@@ -96,6 +96,7 @@ describe('SectorRoom integration — the barge-mining take: the rock ends up in 
   it('lasers and tractors locked on mine-rock-a: the rock is cut down to ore pods and every pod goes into the hold', { timeout: 120_000 }, async () => {
     const { int, holdGoods, fire, watchLocks, dropped } = await start(SHOWCASE_BARGE_MINING_OPTS, SPEED);
     // Hold both triggers through the take (60 s wall, up to ~240 s game): until the rock is cut and no piece is left in the world.
+    const pool0 = int().swarmRegistry.get('mine-rock-a')!.resources!;
     let cut = false;
     /** Every piece seen live, by its size tier at first sight; the cuts (wreck ids, one per split). */
     const tierOf = new Map<string, number>();
@@ -125,7 +126,7 @@ describe('SectorRoom integration — the barge-mining take: the rock ends up in 
       return `${id}@${p ? `${Math.round(p.x)},${Math.round(p.y)}` : '?'} r${Math.round(int().swarmRegistry.get(id)?.radius ?? -1)} ${tierName(tierOf.get(id) ?? -1)}`;
     }).join('; ');
     const sizes = [...new Set(tierOf.values())].sort((a, b) => b - a).map(tierName);
-    console.log(`[bargeMiningTake] ${gameSeconds.toFixed(1)} s game; ${splits.size} cuts; piece sizes seen: ${sizes.join(' > ')}; ${tierOf.size} pieces; ${pods.size} pods; hold ${JSON.stringify(holdGoods())}`);
+    console.log(`[bargeMiningTake] ${gameSeconds.toFixed(1)} s game; ${splits.size} cuts; piece sizes seen: ${sizes.join(' > ')}; ${tierOf.size} pieces; ${pods.size} pods; rock pool ${pool0}; hold ${JSON.stringify(holdGoods())}`);
     expect(cut, 'the lasers cut the rock').toBe(true);
     expect([...dropped], 'no group lost its lock while a piece of the rock was alive').toEqual([]);
     expect(stall, 'every piece cut down to ore pods').toBe('');

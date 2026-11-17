@@ -285,17 +285,12 @@ export class CutFieldSubsystem {
     }
   }
 
-  /** The field's ore where a shot hit field rock `rec` at world (x, y), into
-   *  `out` (F1b: what you cut off decides what you get). The ore is laid out
-   *  over the field as cut, so a rock that has moved (awake) maps the point
-   *  back into its rest frame first. No point (x undefined) ⇒ the rock's
-   *  centre. False for anything else. No allocation. */
-  oreAtHit(rec: SwarmEntityRecord, x: number | undefined, y: number | undefined, out: OreConc): boolean {
+  /** The field's ore at field rock `rec`'s rest centre, into `out` (what a
+   *  harvester or Miner draws from it). False for anything else. No
+   *  allocation. */
+  oreAtCentre(rec: SwarmEntityRecord, out: OreConc): boolean {
     if (rec.fieldRock !== true || rec.restX === undefined || rec.restY === undefined) return false;
-    if (x === undefined || y === undefined) { oreAt(this.oreBase, SLICED.radius, rec.restX, rec.restY, out); return true; }
-    if (!fieldRockOnWire(rec)) { oreAt(this.oreBase, SLICED.radius, x, y, out); return true; }
-    const sab = this.hooks.sab(), b = slotBase(rec.slot);
-    this.oreAtRest(rec.restX, rec.restY, sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!, sab[b + SLOT_ANGLE_OFF]!, x, y, out);
+    oreAt(this.oreBase, SLICED.radius, rec.restX, rec.restY, out);
     return true;
   }
 

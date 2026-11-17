@@ -137,8 +137,8 @@ export const MINING_LASER_WIDTH = HEAVY_BEAM_WIDTH / 4;
  * ship carries it yet), an ordinary hitscan beam like the heavy beam. Its
  * factors make it a tool: nothing on a raised shield, 5 % on a live hull or a
  * structure, full on a wreck piece (wear lands with PR 5); on a rock it
- * draws ore (the server's `OreDraw`; no other weapon mines); a hit its factor
- * zeroes is no hostile act (`SectorRoom.applyDamage`). Its narrow slice cuts
+ * wears (no other weapon cuts rock; its ore comes only as the pieces' pods);
+ * a hit its factor zeroes is no hostile act (`SectorRoom.applyDamage`). Its narrow slice cuts
  * along the beam. 120 × 6 Hz = 720/s on a wreck, 36/s on a bare hull; energy
  * 12/shot = 72/s, under a capital's 120/s regen, so it holds on (the heavy
  * beam costs 45). Range 12,000 u, short of the heavy beam's 20,000; absolute

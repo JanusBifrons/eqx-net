@@ -97,7 +97,7 @@ export interface SwarmEntityRecord {
    *  every client cuts it at its cut pose (`fieldRockOnWire`). */
   fieldMoved?: boolean;
   /** A field rock's centre where the field cut it (angle 0): its rest frame,
-   *  where its ore is sampled once it has moved (`CutFieldSubsystem.oreAtHit`). */
+   *  where its ore is sampled (`CutFieldSubsystem.oreAtCentre`, `oreAtRest`). */
   restX?: number;
   restY?: number;
   /** Wreck pieces (kind 4) and cut-field rocks (kind 0, `fieldRock`, when
