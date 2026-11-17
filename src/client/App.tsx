@@ -126,9 +126,8 @@ installTestLeakHook();
  *  here from the retired GalaxyOverviewScreen with the single-canvas
  *  refactor — the tap-shield belongs at the tap site. */
 const PICKER_OPEN_DELAY_MS = 200;
-// Living Galaxy P5 — after an auth-gated pick (logged-out → auth → success)
-// the post-auth effect returns to 'galaxy-map' and re-opens the picker for the
-// stashed sector. The map remounts on the phase switch, so wait a beat for
+// After a logged-out "Join the fight" (→ auth → success) the post-auth effect
+// returns to 'galaxy-map' and opens the stashed sector's join (ship picker). The map remounts on the phase switch, so wait a beat for
 // GalaxyPickerChrome to re-register its apiRef, then retry briefly.
 const POST_AUTH_PICKER_OPEN_DELAY_MS = 200;
 
@@ -451,23 +450,9 @@ function GameSurface({
     const t0 = performance.now();
     logEvent('galaxy_sector_click', { key: sectorKey, mode: 'spawn', ts: t0 });
     logEvent('respawn_clicked', { source: 'sector-pick', sectorKey });
-    // Living Galaxy P5 — auth-gate on PICK. The galaxy map is the logged-out
-    // landing screen (fully interactive), but spawning requires a login: stash
-    // the picked sector and route to the auth flow. On return, the remounted
-    // GameSurface re-opens this sector's picker (see the idle-mount effect
-    // below). A non-reactive getState() read keeps the callback stable.
-    // Auth-gate the spawn ONLY on the landing map (phase 'galaxy-map'). In-game
-    // (Equinox Phase 7 warp map, phase 'game') the pilot is already in a room —
-    // never bounce them to the auth flow.
-    // A pilot who chose "Continue as guest" passes the gate (guests are full
-    // players, economy v2).
-    const auth = useAuthStore.getState();
-    if (useUIStore.getState().phase === 'galaxy-map' && !auth.user && !auth.guest) {
-      logEvent('pick_auth_gate', { sectorKey });
-      useUIStore.getState().setPendingPickSector(sectorKey);
-      useUIStore.getState().setPhase('auth');
-      return;
-    }
+    // The galaxy map is the homepage for every visitor: a tap always opens the
+    // focus view. Login is asked for on the panel's "Join the fight"
+    // (GalaxyPickerChrome `gateJoin`), never on the tap itself.
     window.setTimeout(() => {
       pickerApiRef.current?.openForSector(sectorKey);
     }, PICKER_OPEN_DELAY_MS);
@@ -481,8 +466,8 @@ function GameSurface({
     pickerApiRef.current?.deselect();
   }, []);
 
-  // Living Galaxy P5 — returning from the auth detour after an auth-gated pick:
-  // re-open the picker for the stashed sector. The map remounts on the
+  // Returning from the auth detour after a logged-out "Join the fight": open
+  // the stashed sector's join (ship picker) straight away. The map remounts on the
   // auth→galaxy-map switch, so retry briefly until GalaxyPickerChrome has
   // re-registered its apiRef. Only meaningful in idle (selector) mode; the
   // very first landing has no stashed sector and no-ops.
@@ -502,7 +487,7 @@ function GameSurface({
       if (!pending) return; // already consumed
       if (pickerApiRef.current) {
         useUIStore.getState().setPendingPickSector(null);
-        pickerApiRef.current.openForSector(pending);
+        pickerApiRef.current.openJoinForSector(pending);
         return;
       }
       if (++attempts < 40) window.setTimeout(tryOpen, 50);

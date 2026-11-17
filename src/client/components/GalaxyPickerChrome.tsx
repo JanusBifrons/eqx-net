@@ -17,6 +17,7 @@ import { loadStoredPlayerId } from '../identity/token';
 import { ShipPickerModal } from './ShipPickerModal';
 import { acquireRosterPolling, releaseRosterPolling } from './rosterPoller';
 import { useUIStore } from '../state/store';
+import { useAuthStore } from '../auth/authStore';
 import { fleetWarpRequest } from '../app/fleetWarp';
 import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
@@ -82,6 +83,9 @@ export interface GalaxyPickerApi {
    * the host's onSelectorPick wiring).
    */
   openForSector(sectorKey: string): void;
+  /** Open the sector's JOIN (the ship-kind picker) directly — used on return
+   *  from the login a logged-out "Join the fight" asked for. */
+  openJoinForSector(sectorKey: string): void;
   /**
    * Equinox Phase 9 — BLUR/deselect: close the SectorInfoDrawer + clear the
    * selection. Fired by the host when a galaxy tap hits no hex (empty space).
@@ -252,11 +256,24 @@ export function GalaxyPickerChrome({
         // closure never goes stale.
         setSelectedSectorKey((cur) => (cur === key ? null : key));
       },
+      openJoinForSector: (key: string) => { setSelectedSectorKey(null); setPendingSpawnSector(key); },
       // Empty-space tap (blur) → close the drawer + deselect.
       deselect: () => { setSelectedSectorKey(null); },
     };
     return () => { if (apiRef) apiRef.current = null; };
   }, [apiRef]);
+
+  // The map is the homepage for everyone; joining needs a login (or the
+  // remembered guest choice). A logged-out "Join the fight" stashes the sector
+  // and goes to the auth flow; App opens that sector's join on return.
+  const gateJoin = (sector: string): boolean => {
+    const auth = useAuthStore.getState();
+    if (isWarp || auth.user || auth.guest) return false;
+    logEvent('join_auth_gate', { sector });
+    useUIStore.getState().setPendingPickSector(sector);
+    useUIStore.getState().setPhase('auth');
+    return true;
+  };
 
   // Living Galaxy Phase 6 — derive the hovered-sector tooltip content (pure).
   const sectorTip = galaxyHover ? buildSectorTooltip(galaxyHover.sectorKey, galaxyStats) : null;
@@ -562,6 +579,7 @@ export function GalaxyPickerChrome({
         }}
         onJoin={(sector) => {
           logEvent('galaxy_drawer_join', { sector });
+          if (gateJoin(sector)) return;
           setPendingSpawnSector(sector);
           setSelectedSectorKey(null);
         }}
@@ -571,6 +589,7 @@ export function GalaxyPickerChrome({
                 // Equinox Phase 5 (WS-3) — join as spectator, SKIPPING the ship
                 // picker entirely (go straight to the room with spectator:true).
                 logEvent('galaxy_drawer_spectate', { sector });
+                if (gateJoin(sector)) return;
                 onSpawnSpectator(sector);
                 setSelectedSectorKey(null);
               }
