@@ -165,7 +165,8 @@ export class RockCutter {
     if (geom.length < 2) return false;
     const fifo = this.h.fifo(false);
     const placed = placeWreckPieces(
-      src, geom, pose, pose.x, pose.y, inputs.killX, -inputs.killY, inputs.seed ^ 0x3ec7, inputs.cutW ?? 0,
+      src, geom, pose, pose.x, pose.y, inputs.killX, -inputs.killY, inputs.seed ^ 0x3ec7,
+      src.profile.fracture?.sweepCuts === true ? 0 : (inputs.cutW ?? 0), // a swept cut burns no gap
     );
     // Every piece carries its area's share of the ore the rock had left.
     const left = rock.resources ?? src.area * ASTEROID_RESOURCES_PER_AREA;

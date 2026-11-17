@@ -91,6 +91,7 @@ export function wreckChainFracture(chain: WreckChildChain): FracturePiece[] {
       chunkyPieces: o.chunkyPieces,
       chunkyMinWidthBeams: o.chunkyMinWidthBeams,
       soundMinShare: o.soundMinShare,
+      sweepCuts: o.sweepCuts,
       extraChunkChance: o.extraChunkChance,
       jag: o.jag,
       // Absent on every re-split profile today (children unchanged).

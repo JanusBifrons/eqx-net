@@ -53,6 +53,9 @@ export interface DestructionFractureOptions {
   /** Least share of the hull on each side of the sound primary crack with
    *  `chunkyPieces` (default 0.15). */
   readonly soundMinShare?: number;
+  /** Rocks: a cut moves like the sound crack (the laser sweeps across a
+   *  long piece), no burned strip. */
+  readonly sweepCuts?: boolean;
   /** Chance of the one extra crack at violence 0 with `chunkyPieces`. */
   readonly extraChunkChance?: number;
   /** Jag of the cut edges (default depth 4, roughness 0.22). */
@@ -480,7 +483,7 @@ const NONE: DestructionProfile = {
  *  pods carry its ore. */
 const ROCK_FRACTURE: DestructionFractureOptions = {
   maxPieces: 3, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: true,
-  chunkyMinWidthBeams: 0.36, soundMinShare: 0.3, extraChunkChance: 0.4, jag: { depth: 1, roughness: 0.12 },
+  chunkyMinWidthBeams: 0.36, soundMinShare: 0.3, sweepCuts: true, extraChunkChance: 0.4, jag: { depth: 1, roughness: 0.12 },
 };
 const ROCK: DestructionProfile = {
   id: 'rock',

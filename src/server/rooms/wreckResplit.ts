@@ -95,9 +95,11 @@ export function planWreckResplit(
   const next: WreckChildChain = { root: chain.root, steps: [...chain.steps, step] };
   const geom = wreckChildGeometry(next);
   if (geom.length < 2) return { step, chain: next, children: [] };
+  // A swept cut (rocks, `sweepCuts`) leaves no burned gap on the beam's line.
+  const gap = src.profile.resplit?.fracture.sweepCuts !== true;
   const children = placeWreckPieces(
-    src, geom, pose, ox, oy, mx, my, wreckChildSeed(chain.root.seed >>> 0, parent.index) ^ 0x3ec7, step.cutW !== undefined ? step.cutW * s : 0,
-    step.cutKind === 'slice' && step.cutAng !== undefined ? { px: mx, py: my, ang: step.cutAng } : undefined,
+    src, geom, pose, ox, oy, mx, my, wreckChildSeed(chain.root.seed >>> 0, parent.index) ^ 0x3ec7, gap && step.cutW !== undefined ? step.cutW * s : 0,
+    gap && step.cutKind === 'slice' && step.cutAng !== undefined ? { px: mx, py: my, ang: step.cutAng } : undefined,
   );
   return { step, chain: next, children };
 }
