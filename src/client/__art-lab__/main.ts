@@ -25,6 +25,7 @@ import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../rende
 import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
 import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, structScale, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
 import { ConnectorRenderer } from '../render/pixi/ConnectorRenderer.js';
+import { readLineLook } from '../render/pixi/connectorLineLooks.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
@@ -374,8 +375,10 @@ async function main(): Promise<void> {
       structures.get(b + 1)!.connTo.push(a + 1);
     }
     const r = new ConnectorRenderer();
+    r.lineLook = readLineLook(location.search); // 1g `?lineLook=`: odd edges carry flow so the look's pulse shows
+    const gridFlashes = r.lineLook ? new Map(scene.edges.filter((_, i) => i % 2 === 1).map(([p, q]) => [(Math.min(p, q) + 1) * 65536 + Math.max(p, q) + 1, 1e12])) : undefined;
     lineL.addChild(r.staticGfx, r.gfx);
-    lines = { r, mirror: { swarm, structures } as unknown as RenderMirror };
+    lines = { r, mirror: { swarm, structures, gridFlashes } as unknown as RenderMirror };
   }
 
   // ---- ships

@@ -22,6 +22,7 @@ import { spawnVaporiseBlast, stackVaporiseOverBeams } from './pixi/vaporiseBlast
 import { raiseBeamsOverHulls } from './pixi/beamsOverHulls.js';
 import { LegacyExplosionSprites } from './pixi/legacyExplosionSprites.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
+import { readLineLook } from './pixi/connectorLineLooks.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
@@ -978,6 +979,8 @@ export class PixiRenderer implements IRenderer {
     // lines render BEHIND the structure/ship sprites added later.
     this.connectorRenderer = new ConnectorRenderer(this._cutField);
     this.connectorRenderer.setTurretOverlaysVisible(this._lockMarksVisible);
+    // Structure restyle 1g line looks (look R&D; main-thread renderer only): `?lineLook=pipe|cable|conduit`.
+    if (isDom) this.connectorRenderer.lineLook = readLineLook(window.location.search);
     // A3 — the static layer (idle web, range rings, wall rails) sits behind the
     // per-frame layer.
     this.shipContainer.addChild(this.connectorRenderer.staticGfx);
