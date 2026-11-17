@@ -28,18 +28,74 @@ describe('CargoPanel (C1)', () => {
     act(() => useUIStore.getState().setCargoState(state()));
     const here = screen.getAllByTestId('cargo-here-row');
     const aboard = screen.getAllByTestId('cargo-aboard-row');
-    expect(here[0]!.textContent).toContain('Alloy ×20');
-    expect(aboard[0]!.textContent).toContain('Salvage ×3');
+    expect(here[0]!.textContent).toContain('Alloy');
+    expect(here[0]!.getAttribute('data-count')).toBe('20');
+    expect(aboard[0]!.textContent).toContain('Salvage');
+    expect(aboard[0]!.getAttribute('data-count')).toBe('3');
     expect(screen.getByTestId('cargo-panel').getAttribute('data-open')).toBe('1');
   });
 
-  it('Take all / Put 1 send the matching cargo_move', () => {
+  it('cargo-pods slice 17: tapping a tile moves the whole stack, either way', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state()));
-    fireEvent.click(screen.getByTestId('cargo-here-row').querySelector('[data-testid="cargo-take-all"]')!);
+    fireEvent.click(screen.getByTestId('cargo-here-row'));
     expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'take', items: { goods: { alloy: 20 } } });
-    fireEvent.click(screen.getByTestId('cargo-aboard-row').querySelector('[data-testid="cargo-put-one"]')!);
-    expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'put', items: { goods: { salvage: 1 } } });
+    fireEvent.click(screen.getByTestId('cargo-aboard-row'));
+    expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'put', items: { goods: { salvage: 3 } } });
+  });
+
+  it('slice 17: hidden stacks are "?" tiles (the first spins); Take all found takes only what is found', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({
+      hold: { goods: { salvage: 4, alloy: 2 }, blueprints: [] }, hidden: 3, revealInMs: 500,
+    })));
+    expect(screen.getAllByTestId('cargo-here-row')).toHaveLength(2);
+    expect(screen.getAllByTestId('cargo-unknown-tile')).toHaveLength(3);
+    expect(screen.getAllByTestId('cargo-search-spinner')).toHaveLength(1);
+    expect(screen.getByTestId('cargo-take-found').textContent).toBe('Take all found');
+    fireEvent.click(screen.getByTestId('cargo-take-found'));
+    expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'take', items: { goods: { salvage: 4, alloy: 2 } } });
+  });
+
+  it('slice 17: asks again when the next stack is due, scaled by game speed', () => {
+    vi.useFakeTimers();
+    try {
+      act(() => useUIStore.getState().setTimeScale(2));
+      render(<CargoPanel entityId={9} />);
+      act(() => useUIStore.getState().setCargoState(state({ hidden: 1, revealInMs: 600 })));
+      send.mockClear();
+      act(() => { vi.advanceTimersByTime(250); });
+      expect(send, 'not before it is due').not.toHaveBeenCalled();
+      act(() => { vi.advanceTimersByTime(100); }); // 600 game ms at 2× = 300 ms + 30 slack
+      expect(send).toHaveBeenCalledWith('cargo_query', { type: 'cargo_query', entityId: 9 });
+    } finally {
+      act(() => useUIStore.getState().setTimeScale(1));
+      vi.useRealTimers();
+    }
+  });
+
+  it('slice 17: a weight bar shows your hold against its capacity', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({ ship: { goods: { alloy: 10 }, blueprints: [] }, shipCapacity: 80 })));
+    const bar = screen.getByTestId('cargo-weight');
+    expect(bar.getAttribute('data-used')).toBe('20');
+    expect(bar.getAttribute('data-capacity')).toBe('80');
+  });
+
+  it('slice 17: your own storage shows both auto-unload switches', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({ autoUnload: true, acceptAutoUnload: false })));
+    expect(screen.getByTestId('auto-unload-ship').getAttribute('data-on')).toBe('1');
+    fireEvent.click(screen.getByTestId('auto-unload-ship'));
+    expect(send).toHaveBeenLastCalledWith('set_auto_unload', { type: 'set_auto_unload', side: 'ship', on: false });
+    fireEvent.click(screen.getByTestId('auto-unload-storage'));
+    expect(send).toHaveBeenLastCalledWith('set_auto_unload', { type: 'set_auto_unload', side: 'storage', on: true, entityId: 9 });
+  });
+
+  it('slice 17: no switches on storage that is not yours', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state()));
+    expect(screen.queryByTestId('auto-unload-ship')).toBeNull();
   });
 
   it('shows why it is locked, and holds a move verdict', () => {

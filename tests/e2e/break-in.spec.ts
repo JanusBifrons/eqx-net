@@ -69,7 +69,7 @@ test("break into another owner's storage: locked, break in, the cargo opens", as
   await expect(panel).toHaveAttribute('data-open', '1', { timeout: 8_000 });
   const hereAlloy = panel.locator('[data-testid="cargo-here-row"][data-key="g:alloy"]');
   await expect(hereAlloy).toHaveAttribute('data-count', '7', { timeout: 5_000 });
-  await hereAlloy.getByTestId('cargo-take-all').click();
+  await hereAlloy.click();
   const aboardAlloy = panel.locator('[data-testid="cargo-aboard-row"][data-key="g:alloy"]');
   await expect(aboardAlloy).toHaveAttribute('data-count', '7', { timeout: 5_000 });
 });

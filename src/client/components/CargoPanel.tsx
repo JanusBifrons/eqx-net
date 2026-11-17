@@ -10,9 +10,10 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Box, IconButton, Tooltip } from '@mui/material';
 import Inventory2Icon from '@mui/icons-material/Inventory2';
 import { useUIStore } from '../state/store';
-import { sendBreakIn, sendBreakInCancel, sendCargoMove, sendCargoQuery, sendSetFreightOrders, type CargoTarget } from '../net/tradeClient';
+import { sendBreakIn, sendBreakInCancel, sendCargoMove, sendCargoQuery, sendSetAutoUnload, sendSetFreightOrders, type CargoTarget } from '../net/tradeClient';
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods';
-import { cargoRows, type CargoRow } from './cargoRows';
+import { holdWeight } from '../../core/cargo/hold';
+import { allOf, cargoRows, type CargoRow } from './cargoRows';
 import { MAX_FREIGHT_ORDERS, type CargoItems, type FreightOrder } from '../../shared-types/messages/cargoMessages';
 
 export const CARGO_POLL_MS = 1000;
@@ -34,6 +35,90 @@ const BTN_SX = {
 };
 const EMPTY_SX = { color: '#7f958c', fontStyle: 'italic' as const };
 const WARN_SX = { color: '#ffb36b' };
+
+/** Tile edge per rarity, the pod beacon's grey / blue / gold. */
+const TIER_EDGE = ['rgba(170,190,180,0.55)', 'rgba(110,170,255,0.85)', 'rgba(255,200,90,0.9)'] as const;
+const GRID_SX = { display: 'grid', gridTemplateColumns: 'repeat(5, 44px)', gap: '3px', maxHeight: 150, overflowY: 'auto' as const };
+const TILE_SX = {
+  position: 'relative' as const, width: 44, height: 44, boxSizing: 'border-box' as const, borderRadius: '3px', p: '2px',
+  backgroundColor: 'rgba(10,30,24,0.75)', fontSize: 8, lineHeight: 1.1, overflow: 'hidden', userSelect: 'none' as const,
+  wordBreak: 'break-word' as const,
+};
+const COUNT_SX = { position: 'absolute' as const, right: 2, bottom: 1, fontSize: 9, fontWeight: 700, color: '#effff8' };
+const SPIN_SX = {
+  width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(143,224,189,0.25)', borderTopColor: '#8fe0bd',
+  animation: 'eqx-loot-spin 0.8s linear infinite', '@keyframes eqx-loot-spin': { to: { transform: 'rotate(360deg)' } },
+};
+
+/** Cargo pods slice 17: one side of the loot window. A tile per stack, then
+ *  a "?" tile per stack still being searched (the first spins). Tap a tile to
+ *  move the whole stack; no `onMove` = look only (a peek). */
+function Grid({ title, rows, hidden, testPrefix, onMove }: {
+  title: string;
+  rows: CargoRow[];
+  hidden: number;
+  testPrefix: 'here' | 'aboard';
+  onMove?: (items: CargoItems) => void;
+}): JSX.Element {
+  const qs: number[] = [];
+  for (let i = 0; i < hidden; i++) qs.push(i);
+  return (
+    <Box>
+      <Box sx={PANE_TITLE_SX}>{title}</Box>
+      <Box sx={GRID_SX} data-testid={`cargo-${testPrefix}-grid`}>
+        {rows.map((r) => (
+          <Box
+            key={r.key} data-testid={`cargo-${testPrefix}-row`} data-key={r.key} data-count={r.count} title={r.label}
+            onClick={onMove !== undefined ? () => onMove(r.all) : undefined}
+            sx={{ ...TILE_SX, border: `1px solid ${TIER_EDGE[r.tier]}`, cursor: onMove !== undefined ? 'pointer' : 'default' }}
+          >
+            {r.label}
+            {r.count > 1 && <Box component="span" sx={COUNT_SX}>{r.count}</Box>}
+          </Box>
+        ))}
+        {qs.map((i) => (
+          <Box
+            key={`q${i}`} data-testid="cargo-unknown-tile"
+            sx={{ ...TILE_SX, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed rgba(143,224,189,0.35)', color: '#7f958c', fontSize: 14 }}
+          >
+            {i === 0 ? <Box sx={SPIN_SX} data-testid="cargo-search-spinner" /> : '?'}
+          </Box>
+        ))}
+        {rows.length === 0 && hidden === 0 && <Box sx={{ ...EMPTY_SX, gridColumn: '1 / -1' }}>Empty</Box>}
+      </Box>
+    </Box>
+  );
+}
+
+/** Your hold's weight against its capacity. */
+function WeightBar({ used, capacity }: { used: number; capacity: number }): JSX.Element {
+  const pct = capacity > 0 ? Math.min(100, Math.round((used / capacity) * 100)) : 100;
+  return (
+    <Box data-testid="cargo-weight" data-used={Math.round(used)} data-capacity={Math.round(capacity)} sx={{ mt: '3px' }}>
+      <Box sx={{ fontSize: 9, color: '#9fb8ad' }}>Weight {Math.round(used)} / {Math.round(capacity)}</Box>
+      <Box sx={{ height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden' }}>
+        <Box sx={{ height: '100%', width: `${pct}%`, backgroundColor: pct >= 100 ? '#ff8f6b' : '#8fe0bd' }} />
+      </Box>
+    </Box>
+  );
+}
+
+/** Slice 14c's switches on your own storage: does your ship drop its cargo
+ *  here on its own, and does this storage take such drops? */
+function AutoUnload({ entityId, ship, storage }: { entityId: number; ship?: boolean; storage?: boolean }): JSX.Element {
+  const sw = (id: string, label: string, on: boolean, flip: () => void): JSX.Element => (
+    <Box sx={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+      <Box sx={{ ...BTN_SX, minWidth: 22, textAlign: 'center' }} data-testid={id} data-on={on ? '1' : '0'} onClick={flip}>{on ? 'On' : 'Off'}</Box>
+      <Box>{label}</Box>
+    </Box>
+  );
+  return (
+    <Box sx={{ mt: '3px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+      {ship !== undefined && sw('auto-unload-ship', 'My ship auto-unloads here', ship, () => sendSetAutoUnload('ship', !ship))}
+      {storage !== undefined && sw('auto-unload-storage', 'Accept auto-unload', storage, () => sendSetAutoUnload('storage', !storage, entityId))}
+    </Box>
+  );
+}
 
 /** "12¢" (whole credits) or "1.5¢" (cheap goods). */
 function credits(n: number): string {
@@ -154,6 +239,16 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship }: CargoPane
     return () => clearInterval(t);
   }, [entityId, ship]);
 
+  // Slice 17: while stacks are hidden, ask again the moment the next one is
+  // due (the search runs in game time; the 1 s poll alone would lag it).
+  const timeScale = useUIStore((s) => s.timeScale);
+  const revealIn = state?.hidden !== undefined ? state.revealInMs : undefined;
+  useEffect(() => {
+    if (revealIn === undefined) return;
+    const t = setTimeout(() => sendCargoQuery(target), Math.max(50, revealIn / Math.max(0.25, timeScale) + 30));
+    return () => clearTimeout(t);
+  }, [state, revealIn, timeScale]);
+
   const here = cargoRows(state?.hold ?? null);
   const aboard = cargoRows(state?.ship ?? null);
   const market = state?.market;
@@ -187,8 +282,23 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship }: CargoPane
           </Box>
         )
       )}
-      {peek && <Pane title="Here (look only)" rows={here} verb="Take" testPrefix="here" />}
-      {state?.open === true && !peek && (
+      {peek && <Grid title="Theirs (look only)" rows={here} hidden={state.hidden ?? 0} testPrefix="here" />}
+      {state?.open === true && !peek && !market && (
+        <>
+          <Grid title="Theirs" rows={here} hidden={state.hidden ?? 0} testPrefix="here" onMove={(items) => sendCargoMove(target, 'take', items)} />
+          {here.length > 0 && (
+            <Box sx={{ ...BTN_SX, display: 'inline-block', mt: '3px' }} data-testid="cargo-take-found" onClick={() => sendCargoMove(target, 'take', allOf(here))}>
+              {state.hidden !== undefined ? 'Take all found' : 'Take all'}
+            </Box>
+          )}
+          <Grid title="Yours" rows={aboard} hidden={0} testPrefix="aboard" onMove={(items) => sendCargoMove(target, 'put', items)} />
+          <WeightBar used={state.ship !== null ? holdWeight(state.ship) : 0} capacity={state.shipCapacity} />
+          {entityId !== undefined && (state.autoUnload !== undefined || state.acceptAutoUnload !== undefined) && (
+            <AutoUnload entityId={entityId} ship={state.autoUnload} storage={state.acceptAutoUnload} />
+          )}
+        </>
+      )}
+      {state?.open === true && !peek && market && (
         <>
           <Pane
             title={market ? 'For sale' : 'Here'} rows={here} verb={market ? 'Buy' : 'Take'} testPrefix="here"

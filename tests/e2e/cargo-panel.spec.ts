@@ -67,14 +67,14 @@ test('open your own storage and move cargo by hand', async ({ page }) => {
   const hereAlloy = panel.locator('[data-testid="cargo-here-row"][data-key="g:alloy"]');
   await expect(hereAlloy).toHaveAttribute('data-count', '20', { timeout: 5_000 });
 
-  // Take one alloy aboard.
-  await hereAlloy.getByTestId('cargo-take-one').click();
+  // Tap the tile: the whole stack comes aboard (cargo pods slice 17 grid).
+  await hereAlloy.click();
   const aboardAlloy = panel.locator('[data-testid="cargo-aboard-row"][data-key="g:alloy"]');
-  await expect(aboardAlloy).toHaveAttribute('data-count', '1', { timeout: 5_000 });
-  await expect(hereAlloy).toHaveAttribute('data-count', '19');
+  await expect(aboardAlloy).toHaveAttribute('data-count', '20', { timeout: 5_000 });
+  await expect(hereAlloy).toHaveCount(0);
 
-  // Put it back.
-  await aboardAlloy.getByTestId('cargo-put-all').click();
+  // Tap it in your grid to put it back.
+  await aboardAlloy.click();
   await expect(hereAlloy).toHaveAttribute('data-count', '20', { timeout: 5_000 });
   await expect(aboardAlloy).toHaveCount(0);
 });

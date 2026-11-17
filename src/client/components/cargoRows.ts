@@ -13,6 +13,9 @@ export interface CargoRow {
   key: string;
   label: string;
   count: number;
+  /** Rarity 0..2 (grey / blue / gold, like the pod beacon); blueprints and
+   *  packed items are top tier. */
+  tier: 0 | 1 | 2;
   one: CargoItems;
   all: CargoItems;
 }
@@ -25,7 +28,7 @@ export function cargoRows(hold: Hold | null): CargoRow[] {
     const n = hold.goods[id] ?? 0;
     if (n <= 0) continue;
     rows.push({
-      key: `g:${id}`, label: GOOD_DEFS[id].displayName, count: n,
+      key: `g:${id}`, label: GOOD_DEFS[id].displayName, count: n, tier: GOOD_DEFS[id].tier,
       one: { goods: { [id]: 1 } }, all: { goods: { [id]: n } },
     });
   }
@@ -33,16 +36,32 @@ export function cargoRows(hold: Hold | null): CargoRow[] {
   for (const p of hold.packed ?? []) packed.set(p.product, (packed.get(p.product) ?? 0) + 1);
   for (const [product, n] of packed) {
     rows.push({
-      key: `p:${product}`, label: `${productName(product)} (packed)`, count: n,
+      key: `p:${product}`, label: `${productName(product)} (packed)`, count: n, tier: 2,
       one: { packed: [product] }, all: { packed: Array<string>(n).fill(product) },
     });
   }
   for (const b of hold.blueprints) {
     const runs = b.kind === 'bpo' ? 'original' : `${b.runs ?? 0} run${b.runs === 1 ? '' : 's'}`;
     rows.push({
-      key: `b:${b.uid}`, label: `${productName(b.product)} blueprint (${runs})`, count: 1,
+      key: `b:${b.uid}`, label: `${productName(b.product)} blueprint (${runs})`, count: 1, tier: 2,
       one: { blueprints: [b.uid] }, all: { blueprints: [b.uid] },
     });
   }
   return rows;
+}
+
+/** Every row's whole stack in one request ("Take all found"). */
+export function allOf(rows: readonly CargoRow[]): CargoItems {
+  const goods: Record<string, number> = {};
+  const packed: string[] = [];
+  const blueprints: string[] = [];
+  for (const r of rows) {
+    for (const [g, n] of Object.entries(r.all.goods ?? {})) goods[g] = (goods[g] ?? 0) + (n ?? 0);
+    if (r.all.packed) packed.push(...r.all.packed);
+    if (r.all.blueprints) blueprints.push(...r.all.blueprints);
+  }
+  const out: CargoItems = { goods: goods as CargoItems['goods'] };
+  if (packed.length > 0) out.packed = packed;
+  if (blueprints.length > 0) out.blueprints = blueprints;
+  return out;
 }
