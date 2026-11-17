@@ -88,6 +88,21 @@ export interface RockRecordStore {
   warn(fields: object, msg: string): void;
 }
 
+/** A partition's saved rows cut under `version`, once when its chunk source
+ *  starts (wreck fields R10: every partition loads through this). Rows cut
+ *  under another version name other things: skipped with one warning, and
+ *  overwritten if their key is written again. */
+export function loadRecords(store: RockRecordStore, version: number): TerrainRecordRow[] {
+  const out: TerrainRecordRow[] = [];
+  let stale = 0;
+  for (const r of store.load()) {
+    if (r.layoutVersion !== version) stale++;
+    else out.push(r);
+  }
+  if (stale > 0) store.warn({ sectorKey: store.sectorKey, stale, layoutVersion: version }, 'terrain_records: rows from another layout version ignored');
+  return out;
+}
+
 /** The whole store: the rock half plus the battle-wreck lineage rows of the
  *  same partition (wreck fields). */
 export interface TerrainRecordStore extends RockRecordStore {
