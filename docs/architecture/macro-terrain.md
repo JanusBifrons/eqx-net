@@ -145,6 +145,22 @@ Every sector the galaxy map marks `asteroid` has ONE cut field, the field as bui
 - Off with solar-system sectors off.
 - **Open risks (next slices):** server cost of streaming chunks round every AI hull across a 300 km field; convoys, flagships and elites fly between pockets through rock until navigation lands (Stage E); phone frame cost (perf A/B owed).
 
+### Wreck fields (F3)
+
+An old battlefield is a list of dead hulls a seed derives; each hull becomes an ordinary live wreck when a ship comes near (later slices). Owner, 2026-11-17: 3–5 sectors get one, about a 50 km core plus a couple of debris trails; it may share a sector with a rock field but never overlaps rocks.
+
+**Layout (`core/terrain/wreckFieldLayout.ts`, slice 1, storage and streaming not wired yet).** `wreckField({ seed, x, y, sides, clearings?, blocked?, capitalWrecksOn?, subcapWrecksOn? })` returns every hull (kind, owner faction, position, resting angle, home chunk, slot, key, fracture seed, footprint, core or trail). Pure and deterministic from `wrecks:<seed>` and `WRECK_FIELD_VERSION` (bump on any change to the hulls a seed gives); run on the server only. It extends the cut field rather than copying it:
+
+- **Chunks and keys:** a hull's home chunk is `chunkOf` its centre; its slot is its rank in that chunk in generation order and its key is `rockKey(cx, cy, slot)` (a field hull's record row key in its own partition). `hullsInChunk(field, cx, cy)` reads a precomputed index (`byChunk`), no allocation.
+- **Kinds:** playable kinds that wreck in the room (`wreckKindAllowed(kind, capitalWrecksOn, subcapWrecksOn)`, moved from `SectorRoom` to `core/destruction/`), split into capitals (`sizeClass`), sub-caps (radius ≥ `subcapMinRadius`) and fighters. Owner = one of the two `sides` (faction ids): side 0 on the positive half of a seeded front line, `sideMix` of hulls on the other half. Never ownerless.
+- **Shape:** capitals in the core disc; sub-caps and fighters split `trailShare` into 1–2 trails, which leave the core in seeded directions, thin outward (t^1.5), narrow to `trailTaper` and bend by up to `trailBend` × their length.
+- **No overlap:** each hull has a footprint circle of `footprintMul` (1.5) × its kind radius (a sub-cap's pieces drift at most ~1.5 radii); footprints keep `gap` apart, stay out of every `FieldClearing`, and must pass the `blocked` predicate. `rockFieldBlocker(chunkOpts)` builds that from a cut field through `fieldRocksInBox` (only the pieces near the circle are cut; circles clear of the field's disc are answered without cutting). A hull with no free spot in `attempts` tries is dropped (`dropped`).
+- **Breaking:** `wreckFieldHullFracture(hull)` gives a hull's `WreckFractureInputs` (a seeded kill point on its outline, seeded damage, the profile's snap chance; no kill cut yet), so `wreckPieceGeometry` gives its pieces with no new fracture code.
+
+Knobs (`WRECK_FIELD`): `coreRadius` 25 km, `capitals` 2–4, `subcaps` 10–25, `fighters` 30–80, `trails` 1–2, `trailLength` 30–50 km, `trailHalfWidth` 4 km, `trailTaper` 0.4, `trailBend` 0.15, `trailShare` 0.3, `footprintMul` 1.5, `gap` 200 u, `subcapMinRadius` 28, `sideMix` 0.25, `attempts` 60. Counts are tuned against owner stills.
+
+Measured (printed by `wreckFieldLayout.test.ts`, seeds `thornfield` / `a` / `b`): 73 / 95 / 53 hulls (2–4 capitals), none dropped; 151 / 202 / 111 pieces; 58 / 78 / 50 occupied chunks; per chunk at most 3 hulls and 7 pieces (mean ~1.2 hulls, ~2.5 pieces); the worst 5×5 chunk ring (the streamer's ring around one ship) holds 18 / 27 / 10 hulls and 37 / 56 / 21 pieces. The fracture is chunky: most hulls break into 2–3 pieces at the seeded damage.
+
 ### Parked follow-ups (owner, 2026-11-17: noted, not scheduled)
 
 - **Self-crossing cut outlines.** About 5–10 % of cut rocks have an outline that crosses itself (`roughen` in `fieldLayout.ts`), so the collider falls back to one convex hull. Fixing the cut changes how those rocks look: stills to the owner first.

@@ -93,6 +93,7 @@ import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
+import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
 import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { pushNotifier } from '../push/PushNotifier.js';
@@ -277,7 +278,6 @@ import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { FleetCommandSubsystem, pilotKindFor, type FleetPose, type FleetModeData, type FleetShipOrders } from '../fleet/FleetCommandSubsystem.js';
 import { clearFleetOrder, defendAt, stepFleetPatrol } from '../fleet/fleetShipOrders.js';
-import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { FleetStatusStream } from '../fleet/FleetStatusStream.js';
 import { FleetStatusSoon, FLEET_STATUS_SOON_TICKS } from '../fleet/FleetStatusSoon.js';
 import { decodeAiInputBits, type AiInputBits } from '../../core/contracts/IAiBehaviour.js';
@@ -5720,13 +5720,7 @@ export class SectorRoom extends Room<SectorState> {
    *  with `subcapWrecks`, except composite kinds (havok), which keep their
    *  per-component scrap; `none` never. */
   private wreckKindAllowed(kindId: string): boolean {
-    // Per hit (noteHit): read the tuning directly, no entity literal (#14).
-    if (!isShipKindId(kindId)) return false;
-    switch (shipTuning(getShipKind(kindId)).destruction) {
-      case 'capital': return this.capitalWrecksOn;
-      case 'subcap': return this.subcapWrecksOn && shipScrapGroups(kindId).length === 0;
-      case 'none': case 'rock': return false;
-    }
+    return wreckKindAllowed(kindId, this.capitalWrecksOn, this.subcapWrecksOn);
   }
 
   /** S2a: a dying ACTIVE hull breaks into wreck bodies, its worker body
