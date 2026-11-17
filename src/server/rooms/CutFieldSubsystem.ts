@@ -14,7 +14,7 @@ import {
   CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockId, fieldRockMass, fieldRocksInBox, fieldRockWakes,
   FIELD_WAKES_PER_TICK, STEP_EVERY_MS,
 } from '../../core/terrain/chunkStreamer.js';
-import { FIELD_LAYOUT_VERSION, SLICED, type ChunkOpts } from '../../core/terrain/fieldLayout.js';
+import { FIELD_LAYOUT_VERSION, SLICED, type ChunkOpts, type FieldClearing } from '../../core/terrain/fieldLayout.js';
 import { rockObstacleParts, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
 import { oreAt, oreSeed, type OreConc } from '../../core/terrain/fieldOre.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
@@ -22,7 +22,7 @@ import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import {
-  MAX_WELCOME_CONSUMED_ROCKS, MAX_WELCOME_MOVED_ROCKS, type FieldConsumedMessage, type FieldMovedMessage, type FieldRockPose,
+  MAX_WELCOME_CLEARINGS, MAX_WELCOME_CONSUMED_ROCKS, MAX_WELCOME_MOVED_ROCKS, type CutFieldWelcome, type FieldConsumedMessage, type FieldMovedMessage, type FieldRockPose,
 } from '../../shared-types/messages/snapshotMessages.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { fieldRockOnWire, type SwarmEntityRecord, type SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
@@ -97,12 +97,17 @@ export class CutFieldSubsystem {
     private readonly registry: SwarmEntityRegistry,
     spawner: SwarmSpawner,
     private readonly hooks: CutFieldRoomHooks,
+    /** Open pockets cut out of the field (galaxy sectors, F4); none in test
+     *  and showcase rooms. On the welcome so the client cuts the same rocks. */
+    clearings?: readonly FieldClearing[],
   ) {
     this.seed = seed;
     this.gameClock = gameClock;
     this.oreBase = oreSeed(seed);
     this.loadRecords();
-    this.opts = cutFieldOpts(seed);
+    // More than the welcome carries would leave joiners cutting other rocks (#15).
+    if ((clearings?.length ?? 0) > MAX_WELCOME_CLEARINGS) throw new Error(`cut field: ${clearings!.length} clearings, the welcome carries ${MAX_WELCOME_CLEARINGS}`);
+    this.opts = cutFieldOpts(seed, clearings);
     this.streamer = new CutFieldStreamer(this.opts, {
       // Pilots and AI hulls keep rocks loaded. Slow cadence (STEP_EVERY_MS).
       visitShips: (cb) => {
@@ -249,11 +254,13 @@ export class CutFieldSubsystem {
     if (stale > 0) store.warn({ sectorKey: store.sectorKey, stale, layoutVersion: FIELD_LAYOUT_VERSION }, 'terrain_records: rows from another field layout ignored');
   }
 
-  /** Spread into every welcome: the seed, the consumed keys (C3) and the
-   *  moved rocks' poses (C2), #16. A join is rare, so the lists are built
-   *  per call. */
-  get welcome(): { cutField: { seed: string; consumed?: number[]; moved?: FieldRockPose[] } } {
-    const cutField: { seed: string; consumed?: number[]; moved?: FieldRockPose[] } = { seed: this.seed };
+  /** Spread into every welcome: the seed, the clearings (F4, when any), the
+   *  consumed keys (C3) and the moved rocks' poses (C2), #16. A join is
+   *  rare, so the lists are built per call. */
+  get welcome(): { cutField: CutFieldWelcome } {
+    const cutField: CutFieldWelcome = { seed: this.seed };
+    const clearings = this.opts.clearings;
+    if (clearings?.length) cutField.clearings = clearings.map((c) => ({ x: c.x, y: c.y, r: c.r }));
     if (this.consumed.size > 0) {
       const consumed: number[] = cutField.consumed = [];
       for (const k of this.consumed) { if (consumed.length >= MAX_WELCOME_CONSUMED_ROCKS) break; consumed.push(k); }
