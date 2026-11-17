@@ -394,8 +394,19 @@ const FACTION_LOOKS = new Map<FactionId, FactionLook>();
 const LOOK_HOLDERS = new Map<number, FactionId>();
 let lookVersion = 0;
 
-function packLook(colorSlot: number, sigil: number): number {
+/** The 16-bit sigil seed of a pair (the hash default uses the same layout). */
+export function packLook(colorSlot: number, sigil: number): number {
   return (colorSlot << 12) | sigil;
+}
+
+/** What a claimed pair paints: team colour, sigil seed, section edge. The one
+ *  formula for a claim (`teamColorOf` & co. and the picker preview share it). */
+export function lookLivery(colorSlot: number, sigil: number): { team: number; sigil: number; edge: LiveryEdge } {
+  return {
+    team: PLAYER_LIVERY[colorSlot]!,
+    sigil: packLook(colorSlot, sigil),
+    edge: LIVERY_EDGES[sigil % LIVERY_EDGES.length]!,
+  };
 }
 
 export function isLookInRange(colorSlot: number, sigil: number): boolean {
@@ -485,7 +496,7 @@ export function teamColorOf(id: FactionId): number {
   const def = NPC_FACTIONS.get(id);
   if (def) return def.color;
   const look = FACTION_LOOKS.get(id);
-  return PLAYER_LIVERY[look ? look.colorSlot : liverySlot(id)]!;
+  return look ? lookLivery(look.colorSlot, look.sigil).team : PLAYER_LIVERY[liverySlot(id)]!;
 }
 
 /** A 16-bit sigil seed for a faction's ship markings: a player's claimed pair,
@@ -494,7 +505,7 @@ export function teamSigilOf(id: FactionId): number {
   const h = fnv1a(id);
   if (NPC_FACTIONS.has(id)) return h & 0xffff;
   const look = FACTION_LOOKS.get(id);
-  if (look) return packLook(look.colorSlot, look.sigil);
+  if (look) return lookLivery(look.colorSlot, look.sigil).sigil;
   return ((liverySlot(id) << 12) | ((h >>> 16) & 0x0fff)) & 0xffff;
 }
 
@@ -505,6 +516,6 @@ export function teamEdgeOf(id: FactionId): LiveryEdge {
   const own = NPC_FACTIONS.get(id)?.liveryEdge;
   if (own) return own;
   const look = FACTION_LOOKS.get(id);
-  if (look) return LIVERY_EDGES[look.sigil % LIVERY_EDGES.length]!;
+  if (look) return lookLivery(look.colorSlot, look.sigil).edge;
   return LIVERY_EDGES[(fnv1a(id) >>> 8) % LIVERY_EDGES.length]!;
 }

@@ -16,30 +16,23 @@ import { fetchFactions } from '../../../net/tradeApi';
 import { sendSetFactionPolicy } from '../../../net/tradeClient';
 import { formatStanding, repLabel } from '../../../net/tradeView';
 import type { PlayerFactionsView, PlayerPolicyWire } from '../../../../shared-types/factions';
+import { DETAIL_SX, POLICY_LABEL_SX, SECTION_SX, TITLE_SX, hex } from './factionsTabStyles';
 
 const POLL_MS = 4000;
 const HOSTILE_STEPS = [-10, -25, -50, -75] as const;
 const ALLIED_STEPS = [25, 50, 75] as const;
 
-const TITLE_SX = { fontSize: 13, fontWeight: 700, color: '#dffff0', mb: 0.75 } as const;
-const SECTION_SX = { fontSize: 10, color: '#9aa0b4', textTransform: 'uppercase', letterSpacing: 0.6, mt: 1, mb: 0.5 } as const;
 const POLICY_ROW_SX = { display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5 } as const;
-const POLICY_LABEL_SX = { flex: 1, fontSize: 10, color: '#c8cde0' } as const;
 const SELECT_SX = { fontSize: 11, minWidth: 64, '& .MuiSelect-select': { py: 0.25, px: 0.75 } } as const;
 const ROW_SX = { display: 'flex', alignItems: 'center', gap: 0.75, py: 0.4, borderBottom: '1px solid rgba(255,255,255,0.06)' } as const;
 const NAME_SX = { flex: 1, fontSize: 11, color: '#dde3ef', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
 const VIEW_SX = { width: 82, fontSize: 10, textAlign: 'right' } as const;
-const DETAIL_SX = { fontSize: 10, color: '#9aa0b4' } as const;
 // The clickable part of each select carries a testid for E2E.
 const HOSTILE_BUTTON_PROPS = { 'data-testid': 'faction-policy-hostile-button' } as HTMLAttributes<HTMLDivElement>;
 const ALLIED_BUTTON_PROPS = { 'data-testid': 'faction-policy-allied-button' } as HTMLAttributes<HTMLDivElement>;
 
 function standingColor(v: number): string {
   return v >= 15 ? '#5fd6a0' : v > -15 ? '#c8cde0' : '#ff8a8a';
-}
-
-function hex(c: number): string {
-  return `#${c.toString(16).padStart(6, '0')}`;
 }
 
 export const FactionsTab = memo(function FactionsTab(): JSX.Element {
