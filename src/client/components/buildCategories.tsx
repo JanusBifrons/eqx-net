@@ -36,7 +36,7 @@ export interface BuildCategory {
 }
 
 export const BUILD_CATEGORIES: readonly BuildCategory[] = [
-  { id: 'core', label: 'Core', icon: <HubIcon />, kinds: ['capital', 'connector'] },
+  { id: 'core', label: 'Core', icon: <HubIcon />, kinds: ['capital', 'connector', 'territory_lock'] },
   {
     id: 'economy',
     label: 'Economy',

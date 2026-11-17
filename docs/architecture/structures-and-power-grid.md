@@ -79,6 +79,12 @@ so it unit-tests like `TransitOrchestrator`):
 - Record ownership + construction state in
   [`StructureRegistry`](../../src/server/structures/StructureRegistry.ts).
   `remove` is owner-gated (anti-grief).
+- **Kind rules** (`placementRefusal` hook, player placements only): a kind may
+  carry its own rule; the refusal text is kept on `lastRefusal` and the room
+  sends it as a `notice`. Today only the **Territory Lock** has one
+  (`structures/territoryLockRules.ts`): the builder's side must hold the sector
+  on the control meter, and one per sector. See
+  [robot-territory](../features/robot-territory.md).
 
 `SectorRoom._internals` exposes `structureRegistry` + the swarm record's
 `shipKind` for the integration test.

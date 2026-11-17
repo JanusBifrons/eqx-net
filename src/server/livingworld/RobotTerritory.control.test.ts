@@ -11,13 +11,13 @@ import { controlOpposes, fillSectorPresence, type FactionPresenceMap } from './f
 import type { LivingWorldRoom, SectorLiveCounts } from './LivingWorldRoom.js';
 import type { SidePresence } from '../../core/territory/sectorControl.js';
 
-function mockRoom(byFaction: () => FactionPresenceMap): LivingWorldRoom {
+function mockRoom(byFaction: () => FactionPresenceMap, lockSides?: () => string[] | undefined): LivingWorldRoom {
   const bus = new Bus();
   return {
     eventBus: () => bus,
     playerCount: () => 0,
     hasFreeSlot: () => false, // the nexus never spawns here: robots stay out of it
-    liveCounts: (): SectorLiveCounts => ({ players: 0, enemies: 0, neutrals: 0, structures: 0, byFaction: byFaction() }),
+    liveCounts: (): SectorLiveCounts => ({ players: 0, enemies: 0, neutrals: 0, structures: 0, byFaction: byFaction(), lockSides: lockSides?.() }),
   } as unknown as LivingWorldRoom;
 }
 
@@ -82,6 +82,35 @@ describe('RobotTerritory — control for every side', () => {
     const { t, run } = setup({ 'orion-belt': sides({ robots: [6, 0] }) }, { 'orion-belt': 6 });
     run(60);
     expect(t.sectorOwner('orion-belt')).toEqual({ factionId: 'robots', contested: false });
+    t.stop();
+  });
+});
+
+describe('RobotTerritory — Territory Lock (a built lock structure)', () => {
+  it('a locked player sector holds against a big robot force, then falls once the lock is gone', () => {
+    const clock = { now: 0 };
+    let locks: string[] | undefined = ['alice'];
+    const rooms = new Map<string, LivingWorldRoom>([['orion-belt', mockRoom(() => sides({ alice: [0, 2] }), () => locks)]]);
+    const t = new RobotTerritory(rooms, () => new Map([['orion-belt', 30]]), { nowMs: () => clock.now, nexusSector: '__none__' });
+    t.start();
+    t.restoreControl([{ sectorKey: 'orion-belt', holder: 'alice', shares: [['alice', 100]] }]);
+    const run = (s: number): void => { for (let i = 0; i < s; i++) { clock.now += 1000; t.tick(clock.now); } };
+    run(300);
+    expect(t.sectorOwner('orion-belt')).toEqual({ factionId: 'alice', contested: true });
+    locks = undefined; // the lock is destroyed
+    run(300);
+    expect(t.sectorOwner('orion-belt')?.factionId).toBe('robots');
+    t.stop();
+  });
+
+  it('a lock owned by a non-holder does not stop the holder losing the sector', () => {
+    const clock = { now: 0 };
+    const rooms = new Map<string, LivingWorldRoom>([['orion-belt', mockRoom(() => sides({ alice: [0, 2] }), () => ['bob'])]]);
+    const t = new RobotTerritory(rooms, () => new Map([['orion-belt', 30]]), { nowMs: () => clock.now, nexusSector: '__none__' });
+    t.start();
+    t.restoreControl([{ sectorKey: 'orion-belt', holder: 'alice', shares: [['alice', 100]] }]);
+    for (let i = 0; i < 300; i++) { clock.now += 1000; t.tick(clock.now); }
+    expect(t.sectorOwner('orion-belt')?.factionId).toBe('robots');
     t.stop();
   });
 });

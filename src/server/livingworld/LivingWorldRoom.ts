@@ -66,6 +66,9 @@ export interface SectorLiveCounts {
   playerStructures?: number;
   /** Ships + structures per side, for the control meter for every side. */
   byFaction?: FactionPresenceMap;
+  /** Sides with a BUILT Territory Lock structure here (control meter lock);
+   *  absent when there is none. */
+  lockSides?: readonly string[];
 }
 
 export interface LivingWorldRoom {

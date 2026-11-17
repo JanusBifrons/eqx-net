@@ -54,6 +54,10 @@ export interface StructurePlacementHooks {
    * injects it in the same PR).
    */
   packedGateForBuild?(owner: string, kindId: StructureKindId, sectorKey: string | null): PackedGateResult;
+  /** A kind's own placement rule for a PLAYER placement (`requirePacked`):
+   *  the refusal text, or null to allow. Today only the Territory Lock has one
+   *  (`territoryLockRefusal`). Absent ⇒ no extra rule. */
+  placementRefusal?(owner: string, kindId: StructureKindId): string | null;
   /** Room's sector key (for the packed gate). */
   sectorKey?(): string | null;
   /** Spawn the kind=2 swarm entity (returns false if the slot pool is full). */
@@ -84,6 +88,9 @@ export interface StructurePlacementHooks {
 export class StructurePlacementSubsystem {
   /** Scratch for `linkReachBox` (auto-connect's `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** Why the last `place` was refused by a kind rule (`placementRefusal`), for
+   *  the room's notice; null when it wasn't (or it succeeded). */
+  lastRefusal: string | null = null;
 
   constructor(private readonly hooks: StructurePlacementHooks) {}
 
@@ -102,6 +109,7 @@ export class StructurePlacementSubsystem {
     y: number,
     opts?: { skipAutoConnect?: boolean; rot?: number; requirePacked?: boolean },
   ): string | null {
+    this.lastRefusal = null;
     if (!isStructureKindId(kindId)) return null;
     const kind = getStructureKind(kindId);
     const pos = this.hooks.clamp(x, y);
@@ -116,6 +124,12 @@ export class StructurePlacementSubsystem {
     const near = { x0: pos.x - hw, y0: pos.y - hh, x1: pos.x + hw, y1: pos.y + hh };
     if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near), rot) !== null) {
       return null;
+    }
+
+    // A kind's own rule (the Territory Lock: hold the sector, one per sector).
+    if (opts?.requirePacked === true && this.hooks.placementRefusal) {
+      this.lastRefusal = this.hooks.placementRefusal(owner, kindId);
+      if (this.lastRefusal !== null) return null;
     }
 
     // P2b — a player placing a non-starter kind needs a packed one.

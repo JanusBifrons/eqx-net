@@ -63,6 +63,7 @@ describe('structureKinds catalogue', () => {
       'coastal_barbette_16in',
       'coastal_lindemann',
       'siege_gun_80cm',
+      'territory_lock',
     ]);
   });
 

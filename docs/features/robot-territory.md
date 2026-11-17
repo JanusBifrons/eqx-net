@@ -53,8 +53,21 @@ resumes on the next control tick: if the holder's share has already fallen to
 20 or below, it loses the sector at once. A lock only counts for the side
 holding the sector. The robots' living nexus IS the robots' lock: a
 robot-held nexus sector can't be taken until the nexus dies
-(`stepMultiControl(…, lockedBy)`, fed by `RobotTerritory.locksFor`). Player
-lock structures and locks at the power hearts come later.
+(`stepMultiControl(…, lockedBy)`, fed by `RobotTerritory.locksFor`).
+
+**The Territory Lock (players).** A player side locks a sector it holds by
+building a **Territory Lock** (`territory_lock`, Core build category). It is
+built like any structure: placed as a blueprint, wired to the grid through a
+Connector, and built by draining `TERRITORY_LOCK_COST` (20,000) minerals, the
+priciest normal structure. The server refuses the placement, with a notice,
+unless the builder's side holds the sector on the control meter right now, and
+allows one lock per sector (a blueprint still building counts). Only a BUILT
+lock locks; it has normal hull (4,000) and dies like any structure, which lifts
+the lock. There is no separate tracker: the room's `liveCounts` reports the
+sides with a built lock (`lockSides`) and `locksFor` adds them. A lock whose
+side has lost the sector does nothing; if that side retakes the sector, the
+standing lock locks it again. Its look is a placeholder (the Research Lab's)
+pending the owner's pick. Locks at the power hearts come later.
 
 ## Internals
 
@@ -75,7 +88,13 @@ lock structures and locks at the power hearts come later.
   survives any siege and is released once the lock goes.
 - `src/server/livingworld/RobotTerritory.control.test.ts` — seeding, any side
   claims, empty sectors keep their holder, who opposes whom; a live nexus
-  locks a robot sector against a big fleet until it dies.
+  locks a robot sector against a big fleet until it dies; a built Territory
+  Lock (`lockSides`) does the same for a player side, a non-holder's does not.
+- `src/server/structures/territoryLockRules.test.ts` — Territory Lock placement
+  rules (hold the sector, one per sector) and the catalogue cost.
+- `tests/integration/sectorRoom/territoryLock.test.ts` — a real room: refused
+  when not held, a second refused, the cost drains, a built lock holds against
+  30 robots and the sector falls once it is destroyed.
 - `tests/integration/sectorRoom/robotTerritory.test.ts` — real rooms: the nexus
   spawns; a killed robot reinforces at the nexus; a destroyed nexus drops cores
   and returns; the nexus sector is claimed.

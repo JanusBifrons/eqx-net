@@ -126,6 +126,8 @@ export function fittedHullMul(fitted: readonly string[]): number {
  *  (agreed with the structures agent; shield_gate so a fenced base can open). */
 export const STARTER_STRUCTURE_KINDS: readonly string[] = [
   'capital', 'connector', 'solar', 'battery', 'miner', 'cargo_bay', 'turret', 'shield_pylon', 'shield_gate',
+  // Sector control: a lock builds from minerals (its 20k cost), never packed.
+  'territory_lock',
 ];
 /** Hulls anyone can fly without building one. */
 export const STARTER_HULL_KINDS: readonly string[] = ['scout', 'fighter'];
