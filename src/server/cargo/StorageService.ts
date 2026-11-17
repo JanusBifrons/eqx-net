@@ -88,6 +88,16 @@ export interface TradeTransferResult {
   y: number;
 }
 
+/** Every unit of each `intake` good aboard `h`, as a `CargoRequest.goods`. */
+function intakeRequest(h: Hold, intake: ReadonlySet<GoodId>): Partial<Record<GoodId, number>> {
+  const out: Partial<Record<GoodId, number>> = {};
+  for (const g of intake) {
+    const n = h.goods[g] ?? 0;
+    if (n > 0) out[g] = n;
+  }
+  return out;
+}
+
 export function holdCapacityOf(rec: StructureRecord): number {
   return getStructureKind(rec.kind).holdCapacity ?? 0;
 }
@@ -224,12 +234,20 @@ export class StorageService {
    * else fills holds by capacity. Whatever doesn't fit STAYS on the ship.
    * Ship side + every touched structure commit as ONE atomic group.
    * Returns what was moved (empty hold ⇒ nothing deposited).
+   *
+   * `intake` (structure-restyle 3c): when given, only those goods are banked —
+   * a freight dock takes in just what its import orders name
+   * (`dockIntakeGoods`). Every other good, blueprint and packed item stays
+   * aboard. Omitted ⇒ the whole hold, as before.
    */
-  deposit(shipInstanceId: string, ownerId: string, target: StructureRecord): Hold {
+  deposit(shipInstanceId: string, ownerId: string, target: StructureRecord, intake?: ReadonlySet<GoodId>): Hold {
     const moved = emptyHold();
     const shipRow = this.d.holdStore.get(shipInstanceId);
     if (shipRow === undefined || isHoldEmpty(shipRow.hold)) return moved;
-    const ship = cloneHold(shipRow.hold);
+    const aboard = cloneHold(shipRow.hold);
+    // Filtered: split off just the intake goods; the rest stays aboard untouched.
+    const ship = intake === undefined ? aboard : extractRequested(aboard, { goods: intakeRequest(aboard, intake) });
+    if (isHoldEmpty(ship)) return moved;
     const touched: StructureRecord[] = [];
     for (const rec of this.network(target)) {
       let touchedThis = false;
@@ -259,6 +277,7 @@ export class StorageService {
       if (isHoldEmpty(ship)) break;
     }
     if (isHoldEmpty(moved)) return moved;
+    if (intake !== undefined) mergeInto(ship, aboard); // non-intake cargo stays aboard
     this.commitShipAndStructures(shipInstanceId, ownerId, ship, touched);
     return moved;
   }

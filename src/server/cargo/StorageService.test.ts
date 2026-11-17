@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { StorageService, structureUid, depositRangeOf, DEPOSIT_RANGE, SALVAGE_TO_MINERALS } from './StorageService.js';
 import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W } from '../../core/articulation/rigCatalogue.js';
 import { HoldStore } from './HoldStore.js';
-import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
+import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';
 import { structureKindToIndex, type StructureKindId } from '../../shared-types/structureKinds.js';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 
@@ -63,6 +63,52 @@ describe('StorageService (P1a-2)', () => {
     expect(bay.hold!.goods.core).toBe(400);
     expect(bay2.hold!.goods.core).toBe(400);
     expect(t.holdStore.get('ship-1')!.hold.goods.core).toBe(200);
+  });
+
+  it('3c: a filtered deposit moves only the dock\'s import goods; the rest stays aboard', () => {
+    const t = setup();
+    const dock = rec('d', 'freight_dock', 0, 0, {
+      freightOrders: [{ good: 'alloy', mode: 'import', level: 10 }, { good: 'salvage', mode: 'export', level: 5 }],
+    });
+    t.registry.add(dock);
+    t.ship({ alloy: 4, salvage: 7, core: 2 });
+    t.ops.length = 0;
+    const moved = t.svc.deposit('ship-1', 'p1', dock, dockIntakeGoods(dock));
+    expect(moved.goods).toEqual({ alloy: 4 });
+    expect(dock.hold!.goods).toEqual({ alloy: 4 });
+    expect(t.holdStore.get('ship-1')!.hold.goods).toEqual({ salvage: 7, core: 2 });
+    expect(t.ops).toHaveLength(1);
+    expect(t.ops[0]!.type).toBe('GROUP');
+  });
+
+  it('3c: a dock with no import orders takes nothing; no filter takes everything, as before', () => {
+    const t = setup();
+    const dock = rec('d', 'freight_dock', 0, 0, { freightOrders: [{ good: 'alloy', mode: 'export', level: 3 }] });
+    t.registry.add(dock);
+    t.ship({ alloy: 4, salvage: 7 });
+    expect(dockIntakeGoods(dock).size).toBe(0);
+    expect(dockIntakeGoods(rec('e', 'freight_dock', 50, 0)).size).toBe(0);
+    t.ops.length = 0;
+    const none = t.svc.deposit('ship-1', 'p1', dock, dockIntakeGoods(dock));
+    expect(none.goods).toEqual({});
+    expect(t.ops).toHaveLength(0);
+    expect(t.holdStore.get('ship-1')!.hold.goods).toEqual({ alloy: 4, salvage: 7 });
+    const all = t.svc.deposit('ship-1', 'p1', dock);
+    expect(all.goods).toEqual({ alloy: 4, salvage: 7 });
+    expect(t.holdStore.get('ship-1')).toBeUndefined();
+  });
+
+  it('3c: a filtered deposit still respects capacity; overflow and non-imports stay aboard', () => {
+    const bay = rec('b', 'cargo_bay', 100, 0);
+    const bay2 = rec('b2', 'cargo_bay', 200, 0);
+    const t = setup(['b', 'b2']);
+    t.registry.add(bay);
+    t.registry.add(bay2);
+    t.ship({ core: 1000, salvage: 3 }); // core 5000 weight, bays hold 2000 each
+    t.svc.deposit('ship-1', 'p1', bay, new Set(['core'] as const));
+    expect(bay.hold!.goods).toEqual({ core: 400 });
+    expect(bay2.hold!.goods).toEqual({ core: 400 });
+    expect(t.holdStore.get('ship-1')!.hold.goods).toEqual({ core: 200, salvage: 3 });
   });
 
   it('a blueprint (unbuilt) or foreign storage is not a deposit target', () => {
