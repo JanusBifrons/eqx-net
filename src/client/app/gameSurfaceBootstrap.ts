@@ -16,7 +16,7 @@
 
 import { PixiRenderer } from '../render/PixiRenderer.js';
 import { loadGraphicsQualityPreference, resolveGraphicsQuality } from '../render/graphicsQuality.js';
-import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, readLivery, readOreLook, readStructLivery, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
+import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, readLivery, readOreLook, readStructLivery, readStructStyle, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
 import {
   WorkerRendererClient,
   supportsOffscreenRenderer,
@@ -75,6 +75,9 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   if (livery) art.livery = livery;
   // Structure livery (look R&D, off by default): `?structLivery=1`.
   if (art.mode === 'machined' && readStructLivery(search)) art.structLivery = true;
+  // Structure style (look R&D, structure restyle): `?restyle=a`.
+  const structStyle = art.mode === 'machined' ? readStructStyle(search) : undefined;
+  if (structStyle) art.structStyle = structStyle;
   const ore = readOreLook(search); // cut-field ore look trial (F1c)
   if (ore) art.ore = ore;
   // Graphics quality (anti-aliasing study): URL > saved choice > today's look.

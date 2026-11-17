@@ -9,7 +9,7 @@
  */
 import type { Texture } from 'pixi.js';
 import { Atlas } from '../render/art/atlas.js';
-import { forgeShip, forgeStructure, type Fields } from '../render/art/fields.js';
+import { forgeShip, forgeStructure, type Fields, type StructLivery } from '../render/art/fields.js';
 import { encodeLitMaps, type LitMaps } from '../render/art/litMaps.js';
 import { litMapsTexture } from '../render/art/litShipShader.js';
 import { DEFAULT_RIG, type LightRig } from '../render/art/shade.js';
@@ -211,8 +211,10 @@ export class ArtCache {
     return art;
   }
 
-  machinedStruct(id: string, rawSeed = 1, accent?: number): StructArt {
-    const job: BakeJob = { type: 'struct', id, seed: seedVariant(rawSeed), accent };
+  /** `extra`: owner livery (`?structLivery=1`) and structure style
+   *  (`?restyle=`), as the game's `ArtService.struct` passes them. */
+  machinedStruct(id: string, rawSeed = 1, accent?: number, extra?: { livery?: StructLivery; style?: string }): StructArt {
+    const job: BakeJob = { type: 'struct', id, seed: seedVariant(rawSeed), accent, ...(extra?.livery ? { livery: extra.livery } : {}), ...(extra?.style ? { style: extra.style } : {}) };
     const key = bakeKey(job);
     const hit = this.structs.get(key);
     if (hit) return hit;

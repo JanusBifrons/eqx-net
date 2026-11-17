@@ -7,6 +7,7 @@ import { npcFactionDef, type FactionId } from '../../shared-types/factions.js';
 import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { buildStructureVisual } from '../render/pixi/structureVisuals.js';
+import { parseStructureStyle, STRUCTURE_STYLE_IDS, type StructureStyleId } from '../render/pixi/structureStyles.js';
 import { shipExtent } from '../render/art/fields.js';
 
 export interface Pose { x: number; y: number; rot: number; thrust: number }
@@ -68,13 +69,11 @@ export interface Scene {
 export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat', 'spin', 'spinfleet', 'capfleet', 'broadside', 'outpost'] as const;
 
 /** Structure style directions (docs/plans/structure-restyle.md §4), chosen by
- *  `?restyle=` (the lab's `?style=` already picks the render arm). Only
- *  today's art exists so far; later slices add 'a' | 'b' | 'c'. */
-export const STRUCT_STYLES = ['current'] as const;
-export type StructStyle = (typeof STRUCT_STYLES)[number];
-export function parseStructStyle(s: string | null): StructStyle {
-  return (STRUCT_STYLES as readonly string[]).includes(s ?? '') ? (s as StructStyle) : 'current';
-}
+ *  `?restyle=` (the lab's `?style=` already picks the render arm). The ids
+ *  are the game's style table (`structureStyles.ts`). */
+export const STRUCT_STYLES = STRUCTURE_STYLE_IDS;
+export type StructStyle = StructureStyleId;
+export const parseStructStyle = parseStructureStyle;
 
 /** The restyle's "Ladder A" sizes (Small 150–300, Medium 600–1,200) for the
  *  refining outpost, as the longest side in world units. Art lab only. */

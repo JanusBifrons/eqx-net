@@ -9,7 +9,8 @@
  * Local space is Pixi-up (ship nose at -y). Heights are in WORLD units.
  */
 import { getShipKind, type ShipKind } from '../../../shared-types/shipKinds.js';
-import { buildStructureVisual, PROPOSED_FOOTPRINTS } from '../pixi/structureVisuals.js';
+import { buildStructureVisual, PROPOSED_FOOTPRINTS, type PolyOp } from '../pixi/structureVisuals.js';
+import { polyEdgeDist } from '../pixi/structureStyleKit.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng, type Poly } from './raster.js';
 import { shipScrapGroups } from '../../../core/geometry/shipScrapGroups.js';
@@ -555,6 +556,9 @@ export interface StructureForgeOpts {
   /** The owner's livery (`?structLivery=1`): paints the plan's livery bands
    *  and stamps the owner's sigil into its slots. Absent = today's bake. */
   livery?: StructLivery;
+  /** Structure style (`?restyle=`, `structureStyles.ts`); absent or
+   *  `current` = today's bake, byte for byte. */
+  style?: string;
 }
 
 const DECK_HEX = 0x1d2433;
@@ -566,6 +570,61 @@ function sat(hex: number): number {
 function lum(hex: number): number {
   const [r, g, b] = lin(hex);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+const POLY_MAT: Record<PolyOp['mat'], number> = { metal: MAT.METAL, paint: MAT.PAINT, glow: MAT.WINDOW, mark: MAT.PAINT, hazard: MAT.PAINT };
+const HAZARD_DARK = 0x1c1c1c;
+
+/**
+ * Bake one style polygon (structure restyle, `PolyOp`): a plate standing
+ * `lift` above what is under it, with a `bevel` edge ramp, an optional
+ * faceted roof (height grows with the distance to the nearest edge, so the
+ * ridges run in from each corner and every face is flat), panel-line seams,
+ * hazard stripes, or lit glass (`glow`: emissive, like a window).
+ */
+function stampStylePoly(f: Fields, p: PolyOp): void {
+  const g = f.g;
+  let px0 = Infinity, py0 = Infinity, px1 = -Infinity, py1 = -Infinity;
+  for (const [x, y] of p.pts) { px0 = Math.min(px0, x); py0 = Math.min(py0, y); px1 = Math.max(px1, x); py1 = Math.max(py1, y); }
+  const x0 = Math.max(0, Math.floor(px0 * g.ppu + g.ox) - 1), x1 = Math.min(g.w - 1, Math.ceil(px1 * g.ppu + g.ox) + 1);
+  const y0 = Math.max(0, Math.floor(py0 * g.ppu + g.oy) - 1), y1 = Math.min(g.h - 1, Math.ceil(py1 * g.ppu + g.oy) + 1);
+  const mat = POLY_MAT[p.mat];
+  const alpha = p.alpha ?? 1;
+  const col = lin(p.color), dark = lin(HAZARD_DARK);
+  const bev = Math.max(0.5, p.bevel);
+  const ca = Math.cos(p.seamAngle ?? 0), sa = Math.sin(p.seamAngle ?? 0);
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      const wx = (tx + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
+      const ed = polyEdgeDist(p.pts, wx, wy);
+      if (ed < -0.5 / g.ppu) continue;
+      const cov = Math.min(1, Math.max(0, ed * g.ppu + 0.5));
+      const i = ty * g.w + tx;
+      const t = Math.min(1, Math.max(0, ed / bev));
+      let hh = f.height[i]! + p.lift * Math.sqrt(1 - (1 - t) * (1 - t));
+      if (p.roof) hh += p.roof[0] * Math.min(1, Math.max(0, ed - bev) / p.roof[1]);
+      let k = 1;
+      if (p.seams && ed > bev + 1) {
+        const s = ((wx * ca + wy * sa) % p.seams + p.seams) % p.seams;
+        if (s < 0.9 || Math.abs(ed - bev - 4) < 0.45) { hh -= 0.4; k = 0.62; }
+      }
+      let c = col;
+      if (p.mat === 'hazard' && (Math.floor((wx + wy) / 9) & 1) === 1) c = dark;
+      f.height[i] = f.height[i]! * (1 - cov) + hh * cov;
+      if (cov > 0.5) {
+        f.mat[i] = mat;
+        f.key[i] = p.color & 0xf0f0f0;
+        f.albedo[i * 3] = c[0] * k; f.albedo[i * 3 + 1] = c[1] * k; f.albedo[i * 3 + 2] = c[2] * k;
+        if (mat === MAT.WINDOW) {
+          const e = alpha * 0.9;
+          f.emis[i * 3] = c[0] * e; f.emis[i * 3 + 1] = c[1] * e; f.emis[i * 3 + 2] = c[2] * e;
+        } else {
+          f.emis[i * 3] = 0; f.emis[i * 3 + 1] = 0; f.emis[i * 3 + 2] = 0;
+        }
+      }
+      f.cov[i] = Math.max(f.cov[i]!, cov * (p.mat === 'glow' ? 1 : alpha));
+    }
+  }
 }
 
 /**
@@ -581,7 +640,7 @@ function lum(hex: number): number {
  */
 export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields {
   const accent = opts.accent ?? (isStructureKindId(kindId) ? getStructureKind(kindId).color : 0x66ccaa);
-  const plan = buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true, ...(opts.livery ? { livery: true } : {}) });
+  const plan = buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true, ...(opts.livery ? { livery: true } : {}), ...(opts.style ? { style: opts.style } : {}) });
   const fp = plan.footprint;
   const box: Poly = [[-fp.w / 2, -fp.h / 2], [fp.w / 2, -fp.h / 2], [fp.w / 2, fp.h / 2], [-fp.w / 2, fp.h / 2]];
   const side = Math.max(fp.w, fp.h) + 4;
@@ -591,6 +650,8 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
   const area = fp.w * fp.h;
   const noiseSeed = hashStr(kindId + ':grime');
 
+  // A style's faceted plates (`?restyle=`), under any rects.
+  for (const p of plan.polys ?? []) stampStylePoly(f, p);
   plan.rects.forEach((r, idx) => {
     if (r.w <= 0 || r.h <= 0) return;
     const thin = Math.min(r.w, r.h) <= 4;
@@ -662,6 +723,7 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
       for (let ty = by0; ty <= by1; ty++) {
         for (let tx = bx0; tx <= bx1; tx++) {
           const i = ty * g.w + tx;
+          if (b.pts && !insidePoly(b.pts, (tx + 0.5 - g.ox) / g.ppu, (ty + 0.5 - g.oy) / g.ppu)) continue;
           if (f.cov[i]! > 0.5 && f.mat[i] !== MAT.WINDOW) paintEnamel(f, i, teamPaint, 1);
         }
       }

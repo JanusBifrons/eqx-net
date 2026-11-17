@@ -16,6 +16,10 @@
  */
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { PAD_SPECS, padPostCenters } from '../../../shared-types/teleport.js';
+import { mixColor, type PolyOp, type Pts } from './structureStyleKit.js';
+import { structureStyleDrawer } from './structureStyles.js';
+
+export { mixColor, type PolyOp };
 
 /** A filled rectangle (pixi space). */
 export interface RectOp { x: number; y: number; w: number; h: number; color: number; alpha: number }
@@ -30,16 +34,9 @@ export interface LightOp { x: number; y: number; r: number; color: number }
  * the slot (`slotEmblem`), never the slot itself.
  */
 export interface SigilSlotOp { x: number; y: number; r: number; screen?: boolean }
-/** Livery: an area painted in the owner's colour (pixi space). */
-export interface LiveryBandOp { x: number; y: number; w: number; h: number }
-
-/** Blend colour `c` toward `target` by `t` (0..1), per channel. */
-export function mixColor(c: number, target: number, t: number): number {
-  const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
-  const tr = (target >> 16) & 0xff, tg = (target >> 8) & 0xff, tb = target & 0xff;
-  const rr = Math.round(r + (tr - r) * t), gg = Math.round(g + (tg - g) * t), bb = Math.round(b + (tb - b) * t);
-  return (rr << 16) | (gg << 8) | bb;
-}
+/** Livery: an area painted in the owner's colour (pixi space): the box, or
+ *  the polygon `pts` inside it (structure styles). */
+export interface LiveryBandOp { x: number; y: number; w: number; h: number; pts?: Pts }
 
 export interface StructureFootprint {
   /** Full width / height (u). */
@@ -77,6 +74,9 @@ export interface StructureVisual {
   sigils?: SigilSlotOp[];
   /** Owner-colour areas (only with `opts.livery`; absent otherwise). */
   bands?: LiveryBandOp[];
+  /** Faceted polygons (only for a `?restyle=` style; absent otherwise),
+   *  baked before `rects`. */
+  polys?: PolyOp[];
 }
 
 export interface StructureVisualOpts {
@@ -96,6 +96,9 @@ export interface StructureVisualOpts {
   /** Owner livery (`?structLivery=1`, off by default): add the sigil slots
    *  and livery bands. Off = the plan is exactly today's. */
   livery?: boolean;
+  /** Structure style (`?restyle=`, `structureStyles.ts`); absent or
+   *  `current` = today's plan, exactly. */
+  style?: string;
 }
 
 /** A gate shield span between two posts: bright when closed, a faint ghost
@@ -243,6 +246,15 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
   const livery = opts.livery === true;
   const sigils: SigilSlotOp[] = [];
   const bands: LiveryBandOp[] = [];
+
+  // A `?restyle=` style draws this kind (else: today's art below).
+  const drawStyle = structureStyleDrawer(opts.style, kindId);
+  if (drawStyle) {
+    const polys: PolyOp[] = [];
+    drawStyle({ kindId, styleId: opts.style!, W, H, accent, seed, live, livery, polys, sigils, bands, lit });
+    if (opts.built === false) for (const p of polys) p.alpha = (p.alpha ?? 1) * 0.45;
+    return livery ? { rects, lights, footprint: fp, sigils, bands, polys } : { rects, lights, footprint: fp, polys };
+  }
 
   switch (kindId) {
     case 'capital': {

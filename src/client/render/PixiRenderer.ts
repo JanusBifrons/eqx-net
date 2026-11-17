@@ -898,6 +898,7 @@ export class PixiRenderer implements IRenderer {
       this._artCtx.turrets = this._artOpts.fx === true;
       if (this._artOpts.livery) this._artCtx.livery = this._artOpts.livery;
       if (this._artOpts.structLivery) this._artCtx.structLivery = true;
+      if (this._artOpts.structStyle) this._artCtx.structStyle = this._artOpts.structStyle;
       this.mountVisuals.setArt(this._artCtx);
       // Warm-up: bake the likely art now (this runs on the galaxy map /
       // warp screen), behind anything that appears on screen meanwhile.

@@ -52,6 +52,8 @@ export interface BootMsg {
   livery?: import('../../art/artMode.js').LiveryTreatment;
   /** Structure livery (`?structLivery=1`); absent = off. */
   structLivery?: boolean;
+  /** Structure style (`?restyle=a`); absent = today's art. */
+  structStyle?: string;
   /** Cut-field ore look (`?ore=`, F1c trial); absent = off. */
   ore?: import('../../art/artMode.js').FieldOreLook;
   /** Graphics quality (`?aa=` / `?renderscale=` / `?texsoft=`), plain data; absent = today's look. */

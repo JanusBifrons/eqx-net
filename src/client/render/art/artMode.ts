@@ -17,6 +17,7 @@ export type ArtMode = 'classic' | 'machined';
 
 /** Ship livery look treatments under trial (`?livery=`); owned by fields.ts. */
 import type { LiveryTreatment } from './fields.js';
+import { parseStructureStyle } from '../pixi/structureStyles.js';
 export type { LiveryTreatment };
 
 export interface ArtOptions {
@@ -43,6 +44,10 @@ export interface ArtOptions {
    *  wear their owner's colours and sigil. Off by default (look not yet
    *  signed off); off = today's structure bakes, byte-identical. Machined only. */
   structLivery?: boolean;
+  /** Structure style (`?restyle=a`, structure restyle 1d+): a look
+   *  direction from `structureStyles.ts`. Absent (or `current`) = today's
+   *  structure bakes, byte-identical. Machined only. */
+  structStyle?: string;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);
@@ -98,6 +103,13 @@ export function readLivery(search: string): LiveryTreatment | undefined {
 /** `?structLivery=1`: structures wear their owner's livery (off by default). */
 export function readStructLivery(search: string): boolean {
   return /[?&]structLivery=1\b/.test(search);
+}
+
+/** `?restyle=<id>`: a structure style from `structureStyles.ts`, or
+ *  undefined for `current`, an unknown id or no param. */
+export function readStructStyle(search: string): string | undefined {
+  const s = parseStructureStyle(new URLSearchParams(search).get('restyle'));
+  return s === 'current' ? undefined : s;
 }
 
 /** `?shiplight=gpu|high|medium|low|baked` (gpu = high), or null. */
