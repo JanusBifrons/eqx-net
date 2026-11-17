@@ -196,10 +196,12 @@ export interface StructureRecord {
 /**
  * structure-restyle 3c — the goods a freight dock takes in on a deposit: the
  * goods its import orders name (`freightOrders`, the dock's import/export
- * list). No import orders ⇒ an EMPTY set: an outlet or idle dock takes nothing
- * in. Pass it to `StorageService.deposit` as `intake`.
+ * list). Export orders only ⇒ an EMPTY set: an outlet takes nothing in. NO
+ * orders at all ⇒ undefined (no filter): a freshly built dock takes a new
+ * player's whole hold (3b). Pass it to `StorageService.deposit` as `intake`.
  */
-export function dockIntakeGoods(rec: Pick<StructureRecord, 'freightOrders'>): Set<GoodId> {
+export function dockIntakeGoods(rec: Pick<StructureRecord, 'freightOrders'>): Set<GoodId> | undefined {
+  if ((rec.freightOrders?.length ?? 0) === 0) return undefined;
   const out = new Set<GoodId>();
   for (const o of rec.freightOrders ?? []) if (o.mode === 'import') out.add(o.good);
   return out;

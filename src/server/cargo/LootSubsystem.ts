@@ -55,6 +55,10 @@ export interface LootCollector {
    *  piece physically meets, `shipWithinHullReach`). */
   angle: number;
   shieldUp: boolean;
+  /** Hull velocity (game units / s): the freight dock bay's "stopped" test
+   *  (`isStillForDock`, structure-restyle 3b). */
+  vx: number;
+  vy: number;
   /** Cargo capacity (weight units) of the collecting hull's kind. */
   capacity: number;
   /** The collecting hull's kind: its mounts decide whether it takes
@@ -299,7 +303,7 @@ export class LootSubsystem {
   };
 
   /** Reused collector for `hullContact` (no per-contact alloc, #14). */
-  private readonly contactCollector: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
+  private readonly contactCollector: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, vx: 0, vy: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
 
   /** A physics contact between `podId` and `otherId`. When `podId` is a loot
    *  pod and `otherId` a ship (a pilot, or an AI ship, kind 1), the pod has
