@@ -113,7 +113,7 @@ function phoneGate(): Plugin {
     if (verdict === 'deny') {
       res.statusCode = 403;
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.end("EQX Peri phone link: open today's link (it carries the key).");
+      res.end("Equinox phone link: open today's link (it carries the key).");
       return;
     }
     if (verdict === 'pass+cookie') res.setHeader('Set-Cookie', keyCookie(PHONE_KEY));
@@ -170,8 +170,8 @@ export default defineConfig({
       // The phone gate refuses a cookie-less manifest fetch (it holds the key).
       useCredentials: Boolean(PHONE_KEY),
       manifest: {
-        name: 'EQX Peri',
-        short_name: 'EQX Peri',
+        name: 'Equinox',
+        short_name: 'Equinox',
         description: 'Multiplayer space combat in a hex galaxy.',
         // Phone lane: the installed app starts WITH the key (an iOS home-screen
         // app has its own cookie jar, so Safari's cookie never reaches it).

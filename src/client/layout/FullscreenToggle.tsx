@@ -95,13 +95,13 @@ function InstallDialog({ open, onClose }: InstallDialogProps): JSX.Element {
             iOS Safari can&apos;t hide its address bar in a normal tab. Tap the{' '}
             <IosShareIcon sx={{ fontSize: 18, verticalAlign: 'text-bottom' }} /> share
             icon at the bottom of the screen, choose{' '}
-            <strong>Add to Home Screen</strong>, then launch EQX Peri from the icon —
+            <strong>Add to Home Screen</strong>, then launch Equinox from the icon —
             the URL bar disappears entirely.
           </Typography>
         ) : (
           <Typography variant="body2">
             Open the browser menu (⋮) and choose <strong>Install app</strong> or{' '}
-            <strong>Add to Home screen</strong>, then launch EQX Peri from the icon
+            <strong>Add to Home screen</strong>, then launch Equinox from the icon
             for a true full-screen experience.
           </Typography>
         )}

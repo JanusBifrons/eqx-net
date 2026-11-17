@@ -6,7 +6,7 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  *
  * SHIPPED BEHAVIOUR THIS SPEC LOCKS:
  *  1. The post-auth Galaxy Map screen (`galaxy-map-screen`) is NOT the
- *     marketing landing — no "EQX Peri" banner / hero copy. That belongs
+ *     marketing landing — no "Equinox" banner / hero copy. That belongs
  *     to `MetaLandingScreen`, which is unmounted by phase='galaxy-map'.
  *  2. `FullscreenCTA` is NOT rendered inside the galaxy map. Today the
  *     component exists but has zero JSX call-sites; this lock catches a
@@ -36,23 +36,23 @@ async function goToGalaxyMap(page: Page): Promise<void> {
   });
 }
 
-test('galaxy-map-screen: no EQX Peri banner inside the spawn-mode landing', async ({ page }) => {
+test('galaxy-map-screen: no Equinox banner inside the spawn-mode landing', async ({ page }) => {
   test.setTimeout(25_000);
   await goToGalaxyMap(page);
 
   const screen = page.locator('[data-testid="galaxy-map-screen"]');
-  // The banner lives in `MetaLandingScreen` (h2 with the "EQX Peri" text).
+  // The banner lives in `MetaLandingScreen` (h2 with the "Equinox" text).
   // After phase advances to 'galaxy-map' the meta screen is unmounted, so
   // the heading must not be present in the DOM at all.
   await expect(
-    screen.locator('h2', { hasText: 'EQX Peri' }),
-    'EQX Peri marketing banner must not appear on the galaxy-map screen. ' +
+    screen.locator('h2', { hasText: 'Equinox' }),
+    'Equinox marketing banner must not appear on the galaxy-map screen. ' +
       'If you see this fail, the meta-landing hero copy has leaked into the ' +
       'post-auth landing — check `MetaLandingScreen` mount conditions or ' +
       'any new <Typography variant="h2"> added under `GalaxyOverviewScreen` (spawn mode).',
   ).toHaveCount(0);
 
-  // The body text inside index.html `<title>EQX Peri</title>` is fine —
+  // The body text inside index.html `<title>Equinox</title>` is fine —
   // we only assert there's no rendered marketing heading in the map screen.
   const innerText = await screen.innerText();
   expect(

@@ -32,7 +32,7 @@ export function LogoutConfirmDialog({
 }: Props): JSX.Element {
   return (
     <Dialog open={open} onClose={onCancel} maxWidth="xs" data-testid={dialogTestId}>
-      <DialogTitle>Log out of EQX Peri?</DialogTitle>
+      <DialogTitle>Log out of Equinox?</DialogTitle>
       <DialogContent>
         <DialogContentText>
           Your session will end and you&rsquo;ll return to the main menu.
