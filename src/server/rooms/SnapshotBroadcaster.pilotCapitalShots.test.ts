@@ -83,7 +83,7 @@ function setup(viewer: Pilot, shooter: Pilot, projectiles: Array<[string, Projec
   const b = new SnapshotBroadcaster(deps);
   // What the swarm broadcast records each tick: the viewer's window.
   const reach = SpatialGrid.viewerReachFor(getShipKind(viewer.kind).radius);
-  b.noteInterestWindow(VSID, Math.floor(viewer.x / CELL_SIZE), Math.floor(viewer.y / CELL_SIZE), reach);
+  b.interestWindows.note(VSID, Math.floor(viewer.x / CELL_SIZE), Math.floor(viewer.y / CELL_SIZE), reach);
   return { b, sent };
 }
 
