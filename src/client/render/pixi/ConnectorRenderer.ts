@@ -449,7 +449,7 @@ export class ConnectorRenderer {
         if (id > otherId) continue; // each undirected edge once
         const b = swarm.get(otherId);
         if (!b) continue;
-        if (this.lineLook) { drawLineLookBody(g, this.lineLook, ax, ay, b.x, -b.y, scale); continue; }
+        if (this.lineLook) { drawLineLookBody(g, this.lineLook, ax, ay, b.x, -b.y, scale, a.radius, b.radius); continue; }
         g.moveTo(ax, ay).lineTo(b.x, -b.y);
         g.stroke({ color: idle.color, alpha: idle.alpha, width: idle.width });
       }
@@ -529,7 +529,7 @@ export class ConnectorRenderer {
         if (!v.pulseActive) continue; // idle: drawn on the static layer
         const bx = b.x;
         const by = -b.y;
-        if (this.lineLook) { drawLineLookFlow(g, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale); continue; }
+        if (this.lineLook) { drawLineLookFlow(g, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale, a.radius, b.radius); continue; }
         // Glow underlay first (so the core line sits on top).
         if (v.glowAlpha > 0) {
           g.moveTo(ax, ay).lineTo(bx, by);
