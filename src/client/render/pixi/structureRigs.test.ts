@@ -18,7 +18,7 @@ import type {
   RenderMirror, SwarmRenderState, StructureRenderState, PoseRingEntry,
 } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
-import { rigForStructureKind, DOCK_CRANE_REACH_TICKS, DOOR_TURRET_SLIDE_TRAVEL } from '../../../core/articulation/rigCatalogue.js';
+import { rigForStructureKind, DOCK_CRANE_REACH_TICKS, DOOR_TURRET_LIFT } from '../../../core/articulation/rigCatalogue.js';
 import { partWorldFrame, type PartFrame } from '../../../core/articulation/mountBridge.js';
 
 function emptyPoseRing(): PoseRingEntry[] {
@@ -205,6 +205,8 @@ describe('updateSwarmSprites with rigs', () => {
       .clusters.get('swarm-5')!.container;
     const restY = clusterC.y, restX = clusterC.x;
     expect(clusterC.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleRest, 6);
+    // Fully sunk under the shut hatch: the gun is not drawn over the leaves.
+    expect(clusterC.visible).toBe(false);
     mirror.structures!.get(5)!.rigClip = { clipId: 'turret-deploy', startTick: 0 };
     ctx.fxNowMs = 0;
     updateSwarmSprites(mirror, ctx);
@@ -214,6 +216,7 @@ describe('updateSwarmSprites with rigs', () => {
     expect(clusterC.y).toBeCloseTo(restY, 6);
     expect(clusterC.x).toBeCloseTo(restX, 6);
     expect(clusterC.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleUp, 6);
+    expect(clusterC.visible).toBe(true);
     expect(clusterC.rotation).toBeCloseTo(0, 9);
   });
 
@@ -290,7 +293,7 @@ describe('rig clip clock (2e): wire start tick vs the client tick clock', () => 
 });
 
 describe('rig part look (2c+)', () => {
-  it('pop-up riser rises in place: grows, its shadow widens and drifts; slide progress drives it', () => {
+  it('pop-up riser rises in place: grows, its shadow widens and drifts; lift progress drives it', () => {
     const rig = rigForStructureKind('turret')!;
     const v = new StructureRigView(rig);
     const r = v.riserPart;
@@ -299,12 +302,48 @@ describe('rig part look (2c+)', () => {
     const x0 = v.parts[r]!.x, y0 = v.parts[r]!.y, s0 = v.shadows[r]!.x - x0, a0 = v.shadows[r]!.alpha;
     expect(v.parts[r]!.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleRest, 6);
     v.update({ clipId: 'turret-deploy', startTick: 0 }, 1000, 0, 0, 0);
-    expect(v.pose.value[r]).toBeCloseTo(DOOR_TURRET_SLIDE_TRAVEL, 6);
+    expect(v.pose.value[r]).toBeCloseTo(DOOR_TURRET_LIFT, 6);
     expect(v.parts[r]!.x).toBeCloseTo(x0, 6);
     expect(v.parts[r]!.y).toBeCloseTo(y0, 6);
     expect(v.parts[r]!.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleUp, 6);
     expect(v.shadows[r]!.x - x0).toBeCloseTo(s0 + RIG_LOOK_C.liftShadow, 6);
     expect(v.shadows[r]!.alpha).toBeGreaterThan(a0);
+    // Half-way through the rise (ticks 15..60, linear-ish in): scale between.
+    v.update({ clipId: 'turret-deploy', startTick: 0 }, 37.5, 0, 0, 0);
+    expect(v.parts[r]!.scale.x).toBeGreaterThan(RIG_LOOK_C.liftScaleRest);
+    expect(v.parts[r]!.scale.x).toBeLessThan(RIG_LOOK_C.liftScaleUp);
+  });
+
+  it('the hatch leaves draw over the riser: shut they cover its drawn top at full size, open they clear it', () => {
+    const rig = rigForStructureKind('turret')!;
+    const v = new StructureRigView(rig);
+    const r = v.riserPart;
+    const L = rig.partIds.indexOf('door-left'), R = rig.partIds.indexOf('door-right');
+    // Drawn above the riser (later in the plane group).
+    expect(v.plane.getChildIndex(v.parts[L]!)).toBeGreaterThan(v.plane.getChildIndex(v.parts[r]!));
+    expect(v.plane.getChildIndex(v.parts[R]!)).toBeGreaterThan(v.plane.getChildIndex(v.parts[r]!));
+    // Riser half extents at full lift (pixi frame, centred on the socket).
+    const ro = rig.parts[r]!.outline!;
+    let hw = 0, hh = 0;
+    for (let j = 0; j < ro.length; j += 2) { hw = Math.max(hw, Math.abs(ro[j]!)); hh = Math.max(hh, Math.abs(ro[j + 1]!)); }
+    hw *= RIG_LOOK_C.liftScaleUp; hh *= RIG_LOOK_C.liftScaleUp;
+    const leafBox = (i: number): { x0: number; x1: number; y0: number; y1: number } => {
+      const b = v.parts[i]!.getLocalBounds();
+      const g = v.parts[i]!;
+      return { x0: g.x + b.minX, x1: g.x + b.maxX, y0: g.y + b.minY, y1: g.y + b.maxY };
+    };
+    v.update(null, 0, 0, 0, 0);
+    const l0 = leafBox(L), r0 = leafBox(R);
+    expect(v.parts[r]!.x).toBeCloseTo(0, 9);
+    expect(v.parts[r]!.y).toBeCloseTo(0, 9);
+    expect(l0.x0).toBeLessThanOrEqual(-hw);
+    expect(r0.x1).toBeGreaterThanOrEqual(hw);
+    expect(Math.min(l0.y0, r0.y0)).toBeLessThanOrEqual(-hh);
+    expect(Math.max(l0.y1, r0.y1)).toBeGreaterThanOrEqual(hh);
+    v.update({ clipId: 'turret-deploy', startTick: 0 }, 1000, 0, 0, 0);
+    // The leaf art strokes its edge, so its bounds run ~1.3 u past the outline.
+    expect(leafBox(L).x1).toBeLessThan(-hw);
+    expect(leafBox(R).x0).toBeGreaterThan(hw);
   });
 
   it('door leaves sit over a dark hatch slot (under every plane part); no slot on a rig without leaves', () => {
@@ -312,8 +351,9 @@ describe('rig part look (2c+)', () => {
     expect(v.slot).not.toBeNull();
     expect(v.plane.getChildIndex(v.slot!)).toBe(0);
     const b = v.slot!.getLocalBounds();
-    // Spans both shut leaves (2 x 30 wide), around the hatch row.
-    expect(b.width).toBeGreaterThanOrEqual(60);
+    // Spans both shut leaves (2 x 24 wide) over the socket.
+    expect(b.width).toBeGreaterThanOrEqual(48);
+    expect(b.height).toBeGreaterThanOrEqual(48);
     expect(new StructureRigView(rigForStructureKind('freight_dock')!).slot).toBeNull();
   });
 
@@ -324,7 +364,7 @@ describe('rig part look (2c+)', () => {
     expect(roles).toEqual(expect.arrayContaining(['lip:pad', 'plinth:base', 'boom:beam', 'jib:beam', 'clamp:head']));
     const turret = rigForStructureKind('turret')!;
     const t = turret.parts.map((_, i) => `${turret.parts[i]!.id}:${rigPartRole(turret, i)}`);
-    expect(t).toEqual(expect.arrayContaining(['door-left:leaf', 'door-right:leaf', 'turret-slide:riser']));
+    expect(t).toEqual(expect.arrayContaining(['door-left:leaf', 'door-right:leaf', 'turret-lift:riser']));
   });
 
   it('shares one art context per part and gives lifted parts a shadow on it', () => {

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { STRUCTURE_KINDS_LIST, structureOutline } from '../../shared-types/structureKinds.js';
-import { buildRig, rigPartIndex, JOINT_HINGE, type Rig } from './rig.js';
+import { buildRig, liftProgress, rigPartIndex, JOINT_HINGE, JOINT_LIFT, type Rig } from './rig.js';
 import { createRigPose, evaluateRig, type PlayingClip } from './evaluate.js';
 import { twoBoneIkSolve } from './ikAdapter.js';
 import {
   DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_CRANE_BOOM, DOCK_CRANE_JIB, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, DOCK_CRANE_REACH_TICKS,
-  DOCK_DEPOSIT_RANGE, DOOR_TURRET_MOUNT, DOOR_TURRET_SLIDE_TRAVEL, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
+  DOCK_DEPOSIT_RANGE, DOOR_TURRET_LIFT, DOOR_TURRET_MOUNT, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
   RIG_DEFS, rigById, rigForStructureKind,
 } from './rigCatalogue.js';
 
@@ -203,7 +203,7 @@ describe('sandbox-door-turret', () => {
   const pose = createRigPose(rig);
   const P = (id: string): number => rigPartIndex(rig, id);
 
-  it('all parts are plane-layer physical; the mount rides the turret slide', () => {
+  it('all parts are plane-layer physical; the mount rides the turret lift', () => {
     for (const p of rig.parts) {
       expect(p.layer).toBe('plane');
       expect(p.kind).toBe('physical');
@@ -213,21 +213,87 @@ describe('sandbox-door-turret', () => {
     expect(turret.mounts?.some((m) => m.id === DOOR_TURRET_MOUNT.mountId)).toBe(true);
   });
 
+  /** Host-frame box of part `id` in the current pose, its outline scaled by `k` about the part origin. */
+  const boxOf = (id: string, k = 1): { x0: number; x1: number; y0: number; y1: number } => {
+    const i = P(id), o = rig.parts[i]!.outline!;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let j = 0; j < o.length; j += 2) {
+      // Parts here have angle 0: host = pose origin + outline.
+      const x = pose.x[i]! + o[j]! * k, y = pose.y[i]! + o[j + 1]! * k;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    return { x0, x1, y0, y1 };
+  };
+  /** The drawn riser grows up to ~1.14x (client `liftScaleUp`); check with margin. */
+  const RISEN = 1.15;
+
+  it('the turret is a lift part over the socket (0, 0): no in-plane motion through deploy and retract', () => {
+    const t = P('turret-lift');
+    expect(rig.jointType[t]).toBe(JOINT_LIFT);
+    for (const clip of ['turret-deploy', 'turret-retract']) {
+      for (let tick = 0; tick <= 70; tick += 5) {
+        evaluateRig(rig, play(clip, 0), tick, pose);
+        expect(pose.x[t]).toBe(0);
+        expect(pose.y[t]).toBe(0);
+        expect(pose.angle[t]).toBe(0);
+      }
+    }
+    evaluateRig(rig, play('turret-deploy', 0), 100, pose);
+    expect(liftProgress(rig, t, pose.value[t]!)).toBe(1);
+    expect(pose.value[t]).toBe(DOOR_TURRET_LIFT);
+    evaluateRig(rig, play('turret-retract', 0), 100, pose);
+    expect(liftProgress(rig, t, pose.value[t]!)).toBe(0);
+  });
+
+  it('closed, the leaves meet at the centre and cover the riser (even fully risen in size)', () => {
+    evaluateRig(rig, null, 0, pose);
+    const l = boxOf('door-left'), r = boxOf('door-right'), riser = boxOf('turret-lift', RISEN);
+    expect(l.x1).toBeCloseTo(0, 9);
+    expect(r.x0).toBeCloseTo(0, 9);
+    expect(l.x0).toBeLessThanOrEqual(riser.x0);
+    expect(r.x1).toBeGreaterThanOrEqual(riser.x1);
+    for (const leaf of [l, r]) {
+      expect(leaf.y0).toBeLessThanOrEqual(riser.y0);
+      expect(leaf.y1).toBeGreaterThanOrEqual(riser.y1);
+    }
+  });
+
+  it('open, both leaves are clear of the fully risen riser and still on the 140 x 140 roof', () => {
+    for (const [clip, tick] of [['door-open', 100], ['turret-deploy', 100], ['turret-retract', 45]] as const) {
+      evaluateRig(rig, play(clip, 0), tick, pose);
+      const riser = boxOf('turret-lift', RISEN);
+      expect(boxOf('door-left').x1).toBeLessThan(riser.x0);
+      expect(boxOf('door-right').x0).toBeGreaterThan(riser.x1);
+      expect(boxOf('door-left').x0).toBeGreaterThan(-70);
+      expect(boxOf('door-right').x1).toBeLessThan(70);
+    }
+  });
+
+  it('the turret only rises once the hatch is (nearly) clear of it', () => {
+    const t = P('turret-lift');
+    for (let tick = 0; tick <= 60; tick++) {
+      evaluateRig(rig, play('turret-deploy', 0), tick, pose);
+      if (liftProgress(rig, t, pose.value[t]!) > 0) {
+        expect(boxOf('door-left').x1).toBeLessThan(boxOf('turret-lift', 0.9).x0);
+      }
+    }
+  });
+
   it('door-open slides the leaves apart; turret-deploy opens and raises; turret-retract closes over it', () => {
     evaluateRig(rig, play('door-open', 0), 100, pose);
     expect(pose.x[P('door-left')]!).toBeLessThan(-40);
     expect(pose.x[P('door-right')]!).toBeGreaterThan(40);
     evaluateRig(rig, play('door-close', 0), 100, pose);
-    expect(pose.x[P('door-left')]).toBeCloseTo(-15, 9);
+    expect(pose.x[P('door-left')]).toBeCloseTo(-12, 9);
 
     evaluateRig(rig, play('turret-deploy', 0), 100, pose);
-    expect(pose.y[P('turret-slide')]).toBeCloseTo(DOOR_TURRET_SLIDE_TRAVEL, 9);
+    expect(pose.value[P('turret-lift')]).toBeCloseTo(DOOR_TURRET_LIFT, 9);
     expect(pose.x[P('door-right')]!).toBeGreaterThan(40);
 
     evaluateRig(rig, play('turret-retract', 0), 45, pose);
-    expect(pose.y[P('turret-slide')]).toBeCloseTo(0, 9);
+    expect(pose.value[P('turret-lift')]).toBeCloseTo(0, 9);
     expect(pose.x[P('door-right')]!).toBeGreaterThan(40); // still open as it sinks
     evaluateRig(rig, play('turret-retract', 0), 100, pose);
-    expect(pose.x[P('door-right')]).toBeCloseTo(15, 9);
+    expect(pose.x[P('door-right')]).toBeCloseTo(12, 9);
   });
 });

@@ -31,7 +31,7 @@
 import { Container, Graphics, GraphicsContext } from 'pixi.js';
 import { createRigPose, evaluateRig, type PlayingClip, type RigPose } from '../../../core/articulation/evaluate.js';
 import { twoBoneIkSolve } from '../../../core/articulation/ikAdapter.js';
-import { rigPartIndex, type DrawLayer, type PartDef, type Rig } from '../../../core/articulation/rig.js';
+import { JOINT_LIFT, liftProgress, rigPartIndex, type DrawLayer, type PartDef, type Rig } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
@@ -180,9 +180,8 @@ function isLong(part: PartDef): boolean {
 export function rigPartRole(rig: Rig, i: number): RigPartRole {
   const part = rig.parts[i]!;
   if (part.layer === 'under') return 'pad';
-  if (part.joint.type === 'slide') {
-    return rig.id === 'sandbox-door-turret' && part.id === DOOR_TURRET_MOUNT.partId ? 'riser' : 'leaf';
-  }
+  if (part.joint.type === 'lift') return 'riser';
+  if (part.joint.type === 'slide') return 'leaf';
   if (isLong(part)) return 'beam';
   if (rig.parent[i]! < 0) return 'base';
   for (let k = 0; k < rig.partCount; k++) if (rig.parent[k] === i) return 'plate';
@@ -530,12 +529,16 @@ export class StructureRigView {
   private readonly shadowOff: number[] = [];
   /** Rig part carrying the kind's weapon mount, or -1. */
   readonly mountPart: number;
-  /** The pop-up riser (a root slide drawn as a lift, 2g), or -1. Its slide
-   *  progress drives the lift: it stays over its socket (its rest spot) and
-   *  only grows, with a widening shadow; the mount cluster rides the same. */
+  /** The pop-up riser (a root LIFT part, 2g+), or -1. Its lift progress
+   *  (`liftProgress`) drives the drawn rise: it never moves in the plane
+   *  (nor does its collider), it only grows, with a widening shadow; the
+   *  mount cluster rides the same and is hidden while fully sunk (the gun is
+   *  under the shut hatch). */
   readonly riserPart: number;
   /** Riser lift scale this frame (1 without a riser). */
   liftScale = 1;
+  /** Riser lift progress this frame, 0 (sunk) .. 1 (risen); 1 without a riser. */
+  lift = 1;
   /** Hatch slot under the door leaves, or null. */
   readonly slot: Graphics | null;
   private readonly playing: MutablePlaying = { clipId: '', startTick: 0, target: undefined };
@@ -573,7 +576,7 @@ export class StructureRigView {
     }
     this.mountPart = rig.id === 'sandbox-door-turret' ? rigPartIndex(rig, DOOR_TURRET_MOUNT.partId) : -1;
     let riser = -1;
-    for (let i = 0; i < rig.partCount; i++) if (rig.parent[i]! < 0 && rigPartRole(rig, i) === 'riser') riser = i;
+    for (let i = 0; i < rig.partCount; i++) if (rig.parent[i]! < 0 && rig.jointType[i] === JOINT_LIFT) riser = i;
     this.riserPart = riser;
     const slotCtx = rigSlotContext(rig);
     this.slot = slotCtx !== null ? new Graphics(slotCtx) : null;
@@ -583,16 +586,9 @@ export class StructureRigView {
     }
   }
 
-  /** Part `i`'s local transform, the riser held over its socket (its slide
-   *  travel is drawn as lift, not as in-plane motion). Allocation-free. */
+  /** Part `i`'s local transform. Allocation-free. */
   private partXform(i: number, xf: PixiXform): PixiXform {
-    partLocalTransform(this.pose, i, xf);
-    if (i === this.riserPart) {
-      const r = this.rig, d = this.pose.value[i]! - r.rest[i]!;
-      xf.x -= r.axisX[i]! * d;
-      xf.y += r.axisY[i]! * d;
-    }
-    return xf;
+    return partLocalTransform(this.pose, i, xf);
   }
 
   groupOf(layer: DrawLayer): Container {
@@ -623,8 +619,8 @@ export class StructureRigView {
     const ri = this.riserPart, look = RIG_LOOK_C;
     let lift = 0;
     if (ri >= 0) {
-      const span = this.rig.max[ri]! - this.rig.rest[ri]!;
-      lift = span > 0 ? Math.min(1, Math.max(0, (this.pose.value[ri]! - this.rig.rest[ri]!) / span)) : 0;
+      lift = liftProgress(this.rig, ri, this.pose.value[ri]!);
+      this.lift = lift;
       this.liftScale = look.liftScaleRest + (look.liftScaleUp - look.liftScaleRest) * lift;
     }
     for (let i = 0; i < this.parts.length; i++) {
@@ -650,7 +646,7 @@ export class StructureRigView {
 
   /** Ride a mount cluster (children laid out in the host frame) on the
    *  mount part: the cluster moves into the part's frame (on a pop-up riser:
-   *  held over the socket, scaled with the lift). The mount ANGLE is
+   *  scaled with the lift, hidden while fully sunk under the hatch). The mount ANGLE is
    *  untouched (still `applyMountAngles`, #12). No-op without a mount part. */
   placeMount(cluster: Container): void {
     const i = this.mountPart;
@@ -658,7 +654,9 @@ export class StructureRigView {
     this.partXform(i, this.xf);
     cluster.position.set(this.xf.x, this.xf.y);
     cluster.rotation = this.xf.rotation;
-    cluster.scale.set(i === this.riserPart ? this.liftScale : 1);
+    const riser = i === this.riserPart;
+    cluster.scale.set(riser ? this.liftScale : 1);
+    cluster.visible = !riser || this.lift > 0;
   }
 
   destroy(): void {

@@ -94,19 +94,45 @@ describe('PhysicsWorld rig parts (structure-restyle 2d)', () => {
     expect(w.getShipState('ship')!.x).toBeGreaterThan(700);
   });
 
-  it('the catalogue turret rig: door-open slides each leaf 30 u out', async () => {
+  it('the catalogue turret rig: door-open slides each leaf 30 u out from over the socket', async () => {
     const w = await PhysicsWorld.create();
     spawnHost(w, 'turret-1');
     w.attachRig('turret-1', rigById('sandbox-door-turret')!);
-    expect(w.rigPartPose('turret-1', 'door-left')!.x).toBeCloseTo(-15, 6);
+    expect(w.rigPartPose('turret-1', 'door-left')!.x).toBeCloseTo(-12, 6);
+    expect(w.rigPartPose('turret-1', 'door-left')!.y).toBeCloseTo(0, 6);
     w.setRigClip('turret-1', 'door-open', 10);
     for (let t = 0; t < 40; t++) {
       w.stepRigs(t + 1);
       w.tick(1 / 60);
     }
-    expect(w.rigPartPose('turret-1', 'door-left')!.x).toBeCloseTo(-45, 3);
-    expect(w.rigPartPose('turret-1', 'door-right')!.x).toBeCloseTo(45, 3);
-    expect(w.rigPartPose('turret-1', 'door-left')!.y).toBeCloseTo(62, 3);
+    expect(w.rigPartPose('turret-1', 'door-left')!.x).toBeCloseTo(-42, 3);
+    expect(w.rigPartPose('turret-1', 'door-right')!.x).toBeCloseTo(42, 3);
+    expect(w.rigPartPose('turret-1', 'door-left')!.y).toBeCloseTo(0, 3);
+  });
+
+  it('the catalogue turret rig: the lift-only turret collider never moves through deploy and retract', async () => {
+    const w = await PhysicsWorld.create();
+    spawnHost(w, 'turret-1');
+    w.attachRig('turret-1', rigById('sandbox-door-turret')!);
+    const p0 = { ...w.rigPartPose('turret-1', 'turret-lift')! };
+    w.setRigClip('turret-1', 'turret-deploy', 1);
+    let t = 0;
+    for (; t < 80; t++) {
+      w.stepRigs(t + 1);
+      w.tick(1 / 60);
+      const p = w.rigPartPose('turret-1', 'turret-lift')!;
+      expect(p.x).toBeCloseTo(p0.x, 9);
+      expect(p.y).toBeCloseTo(p0.y, 9);
+      expect(p.angle).toBeCloseTo(p0.angle, 9);
+    }
+    w.setRigClip('turret-1', 'turret-retract', t);
+    for (; t < 160; t++) {
+      w.stepRigs(t + 1);
+      w.tick(1 / 60);
+      const p = w.rigPartPose('turret-1', 'turret-lift')!;
+      expect(p.x).toBeCloseTo(p0.x, 9);
+      expect(p.y).toBeCloseTo(p0.y, 9);
+    }
   });
 
   it('follows its host: a moved host re-poses the parts', async () => {
