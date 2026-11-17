@@ -7,8 +7,17 @@ import {
   factionBorderColor,
   DEFAULT_FACTION_BORDER_COLOR,
   boundaryEdges,
+  frontEdges,
   HEX_EDGE_NEIGHBOUR_DIRS,
+  splitChallenger,
+  threatBracketStyle,
+  flipRingStrength,
+  FLIP_RING_MS,
+  isNewFlip,
+  ownerHatched,
 } from './galaxyTerritories';
+import { teamColorOf, setFactionLooks } from '../../../shared-types/factions.js';
+import type { SectorControl } from '../../../shared-types/galaxySnapshot.js';
 import { resolveSectorOwner, NEUTRAL_OWNER } from './sectorOwnership';
 
 function sec(key: string, region: string, q: number, r: number, neighbours: string[]): GalaxySector {
@@ -103,8 +112,31 @@ describe('factionColor', () => {
     expect(new Set(colors).size).toBe(GALAXY_FACTIONS.length);
   });
 
-  it('falls back to the neutral default for an unknown faction', () => {
-    expect(factionColor('not-a-faction')).toBe(DEFAULT_FACTION_COLOR);
+  it('neutral ground is the neutral grey', () => {
+    expect(factionColor(NEUTRAL_OWNER)).toBe(DEFAULT_FACTION_COLOR);
+  });
+
+  it('delegates every owner to the ship colour authority (teamColorOf)', () => {
+    for (const id of ['core', 'verdant-reach', 'crimson-expanse', 'azure-deep', 'robots', 'drones', 'player-abc']) {
+      expect(factionColor(id)).toBe(teamColorOf(id));
+    }
+  });
+
+  it('a player faction paints its picked colour', () => {
+    setFactionLooks([{ factionId: 'player-picked', colorSlot: 3, sigil: 7 }]);
+    try {
+      expect(factionColor('player-picked')).toBe(teamColorOf('player-picked'));
+      setFactionLooks([{ factionId: 'player-picked', colorSlot: 8, sigil: 7 }]);
+      expect(factionColor('player-picked')).toBe(teamColorOf('player-picked'));
+    } finally {
+      setFactionLooks([]);
+    }
+  });
+
+  it('only the drones are hatched', () => {
+    expect(ownerHatched('drones')).toBe(true);
+    expect(ownerHatched('robots')).toBe(false);
+    expect(ownerHatched('core')).toBe(false);
   });
 });
 
@@ -155,6 +187,87 @@ describe('factionBorderColor', () => {
   it('returns a distinct (brighter) colour per faction + a default for unknown', () => {
     const colors = GALAXY_FACTIONS.map((f) => factionBorderColor(f.id));
     expect(new Set(colors).size).toBe(GALAXY_FACTIONS.length);
-    expect(factionBorderColor('not-a-faction')).toBe(DEFAULT_FACTION_BORDER_COLOR);
+    expect(factionBorderColor(NEUTRAL_OWNER)).toBe(DEFAULT_FACTION_BORDER_COLOR);
+  });
+});
+
+describe('front seams', () => {
+  it('frontEdges lists edges facing another owner, not the map edge', () => {
+    // (1,0) across edge 5 is fB; (-1,0) across edge 2 is off-map; rest fA.
+    const at = (q: number, r: number): string | null =>
+      q === 1 && r === 0 ? 'fB' : q === -1 && r === 0 ? null : 'fA';
+    expect(frontEdges({ hex: { q: 0, r: 0 }, region: 'fA' }, at, [])).toEqual([5]);
+    expect(boundaryEdges({ hex: { q: 0, r: 0 }, region: 'fA' }, at)).toEqual([2, 5]);
+  });
+
+  it('both owners on a front draw the shared edge (a two-colour seam)', () => {
+    const at = (q: number, _r: number): string | null => (q <= 0 ? 'fA' : 'fB');
+    const out: number[] = [];
+    for (const ei of frontEdges({ hex: { q: 0, r: 0 }, region: 'fA' }, at, out).slice()) {
+      const d = HEX_EDGE_NEIGHBOUR_DIRS[ei]!;
+      const back = frontEdges({ hex: d, region: 'fB' }, at, out);
+      expect(back).toContain((ei + 3) % 6);
+    }
+  });
+
+  it('reuses and clears the scratch array', () => {
+    const out = [9, 9, 9];
+    expect(frontEdges({ hex: { q: 0, r: 0 }, region: 'fA' }, () => 'fA', out)).toBe(out);
+    expect(out).toEqual([]);
+  });
+});
+
+function ctl(over: Partial<SectorControl>): SectorControl {
+  return { holderShare: 60, challenger: null, challengerShare: 0, trend: 0, threat: 0, flippedAtMs: null, locked: false, ...over };
+}
+
+describe('split hex', () => {
+  it('splits only when a different challenger has a share', () => {
+    expect(splitChallenger(undefined, 'core')).toBeNull();
+    expect(splitChallenger(ctl({}), 'core')).toBeNull();
+    expect(splitChallenger(ctl({ challenger: 'robots', challengerShare: 0 }), 'core')).toBeNull();
+    expect(splitChallenger(ctl({ challenger: 'core', challengerShare: 30 }), 'core')).toBeNull();
+    expect(splitChallenger(ctl({ challenger: 'robots', challengerShare: 30 }), 'core')).toBe('robots');
+  });
+
+  it('a neutral sector with a leader splits grey / leader', () => {
+    expect(splitChallenger(ctl({ holderShare: 0, challenger: 'robots', challengerShare: 40 }), NEUTRAL_OWNER)).toBe('robots');
+  });
+});
+
+describe('threat brackets', () => {
+  it('no brackets when calm or missing', () => {
+    expect(threatBracketStyle(0).corners).toEqual([]);
+    expect(threatBracketStyle(undefined).corners).toEqual([]);
+  });
+
+  it('grow with threat 1..3 (corners, arm, width)', () => {
+    const s = [1, 2, 3].map((t) => threatBracketStyle(t));
+    expect(s.map((x) => x.corners.length)).toEqual([2, 4, 6]);
+    expect(s[0]!.arm).toBeLessThan(s[1]!.arm);
+    expect(s[1]!.arm).toBeLessThan(s[2]!.arm);
+    expect(s[0]!.width).toBeLessThan(s[2]!.width);
+    for (const x of s) for (const c of x.corners) { expect(c).toBeGreaterThanOrEqual(0); expect(c).toBeLessThan(6); }
+  });
+
+  it('returns shared styles (no allocation per call)', () => {
+    expect(threatBracketStyle(2)).toBe(threatBracketStyle(2));
+  });
+});
+
+describe('flip ring', () => {
+  it('fades from 1 to 0 over FLIP_RING_MS', () => {
+    expect(flipRingStrength(0)).toBe(1);
+    expect(flipRingStrength(FLIP_RING_MS / 2)).toBeCloseTo(0.5);
+    expect(flipRingStrength(FLIP_RING_MS)).toBe(0);
+    expect(flipRingStrength(-1)).toBe(0);
+  });
+
+  it('marks a flip only when flippedAtMs changes after the first poll', () => {
+    expect(isNewFlip(undefined, 5000)).toBe(false); // first poll: an old flip
+    expect(isNewFlip(null, 5000)).toBe(true);
+    expect(isNewFlip(4000, 5000)).toBe(true);
+    expect(isNewFlip(5000, 5000)).toBe(false);
+    expect(isNewFlip(5000, null)).toBe(false);
   });
 });

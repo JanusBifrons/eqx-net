@@ -4,7 +4,6 @@ import {
   axialToPixel,
   getSector,
   type GalaxySector,
-  type SectorFeature,
 } from '@core/galaxy/galaxy';
 import {
   isSectorSelectable,
@@ -15,19 +14,28 @@ import {
 } from './galaxyLayerDecisions';
 import {
   computeTerritories,
-  boundaryEdges,
+  factionColor,
   factionBorderColor,
-  DEFAULT_FACTION_COLOR,
+  ownerHatched,
+  mixColor,
+  splitChallenger,
+  flipRingStrength,
+  isNewFlip,
   type Territory,
 } from './galaxyTerritories';
-import { resolveSectorOwner } from './sectorOwnership';
+import { sectorNebulaPeak } from '@core/galaxy/nebulaField';
 import {
-  GALAXY_STAR_LAYERS,
-  starHash,
-  starLayerAlphaAt,
-  starRadiusAt,
-  starTileHalfRange,
-} from './galaxyStarfield';
+  hexVertices,
+  drawHexFill,
+  drawHatch,
+  drawSectorControl,
+  drawFlipRing,
+  drawNebulaClouds,
+  drawGalaxyStarfield,
+  drawFeatureGlyphs,
+  drawTerritoryBorder,
+} from './galaxyHexDraw';
+import { resolveSectorOwner } from './sectorOwnership';
 import {
   ENTITY_VISUALS,
   ENTITY_KIND_ORDER,
@@ -86,18 +94,14 @@ const COLOR_WARPABLE = 0x33ddff;
 /** Equinox Phase 9 (item 3) — the FULL-PAGE galaxy map's opaque deep-space
  *  backdrop, so the gameplay starfield can't bleed through. */
 const COLOR_BACKDROP = 0x05070d;
-
-/** Blend two 0xRRGGBB colours (t=0→a, t=1→b). Used to render the selector hex
- *  fill OPAQUE at the tint's alpha-over-backdrop shade, so the LOD starfield
- *  (drawn behind the cluster) never shows THROUGH a sector hex. Pure, alloc-free. */
-function lerpColor(a: number, b: number, t: number): number {
-  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
-  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
-  const r = Math.round(ar + (br - ar) * t);
-  const g = Math.round(ag + (bg - ag) * t);
-  const bl = Math.round(ab + (bb - ab) * t);
-  return (r << 16) | (g << 8) | bl;
-}
+/** Nebula cloud tint (backdrop clouds + the hex-fill lift in nebula sectors). */
+const COLOR_NEBULA = 0x8a5cff;
+/** Inset of the per-owner border from the hex edge, so the two owners on a
+ *  front each draw their own line and the front reads as a two-colour seam. */
+const BORDER_INSET = 0.93;
+/** Owner tint strength of a hex fill over the backdrop (scaled by the state
+ *  weight: current / warpable / selectable / hovered). */
+const OWNER_TINT = 0.78;
 
 /** Per-sector count readout badges — a small per-type ICON (the shared
  *  `entityVisuals` shape) with the count as a SEPARATE ADJACENT text LABEL to its
@@ -156,16 +160,11 @@ interface HexEntry {
   combatIcon: Text;
   /** Index into `territories` / `territoryContainers`. */
   territoryIndex: number;
+  /** The sector's owner (its territory's owner id). */
+  ownerId: string;
 }
 
-function hexVertices(size: number): Array<{ x: number; y: number }> {
-  const out: Array<{ x: number; y: number }> = [];
-  for (let i = 0; i < 6; i++) {
-    const angle = Math.PI / 6 + (i * Math.PI) / 3;
-    out.push({ x: size * Math.cos(angle), y: size * Math.sin(angle) });
-  }
-  return out;
-}
+const HEX_VERTS_BASE = hexVertices(HEX_SIZE_BASE);
 
 export class GalaxyMapLayer extends Container {
   private readonly onSelect: (sectorKey: string) => void;
@@ -193,6 +192,21 @@ export class GalaxyMapLayer extends Container {
    *  to neutral territories too). A child of the matching territory container, so
    *  it shrinks WITH the hover-shrink. */
   private readonly territoryOutlines: Graphics[] = [];
+  /** Per-territory control overlay (threat brackets, trend arrows, lock
+   *  glyphs), above the outline. Redrawn only when the feed changes. */
+  private readonly territoryOverlays: Graphics[] = [];
+  /** Per-territory dashed "just flipped" rings. Drawn on a flip, faded by
+   *  alpha in the ticker (no per-frame redraw). */
+  private readonly territoryFlipRings: Graphics[] = [];
+  /** Static nebula clouds behind the hexes (`nebulaField`), full-page only. */
+  private readonly nebulaBackdrop = new Graphics();
+  /** Last `control.flippedAtMs` per sector (undefined before the first poll). */
+  private readonly lastFlippedAt = new Map<string, number | null>();
+  /** Layer UI clock (ms) at which the client saw each sector's latest flip. */
+  private readonly flipSeenAt = new Map<string, number>();
+  /** Layer UI clock: summed ticker deltas while the map is visible. */
+  private uiClockMs = 0;
+  private readonly _edgeScratch: number[] = [];
   /** owner id at each occupied axial hex ("q,r" → ownerId), built once in
    *  buildHexes; the `boundaryEdges` perimeter lookup (absent ⇒ map edge). */
   private readonly ownerByHexKey = new Map<string, string>();
@@ -259,6 +273,8 @@ export class GalaxyMapLayer extends Container {
     this.starfield.visible = false;
     this.addChild(this.backdrop);
     this.addChild(this.starfield);
+    drawNebulaClouds(this.nebulaBackdrop, HEX_SIZE_BASE, COLOR_NEBULA);
+    this.clusterRoot.addChild(this.nebulaBackdrop);
     this.clusterRoot.addChild(this.hexLayer);
     this.addChild(this.clusterRoot);
     this.panZoomCamera = new Camera(this.clusterRoot, { minScale: 0.12, maxScale: 4 });
@@ -382,10 +398,19 @@ export class GalaxyMapLayer extends Container {
     // rebuild preserves per-entry presence counts; the loop below then applies
     // this push's enemy/neutral counts to the fresh entries.
     this.liveStateByKey = byKey;
+    for (const s of GALAXY_SECTORS) {
+      const next = byKey.get(s.key)?.control?.flippedAtMs ?? null;
+      if (isNewFlip(this.lastFlippedAt.get(s.key), next)) this.flipSeenAt.set(s.key, this.uiClockMs);
+      this.lastFlippedAt.set(s.key, next);
+    }
     const sig = ownershipSignature(byKey);
     if (sig !== this.ownershipSig) {
       this.ownershipSig = sig;
       this.rebuildTerritoryGrouping();
+    } else {
+      // Control (split, threat, lock, trend) can change without an owner flip.
+      this.repaint();
+      this.drawControlOverlays();
     }
     for (const entry of this.entries) {
       const st = byKey.get(entry.sector.key);
@@ -598,8 +623,10 @@ export class GalaxyMapLayer extends Container {
     if (this.mode === 'selector') {
       this.backdrop.rect(0, 0, screenW, screenH).fill({ color: COLOR_BACKDROP, alpha: 1 });
       this.backdrop.visible = true;
+      this.nebulaBackdrop.visible = true;
     } else {
       this.backdrop.visible = false;
+      this.nebulaBackdrop.visible = false;
     }
     const positions = GALAXY_SECTORS.map((s) => axialToPixel(s.hex, HEX_SIZE_BASE));
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -752,7 +779,7 @@ export class GalaxyMapLayer extends Container {
       // Live count glyphs (structures / enemy / neutral / player) are layered in
       // separately by setGalaxyStats (Phase 4b).
       const glyphs = new Graphics();
-      this.drawFeatureGlyphs(glyphs, s.features, ox, oy + HEX_SIZE_BASE * 0.05);
+      drawFeatureGlyphs(glyphs, s.features, ox, oy + HEX_SIZE_BASE * 0.05);
       container.addChild(glyphs);
 
       // Live per-sector count readout — a centred row of "icon + count label"
@@ -802,10 +829,11 @@ export class GalaxyMapLayer extends Container {
       combatIcon.visible = false;
       container.addChild(combatIcon);
 
-      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countSegs, counts: [0, 0, 0, 0], combatIcon, territoryIndex: ti });
+      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countSegs, counts: [0, 0, 0, 0], combatIcon, territoryIndex: ti, ownerId: this.territories[ti]?.ownerId ?? '' });
     }
     this.buildTerritoryOutlines();
     this.repaint();
+    this.drawControlOverlays();
   }
 
   /**
@@ -823,6 +851,8 @@ export class GalaxyMapLayer extends Container {
     for (const c of this.territoryContainers) c.destroy({ children: true });
     this.territoryContainers.length = 0;
     this.territoryOutlines.length = 0;
+    this.territoryOverlays.length = 0;
+    this.territoryFlipRings.length = 0;
     this.territories = [];
     this.territoryScale.length = 0;
     this.territoryTarget.length = 0;
@@ -839,141 +869,78 @@ export class GalaxyMapLayer extends Container {
   }
 
   /**
-   * Draw one bold perimeter outline per territory — the eqx-peri "territory
-   * outline, not per-cell grid" look (Equinox Phase 9 item 4). The outline strokes
-   * only each member hex's edges whose across-neighbour is a DIFFERENT owner (or
-   * absent) via the unit-locked `boundaryEdges`, yielding one continuous perimeter
-   * per contiguous territory. It is a child of the territory CONTAINER, so it
-   * shrinks WITH the hover-shrink. Border colour comes from the owner
-   * (`factionBorderColor` ⇒ DEFAULT for NEUTRAL today; a faction/player hue once
-   * capture exists), so neutral territories get the outline too — exactly what
-   * the bug report asked for. Drawn once (ownership is static-neutral now); a
-   * future re-group would re-run this.
+   * One perimeter outline per territory (a child of its container, so it
+   * breathes with the hover-shrink), inset per owner so a front reads as a
+   * two-colour seam; then the territory's control overlay and flip-ring
+   * Graphics above it. Re-run on every re-group.
    */
   private buildTerritoryOutlines(): void {
-    const verts = hexVertices(HEX_SIZE_BASE);
+    const verts = hexVertices(HEX_SIZE_BASE * BORDER_INSET);
     const ownerAt = (q: number, r: number): string | null =>
       this.ownerByHexKey.get(`${q},${r}`) ?? null;
     for (let ti = 0; ti < this.territories.length; ti++) {
       const t = this.territories[ti]!;
       const container = this.territoryContainers[ti]!;
       const g = new Graphics();
-      for (const key of t.sectorKeys) {
-        const sec = getSector(key);
-        if (!sec) continue;
-        const pos = axialToPixel(sec.hex, HEX_SIZE_BASE);
-        const ox = pos.x - container.x;
-        const oy = pos.y - container.y;
-        for (const ei of boundaryEdges({ hex: sec.hex, region: t.ownerId }, ownerAt)) {
-          const a = verts[ei]!;
-          const b = verts[(ei + 1) % 6]!;
-          g.moveTo(ox + a.x, oy + a.y);
-          g.lineTo(ox + b.x, oy + b.y);
-        }
-      }
-      // Thick, SOLID, pronounced outer-territory outline — drawn for every
-      // territory incl. neutral (factionBorderColor ⇒ DEFAULT for neutral today).
-      g.stroke({ color: factionBorderColor(t.ownerId), width: 3, alpha: 1 });
-      container.addChild(g);
+      drawTerritoryBorder(g, verts, t.sectorKeys, t.ownerId, HEX_SIZE_BASE, container.x, container.y, ownerAt, this._edgeScratch);
+      const overlay = new Graphics();
+      const ring = new Graphics();
+      ring.visible = false;
+      container.addChild(g, overlay, ring);
       this.territoryOutlines.push(g);
+      this.territoryOverlays.push(overlay);
+      this.territoryFlipRings.push(ring);
     }
   }
 
   /**
-   * Equinox Phase 9 (item 3) — redraw the zoom-aware LOD parallax starfield for
-   * the full-page map. Screen-space (a direct child of `this`, NOT clusterRoot):
-   * we project each star through the SAME world→screen transform clusterRoot uses
-   * (`screen = root.xy + world * scale`) but pick which LOD layers are visible by
-   * the live zoom `scale`, so density stays ~constant and stars stay crisp at any
-   * zoom (vs the old fixed TilingSprite). No-op outside `selector` mode (the
-   * in-game overlay HUD has no backdrop/starfield). Pure layer/fade/placement
-   * math is in `galaxyStarfield.ts`; this is just the Pixi draw.
+   * The galaxy-feed control marks, per territory overlay: amber threat
+   * brackets (more corners and longer arms as threat rises), a lock glyph on a
+   * locked sector, and a trend arrow on a contested (split) sector. Feed
+   * cadence only (~10 s), never per frame.
    */
+  private drawControlOverlays(): void {
+    for (const g of this.territoryOverlays) g.clear();
+    for (const entry of this.entries) {
+      const g = this.territoryOverlays[entry.territoryIndex];
+      const container = this.territoryContainers[entry.territoryIndex];
+      const c = this.liveStateByKey?.get(entry.sector.key)?.control;
+      if (!g || !container || !c) continue;
+      drawSectorControl(g, HEX_VERTS_BASE, HEX_SIZE_BASE, entry.x - container.x, entry.y - container.y, c, entry.ownerId);
+    }
+    this.drawFlipRings();
+  }
+
+  /** Dashed rings round recently flipped sectors, in the new owner's border
+   *  colour. Redrawn only when a flip appears or expires; the ticker fades
+   *  them by alpha. */
+  private drawFlipRings(): void {
+    for (const g of this.territoryFlipRings) {
+      g.clear();
+      g.visible = false;
+    }
+    for (const entry of this.entries) {
+      if (!this.flipSeenAt.has(entry.sector.key)) continue;
+      const g = this.territoryFlipRings[entry.territoryIndex];
+      const container = this.territoryContainers[entry.territoryIndex];
+      if (!g || !container) continue;
+      drawFlipRing(g, entry.x - container.x, entry.y - container.y, HEX_SIZE_BASE * 0.78, factionBorderColor(entry.ownerId));
+      g.visible = true;
+    }
+  }
+
+  /** Redraw the LOD starfield against the live cluster transform (full-page
+   *  map only; the in-game overlay has no backdrop). */
   private drawStarfield(): void {
     const g = this.starfield;
     g.clear();
-    if (this.mode !== 'selector' || this.screenW === 0 || this.screenH === 0) {
-      g.visible = false;
-      return;
-    }
     const scale = this.clusterRoot.scale.x;
-    if (scale <= 0) {
+    if (this.mode !== 'selector' || this.screenW === 0 || this.screenH === 0 || scale <= 0) {
       g.visible = false;
       return;
     }
     g.visible = true;
-    const scx = this.screenW / 2;
-    const scy = this.screenH / 2;
-    // The world point currently under the screen centre (inverse clusterRoot map).
-    const camX = (scx - this.clusterRoot.x) / scale;
-    const camY = (scy - this.clusterRoot.y) / scale;
-    const hw = this.screenW / (2 * scale); // half-viewport in world units
-    const hh = this.screenH / (2 * scale);
-
-    for (const layer of GALAXY_STAR_LAYERS) {
-      const alpha = starLayerAlphaAt(layer, scale);
-      if (alpha <= 0) continue;
-      const T = layer.tileSize;
-      const p = layer.parallax;
-      const bgCx = camX * p;
-      const bgCy = camY * p;
-      const cTX = Math.round(bgCx / T);
-      const cTY = Math.round(bgCy / T);
-      const halfX = starTileHalfRange(hw, T);
-      const halfY = starTileHalfRange(hh, T);
-      // Batch the whole layer into one fill call (one colour + alpha). Each
-      // star's radius varies (mostly fine dust, a few brighter) so the field
-      // never reads as uniform chunky dots.
-      for (let atx = cTX - halfX; atx <= cTX + halfX; atx++) {
-        for (let aty = cTY - halfY; aty <= cTY + halfY; aty++) {
-          for (let i = 0; i < layer.starsPerTile; i++) {
-            const sx = (atx + starHash(atx, aty, layer.seed, i * 2)) * T;
-            const sy = (aty + starHash(atx, aty, layer.seed, i * 2 + 1)) * T;
-            const r = starRadiusAt(layer, starHash(atx, aty, layer.seed + 101, i + 1));
-            g.circle(scx + (sx - bgCx) * scale, scy + (sy - bgCy) * scale, r);
-          }
-        }
-      }
-      g.fill({ color: layer.color, alpha });
-    }
-  }
-
-  /** Draw a sector's asteroid-field glyph(s) in a small centred row at (cx, cy).
-   *  Equinox Phase 8 (Bug 3): only ASTEROID features are drawn — the other static
-   *  environmental glyphs (nebula / minerals / black-hole / station) are removed
-   *  so the map shows only buildings / ships / asteroids. Runs once in buildHexes
-   *  (not per-frame), so the filter allocation is fine (invariant #14). */
-  private drawFeatureGlyphs(g: Graphics, features: readonly SectorFeature[], cx: number, cy: number): void {
-    const asteroids = features.filter((f) => f === 'asteroid');
-    if (asteroids.length === 0) return;
-    const spacing = 13;
-    const startX = cx - ((asteroids.length - 1) * spacing) / 2;
-    for (let i = 0; i < asteroids.length; i++) {
-      this.drawFeatureGlyph(g, asteroids[i]!, startX + i * spacing, cy, 5);
-    }
-  }
-
-  /** One small procedural feature glyph (Pixi v8 Graphics). Kept tiny + legible
-   *  per the "start tiny" UI rule; tunable. */
-  private drawFeatureGlyph(g: Graphics, feature: SectorFeature, x: number, y: number, r: number): void {
-    switch (feature) {
-      case 'asteroid':
-        g.ellipse(x, y, r * 1.1, r * 0.8).fill({ color: 0xaa9977 });
-        break;
-      case 'nebula':
-        g.circle(x, y, r).fill({ color: 0xcc88ff, alpha: 0.7 });
-        break;
-      case 'minerals':
-        g.poly([x, y - r, x + r * 0.7, y, x, y + r * 0.8, x - r * 0.7, y]).fill({ color: 0xffdd33 });
-        break;
-      case 'blackhole':
-        g.circle(x, y, r).stroke({ color: 0xff4466, width: 1.5, alpha: 0.9 });
-        g.circle(x, y, r * 0.5).fill({ color: 0x080010 });
-        break;
-      case 'station':
-        g.rect(x - r * 0.7, y - r * 0.7, r * 1.4, r * 1.4).fill({ color: 0xddeeff });
-        break;
-    }
+    drawGalaxyStarfield(g, this.screenW, this.screenH, this.clusterRoot.x, this.clusterRoot.y, scale);
   }
 
   private repaint(): void {
@@ -1002,9 +969,16 @@ export class GalaxyMapLayer extends Container {
       //    hover) for the affordance. In overlay mode there's no full-screen
       //    backdrop, so only the hexes are solid — the gaps still show gameplay.
       const tint = highlighted ? 0.62 : warpable ? 0.58 : selectable ? 0.5 : 0.42;
-      const weight = Math.min(1, hovered ? tint + 0.16 : tint);
-      hex.poly(verts);
-      hex.fill({ color: lerpColor(COLOR_BACKDROP, DEFAULT_FACTION_COLOR, weight), alpha: 1 });
+      const weight = Math.min(1, hovered ? tint + 0.16 : tint) * OWNER_TINT;
+      // Owner tint (the ships' colour), lifted toward violet in a nebula. A
+      // contested sector splits down the middle: holder left, challenger right.
+      const nebulaLift = Math.min(0.5, sectorNebulaPeak(sector.key) * 0.35);
+      const ownerFill = mixColor(COLOR_BACKDROP, mixColor(factionColor(entry.ownerId), COLOR_NEBULA, nebulaLift), weight);
+      const challenger = splitChallenger(this.liveStateByKey?.get(sector.key)?.control, entry.ownerId);
+      const challengerFill = challenger === null ? null
+        : mixColor(COLOR_BACKDROP, mixColor(factionColor(challenger), COLOR_NEBULA, nebulaLift), weight);
+      drawHexFill(hex, verts, ownerFill, challengerFill, COLOR_BACKDROP);
+      if (ownerHatched(entry.ownerId)) drawHatch(hex, this.hexSize, mixColor(ownerFill, 0x000000, 0.5));
       // 2) Faint inner per-hex border for cell separation (under the bold
       //    faction outer-territory outline drawn in buildHexes); the current
       //    sector keeps a brighter ring as the "you are here" marker; a warpable
@@ -1071,6 +1045,26 @@ export class GalaxyMapLayer extends Container {
     const pulse = 0.7 + 0.3 * Math.abs(Math.sin(this.pulsePhase));
     for (const entry of this.entries) {
       entry.hex.alpha = entry.sector.key === this.currentSectorKey ? pulse : 1;
+    }
+
+    // Flip rings: fade by alpha; redraw only when one expires.
+    this.uiClockMs += Ticker.shared.deltaMS;
+    if (this.flipSeenAt.size > 0) {
+      let expired = false;
+      for (let i = 0; i < this.territoryFlipRings.length; i++) this.territoryFlipRings[i]!.alpha = 0;
+      for (const entry of this.entries) {
+        const seen = this.flipSeenAt.get(entry.sector.key);
+        if (seen === undefined) continue;
+        const strength = flipRingStrength(this.uiClockMs - seen);
+        if (strength <= 0) {
+          this.flipSeenAt.delete(entry.sector.key);
+          expired = true;
+          continue;
+        }
+        const ring = this.territoryFlipRings[entry.territoryIndex];
+        if (ring) ring.alpha = Math.max(ring.alpha, strength * pulse);
+      }
+      if (expired) this.drawFlipRings();
     }
   };
 }
