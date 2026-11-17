@@ -184,7 +184,8 @@ export class RobotTerritory {
     i.robots = this.robotCounts().get(sectorKey) ?? 0;
     i.nexus = this.nexus !== null && this.nexus.alive && this.nexus.sectorKey === sectorKey;
     i.players = counts?.players ?? room?.playerCount() ?? 0;
-    i.playerStructures = counts?.structures ?? 0;
+    // Player-owned only: NPC base parts never pushed back against robots.
+    i.playerStructures = counts?.playerStructures ?? counts?.structures ?? 0;
     return i;
   }
 
