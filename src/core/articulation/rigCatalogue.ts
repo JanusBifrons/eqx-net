@@ -47,12 +47,13 @@ function box(x0: number, y0: number, x1: number, y1: number): number[] {
 //
 // Crane: the pivot is the centre of the crane tower on the roof, 60 in from
 // the open edge, at its middle: (0, 140). Boom 390 + jib 390: max reach 780;
-// min reach (jib folded to its 3.0 rad limit) = 780·cos(1.5) ≈ 55. From the
-// pivot the nearest pad point (0, 210) is 70 away (15 spare) and the far
-// corners (±450, 710) ≈ 726 (54 spare), so the whole pad is inside the reach
-// annulus. Boom limits -2.8 .. 2.4 about the plinth's +π/2 facing: the elbow
-// only bends CCW, so near-corner targets put the boom down to ≈ -2.35
-// relative; it can never swing straight back into the dock (-π/2).
+// the jib may fold right over its boom (limits 0 .. 2π, see the path note at
+// CRANE_IK), so there is no minimum reach. The far corners (±450, 710) are
+// ≈ 726 from the pivot (54 spare), so the whole pad is in reach. Boom limits
+// -2.8 .. 2.4 about the plinth's +π/2 facing. The elbow folds to whichever
+// side keeps it out over the pad (swing side +y); for a target just off the
+// open edge in front of the tower the boom lies almost flat over the roof
+// strip, the jib folded back down to the target.
 // Stowed (rest): boom along the roof toward -x (shoulder +π/2, elbow at
 // (-390, 140), inside the ±500 width), jib folded back over it (elbow 3.0)
 // so the clamp tucks INTO the dock, ≈ 55 below the pivot: every part origin
@@ -116,7 +117,7 @@ const DOCK_CRANE_PARTS: readonly PartDef[] = [
   },
   {
     id: 'jib', parent: 'boom', anchorX: DOCK_CRANE_BOOM, anchorY: 0,
-    joint: { type: 'hinge', min: 0, max: JIB_FOLD }, rest: JIB_FOLD, layer: 'over', kind: 'cosmetic',
+    joint: { type: 'hinge', min: 0, max: 2 * Math.PI }, rest: JIB_FOLD, layer: 'over', kind: 'cosmetic',
     outline: box(-8, -13, DOCK_CRANE_JIB, 13),
   },
   // Clamp head at the jib tip (its origin IS the IK end effector).
@@ -127,7 +128,25 @@ const DOCK_CRANE_PARTS: readonly PartDef[] = [
   },
 ];
 
-const CRANE_IK = { chain: ['boom', 'jib'], tipX: DOCK_CRANE_JIB, tipY: 0, bend: 1 } as const;
+// Path (structure-restyle 2g). A crane never passes through its own dock:
+//  - swing side +y: per target the elbow takes the fold that puts it out over
+//    the pad (CCW for targets left of the pivot, CW right of it). A fixed fold
+//    sent the boom back across the roof for targets on the other side;
+//  - the jib may slew over its boom (limits [0, 2π]), so going from the
+//    stowed CCW fold to a CW reach passes the fold (tip over the tower), never
+//    straight out (780 long always pokes past the apron or the dock);
+//  - a READY waypoint halfway: the boom first swings up from the roof to +y
+//    with the jib still folded, then reaches. A straight blend from the stow
+//    unfolded the jib while the boom swung, so the jib swept down through the
+//    dock house (the far-corner bug). The jib eases 'out' into the reach (and
+//    'in' back to ready on retract, the same curve), so it clears the edge
+//    before the boom leans over and its tip never swings past the apron.
+//  holds the zone property for reach, retract and abort.
+const CRANE_IK = {
+  chain: ['boom', 'jib'], tipX: DOCK_CRANE_JIB, tipY: 0, bend: 1, swingSide: { x: 0, y: 1 },
+} as const;
+const READY = DOCK_CRANE_REACH_TICKS / 2;
+const BOOM_READY = 0;
 
 export const DOCK_CRANE_DEF: RigDef = {
   id: 'dock-crane',
@@ -136,8 +155,8 @@ export const DOCK_CRANE_DEF: RigDef = {
     {
       id: 'arm-reach', ik: CRANE_IK,
       tracks: [
-        { part: 'boom', keys: [{ tick: DOCK_CRANE_REACH_TICKS, fromTarget: true }] },
-        { part: 'jib', keys: [{ tick: DOCK_CRANE_REACH_TICKS, fromTarget: true }] },
+        { part: 'boom', keys: [{ tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true }] },
+        { part: 'jib', keys: [{ tick: READY, value: JIB_FOLD }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true, ease: 'out' }] },
       ],
     },
     {
@@ -150,8 +169,8 @@ export const DOCK_CRANE_DEF: RigDef = {
     {
       id: 'arm-retract', ik: CRANE_IK,
       tracks: [
-        { part: 'boom', keys: [{ tick: 0, fromTarget: true }, { tick: DOCK_CRANE_REACH_TICKS, value: BOOM_REST }] },
-        { part: 'jib', keys: [{ tick: 0, fromTarget: true }, { tick: DOCK_CRANE_REACH_TICKS, value: JIB_FOLD }] },
+        { part: 'boom', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, value: BOOM_REST }] },
+        { part: 'jib', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: JIB_FOLD, ease: 'in' }, { tick: DOCK_CRANE_REACH_TICKS, value: JIB_FOLD }] },
       ],
     },
   ],

@@ -17,7 +17,9 @@
  *
  * Targeted clips: keys marked `fromTarget` take their value from an injected
  * IK solver (`IkSolve`; the real 2-bone one is `twoBoneIkSolve` in `ikAdapter.ts`). With no target or no
- * solver those keys fall back to rest.
+ * solver those keys fall back to rest. On a hinge, the IK value takes the
+ * whole-turn copy nearest the key it blends from, within the joint limits
+ * (`nearestTurn`), so the blend goes the short way round.
  */
 import { applyEase } from './easing.js';
 import { JOINT_HINGE, type Rig } from './rig.js';
@@ -46,6 +48,10 @@ export interface IkRequest {
   tipY: number;
   /** Fold direction of a 2-bone chain (+1 counter-clockwise, -1 clockwise). */
   bend: 1 | -1;
+  /** Swing side in the host frame ((0, 0) = keep `bend`): the solver takes
+   *  the fold whose middle joint lies further along it (`IkChainDef.swingSide`). */
+  sideX: number;
+  sideY: number;
   /** Target in the host frame. */
   targetX: number;
   targetY: number;
@@ -86,7 +92,7 @@ export function createRigPose(rig: Rig): RigPose {
     ikOut: new Float64Array(rig.maxChain),
     ikReq: {
       rig, chain: new Int16Array(0), originX: 0, originY: 0, originAngle: 0,
-      tipX: 0, tipY: 0, bend: 1, targetX: 0, targetY: 0,
+      tipX: 0, tipY: 0, bend: 1, sideX: 0, sideY: 0, targetX: 0, targetY: 0,
     },
     ikReached: true,
   };
@@ -96,17 +102,43 @@ function clampTo(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+const TWO_PI = 2 * Math.PI;
+
+/**
+ * A hinge angle from IK, turned by whole turns to the copy NEAREST `from`
+ * (the key it blends from) that lies within [lo, hi]; unchanged when no
+ * other copy fits. IK answers in [-π, π], but a hinge whose limits span
+ * more than [-π, π] can hold the same pose at two values, and the
+ * linear blend between keys must go the short way round, inside the limits
+ * (a crane jib allowed to fold over its boom, [0, 2π], swings over the
+ * boom to reach the other side rather than unfolding straight out through
+ * 0). Arithmetic only, no allocation.
+ */
+function nearestTurn(v: number, from: number, lo: number, hi: number): number {
+  let best = v;
+  let bestD = v >= lo && v <= hi ? Math.abs(v - from) : Infinity;
+  for (let k = -1; k <= 1; k += 2) {
+    const c = v + k * TWO_PI;
+    if (c < lo || c > hi) continue;
+    const d = Math.abs(c - from);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best;
+}
+
 /** Evaluate one track at clip-local time `t` (>= 0). */
 function sampleTrack(
   ticks: Float64Array, values: Float64Array, ease: Uint8Array, fromTarget: Uint8Array,
   restValue: number, ikValue: number, useIk: boolean, t: number,
+  hinge: boolean, lo: number, hi: number,
 ): number {
   const m = ticks.length;
   let prevTick = 0;
   let prevVal = restValue;
   for (let k = 0; k < m; k++) {
     const kt = ticks[k]!;
-    const kv = fromTarget[k] === 1 && useIk ? ikValue : values[k]!;
+    const kv = fromTarget[k] !== 1 || !useIk ? values[k]!
+      : hinge ? nearestTurn(ikValue, prevVal, lo, hi) : ikValue;
     if (t < kt) {
       const span = kt - prevTick;
       const f = applyEase(ease[k]!, (t - prevTick) / span);
@@ -159,6 +191,7 @@ export function evaluateRig(
       req.chain = clip!.chain;
       req.originX = pX; req.originY = pY; req.originAngle = pA;
       req.tipX = clip!.tipX; req.tipY = clip!.tipY; req.bend = clip!.bend;
+      req.sideX = clip!.sideX; req.sideY = clip!.sideY;
       req.targetX = target!.x; req.targetY = target!.y;
       out.ikReached = ik!(req, ikOut);
       ikDone = true;
@@ -172,7 +205,7 @@ export function evaluateRig(
         const tr = clip.tracks[ti]!;
         const useIk = ikDone && tr.chainSlot >= 0;
         v = sampleTrack(tr.ticks, tr.values, tr.ease, tr.fromTarget, rest[i]!,
-          useIk ? ikOut[tr.chainSlot]! : 0, useIk, t);
+          useIk ? ikOut[tr.chainSlot]! : 0, useIk, t, jointType[i] === JOINT_HINGE, min[i]!, max[i]!);
       }
     }
     v = clampTo(v, min[i]!, max[i]!);

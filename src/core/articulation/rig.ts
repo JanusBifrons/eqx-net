@@ -88,6 +88,12 @@ export interface IkChainDef {
    *  counter-clockwise (positive), -1 clockwise. Fixed per clip so an arm
    *  always folds the same way. Default +1. */
   readonly bend?: 1 | -1;
+  /** Optional swing side (host-frame direction, need not be unit). Per
+   *  target, a 2-bone chain takes whichever fold puts its middle joint
+   *  further along this direction, so the elbow always rides on that side
+   *  (a crane's elbow out over its pad, never back over its own building).
+   *  `bend` breaks a tie. Omit for a fixed `bend`. */
+  readonly swingSide?: { readonly x: number; readonly y: number };
 }
 
 export interface ClipDef {
@@ -131,6 +137,9 @@ export interface CompiledClip {
   readonly tipY: number;
   /** IK fold direction (see `IkChainDef.bend`). */
   readonly bend: 1 | -1;
+  /** Swing side (see `IkChainDef.swingSide`); (0, 0) keeps the fixed `bend`. */
+  readonly sideX: number;
+  readonly sideY: number;
 }
 
 /** A built rig. Parts are in topological order (every parent before its
@@ -274,7 +283,10 @@ export function buildRig(def: RigDef): Rig {
       if (prev > endTick) endTick = prev;
       return { part: pi, ticks, values, ease, fromTarget, chainSlot };
     });
-    return { id: c.id, tracks, trackOfPart, endTick, chain, tipX: c.ik?.tipX ?? 0, tipY: c.ik?.tipY ?? 0, bend: c.ik?.bend ?? 1 };
+    return {
+      id: c.id, tracks, trackOfPart, endTick, chain, tipX: c.ik?.tipX ?? 0, tipY: c.ik?.tipY ?? 0,
+      bend: c.ik?.bend ?? 1, sideX: c.ik?.swingSide?.x ?? 0, sideY: c.ik?.swingSide?.y ?? 0,
+    };
   });
 
   return {
