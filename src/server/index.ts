@@ -1450,23 +1450,26 @@ async function main(): Promise<void> {
             .get() as { payload_json: string; created_at: number } | undefined,
         logger,
       });
+      // Living World P3 — robot territory + the nexus (reinforcements spawn at
+      // it; every side's sector control shows on the galaxy map). Built before
+      // the director so its control meter rides the director's state row: the
+      // director restores it inside start() and saves it on every persist.
+      const territory = new RobotTerritory(galaxyRooms, () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS);
       robotDirector = new LivingWorldDirector(galaxyRooms, {
         ...directorOpts,
         ...ROBOT_DIRECTOR_OPTIONS,
         directorPersistence: robotPersistence,
+        hooks: {
+          respawnAnchor: () => territory.respawnAnchor(),
+          onTick: (now) => territory.tick(now),
+          saveSectorControl: () => territory.saveControl(),
+          restoreSectorControl: (entries) => territory.restoreControl(entries),
+        },
       });
       robotDirector.start();
       // v4 T3 — teleporters carry robot bots across sectors.
       const rdMover = robotDirector;
       getTeleportBroker().addBotMover((id, from, to, x, y) => rdMover.teleportBot(id, from, to, x, y));
-      // Living World P3 — robot territory + the nexus (reinforcements spawn at
-      // it; robot-held sectors show on the galaxy map).
-      const rd = robotDirector;
-      const territory = new RobotTerritory(galaxyRooms, () => rd.activeBotCountsBySector());
-      rd.setHooks({
-        respawnAnchor: () => territory.respawnAnchor(),
-        onTick: (now) => territory.tick(now),
-      });
       territory.start();
       robotTerritory = territory;
       logger.info({ bots: ROBOT_BOT_COUNT, nexus: territory.nexusState() }, 'robot director started');

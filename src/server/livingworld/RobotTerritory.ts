@@ -28,6 +28,7 @@ import { cargoCapacityForMaxHealth, type GoodId } from '../../shared-types/goods
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { Bus } from '../../core/events/Bus.js';
 import {
+  CONTROL_MAX,
   freshMultiControl,
   isMultiContested,
   stepMultiControl,
@@ -40,6 +41,18 @@ import { liveEntrySectors, type Rng } from './population.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import { gameNow } from '../time/gameTime.js';
+import type { PersistedSectorControl } from './DirectorPersistence.js';
+
+/** Saved shares below this are dropped (keeps the persisted row small). */
+const SAVE_MIN_SHARE = 0.5;
+
+/** True when rounded `shares` + `holder` equal the sector's static seed. */
+function isSeedState(sectorKey: string, holder: string | null, shares: ReadonlyArray<[string, number]>): boolean {
+  const seed = sectorController(sectorKey);
+  if (holder !== seed) return false;
+  if (seed === null) return shares.length === 0;
+  return shares.length === 1 && shares[0]![0] === seed && shares[0]![1] === CONTROL_MAX;
+}
 
 export const NEXUS_ID = 'rbot-nexus';
 /** A destroyed nexus returns after this long (a real win for the players). */
@@ -172,6 +185,45 @@ export class RobotTerritory {
       const r = stepMultiControl(s, this.presenceFor(key), controlOpposes, dt);
       if (r.flipped) serverLogEvent('sector_control_changed', { sectorKey: key, from: r.previousHolder, to: s.holder });
     }
+  }
+
+  // ── Persistence (rides the robot director's state row) ──────────────────
+
+  /**
+   * Each sector's control meter that differs from its static seed, for the
+   * robot director's persisted state (`saveSectorControl` hook). Shares are
+   * rounded to 1 decimal and shares under 0.5 are dropped, so a sector the meter
+   * has drifted back to its seed is not saved. Persist cadence; allocation fine.
+   */
+  saveControl(): PersistedSectorControl[] {
+    const out: PersistedSectorControl[] = [];
+    for (const [sectorKey, s] of this.control) {
+      const shares: Array<[string, number]> = [];
+      for (const [side, v] of s.shares) {
+        const r = Math.round(v * 10) / 10;
+        if (r >= SAVE_MIN_SHARE) shares.push([side, r]);
+      }
+      shares.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      if (isSeedState(sectorKey, s.holder, shares)) continue;
+      out.push({ sectorKey, holder: s.holder, shares });
+    }
+    return out;
+  }
+
+  /** Overlay saved control onto the seeds (`restoreSectorControl` hook). A
+   *  sector not in this galaxy is ignored; a sector not saved keeps its seed. */
+  restoreControl(entries: readonly PersistedSectorControl[]): void {
+    for (const e of entries) {
+      if (!this.rooms.has(e.sectorKey)) continue;
+      const shares = new Map<string, number>();
+      for (const [side, v] of e.shares) shares.set(side, Math.min(CONTROL_MAX, Math.max(0, v)));
+      this.control.set(e.sectorKey, { shares, holder: e.holder });
+    }
+  }
+
+  /** A sector's live control meter (tests / dev). */
+  controlState(sectorKey: string): Readonly<MultiControlState> | undefined {
+    return this.control.get(sectorKey);
   }
 
   // ── Introspection (tests / dev) ─────────────────────────────────────────
