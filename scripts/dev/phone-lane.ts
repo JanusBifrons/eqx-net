@@ -145,7 +145,7 @@ async function up(appDir: string): Promise<void> {
     appDir,
     RUN,
     { ...PHONE_PORTS },
-    { EQX_ENABLE_TEST_ROOMS: '0' },
+    { EQX_ENABLE_TEST_ROOMS: '0', EQX_TEST_SIGNIN: '1' },
     {
       vite: { mode: 'preview', outDir: path.join(DIR, 'dist'), env: { EQX_PHONE_KEY: tunnel.key, VITE_PHONE_LANE: '1' } },
       outlive: true,
