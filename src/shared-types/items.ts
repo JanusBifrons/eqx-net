@@ -40,11 +40,24 @@ export interface BlueprintItem {
 }
 
 export interface PackedItem {
-  /** `structure:<kind>` or `hull:<shipKind>`. */
+  /** `structure:<kind>`, `hull:<shipKind>` or `chunk:rock` (a cut rock
+   *  chunk, `ROCK_CHUNK_PRODUCT`). */
   product: string;
   /** Quality carried from the blueprint that made it (0 … 100). */
   quality: number;
+  /** A one-of-a-kind item's id (a rock chunk): it is its own cargo tile and
+   *  is moved by this id, never merged with others of its product. */
+  uid?: string;
+  /** This item's own cargo weight (a rock chunk's), over its product's. */
+  weight?: number;
+  /** SERVER ONLY: a rock chunk's hidden ore, what a refinery turns it into
+   *  (`OreDraw.chunkYield`). Never on the wire (`wireHold`). */
+  ore?: Record<string, number>;
 }
+
+/** A cut rock chunk in a hold (owner 2026-11-17: rock never becomes a pod;
+ *  a chunk goes into the hold whole and only a refinery turns it into ore). */
+export const ROCK_CHUNK_PRODUCT = 'chunk:rock';
 
 export const BlueprintItemSchema = z
   .object({
@@ -63,6 +76,9 @@ export const PackedItemSchema = z
   .object({
     product: z.string().min(1).max(80),
     quality: z.number().min(0).max(100),
+    uid: z.string().min(1).max(64).optional(),
+    weight: z.number().nonnegative().optional(),
+    ore: z.record(z.string().max(40), z.number().int().nonnegative()).optional(),
   })
   .strict();
 

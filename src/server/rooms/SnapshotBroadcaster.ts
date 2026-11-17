@@ -57,7 +57,7 @@ import type { ProjectileRecord } from './ProjectilePipeline.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
 import type { ShellKeyRecord } from '../../shared-types/messages/shellEvents.js';
 import type { Hold } from '../../shared-types/goods.js';
-import { isHoldEmpty } from '../../core/cargo/hold.js';
+import { isHoldEmpty, wireHold } from '../../core/cargo/hold.js';
 import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { MountCharges } from './WeaponMountTicker.js';
 
@@ -972,11 +972,12 @@ export class SnapshotBroadcaster {
         setOrDrop(entry, 'statAlloc',
           ownActive && hasAnyStatAlloc(ship.statAlloc) ? ship.statAlloc : undefined);
         // Living World P1a (#16) — the own ACTIVE hull's carried hold, only when
-        // non-empty (zero bytes otherwise). Shared reference (no per-tick alloc).
+        // non-empty (zero bytes otherwise). Shared reference (no per-tick
+        // alloc); a rock chunk's hidden ore stripped (`wireHold`, cached).
         const hold = ownActive && this.deps.shipHoldOf !== undefined
           ? this.deps.shipHoldOf(ship.shipInstanceId)
           : undefined;
-        setOrDrop(entry, 'cargo', hold !== undefined && !isHoldEmpty(hold) ? hold : undefined);
+        setOrDrop(entry, 'cargo', hold !== undefined && !isHoldEmpty(hold) ? wireHold(hold) : undefined);
         setOrDrop(entry, 'depositing', ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined);
         // Fire control (#16): the own pilot's groups + locks (shared ref).
         setOrDrop(entry, 'groups', ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined);

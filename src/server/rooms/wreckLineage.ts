@@ -3,7 +3,7 @@
  *  CapitalWreckSubsystem's maps; split out of it for its size cap. */
 import { wreckSalvageQty } from '../../core/destruction/wreckIntegrity.js';
 import { GOOD_DEFS } from '../../shared-types/goods.js';
-import { asteroidYieldWeightPerUnit } from '../../shared-types/asteroidResources.js';
+import { rockChunkWeight } from '../../core/combat/salvageTargeting.js';
 import type { LiveWreck, PieceKnock, WreckOre } from './capitalWreckTypes.js';
 import { pieceOreUnits, type WreckPiecePose } from './wreckResplit.js';
 
@@ -12,11 +12,12 @@ export interface PieceStoreView {
   /** Body mass and bounding radius (world units). */
   mass: number;
   radius: number;
-  /** Units it stores as: salvage (a ship's wreck) or ore (`ore` set: a rock
-   *  piece, its goods drawn through `OreDraw.cutYield`). 0: nothing. */
+  /** Units it stores as: salvage (a ship's wreck), or for a rock piece
+   *  (`ore` set) its share of the rock's ore, > 0 while the rock had any
+   *  left (it goes in as one chunk, `OreDraw.chunkYield`). 0: nothing. */
   qty: number;
   ore: WreckOre | undefined;
-  /** Hold weight of those units. */
+  /** Hold weight: the salvage's, or a rock chunk's (`rockChunkWeight`). */
   holdWeight: number;
 }
 
@@ -61,8 +62,8 @@ export function pieceSalvageQtyOf(
 
 /** `CapitalWreckSubsystem.pieceStore`: a live piece's mass, radius and what
  *  it stores as whole: the salvage it would leave worn out (`wreckSalvageQty`)
- *  for a ship's wreck, its ore share (`pieceOreUnits`, the worn-out pod's
- *  rule) for a rock's. Read by the lock salvage bits (haul + consume tests,
+ *  for a ship's wreck; for a rock's, one chunk of `rockChunkWeight` while
+ *  its ore share (`pieceOreUnits`) is not empty. Read by the lock salvage bits (haul + consume tests,
  *  lockSalvage.ts) and the loot piece store. False when `id` is not a live
  *  piece. Allocates nothing (#14). */
 export function pieceStoreOf(
@@ -79,7 +80,7 @@ export function pieceStoreOf(
     const area = w.src.bodyMass > 0 ? (k.mass * w.src.area) / w.src.bodyMass : 0;
     out.qty = pieceOreUnits(w.ore, area);
     out.ore = w.ore;
-    out.holdWeight = out.qty * asteroidYieldWeightPerUnit(w.ore.resource);
+    out.holdWeight = rockChunkWeight(k.mass);
   } else {
     out.qty = wreckSalvageQty(w.src, k.mass);
     out.ore = undefined;
@@ -91,11 +92,12 @@ export function pieceStoreOf(
 const _near: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 
 /** `CapitalWreckSubsystem.forEachPieceNear`: visit each live piece (ship
- *  wreck or rock) with a mass ≤ `maxMass` (hold size) whose edge is within
- *  `reach` of (x, y), with its centre and radius; never a rock's piece. A piece still in its crack hold (its
- *  hull only just broke, `tick < holdUntil`) is skipped. The mass test runs
- *  before the pose read, so a pass with nothing at hold size costs one pass
- *  over the masses. The visitor may remove the piece. */
+ *  wreck) with a mass ≤ `maxMass` (hold size), or any rock piece (it goes
+ *  in as a chunk of any size), whose edge is within `reach` of (x, y), with
+ *  its centre and radius. A piece still in its crack hold (its
+ *  hull only just broke, `tick < holdUntil`) is skipped. The size test runs
+ *  before the pose read, so a pass with nothing to take costs one pass over
+ *  the pieces. The visitor may remove the piece. */
 export function forEachPieceNear(
   wrecks: ReadonlyMap<number, LiveWreck>, pieceWreck: ReadonlyMap<string, number>,
   knock: ReadonlyMap<string, PieceKnock>, tick: number,
@@ -105,10 +107,8 @@ export function forEachPieceNear(
 ): void {
   if (poseInto === undefined || !(maxMass > 0)) return;
   for (const [id, k] of knock) {
-    if (!(k.mass <= maxMass)) continue;
     const w = wrecks.get(pieceWreck.get(id) ?? -1);
-    // A rock's piece is never taken in whole (cut down to ore pods).
-    if (w === undefined || w.ore !== undefined || tick < w.holdUntil || !poseInto(id, _near)) continue;
+    if (w === undefined || (w.ore === undefined && !(k.mass <= maxMass)) || tick < w.holdUntil || !poseInto(id, _near)) continue;
     const dx = _near.x - x, dy = _near.y - y, r = reach + k.radius;
     if (dx * dx + dy * dy <= r * r) visit(id, _near.x, _near.y, k.radius);
   }

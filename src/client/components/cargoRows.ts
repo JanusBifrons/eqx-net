@@ -7,9 +7,11 @@
 import { GOOD_DEFS, GOOD_IDS, type Hold } from '../../shared-types/goods';
 import { productName } from '../../shared-types/blueprints';
 import type { CargoItems } from '../../shared-types/messages/cargoMessages';
+import { ROCK_CHUNK_PRODUCT } from '../../shared-types/items';
 
 export interface CargoRow {
-  /** Stable key: `g:<good>`, `p:<product>`, `b:<uid>` (testids, React keys). */
+  /** Stable key: `g:<good>`, `p:<product>`, `u:<uid>` (a rock chunk: one
+   *  tile each), `b:<uid>` (testids, React keys). */
   key: string;
   label: string;
   count: number;
@@ -33,11 +35,20 @@ export function cargoRows(hold: Hold | null): CargoRow[] {
     });
   }
   const packed = new Map<string, number>();
-  for (const p of hold.packed ?? []) packed.set(p.product, (packed.get(p.product) ?? 0) + 1);
+  for (const p of hold.packed ?? []) if (p.uid === undefined) packed.set(p.product, (packed.get(p.product) ?? 0) + 1);
   for (const [product, n] of packed) {
     rows.push({
       key: `p:${product}`, label: `${productName(product)} (packed)`, count: n, tier: 2,
       one: { packed: [product] }, all: { packed: Array<string>(n).fill(product) },
+    });
+  }
+  // A one-of-a-kind item (a rock chunk) is its own tile, moved by its uid;
+  // what is in it stays hidden until a refinery breaks it down.
+  for (const p of hold.packed ?? []) {
+    if (p.uid === undefined) continue;
+    rows.push({
+      key: `u:${p.uid}`, label: p.product === ROCK_CHUNK_PRODUCT ? 'Rock chunk' : productName(p.product), count: 1, tier: 1,
+      one: { packed: [p.uid] }, all: { packed: [p.uid] },
     });
   }
   for (const b of hold.blueprints) {
@@ -69,7 +80,8 @@ export function allOf(rows: readonly CargoRow[]): CargoItems {
 /** Slice 19: just one row's stack of a hold (for its weight). */
 export function rowHold(hold: Hold, row: CargoRow): Hold {
   const goods = row.all.goods ?? {};
-  const packed = row.all.packed !== undefined ? (hold.packed ?? []).filter((p) => p.product === row.all.packed![0]) : [];
+  const key = row.all.packed?.[0];
+  const packed = key !== undefined ? (hold.packed ?? []).filter((p) => p.uid === key || (p.uid === undefined && p.product === key)) : [];
   const uids = row.all.blueprints ?? [];
   return {
     goods: { ...goods },

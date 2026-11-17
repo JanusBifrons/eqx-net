@@ -85,8 +85,7 @@ export function rollIncursionCache(rng: () => number): Hold {
 /** Most salvage / alloy one salvage-field pod holds (`rollSalvagePod`). */
 const SALVAGE_POD_MAX_SALVAGE = 45;
 const SALVAGE_POD_MAX_ALLOY = 8;
-/** The most cargo weight one salvage-field pod carries: the size of a pod.
- *  A rock's ore pod is capped at it too (`dropPieceSalvage`). */
+/** The most cargo weight one salvage-field pod carries: the size of a pod. */
 export const SALVAGE_POD_MAX_WEIGHT =
   SALVAGE_POD_MAX_SALVAGE * GOOD_DEFS.salvage.weight + SALVAGE_POD_MAX_ALLOY * GOOD_DEFS.alloy.weight;
 

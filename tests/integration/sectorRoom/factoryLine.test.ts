@@ -83,7 +83,7 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
       const before = new Set(seen);
       const at = int().wreckState(id)!;
       int().spawnTestProjectile('shooter-x', at.x + 600, at.y, -4000, 0, 'laser', 1e6);
-      for (let t = 0; t < 40 && int().swarmRegistry.get(id); t++) { await harness.advance(50); look(); }
+      for (let t = 0; t < 40 && int().swarmRegistry.get(id); t++) { await harness.advance(50); look(); for (const pod of [...int().loot.podIds()]) int().loot.expireNow(pod); } // a death pod (a box since slice 9) would block the knock
       look();
       expect(int().swarmRegistry.get(id) ?? null, `${id} died`).toBeNull();
       const ids = [...seen].filter((p) => !before.has(p));

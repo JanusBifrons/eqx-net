@@ -120,8 +120,8 @@ it('a field rock (kind 0): no number; health bar and flash stay; a ship still ge
     expect(isNoDamageNumberTarget('swarm-102', swarm)).toBe(false);
     expect(isNoDamageNumberTarget('swarm-103', swarm)).toBe(false);
     expect(isNoDamageNumberTarget('swarm-999', swarm)).toBe(false);
-    // An ore pod (a cut rock's sliver, barge-mining take 2026-11-16): the
-    // mining lasers and tractored pieces hit it; it is salvage, not a foe.
+    // A loot pod: the mining lasers and tractored pieces may hit it; it is
+    // salvage, not a foe.
     expect(isNoDamageNumberTarget('swarm-105', swarm)).toBe(true);
     internals.handleDamage(hit('swarm-105'));
     expect(internals.mirror.pendingDamageNumbers).toHaveLength(0);

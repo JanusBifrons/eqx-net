@@ -14,8 +14,9 @@ import type { WreckSource } from '../../core/destruction/wreckSource.js';
 import type { AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 
 /** Rock cut: the ore a rock's wreck carries. Every piece holds its area's
- *  share of what the rock had left when it broke (`perArea`); a pod made
- *  from one draws that through `OreDraw.cutYield` (the rock's resource). */
+ *  share of what the rock had left when it broke (`perArea`); taken into a
+ *  hold, a piece is a chunk whose hidden ore is `OreDraw.chunkYield` (the
+ *  rock's resource). */
 export interface WreckOre {
   /** The parent rock's stable id. */
   rockId: string;
@@ -139,7 +140,7 @@ export interface CapitalWreckDeps {
    *  instead. Absent ⇒ such a piece just stops wearing. Returns the pod's id
    *  (the piece's locks follow it: `pieceSplit`), when it has one. `root`:
    *  the piece's lineage (`LiveWreck.root`), kept on the pod. */
-  dropSalvage?: (qty: number, x: number, y: number, vx: number, vy: number, ore?: WreckOre, root?: number) => string | null | void;
+  dropSalvage?: (qty: number, x: number, y: number, vx: number, vy: number, root?: number) => string | null | void;
   /** Rock cut: a live rock (kind 0) by id, or null. Absent ⇒ rocks are never
    *  cut (the mining laser only draws their ore). */
   rockOf?: (id: string) => WreckRockView | null;

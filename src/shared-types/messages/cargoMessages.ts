@@ -19,12 +19,13 @@ const product = z.string().min(1).max(80);
 export const CARGO_ACCESS_RANGE = 400;
 
 /** The items to move: goods by count, blueprints by uid, packed items by
- *  product (one entry per item). Mirrors `core/cargo/hold.ts` `CargoRequest`. */
+ *  product or by uid for a rock chunk (one entry per item). Mirrors
+ *  `core/cargo/hold.ts` `CargoRequest`. */
 export const CargoItemsSchema = z
   .object({
     goods: z.partialRecord(z.enum(GOOD_IDS), z.number().int().positive().max(1_000_000)).optional(),
     blueprints: z.array(uid).max(64).optional(),
-    packed: z.array(product).max(64).optional(),
+    packed: z.array(product).max(1024).optional(),
   })
   .strict();
 export type CargoItems = z.infer<typeof CargoItemsSchema>;

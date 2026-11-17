@@ -14,12 +14,12 @@
  *    cut and the other burn lines (`extraCuts`, fracture v12), fractured by
  *    `wreckPieceGeometry`, placed by `placeWreckPieces` and spawned by
  *    `spawnWreckPieces` (wreckResplit.ts) as kind-4 pieces with their own
- *    descriptor; a sliver under the profile's re-split floor drops as an ore
- *    pod instead (`dropPieceSalvage` → the room's `dropSalvage` → `OreDraw`);
+ *    descriptor; every sliver stays a piece (rock never becomes a pod, owner
+ *    2026-11-17: a piece is a chunk to tractor into a hold);
  *  - the rock itself leaves through the room's normal evict path
  *    (`removePiece`).
- * Pieces then wear, re-split and pod exactly like a wreck's (re-split chain
- * on the rock root), by their 'rock' factor.
+ * Pieces then wear and re-split like a wreck's (re-split chain on the rock
+ * root), by their 'rock' factor; one too small to split stays as it is.
  *
  * Per hit: two Map lookups and scalar maths; a rock's first wearing hit
  * allocates its entry (and its source, once). A break allocates (once).
@@ -145,7 +145,6 @@ export class RockCutter {
     if (pose === null) return false;
     const tick = this.d.serverTick();
     const src = k.src;
-    const rs = src.profile.resplit!;
     // The breaking hit in the rock's 1× Pixi-up frame (its rest frame, y
     // flipped; scale 1). The fracture projects it onto the outline.
     hullPointInto(pose.x, pose.y, pose.angle, 1, hitX, hitY, PT);
@@ -172,7 +171,7 @@ export class RockCutter {
     const left = rock.resources ?? src.area * ASTEROID_RESOURCES_PER_AREA;
     const ore: WreckOre = { rockId: id, resource: rock.resource, perArea: src.area > 0 ? Math.max(0, left) / src.area : 0 };
     const [wreckId, serial] = this.h.newWreck();
-    const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, rs.minAreaFrac * src.area, serial, wreckId, null, fifo, id);
+    const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, 0, serial, wreckId, null, fifo, id);
     if (r.ids.length === 0 && r.pods === 0) return false;
     this.rocks.delete(id);
     // TODO(macro terrain C3): record a cut-field rock as mined here with

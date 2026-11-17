@@ -4,6 +4,7 @@
  */
 import { GOOD_DEFS, GOOD_IDS } from '../../shared-types/goods';
 import { productName } from '../../shared-types/blueprints';
+import { ROCK_CHUNK_PRODUCT } from '../../shared-types/items';
 import type { CargoView } from '../state/storeTypes';
 
 /** How long a pickup popup stays on screen. */
@@ -19,7 +20,8 @@ export function formatLootPickup(e: { goods: Partial<Record<string, number>>; bl
   }
   if (e.blueprints > 0) parts.push(`+${e.blueprints} blueprint${e.blueprints === 1 ? '' : 's'}`);
   // Economy v2 W4a — packed structures/hulls, by name ("+Packed Smelter").
-  for (const p of e.packed ?? []) parts.push(`+Packed ${productName(p)}`);
+  // A rock chunk goes in whole, its ore unknown until refined.
+  for (const p of e.packed ?? []) parts.push(p === ROCK_CHUNK_PRODUCT ? '+Rock chunk' : `+Packed ${productName(p)}`);
   return parts.join(' · ');
 }
 

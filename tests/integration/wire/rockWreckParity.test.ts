@@ -9,7 +9,6 @@
  */
 import { describe, expect, it } from 'vitest';
 import { CapitalWreckSubsystem, type WreckPieceSpawn, type WreckPiecePose } from '../../../src/server/rooms/CapitalWreckSubsystem.js';
-import type { WreckOre } from '../../../src/server/rooms/capitalWreckTypes.js';
 import { WreckGeometryStore } from '../../../src/client/net/wreckGeometryStore.js';
 import { isWreckDescriptor, WreckDescriptorSchema, type WreckDescriptor } from '../../../src/shared-types/messages/snapshotMessages.js';
 import { WRECK_ROCK_PARENT_KIND } from '../../../src/shared-types/messages/wreckDescriptor.js';
@@ -24,7 +23,7 @@ function rig() {
   const poses = new Map<string, WreckPiecePose>([[ROCK_ID, { x: 500, y: -200, vx: 1, vy: 0, angle: 0.4, angvel: 0 }]]);
   const spawned: WreckPieceSpawn[] = [];
   const removed: string[] = [];
-  const pods: Array<{ qty: number; ore: WreckOre | undefined }> = [];
+  const pods: Array<{ qty: number }> = [];
   let rockLive = true;
   const clock = { tick: 9000 };
   const sys = new CapitalWreckSubsystem({
@@ -39,7 +38,7 @@ function rig() {
     impulsePiece: () => {},
     piecePose: (id) => { const p = poses.get(id); return p ? { ...p } : null; },
     piecePoseInto: (id, out) => { const p = poses.get(id); if (!p) return false; Object.assign(out, p); return true; },
-    dropSalvage: (qty, _x, _y, _vx, _vy, ore) => { pods.push({ qty, ore }); },
+    dropSalvage: (qty) => { pods.push({ qty }); },
     rockOf: (id) => (id === ROCK_ID && rockLive ? { shape: asteroidShapeSeed(ROCK_ID), radius: R, resource: 'ice', resources: 50_000 } : null),
   });
   sys.forcedSeed = 3;
@@ -87,7 +86,7 @@ describe('rock cut: server bodies == client rebuild (#15, #16)', () => {
     }
   });
 
-  it('a rock piece re-cuts like a wreck piece; the child resolves through the rock root; slivers pod the rock ore', () => {
+  it('a rock piece re-cuts like a wreck piece; the child resolves through the rock root; its slivers stay pieces, never pods', () => {
     const { sys, spawned, pods, poses, clock } = rig();
     for (let i = 0; i < 400 && sys.descriptors().length === 0; i++) sys.onWreckHit(ROCK_ID, 420, -195, 1, 0.05, 120, 'mining_laser', 'p1');
     const root = wire(sys)[0]!;
@@ -111,13 +110,11 @@ describe('rock cut: server bodies == client rebuild (#15, #16)', () => {
       store.apply(descs);
       expect(store.rockOf(child.wreckId)).toEqual(root.rock);
       for (const s of spawned.slice(n0)) expect(store.piece(child.wreckId, s.pieceIndex)!.parts).toEqual(s.parts);
-    } else {
-      // Every child was a sliver: all pods.
-      expect(pods.length).toBeGreaterThan(0);
     }
-    // Grind everything to pods: each carries the rock's ore, never salvage.
-    // One round per server tick (re-splits are budgeted per tick): the swept
-    // cut leaves chunky pieces, so it takes a few generations to reach pods.
+    // Grind everything: a rock piece re-cuts down to slivers too small to
+    // split, which stay pieces (a hull-touch takes each in as one chunk) and
+    // stop wearing; a rock never drops a pod (owner 2026-11-17). One round
+    // per server tick (re-splits are budgeted per tick).
     for (let round = 0; round < 60; round++, clock.tick++) {
       const live = [...poses.keys()].filter((id) => id !== ROCK_ID);
       if (live.length === 0) break;
@@ -126,14 +123,16 @@ describe('rock cut: server bodies == client rebuild (#15, #16)', () => {
         if (q) sys.onWreckHit(id, q.x - 1, q.y, 1, 0, 1e4, 'mining_laser', 'p1');
       }
     }
-    expect([...poses.keys()].filter((id) => id !== ROCK_ID), 'the whole rock ended as pods').toEqual([]);
-    expect(pods.length).toBeGreaterThan(0);
-    for (const pod of pods) {
-      expect(pod.ore).toEqual({ rockId: ROCK_ID, resource: 'ice', perArea: expect.any(Number) });
-      expect(pod.qty).toBeGreaterThan(0);
-    }
-    // The rock's ore is shared out by area, never minted: pods hold at most it.
-    expect(pods.reduce((s, x) => s + x.qty, 0)).toBeLessThanOrEqual(50_000 + pods.length);
+    const left = [...poses.keys()].filter((id) => id !== ROCK_ID);
+    expect(left.length, 'the slivers are still pieces').toBeGreaterThan(spawned.length > n0 ? 1 : 0);
+    expect(pods, 'a rock never drops a pod').toEqual([]);
+    // A sliver too small to split no longer wears.
+    const last = left[0]!;
+    const q = poses.get(last)!;
+    const i1 = sys.pieceIntegrity(last);
+    for (let i = 0; i < 20; i++) sys.onWreckHit(last, q.x - 1, q.y, 1, 0, 1e4, 'mining_laser', 'p1');
+    expect(poses.has(last), 'it stays').toBe(true);
+    expect(sys.pieceIntegrity(last)).toBe(i1);
   });
 
   it('the schema rejects a rock on a child or under a ship parentKind', () => {

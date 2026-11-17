@@ -14,11 +14,13 @@
  * the holds table — hostile-review A3).
  */
 import { randomUUID } from 'node:crypto';
-import type { Hold } from '../../shared-types/goods.js';
+import type { GoodId, Hold } from '../../shared-types/goods.js';
+import { ROCK_CHUNK_PRODUCT } from '../../shared-types/items.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { salvageConsumable, salvageConsumeMass } from '../../core/combat/salvageTargeting.js';
 import type { PieceStoreView } from '../rooms/wreckLineage.js';
+import type { WreckOre } from '../rooms/capitalWreckTypes.js';
 import { cloneHold, emptyHold, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, rollDeathLoss, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import { stream } from '../../core/random/rng.js';
 import { hashString } from '../../core/bases/baseProfile.js';
@@ -93,12 +95,11 @@ export interface LootSubsystemDeps {
    *  (`ForceFieldSubsystem.inTractorHold`)? Such a pod is loaded whole (until
    *  plan cargo-pods F ends ore pods: then a tractor only moves a pod). */
   inTractorHold?: (c: LootCollector, podId: string, x: number, y: number) => boolean;
-  /** Piece store: a WRECK piece goes whole into a collector's hold when its
-   *  own tractor holds it in the hold zone, or (the factory line) when it is
-   *  CONSUMABLE for that ship (`salvageConsumable`: hold size, the AA tier, fits
-   *  its free hold) and touches the hull (`shipWithinHullReach`, to the
-   *  piece's edge). A rock piece never goes in whole (the lasers cut it down
-   *  to ore pods). Absent ⇒ pods only. */
+  /** Piece store: a piece goes whole into a collector's hold when its own
+   *  tractor holds it in the hold zone, or (the factory line) when it is
+   *  CONSUMABLE for that ship (`salvageConsumable`) and touches the hull
+   *  (`shipWithinHullReach`, to the piece's edge). A wreck piece goes in as
+   *  salvage, a rock piece as one rock chunk (`chunkOre`). Absent ⇒ pods only. */
   heldPieces?: {
     /** Any tractor lease or live piece (cheap gate for the pass). */
     any: () => boolean;
@@ -113,6 +114,9 @@ export interface LootSubsystemDeps {
     /** Remove the stored piece (`CapitalWreckSubsystem.storePiece`). */
     remove: (pieceId: string) => void;
   };
+  /** A rock chunk's hidden ore (`OreDraw.chunkYield`, the one ore path).
+   *  Absent: a rock piece is never taken in. */
+  chunkOre?: (ore: WreckOre, x: number, y: number, weight: number) => Partial<Record<GoodId, number>>;
   /** Discrete notifications (UI accelerator + audit). */
   onCollected?: (c: LootCollector, moved: Hold, podId: string) => void;
   onDropped?: (podId: string, hold: Hold, cause: string) => void;
@@ -380,34 +384,41 @@ export class LootSubsystem {
   /** A piece the collector's own tractor holds in its hold zone. Bound once. */
   private readonly storeHeldPiece = (pieceId: string): void => {
     const c = this.pieceCollector;
-    if (c !== null) this.storePiece(c, pieceId, false);
+    if (c !== null) this.storePiece(c, pieceId, false, c.x, c.y);
   };
 
   /** A piece near the collector (the factory line): taken in only when it
    *  touches the hull and is consumable for this ship. Bound once. */
   private readonly consumeNearPiece = (pieceId: string, px: number, py: number, pr: number): void => {
     const c = this.pieceCollector;
-    if (c !== null && shipWithinHullReach(c.kind.id, c.shieldUp, px, py, c.x, c.y, c.angle, pr)) this.storePiece(c, pieceId, true);
+    if (c !== null && shipWithinHullReach(c.kind.id, c.shieldUp, px, py, c.x, c.y, c.angle, pr)) this.storePiece(c, pieceId, true, px, py);
   };
 
   /**
-   * Piece store: a WRECK piece goes WHOLE into `c`'s hold, as the salvage it
-   * would leave when worn out (`heldPieces.store`). Never a rock piece
-   * (`ore`): the lasers cut it down to ore pods (owner 2026-11-16). One
+   * Piece store: a piece goes WHOLE into `c`'s hold (`heldPieces.store`): a
+   * WRECK piece as the salvage it would leave when worn out, a ROCK piece
+   * (`ore`) as one rock chunk of its weight carrying its hidden ore
+   * (`chunkOre`; owner 2026-11-17: never a pod, never ore until refined). One
    * `HoldStore` commit of the fuller ship record, then the piece leaves
-   * through the wreck system's removal path. All or nothing: a hold without room for all of it changes
-   * nothing and the piece stays (no pod). `consume`: only a piece consumable
-   * for this ship (`salvageConsumable`). The room check allocates nothing, so
-   * a full hold costs nothing per pass (#14).
+   * through the wreck system's removal path. All or nothing: a hold without
+   * room for all of it changes nothing and the piece stays. `consume`: only a
+   * piece consumable for this ship (`salvageConsumable`). The room check
+   * allocates nothing, so a full hold costs nothing per pass (#14).
    */
-  private storePiece(c: LootCollector, pieceId: string, consume: boolean): void {
+  private storePiece(c: LootCollector, pieceId: string, consume: boolean, x: number, y: number): void {
     const hp = this.d.heldPieces;
     const v = this.pieceView;
-    if (hp === undefined || !hp.store(pieceId, v) || v.qty <= 0 || v.ore !== undefined) return; // gone, worth nothing, or a rock's (cut to pods)
+    if (hp === undefined || !hp.store(pieceId, v) || v.qty <= 0) return; // gone, or worth nothing
+    if (v.ore !== undefined && this.d.chunkOre === undefined) return;
     const shipRec = this.d.holdStore.get(c.shipInstanceId);
     const free = c.capacity - (shipRec !== undefined ? holdWeight(shipRec.hold) : 0) + 1e-9;
     if (consume ? !salvageConsumable(v, salvageConsumeMass(c.kind), free) : v.holdWeight > free) return; // no room: it stays
-    const moved: Hold = { goods: { salvage: v.qty }, blueprints: [] };
+    const moved: Hold = v.ore === undefined
+      ? { goods: { salvage: v.qty }, blueprints: [] }
+      : { goods: {}, blueprints: [], packed: [{
+        product: ROCK_CHUNK_PRODUCT, quality: 0, uid: `rc-${randomUUID()}`, weight: v.holdWeight,
+        ore: this.d.chunkOre!(v.ore, x, y, v.holdWeight) as Record<string, number>,
+      }] };
     const shipHold = shipRec !== undefined ? cloneHold(shipRec.hold) : emptyHold();
     mergeInto(shipHold, cloneHold(moved));
     this.d.holdStore.commit([this.shipRecord(c, shipHold)], [], this.persist());

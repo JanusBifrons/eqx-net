@@ -28,19 +28,31 @@ export function packedWeightOf(product: string): number {
   return DEFAULT_PACKED_HULL_WEIGHT;
 }
 
+/** Cargo weight of one packed ITEM: its own `weight` (a rock chunk) or its
+ *  product's (`packedWeightOf`). Every weight sum reads this. */
+export function packedItemWeight(p: PackedItem): number {
+  return p.weight ?? packedWeightOf(p.product);
+}
+
 /** Add one packed item (the production pass / a test seed). Mutates. */
 export function addPacked(h: Hold, product: string, quality: number): void {
   (h.packed ??= []).push({ product, quality: Math.max(0, Math.min(100, Math.round(quality))) });
 }
 
-/** Take the best-quality packed `product` out of `h` (placement / unpack), or
+/** Take a packed item out of `h`: the one whose `uid` is `key` (a rock
+ *  chunk), else the best-quality one of product `key` (placement / unpack);
  *  null when there is none. Mutates. */
-export function takePacked(h: Hold, product: string): PackedItem | null {
+export function takePacked(h: Hold, key: string): PackedItem | null {
   const list = h.packed;
   if (!list) return null;
   let best = -1;
   for (let i = 0; i < list.length; i++) {
-    if (list[i]!.product === product && (best < 0 || list[i]!.quality > list[best]!.quality)) best = i;
+    if (list[i]!.uid === key) { best = i; break; }
+  }
+  if (best < 0) {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i]!.uid === undefined && list[i]!.product === key && (best < 0 || list[i]!.quality > list[best]!.quality)) best = i;
+    }
   }
   if (best < 0) return null;
   const [item] = list.splice(best, 1);
@@ -61,8 +73,33 @@ export function emptyHold(): Hold {
 
 export function cloneHold(h: Hold): Hold {
   const c: Hold = { goods: { ...h.goods }, blueprints: h.blueprints.map((b) => ({ ...b })) };
-  if (h.packed && h.packed.length > 0) c.packed = h.packed.map((p) => ({ ...p }));
+  if (h.packed && h.packed.length > 0) c.packed = h.packed.map((p) => (p.ore !== undefined ? { ...p, ore: { ...p.ore } } : { ...p }));
   return c;
+}
+
+/** Last `wireHold` result per hold: the packed list it was built from and
+ *  its length, so a snapshot resends the same copy (no per-tick alloc, #14). */
+const wireCache = new WeakMap<Hold, { packed: PackedItem[]; n: number; out: Hold }>();
+
+/** `h` as a client may see it: a rock chunk's hidden `ore` stripped (the
+ *  gacha: you learn a chunk's ore only at the refinery). Returns `h` itself
+ *  when nothing is hidden; a stripped copy shares `goods`/`blueprints` and is
+ *  cached per hold while its packed list is unchanged. */
+export function wireHold(h: Hold): Hold {
+  const list = h.packed;
+  if (list === undefined) return h;
+  let hidden = false;
+  for (const p of list) if (p.ore !== undefined) { hidden = true; break; }
+  if (!hidden) return h;
+  const hit = wireCache.get(h);
+  if (hit !== undefined && hit.packed === list && hit.n === list.length && hit.out.goods === h.goods && hit.out.blueprints === h.blueprints) return hit.out;
+  const out: Hold = { goods: h.goods, blueprints: h.blueprints, packed: list.map((p) => {
+    if (p.ore === undefined) return p;
+    const { ore: _ore, ...shown } = p;
+    return shown;
+  }) };
+  wireCache.set(h, { packed: list, n: list.length, out });
+  return out;
 }
 
 /** Total cargo weight (blueprints weigh nothing; credits are not cargo;
@@ -73,7 +110,7 @@ export function holdWeight(h: Hold): number {
     const n = h.goods[id];
     if (n) w += n * GOOD_DEFS[id].weight;
   }
-  if (h.packed) for (const p of h.packed) w += packedWeightOf(p.product);
+  if (h.packed) for (const p of h.packed) w += packedItemWeight(p);
   return w;
 }
 
@@ -122,7 +159,7 @@ export function transferInto(dst: Hold, src: Hold, dstCapacity: number): Transfe
   if (src.packed && src.packed.length > 0) {
     const keep: PackedItem[] = [];
     for (const p of src.packed) {
-      const w = packedWeightOf(p.product);
+      const w = packedItemWeight(p);
       if (w <= room + 1e-9) {
         (dst.packed ??= []).push(p);
         (moved.packed ??= []).push(p);
@@ -159,7 +196,8 @@ export function mergeInto(dst: Hold, src: Hold): void {
 
 /** C1 (plan soft-leaping-truffle v3) — the items a player asked to move
  *  between two holds: goods by count, blueprints by uid, packed items by
- *  product (one entry per item). */
+ *  product, or by uid for a one-of-a-kind item (a rock chunk; one entry per
+ *  item). */
 export interface CargoRequest {
   goods?: Partial<Record<GoodId, number>>;
   blueprints?: readonly string[];
@@ -194,8 +232,8 @@ export function extractRequested(src: Hold, want: CargoRequest): Hold {
     }
   }
   if (want.packed && want.packed.length > 0) {
-    for (const product of want.packed) {
-      const item = takePacked(src, product);
+    for (const key of want.packed) {
+      const item = takePacked(src, key);
       if (item) (out.packed ??= []).push(item);
     }
   }

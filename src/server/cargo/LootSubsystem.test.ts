@@ -4,6 +4,7 @@ import { LootSubsystem, LOOT_POD_TTL_MS, MAX_LIVE_LOOT_PER_SECTOR, type LootColl
 import { HoldStore } from './HoldStore.js';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { Hold } from '../../shared-types/goods.js';
+import { ROCK_CHUNK_PRODUCT } from '../../shared-types/items.js';
 import { getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { salvageTierMass } from '../../core/combat/salvageTargeting.js';
 import type { PieceStoreView } from '../rooms/wreckLineage.js';
@@ -50,6 +51,7 @@ function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; 
     podPose: (id) => poses.get(id) ?? null,
     forEachCollector: (visit) => { for (const c of collectors) visit(c); },
     onCollected: (_c, moved, podId) => { collected.push({ moved, podId }); },
+    chunkOre: (_ore, _x, _y, weight) => ({ minerals: weight * 2 }), // a stand-in for OreDraw.chunkYield
     ...(opts.heldPieces ? { heldPieces: opts.heldPieces } : {}),
   });
   return { loot, store, ops, poses, indexes, despawned, collected, collectors, advance: (ms: number) => { now += ms; } };
@@ -273,9 +275,26 @@ describe('LootSubsystem: tractored wreck pieces are stored whole (piece store)',
     expect(t.loot.podCount()).toBe(0);
   });
 
-  it('a rock piece is never stored whole: the lasers cut it down to ore pods', () => {
+  it('a held rock piece goes in whole as ONE rock chunk: its own tile, weight and hidden ore, never goods', () => {
     const { t, removed, pieces } = rig(300);
     pieces.set('wreck-1', -7); // the rig's marker: a rock piece
+    t.loot.collectTick();
+    expect(removed).toEqual(['wreck-1']);
+    const hold = t.store.get('ship-1')!.hold;
+    expect(hold.goods, 'never ore on pickup').toEqual({});
+    expect(hold.packed).toHaveLength(1);
+    const chunk = hold.packed![0]!;
+    expect(chunk.product).toBe(ROCK_CHUNK_PRODUCT);
+    expect(chunk.uid).toMatch(/^rc-/);
+    expect(chunk.weight).toBe(7);
+    expect(chunk.ore).toEqual({ minerals: 14 });
+    expect(t.ops, 'one persisted write').toHaveLength(1);
+    expect(t.loot.podCount(), 'never a pod').toBe(0);
+  });
+
+  it('a rock chunk heavier than the free hold stays where it is', () => {
+    const { t, removed, pieces } = rig(5);
+    pieces.set('wreck-1', -7);
     t.loot.collectTick();
     expect(removed).toEqual([]);
     expect(t.store.get('ship-1')).toBeUndefined();
@@ -343,12 +362,13 @@ describe('LootSubsystem: consumable pieces are taken in by proximity (the factor
     expect(t.ops, 'one persisted write').toHaveLength(1);
   });
 
-  it('a rock piece at the hull is never taken in whole (only its ore pods are)', () => {
+  it('a rock piece touching the hull goes in whole as one chunk', () => {
     const kind = miner();
     const { t, removed } = rig(kind, { r: { x: 0, y: side(kind, 4), radius: 10, qty: 6, rock: true } });
     t.loot.collectTick();
-    expect(removed, 'never whole: the lasers cut it to ore pods').toEqual([]);
-    expect(t.store.get('ship-1')).toBeUndefined();
+    expect(removed).toEqual(['r']);
+    const packed = t.store.get('ship-1')!.hold.packed ?? [];
+    expect(packed.map((p) => p.product)).toEqual([ROCK_CHUNK_PRODUCT]);
   });
 
   it('a hold without room for it: not consumable, the piece stays', () => {

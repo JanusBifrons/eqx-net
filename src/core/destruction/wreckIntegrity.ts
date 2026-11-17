@@ -63,7 +63,8 @@ export function wreckHullArea(source: ShipKindId | WreckSource): number {
 }
 
 /** Is a worn-out piece of this area and radius big enough to break again?
- *  (Too small ⇒ it turns into salvage, or a rock's into an ore pod.) */
+ *  (Too small ⇒ a ship's turns into salvage; a rock's stays a piece and
+ *  stops wearing, to go into a hold whole as one rock chunk.) */
 export function wreckCanResplit(source: ShipKindId | WreckSource, area: number, radius: number): boolean {
   const src = asWreckSource(source);
   const rs = src.profile.resplit;

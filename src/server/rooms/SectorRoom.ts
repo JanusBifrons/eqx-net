@@ -339,7 +339,7 @@ import { clampRequest, isRequestEmpty, searchView } from '../../core/cargo/lootS
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
-import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
+import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, wireHold, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
@@ -2927,6 +2927,7 @@ export class SectorRoom extends Room<SectorState> {
       // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole; a consumable piece near the hull too.
       inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
       heldPieces: { any: () => this.forceFields.tractorCount > 0 || (this.capitalWrecks?.liveCount() ?? 0) > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), near: (x, y, reach, maxM, visit) => this.capitalWrecks?.forEachPieceNear(x, y, reach, maxM, visit), store: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, remove: (id) => this.capitalWrecks?.storePiece(id) },
+      chunkOre: (ore, x, y, weight) => this.oreDraw.chunkYield(ore.rockId, x, y, weight, ore.resource),
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
       onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
       onDestroyed: (podId, hold, cause) => auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
@@ -4062,7 +4063,12 @@ export class SectorRoom extends Room<SectorState> {
         if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
         ref = p.data.ship !== undefined ? { ship: p.data.ship } : { entityId: p.data.entityId! };
       }
-      const send = (st: CargoState): void => { try { client.send('cargo_state', st); } catch { /* closing */ } };
+      // A rock chunk's ore never leaves the server (`wireHold`: the gacha).
+      const send = (st: CargoState): void => {
+        if (st.hold !== null) st.hold = wireHold(st.hold);
+        if (st.ship !== null) st.ship = wireHold(st.ship);
+        try { client.send('cargo_state', st); } catch { /* closing */ }
+      };
       // C3 — a ship (an NPC ship by entityId, a player's ship / parked hull).
       if (ref.ship !== undefined || this.swarmRegistry.getByEntityId(ref.entityId!)?.kind === 1) {
         send(this.shipCargo(playerId, ref, move));
@@ -5726,7 +5732,7 @@ export class SectorRoom extends Room<SectorState> {
         if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
         return slot !== undefined;
       },
-      dropSalvage: (qty, x, y, vx, vy, ore, root) => this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage', root }),
+      dropSalvage: (qty, x, y, vx, vy, root) => this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage', root }),
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       pieceSplit: (from, ids, masses, pods) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks, pods),
     });
