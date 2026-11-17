@@ -73,6 +73,7 @@ import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 import { wreckSwitchOn } from './wreckSwitch.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
+import type { FieldClearing } from '../../core/terrain/fieldLayout.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { AiInputBatch } from '../../core/ai/AiInputBatch.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
@@ -1912,7 +1913,7 @@ export class SectorRoom extends Room<SectorState> {
        * mix) instead of using `asteroidConfig` + `droneCount`. When set,
        * suppresses both legacy paths so we don't double-spawn.
        */
-      cutField?: { seed: string }; // macro terrain v2: test/showcase rooms only (docs/architecture/macro-terrain.md)
+      cutField?: { seed: string; clearings?: FieldClearing[] }; // macro terrain v2 (clearings: galaxy sectors, F4): test/showcase rooms only (docs/architecture/macro-terrain.md)
       swarmCount?: number;
       swarmRatio?: number; // asteroid fraction; default 0.8
       swarmRadius?: number; // spawn disc radius; default 18 000
@@ -3231,7 +3232,7 @@ export class SectorRoom extends Room<SectorState> {
     this.selectionStatsTimer.unref?.();
 
     if (this.testMode) this.persistSector = roomOpts.persistSector !== false; // cut field before any seeding: placement sees its rocks (C5)
-    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null ? terrainRecordStoreFor(`${this.sectorKey}|${roomOpts.cutField.seed}`) : undefined });
+    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null ? terrainRecordStoreFor(`${this.sectorKey}|${roomOpts.cutField.seed}`) : undefined }, roomOpts.cutField.clearings);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).

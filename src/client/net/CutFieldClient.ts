@@ -25,7 +25,7 @@ import {
   fieldRockId,
   type FieldRockBody,
 } from '@core/terrain/chunkStreamer';
-import { CHUNK_SIZE, coarseFieldTiles, rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
+import { CHUNK_SIZE, coarseFieldTiles, rocksInChunk, unpackRockKey, type ChunkOpts, type FieldClearing } from '@core/terrain/fieldLayout';
 import { collapsePackedRock, packChunk, packCoarseTile, packedRockBody, type PackedChunk, type PackedCoarseTile } from '@core/terrain/packedChunk';
 import { FieldConsumedSchema, FieldMovedSchema, type FieldRockPose } from '@shared-types/messages/snapshotMessages';
 import { wantPredBody } from '../structures/predStructureStreaming.js';
@@ -109,6 +109,13 @@ function rocksOf(chunk: PackedChunk): PackedRock[] {
 const NO_OUTLINES = new Float32Array(0);
 const NO_KEYS: readonly number[] = [];
 const NO_POSES: readonly FieldRockPose[] = [];
+const NO_CLEARINGS: readonly FieldClearing[] = [];
+/** Same clearings in the same order (a welcome per join: never per frame). */
+function sameClearings(a: readonly FieldClearing[], b: readonly FieldClearing[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) { const p = a[i]!, q = b[i]!; if (p.x !== q.x || p.y !== q.y || p.r !== q.r) return false; }
+  return true;
+}
 /** Where a moved rock was left (C2 deep sleep), as the server saved it. */
 interface MovedPose { x: number; y: number; a: number }
 /** Placing a moved rock's predWorld body (a spawn, never per frame). */
@@ -186,12 +193,13 @@ export class CutFieldClient implements FieldRockSource {
 
   /** From the welcome: a seed turns the field on, null turns it off.
    *  `consumed` is the whole consumed set and `moved` every moved rock's
-   *  pose, so they replace ours. */
-  setSeed(seed: string | null, consumed: readonly number[] = NO_KEYS, moved: readonly FieldRockPose[] = NO_POSES): void {
-    if (seed !== this.seed) {
+   *  pose, so they replace ours. `clearings` (galaxy sectors, F4) shape the
+   *  cut like the seed does: a change re-cuts the field. */
+  setSeed(seed: string | null, consumed: readonly number[] = NO_KEYS, moved: readonly FieldRockPose[] = NO_POSES, clearings: readonly FieldClearing[] = NO_CLEARINGS): void {
+    if (seed !== this.seed || !sameClearings(clearings, this.field?.clearings ?? NO_CLEARINGS)) {
       this.stop();
       this.seed = seed;
-      if (seed !== null) this.start(seed);
+      if (seed !== null) this.start(seed, clearings);
     }
     this.consumed.clear();
     for (const k of consumed) this.consume(k);
@@ -265,8 +273,8 @@ export class CutFieldClient implements FieldRockSource {
     this.dropRock(id);
   }
 
-  private start(seed: string): void {
-    const field = cutFieldOpts(seed);
+  private start(seed: string, clearings: readonly FieldClearing[]): void {
+    const field = cutFieldOpts(seed, clearings);
     this.field = field;
     this.streamer = new CutFieldStreamer<PackedRock>(field, {
       // The own ship first (its collision rocks), then the camera centre with

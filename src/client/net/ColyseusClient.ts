@@ -1675,7 +1675,7 @@ export class ColyseusGameClient {
       // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
       this.mirror.subcapWrecks = msg.subcapWrecks === true;
       // Cut field on: cut the same rocks as the server from its seed (#16).
-      this._cutField.setSeed(msg.cutField?.seed ?? null, msg.cutField?.consumed, msg.cutField?.moved);
+      this._cutField.setSeed(msg.cutField?.seed ?? null, msg.cutField?.consumed, msg.cutField?.moved, msg.cutField?.clearings);
       // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
       // set (#16); snapshots then carry only adds, removes and a slow resync.
       if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
