@@ -3,7 +3,8 @@
  * arrives as ore pods). A mining-laser hit on a whole rock pays NO ore into
  * the shooter's hold: it only cuts. The rock's pool stays whole until it
  * breaks, is shared out to its pieces by area, and the pieces' ore pods carry
- * it (`OreDraw.cutYield`). Ordinary guns neither mine nor cut.
+ * it (`OreDraw.cutYield`), each up to a pod's size (`SALVAGE_POD_MAX_WEIGHT`:
+ * a share over it stays unmined). Ordinary guns neither mine nor cut.
  *
  * The pilot flies a fighter whose latent wing mount carries the mining laser
  * (seeded on the roster + live hull), locks the rock (`lockTarget`) and fires
@@ -16,6 +17,8 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getHoldStore, getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
+import { SALVAGE_POD_MAX_WEIGHT } from '../../../src/shared-types/worldEvents.js';
+import { asteroidYieldWeightPerUnit } from '../../../src/shared-types/asteroidResources.js';
 
 const WRECK_KIND = 4;
 
@@ -62,7 +65,7 @@ describe('SectorRoom integration — mining-laser ore arrives only as ore pods',
     expect(holdTotal(shipId), 'no ore per hit').toBe(0);
   });
 
-  it('cut to the last sliver, the pods carry the rock\'s full ore and nothing reaches the hold on the way', { timeout: 40_000 }, async () => {
+  it('cut to the last sliver: nothing reaches the hold on the way, and every pod is a full pod', { timeout: 40_000 }, async () => {
     const { room, pid, shipId, rockId } = await setup(60);
     const int = room._internals;
     int.setWreckSeed(9);
@@ -94,7 +97,9 @@ describe('SectorRoom integration — mining-laser ore arrives only as ore pods',
     }
     console.log(`[oreDraw] rock pool ${pool0}; ${pods} pods carry ${podOre}`);
     expect(pods).toBeGreaterThan(0);
-    // Each pod rounds its share to whole units: at most half a unit off per pod.
-    expect(Math.abs(podOre - pool0), 'the pods carry the rock\'s full ore').toBeLessThanOrEqual(pods / 2);
+    // The pool was whole at the break, so every sliver's share is far over a
+    // pod's size: each pod is a FULL pod (none shrunk by a per-hit draw).
+    const podMax = Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit('rock'));
+    expect(podOre, 'every pod full').toBe(pods * podMax);
   });
 });
