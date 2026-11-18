@@ -19,7 +19,7 @@ import type { SectorState } from '../../../src/server/rooms/schema/SectorState.j
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
-import { DEPOSIT_WAITING } from '../../../src/shared-types/messages/snapshotMessages.js';
+import { DEPOSIT_FLOW_STEP, DEPOSIT_WAITING, depositFlowOf, depositPctOf } from '../../../src/shared-types/messages/snapshotMessages.js';
 import { decodeRigHoldTicks } from '../../../src/shared-types/structureStateWire.js';
 import { CRANE_CARGO_IN } from '../../../src/core/articulation/craneCargo.js';
 import { DOCK_UNLOAD_HOLD_MIN_TICKS } from '../../../src/core/articulation/rigCatalogue.js';
@@ -146,7 +146,7 @@ describe('SectorRoom integration — dock crane dwell (structure-restyle 3b)', (
       }
     });
     expect(await until(() => seen.includes(DEPOSIT_WAITING), 4_000), 'a parked ship on a busy dock reads waiting').toBe(true);
-    expect(seen.some((v) => v !== undefined && v > 0), 'no progress while waiting').toBe(false);
+    expect(seen.some((v) => v !== undefined && depositPctOf(v) > 0), 'no progress while waiting').toBe(false);
     expect(aboard(shipId)).toEqual(CARGO.goods);
 
     // The other ship's cycle ends: this ship is next, its readout counts up.
@@ -163,6 +163,8 @@ describe('SectorRoom integration — dock crane dwell (structure-restyle 3b)', (
     expect(decodeRigHoldTicks(st!.rigHold!)).toBe(dock.rigClip!.holdTicks);
     const last = seen[seen.length - 1];
     expect(last !== undefined && last >= 0, 'served: the readout is progress again').toBe(true);
+    // The readout says it is an unload (the HUD drains its bar), not a fill.
+    expect(last !== undefined && last >= DEPOSIT_FLOW_STEP && depositFlowOf(last), 'served: an unload readout').toBe(CRANE_CARGO_IN);
     expect(await until(() => clipOf(dock) === 'arm-retract', 12_000)).toBe(true);
     expect(getHoldStore().get(shipId), 'served after the first ship').toBeUndefined();
   });

@@ -124,6 +124,23 @@ export const SESSION_REPLACED_CLOSE_CODE = 4002;
  *  come, first served). Progress is otherwise 0..100. */
 export const DEPOSIT_WAITING = -1;
 
+/** A crane bay's cycle adds which way the goods go to `depositing`:
+ *  `flow * DEPOSIT_FLOW_STEP + pct`, flow 1 unloading (ship -> dock), 2
+ *  loading (`CRANE_CARGO_IN` / `_OUT`), pct 0..99 through that move. The
+ *  HUD drains the bar for an unload and fills it for a load; the hover
+ *  deposit's dwell timer has no flow (plain 0..100). */
+export const DEPOSIT_FLOW_STEP = 1000;
+
+/** The cargo direction in a `depositing` value (0 none). */
+export function depositFlowOf(v: number): number {
+  return v >= DEPOSIT_FLOW_STEP ? Math.floor(v / DEPOSIT_FLOW_STEP) : 0;
+}
+
+/** The progress 0..100 in a `depositing` value (0 for `DEPOSIT_WAITING`). */
+export function depositPctOf(v: number): number {
+  return v < 0 ? 0 : v % DEPOSIT_FLOW_STEP;
+}
+
 export {
   WRECK_ID_END,
   MAX_WRECK_PIECE_INDEX,
@@ -342,7 +359,8 @@ export interface SnapshotMessage {
       fitted?: string[];
       /** Living World P1a-2 — auto-deposit progress 0..100 (own active ship only;
        *  absent ⇒ not depositing), or `DEPOSIT_WAITING` (parked on a freight
-       *  dock whose crane is serving another ship). Drives the HUD deposit bar. */
+       *  dock whose crane is serving another ship); a crane cycle adds the
+       *  cargo direction (`DEPOSIT_FLOW_STEP`). Drives the HUD deposit bar. */
       depositing?: number;
       /** Fire control (exp/fire-control) — the OWN active pilot's weapon groups:
        *  id, mode (m: 0 auto / 1 manual) and lock queue (t: target key,

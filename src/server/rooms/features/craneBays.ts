@@ -7,11 +7,11 @@
  *
  * Docs: docs/features/loot-and-cargo.md, docs/architecture/server-thresholds.md.
  */
-import { CRANE_CARGO_IN, CRANE_CARGO_OUT } from '../../../core/articulation/craneCargo.js';
+import { CRANE_CARGO_IN, CRANE_CARGO_OUT, craneCargoReadout } from '../../../core/articulation/craneCargo.js';
 import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, craneBayFor, dockUnloadHoldTicks, isStillForDock, onStructureCraneBay } from '../../../core/articulation/rigCatalogue.js';
 import { holdWeight, isHoldEmpty } from '../../../core/cargo/hold.js';
 import type { Hold } from '../../../shared-types/goods.js';
-import { DEPOSIT_WAITING } from '../../../shared-types/messages/snapshotMessages.js';
+import { DEPOSIT_FLOW_STEP, DEPOSIT_WAITING } from '../../../shared-types/messages/snapshotMessages.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import type { LootCollector } from '../../cargo/LootSubsystem.js';
 import type { LootCollectors } from '../../cargo/LootCollectors.js';
@@ -241,9 +241,11 @@ export class CraneBays {
       loadW = storage.outletLoadWeight(dock, c.capacity - (hold ? holdWeight(hold) : 0) + Math.max(0, unloadW));
     }
     if (unloadW < 0 && !(loadW > 0)) { this.dropDepositDwell(c.playerId); return; }
+    const cargo = (unloadW >= 0 ? CRANE_CARGO_IN : 0) | (loadW > 0 ? CRANE_CARGO_OUT : 0);
     if (d === undefined) {
       this.depositDwell.set(c.playerId, { targetId: dock.id, sinceTick: tick, shipId: c.shipInstanceId, phase: 'settle' });
-      this.depositProgress.set(c.shipInstanceId, 0);
+      // The readout says which way the goods will go from the start (unload first).
+      this.depositProgress.set(c.shipInstanceId, craneCargoReadout(0, 0, cargo, DEPOSIT_FLOW_STEP));
       return;
     }
     // Settling: progress 0. Waiting for the crane (another ship's cycle):
@@ -255,14 +257,16 @@ export class CraneBays {
     d.clipTick = tick;
     d.seenTick = tick;
     d.holdTicks = dockUnloadHoldTicks(Math.max(0, unloadW) + loadW, c.capacity);
-    d.cargo = (unloadW >= 0 ? CRANE_CARGO_IN : 0) | (loadW > 0 ? CRANE_CARGO_OUT : 0);
+    d.cargo = cargo;
+    this.setDockProgress(d, tick);
   }
 
-  /** Crane-cycle progress 0..99 over reach + hold (own-ship readout). */
+  /** Own-ship readout over reach + hold (`craneCargoReadout`): which way the
+   *  goods go and how far through that move (0 while the arm reaches). The
+   *  goods move in one trade at hold end; the HUD drains an unload, fills a load. */
   private setDockProgress(d: DepositDwell, tick: number): void {
-    const total = DOCK_CRANE_REACH_TICKS + d.holdTicks!;
-    const done = d.phase === 'reach' ? tick - d.clipTick! : DOCK_CRANE_REACH_TICKS + tick - d.clipTick!;
-    this.depositProgress.set(d.shipId, Math.min(99, Math.floor((done / total) * 100)));
+    const elapsed = d.phase === 'hold' ? tick - d.clipTick! : 0;
+    this.depositProgress.set(d.shipId, craneCargoReadout(elapsed, d.holdTicks!, d.cargo ?? 0, DEPOSIT_FLOW_STEP));
   }
 
   /** The arm is out (reaching, holding, or still retracting). */

@@ -44,6 +44,25 @@ export function craneCargoFlow(elapsed: number, holdTicks: number, flow: number)
 }
 
 /**
+ * The own-ship HUD readout `elapsed` ticks into a hold of `holdTicks`
+ * carrying `flow`: the direction (`craneCargoFlow`; before the hold, the
+ * first move: unload first) times `flowStep`, plus 0..99 through THAT move
+ * (a mixed dock's two halves count separately). The goods themselves move
+ * in one trade at hold end; this only says which way and how far along.
+ */
+export function craneCargoReadout(elapsed: number, holdTicks: number, flow: number, flowStep: number): number {
+  if (!(holdTicks > 0) || !(elapsed > 0)) {
+    const first = (flow & CRANE_CARGO_IN) !== 0 ? CRANE_CARGO_IN : flow & CRANE_CARGO_OUT;
+    return first * flowStep;
+  }
+  const dir = craneCargoFlow(Math.min(elapsed, holdTicks - 1), holdTicks, flow);
+  const both = (flow & CRANE_CARGO_BOTH) === CRANE_CARGO_BOTH;
+  const seg = both ? holdTicks / 2 : holdTicks;
+  const t = both && elapsed >= seg ? elapsed - seg : elapsed;
+  return dir * flowStep + Math.min(99, Math.floor((t / seg) * 100));
+}
+
+/**
  * Write clip `clipIndex`'s IK chain in `pose` (already evaluated) into `out`
  * as x, y pairs from the clip's tip (the clamp) back to the chain root: tip,
  * last joint, ..., root joint. Returns the point count (chain length + 1),
