@@ -196,25 +196,6 @@ export const FACE_MOVE_EXIT = (80 * Math.PI) / 180;
 /** Below this wanted speed (× cruise) the nose stays on the lead point:
  *  the pilot's reverse handles a slow back-off without turning away. */
 export const FACE_MOVE_MIN_SPEED = 0.25;
-/**
- * Hull avoidance (ramming is a real weapon since #558, so an accidental ram
- * hurts both ships). Any ship whose closest approach on the current
- * velocities passes inside `hullClearance` (both shield bubbles + a radius), sooner
- * than the time I need to turn the nose sideways at my turn rate and slide
- * clear with my thrust (× `AVOID_SAFETY`, + `AVOID_LATENCY_S`), makes me
- * dodge: nose to the side away from it, thrust and boost. All from the
- * kind's own handling and size, so it follows a retuned ship.
- */
-export const AVOID_SAFETY = 1.3;
-export const AVOID_LATENCY_S = 0.1;
-/** Look this many seconds of closing ahead for a ship to avoid. */
-export const AVOID_LOOK_S = 3;
-/** The dodge side (left / right of the closing velocity) is latched for the
- *  running manoeuvre, and freed once no dodge has been flown for this long
- *  (ticks, 1 s). Picked afresh each tick, it flipped as the two ships slid
- *  across each other's closest-approach point: the turn key flapped at full
- *  rate nose to nose (filmed Robot Orb, 2026-11-14). */
-export const AVOID_SIDE_IDLE_TICKS = 60;
 /** Simulation ticks per second (fixed 60 Hz step). */
 export const TICKS_PER_S_SIM = 60;
 
