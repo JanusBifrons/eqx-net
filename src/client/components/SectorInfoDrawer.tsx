@@ -504,7 +504,7 @@ export function SectorInfoDrawer({
                   onClick={() => sectorKey && onJoin(sectorKey)}
                   sx={{ flex: 1, bgcolor: '#00aa55', color: '#04140b', fontWeight: 700, fontSize: 12, '&:hover': { bgcolor: '#00cc66' } }}
                 >
-                  Join sector
+                  Join the fight
                 </Button>
                 {onSpectate && (
                   // Equinox Phase 5 (WS-3) — join as a SPECTATOR, skipping the

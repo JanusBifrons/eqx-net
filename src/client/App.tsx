@@ -126,9 +126,8 @@ installTestLeakHook();
  *  here from the retired GalaxyOverviewScreen with the single-canvas
  *  refactor — the tap-shield belongs at the tap site. */
 const PICKER_OPEN_DELAY_MS = 200;
-// Living Galaxy P5 — after an auth-gated pick (logged-out → auth → success)
-// the post-auth effect returns to 'galaxy-map' and re-opens the picker for the
-// stashed sector. The map remounts on the phase switch, so wait a beat for
+// After a logged-out "Join the fight" (→ auth → success) the post-auth effect
+// returns to 'galaxy-map' and opens the stashed sector's join (ship picker). The map remounts on the phase switch, so wait a beat for
 // GalaxyPickerChrome to re-register its apiRef, then retry briefly.
 const POST_AUTH_PICKER_OPEN_DELAY_MS = 200;
 
@@ -150,23 +149,19 @@ interface GameSurfaceProps {
    *  to thread the chosen `shipId` to the server's `onJoin`. */
   joinOptionsOverride?: Record<string, unknown>;
   /** Idle (galaxy-picker) spawn entry points. */
-  onSelectRoom?: (roomName: string) => void;
   onSpawnExistingShip?: (shipId: string, sectorKey: string) => void;
   onSpawnNewShip?: (kind: unknown, sectorKey: string) => void;
   /** Equinox Phase 5 (WS-3) — join a sector as a spectator (no ship picker). */
   onSpawnSpectator?: (sectorKey: string) => void;
-  onSelectLocal?: () => void;
 }
 
 function GameSurface({
   surfaceMode,
   roomNameOverride,
   joinOptionsOverride,
-  onSelectRoom,
   onSpawnExistingShip,
   onSpawnNewShip,
   onSpawnSpectator,
-  onSelectLocal,
 }: GameSurfaceProps): JSX.Element {
   const idle = surfaceMode === 'idle';
   // Equinox Phase 7 (Item 1) — ONE map: both the landing picker and the in-game
@@ -451,23 +446,9 @@ function GameSurface({
     const t0 = performance.now();
     logEvent('galaxy_sector_click', { key: sectorKey, mode: 'spawn', ts: t0 });
     logEvent('respawn_clicked', { source: 'sector-pick', sectorKey });
-    // Living Galaxy P5 — auth-gate on PICK. The galaxy map is the logged-out
-    // landing screen (fully interactive), but spawning requires a login: stash
-    // the picked sector and route to the auth flow. On return, the remounted
-    // GameSurface re-opens this sector's picker (see the idle-mount effect
-    // below). A non-reactive getState() read keeps the callback stable.
-    // Auth-gate the spawn ONLY on the landing map (phase 'galaxy-map'). In-game
-    // (Equinox Phase 7 warp map, phase 'game') the pilot is already in a room —
-    // never bounce them to the auth flow.
-    // A pilot who chose "Continue as guest" passes the gate (guests are full
-    // players, economy v2).
-    const auth = useAuthStore.getState();
-    if (useUIStore.getState().phase === 'galaxy-map' && !auth.user && !auth.guest) {
-      logEvent('pick_auth_gate', { sectorKey });
-      useUIStore.getState().setPendingPickSector(sectorKey);
-      useUIStore.getState().setPhase('auth');
-      return;
-    }
+    // The galaxy map is the homepage for every visitor: a tap always opens the
+    // focus view. Login is asked for on the panel's "Join the fight"
+    // (GalaxyPickerChrome `gateJoin`), never on the tap itself.
     window.setTimeout(() => {
       pickerApiRef.current?.openForSector(sectorKey);
     }, PICKER_OPEN_DELAY_MS);
@@ -481,8 +462,8 @@ function GameSurface({
     pickerApiRef.current?.deselect();
   }, []);
 
-  // Living Galaxy P5 — returning from the auth detour after an auth-gated pick:
-  // re-open the picker for the stashed sector. The map remounts on the
+  // Returning from the auth detour after a logged-out "Join the fight": open
+  // the stashed sector's join (ship picker) straight away. The map remounts on the
   // auth→galaxy-map switch, so retry briefly until GalaxyPickerChrome has
   // re-registered its apiRef. Only meaningful in idle (selector) mode; the
   // very first landing has no stashed sector and no-ops.
@@ -502,7 +483,7 @@ function GameSurface({
       if (!pending) return; // already consumed
       if (pickerApiRef.current) {
         useUIStore.getState().setPendingPickSector(null);
-        pickerApiRef.current.openForSector(pending);
+        pickerApiRef.current.resumeGatedJoin(pending);
         return;
       }
       if (++attempts < 40) window.setTimeout(tryOpen, 50);
@@ -938,11 +919,9 @@ function GameSurface({
         <GalaxyPickerChrome
           apiRef={pickerApiRef}
           onFocusChange={onGalaxyFocus}
-          onSelectRoom={onSelectRoom}
           onSpawnExistingShip={onSpawnExistingShip}
           onSpawnNewShip={onSpawnNewShip}
           onSpawnSpectator={onSpawnSpectator}
-          onSelectLocal={onSelectLocal}
         />
       ) : (
         <>
@@ -1055,6 +1034,9 @@ export function App(): JSX.Element {
   // for the same intent; this URL flag lets multi-ship-roster tests
   // build their fixture state without going through the spawn-select UI.
   const autoJoinNewShip = initialUrlParams.get('newShip') === '1';
+  // Dev rooms and single-player have no homepage button: reach them by link
+  // (`?room=test-sector`, `?local=1`).
+  const autoLocal = initialUrlParams.get('local') === '1';
   const initialJoinOpts: Record<string, unknown> | undefined = autoJoinNewShip
     ? { isNewShip: true }
     : undefined;
@@ -1062,7 +1044,8 @@ export function App(): JSX.Element {
   const { user } = useAuthStore();
   // Phase machine lives in Zustand so drawer tabs (Settings "Return to menu",
   // Profile Logout) can change it without prop-drilling through 4 components.
-  // Default initial value in the store is 'meta'; autoJoin overrides on mount.
+  // Default initial value in the store is 'galaxy-map' (the homepage);
+  // autoJoin overrides on mount.
   const phase = useUIStore((s) => s.phase);
   const setPhase = useUIStore((s) => s.setPhase);
   const [roomNameOverride, setRoomNameOverride] = useState<string | undefined>(
@@ -1078,11 +1061,13 @@ export function App(): JSX.Element {
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
-  // Apply autoJoin once on mount — overrides the store's default 'meta'.
+  // Apply autoJoin once on mount — overrides the store's default 'galaxy-map'.
   // Subsequent phase changes are user-driven (drawer buttons, login flow).
   const autoJoinRef = useRef(autoJoin);
+  const autoLocalRef = useRef(autoLocal);
   useEffect(() => {
-    if (autoJoinRef.current) setPhase('game');
+    if (autoLocalRef.current) setPhase('local');
+    else if (autoJoinRef.current) setPhase('game');
   }, [setPhase]);
 
   useAuthExpiryRedirect();
@@ -1108,14 +1093,6 @@ export function App(): JSX.Element {
     if (!userEmail) return;
     if (refreshAutoCaptureLatch()) installStreamingDiag();
   }, [userEmail]);
-
-  const handleSelectRoom = useCallback((roomName: string) => {
-    setRoomNameOverride(roomName);
-    // Clear roster shipId override — legacy sector-click is a fresh spawn
-    // (or implicit limbo-resume), not a specific-ship resume.
-    setJoinOptionsOverride(undefined);
-    setPhase('game');
-  }, [setPhase]);
 
   const handleSpawnExistingShip = useCallback((shipId: string, sectorKey: string) => {
     setRoomNameOverride(`galaxy-${sectorKey}`);
@@ -1147,10 +1124,6 @@ export function App(): JSX.Element {
     setPhase('game');
   }, [setPhase]);
 
-  const handleSelectLocal = useCallback(() => {
-    setPhase('local');
-  }, [setPhase]);
-
   const handleAuthSuccess = useCallback(() => {
     setPhase('galaxy-map');
   }, [setPhase]);
@@ -1159,12 +1132,6 @@ export function App(): JSX.Element {
     useAuthStore.getState().continueAsGuest();
     setPhase('galaxy-map');
   }, [setPhase]);
-
-  // Meta-landing CTA: if logged in, jump to galaxy-map; else, login flow
-  // first (the post-auth handler then continues on to galaxy-map).
-  const handleJoinFromMeta = useCallback(() => {
-    setPhase(user ? 'galaxy-map' : 'auth');
-  }, [user, setPhase]);
 
   // Per-phase content composition lives in PhaseRouter — the App
   // wraps it in LayoutProvider + ErrorBoundary so the
@@ -1175,7 +1142,6 @@ export function App(): JSX.Element {
         <RotatePhoneOverlay />
         <PhaseRouter
           phase={phase}
-          user={user}
           profileOpen={profileOpen}
           setProfileOpen={setProfileOpen}
           settingsOpen={settingsOpen}
@@ -1187,15 +1153,11 @@ export function App(): JSX.Element {
               surfaceMode={phase === 'galaxy-map' ? 'idle' : 'connect'}
               roomNameOverride={roomNameOverride}
               joinOptionsOverride={joinOptionsOverride}
-              onSelectRoom={handleSelectRoom}
               onSpawnExistingShip={handleSpawnExistingShip}
               onSpawnNewShip={handleSpawnNewShip}
               onSpawnSpectator={handleSpawnSpectator}
-              onSelectLocal={handleSelectLocal}
             />
           }
-          onJoinFromMeta={handleJoinFromMeta}
-          onSelectLocal={handleSelectLocal}
           onAuthSuccess={handleAuthSuccess}
           onContinueAsGuest={handleContinueAsGuest}
         />

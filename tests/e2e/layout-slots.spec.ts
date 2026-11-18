@@ -249,11 +249,8 @@ test.describe('layout-slots', () => {
     const page = await ctx.newPage();
     await page.goto(BASE_URL);
 
-    // Living Galaxy P5 — the galaxy map is the landing screen on load; the meta
-    // "Join the fight" landing is retired from the default path (kept reachable
-    // via Return-to-menu / Logout).
+    // The galaxy map is the homepage: the first screen on load.
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('[data-testid="meta-landing"]')).toHaveCount(0);
 
     // The folded landing info (live player count) is surfaced over the map.
     await expect(page.locator('[data-testid="galaxy-landing-player-count"]')).toBeVisible();
@@ -261,7 +258,7 @@ test.describe('layout-slots', () => {
     await ctx.close();
   });
 
-  test('Settings tab "Return to menu" routes back to the meta landing', async ({ browser }) => {
+  test('Settings tab "Return to menu" routes back to the galaxy map', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page); // starts in /?room=test-sector → game phase
@@ -270,13 +267,14 @@ test.describe('layout-slots', () => {
     await page.locator('[data-testid="drawer-tab-settings"]').click();
     await page.locator('[data-testid="settings-return-to-menu"]').click();
 
-    await expect(page.locator('[data-testid="meta-landing"]')).toBeVisible();
-    await expect(page.locator('[data-testid="game-surface"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
+    // Left the game: the in-game drawer toggle is gone (the map shares the canvas).
+    await expect(page.locator('[data-testid="drawer-toggle"]')).toHaveCount(0);
 
     await ctx.close();
   });
 
-  test('Profile tab Logout shows confirm dialog and routes to meta on confirm', async ({ browser }) => {
+  test('Profile tab Logout shows confirm dialog and routes to the galaxy map on confirm', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
@@ -293,8 +291,8 @@ test.describe('layout-slots', () => {
 
     await page.locator('[data-testid="logout-confirm-button"]').click();
 
-    // Meta landing is now visible; localStorage token has been cleared.
-    await expect(page.locator('[data-testid="meta-landing"]')).toBeVisible();
+    // The galaxy map is back; localStorage token has been cleared.
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
     const token = await page.evaluate(() => localStorage.getItem('eqxAuthToken'));
     expect(token).toBeNull();
 
