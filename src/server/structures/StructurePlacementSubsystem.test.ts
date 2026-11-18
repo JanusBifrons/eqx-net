@@ -4,6 +4,9 @@ import { StructureRegistry } from './StructureRegistry.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { SCAFFOLDING_HP_FRACTION } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
+import { SectorObstacles } from '../rooms/SectorObstacles.js';
+import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
+import { SAB_TOTAL_BYTES, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 
 interface Spawned {
   id: string;
@@ -188,5 +191,46 @@ describe('StructurePlacementSubsystem — packed placement seam (P2b)', () => {
   it('without the hook (until packed structures can be bought) everything builds', () => {
     const h = makeHarness();
     expect(h.sub.place('alice', 'missile_turret', 0, 0, { requirePacked: true })).not.toBeNull();
+  });
+});
+
+describe('wreck pieces block placement, never links (wreck fields 7, plan R13)', () => {
+  /** A room's gatherer over one swarm body of `kind` at (300, 0). */
+  function rig(kind: number) {
+    const registry = new StructureRegistry();
+    const sab = new Float32Array(SAB_TOTAL_BYTES / 4);
+    sab[slotBase(0) + SLOT_X_OFF] = 300; sab[slotBase(0) + SLOT_Y_OFF] = 0;
+    const square = [{ x: -40, y: -40 }, { x: 40, y: -40 }, { x: 40, y: 40 }, { x: -40, y: 40 }];
+    const swarm = [{ id: 'w', kind, slot: 0, radius: 57, wreckParts: [square] } as unknown as SwarmEntityRecord];
+    const g = new SectorObstacles({
+      structures: registry, swarm: { all: () => swarm }, sab: () => sab,
+      forEachHull: () => {}, clearanceOf: () => 0, extentOf: () => undefined,
+    });
+    let n = 0;
+    const sub = new StructurePlacementSubsystem({
+      spawnStructure: () => true, seedHealth: () => {}, despawn: () => {}, clamp: (x, y) => ({ x, y }),
+      nextId: () => `pstruct-${n++}`, registry,
+      getObstacles: (near, wrecks) => g.rocks(near, wrecks),
+    });
+    return { sub, registry };
+  }
+
+  it('placing on a loaded wreck piece is refused; clear beside it is accepted', () => {
+    const { sub } = rig(4);
+    expect(sub.place('player-1', 'connector', 300, 0)).toBeNull();
+    expect(sub.place('player-1', 'connector', 300, 400)).not.toBeNull();
+  });
+
+  it('the link line of sight is unchanged with a wreck piece in the way (a rock there still cuts it)', () => {
+    const linked = (kind: number): number => {
+      const { sub, registry } = rig(kind);
+      const a = sub.place('player-1', 'capital', -100, 0)!; // hw 280: clear of the piece at 300
+      const b = sub.place('player-1', 'connector', 600, 0)!;
+      expect(a).not.toBeNull(); expect(b).not.toBeNull();
+      return registry.connectionsOf(b).length;
+    };
+    expect(linked(4)).toBe(linked(99)); // a wreck piece: the same links as nothing there
+    expect(linked(4)).toBeGreaterThan(0);
+    expect(linked(0)).toBe(0); // control: an asteroid on the line blocks it
   });
 });

@@ -81,8 +81,10 @@ export interface StructurePlacementHooks {
    *  LOS check (byte-identical to pre-Item-D). `near` (the footprint, or the
    *  box the new links may run in, `linkReachBox`): also the obstacles with
    *  no body that reach that box (cut-field rocks whose chunk is not loaded,
-   *  macro terrain C5). */
-  getObstacles?: (near?: ObstacleBox) => readonly GridObstacle[];
+   *  macro terrain C5). `wrecks`: placement's own overlap check also wants
+   *  wreck pieces, loaded and not (wreck fields 7); auto-connect's line of
+   *  sight never passes it, so links are unchanged. */
+  getObstacles?: (near?: ObstacleBox, wrecks?: boolean) => readonly GridObstacle[];
 }
 
 export class StructurePlacementSubsystem {
@@ -122,7 +124,7 @@ export class StructurePlacementSubsystem {
     // the auto-connect LOS check already uses). Shared pure predicate so the
     // client ghost can validate identically.
     const near = { x0: pos.x - hw, y0: pos.y - hh, x1: pos.x + hw, y1: pos.y + hh };
-    if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near), rot) !== null) {
+    if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near, true), rot) !== null) {
       return null;
     }
 

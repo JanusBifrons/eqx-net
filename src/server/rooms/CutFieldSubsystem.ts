@@ -80,6 +80,10 @@ const MOVED_EPS_ANGLE = 1e-3;
 /** Where a moved rock was left (C2 deep sleep): its body centre and angle. */
 interface RockPose { x: number; y: number; angle: number }
 
+/** A chunk source on the room's one streamer; with `dormantObstacles`,
+ *  its unloaded bodies join placement's obstacles (wreck fields 7). */
+export type CutFieldSource = ChunkSource & { dormantObstacles?(box: ObstacleBox, out: GridObstacle[]): void };
+
 export class CutFieldSubsystem {
   readonly streamer: CutFieldStreamer;
   private readonly timer: GameTimer;
@@ -104,6 +108,7 @@ export class CutFieldSubsystem {
   private readonly gameClock: GameClock;
   private readonly opts: ChunkOpts | null;
   private nav: CutFieldNavSink | null = null;
+  private readonly sources: readonly CutFieldSource[];
 
   constructor(
     seed: string | null,
@@ -116,8 +121,9 @@ export class CutFieldSubsystem {
     clearings?: readonly FieldClearing[],
     /** The room's other chunk sources (wreck fields), sharing the streamer's
      *  ship scan, `needed` set and budget after the rocks. */
-    sources: readonly ChunkSource[] = [],
+    sources: readonly CutFieldSource[] = [],
   ) {
+    this.sources = sources;
     this.seed = seed;
     this.gameClock = gameClock;
     this.oreBase = seed !== null ? oreSeed(seed) : 0;
@@ -315,8 +321,12 @@ export class CutFieldSubsystem {
    *  collider would have (`fieldRockBody`; none ⇒ the outline's convex hull,
    *  as the collider), at rest: the same obstacle a live rock gives (C5b). A
    *  broken-up rock is gone; a live one is already in `out` from the registry.
-   *  A discrete player action, never per tick. */
-  dormantObstacles(box: ObstacleBox, out: GridObstacle[]): void {
+   *  A discrete player action, never per tick.
+   *  `wrecks` (placement only, wreck fields 7): also the other sources'
+   *  unloaded pieces (a wreck field's hulls, `WreckFieldSource`): one
+   *  query, two sources. Off for connection line of sight and landing. */
+  dormantObstacles(box: ObstacleBox, out: GridObstacle[], wrecks = false): void {
+    if (wrecks) for (const s of this.sources) s.dormantObstacles?.(box, out);
     if (this.opts === null) return;
     for (const r of fieldRocksInBox(this.opts, box.x0, box.y0, box.x1, box.y1)) {
       if (this.consumed.has(r.key) || this.registry.get(fieldRockId(r.key))) continue;

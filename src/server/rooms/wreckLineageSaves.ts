@@ -170,13 +170,13 @@ function rootInputs(d: WreckDescriptor): WreckFractureInputs {
   };
 }
 
-/**
- * Rebuild one saved lineage. Returns its new root wreck id, or null when
- * nothing came back (geometry did not resolve, or no piece could spawn);
- * then nothing is left behind. `origin`: a battle lineage (the evicting
- * FIFOs) or a wreck-field hull's (the field list, wreck fields slice 4).
- */
-export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord, origin: WreckOrigin = 'battle'): number | null {
+/** A saved lineage's geometry: each node's descriptor (provisional id =
+ *  local index + 1) and, for a node with a live piece or a descendant of
+ *  one (`keep`), its pieces through the shared resolver exactly as a client
+ *  would (#15); null for the rest. Null when the root has no live piece or
+ *  a kept node does not resolve. Restore, and placement's view of an
+ *  unloaded field hull (`WreckFieldSource.dormantObstacles`). Allocates. */
+export function resolveLineageGeometry(rec: WreckLineageRecord): { descs: WreckDescriptor[]; geoms: Array<WreckPieceGeometry[] | null>; keep: boolean[] } | null {
   const nodes = rec.nodes;
   const n = nodes.length;
   // Keep a node with a live piece, and every ancestor of one.
@@ -184,9 +184,6 @@ export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord, or
   for (const pc of rec.pieces) keep[pc.node] = true;
   for (let i = n - 1; i > 0; i--) if (keep[i]) keep[nodes[i]!.parent] = true;
   if (!keep[0]) return null;
-
-  // 1. Descriptors with provisional ids (local index + 1), resolved through
-  //    the shared resolver exactly as a client would (#15).
   const descs: WreckDescriptor[] = [];
   const geoms: Array<WreckPieceGeometry[] | null> = [];
   const byId = (id: number): WreckDescriptor | undefined => descs[id - 1];
@@ -202,6 +199,22 @@ export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord, or
     if (g === null) return null;
     geoms.push(g);
   }
+  return { descs, geoms, keep };
+}
+
+/**
+ * Rebuild one saved lineage. Returns its new root wreck id, or null when
+ * nothing came back (geometry did not resolve, or no piece could spawn);
+ * then nothing is left behind. `origin`: a battle lineage (the evicting
+ * FIFOs) or a wreck-field hull's (the field list, wreck fields slice 4).
+ */
+export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord, origin: WreckOrigin = 'battle'): number | null {
+  const nodes = rec.nodes;
+  const n = nodes.length;
+  // 1. Descriptors with provisional ids, resolved as a client would (#15).
+  const resolved = resolveLineageGeometry(rec);
+  if (resolved === null) return null;
+  const { descs, geoms, keep } = resolved;
 
   // 2. Fresh u16 ids and piece serials, then the pieces (children first, so a
   //    node whose pieces all failed to spawn and has no child is never added).

@@ -2,7 +2,8 @@
  * The room's one obstacle gatherer (navigation plan, Stage E slice 2).
  *
  * Every question of the form "what solid things are near here?" reads this:
- * structure placement and connection line of sight (`rocks`), warp / trip /
+ * structure placement and connection line of sight (`rocks`; placement alone
+ * opts in to wreck pieces, loaded and not), warp / trip /
  * fleet landing (`landing`), join spawns (`structureBoxes`, `hullCircles`) and
  * convoy spawns. It replaced four hand-written gathers in `SectorRoom` that
  * each saw a different subset (landing missed field rocks with no body and
@@ -20,6 +21,7 @@ import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import type { StructureRecord } from '../structures/StructureRegistry.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { PAD_SPECS, isTeleporterKind, padPostCenters } from '../../shared-types/teleport.js';
+import { SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 
 /** Receives each pilot hull (active ship or parked hull). */
 export interface HullSink {
@@ -37,8 +39,9 @@ export interface SectorObstacleSources {
   structures: { all(): Iterable<StructureRecord> };
   swarm: { all(): Iterable<SwarmEntityRecord> };
   sab(): Float32Array;
-  /** Field rocks reaching into `box` that have no body now (cut field only). */
-  dormantRocks?(box: ObstacleBox, out: GridObstacle[]): void;
+  /** Field rocks reaching into `box` that have no body now (cut field only);
+   *  with `wrecks`, also the wreck field's unloaded hull pieces. */
+  dormantRocks?(box: ObstacleBox, out: GridObstacle[], wrecks?: boolean): void;
   /** Every pilot's active ship and parked hull. */
   forEachHull(sink: HullSink): void;
   /** Every wall that blocks right now. */
@@ -95,12 +98,15 @@ export class SectorObstacles implements HullSink, WallSink {
 
   /** Live asteroids and field rocks (swarm kind 0, SAB pose, collider parts),
    *  plus with `near` the field rocks in that box that have no body. Placement
-   *  and connection line of sight. */
-  rocks(near?: ObstacleBox): GridObstacle[] {
+   *  and connection line of sight. `wrecks` (placement and its preview only,
+   *  wreck fields 7 / plan R13): also wreck pieces (kind 4, battle and field,
+   *  by their parts) and, with `near`, the wreck field's unloaded hulls. Off
+   *  for the link line-of-sight sweep, so links never change. */
+  rocks(near?: ObstacleBox, wrecks = false): GridObstacle[] {
     const out = this.rockList, f = this.src.sab();
     let n = 0;
     for (const rec of this.src.swarm.all()) {
-      if (rec.kind !== 0) continue;
+      if (rec.kind !== 0 && !(wrecks && rec.kind === SWARM_KIND_WRECK)) continue;
       const b = slotBase(rec.slot);
       const o = this.rockPool[n] ??= { x: 0, y: 0, radius: 0 };
       o.x = f[b + SLOT_X_OFF]!; o.y = f[b + SLOT_Y_OFF]!; o.radius = rec.radius; o.angle = f[b + SLOT_ANGLE_OFF]!;
@@ -108,7 +114,7 @@ export class SectorObstacles implements HullSink, WallSink {
       out[n++] = o;
     }
     out.length = n;
-    if (near && this.src.dormantRocks) this.src.dormantRocks(near, out);
+    if (near && this.src.dormantRocks) this.src.dormantRocks(near, out, wrecks);
     return out;
   }
 

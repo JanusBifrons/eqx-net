@@ -43,7 +43,7 @@ room's `obstacles` field. It replaced four hand-written gathers in `SectorRoom` 
 different subset.
 | Call | Sees | Used by |
 |---|---|---|
-| `rocks(near?)` | live rocks (swarm kind 0, SAB pose, collider parts); with `near`, field rocks with no body (`CutFieldSubsystem.dormantObstacles`) | structure placement, connection line of sight, NPC base links (`getObstacles`) |
+| `rocks(near?, wrecks?)` | live rocks (swarm kind 0, SAB pose, collider parts); with `near`, field rocks with no body (`CutFieldSubsystem.dormantObstacles`). `wrecks` (placement only): also wreck pieces (kind 4, battle and field, `wreckParts`) and, with `near`, a wreck field's unloaded hull pieces (`WreckFieldSource.dormantObstacles`) | structure placement (`wrecks` on), connection line of sight and NPC base links (`wrecks` off, so links never change) (`getObstacles`) |
 | `structureBoxes()` | structure solid boxes (a teleporter pad is open, only its posts) | join spawn, convoy spawn (`clearPointNear`) |
 | `landing(...)` | structure boxes, every swarm body within reach (rocks, drones, scrap, wreck pieces, pods), field rocks with no body, other pilots' ships and parked hulls (own skipped, or only `onlySkipShipId`), blocking shield walls and closed gate spans | `landingPoint` (warp, sector trip, fleet and bot warps) |
 | `hullCircles(playerId)` | AI ships and other pilots' hulls by extent (pilots still joining skipped) | join spawn spacing |

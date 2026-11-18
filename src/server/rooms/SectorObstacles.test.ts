@@ -14,6 +14,7 @@ function world() {
   const hulls: Hull[] = [];
   const walls: Array<[number, number, number, number, number]> = [];
   const dormant: GridObstacle[] = [];
+  const dormantFlags: Array<boolean | undefined> = [];
   const addSwarm = (kind: number, x: number, y: number, radius: number, extra: Partial<SwarmEntityRecord> = {}) => {
     const slot = swarm.length;
     const b = slotBase(slot);
@@ -24,7 +25,8 @@ function world() {
     structures: { all: () => structures },
     swarm: { all: () => swarm },
     sab: () => sab,
-    dormantRocks: (box: ObstacleBox, out: GridObstacle[]) => {
+    dormantRocks: (box: ObstacleBox, out: GridObstacle[], wrecks?: boolean) => {
+      dormantFlags.push(wrecks);
       for (const d of dormant) if (d.x >= box.x0 && d.x <= box.x1 && d.y >= box.y0 && d.y <= box.y1) out.push(d);
     },
     forEachHull: (sink: HullSink) => { for (const h of hulls) sink.hull(h.x, h.y, h.kind, h.playerId, h.shipId, h.pending ?? false); },
@@ -32,7 +34,7 @@ function world() {
     clearanceOf: (k) => (k === 'big' ? 500 : 60),
     extentOf: (k) => (k === 'big' ? 400 : k === 'small' ? 50 : undefined),
   };
-  return { sab, swarm, structures, hulls, walls, dormant, addSwarm, g: new SectorObstacles(src) };
+  return { sab, swarm, structures, hulls, walls, dormant, dormantFlags, addSwarm, g: new SectorObstacles(src) };
 }
 
 describe('SectorObstacles (navigation slice 2: the one obstacle gatherer)', () => {
@@ -45,6 +47,23 @@ describe('SectorObstacles (navigation slice 2: the one obstacle gatherer)', () =
     expect(r.map((o) => [o.x, o.y, o.radius])).toEqual([[100, 200, 30]]);
     expect(r[0]!.parts).toHaveLength(1);
     expect(w.g.rocks({ x0: 4000, y0: -100, x1: 6000, y1: 100 }).map((o) => o.radius)).toEqual([30, 90]);
+  });
+
+  it('rocks: wreck pieces (kind 4, by their parts) and unloaded wrecks only when placement opts in (wreck fields 7)', () => {
+    const w = world();
+    const parts = [[{ x: -40, y: -40 }, { x: 40, y: -40 }, { x: 0, y: 40 }]];
+    w.addSwarm(0, 100, 0, 30);
+    w.addSwarm(4, 500, 0, 70, { wreckParts: parts });
+    const box = { x0: -1000, y0: -1000, x1: 1000, y1: 1000 };
+    // Link line of sight (no flag): rocks only, as before.
+    expect(w.g.rocks(box).map((o) => o.radius)).toEqual([30]);
+    expect(w.g.rocks().map((o) => o.radius)).toEqual([30]);
+    // Placement: the wreck piece too, with its convex parts and SAB pose.
+    const r = w.g.rocks(box, true);
+    expect(r.map((o) => [o.x, o.radius])).toEqual([[100, 30], [500, 70]]);
+    expect(r[1]!.parts).toBe(parts);
+    // The flag reaches the dormant query (unloaded wreck hulls) only for placement.
+    expect(w.dormantFlags).toEqual([false, true]);
   });
 
   it('reuses its records and part lists on repeat calls (#14)', () => {
