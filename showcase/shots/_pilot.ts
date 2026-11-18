@@ -116,3 +116,57 @@ export async function face(ctx: ShotContext, tx: number, ty: number, ms = 400): 
   }
   if (key) await ctx.page.keyboard.up(key);
 }
+
+/** Park on a crane bay at (tx, ty): steer in at a speed that falls with
+ *  distance, reverse-thrust to a stop on the spot, then let go of every key (a
+ *  bay serves only a ship sitting still; touching a key during the crane's
+ *  reach / hold aborts it). Resolves true once still on the spot. Mirrors
+ *  tests/showcase/helpers.ts `parkAt`. */
+export async function parkAt(ctx: ShotContext, tx: number, ty: number, maxMs = 12_000): Promise<boolean> {
+  const { page } = ctx;
+  const held = new Set<string>();
+  const set = async (key: string, on: boolean): Promise<void> => {
+    if (on && !held.has(key)) {
+      await page.keyboard.down(key);
+      held.add(key);
+    }
+    if (!on && held.has(key)) {
+      await page.keyboard.up(key);
+      held.delete(key);
+    }
+  };
+  const end = Date.now() + maxMs;
+  let parked = false;
+  let onSpot = false;
+  let stillSince = 0;
+  let prev: { x: number; y: number; t: number } | null = null;
+  while (Date.now() < end) {
+    const p = await localPose(ctx);
+    if (p) {
+      const now = Date.now();
+      const dt = prev ? Math.max(0.001, (now - prev.t) / 1000) : 0;
+      const vx = prev ? (p.x - prev.x) / dt : 0;
+      const vy = prev ? (p.y - prev.y) / dt : 0;
+      prev = { x: p.x, y: p.y, t: now };
+      const dist = Math.hypot(tx - p.x, ty - p.y);
+      if (dist < 40) onSpot = true; // there: stop steering, just kill the speed
+      const diff = onSpot ? 0 : wrapPi(Math.atan2(-(tx - p.x), ty - p.y) - p.angle);
+      await set('ArrowLeft', diff > 0.08);
+      await set('ArrowRight', diff < -0.08);
+      const forward = -vx * Math.sin(p.angle) + vy * Math.cos(p.angle);
+      const want = onSpot || Math.abs(diff) > 0.5 ? 0 : Math.min(220, dist * 0.6);
+      await set('ArrowUp', forward < want - 15);
+      await set('ArrowDown', forward > want + 15);
+      if (onSpot && Math.hypot(vx, vy) < 12) {
+        if (stillSince === 0) stillSince = now;
+        if (now - stillSince > 400) {
+          parked = true;
+          break;
+        }
+      } else stillSince = 0;
+    }
+    await ctx.sleep(50);
+  }
+  for (const k of [...held]) await set(k, false);
+  return parked;
+}

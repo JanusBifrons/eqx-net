@@ -5,7 +5,9 @@
  */
 import type { Shot } from '../types.js';
 import { AS_PILOT, SURVIVE } from './_helpers.js';
-import { face, flyRoute, flyTo, localPose } from './_pilot.js';
+import { CAPITAL_BAY } from '../../src/core/articulation/rigCatalogue.js';
+import { SCENARIO } from '../../src/server/rooms/scenarioLayouts.js';
+import { face, flyRoute, flyTo, localPose, parkAt } from './_pilot.js';
 
 const TRACK = (zoom: number) => [{ atMs: 0, smoothMs: 300, shot: { kind: 'track' as const, target: 'local', zoom, leadMs: 250 } }];
 
@@ -46,26 +48,40 @@ export const cockpitStronghold: Shot = {
   },
 };
 
-/** Fly cargo home past the Miner drilling its asteroid, and unload at the Capital. */
+/** Fly cargo home past the Miner drilling its asteroid, park in the Capital's
+ *  crane bay (its only drop-off, structure-restyle 3f) and let its crane unload
+ *  you: settle, reach, hold (3..10 s with load), bank, retract. The homestead
+ *  Capital sits at rot 0, so its bay is the local-frame offset as is. */
 export const cockpitHaul: Shot = {
   id: 'cockpit-haul',
   section: 'mechanics',
   title: 'Mining and hauling',
-  caption: 'Your Miner drills the asteroid while you haul cargo home — park by your Capital and it unloads itself.',
+  caption: 'Your Miner drills the asteroid while you haul cargo home — park in your Capital’s bay and its crane unloads you.',
   features: ['M27'],
   docs: ['loot-and-cargo'],
   reel: true,
   server: 'lean',
   ...AS_PILOT,
-  target: { room: 'showcase-homestead', params: { shipKind: 'fighter', initialCargo: 'salvage:30,alloy:12' } },
+  target: { room: 'showcase-homestead', params: { shipKind: 'fighter', initialCargo: 'salvage:30,alloy:12', zoom: 1 } },
   hud: 'clean',
-  durationMs: 17_000,
-  camera: TRACK(1.0),
+  durationMs: 40_000,
+  endsWithRun: true,
+  // The game's follow camera (a piloted take has no camera script).
   async run(ctx) {
+    const t0 = Date.now();
     await ctx.sleep(500);
-    await flyRoute(ctx, [[-950, -950], [-560, -200]], { cruise: 200, arrive: 200, maxMs: 9000 });
-    // Brake, then hold still by the Capital while auto-deposit unloads the hold.
-    await ctx.hold(['ArrowDown'], 700);
+    // Past the Miner, up the Capital's west side to its open (+y) edge.
+    await flyRoute(ctx, [[-950, -950], [-560, -200], [-480, 680]], { cruise: 200, arrive: 200, maxMs: 9000 });
+    const bay = { x: SCENARIO.capital.x + CAPITAL_BAY.cx, y: SCENARIO.capital.y + CAPITAL_BAY.cy };
+    if (!(await parkAt(ctx, bay.x, bay.y, 10_000))) ctx.log('cockpit-haul: not still on the bay');
+    // Hands off while the crane works; the take ends once it has banked the
+    // hold and swung back.
+    const banked = ctx.page.getByTestId('loot-feed-line').filter({ hasText: 'Banked' });
+    await banked.waitFor({ state: 'visible', timeout: 16_000 }).then(
+      () => ctx.log(`cockpit-haul: Banked at ${Date.now() - t0} ms`),
+      () => ctx.log('cockpit-haul: no Banked line'),
+    );
+    await ctx.sleep(2_500);
   },
 };
 
