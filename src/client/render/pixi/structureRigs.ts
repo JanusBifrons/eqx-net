@@ -31,14 +31,18 @@
  * frame. Lifted parts (over, plane) also get a drop shadow: a second
  * Graphics on the same context, tinted black, offset down-right.
  *
- * 3e: a rig with an IK chain also gets a cargo crate on the over group,
- * shown while a holding clip carries a hold length and a cargo direction
- * (`craneCargo.ts`): it rides the arm from the clamp into the dock (an
+ * 3e: a rig with an IK chain also carries goods along its arm while a
+ * holding clip has a hold length and a cargo direction (`craneCargo.ts`):
+ * the cable look's flow pulse (`drawCablePulse`, same colour, width, beat
+ * and speed as a cable carrying goods) runs from the clamp into the dock (an
  * unload) and/or back out (a load), timed from the clip on the wire.
  */
 import { Container, Graphics, GraphicsContext } from 'pixi.js';
+import { drawCablePulse } from './connectorLineLooks.js';
+import { connectorVisualInto, type CometSegment, type ConnectorVisual } from './connectorVisual.js';
+import { TRANSFER_PULSE_MS } from '../../../core/structures/structureGridConstants.js';
 import { createRigPose, evaluateRig, type PlayingClip, type RigPose } from '../../../core/articulation/evaluate.js';
-import { craneCargoAlong, craneCargoPoint, type ArmPoint } from '../../../core/articulation/craneCargo.js';
+import { CRANE_CARGO_OUT, craneArmPath, craneCargoFlow } from '../../../core/articulation/craneCargo.js';
 import { twoBoneIkSolve } from '../../../core/articulation/ikAdapter.js';
 import { JOINT_LIFT, liftProgress, rigClipIndex, rigPartIndex, type DrawLayer, type PartDef, type Rig } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
@@ -523,31 +527,6 @@ export function rigPartContext(rig: Rig, i: number, look: RigPartLook = RIG_LOOK
   return ctx;
 }
 
-/** 3e cargo crate: a ribbed freight container, long axis along the arm
- *  (host units, centred on its origin). */
-export const RIG_CARGO_LOOK = {
-  w: 46, h: 32, fill: 0xa65a2a, rib: 0x6e3518, edge: 0x0a0c0e, band: 0xd9a92a,
-} as const;
-
-let cargoContext: GraphicsContext | null = null;
-
-/** The shared crate art (built once). */
-export function rigCargoContext(): GraphicsContext {
-  if (cargoContext !== null) return cargoContext;
-  const L = RIG_CARGO_LOOK, hw = L.w / 2, hh = L.h / 2;
-  const ctx = new GraphicsContext();
-  ctx.rect(-hw, -hh, L.w, L.h).fill(L.fill).stroke({ color: L.edge, width: 2.5 });
-  for (let k = 1; k < 6; k++) {
-    const x = -hw + (L.w * k) / 6;
-    ctx.moveTo(x, -hh + 3).lineTo(x, hh - 3).stroke({ color: L.rib, width: 2 });
-  }
-  // Lifting bands where the clamp grips it.
-  ctx.rect(-hw + 4, -hh, 5, L.h).fill(L.band);
-  ctx.rect(hw - 9, -hh, 5, L.h).fill(L.band);
-  cargoContext = ctx;
-  return ctx;
-}
-
 // ---------------------------------------------------------------- one structure
 
 /** A mutable `PlayingClip` (the evaluator reads it; nothing is allocated). */
@@ -586,10 +565,13 @@ export class StructureRigView {
   private readonly playing: MutablePlaying = { clipId: '', startTick: 0, target: undefined };
   private readonly targetScratch = { x: 0, y: 0 };
   private readonly xf: PixiXform = { x: 0, y: 0, rotation: 0 };
-  /** 3e: the cargo crate riding the arm, and its shadow (null: no IK chain). */
+  /** 3e: the goods flow pulse along the arm, redrawn per frame (null: no IK chain). */
   readonly cargo: Graphics | null = null;
-  private readonly cargoShadow: Graphics | null = null;
-  private readonly armPt: ArmPoint = { x: 0, y: 0, angle: 0 };
+  /** 3e scratch: the arm path (x, y pairs, clamp -> root), the pulse visual, its comet. */
+  private readonly armPath: Float64Array;
+  private readonly pulseVisual: ConnectorVisual = { color: 0, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0 };
+  private readonly comet: CometSegment = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  private cargoDrawn = false;
 
   constructor(readonly rig: Rig) {
     this.pose = createRigPose(rig);
@@ -631,21 +613,14 @@ export class StructureRigView {
       this.slot.label = 'rig-slot';
       this.plane.addChildAt(this.slot, 0); // under every plane shadow and part
     }
+    this.armPath = new Float64Array(2 * (rig.maxChain + 1));
     if (rig.maxChain > 0) {
-      // Over the arm (it rides on top of the jib), its shadow with the others.
-      const ctx = rigCargoContext();
-      const sh = new Graphics(ctx);
-      sh.label = 'rig-cargo-shadow';
-      sh.tint = 0x000000;
-      sh.alpha = RIG_LOOK_C.shadowAlpha;
-      sh.visible = false;
-      this.over.addChildAt(sh, shadowsOver);
-      const g = new Graphics(ctx);
-      g.label = 'rig-cargo';
+      // Over the arm (light on top of the jib; a pulse casts no shadow).
+      const g = new Graphics();
+      g.label = 'rig-cargo-pulse';
       g.visible = false;
       this.over.addChild(g);
       this.cargo = g;
-      this.cargoShadow = sh;
     }
   }
 
@@ -712,24 +687,42 @@ export class StructureRigView {
     this.poseCargo(input, nowTick);
   }
 
-  /** 3e: place the crate along the arm for the playing hold, or hide it. */
+  /** 3e: run the cable flow pulse along the arm for the playing hold
+   *  (clamp -> dock on an unload, dock -> clamp on a load), or hide it. */
   private poseCargo(input: StructureRigInput | null, nowTick: number): void {
-    const g = this.cargo, sh = this.cargoShadow;
-    if (g === null || sh === null) return;
-    const along = input !== null && input.holdTicks !== undefined && input.cargo !== undefined
-      ? craneCargoAlong(nowTick - input.startTick, input.holdTicks, input.cargo)
-      : -1;
-    const pt = this.armPt;
-    const show = along >= 0 && craneCargoPoint(this.rig, rigClipIndex(this.rig, input!.clipId), this.pose, along, pt);
-    g.visible = show;
-    sh.visible = show;
-    if (!show) return;
-    // Host frame (y-up) -> the group's Pixi frame (y-down), like the parts.
-    const d = RIG_LOOK_C.shadowOver;
-    g.position.set(pt.x, -pt.y);
-    g.rotation = -pt.angle;
-    sh.position.set(pt.x + d, -pt.y + d);
-    sh.rotation = -pt.angle;
+    const g = this.cargo;
+    if (g === null) return;
+    const flow = input !== null && input.holdTicks !== undefined && input.cargo !== undefined
+      ? craneCargoFlow(nowTick - input.startTick, input.holdTicks, input.cargo)
+      : 0;
+    const n = flow !== 0 ? craneArmPath(this.rig, rigClipIndex(this.rig, input!.clipId), this.pose, this.armPath) : 0;
+    if (n < 2) {
+      if (this.cargoDrawn) { g.clear(); this.cargoDrawn = false; }
+      g.visible = false;
+      return;
+    }
+    // A cable carrying goods: re-pulsed every TRANSFER_PULSE_MS (the 1 Hz
+    // beat), its comet crossing in CONNECTOR_PULSE_PERIOD_MS, on game time.
+    const nowMs = (nowTick * 1000) / RIG_TICKS_PER_SEC;
+    const flashUntil = (Math.floor(nowMs / TRANSFER_PULSE_MS) + 1) * TRANSFER_PULSE_MS;
+    const v = connectorVisualInto(this.pulseVisual, flashUntil, nowMs, 1);
+    const p = this.armPath;
+    let total = 0;
+    for (let k = 0; k + 1 < n; k++) total += Math.hypot(p[2 * k + 2]! - p[2 * k]!, p[2 * k + 3]! - p[2 * k + 1]!);
+    // Phase over the whole arm, 0 = clamp; a load runs root -> clamp.
+    const t = v.pulseT ?? 0;
+    const at = (flow === CRANE_CARGO_OUT ? 1 - t : t) * total;
+    g.clear();
+    let cum = 0;
+    for (let k = 0; k + 1 < n; k++) {
+      // Host frame (y-up) -> the group's Pixi frame (y-down), like the parts.
+      const ax = p[2 * k]!, ay = -p[2 * k + 1]!, bx = p[2 * k + 2]!, by = -p[2 * k + 3]!;
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len > 0) drawCablePulse(g, v, this.comet, (at - cum) / len, true, ax, ay, bx, by, 1);
+      cum += len;
+    }
+    g.visible = true;
+    this.cargoDrawn = true;
   }
 
   /** Ride a mount cluster (children laid out in the host frame) on the

@@ -120,6 +120,23 @@ export function drawLineLookBody(
   run(g, ax, ay, bx, by, nx, ny, 0); stroke(g, CHANNEL_IDLE, 0.7, w * 0.12);
 }
 
+/** The cable look's travelling lit band (its flow pulse) on edge a -> b at
+ *  phase `t` (as `cometSegment`, so a `t` outside [0, 1) draws only the
+ *  part on this edge: one comet over a polyline, e.g. the dock crane's arm,
+ *  3e), in `v`'s pulse colour / alpha. Returns the comet (the `comet`
+ *  scratch), or null when none of it is on this edge. Allocation-free. */
+export function drawCablePulse(
+  g: Graphics, v: ConnectorVisual, comet: CometSegment, t: number, sourceIsLo: boolean,
+  ax: number, ay: number, bx: number, by: number, scale: number,
+): CometSegment | null {
+  const c = cometSegment(comet, t, sourceIsLo, ax, ay, bx, by, scale);
+  if (c.x0 === c.x1 && c.y0 === c.y1) return null;
+  const sw = BASE_W.cable * lineLookScale('cable', scale) * 0.5;
+  g.moveTo(c.x0, c.y0).lineTo(c.x1, c.y1);
+  stroke(g, v.pulseColor ?? 0, v.pulseAlpha ?? 0, sw * 0.7);
+  return c;
+}
+
 /** The flow of one ACTIVE edge (per-frame layer). `v` is this frame's
  *  `connectorVisualInto` result; `sourceIsLo` as for `cometSegment`. */
 export function drawLineLookFlow(
@@ -332,8 +349,6 @@ function drawCableFlow(
   cableLayout(len, ra, rb, w / BASE_W.cable);
   const sw = w * 0.5;
   const sp = w * 0.55;
-  const pulseColor = v.pulseColor ?? 0;
-  const pulseAlpha = v.pulseAlpha ?? 0;
   // Faint bleed around the bundle.
   g.moveTo(ax, ay).lineTo(bx, by); stroke(g, v.color, v.glowAlpha * 0.6, w * 1.2);
   // The lit core, in the gaps between stations.
@@ -348,9 +363,8 @@ function drawCableFlow(
   }
   stroke(g, v.color, v.alpha, sw * 0.42);
   // The travelling lit band.
-  const c = cometSegment(comet, v.pulseT ?? 0, sourceIsLo, ax, ay, bx, by, scale);
-  g.moveTo(c.x0, c.y0).lineTo(c.x1, c.y1); stroke(g, pulseColor, pulseAlpha, sw * 0.7);
-  if (_nSeg === 0) return;
+  const c = drawCablePulse(g, v, comet, v.pulseT ?? 0, sourceIsLo, ax, ay, bx, by, scale);
+  if (_nSeg === 0 || c === null) return;
   // Sparks at the clamp ends of a cradle the band is passing through.
   const d = ((c.x0 + c.x1) * 0.5 - ax) * ux + ((c.y0 + c.y1) * 0.5 - ay) * uy;
   const reach = w * 1.6;
@@ -367,5 +381,5 @@ function drawCableFlow(
       n++;
     }
   }
-  if (n > 0) stroke(g, pulseColor, pulseAlpha * 0.9, Math.max(w * 0.1, 1 / (scale > 0 ? scale : 1)));
+  if (n > 0) stroke(g, v.pulseColor ?? 0, (v.pulseAlpha ?? 0) * 0.9, Math.max(w * 0.1, 1 / (scale > 0 ? scale : 1)));
 }

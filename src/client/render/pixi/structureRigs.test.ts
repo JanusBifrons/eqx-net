@@ -18,9 +18,10 @@ import type {
   RenderMirror, SwarmRenderState, StructureRenderState, PoseRingEntry,
 } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
+import { rigClipIndex } from '../../../core/articulation/rig.js';
 import { rigForStructureKind, DOCK_CRANE_REACH_TICKS, DOOR_TURRET_LIFT } from '../../../core/articulation/rigCatalogue.js';
 import { partWorldFrame, type PartFrame } from '../../../core/articulation/mountBridge.js';
-import { CRANE_CARGO_IN } from '../../../core/articulation/craneCargo.js';
+import { CRANE_CARGO_BOTH, CRANE_CARGO_IN, CRANE_CARGO_OUT, craneArmPath } from '../../../core/articulation/craneCargo.js';
 
 function emptyPoseRing(): PoseRingEntry[] {
   const ring: PoseRingEntry[] = [];
@@ -456,38 +457,76 @@ describe('rig part look (2c+)', () => {
   });
 });
 
-describe('cargo along the crane arm (3e)', () => {
+describe('goods flow pulse along the crane arm (3e)', () => {
   const rig = rigForStructureKind('freight_dock')!;
   const hx = 200, hy = -100, ha = 0.4;
   const hold = { clipId: 'arm-hold', startTick: 1000, targetX: hx + 60, targetY: hy + 450, holdTicks: 300, cargo: CRANE_CARGO_IN };
+  // 51 ticks = one CONNECTOR_PULSE_PERIOD_MS (850 ms) at 60 Hz: tick 1020 + k
+  // puts the pulse k/51 of the way along the arm.
+  /** How far along the arm (arc length from the clamp) the pulse's centre
+   *  sits: its nearest point on the posed arm (Pixi frame, y flipped). */
+  function fromClamp(view: StructureRigView): number {
+    const b = view.cargo!.getLocalBounds();
+    const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+    const path = new Float64Array(2 * (rig.maxChain + 1));
+    const n = craneArmPath(rig, rigClipIndex(rig, 'arm-hold'), view.pose, path);
+    let best = Infinity, at = 0, cum = 0;
+    for (let k = 0; k + 1 < n; k++) {
+      const ax = path[2 * k]!, ay = -path[2 * k + 1]!, bx = path[2 * k + 2]!, by = -path[2 * k + 3]!;
+      const len = Math.hypot(bx - ax, by - ay);
+      const f = Math.max(0, Math.min(1, ((cx - ax) * (bx - ax) + (cy - ay) * (by - ay)) / (len * len)));
+      const d = Math.hypot(ax + (bx - ax) * f - cx, ay + (by - ay) * f - cy);
+      if (d < best) { best = d; at = cum + f * len; }
+      cum += len;
+    }
+    expect(best).toBeLessThan(1); // on the arm
+    return at;
+  }
 
-  it('rides the arm from the clamp into the dock over the hold, over the arm parts', () => {
+  it('an unload runs the cable pulse from the clamp into the dock, over the arm parts', () => {
     const view = new StructureRigView(rig);
     const g = view.cargo!;
     expect(g.parent).toBe(view.over);
     expect(view.over.getChildIndex(g)).toBe(view.over.children.length - 1);
-    view.update(hold, 1010, hx, hy, ha);
+    view.update(hold, 1020 + 5, hx, hy, ha);
     expect(g.visible).toBe(true);
-    // At the clamp: the clamp part's Pixi position (host frame, y flipped).
-    const clamp = rig.parts.findIndex((p) => p.id === 'clamp');
-    expect(Math.hypot(g.x - view.parts[clamp]!.x, g.y - view.parts[clamp]!.y)).toBeLessThan(1);
-    view.update(hold, 1000 + 150, hx, hy, ha);
-    const midDist = Math.hypot(g.x - view.parts[clamp]!.x, g.y - view.parts[clamp]!.y);
-    expect(midDist).toBeGreaterThan(100);
-    // Inside the dock for the last beat, and gone once the hold is over.
-    view.update(hold, 1000 + 290, hx, hy, ha);
+    const near = fromClamp(view);
+    view.update(hold, 1020 + 40, hx, hy, ha);
+    const far = fromClamp(view);
+    expect(near).toBeLessThan(100);
+    expect(far).toBeGreaterThan(near + 300);
+    // Gone once the hold is over.
+    view.update(hold, 1000 + 300, hx, hy, ha);
     expect(g.visible).toBe(false);
     view.update({ ...hold, clipId: 'arm-retract', holdTicks: undefined, cargo: undefined }, 1400, hx, hy, ha);
     expect(g.visible).toBe(false);
   });
 
-  it('no hold on the wire (a staged / older clip): no crate', () => {
+  it('a load runs it from the dock out to the clamp; a mixed dock does both halves', () => {
+    const view = new StructureRigView(rig);
+    const load = { ...hold, cargo: CRANE_CARGO_OUT };
+    view.update(load, 1020 + 5, hx, hy, ha);
+    const early = fromClamp(view);
+    view.update(load, 1020 + 40, hx, hy, ha);
+    expect(fromClamp(view)).toBeLessThan(early - 300);
+    const mixed = { ...hold, cargo: CRANE_CARGO_BOTH };
+    view.update(mixed, 1020 + 5, hx, hy, ha); // first half: in
+    const inA = fromClamp(view);
+    view.update(mixed, 1020 + 40, hx, hy, ha);
+    expect(fromClamp(view)).toBeGreaterThan(inA + 300);
+    view.update(mixed, 1173 + 5, hx, hy, ha); // second half: out
+    const outA = fromClamp(view);
+    view.update(mixed, 1173 + 40, hx, hy, ha);
+    expect(fromClamp(view)).toBeLessThan(outA - 300);
+  });
+
+  it('no hold on the wire (a staged / older clip): no pulse', () => {
     const view = new StructureRigView(rig);
     view.update({ clipId: 'arm-hold', startTick: 0, targetX: hx, targetY: hy + 450 }, 50, hx, hy, ha);
     expect(view.cargo!.visible).toBe(false);
   });
 
-  it('a rig without an IK chain gets no crate', () => {
+  it('a rig without an IK chain gets no pulse', () => {
     expect(new StructureRigView(rigForStructureKind('turret')!).cargo).toBeNull();
   });
 });
