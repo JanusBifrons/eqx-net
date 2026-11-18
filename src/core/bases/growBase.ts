@@ -44,8 +44,10 @@ import type { GoodId } from '../../shared-types/goods.js';
  *  11→12 (structure-restyle): a dock's landing pad (`keepClear`) is kept
  *  clear of other structures, and a dock faces its pad away from its row.
  *  12→13 (structure-restyle main sync): merged main's territory lock into
- *  the stream's generator, so bases saved under the stream's 12 regrow. */
-export const BASE_GROWTH_VERSION = 13;
+ *  the stream's generator, so bases saved under the stream's 12 regrow.
+ *  13→14 (structure-restyle 3i): the Capital has a crane bay pad on its +y
+ *  side; a spine relay that would land on a pad moves just past it. */
+export const BASE_GROWTH_VERSION = 14;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -508,7 +510,14 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
       const span = Math.abs(y - prevY);
       const relays = Math.max(0, Math.ceil((span - 2 * CONN_HALF) / 560) - 1);
       for (let r = 1; r <= relays; r++) {
-        const ry = prevY + Math.sign(j) * (span * r) / (relays + 1);
+        let ry = prevY + Math.sign(j) * (span * r) / (relays + 1);
+        // A keep-clear pad on the spine (the Capital's crane bay, out from
+        // its +y side): the relay moves out past the pad's far side.
+        for (const q of B.placed) {
+          const pad = keepClearBox(q.kind, q.x, q.y, q.rot);
+          if (pad === null || Math.abs(pad.x) >= pad.hw + CONN_HALF || Math.abs(ry - pad.y) >= pad.hh + CONN_HALF) continue;
+          ry = pad.y + Math.sign(j) * (pad.hh + CONN_HALF + GAP);
+        }
         const ri = B.tryPlace({ kind: 'connector', x: 0, y: ry });
         if (ri < 0 || !B.tryLink(prev, ri)) return false;
         prev = ri;

@@ -119,7 +119,7 @@ export const StructureKindSchema = z
      *  structure). No other solid structure may overlap it, and the kind may
      *  not be placed with it over one (`placementRules`, so player placement
      *  and `growBase` both obey it). Links and cables may cross it. Today only
-     *  the Freight Dock has one: its landing pad. ABSENT ⇒ nothing reserved. */
+     *  the Freight Dock and the Capital have one: their crane bay's landing pad. ABSENT ⇒ nothing reserved. */
     keepClear: z.object({
       cx: z.number(), cy: z.number(), w: z.number().positive(), h: z.number().positive(),
     }).strict().optional(),
@@ -227,6 +227,10 @@ export const CAPITAL: StructureKind = {
   description: 'The Core. Pre-built root hub: baseline power output and the main mineral bank.',
   radius: 396, // bounding circle of the 560×560 footprint
   footprint: { w: 560, h: 560 },
+  // structure-restyle 3i: the built-in crane bay (first load home), 500 × 300
+  // past the +y edge with a 10 u gap (y 290..590), centre (0, 440). The ONE
+  // definition: `CAPITAL_BAY` (rigCatalogue) derives from it.
+  keepClear: { cx: 0, cy: 410, w: 500, h: 240 },
   maxHealth: 5000,
   maxConnections: 4,
   isHub: true,
@@ -1289,8 +1293,10 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  10→11 (structure-restyle 2c++): FREIGHT_DOCK grown to the medium size,
  *  520×240 → 1000×400 (radius 287→539): an old dock could overlap on restore.
  *  11→12 (structure-restyle): FREIGHT_DOCK gains its `keepClear` landing pad;
- *  a saved structure could sit on a restored dock's pad. */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 12;
+ *  a saved structure could sit on a restored dock's pad.
+ *  12→13 (structure-restyle 3i): CAPITAL gains its crane bay `keepClear` pad;
+ *  a saved structure could sit on a restored Capital's pad. */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 13;
 // Gates (SHIELD_GATE, SHIELD_AIRLOCK) were APPENDED without a bump: a bump
 // discards every saved structure on the next boot (SectorPersistence's version
 // gate), and appending a kind leaves every existing record — and so every saved

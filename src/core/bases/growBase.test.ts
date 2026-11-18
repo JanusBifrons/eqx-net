@@ -149,27 +149,30 @@ describe('growBase — valid under the real building rules', () => {
     }
   });
 
-  it("no structure stands on a freight dock's landing pad, across many seeds", () => {
+  it("no structure stands on a landing pad (freight dock or Capital crane bay), across many seeds", () => {
     let docks = 0;
+    let capitals = 0;
     for (const tier of ['outpost', 'settlement', 'stronghold', 'citadel'] as const) {
       for (const role of ['trade', 'mining', 'refinery', 'colony', 'transit'] as const) {
         for (let seed = 1; seed <= 12; seed++) {
           const b = growBase(profile(tier, role, seed % 2 === 0), seed * 977 + 13, ['asteroid', 'nebula', 'minerals']);
           b.placements.forEach((d, di) => {
-            if (d.kind !== 'freight_dock') return;
-            docks++;
+            if (d.kind === 'capital') capitals++;
+            else if (d.kind === 'freight_dock') docks++;
+            else return;
             const pad = { ...keepClearBox(d.kind, d.x, d.y, d.rot ?? 0)! };
             b.placements.forEach((o, oi) => {
               if (oi === di) return;
               const { hw, hh } = structureHalfExtents(o.kind, o.rot ?? 0);
               const hit = Math.abs(o.x - pad.x) < hw + pad.hw && Math.abs(o.y - pad.y) < hh + pad.hh;
-              expect(hit, `${tier} ${role} seed ${seed}: ${o.kind} #${oi} on dock #${di} pad`).toBe(false);
+              expect(hit, `${tier} ${role} seed ${seed}: ${o.kind} #${oi} on ${d.kind} #${di} pad`).toBe(false);
             });
           });
         }
       }
     }
     expect(docks).toBeGreaterThan(50);
+    expect(capitals).toBe(4 * 5 * 12);
   });
 
   it('every galaxy sector grows a valid base (sweep)', () => {

@@ -48,6 +48,7 @@ function makePredWorld(): { handle: PredWorldHandle; calls: Call[] } {
     lockBody: (...args: unknown[]) => calls.push({ m: 'lockBody', args }),
     setHullExposed: (...args: unknown[]) => calls.push({ m: 'setHullExposed', args }),
     setShipState: (...args: unknown[]) => calls.push({ m: 'setShipState', args }),
+    attachRig: (...args: unknown[]) => calls.push({ m: 'attachRig', args }),
   } as unknown as PredWorldHandle;
   return { handle, calls };
 }
@@ -169,6 +170,7 @@ describe('StructureClientLeaf (kind 2) — static, no AI, no shield, damageable 
     // collider built from the same points. Replaces the old circular collider.
     expect(spawn.args[5]).toEqual(structureHullPoints('capital', 24)); // entry radius 24
     expect(pw.calls.some((c) => c.m === 'lockBody')).toBe(true);
+    expect(pw.calls.some((c) => c.m === 'attachRig'), 'the Capital carries its crane rig (3i)').toBe(true);
     expect(ai.calls.length).toBe(0);
     expect(ctx.registeredAiId).toBeNull();
   });

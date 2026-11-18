@@ -42,8 +42,13 @@ function makeHarness(
   // while the 600 u connection range stayed fixed. Scaling every layout
   // coordinate by the same factor keeps each test's relationships (overlap,
   // in-range, line of sight) intact without re-deriving every pose by hand.
-  const origPlace = placement.place.bind(placement);
-  placement.place = (owner, kind, x, y, opts) => origPlace(owner, kind, x * LAYOUT_SCALE, y * LAYOUT_SCALE, opts);
+  // structure-restyle 3i: the Capital keeps its crane bay pad clear on its +y
+  // side, where these layouts put their relays and leaves. Every test here
+  // turns the Capital 180° (pad on -y, unused) unless it asks for a rotation.
+  const bound = placement.place.bind(placement);
+  const origPlace: typeof bound = (owner, kind, x, y, opts) =>
+    bound(owner, kind, x, y, kind === 'capital' && opts?.rot === undefined ? { ...opts, rot: 180 } : opts);
+  placement.place =(owner, kind, x, y, opts) => origPlace(owner, kind, x * LAYOUT_SCALE, y * LAYOUT_SCALE, opts);
   /** Unscaled placement — for tests laid out directly in phase-V footprint units
    *  (the Solar's 360×150 aspect breaks a uniform scale's range + sightlines). */
   const placeRaw = origPlace;

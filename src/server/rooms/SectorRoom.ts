@@ -106,7 +106,7 @@ import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js
 import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';
 import { CRANE_CARGO_IN, CRANE_CARGO_OUT } from '../../core/articulation/craneCargo.js';
 import { DEPOSIT_WAITING } from '../../shared-types/messages/snapshotMessages.js';
-import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, dockUnloadHoldTicks, inDockBay, isStillForDock } from '../../core/articulation/rigCatalogue.js';
+import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, craneBayFor, dockUnloadHoldTicks, inCraneBay, isStillForDock } from '../../core/articulation/rigCatalogue.js';
 import { rigClipTip, startStructureRigClip, worldToRigHost, writeRigClipRow } from '../structures/structureRigClip.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
@@ -11811,8 +11811,10 @@ export class SectorRoom extends Room<SectorState> {
       return;
     }
     const hold = this.loot.shipHold(c.shipInstanceId);
-    // 3b: a ship on its own freight dock's bay belongs to that dock, ahead of
-    // the nearest-centre pick (a Capital nearer the ship never steals it).
+    // 3b / 3i: a ship on its own crane bay (a freight dock's or the Capital's)
+    // belongs to that bay, ahead of the nearest-centre pick (a Capital nearer
+    // the ship never steals a dock's ship). The Capital also keeps its plain
+    // hover deposit off the bay.
     const bayDock = this.ownDockBayAt(c.playerId, c.x, c.y);
     if (bayDock !== null) { this.dockDwell(c, bayDock, hold); return; }
     const target = hold !== undefined && !isHoldEmpty(hold)
@@ -11842,8 +11844,8 @@ export class SectorRoom extends Room<SectorState> {
   };
 
   /**
-   * structure-restyle 3b — "stop = go" on a freight dock's bay. A ship whose
-   * centre is on the bay (`inDockBay`) and still (`isStillForDock`) settles
+   * structure-restyle 3b — "stop = go" on a crane bay. A ship whose
+   * centre is on the bay (`inCraneBay`) and still (`isStillForDock`) settles
    * for `DOCK_SETTLE_TICKS`; then the crane reaches for it (`arm-reach`),
    * clamps on (`arm-hold`) for `dockUnloadHoldTicks(load, capacity)`, banks
    * the dock's intake (`dockIntakeGoods`) at hold END, then (3d) loads its
@@ -11852,7 +11854,9 @@ export class SectorRoom extends Room<SectorState> {
    * leaving during reach / hold aborts: the arm retracts from where it is and
    * nothing is banked. One ship per crane, first come first served: a second
    * settled ship waits (`DEPOSIT_WAITING` on its readout, 3e) until the arm
-   * is back at rest.
+   * is back at rest. 3i: the Capital's built-in bay runs the same cycle; it
+   * never has freight orders (only docks take them), so it takes everything
+   * and loads nothing.
    */
   private dockDwell(c: LootCollector, dock: StructureRecord, hold: Hold | undefined): void {
     const tick = this.serverTick;
@@ -11938,17 +11942,18 @@ export class SectorRoom extends Room<SectorState> {
     this.depositProgress.delete(d.shipId);
   }
 
-  /** `owner`'s operational freight dock whose bay holds world point (x, y),
-   *  or null. The host-frame transform is `worldToRigHost`, inline (alloc-free). */
+  /** `owner`'s operational crane-bay structure (`craneBayFor`: freight dock,
+   *  Capital) whose bay holds world point (x, y), or null. The host-frame transform is `worldToRigHost`, inline (alloc-free). */
   private ownDockBayAt(owner: string, x: number, y: number): StructureRecord | null {
     for (const rec of this.structureRegistry.all()) {
-      if (rec.kind !== 'freight_dock' || rec.owner !== owner || !isOperationalStorage(rec)) continue;
+      const bay = craneBayFor(rec.kind);
+      if (bay === null || rec.owner !== owner || !isOperationalStorage(rec)) continue;
       const a = ((rec.rot ?? 0) * Math.PI) / 180;
       const dx = x - rec.x;
       const dy = y - rec.y;
       const cs = Math.cos(a);
       const sn = Math.sin(a);
-      if (inDockBay(dx * cs + dy * sn, -dx * sn + dy * cs)) return rec;
+      if (inCraneBay(bay, dx * cs + dy * sn, -dx * sn + dy * cs)) return rec;
     }
     return null;
   }

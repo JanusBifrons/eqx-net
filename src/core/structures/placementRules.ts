@@ -36,7 +36,7 @@ export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'ove
 export const PLACEMENT_REJECTION_TEXT: Readonly<Record<PlacementRejection, string>> = Object.freeze({
   'overlap-structure': 'Too close to another structure',
   'overlap-obstacle': 'Blocked by an asteroid',
-  'overlap-pad': "Keep the dock's landing pad clear",
+  'overlap-pad': "Keep the landing pad clear",
 });
 
 /** Scratch for {@link keepClearBox} (alloc-free: the ghost preview calls this per frame). */
