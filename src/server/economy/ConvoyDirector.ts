@@ -23,6 +23,12 @@
  *              exporters a link brings closer;
  *   delivery — enters the importer's sector and docks the same way; unloads:
  *              one atomic `tradeTransfer` release (overflow drops as a pod);
+ *   crane    — (structure-restyle 3h) at a base whose Freight Dock bay a
+ *              hauler can reach (`NpcBaseTrade.bay`: not behind the base's
+ *              fence) the hauler parks ON the bay instead, the dock's crane
+ *              serves it like a player ship (`ConvoyRoom.craneServe`, the
+ *              room's bay dwell) and the same atomic take / release runs at
+ *              the end of the crane's hold, not on arrival;
  *   leaving  — flies away and leaves.
  *
  * Freight contracting (v4 C): each convoy has a CARRIER (`chooseCarrier`): its
@@ -65,6 +71,7 @@ import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { Wallet } from './Wallet.js';
 import type { TradeSink } from './tradeSink.js';
 import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
+import { holdWeight } from '../../core/cargo/hold.js';
 
 /** Ops kill switch: `EQX_DISABLE_CONVOYS=1` (also off when NPC bases are). */
 export function isConvoysDisabled(env: Record<string, string | undefined> = process.env): boolean {
@@ -83,6 +90,25 @@ export interface NpcBaseTrade {
   /** T4b — a player's Freight Dock with standing orders (owner = playerId).
    *  Trades only with NPC bases, and is paid / charged through the wallet. */
   player?: { imports: GoodId[]; exports: GoodId[] };
+  /** structure-restyle 3h — a Freight Dock bay a hauler can reach (world
+   *  centre); absent = dock at the footprint box's edge (`dockPoint`). */
+  bay?: ConvoyBay;
+}
+
+/** 3h — a dock's crane bay a convoy hauler parks on. */
+export interface ConvoyBay { dockId: string; x: number; y: number }
+
+/** 3h — what a convoy hauler asks a dock's crane for (`ConvoyRoom.craneServe`). */
+export interface CraneHaulJob {
+  dockId: string;
+  /** The base's owner: the dock must still be theirs. */
+  owner: string;
+  /** Load at pickup, unload at delivery (the crane's cargo direction). */
+  cargo: 'load' | 'unload';
+  /** Cargo weight moved (sizes the crane's hold, `dockUnloadHoldTicks`). */
+  weight: number;
+  /** Runs once, in the room tick, at the end of the crane's hold. */
+  atHoldEnd: () => void;
 }
 
 /** T4b — what the director needs to charge and pay players. */
@@ -105,6 +131,15 @@ export interface ConvoyRoom {
   npcBaseTrade(): NpcBaseTrade[];
   /** T2 — the nearest point clear of every structure (hauler spawns). */
   clearPointNear(x: number, y: number): { x: number; y: number };
+  /** 3h — have `job.dockId`'s crane serve hauler `botId` (the bay dwell
+   *  players get: settle, wait its turn, reach, hold, retract). 'serving'
+   *  while it is on its way onto the bay or being served; 'none' when that
+   *  dock can't serve it (gone, not `job.owner`'s, unpowered): trade
+   *  atomically instead. The first job per hauler stands until it runs or
+   *  is cancelled. */
+  craneServe?(botId: string, job: CraneHaulJob): 'serving' | 'none';
+  /** 3h — drop hauler `botId`'s crane job (an arm out retracts, nothing moves). */
+  craneCancel?(botId: string): void;
 }
 
 export interface ConvoyDirectorOptions {
@@ -158,8 +193,10 @@ interface Convoy {
   unit?: number;
   fromSector: string;
   toSector: string;
-  from: { owner: string; uid: string; box: NpcBaseTrade['box'] };
-  to: { owner: string; uid: string; box: NpcBaseTrade['box'] };
+  from: ConvoyEnd;
+  to: ConvoyEnd;
+  /** 3h — the crane job asked for at the current base (one per visit). */
+  crane?: CraneHaulJob | undefined;
   /** v4 C — the faction that owns the cargo, and the one carrying it (and
    *  its cut of the cargo value, 0 when the owner carries its own). */
   ownerFaction: string;
@@ -175,6 +212,31 @@ interface Convoy {
   phaseBudgetMs: number;
   transitUntilMs: number;
   target: { x: number; y: number };
+}
+
+/** One end of a convoy: the base it trades with. */
+interface ConvoyEnd { owner: string; uid: string; box: NpcBaseTrade['box']; bay?: ConvoyBay }
+
+/**
+ * 3h — where a hauler docks at a base: its Freight Dock's bay centre when it
+ * has a reachable one, else the nearest point of its box expanded by `m`.
+ */
+export function convoyDockTarget(end: { box: NpcBaseTrade['box']; bay?: ConvoyBay }, m: number, x: number, y: number): { x: number; y: number } {
+  return end.bay ? { x: end.bay.x, y: end.bay.y } : dockPoint(end.box, m, x, y);
+}
+
+/**
+ * 3h — true when bay centre (x, y) lies inside the fence ring `pylons`
+ * (the box of the owner's shield emitters: a grown base's fence is a
+ * rectangle around everything, its pads included). Gates open only for
+ * pilots, so a hauler can never reach a bay behind a fence. Fewer than two
+ * emitters is no fence.
+ */
+export function bayBehindFence(x: number, y: number, pylons: ReadonlyArray<{ x: number; y: number }>): boolean {
+  if (pylons.length < 2) return false;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of pylons) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  return x > x0 && x < x1 && y > y0 && y < y1;
 }
 
 /** Nearest point of `box` expanded by `m` to (x, y) — a dock outside the base. */
@@ -441,14 +503,15 @@ export class ConvoyDirector {
     registerConvoyHauler(haulerId, { owner: ownerFaction, carrier });
     const c: Convoy = {
       id, haulerId, plan, fromSector, toSector, ownerFaction, carrier, cut,
-      from: { owner: from.owner, uid: from.networkUid, box: from.box },
-      to: { owner: to.owner, uid: to.networkUid, box: to.box },
+      from: { owner: from.owner, uid: from.networkUid, box: from.box, ...(from.bay ? { bay: from.bay } : {}) },
+      to: { owner: to.owner, uid: to.networkUid, box: to.box, ...(to.bay ? { bay: to.bay } : {}) },
       ...(priced.fromPlayer !== undefined ? { fromPlayer: priced.fromPlayer } : {}),
       ...(priced.toPlayer !== undefined ? { toPlayer: priced.toPlayer } : {}),
       ...(priced.unit !== undefined ? { unit: priced.unit } : {}),
       phase: 'pickup', inSector: fromSector, phaseAtMs: now, phaseBudgetMs: 0, transitUntilMs: 0,
-      target: dockPoint(from.box, this.opts.dockMargin, at.x, at.y),
+      target: { x: 0, y: 0 },
     };
+    c.target = convoyDockTarget(c.from, this.opts.dockMargin, at.x, at.y);
     c.phaseBudgetMs = this.legBudget(at.x, at.y, c.target);
     this.convoys.set(id, c);
     serverLogEvent('convoy_launch', { haulerId, from: plan.from, to: plan.to, good: plan.good, qty: plan.qty, carrier, cut });
@@ -472,7 +535,7 @@ export class ConvoyDirector {
       const at = this.enter(c.toSector, c.fromSector, c.haulerId, c.to.box);
       if (at === null) { c.transitUntilMs = now + 5_000; return; } // sector busy: wait
       c.inSector = c.toSector;
-      c.target = dockPoint(c.to.box, this.opts.dockMargin, at.x, at.y);
+      c.target = convoyDockTarget(c.to, this.opts.dockMargin, at.x, at.y);
       this.setPhase(c, 'delivery', now, at);
       return;
     }
@@ -486,6 +549,49 @@ export class ConvoyDirector {
       room.setBotMoveTarget(c.haulerId, c.target.x, c.target.y);
       return;
     }
+    // 3h — at a reachable bay the dock's crane serves the hauler; the trade
+    // runs at the end of its hold (`atHoldEnd` → `dock`). Timed out, or
+    // the dock can't serve: cancel and trade atomically, as before.
+    if (arrived && !timedOut && this.craneServes(c, room)) {
+      room.setBotMoveTarget(c.haulerId, c.target.x, c.target.y);
+      return;
+    }
+    if (c.crane !== undefined) { room.craneCancel?.(c.haulerId); c.crane = undefined; }
+    this.dock(c, room, now, pose, arrived);
+  }
+
+  /** 3h — ask the bay's crane to serve this visit; true while it does. */
+  private craneServes(c: Convoy, room: ConvoyRoom): boolean {
+    const end = c.phase === 'pickup' ? c.from : c.phase === 'delivery' ? c.to : null;
+    if (end?.bay === undefined || room.craneServe === undefined) return false;
+    if (c.crane === undefined) {
+      let weight: number;
+      if (c.phase === 'pickup') {
+        const want = emptyHold();
+        want.goods[c.plan.good] = c.plan.qty;
+        weight = Math.min(holdWeight(want), this.opts.haulerCapacity);
+      } else {
+        const h = this.holds.get(c.haulerId)?.hold;
+        weight = h ? holdWeight(h) : 0;
+      }
+      const phase = c.phase;
+      c.crane = {
+        dockId: end.bay.dockId, owner: end.owner, cargo: phase === 'pickup' ? 'load' : 'unload', weight,
+        atHoldEnd: () => {
+          // Still this convoy, on the same visit (not raided, not timed out).
+          if (this.convoys.get(c.id) !== c || c.phase !== phase) return;
+          const pose = room.getBotPose(c.haulerId);
+          if (pose === null) return;
+          c.crane = undefined;
+          this.dock(c, room, this.now(), pose, true);
+        },
+      };
+    }
+    return room.craneServe(c.haulerId, c.crane) === 'serving';
+  }
+
+  /** At the base (or out of time): the phase's trade, then the next leg. */
+  private dock(c: Convoy, room: ConvoyRoom, now: number, pose: { x: number; y: number }, arrived: boolean): void {
     switch (c.phase) {
       case 'pickup': {
         if (!arrived) { this.leave(c, room); return; } // never reached the base
@@ -508,7 +614,7 @@ export class ConvoyDirector {
         if (got <= 0) { this.holds.delete(c.haulerId); this.depart(c, now, pose); return; } // nothing to carry
         serverLogEvent('convoy_loaded', { haulerId: c.haulerId, good: c.plan.good, qty: got });
         if (c.toSector === c.fromSector) {
-          c.target = dockPoint(c.to.box, this.opts.dockMargin, pose.x, pose.y);
+          c.target = convoyDockTarget(c.to, this.opts.dockMargin, pose.x, pose.y);
           this.setPhase(c, 'delivery', now, pose);
         } else {
           c.target = this.lanePoint(c.fromSector, c.toSector, c.from.box);

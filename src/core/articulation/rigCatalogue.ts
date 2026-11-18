@@ -171,6 +171,16 @@ export function inCraneBay(bay: CraneBay, lx: number, ly: number): boolean {
     && Math.abs(ly - bay.cy) <= bay.padHalfH - DOCK_BAY_INSET;
 }
 
+/** structure-restyle 3h — the world centre of `bay` on a host at (x, y)
+ *  turned `rotDeg` degrees CCW (the inverse of the host-frame transform
+ *  `worldToRigHost`): where a convoy hauler parks to be served. */
+export function craneBayWorldCentre(bay: CraneBay, x: number, y: number, rotDeg: number): { x: number; y: number } {
+  const a = (rotDeg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return { x: x + bay.cx * c - bay.cy * s, y: y + bay.cx * s + bay.cy * c };
+}
+
 /** Speed (game units / s) below which a ship on the bay counts as stopped.
  *  Ship top speeds run 420 (trader-hauler) .. 950; the helm's own "arrived"
  *  gate is 5 % of top speed (21 .. 48). 25 is met by a ship hovering on the

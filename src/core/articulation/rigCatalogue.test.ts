@@ -7,7 +7,7 @@ import { twoBoneIkSolve } from './ikAdapter.js';
 import {
   DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_CRANE_BOOM, DOCK_CRANE_JIB, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, DOCK_CRANE_REACH_TICKS,
   DOCK_BAY_INSET, DOCK_DEPOSIT_RANGE, DOCK_STILL_SPEED, DOCK_UNLOAD_HOLD_LOAD_TICKS, DOCK_UNLOAD_HOLD_MIN_TICKS, DOOR_TURRET_LEAF_TRAVEL, DOOR_TURRET_LIFT, DOOR_TURRET_MOUNT, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
-  CAPITAL_BAY, CRANE_BAYS, FREIGHT_DOCK_BAY, RIG_DEFS, SANDBOX_DOOR_TURRET_DEF, craneBayFor, dockUnloadHoldTicks, inCraneBay, inDockBay, isStillForDock, rigById, rigForStructureKind,
+  CAPITAL_BAY, CRANE_BAYS, FREIGHT_DOCK_BAY, RIG_DEFS, SANDBOX_DOOR_TURRET_DEF, craneBayFor, craneBayWorldCentre, dockUnloadHoldTicks, inCraneBay, inDockBay, isStillForDock, rigById, rigForStructureKind,
 } from './rigCatalogue.js';
 
 const play = (clipId: string, startTick: number, target?: { x: number; y: number }): PlayingClip =>
@@ -495,5 +495,35 @@ describe('crane bays per kind (structure-restyle 3i)', () => {
     expect(lip.anchorY).toBe(b.halfH);
     const ys = lip.outline!.filter((_, k) => k % 2 === 1);
     expect(lip.anchorY + Math.max(...ys)).toBeGreaterThanOrEqual(b.cy + b.padHalfH);
+  });
+});
+
+describe('craneBayWorldCentre (structure-restyle 3h)', () => {
+  it('maps the bay centre through the host pose: rot 0, 90, 180 and a CAPITAL offset', () => {
+    const near = (p: { x: number; y: number }, x: number, y: number): void => {
+      expect(p.x).toBeCloseTo(x, 6);
+      expect(p.y).toBeCloseTo(y, 6);
+    };
+    near(craneBayWorldCentre(FREIGHT_DOCK_BAY, 0, 0, 0), DOCK_BAY_CX, DOCK_BAY_CY);
+    near(craneBayWorldCentre(FREIGHT_DOCK_BAY, 100, -50, 0), 100 + DOCK_BAY_CX, -50 + DOCK_BAY_CY);
+    // 90° CCW: host +y points to world -x.
+    near(craneBayWorldCentre(FREIGHT_DOCK_BAY, 0, 0, 90), -DOCK_BAY_CY, DOCK_BAY_CX);
+    near(craneBayWorldCentre(FREIGHT_DOCK_BAY, 10, 20, 180), 10 - DOCK_BAY_CX, 20 - DOCK_BAY_CY);
+    near(craneBayWorldCentre(CAPITAL_BAY, 0, 0, 0), CAPITAL_BAY.cx, CAPITAL_BAY.cy);
+  });
+
+  it('is the inverse of the host-frame bay test: the centre is always on the bay', () => {
+    fc.assert(fc.property(
+      fc.integer({ min: -5000, max: 5000 }), fc.integer({ min: -5000, max: 5000 }), fc.integer({ min: 0, max: 359 }),
+      (x, y, rot) => {
+        for (const bay of CRANE_BAYS) {
+          const w = craneBayWorldCentre(bay, x, y, rot);
+          const a = (rot * Math.PI) / 180;
+          const dx = w.x - x, dy = w.y - y;
+          if (!inCraneBay(bay, dx * Math.cos(a) + dy * Math.sin(a), -dx * Math.sin(a) + dy * Math.cos(a))) return false;
+        }
+        return true;
+      },
+    ));
   });
 });

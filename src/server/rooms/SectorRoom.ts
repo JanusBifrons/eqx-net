@@ -106,7 +106,7 @@ import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js
 import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';
 import { CRANE_CARGO_IN, CRANE_CARGO_OUT } from '../../core/articulation/craneCargo.js';
 import { DEPOSIT_WAITING } from '../../shared-types/messages/snapshotMessages.js';
-import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, craneBayFor, dockUnloadHoldTicks, inCraneBay, isStillForDock } from '../../core/articulation/rigCatalogue.js';
+import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, FREIGHT_DOCK_BAY, craneBayFor, craneBayWorldCentre, dockUnloadHoldTicks, inCraneBay, isStillForDock } from '../../core/articulation/rigCatalogue.js';
 import { rigClipTip, startStructureRigClip, worldToRigHost, writeRigClipRow } from '../structures/structureRigClip.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
@@ -167,7 +167,7 @@ const NPC_BASE_GAP = sectorSpace(900);
 import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
 import { isWarpDropPoint, pocketClearing, pocketPadPair, POCKET_PAD_OWNER, SOLAR_HALF_EXTENT, sectorSites } from '../../core/galaxy/sectorSites.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
-import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
+import { bayBehindFence, type CraneHaulJob, type NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
@@ -1148,6 +1148,11 @@ export class SectorRoom extends Room<SectorState> {
    *  (still on the bay) → reach → hold → done (retracting or served; kept
    *  until the ship leaves the bay, so it is not served twice). */
   private readonly depositDwell = new Map<string, DepositDwell>();
+  /** structure-restyle 3h — convoy haulers' crane jobs by bot id
+   *  (`craneServe`); their dwell rides `depositDwell` under the same id. */
+  private readonly haulerCraneJobs = new Map<string, CraneHaulJob>();
+  /** Reused collector for a crane-served hauler (`visitCraneHauler`, #14). */
+  private readonly haulerCollector: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, vx: 0, vy: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
   /** Auto-deposit progress 0..100 by shipInstanceId (own-ship snapshot ring). */
   private readonly depositProgress = new Map<string, number>();
   /** This sector's game clock (game speed is per sector, time scale stream).
@@ -11783,10 +11788,13 @@ export class SectorRoom extends Room<SectorState> {
   private autoDepositTick(): void {
     if (this.structureRegistry.size === 0) {
       if (this.depositDwell.size > 0) { this.depositDwell.clear(); this.depositProgress.clear(); }
+      this.haulerCraneJobs.clear();
       this.manualCargo.clear();
       return;
     }
     this.lootCollectors.forEach(this.visitDepositor);
+    // 3h: convoy haulers a dock's crane was asked to serve.
+    if (this.haulerCraneJobs.size > 0) this.haulerCraneJobs.forEach(this.visitCraneHauler);
     // 3b: a crane claim whose ship was not visited this pass (left the room,
     // died, swapped hulls) retracts the arm and frees the dock.
     if (this.depositDwell.size > 0) this.depositDwell.forEach(this.sweepDepositDwell);
@@ -11800,6 +11808,23 @@ export class SectorRoom extends Room<SectorState> {
       this.depositDwell.delete(pid);
       this.depositProgress.delete(d.shipId);
     }
+  };
+
+  /** 3h: a convoy hauler with a crane job (`craneServe`) runs the same bay
+   *  dwell as a player ship while its centre is on that dock's bay; off the
+   *  bay any crane claim aborts (the arm retracts, nothing moves) and the job
+   *  waits for it to come back. A hauler gone from the room drops its job.
+   *  Bound once (no per-tick closure allocation, #14). */
+  private readonly visitCraneHauler = (job: CraneHaulJob, botId: string): void => {
+    const c = this.haulerCollector;
+    const dock = this.structureRegistry.get(job.dockId);
+    if (!this.lootCollectors.fillShip(botId, c) || dock === undefined || !isOperationalStorage(dock)) {
+      this.haulerCraneJobs.delete(botId);
+      this.dropDepositDwell(botId);
+      return;
+    }
+    if (this.dockBayHolds(dock, c.x, c.y)) this.dockDwell(c, dock, undefined, job);
+    else this.dropDepositDwell(botId);
   };
 
   /** Bound once (no per-tick closure allocation, #14). */
@@ -11858,9 +11883,12 @@ export class SectorRoom extends Room<SectorState> {
    * settled ship waits (`DEPOSIT_WAITING` on its readout, 3e) until the arm
    * is back at rest. 3i: the Capital's built-in bay runs the same cycle; it
    * never has freight orders (only docks take them), so it takes everything
-   * and loads nothing.
+   * and loads nothing. 3h: a convoy hauler (`job`, keyed by its bot id) is
+   * served the same way, one ship per crane with the players; its job fixes
+   * the cargo direction and weight, and its trade (`job.atHoldEnd`) runs
+   * at hold END in place of the bank / load; then the dwell is over.
    */
-  private dockDwell(c: LootCollector, dock: StructureRecord, hold: Hold | undefined): void {
+  private dockDwell(c: LootCollector, dock: StructureRecord, hold: Hold | undefined, job?: CraneHaulJob): void {
     const tick = this.serverTick;
     let d = this.depositDwell.get(c.playerId);
     if (d !== undefined && d.targetId !== dock.id) { this.dropDepositDwell(c.playerId); d = undefined; }
@@ -11876,6 +11904,14 @@ export class SectorRoom extends Room<SectorState> {
         this.startStructureRigClip(dock.id, 'arm-hold', dock.rigClip?.target, { holdTicks: d.holdTicks!, cargo: d.cargo ?? 0 });
       }
       if (tick - d.clipTick! < d.holdTicks!) { this.setDockProgress(d, tick); return; }
+      if (job !== undefined) {
+        this.startStructureRigClip(dock.id, 'arm-retract', dock.rigClip?.target);
+        this.depositDwell.delete(c.playerId);
+        this.depositProgress.delete(c.shipInstanceId);
+        this.haulerCraneJobs.delete(c.playerId);
+        job.atHoldEnd();
+        return;
+      }
       const moved = this.storage.deposit(c.shipInstanceId, c.playerId, dock, dockIntakeGoods(dock));
       const after = this.loot.shipHold(c.shipInstanceId);
       const loaded = this.storage.loadOutlet(c.shipInstanceId, c.playerId, dock, c.capacity - (after ? holdWeight(after) : 0));
@@ -11890,9 +11926,16 @@ export class SectorRoom extends Room<SectorState> {
     // (no bar that restarts forever): a hold with none of the import goods
     // and no room for (or no spare) export goods.
     if (!still) { this.dropDepositDwell(c.playerId); return; }
-    const intake = hold !== undefined ? dockIntakeGoods(dock) : undefined;
-    const unloadW = hold !== undefined && holdHasIntake(hold, intake) ? holdIntakeWeight(hold, intake) : -1;
-    const loadW = this.storage.outletLoadWeight(dock, c.capacity - (hold ? holdWeight(hold) : 0) + Math.max(0, unloadW));
+    let unloadW: number;
+    let loadW: number;
+    if (job !== undefined) {
+      unloadW = job.cargo === 'unload' ? job.weight : -1;
+      loadW = job.cargo === 'load' ? job.weight : 0;
+    } else {
+      const intake = hold !== undefined ? dockIntakeGoods(dock) : undefined;
+      unloadW = hold !== undefined && holdHasIntake(hold, intake) ? holdIntakeWeight(hold, intake) : -1;
+      loadW = this.storage.outletLoadWeight(dock, c.capacity - (hold ? holdWeight(hold) : 0) + Math.max(0, unloadW));
+    }
     if (unloadW < 0 && !(loadW > 0)) { this.dropDepositDwell(c.playerId); return; }
     if (d === undefined) {
       this.depositDwell.set(c.playerId, { targetId: dock.id, sinceTick: tick, shipId: c.shipInstanceId, phase: 'settle' });
@@ -11948,16 +11991,23 @@ export class SectorRoom extends Room<SectorState> {
    *  Capital) whose bay holds world point (x, y), or null. The host-frame transform is `worldToRigHost`, inline (alloc-free). */
   private ownDockBayAt(owner: string, x: number, y: number): StructureRecord | null {
     for (const rec of this.structureRegistry.all()) {
-      const bay = craneBayFor(rec.kind);
-      if (bay === null || rec.owner !== owner || !isOperationalStorage(rec)) continue;
-      const a = ((rec.rot ?? 0) * Math.PI) / 180;
-      const dx = x - rec.x;
-      const dy = y - rec.y;
-      const cs = Math.cos(a);
-      const sn = Math.sin(a);
-      if (inCraneBay(bay, dx * cs + dy * sn, -dx * sn + dy * cs)) return rec;
+      if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
+      if (this.dockBayHolds(rec, x, y)) return rec;
     }
     return null;
+  }
+
+  /** `rec` has a crane bay (`craneBayFor`) and world point (x, y) is on
+   *  it. The host-frame transform is `worldToRigHost`, inline (alloc-free). */
+  private dockBayHolds(rec: StructureRecord, x: number, y: number): boolean {
+    const bay = craneBayFor(rec.kind);
+    if (bay === null) return false;
+    const a = ((rec.rot ?? 0) * Math.PI) / 180;
+    const dx = x - rec.x;
+    const dy = y - rec.y;
+    const cs = Math.cos(a);
+    const sn = Math.sin(a);
+    return inCraneBay(bay, dx * cs + dy * sn, -dx * sn + dy * cs);
   }
 
   /** Tell the depositing pilot what moved, and audit it (nothing moved ⇒ silent).
@@ -12216,7 +12266,8 @@ export class SectorRoom extends Room<SectorState> {
         if (k.miningRate) add(makes, 'minerals', k.miningRate * 60);
         if (k.gasRate) add(makes, 'gas', k.gasRate * 60);
       }
-      out.push({ owner, networkUid: anchor.uid, view: { stock: snap.goods, freeCapacity: snap.freeCapacity, uses, makes }, box: { x0, x1, y0, y1 } });
+      const bay = this.convoyBayOf(recs);
+      out.push({ owner, networkUid: anchor.uid, view: { stock: snap.goods, freeCapacity: snap.freeCapacity, uses, makes }, box: { x0, x1, y0, y1 }, ...(bay ? { bay } : {}) });
     }
     // T4b — a player's Freight Dock with standing orders trades too, but only
     // in the goods it has orders for: "use" is shaped so an import keeps the
@@ -12238,13 +12289,32 @@ export class SectorRoom extends Room<SectorState> {
       // are never asked for.
       for (const g of imports) if ((stock[g] ?? 0) > o_level(r, g)) stock[g] = o_level(r, g);
       const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
+      const bay = this.convoyBayOf([...this.structureRegistry.all()].filter((o) => o.owner === r.owner), r);
       out.push({
+        ...(bay ? { bay } : {}),
         owner: r.owner, networkUid: r.uid, player: { imports, exports },
         view: { stock, freeCapacity: snap.freeCapacity, uses, makes: {} },
         box: { x0: r.x - hw, x1: r.x + hw, y0: r.y - hh, y1: r.y + hh },
       });
     }
     return out;
+  }
+
+  /**
+   * structure-restyle 3h — the Freight Dock bay a convoy hauler parks on at
+   * this owner's base (`recs`: its structures; `only`: that dock), or null:
+   * no operational dock, or every dock's bay is behind the owner's fence
+   * (`bayBehindFence`: gates open only for pilots). Off-tick (planning).
+   */
+  private convoyBayOf(recs: readonly StructureRecord[], only?: StructureRecord): NpcBaseTrade['bay'] | null {
+    const fence: Array<{ x: number; y: number }> = [];
+    for (const r of recs) if (r.isConstructed && isShieldEmitterKind(r.kind)) fence.push({ x: r.x, y: r.y });
+    for (const r of only ? [only] : recs) {
+      if (r.kind !== FREIGHT_DOCK_BAY.kindId || !isOperationalStorage(r)) continue;
+      const at = craneBayWorldCentre(FREIGHT_DOCK_BAY, r.x, r.y, r.rot ?? 0);
+      if (!bayBehindFence(at.x, at.y, fence)) return { dockId: r.id, x: at.x, y: at.y };
+    }
+    return null;
   }
 
   /**
@@ -12276,6 +12346,29 @@ export class SectorRoom extends Room<SectorState> {
   clearPointNear(x: number, y: number): { x: number; y: number } {
     if (this.structureRegistry.size === 0) return { x, y };
     return nearestClearPoint(x, y, this.obstacles.structureBoxes(), 150);
+  }
+
+  /** 3h — ConvoyRoom: `job.dockId`'s crane serves hauler `botId` (the bay
+   *  dwell, `visitCraneHauler` → `dockDwell`). 'none' when that dock can't:
+   *  gone, not `job.owner`'s, no crane bay, not operational, or nothing to
+   *  load; the convoy then trades atomically. Off-tick (convoy loop). */
+  craneServe(botId: string, job: CraneHaulJob): 'serving' | 'none' {
+    const dock = this.structureRegistry.get(job.dockId);
+    if (dock === undefined || dock.owner !== job.owner || craneBayFor(dock.kind) === null
+      || !isOperationalStorage(dock) || (job.cargo === 'load' && !(job.weight > 0))) {
+      this.craneCancel(botId);
+      return 'none';
+    }
+    const had = this.haulerCraneJobs.get(botId);
+    if (had !== undefined && had !== job) this.craneCancel(botId);
+    this.haulerCraneJobs.set(botId, job);
+    return 'serving';
+  }
+
+  /** 3h — ConvoyRoom: drop hauler `botId`'s crane job; an arm out retracts. */
+  craneCancel(botId: string): void {
+    this.haulerCraneJobs.delete(botId);
+    this.dropDepositDwell(botId);
   }
 
   tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null {
