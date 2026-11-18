@@ -1,5 +1,7 @@
 # SectorRoom Anatomy (post-hazy-pillow Step 14)
 
+> The LOC figures below are historical (the file is now ~13k LOC). Where new SectorRoom code goes today: [god-file extension points](god-file-extension-points.md#server-sectorroomts-srcserverroomsclaudemd).
+
 `src/server/rooms/SectorRoom.ts` was 4365 LOC at the start of the
 `hazy-pillow` decomposition plan. After Steps 1–14 it is **4236 LOC**
 with subsystem ownership for 10 distinct concerns. This document
@@ -11,17 +13,14 @@ field cluster owning any piece of state they need to touch.
 | Subsystem | File | Concern | Field cluster |
 |---|---|---|---|
 | `slots` | [`PlayerSlotMap.ts`](../../src/server/rooms/PlayerSlotMap.ts) | SAB slot allocation + bookkeeping | `playerToSlot`, `slotToPlayer`, `freeSlots`, `lingeringSlots`, `initialSpawnPositions` |
-| `swarm` | [`SwarmLifecycleManager.ts`](../../src/server/rooms/SwarmLifecycleManager.ts) | Swarm entity registry + interest grid | `registry`, `grid`, `interestScratch` |
-| `physics` | [`PhysicsBridge.ts`](../../src/server/rooms/PhysicsBridge.ts) | Worker IPC boundary | `worker` (handle), `sabAppliedTicks`, `post(cmd)` |
 | `combat` | [`CombatSubsystem.ts`](../../src/server/rooms/CombatSubsystem.ts) | Fire / projectile / drone HP+shield state | `lastFireClientTick`, `liveProjectiles`, `projectileCounter`, `swarmHealth`, `swarmShield`, `swarmShieldLastDmg` |
 | `mounts` | [`MountAimSubsystem.ts`](../../src/server/rooms/MountAimSubsystem.ts) | Per-mount turret rotation state | `playerMountAngles`, `playerSlotTargets`, `mountTargetsScratch`, `droneMountAngles`, `droneSlotTargets`, `droneMountTargetsScratch` |
 | `ai` | [`AiSubsystem.ts`](../../src/server/rooms/AiSubsystem.ts) | Server-authoritative AI controller + per-tick view scratch | `controller` (AiController), `scratch` (AiPlayerView[]) |
 | `snapshot` | [`SnapshotBroadcaster.ts`](../../src/server/rooms/SnapshotBroadcaster.ts) | Broadcast cadence + idle tracker + TiDi clock + boost/thrust sets | `encoder`, `broadcastCounter`, `lastInputCaches`, `idleTracker`, `forceBroadcastUntilTick`, `ticksSinceSnapshot`, `boostingPlayers`, `thrustingPlayers`, `lastSentClockRate`, `clock` (SimulationClock) |
 | ownerless evict | [`OwnerlessShipEvictor.ts`](../../src/server/rooms/OwnerlessShipEvictor.ts) | Lingering-hull ownerless-evict timers (the former `WreckLifecycleCoordinator` was removed when wrecks were retired — P6.3/C3; abandon now → scrap) | `ownerlessShips` |
-| `players` | [`PlayerSessionManager.ts`](../../src/server/rooms/PlayerSessionManager.ts) | Session bookkeeping + per-tick input counter | `sessionToPlayer`, `playerToSession`, `inputCountThisTick`, `playerToUser`, `playerToActiveShipInstance`, `playerToTransitInFlight` |
 | `obstacles` | [`SectorObstacles.ts`](../../src/server/rooms/SectorObstacles.ts) | The one obstacle gatherer: placement / line-of-sight rocks, landing, join and convoy spawn clearance ([navigation](navigation.md#the-one-obstacle-gatherer-serverroomssectorobstaclests)) | pooled `rockList`, `boxes`, `circles`, `walls` |
 | `nav` | [`RoomNav.ts`](../../src/server/nav/RoomNav.ts) | Cut field's nav maps in the nav worker, AI routes, player autopilot route requests ([navigation](navigation.md)) | `field`, `routes`, `autopilot` |
-| `aiGrids` | [`AiNeighbourFill.ts`](../../src/server/rooms/AiNeighbourFill.ts) | AI neighbour + debris grids, one registry walk per tick | `neighbourGrid`, `wreckGrid`, A/B switches |
+| `aiGrids` | [`AiNeighbourFill.ts`](../../src/server/rooms/AiNeighbourFill.ts) | AI neighbour (+ debris) grids, one registry walk per tick | `neighbourGrid`, A/B switches |
 | `budget` | [`TickBudgetTelemetry.ts`](../../src/server/rooms/TickBudgetTelemetry.ts) | Per-tick timing + hitch detection + 60-sample emit | `sums`, `thisTickPhases`, `historyRing`, `sampleCount`, `maxTotalMs`, `overBudgetCount`, `lastHitchAtMs` |
 
 The 10 subsystems own STATE today. The plan's R1 envisioned them
