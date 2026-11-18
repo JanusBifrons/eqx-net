@@ -56,6 +56,7 @@ import { DEFAULT_LIMITS, judgeLoad, sampleHostLoad, type LoadLimits } from '../s
 import { PERF_SCENES, type PerfScene } from '../src/shared-types/perf/perfScenes.js';
 import { compareArms, MIN_DECISIVE_REPS, type RunMetrics, type ArmVerdict } from './verdict.js';
 import { armOrder, evenReps } from './order.js';
+import { requireHeavyQueue, shellLine } from '../scripts/dev/heavy-queue-guard.mjs';
 
 const GPU_ARGS = ['--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
@@ -380,6 +381,8 @@ function gitSha(dir: string): string {
 }
 
 async function main(): Promise<void> {
+  // perf:scenes is heavy: only through `pnpm heavy run` (or CI).
+  requireHeavyQueue({ kind: 'perf', command: `pnpm perf:scenes ${shellLine(process.argv.slice(2))}`.trim() });
   const args = parseArgs(process.argv.slice(2));
   const scenes = args.scenes.map((id) => {
     const s = PERF_SCENES.find((x) => x.id === id);
