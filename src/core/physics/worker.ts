@@ -35,6 +35,7 @@ import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from './catchUp.js';
 import { WakeCensus, WAKE_CENSUS_EVERY_TICKS } from './wakeCensus.js';
+import { SLEEP_HYSTERESIS_TICKS, spawnAsleep } from './sleepHysteresis.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -67,9 +68,6 @@ import {
 } from '../../shared-types/sabLayout.js';
 
 const TICK_MS = 1000 / 60;
-/** Ticks a body must report sleeping consecutively before FLAG_SLEEPING is set.
- *  Suppresses flap on slow-drift entities under rapier2d-compat's threshold. */
-const SLEEP_HYSTERESIS_TICKS = 12;
 /** Stage 2 — minimum contact-force magnitude (N) to broadcast as a CONTACT
  *  event. ~200 N at the 60 Hz step ≈ 3.3 N·s impulse, which catches every
  *  meaningful ship-vs-asteroid / ship-vs-drone collision but filters out
@@ -333,15 +331,8 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         if (cmd.shipKindId !== undefined) physics.setPilotKind(cmd.obstacleId, getShipKind(shipKindFromIndex(cmd.shipKindId)));
         playerToSlot.set(cmd.obstacleId, cmd.slot);
         slotToPlayer.set(cmd.slot, cmd.obstacleId);
-        // Wreck fields: a piece laid out at rest (a field hull, a restored
-        // battle piece) spawns ASLEEP, so the settle / wakeDv rules govern
-        // from the first step. The counter is seeded one short of the
-        // hysteresis: the first step reports it asleep, sets FLAG_SLEEPING
-        // and posts SLEEP_TRANSITION (no 12-tick awake window).
-        if (cmd.sleeping === true) {
-          physics.setShipStateAsleep(cmd.obstacleId, { x: cmd.x, y: cmd.y, angle: cmd.angle ?? 0, vx: 0, vy: 0, angvel: 0 });
-          sleepCount.set(cmd.slot, SLEEP_HYSTERESIS_TICKS - 1);
-        }
+        // Wreck fields: a piece laid out at rest spawns asleep (sleepHysteresis.ts).
+        if (cmd.sleeping === true) spawnAsleep(physics, sleepCount, cmd.slot, cmd.obstacleId, cmd.x, cmd.y, cmd.angle ?? 0);
         break;
       }
       case 'BOT_WARP': {
