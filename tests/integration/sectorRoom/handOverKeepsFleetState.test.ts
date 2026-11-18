@@ -5,7 +5,7 @@
  * shipInstanceId while an AI pilot flies it. When the owner takes or lets go
  * of the controls the key moves (`displaceActiveHullToLingering` /
  * `reclaimLingeringHull`), and the one "ship key moved" seam
- * (`SectorRoom.shipKeyMoved`) moves everything that names the ship:
+ * (`PilotSwap.shipKeyMoved`) moves everything that names the ship:
  *
  *  1. Attack orders. A's AI-flown ship ordered onto B's ship kept the OLD key,
  *     so when B let go of (or took) the controls the order stopped resolving
@@ -37,7 +37,7 @@ async function waitUntil(pred: () => boolean, ms: number, what: string): Promise
 /** Private room paths the test drives directly (synchronous, no tick in between). */
 interface RoomPeek {
   fleetHooks: { enterSpectate(playerId: string): void };
-  reclaimLingeringHull(client: Client, playerId: string, shipId: string): void;
+  pilotSwap: { reclaimLingeringHull(client: Client, playerId: string, shipId: string): void };
   mountTicker: { playerMountAngles: Map<string, Float32Array> };
   clients: Iterable<Client>;
   playerToSession: Map<string, string>;
@@ -141,7 +141,7 @@ describe('SectorRoom integration — a ship changing hands keeps its fleet state
     // Take the controls back: same server step, the ship is B's again.
     const sid = peek().playerToSession.get(bPid)!;
     const client = [...peek().clients].find((c) => c.sessionId === sid)!;
-    peek().reclaimLingeringHull(client, bPid, hull);
+    peek().pilotSwap.reclaimLingeringHull(client, bPid, hull);
     expect(room()._internals.lingeringSlots.has(hull)).toBe(false);
     expect(Array.from(angles.get(bPid) ?? []), 'turret angles moved back with the ship').toEqual(before);
     expect(angles.has(hull)).toBe(false);
