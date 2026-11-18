@@ -94,3 +94,42 @@ export function launchFooter(v: LaunchVerdict, wallet: number): { cost: string; 
     case 'refuse': return { cost: v.reason === 'shipyard' ? 'Build at a Shipyard' : 'Can\'t afford', after: wallet };
   }
 }
+
+/** One line on what a hull is for (the detail pane). Capitals' catalogue
+ *  descriptions are design notes, so the Hangar keys its own line by tile;
+ *  any other hull falls back to its catalogue description. */
+const HANGAR_ROLE: Readonly<Record<string, string>> = {
+  destroyer: 'The smallest capital. Turrets track for you.',
+  'light-cruiser': 'Line ship with layered batteries.',
+  'heavy-cruiser': 'Heavier main battery.',
+  battlecruiser: 'Battleship guns on a lighter hull.',
+  battleship: 'The biggest gun line in the galaxy.',
+};
+
+export function hangarRole(tile: HangarTile, description: string): string {
+  return HANGAR_ROLE[tile.id] ?? description;
+}
+
+const CLASS_LABEL: Readonly<Record<SizeClass, string>> = {
+  fighter: 'Light fighter', frigate: 'Frigate', cruiser: 'Cruiser', capital: 'Capital',
+};
+
+/** The small caption over the detail picture: "Capital · Railguns fit". */
+export function hangarClassLine(tile: HangarTile, fit: HangarFit, verdict: LaunchVerdict): string {
+  const base = verdict.kind === 'refuse' && verdict.reason === 'shipyard' ? 'Shipyard hull' : CLASS_LABEL[tile.sizeClass];
+  return tile.fits.length > 1 ? `${base} · ${FIT_LABEL[fit.fit]} fit` : base;
+}
+
+/** Why a launch is or isn't possible, when there is something to say. */
+export function hangarWhy(v: LaunchVerdict, purse: HangarPurse): { text: string; warn: boolean } | null {
+  const cr = (n: number): string => n.toLocaleString('en-GB');
+  switch (v.kind) {
+    case 'owned': return { text: 'You own one, parked in this sector. Launching it is free.', warn: false };
+    case 'token': return { text: `You have ${cr(purse.wallet)} cr. This launch uses 1 free launch.`, warn: false };
+    case 'debt': return { text: `You go to ${cr(purse.wallet - v.cost)} cr. Bounties and loot pay it off first.`, warn: true };
+    case 'refuse': return v.reason === 'shipyard'
+      ? { text: 'Build this packed at a Shipyard and unpack it at your storage. Buying one at an allied base is not built yet.', warn: true }
+      : { text: 'Not enough credits.', warn: true };
+    default: return null;
+  }
+}

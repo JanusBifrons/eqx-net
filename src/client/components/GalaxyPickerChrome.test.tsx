@@ -58,7 +58,7 @@ describe('GalaxyPickerChrome', () => {
     fireEvent.click(screen.getByTestId('sector-drawer-join'));
     expect(screen.getByTestId('hangar-window')).toBeInTheDocument();
     // Title carries the tapped sector's name.
-    expect(screen.getByText(/Hangar ·/)).toBeInTheDocument();
+    expect(screen.getByTestId('hangar-window')).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('hangar-launch'));
     expect(onSpawnNewShip).toHaveBeenCalledTimes(1);

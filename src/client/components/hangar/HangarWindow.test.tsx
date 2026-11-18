@@ -43,6 +43,8 @@ describe('HangarWindow (join flow stage 5)', () => {
     const p = open();
     fireEvent.click(screen.getByTestId('hangar-tab-capital'));
     expect(screen.queryByTestId('ship-card-battleship-rail')).toBeNull();
+    // Fits live in the detail pane: pick the tile, then the fit.
+    fireEvent.click(screen.getByTestId('ship-card-battleship').querySelector('button')!);
     fireEvent.click(screen.getByTestId('hangar-fit-battleship-rail'));
     expect(screen.getByTestId('hangar-cost').textContent).toBe('60,000 cr');
     expect(screen.getByTestId('hangar-after').textContent).toContain('-60,000');
@@ -58,14 +60,14 @@ describe('HangarWindow (join flow stage 5)', () => {
     fireEvent.click(screen.getByTestId('hangar-tab-subcap'));
     const picked = screen.getByTestId('hangar-window').ownerDocument.querySelector('[data-selected="1"]')!;
     expect(picked.getAttribute('data-verdict')).toBe('free');
-    expect(screen.getByTestId('hangar-cost').textContent).toBe('Free');
+    expect(screen.getByTestId('hangar-cost').textContent).toBe('free');
   });
 
   it('shows the free-launch pips and spends one before debt', () => {
     useUIStore.setState({ freeLaunches: 3 });
     open({ selectedKind: 'destroyer' });
     expect(screen.getByTestId('hangar-free-launches').getAttribute('data-count')).toBe('3');
-    expect(screen.getByTestId('hangar-cost').textContent).toBe('Free launch');
+    expect(screen.getByTestId('hangar-cost').textContent).toBe('1 free launch');
   });
 
   it('a hull parked here is gold, resumes by shipId and offers Abandon; one elsewhere does not', () => {

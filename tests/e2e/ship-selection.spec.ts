@@ -124,6 +124,8 @@ test.describe('ship-picker on galaxy-map', () => {
     await openPickerViaSectorClick(page);
     await page.getByTestId('hangar-tab-capital').click();
     await expect(page.getByTestId('ship-card-battleship')).toBeVisible();
+    // Fits live in the detail pane: pick the tile, then the fit.
+    await page.getByTestId('ship-card-battleship').locator('button').click();
     await page.getByTestId('hangar-fit-battleship-rail').click();
     await expect(page.getByTestId('ship-card-battleship')).toHaveAttribute('data-selected', '1');
     await expect(page.getByTestId('hangar-cost')).toBeVisible();

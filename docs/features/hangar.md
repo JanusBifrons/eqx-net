@@ -6,12 +6,16 @@ The Hangar is where a pilot picks what to launch into a sector. The way in is: g
 
 ## What the pilot sees
 
-- **Header:** "Hangar · <sector>", the credit balance (red when in debt) and gold pips for the free capital launches left (out of `FREE_LAUNCHES_START`).
-- **Class tabs:** Sub-capitals | Capitals. Each tab says how many of its hulls can launch right now ("· N ready"). More tabs (Fighters, Bombers, Transports, Location) are one entry each in `HANGAR_TABS`.
-- **One tile per hull.** A capital's fits (naval, rail, beam, lance) fold into one tile with a toggle row underneath. Each tile shows the hull's price, "Free", "Free launch" or "Owned". Shipyard hulls (Heavy, Interceptor, Gunship, Missile Frigate, Barge) are greyed out until built.
-- **Owned here:** a hull you own that is parked in this sector has a gold edge. Launch resumes it (free); **Abandon** breaks it up exactly as its death would. Abandoning the hull you are flying ejects you to the galaxy map.
-- **Footer:** what this launch costs and the balance after it. Launch is disabled when the launch is refused.
-- **Signed out:** Join still opens the Hangar. Launch becomes **Sign in** and **Play as guest**. Sign in goes to the login page and comes back to this Hangar with the same sector and hull picked. Play as guest remembers the choice and launches at once.
+The look follows the approved join-flow mock-up (HUD tokens in `hud/tokens.ts`: Chakra Petch labels, JetBrains Mono numbers, cyan for the pick and LAUNCH, gold for credits and owned hulls).
+
+- **Header:** "Hangar", "Launching into <sector>", the credit balance (red when in debt), cyan diamond pips for the free capital launches left (out of `FREE_LAUNCHES_START`), and a close button.
+- **Class tabs:** Sub-capitals | Capitals, each with an "N ready" chip. More tabs (Fighters, Bombers, Transports, Location) are one entry each in `HANGAR_TABS`.
+- **Left: square picture tiles.** "Ready to launch" first, then "Shipyard hulls" (Heavy, Interceptor, Gunship, Missile Frigate, Barge), greyed out until built. Each tile shows the ship picture (`shipPortraitUrl`, outline silhouette as a fallback), its name and "<price> cr", "Free", "Owned" or "Shipyard". Capitals have a blue edge; a capital with several fits carries an "N fits" badge.
+- **Right: the detail pane.** A big picture with the class line ("Capital · Railguns fit") and name, the fit buttons (Guns, Railguns, Lances, Beams), Hull and Speed bars scaled to the toughest and fastest hull in the Hangar, a line on what the ship is for, and why a launch is or isn't possible (a free launch, debt, Shipyard).
+- **Owned here:** a hull you own that is parked in this sector has a gold edge. Launch resumes it (free); **Abandon this ship** breaks it up exactly as its death would. Abandoning the hull you are flying ejects you to the galaxy map.
+- **Footer:** "Cost …" and "After launch … cr" (plus free launches left), **Back to map** and **LAUNCH ▸**; when refused, "Can't launch this from here" and LAUNCH is disabled.
+- **Signed out:** Join still opens the Hangar. The footer shows **Play as guest** and **SIGN IN TO LAUNCH ▸**. Sign in goes to the login page and comes back to this Hangar with the same sector and hull picked. Play as guest remembers the choice and launches at once.
+- **Phones:** two columns above 760 px wide (a sideways phone), one scrolling column below.
 
 ## How it works
 
@@ -23,17 +27,19 @@ The Hangar is where a pilot picks what to launch into a sector. The way in is: g
 
 Files: `src/client/components/hangar/` (`HangarWindow.tsx`, `hangarModel.ts`, `useAbandonShip.ts`).
 
-Testids: `hangar-signin`, `hangar-guest`, `hangar-window`, `hangar-wallet`, `hangar-free-launches` (`data-count`), `hangar-tab-<tabId>`, `ship-card-<tileId>` (`data-selected`, `data-owned`, `data-verdict`), `hangar-fit-<kind>`, `hangar-cost`, `hangar-after`, `hangar-abandon`, `hangar-close`, `hangar-launch`.
+Testids: `hangar-signin`, `hangar-guest`, `hangar-window`, `hangar-wallet`, `hangar-free-launches` (`data-count`), `hangar-tab-<tabId>`, `ship-card-<tileId>` (`data-selected`, `data-owned`, `data-verdict`), `hangar-detail`, `hangar-fit-<kind>` (in the detail pane), `hangar-cost`, `hangar-after`, `hangar-abandon`, `hangar-close`, `hangar-launch`.
 
 Locks: `galaxy-landing-flow.spec.ts`, `hangarModel.test.ts`, `HangarWindow.test.tsx`, `GalaxyPickerChrome.test.tsx`, `tests/e2e/ship-selection.spec.ts`, `spawn-select-flow.spec.ts`, `happy-path-switch-ship.spec.ts`.
 
 ## Future plans
 
-- Ship pictures on the tiles (`shipPortraitUrl`) replace the outline silhouettes.
+- A Spectate button in the footer (the mock-up has one; Back to map stands in for now).
 - The Hangar takes the loot window's shared dialog chrome.
 - Quick launch: one map button to the hottest sector.
 
 ## History
+
+- Hangar restyle (2026-11-18): rebuilt to the approved mock-up: picture tiles, a detail pane with the fits and stat bars, a ledger footer.
 
 - Join flow stage 6 (2026-11-18): sign-in moved from "Join the fight" to the Hangar's Launch (`needsSignIn`; the stash is the existing `pendingPickSector` + `resumeGatedJoin`, plus the picked hull).
 - Join flow stage 5 (2026-11-18): the Hangar replaced `ShipPickerModal`; `ShipRosterPanel`, `ShipDetailModal`, `GalaxyOverviewSelectChrome`, `RosterCountBadge` and the drawer's roster section were removed; launch prices switched on (`LAUNCH_COSTS_ON = true`).
