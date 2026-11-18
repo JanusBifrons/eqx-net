@@ -42,17 +42,11 @@ import {
   MANOEUVRE_ATTACK_RUN,
   MANOEUVRE_BREAK,
   MANOEUVRE_KITE,
-  MANOEUVRE_ORBIT,
-  MANOEUVRE_TAIL,
   makeManoeuvreGoal,
   makeTacticalContext,
   MANOEUVRE_FALL_BACK,
   MANOEUVRE_FLEE,
   MANOEUVRE_HOLD,
-  PARKED_SPEED_FRAC,
-  SLOW_SPEED_FRAC,
-  TARGET_STILL_MEMORY_S,
-  TARGET_STILL_MIN_S,
   type IManoeuvre,
   type ManoeuvreGoal,
   type ManoeuvreId,
@@ -71,6 +65,8 @@ import { hullFireCone } from './hullFireCone.js';
 import { PilotMorale } from './pilot/pilotMorale.js';
 import { PilotSenses } from './pilot/pilotSenses.js';
 import { TargetPick } from './pilot/targetPick.js';
+import { BroadsideHelm } from './tactics/broadside.js';
+import { TacticalFill } from './tactics/tacticalFill.js';
 import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TailManoeuvre } from './tactics/manoeuvres.js';
 import { FallBackManoeuvre, FleeManoeuvre, KiteManoeuvre, OrbitManoeuvre } from './tactics/stanceManoeuvres.js';
 import {
@@ -92,19 +88,10 @@ import {
 } from './contextSteering.js';
 import type { IAiAimBoard, IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
 import {
-  addAllyLaneDanger,
-  ALLY_LANE_K,
-  ALLY_LANE_LOOKAHEAD_S,
-  ALLY_LANE_RADIUS_MUL,
-  ALLY_LANE_WEIGHT,
-  blockedNudgeSide,
+  FireLaneSteer,
   fireLaneAvoidanceOn,
-  insideAllyLane,
   NUDGE_MAX_OFF,
-  NUDGE_MIN_BLOCKS,
   NUDGE_SPEED_FRAC,
-  NUDGE_TICKS,
-  NUDGE_WEIGHT,
 } from './tactics/fireLanes.js';
 import {
   DRONE_AIM_TOLERANCE,
@@ -112,14 +99,6 @@ import {
   POINT_BLANK_RATIO,
   DEFAULT_AIM_RADIUS,
   ENGAGE_DISTANCE_RATIO,
-  BROADSIDE_RANGE_STEER,
-  BROADSIDE_SPEED,
-  BROADSIDE_RANGE_DEADBAND,
-  GUARD_HOLD_FRAC,
-  GUARD_RETURN_FRAC,
-  GUARD_RETURN_SPEED,
-  GUARD_PILOT_PARAMS,
-  TARGET_SPEED_GAIN,
   COMBAT_PILOT_PARAMS,
   RUN_PILOT_PARAMS,
   RUN_NOW_PILOT_PARAMS,
@@ -132,12 +111,9 @@ import {
   COMBAT_SEP_REACH,
   COMBAT_SEP_CORE,
   COMBAT_CROWD_SPEED,
-  NUDGE_ARRIVED,
-  NUDGE_SHAPE,
   FACE_MOVE_ENTER,
   FACE_MOVE_EXIT,
   FACE_MOVE_MIN_SPEED,
-  TICKS_PER_S_SIM,
   WARP_OUT_SENSOR_MUL,
   NEVER_RUN_MORALE,
   BROADSIDE_STANDOFF,
@@ -163,6 +139,7 @@ export {
 } from './hostileDroneTuning.js';
 
 export { hullFireCone } from './hullFireCone.js';
+export { BLOCK_HALF_LIFE_TICKS } from './tactics/fireLanes.js';
 
 /**
  * Hostile drone: steers toward nearest player and fires hitscan when in range
@@ -391,15 +368,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _avoidTicks = 0;
   /** Ticks flown with the afterburner lit (test-visible). */
   private _boostTicks = 0;
-  /** The target the still-memory is about, and the last ticks it was under
-   *  the parked / slow bar (`TARGET_STILL_MEMORY_S`). */
-  private _stillTargetId: string | null = null;
-  private _tParkedTick = -1_000_000;
-  private _tSlowTick = -1_000_000;
-  /** Start of the target's current stretch under the parked bar (-1 while
-   *  above it): it counts toward the parked memory only after
-   *  `TARGET_STILL_MIN_S`. */
-  private _tParkedSince = -1;
   /** Turn-key reversals (test-visible) and the last turn key held (1 L, −1 R). */
   private _turnReversals = 0;
   private _lastTurnKey = 0;
@@ -415,6 +383,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private role: RoleProfile;
   /** Reused tactical context + goal (#14). */
   private readonly _tac: TacticalContext = makeTacticalContext();
+  private readonly _tacFill = new TacticalFill();
+  private readonly _lanes = new FireLaneSteer();
+  private readonly _broadsideHelm = new BroadsideHelm();
   private readonly _goal: ManoeuvreGoal = makeManoeuvreGoal();
   /** Preallocated manoeuvres, indexed by `ManoeuvreId`. */
   private readonly _flee = new FleeManoeuvre();
@@ -453,10 +424,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** A switch waiting out the role's reaction time (-1 = none). */
   private _pendingId = -1;
   private _pendingAt = 0;
-  /** The body target's speed smoothed over ~`TARGET_SPEED_TAU_TICKS` (reset
-   *  on a new target): the slow-target call reads it (`targetSlow`). */
-  private _tSpeedAvg = 0;
-  private _tSpeedId: string | null = null;
 
   constructor(kind?: ShipKind | string, opts?: HostileDroneBehaviourOptions) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
@@ -1001,7 +968,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     } else {
       // Decision layer (slice 4): the running manoeuvre writes the goal, the
       // utility picker re-decides on its cadence.
-      this.fillTactical(self, view.tick, target, dist, ux, uy, aimX, aimY, desiredAngle, bearingError, along, boostOk);
+      this._tacFill.fill(this._tac, self, view.tick, target, dist, ux, uy, aimX, aimY, desiredAngle, bearingError, along, boostOk,
+        this.handling.cruiseSpeed, this.kind.maxHealth);
       this.runDecision(self, view, nb);
       clearContextMaps(this._ctxMaps);
       this._goal.spendReserve = false;
@@ -1141,8 +1109,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // sideways (a ship only thrusts along its nose).
     let nudging = false;
     if (fireLaneAvoidanceOn()) {
-      if (aims !== undefined && this.addAllyLanes(self, nb, aims)) nudging = true;
-      if (this.writeBlockedNudge(self, ux, uy)) nudging = true;
+      const ln = this._lanes, tick = this._tac.tick;
+      if (aims !== undefined && ln.addAllyLanes(self, nb, aims, this._nbIdx, this._ctxMaps, tick, this.fireRange,
+        this.handling.cruiseSpeed, this.kind.radius, this.allegiance)) nudging = true;
+      if (ln.writeBlockedNudge(self, ux, uy, this._ctxMaps, tick, this.combatSeparation,
+        this._picker.current, this._attackRun.diving, this._kite.running)) nudging = true;
     }
 
     const out = resolveContext(m, this._ctxOut);
@@ -1217,82 +1188,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       goal.throttleNow ? RUN_NOW_PILOT_PARAMS : goal.spendReserve ? RUN_PILOT_PARAMS : COMBAT_PILOT_PARAMS);
   }
 
-  /**
-   * Ally fire lanes (slice 5b): for up to `ALLY_LANE_K` same-side AI-flown
-   * wingmen within fire range that aimed this tick or the last few, danger
-   * along wingman → its aim point (lane half-width = own radius ×
-   * `ALLY_LANE_RADIUS_MUL` + the wingman's radius; look-ahead 1 s at
-   * max(cruise, own speed)). Same side = `sideAt === allegiance`, pilot slot
-   * or not: a player-owned AI-flown hull sits in a pilot slot on the players
-   * side (RTS Part B), and its squadmates keep out of its lane. AI-flown =
-   * an aim on the board: a human pilot posts none, so no lane is ever made
-   * from a human's nose. Returns true when this ship sits INSIDE a lane (it
-   * must get out: the caller lets the nose swing toward the exit). Alloc-free
-   * (reuses `_nbIdx`).
-   */
-  private addAllyLanes(self: AiEntity, nb: IAiNeighbourQuery, aims: IAiAimBoard): boolean {
-    const idx = this._nbIdx;
-    const n = nb.queryNeighbours(self.x, self.y, this.fireRange, COMBAT_NEIGHBOUR_K, idx, self.id);
-    const tick = this._tac.tick;
-    const sp = Math.hypot(self.vx, self.vy);
-    const lookahead = ALLY_LANE_LOOKAHEAD_S * (sp > this.handling.cruiseSpeed ? sp : this.handling.cruiseSpeed);
-    let used = 0;
-    let inside = false;
-    for (let k = 0; k < n && used < ALLY_LANE_K; k++) {
-      const i = idx[k]!;
-      if (nb.sideAt(i) !== this.allegiance) continue;
-      // Only an AI-flown ship posts its aim; a human pilot has none.
-      if (!aims.read(nb.idAt(i), tick)) continue;
-      used++;
-      const hw = ALLY_LANE_RADIUS_MUL * this.kind.radius + nb.radiusAt(i);
-      const ax = nb.xAt(i);
-      const ay = nb.yAt(i);
-      addAllyLaneDanger(this._ctxMaps, self.x, self.y, ax, ay, aims.readX, aims.readY, hw, lookahead, ALLY_LANE_WEIGHT);
-      if (!inside && insideAllyLane(self.x, self.y, ax, ay, aims.readX, aims.readY, hw)) inside = true;
-    }
-    if (inside) this._laneExitCount++;
-    return inside;
-  }
-
   /** Test-visible: combat ticks spent inside a wingman's fire lane. */
-  getLaneExitTicks(): number { return this._laneExitCount; }
-
-  /**
-   * Blocked-fire nudge (slice 5b): while the line-of-fire gate held a shot in
-   * the last `NUDGE_TICKS` (and the decayed count is at least
-   * `NUDGE_MIN_BLOCKS`), Hold, Tail and an attack run's dive add interest toward a point one
-   * `combatSeparation` aside of the target line, on the side away from the
-   * ally in the way (latched per block). Ends early once there. Returns
-   * whether it is nudging. A run's pull-off / extend and a break fly their own course.
-   */
-  private writeBlockedNudge(self: AiEntity, ux: number, uy: number): boolean {
-    // The shooting stances side-step: Hold, Tail, a run's dive, Orbit and a
-    // Kite backing off nose on (Orbit / Kite replaced Hold for gunships and
-    // missile boats, slice 6b). A run's pull-off / extend, a Break, a running
-    // Kite, FallBack and Flee fly their own course.
-    const cur = this._picker.current;
-    if (cur !== MANOEUVRE_HOLD && cur !== MANOEUVRE_TAIL && cur !== MANOEUVRE_ORBIT
-      && !(cur === MANOEUVRE_ATTACK_RUN && this._attackRun.diving)
-      && !(cur === MANOEUVRE_KITE && !this._kite.running)) return false;
-    const tick = this._tac.tick;
-    if (tick - this._lastBlockedTick > NUDGE_TICKS || this.getRecentBlocks(tick) < NUDGE_MIN_BLOCKS) return false;
-    if (this._nudgeFromTick !== this._lastBlockedTick) {
-      // A fresh block: pick the side and the reposition point.
-      const side = blockedNudgeSide(self.x, self.y, ux, uy, this._blockerX, this._blockerY, self.vx, self.vy);
-      this._nudgeFromTick = this._lastBlockedTick;
-      this._nudgeGoalX = self.x - uy * side * this.combatSeparation;
-      this._nudgeGoalY = self.y + ux * side * this.combatSeparation;
-    }
-    const gx = this._nudgeGoalX - self.x;
-    const gy = this._nudgeGoalY - self.y;
-    if (gx * gx + gy * gy < NUDGE_ARRIVED * NUDGE_ARRIVED * this.combatSeparation * this.combatSeparation) return false;
-    addInterestToward(this._ctxMaps, gx, gy, NUDGE_WEIGHT, NUDGE_SHAPE);
-    this._nudgeCount++;
-    return true;
-  }
+  getLaneExitTicks(): number { return this._lanes.laneExitTicks; }
 
   /** Test-visible: combat ticks spent side-stepping a blocked line. */
-  getNudgeTicks(): number { return this._nudgeCount; }
+  getNudgeTicks(): number { return this._lanes.nudgeTicks; }
 
   /** Test-visible: ticks spent dodging a hull (hull avoidance). */
   getAvoidTicks(): number { return this._avoidTicks; }
@@ -1301,77 +1201,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private avoidAccel(): number {
     const boostMul = this.energy >= BOOST_RESERVE_FRAC * this.energyMax ? (this.kind.boostMultiplier ?? 1) : 1;
     return this.handling.thrustAccel * 60 * boostMul;
-  }
-
-  /** Refresh the tactical context for this combat tick (plain writes, #14). */
-  private fillTactical(
-    self: AiEntity,
-    tick: number,
-    target: MountTargetView,
-    dist: number,
-    ux: number,
-    uy: number,
-    aimX: number,
-    aimY: number,
-    leadAngle: number,
-    bearingError: number,
-    along: number,
-    boostOk: boolean,
-  ): void {
-    const c = this._tac;
-    c.tick = tick;
-    c.x = self.x; c.y = self.y; c.vx = self.vx; c.vy = self.vy;
-    c.angle = self.angle;
-    c.fwdX = -Math.sin(self.angle);
-    c.fwdY = Math.cos(self.angle);
-    c.tx = target.x; c.ty = target.y; c.tvx = target.vx; c.tvy = target.vy;
-    const tsNow = Math.hypot(target.vx, target.vy);
-    if (target.id !== this._tSpeedId) {
-      this._tSpeedId = target.id;
-      this._tSpeedAvg = tsNow;
-    } else {
-      this._tSpeedAvg += (tsNow - this._tSpeedAvg) * TARGET_SPEED_GAIN;
-    }
-    c.targetSpeed = this._tSpeedAvg;
-    c.targetIsShip = (target as { ship?: boolean }).ship !== false;
-    c.dist = dist; c.ux = ux; c.uy = uy;
-    c.aimX = aimX; c.aimY = aimY;
-    c.leadAngle = leadAngle;
-    c.offBoresight = bearingError < 0 ? -bearingError : bearingError;
-    // d(dist)/dt = (v_target − v_self)·u; closing is its negative.
-    c.closing = -((target.vx - self.vx) * ux + (target.vy - self.vy) * uy);
-    const ts = tsNow;
-    // Still-memory: a nudge does not make a parked / slow target a moving one.
-    if (target.id !== this._stillTargetId) {
-      this._stillTargetId = target.id;
-      this._tParkedTick = -1_000_000;
-      this._tSlowTick = -1_000_000;
-      this._tParkedSince = -1;
-    }
-    const cruise = this.handling.cruiseSpeed;
-    const minStill = TARGET_STILL_MIN_S * TICKS_PER_S_SIM;
-    if (ts <= PARKED_SPEED_FRAC * cruise) {
-      if (this._tParkedSince < 0) this._tParkedSince = tick;
-      if (tick - this._tParkedSince >= minStill) this._tParkedTick = tick;
-    } else {
-      this._tParkedSince = -1;
-    }
-    if (ts < SLOW_SPEED_FRAC * cruise) this._tSlowTick = tick;
-    const mem = TARGET_STILL_MEMORY_S * TICKS_PER_S_SIM;
-    c.tParkedHeld = tick - this._tParkedTick <= mem;
-    c.tSlowHeld = tick - this._tSlowTick <= mem;
-    c.targetAspectCos = ts > PARKED_SPEED_FRAC * this.handling.cruiseSpeed ? -(target.vx * ux + target.vy * uy) / ts : 0;
-    c.threatBearingCos = c.fwdX * ux + c.fwdY * uy;
-    // The same bearing from the target's side: its nose vs target → me.
-    const ta = (target as { angle?: number }).angle;
-    const known = ta !== undefined && !Number.isNaN(ta);
-    c.targetBowCos = known ? Math.sin(ta) * ux - Math.cos(ta) * uy : 1;
-    c.tFwdX = known ? -Math.sin(ta) : 0;
-    c.tFwdY = known ? Math.cos(ta) : 0;
-    const hp = self.health;
-    c.hullFrac = hp === undefined ? 1 : Math.max(0, Math.min(1, hp / this.kind.maxHealth));
-    c.holdAlong = along;
-    c.holdBoost = boostOk;
   }
 
   /**
@@ -1491,87 +1320,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Test-visible: is the nose following the move heading (not the lead)? */
   isFacingMove(): boolean { return this._faceMove; }
 
-  /**
-   * Capital engagement (plan prancy-squishing-donut Phase 3). Out of reach:
-   * close bow-first (the wanted velocity points at the target, so while the
-   * target is abaft the beam the pilot backs its engines: reverse brakes the
-   * way it carries AWAY and backs it toward the target while the bow comes
-   * round — showcase-capital-duel, 2026-11-12). In reach: turn the beam toward
-   * the target (whichever side is nearer the current heading) so fore AND aft
-   * turrets bear, biased in or out to hold `fireRange × BROADSIDE_STANDOFF`,
-   * steaming along that heading at a speed that grows with the range error, so
-   * the hull circles its target. Turning is the kind's own torque turn (slow
-   * to start and stop). Never fires: the turrets do, under WeaponMountTicker
-   * fire control. Allocation-free.
-   */
+  /** Broadside flying (`tactics/broadside.ts`); an attack order takes a
+   *  guarding capital off its post (slice 8). */
   private tickBroadside(self: AiEntity, target: MountTargetView, dx: number, dy: number, dist: number, rangeDist: number): AiIntent {
-    // An attack order takes a guarding capital off its post (slice 8).
-    if (this.guardOn && target.id !== this.orderedTargetId) return this.tickGuardBroadside(self, dx, dy);
-    const bearing = facingOf(dx, dy);
-    const cruise = this.handling.cruiseSpeed;
-    if (rangeDist > this.fireRange) {
-      const s = cruise / dist;
-      return this.fly(self, bearing, dx * s, dy * s, rangeDist > this.fireRange * ENGAGE_DISTANCE_RATIO);
-    }
-    const port = wrapAngle(bearing + Math.PI / 2);
-    const stbd = wrapAngle(bearing - Math.PI / 2);
-    const usePort = Math.abs(wrapAngle(port - self.angle)) <= Math.abs(wrapAngle(stbd - self.angle));
-    const standoff = this.fireRange * BROADSIDE_STANDOFF;
-    // + when too far (turn in toward the target), − when too close; 0 inside
-    // the dead-band (at the stand-off: hold the beam, keys off).
-    const raw = Math.max(-1, Math.min(1, (rangeDist - standoff) / standoff));
-    const over = Math.max(0, Math.abs(raw) - BROADSIDE_RANGE_DEADBAND) / (1 - BROADSIDE_RANGE_DEADBAND);
-    const err = raw < 0 ? -over : over;
-    const bias = err * BROADSIDE_RANGE_STEER;
-    const desired = usePort ? wrapAngle(port - bias) : wrapAngle(stbd + bias);
-    // Hold station: steam only to correct range (none at the stand-off), or
-    // the hull carries itself out of its own guns' reach. The target's own
-    // motion is matched so a moving target stays in reach.
-    const speed = cruise * BROADSIDE_SPEED * Math.abs(err);
-    const hx = -Math.sin(desired);
-    const hy = Math.cos(desired);
-    return this.fly(self, desired, hx * speed + target.vx, hy * speed + target.vy, false);
-  }
-
-  /**
-   * A guarding capital in combat (owner decision 2026-11-11: "It should stay
-   * close to the thing it's defending, obviously"). It never chases the
-   * stand-off or a target out of reach: it keeps station at its post and lets
-   * the turrets do the fighting. Station-keeping: the wanted velocity is zero
-   * inside `GUARD_HOLD_FRAC` of the radius and grows toward the post beyond it;
-   * the pilot thrusts or reverses along the hull axis (the only axis a ship
-   * thrusts on) to close the gap. Inside `GUARD_RETURN_FRAC` of the radius the
-   * hull turns its beam to the target so fore and aft turrets bear; beyond it,
-   * it turns its axis (bow or stern, whichever is nearer) to the correction so
-   * thrust or reverse can bring it back. Never fires itself. Allocation-free.
-   */
-  private tickGuardBroadside(self: AiEntity, dx: number, dy: number): AiIntent {
-    const px = this.guardX - self.x;
-    const py = this.guardY - self.y;
-    const dPost = Math.hypot(px, py);
-    const r = this.guardR;
-    const vMax = this.kind.maxSpeed;
-    const hold = r * GUARD_HOLD_FRAC;
-    let want = 0;
-    if (dPost > hold) want = vMax * GUARD_RETURN_SPEED * Math.min(1, (dPost - hold) / (r - hold));
-    const ux = dPost > 1e-6 ? px / dPost : 0;
-    const uy = dPost > 1e-6 ? py / dPost : 0;
-    const wvx = ux * want;
-    const wvy = uy * want;
-    const ex = wvx - self.vx;
-    const ey = wvy - self.vy;
-    let desired: number;
-    if (dPost > r * GUARD_RETURN_FRAC && Math.hypot(ex, ey) > 1e-6) {
-      const ahead = facingOf(ex, ey);
-      const astern = wrapAngle(ahead + Math.PI);
-      desired = Math.abs(wrapAngle(ahead - self.angle)) <= Math.abs(wrapAngle(astern - self.angle)) ? ahead : astern;
-    } else {
-      const bearing = facingOf(dx, dy);
-      const port = wrapAngle(bearing + Math.PI / 2);
-      const stbd = wrapAngle(bearing - Math.PI / 2);
-      desired = Math.abs(wrapAngle(port - self.angle)) <= Math.abs(wrapAngle(stbd - self.angle)) ? port : stbd;
-    }
-    return this.fly(self, desired, wvx, wvy, false, GUARD_PILOT_PARAMS);
+    const b = this._broadsideHelm;
+    if (this.guardOn && target.id !== this.orderedTargetId) b.guard(self, dx, dy, this.guardX, this.guardY, this.guardR, this.kind.maxSpeed);
+    else b.fight(self, target, dx, dy, dist, rangeDist, this.fireRange, this.handling.cruiseSpeed);
+    return this.fly(self, b.facing, b.wvx, b.wvy, b.boost, b.params);
   }
 
   /** Give this drone a GUARD POST: the area (centre + radius) it was sent to
@@ -2024,47 +1779,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   getTurnReversals(): number { return this._turnReversals; }
 
   // ── Line-of-fire feedback (friendly fire; plan composed-harbor §4) ──────
-  // The room's LineOfFireGate held this NPC's shot because a friendly body
-  // was on the line. Plain fields only (#14); game ticks, never wall time
-  // (#20). Read by later slices (the blocked-fire nudge + utility scoring).
-  private _blockScore = 0;
-  private _blockScoreTick = 0;
-  private _lastBlockedTick = -1_000_000;
-  private _blockerX = 0;
-  private _blockerY = 0;
-  /** Blocked-fire nudge (slice 5b): the block it was planned for and its
-   *  reposition point. */
-  private _nudgeFromTick = -1_000_000;
-  private _nudgeGoalX = 0;
-  private _nudgeGoalY = 0;
-  private _nudgeCount = 0;
-  private _laneExitCount = 0;
-
-  /** At most one count per tick (a capital's barrels may each report). */
-  noteBlocked(tick: number, blockerX: number, blockerY: number): void {
-    this._blockerX = blockerX;
-    this._blockerY = blockerY;
-    if (tick === this._lastBlockedTick) return;
-    this._blockScore = this.getRecentBlocks(tick) + 1;
-    this._blockScoreTick = tick;
-    this._lastBlockedTick = tick;
-  }
-
+  // State lives in `tactics/fireLanes.ts` (`FireLaneSteer`).
+  noteBlocked(tick: number, blockerX: number, blockerY: number): void { this._lanes.noteBlocked(tick, blockerX, blockerY); }
   /** Decaying count of recent blocks: halves every `BLOCK_HALF_LIFE_TICKS`. */
-  getRecentBlocks(tick: number): number {
-    if (this._blockScore === 0) return 0;
-    const age = tick - this._blockScoreTick;
-    if (age <= 0) return this._blockScore;
-    return this._blockScore * Math.pow(0.5, age / BLOCK_HALF_LIFE_TICKS);
-  }
-
+  getRecentBlocks(tick: number): number { return this._lanes.getRecentBlocks(tick); }
   /** Tick of the latest block (-1_000_000 when never blocked). */
-  getLastBlockedTick(): number { return this._lastBlockedTick; }
+  getLastBlockedTick(): number { return this._lanes.lastBlockedTick; }
   /** World position of the latest blocking ally. */
-  getLastBlockerX(): number { return this._blockerX; }
-  getLastBlockerY(): number { return this._blockerY; }
+  getLastBlockerX(): number { return this._lanes.blockerX; }
+  getLastBlockerY(): number { return this._lanes.blockerY; }
 }
 
-/** Line-of-fire feedback: the recent-block count halves every this many game
- *  ticks (0.5 s at 60 Hz). */
-export const BLOCK_HALF_LIFE_TICKS = 30;

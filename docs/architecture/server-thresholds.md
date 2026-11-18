@@ -57,7 +57,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | Naval barrel span | 0.62 (shared with the bake) | `NAVAL_BARREL_SPAN`, `src/core/combat/muzzle.ts` | Per-barrel shell origin (#15) | — |
 | Shell view (real ranges) | reach × 1.05, aspect 2.4 | `GUN_VIEW_MARGIN`, `MAX_VIEW_ASPECT`, `src/shared-types/shipScale/tuning.ts` | Who receives `shell_salvo` events ([shell-events](shell-events.md)) | `ShellEventHub.test.ts` |
 | Line-of-fire gate | 2022 candidates, 296 narrow tests per tick | `LINE_OF_FIRE_BUDGET`, `src/shared-types/perf/perfBudgets.ts` | NPC friendly-fire hold checks ([allegiances](allegiances.md)) | `LineOfFireGate.test.ts`, `perfSceneCounts.test.ts` |
-| Blocked-shot memory | recent-block count halves every 30 ticks | `BLOCK_HALF_LIFE_TICKS`, `src/core/ai/HostileDroneBehaviour.ts` | NPC reaction to a blocked line of fire | `npcLineOfFire.test.ts` |
+| Blocked-shot memory | recent-block count halves every 30 ticks | `BLOCK_HALF_LIFE_TICKS`, `src/core/ai/tactics/fireLanes.ts` | NPC reaction to a blocked line of fire | `npcLineOfFire.test.ts` |
 | Hostility decay | 1800 ticks (30 s) | `FORGET_TICKS`, `src/core/ai/HostileDroneBehaviour.ts` | How long a drone stays hostile | `HostileDroneBehaviour.test.ts` |
 | AI neighbour grid cell | 4 × the default fighter `flockSeparation` (#18); "rebuild + 200 K=8 queries" ≈ 0.02 ms | `NEIGHBOUR_CELL_SEPARATIONS`, `src/server/rooms/AiNeighbourGrid.ts`; `benchmarks/ai-allegiance.bench.ts` | Drone-brain proximity queries | `AiNeighbourGrid.test.ts` |
 
