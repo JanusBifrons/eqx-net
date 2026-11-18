@@ -21,15 +21,15 @@ import {
   TICK_IDX,
   slotBase,
 } from '../../../shared-types/sabLayout.js';
-import { DEFAULT_SHIP_KIND, getShipKind } from '../../../shared-types/shipKinds.js';
+import { getShipKind } from '../../../shared-types/shipKinds.js';
 import type { WelcomeMessage } from '../../../shared-types/messages.js';
 import { factionLooksWelcomeField } from '../../../shared-types/factions.js';
-import { STARTER_HULL_KINDS } from '../../../shared-types/blueprints.js';
+import { gateLaunch, seedTestWallet } from '../launchGate.js';
 import { tuningFor } from '../../../shared-types/shipScale/lookup.js';
 import { nearestClearPoint } from '../../../core/bases/baseSite.js';
 import { effectiveShipShieldMax, effectiveShipEnergyMax } from '../../../core/leveling/shipStats.js';
 import { getUser } from '../../auth/AuthService.js';
-import { getPlayerShipStore, getWallet, getHoldStore } from '../../db/PersistenceWorker.js';
+import { getPlayerShipStore, getHoldStore } from '../../db/PersistenceWorker.js';
 import { setSession } from '../../transit/sessionRegistry.js';
 import { serverLogEvent } from '../../debug/ServerEventLog.js';
 import { registerConnectedPlayer } from '../../push/connectedPlayers.js';
@@ -174,16 +174,10 @@ export function joinFreshSpawn(
     }
   }
 
-  // Economy v2 W5b — the ship-picker gate. Starter hulls (scout, fighter)
-  // are always free; any other kind must be a ship you OWN (a roster row,
-  // e.g. one you unpacked). A fresh spawn asking for another kind gets a
-  // starter hull instead, and is told how to get the one it wanted.
-  if (!resumedFromStore && d.sectorKey !== null && d.enforceHullGate && !STARTER_HULL_KINDS.includes(chosenKind)) {
-    const wanted = getShipKind(chosenKind).displayName;
-    chosenKind = DEFAULT_SHIP_KIND;
-    d.sendNotice(client, `You need a ${wanted}: buy a packed one on the Trade tab (or loot one), then unpack it at your storage.`);
-    serverLogEvent('hull_gate_refused', { playerId, wanted });
-  }
+  // Economy v2 W5b + join flow — the ship-picker gate, which pays for the
+  // launch (rooms/launchGate.ts). Test wallet seed first, so it pays.
+  if ((d.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) seedTestWallet(playerId, parsed.data.initialWallet ?? d.testWalletSeed);
+  if (!resumedFromStore && d.sectorKey !== null && d.enforceHullGate) chosenKind = gateLaunch(d.launchCostsOn, playerId, chosenKind, (m) => d.sendNotice(client, m));
 
   // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
   // resumes by shipId — the roster shipId-restore above, which is now the
@@ -365,12 +359,6 @@ export function joinFreshSpawn(
     // gate/regen flow is testable in a few ticks instead of seconds.
     if (typeof parsed.data.initialEnergy === 'number') {
       ship.energy = Math.max(0, parsed.data.initialEnergy);
-    }
-    // Economy v2 W1 — test-only wallet seed (join option, else the room's).
-    const walletSeed = parsed.data.initialWallet ?? d.testWalletSeed;
-    if (walletSeed > 0) {
-      const have = getWallet().balance(playerId);
-      if (have < walletSeed) getWallet().credit(playerId, walletSeed - have, 'test_seed');
     }
     // Living World P1a — seed the hull's carried hold (needs a roster-bound
     // shipInstanceId; engineering rooms have none ⇒ no-op).
