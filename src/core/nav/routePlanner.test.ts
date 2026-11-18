@@ -141,7 +141,9 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     const q0 = fine.exactQueries, t0 = performance.now();
     const n = p.plan(coarse, fine, sx, sy, tx, ty, c, out);
     const ms = performance.now() - t0, queries = fine.exactQueries - q0;
-    console.log(`[nav route] fighter across packed chunk: ${n} waypoints, ${p.expanded} expansions, ${queries} exact queries, ${ms.toFixed(1)} ms`);
+    const built = fine.liveCount, bytes = fine.poolBytes;
+    console.log(`[nav route] fighter across packed chunk: ${n} waypoints, ${p.expanded} expansions, ${queries} exact queries, ` +
+      `${built}/${fine.loadedCount} loaded chunks built (${(bytes / 1024).toFixed(0)} KB of the pool), ${ms.toFixed(1)} ms`);
     expect(p.status).toBe('route');
     expect([out[(n - 1) * 2], out[(n - 1) * 2 + 1]]).toEqual([tx, ty]);
     // Every point of the route, every 2 u, has the exact room (less the trace's shortest step).
@@ -154,6 +156,8 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect(min).toBeGreaterThanOrEqual(c - 2);
     // Count gate (measured 25 452 locally, 2026-11-18; raise only on a new measurement).
     expect(queries).toBeLessThanOrEqual(32_000);
+    // On demand: detail only for the chunks the search reached (measured 2 of 25, 100 KB).
+    expect(built).toBeLessThanOrEqual(4);
     expect(p.expanded).toBeLessThanOrEqual(NAV_COARSE_EXPAND_CAP + NAV_FINE_EXPAND_CAP);
   });
 
