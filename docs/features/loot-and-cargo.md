@@ -33,6 +33,9 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
   same as an AI pilot's ship of that kind), free for anyone to grab. The dead ship keeps
   nothing. Abandoning a ship spills its hold too (P1a-2 turns that into a
   salvageable hulk).
+- **Death loss (owner 2026-11-17).** When a ship dies, every stack in its
+  hold (its hull salvage included) gets a coin flip: kept whole or destroyed
+  whole. If nothing survives there is no pod. An abandoned ship loses nothing.
 - **Pods don't last.** A pod expires after 15 minutes (its contents are
   lost). Shots and rams never destroy a pod.
 
@@ -96,6 +99,13 @@ accelerator. A lost message loses a popup, never value.
 | Lingering hull killed | `LeafDeps.onLingeringHullDeath` (runs before teardown) |
 | Active ship abandoned | `abandonShipToScrap` |
 | Lingering hull abandoned | `abandonLingeringHullToScrap` |
+
+**The death coin flip** (`rollDeathLoss`, in `LootSubsystem.spillShipHold`)
+runs on deaths only (the `deathLoss` key), never on an abandon. Each death is
+a fresh roll: the key is mixed with a per-room random `deathSalt` and a death
+counter. Seeding by the ship id alone made one id lose the same way on every
+run (2026-11-18). Tests pin `deathSalt`, or set the test-room option
+`keepAllOnDeath` to skip the flip.
 
 Fixing the lingering seam exposed a pre-existing bug (hostile-review A1): a
 killed lingering hull never deleted its roster row. See `docs/LESSONS.md`.

@@ -36,36 +36,54 @@ export const loot: Shot = {
   reel: true,
   server: 'lean',
   viewport: 'phone-landscape',
-  // Roster-backed (cargo needs a roster row). Its near heavy is peaceful and
-  // hull-exposed: auto-fire kills it fast and its pod survives the coin flip.
-  target: { room: 'showcase-loot', params: { shipKind: 'interceptor', ...SURVIVE } },
+  // Roster-backed (cargo needs a roster row). Its heavy is peaceful and
+  // hull-exposed: auto-fire kills it fast. Its one stack survives the death
+  // coin flip half the time, so a take with no pod fails and is retaken.
+  target: { room: 'showcase-levelup', params: { shipKind: 'interceptor', ...SURVIVE } },
   hud: 'full',
   durationMs: 20_000,
   async run(ctx) {
     const { page } = ctx;
-    await page.waitForFunction(
-      () => {
-        const m = (window as unknown as { __eqxClient?: { mirror?: { swarm?: Map<number, { kind: number; shipKind?: string }> } } }).__eqxClient?.mirror;
-        for (const [, e] of m?.swarm ?? []) if (e.kind === 3 && e.shipKind === 'cargo-pod') return true;
-        return false;
-      },
-      undefined,
-      { timeout: 12_000 },
-    );
-    await ctx.sleep(800);
-    const pod = await nearestPod(ctx);
-    if (pod === null) throw new Error('loot shot: no pod dropped');
-    await flyTo(ctx, pod.x, pod.y - 50, { arrive: 40, maxMs: 6000, cruise: 160 });
-    const at = (await nearestPod(ctx)) ?? pod;
-    await selectAt(ctx, at.x, at.y);
-    await page.locator('[data-testid="pod-open"][data-in-reach="1"]').waitFor({ timeout: 5000 });
-    await ctx.sleep(700);
-    await page.getByTestId('pod-open').click();
-    await page.getByTestId('cargo-panel').waitFor({ timeout: 5000 });
-    await page.getByTestId('cargo-unknown-tile').first().waitFor({ state: 'detached', timeout: 15_000 }).catch(() => undefined);
-    await ctx.sleep(1200);
-    await page.getByTestId('cargo-take-found').click();
-    await ctx.sleep(1800);
-    await page.getByTestId('loot-window-close').click();
+    const step = (s: string): void => console.log(`[loot] ${s}`);
+    try {
+      await openPodAndTake(ctx, step);
+    } catch (e) {
+      await page.screenshot({ path: `diag/showcase/loot-fail-${Date.now()}.png` }).catch(() => undefined);
+      throw e;
+    }
   },
 };
+
+async function openPodAndTake(ctx: ShotContext, step: (s: string) => void): Promise<void> {
+  const { page } = ctx;
+  await page.waitForFunction(
+    () => {
+      const m = (window as unknown as { __eqxClient?: { mirror?: { swarm?: Map<number, { kind: number; shipKind?: string }> } } }).__eqxClient?.mirror;
+      for (const [, e] of m?.swarm ?? []) if (e.kind === 3 && e.shipKind === 'cargo-pod') return true;
+      return false;
+    },
+    undefined,
+    { timeout: 12_000 },
+  );
+  step('pod dropped');
+  await ctx.sleep(800);
+  const pod = await nearestPod(ctx);
+  if (pod === null) throw new Error('loot shot: no pod dropped');
+  await flyTo(ctx, pod.x, pod.y - 50, { arrive: 40, maxMs: 6000, cruise: 160 });
+  const at = (await nearestPod(ctx)) ?? pod;
+  step('alongside; selecting');
+  await selectAt(ctx, at.x, at.y);
+  await page.locator('[data-testid="pod-open"][data-in-reach="1"]').waitFor({ timeout: 5000 });
+  await ctx.sleep(700);
+  step('open in reach; clicking Open');
+  await page.getByTestId('pod-open').click({ timeout: 5000 });
+  await page.getByTestId('cargo-panel').waitFor({ timeout: 5000 });
+  await page.getByTestId('cargo-unknown-tile').first().waitFor({ state: 'detached', timeout: 15_000 }).catch(() => undefined);
+  await ctx.sleep(1200);
+  step('searched; Take all found');
+  await page.getByTestId('cargo-take-found').click({ timeout: 5000 });
+  await ctx.sleep(1800);
+  step('taken; Close');
+  await page.getByTestId('loot-window-close').click({ timeout: 5000 });
+  step('done');
+}

@@ -45,6 +45,7 @@ function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; 
     holdStore: store,
     sectorKey: () => (opts.sectorKey === undefined ? 'sol-prime' : opts.sectorKey),
     now: () => now,
+    deathSalt: 0, // repeatable flips; the salt itself is tested below
     spawnPodEntity: (id, x, y, _vx, _vy, index) => { poses.set(id, { x, y }); indexes.set(id, index); return true; },
     despawnPodEntity: (id) => { despawned.push(id); poses.delete(id); },
     setPodTier: (id, index) => { indexes.set(id, index); },
@@ -154,6 +155,19 @@ describe('LootSubsystem (P1a-1)', () => {
       expect(t.store.get('ship-9')).toBeUndefined();
     }
     expect(seen, 'some seed lost the only stack').toBe(true);
+  });
+
+  it('the same ship id dying again rolls afresh: sometimes kept, sometimes lost (owner 2026-11-18)', () => {
+    // Before: the flip was seeded only by the key, so one id lost the same
+    // way every time (a fixed showcase drone never dropped a pod).
+    const t = setup();
+    let kept = 0;
+    for (let i = 0; i < 60; i++) {
+      t.store.put({ holderUid: 'pose-drone-0', holderType: 'ship', ownerId: 'p', sectorKey: null, x: null, y: null, hold: h({ salvage: 21 }), expiresAt: null });
+      if (t.loot.spillShipHold('pose-drone-0', 100, 100, 0, 0, 'kill', { player: false, deathLoss: 'pose-drone-0:0' }) !== null) kept++;
+    }
+    expect(kept).toBeGreaterThan(10);
+    expect(kept).toBeLessThan(50);
   });
 
   it('a death pod is sized to the dead ship', () => {

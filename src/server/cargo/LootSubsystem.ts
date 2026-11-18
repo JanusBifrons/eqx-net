@@ -13,7 +13,7 @@
  * OUT of the scrap FIFO and OUT of the sector snapshot (they persist only via
  * the holds table — hostile-review A3).
  */
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import type { GoodId, Hold } from '../../shared-types/goods.js';
 import { ROCK_CHUNK_PRODUCT } from '../../shared-types/items.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
@@ -71,6 +71,10 @@ export interface LootSubsystemDeps {
   /** Test rooms only: a death keeps every stack (no coin flip), for tests
    *  that pin exact pod contents rather than the death loss. */
   keepAllOnDeath?: boolean;
+  /** Mixed into every death coin flip with a per-room death counter, so each
+   *  death is a fresh roll (owner 2026-11-18: the same ship id must not lose
+   *  the same way on every run). Absent ⇒ random per room; tests pin it. */
+  deathSalt?: number;
   now: () => number;
   /** Spawn the pod's swarm entity at a pose; `tier` is its `componentIndex`
    *  (size class and glow tier, `podComponentIndex`). */
@@ -142,7 +146,12 @@ export const DERELICT_TTL_MS = 60 * 60_000;
 export class LootSubsystem {
   private readonly pods = new Map<string, LivePod>();
 
-  constructor(private readonly d: LootSubsystemDeps) {}
+  private readonly deathSalt: number;
+  private deathCount = 0;
+
+  constructor(private readonly d: LootSubsystemDeps) {
+    this.deathSalt = d.deathSalt ?? randomInt(0x7fffffff);
+  }
 
   isPod(id: string): boolean {
     return this.pods.has(id);
@@ -246,7 +255,8 @@ export class LootSubsystem {
    *  `extra`: value the death adds to the same pod (a player hull's salvage
    *  roll, a vaporised ship's bonus salvage), in the same group; with no
    *  ship hold, `extra` alone drops as an ordinary pod.
-   *  `deathLoss`: a DEATH (not an abandon) seeds this key into the EVE coin
+   *  `deathLoss`: a DEATH (not an abandon) mixes this key (with `deathSalt`
+   *  and the death count: a fresh roll per death) into the EVE coin
    *  flip (`rollDeathLoss`, owner 2026-11-17): every stack, `extra`
    *  included, survives whole or is destroyed whole; nothing left ⇒ no pod. */
   spillShipHold(
@@ -257,7 +267,7 @@ export class LootSubsystem {
     if (rec === undefined && opts.extra === undefined) return null;
     let hold = rec !== undefined ? cloneHold(rec.hold) : emptyHold();
     if (opts.extra !== undefined) mergeInto(hold, opts.extra);
-    if (opts.deathLoss !== undefined && this.d.keepAllOnDeath !== true) hold = rollDeathLoss(hold, stream(hashString(opts.deathLoss), 'death-loss'));
+    if (opts.deathLoss !== undefined && this.d.keepAllOnDeath !== true) hold = rollDeathLoss(hold, stream((hashString(opts.deathLoss) ^ this.deathSalt ^ Math.imul(++this.deathCount, 0x9e3779b1)) >>> 0, 'death-loss'));
     const alone = opts.deathLoss !== undefined;
     const size = opts.size ?? 0;
     if (rec === undefined) return this.drop(hold, x, y, vx, vy, { cause, alone, size });
