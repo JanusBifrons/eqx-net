@@ -59,7 +59,7 @@ const ALLOWLIST = {
   'src/server/transit/TransitOrchestrator.ts': { cap: 909, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
   'src/client/App.tsx': { cap: 1215, target: 600, reason: RATCHET_ONLY },
   'src/client/__art-lab__/fx.ts': { cap: 979, target: 600, reason: RATCHET_ONLY },
-  'src/client/__art-lab__/main.ts': { cap: 702, target: 600, reason: RATCHET_ONLY },
+  'src/client/__art-lab__/main.ts': { cap: 674, target: 600, reason: RATCHET_ONLY },
   'src/client/components/EntityStatsPanel.tsx': { cap: 893, target: 600, reason: RATCHET_ONLY },
   'src/client/net/ColyseusClient.ts': {
     cap: 6941,
@@ -71,19 +71,19 @@ const ALLOWLIST = {
   'src/client/render/HaloRadar.ts': { cap: 662, target: 600, reason: RATCHET_ONLY },
   'src/client/render/MountVisualManager.ts': { cap: 932, target: 600, reason: RATCHET_ONLY },
   'src/client/render/PixiRenderer.ts': {
-    cap: 3484,
+    cap: 3463,
     target: 340,
     reason:
       'v3 plan commits 10-14 split this into 15 collaborators (PixiAppLifecycle, ' +
       'CameraController, SpriteFactory, SpriteRegistry, ShipSpriteUpdater, etc.); ' +
       'orchestrator target ~340 LOC.',
   },
-  'src/client/render/art/ArtService.ts': { cap: 757, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/art/fields.ts': { cap: 1161, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/art/ArtService.ts': { cap: 689, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/art/fields.ts': { cap: 943, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fx/fxTextures.ts': { cap: 783, target: 600, reason: RATCHET_ONLY },
   'src/client/render/galaxy/GalaxyMapLayer.ts': { cap: 1044, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/ConnectorRenderer.ts': { cap: 958, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/pixi/structureVisuals.ts': { cap: 739, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/pixi/structureVisuals.ts': { cap: 687, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/wreckArt.ts': { cap: 1925, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/Camera.ts': { cap: 871, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/WorkerRendererClient.ts': {
