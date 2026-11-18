@@ -7,7 +7,7 @@ import { twoBoneIkSolve } from './ikAdapter.js';
 import {
   DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_CRANE_BOOM, DOCK_CRANE_JIB, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, DOCK_CRANE_REACH_TICKS,
   DOCK_BAY_INSET, DOCK_DEPOSIT_RANGE, DOCK_STILL_SPEED, DOCK_UNLOAD_HOLD_LOAD_TICKS, DOCK_UNLOAD_HOLD_MIN_TICKS, DOOR_TURRET_LEAF_TRAVEL, DOOR_TURRET_LIFT, DOOR_TURRET_MOUNT, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
-  CAPITAL_BAY, CRANE_BAYS, FREIGHT_DOCK_BAY, RIG_DEFS, SANDBOX_DOOR_TURRET_DEF, craneBayFor, craneBayWorldCentre, dockUnloadHoldTicks, inCraneBay, inDockBay, isStillForDock, rigById, rigForStructureKind,
+  CAPITAL_BAY, CRANE_BAYS, FREIGHT_DOCK_BAY, RIG_DEFS, SANDBOX_DOOR_TURRET_DEF, craneBayFor, craneBayWorldCentre, dockUnloadHoldTicks, inCraneBay, inDockBay, isStillForDock, onStructureCraneBay, rigById, rigForStructureKind,
 } from './rigCatalogue.js';
 
 const play = (clipId: string, startTick: number, target?: { x: number; y: number }): PlayingClip =>
@@ -465,6 +465,16 @@ describe('crane bays per kind (structure-restyle 3i)', () => {
     // A hauler (80 wide) parks with room either side, centre band ≥ 160 deep.
     expect(2 * (b.padHalfW - DOCK_BAY_INSET)).toBeGreaterThan(3 * 80);
     expect(2 * (b.padHalfH - DOCK_BAY_INSET)).toBeGreaterThanOrEqual(160);
+  });
+
+  it('onStructureCraneBay: the bay rule on a placed, rotated host in world space', () => {
+    const b = CAPITAL_BAY;
+    expect(onStructureCraneBay('capital', 100, 50, 0, 100, 50 + b.cy)).toBe(true);
+    expect(onStructureCraneBay('capital', 100, 50, 0, 100, 50)).toBe(false);
+    // rot 90 turns the +y bay to -x (host frame y-up, rot counter-clockwise).
+    expect(onStructureCraneBay('capital', 0, 0, 90, -b.cy, 0)).toBe(true);
+    expect(onStructureCraneBay('capital', 0, 0, 90, 0, b.cy)).toBe(false);
+    expect(onStructureCraneBay('cargo_bay', 0, 0, 0, 0, b.cy), 'no bay, never on it').toBe(false);
   });
 
   it('the Capital crane reaches every pad point and stows on the roof', () => {

@@ -31,18 +31,28 @@ export function fittedModuleIds(h: Hold): string[] {
 }
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { DOCK_DEPOSIT_RANGE, craneBayFor } from '../../core/articulation/rigCatalogue.js';
+import { DOCK_DEPOSIT_RANGE, craneBayFor, onStructureCraneBay } from '../../core/articulation/rigCatalogue.js';
 import { cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord, HoldStore } from './HoldStore.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 
 /** Hold within this distance of your own hover drop-off to deposit. */
 export const DEPOSIT_RANGE = 400;
-/** Reach around storage of `kindId` (hover deposit, module install, cargo
- *  access, repair): a freight dock's covers its whole landing pad
+/** Reach around storage of `kindId` (hover deposit; with the crane bay,
+ *  `nearStorage` for module install, cargo access, repair): a freight dock's
+ *  covers its whole landing pad
  *  (`DOCK_DEPOSIT_RANGE`, rigCatalogue.ts); other storage uses `DEPOSIT_RANGE`. */
 export function depositRangeOf(kindId: string): number {
   return kindId === 'freight_dock' ? Math.max(DEPOSIT_RANGE, DOCK_DEPOSIT_RANGE) : DEPOSIT_RANGE;
+}
+/** Is world point (x, y) "at" structure `rec` for install, repair and
+ *  cargo reach? Within its `depositRangeOf` circle, or on its own crane bay
+ *  (`onStructureCraneBay`: a Capital's bay lies past 400 u). Not the deposit
+ *  rule: hover deposit stays `takesHoverDeposit` + `depositRangeOf`. Alloc-free. */
+export function nearStorage(rec: Pick<StructureRecord, 'kind' | 'x' | 'y' | 'rot'>, x: number, y: number): boolean {
+  const r = depositRangeOf(rec.kind);
+  if ((rec.x - x) ** 2 + (rec.y - y) ** 2 <= r * r) return true;
+  return onStructureCraneBay(rec.kind, rec.x, rec.y, rec.rot ?? 0, x, y);
 }
 /** Does storage of `kindId` take the hover deposit (hold within
  *  `depositRangeOf` for `DEPOSIT_DWELL_TICKS`)? A kind with a crane bay
@@ -206,9 +216,9 @@ export class StorageService {
     if (puts.length > 0) this.d.holdStore.commit(puts, [], this.persist());
   }
 
-  /** Nearest OPERATIONAL storage owned by `owner` within deposit range of
-   *  (x, y): each structure's own `depositRangeOf(kind)`, or `range` for all
-   *  when given. */
+  /** Nearest OPERATIONAL storage owned by `owner` that (x, y) is at
+   *  (`nearStorage`: its `depositRangeOf` circle or its crane bay), or within
+   *  `range` of for all when given. */
   nearestOwnStorage(owner: string, x: number, y: number, range?: number): StructureRecord | null {
     return this.nearestOwn(owner, x, y, range, false);
   }
@@ -227,8 +237,10 @@ export class StorageService {
       if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
       if (hoverOnly && !takesHoverDeposit(rec.kind)) continue;
       const d2 = (rec.x - x) ** 2 + (rec.y - y) ** 2;
+      // Hover deposit: the plain circle only; storage reach: `nearStorage`.
       const r = range ?? depositRangeOf(rec.kind);
-      if (d2 <= r * r && d2 <= bestD2) { bestD2 = d2; best = rec; }
+      const near = range !== undefined || hoverOnly ? d2 <= r * r : nearStorage(rec, x, y);
+      if (near && d2 <= bestD2) { bestD2 = d2; best = rec; }
     }
     return best;
   }

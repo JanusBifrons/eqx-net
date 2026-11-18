@@ -309,8 +309,8 @@ export const SHOWCASE_SWARM_OPTS = {
 /**
  * The pilot's home base, roster-backed (real sectorKey, outside the galaxy
  * graph) so cargo can be hauled home: join with `initialCargo` far to the
- * south-west, fly past the Miner drilling its asteroid, and unload at the
- * Capital (auto-deposit). Peaceful — no drones.
+ * south-west, fly past the Miner drilling its asteroid, and park in the
+ * Capital's crane bay to unload. Peaceful — no drones.
  */
 export const SHOWCASE_HOMESTEAD_OPTS = {
   sectorKey: 'showcase-homestead',

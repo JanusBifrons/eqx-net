@@ -181,6 +181,23 @@ export function craneBayWorldCentre(bay: CraneBay, x: number, y: number, rotDeg:
   return { x: x + bay.cx * c - bay.cy * s, y: y + bay.cx * s + bay.cy * c };
 }
 
+/** World point (x, y) on the crane bay (`inCraneBay`) of a `kindId`
+ *  structure centred at (hostX, hostY), rotated `rotDeg`; false for a kind
+ *  with no bay. The world → host-frame transform is `worldToRigHost`, inline
+ *  (alloc-free). */
+export function onStructureCraneBay(
+  kindId: string, hostX: number, hostY: number, rotDeg: number, x: number, y: number,
+): boolean {
+  const bay = craneBayFor(kindId);
+  if (bay === null) return false;
+  const a = (rotDeg * Math.PI) / 180;
+  const dx = x - hostX;
+  const dy = y - hostY;
+  const cs = Math.cos(a);
+  const sn = Math.sin(a);
+  return inCraneBay(bay, dx * cs + dy * sn, -dx * sn + dy * cs);
+}
+
 /** Speed (game units / s) below which a ship on the bay counts as stopped.
  *  Ship top speeds run 420 (trader-hauler) .. 950; the helm's own "arrived"
  *  gate is 5 % of top speed (21 .. 48). 25 is met by a ship hovering on the
