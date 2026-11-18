@@ -8,6 +8,8 @@
  */
 import { PLAYABLE_SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
 import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
+import { buildRecipeFor } from '../../../shared-types/recipes.js';
+import type { ShipKindId } from '../../../shared-types/shipKinds.js';
 
 /** Every hull a pilot can fly (engineering-only test hulls excluded). */
 export const PORTRAIT_KINDS: readonly string[] = PLAYABLE_SHIP_KINDS_LIST
@@ -16,10 +18,11 @@ export const PORTRAIT_KINDS: readonly string[] = PLAYABLE_SHIP_KINDS_LIST
 
 const HAS = new Set(PORTRAIT_KINDS);
 
-/** One camera zoom for every capital, so they read to scale (a Battleship
- *  bigger than a Destroyer): set so the largest (the Barge) fits the 900 px
- *  picture crop with a margin. */
-export const CAPITAL_PORTRAIT_ZOOM = 0.12;
+/** One camera zoom for every warship capital (no Shipyard recipe: launched
+ *  with credits), so they read to scale (a Battleship bigger than a
+ *  Destroyer): set so the largest fits the 900 px picture crop with a margin.
+ *  A Shipyard-built capital (the Barge) is fitted on its own instead. */
+export const CAPITAL_PORTRAIT_ZOOM = 0.17;
 /** Capitals are long: they lie corner to corner (radians, Pixi rotation). */
 export const CAPITAL_PORTRAIT_ROT = -Math.PI / 4;
 
@@ -31,9 +34,10 @@ export interface PortraitFraming { zm: number; cz?: number; rot?: number; th: nu
 
 export function portraitFraming(kind: string): PortraitFraming {
   const k = PLAYABLE_SHIP_KINDS_LIST.find((s) => s.id === kind);
-  return k && sizeClassOf(k) === 'capital'
+  if (!k || sizeClassOf(k) !== 'capital') return { zm: 1, th: 0.6, turrets: false };
+  return buildRecipeFor(kind as ShipKindId) === null
     ? { zm: 1, cz: CAPITAL_PORTRAIT_ZOOM, rot: CAPITAL_PORTRAIT_ROT, th: 0, turrets: true }
-    : { zm: 1, th: 0.6, turrets: false };
+    : { zm: 1, rot: CAPITAL_PORTRAIT_ROT, th: 0, turrets: true };
 }
 
 /** The art lab query for `kind`'s picture. */

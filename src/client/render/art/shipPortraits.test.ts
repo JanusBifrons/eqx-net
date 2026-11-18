@@ -34,9 +34,13 @@ describe('ship portraits (join flow stage 3)', () => {
     expect(portraitQuery('fighter')).toBe('style=machined&scene=portrait&kind=fighter&zm=1&th=0.6');
   });
 
-  it('the largest capital fills most of the 900 px crop without clipping', () => {
+  it('the Barge (Shipyard-built) is fitted on its own', () => {
+    expect(portraitFraming('barge')).toEqual({ zm: 1, rot: CAPITAL_PORTRAIT_ROT, th: 0, turrets: true });
+  });
+
+  it('the largest warship fills most of the 900 px crop without clipping', () => {
     const caps = PORTRAIT_KINDS.filter((k) => portraitFraming(k).cz !== undefined);
-    expect(caps.length).toBeGreaterThanOrEqual(8);
+    expect(caps.length).toBe(8);
     const widest = Math.max(...caps.map(span)) * CAPITAL_PORTRAIT_ZOOM;
     expect(widest).toBeLessThanOrEqual(900 * 0.95);
     expect(widest).toBeGreaterThanOrEqual(900 * 0.7);
