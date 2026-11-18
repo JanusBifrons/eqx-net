@@ -42,6 +42,9 @@ export class PatrolMode implements IPilotMode {
    *  `setMoveTarget` (lone drone / tests) is full-thrust. */
   leaderCruise = false;
 
+  /** The guard post (`GuardReturnMode`, read live): a course onto the post is a hold. */
+  constructor(private readonly guard: Readonly<{ on: boolean; x: number; y: number }>) {}
+
   /** Set the course (`setMoveTarget` / `setFlockLeaderCourse`): it clears any
    *  FOLLOWER role (the ship leads / moves independently now). */
   setCourse(x: number, y: number, leaderCruise: boolean, o: PilotOrderModes): void {
@@ -63,13 +66,14 @@ export class PatrolMode implements IPilotMode {
   writeGoal(ctx: PilotModeContext, out: PilotModeGoal): void {
     const self = ctx.self;
     out.params = DEFAULT_PILOT_PARAMS;
-    const mt = ctx.moveTarget;
+    const mt = this.moveTarget;
     if (ctx.job === JOB_COURSE && mt !== null) {
       // Holding a post (slice 9): inside the arrive radius of it the ship
       // stays where it is and only brakes. With the nose kept (the fly-to
       // close in) a few units off the exact point to the side could never be
       // closed: it tapped forward and back across it every second.
-      if (ctx.guardOn && mt.x === ctx.guardX && mt.y === ctx.guardY) {
+      const g = this.guard;
+      if (g.on && mt.x === g.x && mt.y === g.y) {
         const dx = mt.x - self.x;
         const dy = mt.y - self.y;
         const r = shipTuning(ctx.kind).wingmanArrive;

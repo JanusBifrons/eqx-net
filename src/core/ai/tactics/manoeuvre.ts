@@ -326,13 +326,6 @@ export interface PilotModeContext {
   /** Flee's escape line (unit). */
   escapeX: number;
   escapeY: number;
-  moveTarget: { x: number; y: number } | null;
-  guardOn: boolean;
-  guardX: number;
-  guardY: number;
-  /** The travel point (an owner's Move / patrol leg end). */
-  travelX: number;
-  travelY: number;
 }
 
 /** Placeholder `self` until the brain's first mode call. */
@@ -341,8 +334,7 @@ const NO_SELF: AiEntity = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 
 export function makePilotModeContext(kind: ShipKind, handling: PilotHandling): PilotModeContext {
   return {
     tick: 0, job: JOB_ORBIT, self: NO_SELF, kind, handling, energy: 0, energyMax: 0,
-    escapeX: 0, escapeY: 1, moveTarget: null, guardOn: false, guardX: 0, guardY: 0,
-    travelX: 0, travelY: 0,
+    escapeX: 0, escapeY: 1,
   };
 }
 
