@@ -1,10 +1,9 @@
 /**
- * Mining-laser ore through the REAL room (owner 2026-11-17: all mined ore
- * arrives as ore pods). A mining-laser hit on a whole rock pays NO ore into
- * the shooter's hold: it only cuts. The rock's pool stays whole until it
- * breaks, is shared out to its pieces by area, and the pieces' ore pods carry
- * it (`OreDraw.cutYield`), each up to a pod's size (`SALVAGE_POD_MAX_WEIGHT`:
- * a share over it stays unmined). Ordinary guns neither mine nor cut.
+ * Mining-laser ore (owner 2026-11-17: mined rock never becomes a pod). A
+ * laser hit on a whole rock pays NO ore into the shooter's hold: it only
+ * cuts. The pieces re-cut down to slivers that stay pieces; a hull-touch
+ * takes one in whole as a rock chunk whose hidden ore (`OreDraw.chunkYield`)
+ * grows with the chunk's weight squared. Ordinary guns neither mine nor cut.
  *
  * The pilot flies a fighter whose latent wing mount carries the mining laser
  * (seeded on the roster + live hull), locks the rock (`lockTarget`) and fires
@@ -17,12 +16,11 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getHoldStore, getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
-import { SALVAGE_POD_MAX_WEIGHT } from '../../../src/shared-types/worldEvents.js';
-import { asteroidYieldWeightPerUnit } from '../../../src/shared-types/asteroidResources.js';
+import { OreDraw, type OreDrawDeps } from '../../../src/server/rooms/OreDraw.js';
 
 const WRECK_KIND = 4;
 
-describe('SectorRoom integration — mining-laser ore arrives only as ore pods', () => {
+describe('SectorRoom integration — mining-laser ore arrives only as rock chunks', () => {
   let harness: SectorTestHarness;
   afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
 
@@ -64,7 +62,7 @@ describe('SectorRoom integration — mining-laser ore arrives only as ore pods',
     expect(holdTotal(shipId), 'no ore per hit').toBe(0);
   });
 
-  it('cut to the last sliver: nothing reaches the hold on the way, and every sliver drops a full pod', { timeout: 40_000 }, async () => {
+  it('cut to the last sliver: nothing reaches the hold on the way, and no pod ever drops', { timeout: 40_000 }, async () => {
     const { room, pid, shipId, rockId } = await setup(60);
     const int = room._internals;
     int.setWreckSeed(9);
@@ -77,31 +75,29 @@ describe('SectorRoom integration — mining-laser ore arrives only as ore pods',
       if (int.swarmRegistry.get(rockId) !== null) expect(int.swarmRegistry.get(rockId)!.resources).toBe(pool0);
     }
     expect(int.swarmRegistry.get(rockId), 'the rock broke').toBeNull();
-    // Grind every piece down to its pod.
+    // Grind the pieces: they re-cut down to slivers that stay pieces.
     const size = (id: string): number => int.wreckIntegrity(id) ?? 0;
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 200; i++) {
       const live = [...int.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND);
       if (live.length === 0) break;
-      const p = int.wreckState(live[0]!.id);
-      if (p) int.applyDamage(live[0]!.id, pid, size(live[0]!.id) + 1, p.x - 1, p.y, 1, 0, 'mining_laser');
+      const p = int.wreckState(live[i % live.length]!.id);
+      if (p) int.applyDamage(live[i % live.length]!.id, pid, size(live[i % live.length]!.id) + 1, p.x - 1, p.y, 1, 0, 'mining_laser');
       int.pulseStructureGrid();
       await harness.advance(20);
     }
-    expect([...int.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND).length, 'every piece ground to pods').toBe(0);
+    expect([...int.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND).length, 'the slivers stay pieces').toBeGreaterThan(0);
     expect(holdTotal(shipId), 'nothing went straight into the hold').toBe(0);
-    let podOre = 0, pods = 0;
-    for (const id of int.loot.podIds()) {
-      pods++;
-      podOre += Object.values(int.loot.shipHold(id)?.goods ?? {}).reduce((a, n) => a + (n ?? 0), 0);
-    }
-    console.log(`[oreDraw] rock pool ${pool0}; ${pods} pods carry ${podOre}`);
-    expect(pods).toBeGreaterThan(0);
-    // The pool was whole at the break, so every sliver's share is far over a
-    // pod's size: each sliver drops a FULL pod (none shrunk by a per-hit
-    // draw). Nearby drops merge into one pod, so the total is a whole number
-    // of full pods. The rest of the pool stays unmined (the pod cap).
-    const podMax = Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit('rock'));
-    expect(podOre % podMax, 'every sliver dropped a full pod').toBe(0);
-    expect(podOre).toBeGreaterThanOrEqual(pods * podMax);
+    expect(int.loot.podCount(), 'a rock never drops a pod').toBe(0);
+  });
+
+  it('chunkYield: a chunk holds its rock resource, very steep in its weight', () => {
+    const draw = new OreDraw({} as OreDrawDeps);
+    const total = (o: Partial<Record<string, number>>): number => Object.values(o).reduce<number>((a, n) => a + (n ?? 0), 0);
+    const small = draw.chunkYield('r', 0, 0, 250, 'rock');
+    const big = draw.chunkYield('r', 0, 0, 1_000, 'rock');
+    expect(small.minerals ?? 0, 'plain rock: minerals').toBeGreaterThan(0);
+    expect(total(big) / total(small)).toBeGreaterThan(14); // 4x the weight: ~16x the ore
+    expect((draw.chunkYield('r', 0, 0, 500, 'ice').ice ?? 0), 'ice rock: ice').toBeGreaterThan(0);
+    expect(draw.chunkYield('r', 0, 0, 0, 'rock')).toEqual({});
   });
 });
