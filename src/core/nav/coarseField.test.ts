@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CoarseFieldMap, COARSE_NAV_CELL } from './coarseField.js';
+import { CoarseFieldMap, COARSE_NAV_CELL, HeadingCoarseGraph, NAV_LANE_ENTRY_COST, NAV_TURN_STEP_COST } from './coarseField.js';
 import { GraphSearch, type SearchGoal } from './search.js';
 import { SLICED, slicedFieldLanes, cutFieldPad, type ChunkOpts } from '../terrain/fieldLayout.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -91,5 +91,50 @@ describe('CoarseFieldMap (analytic coarse layer)', () => {
     expect(s.cost(b)).toBeLessThanOrEqual(capital);
     console.log(`[nav coarse] ${m.cols}x${m.rows} cells, ${(bytes / 1024).toFixed(0)} KB, build ${ms.toFixed(1)} ms; ` +
       `across the field: battleship ${(capital / 1000).toFixed(0)} km (${capExp} expanded), fighter ${(s.cost(b) / 1000).toFixed(0)} km (${s.expanded} expanded)`);
+  });
+});
+
+describe('HeadingCoarseGraph (navigation slice 11, capital commitment)', () => {
+  /** 3 × 3 cells 1000 u apart; room 100 everywhere but `tight` cells (room 30). */
+  function grid(tight: number[]): HeadingCoarseGraph {
+    const m = new CoarseFieldMap();
+    m.cols = 3; m.rows = 3;
+    m.bestX = new Float32Array(9); m.bestY = new Float32Array(9); m.room = new Float32Array(9).fill(100);
+    for (let i = 0; i < 9; i++) { m.bestX[i] = (i % 3) * 1000; m.bestY[i] = ((i / 3) | 0) * 1000; }
+    for (const i of tight) m.room[i] = 30;
+    m.clearance = 20;
+    const g = new HeadingCoarseGraph();
+    g.map = m; g.turnRadius = 50; // room 30 < 20 + 50: no turning there; 100 is room enough
+    return g;
+  }
+  // Steps: k 0 +x, 1 −x, 2 +y, 3 −y; arrival code (node & 7) 0 = +x, 4 = −x, 2 = +y.
+  it('in a lane cell only steps within 45° of the way in are open; open space turns freely', () => {
+    const g = grid([4]);
+    const inLaneGoingX = 4 * 8 + 0;
+    expect(g.edgeTo(inLaneGoingX, 0)).toBe(5 * 8 + 0); // on forward
+    expect(g.edgeTo(inLaneGoingX, 4)).toBe(8 * 8); // +x+y: 45°, into open space (one node)
+    expect(g.edgeTo(inLaneGoingX, 1)).toBe(inLaneGoingX); // U-turn: closed
+    expect(g.edgeTo(inLaneGoingX, 2)).toBe(inLaneGoingX); // 90°: closed
+    const open = 0 * 8;
+    expect(g.edgeTo(open, 2)).toBe(3 * 8); // 90° in open space: allowed, and open cells are one node
+    expect(g.edgeTo(open, 4)).toBe(4 * 8 + 1); // into the lane: arrives pointing +x+y
+    expect(g.startNode(4, -Math.PI / 2)).toBe(4 * 8 + 0); // in the lane: the nose counts
+    expect(g.startNode(0, 2)).toBe(0); // in open space it doesn't
+  });
+
+  it('a turn in a lane costs turning radii per 45°, and entering a lane from open space costs more', () => {
+    const g = grid([4]);
+    const r = 50;
+    expect(g.edgeCost(0, 2)).toBeCloseTo(1000, 3); // open space: turning is free
+    expect(g.edgeCost(3 * 8, 0)).toBeCloseTo(1000 + NAV_LANE_ENTRY_COST * r, 3); // into the lane
+    expect(g.edgeCost(4 * 8 + 0, 0)).toBeCloseTo(1000, 3); // straight out of it
+    expect(g.edgeCost(4 * 8 + 0, 4)).toBeCloseTo(1000 * Math.SQRT2 + NAV_TURN_STEP_COST * r, 3); // 45° out of it
+  });
+
+  it('stepOf maps a ship angle to its compass step (0 faces +y)', () => {
+    expect(HeadingCoarseGraph.stepOf(0)).toBe(2);
+    expect(HeadingCoarseGraph.stepOf(-Math.PI / 2)).toBe(0);
+    expect(HeadingCoarseGraph.stepOf(Math.PI / 2)).toBe(4);
+    expect(HeadingCoarseGraph.stepOf(Math.PI)).toBe(6);
   });
 });
