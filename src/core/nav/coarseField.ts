@@ -141,3 +141,62 @@ export class CoarseFieldMap implements SearchGraph {
     this.bestX[i] = bx; this.bestY[i] = by; this.room[i] = br;
   }
 }
+
+/** Each of the 8 neighbour steps as a turn index round the compass (0..7, 45° apart). */
+const STEP_DIR = [0, 4, 2, 6, 1, 7, 3, 5];
+/** A step's cost per 45° it turns from the way the ship arrived, in turning radii. */
+export const NAV_TURN_STEP_COST = 0.25;
+/** Entering a lane (no room to turn round) from open space costs this many
+ *  turning radii on top: once in, the ship is committed to its far end. */
+export const NAV_LANE_ENTRY_COST = 1;
+
+/**
+ * The coarse cells with the way the ship came in (navigation slice 11, capital
+ * commitment). A cell with less room than the clearance plus the hull's
+ * turning radius (a lane, to a capital) is one node per compass step the ship
+ * arrived by (cell × 8 + step), and its next step may turn at most 45°:
+ * forward only, no U-turn planned inside it; each such turn costs
+ * `NAV_TURN_STEP_COST` turning radii per 45°. A cell with room to turn is one
+ * node (cell × 8), free to leave any way, so open space searches as cheaply as
+ * the plain graph. Entering a lane from open space costs
+ * `NAV_LANE_ENTRY_COST` turning radii: once in, the ship is committed to its
+ * far end. A view over the one `CoarseFieldMap`, its rooms and best points.
+ */
+export class HeadingCoarseGraph implements SearchGraph {
+  map: CoarseFieldMap | null = null;
+  turnRadius = 0;
+  get nodeCount(): number { return this.map!.nodeCount * 8; }
+  edgeCount(): number { return 8; }
+  /** The compass step (0..7) nearest a heading (ship angle: 0 faces +y). */
+  static stepOf(heading: number): number {
+    const a = Math.atan2(Math.cos(heading), -Math.sin(heading)); // travel direction's angle from +x
+    return ((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8;
+  }
+  /** No room to turn round in this cell. */
+  tight(cell: number): boolean {
+    const m = this.map!;
+    return m.room[cell]! < m.clearance + this.turnRadius;
+  }
+  /** The search's start node: in `cell`, pointing along `heading`. */
+  startNode(cell: number, heading: number): number {
+    return cell * 8 + (this.tight(cell) ? HeadingCoarseGraph.stepOf(heading) : 0);
+  }
+  /** 45° steps turned from the way in, for a step out of a lane cell; 0 out of open space. */
+  private turnSteps(node: number, k: number): number {
+    if (!this.tight(node >> 3)) return 0;
+    const d = Math.abs(STEP_DIR[k]! - (node & 7));
+    return d > 4 ? 8 - d : d;
+  }
+  edgeTo(node: number, k: number): number {
+    const cell = node >> 3, j = this.map!.edgeTo(cell, k);
+    if (j === cell || this.turnSteps(node, k) > 1) return node;
+    return j * 8 + (this.tight(j) ? STEP_DIR[k]! : 0);
+  }
+  edgeCost(node: number, k: number): number {
+    const to = this.edgeTo(node, k);
+    if (to === node) return Infinity;
+    const cell = node >> 3;
+    const entry = this.tight(to >> 3) && !this.tight(cell) ? NAV_LANE_ENTRY_COST : 0;
+    return this.map!.edgeCost(cell, k) + (this.turnSteps(node, k) * NAV_TURN_STEP_COST + entry) * this.turnRadius;
+  }
+}

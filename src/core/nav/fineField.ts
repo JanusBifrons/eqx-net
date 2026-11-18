@@ -28,6 +28,11 @@ export const FINE_NAV_CELL = 64;
 /** How far past its chunk a fine grid reaches, and the most clearance it
  *  reports (world u). */
 export const FINE_NAV_REACH = 1024;
+/** Rocks grow by half a cell diagonal before stamping, so none slips between
+ *  cell centres; a cell's value − {@link FINE_NAV_DIAG} is then a true lower
+ *  bound on the clearance anywhere in it (`ClearanceGrid`). */
+export const FINE_NAV_PAD = (FINE_NAV_CELL * Math.SQRT2) / 2;
+export const FINE_NAV_DIAG = FINE_NAV_CELL * Math.SQRT2;
 /** Cells on a side of one chunk's grid. */
 export const FINE_NAV_SIDE = (CHUNK_SIZE + 2 * FINE_NAV_REACH) / FINE_NAV_CELL;
 
@@ -138,7 +143,7 @@ export class FineFieldLayer {
       }
     }
     const b = this.builder;
-    b.build(cx * CHUNK_SIZE - FINE_NAV_REACH, cy * CHUNK_SIZE - FINE_NAV_REACH, FINE_NAV_SIDE, FINE_NAV_SIDE, FINE_NAV_CELL, obs);
+    b.build(cx * CHUNK_SIZE - FINE_NAV_REACH, cy * CHUNK_SIZE - FINE_NAV_REACH, FINE_NAV_SIDE, FINE_NAV_SIDE, FINE_NAV_CELL, obs, FINE_NAV_PAD);
     this.live.get(ck(cx, cy))!.set(b.dist);
     this.cellsRebuilt += FINE_NAV_SIDE * FINE_NAV_SIDE;
   }
