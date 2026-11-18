@@ -28,7 +28,7 @@ import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
-import { PAD_SPECS, PairRequestPromptSchema, TP_PHASE, TeleportCandidatesReplySchema, TollPromptSchema, isTeleporterKind } from '../../shared-types/teleport.js';
+import { PAD_SPECS, TP_PHASE, isTeleporterKind } from '../../shared-types/teleport.js';
 
 /** v4 T2 — prediction-world pad field ids, cached per structure (no per-sync string). */
 const PAD_FIELD_IDS = new Map<number, string>();
@@ -46,30 +46,18 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { pushCollisionShieldContacts } from './collisionShieldContacts';
-import { MineDetonatedSchema } from '@shared-types/mines';
-import { ShellBlastSchema } from '@shared-types/shellBlast';
-import { ShellEndSchema, ShellSalvoSchema, type ShellEnd } from '@shared-types/messages/shellEvents';
+import type { ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
-import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
 import { ControlModeMessageSchema } from '@shared-types/messages/snapshotMessages';
 import { parseTransitReadyShipIds } from '@shared-types/messages';
 import { isCommanderFleetFollow, transitStartsLocalTrip, stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
-import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged, cargoViewOf, type WireCargo } from './lootView';
-import { toastForNotice } from './tradeView';
-import { TradeNoticeSchema } from '../../shared-types/economy.js';
-import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
-import { BountyResultSchema } from '../../shared-types/contracts.js';
+import { cargoChanged, cargoViewOf, type WireCargo } from './lootView';
 import { setFactionLooks } from '../../shared-types/factions.js';
-import { ClaimFactionLookResultSchema } from '../../shared-types/messages/factionMessages.js';
-import { onFactionLookClaimed } from './factionLookSync.js';
-import { LabStateSchema } from '../../shared-types/messages/labMessages.js';
-import { BreakInNoticeSchema, CargoStateSchema } from '../../shared-types/messages/cargoMessages.js';
-import { BpMarketStateSchema } from '../../shared-types/blueprintMarket.js';
-import { PackedStockSchema } from '../../shared-types/packedStock.js';
-import { BlueprintResultSchema, fittedCargoMul } from '../../shared-types/blueprints.js';
+import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
+import { fittedCargoMul } from '../../shared-types/blueprints.js';
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
 /** Same id list (order-sensitive; absent ≡ empty). Alloc-free. */
@@ -80,11 +68,7 @@ function sameIds(a: readonly string[], b: readonly string[] | undefined): boolea
   return true;
 }
 
-/** Living World P2 — how long a trade toast stays up. */
-const TRADE_TOAST_TTL_MS = 6_000;
 import { cargoCapacityForMaxHealth } from '@shared-types/goods';
-import { applySelectionStats } from './selectionStats.js';
-import { ingestFleetStatus } from '../fleet/fleetStatusIngest.js';
 import {
   createRemotePredictionGuard,
   forgetRemote,
@@ -119,7 +103,7 @@ import { DataChannelTransport } from './dataChannelTransport.js';
 import { webrtcEnabledFromSearch } from './webrtcEnable.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles } from './SnapshotSyncHelpers.js';
-import { applyMissileSnapshot, removeMissile } from '../combat/MissileMirror.js';
+import { applyMissileSnapshot } from '../combat/MissileMirror.js';
 import { beamOptimalDist, beamMaxDist, beamNoHitSolidDist } from '../combat/beamBands.js';
 import { RafStallDetector } from './RafStallDetector.js';
 import {
@@ -1444,6 +1428,12 @@ export class ColyseusGameClient {
   /** Shells as events: on when the welcome says so (shell-events.md §7). */
   private _shellEvents = false;
   private readonly _shellStore = new ShellSalvoStore();
+  /** The ctx `handlers/index.ts` registers with, built once (#14). */
+  private readonly _handlerCtx: ClientHandlerCtx = {
+    mirror: this.mirror, shellStore: this._shellStore, cutField: this._cutField,
+    shellEvents: () => this._shellEvents,
+    applyShellEnd: (msg: ShellEnd): void => this.applyShellEnd(msg),
+  };
   /** A naval shell hit's FX wait for its drawn burst (navalHitHold.ts). */
   private readonly _navalHitHold = new NavalHitHold();
   /** The sink `_navalHitHold.release` calls (built once, #14). */
@@ -1966,22 +1956,6 @@ export class ColyseusGameClient {
       }
     });
 
-    // Click-to-inspect (structures follow-up Item B5) — live stats for the
-    // locally-selected entity arrive at ~5 Hz. Defensive zod parse (invariant
-    // #3); on success mutate the `selectionStats` module singleton in place (NO
-    // Zustand write — the panel polls the singleton ~1 Hz, avoiding 5 Hz React
-    // re-renders).
-    room.onMessage('entity_stats', (raw: unknown) => {
-      const parsed = EntityStatsSchema.safeParse(raw);
-      if (!parsed.success) return;
-      applySelectionStats(parsed.data);
-    });
-    // RTS slice 7 — the owner-only fleet status stream (~2 Hz, the whole owned
-    // fleet each time) → the `fleet/fleetStatus` singleton the panel polls.
-    room.onMessage('fleet_status', (raw: unknown) => {
-      ingestFleetStatus(raw);
-    });
-
     room.onMessage('damage', (raw: unknown) => {
       // weapon-hit-prediction Phase 3 — defensive zod parse on receive
       // (invariant #4; mirrors the collision_resolved drop-on-fail). The
@@ -2027,50 +2001,6 @@ export class ColyseusGameClient {
     room.onMessage('destroy', (raw: unknown) => {
       const evt = parseDestroy(raw);
       if (evt !== null) this.handleDestroy(evt);
-    });
-
-    // Phase 4 WS-B1 — a ship instance levelled up (public, D13). Defensive zod
-    // parse (invariant #3/#4 — crosses the trust boundary). The badge refresh
-    // for ALL ships rides the next snapshot's states[].level; THIS handler pops
-    // the owner-facing screenspace level-up icon for the LOCAL player's hull.
-    room.onMessage('ship_level_up', (raw: unknown) => {
-      const parsed = ShipLevelUpEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      this.handleShipLevelUp(parsed.data.shipInstanceId, parsed.data.newLevel);
-    });
-
-    // Phase 4 WS-B2 — the server accepted + persisted a stat allocation / respec.
-    // Publish a discrete Zustand ack so the upgrade modal closes + the roster
-    // refreshes; the physics multipliers re-anchor off the snapshot slice, not
-    // this echo (so this is UI-confirmation only). Defensive zod parse.
-    room.onMessage('ship_upgrade_applied', (raw: unknown) => {
-      const parsed = ShipUpgradeAppliedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setUpgradeAck({
-        shipInstanceId: parsed.data.shipInstanceId,
-        alloc: parsed.data.alloc,
-        spent: parsed.data.spent,
-        budget: parsed.data.budget,
-      });
-    });
-
-    // Phase 4 WS-B3 — the server accepted + persisted a dynamic-mount activation.
-    // Patch the Zustand roster entry's `mounts` so the upgrade modal's activated
-    // set updates immediately (the roster poll would also catch it within ~3 s,
-    // but the patch makes the modal feel responsive). The IN-WORLD render +
-    // fire come off the snapshot `states[].mounts` slice (the authority), not
-    // this echo. Defensive zod parse.
-    room.onMessage('mount_activated', (raw: unknown) => {
-      const parsed = MountActivatedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const evt = parsed.data;
-      const store = useUIStore.getState();
-      const patched = store.shipRoster.map((r) =>
-        r.shipId === evt.shipInstanceId
-          ? { ...r, mounts: evt.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId })) }
-          : r,
-      );
-      store.setShipRoster(patched);
     });
 
     room.onMessage('hit_ack', (raw: unknown) => {
@@ -2187,77 +2117,9 @@ export class ColyseusGameClient {
       this.handleRespawnAck(msg);
     });
 
-    // Missile launched — pose arrives on the snapshot's missiles[]
-    // slice (NOT this event), so we don't seed the mirror here.
-    // Defensive zod parse on receive. The discrete event currently has
-    // no client-side subscriber (SFX launch-whoosh is a future hookup);
-    // the parse + drop keeps the wire safe and ready for that hookup.
-    room.onMessage('missile_fired', (raw: unknown) => {
-      MissileFiredEventSchema.safeParse(raw);
-    });
-
-    // Missile detonated — remove from the mirror so the sprite stops
-    // drawing the next frame, and push an explosion entry into the
-    // mirror for the renderer to drain (VFX + camera shake).
-    room.onMessage('missile_detonated', (raw: unknown) => {
-      const result = MissileDetonatedEventSchema.safeParse(raw);
-      if (!result.success) return;
-      removeMissile(this.mirror, result.data.missileId);
-      const list = (this.mirror.pendingMissileExplosions ??= []);
-      list.push({
-        x: result.data.x,
-        y: result.data.y,
-        splashRadius: result.data.splashRadius,
-        missileId: result.data.missileId,
-      });
-    });
-
-    // A shield fence stopped a bolt or missile: draw the impact on the wall
-    // (fence-hit fix). An accelerator only — nothing persistent depends on it.
-    room.onMessage('wall_hit', (raw: unknown) => {
-      const result = WallHitEventSchema.safeParse(raw);
-      if (!result.success) return;
-      this.mirror.pendingEffectTriggers?.push({ kind: 'wall-hit', worldX: result.data.x, worldY: result.data.y });
-    });
-
-    // Mine Layer — a mine went off: the same explosion visual as a missile
-    // (an accelerator; the mine leaving room state is the truth).
-    room.onMessage('mine_detonated', (raw: unknown) => {
-      const result = MineDetonatedSchema.safeParse(raw);
-      if (!result.success) return;
-      (this.mirror.pendingMissileExplosions ??= []).push({
-        x: result.data.x,
-        y: result.data.y,
-        splashRadius: result.data.radius,
-        missileId: -1,
-      });
-    });
-
-    // Coastal defences — a siege shell burst: the same explosion visual, at
-    // the size of its blast (the damage arrives as damage events).
-    // Shells as events (shell-events.md slice 2a): salvo + hit records.
-    room.onMessage('field_consumed', (raw: unknown) => this._cutField.onConsumedMessage(raw)); // macro terrain C3
-    room.onMessage('field_moved', (raw: unknown) => this._cutField.onMovedMessage(raw)); // C2 deep sleep
-    room.onMessage('shell_salvo', (raw: unknown) => {
-      if (!this._shellEvents) return;
-      const r = ShellSalvoSchema.safeParse(raw);
-      if (r.success) this._shellStore.applySalvo(r.data);
-    });
-    room.onMessage('shell_end', (raw: unknown) => {
-      if (!this._shellEvents) return;
-      const r = ShellEndSchema.safeParse(raw);
-      if (r.success) this.applyShellEnd(r.data);
-    });
-    room.onMessage('shell_blast', (raw: unknown) => {
-      const result = ShellBlastSchema.safeParse(raw);
-      if (!result.success) return;
-      (this.mirror.pendingMissileExplosions ??= []).push({
-        x: result.data.x,
-        y: result.data.y,
-        splashRadius: result.data.radius,
-        missileId: -1,
-      });
-    });
+    // Feature handler files (handlers/index.ts): missiles, impact FX, toasts,
+    // wave HUD, structure panels, drawn shells, ship status, cut field.
+    registerClientHandlers(room, this._handlerCtx);
 
     // Stage 2 of the network-feel roadmap — server-broadcast collision
     // events. Apply post-collision velocities to predWorld immediately;
@@ -2359,27 +2221,6 @@ export class ColyseusGameClient {
     room.onMessage('warp_in', (msg) => handleWarpEvent(msg, 'warp_in'));
     room.onMessage('warp_out', (msg) => handleWarpEvent(msg, 'warp_out'));
 
-    // Wave-system Phase 5 — sector-wide warp-in warning HUD. Drives visible UI,
-    // so we zod-validate + drop malformed packets (invariant #3) — a bad
-    // count/countdownMs would render a garbage banner. Purity-clean: no
-    // positions reach Zustand (invariant #2).
-    room.onMessage('warp_warning', (raw: unknown) => {
-      const parsed = WarpWarningSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const { id, label, count, countdownMs, disposition } = parsed.data;
-      // Phase-4 P0 — colour the banner by the inbound's relation. The wire speaks
-      // `enemy`/`neutral`/`friendly`; the store/banner speak `hostile`/`neutral`/
-      // `friendly`. Absent ⇒ store default (hostile), back-compat with old servers.
-      const relation =
-        disposition === 'enemy'
-          ? 'hostile'
-          : disposition === 'friendly'
-            ? 'friendly'
-            : disposition === 'neutral'
-              ? 'neutral'
-              : undefined;
-      useUIStore.getState().addWarpWarning({ id, label, count, countdownMs, ...(relation ? { relation } : {}) });
-    });
     // Living World P1a — pickup popup (UI accelerator only; cargo truth rides
     // the own-ship snapshot slice). zod-validated (invariant #3).
     // RTS slice 10 — a command-view join: the server parked our hull at the
@@ -2389,136 +2230,6 @@ export class ColyseusGameClient {
       const parsed = ControlModeMessageSchema.safeParse(raw);
       if (!parsed.success || parsed.data.mode !== 'command') return;
       this.enterCommandFromServer();
-    });
-    room.onMessage('notice', (raw: unknown) => {
-      const parsed = NoticeEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushLootFeed(parsed.data.text);
-      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
-    });
-    // Living World P2 — trade toasts + Trade-tab badge. An ACCELERATOR only:
-    // the tab's truth is `GET /trade/economy` (it refetches on tradeNoticeSeq).
-    // C2 — a break-in alarm (owner) or result (actor). Accelerator only.
-    room.onMessage('break_in_notice', (raw: unknown) => {
-      const parsed = BreakInNoticeSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.tone, false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Living World P5 — a blueprint install verdict (accelerator only).
-    room.onMessage('blueprint_result', (raw: unknown) => {
-      const parsed = BlueprintResultSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Living World P4c-2 — a bounty placement verdict (accelerator only).
-    room.onMessage('bounty_result', (raw: unknown) => {
-      const parsed = BountyResultSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // A faction ship-look claim verdict (accelerator only).
-    room.onMessage('claim_faction_look_result', (raw: unknown) => {
-      const parsed = ClaimFactionLookResultSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Someone claimed a ship look (accelerator; the welcome carries them all).
-    room.onMessage('faction_look_claimed', onFactionLookClaimed);
-    // Economy v2 W3 — the Research Lab panel's view (a reply to lab_query /
-    // lab_start / lab_cancel; the panel is rebuilt from it alone).
-    // C1 — a structure's cargo (and our hold) for the cargo panel (#16).
-    room.onMessage('cargo_state', (raw: unknown) => {
-      const parsed = CargoStateSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setCargoState(parsed.data);
-    });
-    // Economy v2 W6 — the blueprint market view (the Trade tab rebuilds from it).
-    // Economy v2 — packed-structure counts (the Build menus label/lock from them).
-    room.onMessage('packed_stock', (raw: unknown) => {
-      const parsed = PackedStockSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setPackedStock(parsed.data.counts);
-    });
-    room.onMessage('bp_market_state', (raw: unknown) => {
-      const parsed = BpMarketStateSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setBpMarket(parsed.data);
-    });
-    room.onMessage('teleport_toll', (raw: unknown) => {
-      const parsed = TollPromptSchema.safeParse(raw);
-      if (parsed.success) useUIStore.getState().setTollPrompt(parsed.data);
-    });
-    room.onMessage('teleport_pair_request', (raw: unknown) => {
-      const parsed = PairRequestPromptSchema.safeParse(raw);
-      if (parsed.success) useUIStore.getState().addPairRequest(parsed.data);
-    });
-    room.onMessage('teleport_candidates', (raw: unknown) => {
-      const parsed = TeleportCandidatesReplySchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setTeleportCandidates(parsed.data);
-    });
-    room.onMessage('lab_state', (raw: unknown) => {
-      const parsed = LabStateSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setLabState(parsed.data);
-    });
-    room.onMessage('trade_notice', (raw: unknown) => {
-      const parsed = TradeNoticeSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const { tone, unread } = toastForNotice(parsed.data);
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, tone, unread);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Living World P4 — galaxy-wide world notices (elite sighted / destroyed).
-    // An accelerator only (#16): the elite itself rides the snapshot + map.
-    room.onMessage('world_notice', (raw: unknown) => {
-      const parsed = WorldNoticeSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, 'world', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    room.onMessage('cargo_deposited', (raw: unknown) => {
-      const parsed = CargoDepositedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const text = formatLootPickup(parsed.data);
-      if (text === '') return;
-      const id = useUIStore.getState().pushLootFeed(`Banked ${text}`);
-      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
-    });
-    room.onMessage('loot_collected', (raw: unknown) => {
-      const parsed = LootCollectedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const text = formatLootPickup(parsed.data);
-      if (text === '') return;
-      const id = useUIStore.getState().pushLootFeed(text);
-      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
-    });
-    room.onMessage('warp_warning_clear', (raw: unknown) => {
-      const parsed = WarpWarningClearSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().removeWarpWarning(parsed.data.id);
-    });
-
-    // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the first
-    // time the local player's base qualifies for waves. Broadcast to the whole
-    // sector; OWNER-ONLY (it's a personal base milestone). Reuses the transient
-    // `sectorAlert` HUD line (the existing toast mechanism). zod-validated
-    // (invariant #3); purity-clean (a discrete string, no spatial field, #2).
-    room.onMessage('base_ready', (raw: unknown) => {
-      const parsed = BaseReadySchema.safeParse(raw);
-      if (!parsed.success) return;
-      if (parsed.data.factionId !== this.mirror.localPlayerId) return;
-      const msg = '⚔ Base operational — defend against incoming waves';
-      useUIStore.getState().setSectorAlert(msg);
-      // Auto-clear after ~6 s, but only if it's still OUR message (don't clobber
-      // a newer alert set in the meantime).
-      window.setTimeout(() => {
-        if (useUIStore.getState().sectorAlert === msg) useUIStore.getState().setSectorAlert(null);
-      }, 6000);
     });
 
     // Living World — server→client twin of the damage→markHostile mirror.
@@ -3221,31 +2932,6 @@ export class ColyseusGameClient {
     if (vaporised) this.mirror.vaporisedShips?.add(evt.targetId);
     if (evt.targetId.startsWith('swarm-')) this.killSwarmEntity(evt.targetId);
     else this.killEntity(evt.targetId);
-  }
-
-  /**
-   * Phase 4 WS-B1 — a ship instance just levelled up. The PUBLIC badge for ALL
-   * ships refreshes from the next snapshot's `states[].level` (applyShipLevels);
-   * this only pops the OWNER-facing screenspace level-up icon for the LOCAL
-   * player's own hull (resolved via `localShipInstanceId`). Remote level-ups
-   * just refresh their badge — no icon for other players. Discrete + low-
-   * frequency (a kill threshold), so the single pooled-array push is off the
-   * hot path (mirrors `pendingEffectTriggers` pushes from `handleDamage`).
-   */
-  private handleShipLevelUp(shipInstanceId: string, newLevel: number): void {
-    const localShipInstanceId = this.mirror.localShipInstanceId;
-    const localPlayerId = this.mirror.localPlayerId;
-    if (localShipInstanceId == null || localPlayerId == null) return;
-    if (shipInstanceId !== localShipInstanceId) return; // owner-facing icon only
-    // Pooled one-frame trigger — drained by the renderer, cleared in
-    // consumeOneFrameTriggers. Keyed by playerId so the renderer resolves it to
-    // the local ship's (playerId-keyed) mirror pose for the screenspace anchor.
-    const queue = this.mirror.pendingLevelUps;
-    if (queue) queue.push({ playerId: localPlayerId, newLevel });
-    // Discrete Zustand seam for the upgrade modal (WS-B2 wires the modal open;
-    // here we surface "the local player just hit level N" as a discrete scalar —
-    // purity-clean, Invariant #2). A no-op until WS-B2 reads it.
-    useUIStore.getState().setPendingLevelUp(newLevel);
   }
 
   /**

@@ -62,7 +62,7 @@ const ALLOWLIST = {
   'src/client/__art-lab__/main.ts': { cap: 702, target: 600, reason: RATCHET_ONLY },
   'src/client/components/EntityStatsPanel.tsx': { cap: 893, target: 600, reason: RATCHET_ONLY },
   'src/client/net/ColyseusClient.ts': {
-    cap: 7354,
+    cap: 7008,
     target: 350,
     reason:
       'v3 plan commits 16-19 split this into 15 collaborators (PredictionStateManager, ' +
@@ -71,7 +71,7 @@ const ALLOWLIST = {
   'src/client/render/HaloRadar.ts': { cap: 662, target: 600, reason: RATCHET_ONLY },
   'src/client/render/MountVisualManager.ts': { cap: 932, target: 600, reason: RATCHET_ONLY },
   'src/client/render/PixiRenderer.ts': {
-    cap: 3964,
+    cap: 3484,
     target: 340,
     reason:
       'v3 plan commits 10-14 split this into 15 collaborators (PixiAppLifecycle, ' +
@@ -102,7 +102,6 @@ const ALLOWLIST = {
   'src/server/cargo/StorageService.ts': { cap: 901, target: 600, reason: RATCHET_ONLY },
   'src/server/economy/ConvoyDirector.ts': { cap: 605, target: 600, reason: RATCHET_ONLY },
   'src/server/economy/TradeDirector.ts': { cap: 891, target: 600, reason: RATCHET_ONLY },
-  'src/server/index.ts': { cap: 1699, target: 600, reason: RATCHET_ONLY },
   'src/server/livingworld/LivingWorldDirector.ts': { cap: 1575, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/LockSubsystem.ts': { cap: 684, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
@@ -122,7 +121,6 @@ const ALLOWLIST = {
     target: 600,
     reason: RATCHET_ONLY,
   },
-  'src/shared-types/structureKinds.ts': { cap: 1447, target: 600, reason: RATCHET_ONLY },
 };
 
 /**
@@ -137,6 +135,13 @@ const CLAUDE_MD_BUDGETS = {
   'src/client/CLAUDE.md': 26000,
   'src/core/CLAUDE.md': 15200,
   'plans/CLAUDE.md': 2000,
+  // Folder rules next to each god file: where new code goes instead (rules only).
+  // A missing file is skipped, so each lands with its extension point.
+  'src/server/rooms/CLAUDE.md': 3000,
+  'src/client/net/CLAUDE.md': 3000,
+  'src/client/render/CLAUDE.md': 3000,
+  'src/core/ai/CLAUDE.md': 3000,
+  'src/shared-types/CLAUDE.md': 3000,
 };
 
 function claudeMdViolations() {
@@ -163,6 +168,35 @@ function reportClaudeMd(violations) {
         `and leave a one-line pointer (root CLAUDE.md "What goes where").`,
     );
   }
+}
+
+/**
+ * Where to put the growth instead. Longest matching path prefix wins. A cap or
+ * ceiling failure prints this so the fix is a move to the extension point,
+ * never a comment trim or a cap raise (docs/architecture/god-file-extension-points.md).
+ */
+const EXTEND_GUIDE = {
+  'src/server/rooms/': 'src/server/rooms/CLAUDE.md',
+  'src/server/index.ts': 'src/server/CLAUDE.md',
+  'src/client/net/': 'src/client/net/CLAUDE.md',
+  'src/client/render/': 'src/client/render/CLAUDE.md',
+  'src/core/ai/': 'src/core/ai/CLAUDE.md',
+  'src/core/contracts/': 'src/client/render/CLAUDE.md',
+  'src/shared-types/': 'src/shared-types/CLAUDE.md',
+};
+const EXTEND_DOC = 'docs/architecture/god-file-extension-points.md';
+
+function extendHint(rel) {
+  let best = '';
+  for (const prefix of Object.keys(EXTEND_GUIDE)) {
+    if (rel.startsWith(prefix) && prefix.length > best.length) best = prefix;
+  }
+  const guide = best ? EXTEND_GUIDE[best] : null;
+  return (
+    '    Fix: move the new code to this file’s extension point (a new small file), ' +
+    'do not trim comments or raise the cap. See ' +
+    (guide ? guide + ' and ' : '') + EXTEND_DOC + '.'
+  );
 }
 
 /** Skip-list for files we deliberately leave > 600 LOC out of scope. Empty. */
@@ -260,13 +294,17 @@ function main() {
     if (v.kind === 'ceiling') {
       console.error(
         `  ${v.rel}: ${v.lines} LOC > ceiling ${v.limit}. ` +
-          `Split it OR add an ALLOWLIST entry in scripts/audit-god-files.mjs with cap+target+reason.`,
+          `Split it OR add an ALLOWLIST entry in scripts/audit-god-files.mjs with cap+target+reason.
+` +
+          extendHint(v.rel),
       );
     } else {
       console.error(
         `  ${v.rel}: ${v.lines} LOC > allowlist cap ${v.limit} (+${CAP_SLACK} slack). ` +
           `File grew; cap was set to prevent backsliding during the v3 refactor.\n` +
-          `    target=${v.target}; reason: ${v.reason}`,
+          `    target=${v.target}; reason: ${v.reason}
+` +
+          extendHint(v.rel),
       );
     }
   }

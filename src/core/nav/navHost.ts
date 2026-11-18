@@ -27,7 +27,8 @@ export interface NavChunkCmd { type: 'CHUNK'; worldId: number; cx: number; cy: n
 export interface NavRockCmd { type: 'ROCK'; worldId: number; key: number; gone?: true; pose?: { x: number; y: number; angle: number } | null }
 /** Plan a route from (sx, sy) to (tx, ty) for a hull of clearance `clearance`
  *  (from `shipTuning`, #18); `reqId` matches the reply. */
-export interface NavRouteCmd { type: 'ROUTE'; worldId: number; reqId: number; sx: number; sy: number; tx: number; ty: number; clearance: number }
+/** `heading`/`turnRadius`: a capital's nose and turning radius (slice 11); NaN/0 plans without. */
+export interface NavRouteCmd { type: 'ROUTE'; worldId: number; reqId: number; sx: number; sy: number; tx: number; ty: number; clearance: number; heading: number; turnRadius: number }
 export type NavCommand = NavAddFieldCmd | NavRemoveFieldCmd | NavChunkCmd | NavRockCmd | NavRouteCmd;
 
 /** Reply to `ADD_FIELD`: the coarse layer is built. */
@@ -105,7 +106,7 @@ export class NavHost {
       case 'ROUTE': {
         const t0 = this.now(), w = this.worlds.get(cmd.worldId);
         let n = 0;
-        if (w) n = this.planner.plan(w.coarse, w.fine, cmd.sx, cmd.sy, cmd.tx, cmd.ty, cmd.clearance, this.scratch);
+        if (w) n = this.planner.plan(w.coarse, w.fine, cmd.sx, cmd.sy, cmd.tx, cmd.ty, cmd.clearance, this.scratch, cmd.heading, cmd.turnRadius);
         return {
           type: 'ROUTE', worldId: cmd.worldId, reqId: cmd.reqId,
           status: w ? this.planner.status : 'none',
