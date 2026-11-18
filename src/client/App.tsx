@@ -444,8 +444,8 @@ function GameSurface({
     logEvent('galaxy_sector_click', { key: sectorKey, mode: 'spawn', ts: t0 });
     logEvent('respawn_clicked', { source: 'sector-pick', sectorKey });
     // The galaxy map is the homepage for every visitor: a tap always opens the
-    // focus view. Login is asked for on the panel's "Join the fight"
-    // (GalaxyPickerChrome `gateJoin`), never on the tap itself.
+    // focus view. Login is asked for at the Hangar's Launch (Sign in / Play
+    // as guest), never on the tap itself.
     window.setTimeout(() => {
       pickerApiRef.current?.openForSector(sectorKey);
     }, PICKER_OPEN_DELAY_MS);

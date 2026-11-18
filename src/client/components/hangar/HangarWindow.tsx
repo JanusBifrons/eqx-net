@@ -32,9 +32,16 @@ export interface HangarWindowProps {
   onClose: () => void;
   onLaunchNew: (kind: ShipKindId, sectorKey: string) => void;
   onResume: (shipId: string, sectorKey: string) => void;
+  /** Signed out and not a remembered guest: the footer asks for sign-in
+   *  (or Play as guest) instead of Launch. */
+  needsSignIn?: boolean;
+  /** Sign in, keeping this sector and hull for the return. */
+  onSignIn?: (kind: ShipKindId, sectorKey: string) => void;
+  /** Remember the guest choice; the window then launches. */
+  onPlayAsGuest?: () => void;
 }
 
-export function HangarWindow({ sectorKey, sectorName, playerId, selectedKind, onClose, onLaunchNew, onResume }: HangarWindowProps): JSX.Element {
+export function HangarWindow({ sectorKey, sectorName, playerId, selectedKind, onClose, onLaunchNew, onResume, needsSignIn = false, onSignIn, onPlayAsGuest }: HangarWindowProps): JSX.Element {
   const open = sectorKey !== null;
   const roster = useUIStore((s) => s.shipRoster);
   const storeWallet = useUIStore((s) => s.wallet);
@@ -144,13 +151,32 @@ export function HangarWindow({ sectorKey, sectorName, playerId, selectedKind, on
           </Button>
         )}
         <Button size="small" onClick={onClose} data-testid="hangar-close" sx={{ color: '#9aa0b4', fontSize: 11 }}>Cancel</Button>
-        <Button
-          size="small" variant="contained" disabled={verdict.kind === 'refuse'} onClick={launch}
-          startIcon={<RocketLaunchIcon sx={{ fontSize: 14 }} />} data-testid="hangar-launch"
-          sx={{ bgcolor: '#1f7a4d', color: '#fff', fontSize: 11, '&:hover': { bgcolor: '#288c5b' } }}
-        >
-          Launch
-        </Button>
+        {needsSignIn ? (
+          <>
+            <Button
+              size="small" disabled={verdict.kind === 'refuse'} data-testid="hangar-guest"
+              onClick={() => { onPlayAsGuest?.(); launch(); }}
+              sx={{ color: '#cde', fontSize: 11 }}
+            >
+              Play as guest
+            </Button>
+            <Button
+              size="small" variant="contained" data-testid="hangar-signin"
+              onClick={() => { if (sectorKey !== null) onSignIn?.(kind as ShipKindId, sectorKey); }}
+              sx={{ bgcolor: '#1f7a4d', color: '#fff', fontSize: 11, '&:hover': { bgcolor: '#288c5b' } }}
+            >
+              Sign in
+            </Button>
+          </>
+        ) : (
+          <Button
+            size="small" variant="contained" disabled={verdict.kind === 'refuse'} onClick={launch}
+            startIcon={<RocketLaunchIcon sx={{ fontSize: 14 }} />} data-testid="hangar-launch"
+            sx={{ bgcolor: '#1f7a4d', color: '#fff', fontSize: 11, '&:hover': { bgcolor: '#288c5b' } }}
+          >
+            Launch
+          </Button>
+        )}
       </Box>
     </Dialog>
   );
