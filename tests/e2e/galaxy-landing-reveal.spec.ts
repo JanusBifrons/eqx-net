@@ -75,7 +75,7 @@ test('landing map is BLOCKED until counts load, then hexes + icons reveal togeth
 /**
  * 2026-06-19 — THE THIRD-FAILURE LOCK. The user reported "the ships still pop in"
  * after the count-icon fix: the player's OWN ship badges come from a SEPARATE
- * async source (the `/dev/player-ships` roster), not `/galaxy/snapshot`, so gating
+ * async source (the `/hangar/ships` roster), not `/galaxy/snapshot`, so gating
  * the reveal only on the snapshot let the ship badges appear AFTER the map. The
  * gate now also waits on the player's roster (ships) + presence (structures). This
  * test holds the ROSTER while letting the global snapshot + presence resolve, and
@@ -112,7 +112,7 @@ test('landing also BLOCKS until the player OWN ships load — ship badge appears
   const rosterHeld = new Promise<void>((r) => {
     releaseRoster = r;
   });
-  await page.route('**/dev/player-ships**', async (route) => {
+  await page.route('**/hangar/ships**', async (route) => {
     await rosterHeld;
     await route.fulfill({
       status: 200,

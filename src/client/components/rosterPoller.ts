@@ -31,7 +31,9 @@ import { useUIStore } from '../state/store';
 import type { RosterShipEntry } from './ShipRosterCard';
 
 const POLL_MS = 3000;
-const ENDPOINT_LIST = '/dev/player-ships';
+// Join flow stage 5: the production path (the same handler also answers at
+// /dev/player-ships for tests and tools).
+const ENDPOINT_LIST = '/hangar/ships';
 
 interface PollerState {
   refCount: number;
