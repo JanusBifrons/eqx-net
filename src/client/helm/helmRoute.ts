@@ -49,8 +49,8 @@ export class HelmRouteClient {
     this.tick(nowMs);
   }
 
-  /** The course was cancelled: stop asking, ignore late replies. */
-  clear(): void { this.wantId = -1; this.inFlightId = -1; }
+  /** The course was cancelled: drop its route, stop asking, ignore late replies. */
+  clear(order: HelmOrder): void { order.route = null; this.wantId = -1; this.inFlightId = -1; }
 
   /** Each input tick (game ms): send the waiting ask once the gap allows. */
   tick(nowMs: number): void {
