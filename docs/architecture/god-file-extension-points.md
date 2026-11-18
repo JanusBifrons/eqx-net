@@ -53,6 +53,18 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | An order / stance / non-combat mode | A mode file in `src/core/ai/modes/`. | planned |
 | A tuning number | `hostileDroneTuning.ts`. | planned |
 
+## Core: `fractureHull.ts` (`src/core/CLAUDE.md`)
+
+`fractureHull.ts` keeps the plan, the crack lines and the piece split; it re-exports the moved public names (`FRACTURE_QUANTUM`, `EDGE_HULL`, `EDGE_CUT`, `FractureEdgeKind`). Every sibling stays under the determinism rules in its header and bumps `FRACTURE_ALGO_VERSION` on any output change.
+
+| To add | Do this | Status |
+|---|---|---|
+| A new edge kind (`EDGE_*`) | `destruction/fractureRings.ts`; if it is jagged, add it to `jagged()` in `fractureJag.ts`. | live |
+| A ring predicate, quantising rule or piece-output field (`FracturePiece`, convex decomposition) | `destruction/fractureRings.ts`. | live |
+| A jag shape, jag repair pass or T-junction weld rule | `destruction/fractureJag.ts`. | live |
+| A splitting primitive (line clip, strip, extra cut) | `destruction/fractureSplit.ts`. | live |
+| A new crack family or plan draw | `fractureHull.ts` (`crackLines` / `planFor`) until a crack-lines module is split out. | planned |
+
 ## Shared data: `structureKinds.ts` (`src/shared-types/CLAUDE.md`)
 
 | To add | Do this | Status |
