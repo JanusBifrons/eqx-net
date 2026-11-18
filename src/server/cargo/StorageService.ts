@@ -23,9 +23,6 @@ import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { depositRangeOf, nearStorage, takesHoverDeposit } from './storageReach.js';
 import { fittedModuleIds, holdCapacityOf, intakeRequest, isOperationalStorage, isStorage, releaseIntoNetwork, sig, stockOf, takeFromNetwork } from './storageHolds.js';
-// SectorRoom reads these from here.
-export { DEPOSIT_DWELL_TICKS, nearStorage } from './storageReach.js';
-export { fittedModuleIds, holdHasIntake, holdIntakeWeight, isOperationalStorage, structureUid } from './storageHolds.js';
 import { cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord, HoldStore } from './HoldStore.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
