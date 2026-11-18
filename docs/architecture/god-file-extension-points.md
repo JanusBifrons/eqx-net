@@ -30,7 +30,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A server→client message | Its zod schema in `src/shared-types/messages/` and a name→schema row in `messageNames.ts`; a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in the handler list. | planned |
+| A server→client message | Its zod schema in `src/shared-types/messages/` and a row in `ServerMessageSchemas` (`src/shared-types/messages.ts`); a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in `handlers/index.ts`. | live |
 | A per-entity timer / state machine | Its own module, like `drawnShellTiming.ts`, `damageNumberTargets.ts`. | live |
 | Fire control / lock state | `FireControlClient`. | planned |
 

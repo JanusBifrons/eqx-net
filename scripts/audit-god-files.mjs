@@ -62,7 +62,7 @@ const ALLOWLIST = {
   'src/client/__art-lab__/main.ts': { cap: 702, target: 600, reason: RATCHET_ONLY },
   'src/client/components/EntityStatsPanel.tsx': { cap: 893, target: 600, reason: RATCHET_ONLY },
   'src/client/net/ColyseusClient.ts': {
-    cap: 7354,
+    cap: 7008,
     target: 350,
     reason:
       'v3 plan commits 16-19 split this into 15 collaborators (PredictionStateManager, ' +
