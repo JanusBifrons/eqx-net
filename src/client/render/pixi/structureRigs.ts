@@ -309,7 +309,7 @@ export class StructureRigView {
     // The static body is drawn at zoom 1: re-base the size so the flow's
     // width and stations land on it at this zoom.
     const cable = this.armCable, opts = this.flowOpts;
-    opts.size = cable.opts.size / lineLookScale('cable', this.zoom);
+    const scale = lineLookScale('cable', this.zoom);
     const chain = this.rig.clips[ci]!.chain;
     g.clear();
     let cum = 0;
@@ -321,6 +321,7 @@ export class StructureRigView {
       // its far-end collar first).
       const part = chain[n - 2 - k]!;
       if (len > 0) {
+        opts.size = cable.size[part]! / scale;
         v.pulseT = (at - cum) / len;
         drawLineLookFlow(g, 'cable', v, this.comet, true, ax, ay, bx, by, this.zoom, cable.rb[part]!, cable.ra[part]!, opts);
       }

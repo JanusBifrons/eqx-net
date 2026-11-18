@@ -11,7 +11,7 @@ import {
   centroid, chamferBox, chevron, ngon, polyBounds, rivetPolys, scalePts, trussPolys,
   type PolySink, type Pt, type Pts,
 } from './structureStyleKit.js';
-import { drawLineLookBody, lineLookBaseWidth, type LineLookOpts } from './connectorLineLooks.js';
+import { drawLineLookBody, lineLookBaseWidth } from './connectorLineLooks.js';
 
 // ---------------------------------------------------------------- the look
 
@@ -64,8 +64,8 @@ export interface RigPartLook {
   slot: number;
   /** The internal cable laid along an arm's lattice (the connector cable
    *  look, `lineLook=cable`, without its own cradles: the truss carries it):
-   *  its body width as a fraction of the arm's narrowest truss depth, so
-   *  the open lattice still shows each side of it. */
+   *  its body width as a fraction of each beam's own truss depth (sized
+   *  per segment), so the open lattice still shows each side of it. */
   cableFill: number;
 }
 
@@ -75,7 +75,7 @@ export const RIG_LOOK_C: RigPartLook = {
   lamp: 0xffa030, boomW: 28, jibW: 22, headScale: 1.6,
   shadowOver: 11, shadowPlane: 6, shadowAlpha: 0.5,
   liftScaleRest: 0.88, liftScaleUp: 1.14, liftShadow: 12, liftShadowAlphaUp: 0.6,
-  slot: 0x020304, cableFill: 0.27,
+  slot: 0x020304, cableFill: 0.36,
 };
 
 /** What a part is drawn as, read from the rig's shape (layer, joint,
@@ -258,7 +258,7 @@ function drawBeam(ctx: GraphicsContext, rig: Rig, i: number, look: RigPartLook):
   // chain) runs inside it, under the laces, pivot -> the next joint / tip.
   const cable = rigArmCable(rig, look);
   if (cable.onArm[i] === 1) {
-    drawLineLookBody(ctx, 'cable', 0, 0, cable.endX[i]!, cable.endY[i]!, 1, cable.ra[i]!, cable.rb[i]!, cable.opts);
+    drawLineLookBody(ctx, 'cable', 0, 0, cable.endX[i]!, cable.endY[i]!, 1, cable.ra[i]!, cable.rb[i]!, { size: cable.size[i]!, cradles: false });
   }
   trussPolys(sink, P(s0 + 1, 0), P(s1 - 1, 0), W, look.truss, 0);
   ctx.poly(flat(rect), true).stroke({ color: look.edge, width: 2 });
@@ -283,7 +283,7 @@ function drawBeam(ctx: GraphicsContext, rig: Rig, i: number, look: RigPartLook):
 /** A rig's arm cable layout: per part (rig order) whether it carries the
  *  cable (a beam in some clip's IK chain), its far end in the part's Pixi
  *  frame (the next chain joint, or the clip tip), its collar radii at the
- *  pivot (`ra`) and the far end (`rb`), and the shared look options. The
+ *  pivot (`ra`) and the far end (`rb`), and its cable look size. The
  *  goods flow (`StructureRigView`) runs the same cable flow over it. */
 export interface RigArmCable {
   readonly onArm: Uint8Array;
@@ -291,8 +291,9 @@ export interface RigArmCable {
   readonly endY: Float64Array;
   readonly ra: Float64Array;
   readonly rb: Float64Array;
-  /** Cable look size (`LineLookOpts.size`, 1 = a connector's) and no cradles. */
-  readonly opts: LineLookOpts;
+  /** Per part: cable look size (`LineLookOpts.size`, 1 = a connector's),
+   *  `cableFill` of that beam's truss depth; drawn without cradles. */
+  readonly size: Float64Array;
 }
 
 const armCables = new Map<string, RigArmCable>();
@@ -303,8 +304,7 @@ export function rigArmCable(rig: Rig, look: RigPartLook = RIG_LOOK_C): RigArmCab
   if (hit !== undefined) return hit;
   const n = rig.partCount;
   const onArm = new Uint8Array(n), endX = new Float64Array(n), endY = new Float64Array(n);
-  const ra = new Float64Array(n), rb = new Float64Array(n);
-  let minW = Infinity;
+  const ra = new Float64Array(n), rb = new Float64Array(n), size = new Float64Array(n);
   for (const clip of rig.clips) {
     const chain = clip.chain;
     for (let s = 0; s < chain.length; s++) {
@@ -312,8 +312,8 @@ export function rigArmCable(rig: Rig, look: RigPartLook = RIG_LOOK_C): RigArmCab
       const part = rig.parts[i]!;
       if (part.outline === undefined || rigPartRole(rig, i) !== 'beam') continue;
       const W = beamDepth(rig, i, look);
-      minW = Math.min(minW, W);
       onArm[i] = 1;
+      size[i] = (W * look.cableFill) / lineLookBaseWidth('cable');
       // Game frame (y-up) -> the part's Pixi frame (y-down).
       const next = s + 1 < chain.length ? rig.parts[chain[s + 1]!]! : null;
       endX[i] = next !== null ? next.anchorX : clip.tipX;
@@ -324,8 +324,7 @@ export function rigArmCable(rig: Rig, look: RigPartLook = RIG_LOOK_C): RigArmCab
       rb[i] = W * 0.55;
     }
   }
-  const size = minW < Infinity ? (minW * look.cableFill) / lineLookBaseWidth('cable') : 1;
-  const out: RigArmCable = { onArm, endX, endY, ra, rb, opts: Object.freeze({ size, cradles: false }) };
+  const out: RigArmCable = { onArm, endX, endY, ra, rb, size };
   armCables.set(rig.id, out);
   return out;
 }

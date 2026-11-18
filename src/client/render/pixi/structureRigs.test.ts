@@ -576,9 +576,26 @@ describe('the crane arm is an open lattice with the connector cable inside (rest
       expect(list.filter((x) => x.action === 'stroke').length).toBeGreaterThan(15);
     }
     expect(arms, 'boom and jib').toBe(2);
-    // The widest cable parts (collars, ~2.2 body widths) fit inside the narrowest truss.
-    expect(cable.opts.size * lineLookBaseWidth('cable') * 2.2).toBeLessThan(RIG_LOOK_C.jibW);
-    expect(cable.opts.cradles).toBe(false);
+  });
+
+  it.each(['freight_dock', 'capital'])('%s: the cable is sized per segment, ~0.36 of that beam\x27s truss depth', (kind) => {
+    const rig = rigForStructureKind(kind)!;
+    const cable = rigArmCable(rig);
+    const sizes: number[] = [];
+    for (let i = 0; i < rig.partCount; i++) {
+      if (cable.onArm[i] !== 1) continue;
+      const body = cable.size[i]! * lineLookBaseWidth('cable');
+      // Each beam's truss is at least jibW deep; boom (carries the jib) at least boomW.
+      expect(body).toBeGreaterThanOrEqual(RIG_LOOK_C.jibW * 0.36 - 1e-9);
+      // 0.36 of THIS beam's depth W (the far collar is 0.55 W), and the collars (~2.2 body widths) fit inside it.
+      const W = cable.rb[i]! / 0.55;
+      expect(body).toBeCloseTo(W * 0.36, 6);
+      expect(body * 2.2).toBeLessThan(W);
+      sizes.push(cable.size[i]!);
+    }
+    // The boom is deeper than the jib, so its cable is thicker.
+    expect(Math.max(...sizes)).toBeGreaterThan(Math.min(...sizes));
+    expect(cable.size.every((v, i) => (cable.onArm[i] === 1) === (v > 0))).toBe(true);
   });
 
   it('idle: the cable is in the static art, no flow is drawn', () => {
