@@ -1581,7 +1581,7 @@ async function main(): Promise<void> {
   const director = tradeDirector;
   setEconomyRouteProvider({
     offersFor: (pid, sector) => director.offersFor(pid, sector),
-    view: (pid) => store.view(pid),
+    view: (pid) => ({ ...store.view(pid), wallet: getWallet().balance(pid), freeLaunches: store.freeLaunches(pid) }),
     factions: (pid) => store.factionsView(pid, (other) => {
       const uid = getPlayerShipStore().listByPlayer(other).find((r) => r.userId !== null)?.userId ?? null;
       const u = uid ? getUser(uid) : null;
