@@ -699,10 +699,12 @@ export interface RenderMirror {
    * Helm move marker (owner 2026-11-12): the local pilot's active helm course
    * point, GAME-space, while they fly a capital under a helm order (never for
    * other ships, never while spectating). `seq` bumps on each new course tap
-   * so the renderer replays its pop. Spatial ⇒ here, never Zustand (#2).
+   * so the renderer replays its pop. `route`/`routeN`: the autopilot turns
+   * still ahead, drawn as the route line (navigation slice 14). Spatial ⇒
+   * here, never Zustand (#2).
    * A reused plain object (structured-cloneable); `null`/absent ⇒ no marker.
    */
-  helmCourse?: { x: number; y: number; seq: number } | null;
+  helmCourse?: { x: number; y: number; seq: number; route?: Float64Array; routeN?: number } | null;
   /** Ships currently flashing due to recent damage (set of player IDs). */
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
@@ -1018,7 +1020,7 @@ export interface RendererFeedback {
   /** Kind of the selected entity (drives the stats-channel routing: only
    *  `ship`/`structure` use the server `entity_stats` channel; `drone`
    *  reads health from the mirror directly). `null` when nothing is selected. */
-  selectedPickKind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null;
+  selectedPickKind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod' | null;
   /**
    * WS-10 (R2.4) — the id of the entity the desktop pointer is HOVERING over
    * (set from pointer-move via `pickEntityAt`), or null when the cursor is over

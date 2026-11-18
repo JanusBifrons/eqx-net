@@ -94,6 +94,8 @@ describe('recipes', () => {
   it('use positive whole quantities and at least one input, output and processor', () => {
     for (const id of RECIPE_IDS) {
       const r = RECIPES[id];
+      expect(r.processors.length).toBeGreaterThan(0);
+      if (r.chunkInput !== undefined) continue; // a chunk recipe: its item is the input, its hidden ore the output
       expect(Object.keys(r.inputs).length).toBeGreaterThan(0);
       expect(r.outputs.length).toBeGreaterThan(0);
       expect(r.processors.length).toBeGreaterThan(0);
@@ -109,6 +111,7 @@ describe('recipes', () => {
       const r = RECIPES[id];
       if (packedKindOf(id) !== null) continue; // packed structures are priced by W4's markup
       if (hullKindOf(id) !== null) continue; // packed hulls too (W5b)
+      if (r.chunkInput !== undefined) continue; // a chunk pays its own hidden ore (OreDraw.chunkYield)
       const ratio = outputValue(r) / inputValue(r);
       expect(ratio, `${id} returns ${ratio.toFixed(2)}×`).toBeGreaterThanOrEqual(1.2);
       expect(ratio, `${id} returns ${ratio.toFixed(2)}×`).toBeLessThanOrEqual(1.6);
@@ -132,8 +135,8 @@ describe('recipes', () => {
   it('a recipe never makes a good of an earlier stage than its main output (except by-products)', () => {
     for (const id of RECIPE_IDS) {
       const r = RECIPES[id];
-      const main = r.outputs[0]!;
-      if (!('good' in main)) continue;
+      const main = r.outputs[0];
+      if (main === undefined || !('good' in main)) continue; // a chunk recipe has no fixed output
       for (const g of Object.keys(r.inputs) as GoodId[]) {
         expect(GOOD_DEFS[g].stage, `${id}: input ${g}`).toBeLessThanOrEqual(GOOD_DEFS[main.good].stage);
       }
@@ -143,8 +146,8 @@ describe('recipes', () => {
   it('components and up need a blueprint; extraction-side refining does not', () => {
     for (const id of RECIPE_IDS) {
       const r = RECIPES[id];
-      const main = r.outputs[0]!;
-      if (!('good' in main)) continue;
+      const main = r.outputs[0];
+      if (main === undefined || !('good' in main)) continue; // a chunk recipe has no fixed output
       expect(r.blueprintRequired, id).toBe(GOOD_DEFS[main.good].stage >= 2);
     }
   });
