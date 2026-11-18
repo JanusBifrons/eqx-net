@@ -103,6 +103,12 @@ export class AiNeighbourGrid implements IAiNeighbourQuery {
     this.add(id, x, y, vx, vy, radius, a < 0 ? 1 : a + 1, capital);
   }
 
+  /** Add a wreck piece (the debris index, `AiWorldView.debris`): terrain,
+   *  not a ship, so only its pose, velocity and radius mean anything. */
+  addDebris(id: string, x: number, y: number, vx: number, vy: number, radius: number): void {
+    this.add(id, x, y, vx, vy, radius, 0, false);
+  }
+
   /** Finish a rebuild: drop id refs past the new count. */
   end(): void {
     const ids = this.ids;
