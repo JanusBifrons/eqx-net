@@ -76,7 +76,9 @@ async function openPodAndTake(ctx: ShotContext, step: (s: string) => void): Prom
   await page.locator('[data-testid="pod-open"][data-in-reach="1"]').waitFor({ timeout: 5000 });
   await ctx.sleep(700);
   step('open in reach; clicking Open');
-  await page.getByTestId('pod-open').click({ timeout: 5000 });
+  // The inspector follows the drifting pod, so the button never settles:
+  // tap it where it is now (a player taps a moving button too).
+  await page.getByTestId('pod-open').click({ timeout: 5000, force: true });
   await page.getByTestId('cargo-panel').waitFor({ timeout: 5000 });
   await page.getByTestId('cargo-unknown-tile').first().waitFor({ state: 'detached', timeout: 15_000 }).catch(() => undefined);
   await ctx.sleep(1200);
