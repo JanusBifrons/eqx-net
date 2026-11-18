@@ -49,7 +49,7 @@ import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
 import { CollisionResolvedMessageSchema } from '@shared-types/messages';
 import { stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
-import { cargoChanged } from './lootView';
+import { cargoChanged, cargoViewOf, type WireCargo } from './lootView';
 import { setFactionLooks } from '../../shared-types/factions.js';
 import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
 import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
@@ -134,7 +134,7 @@ import { tuningFor } from '@shared-types/shipScale/lookup';
 import { mountRangeFactor } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
-import { getWeapon, isMiningTool } from '@core/combat/WeaponCatalogue';
+import { getWeapon } from '@core/combat/WeaponCatalogue';
 import { spendEnergy, resolveSlotEnergyCost } from '@core/combat/Energy';
 import type { ControlBits } from '@core/combat/disable';
 import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
@@ -4132,7 +4132,7 @@ export class ColyseusGameClient {
       const beamMax = beamMaxDist(wdef, rangeMul);
       // Remote drones/scrap are tested at their DRAWN pose (the pose the
       // turret aims at), not their predicted-timeline body.
-      const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId, beamHalfWidth(wdef), isMiningTool(mount.weaponId));
+      const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId, beamHalfWidth(wdef));
       // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
       // 2026-06-03). When the beam stops on a body whose pose is within
       // ε of world origin, log the hitId — its namespace prefix names the
@@ -4425,7 +4425,7 @@ export class ColyseusGameClient {
    */
   private applyLocalCargo(
     localId: string,
-    cargo: { goods: Partial<Record<string, number>>; blueprints: readonly unknown[]; packed?: readonly unknown[] } | undefined,
+    cargo: WireCargo | undefined,
     fitted?: string[],
   ): void {
     const s = useUIStore.getState();
@@ -4437,7 +4437,7 @@ export class ColyseusGameClient {
     );
     if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
     s.setCargo(
-      cargo === undefined ? null : { goods: { ...cargo.goods }, blueprints: cargo.blueprints.length, packed: cargo.packed?.length ?? 0 },
+      cargo === undefined ? null : cargoViewOf(cargo),
       capacity,
     );
   }
@@ -4710,7 +4710,7 @@ export class ColyseusGameClient {
       sink: predSink,
       world: this.displayHitscan(),
       clientShotId: shotId,
-      mode: weaponDef.mode, halfWidth: beamHalfWidth(weaponDef), passLootPods: isMiningTool(slotWeapon),
+      mode: weaponDef.mode, halfWidth: beamHalfWidth(weaponDef),
       damage: weaponDef.damage,
       mounts: mountGeom,
       maxDist: predMaxDist,

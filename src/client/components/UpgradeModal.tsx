@@ -27,6 +27,7 @@ import {
   draftToAlloc,
 } from './upgradeModalDraft';
 import type { RosterShipEntry } from './ShipRosterCard';
+import { GAME_DIALOG_CONTENT_SX, GAME_DIALOG_PAPER_SX, GAME_DIALOG_TITLE_SX } from './gameDialogChrome';
 
 /**
  * Ship stat-upgrade modal (Phase 4 WS-B2, plan: effervescent-umbrella). Spend
@@ -113,13 +114,13 @@ export function UpgradeModal({ ship, open, onClose, onApply, onRespec, onActivat
       maxWidth="xs"
       fullWidth
       data-testid="upgrade-modal"
-      PaperProps={{ sx: { bgcolor: '#0c1020', border: '1px solid #2a2f40' } }}
+      PaperProps={{ sx: GAME_DIALOG_PAPER_SX }}
     >
-      <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88', display: 'flex', alignItems: 'center', gap: 1.5 }}>
+      <DialogTitle sx={GAME_DIALOG_TITLE_SX}>
         <span>{kind.displayName}</span>
         <LevelBadge level={level} />
       </DialogTitle>
-      <DialogContent sx={{ bgcolor: '#0c1020', color: '#ccc' }}>
+      <DialogContent sx={GAME_DIALOG_CONTENT_SX}>
         <Typography
           variant="caption"
           data-testid="upgrade-points-remaining"

@@ -12,7 +12,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { PROD_STATE } from '../../../src/shared-types/production.js';
-import { RECIPES } from '../../../src/shared-types/recipes.js';
+import { CHUNK_REFINE_BATCH, RECIPES } from '../../../src/shared-types/recipes.js';
+import { ROCK_CHUNK_PRODUCT } from '../../../src/shared-types/items.js';
 
 const OWNER = '6a7e0000-0000-4000-8000-0000000000a1';
 
@@ -121,6 +122,48 @@ describe('SectorRoom integration — production (P2b)', () => {
     owner.send('set_recipe', { type: 'set_recipe', entityId, recipe: 'refine_gas' });
     await harness.advance(200);
     expect(refinery.recipe).toBe('refine_gas');
+  });
+
+  it('a refinery set to break down rock chunks turns a stored chunk into its hidden ore (owner 2026-11-17)', async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime',
+      droneCount: 0,
+      testMode: true,
+      asteroidConfig: [],
+      prebuiltStructures: [
+        { kind: 'capital', x: 0, y: 0 },
+        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'refinery', x: 0, y: -680 },
+        { kind: 'cargo_bay', x: -450, y: -350 },
+      ],
+      prebuiltStructuresOwner: OWNER,
+      defaultSpawnX: 0,
+      defaultSpawnY: -1500,
+    });
+    const owner = await harness.connectAs(OWNER);
+    const internals = harness.getServerRoom()!._internals;
+    const all = [...internals.structureRegistry.all()];
+    const refinery = all.find((r) => r.kind === 'refinery')!;
+    const bay = all.find((r) => r.kind === 'cargo_bay')!;
+    const capital = all.find((r) => r.kind === 'capital')!;
+    owner.send('set_recipe', { type: 'set_recipe', entityId: internals.swarmRegistry.get(refinery.id)!.entityId, recipe: 'refine_rock_chunk' });
+    await harness.advance(200);
+    expect(refinery.recipe).toBe('refine_rock_chunk');
+
+    capital.minerals = 0;
+    capital.hold = { goods: {}, blueprints: [] };
+    bay.hold = { goods: {}, blueprints: [], packed: [{ product: ROCK_CHUNK_PRODUCT, quality: 0, uid: 'rc-it', weight: 250, ore: { minerals: 6_000 } }] };
+    const minerals = () => capital.minerals + (capital.hold?.goods.minerals ?? 0) + (bay.hold?.goods.minerals ?? 0);
+    for (let i = 0; i < RECIPES.refine_rock_chunk.cyclePulses; i++) internals.pulseStructureGrid();
+    expect(refinery.prodState).toBe(PROD_STATE.running);
+    expect(bay.hold!.packed).toBeUndefined();
+    expect(minerals()).toBe(CHUNK_REFINE_BATCH);
+    for (let i = 0; i < RECIPES.refine_rock_chunk.cyclePulses; i++) internals.pulseStructureGrid();
+    expect(minerals()).toBe(6_000);
+    expect(refinery.prodChunk).toBeUndefined();
+
+    internals.pulseStructureGrid();
+    expect(refinery.prodState).toBe(PROD_STATE.starved); // no chunk left
   });
 });
 
