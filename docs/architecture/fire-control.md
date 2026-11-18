@@ -247,7 +247,7 @@ Cost (laptop, 2026-11-14): `turretGather.count.test.ts` real 60 hostiles /
 alongside, a drone holding fire beyond reach with a lock, a coastal barbette vs
 a bow-on battleship), `turretLockPick.test.ts`.
 
-The drone brain (`HostileDroneBehaviour.tickCombat` / `tickBroadside`) also
+The drone brain (`HostileDroneBehaviour.tickCombat` / `BroadsideHelm` in `ai/tactics/broadside.ts`) also
 ranges to the hull: its "in range", stop, back-off, point-blank and broadside
 stand-off distances compare `fireRange × factor` with the hull distance
 (centre − `shipHitBound` when that is already past `fireRange`, else
