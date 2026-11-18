@@ -1,5 +1,4 @@
 import { Room, Client } from 'colyseus';
-import { aggregateRamming } from '../../core/combat/Ramming.js';
 import { playerInMiningBeam, MINING_BEAM_HALF_WIDTH } from '../../core/combat/miningBeamHazard.js';
 // clampFireTick now used inside PlayerFireResolver.ts
 import { fileURLToPath } from 'node:url';
@@ -13,8 +12,6 @@ import {
   type GcPauseEvent,
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
-import type { CollisionResolvedMessage } from '../../shared-types/messages.js';
-import { wireShipBodyId } from '../../shared-types/shipBodyIds.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import type { GridFlowMaterial } from '../../shared-types/messages.js';
 import { SESSION_REPLACED_CLOSE_CODE, type SessionReplacedMessage } from '../../shared-types/messages.js';
@@ -104,18 +101,14 @@ import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerRoomFeatures } from './features/index.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { TeleporterSubsystem, seedAlienGates, seedPocketPads, type NpcGateSeedHost, type PartnerLink } from '../structures/TeleporterSubsystem.js';
-import { getTeleportBroker, type HandedOffHull, type RiderBatch, type TeleportRoom } from '../teleport/TeleportBroker.js';
+import { TeleporterSubsystem, seedAlienGates, seedPocketPads, type NpcGateSeedHost } from '../structures/TeleporterSubsystem.js';
+import { getTeleportBroker, type HandedOffHull, type TeleportRoom } from '../teleport/TeleportBroker.js';
 import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
 import { linkEnds } from '../../core/bases/transitNetwork.js';
-import { hopDistance } from '../livingworld/population.js';
 import {
   DEFAULT_TELEPORT_RULES,
   PAD_SPECS,
   TP_RULE_TOLL_HOSTILE,
-  onPad,
-  padIrisSpanLocal,
-  type TeleporterKind,
   TP_PARTNER_REMOTE,
   TP_RULE_BOARDS,
   TP_RULE_CHARGED,
@@ -233,6 +226,7 @@ import { FleetCommandSubsystem } from '../fleet/FleetCommandSubsystem.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { JoinHandler } from './join/JoinHandler.js';
 import { TeleportTolls } from './features/teleportTolls.js';
+import { TeleportPadRiders } from './features/teleportMessages.js';
 import { WingmanPilots } from './features/wingmanPilots.js';
 import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { PilotSwap } from './features/pilotSwap.js';
@@ -251,6 +245,7 @@ import {
 } from './join/joinConstants.js';
 import { ChargeTicksCapSchema, LockTimeCapSchema, TimeScaleSchema, TraverseTicksCapSchema } from './join/joinOptions.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
+import { handleContactBatch, type ContactBatchHost } from './contactFilter.js';
 import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
 import { recordLagCompPoses } from './lagCompRecorder.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
@@ -960,6 +955,16 @@ export class SectorRoom extends Room<SectorState> {
     relationCtx: this.relationCtx, hostileActs: this.hostileActs, now: () => this.gameClock.now(), sectorKey: () => this.sectorKey,
     resolveOwnerName: (o) => this.resolveOwnerName(o), sendToPlayerHere: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
     adjustStanding: (from, to, d) => this.adjustStanding(from, to, d),
+  });
+  /** v4 T2/T3 — who rides a teleporter jump (`features/teleportMessages.ts`). */
+  private readonly padRiders = new TeleportPadRiders({
+    sectorKey: () => this.sectorKey, teleportRoom: () => this.teleportRoom, storage: () => this.storage,
+    playerToSlot: () => this.playerToSlot, playerToSession: () => this.playerToSession,
+    lingeringSlots: this.lingeringSlots, lingeringPoseCache: this.lingeringPoseCache, shipPoseCache: () => this.shipPoseCache,
+    ships: () => this.state.ships, swarmRegistry: this.swarmRegistry, sabF32: () => this.sabF32, sabU32: () => this.sabU32,
+    getActiveShip: (pid) => this.getActiveShip(pid), displaceActiveHullToLingering: (pid) => this.pilotSwap.displaceActiveHullToLingering(pid),
+    transitOrchestrator: () => this.transitOrchestrator, handOffHullsTo: (to, moves, arrival) => this.handOffHullsTo(to, moves, arrival),
+    fleet: this.fleet, postToWorker: (cmd) => this.postToWorker(cmd), forceBroadcastUntil: (tick) => { this.forceBroadcastUntilTick = tick; },
   });
   /** C2/C3 — break-in start/end hooks (`features/breakInHooks.ts`). */
   private readonly breakInHooks = new BreakInHooks({
@@ -2785,29 +2790,29 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: () => this.sectorKey,
       isPowered: (rec) => rec.isConstructed && this.structureGrid.powerSummaryFor(rec.id).powered,
       cycleScale: () => tpScale,
-      shipsOnPad: (rec) => this.shipsOnPad(rec),
+      shipsOnPad: (rec) => this.padRiders.shipsOnPad(rec),
       onChanged: () => this.rebuildStructuresSlice(),
       // T2 — ships ride the swap; the iris and the closing push in the worker.
-      onSwapShips: (a, b) => this.swapPadShips(a, b),
+      onSwapShips: (a, b) => this.padRiders.swapPadShips(a, b),
       // T3 — partners in other sectors, reached through the broker.
-      onSwapRemote: (a, link) => this.swapAcross(a, link),
+      onSwapRemote: (a, link) => this.padRiders.swapAcross(a, link),
       remoteFind: (sk, uid) => {
         const f = getTeleportBroker().find(sk, uid);
         return f && f.room !== this.teleportRoom ? { rec: f.rec, sys: f.room.teleporters } : null;
       },
-      hopsTo: (sk) => this.hopsToSector(sk),
+      hopsTo: (sk) => this.padRiders.hopsToSector(sk),
       findAlienTwin: (rec) => this.findAlienTwin(rec),
       findLinkTwin: (rec) => this.findLinkTwin(rec),
       // T4 — tolls: offered at arming, settled at the swap.
       onArmed: (rec) => this.tolls.offerToll(rec),
       onTollSettle: (rec) => this.tolls.settleToll(rec),
-      spawnIris: (rec) => this.forIrisSpan(rec, (id, s) => {
+      spawnIris: (rec) => this.padRiders.forIrisSpan(rec, (id, s) => {
         this.postToWorker({ type: 'SPAWN_WALL', id, ax: rec.x + s.ax, ay: rec.y + s.ay, bx: rec.x + s.bx, by: rec.y + s.by, thickness: GATE_SPAN_THICKNESS });
         this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active: false });
       }),
-      setIrisActive: (rec, active) => this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active })),
+      setIrisActive: (rec, active) => this.padRiders.forIrisSpan(rec, (id) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active })),
       removeIris: (rec) => {
-        this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'REMOVE_WALL', id }));
+        this.padRiders.forIrisSpan(rec, (id) => this.postToWorker({ type: 'REMOVE_WALL', id }));
         this.forceFields.remove(`tpfield-${rec.id}`);
       },
       setPadField: (rec, active) => {
@@ -2832,8 +2837,8 @@ export class SectorRoom extends Room<SectorState> {
         }
         return out;
       },
-      collectRiders: (from) => this.collectRiders(from),
-      dispatchRiders: (batch, toRoom, to) => this.dispatchRiders(batch, toRoom, to),
+      collectRiders: (from) => this.padRiders.collectRiders(from),
+      dispatchRiders: (batch, toRoom, to) => this.padRiders.dispatchRiders(batch, toRoom, to),
       canReceiveHull: (shipInstanceId) => this.freeSlots.length > 0 && !this.state.ships.has(shipInstanceId),
       receiveLingeringHull: (row) => this.receiveHandedOffHull(row),
       receiveFleetSquads: (rows) => { this.fleet.restoreSquads(rows); },
@@ -4873,101 +4878,6 @@ export class SectorRoom extends Room<SectorState> {
 
   // ── v4 T3 — teleporters across sectors ──────────────────────────────────
 
-  /** Hops to another sector for the jump charge. Rooms outside the galaxy
-   *  graph (tests) that the broker knows count as one hop. */
-  private hopsToSector(sectorKey: string): number {
-    if (this.sectorKey === null) return Infinity;
-    if (getSector(this.sectorKey) && getSector(sectorKey)) return hopDistance(this.sectorKey, sectorKey);
-    return getTeleportBroker().room(sectorKey) !== null ? 1 : Infinity;
-  }
-
-  /** The jump across sectors: the pad holds trade in one group, then both
-   *  pads' riders are collected BEFORE either side is sent (nobody rides twice). */
-  private swapAcross(a: StructureRecord, link: PartnerLink): void {
-    const other = a.tpPartner ? getTeleportBroker().room(a.tpPartner.sectorKey) : null;
-    if (other === null) return;
-    this.storage.padSwapAcross(a, other.storage, link.rec);
-    const mine = this.collectRiders(a);
-    const theirs = other.collectRiders(link.rec);
-    this.dispatchRiders(mine, other, link.rec);
-    other.dispatchRiders(theirs, this.teleportRoom, a);
-    serverLogEvent('teleport_swap_across', {
-      from: this.sectorKey ?? '', to: other.sectorKey ?? '',
-      out: mine.pilots.length + mine.hulls.length + mine.bots.length,
-      in: theirs.pilots.length + theirs.hulls.length + theirs.bots.length,
-    });
-  }
-
-  /** Who is on a pad (#17 by class: ACTIVE alive pilots, LINGERING hulls,
-   *  NPC ships), as offsets from its centre. A discrete event per jump. */
-  private collectRiders(from: StructureRecord): RiderBatch {
-    const batch: RiderBatch = { pilots: [], hulls: [], bots: [] };
-    if (!isTeleporterKind(from.kind)) return batch;
-    const kind = from.kind;
-    const disconnected: string[] = [];
-    for (const [pid, slot] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (!ship?.alive) continue;
-      const sb = slotBase(slot);
-      const x = this.sabF32[sb + SLOT_X_OFF]!;
-      const y = this.sabF32[sb + SLOT_Y_OFF]!;
-      if (!onPad(kind, from.x, from.y, x, y)) continue;
-      if (ship.isActive) batch.pilots.push({ playerId: pid, dx: x - from.x, dy: y - from.y });
-      // A disconnected pilot's hull lingers under their id; a connected but
-      // inactive hull is a pending join and stays (#17).
-      else if (!this.playerToSession.has(pid)) disconnected.push(pid);
-    }
-    // Disconnected hulls become ordinary parked hulls, so they ride below.
-    for (const pid of disconnected) this.pilotSwap.displaceActiveHullToLingering(pid);
-    for (const [sid, slot] of this.lingeringSlots) {
-      const ship = this.state.ships.get(sid);
-      if (!ship || !ship.alive) continue;
-      const sb = slotBase(slot);
-      const x = this.sabF32[sb + SLOT_X_OFF]!;
-      const y = this.sabF32[sb + SLOT_Y_OFF]!;
-      if (!onPad(kind, from.x, from.y, x, y)) continue;
-      batch.hulls.push({
-        shipInstanceId: sid, playerId: ship.playerId, kind: ship.kind,
-        dx: x - from.x, dy: y - from.y,
-        vx: this.sabF32[sb + SLOT_VX_OFF]!, vy: this.sabF32[sb + SLOT_VY_OFF]!,
-        angle: this.sabF32[sb + SLOT_ANGLE_OFF]!, angvel: this.sabF32[sb + SLOT_ANGVEL_OFF]!,
-        health: ship.health, shieldDown: ship.shield <= 0,
-      });
-    }
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1) continue;
-      const sb = slotBase(rec.slot);
-      const x = this.sabF32[sb + SLOT_X_OFF]!;
-      const y = this.sabF32[sb + SLOT_Y_OFF]!;
-      if (onPad(kind, from.x, from.y, x, y)) batch.bots.push({ botId: rec.id, dx: x - from.x, dy: y - from.y });
-    }
-    return batch;
-  }
-
-  /** Send a batch to another sector's pad: pilots by an instant transit,
-   *  parked hulls rebuilt there (their roster row moves sector), NPC bots
-   *  through their director (a bot no director owns stays behind). */
-  private dispatchRiders(batch: RiderBatch, toRoom: TeleportRoom, to: StructureRecord): void {
-    const dest = toRoom.sectorKey;
-    if (dest === null || this.sectorKey === null) return;
-    for (const p of batch.pilots) {
-      this.transitOrchestrator?.teleportOut(p.playerId, dest, { x: to.x + p.dx, y: to.y + p.dy });
-    }
-    if (batch.hulls.length > 0) {
-      const moves: HullMove[] = [];
-      for (const h of batch.hulls) {
-        moves.push({
-          shipInstanceId: h.shipInstanceId, x: to.x + h.dx, y: to.y + h.dy,
-          vx: h.vx, vy: h.vy, angle: h.angle, angvel: h.angvel,
-        });
-      }
-      this.handOffHullsTo(toRoom, moves, 'teleport');
-    }
-    for (const b of batch.bots) {
-      getTeleportBroker().moveBot(b.botId, this.sectorKey, dest, to.x + b.dx, to.y + b.dy);
-    }
-  }
-
   /**
    * THE cross-sector hand-off of parked (LINGERING, #17) hulls, shared by the
    * teleporter and the fleet warp. Per hull, in order: (1) ask the far room
@@ -5086,108 +4996,6 @@ export class SectorRoom extends Room<SectorState> {
     }
     this.state.ships.delete(shipInstanceId);
     return true;
-  }
-
-  /** v4 T1 — how many ACTIVE, alive player ships (#17: lingering hulls and
-   *  the dead don't board) sit with their centre on this teleporter's pad. */
-  private shipsOnPad(rec: StructureRecord): number {
-    if (!isTeleporterKind(rec.kind)) return 0;
-    let n = 0;
-    for (const [pid] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (!ship?.alive || !ship.isActive) continue;
-      const pose = this.shipPoseCache.get(pid);
-      if (pose && onPad(rec.kind, rec.x, rec.y, pose.x, pose.y)) n++;
-    }
-    return n;
-  }
-
-  /** T2 — call `fn` with each iris span's worker id and its offset from the
-   *  pad centre (the pad is square, so a quarter turn leaves them unchanged). */
-  private forIrisSpan(rec: StructureRecord, fn: (id: string, s: { ax: number; ay: number; bx: number; by: number }) => void): void {
-    if (!isTeleporterKind(rec.kind)) return;
-    const n = PAD_SPECS[rec.kind].posts;
-    for (let i = 0; i < n; i++) {
-      padIrisSpanLocal(rec.kind, i, this._irisSpan);
-      fn(`tpiris-${rec.id}-${i}`, this._irisSpan);
-    }
-  }
-  private readonly _irisSpan = { ax: 0, ay: 0, bx: 0, by: 0 };
-
-  /**
-   * T2 — the jump: everything on pad `a` goes to pad `b` and everything on
-   * `b` comes to `a`, each at the same offset from its pad's centre. Riders,
-   * by liveness class (#17): ACTIVE alive player ships, LINGERING hulls, and
-   * NPC ships and scrap (swarm kinds 1 and 3). Everyone rides, strangers too
-   * (user ruling). Collected first, then moved, so nobody rides twice. An
-   * active player's `poseEpoch` bumps so their client re-seeds its prediction.
-   * A discrete event (once per jump), so its small arrays are fine.
-   */
-  private swapPadShips(a: StructureRecord, b: StructureRecord): void {
-    if (!isTeleporterKind(a.kind) || !isTeleporterKind(b.kind)) return;
-    const moves: Array<{ bodyKey: string; slot: number; nx: number; ny: number; playerId?: string; lingerId?: string }> = [];
-    const pairs: Array<[StructureRecord, StructureRecord]> = [[a, b], [b, a]];
-    for (const [from, to] of pairs) {
-      const kind = from.kind as TeleporterKind;
-      for (const [pid, slot] of this.playerToSlot) {
-        const ship = this.getActiveShip(pid);
-        if (!ship?.alive) continue;
-        // Active pilots and disconnected pilots' parked hulls ride; a connected
-        // but inactive hull is a pending join and stays (#17).
-        if (!ship.isActive && this.playerToSession.has(pid)) continue;
-        const sb = slotBase(slot);
-        const x = this.sabF32[sb + SLOT_X_OFF]!;
-        const y = this.sabF32[sb + SLOT_Y_OFF]!;
-        if (onPad(kind, from.x, from.y, x, y)) moves.push({ bodyKey: pid, slot, nx: to.x + x - from.x, ny: to.y + y - from.y, playerId: pid });
-      }
-      for (const [sid, slot] of this.lingeringSlots) {
-        const sb = slotBase(slot);
-        const x = this.sabF32[sb + SLOT_X_OFF]!;
-        const y = this.sabF32[sb + SLOT_Y_OFF]!;
-        if (onPad(kind, from.x, from.y, x, y)) moves.push({ bodyKey: `linger-${sid}`, slot, nx: to.x + x - from.x, ny: to.y + y - from.y, lingerId: sid });
-      }
-      for (const rec of this.swarmRegistry.all()) {
-        if (rec.kind !== 1 && rec.kind !== 3) continue;
-        const sb = slotBase(rec.slot);
-        const x = this.sabF32[sb + SLOT_X_OFF]!;
-        const y = this.sabF32[sb + SLOT_Y_OFF]!;
-        if (onPad(kind, from.x, from.y, x, y)) moves.push({ bodyKey: rec.id, slot: rec.slot, nx: to.x + x - from.x, ny: to.y + y - from.y });
-      }
-    }
-    for (const m of moves) {
-      const sb = slotBase(m.slot);
-      this.sabF32[sb + SLOT_X_OFF] = m.nx;
-      this.sabF32[sb + SLOT_Y_OFF] = m.ny;
-      this.postToWorker({
-        type: 'SET_POSITION', entityId: m.bodyKey, x: m.nx, y: m.ny,
-        angle: this.sabF32[sb + SLOT_ANGLE_OFF]!, vx: this.sabF32[sb + SLOT_VX_OFF]!,
-        vy: this.sabF32[sb + SLOT_VY_OFF]!, angvel: this.sabF32[sb + SLOT_ANGVEL_OFF]!,
-      });
-      if (m.playerId !== undefined) {
-        const pose = this.shipPoseCache.get(m.playerId);
-        if (pose) { pose.x = m.nx; pose.y = m.ny; }
-        const ship = this.getActiveShip(m.playerId);
-        if (ship) ship.poseEpoch++;
-      }
-      if (m.lingerId !== undefined) {
-        const pose = this.lingeringPoseCache.get(m.lingerId);
-        if (pose) {
-          // RTS slice 4: a wingman's guard post rides the jump with its hull,
-          // or the brain would fly straight back to the old pad.
-          const w = this.fleet.ordersOf(m.lingerId);
-          if (w !== null && w.guardPostX !== null && w.guardPostY !== null) {
-            w.guardPostX += m.nx - pose.x;
-            w.guardPostY += m.ny - pose.y;
-          }
-          pose.x = m.nx; pose.y = m.ny;
-        }
-      }
-    }
-    if (moves.length > 0) {
-      // Keep snapshots flowing so the riders' clients reconcile at once.
-      this.forceBroadcastUntilTick = Atomics.load(this.sabU32, TICK_IDX) + JOIN_BROADCAST_GRACE_TICKS;
-      serverLogEvent('teleport_swap', { sectorKey: this.sectorKey ?? '', riders: moves.length });
-    }
   }
 
   /** C2 — does `playerId` fly a live ship (#17) within cargo range of `rec`? */
@@ -6596,6 +6404,14 @@ export class SectorRoom extends Room<SectorState> {
    * the handlers (bus emit, broadcast, ramming damage) via callbacks.
    */
   private async spawnWorker(): Promise<void> {
+    // Contact batches: collision broadcast + ramming damage (`contactFilter.ts`).
+    const contactHost: ContactBatchHost = {
+      sceneWork: this.sceneWork, collisionGate: this.collisionGate, cutField: () => this.cutField, bus: () => this.bus,
+      broadcast: (type, msg) => { this.broadcast(type, msg); }, disableCollisionDamage: () => this.disableCollisionDamage,
+      loot: () => this.loot, applyDamage: (target, shooter, dmg) => this.applyDamage(target, shooter, dmg),
+      swarmRegistry: this.swarmRegistry, lingeringSlots: this.lingeringSlots, ships: () => this.state.ships,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+    };
     this.physicsWorkerProxy = new PhysicsWorkerProxy({
       workerEntryPath: WORKER_TS_PATH,
       sab: this.sab,
@@ -6615,124 +6431,9 @@ export class SectorRoom extends Room<SectorState> {
           this.bus.emit('ENTITY_WOKE', { type: 'ENTITY_WOKE', entityId });
         }
       },
-      onContactBatch: (tick, contacts) => {
-        if (this.sceneWork.active) this.sceneWork.contacts += contacts.length;
-        this.collisionGate.sweep(tick);
-        // Stage 2 of the network-feel roadmap: each contact above the
-        // worker's CONTACT_FORCE_FLOOR is broadcast to all clients in
-        // the room as `collision_resolved`. AOI filter is deferred —
-        // the typical 1–4 player room's per-tick contact volume is
-        // low, and the client's `applyCollisionResolved` silently
-        // no-ops on bodies its predWorld doesn't track. Bus emission
-        // lets persistence/telemetry subscribe.
-        //
-        // Aggregate per unordered {aId,bId} pair FIRST. A hull-polygon
-        // body is a compound of N triangle colliders, so one physical
-        // ram emits up to N contact-force sub-events sharing aId/bId.
-        // Summing before floor/damage/broadcast prevents N-multiplied
-        // damage, sub-floor splitting, and one broadcast per triangle.
-        // See src/core/combat/Ramming.ts.
-        for (const p of aggregateRamming(contacts)) {
-          // Phase 6b self-collision filter (aId === bId): the active +
-          // lingering hulls of one player share the playerId identity.
-          // See ./contactFilter.ts for the rationale + its unit test.
-          if (p.aId === p.bId) {
-            serverLogEvent('collision_self_filtered', {
-              aId: p.aId,
-              tick,
-              impulse: parseFloat(p.force.toFixed(3)),
-            });
-            continue;
-          }
-          this.cutField?.onContact(p.aId, p.bId, p.normalSpeed, tick);
-          this.bus.emit('COLLISION_RESOLVED', {
-            type: 'COLLISION_RESOLVED',
-            aId: p.aId,
-            bId: p.bId,
-            vA: p.vA,
-            vB: p.vB,
-            impulse: p.force,
-            tick,
-          });
-          // Lasting contacts (ships pressed together) arrive every tick;
-          // the client keeps at most a few a second, so only a pair's first
-          // contact, an impact, or one every 150 ms goes out (the ram
-          // damage below still sees every tick). See CollisionBroadcastGate.
-          if (this.collisionGate.shouldSend(p.aId, p.bId, p.normalSpeed, tick)) {
-            // eA/eB name each side as the client knows it, so it can draw a
-            // shield contact on a raised shield (user report 2026-11-07).
-            // Ids as the CLIENT keys bodies: a parked hull's `linger-<sid>`
-            // worker body is the bare sid client-side (RTS Part A S3; the ONE
-            // mapping, `wireShipBodyId`, #15).
-            const msg: CollisionResolvedMessage = {
-              type: 'collision_resolved',
-              aId: wireShipBodyId(p.aId),
-              bId: wireShipBodyId(p.bId),
-              vA: p.vA,
-              vB: p.vB,
-              impulse: p.force,
-              tick,
-            };
-            const eA = this.clientEntityCode(p.aId), eB = this.clientEntityCode(p.bId);
-            if (eA !== undefined) msg.eA = eA;
-            if (eB !== undefined) msg.eB = eB;
-            this.broadcast('collision_resolved', msg);
-            serverLogEvent('collision_resolved', {
-              aId: p.aId,
-              bId: p.bId,
-              impulse: parseFloat(p.force.toFixed(3)),
-              tick,
-            });
-          }
-          // Ramming damage (impact-based model, 2026-11-13; see Ramming.ts).
-          // Each side takes its OWN damage (normal-impact energy shared by
-          // weight: equal ships equally, the lighter more); the OTHER id is the "shooter" (kill-feed + hostility
-          // attribution). applyDamage already no-ops on asteroids (immune - no
-          // swarmHealth entry), so "asteroids deal but do not take" still holds.
-          // Applied once per pair per tick.
-          // P3.3 — ROUND the damage BEFORE the guard so a fractional collision
-          // (the post-WS-1 light-bump regime, e.g. 0.13) emits NOTHING. The old
-          // guard tested the raw float `> 0`, so 0.13 passed → a DamageEvent
-          // broadcast → the client drew impact sparks + a damage number that
-          // rounded to "0" ("sparks and damage still show… it just now shows
-          // 0s"). Gating on the ROUNDED value aborts the whole pipeline (no
-          // applyDamage → no DamageEvent → no sparks) for any sub-0.5 hit, and
-          // makes the applied damage match what the client displays.
-          const damageA = Math.round(p.damageA);
-          const damageB = Math.round(p.damageB);
-          if ((damageA > 0 || damageB > 0) && !this.disableCollisionDamage) {
-            serverLogEvent('ram_damage', {
-              aId: p.aId,
-              bId: p.bId,
-              force: parseFloat(p.force.toFixed(1)),
-              impactSpeed: parseFloat(p.impactSpeed.toFixed(1)),
-              normalSpeed: parseFloat(p.normalSpeed.toFixed(1)),
-              damageA,
-              damageB,
-              tick,
-            });
-            if (damageA > 0 && !this.loot.hullContact(p.aId, p.bId)) this.applyDamage(p.aId, p.bId, damageA);
-            if (damageB > 0 && !this.loot.hullContact(p.bId, p.aId)) this.applyDamage(p.bId, p.aId, damageB);
-          }
-        }
-      },
+      onContactBatch: (tick, contacts) => { handleContactBatch(contactHost, tick, contacts); },
     });
     await this.physicsWorkerProxy.start();
-  }
-
-  /** How the client knows a physics body: -1 = a ship, keyed as the client
-   *  keys it (`wireShipBodyId`: an active pilot's playerId, or an AI-flown
-   *  hull's bare sid), >= 0 = a swarm entity id, undefined = neither. */
-  private clientEntityCode(id: string): number | undefined {
-    const rec = this.swarmRegistry.get(id);
-    if (rec) return rec.entityId;
-    const wireId = wireShipBodyId(id);
-    if (wireId !== id) {
-      // A `linger-<sid>` body: an AI-flown (LINGERING) hull.
-      const hull = this.lingeringSlots.has(wireId) ? this.state.ships.get(wireId) : undefined;
-      return hull && isLingeringHull(hull) ? -1 : undefined;
-    }
-    return this.getActiveShip(id)?.isActive === true ? -1 : undefined;
   }
 
   private postToWorker(cmd: WorkerCmd): void {
