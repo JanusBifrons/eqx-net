@@ -17,13 +17,12 @@ import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { GameClock } from '@core/clock/GameClock';
 import { glideToward } from '@shared-types/timeScale';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
-import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
+import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage } from '@shared-types/messages';
 import type { FleetOrderMessage, SetModeMessage, SetStanceMessage, FormSquadMessage, DisbandSquadMessage } from '@shared-types/messages';
 /** RTS slice 6a: the fleet command messages `sendFleetCommand` dispatches. */
 export type FleetCommandMessage = FleetOrderMessage | SetModeMessage | SetStanceMessage | FormSquadMessage | DisbandSquadMessage;
 import { parseWelcome } from './parseWelcome';
 import { parseDestroy } from './parseDestroy';
-import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
@@ -179,8 +178,7 @@ import {
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
-import { flowMaterialToCode } from '../render/pixi/connectorVisual';
-import { findMount, isSustainedBeamMount, mountMuzzleRay, remoteBeamTtlMs, type MuzzleRay } from '../render/beamStyles';
+import { mountMuzzleRay, type MuzzleRay } from '../render/beamStyles';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
@@ -1431,7 +1429,8 @@ export class ColyseusGameClient {
   /** The ctx `handlers/index.ts` registers with, built once (#14). */
   private readonly _handlerCtx: ClientHandlerCtx = {
     mirror: this.mirror, shellStore: this._shellStore, cutField: this._cutField,
-    shellEvents: () => this._shellEvents,
+    shellEvents: () => this._shellEvents, now: (): number => this.clock.now(),
+    onBeamFired: (evt: LaserFiredEvent): void => this._shellTiming.onBeamFired(evt),
     applyShellEnd: (msg: ShellEnd): void => this.applyShellEnd(msg),
   };
   /** A naval shell hit's FX wait for its drawn burst (navalHitHold.ts). */
@@ -1918,44 +1917,6 @@ export class ColyseusGameClient {
       this.hudDispatcher.pushSwarmCount(this.mirror.swarm?.size ?? 0);
     });
 
-    // Structures plan, Phase 3 — discrete grid pulse: light the named
-    // connection segments for FLASH_DURATION_MS. Stored on the mirror so the
-    // (worker) renderer reads them; joined to structure positions by entityId.
-    room.onMessage('grid_pulse', (msg: GridPulseEvent) => {
-      if (!msg || !Array.isArray(msg.flashed)) return;
-      let flashes = this.mirror.gridFlashes;
-      if (!flashes) { flashes = new Map(); this.mirror.gridFlashes = flashes; }
-      // R2.2 — recover the flow DIRECTION the sorted key throws away (the comet
-      // travels source→dest). Sibling map keyed identically; value = the source.
-      let flowSrc = this.mirror.gridFlowSrc;
-      if (!flowSrc) { flowSrc = new Map(); this.mirror.gridFlowSrc = flowSrc; }
-      // WS-D (#12) — per-edge flow MATERIAL (numeric code) for the connector
-      // tint. Sibling map keyed identically; value = flowMaterialToCode(material).
-      let flowMat = this.mirror.gridFlowMaterial;
-      if (!flowMat) { flowMat = new Map(); this.mirror.gridFlowMaterial = flowMat; }
-      // R2.2 — keep the edge lit for a FULL pulse period so consecutive 1 Hz
-      // pulses read as continuous flow (not a 300 ms blink + 700 ms gap); it
-      // fades ~1 s after the flow actually stops being re-stamped.
-      const until = this.clock.now() + GRID_PULSE_WINDOW_MS;
-      const defaultMatCode = flowMaterialToCode(msg.material ?? 'minerals');
-      for (const pair of msg.flashed) {
-        const a = pair[0];
-        const b = pair[1];
-        if (typeof a !== 'number' || typeof b !== 'number') continue;
-        const lo = a < b ? a : b;
-        const hi = a < b ? b : a;
-        const key = lo * 65536 + hi;
-        flashes.set(key, until);
-        // `a` is the route SOURCE (StructureGridSubsystem.flashRoute pushes
-        // [route[i], route[i+1]] in source→dest order; SectorRoom preserves it).
-        flowSrc.set(key, a);
-        // Per-edge material (WS-D #12); a legacy 2-tuple falls back to the
-        // pulse-level `material`.
-        const edgeMat = pair[2];
-        flowMat.set(key, edgeMat !== undefined ? flowMaterialToCode(edgeMat) : defaultMatCode);
-      }
-    });
-
     room.onMessage('damage', (raw: unknown) => {
       // weapon-hit-prediction Phase 3 — defensive zod parse on receive
       // (invariant #4; mirrors the collision_resolved drop-on-fail). The
@@ -2042,83 +2003,12 @@ export class ColyseusGameClient {
       }
     });
 
-    room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
-      this._shellTiming.onBeamFired(evt);
-      // Own shots are already shown as liveBeams — only store remote ones.
-      if (evt.shooterId === this.mirror.localPlayerId) return;
-      const dx = evt.toX - evt.fromX;
-      const dy = evt.toY - evt.fromY;
-      const range = Math.hypot(dx, dy);
-      // Upsert: replaces the previous beam from this (shooter, mount) so
-      // there is never more than one entry per mount and the TTL resets on
-      // each shot. Player beams are HELD weapons (cooldown 167 ms at 60 Hz;
-      // TTL 400 ms keeps the visual continuous while space is held).
-      //
-      // For AI shooters (`swarm-${entityId}`) the iteration we converged on:
-      //   - First attempt 400 ms: the beam endpoints were stamped at fire time
-      //     and stayed frozen, but the drone moved underneath, so each new
-      //     fire teleported the beam origin → "jittery and laggy" (5c smoke).
-      //   - Second attempt 80 ms: gave a discrete flash, but cooldown is 167 ms,
-      //     so there's an 87 ms gap between flashes → visible flicker.
-      //   - Settled: 250 ms TTL (overlaps cooldown by ~83 ms, no gap) AND the
-      //     renderer re-derives the beam ORIGIN from `mirror.swarm[entityId]`
-      //     each frame so it tracks the moving drone smoothly. Same pattern
-      //     player beams use against `mirror.ships[localId]`.
-      //
-      // Multi-mount/turret refactor (Phase 2c): keyed by (shooterId, mountId).
-      // Pre-2c servers omit `mountId`; we synthesise `'forward'` so the entry
-      // still has a stable key and legacy single-mount rendering is unchanged.
-      const isAiShooter = evt.shooterId.startsWith('swarm-');
-      const mountKey = evt.mountId ?? 'forward';
-      // The capital heavy beam (cooldown 10 ticks) holds longer so it reads as
-      // one continuous burn, not a strobe (beamStyles `remoteBeamTtlMs`). Its
-      // mount is looked up on the shooter's kind: no wire field.
-      const ttlMs = remoteBeamTtlMs(isAiShooter, isSustainedBeamMount(findMount(this.shooterKindMounts(evt.shooterId), evt.mountId)));
-      const lasers = (this.mirror.remoteLasers ??= new Map());
-      let perShooter = lasers.get(evt.shooterId);
-      if (!perShooter) {
-        perShooter = new Map();
-        lasers.set(evt.shooterId, perShooter);
-      }
-      // 2026-05-25 heap-growth gate step 7: pool the per-fire entry.
-      // Pre-fix this handler allocated a fresh 8-field object literal
-      // per drone fire (~150 allocs/sec under 25-drone combat).
-      // Isolation experiment 2026-05-25 showed the 3 message handlers
-      // (swarm/damage/laser_fired) drive 0.435 MB/s heap growth +
-      // 80% of major-GC stalls. Reusing the entry object per
-      // (shooter, mount) is safe — the renderer reads fields
-      // synchronously each frame; upsert semantics are preserved.
-      const expiresAt = this.clock.now() + ttlMs;
-      const existing = perShooter.get(mountKey);
-      if (existing) {
-        existing.range = range;
-        existing.hit = evt.hit;
-        existing.targetId = evt.targetId;
-        existing.expiresAt = expiresAt;
-        existing.fromX = evt.fromX;
-        existing.fromY = evt.fromY;
-        existing.toX = evt.toX;
-        existing.toY = evt.toY;
-      } else {
-        perShooter.set(mountKey, {
-          range,
-          hit: evt.hit,
-          targetId: evt.targetId,
-          expiresAt,
-          fromX: evt.fromX,
-          fromY: evt.fromY,
-          toX: evt.toX,
-          toY: evt.toY,
-        });
-      }
-    });
-
     room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
       this.handleRespawnAck(msg);
     });
 
     // Feature handler files (handlers/index.ts): missiles, impact FX, toasts,
-    // wave HUD, structure panels, drawn shells, ship status, cut field.
+    // wave HUD, structure panels, drawn shells, ship status, cut field, beams, grid pulses.
     registerClientHandlers(room, this._handlerCtx);
 
     // Stage 2 of the network-feel roadmap — server-broadcast collision
@@ -3683,18 +3573,6 @@ export class ColyseusGameClient {
         });
       }
     }
-  }
-
-  /** The catalogue mounts of a `laser_fired` shooter's ship kind (a remote
-   *  player's ship, or a `swarm-<id>` drone/capital), or undefined when the
-   *  shooter isn't mirrored. Same lookup the renderer's beam loop does. */
-  private shooterKindMounts(shooterId: string): readonly WeaponMount[] | undefined {
-    const ship = this.mirror.ships.get(shooterId);
-    if (ship) return ship.kind ? getShipKind(ship.kind).mounts : undefined;
-    if (!shooterId.startsWith('swarm-')) return undefined;
-    const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
-    const sw = Number.isNaN(entityId) ? undefined : this.mirror.swarm?.get(entityId);
-    return sw?.shipKind ? getShipKind(sw.shipKind).mounts : undefined;
   }
 
   /**
