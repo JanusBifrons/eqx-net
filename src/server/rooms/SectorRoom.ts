@@ -106,7 +106,7 @@ import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js
 import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';
 import { CRANE_CARGO_IN, CRANE_CARGO_OUT } from '../../core/articulation/craneCargo.js';
 import { DEPOSIT_WAITING } from '../../shared-types/messages/snapshotMessages.js';
-import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, craneBayFor, dockUnloadHoldTicks, inCraneBay, isStillForDock } from '../../core/articulation/rigCatalogue.js';
+import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, dockUnloadHoldTicks, isStillForDock, onStructureCraneBay } from '../../core/articulation/rigCatalogue.js';
 import { rigClipTip, startStructureRigClip, worldToRigHost, writeRigClipRow } from '../structures/structureRigClip.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
@@ -343,7 +343,7 @@ import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type La
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
-import { StorageService, fittedModuleIds, holdHasIntake, holdIntakeWeight, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, depositRangeOf, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
+import { StorageService, fittedModuleIds, holdHasIntake, holdIntakeWeight, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, nearStorage, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
@@ -4016,7 +4016,7 @@ export class SectorRoom extends Room<SectorState> {
       const s = rec ? this.structureRegistry.get(rec.id) : undefined;
       if (s === undefined || s.owner !== playerId || s.uid === undefined) { reply(false, 'Pick one of your storage structures.'); return; }
       const pose = this.shipPoseCache.get(playerId);
-      if (!pose || Math.hypot(pose.x - s.x, pose.y - s.y) > depositRangeOf(s.kind)) { reply(false, 'Fly your ship next to that storage to install.'); return; }
+      if (!pose || !nearStorage(s, pose.x, pose.y)) { reply(false, 'Fly your ship next to that storage to install.'); return; }
       const id = p.data.blueprintId;
       if (this.fittedOf(shipId).includes(id)) { reply(false, 'This ship already has that blueprint.'); return; }
       const fitted = this.storage.installBlueprint(playerId, s.uid, id, shipId);
@@ -4385,7 +4385,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // ── Living World P1a-2 — instant repair at your own storage (credit sink) ──
     // Repairs the sender's ACTIVE hull to full while it sits within
-    // deposit range (`depositRangeOf`) of its own operational storage; costs REPAIR_CREDITS_PER_HP
+    // reach (`nearStorage`: deposit circle or crane bay) of its own operational storage; costs REPAIR_CREDITS_PER_HP
     // per missing hull point from the credits banked in this sector.
     this.onMessage('repair_ship', (client: Client, raw: unknown) => {
       const parsed = RepairShipSchema.safeParse(raw);
@@ -7625,9 +7625,9 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** C2 — does `playerId` fly a live ship (#17) within cargo range of `rec`?
-   *  In range = within CARGO_ACCESS_RANGE of its footprint edge, or inside its
-   *  deposit circle (`depositRangeOf`): a freight dock's circle covers its
-   *  whole landing pad, which reaches past the edge range. */
+   *  In range = within CARGO_ACCESS_RANGE of its footprint edge, or at it by
+   *  `nearStorage` (its deposit circle or its crane bay): a freight dock's
+   *  circle covers its whole landing pad, which reaches past the edge range. */
   private pilotNear(playerId: string, rec: StructureRecord): boolean {
     const ship = this.getActiveShip(playerId);
     const pose = this.shipPoseCache.get(playerId);
@@ -7635,8 +7635,7 @@ export class SectorRoom extends Room<SectorState> {
     const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
     const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
     if (dx * dx + dy * dy <= CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) return true;
-    const pad = depositRangeOf(rec.kind);
-    return (pose.x - rec.x) ** 2 + (pose.y - rec.y) ** 2 <= pad * pad;
+    return nearStorage(rec, pose.x, pose.y);
   }
 
   /**
@@ -11807,7 +11806,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.manualCargo.has(c.playerId)) {
       // Moved cargo by hand: no auto-deposit until they leave their storage
       // (its reach, or its crane bay: a Capital's bay lies past 400 u).
-      if (this.storage.nearestOwnStorage(c.playerId, c.x, c.y) === null && this.ownDockBayAt(c.playerId, c.x, c.y) === null) {
+      if (this.storage.nearestOwnStorage(c.playerId, c.x, c.y) === null) {
         this.manualCargo.delete(c.playerId);
       }
       this.dropDepositDwell(c.playerId);
@@ -11945,17 +11944,11 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** `owner`'s operational crane-bay structure (`craneBayFor`: freight dock,
-   *  Capital) whose bay holds world point (x, y), or null. The host-frame transform is `worldToRigHost`, inline (alloc-free). */
+   *  Capital) whose bay holds world point (x, y) (`onStructureCraneBay`), or null. Alloc-free. */
   private ownDockBayAt(owner: string, x: number, y: number): StructureRecord | null {
     for (const rec of this.structureRegistry.all()) {
-      const bay = craneBayFor(rec.kind);
-      if (bay === null || rec.owner !== owner || !isOperationalStorage(rec)) continue;
-      const a = ((rec.rot ?? 0) * Math.PI) / 180;
-      const dx = x - rec.x;
-      const dy = y - rec.y;
-      const cs = Math.cos(a);
-      const sn = Math.sin(a);
-      if (inCraneBay(bay, dx * cs + dy * sn, -dx * sn + dy * cs)) return rec;
+      if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
+      if (onStructureCraneBay(rec.kind, rec.x, rec.y, rec.rot ?? 0, x, y)) return rec;
     }
     return null;
   }
