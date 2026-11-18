@@ -8,10 +8,13 @@
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
+import { isFullVitestRun, requireHeavyQueue, shellLine } from './dev/heavy-queue-guard.mjs';
 
 const require = createRequire(import.meta.url);
 const vitestBin = join(dirname(require.resolve('vitest/package.json')), 'vitest.mjs');
 const args = process.argv.slice(2);
+// The FULL suite is heavy (queue it); a file or -t filter stays light.
+requireHeavyQueue({ kind: 'suite', command: `pnpm test ${shellLine(args)}`.trim(), full: isFullVitestRun(args) });
 const filtered = args.length > 0 ? ['--passWithNoTests'] : [];
 let status = 0;
 for (const config of [[], ['--config', 'vitest.art.config.ts']]) {

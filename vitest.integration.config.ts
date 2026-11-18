@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import path from 'node:path';
+import { isFullVitestRun, requireHeavyQueue, shellLine } from './scripts/dev/heavy-queue-guard.mjs';
 
 /**
  * Vitest config — integration tests (Phase A1+).
@@ -42,6 +43,12 @@ import path from 'node:path';
  * in `pnpm test:naval-real` (vitest.naval-real.config.ts) and is excluded
  * here so it doesn't run twice. See docs/architecture/real-scale-ranges.md.
  */
+// The full integration suite is heavy: only through `pnpm heavy run` (or CI,
+// which shards it). A file filter or -t stays light and never blocks.
+if (/vitest/.test(process.argv[1] ?? '') && isFullVitestRun(process.argv.slice(2))) {
+  requireHeavyQueue({ kind: 'suite', command: `pnpm exec vitest ${shellLine(process.argv.slice(2))}` });
+}
+
 export default defineConfig({
   resolve: {
     alias: {

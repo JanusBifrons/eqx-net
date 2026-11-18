@@ -18,7 +18,7 @@ import type { AiEntity, AiWorldView, IAiNavRoutes, IAiNeighbourQuery } from '../
 import { CALM_CRUISE_FRAC, LEADER_CRUISE_THROTTLE, MOVE_ARRIVE_SLOW_RADIUS } from '../hostileDroneTuning.js';
 import type { HullAvoid } from '../hullAvoid.js';
 import { arrive, makeSteerOutput, type SteerOutput } from '../steering.js';
-import { brakingSpeed, facingOf, type PilotHandling } from '../virtualPilot.js';
+import { brakingSpeed, facingOf, pilotTurnRadius, type PilotHandling } from '../virtualPilot.js';
 
 export class MoveToHelm {
   /** Out: the facing, wanted velocity and boost to fly. */
@@ -63,7 +63,10 @@ export class MoveToHelm {
       return true;
     }
     // Round rock: fly the route's next waypoint, braking for what lies ahead on it.
-    if (nav !== null && nav.waypoint(self.id, self.x, self.y, tx, ty, t.navClearance, t.wingmanArrive)) {
+    // A capital plans with its nose and turning radius: no U-turn where it has no room (slice 11).
+    const cap = this.kind.sizeClass === 'capital';
+    if (nav !== null && nav.waypoint(self.id, self.x, self.y, tx, ty, t.navClearance, t.wingmanArrive, false,
+      cap ? self.angle : NaN, cap ? pilotTurnRadius(h) : 0)) {
       const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this.steerScratch), v = Math.min(cruiseCap >= 0 ? cruiseCap : this.handling.cruiseSpeed * CALM_CRUISE_FRAC, brakingSpeed(this.handling, nav.ahead));
       this.out(facingOf(w.dirX, w.dirY), w.dirX * v, w.dirY * v, boostOk);
       return false;
