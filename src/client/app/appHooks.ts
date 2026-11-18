@@ -3,7 +3,7 @@
  * "configure state -> render phase content" rather than "configure state +
  * side-effects + render phase content".
  *
- *   - `useServerHealthPoll` — drives the meta-landing banner + join gate +
+ *   - `useServerHealthPoll` — drives the galaxy-map health banner + join gate +
  *     hype number. Polls every ~8 s for the whole app lifetime.
  *   - `useShipSwapDispatcher` — orchestrates the `game -> connecting -> game`
  *     phase cycle that powers the GalaxyTab "swap into this hull" CTA. The
@@ -28,7 +28,7 @@ import { SERVER_URL } from './serverUrl';
 /**
  * Server-health poll loop. Runs for the whole app lifetime — the
  * landing-screen banner + Join-button gate are the primary consumers,
- * but the value also drives the hype-number on `MetaLandingScreen`,
+ * but the value also drives the hype-number over the galaxy map (`GalaxyPickerChrome`),
  * so keep polling even after the player joins. The poller is cheap
  * (one HTTP GET every ~8 s in steady state).
  */
@@ -126,10 +126,9 @@ export function usePhaseChangeLog(phase: string): void {
 }
 
 /**
- * Living Galaxy P5 — NO-OP. The galaxy map is now the PUBLIC landing screen
- * (auth is gated on the sector PICK in `GameSurface.handleSelectorPick`, not on
- * viewing the map), so a logged-out or token-expired user must NOT be bumped
- * away from it. Pre-P5 this redirected `!user && phase === 'galaxy-map'` → 'meta',
+ * NO-OP. The galaxy map is the PUBLIC homepage (auth is gated on "Join the
+ * fight" in `GalaxyPickerChrome`, not on viewing the map), so a logged-out or token-expired user must NOT be bumped
+ * away from it. Pre-P5 this redirected `!user && phase === 'galaxy-map'` to a splash,
  * which now fights the public map. Kept as a stable call site for a future
  * auth-required phase that might re-introduce an expiry redirect.
  */
