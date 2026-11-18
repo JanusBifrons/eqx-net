@@ -16,14 +16,14 @@ import { Rectangle, Texture } from 'pixi.js';
 import { FX_SPECS, isFxId, type FxId, type FxSpec } from './fx/fxTextures.js';
 import { Atlas, PageBudget, type AtlasOpts } from './atlas.js';
 import type { Livery } from './fields.js';
-import { bakeKey, runBake, seedVariant, type Baked, type BakeJob, type LitMeta } from './bake.js';
+import { bakeKey, seedVariant, type Baked, type BakeJob, type LitMeta } from './bake.js';
 import type { LightingSettings } from './lightingSettings.js';
 import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
 import { readArtDelayMs } from './artMode.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
-import { ChunkCutJobs, cutCoarseInline, cutInline, type ChunkOpts, type PackedChunk, type PackedCoarseTile } from './chunkCutJobs.js';
+import { ChunkCutJobs, type ChunkOpts, type PackedChunk, type PackedCoarseTile } from './chunkCutJobs.js';
 
 export type ArtState = 'pending' | 'ready' | 'failed';
 
@@ -696,29 +696,8 @@ export class WorkerBakeRunner implements BakeRunner {
   }
 }
 
-/** Fallback when workers can't be created: one bake per macrotask on the
- *  current thread. Each bake still blocks for its own duration (up to a few
- *  hundred ms for the biggest structures), so this is a last resort. */
-export class InlineBakeRunner implements BakeRunner {
-  private chain: Promise<unknown> = Promise.resolve();
-  private stopped = false;
-  constructor(private readonly delayMs = 0) {}
-  get workers(): number { return 0; }
-  run(job: BakeJob, rig: LightRig, _urgent = true): Promise<Baked> {
-    const p = this.chain.then(() => new Promise<Baked>((resolve, reject) => {
-      setTimeout(() => {
-        if (this.stopped) { reject(new Error('art service destroyed')); return; }
-        try { resolve(runBake(job, rig)); } catch (e) { reject(e instanceof Error ? e : new Error(String(e))); }
-      }, 0);
-    }));
-    this.chain = p.catch(() => undefined);
-    // As in the worker pool, the test delay holds back the result, not the queue.
-    return this.delayMs > 0 ? p.then((b) => new Promise<Baked>((resolve) => { setTimeout(() => resolve(b), this.delayMs); })) : p;
-  }
-  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk> { return cutInline(field, cx, cy, () => this.stopped); }
-  cutCoarseField(field: ChunkOpts): Promise<PackedCoarseTile[]> { return cutCoarseInline(field, () => this.stopped); }
-  destroy(): void { this.stopped = true; }
-}
+export { InlineBakeRunner } from './inlineBakeRunner.js';
+import { InlineBakeRunner } from './inlineBakeRunner.js';
 
 // ---------------------------------------------------------------- factory
 
