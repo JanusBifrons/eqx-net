@@ -102,6 +102,8 @@ export type PersistOp =
       y: number | null;
       payloadJson: string;
       expiresAt: number | null;
+      /** A pod's look (size class + glow tier); null for other holders. */
+      look?: number | null;
       ts: number;
     }
   | { type: 'HOLD_DELETE'; holderUid: string; ts: number }

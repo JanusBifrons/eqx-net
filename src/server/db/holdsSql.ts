@@ -7,18 +7,18 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 
 export const HOLD_PUT_SQL =
-  'INSERT INTO holds (holder_uid, holder_type, owner_id, sector_key, x, y, payload_json, expires_at, updated_at) ' +
-  'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+  'INSERT INTO holds (holder_uid, holder_type, owner_id, sector_key, x, y, payload_json, expires_at, look, updated_at) ' +
+  'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
   'ON CONFLICT(holder_uid) DO UPDATE SET holder_type=excluded.holder_type, owner_id=excluded.owner_id, ' +
   'sector_key=excluded.sector_key, x=excluded.x, y=excluded.y, payload_json=excluded.payload_json, ' +
-  'expires_at=excluded.expires_at, updated_at=excluded.updated_at';
+  'expires_at=excluded.expires_at, look=excluded.look, updated_at=excluded.updated_at';
 
 export const HOLD_DELETE_SQL = 'DELETE FROM holds WHERE holder_uid = ?';
 
 type HoldPutOp = Extract<PersistOp, { type: 'HOLD_PUT' }>;
 
 export function holdPutArgs(op: HoldPutOp): Array<string | number | null> {
-  return [op.holderUid, op.holderType, op.ownerId, op.sectorKey, op.x, op.y, op.payloadJson, op.expiresAt, op.ts];
+  return [op.holderUid, op.holderType, op.ownerId, op.sectorKey, op.x, op.y, op.payloadJson, op.expiresAt, op.look ?? null, op.ts];
 }
 
 let savepointSeq = 0;
