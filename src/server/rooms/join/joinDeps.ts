@@ -29,6 +29,8 @@ export interface JoinHandlerDeps {
   readonly roomId: string;
   readonly testMode: boolean;
   readonly enforceHullGate: boolean;
+  /** Join flow: launch prices on (rooms/launchGate.ts). */
+  readonly launchCostsOn: boolean;
   readonly defaultSpawnX: number | null;
   readonly defaultSpawnY: number | null;
   readonly testWalletSeed: number;

@@ -43,6 +43,8 @@ export interface CargoView {
   blueprints: number;
   /** Economy v2 W2 — packed structures / hulls carried (count). */
   packed?: number;
+  /** Their total weight (a rock chunk weighs hundreds): the chip counts it. */
+  packedWeight?: number;
 }
 
 export interface WarpWarning {
@@ -138,7 +140,7 @@ export type ControlMode = 'fly' | 'command';
 
 /** What kind of entity the selection's focus is (routes the details panel:
  *  `ship`/`structure` use the server `entity_stats` stream). */
-export type SelectionFocusKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering';
+export type SelectionFocusKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod';
 
 /**
  * THE selection (RTS Part A: one selection concept). The renderer owns it
@@ -321,6 +323,9 @@ export interface UIStore {
   /** Economy v2 W1 — the player's WALLET balance (credits are virtual), from
    *  the own-ship snapshot `wallet` field; null until the first snapshot. */
   wallet: number | null;
+  /** Join flow — free capital launches left, from the own-ship snapshot
+   *  `freeLaunches` field; null until the first snapshot. */
+  freeLaunches: number | null;
   /** Economy v2 W3 — the last `lab_state` reply (the Research Lab panel is
    *  rebuilt from it; discrete, written only on a reply). */
   labState: LabState | null;
@@ -426,11 +431,6 @@ export interface UIStore {
    *  (NOT per-pointermove), so it's a discrete low-frequency UI field; the
    *  `left`/`top` are tooltip anchor px, not game-spatial → Zustand-safe (#2). */
   galaxyHover: { sectorKey: string; left: number; top: number } | null;
-  /** Standalone Galaxy Overview (Map A) open state in-game. Toggled by the
-   *  drawer's Galaxy tab. Replaces the gameplay canvas full-screen with a
-   *  Pixi-rendered overview that supports drag/pinch/wheel pan & zoom. The
-   *  Colyseus session stays alive in the background. */
-  isGalaxyOverviewOpen: boolean;
   /** Hyperspace arrival mode for the next warp. UI-discrete value (3 modes),
    *  not per-frame — purity-clean. PC has no UI for this and the value
    *  stays at the `'same'` default. Persisted per-user. */
@@ -445,8 +445,8 @@ export interface UIStore {
   /** Phase 5 — singleton roster cache for the local player's ships.
    *  Populated by the diag-endpoint fetcher (one-shot at login) and
    *  refreshed by the `SHIP_ROSTER` Colyseus push (server-side abandon /
-   *  transit broadcast). Consumers: `ShipRosterPanel`, `RosterCountBadge`,
-   *  `GalaxyTab`. Empty array when the player has no ships. */
+   *  transit broadcast). Consumers: the Hangar (`HangarWindow`),
+   *  `GalaxyTab`, `UpgradeModalHost`. Empty array when the player has no ships. */
   shipRoster: RosterEntry[];
   /** HTTP-level `/healthz` probe state for the pre-game UI gate. Drives
    *  the landing-screen banner + join-button disabled state. */
@@ -556,6 +556,7 @@ export interface UIStore {
   setHelmState: (available: boolean, active: boolean, speed: 0 | 1 | 2 | 3) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;
   setWallet: (credits: number | null) => void;
+  setFreeLaunches: (n: number | null) => void;
   setLabState: (s: LabState | null) => void;
   setCargoState: (s: CargoState | null) => void;
   setTeleportCandidates: (s: TeleportCandidatesReply | null) => void;
@@ -588,8 +589,6 @@ export interface UIStore {
   setGalaxyOwnedStructures: (sectors: SectorStructurePresence[]) => void;
   setGalaxyHover: (hover: { sectorKey: string; left: number; top: number } | null) => void;
   toggleGalaxyMapOpen: () => void;
-  setGalaxyOverviewOpen: (v: boolean) => void;
-  toggleGalaxyOverviewOpen: () => void;
   setArrivalMode: (m: ArrivalMode) => void;
   setArrivalTarget: (x: number, y: number) => void;
   setHomePos: (x: number, y: number) => void;

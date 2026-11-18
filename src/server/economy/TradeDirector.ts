@@ -534,6 +534,14 @@ export class TradeDirector implements TradeSink {
     this.store.setTollPref(playerId, faction, pref);
   }
 
+  freeLaunches(playerId: string): number {
+    return this.store.freeLaunches(playerId);
+  }
+
+  spendFreeLaunch(playerId: string): boolean {
+    return this.store.spendFreeLaunch(playerId);
+  }
+
   creditFaction(faction: string, credits: number): void {
     this.store.creditTreasury(faction, credits);
   }
