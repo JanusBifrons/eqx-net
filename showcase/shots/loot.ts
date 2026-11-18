@@ -36,12 +36,12 @@ export const loot: Shot = {
   reel: true,
   server: 'lean',
   viewport: 'phone-landscape',
-  // Roster-backed (cargo needs a roster row). Its heavy is peaceful and
-  // hull-exposed: auto-fire kills it fast. Its one stack survives the death
-  // coin flip half the time, so a take with no pod fails and is retaken.
-  target: { room: 'showcase-levelup', params: { shipKind: 'interceptor', ...SURVIVE } },
+  // Roster-backed (cargo needs a roster row). Four peaceful, hull-exposed
+  // heavies: auto-fire kills them in turn and a death keeps its loot about
+  // half the time, so a pod is almost sure to drop.
+  target: { room: 'showcase-loot', params: { shipKind: 'interceptor', ...SURVIVE } },
   hud: 'full',
-  durationMs: 20_000,
+  durationMs: 40_000,
   async run(ctx) {
     const { page } = ctx;
     const step = (s: string): void => console.log(`[loot] ${s}`);
@@ -63,7 +63,7 @@ async function openPodAndTake(ctx: ShotContext, step: (s: string) => void): Prom
       return false;
     },
     undefined,
-    { timeout: 12_000 },
+    { timeout: 25_000 },
   );
   step('pod dropped');
   await ctx.sleep(800);

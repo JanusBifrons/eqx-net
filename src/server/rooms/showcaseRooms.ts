@@ -290,6 +290,22 @@ export const SHOWCASE_LEVELUP_OPTS = {
 } as const;
 
 /**
+ * The "open a pod" loot shot: levelup with four peaceful, hull-exposed
+ * heavies in auto-fire reach. Each death's coin flip is a fresh roll, so one
+ * kill leaves a pod only about half the time; four kills almost always do.
+ */
+export const SHOWCASE_LOOT_OPTS = {
+  ...SHOWCASE_LEVELUP_OPTS,
+  sectorKey: 'showcase-loot',
+  dronePoses: [
+    { kind: 'heavy', x: 0, y: 140, angle: 0, hullExposed: true },
+    { kind: 'heavy', x: -150, y: 90, angle: 0, hullExposed: true },
+    { kind: 'heavy', x: 150, y: 90, angle: 0, hullExposed: true },
+    { kind: 'heavy', x: 0, y: -220, angle: 0, hullExposed: true },
+  ],
+} as const;
+
+/**
  * A dense field for the scale shot: 500 bodies (60 % asteroids, the rest
  * peaceful drones) packed into a 2500 u radius — inside one client's interest
  * window, so it reads as dense on screen. (`swarm-tidi`'s 4000 are spread over
@@ -573,6 +589,7 @@ export const SHOWCASE_ROOMS = {
   'showcase-base': SHOWCASE_BASE_OPTS,
   'showcase-defence': SHOWCASE_DEFENCE_OPTS,
   'showcase-levelup': SHOWCASE_LEVELUP_OPTS,
+  'showcase-loot': SHOWCASE_LOOT_OPTS,
   'showcase-swarm': SHOWCASE_SWARM_OPTS,
   'showcase-homestead': SHOWCASE_HOMESTEAD_OPTS,
   'showcase-bounty': SHOWCASE_BOUNTY_OPTS,
