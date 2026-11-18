@@ -137,6 +137,13 @@ const CLAUDE_MD_BUDGETS = {
   'src/client/CLAUDE.md': 26000,
   'src/core/CLAUDE.md': 15200,
   'plans/CLAUDE.md': 2000,
+  // Folder rules next to each god file: where new code goes instead (rules only).
+  // A missing file is skipped, so each lands with its extension point.
+  'src/server/rooms/CLAUDE.md': 3000,
+  'src/client/net/CLAUDE.md': 3000,
+  'src/client/render/CLAUDE.md': 3000,
+  'src/core/ai/CLAUDE.md': 3000,
+  'src/shared-types/CLAUDE.md': 3000,
 };
 
 function claudeMdViolations() {
