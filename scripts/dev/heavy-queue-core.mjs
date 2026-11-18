@@ -118,6 +118,11 @@ export function resolveQueueDir(cwd = process.cwd(), env = process.env) {
   return resolveSharedClaudeDir('heavy-queue', cwd);
 }
 
+/** Join argv for a shell, quoting args that need it. */
+export function shellJoin(args) {
+  return args.map((a) => (/^[\w@%+=:,./\\-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`)).join(' ');
+}
+
 export function newTicketId(now = Date.now(), pid = process.pid) {
   return `${now.toString(36)}-${pid}-${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -239,6 +244,96 @@ export function adoptOrphan(dir, t, now = Date.now()) {
   return o;
 }
 
+// ── dev-server leases (dev-lease.mjs) ─────────────────────────────────────
+// Hand-started dev servers are NOT queued (a play session would block films);
+// instead each one holds a lease in `<queue dir>/dev/` (same ticket files) and
+// at most EQX_DEV_CAP (default 2) dev SETUPS run machine-wide. A server and a
+// client from the same worktree are one setup. A lease is live while its
+// wrapper or its child process lives; a dead one is swept, never killed.
+
+export const DEV_KINDS = ['server', 'client'];
+export const DEFAULT_DEV_CAP = 2;
+
+/** `<queue dir>/dev`: one lease ticket per running dev server/client. */
+export const devLeaseDir = (queueDir) => path.join(queueDir, 'dev');
+
+/** Why this start skips the cap (it still writes a lease), or null. */
+export function devCapExemption(env = process.env) {
+  if (env.CI) return 'ci';
+  if (env.EQX_HEAVY_QUEUE) return 'queued';
+  const skip = env.EQX_DEV_CAP_SKIP;
+  if (skip && skip !== '0') return skip === '1' ? 'skip' : skip;
+  return null;
+}
+
+/** EQX_DEV_CAP as a positive integer, else the default. */
+export function devCap(env = process.env) {
+  const n = Number(env.EQX_DEV_CAP);
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_DEV_CAP;
+}
+
+/** Live while the wrapper or the command it started is alive. */
+export function isLeaseLive(l, isAlive = isPidAlive) {
+  return isAlive(l.pid) || (l.childPid != null && isAlive(l.childPid));
+}
+
+/** Leases grouped into setups (one per worktree), oldest setup first. */
+export function groupDevSetups(leases) {
+  const byKey = new Map();
+  for (const l of leases) {
+    const key = l.worktree ?? l.cwd;
+    let s = byKey.get(key);
+    if (!s) { s = { worktree: key, who: l.who, startedAtMs: l.startedAtMs, firstId: l.id, leases: [] }; byKey.set(key, s); }
+    s.leases.push(l);
+    if (l.startedAtMs < s.startedAtMs || (l.startedAtMs === s.startedAtMs && l.id < s.firstId)) {
+      s.startedAtMs = l.startedAtMs; s.firstId = l.id; s.who = l.who;
+    }
+  }
+  return [...byKey.values()].sort((a, b) => a.startedAtMs - b.startedAtMs
+    || (a.firstId < b.firstId ? -1 : a.firstId > b.firstId ? 1 : 0));
+}
+
+/**
+ * May lease `meId` (already written, so two racers see each other) run?
+ * Only live, non-exempt leases count; the oldest `cap` setups win, so of two
+ * racers for the last slot the later one refuses. `others` = the other setups.
+ */
+export function devCapDecision({ meId, leases, cap }) {
+  const me = leases.find((l) => l.id === meId);
+  const setups = groupDevSetups(leases.filter((l) => !l.exempt));
+  const key = me ? (me.worktree ?? me.cwd) : undefined;
+  const idx = setups.findIndex((s) => s.worktree === key);
+  const others = setups.filter((s) => s.worktree !== key);
+  if (!me || me.exempt) return { go: true, reason: me ? 'exempt' : 'lease missing', others };
+  if (idx < cap) return { go: true, reason: setups[idx].leases.length > 1 ? 'same-setup' : 'under-cap', others };
+  return { go: false, reason: 'over-cap', others };
+}
+
+/** Delete leases whose processes are all dead. Never touches a process. */
+export function sweepDevLeases(dir, { isAlive = isPidAlive } = {}) {
+  const removed = [];
+  for (const l of readTickets(dir)) {
+    if (!isLeaseLive(l, isAlive)) { removeTicket(dir, l.id); removed.push(l); }
+  }
+  return removed;
+}
+
+/** One line per setup: who, kinds + ports, age, worktree. */
+export function formatDevSetup(s, now) {
+  const parts = s.leases.map((l) => `${l.kind}${l.port ? ` :${l.port}` : ''}`).join(' + ');
+  const ex = s.leases.every((l) => l.exempt) ? ` [exempt: ${s.leases[0].exempt}]` : '';
+  return `${String(s.who).slice(0, 25).padEnd(25)} ${parts}  up ${fmtDur(now - s.startedAtMs)}${ex}  (${s.worktree})`;
+}
+
+export function devRefusalMessage({ others, cap, now }) {
+  return [
+    `[dev-lease] refused: ${others.length} dev setups already run on this machine (cap EQX_DEV_CAP=${cap}):`,
+    ...others.map((s) => `  ${formatDevSetup(s, now)}`),
+    '  Stop your own dev server when done, or reuse a running one (point at its ports).',
+    '  See docs/ops/agent-workflow.md "Heavy-job queue". Debug escape: EQX_DEV_CAP_SKIP=1',
+  ].join('\n');
+}
+
 // ── formatting ────────────────────────────────────────────────────────────
 
 export function fmtDur(ms) {
@@ -275,7 +370,12 @@ export function snapshot(dir, now = Date.now()) {
       overdue: holderOverdue(running, now), command: running.command,
     };
   }
-  return { dir, running: run, queue, orphaned };
+  // Live dev-server setups (the caller sweeps dead leases first).
+  const dev = groupDevSetups(readTickets(devLeaseDir(dir))).map((s) => ({
+    who: s.who, worktree: s.worktree, upMs: now - s.startedAtMs,
+    leases: s.leases.map((l) => ({ kind: l.kind, port: l.port ?? null, pid: l.pid, exempt: l.exempt ?? null })),
+  }));
+  return { dir, running: run, queue, orphaned, dev };
 }
 
 export function formatStatus(snap) {
@@ -299,6 +399,11 @@ export function formatStatus(snap) {
   for (const o of snap.orphaned ?? []) {
     lines.push(`orphaned: ${o.who} [${o.kind}] ${fmtDur(o.orphanedMs)} (joined ${fmtDur(o.waitedMs)} ago),`
       + ` rejoin with same --who to keep place (expires in ${fmtDur(o.expiresInMs)})`);
+  }
+  if (!snap.dev || snap.dev.length === 0) lines.push('dev servers: (none)');
+  else {
+    lines.push('dev servers:');
+    for (const d of snap.dev) lines.push(`  ${formatDevSetup({ ...d, startedAtMs: 0 }, d.upMs)}`);
   }
   return lines.join('\n');
 }

@@ -346,6 +346,9 @@ export default defineConfig({
             // so a spec can speed a real sector's game clock: rts-fleet-warp
             // joins at timeScale=4 so the 30 s warp spool takes 7.5 s.
             EQX_ALLOW_DEV_OVERRIDES: '1',
+            // Test servers live only for the run: exempt from the dev-server
+            // cap (scripts/dev/dev-lease.mjs), never refused.
+            EQX_DEV_CAP_SKIP: 'playwright',
             ...(IS_OFFSET_LANE ? { PORT: String(E2E_SERVER_PORT) } : {}),
           },
         },
@@ -356,10 +359,13 @@ export default defineConfig({
           port: E2E_CLIENT_PORT,
           reuseExistingServer: !IS_OFFSET_LANE,
           // Offset lane: point Vite's proxy at the lane's server and move HMR
-          // off the shared 24678. (Offset 0 passes no env, exactly as before.)
-          ...(IS_OFFSET_LANE
-            ? { env: { EQX_SERVER_PORT: String(E2E_SERVER_PORT), VITE_HMR_PORT: String(E2E_HMR_PORT) } }
-            : {}),
+          // off the shared 24678. Always exempt from the dev-server cap.
+          env: {
+            EQX_DEV_CAP_SKIP: 'playwright',
+            ...(IS_OFFSET_LANE
+              ? { EQX_SERVER_PORT: String(E2E_SERVER_PORT), VITE_HMR_PORT: String(E2E_HMR_PORT) }
+              : {}),
+          },
           timeout: 60_000,
         },
       ],
