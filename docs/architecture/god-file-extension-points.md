@@ -53,6 +53,16 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | An order / stance / non-combat mode | A mode file in `src/core/ai/modes/`. | planned |
 | A tuning number | `hostileDroneTuning.ts`. | planned |
 
+## Core: `World.ts` (`src/core/CLAUDE.md`)
+
+| To add | Do this | Status |
+|---|---|---|
+| A new body shape or collider set | A builder in `src/core/physics/spawnBodies.ts` (`createShipBody`, `createObstacleBody`, `createProjectileBody`, `mountShipColliders`) called from the `PhysicsWorld` spawn method; collider settings stay in `colliderConfig.ts`. | live |
+| Warp body behaviour (spool turn, run, drop) | `src/core/physics/warpActuator.ts` (`applyPilotInput`, `botWarpStep`, `restoreWarp`); the warp state machine stays in `warpDrive.ts`. `PhysicsWorld` keeps one-line delegates. | live |
+| A shared World record type | `src/core/physics/worldTypes.ts` (`ShipBody`, `ShipInput`, `ShipPhysicsState`), so extension modules never import `World.ts`. | live |
+| A per-step pass | Its own module with a class or function called from `tick`, like `CapitalOverlapResolver` (`capitalOverlap.ts`) or `applyForceFields` (`forceFields.ts`); scratch built once (#14). | live |
+| A ray / hitscan query | `hitscanRay.ts`; `PhysicsWorld.hitscan` stays a thin wrapper. | live |
+
 ## Shared data: `structureKinds.ts` (`src/shared-types/CLAUDE.md`)
 
 | To add | Do this | Status |

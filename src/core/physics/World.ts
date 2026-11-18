@@ -1,6 +1,5 @@
 import RAPIER from '@dimforge/rapier2d-compat';
-import { shipCollisionTriangles } from '../geometry/shipHullDecomp.js';
-import { polygonArea, verticesToFloat32, type Vec2 } from '../swarm/asteroidShape.js';
+import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   DEFAULT_SHIP_KIND,
   getShipKind,
@@ -8,14 +7,15 @@ import {
   type ShipKind,
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
-import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
 import { applyShipInput, type ShipInputArgs, type ShipInputMultipliers } from './applyShipInput.js';
-import { newWarpState, spoolHeldForAlign, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_MIN_TURN, WARP_SPEED, type WarpPhase, type WarpState } from './warpDrive.js';
+import type { WarpPhase, WarpState } from './warpDrive.js';
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { applyForceFields, storeForceField, type ForceField } from './forceFields.js';
-import { shipBodyInertia, shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
+import type { ShipBody, ShipInput, ShipPhysicsState } from './worldTypes.js';
+import { applyPilotInput, botWarpStep, restoreWarp } from './warpActuator.js';
+import { createObstacleBody, createProjectileBody, createShipBody, mountShipColliders } from './spawnBodies.js';
 
 const FIXED_DT = 1 / 60;
 
@@ -27,74 +27,14 @@ const FIXED_DT = 1 / 60;
  */
 export { BOOST_MULTIPLIER } from '../../shared-types/shipKinds.js';
 
-/**
- * Soft-CCD prediction distance (u) for every dynamic body (plan
- * soft-leaping-truffle PR-C). Ship movement has no ray-projection, so without
- * this a body whose centre crossed a thin wall's midline within one 60 Hz step
- * was ejected out the far side. Measured 2026-10-31 (16 u walls, cuboid +
- * trimesh, shields up/down, 90/60/30°, ~46 u/tick = 2× the fastest flyable
- * ship at max topSpeed upgrade): prediction 0 → 10–27 pass-throughs per sweep;
- * 32 / 64 / 96 → 0. 48 = 2× max per-tick travel. Larger values widen the
- * broad-phase (Rapier docs), so this is kept tight; raise only with a
- * re-measurement (World.ccd.test.ts).
- */
-export const SOFT_CCD_PREDICTION = 48;
+export { SOFT_CCD_PREDICTION } from './spawnBodies.js';
 
 /** Fixed steps a settle body (`setSleepSettle`) must stay under its
  *  thresholds before it is put to sleep: half a second (Rapier's own timer
  *  is 2 s, at a 0.4 u/s threshold). */
 export const WRECK_SETTLE_STEPS = 30;
 
-export interface ShipPhysicsState {
-  x: number;
-  y: number;
-  angle: number;
-  vx: number;
-  vy: number;
-  /** Angular velocity in rad/s. Optional for back-compat with server snapshots that omit it. */
-  angvel?: number;
-}
-
-export interface ShipInput {
-  thrust: boolean;
-  turnLeft: boolean;
-  turnRight: boolean;
-  /** Shift-held boost — multiplies thrust impulse by `kind.boostMultiplier`
-   *  while thrust is also held. No-op on its own. Optional for back-compat. */
-  boost?: boolean;
-  /** S / Down arrow held — applies a (typically) reduced-magnitude impulse in
-   *  the opposite direction of the ship's facing. Cancels with thrust if both
-   *  are pressed. Optional for back-compat with replay buffers / unit tests
-   *  written before reverse landed. */
-  reverse?: boolean;
-  /** In-sector warp-to (Phase 4): the drop point asked for this tick. Held
-   *  while the pilot wants the warp; absent = no request (cancels a spool).
-   *  Run through `stepWarp` (warpDrive.ts) identically on both sides. */
-  warpX?: number;
-  warpY?: number;
-}
-
-interface ShipBody {
-  body: RAPIER.RigidBody;
-  kind: ShipKind;
-  /** Current collider geometry: false = cheap CIRCLE (shield up), true =
-   *  exact HULL polygon compound (shield down). Owned by setHullExposed. */
-  exposed: boolean;
-  /** Phase 4 WS-B2 — per-instance PHYSICS stat multipliers (`topSpeed`,
-   *  `turnRate`), set via `setStatMultipliers`. Threaded into `applyShipInput`
-   *  so the server sim + client prediction scale movement identically (risk
-   *  #1). `undefined` ⇒ no upgrades ⇒ byte-identical to the legacy path. */
-  statMul?: ShipInputMultipliers;
-  /** In-sector warp-to state; created on the first warp request. */
-  warp?: WarpState;
-  /** Pilot layer: the ShipKind an AI slot flies with when driven by input
-   *  bits (`applyAiInput`). Set at drone spawn (`SPAWN_OBSTACLE.shipKindId`).
-   *  Kept apart from `kind` (an obstacle's placeholder default kind, which
-   *  other paths such as the bot warp align still read). */
-  pilotKind?: ShipKind;
-  /** True once `applyAiInput` has given the body its kind's damping. */
-  piloted?: boolean;
-}
+export type { ShipInput, ShipPhysicsState } from './worldTypes.js';
 
 export class PhysicsWorld {
   private world: RAPIER.World;
@@ -197,43 +137,7 @@ export class PhysicsWorld {
    */
   spawnShip(id: string, x = 0, y = 0, kindId: ShipKindId = DEFAULT_SHIP_KIND): void {
     const kind = getShipKind(kindId);
-    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(x, y)
-      .setLinearDamping(kind.linearDamping)
-      .setAngularDamping(kind.angularDamping)
-      // Soft CCD (plan soft-leaping-truffle PR-C): predictive contacts along
-      // the body's path so it can't tunnel thin static geometry between 60 Hz
-      // steps. NOT full CCD — full CCD suppressed static-overlap contact events
-      // + under-resolved interpenetration (hullCollisionNoTouch positive
-      // control). Lock: World.ccd.test.ts. Same path on server worker + client
-      // predWorld (Invariant #15).
-      .setSoftCcdPrediction(SOFT_CCD_PREDICTION);
-    const body = this.world.createRigidBody(bodyDesc);
-    // Mass + inertia are pinned ONCE to the legacy disc-equivalent so the
-    // shield 0-cross collider swap (setHullExposed) is DYNAMICALLY
-    // TRANSPARENT: a uniform ball(r) at density 1/(pi r^2) has mass 1 and
-    // angular inertia 0.5*m*r^2. Every ship collider is ZERO-density, so the
-    // body's mass/inertia are exactly these additional mass-props no matter
-    // which collider shape is mounted.
-    //
-    // Rapier folds total mass = collider-contributions + additional-props
-    // only at the next world.step() (per @dimforge/rapier2d-compat
-    // rigid_body.d.ts:377/395). We MUST recompute right here so the pinned
-    // mass is live before the first step (otherwise a pre-step applyImpulse
-    // sees inverse-mass 0 and is silently dropped). recomputeMassProperties-
-    // FromColliders is SAFE and REQUIRED here precisely because it recomputes
-    // the TOTAL (zero colliders + the stored additional = mass 1, I = 0.5 r^2)
-    // -- "FromColliders" is a misnomer; it includes the additional props.
-    // Shield collider radius = kind.radius + shipTuning(kind).shieldPad =
-    // `shieldBubbleRadius(kind)`, the radius the shield aura is drawn at. Pinned mass + inertia stay derived from the bare
-    // `kind.radius` — they're a kind-feel knob, not a function of the
-    // current collider geometry (the pad doesn't change ship handling).
-    this.world.createCollider(shipShieldColliderDesc(kind), body);
-    // The kind's one mass + inertia source (`shipBodyMass` /
-    // `shipBodyInertia`), shared with every NPC body of the kind: ship
-    // stats belong to the ship, never the pilot (owner 2026-11-13).
-    body.setAdditionalMassProperties(shipBodyMass(kind), { x: 0, y: 0 }, shipBodyInertia(kind), true);
-    body.recomputeMassPropertiesFromColliders();
+    const body = createShipBody(this.world, kind, x, y);
     const rec: ShipBody = { body, kind, exposed: false };
     this.bodies.set(id, rec);
     this.handleToId.set(body.handle, id);
@@ -283,103 +187,11 @@ export class PhysicsWorld {
      *  rounded hull. Omitted ⇒ a plain `ball(radius)` obstacle. */
     shieldKind?: ShipKind,
   ): void {
-    // WS-11 (R2.25) — `linearDamping` defaults to 0 so ASTEROIDS + STRUCTURES
-    // stay ballistic (no friction), but DRONES pass their per-kind
-    // `ShipKind.linearDamping` (exactly like `spawnShip` does, World.ts:152) so
-    // the AI standoff/brake has something to settle against. Before this, drone
-    // bodies had ZERO damping and the AI-impulse path bypasses the player's
-    // max-speed clamp, so once a drone overshot its target it coasted away
-    // FOREVER (thrust=0 inside the standoff + no friction) — the "flies past /
-    // floats / never approaches" bug.
-    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(x, y)
-      .setLinearDamping(linearDamping)
-      .setAngularDamping(0)
-      // Soft CCD for every moving obstacle (drones, asteroids, scrap) — see spawnShip.
-      .setSoftCcdPrediction(SOFT_CCD_PREDICTION);
-    const body = this.world.createRigidBody(bodyDesc);
-
-    // Gates (phase V): a body made of SEVERAL convex parts (two posts, or an
-    // airlock's posts + side walls) so ships can pass through the gap between
-    // them. Density spreads the requested mass over the total part area.
+    const body = createObstacleBody(this.world, x, y, radius, mass, vertices, linearDamping, collisionGroups, parts, shieldKind);
     if (parts && parts.length > 0) {
-      let totalArea = 0;
-      for (const p of parts) totalArea += polygonArea(p);
-      const density = totalArea > 0 ? mass / totalArea : mass;
-      for (const p of parts) {
-        const d = RAPIER.ColliderDesc.convexHull(verticesToFloat32(p));
-        if (!d) continue;
-        d.setRestitution(0.8).setFriction(0).setDensity(density)
-          .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-          .setContactForceEventThreshold(10);
-        if (collisionGroups !== undefined) d.setCollisionGroups(collisionGroups);
-        // A thin sliver (a capital wreck piece can have one, height < 1 u) has
-        // no hull Rapier can build: createCollider throws before touching the
-        // world. Skip that part and keep the rest; the same code runs in the
-        // server worker and the client predWorld, so both twins skip it.
-        try {
-          this.world.createCollider(d, body);
-        } catch {
-          continue;
-        }
-      }
       this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false });
       this.handleToId.set(body.handle, id);
       return;
-    }
-
-    let collider: RAPIER.ColliderDesc | null = null;
-    if (vertices && vertices.length >= 3) {
-      const flat = verticesToFloat32(vertices);
-      collider = RAPIER.ColliderDesc.convexHull(flat);
-      if (collider) {
-        const area = polygonArea(vertices);
-        const density = area > 0 ? mass / area : mass / (Math.PI * radius * radius);
-        collider.setRestitution(0.8).setFriction(0).setDensity(density);
-      }
-    }
-    const isBall = !(vertices && vertices.length >= 3);
-    // A drone (any `shieldKind`) spawns shield-up, so it collides as its shield
-    // bubble: the SAME `shipShieldColliderDesc` that `setHullExposed(false)`
-    // mounts on regen (ball(radius + shieldPad), or the rounded hull for a
-    // capital). One place for the server worker and the client predWorld (#15).
-    // Before 2026-11-10 non-capital drones got a bare `ball(radius)` here.
-    if (!collider && shieldKind) {
-      collider = shipShieldColliderDesc(shieldKind);
-    }
-    if (!collider) {
-      // Drone / plain-obstacle ball: ZERO density + a pinned additional
-      // mass (set after createCollider below) so setHullExposed\u2019s
-      // circle<->hull swap is dynamically transparent for drones, exactly
-      // like spawnShip. Mathematically identical to the legacy
-      // mass/(pi r^2) ball for any body that never swaps. Asteroids
-      // (convexHull branch) keep real area-density — they never swap.
-      collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(0);
-    }
-    // Stage 2: enable contact-force events on obstacles too — ship-vs-asteroid
-    // collisions are the dominant case the network-feel collision-event
-    // broadcast addresses.
-    collider
-      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-      .setContactForceEventThreshold(10);
-    // Scrap-on-death (Phase 2b-i) — an optional collision-group mask. Used by
-    // SCRAP bodies (SCRAP_COLLISION_GROUPS) so scrap does NOT collide with
-    // other scrap but DOES collide with everything else. Omitted ⇒ Rapier's
-    // default groups (collide with all), so every existing caller is unchanged.
-    if (collisionGroups !== undefined) collider.setCollisionGroups(collisionGroups);
-    this.world.createCollider(collider, body);
-    if (isBall && shieldKind) {
-      // An NPC ship: the SAME mass + inertia as a pilot ship of its kind
-      // (`spawnShip`), whatever mass the caller passed. Ship stats belong to
-      // the ship, never the pilot (owner 2026-11-13); server worker and
-      // client predWorld both land here (#15).
-      body.setAdditionalMassProperties(shipBodyMass(shieldKind), { x: 0, y: 0 }, shipBodyInertia(shieldKind), true);
-      body.recomputeMassPropertiesFromColliders();
-    } else if (isBall) {
-      // Pin mass to the disc-equivalent (mass param, I = 0.5 m r^2),
-      // identical to what the legacy density ball produced. See spawnShip.
-      body.setAdditionalMassProperties(mass, { x: 0, y: 0 }, 0.5 * mass * radius * radius, true);
-      body.recomputeMassPropertiesFromColliders();
     }
     // Obstacles are tracked under the default kind purely so the bodies map
     // shape stays uniform; obstacle physics never reads this kind back.
@@ -394,16 +206,7 @@ export class PhysicsWorld {
 
   /** Spawn a fast-moving kinematic projectile body (sensor — no physics impulses). */
   spawnProjectile(id: string, x: number, y: number, vx: number, vy: number, radius: number): void {
-    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(x, y)
-      .setLinvel(vx, vy)
-      .setLinearDamping(0)
-      .setAngularDamping(0);
-    const body = this.world.createRigidBody(bodyDesc);
-    const collider = RAPIER.ColliderDesc.ball(radius)
-      .setSensor(true)
-      .setDensity(0.001);
-    this.world.createCollider(collider, body);
+    const body = createProjectileBody(this.world, x, y, vx, vy, radius);
     this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false });
     this.handleToId.set(body.handle, id);
   }
@@ -502,40 +305,7 @@ export class PhysicsWorld {
     if (!rec) return;
     if (!kindHasShield(kind)) exposed = true; // no shield (capitals): hull, always
     if (rec.exposed === exposed) return; // idempotent -- no redundant churn
-    const body = rec.body;
-    // Collect-then-remove: removeCollider mutates the body's collider list,
-    // so iterating by live index while removing would skip colliders.
-    const cols: RAPIER.Collider[] = [];
-    for (let i = 0; i < body.numColliders(); i++) cols.push(body.collider(i));
-    for (const c of cols) this.world.removeCollider(c, true);
-    if (exposed) {
-      // TRIANGLE colliders, fan-triangulated from each convex part
-      // (`shipCollisionTriangles`), never `convexHull`/`cuboid`: in Rapier 2D
-      // only triangles fire `CONTACT_FORCE_EVENTS` for bodies overlapping at
-      // zero closing speed, which ram damage and `t-ship-no-self-collision`
-      // need (`hullCollisionNoTouch.test.ts`; the 2026-05-28 convexHull
-      // experiment was reverted 2026-06-11). Penetration is the stiff solver's.
-      for (const t of shipCollisionTriangles(kind.id)) {
-        this.world.createCollider(
-          configureShipCollider(
-            RAPIER.ColliderDesc.triangle(
-              new RAPIER.Vector2(t[0].x, t[0].y),
-              new RAPIER.Vector2(t[1].x, t[1].y),
-              new RAPIER.Vector2(t[2].x, t[2].y),
-            ),
-          ),
-          body,
-        );
-      }
-    } else {
-      // Shield up — the shield collider (`shipTuning` pad past the hull, the
-      // same bubble the aura draws: `shieldBubbleRadius`).
-      this.world.createCollider(shipShieldColliderDesc(kind), body);
-    }
-    // Re-fold the pinned additional mass-props now (Rapier otherwise defers
-    // to the next step). Total stays mass 1 / I 0.5r^2 -- the new colliders
-    // are zero-density and the additional props were never cleared.
-    body.recomputeMassPropertiesFromColliders();
+    mountShipColliders(this.world, rec.body, kind, exposed);
     rec.exposed = exposed;
   }
 
@@ -576,56 +346,7 @@ export class PhysicsWorld {
   applyInput(id: string, input: ShipInput): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
-    if (input.warpX !== undefined || rec.warp !== undefined) {
-      const hasReq = input.warpX !== undefined && input.warpY !== undefined;
-      if (hasReq) { this._warpReq.x = input.warpX!; this._warpReq.y = input.warpY!; }
-      rec.warp ??= newWarpState();
-      const body = rec.body;
-      const t = body.translation();
-      const w = rec.warp;
-      // A slow hull keeps spooling until it faces the (unchanged) jump, as in `botWarp`.
-      const q = this._warpReq;
-      if (hasReq && q.x === w.tx && q.y === w.ty && spoolHeldForAlign(w, t.x, t.y, body.rotation(), q.x, q.y)) {
-        const s = this._spoolInput;
-        s.thrust = input.thrust; s.boost = input.boost; s.reverse = input.reverse;
-        applyShipInput(body, rec.kind, s, rec.statMul);
-        this.alignToWarp(rec, w, WARP_MIN_TURN);
-        return;
-      }
-      const act = stepWarp(w, hasReq ? this._warpReq : null, t.x, t.y, 1 / 60);
-      if (act === 'engage') {
-        // Face the run (nose = (-sin θ, cos θ)), go, and stop colliding: at
-        // ~330 u a tick a body would tunnel or slam into whatever it met.
-        body.setRotation(Math.atan2(-w.dx, w.dy), true);
-        body.setAngvel(0, true);
-        body.setLinvel({ x: w.dx * WARP_SPEED, y: w.dy * WARP_SPEED }, true);
-        this.setCollidersEnabled(rec, false);
-        return;
-      }
-      if (act === 'cruise') {
-        body.setAngvel(0, true);
-        body.setLinvel({ x: w.dx * WARP_SPEED, y: w.dy * WARP_SPEED }, true);
-        return;
-      }
-      if (act === 'drop') {
-        body.setTranslation({ x: w.tx, y: w.ty }, true);
-        body.setLinvel({ x: w.dx * WARP_EXIT_SPEED, y: w.dy * WARP_EXIT_SPEED }, true);
-        this.setCollidersEnabled(rec, true);
-        return;
-      }
-    }
-    const spool = rec.warp !== undefined && rec.warp.phase === 'spool';
-    if (!spool) {
-      applyShipInput(rec.body, rec.kind, input, rec.statMul);
-      return;
-    }
-    // Spooling: the drive turns the ship to face its target (the pilot's turn
-    // keys are ignored; thrust still works), so it is already pointing the
-    // way it goes when the run starts. Same code on server and prediction.
-    const s = this._spoolInput;
-    s.thrust = input.thrust; s.boost = input.boost; s.reverse = input.reverse;
-    applyShipInput(rec.body, rec.kind, s, rec.statMul);
-    this.alignToWarp(rec, rec.warp!, WARP_MIN_TURN);
+    applyPilotInput(rec, input);
   }
 
   /**
@@ -648,89 +369,7 @@ export class PhysicsWorld {
   botWarp(id: string, target: { x: number; y: number } | null, keys?: ShipInputArgs | null): boolean {
     const rec = this.bodies.get(id);
     if (!rec) return false;
-    if (target === null && rec.warp === undefined) return false;
-    rec.warp ??= newWarpState();
-    const body = rec.body;
-    const t = body.translation();
-    const w = rec.warp;
-    // A slow-turning ship (a capital) keeps spooling until it faces its
-    // target: engaging early snapped the hull round in one frame (first fleet
-    // film). This is what makes a capital's spool the long one.
-    if (target !== null && spoolHeldForAlign(w, t.x, t.y, body.rotation(), target.x, target.y)) {
-      w.tx = target.x; w.ty = target.y;
-      const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
-      this.setBotVel(body, v.x * 0.9, v.y * 0.9);
-      this.alignToWarp(rec, w, WARP_MIN_TURN);
-      return true;
-    }
-    const act = stepWarp(w, target, t.x, t.y, 1 / 60);
-    if (act === 'engage') {
-      body.setRotation(Math.atan2(-w.dx, w.dy), true);
-      body.setAngvel(0, true);
-      this.setBotVel(body, w.dx * WARP_SPEED, w.dy * WARP_SPEED);
-      this.setCollidersEnabled(rec, false);
-      return true;
-    }
-    if (act === 'cruise') {
-      body.setAngvel(0, true);
-      this.setBotVel(body, w.dx * WARP_SPEED, w.dy * WARP_SPEED);
-      return true;
-    }
-    if (act === 'drop') {
-      this._botVec.x = w.tx; this._botVec.y = w.ty;
-      body.setTranslation(this._botVec, true);
-      // An NPC drops out at rest (its AI takes over); a capital coasting on at
-      // the pilot's exit speed drifted off its station (fleet film review).
-      this.setBotVel(body, 0, 0);
-      this.setCollidersEnabled(rec, true);
-      return true;
-    }
-    if (w.phase === 'spool') {
-      if (keys !== undefined && rec.piloted === true) {
-        // Flown by keys: spool like a pilot (thrust works, the drive turns).
-        if (keys !== null) {
-          const s = this._spoolInput;
-          s.thrust = keys.thrust; s.boost = keys.boost; s.reverse = keys.reverse;
-          applyShipInput(body, rec.pilotKind ?? rec.kind, s, rec.statMul);
-        }
-        this.alignToWarp(rec, w, WARP_MIN_TURN);
-        return true;
-      }
-      // Hold position and face the target (a capital turns slowly: its own
-      // turn rate caps the align, so a long spool is part of the look).
-      const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
-      this.setBotVel(body, v.x * 0.9, v.y * 0.9);
-      this.alignToWarp(rec, w, WARP_MIN_TURN);
-      return true;
-    }
-    return false;
-  }
-
-  private readonly _botVec = { x: 0, y: 0 };
-  private setBotVel(body: RAPIER.RigidBody, vx: number, vy: number): void {
-    this._botVec.x = vx; this._botVec.y = vy;
-    body.setLinvel(this._botVec, true);
-  }
-
-  /** Turn toward the warp target at up to the ship's turn rate. */
-  private alignToWarp(rec: ShipBody, w: WarpState, minRate = 0): void {
-    const body = rec.body;
-    const t = body.translation();
-    const want = Math.atan2(-(w.tx - t.x), w.ty - t.y);
-    let d = want - body.rotation();
-    d = Math.atan2(Math.sin(d), Math.cos(d));
-    const cap = Math.max(minRate, rec.kind.maxAngvel * (rec.statMul !== undefined && rec.statMul.turnRate > 0 ? rec.statMul.turnRate : 1));
-    // Proportional: full rate when far off, easing in over the last few degrees.
-    const rate = d * WARP_ALIGN_GAIN;
-    body.setAngvel(rate > cap ? cap : rate < -cap ? -cap : rate, true);
-  }
-
-  private readonly _warpReq = { x: 0, y: 0 };
-  private readonly _spoolInput: ShipInput = { thrust: false, turnLeft: false, turnRight: false };
-
-  private setCollidersEnabled(rec: ShipBody, on: boolean): void {
-    const body = rec.body;
-    for (let i = 0; i < body.numColliders(); i++) body.collider(i).setEnabled(on);
+    return botWarpStep(rec, target, keys);
   }
 
   /** Copy a ship's warp state into `out` (false when it never warped). The
@@ -747,14 +386,7 @@ export class PhysicsWorld {
   restoreWarpState(id: string, src: WarpState | null): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
-    if (src === null) {
-      if (rec.warp) { Object.assign(rec.warp, newWarpState()); this.setCollidersEnabled(rec, true); }
-      return;
-    }
-    rec.warp ??= newWarpState();
-    Object.assign(rec.warp, src);
-    // Collisions are off only during the run: match the restored phase.
-    this.setCollidersEnabled(rec, rec.warp.phase !== 'cruise');
+    restoreWarp(rec, src);
   }
 
   /** Move a running warp's drop point (server: land at the nearest clear spot).
