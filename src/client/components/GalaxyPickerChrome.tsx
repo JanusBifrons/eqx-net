@@ -8,7 +8,7 @@ import {
 } from '@mui/material';
 import { getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
-import { ShipPickerModal } from './ShipPickerModal';
+import { HangarWindow } from './hangar/HangarWindow';
 import { acquireRosterPolling, releaseRosterPolling } from './rosterPoller';
 import { useUIStore } from '../state/store';
 import { useAuthStore } from '../auth/authStore';
@@ -16,7 +16,9 @@ import { fleetWarpRequest } from '../app/fleetWarp';
 import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
 import { useMountLog } from '../debug/useMountLog';
-import { buildSectorTooltip, ownerLine, shipsInSector } from './galaxyTooltip';
+import { buildSectorTooltip, shipsInSector } from './galaxyTooltip';
+import { GalaxySectorTooltip } from './GalaxySectorTooltip';
+import { QuickLaunchButton, useQuickLaunch } from './QuickLaunchButton';
 import { SectorInfoDrawer } from './SectorInfoDrawer';
 import { isSectorWarpable } from '../render/galaxy/galaxyLayerDecisions';
 import { isTouchDevice } from '../input/TouchInput';
@@ -47,6 +49,9 @@ const GALAXY_LOADING_SX = {
 /** What a logged-out visitor pressed before the login detour. Module scope:
  *  the chrome remounts across the auth phase. */
 let gatedIntent: 'join' | 'spectate' = 'join';
+/** The hull picked in the Hangar before Sign in (login re-loads the account's
+ *  saved kind, so the pick is restored on return). */
+let gatedKind: ShipKindId | null = null;
 
 /**
  * Imperative handle exposed by {@link GalaxyPickerChrome} so the host
@@ -106,7 +111,7 @@ export interface GalaxyPickerChromeProps {
  * `GalaxyOverviewScreen` (spawn mode) so the second Pixi `Application`
  * can be retired. Preserves every load-bearing testid:
  * `galaxy-map-screen`, `limbo-resume-banner` (+ `data-limbo-sector-key`),
- * the roster panel and the `ship-picker-modal`. Dev rooms and single-player
+ * and the Hangar (`hangar-window`). Dev rooms and single-player
  * have no button here: they are reached by direct link (`?room=`, `?local=1`).
  *
  * The root is `pointerEvents: 'none'` so taps in empty regions fall
@@ -134,6 +139,10 @@ export function GalaxyPickerChrome({
   // Living Galaxy Phase 6 — hovered sector + live stats drive the tooltip.
   const galaxyHover = useUIStore((s) => s.galaxyHover);
   const galaxyStats = useUIStore((s) => s.galaxyStats);
+  // When the feed last arrived (each poll writes a new array): the panel's
+  // "UPDATED n S AGO". Null before the first poll.
+  const [statsAtMs, setStatsAtMs] = useState<number | null>(null);
+  useEffect(() => { if (galaxyStats.length > 0) setStatsAtMs(Date.now()); }, [galaxyStats]);
   // False until the first /galaxy/snapshot poll resolves (one-shot spinner).
   const galaxyStatsLoaded = useUIStore((s) => s.galaxyStatsLoaded);
   // 2026-06-19 pop-in fix — the badges come from THREE async sources: global
@@ -173,10 +182,19 @@ export function GalaxyPickerChrome({
   // SectorInfoDrawer (replaces the old fixed popover; the desktop hover tooltip is
   // separate + kept). The drawer reads this key; ✕ / swipe deselects.
   const [selectedSectorKey, setSelectedSectorKey] = useState<string | null>(null);
-  useEffect(() => onFocusChange?.(selectedSectorKey), [selectedSectorKey, onFocusChange]);
+  // Join flow stage 7 — Quick launch: the sector it is gliding into. The map's
+  // focus view follows it (the glide is the loading screen), then the Fighter
+  // launches through the same path as the Hangar's LAUNCH.
+  const quick = useQuickLaunch({
+    isWarp,
+    galaxyStats,
+    onStart: () => setSelectedSectorKey(null),
+    onLaunch: (kind, sector) => { setSelectedShipKind(kind); onSpawnNewShip?.(kind, sector); },
+  });
+  useEffect(() => onFocusChange?.(quick.launching ?? selectedSectorKey), [quick.launching, selectedSectorKey, onFocusChange]);
 
   // Keep the roster polled while the picker is mounted (the popover sub-list +
-  // RosterCountBadge consume store.shipRoster). Refcounted — safe alongside the
+  // the Hangar consume store.shipRoster). Refcounted — safe alongside the
   // drawer Galaxy-tab panel.
   useEffect(() => {
     if (!storedPlayerId) return undefined;
@@ -235,6 +253,7 @@ export function GalaxyPickerChrome({
         setSelectedSectorKey(null);
         const spectate = gatedIntent === 'spectate';
         gatedIntent = 'join';
+        if (gatedKind !== null) { useUIStore.getState().setSelectedShipKind(gatedKind); gatedKind = null; }
         if (spectate && onSpawnSpectatorRef.current) onSpawnSpectatorRef.current(key);
         else setPendingSpawnSector(key);
       },
@@ -244,16 +263,21 @@ export function GalaxyPickerChrome({
     return () => { if (apiRef) apiRef.current = null; };
   }, [apiRef]);
 
-  // The map is the homepage for everyone; joining needs a login (or the
-  // remembered guest choice). A logged-out "Join the fight" stashes the sector
-  // and goes to the auth flow; App opens that sector's join on return.
-  const gateJoin = (sector: string, intent: 'join' | 'spectate'): boolean => {
-    const auth = useAuthStore.getState();
-    if (isWarp || auth.user || auth.guest) return false;
+  // The map is the homepage for everyone. Join opens the Hangar for anyone;
+  // the login (or the remembered guest choice) is asked at Launch. Sign in
+  // stashes the sector and hull and goes to the auth flow; App reopens that
+  // sector's Hangar on return. Spectate (no Hangar) still asks up front.
+  const needsSignIn = useAuthStore((s) => !isWarp && s.user === null && !s.guest);
+  const sendToAuth = (sector: string, intent: 'join' | 'spectate'): void => {
     logEvent('join_auth_gate', { sector, intent });
     gatedIntent = intent;
     useUIStore.getState().setPendingPickSector(sector);
     useUIStore.getState().setPhase('auth');
+  };
+  const gateSpectate = (sector: string): boolean => {
+    const auth = useAuthStore.getState();
+    if (isWarp || auth.user || auth.guest) return false;
+    sendToAuth(sector, 'spectate');
     return true;
   };
 
@@ -370,7 +394,7 @@ export function GalaxyPickerChrome({
 
       {/* Equinox Phase 7 (Item 4) — the floating top-bar roster panel is GONE;
        *  the per-sector popover's "your ships" sub-list replaces it (the roster
-       *  is still polled above so the popover + RosterCountBadge have data). */}
+       *  is still polled above so the popover + Hangar have data). */}
 
       <Box sx={{ flex: 1, minHeight: 0 }} />
 
@@ -384,6 +408,14 @@ export function GalaxyPickerChrome({
         </Typography>
       </Box>
 
+
+      {/* Join flow stage 7 — Quick launch (landing map only): one tap flies a
+       *  Fighter into the busiest contested sector, as a guest when signed out.
+       *  Bottom-right is free on the landing map; hidden while a sector's drawer
+       *  (docked there) or the Hangar is open. */}
+      {!isWarp && galaxyReady && selectedSectorKey === null && pendingSpawnSector === null && (
+        <QuickLaunchButton quick={quick} />
+      )}
 
       {/* Equinox Phase 7 (Item 1) — Close button for the in-game warp map.
        *  Portal'd to <body> at Z.overlay: inside this chrome its z-index was
@@ -430,74 +462,7 @@ export function GalaxyPickerChrome({
        *  (the user's "still shows the tooltip on mobile"). The drawer is the
        *  touch affordance; the hover tooltip is gated out entirely on touch. */}
       {!isTouchDevice() && galaxyHover && sectorTip && (
-        <Box
-          data-testid="galaxy-sector-tooltip"
-          data-tooltip-sector={galaxyHover.sectorKey}
-          sx={{
-            position: 'fixed',
-            // Equinox Phase 9 — anchored ABOVE-CENTRE of the hex. galaxyHover now
-            // carries the hex's TOP-centre (GalaxyMapLayer.updateHover), so centre
-            // the tooltip horizontally on it and float it just above (vs the old
-            // down-right-of-cursor offset). `textAlign:center` keeps the copy tidy
-            // under the centred anchor.
-            left: galaxyHover.left,
-            top: galaxyHover.top,
-            transform: 'translate(-50%, calc(-100% - 6px))',
-            textAlign: 'center',
-            zIndex: 5,
-            pointerEvents: 'none',
-            bgcolor: 'rgba(8,12,24,0.94)',
-            border: '1px solid #2a3550',
-            borderRadius: 1,
-            px: 1,
-            py: 0.75,
-            maxWidth: 220,
-          }}
-        >
-          <Typography sx={{ color: '#dffff0', fontSize: 12, fontWeight: 700, lineHeight: 1.2 }}>
-            {sectorTip.name}
-          </Typography>
-          <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            {ownerLine(sectorTip)}
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
-            {sectorTip.players > 0 && (
-              <Typography sx={{ color: '#6bff9b', fontSize: 10 }} title="Players">▲ {sectorTip.players}</Typography>
-            )}
-            {sectorTip.enemies > 0 && (
-              <Typography sx={{ color: '#ff6b6b', fontSize: 10 }} title="Hostiles">✦ {sectorTip.enemies}</Typography>
-            )}
-            {sectorTip.neutrals > 0 && (
-              <Typography sx={{ color: '#ffd479', fontSize: 10 }} title="Neutrals">◇ {sectorTip.neutrals}</Typography>
-            )}
-            {sectorTip.structures > 0 && (
-              <Typography sx={{ color: '#9ab4dd', fontSize: 10 }} title="Structures">⬡ {sectorTip.structures}</Typography>
-            )}
-            {sectorTip.players + sectorTip.enemies + sectorTip.neutrals + sectorTip.structures === 0 && (
-              <Typography sx={{ color: '#6b7280', fontSize: 10 }}>no activity</Typography>
-            )}
-          </Box>
-          {sectorTip.event !== null && (
-            <Typography sx={{ color: '#ff9f43', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-event">
-              ⚑ {sectorTip.event} underway
-            </Typography>
-          )}
-          {sectorTip.capital !== null && (
-            <Typography sx={{ color: '#9ec9ff', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-capital">
-              ⚓ Capital sighted: the {sectorTip.capital}
-            </Typography>
-          )}
-          {sectorTip.elite !== null && (
-            <Typography sx={{ color: '#ffc850', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-elite">
-              ★ {sectorTip.elite} sighted
-            </Typography>
-          )}
-          {sectorTip.features.length > 0 && (
-            <Typography sx={{ color: '#7a8499', fontSize: 9, mt: 0.25, textTransform: 'capitalize' }}>
-              {sectorTip.features.join(' · ')}
-            </Typography>
-          )}
-        </Box>
+        <GalaxySectorTooltip hover={galaxyHover} tip={sectorTip} />
       )}
 
       {/* Equinox Phase 9 (item 2) — the docked SectorInfoDrawer REPLACES the old
@@ -510,6 +475,7 @@ export function GalaxyPickerChrome({
         tip={drawerTip}
         ships={drawerShips}
         recentCombat={drawerRecentCombat}
+        updatedAtMs={statsAtMs}
         context={context}
         warpable={drawerWarpable}
         currentSectorKey={currentSectorKey}
@@ -521,7 +487,6 @@ export function GalaxyPickerChrome({
         }}
         onJoin={(sector) => {
           logEvent('galaxy_drawer_join', { sector });
-          if (gateJoin(sector, 'join')) return;
           setPendingSpawnSector(sector);
           setSelectedSectorKey(null);
         }}
@@ -531,7 +496,7 @@ export function GalaxyPickerChrome({
                 // Equinox Phase 5 (WS-3) — join as spectator, SKIPPING the ship
                 // picker entirely (go straight to the room with spectator:true).
                 logEvent('galaxy_drawer_spectate', { sector });
-                if (gateJoin(sector, 'spectate')) return;
+                if (gateSpectate(sector)) return;
                 onSpawnSpectator(sector);
                 setSelectedSectorKey(null);
               }
@@ -545,27 +510,35 @@ export function GalaxyPickerChrome({
         warpBlockedHint={warpBlockedHint}
       />
 
-      {/* Sector-click confirmation. Opened imperatively via apiRef when the
-       *  player taps a galaxy sector hex on the shared canvas; picking a
-       *  kind fires onSpawnNewShip with the captured sector. */}
-      <ShipPickerModal
-        open={pendingSpawnSector !== null}
+      {/* Join flow stage 5 — the Hangar. Opened when the player joins a sector;
+       *  Launch fires onSpawnNewShip (a new hull) or onSpawnExistingShip (one of
+       *  theirs parked here) with the captured sector. */}
+      <HangarWindow
+        sectorKey={pendingSpawnSector}
+        sectorName={pendingSpawnSector !== null ? (getSector(pendingSpawnSector)?.name ?? pendingSpawnSector) : ''}
+        playerId={storedPlayerId}
+        selectedKind={selectedShipKindId}
+        needsSignIn={needsSignIn}
+        onSignIn={(kind, sector) => {
+          gatedKind = kind;
+          setPendingSpawnSector(null);
+          sendToAuth(sector, 'join');
+        }}
+        onPlayAsGuest={() => useAuthStore.getState().continueAsGuest()}
         onClose={() => {
           logEvent('ship_picker_close', { pendingSpawnSector, ts: performance.now() });
           setPendingSpawnSector(null);
         }}
-        selectedKind={selectedShipKindId}
-        title={pendingSpawnSector !== null
-          ? `Spawn in ${getSector(pendingSpawnSector)?.name ?? pendingSpawnSector}`
-          : undefined}
-        subtitle={pendingSpawnSector !== null ? 'Pick a ship kind for this sector.' : undefined}
-        onSelect={(kind) => {
-          logEvent('ship_picker_select', { kind, pendingSpawnSector, ts: performance.now() });
+        onLaunchNew={(kind, sector) => {
+          logEvent('ship_picker_select', { kind, pendingSpawnSector: sector, ts: performance.now() });
           setSelectedShipKind(kind);
-          if (pendingSpawnSector !== null) {
-            onSpawnNewShip?.(kind, pendingSpawnSector);
-            setPendingSpawnSector(null);
-          }
+          onSpawnNewShip?.(kind, sector);
+          setPendingSpawnSector(null);
+        }}
+        onResume={(shipId, sector) => {
+          logEvent('hangar_resume', { shipId, sector });
+          onSpawnExistingShip?.(shipId, sector);
+          setPendingSpawnSector(null);
         }}
       />
     </Box>

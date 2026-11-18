@@ -190,7 +190,6 @@ export function WarpScreen(): JSX.Element | null {
     ui.setLocalShipInstanceId(null);
     ui.setCurrentSectorKey(null);
     ui.setDead(false);
-    ui.setGalaxyOverviewOpen(false);
     ui.setGalaxyMapOpen(false);
     ui.setDrawerOpen(false);
     ui.setPendingShipSwap(null);

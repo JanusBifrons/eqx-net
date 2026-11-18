@@ -55,6 +55,11 @@ const API_PROXY: Record<string, string | ProxyOptions> = {
     target: `http://localhost:${SERVER_PORT}`,
     changeOrigin: true,
   },
+  // Join flow stage 5 — the Hangar's owned hulls (never a src/client/hangar/ dir).
+  '/hangar': {
+    target: `http://localhost:${SERVER_PORT}`,
+    changeOrigin: true,
+  },
   // Living World P2 economy reads. NOTE: never add a top-level
   // `src/client/trade/` dir — its module URLs would collide with this proxy
   // (the 2026-06-14 `/galaxy` lesson).

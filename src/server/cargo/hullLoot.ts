@@ -13,6 +13,7 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { rollEliteLoot } from '../../shared-types/elites.js';
 import { stream } from '../../core/random/rng.js';
 import { hashString } from '../../core/bases/baseProfile.js';
+import { SCRAP_BURST_SPEED } from '../../core/swarm/scrapConstants.js';
 
 export function rollHullLoot(seedKey: string, kindId: string | null | undefined, elite: boolean): Hold {
   const rng = stream(hashString(seedKey), 'npc-hold');
@@ -43,18 +44,23 @@ export function deathHullLoot(shipInstanceId: string, kindId: string, vaporised:
  *  ship's centre: beside the wreck, not in it. */
 export const KILL_POD_CLEAR_RADII = 1.2;
 
+/** The gentle push (u/s) a death pod gets away from its wreck, on top of the
+ *  ship's own velocity: under a scrap burst, so it eases clear of the
+ *  break-up rather than flying off (owner 2026-11-17: the pod floats). */
+export const DEATH_POD_PUSH = SCRAP_BURST_SPEED * 0.5;
+
 /**
- * Where a dead ship's pod spawns (every ship, whoever flies it): beside the
- * wreck, not in it (owner's v5 film, 2026-11-13: a pod at the hull's centre
- * took the rest of the salvo, a second blast and a damage number ~1 s after
- * each death, and hid the break-up). Just outside the hull, to the SIDE of
- * the killer's line from (sx, sy) (the far side is where the misses go, and
- * a heavy beam's kill follow-through runs on down that line); side and, with
- * no known killer (NaN), direction come from `seed`. Writes `out`.
+ * Where a dead ship's pod spawns (every ship, whoever flies it): just outside
+ * the hull, not in it, so it never hides the break-up (owner's v5 film,
+ * 2026-11-13). To the SIDE of the killer's line from (sx, sy), where the
+ * wreck's pieces and a heavy beam's follow-through don't go; side and, with
+ * no known killer (NaN), direction come from `seed`. Writes `out`: the spot
+ * and (ux, uy), the unit push direction away from the wreck
+ * (`DEATH_POD_PUSH`).
  */
 export function killPodSpot(
-  out: { x: number; y: number }, seed: number, cx: number, cy: number, hullRadius: number, sx: number, sy: number,
-): { x: number; y: number } {
+  out: { x: number; y: number; ux: number; uy: number }, seed: number, cx: number, cy: number, hullRadius: number, sx: number, sy: number,
+): { x: number; y: number; ux: number; uy: number } {
   const lx = cx - sx;
   const ly = cy - sy;
   const ll = Math.hypot(lx, ly);
@@ -72,5 +78,7 @@ export function killPodSpot(
   const off = hullRadius * KILL_POD_CLEAR_RADII + getShipKind('cargo-pod').radius;
   out.x = cx + ux * off;
   out.y = cy + uy * off;
+  out.ux = ux;
+  out.uy = uy;
   return out;
 }

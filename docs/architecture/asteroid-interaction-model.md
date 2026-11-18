@@ -4,7 +4,7 @@
 
 **Date:** 2026-06-12
 
-> **Partly superseded (rock cut, salvage stream).** "Indestructible" and "no fracture / debris" (Decision 1) no longer hold for the mining laser: it wears a rock down and, worn out, the rock breaks along its burn lines into movable wreck pieces that grind down to ore pods, through the wreck system. Other weapons still never wear or destroy a rock (their rock factor is 0). Current model: [mining-and-salvage.md "Mining asteroids"](../features/mining-and-salvage.md#mining-asteroids). The rest of this ADR stands as history.
+> **Partly superseded (rock cut, salvage stream).** "Indestructible" and "no fracture / debris" (Decision 1) no longer hold for the mining laser: it wears a rock down and, worn out, the rock breaks along its burn lines into movable wreck pieces that tractors drag into a hold as whole rock chunks, through the wreck system. Other weapons still never wear or destroy a rock (their rock factor is 0). Current model: [mining-and-salvage.md "Mining asteroids"](../features/mining-and-salvage.md#mining-asteroids). The rest of this ADR stands as history.
 
 ## Context — what asteroids ARE today (grounded in the code)
 
