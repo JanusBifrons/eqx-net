@@ -22,7 +22,7 @@ interface Internals {
     structures: Map<number, { owner?: string }>;
     localPlayerId: string | null;
   };
-  _fcInfo: Map<string, { reach: number }>;
+  fc: { _fcInfo: Map<string, { reach: number }> };
 }
 
 const ME = 'me';
@@ -61,7 +61,7 @@ describe('real naval ranges — the lock-line pick reaches 30 km', () => {
     expect(NAVAL_RANGE).toBe('real');
     // The pick reads the group's reach from the catalogue: the 16" reaches 38.7 km.
     client.updateLockGuide(0);
-    const reach = internals._fcInfo.get('main')!.reach;
+    const reach = internals.fc._fcInfo.get('main')!.reach;
     expect(reach).toBeGreaterThan(38_000);
 
     // One target at a time, each 30 km out on its own bearing.

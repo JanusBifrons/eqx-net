@@ -275,7 +275,7 @@ is a `FireTargetShape` (pose, heading, `ship`, `kindId`, `shieldUp`,
 `signature`), filled on both sides by the one `fillFireTargetShape`: the server
 in `SectorRoom.resolveLockTarget` (swarm record `shipKind` / `!shieldDown` /
 `radius`; a pilot's `ShipState.kind` / `shield > 0`), the client in
-`ColyseusClient.fcTargetPose` (swarm wire `shipKind` / `shieldDown` / `radius`;
+`FireControlClient.fcTargetPose` (swarm wire `shipKind` / `shieldDown` / `radius`;
 the ship mirror's `kind` / `shieldDown`). `LockTargetView` extends it.
 Its range half is `fillRangeShape`, which every other range shape also uses
 (the server's NPC turret / drone / structure gates via
@@ -398,7 +398,7 @@ up/down, drawn drones, a rock, a structure box), `weapons.test.ts`,
 | Player fire gate | `PlayerFireResolver` deps `fireAllowed` + `mountBearsOnLock` | A group fires only with a LOCKED target, and only mounts that pass the shared `mountFiresOn`: the target's hit shape within the mount's own reach, measured from the mount, and the barrel bearing on it (`mountBearsOn`); otherwise refused without spending cooldown or energy |
 | Turret aim | `WeaponMountTicker.tickPlayer` → `LockSubsystem.aimKeyFor` | Each mount slews toward its group's locked (else acquiring) target; no target ⇒ home. With several locks (capitals) the turrets share them out via the shared `pickTurretLock` (`core/combat/turretLockPick.ts`): turret *i* of the group prefers lock *i mod n*, else the next lock round the list it can engage (reach + arc), else the first. The client's predicted aim and ghost gate (`fcMountAimKey`) call the same function (#15) |
 | Naval reach switch | `shared-types/combat/navalRange.ts` + `navalGuns.ts` | `real` (the default since 2026-11-14) gives every `naval_*` gun its real range as its engage reach (16" 38,700 u, Lindemann 56,000 u) and flight real ÷ 3. The absolute-distance lock time follows; a 16" lock at 30 km takes ~17 s. `EQX_NAVAL_RANGE=legacy` (client `?navalRange=legacy`) opts back into the old reaches; both sides read it, the welcome always carries it (#15). See [real-scale-ranges.md](real-scale-ranges.md) |
-| Capital fire cadence | `PlayerFireResolver` (per-mount ledger) + `ColyseusClient.fcFireMounts` | Capitals (`hasTurretFireControl`) fire each turret on its OWN weapon reload as soon as it bears on its own target; the group fire carries only the reloaded, bearing mounts and pays that share of the group energy cost. A multi-barrel turret is one mount, so its barrels still fire together. Other ships keep the one group cooldown |
+| Capital fire cadence | `PlayerFireResolver` (per-mount ledger) + `FireControlClient.fcFireMounts` | Capitals (`hasTurretFireControl`) fire each turret on its OWN weapon reload as soon as it bears on its own target; the group fire carries only the reloaded, bearing mounts and pays that share of the group energy cost. A multi-barrel turret is one mount, so its barrels still fire together. Other ships keep the one group cooldown |
 
 **Messages** (strict zod, `clientMessages.ts`): `lock_request {groupId, target}`
 (commit), `lock_track {groupId, target | null, b?}` (the held line and its
@@ -449,7 +449,7 @@ Locks: `tests/integration/sectorRoom/lockAiFlownHull.test.ts`,
 
 ## Client
 
-- `ColyseusClient`: `applyFcGroups` (store summary written only when ids, modes,
+- `FireControlClient`: `applyFcGroups` (store summary written only when ids, modes,
   targets or stages change), `localLockedBy` into the render mirror,
   `guideLock(bearing)` / `releaseLockGuide()` (send `lock_track` on change; the
   stick and mouse re-check 10×/s while held so a moving target stays held),
@@ -523,7 +523,7 @@ The per-weapon picker is GONE. Each ship fires its **catalogue-bound loadout** (
 
 Full story: [docs/architecture/fire-control.md](fire-control.md). There is ONE HUD ([hud/GameHud.tsx](../../src/client/hud/GameHud.tsx)); the `?ui=` variants, the legacy HUD panels, the auto-fire toggle and manual aim are gone.
 
-- **Every weapon group fires only at a LOCKED target** (the server refuses any player shot without a completed lock). `ColyseusClient.fcFireTick` is the only client fire path: **AUTO** groups pick + lock hostile targets in reach/arc and fire on their own; **MAN** groups fire while their weapon-strip chip is held or Space on the active group. There is no auto-fire toggle and no free fire.
+- **Every weapon group fires only at a LOCKED target** (the server refuses any player shot without a completed lock). `FireControlClient.fcFireTick` is the only client fire path: **AUTO** groups pick + lock hostile targets in reach/arc and fire on their own; **MAN** groups fire while their weapon-strip chip is held or Space on the active group. There is no auto-fire toggle and no free fire.
 - **The own-ship `groups` / `lockedBy` snapshot slices are always applied** (`applyFcGroups` → Zustand `fcGroups` on change + `mirror.localGroups` / `localLockedBy`, #16).
 - **Lock line (`updateLockGuide` / `guideLock`):** the pick uses the SHARED `lockLineScore` (`@core/combat/lockLine`), and `lock_track` carries `b` = `encodeAim(bearing)`; the server verifies the claim with the same rule (`lockLineHolds`, #15) and ignores a target without `b`. Sends only when group/key change. The pick is alloc-free per candidate (cached `s:`/`p:` keys, bound visitors). Lock: `ColyseusClient.lockGuide.test.ts`.
 - **`fcTickMountAngles` is THE client mount-angle path** (via `tickLocalMountAim`, #12): each mount slews to its group's lock (locked, else acquiring) from the MIRROR pose, or back to base. The client sends no `aim` input any more. Lock: `ColyseusClient.liveBeamMountAimPose.test.ts`.

@@ -8,3 +8,4 @@ Rules for the client network layer. `ColyseusClient.ts` is at its size cap (`scr
 - **A per-entity timer or state machine is its own module** (like `drawnShellTiming.ts`, `damageNumberTargets.ts`), never inline in `ColyseusClient.ts`.
 - **Never add a `ColyseusClient` field for one feature;** the feature's module owns its state.
 - **`snapshot` and `swarm` stay inline in `connect()`** (hot path).
+- **Fire control and lock state** live in `FireControlClient.ts` (lock line in `fireControl/`); `ColyseusClient` keeps one-line delegates and reaches prediction/fire dispatch for it through `FireControlHost`.

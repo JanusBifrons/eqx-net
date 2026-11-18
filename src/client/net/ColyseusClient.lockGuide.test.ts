@@ -56,7 +56,7 @@ describe('lock line pick (updateLockGuide)', () => {
     m.swarm.set(4, drone(0, 100, 2)); // own structure: never
     m.structures.set(4, { owner: ME });
     const bearing = 0; // line along +y
-    const reach = (client as unknown as { _fcInfo: Map<string, { reach: number }> })._fcInfo;
+    const reach = (client as unknown as { fc: { _fcInfo: Map<string, { reach: number }> } }).fc._fcInfo;
     const got = client.updateLockGuide(bearing);
     const r = reach.get(useUIStore.getState().activeGroupId!)!.reach;
     let best: string | null = null;

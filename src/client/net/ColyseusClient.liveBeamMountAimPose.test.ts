@@ -42,7 +42,7 @@ import type { SwarmRenderState } from '@core/contracts/IRenderer';
 interface Internals {
   tickLocalMountAim(dtSec: number): void;
   predWorld: PhysicsWorld | null;
-  _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }>;
+  fc: { _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }> };
   mirror: {
     ships: Map<
       string,
@@ -108,7 +108,7 @@ describe('local turret aim is computed from the RENDERED (mirror) pose, not the 
       radius: 8, isHostileToLocal: true,
     } as unknown as SwarmRenderState);
     // The interceptor's one weapon group holds a completed lock on it.
-    internals._fcGroups = [{ id: 'primary', m: 0, l: [{ t: 's:1', s: 2, p: 100 }] }];
+    internals.fc._fcGroups = [{ id: 'primary', m: 0, l: [{ t: 's:1', s: 2, p: 100 }] }];
   });
 
   it('slews each active wing mount toward the target as seen from the mirror pose', () => {

@@ -1,5 +1,5 @@
 /**
- * Lock-line pick scratch (`ColyseusClient.updateLockGuide`): the lockable
+ * Lock-line pick scratch (`FireControlClient.updateLockGuide`): the lockable
  * target nearest the guideline within reach — the shared `lockLineScore`
  * rule, the one the server uses to verify `lock_track` (#15). Contacts
  * (drones, structures, other pilots) and neutral terrain (asteroid, scrap /

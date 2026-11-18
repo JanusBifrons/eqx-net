@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { LockSubsystem, type LockTargetView } from '../../src/server/rooms/LockSubsystem.js';
-import { ColyseusGameClient } from '../../src/client/net/ColyseusClient.js';
+import { FireControlClient } from '../../src/client/net/FireControlClient.js';
 import { getShipKind } from '../../src/shared-types/shipKinds.js';
 import { mountWeaponReach } from '../../src/core/combat/mountReach.js';
 import { FcMountPicker } from '../../src/client/net/fcMountPick.js';
@@ -36,7 +36,7 @@ describe('pickTurretLock parity with mixed-class locks (#15, owner 2026-11-14)',
     for (const k of ['s:1', 's:2', 's:3']) locks.forceLock('p1', k, 'main');
 
     // The client, fed the same groups and the same targets through its mirror.
-    const client = Object.create(ColyseusGameClient.prototype) as Record<string, unknown>;
+    const client = Object.create(FireControlClient.prototype) as Record<string, unknown>;
     const mains = (kind.mounts ?? []).filter((m) => m.id.startsWith('main-'));
     const aas = (kind.mounts ?? []).filter((m) => m.id.startsWith('aa-'));
     const swarm = new Map<number, unknown>();
@@ -74,10 +74,10 @@ describe('pickTurretLock parity (#15)', () => {
   });
 
   it('the client turret aim and ghost gate both go through the per-mount pick', () => {
-    const client = readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
-    const aim = client.slice(client.indexOf('private fcTickMountAngles('), client.indexOf('private fcTickMountAngles(') + 1500);
+    const client = readFileSync('src/client/net/FireControlClient.ts', 'utf8');
+    const aim = client.slice(client.indexOf('  fcTickMountAngles('), client.indexOf('  fcTickMountAngles(') + 1500);
     expect(aim).toMatch(/fcMountAimKey\(/);
-    const bears = client.slice(client.indexOf('private fcMountBears('), client.indexOf('private fcMountBears(') + 600);
+    const bears = client.slice(client.indexOf('  fcMountBears('), client.indexOf('  fcMountBears(') + 600);
     expect(bears).toMatch(/fcMountAimKey\(/);
   });
 });
