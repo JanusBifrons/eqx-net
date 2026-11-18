@@ -9,7 +9,7 @@ import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { galaxySectorsToBoot } from './rooms/galaxyBoot.js';
-import { GATE_TEST_PREBUILT, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
+import { GATE_TEST_PREBUILT, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
 import { SHOWCASE_PILOT_ID, SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
 import { getRecentEvents, getRecentEventsByTag, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
@@ -746,11 +746,13 @@ gameServer
 // crane reaches for it, then the turret opens and deploys (scenarioLayouts
 // RIG_SANDBOX). Draw the rigs with ?rigs=1. The e2e room reaches at once.
 // `rig-unload` has no script: the pilot flies onto their own dock's pad and
-// the real bay dwell unloads them (RIG_UNLOAD).
+// the real bay dwell unloads them (RIG_UNLOAD). `rig-home` (3i): the same
+// with the pilot's own Capital alone, unloaded by its built-in crane bay.
 for (const [name, extra] of [
   ['rig-sandbox', { sceneScript: rigSandboxScene(4000) }],
   ['rig-sandbox-e2e', { sceneScript: RIG_SANDBOX_E2E_SCENE }],
   ['rig-unload', RIG_UNLOAD],
+  ['rig-home', RIG_HOME],
 ] as const) {
   gameServer.define(name, SectorRoom, {
     testMode: true,
