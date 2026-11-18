@@ -453,7 +453,7 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
   });
 
   it('SHIP_KIND_CATALOGUE_VERSION is bumped to 27 (energy pool x2; 26 = nose guns become small-arc turrets, owner 2026-11-14; 25 = arcade handling + toughness layer, owner 2026-11-13: "make it more like micro machines and make fights a bit longer"; 24 = fire-control weapon groups + frigate PD turret; 23 = capital AA mounts + realistic reloads; 22 = capital naval guns, turret rates + spacing; 21 = capital flat transom; 20 = turrets T3: gunship mounts moved to nose / tail; 19 = P3c orb charge-laser mount; 18 = P3b robot-harvester)', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(29);
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(30); // 30 = barge side mounts ±45° (2026-11-18)
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {

@@ -119,7 +119,7 @@ The owner picked look A, the container ship. It is the ship kind `barge`, the la
 
 ### Look options
 
-The barge is a container ship for salvage: about 1.3 times a battleship's length (7,480 u), twice its beam, a deck of container stacks, a few big mining lasers at the bow corners and rows of tractor dishes down both sides so it can strip-mine a field, and a stern engine module wider than the hull (1.4 beams) with three or four round bell nozzles, each about a quarter of the beam across, whose plume at full thrust is 30 % of the hull's length. It has no side of its own: whoever owns it decides that.
+The barge is a container ship for salvage: about 1.3 times a battleship's length (7,480 u), twice its beam, a deck of container stacks, a few big mining lasers at the bow corners and rows of tractor dishes down both sides so it can strip-mine a field (each side mount, laser or dish, swings in a cone of ±45° about its side-facing rest bearing, `SIDE_MOUNT_ARC`, owner 2026-11-18; the bow and aft corner lasers keep their wider arcs), and a stern engine module wider than the hull (1.4 beams) with three or four round bell nozzles, each about a quarter of the beam across, whose plume at full thrust is 30 % of the hull's length. It has no side of its own: whoever owns it decides that.
 
 Three hull looks are on the table for the owner to pick (`bargeDesign` in `shared-types/shipKinds/capitals/bargeDesign.ts`, built from the warship generator's parts):
 

@@ -35,6 +35,13 @@ describe('holds persistence — atomic GROUP (A5)', () => {
 
   const rows = () => db.prepare('SELECT holder_uid, payload_json FROM holds ORDER BY holder_uid').all() as Array<{ holder_uid: string; payload_json: string }>;
 
+  it('a pod\'s look (size + glow) is saved and read back; other holders save null (cargo pods, owner 2026-11-18)', () => {
+    sink.enqueueCritical({ ...put('pod-1', '{"goods":{},"credits":0,"blueprints":[]}'), look: 15 });
+    sink.enqueueCritical(put('ship-1', '{"goods":{},"credits":0,"blueprints":[]}', 'ship'));
+    const looks = db.prepare('SELECT holder_uid, look FROM holds ORDER BY holder_uid').all();
+    expect(looks).toEqual([{ holder_uid: 'pod-1', look: 15 }, { holder_uid: 'ship-1', look: null }]);
+  });
+
   it('a successful group lands every op together', () => {
     sink.enqueueCritical(put('pod-1', '{"goods":{"salvage":5},"credits":0,"blueprints":[]}'));
     sink.enqueueCritical({
