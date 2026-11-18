@@ -128,6 +128,17 @@ The renderer reaches the art through `src/client/render/art/ArtService.ts` (plan
 It boots its own Vite on port 5374. On an 8 GB machine, run clips one at a
 time: a long background capture was once stopped by Claude Code for low memory.
 
+### Ship pictures (Hangar cards)
+
+`pnpm ships:portraits [--only kind,…]` bakes `public/ships/<kind>.webp` (320 px,
+committed so a phone's first paint needs no bake) from the lab's `portrait`
+scene on its own Vite (port 5378). Framing lives in
+`render/art/shipPortraits.ts`: sub-capitals are each fitted to the picture;
+warship capitals (no Shipyard recipe) share one zoom, `CAPITAL_PORTRAIT_ZOOM`,
+so they compare true (the largest fills about 70–95% of the crop, unit-locked),
+lie corner to corner and show their turrets; a Shipyard-built capital (the
+Barge) is fitted on its own. Re-bake after any hull, turret or forge change.
+
 ## Effects and backdrop (plan iridescent-seeking-rainbow v3)
 
 Round 2 applied the same idea to everything that isn't a hull: weapons, shield
