@@ -82,7 +82,7 @@ export function CargoChip(): JSX.Element | null {
   const depositPct = useUIStore((s) => s.depositPct);
   const [open, setOpen] = useState(false);
   if (!shouldRender) return null;
-  if (cargo === null && feed.length === 0) return null;
+  if (cargo === null && feed.length === 0 && depositPct === null) return null;
 
   const weight = Math.round(cargoWeight(cargo));
   const fill = cargoFillState(weight, capacity);
@@ -102,14 +102,15 @@ export function CargoChip(): JSX.Element | null {
           {(cargo.packed ?? 0) > 0 && <span style={{ color: '#9ad0ff' }} data-testid="cargo-packed">▢{cargo.packed}</span>}
         </Box>
       )}
-      {depositPct === DEPOSIT_WAITING && cargo !== null && (
+      {depositPct === DEPOSIT_WAITING && (
         // Structure-restyle 3e — parked on a freight dock whose crane is
-        // serving another ship: first come, first served.
+        // serving another ship: first come, first served. Shown with an empty hold
+        // too (a ship parked to LOAD at an outlet dock).
         <Box data-testid="cargo-depositing" data-deposit-pct={depositPct} data-deposit-waiting="1" sx={DEPOSIT_WAIT_SX}>
           waiting for crane…
         </Box>
       )}
-      {depositPct !== null && depositPct !== DEPOSIT_WAITING && cargo !== null && (
+      {depositPct !== null && depositPct !== DEPOSIT_WAITING && (
         // Living World P1a-2 — auto-deposit progress (hold position by your
         // storage). The CSS transition smooths the 10 % steps.
         <Box data-testid="cargo-depositing" data-deposit-pct={depositPct} sx={DEPOSIT_TRACK_SX}>
