@@ -11,7 +11,7 @@ import {
 import type { BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
 import { TractorLinkClient } from './tractorLinks.js';
 import { Client, Room } from 'colyseus.js';
-import type { RenderMirror, ShipRenderState, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
+import type { RenderMirror, ShipRenderState, StructureRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { GameClock } from '@core/clock/GameClock';
@@ -28,7 +28,7 @@ import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
-import { PAD_SPECS, PairRequestPromptSchema, TP_PHASE, TeleportCandidatesReplySchema, TollPromptSchema, isTeleporterKind } from '../../shared-types/teleport.js';
+import { PAD_SPECS, TP_PHASE, isTeleporterKind } from '../../shared-types/teleport.js';
 
 /** v4 T2 — prediction-world pad field ids, cached per structure (no per-sync string). */
 const PAD_FIELD_IDS = new Map<number, string>();
@@ -46,30 +46,18 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { pushCollisionShieldContacts } from './collisionShieldContacts';
-import { MineDetonatedSchema } from '@shared-types/mines';
-import { ShellBlastSchema } from '@shared-types/shellBlast';
-import { ShellEndSchema, ShellSalvoSchema, type ShellEnd } from '@shared-types/messages/shellEvents';
+import type { ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
-import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
 import { ControlModeMessageSchema } from '@shared-types/messages/snapshotMessages';
 import { parseTransitReadyShipIds } from '@shared-types/messages';
 import { isCommanderFleetFollow, transitStartsLocalTrip, stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
-import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged, cargoViewOf, type WireCargo } from './lootView';
-import { toastForNotice } from './tradeView';
-import { TradeNoticeSchema } from '../../shared-types/economy.js';
-import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
-import { BountyResultSchema } from '../../shared-types/contracts.js';
+import { cargoChanged, cargoViewOf, type WireCargo } from './lootView';
 import { setFactionLooks } from '../../shared-types/factions.js';
-import { ClaimFactionLookResultSchema } from '../../shared-types/messages/factionMessages.js';
-import { onFactionLookClaimed } from './factionLookSync.js';
-import { LabStateSchema } from '../../shared-types/messages/labMessages.js';
-import { BreakInNoticeSchema, CargoStateSchema } from '../../shared-types/messages/cargoMessages.js';
-import { BpMarketStateSchema } from '../../shared-types/blueprintMarket.js';
-import { PackedStockSchema } from '../../shared-types/packedStock.js';
-import { BlueprintResultSchema, fittedCargoMul } from '../../shared-types/blueprints.js';
+import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
+import { fittedCargoMul } from '../../shared-types/blueprints.js';
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
 /** Same id list (order-sensitive; absent ≡ empty). Alloc-free. */
@@ -80,11 +68,7 @@ function sameIds(a: readonly string[], b: readonly string[] | undefined): boolea
   return true;
 }
 
-/** Living World P2 — how long a trade toast stays up. */
-const TRADE_TOAST_TTL_MS = 6_000;
 import { cargoCapacityForMaxHealth } from '@shared-types/goods';
-import { applySelectionStats } from './selectionStats.js';
-import { ingestFleetStatus } from '../fleet/fleetStatusIngest.js';
 import {
   createRemotePredictionGuard,
   forgetRemote,
@@ -119,7 +103,7 @@ import { DataChannelTransport } from './dataChannelTransport.js';
 import { webrtcEnabledFromSearch } from './webrtcEnable.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles } from './SnapshotSyncHelpers.js';
-import { applyMissileSnapshot, removeMissile } from '../combat/MissileMirror.js';
+import { applyMissileSnapshot } from '../combat/MissileMirror.js';
 import { beamOptimalDist, beamMaxDist, beamNoHitSolidDist } from '../combat/beamBands.js';
 import { RafStallDetector } from './RafStallDetector.js';
 import {
@@ -173,18 +157,16 @@ import { shipShotMuzzle } from '@core/combat/muzzle';
 import { tuningFor } from '@shared-types/shipScale/lookup';
 
 // A group fires only when a barrel bears on its lock: the shared rule (#15).
-import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '@core/combat/fireControlBearing';
-import { FcMountPicker, fcNeedsPick, type FcMountDef } from './fcMountPick';
-import { hasTurretFireControl, mountRangeFactor, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
+import { mountRangeFactor } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
-import { getWeapon, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
+import { getWeapon } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
 import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
 import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
 import { makeHelmCourseMark, resolveHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
-import { resolveSlotMounts, resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
+import { resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
   predictShotOutcome,
@@ -200,9 +182,7 @@ import { findMount, isSustainedBeamMount, mountMuzzleRay, remoteBeamTtlMs, type 
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
-import { encodeAim } from '@core/combat/manualAim';
-import { isContactLockKind, isTerrainLockKind } from '@core/combat/lockState';
-import { LockLinePick } from './lockLinePick';
+import { FireControlClient } from './FireControlClient';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   interpolateSwarmPose,
@@ -225,8 +205,6 @@ import {
 } from '../structures/structurePlacementClient.js';
 import { shouldEnterSpectatorOnDeath } from '../spectator/spectatorMode.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
-import { rotateMountToward, wrapPi } from '@core/ai/WeaponMountController';
-import type { FcGroupSummary } from '../state/storeTypes';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -1444,6 +1422,12 @@ export class ColyseusGameClient {
   /** Shells as events: on when the welcome says so (shell-events.md §7). */
   private _shellEvents = false;
   private readonly _shellStore = new ShellSalvoStore();
+  /** The ctx `handlers/index.ts` registers with, built once (#14). */
+  private readonly _handlerCtx: ClientHandlerCtx = {
+    mirror: this.mirror, shellStore: this._shellStore, cutField: this._cutField,
+    shellEvents: () => this._shellEvents,
+    applyShellEnd: (msg: ShellEnd): void => this.applyShellEnd(msg),
+  };
   /** A naval shell hit's FX wait for its drawn burst (navalHitHold.ts). */
   private readonly _navalHitHold = new NavalHitHold();
   /** The sink `_navalHitHold.release` calls (built once, #14). */
@@ -1966,22 +1950,6 @@ export class ColyseusGameClient {
       }
     });
 
-    // Click-to-inspect (structures follow-up Item B5) — live stats for the
-    // locally-selected entity arrive at ~5 Hz. Defensive zod parse (invariant
-    // #3); on success mutate the `selectionStats` module singleton in place (NO
-    // Zustand write — the panel polls the singleton ~1 Hz, avoiding 5 Hz React
-    // re-renders).
-    room.onMessage('entity_stats', (raw: unknown) => {
-      const parsed = EntityStatsSchema.safeParse(raw);
-      if (!parsed.success) return;
-      applySelectionStats(parsed.data);
-    });
-    // RTS slice 7 — the owner-only fleet status stream (~2 Hz, the whole owned
-    // fleet each time) → the `fleet/fleetStatus` singleton the panel polls.
-    room.onMessage('fleet_status', (raw: unknown) => {
-      ingestFleetStatus(raw);
-    });
-
     room.onMessage('damage', (raw: unknown) => {
       // weapon-hit-prediction Phase 3 — defensive zod parse on receive
       // (invariant #4; mirrors the collision_resolved drop-on-fail). The
@@ -2027,50 +1995,6 @@ export class ColyseusGameClient {
     room.onMessage('destroy', (raw: unknown) => {
       const evt = parseDestroy(raw);
       if (evt !== null) this.handleDestroy(evt);
-    });
-
-    // Phase 4 WS-B1 — a ship instance levelled up (public, D13). Defensive zod
-    // parse (invariant #3/#4 — crosses the trust boundary). The badge refresh
-    // for ALL ships rides the next snapshot's states[].level; THIS handler pops
-    // the owner-facing screenspace level-up icon for the LOCAL player's hull.
-    room.onMessage('ship_level_up', (raw: unknown) => {
-      const parsed = ShipLevelUpEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      this.handleShipLevelUp(parsed.data.shipInstanceId, parsed.data.newLevel);
-    });
-
-    // Phase 4 WS-B2 — the server accepted + persisted a stat allocation / respec.
-    // Publish a discrete Zustand ack so the upgrade modal closes + the roster
-    // refreshes; the physics multipliers re-anchor off the snapshot slice, not
-    // this echo (so this is UI-confirmation only). Defensive zod parse.
-    room.onMessage('ship_upgrade_applied', (raw: unknown) => {
-      const parsed = ShipUpgradeAppliedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setUpgradeAck({
-        shipInstanceId: parsed.data.shipInstanceId,
-        alloc: parsed.data.alloc,
-        spent: parsed.data.spent,
-        budget: parsed.data.budget,
-      });
-    });
-
-    // Phase 4 WS-B3 — the server accepted + persisted a dynamic-mount activation.
-    // Patch the Zustand roster entry's `mounts` so the upgrade modal's activated
-    // set updates immediately (the roster poll would also catch it within ~3 s,
-    // but the patch makes the modal feel responsive). The IN-WORLD render +
-    // fire come off the snapshot `states[].mounts` slice (the authority), not
-    // this echo. Defensive zod parse.
-    room.onMessage('mount_activated', (raw: unknown) => {
-      const parsed = MountActivatedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const evt = parsed.data;
-      const store = useUIStore.getState();
-      const patched = store.shipRoster.map((r) =>
-        r.shipId === evt.shipInstanceId
-          ? { ...r, mounts: evt.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId })) }
-          : r,
-      );
-      store.setShipRoster(patched);
     });
 
     room.onMessage('hit_ack', (raw: unknown) => {
@@ -2187,77 +2111,9 @@ export class ColyseusGameClient {
       this.handleRespawnAck(msg);
     });
 
-    // Missile launched — pose arrives on the snapshot's missiles[]
-    // slice (NOT this event), so we don't seed the mirror here.
-    // Defensive zod parse on receive. The discrete event currently has
-    // no client-side subscriber (SFX launch-whoosh is a future hookup);
-    // the parse + drop keeps the wire safe and ready for that hookup.
-    room.onMessage('missile_fired', (raw: unknown) => {
-      MissileFiredEventSchema.safeParse(raw);
-    });
-
-    // Missile detonated — remove from the mirror so the sprite stops
-    // drawing the next frame, and push an explosion entry into the
-    // mirror for the renderer to drain (VFX + camera shake).
-    room.onMessage('missile_detonated', (raw: unknown) => {
-      const result = MissileDetonatedEventSchema.safeParse(raw);
-      if (!result.success) return;
-      removeMissile(this.mirror, result.data.missileId);
-      const list = (this.mirror.pendingMissileExplosions ??= []);
-      list.push({
-        x: result.data.x,
-        y: result.data.y,
-        splashRadius: result.data.splashRadius,
-        missileId: result.data.missileId,
-      });
-    });
-
-    // A shield fence stopped a bolt or missile: draw the impact on the wall
-    // (fence-hit fix). An accelerator only — nothing persistent depends on it.
-    room.onMessage('wall_hit', (raw: unknown) => {
-      const result = WallHitEventSchema.safeParse(raw);
-      if (!result.success) return;
-      this.mirror.pendingEffectTriggers?.push({ kind: 'wall-hit', worldX: result.data.x, worldY: result.data.y });
-    });
-
-    // Mine Layer — a mine went off: the same explosion visual as a missile
-    // (an accelerator; the mine leaving room state is the truth).
-    room.onMessage('mine_detonated', (raw: unknown) => {
-      const result = MineDetonatedSchema.safeParse(raw);
-      if (!result.success) return;
-      (this.mirror.pendingMissileExplosions ??= []).push({
-        x: result.data.x,
-        y: result.data.y,
-        splashRadius: result.data.radius,
-        missileId: -1,
-      });
-    });
-
-    // Coastal defences — a siege shell burst: the same explosion visual, at
-    // the size of its blast (the damage arrives as damage events).
-    // Shells as events (shell-events.md slice 2a): salvo + hit records.
-    room.onMessage('field_consumed', (raw: unknown) => this._cutField.onConsumedMessage(raw)); // macro terrain C3
-    room.onMessage('field_moved', (raw: unknown) => this._cutField.onMovedMessage(raw)); // C2 deep sleep
-    room.onMessage('shell_salvo', (raw: unknown) => {
-      if (!this._shellEvents) return;
-      const r = ShellSalvoSchema.safeParse(raw);
-      if (r.success) this._shellStore.applySalvo(r.data);
-    });
-    room.onMessage('shell_end', (raw: unknown) => {
-      if (!this._shellEvents) return;
-      const r = ShellEndSchema.safeParse(raw);
-      if (r.success) this.applyShellEnd(r.data);
-    });
-    room.onMessage('shell_blast', (raw: unknown) => {
-      const result = ShellBlastSchema.safeParse(raw);
-      if (!result.success) return;
-      (this.mirror.pendingMissileExplosions ??= []).push({
-        x: result.data.x,
-        y: result.data.y,
-        splashRadius: result.data.radius,
-        missileId: -1,
-      });
-    });
+    // Feature handler files (handlers/index.ts): missiles, impact FX, toasts,
+    // wave HUD, structure panels, drawn shells, ship status, cut field.
+    registerClientHandlers(room, this._handlerCtx);
 
     // Stage 2 of the network-feel roadmap — server-broadcast collision
     // events. Apply post-collision velocities to predWorld immediately;
@@ -2359,27 +2215,6 @@ export class ColyseusGameClient {
     room.onMessage('warp_in', (msg) => handleWarpEvent(msg, 'warp_in'));
     room.onMessage('warp_out', (msg) => handleWarpEvent(msg, 'warp_out'));
 
-    // Wave-system Phase 5 — sector-wide warp-in warning HUD. Drives visible UI,
-    // so we zod-validate + drop malformed packets (invariant #3) — a bad
-    // count/countdownMs would render a garbage banner. Purity-clean: no
-    // positions reach Zustand (invariant #2).
-    room.onMessage('warp_warning', (raw: unknown) => {
-      const parsed = WarpWarningSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const { id, label, count, countdownMs, disposition } = parsed.data;
-      // Phase-4 P0 — colour the banner by the inbound's relation. The wire speaks
-      // `enemy`/`neutral`/`friendly`; the store/banner speak `hostile`/`neutral`/
-      // `friendly`. Absent ⇒ store default (hostile), back-compat with old servers.
-      const relation =
-        disposition === 'enemy'
-          ? 'hostile'
-          : disposition === 'friendly'
-            ? 'friendly'
-            : disposition === 'neutral'
-              ? 'neutral'
-              : undefined;
-      useUIStore.getState().addWarpWarning({ id, label, count, countdownMs, ...(relation ? { relation } : {}) });
-    });
     // Living World P1a — pickup popup (UI accelerator only; cargo truth rides
     // the own-ship snapshot slice). zod-validated (invariant #3).
     // RTS slice 10 — a command-view join: the server parked our hull at the
@@ -2389,136 +2224,6 @@ export class ColyseusGameClient {
       const parsed = ControlModeMessageSchema.safeParse(raw);
       if (!parsed.success || parsed.data.mode !== 'command') return;
       this.enterCommandFromServer();
-    });
-    room.onMessage('notice', (raw: unknown) => {
-      const parsed = NoticeEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushLootFeed(parsed.data.text);
-      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
-    });
-    // Living World P2 — trade toasts + Trade-tab badge. An ACCELERATOR only:
-    // the tab's truth is `GET /trade/economy` (it refetches on tradeNoticeSeq).
-    // C2 — a break-in alarm (owner) or result (actor). Accelerator only.
-    room.onMessage('break_in_notice', (raw: unknown) => {
-      const parsed = BreakInNoticeSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.tone, false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Living World P5 — a blueprint install verdict (accelerator only).
-    room.onMessage('blueprint_result', (raw: unknown) => {
-      const parsed = BlueprintResultSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Living World P4c-2 — a bounty placement verdict (accelerator only).
-    room.onMessage('bounty_result', (raw: unknown) => {
-      const parsed = BountyResultSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // A faction ship-look claim verdict (accelerator only).
-    room.onMessage('claim_faction_look_result', (raw: unknown) => {
-      const parsed = ClaimFactionLookResultSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Someone claimed a ship look (accelerator; the welcome carries them all).
-    room.onMessage('faction_look_claimed', onFactionLookClaimed);
-    // Economy v2 W3 — the Research Lab panel's view (a reply to lab_query /
-    // lab_start / lab_cancel; the panel is rebuilt from it alone).
-    // C1 — a structure's cargo (and our hold) for the cargo panel (#16).
-    room.onMessage('cargo_state', (raw: unknown) => {
-      const parsed = CargoStateSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setCargoState(parsed.data);
-    });
-    // Economy v2 W6 — the blueprint market view (the Trade tab rebuilds from it).
-    // Economy v2 — packed-structure counts (the Build menus label/lock from them).
-    room.onMessage('packed_stock', (raw: unknown) => {
-      const parsed = PackedStockSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setPackedStock(parsed.data.counts);
-    });
-    room.onMessage('bp_market_state', (raw: unknown) => {
-      const parsed = BpMarketStateSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setBpMarket(parsed.data);
-    });
-    room.onMessage('teleport_toll', (raw: unknown) => {
-      const parsed = TollPromptSchema.safeParse(raw);
-      if (parsed.success) useUIStore.getState().setTollPrompt(parsed.data);
-    });
-    room.onMessage('teleport_pair_request', (raw: unknown) => {
-      const parsed = PairRequestPromptSchema.safeParse(raw);
-      if (parsed.success) useUIStore.getState().addPairRequest(parsed.data);
-    });
-    room.onMessage('teleport_candidates', (raw: unknown) => {
-      const parsed = TeleportCandidatesReplySchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setTeleportCandidates(parsed.data);
-    });
-    room.onMessage('lab_state', (raw: unknown) => {
-      const parsed = LabStateSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setLabState(parsed.data);
-    });
-    room.onMessage('trade_notice', (raw: unknown) => {
-      const parsed = TradeNoticeSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const { tone, unread } = toastForNotice(parsed.data);
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, tone, unread);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Living World P4 — galaxy-wide world notices (elite sighted / destroyed).
-    // An accelerator only (#16): the elite itself rides the snapshot + map.
-    room.onMessage('world_notice', (raw: unknown) => {
-      const parsed = WorldNoticeSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, 'world', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    room.onMessage('cargo_deposited', (raw: unknown) => {
-      const parsed = CargoDepositedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const text = formatLootPickup(parsed.data);
-      if (text === '') return;
-      const id = useUIStore.getState().pushLootFeed(`Banked ${text}`);
-      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
-    });
-    room.onMessage('loot_collected', (raw: unknown) => {
-      const parsed = LootCollectedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const text = formatLootPickup(parsed.data);
-      if (text === '') return;
-      const id = useUIStore.getState().pushLootFeed(text);
-      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
-    });
-    room.onMessage('warp_warning_clear', (raw: unknown) => {
-      const parsed = WarpWarningClearSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().removeWarpWarning(parsed.data.id);
-    });
-
-    // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the first
-    // time the local player's base qualifies for waves. Broadcast to the whole
-    // sector; OWNER-ONLY (it's a personal base milestone). Reuses the transient
-    // `sectorAlert` HUD line (the existing toast mechanism). zod-validated
-    // (invariant #3); purity-clean (a discrete string, no spatial field, #2).
-    room.onMessage('base_ready', (raw: unknown) => {
-      const parsed = BaseReadySchema.safeParse(raw);
-      if (!parsed.success) return;
-      if (parsed.data.factionId !== this.mirror.localPlayerId) return;
-      const msg = '⚔ Base operational — defend against incoming waves';
-      useUIStore.getState().setSectorAlert(msg);
-      // Auto-clear after ~6 s, but only if it's still OUR message (don't clobber
-      // a newer alert set in the meantime).
-      window.setTimeout(() => {
-        if (useUIStore.getState().sectorAlert === msg) useUIStore.getState().setSectorAlert(null);
-      }, 6000);
     });
 
     // Living World — server→client twin of the damage→markHostile mirror.
@@ -3114,27 +2819,9 @@ export class ColyseusGameClient {
       this.ensureRemoteShipBody(to, body, entry.kind);
     }
     moveKey(this._damageFlashFrames, from, to);
-    this.rekeyLockState(from, to);
+    this.fc.rekeyLockState(from, to);
     this.mirror.pendingShipRekeys?.push(from, to);
     logEvent('ship_rekeyed', { from, to });
-  }
-
-  /**
-   * The lock state that names a re-keyed ship follows it (`p:<from>` →
-   * `p:<to>`), as the server's `LockSubsystem.shipKeyMoved` does: the own
-   * groups' lock targets (lock line, marks, turret aim, fire gate read them
-   * until the next snapshot's `groups` slice, which the server already
-   * re-keyed, #16), the held lock-line candidate and the last `lock_track`
-   * sent (so the line neither re-sends nor lets go of the same ship).
-   */
-  private rekeyLockState(from: string, to: string): void {
-    const fromKey = this.shipLockKey(from);
-    const toKey = this.shipLockKey(to);
-    for (const g of this._fcGroups) {
-      for (const l of g.l) if (l.t === fromKey) (l as { t: string }).t = toKey;
-    }
-    if (this.mirror.localLockCandidate === fromKey) this.mirror.localLockCandidate = toKey;
-    if (this._trackKey === fromKey) this._trackKey = toKey;
   }
 
   /**
@@ -3221,31 +2908,6 @@ export class ColyseusGameClient {
     if (vaporised) this.mirror.vaporisedShips?.add(evt.targetId);
     if (evt.targetId.startsWith('swarm-')) this.killSwarmEntity(evt.targetId);
     else this.killEntity(evt.targetId);
-  }
-
-  /**
-   * Phase 4 WS-B1 — a ship instance just levelled up. The PUBLIC badge for ALL
-   * ships refreshes from the next snapshot's `states[].level` (applyShipLevels);
-   * this only pops the OWNER-facing screenspace level-up icon for the LOCAL
-   * player's own hull (resolved via `localShipInstanceId`). Remote level-ups
-   * just refresh their badge — no icon for other players. Discrete + low-
-   * frequency (a kill threshold), so the single pooled-array push is off the
-   * hot path (mirrors `pendingEffectTriggers` pushes from `handleDamage`).
-   */
-  private handleShipLevelUp(shipInstanceId: string, newLevel: number): void {
-    const localShipInstanceId = this.mirror.localShipInstanceId;
-    const localPlayerId = this.mirror.localPlayerId;
-    if (localShipInstanceId == null || localPlayerId == null) return;
-    if (shipInstanceId !== localShipInstanceId) return; // owner-facing icon only
-    // Pooled one-frame trigger — drained by the renderer, cleared in
-    // consumeOneFrameTriggers. Keyed by playerId so the renderer resolves it to
-    // the local ship's (playerId-keyed) mirror pose for the screenspace anchor.
-    const queue = this.mirror.pendingLevelUps;
-    if (queue) queue.push({ playerId: localPlayerId, newLevel });
-    // Discrete Zustand seam for the upgrade modal (WS-B2 wires the modal open;
-    // here we surface "the local player just hit level N" as a discrete scalar —
-    // purity-clean, Invariant #2). A no-op until WS-B2 reads it.
-    useUIStore.getState().setPendingLevelUp(newLevel);
   }
 
   /**
@@ -3789,7 +3451,7 @@ export class ColyseusGameClient {
       const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;
       if (useUIStore.getState().depositPct !== dep) useUIStore.getState().setDepositPct(dep);
       // Fire control (#16): the pilot's groups + locks, always applied.
-      this.applyFcGroups(serverState.groups);
+      this.fc.applyFcGroups(serverState.groups);
       this.mirror.localLockedBy = serverState.lockedBy ?? NO_LOCKED_BY;
       this.mirror.localLockedByTotal = serverState.lockedByN ?? 0;
       this.mirror.localLockedByLocked = serverState.lockedByL ?? 0;
@@ -5695,7 +5357,7 @@ export class ColyseusGameClient {
     // server refuses a player shot without a lock.
     // Aim guides: none — the lock rings and firing lines replace them.
     this.mirror.localAimMountIds = EMPTY_AIM_IDS;
-    this.fcFireTick(kb.fireHeld);
+    this.fc.fcFireTick(kb.fireHeld);
 
     // Predict the energy pool for the frame (weapons/energy/AI overhaul
     // §3.2): regen every stepped tick + drain a boost tick while boosting,
@@ -5928,8 +5590,8 @@ export class ColyseusGameClient {
       angles = new Array<number>(catalogueMounts.length).fill(0);
       ship.mountAngles = angles;
     }
-    this.fcSyncKind(ship.kind ?? null);
-    this.fcTickMountAngles(angles, catalogueMounts, ship.x, ship.y, ship.angle, dtSec);
+    this.fc.fcSyncKind(ship.kind ?? null);
+    this.fc.fcTickMountAngles(angles, catalogueMounts, ship.x, ship.y, ship.angle, dtSec);
   }
 
   /** Compute (and cache in `mirror.liveBeams`) the local player's hitscan
@@ -5990,10 +5652,10 @@ export class ColyseusGameClient {
     // mid-life — currently impossible but cheap to guard).
     // A capital group fires each turret only while it bears (`fcFireMounts`):
     // a turret aimed away draws no beam (it once drew one to max range).
-    const bearingOnly = this._fcPerMount && this._fireSlotOverride !== null;
+    const bearingOnly = this.fc._fcPerMount && this.fc._fireSlotOverride !== null;
     const mountIds = this._liveBeamMountIdsScratch;
     mountIds.clear();
-    for (const m of mounts) if (!bearingOnly || this._fcBearing.has(m.id)) mountIds.add(m.id);
+    for (const m of mounts) if (!bearingOnly || this.fc._fcBearing.has(m.id)) mountIds.add(m.id);
     for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
 
     const mountAngles = ship.mountAngles;
@@ -6104,558 +5766,28 @@ export class ColyseusGameClient {
     return -1;
   }
 
-  // ── Fire control (universal: every weapon group fires only at a lock) ────
-  /** The own-ship snapshot's groups (server truth; replaced each snapshot). */
-  private _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; c?: number; f?: number }> }> = [];
-  /** Hash of the HUD-visible group summary; the store is written on change only. */
-  private _fcSummarySig = -1;
-  /** Group the pilot is holding to fire (manual mode), or null. */
-  private _fcHeld: string | null = null;
-  private readonly _fcLastFireMs = new Map<string, number>();
-  private readonly _fcLastFireTick = new Map<string, number>();
-  /** Per-kind group info, rebuilt when the ship kind changes. */
-  private _fcInfoKind: string | null | undefined = undefined;
-  private readonly _fcInfo = new Map<string, { cooldownMs: number; cooldownTicks: number; mode: WeaponDef['mode']; reach: number; energyCost: number; name: string; colour: number; capacity: number }>();
-  private readonly _fcMountGroup = new Map<string, string>();
-  /** Per mount: its definition, its place in its group (the `pickTurretLock`
-   *  ordinal), its reach and its group's mounts. Rebuilt with `_fcMountGroup`. */
-  private readonly _fcMountDef = new Map<string, FcMountDef>();
-  /** True when the ship's turrets fire one by one on their own reload (capitals). */
-  private _fcPerMount = false;
-  /** Per-mount fire ledger (capitals): wall ms + input tick of each mount's last shot. */
-  private readonly _fcMountLastMs = new Map<string, number>();
-  private readonly _fcMountLastTick = new Map<string, number>();
-  /** Mounts in the salvo being sent (capitals; empty = every bearing mount). */
-  private readonly _fcSalvo = new Set<string>();
-  /** Mounts that bore on their target this fire tick (capitals): the only
-   *  ones `updateLiveBeam` draws a beam from. */
-  private readonly _fcBearing = new Set<string>();
-  /** Per-mount lock pick (shared `pickTurretLock` with the salvage bits, #15). */
-  private readonly _fcPicker = new FcMountPicker((k, o) => this.fcTargetPose(k, o), (k, o) => this.fcTargetShape(k, o));
-  /** Parsed lock keys (`s:<n>` / `p:<id>`), so per-frame lookups never slice strings. */
-  private readonly _fcKeys = new Map<string, { swarm: number; player: string | null }>();
-  private readonly _fcPose: FireTargetShape = newFireTargetShape();
-  /** Slot to fire in `sendFire` / `localShipMounts` instead of the store's active slot. */
-  private _fireSlotOverride: string | null = null;
-
-  /** Ask the server to lock `targetKey` with weapon group `groupId`. */
-  requestLock(groupId: string, targetKey: string): void {
-    if (!this.room) return;
-    this.room.send('lock_request', { type: 'lock_request', groupId, target: targetKey });
-  }
-
-  /** A weapon group's lock-reach basis (u, before `LOCK_TUNING.reachSlack`) for the local
-   *  ship: the same `mountWeaponReach` max the server's `groupGeometry` uses. 0 = unknown.
-   *  Read by the contacts overview at 4 Hz, never per frame. */
-  fcGroupReach(groupId: string): number {
-    const id = this.mirror.localPlayerId;
-    const ship = id ? this.mirror.ships.get(id) : undefined;
-    if (!ship) return 0;
-    this.fcSyncKind(ship.kind ?? null);
-    return this._fcInfo.get(groupId)?.reach ?? 0;
-  }
-
-  /** Drop one lock (or all of a group's locks when no key). */
-  cancelLock(groupId: string, targetKey?: string): void {
-    if (!this.room) return;
-    this.room.send('lock_cancel', targetKey === undefined
-      ? { type: 'lock_cancel', groupId }
-      : { type: 'lock_cancel', groupId, target: targetKey });
-  }
-
-  setGroupMode(groupId: string, mode: 'auto' | 'manual'): void {
-    if (!this.room) return;
-    this.room.send('set_group_mode', { type: 'set_group_mode', groupId, mode });
-  }
-
-  /** Manual mode: hold a group's chip to fire it (null = release). */
-  setGroupHeld(groupId: string | null): void {
-    this._fcHeld = groupId;
-  }
-
-  /**
-   * Smart-aim lock: the pilot is dragging a guideline along `bearing` (world,
-   * ship-angle convention). Picks the lockable target nearest the line within
-   * the active group's reach — the shared `lockLineScore` rule, the same one
-   * the server uses to verify `lock_track` (#15) — and publishes guide +
-   * candidate for the renderer. Called from pointer handlers (not the frame
-   * loop), but still alloc-free per candidate (#14): cached key strings, a
-   * bound visitor instead of a per-call closure. NaN clears the guide.
-   */
-  updateLockGuide(bearing: number): string | null {
-    const m = this.mirror;
-    if (Number.isNaN(bearing)) {
-      m.localLockGuide = NaN;
-      m.localLockCandidate = null;
-      return null;
-    }
-    const localId = m.localPlayerId;
-    const ship = localId ? m.ships.get(localId) : undefined;
-    if (!localId || !ship) return null;
-    this.fcSyncKind(ship.kind ?? null);
-    const active = useUIStore.getState().activeGroupId;
-    const reach = (active && this._fcInfo.get(active)?.reach) || 600;
-    m.localLockGuide = bearing;
-    m.localAimReach = reach;
-    this._lgLocalId = localId;
-    this._lgPick.begin(ship.x, ship.y, bearing, reach, m.localLockCandidate ?? null);
-    m.swarm?.forEach(this._lgVisitSwarm);
-    m.ships.forEach(this._lgVisitShip);
-    const best = this._lgPick.result(); // terrain only with no contact on the line
-    m.localLockCandidate = best;
-    return best;
-  }
-
-  /** Lock-line pick scratch (one pick at a time; reused, #14). */
-  private _lgLocalId: string | null = null;
-  private readonly _lgPick = new LockLinePick();
-  /** Lock keys (`s:<entityId>` / `p:<ship mirror key>`), built once per id. */
-  private readonly _swarmLockKeys = new Map<number, string>();
-  private readonly _shipLockKeys = new Map<string, string>();
-
-  /** `s:<entityId>`, cached (no template literal per candidate). */
-  private swarmLockKey(entityId: number): string {
-    let k = this._swarmLockKeys.get(entityId);
-    if (k === undefined) {
-      if (this._swarmLockKeys.size > 2048) this._swarmLockKeys.clear();
-      k = `s:${entityId}`;
-      this._swarmLockKeys.set(entityId, k);
-    }
-    return k;
-  }
-
-  /** `p:<mirror key>` (playerId, or a parked hull's shipInstanceId), cached. */
-  private shipLockKey(playerId: string): string {
-    let k = this._shipLockKeys.get(playerId);
-    if (k === undefined) {
-      if (this._shipLockKeys.size > 512) this._shipLockKeys.clear();
-      k = `p:${playerId}`;
-      this._shipLockKeys.set(playerId, k);
-    }
-    return k;
-  }
-
-  /** Drones + structures (not your own) on the lock line; neutral terrain
-   *  (shared `isTerrainLockKind`, the server's `resolveLockTarget` rule, #15)
-   *  in its own lowest-priority tier. Bound once. */
-  private readonly _lgVisitSwarm = (e: SwarmRenderState, entityId: number): void => {
-    const terrain = isTerrainLockKind(e.kind);
-    if (!terrain && !isContactLockKind(e.kind)) return;
-    if (e.kind === 2 && this.mirror.structures?.get(entityId)?.owner === this._lgLocalId) return;
-    this._lgPick.consider(this.swarmLockKey(entityId), e.x, e.y, e.radius ?? 20, terrain);
-  };
-
-  /** Other players' ships on the lock line, flown by a pilot or an AI pilot
-   *  (every class in the one ship list; the key is the mirror key, which the
-   *  server's `resolveLockTarget` resolves for both, #15). Never a ship the
-   *  local player owns (the ship they fly or their own fleet). Bound once. */
-  private readonly _lgVisitShip = (s: ShipRenderState, key: string): void => {
-    if (isOwnedByMe(this.mirror, key, s)) return;
-    this._lgPick.consider(this.shipLockKey(key), s.x, s.y, getShipKind(s.kind ?? null).radius, false);
-  };
-
-  /**
-   * Held lock line: point the line along `bearing` and hold whatever it lands
-   * on. The server builds a lock only while it's held; moving off (or letting
-   * go) releases it and it drains back to 0. Sends only when the held target
-   * changes. Call on every drag move AND periodically while held (targets move).
-   */
-  guideLock(bearing: number): void {
-    const key = this.updateLockGuide(bearing);
-    this.trackLock(key, bearing);
-  }
-
-  /** Let go of the lock line: whatever it held drains unless already locked. */
-  releaseLockGuide(): void {
-    this.mirror.localLockGuide = NaN;
-    this.mirror.localLockCandidate = null;
-    this.trackLock(null, NaN);
-  }
-
-  /** Last `lock_track` sent: group + target (dedup — the line moves at frame rate). */
-  private _trackGroup: string | null = null;
-  private _trackKey: string | null = null;
-  /**
-   * Tell the server what the line holds. A held target carries `b`, the
-   * line's quantised world bearing: the server re-checks the target is on
-   * that line with the shared `lockLineHolds` (#15) and ignores a claim
-   * without it. Dedup on group + key: the server checks only when the claim
-   * changes, so an unchanged key needs no resend.
-   */
-  private trackLock(key: string | null, bearing: number): void {
-    if (!this.room) return;
-    const group = useUIStore.getState().activeGroupId;
-    if (group === null) return;
-    if (group !== this._trackGroup && this._trackGroup !== null && this._trackKey !== null) {
-      // Switched group mid-hold: let the old group's line go.
-      this.room.send('lock_track', { type: 'lock_track', groupId: this._trackGroup, target: null });
-    }
-    if (group === this._trackGroup && key === this._trackKey) return;
-    this._trackGroup = group;
-    this._trackKey = key;
-    this.room.send('lock_track', key === null || Number.isNaN(bearing)
-      ? { type: 'lock_track', groupId: group, target: null }
-      : { type: 'lock_track', groupId: group, target: key, b: encodeAim(bearing) });
-  }
-
-  /** Lock whatever the pilot has selected (inspector Target button / T key). */
-  lockSelected(): boolean {
-    const st = useUIStore.getState();
-    const id = st.selection.focusId;
-    const active = st.activeGroupId;
-    if (!id || !active) return false;
-    let key: string | null = null;
-    if (id.startsWith('swarm-')) key = `s:${id.slice(6)}`;
-    else {
-      // Another player's ship, pilot- or AI-flown (the mirror key is the lock
-      // key); never one of your own.
-      const ship = this.mirror.ships.get(id);
-      if (ship !== undefined && !isOwnedByMe(this.mirror, id, ship)) key = `p:${id}`;
-    }
-    if (key === null) return false;
-    this.requestLock(active, key);
-    return true;
-  }
-
-  /** Rebuild per-kind group info (only when the ship kind changes). */
-  private fcSyncKind(kindStr: string | null): void {
-    if (kindStr === this._fcInfoKind) return;
-    this._fcInfoKind = kindStr;
-    this._fcInfo.clear();
-    this._fcMountGroup.clear();
-    this._fcMountDef.clear();
-    this._fcMountLastMs.clear();
-    this._fcMountLastTick.clear();
-    const kind = getShipKind(kindStr);
-    this._fcPerMount = hasTurretFireControl(kind);
-    const slots = kind.slots ?? [];
-    for (let si = 0; si < slots.length; si++) {
-      const slot = slots[si]!;
-      const mounts = resolveSlotMounts(kind, slot.id);
-      let cd = 0;
-      let reach = 0;
-      for (let mi = 0; mi < mounts.length; mi++) {
-        const m = mounts[mi]!;
-        const w = getWeapon(m.weaponId);
-        if (w.cooldownTicks > cd) cd = w.cooldownTicks;
-        const r = mountWeaponReach(m);
-        if (r > reach) reach = r;
-        this._fcMountGroup.set(m.id, slot.id);
-        this._fcMountDef.set(m.id, { mount: m, ordinal: mi, reach: r, group: mounts });
-      }
-      this._fcInfo.set(slot.id, {
-        cooldownMs: (cd * 1000) / 60,
-        cooldownTicks: cd,
-        mode: getWeapon(mounts[0]?.weaponId ?? 'hitscan').mode,
-        reach,
-        energyCost: resolveSlotEnergyCost(kind, slot.id),
-        name: slot.displayName,
-        colour: slot.colour ?? si,
-        capacity: slot.lockCapacity ?? (kind.sizeClass === 'capital' ? 3 : 1),
-      });
-    }
-  }
-
-  /** Parse a lock key once; cached. */
-  private fcKey(key: string): { swarm: number; player: string | null } {
-    let k = this._fcKeys.get(key);
-    if (!k) {
-      k = key.startsWith('s:') ? { swarm: Number(key.slice(2)), player: null } : { swarm: -1, player: key.slice(2) };
-      if (this._fcKeys.size > 512) this._fcKeys.clear();
-      this._fcKeys.set(key, k);
-    }
-    return k;
-  }
-
-  /** A lock target's hit shape for the shared turret range gate
-   *  (`pickTurretLock` → `mountInReach`), from the mirror: the same fields the
-   *  server's `resolveLockTarget` fills (#15). */
-  private fcTargetShape(key: string, out: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }): void {
-    const k = this.fcKey(key);
-    if (k.player !== null) {
-      const s = this.mirror.ships.get(k.player);
-      if (s) fillRangeShape(out, s.angle, true, s.kind ?? null, s.shieldDown !== true, 0);
-      else fillRangeShape(out, 0, false, null, false, 0); // not visible: a point
-      return;
-    }
-    const e = this.mirror.swarm?.get(k.swarm);
-    if (!e) { fillRangeShape(out, 0, false, null, false, 0); return; }
-    const ship = e.kind === 1;
-    fillRangeShape(out, ship ? e.angle : 0, ship, e.shipKind ?? null, ship && e.shieldDown !== true, e.radius);
-  }
-
-  /**
-   * World pose + hit shape of a lock target from the render mirror (false =
-   * not visible). The same fields the server's `resolveLockTarget` fills
-   * (#15): a ship (pilot or NPC) by kind, heading and shield, so the fire gate
-   * `mountFiresOn` measures range to the shape its hits use; a structure by
-   * its radius (its lock signature).
-   */
-  private fcTargetPose(key: string, out: FireTargetShape): boolean {
-    const k = this.fcKey(key);
-    if (k.player !== null) {
-      const s = this.mirror.ships.get(k.player);
-      if (!s) return false;
-      fillFireTargetShape(out, s.x, s.y, s.angle, true, s.kind ?? null, s.shieldDown !== true, 0);
-      return true;
-    }
-    const e = this.mirror.swarm?.get(k.swarm);
-    if (!e) return false;
-    fillFireTargetShape(out, e.x, e.y, e.angle, e.kind === 1, e.shipKind ?? null, e.shieldDown !== true, e.radius);
-    return true;
-  }
-
-  /** The group's aim key: first LOCKED target, else first acquiring (pre-slew). */
-  private fcGroupAimKey(groupId: string): string | null {
-    for (const g of this._fcGroups) {
-      if (g.id !== groupId) continue;
-      let acquiring: string | null = null;
-      for (const l of g.l) {
-        if (l.s === 2) return l.t;
-        if (acquiring === null && l.s === 1) acquiring = l.t;
-      }
-      return acquiring;
-    }
-    return null;
-  }
-
-  /**
-   * The lock one mount aims at (null = no aim, so no fire). One plain lock
-   * (every non-capital group): the group's aim key. Several, or a salvage
-   * lock (`f`): the shared `pickTurretLock` share-out with the same salvage
-   * bits as the server's `LockSubsystem.aimKeyFor` (#15; `fcMountPick.ts`).
-   * (sx, sy, sAngle) is the ship pose the mount is placed from.
-   */
-  private fcMountAimKey(mountId: string, sx: number, sy: number, sAngle: number): string | null {
-    const gid = this._fcMountGroup.get(mountId);
-    if (gid === undefined) return null;
-    let group: (typeof this._fcGroups)[number] | null = null;
-    for (const g of this._fcGroups) if (g.id === gid) { group = g; break; }
-    if (group === null) return null;
-    if (!fcNeedsPick(group.l)) return this.fcGroupAimKey(gid);
-    let first: string | null = null;
-    for (const l of group.l) if (l.s === 2) { first = l.t; break; }
-    const def = this._fcMountDef.get(mountId);
-    return def ? this._fcPicker.pick(group.l, def, sx, sy, sAngle, first) : first;
-  }
-
-  /** Apply the own-ship snapshot's groups (#16). Store write only on change. */
-  private applyFcGroups(groups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; r?: number; c?: number; f?: number }> }> | undefined): void {
-    this._fcGroups = groups ?? [];
-    this.mirror.localGroups = this._fcGroups;
-    // Cheap change signature over ids / modes / lock targets / stages.
-    let sig = this._fcGroups.length;
-    for (const g of this._fcGroups) {
-      sig = (sig * 31 + g.m + 7) | 0;
-      for (let i = 0; i < g.id.length; i++) sig = (sig * 31 + g.id.charCodeAt(i)) | 0;
-      for (const l of g.l) {
-        sig = (sig * 31 + l.s + 3 + (l.c === 1 ? 11 : 0)) | 0;
-        for (let i = 0; i < l.t.length; i++) sig = (sig * 31 + l.t.charCodeAt(i)) | 0;
-      }
-    }
-    if (sig === this._fcSummarySig) return;
-    this._fcSummarySig = sig;
-    this.fcSyncKind(this.mirror.ships.get(this.mirror.localPlayerId ?? '')?.kind ?? null);
-    const summary: FcGroupSummary[] = this._fcGroups.map((g) => {
-      const info = this._fcInfo.get(g.id);
-      return {
-        id: g.id,
-        name: info?.name ?? (g.id === 'wing' ? 'Wing' : g.id),
-        mode: g.m === 1 ? 'manual' : 'auto',
-        colour: info?.colour ?? 0,
-        capacity: info?.capacity ?? 1,
-        locks: g.l.map((l) => (l.c === 1 ? { target: l.t, stage: l.s, blocked: true } : { target: l.t, stage: l.s })),
-      };
-    });
-    const st = useUIStore.getState();
-    st.setFcGroups(summary);
-    if (st.activeGroupId === null || !summary.some((g) => g.id === st.activeGroupId)) {
-      st.setActiveGroupId(summary[0]?.id ?? null);
-    }
-  }
-
-  /** Turret aim for a fire-control pilot: each mount at its group's lock. Mirrors
-   *  WeaponMountTicker's fire-control branch (#12/#15). */
-  private fcTickMountAngles(
-    angles: number[], mounts: ReadonlyArray<WeaponMount>, x: number, y: number, angle: number, dtSec: number,
-  ): void {
-    const cosA = Math.cos(angle);
-    const sinA = Math.sin(angle);
-    for (let i = 0; i < mounts.length; i++) {
-      const mount = mounts[i]!;
-      const key = this.fcMountAimKey(mount.id, x, y, angle);
-      if (key === null || !this.fcTargetPose(key, this._fcPose)) {
-        angles[i] = rotateMountToward(angles[i]!, 0, mount, dtSec);
-        continue;
-      }
-      const mx = x + (mount.localX * cosA - mount.localY * sinA);
-      const my = y + (mount.localX * sinA + mount.localY * cosA);
-      const bearing = Math.atan2(-(this._fcPose.x - mx), this._fcPose.y - my);
-      angles[i] = rotateMountToward(angles[i]!, wrapPi(bearing - angle - mount.baseAngle), mount, dtSec);
-    }
-  }
-
-  /**
-   * Fire control's per-frame fire pass: every group with a LOCKED target fires
-   * on its own cooldown (auto always; manual while held / Space on the active
-   * group). Fixed guns wait until the target is inside their nose cone.
-   */
-  /**
-   * May any mount of `groupId` fire at target `t`? Per mount, from its world
-   * origin: the target's hit shape within the mount's own reach AND its barrel
-   * bearing on it, exactly as the server's fire gate (shared `mountFiresOn`,
-   * #15).
-   */
-  private fcGroupBears(groupId: string, sx: number, sy: number, shipAngle: number, t: FireTargetShape): boolean {
-    const localId = this.mirror.localPlayerId;
-    const ship = localId ? this.mirror.ships.get(localId) : undefined;
-    const mounts = getShipKind(ship?.kind ?? null).mounts ?? [];
-    const angles = ship?.mountAngles;
-    const cosA = Math.cos(shipAngle);
-    const sinA = Math.sin(shipAngle);
-    for (let i = 0; i < mounts.length; i++) {
-      const m = mounts[i]!;
-      // Not this group, or no aim (a mining laser leaves a haulable piece to the tractors, as the server).
-      if (this._fcMountGroup.get(m.id) !== groupId || this.fcMountAimKey(m.id, sx, sy, shipAngle) === null) continue;
-      const ox = sx + (m.localX * cosA - m.localY * sinA);
-      const oy = sy + (m.localX * sinA + m.localY * cosA);
-      if (mountFiresOn(m.weaponId, mountWeaponReach(m), ox, oy, shipAngle + m.baseAngle + (angles?.[i] ?? 0), t)) return true;
-    }
-    return false;
-  }
-
-  /** May this one mount (world origin + barrel angle) fire at its group's aim target (`mountFiresOn`)?
-   *  `size`: the mount's (a mining tool's reach scales with it, `weaponIdReach`). */
-  private fcMountBears(mountId: string, weaponId: WeaponId, size: WeaponMount['size'], ox: number, oy: number, angle: number): boolean {
-    // Capitals fire one turret at a time: only the mounts in this salvo.
-    if (this._fcSalvo.size > 0 && !this._fcSalvo.has(mountId)) return false;
-    const localId = this.mirror.localPlayerId;
-    const ship = localId ? this.mirror.ships.get(localId) : undefined;
-    const key = this.fcMountAimKey(mountId, ship?.x ?? ox, ship?.y ?? oy, ship?.angle ?? 0);
-    if (key === null || !this.fcTargetPose(key, this._fcBearPose)) return false;
-    return mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._fcBearPose);
-  }
-  private readonly _fcBearPose: FireTargetShape = newFireTargetShape();
-
-  private fcFireTick(spaceHeld: boolean): void {
-    const localId = this.mirror.localPlayerId;
-    if (!localId || this.localDead || !this.predWorld || !this.room || this.isLocallyDisabled()) return;
-    const st = this.predWorld.getShipState(localId);
-    if (!st) return;
-    this.fcSyncKind(this.mirror.ships.get(localId)?.kind ?? null);
-    const activeGroup = useUIStore.getState().activeGroupId;
-    const nowMs = this.clock.now();
-    this._fcBearing.clear();
-    let beamGroup: string | null = null;
-    for (const g of this._fcGroups) {
-      let lockedKey: string | null = null;
-      for (const l of g.l) if (l.s === 2) { lockedKey = l.t; break; }
-      if (lockedKey === null) continue;
-      const wants = g.m === 0 || this._fcHeld === g.id || (spaceHeld && g.id === activeGroup);
-      if (!wants) continue;
-      const info = this._fcInfo.get(g.id);
-      if (!info) continue;
-      if (this._fcPerMount) {
-        // Capitals: each turret fires on its own reload once it bears on its
-        // own share of the group's locks (server: PlayerFireResolver per-mount).
-        if (this.fcFireMounts(g.id, info, st, nowMs) && beamGroup === null && info.mode === 'hitscan') beamGroup = g.id;
-        continue;
-      }
-      if (!this.fcTargetPose(lockedKey, this._fcPose)) continue;
-      // Only when a mount of this group reaches the target's hull and its
-      // barrel is on the target (fixed guns: the nose; turrets: their slewed
-      // angle — a turret parked at its arc limit never is). Same rule the
-      // server enforces (#15).
-      if (!this.fcGroupBears(g.id, st.x, st.y, st.angle, this._fcPose)) continue;
-      if (!canAfford(this.predEnergy, info.energyCost)) continue;
-      // A firing hitscan group draws the continuous predicted beam (the own
-      // `laser_fired` is skipped: own shots show as liveBeams).
-      if (beamGroup === null && info.mode === 'hitscan') beamGroup = g.id;
-      const last = this._fcLastFireMs.get(g.id);
-      if (last !== undefined && nowMs - last < info.cooldownMs) continue;
-      const floor = (this._fcLastFireTick.get(g.id) ?? -1e9) + info.cooldownTicks;
-      const sendTick = Math.max(this.inputTick, floor);
-      this._fireSlotOverride = g.id;
-      try {
-        this.sendFire(sendTick);
-      } finally {
-        this._fireSlotOverride = null;
-      }
-      this._fcLastFireMs.set(g.id, nowMs);
-      this._fcLastFireTick.set(g.id, sendTick);
-      this.lastFiredAtTick = sendTick;
-      if (info.mode === 'hitscan') this._lastHitscanFireMs = nowMs;
-    }
-    if (beamGroup !== null) {
-      this._fireSlotOverride = beamGroup;
-      try {
-        this.updateLiveBeam();
-      } finally {
-        this._fireSlotOverride = null;
-      }
-    }
-  }
-
-  /**
-   * Capital fire pass for one group: every mount that bears on ITS lock
-   * (`fcMountAimKey`) and has reloaded joins the salvo, which goes out as one
-   * group fire carrying only those mounts' ghosts. Returns true when any
-   * mount of the group bears (reloaded or not), for the live beam.
-   */
-  private fcFireMounts(
-    groupId: string, info: { energyCost: number; mode: WeaponDef['mode'] },
-    st: { x: number; y: number; angle: number }, nowMs: number,
-  ): boolean {
-    const localId = this.mirror.localPlayerId;
-    const ship = localId ? this.mirror.ships.get(localId) : undefined;
-    const mounts = getShipKind(ship?.kind ?? null).mounts ?? [];
-    const angles = ship?.mountAngles;
-    const cosA = Math.cos(st.angle);
-    const sinA = Math.sin(st.angle);
-    const salvo = this._fcSalvo;
-    salvo.clear();
-    let bears = false;
-    for (let i = 0; i < mounts.length; i++) {
-      const m = mounts[i]!;
-      if (this._fcMountGroup.get(m.id) !== groupId) continue;
-      const def = this._fcMountDef.get(m.id);
-      if (!def) continue;
-      const key = this.fcMountAimKey(m.id, st.x, st.y, st.angle);
-      if (key === null || !this.fcTargetPose(key, this._fcPose)) continue;
-      const ox = st.x + (m.localX * cosA - m.localY * sinA);
-      const oy = st.y + (m.localX * sinA + m.localY * cosA);
-      // In the mount's own reach of the target's hull AND on bearing (#15).
-      if (!mountFiresOn(m.weaponId, def.reach, ox, oy, st.angle + m.baseAngle + (angles?.[i] ?? 0), this._fcPose)) continue;
-      bears = true;
-      this._fcBearing.add(m.id);
-      const cd = getWeapon(m.weaponId).cooldownTicks;
-      const lastMs = this._fcMountLastMs.get(m.id);
-      if (lastMs !== undefined && nowMs - lastMs < (cd * 1000) / 60) continue;
-      if (this.inputTick < (this._fcMountLastTick.get(m.id) ?? -1e9) + cd) continue;
-      salvo.add(m.id);
-    }
-    if (salvo.size === 0 || !canAfford(this.predEnergy, info.energyCost)) {
-      salvo.clear();
-      return bears;
-    }
-    const sendTick = this.inputTick;
-    for (const id of salvo) {
-      this._fcMountLastMs.set(id, nowMs);
-      this._fcMountLastTick.set(id, sendTick);
-    }
-    this._fireSlotOverride = groupId;
-    try {
-      this.sendFire(sendTick);
-    } finally {
-      this._fireSlotOverride = null;
-      salvo.clear();
-    }
-    this._fcLastFireMs.set(groupId, nowMs);
-    this._fcLastFireTick.set(groupId, sendTick);
-    this.lastFiredAtTick = sendTick;
-    if (info.mode === 'hitscan') this._lastHitscanFireMs = nowMs;
-    return bears;
-  }
+  // ── Fire control: `FireControlClient` (one-line delegates) ────
+  private readonly fc = new FireControlClient(this.mirror, {
+    room: () => this.room,
+    now: () => this.clock.now(),
+    canFire: () => !this.localDead && this.predWorld !== null && this.room !== null && !this.isLocallyDisabled(),
+    shipState: (id) => this.predWorld!.getShipState(id),
+    predEnergy: () => this.predEnergy,
+    inputTick: () => this.inputTick,
+    sendFire: (tick) => this.sendFire(tick),
+    updateLiveBeam: () => this.updateLiveBeam(),
+    fired: (tick) => { this.lastFiredAtTick = tick; },
+    hitscanFired: (nowMs) => { this._lastHitscanFireMs = nowMs; },
+  });
+  requestLock(groupId: string, targetKey: string): void { this.fc.requestLock(groupId, targetKey); }
+  fcGroupReach(groupId: string): number { return this.fc.fcGroupReach(groupId); }
+  cancelLock(groupId: string, targetKey?: string): void { this.fc.cancelLock(groupId, targetKey); }
+  setGroupMode(groupId: string, mode: 'auto' | 'manual'): void { this.fc.setGroupMode(groupId, mode); }
+  setGroupHeld(groupId: string | null): void { this.fc.setGroupHeld(groupId); }
+  updateLockGuide(bearing: number): string | null { return this.fc.updateLockGuide(bearing); }
+  guideLock(bearing: number): void { this.fc.guideLock(bearing); }
+  releaseLockGuide(): void { this.fc.releaseLockGuide(); }
+  lockSelected(): boolean { return this.fc.lockSelected(); }
 
   private localShipMounts(): ReadonlyArray<WeaponMount> {
     const localId = this.mirror.localPlayerId;
@@ -6667,7 +5799,7 @@ export class ColyseusGameClient {
     // the server fires each mount's bound weapon. Same shared resolver the
     // server uses (resolveInstanceFireMounts) so client ghost geometry matches.
     // Un-upgraded ⇒ exactly the active slot (byte-identical).
-    return resolveInstanceFireMounts(getShipKind(kindId), ship?.activatedMounts, this._fireSlotOverride ?? useUIStore.getState().activeSlotId);
+    return resolveInstanceFireMounts(getShipKind(kindId), ship?.activatedMounts, this.fc._fireSlotOverride ?? useUIStore.getState().activeSlotId);
   }
 
   /**
@@ -6972,7 +6104,7 @@ export class ColyseusGameClient {
     if (!localId || !this.predWorld || !this.room) return;
     const state = this.predWorld.getShipState(localId);
     if (!state) return;
-    const activeSlotId = this._fireSlotOverride ?? useUIStore.getState().activeSlotId;
+    const activeSlotId = this.fc._fireSlotOverride ?? useUIStore.getState().activeSlotId;
     const shotId = nextShotId();
 
     // Multi-mount/turret refactor (Phase 3 fix-up): spawn one ghost per mount
@@ -7037,7 +6169,7 @@ export class ColyseusGameClient {
         // Fire control: the server fires only mounts that bear on their lock,
         // so a mount that doesn't gets no predicted bolt (the "ghost bolts"
         // from capital turrets still slewing). Same rule, shared (#15).
-        if (this._fireSlotOverride !== null && !this.fcMountBears(mount.id, mount.weaponId, mount.size, mountWorldX, mountWorldY, mountFireAngle)) continue;
+        if (this.fc._fireSlotOverride !== null && !this.fc.fcMountBears(mount.id, mount.weaponId, mount.size, mountWorldX, mountWorldY, mountFireAngle)) continue;
         const fwdX = -Math.sin(mountFireAngle);
         const fwdY = Math.cos(mountFireAngle);
         const muzzleD = this.localMuzzle(mount);
