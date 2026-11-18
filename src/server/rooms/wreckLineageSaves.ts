@@ -108,6 +108,8 @@ export class BattleWreckSaves {
   }
 
   private write(root: number): void {
+    // A field lineage is the wreck field's (WreckFieldSource), never a battle row.
+    if (this.s.wrecks.get(root)?.origin === 'field') return;
     const rec = collectLineage(root, this.deps);
     let serial = this.serials.get(root);
     if (rec === null || rec.pieces.length === 0) {

@@ -218,9 +218,13 @@ export interface HitEntry {
  *  start of the hold. `poses`: by piece index, an exact spawn pose (no
  *  kick). `skipPieces`: piece indices left out. `origin` (default
  *  `battle`): the lineage's origin, its FIFO list. `sleeping`: every piece
- *  spawns asleep (laid out at rest). */
+ *  spawns asleep (laid out at rest). `owner`: the descriptor's livery owner
+ *  as given (a field hull's faction id) instead of `ownerOf`. `cool`: no
+ *  `deathTick` on the descriptor (a joiner draws it long dead). */
 export interface SpawnWreckOpts {
   readonly held: boolean;
+  readonly owner?: string;
+  readonly cool?: boolean;
   readonly origin?: WreckOrigin;
   readonly sleeping?: boolean;
   readonly deathTick?: number;
