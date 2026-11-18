@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
-import { LOCK_CONSUMABLE, LOCK_SALVAGE, TURRET_NO_LOCK, lockTierBits, pickTurretLock } from './turretLockPick.js';
+import { LOCK_CONSUMABLE, LOCK_HAUL, LOCK_SALVAGE, TURRET_NO_LOCK, lockTierBits, pickTurretLock } from './turretLockPick.js';
 import { SALVAGE_TIER_NONE, mountTier } from './salvageTargeting.js';
 
 // Salvage share-out (owner 2026-11-16): a group's mining lasers spread over
@@ -157,6 +157,15 @@ describe('pickTurretLock: consumable pieces (the factory line)', () => {
     const group = [mount('tractor', 'L'), mount('tractor', 'S')];
     expect(picks(group, [30], [C])).toEqual([TURRET_NO_LOCK, TURRET_NO_LOCK]);
     expect(picks(group, [30, 40], [C, tierOf('S')])).toEqual([1, 1]);
+  });
+});
+
+describe('pickTurretLock: hauled rock pieces (owner 2026-11-17)', () => {
+  it('no laser cuts a hauled rock piece; a tractor that pulls its tier still takes it', () => {
+    const H = tierOf('S') | LOCK_HAUL;
+    expect(picks([mount('mining_laser', 'AA')], [30], [H])).toEqual([TURRET_NO_LOCK]);
+    expect(picks([mount('mining_laser', 'AA')], [30, 20], [H, tierOf('S')])).toEqual([1]);
+    expect(picks([mount('tractor', 'L')], [30], [H])).toEqual([0]);
   });
 });
 

@@ -193,7 +193,7 @@ export function createDevRouter(deps: DevRouterDeps): ExpressRouter {
   // POST /dev/player-ships/:shipId/abandon — Phase 3 roster abandonment.
   // Body: { playerId: string }. Drops a stored / lingering ship from the
   // roster. Returns 409 when the ship is currently active.
-  router.post('/dev/player-ships/:shipId/abandon', devPlayerShipsAbandonHandler);
+  router.post('/dev/player-ships/:shipId/abandon', (req, res) => { void devPlayerShipsAbandonHandler(req, res); });
 
   // POST /dev/reset-sector?key=<roomName> — surgical reset for smoke testing.
   // Wipes one (or all) sector's in-memory + persisted swarm state and forces
