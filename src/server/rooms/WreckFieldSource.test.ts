@@ -375,7 +375,7 @@ describe('WreckFieldSource.dormantObstacles (wreck fields 7: placement sees unlo
     expect(out).toContainEqual(expect.objectContaining({ x: big.x, y: big.y, radius: big.radius, angle: big.angle }));
     expect(out.find((o) => o.x === big.x)!.parts).toEqual(big.parts);
     expect(placementRejection('connector', big.x, big.y, [], out)).toBe('overlap-obstacle');
-    // Wrecks off (link line of sight, landing): the host gives no hull.
+    // Wrecks off (link line of sight): the host gives no hull.
     const off: GridObstacle[] = [];
     host(t.src).dormantObstacles(box(big.x, big.y), off);
     expect(off).toEqual([]);
@@ -392,6 +392,17 @@ describe('WreckFieldSource.dormantObstacles (wreck fields 7: placement sees unlo
     for (let i = 0; i < 9; i++) { const t0 = performance.now(); t.src.dormantObstacles(box(cap.x, cap.y, 200), []); ms.push(performance.now() - t0); }
     ms.sort((p, q) => p - q);
     console.log(`[wreck-fields 7] placement query over an unloaded ${cap.kindId}: p50 ${ms[4]!.toFixed(2)} ms`);
+  });
+
+  it('wreck fields 14: landing (footprints) gets an unloaded hull as one footprint circle, a loaded one nothing', () => {
+    const t = make();
+    const fp: GridObstacle[] = [];
+    host(t.src).dormantObstacles(box(hull.x, hull.y), fp, 'footprints');
+    expect(fp).toEqual([{ x: hull.x, y: hull.y, radius: hull.footprint }]);
+    t.src.step(needed, 100, 0);
+    const live: GridObstacle[] = [];
+    host(t.src).dormantObstacles(box(hull.x, hull.y), live, 'footprints');
+    expect(live).toEqual([]);
   });
 
   it('a loaded hull gives nothing (its live pieces are already obstacles); a consumed one nothing; a saved one its row poses', () => {

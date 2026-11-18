@@ -27,7 +27,7 @@ import type { WreckOrigin } from './capitalWreckTypes.js';
  *  Since wreck fields 11 (a 7 km core) one ring holds nearly a whole field,
  *  so the worst loaded set with any number of ships is one whole field
  *  (wreck fields 13: at most 357 pieces, test seed `thornfield`; galaxy
- *  fields at most 347), under the cap
+ *  fields at most 350 since wreck fields 14), under the cap
  *  (macro-terrain.md "F3"). The streamer keeps that ring loaded around each
  *  ship (macro-terrain.md "One streamer, several sources"). */
 export const FIELD_RING_WORST_PIECES = 56;

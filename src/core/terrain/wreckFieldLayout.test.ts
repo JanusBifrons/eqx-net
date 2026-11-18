@@ -89,16 +89,23 @@ describe('wreckFieldLayout', () => {
     expect(caps).toBeGreaterThan(0);
   });
 
-  it('wreck fields 13: no footprint comes within rimGap of an arrival rim; hulls lie both inside and outside it', () => {
-    const rim = { x: 0, y: 0, r: 3000 };
-    const f = typical('thornfield', { clearings: [{ x: 0, y: 0, r: 1800 }], rims: [rim] });
-    let inside = 0;
-    for (const h of f.hulls) {
-      const d = Math.hypot(h.x - rim.x, h.y - rim.y);
-      expect(Math.abs(d - rim.r)).toBeGreaterThanOrEqual(h.footprint + WRECK_FIELD.rimGap);
-      if (d < rim.r) inside++;
+  it('wreck fields 14: an arrival spot stays clear, with wrecks seated round it on every side of a phone view', () => {
+    const spots = [0, 1, 2, 3].map((i) => ({ x: Math.cos(i * Math.PI / 2) * 3000, y: Math.sin(i * Math.PI / 2) * 3000, r: 300 }));
+    const plain = typical('thornfield', { clearings: [{ x: 0, y: 0, r: 1800 }] });
+    const f = typical('thornfield', { clearings: [{ x: 0, y: 0, r: 1800 }], arrivals: spots });
+    // The same hulls, only placed differently.
+    expect(f.hulls.length + f.dropped).toBe(plain.hulls.length + plain.dropped);
+    for (const s of spots) {
+      for (const h of f.hulls) expect(Math.hypot(h.x - s.x, h.y - s.y)).toBeGreaterThanOrEqual(s.r + h.footprint);
+      // Its seated hulls lie in the box round it, on most of its sides (the
+      // quarters the box's diagonals cut).
+      const seated = f.hulls.filter((h) => Math.abs(h.x - s.x) <= WRECK_FIELD.arrivalHalfW && Math.abs(h.y - s.y) <= WRECK_FIELD.arrivalHalfH);
+      expect(seated.length).toBeGreaterThanOrEqual(WRECK_FIELD.arrivalHulls);
+      const sides = new Set(seated.map((h) => Math.round(Math.atan2((h.y - s.y) / WRECK_FIELD.arrivalHalfH, (h.x - s.x) / WRECK_FIELD.arrivalHalfW) / (Math.PI / 2)) & 3));
+      expect(sides.size).toBeGreaterThanOrEqual(3);
     }
-    expect(inside).toBeGreaterThan(0);
+    // No arrivals: the layout is unchanged by the option's absence.
+    expect(typical('thornfield', { clearings: [{ x: 0, y: 0, r: 1800 }], arrivals: [] }).hulls).toEqual(plain.hulls);
   });
 
   it('never overlaps rocks when given the rock field', () => {

@@ -99,7 +99,7 @@ export function fieldHullPieces(hull: WreckFieldHull): { pieces: WreckPieceSpec[
  *  its seed, the two sides that fought there (faction ids) and, optionally,
  *  its own open clearings (galaxy sectors: every pocket; else the cut
  *  field's). */
-export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings' | 'rims'> & {
+export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings' | 'arrivals'> & {
   /** Dev look flag (wreck fields 9, owner Q4 stills): seed hulls spawn
    *  freshly dead (a `deathTick` at load: hot cut edges that cool on the
    *  normal schedule) instead of cool. Off by default; dev room
@@ -483,25 +483,29 @@ export class WreckFieldSource implements ChunkSource {
    *  with a lineage row gives its saved pieces at their saved poses (the
    *  restore resolver, `resolveLineageGeometry`); a consumed one nothing;
    *  else its seed pieces (`fieldHullPieces`). Nothing when wrecks are off.
+   *  With `footprints` (landing, wreck fields 14) each such hull is one
+   *  circle, its seed footprint, with no fracture: a warp drop or spawn never
+   *  lands a ship of any size inside an unloaded hull.
    *  A discrete player action, never per tick; allocates. */
-  dormantObstacles(box: ObstacleBox, out: GridObstacle[]): void {
+  dormantObstacles(box: ObstacleBox, out: GridObstacle[], footprints = false): void {
     if (this.d.wrecks() === undefined || this.field.hulls.length === 0) return;
     const r = this.reach;
     const cx0 = Math.floor((box.x0 - r) / CHUNK_SIZE), cx1 = Math.floor((box.x1 + r) / CHUNK_SIZE);
     const cy0 = Math.floor((box.y0 - r) / CHUNK_SIZE), cy1 = Math.floor((box.y1 + r) / CHUNK_SIZE);
     if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > this.field.byChunk.size) {
-      for (const h of this.field.hulls) this.dormantHull(h, box, out);
+      for (const h of this.field.hulls) this.dormantHull(h, box, out, footprints);
       return;
     }
     for (let cy = cy0; cy <= cy1; cy++) {
-      for (let cx = cx0; cx <= cx1; cx++) for (const h of hullsInChunk(this.field, cx, cy)) this.dormantHull(h, box, out);
+      for (let cx = cx0; cx <= cx1; cx++) for (const h of hullsInChunk(this.field, cx, cy)) this.dormantHull(h, box, out, footprints);
     }
   }
 
-  private dormantHull(h: WreckFieldHull, box: ObstacleBox, out: GridObstacle[]): void {
+  private dormantHull(h: WreckFieldHull, box: ObstacleBox, out: GridObstacle[], footprints: boolean): void {
     if (this.live.has(h.key) || !circleMeetsBox(h.x, h.y, h.footprint, box)) return;
     const row = this.rows.get(h.key);
     if (row?.consumed === true) return;
+    if (footprints) { out.push({ x: h.x, y: h.y, radius: h.footprint }); return; }
     if (row?.json != null && this.dormantRow(row.json, box, out)) return;
     for (const p of fieldHullPieces(h).pieces) pushPiece(out, box, p.x, p.y, p.radius, p.angle, p.parts);
   }

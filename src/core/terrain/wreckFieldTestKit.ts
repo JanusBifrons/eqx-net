@@ -62,25 +62,31 @@ export function screenLine(f: WreckField, pieces: ReadonlyMap<number, number>, c
   return `default screen: ${s(PHONE_VIEWS.default)} | floor screen: ${s(PHONE_VIEWS.floor)}`;
 }
 
-export interface ArrivalStats { hullsMean: number; hullsFewest: number; empty: number; samples: number; dropBlocked: number }
+export interface ArrivalStats { hullsMean: number; hullsFewest: number; empty: number; samples: number; dropBlocked: number; sidesFewest: number }
 
-/** Wreck fields 13 ("wrecks in view"): warp drops round a pocket rim (every
- *  `360 / samples` degrees), each seen in a `w` x `h` view centred on the drop
- *  point. A hull counts when its body (footprint / `footprintMul`) touches
- *  the view; `dropBlocked` counts drop points inside some hull's footprint. */
-export function arrivalStats(f: WreckField, rim: { x: number; y: number; r: number }, footprintMul: number, w: number, h: number, samples = 72): ArrivalStats {
-  let hs = 0, fewest = Infinity, empty = 0, dropBlocked = 0;
-  for (let i = 0; i < samples; i++) {
-    const a = (i / samples) * 2 * Math.PI;
-    const vx = rim.x + Math.cos(a) * rim.r, vy = rim.y + Math.sin(a) * rim.r;
-    let hc = 0, blocked = false;
+/** Wreck fields 13 ("wrecks in view"): each warp drop point seen in a `w` x
+ *  `h` view centred on it. A hull counts when its body (footprint /
+ *  `footprintMul`) touches the view; `sidesFewest` is the fewest of the
+ *  view's four sides (the quarters its diagonals cut: right, top, left,
+ *  bottom) holding a hull in view (4: wrecks all round, wreck fields 14); `dropBlocked` counts drop points within
+ *  `clearance` of some hull's footprint. */
+export function arrivalStats(f: WreckField, drops: readonly { x: number; y: number }[], footprintMul: number, w: number, h: number, clearance = 0): ArrivalStats {
+  let hs = 0, fewest = Infinity, empty = 0, dropBlocked = 0, sidesFewest = 4;
+  for (const { x: vx, y: vy } of drops) {
+    let hc = 0, blocked = false, sides = 0;
     for (const hull of f.hulls) {
       const body = hull.footprint / footprintMul;
       const dx = Math.max(0, Math.abs(hull.x - vx) - w / 2), dy = Math.max(0, Math.abs(hull.y - vy) - h / 2);
-      if (dx * dx + dy * dy < body * body) hc++;
-      if (Math.hypot(hull.x - vx, hull.y - vy) < hull.footprint) blocked = true;
+      if (dx * dx + dy * dy < body * body) {
+        hc++;
+        sides |= 1 << (Math.round(Math.atan2((hull.y - vy) / h, (hull.x - vx) / w) / (Math.PI / 2)) & 3);
+      }
+      if (Math.hypot(hull.x - vx, hull.y - vy) < hull.footprint + clearance) blocked = true;
     }
-    hs += hc; fewest = Math.min(fewest, hc); if (hc === 0) empty++; if (blocked) dropBlocked++;
+    let n = 0;
+    for (let s = sides; s > 0; s >>= 1) n += s & 1;
+    hs += hc; fewest = Math.min(fewest, hc); if (hc === 0) empty++; if (blocked) dropBlocked++; sidesFewest = Math.min(sidesFewest, n);
   }
-  return { hullsMean: hs / samples, hullsFewest: fewest, empty, samples, dropBlocked };
+  return { hullsMean: hs / drops.length, hullsFewest: fewest, empty, samples: drops.length, dropBlocked, sidesFewest };
 }
+

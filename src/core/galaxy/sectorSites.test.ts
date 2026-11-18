@@ -4,12 +4,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import { GALAXY_SECTORS, GALAXY_FACTIONS, getNeighbours, getSector, axialToPixel } from './galaxy.js';
-import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE, sectorCutField, sectorWreckField, warpDropPoint, FIELD_CLEARING_MARGIN, BELT_CLEARING_MARGIN, fieldClearingRadius, wreckClearingRadius, BATTLE_POCKET_OPEN_CENTRE } from './sectorSites.js';
+import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE, sectorCutField, sectorWreckField, warpDropPoint, FIELD_CLEARING_MARGIN, BELT_CLEARING_MARGIN, fieldClearingRadius, wreckClearingRadius, BATTLE_POCKET_OPEN_CENTRE, isWarpDropPoint, wreckArrivalSpots, WRECK_ARRIVAL } from './sectorSites.js';
 import { cutFieldOpts, fieldRocksInBox } from '../terrain/chunkStreamer.js';
 import { slicedFieldLanes } from '../terrain/fieldLayout.js';
 import { rockFieldBlocker, wreckField, WRECK_FIELD } from '../terrain/wreckFieldLayout.js';
 import { arrivalStats, hullPieceCounts, PHONE_VIEWS, screenLine, worstRing } from '../terrain/wreckFieldTestKit.js';
-import { getShipKind } from '../../shared-types/shipKinds.js';
+import { getShipKind, SHIP_KINDS } from '../../shared-types/shipKinds.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { landingReach } from '../../shared-types/shipScale/landingReach.js';
+import { nearestClearPoint } from '../bases/baseSite.js';
 
 describe('sectorSites', () => {
   it('is deterministic per sector key', () => {
@@ -195,7 +198,40 @@ describe('sectorWreckField (wreck fields F3, slice 8)', () => {
       const own = f.clearings.find((c) => c.x === combat.x && c.y === combat.y)!;
       expect(own.r).toBe(combat.r * BATTLE_POCKET_OPEN_CENTRE);
       expect(own.r).toBeLessThan(combat.r);
-      expect(f.rims).toEqual([{ x: combat.x, y: combat.y, r: combat.r }]);
+      // Wreck fields 14: the drops land on arrival spots round its rim, kept clear.
+      expect(combat.wreckCentre).toBe(true);
+      expect(f.arrivals).toEqual(wreckArrivalSpots(combat).map((p) => ({ ...p, r: WRECK_ARRIVAL.clear })));
+      expect(f.arrivals).toHaveLength(WRECK_ARRIVAL.spots);
+    }
+  });
+
+  it('wreck fields 14: a warp to the field centre lands on the arrival spot facing the ship; every other pocket, and every sector without a field, on the rim as before', () => {
+    for (const s of GALAXY_SECTORS) {
+      const sites = sectorSites(s.key);
+      expect(sites.filter((p) => p.wreckCentre).length, s.key).toBe(s.features.includes('wrecks') ? 1 : 0);
+      for (const site of sites) {
+        const spots = wreckArrivalSpots(site);
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * 2 * Math.PI + 0.1, from = { x: site.x + Math.cos(a) * 60_000, y: site.y + Math.sin(a) * 60_000 };
+          const drop = warpDropPoint(site, from.x, from.y);
+          expect(isWarpDropPoint(s.key, drop.x, drop.y, true), `${s.key} ${site.id}`).toBe(true);
+          if (!site.wreckCentre) {
+            expect(spots).toEqual([]);
+            expect(drop).toEqual({ x: Math.round(site.x + Math.cos(a) * site.r), y: Math.round(site.y + Math.sin(a) * site.r) });
+            continue;
+          }
+          // The nearest spot to the ship's side: within half a spot step of it.
+          expect(spots).toContainEqual(drop);
+          const off = Math.atan2(drop.y - site.y, drop.x - site.x) - a;
+          expect(Math.abs(Math.atan2(Math.sin(off), Math.cos(off)))).toBeLessThanOrEqual(Math.PI / WRECK_ARRIVAL.spots + 1e-3);
+        }
+      }
+    }
+  });
+
+  it('wreck fields 14: a spot is kept clearer than any non-capital kind needs, so the landing never moves a fighter or sub-cap off it', () => {
+    for (const k of Object.values(SHIP_KINDS)) {
+      if (k.sizeClass !== 'capital') expect(shipTuning(k).spawnClearance, k.id).toBeLessThan(WRECK_ARRIVAL.clear);
     }
   });
 
@@ -231,16 +267,33 @@ describe('sectorWreckField (wreck fields F3, slice 8)', () => {
         if (k.sizeClass === 'capital') byClass.cap++; else if (k.radius >= WRECK_FIELD.subcapMinRadius) byClass.sub++; else byClass.ftr++;
         kinds[h.kindId] = (kinds[h.kindId] ?? 0) + 1;
       }
-      const arr = arrivalStats(field, f.rims[0]!, WRECK_FIELD.footprintMul, PHONE_VIEWS.default.w, PHONE_VIEWS.default.h);
-      console.log(`[wreck fields] ${s.key}${cut ? ' (+rocks)' : ''}: ${field.hulls.length} hulls (cap ${byClass.cap} sub ${byClass.sub} ftr ${byClass.ftr}) ${JSON.stringify(kinds)}, ${field.dropped} dropped, ${total} pieces, sides ${f.sides.join(' vs ')} | ${screenLine(field, p, WRECK_FIELD.coreRadius)} | worst ring ${ring.pieces} pieces (${ring.hulls} hulls) | arrival (default view, ${arr.samples} rim drops): hulls mean ${arr.hullsMean.toFixed(1)} fewest ${arr.hullsFewest}, empty ${arr.empty}, drop blocked ${arr.dropBlocked}`);
-      // Wreck fields 13 ("wrecks in view"): every rim drop lands clear, and
-      // nearly every one (all but 4 of 72; tideglass misses 3 straight-down
-      // drops, where a sideways screen sees least of the ring) has wrecks on
-      // a default phone screen.
-      expect(arr.dropBlocked, `${s.key}: a rim drop inside a footprint`).toBe(0);
-      expect(arr.empty, `${s.key}: rim drops with no wreck in view`).toBeLessThanOrEqual(4);
+      const centre = sectorSites(s.key).find((p) => p.wreckCentre)!;
+      // Wreck fields 14: drops land on the arrival spots; a fighter's
+      // spawn clearance (the landing's test) must be clear of every footprint.
+      const arr = arrivalStats(field, f.arrivals, WRECK_FIELD.footprintMul, PHONE_VIEWS.default.w, PHONE_VIEWS.default.h, shipTuning(getShipKind('fighter')).spawnClearance);
+      // A destroyer (radius 1,220) at a spot: the landing's ring search
+      // (`SectorRoom.landingPoint` over the hull footprints, which
+      // `SectorObstacles.landing` now gives) moves it clear.
+      const capClear = shipTuning(getShipKind('destroyer')).spawnClearance;
+      const circles = field.hulls.map((h) => ({ x: h.x, y: h.y, r: h.footprint }));
+      let capMoved = 0, capStuck = 0;
+      for (const d of f.arrivals) {
+        const p = nearestClearPoint(d.x, d.y, [], capClear, landingReach(capClear).maxDistance, circles, capClear);
+        const clear = circles.every((c) => Math.hypot(c.x - p.x, c.y - p.y) >= c.r + capClear);
+        if (!clear) capStuck++;
+        capMoved = Math.max(capMoved, Math.hypot(p.x - d.x, p.y - d.y));
+      }
+      console.log(`[wreck fields] ${s.key}${cut ? ' (+rocks)' : ''}: ${field.hulls.length} hulls (cap ${byClass.cap} sub ${byClass.sub} ftr ${byClass.ftr}) ${JSON.stringify(kinds)}, ${field.dropped} dropped, ${total} pieces, sides ${f.sides.join(' vs ')} | ${screenLine(field, p, WRECK_FIELD.coreRadius)} | worst ring ${ring.pieces} pieces (${ring.hulls} hulls) | arrival (default view, ${arr.samples} spots): hulls mean ${arr.hullsMean.toFixed(1)} fewest ${arr.hullsFewest}, empty ${arr.empty}, fewest sides ${arr.sidesFewest}/4, drop blocked ${arr.dropBlocked} | destroyer: moved up to ${Math.round(capMoved)} u, stuck ${capStuck}`);
+      // Wreck fields 14 ("arrive among wrecks"): every drop lands clear, with
+      // wrecks on at least three sides of a default phone screen (measured:
+      // 7.8-8.4 hulls mean, 4-6 fewest, 3-4 sides fewest).
+      expect(arr.dropBlocked, `${s.key}: a drop inside a footprint`).toBe(0);
+      expect(arr.empty, `${s.key}: drops with no wreck in view`).toBe(0);
+      expect(arr.hullsFewest, `${s.key}: fewest hulls in view`).toBeGreaterThanOrEqual(3);
+      expect(arr.sidesFewest, `${s.key}: fewest sides with wrecks`).toBeGreaterThanOrEqual(3);
+      expect(capStuck, `${s.key}: a destroyer found no clear landing`).toBe(0);
       // The open centre stays clear of every footprint.
-      for (const h of field.hulls) expect(Math.hypot(h.x - f.x, h.y - f.y) - h.footprint).toBeGreaterThanOrEqual(f.rims[0]!.r * BATTLE_POCKET_OPEN_CENTRE);
+      for (const h of field.hulls) expect(Math.hypot(h.x - f.x, h.y - f.y) - h.footprint).toBeGreaterThanOrEqual(centre.r * BATTLE_POCKET_OPEN_CENTRE);
       expect(field.hulls.length, s.key).toBeGreaterThan(field.dropped);
       for (const side of sides) expect(f.sides).toContain(side);
       for (const h of field.hulls) for (const c of f.clearings) expect(Math.hypot(h.x - c.x, h.y - c.y), `${s.key} hull in a clearing`).toBeGreaterThanOrEqual(c.r);

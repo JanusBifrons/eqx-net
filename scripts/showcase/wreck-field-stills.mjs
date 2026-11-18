@@ -21,8 +21,10 @@
 // dev room (which sits in a dense rock field), joined as a player would
 // (`?room=galaxy-<key>`: the room `resolveSectorConfig` gives its
 // `wreckField`), laid out here the same way. Per sector:
-//   <key>-arrival.png — the normal play zoom on the battle pocket's rim, where
-//                       a warp from the home pocket drops you;
+//   <key>-arrival.png — the normal play zoom on the arrival spot where a warp
+//                       from the home pocket drops you (warpDropPoint: an
+//                       arrival spot on the battle pocket's rim, wrecks seated
+//                       round it; wreck fields 14);
 //   <key>-dense.png   — the normal play zoom on the densest phone view;
 //   <key>-far.png     — the gameplay zoom-out floor, centred on the core
 //                       (the battle pocket's open centre: no hull within
@@ -160,10 +162,10 @@ if (sectors.length === 0) {
     const FIELD = wreckField({ ...wf, ...(cut ? { blocked: rockFieldBlocker(cutFieldOpts(cut.seed, cut.clearings)) } : {}) });
     const { capital, denseSpawn } = planShots(FIELD, key);
     const sites = sectorSites(key);
-    const pocket = sites.find((s) => s.kind === 'combat') ?? sites.find((s) => s.kind === 'base');
+    const pocket = sites.find((s) => s.wreckCentre);
     const home = sites.find((s) => s.kind === 'home') ?? { x: 0, y: 0 };
     const arrive = warpDropPoint(pocket, home.x, home.y);
-    console.log(`${key}: rock field ${cut ? 'yes' : 'none'}; battle pocket ${pocket.id} at (${pocket.x | 0}, ${pocket.y | 0}) r ${pocket.r}; arrival (warp from home) at (${arrive.x}, ${arrive.y})`);
+    console.log(`${key}: rock field ${cut ? 'yes' : 'none'}; battle pocket ${pocket.id} at (${pocket.x | 0}, ${pocket.y | 0}) r ${pocket.r}; arrival (warp from home) at spot (${arrive.x}, ${arrive.y})`);
     const room = `galaxy-${key}`;
     RUNS.push({ prefix: key, room, name: 'arrival', spawnX: arrive.x, spawnY: arrive.y });
     RUNS.push({ prefix: key, room, name: 'dense', spawnX: denseSpawn.x, spawnY: denseSpawn.y });

@@ -27,7 +27,7 @@ import { fieldRocksInBox } from './chunkStreamer.js';
 
 /** Bump on ANY change to the hulls a seed gives: saved field-hull records are
  *  keyed by it (`layout_version`), and a mismatch discards them. */
-export const WRECK_FIELD_VERSION = 3;
+export const WRECK_FIELD_VERSION = 4;
 
 /** The layout's knobs (owner Q1: a few mid-size fields plus a couple of
  *  debris trails). Counts are tuned against owner stills: 2026-11-18 the
@@ -81,9 +81,16 @@ export const WRECK_FIELD = {
    *  (wreck fields 13: was up to 1.5 core radii, ~20 km out): the hull still
    *  overlaps the core, and a big one fits round an open battle pocket. */
   capitalOverhang: 0.5,
-  /** Clear band either side of an arrival rim (`WreckFieldOpts.rims`), u:
-   *  a warp drop on the rim lands clear of every footprint. */
-  rimGap: 120,
+  /** Hulls seated round each arrival spot (`WreckFieldOpts.arrivals`,
+   *  wreck fields 14, owner "arrive among wrecks"): sub-caps and fighters
+   *  taken from the core's share, spread round the spot so a warp drop there
+   *  sees wrecks on every side. */
+  arrivalHulls: 6,
+  /** Half extents (u) of the box round an arrival spot its hulls sit in:
+   *  inside a sideways phone's default view (2,600 x 1,160 u), less a
+   *  margin, so they are on screen on arrival. */
+  arrivalHalfW: 1150,
+  arrivalHalfH: 480,
   /** Tries per hull before it is dropped (a crowded or rocky spot). */
   attempts: 60,
 } as const;
@@ -148,10 +155,11 @@ export interface WreckFieldOpts {
   sides: readonly [FactionId, FactionId];
   /** Open clearings (gates, stations): no footprint reaches into one. */
   clearings?: readonly FieldClearing[];
-  /** Arrival rims (warp drops land on a pocket's rim): no footprint comes
-   *  within `WRECK_FIELD.rimGap` of the circle, so hulls lie either side of
-   *  it, the ring inside a pocket and the field outside. */
-  rims?: readonly FieldClearing[];
+  /** Arrival spots (warp drops land on them): each is kept clear like a
+   *  clearing (no footprint within `r`), and `WRECK_FIELD.arrivalHulls` of
+   *  the core's small hulls are seated round it, so a drop lands clear with
+   *  wrecks round it. */
+  arrivals?: readonly FieldClearing[];
   /** Occupied space (rocks): a blocked footprint is tried elsewhere. */
   blocked?: WreckFieldBlocker;
   /** The room's wreck switches (`wreckKindAllowed`); default both on. */
@@ -227,8 +235,20 @@ export function wreckField(o: WreckFieldOpts): WreckField {
   add(kinds.subcaps, W.subcaps, true, W.subcapSizePow);
   add(kinds.fighters, W.fighters, true, 0);
 
-  const clearings = o.clearings ?? [];
-  const rims = o.rims ?? [];
+  const arrivals = o.arrivals ?? [];
+  const clearings = arrivals.length > 0 ? [...(o.clearings ?? []), ...arrivals] : o.clearings ?? [];
+  // Seat round the arrival spots an even spread of the small core hulls
+  // (sub-caps and fighters alike), round-robin over the spots, until each has
+  // its share: by the hull's index in the plan, its spot and place round it.
+  const seat = new Map<number, { spot: number; k: number }>();
+  const isSmallCore = (h: number): boolean => plan[h]!.core && getShipKind(plan[h]!.kind).sizeClass !== 'capital';
+  const want = arrivals.length * W.arrivalHulls;
+  let smallCore = 0;
+  for (let h = 0; h < plan.length; h++) if (isSmallCore(h)) smallCore++;
+  const stride = want > 0 ? Math.max(1, Math.floor(smallCore / want)) : 1;
+  for (let h = 0, small = 0; h < plan.length && seat.size < want; h++) {
+    if (isSmallCore(h) && small++ % stride === 0) seat.set(h, { spot: seat.size % arrivals.length, k: Math.floor(seat.size / arrivals.length) });
+  }
   const placed: Array<{ x: number; y: number; r: number }> = [];
   const free = (x: number, y: number, r: number): boolean => {
     for (const p of placed) {
@@ -238,9 +258,6 @@ export function wreckField(o: WreckFieldOpts): WreckField {
     for (const k of clearings) {
       const dx = k.x - x, dy = k.y - y, m = k.r + r;
       if (dx * dx + dy * dy < m * m) return false;
-    }
-    for (const k of rims) {
-      if (Math.abs(Math.hypot(k.x - x, k.y - y) - k.r) < r + W.rimGap) return false;
     }
     return !o.blocked || !o.blocked(x, y, r);
   };
@@ -252,9 +269,16 @@ export function wreckField(o: WreckFieldOpts): WreckField {
     const k = getShipKind(kind), capital = k.sizeClass === 'capital';
     const r = k.radius * (capital ? W.capitalFootprintMul : W.footprintMul);
     let spot: { x: number; y: number; zone: WreckFieldZone } | null = null;
+    const seatAt = seat.get(h);
     for (let a = 0; a < W.attempts && !spot; a++) {
       let x: number, y: number;
-      if (core || trails.length === 0) {
+      if (seatAt !== undefined && a < W.attempts / 2) {
+        // Seated round an arrival spot: its own slice of the turn (the
+        // spot's hulls spread round it), out toward the box's edge.
+        const s = arrivals[seatAt.spot]!;
+        const turn = ((seatAt.k + unit(place)) / W.arrivalHulls) * 2 * Math.PI, t = 0.4 + 0.6 * unit(place);
+        x = s.x + Math.cos(turn) * W.arrivalHalfW * t; y = s.y + Math.sin(turn) * W.arrivalHalfH * t;
+      } else if (core || trails.length === 0) {
         // Uniform over the core disc. A capital's centre may lie up to
         // `capitalOverhang` footprints past its rim (a 4-9 km footprint has
         // little room in a 7 km core round an open battle pocket).
