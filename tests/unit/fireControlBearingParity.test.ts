@@ -38,7 +38,7 @@ describe('barrelBearsOn (#15)', () => {
     // `features/fireControlLocks.ts`; the rest of the room in `SectorRoom.ts`.
     const server = readFileSync('src/server/rooms/SectorRoom.ts', 'utf8') +
       readFileSync('src/server/rooms/features/fireControlLocks.ts', 'utf8');
-    const client = readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
+    const client = readFileSync('src/client/net/FireControlClient.ts', 'utf8') + readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
     // `mountFiresOn` = per-mount range to the hull (`mountInReach`) AND
     // the per-weapon bearing rule (`mountBearsOn`), on a shape both fill with
     // `fillFireTargetShape`.
@@ -99,7 +99,7 @@ describe('mountInReach on a FireTargetShape / mountFiresOn', () => {
     // Every pilot range shape too: no hand-written `kindId = …kind; … radius = 0` fills.
     expect(server).not.toMatch(/\.kindId = h\.ship\.kind;/);
     // The client's turret range shape (`fcTargetShape`) mirrors it.
-    const client = readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
+    const client = readFileSync('src/client/net/FireControlClient.ts', 'utf8');
     const fc = method(client, 'private fcTargetShape(');
     expect(fc).toMatch(/fillRangeShape\(/);
     expect(fc).not.toMatch(/\.kindId = /);
