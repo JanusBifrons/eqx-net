@@ -39,3 +39,23 @@ export function placeInspector(
   out.top = minY > maxY ? maxY : Math.max(minY, Math.min(maxY, ssy));
   return out;
 }
+
+/**
+ * A HELD panel (a pointer is on it: inspectorHold.ts) keeps its spot so taps
+ * land, but if it grew (a loot window opening) the whole panel is clamped
+ * back on screen. `left`/`top` are its current anchor (NaN = never placed:
+ * leave it). Writes `out`; true when it must move.
+ */
+export function reclampHeldInspector(
+  left: number,
+  top: number,
+  panelW: number,
+  panelH: number,
+  viewW: number,
+  viewH: number,
+  out: InspectorAnchor,
+): boolean {
+  if (!Number.isFinite(left) || !Number.isFinite(top)) return false;
+  placeInspector(left, top, panelW, panelH, viewW, viewH, out);
+  return Math.abs(out.left - left) > 0.5 || Math.abs(out.top - top) > 0.5;
+}

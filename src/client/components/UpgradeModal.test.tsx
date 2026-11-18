@@ -5,13 +5,13 @@
  * draft math is unit-locked in `upgradeModalDraft.test.ts`; this locks the React
  * wiring (rows, points readout, button gating).
  */
+import type { RosterEntry } from '../state/storeTypes';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { UpgradeModal } from './UpgradeModal';
 import { useUIStore } from '../state/store';
-import type { RosterShipEntry } from './ShipRosterCard';
 
-function makeShip(over: Partial<RosterShipEntry> = {}): RosterShipEntry {
+function makeShip(over: Partial<RosterEntry> = {}): RosterEntry {
   return {
     shipId: 'ship-1',
     kind: 'fighter',
