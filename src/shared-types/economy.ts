@@ -149,6 +149,11 @@ export interface PlayerEconomyView {
   rep: Record<EconAllegiance, number>;
   deals: TradeDealView[];
   history: TradeHistoryEntry[];
+  /** Join flow stage 5: the pilot's credits (may be negative: launch debt)
+   *  and free capital launches left, so the Hangar can show them before the
+   *  pilot is in a room (the in-room snapshot carries the same two). */
+  wallet?: number;
+  freeLaunches?: number;
 }
 
 // ── Client → server messages (strict zod, invariant #3) ─────────────────────
@@ -238,6 +243,8 @@ export const PlayerEconomyViewSchema = z.object({
   rep: repSchema,
   deals: z.array(TradeDealViewSchema),
   history: z.array(TradeHistoryEntrySchema),
+  wallet: z.number().optional(),
+  freeLaunches: z.number().int().nonnegative().optional(),
 });
 
 export const TRADE_NOTICE_EVENTS = [

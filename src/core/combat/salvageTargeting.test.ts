@@ -8,7 +8,7 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import {
   SALVAGE_HAUL_DIST_PER_DREF, SALVAGE_HAUL_MIN_ACCEL, SALVAGE_TARGET_CLASS,
   SALVAGE_TIER_NONE, SALVAGE_TIER_SIZES, hasMiningTool, isSalvageWeapon, laserCutsTier, laserRungMask, mountTier,
-  salvageConsumable, salvageConsumeMass, salvagePrefersBig, salvageTier, salvageTierMass, tractorTakesTier,
+  ROCK_CHUNK_MIN_WEIGHT, rockChunkWeight, salvageConsumable, salvageConsumeMass, salvagePrefersBig, salvageTier, salvageTierMass, tractorTakesTier,
 } from './salvageTargeting.js';
 
 const mount = (id: string, weaponId: WeaponMount['weaponId'], size?: WeaponMount['size']): WeaponMount => ({
@@ -124,11 +124,21 @@ describe('consumable: a piece this ship can take in whole (the factory line)', (
     expect(salvageConsumable({ mass: 1, holdWeight: 1 }, 0, 1000), 'no mining tool').toBe(false);
   });
 
-  it('a rock piece is never consumable: the lasers cut it down to ore pods', () => {
+  it('a rock piece goes in whole as one chunk: only its weight against the free hold counts', () => {
     const m = salvageConsumeMass(getShipKind('barge'));
     const ore = { rockId: 'r', resource: 'rock', perArea: 1 } as const;
-    expect(salvageConsumable({ mass: 1, holdWeight: 1, ore }, m, 1000)).toBe(false);
-    expect(salvageConsumable({ mass: 1, holdWeight: 1, ore: undefined }, m, 1000), 'a wreck crumb still is').toBe(true);
+    expect(salvageConsumable({ mass: 1, holdWeight: 250, ore }, m, 1000)).toBe(true);
+    expect(salvageConsumable({ mass: m * 50, holdWeight: 900, ore }, m, 1000), 'no mass cap for a chunk').toBe(true);
+    expect(salvageConsumable({ mass: 1, holdWeight: 1200, ore }, m, 1000), 'too heavy for the free hold').toBe(false);
+    expect(salvageConsumable({ mass: 1, holdWeight: 250, ore }, 0, 1000), 'no mining tool').toBe(false);
+    expect(salvageConsumable({ mass: m * 50, holdWeight: 5, ore: undefined }, m, 1000), 'a big wreck piece is still cut first').toBe(false);
+  });
+
+  it('a rock chunk weighs at least 250 and grows with its mass', () => {
+    expect(rockChunkWeight(0)).toBe(ROCK_CHUNK_MIN_WEIGHT);
+    expect(rockChunkWeight(1)).toBe(ROCK_CHUNK_MIN_WEIGHT);
+    expect(rockChunkWeight(1e12)).toBeGreaterThan(ROCK_CHUNK_MIN_WEIGHT);
+    expect(rockChunkWeight(2e12)).toBeGreaterThan(rockChunkWeight(1e12));
   });
 
   it('a full hold: not consumable', () => {
