@@ -410,24 +410,40 @@ and turn, so really it's laser beams and railguns."
 - **Tolerance:** the mount holds only once the line has been blocked
   continuously for `BLOCKED_LINE_HOLD_MS` (500 ms of GAME time, the room's
   `gameClock`); fire resumes the instant the line clears. Holding spends
-  nothing (no cooldown, no energy) and the mount keeps aiming.
+  nothing (no cooldown, no energy) and the mount keeps aiming. A mount that
+  switches targets starts its tolerance over (the timer remembers the target
+  it measured).
 - **Who:** every turret: pilots and AI-flown hulls (`SectorRoom.mountBearsOnLock`,
   the one player fire gate, so a held mount drops out of the `hit_ack` bear
-  mask), AI pilots' slots and capital turrets (`npcShipLineBlocked`, beside the
-  friendly-line check), structure turrets (`structureLineBlocked`). The heavy
-  beam's kill follow-through is exempt (it burns on through its own cut).
-- **State:** one blocked-since timer per shooter key and mount in
+  mask), an AI pilot's slot mounts (`AiFireResolver.bearingMask` via
+  `slotLineHeld`: each mount on its own weapon and timer, so a held beam drops
+  out while the bolt gun beside it fires), capital turrets
+  (`npcShipLineBlocked`, beside the friendly-line check), structure turrets
+  (`structureLineBlocked`).
+- **State:** one blocked-since timer per shooter key and mount, the core
+  `BlockedLineTimers` (both sides), held by the server's
   `BlockedLineHold` (`src/server/rooms/BlockedLineHold.ts`), owned by
   `WeaponMountTicker.lineHold` beside the mount angles and cleared on the same
   paths (`clearPlayer`, `clearDrone`, `shipKeyMoved`, a reclaimed hull).
-- **Client:** NOT YET MIRRORED. The client's fire passes (`fcGroupBears`,
-  `fcFireMounts`) still draw predicted beams on a held line; the server refuses
-  them (`hit_ack { rejected }`) and the ghost fades. The shared pieces for the
-  mirror (predicate, tolerance, timer step) are in core.
+- **Client (mirrored, #15/#19):** `BlockedLineMirror`
+  (`src/client/combat/blockedLineMirror.ts`) runs the same rule in the local
+  fire pass (`fcGroupBears`, `fcMountBears`, `fcFireMounts`), on the drawn
+  beam's first-hit ray (`DisplayPoseHitscan`, `passWreck` for the slug) and the
+  same core timers in game time, so the client draws no predicted beam and
+  sends no shot on a held line. Every mount of a group looks each frame (its
+  timer steps), as on the server. The timers clear on a sector handoff.
+- **Known gaps (left as they are, coordinator 2026-11-18):** the heavy beam's
+  kill follow-through is exempt (it burns on through its own cut; the ticker
+  passes no weapon for it), and the testMode switch `npcLineOfFire` turns off
+  only the friendly-line check, never this hold. The two sides sample at
+  their own cadence (server per `fire`, client per frame), so a hold can start
+  up to one fire interval apart.
 
 Locks: `src/core/combat/blockedLineHold.test.ts` (weapon classes, tolerance),
 `src/server/rooms/BlockedLineHold.test.ts` (blockers, skips, wreck vs slug,
-cleanup), `tests/integration/sectorRoom/beamHoldsOnBlockedLine.test.ts` (a
+target switch, cleanup), `AiFireResolver.test.ts` (per-slot hold),
+`tests/unit/blockedLineHoldParity.test.ts` (client vs server on the same
+scenes), `ColyseusClient.blockedLine.test.ts` (no predicted beam on a held line), `tests/integration/sectorRoom/beamHoldsOnBlockedLine.test.ts` (a
 pilot's beam behind a rock holds after the tolerance while its bolt gun keeps
 firing, resumes when the rock goes, and a brief crossing never stops it).
 
@@ -640,7 +656,7 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 ## History
 
-- **2026-11-18, beams and railguns hold fire on a blocked line.** Owner rule (quoted in "Blocked line hold" above): a straight-line instant weapon whose line to its target is blocked by another body for 0.5 s of game time holds fire until it clears, for every shooter, players included (before, only AI pilots held, and only for a FRIENDLY body on the line). Shells and missiles are unchanged.
+- **2026-11-18, beams and railguns hold fire on a blocked line.** Owner rule (quoted in "Blocked line hold" above): a straight-line instant weapon whose line to its target is blocked by another body for 0.5 s of game time holds fire until it clears, for every shooter, players included (before, only AI pilots held, and only for a FRIENDLY body on the line). Shells and missiles are unchanged. The client mirrors it (no predicted beam on a held line); each mount has its own timer, reset on a target switch.
 - **2026-11-16, a turret fires the moment its barrel ray hits.** Owner, on film: a heavy beam fired beside a missile frigate, then jumped onto it a pulse later. A first fix made turrets also wait until fully turned onto the centre; the owner rejected that ("the logic there is just completely baffling"): a turret fires the moment a ray down its barrel touches the target's shield or hull, and the old 60 u rule is gone for turrets. The jump itself is in the drawing: each heavy-beam pulse is drawn as a frozen line while the turret keeps turning (follow-up: the drawn beam follows the live barrel, stopped by a client ray).
 - **2026-11-15, the heavy-beam follow-through stays on the kill spot.** Owner decision ("Stay on the kill spot"): the turret held the kill's world bearing, so a moving capital slid the beam sideways off where the ship died (~30 px at fight zoom in 0.5 s). It now aims every tick from its live pivot at the kill point. See "Kill follow-through" above.
 - **2026-11-15, the heavy beam hits by its width.** Owner decision ("Hit by its width"): the 60 u heavy beam hit-tested as a thin line, so a near miss drew over a small ship and passed through it. Now its hit test is a capsule of its drawn width on both sides (#15). See "The heavy beam hits by its width" above.

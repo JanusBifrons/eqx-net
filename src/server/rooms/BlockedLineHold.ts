@@ -14,10 +14,10 @@
  *
  * The per-mount blocked-since timers live beside the mount angles in
  * `WeaponMountTicker` (one instance) and are cleared on every path that
- * clears them (`clearPlayer`, `clearDrone`, `shipKeyMoved`). One array per
- * shooter, grown only past its mount count; allocation-free otherwise (#14).
+ * clears them (`clearPlayer`, `clearDrone`, `shipKeyMoved`); the store is
+ * core `BlockedLineTimers`, shared with the client mirror (#15).
  */
-import { LINE_CLEAR, holdsOnBlockedLine, lineHeld, shotPassesThrough, stepBlockedSince } from '../../core/combat/blockedLineHold.js';
+import { BlockedLineTimers, holdsOnBlockedLine, shotPassesThrough } from '../../core/combat/blockedLineHold.js';
 import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 
@@ -34,15 +34,15 @@ const beamBlocks = (rec: LineBody): boolean => !isLootPod(rec);
 const slugBlocks = (rec: LineBody): boolean => !isLootPod(rec) && !isWreckPiece(rec);
 
 export class BlockedLineHold {
-  /** Blocked-since (game ms, `LINE_CLEAR` = clear) per shooter key, by mount index. */
-  private readonly since = new Map<string, Float64Array>();
+  /** The shared per-mount timers (core, the client mirror steps the same). */
+  private readonly timers = new BlockedLineTimers();
   /** Running count of line queries (host-independent work count). */
   checks = 0;
 
   /**
    * True ⇒ this mount holds fire now: `weaponId` is a straight-line weapon
-   * and its line (fx, fy) → (tx, ty) has been blocked for the tolerance.
-   * Records this look (a clear line resets the timer at once).
+   * and its line (fx, fy) → (tx, ty) to `targetId` has been blocked for the
+   * tolerance. Records this look (a clear line or a new target resets the timer).
    */
   held<R extends LineBody>(
     gate: LineQuery<R>, key: string, mountIdx: number, weaponId: WeaponId,
@@ -52,36 +52,15 @@ export class BlockedLineHold {
     this.checks++;
     const blocks = shotPassesThrough(weaponId) ? slugBlocks : beamBlocks;
     const blocked = gate.firstOnLine(fx, fy, tx, ty, skipId, targetId, blocks) !== '';
-    let arr = this.since.get(key);
-    if (!blocked) {
-      if (arr !== undefined && mountIdx < arr.length) arr[mountIdx] = LINE_CLEAR;
-      return false;
-    }
-    if (arr === undefined || mountIdx >= arr.length) {
-      // Once per shooter (or past its high-water mount count), never per tick.
-      const grown = new Float64Array(Math.max(mountIdx + 1, 4)).fill(LINE_CLEAR);
-      if (arr !== undefined) grown.set(arr);
-      arr = grown;
-      this.since.set(key, arr);
-    }
-    const s = stepBlockedSince(arr[mountIdx]!, true, nowMs);
-    arr[mountIdx] = s;
-    return lineHeld(s, nowMs);
+    return this.timers.step(key, mountIdx, targetId, blocked, nowMs);
   }
 
   /** Drop a shooter's timers (leave, death, eviction, hand-back). */
-  forget(key: string): void {
-    this.since.delete(key);
-  }
+  forget(key: string): void { this.timers.forget(key); }
 
   /** A ship's key moved (playerId <-> shipInstanceId): its timers go with it. */
-  moved(from: string, to: string): void {
-    const arr = this.since.get(from);
-    this.since.delete(from);
-    if (arr !== undefined) this.since.set(to, arr);
-    else this.since.delete(to);
-  }
+  moved(from: string, to: string): void { this.timers.moved(from, to); }
 
   /** Shooters with timers (tests: cleanup leaves none behind). */
-  get size(): number { return this.since.size; }
+  get size(): number { return this.timers.size; }
 }

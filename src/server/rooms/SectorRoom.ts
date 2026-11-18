@@ -2355,7 +2355,8 @@ export class SectorRoom extends Room<SectorState> {
         return b?.trySpendEnergy === undefined ? true : b.trySpendEnergy(cost);
       },
       // Friendly fire slice 2: a drone holds while an ally is in the way.
-      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, w) => this.droneLineBlocked(id, targetId, fx, fy, dx, dy, w),
+      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy) => this.droneLineBlocked(id, targetId, fx, fy, dx, dy),
+      slotLineHeld: (id, targetId, k, w, fx, fy, tx, ty) => this.lineHeld(id, k, w, fx, fy, tx, ty, id, targetId),
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       targetShape: (id, out) => this.aiFireTargetShape(id, out),
@@ -4669,8 +4670,7 @@ export class SectorRoom extends Room<SectorState> {
   // ── Fire control (exp/fire-control) ─────────────────────────────────────
   private readonly _lockPose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
   private readonly _lockTarget: LockTargetView = newLockTargetView();
-  /** The body id `resolveLockTarget` last resolved (the blocked-line hold's target). */
-  private _lockTargetId = '';
+  private _lockTargetId = ''; // the body id `resolveLockTarget` last resolved (the blocked-line hold's target)
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
@@ -9132,8 +9132,8 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** A drone's slot shot: the distance is to its target's live pose. */
-  private droneLineBlocked(shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, weaponId?: WeaponId): boolean {
-    if (targetId === '') return false;
+  private droneLineBlocked(shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number): boolean {
+    if (!this.npcLineOfFire || targetId === '') return false;
     let tx: number, ty: number;
     const pose = this.shipPoseCache.get(targetId);
     if (pose !== undefined) { tx = pose.x; ty = pose.y; } else {
@@ -9142,7 +9142,7 @@ export class SectorRoom extends Room<SectorState> {
       const b = slotBase(t.slot);
       tx = this.sabF32[b + SLOT_X_OFF]!; ty = this.sabF32[b + SLOT_Y_OFF]!;
     }
-    return this.npcShipLineBlocked(shooterId, targetId, fx, fy, dx, dy, Math.hypot(tx - fx, ty - fy), weaponId);
+    return this.npcShipLineBlocked(shooterId, targetId, fx, fy, dx, dy, Math.hypot(tx - fx, ty - fy));
   }
 
   /** A structure turret's line of fire. */

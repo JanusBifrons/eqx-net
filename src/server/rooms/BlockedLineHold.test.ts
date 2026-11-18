@@ -71,6 +71,21 @@ describe('BlockedLineHold', () => {
     expect(h.held(w.gate, 'shooter', 0, 'hitscan', 0, 0, 0, 1000, 'shooter', 'target', 1_032)).toBe(false);
   });
 
+  it('a mount that switches targets starts its tolerance over', () => {
+    const w = duel();
+    w.add('other', 600, 1000, 20, 1, 'fighter');
+    w.add('rock', 0, 500, 60);
+    w.add('rock2', 300, 500, 60);
+    const h = new BlockedLineHold();
+    h.held(w.gate, 'shooter', 0, 'hitscan', 0, 0, 0, 1000, 'shooter', 'target', 0);
+    expect(h.held(w.gate, 'shooter', 0, 'hitscan', 0, 0, 0, 1000, 'shooter', 'target', 1_000)).toBe(true);
+    // A new target behind another rock: blocked too, but its own tolerance runs.
+    expect(h.held(w.gate, 'shooter', 0, 'hitscan', 0, 0, 600, 1000, 'shooter', 'other', 1_016), 'no inherited hold').toBe(false);
+    expect(h.held(w.gate, 'shooter', 0, 'hitscan', 0, 0, 600, 1000, 'shooter', 'other', 1_016 + BLOCKED_LINE_HOLD_MS)).toBe(true);
+    // ...and back to the first target: over again.
+    expect(h.held(w.gate, 'shooter', 0, 'hitscan', 0, 0, 0, 1000, 'shooter', 'target', 1_600)).toBe(false);
+  });
+
   it('a brief crossing never stops fire', () => {
     const w = duel();
     const h = new BlockedLineHold();

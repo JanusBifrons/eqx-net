@@ -76,9 +76,11 @@ export interface AiFireResolverDeps {
   /** NPC line of fire (friendly fire slice 2): true ⇒ a FRIENDLY body lies
    *  between the shooter at (fx, fy) and `targetId` along unit (dx, dy), so
    *  the drone holds fire this tick (no cooldown spent). The room resolves the
-   *  target's distance. With `weaponId`, a beam also holds on a line blocked
-   *  by any solid body for the tolerance (`BlockedLineHold`). Absent ⇒ never blocked (unit harnesses). */
-  lineOfFireBlocked?: (shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, weaponId?: WeaponId) => boolean;
+   *  target's distance. Absent ⇒ never blocked (unit harnesses). */
+  lineOfFireBlocked?: (shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number) => boolean;
+  /** Blocked-line hold, per slot mount (its own weapon and timer, `BlockedLineHold`): true ⇒ mount
+   *  `mountIdx` holds, its line (fx, fy) → (tx, ty) to `targetId` blocked for the tolerance. */
+  slotLineHeld?: (shooterId: string, targetId: string, mountIdx: number, weaponId: WeaponId, fx: number, fy: number, tx: number, ty: number) => boolean;
   /** The ship's energy pool (owner rule 2026-11-13: an AI pilot's ship pays a
    *  player's energy per slot trigger). Spends `cost` and returns true when
    *  the pool can pay; false ⇒ the shot is refused and nothing is spent. The
@@ -242,7 +244,7 @@ export class AiFireResolver implements WeaponFireSink {
     // Line of fire: an ally (or its own base) in the way ⇒ hold this tick
     // without spending the cooldown, so a held shot fires the moment the line
     // clears.
-    if (d.lineOfFireBlocked?.(shooterId, targetId, selfX, selfY, dirNdx, dirNdy, slotMounts[0]!.weaponId)) return;
+    if (d.lineOfFireBlocked?.(shooterId, targetId, selfX, selfY, dirNdx, dirNdy)) return;
     // Fire control: a barrel fires only when it bears on the aim (the pilot's
     // rule, `mountFireTolerance`). Every shot leaves down its drawn barrel, so
     // a gun that doesn't bear would fire visibly off its target (owner
@@ -254,7 +256,7 @@ export class AiFireResolver implements WeaponFireSink {
     // weapon reach of it, measured from the mount (owner 2026-11-14; a lock
     // alone is no licence to fire from any distance).
     const shape = targetId !== '' && d.targetShape?.(targetId, this._targetShape) === true ? this._targetShape : null;
-    const bearMask = this.bearingMask(shooterId, selfX, selfY, hullAngle, slotMounts, dirNdx, dirNdy, shape, cone);
+    const bearMask = this.bearingMask(shooterId, selfX, selfY, hullAngle, slotMounts, dirNdx, dirNdy, shape, cone, targetId);
     if (bearMask === 0) return;
 
     // Energy gate, the player's rule (PlayerFireResolver): the slot trigger
@@ -288,11 +290,11 @@ export class AiFireResolver implements WeaponFireSink {
    *  the aim direction within its weapon's window (`mountFireTolerance`, the
    *  pilot's rule, #19), narrowed to `cone` (the target hull's angular size),
    *  AND, with a known `target`, the target's hull is within the mount's own
-   *  weapon reach of its world origin (`mountInReach`).
+   *  weapon reach of its world origin (`mountInReach`), and its line is not held (`slotLineHeld`).
    *  Mounts past bit 30 always count as bearing. */
   private bearingMask(
     shooterId: string, sx: number, sy: number, hullAngle: number, slotMounts: ReadonlyArray<WeaponMount>,
-    dirX: number, dirY: number, target: AiFireTargetShape | null, cone: number,
+    dirX: number, dirY: number, target: AiFireTargetShape | null, cone: number, targetId = '',
   ): number {
     const angles = this.deps.droneMountAngles.get(shooterId);
     const cosA = Math.cos(hullAngle), sinA = Math.sin(hullAngle);
@@ -301,14 +303,14 @@ export class AiFireResolver implements WeaponFireSink {
       if (i > 30) { mask |= 1 << 30; continue; }
       const m = slotMounts[i]!;
       const reach = mountWeaponReach(m);
-      if (target !== null) {
-        const mx = sx + (m.localX * cosA - m.localY * sinA);
-        const my = sy + (m.localX * sinA + m.localY * cosA);
-        if (!mountInReach(target.x - mx, target.y - my, reach, target)) continue;
-      }
+      const mx = sx + (m.localX * cosA - m.localY * sinA);
+      const my = sy + (m.localX * sinA + m.localY * cosA);
+      if (target !== null && !mountInReach(target.x - mx, target.y - my, reach, target)) continue;
       const a = hullAngle + m.baseAngle + (angles?.[i] ?? 0);
       const tol = mountFireTolerance(m.weaponId, reach);
-      if (barrelBearsOn(0, 0, a, dirX, dirY, cone < tol ? cone : tol)) mask |= 1 << i;
+      if (!barrelBearsOn(0, 0, a, dirX, dirY, cone < tol ? cone : tol)) continue;
+      if (target !== null && this.deps.slotLineHeld?.(shooterId, targetId, i, m.weaponId, mx, my, target.x, target.y)) continue;
+      mask |= 1 << i;
     }
     return mask;
   }

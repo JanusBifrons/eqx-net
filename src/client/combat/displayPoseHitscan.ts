@@ -118,6 +118,8 @@ export class DisplayPoseHitscan implements PredHitscanWorld {
     maxDist: number, excludeId: string,
     /** A wide beam's half-width (`beamHalfWidth`); 0 ⇒ the thin ray. */
     halfWidth = 0,
+    /** A pass-through slug (`shotPassesThrough`): wreck pieces never stop it, as on the server. */
+    passWreck = false,
   ): { hitId: string; dist: number } | null {
     const world = this.world;
     if (world === null) return null;
@@ -132,6 +134,7 @@ export class DisplayPoseHitscan implements PredHitscanWorld {
     if (swarm !== undefined) {
       for (const [entityId, e] of swarm) {
         if (e.kind !== SWARM_KIND_DRONE && e.kind !== SWARM_KIND_SCRAP && e.kind !== SWARM_KIND_WRECK) continue;
+        if (passWreck && e.kind === SWARM_KIND_WRECK) continue;
         const key = this.keyCache.get(entityId);
         if (key === undefined || key === excludeId) continue;
         // Drones and scrap count when they have a collision body (as before).

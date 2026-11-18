@@ -158,6 +158,7 @@ export function travelApproach(tau: number): [number, number] {
   return [TRAVEL_BRAKE_D + TRAVEL_GLIDE_V * (s - (s * s) / (2 * TRAVEL_GLIDE_S)), TRAVEL_GLIDE_V * (1 - s / TRAVEL_GLIDE_S)];
 }
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
+import { BlockedLineMirror } from '../combat/blockedLineMirror.js';
 import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets, stepRemoteShipOffset, type RemoteShipOffset } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
@@ -1457,8 +1458,9 @@ export class ColyseusGameClient {
     this._cutField.stop(); // the cut field belongs to the old sector; the next welcome re-arms it
     // Deaths held for their drawn shell belong to the old sector too.
     this._shellTiming.reset();
-    // Fire control: NPC locks belong to the old sector.
+    // Fire control: NPC locks and blocked-line timers belong to the old sector.
     this.mirror.localLockedBy = NO_LOCKED_BY;
+    this._fcLineHold.clear();
     // A new sector / ship: seed the energy pool again from the new ship.
     this._energySeeded = false;
     // v4 T2 — a new sector's first snapshot only records the teleport epoch.
@@ -6513,15 +6515,17 @@ export class ColyseusGameClient {
     const angles = ship?.mountAngles;
     const cosA = Math.cos(shipAngle);
     const sinA = Math.sin(shipAngle);
+    let bears = false; // every mount looks (its blocked-line timer steps, as the server's per-mount gate)
     for (let i = 0; i < mounts.length; i++) {
       const m = mounts[i]!;
       // Not this group, or no aim (a mining laser leaves a haulable piece to the tractors, as the server).
-      if (this._fcMountGroup.get(m.id) !== groupId || this.fcMountAimKey(m.id, sx, sy, shipAngle) === null) continue;
+      const key = this._fcMountGroup.get(m.id) === groupId ? this.fcMountAimKey(m.id, sx, sy, shipAngle) : null;
+      if (key === null) continue;
       const ox = sx + (m.localX * cosA - m.localY * sinA);
       const oy = sy + (m.localX * sinA + m.localY * cosA);
-      if (mountFiresOn(m.weaponId, mountWeaponReach(m), ox, oy, shipAngle + m.baseAngle + (angles?.[i] ?? 0), t)) return true;
+      if (mountFiresOn(m.weaponId, mountWeaponReach(m), ox, oy, shipAngle + m.baseAngle + (angles?.[i] ?? 0), t) && !this.fcLineHeld(key, i, m.weaponId, ox, oy, t)) bears = true;
     }
-    return false;
+    return bears;
   }
 
   /** May this one mount (world origin + barrel angle) fire at its group's aim target (`mountFiresOn`)?
@@ -6533,9 +6537,25 @@ export class ColyseusGameClient {
     const ship = localId ? this.mirror.ships.get(localId) : undefined;
     const key = this.fcMountAimKey(mountId, ship?.x ?? ox, ship?.y ?? oy, ship?.angle ?? 0);
     if (key === null || !this.fcTargetPose(key, this._fcBearPose)) return false;
-    return mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._fcBearPose);
+    if (!mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._fcBearPose)) return false;
+    const mounts = getShipKind(ship?.kind ?? null).mounts ?? [];
+    let idx = 0;
+    while (idx < mounts.length && mounts[idx]!.id !== mountId) idx++;
+    return !this.fcLineHeld(key, idx, weaponId, ox, oy, this._fcBearPose);
   }
   private readonly _fcBearPose: FireTargetShape = newFireTargetShape();
+  /** Fire control's blocked-line hold, mirrored (`BlockedLineMirror`, #15). */
+  private readonly _fcLineHold = new BlockedLineMirror();
+
+  /** Does this beam or slug mount (catalogue index `idx`, muzzle (ox, oy)) hold on a line to lock `key`'s
+   *  target `t` blocked for the tolerance? The server's `BlockedLineHold`, on the drawn beam's ray, in game time. */
+  private fcLineHeld(key: string, idx: number, weaponId: WeaponId, ox: number, oy: number, t: FireTargetShape): boolean {
+    const localId = this.mirror.localPlayerId;
+    if (!localId) return false;
+    const k = this.fcKey(key);
+    const target = k.player ?? this._swarmBodyKeyCache.get(k.swarm) ?? '';
+    return this._fcLineHold.held(this.displayHitscan(), localId, idx, weaponId, ox, oy, t.x, t.y, localId, target, this.gameClock.now());
+  }
 
   private fcFireTick(spaceHeld: boolean): void {
     const localId = this.mirror.localPlayerId;
@@ -6626,6 +6646,7 @@ export class ColyseusGameClient {
       const oy = st.y + (m.localX * sinA + m.localY * cosA);
       // In the mount's own reach of the target's hull AND on bearing (#15).
       if (!mountFiresOn(m.weaponId, def.reach, ox, oy, st.angle + m.baseAngle + (angles?.[i] ?? 0), this._fcPose)) continue;
+      if (this.fcLineHeld(key, i, m.weaponId, ox, oy, this._fcPose)) continue; // blocked line: held, as the server
       bears = true;
       this._fcBearing.add(m.id);
       const cd = getWeapon(m.weaponId).cooldownTicks;
