@@ -212,6 +212,7 @@ const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 
 export { isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './damageNumberTargets.js';
 import { applyDamageFx, handleDamage, handleDestroy, handleShield, killEntity, killSwarmEntity, type DamagePathCtx } from './damagePath.js';
+import { syncOwnEconomy } from './ownEconomySync';
 
 export class ColyseusGameClient {
   /**
@@ -1848,12 +1849,8 @@ export class ColyseusGameClient {
       this.applyLocalStatAlloc(localId, serverState.statAlloc);
       // Living World P1a (#16) — the authoritative own-ship cargo slice.
       this.applyLocalCargo(localId, serverState.cargo, serverState.fitted);
-      // Economy v2 W1 (#16) — the wallet balance (store write only on change).
-      // `?fakeCredits=1` (HUD demo only) owns the wallet: skip the server write
-      // so the demo drip isn't reset to the real balance every snapshot.
-      if (serverState.wallet !== undefined && !this._fakeCredits && useUIStore.getState().wallet !== serverState.wallet) {
-        useUIStore.getState().setWallet(serverState.wallet);
-      }
+      // Economy (#16) — wallet + free launches (store writes only on change).
+      syncOwnEconomy(serverState, this._fakeCredits);
       // Living World P1a-2 — auto-deposit progress ring (quantised to 10 % so
       // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
       const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;
