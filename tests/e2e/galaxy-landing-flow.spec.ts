@@ -48,7 +48,7 @@ test('logged-in pick → ship picker opens directly (no auth detour)', async ({ 
   // "Join the fight" opens the ship picker (the flow is no longer one-click).
   await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
   await page.getByTestId('sector-drawer-join').click();
-  await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByTestId('hangar-window')).toBeVisible({ timeout: 8_000 });
   // A logged-in pilot is NOT detoured through the auth flow.
   await expect(page.locator('text=Continue as guest')).toHaveCount(0);
 });
@@ -75,7 +75,7 @@ test.describe('logged-out (auth-gated Join the fight)', () => {
     // ...and Join the fight goes to the auth flow, NOT the ship picker.
     await page.getByTestId('sector-drawer-join').click();
     await expect(page.locator('text=Continue as guest')).toBeVisible({ timeout: 8_000 });
-    await expect(page.getByTestId('ship-picker-modal')).toHaveCount(0);
+    await expect(page.getByTestId('hangar-window')).toHaveCount(0);
   });
 
   test('after auth (guest), the ship picker opens for the stashed sector', async ({ page }) => {
@@ -87,7 +87,7 @@ test.describe('logged-out (auth-gated Join the fight)', () => {
     await page.locator('text=Continue as guest').click();
     // Back on the map, the Join they pressed carries on: the ship picker opens
     // for the stashed sector with no re-tap and no second Join.
-    await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('hangar-window')).toBeVisible({ timeout: 10_000 });
   });
 
   /**
@@ -104,9 +104,9 @@ test.describe('logged-out (auth-gated Join the fight)', () => {
     await pickSector(page);
     await page.getByTestId('sector-drawer-join').click();
     await page.locator('text=Continue as guest').click();
-    await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId('ship-picker-close').click();
-    await expect(page.getByTestId('ship-picker-modal')).toHaveCount(0);
+    await expect(page.getByTestId('hangar-window')).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId('hangar-close').click();
+    await expect(page.getByTestId('hangar-window')).toHaveCount(0);
     // A second pick, made by the guest themselves. A DIFFERENT sector: re-tapping
     // the sector whose drawer is open closes it by design, so picking sol-prime
     // again raced the close against the Join click (flaked on CI: "element was
@@ -116,6 +116,6 @@ test.describe('logged-out (auth-gated Join the fight)', () => {
     await expect(page.locator('text=Continue as guest')).toHaveCount(0);
     await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
     await page.getByTestId('sector-drawer-join').click();
-    await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByTestId('hangar-window')).toBeVisible({ timeout: 8_000 });
   });
 });

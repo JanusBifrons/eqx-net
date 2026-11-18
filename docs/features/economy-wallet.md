@@ -29,8 +29,8 @@ Plan `peppy-jumping-pinwheel`, economy v2, phase W1. This follows Eve Online:
   pilot gets **5 free capital launches**; after those, a launch you can't
   afford goes on credit, taking the wallet **below zero, down to −100,000**.
   In debt you can't buy anything until income pays it off. Past the floor
-  you launch in a Fighter. Resuming a hull you own is free. Prices are
-  switched off (`LAUNCH_COSTS_ON = false`) until the Hangar shows them.
+  you launch in a Fighter. Resuming a hull you own is free. The [Hangar](hangar.md)
+  shows each price before Launch (`LAUNCH_COSTS_ON = true`).
 
 ## How it works
 

@@ -25,10 +25,10 @@ describe('launch table', () => {
     }
   });
 
-  it('stays switched off until the Hangar shows prices', () => {
-    expect(LAUNCH_COSTS_ON).toBe(false);
-    expect(launchCost('battleship')).toBe(0);
-    expect(launchCost('battleship', true)).toBe(60_000);
+  it('is switched on now the Hangar shows prices; off, every cost reads 0', () => {
+    expect(LAUNCH_COSTS_ON).toBe(true);
+    expect(launchCost('battleship')).toBe(60_000);
+    expect(launchCost('battleship', false)).toBe(0);
   });
 
   it('knows Shipyard hulls are not launchable', () => {

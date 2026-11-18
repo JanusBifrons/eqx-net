@@ -15,6 +15,7 @@ import { defineWorldRooms } from './rooms/testRooms/worldRooms.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { createDevRouter } from './routes/devRouter.js';
+import { devPlayerShipsAbandonHandler, devPlayerShipsHandler } from './routes/diag/devHandlers.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
 import { economyRouter, setEconomyRouteProvider } from './routes/economyRouter.js';
 import { EconomyStore, hydrateEconomyStore } from './economy/EconomyStore.js';
@@ -101,6 +102,10 @@ app.use('/galaxy', galaxyRouter);
 app.use('/trade', economyRouter);
 // Web Push (PWA notifications): VAPID public key + subscribe/unsubscribe.
 app.use('/push', pushRouter);
+// Join flow stage 5 — the Hangar's owned hulls and Abandon (same handlers as
+// the /dev roster routes; Abandon checks ownership like a join does).
+app.get('/hangar/ships', devPlayerShipsHandler);
+app.post('/hangar/ships/:shipId/abandon', (req, res) => { void devPlayerShipsAbandonHandler(req, res); });
 
 /**
  * Server health probe. The client polls this to gate the pre-game UI
@@ -532,7 +537,7 @@ async function main(): Promise<void> {
   const director = tradeDirector;
   setEconomyRouteProvider({
     offersFor: (pid, sector) => director.offersFor(pid, sector),
-    view: (pid) => store.view(pid),
+    view: (pid) => ({ ...store.view(pid), wallet: getWallet().balance(pid), freeLaunches: store.freeLaunches(pid) }),
     factions: (pid) => store.factionsView(pid, (other) => {
       const uid = getPlayerShipStore().listByPlayer(other).find((r) => r.userId !== null)?.userId ?? null;
       const u = uid ? getUser(uid) : null;

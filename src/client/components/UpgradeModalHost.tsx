@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 import { UpgradeModal } from './UpgradeModal';
-import type { RosterShipEntry } from './ShipRosterCard';
 import type { RosterEntry } from '../state/storeTypes';
 
 /**
@@ -77,8 +76,8 @@ export function UpgradeModalHost(): JSX.Element | null {
   );
 }
 
-/** Adapt a Zustand `RosterEntry` to the `RosterShipEntry` the modal reads. */
-function rosterEntryToShip(r: RosterEntry): RosterShipEntry {
+/** Adapt a Zustand `RosterEntry` to the `RosterEntry` the modal reads. */
+function rosterEntryToShip(r: RosterEntry): RosterEntry {
   return {
     shipId: r.shipId,
     kind: r.kind,

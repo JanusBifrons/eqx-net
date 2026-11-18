@@ -39,15 +39,19 @@ vi.mock('../db/PersistenceWorker.js', () => ({
 vi.mock('../db/Database.js', () => ({ db: { prepare: () => ({ all: () => [] }) } }));
 
 vi.mock('colyseus', () => ({ matchMaker: {} }));
+// Join flow stage 5: 'good-token' is account u1's token; anything else is invalid.
+vi.mock('../auth/AuthService.js', () => ({ validateToken: (t: string) => Promise.resolve(t === 'good-token' ? 'u1' : null) }));
 
 import { devPlayerShipsHandler, devPlayerShipsAbandonHandler } from './diagRouter.js';
 import { setPlayerShipStore } from '../db/PersistenceWorker.js';
+import { AccountPlayerRegistry, setAccountPlayerRegistry } from '../identity/AccountPlayerRegistry.js';
 
-function makeReq(opts: { query?: Record<string, unknown>; params?: Record<string, string>; body?: unknown }): Request {
+function makeReq(opts: { query?: Record<string, unknown>; params?: Record<string, string>; body?: unknown; headers?: Record<string, string> }): Request {
   return {
     query: opts.query ?? {},
     params: opts.params ?? {},
     body: opts.body ?? {},
+    headers: opts.headers ?? {},
   } as unknown as Request;
 }
 
@@ -208,6 +212,37 @@ describe('devPlayerShipsAbandonHandler', () => {
     );
     expect(res._status).toBe(200);
     expect(res._json).toEqual({ ok: true, shipId: ship.shipId });
+    expect(store.get(ship.shipId)).toBeNull();
+  });
+});
+
+describe('abandon of an account-bound ship (join flow stage 5: served in production)', () => {
+  let store: PlayerShipStore;
+  const PID = '11111111-1111-4111-8111-111111111111';
+
+  beforeEach(() => {
+    store = freshStore();
+    setPlayerShipStore(store);
+    const registry = new AccountPlayerRegistry();
+    registry.bind('u1', PID);
+    setAccountPlayerRegistry(registry);
+  });
+
+  it('refuses without the account token, even with the right playerId', async () => {
+    const ship = store.create({ playerId: PID, userId: 'u1', kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+    for (const headers of [{}, { authorization: 'Bearer stolen' }]) {
+      const res = makeRes();
+      await devPlayerShipsAbandonHandler(makeReq({ params: { shipId: ship.shipId }, body: { playerId: PID }, headers }), res);
+      expect(res._status).toBe(401);
+    }
+    expect(store.get(ship.shipId)).not.toBeNull();
+  });
+
+  it('allows the signed-in owner', async () => {
+    const ship = store.create({ playerId: PID, userId: 'u1', kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+    const res = makeRes();
+    await devPlayerShipsAbandonHandler(makeReq({ params: { shipId: ship.shipId }, body: { playerId: PID }, headers: { authorization: 'Bearer good-token' } }), res);
+    expect(res._status).toBe(200);
     expect(store.get(ship.shipId)).toBeNull();
   });
 });

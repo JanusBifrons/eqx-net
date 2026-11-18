@@ -3,9 +3,9 @@
  * This is the post-auth spawn chrome with its OWN Pixi surface removed —
  * it overlays the shared gameplay canvas. The regression risks it guards:
  *   - a load-bearing testid disappears (E2E specs probe galaxy-map-screen,
- *     limbo-resume-banner/data-limbo-sector-key, ship-picker-modal),
+ *     limbo-resume-banner/data-limbo-sector-key, hangar-window),
  *   - the imperative apiRef.openForSector → popover → "Join the fight" →
- *     ship-picker → onSpawnNewShip spawn flow breaks (Equinox Phase 7 / Item 4:
+ *     Hangar → onSpawnNewShip spawn flow breaks (Equinox Phase 7 / Item 4:
  *     a tap on the selector layer opens the interactive popover, not the picker
  *     directly),
  *   - a dev button (single-player / engineering rooms) creeps back onto the
@@ -47,7 +47,7 @@ describe('GalaxyPickerChrome', () => {
     // Drawer + picker are both closed until a sector is tapped (the drawer's
     // Join CTA only renders when a sector is selected).
     expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('ship-picker-modal')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('hangar-window')).not.toBeInTheDocument();
 
     // Equinox Phase 9 (item 2) — a tap SELECTS the sector → the docked drawer,
     // NOT the ship picker directly.
@@ -56,11 +56,11 @@ describe('GalaxyPickerChrome', () => {
 
     // "Join the fight" opens the kind-picker for that sector.
     fireEvent.click(screen.getByTestId('sector-drawer-join'));
-    expect(screen.getByTestId('ship-picker-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('hangar-window')).toBeInTheDocument();
     // Title carries the tapped sector's name.
-    expect(screen.getByText(/Spawn in/)).toBeInTheDocument();
+    expect(screen.getByText(/Hangar ·/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId('ship-picker-spawn'));
+    fireEvent.click(screen.getByTestId('hangar-launch'));
     expect(onSpawnNewShip).toHaveBeenCalledTimes(1);
     expect(onSpawnNewShip.mock.calls[0][1]).toBe('sol-prime');
   });
@@ -72,12 +72,12 @@ describe('GalaxyPickerChrome', () => {
     render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
     act(() => { apiRef.current?.openForSector('sol-prime'); });
     fireEvent.click(screen.getByTestId('sector-drawer-join'));
-    expect(screen.queryByTestId('ship-picker-modal')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('hangar-window')).not.toBeInTheDocument();
     expect(useUIStore.getState().phase).toBe('auth');
     expect(useUIStore.getState().pendingPickSector).toBe('sol-prime');
     // Back from login: the stashed Join opens the picker for that sector.
     act(() => { apiRef.current?.resumeGatedJoin('sol-prime'); });
-    expect(screen.getByTestId('ship-picker-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('hangar-window')).toBeInTheDocument();
   });
 
   it('logged out: Spectate goes to login, and resumeGatedJoin then spectates (not the picker)', () => {
@@ -92,7 +92,7 @@ describe('GalaxyPickerChrome', () => {
     expect(useUIStore.getState().phase).toBe('auth');
     act(() => { apiRef.current?.resumeGatedJoin('sol-prime'); });
     expect(onSpawnSpectator).toHaveBeenCalledWith('sol-prime');
-    expect(screen.queryByTestId('ship-picker-modal')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('hangar-window')).not.toBeInTheDocument();
   });
 
   it('apiRef.openForSector TOGGLES — re-selecting the same sector deselects (closes the drawer)', () => {

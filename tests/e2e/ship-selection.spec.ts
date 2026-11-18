@@ -8,10 +8,10 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  * galaxy-map screen was removed. The picker is now SECTOR-SCOPED — a
  * sector hex click sets `pendingSpawnSector`, which opens the picker
  * with "Spawn in {sector}" framing. The picker itself
- * (ShipPickerModal — components/ShipPickerModal.tsx) is the same
+ * (the Hangar — components/hangar/HangarWindow.tsx) is the same
  * MUI Dialog as before, with the same card grid and data-testids
- * (`ship-card-${kind.id}`, `ship-picker-modal`, `ship-picker-spawn`,
- * `ship-picker-close`).
+ * (`ship-card-${kind.id}`, `hangar-window`, `hangar-launch`,
+ * `hangar-close`).
  *
  * These tests use a mocked `/auth/me` so we land on the galaxy-map
  * without touching the real auth path, then click the centre canvas
@@ -67,7 +67,7 @@ async function openPickerViaSectorClick(page: Page): Promise<void> {
   // "Join the fight" opens the ship picker (no longer one-click).
   await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
   await page.getByTestId('sector-drawer-join').click();
-  await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByTestId('hangar-window')).toBeVisible({ timeout: 5_000 });
 }
 
 test.describe('ship-picker on galaxy-map', () => {
@@ -113,9 +113,19 @@ test.describe('ship-picker on galaxy-map', () => {
   test('picker exposes Spawn + Cancel buttons; Cancel closes', async ({ page }) => {
     await mockAuthAndGo(page);
     await openPickerViaSectorClick(page);
-    await expect(page.getByTestId('ship-picker-spawn')).toBeVisible();
-    await expect(page.getByTestId('ship-picker-close')).toBeVisible();
-    await page.getByTestId('ship-picker-close').click();
-    await expect(page.getByTestId('ship-picker-modal')).not.toBeVisible();
+    await expect(page.getByTestId('hangar-launch')).toBeVisible();
+    await expect(page.getByTestId('hangar-close')).toBeVisible();
+    await page.getByTestId('hangar-close').click();
+    await expect(page.getByTestId('hangar-window')).not.toBeVisible();
+  });
+
+  test('Capitals tab folds each class\'s fits into one tile with a toggle', async ({ page }) => {
+    await mockAuthAndGo(page);
+    await openPickerViaSectorClick(page);
+    await page.getByTestId('hangar-tab-capital').click();
+    await expect(page.getByTestId('ship-card-battleship')).toBeVisible();
+    await page.getByTestId('hangar-fit-battleship-rail').click();
+    await expect(page.getByTestId('ship-card-battleship')).toHaveAttribute('data-selected', '1');
+    await expect(page.getByTestId('hangar-cost')).toBeVisible();
   });
 });
