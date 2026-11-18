@@ -92,6 +92,20 @@ test.describe('logged-out (sign-in asked at Launch)', () => {
     await expect(page.locator('text=Continue as guest')).toHaveCount(0);
   });
 
+  test('signed out: Quick launch is one tap from the map into a fight (stage 7)', async ({ page }) => {
+    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
+    const quick = page.getByTestId('galaxy-quick-launch');
+    // The feed's busiest contested sector (any sector on a calm galaxy).
+    await expect(quick).toHaveAttribute('data-target', /S/, { timeout: 15_000 });
+    await quick.click();
+    // No Hangar and no login wall: the map glides in, then a guest Fighter launches.
+    await expect(page.getByTestId('hangar-window')).toHaveCount(0);
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.locator('[data-testid="game-surface"]')).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('text=Continue as guest')).toHaveCount(0);
+  });
+
   test('Sign in → auth (guest there) → the Hangar reopens for the stashed sector', async ({ page }) => {
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
