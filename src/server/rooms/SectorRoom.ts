@@ -104,10 +104,9 @@ import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerRoomFeatures } from './features/index.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
+import { TeleporterSubsystem, seedAlienGates, seedPocketPads, type NpcGateSeedHost, type PartnerLink } from '../structures/TeleporterSubsystem.js';
 import { getTeleportBroker, type HandedOffHull, type RiderBatch, type TeleportRoom } from '../teleport/TeleportBroker.js';
 import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
-import { fleetArrivalPoses, largestHullIndex, type FleetArrivalPose } from '../transit/fleetArrivalPoses.js';
 import { linkEnds } from '../../core/bases/transitNetwork.js';
 import { hopDistance } from '../livingworld/population.js';
 import {
@@ -124,15 +123,11 @@ import {
   TP_RULE_LOADED,
   isTeleporterKind,
 } from '../../shared-types/teleport.js';
-import { NpcBaseSubsystem, isNpcBasesDisabled, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
+import { isNpcBasesDisabled, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
 import { hashString } from '../../core/bases/baseProfile.js';
-import { chooseBaseSite, grownExtent, nearestClearPoint, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
-import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBases.js';
-import type { SectorFeature } from '../../core/galaxy/galaxy.js';
-/** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
-const NPC_BASE_GAP = sectorSpace(900);
-import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
-import { pocketPadPair, POCKET_PAD_OWNER, SOLAR_HALF_EXTENT, sectorSites } from '../../core/galaxy/sectorSites.js';
+import { nearestClearPoint } from '../../core/bases/baseSite.js';
+import { SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
@@ -185,7 +180,7 @@ import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGua
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
 import type { FactionId } from '../../shared-types/factions.js';
 import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
-import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSite } from '../../core/galaxy/alienGates.js';
+import { ALIEN_GATE_OWNER, alienGateSites } from '../../core/galaxy/alienGates.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
@@ -235,7 +230,6 @@ import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { FleetCommandSubsystem } from '../fleet/FleetCommandSubsystem.js';
-import { clearFleetOrder } from '../fleet/fleetShipOrders.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { JoinHandler } from './join/JoinHandler.js';
 import { TeleportTolls } from './features/teleportTolls.js';
@@ -243,7 +237,7 @@ import { WingmanPilots } from './features/wingmanPilots.js';
 import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { PilotSwap } from './features/pilotSwap.js';
 import { FireControlLocks } from './features/fireControlLocks.js';
-import { FLEET_STOP_ORDER } from './features/fleetMessages.js';
+import { transitHostRoom, type HullMove } from './features/transitMessages.js';
 import { BreakInHooks } from './features/breakInHooks.js';
 import { TurretTargeting } from './features/turretTargeting.js';
 import { SectorTimeScale } from './features/sectorTimeScale.js';
@@ -344,7 +338,6 @@ import {
   // broad-phase radius for the scalar sweeps/rays that haven't gone per-kind
   // (mining beam here; missile sweep; lingering ray — campaign 5.3).
   SHIP_COLLISION_RADIUS,
-  SHIP_MAX_HEALTH,
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import { getWeapon, weaponLayerMul, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
@@ -367,11 +360,6 @@ import type { GameClock } from '../../core/clock/GameClock.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/physics/catchUp.js';
 
 
-/** One parked hull for `handOffHullsTo`: where it lands in the far sector. */
-interface HullMove {
-  shipInstanceId: string;
-  x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
-}
 
 /** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
 const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
@@ -429,8 +417,6 @@ class LofShipBody {
   gen = 0;
 }
 type LofBody = SwarmEntityRecord | LofShipBody;
-/** RTS fleet warp: `handOffHulls` until slice S3 moves hulls. */
-const NO_HULLS_MOVED: readonly string[] = [];
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
 
 /** Click-to-inspect live-stats emit cadence (Item B5). ~5 Hz on its OWN
@@ -2916,7 +2902,7 @@ export class SectorRoom extends Room<SectorState> {
     this.testTeleportFullCharge = this.testMode && roomOpts.teleportFullCharge === true;
     if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
     // D2 (plan soft-leaping-truffle v3) — NPC bases grown from the generator.
-    if (roomOpts.npcBases && roomOpts.npcBases.length > 0) this.seedNpcBases(roomOpts.npcBases);
+    if (roomOpts.npcBases && roomOpts.npcBases.length > 0) seedNpcBases(this.npcSeedHost, roomOpts.npcBases);
     if (this.testMode && roomOpts.tradeEnabled === true && this.sectorKey !== null) {
       // Per-room key: testId-filtered rooms share a sectorKey, so the director
       // must not confuse two parallel tests' rooms.
@@ -3142,19 +3128,19 @@ export class SectorRoom extends Room<SectorState> {
     }
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
-      this.seedGalaxyBase(this.sectorKey);
+      seedGalaxyBase(this.npcSeedHost, this.sectorKey);
     }
     // v4 A — the border gates, after the restore (saved player structures keep
     // their places) and the NPC bases (a gate takes the nearest free spot).
     if (roomOpts.solarSectors !== undefined) this.solar = roomOpts.solarSectors;
     if (roomOpts.alienGates === true && this.sectorKey !== null && getSector(this.sectorKey) && !isAlienGatesDisabled()) {
-      this.seedAlienGates(this.sectorKey, alienGateSites(this.sectorKey));
+      seedAlienGates(this.npcSeedHost, this.sectorKey, alienGateSites(this.sectorKey));
     }
     if (this.testMode && roomOpts.testAlienGate !== undefined) {
-      this.seedAlienGates(this.sectorKey ?? 'test', [roomOpts.testAlienGate]);
+      seedAlienGates(this.npcSeedHost, this.sectorKey ?? 'test', [roomOpts.testAlienGate]);
     }
     if ((roomOpts.pocketPads ?? roomOpts.alienGates) === true && this.solar && this.sectorKey !== null && getSector(this.sectorKey)) {
-      this.seedPocketPads(this.sectorKey);
+      seedPocketPads(this.npcSeedHost, this.sectorKey);
     }
 
     // Phase 8 sub-phase B — explicit 15s seat-reservation TTL for incoming
@@ -3192,7 +3178,15 @@ export class SectorRoom extends Room<SectorState> {
         ? Math.max(1, roomOpts.transitSpoolMsOverride)
         : undefined;
     this.transitOrchestrator = new TransitOrchestrator(
-      this.asTransitHost(),
+      transitHostRoom({
+        sectorKey: this.sectorKey, bus: this.bus, sabF32: this.sabF32, playerToSlot: this.playerToSlot,
+        playerToUser: this.playerToUser, playerToActiveShipInstance: this.playerToActiveShipInstance,
+        lastFireClientTick: this.lastFireClientTick, playerToTransitInFlight: this.playerToTransitInFlight,
+        playerToSession: this.playerToSession, lingeringSlots: this.lingeringSlots, fleet: this.fleet, fleetHooks: this.fleetHooks,
+        getActiveShip: (pid) => this.getActiveShip(pid), clients: () => this.clients, ships: () => this.state.ships,
+        broadcast: (type, message, options) => this.broadcast(type, message, options),
+        handOffHullsTo: (toRoom, moves, arrival) => this.handOffHullsTo(toRoom, moves, arrival),
+      }),
       transitSpoolMs,
       getPlayerShipStore(),
       this.gameClock,
@@ -4497,113 +4491,6 @@ export class SectorRoom extends Room<SectorState> {
    *  auto-connected structures (owner `scenario`) + parked drones + asteroids.
    *  Gives E2E a fully-functional powered grid without the place-ahead UI
    *  (which overlaps stacked placements) or the construction wait. */
-  /**
-   * A0 scale lattice: place every structure WITHOUT greedy auto-connect, then
-   * apply the lattice's intended edges through `connectExplicit` (the real
-   * `canConnect` re-checked), force-build, and run one grid tick. Owner
-   * `scenario`. Rejections are counted and logged — the lattice is rule-valid
-   * by construction (structureLattice.test.ts), so any rejection is a bug.
-   */
-  /**
-   * T1 — grow this galaxy sector's NPC base from its profile and seed it at a
-   * site that fits: clear of saved player structures and parked hulls (they
-   * always win the space), on the fewest asteroids (those under the footprint
-   * are cleared: the builders cleared the rock), as far from the spawn at the
-   * origin as it fits. Not persisted: a restart regrows it from the seed.
-   */
-  /**
-   * v4 A — seed this sector's alien gates: one per neighbour, near the edge
-   * facing it, built and invulnerable (no hull pool; `applyDamage` turns a hit
-   * into a disable). Runs AFTER the NPC bases, so a gate takes the nearest
-   * free spot to its ideal site (`alienGateCandidates`); asteroids under it are
-   * cleared quietly. It remembers its neighbour, and the teleporter subsystem
-   * finds the twin across the border through the broker the first time it
-   * needs it (`findAlienTwin`). Not persisted (NPC-owned): every boot
-   * regenerates them.
-   */
-  private seedAlienGates(sectorKey: string, sites: readonly AlienGateSite[]): void {
-    const half = getStructureKind('alien_gate').footprint.w / 2;
-    for (const site of sites) {
-      let placed: string | null = null;
-      for (const c of alienGateCandidates(site, half, SECTOR_PLAYABLE_HALF_EXTENT)) {
-        let blocked = false;
-        for (const r of this.structureRegistry.all()) {
-          if (Math.abs(r.x - c.x) < half + (r.halfW ?? r.radius) && Math.abs(r.y - c.y) < half + (r.halfH ?? r.radius)) {
-            blocked = true;
-            break;
-          }
-        }
-        if (blocked) continue;
-        for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (boot only)
-          if (rec.kind !== 0) continue;
-          const b = slotBase(rec.slot);
-          const dx = Math.abs(this.sabF32[b + SLOT_X_OFF]! - c.x);
-          const dy = Math.abs(this.sabF32[b + SLOT_Y_OFF]! - c.y);
-          if (dx < half + rec.radius && dy < half + rec.radius) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
-        }
-        placed = this.structurePlacement.place(ALIEN_GATE_OWNER, 'alien_gate', c.x, c.y, { skipAutoConnect: true });
-        if (placed !== null) break;
-      }
-      if (placed === null) {
-        logger.warn({ sectorKey, neighbour: site.neighbour }, 'alien gate: no free spot; gate skipped');
-        continue;
-      }
-      const rec = this.structureRegistry.get(placed)!;
-      rec.isConstructed = true;
-      rec.constructionProgress = rec.constructionCost;
-      rec.alienNeighbour = site.neighbour;
-      this.swarmHealth.delete(placed);
-      this.gateGuard.addGate(rec);
-    }
-    this.rebuildStructuresSlice();
-  }
-
-  /**
-   * Wrap-up W1b — the system's transit pads: home and one other pocket, if
-   * this system has a pair at all (`pocketPadPair`, rare by design). Neutral
-   * (Traders-owned), free (no charge, no grid), fire when a ship boards, no
-   * toll. Each takes the nearest free spot to its ideal centre. Not persisted
-   * (NPC-owned): every boot regenerates them.
-   */
-  private seedPocketPads(sectorKey: string): void {
-    const pair = pocketPadPair(sectorKey);
-    if (pair === null) return;
-    const half = getStructureKind('pocket_pad').footprint.w / 2;
-    const placeNear = (x: number, y: number): StructureRecord | null => {
-      for (let ring = 0; ring < 8; ring++) {
-        const steps = ring === 0 ? 1 : ring * 8;
-        for (let k = 0; k < steps; k++) {
-          const t = (k / steps) * Math.PI * 2;
-          const cx = Math.round(x + Math.cos(t) * ring * half * 2.5), cy = Math.round(y + Math.sin(t) * ring * half * 2.5);
-          let blocked = false;
-          for (const r of this.structureRegistry.all()) {
-            if (Math.abs(r.x - cx) < half + (r.halfW ?? r.radius) && Math.abs(r.y - cy) < half + (r.halfH ?? r.radius)) { blocked = true; break; }
-          }
-          if (blocked) continue;
-          const id = this.structurePlacement.place(POCKET_PAD_OWNER, 'pocket_pad', cx, cy, { skipAutoConnect: true });
-          if (id !== null) return this.structureRegistry.get(id) ?? null;
-        }
-      }
-      return null;
-    };
-    const a = placeNear(pair.ax, pair.ay);
-    const b = a === null ? null : placeNear(pair.bx, pair.by);
-    if (a === null || b === null) {
-      logger.warn({ sectorKey, to: pair.b.id }, 'pocket pads: no free spot; pads skipped');
-      if (a !== null) this.structurePlacement.remove(POCKET_PAD_OWNER, a.id);
-      this.rebuildStructuresSlice();
-      return;
-    }
-    for (const rec of [a, b]) {
-      rec.isConstructed = true;
-      rec.constructionProgress = rec.constructionCost;
-      rec.tpRules = { ...DEFAULT_TELEPORT_RULES, shipBoards: true };
-      this.swarmHealth.delete(rec.id);
-    }
-    this.teleporters.pair(a, b);
-    this.rebuildStructuresSlice();
-  }
-
   /** v4 H — the teleporter at the other end of `rec.npcLink` (another sector's
    *  room, found through the broker; it carries the same link id). */
   private findLinkTwin(rec: StructureRecord): { sectorKey: string; uid: string } | null {
@@ -4639,122 +4526,13 @@ export class SectorRoom extends Room<SectorState> {
     return null;
   }
 
-  private seedGalaxyBase(sectorKey: string): void {
-    // A sector holds one to three NPC bases (galaxyBasePlan); base 0 is the
-    // sector's original base. Each later one keeps well clear of the earlier.
-    const sector = getSector(sectorKey)!;
-    const sub = new NpcBaseSubsystem({
-      registry: this.structureRegistry,
-      place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
-      setHealth: (id, hp) => this.swarmHealth.set(id, hp),
-      getObstacles: (near) => this.obstacles.rocks(near),
-    });
-    const seededBases: SiteBox[] = [];
-    const plans = galaxyBasePlan(sectorKey);
-    // Solar-system sectors (Phase 4): with two or more bases, the last grows
-    // at the sector's outer base pocket, out in the system, not at home.
-    const outer = SOLAR_SECTORS && plans.length >= 2 ? sectorSites(sectorKey).find((s) => s.kind === 'base') ?? null : null;
-    plans.forEach((plan, i) => {
-      const at = outer && i === plans.length - 1 ? { x: outer.x, y: outer.y } : null;
-      const box = this.seedOneGalaxyBase(sectorKey, sector.features, plan, sub, seededBases, at);
-      if (box !== null) seededBases.push(box);
-    });
-    this.structureGridTick();
-  }
-
-  /** Seed one planned galaxy base; returns its footprint box, inflated by the
-   *  gap a later base must keep, or null when no site fits. */
-  private seedOneGalaxyBase(
-    sectorKey: string,
-    features: readonly SectorFeature[],
-    plan: GalaxyBasePlan,
-    sub: NpcBaseSubsystem,
-    seededBases: readonly SiteBox[],
-    /** Grow round this point instead of in the home pocket (outer base pocket). */
-    at: { x: number; y: number } | null = null,
-  ): SiteBox | null {
-    const { seed, profile } = plan;
-    const spec: NpcBaseSpec = {
-      baseId: plan.baseId, role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
-      side: profile.ownerFaction, features: [...features], profile,
-    };
-    const grown = sub.grow(spec);
-    const hard: SiteBox[] = [...seededBases];
-    for (const r of this.structureRegistry.all()) hard.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
-    for (const p of this.lingeringPoseCache.values()) hard.push({ x: p.x, y: p.y, hw: 150, hh: 150 });
-    const rocks: SwarmEntityRecord[] = [];
-    const soft: SiteCircle[] = [];
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 0) continue;
-      const b = slotBase(rec.slot);
-      rocks.push(rec);
-      soft.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r: rec.radius });
-    }
-    const ext = grownExtent(grown.placements);
-    const site = chooseBaseSite(ext, hard, soft, {
-      // The home pocket (today's whole sector; the same bound when solar-system
-      // sectors are off).
-      halfExtent: HOME_POCKET_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed,
-      ...(at ? { centreX: at.x, centreY: at.y } : {}),
-    });
-    if (site === null) {
-      logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');
-      return null;
-    }
-    for (const i of site.overlapped) this.evictSwarmEntity(rocks[i]!, { broadcast: false, emitDestroyed: false });
-    const r = sub.seed({ ...spec, x: site.x, y: site.y }, grown);
-    // v4 M2 — a garrison flies a patrol round its approaches.
-    if (profile.role === 'military') this.addGarrisonPatrol(`${sectorKey}-${plan.baseId}`, r.owner, profile.ownerFaction, profile.tier, site.x, site.y);
-    logger.info({
-      sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
-      placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge, asteroidsCleared: site.overlapped.length,
-    }, 'galaxy npc base seeded');
-    // Later bases keep this far from this one's footprint (room for its
-    // bastions, its minefield and traffic between the two).
-    const gap = NPC_BASE_GAP;
-    return {
-      x: site.x + (ext.x0 + ext.x1) / 2,
-      y: site.y + (ext.y0 + ext.y1) / 2,
-      hw: (ext.x1 - ext.x0) / 2 + gap,
-      hh: (ext.y1 - ext.y0) / 2 + gap,
-    };
-  }
-
-  /** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
-   *  blueprints loaded), then run one grid pulse so power settles. */
-  /** v4 M2 — give a seeded garrison its patrol: corners from the base's
-   *  footprint, 3 ships (4 for a stronghold or citadel). */
-  private addGarrisonPatrol(tag: string, owner: string, faction: FactionId, tier: string, cx: number, cy: number): void {
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const rec of this.structureRegistry.all()) {
-      if (rec.owner !== owner) continue;
-      const hw = rec.halfW ?? rec.radius, hh = rec.halfH ?? rec.radius;
-      x0 = Math.min(x0, rec.x - hw); x1 = Math.max(x1, rec.x + hw);
-      y0 = Math.min(y0, rec.y - hh); y1 = Math.max(y1, rec.y + hh);
-    }
-    if (!Number.isFinite(x0)) return;
-    const count = tier === 'stronghold' || tier === 'citadel' ? 4 : 3;
-    this.patrols.addBase(tag, owner, faction, { x0, x1, y0, y1 }, cx, cy, count);
-  }
-
-  private seedNpcBases(specs: readonly NpcBaseSpec[]): void {
-    const sub = new NpcBaseSubsystem({
-      registry: this.structureRegistry,
-      place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
-      setHealth: (id, hp) => this.swarmHealth.set(id, hp),
-      getObstacles: (near) => this.obstacles.rocks(near),
-    });
-    for (const spec of specs.slice(0, 8)) {
-      const r = sub.seed(spec);
-      // v4 M2 — a garrison flies its patrol here too (showcase / test rooms).
-      if (spec.role === 'military') {
-        this.addGarrisonPatrol(`${this.sectorKey ?? 'room'}-${spec.baseId}`, r.owner, spec.profile?.ownerFaction ?? spec.side ?? 'traders', spec.tier, spec.x, spec.y);
-      }
-      logger.info({ baseId: spec.baseId, role: spec.role, tier: spec.tier, owner: r.owner, placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge }, 'npc base seeded');
-    }
-    this.structureGridTick();
-  }
-
+  /**
+   * A0 scale lattice: place every structure WITHOUT greedy auto-connect, then
+   * apply the lattice's intended edges through `connectExplicit` (the real
+   * `canConnect` re-checked), force-build, and run one grid tick. Owner
+   * `scenario`. Rejections are counted and logged — the lattice is rule-valid
+   * by construction (structureLattice.test.ts), so any rejection is a bug.
+   */
   private seedScaleGrid(opts: { n: number; seed: number; fence?: boolean }): void {
     const n = Math.max(1, Math.min(4000, Math.floor(opts.n)));
     const lat = buildStructureLattice({ n, seed: opts.seed, fence: opts.fence === true });
@@ -4855,6 +4633,17 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
   }
+
+  /** Boot seeding of NPC structures: galaxy / test bases (`bases/NpcBaseSubsystem.ts`),
+   *  alien gates and pocket pads (`structures/TeleporterSubsystem.ts`). */
+  private readonly npcSeedHost: NpcBaseSeedHost & NpcGateSeedHost = {
+    structureRegistry: this.structureRegistry, swarmRegistry: this.swarmRegistry, lingeringPoseCache: this.lingeringPoseCache,
+    patrols: this.patrols, obstacles: this.obstacles, gateGuard: this.gateGuard, logger,
+    sabF32: () => this.sabF32, structurePlacement: () => this.structurePlacement, teleporters: () => this.teleporters,
+    swarmHealth: () => this.swarmHealth, sectorKey: () => this.sectorKey,
+    evictSwarmEntity: (rec, opts) => this.evictSwarmEntity(rec, opts),
+    structureGridTick: () => this.structureGridTick(), rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
+  };
 
   /** The sector snapshot's room side: its scrap / lingering-hull rows and the
    *  structure / scrap / lingering-hull restores (`SectorSnapshotRestore.ts`). */
@@ -8024,103 +7813,6 @@ export class SectorRoom extends Room<SectorState> {
       roomId: this.roomId,
       sectorKey: this.sectorKey,
       sessions: this.webrtcChannelManager.getCounters(),
-    };
-  }
-
-  // ── Phase 8 sub-phase B — TransitOrchestrator host adapter ──────────────
-
-  /**
-   * Adapts this room to the narrow `TransitHostRoom` contract the
-   * orchestrator depends on. Keeps the orchestrator decoupled from the
-   * full SectorRoom surface so its tests can mock just these members.
-   */
-  private asTransitHost(): import('../transit/TransitOrchestrator.js').TransitHostRoom {
-    return {
-      sectorKey: this.sectorKey,
-      bus: this.bus,
-      sabF32: this.sabF32,
-      playerToSlot: this.playerToSlot,
-      playerToUser: this.playerToUser,
-      playerToActiveShipInstance: this.playerToActiveShipInstance,
-      lastFireClientTick: this.lastFireClientTick,
-      getShipHealth: (playerId: string): number => {
-        const ship = this.getActiveShip(playerId);
-        return ship?.health ?? SHIP_MAX_HEALTH;
-      },
-      getShipKind: (playerId: string): string => {
-        const ship = this.getActiveShip(playerId);
-        return ship?.kind ?? DEFAULT_SHIP_KIND;
-      },
-      // Campaign 3.1 — warp requires a LIVE hull. Alive-only, NOT isActive:
-      // a dead player has no state.ships entry under their playerId (removed
-      // or rekeyed to linger-<id>), so `!!ship && ship.alive` fully blocks the
-      // dead-warp bug, while a PENDING hull (joined, pre-client_ready —
-      // isActive still false) keeps its long-standing ability to engage
-      // transit (the Phase-A9 transitShipIdBinding wiring contract).
-      hasLiveHull: (playerId: string): boolean => {
-        const ship = this.getActiveShip(playerId);
-        return !!ship && ship.alive;
-      },
-      playerToTransitInFlight: this.playerToTransitInFlight,
-      clientForPlayer: (playerId: string): Client | null => {
-        const sessionId = this.playerToSession.get(playerId);
-        if (!sessionId) return null;
-        const c = this.clients.find((x) => x.sessionId === sessionId);
-        return c ?? null;
-      },
-      broadcast: (type: string, message: unknown, options?: { except?: Client | Client[] }): void => {
-        this.broadcast(type, message, options);
-      },
-      // ── RTS fleet warp hooks ──────────────────────────────────────────
-      // A parked (LINGERING, #17) hull in this room, owned by the commander.
-      canFleetWarp: (commanderId: string, shipId: string): boolean => {
-        if (!this.lingeringSlots.has(shipId)) return false;
-        const ship = this.state.ships.get(shipId);
-        return ship !== undefined && isLingeringHull(ship)
-          && ship.playerId === commanderId && ship.shipInstanceId === shipId;
-      },
-      // The existing fleet `stop` order holds them while they spool.
-      holdFleetShips: (commanderId: string, shipIds: readonly string[]): void => {
-        this.fleet.applyOrder(commanderId, shipIds, FLEET_STOP_ORDER);
-        this.fleetHooks.fleetStatusSoonFor(commanderId);
-      },
-      // Clear the hold: each ship goes back to its mode (a squad's leader to
-      // the squad mode; members follow it).
-      releaseFleetShips: (commanderId: string, shipIds: readonly string[]): void => {
-        for (let i = 0; i < shipIds.length; i++) {
-          const id = shipIds[i]!;
-          if (this.fleet.ownerOfAttached(id) !== commanderId) continue;
-          const w = this.fleet.ordersOf(id);
-          if (w !== null) clearFleetOrder(w);
-        }
-        this.fleetHooks.fleetStatusSoonFor(commanderId);
-      },
-      // The LARGEST hull's live pose (the `fleetArrivalPoses` rule: it lands
-      // on the anchor and the others keep their offsets from it).
-      fleetAnchor: (shipIds: readonly string[]): { x: number; y: number } | null => {
-        const hulls = this.fleetHooks.fleetHullPoses(shipIds, null);
-        const lead = largestHullIndex(hulls);
-        return lead === -1 ? null : { x: hulls[lead]!.x, y: hulls[lead]!.y };
-      },
-      // The parked hulls go through the ONE hand-off the teleporter uses, in
-      // formation round the anchor (velocity zeroed, heading kept).
-      handOffHulls: (shipIds: readonly string[], destSectorKey: string, anchor: { x: number; y: number }): readonly string[] => {
-        const toRoom = getTeleportBroker().room(destSectorKey);
-        if (toRoom === null) return NO_HULLS_MOVED;
-        const ids: string[] = [];
-        const hulls = this.fleetHooks.fleetHullPoses(shipIds, ids);
-        const poses: FleetArrivalPose[] = [];
-        if (fleetArrivalPoses(hulls, anchor, poses) === -1) return NO_HULLS_MOVED;
-        const moves: HullMove[] = [];
-        for (let i = 0; i < ids.length; i++) {
-          const slot = this.lingeringSlots.get(ids[i]!)!;
-          moves.push({
-            shipInstanceId: ids[i]!, x: poses[i]!.x, y: poses[i]!.y,
-            vx: 0, vy: 0, angle: this.sabF32[slotBase(slot) + SLOT_ANGLE_OFF]!, angvel: 0,
-          });
-        }
-        return this.handOffHullsTo(toRoom, moves, 'warp');
-      },
     };
   }
 

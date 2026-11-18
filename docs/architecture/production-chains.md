@@ -86,7 +86,7 @@ User ruling (2026-11-01): "not everything should drain full power all of the tim
 
 ## NPC bases in the galaxy (T1)
 
-Every galaxy sector grows its own NPC base when its room is created (`SectorRoom.seedGalaxyBase`, enabled for every galaxy room by `resolveSectorConfig`):
+Every galaxy sector grows its own NPC base when its room is created (`seedGalaxyBase` in `bases/NpcBaseSubsystem.ts`, enabled for every galaxy room by `resolveSectorConfig`):
 - **Profile and growth.** `contextForSector` → `baseProfileFor` (tier, role, wealth, level cap, fence) → `growBase`. The seed is `hashString(sectorKey)`, so a sector's base is stable across restarts.
 - **After the restore.** Seeding runs AFTER the sector snapshot restore, so saved player structures and parked hulls are already in place and always win the space.
 - **Site.** The pure `chooseBaseSite` (`src/core/bases/baseSite.ts`) scans the sector on a 250 u grid for a Capital position where the whole base, plus a 250 u margin, fits inside the sector and touches no player structure or parked hull. It prefers the fewest asteroids, then the site farthest from the origin (where players spawn). Asteroids under the chosen footprint are cleared quietly (no destroy event).
