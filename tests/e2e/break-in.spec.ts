@@ -63,13 +63,17 @@ test("break into another owner's storage: locked, break in, the cargo opens", as
   const panel = page.getByTestId('cargo-panel');
   await expect(panel).toHaveAttribute('data-open', '0', { timeout: 5_000 });
   await expect(page.getByTestId('cargo-locked')).toBeVisible();
+  // Close by, it is a peek (cargo-pods slice 13): wait for the look-through
+  // to finish, so the growing grid doesn't move the button mid-click.
+  await expect(panel).toHaveAttribute('data-peek', '1');
+  await expect(page.getByTestId('cargo-hidden')).toHaveCount(0, { timeout: 8_000 });
   await page.getByTestId('cargo-break-in').click();
 
   // 800 ms later it opens, with the owner's alloy inside.
   await expect(panel).toHaveAttribute('data-open', '1', { timeout: 8_000 });
   const hereAlloy = panel.locator('[data-testid="cargo-here-row"][data-key="g:alloy"]');
   await expect(hereAlloy).toHaveAttribute('data-count', '7', { timeout: 5_000 });
-  await hereAlloy.getByTestId('cargo-take-all').click();
+  await hereAlloy.click();
   const aboardAlloy = panel.locator('[data-testid="cargo-aboard-row"][data-key="g:alloy"]');
   await expect(aboardAlloy).toHaveAttribute('data-count', '7', { timeout: 5_000 });
 });
