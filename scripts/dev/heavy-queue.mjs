@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import {
-  KINDS, adoptOrphan, decide, devLeaseDir, endOverdue, isOrphaned, killTree, recordRunningChild, watchdogDecision, watchdogMessage, shellJoin, sweepDevLeases, fmtDur, formatStatus, newTicketId, readRunning, readTickets,
+  KINDS, adoptOrphan, decide, devLeaseDir, lightLeaseDir, sweepLightLeases, endOverdue, isOrphaned, killTree, recordRunningChild, watchdogDecision, watchdogMessage, shellJoin, sweepDevLeases, fmtDur, formatStatus, newTicketId, readRunning, readTickets,
   releaseRunning, removeTicket, resolveQueueDir, snapshot, sweepStale, tryClaim, writeTicket,
 } from './heavy-queue-core.mjs';
 
@@ -195,6 +195,7 @@ function cmdStatus(argv) {
   sweepStale(dir);
   enforceWatchdog(dir);
   sweepDevLeases(devLeaseDir(dir));
+  sweepLightLeases(lightLeaseDir(dir));
   const snap = snapshot(dir);
   if (argv.includes('--json')) process.stdout.write(`${JSON.stringify(snap, null, 2)}\n`);
   else process.stdout.write(`${formatStatus(snap)}\n`);
