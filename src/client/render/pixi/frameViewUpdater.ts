@@ -6,17 +6,16 @@
  * mining / live beams, frames the camera and the placement ghost;
  * `updateBackdrop` draws the sky, starfield and grid from this frame's camera;
  * `updateHudOverlays` runs damage numbers, hit events, HUD drains, aim
- * feedback, selection / hover, the cut field, labels, dying hulls, incoming
+ * feedback, selection / hover (the input controller), the cut field, labels, dying hulls, incoming
  * fire, the helm marker, fleet selection and the radar. All read the pooled
  * frame ctx (`frameCtx.ts`) and allocate nothing (#14).
  */
 
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { beginShieldFrame, updateHitEvents } from './hitEventUpdater.js';
-import { updateBeams } from './beamUpdater.js';
+import { updateBeams, updateTractorBeams } from './beamUpdater.js';
 import { updatePlacementGhost } from './placementGhostUpdater.js';
 import { spawnDamageNumbers, updateHudDrains } from './hudDrainUpdater.js';
-import { fillTractorBeams } from '../tractorBeams';
 import { speedFxSampleInto } from '../camera/speedFxSample';
 import { speedFxFullSpeed } from '../art/fx/depth.js';
 import { updateArtShipLight } from '../art/shipArtSprites.js';
@@ -28,8 +27,7 @@ export function updateBeamsAndCamera(mirror: RenderMirror, ctx: RendererFrameCtx
   // New shields (B5): open the frame here; beams and hits feed it below,
   // the shield sync closes it (pixi/hitEventUpdater.ts).
   beginShieldFrame(r.hitEventCtx);
-  ctx.tractorViewCount = r.beamsDisabled || !r.tractorBeamPool ? 0 : fillTractorBeams(mirror, r.fxNow(), r.world.scale.x, r.tractorViews);
-  r.tractorBeamPool?.setBeams(r.tractorViews, ctx.tractorViewCount, r.world.scale.x);
+  ctx.tractorViewCount = updateTractorBeams(mirror, r.tractorBeamPool, r.tractorViews, r.beamsDisabled, r.fxNow, r.world.scale.x);
   // Remote, mining + live beams: see pixi/beamUpdater.ts. Ctx pooled to
   // `r.beamCtx` (built once in init); camera scale + shield gate per frame.
   r.beamCtx.cameraScale = r.world.scale.x;
@@ -107,46 +105,8 @@ export function updateHudOverlays(mirror: RenderMirror, ctx: RendererFrameCtx): 
   if (r.lockMarksVisible) r.aimFeedback?.update(mirror, r.camera.scale.x);
   else r.aimFeedback?.hide();
 
-  // The selection's focus (Item B4; RTS Part A). The renderer owns
-  // `_focusId`; the bracket resolves its live pose from the mirror each frame
-  // (the markers themselves are drawn in the ticker, `drawFleetOverlay`). If
-  // the focus has vanished from the mirror (despawned / left interest), clear
-  // it so the panel + stats channel tear down.
-  const focusPresent = r.selectionBracket?.resolveFocus(mirror, r.input._focusId) ?? false;
-  if (!focusPresent && r.input._focusId !== null) {
-    r.input._focusId = null;
-    r.input._focusKind = null;
-  }
-  // Publish the current selection for the main thread → Zustand bridge.
-  r.feedback.selectedPickId = r.input._focusId;
-  r.feedback.selectedPickKind = r.input._focusKind;
-
-  // WS-10 (R2.4) — hover outline. Suppress it on the already-SELECTED entity so
-  // the two brackets never stack on the same target. If the hovered entity
-  // vanished from the mirror, clear `_hoveredId`. Renderer-local id published
-  // for the E2E bridge (data-hover-pick-id) — NEVER Zustand (#2).
-  // Below the full HUD (showcase `?hud=`) the hover outline is not drawn.
-  const hovered = r.input._hoveredId;
-  const hoverTarget = hovered === null || hovered === r.input._focusId || r.input._selShips.has(hovered) || !r.lockMarksVisible ? null : hovered;
-  if (hoverTarget !== null) {
-    const stillHovered = r.hoverBracket?.update(mirror, hoverTarget) ?? false;
-    if (!stillHovered) r.input._hoveredId = null;
-  } else {
-    r.hoverBracket?.update(mirror, null);
-  }
-  r.feedback.hoveredPickId = r.input._hoveredId;
-  // WS-9 (R2.30) — project the bracket's above-entity point to SCREEN so the
-  // stats box floats over the entity (any kind). Alloc-free toScreenInto (#14).
-  const selWX = r.selectionBracket?.lastWorldX ?? null;
-  const selWY = r.selectionBracket?.lastWorldY ?? null;
-  if (selWX !== null && selWY !== null) {
-    r.camera.toScreenInto(selWX, selWY, ctx.selScreenScratch);
-    r.feedback.selectionScreenX = ctx.selScreenScratch.x;
-    r.feedback.selectionScreenY = ctx.selScreenScratch.y;
-  } else {
-    r.feedback.selectionScreenX = null;
-    r.feedback.selectionScreenY = null;
-  }
+  // Selection focus + hover outline + the stats-box projection: see pixi/rendererInputController.ts.
+  r.input.updateSelectionBrackets(mirror, r.hoverBracket, r.lockMarksVisible);
 
   r.cutField.update(mirror, r.artCtx.sunAz, r.camera.scale.x, r.camera.visibleBoundsInto(ctx.swarmViewScratch)); // cut-field chunks + view (far-zoom tiles culled to it)
 

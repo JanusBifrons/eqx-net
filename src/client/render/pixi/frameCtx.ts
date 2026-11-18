@@ -118,8 +118,6 @@ export interface RendererFrameCtx {
   readonly r: RendererFrameRefs;
   /** A3 — visible rect for culling structure sprites (reused per frame). */
   readonly swarmViewScratch: Float64Array;
-  /** WS-9 (R2.30) — reused scratch for the selection screen-projection (#14). */
-  readonly selScreenScratch: { x: number; y: number };
   /** `deathBlastFor` out (reused, #14). */
   readonly deathBlastScratch: DeathBlast;
   readonly explosionSprites: LegacyExplosionSprites;
@@ -158,7 +156,6 @@ export function createRendererFrameCtx(refs: RendererFrameRefs): RendererFrameCt
   const ctx: RendererFrameCtx = {
     r: refs,
     swarmViewScratch: new Float64Array(4),
-    selScreenScratch: { x: 0, y: 0 },
     deathBlastScratch: { scale: 1, linger: 1, vaporise: false, tint: 0, seconds: 0 },
     explosionSprites: new LegacyExplosionSprites(),
     skyCam: { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 0, screenHeight: 0 },

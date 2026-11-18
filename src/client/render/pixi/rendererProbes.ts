@@ -7,8 +7,9 @@
  * A new probe goes here, not inline in PixiRenderer.
  */
 
-import type { Container } from 'pixi.js';
-import type { RenderMirror } from '@core/contracts/IRenderer';
+import type { Application, Container } from 'pixi.js';
+import type { RenderMirror, RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
+import { FrameTimeRing } from '@core/perf/FrameTimeRing';
 import type { Camera } from '../worker/Camera';
 import type { EffectsService } from '../../effects/EffectsService';
 import type { MountVisualManager } from '../MountVisualManager';
@@ -29,6 +30,7 @@ import type { WarpSpoolFx } from './WarpSpoolFx.js';
 
 /** The renderer state the probes read (live values: getters on the renderer). */
 export interface RendererProbeState {
+  readonly app: Application;
   readonly sprites: Map<string, Container>;
   readonly artCtx: ShipArtCtx;
   readonly swarmSpriteKinds: Map<string, number>;
@@ -123,4 +125,94 @@ export function artStats(r: RendererProbeState): ArtStats {
   const wreckBreaks = r.wreckBreaks;
   const art = r.artCtx.art;
   return { wreckPieces, wreckTextured, wreckGlowing, wreckBreaks, wreckEngines, wreckLit, wreckRawMaps, wreckFarLod, wreckBlasts: r.wreckBlastsSpawned, wreckRipples: r.wreckRipplesSpawned, hullBlastsReplaced: r.hullBlastsReplaced, litMeshes: litPass.settings ? litPass.count : -1, mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: backdropStats(r), fxProjectiles: r.fxProjectiles?.liveCount() ?? 0, fxWakes: r.fxProjectiles?.wakeCount() ?? 0, fxBeam: r.fxLiveBeams?.container.visible === true, fxExplosions: r.fxExplosions?.activeCount() ?? 0, fxShields: r.fxShieldsOn ? r.fxShields!.count() : -1, fxFences: r.fxFences?.count() ?? 0, fxFenceHits: r.fxFences?.hitCount ?? 0, fxFenceContacts: r.fxFences?.contactCount() ?? 0, fxEngines: r.fxEngines?.drawn() ?? -1, engineParticles: r.effects ? r.effects.debugCopyEngineParticleWorld(r.engineDbgScratch) : 0, turrets: r.mountVisuals.machinedGunCount(), turretShots: r.mountVisuals.turretShotCount(), turretAim: r.mountVisuals.aimProbe(), lodDots: r.farIcons.iconCount, effectQuality: r.effects?.getQuality() ?? 'none', fxRibbons: r.fxEngines?.ribbons() ?? -1, warpBursts: r.warpFx.burstCount(), warpSpooling: r.warpFx.spoolCount(), spoolFxDrawn: r.spoolFx.spooling, helmMarker: r.helmMarker.isVisible(), ownArt: r.lastMirror?.localPlayerId ? (r.artCtx.handles.get(r.lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: r.lastMirror?.localPlayerId ? (r.fxEngines?.debugView(r.lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+}
+
+/**
+ * Perf scenes (plan prancy-squishing-donut P2): per-frame render cost,
+ * recorded only after `sync('enable')` (`?perfprobe=1`), plus the count
+ * probe (WS3): draw calls per rendered frame + upload baselines. Built once by
+ * the renderer; `ring` is pushed once per `update()`.
+ */
+export class RendererPerfProbe {
+  ring: FrameTimeRing | null = null;
+  private _drawRing: FrameTimeRing | null = null;
+  private _drawCount = 0;
+  private _drawMark = 0;
+  private _uploadsBase = 0;
+  private _uploadTexelsBase = 0;
+
+  constructor(private readonly r: RendererProbeState) {}
+
+  /** Count mode (`?perfcounts=1`): pin the effects tier (what is drawn must not
+   *  depend on the host's speed), count WebGL draw calls by wrapping the
+   *  context's draw entry points, and close each rendered frame on Pixi's
+   *  `postrender` runner. Perf runs only; players never reach it. */
+  private enableCountProbe(): void {
+    if (this._drawRing || !this.r.app?.renderer) return;
+    this._drawRing = new FrameTimeRing();
+    this.r.effects?.pinQuality('high');
+    const gl = (this.r.app.renderer as unknown as { gl?: WebGL2RenderingContext }).gl;
+    if (gl) {
+      // Fixed-arity wrappers: no rest-array per draw call (#14).
+      const de = gl.drawElements.bind(gl);
+      gl.drawElements = (m, c, t, o) => { this._drawCount++; de(m, c, t, o); };
+      const da = gl.drawArrays.bind(gl);
+      gl.drawArrays = (m, f, c) => { this._drawCount++; da(m, f, c); };
+      if (typeof gl.drawElementsInstanced === 'function') {
+        const dei = gl.drawElementsInstanced.bind(gl);
+        gl.drawElementsInstanced = (m, c, t, o, n) => { this._drawCount++; dei(m, c, t, o, n); };
+      }
+      if (typeof gl.drawArraysInstanced === 'function') {
+        const dai = gl.drawArraysInstanced.bind(gl);
+        gl.drawArraysInstanced = (m, f, c, n) => { this._drawCount++; dai(m, f, c, n); };
+      }
+    }
+    const runners = (this.r.app.renderer as unknown as { runners?: { postrender?: { add(o: { postrender(): void }): void } } }).runners;
+    runners?.postrender?.add({ postrender: () => {
+      this._drawRing?.push(this._drawCount - this._drawMark);
+      this._drawMark = this._drawCount;
+    } });
+    this.resetCountProbe();
+  }
+
+  private resetCountProbe(): void {
+    this._drawRing?.reset();
+    this._drawMark = this._drawCount;
+    const s = this.r.artCtx.art?.stats();
+    this._uploadsBase = s?.uploads ?? 0;
+    this._uploadTexelsBase = s?.uploadTexels ?? 0;
+  }
+
+  private readCountProbe(): RenderCountReading | null {
+    if (!this._drawRing) return null;
+    const d = this._drawRing.summary();
+    const s = this.r.artCtx.art?.stats();
+    return {
+      drawCalls: { frames: d.frames, p50: d.p50, p95: d.p95, max: d.max },
+      textureUploads: (s?.uploads ?? 0) - this._uploadsBase,
+      uploadTexels: (s?.uploadTexels ?? 0) - this._uploadTexelsBase,
+      atlasPages: s?.pages ?? 0,
+      gpuBytes: s?.gpuBytes ?? 0,
+    };
+  }
+
+  sync(op: PerfProbeOp): RenderPerfReading | null {
+    if (op === 'enable') { this.ring ??= new FrameTimeRing(); return null; }
+    if (op === 'counts') { this.ring ??= new FrameTimeRing(); this.enableCountProbe(); return null; }
+    if (!this.ring) return null;
+    if (op === 'reset') { this.ring.reset(); this.resetCountProbe(); return null; }
+    let displayObjects = 0;
+    const walk = (c: Container): void => { displayObjects++; for (const ch of c.children) walk(ch as Container); };
+    if (this.r.app?.stage) walk(this.r.app.stage);
+    const m = this.r.lastMirror;
+    return {
+      render: this.ring.summary(),
+      sprites: this.r.sprites.size,
+      displayObjects,
+      mirrorShips: m?.ships.size ?? 0,
+      mirrorSwarm: m?.swarm?.size ?? 0,
+      effectQuality: this.r.effects?.getQuality() ?? 'none',
+      counts: this.readCountProbe(),
+    };
+  }
 }

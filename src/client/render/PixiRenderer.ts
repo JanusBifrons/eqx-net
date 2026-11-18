@@ -34,7 +34,7 @@ import { writeFrameFeedback, tickFrameEffects } from './pixi/frameFeedbackUpdate
 import type { EffectQuality } from '@core/contracts/IEffects';
 import { RendererInputController, type ForwardedPointerEvent, type RendererInputDeps } from './pixi/rendererInputController.js';
 import { RendererCameraDirector, DEFAULT_GAMEPLAY_ZOOM, type RendererCameraDeps } from './pixi/cameraDirector.js';
-import { artStats, backdropStats, shipVisualProbe, type ArtStats, type BackdropStats, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
+import { artStats, backdropStats, shipVisualProbe, type ArtStats, type BackdropStats, RendererPerfProbe, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
 import { type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
 import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
@@ -64,9 +64,8 @@ import { BackgroundGrid } from './BackgroundGrid';
 import { CutFieldLayer } from './field/CutFieldLayer';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
-import { FrameTimeRing } from '@core/perf/FrameTimeRing';
-import { moveKey, moveSetKey } from './shipRekey.js';
-import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
+import { rekeyShipVisuals, type ShipRekeyRefs } from './shipRekey.js';
+import type { RenderPerfReading, PerfProbeOp } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
 // the constants below are PixiRenderer-specific (background tint,
@@ -207,7 +206,7 @@ export class PixiRenderer implements IRenderer {
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
     const r = this;
     return {
-      get sprites() { return r.sprites; }, get artCtx() { return r._artCtx; }, get swarmSpriteKinds() { return r._swarmSpriteKinds; },
+      get app() { return r.app; }, get sprites() { return r.sprites; }, get artCtx() { return r._artCtx; }, get swarmSpriteKinds() { return r._swarmSpriteKinds; },
       get mountVisuals() { return r.mountVisuals; }, get camera() { return r.camera; }, get starfield() { return r.starfield; },
       get backdrop() { return r._backdrop; }, get effects() { return r.effects; }, get engineDbgScratch() { return r._engineDbgScratch; },
       get farIcons() { return r._farIcons; }, get warpFx() { return r._warpFxCtx.warpFx; }, get spoolFx() { return r._warpFxCtx.spoolFx; },
@@ -269,46 +268,19 @@ export class PixiRenderer implements IRenderer {
     this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
     this._artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
   };
-  /** Bound once (#14): the per-pair step of `applyShipRekeys`. */
+  /** Bound once (#14): the per-pair step of `applyShipRekeys` (shipRekey.ts `rekeyShipVisuals`). */
   private readonly _rekeyShip = (from: string, to: string): void => {
-    this.rekeyShip(from, to);
+    if (rekeyShipVisuals(this._rekeyRefs, from, to)) this._shipRekeysApplied++;
   };
-
-  /**
-   * RTS Part A seamless hand-over: a ship's mirror key changed (someone took
-   * or let go of its controls; `ColyseusClient.rekeyShip` queued the pair on
-   * `mirror.pendingShipRekeys`, which crosses the worker boundary with the
-   * mirror). Every per-ship piece of renderer state MOVES to the new key, so
-   * `updateShipSprites` finds the ship's sprite already built and the sweep
-   * never destroys it: same sprite and art handle, same turret cluster (guns,
-   * recoil, angles), health bar, label, exhaust, shield view, selection.
-   * A stale sprite under `to` is torn down first, exactly as the sweep would.
-   * Legacy effects (engine particles, shield ring) re-register by id on their
-   * own each frame; their visuals don't depend on the key's history.
-   */
-  private rekeyShip(from: string, to: string): void {
-    if (from === to) return;
-    const sprite = this.sprites.get(from);
-    if (sprite === undefined) return;
-    const stale = this.sprites.get(to);
-    if (stale !== undefined) {
-      this.sprites.delete(to);
-      stale.parent?.removeChild(stale);
-      this._forgetSprite(to, false);
-      stale.destroy({ children: true });
-    }
-    moveKey(this.sprites, from, to);
-    moveKey(this._artCtx.handles, from, to);
-    this.mountVisuals.rekeyShip(from, to);
-    this._hudCtx.healthBars?.rekey(from, to);
-    this.labels?.rekey(from, to);
-    this._farIcons.forgetShip(from, sprite);
-    this._fxEngines?.rekey(from, to);
-    this._fxShields?.rekey(from, to);
-    if (this._input._focusId === from) this._input._focusId = to;
-    if (this._input._hoveredId === from) this._input._hoveredId = to;
-    if (moveSetKey(this._input._selShips, from, to)) this._input.publishFleetSelection();
-    this._shipRekeysApplied++;
+  private readonly _rekeyRefs: ShipRekeyRefs = this.rekeyRefs();
+  private rekeyRefs(): ShipRekeyRefs {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
+    const r = this;
+    return {
+      get sprites() { return r.sprites; }, get artHandles() { return r._artCtx.handles; }, get mountVisuals() { return r.mountVisuals; },
+      get healthBars() { return r._hudCtx.healthBars; }, get labels() { return r.labels; }, get farIcons() { return r._farIcons; },
+      get fxEngines() { return r._fxEngines; }, get fxShields() { return r._fxShields; }, get input() { return r._input; }, forgetSprite: this._forgetSprite,
+    };
   }
 
   /** Re-keys this renderer has applied (diagnostic / E2E). */
@@ -465,89 +437,9 @@ export class PixiRenderer implements IRenderer {
     return this.frameMarkers;
   }
 
-  /** Perf scenes (plan prancy-squishing-donut P2): per-frame render cost,
-   *  recorded only after `perfProbeSync('enable')` (`?perfprobe=1`). */
-  private _perfRing: FrameTimeRing | null = null;
-
-  /** Count probe (WS3): draw calls per rendered frame + upload baselines. */
-  private _drawRing: FrameTimeRing | null = null;
-  private _drawCount = 0;
-  private _drawMark = 0;
-  private _uploadsBase = 0;
-  private _uploadTexelsBase = 0;
-
-  /** Count mode (`?perfcounts=1`): pin the effects tier (what is drawn must not
-   *  depend on the host's speed), count WebGL draw calls by wrapping the
-   *  context's draw entry points, and close each rendered frame on Pixi's
-   *  `postrender` runner. Perf runs only; players never reach it. */
-  private enableCountProbe(): void {
-    if (this._drawRing || !this.app?.renderer) return;
-    this._drawRing = new FrameTimeRing();
-    this.effects?.pinQuality('high');
-    const gl = (this.app.renderer as unknown as { gl?: WebGL2RenderingContext }).gl;
-    if (gl) {
-      // Fixed-arity wrappers: no rest-array per draw call (#14).
-      const de = gl.drawElements.bind(gl);
-      gl.drawElements = (m, c, t, o) => { this._drawCount++; de(m, c, t, o); };
-      const da = gl.drawArrays.bind(gl);
-      gl.drawArrays = (m, f, c) => { this._drawCount++; da(m, f, c); };
-      if (typeof gl.drawElementsInstanced === 'function') {
-        const dei = gl.drawElementsInstanced.bind(gl);
-        gl.drawElementsInstanced = (m, c, t, o, n) => { this._drawCount++; dei(m, c, t, o, n); };
-      }
-      if (typeof gl.drawArraysInstanced === 'function') {
-        const dai = gl.drawArraysInstanced.bind(gl);
-        gl.drawArraysInstanced = (m, f, c, n) => { this._drawCount++; dai(m, f, c, n); };
-      }
-    }
-    const runners = (this.app.renderer as unknown as { runners?: { postrender?: { add(o: { postrender(): void }): void } } }).runners;
-    runners?.postrender?.add({ postrender: () => {
-      this._drawRing?.push(this._drawCount - this._drawMark);
-      this._drawMark = this._drawCount;
-    } });
-    this.resetCountProbe();
-  }
-
-  private resetCountProbe(): void {
-    this._drawRing?.reset();
-    this._drawMark = this._drawCount;
-    const s = this._artCtx.art?.stats();
-    this._uploadsBase = s?.uploads ?? 0;
-    this._uploadTexelsBase = s?.uploadTexels ?? 0;
-  }
-
-  private readCountProbe(): RenderCountReading | null {
-    if (!this._drawRing) return null;
-    const d = this._drawRing.summary();
-    const s = this._artCtx.art?.stats();
-    return {
-      drawCalls: { frames: d.frames, p50: d.p50, p95: d.p95, max: d.max },
-      textureUploads: (s?.uploads ?? 0) - this._uploadsBase,
-      uploadTexels: (s?.uploadTexels ?? 0) - this._uploadTexelsBase,
-      atlasPages: s?.pages ?? 0,
-      gpuBytes: s?.gpuBytes ?? 0,
-    };
-  }
-
-  perfProbeSync(op: PerfProbeOp): RenderPerfReading | null {
-    if (op === 'enable') { this._perfRing ??= new FrameTimeRing(); return null; }
-    if (op === 'counts') { this._perfRing ??= new FrameTimeRing(); this.enableCountProbe(); return null; }
-    if (!this._perfRing) return null;
-    if (op === 'reset') { this._perfRing.reset(); this.resetCountProbe(); return null; }
-    let displayObjects = 0;
-    const walk = (c: Container): void => { displayObjects++; for (const ch of c.children) walk(ch as Container); };
-    if (this.app?.stage) walk(this.app.stage);
-    const m = this._lastMirror;
-    return {
-      render: this._perfRing.summary(),
-      sprites: this.sprites.size,
-      displayObjects,
-      mirrorShips: m?.ships.size ?? 0,
-      mirrorSwarm: m?.swarm?.size ?? 0,
-      effectQuality: this.effects?.getQuality() ?? 'none',
-      counts: this.readCountProbe(),
-    };
-  }
+  /** Perf scenes + count probe (pixi/rendererProbes.ts), built once. */
+  private readonly _perf = new RendererPerfProbe(this._probes);
+  perfProbeSync(op: PerfProbeOp): RenderPerfReading | null { return this._perf.sync(op); }
 
   perfProbe(op: PerfProbeOp): Promise<RenderPerfReading | null> {
     return Promise.resolve(this.perfProbeSync(op));
@@ -832,7 +724,7 @@ export class PixiRenderer implements IRenderer {
 
     // eslint-disable-next-line no-restricted-properties -- real time: cost measurement
     this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
-    this._perfRing?.push(this.frameMarkers.rendererUpdateMs);
+    this._perf.ring?.push(this.frameMarkers.rendererUpdateMs);
   }
 
   /**
