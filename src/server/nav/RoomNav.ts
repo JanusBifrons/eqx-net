@@ -10,7 +10,7 @@ import { NavRoutes } from './NavRoutes.js';
 import { AutopilotRoutes, type AutopilotHull } from './AutopilotRoutes.js';
 import type { CutFieldNavSink } from '../rooms/CutFieldSubsystem.js';
 import type { ChunkOpts } from '../../core/terrain/fieldLayout.js';
-import { NavRouteRequestSchema, type NavRouteReply } from '../../shared-types/messages/navMessages.js';
+import type { NavRouteReply, NavRouteRequest } from '../../shared-types/messages/navMessages.js';
 
 /** What the room tells it. */
 export interface RoomNavDeps {
@@ -21,8 +21,6 @@ export interface RoomNavDeps {
   stopped(): boolean;
   /** The asking session's player and active hull, or null (no player, no live hull). */
   hullOf(sessionId: string): (AutopilotHull & { playerId: string }) | null;
-  /** A malformed message from this session (the room's counter). */
-  malformed(sessionId: string, kind: string): void;
 }
 
 /** The cut field's side: streams chunk loads and rock changes. */
@@ -60,13 +58,11 @@ export class RoomNav {
     return this.routes = new NavRoutes(this.routeFn, this.deps.now);
   }
 
-  /** `nav_route_request` (slice 12): parse, then answer the asker's own hull. */
-  onRequest(client: { sessionId: string; send(type: string, msg: unknown): void }, raw: unknown): void {
-    const p = NavRouteRequestSchema.safeParse(raw);
-    if (!p.success) { this.deps.malformed(client.sessionId, 'nav_route_request'); return; }
+  /** A parsed `nav_route_request` (slice 12; `rooms/features/navMessages.ts`): answer the asker's own hull. */
+  onRequest(client: { sessionId: string; send(type: string, msg: unknown): void }, req: NavRouteRequest): void {
     const hull = this.deps.hullOf(client.sessionId);
     if (hull === null) return;
-    this.autopilot.request(hull.playerId, hull, p.data.reqId, p.data.tx, p.data.ty,
+    this.autopilot.request(hull.playerId, hull, req.reqId, req.tx, req.ty,
       (r: NavRouteReply) => { try { client.send('nav_route', r); } catch { /* closing */ } });
   }
 
