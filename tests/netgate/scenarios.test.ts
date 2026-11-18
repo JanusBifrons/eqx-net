@@ -68,6 +68,7 @@ describe('selectScenarios — fail-CLOSED routing (hostile review M3)', () => {
     expect(selectScenarios(['src/server/structures/StructureGridSubsystem.ts'])).toEqual(['core']);
     expect(selectScenarios(['src/core/structures/Grid.ts'])).toEqual(['core']);
     expect(selectScenarios(['src/shared-types/structureKinds.ts'])).toEqual(['core']);
+    expect(selectScenarios(['src/shared-types/structureKinds/coastal.ts'])).toEqual(['core']);
     expect(selectScenarios(['src/server/spawn/ScrapSpawner.ts'])).toEqual(['core']);
     expect(selectScenarios(['src/core/geometry/scrapCollider.ts'])).toEqual(['core']);
   });
