@@ -183,6 +183,8 @@ export async function bootSectorTestServer(opts: {
   swarmAtRest?: boolean;
   /** Macro terrain v2: stream a cut field (room option `cutField`). */
   cutField?: { seed: string };
+  /** Wreck fields 3b: stream an old battlefield's hulls (room option `wreckField`). */
+  wreckField?: { seed: string; x: number; y: number; sides: readonly [string, string] };
   /** D2 — NPC bases grown by the generator. */
   npcBases?: ReadonlyArray<Record<string, unknown>>;
   /** T1 — seed the sector's own NPC base (as galaxy rooms do). */
@@ -290,6 +292,7 @@ export async function bootSectorTestServer(opts: {
     swarmRadius: opts.swarmRadius,
     swarmAtRest: opts.swarmAtRest,
     cutField: opts.cutField,
+    wreckField: opts.wreckField,
     sectorFeatures: opts.sectorFeatures,
     npcBases: opts.npcBases,
     galaxyBases: opts.galaxyBases,

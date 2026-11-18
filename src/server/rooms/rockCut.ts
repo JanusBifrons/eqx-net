@@ -162,7 +162,7 @@ export class RockCutter {
     }
     const geom = wreckPieceGeometry(inputs);
     if (geom.length < 2) return false;
-    const fifo = this.h.fifo(false);
+    const fifo = this.h.fifo(false, 'battle'); // a rock break is a battle-origin root
     const placed = placeWreckPieces(
       src, geom, pose, pose.x, pose.y, inputs.killX, -inputs.killY, inputs.seed ^ 0x3ec7,
       src.profile.fracture?.sweepCuts === true ? 0 : (inputs.cutW ?? 0), // a swept cut burns no gap

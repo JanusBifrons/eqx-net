@@ -4,20 +4,11 @@ import { DEFAULT_BASE_URL, SERVER_URL } from './helpers/ports';
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinSector(page: import('@playwright/test').Page): Promise<void> {
-  // Post-auth flow (storageState pre-pops the JWT). The old "Enter Sector
-  // Alpha" button is gone — flow is now: landing → "Join the fight" CTA →
-  // galaxy-map-screen → engineering-rooms-button → engineering-room-test-sector.
-  // Pattern lifted from the working spawn-select-flow.spec.ts:19.
-  // test-sector (engineering, testMode=true, no drones) is the right room
-  // for the basic connectivity/movement/broadcast tests below.
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
-  const cta = page.locator('text=Join the fight').first();
-  if (await cta.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await cta.click();
-  }
-  await page.locator('[data-testid="galaxy-map-screen"]').waitFor({ timeout: 15_000 });
-  await page.locator('[data-testid="engineering-rooms-button"]').click();
-  await page.locator('[data-testid="engineering-room-test-sector"]').click();
+  // Post-auth flow (storageState pre-pops the JWT). Dev rooms have no
+  // homepage button; they are reached by direct link. test-sector
+  // (testMode=true, no drones) is the right room for the basic
+  // connectivity/movement/broadcast tests below.
+  await page.goto(`${BASE_URL}/?room=test-sector`, { waitUntil: 'domcontentloaded' });
   // Wait for the in-game HUD to mount + the local ship to broadcast.
   await page.locator('[data-testid="hud-sector"]').waitFor({ timeout: 20_000 });
   await page.waitForFunction(

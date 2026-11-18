@@ -158,7 +158,7 @@ app.get('/healthz', (_req, res) => {
  * Deterministic-per-minute "X players fighting" hype number. Returns
  * 600–900, the same value across all clients hitting the server in the
  * same minute, rotating once per minute. Pre-moved-server: lived in
- * `MetaLandingScreen.tsx` and ran on the client's clock — moved here so
+ * the old client splash screen and ran on the client's clock — moved here so
  * (a) every concurrent visitor sees the same number, (b) when we swap
  * this for a real `matchMaker`-summed count later the client doesn't
  * change. */
@@ -725,6 +725,11 @@ gameServer
 gameServer.define('cut-field-test', SectorRoom, {
   testMode: true, cutField: { seed: 'look' }, asteroidConfig: [], droneCount: 0,
   defaultSpawnX: -30_002, defaultSpawnY: 27_191, maxClients: 4,
+}).filterBy(['testId']);
+// Wreck field `?room=wreck-field-test` (wreck fields 3b): an old battlefield streamed in by chunk around the spawn, inside the 'look' rock field.
+gameServer.define('wreck-field-test', SectorRoom, {
+  testMode: true, cutField: { seed: 'look' }, wreckField: { seed: 'look', x: 60_000, y: 0, sides: ['ashen-league', 'vel-concord'] },
+  asteroidConfig: [], droneCount: 0, defaultSpawnX: 60_000, defaultSpawnY: 0, maxClients: 4,
 }).filterBy(['testId']);
 // Gates (plan soft-leaping-truffle v2, phase V) — two powered Shield Gates:
 // west opens for anyone not hostile, east is owner-only (owner `scenario`).

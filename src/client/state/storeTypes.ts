@@ -164,7 +164,7 @@ export interface UISelection {
  * Settings "Return to menu") can change it without prop-drilling through
  * App → ... → tab.
  */
-export type Phase = 'meta' | 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local';
+export type Phase = 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local';
 
 export interface DevData {
   rtt: number;
