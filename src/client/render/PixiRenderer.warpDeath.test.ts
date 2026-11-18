@@ -10,14 +10,15 @@
  * dies leaves the mirror too. A ship that dies mid-spool did not warp: it
  * must draw no departure (its explosion and wreck are the whole story).
  *
- * Driven at the renderer: the real `drawWarpFx` on a prototype-backed
- * instance (a full PixiRenderer needs WebGL), with a real `WarpFx`, so the
- * test exercises the death decision where it lives.
+ * Driven at the renderer's warp pass (`updateWarpFx`, pixi/warpFxUpdater.ts; a
+ * full PixiRenderer needs WebGL), with a real `WarpFx`, so the test
+ * exercises the death decision where it lives.
  */
 import { describe, expect, it } from 'vitest';
 import { Container } from 'pixi.js';
-import { PixiRenderer } from './PixiRenderer';
+import { createWarpFxCtx, updateWarpFx } from './pixi/warpFxUpdater';
 import { WarpFx } from './pixi/WarpFx';
+import type { WarpSpoolFx } from './pixi/WarpSpoolFx';
 import type { RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
 
 type Harness = { drawWarpFx(mirror: RenderMirror): void };
@@ -25,20 +26,11 @@ type Harness = { drawWarpFx(mirror: RenderMirror): void };
 function makeRenderer(): { r: Harness; fx: WarpFx; setNow(ms: number): void } {
   let now = 0;
   const fx = new WarpFx();
-  const r = Object.create(PixiRenderer.prototype) as Harness & Record<string, unknown>;
   const sprite = new Container();
   sprite.position.set(100, -200);
-  r._warpFx = fx;
-  r._spoolFx = { beginFrame: () => {}, endFrame: () => {} };
-  r.drawSpoolFx = () => {};
-  r.fxClock = { now: () => now };
-  r.world = { scale: { x: 1 } };
-  r.sprites = new Map([['swarm-7', sprite]]);
-  r._warpShipScratch = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
-  r._warpStern = new Map<string, number>();
-  r._droneWarpFed = new Set<string>();
-  r._hullWarpFed = new Set<string>();
-  r._droneWarpKeys = new Map<number, string>();
+  const spoolFx = { beginFrame: () => {}, endFrame: () => {}, draw: () => {} } as unknown as WarpSpoolFx;
+  const ctx = createWarpFxCtx({ fxNow: () => now, sprites: new Map([['swarm-7', sprite]]), artHandles: new Map(), warpFx: fx, spoolFx });
+  const r: Harness = { drawWarpFx: (m) => updateWarpFx(m, ctx) };
   return { r, fx, setNow: (ms) => { now = ms; } };
 }
 

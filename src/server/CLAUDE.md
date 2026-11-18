@@ -109,7 +109,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Cargo access
 
-- **Gate:** `SectorRoom.cargoAccess` is re-checked on every `cargo_query` / `cargo_move`; moves only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell`.
+- **Gate:** `cargoAccess` (`rooms/features/cargoMessages.ts`) is re-checked on every `cargo_query` / `cargo_move`; moves only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell`.
 - **Break-ins** are hostile acts; an NPC's loot is rolled once per spawn (`npcHold`).
 - Full text and locks: [loot-and-cargo.md](../../docs/features/loot-and-cargo.md#server-implementation-notes).
 
@@ -195,6 +195,8 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - **Decision logic over state:** hand-rolled mocks (`src/server/transit/TransitOrchestrator.test.ts` is the model).
 - **Anything on the snapshot wire or broadcast gates, and every new visible entity type:** an integration test on `tests/integration/sectorRoom/harness.ts` (`pnpm test:integration`).
 - **A test that needs a live hull uses `harness.connectActive`** (sends `client_ready`); `connectAs` alone never activates. Detail: [DETERMINISM.md](../../tests/integration/sectorRoom/DETERMINISM.md#server-testing-patterns).
+- **A new test/engineering room is a row in `rooms/testRooms/`** (behind `shouldRegisterTestRooms`), never a `define` in `index.ts`.
+- **A new HTTP route is a router in `routes/`** (dev-only ones in `devRouter.ts`), mounted with one line.
 
 ## Generic Entity Pipeline
 

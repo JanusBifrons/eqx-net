@@ -134,6 +134,10 @@ export function GalaxyPickerChrome({
   // Living Galaxy Phase 6 — hovered sector + live stats drive the tooltip.
   const galaxyHover = useUIStore((s) => s.galaxyHover);
   const galaxyStats = useUIStore((s) => s.galaxyStats);
+  // When the feed last arrived (each poll writes a new array): the panel's
+  // "UPDATED n S AGO". Null before the first poll.
+  const [statsAtMs, setStatsAtMs] = useState<number | null>(null);
+  useEffect(() => { if (galaxyStats.length > 0) setStatsAtMs(Date.now()); }, [galaxyStats]);
   // False until the first /galaxy/snapshot poll resolves (one-shot spinner).
   const galaxyStatsLoaded = useUIStore((s) => s.galaxyStatsLoaded);
   // 2026-06-19 pop-in fix — the badges come from THREE async sources: global
@@ -510,6 +514,7 @@ export function GalaxyPickerChrome({
         tip={drawerTip}
         ships={drawerShips}
         recentCombat={drawerRecentCombat}
+        updatedAtMs={statsAtMs}
         context={context}
         warpable={drawerWarpable}
         currentSectorKey={currentSectorKey}

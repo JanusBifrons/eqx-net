@@ -62,6 +62,19 @@ export class SectorControlHistory {
     this.nextSampleAtMs = nowMs + HISTORY_SAMPLE_MS;
   }
 
+  /** Refill a sector's ring from saved samples (oldest first) after a restart.
+   *  Samples older than an hour before `nowMs` are dropped; the rest replace the
+   *  ring, newest HISTORY_SAMPLES kept. Restore path; allocation fine. */
+  restore(sectorKey: string, saved: readonly SectorHistorySample[], nowMs: number): void {
+    const r = this.rings.get(sectorKey);
+    if (!r) return;
+    const fresh = saved.filter((s) => s.atMs > nowMs - HISTORY_SAMPLES * HISTORY_SAMPLE_MS && s.atMs <= nowMs);
+    const keep = fresh.slice(-HISTORY_SAMPLES);
+    r.head = 0;
+    r.count = 0;
+    for (const s of keep) this.record(sectorKey, s.atMs, s.holder, s.holderShare);
+  }
+
   /** A sector's samples, oldest first; null for an unknown sector. */
   samples(sectorKey: string): SectorHistorySample[] | null {
     const r = this.rings.get(sectorKey);
