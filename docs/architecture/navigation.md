@@ -95,11 +95,22 @@ left somewhere else" do.
 - Rocks grow by half a cell diagonal (`FINE_NAV_PAD`) before stamping, and the planner reads a cell's
   value less a cell diagonal (`FINE_NAV_DIAG`, ~91 u): a true lower bound anywhere in the cell, not just
   at its centre. Without it a route rated "64 u of room" ran a fighter into rock between cell centres.
-  The cost: in the packed chunks (80+ rocks) almost no cell has fighter room. Measured 2026-11-18 (seed
-  `look`): 1.5–5.5 % of a packed chunk's cells pass a fighter (`navClearance` 30 u), about 88 % read as
-  rock. The streets (48 u at the core, 288 u at the rim) lose the 45 u pad on each side plus the 91 u
-  diagonal, so the fine layer closes them too: a fighter's route into a packed chunk ends at the nearest
-  reachable spot. In sparse chunks and outside the field fighters thread between rocks.
+  That bound alone closes the packed chunks' streets: they pinch to 60–68 u gaps and a fighter's
+  `navClearance` is 30 u. Measured 2026-11-18 (seed `look`, chunk (-9, 5)): exact distance on a 16 u
+  lattice leaves 27 % of the chunk flyable and the open part spans it; the 64 u bound leaves 3.9 % and
+  no span; even an 8 u padded grid only 5 %.
+- **Exact where the bound can't tell.** A cell is *tight* for clearance `c` when its value less a
+  diagonal is under `c` but its value plus a diagonal is not (the true room is within a diagonal of the
+  value). Only there the planner asks `exactAt`: the distance to the nearest rock outline, the rocks'
+  own convex parts at their pose (`pointToShipPolygonDistance`, the hit-test geometry), through a
+  256 u bucket index built with the chunk's grid. A tight cell is sampled at 4×4 points (16 u apart)
+  and admitted if one has room; its search node moves to the roomiest sample, and any edge touching
+  such a node is traced exactly. Line checks sphere-trace the exact distance there, leaping by the slack
+  (at least 2 u, so a line may graze a rock 2 u inside the clearance; local avoidance covers that).
+  Counted in `exactQueries`: a fighter crossing packed chunk (-9, 5) takes ~25 000 (gate 32 000),
+  ~30–50 ms on the desktop. Next (owner, 2026-11-18): nothing built ahead of time, detail only where
+  route searches go, in one fixed-size pool per server with the least recently used dropped; static and
+  sleeping obstacles of every kind from `SectorObstacles`, not only rocks.
 - Each chunk's grid reaches 1024 u past the chunk on every side (96×96 cells, 36 KB), so a rock over
   the border counts. Clearance reads are capped at that reach (past it the coarse layer decides) and read
   -1 where the chunk is not loaded.
@@ -136,7 +147,7 @@ chunk is loaded and rock is within its reach, else the coarse layer.
 4. String-pull: keep only the turns a straight line can't skip. Past the window the route follows coarse
    cell points; the ship asks again as it goes (slice 9).
 - Line checks leap by the room to spare and, when tight, visit every 64 u cell
-  the segment crosses (a fixed step skipped thin rock).
+  the segment crosses (a fixed step skipped thin rock); in a tight cell they trace the exact distance.
 - Per-request caps: 30 000 coarse and 60 000 fine expansions. Past them, or with no way at this
   clearance, the route ends at the reached cell nearest the goal (`GraphSearch.nearest`, least heuristic),
   status `nearest`; `none` only when nothing reached is nearer than the start. At most 64 waypoints (`NAV_ROUTE_MAX_POINTS`).
@@ -179,10 +190,17 @@ one it flies straight as before.
   (the member before it; the first, the leader) with `keep` (a moving goal flies the old route until the
   new plan lands). Open space answers straight and the boids herd is unchanged; rock between ⇒ it flies the
   route and stops `flockFollow` behind that ship, so the squad crosses single file (owner, 2026-11-17).
+- Turns are flown, not cut (`stepNavRoute`): a waypoint before the goal is passed only once the ship,
+  inside `arrive`, has drawn level with it along its incoming leg (from the waypoint before, or for the
+  first, the plan's start, which `NavRoutes` stores with the route). The planner's turns sit at the
+  hull's clearance from rock; leaving one from a fighter's 80 u arrive flew the chord across a street
+  corner at 0 u from rock (clearance 30 u). The goal still arrives by distance alone.
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25.
 - `CutFieldSubsystem.rockContacts` counts ship-vs-field-rock contacts (the test gate).
 - Lock: `tests/integration/sectorRoom/navFollowRoute.test.ts`, a fighter told to Move across a rock arrives
-  with no rock contact; the same order with routes off hits it.
+  with no rock contact; the same order with routes off hits it; and on the field's street crossing (the
+  big rock's 8-turn way through the packed rocks beside it, longer than the harness's 8 s flight) it makes
+  way with no rock contact. The arrival case takes a crossing whose route fits that flight (≤ 2 400 u).
 
 ## The player's autopilot asks (`server/nav/AutopilotRoutes.ts`)
 - Wire (slice 12): client → server `nav_route_request {reqId, tx, ty}` (strict; the client names only the
@@ -228,3 +246,6 @@ one it flies straight as before.
   pick and the helm course; `RenderMirror.helmCourse` carries the turns still ahead (`route`, `routeN`).
   2026-11-18 slice 15: netgate scenario `autopilot` (the plan's D1 guard). Found while choosing its route:
   the fine layer closes the field's streets to fighters (fine layer, above).
+  2026-11-18 fine rebuild slice A: exact distance in tight cells (`exactAt`); fighters cross packed
+  chunks by their streets. Ships fly each turn instead of leaving it from the arrive radius (the
+  streets left no margin for the cut).

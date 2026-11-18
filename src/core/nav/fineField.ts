@@ -22,6 +22,7 @@ import { CHUNK_SIZE, rocksInChunk, unpackRockKey, type ChunkOpts } from '../terr
 import { fieldRockBody } from '../terrain/chunkStreamer.js';
 import { rockObstacleParts, type GridObstacle } from '../structures/Grid.js';
 import { ClearanceGrid } from './clearance.js';
+import { pointToShipPolygonDistance } from '../combat/Weapons.js';
 
 /** Fine cell side (world u). */
 export const FINE_NAV_CELL = 64;
@@ -35,6 +36,15 @@ export const FINE_NAV_PAD = (FINE_NAV_CELL * Math.SQRT2) / 2;
 export const FINE_NAV_DIAG = FINE_NAV_CELL * Math.SQRT2;
 /** Cells on a side of one chunk's grid. */
 export const FINE_NAV_SIDE = (CHUNK_SIZE + 2 * FINE_NAV_REACH) / FINE_NAV_CELL;
+
+/** Bucket side of a chunk's rock index for exact distances (world u). */
+const IDX_CELL = 256;
+/** Buckets on a side of one chunk's index (it covers the grid's area). */
+const IDX_SIDE = (CHUNK_SIZE + 2 * FINE_NAV_REACH) / IDX_CELL;
+
+/** A chunk's rocks bucketed for {@link FineFieldLayer.exactAt}: bucket `b`
+ *  holds `items[start[b] .. start[b + 1])`, indices into `obs`. */
+interface RockIndex { obs: GridObstacle[]; start: Int32Array; items: Int32Array }
 
 /** A rock as the fine layer sees it: its obstacle record plus its key. */
 interface NavRock extends GridObstacle { key: number; angle: number; restX: number; restY: number }
@@ -54,6 +64,11 @@ export class FineFieldLayer {
   private readonly builder = new ClearanceGrid();
   private readonly obs: GridObstacle[] = [];
   private readonly spare: Float32Array[] = [];
+  /** Per loaded chunk: its rocks bucketed for exact distance (slice A of the fine rebuild). */
+  private readonly index = new Map<number, RockIndex>();
+
+  /** Exact point-to-rock distances worked out so far (the count gate's work counter). */
+  exactQueries = 0;
 
   /** Grid cells rebuilt so far (the count gate's work counter). */
   cellsRebuilt = 0;
@@ -81,6 +96,7 @@ export class FineFieldLayer {
     const key = ck(cx, cy), grid = this.live.get(key);
     if (!grid) return;
     this.live.delete(key);
+    this.index.delete(key);
     this.spare.push(grid);
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
       if (!this.neededForCut(cx + dx, cy + dy)) this.cut.delete(ck(cx + dx, cy + dy));
@@ -118,6 +134,32 @@ export class FineFieldLayer {
     return d < FINE_NAV_REACH ? d : FINE_NAV_REACH;
   }
 
+  /** The exact distance from (x, y) to the nearest rock outline (the rocks'
+   *  own convex parts, at their pose), capped at `cap` (≤ `FINE_NAV_REACH`);
+   *  -1 when the chunk is not loaded. For where a cell's bound is too rough
+   *  to tell whether a hull fits (a tight street): never on a tick. */
+  exactAt(x: number, y: number, cap: number): number {
+    const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE);
+    const idx = this.index.get(ck(cx, cy));
+    if (!idx) return -1;
+    this.exactQueries++;
+    const x0 = cx * CHUNK_SIZE - FINE_NAV_REACH, y0 = cy * CHUNK_SIZE - FINE_NAV_REACH;
+    const bx0 = Math.max(0, Math.floor((x - cap - x0) / IDX_CELL)), bx1 = Math.min(IDX_SIDE - 1, Math.floor((x + cap - x0) / IDX_CELL));
+    const by0 = Math.max(0, Math.floor((y - cap - y0) / IDX_CELL)), by1 = Math.min(IDX_SIDE - 1, Math.floor((y + cap - y0) / IDX_CELL));
+    let best = cap;
+    for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) {
+      const b = by * IDX_SIDE + bx;
+      for (let k = idx.start[b]!, end = idx.start[b + 1]!; k < end; k++) {
+        const o = idx.obs[idx.items[k]!]!;
+        const dx = x - o.x, dy = y - o.y, far = best + o.radius;
+        if (dx * dx + dy * dy >= far * far) continue;
+        const d = o.parts ? pointToShipPolygonDistance(x, y, o.x, o.y, o.angle ?? 0, o.parts) : Math.max(0, Math.sqrt(dx * dx + dy * dy) - o.radius);
+        if (d < best) { best = d; if (best === 0) return 0; }
+      }
+    }
+    return best;
+  }
+
   /** Rebuilds every loaded chunk whose grid a circle at (x, y) of `radius`
    *  (and, optionally, the same circle at (x2, y2)) reaches. */
   private dirtyAround(x: number, y: number, radius: number, x2 = x, y2 = y): void {
@@ -145,6 +187,7 @@ export class FineFieldLayer {
     const b = this.builder;
     b.build(cx * CHUNK_SIZE - FINE_NAV_REACH, cy * CHUNK_SIZE - FINE_NAV_REACH, FINE_NAV_SIDE, FINE_NAV_SIDE, FINE_NAV_CELL, obs, FINE_NAV_PAD);
     this.live.get(ck(cx, cy))!.set(b.dist);
+    this.index.set(ck(cx, cy), indexRocks(cx, cy, obs));
     this.cellsRebuilt += FINE_NAV_SIDE * FINE_NAV_SIDE;
   }
 
@@ -178,4 +221,20 @@ export class FineFieldLayer {
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) if (this.live.has(ck(cx + dx, cy + dy))) return true;
     return false;
   }
+}
+
+/** Buckets `obs` (copied) by the index cells each rock's circle covers. */
+function indexRocks(cx: number, cy: number, obs: readonly GridObstacle[]): RockIndex {
+  const x0 = cx * CHUNK_SIZE - FINE_NAV_REACH, y0 = cy * CHUNK_SIZE - FINE_NAV_REACH, n = IDX_SIDE * IDX_SIDE;
+  const start = new Int32Array(n + 1);
+  const span = (o: GridObstacle, visit: (b: number) => void): void => {
+    const bx0 = Math.max(0, Math.floor((o.x - o.radius - x0) / IDX_CELL)), bx1 = Math.min(IDX_SIDE - 1, Math.floor((o.x + o.radius - x0) / IDX_CELL));
+    const by0 = Math.max(0, Math.floor((o.y - o.radius - y0) / IDX_CELL)), by1 = Math.min(IDX_SIDE - 1, Math.floor((o.y + o.radius - y0) / IDX_CELL));
+    for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) visit(by * IDX_SIDE + bx);
+  };
+  for (const o of obs) span(o, (b) => { start[b + 1] = start[b + 1]! + 1; });
+  for (let b = 0; b < n; b++) start[b + 1] = start[b + 1]! + start[b]!;
+  const fill = start.slice(0, n), items = new Int32Array(start[n]!);
+  obs.forEach((o, i) => span(o, (b) => { items[fill[b]!] = i; fill[b] = fill[b]! + 1; }));
+  return { obs: obs.slice(), start, items };
 }
