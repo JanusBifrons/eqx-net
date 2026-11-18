@@ -413,6 +413,99 @@ export function devRefusalMessage({ others, cap, now }) {
   ].join('\n');
 }
 
+// ── light lane (light-lane.mjs) ───────────────────────────────────────────
+// Local typecheck / lint (~1 GB each) take one of EQX_LIGHT_CAP (default 2)
+// slots machine-wide; the rest WAIT (never refused). Each run holds a lease in
+// `<queue dir>/light/` (same ticket files): `joinedAtMs` when it lines up,
+// `startedAtMs` once it holds a slot. Waiters go first-come first-served. No
+// watchdog kills: a holder past LIGHT_STALE_MS stops counting and is swept,
+// but its process is left alone. Dead leases (wrapper and child gone) too.
+
+export const LIGHT_KINDS = ['typecheck', 'lint'];
+export const DEFAULT_LIGHT_CAP = 2;
+/** A slot held longer than this stops blocking (swept; never killed). */
+export const LIGHT_STALE_MS = 20 * 60_000;
+
+/** `<queue dir>/light`: one lease per waiting or running typecheck / lint. */
+export const lightLeaseDir = (queueDir) => path.join(queueDir, 'light');
+
+/** Why this run skips the lane entirely (no lease), or null. */
+export function lightSkip(env = process.env) {
+  if (env.CI) return 'ci';
+  if (env.EQX_HEAVY_QUEUE) return 'queued';
+  if (env.EQX_LIGHT_SKIP && env.EQX_LIGHT_SKIP !== '0') return 'skip';
+  return null;
+}
+
+/** EQX_LIGHT_CAP as a positive integer, else the default. */
+export function lightCap(env = process.env) {
+  const n = Number(env.EQX_LIGHT_CAP);
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_LIGHT_CAP;
+}
+
+/** Dead (wrapper and child gone), or held a slot past LIGHT_STALE_MS. */
+export function isLightStale(l, now, isAlive = isPidAlive) {
+  if (!isLeaseLive(l, isAlive)) return true;
+  return l.startedAtMs != null && now - l.startedAtMs > LIGHT_STALE_MS;
+}
+
+const byJoin = (a, b) => a.joinedAtMs - b.joinedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+/**
+ * May lease `meId` (already written, so racers see each other) take a slot?
+ * Stale leases never count. Holders = leases with a slot; free slots go to the
+ * oldest waiters, so of two racers for the last slot the later one waits.
+ * `holders` (oldest first) is who to name in the wait message.
+ */
+export function lightLaneDecision({ meId, leases, cap, now, isAlive = isPidAlive }) {
+  const live = leases.filter((l) => l.id === meId || !isLightStale(l, now, isAlive));
+  const me = live.find((l) => l.id === meId);
+  const holders = live.filter((l) => l.startedAtMs != null && l.id !== meId).sort(byJoin);
+  if (!me) return { go: false, reason: 'lease missing', holders, position: 0 };
+  if (me.startedAtMs != null) return { go: true, reason: 'holding', holders, position: 0 };
+  const waiters = live.filter((l) => l.startedAtMs == null).sort(byJoin);
+  const position = waiters.findIndex((l) => l.id === meId) + 1;
+  const free = cap - holders.length;
+  if (position <= free) return { go: true, reason: 'free-slot', holders, position };
+  return { go: false, reason: free > 0 ? 'queued' : 'busy', holders, position };
+}
+
+/** Delete dead or stale light leases. Never touches a process. */
+export function sweepLightLeases(dir, { isAlive = isPidAlive, now = Date.now() } = {}) {
+  const removed = [];
+  for (const l of readTickets(dir)) {
+    if (isLightStale(l, now, isAlive)) { removeTicket(dir, l.id); removed.push(l); }
+  }
+  return removed;
+}
+
+/** One line per light lease: who, kind, held/waiting for how long, worktree. */
+export function formatLightLease(l, now) {
+  const running = l.startedAtMs != null;
+  return formatLightRow({ ...l, running, forMs: now - (running ? l.startedAtMs : l.joinedAtMs) });
+}
+
+/** A light-lane row from a status snapshot entry. */
+export function formatLightRow(l) {
+  const state = `${l.running ? 'running' : 'waiting'} ${fmtDur(l.forMs)}`;
+  return `${String(l.who).slice(0, 25).padEnd(25)} ${String(l.kind).padEnd(9)} ${state}  pid ${l.pid}  (${l.cwd})`;
+}
+
+/** Light-lane entries for `pnpm heavy status`, oldest first. */
+export function lightSnapshot(dir, now) {
+  return readTickets(dir).sort(byJoin).map((l) => ({
+    who: l.who, kind: l.kind, pid: l.pid, cwd: l.cwd, running: l.startedAtMs != null,
+    forMs: now - (l.startedAtMs ?? l.joinedAtMs), command: l.command,
+  }));
+}
+
+export function lightWaitMessage({ kind, holders, cap, now }) {
+  return [
+    `[light-lane] ${kind} lane busy (${holders.length}/${cap}): waiting…`,
+    ...holders.map((l) => `  ${formatLightLease(l, now)}`),
+  ].join('\n');
+}
+
 // ── formatting ────────────────────────────────────────────────────────────
 
 export function fmtDur(ms) {
@@ -455,7 +548,9 @@ export function snapshot(dir, now = Date.now()) {
     who: s.who, worktree: s.worktree, upMs: now - s.startedAtMs,
     leases: s.leases.map((l) => ({ kind: l.kind, port: l.port ?? null, pid: l.pid, exempt: l.exempt ?? null })),
   }));
-  return { dir, running: run, queue, orphaned, dev };
+  // Light lane (typecheck / lint; the caller sweeps stale leases first).
+  const light = lightSnapshot(lightLeaseDir(dir), now);
+  return { dir, running: run, queue, orphaned, dev, light };
 }
 
 export function formatStatus(snap) {
@@ -485,6 +580,11 @@ export function formatStatus(snap) {
   else {
     lines.push('dev servers:');
     for (const d of snap.dev) lines.push(`  ${formatDevSetup({ ...d, startedAtMs: 0 }, d.upMs)}`);
+  }
+  if (!snap.light || snap.light.length === 0) lines.push('light lane: (none)');
+  else {
+    lines.push('light lane (typecheck / lint):');
+    for (const l of snap.light) lines.push(`  ${formatLightRow(l)}`);
   }
   return lines.join('\n');
 }
