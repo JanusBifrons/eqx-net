@@ -8,7 +8,10 @@
  * fields, no object, so set / clear never allocates (#14).
  */
 import type { AiEntityPoseOut, AiWorldView } from '../../contracts/IAiBehaviour.js';
-import { MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal } from '../tactics/manoeuvre.js';
+import { TRAVEL_NONE } from '../hostileDroneTuning.js';
+import {
+  MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
+} from '../tactics/manoeuvre.js';
 
 export class GuardReturnMode implements IPilotMode {
   /** Guard post (server-only, set by a director via `setGuardPost`): a
@@ -25,6 +28,18 @@ export class GuardReturnMode implements IPilotMode {
    *  tick into `anchorPose` (`followAnchor`). */
   anchorId: string | null = null;
   private readonly anchorPose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+
+  /** Take a post (`setGuardPost`): radius `r` already floored by the brain.
+   *  A post is a hold: it ends a hunt and a travel. */
+  post(x: number, y: number, r: number, anchorId: string | null, o: PilotOrderModes): void {
+    this.on = true;
+    this.anchorId = anchorId;
+    this.x = x;
+    this.y = y;
+    this.r = r;
+    o.search.on = false;
+    o.travel.state = TRAVEL_NONE;
+  }
 
   /** Drop the post (and its anchor). */
   clear(): void {

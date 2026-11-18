@@ -25,9 +25,39 @@ import {
   type IPilotMode,
   type PilotModeContext,
   type PilotModeGoal,
+  type PilotOrderModes,
 } from '../tactics/manoeuvre.js';
 
 export class PatrolMode implements IPilotMode {
+  /** Roaming-formation (Phase 5): the in-sector point the director wants this
+   *  drone to fly to while IDLE (its formation slot / the squad destination for
+   *  the leader). `null` ⇒ default origin orbit. Server-only — set via the
+   *  brain's `setMoveTarget`; the client never ticks the drone brain. */
+  moveTarget: { x: number; y: number } | null = null;
+  /** True when this drone is a flock LEADER cruising a course (set by
+   *  `setFlockLeaderCourse`, cleared by `setMoveTarget`/`setFlockFollow`). While
+   *  set, the fly-to (`pilot/moveTo.ts`) throttles forward thrust by
+   *  `LEADER_CRUISE_THROTTLE` so the leader travels slower than its
+   *  full-cruise followers and they tighten into the herd. A plain
+   *  `setMoveTarget` (lone drone / tests) is full-thrust. */
+  leaderCruise = false;
+
+  /** Set the course (`setMoveTarget` / `setFlockLeaderCourse`): it clears any
+   *  FOLLOWER role (the ship leads / moves independently now). */
+  setCourse(x: number, y: number, leaderCruise: boolean, o: PilotOrderModes): void {
+    o.flock.leaderId = null;
+    this.leaderCruise = leaderCruise;
+    if (this.moveTarget === null) this.moveTarget = { x, y };
+    else { this.moveTarget.x = x; this.moveTarget.y = y; }
+  }
+
+  /** Drop the course and any follower role (`clearMoveTarget`). */
+  clearCourse(o: PilotOrderModes): void {
+    this.moveTarget = null;
+    o.flock.leaderId = null;
+    this.leaderCruise = false;
+  }
+
   begin(_ctx: PilotModeContext): void {}
 
   writeGoal(ctx: PilotModeContext, out: PilotModeGoal): void {

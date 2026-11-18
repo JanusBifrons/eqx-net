@@ -17,9 +17,8 @@ import {
   type AllegianceSide,
 } from '../../shared-types/allegiances.js';
 import { type MountTargetView } from './WeaponMountController.js';
-import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
 import { HullAvoid } from './hullAvoid.js';
-import type { AiShipActivity, IAiNavRoutes } from '../contracts/IAiBehaviour.js';
+import type { AiShipActivity } from '../contracts/IAiBehaviour.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { AI_INPUT_BOOST, AI_INPUT_TURN_LEFT, AI_INPUT_TURN_RIGHT } from '../contracts/IAiBehaviour.js';
 import { BOOST_TICK_COST, canAfford, regenEnergyStep, spendEnergy } from '../combat/Energy.js';
@@ -46,7 +45,7 @@ import {
   type TacticalContext,
   JOB_COURSE, JOB_FLOCK, JOB_GUARD, JOB_LEAVING, JOB_ORBIT, JOB_SEARCH, JOB_TRAVEL,
   JOB_ORDER_NO_FLOCK, JOB_ORDER_REPORT, JOB_ORDER_TICK, MODE_GOAL_MOVE_TO, makePilotModeContext, makePilotModeGoal,
-  type IPilotMode, type PilotJobId, type PilotModeContext, type PilotModeGoal,
+  type IPilotMode, type PilotJobId, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
 } from './tactics/manoeuvre.js';
 import { FlockMode } from './modes/flockMode.js';
 import { GuardReturnMode } from './modes/guardReturnMode.js';
@@ -55,6 +54,7 @@ import { PatrolMode } from './modes/patrolMode.js';
 import { SearchMode } from './modes/searchMode.js';
 import { TravelMode } from './modes/travelMode.js';
 import { hullFireCone } from './hullFireCone.js';
+import { MoveToHelm } from './pilot/moveTo.js';
 import { PilotMorale } from './pilot/pilotMorale.js';
 import { PilotSenses } from './pilot/pilotSenses.js';
 import { TargetPick } from './pilot/targetPick.js';
@@ -70,7 +70,6 @@ import {
   clearContextMaps,
   type ContextSteerOutput,
 } from './contextSteering.js';
-import type { IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
 import {
   FireLaneSteer,
 } from './tactics/fireLanes.js';
@@ -83,14 +82,10 @@ import {
   RUN_PILOT_PARAMS,
   BOOST_RESERVE_FRAC,
   FORGET_TICKS,
-  CALM_CRUISE_FRAC,
-  MOVE_ARRIVE_SLOW_RADIUS,
-  LEADER_CRUISE_THROTTLE,
   COMBAT_NEIGHBOUR_K,
   WARP_OUT_SENSOR_MUL,
   NEVER_RUN_MORALE,
   BROADSIDE_STANDOFF,
-  TRAVEL_NONE,
   TRAVEL_ON_THE_WAY,
   TRAVEL_ARRIVED,
   type TravelState,
@@ -128,21 +123,8 @@ export { BLOCK_HALF_LIFE_TICKS } from './tactics/fireLanes.js';
 export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly kind: ShipKind;
 
-  /** Roaming-formation (Phase 5): the in-sector point the director wants this
-   *  drone to fly to while IDLE (its formation slot / the squad destination for
-   *  the leader). `null` ⇒ default origin orbit. Server-only — set via the
-   *  `setMoveTarget` hook; the client never ticks the drone brain. */
-  private moveTarget: { x: number; y: number } | null = null;
-  /** True when this drone is a flock LEADER cruising a course (set by
-   *  `setFlockLeaderCourse`, cleared by `setMoveTarget`/`setFlockFollow`). While
-   *  set, `tickMoveTo` throttles forward thrust by `LEADER_CRUISE_THROTTLE` so
-   *  the leader travels slower than its full-cruise followers and they tighten
-   *  into the herd. A plain `setMoveTarget` (lone drone / tests) is full-thrust. */
-  private _flockLeaderCruise = false;
-  /** Reused arrive() output (alloc-free hot path, invariant #14). */
-  private readonly _steerScratch: SteerOutput = makeSteerOutput();
-  /** This tick's routes round rock (`view.nav`, navigation slice 7), debris and tick, for `tickMoveTo`. */
-  private _nav: IAiNavRoutes | null = null; private _debris: IAiNeighbourQuery | undefined; private _viewTick = 0;
+  /** The shared fly-to (`ai/pilot/moveTo.ts`). */
+  private readonly _moveTo: MoveToHelm;
 
   /** Leader-led flocking (non-combat herding): a FOLLOWER (`leaderId !== null`,
    *  set by the director via `setFlockFollow`) flocks to its leader's live pose
@@ -319,6 +301,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _travel: TravelMode;
   private readonly _search: SearchMode;
   private _modeCtx!: PilotModeContext;
+  /** The modes as the order setters see each other (built once, #14). */
+  private readonly _orders: PilotOrderModes;
   private readonly _modeGoal: PilotModeGoal = makePilotModeGoal(DEFAULT_PILOT_PARAMS);
   /** The decision layer's state and cadence, and combat context steering (`ai/tactics/`). */
   private readonly _decide: CombatDecision;
@@ -408,6 +392,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       shotRadius: this.shotRadius, maxTurretHalfArc: this.maxTurretHalfArc,
     }, this._fireScratch);
     this._search = new SearchMode(this.sensorRange);
+    this._orders = { guard: this._guardReturn, travel: this._travel, search: this._search, flock: this._flock, course: this._patrol };
+    this._moveTo = new MoveToHelm(this.kind, this.handling, this.shieldPad, this._avoid);
     const tac = this._tac;
     tac.fireRange = this.fireRange;
     tac.cruiseSpeed = this.handling.cruiseSpeed;
@@ -523,7 +509,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   tick(self: AiEntity, view: AiWorldView): AiIntent {
     this._aimValid = false;
-    this._nav = view.nav ?? null; this._debris = view.debris; this._viewTick = view.tick;
+    this._moveTo.sense(view);
     this._lastX = self.x;
     this._lastY = self.y;
     this._pilot.turn.aimCone = 0;
@@ -721,7 +707,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     }
     if (order === JOB_ORDER_TICK && this._flock.leaderId !== null) return JOB_FLOCK;
     if (this._travel.state === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
-    if (this.moveTarget !== null) return JOB_COURSE;
+    if (this._patrol.moveTarget !== null) return JOB_COURSE;
     // Guard leash: nothing to fight ⇒ back to the post.
     if (this.guardLeash()) return JOB_GUARD;
     // Hunt: nothing to fight ⇒ search the sector.
@@ -752,7 +738,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private modeCtx(self: AiEntity, tick: number, job: PilotJobId): PilotModeContext {
     const c = this._modeCtx;
     c.tick = tick; c.job = job; c.self = self; c.energy = this.energy; c.energyMax = this.energyMax;
-    c.escapeX = this._decide.flee.dirX; c.escapeY = this._decide.flee.dirY; c.moveTarget = this.moveTarget;
+    c.escapeX = this._decide.flee.dirX; c.escapeY = this._decide.flee.dirY; c.moveTarget = this._patrol.moveTarget;
     c.guardOn = this._guardReturn.on; c.guardX = this._guardReturn.x; c.guardY = this._guardReturn.y;
     c.travelX = this._travel.x; c.travelY = this._travel.y;
     return c;
@@ -1008,7 +994,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Give this drone a GUARD POST: the area (centre + radius) it was sent to
    *  defend. A broadside capital with a post fights from it (see
-   *  `tickGuardBroadside`) instead of holding its gun stand-off; any other
+   *  `BroadsideHelm.guard`) instead of holding its gun stand-off; any other
    *  ship engages only targets inside the radius (measured from the post)
    *  and flies back to the post when it has none (the guard leash). The radius is
    *  at least `shipTuning(kind).guardRadiusMin` (#18), so a big hull has room
@@ -1022,16 +1008,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  cleared when the anchor leaves the AI controller (`noteEntityGone`).
    *  Omitted / null ⇒ a fixed post at (x, y). */
   setGuardPost(x: number, y: number, radius: number, anchorId: string | null = null): void {
-    const g = this._guardReturn;
-    g.on = true;
-    g.anchorId = anchorId;
-    g.x = x;
-    g.y = y;
-    g.r = Math.max(radius, shipTuning(this.kind).guardRadiusMin);
-    this._targets.setLeash(g.r, this.fireRange);
-    // A post is a hold: it ends a hunt and a travel.
-    this._search.on = false;
-    this._travel.state = TRAVEL_NONE;
+    this._guardReturn.post(x, y, Math.max(radius, shipTuning(this.kind).guardRadiusMin), anchorId, this._orders);
+    this._targets.setLeash(this._guardReturn.r, this.fireRange);
   }
 
   clearGuardPost(): void { this._guardReturn.clear(); }
@@ -1043,7 +1021,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   /** The guard post leashes this ship's target pick: every ship with a post
-   *  but a broadside capital (that one keeps `tickGuardBroadside`). */
+   *  but a broadside capital (that one flies `BroadsideHelm.guard`). */
   private guardLeash(): boolean {
     return this._guardReturn.on && !this.broadside;
   }
@@ -1113,17 +1091,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  move target, widens on-sight engagement to the sensor range, and with
    *  nothing to fight the ship searches the sector (`modes/searchMode.ts`). A later
    *  guard post (a hold) ends the hunt. Server-only. */
-  setHunt(on: boolean): void {
-    if (on) {
-      this._guardReturn.on = false;
-      this.moveTarget = null;
-      this._travel.state = TRAVEL_NONE;
-      this._flock.leaderId = null;
-      this._flockLeaderCruise = false;
-      if (!this._search.on) this._search.reset = true;
-    }
-    this._search.on = on;
-  }
+  setHunt(on: boolean): void { this._search.hunt(on, this._orders); }
 
   /** Test-visible: hunting? */
   isHunting(): boolean { return this._search.on; }
@@ -1140,15 +1108,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * ends the travel. Hold fire still wins (no target, no trigger).
    * Server-only.
    */
-  setTravel(x: number, y: number): void {
-    this.setMoveTarget(x, y);
-    this._guardReturn.clear();
-    this._search.on = false;
-    this._travel.state = TRAVEL_ON_THE_WAY;
-    this._travel.x = x;
-    this._travel.y = y;
-    this._travel.fights = false;
-  }
+  setTravel(x: number, y: number): void { this._travel.go(x, y, this._orders); }
 
   /**
    * RTS Part B slice 11: one leg of an owner's Patrol, from (fromX, fromY) to
@@ -1160,11 +1120,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * `patrolling`. Arrival is the travel's. Server-only.
    */
   setPatrolLeg(fromX: number, fromY: number, x: number, y: number): void {
-    this.setTravel(x, y);
-    this._travel.fights = true;
-    this._travel.legFromX = fromX;
-    this._travel.legFromY = fromY;
-    this._guardReturn.r = shipTuning(this.kind).guardRadiusMin;
+    this._travel.patrolLeg(fromX, fromY, x, y, shipTuning(this.kind).guardRadiusMin, this._orders);
     this._targets.setLeash(this._guardReturn.r, this.fireRange);
   }
 
@@ -1246,83 +1202,30 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  drone's destination). Setting a course clears any FOLLOWER role (you lead /
    *  move independently now), so a former follower promoted to leader stops
    *  flocking. The director re-issues the course each control tick. */
-  setMoveTarget(x: number, y: number): void {
-    this._flock.leaderId = null;
-    this._flockLeaderCruise = false;
-    if (this.moveTarget === null) this.moveTarget = { x, y };
-    else { this.moveTarget.x = x; this.moveTarget.y = y; }
-  }
+  setMoveTarget(x: number, y: number): void { this._patrol.setCourse(x, y, false, this._orders); }
 
   /** Leader-led flocking (non-combat herding): assign this drone the LEADER's
-   *  course. Same as `setMoveTarget` but flags it a flock leader so `tickMoveTo`
+   *  course. Same as `setMoveTarget` but flags it a flock leader so the fly-to
    *  THROTTLES its cruise (`LEADER_CRUISE_THROTTLE`) — the leader travels slower
    *  than its full-cruise followers so the herd tightens around it (replaces the
    *  old follower-boost; the user's "make the leader wait"). The director sets
    *  the course to the leader's OWN pose to make it hold while the flock gathers. */
-  setFlockLeaderCourse(x: number, y: number): void {
-    this._flock.leaderId = null;
-    this._flockLeaderCruise = true;
-    if (this.moveTarget === null) this.moveTarget = { x, y };
-    else { this.moveTarget.x = x; this.moveTarget.y = y; }
-  }
+  setFlockLeaderCourse(x: number, y: number): void { this._patrol.setCourse(x, y, true, this._orders); }
 
-  clearMoveTarget(): void {
-    this.moveTarget = null;
-    this._flock.leaderId = null;
-    this._flockLeaderCruise = false;
-  }
+  clearMoveTarget(): void { this._patrol.clearCourse(this._orders); }
 
   /** Leader-led flocking (non-combat herding): mark this drone a FOLLOWER of
    *  `leaderId`, herding to the leader's LIVE pose via cohesion/alignment/
    *  separation each tick (vs the old static wedge slot). `memberIds` (the
    *  squad) drives the separation rule. Copied into an owned buffer so the
    *  director may reuse its source array. Clears any leader course. */
-  setFlockFollow(leaderId: string, memberIds: readonly string[]): void {
-    this.moveTarget = null;
-    // Following is the ship's job: it ends a travel and a hunt (RTS squads).
-    this._travel.state = TRAVEL_NONE;
-    this._search.on = false;
-    this._flock.follow(leaderId, memberIds);
-    this._flockLeaderCruise = false;
-  }
+  setFlockFollow(leaderId: string, memberIds: readonly string[]): void { this._flock.followOrder(leaderId, memberIds, this._orders); }
 
-  /** Fly to (tx, ty) and stop there: face the slot and ask the pilot for a
-   *  speed it can still brake from (the arrive ramp), capped at the calm
-   *  cruise (or `cruiseCap`: an owner's Move flies at the full cruise, a
-   *  long leg at the top speed with `boostOk`, `modes/travelMode.ts`). At the slot
-   *  the wanted velocity is zero and the nose stays put, so the pilot brakes
-   *  to a stop with reverse instead of turning around.
-   */
+  /** The shared fly-to (`ai/pilot/moveTo.ts`): fly to (tx, ty) and stop there. */
   private tickMoveTo(self: AiEntity, tx: number, ty: number, cruiseCap = -1, boostOk = false): AiIntent {
-    const t = shipTuning(this.kind), nav = this._nav, h = this.handling, av = this._avoid;
-    // A wreck piece or drifting rock on a collision course: dodge it first (navigation slice 8).
-    if (!h.torqueTurn && av.check(self, h, this.kind.radius, this.shieldPad, this.avoidAccel(), this._viewTick, undefined, this._debris, true)) {
-      this._avoidTicks++;
-      return this.fly(self, facingOf(av.x, av.y), self.vx + av.x * h.maxSpeed, self.vy + av.y * h.maxSpeed, boostOk);
-    }
-    // Round rock: fly the route's next waypoint, braking for what lies ahead on it.
-    if (nav !== null && nav.waypoint(self.id, self.x, self.y, tx, ty, t.navClearance, t.wingmanArrive)) {
-      const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this._steerScratch), v = Math.min(cruiseCap >= 0 ? cruiseCap : this.handling.cruiseSpeed * CALM_CRUISE_FRAC, brakingSpeed(this.handling, nav.ahead));
-      return this.fly(self, facingOf(w.dirX, w.dirY), w.dirX * v, w.dirY * v, boostOk);
-    }
-    const steer = arrive(self.x, self.y, tx, ty, MOVE_ARRIVE_SLOW_RADIUS, this._steerScratch);
-    // Arrived: inside the distance one tap of thrust carries this hull before
-    // damping stops it (live thrust per tick / damping), any press can only
-    // overshoot the slot, so the pilot brakes to zero and lets go, as a player
-    // who has arrived does. Without it a light hull (a fighter gains 18 u/s a
-    // tick) taps forward and back across the slot for ever.
-    const tapCoast = this.handling.linearDamping > 0 ? this.handling.thrustAccel / this.handling.linearDamping : 0;
-    if (steer.thrustScale <= 0 || steer.dist <= tapCoast) return this.fly(self, self.angle, 0, 0, false);
-    // A flock leader cruises SLOWER than its full-cruise followers so they
-    // tighten into the herd around it (the "make the leader wait" lever).
-    const cruise = cruiseCap >= 0
-      ? cruiseCap
-      : this.handling.cruiseSpeed * CALM_CRUISE_FRAC * (this._flockLeaderCruise ? LEADER_CRUISE_THROTTLE : 1);
-    const speed = Math.min(cruise, brakingSpeed(this.handling, steer.dist));
-    // Close in: keep the nose where it is and just brake (no turn-around for
-    // an overshoot of a few lengths).
-    const facing = steer.dist > t.flockFollow ? facingOf(steer.dirX, steer.dirY) : self.angle;
-    return this.fly(self, facing, steer.dirX * speed, steer.dirY * speed, boostOk);
+    const m = this._moveTo;
+    if (m.steerTo(self, tx, ty, cruiseCap, boostOk, this.avoidAccel(), this._patrol.leaderCruise)) this._avoidTicks++;
+    return this.fly(self, m.facing, m.wvx, m.wvy, m.boost);
   }
 
   /** Travel (`setTravel` / `setPatrolLeg`, `modes/travelMode.ts`): fly the
@@ -1333,7 +1236,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const tr = this._travel;
     if (tr.isDone(c)) {
       this.setGuardPost(c.travelX, c.travelY, 0);
-      this._travel.state = TRAVEL_ARRIVED;
+      tr.state = TRAVEL_ARRIVED;
       return this.runMode(tr, self);
     }
     const intent = this.runMode(tr, self);

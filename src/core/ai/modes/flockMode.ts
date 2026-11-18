@@ -30,10 +30,12 @@ import {
   type FlockAccumulator,
   type FlockOutput,
 } from '../flocking.js';
-import { CALM_CRUISE_FRAC, FLOCK_ACTIVITY_GAP_MUL, FLOCK_CATCH_UP } from '../hostileDroneTuning.js';
+import { CALM_CRUISE_FRAC, FLOCK_ACTIVITY_GAP_MUL, FLOCK_CATCH_UP, TRAVEL_NONE } from '../hostileDroneTuning.js';
 import { arrive, makeSteerOutput, type SteerOutput } from '../steering.js';
 import { brakingSpeed, DEFAULT_PILOT_PARAMS, facingOf } from '../virtualPilot.js';
-import { MODE_GOAL_FLY, type IPilotMode, type PilotModeContext, type PilotModeGoal } from '../tactics/manoeuvre.js';
+import {
+  MODE_GOAL_FLY, type IPilotMode, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
+} from '../tactics/manoeuvre.js';
 
 export class FlockMode implements IPilotMode {
   /** The leader this ship follows; null = none (it leads or flies alone).
@@ -64,6 +66,16 @@ export class FlockMode implements IPilotMode {
     this.leaderPrev = leaderId;
     this.memberIds.length = 0;
     for (let i = 0; i < memberIds.length; i++) this.memberIds.push(memberIds[i]!);
+  }
+
+  /** The follow order (`setFlockFollow`): following is the ship's job, so
+   *  it ends the course, a travel and a hunt (RTS squads). */
+  followOrder(leaderId: string, memberIds: readonly string[], o: PilotOrderModes): void {
+    o.course.moveTarget = null;
+    o.travel.state = TRAVEL_NONE;
+    o.search.on = false;
+    this.follow(leaderId, memberIds);
+    o.course.leaderCruise = false;
   }
 
   /** Read the leader's live pose; false when it (or the resolver) is gone. */

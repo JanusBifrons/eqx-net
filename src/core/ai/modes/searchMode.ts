@@ -10,8 +10,10 @@
  * combat branch and `setHunt`).
  */
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../../shared-types/sectorBounds.js';
-import { HUNT_EDGE_FRAC, HUNT_LEG_SPACING_MUL, MOVE_ARRIVE_SLOW_RADIUS } from '../hostileDroneTuning.js';
-import { MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal } from '../tactics/manoeuvre.js';
+import { HUNT_EDGE_FRAC, HUNT_LEG_SPACING_MUL, MOVE_ARRIVE_SLOW_RADIUS, TRAVEL_NONE } from '../hostileDroneTuning.js';
+import {
+  MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
+} from '../tactics/manoeuvre.js';
 
 export class SearchMode implements IPilotMode {
   /** Hunt (RTS Part B slice 6, `setHunt`): no leash, on-sight engagement out
@@ -29,6 +31,20 @@ export class SearchMode implements IPilotMode {
 
   /** `sensorRange`: the brain's sighting range (fixed per brain). */
   constructor(private readonly sensorRange: number) {}
+
+  /** Hunt on / off (`setHunt`): on lifts the guard leash, the move target,
+   *  a travel and a follower role; a search not running restarts. */
+  hunt(on: boolean, o: PilotOrderModes): void {
+    if (on) {
+      o.guard.on = false;
+      o.course.moveTarget = null;
+      o.travel.state = TRAVEL_NONE;
+      o.flock.leaderId = null;
+      o.course.leaderCruise = false;
+      if (!this.on) this.reset = true;
+    }
+    this.on = on;
+  }
 
   begin(_ctx: PilotModeContext): void {}
 

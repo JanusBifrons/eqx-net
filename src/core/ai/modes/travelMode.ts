@@ -27,11 +27,14 @@ import {
   TRAVEL_ARRIVE_SPEED_FRAC,
   TRAVEL_LONG_LEG_GUARD_MUL,
   TRAVEL_NONE,
+  TRAVEL_ON_THE_WAY,
   type TravelState,
 } from '../hostileDroneTuning.js';
 import { hullFireCone } from '../hullFireCone.js';
 import { facingOf, wrapAngle } from '../virtualPilot.js';
-import { MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal } from '../tactics/manoeuvre.js';
+import {
+  MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
+} from '../tactics/manoeuvre.js';
 
 /** The brain's fixed gun numbers (set once at construction). */
 export interface TravelFireTune {
@@ -73,6 +76,28 @@ export class TravelMode implements IPilotMode {
   constructor(private readonly tune: TravelFireTune, private readonly fireOut: TravelFireOut) {}
 
   begin(_ctx: PilotModeContext): void {}
+
+  /** An owner's Move to (x, y) (`setTravel`): the course is set, the post
+   *  and a hunt end. */
+  go(x: number, y: number, o: PilotOrderModes): void {
+    o.course.setCourse(x, y, false, o);
+    o.guard.clear();
+    o.search.on = false;
+    this.state = TRAVEL_ON_THE_WAY;
+    this.x = x;
+    this.y = y;
+    this.fights = false;
+  }
+
+  /** One patrol leg from (fromX, fromY) to (x, y) (`setPatrolLeg`): a travel
+   *  that fights, leashed at `guardR` (the kind's `guardRadiusMin`). */
+  patrolLeg(fromX: number, fromY: number, x: number, y: number, guardR: number, o: PilotOrderModes): void {
+    this.go(x, y, o);
+    this.fights = true;
+    this.legFromX = fromX;
+    this.legFromY = fromY;
+    o.guard.r = guardR;
+  }
 
   /** Patrol leg: the leash centre (`leashX`, `leashY`) = the nearest point
    *  of the leg to the ship. */

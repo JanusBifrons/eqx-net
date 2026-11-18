@@ -17,6 +17,7 @@ import { Rng } from '../../random/rng.js';
 import type { AiEntity } from '../../contracts/IAiBehaviour.js';
 import type { ShipKind } from '../../../shared-types/shipKinds.js';
 import type { PilotHandling, PilotParams } from '../virtualPilot.js';
+import type { TravelState } from '../hostileDroneTuning.js';
 
 /** Manoeuvre ids (dense, used as array indices and the test-visible value). */
 export const MANOEUVRE_HOLD = 0;
@@ -347,7 +348,7 @@ export function makePilotModeContext(kind: ShipKind, handling: PilotHandling): P
 
 /** Fly `facing` + (`vx`, `vy`) through the virtual pilot with `params`. */
 export const MODE_GOAL_FLY = 0;
-/** The brain's shared fly-to helper (`tickMoveTo(tx, ty, cruiseCap, boost)`). */
+/** The brain's shared fly-to (`MoveToHelm`, `ai/pilot/moveTo.ts`: tx, ty, cruiseCap, boost). */
 export const MODE_GOAL_MOVE_TO = 1;
 
 /** A peacetime mode's goal for this tick, written in place. */
@@ -366,6 +367,22 @@ export interface PilotModeGoal {
 
 export function makePilotModeGoal(params: Readonly<PilotParams>): PilotModeGoal {
   return { kind: MODE_GOAL_FLY, facing: 0, vx: 0, vy: 0, boost: false, params, tx: 0, ty: 0, cruiseCap: -1 };
+}
+
+/** The order state on the peacetime modes, as one order setter sees the
+ *  others (an order ends some of them: a post ends a hunt and a travel).
+ *  Structural, so the mode files never import each other; the brain builds
+ *  it once from its mode objects (#14). */
+export interface PilotOrderModes {
+  readonly guard: { on: boolean; r: number; clear(): void };
+  readonly travel: { state: TravelState };
+  readonly search: { on: boolean; reset: boolean };
+  readonly flock: { leaderId: string | null };
+  readonly course: {
+    moveTarget: { x: number; y: number } | null;
+    leaderCruise: boolean;
+    setCourse(x: number, y: number, leaderCruise: boolean, o: PilotOrderModes): void;
+  };
 }
 
 /** One peacetime job, with the manoeuvre lifecycle. Stateful per brain;
