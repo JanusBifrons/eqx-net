@@ -24,7 +24,12 @@
 //   <key>-arrival.png — the normal play zoom on the battle pocket's rim, where
 //                       a warp from the home pocket drops you;
 //   <key>-dense.png   — the normal play zoom on the densest phone view;
-//   <key>-far.png     — the gameplay zoom-out floor, centred on the core;
+//   <key>-far.png     — the gameplay zoom-out floor, centred on the core
+//                       (the open battle pocket: no hull lies within ~3.5 km);
+//   <key>-dense-far.png — the zoom-out floor on the densest view (the far-zoom
+//                       pieces and specks, wreckArt.ts setFarZoom);
+//   <key>-command.png — the densest view in Command view (a plain galaxy
+//                       join, startMode.ts): the parked hull streams the field;
 //   <key>-capital.png — a capital's sections up close (from the live pieces).
 // The server log's 'wreck field laid out' lines are echoed at the end, so the
 // joined room's real hull count can be checked against the planned one.
@@ -146,6 +151,8 @@ if (sectors.length === 0) {
     RUNS.push({ prefix: key, room, name: 'arrival', spawnX: arrive.x, spawnY: arrive.y });
     RUNS.push({ prefix: key, room, name: 'dense', spawnX: denseSpawn.x, spawnY: denseSpawn.y });
     RUNS.push({ prefix: key, room, name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: '0.15' });
+    RUNS.push({ prefix: key, room, name: 'dense-far', spawnX: denseSpawn.x, spawnY: denseSpawn.y, zoom: '0.15' });
+    RUNS.push({ prefix: key, room, name: 'command', spawnX: denseSpawn.x, spawnY: denseSpawn.y, startMode: 'command' });
     if (capital) RUNS.push({ prefix: key, room, name: 'capital', spawnX: capital.x, spawnY: capital.y - capital.footprint - 120, zoom: fit(capital.footprint) });
   }
 }
@@ -168,7 +175,8 @@ try {
       ...(s.zoom ? { zoom: s.zoom } : {}),
       // A galaxy join lands in command view (startMode.ts); a pilot warping in,
       // or launching a ship from the map, flies: shoot from the helm.
-      ...(room.startsWith('galaxy-') ? { startMode: 'fly' } : {}),
+      // The 'command' shot lands as a plain galaxy join does.
+      ...(room.startsWith('galaxy-') ? { startMode: s.startMode ?? 'fly' } : {}),
     });
     await page.goto(`${servers.baseUrl}/?${q}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
     // In game (the recorder's join gate), then the field's pieces drawn.
