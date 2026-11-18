@@ -3,13 +3,13 @@
  * This is the post-auth spawn chrome with its OWN Pixi surface removed —
  * it overlays the shared gameplay canvas. The regression risks it guards:
  *   - a load-bearing testid disappears (E2E specs probe galaxy-map-screen,
- *     limbo-resume-banner/data-limbo-sector-key, engineering-rooms-button,
- *     single-player-button, ship-picker-modal),
+ *     limbo-resume-banner/data-limbo-sector-key, ship-picker-modal),
  *   - the imperative apiRef.openForSector → popover → "Join the fight" →
  *     ship-picker → onSpawnNewShip spawn flow breaks (Equinox Phase 7 / Item 4:
  *     a tap on the selector layer opens the interactive popover, not the picker
  *     directly),
- *   - the engineering-room path stops routing to onSelectRoom.
+ *   - a dev button (single-player / engineering rooms) creeps back onto the
+ *     public homepage (owner: dev tools are reached by direct link only).
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
@@ -18,23 +18,19 @@ import { useUIStore } from '../state/store';
 import { useAuthStore } from '../auth/authStore';
 
 describe('GalaxyPickerChrome', () => {
-  it('renders the load-bearing testids (limbo stub, engineering, single-player)', () => {
-    render(
-      <GalaxyPickerChrome
-        activeLimboSectorKey={null}
-        onSelectLocal={() => {}}
-      />,
-    );
+  it('renders the load-bearing testids (limbo stub)', () => {
+    render(<GalaxyPickerChrome activeLimboSectorKey={null} />);
     expect(screen.getByTestId('galaxy-map-screen')).toBeInTheDocument();
     const banner = screen.getByTestId('limbo-resume-banner');
     expect(banner).toHaveAttribute('data-limbo-sector-key', '');
-    expect(screen.getByTestId('engineering-rooms-button')).toBeInTheDocument();
-    expect(screen.getByTestId('single-player-button')).toBeInTheDocument();
   });
 
-  it('omits the single-player button when onSelectLocal is not provided', () => {
+  it('shows no dev buttons on the homepage (reached by ?room= / ?local=1 link)', () => {
     render(<GalaxyPickerChrome activeLimboSectorKey={null} />);
     expect(screen.queryByTestId('single-player-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('engineering-rooms-button')).not.toBeInTheDocument();
+    expect(screen.queryByText(/single-player diagnostic/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/engineering rooms/i)).not.toBeInTheDocument();
   });
 
   it('apiRef.openForSector opens the sector popover → Join → kind-picker → spawn fires onSpawnNewShip', () => {
@@ -117,14 +113,6 @@ describe('GalaxyPickerChrome', () => {
     expect(screen.getByTestId('sector-drawer-join')).toBeInTheDocument();
     act(() => { apiRef.current?.deselect(); });
     expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
-  });
-
-  it('engineering room selection routes to onSelectRoom', () => {
-    const onSelectRoom = vi.fn();
-    render(<GalaxyPickerChrome activeLimboSectorKey={null} onSelectRoom={onSelectRoom} />);
-    fireEvent.click(screen.getByTestId('engineering-rooms-button'));
-    fireEvent.click(screen.getByTestId('engineering-room-test-sector'));
-    expect(onSelectRoom).toHaveBeenCalledWith('test-sector');
   });
 
   it('sector drawer shows LABELLED counts incl. drones (Equinox Phase 8 / Bug 5)', () => {

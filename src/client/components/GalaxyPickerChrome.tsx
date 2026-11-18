@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Box,
-  Button,
   Typography,
-  Stack,
   Alert,
   CircularProgress,
   Portal,
@@ -11,7 +9,6 @@ import {
 import { getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
 import { ShipPickerModal } from './ShipPickerModal';
-import { EngineeringRoomsDialog } from './EngineeringRoomsDialog';
 import { acquireRosterPolling, releaseRosterPolling } from './rosterPoller';
 import { useUIStore } from '../state/store';
 import { useAuthStore } from '../auth/authStore';
@@ -78,15 +75,12 @@ export interface GalaxyPickerApi {
 export interface GalaxyPickerChromeProps {
   /** Set by the chrome on mount so the host can drive the picker. */
   apiRef?: MutableRefObject<GalaxyPickerApi | null>;
-  /** Engineering-room / single-player entry points. */
-  onSelectRoom?: (roomName: string) => void;
   onSpawnExistingShip?: (shipId: string, sectorKey: string) => void;
   onSpawnNewShip?: (kind: ShipKindId, sectorKey: string) => void;
   /** Equinox Phase 5 (WS-3) — join a sector as a SPECTATOR (no ship picker;
    *  free-roam camera + construction, hull parks as a pilotable lingering
    *  hull). Landing context only. */
   onSpawnSpectator?: (sectorKey: string) => void;
-  onSelectLocal?: () => void;
   /** Pre-resolved limbo sector; when omitted the chrome runs its own
    *  /dev/limbo lookup (matches the legacy spawn-screen behaviour). */
   activeLimboSectorKey?: string | null;
@@ -112,8 +106,8 @@ export interface GalaxyPickerChromeProps {
  * `GalaxyOverviewScreen` (spawn mode) so the second Pixi `Application`
  * can be retired. Preserves every load-bearing testid:
  * `galaxy-map-screen`, `limbo-resume-banner` (+ `data-limbo-sector-key`),
- * the roster panel, `single-player-button`, `engineering-rooms-button`,
- * and the `ship-picker-modal`.
+ * the roster panel and the `ship-picker-modal`. Dev rooms and single-player
+ * have no button here: they are reached by direct link (`?room=`, `?local=1`).
  *
  * The root is `pointerEvents: 'none'` so taps in empty regions fall
  * through to the canvas (the galaxy layer's hit-test); interactive
@@ -121,11 +115,9 @@ export interface GalaxyPickerChromeProps {
  */
 export function GalaxyPickerChrome({
   apiRef,
-  onSelectRoom,
   onSpawnExistingShip,
   onSpawnNewShip,
   onSpawnSpectator,
-  onSelectLocal,
   activeLimboSectorKey,
   context = 'landing',
   onWarp,
@@ -176,7 +168,6 @@ export function GalaxyPickerChrome({
   const galaxyReady =
     galaxyStatsLoaded && (storedPlayerId === '' || (galaxyPresenceLoaded && rosterLoaded));
 
-  const [engineeringOpen, setEngineeringOpen] = useState(false);
   const [pendingSpawnSector, setPendingSpawnSector] = useState<string | null>(null);
   // Equinox Phase 9 (item 2) — a hex tap SELECTS a sector, opening the docked
   // SectorInfoDrawer (replaces the old fixed popover; the desktop hover tooltip is
@@ -389,50 +380,10 @@ export function GalaxyPickerChrome({
             ? 'Tap a sector for info · highlighted neighbours are warp targets.'
             : limboSector
               ? 'Other sectors are locked while your ship is in flight.'
-              : 'Tap a sector to spawn a new ship · tap a card to resume an existing one.'}
+              : 'Tap a sector to see the fight.'}
         </Typography>
       </Box>
 
-      {!isWarp && !selectedSectorKey && (
-      <Stack
-        direction="row"
-        spacing={2}
-        sx={{
-          position: 'absolute',
-          bottom: 16,
-          right: 16,
-          alignItems: 'center',
-          pointerEvents: 'auto',
-          // Above the roster panel (zIndex 2). The roster column hugs the
-          // viewport's right edge now (the chrome is transparent over the
-          // full-bleed shared canvas, not a centred max-width box like the
-          // retired GalaxyOverviewScreen), so these CTAs would otherwise sit
-          // under the roster's pointer-capture region.
-          zIndex: 3,
-        }}
-      >
-        {onSelectLocal && (
-          <Button
-            variant="text"
-            size="small"
-            onClick={onSelectLocal}
-            sx={{ color: '#ff8800', '&:hover': { bgcolor: 'rgba(255,136,0,0.08)' } }}
-            data-testid="single-player-button"
-          >
-            Single-Player Diagnostic
-          </Button>
-        )}
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={() => setEngineeringOpen(true)}
-          sx={{ color: '#9aa0b4', borderColor: '#2a2f40', '&:hover': { borderColor: '#9aa0b4' } }}
-          data-testid="engineering-rooms-button"
-        >
-          Engineering rooms
-        </Button>
-      </Stack>
-      )}
 
       {/* Equinox Phase 7 (Item 1) — Close button for the in-game warp map.
        *  Portal'd to <body> at Z.overlay: inside this chrome its z-index was
@@ -617,8 +568,6 @@ export function GalaxyPickerChrome({
           }
         }}
       />
-
-      <EngineeringRoomsDialog open={engineeringOpen} onClose={() => setEngineeringOpen(false)} onSelectRoom={onSelectRoom} />
     </Box>
   );
 }

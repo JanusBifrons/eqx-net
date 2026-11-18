@@ -149,23 +149,19 @@ interface GameSurfaceProps {
    *  to thread the chosen `shipId` to the server's `onJoin`. */
   joinOptionsOverride?: Record<string, unknown>;
   /** Idle (galaxy-picker) spawn entry points. */
-  onSelectRoom?: (roomName: string) => void;
   onSpawnExistingShip?: (shipId: string, sectorKey: string) => void;
   onSpawnNewShip?: (kind: unknown, sectorKey: string) => void;
   /** Equinox Phase 5 (WS-3) — join a sector as a spectator (no ship picker). */
   onSpawnSpectator?: (sectorKey: string) => void;
-  onSelectLocal?: () => void;
 }
 
 function GameSurface({
   surfaceMode,
   roomNameOverride,
   joinOptionsOverride,
-  onSelectRoom,
   onSpawnExistingShip,
   onSpawnNewShip,
   onSpawnSpectator,
-  onSelectLocal,
 }: GameSurfaceProps): JSX.Element {
   const idle = surfaceMode === 'idle';
   // Equinox Phase 7 (Item 1) — ONE map: both the landing picker and the in-game
@@ -923,11 +919,9 @@ function GameSurface({
         <GalaxyPickerChrome
           apiRef={pickerApiRef}
           onFocusChange={onGalaxyFocus}
-          onSelectRoom={onSelectRoom}
           onSpawnExistingShip={onSpawnExistingShip}
           onSpawnNewShip={onSpawnNewShip}
           onSpawnSpectator={onSpawnSpectator}
-          onSelectLocal={onSelectLocal}
         />
       ) : (
         <>
@@ -1040,6 +1034,9 @@ export function App(): JSX.Element {
   // for the same intent; this URL flag lets multi-ship-roster tests
   // build their fixture state without going through the spawn-select UI.
   const autoJoinNewShip = initialUrlParams.get('newShip') === '1';
+  // Dev rooms and single-player have no homepage button: reach them by link
+  // (`?room=test-sector`, `?local=1`).
+  const autoLocal = initialUrlParams.get('local') === '1';
   const initialJoinOpts: Record<string, unknown> | undefined = autoJoinNewShip
     ? { isNewShip: true }
     : undefined;
@@ -1067,8 +1064,10 @@ export function App(): JSX.Element {
   // Apply autoJoin once on mount — overrides the store's default 'galaxy-map'.
   // Subsequent phase changes are user-driven (drawer buttons, login flow).
   const autoJoinRef = useRef(autoJoin);
+  const autoLocalRef = useRef(autoLocal);
   useEffect(() => {
-    if (autoJoinRef.current) setPhase('game');
+    if (autoLocalRef.current) setPhase('local');
+    else if (autoJoinRef.current) setPhase('game');
   }, [setPhase]);
 
   useAuthExpiryRedirect();
@@ -1094,14 +1093,6 @@ export function App(): JSX.Element {
     if (!userEmail) return;
     if (refreshAutoCaptureLatch()) installStreamingDiag();
   }, [userEmail]);
-
-  const handleSelectRoom = useCallback((roomName: string) => {
-    setRoomNameOverride(roomName);
-    // Clear roster shipId override — legacy sector-click is a fresh spawn
-    // (or implicit limbo-resume), not a specific-ship resume.
-    setJoinOptionsOverride(undefined);
-    setPhase('game');
-  }, [setPhase]);
 
   const handleSpawnExistingShip = useCallback((shipId: string, sectorKey: string) => {
     setRoomNameOverride(`galaxy-${sectorKey}`);
@@ -1133,10 +1124,6 @@ export function App(): JSX.Element {
     setPhase('game');
   }, [setPhase]);
 
-  const handleSelectLocal = useCallback(() => {
-    setPhase('local');
-  }, [setPhase]);
-
   const handleAuthSuccess = useCallback(() => {
     setPhase('galaxy-map');
   }, [setPhase]);
@@ -1166,11 +1153,9 @@ export function App(): JSX.Element {
               surfaceMode={phase === 'galaxy-map' ? 'idle' : 'connect'}
               roomNameOverride={roomNameOverride}
               joinOptionsOverride={joinOptionsOverride}
-              onSelectRoom={handleSelectRoom}
               onSpawnExistingShip={handleSpawnExistingShip}
               onSpawnNewShip={handleSpawnNewShip}
               onSpawnSpectator={handleSpawnSpectator}
-              onSelectLocal={handleSelectLocal}
             />
           }
           onAuthSuccess={handleAuthSuccess}

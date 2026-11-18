@@ -61,7 +61,6 @@ const ALLOWLIST = {
   'src/client/__art-lab__/fx.ts': { cap: 979, target: 600, reason: RATCHET_ONLY },
   'src/client/__art-lab__/main.ts': { cap: 702, target: 600, reason: RATCHET_ONLY },
   'src/client/components/EntityStatsPanel.tsx': { cap: 893, target: 600, reason: RATCHET_ONLY },
-  'src/client/components/GalaxyPickerChrome.tsx': { cap: 624, target: 600, reason: RATCHET_ONLY },
   'src/client/net/ColyseusClient.ts': {
     cap: 7354,
     target: 350,

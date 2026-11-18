@@ -72,12 +72,11 @@ async function openPickerViaSectorClick(page: Page): Promise<void> {
 
 test.describe('ship-picker on galaxy-map', () => {
   test('galaxy-map screen mounts the spawn-mode UI', async ({ page }) => {
-    // The old top-level "ship-picker-trigger" was removed when the picker
-    // became sector-scoped. The spawn-mode galaxy-map still mounts and
-    // exposes both the engineering-rooms entry and the galaxy canvas;
-    // the picker is now triggered by a sector hex tap (covered below).
+    // The picker is sector-scoped (a hex tap, covered below). The homepage
+    // shows the galaxy canvas and NO dev buttons (dev rooms are links).
     await mockAuthAndGo(page);
-    await expect(page.getByTestId('engineering-rooms-button')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId('engineering-rooms-button')).toHaveCount(0);
+    await expect(page.getByTestId('single-player-button')).toHaveCount(0);
     // Single-canvas refactor: the hex map now renders on the SHARED
     // gameplay canvas (game-surface), with the picker chrome
     // (galaxy-map-screen) overlaid as a sibling — so the canvas lives

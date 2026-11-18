@@ -54,7 +54,7 @@ architecture, across four threads:
 |---|---|---|
 | Galaxy graph | `src/core/galaxy/galaxy.ts` | Pure, hand-authored, **determinism-locked** (`galaxy.test.ts` enforces symmetric edges, no dangling neighbours). 7-sector sunflower. `getEntrySectors()` derives the edge ring by **max hex-distance**. `axialToPixel` projects hex→pixel for the map. |
 | Galaxy map renderer | `src/client/render/galaxy/GalaxyMapLayer.ts` | **Single** Pixi `Container` on the shared gameplay canvas (the 2nd `Application`/`GalaxyOverviewScreen` was deleted 2026-06-05 — `galaxy-graph.md` is stale on this). Two modes (`galaxyLayerDecisions.ts`): `selector` (full-screen picker, pan/zoom) and `overlay` (in-game transparent HUD, neighbours-only). Builds hexes once, `repaint()` on state change, pulses the current sector. **Lives worker-side** — state crosses via `SET_VISIBLE / SET_CURRENT_SECTOR / SET_TRANSIT_DOCKED / SET_OVERLAY_MODE / RESIZE` protocol messages. |
-| Picker chrome | `src/client/components/GalaxyPickerChrome.tsx` | React overlay on the selector: roster panel, `ShipPickerModal`, engineering rooms, limbo stub. Hex tap → `App.handleSelectorPick` → `openForSector`. |
+| Picker chrome | `src/client/components/GalaxyPickerChrome.tsx` | React overlay on the selector: roster panel, `ShipPickerModal`, limbo stub. Hex tap → `App.handleSelectorPick` → `openForSector`. |
 | Warp/transit | `HyperspaceOverlay.tsx`, `net/transitClient.ts`, server `TransitOrchestrator` | Spool→IN_TRANSIT→arrive; neighbour-validated server-side. Overlay map taps a neighbour → `engageTransit`. |
 | Landing flow | `src/client/app/PhaseRouter.tsx`, `App.tsx`, store `phase` | `galaxy-map` (the homepage: GameSurface idle + selector + chrome) → tap a sector → "Join the fight" (logged-out: `auth` `LoginPage` and back) → `connecting` → `game`. Logout, lost connection and Settings "Return to menu" all return to `galaxy-map`. `?room=`/`?galaxy=` deep-links skip to `game`. |
 | Galaxy REST | `src/server/routes/galaxyRouter.ts` | Only `GET /galaxy/sectors` (static graph). No live state. |
@@ -564,7 +564,10 @@ The map is the first thing every visitor sees; there is no other landing screen 
 - **Back from login.** App's idle-mount effect calls `resumeGatedJoin(sector)`: a Join opens that sector's ship picker straight away; a Spectate goes in as a spectator. No re-tap.
 - **Every exit lands here.** Logout (`useLogout`), the lost-connection overlay and Settings "Return to menu" set `galaxy-map`.
 - **Touch avatar.** `MobileAvatarBadge` mounts on the map (touch, logged in), since phones have no AppBar.
-- **Dev links.** Engineering rooms (and, in dev builds, the Visual FX Sandbox link) live in `EngineeringRoomsDialog`.
+- **No dev buttons.** The public page shows only the map, the pilot count and the fullscreen chip; the hint reads "Tap a sector to see the fight." Dev tools are reached by direct link only:
+  - single-player diagnostic: `/?local=1`;
+  - dev rooms: `/?room=<name>`, with `sector` (legacy 30-drone ring), `test-sector` (no drones or rocks; the E2E room), `shield-test`, `hull-collision-test`, `hull-collision-overlap-test`, `mount-test`, `feel-test`, `swarm-soak` (500), `swarm-tidi` (4000), `swarm-tidi-burn`;
+  - Visual FX Sandbox (dev server): `/__offscreen-spike__/visual-effects-sandbox.html`.
 - **Locks.** `GalaxyPickerChrome.test.tsx` (gate + resume), `galaxy-landing-flow.spec.ts`, `avatar-menu-logout.spec.ts`, `layout-slots.spec.ts`.
 
 ## Client rules in detail
