@@ -16,9 +16,8 @@ import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { GameClock } from '@core/clock/GameClock';
 import { glideToward } from '@shared-types/timeScale';
 import type { SnapshotMessage, DamageEvent, DestroyEvent, RespawnAckMessage, ShieldEventMessage } from '@shared-types/messages';
-import type { FleetOrderMessage, SetModeMessage, SetStanceMessage, FormSquadMessage, DisbandSquadMessage } from '@shared-types/messages';
 /** RTS slice 6a: the fleet command messages `sendFleetCommand` dispatches. */
-export type FleetCommandMessage = FleetOrderMessage | SetModeMessage | SetStanceMessage | FormSquadMessage | DisbandSquadMessage;
+export type { FleetCommandMessage } from './connection/roomCommands.js';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
@@ -42,7 +41,7 @@ import type { ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
-import { stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
+import type { FleetArrival, FleetArrivalWatch } from './fleetWarpFollow';
 import { cargoChanged } from './lootView';
 import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
 import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
@@ -87,6 +86,11 @@ import {
 import { resetPredictionState } from './prediction/resetPrediction.js';
 import { tryInitPredWorld, syncSwarmIntoPredWorld } from './prediction/predWorldSync.js';
 import { disposeClient, type ClientTeardownCtx } from './connection/clientTeardown.js';
+import {
+  pilotInSectorShip, sendSpectate, sendCommand, enterCommandFromServer, sendFleetCommand, applyShipUpgrade, respecShip, activateMount,
+  consumePendingCameraGlide, consumePendingFleetArrival, handleRespawnAck, respawnShip, devKillLocalShip, sendClientReady,
+  type RoomCommandsCtx, type FleetCommandMessage,
+} from './connection/roomCommands.js';
 import { MineSync } from './mirror/mineSync.js';
 import type { WelcomeTarget } from './handlers/welcomeHandlers.js';
 import {
@@ -506,197 +510,47 @@ export class ColyseusGameClient {
     };
   }
 
-  /**
-   * Phase 4 WS-A2 — same-sector instant pilot swap. Sends `pilot_ship { shipId }`
-   * over the LIVE room (no leave/rejoin → no spool, no curtain), then primes the
-   * client-side transition: despawn the local predWorld body so the fresh
-   * `welcome` re-anchors self-prediction at the new authoritative pose (one
-   * ownership site — same discipline as `resetPredictionState`), and stash the
-   * target shipId so the welcome handler clears spectator + arms the camera glide.
-   * Returns true when the swap was dispatched (false when there's no live room).
-   */
-  pilotInSectorShip(shipId: string): boolean {
-    if (!this.room || shipId === '') return false;
-    this.room.send('pilot_ship', { type: 'pilot_ship', shipId });
-    this._pendingPilotSwapShipId = shipId;
-    // Despawn the local predWorld body so the welcome's `tryInitPredWorld`
-    // reseeds it at the new ship's AUTHORITATIVE pose (the spectator case has
-    // none; the switch-from-another-hull case must drop the OLD body). The
-    // `welcome` handler nulls + rebuilds the Reconciler via tryInitPredWorld.
-    const localId = this.mirror.localPlayerId;
-    if (localId && this.predWorld?.hasShip(localId)) {
-      this.predWorld.despawnShip(localId);
-      this.reconciler = null;
-    }
-    this.localDead = false;
-    logEvent('pilot_swap_requested', { shipId });
-    return true;
-  }
+  /** The ctx the room commands (`connection/roomCommands.ts`) run with, built once (#14). */
+  private readonly _roomCmdCtx: RoomCommandsCtx = ((c: ColyseusGameClient): RoomCommandsCtx => ({
+    get room() { return c.room; }, get mirror() { return c.mirror; }, get clock() { return c.clock; },
+    get gameClock() { return c.gameClock; }, get predWorld() { return c.predWorld; }, get disposed() { return c.disposed; },
+    get reconciler() { return c.reconciler; }, set reconciler(v) { c.reconciler = v; },
+    get localDead() { return c.localDead; }, set localDead(v) { c.localDead = v; },
+    get pendingPilotSwapShipId() { return c._pendingPilotSwapShipId; }, set pendingPilotSwapShipId(v) { c._pendingPilotSwapShipId = v; },
+    get pilotSwapGlidePending() { return c._pilotSwapGlidePending; }, set pilotSwapGlidePending(v) { c._pilotSwapGlidePending = v; },
+    get fleetArrival() { return c._fleetArrival; }, set fleetArrival(v) { c._fleetArrival = v; },
+    get inputTick() { return c.inputTick; }, set inputTick(v) { c.inputTick = v; },
+    get serverTickAtWelcome() { return c.serverTickAtWelcome; }, set serverTickAtWelcome(v) { c.serverTickAtWelcome = v; },
+    get welcomePerfNow() { return c.welcomePerfNow; }, set welcomePerfNow(v) { c.welcomePerfNow = v; },
+    get clockAnchorServerTick() { return c.clockAnchorServerTick; }, set clockAnchorServerTick(v) { c.clockAnchorServerTick = v; },
+    get clockAnchorPerfNow() { return c.clockAnchorPerfNow; }, set clockAnchorPerfNow(v) { c.clockAnchorPerfNow = v; },
+    get anchorInitialised() { return c._anchorInitialised; }, set anchorInitialised(v) { c._anchorInitialised = v; },
+    get anchorFreshAtMs() { return c._anchorFreshAtMs; }, set anchorFreshAtMs(v) { c._anchorFreshAtMs = v; },
+    get lastSentInputState() { return c.lastSentInputState; }, set lastSentInputState(v) { c.lastSentInputState = v; },
+    get lastSentInputAtMs() { return c.lastSentInputAtMs; }, set lastSentInputAtMs(v) { c.lastSentInputAtMs = v; },
+    rekeyShip: (from: string, to: string): void => c.rekeyShip(from, to),
+    killEntity: (id: string): void => c.killEntity(id),
+  }))(this);
 
-  /**
-   * Equinox Phase-5 audit — STOP PILOTING → spectate. The inverse of
-   * {@link pilotInSectorShip}: tell the server to displace our active hull into a
-   * lingering hull (so it parks in-world AND surfaces in our own parked hulls
-   * for the Pilot dropdown). Drop the local predWorld body — same one-ownership-
-   * site discipline as the pilot swap / death — so prediction doesn't fight the
-   * now-parked hull; re-piloting re-anchors via the fresh `welcome`. No-op
-   * server-side when we have no active hull. Returns true when dispatched.
-   */
-  sendSpectate(): boolean {
-    if (!this.room) return false;
-    this.room.send('spectate', { type: 'spectate' });
-    this.dropLocalShipForCommand();
-    logEvent('spectate_requested', {});
-    return true;
-  }
-
-  /**
-   * RTS command layer (slice 10) — let go of the controls: enter command view.
-   * Sends `command` (the server parks the hull as an AI-flown wingman, the same
-   * path as `spectate`) and does the same local drop. The caller flips
-   * `pilotMode` first (as the toggle does for spectate). Returns true when
-   * dispatched.
-   */
-  sendCommand(): boolean {
-    if (!this.room) return false;
-    this.room.send('command', { type: 'command' });
-    this.dropLocalShipForCommand();
-    logEvent('command_requested', {});
-    return true;
-  }
-
-  /** RTS slice 10 — the server's `control_mode: command` (a command-view join
-   *  parked our hull at the arrival flip): flip the mode, then drop the local
-   *  ship exactly as a toggle-to-command does. Idempotent. Public for tests. */
-  enterCommandFromServer(): void {
-    const ui = useUIStore.getState();
-    if (ui.pilotMode !== 'spectator') ui.setPilotMode('spectator');
-    this.dropLocalShipForCommand();
-    logEvent('command_view_entered', { source: 'join' });
-  }
-
-  /** The local half of stop-piloting (spectate / command / a command-view
-   *  join): drop the predWorld body (one ownership site, like the pilot swap /
-   *  death) and the own drawn entry. The hull is parked now and comes back as a
-   *  lingering hull (syncMirror skips the own ship while spectating). */
-  private dropLocalShipForCommand(): void {
-    const localId = this.mirror.localPlayerId;
-    // Seamless hand-over (RTS Part A): the ship we let go of keeps being drawn
-    // as the parked hull it becomes. Its entry, body and renderer state MOVE
-    // to its shipInstanceId (`rekeyShip`); the router keys our still-ACTIVE
-    // wire entry there too until the server parks it (`shipMirrorKey`).
-    const sid = this.mirror.localShipInstanceId ?? null;
-    const own = localId !== null ? this.mirror.ships.get(localId) : undefined;
-    if (localId !== null && own !== undefined && sid !== null && sid !== localId) {
-      own.isActive = false;
-      own.ownerPlayerId = localId;
-      own.shipInstanceId = sid;
-      this.rekeyShip(localId, sid);
-      return;
-    }
-    if (localId && this.predWorld?.hasShip(localId)) {
-      this.predWorld.despawnShip(localId);
-      this.reconciler = null;
-    }
-    if (localId) this.mirror.ships.delete(localId);
-  }
-
-  /**
-   * RTS command layer (slice 6a): send a fleet command message
-   * (`fleet_order` / `set_mode` / `set_stance` / `form_squad` /
-   * `disband_squad`). Pure dispatch — no local state; the server owns the
-   * wingman brains. Returns true when dispatched (false with no live room).
-   */
-  sendFleetCommand(msg: FleetCommandMessage): boolean {
-    if (!this.room) return false;
-    this.room.send(msg.type, msg);
-    return true;
-  }
-
-  /**
-   * Phase 4 WS-B2 — send a free stat allocation for a ship instance. The server
-   * validates ownership + the point budget, persists, applies the multipliers,
-   * and echoes `ship_upgrade_applied`. The physics re-anchor happens off the
-   * authoritative own-ship `statAlloc` snapshot slice (not this send), so the
-   * client never predicts the upgrade — it waits for the server's truth. Returns
-   * true when dispatched (false when there's no live room / blank id).
-   */
-  applyShipUpgrade(shipId: string, alloc: Record<string, number>): boolean {
-    if (!this.room || shipId === '') return false;
-    this.room.send('apply_ship_upgrade', { type: 'apply_ship_upgrade', shipId, alloc });
-    logEvent('ship_upgrade_requested', { shipId });
-    return true;
-  }
-
-  /**
-   * Phase 4 WS-B2 — respec a ship instance (refund every spent point). The
-   * server resets the roster `statAlloc` to `{}`, re-anchors the multipliers to
-   * neutral, and echoes `ship_upgrade_applied` with the empty alloc. Returns
-   * true when dispatched.
-   */
-  respecShip(shipId: string): boolean {
-    if (!this.room || shipId === '') return false;
-    this.room.send('respec_ship', { type: 'respec_ship', shipId });
-    logEvent('ship_respec_requested', { shipId });
-    return true;
-  }
-
-  /**
-   * Phase 4 WS-B3 — activate a latent weapon mount on a ship instance + bind a
-   * weapon to it. The server validates ownership + that `slotId` is a real
-   * latent hardpoint, persists the activation on the roster, mirrors it onto the
-   * live hull, and echoes `mount_activated`. The activated mount fires + renders
-   * from the next snapshot (PUBLIC via `states[].mounts`; geometry looked up
-   * client-side by `(kind, slotId)`). Returns true when dispatched.
-   */
+  // Outbound room commands (`connection/roomCommands.ts`); callers and tests use these.
+  pilotInSectorShip(shipId: string): boolean { return pilotInSectorShip(this._roomCmdCtx, shipId); }
+  sendSpectate(): boolean { return sendSpectate(this._roomCmdCtx); }
+  sendCommand(): boolean { return sendCommand(this._roomCmdCtx); }
+  /** Public for tests (a command-view join). */
+  enterCommandFromServer(): void { enterCommandFromServer(this._roomCmdCtx); }
+  sendFleetCommand(msg: FleetCommandMessage): boolean { return sendFleetCommand(this._roomCmdCtx, msg); }
+  applyShipUpgrade(shipId: string, alloc: Record<string, number>): boolean { return applyShipUpgrade(this._roomCmdCtx, shipId, alloc); }
+  respecShip(shipId: string): boolean { return respecShip(this._roomCmdCtx, shipId); }
   activateMount(shipId: string, slotId: string, weaponId: 'hitscan' | 'laser' | 'heat-seeker'): boolean {
-    if (!this.room || shipId === '' || slotId === '') return false;
-    this.room.send('activate_mount', { type: 'activate_mount', shipId, slotId, weaponId });
-    logEvent('mount_activation_requested', { shipId, slotId, weaponId });
-    return true;
+    return activateMount(this._roomCmdCtx, shipId, slotId, weaponId);
   }
-
-  /**
-   * Phase 4 WS-A2 — one-shot read of the pending pilot-swap camera glide target.
-   * Returns the NEW local ship's GAME-space pose ONCE the welcome has landed AND
-   * the new pose is in the mirror, then clears the flag; null otherwise. The RAF
-   * loop calls this each frame and, on a non-null return, drives the renderer's
-   * `glideCameraTo` (the smooth ship-switch). Driven off the mirror pose, not
-   * pose interpolation — independent of the snapshot teleport guard (Risk #4).
-   */
-  consumePendingCameraGlide(): { x: number; y: number } | null {
-    if (!this._pilotSwapGlidePending) return null;
-    const localId = this.mirror.localPlayerId;
-    const ship = localId ? this.mirror.ships.get(localId) : undefined;
-    if (!ship) return null; // wait until the new pose is mirrored
-    this._pilotSwapGlidePending = false;
-    return { x: ship.x, y: ship.y };
-  }
+  consumePendingCameraGlide(): { x: number; y: number } | null { return consumePendingCameraGlide(this._roomCmdCtx); }
 
   /** RTS fleet warp (S8): the ships a commander followed, waiting to show up
    *  in the destination's mirror (armed in the `transit_ready` handler). */
   private _fleetArrival: FleetArrivalWatch | null = null;
 
-  /**
-   * RTS fleet warp (S8) — one-shot: once the ships the commander followed are
-   * in the destination's mirror, returns their ids (to re-select: the ONE
-   * selection lives in the renderer) and their centroid (the camera glide
-   * target), then clears. Null while waiting or when nothing is pending. The
-   * RAF loop calls it each frame, like `consumePendingCameraGlide`.
-   */
-  consumePendingFleetArrival(): FleetArrival | null {
-    const w = this._fleetArrival;
-    if (w === null) return null;
-    const r = stepFleetArrival(w, this.mirror.ships, this.clock.now());
-    if (r === null) return null;
-    this._fleetArrival = null;
-    if (r === 'drop') {
-      logEvent('fleet_warp_follow_lost', { ids: w.ids.length });
-      return null;
-    }
-    logEvent('fleet_warp_follow_arrived', { ids: r.ids.length, of: w.ids.length });
-    return r;
-  }
+  consumePendingFleetArrival(): FleetArrival | null { return consumePendingFleetArrival(this._roomCmdCtx); }
 
   private inputTick = 0;
   /** Raw server snapshot position — shown as the orange ghost ship. */
@@ -1562,7 +1416,7 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
-      this.handleRespawnAck(msg);
+      handleRespawnAck(this._roomCmdCtx, msg);
     });
 
     // Feature handler files (handlers/index.ts): welcome, missiles, impact FX, toasts,
@@ -1762,84 +1616,10 @@ export class ColyseusGameClient {
     return true;
   }
 
-  private handleRespawnAck(msg: RespawnAckMessage): void {
-    const playerId = this.mirror.localPlayerId;
-    if (!playerId || !this.predWorld) return;
-
-    // Spawn new physics body at server-assigned position.
-    this.predWorld.spawnShip(playerId, msg.x, msg.y);
-
-    // Re-initialise reconciler so it doesn't try to replay inputs from before death.
-    this.reconciler = new Reconciler(this.predWorld, playerId, this.clock);
-
-    // Sync input tick to server tick so first fire passes temporal plausibility,
-    // and re-anchor the clock so tickPhysics()'s `targetTick` derivation stays
-    // consistent with the new tick base.
-    this.inputTick = msg.serverTick;
-    this.serverTickAtWelcome = msg.serverTick;
-    this.welcomePerfNow = this.clock.now();
-    this.clockAnchorServerTick = msg.serverTick;
-    this.clockAnchorPerfNow = this.gameClock.at(this.welcomePerfNow);
-    this._anchorInitialised = true;
-    this._anchorFreshAtMs = this.welcomePerfNow;
-    // Reset the idle-input throttle so the first post-respawn input always sends.
-    this.lastSentInputState = null;
-    this.lastSentInputAtMs = 0;
-
-    // Bootstrap mirror so the renderer shows the ship immediately (before next syncMirror).
-    this.mirror.ships.set(playerId, { x: msg.x, y: msg.y, vx: 0, vy: 0, angle: 0 });
-
-    this.localDead = false;
-    useUIStore.getState().setDead(false);
-    useUIStore.getState().setHullPct(100);
-    useUIStore.getState().setSectorAlert(null);
-
-    logEvent('cc_respawned', { x: msg.x, y: msg.y });
-  }
-
-  /** Send a respawn request to the server. Only valid while the local ship is dead. */
-  respawnShip(): void {
-    if (!this.room || !this.localDead) return;
-    this.room.send('respawn', { type: 'respawn' });
-  }
-
-  /**
-   * Test-only (Phase 4 WS-A1) — drive the CLIENT-LOCAL death path for the local
-   * ship, exactly as a `destroy` event would (kill the body + mirror entry +
-   * flip into spectator). Spectator is client-local + un-networked (D5), so the
-   * spectator-mode E2E exercises the transition deterministically here instead
-   * of waiting out hostile-fire TTK. Exposed only via the DEV-gated
-   * `__eqxKillLocalShip` window hook in App.tsx; production tree-shakes the hook.
-   */
-  devKillLocalShip(): void {
-    const id = this.mirror.localPlayerId;
-    if (!id) return;
-    this.killEntity(id);
-  }
-
-  /**
-   * Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
-   *
-   * Tells the server "I have finished bootstrapping; please activate
-   * my ship and broadcast the warp-in". Idempotent: a second call
-   * (e.g. from the per-RAF trigger in gameRafLoop after the first
-   * fire) is a no-op. The Zustand `clientReadySent` flag flips here
-   * so future callers also short-circuit.
-   *
-   * Called from the per-RAF check in `gameRafLoop` once all
-   * bootstrap gates pass (`computeBootstrapReadyFromState === true`).
-   */
-  sendClientReady(): void {
-    if (!this.room || this.disposed) return;
-    const state = useUIStore.getState();
-    if (state.clientReadySent) return;
-    state.setClientReadySent(true);
-    this.room.send('client_ready', { type: 'client_ready' });
-    const msSinceWelcome = this.welcomePerfNow > 0
-      ? Math.round(this.clock.now() - this.welcomePerfNow)
-      : -1;
-    logEvent('client_ready_sent', { msSinceWelcome });
-  }
+  respawnShip(): void { respawnShip(this._roomCmdCtx); }
+  /** Test-only: the client-local death of the local ship (DEV `__eqxKillLocalShip`). */
+  devKillLocalShip(): void { devKillLocalShip(this._roomCmdCtx); }
+  sendClientReady(): void { sendClientReady(this._roomCmdCtx); }
 
   // ── Prediction bootstrap ────────────────────────────────────────────────
 
