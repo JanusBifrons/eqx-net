@@ -14,6 +14,8 @@ import type { Request, Response } from 'express';
 import { matchMaker } from 'colyseus';
 import { db } from '../../db/Database.js';
 import { getPlayerShipStore } from '../../db/PersistenceWorker.js';
+import { validateToken } from '../../auth/AuthService.js';
+import { getAccountPlayerRegistry } from '../../identity/AccountPlayerRegistry.js';
 import { GALAXY_SECTORS } from '../../../core/galaxy/galaxy.js';
 
 /**
@@ -174,10 +176,12 @@ export function devLimboHandler(req: Request, res: Response): void {
 }
 
 /**
- * POST /dev/player-ships/:shipId/abandon — Phase 3 multi-ship roster.
- * Drop a ship from the player's roster. Requires `playerId` in the JSON
- * body (the dev endpoint trusts the caller — the client sends its own
- * playerId; a malicious client could only abandon its own ships). 404
+ * POST /dev/player-ships/:shipId/abandon — Phase 3 multi-ship roster; also
+ * served in production as POST /hangar/ships/:shipId/abandon (join flow
+ * stage 5: the Hangar's Abandon). Drop a ship from the player's roster.
+ * Requires `playerId` in the JSON body. Ownership follows the join rules: a
+ * guest id is trusted like a guest join, but a ship whose player is bound to
+ * an account needs that account's `Authorization: Bearer` token (401). 404
  * if no such ship; 403 if the ship is not owned by the supplied
  * playerId. Active and lingering ships are both abandonable — the
  * roster row vanishes immediately; if the ship is still in a sector
@@ -185,7 +189,7 @@ export function devLimboHandler(req: Request, res: Response): void {
  * disconnect/eviction path runs, but it will not be remembered after.
  * The room's abandon-detection poll shatters the hull into scrap.
  */
-export function devPlayerShipsAbandonHandler(req: Request, res: Response): void {
+export async function devPlayerShipsAbandonHandler(req: Request, res: Response): Promise<void> {
   const shipId = String(req.params['shipId'] ?? '');
   const body = (req.body ?? {}) as { playerId?: unknown };
   const playerId = typeof body.playerId === 'string' ? body.playerId : '';
@@ -202,6 +206,16 @@ export function devPlayerShipsAbandonHandler(req: Request, res: Response): void 
   if (ship.playerId !== playerId) {
     res.status(403).json({ error: 'ship not owned by caller' });
     return;
+  }
+  const registry = getAccountPlayerRegistry();
+  if (registry.isAccountBound(ship.playerId)) {
+    const auth = req.headers?.['authorization'];
+    const userId = auth?.startsWith('Bearer ') ? await validateToken(auth.slice(7)) : null;
+    if (!userId || registry.canonicalForUser(userId) !== ship.playerId) {
+      res.status(401).json({ error: 'sign in to abandon this ship' });
+      return;
+    }
+    if (store.get(shipId) === null) { res.status(404).json({ error: 'ship not found' }); return; }
   }
   const removed = store.delete(shipId);
   res.json({ ok: removed, shipId });
@@ -268,7 +282,9 @@ export async function devWebrtcCountersHandler(
 }
 
 /**
- * GET /dev/player-ships?playerId=foo — Phase 2 multi-ship roster.
+ * GET /dev/player-ships?playerId=foo — Phase 2 multi-ship roster; also served
+ * in production as GET /hangar/ships (join flow stage 5: the Hangar's owned
+ * hulls). Reads only, by playerId like the /trade reads.
  * Returns the player's full roster (up to 10 entries). Empty array if the
  * player has never spawned. Read-only; mutations flow through gameplay
  * paths (sector-room onJoin/onLeave/transit) which are wired in Phase 3.
