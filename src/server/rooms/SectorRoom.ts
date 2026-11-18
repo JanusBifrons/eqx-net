@@ -124,7 +124,7 @@ import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
-import { registerTeleportMessages } from './TeleportMessageHandlers.js';
+import { registerRoomFeatures } from './features/index.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
@@ -250,7 +250,6 @@ import { AiFireResolver, type AiFireTargetShape } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
 import { DamageRouter } from './DamageRouter.js';
 import { RespawnHandler } from './RespawnHandler.js';
-import { TestMessageHandlers } from './TestMessageHandlers.js';
 import { SwarmEvictor } from './SwarmEvictor.js';
 import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
@@ -1879,6 +1878,7 @@ export class SectorRoom extends Room<SectorState> {
   // TickBudgetTelemetry.
   private readonly tickBudget = new TickBudgetTelemetry();
 
+  private roomFeatures: { dispose: () => void } | null = null; // features/index.ts; disposed in onDispose
   override async onCreate(options: unknown): Promise<void> {
     this.setState(new SectorState());
     this.bus = new Bus();
@@ -3576,30 +3576,6 @@ export class SectorRoom extends Room<SectorState> {
       );
     });
 
-    // Test-only cues (testMode / EQX_ALLOW_DEV_OVERRIDES): TestMessageHandlers.ts.
-    const testHandlers = new TestMessageHandlers({
-      testMode: this.testMode,
-      allowDevOverrides: ALLOW_DEV_OVERRIDES,
-      sabF32: this.sabF32,
-      sessionToPlayer: this.sessionToPlayer,
-      swarmRegistry: this.swarmRegistry,
-      malformed: this.malformed,
-      markAllDronesHostileTo: (pid) => this.markAllDronesHostileTo(pid),
-      reloadAllTurrets: () => this.structureGrid.reloadAllTurrets(),
-      applyDamage: (id, shooter, dmg, x, y) => { this.applyDamage(id, shooter, dmg, x, y); },
-      warpBot: (id, x, y) => { this.warpBot(id, x, y); },
-      setBotMoveTarget: (id, x, y) => this.setBotMoveTarget(id, x, y),
-      testTractor: (pid, entityId, ticks) => {
-        const m = getShipKind(this.getActiveShip(pid)?.kind ?? null).mounts?.[0], t = this.swarmRegistry.getByEntityId(entityId);
-        if (m && t) this.forceFields.renewTractor(pid, { ...m, weaponId: 'tractor' }, t.id, ticks);
-      },
-    });
-    this.onMessage('test_tractor', (client: Client, raw: unknown) => testHandlers.tractor(client, raw));
-    this.onMessage('test_aggro', (client: Client, raw: unknown) => testHandlers.aggro(client, raw));
-    this.onMessage('test_reload_turrets', (client: Client, raw: unknown) => testHandlers.reloadTurrets(client, raw));
-    this.onMessage('test_kill_capitals', (client: Client, raw: unknown) => testHandlers.killCapitals(client, raw));
-    this.onMessage('test_fleet_warp', (client: Client, raw: unknown) => testHandlers.fleetWarp(client, raw));
-
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId || !this.transitOrchestrator) return;
@@ -3831,8 +3807,25 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('load_blueprint', blueprintMessage('load_blueprint'));
     this.onMessage('unload_blueprint', blueprintMessage('unload_blueprint'));
 
-    // v4 T1-T4 — teleporter messages (TeleportMessageHandlers.ts).
-    registerTeleportMessages({
+    // Client-message features (features/index.ts): test-only cues, teleporters.
+    this.roomFeatures = registerRoomFeatures({
+      devTest: {
+        testMode: this.testMode,
+        allowDevOverrides: ALLOW_DEV_OVERRIDES,
+        sabF32: this.sabF32,
+        sessionToPlayer: this.sessionToPlayer,
+        swarmRegistry: this.swarmRegistry,
+        malformed: this.malformed,
+        markAllDronesHostileTo: (pid) => this.markAllDronesHostileTo(pid),
+        reloadAllTurrets: () => this.structureGrid.reloadAllTurrets(),
+        applyDamage: (id, shooter, dmg, x, y) => { this.applyDamage(id, shooter, dmg, x, y); },
+        warpBot: (id, x, y) => { this.warpBot(id, x, y); },
+        setBotMoveTarget: (id, x, y) => this.setBotMoveTarget(id, x, y),
+        testTractor: (pid, entityId, ticks) => {
+          const m = getShipKind(this.getActiveShip(pid)?.kind ?? null).mounts?.[0], t = this.swarmRegistry.getByEntityId(entityId);
+          if (m && t) this.forceFields.renewTractor(pid, { ...m, weaponId: 'tractor' }, t.id, ticks);
+        },
+      },
       onMessage: (type, handler) => this.onMessage(type, handler),
       malformed: this.malformed,
       sessionToPlayer: () => this.sessionToPlayer,
@@ -12748,6 +12741,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   override onDispose(): void {
+    this.roomFeatures?.dispose();
     if (this.sceneRunner) unregisterScenePerfRoom(this);
     this.simLoopStopped = true;
     this.gameClock.cancelAll();
