@@ -175,3 +175,5 @@ one it flies straight as before.
   `NavRoute` record. Not yet flown by any ship (slice 7).
   2026-11-18 slice 7: AI-flown ships follow routes (`NavRoutes`, `view.nav`, `tickMoveTo`). The fine
   layer's room became a true lower bound (padded rocks, value less a cell diagonal).
+  2026-11-18 slice 8: moving danger. Drifting field rocks join the wreck-piece debris grid, and move legs
+  dodge debris with the combat hull avoidance (extracted to `ai/hullAvoid.ts`); resting rocks stay with routes.
