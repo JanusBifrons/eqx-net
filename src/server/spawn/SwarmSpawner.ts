@@ -77,7 +77,7 @@ export interface SpawnerHooks {
    *  / undefined (legacy axis-aligned spawn). `shipKindId` (drones only) is
    *  the drone kind's catalogue index (`shipKindToIndex`): the worker flies the
    *  body as that kind when the AI drives it with control keys (AI_INPUTS). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean | 'fixed', collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number) => void;
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean | 'fixed', collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number, sleeping?: boolean) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -328,6 +328,9 @@ export class SwarmSpawner {
     /** `wreckBodyParams(kind).settleSpeed/settleSpin`; absent ⇒ no settle. */
     settleSpeed?: number;
     settleSpin?: number;
+    /** Spawn asleep (wreck fields: a field hull, a restored piece; the same
+     *  shape as `spawnAsteroid`'s `fixed`): `FLAG_SLEEPING` from step 1. */
+    sleeping?: boolean;
   }): boolean {
     const slot = this.hooks.takeSlot();
     if (slot === undefined) return false;
@@ -349,6 +352,7 @@ export class SwarmSpawner {
       slot, spec.id, spec.x, spec.y, spec.vx, spec.vy, spec.radius, spec.mass, undefined,
       spec.linearDamping, false, spec.collisionGroups ?? WRECK_COLLISION_GROUPS, spec.angle, spec.colliderParts, undefined,
       { angvel: spec.angvel, angularDamping: spec.angularDamping, ...(spec.settleSpeed ? { settleSpeed: spec.settleSpeed, settleSpin: spec.settleSpin ?? 0 } : {}) },
+      undefined, spec.sleeping === true ? true : undefined,
     );
     this.hooks.interestGrid?.insert(rec.entityId, spec.x, spec.y, spec.radius);
     return true;
