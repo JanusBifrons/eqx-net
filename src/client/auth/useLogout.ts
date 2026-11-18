@@ -11,11 +11,11 @@ import { useUIStore } from '../state/store.js';
  * The sequence, lifted from the original `ProfileTab.onConfirmLogout`:
  *   1. `clearAuth()`     — nulls token+user in Zustand AND clears the
  *                          `eqxAuthToken` localStorage key.
- *   2. `setPhase('meta')`— unmounts `GameSurface` (which disposes the Colyseus
- *                          client + leaves the room) and returns to the main
- *                          menu. The App's passive `!user` redirect only catches
- *                          the galaxy-map phase, so logout must drive the phase
- *                          transition itself.
+ *   2. `setPhase('galaxy-map')`— swaps `GameSurface` to idle (which disposes the Colyseus
+ *                          client + leaves the room) and returns to the galaxy
+ *                          map (the homepage). Logout must drive the phase
+ *                          transition itself;
+ *                          the map stays usable logged-out.
  *   3. `setDrawerOpen(false)` — closes the drawer if open; a harmless no-op on
  *                          surfaces (header / mobile badge) that have no drawer.
  */
@@ -26,7 +26,7 @@ export function useLogout(): () => void {
 
   return useCallback(() => {
     clearAuth();
-    setPhase('meta');
+    setPhase('galaxy-map');
     setDrawerOpen(false);
   }, [clearAuth, setPhase, setDrawerOpen]);
 }

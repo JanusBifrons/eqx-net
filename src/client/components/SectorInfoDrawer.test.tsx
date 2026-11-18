@@ -106,11 +106,11 @@ describe('SectorInfoDrawer', () => {
     expect(onSpawnExistingShip).toHaveBeenCalledWith('sh1', 'sol-prime');
   });
 
-  it('landing context shows "Join sector" → onJoin', () => {
+  it('landing context shows "Join the fight" → onJoin', () => {
     const onJoin = vi.fn();
     renderDrawer({ context: 'landing', onJoin });
     const join = screen.getByTestId('sector-drawer-join');
-    expect(join).toHaveTextContent('Join sector');
+    expect(join).toHaveTextContent('Join the fight');
     fireEvent.click(join);
     expect(onJoin).toHaveBeenCalledWith('sol-prime');
     expect(screen.queryByTestId('sector-drawer-warp')).not.toBeInTheDocument();
