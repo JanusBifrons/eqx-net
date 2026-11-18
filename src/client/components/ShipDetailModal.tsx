@@ -7,6 +7,7 @@ import { ShipSilhouette } from '../render/shipShapeSvg';
 import { GRID_CELL } from './rosterConstants';
 import { useUIStore } from '../state/store';
 import type { RosterShipEntry } from './ShipRosterCard';
+import { GAME_DIALOG_CONTENT_SX, GAME_DIALOG_PAPER_SX, GAME_DIALOG_TITLE_SX } from './gameDialogChrome';
 
 /**
  * Detail modal for one roster ship. Full silhouette + full stats + a
@@ -108,9 +109,9 @@ export function ShipDetailModal({ ship, open, onClose, onSpawn, onAbandon }: Shi
       maxWidth="xs"
       fullWidth
       data-testid="ship-detail-modal"
-      PaperProps={{ sx: { bgcolor: '#0c1020', border: '1px solid #2a2f40' } }}
+      PaperProps={{ sx: GAME_DIALOG_PAPER_SX }}
     >
-      <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88', display: 'flex', alignItems: 'center', gap: 1.5 }}>
+      <DialogTitle sx={GAME_DIALOG_TITLE_SX}>
         <span>{kind.displayName}</span>
         {isActive && (
           <Chip
@@ -125,7 +126,7 @@ export function ShipDetailModal({ ship, open, onClose, onSpawn, onAbandon }: Shi
           />
         )}
       </DialogTitle>
-      <DialogContent sx={{ bgcolor: '#0c1020', color: '#ccc' }}>
+      <DialogContent sx={GAME_DIALOG_CONTENT_SX}>
         <Box sx={{ display: 'flex', justifyContent: 'center', my: 1 }}>
           <ShipSilhouette shape={kind.shape} size={96} />
         </Box>
@@ -191,7 +192,7 @@ export function ShipDetailModal({ ship, open, onClose, onSpawn, onAbandon }: Shi
           <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88', fontSize: 14 }}>
             Switch ships?
           </DialogTitle>
-          <DialogContent sx={{ bgcolor: '#0c1020', color: '#ccc' }}>
+          <DialogContent sx={GAME_DIALOG_CONTENT_SX}>
             <Typography variant="body2" sx={{ fontSize: 12, lineHeight: 1.5 }}>
               Your current ship will be parked where it is. You&apos;ll spawn
               as {kind.displayName} in {ship.sectorKey}.
@@ -237,7 +238,7 @@ export function ShipDetailModal({ ship, open, onClose, onSpawn, onAbandon }: Shi
           <DialogTitle sx={{ bgcolor: '#0c1020', color: '#ff5566', fontSize: 14 }}>
             {isMyPilotedShip ? 'Abandon active ship?' : `Abandon ${kind.displayName}?`}
           </DialogTitle>
-          <DialogContent sx={{ bgcolor: '#0c1020', color: '#ccc' }}>
+          <DialogContent sx={GAME_DIALOG_CONTENT_SX}>
             <Typography variant="body2" sx={{ fontSize: 12, lineHeight: 1.5 }}>
               {isMyPilotedShip
                 ? 'This is your active ship — abandoning will eject you to the galaxy map. Continue?'
