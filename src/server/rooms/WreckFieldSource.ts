@@ -37,7 +37,7 @@
  * the pending-unload sweep reads poses through made-once callbacks.
  */
 import { chunkKeyX, chunkKeyY, type ChunkSource } from '../../core/terrain/chunkStreamer.js';
-import { hullsInChunk, wreckFieldHullFracture, WRECK_FIELD, WRECK_FIELD_VERSION, type WreckField, type WreckFieldHull, type WreckFieldOpts } from '../../core/terrain/wreckFieldLayout.js';
+import { hullsInChunk, wreckFieldHullFracture, WRECK_FIELD_VERSION, type WreckField, type WreckFieldHull, type WreckFieldOpts } from '../../core/terrain/wreckFieldLayout.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import { loadRecords, type RockRecordStore } from '../db/terrainSql.js';
 import { collectLineage, type WreckLineageDeps, type WreckLineageRecord } from './wreckLineageRecord.js';
@@ -63,7 +63,8 @@ export const WRECK_FIELD_ROW_VERSION = WRECK_FIELD_VERSION * 256 + FRACTURE_ALGO
  *  hull): a few seconds of their parting kicks, so the cuts read open. */
 const DRIFT_S: readonly [number, number] = [1, 3];
 /** The most a piece's centre drifts: a share of the hull's free footprint
- *  margin (`footprintMul` − 1 radii), and never past a quarter chunk. */
+ *  margin (its footprint less its kind radius: `footprintMul` − 1 radii, a
+ *  capital's `capitalFootprintMul` − 1), and never past a quarter chunk. */
 const DRIFT_MARGIN_SHARE = 0.5;
 
 /** A field hull's pieces at rest where they drifted to: its fracture
@@ -85,7 +86,7 @@ export function fieldHullPieces(hull: WreckFieldHull): { pieces: WreckPieceSpec[
   for (const p of pieces) vmax = Math.max(vmax, Math.hypot(p.kickVx, p.kickVy));
   const r = new Rng(fnvMixU32(hull.seed, 0xd71f));
   const want = DRIFT_S[0] + (DRIFT_S[1] - DRIFT_S[0]) * (r.u32() / 4294967296);
-  const reach = Math.min((WRECK_FIELD.footprintMul - 1) * kind.radius * DRIFT_MARGIN_SHARE, CHUNK_SIZE / 4);
+  const reach = Math.min((hull.footprint - kind.radius) * DRIFT_MARGIN_SHARE, CHUNK_SIZE / 4);
   const t = vmax > 0 ? Math.min(want, reach / vmax) : 0;
   for (const p of pieces) {
     p.x += p.kickVx * t; p.y += p.kickVy * t; p.angle += p.kickAngvel * t;
@@ -98,7 +99,7 @@ export function fieldHullPieces(hull: WreckFieldHull): { pieces: WreckPieceSpec[
  *  its seed, the two sides that fought there (faction ids) and, optionally,
  *  its own open clearings (galaxy sectors: every pocket; else the cut
  *  field's). */
-export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings'> & {
+export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings' | 'rims'> & {
   /** Dev look flag (wreck fields 9, owner Q4 stills): seed hulls spawn
    *  freshly dead (a `deathTick` at load: hot cut edges that cool on the
    *  normal schedule) instead of cool. Off by default; dev room

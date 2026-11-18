@@ -140,6 +140,16 @@ describe('WreckFieldSource (wreck fields 3b)', () => {
     expect(t.src.stats.hullsLive).toBe(d.hulls.length);
   });
 
+  it('wreck fields 13: every piece rests inside its hull footprint (a capital has the tighter one), drift included', () => {
+    let capitals = 0;
+    for (const h of FIELD.hulls) {
+      const k = getShipKind(h.kindId);
+      if (k.sizeClass === 'capital') capitals++;
+      for (const p of fieldHullPieces(h).pieces) expect(Math.hypot(p.x - h.x, p.y - h.y), h.kindId).toBeLessThan(h.footprint - (h.footprint - k.radius) * 0.4);
+    }
+    expect(capitals).toBeGreaterThan(0);
+  });
+
   it('wreck fields 9 dev look flag: `fresh` hulls load with a deathTick (drawn just killed); the default stays cool', () => {
     const fresh = make(FIELD, 1000, memStore(), true);
     fresh.src.step(needed, 100, 0);
@@ -400,7 +410,8 @@ describe('WreckFieldSource.dormantObstacles (wreck fields 7: placement sees unlo
     expect(t.src.rowOf(hull.key)).toBe('lineage');
     const saved: GridObstacle[] = [];
     t.src.dormantObstacles(near, saved);
-    const mine = saved.filter((o) => Math.hypot(o.x - hull.x, o.y - hull.y) < hull.footprint);
+    // The moved piece may sit just past the footprint (by the move).
+    const mine = saved.filter((o) => Math.hypot(o.x - hull.x, o.y - hull.y) < hull.footprint + Math.hypot(37, 11));
     expect(mine.length).toBe(ids.length);
     expect(mine.some((o) => Math.abs(o.x - (first.x + 37)) < 1e-9 && Math.abs(o.y - (first.y - 11)) < 1e-9)).toBe(true);
     // Every piece gone: consumed, nothing.

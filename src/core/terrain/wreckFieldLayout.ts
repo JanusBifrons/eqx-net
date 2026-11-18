@@ -27,20 +27,27 @@ import { fieldRocksInBox } from './chunkStreamer.js';
 
 /** Bump on ANY change to the hulls a seed gives: saved field-hull records are
  *  keyed by it (`layout_version`), and a mismatch discards them. */
-export const WRECK_FIELD_VERSION = 2;
+export const WRECK_FIELD_VERSION = 3;
 
 /** The layout's knobs (owner Q1: a few mid-size fields plus a couple of
  *  debris trails). Counts are tuned against owner stills: 2026-11-18 the
  *  owner saw "one ship" per phone screen in a 50 km core and chose "tighter
- *  AND more wrecks" (wreck fields 11): a ~14 km core, 2.5x the small hulls. */
+ *  AND more wrecks" (wreck fields 11): a ~14 km core, 2.5x the small hulls.
+ *  Wreck fields 13 (owner "more big wrecks"): fewer fighters, more sub-caps
+ *  (mostly missile frigates) and capitals (mostly destroyers and cruisers). */
 export const WRECK_FIELD = {
   /** Core disc radius (world u): ~14 km across (was 25,000, ~50 km). */
   coreRadius: 7_000,
   /** Hull counts in the whole field, [min, max] inclusive. The small hulls are
    *  the debris: fighter and sub-cap wrecks break into many small pieces. */
-  capitals: [2, 4],
-  subcaps: [25, 60],
-  fighters: [75, 200],
+  capitals: [3, 6],
+  subcaps: [60, 110],
+  fighters: [40, 100],
+  /** Kind pick weight within a class: ∝ kind radius ^ this. Capitals favour
+   *  the smaller (destroyers, cruisers; battleships and barges are rare),
+   *  sub-caps the bigger (missile frigates). Fighters pick evenly. */
+  capitalSizePow: -2,
+  subcapSizePow: 2,
   /** Debris trails leaving the core: count, length and start half-width
    *  (world u); a trail narrows to `trailTaper` of that at its end and bends
    *  by up to `trailBend` × its length sideways. */
@@ -56,6 +63,13 @@ export const WRECK_FIELD = {
    *  at most ~1.5 radii (`destruction.ts` subcap profile); a capital's hold
    *  their shape. Footprints never overlap. */
   footprintMul: 1.5,
+  /** A capital's footprint: × its kind radius (its sections hold their
+   *  shape, so it needs little more than its hull). */
+  capitalFootprintMul: 1.15,
+  /** Core placement radius = reach × u ^ this (u uniform): 0.5 spreads hulls
+   *  evenly over the disc; higher packs them toward the centre, so the wreck
+   *  lies thickest round the battle pocket the fight was over. */
+  radialPow: 1.25,
   /** Gap kept between neighbouring footprints (world u). */
   gap: 200,
   /** A non-capital kind with at least this radius is a sub-cap, else a
@@ -63,9 +77,13 @@ export const WRECK_FIELD = {
   subcapMinRadius: 28,
   /** Share of hulls lying on the other side's half of the front. */
   sideMix: 0.25,
-  /** How far past the core rim a blocked capital may look, in core radii
-   *  (it widens over its tries; most land in the core). */
-  capitalReach: 1.5,
+  /** How far past the core rim a capital's centre may lie, × its footprint
+   *  (wreck fields 13: was up to 1.5 core radii, ~20 km out): the hull still
+   *  overlaps the core, and a big one fits round an open battle pocket. */
+  capitalOverhang: 0.5,
+  /** Clear band either side of an arrival rim (`WreckFieldOpts.rims`), u:
+   *  a warp drop on the rim lands clear of every footprint. */
+  rimGap: 120,
   /** Tries per hull before it is dropped (a crowded or rocky spot). */
   attempts: 60,
 } as const;
@@ -130,6 +148,10 @@ export interface WreckFieldOpts {
   sides: readonly [FactionId, FactionId];
   /** Open clearings (gates, stations): no footprint reaches into one. */
   clearings?: readonly FieldClearing[];
+  /** Arrival rims (warp drops land on a pocket's rim): no footprint comes
+   *  within `WRECK_FIELD.rimGap` of the circle, so hulls lie either side of
+   *  it, the ring inside a pocket and the field outside. */
+  rims?: readonly FieldClearing[];
   /** Occupied space (rocks): a blocked footprint is tried elsewhere. */
   blocked?: WreckFieldBlocker;
   /** The room's wreck switches (`wreckKindAllowed`); default both on. */
@@ -188,17 +210,25 @@ export function wreckField(o: WreckFieldOpts): WreckField {
 
   const kinds = wreckFieldKinds(o.capitalWrecksOn ?? true, o.subcapWrecksOn ?? true);
   const plan: Array<{ kind: ShipKindId; core: boolean }> = [];
-  const add = (pool: ShipKindId[], range: readonly [number, number], trailable: boolean): void => {
+  const add = (pool: ShipKindId[], range: readonly [number, number], trailable: boolean, sizePow: number): void => {
     const n = counts.int(range[0], range[1]);
     if (pool.length === 0) return;
-    for (let i = 0; i < n; i++) plan.push({ kind: pick.pick(pool), core: !trailable || unit(counts) >= W.trailShare });
+    const weights = pool.map((id) => getShipKind(id).radius ** sizePow);
+    let total = 0;
+    for (const w of weights) total += w;
+    for (let i = 0; i < n; i++) {
+      let u = unit(pick) * total, j = 0;
+      while (j < pool.length - 1 && u >= weights[j]!) u -= weights[j++]!;
+      plan.push({ kind: pool[j]!, core: !trailable || unit(counts) >= W.trailShare });
+    }
   };
   // Biggest first, so capitals get room before the small hulls fill in.
-  add(kinds.capitals, W.capitals, false);
-  add(kinds.subcaps, W.subcaps, true);
-  add(kinds.fighters, W.fighters, true);
+  add(kinds.capitals, W.capitals, false, W.capitalSizePow);
+  add(kinds.subcaps, W.subcaps, true, W.subcapSizePow);
+  add(kinds.fighters, W.fighters, true, 0);
 
   const clearings = o.clearings ?? [];
+  const rims = o.rims ?? [];
   const placed: Array<{ x: number; y: number; r: number }> = [];
   const free = (x: number, y: number, r: number): boolean => {
     for (const p of placed) {
@@ -209,6 +239,9 @@ export function wreckField(o: WreckFieldOpts): WreckField {
       const dx = k.x - x, dy = k.y - y, m = k.r + r;
       if (dx * dx + dy * dy < m * m) return false;
     }
+    for (const k of rims) {
+      if (Math.abs(Math.hypot(k.x - x, k.y - y) - k.r) < r + W.rimGap) return false;
+    }
     return !o.blocked || !o.blocked(x, y, r);
   };
 
@@ -217,18 +250,17 @@ export function wreckField(o: WreckFieldOpts): WreckField {
   for (let h = 0; h < plan.length; h++) {
     const { kind, core } = plan[h]!;
     const k = getShipKind(kind), capital = k.sizeClass === 'capital';
-    const r = k.radius * W.footprintMul;
+    const r = k.radius * (capital ? W.capitalFootprintMul : W.footprintMul);
     let spot: { x: number; y: number; zone: WreckFieldZone } | null = null;
     for (let a = 0; a < W.attempts && !spot; a++) {
       let x: number, y: number;
       if (core || trails.length === 0) {
-        // Uniform over the core disc. A capital may lie across its rim (a
-        // 3-4 km footprint has little room in a 7 km core), and a blocked one
-        // (rocks, the open battle pocket) looks further out each try, up to
-        // `capitalReach` core radii more.
+        // Uniform over the core disc. A capital's centre may lie up to
+        // `capitalOverhang` footprints past its rim (a 4-9 km footprint has
+        // little room in a 7 km core round an open battle pocket).
         unitDirFromSteps(unit(place) * ANGLE_STEPS, dir);
-        const reach = W.coreRadius + (capital ? r + (a / W.attempts) * W.capitalReach * W.coreRadius : 0);
-        const d = reach * Math.sqrt(unit(place));
+        const reach = W.coreRadius + (capital ? r * W.capitalOverhang : 0);
+        const d = reach * unit(place) ** W.radialPow;
         x = o.x + dir.x * d; y = o.y + dir.y * d;
       } else {
         // Along a trail, thinning outward (t^1.5), narrowing and bending.

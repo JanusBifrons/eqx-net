@@ -14,7 +14,7 @@
  * server's pose.
  *
  * Prints (never asserts) the welcome's wreck bytes and the resync cycle time
- * for the worst-case ring (layout seed `a`: 56 pieces, `FIELD_RING_WORST_PIECES`)
+ * for seed `a`'s worst ring (nearly its whole field since wreck fields 11)
  * with one ship parked at its densest point. Read them from the
  * `[wreck-field late joiner]` lines in the test output.
  */
@@ -24,7 +24,7 @@ import { Packr } from '@colyseus/msgpackr';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { CELL_SIZE } from '../../../src/server/interest/SpatialGrid.js';
-import { FIELD_CAP_SHIPS, FIELD_LIVE_CAP, FIELD_RING_WORST_PIECES } from '../../../src/server/rooms/wreckFifos.js';
+import { FIELD_CAP_SHIPS, FIELD_LIVE_CAP } from '../../../src/server/rooms/wreckFifos.js';
 import { WRECK_RESYNC_CHUNK, WRECK_RESYNC_EVERY } from '../../../src/server/rooms/WreckWireDeltas.js';
 import { wreckField, hullsInChunk, wreckFieldHullFracture, WRECK_FIELD, type WreckFieldHull } from '../../../src/core/terrain/wreckFieldLayout.js';
 import { wreckPieceGeometry } from '../../../src/core/destruction/wreckPieces.js';
@@ -41,7 +41,7 @@ type WreckRec = { id: string; kind: number; entityId: number; wreckId?: number; 
 const SPEED = 4;
 /** Room updates (= broadcast counters) per GAME second (SectorRoom tick loop). */
 const UPDATES_PER_GAME_S = 60;
-/** Seed `a` is the layout's worst 5 x 5 ring (wreckFieldLayout.test.ts: 56 pieces). */
+/** Layout seed `a`: its densest 5 x 5 ring is nearly the whole field (wreckFieldLayout.test.ts prints it). */
 const OPTS = { seed: 'a', x: 0, y: 0, sides: ['ashen-league', 'vel-concord'] as const };
 const FIELD = wreckField(OPTS);
 const RING = 2; // the streamer's wake ring (5×5 chunks)
@@ -115,7 +115,7 @@ describe('SectorRoom integration — late joiner sees the wreck field (wreck fie
     const src = int().wreckFieldSource!;
     const fieldPieces = (): number => src.livePieces();
     const want = Math.min(spot.pieces, FIELD_LIVE_CAP);
-    expect(spot.pieces, 'seed a is the measured worst ring').toBe(FIELD_RING_WORST_PIECES);
+    expect(spot.pieces, 'the ring fits under the field cap').toBeLessThanOrEqual(FIELD_LIVE_CAP);
     await until('ring loaded', () => fieldPieces() >= want);
 
     /** The live field piece nearest (x, y): the one the joiner will have in interest. */

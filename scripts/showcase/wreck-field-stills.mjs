@@ -25,12 +25,15 @@
 //                       a warp from the home pocket drops you;
 //   <key>-dense.png   — the normal play zoom on the densest phone view;
 //   <key>-far.png     — the gameplay zoom-out floor, centred on the core
-//                       (the open battle pocket: no hull lies within ~3.5 km);
+//                       (the battle pocket's open centre: no hull within
+//                       ~1.8 km; wreck fields 13);
 //   <key>-dense-far.png — the zoom-out floor on the densest view (the far-zoom
 //                       pieces and specks, wreckArt.ts setFarZoom);
 //   <key>-command.png — the densest view in Command view (a plain galaxy
 //                       join, startMode.ts): the parked hull streams the field;
-//   <key>-capital.png — a capital's sections up close (from the live pieces).
+//   <key>-capital.png — the field's smallest capital, whole: the ship parks
+//                       beside it on the screen's long axis (wreck fields 13;
+//                       was below it at the 0.15 zoom clamp: a sliver showed).
 // The server log's 'wreck field laid out' lines are echoed at the end, so the
 // joined room's real hull count can be checked against the planned one.
 // Boots its own capture server + Vite (showcase/servers.ts) on the
@@ -54,7 +57,7 @@ mkdirSync(out, { recursive: true });
 const here = import.meta.url;
 const { CaptureServers, defaultPorts } = await tsImport('../../showcase/servers.ts', here);
 const { PLAYER_LOOK, FILM_HUD } = await tsImport('../../showcase/recorder.ts', here);
-const { wreckField, wreckFieldKinds, rockFieldBlocker } = await tsImport('../../src/core/terrain/wreckFieldLayout.ts', here);
+const { wreckField, wreckFieldKinds, rockFieldBlocker, WRECK_FIELD } = await tsImport('../../src/core/terrain/wreckFieldLayout.ts', here);
 const { cutFieldOpts } = await tsImport('../../src/core/terrain/chunkStreamer.ts', here);
 const { sectorWreckField, sectorCutField, sectorSites, warpDropPoint } = await tsImport('../../src/core/galaxy/sectorSites.ts', here);
 const { SOLAR_SECTORS } = await tsImport('../../src/shared-types/sectorBounds.ts', here);
@@ -72,14 +75,28 @@ const PHONE = {
   hasTouch: true,
 };
 const VIEW_H = PHONE.viewport.height;
+const VIEW_W = PHONE.viewport.width;
 // Ship parked just off the hull (outside its footprint), zoomed so the hull fits the short side.
 const fit = (r) => Math.max(0.15, Math.min(1, VIEW_H / (2 * r + 500))).toFixed(3);
 
-/** A field's targets: the capital nearest the core, the busiest cluster and
+/** The capital shot: the ship parks beside the hull (its body radius plus a
+ *  margin off its centre, on the side clear of every other footprint), zoomed
+ *  so the whole hull fits the long side of the sideways screen. */
+function capitalShot(FIELD, capital) {
+  const body = capital.footprint / WRECK_FIELD.capitalFootprintMul, off = body + 250;
+  const clear = (p) => !FIELD.hulls.some((h) => h !== capital && dist(h, p) < h.footprint + 80);
+  const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({ x: capital.x + dx * off, y: capital.y + dy * off }));
+  const spot = sides.find(clear) ?? sides[0];
+  const zoom = Math.max(0.15, Math.min(1, VIEW_W / (2 * (off + body + 150)))).toFixed(3);
+  return { spawnX: spot.x, spawnY: spot.y, zoom };
+}
+
+/** A field's targets: the smallest capital (nearest the core first; it frames
+ *  whole), the busiest cluster and
  *  the densest normal-zoom view (the ship parks at its nearest clear point). */
 function planShots(FIELD, label) {
   const centre = { x: FIELD.x, y: FIELD.y };
-  const capital = FIELD.hulls.filter((h) => capitalKinds.has(h.kindId)).sort((a, b) => dist(a, centre) - dist(b, centre))[0];
+  const capital = FIELD.hulls.filter((h) => capitalKinds.has(h.kindId)).sort((a, b) => a.footprint - b.footprint || dist(a, centre) - dist(b, centre))[0];
   const small = FIELD.hulls.filter((h) => !capitalKinds.has(h.kindId));
   let cluster = small[0];
   let best = -1;
@@ -122,7 +139,7 @@ if (sectors.length === 0) {
   });
   const { capital, cluster, denseSpawn } = planShots(FIELD, 'wreck-field-test');
   const SHOTS = [
-    ...(capital ? [{ name: 'capital', spawnX: capital.x, spawnY: capital.y - capital.footprint - 120, zoom: fit(capital.footprint) }] : []),
+    ...(capital ? [{ name: 'capital', ...capitalShot(FIELD, capital) }] : []),
     { name: 'cluster', spawnX: cluster.x, spawnY: cluster.y - cluster.footprint - 120, zoom: fit(700) },
     { name: 'wide', spawnX: FIELD.x, spawnY: FIELD.y },
     { name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: '0.15' },
@@ -153,7 +170,7 @@ if (sectors.length === 0) {
     RUNS.push({ prefix: key, room, name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: '0.15' });
     RUNS.push({ prefix: key, room, name: 'dense-far', spawnX: denseSpawn.x, spawnY: denseSpawn.y, zoom: '0.15' });
     RUNS.push({ prefix: key, room, name: 'command', spawnX: denseSpawn.x, spawnY: denseSpawn.y, startMode: 'command' });
-    if (capital) RUNS.push({ prefix: key, room, name: 'capital', spawnX: capital.x, spawnY: capital.y - capital.footprint - 120, zoom: fit(capital.footprint) });
+    if (capital) RUNS.push({ prefix: key, room, name: 'capital', ...capitalShot(FIELD, capital) });
   }
 }
 

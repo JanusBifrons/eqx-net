@@ -24,9 +24,10 @@ import type { WreckOrigin } from './capitalWreckTypes.js';
 /** Worst live field pieces in ONE ship's 5 x 5 chunk ring, measured by
  *  `wreckFieldLayout.test.ts` on the version-1 layout (seed `a`: 56;
  *  `thornfield` 37, `b` 21): what the cap below was sized from, kept as is.
- *  Since wreck fields 11 (a 7 km core) one ring holds nearly a whole field
- *  (worst 426 pieces), so the worst loaded set with any number of ships is
- *  one whole field (at most 443 pieces, abyssal-gate), under the cap
+ *  Since wreck fields 11 (a 7 km core) one ring holds nearly a whole field,
+ *  so the worst loaded set with any number of ships is one whole field
+ *  (wreck fields 13: at most 357 pieces, test seed `thornfield`; galaxy
+ *  fields at most 347), under the cap
  *  (macro-terrain.md "F3"). The streamer keeps that ring loaded around each
  *  ship (macro-terrain.md "One streamer, several sources"). */
 export const FIELD_RING_WORST_PIECES = 56;

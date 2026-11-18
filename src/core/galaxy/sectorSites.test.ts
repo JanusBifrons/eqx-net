@@ -4,11 +4,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import { GALAXY_SECTORS, GALAXY_FACTIONS, getNeighbours, getSector, axialToPixel } from './galaxy.js';
-import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE, sectorCutField, sectorWreckField, warpDropPoint, FIELD_CLEARING_MARGIN, BELT_CLEARING_MARGIN, fieldClearingRadius, wreckClearingRadius, WARP_DROP_TOLERANCE } from './sectorSites.js';
+import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE, sectorCutField, sectorWreckField, warpDropPoint, FIELD_CLEARING_MARGIN, BELT_CLEARING_MARGIN, fieldClearingRadius, wreckClearingRadius, BATTLE_POCKET_OPEN_CENTRE } from './sectorSites.js';
 import { cutFieldOpts, fieldRocksInBox } from '../terrain/chunkStreamer.js';
 import { slicedFieldLanes } from '../terrain/fieldLayout.js';
 import { rockFieldBlocker, wreckField, WRECK_FIELD } from '../terrain/wreckFieldLayout.js';
-import { hullPieceCounts, screenLine, worstRing } from '../terrain/wreckFieldTestKit.js';
+import { arrivalStats, hullPieceCounts, PHONE_VIEWS, screenLine, worstRing } from '../terrain/wreckFieldTestKit.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 describe('sectorSites', () => {
   it('is deterministic per sector key', () => {
@@ -189,10 +190,12 @@ describe('sectorWreckField (wreck fields F3, slice 8)', () => {
       const combat = sectorSites(s.key).find((p) => p.kind === 'combat')!;
       expect({ x: f.x, y: f.y }, s.key).toEqual({ x: combat.x, y: combat.y });
       expect(f.clearings).toEqual(sectorSites(s.key).map((p) => ({ x: p.x, y: p.y, r: wreckClearingRadius(p, combat) })));
-      // Wreck fields 11: the battle pocket keeps only a warp drop's room open.
+      // Wreck fields 13: hulls reach into the battle pocket's outer ring round
+      // an open centre; its rim (the warp drop circle) stays clear.
       const own = f.clearings.find((c) => c.x === combat.x && c.y === combat.y)!;
-      expect(own.r).toBeGreaterThan(combat.r + WARP_DROP_TOLERANCE);
-      expect(own.r).toBeLessThan(fieldClearingRadius(combat));
+      expect(own.r).toBe(combat.r * BATTLE_POCKET_OPEN_CENTRE);
+      expect(own.r).toBeLessThan(combat.r);
+      expect(f.rims).toEqual([{ x: combat.x, y: combat.y, r: combat.r }]);
     }
   });
 
@@ -222,7 +225,22 @@ describe('sectorWreckField (wreck fields F3, slice 8)', () => {
       const p = hullPieceCounts(field), ring = worstRing(field, p);
       let total = 0;
       for (const n of p.values()) total += n;
-      console.log(`[wreck fields] ${s.key}${cut ? ' (+rocks)' : ''}: ${field.hulls.length} hulls, ${field.dropped} dropped, ${total} pieces, sides ${f.sides.join(' vs ')} | ${screenLine(field, p, WRECK_FIELD.coreRadius)} | worst ring ${ring.pieces} pieces (${ring.hulls} hulls)`);
+      const byClass = { cap: 0, sub: 0, ftr: 0 }, kinds: Record<string, number> = {};
+      for (const h of field.hulls) {
+        const k = getShipKind(h.kindId);
+        if (k.sizeClass === 'capital') byClass.cap++; else if (k.radius >= WRECK_FIELD.subcapMinRadius) byClass.sub++; else byClass.ftr++;
+        kinds[h.kindId] = (kinds[h.kindId] ?? 0) + 1;
+      }
+      const arr = arrivalStats(field, f.rims[0]!, WRECK_FIELD.footprintMul, PHONE_VIEWS.default.w, PHONE_VIEWS.default.h);
+      console.log(`[wreck fields] ${s.key}${cut ? ' (+rocks)' : ''}: ${field.hulls.length} hulls (cap ${byClass.cap} sub ${byClass.sub} ftr ${byClass.ftr}) ${JSON.stringify(kinds)}, ${field.dropped} dropped, ${total} pieces, sides ${f.sides.join(' vs ')} | ${screenLine(field, p, WRECK_FIELD.coreRadius)} | worst ring ${ring.pieces} pieces (${ring.hulls} hulls) | arrival (default view, ${arr.samples} rim drops): hulls mean ${arr.hullsMean.toFixed(1)} fewest ${arr.hullsFewest}, empty ${arr.empty}, drop blocked ${arr.dropBlocked}`);
+      // Wreck fields 13 ("wrecks in view"): every rim drop lands clear, and
+      // nearly every one (all but 4 of 72; tideglass misses 3 straight-down
+      // drops, where a sideways screen sees least of the ring) has wrecks on
+      // a default phone screen.
+      expect(arr.dropBlocked, `${s.key}: a rim drop inside a footprint`).toBe(0);
+      expect(arr.empty, `${s.key}: rim drops with no wreck in view`).toBeLessThanOrEqual(4);
+      // The open centre stays clear of every footprint.
+      for (const h of field.hulls) expect(Math.hypot(h.x - f.x, h.y - f.y) - h.footprint).toBeGreaterThanOrEqual(f.rims[0]!.r * BATTLE_POCKET_OPEN_CENTRE);
       expect(field.hulls.length, s.key).toBeGreaterThan(field.dropped);
       for (const side of sides) expect(f.sides).toContain(side);
       for (const h of field.hulls) for (const c of f.clearings) expect(Math.hypot(h.x - c.x, h.y - c.y), `${s.key} hull in a clearing`).toBeGreaterThanOrEqual(c.r);

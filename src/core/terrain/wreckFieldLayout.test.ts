@@ -60,6 +60,47 @@ describe('wreckFieldLayout', () => {
     for (const h of f.hulls) for (const k of clearings) expect(Math.hypot(h.x - k.x, h.y - k.y)).toBeGreaterThanOrEqual(k.r + h.footprint);
   });
 
+  it('wreck fields 13 "more big wrecks": sub-caps outnumber fighters, mostly missile frigates; capitals mostly destroyers and cruisers', () => {
+    const tally: Record<string, number> = {};
+    let sub = 0, ftr = 0;
+    for (const seed of ['thornfield', 'a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+      for (const h of typical(seed).hulls) {
+        const k = getShipKind(h.kindId);
+        tally[h.kindId] = (tally[h.kindId] ?? 0) + 1;
+        if (k.sizeClass !== 'capital') { if (k.radius >= WRECK_FIELD.subcapMinRadius) sub++; else ftr++; }
+      }
+    }
+    expect(sub).toBeGreaterThan(ftr);
+    const n = (id: string): number => tally[id] ?? 0;
+    expect(n('missile-frigate')).toBeGreaterThan(n('heavy') + n('gunship'));
+    const small = n('destroyer') + n('light-cruiser') + n('heavy-cruiser') + n('heavy-cruiser-beam');
+    const big = n('battlecruiser') + n('battlecruiser-lance') + n('battleship') + n('battleship-rail') + n('barge');
+    expect(small).toBeGreaterThan(big);
+  });
+
+  it('wreck fields 13: a capital lies in the field (centre within capitalOverhang footprints of the core rim), even round a big clearing', () => {
+    const fields = [typical('thornfield'), typical('a'), typical('b', { clearings: [{ x: 0, y: 0, r: 3000 }] }), wreckField({ seed: 'look', x: 60_000, y: 0, sides: SIDES, blocked: rockFieldBlocker(cutFieldOpts('look', undefined)) })];
+    let caps = 0;
+    for (const f of fields) for (const h of f.hulls) {
+      if (getShipKind(h.kindId).sizeClass !== 'capital') continue;
+      caps++;
+      expect(Math.hypot(h.x - f.x, h.y - f.y), `${f.seed} ${h.kindId}`).toBeLessThanOrEqual(WRECK_FIELD.coreRadius + h.footprint * WRECK_FIELD.capitalOverhang);
+    }
+    expect(caps).toBeGreaterThan(0);
+  });
+
+  it('wreck fields 13: no footprint comes within rimGap of an arrival rim; hulls lie both inside and outside it', () => {
+    const rim = { x: 0, y: 0, r: 3000 };
+    const f = typical('thornfield', { clearings: [{ x: 0, y: 0, r: 1800 }], rims: [rim] });
+    let inside = 0;
+    for (const h of f.hulls) {
+      const d = Math.hypot(h.x - rim.x, h.y - rim.y);
+      expect(Math.abs(d - rim.r)).toBeGreaterThanOrEqual(h.footprint + WRECK_FIELD.rimGap);
+      if (d < rim.r) inside++;
+    }
+    expect(inside).toBeGreaterThan(0);
+  });
+
   it('never overlaps rocks when given the rock field', () => {
     // A small rock field (30 km radius) at the origin; the wreck field's core
     // reaches into its rim.
