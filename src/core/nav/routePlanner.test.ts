@@ -11,10 +11,11 @@ const fighter = getShipKind('fighter').radius;
 const battleship = getShipKind('battleship').radius;
 const opts: ChunkOpts = { seed: 'look', battleshipLength: battleship * 2, fighterLength: fighter * 2 };
 
-/** A busy chunk inside the field, off the lanes (as the fine layer's tests). */
+/** A sparse chunk inside the field (38 rocks): room between them for a fighter.
+ *  The busy chunks are packed solid; fighters cross those by street. */
 function busyChunk(): { cx: number; cy: number } {
-  for (let cx = 6; cx < 30; cx++) if (rocksInChunk(opts, cx, 3).length > 80) return { cx, cy: 3 };
-  throw new Error('no busy chunk');
+  expect(rocksInChunk(opts, 20, 10).length).toBeGreaterThan(20);
+  return { cx: 20, cy: 10 };
 }
 
 function world(loadAround?: { cx: number; cy: number }): { coarse: CoarseFieldMap; fine: FineFieldLayer } {
@@ -60,6 +61,17 @@ class RefGrid implements SearchGraph {
   edgeCost(_i: number, k: number): number { return k < 4 ? FINE_NAV_CELL : FINE_NAV_CELL * Math.SQRT2; }
 }
 
+/** The reference grid path over the 5×5 chunks round (cx, cy), or null when none fits a fighter. */
+function refPath(p: RoutePlanner, cx: number, cy: number, sx: number, sy: number, tx: number, ty: number): { cost: number } | null {
+  const ox = (cx - 2) * CHUNK_SIZE, oy = (cy - 2) * CHUNK_SIZE, w = (5 * CHUNK_SIZE) / FINE_NAV_CELL;
+  const ref = new RefGrid(ox, oy, w, (x, y) => p.roomAt(x, y), fighter);
+  const cell = (x: number, y: number) => Math.floor((y - oy) / FINE_NAV_CELL) * w + Math.floor((x - ox) / FINE_NAV_CELL);
+  const target = cell(tx, ty);
+  const goal: SearchGoal = { isGoal: (i) => i === target, heuristic: (i) => Math.hypot(ref.x(i) - tx, ref.y(i) - ty) * 0.999 };
+  const s = new GraphSearch(), hit = s.search(ref, cell(sx, sy), goal);
+  return hit === target ? { cost: s.cost(hit) } : null;
+}
+
 /** Points with room for a fighter either side of the chunk's biggest rock (the line through it blocked). */
 function acrossARock(p: RoutePlanner, coarse: CoarseFieldMap, fine: FineFieldLayer, cx: number, cy: number): { sx: number; sy: number; tx: number; ty: number } {
   // Seed the planner's layers with a throwaway straight request.
@@ -68,7 +80,8 @@ function acrossARock(p: RoutePlanner, coarse: CoarseFieldMap, fine: FineFieldLay
   for (const r of rocks) {
     for (let d = r.radius + 200; d < r.radius + 1500; d += 100) {
       const sx = r.x - d, sy = r.y, tx = r.x + d, ty = r.y;
-      if (p.roomAt(sx, sy) >= fighter && p.roomAt(tx, ty) >= fighter && !p.segmentClear(sx, sy, tx, ty, fighter)) return { sx, sy, tx, ty };
+      if (p.roomAt(sx, sy) >= 3 * fighter && p.roomAt(tx, ty) >= 3 * fighter && !p.segmentClear(sx, sy, tx, ty, fighter) &&
+        refPath(p, cx, cy, sx, sy, tx, ty) !== null) return { sx, sy, tx, ty };
     }
   }
   throw new Error('no blocked crossing');
@@ -98,16 +111,10 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect([out[(n - 1) * 2], out[(n - 1) * 2 + 1]]).toEqual([tx, ty]);
     expect(minRoomAlong(p, sx, sy, out, n)).toBeGreaterThanOrEqual(fighter - 1e-6);
     // Lower bound: the 8-way grid path over the same cells is at most 1.0824× the true shortest.
-    const ox = (at.cx - 2) * CHUNK_SIZE, oy = (at.cy - 2) * CHUNK_SIZE, w = (5 * CHUNK_SIZE) / FINE_NAV_CELL;
-    const ref = new RefGrid(ox, oy, w, (x, y) => p.roomAt(x, y), fighter);
-    const cell = (x: number, y: number) => Math.floor((y - oy) / FINE_NAV_CELL) * w + Math.floor((x - ox) / FINE_NAV_CELL);
-    const target = cell(tx, ty);
-    const goal: SearchGoal = { isGoal: (i) => i === target, heuristic: (i) => Math.hypot(ref.x(i) - tx, ref.y(i) - ty) * 0.999 };
-    const s = new GraphSearch(), hit = s.search(ref, cell(sx, sy), goal);
-    expect(hit).toBe(target);
-    const lower = s.cost(hit) / 1.0824 - 2 * FINE_NAV_CELL; // cell centres vs the exact ends
+    const grid = refPath(p, at.cx, at.cy, sx, sy, tx, ty)!.cost;
+    const lower = grid / 1.0824 - 2 * FINE_NAV_CELL; // cell centres vs the exact ends
     const len = routeLength(sx, sy, out, n);
-    console.log(`[nav route] fighter round a rock: ${n} waypoints, ${len.toFixed(0)} u (grid ${s.cost(hit).toFixed(0)} u), ` +
+    console.log(`[nav route] fighter round a rock: ${n} waypoints, ${len.toFixed(0)} u (grid ${grid.toFixed(0)} u), ` +
       `${p.expanded} expansions, ${ms.toFixed(1)} ms`);
     expect(len).toBeLessThanOrEqual(1.2 * lower);
     // Repeat: same answer, no growth.
