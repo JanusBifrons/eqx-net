@@ -74,11 +74,19 @@ export class LootCollectors {
     return true;
   }
 
+  /** structure-restyle 3h — fill `c` with any live AI ship's pose and
+   *  capacity (kind 1), collecting or not: a convoy hauler a crane serves
+   *  (`SectorRoom.craneServe`). False = not a live AI ship here. */
+  fillShip(shipId: string, c: LootCollector): boolean {
+    const rec = this.d.swarm.get(shipId);
+    return rec !== null && this.npc(rec, c, false);
+  }
+
   /** Fill `c` with swarm entity `rec`'s collector; false = not a `collectsLoot` AI ship (kind 1). */
-  private npc(rec: SwarmEntityRecord, c: LootCollector): boolean {
+  private npc(rec: SwarmEntityRecord, c: LootCollector, collectingOnly = true): boolean {
     if (rec.kind !== 1) return false;
     const kindDef = getShipKind(rec.shipKind);
-    if (kindDef.collectsLoot !== true) return false;
+    if (collectingOnly && kindDef.collectsLoot !== true) return false;
     const b = slotBase(rec.slot);
     const sab = this.d.sab();
     c.playerId = rec.id;

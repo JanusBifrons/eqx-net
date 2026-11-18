@@ -171,6 +171,16 @@ export function inCraneBay(bay: CraneBay, lx: number, ly: number): boolean {
     && Math.abs(ly - bay.cy) <= bay.padHalfH - DOCK_BAY_INSET;
 }
 
+/** structure-restyle 3h — the world centre of `bay` on a host at (x, y)
+ *  turned `rotDeg` degrees CCW (the inverse of the host-frame transform
+ *  `worldToRigHost`): where a convoy hauler parks to be served. */
+export function craneBayWorldCentre(bay: CraneBay, x: number, y: number, rotDeg: number): { x: number; y: number } {
+  const a = (rotDeg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return { x: x + bay.cx * c - bay.cy * s, y: y + bay.cx * s + bay.cy * c };
+}
+
 /** World point (x, y) on the crane bay (`inCraneBay`) of a `kindId`
  *  structure centred at (hostX, hostY), rotated `rotDeg`; false for a kind
  *  with no bay. The world → host-frame transform is `worldToRigHost`, inline
