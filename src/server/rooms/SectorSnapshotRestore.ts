@@ -15,6 +15,7 @@ import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { effectiveShipShieldMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { MAX_FREIGHT_ORDERS } from '../../shared-types/messages/cargoMessages.js';
+import { PackedItemSchema } from '../../shared-types/items.js';
 import { isRecipeId } from '../../shared-types/recipes.js';
 import {
   SLOT_X_OFF,
@@ -122,10 +123,12 @@ export class SectorSnapshotRestore {
           const ok = r.freightOrders.filter((o) => (GOOD_IDS as readonly string[]).includes(o.good) && (o.mode === 'import' || o.mode === 'export') && o.level > 0);
           if (ok.length > 0) rec.freightOrders = ok.map((o) => ({ good: o.good as GoodId, mode: o.mode, level: Math.floor(o.level) })).slice(0, MAX_FREIGHT_ORDERS);
         }
+        if (r.acceptAutoUnload === false) rec.acceptAutoUnload = false; // cargo pods 14c
         if (typeof r.packedQuality === 'number') rec.packedQuality = r.packedQuality;
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
           rec.prodProgress = r.prodProgress ?? 0;
+          if (r.prodChunk) { const c = PackedItemSchema.safeParse(r.prodChunk); if (c.success) rec.prodChunk = c.data; }
         }
         // Living World P1a-2 — overlay the fresher holds-table payload (bank +
         // deposited goods) keyed by the structure's stable uid.

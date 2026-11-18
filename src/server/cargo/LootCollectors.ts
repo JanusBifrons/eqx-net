@@ -18,7 +18,8 @@ import type { LootCollector } from './LootSubsystem.js';
 import type { Client } from 'colyseus';
 import type { Hold } from '../../shared-types/goods.js';
 import { holdWeight, isHoldEmpty } from '../../core/cargo/hold.js';
-import { DEPOSIT_DWELL_TICKS, type StorageService } from './StorageService.js';
+import { DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, type StorageService } from './StorageService.js';
+import { getPlayerShipStore } from '../db/PersistenceWorker.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 
 /** The pilot hull fields a collector reads (`ShipState`). */
@@ -80,6 +81,12 @@ export class LootCollectors {
     const rec = this.d.swarm.get(shipId);
     if (rec === null || rec.kind !== 1) return null;
     return this.d.sectorKey() !== null && this.npc(rec, c);
+  }
+
+  /** Pilot `pid`'s collector (the reused scratch: read it before the next
+   *  call), or null with no live hold-carrying hull (the loot window's reach). */
+  pilotCollector(pid: string): LootCollector | null {
+    return this.d.sectorKey() !== null && this.pilot(pid, this.c) ? this.c : null;
   }
 
   /** Fill `c` with pilot `pid`'s collector; false = none (#17: a live ACTIVE hull with a hold). */
@@ -169,8 +176,9 @@ export class LootCollectors {
       return;
     }
     const hold = this.d.shipHold(c.shipInstanceId);
-    const target = hold !== undefined && !isHoldEmpty(hold)
-      ? this.d.storage().nearestOwnStorage(c.playerId, c.x, c.y)
+    // Cargo pods 14c: both ends must agree (the ship's switch, the storage's accept).
+    const target = hold !== undefined && !isHoldEmpty(hold) && getPlayerShipStore().get(c.shipInstanceId)?.autoUnload !== false
+      ? this.d.storage().nearestOwnStorage(c.playerId, c.x, c.y, DEPOSIT_RANGE, true)
       : null;
     if (target === null) {
       if (this.depositDwell.delete(c.playerId)) this.depositProgress.delete(c.shipInstanceId);
