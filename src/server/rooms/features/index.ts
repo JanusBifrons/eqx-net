@@ -10,6 +10,7 @@ import { registerBountyMessages, type BountyMessageHost } from './bountyMessages
 import { registerCargoMessages, type CargoMessageHost } from './cargoMessages.js';
 import { registerDevTestMessages, type DevTestMessageHost } from './devTestMessages.js';
 import { registerLabMessages, type LabMessageHost } from './labMessages.js';
+import { registerNavMessages, type NavMessageHost } from './navMessages.js';
 import type { RoomFeature } from './parsedMessage.js';
 import { registerShipUpgradeMessages, type ShipUpgradeMessageHost } from './shipUpgradeMessages.js';
 import { registerStructureMessages, type StructureMessageHost } from './structureMessages.js';
@@ -28,7 +29,8 @@ export type RoomFeaturesHost =
   & StructureMessageHost
   & StructureSettingMessageHost
   & BountyMessageHost
-  & ShipUpgradeMessageHost;
+  & ShipUpgradeMessageHost
+  & NavMessageHost;
 
 const FEATURES: ReadonlyArray<(host: RoomFeaturesHost) => RoomFeature> = [
   registerDevTestMessages,
@@ -41,6 +43,7 @@ const FEATURES: ReadonlyArray<(host: RoomFeaturesHost) => RoomFeature> = [
   registerStructureSettingMessages,
   registerBountyMessages,
   registerShipUpgradeMessages,
+  registerNavMessages,
 ];
 
 export function registerRoomFeatures(host: RoomFeaturesHost): Required<RoomFeature> {

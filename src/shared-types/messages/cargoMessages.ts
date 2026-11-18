@@ -19,12 +19,13 @@ const product = z.string().min(1).max(80);
 export const CARGO_ACCESS_RANGE = 400;
 
 /** The items to move: goods by count, blueprints by uid, packed items by
- *  product (one entry per item). Mirrors `core/cargo/hold.ts` `CargoRequest`. */
+ *  product or by uid for a rock chunk (one entry per item). Mirrors
+ *  `core/cargo/hold.ts` `CargoRequest`. */
 export const CargoItemsSchema = z
   .object({
     goods: z.partialRecord(z.enum(GOOD_IDS), z.number().int().positive().max(1_000_000)).optional(),
     blueprints: z.array(uid).max(64).optional(),
-    packed: z.array(product).max(64).optional(),
+    packed: z.array(product).max(1024).optional(),
   })
   .strict();
 export type CargoItems = z.infer<typeof CargoItemsSchema>;
@@ -48,6 +49,16 @@ export const SetFreightOrdersSchema = z
   .object({ type: z.literal('set_freight_orders'), entityId, orders: z.array(FreightOrderSchema).max(MAX_FREIGHT_ORDERS) })
   .strict();
 export type SetFreightOrders = z.infer<typeof SetFreightOrdersSchema>;
+
+/** Cargo pods 14c — auto-unload, configurable on both ends (owner
+ *  2026-11-17): `ship` = your active ship unloads at your storage or not;
+ *  `storage` = your storage `entityId` accepts auto-unload or not. Owner-gated;
+ *  anything else is a silent no-op. */
+export const SetAutoUnloadSchema = z
+  .object({ type: z.literal('set_auto_unload'), side: z.enum(['ship', 'storage']), on: z.boolean(), entityId: entityId.optional() })
+  .strict()
+  .refine((m) => (m.side === 'storage') === (m.entityId !== undefined), { message: 'entityId with side storage only' });
+export type SetAutoUnload = z.infer<typeof SetAutoUnloadSchema>;
 
 /** C3 — a cargo target: a swarm `entityId` (a structure, or an NPC ship) OR
  *  `ship` (another player's ship by playerId, or a parked hull by its
@@ -108,6 +119,21 @@ export const CargoStateSchema = z
       .optional(),
     /** The verdict of the action this replies to, or why it's locked. */
     message: z.string().max(200).optional(),
+    /** Loot window search (cargo-pods slice 12): `hold` carries only the
+     *  stacks found so far; `hidden` more are still "?" tiles, the next shows
+     *  in `revealInMs` of searching (ask again then). Absent = all shown. */
+    hidden: z.number().int().nonnegative().max(1024).optional(),
+    /** Slice 13: false = a peek (a living stranger's cargo): `open` to look
+     *  while close, never to move. Absent = takeable. */
+    takeable: z.boolean().optional(),
+    /** Slice 19: your own ship's hold ("your hold" from the HUD cargo chip):
+     *  `hold` is your ship's, all visible; `ship` is null. */
+    own: z.boolean().optional(),
+    revealInMs: z.number().int().nonnegative().max(60_000).optional(),
+    /** 14c — your own storage open: does your ship auto-unload here, and
+     *  does this storage accept auto-unload? */
+    autoUnload: z.boolean().optional(),
+    acceptAutoUnload: z.boolean().optional(),
     ok: z.boolean().optional(),
   })
   .strict();
