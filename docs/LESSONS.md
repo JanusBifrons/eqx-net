@@ -3180,3 +3180,11 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** the resting touch stick fades to 40 % opacity, and a dark wash added to its own background faded with it, so the ring stayed invisible over bright asteroid rock however dark the wash was.
 - **Rule:** a readability backing goes on its own element beside the faded one (`FloatingStick`'s `-backing` layer moves with the ring but keeps full opacity); HUD panels use `HUD.color.panel` (0.72) so they read over rock.
+
+## 2026-11-18 — a per-cell worst-case bound closes gaps narrower than its slack
+
+The nav fine layer stored, per 64 u cell, a room bound valid anywhere in the cell (rocks padded half a
+diagonal, the reader subtracts a diagonal: ~136 u lost in all). The cut field's streets pinch to
+60–68 u, so every street read as rock, and no finer padded grid (down to 8 u) reopened them. Measure
+the gap against the exact distance first; then refine exactly only where the bound is too rough to
+decide (`docs/architecture/navigation.md`, fine layer), instead of shrinking cells everywhere.

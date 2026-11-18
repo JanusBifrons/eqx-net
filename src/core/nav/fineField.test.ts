@@ -5,6 +5,7 @@ import { CHUNK_SIZE, rocksInChunk, type ChunkOpts } from '../terrain/fieldLayout
 import { fieldRockBody } from '../terrain/chunkStreamer.js';
 import { rockObstacleParts, type GridObstacle } from '../structures/Grid.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { pointToShipPolygonDistance } from '../combat/Weapons.js';
 
 const opts: ChunkOpts = {
   seed: 'look', battleshipLength: getShipKind('battleship').radius * 2, fighterLength: getShipKind('fighter').radius * 2,
@@ -103,6 +104,29 @@ describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
     f.chunkUnloaded(cx, cy);
     f.chunkLoaded(cx, cy);
     expect(f.clearanceAt(rock.x, rock.y)).toBe(h.clearanceAt(rock.x, rock.y));
+  });
+
+  it('exactAt is the exact distance to the nearest rock outline (brute force over every rock), a moved rock included', () => {
+    const { cx, cy } = busyChunk();
+    const rocks = rocksAround(cx - 1, cy - 1, cx + 1, cy + 1);
+    const f = new FineFieldLayer(opts);
+    f.chunkLoaded(cx, cy);
+    const big = rocks.filter((r) => Math.floor(r.x / CHUNK_SIZE) === cx && Math.floor(r.y / CHUNK_SIZE) === cy).sort((a, b) => b.radius - a.radius)[0]!;
+    const to = { key: big.key, x: big.x + 37, y: big.y - 21, angle: 0.7 };
+    f.rockMoved(to.key, to);
+    Object.assign(big, to);
+    const cap = 200;
+    let seed = 7, checked = 0;
+    const rnd = (): number => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let k = 0; k < 400; k++) {
+      const x = cx * CHUNK_SIZE + rnd() * CHUNK_SIZE, y = cy * CHUNK_SIZE + rnd() * CHUNK_SIZE;
+      let want = cap;
+      for (const r of rocks) want = Math.min(want, pointToShipPolygonDistance(x, y, r.x, r.y, r.angle ?? 0, r.parts!));
+      expect(f.exactAt(x, y, cap)).toBeCloseTo(want, 6);
+      if (want > 0 && want < cap) checked++;
+    }
+    expect(checked).toBeGreaterThan(50); // most samples sit near a rock, not in one or far off
+    expect(f.exactAt(cx * CHUNK_SIZE + 5 * CHUNK_SIZE, cy * CHUNK_SIZE, cap)).toBe(-1); // not loaded
   });
 
   it('unloading frees the grid and the cut rocks nothing needs; reuses grids (prints ms per chunk)', () => {
