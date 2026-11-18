@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { NavRouteRequestSchema, NavRouteReplySchema, NAV_ROUTE_REPLY_MAX_POINTS, NAV_ROUTE_STATUSES, NAV_ROUTE_COORD_MAX } from './navMessages.js';
-import { NAV_ROUTE_MAX_POINTS, RoutePlanner } from '../../core/nav/routePlanner.js';
+import { NavRouteRequestSchema, NavRouteReplySchema, NAV_ROUTE_REPLY_MAX_POINTS, NAV_ROUTE_STATUSES, NAV_ROUTE_COORD_MAX } from '../../shared-types/messages/navMessages.js';
+import { NAV_ROUTE_MAX_POINTS, RoutePlanner } from './routePlanner.js';
 
 describe('nav_route wire (navigation slice 12)', () => {
   it('a request is a goal and a request number, nothing else', () => {
