@@ -10,6 +10,8 @@ import type { AiEntityPoseOut, AiWorldView, IAiNavRoutes } from '../contracts/IA
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { stepKinematic, type KinematicBody } from './pilotTestKit.js';
+import { makePilotHandling, pilotTurnRadius } from './virtualPilot.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 
 const KIND = getShipKind('fighter');
 
@@ -18,8 +20,11 @@ class FakeNav implements IAiNavRoutes {
   wpX = 0; wpY = 0; ahead = 0;
   wp: { x: number; y: number } | null = null;
   readonly asks: { id: string; tx: number; ty: number; keep: boolean | undefined }[] = [];
-  waypoint(id: string, x: number, y: number, tx: number, ty: number, _c: number, _a: number, keep?: boolean): boolean {
+  readonly turns: { heading: number | undefined; turnRadius: number | undefined }[] = [];
+  waypoint(id: string, x: number, y: number, tx: number, ty: number, _c: number, _a: number, keep?: boolean,
+    heading?: number, turnRadius?: number): boolean {
     this.asks.push({ id, tx, ty, keep });
+    this.turns.push({ heading, turnRadius });
     if (this.wp === null) return false;
     this.wpX = this.wp.x; this.wpY = this.wp.y; this.ahead = Math.hypot(this.wp.x - x, this.wp.y - y);
     return true;
@@ -81,5 +86,25 @@ describe('HostileDroneBehaviour — single file round rock (navigation slice 10)
     const body = at(0, 0);
     const intent = b.tick({ id: 'f', ...body }, view(poses, nav));
     expect(intent.input ?? 0).toBe(0);
+  });
+});
+
+describe('HostileDroneBehaviour — a capital plans with its nose (navigation slice 11)', () => {
+  it('a battleship on a Move sends its heading and turning radius; a fighter sends none', () => {
+    const BS = getShipKind('battleship');
+    for (const [kind, angle] of [[BS, 0.7], [KIND, 0.7]] as const) {
+      const nav = new FakeNav(), b = new HostileDroneBehaviour(kind);
+      b.setTravel(0, 40_000);
+      b.tick({ id: 's', x: 0, y: 0, vx: 0, vy: 0, angle, angvel: 0 }, view({}, nav));
+      const turn = nav.turns[0]!;
+      if (kind === BS) {
+        expect(turn.heading).toBe(0.7);
+        expect(turn.turnRadius).toBeCloseTo(pilotTurnRadius(makePilotHandling(BS, shipBodyMass(BS))), 6);
+        expect(turn.turnRadius!).toBeGreaterThan(shipTuning(BS).navClearance);
+      } else {
+        expect(turn.heading).toBeNaN();
+        expect(turn.turnRadius).toBe(0);
+      }
+    }
   });
 });

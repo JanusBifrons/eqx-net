@@ -6,6 +6,9 @@ import { GraphSearch, type SearchGoal, type SearchGraph } from './search.js';
 import { CHUNK_SIZE, SLICED, rocksInChunk, type ChunkOpts } from '../terrain/fieldLayout.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { fieldRockBody } from '../terrain/chunkStreamer.js';
+import { HeadingCoarseGraph } from './coarseField.js';
+import { makePilotHandling, pilotTurnRadius } from '../ai/virtualPilot.js';
+import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 
 const fighter = getShipKind('fighter').radius;
 const battleship = getShipKind('battleship').radius;
@@ -160,5 +163,48 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect(minRoomAlong(p, sx, rock.y, out, n)).toBeGreaterThanOrEqual(fighter - 1e-6);
     expect(p.expanded).toBeGreaterThan(0);
     expect(p.expanded).toBeLessThanOrEqual(NAV_COARSE_EXPAND_CAP + NAV_FINE_EXPAND_CAP);
+  });
+  it('a battleship in a lane with its goal behind it plans no U-turn there: it goes on forward (slice 11)', () => {
+    const BS = getShipKind('battleship');
+    const h = makePilotHandling(BS, shipBodyMass(BS));
+    const turnR = pilotTurnRadius(h);
+    const c = shipTuning(BS).navClearance;
+    const { coarse, fine } = world();
+    const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
+    // A lane cell: a capital fits, but with less room than it needs to turn round, and
+    // the lane runs on both ways along one compass step.
+    const NDX = [1, -1, 0, 0, 1, 1, -1, -1], NDY = [0, 0, 1, -1, 1, -1, 1, -1];
+    const tight = (i: number) => coarse.room[i]! >= c && coarse.room[i]! < c + turnR;
+    let found: { i: number; k: number } | null = null;
+    for (let i = 0; i < coarse.cols * coarse.rows && found === null; i++) {
+      if (!tight(i)) continue;
+      const x = i % coarse.cols, y = (i / coarse.cols) | 0;
+      for (let k = 0; k < 4 && found === null; k++) {
+        const along = (n: number) => (y + NDY[k]! * n) * coarse.cols + x + NDX[k]! * n;
+        if (tight(along(1)) && tight(along(2)) && tight(along(-1)) && tight(along(-2))) found = { i, k };
+      }
+    }
+    expect(found, `no lane at turn radius ${turnR.toFixed(0)}`).not.toBeNull();
+    const { i, k } = found!;
+    const sx = coarse.bestX[i]!, sy = coarse.bestY[i]!;
+    // Pointing along +k: ship angle a with (-sin a, cos a) = the step's direction.
+    const heading = Math.atan2(-NDX[k]!, NDY[k]!);
+    expect(HeadingCoarseGraph.stepOf(heading)).toBe([0, 4, 2, 6][k]);
+    const tx = sx - NDX[k]! * 2 * 2048, ty = sy - NDY[k]! * 2 * 2048;
+    // Without the heading: straight back down the lane.
+    p.plan(coarse, fine, sx, sy, tx, ty, c, out);
+    const plainFirst = Math.atan2(out[1]! - sy, out[0]! - sx);
+    // With it: the first leg goes on forward (within 45° of the nose).
+    const n = p.plan(coarse, fine, sx, sy, tx, ty, c, out, heading, turnR);
+    console.log(`[nav route] battleship lane U-turn: turn radius ${turnR.toFixed(0)}, status ${p.status}, ${n} waypoints, ${p.expanded} expansions`);
+    expect(['route', 'nearest']).toContain(p.status);
+    const fx = out[0]! - sx, fy = out[1]! - sy, fl = Math.hypot(fx, fy);
+    expect((fx * NDX[k]! + fy * NDY[k]!) / (fl * Math.hypot(NDX[k]!, NDY[k]!))).toBeGreaterThan(Math.SQRT1_2 - 1e-6);
+    expect(Math.cos(plainFirst - Math.atan2(NDY[k]!, NDX[k]!))).toBeLessThan(0); // control: it did turn back
+    // Across the whole field with its nose on: still a route, within the expansion cap.
+    const R = 150_000 * 1.2, across = p.plan(coarse, fine, -R, 0, R, 0, c, out, -Math.PI / 2, turnR);
+    console.log(`[nav route] battleship across the field, nose on: ${across} waypoints, ${p.expanded} expansions`);
+    expect(p.status).toBe('route');
+    expect(p.expanded).toBeLessThan(NAV_COARSE_EXPAND_CAP);
   });
 });

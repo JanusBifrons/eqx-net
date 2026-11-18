@@ -21,7 +21,7 @@
  */
 import { CHUNK_SIZE } from '../terrain/fieldLayout.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from './search.js';
-import type { CoarseFieldMap } from './coarseField.js';
+import { HeadingCoarseGraph, type CoarseFieldMap } from './coarseField.js';
 import { FINE_NAV_CELL, FINE_NAV_DIAG, FINE_NAV_REACH, type FineFieldLayer } from './fineField.js';
 
 /** Most waypoints one route carries (the rest comes from asking again). */
@@ -110,9 +110,11 @@ class FineGoal implements SearchGoal {
 class CoarseGoal implements SearchGoal {
   map: CoarseFieldMap | null = null;
   target = -1;
-  isGoal(i: number): boolean { return i === this.target; }
+  /** 3 over the heading graph (node = cell × 8 + step), else 0. */
+  shift = 0;
+  isGoal(i: number): boolean { return i >> this.shift === this.target; }
   heuristic(i: number): number {
-    const m = this.map!, dx = m.bestX[i]! - m.bestX[this.target]!, dy = m.bestY[i]! - m.bestY[this.target]!;
+    const m = this.map!, c = i >> this.shift, dx = m.bestX[c]! - m.bestX[this.target]!, dy = m.bestY[c]! - m.bestY[this.target]!;
     return Math.sqrt(dx * dx + dy * dy);
   }
 }
@@ -122,6 +124,7 @@ export class RoutePlanner {
   private readonly win = new FineWindow(this);
   private readonly fGoal = new FineGoal(this.win);
   private readonly cGoal = new CoarseGoal();
+  private readonly headed = new HeadingCoarseGraph();
   private coarse: CoarseFieldMap | null = null;
   private fine: FineFieldLayer | null = null;
   private cPath = new Int32Array(256);
@@ -167,11 +170,16 @@ export class RoutePlanner {
 
   /** Plans from (sx, sy) to (tx, ty) for clearance `c`. Writes the waypoints
    *  after the start into `out` (packed x, y; the goal last unless cut short at
-   *  `out`'s size) and returns how many; sets {@link status} and {@link expanded}. */
-  plan(coarse: CoarseFieldMap, fine: FineFieldLayer, sx: number, sy: number, tx: number, ty: number, c: number, out: Float64Array): number {
+   *  `out`'s size) and returns how many; sets {@link status} and {@link expanded}.
+   *  With a `heading` (ship angle) and `turnRadius` the coarse search knows
+   *  which way the ship points (slice 11): no turn past 45° a step where the
+   *  room is under the turning radius, turns cost. A hull wider than the fine
+   *  layer's reach (a capital) then plans on the coarse layer alone. */
+  plan(coarse: CoarseFieldMap, fine: FineFieldLayer, sx: number, sy: number, tx: number, ty: number, c: number, out: Float64Array,
+    heading = NaN, turnRadius = 0): number {
     this.coarse = coarse; this.fine = fine;
     this.expanded = 0;
-    if (this.segmentClear(sx, sy, tx, ty, c)) {
+    if (this.segmentClear(sx, sy, tx, ty, c) && !this.turnsInTight(sx, sy, tx, ty, c, heading, turnRadius)) {
       out[0] = tx; out[1] = ty;
       this.status = 'straight';
       return 1;
@@ -190,28 +198,43 @@ export class RoutePlanner {
     // 1. Coarse: which way round (not needed with the goal in the window,
     //    and the coarse layer reads the field's inside as solid).
     const cs = clampedCell(coarse, sx, sy), cg = clampedCell(coarse, tx, ty);
+    const headed = turnRadius > 0 && Number.isFinite(heading);
+    const coarseOnly = headed && c > FINE_NAV_REACH;
     let cLen = 1, partial = false, gx = tx, gy = ty;
     this.cPath[0] = cs;
-    if (cs !== cg && !inside(tx, ty)) {
+    if (cs !== cg && (coarseOnly || !inside(tx, ty))) {
       coarse.clearance = c;
       this.cGoal.map = coarse; this.cGoal.target = cg;
-      let hit = this.search.search(coarse, cs, this.cGoal, NAV_COARSE_EXPAND_CAP);
+      let graph: SearchGraph = coarse, from = cs, shift = 0;
+      if (headed) {
+        this.headed.map = coarse; this.headed.turnRadius = turnRadius;
+        graph = this.headed; from = this.headed.startNode(cs, heading); shift = 3;
+      }
+      this.cGoal.shift = shift;
+      let hit = this.search.search(graph, from, this.cGoal, NAV_COARSE_EXPAND_CAP);
       this.expanded += this.search.expanded;
       if (hit < 0) {
         // No way: head for the reached cell nearest the goal, if nearer than here.
         hit = this.search.nearest;
-        if (hit < 0 || hit === cs) return 0;
-        partial = true; gx = coarse.bestX[hit]!; gy = coarse.bestY[hit]!;
+        if (hit < 0 || hit >> shift === cs) return 0;
+        partial = true; gx = coarse.bestX[hit >> shift]!; gy = coarse.bestY[hit >> shift]!;
       }
       cLen = this.search.hops(hit) + 1;
       if (this.cPath.length < cLen) this.cPath = new Int32Array(cLen * 2);
-      for (let t = hit, k = cLen - 1; k >= 0; t = this.search.prev(t), k--) this.cPath[k] = t;
+      for (let t = hit, k = cLen - 1; k >= 0; t = this.search.prev(t), k--) this.cPath[k] = t >> shift;
     }
     // Coarse polyline: start, the inner cells' best points, goal (in `poly` for now).
     this.polyLen = 0;
     this.push(sx, sy);
     for (let k = 1; k < cLen - 1; k++) this.push(coarse.bestX[this.cPath[k]!]!, coarse.bestY[this.cPath[k]!]!);
     this.push(gx, gy);
+    if (coarseOnly) {
+      // A capital: the coarse way is its route (fine rock within its reach blocks it anyway).
+      if (this.polyLen <= 2 && !partial && cs === cg) { out[0] = tx; out[1] = ty; this.status = 'none'; return 0; }
+      const count = this.pull(this.polyLen, c, out, heading, turnRadius);
+      this.status = partial ? 'nearest' : 'route';
+      return count;
+    }
     // 2. Fine search in the window to the goal, or to where the coarse path leaves it.
     const P = this.poly, n = this.polyLen;
     let k = 0; // last coarse point inside the window
@@ -267,16 +290,45 @@ export class RoutePlanner {
       len += restLen;
     }
     // 3. String-pull.
-    const max = out.length >> 1;
+    const count = this.pull(len, c, out, heading, turnRadius);
+    this.status = partial ? 'nearest' : 'route';
+    return count;
+  }
+
+  /** Would flying straight at (tx, ty) turn the ship more than 45° where it
+   *  has no room to turn (slice 11)? Then the straight answer is not taken. */
+  private turnsInTight(sx: number, sy: number, tx: number, ty: number, c: number, heading: number, turnRadius: number): boolean {
+    if (!Number.isFinite(heading)) return false;
+    return this.turnsInTightDir(sx, sy, tx, ty, c, -Math.sin(heading), Math.cos(heading), turnRadius);
+  }
+
+  /** As {@link turnsInTight}, for an arrival direction (hx, hy) (unit). */
+  private turnsInTightDir(sx: number, sy: number, tx: number, ty: number, c: number, hx: number, hy: number, turnRadius: number): boolean {
+    if (!(turnRadius > 0) || this.roomAt(sx, sy) >= c + turnRadius) return false;
+    const dx = tx - sx, dy = ty - sy, d = Math.sqrt(dx * dx + dy * dy);
+    return d > 1e-6 && (hx * dx + hy * dy) / d < Math.SQRT1_2 - 1e-9;
+  }
+
+  /** String-pull the first `len` points of `poly`: keep only the turns a
+   *  straight line can't skip; writes the points after the start to `out`.
+   *  With a turning radius (slice 11) a shortcut from a point with no room to
+   *  turn may not swing more than 45° off the way the ship arrives there. */
+  private pull(len: number, c: number, out: Float64Array, heading: number, turnRadius: number): number {
+    const Q = this.poly, max = out.length >> 1;
+    const headed = turnRadius > 0 && Number.isFinite(heading);
+    let hx = headed ? -Math.sin(heading) : 0, hy = headed ? Math.cos(heading) : 0;
     let a = 0, count = 0;
     while (a < len - 1 && count < max) {
+      const ax = Q[a * 2]!, ay = Q[a * 2 + 1]!;
       let j = a + 1;
-      while (j + 1 < len && this.segmentClear(Q[a * 2]!, Q[a * 2 + 1]!, Q[(j + 1) * 2]!, Q[(j + 1) * 2 + 1]!, c)) j++;
-      out[count * 2] = Q[j * 2]!; out[count * 2 + 1] = Q[j * 2 + 1]!;
+      while (j + 1 < len && this.segmentClear(ax, ay, Q[(j + 1) * 2]!, Q[(j + 1) * 2 + 1]!, c) &&
+        !(headed && this.turnsInTightDir(ax, ay, Q[(j + 1) * 2]!, Q[(j + 1) * 2 + 1]!, c, hx, hy, turnRadius))) j++;
+      const bx = Q[j * 2]!, by = Q[j * 2 + 1]!;
+      out[count * 2] = bx; out[count * 2 + 1] = by;
       count++;
+      if (headed) { const l = Math.hypot(bx - ax, by - ay); if (l > 1e-6) { hx = (bx - ax) / l; hy = (by - ay) / l; } }
       a = j;
     }
-    this.status = partial ? 'nearest' : 'route';
     return count;
   }
 

@@ -137,7 +137,17 @@ chunk is loaded and rock is within its reach, else the coarse layer.
 - Per-request caps: 30 000 coarse and 60 000 fine expansions. Past them, or with no way at this
   clearance, the route ends at the reached cell nearest the goal (`GraphSearch.nearest`, least heuristic),
   status `nearest`; `none` only when nothing reached is nearer than the start. At most 64 waypoints (`NAV_ROUTE_MAX_POINTS`).
-- Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance}` → `ROUTE {reqId, status,
+- Capital commitment (slice 11): a capital's request also carries its nose (ship angle) and turning
+  radius (`pilotTurnRadius`: cruise speed / turn rate, ~7 800 u for a battleship, wider than a lane).
+  The coarse search then runs on `HeadingCoarseGraph`: a cell with less room than clearance + turning
+  radius (a lane, to a capital) remembers which way the ship came in and lets the next step turn at most
+  45° (forward only, no U-turn planned in a lane); each such turn costs 0.25 turning radii per 45°
+  (`NAV_TURN_STEP_COST`), and entering a lane from open space costs one turning radius
+  (`NAV_LANE_ENTRY_COST`). Open cells stay one node each, so the search costs about what the plain graph
+  does (battleship across the field, nose on: ~12 900 expansions). The straight answer and the
+  string-pull obey the same 45° rule where there is no room to turn. A capital (clearance past the fine
+  layer's reach) plans on the coarse layer alone. Fighters send neither and see the plain graph.
+- Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius}` → `ROUTE {reqId, status,
   points, expanded, ms}` (points transferred, not copied). `NavField.route(...)` returns a Promise;
   `NavWorker.inFlight` counts open requests; a detached field answers `none`; a worker exit rejects
   every open request.
@@ -193,3 +203,5 @@ one it flies straight as before.
   2026-11-18 slice 9: no way ⇒ `nearest` route and wait; stuck ⇒ re-plan twice, then wait; fleet status
   `blocked` ("Can't get closer").
   2026-11-18 slice 10: squads cross rock single file, each follower routing to the ship ahead of it.
+  2026-11-18 slice 11: capital commitment. Capitals plan with nose and turning radius: no U-turn in a
+  lane, turns and lane entry cost turning radii.

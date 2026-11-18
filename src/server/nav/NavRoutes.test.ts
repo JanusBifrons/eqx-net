@@ -3,13 +3,15 @@ import { NavRoutes, type NavRouteRequest } from './NavRoutes.js';
 import type { NavRouteMsg } from '../../core/nav/navHost.js';
 
 /** A request stub: records each ask; `answer` resolves the latest. */
-function stub(): { request: NavRouteRequest; asks: number[][]; answer: (msg: Partial<NavRouteMsg>) => Promise<void> } {
+function stub(): { request: NavRouteRequest; asks: number[][]; turns: number[][]; answer: (msg: Partial<NavRouteMsg>) => Promise<void> } {
   const asks: number[][] = [];
+  const turns: number[][] = [];
   let resolve: ((m: NavRouteMsg) => void) | null = null;
   return {
-    asks,
-    request: (sx, sy, tx, ty, c) => {
+    asks, turns,
+    request: (sx, sy, tx, ty, c, hd, tr) => {
       asks.push([sx, sy, tx, ty, c]);
+      turns.push([hd, tr]);
       return new Promise<NavRouteMsg>((r) => { resolve = r; });
     },
     answer: async (msg) => {
@@ -153,5 +155,14 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     await s.answer({ points: new Float64Array([600, 300, 1100, 0]) });
     expect(nav.waypoint('a', 10, 0, 1100, 0, 30, 50, true)).toBe(true);
     expect([nav.wpX, nav.wpY]).toEqual([600, 300]);
+  });
+
+  it('passes a capital nose and turning radius on to its plan; a plain ask sends none (slice 11)', () => {
+    const s = stub(), nav = new NavRoutes(s.request, () => 0);
+    nav.waypoint('cap', 0, 0, 9000, 0, 3000, 500, false, 1.25, 7758);
+    nav.waypoint('f', 0, 0, 1000, 0, 30, 50);
+    expect(s.turns[0]).toEqual([1.25, 7758]);
+    expect(s.turns[1]![0]).toBeNaN();
+    expect(s.turns[1]![1]).toBe(0);
   });
 });

@@ -25,7 +25,7 @@ import { createNavRoute, setNavRoute, stepNavRoute, type NavRoute } from '../../
 import type { NavRouteMsg } from '../../core/nav/navHost.js';
 
 /** Plans a route (the room's `NavField.route`). */
-export type NavRouteRequest = (sx: number, sy: number, tx: number, ty: number, clearance: number) => Promise<NavRouteMsg>;
+export type NavRouteRequest = (sx: number, sy: number, tx: number, ty: number, clearance: number, heading: number, turnRadius: number) => Promise<NavRouteMsg>;
 
 /** A ship not asking for this long (game ms) is forgotten. */
 const NAV_FORGET_MS = 10_000;
@@ -73,10 +73,16 @@ export class NavRoutes implements IAiNavRoutes {
 
   constructor(private readonly request: NavRouteRequest, private readonly now: () => number) {}
 
+  /** This call's nose and turning radius (passed on to its plans, slice 11). */
+  private heading = NaN;
+  private turnRadius = 0;
+
   /** Ships with a record (diagnostics, tests). */
   get size(): number { return this.ships.size; }
 
-  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number, keep = false): boolean {
+  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number, keep = false,
+    heading = NaN, turnRadius = 0): boolean {
+    this.heading = heading; this.turnRadius = turnRadius;
     const now = this.now();
     if (now >= this.nextSweep) this.sweep(now);
     let s = this.ships.get(entityId);
@@ -129,7 +135,7 @@ export class NavRoutes implements IAiNavRoutes {
     s.askedAt = now;
     const gen = ++s.gen;
     this.requests++;
-    this.request(x, y, tx, ty, clearance).then((msg) => {
+    this.request(x, y, tx, ty, clearance, this.heading, this.turnRadius).then((msg) => {
       if (s.gen !== gen) return;
       s.pending = false;
       if (msg.status === 'straight') { s.route.count = 0; s.short = false; } // the way is clear (again)
