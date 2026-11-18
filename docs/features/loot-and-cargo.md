@@ -13,27 +13,31 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
 ## What the player sees
 
 - **Every kill drops loot.** A destroyed ship, whoever flew it, leaves a
-  small glowing diamond, a *loot pod*, just beside where it died (off to the
-  side of the shot that killed it, so the rest of the volley doesn't blow it
-  up). AI-vs-AI kills drop loot too, so a
+  small glowing diamond, a *loot pod*, just beside where it died. AI-vs-AI
+  kills drop loot too, so a
   battlefield you stumble onto is worth picking over. A ship burned away
   whole by a heavy beam or a railgun (vaporised) leaves half as much salvage
   again: the beam rendered the whole ship down.
-- **Fly over a pod to collect it.** No button: touching a pod with free cargo
-  space moves its contents into your ship's hold. A popup confirms what you
-  got ("+7 Salvage · +30 cr").
+- **Open a pod to loot it.** Flying over or touching a pod takes nothing. Come
+  within about 80 u of it (more on a big ship) and open its loot window, then
+  take what you want; what does not fit stays in the pod. A pod your own
+  tractor holds close loads whole. A popup confirms what you got
+  ("+7 Salvage · +30 cr").
 - **Your hold is on your ship.** The top-left chip shows weight / capacity,
   credits and blueprints (`▣ 340/500  ¢1,250  ★1`). It turns amber at 80 %
   and red when full; tap it for a per-good breakdown. A full hold still
-  picks up credits and blueprints (they weigh nothing); the rest stays in the
+  takes credits and blueprints (they weigh nothing); the rest stays in the
   pod.
 - **Hardcore.** If your ship dies, everything it carries spills as a bright
   magenta pod beside where it died, with the salvage its hull is worth (the
   same as an AI pilot's ship of that kind), free for anyone to grab. The dead ship keeps
   nothing. Abandoning a ship spills its hold too (P1a-2 turns that into a
   salvageable hulk).
-- **Pods don't last.** A pod expires after 15 minutes, and a pod can be shot
-  and destroyed (its contents are lost).
+- **Death loss (owner 2026-11-17).** When a ship dies, every stack in its
+  hold (its hull salvage included) gets a coin flip: kept whole or destroyed
+  whole. If nothing survives there is no pod. An abandoned ship loses nothing.
+- **Pods don't last.** A pod expires after 15 minutes (its contents are
+  lost). Shots and rams never destroy a pod.
 
 ## Goods
 
@@ -51,8 +55,9 @@ as live ships among the wreckage). Cargo capacity is derived
 from the ship's toughness (`maxHealth × 2`), so heavier hulls haul more, unless
 the kind sets a `cargoCapacity` override (the robot harvester's 400; later a
 mining barge). Server clamp, client HUD and NPC collectors all call the one
-`cargoCapacityForMaxHealth(kind)`. An NPC kind with `collectsLoot: true` scoops
-pods through the same pickup path as players (`SectorRoom.forEachLootCollector`).
+`cargoCapacityForMaxHealth(kind)`. An NPC kind with `collectsLoot: true` has no loot
+window: it takes whole pods within the same open reach (`LootCollectors`,
+`LootSubsystem.visitCollector`).
 
 ## How it works
 
@@ -94,6 +99,13 @@ accelerator. A lost message loses a popup, never value.
 | Lingering hull killed | `LeafDeps.onLingeringHullDeath` (runs before teardown) |
 | Active ship abandoned | `abandonShipToScrap` |
 | Lingering hull abandoned | `abandonLingeringHullToScrap` |
+
+**The death coin flip** (`rollDeathLoss`, in `LootSubsystem.spillShipHold`)
+runs on deaths only (the `deathLoss` key), never on an abandon. Each death is
+a fresh roll: the key is mixed with a per-room random `deathSalt` and a death
+counter. Seeding by the ship id alone made one id lose the same way on every
+run (2026-11-18). Tests pin `deathSalt`, or set the test-room option
+`keepAllOnDeath` to skip the flip.
 
 Fixing the lingering seam exposed a pre-existing bug (hostile-review A1): a
 killed lingering hull never deleted its roster row. See `docs/LESSONS.md`.
@@ -302,7 +314,7 @@ Ships have cargo you can open too. Select one and use **Open cargo**:
   cap, TTL, spill, restore), `src/server/db/holdsGroup.test.ts` (atomic
   group rollback, idempotent upsert), `lootView.test.ts`, `CargoChip.test.tsx`.
 - Integration: `tests/integration/sectorRoom/lootLoop.test.ts` (kill → pod,
-  fly-over → hold in the own-ship snapshot, death spills and keeps nothing),
+  open and take → hold in the own-ship snapshot, death spills and keeps nothing),
   `lingeringDeathDeletesRoster.test.ts` (A1, failing-first).
 - Test trigger: the `initialCargo` join option (testMode) seeds a hold.
 
@@ -314,7 +326,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 - The local ship's hold is decoded ONLY from the authoritative own-ship `SnapshotMessage.states[].cargo` slice (`ColyseusClient.applyLocalCargo`, invariant #16). It writes the discrete Zustand `cargo`/`cargoCapacity` ONLY when the contents changed (`net/lootView.ts` `cargoChanged`, field-by-field, alloc-free), so a steady hold costs zero React renders.
 - `loot_collected` (zod-validated) only pushes a short-lived popup line (`lootFeed`, capped at 4, `LOOT_FEED_TTL_MS`). Never derive cargo from it.
-- `CargoChip` lives in the `top-left` slot at `order={3}` (under the sector chip). Testids: `cargo-chip` (`data-cargo-weight/capacity/fill`), `cargo-breakdown`, `loot-feed-line`. It shows NO credits.
+- `CargoChip` lives in the `top-left` slot at `order={3}` (under the sector chip). Testids: `cargo-chip` (`data-cargo-weight/capacity/fill`), `loot-feed-line`. It shows NO credits. A tap opens "your hold": the loot window on your own ship (`cargo_query { ship: <your playerId> }` answers `own: true`, one grid, all visible, a "Selected" pane, the ship-side auto-unload switch; nothing moves).
 
 - Loot pods render through the EXISTING scrap path (`parentShipKind 'cargo-pod'`, `componentIndex` = tier colour). There's no separate pod renderer.
 
@@ -350,7 +362,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
   - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.
 - Lock: `tests/integration/sectorRoom/cargoAccess.test.ts`. Story: [docs/features/loot-and-cargo.md](../features/loot-and-cargo.md) Part 3.
-- **Wreck pieces into the hold (`LootSubsystem` piece store):** on each collect pass a ship's wreck piece goes WHOLE into a collector's hold when its own tractor holds it in the hold zone, or when it is consumable for that ship (`salvageConsumable`: mass ≤ the AA size, `salvageConsumeMass`, for a kind with a mining tool, fits the free hold) and it touches the hull (`shipWithinHullReach` with the piece's radius, the shield bubble while up; `CapitalWreckSubsystem.forEachPieceNear` pre-filters by `shipHitBound`; pieces in a crack hold wait). One `HoldStore` commit of salvage, then `CapitalWreckSubsystem.storePiece`; all or nothing, no pod. A ROCK piece is never stored whole (owner 2026-11-16): it is cut to ore pods, and a pod goes in on the fly-over circle, on hull touch (`LOOT_TOUCH_REACH`) or in the hold zone. Lock: `LootSubsystem.test.ts`, `tests/integration/sectorRoom/factoryLine.test.ts`. Story: [mining-and-salvage](mining-and-salvage.md#the-factory-line-small-pieces-go-straight-into-the-hold).
+- **Wreck pieces into the hold (`LootSubsystem` piece store):** on each collect pass a ship's wreck piece goes WHOLE into a collector's hold when its own tractor holds it in the hold zone, or when it is consumable for that ship (`salvageConsumable`: mass ≤ the AA size, `salvageConsumeMass`, for a kind with a mining tool, fits the free hold) and it touches the hull (`shipWithinHullReach` with the piece's radius, the shield bubble while up; `CapitalWreckSubsystem.forEachPieceNear` pre-filters by `shipHitBound`; pieces in a crack hold wait). One `HoldStore` commit of salvage, then `CapitalWreckSubsystem.storePiece`; all or nothing, no pod. A ROCK piece goes in whole as ONE rock chunk (owner 2026-11-17): any mass, while its chunk weight (`rockChunkWeight`) fits the free hold; the chunk is a packed item (`chunk:rock`, own `uid`, server-only `ore` from `OreDraw.chunkYield`, stripped by `wireHold`), one tile per chunk. A rock never drops a pod. Lock: `LootSubsystem.test.ts`, `tests/integration/sectorRoom/factoryLine.test.ts`. Story: [mining-and-salvage](mining-and-salvage.md#the-factory-line-small-pieces-go-straight-into-the-hold).
 
 ### From the server Thresholds section
 
