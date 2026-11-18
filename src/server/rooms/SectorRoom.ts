@@ -107,7 +107,7 @@ import { buildGridNodes, connectExplicit } from '../structures/structureGridView
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
-import { CARGO_ACCESS_RANGE, MAX_FREIGHT_ORDERS, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
+import { CARGO_ACCESS_RANGE, MAX_FREIGHT_ORDERS, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
@@ -123,12 +123,8 @@ import { hopDistance } from '../livingworld/population.js';
 import {
   DEFAULT_TELEPORT_RULES,
   PAD_SPECS,
-  TOLL_DODGE_STANDING,
   TP_RULE_TOLL_HOSTILE,
   TeleportTollSchema,
-  tollFor,
-  type TollAnswer,
-  type TollPrompt,
   onPad,
   padIrisSpanLocal,
   type TeleporterKind,
@@ -177,9 +173,8 @@ function withAsteroidResources<T extends { id: string }>(roster: readonly T[], f
     return { ...a, resource: rollAsteroidResource((h >>> 0) / 4294967296, features) };
   });
 }
-import { NPC_ALLEGIANCE_IDS, ON_SIGHT_ENGAGE_RANGE, type NpcAllegianceId } from '../../shared-types/allegiances.js';
+import { NPC_ALLEGIANCE_IDS, type NpcAllegianceId } from '../../shared-types/allegiances.js';
 import {
-  STANDING_BREAK_IN_DELTA,
   STANDING_HIT_DELTA,
   STANDING_HIT_WINDOW_MS,
   defaultFactionPolicy,
@@ -266,6 +261,8 @@ import { FleetStatusSoon, FLEET_STATUS_SOON_TICKS } from '../fleet/FleetStatusSo
 import { decodeAiInputBits, type AiInputBits } from '../../core/contracts/IAiBehaviour.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { JoinHandler } from './join/JoinHandler.js';
+import { TeleportTolls } from './features/teleportTolls.js';
+import { BreakInHooks } from './features/breakInHooks.js';
 import {
   ALLOW_DEV_OVERRIDES,
   CLIENT_READY_TIMEOUT_TICKS,
@@ -868,8 +865,8 @@ export class SectorRoom extends Room<SectorState> {
       return t !== null && this.pilotNearPoint(actor, t.x, t.y, t.radius);
     },
     exists: (sid) => this.structureRegistry.get(sid) !== undefined || this.shipTargetById(sid) !== null,
-    onStart: (actor, sid) => this.onBreakInStart(actor, sid),
-    onEnd: (actor, sid, outcome, reason) => this.onBreakInEnd(actor, sid, outcome, reason),
+    onStart: (actor, sid) => this.breakInHooks.onBreakInStart(actor, sid),
+    onEnd: (actor, sid, outcome, reason) => this.breakInHooks.onBreakInEnd(actor, sid, outcome, reason),
   });
   /** Force fields in this room's physics world (teleporter pad push today). */
   private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd), tractors: {
@@ -1111,6 +1108,24 @@ export class SectorRoom extends Room<SectorState> {
   private testTimeScale = 1;
   private sessionToPlayer = new Map<string, string>();
   private playerToSession = new Map<string, string>();
+  /** T4 — teleporter tolls (`features/teleportTolls.ts`). */
+  private readonly tolls = new TeleportTolls({
+    playerToSlot: () => this.playerToSlot, sabF32: () => this.sabF32, getActiveShip: (pid) => this.getActiveShip(pid),
+    teleporters: () => this.teleporters, swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry,
+    relationCtx: this.relationCtx, hostileActs: this.hostileActs, now: () => this.gameClock.now(), sectorKey: () => this.sectorKey,
+    resolveOwnerName: (o) => this.resolveOwnerName(o), sendToPlayerHere: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
+    adjustStanding: (from, to, d) => this.adjustStanding(from, to, d),
+  });
+  /** C2/C3 — break-in start/end hooks (`features/breakInHooks.ts`). */
+  private readonly breakInHooks = new BreakInHooks({
+    testBreakInMs: () => this.testBreakInMs, playerToSession: this.playerToSession, clients: () => this.clients,
+    structureRegistry: this.structureRegistry, swarmRegistry: this.swarmRegistry, sabF32: () => this.sabF32,
+    hostileActs: this.hostileActs, relationCtx: this.relationCtx, aiController: () => this.aiController,
+    now: () => this.gameClock.now(), serverTick: () => this.serverTick, sectorKey: () => this.sectorKey,
+    adjustStanding: (from, to, d) => this.adjustStanding(from, to, d), resolveOwnerName: (o) => this.resolveOwnerName(o),
+    shipTargetById: (id) => this.shipTargetById(id), broadcast: (type, msg) => { this.broadcast(type, msg); },
+    rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
+  });
   private inputCountThisTick = new Map<string, number>();
   /** Fire control: lock messages (`lock_request` / `lock_track` /
    *  `lock_cancel` / `set_group_mode`) received this tick, per session. */
@@ -2940,8 +2955,8 @@ export class SectorRoom extends Room<SectorState> {
       findAlienTwin: (rec) => this.findAlienTwin(rec),
       findLinkTwin: (rec) => this.findLinkTwin(rec),
       // T4 — tolls: offered at arming, settled at the swap.
-      onArmed: (rec) => this.offerToll(rec),
-      onTollSettle: (rec) => this.settleToll(rec),
+      onArmed: (rec) => this.tolls.offerToll(rec),
+      onTollSettle: (rec) => this.tolls.settleToll(rec),
       spawnIris: (rec) => this.forIrisSpan(rec, (id, s) => {
         this.postToWorker({ type: 'SPAWN_WALL', id, ax: rec.x + s.ax, ay: rec.y + s.ay, bx: rec.x + s.bx, by: rec.y + s.by, thickness: GATE_SPAN_THICKNESS });
         this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active: false });
@@ -3457,7 +3472,7 @@ export class SectorRoom extends Room<SectorState> {
       now: () => this.gameClock.now(),
       storage: () => this.storage,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
-      answerToll: (pid, padId, answer) => this.answerToll(pid, padId, answer),
+      answerToll: (pid, padId, answer) => this.tolls.answerToll(pid, padId, answer),
       resolveOwnerName: (owner) => this.resolveOwnerName(owner),
       relationCtx: this.relationCtx,
       tradeRegisteredKey: () => this.tradeRegisteredKey,
@@ -3477,7 +3492,7 @@ export class SectorRoom extends Room<SectorState> {
       shipCargoCapacity: (kind, id) => this.shipCargoCapacity(kind, id),
       shipCargo: (pid, ref, move) => this.shipCargo(pid, ref, move),
       shipTarget: (ref) => this.shipTarget(ref),
-      breakInMsFor: (rec) => this.breakInMsFor(rec),
+      breakInMsFor: (rec) => this.breakInHooks.breakInMsFor(rec),
       breakInMsForShip: (t) => this.breakInMsForShip(t),
       pilotNear: (pid, rec) => this.pilotNear(pid, rec),
       pilotNearPoint: (pid, x, y, r) => this.pilotNearPoint(pid, x, y, r),
@@ -6417,84 +6432,6 @@ export class SectorRoom extends Room<SectorState> {
   }
   private readonly _hostilePilotOut = { playerId: '', x: 0, y: 0, d2: 0 };
 
-  // ── v4 T4 — teleporter tolls ────────────────────────────────────────────
-
-  /** A pad armed: offer its toll to every rider on it who isn't the owner or
-   *  their friend/ally. A remembered Always pays at once, a Never declines. */
-  private offerToll(rec: StructureRecord): void {
-    this.tollAnswers.delete(rec.id);
-    const toll = rec.tpToll;
-    if (!toll || toll.per1000 <= 0 || !isTeleporterKind(rec.kind)) return;
-    const credits = tollFor(this.teleporters.required(rec), toll.per1000);
-    if (credits <= 0) return;
-    const ownerFaction = parseOwner(rec.owner).faction;
-    const ownerName = this.resolveOwnerName(rec.owner) ?? 'the owner';
-    const padId = this.swarmRegistry.get(rec.id)?.entityId ?? -1;
-    const answers = new Map<string, 'paid' | 'declined' | 'pending'>();
-    this.tollAnswers.set(rec.id, { credits, answers });
-    const sink = getTradeSink();
-    for (const [pid, slot] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (!ship?.alive || !ship.isActive || pid === rec.owner) continue;
-      const sb = slotBase(slot);
-      if (!onPad(rec.kind, rec.x, rec.y, this.sabF32[sb + SLOT_X_OFF]!, this.sabF32[sb + SLOT_Y_OFF]!)) continue;
-      const rel = relationOf(pid, rec.owner, this.relationCtx);
-      if (rel === 'self' || rel === 'friendly' || rel === 'allied') continue;
-      const pref = sink?.tollPref?.(pid, ownerFaction);
-      if (pref === 'always') { answers.set(pid, this.payToll(rec, pid, credits) ? 'paid' : 'declined'); continue; }
-      if (pref === 'never') { answers.set(pid, 'declined'); continue; }
-      answers.set(pid, 'pending');
-      if (padId >= 0) this.sendToPlayerHere(pid, 'teleport_toll', { type: 'teleport_toll', padId, credits, ownerName } satisfies TollPrompt);
-    }
-    serverLogEvent('teleport_toll_offered', { sectorKey: this.sectorKey ?? '', padId, riders: answers.size });
-  }
-
-  /** Take the toll from the rider's wallet (all or nothing) and pay the owner:
-   *  a player's wallet, or an NPC faction's treasury. */
-  private payToll(rec: StructureRecord, pid: string, credits: number): boolean {
-    if (!getWallet().debit(pid, credits, 'teleport_toll')) return false;
-    const owner = parseOwner(rec.owner);
-    if (owner.kind === 'player') getWallet().credit(rec.owner, credits, 'teleport_toll');
-    else getTradeSink()?.creditFaction?.(owner.faction, credits);
-    return true;
-  }
-
-  /** The swap is now: anyone still on the pad who was asked and didn't pay
-   *  rides anyway, and loses the owner's standing (or becomes hostile). */
-  private settleToll(rec: StructureRecord): void {
-    const entry = this.tollAnswers.get(rec.id);
-    this.tollAnswers.delete(rec.id);
-    if (!entry || !isTeleporterKind(rec.kind)) return;
-    const hostile = rec.tpToll?.nonPayer === 'hostile';
-    const ownerFaction = parseOwner(rec.owner).faction;
-    for (const [pid, state] of entry.answers) {
-      if (state === 'paid') continue;
-      const slot = this.playerToSlot.get(pid);
-      if (slot === undefined) continue;
-      const sb = slotBase(slot);
-      if (!onPad(rec.kind, rec.x, rec.y, this.sabF32[sb + SLOT_X_OFF]!, this.sabF32[sb + SLOT_Y_OFF]!)) continue;
-      if (hostile) this.hostileActs.record(pid, rec.owner, this.gameClock.now());
-      else this.adjustStanding(ownerFaction, pid, TOLL_DODGE_STANDING);
-      serverLogEvent('teleport_toll_dodged', { sectorKey: this.sectorKey ?? '', playerId: pid, owner: rec.owner, hostile });
-    }
-  }
-
-  /** A rider answered a toll prompt. */
-  private answerToll(pid: string, padId: number, answer: TollAnswer): void {
-    const sw = this.swarmRegistry.getByEntityId(padId);
-    const rec = sw ? this.structureRegistry.get(sw.id) : undefined;
-    const entry = rec ? this.tollAnswers.get(rec.id) : undefined;
-    // Too late (the swap already settled it) or not asked: log, ignore.
-    if (!rec || !entry || entry.answers.get(pid) !== 'pending') {
-      serverLogEvent('teleport_toll_answer_ignored', { sectorKey: this.sectorKey ?? '', playerId: pid, padId, hasRec: rec !== undefined, hasEntry: entry !== undefined, state: entry?.answers.get(pid) ?? null });
-      return;
-    }
-    const ownerFaction = parseOwner(rec.owner).faction;
-    if (answer === 'always' || answer === 'never') getTradeSink()?.setTollPref?.(pid, ownerFaction, answer);
-    const pay = answer === 'pay' || answer === 'always';
-    entry.answers.set(pid, pay && this.payToll(rec, pid, entry.credits) ? 'paid' : 'declined');
-  }
-
   private sendToPlayerHere(pid: string, type: string, msg: unknown): boolean {
     const sid = this.playerToSession.get(pid);
     if (!sid) return false;
@@ -6746,8 +6683,6 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
   private readonly _irisSpan = { ax: 0, ay: 0, bx: 0, by: 0 };
-  /** T4 — per armed pad (structure id): the toll and each rider's answer. */
-  private readonly tollAnswers = new Map<string, { credits: number; answers: Map<string, 'paid' | 'declined' | 'pending'> }>();
 
   /**
    * T2 — the jump: everything on pad `a` goes to pad `b` and everything on
@@ -6916,90 +6851,6 @@ export class SectorRoom extends Room<SectorState> {
 
   /** This sector's speed keyframe (shared, mutated on change). */
   private readonly timeScaleKey: TimeScaleKeyframe = { s: 1, fromTick: 0 };
-
-  /** C2 — how long a break-in into `rec` takes. */
-  private breakInMsFor(rec: StructureRecord): number {
-    return this.testBreakInMs ?? breakInDurationMs(getStructureKind(rec.kind).holdCapacity ?? 0, rec.level ?? 1);
-  }
-
-  private notifyBreakIn(playerId: string, tone: 'good' | 'danger', message: string): void {
-    const sessionId = this.playerToSession.get(playerId);
-    if (sessionId === undefined) return;
-    const client = this.clients.find((c) => c.sessionId === sessionId);
-    const msg: BreakInNotice = { type: 'break_in_notice', tone, message };
-    try { client?.send('break_in_notice', msg); } catch { /* closing */ }
-  }
-
-  /**
-   * C2 — a break-in started: it is a HOSTILE ACT (the owner's turrets now
-   * engage the actor; an NPC side's ships nearby turn on them), and the owner
-   * is alerted (online: a notice; offline: a push).
-   */
-  private onBreakInStart(actor: string, sid: string): void {
-    const rec = this.structureRegistry.get(sid);
-    if (!rec) { this.onShipBreakInStart(actor, sid); return; }
-    const now = this.gameClock.now();
-    this.hostileActs.record(actor, rec.owner, now);
-    this.relationCtx.nowMs = now;
-    this.adjustStanding(parseOwner(rec.owner).faction, actor, STANDING_BREAK_IN_DELTA);
-    const kindName = getStructureKind(rec.kind).displayName;
-    const who = this.resolveOwnerName(actor) ?? 'A pilot';
-    const party = parseOwner(rec.owner);
-    if (party.kind === 'npc' && party.allegiance != null) {
-      this.aggroNpcSide(party.allegiance, rec.x, rec.y, actor);
-    } else if (party.kind === 'player') {
-      const text = `${who} is breaking into your ${kindName}!`;
-      this.notifyBreakIn(rec.owner, 'danger', text);
-      pushNotifier.notifyTrade(rec.owner, 'Break-in!', text, 'break-in');
-    }
-    auditEvent({ event: 'break_in', sector: this.sectorKey ?? undefined, playerId: actor, owner: rec.owner, structureKind: rec.kind, outcome: 'started' });
-    this.rebuildStructuresSlice(); // the BREACH flag
-  }
-
-  /** C2/C3 — an NPC side's ships near (x, y) turn on `actor` (ledger + bot_aggro). */
-  private aggroNpcSide(allegiance: NpcAllegianceId, x: number, y: number, actor: string): void {
-    const tick = this.serverTick;
-    const r2 = ON_SIGHT_ENGAGE_RANGE * ON_SIGHT_ENGAGE_RANGE;
-    for (const s of this.swarmRegistry.all()) {
-      if (s.kind !== 1 || allegianceOfKind(s.shipKind) !== allegiance) continue;
-      const b = slotBase(s.slot);
-      if ((this.sabF32[b + SLOT_X_OFF]! - x) ** 2 + (this.sabF32[b + SLOT_Y_OFF]! - y) ** 2 > r2) continue;
-      this.aiController.markHostile(s.id, actor, tick);
-      this.broadcast('bot_aggro', { type: 'bot_aggro', botEntityId: `swarm-${s.entityId}`, targetPlayerId: actor, tick });
-    }
-  }
-
-  /** C3 — breaking into a ship: a hostile act against its owner / NPC side. */
-  private onShipBreakInStart(actor: string, sid: string): void {
-    const t = this.shipTargetById(sid);
-    if (!t) return;
-    const now = this.gameClock.now();
-    this.hostileActs.record(actor, t.owner, now);
-    this.relationCtx.nowMs = now;
-    this.adjustStanding(parseOwner(t.owner).faction, actor, STANDING_BREAK_IN_DELTA);
-    if (t.npc) {
-      this.aggroNpcSide(allegianceOfKind(t.npc.shipKind), t.x, t.y, actor);
-    } else {
-      const text = `${this.resolveOwnerName(actor) ?? 'A pilot'} is breaking into your ${t.label}!`;
-      this.notifyBreakIn(t.owner, 'danger', text);
-      pushNotifier.notifyTrade(t.owner, 'Break-in!', text, 'break-in');
-    }
-    auditEvent({ event: 'break_in', sector: this.sectorKey ?? undefined, playerId: actor, owner: t.owner, structureKind: `ship:${t.label}`, outcome: 'started' });
-  }
-
-  private onBreakInEnd(actor: string, sid: string, outcome: 'success' | 'interrupted', reason: string): void {
-    const rec = this.structureRegistry.get(sid);
-    if (!rec && outcome === 'success') {
-      const t = this.shipTargetById(sid);
-      if (t && !t.npc) this.notifyBreakIn(t.owner, 'danger', `Your ${t.label} was broken into!`);
-    }
-    this.notifyBreakIn(actor, outcome === 'success' ? 'good' : 'danger', outcome === 'success' ? 'You are in. The cargo is open for a minute.' : `Break-in failed: ${reason}`);
-    if (rec && parseOwner(rec.owner).kind === 'player' && outcome === 'success') {
-      this.notifyBreakIn(rec.owner, 'danger', `Your ${getStructureKind(rec.kind).displayName} was broken into!`);
-    }
-    auditEvent({ event: 'break_in', sector: this.sectorKey ?? undefined, playerId: actor, owner: rec?.owner ?? '', structureKind: rec?.kind ?? '', outcome: outcome === 'success' ? 'success' : 'interrupted' });
-    this.rebuildStructuresSlice();
-  }
 
   private findNearestSwarmOfKind(
     x: number,
