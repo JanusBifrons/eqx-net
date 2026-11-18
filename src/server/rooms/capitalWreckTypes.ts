@@ -164,6 +164,10 @@ export interface CapitalWreckDeps {
    *  lost a piece, or a piece was hit). The battle-wreck save marks it dirty
    *  (`BattleWreckSaves.touch`, no allocation). Absent ⇒ nothing is saved. */
   lineageTouched?: (root: number) => void;
+  /** Wreck fields 0b: the battle FIFO evicts piece `id`. True: its whole
+   *  lineage was retired to its saved row (`BattleWreckSaves.evictPiece`);
+   *  false or absent: the piece is deleted. */
+  evictRetire?: (id: string) => boolean;
 }
 
 /** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */

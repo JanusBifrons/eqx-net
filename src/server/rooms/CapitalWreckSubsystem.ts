@@ -100,8 +100,8 @@ export class CapitalWreckSubsystem {
   private readonly pool: HitEntry[] = [];
   /** Live piece ids per origin and class (wreckFifos.ts): battle FIFOs evict, the field list never does. */
   private readonly fifos = new WreckFifos();
-  /** Battle eviction of one piece (made once, #14). */
-  private readonly evict = (id: string): void => { if (this.d.isLive(id)) this.d.removePiece(id); this.pieceGone(id); };
+  /** Battle eviction of one piece (made once, #14): retired with its lineage to its row when saves stream (0b), else deleted. */
+  private readonly evict = (id: string): void => { if (this.d.evictRetire?.(id) === true) return; if (this.d.isLive(id)) this.d.removePiece(id); this.pieceGone(id); };
   private deaths = 0;
   private readonly lastDeathTick = new Map<string, number>();
   /** S2b: live wrecks by wreckId, and the snapshot slice (one descriptor per

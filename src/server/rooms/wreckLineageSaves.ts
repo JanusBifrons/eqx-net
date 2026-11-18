@@ -15,7 +15,21 @@
  *    piece, so a drifting, rammed or towed piece is saved where it comes to
  *    rest. A lineage with no live piece left deletes its row. The 60 s
  *    sector snapshot never writes wrecks.
- *  - RESTORE (room boot): each row is parsed (#3); a bad row, or one from
+ *  - STREAM (wreck fields 0b, owner Q3 "keep it all"): the battle lineages
+ *    are a chunk source of the room's ONE streamer, like field hulls. A
+ *    lineage is where its pieces are (no home chunk): once no piece has been
+ *    in a needed chunk, on a tractor or in its crack hold for the linger, it
+ *    is written and retired (`LineageUnloader`, shared with
+ *    `WreckFieldSource`); its row stays, indexed by its pieces' chunks, and
+ *    it comes back (`restoreLineage`) when a ship needs one of them, within
+ *    the shared budget (`lineageUnits`) and the battle caps (one that would
+ *    pass a cap waits). The battle FIFO eviction retires the evicted piece's
+ *    whole lineage to its row (`evictPiece`) instead of deleting it, so the
+ *    live cap bounds only what is near ships and nothing is lost. A room
+ *    that does not stream (test rooms unless `battleWreckStreaming`) loads
+ *    every row at boot and deletes on eviction, as before.
+ *  - RESTORE (on approach, or boot when not streaming): each row is parsed
+ *    (#3) at boot; a bad row, or one from
  *    another `FRACTURE_ALGO_VERSION`, is deleted with a `warn`. The tree is
  *    rebuilt with fresh u16 wreck ids and rewritten `parentWreck` links, its
  *    geometry resolved by the shared core resolver (the client's), and its
@@ -25,9 +39,10 @@
  *    worker's `sleeping` spawn: FLAG_SLEEPING from step 1). The row keeps its
  *    serial, so later writes overwrite it.
  *
- * Restore and flush run at boot, on a timer and at dispose: they allocate.
+ * Restore, retire and flush are chunk, timer and dispose events: they
+ * allocate. The streamer step's sweep allocates nothing in steady state.
  */
-import { collectLineage, parseLineageRecord, WRECK_LINEAGE_UNBREAKABLE, type WreckLineageDeps, type WreckLineageRecord } from './wreckLineageRecord.js';
+import { collectLineage, WRECK_LINEAGE_UNBREAKABLE, type WreckLineageDeps, type WreckLineageRecord } from './wreckLineageRecord.js';
 import { lineageRowKey, type TerrainRecordStore } from '../db/terrainSql.js';
 import { terrainRecordStoreFor } from '../db/PersistenceWorker.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
@@ -39,6 +54,9 @@ import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { WreckDescriptor } from '../../shared-types/messages/wreckDescriptor.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock, WreckOrigin } from './capitalWreckTypes.js';
 import { spawnWreckPieces, type WreckChildSpawn, type WreckPiecePose, type WreckResplitHost } from './wreckResplit.js';
+import type { ChunkSource } from '../../core/terrain/chunkStreamer.js';
+import { lineageChunks, lineageUnits, LineageUnloader, parseLineageJson } from './wreckLineageStream.js';
+import { lineageRootOf } from './wreckLineage.js';
 
 /** Game ms between lineage flushes: a crash loses at most this much wreck
  *  history; each flush writes only the lineages that changed or still move. */
@@ -84,23 +102,74 @@ export function lineageRecordDeps(s: WreckLineageState): WreckLineageDeps {
   };
 }
 
-export class BattleWreckSaves {
-  private readonly dirty = new Set<number>();
-  /** Lineage root wreck id → its row serial. */
-  private readonly serials = new Map<number, number>();
-  private readonly deps: WreckLineageDeps;
+/** A saved lineage that is not loaded: its record, the chunks its pieces lie
+ *  in, its restore cost and FIFO class. */
+interface SavedLineage { rec: WreckLineageRecord; chunks: number[]; units: number; capital: boolean }
 
-  constructor(private readonly s: WreckLineageState, private readonly store: TerrainRecordStore) {
-    this.deps = lineageRecordDeps(s);
+/** What the battle source reads from the room (wreck fields 0b). */
+export interface BattleWreckStreamDeps {
+  /** A live piece's pose into `out`; false when it is gone. */
+  piecePoseInto(id: string, out: WreckPiecePose): boolean;
+  /** Is a piece on a tractor lease? Absent ⇒ never. */
+  tractored?(id: string): boolean;
+  /** Stream lineages (retire far ones, restore near ones, evict to rows)?
+   *  False: every row comes back at boot and the cap deletes (test rooms
+   *  that do not opt in, room option `battleWreckStreaming`). */
+  streaming: boolean;
+  /** Game ms no ship is near a lineage before it retires to its row. */
+  lingerMs?: number;
+}
+
+/** Counters for tests and perf (counts only). */
+export interface BattleWreckStats { saved: number; retired: number; restored: number; evicted: number; capWaits: number; unitsThisStep: number }
+
+/** The default linger: the streamer's (`CutFieldStreamer`), as field hulls. */
+const BATTLE_LINGER_MS = 10_000;
+
+export class BattleWreckSaves implements ChunkSource {
+  private readonly dirty = new Set<number>();
+  /** Live lineage root wreck id → its row serial. */
+  private readonly serials = new Map<number, number>();
+  /** Saved lineages not loaded, by serial, and their serials by chunk. */
+  private readonly rows = new Map<number, SavedLineage>();
+  private readonly byChunk = new Map<number, number[]>();
+  /** Live battle root → game ms a piece was last near (or it came). */
+  private readonly lastNear = new Map<number, number>();
+  private s: WreckLineageState | null = null;
+  private deps: WreckLineageDeps | null = null;
+  private readonly unloader: LineageUnloader;
+  /** True while this source removes pieces (their touches are its own). */
+  private retiring = false;
+  private nowMs = 0;
+  readonly stats: BattleWreckStats = { saved: 0, retired: 0, restored: 0, evicted: 0, capWaits: 0, unitsThisStep: 0 };
+
+  constructor(
+    /** The room's wreck maps; null until the wreck system exists (the
+     *  streaming host is built before it). */
+    private readonly state: () => WreckLineageState | null,
+    private readonly store: TerrainRecordStore,
+    private readonly sd: BattleWreckStreamDeps,
+  ) {
+    this.unloader = new LineageUnloader(sd);
+  }
+
+  private st(): WreckLineageState | null {
+    if (this.s === null) { this.s = this.state(); if (this.s !== null) this.deps = lineageRecordDeps(this.s); }
+    return this.s;
   }
 
   /** Lineage `root` changed (`CapitalWreckDeps.lineageTouched`). */
-  touch(root: number): void { this.dirty.add(root); }
+  touch(root: number): void { if (!this.retiring) this.dirty.add(root); }
+
+  /** Saved lineages not loaded now (rows only). Tests and perf. */
+  savedUnloaded(): number { return this.rows.size; }
 
   /** Write the dirty lineages, plus every lineage with an awake piece
    *  (`all`: every live lineage, the room's dispose). */
   flush(all: boolean): void {
-    const { wrecks, pieceWreck, knock, d } = this.s;
+    const s = this.st();
+    if (s === null) return;
+    const { wrecks, pieceWreck, knock, d } = s;
     if (all) { for (const w of wrecks.values()) this.dirty.add(w.root); }
     else if (d.pieceAsleep !== undefined) {
       for (const id of knock.keys()) {
@@ -113,47 +182,156 @@ export class BattleWreckSaves {
     this.dirty.clear();
   }
 
-  private write(root: number): void {
+  /** Write lineage `root`'s row (no piece left: delete it). Returns the
+   *  record written, or null. */
+  private write(root: number): WreckLineageRecord | null {
     // A field lineage is the wreck field's (WreckFieldSource), never a battle row.
-    if (this.s.wrecks.get(root)?.origin === 'field') return;
-    const rec = collectLineage(root, this.deps);
+    if (this.s!.wrecks.get(root)?.origin === 'field') return null;
+    const rec = collectLineage(root, this.deps!);
     let serial = this.serials.get(root);
     if (rec === null || rec.pieces.length === 0) {
-      // Fully salvaged (or evicted): the row goes.
+      // Fully salvaged: the row goes.
       if (serial !== undefined) this.store.deleteRecord(lineageRowKey(serial));
       this.serials.delete(root);
-      return;
+      return null;
     }
     if (serial === undefined) { serial = this.store.nextLineageSerial(); this.serials.set(root, serial); }
     this.store.putLineage(serial, JSON.stringify(rec));
+    return rec;
   }
 
-  /** Room boot: bring every saved lineage back. Returns how many came back. */
-  restoreAll(): number {
+  /** Room boot: read every saved row (a bad one is dropped with a warning).
+   *  Streaming: index them by the chunks their pieces lie in; each loads
+   *  when a ship comes near (`step`). Not streaming: all come back now.
+   *  Returns the rows kept. */
+  loadRows(): number {
+    const s = this.st();
+    if (s === null) return 0;
     let n = 0;
     for (const { serial, json } of this.store.lineages()) {
-      let raw: unknown;
-      try { raw = JSON.parse(json); } catch { raw = undefined; }
-      const rec = raw === undefined ? null : parseLineageRecord(raw);
+      const { rec, algo } = parseLineageJson(json);
       if (rec === null) {
-        const algo = (raw as { fractureAlgo?: unknown } | undefined)?.fractureAlgo;
         this.store.warn({ sectorKey: this.store.sectorKey, serial, fractureAlgo: algo, want: FRACTURE_ALGO_VERSION },
           algo !== undefined && algo !== FRACTURE_ALGO_VERSION ? 'battle wreck lineage from another fracture version, dropped' : 'battle wreck lineage row unreadable, dropped');
         this.store.deleteRecord(lineageRowKey(serial));
         continue;
       }
-      const root = restoreLineage(this.s, rec);
-      if (root === null) {
-        this.store.warn({ sectorKey: this.store.sectorKey, serial }, 'battle wreck lineage did not resolve or spawn, dropped');
-        this.store.deleteRecord(lineageRowKey(serial));
-        continue;
-      }
-      this.serials.set(root, serial);
-      n++;
+      if (this.sd.streaming) { this.index(serial, rec); n++; continue; }
+      if (this.restoreRow(s, serial, rec)) n++;
     }
-    this.s.host.enforceCap(true);
-    this.s.host.enforceCap(false);
+    if (!this.sd.streaming) { s.host.enforceCap(true); s.host.enforceCap(false); }
     return n;
+  }
+
+  /** Bring saved lineage `serial` back (`restoreLineage`: fresh ids, saved
+   *  poses); a row that does not resolve is dropped with a warning. */
+  private restoreRow(s: WreckLineageState, serial: number, rec: WreckLineageRecord): boolean {
+    const root = restoreLineage(s, rec);
+    if (root === null) {
+      this.store.warn({ sectorKey: this.store.sectorKey, serial }, 'battle wreck lineage did not resolve or spawn, dropped');
+      this.store.deleteRecord(lineageRowKey(serial));
+      return false;
+    }
+    this.serials.set(root, serial);
+    this.lastNear.set(root, this.nowMs);
+    return true;
+  }
+
+  /** Keep saved lineage `serial` as a row, found by its pieces' chunks. */
+  private index(serial: number, rec: WreckLineageRecord): void {
+    const chunks = lineageChunks(rec);
+    const capital = wreckSourceOf(rootInputs(rec.nodes[0]!.desc as WreckDescriptor)).profile.id === 'capital';
+    this.rows.set(serial, { rec, chunks, units: lineageUnits(rec), capital });
+    for (const k of chunks) {
+      let list = this.byChunk.get(k);
+      if (list === undefined) this.byChunk.set(k, list = []);
+      list.push(serial);
+    }
+  }
+
+  private unindex(serial: number, row: SavedLineage): void {
+    this.rows.delete(serial);
+    for (const k of row.chunks) {
+      const list = this.byChunk.get(k);
+      if (list === undefined) continue;
+      const i = list.indexOf(serial);
+      if (i >= 0) list.splice(i, 1);
+      if (list.length === 0) this.byChunk.delete(k);
+    }
+  }
+
+  /** The battle lineages as a chunk source of the room's ONE streamer (wreck
+   *  fields 0b): a saved lineage with a piece in a needed chunk comes back
+   *  (within the shared budget and the battle caps: one that would pass a
+   *  cap waits, so a restore never evicts); a live one with no piece near
+   *  (needed chunk, tractor, crack hold) for the linger retires to its row.
+   *  Steady state allocates nothing (#14); a restore or retire is a chunk
+   *  event. */
+  step(needed: ReadonlySet<number>, budget: number, now: number): number {
+    this.nowMs = now;
+    const s = this.sd.streaming ? this.st() : null;
+    if (s === null) return 0;
+    let spent = 0;
+    if (this.byChunk.size > 0) {
+      for (const key of needed) {
+        const list = this.byChunk.get(key);
+        if (list === undefined) continue;
+        for (let i = list.length - 1; i >= 0; i--) {
+          const serial = list[i]!;
+          const row = this.rows.get(serial);
+          if (row === undefined || budget <= 0 || (spent > 0 && spent + row.units > budget)) continue;
+          if (s.host.fifo(row.capital, 'battle').length + row.rec.pieces.length > s.host.cap(row.capital, 'battle')) { this.stats.capWaits++; continue; }
+          spent += row.units;
+          this.unindex(serial, row);
+          if (this.restoreRow(s, serial, row.rec)) this.stats.restored++;
+          if (i > list.length) i = list.length;
+        }
+      }
+    }
+    this.sweep(s, needed, now);
+    this.stats.unitsThisStep = spent;
+    return Math.min(spent, budget);
+  }
+
+  /** Mark every live battle lineage with a piece near (one pass over the
+   *  wrecks), then retire the ones none has been near for the linger. */
+  private sweep(s: WreckLineageState, needed: ReadonlySet<number>, now: number): void {
+    const tick = s.d.serverTick();
+    for (const w of s.wrecks.values()) {
+      if (w.origin !== 'battle' || w.pieces <= 0) continue;
+      if (tick < w.holdUntil || this.unloader.wreckNear(s, w, needed) || !this.lastNear.has(w.root)) this.lastNear.set(w.root, now);
+    }
+    const linger = this.sd.lingerMs ?? BATTLE_LINGER_MS;
+    for (const [root, t] of this.lastNear) {
+      const w = s.wrecks.get(root);
+      if (w === undefined || w.root !== root || w.origin !== 'battle') { this.lastNear.delete(root); continue; }
+      if (now - t >= linger) { this.retireRoot(s, root); this.stats.retired++; }
+    }
+  }
+
+  /** Lineage `root` to its row (written now), then every piece out. */
+  private retireRoot(s: WreckLineageState, root: number): void {
+    const rec = this.write(root);
+    const serial = this.serials.get(root);
+    this.retiring = true;
+    try { this.unloader.retire(s, root); } finally { this.retiring = false; }
+    this.dirty.delete(root);
+    this.lastNear.delete(root);
+    this.serials.delete(root);
+    if (rec !== null && serial !== undefined) { this.index(serial, rec); this.stats.saved++; }
+  }
+
+  /** Battle FIFO eviction (`CapitalWreckDeps.evictRetire`): streaming, the
+   *  evicted piece's whole lineage retires to its row instead of being
+   *  deleted, so nothing is lost. False (not streaming): delete as before. */
+  evictPiece(id: string): boolean {
+    const s = this.sd.streaming && !this.retiring ? this.st() : null;
+    if (s === null) return false;
+    const root = lineageRootOf(s.wrecks, s.pieceWreck, id);
+    if (root === null || s.wrecks.get(root)?.origin !== 'battle') return false;
+    this.retireRoot(s, root);
+    this.stats.evicted++;
+    return true;
   }
 }
 
