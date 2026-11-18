@@ -109,6 +109,10 @@ app.use('/galaxy', galaxyRouter);
 app.use('/trade', economyRouter);
 // Web Push (PWA notifications): VAPID public key + subscribe/unsubscribe.
 app.use('/push', pushRouter);
+// Join flow stage 5 — the Hangar's owned hulls and Abandon (same handlers as
+// the /dev roster routes; Abandon checks ownership like a join does).
+app.get('/hangar/ships', devPlayerShipsHandler);
+app.post('/hangar/ships/:shipId/abandon', (req, res) => { void devPlayerShipsAbandonHandler(req, res); });
 
 /**
  * Server health probe. The client polls this to gate the pre-game UI
@@ -331,7 +335,7 @@ if (process.env['NODE_ENV'] !== 'production') {
   // POST /dev/player-ships/:shipId/abandon — Phase 3 roster abandonment.
   // Body: { playerId: string }. Drops a stored / lingering ship from the
   // roster. Returns 409 when the ship is currently active.
-  app.post('/dev/player-ships/:shipId/abandon', devPlayerShipsAbandonHandler);
+  app.post('/dev/player-ships/:shipId/abandon', (req, res) => { void devPlayerShipsAbandonHandler(req, res); });
 
   // POST /dev/reset-sector?key=<roomName> — surgical reset for smoke testing.
   // Wipes one (or all) sector's in-memory + persisted swarm state and forces
