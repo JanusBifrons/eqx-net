@@ -26,6 +26,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { EqxLatencyProxy } from './eqxLatencyProxy';
 import { PROFILE_PRIMARY, PROFILE_REGRESSION_INJECT } from './latencyProfile';
 import { resolveNetgatePorts } from './netgatePorts';
+import { requireHeavyQueue, shellLine } from '../../scripts/dev/heavy-queue-guard.mjs';
 
 // NETGATE_PORT_OFFSET shifts every port (default 0 = the canonical set), so
 // the gate can run beside a dev session on 2567/5173 that another session
@@ -180,6 +181,8 @@ function startVite(cwd: string, port: number, wsProxyPort: number): ReturnType<t
 }
 
 async function main(): Promise<void> {
+  // The netgate is heavy: only through `pnpm heavy run` (or CI).
+  requireHeavyQueue({ kind: 'netgate', command: `pnpm e2e:netgate ${shellLine(process.argv.slice(2))}`.trim() });
   let serverProc: ReturnType<typeof spawn> | undefined;
   let viteBase: ReturnType<typeof spawn> | undefined;
   let viteHead: ReturnType<typeof spawn> | undefined;
