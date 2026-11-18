@@ -51,9 +51,6 @@ import type { Hold, GoodId } from '../../shared-types/goods.js';
 import { HOME_POCKET_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import type { ConvoyBay, ConvoyPayments, ConvoyRoom, CraneHaulJob, NpcBaseTrade } from './convoyRoom.js';
 import { convoyDockTarget, edgeNear, solarLanePoint } from './convoyDocking.js';
-// SectorRoom reads these from here.
-export { bayBehindFence } from './convoyDocking.js';
-export type { CraneHaulJob, NpcBaseTrade } from './convoyRoom.js';
 
 /** Speed a convoy phase is budgeted at (u/s): well under the hauler's 420 u/s
  *  cruise, so a long solar-system leg (170 km ≈ 7 min) is never cut short. */

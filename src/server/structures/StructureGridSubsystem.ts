@@ -35,7 +35,7 @@ import {
 import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
-import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
+import { batteryChargeOf, chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
 import type { Connection, FlowMaterial } from '../../core/structures/Connection.js';
 import {
   CONSTRUCTION_PULSE_AMOUNT,
@@ -581,59 +581,11 @@ export class StructureGridSubsystem {
       // A capital-less island is unpowered (raw rule) — batteries inert there.
       if (!hasCapital) return;
       if (netPower > 0) {
-        const left = this.chargeComponentBatteries(members, capacity, netPower);
+        const left = chargeComponentBatteries(this.hooks.registry, members, capacity, netPower);
         if (left > 0) this.hooks.chargeCapacitors?.(members, left);
       }
-      else if (netPower < 0) this.dischargeComponentBatteries(members, -netPower);
+      else if (netPower < 0) dischargeComponentBatteries(this.hooks.registry, members, -netPower, this.batteryRescued);
     });
-  }
-
-  /** Charge a component's not-yet-full batteries with `surplus`, split evenly.
-   *  Returns the surplus the batteries could not take (v4 T1: it charges
-   *  teleporter capacitors). */
-  private chargeComponentBatteries(
-    members: readonly string[],
-    capacity: number,
-    surplus: number,
-  ): number {
-    let count = 0;
-    for (const id of members) {
-      const rec = this.hooks.registry.get(id);
-      if (rec && rec.kind === 'battery' && rec.storedPower < capacity) count++;
-    }
-    if (count === 0) return surplus;
-    const share = surplus / count;
-    let used = 0;
-    for (const id of members) {
-      const rec = this.hooks.registry.get(id);
-      if (!rec || rec.kind !== 'battery' || rec.storedPower >= capacity) continue;
-      const before = rec.storedPower;
-      rec.storedPower = chargeStep(rec.storedPower, capacity, share).stored;
-      used += rec.storedPower - before;
-    }
-    return Math.max(0, surplus - used);
-  }
-
-  /** Discharge a component's batteries to cover a per-pulse `deficit` — but only
-   *  when their combined charge can meet it in full. Marks the whole component
-   *  battery-backed (`batteryRescued`) for this pulse. */
-  private dischargeComponentBatteries(members: readonly string[], deficit: number): void {
-    let total = 0;
-    for (const id of members) {
-      const rec = this.hooks.registry.get(id);
-      if (rec && rec.kind === 'battery') total += rec.storedPower;
-    }
-    if (total < deficit) return; // can't sustain the load → brownout, hold charge
-    for (const id of members) this.batteryRescued.add(id);
-    let remaining = deficit;
-    for (const id of members) {
-      if (remaining <= 0) break;
-      const rec = this.hooks.registry.get(id);
-      if (!rec || rec.kind !== 'battery' || rec.storedPower <= 0) continue;
-      const r = dischargeStep(rec.storedPower, remaining);
-      rec.storedPower = r.stored;
-      remaining -= r.supplied;
-    }
   }
 
   /** Living World P1a-2 — every structure id in the connected grid component
@@ -645,27 +597,13 @@ export class StructureGridSubsystem {
   /** Total stored battery charge in the connected component containing `id`
    *  (shield-fence plan — the wall's depletable buffer). 0 if `id` is unbuilt. */
   componentBatteryCharge(id: string): number {
-    let total = 0;
-    for (const mid of this.grid.componentMembers(id)) {
-      const rec = this.hooks.registry.get(mid);
-      if (rec && rec.kind === 'battery') total += rec.storedPower;
-    }
-    return total;
+    return batteryChargeOf(this.hooks.registry, this.grid.componentMembers(id));
   }
 
   /** Drain up to `amount` from the component's batteries (a shield-wall hit).
    *  Returns the amount actually drained. */
   drainComponentBatteries(id: string, amount: number): number {
-    let remaining = amount;
-    for (const mid of this.grid.componentMembers(id)) {
-      if (remaining <= 0) break;
-      const rec = this.hooks.registry.get(mid);
-      if (!rec || rec.kind !== 'battery' || rec.storedPower <= 0) continue;
-      const r = drainPower(rec.storedPower, remaining);
-      rec.storedPower = r.stored;
-      remaining -= r.drained;
-    }
-    return amount - remaining;
+    return drainBatteries(this.hooks.registry, this.grid.componentMembers(id), amount);
   }
 
   /** Phase 4 — each built + powered Miner extracts `miningRate` from the
