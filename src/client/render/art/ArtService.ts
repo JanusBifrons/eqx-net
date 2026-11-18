@@ -21,6 +21,7 @@ import type { LightingSettings } from './lightingSettings.js';
 import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
+import { readArtDelayMs } from './artMode.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
 import { ChunkCutJobs, cutCoarseInline, cutInline, type ChunkOpts, type PackedChunk, type PackedCoarseTile } from './chunkCutJobs.js';
 
@@ -674,8 +675,11 @@ export class WorkerBakeRunner implements BakeRunner {
       const seq = this.seq++;
       const done = (): void => { this.idle.push(w); this.pump(); };
       w.onmessage = (e: MessageEvent<{ seq: number; baked: Baked }>): void => {
-        const finish = (): void => { item.resolve(e.data.baked); done(); };
-        if (this.delayMs > 0) setTimeout(finish, this.delayMs); else finish();
+        // The test delay holds back the RESULT, not the worker: each bake still
+        // lands delayMs after it is done, but the queue drains at full speed
+        // (holding the worker made N bakes take N x delay / pool size).
+        if (this.delayMs > 0) { const baked = e.data.baked; done(); setTimeout(() => item.resolve(baked), this.delayMs); return; }
+        item.resolve(e.data.baked); done();
       };
       w.onerror = (err): void => { item.reject(new Error(err.message)); done(); };
       w.postMessage({ seq, job: item.job, rig: item.rig });
@@ -705,10 +709,11 @@ export class InlineBakeRunner implements BakeRunner {
       setTimeout(() => {
         if (this.stopped) { reject(new Error('art service destroyed')); return; }
         try { resolve(runBake(job, rig)); } catch (e) { reject(e instanceof Error ? e : new Error(String(e))); }
-      }, this.delayMs);
+      }, 0);
     }));
     this.chain = p.catch(() => undefined);
-    return p;
+    // As in the worker pool, the test delay holds back the result, not the queue.
+    return this.delayMs > 0 ? p.then((b) => new Promise<Baked>((resolve) => { setTimeout(() => resolve(b), this.delayMs); })) : p;
   }
   cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk> { return cutInline(field, cx, cy, () => this.stopped); }
   cutCoarseField(field: ChunkOpts): Promise<PackedCoarseTile[]> { return cutCoarseInline(field, () => this.stopped); }
@@ -749,7 +754,9 @@ function pageRunner(o: CreateArtServiceOpts): BakeRunner {
   return sharedRunner;
 }
 
-export const pageBakeRunner = (): BakeRunner => pageRunner({ touch: false }); // this page's pool, for cut-field chunk cuts
+// The cut field can create the pool before the renderer does, so the pool reads
+// the test delay from the URL itself; else `?artDelayMs` depends on that race.
+export const pageBakeRunner = (): BakeRunner => pageRunner({ touch: false, delayMs: readArtDelayMs(globalThis.location?.search ?? '') }); // this page's pool, for cut-field chunk cuts
 export function createArtService(o: CreateArtServiceOpts): ArtService {
   const opts = atlasOptsFor(o.touch, (globalThis.navigator as { deviceMemory?: number } | undefined)?.deviceMemory);
   const budget = new PageBudget(opts.maxPages ?? Infinity);
