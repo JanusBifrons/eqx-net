@@ -16,6 +16,7 @@ The look follows the approved join-flow mock-up (HUD tokens in `hud/tokens.ts`: 
 - **Footer:** "Cost …" and "After launch … cr" (plus free launches left), **Back to map** and **LAUNCH ▸**; when refused, "Can't launch this from here" and LAUNCH is disabled.
 - **Signed out:** Join still opens the Hangar. The footer shows **Play as guest** and **SIGN IN TO LAUNCH ▸**. Sign in goes to the login page and comes back to this Hangar with the same sector and hull picked. Play as guest remembers the choice and launches at once.
 - **Phones:** two columns above 760 px wide (a sideways phone), one scrolling column below.
+- **Quick launch (skips the Hangar):** the landing map has a **QUICK LAUNCH ▸** button bottom-right. One tap picks the busiest contested sector, glides the map into it ("Warping into <sector>…") and launches the free Fighter there, as a guest when signed out. It hides while a sector's panel or the Hangar is open, and on the in-game warp map.
 
 ## How it works
 
@@ -23,6 +24,7 @@ The look follows the approved join-flow mock-up (HUD tokens in `hud/tokens.ts`: 
 - **Tabs come from `sizeClass`.** `hangarModel.HANGAR_TABS` lists the classes per tab; the hull list is the flyable kinds minus engineering-only hulls. Fits fold through `capitalClassAndFitOf(kind)`, so the client never parses kind ids.
 - **Credits:** read from `/trade/economy` each time the window opens, falling back to the last snapshot's `wallet` / `freeLaunches` in the store.
 - **Owned hulls** come from the store's `shipRoster`, fed by the refcounted `rosterPoller` from `GET /hangar/ships` (served in production; the `/dev/player-ships` route stays for tests). Abandon is `POST /hangar/ships/:id/abandon` (`components/hangar/useAbandonShip.ts`); an account-bound ship needs that account's Bearer token.
+- **Quick launch** picks its sector with `components/quickLaunch.ts` `quickLaunchSector(galaxyStats)`: a hot front first (the map's own pulse rule, `HOT_THREAT`), then the higher threat, recent fighting, the most pilots, then the most hostiles; a calm galaxy sends a newcomer where people are, not into the biggest drone swarm. The glide is the map's focus view (`onFocusChange`, `FOCUS_GLIDE_MS`); the launch is the same `onSpawnNewShip` the Hangar calls. Test id `galaxy-quick-launch` (`data-target` = the picked sector).
 - **Mount:** `GalaxyPickerChrome` mounts `HangarWindow` for the pending sector and calls the existing `onSpawnNewShip` / `onSpawnExistingShip`. In-game ship swap is the same path: map → sector → the owned tile.
 
 Files: `src/client/components/hangar/` (`HangarWindow.tsx`, `hangarModel.ts`, `useAbandonShip.ts`).
@@ -35,9 +37,11 @@ Locks: `galaxy-landing-flow.spec.ts`, `hangarModel.test.ts`, `HangarWindow.test.
 
 - A Spectate button in the footer (the mock-up has one; Back to map stands in for now).
 - The Hangar takes the loot window's shared dialog chrome.
-- Quick launch: one map button to the hottest sector.
+- After a Quick launch: a small "Want a bigger ship? Open Hangar" hint in game, and one "sign in to keep your credits" ask after the first fight (mock-up flow B, steps 3 and 4).
 
 ## History
+
+- Join flow stage 7 (2026-11-18): Quick launch on the landing map.
 
 - Hangar restyle (2026-11-18): rebuilt to the approved mock-up: picture tiles, a detail pane with the fits and stat bars, a ledger footer.
 

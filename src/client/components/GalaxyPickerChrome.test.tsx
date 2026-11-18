@@ -138,6 +138,52 @@ describe('GalaxyPickerChrome', () => {
     expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
   });
 
+  it('Quick launch (stage 7): one tap glides to the hottest sector, then a guest Fighter launches there', () => {
+    vi.useFakeTimers();
+    try {
+      useAuthStore.setState({ user: null, token: null, guest: false });
+      useUIStore.setState({ galaxyStatsLoaded: true, selectedShipKind: 'scout' });
+      act(() => {
+        useUIStore.getState().setGalaxyStats([
+          { key: 'sol-prime', players: 6, enemies: 0, neutrals: 0, structures: 0, owner: null },
+          { key: 'orion-belt', players: 1, enemies: 3, neutrals: 0, structures: 0, owner: null,
+            control: { holder: 'a', holderShare: 0.55, challenger: 'b', challengerShare: 0.45, trend: -1, threat: 3, flippedAtMs: null, locked: false } } as never,
+        ]);
+      });
+      const onSpawnNewShip = vi.fn();
+      const onFocusChange = vi.fn();
+      render(<GalaxyPickerChrome activeLimboSectorKey={null} onSpawnNewShip={onSpawnNewShip} onFocusChange={onFocusChange} />);
+      const btn = screen.getByTestId('galaxy-quick-launch');
+      expect(btn).toHaveAttribute('data-target', 'orion-belt');
+      fireEvent.click(btn);
+      // Signed out: the guest choice is remembered; the map glides in first.
+      expect(useAuthStore.getState().guest).toBe(true);
+      expect(onFocusChange).toHaveBeenLastCalledWith('orion-belt');
+      expect(onSpawnNewShip).not.toHaveBeenCalled();
+      expect(screen.getByTestId('galaxy-quick-launch')).toHaveTextContent(/Warping into/);
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(onSpawnNewShip).toHaveBeenCalledWith('fighter', 'orion-belt');
+      expect(useUIStore.getState().selectedShipKind).toBe('fighter');
+    } finally {
+      vi.useRealTimers();
+      useUIStore.setState({ galaxyStatsLoaded: false });
+    }
+  });
+
+  it('Quick launch is hidden on the in-game warp map and while a sector is selected', () => {
+    useUIStore.setState({ galaxyStatsLoaded: true });
+    act(() => { useUIStore.getState().setGalaxyStats([{ key: 'sol-prime', players: 1, enemies: 0, neutrals: 0, structures: 0, owner: null }]); });
+    const { unmount } = render(<GalaxyPickerChrome activeLimboSectorKey={null} context="warp" />);
+    expect(screen.queryByTestId('galaxy-quick-launch')).not.toBeInTheDocument();
+    unmount();
+    const apiRef = { current: null as GalaxyPickerApi | null };
+    render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
+    expect(screen.getByTestId('galaxy-quick-launch')).toBeInTheDocument();
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    expect(screen.queryByTestId('galaxy-quick-launch')).not.toBeInTheDocument();
+    useUIStore.setState({ galaxyStatsLoaded: false });
+  });
+
   it('sector drawer shows LABELLED counts incl. drones (Equinox Phase 8 / Bug 5)', () => {
     // Inject a live snapshot slice so the drawer has non-zero counts to label.
     act(() => {

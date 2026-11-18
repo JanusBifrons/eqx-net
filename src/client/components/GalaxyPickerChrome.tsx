@@ -5,7 +5,9 @@ import {
   Alert,
   CircularProgress,
   Portal,
+  ButtonBase,
 } from '@mui/material';
+import { HUD } from '../hud/tokens';
 import { getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
 import { HangarWindow } from './hangar/HangarWindow';
@@ -21,6 +23,8 @@ import { SectorInfoDrawer } from './SectorInfoDrawer';
 import { isSectorWarpable } from '../render/galaxy/galaxyLayerDecisions';
 import { isTouchDevice } from '../input/TouchInput';
 import { Z } from '../layout/zIndex';
+import { quickLaunchSector, QUICK_LAUNCH_KIND } from './quickLaunch';
+import { FOCUS_GLIDE_MS } from '../render/galaxy/galaxyFocus';
 import type { MutableRefObject } from 'react';
 
 /** Phase 2 #2 — one-shot loading overlay (static sx, hoisted per the drawer-perf
@@ -74,6 +78,29 @@ export interface GalaxyPickerApi {
    */
   deselect(): void;
 }
+
+/** Quick launch: a ghost cyan button (the mock-up's flow A, second button). */
+const QUICK_LAUNCH_SX = {
+  position: 'absolute',
+  right: 'calc(12px + env(safe-area-inset-right, 0px))',
+  bottom: 'calc(10px + env(safe-area-inset-bottom, 0px))',
+  zIndex: 1,
+  pointerEvents: 'auto',
+  fontFamily: HUD.font.label,
+  fontWeight: 700,
+  fontSize: 13,
+  letterSpacing: '.08em',
+  px: '18px',
+  minHeight: HUD.touchMin,
+  borderRadius: '4px',
+  color: HUD.color.auto,
+  bgcolor: 'rgba(7,11,21,0.82)',
+  border: '1px solid rgba(52,216,255,.55)',
+  boxShadow: '0 0 12px rgba(52,216,255,.18)',
+  whiteSpace: 'nowrap',
+  '&:hover': { borderColor: HUD.color.auto, boxShadow: '0 0 16px rgba(52,216,255,.35)' },
+  '&.Mui-disabled': { color: HUD.color.inkFaint, borderColor: HUD.color.edge2, boxShadow: 'none' },
+} as const;
 
 export interface GalaxyPickerChromeProps {
   /** Set by the chrome on mount so the host can drive the picker. */
@@ -180,7 +207,11 @@ export function GalaxyPickerChrome({
   // SectorInfoDrawer (replaces the old fixed popover; the desktop hover tooltip is
   // separate + kept). The drawer reads this key; ✕ / swipe deselects.
   const [selectedSectorKey, setSelectedSectorKey] = useState<string | null>(null);
-  useEffect(() => onFocusChange?.(selectedSectorKey), [selectedSectorKey, onFocusChange]);
+  // Join flow stage 7 — Quick launch: the sector it is gliding into. The map's
+  // focus view follows it (the glide is the loading screen), then the Fighter
+  // launches through the same path as the Hangar's LAUNCH.
+  const [quickLaunching, setQuickLaunching] = useState<string | null>(null);
+  useEffect(() => onFocusChange?.(quickLaunching ?? selectedSectorKey), [quickLaunching, selectedSectorKey, onFocusChange]);
 
   // Keep the roster polled while the picker is mounted (the popover sub-list +
   // the Hangar consume store.shipRoster). Refcounted — safe alongside the
@@ -268,6 +299,22 @@ export function GalaxyPickerChrome({
     if (isWarp || auth.user || auth.guest) return false;
     sendToAuth(sector, 'spectate');
     return true;
+  };
+
+  const quickTarget = isWarp ? null : quickLaunchSector(galaxyStats);
+  const quickLaunch = (): void => {
+    if (quickTarget === null || quickLaunching !== null) return;
+    logEvent('quick_launch', { sector: quickTarget });
+    // Signed out: Quick launch flies as a guest (sign-in is offered later).
+    const auth = useAuthStore.getState();
+    if (auth.user === null && !auth.guest) auth.continueAsGuest();
+    setSelectedSectorKey(null);
+    setQuickLaunching(quickTarget);
+    const sector = quickTarget;
+    window.setTimeout(() => {
+      setSelectedShipKind(QUICK_LAUNCH_KIND);
+      onSpawnNewShip?.(QUICK_LAUNCH_KIND, sector);
+    }, FOCUS_GLIDE_MS);
   };
 
   // Living Galaxy Phase 6 — derive the hovered-sector tooltip content (pure).
@@ -397,6 +444,23 @@ export function GalaxyPickerChrome({
         </Typography>
       </Box>
 
+
+      {/* Join flow stage 7 — Quick launch (landing map only): one tap flies a
+       *  Fighter into the busiest contested sector, as a guest when signed out.
+       *  Bottom-right is free on the landing map; hidden while a sector's drawer
+       *  (docked there) or the Hangar is open. */}
+      {!isWarp && galaxyReady && selectedSectorKey === null && pendingSpawnSector === null && (
+        <ButtonBase
+          data-testid="galaxy-quick-launch"
+          data-target={quickTarget ?? ''}
+          disabled={quickTarget === null}
+          aria-busy={quickLaunching !== null}
+          onClick={quickLaunch}
+          sx={QUICK_LAUNCH_SX}
+        >
+          {quickLaunching !== null ? `Warping into ${getSector(quickLaunching)?.name ?? quickLaunching}…` : 'QUICK LAUNCH ▸'}
+        </ButtonBase>
+      )}
 
       {/* Equinox Phase 7 (Item 1) — Close button for the in-game warp map.
        *  Portal'd to <body> at Z.overlay: inside this chrome its z-index was
