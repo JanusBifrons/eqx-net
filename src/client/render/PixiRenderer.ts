@@ -985,7 +985,7 @@ export class PixiRenderer implements IRenderer {
       get backgroundGrid() { return r.backgroundGrid; }, get starfield() { return r.starfield; }, get fxExplosions() { return r._fxExplosions; },
       get fxShields() { return r._fxShields; }, get fxFences() { return r._fxFences; },
       artCtx: this._artCtx, engineShieldFxCtx: this._engineShieldFxCtx, input: this._input, hudCtx: this._hudCtx,
-      mountVisuals: this.mountVisuals, halo: this.halo, incomingFire: this.incomingFire, helmMarker: this.helmMarker,
+      mountVisuals: this.mountVisuals, get halo() { return r.halo; }, incomingFire: this.incomingFire, helmMarker: this.helmMarker,
     };
   }
 }
