@@ -77,10 +77,14 @@ export interface SectorSnapshotStructure {
    *  (its inputs are already taken). Absent ⇒ default recipe, idle. */
   recipe?: string;
   prodLoaded?: boolean;
+  /** A chunk recipe's loaded rock chunk (its ore still to pay out). */
+  prodChunk?: { product: string; quality: number; uid?: string; weight?: number; ore?: Record<string, number> };
   /** Economy v2 W4b — placed from a packed item. Absent ⇒ built from minerals. */
   prepaid?: boolean;
   /** T4b — a Freight Dock's standing orders. Absent ⇒ none. */
   freightOrders?: Array<{ good: string; mode: 'import' | 'export'; level: number }>;
+  /** Cargo pods 14c — false: refuses auto-unload. Absent ⇒ accepts. */
+  acceptAutoUnload?: boolean;
   /** v4 T1 — a teleporter's partner, rules (validated on restore) and charge. */
   teleport?: { partner?: { sectorKey: string; uid: string }; rules?: unknown; charge?: number; toll?: unknown };
   /** The packed item's quality (a deconstruct repacks it). */

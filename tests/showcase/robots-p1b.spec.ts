@@ -4,7 +4,7 @@
  *
  *   a mixed-tier robot squad (hexagon / circles / cubes) and a drone pack
  *   engage each other on sight, and the robots go for the pilot too (who
- *   returns fire on auto) → wrecks drop tiered loot → the pilot scoops it.
+ *   returns fire on auto) → wrecks drop tiered loot → the pilot opens the pods and takes it.
  *
  * Run (headed — headless software WebGL can't render the game):
  *   pnpm exec playwright test --config playwright.showcase.config.ts robots-p1b --headed
@@ -14,7 +14,7 @@ import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { countCombatants, flyTo, localPose, podPositions } from './helpers';
+import { countCombatants, lootNearestPods } from './helpers';
 
 const BASE_URL = process.env['BASE_URL'] ?? 'http://localhost:5173/';
 const OUT_DIR = join('diag', 'showcase', 'p1b');
@@ -45,22 +45,15 @@ test('Living World P1b: robots vs drones vs pilot → tiered loot', async ({ pag
     const c = (window as unknown as { __eqxClient?: { mirror?: { swarm?: Map<number, { kind: number; shipKind?: string }> } } }).__eqxClient;
     let n = 0;
     for (const e of c?.mirror?.swarm?.values() ?? []) if (e.kind === 3 && e.shipKind === 'cargo-pod') n++;
-    // Nearby drops MERGE into one pod (60 u) and crossfire can destroy pods, so
-    // a dozen kills settle into a handful of pods — 2 is a reliable "loot is down".
+    // Each death drops one pod, but a hold can lose everything to the
+    // death coin flip (then no pod), so — 2 is a reliable "loot is down".
     return n >= 2;
   }, undefined, { timeout: 90_000 });
   await page.waitForTimeout(3_000);
   await page.screenshot({ path: join(OUT_DIR, '2-wrecks-and-loot.png') });
 
-  // 3) Scoop the loot (nearest first).
-  for (let i = 0; i < 6; i++) {
-    const pods = await podPositions(page);
-    const me = await localPose(page);
-    if (pods.length === 0 || me === null) break;
-    pods.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
-    await flyTo(page, pods[0]!.x, pods[0]!.y, 50, 10_000);
-    await page.waitForTimeout(300);
-  }
+  // 3) Open the nearest pods and take what survived (no fly-over pickup).
+  expect(await lootNearestPods(page, 3, 10_000)).toBeGreaterThan(0);
   await expect(page.getByTestId('cargo-chip')).toBeVisible({ timeout: 10_000 });
   await page.screenshot({ path: join(OUT_DIR, '3-loot-collected.png') });
   await page.waitForTimeout(2_000);

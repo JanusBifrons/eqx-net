@@ -140,7 +140,7 @@ export class NavRoutes implements IAiNavRoutes {
       s.pending = false;
       if (msg.status === 'straight') { s.route.count = 0; s.short = false; } // the way is clear (again)
       else if (msg.status === 'route' || msg.status === 'nearest') {
-        setNavRoute(s.route, msg.points);
+        setNavRoute(s.route, msg.points, x, y); // planned from (x, y): the first turn's incoming leg
         s.short = msg.status === 'nearest';
         if (s.short) this.short++; else this.routed++;
       }

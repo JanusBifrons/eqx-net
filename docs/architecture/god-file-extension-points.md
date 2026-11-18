@@ -26,13 +26,21 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | An HTTP route | A router in `src/server/routes/` (like `diagRouter.ts`, `galaxyRouter.ts`), mounted with one line. Dev-only `/dev/*` and `/test/*` endpoints go in `routes/devRouter.ts` (mounted outside production). | live |
 | A boot step | A step function in `src/server/boot/` (like `persistenceBoot.ts`, `livingWorldBoot.ts`, `economyBoot.ts`) taking a narrow deps object and returning what later steps need; `main()` is the ordered list of calls. Directors it starts go on `WorldHandles` (`boot/worldHandles.ts`). | live |
 
+## Server: `LivingWorldDirector.ts` (`src/server/CLAUDE.md`)
+
+| To add | Do this | Status |
+|---|---|---|
+| A periodic world activity (roam-like squad behaviour, ambient work on the control tick) | A `DirectorActivity` (`step(now)`) class in `src/server/livingworld/director/`, built once in the director's constructor from a narrow deps object (reassigned director fields read via a getter callback), plus one entry in the director's `activities` list. Runs on the ~1.5 s control tick in list order, never the 60 Hz loop; allocation-free per tick. Reference: `SquadHerding` (roam, clusters, flock roles). | live |
+| Respawn ingress / arrival pose or hostility rules | `director/HunterBotRespawner.ts`; the director keeps one-line delegates (`respawnStep`, `hostileSpecFor`, `arrivalPoseFor`). | live |
+| A side-specific (robot / drone) per-tick hook | A field on `LivingWorldHooks`, wired in `src/server/boot/livingWorldBoot.ts` via `setHooks`. | live |
+
 ## Client: `ColyseusClient.ts` (`src/client/net/CLAUDE.md`)
 
 | To add | Do this | Status |
 |---|---|---|
 | A server→client message | Its zod schema in `src/shared-types/messages/` and a row in `ServerMessageSchemas` (`src/shared-types/messages.ts`); a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in `handlers/index.ts`. | live |
 | A per-entity timer / state machine | Its own module, like `drawnShellTiming.ts`, `damageNumberTargets.ts`. | live |
-| Fire control / lock state | `FireControlClient`. | planned |
+| Fire control / lock state | `FireControlClient` (`src/client/net/FireControlClient.ts`; the lock line in `fireControl/LockLineClient.ts`); `ColyseusClient` keeps one-line delegates and reaches it as `this.fc`. | live |
 
 ## Client: `PixiRenderer.ts` and `IRenderer.ts` (`src/client/render/CLAUDE.md`)
 
@@ -50,8 +58,21 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | To add | Do this | Status |
 |---|---|---|
 | A combat move | An `IManoeuvre` in `src/core/ai/tactics/` (`manoeuvre.ts`). | live |
-| An order / stance / non-combat mode | A mode file in `src/core/ai/modes/`. | planned |
-| A tuning number | `hostileDroneTuning.ts`. | planned |
+| An order / stance / non-combat mode | An `IPilotMode` file in `src/core/ai/modes/` (lifecycle next to `IManoeuvre` in `tactics/manoeuvre.ts`) plus a case in `pilotJob()`. Live: leaving, patrol (course + orbit), travel / patrol leg, search, flock follow, guard return. An order's state (post, travel, hunt) is fields on its mode, not the brain. | live |
+| A pilot helper the brain owns (senses, target pick, morale state) | A class in `src/core/ai/pilot/` built once in the constructor (`PilotSenses`, `TargetPick`, `PilotMorale`). Combat-side helpers (`TacticalFill`, `BroadsideHelm`, `FireLaneSteer`, `CombatDecision`, `CombatSteer`) are classes in `src/core/ai/tactics/`, built the same way. | live |
+| A tuning number | `hostileDroneTuning.ts`. | live |
+
+## Core: `fractureHull.ts` (`src/core/CLAUDE.md`)
+
+`fractureHull.ts` keeps the plan, the crack lines and the piece split; it re-exports the moved public names (`FRACTURE_QUANTUM`, `EDGE_HULL`, `EDGE_CUT`, `FractureEdgeKind`). Every sibling stays under the determinism rules in its header and bumps `FRACTURE_ALGO_VERSION` on any output change.
+
+| To add | Do this | Status |
+|---|---|---|
+| A new edge kind (`EDGE_*`) | `destruction/fractureRings.ts`; if it is jagged, add it to `jagged()` in `fractureJag.ts`. | live |
+| A ring predicate, quantising rule or piece-output field (`FracturePiece`, convex decomposition) | `destruction/fractureRings.ts`. | live |
+| A jag shape, jag repair pass or T-junction weld rule | `destruction/fractureJag.ts`. | live |
+| A splitting primitive (line clip, strip, extra cut) | `destruction/fractureSplit.ts`. | live |
+| A new crack family or plan draw | `fractureHull.ts` (`crackLines` / `planFor`) until a crack-lines module is split out. | planned |
 
 ## Shared data: `structureKinds.ts` (`src/shared-types/CLAUDE.md`)
 

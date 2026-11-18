@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cargoChanged, cargoFillState, cargoWeight, formatLootPickup } from './lootView';
+import { cargoChanged, cargoFillState, cargoViewOf, cargoWeight, formatLootPickup } from './lootView';
 
 describe('lootView (P1a-1)', () => {
   it('formats a pickup popup', () => {
@@ -24,5 +24,13 @@ describe('lootView (P1a-1)', () => {
     expect(cargoFillState(10, 100)).toBe('ok');
     expect(cargoFillState(80, 100)).toBe('high');
     expect(cargoFillState(100, 100)).toBe('full');
+  });
+
+  it('a packed item (a rock chunk) counts its weight on the chip, and a heavier swap is a change', () => {
+    const wire = { goods: { salvage: 2 }, blueprints: [], packed: [{ product: 'chunk:rock', quality: 0, uid: 'rc-1', weight: 400 }] };
+    const view = cargoViewOf(wire);
+    expect(cargoWeight(view)).toBe(402);
+    expect(cargoChanged(view, wire)).toBe(false);
+    expect(cargoChanged(view, { ...wire, packed: [{ product: 'chunk:rock', quality: 0, uid: 'rc-2', weight: 900 }] })).toBe(true);
   });
 });
