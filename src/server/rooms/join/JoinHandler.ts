@@ -44,10 +44,17 @@ import {
 } from './joinConstants.js';
 import { JoinOptionsSchema } from './joinOptions.js';
 import { joinFreshSpawn } from './joinFreshSpawn.js';
+import { drainPendingJoin, handleClientReady } from './joinHandshake.js';
 import type { JoinHandlerDeps } from './joinDeps.js';
 
 export class JoinHandler {
   constructor(private readonly deps: JoinHandlerDeps) {}
+
+  /** `client_ready`: stamp the arrival tick and broadcast `warp_in` (`joinHandshake.ts`). */
+  clientReady(client: Client): void { handleClientReady(this.deps, client); }
+
+  /** Per tick, from `update()`: activate arrived joins, fire the watchdog (`joinHandshake.ts`). */
+  drainPending(): void { drainPendingJoin(this.deps); }
 
   async handle(client: Client, options: unknown): Promise<void> {
     const d = this.deps;
