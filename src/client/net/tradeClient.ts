@@ -69,6 +69,11 @@ export function sendSetFreightOrders(entityId: number, orders: FreightOrder[]): 
   return send('set_freight_orders', { entityId, orders });
 }
 
+/** Cargo pods 14c — auto-unload on/off: my active ship, or my storage `entityId`. */
+export function sendSetAutoUnload(side: 'ship' | 'storage', on: boolean, entityId?: number): boolean {
+  return send('set_auto_unload', entityId !== undefined ? { side, on, entityId } : { side, on });
+}
+
 /** Economy v2 — packed-structure counts for the Build menus (→ `packed_stock`). */
 export function sendPackedStockQuery(): boolean {
   return send('packed_stock_query', {});

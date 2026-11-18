@@ -20,8 +20,18 @@
  * changes what it WANTS. Zone-pure, deterministic, allocation-free in steady
  * state (#14): board slots are assigned at register, never per tick.
  */
-import type { IAiAimBoard } from '../../contracts/IAiBehaviour.js';
-import { addDangerFromSegment, type ContextMaps } from '../contextSteering.js';
+import type { AiEntity, IAiAimBoard, IAiNeighbourQuery } from '../../contracts/IAiBehaviour.js';
+import type { AllegianceSide } from '../../../shared-types/allegiances.js';
+import { addDangerFromSegment, addInterestToward, type ContextMaps } from '../contextSteering.js';
+import { COMBAT_NEIGHBOUR_K, NUDGE_ARRIVED, NUDGE_SHAPE } from '../hostileDroneTuning.js';
+import {
+  MANOEUVRE_ATTACK_RUN,
+  MANOEUVRE_HOLD,
+  MANOEUVRE_KITE,
+  MANOEUVRE_ORBIT,
+  MANOEUVRE_TAIL,
+  type ManoeuvreId,
+} from './manoeuvre.js';
 
 /** A block counts as live for this many ticks (0.5 s): the nudge runs while
  *  the last block is this recent. */
@@ -187,4 +197,133 @@ export function addAllyLaneDanger(
   const bx = ax + (aimX - ax) * ALLY_LANE_END_FRAC;
   const by = ay + (aimY - ay) * ALLY_LANE_END_FRAC;
   addDangerFromSegment(m, selfX, selfY, ax, ay, bx, by, laneHalfWidth, lookahead, weight);
+}
+
+/** Line-of-fire feedback: the recent-block count halves every this many game
+ *  ticks (0.5 s at 60 Hz). */
+export const BLOCK_HALF_LIFE_TICKS = 30;
+
+/**
+ * One brain's fire-lane state, owned by `HostileDroneBehaviour` and built
+ * once: the line-of-fire feedback (friendly fire; plan composed-harbor §4),
+ * the blocked-fire nudge and the ally-lane danger. The room's LineOfFireGate
+ * held this NPC's shot because a friendly body was on the line. Plain fields
+ * only (#14); game ticks, never wall time (#20).
+ */
+export class FireLaneSteer {
+  private _blockScore = 0;
+  private _blockScoreTick = 0;
+  private _lastBlockedTick = -1_000_000;
+  private _blockerX = 0;
+  private _blockerY = 0;
+  /** Blocked-fire nudge (slice 5b): the block it was planned for and its
+   *  reposition point. */
+  private _nudgeFromTick = -1_000_000;
+  private _nudgeGoalX = 0;
+  private _nudgeGoalY = 0;
+  private _nudgeCount = 0;
+  private _laneExitCount = 0;
+
+  /** At most one count per tick (a capital's barrels may each report). */
+  noteBlocked(tick: number, blockerX: number, blockerY: number): void {
+    this._blockerX = blockerX;
+    this._blockerY = blockerY;
+    if (tick === this._lastBlockedTick) return;
+    this._blockScore = this.getRecentBlocks(tick) + 1;
+    this._blockScoreTick = tick;
+    this._lastBlockedTick = tick;
+  }
+
+  /** Decaying count of recent blocks: halves every `BLOCK_HALF_LIFE_TICKS`. */
+  getRecentBlocks(tick: number): number {
+    if (this._blockScore === 0) return 0;
+    const age = tick - this._blockScoreTick;
+    if (age <= 0) return this._blockScore;
+    return this._blockScore * Math.pow(0.5, age / BLOCK_HALF_LIFE_TICKS);
+  }
+
+  /** Tick of the latest block (-1_000_000 when never blocked). */
+  get lastBlockedTick(): number { return this._lastBlockedTick; }
+  /** World position of the latest blocking ally. */
+  get blockerX(): number { return this._blockerX; }
+  get blockerY(): number { return this._blockerY; }
+  /** Combat ticks spent side-stepping a blocked line. */
+  get nudgeTicks(): number { return this._nudgeCount; }
+  /** Combat ticks spent inside a wingman's fire lane. */
+  get laneExitTicks(): number { return this._laneExitCount; }
+
+  /**
+   * Ally fire lanes (slice 5b): for up to `ALLY_LANE_K` same-side AI-flown
+   * wingmen within fire range that aimed this tick or the last few, danger
+   * along wingman → its aim point (lane half-width = own radius ×
+   * `ALLY_LANE_RADIUS_MUL` + the wingman's radius; look-ahead 1 s at
+   * max(cruise, own speed)). Same side = `sideAt === allegiance`, pilot slot
+   * or not: a player-owned AI-flown hull sits in a pilot slot on the players
+   * side (RTS Part B), and its squadmates keep out of its lane. AI-flown =
+   * an aim on the board: a human pilot posts none, so no lane is ever made
+   * from a human's nose. Returns true when this ship sits INSIDE a lane (it
+   * must get out: the caller lets the nose swing toward the exit). Alloc-free
+   * (reuses the brain's neighbour index scratch `idx`).
+   */
+  addAllyLanes(
+    self: AiEntity, nb: IAiNeighbourQuery, aims: IAiAimBoard, idx: Int32Array, maps: ContextMaps, tick: number,
+    fireRange: number, cruiseSpeed: number, ownRadius: number, allegiance: AllegianceSide,
+  ): boolean {
+    const n = nb.queryNeighbours(self.x, self.y, fireRange, COMBAT_NEIGHBOUR_K, idx, self.id);
+    const sp = Math.hypot(self.vx, self.vy);
+    const lookahead = ALLY_LANE_LOOKAHEAD_S * (sp > cruiseSpeed ? sp : cruiseSpeed);
+    let used = 0;
+    let inside = false;
+    for (let k = 0; k < n && used < ALLY_LANE_K; k++) {
+      const i = idx[k]!;
+      if (nb.sideAt(i) !== allegiance) continue;
+      // Only an AI-flown ship posts its aim; a human pilot has none.
+      if (!aims.read(nb.idAt(i), tick)) continue;
+      used++;
+      const hw = ALLY_LANE_RADIUS_MUL * ownRadius + nb.radiusAt(i);
+      const ax = nb.xAt(i);
+      const ay = nb.yAt(i);
+      addAllyLaneDanger(maps, self.x, self.y, ax, ay, aims.readX, aims.readY, hw, lookahead, ALLY_LANE_WEIGHT);
+      if (!inside && insideAllyLane(self.x, self.y, ax, ay, aims.readX, aims.readY, hw)) inside = true;
+    }
+    if (inside) this._laneExitCount++;
+    return inside;
+  }
+
+  /**
+   * Blocked-fire nudge (slice 5b): while the line-of-fire gate held a shot in
+   * the last `NUDGE_TICKS` (and the decayed count is at least
+   * `NUDGE_MIN_BLOCKS`), Hold, Tail and an attack run's dive add interest toward a point one
+   * `combatSeparation` aside of the target line, on the side away from the
+   * ally in the way (latched per block). Ends early once there. Returns
+   * whether it is nudging. A run's pull-off / extend and a break fly their own course.
+   * `cur` is the running manoeuvre; `diving` / `kiteRunning` its attack-run
+   * and Kite phase.
+   */
+  writeBlockedNudge(
+    self: AiEntity, ux: number, uy: number, maps: ContextMaps, tick: number, combatSeparation: number,
+    cur: ManoeuvreId, diving: boolean, kiteRunning: boolean,
+  ): boolean {
+    // The shooting stances side-step: Hold, Tail, a run's dive, Orbit and a
+    // Kite backing off nose on (Orbit / Kite replaced Hold for gunships and
+    // missile boats, slice 6b). A run's pull-off / extend, a Break, a running
+    // Kite, FallBack and Flee fly their own course.
+    if (cur !== MANOEUVRE_HOLD && cur !== MANOEUVRE_TAIL && cur !== MANOEUVRE_ORBIT
+      && !(cur === MANOEUVRE_ATTACK_RUN && diving)
+      && !(cur === MANOEUVRE_KITE && !kiteRunning)) return false;
+    if (tick - this._lastBlockedTick > NUDGE_TICKS || this.getRecentBlocks(tick) < NUDGE_MIN_BLOCKS) return false;
+    if (this._nudgeFromTick !== this._lastBlockedTick) {
+      // A fresh block: pick the side and the reposition point.
+      const side = blockedNudgeSide(self.x, self.y, ux, uy, this._blockerX, this._blockerY, self.vx, self.vy);
+      this._nudgeFromTick = this._lastBlockedTick;
+      this._nudgeGoalX = self.x - uy * side * combatSeparation;
+      this._nudgeGoalY = self.y + ux * side * combatSeparation;
+    }
+    const gx = this._nudgeGoalX - self.x;
+    const gy = this._nudgeGoalY - self.y;
+    if (gx * gx + gy * gy < NUDGE_ARRIVED * NUDGE_ARRIVED * combatSeparation * combatSeparation) return false;
+    addInterestToward(maps, gx, gy, NUDGE_WEIGHT, NUDGE_SHAPE);
+    this._nudgeCount++;
+    return true;
+  }
 }
