@@ -8,11 +8,12 @@
  *
  * Per field it holds the coarse layer (`CoarseFieldMap`, the whole field from
  * its layout) and the fine layer (`FineFieldLayer`, per loaded chunk from the
- * cut rocks). The route planner (slice 6) adds commands here.
+ * cut rocks). `ROUTE` asks the route planner (slice 6) for a way across.
  */
 import type { ChunkOpts } from '../terrain/fieldLayout.js';
 import { CoarseFieldMap } from './coarseField.js';
 import { FineFieldLayer, type NavRockPose } from './fineField.js';
+import { RoutePlanner, NAV_ROUTE_MAX_POINTS, type NavRouteStatus } from './routePlanner.js';
 
 /** Host a cut field's nav maps for one sector room. `gone` / `moved`: rocks
  *  already broken up or left elsewhere when the room started (saved records). */
@@ -24,7 +25,10 @@ export interface NavChunkCmd { type: 'CHUNK'; worldId: number; cx: number; cy: n
 /** A rock was broken up (`gone`), or rests somewhere new (`pose`; null: back
  *  at its cut pose). */
 export interface NavRockCmd { type: 'ROCK'; worldId: number; key: number; gone?: true; pose?: { x: number; y: number; angle: number } | null }
-export type NavCommand = NavAddFieldCmd | NavRemoveFieldCmd | NavChunkCmd | NavRockCmd;
+/** Plan a route from (sx, sy) to (tx, ty) for a hull of clearance `clearance`
+ *  (from `shipTuning`, #18); `reqId` matches the reply. */
+export interface NavRouteCmd { type: 'ROUTE'; worldId: number; reqId: number; sx: number; sy: number; tx: number; ty: number; clearance: number }
+export type NavCommand = NavAddFieldCmd | NavRemoveFieldCmd | NavChunkCmd | NavRockCmd | NavRouteCmd;
 
 /** Reply to `ADD_FIELD`: the coarse layer is built. */
 export interface NavFieldBuiltMsg {
@@ -37,12 +41,26 @@ export interface NavFieldBuiltMsg {
   /** Build time (worker wall clock, print-only). */
   ms: number;
 }
-export type NavReply = NavFieldBuiltMsg;
+/** Reply to `ROUTE`: the waypoints after the start (packed x, y; the goal
+ *  last), how many nodes the search expanded, and its time (print-only).
+ *  An unknown world answers `none`. */
+export interface NavRouteMsg {
+  type: 'ROUTE';
+  worldId: number;
+  reqId: number;
+  status: NavRouteStatus;
+  points: Float64Array;
+  expanded: number;
+  ms: number;
+}
+export type NavReply = NavFieldBuiltMsg | NavRouteMsg;
 
 interface NavWorld { coarse: CoarseFieldMap; fine: FineFieldLayer }
 
 export class NavHost {
   private readonly worlds = new Map<number, NavWorld>();
+  private readonly planner = new RoutePlanner();
+  private readonly scratch = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
 
   /** `now`: a millisecond clock for print-only build timings (real time). */
   constructor(private readonly now: () => number) {}
@@ -83,6 +101,17 @@ export class NavHost {
         if (cmd.gone) fine?.rockGone(cmd.key);
         else if (cmd.pose !== undefined) fine?.rockMoved(cmd.key, cmd.pose);
         return null;
+      }
+      case 'ROUTE': {
+        const t0 = this.now(), w = this.worlds.get(cmd.worldId);
+        let n = 0;
+        if (w) n = this.planner.plan(w.coarse, w.fine, cmd.sx, cmd.sy, cmd.tx, cmd.ty, cmd.clearance, this.scratch);
+        return {
+          type: 'ROUTE', worldId: cmd.worldId, reqId: cmd.reqId,
+          status: w ? this.planner.status : 'none',
+          points: this.scratch.slice(0, n * 2), // the reply's own copy (it is transferred)
+          expanded: w ? this.planner.expanded : 0, ms: this.now() - t0,
+        };
       }
     }
   }

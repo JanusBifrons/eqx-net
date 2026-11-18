@@ -109,12 +109,36 @@ pool: the entry (`navWorkerEntry.ts`) is bundled once with `bundleWorker`, start
 tagged with it.
 - What the worker does with each message is `core/nav/navHost.ts` (`NavHost`), pure and tested
   directly: `ADD_FIELD {worldId, opts}` builds the coarse layer and replies `FIELD_BUILT` (cells, bytes,
-  build ms); `REMOVE_FIELD` frees it; `CHUNK` and `ROCK` drive the fine layer.
+  build ms); `REMOVE_FIELD` frees it; `CHUNK` and `ROCK` drive the fine layer; `ROUTE` plans a route
+  (below).
 - `SectorRoom` sends its cut field's own layout options (`CutFieldSubsystem.navOpts`, the same
   `ChunkOpts` the cut uses, #15) when the field is created, logs `nav coarse layer built`, and detaches
   on dispose. `NavWorker.addField` returns at once: chunk and rock events posted before the build replies
   queue in order behind it, so the field attaches before the streamer's first step and needs no replay. Rooms without a cut field never start the worker.
 - Measured (desktop, print-only): a field with a clearing builds in ~8 ms in the worker, 285 KB.
+
+## The route planner (`core/nav/routePlanner.ts`)
+Runs on the nav worker over one field's two layers; a request is start, goal and hull clearance (how far
+the hull's centre stays from rock, from `shipTuning`, #18). Room at a point is the fine layer where its
+chunk is loaded and rock is within its reach, else the coarse layer.
+1. Straight line clear ⇒ that is the route, no search (most requests).
+2. Coarse A* over the whole field (cells with room for the hull): which way round, which lane.
+3. Fine A* over 64 u cells in a 5×5-chunk window round the start, to the goal or to where the coarse path
+   leaves the window. Diagonals never cut a corner.
+4. String-pull: keep only the turns a straight line can't skip. Past the window the route follows coarse
+   cell points; the ship asks again as it goes (slice 9).
+- Line checks leap by the room to spare (minus a cell diagonal) and, when tight, visit every 64 u cell
+  the segment crosses (a fixed step skipped thin rock).
+- Per-request caps: 30 000 coarse and 60 000 fine expansions; past them, or with no way at this clearance,
+  the answer is `none`. At most 64 waypoints (`NAV_ROUTE_MAX_POINTS`).
+- Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance}` → `ROUTE {reqId, status,
+  points, expanded, ms}` (points transferred, not copied). `NavField.route(...)` returns a Promise;
+  `NavWorker.inFlight` counts open requests; a detached field answers `none`; a worker exit rejects
+  every open request.
+- A ship keeps its route in a `NavRoute` (`core/ai/stepRoute.ts`), walked by the one `stepRoute` in
+  open mode (runs out at the goal instead of looping; `stepNavRoute` returns -1 when finished).
+- Measured (desktop, print-only): a fighter round a rock 447 expansions, ~3.5 ms, 4 698 u against a
+  4 871 u grid path; a battleship across the field 6 waypoints, ~9 200 expansions, ~18 ms in the worker.
 
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
@@ -129,3 +153,5 @@ tagged with it.
   streets are closed to capitals.
   Slice 4b: the nav worker builds the coarse layer for every cut-field sector room.
   Slice 5: the fine layer, per loaded chunk from the cut rocks, kept current as rocks break up or move.
+  Slice 6: the route planner on the worker (`ROUTE`), `NavField.route`, `stepRoute` open mode and the
+  `NavRoute` record. Not yet flown by any ship (slice 7).
