@@ -16,6 +16,7 @@ import type { StructureRecord } from '../structures/StructureRegistry.js';
 import { structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons } from '../../core/structures/gateGeometry.js';
 import { convexHullCCW } from '../../core/swarm/asteroidShape.js';
+import { RestingObstacles, type RestingSources } from './RestingObstacles.js';
 
 /** What the room tells it. */
 export interface RoomNavDeps {
@@ -28,6 +29,8 @@ export interface RoomNavDeps {
   hullOf(sessionId: string): (AutopilotHull & { playerId: string }) | null;
   /** The room's structures (static obstacles for the fine layer); read at `host`. */
   structures?(): { all(): Iterable<StructureRecord>; onChange(fn: (rec: StructureRecord, added: boolean) => void): () => void } | undefined;
+  /** Resting wrecks / scrap / plain asteroids (slice C2); read at `host`. */
+  resting?(): RestingSources | undefined;
 }
 
 /** A structure as the fine layer's static obstacle: the parts its physics
@@ -52,6 +55,7 @@ export class RoomNav {
   private readonly structureIds = new Map<string, number>();
   private nextObstacleId = 1;
   private unsubscribe: (() => void) | undefined;
+  private resting: RestingObstacles | undefined;
   /** The AI brains' routes (set once a field is hosted). */
   routes: NavRoutes | undefined;
   /** Stable (asking allocates no closure). */
@@ -82,6 +86,11 @@ export class RoomNav {
       for (const rec of structures.all()) this.structureChanged(rec, true);
       this.unsubscribe = structures.onChange((rec, added) => this.structureChanged(rec, added));
     }
+    const resting = this.deps.resting?.();
+    if (resting) {
+      this.resting = new RestingObstacles(resting, (id, o) => this.field?.obstacle(id, o), () => this.nextObstacleId++);
+      this.resting.attach();
+    }
     return this.routes = new NavRoutes(this.routeFn, this.deps.now);
   }
 
@@ -109,6 +118,9 @@ export class RoomNav {
   /** Does this AI ship wait short of its goal (slice 9's `blocked`)? */
   waiting(id: string): boolean { return this.routes?.waiting(id) === true; }
 
+  /** A swarm body left the world (`SwarmEvictor`, the one removal site). */
+  swarmGone(id: string): void { this.resting?.gone(id); }
+
   /** A player left the room. */
   forget(playerId: string): void { this.autopilot.forget(playerId); }
 
@@ -117,6 +129,8 @@ export class RoomNav {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.structureIds.clear();
+    this.resting?.detach();
+    this.resting = undefined;
     this.field?.detach();
     this.field = undefined;
     this.routes = undefined;
