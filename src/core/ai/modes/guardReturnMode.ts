@@ -34,7 +34,23 @@ export class GuardReturnMode implements IPilotMode {
   stopY = 0;
 
   /** Take a post (`setGuardPost`): radius `r` already floored by the brain.
-   *  A post is a hold: it ends a hunt and a travel. */
+   *  A post is a hold: it ends a hunt and a travel.
+   *
+   *  The GUARD POST: the area (centre + radius) it was sent to
+   *  defend. A broadside capital with a post fights from it (see
+   *  `BroadsideHelm.guard`) instead of holding its gun stand-off; any other
+   *  ship engages only targets inside the radius (measured from the post)
+   *  and flies back to the post when it has none (the guard leash). The radius is
+   *  at least `shipTuning(kind).guardRadiusMin` (#18), so a big hull has room
+   *  to turn. Independent of the move target / flock roles (those steer the
+   *  IDLE drone). Server-only: the client never ticks the drone brain.
+   *
+   *  `anchorId` makes the post FOLLOW that ship (an escort guards round
+   *  the ship it escorts): each tick the post moves to the anchor's live pose
+   *  (`view.resolveEntityInto`); while the anchor can't be resolved the post
+   *  holds its last known spot ((x, y) until the first resolve); the post is
+   *  cleared when the anchor leaves the AI controller (`noteEntityGone`).
+   *  Omitted / null ⇒ a fixed post at (x, y). */
   post(x: number, y: number, r: number, anchorId: string | null, o: PilotOrderModes): void {
     this.on = true;
     this.anchorId = anchorId;
@@ -46,9 +62,12 @@ export class GuardReturnMode implements IPilotMode {
   }
 
   /**
-   * Stop (`stopAt`): the spot the pilot's brakes (reverse plus damping, this
-   * kind's handling `h`) bring it to from (vx, vy) at (x, y), along its
-   * course, into (`stopX`, `stopY`). The brain posts the guard there.
+   * RTS Part B slice 9, Stop (`stopAt`): The ship brakes to a halt along its course and
+   * guards the spot it stops on: the post is where the pilot's brakes
+   * (reverse plus damping, this kind's handling) bring it from (vx, vy) at
+   * (x, y), so the nose stays on course and it never turns back for a point
+   * it has already passed. Ends a travel and a hunt. Server-only. This fills
+   * (`stopX`, `stopY`) with kind handling `h`; the brain posts the guard there.
    */
   brakePoint(h: PilotHandling, x: number, y: number, vx: number, vy: number): void {
     const v = Math.hypot(vx, vy);
