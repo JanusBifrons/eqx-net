@@ -140,7 +140,7 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect(min).toBeGreaterThan(576);
   });
 
-  it('no way at this clearance (goal inside a rock) ⇒ none, within the expansion caps', () => {
+  it('no way to the goal (inside a rock) ⇒ nearest: a clear route to a point with room, nearer the goal, within the caps', () => {
     const at = busyChunk();
     const { coarse, fine } = world(at);
     const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
@@ -149,8 +149,15 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect(p.roomAt(rock.x, rock.y)).toBe(0);
     let sx = rock.x - rock.radius - 300;
     while (p.roomAt(sx, rock.y) < fighter) sx -= 64;
-    expect(p.plan(coarse, fine, sx, rock.y, rock.x, rock.y, fighter, out)).toBe(0);
-    expect(p.status).toBe('none');
+    sx -= 600; // a little way off, so there is somewhere nearer to go
+    while (p.roomAt(sx, rock.y) < fighter) sx -= 64;
+    const n = p.plan(coarse, fine, sx, rock.y, rock.x, rock.y, fighter, out);
+    expect(p.status).toBe('nearest');
+    expect(n).toBeGreaterThan(0);
+    const ex = out[(n - 1) * 2]!, ey = out[(n - 1) * 2 + 1]!;
+    expect(Math.hypot(ex - rock.x, ey - rock.y)).toBeLessThan(Math.hypot(sx - rock.x, 0) - 300);
+    expect(p.roomAt(ex, ey)).toBeGreaterThanOrEqual(fighter);
+    expect(minRoomAlong(p, sx, rock.y, out, n)).toBeGreaterThanOrEqual(fighter - 1e-6);
     expect(p.expanded).toBeGreaterThan(0);
     expect(p.expanded).toBeLessThanOrEqual(NAV_COARSE_EXPAND_CAP + NAV_FINE_EXPAND_CAP);
   });

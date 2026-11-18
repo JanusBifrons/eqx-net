@@ -24,7 +24,8 @@ const fighter = getShipKind('fighter');
 const opts: ChunkOpts = { seed: 'look', battleshipLength: getShipKind('battleship').radius * 2, fighterLength: fighter.radius * 2 };
 
 /** Two open spots either side of a big rock in a sparse chunk (the straight
- *  line between them blocked, a fighter route round it). */
+ *  line between them blocked, a full fighter route round it: a `nearest`
+ *  route, slice 9, ends short and the ship waits there). */
 function crossing(): { ax: number; ay: number; bx: number; by: number } {
   const coarse = new CoarseFieldMap(); coarse.build(opts);
   const fine = new FineFieldLayer(opts);
@@ -37,7 +38,7 @@ function crossing(): { ax: number; ay: number; bx: number; by: number } {
     for (let d = r.radius + 300; d < r.radius + 1500; d += 100) {
       const ax = r.x - d, bx = r.x + d;
       if (p.roomAt(ax, r.y) >= room && p.roomAt(bx, r.y) >= room && !p.segmentClear(ax, r.y, bx, r.y, c) &&
-        p.plan(coarse, fine, ax, r.y, bx, r.y, c, out) > 1) return { ax, ay: r.y, bx, by: r.y };
+        p.plan(coarse, fine, ax, r.y, bx, r.y, c, out) > 1 && p.status === 'route') return { ax, ay: r.y, bx, by: r.y };
     }
   }
   throw new Error('no crossing');
