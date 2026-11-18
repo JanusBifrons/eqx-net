@@ -215,7 +215,7 @@ const ROOM_STANDING: StandingQuery = { of: (from, to) => getTradeSink()?.standin
  *  settings live in the economy store). No sink ⇒ the catalogue defaults. */
 const ROOM_POLICY = (faction: string): FactionPolicy => getTradeSink()?.policyOf?.(faction) ?? defaultFactionPolicy(faction);
 const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcOwner(a)])) as Record<NpcAllegianceId, string>;
-import { getStructureKind, isBuildableStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
 import type { FactionId } from '../../shared-types/factions.js';
@@ -343,7 +343,7 @@ import { deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from 
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
 import {
-  qualityHullFactor, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, fittedCargoMul, fittedHullMul, fittedUid, productName,
+  qualityHullFactor, STARTER_HULL_KINDS, fittedCargoMul, fittedHullMul, fittedUid,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
@@ -358,10 +358,6 @@ import {
   EngageTransitSchema,
   CancelTransitSchema,
   ClientReadyMessageSchema,
-  PlaceStructureSchema,
-  RemoveStructureSchema,
-  StructureActionSchema,
-  UpgradeStructureSchema,
   PilotShipSchema,
   SpectateSchema,
   CommandSchema,
@@ -3607,143 +3603,9 @@ export class SectorRoom extends Room<SectorState> {
       this.handleClientReady(client);
     });
 
-    // ── Structures plan, Phase 2 — placement / removal ──────────────────
-    this.onMessage('place_structure', (client: Client, raw: unknown) => {
-      const parsed = PlaceStructureSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'place_structure');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      // v4 A — nobody builds an alien gate.
-      if (!isBuildableStructureKind(parsed.data.kind)) return;
-      const id = this.structurePlacement.place(
-        owner,
-        parsed.data.kind,
-        parsed.data.x,
-        parsed.data.y,
-        // P2b — only a PLAYER's placement can need a packed structure.
-        { rot: parsed.data.rot, requirePacked: true },
-      );
-      if (id === null) {
-        logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
-        // Economy v2 W4b — say why when it was the packed item that was missing.
-        const kindId = parsed.data.kind;
-        if (this.structurePlacement.lastRefusal !== null) this.sendNotice(client, this.structurePlacement.lastRefusal);
-        else if (!STARTER_STRUCTURE_KINDS.includes(kindId) && this.findPacked(owner, `structure:${kindId}`) === null) {
-          this.sendNotice(client, `You need a Packed ${productName(`structure:${kindId}`)}: buy one on the Trade tab, or loot one.`);
-        }
-      } else {
-        // P2 bespoke trigger (testMode) — a placed storage structure starts
-        // stocked, so a trade E2E/showcase needn't fly cargo home first.
-        if (this.testSeedStorageHold !== null) {
-          const s = this.structureRegistry.get(id);
-          if (s !== undefined && (getStructureKind(s.kind).holdCapacity ?? 0) > 0) {
-            s.hold = { goods: { ...this.testSeedStorageHold.goods }, blueprints: [] };
-            this.storage.flushDirty();
-          }
-        }
-        // Refresh the slice so the new blueprint + its auto-connection appear on
-        // the next snapshot without waiting for the 1 Hz pulse.
-        this.rebuildStructuresSlice();
-        // Campaign 6.3 — event-driven persist so a crash can't erase the
-        // placement (the 60 s cadence + onDispose never run on a crash).
-        this.sectorPersistence.persistSoon();
-        auditEvent({
-          event: 'structure_placed',
-          sector: this.sectorKey ?? undefined,
-          owner,
-          kind: parsed.data.kind,
-          x: parsed.data.x,
-          y: parsed.data.y,
-        });
-      }
-    });
-
-    this.onMessage('remove_structure', (client: Client, raw: unknown) => {
-      const parsed = RemoveStructureSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'remove_structure');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      // Capture the kind BEFORE removal (the record is gone afterwards).
-      const removedKind = this.structureRegistry.get(parsed.data.id)?.kind;
-      if (this.structurePlacement.remove(owner, parsed.data.id)) {
-        this.rebuildStructuresSlice();
-        // Campaign 6.3 — a removal is durable state too (a crash must not
-        // resurrect a removed structure from a stale snapshot).
-        this.sectorPersistence.persistSoon();
-        auditEvent({
-          event: 'structure_removed',
-          sector: this.sectorKey ?? undefined,
-          owner,
-          kind: removedKind ?? 'unknown',
-        });
-      }
-    });
-
-    // Phase-1 issue 6 — structure action buttons (deconstruct toggle / reconnect
-    // / clear connections). The client references the structure by its numeric
-    // swarm entityId (the selected id); resolve → registry record → OWNER-gate.
-    this.onMessage('structure_action', (client: Client, raw: unknown) => {
-      const parsed = StructureActionSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'structure_action');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.id);
-      if (!swarmRec) return;
-      const rec = this.structureRegistry.get(swarmRec.id);
-      if (!rec || rec.owner !== owner) return; // own-only
-      switch (parsed.data.action) {
-        case 'toggle_deconstruct':
-          rec.isDeconstructing = !rec.isDeconstructing;
-          break;
-        case 'reconnect':
-          this.structureGrid.reconnect(rec.id);
-          break;
-        case 'clear_connections':
-          this.structureGrid.clearConnections(rec.id);
-          break;
-      }
-      // Refresh the slice so the button state + web update on the next snapshot
-      // without waiting for the 1 Hz pulse.
-      this.rebuildStructuresSlice();
-    });
-
-    // ── Phase 4 WS-B4 — structure leveling (paid Upgrade build phase) ──────
-    // The client references the structure by its numeric swarm entityId (the
-    // selected id); resolve → registry record → OWNER-gate, then start a paid
-    // build phase (charges drained during the build by the grid pulse). On the
-    // build's completion the level increments + the per-level stat grant applies.
-    this.onMessage('upgrade_structure', (client: Client, raw: unknown) => {
-      const parsed = UpgradeStructureSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'upgrade_structure');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      if (!swarmRec) return;
-      const rec = this.structureRegistry.get(swarmRec.id);
-      if (!rec || rec.owner !== owner) return; // own-only
-      if (this.structureGrid.upgradeStructure(rec.id)) {
-        // Refresh the slice so the blueprint state + the LVL line update on the
-        // next snapshot without waiting for the 1 Hz pulse. The build's
-        // COMPLETION is audited via `onConstructed` (`structure_built`).
-        this.rebuildStructuresSlice();
-      }
-    });
-
     // Client-message features (features/index.ts): test-only cues, teleporters,
-    // trade, the research lab, blueprints, cargo, structure settings, bounties
-    // and ship upgrades.
+    // trade, the research lab, blueprints, cargo, structures, structure
+    // settings, bounties and ship upgrades.
     this.roomFeatures = registerRoomFeatures({
       devTest: {
         testMode: this.testMode,
@@ -3800,6 +3662,11 @@ export class SectorRoom extends Room<SectorState> {
       bountyRoom: { broadcastWorldNotice: (notice) => this.broadcastWorldNotice(notice) },
       sendNotice: (client, text) => this.sendNotice(client, text),
       applyShipUpgrade: (client, pid, shipId, alloc) => this.applyShipUpgrade(client, pid, shipId, alloc),
+      structurePlacement: () => this.structurePlacement,
+      structureGrid: () => this.structureGrid,
+      sectorPersistence: () => this.sectorPersistence,
+      testSeedStorageHold: () => this.testSeedStorageHold,
+      findPacked: (owner, product) => this.findPacked(owner, product),
       logger,
     });
 
