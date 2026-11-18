@@ -167,6 +167,7 @@ import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
+import { isLaunchableHull } from '../../shared-types/launch.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector, isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
@@ -352,7 +353,7 @@ import { deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from 
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
-  InstallBlueprintSchema, UnpackHullSchema, qualityHullFactor, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
+  InstallBlueprintSchema, UnpackHullSchema, qualityHullFactor, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
@@ -9824,11 +9825,12 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
 
-    // Economy v2 W5b — the ship-picker gate. Starter hulls (scout, fighter)
-    // are always free; any other kind must be a ship you OWN (a roster row,
-    // e.g. one you unpacked). A fresh spawn asking for another kind gets a
-    // starter hull instead, and is told how to get the one it wanted.
-    if (!resumedFromStore && this.sectorKey !== null && this.enforceHullGate && !STARTER_HULL_KINDS.includes(chosenKind)) {
+    // Economy v2 W5b — the ship-picker gate. A launchable hull (the launch
+    // table, shared-types/launch.ts: sub-capitals and the player capitals)
+    // needs no packed hull; any other kind must be a ship you OWN (a roster
+    // row, e.g. one you unpacked). A fresh spawn asking for another kind gets
+    // a starter hull instead, and is told how to get the one it wanted.
+    if (!resumedFromStore && this.sectorKey !== null && this.enforceHullGate && !isLaunchableHull(chosenKind)) {
       const wanted = getShipKind(chosenKind).displayName;
       chosenKind = DEFAULT_SHIP_KIND;
       this.sendNotice(client, `You need a ${wanted}: buy a packed one on the Trade tab (or loot one), then unpack it at your storage.`);

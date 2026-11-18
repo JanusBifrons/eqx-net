@@ -2,13 +2,13 @@ import { Box, Button, Card, CardActionArea, Dialog, DialogActions, DialogContent
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { useEffect, useState } from 'react';
 import { DEFAULT_SHIP_KIND, PLAYABLE_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds';
-import { STARTER_HULL_KINDS } from '../../shared-types/blueprints';
+import { isLaunchableHull } from '../../shared-types/launch';
 
-/** Economy v2 W5b — a NEW ship can only be a starter hull; any other kind must
+/** Economy v2 W5b — a NEW ship can only be a launchable hull (shared-types/launch.ts); any other kind must
  *  be bought packed, unpacked at your storage, then picked from the roster.
  *  (The server enforces the same rule; this keeps the picker honest.) */
 export function isFreeHull(kind: ShipKindId): boolean {
-  return STARTER_HULL_KINDS.includes(kind);
+  return isLaunchableHull(kind);
 }
 import { ShipSilhouette } from '../render/shipShapeSvg';
 
