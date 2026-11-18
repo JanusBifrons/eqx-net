@@ -36,9 +36,9 @@ export const loot: Shot = {
   reel: true,
   server: 'lean',
   viewport: 'phone-landscape',
-  // A roster-backed room (cargo needs a roster row). Its heavy is peaceful and
-  // hull-exposed: auto-fire kills it fast and it drops its pod.
-  target: { room: 'showcase-levelup', params: { shipKind: 'interceptor', ...SURVIVE } },
+  // Roster-backed (cargo needs a roster row). Its near heavy is peaceful and
+  // hull-exposed: auto-fire kills it fast and its pod survives the coin flip.
+  target: { room: 'showcase-loot', params: { shipKind: 'interceptor', ...SURVIVE } },
   hud: 'full',
   durationMs: 20_000,
   async run(ctx) {

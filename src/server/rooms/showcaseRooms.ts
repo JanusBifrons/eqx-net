@@ -290,6 +290,22 @@ export const SHOWCASE_LEVELUP_OPTS = {
 } as const;
 
 /**
+ * The "open a pod" loot shot: like levelup, but the kill must drop a pod. A
+ * death's coin flip is seeded by the drone id, so it is the same every run:
+ * `pose-drone-0`'s single stack is always lost, `pose-drone-1` keeps its
+ * salvage. Drone 0 waits far out of range; drone 1 sits in auto-fire reach.
+ * Lock: `showcaseLootRoom.test.ts`.
+ */
+export const SHOWCASE_LOOT_OPTS = {
+  ...SHOWCASE_LEVELUP_OPTS,
+  sectorKey: 'showcase-loot',
+  dronePoses: [
+    { kind: 'heavy', x: 4000, y: 4000, angle: 0 },
+    { kind: 'heavy', x: 0, y: 140, angle: 0, hullExposed: true },
+  ],
+} as const;
+
+/**
  * A dense field for the scale shot: 500 bodies (60 % asteroids, the rest
  * peaceful drones) packed into a 2500 u radius — inside one client's interest
  * window, so it reads as dense on screen. (`swarm-tidi`'s 4000 are spread over
@@ -573,6 +589,7 @@ export const SHOWCASE_ROOMS = {
   'showcase-base': SHOWCASE_BASE_OPTS,
   'showcase-defence': SHOWCASE_DEFENCE_OPTS,
   'showcase-levelup': SHOWCASE_LEVELUP_OPTS,
+  'showcase-loot': SHOWCASE_LOOT_OPTS,
   'showcase-swarm': SHOWCASE_SWARM_OPTS,
   'showcase-homestead': SHOWCASE_HOMESTEAD_OPTS,
   'showcase-bounty': SHOWCASE_BOUNTY_OPTS,
