@@ -34,6 +34,9 @@ export interface PerfScene {
    *  holds these keys for the whole window. The camera then follows the ship
    *  as in play (`camera` is not held). */
   pilotHold?: { keys: string[]; initialAngle: number };
+  /** The scene's room option `wreckField` is the thing measured:
+   *  `EQX_SCENE_WRECK_FIELD=0` leaves it off (the A/B's no-field arm). */
+  wreckFieldSwitch?: boolean;
   /** A galaxy sector key: the room gets that sector's cut field (seed and
    *  pocket clearings) exactly as the live sector boots it
    *  (`resolveSectorConfig`). `EQX_SCENE_GALAXY_FIELD=0` leaves it off (the
@@ -72,7 +75,8 @@ export const ROCK_FIELD_FIGHT = 4000;
 
 /** Wreck fields slice 6: the opt-in room option `wreckField` alone (no rocks,
  *  no ships but the pilot), layout seed `a`. `persistSector: false`, so a run
- *  never inherits a touched hull from the one before. */
+ *  never inherits a touched hull from the one before. `EQX_SCENE_WRECK_FIELD=0`
+ *  leaves the field out (the A/B's no-field arm, `perfRoomOptions`). */
 const WRECK_FIELD_ROOM: PerfScene['room'] = {
   droneCount: 0, asteroidConfig: [], persistSector: false,
   wreckField: { seed: 'a', x: 0, y: 0, sides: ['ashen-league', 'vel-concord'] },
@@ -452,33 +456,39 @@ export const PERF_SCENES: readonly PerfScene[] = [
   },
   {
     // Wreck fields slice 6 (macro-terrain F3): the client draw cost of a
-    // loaded old battlefield. Layout seed `a` (centre 0,0) has the worst
-    // 5 x 5 chunk ring measured (56 live pieces, `FIELD_RING_WORST_PIECES`,
-    // ring centred on chunk (4, 0)). The idle pilot sits in that chunk, so
-    // the streamer loads the whole worst ring around it; the camera holds the
-    // normal play zoom on the densest view in it (7 pieces in a 960 px view,
-    // all in full art). No rock field: the wrecks alone.
+    // loaded old battlefield. Layout seed `a` (centre 0,0; wreck fields 11
+    // tuning: a 7 km core) has its worst 5 x 5 chunk ring centred on chunk
+    // (0, -1): 352 live pieces (170 hulls), nearly the whole field. The idle
+    // pilot sits in that chunk, clear of every footprint, so the streamer
+    // loads the whole worst ring around it; the camera holds the normal play
+    // zoom on the densest phone view in it (23 pieces, 11 hulls in a sideways
+    // Pixel 7's 2,600 x 1,160 u view). No rock field: the wrecks alone.
+    // The no-field arm: `--base HEAD --base-env EQX_SCENE_WRECK_FIELD=0`.
     id: 'wreck-field',
     title: 'The worst-loaded wreck field ring, seen at the normal zoom',
     room: WRECK_FIELD_ROOM,
-    spawn: { x: 19_640, y: 3752 },
-    camera: { x: 19_640, y: 3752, zoom: 0.6 },
+    wreckFieldSwitch: true,
+    spawn: { x: 2000, y: -1500 },
+    camera: { x: 5600, y: 3000, zoom: 0.6 },
     durationMs: 20_000,
-    minSwarm: 1,
+    // 0, not 1: the no-field arm (EQX_SCENE_WRECK_FIELD=0) has no swarm.
+    // Read the field arm's swarm count in the verdict (~350 pieces loaded).
+    minSwarm: 0,
     soak: true,
   },
   {
     // The same loaded ring from the fighter's zoom-out floor, held on the
-    // ring's centre chunk (21 pieces in view): fighter and frigate pieces
-    // drop to far-LOD specks (`wreckPieceFarLod`, under 8 px), the light
-    // cruiser's pieces stay art.
+    // densest floor view in it (80 pieces, 38 hulls in a 6,100 x 2,750 u
+    // view): fighter and frigate pieces drop to far-LOD specks
+    // (`wreckPieceFarLod`, under 8 px), capital pieces stay art.
     id: 'wreck-field-far',
     title: 'The worst-loaded wreck field ring from the zoom-out floor (specks)',
     room: WRECK_FIELD_ROOM,
-    spawn: { x: 19_640, y: 3752 },
-    camera: { x: 18_432, y: 2048, zoom: 0.15 },
+    wreckFieldSwitch: true,
+    spawn: { x: 2000, y: -1500 },
+    camera: { x: 2800, y: 300, zoom: 0.15 },
     durationMs: 20_000,
-    minSwarm: 1,
+    minSwarm: 0,
     soak: true,
   },
 ];

@@ -9,7 +9,7 @@ import { resolveSectorConfig } from '../galaxy/GalaxyRegistry.js';
 
 /** The room options for one perf scene. */
 export function perfRoomOptions(scene: PerfScene, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
-  return {
+  const o: Record<string, unknown> = {
     testMode: true,
     defaultSpawnX: scene.spawn.x,
     defaultSpawnY: scene.spawn.y,
@@ -25,6 +25,9 @@ export function perfRoomOptions(scene: PerfScene, env: NodeJS.ProcessEnv = proce
       ? { cutField: resolveSectorConfig(scene.galaxyField).cutField }
       : {}),
   };
+  // A wreck field scene's no-field arm: `EQX_SCENE_WRECK_FIELD=0`.
+  if (scene.wreckFieldSwitch === true && env['EQX_SCENE_WRECK_FIELD'] === '0') delete o['wreckField'];
+  return o;
 }
 
 /** Registers every scene's room. The room class is passed in (`SectorRoom`)

@@ -5,6 +5,8 @@ import { cutFieldOpts } from './chunkStreamer.js';
 import { wreckPieceGeometry } from '../destruction/wreckPieces.js';
 import { wreckKindAllowed } from '../destruction/wreckKindAllowed.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { hullPieceCounts, screenLine, worstRing } from './wreckFieldTestKit.js';
+import { WRECK_FIELD } from './wreckFieldLayout.js';
 
 const SIDES = ['ashen-league', 'vel-concord'] as const;
 const typical = (seed = 'thornfield', extra: Partial<WreckFieldOpts> = {}): WreckField =>
@@ -125,5 +127,11 @@ describe('wreckFieldLayout', () => {
       rows.push(`${seed.padEnd(10)} hulls ${f.hulls.length} (cap ${byClass.cap} sub ${byClass.sub} ftr ${byClass.ftr}, dropped ${f.dropped}) pieces ${totalPieces} | chunks ${f.byChunk.size} (${CHUNK_SIZE} u) | per chunk: hulls max ${Math.max(...hullCounts)} mean ${(f.hulls.length / f.byChunk.size).toFixed(1)}, pieces max ${Math.max(...pieces.values())} mean ${(totalPieces / f.byChunk.size).toFixed(1)} | worst 5x5 ring: hulls ${ringHulls} pieces ${ringPieces}`);
     }
     console.log(`wreck field per chunk:\n${rows.join('\n')}`);
+    // Wreck fields 11: how full a sideways phone screen is, across the core.
+    const lines = ['thornfield', 'a', 'b'].map((seed) => {
+      const f = typical(seed), p = hullPieceCounts(f), ring = worstRing(f, p);
+      return `${seed.padEnd(10)} ${screenLine(f, p, WRECK_FIELD.coreRadius)} | worst ring ${ring.pieces} pieces (${ring.hulls} hulls) at chunk (${ring.cx}, ${ring.cy})`;
+    });
+    console.log(`wreck field per phone screen:\n${lines.join('\n')}`);
   });
 });

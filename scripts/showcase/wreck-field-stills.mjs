@@ -6,7 +6,11 @@
 //   <look>-capital.png — a capital hull's pieces up close (2-3 big sections);
 //   <look>-cluster.png — a sub-capital / fighter cluster;
 //   <look>-wide.png    — the field at the normal play zoom (no ?zoom);
-//   <look>-far.png     — the gameplay zoom-out floor.
+//   <look>-far.png     — the gameplay zoom-out floor, centred on the core;
+//   <look>-dense.png   — the normal play zoom on the densest phone view
+//                        (wreck fields 11: the "tighter AND more wrecks" check).
+// Wreck fields 11: aged only (owner chose the cold look); the fresh arm is
+// still in LOOKS, commented out.
 // The real game as a phone player sees it: Pixel 7 held sideways (touch,
 // isMobile), the player's look (PLAYER_LOOK) and the full HUD (FILM_HUD). Each
 // shot joins its own room (fresh testId), so the fresh look is shot straight
@@ -47,8 +51,25 @@ for (const h of small) {
   const n = small.filter((o) => dist(o, h) < 900).length;
   if (n > best) { best = n; cluster = h; }
 }
-if (!capital || !cluster) throw new Error(`field has no capital/cluster (hulls ${FIELD.hulls.length})`);
-console.log(`field: ${FIELD.hulls.length} hulls; capital ${capital.kindId} at (${capital.x | 0}, ${capital.y | 0}) r ${capital.footprint | 0}; cluster of ${best} round ${cluster.kindId} at (${cluster.x | 0}, ${cluster.y | 0})`);
+// The densest sideways-phone view at the normal zoom (~2,600 x 1,160 u): most
+// pieces' hulls touching it. The ship parks at its nearest clear point.
+let dense = { x: FIELD.x, y: FIELD.y, n: -1 };
+for (let dx = -9000; dx <= 9000; dx += 200) for (let dy = -9000; dy <= 9000; dy += 200) {
+  const vx = FIELD.x + dx, vy = FIELD.y + dy;
+  let n = 0;
+  for (const h of FIELD.hulls) {
+    const ex = Math.max(0, Math.abs(h.x - vx) - 1300), ey = Math.max(0, Math.abs(h.y - vy) - 580);
+    if (ex * ex + ey * ey < h.footprint * h.footprint) n++;
+  }
+  if (n > dense.n) dense = { x: vx, y: vy, n };
+}
+const clearOf = (p) => !FIELD.hulls.some((h) => dist(h, p) < h.footprint + 80);
+let denseSpawn = { x: dense.x, y: dense.y };
+for (let k = 0; k < 400 && !clearOf(denseSpawn); k++) denseSpawn = { x: dense.x + ((k % 20) - 10) * 60, y: dense.y + (Math.floor(k / 20) - 10) * 60 };
+if (!capital && !cluster) throw new Error(`field has no hulls (${FIELD.hulls.length})`);
+if (!capital) console.log('field has no capital: the capital shot is skipped');
+console.log(`densest view: ${dense.n} hulls round (${dense.x | 0}, ${dense.y | 0}), ship at (${denseSpawn.x | 0}, ${denseSpawn.y | 0})`);
+console.log(`field: ${FIELD.hulls.length} hulls, ${FIELD.dropped} dropped; capital ${capital?.kindId} at (${capital?.x | 0}, ${capital?.y | 0}) r ${capital?.footprint | 0}; cluster of ${best} round ${cluster.kindId} at (${cluster.x | 0}, ${cluster.y | 0})`);
 
 // Pixel 7 held sideways (phones play landscape only).
 const P7 = devices['Pixel 7'];
@@ -63,14 +84,15 @@ const VIEW_H = PHONE.viewport.height;
 // Ship parked just off the hull (outside its footprint), zoomed so the hull fits the short side.
 const fit = (r) => Math.max(0.15, Math.min(1, VIEW_H / (2 * r + 500))).toFixed(3);
 const SHOTS = [
-  { name: 'capital', spawnX: capital.x, spawnY: capital.y - capital.footprint - 120, zoom: fit(capital.footprint) },
+  ...(capital ? [{ name: 'capital', spawnX: capital.x, spawnY: capital.y - capital.footprint - 120, zoom: fit(capital.footprint) }] : []),
   { name: 'cluster', spawnX: cluster.x, spawnY: cluster.y - cluster.footprint - 120, zoom: fit(700) },
   { name: 'wide', spawnX: FIELD.x, spawnY: FIELD.y },
   { name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: '0.15' },
+  { name: 'dense', spawnX: denseSpawn.x, spawnY: denseSpawn.y },
 ];
 const LOOKS = [
   { look: 'aged', room: 'wreck-field-test' },
-  { look: 'fresh', room: 'wreck-field-test-fresh' },
+  // { look: 'fresh', room: 'wreck-field-test-fresh' },
 ];
 
 const runDir = mkdtempSync(path.join(os.tmpdir(), 'eqx-wreck-stills-'));

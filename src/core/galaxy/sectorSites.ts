@@ -252,6 +252,19 @@ export function sectorCutField(sectorKey: string, enabled: boolean): SectorCutFi
   return { seed: `galaxy:${sectorKey}:v${SECTOR_FIELD_VERSION}`, clearings };
 }
 
+/** Wreck-free room round a wreck field's battle pocket beyond its rim (u,
+ *  wreck fields 11): a warp drop on the rim (within WARP_DROP_TOLERANCE)
+ *  lands clear, with hulls all round. The pocket's rock clearing
+ *  (`fieldClearingRadius`, rim + 2.5 km) would empty most of the 7 km wreck
+ *  core (`WRECK_FIELD.coreRadius`). */
+export const BATTLE_POCKET_WRECK_MARGIN = 500;
+
+/** A pocket's wreck clearing: its rock clearing, but the field's own battle
+ *  pocket only `BATTLE_POCKET_WRECK_MARGIN` past its rim. */
+export function wreckClearingRadius(site: SectorSite, centre: SectorSite): number {
+  return site.id === centre.id ? site.r + BATTLE_POCKET_WRECK_MARGIN : fieldClearingRadius(site);
+}
+
 export interface SectorWreckField {
   /** The layout seed (`wreckField` hashes `wrecks:<seed>`): the sector key. */
   seed: string;
@@ -260,7 +273,8 @@ export interface SectorWreckField {
   y: number;
   /** The two sides that fought here (faction ids: region powers). */
   sides: readonly [string, string];
-  /** Every pocket kept open (the battle pocket too: hulls ring it). */
+  /** Every pocket kept open (the battle pocket too, at
+   *  `wreckClearingRadius`: hulls ring it). */
   clearings: FieldClearing[];
 }
 
@@ -282,7 +296,7 @@ export function sectorWreckField(sectorKey: string, enabled: boolean): SectorWre
   if (!centre) return null;
   return {
     seed: sectorKey, x: centre.x, y: centre.y, sides: [sector.region, wreckRival(sector)],
-    clearings: sites.map((s) => ({ x: s.x, y: s.y, r: fieldClearingRadius(s) })),
+    clearings: sites.map((s) => ({ x: s.x, y: s.y, r: wreckClearingRadius(s, centre) })),
   };
 }
 
