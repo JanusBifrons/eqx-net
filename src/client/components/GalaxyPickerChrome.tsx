@@ -5,9 +5,7 @@ import {
   Alert,
   CircularProgress,
   Portal,
-  ButtonBase,
 } from '@mui/material';
-import { HUD } from '../hud/tokens';
 import { getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
 import { HangarWindow } from './hangar/HangarWindow';
@@ -18,13 +16,13 @@ import { fleetWarpRequest } from '../app/fleetWarp';
 import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
 import { useMountLog } from '../debug/useMountLog';
-import { buildSectorTooltip, ownerLine, shipsInSector } from './galaxyTooltip';
+import { buildSectorTooltip, shipsInSector } from './galaxyTooltip';
+import { GalaxySectorTooltip } from './GalaxySectorTooltip';
+import { QuickLaunchButton, useQuickLaunch } from './QuickLaunchButton';
 import { SectorInfoDrawer } from './SectorInfoDrawer';
 import { isSectorWarpable } from '../render/galaxy/galaxyLayerDecisions';
 import { isTouchDevice } from '../input/TouchInput';
 import { Z } from '../layout/zIndex';
-import { quickLaunchSector, QUICK_LAUNCH_KIND } from './quickLaunch';
-import { FOCUS_GLIDE_MS } from '../render/galaxy/galaxyFocus';
 import type { MutableRefObject } from 'react';
 
 /** Phase 2 #2 — one-shot loading overlay (static sx, hoisted per the drawer-perf
@@ -78,29 +76,6 @@ export interface GalaxyPickerApi {
    */
   deselect(): void;
 }
-
-/** Quick launch: a ghost cyan button (the mock-up's flow A, second button). */
-const QUICK_LAUNCH_SX = {
-  position: 'absolute',
-  right: 'calc(12px + env(safe-area-inset-right, 0px))',
-  bottom: 'calc(10px + env(safe-area-inset-bottom, 0px))',
-  zIndex: 1,
-  pointerEvents: 'auto',
-  fontFamily: HUD.font.label,
-  fontWeight: 700,
-  fontSize: 13,
-  letterSpacing: '.08em',
-  px: '18px',
-  minHeight: HUD.touchMin,
-  borderRadius: '4px',
-  color: HUD.color.auto,
-  bgcolor: 'rgba(7,11,21,0.82)',
-  border: '1px solid rgba(52,216,255,.55)',
-  boxShadow: '0 0 12px rgba(52,216,255,.18)',
-  whiteSpace: 'nowrap',
-  '&:hover': { borderColor: HUD.color.auto, boxShadow: '0 0 16px rgba(52,216,255,.35)' },
-  '&.Mui-disabled': { color: HUD.color.inkFaint, borderColor: HUD.color.edge2, boxShadow: 'none' },
-} as const;
 
 export interface GalaxyPickerChromeProps {
   /** Set by the chrome on mount so the host can drive the picker. */
@@ -210,8 +185,13 @@ export function GalaxyPickerChrome({
   // Join flow stage 7 — Quick launch: the sector it is gliding into. The map's
   // focus view follows it (the glide is the loading screen), then the Fighter
   // launches through the same path as the Hangar's LAUNCH.
-  const [quickLaunching, setQuickLaunching] = useState<string | null>(null);
-  useEffect(() => onFocusChange?.(quickLaunching ?? selectedSectorKey), [quickLaunching, selectedSectorKey, onFocusChange]);
+  const quick = useQuickLaunch({
+    isWarp,
+    galaxyStats,
+    onStart: () => setSelectedSectorKey(null),
+    onLaunch: (kind, sector) => { setSelectedShipKind(kind); onSpawnNewShip?.(kind, sector); },
+  });
+  useEffect(() => onFocusChange?.(quick.launching ?? selectedSectorKey), [quick.launching, selectedSectorKey, onFocusChange]);
 
   // Keep the roster polled while the picker is mounted (the popover sub-list +
   // the Hangar consume store.shipRoster). Refcounted — safe alongside the
@@ -299,22 +279,6 @@ export function GalaxyPickerChrome({
     if (isWarp || auth.user || auth.guest) return false;
     sendToAuth(sector, 'spectate');
     return true;
-  };
-
-  const quickTarget = isWarp ? null : quickLaunchSector(galaxyStats);
-  const quickLaunch = (): void => {
-    if (quickTarget === null || quickLaunching !== null) return;
-    logEvent('quick_launch', { sector: quickTarget });
-    // Signed out: Quick launch flies as a guest (sign-in is offered later).
-    const auth = useAuthStore.getState();
-    if (auth.user === null && !auth.guest) auth.continueAsGuest();
-    setSelectedSectorKey(null);
-    setQuickLaunching(quickTarget);
-    const sector = quickTarget;
-    window.setTimeout(() => {
-      setSelectedShipKind(QUICK_LAUNCH_KIND);
-      onSpawnNewShip?.(QUICK_LAUNCH_KIND, sector);
-    }, FOCUS_GLIDE_MS);
   };
 
   // Living Galaxy Phase 6 — derive the hovered-sector tooltip content (pure).
@@ -450,16 +414,7 @@ export function GalaxyPickerChrome({
        *  Bottom-right is free on the landing map; hidden while a sector's drawer
        *  (docked there) or the Hangar is open. */}
       {!isWarp && galaxyReady && selectedSectorKey === null && pendingSpawnSector === null && (
-        <ButtonBase
-          data-testid="galaxy-quick-launch"
-          data-target={quickTarget ?? ''}
-          disabled={quickTarget === null}
-          aria-busy={quickLaunching !== null}
-          onClick={quickLaunch}
-          sx={QUICK_LAUNCH_SX}
-        >
-          {quickLaunching !== null ? `Warping into ${getSector(quickLaunching)?.name ?? quickLaunching}…` : 'QUICK LAUNCH ▸'}
-        </ButtonBase>
+        <QuickLaunchButton quick={quick} />
       )}
 
       {/* Equinox Phase 7 (Item 1) — Close button for the in-game warp map.
@@ -507,74 +462,7 @@ export function GalaxyPickerChrome({
        *  (the user's "still shows the tooltip on mobile"). The drawer is the
        *  touch affordance; the hover tooltip is gated out entirely on touch. */}
       {!isTouchDevice() && galaxyHover && sectorTip && (
-        <Box
-          data-testid="galaxy-sector-tooltip"
-          data-tooltip-sector={galaxyHover.sectorKey}
-          sx={{
-            position: 'fixed',
-            // Equinox Phase 9 — anchored ABOVE-CENTRE of the hex. galaxyHover now
-            // carries the hex's TOP-centre (GalaxyMapLayer.updateHover), so centre
-            // the tooltip horizontally on it and float it just above (vs the old
-            // down-right-of-cursor offset). `textAlign:center` keeps the copy tidy
-            // under the centred anchor.
-            left: galaxyHover.left,
-            top: galaxyHover.top,
-            transform: 'translate(-50%, calc(-100% - 6px))',
-            textAlign: 'center',
-            zIndex: 5,
-            pointerEvents: 'none',
-            bgcolor: 'rgba(8,12,24,0.94)',
-            border: '1px solid #2a3550',
-            borderRadius: 1,
-            px: 1,
-            py: 0.75,
-            maxWidth: 220,
-          }}
-        >
-          <Typography sx={{ color: '#dffff0', fontSize: 12, fontWeight: 700, lineHeight: 1.2 }}>
-            {sectorTip.name}
-          </Typography>
-          <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            {ownerLine(sectorTip)}
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
-            {sectorTip.players > 0 && (
-              <Typography sx={{ color: '#6bff9b', fontSize: 10 }} title="Players">▲ {sectorTip.players}</Typography>
-            )}
-            {sectorTip.enemies > 0 && (
-              <Typography sx={{ color: '#ff6b6b', fontSize: 10 }} title="Hostiles">✦ {sectorTip.enemies}</Typography>
-            )}
-            {sectorTip.neutrals > 0 && (
-              <Typography sx={{ color: '#ffd479', fontSize: 10 }} title="Neutrals">◇ {sectorTip.neutrals}</Typography>
-            )}
-            {sectorTip.structures > 0 && (
-              <Typography sx={{ color: '#9ab4dd', fontSize: 10 }} title="Structures">⬡ {sectorTip.structures}</Typography>
-            )}
-            {sectorTip.players + sectorTip.enemies + sectorTip.neutrals + sectorTip.structures === 0 && (
-              <Typography sx={{ color: '#6b7280', fontSize: 10 }}>no activity</Typography>
-            )}
-          </Box>
-          {sectorTip.event !== null && (
-            <Typography sx={{ color: '#ff9f43', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-event">
-              ⚑ {sectorTip.event} underway
-            </Typography>
-          )}
-          {sectorTip.capital !== null && (
-            <Typography sx={{ color: '#9ec9ff', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-capital">
-              ⚓ Capital sighted: the {sectorTip.capital}
-            </Typography>
-          )}
-          {sectorTip.elite !== null && (
-            <Typography sx={{ color: '#ffc850', fontSize: 10, mt: 0.25 }} data-testid="galaxy-tooltip-elite">
-              ★ {sectorTip.elite} sighted
-            </Typography>
-          )}
-          {sectorTip.features.length > 0 && (
-            <Typography sx={{ color: '#7a8499', fontSize: 9, mt: 0.25, textTransform: 'capitalize' }}>
-              {sectorTip.features.join(' · ')}
-            </Typography>
-          )}
-        </Box>
+        <GalaxySectorTooltip hover={galaxyHover} tip={sectorTip} />
       )}
 
       {/* Equinox Phase 9 (item 2) — the docked SectorInfoDrawer REPLACES the old

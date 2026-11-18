@@ -97,7 +97,7 @@ test.describe('logged-out (sign-in asked at Launch)', () => {
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
     const quick = page.getByTestId('galaxy-quick-launch');
     // The feed's busiest contested sector (any sector on a calm galaxy).
-    await expect(quick).toHaveAttribute('data-target', /S/, { timeout: 15_000 });
+    await expect(quick).toHaveAttribute('data-target', /\S/, { timeout: 15_000 });
     await quick.click();
     // No Hangar and no login wall: the map glides in, then a guest Fighter launches.
     await expect(page.getByTestId('hangar-window')).toHaveCount(0);
