@@ -3,10 +3,11 @@
  * on every real galaxy sector.
  */
 import { describe, it, expect } from 'vitest';
-import { GALAXY_SECTORS, getNeighbours, getSector, axialToPixel } from './galaxy.js';
-import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE, sectorCutField, warpDropPoint, FIELD_CLEARING_MARGIN, BELT_CLEARING_MARGIN, fieldClearingRadius } from './sectorSites.js';
+import { GALAXY_SECTORS, GALAXY_FACTIONS, getNeighbours, getSector, axialToPixel } from './galaxy.js';
+import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE, sectorCutField, sectorWreckField, warpDropPoint, FIELD_CLEARING_MARGIN, BELT_CLEARING_MARGIN, fieldClearingRadius } from './sectorSites.js';
 import { cutFieldOpts, fieldRocksInBox } from '../terrain/chunkStreamer.js';
 import { slicedFieldLanes } from '../terrain/fieldLayout.js';
+import { rockFieldBlocker, wreckField } from '../terrain/wreckFieldLayout.js';
 
 describe('sectorSites', () => {
   it('is deterministic per sector key', () => {
@@ -166,5 +167,57 @@ describe('sectorCutField (macro terrain F4)', () => {
       }
     }
     expect(bad).toEqual([]);
+  }, 180_000);
+});
+
+describe('sectorWreckField (wreck fields F3, slice 8)', () => {
+  const marked = GALAXY_SECTORS.filter((s) => s.features.includes('wrecks'));
+
+  it('every wrecks-marked sector, and only those, gets one field; off with solar sectors off', () => {
+    expect(marked.length).toBeGreaterThan(0);
+    for (const s of GALAXY_SECTORS) expect(sectorWreckField(s.key, true) !== null, s.key).toBe(s.features.includes('wrecks'));
+    for (const s of marked) expect(sectorWreckField(s.key, false)).toBeNull();
+    expect(sectorWreckField('no-such-sector', true)).toBeNull();
+  });
+
+  it('sits on the battle pocket, keeps every pocket open, and is stable', () => {
+    for (const s of marked) {
+      const f = sectorWreckField(s.key, true)!;
+      expect(sectorWreckField(s.key, true)).toEqual(f);
+      expect(f.seed).toBe(s.key); // the layout hashes `wrecks:<seed>`
+      const combat = sectorSites(s.key).find((p) => p.kind === 'combat')!;
+      expect({ x: f.x, y: f.y }, s.key).toEqual({ x: combat.x, y: combat.y });
+      expect(f.clearings).toEqual(sectorSites(s.key).map((p) => ({ x: p.x, y: p.y, r: fieldClearingRadius(p) })));
+    }
+  });
+
+  it('sides: own region vs the most common other neighbour region, else a seeded rival power', () => {
+    const powers = new Set(GALAXY_FACTIONS.map((f) => f.id));
+    for (const s of marked) {
+      const [own, rival] = sectorWreckField(s.key, true)!.sides;
+      expect(own).toBe(s.region);
+      expect(rival).not.toBe(s.region);
+      expect(powers.has(rival), rival).toBe(true);
+      const others = getNeighbours(s.key).filter((n) => n.region !== s.region).map((n) => n.region);
+      if (others.length > 0) {
+        const c = (r: string): number => others.filter((o) => o === r).length;
+        expect(c(rival)).toBe(Math.max(...others.map(c)));
+      }
+    }
+  });
+
+  // Printed, not asserted beyond "most hulls placed": the hull counts each
+  // galaxy field lays out, around its pockets and (rock sectors) its rocks.
+  it('lays out in every marked sector, off the rocks where the sector has a field', () => {
+    for (const s of marked) {
+      const f = sectorWreckField(s.key, true)!;
+      const cut = sectorCutField(s.key, true);
+      const field = wreckField({ ...f, ...(cut ? { blocked: rockFieldBlocker(cutFieldOpts(cut.seed, cut.clearings)) } : {}) });
+      const sides = new Set(field.hulls.map((h) => h.owner));
+      console.log(`[wreck fields] ${s.key}${cut ? ' (+rocks)' : ''}: ${field.hulls.length} hulls, ${field.dropped} dropped, sides ${f.sides.join(' vs ')}`);
+      expect(field.hulls.length, s.key).toBeGreaterThan(field.dropped);
+      for (const side of sides) expect(f.sides).toContain(side);
+      for (const h of field.hulls) for (const c of f.clearings) expect(Math.hypot(h.x - c.x, h.y - c.y), `${s.key} hull in a clearing`).toBeGreaterThanOrEqual(c.r);
+    }
   }, 180_000);
 });

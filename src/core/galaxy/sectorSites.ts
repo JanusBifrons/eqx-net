@@ -15,7 +15,7 @@
  *
  * Pure (no I/O, no randomness beyond the seeded stream).
  */
-import { getNeighbours, getSector, axialToPixel, type GalaxySector } from './galaxy.js';
+import { getNeighbours, getSector, axialToPixel, GALAXY_FACTIONS, type GalaxySector } from './galaxy.js';
 import { SOLAR_SECTOR_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import { cutFieldPad, SLICED, type FieldClearing } from '../terrain/fieldLayout.js';
 
@@ -250,4 +250,52 @@ export function sectorCutField(sectorKey: string, enabled: boolean): SectorCutFi
     if (Math.hypot(site.x, site.y) - r < reach) clearings.push({ x: site.x, y: site.y, r });
   }
   return { seed: `galaxy:${sectorKey}:v${SECTOR_FIELD_VERSION}`, clearings };
+}
+
+export interface SectorWreckField {
+  /** The layout seed (`wreckField` hashes `wrecks:<seed>`): the sector key. */
+  seed: string;
+  /** Centre: the sector's battle pocket (an old battlefield). */
+  x: number;
+  y: number;
+  /** The two sides that fought here (faction ids: region powers). */
+  sides: readonly [string, string];
+  /** Every pocket kept open (the battle pocket too: hulls ring it). */
+  clearings: FieldClearing[];
+}
+
+/**
+ * Wreck fields F3 (slice 8): the old battlefield of a sector the galaxy map
+ * marks `wrecks`, or null. Owner 2026-11-17: a few, mid-size, anywhere, may
+ * share the sector with a rock field (the room's rock blocker keeps hulls off
+ * the rocks). Centred on the battle pocket, which stays open with every other
+ * pocket. Sides: the sector's own region against the most common other
+ * region among its neighbours, else a seeded rival power. Pure and
+ * deterministic per sector key. Off with solar-system sectors off.
+ */
+export function sectorWreckField(sectorKey: string, enabled: boolean): SectorWreckField | null {
+  if (!enabled) return null;
+  const sector = getSector(sectorKey);
+  if (!sector || !sector.features.includes('wrecks')) return null;
+  const sites = sectorSites(sectorKey);
+  const centre = sites.find((s) => s.kind === 'combat') ?? sites.find((s) => s.kind === 'base');
+  if (!centre) return null;
+  return {
+    seed: sectorKey, x: centre.x, y: centre.y, sides: [sector.region, wreckRival(sector)],
+    clearings: sites.map((s) => ({ x: s.x, y: s.y, r: fieldClearingRadius(s) })),
+  };
+}
+
+/** The other side of a sector's old battle (see `sectorWreckField`). Ties
+ *  between neighbour regions and the no-neighbour case are seeded. */
+function wreckRival(sector: GalaxySector): string {
+  const rand = rng(hash(`wrecks:rival:${sector.key}`));
+  const count = new Map<string, number>();
+  for (const n of getNeighbours(sector.key)) if (n.region !== sector.region) count.set(n.region, (count.get(n.region) ?? 0) + 1);
+  let best: string[] = [], most = 0;
+  for (const [region, c] of count) {
+    if (c > most) { best = [region]; most = c; } else if (c === most) best.push(region);
+  }
+  if (best.length === 0) best = GALAXY_FACTIONS.map((f) => f.id).filter((id) => id !== sector.region);
+  return best[Math.floor(rand() * best.length)] ?? sector.region;
 }

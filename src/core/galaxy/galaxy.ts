@@ -34,8 +34,12 @@ export type AsteroidConfigKey = 'sparse' | 'dense' | 'none';
  * Static, cosmetic environmental-feature glyphs shown per sector on the map
  * (eqx-peri icon vocabulary). Baked from region theme + asteroid config; NOT
  * live state (live counts ride the Phase-3 /galaxy/snapshot endpoint).
+ *
+ * wrecks (wreck fields F3): the sector holds one old battlefield (the server
+ * resolves it into the wreckField room option). Picked by a seeded draw in
+ * the generator, not hand-authored. Append-only.
  */
-export type SectorFeature = 'asteroid' | 'nebula' | 'minerals' | 'blackhole' | 'station';
+export type SectorFeature = 'asteroid' | 'nebula' | 'minerals' | 'blackhole' | 'station' | 'wrecks';
 
 export interface GalaxySector {
   /** Stable identity used as the persistence key. Slug-style, lowercase. */
@@ -160,7 +164,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     neighbours: ['orion-belt', 'bloomgate', 'verdance'],
     asteroidConfigKey: 'dense',
     droneCount: AMBIENT_DRONE_FLOOR,
-    features: ['asteroid', 'minerals'],
+    features: ['asteroid', 'minerals', 'wrecks'],
     defaultSpawn: { x: 0, y: 0 },
   },
   {
@@ -280,7 +284,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     neighbours: ['cinderpath', 'scoria-drift'],
     asteroidConfigKey: 'none',
     droneCount: AMBIENT_DRONE_FLOOR,
-    features: ['blackhole', 'nebula'],
+    features: ['blackhole', 'nebula', 'wrecks'],
     defaultSpawn: { x: 0, y: 0 },
   },
   {
@@ -304,7 +308,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     neighbours: ['kepler-spur', 'coralward', 'deepcurrent'],
     asteroidConfigKey: 'sparse',
     droneCount: AMBIENT_DRONE_FLOOR,
-    features: ['asteroid'],
+    features: ['asteroid', 'wrecks'],
     defaultSpawn: { x: 0, y: 0 },
   },
   {
@@ -352,7 +356,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     neighbours: ['deepcurrent', 'marrow-trench'],
     asteroidConfigKey: 'none',
     droneCount: AMBIENT_DRONE_FLOOR,
-    features: ['blackhole'],
+    features: ['blackhole', 'wrecks'],
     defaultSpawn: { x: 0, y: 0 },
   },
 ];

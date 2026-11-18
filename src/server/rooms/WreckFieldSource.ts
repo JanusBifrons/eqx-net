@@ -106,8 +106,10 @@ export function fieldHullPieces(hull: WreckFieldHull): { pieces: WreckPieceSpec[
 }
 
 /** The room option `wreckField` (`SectorRoom`): where the battlefield lies,
- *  its seed and the two sides that fought there (faction ids). */
-export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides'>;
+ *  its seed, the two sides that fought there (faction ids) and, optionally,
+ *  its own open clearings (galaxy sectors: every pocket; else the cut
+ *  field's). */
+export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings'>;
 
 /** A loaded field hull: its lineage root, its pieces as spawned (ids, rest
  *  poses), and whether anything touched it since. */

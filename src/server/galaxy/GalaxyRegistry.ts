@@ -6,7 +6,7 @@
  * See docs/architecture/galaxy-graph.md for the walkthrough.
  */
 import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
-import { sectorSites, sectorCutField } from '../../core/galaxy/sectorSites.js';
+import { sectorSites, sectorCutField, sectorWreckField } from '../../core/galaxy/sectorSites.js';
 import type { SectorCutField } from '../../core/galaxy/sectorSites.js';
 import { GALAXY_SECTORS, getSector } from '../../core/galaxy/galaxy.js';
 import type { GalaxySector } from '../../core/galaxy/galaxy.js';
@@ -36,11 +36,13 @@ export interface ResolvedSectorConfig {
    */
   cutField?: SectorCutField;
   /**
-   * Wreck fields 3b: an old battlefield streamed in by chunk. No galaxy
-   * sector sets it yet (dev room `wreck-field-test` only); becomes
-   * `roomOpts.wreckField`.
+   * Wreck fields F3: a `wrecks`-marked sector gets ONE old battlefield
+   * streamed in by chunk, centred on its battle pocket with every pocket
+   * kept open (`sectorWreckField`). In a rock sector the room keeps hulls off
+   * the rocks (`rockFieldBlocker` from `cutField`). Absent = no field.
+   * Becomes `roomOpts.wreckField`.
    */
-  wreckField?: Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides'>;
+  wreckField?: Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings'>;
 }
 
 export function resolveSectorConfig(key: string): ResolvedSectorConfig {
@@ -49,6 +51,7 @@ export function resolveSectorConfig(key: string): ResolvedSectorConfig {
     throw new Error(`resolveSectorConfig: unknown galaxy sector key '${key}'`);
   }
   const cutField = sectorCutField(sector.key, SOLAR_SECTORS);
+  const wreckField = sectorWreckField(sector.key, SOLAR_SECTORS);
   return {
     sectorKey: sector.key,
     // Fields spread with the sector space; rock sizes stay (round 3 C). In a
@@ -59,6 +62,7 @@ export function resolveSectorConfig(key: string): ResolvedSectorConfig {
       ...(SOLAR_SECTORS && !cutField ? beltPocketAsteroids(sector.key) : []),
     ],
     ...(cutField ? { cutField } : {}),
+    ...(wreckField ? { wreckField } : {}),
     droneCount: sector.droneCount,
     maxClients: DEFAULT_MAX_CLIENTS,
     galaxyBases: true,

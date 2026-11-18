@@ -5733,7 +5733,7 @@ export class SectorRoom extends Room<SectorState> {
   private buildWreckFieldSource(o: WreckFieldRoomOpts, cut: { seed: string; clearings?: FieldClearing[] } | undefined): WreckFieldSource {
     const field = wreckField({
       ...o, capitalWrecksOn: this.capitalWrecksOn, subcapWrecksOn: this.subcapWrecksOn,
-      ...(cut?.clearings ? { clearings: cut.clearings } : {}),
+      ...(!o.clearings && cut?.clearings ? { clearings: cut.clearings } : {}),
       ...(cut ? { blocked: rockFieldBlocker(cutFieldOpts(cut.seed, cut.clearings)) } : {}),
     });
     logger.info({ seed: o.seed, hulls: field.hulls.length, dropped: field.dropped }, 'wreck field laid out');

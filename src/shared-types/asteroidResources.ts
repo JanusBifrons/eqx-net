@@ -15,7 +15,7 @@ export const ASTEROID_RESOURCE_IDS = ['rock', 'ice', 'crystal'] as const;
 export type AsteroidResourceId = (typeof ASTEROID_RESOURCE_IDS)[number];
 
 /** Sector features that change a field's mix (from `src/core/galaxy/galaxy.ts`). */
-export type AsteroidFieldFeature = 'asteroid' | 'nebula' | 'minerals' | 'blackhole' | 'station';
+export type AsteroidFieldFeature = 'asteroid' | 'nebula' | 'minerals' | 'blackhole' | 'station' | 'wrecks';
 
 /**
  * Of every 10 units a Miner extracts, how many of each good. Whole numbers so

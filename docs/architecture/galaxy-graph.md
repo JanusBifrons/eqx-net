@@ -67,9 +67,21 @@ BFS-over-same-faction-neighbours meaningful.
 ### Environmental features
 
 Each sector carries a static `features` list (`asteroid | nebula | minerals |
-blackhole | station`) — the map glyph vocabulary that gives each sector
+blackhole | station | wrecks`, append-only) — the map glyph vocabulary that gives each sector
 character. Static + cosmetic; baked into the graph, so no wire cost (Phase 4
 renders them).
+
+`wrecks` (wreck fields, macro-terrain.md F3) is not hand-authored: the
+generator appends it to a SEEDED pick of `WRECK_SECTOR_COUNT` (4) sectors.
+`thornfield` ("tangled debris fields") is always one; the rest are the
+other sectors ranked by the FNV-1a hash of `WRECK_PICK_SEED` (`wrecks:v1`) +
+key, so the set changes only if the seed, the count or the sector list does.
+The generator prints the pick on stderr (`wreck fields: …`, `(+asteroid)`
+marks a sector that also has a rock field). Today: `thornfield` (+asteroid),
+`ashfront`, `tideglass` (+asteroid), `abyssal-gate`. The server resolves it
+through `sectorWreckField` (`sectorSites.ts`) into the `wreckField` room
+option (`resolveSectorConfig`). The map draws no glyph for it yet; the
+tooltip's feature line lists it as `wrecks`.
 
 ## Entry (drone warp-in) sectors
 
