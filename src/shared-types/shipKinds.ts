@@ -11,7 +11,7 @@
  *     `JoinOptions`, writes it to `ShipState.kind`, threads it into the
  *     `SPAWN` worker command).
  *   - `src/server/spawn/SwarmSpawner.ts` (picks a random kind per drone).
- *   - `src/client/components/ShipPickerModal.tsx` and the in-game renderer
+ *   - `src/client/components/hangar/HangarWindow.tsx` and the in-game renderer
  *     (`shape` drives the polygon and colour so the picker silhouette
  *     and the in-world sprite are guaranteed identical).
  *

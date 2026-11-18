@@ -1,17 +1,11 @@
 import { Box, IconButton, Tooltip } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import { useUIStore, useShouldRenderHud } from '../../state/store';
-import { RosterCountBadge } from '../../components/RosterCountBadge';
 
 /**
  * Subtle top-right icon button that opens the AdvancedDrawer. The slotting
  * (anchor + ordering) is owned by `TopRightToolbar` so this component is
  * just the presentational chip; render it wherever the toolbar wants it.
- *
- * Phase 5 — adjacent `RosterCountBadge` surfaces the owned-ship count so the player has an
- * always-on cue for roster fullness without opening the drawer. The badge
- * reads from the same Zustand singleton the drawer Galaxy tab uses, so
- * abandon / spawn pushes update both surfaces in lockstep.
  */
 export function DrawerToggle(): JSX.Element | null {
   // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
@@ -20,7 +14,6 @@ export function DrawerToggle(): JSX.Element | null {
   if (!shouldRender) return null;
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-      <RosterCountBadge />
       <Tooltip title="Open panels">
         <IconButton
           aria-label="Open advanced panels"

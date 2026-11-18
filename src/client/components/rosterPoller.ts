@@ -26,9 +26,9 @@
  * Test seam: `__test_resetRosterPoller` lets tests start each case from
  * a known state without module-cache shenanigans.
  */
+import type { RosterEntry } from '../state/storeTypes';
 import { logEvent } from '../debug/ClientLogger';
 import { useUIStore } from '../state/store';
-import type { RosterShipEntry } from './ShipRosterCard';
 
 const POLL_MS = 3000;
 // Join flow stage 5: the production path (the same handler also answers at
@@ -43,7 +43,7 @@ interface PollerState {
   /** The last reply's raw text and the array it produced: an identical reply
    *  is skipped while the store still holds that array (no re-render). */
   lastBody: string;
-  lastApplied: RosterShipEntry[] | null;
+  lastApplied: RosterEntry[] | null;
 }
 
 const state: PollerState = {
@@ -103,7 +103,7 @@ async function performFetch(playerId: string): Promise<void> {
       logEvent('roster_fetch', { stage: 'ok', unchanged: true });
       return;
     }
-    const body = JSON.parse(text) as { ships?: RosterShipEntry[] };
+    const body = JSON.parse(text) as { ships?: RosterEntry[] };
     const out = Array.isArray(body.ships) ? body.ships : [];
     store.setShipRoster(out);
     state.lastBody = text;

@@ -45,8 +45,8 @@ test('real spawn flow: galaxy → pick sector → spawn → no uncaught error fo
     (window as unknown as { __eqxGalaxyPick?: (k: string) => void }).__eqxGalaxyPick?.('sol-prime');
   });
   await page.getByTestId('sector-drawer-join').click();
-  await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
-  await page.getByTestId('ship-picker-spawn').click();
+  await expect(page.getByTestId('hangar-window')).toBeVisible({ timeout: 8_000 });
+  await page.getByTestId('hangar-launch').click();
 
   // HUD mounts only once the room is connected + welcomed + first snapshot applied.
   await expect(page.locator('[data-testid="hud-sector"]')).toBeVisible({ timeout: 20_000 });
@@ -111,8 +111,8 @@ test('DataChannel path (?webrtc=1): real spawn flow → no uncaught error over D
     (window as unknown as { __eqxGalaxyPick?: (k: string) => void }).__eqxGalaxyPick?.('sol-prime');
   });
   await page.getByTestId('sector-drawer-join').click();
-  await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
-  await page.getByTestId('ship-picker-spawn').click();
+  await expect(page.getByTestId('hangar-window')).toBeVisible({ timeout: 8_000 });
+  await page.getByTestId('hangar-launch').click();
 
   // The DataChannel must actually establish AND carry a snapshot — otherwise the
   // session silently ran over WS and this test proved nothing. (snapshot_received

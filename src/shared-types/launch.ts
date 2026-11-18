@@ -13,8 +13,8 @@
  * those are built packed and unpacked, never launched for credits.
  */
 
-/** Off until the Hangar shows prices (join-flow stage 5): every cost reads 0. */
-export const LAUNCH_COSTS_ON = false;
+/** On since the Hangar shows prices (join-flow stage 5). Off: every cost reads 0. */
+export const LAUNCH_COSTS_ON = true;
 
 /** Free capital launches every pilot starts with. */
 export const FREE_LAUNCHES_START = 5;

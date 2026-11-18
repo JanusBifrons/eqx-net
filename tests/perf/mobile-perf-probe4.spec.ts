@@ -1,7 +1,7 @@
 /**
  * E2E coverage for Probe 4 (mobile-perf-investigation, 2026-05-24):
  *
- *   1. Roster polling dedupe — multiple ShipRosterPanel mounts share
+ *   1. Roster polling dedupe — every roster consumer shares
  *      ONE fetch loop instead of each owning their own setInterval.
  *   2. Damage-number instrumentation — `damage_number_scheduled` fires
  *      ONCE per shot (not 5×), with `damage_number_spawned` per actual
@@ -64,9 +64,9 @@ async function getLogs(page: Page, tag?: string): Promise<LogEntry[]> {
 }
 
 test.describe('Probe 4 — roster polling dedupe', () => {
-  test('two ShipRosterPanel mounts share ONE poll loop (≤2 fetches per 6 s window)', async ({ browser }) => {
+  test('roster consumers share ONE poll loop (≤2 fetches per 6 s window)', async ({ browser }) => {
     test.setTimeout(30_000);
-    // Intercept /dev/player-ships GET requests to count network volume.
+    // Intercept /hangar/ships GET requests to count network volume.
     // Pre-fix: two mounted panels × 3 s poll interval = 4 fetches per 6 s.
     // Post-fix: one shared interval = 2 fetches per 6 s (initial + one tick).
     let rosterFetchCount = 0;
@@ -77,11 +77,11 @@ test.describe('Probe 4 — roster polling dedupe', () => {
       // ShipRosterPanel alongside the galaxy-map landing screen path.
     });
     page.on('request', (req) => {
-      if (req.method() === 'GET' && req.url().includes('/dev/player-ships?playerId=')) {
+      if (req.method() === 'GET' && req.url().includes('/hangar/ships?playerId=')) {
         rosterFetchCount++;
       }
     });
-    // Open the drawer Galaxy tab to mount a second ShipRosterPanel.
+    // Open the drawer Galaxy tab (it used to mount a second roster panel).
     // Drawer toggle is in the top-right slot.
     const drawerToggle = page.locator('[data-testid="drawer-toggle"]').first();
     if (await drawerToggle.count() > 0) {

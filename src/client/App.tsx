@@ -77,7 +77,6 @@ import { WarpInWarningBanner } from './components/WarpInWarningBanner';
 import { PilotSpectatorToggle } from './components/PilotSpectatorToggle';
 import { SpectatorIndicator } from './components/SpectatorIndicator';
 import { GalaxyPickerChrome, type GalaxyPickerApi } from './components/GalaxyPickerChrome';
-import { GalaxyOverviewSelectChrome } from './components/GalaxyOverviewSelectChrome';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
@@ -403,8 +402,6 @@ function GameSurface({
   // setter), so it isn't a hook here anymore.
   const galaxyMapOpen        = useUIStore((s) => s.isGalaxyMapOpen);
   const toggleGalaxyMap      = useUIStore((s) => s.toggleGalaxyMapOpen);
-  const galaxyOverviewOpen   = useUIStore((s) => s.isGalaxyOverviewOpen);
-  const setGalaxyOverviewOpen = useUIStore((s) => s.setGalaxyOverviewOpen);
 
   const handleEngageTransit = useCallback((targetSectorKey: string) => {
     const room = clientRef.current?.getRoom();
@@ -858,16 +855,15 @@ function GameSurface({
   // UI not the game, so the gameplay frame-rate drop is invisible.
   // See `docs/LESSONS.md` 2026-05-13 §6.
   const isDrawerOpen = useUIStore((s) => s.isDrawerOpen);
-  const isGalaxyOverviewOpen = useUIStore((s) => s.isGalaxyOverviewOpen);
   // **Real users get full 60 fps even when overlays are open** — the
   // drawer is partial-width and the gameplay underneath should keep
   // animating at full rate. We ONLY intervene when the E2E harness sets
   // the explicit `e2ePause` flag (see `app/automationTickerPause.ts`),
   // where Pixi's rAF tax starves the CDP protocol loop to ~500 ms median
   // roundtrip. There we pause the ticker entirely while the
-  // drawer/overview is open. NOT keyed on `navigator.webdriver`: the
+  // drawer is open. NOT keyed on `navigator.webdriver`: the
   // Playwright showcase recorder must film a live game behind menus.
-  const uiCoversGame = isDrawerOpen || isGalaxyOverviewOpen;
+  const uiCoversGame = isDrawerOpen;
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;
@@ -998,17 +994,6 @@ function GameSurface({
             useUIStore.getState().setGalaxyMapOpen(false);
           }}
         />
-      )}
-      {galaxyOverviewOpen && (
-        <Slot anchor="fullscreen" order={25}>
-          {/* In-game ship-swap overview — roster-pick only over the live
-              game (single-canvas refactor: Map A's second Pixi
-              Application is retired). Warp lives on the bottom-center MAP
-              button / M-key overlay (`GalaxyMapLayer`). */}
-          <GalaxyOverviewSelectChrome
-            onClose={() => setGalaxyOverviewOpen(false)}
-          />
-        </Slot>
       )}
         </>
       )}

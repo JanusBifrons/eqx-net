@@ -1,3 +1,4 @@
+import type { RosterEntry } from '../state/storeTypes';
 import { RESPEC_CREDIT_COST } from '../../shared-types/goods';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -26,7 +27,6 @@ import {
   remainingPoints,
   draftToAlloc,
 } from './upgradeModalDraft';
-import type { RosterShipEntry } from './ShipRosterCard';
 
 /**
  * Ship stat-upgrade modal (Phase 4 WS-B2, plan: effervescent-umbrella). Spend
@@ -43,7 +43,7 @@ import type { RosterShipEntry } from './ShipRosterCard';
  * Stateless about the wire: the parent owns the send callbacks + the close.
  */
 interface UpgradeModalProps {
-  ship: RosterShipEntry;
+  ship: RosterEntry;
   open: boolean;
   onClose: () => void;
   onApply: (shipId: string, alloc: Record<string, number>) => void;

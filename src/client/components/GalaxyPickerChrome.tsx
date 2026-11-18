@@ -8,7 +8,7 @@ import {
 } from '@mui/material';
 import { getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
-import { ShipPickerModal } from './ShipPickerModal';
+import { HangarWindow } from './hangar/HangarWindow';
 import { acquireRosterPolling, releaseRosterPolling } from './rosterPoller';
 import { useUIStore } from '../state/store';
 import { useAuthStore } from '../auth/authStore';
@@ -106,7 +106,7 @@ export interface GalaxyPickerChromeProps {
  * `GalaxyOverviewScreen` (spawn mode) so the second Pixi `Application`
  * can be retired. Preserves every load-bearing testid:
  * `galaxy-map-screen`, `limbo-resume-banner` (+ `data-limbo-sector-key`),
- * the roster panel and the `ship-picker-modal`. Dev rooms and single-player
+ * and the Hangar (`hangar-window`). Dev rooms and single-player
  * have no button here: they are reached by direct link (`?room=`, `?local=1`).
  *
  * The root is `pointerEvents: 'none'` so taps in empty regions fall
@@ -180,7 +180,7 @@ export function GalaxyPickerChrome({
   useEffect(() => onFocusChange?.(selectedSectorKey), [selectedSectorKey, onFocusChange]);
 
   // Keep the roster polled while the picker is mounted (the popover sub-list +
-  // RosterCountBadge consume store.shipRoster). Refcounted — safe alongside the
+  // the Hangar consume store.shipRoster). Refcounted — safe alongside the
   // drawer Galaxy-tab panel.
   useEffect(() => {
     if (!storedPlayerId) return undefined;
@@ -374,7 +374,7 @@ export function GalaxyPickerChrome({
 
       {/* Equinox Phase 7 (Item 4) — the floating top-bar roster panel is GONE;
        *  the per-sector popover's "your ships" sub-list replaces it (the roster
-       *  is still polled above so the popover + RosterCountBadge have data). */}
+       *  is still polled above so the popover + Hangar have data). */}
 
       <Box sx={{ flex: 1, minHeight: 0 }} />
 
@@ -550,27 +550,28 @@ export function GalaxyPickerChrome({
         warpBlockedHint={warpBlockedHint}
       />
 
-      {/* Sector-click confirmation. Opened imperatively via apiRef when the
-       *  player taps a galaxy sector hex on the shared canvas; picking a
-       *  kind fires onSpawnNewShip with the captured sector. */}
-      <ShipPickerModal
-        open={pendingSpawnSector !== null}
+      {/* Join flow stage 5 — the Hangar. Opened when the player joins a sector;
+       *  Launch fires onSpawnNewShip (a new hull) or onSpawnExistingShip (one of
+       *  theirs parked here) with the captured sector. */}
+      <HangarWindow
+        sectorKey={pendingSpawnSector}
+        sectorName={pendingSpawnSector !== null ? (getSector(pendingSpawnSector)?.name ?? pendingSpawnSector) : ''}
+        playerId={storedPlayerId}
+        selectedKind={selectedShipKindId}
         onClose={() => {
           logEvent('ship_picker_close', { pendingSpawnSector, ts: performance.now() });
           setPendingSpawnSector(null);
         }}
-        selectedKind={selectedShipKindId}
-        title={pendingSpawnSector !== null
-          ? `Spawn in ${getSector(pendingSpawnSector)?.name ?? pendingSpawnSector}`
-          : undefined}
-        subtitle={pendingSpawnSector !== null ? 'Pick a ship kind for this sector.' : undefined}
-        onSelect={(kind) => {
-          logEvent('ship_picker_select', { kind, pendingSpawnSector, ts: performance.now() });
+        onLaunchNew={(kind, sector) => {
+          logEvent('ship_picker_select', { kind, pendingSpawnSector: sector, ts: performance.now() });
           setSelectedShipKind(kind);
-          if (pendingSpawnSector !== null) {
-            onSpawnNewShip?.(kind, pendingSpawnSector);
-            setPendingSpawnSector(null);
-          }
+          onSpawnNewShip?.(kind, sector);
+          setPendingSpawnSector(null);
+        }}
+        onResume={(shipId, sector) => {
+          logEvent('hangar_resume', { shipId, sector });
+          onSpawnExistingShip?.(shipId, sector);
+          setPendingSpawnSector(null);
         }}
       />
     </Box>

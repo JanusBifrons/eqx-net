@@ -72,10 +72,10 @@ test('switch-ship dispatch keeps the local ship rendered', async ({ page }) => {
   // Step 2: wait for first spawn — local ship visible.
   await waitForLocalShip(page);
 
-  // Step 3: populate the roster. In production the ShipRosterPanel
-  // fetches `/dev/player-ships?playerId=...` when the drawer Galaxy
-  // tab mounts. In this test we mimic that fetch directly so the test
-  // doesn't depend on the drawer UI (which has its own tests). The
+  // Step 3: populate the roster. In production the roster poller
+  // fetches `/hangar/ships?playerId=...` for the Hangar. In this test we
+  // mimic that fetch directly so the test doesn't depend on the Hangar UI
+  // (which has its own tests). The
   // server-side roster row was written when we spawned in step 2.
   const playerId = await page.evaluate(() => {
     const win = window as unknown as StoreWindow;
@@ -84,7 +84,7 @@ test('switch-ship dispatch keeps the local ship rendered', async ({ page }) => {
   expect(playerId, 'playerId should be set after welcome').toBeTruthy();
 
   const fetchedRoster = await page.evaluate(async (pid) => {
-    const res = await fetch(`/dev/player-ships?playerId=${encodeURIComponent(pid!)}`);
+    const res = await fetch(`/hangar/ships?playerId=${encodeURIComponent(pid!)}`);
     if (!res.ok) throw new Error(`roster fetch failed ${res.status}`);
     return (await res.json()) as { ships: RosterEntry[] };
   }, playerId);

@@ -63,7 +63,7 @@ In `selector`/idle mode a hex tap routes to `App.handleSelectorPick`, which
 logs `galaxy_sector_click` + `respawn_clicked`, applies the **200 ms
 tap-shield** (the tap originates on the Pixi canvas, so the touchend can bleed
 through onto a modal mounted under the finger), then calls
-`GalaxyPickerChrome.openForSector` → `ShipPickerModal` → `onSpawnNewShip`. A
+`GalaxyPickerChrome.openForSector` → the [Hangar](../features/hangar.md) → `onSpawnNewShip`. A
 DEV-only `window.__eqxGalaxyPick(sectorKey)` mirrors a tap deterministically
 for E2E (no hex-pixel math — this retired three long-standing `fixme` specs).
 
@@ -78,8 +78,8 @@ new `SET_OVERLAY_MODE` message
 ### In-game ship-swap overview
 
 The drawer's "Show galaxy map" was Map A's third role. Its real job is the
-roster ship-swap picker, so it is now `GalaxyOverviewSelectChrome` — roster
-panel + close over a dim scrim of the live game, **no galaxy backdrop**.
+roster ship-swap picker. That chrome and the roster are gone (join flow
+stage 5): ship swap is map → sector → the Hangar's owned tile.
 Tap-to-warp stays on the MAP button / `M`-key `overlay`.
 
 ## Pan / pinch / wheel zoom (dropped 2026-06-05, RESTORED 2026-06-06)
@@ -109,7 +109,6 @@ recompute) and asserts a drag pans + a wheel zooms.
 - `render/galaxy/galaxyLayerDecisions.ts` — pure `isSectorSelectable` /
   `clusterFitFraction` (+ test).
 - `components/GalaxyPickerChrome.tsx` — post-auth spawn chrome (canvas-less).
-- `components/GalaxyOverviewSelectChrome.tsx` — in-game ship-swap chrome.
 - `app/gameSurfaceConnectFlow.ts` — `surfaceMode` idle/connect branch.
 - `app/galaxyOverlay.ts` — install + `syncGalaxyMode` (dual path).
 - **Deleted:** `components/GalaxyOverviewScreen.tsx`,
@@ -118,7 +117,7 @@ recompute) and asserts a drag pans + a wheel zooms.
 ## Regression locks
 
 - Unit: `galaxyLayerDecisions.test.ts`, `galaxyOverlay.test.ts`,
-  `GalaxyPickerChrome.test.tsx`, `GalaxyOverviewSelectChrome.test.tsx`,
+  `GalaxyPickerChrome.test.tsx`,
   `render/worker/protocol.test.ts` (`SET_OVERLAY_MODE`).
 - E2E: `spawn-select-flow.spec.ts` (engineering + the deterministic
   galaxy-sector flip), `ship-selection.spec.ts` (mount + the three
