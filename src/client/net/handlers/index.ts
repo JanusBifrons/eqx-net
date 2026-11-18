@@ -11,6 +11,7 @@ import { registerShellHandlers, type ShellHandlerCtx } from './shellHandlers.js'
 import { registerShipStatusHandlers, type ShipStatusHandlerCtx } from './shipStatusHandlers.js';
 import { registerStructurePanelHandlers, type StructurePanelHandlerCtx } from './structurePanelHandlers.js';
 import { registerToastHandlers, type ToastHandlerCtx } from './toastHandlers.js';
+import { registerTransitHandlers, type TransitHandlerCtx } from './transitHandlers.js';
 import { registerWaveHandlers, type WaveHandlerCtx } from './waveHandlers.js';
 
 export type ClientHandlerCtx = FieldHandlerCtx &
@@ -20,6 +21,7 @@ export type ClientHandlerCtx = FieldHandlerCtx &
   ShipStatusHandlerCtx &
   StructurePanelHandlerCtx &
   ToastHandlerCtx &
+  TransitHandlerCtx &
   WaveHandlerCtx;
 
 export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void {
@@ -31,4 +33,5 @@ export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void 
   registerStructurePanelHandlers(room, ctx);
   registerFieldHandlers(room, ctx);
   registerShellHandlers(room, ctx);
+  registerTransitHandlers(room, ctx);
 }
