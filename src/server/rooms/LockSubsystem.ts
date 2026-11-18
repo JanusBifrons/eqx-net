@@ -12,7 +12,7 @@
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_MODS, type MountSize } from '../../shared-types/combat/lockProfile.js';
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
-import { lineageRekey, rekeyUnworkable, splitGroupLocks } from './lockSplit.js';
+import { lineageRekey, rekeyBlockedTractor, rekeyUnworkable, splitGroupLocks } from './lockSplit.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { LockPicker } from './lockPick.js';
 import { lockSalvageFlags, refreshLockSalvage, type LockSalvageDeps } from './lockSalvage.js';
@@ -629,6 +629,8 @@ export class LockSubsystem {
       if (this.deps.resolveTarget(playerId, e.target, this.target)) {
         secs = this.lockSecsNow(p, g);
         refreshLockSalvage(this.deps, ship, playerId, e); // bits + lineage: hold fills, pieces split: per step
+        // A tractor's line blocked by a body in the way: move to a lineage piece with a clear line.
+        if (rekeyBlockedTractor(this.deps, ship, playerId, g, e) && !this.deps.resolveTarget(playerId, e.target, this.target)) continue;
       } else {
         // Gone (destroyed / left): the lineage's next live piece takes the lock (lockSplit.ts), else drop now, no grace.
         if (!lineageRekey(this.deps, ship, playerId, g, e)) g.locks.splice(i, 1);

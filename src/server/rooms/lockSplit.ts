@@ -18,7 +18,10 @@
  * salvage group's lineage lock it can't work moves to a free member it can
  * (`rekeyUnworkable`): the pieces are handed out biggest first, so without
  * it a tractor group held the uncut pieces too heavy to pull while the
- * haulable ones went unheld (barge-mining take, 2026-11-17).
+ * haulable ones went unheld (barge-mining take, 2026-11-17). A tractor
+ * group's lineage lock also prefers a piece its dishes have a clear line to
+ * (`rekeyBlockedTractor`, each lock step): its beam acts on the first body in
+ * the way (owner 2026-11-18).
  */
 import { LOCK_TRACK, newLock, type LockEntry } from '../../core/combat/lockState.js';
 import { groupWorksSalvage, lockTierOf, type TurretGroupMount } from '../../core/combat/turretLockPick.js';
@@ -45,9 +48,24 @@ export interface LineageCtx {
 /** The one reused member list of `lineageRekey` (#14). */
 const MEMBERS: string[] = [];
 
-/** A member's rank for group `g`: one a mount of it can work first, then the bigger size tier. */
-function memberRank(g: LineageGroup, flags: number): number {
-  return (groupWorksSalvage(g.mounts, flags) ? 8 : 0) + lockTierOf(flags);
+/** A member's rank for group `g`: one a mount of it can work first, then (a
+ *  tractor group) one its dishes have a clear line to (`clear`), then the
+ *  bigger size tier. */
+function memberRank(g: LineageGroup, flags: number, clear: boolean): number {
+  return (groupWorksSalvage(g.mounts, flags) ? 16 : 0) + (clear ? 8 : 0) + lockTierOf(flags);
+}
+
+/** Does group `g` carry a tractor? */
+function tractorGroup(g: LineageGroup): boolean {
+  for (let i = 0; i < g.mounts.length; i++) if (getWeapon(g.mounts[i]!.weaponId).tractor !== undefined) return true;
+  return false;
+}
+
+/** A tractor beam acts on the first body in its line (owner 2026-11-18):
+ *  is `key`'s line clear for a tractor group? Always true for other groups,
+ *  or with no `tractorLineClear` dep. */
+function lineClear(d: LockSalvageDeps, playerId: string, tractor: boolean, key: string): boolean {
+  return !tractor || d.tractorLineClear === undefined || d.tractorLineClear(playerId, key);
 }
 
 function holds(g: { locks: LockEntry[] }, key: string): boolean {
@@ -76,10 +94,13 @@ export function lineageRekey(
   MEMBERS.length = 0;
   src.keysOf(root, MEMBERS);
   let best: string | null = null;
-  let bestRank = keep ? memberRank(g, e.flags) : -1;
+  const tractor = tractorGroup(g);
+  let bestRank = keep ? memberRank(g, e.flags, lineClear(d, playerId, tractor, e.target)) : -1;
   for (const key of MEMBERS) {
     if (key === e.target || holds(g, key)) continue;
-    const r = memberRank(g, lockSalvageFlags(d, ship, playerId, key));
+    const base = memberRank(g, lockSalvageFlags(d, ship, playerId, key), false);
+    if (base + 8 <= bestRank) continue; // can't win even clear: no line query
+    const r = base + (lineClear(d, playerId, tractor, key) ? 8 : 0);
     if (r > bestRank) { best = key; bestRank = r; }
   }
   if (best === null && !keep) return false;
@@ -117,6 +138,26 @@ export function rekeyUnworkable(g: LineageGroup, c: LineageCtx): boolean {
     }
   }
   return moved;
+}
+
+/**
+ * Each lock step: a tractor group's lineage lock `e` whose line from the
+ * ship's dishes is blocked (`tractorLineClear` false: the beam would act on
+ * the body in the way) moves to a free member of its lineage with a clear
+ * line (`lineageRekey` with `keep`: it stays when none is free). Fixing the
+ * line is the pilot's job (owner 2026-11-18); this is the lock hand-over
+ * doing it for the lineage it already follows. Cost: one line query per
+ * tractor lineage lock per lock step, plus one per free member only while
+ * blocked. True when the lock moved.
+ */
+export function rekeyBlockedTractor(
+  d: LockSalvageDeps, ship: LineageCtx['ship'], playerId: string, g: LineageGroup, e: LockEntry,
+): boolean {
+  if (e.root < 0 || d.tractorLineClear === undefined || !tractorGroup(g) || d.tractorLineClear(playerId, e.target)) return false;
+  const was = e.target;
+  if (!lineageRekey(d, ship, playerId, g, e, true) || e.target === was) return false;
+  refreshLockSalvage(d, ship, playerId, e);
+  return true;
 }
 
 /** Re-key one group's lock on `fromKey` to the first of the first `count`

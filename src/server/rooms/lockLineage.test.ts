@@ -23,6 +23,8 @@ function harness(kindId = 'barge') {
   const root = new Map<string, number>();
   const pods = new Set<string>();
   const masses = new Map<string, number>();
+  /** Keys a tractor dish of the ship has no clear line to (`tractorLineClear`). */
+  const blocked = new Set<string>();
   const deps: LockSubsystemDeps = {
     resolveTarget: (_p, key, out) => {
       const t = targets.get(key);
@@ -47,6 +49,7 @@ function harness(kindId = 'barge') {
         for (const k of targets.keys()) if (root.get(k) === r && !pods.has(k)) out.push(k);
       },
     },
+    tractorLineClear: (_p, key) => !blocked.has(key),
     autoPick: () => null,
     commitHostileAct: () => {},
     refreshHostility: () => {},
@@ -58,7 +61,7 @@ function harness(kindId = 'barge') {
     if (pod) pods.add(key);
   };
   const keys = (gid: string): string[] => locks.wireFor('p1')!.find((g) => g.id === gid)!.l.map((l) => l.t);
-  return { locks, targets, add, keys, masses };
+  return { locks, targets, add, keys, masses, blocked };
 }
 
 const rock = (): LockTargetView => ({ x: 600, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 60, hostile: false, terrain: true });
@@ -134,6 +137,35 @@ describe('a salvage lock ends with its lineage, not its piece', () => {
     const held = h.keys('tractor');
     expect(held.length, 'the tractors hold fewer than the haulable pieces').toBeLessThan(haul.length);
     expect(held.filter((k) => big.includes(k)), 'no tractor lock on a piece too heavy to pull').toEqual([]);
+  });
+
+  it('a tractor lock whose line is blocked by another piece moves to a free piece it has a clear line to; the lasers stay (owner 2026-11-18: fixing the line is the pilot\'s job)', () => {
+    // Seen in the barge-mining take (2026-11-18): with line of sight, a tractor
+    // lock on a piece behind a big one pulled the big one, which never comes in.
+    const h = harness();
+    h.targets.set('s:1', rock());
+    for (const g of ['laser', 'tractor']) expect(h.locks.forceLock('p1', 's:1', g), g).toBeGreaterThan(0);
+    h.locks.step();
+    const haul = ['s:13', 's:14', 's:15', 's:16', 's:17', 's:18', 's:19', 's:20'];
+    for (const k of haul) { h.add(k); h.masses.set(k, 1_500); }
+    h.locks.targetSplit('s:1', haul);
+    h.targets.delete('s:1');
+    h.locks.step();
+    const tractors0 = h.keys('tractor');
+    const lasers0 = h.keys('laser');
+    expect(tractors0.length, 'the tractors hold fewer than the pieces').toBeLessThan(haul.length);
+    const behind = tractors0[0]!;
+    h.blocked.add(behind); // another piece drifts between the dish and it
+    h.locks.step();
+    const tractors1 = h.keys('tractor');
+    expect(tractors1, 'the blocked lock moved on').not.toContain(behind);
+    expect(tractors1.filter((k) => h.blocked.has(k)), 'no tractor lock on a blocked line').toEqual([]);
+    expect(tractors1.length, 'same lock count').toBe(tractors0.length);
+    expect(h.keys('laser'), 'a laser group never minds the tractor line').toEqual(lasers0);
+    // Every free piece blocked too: the lock stays where it is.
+    for (const k of haul) h.blocked.add(k);
+    h.locks.step();
+    expect(h.keys('tractor'), 'nothing clear to move to: it stays').toEqual(tractors1);
   });
 
   it('a lineage piece it can not track (crossing too fast): the lock idles on the lineage instead of dropping', () => {
