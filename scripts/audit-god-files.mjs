@@ -165,6 +165,35 @@ function reportClaudeMd(violations) {
   }
 }
 
+/**
+ * Where to put the growth instead. Longest matching path prefix wins. A cap or
+ * ceiling failure prints this so the fix is a move to the extension point,
+ * never a comment trim or a cap raise (docs/architecture/god-file-extension-points.md).
+ */
+const EXTEND_GUIDE = {
+  'src/server/rooms/': 'src/server/rooms/CLAUDE.md',
+  'src/server/index.ts': 'src/server/CLAUDE.md',
+  'src/client/net/': 'src/client/net/CLAUDE.md',
+  'src/client/render/': 'src/client/render/CLAUDE.md',
+  'src/core/ai/': 'src/core/ai/CLAUDE.md',
+  'src/core/contracts/': 'src/client/render/CLAUDE.md',
+  'src/shared-types/': 'src/shared-types/CLAUDE.md',
+};
+const EXTEND_DOC = 'docs/architecture/god-file-extension-points.md';
+
+function extendHint(rel) {
+  let best = '';
+  for (const prefix of Object.keys(EXTEND_GUIDE)) {
+    if (rel.startsWith(prefix) && prefix.length > best.length) best = prefix;
+  }
+  const guide = best ? EXTEND_GUIDE[best] : null;
+  return (
+    '    Fix: move the new code to this file’s extension point (a new small file), ' +
+    'do not trim comments or raise the cap. See ' +
+    (guide ? guide + ' and ' : '') + EXTEND_DOC + '.'
+  );
+}
+
 /** Skip-list for files we deliberately leave > 600 LOC out of scope. Empty. */
 const SKIP = new Set([]);
 
@@ -260,13 +289,17 @@ function main() {
     if (v.kind === 'ceiling') {
       console.error(
         `  ${v.rel}: ${v.lines} LOC > ceiling ${v.limit}. ` +
-          `Split it OR add an ALLOWLIST entry in scripts/audit-god-files.mjs with cap+target+reason.`,
+          `Split it OR add an ALLOWLIST entry in scripts/audit-god-files.mjs with cap+target+reason.
+` +
+          extendHint(v.rel),
       );
     } else {
       console.error(
         `  ${v.rel}: ${v.lines} LOC > allowlist cap ${v.limit} (+${CAP_SLACK} slack). ` +
           `File grew; cap was set to prevent backsliding during the v3 refactor.\n` +
-          `    target=${v.target}; reason: ${v.reason}`,
+          `    target=${v.target}; reason: ${v.reason}
+` +
+          extendHint(v.rel),
       );
     }
   }
