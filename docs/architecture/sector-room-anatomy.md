@@ -20,6 +20,8 @@ field cluster owning any piece of state they need to touch.
 | ownerless evict | [`OwnerlessShipEvictor.ts`](../../src/server/rooms/OwnerlessShipEvictor.ts) | Lingering-hull ownerless-evict timers (the former `WreckLifecycleCoordinator` was removed when wrecks were retired — P6.3/C3; abandon now → scrap) | `ownerlessShips` |
 | `players` | [`PlayerSessionManager.ts`](../../src/server/rooms/PlayerSessionManager.ts) | Session bookkeeping + per-tick input counter | `sessionToPlayer`, `playerToSession`, `inputCountThisTick`, `playerToUser`, `playerToActiveShipInstance`, `playerToTransitInFlight` |
 | `obstacles` | [`SectorObstacles.ts`](../../src/server/rooms/SectorObstacles.ts) | The one obstacle gatherer: placement / line-of-sight rocks, landing, join and convoy spawn clearance ([navigation](navigation.md#the-one-obstacle-gatherer-serverroomssectorobstaclests)) | pooled `rockList`, `boxes`, `circles`, `walls` |
+| `nav` | [`RoomNav.ts`](../../src/server/nav/RoomNav.ts) | Cut field's nav maps in the nav worker, AI routes, player autopilot route requests ([navigation](navigation.md)) | `field`, `routes`, `autopilot` |
+| `aiGrids` | [`AiNeighbourFill.ts`](../../src/server/rooms/AiNeighbourFill.ts) | AI neighbour + debris grids, one registry walk per tick | `neighbourGrid`, `wreckGrid`, A/B switches |
 | `budget` | [`TickBudgetTelemetry.ts`](../../src/server/rooms/TickBudgetTelemetry.ts) | Per-tick timing + hitch detection + 60-sample emit | `sums`, `thisTickPhases`, `historyRing`, `sampleCount`, `maxTotalMs`, `overBudgetCount`, `lastHitchAtMs` |
 
 The 10 subsystems own STATE today. The plan's R1 envisioned them

@@ -181,6 +181,16 @@ one it flies straight as before.
 - Lock: `tests/integration/sectorRoom/navFollowRoute.test.ts`, a fighter told to Move across a rock arrives
   with no rock contact; the same order with routes off hits it.
 
+## The player's autopilot asks (`server/nav/AutopilotRoutes.ts`)
+- Wire (slice 12): client → server `nav_route_request {reqId, tx, ty}` (strict; the client names only the
+  goal); server → that client `nav_route {reqId, status, points}` (`shared-types/messages/navMessages.ts`).
+- The room plans from the asker's own active hull: its pose, `shipTuning` clearance and, for a capital,
+  nose and turning radius (the slice 11 rules, as for AI capitals). A room without a rock field answers
+  `straight` at once.
+- One request in flight per player and one per 500 game ms; excess is dropped silently. The reply is advice
+  for the client's helm, not state (#16 holds: a lost reply only means asking again).
+- Player guide: [autopilot](../features/autopilot.md).
+
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
   squads single file). Slice 1a: `GraphSearch` lands; `HeldSectorRoutes` moves onto it.
@@ -205,3 +215,4 @@ one it flies straight as before.
   2026-11-18 slice 10: squads cross rock single file, each follower routing to the ship ahead of it.
   2026-11-18 slice 11: capital commitment. Capitals plan with nose and turning radius: no U-turn in a
   lane, turns and lane entry cost turning radii.
+  2026-11-18 slice 12: autopilot wire, `nav_route_request` → `nav_route`, served by `AutopilotRoutes`.

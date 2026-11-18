@@ -24,6 +24,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | JWT secret | production throws at boot on a missing / placeholder `JWT_SECRET` | auth boot | Fail-closed auth | — |
 | Input rate limit | max 3 inputs per entity per tick in `onMessage`; excess silently dropped | `MAX_INPUTS_PER_TICK`, `src/server/rooms/SectorRoom.ts` (applied in `InputHandler.ts`) | Input flooding | — |
 | Lock message cap | max 3 per session per tick for `lock_request` / `lock_track` / `lock_cancel` / `set_group_mode` together (`lockMsgAllowed`, cleared at the top of `update()`); excess silently dropped | `MAX_LOCK_MSGS_PER_TICK`, `src/server/rooms/SectorRoom.ts` | Fire-control message flooding | `LockSubsystem.test.ts` |
+| Autopilot route requests | one `nav_route_request` in flight per player, at most one per 500 game ms; excess silently dropped | `NAV_ROUTE_MIN_GAP_MS`, `src/shared-types/messages/navMessages.ts` (`AutopilotRoutes`) | Route-planning flood on the nav worker | `AutopilotRoutes.test.ts` |
 | RTS fleet command cap | max 4 per session per tick for `fleet_order` / `set_mode` / `set_stance` / `form_squad` / `disband_squad` together (`fleetMsgAllowed`, cleared at the top of `update()`); excess silently dropped | `MAX_FLEET_MSGS_PER_TICK`, `src/server/rooms/SectorRoom.ts` | Fleet command flooding ([fleet-command](fleet-command.md)) | — |
 
 ### Snapshot, interest and network ([snapshot-cadence](snapshot-cadence.md))
