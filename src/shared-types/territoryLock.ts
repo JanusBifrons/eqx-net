@@ -3,7 +3,7 @@
  * beside the catalogue so `structureKinds.ts` stays under its size cap. It is
  * appended to `STRUCTURE_KINDS_LIST` there (wire order, invariant #11).
  */
-import type { StructureKind } from './structureKinds.js';
+import type { StructureKind } from './structureKinds/types.js';
 
 /**
  * Sector control: the price of a Territory Lock, in minerals drained while it

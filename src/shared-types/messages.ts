@@ -9,6 +9,27 @@
  * preserved — zero call-site changes required.
  */
 
+import type { z } from 'zod';
+import { WelcomeSchema, ControlModeMessageSchema } from './messages/snapshotMessages.js';
+import {
+  CollisionResolvedMessageSchema,
+  HitAckSchema,
+  DamageEventSchema,
+  ShipLevelUpEventSchema,
+  ShipUpgradeAppliedEventSchema,
+  MountActivatedEventSchema,
+} from './messages/combatMessages.js';
+import { WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema } from './messages/transitMessages.js';
+import { EntityStatsSchema } from './messages/selectionMessages.js';
+import { FleetStatusMessageSchema } from './messages/fleetStatusMessages.js';
+import { MissileFiredEventSchema, MissileDetonatedEventSchema } from './messages/missileMessages.js';
+import { WallHitEventSchema } from './messages/wallHitMessages.js';
+import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from './messages/lootMessages.js';
+import { BreakInNoticeSchema, CargoStateSchema } from './messages/cargoMessages.js';
+import { ClaimFactionLookResultSchema, FactionLookClaimedSchema } from './messages/factionMessages.js';
+import { LabStateSchema } from './messages/labMessages.js';
+import { ShellSalvoSchema, ShellEndSchema } from './messages/shellEvents.js';
+
 // Inbound (client → server)
 export {
   InputMessageSchema,
@@ -182,3 +203,39 @@ export { ShipRosterEntrySchema, ShipRosterSchema } from './messages/rosterMessag
 
 // Server → client diagnostic broadcasts (paradigm plan: quirky-rabbit, Phase 6).
 export type { GcPauseEventMessage } from './messages/diagMessages.js';
+
+// Server → client message type → its zod schema. Every server → client
+// message has a row here; its handler lives in `src/client/net/handlers/`.
+export const ServerMessageSchemas = {
+  welcome: WelcomeSchema,
+  control_mode: ControlModeMessageSchema,
+  collision_resolved: CollisionResolvedMessageSchema,
+  hit_ack: HitAckSchema,
+  damage: DamageEventSchema,
+  ship_level_up: ShipLevelUpEventSchema,
+  ship_upgrade_applied: ShipUpgradeAppliedEventSchema,
+  mount_activated: MountActivatedEventSchema,
+  warp_warning: WarpWarningSchema,
+  warp_warning_clear: WarpWarningClearSchema,
+  base_ready: BaseReadySchema,
+  entity_stats: EntityStatsSchema,
+  fleet_status: FleetStatusMessageSchema,
+  missile_fired: MissileFiredEventSchema,
+  missile_detonated: MissileDetonatedEventSchema,
+  wall_hit: WallHitEventSchema,
+  shell_salvo: ShellSalvoSchema,
+  shell_end: ShellEndSchema,
+  notice: NoticeEventSchema,
+  loot_collected: LootCollectedEventSchema,
+  cargo_deposited: CargoDepositedEventSchema,
+  break_in_notice: BreakInNoticeSchema,
+  cargo_state: CargoStateSchema,
+  claim_faction_look_result: ClaimFactionLookResultSchema,
+  faction_look_claimed: FactionLookClaimedSchema,
+  lab_state: LabStateSchema,
+} as const;
+
+/** A server → client message type with a `ServerMessageSchemas` row. */
+export type ServerMessageType = keyof typeof ServerMessageSchemas;
+/** The parsed payload of server → client message `K`. */
+export type ServerMessagePayload<K extends ServerMessageType> = z.infer<(typeof ServerMessageSchemas)[K]>;

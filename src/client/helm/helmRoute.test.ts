@@ -66,7 +66,8 @@ describe('HelmRouteClient (autopilot, navigation slice 13)', () => {
     c.course(order, 10);
     c.tick(NAV_ROUTE_LOST_MS + 1);
     expect(sent).toHaveLength(2);
-    c.clear();
+    c.clear(order);
+    expect(order.route).toBeNull();
     expect(c.onReply(reply(sent[1]!.reqId, 'route', [1, 2]), order)).toBe('keep');
   });
 
