@@ -151,7 +151,7 @@ export class RobotTerritory {
   /** P3b — harvester id → where it lives + when it may respawn. */
   private readonly harvesters = new Map<string, { alive: boolean; sectorKey: string | null; respawnAtMs: number; mining: boolean }>();
   private readonly harvesterRespawnMs: number;
-  /** Galaxy feed — last holder change per sector (game ms; this process only). */
+  /** Galaxy feed — last holder change per sector (game ms; saved with control). */
   private readonly flippedAtMs = new Map<string, number>();
   /** Galaxy feed — an hour of control per sector, one sample a minute. */
   private readonly controlHistory: SectorControlHistory;
@@ -275,7 +275,9 @@ export class RobotTerritory {
    * Each sector's control meter that differs from its static seed, for the
    * robot director's persisted state (`saveSectorControl` hook). Shares are
    * rounded to 1 decimal and shares under 0.5 are dropped, so a sector the meter
-   * has drifted back to its seed is not saved. Persist cadence; allocation fine.
+   * has drifted back to its seed is not saved — unless it has a last-flip time
+   * or an hour of history (the galaxy feed), which ride the same entry so the
+   * sector panel survives a restart. Persist cadence; allocation fine.
    */
   saveControl(): PersistedSectorControl[] {
     const out: PersistedSectorControl[] = [];
@@ -286,8 +288,14 @@ export class RobotTerritory {
         if (r >= SAVE_MIN_SHARE) shares.push([side, r]);
       }
       shares.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-      if (isSeedState(sectorKey, s.holder, shares)) continue;
-      out.push({ sectorKey, holder: s.holder, shares });
+      const flippedAtMs = this.flippedAtMs.get(sectorKey);
+      const history = (this.controlHistory.samples(sectorKey) ?? []).map((h): [number, string | null, number] => [h.atMs, h.holder, h.holderShare]);
+      if (isSeedState(sectorKey, s.holder, shares) && flippedAtMs === undefined && history.length === 0) continue;
+      out.push({
+        sectorKey, holder: s.holder, shares,
+        ...(flippedAtMs !== undefined ? { flippedAtMs } : {}),
+        ...(history.length > 0 ? { history } : {}),
+      });
     }
     return out;
   }
@@ -304,6 +312,11 @@ export class RobotTerritory {
       }
       const holder = e.holder && countsForControl(e.holder) ? e.holder : null;
       this.control.set(e.sectorKey, { shares, holder });
+      if (e.flippedAtMs !== undefined) this.flippedAtMs.set(e.sectorKey, e.flippedAtMs);
+      if (e.history) {
+        const samples = e.history.map(([atMs, h, holderShare]) => ({ atMs, holder: h, holderShare }));
+        this.controlHistory.restore(e.sectorKey, samples, this.now());
+      }
     }
   }
 

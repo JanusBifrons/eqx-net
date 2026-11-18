@@ -612,12 +612,12 @@ The galaxy map is the site homepage, so every viewer reads ONE shared feed that 
 | `challenger`, `challengerShare` | The strongest side working against the holder (`challengerOf`; the leader on neutral ground), or null / 0. |
 | `trend` | −1 holder losing ground, 0 steady, +1 gaining (`holderTrend`). |
 | `threat` | 0–3, below. |
-| `flippedAtMs` | Game-time ms of the last holder change this process saw (not persisted: null after a restart until the next flip). |
+| `flippedAtMs` | Game-time ms of the last holder change; saved with the sector's control entry, so it survives a restart (null until the sector first changes hands). |
 | `locked` | The holder has a live lock here (a Territory Lock structure, or the robots' nexus): `RobotTerritory.locksFor`. |
 
 **Threat** (`controlThreat`, pure, in sectorControl.ts). The holder is threatened when its share is falling (`trend` −1) OR one of its structures was hit within **3 min** of game time (`THREAT_STRUCTURE_HIT_WINDOW_MS`; `SectorRoom.sideStructuresHitWithin`, the per-side generalisation of `tradeBaseUnderAttack` over the same `structureAttackAuditAtMs` throttle map, so a hit registers at most once per 15 s per structure). Each sign counts 1. A threatened holder gains 1 more when the sector has `recentCombat` or its share is at or under **40** (`THREAT_LOW_SHARE`; release is at 20). Neutral ground is 0.
 
-**History.** `GET /galaxy/sector/:key/history` returns `{ key, samples: [{ atMs, holder, holderShare }] }`, oldest first: one sample a minute (game time), **60 samples** (an hour) per sector, in a ring preallocated per sector ([sectorControlHistory.ts](../../src/server/livingworld/sectorControlHistory.ts)) and written from the control tick without allocating. `:key` must be a known sector (else 404). Not persisted: the ring refills after a restart. Same `Cache-Control` as the snapshot.
+**History.** `GET /galaxy/sector/:key/history` returns `{ key, samples: [{ atMs, holder, holderShare }] }`, oldest first: one sample a minute (game time), **60 samples** (an hour) per sector, in a ring preallocated per sector ([sectorControlHistory.ts](../../src/server/livingworld/sectorControlHistory.ts)) and written from the control tick without allocating. `:key` must be a known sector (else 404). Saved in the robot director's state row with the sector's control entry (`history: [atMs, holder, holderShare][]`, once a minute and on shutdown), so the panel's graph survives a restart; on restore, samples older than an hour are dropped. Same `Cache-Control` as the snapshot.
 
 **Client.** `useGalaxyStats` and `useGalaxyPresence` both poll on `GALAXY_FEED_INTERVAL_MS` (10 s). Presence (`/galaxy/presence`) is per player and not memoised, so pilot counts stay exact.
 
