@@ -30,7 +30,7 @@ export const loot: Shot = {
   id: 'loot',
   section: 'mechanics',
   title: 'Loot & cargo',
-  caption: 'Every kill drops a loot pod. Fly alongside, tap it and press Open: the hold reveals item by item. Take what you want, or lose it all if you die.',
+  caption: 'A kill keeps its cargo about half the time, in a loot pod. Fly alongside, tap it and press Open: the hold reveals item by item. Take what you want, or lose it all if you die.',
   features: ['M17'],
   docs: ['loot-and-cargo'],
   reel: true,

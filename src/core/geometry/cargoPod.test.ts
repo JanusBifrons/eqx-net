@@ -3,10 +3,10 @@
  * The pod's wire `componentIndex` carries size class and glow tier together.
  */
 import { describe, expect, it } from 'vitest';
-import { podComponentIndex, podSizeClass, podSizeOf, podTierOf, POD_TIERS, POD_SIZE_SCALES, POD_TIER_COLORS } from './cargoPod.js';
-import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
-import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
-import { getShipKind } from '../shipKinds.js';
+import { podComponentIndex, podSizeClass, podSizeOf, podTierOf, POD_TIERS, POD_SIZE_SCALES, POD_TIER_COLORS } from '../../shared-types/shipKinds/cargoPod.js';
+import { shipScrapGroups } from './shipScrapGroups.js';
+import { scrapColliderFor } from './scrapCollider.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 describe('cargo pod size classes', () => {
   it('a fighter gets the smallest pod, a capital the biggest', () => {
