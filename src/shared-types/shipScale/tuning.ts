@@ -7,15 +7,13 @@
  *     scale, mount and latent-mount positions) and records the factor as
  *     `appliedScale`. `defineShipKind` (shipKinds/types) runs it for every
  *     catalogue kind with `effectiveScale(kind)`.
- *  2. `shipTuning(kind)` — every OTHER number that depends on a ship's size,
- *     derived from its `appliedScale` and its `sizeClass` through the
- *     `CLASS_TUNING` table: muzzle clearance, hit radius, shield pad, turret
- *     sizes, exhaust, spawn clearance, loot pickup, flocking, bake budget.
+ *  2. `shipTuning(kind)` — every OTHER number that depends on a ship's size, derived from its
+ *     `appliedScale` and its `sizeClass` through the `CLASS_TUNING` table: muzzle clearance,
+ *     hit radius, shield pad, turrets, exhaust, spawn and nav clearance, loot, flocking, bake budget.
  *
- * Rule: a size-dependent number comes from here, never a constant. At scale 1
- * with today's classes every value equals the old constant exactly, so the
- * 1× game is byte-identical; at 2× they follow the ships; a capital class
- * gets its own multipliers. Tuning is a data change in `CLASS_TUNING`.
+ * Rule: a size-dependent number comes from here, never a constant. At scale 1 with today's classes
+ * every value equals the old constant exactly, so the 1× game is byte-identical; at 2× they follow
+ * the ships; a capital class gets its own multipliers. Tuning is a data change in `CLASS_TUNING`.
  *
  * Cached per kind object (a hot loop pays one WeakMap lookup, #14). Pure.
  */
@@ -259,6 +257,7 @@ export interface ShipTuning {
    *  against the hull at 2x and hid inside the flame (2026-11-06). */
   exhaustTrailS: number;
   spawnClearance: number;
+  navClearance: number; // hull centre to rock on a nav route (navigation slice 7): radius + a quarter
   lootPickup: number;
   flockFollow: number;
   flockSeparation: number;
@@ -370,6 +369,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     nozzleMax: BASE.nozzleMax * g,
     exhaustTrailS: (BASE.exhaustTrailS * s) / motionFactors(s).speed,
     spawnClearance: ct.clearHull ? Math.max(BASE.spawnClearance * sp, kind.radius * 2) : BASE.spawnClearance * sp,
+    navClearance: kind.radius * 1.25,
     lootPickup: ct.clearHull ? Math.max(BASE.lootPickup * sp, kind.radius * 1.3) : BASE.lootPickup * sp,
     flockFollow: ct.clearHull ? Math.max(BASE.flockFollow * sp, kind.radius * 3.3) : BASE.flockFollow * sp,
     flockSeparation: ct.clearHull ? Math.max(BASE.flockSeparation * sp, kind.radius * 2.2) : BASE.flockSeparation * sp,

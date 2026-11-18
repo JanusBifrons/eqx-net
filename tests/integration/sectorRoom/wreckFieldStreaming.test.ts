@@ -129,6 +129,37 @@ describe('SectorRoom integration — wreck field streaming (wreck fields 3b)', (
     expect(src.stats.hullsLive).toBe(spot.hulls.length);
   });
 
+  it('slice 4: a touched hull unloads into a lineage row when nothing is near, and reloads from it where it was left', { timeout: 60_000 }, async () => {
+    const { int, playerId } = await boot();
+    const src = int().wreckFieldSource!;
+    const want = Math.min(spot.pieces, FIELD_LIVE_CAP);
+    await until('ring loaded', () => fieldPieces(int()) >= want);
+    // Touch one hull: shove one of its pieces 60 u.
+    const id = src.pieceIds()[0]!;
+    const p = { ...int().wreckState(id)! };
+    const moved = { x: p.x + 60, y: p.y - 25 };
+    int().postToWorker({ type: 'SET_POSITION', entityId: id, x: moved.x, y: moved.y, angle: p.angle, vx: 0, vy: 0, angvel: 0 });
+    await harness!.advance(300);
+
+    // Leave for longer than the linger: untouched hulls retire, the touched one unloads into its row.
+    const away = { x: spot.x + 12 * CHUNK_SIZE, y: spot.y };
+    int().postToWorker({ type: 'SET_POSITION', entityId: playerId, x: away.x, y: away.y, angle: 0, vx: 0, vy: 0, angvel: 0 });
+    await until(() => `touched hull unloaded: ${JSON.stringify(src.stats)}`, () => src.stats.hullsUnloaded === 1 && src.stats.hullsRetired === spot.hulls.length - 1, 30);
+    expect(fieldPieces(int())).toBe(0);
+    expect(wreckPieces(int())).toBe(0);
+    expect(int().wreckDescriptors().length).toBe(0);
+
+    // Back: the touched hull comes from its row (at the moved pose), the rest from the seed, once each.
+    int().postToWorker({ type: 'SET_POSITION', entityId: playerId, x: spot.x, y: spot.y, angle: 0, vx: 0, vy: 0, angvel: 0 });
+    await until(() => `ring reloaded: ${JSON.stringify(src.stats)}`, () => fieldPieces(int()) >= want);
+    await harness!.advance(300);
+    expect(src.stats.hullsRestored).toBe(1);
+    expect(fieldPieces(int())).toBe(want);
+    expect(src.stats.hullsLive).toBe(spot.hulls.length);
+    const near = src.pieceIds().some((q) => { const s = int().wreckState(q); return s !== null && Math.hypot(s.x - moved.x, s.y - moved.y) < 0.5; });
+    expect(near, 'a reloaded piece sits where the moved one was left').toBe(true);
+  });
+
   it('a battle break-up beside the field evicts none of it, and the field none of the battle', { timeout: 60_000 }, async () => {
     const { int } = await boot();
     const want = Math.min(spot.pieces, FIELD_LIVE_CAP);

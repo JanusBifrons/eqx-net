@@ -24,6 +24,8 @@ import type { AiEntity, AiSwarmView, AiWorldView, IAiNeighbourQuery } from '../c
 import { MANOEUVRE_ATTACK_RUN } from './tactics/manoeuvre.js';
 import { MORALE_OUTCOME } from './tactics/morale.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import type { HullAvoid } from './hullAvoid.js';
+import type { PilotHandling } from './virtualPilot.js';
 
 const ORB = getShipKind('robot-circle');
 const HEAVY = getShipKind('heavy');
@@ -46,9 +48,17 @@ const sw = (o: KinematicBody, id: string, allegiance: string): AiSwarmView =>
 
 interface Brain {
   switchManoeuvre(id: number, tick: number): void;
-  hullAvoid(self: AiEntity, nb: IAiNeighbourQuery): boolean;
-  _avX: number;
+  _avoid: HullAvoid;
+  handling: PilotHandling;
+  kind: { radius: number };
+  shieldPad: number;
+  avoidAccel(): number;
   _tac: { tick: number };
+}
+
+/** The brain's hull-avoidance check on ships only, as its combat tick runs it. */
+function hullAvoid(b: Brain, self: AiEntity, nb: IAiNeighbourQuery): boolean {
+  return b._avoid.check(self, b.handling, b.kind.radius, b.shieldPad, b.avoidAccel(), b._tac.tick, nb, undefined);
 }
 
 interface Scene { turnFlips: number; maxCloseSlowTicks: number }
@@ -144,24 +154,24 @@ describe('HostileDroneBehaviour — an attack run started nose to nose opens the
     const nb = oneShip(other, 'b', HEAVY.radius, 'drones');
     // Passing 10 u to my left: dodge right (+x).
     brain._tac.tick = 100;
-    expect(brain.hullAvoid(self, nb)).toBe(true);
-    expect(brain._avX).toBeGreaterThan(0.9);
+    expect(hullAvoid(brain, self, nb)).toBe(true);
+    expect(brain._avoid.x).toBeGreaterThan(0.9);
     // Next tick it slides 10 u to my right: a fresh pick would dodge left;
     // the latched side keeps the dodge going right.
     other.x = 10;
     brain._tac.tick = 101;
-    expect(brain.hullAvoid(self, nb)).toBe(true);
-    expect(brain._avX).toBeGreaterThan(0.9);
+    expect(hullAvoid(brain, self, nb)).toBe(true);
+    expect(brain._avoid.x).toBeGreaterThan(0.9);
     // A new manoeuvre frees the side: now it dodges away, to the left.
     brain.switchManoeuvre(MANOEUVRE_ATTACK_RUN, 102);
     brain._tac.tick = 102;
-    expect(brain.hullAvoid(self, nb)).toBe(true);
-    expect(brain._avX).toBeLessThan(-0.9);
+    expect(hullAvoid(brain, self, nb)).toBe(true);
+    expect(brain._avoid.x).toBeLessThan(-0.9);
     // So does a second without a dodge.
     other.x = -10;
     brain._tac.tick = 102 + 61;
-    expect(brain.hullAvoid(self, nb)).toBe(true);
-    expect(brain._avX).toBeGreaterThan(0.9);
+    expect(hullAvoid(brain, self, nb)).toBe(true);
+    expect(brain._avoid.x).toBeGreaterThan(0.9);
   });
 
   it('hull avoidance clears the shield bubbles, not just the hulls (2026-11-14)', () => {
@@ -181,8 +191,8 @@ describe('HostileDroneBehaviour — an attack run started nose to nose opens the
     // Close enough (~0.45 s off) that even the arcade turn rate needs to start now.
     const other: KinematicBody = { x: miss, y: 150, vx: 0, vy: -170, angle: Math.PI, angvel: 0 };
     brain._tac.tick = 100;
-    expect(brain.hullAvoid(self, oneShip(other, 'b', F.radius, 'robots'))).toBe(true);
+    expect(hullAvoid(brain, self, oneShip(other, 'b', F.radius, 'robots'))).toBe(true);
     // Passing on my right: dodge left.
-    expect(brain._avX).toBeLessThan(-0.9);
+    expect(brain._avoid.x).toBeLessThan(-0.9);
   });
 });
