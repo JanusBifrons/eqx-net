@@ -21,7 +21,8 @@
  *    geometry resolved by the shared core resolver (the client's), and its
  *    live pieces spawned through the re-split / rock-cut piece spawn
  *    (`spawnWreckPieces` + `addWreck`) at their saved poses, at rest, with
- *    their saved integrity, no `deathTick` (drawn cool). The row keeps its
+ *    their saved integrity, no `deathTick` (drawn cool), asleep (the
+ *    worker's `sleeping` spawn: FLAG_SLEEPING from step 1). The row keeps its
  *    serial, so later writes overwrite it.
  *
  * Restore and flush run at boot, on a timer and at dispose: they allocate.
@@ -107,6 +108,8 @@ export class BattleWreckSaves {
   }
 
   private write(root: number): void {
+    // A field lineage is the wreck field's (WreckFieldSource), never a battle row.
+    if (this.s.wrecks.get(root)?.origin === 'field') return;
     const rec = collectLineage(root, this.deps);
     let serial = this.serials.get(root);
     if (rec === null || rec.pieces.length === 0) {
@@ -196,10 +199,11 @@ export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord): n
   // 2. Fresh u16 ids and piece serials, then the pieces (children first, so a
   //    node whose pieces all failed to spawn and has no child is never added).
   const { host, d } = s;
-  const quiet: CapitalWreckDeps = { ...d, pieceSplit: undefined, dropSalvage: undefined };
+  // Restored pieces are at rest: they spawn asleep (`sleeping`, no awake window).
+  const quiet: CapitalWreckDeps = { ...d, pieceSplit: undefined, dropSalvage: undefined, spawnPiece: (spec) => d.spawnPiece({ ...spec, sleeping: true }) };
   const chainRoot = rootInputs(descs[0]!);
   const src = wreckSourceOf(chainRoot);
-  const fifo = host.fifo(src.profile.id === 'capital');
+  const fifo = host.fifo(src.profile.id === 'capital', 'battle');
   const like = knockLike(src.ship, geoms[0]!);
   const ids: number[] = new Array<number>(n).fill(0);
   const serial: number[] = new Array<number>(n).fill(0);

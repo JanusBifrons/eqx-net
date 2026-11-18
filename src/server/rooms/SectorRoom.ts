@@ -268,10 +268,12 @@ import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { BattleWreckSaves, battleWreckStore, WRECK_LINEAGE_FLUSH_MS } from './wreckLineageSaves.js';
 import { CutFieldSubsystem } from './CutFieldSubsystem.js';
+import { cutFieldOpts, type ChunkSource } from '../../core/terrain/chunkStreamer.js';
+import { rockFieldBlocker, wreckField } from '../../core/terrain/wreckFieldLayout.js';
+import { WreckFieldSource, type WreckFieldRoomOpts } from './WreckFieldSource.js';
 import { getNavWorker, type NavField } from '../nav/NavWorker.js';
 import { NavRoutes } from '../nav/NavRoutes.js';
 import type { IAiNavRoutes } from '../../core/contracts/IAiBehaviour.js';
-import type { ChunkSource } from '../../core/terrain/chunkStreamer.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -1275,6 +1277,7 @@ export class SectorRoom extends Room<SectorState> {
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
   private structureGridTimer: GameTimer | undefined;
   private cutField: CutFieldSubsystem | undefined; // macro terrain v2 (room option `cutField`)
+  private wreckFieldSource: WreckFieldSource | undefined; // wreck fields 3b (room option `wreckField`)
   /** The cut field's nav maps in the nav worker (navigation slice 4b); set once built. */
   private navField: NavField | undefined;
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
@@ -1596,7 +1599,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   get _internals(): {
-    cutField: CutFieldSubsystem['streamer'] | undefined; cutFieldSub: CutFieldSubsystem | undefined; serverTick: number;
+    cutField: CutFieldSubsystem['streamer'] | undefined; cutFieldSub: CutFieldSubsystem | undefined; wreckFieldSource: WreckFieldSource | undefined; serverTick: number;
     /** Room update() calls so far (the AI-pilot cadence; serverTick is the
      *  physics worker's step count and can drift a step or two from it). */
     roomUpdates: number;
@@ -1741,7 +1744,7 @@ export class SectorRoom extends Room<SectorState> {
   } {
     return {
       loot: this.loot,
-      cutField: this.cutField?.streamer, cutFieldSub: this.cutField,
+      cutField: this.cutField?.streamer, cutFieldSub: this.cutField, wreckFieldSource: this.wreckFieldSource,
       serverTick: this.serverTick,
       roomUpdates: this.roomUpdateCount,
       droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
@@ -1932,6 +1935,9 @@ export class SectorRoom extends Room<SectorState> {
        * suppresses both legacy paths so we don't double-spawn.
        */
       cutField?: { seed: string; clearings?: FieldClearing[] }; // macro terrain v2: test/showcase rooms, and every asteroid-marked galaxy sector via resolveSectorConfig (F4, with pocket clearings; docs/architecture/macro-terrain.md)
+      /** Wreck fields 3b: an old battlefield's hulls streamed in by chunk
+       *  (`WreckFieldSource`). Off by default; dev room `wreck-field-test`. */
+      wreckField?: WreckFieldRoomOpts;
       swarmCount?: number;
       swarmRatio?: number; // asteroid fraction; default 0.8
       swarmRadius?: number; // spawn disc radius; default 18 000
@@ -2844,8 +2850,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin, shipKindId) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(spin?.settleSpeed ? { settleSpeed: spin.settleSpeed, settleSpin: spin.settleSpin ?? 0 } : {}), ...(shipKindId !== undefined ? { shipKindId } : {}) }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin, shipKindId, sleeping) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(spin?.settleSpeed ? { settleSpeed: spin.settleSpeed, settleSpin: spin.settleSpin ?? 0 } : {}), ...(shipKindId !== undefined ? { shipKindId } : {}), ...(sleeping === true ? { sleeping } : {}) }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -3249,7 +3255,15 @@ export class SectorRoom extends Room<SectorState> {
 
     if (this.testMode) this.persistSector = roomOpts.persistSector !== false; // cut field before any seeding: placement sees its rocks (C5)
     // The chunk-streaming host exists when the sector has ANY chunk source: the field's rocks today; wreck-field sources join `chunkSources` (wreck fields R7).
+    // Break-up is ON by default in every room (owner decision 2026-11-14:
+    // "land it switched on"). A room opts out with `capitalWrecks: false` /
+    // `subcapWrecks: false`; the env switch wins over the room either way:
+    // `=0` forces it off (tests, the off arm of the debris soak), `=1` on.
+    // Read before the streaming host: a wreck field follows the switches.
+    this.capitalWrecksOn = wreckSwitchOn(process.env['EQX_CAPITAL_WRECKS'], roomOpts.capitalWrecks);
+    this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks);
     const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
+    if (roomOpts.wreckField !== undefined && (this.capitalWrecksOn || this.subcapWrecksOn)) chunkSources.push(this.buildWreckFieldSource(roomOpts.wreckField, roomOpts.cutField));
     if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
     if (this.cutField?.navOpts) this.hostNavField(this.cutField, this.cutField.navOpts);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
@@ -3476,12 +3490,7 @@ export class SectorRoom extends Room<SectorState> {
     } else if (ENV_TIME_SCALE !== null) {
       this.setTimeScale(ENV_TIME_SCALE);
     }
-    // Break-up is ON by default in every room (owner decision 2026-11-14:
-    // "land it switched on"). A room opts out with `capitalWrecks: false` /
-    // `subcapWrecks: false`; the env switch wins over the room either way:
-    // `=0` forces it off (tests, the off arm of the debris soak), `=1` on.
-    this.capitalWrecksOn = wreckSwitchOn(process.env['EQX_CAPITAL_WRECKS'], roomOpts.capitalWrecks);
-    this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks);
+    // (Wreck switches: read before the streaming host, above.)
     if (this.capitalWrecksOn || this.subcapWrecksOn) this.initCapitalWrecks();
     if (this.capitalWrecks !== null && this.persistSector && this.sectorKey !== null) {
       this.wreckSaves = new BattleWreckSaves(this.capitalWrecks.lineageState(), battleWreckStore(this.sectorKey));
@@ -5717,7 +5726,30 @@ export class SectorRoom extends Room<SectorState> {
       dropSalvage: (qty, x, y, vx, vy, ore, root) => this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage', root }),
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       pieceSplit: (from, ids, masses, pods) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks, pods),
-      lineageTouched: (root) => this.wreckSaves?.touch(root),
+      lineageTouched: (root) => { this.wreckSaves?.touch(root); this.wreckFieldSource?.touched(root); },
+    });
+  }
+
+  /** Wreck fields 3b: the room option `wreckField` as a chunk source of the
+   *  ONE streamer (`WreckFieldSource`; macro-terrain.md F3), laid out once
+   *  at boot around the cut field's rocks and clearings, under the room's
+   *  wreck switches. */
+  private buildWreckFieldSource(o: WreckFieldRoomOpts, cut: { seed: string; clearings?: FieldClearing[] } | undefined): WreckFieldSource {
+    const field = wreckField({
+      ...o, capitalWrecksOn: this.capitalWrecksOn, subcapWrecksOn: this.subcapWrecksOn,
+      ...(cut?.clearings ? { clearings: cut.clearings } : {}),
+      ...(cut ? { blocked: rockFieldBlocker(cutFieldOpts(cut.seed, cut.clearings)) } : {}),
+    });
+    logger.info({ seed: o.seed, hulls: field.hulls.length, dropped: field.dropped }, 'wreck field laid out');
+    return this.wreckFieldSource = new WreckFieldSource(field, {
+      wrecks: () => this.capitalWrecks ?? undefined,
+      piecePoseInto: (id, out) => this.wreckPose(id, out) !== null,
+      pieceAwake: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        return rec != null && ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) === 0;
+      },
+      tractored: (id) => this.forceFields.isTractored(id),
+      warn: (obj, msg) => logger.warn(obj, msg),
     });
   }
 
