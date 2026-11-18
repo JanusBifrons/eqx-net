@@ -86,6 +86,15 @@ function leavingScene(): Trace {
   return record(b, self, 400, v, t);
 }
 
+/** An owned Aggressive ship flying past a robot on its route. */
+function ownedPast(order: (b: HostileDroneBehaviour) => void): Trace {
+  const b = new HostileDroneBehaviour(KIND, { side: 'players', ownerId: 'owner-1' });
+  b.setEngageOnSight(true);
+  order(b);
+  const swarms: AiSwarmView[] = [{ id: 'r1', x: 0, y: 1500, vx: 0, vy: 0, allegiance: 'robots', kindId: 'robot-square' }];
+  return record(b, body(0, 0, 0), 900, (t) => ({ players: [], tick: t, dtSec: 1 / 60, swarms }));
+}
+
 const SCENES: Record<string, () => Trace> = {
   orbit: () => record(brain(), body(), 240, (t) => view(t)),
   orbitFar: () => record(brain(), body(9000, 4000), 240, (t) => view(t)),
@@ -125,9 +134,16 @@ const SCENES: Record<string, () => Trace> = {
     return record(b, body(), 400, (t) => view(t));
   },
   leaving: leavingScene,
+  // Travel / patrol / search coverage (recorded before the travel and search
+  // modes moved out of the brain).
+  travelArrive: () => { const b = brain(); b.setTravel(900, 300); return record(b, body(), 600, (t) => view(t)); },
+  travelFiring: () => ownedPast((b) => b.setTravel(0, 3000)),
+  patrolLegFight: () => ownedPast((b) => b.setPatrolLeg(0, 0, 0, 3000)),
+  huntLong: () => { const b = brain(); b.setHunt(true); return record(b, body(), 2400, (t) => view(t)); },
 };
 
-/** Recorded on the pre-selector code (see header). */
+/** Recorded on the pre-selector code (see header); the travel / patrol /
+ *  search additions on the code before those modes moved out. */
 const EXPECTED: Record<string, Trace> = {
   orbit: { activities: ['idle'], hash: 2473974824 },
   orbitFar: { activities: ['idle'], hash: 474350843 },
@@ -144,6 +160,10 @@ const EXPECTED: Record<string, Trace> = {
   hunt: { activities: ['searching'], hash: 1793141760 },
   huntThenCourse: { activities: ['searching'], hash: 965616777 },
   leaving: { activities: ['retreating', 'idle'], hash: 4093456341 },
+  travelArrive: { activities: ['moving', 'guarding'], hash: 4260918485 },
+  travelFiring: { activities: ['moving', 'chasing', 'guarding'], hash: 3754968701 },
+  patrolLegFight: { activities: ['patrolling', 'chasing', 'attacking'], hash: 2851019941 },
+  huntLong: { activities: ['searching'], hash: 2146711092 },
 };
 
 describe('HostileDroneBehaviour — pilotJob() equivalence', () => {
