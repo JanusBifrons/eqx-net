@@ -61,6 +61,7 @@ describe('describeActivity', () => {
   it('reads in plain language', () => {
     expect(describeActivity(row('a', { activity: 'guarding' }))).toBe('Guarding');
     expect(describeActivity(row('a', { activity: 'moving' }))).toBe('Moving');
+    expect(describeActivity(row('a', { activity: 'blocked' }))).toBe("Can't get closer");
     expect(describeActivity(row('a', { activity: 'chasing' }), 'Drone')).toBe('Chasing Drone');
     expect(describeActivity(row('a', { activity: 'chasing' }))).toBe('Chasing');
     expect(describeActivity(row('a', { activity: 'attacking' }), 'Fighter')).toBe('Attacking Fighter');

@@ -23,6 +23,8 @@ export const FLEET_STATUS_STANCES = ['aggressive', 'defensive', 'holdFire'] as c
 export const FLEET_STATUS_ACTIVITIES = [
   'idle', 'moving', 'patrolling', 'chasing', 'attacking', 'retreating', 'formingUp', 'guarding',
   'searching',
+  // Navigation slice 9: no way fits to its goal, so it waits as close as it can get.
+  'blocked',
 ] as const;
 export const FLEET_STATUS_ORDERS = ['move', 'attack', 'stop'] as const;
 /** Slot 6 (morale) is RETIRED; it still accepts the old index range so an

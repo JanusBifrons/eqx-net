@@ -1036,6 +1036,8 @@ export class SectorRoom extends Room<SectorState> {
     activityOf: (id) => {
       const a = this.aiController.getBehaviour(id)?.getActivity?.();
       if (a === undefined) return null;
+      // Navigation slice 9: on its way but no way fits, so it waits short of the goal.
+      if ((a === 'moving' || a === 'patrolling') && this.aiController.nav instanceof NavRoutes && this.aiController.nav.waiting(id)) return 'blocked';
       if (a === 'moving') {
         const w = this.fleet.ordersOf(id);
         if (w !== null && w.mode === 'retreat' && w.order === null) return 'retreating';
