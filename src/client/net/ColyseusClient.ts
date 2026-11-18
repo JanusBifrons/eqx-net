@@ -1,4 +1,4 @@
-import { beamShieldEdgeDist, updateRemoteBeamDists } from '../combat/remoteBeamRay.js';
+import { beamShieldEdgeDist } from '../combat/remoteBeamRay.js';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
@@ -52,6 +52,9 @@ import { stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './f
 import { cargoChanged } from './lootView';
 import { setFactionLooks } from '../../shared-types/factions.js';
 import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
+import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
+import { drainScheduledDamageSpawns, updateLocalShipMirror } from './mirror/localShipPass.js';
+import { updateSpectatorPlacement, updateServerGhost, updateSwarmMirror, updateRemoteShipsMirror, updateProjectilesMirror, expireFrameState, updateDroneHostility } from './mirror/worldPasses.js';
 import { fittedCargoMul } from '../../shared-types/blueprints.js';
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
@@ -138,9 +141,9 @@ export function travelApproach(tau: number): [number, number] {
 }
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
 import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
-import { computeRemoteLerpOffsets, stepRemoteShipOffset, type RemoteShipOffset } from './remoteLerpOffsets.js';
+import { computeRemoteLerpOffsets, type RemoteShipOffset } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
-import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled, isGhostProbeEnabled } from '../debug/ClientLogger';
+import { logEvent, isDiagEnabled, isFullDiagMode, isGhostProbeEnabled } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
@@ -158,7 +161,7 @@ const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, isMiningTool } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
-import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
+import { RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
 import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
 import { makeHelmCourseMark, resolveHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
 import { resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
@@ -169,7 +172,7 @@ import {
   type ReconcileFeedbackSink,
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
-import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
+import { localFireSpawnsGhost, localFirePredicts } from '../combat/LocalBeam';
 import { mountMuzzleRay, type MuzzleRay } from '../render/beamStyles';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
@@ -177,20 +180,14 @@ import { aimInput } from '../input/AimInput';
 import { FireControlClient } from './FireControlClient';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
-  interpolateSwarmPose,
   setSwarmDisplaySpeed,
   type InterpolatedPose,
-  DISPLAY_DELAY_MS as SHELL_DISPLAY_DELAY_MS,
 } from './swarmInterpolation';
-/** One server tick in ms (shells as events: the display-tick estimate). */
-const SHELL_TICK_MS = 1000 / 60;
 import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
-import { slewDisplayMountAngles } from './displayMountAngles';
 import {
-  resolvePlacementPreviewStatus,
   type PlacementPreview,
   type PendingPlacement,
   type ShipPose,
@@ -1437,6 +1434,32 @@ export class ColyseusGameClient {
     enterCommandFromServer: (): void => this.enterCommandFromServer(),
     dataChannelTransport: (): DataChannelTransport | null => this._dataChannelTransport,
   };
+  /** The ctx the `updateMirror` passes (`mirror/`) run with, built once (#14). */
+  private readonly _mirrorPassCtx: MirrorPassCtx = ((c: ColyseusGameClient): MirrorPassCtx => ({
+    get mirror() { return c.mirror; }, get clock() { return c.clock; }, get gameClock() { return c.gameClock; },
+    get predWorld() { return c.predWorld; }, get reconciler() { return c.reconciler; },
+    get lastFrameMs() { return c.lastFrameMs; }, get lastLocalTickAtMs() { return c._lastLocalTickAtMs; },
+    get inputTick() { return c.inputTick; }, get scheduledDamageSpawns() { return c._scheduledDamageSpawns; },
+    get pendingPlacement() { return c._pendingPlacement; },
+    set pendingPlacement(v) { c._pendingPlacement = v; },
+    get placementShipScratch() { return c._placementShipScratch; },
+    get placementPreviewScratch() { return c._placementPreviewScratch; },
+    get swarmNearbyIds() { return c._swarmNearbyIds; }, set swarmNearbyIds(v) { c._swarmNearbyIds = v; },
+    get swarmNearbySwapScratch() { return c._swarmNearbySwapScratch; },
+    set swarmNearbySwapScratch(v) { c._swarmNearbySwapScratch = v; },
+    get swarmInterpScratch() { return c._swarmInterpScratch; }, get lastSnapshotPos() { return c.lastSnapshotPos; },
+    get predRemoteShipIds() { return c.predRemoteShipIds; }, get remoteShipOffsets() { return c._remoteShipOffsets; },
+    get ghostManager() { return c.ghostManager; }, get shellEvents() { return c._shellEvents; },
+    get clockAnchorServerTick() { return c.clockAnchorServerTick; },
+    get clockAnchorPerfNow() { return c.clockAnchorPerfNow; },
+    get damageFlashFrames() { return c._damageFlashFrames; }, get hitLedger() { return c._hitLedger; },
+    get lastHitscanFireMs() { return c._lastHitscanFireMs; },
+    get skipHitscanVisual() { return ColyseusGameClient.SKIP_HITSCAN_VISUAL_FLAG; },
+    get aiController() { return c._aiController; },
+    gameFrameMs: (): number => c.gameFrameMs(),
+    placeShells: (displayTick: number): void => c.placeShells(displayTick),
+    displayHitscan: (): DisplayPoseHitscan => c.displayHitscan(),
+  }))(this);
   /** The live connection's client + room binder, set once per `connect()`;
    *  the `transit_ready` handoff (handlers/transitHandlers.ts) consumes the
    *  destination seat through it. */
@@ -3670,644 +3693,21 @@ export class ColyseusGameClient {
     const mirrorRebuildStart = isDiagEnabled() ? this.clock.now() : -1;
     const localId = this.mirror.localPlayerId;
 
-    // Smooth-beam (2026-05-22): drain scheduled visual damage-number
-    // spawns whose time has come. See `_scheduledDamageSpawns` field
-    // declaration for the why; the splits are seeded inside
-    // `sendFire` per predicted hit, share one `clientShotId`, and ride
-    // the existing pendingDamageNumbers pipeline (which DamageNumberManager
-    // drains in its own update() — cancelByTag on a mispredict cancels
-    // ALREADY-SPAWNED numbers; the loop below also evicts not-yet-due
-    // entries for the cancelled tag so a misprediction never produces
-    // a delayed visual after the rollback). Bounded array (max ~5 ×
-    // active predictions); the `cancelScheduledDamageSpawnsByTag`
-    // hook is invoked from the existing reconcile path.
-    if (this._scheduledDamageSpawns.length > 0) {
-      const now = this.clock.now();
-      const pending = this.mirror.pendingDamageNumbers;
-      // Iterate from the tail so splice() is O(1) and ordering is
-      // preserved for the kept entries.
-      for (let i = this._scheduledDamageSpawns.length - 1; i >= 0; i--) {
-        const s = this._scheduledDamageSpawns[i]!;
-        if (s.atMs <= now) {
-          pending?.push({ targetId: s.targetId, x: s.x, y: s.y, damage: s.damage, tag: s.tag });
-          this._scheduledDamageSpawns.splice(i, 1);
-          // Probe 4 (mobile-perf-investigation, 2026-05-24) — log spawn
-          // separately from schedule. Previously `damage_number_predicted`
-          // fired at SCHEDULE time, making it look like 5 damage numbers
-          // spawned simultaneously per shot (confusing the "laser damage
-          // applying inconsistently" investigation). Now schedule fires
-          // once per shot with `count`, and spawn fires per actual emit
-          // with `lateMs` (time between scheduled `atMs` and actual spawn
-          // — measures how late the drain ran).
-          logEvent('damage_number_spawned', {
-            damage: s.damage,
-            tag: s.tag,
-            lateMs: parseFloat((now - s.atMs).toFixed(2)),
-          });
-        }
-      }
-    }
-
-    // Local ship — prediction + lerp correction.
-    if (localId && this.predWorld && this.reconciler) {
-      const state = this.predWorld.getShipState(localId);
-      if (state) {
-        const ox = this.reconciler.lerpOffset.x;
-        const oy = this.reconciler.lerpOffset.y;
-        const oa = this.reconciler.lerpAngleOffset;
-        this.reconciler.advanceLerp(this.lastFrameMs);
-
-        // Render-jitter-fix Phase 1 (2026-05-21): dead-reckon the
-        // rendered pose forward by `(clock.now() - _lastLocalTickAtMs) ×
-        // velocity` so 0-step RAFs show smooth motion instead of a
-        // frozen pose. The pre-fix renderer composed `predWorld + lerp`
-        // each RAF — but on a 90 Hz mobile display with 60 Hz physics,
-        // some RAFs fire without advancing a physics tick, so the
-        // rendered pose was identical to the prior frame. Cluster of
-        // 0-step RAFs = sprite holds for 3-5 display frames = user-
-        // perceived "stop-start" jitter. Locked by `assertFramePacingSmooth`
-        // on the 2q0jxw capture.
-        //
-        // Dead-reckon dt is capped at DEAD_RECKON_CAP_MS (~2 ticks) to avoid wild
-        // extrapolation across multi-second stalls (tab background,
-        // OS process reap) — those become discrete "freeze events"
-        // visually, not glide-overshoot artifacts.
-        //
-        // When the next physics tick fires, `state.x` will equal
-        // `prev_state.x + vx × dt + accel × dt²/2` ≈ the dead-reckoned
-        // pose (acceleration term is sub-pixel for typical ship
-        // accelerations over 16.7 ms), so the transition from dead-
-        // reckon to authoritative tick is visually continuous.
-        // From the frame's timestamp; a tick that fell due after the frame
-        // started (during this frame's work) makes it slightly negative, i.e.
-        // the pose a fraction of a tick before the state: still continuous.
-        const tickElapsedMs = this._lastLocalTickAtMs >= 0
-          ? Math.max(-DEAD_RECKON_BACK_MS, Math.min(DEAD_RECKON_CAP_MS, this.gameClock.at(frameNowMs ?? this.clock.now()) - this._lastLocalTickAtMs))
-          : 0;
-        const dtSec = tickElapsedMs / 1000;
-        const drX = state.x + state.vx * dtSec;
-        const drY = state.y + state.vy * dtSec;
-        const drAngle = state.angle + (state.angvel ?? 0) * dtSec;
-
-        // Preserve non-spatial fields across per-frame rewrites so the
-        // renderer keeps drawing the correct silhouette and the local-
-        // turret rotation state survives the per-frame mirror rebuild.
-        // `kind` was the first such field; `displayName` follows the same
-        // pattern; `mountAngles` (Phase 4b.2) is critical — `tickLocalMountAim`
-        // writes it on the same frame and `updateLiveBeam` re-derives the
-        // beam geometry from it, so wiping it here makes the visible beam
-        // flip back to baseAngle every render frame (visible bug: a solid
-        // unrotated beam under the flickering correctly-rotated ghost).
-        // Probe 7 (mobile-perf-investigation, 2026-05-24) — mutate
-        // the existing entry in place instead of allocating a new
-        // object literal per RAF. Non-spatial fields (`kind`,
-        // `displayName`, `mountAngles`) are PRESERVED by not touching
-        // them — they were written previously by `syncMirror` (kind/
-        // displayName) and `tickLocalMountAim` (mountAngles) and stay
-        // on the entry across rebuilds. Pre-fix the conditional-spread
-        // pattern allocated 2-4 objects per ship per RAF, ~9000
-        // allocations/sec at 25 in-interest entities. Pooling eliminates
-        // these allocations entirely after the first-spawn create.
-        let entry = this.mirror.ships.get(localId);
-        if (!entry) {
-          entry = {
-            x: drX + ox,
-            y: drY + oy,
-            vx: state.vx,
-            vy: state.vy,
-            angle: drAngle + oa,
-          };
-          this.mirror.ships.set(localId, entry);
-        } else {
-          entry.x = drX + ox;
-          entry.y = drY + oy;
-          entry.vx = state.vx;
-          entry.vy = state.vy;
-          entry.angle = drAngle + oa;
-        }
-        // Warp-to (#16): the local ship shows its PREDICTED phase (others take
-        // the snapshot's), so the build-up starts on the frame the pilot asks.
-        {
-          const wp = this.predWorld ? this.predWorld.warpPhase(localId) : 'idle';
-          // A sector transit's spool shows the same build-up.
-          const w = wp === 'spool' || (wp === 'idle' && useUIStore.getState().transitState === 'SPOOLING') ? 1
-            : wp === 'cruise' ? 2 : undefined;
-          if (entry.warp !== w) entry.warp = w;
-        }
-
-        // Structure placement ghost preview (smoke handoff 2026-06-06, Issue 5;
-        // post-Confirm "pending" ghost added playtest 2026-06-10 Issue 7). The
-        // live (positioning) ghost is anchored to the RENDERED local-ship pose
-        // (the same dead-reckoned + lerp pose the sprite is drawn at) so it
-        // tracks the ship; the dim "pending" ghost sits at the sent point until
-        // the structure lands (slice count grows) or times out — bridging the
-        // RTT+snapshot gap where the blueprint used to vanish. Spatial pose →
-        // render mirror, NOT Zustand (#2 — only the discrete `placementKind` id
-        // lives in Zustand). The resolver reuses `computePlacementPose` so the
-        // live ghost lands EXACTLY where Confirm sends (no preview/commit drift).
-        const placementKind = useUIStore.getState().placementKind;
-        const ship = this._placementShipScratch;
-        ship.x = entry.x;
-        ship.y = entry.y;
-        ship.angle = entry.angle;
-        // R2.1 — a structure RENDERS only when its entityId has a swarm pose
-        // (mirror.swarm, kind 2); the JSON structures slice that grows the count
-        // arrives on a SEPARATE channel. The pending ghost must persist until the
-        // structure is actually renderable (every slice entry has a swarm pose),
-        // not merely until the slice count grew, or it vanishes for the channel
-        // gap. Computed alloc-free (Map keys() iterator, reused maps) and ONLY
-        // while a placement is pending — the common no-pending frame pays nothing.
-        let allRenderable = true;
-        if (this._pendingPlacement) {
-          const structs = this.mirror.structures;
-          const sw = this.mirror.swarm;
-          if (structs && structs.size > 0) {
-            if (!sw) {
-              allRenderable = false;
-            } else {
-              for (const id of structs.keys()) {
-                if (!sw.has(id)) {
-                  allRenderable = false;
-                  break;
-                }
-              }
-            }
-          }
-        }
-        const placementStatus = resolvePlacementPreviewStatus(
-          placementKind,
-          placementKind ? ship : null,
-          this._pendingPlacement,
-          Date.now(),
-          this.mirror.structures?.size ?? 0,
-          allRenderable,
-          this._placementPreviewScratch,
-        );
-        if (placementStatus === 'active' || placementStatus === 'pending') {
-          this.mirror.pendingPlacementPreview = this._placementPreviewScratch;
-        } else {
-          if (placementStatus === 'cleared') this._pendingPlacement = null;
-          if (this.mirror.pendingPlacementPreview) this.mirror.pendingPlacementPreview = null;
-        }
-
-        // Replay-grade per-RAF rendered-pose capture (plan: replay infra
-        // Phase A, 2026-05-21). This is the EXACT position+angle the
-        // renderer will draw this frame — dead-reckoned predWorld +
-        // lerpOffset. The GROUND TRUTH for the on-device user experience
-        // and the basis for `assertFramePacingSmooth` (plan: render-
-        // jitter-fix Phase 0a) and `assertNoTeleport`.
-        // HIGH_VOLUME_TAGS gate (Phase 5e — invariant #14). `logEvent`
-        // would discard this in production but the object literal was
-        // being built per-RAF regardless. Gate at the callsite so the
-        // literal is never even allocated on a production session.
-        if (isFullDiagMode()) {
-          logEvent('local_pose_rendered', {
-            inputTick: this.inputTick,
-            x: Math.round((drX + ox) * 1000) / 1000,
-            y: Math.round((drY + oy) * 1000) / 1000,
-            angle: Math.round((drAngle + oa) * 10000) / 10000,
-            lerpOffsetX: Math.round(ox * 1000) / 1000,
-            lerpOffsetY: Math.round(oy * 1000) / 1000,
-            lerpAngleOffset: Math.round(oa * 10000) / 10000,
-          });
-        }
-
-        // 2026-05-28 — Ramming probe: per-frame snapshot of all the
-        // pose surfaces that could contribute to visual-vs-physics
-        // divergence during a player ↔ drone collision. Logged ONLY
-        // when the player is within 400 u of the nearest drone (the
-        // only situation where the gap matters — otherwise this
-        // would flood the diag at 60 Hz). Used by
-        // `tests/e2e/ramming-probe-armpit.spec.ts` and on-device
-        // smoke captures to diagnose the 2026-05-28 "fly inside the
-        // T-ship" report (user observation: speed-dependent visible
-        // penetration into the rendered hull silhouette).
-        //
-        // TODO: alloc-debt (Invariant #14) — this block runs every
-        // frame within 1500 u of any drone and builds a ~12-field
-        // diagnostic object literal that feeds `logEvent`. Should be
-        // gated on `isFullDiagMode()` so production never allocates
-        // here. Deferred per fuzzy-gray integration plan; sweep with
-        // `grep -rn 'TODO: alloc-debt' src/` follow-up.
-        //
-        // Captured surfaces:
-        //   - physPos     : local player predWorld position (collider).
-        //   - physVel/Spd : predWorld velocity (drives dead-reckon).
-        //   - visPos      : what the renderer DRAWS (= drX + ox).
-        //   - drOffset    : dead-reckon contribution = vel × dtSec.
-        //   - lerpOffset  : reconciliation smoothing residue (ox, oy).
-        //   - dronePos    : drone's interpolated/rendered position
-        //                   (same value the kinematic-follower will
-        //                   write to predWorld this frame).
-        //   - physDist    : center-to-center physics distance.
-        //   - visDist     : center-to-center visual distance.
-        //   - visVsPhys   : |visDist − physDist| — pure visual vs
-        //                   physics divergence, the smoking-gun
-        //                   number for "I see myself inside but
-        //                   physics says I'm not". Always ≥ 0.
-        //
-        // Gated on isRammingProbeEnabled() (2026-05-29, plan: lazy-mochi
-        // — supersedes the 2026-05-28 isFullDiagMode() gate). Capture
-        // ilhqk6 surfaced the unconditional alloc cost; b7b18d1 gated it
-        // on isFullDiagMode but Playwright auto-enables diag via
-        // navigator.webdriver, so every E2E spec that touches drones
-        // (combat-heap-growth, heap-growth-gate, every netgate rep,
-        // every smoke spec) still paid the ~12-field nested literal
-        // per RAF — driving updateMirror's share of CDP-sampled
-        // allocation from 4.6 % on main to 15.1 % on integration HEAD
-        // (lazy-mochi P2). Opt-in via `?probe=ram` only; the ramming-
-        // probe-armpit.spec.ts sets it explicitly. No E2E that isn't
-        // investigating ramming behaviour pays anything now.
-        if (isRammingProbeEnabled() && this.mirror.swarm) {
-          let nearestId = -1;
-          let nearestDx = 0;
-          let nearestDy = 0;
-          let nearestDistSq = Infinity;
-          for (const [entityId, entry] of this.mirror.swarm) {
-            if (entry.kind !== 1) continue;
-            const dx = entry.x - state.x;
-            const dy = entry.y - state.y;
-            const distSq = dx * dx + dy * dy;
-            if (distSq < nearestDistSq) {
-              nearestDistSq = distSq;
-              nearestId = entityId;
-              nearestDx = dx;
-              nearestDy = dy;
-            }
-          }
-          // 1500 u threshold accommodates gigantic test ships like the
-          // L-shape (polygon extent ~2000 from body center). For normal
-          // gameplay this still filters out most far-off drones — only
-          // ones the player could plausibly collide with get logged.
-          if (nearestId >= 0 && nearestDistSq < 1500 * 1500) {
-            const droneEntry = this.mirror.swarm.get(nearestId);
-            if (droneEntry) {
-              const physDist = Math.sqrt(nearestDistSq);
-              const visDx = (drX + ox) - droneEntry.x;
-              const visDy = (drY + oy) - droneEntry.y;
-              const visDist = Math.sqrt(visDx * visDx + visDy * visDy);
-              const physSpd = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
-              void nearestDx; void nearestDy; // diagnostics: relative direction kept here for callsites that need it
-              logEvent('ramming_probe', {
-                inputTick: this.inputTick,
-                physPos: {
-                  x: Math.round(state.x * 1000) / 1000,
-                  y: Math.round(state.y * 1000) / 1000,
-                },
-                physVel: {
-                  x: Math.round(state.vx * 1000) / 1000,
-                  y: Math.round(state.vy * 1000) / 1000,
-                },
-                physSpd: Math.round(physSpd * 10) / 10,
-                visPos: {
-                  x: Math.round((drX + ox) * 1000) / 1000,
-                  y: Math.round((drY + oy) * 1000) / 1000,
-                },
-                drOffset: {
-                  x: Math.round((drX - state.x) * 1000) / 1000,
-                  y: Math.round((drY - state.y) * 1000) / 1000,
-                },
-                lerpOffset: {
-                  x: Math.round(ox * 1000) / 1000,
-                  y: Math.round(oy * 1000) / 1000,
-                },
-                droneId: nearestId,
-                dronePos: {
-                  x: Math.round(droneEntry.x * 1000) / 1000,
-                  y: Math.round(droneEntry.y * 1000) / 1000,
-                },
-                droneShieldDown: droneEntry.shieldDown ?? false,
-                droneKind: droneEntry.shipKind ?? null,
-                physDist: Math.round(physDist * 100) / 100,
-                visDist: Math.round(visDist * 100) / 100,
-                visVsPhys: Math.round(Math.abs(visDist - physDist) * 100) / 100,
-                // 2026-05-28 contact-state probe — directly ask Rapier what
-                // the resolver produced THIS tick for the player ball:
-                //   - normal       : world-space normal the resolver chose
-                //                    to push the player along (should point
-                //                    AWAY from the polygon edge).
-                //   - penetration  : Rapier's own measured overlap (negative
-                //                    contactDist, in world units). If this
-                //                    matches the body-local penetration we
-                //                    compute geometrically, the resolver is
-                //                    SEEING the overlap correctly. If the
-                //                    resolver reports 0 while we measure 20u
-                //                    geometrically, the contact isn't even
-                //                    being generated → polygon decomposition
-                //                    seam problem.
-                //   - impulse      : the impulse magnitude applied this step.
-                //                    If thrust = 9000 N and impulse < 9000,
-                //                    the resolver is under-pushing → param /
-                //                    iteration count too low.
-                //   - contactCount : number of contact points (multi-edge =
-                //                    concave-corner contact).
-                //   - otherBodyId  : which body the player is contacting
-                //                    (sanity-check it's a swarm drone, not
-                //                    something else).
-                contactState: this.predWorld.queryContactState(localId) ?? null,
-              });
-            }
-          }
-        }
-
-        // Diagnostic — track swarm entities entering/leaving overlap range.
-        // The user reported "overlapping with enemy ships" (drones, since
-        // ship-on-ship interactions wouldn't show in single-player rooms).
-        // We log entry/exit events for any swarm entity within
-        // SWARM_OVERLAP_LOG_DIST of the local ship's RENDERED position
-        // (mirror, includes lerp). Entry and exit are logged with both
-        // the rendered local position AND the predWorld position so we
-        // can tell if the overlap is real (predWorld distance also small)
-        // or render-only (predWorld distance fine, lerp pulled the sprite).
-        if (this.mirror.swarm) {
-          const renderedX = state.x + ox;
-          const renderedY = state.y + oy;
-          const SWARM_OVERLAP_LOG_DIST = 100; // ~ ship radius + drone radius + buffer
-          // 2026-05-25 heap-growth gate step 2: two-Set swap.
-          const nowNear = this._swarmNearbySwapScratch;
-          nowNear.clear();
-          for (const [entityId, entry] of this.mirror.swarm) {
-            const dx = entry.x - renderedX;
-            const dy = entry.y - renderedY;
-            if (dx * dx + dy * dy < SWARM_OVERLAP_LOG_DIST * SWARM_OVERLAP_LOG_DIST) {
-              nowNear.add(entityId);
-              if (!this._swarmNearbyIds.has(entityId)) {
-                logEvent('swarm_near_enter', {
-                  entityId,
-                  kind: entry.kind,
-                  swarmPos: {
-                    x: parseFloat(entry.x.toFixed(2)),
-                    y: parseFloat(entry.y.toFixed(2)),
-                  },
-                  rendered: {
-                    x: parseFloat(renderedX.toFixed(2)),
-                    y: parseFloat(renderedY.toFixed(2)),
-                  },
-                  predWorld: {
-                    x: parseFloat(state.x.toFixed(2)),
-                    y: parseFloat(state.y.toFixed(2)),
-                  },
-                  lerpOffset: {
-                    x: parseFloat(ox.toFixed(2)),
-                    y: parseFloat(oy.toFixed(2)),
-                  },
-                  distRendered: parseFloat(Math.sqrt(dx * dx + dy * dy).toFixed(2)),
-                });
-              }
-            }
-          }
-          for (const oldId of this._swarmNearbyIds) {
-            if (!nowNear.has(oldId)) {
-              logEvent('swarm_near_exit', { entityId: oldId });
-            }
-          }
-          const oldActive = this._swarmNearbyIds;
-          this._swarmNearbyIds = nowNear;
-          this._swarmNearbySwapScratch = oldActive;
-        }
-      }
-    }
-
-    // Phase 4 WS-A1 — construction WITHOUT an active ship (spectator mode, D4).
-    // The placement-preview block above lives inside the local-ship branch and
-    // anchors the ghost AHEAD of the ship. After death there is NO local ship in
-    // `mirror.ships`, so that branch never runs — yet the spectator must still
-    // build. Set `pendingPlacementPreview` here from a zeroed placeholder pose;
-    // the renderer overrides x/y to the CAMERA CENTRE (free-roam) via the
-    // spectator centre-seed (`shouldCentreGhostOnActivate(..., spectator)`), so
-    // the blueprint follows where the player is looking. Reuses the same scratch
-    // (no per-frame alloc — invariant #14) + the same pending-ghost machinery.
-    const noLocalShip = !localId || !this.mirror.ships.has(localId);
-    if (noLocalShip && useUIStore.getState().pilotMode === 'spectator') {
-      const placementKind = useUIStore.getState().placementKind;
-      let allRenderable = true;
-      if (this._pendingPlacement) {
-        const structs = this.mirror.structures;
-        const sw = this.mirror.swarm;
-        if (structs && structs.size > 0) {
-          if (!sw) {
-            allRenderable = false;
-          } else {
-            for (const id of structs.keys()) {
-              if (!sw.has(id)) { allRenderable = false; break; }
-            }
-          }
-        }
-      }
-      // Zeroed placeholder ship — the renderer re-anchors the ghost to the
-      // camera centre in spectator, so the resolver's ahead-of-ship pose is a
-      // throwaway that's immediately overridden.
-      this._placementShipScratch.x = 0;
-      this._placementShipScratch.y = 0;
-      this._placementShipScratch.angle = 0;
-      const status = resolvePlacementPreviewStatus(
-        placementKind,
-        placementKind ? this._placementShipScratch : null,
-        this._pendingPlacement,
-        Date.now(),
-        this.mirror.structures?.size ?? 0,
-        allRenderable,
-        this._placementPreviewScratch,
-      );
-      if (status === 'active' || status === 'pending') {
-        this.mirror.pendingPlacementPreview = this._placementPreviewScratch;
-      } else {
-        if (status === 'cleared') this._pendingPlacement = null;
-        if (this.mirror.pendingPlacementPreview) this.mirror.pendingPlacementPreview = null;
-      }
-    }
-
-    // Server ghost position — orange diamond drawn at the raw snapshot coords.
-    this.mirror.serverGhostPos = this.lastSnapshotPos;
-    // Snapshot the user's debug visibility preference into the mirror once per
-    // frame so the Pixi renderer never reaches into the Zustand subscription
-    // path (per src/client/CLAUDE.md Zustand-purity rule).
-    this.mirror.showServerGhost = useUIStore.getState().showServerGhost;
-
-    // Phase 5c: swarm entities (asteroids, drones) live in mirror.swarm,
-    // populated by `decodeSwarmPacket` on every binary 'swarm' message. They
-    // have no client prediction — server-authoritative @ 60 Hz lerped between
-    // received frames. The renderer reads mirror.swarm directly each frame.
-
-    // Drones (kind=1) AND scrap (kind=3): PURE snapshot interpolation off the
-    // decoder-fed `poseRing` (drone-snapshot-interpolation pivot, 2026-05-18;
-    // scrap joined this path in the Phase-5 desync fix, 2026-06-14). The SAME
-    // `interpolateSwarmPose` the renderer uses (display-delay buffer + teleport
-    // guard), computed ONCE here and written into the mirror entry so every
-    // reader — renderer, HaloRadar, labels, health bars, MountVisualManager,
-    // damage numbers, the local beam's hit test — sees one consistent pose.
-    //
-    // This loop does NOT touch the predWorld body any more (2026-11-08, the
-    // remote-entity paradigm). The old "kinematic follower" re-posed the body
-    // here every frame to this display-delayed pose (now − DISPLAY_DELAY_MS),
-    // so the local ship, predicted AHEAD of the server, met each drone where
-    // it was ~(100 ms + lead) ago: a correction on every melee contact
-    // (docs/LESSONS.md 2026-11-08). Drone and scrap bodies now follow the same
-    // path as remote player ships: anchored to the latest server state on
-    // each snapshot (`anchorRemoteSwarmBodies`, inside `preResetRemoteShips`)
-    // and stepped forward by the replay + `tickPhysics`, so they sit on the
-    // local prediction's timeline and keep the local ship's own push. The
-    // body may lead the sprite, exactly as a remote ship's body can lead its
-    // lerp-offset sprite. Scrap stays a dynamic mass-1 body (never locked).
-    //
-    // Asteroids (kind=0) + structures (kind=2) keep their predWorld pose from
-    // the binary packet (set in `syncSwarmIntoPredWorld`) and the renderer
-    // interpolates them off the same poseRing — nothing to do for them here.
-    if (this.predWorld && this.mirror.swarm) {
-      const nowMs = this.clock.now();
-      for (const entry of this.mirror.swarm.values()) {
-        if (!isRemoteMovingSwarmKind(entry.kind)) continue;
-        interpolateSwarmPose(entry, nowMs, this._swarmInterpScratch);
-        entry.x = this._swarmInterpScratch.x;
-        entry.y = this._swarmInterpScratch.y;
-        entry.angle = this._swarmInterpScratch.angle;
-        // Turret angles: carried forward between 20 Hz snapshots, at the same
-        // single per-frame resolve as the pose (displayMountAngles.ts).
-        if (entry.kind === 1 && (entry.mountAngles || entry.displayMountAngles)) {
-          slewDisplayMountAngles(entry, entry.shipKind ? getShipKind(entry.shipKind).mounts : undefined, this.gameFrameMs() / 1000);
-        }
-      }    }
-
-    // Remote ships — read from predWorld at 60 Hz with decaying lerp offsets.
-    if (this.predWorld) {
-      for (const remoteId of this.predRemoteShipIds) {
-        if (remoteId === localId) continue;
-        const s = this.predWorld.getShipState(remoteId);
-        if (!s) continue;
-        const off = this._remoteShipOffsets.get(remoteId);
-        let ox = 0, oy = 0, oa = 0;
-        if (off) {
-          // Stage 1: critically-damped springs (x, y and angle; RTS Part A
-          // S1 added the angle). Frame-rate independent and matches
-          // Reconciler's local-ship offset shape; the entry ends once every
-          // axis is at the noise floor (position and velocity).
-          const stillMoving = stepRemoteShipOffset(off, this.lastFrameMs);
-          ox = off.sx.x;
-          oy = off.sy.x;
-          oa = off.sa.x;
-          if (!stillMoving) this._remoteShipOffsets.delete(remoteId);
-        }
-        // Probe 7 — mutate in place. Same rationale as the local-ship
-        // pooling above: non-spatial fields (kind, displayName,
-        // mountAngles) are preserved by NOT touching them.
-        let entry = this.mirror.ships.get(remoteId);
-        if (!entry) {
-          entry = {
-            x: s.x + ox,
-            y: s.y + oy,
-            vx: s.vx,
-            vy: s.vy,
-            angle: s.angle + oa,
-          };
-          this.mirror.ships.set(remoteId, entry);
-        } else {
-          entry.x = s.x + ox;
-          entry.y = s.y + oy;
-          entry.vx = s.vx;
-          entry.vy = s.vy;
-          entry.angle = s.angle + oa;
-        }
-      }
-    }
-
+    // The passes live in `mirror/` (one function each, ctx built once, #14);
+    // order matters: the local ship first, the travel override last.
+    const pc = this._mirrorPassCtx;
+    drainScheduledDamageSpawns(pc);
+    updateLocalShipMirror(pc, frameNowMs, localId);
+    updateSpectatorPlacement(pc, localId);
+    updateServerGhost(pc);
+    updateSwarmMirror(pc);
+    updateRemoteShipsMirror(pc, localId);
     // Parked / AI-flown hulls ride the remote-ship loop above (RTS Part A S3:
     // their bodies are in `predRemoteShipIds` under the bare shipInstanceId),
     // so the old parked-hull offset loop is gone.
-
-    // Ghost projectiles — advance and write to mirror.projectiles.
-    if (this.mirror.projectiles) {
-      this.ghostManager.update(this.gameFrameMs(), this.mirror.projectiles);
-      // Shells as events (slice 2b): draw salvo shells at the display tick
-      // (server tick estimate minus the remote-entity display delay), and
-      // burst them when the display reaches their hit. At the FRAME's own
-      // time (RAF stamp), not `gameClock.now()` (shellFrameTime.test.ts).
-      if (this._shellEvents) {
-        const displayTick = this.clockAnchorServerTick
-          + (this.gameClock.at(frameNowMs ?? this.clock.now()) - this.clockAnchorPerfNow) / SHELL_TICK_MS
-          - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
-        this.placeShells(displayTick);
-      }
-
-      // Authoritative projectile extrapolation. Snapshots arrive at 20 Hz, but
-      // we render at RAF cadence — without per-frame integration the bolt is
-      // frozen between snapshots and visibly stutters. Server-side projectiles
-      // are constant-velocity (no forces), so straight-line extrapolation is
-      // exact between snapshots. Ghosts are advanced by GhostManager above.
-      // GAME seconds (time scale): at 0.4× a bolt drawn on wall dt flew at full
-      // speed between snapshots and snapped back (hostile review 2026-11-12).
-      const dtSec = this.gameFrameMs() / 1000;
-      for (const entry of this.mirror.projectiles.values()) {
-        if (entry.isGhost || entry.event === true) continue;
-        entry.x += entry.vx * dtSec;
-        entry.y += entry.vy * dtSec;
-      }
-    }
-
-    // Damage flash — advance counters, populate mirror.damagedShips.
-    this.mirror.damagedShips?.clear();
-    for (const [id, frames] of this._damageFlashFrames) {
-      if (frames <= 0) {
-        this._damageFlashFrames.delete(id);
-      } else {
-        this.mirror.damagedShips?.add(id);
-        this._damageFlashFrames.set(id, frames - 1);
-      }
-    }
-
-    // weapon-hit-prediction Phase 2 — TTL-expire predictions whose
-    // confirmation never arrived and hard-cancel their predicted numbers
-    // (lost-ack / projectile-that-missed failsafe). Phase 3 adds the
-    // hit_ack/DamageEvent-driven cancels on top of this one channel.
-    const expiredShots = this._hitLedger.tick(this.clock.now());
-    if (expiredShots.length > 0) {
-      const cancels = this.mirror.pendingDamageNumberCancels;
-      if (cancels) for (const e of expiredShots) cancels.push(e.clientShotId);
-    }
-
-    // beam-attach fix (capture pe6rdt): expire the persisted local
-    // hitscan beam once its post-fire window has elapsed. While within
-    // the window the renderer keeps drawing `mirror.liveBeams` from
-    // `mirror.ships` every frame (ship-attached); past it, clear so a
-    // released / switched weapon doesn't leave a beam lingering.
-    if (
-      this.mirror.liveBeams &&
-      this.mirror.liveBeams.size > 0 &&
-      !liveBeamVisible(this.clock.now(), this._lastHitscanFireMs, LIVE_BEAM_PERSIST_MS)
-    ) {
-      this.mirror.liveBeams.clear();
-    }
-
-    // explodingShips is cleared in App.tsx AFTER renderer.update() so the renderer
-    // actually sees the set on the frame it was populated.
-
-    // Expire remote lasers past their TTL. Per-mount, so different mounts on
-    // the same shooter independently fade out as their cooldown windows end.
-    if (this.mirror.remoteLasers && this.mirror.remoteLasers.size > 0) {
-      const now = this.clock.now();
-      for (const [shooterId, perShooter] of this.mirror.remoteLasers) {
-        for (const [mountId, laser] of perShooter) {
-          if (laser.expiresAt <= now) perShooter.delete(mountId);
-        }
-        if (perShooter.size === 0) this.mirror.remoteLasers.delete(shooterId);
-      }
-      // Heavy beams follow the live barrel to the client ray's stop (remoteBeamRay.ts).
-      const skipRay = ColyseusGameClient.SKIP_HITSCAN_VISUAL_FLAG || !this.predWorld;
-      updateRemoteBeamDists(this.mirror, skipRay ? null : this.displayHitscan());
-    }
-
-    // Phase F — drone hostility flag, driven by the per-drone AI behaviour's
-    // `hostileTo` set. The radar (and any future hostility-aware surface)
-    // reads `entry.isHostileToLocal` to colour entities. O(N) per frame
-    // over registered drones; the underlying lookup is a Set.has().
-    if (this.mirror.swarm && localId) {
-      for (const [entityId, entry] of this.mirror.swarm) {
-        if (entry.kind !== 1) continue; // asteroid — no hostility concept
-        entry.isHostileToLocal = this._aiController.isEntityHostileToPlayer(
-          `${entityId}`,
-          localId,
-        );
-      }
-    }
+    updateProjectilesMirror(pc, frameNowMs);
+    expireFrameState(pc);
+    updateDroneHostility(pc, localId);
 
     // Phase 4 travel state: during a sector-to-sector trip the local ship flies
     // on at warp speed along its heading (the trip is the loading screen).
