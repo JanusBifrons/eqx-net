@@ -81,6 +81,12 @@ export interface KeyframeDef {
   readonly fromTarget?: boolean;
   /** Curve INTO this key from the previous one. Default 'inOut'. */
   readonly ease?: EaseId;
+  /** A waypoint value written for the clip's `bend` fold (targeted clips,
+   *  chain tracks only): when the solve for the target takes the OTHER fold,
+   *  the key uses `-value` (the same pose mirrored across the parent bone),
+   *  so a waypoint before or after a `tipPath` segment is on the fold the
+   *  arm holds and the segment starts in place. */
+  readonly foldMirror?: boolean;
 }
 
 export interface TrackDef {
@@ -105,6 +111,13 @@ export interface IkChainDef {
    *  (a crane's elbow out over its pad, never back over its own building).
    *  `bend` breaks a tie. Omit for a fixed `bend`. */
   readonly swingSide?: { readonly x: number; readonly y: number };
+  /** Move the tip in a straight line between a waypoint and the target:
+   *  in a segment between two keys where one key is `fromTarget`, the chain
+   *  is solved each evaluation for the eased point between the two keys'
+   *  tips (fold fixed to the target's), instead of blending joint values.
+   *  A joint blend there swings the tip out sideways (one joint leads the
+   *  other). Needs every chain part tracked, all on the same key ticks. */
+  readonly tipPath?: boolean;
 }
 
 export interface ClipDef {
@@ -139,6 +152,8 @@ export interface CompiledTrack {
   readonly fromTarget: Uint8Array;
   /** Position of the track's part in the clip's IK chain, or -1. */
   readonly chainSlot: number;
+  /** 1 where the key's value mirrors with the fold (`KeyframeDef.foldMirror`). */
+  readonly mirror: Uint8Array;
 }
 
 export interface CompiledClip {
@@ -157,6 +172,8 @@ export interface CompiledClip {
   /** Swing side (see `IkChainDef.swingSide`); (0, 0) keeps the fixed `bend`. */
   readonly sideX: number;
   readonly sideY: number;
+  /** Straight tip path between a waypoint and the target (`IkChainDef.tipPath`). */
+  readonly tipPath: boolean;
 }
 
 /** A built rig. Parts are in topological order (every parent before its
@@ -286,6 +303,7 @@ export function buildRig(def: RigDef): Rig {
       const values = new Float64Array(m);
       const ease = new Uint8Array(m);
       const fromTarget = new Uint8Array(m);
+      const mirror = new Uint8Array(m);
       let prev = -Infinity;
       t.keys.forEach((k, ki) => {
         if (!(k.tick >= 0) || !(k.tick > prev)) fail(rid, `clip '${c.id}' track '${t.part}' key ticks must be >= 0 and increasing`);
@@ -300,13 +318,29 @@ export function buildRig(def: RigDef): Rig {
           values[ki] = k.value;
         }
         ease[ki] = easeCode(k.ease ?? 'inOut');
+        if (k.foldMirror) {
+          if (chainSlot < 0 || k.fromTarget) fail(rid, `clip '${c.id}' track '${t.part}' foldMirror needs a value key in the IK chain`);
+          mirror[ki] = 1;
+        }
       });
       if (prev > endTick) endTick = prev;
-      return { part: pi, ticks, values, ease, fromTarget, chainSlot };
+      return { part: pi, ticks, values, ease, fromTarget, chainSlot, mirror };
     });
+    if (c.ik?.tipPath) {
+      const first = trackOfPart[chain[0]!]!;
+      for (let k = 0; k < chain.length; k++) {
+        const pi = chain[k]!;
+        if (jointType[pi] !== JOINT_HINGE) fail(rid, `clip '${c.id}' tipPath needs a hinge chain`);
+        const ti = trackOfPart[pi]!;
+        if (ti < 0) fail(rid, `clip '${c.id}' tipPath needs a track for every chain part`);
+        const a = tracks[first]!.ticks, b = tracks[ti]!.ticks;
+        if (a.length !== b.length || a.some((v, i) => v !== b[i])) fail(rid, `clip '${c.id}' tipPath chain tracks must share key ticks`);
+      }
+    }
     return {
       id: c.id, tracks, trackOfPart, endTick, chain, tipX: c.ik?.tipX ?? 0, tipY: c.ik?.tipY ?? 0,
       bend: c.ik?.bend ?? 1, sideX: c.ik?.swingSide?.x ?? 0, sideY: c.ik?.swingSide?.y ?? 0,
+      tipPath: c.ik?.tipPath ?? false,
     };
   });
 

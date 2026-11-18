@@ -23,9 +23,16 @@
  * solver those keys fall back to rest. On a hinge, the IK value takes the
  * whole-turn copy nearest the key it blends from, within the joint limits
  * (`nearestTurn`), so the blend goes the short way round.
+ *
+ * Tip paths (`IkChainDef.tipPath`): in a segment between two keys where one
+ * is `fromTarget`, the chain is solved for the eased point on the straight
+ * line between the two keys' tips, on the fold the target's solve took, so
+ * the clamp travels straight at (or back from) its target and stops at rest
+ * on it. A `foldMirror` waypoint key flips to `-value` when that fold is
+ * not the clip's `bend`, so the segment starts in place on either fold.
  */
 import { applyEase } from './easing.js';
-import { JOINT_HINGE, JOINT_LIFT, JOINT_SLIDE, liftProgress, type Rig } from './rig.js';
+import { JOINT_HINGE, JOINT_LIFT, JOINT_SLIDE, liftProgress, type CompiledClip, type Rig } from './rig.js';
 
 /** A clip playing on a rig: the whole wire record (2e). */
 export interface PlayingClip {
@@ -63,6 +70,8 @@ export interface IkRequest {
   /** Target in the host frame. */
   targetX: number;
   targetY: number;
+  /** Written by the solver: the fold it took (`evaluateRig` presets `bend`). */
+  fold: 1 | -1;
 }
 
 /**
@@ -86,6 +95,10 @@ export interface RigPose {
   readonly sin: Float64Array;
   /** IK scratch. */
   readonly ikOut: Float64Array;
+  /** Tip-path scratch: chain values at the segment's start, its end, and now. */
+  readonly pathA: Float64Array;
+  readonly pathB: Float64Array;
+  readonly pathOut: Float64Array;
   readonly ikReq: IkRequest;
   /** Last IK verdict for the playing clip (true when none was asked). */
   ikReached: boolean;
@@ -98,9 +111,10 @@ export function createRigPose(rig: Rig): RigPose {
     value: new Float64Array(n), x: new Float64Array(n), y: new Float64Array(n),
     angle: new Float64Array(n), cos: new Float64Array(n), sin: new Float64Array(n),
     ikOut: new Float64Array(rig.maxChain),
+    pathA: new Float64Array(rig.maxChain), pathB: new Float64Array(rig.maxChain), pathOut: new Float64Array(rig.maxChain),
     ikReq: {
       rig, chain: new Int16Array(0), originX: 0, originY: 0, originAngle: 0,
-      tipX: 0, tipY: 0, bend: 1, sideX: 0, sideY: 0, targetX: 0, targetY: 0,
+      tipX: 0, tipY: 0, bend: 1, sideX: 0, sideY: 0, targetX: 0, targetY: 0, fold: 1,
     },
     ikReached: true,
   };
@@ -136,8 +150,8 @@ function nearestTurn(v: number, from: number, lo: number, hi: number): number {
 
 /** Evaluate one track at clip-local time `t` (>= 0). */
 function sampleTrack(
-  ticks: Float64Array, values: Float64Array, ease: Uint8Array, fromTarget: Uint8Array,
-  restValue: number, ikValue: number, useIk: boolean, t: number,
+  ticks: Float64Array, values: Float64Array, ease: Uint8Array, fromTarget: Uint8Array, mirror: Uint8Array,
+  restValue: number, ikValue: number, useIk: boolean, flip: boolean, t: number,
   hinge: boolean, lo: number, hi: number,
 ): number {
   const m = ticks.length;
@@ -145,8 +159,9 @@ function sampleTrack(
   let prevVal = restValue;
   for (let k = 0; k < m; k++) {
     const kt = ticks[k]!;
-    const kv = fromTarget[k] !== 1 || !useIk ? values[k]!
-      : hinge ? nearestTurn(ikValue, prevVal, lo, hi) : ikValue;
+    const kv = fromTarget[k] === 1 && useIk ? (hinge ? nearestTurn(ikValue, prevVal, lo, hi) : ikValue)
+      : mirror[k] === 1 && flip ? (hinge ? nearestTurn(-values[k]!, prevVal, lo, hi) : -values[k]!)
+        : values[k]!;
     if (t < kt) {
       const span = kt - prevTick;
       const f = applyEase(ease[k]!, (t - prevTick) / span);
@@ -156,6 +171,75 @@ function sampleTrack(
     prevVal = kv;
   }
   return prevVal;
+}
+
+/** Sample chain slot `s`'s track of `clip` at clip time `t` (IK on). */
+function sampleChain(rig: Rig, clip: CompiledClip, s: number, ikOut: Float64Array, flip: boolean, t: number): number {
+  const pi = clip.chain[s]!;
+  const tr = clip.tracks[clip.trackOfPart[pi]!]!;
+  return sampleTrack(tr.ticks, tr.values, tr.ease, tr.fromTarget, tr.mirror, rig.rest[pi]!,
+    ikOut[s]!, true, flip, t, true, rig.min[pi]!, rig.max[pi]!);
+}
+
+let fkX = 0;
+let fkY = 0;
+/** Forward kinematics of the chain in `req` at hinge values `v` (per chain
+ *  slot): the tip, host frame, into `fkX` / `fkY`. */
+function chainTip(req: IkRequest, v: Float64Array): void {
+  const rig = req.rig, chain = req.chain;
+  let x = req.originX, y = req.originY, a = req.originAngle;
+  for (let s = 0; s < chain.length; s++) {
+    const pi = chain[s]!;
+    const c = Math.cos(a), sn = Math.sin(a);
+    const ax = rig.anchorX[pi]!, ay = rig.anchorY[pi]!;
+    x += ax * c - ay * sn;
+    y += ax * sn + ay * c;
+    a += rig.baseAngle[pi]! + v[s]!;
+  }
+  const c = Math.cos(a), sn = Math.sin(a);
+  fkX = x + req.tipX * c - req.tipY * sn;
+  fkY = y + req.tipX * sn + req.tipY * c;
+}
+
+/**
+ * Tip path (`IkChainDef.tipPath`): when clip time `t` is inside a segment
+ * with a `fromTarget` end, solve the chain for the eased point between the
+ * two ends' tips on fold `fold` into `out.pathOut` (each value the turn
+ * nearest the segment's start, within the limits). Returns false outside
+ * such a segment (the tracks blend as usual).
+ */
+function solveTipPath(rig: Rig, clip: CompiledClip, t: number, flip: boolean, fold: 1 | -1, out: RigPose, ik: IkSolve): boolean {
+  const root = clip.tracks[clip.trackOfPart[clip.chain[0]!]!]!;
+  const ticks = root.ticks;
+  let k = 0;
+  while (k < ticks.length && !(t < ticks[k]!)) k++;
+  if (k >= ticks.length) return false;
+  const ft = root.fromTarget;
+  if (ft[k] !== 1 && !(k > 0 && ft[k - 1] === 1)) return false;
+  const t0 = k > 0 ? ticks[k - 1]! : 0;
+  const t1 = ticks[k]!;
+  const { pathA, pathB, pathOut, ikOut } = out;
+  const n = clip.chain.length;
+  for (let s = 0; s < n; s++) {
+    pathA[s] = sampleChain(rig, clip, s, ikOut, flip, t0);
+    pathB[s] = sampleChain(rig, clip, s, ikOut, flip, t1);
+  }
+  const req = out.ikReq;
+  chainTip(req, pathA);
+  const ax = fkX, ay = fkY;
+  chainTip(req, pathB);
+  const f = applyEase(root.ease[k]!, (t - t0) / (t1 - t0));
+  req.targetX = ax + (fkX - ax) * f;
+  req.targetY = ay + (fkY - ay) * f;
+  req.bend = fold;
+  req.sideX = 0;
+  req.sideY = 0;
+  ik(req, pathOut);
+  for (let s = 0; s < n; s++) {
+    const pi = clip.chain[s]!;
+    pathOut[s] = nearestTurn(pathOut[s]!, pathA[s]!, rig.min[pi]!, rig.max[pi]!);
+  }
+  return true;
 }
 
 /**
@@ -183,6 +267,8 @@ export function evaluateRig(
   const wantIk = clip !== null && clip.chain.length > 0 && target !== undefined && ik !== undefined;
   const chainRoot = wantIk ? clip.chain[0]! : -1;
   let ikDone = false;
+  let flip = false;
+  let onPath = false;
   out.ikReached = true;
 
   const { parent, jointType, anchorX, anchorY, baseAngle, axisX, axisY, min, max, rest } = rig;
@@ -204,8 +290,12 @@ export function evaluateRig(
       req.tipX = clip!.tipX; req.tipY = clip!.tipY; req.bend = clip!.bend;
       req.sideX = clip!.sideX; req.sideY = clip!.sideY;
       req.targetX = target!.x; req.targetY = target!.y;
+      req.fold = req.bend;
       out.ikReached = ik!(req, ikOut);
       ikDone = true;
+      const fold = req.fold;
+      flip = fold !== clip!.bend;
+      if (clip!.tipPath) onPath = solveTipPath(rig, clip!, t, flip, fold, out, ik!);
     }
 
     // Joint value.
@@ -215,8 +305,9 @@ export function evaluateRig(
       if (ti >= 0) {
         const tr = clip.tracks[ti]!;
         const useIk = ikDone && tr.chainSlot >= 0;
-        v = sampleTrack(tr.ticks, tr.values, tr.ease, tr.fromTarget, rest[i]!,
-          useIk ? ikOut[tr.chainSlot]! : 0, useIk, t, jointType[i] === JOINT_HINGE, min[i]!, max[i]!);
+        v = onPath && tr.chainSlot >= 0 ? out.pathOut[tr.chainSlot]!
+          : sampleTrack(tr.ticks, tr.values, tr.ease, tr.fromTarget, tr.mirror, rest[i]!,
+            useIk ? ikOut[tr.chainSlot]! : 0, useIk, useIk && flip, t, jointType[i] === JOINT_HINGE, min[i]!, max[i]!);
       }
     }
     v = clampTo(v, min[i]!, max[i]!);

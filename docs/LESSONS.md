@@ -3185,3 +3185,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** the Capital gained a crane bay pad (`keepClear`), and every prebuilt layout with a relay or solar just north of a rot-0 Capital lost those structures at room seed (`overlap-pad`, a log line only): the scenario, gate, wave, defence and homestead bases ran short and some gates went unpowered.
 - **Rule:** after changing a footprint, a pad or `placementRejection`, run `src/server/rooms/prebuiltLayouts.test.ts`; it seeds every exported layout through the real placement seam. Prefer turning the Capital (`rot`) so its pad faces open space over moving the base.
+
+## 2026-11-18 — a joint blend between two IK poses is not a path
+
+- **Finding:** the crane reach blended its joints from a waypoint to the IK pose with different eases (jib linear, boom cubic in). Both ends were right, so pose tests passed, but the clamp swung out sideways away from the ship, then the boom whipped it into the hold pose at full speed: a one-frame snap on film.
+- **Rule:** an arm that must travel AT a target uses `tipPath` (straight eased tip line, fold fixed); test a clip by sampling it every half tick (on the line, never backing off, one fold, ending at rest), not just its end poses (`cranePath.test.ts`).
