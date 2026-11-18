@@ -11,10 +11,13 @@
  * On the way (`fireOnTheWay`) the ship fires only at a target already in its
  * sights; it never turns toward it. A patrol leg that fights hands the fight
  * to the combat branch instead (the brain decides).
+ *
+ * Holds the order itself (set by the brain's `setTravel` / `setPatrolLeg`):
+ * plain fields, so set / clear never allocates (#14).
  */
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 import { shipHitBound, shipHullDistance } from '../../combat/shipHitShape.js';
-import type { AiIntent, AiWorldView } from '../../contracts/IAiBehaviour.js';
+import type { AiEntity, AiIntent, AiWorldView } from '../../contracts/IAiBehaviour.js';
 import type { MountTargetView } from '../WeaponMountController.js';
 import {
   DEFAULT_AIM_RADIUS,
@@ -23,6 +26,8 @@ import {
   POINT_BLANK_RATIO,
   TRAVEL_ARRIVE_SPEED_FRAC,
   TRAVEL_LONG_LEG_GUARD_MUL,
+  TRAVEL_NONE,
+  type TravelState,
 } from '../hostileDroneTuning.js';
 import { hullFireCone } from '../hullFireCone.js';
 import { facingOf, wrapAngle } from '../virtualPilot.js';
@@ -41,6 +46,26 @@ export interface TravelFireTune {
 export interface TravelFireOut { dirX: number; dirY: number; targetId: string; cone: number }
 
 export class TravelMode implements IPilotMode {
+  /** Travel (RTS Part B slice 9, `setTravel`): an owner's Move / Retreat.
+   *  On the way the ship flies to (`x`, `y`) and never turns to fight: it
+   *  still picks a target (locks, the trigger) and fires only at one already
+   *  in its sights. Arrived ⇒ it guards the point. Set / cleared by the
+   *  brain's job setters (a guard post, a hunt, a stop). */
+  state: TravelState = TRAVEL_NONE;
+  x = 0;
+  y = 0;
+  /** Patrol leg (RTS Part B slice 11, `setPatrolLeg`): a travel that FIGHTS.
+   *  The leash is the guard radius round the nearest point of the leg (from
+   *  (`legFromX`, `legFromY`) to the travel point): on the route that is the
+   *  ship's own position, so it engages what it sees near it (Aggressive) or
+   *  answers an attacker (Defensive), and lets go of a target that drags it
+   *  a guard radius off its route, then flies the leg on. */
+  fights = false;
+  legFromX = 0;
+  legFromY = 0;
+  /** Out of `legLeashCentre`: the nearest point of the leg to the ship. */
+  leashX = 0;
+  leashY = 0;
   /** The lead point of the last `fireOnTheWay` that held the trigger. */
   aimX = 0;
   aimY = 0;
@@ -48,6 +73,20 @@ export class TravelMode implements IPilotMode {
   constructor(private readonly tune: TravelFireTune, private readonly fireOut: TravelFireOut) {}
 
   begin(_ctx: PilotModeContext): void {}
+
+  /** Patrol leg: the leash centre (`leashX`, `leashY`) = the nearest point
+   *  of the leg to the ship. */
+  legLeashCentre(self: AiEntity): void {
+    const ax = this.legFromX;
+    const ay = this.legFromY;
+    const bx = this.x - ax;
+    const by = this.y - ay;
+    const l2 = bx * bx + by * by;
+    let t = l2 > 1e-9 ? ((self.x - ax) * bx + (self.y - ay) * by) / l2 : 1;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    this.leashX = ax + bx * t;
+    this.leashY = ay + by * t;
+  }
 
   /** Arrived: inside `wingmanArrive` of the travel point, nearly stopped. */
   isDone(ctx: PilotModeContext): boolean {

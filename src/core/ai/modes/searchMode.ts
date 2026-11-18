@@ -14,6 +14,10 @@ import { HUNT_EDGE_FRAC, HUNT_LEG_SPACING_MUL, MOVE_ARRIVE_SLOW_RADIUS } from '.
 import { MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal } from '../tactics/manoeuvre.js';
 
 export class SearchMode implements IPilotMode {
+  /** Hunt (RTS Part B slice 6, `setHunt`): no leash, on-sight engagement out
+   *  to the sensor range, and with nothing to fight the ship searches the
+   *  sector in an expanding square round where the search began. */
+  on = false;
   /** The search (re)starts from where the ship is on its next idle tick. */
   reset = true;
   /** Current leg (0-based), its unit direction and its end point. */
