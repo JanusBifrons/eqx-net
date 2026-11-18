@@ -34,7 +34,7 @@ test('drawer opens on pick (right dock, landscape): info + recent + close', asyn
   // Drawer open (the Join CTA only renders when a sector is selected + landing ctx).
   await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
   await expect(page.getByTestId('sector-drawer-breakdown')).toBeVisible();
-  // Recent-activity line is always present (quiet → "No recent activity").
+  // The RECENT section is always present (it always has the "your ships" line).
   await expect(page.getByTestId('sector-drawer-recent')).toBeVisible();
   await page.screenshot({ path: 'diag/e2e-screenshots/galaxy-drawer/01-right.png' });
 
