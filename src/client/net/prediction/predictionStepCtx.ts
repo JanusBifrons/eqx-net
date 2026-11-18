@@ -6,6 +6,10 @@ import type { ControlBits } from '@core/combat/disable';
 import type { HelmOrder, HelmOutput } from '@core/helm/helm';
 import type { TouchInput } from '../../input/TouchInput';
 import type { JoystickInputState } from '../../input/joystickToInput';
+import type { AiController } from '@core/ai/AiController';
+import type { ClientSpawnCtx } from '../entity/IClientEntityLeaf.js';
+import type { ClientEntityFactory } from '../entity/ClientEntityFactory.js';
+import type { WreckGeometryStore } from '../wreckGeometryStore.js';
 
 /** One `keyboard.read()` (stateless, hoisted out of the input loop). */
 export interface KeyboardBits {
@@ -31,7 +35,8 @@ export interface SendInputScratch {
 export interface SendWarpInputScratch extends SendInputScratch { warpX: number; warpY: number }
 
 /**
- * What the prediction step passes (`inputStep.ts`) read and write on
+ * What the prediction step passes (`inputStep.ts`) and the predWorld body
+ * sync (`predWorldSync.ts`) read and write on
  * `ColyseusClient`. Built ONCE (#14): fields the client reassigns are getters
  * (and setters where a pass writes them), so a pass never holds a stale value
  * and no call allocates.
@@ -40,7 +45,7 @@ export interface PredictionStepCtx {
   readonly mirror: RenderMirror;
   readonly clock: Clock;
   readonly predWorld: PhysicsWorld | null;
-  readonly reconciler: Reconciler | null;
+  reconciler: Reconciler | null;
   readonly touchInput: TouchInput | null;
   readonly localDead: boolean;
   inputTick: number;
@@ -67,4 +72,17 @@ export interface PredictionStepCtx {
   gameLeadTicks(): number;
   applyRemoteInputs(): void;
   tickLocalMountAim(dt: number): void;
+  // predWorld body sync (`predWorldSync.ts`): swarm bodies + the local-body bootstrap.
+  readonly swarmSyncSeenScratch: Set<string>;
+  readonly swarmBodyKeyCache: Map<number, string>;
+  readonly clientSpawnCtx: ClientSpawnCtx;
+  readonly entityFactory: Pick<ClientEntityFactory, 'leafFor'>;
+  readonly wrecks: Pick<WreckGeometryStore, 'has'>;
+  readonly aiRegisteredIds: Set<number>;
+  readonly aiController: Pick<AiController, 'unregister'>;
+  readonly predSwarmKeys: Set<string>;
+  readonly movingSwarmKeys: Set<string>;
+  readonly swarmAnchorScratch: { x: number; y: number; vx: number; vy: number; angle: number; angvel: number };
+  readonly welcomePerfNow: number;
+  localPoseResolvedLogged: boolean;
 }

@@ -33,7 +33,6 @@ function padFieldId(id: number): string {
   return s;
 }
 import { pointSegmentDistance, wantPredBody } from '../structures/predStructureStreaming.js';
-import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_WRECK_RADIUS } from '../../shared-types/structureBudgets.js';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import {
   createCollisionGuard,
@@ -85,7 +84,10 @@ import {
   createDropDetector,
   type DropDetector,
 } from './snapshotDropDetector';
-import { resetPredictionState, type PredictionResetCtx } from './prediction/resetPrediction.js';
+import { resetPredictionState } from './prediction/resetPrediction.js';
+import { tryInitPredWorld, syncSwarmIntoPredWorld } from './prediction/predWorldSync.js';
+import { disposeClient, type ClientTeardownCtx } from './connection/clientTeardown.js';
+import { MineSync } from './mirror/mineSync.js';
 import type { WelcomeTarget } from './handlers/welcomeHandlers.js';
 import {
   readConnectionFlags, installConnectionDiagnostics, joinRoom, installBwStats, bwStats, createSnapshotDataChannel,
@@ -95,9 +97,7 @@ import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction }
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
 import { createGameCutField, type CutFieldSummary } from './cutFieldWiring.js';
-import { clearMirror } from './clearMirror.js';
 import { WreckGeometryStore } from './wreckGeometryStore.js';
-import { SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
 import { DataChannelTransport } from './dataChannelTransport.js';
 import { HudDispatcher } from './HudDispatcher.js';
@@ -114,7 +114,7 @@ import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
 import { stepTravel, TRAVEL_OUT_S, type TravelTrip } from './mirror/travelPass.js';
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
-import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets, type RemoteShipOffset } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode } from '../debug/ClientLogger';
@@ -1330,7 +1330,8 @@ export class ColyseusGameClient {
   /** The ctx the `tickPhysics` prediction passes (`prediction/`) run with, built once (#14). */
   private readonly _predStepCtx: PredictionStepCtx = ((c: ColyseusGameClient): PredictionStepCtx => ({
     get mirror() { return c.mirror; }, get clock() { return c.clock; },
-    get predWorld() { return c.predWorld; }, get reconciler() { return c.reconciler; },
+    get predWorld() { return c.predWorld; },
+    get reconciler() { return c.reconciler; }, set reconciler(v) { c.reconciler = v; },
     get touchInput() { return c.touchInput; }, get localDead() { return c.localDead; },
     get inputTick() { return c.inputTick; }, set inputTick(v) { c.inputTick = v; },
     get predEnergy() { return c.predEnergy; }, set predEnergy(v) { c.predEnergy = v; },
@@ -1347,6 +1348,12 @@ export class ColyseusGameClient {
     clearHelm: (): void => c.clearHelm(), stepHelm: (): void => c.stepHelm(),
     isLocallyDisabled: (): boolean => c.isLocallyDisabled(), gameLeadTicks: (): number => c.gameLeadTicks(),
     applyRemoteInputs: (): void => c.applyRemoteInputs(), tickLocalMountAim: (dt: number): void => c.tickLocalMountAim(dt),
+    get swarmSyncSeenScratch() { return c._swarmSyncSeenScratch; }, get swarmBodyKeyCache() { return c._swarmBodyKeyCache; },
+    get clientSpawnCtx() { return c._clientSpawnCtx; }, get entityFactory() { return c._entityFactory; }, get wrecks() { return c._wrecks; },
+    get aiRegisteredIds() { return c._aiRegisteredIds; }, get aiController() { return c._aiController; },
+    get predSwarmKeys() { return c.predSwarmKeys; }, get movingSwarmKeys() { return c._movingSwarmKeys; },
+    get swarmAnchorScratch() { return c._swarmAnchorScratch; }, get welcomePerfNow() { return c.welcomePerfNow; },
+    get localPoseResolvedLogged() { return c._localPoseResolvedLogged; }, set localPoseResolvedLogged(v) { c._localPoseResolvedLogged = v; },
   }))(this);
   /** The live connection's client + room binder, set once per `connect()`;
    *  the `transit_ready` handoff (handlers/transitHandlers.ts) consumes the
@@ -1388,10 +1395,11 @@ export class ColyseusGameClient {
     dropRemoteShip: (key: string): void => c.dropRemoteShip(key),
   }))(this);
 
-  /** The ctx the sector-handoff reset (`prediction/resetPrediction.ts`) runs with, built once (#14). */
-  private readonly _predResetCtx: PredictionResetCtx = ((c: ColyseusGameClient): PredictionResetCtx => ({
+  /** The ctx the sector-handoff reset (`prediction/resetPrediction.ts`) and `dispose()`
+   *  (`connection/clientTeardown.ts`) run with, built once (#14). */
+  private readonly _predResetCtx: ClientTeardownCtx = ((c: ColyseusGameClient): ClientTeardownCtx => ({
     get mirror() { return c.mirror; }, get wrecks() { return c._wrecks; }, get cutField() { return c._cutField; },
-    get shellTiming() { return c._shellTiming; }, get predWorld() { return c.predWorld; },
+    get shellTiming() { return c._shellTiming; }, get predWorld() { return c.predWorld; }, set predWorld(v) { c.predWorld = v; },
     get aiController() { return c._aiController; }, get aiRegisteredIds() { return c._aiRegisteredIds; },
     get predWalls() { return c._predWalls; }, get recentIntervals() { return c._recentIntervals; },
     get recentCorrFlags() { return c._recentCorrFlags; }, get scheduledDamageSpawns() { return c._scheduledDamageSpawns; },
@@ -1414,6 +1422,21 @@ export class ColyseusGameClient {
     get lastLocalTickAtMs() { return c._lastLocalTickAtMs; }, set lastLocalTickAtMs(v) { c._lastLocalTickAtMs = v; },
     get dataChannelTransport() { return c._dataChannelTransport; }, set dataChannelTransport(v) { c._dataChannelTransport = v; },
     applyLocalDisabled: (ms: number): void => c.applyLocalDisabled(ms),
+    get disposed() { return c.disposed; }, set disposed(v) { c.disposed = v; },
+    get localDead() { return c.localDead; }, set localDead(v) { c.localDead = v; },
+    get diedAtMs() { return c.diedAtMs; }, set diedAtMs(v) { c.diedAtMs = v; },
+    get keyboard() { return c.keyboard; }, set keyboard(v) { c.keyboard = v; },
+    get touchInput() { return c.touchInput; }, set touchInput(v) { c.touchInput = v; },
+    get audio() { return c.audio; }, set audio(v) { c.audio = v; }, get room() { return c.room; }, set room(v) { c.room = v; },
+    get snapshotCoalescer() { return c.snapshotCoalescer; }, get transitInstr() { return c.transitInstr; },
+    get rafStallDetector() { return c.rafStallDetector; }, get hudDispatcher() { return c.hudDispatcher; },
+    get ghostManager() { return c.ghostManager; }, get remoteHistory() { return c.remoteHistory; },
+    get predRemoteShipIds() { return c.predRemoteShipIds; }, get remoteShipOffsets() { return c._remoteShipOffsets; },
+    get predSwarmKeys() { return c.predSwarmKeys; }, get movingSwarmKeys() { return c._movingSwarmKeys; },
+    get damageFlashFrames() { return c._damageFlashFrames; },
+    get lastSentInputAtMs() { return c.lastSentInputAtMs; }, set lastSentInputAtMs(v) { c.lastSentInputAtMs = v; },
+    get lastSentInputState() { return c.lastSentInputState; }, set lastSentInputState(v) { c.lastSentInputState = v; },
+    get liveInstanceN() { return ColyseusGameClient._liveInstanceN; }, set liveInstanceN(v) { ColyseusGameClient._liveInstanceN = v; },
   }))(this);
   /** Sector-handoff reset (`prediction/resetPrediction.ts`); tests call it. */
   private resetPredictionState(): void { resetPredictionState(this._predResetCtx); }
@@ -1820,53 +1843,8 @@ export class ColyseusGameClient {
 
   // ── Prediction bootstrap ────────────────────────────────────────────────
 
-  private tryInitPredWorld(playerId: string): void {
-    if (!this.predWorld || this.predWorld.hasShip(playerId)) return;
-    const existing = this.mirror.ships.get(playerId);
-    if (!existing) {
-      // Telemetry: tryInitPredWorld was called but the local ship's
-      // mirror entry isn't ready yet. Common during the 1-tick window
-      // between welcome and the first state-diff for the local ship.
-      logEvent('predworld_init_deferred', { playerId, reason: 'no-mirror-entry' });
-      return;
-    }
-    this.predWorld.spawnShip(playerId, existing.x, existing.y, existing.kind);
-    this.predWorld.setShipState(playerId, existing);
-    this.reconciler = new Reconciler(this.predWorld, playerId, this.clock);
-    logEvent('predworld_init', {
-      playerId,
-      x: existing.x, y: existing.y, kind: existing.kind ?? null,
-    });
-    // Join-render diagnostic: this is the moment the local ship's
-    // pose is observable in the mirror at server-authoritative coords.
-    // Fire ONCE per (re)connect — `resetPredictionState` resets the latch.
-    if (!this._localPoseResolvedLogged) {
-      this._localPoseResolvedLogged = true;
-      const msSinceWelcome = this.welcomePerfNow > 0
-        ? Math.round(this.clock.now() - this.welcomePerfNow)
-        : -1;
-      logEvent('local_pose_resolved', {
-        playerId,
-        x: existing.x,
-        y: existing.y,
-        kind: existing.kind ?? null,
-        msSinceWelcome,
-      });
-    }
-    // Plan: crispy-kazoo, Commit 2 — surface the localPoseResolved
-    // gate to Zustand so `computeBootstrapReadyFromState` flips true
-    // when the predWorld + reconciler are live. Idempotent; the
-    // setter is a no-op if already true.
-    useUIStore.getState().setLocalPoseResolved(true);
-    logEvent('cc_predworld_init', { x: existing.x, y: existing.y });
-    // Remote ships (other pilots and parked hulls) get their bodies from the
-    // next snapshot (`spawnRemoteShipBodies`): one spawn rule, snapshot pose
-    // only (B2). The old retro spawn here used the mirror's pose, which for a
-    // ship known only from the schema diff was (0,0).
-    // Swarm entries: a binary `swarm` packet may have arrived
-    // before predWorld existed; bring those bodies up now.
-    this.syncSwarmIntoPredWorld();
-  }
+  /** Local predWorld body + Reconciler (`prediction/predWorldSync.ts`); tests call it. */
+  private tryInitPredWorld(playerId: string): void { tryInitPredWorld(this._predStepCtx, playerId); }
 
   // ── Snapshot / reconciliation ───────────────────────────────────────────
 
@@ -2443,115 +2421,8 @@ export class ColyseusGameClient {
     return sw?.shipKind ? getShipKind(sw.shipKind).mounts : undefined;
   }
 
-  /**
-   * Sync swarm entries into the prediction world. Called after every binary
-   * `swarm` packet decode. New entries spawn predWorld bodies (so the local
-   * ship can collide with them and the local hitscan can target them);
-   * existing entries get setShipState; entries that vanish from the mirror
-   * get despawned. The predWorld key is `swarm-${entityId}`, matching the
-   * sprite key in PixiRenderer and the `targetId` the server emits in
-   * `laser_fired` for swarm hits.
-   */
-  private syncSwarmIntoPredWorld(): void {
-    if (!this.predWorld || !this.mirror.swarm) return;
-    // 2026-05-25 heap-growth gate step 5: persistent scratch Set +
-    // cached key strings (shared with the updateMirror kinematic loop).
-    const seen = this._swarmSyncSeenScratch;
-    seen.clear();
-    const keyCache = this._swarmBodyKeyCache;
-    // Generic Entity Pipeline B4: route construction through the client
-    // EntityFactory (the OOP peer of the server leaves). The reused ctx keeps
-    // this allocation-free (invariant #14); `ColyseusClient` stays the owner of
-    // predSwarmKeys / _swarmBodyKeyCache / _aiRegisteredIds — the leaves only
-    // read the ctx and call predWorld / aiController. `staticBody` (lock + pose)
-    // is now derived from the core descriptor inside the leaf base; the per-kind
-    // collider / mass / AI-ledger / shield-swap details live in the leaves.
-    const ctx = this._clientSpawnCtx;
-    ctx.predWorld = this.predWorld;
-    // A3 — structures stream in by distance from the local ship (every
-    // correction replays the whole prediction world). No local ship ⇒ keep all.
-    const localId = this.mirror.localPlayerId;
-    const me = localId ? this.mirror.ships.get(localId) : undefined;
-    // Wreck pieces stream by the GAP between hulls: the local hull's radius
-    // (213 u for a 2× crossguard) is not part of the PREDWORLD_WRECK_RADIUS
-    // travel budget.
-    const myHull = me ? getShipKind(me.kind ?? null).radius : 0;
-    for (const [entityId, entry] of this.mirror.swarm) {
-      // HC#2: an unrecognised pose-core kind resolves to `null` and is SKIPPED —
-      // it never falls through to the drone path (the old `else`-is-drone branch
-      // that would mis-register a kind=2 structure as a HostileDroneBehaviour).
-      const leaf = this._entityFactory.leafFor(entry.kind);
-      if (leaf === null) continue;
-      let key = keyCache.get(entityId);
-      if (key === undefined) {
-        key = `swarm-${entityId}`;
-        keyCache.set(entityId, key);
-      }
-      // S2b: a wreck piece needs its wreck's descriptor for its geometry; until
-      // it arrives (≤ 0.5 s for a late joiner) the piece has no body yet.
-      if (entry.kind === SWARM_KIND_WRECK && (entry.wreckId === undefined || !this._wrecks.has(entry.wreckId))) continue;
-      // Wreck pieces stream in the same way (soak 2026-11-13: ~700 pieces in
-      // the predWorld put 56 % of the client main thread into Rapier's step).
-      // A piece only matters to prediction where the local ship can touch it.
-      if ((entry.kind === 2 || entry.kind === SWARM_KIND_WRECK) && me) {
-        const wreck = entry.kind === SWARM_KIND_WRECK;
-        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius - (wreck ? myHull : 0);
-        const radius = wreck ? PREDWORLD_WRECK_RADIUS : PREDWORLD_STRUCTURE_RADIUS;
-        if (!wantPredBody(this.predWorld.hasShip(key), edge, radius)) continue; // unseen ⇒ swept below
-      }
-      seen.add(key);
-      ctx.entityId = entityId;
-      ctx.key = key;
-      ctx.entry = entry;
-      if (!this.predWorld.hasShip(key)) {
-        ctx.registeredAiId = null;
-        leaf.spawnBody(ctx);
-        // Fold any AI-ledger registration the leaf made (drone only) into the
-        // client-owned set — single cache ownership stays here.
-        if (ctx.registeredAiId !== null) {
-          this._aiRegisteredIds.add(ctx.registeredAiId);
-        }
-        this.predSwarmKeys.add(key);
-        if (isRemoteMovingSwarmKind(entry.kind)) {
-          this._movingSwarmKeys.add(key);
-          // Seed the new body with its latest server state (velocity
-          // included) so it moves from birth; the next snapshot's
-          // remote-entity anchor puts it on the prediction timeline.
-          if (authoritativeSwarmStateAt(entry, entry.lastUpdateTick, this._swarmAnchorScratch)) {
-            this.predWorld.setShipState(key, this._swarmAnchorScratch);
-          }
-        }
-      }
-      // Idempotent per-sync upkeep: shield-collider swap (drone) or static
-      // repose (asteroid / structure). Drones and scrap are NOT re-posed
-      // here: their body pose has ONE writer, the per-snapshot remote-entity
-      // anchor (`anchorRemoteSwarmBodies`); the leaf's onSync only swaps the
-      // shield collider (same body, pose and velocity kept).
-      leaf.onSync(ctx);
-    }
-    // Sweep predWorld bodies whose entityId no longer appears in mirror.swarm.
-    for (const key of this.predSwarmKeys) {
-      if (!seen.has(key)) {
-        this.predWorld.despawnShip(key);
-        this.predSwarmKeys.delete(key);
-        this._movingSwarmKeys.delete(key);
-        // If the swept body was a drone, unregister it from the hostility
-        // ledger (`_aiController` is ledger-only post-pivot — never ticked).
-        // Numeric entityId is encoded in the key as `swarm-${id}`.
-        const idStr = key.startsWith('swarm-') ? key.slice(6) : '';
-        const id = Number(idStr);
-        if (Number.isFinite(id)) {
-          // Step 5 cleanup: also evict the cached key string so the
-          // cache doesn't grow unbounded across entity churn.
-          this._swarmBodyKeyCache.delete(id);
-        }
-        if (Number.isFinite(id) && this._aiRegisteredIds.has(id)) {
-          this._aiController.unregister(`${id}`);
-          this._aiRegisteredIds.delete(id);
-        }
-      }
-    }
-  }
+  /** Swarm entries into the prediction world (`prediction/predWorldSync.ts`); tests call it. */
+  private syncSwarmIntoPredWorld(): void { syncSwarmIntoPredWorld(this._predStepCtx); }
 
   /** Sync authoritative projectile positions from the per-recipient snapshot.
    *  Wire-discipline P3: projectiles no longer live on the Colyseus schema —
@@ -2577,38 +2448,8 @@ export class ColyseusGameClient {
   private _structureMap: Map<number, StructureRenderState> | null = null;
   /** Interned owner tables (index → id / name), refreshed from room state. */
   private readonly _structureOwners: { ids: string[]; names: string[] } = { ids: [], names: [] };
-  /** Mine Layer — sync generation for the mines sweep. */
-  private _mineGen = 0;
-  private readonly _decodeMine = (v: { ownerIdx?: number; x?: number; y?: number }, k: string): void => {
-    const map = this.mirror.mines!;
-    let row = map.get(k);
-    if (!row) {
-      row = { x: 0, y: 0, own: false, gen: 0 };
-      map.set(k, row);
-    }
-    row.x = v.x ?? 0;
-    row.y = v.y ?? 0;
-    row.own = this._structureOwners.ids[v.ownerIdx ?? 0] === this.mirror.localPlayerId;
-    row.gen = this._mineGen;
-  };
-
-  /** Mine Layer — mirror room-state `mines` (join payload + patches) into
-   *  `mirror.mines` in place; a mine gone from room state is gone. */
-  private syncMines(): void {
-    const rows = (this.room?.state as { mines?: { size: number; forEach(cb: (v: { ownerIdx?: number; x?: number; y?: number }, k: string) => void): void } } | undefined)?.mines;
-    let map = this.mirror.mines;
-    if (!rows || rows.size === 0) {
-      if (map && map.size > 0) map.clear();
-      return;
-    }
-    if (!map) {
-      map = new Map();
-      this.mirror.mines = map;
-    }
-    this._mineGen++;
-    rows.forEach(this._decodeMine);
-    for (const [id, row] of map) if (row.gen !== this._mineGen) map.delete(id);
-  }
+  /** Mine Layer — room-state `mines` into `mirror.mines` (`mirror/mineSync.ts`). */
+  private readonly _mines = new MineSync(this.mirror, this._structureOwners, () => this.room);
   private readonly _readStructureOwner = (v: string, k: string): void => { this._structureOwners.ids[Number(k)] = v; };
   private readonly _readStructureOwnerName = (v: string, k: string): void => { this._structureOwners.names[Number(k)] = v; };
   /** Bound once (no per-snapshot closure): decode one room-state row into
@@ -2705,7 +2546,7 @@ export class ColyseusGameClient {
     this._tractors.sync(targets, this._beamLinkVisitor, this.predWorld);
     this.syncPredWalls();
     this.syncForceFields();
-    this.syncMines();
+    this._mines.sync();
   }
 
   /** Scratch for `syncForceFields` (`setForceField` copies it; no per-frame object). */
@@ -3624,87 +3465,5 @@ export class ColyseusGameClient {
 
   get cutFieldStats(): CutFieldSummary { return this._cutField.summary(); } // cut-field-collision.spec.ts waits on it
 
-  dispose(): void {
-    this._cutField.stop();
-    // Game time scale: the next session starts at 1× until its snapshots say otherwise.
-    useUIStore.getState().setTimeScale(1);
-    this.disposed = true;
-    this.localDead = false;
-    this.diedAtMs = 0;
-    useUIStore.getState().setDead(false);
-    // Phase 4 WS-A1 — a fresh GameSurface mount (new join / respawn-via-galaxy)
-    // builds a new client; reset the spectator flag so the next session starts
-    // piloting. (Spectator is client-local and never crosses a room boundary.)
-    useUIStore.getState().setPilotMode('pilot');
-    this.keyboard = null;
-    this.touchInput = null;
-    // Phase 4 swift-otter — close the DC transport BEFORE the room leave
-    // so the PeerConnection's signaling channel is shut down before the
-    // WS closes. In React 18 StrictMode dev mode the useEffect cleanup
-    // → re-mount cycle was creating two ColyseusClients per page load,
-    // each with its own DataChannelTransport / PeerConnection. The
-    // first instance's PC stayed open (the original dispose() didn't
-    // touch it) and continued receiving the brief window of snapshots
-    // that landed between its DC opening and the WS-level room.leave()
-    // taking effect on the server — those snapshots logged with via=dc
-    // alongside the second instance's, and any tick races between the
-    // two receivers' `_lastSeenServerTick` produced `snap_dropped_old`
-    // events the test surfaced as the integration bug.
-    if (this._dataChannelTransport) {
-      this._dataChannelTransport.close('client-dispose');
-      this._dataChannelTransport = null;
-    }
-    this.room?.leave();
-    this.room = null;
-
-    // Plan: crispy-kazoo, Commit 6 — subsystem disposes.
-    // The pre-Commit-6 dispose covered ~14 fields and missed 20+
-    // surfaces, which is the proximate cascade-trigger root cause: a
-    // stale ColyseusGameClient retained via uncleared subscriptions /
-    // timers / Maps. Each subsystem's dispose is idempotent.
-    this.snapshotCoalescer.dispose();
-    this.transitInstr.dispose();
-    this.rafStallDetector.dispose();
-    this.hudDispatcher.dispose();
-    this.ghostManager.dispose();
-    this._aiController.clear();
-
-    this.predWorld?.dispose();
-    this.predWorld = null;
-    this.reconciler = null;
-    this.remoteHistory.clear();
-    this.predRemoteShipIds.clear();
-    this._remoteShipOffsets.clear();
-    this.predSwarmKeys.clear();
-    this._movingSwarmKeys.clear();
-
-    // Maps + sets on the client itself (combat surfaces).
-    this._damageFlashFrames.clear();
-    this._scheduledDamageSpawns.length = 0;
-
-    // Reflection-based clear: every Map / Set / Array on `mirror` empties.
-    clearMirror(this.mirror); // ./clearMirror.ts
-
-    // Stats + per-connection accumulators — reset to freshly-constructed
-    // (non-nullable types) so a re-mount sees a clean baseline.
-    this._rttWelford = createWelford();
-    this._lookaheadCtrl = createLookaheadController(6);
-    this._dropDetector = createDropDetector();
-    this._anchorInitialised = false;
-    this._anchorFreshAtMs = -Infinity;
-    this._stallHoldSinceMs = -1;
-    this._localPoseResolvedLogged = false;
-    this.lastSentInputAtMs = 0;
-    this.lastSentInputState = null;
-
-    // Audio reference released — GameSurface owns the lifecycle.
-    this.audio = null;
-
-    ColyseusGameClient._liveInstanceN = Math.max(0, ColyseusGameClient._liveInstanceN - 1);
-    logEvent('dispose_complete', {
-      liveInstanceN: ColyseusGameClient._liveInstanceN,
-      mirrorShipsRemaining: this.mirror.ships.size,
-      mirrorSwarmRemaining: this.mirror.swarm?.size ?? 0,
-    });
-  }
+  dispose(): void { disposeClient(this._predResetCtx); }
 }

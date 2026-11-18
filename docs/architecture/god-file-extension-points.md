@@ -40,6 +40,9 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | Damage / shield / death state | A function `(ctx, ...)` in `src/client/net/damagePath.ts` taking the once-built `DamagePathCtx`; the wire side stays in `handlers/combatHandlers.ts`. | live |
 | Connection / join / room lifecycle | `src/client/net/connection/roomConnection.ts` (URL transport flags, join with timeout, DEV bandwidth tally, the DataChannel snapshot transport, `onLeave` / `onError`); `connect()` keeps the order of calls. The `welcome` handshake is `handlers/welcomeHandlers.ts` (its `WelcomeTarget` built once). | live |
 | Sector-handoff prediction reset | `resetPredictionState(ctx)` in `src/client/net/prediction/resetPrediction.ts` with the once-built `PredictionResetCtx`; `ColyseusClient` keeps a one-line delegate. New per-sector state is reset there. | live |
+| PredWorld body sync (local-body bootstrap, swarm bodies) | `tryInitPredWorld` / `syncSwarmIntoPredWorld` in `src/client/net/prediction/predWorldSync.ts`, run with the once-built `PredictionStepCtx`; `ColyseusClient` keeps one-line delegates. | live |
+| Client teardown (`dispose()`) | `disposeClient(ctx)` in `src/client/net/connection/clientTeardown.ts` with the once-built `ClientTeardownCtx` (the sector-reset ctx plus teardown-only fields). A new subsystem is disposed / cleared there. | live |
+| Room-state mines into the mirror | `MineSync` (`src/client/net/mirror/mineSync.ts`), built once; `syncStructures` calls `sync()`. | live |
 
 ## Client: `PixiRenderer.ts` and `IRenderer.ts` (`src/client/render/CLAUDE.md`)
 
