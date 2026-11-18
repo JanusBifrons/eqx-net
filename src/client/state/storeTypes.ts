@@ -321,6 +321,9 @@ export interface UIStore {
   /** Economy v2 W1 — the player's WALLET balance (credits are virtual), from
    *  the own-ship snapshot `wallet` field; null until the first snapshot. */
   wallet: number | null;
+  /** Join flow — free capital launches left, from the own-ship snapshot
+   *  `freeLaunches` field; null until the first snapshot. */
+  freeLaunches: number | null;
   /** Economy v2 W3 — the last `lab_state` reply (the Research Lab panel is
    *  rebuilt from it; discrete, written only on a reply). */
   labState: LabState | null;
@@ -556,6 +559,7 @@ export interface UIStore {
   setHelmState: (available: boolean, active: boolean, speed: 0 | 1 | 2 | 3) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;
   setWallet: (credits: number | null) => void;
+  setFreeLaunches: (n: number | null) => void;
   setLabState: (s: LabState | null) => void;
   setCargoState: (s: CargoState | null) => void;
   setTeleportCandidates: (s: TeleportCandidatesReply | null) => void;

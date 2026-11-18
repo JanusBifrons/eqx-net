@@ -24,6 +24,13 @@ Plan `peppy-jumping-pinwheel`, economy v2, phase W1. This follows Eve Online:
   touches your balance.
 - **Guests are full players.** A guest is an account that hasn't set a
   password, so it has a wallet like anyone else.
+- **Launching a capital (join flow).** Capitals cost credits to launch (the
+  launch table in `shared-types/launch.ts`; sub-capitals are free). A new
+  pilot gets **5 free capital launches**; after those, a launch you can't
+  afford goes on credit, taking the wallet **below zero, down to −100,000**.
+  In debt you can't buy anything until income pays it off. Past the floor
+  you launch in a Fighter. Resuming a hull you own is free. Prices are
+  switched off (`LAUNCH_COSTS_ON = false`) until the Hangar shows them.
 
 ## How it works
 
@@ -33,9 +40,20 @@ Plan `peppy-jumping-pinwheel`, economy v2, phase W1. This follows Eve Online:
   - `creditDeferred` / `debitDeferred` + `putOp`: for moves that must be
     atomic with goods (they return a `WALLET_PUT` op for the caller's
     `HoldStore.commit(…, extraOps)` group);
-  - `flush`.
+  - `flush`;
+  - `debitAllowingDebt(pid, n, floor)`: the ONLY way below zero (launch on
+    credit). Every other debit stays all-or-nothing, and `hydrate` keeps a
+    negative balance across a restart.
 
   Every change is a `wallet_tx` audit event.
+- **Launch charging** (`economy/launchCharge.ts` `chargeLaunch`): the server
+  side of the shared `launchVerdict`. The SectorRoom hull gate (a fresh, not
+  resumed, spawn) and the respawn path both call it: `pay` debits, `token`
+  spends a free launch (`EconomyStore` `PlayerEconomy.freeLaunches`, default
+  5, via the TradeSink), `debt` uses `debitAllowingDebt`; a refusal downgrades
+  to a Fighter with a notice. Each charge is a `launch_charged` audit event.
+  The own-ship snapshot carries `freeLaunches` next to `wallet` (Zustand
+  `freeLaunches`). Test rooms switch prices on with the `launchCosts` option.
 - **Persistence.** Table `player_wallets(player_id, balance)`, written by an
   absolute `WALLET_PUT` op through both writers (`economySql.ts`). It is
   hydrated at boot after the account merge, so alias ids fold onto the
@@ -62,7 +80,10 @@ Plan `peppy-jumping-pinwheel`, economy v2, phase W1. This follows Eve Online:
   - `loot_collected`, `cargo_deposited` and `entity_stats.hold` carry no
     credits.
 - **Tests** set credits with the `initialWallet` join option, or a room's
-  `seedStorageHold.credits`, which now seeds joiners' wallets.
+  `seedStorageHold.credits`, which now seeds joiners' wallets. The seed lands
+  BEFORE the launch is charged, so it pays for it. It works in test rooms and
+  wherever the server runs with `EQX_ALLOW_DEV_OVERRIDES=1` (URL
+  `?initialWallet=500000`).
 
 ## Tests
 
@@ -79,6 +100,10 @@ Plan `peppy-jumping-pinwheel`, economy v2, phase W1. This follows Eve Online:
 - `storageDeposit.test.ts`: repair is paid from the wallet, and a short
   wallet is refused.
 - `WalletChip.test.tsx`.
+- `launchCharge.test.ts` (every verdict path, a failed charge refuses),
+  `EconomyStore.test.ts` (free launches persist), and
+  `tests/integration/sectorRoom/launchCharge.test.ts` (pay, token, debt,
+  refuse past the floor, resume free, through a real room).
 
 ## Client rules in detail
 
