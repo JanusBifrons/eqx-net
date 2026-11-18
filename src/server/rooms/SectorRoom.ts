@@ -5744,7 +5744,7 @@ export class SectorRoom extends Room<SectorState> {
         return rec != null && ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) === 0;
       },
       tractored: (id) => this.forceFields.isTractored(id),
-      warn: (obj, msg) => logger.warn(obj, msg),
+      warn: (obj, msg) => logger.warn(obj, msg), ...(this.persistSector && this.sectorKey !== null ? { records: terrainRecordStoreFor(`${this.sectorKey}|wrecks:${o.seed}`) } : {}), // slice 4: touched hulls' rows
     });
   }
 
@@ -12798,7 +12798,7 @@ export class SectorRoom extends Room<SectorState> {
     // supersedes it, and a fire-after-teardown would read torn-down state.
     this.sectorPersistence.dispose();
     if (this.sectorKey !== null) {
-      try { this.wreckSaves?.flush(true); } catch { /* non-critical */ }
+      try { this.wreckSaves?.flush(true); this.wreckFieldSource?.flushAll(); } catch { /* non-critical */ }
       try { this.persistSectorSnapshot(); } catch { /* non-critical */ }
     }
     // Phase 1 swift-otter — close every PeerConnection so the libdatachannel

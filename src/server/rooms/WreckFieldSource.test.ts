@@ -5,11 +5,19 @@
  * (slice 4), the field cap makes a hull wait, and the budget units are
  * measured here against a rock chunk cut.
  */
-import { describe, expect, it } from 'vitest';
-import { CapitalWreckSubsystem, type WreckPieceSpawn } from './CapitalWreckSubsystem.js';
-import { FIELD_HULL_UNITS, WreckFieldSource, fieldHullPieces, fieldHullUnits } from './WreckFieldSource.js';
+import { describe, expect, it, vi } from 'vitest';
+// WreckFieldSource restores through wreckLineageSaves, which imports the process DB: no sqlite here.
+vi.mock('../db/Database.js', () => ({ db: { prepare: () => ({ run: () => ({}), get: () => null, all: () => [] }), exec: () => {} } }));
+import { CapitalWreckSubsystem, type WreckPiecePose, type WreckPieceSpawn } from './CapitalWreckSubsystem.js';
+import { FIELD_HULL_UNITS, WRECK_FIELD_ROW_VERSION, WreckFieldSource, fieldHullPieces, fieldHullUnits } from './WreckFieldSource.js';
+import type { RockRecordStore, TerrainRecordRow } from '../db/terrainSql.js';
+import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
+type TerrainRecordPutOp = Extract<PersistOp, { type: 'TERRAIN_RECORD_PUT' }>;
+import { CHUNK_SIZE } from '../../core/terrain/fieldLayout.js';
+import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
+import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { wreckField, hullsInChunk, wreckFieldHullFracture, type WreckField, type WreckFieldHull } from '../../core/terrain/wreckFieldLayout.js';
-import { wreckPieceGeometry } from '../../core/destruction/wreckPieces.js';
+import { wreckBodyParams, wreckPieceGeometry } from '../../core/destruction/wreckPieces.js';
 import { chunkKey, cutFieldOpts, fieldRockBody } from '../../core/terrain/chunkStreamer.js';
 import { rocksInChunk } from '../../core/terrain/fieldLayout.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -27,13 +35,39 @@ function densest(field: WreckField): { cx: number; cy: number; hulls: readonly W
   return best;
 }
 
-function make(field = FIELD, linger = 1000) {
+/** An in-memory field partition: rows by key, every put kept. */
+function memStore(rows = new Map<number, TerrainRecordRow>()) {
+  const puts: TerrainRecordPutOp[] = [];
+  const warns: unknown[] = [];
+  const store: RockRecordStore = {
+    sectorKey: 's|wrecks:source',
+    load: () => [...rows.values()],
+    put: (op) => {
+      puts.push(op);
+      rows.set(op.rockKey, { rockKey: op.rockKey, layoutVersion: op.layoutVersion, pool: op.pool, consumed: op.consumed, pose: op.pose, lineage: op.lineage ?? null });
+    },
+    warn: (o) => { warns.push(o); },
+  };
+  return { store, rows, puts, warns };
+}
+
+function make(field = FIELD, linger = 1000, mem = memStore()) {
   const spawned = new Map<string, WreckPieceSpawn>();
   const live = new Set<string>();
   const awake = new Set<string>();
   const removed: string[] = [];
   const warns: unknown[] = [];
   const moved = new Map<string, { x: number; y: number }>();
+  const tractored = new Set<string>();
+  /** A live piece's pose as the SAB would give it (moved, angle wrapped). */
+  const poseInto = (id: string, out: WreckPiecePose): boolean => {
+    const s = spawned.get(id);
+    if (s === undefined || !live.has(id)) return false;
+    const m = moved.get(id);
+    out.x = m?.x ?? s.x; out.y = m?.y ?? s.y; out.angle = Math.atan2(Math.sin(s.angle), Math.cos(s.angle));
+    out.vx = 0; out.vy = 0; out.angvel = 0;
+    return true;
+  };
   let src: WreckFieldSource | null = null;
   const sys = new CapitalWreckSubsystem({
     serverTick: () => 1000,
@@ -49,22 +83,29 @@ function make(field = FIELD, linger = 1000) {
       const s = spawned.get(id);
       return s !== undefined && live.has(id) ? { x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle, angvel: s.angvel } : null;
     },
+    piecePoseInto: poseInto,
     dropSalvage: () => 'pod',
     lineageTouched: (root) => src?.touched(root),
   });
   src = new WreckFieldSource(field, {
     wrecks: () => sys,
-    piecePoseInto: (id, out) => {
-      const s = spawned.get(id);
-      if (s === undefined || !live.has(id)) return false;
-      const m = moved.get(id);
-      out.x = m?.x ?? s.x; out.y = m?.y ?? s.y; out.angle = Math.atan2(Math.sin(s.angle), Math.cos(s.angle)); // wrapped, as the SAB out.vx = 0; out.vy = 0; out.angvel = 0;
-      return true;
-    },
+    piecePoseInto: poseInto,
     pieceAwake: (id) => awake.has(id),
+    tractored: (id) => tractored.has(id),
     warn: (o) => { warns.push(o); },
+    records: mem.store,
   }, linger);
-  return { sys, src, spawned, live, awake, removed, warns, moved };
+  return { sys, src, spawned, live, awake, removed, warns, moved, tractored, mem };
+}
+
+/** The live piece ids of the hull at `key` (by lineage root). */
+function hullPieces(t: ReturnType<typeof make>, key: number): string[] {
+  const out: string[] = [];
+  for (const w of t.sys.descriptors()) {
+    if (w.parentWreck !== undefined) continue;
+    if (t.src.hullKeyOf(w.wreckId) === key) t.sys.forEachLineagePiece(w.wreckId, (id) => out.push(id));
+  }
+  return out;
 }
 
 describe('WreckFieldSource (wreck fields 3b)', () => {
@@ -108,20 +149,121 @@ describe('WreckFieldSource (wreck fields 3b)', () => {
     expect(t.sys.liveFieldCount()).toBe(n);
   });
 
-  it('a touched hull (moved, awake, or hit) stays loaded and never double-spawns', () => {
+  it('slice 4: a touched hull unloads into ONE lineage row and reloads from it at the stored poses, never also from the seed', () => {
     const t = make();
     t.src.step(needed, 100, 0);
-    const ids = [...t.spawned.keys()];
+    const n = t.sys.liveFieldCount();
+    const hk = d.hulls[0]!.key;
+    const ids = hullPieces(t, hk);
+    expect(ids.length).toBeGreaterThan(1);
+    // Touch: move one piece, and lose another (a piece gone).
     const first = t.spawned.get(ids[0]!)!;
-    t.moved.set(first.id, { x: first.x + 10, y: first.y });
-    t.src.step(none, 100, 5000);
-    const kept = t.sys.liveFieldCount();
-    expect(kept).toBeGreaterThan(0);
-    expect(t.src.stats.hullsLive).toBe(1);
+    t.moved.set(first.id, { x: first.x + 37, y: first.y - 11 });
+    t.live.delete(ids[1]!); t.sys.pieceGone(ids[1]!);
+    t.src.step(none, 100, 5000); // home chunk past the linger, no piece near
+    const rows = t.mem.puts.filter((p) => p.rockKey === hk);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.consumed).toBe(false);
+    expect(rows[0]!.layoutVersion).toBe(WRECK_FIELD_ROW_VERSION);
+    expect(t.mem.puts.length).toBe(1); // untouched hulls write nothing
+    expect(t.src.rowOf(hk)).toBe('lineage');
+    expect(t.src.stats.hullsUnloaded).toBe(1);
+    expect(t.sys.liveFieldCount()).toBe(0);
+    expect(t.sys.descriptors().length).toBe(0); // no orphaned ancestor
+    // Back: the touched hull comes from its row.
+    const before = new Set(t.spawned.keys());
     t.src.step(needed, 100, 6000);
+    expect(t.src.stats.hullsRestored).toBe(1);
     expect(t.src.stats.hullsLive).toBe(d.hulls.length);
-    expect(t.sys.liveFieldCount()).toBe(kept + t.removed.length);
-    expect(t.src.stats.hullsSpawned).toBe(d.hulls.length * 2 - 1);
+    expect(t.sys.liveFieldCount()).toBe(n - 1); // the lost piece stays lost; no seed copy
+    const back = hullPieces(t, hk);
+    expect(back.length).toBe(ids.length - 1);
+    for (const id of back) expect(before.has(id)).toBe(false); // fresh ids
+    const at = back.map((id) => t.spawned.get(id)!);
+    expect(at.some((s) => Math.abs(s.x - (first.x + 37)) < 1e-9 && Math.abs(s.y - (first.y - 11)) < 1e-9)).toBe(true);
+    for (const s of at) expect(s.sleeping).toBe(true);
+    for (const w of t.sys.descriptors()) expect(w.deathTick).toBeUndefined();
+    // Restart: a new source reads the row back through loadRecords.
+    const t2 = make(FIELD, 1000, memStore(t.mem.rows));
+    t2.src.step(needed, 100, 0);
+    expect(t2.src.stats.hullsRestored).toBe(1);
+    expect(t2.sys.liveFieldCount()).toBe(n - 1);
+  });
+
+  it('slice 4: a held (tractored) piece, or a piece in a needed chunk, keeps the whole lineage loaded', () => {
+    const t = make();
+    t.src.step(needed, 100, 0);
+    const hk = d.hulls[0]!.key;
+    const ids = hullPieces(t, hk);
+    const p0 = t.spawned.get(ids[0]!)!;
+    t.moved.set(p0.id, { x: p0.x + 5, y: p0.y });
+    t.tractored.add(p0.id);
+    t.src.step(none, 100, 5000);
+    t.src.step(none, 100, 9000);
+    expect(hullPieces(t, hk).length).toBe(ids.length);
+    expect(t.mem.puts.length).toBe(0);
+    // Let go, but the piece now lies in another chunk a ship needs.
+    t.tractored.delete(p0.id);
+    const far = { x: (d.cx + 6.5) * CHUNK_SIZE, y: (d.cy + 0.5) * CHUNK_SIZE };
+    t.moved.set(p0.id, far);
+    const farNeeded = new Set([chunkKey(d.cx + 6, d.cy)]);
+    t.src.step(farNeeded, 100, 12000);
+    t.src.step(farNeeded, 100, 20000);
+    expect(hullPieces(t, hk).length).toBe(ids.length);
+    // Nothing near for the linger: it unloads.
+    t.src.step(none, 100, 20500);
+    expect(hullPieces(t, hk).length).toBe(ids.length);
+    t.src.step(none, 100, 21100);
+    expect(hullPieces(t, hk).length).toBe(0);
+    expect(t.src.rowOf(hk)).toBe('lineage');
+  });
+
+  it('slice 4: a fully consumed hull writes a consumed row at once and never comes back', () => {
+    const t = make();
+    t.src.step(needed, 100, 0);
+    const hk = d.hulls[0]!.key;
+    for (const id of hullPieces(t, hk)) { t.live.delete(id); t.sys.pieceGone(id); }
+    t.src.step(needed, 100, 100);
+    expect(t.src.rowOf(hk)).toBe('consumed');
+    const row = t.mem.puts.find((p) => p.rockKey === hk)!;
+    expect(row.consumed).toBe(true);
+    expect(row.lineage ?? null).toBeNull();
+    expect(t.src.stats.hullsConsumed).toBe(1);
+    t.src.step(none, 100, 5000);
+    t.src.step(needed, 100, 6000);
+    expect(t.src.stats.hullsLive).toBe(d.hulls.length - 1);
+    expect(hullPieces(t, hk).length).toBe(0);
+  });
+
+  it('slice 4: a stale-version row is ignored with a warning (the seed hull spawns)', () => {
+    const rows = new Map<number, TerrainRecordRow>();
+    const hk = d.hulls[0]!.key;
+    rows.set(hk, { rockKey: hk, layoutVersion: WRECK_FIELD_ROW_VERSION - 1, pool: null, consumed: true, pose: null, lineage: null });
+    const mem = memStore(rows);
+    const t = make(FIELD, 1000, mem);
+    expect(mem.warns.length).toBe(1);
+    t.src.step(needed, 100, 0);
+    expect(t.src.stats.hullsLive).toBe(d.hulls.length);
+  });
+
+  it('owner Q2 print: the speed a fighter ram gives a capital-section field piece and a fighter-sized piece', () => {
+    const fighter = getShipKind('fighter');
+    const mF = shipBodyMass(fighter), vF = fighter.maxSpeed;
+    // Rapier averages restitution: ship colliders 0.3, wreck-piece (obstacle) colliders 0.8.
+    const e = (0.3 + 0.8) / 2;
+    const dv = (mP: number) => ((1 + e) * mF * vF) / (mF + mP);
+    const cap = FIELD.hulls.find((h) => getShipKind(h.kindId).sizeClass === 'capital');
+    const fig = FIELD.hulls.find((h) => fieldHullUnits(h.kindId) === FIELD_HULL_UNITS.fighter);
+    const line = (label: string, h: WreckFieldHull | undefined, pick: 'max' | 'min') => {
+      if (h === undefined) return `${label}: none in this field`;
+      const ps = fieldHullPieces(h).pieces;
+      const p = ps.reduce((a, b) => ((pick === 'max' ? b.mass > a.mass : b.mass < a.mass) ? b : a));
+      const body = wreckBodyParams(h.kindId);
+      const tn = shipTuning(getShipKind(h.kindId));
+      return `${label} (${h.kindId}, piece mass ${p.mass.toFixed(1)}): ram dv ${dv(p.mass).toFixed(2)} u/s; settle-to-sleep ${body.settleSpeed.toFixed(2)} u/s; hit wakeDv ${(DESTRUCTION_PROFILES[tn.destruction].knockWakeScale * tn.wreckKnockMax).toFixed(2)} u/s`;
+    };
+    console.log(`[wreck-field Q2] fighter mass ${mF.toFixed(2)} at top speed ${vF.toFixed(1)} u/s, restitution ${e}; ${line('capital section', cap, 'max')}; ${line('fighter-sized piece', fig, 'max')}`);
+    expect(mF).toBeGreaterThan(0);
   });
 
   it('the field cap makes a hull wait (sampled warn), and it loads once there is room', () => {
