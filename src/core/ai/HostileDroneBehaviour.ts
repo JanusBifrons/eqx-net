@@ -2659,6 +2659,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       addSeparation(acc, self.x, self.y, mx, my, tuning.flockSeparation);
     }
     addAlignment(acc, this._leaderScratch.angle);
+    const lv = Math.hypot(this._leaderScratch.vx, this._leaderScratch.vy);
+    const pace = Math.min(this.handling.maxSpeed, Math.max(this.handling.cruiseSpeed * CALM_CRUISE_FRAC, lv * FLOCK_CATCH_UP));
+    const single = this.tickSingleFile(self, resolve, leaderX, leaderY, pace);
+    if (single !== null) return single;
     const flock = resolveFlock(acc, this._flockOut);
     if (flock.thrustScale <= 1e-4) return this.fly(self, self.angle, 0, 0, false);
     // Calm cruise scaled by the boids desired-velocity magnitude. As the follower
@@ -2669,10 +2673,35 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // wait) sets the pace: a little over its speed so the pack closes up,
     // never over this ship's top speed and never boosting. An AI pilots' pack
     // leader is throttled below the calm cruise, so its pack is unchanged.
-    const lv = Math.hypot(this._leaderScratch.vx, this._leaderScratch.vy);
-    const pace = Math.min(this.handling.maxSpeed, Math.max(this.handling.cruiseSpeed * CALM_CRUISE_FRAC, lv * FLOCK_CATCH_UP));
     const speed = pace * flock.thrustScale;
     return this.fly(self, facingOf(flock.dirX, flock.dirY), flock.dirX * speed, flock.dirY * speed, false);
+  }
+
+  /**
+   * Single file round rock (navigation slice 10, owner 2026-11-17): a
+   * follower routes to the ship ahead of it in squad order (the one before it
+   * in the member list; the first, or one with none found, the leader). Open
+   * space answers straight and the herd flocks as before (null). With rock
+   * between, it flies that route and stops a follow distance behind the ship
+   * ahead, so the squad strings out through the gap one behind the other.
+   */
+  private tickSingleFile(self: AiEntity, resolve: NonNullable<AiWorldView['resolveEntityInto']>, leaderX: number, leaderY: number, pace: number): AiIntent | null {
+    const nav = this._nav;
+    if (nav === null) return null;
+    let ax = leaderX, ay = leaderY;
+    const ids = this._flockMemberIds;
+    for (let i = ids.indexOf(self.id) - 1; i >= 0; i--) {
+      const id = ids[i]!;
+      if (id === this.leaderId) break;
+      if (resolve(id, this._neighborScratch)) { ax = this._neighborScratch.x; ay = this._neighborScratch.y; break; }
+    }
+    const t = shipTuning(this.kind);
+    if (!nav.waypoint(self.id, self.x, self.y, ax, ay, t.navClearance, t.wingmanArrive, true)) return null;
+    const dx = ax - self.x, dy = ay - self.y;
+    if (dx * dx + dy * dy <= t.flockFollow * t.flockFollow) return this.fly(self, self.angle, 0, 0, false);
+    const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this._steerScratch);
+    const v = Math.min(pace, brakingSpeed(this.handling, nav.ahead));
+    return this.fly(self, facingOf(w.dirX, w.dirY), w.dirX * v, w.dirY * v, false);
   }
 
   /**
