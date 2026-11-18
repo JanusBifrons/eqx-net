@@ -51,6 +51,7 @@ import {
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import { getWeapon, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { shotPassesThrough } from '../../core/combat/blockedLineHold.js';
 import { shellBlastDamage } from '../../shared-types/shellBlast.js';
 import type { ShipState } from './schema/SectorState.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
@@ -205,8 +206,7 @@ export const DT_SEC = 1 / 60;
 /** Does a shell of this weapon pass through what it kills? (Its `killCut` is
  *  a channel: the capital railgun, plan beam-slices §7.) */
 export function passesThrough(weaponId: WeaponId): boolean {
-  const cut = getWeapon(weaponId).killCut;
-  return cut !== undefined && cut.kind === 'channel';
+  return shotPassesThrough(weaponId); // one source with the blocked-line hold
 }
 
 const spawnQ: ShellSpawnMut = { x: 0, y: 0, vx: 0, vy: 0 };

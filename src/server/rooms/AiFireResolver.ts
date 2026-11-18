@@ -76,8 +76,9 @@ export interface AiFireResolverDeps {
   /** NPC line of fire (friendly fire slice 2): true ⇒ a FRIENDLY body lies
    *  between the shooter at (fx, fy) and `targetId` along unit (dx, dy), so
    *  the drone holds fire this tick (no cooldown spent). The room resolves the
-   *  target's distance. Absent ⇒ never blocked (unit harnesses). */
-  lineOfFireBlocked?: (shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number) => boolean;
+   *  target's distance. With `weaponId`, a beam also holds on a line blocked
+   *  by any solid body for the tolerance (`BlockedLineHold`). Absent ⇒ never blocked (unit harnesses). */
+  lineOfFireBlocked?: (shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, weaponId?: WeaponId) => boolean;
   /** The ship's energy pool (owner rule 2026-11-13: an AI pilot's ship pays a
    *  player's energy per slot trigger). Spends `cost` and returns true when
    *  the pool can pay; false ⇒ the shot is refused and nothing is spent. The
@@ -241,7 +242,7 @@ export class AiFireResolver implements WeaponFireSink {
     // Line of fire: an ally (or its own base) in the way ⇒ hold this tick
     // without spending the cooldown, so a held shot fires the moment the line
     // clears.
-    if (d.lineOfFireBlocked?.(shooterId, targetId, selfX, selfY, dirNdx, dirNdy)) return;
+    if (d.lineOfFireBlocked?.(shooterId, targetId, selfX, selfY, dirNdx, dirNdy, slotMounts[0]!.weaponId)) return;
     // Fire control: a barrel fires only when it bears on the aim (the pilot's
     // rule, `mountFireTolerance`). Every shot leaves down its drawn barrel, so
     // a gun that doesn't bear would fire visibly off its target (owner

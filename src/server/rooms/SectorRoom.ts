@@ -432,6 +432,7 @@ import { rockViewOf } from './rockCut.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
+import { LofShipBody, type LofBody } from './lofShipBody.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
 import { isTerrainLockKind, swarmLockEligible, type LockEntry } from '../../core/combat/lockState.js';
@@ -707,25 +708,6 @@ const FLEET_STOP_ORDER = { kind: 'stop' } as const;
  *  INPUT, no AI fire path). */
 const HULL_AI_REGISTRATION = Object.freeze({ hull: true });
 
-/** A player's ship (a pilot's ACTIVE ship, keyed by playerId, or a LINGERING
- *  hull, keyed by shipInstanceId) as a `LineOfFireGate` body: players' ships
- *  are not swarm records. One per ship key, reused (#14). */
-class LofShipBody {
-  id = '';
-  slot = 0;
-  /** Broadphase bound: kind 1 + `shipKind` bins by `shipHitBound`. */
-  radius = 0;
-  readonly kind = 1;
-  shipKind = '';
-  /** Owning player. */
-  owner = '';
-  /** The ship's instance id (= `id` for a lingering hull). */
-  sid = '';
-  ship: ShipState | null = null;
-  /** Build generation it was last filled in (stale-body sweep). */
-  gen = 0;
-}
-type LofBody = SwarmEntityRecord | LofShipBody;
 /** A tractor beam's line of sight is blocked by any body but a loot pod
  *  (pre-bound for `LineOfFireGate.firstOnLine`, #14). */
 const notLootPod = (rec: LofBody): boolean => !isLootPod(rec);
@@ -2309,7 +2291,7 @@ export class SectorRoom extends Room<SectorState> {
       fireDroneMount: (id, i, target, killAt, from) => this.aiFireResolver.fireMount(id, i, target, killAt, from),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       // Friendly fire slice 2: a turret holds while an escort is on its line.
-      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max) => this.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max),
+      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max, w, k) => this.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max, w, k),
       // Capital turrets engage hostile structures too (the AI's per-tick set).
       hostileStructures: () => this.hostileStructureCircles,
       lockTimeCapS: () => this.testLockTimeCapS,
@@ -2358,7 +2340,7 @@ export class SectorRoom extends Room<SectorState> {
       malformed: this.malformed,
       // RTS slice 5: a wingman's hull (shipInstanceId) gates on its own locks.
       fireAllowed: (pid, slotId) => this.locksFor(pid).hasLocked(pid, slotId),
-      mountBearsOnLock: (pid, mountId, ox, oy, angle, weaponId, size) => this.mountBearsOnLock(pid, mountId, ox, oy, angle, weaponId, size),
+      mountBearsOnLock: (pid, mountId, k, ox, oy, angle, weaponId, size) => this.mountBearsOnLock(pid, mountId, k, ox, oy, angle, weaponId, size),
       hullLineBlocked: (sid, fx, fy, dx, dy, weaponId, svx, svy, size) => this.hullLineBlocked(sid, fx, fy, dx, dy, weaponId, svx, svy, size),
       fireTractor: (pid, m) => this.forceFields.renewTractor(pid, m, lockKeyBodyId(this.locks.aimKeyFor(pid, m.id), this.swarmRegistry)),
     });
@@ -2373,7 +2355,7 @@ export class SectorRoom extends Room<SectorState> {
         return b?.trySpendEnergy === undefined ? true : b.trySpendEnergy(cost);
       },
       // Friendly fire slice 2: a drone holds while an ally is in the way.
-      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy) => this.droneLineBlocked(id, targetId, fx, fy, dx, dy),
+      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, w) => this.droneLineBlocked(id, targetId, fx, fy, dx, dy, w),
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       targetShape: (id, out) => this.aiFireTargetShape(id, out),
@@ -3037,7 +3019,7 @@ export class SectorRoom extends Room<SectorState> {
       // Friendly fire: a turret beam lands on the first thing in its path.
       beamFirstHit: (fx, fy, dx, dy, maxDist, skipId) => this.turretBeamFirstHit(fx, fy, dx, dy, maxDist, skipId),
       // Friendly fire slice 2: a turret holds over its own base / its owner.
-      lineOfFireBlocked: (rec, targetId, fx, fy, dx, dy, max) => this.structureLineBlocked(rec, targetId, fx, fy, dx, dy, max),
+      lineOfFireBlocked: (rec, targetId, fx, fy, dx, dy, max, w, k) => this.structureLineBlocked(rec, targetId, fx, fy, dx, dy, max, w, k),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
           type: 'laser_fired',
@@ -4687,6 +4669,8 @@ export class SectorRoom extends Room<SectorState> {
   // ── Fire control (exp/fire-control) ─────────────────────────────────────
   private readonly _lockPose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
   private readonly _lockTarget: LockTargetView = newLockTargetView();
+  /** The body id `resolveLockTarget` last resolved (the blocked-line hold's target). */
+  private _lockTargetId = '';
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
@@ -4943,6 +4927,7 @@ export class SectorRoom extends Room<SectorState> {
       }
       if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
       out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
+      this._lockTargetId = rec.id;
       this.fillSwarmFireShape(rec, this._lockPose, out);
       return true;
     }
@@ -4966,6 +4951,7 @@ export class SectorRoom extends Room<SectorState> {
       // Fire shape: the hit shape the pilot's ship is hit on (shipHitShape).
       fillFireTargetShape(out, p.x, p.y, p.angle, true, ship.kind, ship.shield > 0, 0);
       out.hostile = false; out.terrain = false; // PvP always runs the failsafe first
+      this._lockTargetId = other;
       return true;
     }
     return false;
@@ -5032,12 +5018,14 @@ export class SectorRoom extends Room<SectorState> {
    * the mount, and its barrel bears on it (shared `mountFiresOn`, the same
    * call as the client's fire passes, #15). A turret clamped at its arc
    * limit with the target outside the arc fails, so it can't fire. `size`: the mount's (mining reach, `weaponIdReach`).
+   * A beam or slug also holds once its line to the lock has been blocked for the tolerance (`lineHeld`).
    */
-  private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId, size: WeaponMount['size']): boolean {
+  private mountBearsOnLock(pid: string, mountId: string, mountIdx: number, ox: number, oy: number, angle: number, weaponId: WeaponId, size: WeaponMount['size']): boolean {
     // A wingman's locks live in `wingmanLocks` and resolve as its owner (RTS).
     const key = this.locksFor(pid).aimKeyFor(pid, mountId);
     if (key === null || !this.resolveLockTarget(this.lockOwner(pid), key, this._lockTarget)) return false;
-    return mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._lockTarget);
+    if (!mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._lockTarget)) return false;
+    return !this.lineHeld(pid, mountIdx, weaponId, ox, oy, this._lockTarget.x, this._lockTarget.y, pid, this._lockTargetId);
   }
 
   /** Turret aim: the pose of the mount's group lock target (false = none). */
@@ -9107,8 +9095,9 @@ export class SectorRoom extends Room<SectorState> {
 
   /** An NPC ship's line of fire (drone slot or capital turret). */
   private npcShipLineBlocked(
-    shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number, weaponId?: WeaponId, mountIdx = 0,
   ): boolean {
+    if (weaponId !== undefined && this.lineHeld(shooterId, mountIdx, weaponId, fx, fy, fx + dx * maxDist, fy + dy * maxDist, shooterId, targetId)) return true;
     if (!this.npcLineOfFire) return false;
     const rec = this.swarmRegistry.get(shooterId);
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
@@ -9143,8 +9132,8 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** A drone's slot shot: the distance is to its target's live pose. */
-  private droneLineBlocked(shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number): boolean {
-    if (!this.npcLineOfFire || targetId === '') return false;
+  private droneLineBlocked(shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, weaponId?: WeaponId): boolean {
+    if (targetId === '') return false;
     let tx: number, ty: number;
     const pose = this.shipPoseCache.get(targetId);
     if (pose !== undefined) { tx = pose.x; ty = pose.y; } else {
@@ -9153,13 +9142,14 @@ export class SectorRoom extends Room<SectorState> {
       const b = slotBase(t.slot);
       tx = this.sabF32[b + SLOT_X_OFF]!; ty = this.sabF32[b + SLOT_Y_OFF]!;
     }
-    return this.npcShipLineBlocked(shooterId, targetId, fx, fy, dx, dy, Math.hypot(tx - fx, ty - fy));
+    return this.npcShipLineBlocked(shooterId, targetId, fx, fy, dx, dy, Math.hypot(tx - fx, ty - fy), weaponId);
   }
 
   /** A structure turret's line of fire. */
   private structureLineBlocked(
-    rec: StructureRecord, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    rec: StructureRecord, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number, weaponId?: WeaponId, mountIdx = 0,
   ): boolean {
+    if (weaponId !== undefined && this.lineHeld(rec.id, mountIdx, weaponId, fx, fy, fx + dx * maxDist, fy + dy * maxDist, rec.id, targetId)) return true;
     if (!this.npcLineOfFire) return false;
     this.lofShooterKind = 2;
     this.lofOwner = rec.owner;
@@ -9167,6 +9157,11 @@ export class SectorRoom extends Room<SectorState> {
     // A player's turret never fires through its owner's own ships (the gate's
     // player-ship bodies: the active ship and parked hulls).
     return this.lofGate().blocked(fx, fy, dx, dy, maxDist, rec.id, targetId, this.lofFriendly);
+  }
+
+  /** Fire control's blocked-line hold (`BlockedLineHold`) on the one line-of-fire grid, in game time. */
+  private lineHeld(key: string, idx: number, weaponId: WeaponId, fx: number, fy: number, tx: number, ty: number, skipId: string, targetId: string): boolean {
+    return this.mountTicker.lineHold.held(this.lofGate(), key, idx, weaponId, fx, fy, tx, ty, skipId, targetId, this.gameClock.now());
   }
 
   /** Scratch: an owned hull's target pose (`hullLineBlocked`). */
@@ -10761,6 +10756,7 @@ export class SectorRoom extends Room<SectorState> {
     // cooldown ledger, target cache). A reclaimed hull fires as its pilot.
     this.wingmanLocks.forget(shipInstanceId);
     this.mountTicker.playerMountAngles.delete(shipInstanceId);
+    this.mountTicker.lineHold.forget(shipInstanceId);
     this.lastFireClientTick.delete(shipInstanceId);
     this._lockActivated.delete(shipInstanceId);
     this.wingmanFireKeys.delete(shipInstanceId);

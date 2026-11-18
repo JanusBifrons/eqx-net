@@ -73,7 +73,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 **Allegiances and friendly fire** ([allegiances](../../docs/architecture/allegiances.md#server-implementation-notes)):
 - 🔴 Classify by the registry kind, never an id prefix. `isHostileToPlayer` = stance OR ledger; only a hit on a DRONE escalates the `FactionLedger`. Allegiance decides targeting, never what a shot hits.
 - 🔴 Every shot hits the first thing in its path, own side included (skips: shooter, a capital's own deck, loot pods); friendly hits never mark hostile.
-- AI pilots (AI-flown owned hulls too) hold fire on a friendly line only via `LineOfFireGate`; players are never gated. Drone-brain proximity queries use `AiNeighbourGrid`.
+- AI pilots (AI-flown owned hulls too) hold fire on a friendly line only via `LineOfFireGate`. Every shooter's beam or railgun holds on a line blocked by any body for the tolerance only via `BlockedLineHold` (fire-control.md). Drone-brain proximity queries use `AiNeighbourGrid`.
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md#server-implementation-notes)):
 - 🔴 Value only moves (`transferInto`), never copies; every transfer is ONE atomic `GROUP`; `HoldStore` is the authority. Every death and abandon seam spills the hold.
