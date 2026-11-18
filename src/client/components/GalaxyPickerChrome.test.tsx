@@ -15,6 +15,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { GalaxyPickerChrome, type GalaxyPickerApi } from './GalaxyPickerChrome';
 import { useUIStore } from '../state/store';
+import { useAuthStore } from '../auth/authStore';
 
 describe('GalaxyPickerChrome', () => {
   it('renders the load-bearing testids (limbo stub, engineering, single-player)', () => {
@@ -37,6 +38,7 @@ describe('GalaxyPickerChrome', () => {
   });
 
   it('apiRef.openForSector opens the sector popover → Join → kind-picker → spawn fires onSpawnNewShip', () => {
+    useAuthStore.setState({ guest: true });
     const apiRef = { current: null as GalaxyPickerApi | null };
     const onSpawnNewShip = vi.fn();
     render(
@@ -56,7 +58,7 @@ describe('GalaxyPickerChrome', () => {
     act(() => { apiRef.current?.openForSector('sol-prime'); });
     expect(screen.getByTestId('sector-drawer-join')).toBeInTheDocument();
 
-    // "Join sector" opens the kind-picker for that sector.
+    // "Join the fight" opens the kind-picker for that sector.
     fireEvent.click(screen.getByTestId('sector-drawer-join'));
     expect(screen.getByTestId('ship-picker-modal')).toBeInTheDocument();
     // Title carries the tapped sector's name.
@@ -65,6 +67,36 @@ describe('GalaxyPickerChrome', () => {
     fireEvent.click(screen.getByTestId('ship-picker-spawn'));
     expect(onSpawnNewShip).toHaveBeenCalledTimes(1);
     expect(onSpawnNewShip.mock.calls[0][1]).toBe('sol-prime');
+  });
+
+  it('logged out: Join the fight stashes the sector and goes to login; resumeGatedJoin opens its ship picker', () => {
+    useAuthStore.setState({ user: null, token: null, guest: false });
+    useUIStore.setState({ phase: 'galaxy-map', pendingPickSector: null });
+    const apiRef = { current: null as GalaxyPickerApi | null };
+    render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    fireEvent.click(screen.getByTestId('sector-drawer-join'));
+    expect(screen.queryByTestId('ship-picker-modal')).not.toBeInTheDocument();
+    expect(useUIStore.getState().phase).toBe('auth');
+    expect(useUIStore.getState().pendingPickSector).toBe('sol-prime');
+    // Back from login: the stashed Join opens the picker for that sector.
+    act(() => { apiRef.current?.resumeGatedJoin('sol-prime'); });
+    expect(screen.getByTestId('ship-picker-modal')).toBeInTheDocument();
+  });
+
+  it('logged out: Spectate goes to login, and resumeGatedJoin then spectates (not the picker)', () => {
+    useAuthStore.setState({ user: null, token: null, guest: false });
+    useUIStore.setState({ phase: 'galaxy-map', pendingPickSector: null });
+    const apiRef = { current: null as GalaxyPickerApi | null };
+    const onSpawnSpectator = vi.fn();
+    render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} onSpawnSpectator={onSpawnSpectator} />);
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    fireEvent.click(screen.getByTestId('sector-drawer-spectate'));
+    expect(onSpawnSpectator).not.toHaveBeenCalled();
+    expect(useUIStore.getState().phase).toBe('auth');
+    act(() => { apiRef.current?.resumeGatedJoin('sol-prime'); });
+    expect(onSpawnSpectator).toHaveBeenCalledWith('sol-prime');
+    expect(screen.queryByTestId('ship-picker-modal')).not.toBeInTheDocument();
   });
 
   it('apiRef.openForSector TOGGLES — re-selecting the same sector deselects (closes the drawer)', () => {
@@ -120,4 +152,5 @@ describe('GalaxyPickerChrome', () => {
 // Reset the shared Zustand galaxyStats so the injected slice above doesn't leak.
 afterEach(() => {
   useUIStore.getState().setGalaxyStats([]);
+  useAuthStore.setState({ guest: false });
 });

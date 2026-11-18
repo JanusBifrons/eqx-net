@@ -487,7 +487,7 @@ function GameSurface({
       if (!pending) return; // already consumed
       if (pickerApiRef.current) {
         useUIStore.getState().setPendingPickSector(null);
-        pickerApiRef.current.openJoinForSector(pending);
+        pickerApiRef.current.resumeGatedJoin(pending);
         return;
       }
       if (++attempts < 40) window.setTimeout(tryOpen, 50);
@@ -1047,7 +1047,8 @@ export function App(): JSX.Element {
   const { user } = useAuthStore();
   // Phase machine lives in Zustand so drawer tabs (Settings "Return to menu",
   // Profile Logout) can change it without prop-drilling through 4 components.
-  // Default initial value in the store is 'meta'; autoJoin overrides on mount.
+  // Default initial value in the store is 'galaxy-map' (the homepage);
+  // autoJoin overrides on mount.
   const phase = useUIStore((s) => s.phase);
   const setPhase = useUIStore((s) => s.setPhase);
   const [roomNameOverride, setRoomNameOverride] = useState<string | undefined>(
@@ -1063,7 +1064,7 @@ export function App(): JSX.Element {
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
-  // Apply autoJoin once on mount — overrides the store's default 'meta'.
+  // Apply autoJoin once on mount — overrides the store's default 'galaxy-map'.
   // Subsequent phase changes are user-driven (drawer buttons, login flow).
   const autoJoinRef = useRef(autoJoin);
   useEffect(() => {
@@ -1145,12 +1146,6 @@ export function App(): JSX.Element {
     setPhase('galaxy-map');
   }, [setPhase]);
 
-  // Meta-landing CTA: if logged in, jump to galaxy-map; else, login flow
-  // first (the post-auth handler then continues on to galaxy-map).
-  const handleJoinFromMeta = useCallback(() => {
-    setPhase(user ? 'galaxy-map' : 'auth');
-  }, [user, setPhase]);
-
   // Per-phase content composition lives in PhaseRouter — the App
   // wraps it in LayoutProvider + ErrorBoundary so the
   // TopRightToolbar / WarpScreen persist across phase transitions.
@@ -1160,7 +1155,6 @@ export function App(): JSX.Element {
         <RotatePhoneOverlay />
         <PhaseRouter
           phase={phase}
-          user={user}
           profileOpen={profileOpen}
           setProfileOpen={setProfileOpen}
           settingsOpen={settingsOpen}
@@ -1179,8 +1173,6 @@ export function App(): JSX.Element {
               onSelectLocal={handleSelectLocal}
             />
           }
-          onJoinFromMeta={handleJoinFromMeta}
-          onSelectLocal={handleSelectLocal}
           onAuthSuccess={handleAuthSuccess}
           onContinueAsGuest={handleContinueAsGuest}
         />

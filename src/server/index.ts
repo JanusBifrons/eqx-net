@@ -158,7 +158,7 @@ app.get('/healthz', (_req, res) => {
  * Deterministic-per-minute "X players fighting" hype number. Returns
  * 600–900, the same value across all clients hitting the server in the
  * same minute, rotating once per minute. Pre-moved-server: lived in
- * `MetaLandingScreen.tsx` and ran on the client's clock — moved here so
+ * the old client splash screen and ran on the client's clock — moved here so
  * (a) every concurrent visitor sees the same number, (b) when we swap
  * this for a real `matchMaker`-summed count later the client doesn't
  * change. */

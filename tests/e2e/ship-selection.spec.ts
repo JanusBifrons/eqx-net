@@ -45,13 +45,6 @@ async function mockAuthAndGo(page: Page): Promise<void> {
     }
   }, FAKE_TOKEN);
   await page.goto(BASE_URL);
-  // The 2026-05-10 post-auth refactor introduced a meta-landing with a
-  // "Join the fight" CTA between login and the galaxy map. Some flows
-  // (storageState pre-pop) skip it; click only if visible.
-  const cta = page.locator('text=Join the fight').first();
-  if (await cta.isVisible({ timeout: 8000 }).catch(() => false)) {
-    await cta.click();
-  }
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
 }
 

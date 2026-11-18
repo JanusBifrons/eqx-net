@@ -85,8 +85,8 @@ Adding a new tab means appending a record (set `bottom: true` to pin it under th
 
 | Tab | Contents | Notes |
 |---|---|---|
-| **Profile** | Avatar header, display-name editor, **red Logout** with confirm dialog | Logged-out users see a "Sign in" CTA instead. Logout fires `clearAuth()` + explicit `setPhase('meta')`. |
-| **Settings** | **Return to menu** button (top), `showDevOverlay` / `showLogPanel` / `showServerGhost` switches | "Return to menu" sets `phase = 'meta'` and closes the drawer. Promoted to the top of the panel so navigation isn't buried under preference toggles. |
+| **Profile** | Avatar header, display-name editor, **red Logout** with confirm dialog | Logged-out users see a "Sign in" CTA instead. Logout fires `clearAuth()` + explicit `setPhase('galaxy-map')`. |
+| **Settings** | **Return to menu** button (top), `showDevOverlay` / `showLogPanel` / `showServerGhost` switches | "Return to menu" sets `phase = 'galaxy-map'` (the homepage map) and closes the drawer. Promoted to the top of the panel so navigation isn't buried under preference toggles. |
 | **Galaxy** | "Show galaxy map" button (disabled while transit is active), reserved space for future warp actions | Replaces the floating MAP button that used to live in the `top-center` slot. M-key shortcut still works. |
 | **Debug** *(sticky bottom)* | "Capture diagnostic" block (note + button), `ConnectionDiagnostics`, `DevOverlay`, `LogPanel` | The `showDevOverlay` / `showLogPanel` toggles still gate the latter two inside this tab. |
 
@@ -101,22 +101,19 @@ The drawer is mobile-primary; desktop keeps its existing AppHeader + ProfileModa
 
 `ProfileModal.tsx`, `SettingsModal.tsx`, and `AvatarMenu.tsx` are the desktop access path — **do not delete them**. They overlap with the drawer tabs intentionally.
 
-## Phase machine + meta landing
+## Phase machine + homepage
 
 The top-level UX phase is in Zustand (`phase: Phase`), so drawer tabs can drive navigation without prop drilling:
 
 ```
-type Phase = 'meta' | 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local';
+type Phase = 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local';
 ```
 
-Initial phase is `'meta'` for everyone. The `?room=…` / `?galaxy=…` URL escape hatch overrides to `'game'` on mount (preserves existing E2E specs and deep links).
+Initial phase is `'galaxy-map'` for everyone: the galaxy map is the homepage. The `?room=…` / `?galaxy=…` URL escape hatch overrides to `'game'` on mount (preserves existing E2E specs and deep links).
 
-[MetaLandingScreen](../../src/client/components/MetaLandingScreen.tsx) is the canonical "main menu":
+A logged-out visitor can tap any sector; login is asked for only on "Join the fight" (see [living-galaxy](../architecture/living-galaxy.md) "Homepage"). The live player count and server-health banner sit over the map (`galaxy-landing-info`).
 
-- Big "Join the fight!" CTA → if logged in → `phase = 'galaxy-map'`; else → `'auth'`.
-- Fake but deterministic player count: `600 + (hash(floor(now / 60_000)) % 300)`. Same value across all clients hitting at the same minute, ticks over each minute. Implementation in `fakePlayerCount()` exported from `MetaLandingScreen.tsx`.
-
-Drawer Profile-tab Logout = `clearAuth() + setPhase('meta')`. Drawer Settings-tab "Return to menu" = `setPhase('meta')` (no auth change).
+Drawer Profile-tab Logout = `clearAuth() + setPhase('galaxy-map')`. Drawer Settings-tab "Return to menu" = `setPhase('galaxy-map')` (no auth change).
 
 ## Orientation policy
 
@@ -182,7 +179,7 @@ In-game React overlays are positioned via **named slot anchors**, never hand-pla
 
 - **Mobile vs desktop split**: `AppHeader` is hidden via MUI `display: { xs: 'none', sm: 'flex' }` below the `sm` breakpoint (600 px). The `--app-bar-h` CSS var is responsive to match (`0px` below 600 px, `48px` at and above). Mobile users only have the drawer for settings/profile/galaxy/debug; desktop users keep the existing `ProfileModal` + `SettingsModal` paths as well as the drawer. **Do not delete `ProfileModal.tsx`, `SettingsModal.tsx`, or `AvatarMenu.tsx`** — they are the desktop access path.
 
-- **Avatar context menu + logout (one ownership site).** `AvatarMenu.tsx` is the shared popover for BOTH the desktop header (`variant="desktop"`) AND the mobile meta-landing badge (`variant="mobile"`; `MobileAvatarBadge.tsx` now only owns the touch/meta gate + the `top-right` `Slot` and delegates the trigger + menu to `AvatarMenu`). The menu has two items: **Display name** (`avatar-menu-display-name` → `onProfileClick` → `ProfileModal`) and **Logout** (`avatar-menu-logout` → a confirm dialog → real logout). **Logout has exactly ONE definition: the `useLogout()` hook** ([auth/useLogout.ts](../../src/client/auth/useLogout.ts)) = `clearAuth(); setPhase('meta'); setDrawerOpen(false);`. Every logout entry point (avatar menu + drawer `ProfileTab`) routes through it — do NOT re-inline `clearAuth()` without the `setPhase('meta')` (the pre-fix bug: token cleared but you stayed in-game). The confirm dialog is the shared `LogoutConfirmDialog.tsx`; it takes overridable testids so the header/mobile instance (`avatar-logout-confirm-*`) never collides with the drawer instance (`logout-confirm-*`). Regression lock: [tests/e2e/avatar-menu-logout.spec.ts](../../tests/e2e/avatar-menu-logout.spec.ts) + `AvatarMenu.test.tsx` + `useLogout.test.tsx`.
+- **Avatar context menu + logout (one ownership site).** `AvatarMenu.tsx` is the shared popover for BOTH the desktop header (`variant="desktop"`) AND the mobile galaxy-map badge (`variant="mobile"`; `MobileAvatarBadge.tsx` now only owns the touch gate + the `top-right` `Slot` and delegates the trigger + menu to `AvatarMenu`). The menu has two items: **Display name** (`avatar-menu-display-name` → `onProfileClick` → `ProfileModal`) and **Logout** (`avatar-menu-logout` → a confirm dialog → real logout). **Logout has exactly ONE definition: the `useLogout()` hook** ([auth/useLogout.ts](../../src/client/auth/useLogout.ts)) = `clearAuth(); setPhase('galaxy-map'); setDrawerOpen(false);`. Every logout entry point (avatar menu + drawer `ProfileTab`) routes through it — do NOT re-inline `clearAuth()` without the `setPhase('galaxy-map')` (the pre-fix bug: token cleared but you stayed in-game). The confirm dialog is the shared `LogoutConfirmDialog.tsx`; it takes overridable testids so the header/mobile instance (`avatar-logout-confirm-*`) never collides with the drawer instance (`logout-confirm-*`). Regression lock: [tests/e2e/avatar-menu-logout.spec.ts](../../tests/e2e/avatar-menu-logout.spec.ts) + `AvatarMenu.test.tsx` + `useLogout.test.tsx`.
 
 - **Phones play sideways.** An upright phone shows `RotatePhoneOverlay` (`rotate` anchor) with input off underneath; the installed Android app is locked sideways by the manifest and a runtime lock at launch. Full screen starts only from a tap on `<FullscreenToggle>` ([layout/FullscreenToggle.tsx](../../src/client/layout/FullscreenToggle.tsx)), which labels itself "Tap for full screen" briefly after the phone turns. iOS Safari has no JS API to remove its address bar, so on iOS the toggle opens an "Add to Home Screen" install dialog instead. See "Orientation policy".
 
@@ -190,9 +187,9 @@ In-game React overlays are positioned via **named slot anchors**, never hand-pla
 
 - **`useIsCompact()` (`useMediaQuery(theme.breakpoints.down('sm'))`)** and **`isTouchDevice()`** are independent axes — touch on a desktop monitor and pointer on a tablet are real cases. Don't fuse them.
 
-- **Phase machine lives in Zustand** (`phase: 'meta' | 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local'`). Drawer tabs use `useUIStore(s => s.setPhase)` to drive navigation (Settings `Return to menu`, Profile Logout). **Living Galaxy P5 (2026-06-15): the initial phase is `galaxy-map`** — the live galaxy map IS the landing screen on load. **Spawning is auth-gated ON THE PICK** (`GameSurface.handleSelectorPick`): a logged-out pilot browses the map freely, but picking a sector stashes it in Zustand `pendingPickSector` and routes to `auth`; on return the remounted GameSurface's idle-mount effect re-opens the picker for the stashed sector. `?room=…` / `?galaxy=…` URL escape hatches still skip straight to `game` (App's `autoJoin` overrides the initial phase). `meta` is **retired from the default path** (kept reachable via Return-to-menu / Logout); the `MetaLandingScreen`'s server-health banner + live player count are FOLDED into `GalaxyPickerChrome` (`galaxy-landing-info`). Regression lock: [tests/e2e/galaxy-landing-flow.spec.ts](../../tests/e2e/galaxy-landing-flow.spec.ts).
+- **Phase machine lives in Zustand** (`phase: 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local'`). Drawer tabs use `useUIStore(s => s.setPhase)` to drive navigation (Settings `Return to menu`, Profile Logout). **Living Galaxy P5 (2026-06-15): the initial phase is `galaxy-map`** — the live galaxy map IS the landing screen on load. **Joining is auth-gated on "Join the fight"** (`GalaxyPickerChrome.gateJoin`): a logged-out visitor taps sectors and sees their focus view freely; Join (or Spectate) stashes the sector in Zustand `pendingPickSector` and routes to `auth`; on return the remounted GameSurface's idle-mount effect calls `resumeGatedJoin`, which opens that sector's ship picker (or spectates). `?room=…` / `?galaxy=…` URL escape hatches still skip straight to `game` (App's `autoJoin` overrides the initial phase). The old `meta` splash phase is **deleted**; its server-health banner + live player count are FOLDED into `GalaxyPickerChrome` (`galaxy-landing-info`). Regression lock: [tests/e2e/galaxy-landing-flow.spec.ts](../../tests/e2e/galaxy-landing-flow.spec.ts).
 
-- Regression lock: [tests/e2e/layout-slots.spec.ts](../../tests/e2e/layout-slots.spec.ts) covers HUD vs AppBar clearance, HUD vs joystick non-overlap, the upright-phone turn-sideways screen and full-screen label, mobile AppBar hidden, vertical tab order (galaxy first), debug-tab content gating, MAP-button removal, meta-landing visibility, Return-to-menu flow, Logout confirm (drawer `ProfileTab`; the avatar-menu logout path is locked separately by [tests/e2e/avatar-menu-logout.spec.ts](../../tests/e2e/avatar-menu-logout.spec.ts)).
+- Regression lock: [tests/e2e/layout-slots.spec.ts](../../tests/e2e/layout-slots.spec.ts) covers HUD vs AppBar clearance, HUD vs joystick non-overlap, the upright-phone turn-sideways screen and full-screen label, mobile AppBar hidden, vertical tab order (galaxy first), debug-tab content gating, MAP-button removal, map-on-load, Return-to-menu flow, Logout confirm (drawer `ProfileTab`; the avatar-menu logout path is locked separately by [tests/e2e/avatar-menu-logout.spec.ts](../../tests/e2e/avatar-menu-logout.spec.ts)).
 
 - **No raw ids in player-facing UI (2026-06-14 — load-bearing).** NEVER render a playerId / shipId / entityId / ownerPlayerId as visible text. There are no anonymous players — every owner resolves to a DB user — so show a HUMAN label: a display name ("you" for the local player, the owner's server-resolved name, or "Unknown" for an owner that doesn't map to a DB user, which is an ORPHAN the server logs via `structure_owner_unresolved`). When no name is available, show a kind/role, never an id. Ids live ONLY in hidden `data-*` attrs (E2E) + logs. (Internal sprite/map/body keys — `swarm-${id}`, `linger-${id}`, `p:${playerId}` — are fine; they're never shown. Drone NPC callsigns `AI <hex>` are a deliberate designation, not a player-identity id.) Fixed instances: structure-owner inspector line, lingering-hull inspector (kind only), ship name-label fallback (`Pilot`, never `Pilot <id>`), ConnectionDiagnostics ID row (removed).
 

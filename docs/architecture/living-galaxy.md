@@ -56,7 +56,7 @@ architecture, across four threads:
 | Galaxy map renderer | `src/client/render/galaxy/GalaxyMapLayer.ts` | **Single** Pixi `Container` on the shared gameplay canvas (the 2nd `Application`/`GalaxyOverviewScreen` was deleted 2026-06-05 — `galaxy-graph.md` is stale on this). Two modes (`galaxyLayerDecisions.ts`): `selector` (full-screen picker, pan/zoom) and `overlay` (in-game transparent HUD, neighbours-only). Builds hexes once, `repaint()` on state change, pulses the current sector. **Lives worker-side** — state crosses via `SET_VISIBLE / SET_CURRENT_SECTOR / SET_TRANSIT_DOCKED / SET_OVERLAY_MODE / RESIZE` protocol messages. |
 | Picker chrome | `src/client/components/GalaxyPickerChrome.tsx` | React overlay on the selector: roster panel, `ShipPickerModal`, engineering rooms, limbo stub. Hex tap → `App.handleSelectorPick` → `openForSector`. |
 | Warp/transit | `HyperspaceOverlay.tsx`, `net/transitClient.ts`, server `TransitOrchestrator` | Spool→IN_TRANSIT→arrive; neighbour-validated server-side. Overlay map taps a neighbour → `engageTransit`. |
-| Landing flow | `src/client/app/PhaseRouter.tsx`, `App.tsx`, store `phase` | `meta` (`MetaLandingScreen` "Join the fight!") → `auth` (`LoginPage`) → `galaxy-map` (GameSurface idle + selector + chrome) → `connecting` → `game`. `?room=`/`?galaxy=` deep-links skip to `game`. |
+| Landing flow | `src/client/app/PhaseRouter.tsx`, `App.tsx`, store `phase` | `galaxy-map` (the homepage: GameSurface idle + selector + chrome) → tap a sector → "Join the fight" (logged-out: `auth` `LoginPage` and back) → `connecting` → `game`. Logout, lost connection and Settings "Return to menu" all return to `galaxy-map`. `?room=`/`?galaxy=` deep-links skip to `game`. |
 | Galaxy REST | `src/server/routes/galaxyRouter.ts` | Only `GET /galaxy/sectors` (static graph). No live state. |
 | Director | `src/server/livingworld/LivingWorldDirector.ts` + `director/SquadPool.ts` (`LIVING_WORLD_SQUAD_COUNT=3`, `SQUAD_SIZE=8` → 24 bots), `population.ts`, `WaveDirector.ts` | Squads home at entry sectors, roam one hop/45s in formation, warp hop-by-hop, attack ready faction bases (≤1 squad/5min/faction, nearest dispatched). Concentrates on players; idle galaxy spreads. Holds all `galaxy-*` rooms → natural aggregation point for `/galaxy/snapshot`. |
 | Room wiring | `src/server/index.ts`, `galaxy/GalaxyRegistry.ts` | Iterates `GALAXY_SECTORS`, `gameServer.define('galaxy-${key}')` + eager `matchMaker.createRoom`. Scales automatically with the graph. |
@@ -301,8 +301,8 @@ ship-select → game`. Collapse the standalone "Join the fight!" screen into the
   ship picker for the stashed sector. If `user` → open `ShipPickerModal` as today.
 - **Retire `meta` from the default path.** Fold `MetaLandingScreen`'s useful bits
   (server-health banner, live player count) into a light HUD/banner over the map.
-  Keep the `MetaLandingScreen` component initially (don't delete) but out of the
-  default flow; revisit deletion later.
+  (Done: the `meta` phase and `MetaLandingScreen` were deleted when the map
+  became the homepage — see "Homepage" under the map look.)
 - **Preserve:** `AppHeader` (login/profile/settings), renderer idle-boot,
   `GalaxyPickerChrome` roster/picker, limbo handling, the `?room=`/`?galaxy=`
   deep-link skip-to-`game` escape hatches, and the DEV `__eqxGalaxyPick` hook.
@@ -555,6 +555,17 @@ Tapping a sector on the full-page map opens a focus view. The pure decisions are
 - **History.** The drawer shows control over the last hour (`SectorHistorySparkline`): one `GET /galaxy/sector/:key/history` fetch per sector opened, zod-checked, no polling. Line height is the holder's share; dashed ticks mark a change of hands (`sectorSparkline.ts`).
 - **Cost.** Drawing happens on a focus change only; the per-frame tick fades the veil and waits for the glide to land, and does nothing while idle.
 - **E2E hook.** `__eqxGalaxyFocus()` (DOM path) returns the phase, sector and lit neighbour keys.
+
+### Homepage
+
+The map is the first thing every visitor sees; there is no other landing screen and no `meta` phase.
+
+- **No login to look.** A logged-out tap opens the focus view like anyone else's. Login is asked for only on the panel's **Join the fight** (and Spectate): `GalaxyPickerChrome.gateJoin` stashes the sector (`pendingPickSector`) and what was pressed, then goes to `auth`. A remembered guest passes.
+- **Back from login.** App's idle-mount effect calls `resumeGatedJoin(sector)`: a Join opens that sector's ship picker straight away; a Spectate goes in as a spectator. No re-tap.
+- **Every exit lands here.** Logout (`useLogout`), the lost-connection overlay and Settings "Return to menu" set `galaxy-map`.
+- **Touch avatar.** `MobileAvatarBadge` mounts on the map (touch, logged in), since phones have no AppBar.
+- **Dev links.** Engineering rooms (and, in dev builds, the Visual FX Sandbox link) live in `EngineeringRoomsDialog`.
+- **Locks.** `GalaxyPickerChrome.test.tsx` (gate + resume), `galaxy-landing-flow.spec.ts`, `avatar-menu-logout.spec.ts`, `layout-slots.spec.ts`.
 
 ## Client rules in detail
 
