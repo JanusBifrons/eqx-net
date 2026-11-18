@@ -67,7 +67,7 @@ export class HunterBotRespawner implements DirectorActivity {
     return this.shedAt();
   }
 
-  step(now: number): void {
+  tick(now: number): void {
     this.respawnStep(now);
   }
 

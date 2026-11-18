@@ -92,7 +92,7 @@ export class SquadHerding implements DirectorActivity {
   }
 
   /** Control tick: roam idle squads (2b), then herd gathered ones (2b-ii). */
-  step(now: number): void {
+  tick(now: number): void {
     this.roamStep(now);
     this.flockStep();
   }

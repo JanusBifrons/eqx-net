@@ -6,6 +6,6 @@
  * in list order, after wave planning and before the incoming-banner reconcile.
  */
 export interface DirectorActivity {
-  /** One control-tick step at game time `now` (ms). */
-  step(now: number): void;
+  /** One control-tick step at game time `nowMs` (ms). */
+  tick(nowMs: number): void;
 }

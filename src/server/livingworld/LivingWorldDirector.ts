@@ -663,7 +663,7 @@ export class LivingWorldDirector {
 
     // ── 2b. world activities, in order: roam idle/unassigned squads, then
     //        herd gathered ones (leader course + flock roles) — `SquadHerding` ──
-    for (let i = 0; i < this.activities.length; i++) this.activities[i]!.step(now);
+    for (let i = 0; i < this.activities.length; i++) this.activities[i]!.tick(now);
 
     // ── 2c. clear "incoming" banners for squads that have arrived ────────
     this.reconcileIncoming();
