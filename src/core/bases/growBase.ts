@@ -42,8 +42,10 @@ import type { GoodId } from '../../shared-types/goods.js';
  *  10→11 (structure-restyle 2c++): the freight dock grew to 1000×400, so
  *  every base with a dock lays out wider.
  *  11→12 (structure-restyle): a dock's landing pad (`keepClear`) is kept
- *  clear of other structures, and a dock faces its pad away from its row. */
-export const BASE_GROWTH_VERSION = 12;
+ *  clear of other structures, and a dock faces its pad away from its row.
+ *  12→13 (structure-restyle main sync): merged main's territory lock into
+ *  the stream's generator, so bases saved under the stream's 12 regrow. */
+export const BASE_GROWTH_VERSION = 13;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
