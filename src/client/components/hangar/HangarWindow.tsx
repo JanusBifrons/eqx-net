@@ -81,6 +81,16 @@ export function HangarWindow({ sectorKey, sectorName, playerId, selectedKind, on
   const footer = launchFooter(verdict, purse.wallet);
   const ownedShipId = ownedShips.get(kind);
 
+  // A tab switch moves the pick onto that tab (its first launchable hull), so
+  // the footer never prices a ship the pilot can't see.
+  const pickTab = (v: number): void => {
+    setTabIx(v);
+    const t = HANGAR_TABS[v]!;
+    const here = hangarTiles(t).flatMap((x) => x.fits.map((f) => f.kind));
+    if (here.includes(kind)) return;
+    setKind(here.find((k) => tileVerdict(k, purse).kind !== 'refuse') ?? here[0]!);
+  };
+
   const launch = (): void => {
     if (sectorKey === null || verdict.kind === 'refuse') return;
     if (ownedShipId !== undefined) onResume(ownedShipId, sectorKey);
@@ -109,7 +119,7 @@ export function HangarWindow({ sectorKey, sectorName, playerId, selectedKind, on
           ))}
         </Box>
       </Box>
-      <Tabs value={tabIx} onChange={(_, v: number) => setTabIx(v)} variant="fullWidth" sx={{ minHeight: 30, px: 1, '& .MuiTab-root': { minHeight: 30, fontSize: 11, py: 0.25, color: '#9aa0b4' }, '& .Mui-selected': { color: '#00ff88 !important' }, '& .MuiTabs-indicator': { bgcolor: '#00ff88' } }}>
+      <Tabs value={tabIx} onChange={(_, v: number) => pickTab(v)} variant="fullWidth" sx={{ minHeight: 30, px: 1, '& .MuiTab-root': { minHeight: 30, fontSize: 11, py: 0.25, color: '#9aa0b4' }, '& .Mui-selected': { color: '#00ff88 !important' }, '& .MuiTabs-indicator': { bgcolor: '#00ff88' } }}>
         {HANGAR_TABS.map((t) => (
           <Tab key={t.id} data-testid={`hangar-tab-${t.id}`} label={`${t.label} · ${tabReadyCount(t, purse)} ready`} />
         ))}

@@ -50,6 +50,17 @@ describe('HangarWindow (join flow stage 5)', () => {
     expect(p.onLaunchNew).toHaveBeenCalledWith('battleship-rail', 's1');
   });
 
+  it('a tab switch moves the pick onto that tab, so the footer never prices a hidden ship', () => {
+    open();
+    fireEvent.click(screen.getByTestId('hangar-tab-capital'));
+    expect(screen.getByTestId('ship-card-destroyer').getAttribute('data-selected')).toBe('1');
+    expect(screen.getByTestId('hangar-cost').textContent).toBe('2,500 cr');
+    fireEvent.click(screen.getByTestId('hangar-tab-subcap'));
+    const picked = screen.getByTestId('hangar-window').ownerDocument.querySelector('[data-selected="1"]')!;
+    expect(picked.getAttribute('data-verdict')).toBe('free');
+    expect(screen.getByTestId('hangar-cost').textContent).toBe('Free');
+  });
+
   it('shows the free-launch pips and spends one before debt', () => {
     useUIStore.setState({ freeLaunches: 3 });
     open({ selectedKind: 'destroyer' });
