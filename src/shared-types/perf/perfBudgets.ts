@@ -139,6 +139,12 @@ export const CLIENT_COUNT_BUDGETS: Record<string, ClientCountBudget> = {
   },
 };
 
+/** Scenes `pnpm perf:counts` plays by default and only PRINTS: no budget
+ *  until it is calibrated locally AND on CI (perf-scenes.md "Gate on counts,
+ *  compare timings"). A scene leaves this list when it gets its
+ *  `CLIENT_COUNT_BUDGETS` rows. Wreck fields slice 6: the loaded worst ring. */
+export const CLIENT_COUNT_PRINT_ONLY: readonly string[] = ['wreck-field', 'wreck-field-far'];
+
 /**
  * Projectile broadphase (ranges plan, risk 2): narrow-phase sweeps per tick
  * with 500 shells among 1,000 entities (40 km square, naval shell speed,
