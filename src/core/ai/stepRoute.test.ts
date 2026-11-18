@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { stepRoute } from './stepRoute.js';
+import { stepRoute, createNavRoute, setNavRoute, stepNavRoute, NAV_ROUTE_POINTS } from './stepRoute.js';
+import { NAV_ROUTE_MAX_POINTS } from '../nav/routePlanner.js';
 
 describe('stepRoute — the one patrol-route stepper (RTS Part B slice 11)', () => {
   // Three waypoints, packed x0, y0, x1, y1, x2, y2.
@@ -41,5 +42,32 @@ describe('stepRoute — the one patrol-route stepper (RTS Part B slice 11)', () 
 
   it('an empty route stays at 0', () => {
     expect(stepRoute(route, 0, 0, 0, 0, 300)).toBe(0);
+  });
+});
+
+describe('stepRoute open mode + NavRoute (navigation slice 6)', () => {
+  const route = [0, 0, 1000, 0, 1000, 1000];
+
+  it('an open route runs out instead of wrapping', () => {
+    expect(stepRoute(route, 3, 2, 1000, 1000, 300, true)).toBe(3);
+    expect(stepRoute(route, 3, 3, 0, 0, 300, true)).toBe(3); // finished stays finished
+    expect(stepRoute(route, 3, 1, 1000, 0, 300, true)).toBe(2);
+    expect(stepRoute(route, 3, 1, 0, 0, 300, true)).toBe(1);
+    expect(stepRoute(route, 0, 0, 0, 0, 300, true)).toBe(0);
+  });
+
+  it('NavRoute: set, step leg by leg to -1; holds the planner cap; set again restarts', () => {
+    expect(NAV_ROUTE_POINTS).toBe(NAV_ROUTE_MAX_POINTS);
+    const r = createNavRoute();
+    expect(stepNavRoute(r, 0, 0, 10)).toBe(-1); // empty
+    setNavRoute(r, new Float64Array([500, 0, 500, 500]));
+    expect(r.count).toBe(2);
+    expect(stepNavRoute(r, 0, 0, 10)).toBe(0);
+    expect(stepNavRoute(r, 495, 0, 10)).toBe(1);
+    expect(stepNavRoute(r, 500, 495, 10)).toBe(-1);
+    expect(stepNavRoute(r, 0, 0, 10)).toBe(-1);
+    const long = new Float64Array((NAV_ROUTE_POINTS + 5) * 2).fill(7);
+    setNavRoute(r, long);
+    expect([r.count, r.leg]).toEqual([NAV_ROUTE_POINTS, 0]);
   });
 });

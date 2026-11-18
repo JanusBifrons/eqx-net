@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { NavHost } from './navHost.js';
 import { CoarseFieldMap } from './coarseField.js';
+import { RoutePlanner, NAV_ROUTE_MAX_POINTS } from './routePlanner.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { ChunkOpts } from '../terrain/fieldLayout.js';
 
@@ -46,5 +47,21 @@ describe('NavHost (nav worker commands)', () => {
     expect(fine.liveCount).toBe(0);
     expect(host.handle({ type: 'CHUNK', worldId: 99, cx: 0, cy: 0, loaded: true })).toBeNull();
     expect(host.handle({ type: 'ROCK', worldId: 99, key: 1, pose: null })).toBeNull();
+  });
+
+  it('ROUTE answers from the hosted field (same as the planner directly); an unknown world answers none', () => {
+    let t = 0;
+    const host = new NavHost(() => (t += 2));
+    host.handle({ type: 'ADD_FIELD', worldId: 1, opts: opts('look') });
+    const R = 150_000 * 1.2, c = getShipKind('battleship').radius;
+    const reply = host.handle({ type: 'ROUTE', worldId: 1, reqId: 9, sx: -R, sy: 0, tx: R, ty: 0, clearance: c });
+    const direct = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
+    const n = direct.plan(host.coarse(1)!, host.fine(1)!, -R, 0, R, 0, c, out);
+    expect(reply).toEqual({
+      type: 'ROUTE', worldId: 1, reqId: 9, status: 'route', points: out.slice(0, n * 2), expanded: direct.expanded, ms: 2,
+    });
+    expect(host.handle({ type: 'ROUTE', worldId: 5, reqId: 10, sx: 0, sy: 0, tx: 1, ty: 1, clearance: c })).toMatchObject({
+      type: 'ROUTE', worldId: 5, reqId: 10, status: 'none', points: new Float64Array(0), expanded: 0,
+    });
   });
 });

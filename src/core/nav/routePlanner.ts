@@ -82,7 +82,10 @@ class FineWindow implements SearchGraph {
     const gx = (i % W) + NDX[k]!, gy = ((i / W) | 0) + NDY[k]!;
     if (gx < 0 || gy < 0 || gx >= W || gy >= W) return i;
     const j = gy * W + gx;
-    return this.admits(j) ? j : i;
+    if (!this.admits(j)) return i;
+    // A diagonal never cuts a corner: both cells beside it must admit too.
+    if (k >= 4 && (!this.admits(gy * W + (i % W)) || !this.admits(((i / W) | 0) * W + gx))) return i;
+    return j;
   }
   edgeCost(_i: number, k: number): number { return k < 4 ? FINE_NAV_CELL : DIAG; }
 }
@@ -138,16 +141,26 @@ export class RoutePlanner {
     return f >= 0 ? Math.max(r, FINE_NAV_REACH) : r;
   }
 
-  /** Can a hull of clearance `c` fly straight from a to b? */
+  /** Can a hull of clearance `c` fly straight from a to b? The fine layer's
+   *  room is one value per 64 u cell, so with room to spare the check leaps
+   *  (a skipped point's cell is no nearer rock than its distance plus a cell
+   *  diagonal), and when tight it visits every cell the segment crosses. */
   segmentClear(ax: number, ay: number, bx: number, by: number, c: number): boolean {
     const dx = bx - ax, dy = by - ay, len = Math.sqrt(dx * dx + dy * dy);
+    if (len === 0) return this.roomAt(ax, ay) >= c;
+    const ux = dx / len, uy = dy / len;
     let t = 0;
-    while (t < len) {
-      const r = this.roomAt(ax + (dx * t) / len, ay + (dy * t) / len);
+    for (;;) {
+      const x = ax + ux * t, y = ay + uy * t, r = this.roomAt(x, y);
       if (r < c) return false;
-      t += Math.max(FINE_NAV_CELL / 2, Math.min(r - c, FINE_NAV_REACH) - FINE_NAV_CELL);
+      if (t >= len) return true;
+      const leap = Math.min(r - c, FINE_NAV_REACH) - DIAG;
+      // Distance to the next cell boundary along the segment (a hair past it).
+      const gx = Math.floor(x / FINE_NAV_CELL), gy = Math.floor(y / FINE_NAV_CELL);
+      const tx = ux > 0 ? ((gx + 1) * FINE_NAV_CELL - x) / ux : ux < 0 ? (gx * FINE_NAV_CELL - x) / ux : Infinity;
+      const ty = uy > 0 ? ((gy + 1) * FINE_NAV_CELL - y) / uy : uy < 0 ? (gy * FINE_NAV_CELL - y) / uy : Infinity;
+      t = Math.min(len, t + Math.max(leap, Math.min(tx, ty) + 1e-6));
     }
-    return this.roomAt(bx, by) >= c;
   }
 
   /** Plans from (sx, sy) to (tx, ty) for clearance `c`. Writes the waypoints
