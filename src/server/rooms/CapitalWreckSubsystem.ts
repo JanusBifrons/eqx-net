@@ -349,13 +349,13 @@ export class CapitalWreckSubsystem {
       this.pieceWreck.set(id, wreckId);
     }
     if (spawned > 0) {
-      const owner = this.d.ownerOf?.(ownerKey);
+      const owner = opts.owner ?? this.d.ownerOf?.(ownerKey);
       this.wrecks.set(wreckId, {
         desc: {
           wreckId, parentKind: kindId, seed: fracture.seed, killX: fracture.killX, killY: fracture.killY,
           killBlowDamage: fracture.killBlowDamage, recentDamageRate: fracture.recentDamageRate,
           snapChance: fracture.snapChance, algoVersion: FRACTURE_ALGO_VERSION,
-          deathTick: at,
+          ...(opts.cool === true ? {} : { deathTick: at }), // cool: drawn long dead
           // Emit-when-present: an un-cut wreck's descriptor is unchanged.
           ...(fracture.cutKind !== undefined ? { cutKind: fracture.cutKind, cutAng: fracture.cutAng } : {}),
           ...(fracture.cutW !== undefined ? { cutW: fracture.cutW } : {}),
@@ -552,6 +552,8 @@ export class CapitalWreckSubsystem {
   pieceSalvageQty(id: string): number { return pieceSalvageQtyOf(this.wrecks, this.pieceWreck, this.knock, id); }
 
   /** A piece went whole into a hold (`LootSubsystem`'s piece store): it leaves like a worn-out piece turning to salvage. */
+  /** Wreck fields 3b: an untouched field hull's piece retires with its chunk (`dropPiece`, field list). */
+  retireFieldPiece(id: string): void { if (this.knock.has(id)) this.dropPiece(id, this.fifos.field); }
   storePiece(id: string): void {
     if (!this.knock.has(id)) return;
     this.dropPiece(id, this.fifos.holding(id) ?? this.fifos.capital);

@@ -726,6 +726,11 @@ gameServer.define('cut-field-test', SectorRoom, {
   testMode: true, cutField: { seed: 'look' }, asteroidConfig: [], droneCount: 0,
   defaultSpawnX: -30_002, defaultSpawnY: 27_191, maxClients: 4,
 }).filterBy(['testId']);
+// Wreck field `?room=wreck-field-test` (wreck fields 3b): an old battlefield streamed in by chunk around the spawn, inside the 'look' rock field.
+gameServer.define('wreck-field-test', SectorRoom, {
+  testMode: true, cutField: { seed: 'look' }, wreckField: { seed: 'look', x: 60_000, y: 0, sides: ['ashen-league', 'vel-concord'] },
+  asteroidConfig: [], droneCount: 0, defaultSpawnX: 60_000, defaultSpawnY: 0, maxClients: 4,
+}).filterBy(['testId']);
 // Gates (plan soft-leaping-truffle v2, phase V) — two powered Shield Gates:
 // west opens for anyone not hostile, east is owner-only (owner `scenario`).
 // Spawn south of a gate with ?spawnX=±400&spawnY=-1300 and fly north.
