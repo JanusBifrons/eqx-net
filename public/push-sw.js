@@ -1,4 +1,4 @@
-// EQX Peri — Web Push service-worker handlers.
+// Equinox — Web Push service-worker handlers.
 //
 // This file is imported into the vite-plugin-pwa generated service worker via
 // `workbox.importScripts(['push-sw.js'])` (see vite.config.ts). It runs in the
@@ -16,7 +16,7 @@ self.addEventListener('push', (event) => {
   } catch {
     data = {};
   }
-  const title = data.title || 'EQX Peri';
+  const title = data.title || 'Equinox';
   const options = {
     body: data.body || 'Something is happening in your sector.',
     icon: '/pwa-192x192.png',

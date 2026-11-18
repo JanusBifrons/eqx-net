@@ -110,7 +110,13 @@ export type PersistOp =
   // mined rock (null when none recorded); `consumed`: broken up, never cut whole
   // again; `pose`: where a moved rock was left (C2 deep sleep; null: its cut
   // pose). `layoutVersion` is the FIELD_LAYOUT_VERSION the rock key was cut under.
-  | { type: 'TERRAIN_RECORD_PUT'; sectorKey: string; rockKey: number; layoutVersion: number; pool: number | null; consumed: boolean; pose: { x: number; y: number; angle: number } | null; ts: number }
+  // `lineage`: a battle wreck's lineage record (JSON text) on a lineage row
+  // (rockKey = -serial); absent/null on rock rows and on the reserved serial
+  // row (rockKey 0, next serial in `pool`). See server/db/terrainSql.ts.
+  | { type: 'TERRAIN_RECORD_PUT'; sectorKey: string; rockKey: number; layoutVersion: number; pool: number | null; consumed: boolean; pose: { x: number; y: number; angle: number } | null; lineage?: string | null; ts: number }
+  // Wreck fields — removes one `terrain_records` row (a cleared battle wreck's
+  // lineage row). Idempotent: deleting a missing row is a no-op.
+  | { type: 'TERRAIN_RECORD_DELETE'; sectorKey: string; rockKey: number; ts: number }
   // Hostile-review A5 — an ATOMIC group. Enqueued as ONE op so the write-ahead
   // buffer can never split it across two flushes; applied inside a SAVEPOINT so
   // a failing group rolls back alone (other ops in the batch still commit).

@@ -1,4 +1,7 @@
 import { axialToPixel, type GalaxySector } from '@core/galaxy/galaxy';
+import { teamColorOf } from '../../../shared-types/factions.js';
+import type { SectorControl } from '../../../shared-types/galaxySnapshot.js';
+import { NEUTRAL_OWNER } from './sectorOwnership';
 
 /**
  * Pure territory model for {@link GalaxyMapLayer} (Living Galaxy Phase 4a — the
@@ -89,44 +92,105 @@ export function computeTerritories(
 }
 
 /**
- * Faction → territory-tint colour (client render concern; core
- * `GALAXY_FACTIONS` stays UI-free with only display names). Drawn at low alpha as
- * the hex fill; the current-sector pulse + selectable strokes layer on top.
- * Unknown faction ⇒ a neutral grey so a new region is never invisible.
+ * Owner → territory colours. The map paints owners with the SAME colour
+ * authority the ships use (`teamColorOf`): the region powers, robots and drones
+ * their livery colour, a player faction its picked (or hashed) palette slot.
+ * There is no galaxy-only palette. Neutral ground is a grey.
  */
-const FACTION_COLORS: Readonly<Record<string, number>> = {
-  core: 0x3d6fb4, // steel blue — the safe home core
-  'verdant-reach': 0x2f9e54, // green — growth country
-  'crimson-expanse': 0xc0392b, // red — ember void
-  'azure-deep': 0x1f9e9e, // teal — the cold deep
-  // Living World P3 — robot-held territory (live, from /galaxy/snapshot).
-  robots: 0x6f4bff, // violet — the robot palette
-};
-
 export const DEFAULT_FACTION_COLOR = 0x8893a6;
 
-export function factionColor(factionId: string): number {
-  return FACTION_COLORS[factionId] ?? DEFAULT_FACTION_COLOR;
+export function factionColor(ownerId: string): number {
+  return ownerId === NEUTRAL_OWNER || ownerId === '' ? DEFAULT_FACTION_COLOR : teamColorOf(ownerId);
 }
 
 /**
- * Faction → BORDER colour — a brighter / more saturated sibling of the fill,
- * used for the bold outer-territory outline (the eqx-peri "territory outline,
- * not per-cell grid" look). Brighter than {@link factionColor} so the perimeter
- * reads over the muted fill.
+ * Owner → BORDER colour: the owner's ship colour lifted toward white, so the
+ * inset border reads over the darker fill.
  */
-const FACTION_BORDER_COLORS: Readonly<Record<string, number>> = {
-  core: 0x6ea0e8,
-  'verdant-reach': 0x4fdc7a,
-  'crimson-expanse': 0xff6b5e,
-  'azure-deep': 0x3fd6d6,
-  robots: 0xb08cff,
-};
-
 export const DEFAULT_FACTION_BORDER_COLOR = 0xb8c2d6;
 
-export function factionBorderColor(factionId: string): number {
-  return FACTION_BORDER_COLORS[factionId] ?? DEFAULT_FACTION_BORDER_COLOR;
+export function factionBorderColor(ownerId: string): number {
+  if (ownerId === NEUTRAL_OWNER || ownerId === '') return DEFAULT_FACTION_BORDER_COLOR;
+  return mixColor(teamColorOf(ownerId), 0xffffff, 0.35);
+}
+
+/** Owners whose ground carries a hatch over the fill (the drone swarm). */
+export function ownerHatched(ownerId: string): boolean {
+  return ownerId === 'drones';
+}
+
+/** Blend two 0xRRGGBB colours (t=0 → a, t=1 → b). Pure, alloc-free. */
+export function mixColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+  return (Math.round(ar + (br - ar) * t) << 16) | (Math.round(ag + (bg - ag) * t) << 8) | Math.round(ab + (bb - ab) * t);
+}
+
+// ── Control overlays (galaxy feed `control`) ────────────────────────────────
+
+/** A sector nobody owns shows a split only once the leader holds at least
+ *  this share (0-100), so a stray pass does not paint unclaimed ground. */
+export const UNOWNED_SPLIT_MIN_SHARE = 40;
+
+/** Factions that never count for capture (the Ancients guard, never claim).
+ *  The server meter leaves them out; the map never splits for them either. */
+const NON_CAPTURING_OWNERS: ReadonlySet<string> = new Set(['ancients']);
+
+/** The challenger a contested sector splits with, or null (draw a whole hex).
+ *  Contested = the meter names a challenger other than the holder, with some
+ *  share. A sector nobody owns splits grey / leader only once the leader holds
+ *  {@link UNOWNED_SPLIT_MIN_SHARE}. A non-capturing faction never splits. */
+export function splitChallenger(control: SectorControl | null | undefined, holderId: string): string | null {
+  if (!control || control.challenger === null) return null;
+  if (control.challenger === holderId || control.challengerShare <= 0) return null;
+  if (NON_CAPTURING_OWNERS.has(control.challenger)) return null;
+  const unowned = holderId === NEUTRAL_OWNER || holderId === '';
+  if (unowned && control.challengerShare < UNOWNED_SPLIT_MIN_SHARE) return null;
+  return control.challenger;
+}
+
+/** How a threat level draws: which hex corners get an amber bracket, how long
+ *  each arm is (fraction of the hex size) and how thick. Grows with threat. */
+export interface ThreatBracketStyle {
+  readonly corners: readonly number[];
+  readonly arm: number;
+  readonly width: number;
+}
+
+const NO_BRACKETS: ThreatBracketStyle = Object.freeze({ corners: Object.freeze([]), arm: 0, width: 0 });
+const THREAT_BRACKETS: readonly ThreatBracketStyle[] = Object.freeze([
+  NO_BRACKETS,
+  Object.freeze({ corners: Object.freeze([2, 5]), arm: 0.22, width: 2 }),
+  Object.freeze({ corners: Object.freeze([0, 2, 3, 5]), arm: 0.28, width: 2.5 }),
+  Object.freeze({ corners: Object.freeze([0, 1, 2, 3, 4, 5]), arm: 0.34, width: 3 }),
+]);
+
+export const THREAT_BRACKET_COLOR = 0xffb020;
+
+export function threatBracketStyle(threat: number | undefined): ThreatBracketStyle {
+  if (threat === undefined || !(threat >= 1)) return NO_BRACKETS;
+  return THREAT_BRACKETS[Math.min(3, Math.floor(threat))]!;
+}
+
+/** How long the dashed "just flipped" ring shows after the client sees a flip. */
+export const FLIP_RING_MS = 30_000;
+
+/** The flip ring's strength `ageMs` after the flip was seen: 1 → 0, gone after
+ *  {@link FLIP_RING_MS}. */
+export function flipRingStrength(ageMs: number): number {
+  if (!(ageMs >= 0) || ageMs >= FLIP_RING_MS) return 0;
+  return 1 - ageMs / FLIP_RING_MS;
+}
+
+/**
+ * Did this poll show a NEW flip? `flippedAtMs` is server game time, which the
+ * landing page has no clock for, so the client marks a flip when the value
+ * changes between two polls. The first poll (`prev === undefined`) never marks
+ * one: an old flip must not ring on every page load.
+ */
+export function isNewFlip(prev: number | null | undefined, next: number | null | undefined): boolean {
+  if (prev === undefined || next === undefined || next === null) return false;
+  return next !== prev;
 }
 
 /**
@@ -161,6 +225,26 @@ export function boundaryEdges(
   for (let ei = 0; ei < HEX_EDGE_NEIGHBOUR_DIRS.length; ei++) {
     const d = HEX_EDGE_NEIGHBOUR_DIRS[ei]!;
     if (factionAt(sector.hex.q + d.q, sector.hex.r + d.r) !== sector.region) out.push(ei);
+  }
+  return out;
+}
+
+/**
+ * The perimeter edges of `sector` that face ANOTHER owner's hex (a front), as
+ * opposed to the map edge. Both sides of a front list the shared edge, each
+ * drawing its own inset border, so a front reads as a two-colour seam. Pushes
+ * into `out` (cleared first) so the layer can reuse a scratch array.
+ */
+export function frontEdges(
+  sector: { hex: { q: number; r: number }; region: string },
+  factionAt: (q: number, r: number) => string | null,
+  out: number[],
+): number[] {
+  out.length = 0;
+  for (let ei = 0; ei < HEX_EDGE_NEIGHBOUR_DIRS.length; ei++) {
+    const d = HEX_EDGE_NEIGHBOUR_DIRS[ei]!;
+    const other = factionAt(sector.hex.q + d.q, sector.hex.r + d.r);
+    if (other !== null && other !== sector.region) out.push(ei);
   }
   return out;
 }

@@ -16,6 +16,7 @@
  */
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { PAD_SPECS, padPostCenters } from '../../../shared-types/teleport.js';
+import { drawTerritoryLock } from './territoryLockLook.js';
 
 /** A filled rectangle (pixi space). */
 export interface RectOp { x: number; y: number; w: number; h: number; color: number; alpha: number }
@@ -683,6 +684,14 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(x0 + W - 24, y0 + H - 24, 10, RED);
       break;
     }
+    case 'territory_lock':
+      // The spire: a broadcast spine, lantern tower and antenna fins (territoryLockLook.ts).
+      drawTerritoryLock({
+        box: (x, y, w, h, c, a) => box(rects, x, y, w, h, c, a),
+        slab: (x, y, w, h, c, r) => slab(rects, x, y, w, h, c, r),
+        lit, mix: mixColor,
+      }, W, H, accent, live, { steel: STEEL, dark: STEEL_DARK, light: STEEL_LIGHT, deck: DECK, red: RED });
+      break;
     case 'research_lab': {
       // Research lab: a glass-roofed hall around a central test chamber, with
       // two instrument racks either side.

@@ -100,16 +100,22 @@ export function findAdoptable(tickets, { who, kind }, now) {
 
 // ── file layer ────────────────────────────────────────────────────────────
 
-/** `<main checkout>/.claude/heavy-queue`, shared by every worktree. */
-export function resolveQueueDir(cwd = process.cwd(), env = process.env) {
-  if (env.HEAVY_QUEUE_DIR) return path.resolve(env.HEAVY_QUEUE_DIR);
+/** `<main checkout>/.claude/<name>`: per-machine state shared by every
+ *  worktree (the heavy queue; the phone lane, phone-lane-core.mjs). */
+export function resolveSharedClaudeDir(name, cwd = process.cwd()) {
   const r = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
     cwd, encoding: 'utf8',
   });
   if (r.status !== 0 || !r.stdout.trim()) {
-    throw new Error(`heavy-queue: not in a git checkout (${(r.stderr || '').trim()})`);
+    throw new Error(`${name}: not in a git checkout (${(r.stderr || '').trim()})`);
   }
-  return path.join(path.dirname(r.stdout.trim()), '.claude', 'heavy-queue');
+  return path.join(path.dirname(r.stdout.trim()), '.claude', name);
+}
+
+/** `<main checkout>/.claude/heavy-queue`, shared by every worktree. */
+export function resolveQueueDir(cwd = process.cwd(), env = process.env) {
+  if (env.HEAVY_QUEUE_DIR) return path.resolve(env.HEAVY_QUEUE_DIR);
+  return resolveSharedClaudeDir('heavy-queue', cwd);
 }
 
 export function newTicketId(now = Date.now(), pid = process.pid) {

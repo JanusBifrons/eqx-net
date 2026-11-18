@@ -213,6 +213,9 @@ CREATE INDEX IF NOT EXISTS idx_holds_sector ON holds(sector_key, holder_type);
 -- rock is broken up (never cut whole again); pose_x/pose_y/pose_angle: where a
 -- moved rock was left when its chunk unloaded (C2 deep sleep; NULL: its cut
 -- pose). Absolute upserts, never deltas.
+-- Wreck fields: lineage (JSON text) marks a battle-wreck lineage row (rock_key
+-- = -serial); rock_key 0 is the reserved per-field serial row (next serial in
+-- pool). Rock rows have lineage NULL. See terrainSql.ts.
 CREATE TABLE IF NOT EXISTS terrain_records (
   sector_key     TEXT NOT NULL,
   rock_key       INTEGER NOT NULL,
@@ -223,6 +226,7 @@ CREATE TABLE IF NOT EXISTS terrain_records (
   pose_x         REAL,
   pose_y         REAL,
   pose_angle     REAL,
+  lineage        TEXT,
   PRIMARY KEY (sector_key, rock_key)
 );
 `;
@@ -255,4 +259,6 @@ export const PLAYER_SHIPS_MIGRATIONS: readonly string[] = [
   "ALTER TABLE terrain_records ADD COLUMN pose_x REAL",
   "ALTER TABLE terrain_records ADD COLUMN pose_y REAL",
   "ALTER TABLE terrain_records ADD COLUMN pose_angle REAL",
+  // Wreck fields — a battle wreck's lineage record (JSON text; NULL on rocks).
+  "ALTER TABLE terrain_records ADD COLUMN lineage TEXT",
 ];

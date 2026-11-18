@@ -6,12 +6,12 @@ import type { GridObstacle } from '../../core/structures/Grid.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
-import { CutFieldSubsystem, toRestFrame } from './CutFieldSubsystem.js';
+import { CutFieldSubsystem, toRestFrame, type CutFieldNavSink } from './CutFieldSubsystem.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { FIELD_LAYOUT_VERSION, rocksInChunk } from '../../core/terrain/fieldLayout.js';
 import { convexHullCCW } from '../../core/swarm/asteroidShape.js';
-import type { TerrainRecordRow, TerrainRecordStore } from '../db/terrainSql.js';
+import type { TerrainRecordRow, RockRecordStore } from '../db/terrainSql.js';
 
 function setup(recs: Record<string, Partial<SwarmEntityRecord>>) {
   const posted: WorkerCmd[] = [];
@@ -70,7 +70,7 @@ describe('toRestFrame (F1b: an awake rock samples its ore where it was cut)', ()
 describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
   /** A real streamer over a fake spawner: one ship in the `look` field's lane,
    *  flown away (its chunks unload after the linger) and back (they re-cut). */
-  function field(store?: TerrainRecordStore) {
+  function field(store?: RockRecordStore, nav?: (sub: CutFieldSubsystem) => void) {
     let now = 0;
     const recs = new Map<string, SwarmEntityRecord>();
     const sent: number[] = [];
@@ -98,6 +98,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
       expect(recs.size, 'all chunks unloaded').toBe(0);
       back();
     };
+    nav?.(sub); // the room attaches its nav field before the first step
     at(-30_120, 26_501); settle();
     /** Wake `rec` and put it at (x, y, angle) (its SAB pose). */
     const move = (rec: SwarmEntityRecord, x: number, y: number, angle: number) => {
@@ -112,7 +113,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
   function store(rows: TerrainRecordRow[] = []) {
     const puts: PersistOp[] = [];
     const warns: unknown[] = [];
-    const s: TerrainRecordStore = { sectorKey: 'sec', load: () => rows, put: (op) => { puts.push(op); }, warn: (f) => { warns.push(f); } };
+    const s: RockRecordStore = { sectorKey: 'sec', load: () => rows, put: (op) => { puts.push(op); }, warn: (f) => { warns.push(f); } };
     return { s, puts, warns };
   }
 
@@ -168,8 +169,8 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const [gone, mined, other] = [...first.recs.values()];
     first.sub.dispose();
     const st = store([
-      { rockKey: gone!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, pose: null },
-      { rockKey: mined!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 12, consumed: false, pose: null },
+      { rockKey: gone!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, pose: null, lineage: null },
+      { rockKey: mined!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 12, consumed: false, pose: null, lineage: null },
     ]);
     const { sub, recs, byKey } = field(st.s);
     expect(sub.isConsumed(gone!.fieldKey!)).toBe(true);
@@ -186,8 +187,8 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const first = field();
     const [a, b] = [...first.recs.values()];
     const st = store([
-      { rockKey: a!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION + 1, pool: null, consumed: true, pose: null },
-      { rockKey: b!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION - 1, pool: 5, consumed: false, pose: null },
+      { rockKey: a!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION + 1, pool: null, consumed: true, pose: null, lineage: null },
+      { rockKey: b!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION - 1, pool: 5, consumed: false, pose: null, lineage: null },
     ]);
     const { sub, byKey } = field(st.s);
     expect(sub.isConsumed(a!.fieldKey!)).toBe(false);
@@ -241,11 +242,46 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const rock = [...first.recs.values()][0]!;
     first.sub.dispose();
     const pose = { x: rock.restX! + 10, y: rock.restY! + 20, angle: -0.25 };
-    const st = store([{ rockKey: rock.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 40, consumed: false, pose }]);
+    const st = store([{ rockKey: rock.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 40, consumed: false, pose, lineage: null }]);
     const { spawned, byKey } = field(st.s);
     expect(spawned.get(rock.fieldKey!)).toEqual({ ...pose, restX: rock.restX, restY: rock.restY });
     expect(byKey(rock.fieldKey!)!.resources).toBe(40);
     expect(byKey(rock.fieldKey!)!.fieldMoved).toBe(true);
+  });
+
+  it('streams chunk loads, broken-up rocks and moved rocks, and starts from the save', () => {
+    const rows = [] as TerrainRecordRow[];
+    const events: string[] = [];
+    let known: ReturnType<CutFieldSubsystem['attachNav']> | undefined;
+    const sink: CutFieldNavSink = {
+      chunk: (cx, cy, loaded) => events.push(`chunk ${cx},${cy} ${loaded ? 'in' : 'out'}`),
+      rockGone: (k) => events.push(`gone ${k}`),
+      rockMoved: (k, p) => events.push(`moved ${k} ${p ? 'pose' : 'home'}`),
+    };
+    // A first run to learn some rock keys.
+    const probe = field();
+    const [a, b] = [...probe.recs.values()];
+    probe.sub.dispose();
+    rows.push(
+      { rockKey: a!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, pose: null, lineage: null },
+      { rockKey: b!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: false, pose: { x: 1, y: 2, angle: 3 }, lineage: null },
+    );
+    const st = { sectorKey: 'sec', load: () => rows, put: () => {}, warn: () => {} } as RockRecordStore;
+    const { sub, recs, away, move } = field(st, (s) => { known = s.attachNav(sink); });
+    expect(known).toEqual({ gone: [a!.fieldKey], moved: [{ key: b!.fieldKey, x: 1, y: 2, angle: 3 }] });
+    const loads = events.filter((e) => e.endsWith(' in'));
+    expect(loads.length).toBeGreaterThan(0);
+    events.length = 0;
+    const rock = [...recs.values()].find((r) => r.fieldKey !== b!.fieldKey)!;
+    sub.markConsumed(rock.fieldKey!);
+    sub.markConsumed(rock.fieldKey!);
+    expect(events).toEqual([`gone ${rock.fieldKey}`]);
+    events.length = 0;
+    const other = [...recs.values()].find((r) => r.fieldKey !== rock.fieldKey && r.fieldKey !== b!.fieldKey)!;
+    move(other, other.restX! + 500, other.restY!, 0.2);
+    away();
+    expect(events).toContain(`moved ${other.fieldKey} pose`);
+    expect(events.filter((e) => e.endsWith(' out')).sort()).toEqual(loads.map((e) => e.replace(' in', ' out')).sort());
   });
 });
 
@@ -307,5 +343,24 @@ describe('CutFieldSubsystem.dormantObstacles (C5: placement sees unloaded field 
     const live: GridObstacle[] = [];
     sub(new Set([fieldRockId(rock.key)])).dormantObstacles(box, live);
     expect(live).not.toContainEqual(expect.objectContaining({ x: body.x, y: body.y, radius: body.radius }));
+  });
+});
+
+describe('CutFieldSubsystem as a host with no rocks (wreck fields R7)', () => {
+  it('runs its other sources on the one streamer and sends no cutField welcome', () => {
+    let step: (() => void) | null = null;
+    const clock = { now: () => 0, every: (_ms: number, fn: () => void) => { step = fn; return { cancel: () => {} }; } } as unknown as GameClock;
+    const registry = { get: () => null, all: () => [] } as unknown as SwarmEntityRegistry;
+    const budgets: number[] = [];
+    const sub = new CutFieldSubsystem(null, clock, registry, {} as SwarmSpawner, {
+      shipSlots: () => [0], sab: () => new Float32Array(64), post: () => {}, evict: () => {}, broadcast: () => {},
+    }, undefined, [{ step: (needed, budget) => { budgets.push(needed.size, budget); return 0; } }]);
+    step!();
+    expect(budgets).toEqual([25, 2]); // one ship at the origin: its 5x5 ring, the whole budget
+    expect(sub.welcome).toEqual({});
+    expect(sub.streamer.stats.chunksLoaded).toBe(0);
+    const out: GridObstacle[] = [];
+    sub.dormantObstacles({ x0: -100, y0: -100, x1: 100, y1: 100 }, out);
+    expect(out).toEqual([]);
   });
 });

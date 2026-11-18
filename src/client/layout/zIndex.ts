@@ -7,6 +7,8 @@
  *
  * Tier ordering (lowest → highest):
  *   canvas  < hud < mobileControls < drawer < appBar < overlay < modal < transit
+ *   < rotatePrompt (above the galaxy map chrome at 2000, below the
+ *   lost-connection and error overlays at 9999)
  *
  * `modal`: a game Dialog opened from an overlay (the loot window over the
  * world inspector); the drag ghost (`transit`) still draws above it.
@@ -20,6 +22,7 @@ export const Z = {
   overlay: 1400,
   modal: 1450,
   transit: 1500,
+  rotatePrompt: 5000,
 } as const;
 
 export type ZTier = keyof typeof Z;

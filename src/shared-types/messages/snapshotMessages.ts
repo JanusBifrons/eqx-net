@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Hold } from '../goods.js';
 import type { BeamLinks } from '../beamLinksWire.js';
+import { FactionLookWireSchema, MAX_FACTION_LOOKS, type FactionLookWire } from '../factions.js';
 import { ShellSalvoSchema, type ShellKeyRecord, type ShellSalvo } from './shellEvents.js';
 import { MAX_WELCOME_WRECKS, WreckDescriptorSchema, type WreckDescriptor, type WreckSync } from './wreckDescriptor.js';
 
@@ -62,9 +63,23 @@ export interface WelcomeMessage {
    *  the same rocks from it, minus `consumed`: the keys of rocks broken up
    *  (C3; later breaks arrive as `field_consumed`), and `moved`: where each
    *  moved rock was left (C2 deep sleep; later moves arrive as `field_moved`).
-   *  Absent = no cut field. */
-  cutField?: { seed: string; consumed?: number[]; moved?: FieldRockPose[] };
+   *  `clearings`: the open pockets cut out of the field (galaxy sectors, F4),
+   *  absent when none. Absent = no cut field. */
+  cutField?: CutFieldWelcome;
+  /** Every claimed faction ship look (galaxy-wide, #16); later claims arrive
+   *  as `faction_look_claimed`. Absent = none known (older server). */
+  factionLooks?: FactionLookWire[];
 }
+
+/** The welcome's cut field (see `WelcomeMessage.cutField`). */
+export interface CutFieldWelcome { seed: string; clearings?: FieldClearingWire[]; consumed?: number[]; moved?: FieldRockPose[] }
+/** A field clearing on the wire: the same numbers as core `FieldClearing`. */
+export interface FieldClearingWire { x: number; y: number; r: number }
+/** Clearings a welcome carries at most (a galaxy sector has a handful). */
+export const MAX_WELCOME_CLEARINGS = 16;
+const FieldClearingSchema = z.object({
+  x: z.number().finite(), y: z.number().finite(), r: z.number().finite().positive(),
+}).strict();
 
 /** Macro terrain C3: a packed field rock key (`rockKey`, u32). */
 const RockKeySchema = z.number().int().min(0).max(0xffff_ffff);
@@ -147,9 +162,11 @@ export const WelcomeSchema = z
      *  cuts the same rocks from it; none of them ride the wire. */
     cutField: z.object({
       seed: z.string().min(1).max(64),
+      clearings: z.array(FieldClearingSchema).min(1).max(MAX_WELCOME_CLEARINGS).optional(),
       consumed: z.array(RockKeySchema).max(MAX_WELCOME_CONSUMED_ROCKS).optional(),
       moved: z.array(FieldRockPoseSchema).max(MAX_WELCOME_MOVED_ROCKS).optional(),
     }).strict().optional(),
+    factionLooks: z.array(FactionLookWireSchema).max(MAX_FACTION_LOOKS).optional(),
   })
   .strict();
 

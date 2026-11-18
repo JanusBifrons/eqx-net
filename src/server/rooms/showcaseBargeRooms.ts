@@ -22,8 +22,6 @@ export const SHOWCASE_BARGE_LOOK_OPTS = {
   defaultSpawnX: -1400,
   defaultSpawnY: -4600,
   maxClients: 4,
-  /** Join `?shipKind=barge-look` to fly the look (the engines close-up). */
-  pilotCapitals: true,
 };
 
 /** The barge look under way (an NPC on a scripted straight line at about
@@ -82,8 +80,6 @@ export const SHOWCASE_BARGE_MINING_OPTS = {
   defaultSpawnX: SHOWCASE_BARGE_MINING_SPAWN.x,
   defaultSpawnY: SHOWCASE_BARGE_MINING_SPAWN.y,
   maxClients: 4,
-  /** Join `?shipKind=barge` to fly the barge. */
-  pilotCapitals: true,
 };
 
 /** The barge rooms, spread into `SHOWCASE_ROOMS`. */

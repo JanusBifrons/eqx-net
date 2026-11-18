@@ -203,6 +203,16 @@ Eight still rocks (scene steps `rocks`, then `rockCut` at t = 2 s) are mined to 
 pnpm perf:scenes --scenes rock-cut --base HEAD --base-env EQX_SCENE_ROCK_CUT=0
 ```
 
+## The galaxy field scene (`galaxy-field`)
+
+A real asteroid-marked galaxy sector's cut field (sol-prime: seed and pocket clearings exactly as `resolveSectorConfig` boots the live sector), the pilot idle at the belt warp drop on the belt clearing's edge, camera pulled out. The room options come from `src/server/rooms/perfRooms.ts` (`galaxyField` on the scene). The no-field arm is the same commit with the field off:
+
+```
+pnpm perf:scenes --scenes galaxy-field --device phone-proxy --cpu-rate 2 --base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0
+```
+
+First reading: [macro-terrain](macro-terrain.md) (Galaxy sectors, phone cost).
+
 ## Adding a scene
 
 Add one entry to `PERF_SCENES` with:

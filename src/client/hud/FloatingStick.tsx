@@ -11,9 +11,14 @@
  * (or a stick and a button) work as simultaneous fingers. All per-move work
  * writes CSS transforms straight to the DOM — no React render per move, no
  * allocation per move (scratch objects below).
+ *
+ * Two fingers placed together (within `PINCH_WINDOW_MS`) are a pinch-zoom:
+ * neither stick drives and both fingers go to the world canvas
+ * (`stickPinch.ts`).
  */
 import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { clampStickOrigin, isTap, leashOrigin, stickVector, type StickVec } from './floatingStickMath';
+import { forwardPinchPointer, forwardTapToWorld, stickTouchDown, stickTouchUp, type PinchableStick } from './stickPinch';
 
 export interface StickHome {
   /** Distance from the left edge to the ring's edge (px). Use left OR right. */
@@ -70,6 +75,7 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
   } = props;
   const baseRef = useRef<HTMLDivElement | null>(null);
   const knobRef = useRef<HTMLDivElement | null>(null);
+  const backRef = useRef<HTMLDivElement | null>(null);
   const zoneRef = useRef<HTMLDivElement | null>(null);
   // Latest callbacks without re-binding listeners.
   const cb = useRef(props);
@@ -90,6 +96,10 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
     let downX = 0;
     let downY = 0;
     let travel = 0;
+    let lastX = 0;
+    let lastY = 0;
+    // Fingers handed to the camera as a pinch (not driving this stick).
+    const pinchIds = new Set<number>();
 
     const computeHome = (): void => {
       const w = window.innerWidth;
@@ -100,6 +110,11 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
     const placeBase = (x: number, y: number, glide: boolean): void => {
       base.style.transition = glide ? GLIDE : 'none';
       base.style.transform = `translate3d(${x - radius}px, ${y - radius}px, 0)`;
+      const back = backRef.current;
+      if (back) {
+        back.style.transition = base.style.transition;
+        back.style.transform = base.style.transform;
+      }
     };
     const placeKnob = (dx: number, dy: number, glide: boolean): void => {
       knobEl.style.transition = glide ? GLIDE : 'none';
@@ -115,15 +130,46 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
     placeKnob(0, 0, false);
     setActive(false);
 
-    const onDown = (e: PointerEvent): void => {
-      if (pointerId !== null) return;
-      pointerId = e.pointerId;
+    const capture = (id: number): void => {
       try {
-        zoneEl.setPointerCapture(e.pointerId);
+        zoneEl.setPointerCapture(id);
       } catch {
         /* synthetic events in tests can't be captured */
       }
+    };
+    // Stop driving the stick and leave it resting at home (no tap).
+    const release = (): void => {
+      pointerId = null;
+      placeBase(homePt.x, homePt.y, true);
+      placeKnob(0, 0, true);
+      setActive(false);
+      vec.x = 0;
+      vec.y = 0;
+      vec.mag = 0;
+    };
+    const pinchable: PinchableStick = {
+      joinPinch(id: number): void {
+        if (id !== pointerId) return;
+        release();
+        cb.current.onEnd(false);
+        pinchIds.add(id);
+        forwardPinchPointer('pointerdown', id, lastX, lastY);
+      },
+    };
+
+    const onDown = (e: PointerEvent): void => {
+      const touch = stickTouchDown(e.pointerId, pinchable, performance.now(), pointerId !== null);
+      if (touch === 'ignore') return;
+      capture(e.pointerId);
       e.preventDefault();
+      if (touch === 'pinch') {
+        pinchIds.add(e.pointerId);
+        forwardPinchPointer('pointerdown', e.pointerId, e.clientX, e.clientY);
+        return;
+      }
+      pointerId = e.pointerId;
+      lastX = e.clientX;
+      lastY = e.clientY;
       downAt = performance.now();
       downX = e.clientX;
       downY = e.clientY;
@@ -148,23 +194,32 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
       cb.current.onMove(vec);
     };
     const onMove = (e: PointerEvent): void => {
+      if (pinchIds.has(e.pointerId)) {
+        e.preventDefault();
+        forwardPinchPointer('pointermove', e.pointerId, e.clientX, e.clientY);
+        return;
+      }
       if (e.pointerId !== pointerId) return;
       e.preventDefault();
+      lastX = e.clientX;
+      lastY = e.clientY;
       const t = Math.hypot(e.clientX - downX, e.clientY - downY);
       if (t > travel) travel = t;
       move(e.clientX, e.clientY);
     };
     const end = (e: PointerEvent): void => {
+      if (pinchIds.delete(e.pointerId)) {
+        stickTouchUp(e.pointerId);
+        forwardPinchPointer(e.type === 'pointerup' ? 'pointerup' : 'pointercancel', e.pointerId, e.clientX, e.clientY);
+        return;
+      }
       if (e.pointerId !== pointerId) return;
-      pointerId = null;
+      stickTouchUp(e.pointerId);
       const tapped = isTap(performance.now() - downAt, travel);
-      placeBase(homePt.x, homePt.y, true);
-      placeKnob(0, 0, true);
-      setActive(false);
-      vec.x = 0;
-      vec.y = 0;
-      vec.mag = 0;
+      release();
       cb.current.onEnd(tapped);
+      // The zones cover most of a phone screen: a tap there is a tap on the world.
+      if (tapped && floating && e.type === 'pointerup') forwardTapToWorld(e.pointerId, downX, downY);
     };
     const onResize = (): void => {
       computeHome();
@@ -184,7 +239,11 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
       zoneEl.removeEventListener('pointercancel', end);
       zoneEl.removeEventListener('lostpointercapture', end);
       window.removeEventListener('resize', onResize);
-      if (pointerId !== null) cb.current.onEnd(false);
+      if (pointerId !== null) {
+        stickTouchUp(pointerId);
+        cb.current.onEnd(false);
+      }
+      for (const id of pinchIds) stickTouchUp(id);
     };
   }, [id, floating, leash, radius, idleOpacity, home.left, home.right, home.bottom]);
 
@@ -205,6 +264,24 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
           }}
         />
       )}
+      {/* A dark wash under the ring, NOT faded with the resting stick, keeps it
+          readable over bright rock; over empty space it is dark on dark. */}
+      <div
+        ref={backRef}
+        data-testid={`${id}-backing`}
+        style={{
+          position: 'fixed',
+          left: 0,
+          top: 0,
+          width: d,
+          height: d,
+          zIndex,
+          borderRadius: '50%',
+          pointerEvents: 'none',
+          background: 'radial-gradient(circle, rgba(4,8,16,0.55) 0%, rgba(4,8,16,0.45) 64%, rgba(4,8,16,0.2) 72%, transparent 76%)',
+          willChange: 'transform',
+        }}
+      />
       <div
         ref={baseRef}
         data-testid={`${id}-home`}

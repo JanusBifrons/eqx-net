@@ -12,6 +12,17 @@ interface ElLike extends HTMLElement {
   webkitRequestFullscreen?: () => Promise<void>;
 }
 
+/**
+ * Best-effort landscape lock. Browsers grant it only in full screen or in an
+ * installed app (Android); iOS has no lock API, so it does nothing there and
+ * `RotatePhoneOverlay` asks the player to turn the phone instead.
+ */
+export function lockLandscape(): void {
+  const orientation = (screen as Screen & { orientation?: { lock?: LockOrientation } }).orientation;
+  if (!orientation?.lock) return;
+  orientation.lock('landscape').catch(() => { /* not granted / not supported */ });
+}
+
 function getFullscreenElement(): Element | null {
   const d = document as DocLike;
   return d.fullscreenElement ?? d.webkitFullscreenElement ?? null;
@@ -54,10 +65,7 @@ export function useFullscreen(): {
     } catch {
       return false;
     }
-    const orientation = (screen as Screen & { orientation?: { lock?: LockOrientation } }).orientation;
-    if (orientation?.lock) {
-      orientation.lock('landscape').catch(() => { /* not granted / not supported */ });
-    }
+    lockLandscape();
     return true;
   }, []);
 

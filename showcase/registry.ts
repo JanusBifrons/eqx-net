@@ -11,7 +11,7 @@ import { warpOnlooker, warpArrival } from './shots/warpOnlooker.js';
 import { sectorTravel } from './shots/sectorTravel.js';
 import { joinSector } from './shots/joinSector.js';
 import { shipGallery } from './shots/shipGallery.js';
-import { capitalFleetWarp, capitalFleetArrive, capitalLineup, capitalBroadside, capitalFlyby, capitalPilot, capitalEngines, capitalTurrets, capitalGunsFighter, capitalGunsBystander, gpuLitShips, capitalBreakup } from './shots/capitals.js';
+import { capitalFleetWarp, capitalFleetArrive, capitalLineup, capitalBroadside, capitalFlyby, capitalPilot, capitalEngines, capitalTurrets, capitalGunsFighter, capitalGunsBystander, gpuLitShips, capitalBreakup, playerCapitalSector } from './shots/capitals.js';
 import { machinedArt } from './shots/machinedArt.js';
 import { newEffects } from './shots/newEffects.js';
 import { crossingSector } from './shots/crossingSector.js';
@@ -85,6 +85,7 @@ export const SHOTS: readonly Shot[] = [
   capitalFleetArrive,
   capitalFlyby,
   capitalPilot,
+  playerCapitalSector,
   capitalEngines,
   capitalTurrets,
   gpuLitShips,

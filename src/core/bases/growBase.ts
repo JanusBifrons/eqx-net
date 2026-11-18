@@ -425,6 +425,8 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   // v4 H — one teleporter per transit link this base ends (outside the budget:
   // the network needs both ends).
   for (const id of profile.links ?? []) wants.push({ kind: 'teleporter', link: id });
+  // Sector control — a heart garrison's Territory Lock (outside the budget too).
+  if (profile.territoryLock === true) wants.push({ kind: 'territory_lock' });
   const huge = wants.filter((w) => HUGE.has(w.kind));
   // A fenced base's turrets go on bastions outside the fence (placed after it).
   const posts = profile.fenced ? wants.filter((w) => TURRET_KINDS.has(w.kind)) : [];
@@ -457,7 +459,10 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   const reach = CONN_HALF + GAP + tallest; // a leaf's far edge from its row line
   const pitchY = 2 * reach + GAP;
   // Columns per side: enough slots for the base with a square-ish shape.
-  const cols = Math.max(1, Math.ceil(Math.sqrt(normal.length / 2) * 0.8));
+  // (A heart's Territory Lock is one extra leaf: it takes a free slot, never
+  // widens the base — sector control.)
+  const sized = normal.length - (profile.territoryLock === true ? 1 : 0);
+  const cols = Math.max(1, Math.ceil(Math.sqrt(sized / 2) * 0.8));
 
   const B = new Builder();
   const cap = B.tryPlace({ kind: 'capital', x: 0, y: 0 });

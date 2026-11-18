@@ -69,6 +69,7 @@ Full text and commands: [agent-workflow](docs/ops/agent-workflow.md).
 - **Push and open PRs.** Never leave finished, green work unpushed. Branch from fresh `origin/main`; merge `origin/main` once before the first push, then only on a conflict (`DIRTY`) or for needed code, with `git merge`, never rebase. Enable auto-merge (`gh pr merge <n> --auto --merge`) the instant the PR exists and report "auto-merge on".
 - **Rules live in the repo.** Auto-memory is per machine (the user has two): only machine-specific facts go there; rules, conventions and gotchas go in the repo.
 - **Work in a worktree** (`.claude/worktrees/<name>`, own branch), never the main checkout. Check a port's owner right before using it; stop only processes this session started (worktree path in the command line); another session's server is never yours: use an offset lane (`EQX_E2E_PORT_OFFSET`, `EQX_SHOWCASE_PORT_OFFSET`, `NETGATE_PORT_OFFSET`).
+- **Phone link:** `pnpm phone up` serves a checkout to the owner's phone; any session may replace the lane, which outlives the session until `pnpm phone down` ([phone-link](docs/ops/phone-link.md)).
 - **Verify server changes.** `timeout 8 pnpm dev:server` must print `EQX Peri server started` and exit 143; anything else broke the runtime even if typecheck passes.
 
 ## Running E2E Tests and the test-harness philosophy

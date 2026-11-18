@@ -43,6 +43,12 @@ export async function apiGetMe(token: string): Promise<{ user: AuthUser }> {
   return request('/auth/me', { headers: authHeaders(token) });
 }
 
+/** Test builds only: one-tap sign-in to the owner's account (server route
+ *  /auth/test-signin; docs/ops/phone-link.md). */
+export async function apiTestSignIn(): Promise<AuthResponse> {
+  return request('/auth/test-signin', { method: 'POST' });
+}
+
 /** Swap a single-use OAuth code (from the /?authCode= redirect) for the
  *  session token + user (S3). Keeps the JWT out of the URL. */
 export async function exchangeAuthCode(code: string): Promise<AuthResponse> {

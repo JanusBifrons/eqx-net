@@ -11,9 +11,9 @@ interface Props {
  * element map via `LayoutContext`. Children call `<Slot anchor=...>` to
  * portal their content into the matching host.
  *
- * Orientation policy: portrait works by default. Entering fullscreen is the
- * only path that locks landscape, and that lock is initiated explicitly by
- * the user via `<FullscreenToggle>` — not reflexively on first touch.
+ * Orientation policy (docs/features/mobile-layout.md): phones play sideways;
+ * an upright phone shows RotatePhoneOverlay in the `rotate` anchor. Full
+ * screen starts only from a tap on `<FullscreenToggle>`.
  */
 export function LayoutProvider({ children }: Props): JSX.Element {
   // Element map lives in state so context consumers re-render only when an

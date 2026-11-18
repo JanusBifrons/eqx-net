@@ -30,7 +30,7 @@ describe('SectorRoom integration: a main battery wears a capital wreck piece slo
   it('a lance main battery takes ~10 s to crack the biggest battleship piece; it stays at rest; the floor is ~3 s', async () => {
     harness = await bootSectorTestServer({
       sectorKey: null, droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
-      capitalWrecks: true, pilotCapitals: true, traverseTicksCap: 0, lockTimeCapS: 0,
+      capitalWrecks: true, traverseTicksCap: 0, lockTimeCapS: 0,
       dronePoses: [{ kind: 'battleship', x: 0, y: 2500, angle: 0 }],
     });
     const pid = randomUUID();

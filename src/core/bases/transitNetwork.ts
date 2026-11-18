@@ -19,6 +19,7 @@
 import { GALAXY_SECTORS, getSector } from '../galaxy/galaxy.js';
 import { regionHeart } from '../galaxy/control.js';
 import type { GalaxyBasePlan } from './galaxyBases.js';
+import { GraphSearch, NodeGoal, type SearchGraph } from '../nav/search.js';
 
 /** The base id of a sector's transit hub. */
 export const TRANSIT_HUB_BASE_ID = 'hub';
@@ -146,29 +147,47 @@ export const LINK_HOP_COST = 0.5;
  */
 export function routeHops(from: string, to: string, network: TransitNetwork): number {
   if (from === to) return 0;
-  if (getSector(from) === undefined || getSector(to) === undefined) return Infinity;
-  const extra = new Map<string, string[]>();
-  for (const l of network.links) {
-    (extra.get(l.a.sector) ?? extra.set(l.a.sector, []).get(l.a.sector)!).push(l.b.sector);
-    (extra.get(l.b.sector) ?? extra.set(l.b.sector, []).get(l.b.sector)!).push(l.a.sector);
-  }
-  const dist = new Map<string, number>([[from, 0]]);
-  const open = new Set<string>([from]);
-  while (open.size > 0) {
-    let k = '';
-    let best = Infinity;
-    for (const o of open) {
-      const d = dist.get(o)!;
-      if (d < best || (d === best && o < k)) { best = d; k = o; }
+  const g = linkGraph(network);
+  const a = g.index.get(from), b = g.index.get(to);
+  if (a === undefined || b === undefined) return Infinity;
+  routeGoal.target = b;
+  return routeSearch.search(g, a, routeGoal) < 0 ? Infinity : routeSearch.cost(b);
+}
+
+/** Sectors with gate edges (cost 1) plus transit links (`LINK_HOP_COST`),
+ *  one per network, built on first use. */
+class LinkGraph implements SearchGraph {
+  readonly index = new Map<string, number>();
+  private readonly to: number[][] = [];
+  private readonly w: number[][] = [];
+  constructor(network: TransitNetwork) {
+    GALAXY_SECTORS.forEach((s, i) => { this.index.set(s.key, i); this.to.push([]); this.w.push([]); });
+    for (const s of GALAXY_SECTORS) {
+      for (const n of s.neighbours) this.edge(s.key, n, 1);
     }
-    open.delete(k);
-    if (k === to) return best;
-    const relax = (n: string, w: number): void => {
-      const nd = best + w;
-      if (nd < (dist.get(n) ?? Infinity)) { dist.set(n, nd); open.add(n); }
-    };
-    for (const n of getSector(k)!.neighbours) relax(n, 1);
-    for (const n of extra.get(k) ?? []) relax(n, LINK_HOP_COST);
+    for (const l of network.links) {
+      this.edge(l.a.sector, l.b.sector, LINK_HOP_COST);
+      this.edge(l.b.sector, l.a.sector, LINK_HOP_COST);
+    }
   }
-  return Infinity;
+  get nodeCount(): number { return this.to.length; }
+  edgeCount(i: number): number { return this.to[i]!.length; }
+  edgeTo(i: number, k: number): number { return this.to[i]![k]!; }
+  edgeCost(i: number, k: number): number { return this.w[i]![k]!; }
+  private edge(from: string, to: string, cost: number): void {
+    const a = this.index.get(from), b = this.index.get(to);
+    if (a === undefined || b === undefined) return;
+    this.to[a]!.push(b);
+    this.w[a]!.push(cost);
+  }
+}
+
+const linkGraphs = new WeakMap<TransitNetwork, LinkGraph>();
+const routeSearch = new GraphSearch();
+const routeGoal = new NodeGoal();
+
+function linkGraph(network: TransitNetwork): LinkGraph {
+  let g = linkGraphs.get(network);
+  if (g === undefined) { g = new LinkGraph(network); linkGraphs.set(network, g); }
+  return g;
 }

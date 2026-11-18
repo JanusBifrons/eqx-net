@@ -53,7 +53,6 @@ describe('SectorRoom integration — a spectate-parked hull stays an ordinary ta
       testMode: true,
       asteroidConfig: [],
       peacefulDrones: d.peacefulDrones,
-      pilotCapitals: d.pilotCapitals,
       prebuiltStructures: d.prebuiltStructures,
       defaultSpawnX: d.defaultSpawnX,
       defaultSpawnY: d.defaultSpawnY,

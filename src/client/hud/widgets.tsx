@@ -97,7 +97,7 @@ export function HoldButton(p: HoldButtonProps): JSX.Element {
         pointerEvents: 'auto',
         color: p.color,
         border: `1.5px solid ${p.color}`,
-        background: p.filled ? `${p.color}33` : 'rgba(6,10,20,0.45)',
+        background: p.filled ? `${p.color}33` : 'rgba(6,10,20,0.62)',
         boxShadow: p.filled ? `0 0 14px ${p.color}66, inset 0 0 10px ${p.color}33` : `0 0 8px ${p.color}22`,
         fontFamily: HUD.font.label,
         fontWeight: 700,

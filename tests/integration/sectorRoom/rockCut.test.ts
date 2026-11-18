@@ -23,7 +23,7 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
   afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
 
   async function setup(radius: number, shipKind = 'fighter', rockY = 400): Promise<{ cr: ClientRoom<SectorState>; room: SectorRoom; pid: string; shipId: string }> {
-    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: shipKind !== 'fighter' });
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: []});
     const pid = randomUUID();
     const cr = (await harness.connectActive(pid, { shipKind, spawnX: 0, spawnY: 0, instantLock: true })) as ClientRoom<SectorState>;
     const room = harness.getServerRoom() as unknown as SectorRoom;

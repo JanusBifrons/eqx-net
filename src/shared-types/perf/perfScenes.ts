@@ -34,6 +34,11 @@ export interface PerfScene {
    *  holds these keys for the whole window. The camera then follows the ship
    *  as in play (`camera` is not held). */
   pilotHold?: { keys: string[]; initialAngle: number };
+  /** A galaxy sector key: the room gets that sector's cut field (seed and
+   *  pocket clearings) exactly as the live sector boots it
+   *  (`resolveSectorConfig`). `EQX_SCENE_GALAXY_FIELD=0` leaves it off (the
+   *  A/B's no-field arm). */
+  galaxyField?: string;
   /** A moving director camera instead of the held `camera`: cinema holds,
    *  each eased in over `smoothMs` from its `atMs` (ms after the window
    *  starts). `scale` is the ABSOLUTE camera scale (screen px per world unit),
@@ -295,7 +300,6 @@ export const PERF_SCENES: readonly PerfScene[] = [
       droneCount: 0,
       asteroidConfig: [],
       lockTimeCapS: 2,
-      pilotCapitals: true,
       sceneScript: [
         { atMs: 0, action: 'spawn', tag: 'battleline', kind: 'battleship', count: 10, x: 0, y: 0, spread: 6000, hostile: true },
         { atMs: 30_000, action: 'end' },
@@ -408,7 +412,7 @@ export const PERF_SCENES: readonly PerfScene[] = [
     // the same zooms. Runs on a build without the far view too (fair A/B).
     id: 'cut-field-far',
     title: 'The cut field from far out: battleship floor zoom, then just past the far switch, panning',
-    room: { droneCount: 0, asteroidConfig: [], cutField: { seed: 'look' }, pilotCapitals: true, sceneScript: [{ atMs: 30_000, action: 'end' }] },
+    room: { droneCount: 0, asteroidConfig: [], cutField: { seed: 'look' }, sceneScript: [{ atMs: 30_000, action: 'end' }] },
     spawn: { x: -11_147, y: 20_249 },
     pilotKind: 'battleship',
     camera: { x: -11_147, y: 20_249, zoom: 0.02 },
@@ -420,6 +424,21 @@ export const PERF_SCENES: readonly PerfScene[] = [
     ],
     durationMs: 30_000,
     minSwarm: 1,
+    soak: true,
+  },
+  {
+    // Macro terrain F4: a real asteroid-marked galaxy sector's field (sol-prime,
+    // seed + pocket clearings as the live sector boots it), the pilot idle at
+    // the belt warp drop on the belt clearing's edge, camera pulled out as in
+    // `cut-field`. The no-field arm: `--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`.
+    id: 'galaxy-field',
+    title: 'A galaxy asteroid sector: pilot at the belt warp drop, camera pulled out',
+    room: { droneCount: 0, asteroidConfig: [], sceneScript: [{ atMs: 20_000, action: 'end' }] },
+    galaxyField: 'sol-prime',
+    spawn: { x: 93_553, y: 77_939 },
+    camera: { x: 93_553, y: 77_939, zoom: 0.08 },
+    durationMs: 20_000,
+    minSwarm: 0,
     soak: true,
   },
 ];

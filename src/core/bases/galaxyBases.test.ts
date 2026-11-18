@@ -7,7 +7,7 @@ import { regionHeart, sectorController } from '../galaxy/control.js';
 import { isNpcFactionId, npcFactionDef } from '../../shared-types/factions.js';
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
 import { baseProfileFor, contextForSector, hashString } from './baseProfile.js';
-import { HEART_SUPER_GUNS, galaxyBasePlan, heartSuperGunFunds } from './galaxyBases.js';
+import { HEART_SUPER_GUNS, galaxyBasePlan, heartOwner, heartSuperGunFunds } from './galaxyBases.js';
 import { TIER_MAX_STRUCTURES, growBase } from './growBase.js';
 import { chooseBaseSite, grownExtent, type SiteBox } from './baseSite.js';
 import { getSector } from '../galaxy/galaxy.js';
@@ -38,7 +38,7 @@ describe('galaxyBasePlan', () => {
       // Only the owner (F2), its transit links (v4 H) and — for a big base
       // holding a region heart alone — the region's super-guns with their own
       // funding (coastal defences) are added on top of the original profile.
-      const { links: _links, superGuns, ...rest } = b0!.profile;
+      const { links: _links, superGuns, territoryLock: _lock, ...rest } = b0!.profile;
       if (superGuns !== undefined) {
         expect(superGuns).toEqual(HEART_SUPER_GUNS);
         expect(regionHeart(s.region)).toBe(s.key);
@@ -60,6 +60,32 @@ describe('galaxyBasePlan', () => {
     for (const s of GALAXY_SECTORS) {
       if (regionHeart(s.region) === s.key) continue;
       expect(galaxyBasePlan(s.key).some((b) => b.profile.superGuns !== undefined), s.key).toBe(false);
+    }
+  });
+
+  it("every region power's heart builds one Territory Lock, owned by that power (sector control)", () => {
+    const regions = [...new Set(GALAXY_SECTORS.map((s) => s.region))];
+    let hearts = 0;
+    for (const region of regions) {
+      const heart = regionHeart(region);
+      const plan = galaxyBasePlan(heart);
+      const locked = plan.filter((b) => b.profile.territoryLock === true);
+      // Every power heart, the Crimson Expanse's (held alone by a big trade
+      // hub) included: its heart base is the power's, so it carries the lock.
+      hearts++;
+      expect(locked, region).toHaveLength(1);
+      expect(locked[0]!.profile.ownerFaction, region).toBe(sectorController(heart));
+      const kinds = growBase(locked[0]!.profile, locked[0]!.seed, getSector(heart)!.features).placements.map((p) => p.kind);
+      expect(kinds.filter((k) => k === 'territory_lock'), region).toHaveLength(1);
+    }
+    expect(hearts).toBe(regions.length);
+    // Nowhere else, held or neutral (the rest of the core included).
+    for (const s of GALAXY_SECTORS) {
+      if (regionHeart(s.region) === s.key) continue;
+      for (const b of galaxyBasePlan(s.key)) {
+        expect(b.profile.territoryLock, s.key).toBeUndefined();
+        expect(growBase(b.profile, b.seed, s.features).placements.some((p) => p.kind === 'territory_lock'), s.key).toBe(false);
+      }
     }
   });
 
@@ -100,14 +126,35 @@ describe('galaxyBasePlan', () => {
 });
 
 describe('galaxy base owners (v4 F2)', () => {
-  it('a controlled sector is its power’s; the Traders run its trade and transit hubs', () => {
+  it('a controlled sector is its power’s; the Traders run its trade and transit hubs, except at its heart', () => {
+    let traderHubs = 0;
     for (const s of GALAXY_SECTORS) {
       const controller = sectorController(s.key);
       if (controller === null) continue;
+      const heart = regionHeart(s.region) === s.key;
       for (const b of galaxyBasePlan(s.key)) {
-        expect(b.profile.ownerFaction, s.key).toBe(b.profile.role === 'trade' || b.profile.role === 'transit' ? 'traders' : controller);
+        const hub = !heart && (b.profile.role === 'trade' || b.profile.role === 'transit');
+        if (hub) traderHubs++;
+        expect(b.profile.ownerFaction, s.key).toBe(hub ? 'traders' : controller);
       }
     }
+    expect(traderHubs, 'the Traders keep their hubs in the other held sectors').toBeGreaterThan(0);
+  });
+
+  it("a power's heart base is always the power's, never the Traders' (owner: hand hub to Crimson)", () => {
+    const regions = [...new Set(GALAXY_SECTORS.map((s) => s.region))];
+    for (const region of regions) {
+      const heart = regionHeart(region);
+      const power = sectorController(heart)!;
+      expect(heartOwner(heart), region).toBe(power);
+      for (const b of galaxyBasePlan(heart)) expect(b.profile.ownerFaction, `${region}/${b.baseId}`).toBe(power);
+    }
+    // The Crimson Expanse heart: its big trade hub stays a trade-hub stronghold
+    // holding the sector alone, with the super-guns — only the owner changed.
+    const crimson = galaxyBasePlan(regionHeart('crimson-expanse'));
+    expect(crimson).toHaveLength(1);
+    const original = baseProfileFor(contextForSector(regionHeart('crimson-expanse')), crimson[0]!.seed);
+    expect(crimson[0]!.profile).toMatchObject({ tier: original.tier, role: original.role, ownerFaction: 'crimson-expanse', superGuns: HEART_SUPER_GUNS, territoryLock: true });
   });
 
   it('neutral ground is shared by minor factions, powers and the Traders', () => {

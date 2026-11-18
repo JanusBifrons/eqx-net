@@ -72,7 +72,7 @@ describe('SectorRoom integration — a heavy-beam kill burns a gap the beam shin
     const kind = getShipKind('battlecruiser-lance');
     const beamMounts = new Set(kind.mounts.filter((m) => m.weaponId === 'heavy_beam').map((m) => m.id));
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, capitalWrecks: true,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], capitalWrecks: true,
       lockTimeCapS: 0, traverseTicksCap: 0,
       dronePoses: [{ kind: 'battlecruiser-lance', x: 5000, y: 0, angle: Math.PI }],
     });

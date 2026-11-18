@@ -20,11 +20,14 @@ All driven by **`vite-plugin-pwa`** (config in `vite.config.ts`):
 - **Manifest** is defined in the plugin config (single source of truth — the old
   static `public/manifest.json` was removed). The plugin injects
   `<link rel="manifest" href="/manifest.webmanifest">`.
-- **Icons** are generated from one source SVG, `public/pwa-icon.svg` (the in-game
-  FIGHTER silhouette in brand green `#00ff88` on `#05070f`), via
-  `@vite-pwa/assets-generator`: run `pnpm gen:pwa-assets` to (re)emit
+- **Icons** are generated from one source picture, `public/pwa-icon.png` (a real
+  frame of the railgun showcase shot: the rail slug passing through a heavy cruiser), via
+  `@vite-pwa/assets-generator` (`pwa-assets.config.ts`): run `pnpm gen:pwa-assets` to (re)emit
   `pwa-192x192.png`, `pwa-512x512.png`, `maskable-icon-512x512.png`,
   `apple-touch-icon-180x180.png`, `favicon.ico` into `public/`. These are committed.
+  The source is full-bleed (square corners) and the maskable and Apple icons have
+  no padding: the phone crops them to its own shape, so padding would show as a
+  square inside the circle. Keep the subject within 40% of the size from the centre.
 - **Service worker** is Workbox `generateSW`, registered explicitly in
   `src/client/main.tsx` (`registerSW({ immediate: true })`, gated on
   `import.meta.env.PROD`).
@@ -33,6 +36,9 @@ All driven by **`vite-plugin-pwa`** (config in `vite.config.ts`):
     code-split chunks (incl. the Pixi render worker) that mismatch the running app.
     `prompt` leaves the new SW *waiting*; with no prompt UI it activates on the next
     full launch. → "auto-update, apply on next launch", no mid-combat disruption.
+    Exception: a phone-lane build (`VITE_PHONE_LANE=1`) applies a waiting SW at once
+    (`onNeedRefresh` → `updateSW(true)`); a lane swap has already restarted the game
+    server, so there is no session to protect ([phone-link](../ops/phone-link.md)).
   - **`devOptions.enabled: false`** — the SW exists only in production builds. Both
     Playwright and the netgate run against `vite dev`, so they never see it (no
     precache vs wire-format desync during tests).

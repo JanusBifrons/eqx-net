@@ -73,6 +73,7 @@ import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 import { wreckSwitchOn } from './wreckSwitch.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
+import type { ChunkOpts, FieldClearing } from '../../core/terrain/fieldLayout.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { AiInputBatch } from '../../core/ai/AiInputBatch.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
@@ -92,6 +93,7 @@ import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
+import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
 import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { pushNotifier } from '../push/PushNotifier.js';
@@ -105,6 +107,7 @@ import { StructureRegistry, type StructureRecord } from '../structures/Structure
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
+import { tallyFaction, type FactionPresenceMap } from '../livingworld/factionPresence.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem, type PackedGateResult } from '../structures/StructurePlacementSubsystem.js';
@@ -141,7 +144,6 @@ import {
   type TollPrompt,
   onPad,
   padIrisSpanLocal,
-  padPostCenters,
   type TeleporterKind,
   TP_PARTNER_REMOTE,
   TeleportRulesSchema,
@@ -201,11 +203,12 @@ import {
   STANDING_HIT_WINDOW_MS,
   defaultFactionPolicy,
   factionDisplayName,
+  factionLooksWelcomeField,
   isNpcFactionId,
   policyActsOnStanding,
   type FactionPolicy,
 } from '../../shared-types/factions.js';
-import { SetFactionPolicySchema } from '../../shared-types/messages/factionMessages.js';
+import { ClaimFactionLookSchema, SetFactionPolicySchema, claimFactionLookResult, type FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
 import { encodePlayerTurretTarget, encodeStructureMountAngles } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
@@ -225,7 +228,6 @@ import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSite } from '../../core/galaxy/alienGates.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
-import { rockObstacleParts, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
@@ -265,7 +267,10 @@ import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { isEngageablePilotHull, isLingeringHull, isPilotedActive } from '../../core/entity/shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
+import { BattleWreckSaves, battleWreckStore, WRECK_LINEAGE_FLUSH_MS } from './wreckLineageSaves.js';
 import { CutFieldSubsystem } from './CutFieldSubsystem.js';
+import { getNavWorker, type NavField } from '../nav/NavWorker.js';
+import type { ChunkSource } from '../../core/terrain/chunkStreamer.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -276,7 +281,6 @@ import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { FleetCommandSubsystem, pilotKindFor, type FleetPose, type FleetModeData, type FleetShipOrders } from '../fleet/FleetCommandSubsystem.js';
 import { clearFleetOrder, defendAt, stepFleetPatrol } from '../fleet/fleetShipOrders.js';
-import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { FleetStatusStream } from '../fleet/FleetStatusStream.js';
 import { FleetStatusSoon, FLEET_STATUS_SOON_TICKS } from '../fleet/FleetStatusSoon.js';
 import { decodeAiInputBits, type AiInputBits } from '../../core/contracts/IAiBehaviour.js';
@@ -291,6 +295,7 @@ import {
 } from './sectorIdleEvaluator.js';
 import { runAiTick } from './aiTickRunner.js';
 import { AiNeighbourGrid } from './AiNeighbourGrid.js';
+import { SectorObstacles } from './SectorObstacles.js';
 import { makeInputHandler } from './InputHandler.js';
 import {
   TICK_IDX,
@@ -341,7 +346,8 @@ import { OreDraw } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, wireHold, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
-import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
+import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY, liveSectorHolder } from '../livingworld/RobotTerritory.js';
+import { isLiveTerritoryLock, territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { PackedItemSchema, ROCK_CHUNK_PRODUCT } from '../../shared-types/items.js';
 import { rollKillBounty } from '../../shared-types/lootTables.js';
@@ -416,6 +422,7 @@ import { shipBodyMass, shellViewHalfExtent } from '../../shared-types/shipScale/
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
+import { landingReach } from '../../shared-types/shipScale/landingReach.js';
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
@@ -465,16 +472,7 @@ const NPC_HOLD_CAPACITY = 1000;
 /** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
 const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
 /** T4b — the level of `good`'s order on a dock (0 when none). */
-/** The solid boxes of a structure for spawn clearance: a teleporter's pad is
- *  open (only its posts are solid, v4 T2), everything else is its footprint. */
-function pushSolidBoxes(r: StructureRecord, out: SiteBox[]): void {
-  if (isTeleporterKind(r.kind)) {
-    const h = PAD_SPECS[r.kind].post / 2;
-    for (const [cx, cy] of padPostCenters(r.kind)) out.push({ x: r.x + cx, y: r.y + cy, hw: h, hh: h });
-    return;
-  }
-  out.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
-}
+const NO_SITE_CIRCLES: readonly SiteCircle[] = [];
 
 /** A hull's extent for spawn clearance against other hulls: its radius plus
  *  its shield pad (#18, both from the kind's size). */
@@ -1170,8 +1168,6 @@ export class SectorRoom extends Room<SectorState> {
   /** Bespoke test/recording trigger (testMode `traverseTicksCap`): the longest
    *  a capital turret takes to train a full turn, in ticks. Undefined = off. */
   private testTraverseTicksCap: number | undefined = undefined;
-  /** Round 3 D test switch (testMode `pilotCapitals`). */
-  private testPilotCapitals = false;
   /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS):
    *  a dying capital breaks into wreck bodies. On by default since 2026-11-14
    *  (`wreckSwitchOn`); null = both switches off.
@@ -1182,6 +1178,8 @@ export class SectorRoom extends Room<SectorState> {
    *  in-flight descriptor-transport slice. */
   private capitalWrecks: CapitalWreckSubsystem | null = null;
   private capitalWrecksOn = false;
+  /** Wreck fields 0a2c: battle wrecks survive a restart (wreckLineageSaves.ts). */
+  private wreckSaves: BattleWreckSaves | null = null;
   private subcapWrecksOn = false;
   /** Reused per-hit weapon layer multiplier (`applyDamage`, #14). */
   private readonly _layerMul = { shield: 1, hull: 1 };
@@ -1280,6 +1278,8 @@ export class SectorRoom extends Room<SectorState> {
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
   private structureGridTimer: GameTimer | undefined;
   private cutField: CutFieldSubsystem | undefined; // macro terrain v2 (room option `cutField`)
+  /** The cut field's nav maps in the nav worker (navigation slice 4b); set once built. */
+  private navField: NavField | undefined;
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
   private structureTurretTimer: GameTimer | undefined;
   /** Click-to-inspect live-stats channel (structures follow-up Item B5) +
@@ -1445,6 +1445,18 @@ export class SectorRoom extends Room<SectorState> {
    *  per tick to avoid GC churn. Entries are added on spawn/respawn and
    *  removed on player leave. */
   private readonly shipPoseCache = new Map<string, ShipPhysicsState>();
+  /** The one obstacle gatherer (placement, line of sight, landing, spawns). */
+  private readonly obstacles = new SectorObstacles({
+    structures: this.structureRegistry, swarm: this.swarmRegistry, sab: () => this.sabF32,
+    dormantRocks: (box, out) => this.cutField?.dormantObstacles(box, out),
+    forEachHull: (sink) => {
+      for (const [pid, pose] of this.shipPoseCache) sink.hull(pose.x, pose.y, this.getActiveShip(pid)?.kind, pid, undefined, this.pendingJoin.has(pid));
+      for (const [shipId, pose] of this.lingeringPoseCache) { const h = this.state.ships.get(shipId); sink.hull(pose.x, pose.y, h?.kind || undefined, h?.playerId, shipId, false); }
+    },
+    forEachWall: (sink) => this.shieldWalls?.forEachBlockingWall(this.gameClock.now(), sink),
+    clearanceOf: (kind) => (kind ? tuningFor(kind).spawnClearance : 60),
+    extentOf: (kind) => (isShipKindId(kind) ? hullExtent(kind) : undefined),
+  });
   private serverTick = 0;
   /** Pre-Stage-5: gated the 20 Hz broadcast — fired every 3 update() calls.
    *  Stage 5 replaces this with per-client {@link shouldBroadcastFar} /
@@ -1720,6 +1732,8 @@ export class SectorRoom extends Room<SectorState> {
     setSubcapWreckCap: (cap: number | null) => void;
     /** S2b — the live wreck descriptors (the snapshot's `wrecks[]`). */
     wreckDescriptors: () => readonly import('../../shared-types/messages.js').WreckDescriptor[];
+    /** Wreck fields 0a2c — write the battle-wreck lineage rows now. */
+    flushWreckSaves: (all: boolean) => void;
     /** Slice 3 — remove a swarm entity the normal way (a wreck piece reaches
      *  `pieceGone`, so its wreck's descriptor retires once all are gone). */
     evictSwarm: (id: string) => void;
@@ -1805,6 +1819,7 @@ export class SectorRoom extends Room<SectorState> {
       wreckCounts: () => ({ total: this.capitalWrecks?.liveCount() ?? 0, subcap: this.capitalWrecks?.liveSubcapCount() ?? 0 }),
       setSubcapWreckCap: (cap) => { if (this.capitalWrecks) this.capitalWrecks.subcapCapOverride = cap; },
       wreckDescriptors: () => this.capitalWrecks?.descriptors() ?? [],
+      flushWreckSaves: (all) => this.wreckSaves?.flush(all),
       evictSwarm: (id) => {
         const rec = this.swarmRegistry.get(id);
         if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
@@ -1916,7 +1931,7 @@ export class SectorRoom extends Room<SectorState> {
        * mix) instead of using `asteroidConfig` + `droneCount`. When set,
        * suppresses both legacy paths so we don't double-spawn.
        */
-      cutField?: { seed: string }; // macro terrain v2: test/showcase rooms only (docs/architecture/macro-terrain.md)
+      cutField?: { seed: string; clearings?: FieldClearing[] }; // macro terrain v2: test/showcase rooms, and every asteroid-marked galaxy sector via resolveSectorConfig (F4, with pocket clearings; docs/architecture/macro-terrain.md)
       swarmCount?: number;
       swarmRatio?: number; // asteroid fraction; default 0.8
       swarmRadius?: number; // spawn disc radius; default 18 000
@@ -2113,9 +2128,6 @@ export class SectorRoom extends Room<SectorState> {
       /** testMode: run the automatic slowdown here too (on by default only in
        *  real sectors). */
       autoTimeScale?: boolean;
-      /** Capital-ship R&D (round 3 D): a player may join flying a capital
-       *  (capitals stay npcOnly everywhere else). testMode-only. */
-      pilotCapitals?: boolean;
       /** Capital destruction: a dying capital breaks into wreck bodies. ON
        *  by default (owner 2026-11-14); `false` opts this room out.
        *  `EQX_CAPITAL_WRECKS=0|1` forces it for every room (`wreckSwitchOn`). */
@@ -2967,12 +2979,13 @@ export class SectorRoom extends Room<SectorState> {
       // Asteroids (swarm kind=0) block placement and a connector's line of sight
       // (Item D); shared with the grid-pulse reconnect sweep. Placement also
       // passes `near` for unloaded cut-field rocks (C5, links C5g). Off the hot loop.
-      getObstacles: (near) => this.gatherStructureObstacles(near),
+      getObstacles: (near) => this.obstacles.rocks(near),
       // Economy v2 W4b — a player's non-starter structure is placed from a
       // PACKED item (now buyable from traders, and lootable). Consumed only
       // after the structure registers; its build then costs only time.
       sectorKey: () => this.sectorKey,
       packedGateForBuild: (owner, kindId) => this.packedGateForBuild(owner, kindId),
+      placementRefusal: (owner, kindId) => territoryLockRefusal(owner, kindId, this.sectorKey ?? '', liveSectorHolder(this.sectorKey ?? ''), this.structureRegistry.all()),
     });
 
     // ── Structure grid pulse (structures plan, Phase 3) ─────────────────
@@ -3036,7 +3049,7 @@ export class SectorRoom extends Room<SectorState> {
       spawnMissile: (shooterId, x, y, dx, dy, def) =>
         this.spawnServerMissile(shooterId, x, y, dx, dy, def),
       // Reconnect sweep honours current asteroid LOS (Issue 2), unloaded rocks in `near` too (C5g).
-      getObstacles: (near) => this.gatherStructureObstacles(near),
+      getObstacles: (near) => this.obstacles.rocks(near),
       // Gameplay audit — a blueprint finished construction (1 Hz pulse, off-tick).
       // Campaign 6.3 — completion is durable state (isConstructed + full HP);
       // persist event-driven so a crash keeps the built structure built.
@@ -3236,7 +3249,10 @@ export class SectorRoom extends Room<SectorState> {
     this.selectionStatsTimer.unref?.();
 
     if (this.testMode) this.persistSector = roomOpts.persistSector !== false; // cut field before any seeding: placement sees its rocks (C5)
-    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null ? terrainRecordStoreFor(`${this.sectorKey}|${roomOpts.cutField.seed}`) : undefined });
+    // The chunk-streaming host exists when the sector has ANY chunk source: the field's rocks today; wreck-field sources join `chunkSources` (wreck fields R7).
+    const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
+    if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
+    if (this.cutField?.navOpts) this.hostNavField(this.cutField, this.cutField.navOpts);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
@@ -3461,7 +3477,6 @@ export class SectorRoom extends Room<SectorState> {
     } else if (ENV_TIME_SCALE !== null) {
       this.setTimeScale(ENV_TIME_SCALE);
     }
-    this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
     // Break-up is ON by default in every room (owner decision 2026-11-14:
     // "land it switched on"). A room opts out with `capitalWrecks: false` /
     // `subcapWrecks: false`; the env switch wins over the room either way:
@@ -3469,6 +3484,11 @@ export class SectorRoom extends Room<SectorState> {
     this.capitalWrecksOn = wreckSwitchOn(process.env['EQX_CAPITAL_WRECKS'], roomOpts.capitalWrecks);
     this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks);
     if (this.capitalWrecksOn || this.subcapWrecksOn) this.initCapitalWrecks();
+    if (this.capitalWrecks !== null && this.persistSector && this.sectorKey !== null) {
+      this.wreckSaves = new BattleWreckSaves(this.capitalWrecks.lineageState(), battleWreckStore(this.sectorKey));
+      this.wreckSaves.restoreAll();
+      this.gameClock.every(WRECK_LINEAGE_FLUSH_MS, guarded('wreck-lineage-flush', () => this.wreckSaves?.flush(false)));
+    }
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
       this.seedGalaxyBase(this.sectorKey);
@@ -3673,7 +3693,8 @@ export class SectorRoom extends Room<SectorState> {
         logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
         // Economy v2 W4b — say why when it was the packed item that was missing.
         const kindId = parsed.data.kind;
-        if (!STARTER_STRUCTURE_KINDS.includes(kindId) && this.findPacked(owner, `structure:${kindId}`) === null) {
+        if (this.structurePlacement.lastRefusal !== null) this.sendNotice(client, this.structurePlacement.lastRefusal);
+        else if (!STARTER_STRUCTURE_KINDS.includes(kindId) && this.findPacked(owner, `structure:${kindId}`) === null) {
           this.sendNotice(client, `You need a Packed ${productName(`structure:${kindId}`)}: buy one on the Trade tab, or loot one.`);
         }
       } else {
@@ -3856,6 +3877,20 @@ export class SectorRoom extends Room<SectorState> {
       const owner = this.sessionToPlayer.get(client.sessionId);
       if (!owner) return;
       getTradeSink()?.setPlayerPolicy?.(owner, parsed.data.policy);
+    });
+
+    // A player claims a unique ship look for their faction; the claimant gets
+    // the verdict, every room gets a success (`broadcastFactionLook`).
+    this.onMessage('claim_faction_look', (client: Client, raw: unknown) => {
+      const parsed = ClaimFactionLookSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'claim_faction_look');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const claim = getTradeSink()?.claimFactionLook?.(owner, parsed.data.colorSlot, parsed.data.sigil);
+      if (claim) try { client.send('claim_faction_look_result', claimFactionLookResult(claim)); } catch { /* closing */ }
     });
 
     this.onMessage('set_gate_access', (client: Client, raw: unknown) => {
@@ -5739,6 +5774,7 @@ export class SectorRoom extends Room<SectorState> {
       dropSalvage: (qty, x, y, vx, vy) => this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }),
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       pieceSplit: (from, ids, masses) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks),
+      lineageTouched: (root) => this.wreckSaves?.touch(root),
     });
   }
 
@@ -5753,13 +5789,7 @@ export class SectorRoom extends Room<SectorState> {
    *  with `subcapWrecks`, except composite kinds (havok), which keep their
    *  per-component scrap; `none` never. */
   private wreckKindAllowed(kindId: string): boolean {
-    // Per hit (noteHit): read the tuning directly, no entity literal (#14).
-    if (!isShipKindId(kindId)) return false;
-    switch (shipTuning(getShipKind(kindId)).destruction) {
-      case 'capital': return this.capitalWrecksOn;
-      case 'subcap': return this.subcapWrecksOn && shipScrapGroups(kindId).length === 0;
-      case 'none': case 'rock': return false;
-    }
+    return wreckKindAllowed(kindId, this.capitalWrecksOn, this.subcapWrecksOn);
   }
 
   /** S2a: a dying ACTIVE hull breaks into wreck bodies, its worker body
@@ -6231,7 +6261,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
-      getObstacles: (near) => this.gatherStructureObstacles(near),
+      getObstacles: (near) => this.obstacles.rocks(near),
     });
     const seededBases: SiteBox[] = [];
     const plans = galaxyBasePlan(sectorKey);
@@ -6326,7 +6356,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
-      getObstacles: (near) => this.gatherStructureObstacles(near),
+      getObstacles: (near) => this.obstacles.rocks(near),
     });
     for (const spec of specs.slice(0, 8)) {
       const r = sub.seed(spec);
@@ -6811,20 +6841,6 @@ export class SectorRoom extends Room<SectorState> {
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
   ): number | null {
     return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, this.gameClock.now());
-  }
-
-  /** Live asteroids (swarm kind=0, SAB pose) blocking structure placement (Item D) and connection
-   *  line of sight, incl. the grid-pulse reconnect sweep (playtest 2026-06-10 Issue 2). Off the
-   *  60 Hz hot loop (placement + 1 Hz pulse only), so the array build is acceptable. */
-  private gatherStructureObstacles(near?: ObstacleBox): GridObstacle[] {
-    const obstacles: GridObstacle[] = [];
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 0) continue; // asteroids only
-      const b = slotBase(rec.slot), f = this.sabF32; // narrow phase (C5b/C5c): collider parts, else the convex outline (a field rock's raw outline may dent: its hull, as its collider), at the live pose
-      obstacles.push({ x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, radius: rec.radius, angle: f[b + SLOT_ANGLE_OFF]!, parts: rockObstacleParts(rec.vertices, rec.wreckParts, rec.fieldRock === true) });
-    }
-    if (near) this.cutField?.dormantObstacles(near, obstacles);
-    return obstacles;
   }
 
   /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
@@ -8238,10 +8254,13 @@ export class SectorRoom extends Room<SectorState> {
       const ship = this.getActiveShip(pid);
       if (ship?.alive && ship.isActive) present.push(pid);
     }
+    const byFaction: FactionPresenceMap = new Map();
+    for (const pid of present) tallyFaction(byFaction, pid, 'ships');
     let enemies = 0;
     let neutrals = 0;
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== SWARM_KIND_DRONE) continue;
+      tallyFaction(byFaction, (this.patrols.count > 0 ? this.patrols.factionOf(rec.id) : undefined) ?? allegianceOfKind(rec.shipKind), 'ships');
       let hostile = false;
       for (const pid of present) {
         if (this.npcHostileTo(rec.id, pid)) {
@@ -8252,7 +8271,15 @@ export class SectorRoom extends Room<SectorState> {
       if (hostile) enemies++;
       else neutrals++;
     }
-    return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size };
+    let playerStructures = 0;
+    let lockSides: string[] | undefined;
+    for (const rec of this.structureRegistry.all()) {
+      const o = parseOwner(rec.owner);
+      if (o.kind === 'player') playerStructures++;
+      tallyFaction(byFaction, o.faction, 'structures');
+      if (isLiveTerritoryLock(rec)) (lockSides ??= []).push(o.faction);
+    }
+    return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size, playerStructures, byFaction, lockSides };
   }
 
   /** Equinox Phase 9 (item 5) — recent-combat tally for `/galaxy/snapshot` (the
@@ -8307,8 +8334,10 @@ export class SectorRoom extends Room<SectorState> {
     vy?: number;
     health?: number;
     hostileToFaction?: { playerId: string; structureIds: readonly string[] };
+    factionId?: FactionId;
   }): boolean {
     const ok = this.livingWorldBotHooks.spawnBot(spec);
+    if (ok && spec.factionId !== undefined) this.patrols.attachShip(spec.botId, spec.factionId, npcOwner(spec.factionId));
     // P2 bespoke trigger (testMode): robot raiders meet an incoming hauler
     // ~45 % of the way from its entry point to the sector centre.
     if (ok && this.testHaulerRaiders > 0 && isHaulerId(spec.botId)) {
@@ -8405,6 +8434,10 @@ export class SectorRoom extends Room<SectorState> {
 
   broadcastWorldNotice(notice: WorldNotice): void {
     this.broadcast('world_notice', notice);
+  }
+
+  broadcastFactionLook(msg: FactionLookClaimed): void {
+    this.broadcast('faction_look_claimed', msg);
   }
 
   markElite(botId: string, name: string, healthMul = ELITE_HEALTH_MUL, bounty = ELITE_BOUNTY_CREDITS): boolean {
@@ -9479,9 +9512,7 @@ export class SectorRoom extends Room<SectorState> {
     // swap kind by reconnecting — the existing ShipState.kind is preserved).
     const requestedKind = parsed.success
         && typeof parsed.data.shipKind === 'string'
-        && (isPlayableShipKindId(parsed.data.shipKind)
-          || (this.testPilotCapitals && isShipKindId(parsed.data.shipKind)
-            && getShipKind(parsed.data.shipKind).sizeClass === 'capital'))
+        && isPlayableShipKindId(parsed.data.shipKind)
       ? parsed.data.shipKind
       : DEFAULT_SHIP_KIND;
 
@@ -9675,7 +9706,7 @@ export class SectorRoom extends Room<SectorState> {
           sectorKey: this.sectorKey,
           shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
-        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
 
         setSession(client.sessionId, {
           roomId: this.roomId,
@@ -9890,10 +9921,9 @@ export class SectorRoom extends Room<SectorState> {
       // their exact placement (tests set up collisions on purpose), and a
       // resumed hull comes back where it really is.
       const explicit = parsed.success && (parsed.data.spawnX !== undefined || parsed.data.spawnY !== undefined);
-      const hulls = explicit || resumedFromStore ? [] : this.spawnHullCircles(playerId);
+      const hulls = explicit || resumedFromStore ? NO_SITE_CIRCLES : this.obstacles.hullCircles(playerId);
       if (this.structureRegistry.size > 0 || hulls.length > 0) {
-        const boxes: SiteBox[] = [];
-        for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
+        const boxes = this.obstacles.structureBoxes();
         const clear = nearestClearPoint(spawnX, spawnY, boxes, tuningFor(chosenKind).spawnClearance, 6000, hulls, hullExtent(chosenKind));
         spawnX = clear.x;
         spawnY = clear.y;
@@ -10181,7 +10211,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
 
     // Prefer the auth-validated userId from this connect; fall back to the
     // Limbo-resumed value when this connect was anonymous (covers the
@@ -10309,7 +10339,7 @@ export class SectorRoom extends Room<SectorState> {
       shipInstanceId: '',
       spectator: true,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
 
     setSession(client.sessionId, {
       roomId: this.roomId,
@@ -10365,6 +10395,8 @@ export class SectorRoom extends Room<SectorState> {
     this.fleetStatus?.clearSession(client.sessionId);
     this.fleetStatusSoon.clear(client.sessionId);
     this.fleetMsgCountThisTick.delete(client.sessionId);
+    // Interest window + scratch set of a gone connection.
+    this.snapshotBroadcaster.forgetInterestWindow(client.sessionId);
 
     // Campaign 1.3 — forget this connection's malformed-packet counter.
     this.malformed.clear(client.sessionId);
@@ -11201,7 +11233,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: shipId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
     this.pendingJoin.set(playerId, {
       joinTick: tick,
       watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,
@@ -11240,6 +11272,10 @@ export class SectorRoom extends Room<SectorState> {
       vy:    this.sabF32[b + SLOT_VY_OFF]!,
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
+    // Player capitals: an abandoned capital breaks into a wreck like its death
+    // (its body despawned first; the DESPAWN below is then a no-op).
+    this.spawnCapitalWreck(playerId, ship.kind, pose,
+      ship.maxHealth > 0 ? ship.maxHealth : getShipKind(ship.kind).maxHealth, slot, playerId);
     this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
     // Living World P1a — an abandoned hull's hold spills where it sat (P1a-2
     // turns this into a salvageable hulk).
@@ -11304,6 +11340,8 @@ export class SectorRoom extends Room<SectorState> {
       vy:    this.sabF32[b + SLOT_VY_OFF]!,
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
+    this.spawnCapitalWreck(shipInstanceId, ship.kind, pose,
+      ship.maxHealth > 0 ? ship.maxHealth : getShipKind(ship.kind).maxHealth, slot, `linger-${shipInstanceId}`);
     this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
     this.spillOrLoseShipHold(shipInstanceId, ship.playerId, pose, 'abandoned');
 
@@ -12130,70 +12168,25 @@ export class SectorRoom extends Room<SectorState> {
     return this.landingPoint(playerId, x, y, this.getActiveShip(playerId)?.kind);
   }
 
-  /** The nearest spot to (x, y) clear of structures, swarm entities, and other
-   *  players' ships and parked hulls (the pilot's own are not obstacles).
+  /** The nearest spot to (x, y) clear of structures, swarm entities, field
+   *  rocks with no body, blocking walls, and other players' ships and parked
+   *  hulls (the pilot's own are not obstacles; `SectorObstacles.landing`).
    *  With `onlySkipShipId` (a fleet warp placing one of its hulls) the
    *  owner's own ships and hulls ARE obstacles; only that ship is skipped. */
   private landingPoint(
     playerId: string, x: number, y: number, kind: string | undefined, onlySkipShipId?: string,
   ): { x: number; y: number } {
-    const skipOwn = onlySkipShipId === undefined;
-    const near = 8000;
-    const boxes: SiteBox[] = [];
-    for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
-    const circles: Array<{ x: number; y: number; r: number }> = [];
-    for (const rec of this.swarmRegistry.all()) {
-      const b = slotBase(rec.slot);
-      const ex = this.sabF32[b + SLOT_X_OFF]!, ey = this.sabF32[b + SLOT_Y_OFF]!;
-      if (Math.abs(ex - x) > near || Math.abs(ey - y) > near) continue;
-      circles.push({ x: ex, y: ey, r: rec.radius });
-    }
-    for (const [pid, pose] of this.shipPoseCache) {
-      if ((skipOwn && pid === playerId) || Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
-      const kind = this.getActiveShip(pid)?.kind;
-      circles.push({ x: pose.x, y: pose.y, r: kind ? tuningFor(kind).spawnClearance : 60 });
-    }
-    for (const [shipId, pose] of this.lingeringPoseCache) {
-      if (shipId === onlySkipShipId || Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
-      const hull = this.state.ships.get(shipId);
-      if (skipOwn && hull?.playerId === playerId) continue;
-      circles.push({ x: pose.x, y: pose.y, r: hull?.kind ? tuningFor(hull.kind).spawnClearance : 60 });
-    }
-    return nearestClearPoint(x, y, boxes, kind ? tuningFor(kind).spawnClearance : 60, 6000, circles);
-  }
-
-  /** Every other hull in the sector as a circle of its own extent (hull
-   *  radius + shield pad, `hullExtent`): NPC ships, other pilots' ships and
-   *  parked hulls. The joining pilot's own hulls and pilots still joining
-   *  (not in the world yet) are not obstacles. Join path
-   *  only (allocates). */
-  private spawnHullCircles(playerId: string): SiteCircle[] {
-    const circles: SiteCircle[] = [];
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1) continue;
-      const b = slotBase(rec.slot);
-      const r = rec.shipKind && isShipKindId(rec.shipKind) ? hullExtent(rec.shipKind) : rec.radius;
-      circles.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r });
-    }
-    for (const [pid, pose] of this.shipPoseCache) {
-      if (pid === playerId || this.pendingJoin.has(pid)) continue;
-      const kind = this.getActiveShip(pid)?.kind;
-      if (kind) circles.push({ x: pose.x, y: pose.y, r: hullExtent(kind) });
-    }
-    for (const [shipId, pose] of this.lingeringPoseCache) {
-      const hull = this.state.ships.get(shipId);
-      if (!hull?.kind || hull.playerId === playerId) continue;
-      circles.push({ x: pose.x, y: pose.y, r: hullExtent(hull.kind) });
-    }
-    return circles;
+    const ownClear = kind ? tuningFor(kind).spawnClearance : 60;
+    const { near, maxDistance } = landingReach(ownClear);
+    const o = this.obstacles;
+    o.landing(playerId, x, y, near, onlySkipShipId);
+    return nearestClearPoint(x, y, o.boxes, ownClear, maxDistance, o.circles, ownClear, o.walls);
   }
 
   /** T2 — the nearest point clear of every structure (convoy hauler spawns). */
   clearPointNear(x: number, y: number): { x: number; y: number } {
     if (this.structureRegistry.size === 0) return { x, y };
-    const boxes: SiteBox[] = [];
-    for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
-    return nearestClearPoint(x, y, boxes, 150);
+    return nearestClearPoint(x, y, this.obstacles.structureBoxes(), 150);
   }
 
   tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null {
@@ -12206,10 +12199,21 @@ export class SectorRoom extends Room<SectorState> {
    *  or one of its structures was hit in the last 60 s. */
   tradeBaseUnderAttack(ownerId: string): boolean {
     if (this.factionLedger.get(ownerId)?.underWave === true) return true;
+    return this.structureHitWithin(60_000, ownerId, false);
+  }
+
+  /** Galaxy feed — a structure of control side `side` was hit within `windowMs` (game time). */
+  sideStructuresHitWithin(side: string, windowMs: number): boolean {
+    return this.structureHitWithin(windowMs, side, true);
+  }
+
+  /** A structure owned by `who` (an owner id, or a control side when `bySide`) was hit within `windowMs`. */
+  private structureHitWithin(windowMs: number, who: string, bySide: boolean): boolean {
     const now = this.gameClock.now();
     for (const [sid, at] of this.structureAttackAuditAtMs) {
-      if (now - at > 60_000) continue;
-      if (this.structureRegistry.get(sid)?.owner === ownerId) return true;
+      if (now - at > windowMs) continue;
+      const owner = this.structureRegistry.get(sid)?.owner;
+      if (owner !== undefined && (bySide ? parseOwner(owner).faction : owner) === who) return true;
     }
     return false;
   }
@@ -12834,6 +12838,21 @@ export class SectorRoom extends Room<SectorState> {
     });
   }
 
+  /** Hosts the cut field's nav maps in the nav worker; chunk loads and rock
+   *  changes stream to it from here on (navigation slices 4b–5; print-only size + ms). */
+  private hostNavField(cutField: CutFieldSubsystem, opts: ChunkOpts): void {
+    let field: NavField | undefined;
+    const known = cutField.attachNav({
+      chunk: (cx, cy, loaded) => field?.chunk(cx, cy, loaded),
+      rockGone: (key) => field?.rockGone(key),
+      rockMoved: (key, pose) => field?.rockMoved(key, pose),
+    });
+    field = this.navField = getNavWorker(logger).addField(opts, known.gone, known.moved);
+    field.built.then((b) => {
+      logger.info({ sectorKey: this.sectorKey, cols: b.cols, rows: b.rows, kb: Math.round(b.bytes / 1024), ms: Math.round(b.ms * 10) / 10 }, 'nav coarse layer built');
+    }, (err: unknown) => { if (!this.simLoopStopped) logger.error({ err, sectorKey: this.sectorKey }, 'nav field build failed'); });
+  }
+
   override onDispose(): void {
     if (this.sceneRunner) unregisterScenePerfRoom(this);
     this.simLoopStopped = true;
@@ -12841,6 +12860,8 @@ export class SectorRoom extends Room<SectorState> {
     if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
     if (this.teleportRoom) getTeleportBroker().unregister(this.teleportRoom);
     this.cutField?.dispose();
+    this.navField?.detach();
+    this.navField = undefined;
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
       this.structureGridTimer.cancel();
@@ -12883,6 +12904,7 @@ export class SectorRoom extends Room<SectorState> {
     // supersedes it, and a fire-after-teardown would read torn-down state.
     this.sectorPersistence.dispose();
     if (this.sectorKey !== null) {
+      try { this.wreckSaves?.flush(true); } catch { /* non-critical */ }
       try { this.persistSectorSnapshot(); } catch { /* non-critical */ }
     }
     // Phase 1 swift-otter — close every PeerConnection so the libdatachannel

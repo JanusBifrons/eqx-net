@@ -41,6 +41,29 @@ export interface RecentCombat {
   lastEventMs: number;
 }
 
+/** One shared feed cadence (ms): the server rebuilds the `/galaxy/snapshot`
+ *  body this often (and sends `Cache-Control: max-age` of the same), and the
+ *  client polls the snapshot + presence on it. Never real-time. */
+export const GALAXY_FEED_INTERVAL_MS = 10_000;
+
+/** Galaxy feed — a sector's live control meter (`core/territory/sectorControl`),
+ *  omitted when no meter is running. Shares are 0..100. */
+export interface SectorControl {
+  /** The holder's share (0 when neutral). */
+  holderShare: number;
+  /** The strongest side working against the holder (the leader when neutral), or null. */
+  challenger: string | null;
+  challengerShare: number;
+  /** −1 holder losing ground, 0 steady, +1 gaining. */
+  trend: -1 | 0 | 1;
+  /** 0 calm … 3 about to fall (`controlThreat`). */
+  threat: 0 | 1 | 2 | 3;
+  /** Server game-time ms of the last holder change this process saw, or null. */
+  flippedAtMs: number | null;
+  /** The holder has a live lock here (Territory Lock or the robot nexus). */
+  locked: boolean;
+}
+
 export interface SectorLiveState {
   /** Stable sector key (matches `GalaxySector.key`). */
   key: string;
@@ -68,26 +91,40 @@ export interface SectorLiveState {
   capital?: { name: string; kind: string } | null;
   /** Living World P4b — the world event running in this sector, or null/absent. */
   event?: WorldEventView | null;
+  /** Galaxy feed — the live control meter; absent with no meter. Additive. */
+  control?: SectorControl;
 }
 
 export interface GalaxySnapshotResponse {
   sectors: SectorLiveState[];
 }
 
+// Response schemas (server OUTPUT, parsed by the client) use zod's default strip,
+// never .strict(): an older client ignores fields added after it was built
+// instead of rejecting the whole snapshot (which blanks the map).
 export const SectorOwnerSchema = z
   .object({
     factionId: z.string(),
     contested: z.boolean(),
-  })
-  .strict();
+  });
 
 export const RecentCombatSchema = z
   .object({
     shipsDestroyed: z.number().int().nonnegative(),
     structuresDestroyed: z.number().int().nonnegative(),
     lastEventMs: z.number().nonnegative(),
-  })
-  .strict();
+  });
+
+export const SectorControlSchema = z
+  .object({
+    holderShare: z.number().min(0).max(100),
+    challenger: z.string().max(64).nullable(),
+    challengerShare: z.number().min(0).max(100),
+    trend: z.union([z.literal(-1), z.literal(0), z.literal(1)]),
+    threat: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
+    flippedAtMs: z.number().nullable(),
+    locked: z.boolean(),
+  });
 
 export const SectorLiveStateSchema = z
   .object({
@@ -103,14 +140,36 @@ export const SectorLiveStateSchema = z
     // P4a — additive, optional.
     elite: z.string().max(60).nullable().optional(),
     // W2a — additive, optional.
-    capital: z.object({ name: z.string().max(60), kind: z.string().max(40) }).strict().nullable().optional(),
+    capital: z.object({ name: z.string().max(60), kind: z.string().max(40) }).nullable().optional(),
     // P4b — additive, optional.
     event: WorldEventViewSchema.nullable().optional(),
-  })
-  .strict();
+    // Galaxy feed — additive, optional.
+    control: SectorControlSchema.optional(),
+  });
 
 export const GalaxySnapshotResponseSchema = z
   .object({
     sectors: z.array(SectorLiveStateSchema),
-  })
-  .strict();
+  });
+
+/** One minute-sample of a sector's control (`GET /galaxy/sector/:key/history`). */
+export interface SectorHistorySample {
+  /** Server game-time ms of the sample. */
+  atMs: number;
+  holder: string | null;
+  holderShare: number;
+}
+
+/** Oldest first; at most an hour (60 one-minute samples). */
+export interface SectorHistoryResponse {
+  key: string;
+  samples: SectorHistorySample[];
+}
+
+export const SectorHistoryResponseSchema = z
+  .object({
+    key: z.string(),
+    samples: z.array(
+      z.object({ atMs: z.number(), holder: z.string().nullable(), holderShare: z.number().min(0).max(100) }),
+    ),
+  });

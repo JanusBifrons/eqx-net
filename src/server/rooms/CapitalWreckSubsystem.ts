@@ -35,7 +35,7 @@
  *
  * Hand-rolled-mock testable: everything room-shaped comes in as hooks.
  */
-import { buildWreckPieces, hullLocalCutAngle, MAX_LIVE_SUBCAP_WRECK_PIECES, MAX_LIVE_WRECK_PIECES, WRECK_RECENT_DAMAGE_TICKS, wreckBodyParams, type WreckDeathPose } from '../../core/destruction/wreckPieces.js';
+import { buildWreckPieces, hullLocalCutAngle, type WreckFractureInputs, type WreckPieceSpec, MAX_LIVE_SUBCAP_WRECK_PIECES, MAX_LIVE_WRECK_PIECES, WRECK_RECENT_DAMAGE_TICKS, wreckBodyParams, type WreckDeathPose } from '../../core/destruction/wreckPieces.js';
 import { DESTRUCTION_PROFILES, killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import { fnv1a32, fnvMixU32 } from '../../core/random/rng.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
@@ -46,16 +46,16 @@ import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
 import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
-import type { BurnLines } from '../../core/destruction/burnLines.js';
-import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
-import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
+import { WreckResplitter, type WreckPiecePose, type WreckResplitHost } from './wreckResplit.js';
+import type { CapitalWreckDeps, HitEntry, LiveWreck, PieceKnock, SpawnWreckOpts } from './capitalWreckTypes.js';
 import { forEachLineagePiece, forEachPieceNear, lineageRootOf, pieceSalvageQtyOf, pieceStoreOf, type PieceStoreView } from './wreckLineage.js';
 import { burnHullHit, burnPieceHit, deathExtraCuts } from './wreckBurnHits.js';
 import { RockCutter } from './rockCut.js';
+import type { WreckLineageState } from './wreckLineageSaves.js';
 import { WreckKickQueue } from './wreckKicks.js';
 import { shipWreckSource } from '../../core/destruction/wreckSource.js';
 export type { WreckPiecePose };
-export type { CapitalWreckDeps, LiveWreck, PieceKnock, WreckPieceSpawn } from './capitalWreckTypes.js';
+export type { CapitalWreckDeps, LiveWreck, PieceKnock, SpawnWreckOpts, WreckPieceSpawn } from './capitalWreckTypes.js';
 
 const BUCKETS = 6;
 const BUCKET_TICKS = WRECK_RECENT_DAMAGE_TICKS / BUCKETS;
@@ -76,24 +76,6 @@ export interface LastHitView {
   readonly shooterId: string;
 }
 
-interface HitEntry {
-  hasPoint: boolean;
-  x: number;
-  y: number;
-  hasDir: boolean;
-  dirX: number;
-  dirY: number;
-  weaponId: WeaponId | null;
-  lastDamage: number;
-  shooterId: string;
-  /** Damage per bucket; `stamp[i]` is the bucket index it holds. */
-  dmg: Float64Array;
-  stamp: Int32Array;
-  /** Fracture v12 multi-cut: the hull's recent cutting-beam lines (null
-   *  until its first cutting hit; cleared when the entry is reused). */
-  burn: BurnLines | null;
-}
-
 /** What `onDeath` did with a dying ship. `vaporised`: a cut weapon's kill
  *  (heavy-beam slice, railgun channel) burned every piece away (fracture
  *  v11, the profile's `cutBurnMinShare`): no wreck, the body is gone, and
@@ -102,6 +84,8 @@ export interface WreckDeathOutcome {
   readonly pieces: number;
   readonly vaporised: boolean;
 }
+const HELD: SpawnWreckOpts = { held: true };
+const NOT_HELD: SpawnWreckOpts = { held: false };
 const NO_WRECK: WreckDeathOutcome = { pieces: 0, vaporised: false };
 const VAPORISED: WreckDeathOutcome = { pieces: 0, vaporised: true };
 
@@ -135,13 +119,14 @@ export class CapitalWreckSubsystem {
 
   /** Worn-out pieces split or turn to salvage (§S4, wreckResplit.ts). */
   private readonly resplit: WreckResplitter;
+  private readonly host: WreckResplitHost;
   /** Rock cut: mined-out rocks break into wreck pieces (rockCut.ts). */
   readonly rockCut: RockCutter;
 
   constructor(private readonly d: CapitalWreckDeps) {
     this.kicks = new WreckKickQueue(d);
     const capOf = (capital: boolean): number => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES));
-    const host = {
+    const host = this.host = {
       fifo: (capital: boolean) => (capital ? this.live : this.liveSubcap),
       cap: capOf,
       newWreck: (): [number, number] => [this.allocWreckId(), this.deaths++],
@@ -150,7 +135,7 @@ export class CapitalWreckSubsystem {
         // Lineage: a root (rock break) is its own root; a child inherits its parent's.
         const w = nw as LiveWreck; w.root = parent !== null ? parent.root : w.desc.wreckId;
         this.wrecks.set(w.desc.wreckId, w); if (parent !== null) parent.children++;
-        this.setChanged();
+        this.setChanged(); this.d.lineageTouched?.(w.root);
       },
       dropPiece: (id: string, fifo: string[]) => this.dropPiece(id, fifo),
       enforceCap: (capital: boolean) => this.enforceCap(capital ? this.live : this.liveSubcap, capOf(capital)),
@@ -295,17 +280,30 @@ export class CapitalWreckSubsystem {
     const vaporised = pieces.length === 0 && fracture.cutKind !== undefined;
     if (pieces.length > 0 || vaporised) despawnDyingBody?.();
     if (vaporised) return VAPORISED;
+    // The profile decides the hold (capital: `WRECK_CRACK_MS` in game ticks;
+    // sub-cap 0: the kick rides the spawn velocity), the body and the FIFO.
+    // A cut kill splits at once (owner, weapon cuts): no hold whatever the
+    // profile; the client reads the same from the descriptor's `cutKind`.
+    const held = DESTRUCTION_PROFILES[shipTuning(getShipKind(kindId)).destruction].holdMs > 0 && fracture.cutKind === undefined;
+    const spawned = this.spawnWreck(kindId, targetId, pieces, fracture, hull, pose.angle, held ? HELD : NOT_HELD);
+    return { pieces: spawned, vaporised: false };
+  }
+
+  /** THE wreck spawn path (wreck fields plan slice 0a; capital-destruction.md):
+   *  id, piece bodies in order, knock, kicks when `held`, FIFO, `LiveWreck` +
+   *  descriptor, cap. `ownerKey` goes to `ownerOf`; `hull` is the max HP. */
+  spawnWreck(
+    kindId: ShipKindId, ownerKey: string, pieces: readonly WreckPieceSpec[], fracture: WreckFractureInputs,
+    hull: number, deathAngle: number, opts: SpawnWreckOpts,
+  ): number {
+    const { held, poses, skipPieces } = opts;
+    const at = opts.deathTick ?? this.d.serverTick();
     const n = this.deaths++;
     const wreckId = this.allocWreckId();
     // Overkill knock-back (#18): a blow worth the whole hull's HP would move
     // the whole hull at `wreckKnockSpeed`.
     const tuning = shipTuning(getShipKind(kindId));
-    // The profile decides the hold (capital: `WRECK_CRACK_MS` in game ticks;
-    // sub-cap 0: the kick rides the spawn velocity), the body and the FIFO.
-    // A cut kill splits at once (owner, weapon cuts): no hold whatever the
-    // profile; the client reads the same from the descriptor's `cutKind`.
     const profile = DESTRUCTION_PROFILES[tuning.destruction];
-    const held = profile.holdMs > 0 && fracture.cutKind === undefined;
     const crackTicks = held ? wreckCrackTicks() : 0;
     const body = wreckBodyParams(kindId);
     const fifo = profile.id === 'capital' ? this.live : this.liveSubcap;
@@ -316,13 +314,17 @@ export class CapitalWreckSubsystem {
     let spawnedMass = 0;
     const spawnedIds: string[] = [];
     for (const p of pieces) {
+      if (skipPieces?.has(p.index) === true) continue;
       const id = `wreck-${n}-${p.index}`;
+      const posed = poses?.get(p.index);
       // No hold: the separating kick is part of the spawn motion (the pieces
       // spawn at the death angle, the kick's frame), so no pending kick.
+      // A posed piece spawns exactly as given (no kick at all).
+      const kick = posed === undefined && !held;
       const ok = this.d.spawnPiece({
-        id, x: p.x, y: p.y,
-        vx: held ? p.vx : p.vx + p.kickVx, vy: held ? p.vy : p.vy + p.kickVy,
-        angle: p.angle, angvel: held ? p.angvel : p.angvel + p.kickAngvel,
+        id, x: posed?.x ?? p.x, y: posed?.y ?? p.y,
+        vx: posed?.vx ?? (kick ? p.vx + p.kickVx : p.vx), vy: posed?.vy ?? (kick ? p.vy + p.kickVy : p.vy),
+        angle: posed?.angle ?? p.angle, angvel: posed?.angvel ?? (kick ? p.angvel + p.kickAngvel : p.angvel),
         radius: p.radius, mass: p.mass, parentShipKind: kindId, pieceIndex: p.index, wreckId,
         parts: p.parts, colliderParts: p.colliderParts,
         linearDamping: body.linearDamping, angularDamping: body.angularDamping,
@@ -339,18 +341,18 @@ export class CapitalWreckSubsystem {
         cx: p.cx, cy: p.cy, radius: p.radius, burn: null,
       });
       // The hull holds together for the crack delay, then parts (game ticks).
-      if (held) this.kicks.push(id, tick + crackTicks, p.kickVx, p.kickVy, p.kickAngvel, pose.angle);
+      if (held && posed === undefined) this.kicks.push(id, at + crackTicks, p.kickVx, p.kickVy, p.kickAngvel, deathAngle);
       fifo.push(id);
       this.pieceWreck.set(id, wreckId);
     }
     if (spawned > 0) {
-      const owner = this.d.ownerOf?.(targetId);
+      const owner = this.d.ownerOf?.(ownerKey);
       this.wrecks.set(wreckId, {
         desc: {
           wreckId, parentKind: kindId, seed: fracture.seed, killX: fracture.killX, killY: fracture.killY,
           killBlowDamage: fracture.killBlowDamage, recentDamageRate: fracture.recentDamageRate,
           snapChance: fracture.snapChance, algoVersion: FRACTURE_ALGO_VERSION,
-          deathTick: tick,
+          deathTick: at,
           // Emit-when-present: an un-cut wreck's descriptor is unchanged.
           ...(fracture.cutKind !== undefined ? { cutKind: fracture.cutKind, cutAng: fracture.cutAng } : {}),
           ...(fracture.cutW !== undefined ? { cutW: fracture.cutW } : {}),
@@ -360,17 +362,17 @@ export class CapitalWreckSubsystem {
         pieces: spawned,
         ids: spawnedIds,
         mass: spawnedMass,
-        holdUntil: tick + crackTicks,
+        holdUntil: at + crackTicks,
         chain: { root: fracture, steps: [] },
         parent: 0,
         children: 0,
         root: wreckId,
         src: shipWreckSource(kindId),
       });
-      this.setChanged();
+      this.setChanged(); this.d.lineageTouched?.(wreckId);
     }
     this.enforceCap(fifo, profile.id === 'capital' ? MAX_LIVE_WRECK_PIECES : MAX_LIVE_SUBCAP_WRECK_PIECES);
-    return { pieces: spawned, vaporised: false };
+    return spawned;
   }
 
   /** Per server tick: due separating kicks (`WreckKickQueue.tick`). */
@@ -426,7 +428,7 @@ export class CapitalWreckSubsystem {
     const wreckId = this.pieceWreck.get(id);
     const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
     // Fracture v12 multi-cut: a cutting beam burns its line into the piece.
-    if (w !== undefined) burnPieceHit(k, this.d, id, w.src.scale, shooterId, hitX, hitY, dirX, dirY, weaponId);
+    if (w !== undefined) { burnPieceHit(k, this.d, id, w.src.scale, shooterId, hitX, hitY, dirX, dirY, weaponId); this.d.lineageTouched?.(w.root); }
     // Re-split (§S4): the hit wears the piece's hidden integrity; worn out
     // (and past the crack hold) it splits or turns to salvage instead of
     // being shoved.
@@ -510,7 +512,7 @@ export class CapitalWreckSubsystem {
     this.pieceWreck.delete(id);
     const w = this.wrecks.get(wreckId);
     if (w === undefined) return;
-    w.pieces--;
+    w.pieces--; this.d.lineageTouched?.(w.root);
     this.retire(wreckId, w);
   }
 
@@ -538,6 +540,8 @@ export class CapitalWreckSubsystem {
     if (this.d.isLive(id)) this.d.removePiece(id);
     this.pieceGone(id);
   }
+  /** Battle-wreck save/restore (wreckLineageSaves.ts): the maps it reads, the spawn host it restores through. */
+  lineageState(): WreckLineageState { return { wrecks: this.wrecks, pieceWreck: this.pieceWreck, knock: this.knock, host: this.host, d: this.d }; }
 
   /** A live piece's salvage if stored whole (wreckLineage.ts `pieceSalvageQtyOf`). */
   pieceSalvageQty(id: string): number { return pieceSalvageQtyOf(this.wrecks, this.pieceWreck, this.knock, id); }

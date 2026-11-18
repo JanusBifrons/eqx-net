@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
 import { useUIStore } from '../state/store';
 import { GalaxyPresenceResponseSchema } from '../../shared-types/galaxyPresence.js';
+import { GALAXY_FEED_INTERVAL_MS } from '../../shared-types/galaxySnapshot.js';
 
-/** Presence poll cadence (ms) — matches the galaxy snapshot poll. */
-const POLL_MS = 4000;
+/** Poll cadence (ms): the ONE shared galaxy-feed interval (the server rebuilds
+ *  the snapshot this often) — see docs/architecture/living-galaxy.md. */
+const POLL_MS = GALAXY_FEED_INTERVAL_MS;
 
 /**
  * Polls `GET /galaxy/presence?playerId=` while a galaxy map is on screen and

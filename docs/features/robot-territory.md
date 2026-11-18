@@ -31,17 +31,63 @@ Plan: `peppy-jumping-pinwheel`. Builds on robots v1
 
 ## How territory works
 
-Each sector has a control **pressure** from −100 to 100, recomputed every robot
-control tick (`src/core/territory/sectorControl.ts`):
+Robots are one side on the control meter for EVERY side
+(`src/core/territory/sectorControl.ts` `stepMultiControl`), stepped every
+robot control tick. Each side present pushes its share: each ship +15, each
+structure +6, each robot +12, a living nexus +80; sides that oppose it push
+it down. Robots oppose everyone; a player opposes every other side
+(`controlOpposes` in `livingworld/factionPresence.ts`).
 
-- each robot present: +12; a living nexus: +80;
-- each player structure: −6; each player present: −15.
+The Ancients (the alien-gate owners) don't count for capture: their gates
+and ships push no share, so they never claim a sector, never show as the
+challenger and never push another side down. They are left out of the
+presence tally at one place (`countsForControl` in `fillSectorPresence`); a
+saved meter that still holds an Ancients share or hold drops it on restore.
 
-Pressure moves toward that target at 1.5 per second, so a squad passing
-through does not flip a sector. Robots **claim** a sector at 60 and only
-**release** it at 20 (hysteresis), so a contested frontier doesn't flicker on
-the map. A sector a robot squad lingers in for a while turns violet and fades
-back after it leaves; the nexus sector stays held.
+Shares move at 1.5 per second, so a squad passing through does not flip a
+sector. A side **claims** a sector at 60 and only **loses** it at 20
+(hysteresis), so a contested frontier doesn't flicker on the map. An empty
+sector keeps its holder: a sector the robots took stays robot-held after they
+leave, until someone comes to contest it. Sol starts holding the core and
+each power its region heart; the rest start neutral.
+
+**Locks — frozen until destroyed.** A side that holds a sector can lock it
+down: while the holder has a live lock there, nobody can flip it, however
+many ships they bring. The shares still move, so the map still shows the
+siege (challenger, trend, Contested). Kill the lock and the normal tug of war
+resumes on the next control tick: if the holder's share has already fallen to
+20 or below, it loses the sector at once. A lock only counts for the side
+holding the sector. The robots' living nexus IS the robots' lock: a
+robot-held nexus sector can't be taken until the nexus dies
+(`stepMultiControl(…, lockedBy)`, fed by `RobotTerritory.locksFor`).
+
+**The Territory Lock (players).** A player side locks a sector it holds by
+building a **Territory Lock** (`territory_lock`, Core build category). It is
+built like any structure: placed as a blueprint, wired to the grid through a
+Connector, and built by draining `TERRITORY_LOCK_COST` (20,000) minerals, the
+priciest normal structure. The server refuses the placement, with a notice,
+unless the builder's side holds the sector on the control meter right now, and
+allows one lock per sector (a blueprint still building counts). Only a BUILT
+lock locks; it has normal hull (4,000) and dies like any structure, which lifts
+the lock. There is no separate tracker: the room's `liveCounts` reports the
+sides with a built lock (`lockSides`) and `locksFor` adds them. A lock whose
+side has lost the sector does nothing; if that side retakes the sector, the
+standing lock locks it again. It looks like a broadcast spire: a spine across
+its width, a lit lantern tower in the middle and three pairs of antenna fins
+either side (`render/pixi/territoryLockLook.ts`). Owner colour is not applied
+yet (no structure takes owner colour).
+
+**Power hearts start locked.** Each region power's heart (`regionHeart`, the
+sector its static control seeds it with; `core/galaxy/control.ts`) starts
+locked for that power: the power's own base there (its heart garrison, else
+the first base it owns) builds a real Territory Lock as part of its generated
+layout (`BaseProfile.territoryLock`, set by `galaxyBasePlan`). It is the same
+structure as a player's, so destroying it lifts the lock. NPC bases are not
+persisted, so a destroyed heart lock comes back when the server restarts. The
+Traders have no heart and get none. A power's heart base is always the
+power's, never the Traders' (`heartOwner`), so every heart has a base to
+carry the lock: the Crimson Expanse heart (andromeda-rim), held alone by a big
+trade-hub stronghold, is Crimson's hub and carries Crimson's lock.
 
 ## Internals
 
@@ -50,14 +96,30 @@ back after it leaves; the nexus sector stays held.
   plugs into the robot director through hooks: `respawnAnchor` (reinforcements
   at the nexus — the robots-only exception to edge ingress), `onTick`, and
   `sectorOwner` (handed to the drone director, which publishes
-  `/galaxy/snapshot`, so robot-held sectors get `owner: { factionId: 'robots' }`).
+  `/galaxy/snapshot`, so every sector reports its holding side as `owner`).
 - The galaxy map colours `robots` violet and the tooltip reads "Robot Dominion".
-- Not persisted: on restart the nexus is placed fresh and control starts at 0.
+- Not persisted: on restart the nexus is placed fresh and control restarts
+  from the static controllers.
 
 ## Tests
 
-- `src/core/territory/sectorControl.test.ts` — targets, bounded rate, claim /
-  hold-through-a-dip / release, contested.
+- `src/core/territory/sectorControl.multi.test.ts` — targets, bounded rate,
+  claim / hold-through-a-dip / release, contested; a locked holder
+  survives any siege and is released once the lock goes.
+- `src/server/livingworld/RobotTerritory.control.test.ts` — seeding, any side
+  claims, empty sectors keep their holder, who opposes whom; a live nexus
+  locks a robot sector against a big fleet until it dies; a built Territory
+  Lock (`lockSides`) does the same for a player side, a non-holder's does not.
+- `src/server/structures/territoryLockRules.test.ts` — Territory Lock placement
+  rules (hold the sector, one per sector) and the catalogue cost.
+- `tests/integration/sectorRoom/territoryLock.test.ts` — a real room: refused
+  when not held, a second refused, the cost drains, a built lock holds against
+  30 robots and the sector falls once it is destroyed.
+- `tests/integration/sectorRoom/heartLock.test.ts` — a real heart room: the
+  garrison's lock is built and the power's, the heart holds against a robot
+  horde until it is destroyed; a held non-heart sector has none and falls.
+- `src/core/bases/galaxyBases.test.ts` — every heart the power owns a base in
+  grows exactly one lock, owned by the power; no other sector grows one.
 - `tests/integration/sectorRoom/robotTerritory.test.ts` — real rooms: the nexus
   spawns; a killed robot reinforces at the nexus; a destroyed nexus drops cores
   and returns; the nexus sector is claimed.
@@ -165,4 +227,4 @@ Tests: `robotTerritory.test.ts` ("mines a rock, from its finite ore", "never bur
 
 Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](../architecture/server-thresholds.md). Dates, plan names and "was" notes below are history.
 
-- **Robot territory + nexus (plan peppy-jumping-pinwheel P3a)**: `RobotTerritory` (`livingworld/`) owns the single robot nexus (`rbot-nexus`, kind `robot-nexus`, shedImmune, stationary, pulse-orb weapon, rich loot) and per-sector control (`core/territory/sectorControl.ts`: pressure −100..100, claim 60 / release 20, 1.5/s). **Rules:** (1) it hooks into the ROBOT director only — `respawnAnchor` is the robots-only exception to entry-only ingress (reinforcements spawn AT a living nexus); never give the drone director an anchor; (2) robot-held owners reach `/galaxy/snapshot` through the DRONE director's `sectorOwner` hook (still the only snapshot provider); (3) director hooks attach after construction via `setHooks` (merge). Not persisted (fresh nexus + zero pressure on boot). Showcase room `nexus-showcase`. **P3c:** (4) a harvester raid is ONE `StorageService.tradeTransfer({take:{…, intoOwner: null}})` group per step (stolen cargo is ownerless, so a killed raider spills it); the owner warning is a throttled `trade_notice` (`raided`) + a `storage_raided` audit event; (5) a CHARGE weapon (`chargeTicks`) is gated in `AiFireResolver.resolve` — the trigger writes each bearing mount's start tick into the one per-mount store (`WeaponMountTicker.charges`) and `releaseCharges(tick)` (called after `runAiTick`) fires the mounts that bore at the pull, down their barrels from the current pose; eviction clears the store (`clearDrone`). `drones[].chargingMask` + `chargeStartTick` (emit-when-non-zero) are the #16 carrier for the telegraph. **W6:** (6) a harvester MINES only through `SectorRoom.mineAsteroid`: the Miner's finite pool (`drawAsteroidResources`) and the shared yield (`asteroidYield`), sized to the hold's free weight, one hold commit; never give an extractor its own ore maths. Locks: `sectorControl.test.ts`, `tests/integration/sectorRoom/robotTerritory.test.ts`. 🔴 netgate (the nexus on the swarm wire + respawn path). Story: [docs/features/robot-territory.md](robot-territory.md).
+- **Robot territory + nexus (plan peppy-jumping-pinwheel P3a)**: `RobotTerritory` (`livingworld/`) owns the single robot nexus (`rbot-nexus`, kind `robot-nexus`, shedImmune, stationary, pulse-orb weapon, rich loot) and per-sector control for every side (`core/territory/sectorControl.ts` `stepMultiControl`: shares 0..100, claim 60 / release 20, 1.5/s; seeded from `sectorController`)). **Rules:** (1) it hooks into the ROBOT director only — `respawnAnchor` is the robots-only exception to entry-only ingress (reinforcements spawn AT a living nexus); never give the drone director an anchor; (2) robot-held owners reach `/galaxy/snapshot` through the DRONE director's `sectorOwner` hook (still the only snapshot provider); (3) director hooks attach after construction via `setHooks` (merge). Not persisted (fresh nexus + static controllers on boot). Showcase room `nexus-showcase`. **P3c:** (4) a harvester raid is ONE `StorageService.tradeTransfer({take:{…, intoOwner: null}})` group per step (stolen cargo is ownerless, so a killed raider spills it); the owner warning is a throttled `trade_notice` (`raided`) + a `storage_raided` audit event; (5) a CHARGE weapon (`chargeTicks`) is gated in `AiFireResolver.resolve` — the trigger writes each bearing mount's start tick into the one per-mount store (`WeaponMountTicker.charges`) and `releaseCharges(tick)` (called after `runAiTick`) fires the mounts that bore at the pull, down their barrels from the current pose; eviction clears the store (`clearDrone`). `drones[].chargingMask` + `chargeStartTick` (emit-when-non-zero) are the #16 carrier for the telegraph. **W6:** (6) a harvester MINES only through `SectorRoom.mineAsteroid`: the Miner's finite pool (`drawAsteroidResources`) and the shared yield (`asteroidYield`), sized to the hold's free weight, one hold commit; never give an extractor its own ore maths. Locks: `sectorControl.multi.test.ts`, `RobotTerritory.control.test.ts`, `tests/integration/sectorRoom/robotTerritory.test.ts`. 🔴 netgate (the nexus on the swarm wire + respawn path). Story: [docs/features/robot-territory.md](robot-territory.md).

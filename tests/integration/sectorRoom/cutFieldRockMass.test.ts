@@ -37,7 +37,7 @@ function approach(t: Target, gap: number, along: number): { x: number; y: number
 }
 
 async function boot(shipKind: string, at: { x: number; y: number; angle: number }) {
-  harness = await bootSectorTestServer({ sectorKey: null, testMode: true, pilotCapitals: true, cutField: { seed: 'look' }, asteroidConfig: [], droneCount: 0 });
+  harness = await bootSectorTestServer({ sectorKey: null, testMode: true, cutField: { seed: 'look' }, asteroidConfig: [], droneCount: 0 });
   const pid = randomUUID();
   const client = await harness.connectActive(pid, { shipKind, initialHull: 1_000_000, initialAngle: at.angle, spawnX: Math.round(at.x), spawnY: Math.round(at.y) });
   const int = (harness.getServerRoom() as unknown as SectorRoom)._internals;

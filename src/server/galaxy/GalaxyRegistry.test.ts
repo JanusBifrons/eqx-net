@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { resolveSectorConfig, listGalaxySectors } from './GalaxyRegistry.js';
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
-import { HOME_POCKET_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+import { HOME_POCKET_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
+import { sectorCutField, sectorSites } from '../../core/galaxy/sectorSites.js';
+import { SLICED } from '../../core/terrain/fieldLayout.js';
 
 describe('GalaxyRegistry', () => {
   it('resolves sol-prime to dense asteroids and ZERO boot-seeded drones', () => {
@@ -32,6 +34,27 @@ describe('GalaxyRegistry', () => {
     for (const sec of GALAXY_SECTORS) {
       expect(() => resolveSectorConfig(sec.key)).not.toThrow();
     }
+  });
+
+  it('macro terrain F4: an asteroid-marked sector gets its one cut field and no belt rings; others keep the rings', () => {
+    for (const sec of GALAXY_SECTORS) {
+      const cfg = resolveSectorConfig(sec.key);
+      const field = sectorCutField(sec.key, SOLAR_SECTORS);
+      expect(cfg.cutField, sec.key).toEqual(field ?? undefined);
+      const belts = SOLAR_SECTORS ? sectorSites(sec.key).filter((s) => s.kind === 'belt') : [];
+      const ringRocks = cfg.asteroidConfig.filter((a) => belts.some((b) => a.id.startsWith(`${b.id}-`)));
+      if (field) expect(ringRocks, `${sec.key}: the field replaces the belt rings`).toEqual([]);
+      else if (belts.length > 0) expect(ringRocks.length, `${sec.key}: belt rings`).toBeGreaterThan(0);
+    }
+    expect(GALAXY_SECTORS.some((s) => resolveSectorConfig(s.key).cutField)).toBe(SOLAR_SECTORS);
+  });
+
+  it('macro terrain F4: the home starter rocks stay, and sit in the field’s open core', () => {
+    const cfg = resolveSectorConfig('sol-prime');
+    expect(cfg.cutField).toBeDefined();
+    expect(cfg.asteroidConfig.length).toBeGreaterThan(0);
+    const core = SLICED.radius * SLICED.holeShare;
+    for (const a of cfg.asteroidConfig) expect(Math.hypot(a.x, a.y) + a.radius, a.id).toBeLessThan(core);
   });
 
   it('listGalaxySectors returns the GALAXY_SECTORS array', () => {

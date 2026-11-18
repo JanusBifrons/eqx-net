@@ -32,7 +32,7 @@ async function joinAndOpenBuild(
 ): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
   const ctx = await browser.newContext(
     opts.mobile
-      ? { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }
+      ? { viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true }
       : { viewport: { width: 1280, height: 800 } },
   );
   const page = await ctx.newPage();
@@ -474,12 +474,12 @@ test('(L) TOUCH: picking a kind centres the ghost on select, ready to confirm (P
     );
 
     // The projected ghost is anchored at (near) the viewport centre — NOT off
-    // under the dial. Viewport is 390×844 (see joinAndOpenBuild mobile context).
+    // under the dial. Viewport is 844×390 (see joinAndOpenBuild mobile context).
     const sx = parseFloat((await surfaceAttr(page, 'data-placement-screen-x')) ?? 'NaN');
     const sy = parseFloat((await surfaceAttr(page, 'data-placement-screen-y')) ?? 'NaN');
     expect(Number.isFinite(sx) && Number.isFinite(sy), 'ghost projected to screen').toBe(true);
-    expect(Math.abs(sx - 195), `ghost screen-x ${sx} should be near centre 195`).toBeLessThan(80);
-    expect(Math.abs(sy - 422), `ghost screen-y ${sy} should be near centre 422`).toBeLessThan(140);
+    expect(Math.abs(sx - 422), `ghost screen-x ${sx} should be near centre 422`).toBeLessThan(140);
+    expect(Math.abs(sy - 195), `ghost screen-y ${sy} should be near centre 195`).toBeLessThan(80);
 
     // Confirm is immediately available at centre (no tap-to-position required).
     await expect(page.locator('[data-testid="placement-confirm"]')).toBeVisible({ timeout: 5_000 });

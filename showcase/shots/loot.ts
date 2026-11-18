@@ -41,7 +41,6 @@ export const loot: Shot = {
   target: { room: 'showcase-levelup', params: { shipKind: 'interceptor', ...SURVIVE } },
   hud: 'full',
   durationMs: 20_000,
-  camera: [{ atMs: 0, smoothMs: 250, shot: { kind: 'track', target: 'local', zoom: 1.4, offsetY: 60 } }],
   async run(ctx) {
     const { page } = ctx;
     await page.waitForFunction(

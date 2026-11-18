@@ -27,7 +27,7 @@ describe('SectorRoom integration — a player turret fires all its barrels', () 
   let harness: SectorTestHarness;
   beforeEach(async () => {
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, pilotCapitals: true, asteroidConfig: [],
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
       dronePoses: [{ kind: 'battleship', x: RANGE, y: 0, angle: 0 }],
     });
   }, 15_000);

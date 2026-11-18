@@ -66,7 +66,7 @@ import { EscalatingWavePattern } from './director/WavePattern.js';
 import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
 import { IncomingRegistry } from './IncomingRegistry.js';
 import type { WarpDisposition, WarpWarningEvent } from '../../shared-types/messages.js';
-import { DIRECTOR_STATE_VERSION, type DirectorPersistence } from './DirectorPersistence.js';
+import { DIRECTOR_STATE_VERSION, type DirectorPersistence, type PersistedSectorControl } from './DirectorPersistence.js';
 import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 // Re-export the room type so existing imports from this module keep working.
@@ -255,9 +255,14 @@ export interface LivingWorldHooks {
   respawnAnchor?: () => { sectorKey: string; x: number; y: number } | null;
   /** P3 — called at the tail of every control tick (robot territory). */
   onTick?: (nowMs: number) => void;
-  /** P3 — a sector's live owner override for `/galaxy/snapshot` (robot-held
-   *  territory), or null ⇒ the sector's static region. */
-  sectorOwner?: (sectorKey: string) => SectorOwner | null;
+  /** Live owner from the control meter (`RobotTerritory`); null = neutral, undefined ⇒ static controller. */
+  sectorOwner?: (sectorKey: string) => SectorOwner | null | undefined;
+  /** Step 1c — control entries saved WITH this director's state row, on every persist. */
+  saveSectorControl?: () => PersistedSectorControl[];
+  /** Step 1c — hand restored control entries back (`RobotTerritory.restoreControl`).
+   *  Called from `start()` when the hydrated row carries them, so the hook must
+   *  be set at construction (`options.hooks`), not via a later `setHooks`. */
+  restoreSectorControl?: (entries: readonly PersistedSectorControl[]) => void;
   /** P4a — the name of a named elite roaming a sector (galaxy snapshot), or null. */
   sectorElite?: (sectorKey: string) => string | null;
   /** W2a — a flagship fleet in a sector (galaxy snapshot), or null. */
@@ -659,7 +664,8 @@ export class LivingWorldDirector {
       waveCount: p.waveCount.map(([k, v]) => [canonicalPlayerId(k), v] as [string, number]),
       lastDispatchAtMs: p.lastDispatchAtMs.map(([k, v]) => [canonicalPlayerId(k), v] as [string, number]),
     });
-    serverLogEvent('director_state_restored', { squads: p.squads.length });
+    if (p.sectorControl !== undefined) this.hooks.restoreSectorControl?.(p.sectorControl);
+    serverLogEvent('director_state_restored', { squads: p.squads.length, sectorControl: p.sectorControl?.length ?? 0 });
   }
 
   /**
@@ -671,12 +677,14 @@ export class LivingWorldDirector {
     const dp = this.directorPersistence;
     if (!dp) return;
     const wave = this.waveDirector.serialize();
+    const control = this.hooks.saveSectorControl?.();
     dp.persist({
       version: DIRECTOR_STATE_VERSION,
       savedAtMs: this.nowMs(),
       squads: this.squadPool.serialize(),
       waveCount: wave.waveCount,
       lastDispatchAtMs: wave.lastDispatchAtMs,
+      ...(control !== undefined ? { sectorControl: control } : {}),
     });
   }
 
@@ -778,15 +786,15 @@ export class LivingWorldDirector {
       );
       const neutrals = Math.max(0, totalDrones - enemies);
       const controller = sectorController(key);
+      const liveOwner = this.hooks.sectorOwner?.(key);
       out.push({
         key,
         players: counts.players,
         enemies,
         neutrals,
         structures: counts.structures,
-        // P3 — a robot-held sector shows the robots as its owner. Factions F2:
-        // otherwise the controlling power, or null on neutral ground.
-        owner: this.hooks.sectorOwner?.(key) ?? (controller ? { factionId: controller, contested: false } : null),
+        // The control meter's holder (null = neutral); with no meter, the static controller.
+        owner: liveOwner !== undefined ? liveOwner : (controller ? { factionId: controller, contested: false } : null),
         // Equinox Phase 9 (item 5) — recent-combat tally (null when quiet); the
         // room owns the sliding window, the director just forwards it.
         recentCombat: room.recentCombat?.() ?? null,

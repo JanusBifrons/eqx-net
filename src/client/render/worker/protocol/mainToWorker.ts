@@ -10,6 +10,7 @@ import type { CameraCue } from '@core/contracts/cameraScript';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
 import type { SectorLiveState } from '../../../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../../../shared-types/galaxyPresence.js';
+import type { FactionLookWire } from '../../../../shared-types/factions.js';
 import type { RadarInsets, RadarPrefs } from '../../../../shared-types/settings/radar.js';
 
 /**
@@ -67,6 +68,9 @@ export interface BootMsg {
    * screen-centre on touch. Absent ⇒ desktop (ahead-of-ship + hover-follow).
    */
   isTouch?: boolean;
+  /** prefers-reduced-motion, read on the main thread (no matchMedia in a
+   *  worker): the galaxy map then skips its tweens, pulses and drift. */
+  reducedMotion?: boolean;
 }
 
 /**
@@ -113,6 +117,8 @@ export interface SwarmDeltaMsg {
 /** GalaxyMapLayer overlay state — driven by Zustand useEffects in `App.tsx`. */
 export interface SetVisibleMsg { type: 'SET_VISIBLE'; visible: boolean }
 export interface SetCurrentSectorMsg { type: 'SET_CURRENT_SECTOR'; sectorKey: string | null }
+/** Galaxy map focus view: glide into the selected sector, or back out (null). */
+export interface SetGalaxyFocusMsg { type: 'SET_GALAXY_FOCUS'; sectorKey: string | null }
 export interface SetTransitDockedMsg { type: 'SET_TRANSIT_DOCKED'; docked: boolean }
 /**
  * Switch the worker-hosted GalaxyMapLayer between the in-game additive
@@ -137,6 +143,13 @@ export interface SetGalaxyStatsMsg { type: 'SET_GALAXY_STATS'; stats: SectorLive
  * thread (roster + GET /galaxy/presence) and pushed here.
  */
 export interface SetPlayerPresenceMsg { type: 'SET_PLAYER_PRESENCE'; presence: SectorPresence[] }
+
+/**
+ * Every claimed faction ship look (the main thread's registry, posted when its
+ * version changes). The worker's own copy of `shared-types/factions` applies
+ * it, so `teamColorOf` / `teamSigilOf` / `teamEdgeOf` agree on both threads.
+ */
+export interface SetFactionLooksMsg { type: 'SET_FACTION_LOOKS'; looks: FactionLookWire[] }
 
 /**
  * Canvas resize. Width/height in LOGICAL (CSS) px; `dpr` carries the
@@ -408,10 +421,12 @@ export type MainToWorkerMsg =
   | MirrorUpdateMsg
   | SetVisibleMsg
   | SetCurrentSectorMsg
+  | SetGalaxyFocusMsg
   | SetTransitDockedMsg
   | SetOverlayModeMsg
   | SetGalaxyStatsMsg
   | SetPlayerPresenceMsg
+  | SetFactionLooksMsg
   | ResizeMsg
   | SetTickerFpsMsg
   | PerfProbeMsg

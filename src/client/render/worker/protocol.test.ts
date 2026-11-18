@@ -135,6 +135,7 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_VISIBLE', msg: { type: 'SET_VISIBLE', visible: true } },
       { name: 'SET_CURRENT_SECTOR', msg: { type: 'SET_CURRENT_SECTOR', sectorKey: 'sol-prime' } },
       { name: 'SET_CURRENT_SECTOR null', msg: { type: 'SET_CURRENT_SECTOR', sectorKey: null } },
+      { name: 'SET_GALAXY_FOCUS', msg: { type: 'SET_GALAXY_FOCUS', sectorKey: 'sol-prime' } },
       { name: 'SET_TRANSIT_DOCKED', msg: { type: 'SET_TRANSIT_DOCKED', docked: true } },
       { name: 'SET_OVERLAY_MODE overlay', msg: { type: 'SET_OVERLAY_MODE', mode: 'overlay' } },
       { name: 'SET_OVERLAY_MODE selector', msg: { type: 'SET_OVERLAY_MODE', mode: 'selector' } },
@@ -157,6 +158,10 @@ describe('renderer-worker protocol', () => {
             { key: 'greenfall', ships: 0, structures: 0 },
           ],
         },
+      },
+      {
+        name: 'SET_FACTION_LOOKS',
+        msg: { type: 'SET_FACTION_LOOKS', looks: [{ factionId: 'player-a', colorSlot: 3, sigil: 0x2a }] },
       },
       { name: 'RESIZE', msg: { type: 'RESIZE', width: 1024, height: 768, dpr: 1.5 } },
       { name: 'SET_TICKER_FPS number', msg: { type: 'SET_TICKER_FPS', fps: 30 } },
@@ -327,9 +332,11 @@ describe('renderer-worker protocol', () => {
           case 'MIRROR_UPDATE':
           case 'SET_VISIBLE':
           case 'SET_CURRENT_SECTOR':
+          case 'SET_GALAXY_FOCUS':
           case 'SET_TRANSIT_DOCKED':
           case 'SET_OVERLAY_MODE':
           case 'SET_GALAXY_STATS':
+          case 'SET_FACTION_LOOKS':
           case 'RESIZE':
           case 'SET_TICKER_FPS':
           case 'PERF_PROBE':

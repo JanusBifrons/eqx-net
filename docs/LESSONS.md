@@ -3160,3 +3160,28 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** in the barge mining test, heavy rock pieces under a tractor beam crept ~10 u a minute and never reached the hull. The beam's pull (inverse-square, not mass-scaled) kept a 2,000-mass piece far below its settle speed, so `World.settleStep` put it to sleep every 30 steps, and sleep zeroes the velocity the beam had built up; 10× rock drag ate the rest.
 - **Rule:** a per-body rule that stops bodies (settle, sleep, clamp) must exempt bodies another force is deliberately moving, and drag tuned for loose debris must not apply to a body being hauled. `World.settleStep` skips a tractor-held body and caps its damping at `BEAMED_LINEAR_DAMPING`. Lock: `World.sleepSettle.test.ts` (tow keeps its speed; beamed piece has plain drag), `tests/integration/sectorRoom/bargeMiningTake.test.ts`.
+
+## 2026-11-17 — an installed iPhone web app has its own cookie jar
+
+- **Finding (design):** behind a cookie gate, a page that works in Safari would open to "forbidden" once added to the home screen: the installed app does not share Safari's cookies, and the browser fetches the manifest without credentials by default.
+- **Rule:** behind a gate, the manifest's `start_url` carries the key and the manifest link uses credentials (VitePWA `useCredentials`). Guide: [phone-link](ops/phone-link.md).
+
+## 2026-11-17 — an installed app picks up a manifest orientation change late
+
+- **Finding (design):** switching the manifest to `orientation: 'landscape'` does not lock an already-installed Android app at once: Chrome refreshes an installed app's manifest lazily (it can take days), and iOS ignores manifest orientation entirely. An upright-phone screen is still needed for the iPhone app and the browser.
+- **Rule:** never rely on the manifest alone to keep a phone sideways; the in-page turn-sideways screen covers every case, and a manifest change is verified on a fresh install. Guide: [mobile-layout](features/mobile-layout.md#orientation-policy).
+
+## 2026-11-17 — a cut field's keep-out test must use the rock's final outline
+
+- **Finding (bug):** galaxy field clearings dropped only pieces whose pre-warp centre was inside and that were smaller than the clearing. Large pieces and the field warp (up to ~1.1 km) reached across, so belt warps in three sectors dropped ships inside rock. One test checked one sector, so it missed them.
+- **Rule:** a keep-out area in a generated field is tested on the rock's final, warped outline (or a pre-warp reach padded by `cutFieldPad()`), and its test covers every seed that ships, not a sample. Guide: [macro-terrain](architecture/macro-terrain.md#galaxy-sectors-f4).
+
+## 2026-11-17 — a galaxy showcase shot's retakes film the earlier takes' ships
+
+- **Finding:** a showcase shot targeting a real galaxy sector keeps one server for every take. Each take's player disconnects at the end and its ship lingers, and the next take's player lands at the same home-pocket spot, so take 3 filmed three battleships side by side. A galaxy join also lands in Command view, so a course tap before Fly (and picking the ship from its menu) steers nothing.
+- **Rule:** film a galaxy-sector shot that spawns a ship with `EQX_SHOWCASE_TAKES=1` (a restart keeps the DB, so it keeps the ships), and have the shot tap Fly and pick the ship the way a player does.
+
+## 2026-11-17 — a backing inside a faded element fades with it
+
+- **Finding:** the resting touch stick fades to 40 % opacity, and a dark wash added to its own background faded with it, so the ring stayed invisible over bright asteroid rock however dark the wash was.
+- **Rule:** a readability backing goes on its own element beside the faded one (`FloatingStick`'s `-backing` layer moves with the ring but keeps full opacity); HUD panels use `HUD.color.panel` (0.72) so they read over rock.

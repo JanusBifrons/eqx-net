@@ -93,7 +93,7 @@ test.describe('galaxy-map overlay (Map B)', () => {
 
   test('mobile: MAP and weapon-slot actions both live inside the consolidated dial', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
-    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 375, height: 667 } });
+    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 667, height: 375 } });
     const page = await ctx.newPage();
     await bootGame(page);
 

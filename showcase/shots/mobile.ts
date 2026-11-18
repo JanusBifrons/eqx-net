@@ -11,7 +11,7 @@ export const mobile: Shot = {
   docs: ['mobile-layout', 'mobile-perf-investigation'],
   reel: true,
   server: 'lean',
-  viewport: 'phone',
+  viewport: 'phone-landscape',
   target: { room: 'feel-test', params: { shipKind: 'fighter', ...SURVIVE } },
   hud: 'clean',
   durationMs: 10_000,

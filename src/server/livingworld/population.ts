@@ -10,7 +10,8 @@
  * The `LivingWorldDirector` composes these; it owns the timers, bus
  * subscriptions and room references. This module owns only the decisions.
  */
-import { getSector, getNeighbours, getEntrySectors } from '../../core/galaxy/galaxy.js';
+import { getNeighbours, getEntrySectors } from '../../core/galaxy/galaxy.js';
+import { gateFirstHop, gateHops } from '../../core/galaxy/gateHops.js';
 import { clampToSectorBounds, HOME_POCKET_HALF_EXTENT, SECTOR_SPACE_SCALE, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import { sectorSites, type SectorSite } from '../../core/galaxy/sectorSites.js';
 
@@ -150,32 +151,7 @@ export function computeDesiredDistribution(input: DistributionInput): Map<string
  * order, so the first shortest path found is stable.
  */
 export function nextHopToward(from: string, goal: string): string | null {
-  if (from === goal) return null;
-  if (!getSector(from) || !getSector(goal)) return null;
-
-  const prev = new Map<string, string>();
-  const visited = new Set<string>([from]);
-  const queue: string[] = [from];
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    if (cur === goal) break;
-    for (const n of getNeighbours(cur)) {
-      if (visited.has(n.key)) continue;
-      visited.add(n.key);
-      prev.set(n.key, cur);
-      queue.push(n.key);
-    }
-  }
-  if (!prev.has(goal)) return null;
-
-  // Walk predecessors back until the node whose parent is `from`.
-  let step = goal;
-  while (prev.get(step) !== from) {
-    const p = prev.get(step);
-    if (p === undefined) return null;
-    step = p;
-  }
-  return step;
+  return gateFirstHop(from, goal);
 }
 
 /**
@@ -185,25 +161,7 @@ export function nextHopToward(from: string, goal: string): string | null {
  * (the "review the pools, direct the nearest roaming groups" directive).
  */
 export function hopDistance(from: string, goal: string): number {
-  if (from === goal) return 0;
-  if (!getSector(from) || !getSector(goal)) return Infinity;
-  const visited = new Set<string>([from]);
-  let frontier: string[] = [from];
-  let depth = 0;
-  while (frontier.length > 0) {
-    depth++;
-    const next: string[] = [];
-    for (const cur of frontier) {
-      for (const n of getNeighbours(cur)) {
-        if (n.key === goal) return depth;
-        if (visited.has(n.key)) continue;
-        visited.add(n.key);
-        next.push(n.key);
-      }
-    }
-    frontier = next;
-  }
-  return Infinity;
+  return gateHops(from, goal);
 }
 
 /** A squad's wave assignment + membership — the fields the galaxy-map enemy
@@ -321,7 +279,7 @@ export function planMigrations(input: MigrationPlanInput): Migration[] {
       .filter((k) => k !== target && surplusOf(k) >= 1 && (pool.get(k)?.length ?? 0) > 0)
       .sort(
         (a, b) =>
-          hopCount(a, target) - hopCount(b, target) ||
+          gateHops(a, target) - gateHops(b, target) ||
           surplusOf(b) - surplusOf(a) ||
           order.get(a)! - order.get(b)!,
       );
@@ -336,29 +294,6 @@ export function planMigrations(input: MigrationPlanInput): Migration[] {
     out.push({ botId, from, to: hop });
   }
   return out;
-}
-
-/** BFS hop count between two sectors; `Infinity` if unreachable. Cheap —
- *  the galaxy is 7 nodes. Internal to `planMigrations`'s donor ranking. */
-function hopCount(from: string, goal: string): number {
-  if (from === goal) return 0;
-  const visited = new Set<string>([from]);
-  let frontier: string[] = [from];
-  let dist = 0;
-  while (frontier.length > 0) {
-    dist++;
-    const next: string[] = [];
-    for (const cur of frontier) {
-      for (const n of getNeighbours(cur)) {
-        if (n.key === goal) return dist;
-        if (visited.has(n.key)) continue;
-        visited.add(n.key);
-        next.push(n.key);
-      }
-    }
-    frontier = next;
-  }
-  return Infinity;
 }
 
 /** Uniform-random sector for a "from outside known space" respawn. */
