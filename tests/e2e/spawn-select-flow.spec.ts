@@ -35,7 +35,7 @@ test('post-auth direct room link → game surface mounts', async ({ page }) => {
 // path the prior `fixme` comment was waiting for (landed with the
 // single-canvas refactor). It mirrors a real selector-layer tap on the
 // shared canvas (incl. the 200 ms tap-shield) without hex-pixel math,
-// then confirms the ShipPickerModal → Spawn → game-surface round-trip.
+// then confirms the Hangar → Launch → game-surface round-trip.
 test('post-auth spawn-select → pick galaxy sector → game surface mounts', async ({
   page,
 }) => {
@@ -58,14 +58,14 @@ test('post-auth spawn-select → pick galaxy sector → game surface mounts', as
   });
 
   // Equinox Phase 7 (Item 4) — a sector pick now opens the interactive popover;
-  // "Join the fight" opens the ShipPickerModal (no longer one-click).
+  // "Join the fight" opens the Hangar (no longer one-click).
   await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
   await page.getByTestId('sector-drawer-join').click();
   // The picker ("Spawn in {sector}") accepts the default ship (last choice, or
   // Fighter on fresh state) via Spawn — that fires the real
   // `onSpawnNewShip` -> `handleSelectRoom` round-trip.
-  await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 5_000 });
-  await page.getByTestId('ship-picker-spawn').click();
+  await expect(page.getByTestId('hangar-window')).toBeVisible({ timeout: 5_000 });
+  await page.getByTestId('hangar-launch').click();
 
   await expect(page.locator('[data-testid="hud-sector"]')).toBeVisible({ timeout: 20_000 });
   expect(errors, errors.join('\n')).toEqual([]);
