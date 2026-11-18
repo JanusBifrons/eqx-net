@@ -40,6 +40,7 @@ describe('tractor field parity (server lease ↔ client predWorld)', () => {
             return true;
           },
           lineBodies: () => 0,
+          lineBlocker: () => '',
           inCrackHold: () => false,
           wireRef: (id) => (id === 'rock' ? 42 : id),
           onShipTractored: () => {},
@@ -94,7 +95,7 @@ describe('tractor field parity (server lease ↔ client predWorld)', () => {
             if (id === 'rock') { out.x = rock.x; out.y = rock.y; out.angle = 0; out.kindId = null; out.radius = rock.radius; return true; }
             return false;
           },
-          lineBodies: () => 0, inCrackHold: () => false, wireRef: (id) => (id === 'rock' ? 42 : id),
+          lineBodies: () => 0, lineBlocker: () => '', inCrackHold: () => false, wireRef: (id) => (id === 'rock' ? 42 : id),
           onShipTractored: () => {}, isTerrain: () => true,
         },
       });

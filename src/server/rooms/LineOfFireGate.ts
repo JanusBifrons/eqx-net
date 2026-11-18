@@ -164,6 +164,40 @@ export class LineOfFireGate<R extends LineOfFireBody> {
     return n;
   }
 
+  /**
+   * The tractor beam's line of sight (owner 2026-11-18): the id of the first
+   * body the thin ray (fx, fy) → (tx, ty) meets before `targetId`'s own
+   * surface, or '' when the line to the target is clear. `skipId` (the
+   * emitter) and bodies `blocks` rejects are passed through. Same per-tick
+   * grid and narrow phase (`rayHit`) as `blocked`: one grid query per call.
+   * Allocation-free (#14): pass a pre-bound predicate.
+   */
+  firstOnLine(
+    fx: number, fy: number, tx: number, ty: number,
+    skipId: string, targetId: string, blocks: (rec: R) => boolean,
+  ): string {
+    const d = this.deps;
+    const sx = tx - fx, sy = ty - fy;
+    const len = Math.sqrt(sx * sx + sy * sy);
+    if (!(len > 0)) return '';
+    const tick = d.tick();
+    const version = d.registry.version ?? -1;
+    if (tick !== this.builtTick || version !== this.builtVersion || version === -1) this.rebuild(tick, version);
+    const bp = this.bp;
+    const dx = sx / len, dy = sy / len;
+    bp.query(fx, fy, sx, sy, 0);
+    let best = len;
+    let bestId = '';
+    for (let k = 0; k < bp.outCount; k++) {
+      const i = bp.out[k]!;
+      const rec = bp.recs[i]!;
+      if (rec.id === skipId || (rec.id !== targetId && !blocks(rec))) continue;
+      const dist = d.rayHit(rec, fx, fy, dx, dy, best, bp.x[i]!, bp.y[i]!, bp.angle[i]!);
+      if (dist !== null && dist < best) { best = dist; bestId = rec.id; }
+    }
+    return bestId === targetId ? '' : bestId;
+  }
+
   private rebuild(tick: number, version: number): void {
     const d = this.deps;
     const bp = this.bp;

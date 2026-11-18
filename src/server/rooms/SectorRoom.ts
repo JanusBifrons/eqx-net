@@ -726,6 +726,9 @@ class LofShipBody {
   gen = 0;
 }
 type LofBody = SwarmEntityRecord | LofShipBody;
+/** A tractor beam's line of sight is blocked by any body but a loot pod
+ *  (pre-bound for `LineOfFireGate.firstOnLine`, #14). */
+const notLootPod = (rec: LofBody): boolean => !isLootPod(rec);
 /** RTS fleet warp: `handOffHulls` until slice S3 moves hulls. */
 const NO_HULLS_MOVED: readonly string[] = [];
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
@@ -1155,6 +1158,8 @@ export class SectorRoom extends Room<SectorState> {
   private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd), tractors: {
     tick: () => this.serverTick, poseOf: (id, out) => this.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
     lineBodies: (fx, fy, tx, ty, w, a, b, ids, cap) => this.lofGate().lineBodies(fx, fy, tx, ty, w, a, b, ids, cap),
+    // Line of sight: what a shot would hit first (loot pods pass, as for every beam).
+    lineBlocker: (fx, fy, tx, ty, e, t) => this.lofGate().firstOnLine(fx, fy, tx, ty, e, t, notLootPod),
     inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1), isWreckPiece: (id) => { const r = this.swarmRegistry.get(id); return r != null && isWreckPiece(r); },
     // Tractoring a ship is a hostile act, like a hit (weapon-mounts.md "Tractor beam"); terrain is neutral.
     onShipTractored: (e, t) => { this.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
