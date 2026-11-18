@@ -14,6 +14,10 @@ import { canAfford, spendEnergy, regenEnergyStep, BOOST_TICK_COST } from '@core/
 import { RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from '../renderTickPhase';
 import { logEvent, isFullDiagMode } from '../../debug/ClientLogger';
 import { getShipKind } from '@shared-types/shipKinds';
+import { resolveInstanceMounts } from '@shared-types/shipKinds/slots';
+import { helmStep, type HelmSpeed } from '@core/helm/helm';
+import { resolveHelmCourseMark } from '../../helm/helmCourseMark.js';
+import { useUIStore } from '../../state/store.js';
 
 /** Idle-input heartbeat (network-discipline P4). When the control state has
  *  not changed for this long, we re-send the latest state once anyway, so the
@@ -455,4 +459,102 @@ export function sendCapSentinel(
       }
     }
   }
+}
+
+// ── Helm orders + local mount aim (moved verbatim out of ColyseusClient) ──
+
+/** Helm orders: set the course point (game space). Only a ship that takes
+ *  helm orders (a capital) accepts one. */
+export function setHelmCourse(ctx: PredictionStepCtx, x: number, y: number): void {
+  if (!ctx.helmAvailable) return;
+  ctx.helmOrder.tx = x;
+  ctx.helmOrder.ty = y;
+  ctx.helmOrder.active = true;
+  ctx.helmCourseSeq++;
+  publishHelm(ctx);
+}
+
+/** Helm orders: stop, one third, two thirds or full. */
+export function setHelmSpeed(ctx: PredictionStepCtx, speed: HelmSpeed): void {
+  ctx.helmOrder.speed = speed;
+  publishHelm(ctx);
+}
+
+/** Cancel the course (WASD does this too). */
+export function clearHelm(ctx: PredictionStepCtx): void {
+  if (!ctx.helmOrder.active) return;
+  ctx.helmOrder.active = false;
+  ctx.helmOut.thrust = false; ctx.helmOut.turnLeft = false; ctx.helmOut.turnRight = false;
+  publishHelm(ctx);
+}
+
+function publishHelm(ctx: PredictionStepCtx): void {
+  useUIStore.getState().setHelmState(ctx.helmAvailable, ctx.helmOrder.active, ctx.helmOrder.speed);
+  syncHelmMark(ctx);
+}
+
+/** Helm move marker: show the course point only for the pilot's own
+ *  capital under an active order, never while spectating. Alloc-free. */
+export function syncHelmMark(ctx: PredictionStepCtx): void {
+  const spectating = useUIStore.getState().pilotMode === 'spectator';
+  const show = resolveHelmCourseMark(ctx.helmOrder, ctx.helmAvailable, spectating, ctx.helmCourseSeq, ctx.helmMark);
+  const next = show ? ctx.helmMark : null;
+  if (ctx.mirror.helmCourse !== next) ctx.mirror.helmCourse = next;
+}
+
+/** Helm availability follows the ship you fly (id compare; free when unchanged). */
+export function updateHelmAvailability(ctx: PredictionStepCtx): void {
+  const id = ctx.mirror.localPlayerId;
+  const kindId = id ? ctx.mirror.ships.get(id)?.kind ?? null : null;
+  if (kindId === ctx.helmKindId) return;
+  ctx.helmKindId = kindId;
+  ctx.helmAvailable = kindId !== null && getShipKind(kindId).sizeClass === 'capital';
+  if (!ctx.helmAvailable) ctx.helmOrder.active = false;
+  publishHelm(ctx);
+}
+
+/** One helm tick off the real-time predicted pose (same source the stick reads). */
+export function stepHelm(ctx: PredictionStepCtx): void {
+  const id = ctx.mirror.localPlayerId;
+  const s = id ? ctx.predWorld?.getShipState(id) ?? null : null;
+  if (s === null || ctx.helmKindId === null) return;
+  const p = ctx.helmPose;
+  p.x = s.x; p.y = s.y; p.angle = s.angle; p.vx = s.vx; p.vy = s.vy; p.angvel = s.angvel ?? 0;
+  helmStep(ctx.helmOrder, p, getShipKind(ctx.helmKindId), ctx.helmOut);
+  if (ctx.helmOut.arrived) clearHelm(ctx);
+}
+
+/**
+ * The local ship's predicted turret angles (#12): each mount slews toward
+ * its weapon group's lock (first LOCKED target, else the one being
+ * acquired, so the barrel pre-slews), or back to base when the group holds
+ * none — `fcTickMountAngles`, the client mount-angle path, mirroring the
+ * server's WeaponMountTicker (#15). Aims from the RENDERED (mirror) pose the
+ * beam is drawn from, never the lagging predicted pose (locked by
+ * ColyseusClient.liveBeamMountAimPose.test.ts).
+ *
+ * `mountAngles` is CATALOGUE-indexed everywhere it is read (the renderer
+ * beam direction + the turret sprites): the array is sized by the full
+ * per-instance mount list `[...kind.mounts, ...activated latent]` (WS-B3),
+ * the same index space the server ticker writes.
+ */
+export function tickLocalMountAim(ctx: PredictionStepCtx, dtSec: number): void {
+  const localId = ctx.mirror.localPlayerId;
+  if (!localId || !ctx.predWorld) return;
+  const ship = ctx.mirror.ships.get(localId);
+  if (!ship) return;
+  if (!ctx.predWorld.getShipState(localId)) return;
+  const catalogueMounts = resolveInstanceMounts(getShipKind(ship.kind ?? null), ship.activatedMounts);
+  if (catalogueMounts.length === 0) {
+    if (ship.mountAngles) ship.mountAngles = undefined;
+    return;
+  }
+  // number[] is fine — N is small (1–3) and the array survives many frames.
+  let angles = ship.mountAngles;
+  if (!angles || angles.length !== catalogueMounts.length) {
+    angles = new Array<number>(catalogueMounts.length).fill(0);
+    ship.mountAngles = angles;
+  }
+  ctx.fc.fcSyncKind(ship.kind ?? null);
+  ctx.fc.fcTickMountAngles(angles, catalogueMounts, ship.x, ship.y, ship.angle, dtSec);
 }
