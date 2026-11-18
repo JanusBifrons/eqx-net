@@ -217,6 +217,8 @@ export async function bootSectorTestServer(opts: {
   teleportFullCharge?: boolean;
   /** Drones never attack (the room option). */
   peacefulDrones?: boolean;
+  /** Deaths keep every stack (no coin flip): the room option. */
+  keepAllOnDeath?: boolean;
   /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
   capitalWrecks?: boolean;
   subcapWrecks?: boolean;
@@ -231,6 +233,8 @@ export async function bootSectorTestServer(opts: {
   tradeEnabled?: boolean;
   /** Economy v2 W5b — switch the ship-picker hull gate on in a test room. */
   enforceHullGate?: boolean;
+  /** Join flow — launch prices on in a test room. */
+  launchCosts?: boolean;
   seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits?: number };
   haulerRaiders?: number;
   /** A0 scale lattice (plan soft-leaping-truffle v2). */
@@ -312,11 +316,13 @@ export async function bootSectorTestServer(opts: {
     teleportShipBoards: opts.teleportShipBoards,
     teleportFullCharge: opts.teleportFullCharge,
     peacefulDrones: opts.peacefulDrones,
+    keepAllOnDeath: opts.keepAllOnDeath,
     capitalWrecks: opts.capitalWrecks,
     subcapWrecks: opts.subcapWrecks,
     battleWreckStreaming: opts.battleWreckStreaming,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
+    launchCosts: opts.launchCosts,
     seedStorageHold: opts.seedStorageHold,
     haulerRaiders: opts.haulerRaiders,
     defaultSpawnX: opts.defaultSpawnX,
@@ -521,6 +527,9 @@ export async function bootLivingWorldTestServer(opts: {
   teleportCycleScale?: number;
   /** testMode player warp spool in every sector (ms; production 5 min). */
   transitSpoolMsOverride?: number;
+  /** Deaths keep every stack in every sector (no death coin flip), for tests
+   *  that pin what a kill drops. */
+  keepAllOnDeath?: boolean;
   /** v4 A — seed the alien gates in every sector (off by default). */
   alienGates?: boolean;
   /** v4 H — grow each sector's real NPC bases (galaxyBasePlan; off by default). */
@@ -564,6 +573,7 @@ export async function bootLivingWorldTestServer(opts: {
       ...(opts.transitSpoolMsOverride !== undefined ? { transitSpoolMsOverride: opts.transitSpoolMsOverride } : {}),
       ...(opts.alienGates === true ? { alienGates: true } : {}),
       ...(opts.galaxyBases === true ? { galaxyBases: true } : {}),
+      ...(opts.keepAllOnDeath === true ? { keepAllOnDeath: true } : {}),
       // Seed a base ⇒ also clear the ambient asteroid field: placement is
       // obstacle-aware, so a stray rock would block a structure (e.g. the solar)
       // and leave the base un-ready. Mirrors structureScenario.test's

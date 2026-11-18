@@ -32,12 +32,7 @@ import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
 import { isDirectorBotId, isHaulerId } from '../livingworld/directorBotIds.js';
 import { getTradeSink } from '../economy/tradeSink.js';
 import type { TradeNetworkSnapshot, TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
-import {
-  AcceptOfferSchema,
-  CancelDealSchema,
-  SendGiftSchema,
-  type TradeNotice,
-} from '../../shared-types/economy.js';
+import type { TradeNotice } from '../../shared-types/economy.js';
 import { MineState, SectorState, ShipState, StructureState } from './schema/SectorState.js';
 import { MineFieldSubsystem, type MineRecord, type MineTarget } from '../structures/MineFieldSubsystem.js';
 import { MINE_BLAST_RADIUS, MINE_CLEARANCE, MINE_DAMAGE, type MineDetonated } from '../../shared-types/mines.js';
@@ -73,7 +68,7 @@ import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 import { wreckSwitchOn } from './wreckSwitch.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
-import type { ChunkOpts, FieldClearing } from '../../core/terrain/fieldLayout.js';
+import type { FieldClearing } from '../../core/terrain/fieldLayout.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { AiInputBatch } from '../../core/ai/AiInputBatch.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
@@ -120,11 +115,11 @@ import { buildGridNodes, connectExplicit } from '../structures/structureGridView
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
-import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
+import { CARGO_ACCESS_RANGE, MAX_FREIGHT_ORDERS, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
-import { registerTeleportMessages } from './TeleportMessageHandlers.js';
+import { registerRoomFeatures } from './features/index.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
@@ -165,8 +160,10 @@ import { isWarpDropPoint, pocketPadPair, POCKET_PAD_OWNER, SOLAR_HALF_EXTENT, se
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
-import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
+import { RECIPES, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
+import { LAUNCH_COSTS_ON } from '../../shared-types/launch.js';
+import { chargeLaunchFor, gateLaunch, seedTestWallet } from './launchGate.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector, isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
@@ -208,7 +205,7 @@ import {
   policyActsOnStanding,
   type FactionPolicy,
 } from '../../shared-types/factions.js';
-import { ClaimFactionLookSchema, SetFactionPolicySchema, claimFactionLookResult, type FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
+import type { FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
 import { encodePlayerTurretTarget, encodeStructureMountAngles } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
@@ -232,8 +229,8 @@ import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
-import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
-import { ROSTER_SOFT_GUARD, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
+import { resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
+import { podSizeClass } from '../../shared-types/shipKinds/cargoPod.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
@@ -250,7 +247,6 @@ import { AiFireResolver, type AiFireTargetShape } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
 import { DamageRouter } from './DamageRouter.js';
 import { RespawnHandler } from './RespawnHandler.js';
-import { TestMessageHandlers } from './TestMessageHandlers.js';
 import { SwarmEvictor } from './SwarmEvictor.js';
 import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
@@ -271,7 +267,8 @@ import { CutFieldSubsystem } from './CutFieldSubsystem.js';
 import { cutFieldOpts, type ChunkSource } from '../../core/terrain/chunkStreamer.js';
 import { rockFieldBlocker, wreckField } from '../../core/terrain/wreckFieldLayout.js';
 import { WreckFieldSource, type WreckFieldRoomOpts } from './WreckFieldSource.js';
-import { getNavWorker, type NavField } from '../nav/NavWorker.js';
+import { RoomNav } from '../nav/RoomNav.js';
+import type { IAiNavRoutes } from '../../core/contracts/IAiBehaviour.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -295,7 +292,7 @@ import {
   findAbandonedShips,
 } from './sectorIdleEvaluator.js';
 import { runAiTick } from './aiTickRunner.js';
-import { AiNeighbourGrid } from './AiNeighbourGrid.js';
+import { AiNeighbourFill } from './AiNeighbourFill.js';
 import { SectorObstacles } from './SectorObstacles.js';
 import { makeInputHandler } from './InputHandler.js';
 import {
@@ -335,33 +332,29 @@ import type {
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard, terrainRecordStoreFor } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
-import { PackedStockQuerySchema, type PackedStock } from '../../shared-types/packedStock.js';
-import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type BpMarketState } from '../../shared-types/blueprintMarket.js';
-import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../economy/BlueprintMarket.js';
-import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
+import { LootSearch } from '../cargo/LootSearch.js';
+import { dropTestPodRow, ownHoldState, peekCargoState, moveBetweenHolds, type CargoMove, type CargoRef } from '../cargo/cargoWindow.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
-import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
-import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
-import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
-import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
+import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE } from '../cargo/StorageService.js';
+import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked } from '../../core/cargo/hold.js';
+import type { HolderType } from '../cargo/HoldStore.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY, liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { isLiveTerritoryLock, territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
+import { PackedItemSchema } from '../../shared-types/items.js';
 import { rollKillBounty } from '../../shared-types/lootTables.js';
-import { deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
+import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
-import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
+import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
 import {
-  InstallBlueprintSchema, UnpackHullSchema, qualityHullFactor, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
+  qualityHullFactor, STARTER_STRUCTURE_KINDS, fittedCargoMul, fittedHullMul, fittedUid, productName,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
 /** Economy v2 — a repacked structure with no recorded quality (pre-repack rows). */
 const REPACK_DEFAULT_QUALITY = 50;
-/** Economy v2 W5a — an unpacked hull parks this far from its storage. */
-const UNPACK_PARK_OFFSET = 400;
 import { getBountyBoard } from '../economy/BountyBoard.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
@@ -375,12 +368,6 @@ import {
   RemoveStructureSchema,
   StructureActionSchema,
   UpgradeStructureSchema,
-  SetGateAccessSchema,
-  SetRecipeSchema,
-  LoadBlueprintSchema,
-  UnloadBlueprintSchema,
-  RefineSalvageSchema,
-  RepairShipSchema,
   PilotShipSchema,
   SpectateSchema,
   CommandSchema,
@@ -390,9 +377,6 @@ import {
   SetStanceSchema,
   FormSquadSchema,
   DisbandSquadSchema,
-  ApplyShipUpgradeSchema,
-  RespecShipSchema,
-  ActivateMountSchema,
   LockRequestSchema,
   LockCancelSchema, LockTrackSchema,
   SetGroupModeSchema,
@@ -1036,6 +1020,8 @@ export class SectorRoom extends Room<SectorState> {
     activityOf: (id) => {
       const a = this.aiController.getBehaviour(id)?.getActivity?.();
       if (a === undefined) return null;
+      // Navigation slice 9: on its way but no way fits, so it waits short of the goal.
+      if ((a === 'moving' || a === 'patrolling') && this.nav.waiting(id)) return 'blocked';
       if (a === 'moving') {
         const w = this.fleet.ordersOf(id);
         if (w !== null && w.mode === 'retreat' && w.order === null) return 'retreating';
@@ -1118,6 +1104,8 @@ export class SectorRoom extends Room<SectorState> {
   private scrapSpawner!: ScrapSpawner;
   /** Living World P1a — loot pods, pickup, spill-on-death (see LootSubsystem). */
   private loot!: LootSubsystem;
+  /** Loot window search time per (viewer, pod) (cargo-pods slice 12). */
+  private readonly lootSearch = new LootSearch();
   /** Asteroid ore: the one draw path (Miner, harvesters, mining-laser hits paid on the pulse). */
   private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, sectorKey: () => this.sectorKey, oreAtCentre: (r, out) => this.cutField?.oreAtCentre(r, out) ?? false });
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
@@ -1276,8 +1264,15 @@ export class SectorRoom extends Room<SectorState> {
   private structureGridTimer: GameTimer | undefined;
   private cutField: CutFieldSubsystem | undefined; // macro terrain v2 (room option `cutField`)
   private wreckFieldSource: WreckFieldSource | undefined; // wreck fields 3b (room option `wreckField`)
-  /** The cut field's nav maps in the nav worker (navigation slice 4b); set once built. */
-  private navField: NavField | undefined;
+  /** Navigation: the cut field's nav maps, AI routes and autopilot requests (`nav/RoomNav.ts`). */
+  private readonly nav: RoomNav = new RoomNav({
+    now: () => this.gameClock.now(), logger, sectorKey: () => this.sectorKey, stopped: () => this.simLoopStopped,
+    hullOf: (sid) => {
+      const playerId = this.sessionToPlayer.get(sid), ship = playerId ? this.getActiveShip(playerId) : undefined;
+      const pose = playerId ? this.shipPoseCache.get(playerId) : undefined;
+      return playerId && ship?.alive && pose ? { playerId, x: pose.x, y: pose.y, angle: pose.angle, kind: ship.kind } : null;
+    },
+  });
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
   private structureTurretTimer: GameTimer | undefined;
   /** Click-to-inspect live-stats channel (structures follow-up Item B5) +
@@ -1518,6 +1513,8 @@ export class SectorRoom extends Room<SectorState> {
    *  (galaxy rooms). Off in test rooms unless `enforceHullGate` is set, so the
    *  many tests/showcases that join as other kinds are unaffected. */
   private enforceHullGate = false;
+  /** Join flow — launch prices on (LAUNCH_COSTS_ON; test rooms may override). */
+  private launchCostsOn = LAUNCH_COSTS_ON;
   private disableCollisionDamage = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
    *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
@@ -1619,6 +1616,8 @@ export class SectorRoom extends Room<SectorState> {
     /** RTS — the owned ships' orders on lingering hulls. Tests issue orders
      *  through its owner-checked API (`applyOrder(ownerId, [shipId], order)`). */
     fleet: FleetCommandSubsystem;
+    /** Navigation — the AI brains' routes round rock (null ⇒ turn them off, a test's baseline). */
+    aiNav: { get: () => IAiNavRoutes | undefined; set: (nav: IAiNavRoutes | undefined) => void };
     /** RTS Part B — the AI pilot brain registered for an id (an owned hull's
      *  shipInstanceId or a swarm id), or null. */
     aiBrainOf: (id: string) => IAiBehaviour | null;
@@ -1691,6 +1690,8 @@ export class SectorRoom extends Room<SectorState> {
     setNpcLineOfFire: (on: boolean) => void;
     /** AI steering 2c: hand brains the neighbour grid (default on). */
     setAiNeighbours: (on: boolean) => void;
+    /** Off ⇒ brains get no `view.debris` (no wreck-piece avoidance): A/B control. */
+    setAiWreckAvoid: (on: boolean) => void;
     /** Does NPC `id`'s brain treat `otherId` as hostile (stance or ledger)? */
     npcHostileTo: (id: string, otherId: string) => boolean;
     /** Mine Layers' live mines (integration tests). */
@@ -1749,6 +1750,7 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots, forceFields: this.forceFields,
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       fleet: this.fleet,
+      aiNav: { get: () => this.aiController.nav, set: (nav) => { this.aiController.nav = nav; } },
       aiBrainOf: (id) => this.aiController.getBehaviour(id),
       lingeringPoseCache: this.lingeringPoseCache,
       sendFleetStatus: () => this.fleetStatus.sendAll(),
@@ -1786,7 +1788,8 @@ export class SectorRoom extends Room<SectorState> {
         return { checks: g?.checks ?? 0, candidates: g?.candidates ?? 0, narrow: g?.narrow ?? 0 };
       },
       setNpcLineOfFire: (on) => { this.npcLineOfFire = on; },
-      setAiNeighbours: (on) => { this.aiNeighboursOn = on; },
+      setAiNeighbours: (on) => { this.aiGrids.neighboursOn = on; },
+      setAiWreckAvoid: (on) => { this.aiGrids.wreckAvoidOn = on; },
       npcHostileTo: (id, otherId) => this.aiController.isEntityHostileToPlayer(id, otherId),
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
@@ -1879,6 +1882,7 @@ export class SectorRoom extends Room<SectorState> {
   // TickBudgetTelemetry.
   private readonly tickBudget = new TickBudgetTelemetry();
 
+  private roomFeatures: { dispose: () => void } | null = null; // features/index.ts; disposed in onDispose
   override async onCreate(options: unknown): Promise<void> {
     this.setState(new SectorState());
     this.bus = new Bus();
@@ -1956,6 +1960,9 @@ export class SectorRoom extends Room<SectorState> {
        * normally; only the COMBAT state transition (pursuit + fire)
        * is suppressed. */
       peacefulDrones?: boolean;
+      /** Test mode only: deaths keep every stack (no EVE coin flip), for
+       *  tests that pin exact pod contents. */
+      keepAllOnDeath?: boolean;
       /**
        * Phase 5e sleep handshake test mode. Spawns exactly one stationary
        * asteroid at a known position so the test can observe its sleep
@@ -2141,6 +2148,8 @@ export class SectorRoom extends Room<SectorState> {
       prebuiltStructuresOwner?: string;
       /** Economy v2 W5b — test rooms: switch the ship-picker hull gate on. */
       enforceHullGate?: boolean;
+      /** Join flow — test rooms: launch prices on/off (default LAUNCH_COSTS_ON). */
+      launchCosts?: boolean;
       /** P2d (testMode) — goods put into the prebuilt Capital's hold (e.g.
        *  munitions so a showcase's missile turrets can fire). */
       prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
@@ -2194,6 +2203,7 @@ export class SectorRoom extends Room<SectorState> {
     assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
     this.enforceHullGate = !this.testMode || roomOpts.enforceHullGate === true;
+    this.launchCostsOn = this.testMode ? (roomOpts.launchCosts ?? LAUNCH_COSTS_ON) : LAUNCH_COSTS_ON;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
     // Default 1.0 (no acceleration). Only honoured when testMode is true,
     // so a malicious / mis-targeted galaxy join can't ever speed it up.
@@ -2486,6 +2496,8 @@ export class SectorRoom extends Room<SectorState> {
     // Player respawn handler. Composes worker proxy + SAB writer +
     // mount-ticker cleanup. Extracted to RespawnHandler.ts.
     this.respawnHandler = new RespawnHandler({
+      // Join flow — a respawn re-launches the same hull, so it pays like a launch.
+      chargeRespawn: (pid, kind) => !this.launchCharged() || chargeLaunchFor(this.launchCostsOn, pid, kind).kind !== 'refuse',
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       serverTick: () => this.serverTick,
@@ -2518,7 +2530,6 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
-      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId), // only a pilot's own shot can hit a loot pod, except mining tools
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
@@ -2636,6 +2647,8 @@ export class SectorRoom extends Room<SectorState> {
       fittedOf: (shipInstanceId) => this.fittedCache.get(shipInstanceId),
       // Economy v2 W1 — the own player's wallet balance on the snapshot.
       walletOf: (playerId) => getWallet().balance(playerId),
+      // Join flow — free capital launches left (alloc-free Map read).
+      freeLaunchesOf: (playerId) => getTradeSink()?.freeLaunches?.(playerId) ?? 0,
       disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, this.gameClock.now()),
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       droneWarpOf: (id) => (this.npcWarps.size > 0 ? this.botWarpPhase(id) : 0),
@@ -2905,20 +2918,18 @@ export class SectorRoom extends Room<SectorState> {
     this.loot = new LootSubsystem({
       holdStore: getHoldStore(),
       sectorKey: () => this.sectorKey,
+      ...(roomOpts.testMode === true && roomOpts.keepAllOnDeath === true ? { keepAllOnDeath: true } : {}),
       now: () => this.gameClock.now(),
       spawnPodEntity: (id, x, y, vx, vy, tier) => {
         if (this.swarmRegistry.has(id)) return false;
         const geom = scrapColliderFor('cargo-pod', tier);
         if (geom === null) return false;
-        const ok = this.swarmSpawner.spawnScrap({
+        // No health entry: a pod is immune to damage, like an asteroid
+        // (`swarmHealthBinding` → `applied: false`; owner 2026-11-17).
+        return this.swarmSpawner.spawnScrap({
           id, x, y, vx, vy, angle: 0, radius: geom.radius,
           parentShipKind: 'cargo-pod', componentIndex: tier, vertices: geom.vertices,
         });
-        if (ok) {
-          this.swarmHealth.set(id, SCRAP_HP);
-          this.swarmShield.set(id, 0);
-        }
-        return ok;
       },
       despawnPodEntity: (id) => {
         const rec = this.swarmRegistry.get(id);
@@ -2941,6 +2952,7 @@ export class SectorRoom extends Room<SectorState> {
       // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole; a consumable piece near the hull too.
       inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
       heldPieces: { any: () => this.forceFields.tractorCount > 0 || (this.capitalWrecks?.liveCount() ?? 0) > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), near: (x, y, reach, maxM, visit) => this.capitalWrecks?.forEachPieceNear(x, y, reach, maxM, visit), store: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, remove: (id) => this.capitalWrecks?.storePiece(id) },
+      chunkOre: (ore, x, y, weight) => this.oreDraw.chunkYield(ore.rockId, x, y, weight, ore.resource),
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
       onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
       onDestroyed: (podId, hold, cause) => auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
@@ -3262,7 +3274,7 @@ export class SectorRoom extends Room<SectorState> {
     if (roomOpts.wreckField !== undefined && (this.capitalWrecksOn || this.subcapWrecksOn)) chunkSources.push(this.buildWreckFieldSource(roomOpts.wreckField, roomOpts.cutField));
     if ((this.capitalWrecksOn || this.subcapWrecksOn) && this.persistSector && this.sectorKey !== null) chunkSources.push(this.wreckSaves = new BattleWreckSaves(() => this.capitalWrecks?.lineageState() ?? null, battleWreckStore(this.sectorKey), { piecePoseInto: (id, out) => this.wreckPose(id, out) !== null, tractored: (id) => this.forceFields.isTractored(id), streaming: !this.testMode || roomOpts.battleWreckStreaming === true })); // wreck fields 0b: battle lineages stream on the one streamer
     if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
-    if (this.cutField?.navOpts) this.hostNavField(this.cutField, this.cutField.navOpts);
+    if (this.cutField?.navOpts) this.aiController.nav = this.nav.host(this.cutField, this.cutField.navOpts);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
@@ -3574,30 +3586,6 @@ export class SectorRoom extends Room<SectorState> {
       );
     });
 
-    // Test-only cues (testMode / EQX_ALLOW_DEV_OVERRIDES): TestMessageHandlers.ts.
-    const testHandlers = new TestMessageHandlers({
-      testMode: this.testMode,
-      allowDevOverrides: ALLOW_DEV_OVERRIDES,
-      sabF32: this.sabF32,
-      sessionToPlayer: this.sessionToPlayer,
-      swarmRegistry: this.swarmRegistry,
-      malformed: this.malformed,
-      markAllDronesHostileTo: (pid) => this.markAllDronesHostileTo(pid),
-      reloadAllTurrets: () => this.structureGrid.reloadAllTurrets(),
-      applyDamage: (id, shooter, dmg, x, y) => { this.applyDamage(id, shooter, dmg, x, y); },
-      warpBot: (id, x, y) => { this.warpBot(id, x, y); },
-      setBotMoveTarget: (id, x, y) => this.setBotMoveTarget(id, x, y),
-      testTractor: (pid, entityId, ticks) => {
-        const m = getShipKind(this.getActiveShip(pid)?.kind ?? null).mounts?.[0], t = this.swarmRegistry.getByEntityId(entityId);
-        if (m && t) this.forceFields.renewTractor(pid, { ...m, weaponId: 'tractor' }, t.id, ticks);
-      },
-    });
-    this.onMessage('test_tractor', (client: Client, raw: unknown) => testHandlers.tractor(client, raw));
-    this.onMessage('test_aggro', (client: Client, raw: unknown) => testHandlers.aggro(client, raw));
-    this.onMessage('test_reload_turrets', (client: Client, raw: unknown) => testHandlers.reloadTurrets(client, raw));
-    this.onMessage('test_kill_capitals', (client: Client, raw: unknown) => testHandlers.killCapitals(client, raw));
-    this.onMessage('test_fleet_warp', (client: Client, raw: unknown) => testHandlers.fleetWarp(client, raw));
-
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId || !this.transitOrchestrator) return;
@@ -3784,54 +3772,30 @@ export class SectorRoom extends Room<SectorState> {
       }
     });
 
-    // ── Gates — set who a gate opens for (owner-gated) ──
-    // ── P2b — the owner picks a processor's recipe ──
-    // Owner-gated; a foreign / non-processor / wrong-recipe request is a no-op.
-    this.onMessage('set_recipe', (client: Client, raw: unknown) => {
-      const parsed = SetRecipeSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'set_recipe');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      if (!swarmRec) return;
-      const rec = this.structureRegistry.get(swarmRec.id);
-      if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
-      if (this.production.setRecipe(rec, parsed.data.recipe)) {
-        this.storage.flushDirty();
-        this.rebuildStructuresSlice();
-      }
-    });
-
-    // ── P2b — load / unload a processor's blueprint (owner-gated) ──
-    // A loaded cycle hands its inputs back first; if they don't fit, no change.
-    const blueprintMessage = (type: 'load_blueprint' | 'unload_blueprint') => (client: Client, raw: unknown) => {
-      const parsed = (type === 'load_blueprint' ? LoadBlueprintSchema : UnloadBlueprintSchema).safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, type);
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      if (!swarmRec) return;
-      const rec = this.structureRegistry.get(swarmRec.id);
-      if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
-      if (!this.production.unload(rec)) return;
-      const ok = type === 'load_blueprint'
-        ? this.storage.loadBlueprint(rec, blueprintProductFor(this.production.recipeOf(rec)), blueprintQuality)
-        : this.storage.unloadBlueprint(rec);
-      this.storage.flushDirty();
-      if (ok) this.rebuildStructuresSlice();
-    };
-    this.onMessage('load_blueprint', blueprintMessage('load_blueprint'));
-    this.onMessage('unload_blueprint', blueprintMessage('unload_blueprint'));
-
-    // v4 T1-T4 — teleporter messages (TeleportMessageHandlers.ts).
-    registerTeleportMessages({
+    // Client-message features (features/index.ts): test-only cues, teleporters,
+    // trade, the research lab, blueprints, cargo, structure settings, bounties
+    // and ship upgrades.
+    this.roomFeatures = registerRoomFeatures({
+      devTest: {
+        testMode: this.testMode,
+        allowDevOverrides: ALLOW_DEV_OVERRIDES,
+        sabF32: this.sabF32,
+        sessionToPlayer: this.sessionToPlayer,
+        swarmRegistry: this.swarmRegistry,
+        malformed: this.malformed,
+        markAllDronesHostileTo: (pid) => this.markAllDronesHostileTo(pid),
+        reloadAllTurrets: () => this.structureGrid.reloadAllTurrets(),
+        applyDamage: (id, shooter, dmg, x, y) => { this.applyDamage(id, shooter, dmg, x, y); },
+        warpBot: (id, x, y) => { this.warpBot(id, x, y); },
+        setBotMoveTarget: (id, x, y) => this.setBotMoveTarget(id, x, y),
+        testTractor: (pid, entityId, ticks) => {
+          const m = getShipKind(this.getActiveShip(pid)?.kind ?? null).mounts?.[0], t = this.swarmRegistry.getByEntityId(entityId);
+          if (m && t) this.forceFields.renewTractor(pid, { ...m, weaponId: 'tractor' }, t.id, ticks);
+        },
+        dropTestPods: (pid) => { const p = this.shipPoseCache.get(pid); if (p) dropTestPodRow(this.loot, p.x, p.y); },
+      },
       onMessage: (type, handler) => this.onMessage(type, handler),
+      nav: this.nav,
       malformed: this.malformed,
       sessionToPlayer: () => this.sessionToPlayer,
       swarmRegistry: this.swarmRegistry,
@@ -3845,348 +3809,34 @@ export class SectorRoom extends Room<SectorState> {
       answerToll: (pid, padId, answer) => this.answerToll(pid, padId, answer),
       resolveOwnerName: (owner) => this.resolveOwnerName(owner),
       relationCtx: this.relationCtx,
-    });
-
-    // F3 — a player edits their own faction's policy (owner = the session).
-    this.onMessage('set_faction_policy', (client: Client, raw: unknown) => {
-      const parsed = SetFactionPolicySchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'set_faction_policy');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      getTradeSink()?.setPlayerPolicy?.(owner, parsed.data.policy);
-    });
-
-    // A player claims a unique ship look for their faction; the claimant gets
-    // the verdict, every room gets a success (`broadcastFactionLook`).
-    this.onMessage('claim_faction_look', (client: Client, raw: unknown) => {
-      const parsed = ClaimFactionLookSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'claim_faction_look');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const claim = getTradeSink()?.claimFactionLook?.(owner, parsed.data.colorSlot, parsed.data.sigil);
-      if (claim) try { client.send('claim_faction_look_result', claimFactionLookResult(claim)); } catch { /* closing */ }
-    });
-
-    this.onMessage('set_gate_access', (client: Client, raw: unknown) => {
-      const parsed = SetGateAccessSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'set_gate_access');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      if (!swarmRec) return;
-      const rec = this.structureRegistry.get(swarmRec.id);
-      if (!rec || rec.owner !== owner || gateTypeOf(rec.kind) === null) return;
-      rec.gateAccess = gateAccessIndex(parsed.data.access);
-      this.rebuildStructuresSlice();
-    });
-
-    // ── Living World P1a-2 — refine salvage into a Capital's mineral bank ──
-    // Owner-gated; a foreign / non-Capital / empty request is a silent no-op.
-    this.onMessage('refine_salvage', (client: Client, raw: unknown) => {
-      const parsed = RefineSalvageSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'refine_salvage');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      if (!swarmRec) return;
-      const rec = this.structureRegistry.get(swarmRec.id);
-      if (!rec || rec.owner !== owner) return; // own-only
-      const refined = this.storage.refine(rec, parsed.data.qty);
-      if (refined > 0) {
-        auditEvent({ event: 'salvage_refined', sector: this.sectorKey ?? undefined, owner, salvage: refined });
-        this.rebuildStructuresSlice(); // the bank (minerals) rides the slice
-      }
-    });
-
-    // ── Living World P2 — trade deals (account required) ───────────────────
-    // Thin relays to the process-global TradeDirector (via the trade sink).
-    // The verdict comes straight back as a `trade_notice` (accelerator only —
-    // the Trade tab's truth is `GET /player/economy`, #16).
-    const tradeRequest = (
-      client: Client,
-      kind: 'accept_offer' | 'cancel_deal' | 'send_gift',
-      raw: unknown,
-    ): void => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      const sink = getTradeSink();
-      if (!playerId || !sink) return;
-      // A testMode trade room may have been created before boot installed the
-      // director — join it now (idempotent).
-      this.ensureTradeRegistered();
-      const reply = (ok: boolean, dealId: string | null, message: string): void => {
-        try {
-          client.send('trade_notice', {
-            type: 'trade_notice', dealId: dealId ?? '', event: ok ? 'accepted' : 'rejected', message, econVersion: 0,
-          } satisfies TradeNotice);
-        } catch { /* socket closing */ }
-      };
-      // The key the TradeDirector knows this room by (galaxy: the sectorKey).
-      const tradeKey = this.tradeRegisteredKey ?? this.sectorKey;
-      if (tradeKey === null) { reply(false, null, 'Trade is only available in the galaxy.'); return; }
-      // Economy v2 — guests are full players (the user's ruling): no sign-in gate.
-      // A storage structure the player OWNS here → its stable uid.
-      const networkUidOf = (entityId: number): string | null => {
-        const rec = this.swarmRegistry.getByEntityId(entityId);
-        const s = rec ? this.structureRegistry.get(rec.id) : undefined;
-        return s !== undefined && s.owner === playerId && s.uid !== undefined ? s.uid : null;
-      };
-      let v;
-      if (kind === 'accept_offer') {
-        const p = AcceptOfferSchema.safeParse(raw);
-        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        const uid = networkUidOf(p.data.networkEntityId);
-        if (uid === null) { reply(false, null, 'Pick one of your storage structures.'); return; }
-        v = sink.acceptOffer(playerId, tradeKey, uid, p.data);
-      } else if (kind === 'cancel_deal') {
-        const p = CancelDealSchema.safeParse(raw);
-        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        v = sink.cancelDeal(playerId, p.data.dealId);
-      } else {
-        const p = SendGiftSchema.safeParse(raw);
-        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        const uid = networkUidOf(p.data.networkEntityId);
-        if (uid === null) { reply(false, null, 'Pick one of your storage structures.'); return; }
-        v = sink.sendGift(playerId, tradeKey, uid, p.data);
-      }
-      reply(v.ok, v.dealId, v.message);
-    };
-    this.onMessage('accept_offer', (client: Client, raw: unknown) => tradeRequest(client, 'accept_offer', raw));
-    this.onMessage('cancel_deal', (client: Client, raw: unknown) => tradeRequest(client, 'cancel_deal', raw));
-    this.onMessage('send_gift', (client: Client, raw: unknown) => tradeRequest(client, 'send_gift', raw));
-
-    // ── Living World P5 — install a blueprint from my storage onto my ship ───
-    this.onMessage('install_blueprint', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      const p = InstallBlueprintSchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'install_blueprint'); return; }
-      const reply = (ok: boolean, message: string): void => {
-        try { client.send('blueprint_result', { type: 'blueprint_result', ok, message } satisfies BlueprintResult); } catch { /* closing */ }
-      };
-      const shipId = this.resolveActiveShipKey(playerId);
-      const ship = shipId ? this.state.ships.get(shipId) : undefined;
-      if (this.sectorKey === null || !shipId || !ship || !ship.alive || !ship.isActive) { reply(false, 'You need an active ship here.'); return; }
-      const rec = this.swarmRegistry.getByEntityId(p.data.networkEntityId);
-      const s = rec ? this.structureRegistry.get(rec.id) : undefined;
-      if (s === undefined || s.owner !== playerId || s.uid === undefined) { reply(false, 'Pick one of your storage structures.'); return; }
-      const pose = this.shipPoseCache.get(playerId);
-      if (!pose || Math.hypot(pose.x - s.x, pose.y - s.y) > DEPOSIT_RANGE) { reply(false, 'Fly your ship next to that storage to install.'); return; }
-      const id = p.data.blueprintId;
-      if (this.fittedOf(shipId).includes(id)) { reply(false, 'This ship already has that blueprint.'); return; }
-      const fitted = this.storage.installBlueprint(playerId, s.uid, id, shipId);
-      if (fitted === null) { reply(false, 'That blueprint isn\'t in this storage.'); return; }
-      this.fittedCache.set(shipId, fitted);
-      // A hull blueprint raises the max now (no free heal — the extra is empty).
-      const kind = getShipKind(ship.kind);
-      ship.maxHealth = this.shipHullMax(kind.maxHealth, ship.statAlloc, shipId);
-      this.rebuildStructuresSlice();
-      auditEvent({ event: 'blueprint_installed', sector: this.sectorKey, playerId, shipInstanceId: shipId, blueprint: id });
-      reply(true, `${blueprintName(id)} installed.`);
-    });
-
-    // ── Economy v2 W3 — Research Lab: view / start / cancel a job ───────────
-    const labRequest = (client: Client, kind: 'lab_query' | 'lab_start' | 'lab_cancel', raw: unknown): void => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      let entityId: number;
-      let job: LabStart['job'] | null = null;
-      if (kind === 'lab_start') {
-        const p = LabStartSchema.safeParse(raw);
-        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        entityId = p.data.entityId;
-        job = p.data.job;
-      } else {
-        const p = (kind === 'lab_query' ? LabQuerySchema : LabCancelSchema).safeParse(raw);
-        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        entityId = p.data.entityId;
-      }
-      const rec = this.swarmRegistry.getByEntityId(entityId);
-      const lab = rec ? this.structureRegistry.get(rec.id) : undefined;
-      if (lab === undefined || lab.owner !== playerId) {
-        const none: LabState = { type: 'lab_state', entityId, powered: false, connected: false, job: null, blueprints: [], ok: false, message: 'That is not your Research Lab.' };
-        try { client.send('lab_state', none); } catch { /* closing */ }
-        return;
-      }
-      let verdict: { ok: boolean; message: string } | undefined;
-      if (job !== null) verdict = this.researchLabs.start(playerId, lab, job);
-      else if (kind === 'lab_cancel') verdict = this.researchLabs.cancel(playerId, lab);
-      try { client.send('lab_state', this.researchLabs.view(playerId, lab, entityId, verdict)); } catch { /* closing */ }
-    };
-    this.onMessage('lab_query', (client: Client, raw: unknown) => labRequest(client, 'lab_query', raw));
-    this.onMessage('lab_start', (client: Client, raw: unknown) => labRequest(client, 'lab_start', raw));
-    this.onMessage('lab_cancel', (client: Client, raw: unknown) => labRequest(client, 'lab_cancel', raw));
-
-    // ── Economy v2 — packed-structure stock for the Build menus ──────────────
-    this.onMessage('packed_stock_query', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      if (!PackedStockQuerySchema.safeParse(raw).success) { this.malformed.record(client.sessionId, 'packed_stock_query'); return; }
-      try { client.send('packed_stock', { type: 'packed_stock', counts: this.packedStockOf(playerId) } satisfies PackedStock); } catch { /* closing */ }
-    });
-
-    // ── Economy v2 W6 — the blueprint market (buy / sell, instant) ───────────
-    const bpRequest = (client: Client, kind: 'bp_market_query' | 'bp_buy' | 'bp_sell', raw: unknown): void => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      const schema = kind === 'bp_buy' ? BpBuySchema : kind === 'bp_sell' ? BpSellSchema : BpMarketQuerySchema;
-      const p = schema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-      const d = p.data as { networkEntityId: number; offerId?: string; uid?: string };
-      let verdict: { ok: boolean; message: string } | undefined;
-      if (kind === 'bp_buy') verdict = this.buyBlueprint(playerId, d.networkEntityId, d.offerId!);
-      else if (kind === 'bp_sell') verdict = this.sellBlueprint(playerId, d.networkEntityId, d.uid!);
-      try { client.send('bp_market_state', this.bpMarketView(playerId, d.networkEntityId, verdict)); } catch { /* closing */ }
-    };
-    this.onMessage('bp_market_query', (client: Client, raw: unknown) => bpRequest(client, 'bp_market_query', raw));
-    this.onMessage('bp_buy', (client: Client, raw: unknown) => bpRequest(client, 'bp_buy', raw));
-    this.onMessage('bp_sell', (client: Client, raw: unknown) => bpRequest(client, 'bp_sell', raw));
-
-    // ── Economy v2 W5a — unpack a packed hull into my roster ─────────────────
-    this.onMessage('unpack_hull', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      const p = UnpackHullSchema.safeParse(raw);
-      if (!p.success || !isPlayableShipKindId(p.data.kind)) { this.malformed.record(client.sessionId, 'unpack_hull'); return; }
-      const reply = (ok: boolean, message: string): void => {
-        try { client.send('blueprint_result', { type: 'blueprint_result', ok, message } satisfies BlueprintResult); } catch { /* closing */ }
-      };
-      reply(...this.unpackHull(playerId, p.data.networkEntityId, p.data.kind));
-    });
-
-    // ── C1 (plan soft-leaping-truffle v3) — open a structure's cargo ────────
-    // The cargo pane is rebuilt from `cargo_state` replies only (#16).
-    const cargoRequest = (client: Client, kind: 'cargo_query' | 'cargo_move', raw: unknown): void => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      let ref: { entityId?: number; ship?: string };
-      let move: { dir: 'take' | 'put'; items: CargoRequest } | null = null;
-      if (kind === 'cargo_move') {
-        const p = CargoMoveSchema.safeParse(raw);
-        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        ref = p.data.ship !== undefined ? { ship: p.data.ship } : { entityId: p.data.entityId! };
-        move = { dir: p.data.dir, items: p.data.items };
-      } else {
-        const p = CargoQuerySchema.safeParse(raw);
-        if (!p.success) { this.malformed.record(client.sessionId, kind); return; }
-        ref = p.data.ship !== undefined ? { ship: p.data.ship } : { entityId: p.data.entityId! };
-      }
-      const send = (st: CargoState): void => { try { client.send('cargo_state', st); } catch { /* closing */ } };
-      // C3 — a ship (an NPC ship by entityId, a player's ship / parked hull).
-      if (ref.ship !== undefined || this.swarmRegistry.getByEntityId(ref.entityId!)?.kind === 1) {
-        send(this.shipCargo(playerId, ref, move));
-        return;
-      }
-      const entityId = ref.entityId!;
-      const access = this.cargoAccess(playerId, entityId);
-      if (!access.ok) {
-        const lr = access.locked;
-        const breakIn = lr ? { pct: this.breakIns.progress(playerId, lr.id), durationMs: this.breakInMsFor(lr) } : undefined;
-        send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message: access.message, ...(breakIn ? { breakIn } : {}), ...(move ? { ok: false } : {}) });
-        return;
-      }
-      if (access.market) { send(this.dockMarket(playerId, entityId, access, move)); return; }
-      let verdict: { ok: boolean; message: string } | undefined;
-      if (move !== null) {
-        const moved = move.dir === 'take'
-          ? this.storage.cargoTake(access.shipInstanceId, playerId, access.rec, move.items, access.capacity)
-          : this.storage.cargoPut(access.shipInstanceId, playerId, access.rec, move.items);
-        if (isHoldEmpty(moved)) {
-          verdict = { ok: false, message: move.dir === 'take' ? 'No room aboard for that.' : 'No room in there for that.' };
-        } else {
-          verdict = { ok: true, message: move.dir === 'take' ? 'Loaded aboard.' : 'Unloaded.' };
-          this.manualCargo.add(playerId);
-          auditEvent({
-            event: 'cargo_moved', sector: this.sectorKey ?? undefined, playerId, shipInstanceId: access.shipInstanceId,
-            owner: access.rec.owner, structureKind: access.rec.kind, dir: move.dir, weight: holdWeight(moved),
-          });
-          // A Capital's mineral bank rides room state.
-          if (getStructureKind(access.rec.kind).storageCapacity > 0) this.rebuildStructuresSlice();
-        }
-      }
-      const view = this.storage.cargoView(access.rec);
-      const shipHold = getHoldStore().get(access.shipInstanceId)?.hold ?? emptyHold();
-      const own = access.rec.owner === playerId && access.rec.kind === 'freight_dock';
-      send({
-        type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity,
-        ship: shipHold, shipCapacity: access.capacity,
-        ...(own ? { orders: (access.rec.freightOrders ?? []).map((o) => ({ ...o })) } : {}),
-        ...(verdict ?? {}),
-      });
-    };
-    // C2 — break into locked cargo (a hostile act); stop.
-    this.onMessage('break_in', (client: Client, raw: unknown) => {
-      const p = BreakInSchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'break_in'); return; }
-      const actor = this.sessionToPlayer.get(client.sessionId);
-      if (!actor) return;
-      // C3 — a ship: an NPC ship (by entityId), a player's ship or parked hull.
-      const st = this.shipTarget(p.data.ship !== undefined ? { ship: p.data.ship } : { entityId: p.data.entityId! });
-      if (st !== null) {
-        if (cargoOpensFor(relationOf(actor, st.owner, this.relationCtx), false) || this.breakIns.hasGrant(actor, st.id)) return;
-        if (this.getActiveShip(actor)?.shipInstanceId === st.holdUid || !this.pilotNearPoint(actor, st.x, st.y, st.radius)) return;
-        this.breakIns.start(actor, st.id, this.breakInMsForShip(st));
-        return;
-      }
-      if (p.data.entityId === undefined) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(p.data.entityId);
-      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
-      if (!rec || !isOperationalStorage(rec)) return;
-      // Only cargo that doesn't open for you, and only once you're there.
-      if (cargoOpensFor(relationOf(actor, rec.owner, this.relationCtx), false) || this.breakIns.hasGrant(actor, rec.id)) return;
-      if (!this.pilotNear(actor, rec)) return;
-      this.breakIns.start(actor, rec.id, this.breakInMsFor(rec));
-    });
-    this.onMessage('break_in_cancel', (client: Client, raw: unknown) => {
-      if (!BreakInCancelSchema.safeParse(raw).success) { this.malformed.record(client.sessionId, 'break_in_cancel'); return; }
-      const actor = this.sessionToPlayer.get(client.sessionId);
-      if (actor) this.breakIns.cancel(actor, 'You stopped.');
-    });
-
-    // T4b — standing orders on the owner's own built Freight Dock (last
-    // order per good wins). Convoys fill them; the panel re-reads on its poll.
-    this.onMessage('set_freight_orders', (client: Client, raw: unknown) => {
-      const p = SetFreightOrdersSchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'set_freight_orders'); return; }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(p.data.entityId);
-      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
-      if (!rec || rec.owner !== owner || rec.kind !== 'freight_dock' || !rec.isConstructed) return;
-      const byGood = new Map<GoodId, { good: GoodId; mode: 'import' | 'export'; level: number }>();
-      for (const o of p.data.orders) byGood.set(o.good, { good: o.good, mode: o.mode, level: o.level });
-      rec.freightOrders = [...byGood.values()].slice(0, MAX_FREIGHT_ORDERS);
-      if (rec.freightOrders.length === 0) delete rec.freightOrders;
-      auditEvent({ event: 'freight_orders_set', sector: this.sectorKey ?? undefined, playerId: owner, orders: rec.freightOrders?.length ?? 0 });
-    });
-    this.onMessage('cargo_query', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_query', raw));
-    this.onMessage('cargo_move', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_move', raw));
-
-    // ── Living World P4c-2 — place a player bounty ───────────────────────────
-    this.onMessage('place_bounty', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      const board = getBountyBoard();
-      if (!playerId || !board) return;
-      const p = PlaceBountySchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'place_bounty'); return; }
-      const reply = (ok: boolean, message: string): void => {
-        try { client.send('bounty_result', { type: 'bounty_result', ok, message } satisfies BountyResult); } catch { /* closing */ }
-      };
-      if (this.sectorKey === null) { reply(false, 'Bounties are only available in the galaxy.'); return; }
-      // Economy v2 W1 — paid from the placer's WALLET (anywhere; guests too).
-      const v = board.place(this, playerId, p.data.targetPlayerId, p.data.amount);
-      reply(v.ok, v.message);
+      tradeRegisteredKey: () => this.tradeRegisteredKey,
+      ensureTradeRegistered: () => this.ensureTradeRegistered(),
+      researchLabs: () => this.researchLabs,
+      playerToUser: this.playerToUser,
+      production: () => this.production,
+      resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid),
+      ship: (id) => this.state.ships.get(id),
+      shipPoseCache: this.shipPoseCache,
+      fittedOf: (id) => this.fittedOf(id),
+      fittedCache: this.fittedCache,
+      shipHullMax: (kindMax, alloc, id) => this.shipHullMax(kindMax, alloc, id),
+      breakIns: this.breakIns,
+      manualCargo: this.manualCargo,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      shipCargoCapacity: (kind, id) => this.shipCargoCapacity(kind, id),
+      shipCargo: (pid, ref, move) => this.shipCargo(pid, ref, move),
+      shipTarget: (ref) => this.shipTarget(ref),
+      breakInMsFor: (rec) => this.breakInMsFor(rec),
+      breakInMsForShip: (t) => this.breakInMsForShip(t),
+      pilotNear: (pid, rec) => this.pilotNear(pid, rec),
+      pilotNearPoint: (pid, x, y, r) => this.pilotNearPoint(pid, x, y, r),
+      loot: () => this.loot,
+      lootSearch: this.lootSearch,
+      pilotCollector: (pid) => this.lootCollectors.pilotCollector(pid),
+      bountyRoom: { broadcastWorldNotice: (notice) => this.broadcastWorldNotice(notice) },
+      sendNotice: (client, text) => this.sendNotice(client, text),
+      applyShipUpgrade: (client, pid, shipId, alloc) => this.applyShipUpgrade(client, pid, shipId, alloc),
+      logger,
     });
 
     // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
@@ -4309,93 +3959,6 @@ export class SectorRoom extends Room<SectorState> {
       if (pid === undefined) return;
       this.fleet.disbandSquad(pid, p.data.squadId);
       this.fleetStatusSoon.request(client.sessionId, this.serverTick);
-    });
-
-    // ── Phase 4 WS-B2 — ship stat upgrades (free allocation + respec) ──────
-    // Spend the ship instance's upgrade points (budget = level - 1) across the
-    // stat pool, FREELY (re-distribute any way within the budget). Owner-gated +
-    // budget-gated server-side; the multipliers are applied at the ONE seam the
-    // clamps live (applyShipInput, identical server + client) so prediction
-    // stays in lockstep (risk #1).
-    this.onMessage('apply_ship_upgrade', (client: Client, raw: unknown) => {
-      const parsed = ApplyShipUpgradeSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'apply_ship_upgrade');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      this.applyShipUpgrade(client, playerId, parsed.data.shipId, parsed.data.alloc as CoreStatAlloc);
-    });
-
-    this.onMessage('respec_ship', (client: Client, raw: unknown) => {
-      const parsed = RespecShipSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'respec_ship');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      // A respec is a CREDIT SINK: RESPEC_CREDIT_COST from the WALLET (economy
-      // v2 — anywhere). Charged only for an OWNED ship with points to refund.
-      const row = this.sectorKey !== null ? getPlayerShipStore().get(parsed.data.shipId) : null;
-      if (row === null || row.playerId !== playerId || Object.keys(row.statAlloc).length === 0) return;
-      if (!getWallet().debit(playerId, RESPEC_CREDIT_COST, 'respec')) {
-        this.sendNotice(client, `Respec costs ${RESPEC_CREDIT_COST} cr — not enough credits`);
-        return;
-      }
-      auditEvent({ event: 'credits_spent', sector: this.sectorKey ?? undefined, playerId, amount: RESPEC_CREDIT_COST, reason: 'respec' });
-      // A respec is "apply the empty allocation" — refund every spent point.
-      this.applyShipUpgrade(client, playerId, parsed.data.shipId, {});
-    });
-
-    // ── Living World P1a-2 — instant repair at your own storage (credit sink) ──
-    // Repairs the sender's ACTIVE hull to full while it sits within
-    // DEPOSIT_RANGE of its own operational storage; costs REPAIR_CREDITS_PER_HP
-    // per missing hull point from the credits banked in this sector.
-    this.onMessage('repair_ship', (client: Client, raw: unknown) => {
-      const parsed = RepairShipSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'repair_ship');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      const ship = this.getActiveShip(playerId);
-      const pose = this.shipPoseCache.get(playerId);
-      if (!ship?.alive || !ship.isActive || !pose) return;
-      const missing = ship.maxHealth - ship.health;
-      if (missing <= 0) return;
-      if (this.storage.nearestOwnStorage(playerId, pose.x, pose.y) === null) {
-        this.sendNotice(client, 'Fly to your own Capital or Cargo Bay to repair');
-        return;
-      }
-      const cost = Math.ceil(missing * REPAIR_CREDITS_PER_HP);
-      if (!getWallet().debit(playerId, cost, 'repair')) {
-        this.sendNotice(client, `Repair costs ${cost} cr — not enough credits`);
-        return;
-      }
-      ship.health = ship.maxHealth;
-      auditEvent({ event: 'credits_spent', sector: this.sectorKey ?? undefined, playerId, amount: cost, reason: 'repair' });
-      this.sendNotice(client, `Repaired for ${cost} cr`);
-    });
-
-    // ── Phase 4 WS-B3 — dynamic weapon mounts (activate a latent slot) ──────
-    // Activate a latent hardpoint on a ship instance + bind a weapon to it.
-    // Owner-gated + valid-latent-slot-gated server-side; the activated mount is
-    // persisted on the roster, mirrored onto the live ShipState, and fed through
-    // the SAME per-instance mount resolver the aim + fire path use, so it fires
-    // from the first tick (geometry looked up by slotId on both sides — no wire
-    // bump, the scrap-collider trick).
-    this.onMessage('activate_mount', (client: Client, raw: unknown) => {
-      const parsed = ActivateMountSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'activate_mount');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      this.activateMount(client, playerId, parsed.data.shipId, parsed.data.slotId, parsed.data.weaponId);
     });
 
     // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────
@@ -4689,7 +4252,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
     piece: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, // salvage lock bits (lockSalvage.ts)
-    wrecks: () => this.capitalWrecks, pods: () => this.loot, entity: (id) => this.swarmRegistry.get(id)?.entityId ?? -1, // lock lineage (lockSplit.ts)
+    wrecks: () => this.capitalWrecks, entity: (id) => this.swarmRegistry.get(id)?.entityId ?? -1, // lock lineage (lockSplit.ts)
     // No hold (no roster row, e.g. a showcase room with no sectorKey): it takes nothing in, so nothing is consumable.
     freeHold: (s) => (this.hasHold(s.shipInstanceId) ? this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) : 0) });
 
@@ -5313,27 +4876,8 @@ export class SectorRoom extends Room<SectorState> {
   }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
 
-  /** AI steering 2a — per-tick neighbour index over combat drones + pilot
-   *  hulls, rebuilt once per tick in `runAiTick` (alloc-free, #14). */
-  private readonly aiNeighbourGrid = new AiNeighbourGrid();
-  /** Tests (`_internals.setAiNeighbours`): off ⇒ brains get no `view.neighbours`
-   *  (no combat separation), the A/B control for slice 2c. */
-  private aiNeighboursOn = true;
-  /** Add every kind-1 swarm combatant (all allegiances) with its SAB pose.
-   *  Same set `fillSwarmTargets` covers; bound once (#14). */
-  private readonly _visitAiNeighbourDrones = (_grid: AiNeighbourGrid): void => {
-    this.swarmRegistry.forEachRecord(this._addAiNeighbourDrone);
-  };
-  private readonly _addAiNeighbourDrone = (rec: SwarmEntityRecord): void => {
-    if (rec.kind !== SWARM_KIND_DRONE) return;
-    const b = slotBase(rec.slot);
-    this.aiNeighbourGrid.addDrone(
-      rec.id,
-      this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
-      this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
-      rec.radius, allegianceOfKind(rec.shipKind), getShipKind(rec.shipKind ?? null).aiRole === 'capital',
-    );
-  };
+  /** The AI tick's neighbour + debris grids, one registry walk per tick (`AiNeighbourFill`). */
+  private readonly aiGrids = new AiNeighbourFill(this.swarmRegistry, () => this.sabF32);
 
   /**
    * Allegiances P0 — rebuild this tick's swarm-combatant set (kind-1 entities),
@@ -5716,9 +5260,9 @@ export class SectorRoom extends Room<SectorState> {
         if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
         return slot !== undefined;
       },
-      dropSalvage: (qty, x, y, vx, vy, ore, root) => this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage', root }),
+      dropSalvage: (qty, x, y, vx, vy) => this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }),
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
-      pieceSplit: (from, ids, masses, pods) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks, pods),
+      pieceSplit: (from, ids, masses) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks),
       lineageTouched: (root) => { this.wreckSaves?.touch(root); this.wreckFieldSource?.touched(root); }, evictRetire: (id) => this.wreckSaves?.evictPiece(id) ?? false,
     });
   }
@@ -5964,9 +5508,9 @@ export class SectorRoom extends Room<SectorState> {
     // so the global cap accounting stays correct. Harmless no-op when this
     // eviction IS the FIFO path (the id was already shifted off the list).
     // Living World P1a — a combat-killed NPC drops its loot where it died (the
-    // SAB pose is still live here; the evictor below frees the slot). A pod
-    // destroyed in combat loses its contents. A pod the LootSubsystem despawns
-    // itself (pickup / TTL) is already off its books, so `isPod` is false then.
+    // SAB pose is still live here; the evictor below frees the slot). A cargo
+    // pod has no health, so combat never evicts one: only the LootSubsystem
+    // despawns pods (emptied / TTL).
     if (opts.emitDestroyed && rec.kind === SWARM_KIND_DRONE) {
       this.dropKillLoot(rec, opts.shooterId, opts.vaporised === true);
     }
@@ -5976,9 +5520,6 @@ export class SectorRoom extends Room<SectorState> {
       getHoldStore().delete(rec.id, false);
     }
     if (rec.kind === SWARM_KIND_DRONE) this.npcLootRolled.delete(`${rec.id}:${rec.entityId}`);
-    if (rec.kind === SWARM_KIND_SCRAP && this.loot.isPod(rec.id) && opts.emitDestroyed) {
-      this.loot.onPodDestroyed(rec.id);
-    }
     if (rec.kind === SWARM_KIND_SCRAP) {
       this.scrapSpawner.notifyRemoved(rec.id);
     }
@@ -6490,10 +6031,12 @@ export class SectorRoom extends Room<SectorState> {
           const ok = r.freightOrders.filter((o) => (GOOD_IDS as readonly string[]).includes(o.good) && (o.mode === 'import' || o.mode === 'export') && o.level > 0);
           if (ok.length > 0) rec.freightOrders = ok.map((o) => ({ good: o.good as GoodId, mode: o.mode, level: Math.floor(o.level) })).slice(0, MAX_FREIGHT_ORDERS);
         }
+        if (r.acceptAutoUnload === false) rec.acceptAutoUnload = false; // cargo pods 14c
         if (typeof r.packedQuality === 'number') rec.packedQuality = r.packedQuality;
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
           rec.prodProgress = r.prodProgress ?? 0;
+          if (r.prodChunk) { const c = PackedItemSchema.safeParse(r.prodChunk); if (c.success) rec.prodChunk = c.data; }
         }
         // Living World P1a-2 — overlay the fresher holds-table payload (bank +
         // deposited goods) keyed by the structure's stable uid.
@@ -8725,6 +8268,11 @@ export class SectorRoom extends Room<SectorState> {
     this.broadcast('warp_warning_clear', msg);
   }
 
+  /** Join flow — this room's launches go through the hull gate and pay. */
+  private launchCharged(): boolean {
+    return this.sectorKey !== null && this.enforceHullGate;
+  }
+
   private handleRespawn(client: Client): void {
     this.respawnHandler.handle(client);
   }
@@ -9855,16 +9403,10 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
 
-    // Economy v2 W5b — the ship-picker gate. Starter hulls (scout, fighter)
-    // are always free; any other kind must be a ship you OWN (a roster row,
-    // e.g. one you unpacked). A fresh spawn asking for another kind gets a
-    // starter hull instead, and is told how to get the one it wanted.
-    if (!resumedFromStore && this.sectorKey !== null && this.enforceHullGate && !STARTER_HULL_KINDS.includes(chosenKind)) {
-      const wanted = getShipKind(chosenKind).displayName;
-      chosenKind = DEFAULT_SHIP_KIND;
-      this.sendNotice(client, `You need a ${wanted}: buy a packed one on the Trade tab (or loot one), then unpack it at your storage.`);
-      serverLogEvent('hull_gate_refused', { playerId, wanted });
-    }
+    // Economy v2 W5b + join flow — the ship-picker gate, which pays for the
+    // launch (rooms/launchGate.ts). Test wallet seed first, so it pays.
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) seedTestWallet(playerId, parsed.data.initialWallet ?? this.testWalletSeed);
+    if (!resumedFromStore && this.launchCharged()) chosenKind = gateLaunch(this.launchCostsOn, playerId, chosenKind, (m) => this.sendNotice(client, m));
 
     // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
     // resumes by shipId — the roster shipId-restore above, which is now the
@@ -10046,12 +9588,6 @@ export class SectorRoom extends Room<SectorState> {
       // gate/regen flow is testable in a few ticks instead of seconds.
       if (typeof parsed.data.initialEnergy === 'number') {
         ship.energy = Math.max(0, parsed.data.initialEnergy);
-      }
-      // Economy v2 W1 — test-only wallet seed (join option, else the room's).
-      const walletSeed = parsed.data.initialWallet ?? this.testWalletSeed;
-      if (walletSeed > 0) {
-        const have = getWallet().balance(playerId);
-        if (have < walletSeed) getWallet().credit(playerId, walletSeed - have, 'test_seed');
       }
       // Living World P1a — seed the hull's carried hold (needs a roster-bound
       // shipInstanceId; engineering rooms have none ⇒ no-op).
@@ -10356,6 +9892,7 @@ export class SectorRoom extends Room<SectorState> {
       this.pendingCommandStart.delete(leavingPlayerId);
       // Presence — drop this session's connected refcount (push offline gate).
       unregisterConnectedPlayer(leavingPlayerId);
+      this.nav.forget(leavingPlayerId);
     }
 
     // Click-to-inspect (Item B5) — drop this connection's selection so the
@@ -11405,7 +10942,10 @@ export class SectorRoom extends Room<SectorState> {
       if (death !== undefined) {
         const hull = deathHullLoot(shipInstanceId, death.kind, death.vaporised);
         const spot = this.podSpot(hashString(shipInstanceId), pose.x, pose.y, getShipKind(death.kind).radius, death.shooterId);
-        this.loot.spillShipHold(shipInstanceId, spot.x, spot.y, pose.vx, pose.vy, cause, { player: true, extra: hull });
+        this.loot.spillShipHold(shipInstanceId, spot.x, spot.y, pose.vx + spot.ux * DEATH_POD_PUSH, pose.vy + spot.uy * DEATH_POD_PUSH, cause, {
+          player: true, extra: hull, deathLoss: `${shipInstanceId}:${this.gameClock.now()}`,
+          size: podSizeClass(getShipKind(death.kind).radius),
+        });
       } else {
         // Living World P1a-2 — an ABANDONED hull becomes a salvageable derelict
         // (fly alongside to salvage over time).
@@ -11423,130 +10963,6 @@ export class SectorRoom extends Room<SectorState> {
    *  Expander (shared helper, #15). Used by loot pickup and cargo access. */
   private shipCargoCapacity(kind: string, shipInstanceId: string): number {
     return Math.floor(cargoCapacityForMaxHealth(getShipKind(kind as ShipKindId)) * fittedCargoMul(this.fittedOf(shipInstanceId)));
-  }
-
-  /**
-   * C1 (plan soft-leaping-truffle v3) — may `playerId` open the cargo of the
-   * structure with this entity id right now? Opens when the relation allows it
-   * (`cargoOpensFor`: own and friendly; allied only if the owner allows), the
-   * pilot flies a live ship (#17: ACTIVE + alive + a roster row, the loot
-   * collector's liveness) and is within CARGO_ACCESS_RANGE of its footprint.
-   * Neutral or hostile cargo needs a break-in (C2).
-   */
-  private cargoAccess(playerId: string, entityId: number):
-    | { ok: true; rec: StructureRecord; shipInstanceId: string; capacity: number; market: boolean }
-    | { ok: false; message: string; locked?: StructureRecord } {
-    const swarmRec = this.swarmRegistry.getByEntityId(entityId);
-    const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) ?? null : null;
-    if (rec === null || !isOperationalStorage(rec)) return { ok: false, message: 'That has no cargo hold.' };
-    // Allies may open only if the owner allows it; there is no owner setting yet.
-    const relation = relationOf(playerId, rec.owner, this.relationCtx);
-    let market = false;
-    // C2 — a successful break-in opens it for a short window.
-    if (!cargoOpensFor(relation, false) && !this.breakIns.hasGrant(playerId, rec.id)) {
-      // T4 — an NPC Freight Dock trades with anyone who isn't hostile.
-      if (isNpcOwner(rec.owner) && rec.kind === 'freight_dock' && relation !== 'hostile' && getTradeSink() !== null) {
-        market = true;
-      } else {
-        return { ok: false, locked: rec, message: relation === 'hostile' ? 'Locked. They will not trade with you.' : 'Locked. That cargo is not yours.' };
-      }
-    }
-    if (this.sectorKey === null) return { ok: false, message: 'Cargo only moves in the galaxy.' };
-    const ship = this.getActiveShip(playerId);
-    const pose = this.shipPoseCache.get(playerId);
-    if (!ship?.alive || !ship.isActive || ship.shipInstanceId === '' || getPlayerShipStore().get(ship.shipInstanceId) === null || !pose) {
-      return { ok: false, message: 'You need a ship to move cargo.' };
-    }
-    const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
-    const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
-    if (dx * dx + dy * dy > CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) {
-      return { ok: false, message: 'Fly closer to open its cargo.' };
-    }
-    return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: this.shipCargoCapacity(ship.kind, ship.shipInstanceId), market };
-  }
-
-  /**
-   * T4 — an NPC Freight Dock is a market: Take buys from the base's storage
-   * network, Put sells into the dock, at the trade board's regional price for
-   * this pilot. Each good is ONE atomic group (ship + storage + the wallet op),
-   * clamped first to stock, cargo space, the wallet and the hourly volume.
-   */
-  private dockMarket(
-    playerId: string,
-    entityId: number,
-    access: { rec: StructureRecord; shipInstanceId: string; capacity: number },
-    move: { dir: 'take' | 'put'; items: CargoRequest } | null,
-  ): CargoState {
-    const sink = getTradeSink();
-    const shipId = access.shipInstanceId;
-    const dock = access.rec;
-    const closed = (message: string): CargoState => ({
-      type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message, ...(move ? { ok: false } : {}),
-    });
-    if (sink === null) return closed('The traders are not here.');
-    if (sink.dockQuote(playerId, this.sectorKey, 'minerals') === null) return closed('The traders refuse to deal with you.');
-    const wallet = getWallet();
-    let verdict: { ok: boolean; message: string } | undefined;
-    if (move !== null) {
-      let total = 0;
-      let any = false;
-      for (const g of GOOD_IDS) {
-        const asked = move.items.goods?.[g] ?? 0;
-        if (!(asked > 0)) continue;
-        const q = sink.dockQuote(playerId, this.sectorKey, g);
-        if (q === null) continue;
-        const ship = getHoldStore().get(shipId)?.hold ?? emptyHold();
-        const w = GOOD_DEFS[g].weight;
-        if (move.dir === 'take') {
-          const unit = q.buy;
-          const space = Math.floor(Math.max(0, access.capacity - holdWeight(ship)) / Math.max(1e-9, w));
-          const afford = unit > 0 ? Math.floor(wallet.balance(playerId) / unit) : asked;
-          const volume = unit > 0 ? Math.floor(sink.volumeLeft(playerId) / unit) : asked;
-          const n = Math.min(asked, this.storage.networkStock(dock, g), space, afford, volume);
-          if (n <= 0) continue;
-          const cost = Math.ceil(n * unit);
-          const op = cost > 0 ? wallet.debitDeferred(playerId, cost, 'dock_buy') : null;
-          if (cost > 0 && op === null) continue;
-          const moved = this.storage.marketBuy(shipId, playerId, dock, g, n, op ? [op] : []);
-          if (moved <= 0) { if (cost > 0) wallet.credit(playerId, cost, 'dock_refund'); continue; }
-          sink.recordDockFill(playerId, g, moved, 'buy', cost);
-          total += cost;
-          any = true;
-        } else {
-          const unit = q.sell;
-          const fit = Math.floor(this.storage.dockFreeWeight(dock) / Math.max(1e-9, w));
-          const volume = unit > 0 ? Math.floor(sink.volumeLeft(playerId) / unit) : asked;
-          const n = Math.min(asked, ship.goods[g] ?? 0, fit, volume);
-          if (n <= 0) continue;
-          const pay = Math.floor(n * unit);
-          const op = pay > 0 ? wallet.creditDeferred(playerId, pay, 'dock_sell') : null;
-          const moved = this.storage.marketSell(shipId, playerId, dock, g, n, op ? [op] : []);
-          if (moved <= 0) continue;
-          sink.recordDockFill(playerId, g, moved, 'sell', pay);
-          total += pay;
-          any = true;
-        }
-      }
-      verdict = any
-        ? { ok: true, message: move.dir === 'take' ? `Bought for ${total}¢.` : `Sold for ${total}¢.` }
-        : { ok: false, message: move.dir === 'take' ? 'Nothing bought: out of stock, no room aboard, or not enough credits.' : 'Nothing sold: the dock is full or you hold none.' };
-      if (any) auditEvent({ event: 'dock_trade', sector: this.sectorKey ?? undefined, playerId, owner: dock.owner, dir: move.dir === 'take' ? 'buy' : 'sell', credits: total });
-    }
-    const stock: Hold = { goods: {}, blueprints: [] };
-    for (const g of GOOD_IDS) {
-      const n = this.storage.networkStock(dock, g);
-      if (n > 0) stock.goods[g] = n;
-    }
-    const ship = getHoldStore().get(shipId)?.hold ?? emptyHold();
-    const market: NonNullable<CargoState['market']> = { buy: {}, sell: {} };
-    for (const g of GOOD_IDS) {
-      if ((stock.goods[g] ?? 0) <= 0 && (ship.goods[g] ?? 0) <= 0) continue;
-      const q = sink.dockQuote(playerId, this.sectorKey, g);
-      if (q === null) continue;
-      market.buy[g] = q.buy;
-      market.sell[g] = q.sell;
-    }
-    return { type: 'cargo_state', entityId, open: true, hold: stock, used: 0, capacity: 0, ship, shipCapacity: access.capacity, market, ...(verdict ?? {}) };
   }
 
   /** Does pilot ship `shipInstanceId` have a hold: a roster row in a roster-backed room (the loot pickup's gate; the lock's free hold). */
@@ -11632,124 +11048,6 @@ export class SectorRoom extends Room<SectorState> {
     auditEvent({ event: 'structure_repacked', sector: this.sectorKey ?? undefined, owner: rec.owner, kind: rec.kind, quality: item.quality, toStorage: target !== undefined });
   }
 
-  /**
-   * Economy v2 W5a — unpack one packed `kind` hull from `playerId`'s storage
-   * network at `networkEntityId` into their roster: a fresh ship parked beside
-   * that storage, picked from the roster like any other. The roster cap is
-   * checked first; the packed item is taken (one hold group) BEFORE the roster
-   * row is created, and put back if creating it fails, so a hull is never
-   * duplicated. Galaxy rooms only (engineering rooms have no roster).
-   */
-  private unpackHull(playerId: string, networkEntityId: number, kind: ShipKindId): [boolean, string] {
-    const name = getShipKind(kind).displayName;
-    if (this.sectorKey === null) return [false, 'Ships can only be unpacked in the galaxy.'];
-    const rec = this.swarmRegistry.getByEntityId(networkEntityId);
-    const s = rec ? this.structureRegistry.get(rec.id) : undefined;
-    if (s === undefined || s.owner !== playerId || !isOperationalStorage(s)) return [false, 'Pick one of your storage structures.'];
-    const product = `hull:${kind}`;
-    const from = this.storage.network(s).find((r) => r.hold !== undefined && packedCount(r.hold, product) > 0);
-    if (from === undefined) return [false, `There is no packed ${name} in this base.`];
-    const store = getPlayerShipStore();
-    if (store.listByPlayer(playerId).length >= ROSTER_SOFT_GUARD) return [false, `Your roster is full (${ROSTER_SOFT_GUARD} ships). Abandon one first.`];
-    const item = takePacked(from.hold!, product)!;
-    this.storage.commitChanged([from], []);
-    try {
-      const ship = store.create({
-        playerId,
-        userId: this.playerToUser.get(playerId) ?? null,
-        kind,
-        sectorKey: this.sectorKey,
-        x: s.x + UNPACK_PARK_OFFSET,
-        y: s.y,
-        health: Math.round(getShipKind(kind).maxHealth * qualityHullFactor(item.quality)),
-        hullQuality: item.quality,
-      });
-      auditEvent({ event: 'hull_unpacked', sector: this.sectorKey, playerId, shipInstanceId: ship.shipId, kind, quality: item.quality });
-      return [true, `${name} unpacked: it's in your roster.`];
-    } catch {
-      (from.hold!.packed ??= []).push(item);
-      this.storage.commitChanged([from], []);
-      return [false, `Could not unpack the ${name}.`];
-    }
-  }
-
-  /** Economy v2 — `playerId`'s packed STRUCTURES in this sector, by product:
-   *  their operational storage here plus their active ship's hold (exactly
-   *  where `packedGateForBuild` looks). Control cadence (allocates). */
-  private packedStockOf(playerId: string): Record<string, number> {
-    const counts: Record<string, number> = {};
-    const add = (items: readonly { product: string }[] | undefined): void => {
-      for (const it of items ?? []) if (it.product.startsWith('structure:')) counts[it.product] = (counts[it.product] ?? 0) + 1;
-    };
-    for (const rec of this.structureRegistry.all()) {
-      if (rec.owner === playerId && rec.hold !== undefined && isOperationalStorage(rec)) add(rec.hold.packed);
-    }
-    const shipId = this.resolveActiveShipKey(playerId);
-    if (shipId) add(getHoldStore().get(shipId)?.hold.packed);
-    return counts;
-  }
-
-  /** Economy v2 W6 — `playerId`'s operational storage at `networkEntityId`. */
-  private ownStorageAt(playerId: string, networkEntityId: number): StructureRecord | null {
-    const rec = this.swarmRegistry.getByEntityId(networkEntityId);
-    const s = rec ? this.structureRegistry.get(rec.id) : undefined;
-    return s !== undefined && s.owner === playerId && s.uid !== undefined && isOperationalStorage(s) ? s : null;
-  }
-
-  /** Economy v2 W6 — the market view for `playerId`'s base at `networkEntityId`. */
-  private bpMarketView(playerId: string, networkEntityId: number, verdict?: { ok: boolean; message: string }): BpMarketState {
-    const rep = getTradeSink()?.traderRep?.(playerId) ?? 0;
-    const s = this.ownStorageAt(playerId, networkEntityId);
-    const mine: BpListing[] = [];
-    if (s !== null) {
-      for (const r of this.storage.network(s)) {
-        for (const b of r.hold?.blueprints ?? []) if (mine.length < 200) mine.push(bpListing(b, b.uid, bpSellPrice(b, rep)));
-      }
-    }
-    return {
-      type: 'bp_market_state',
-      networkEntityId,
-      offers: getBlueprintMarket().offersFor(rep),
-      mine,
-      ...(verdict ?? {}),
-    };
-  }
-
-  /** Economy v2 W6 — buy a board blueprint into this base: the wallet debit
-   *  and the storage change commit as ONE group; the offer then leaves the board. */
-  private buyBlueprint(playerId: string, networkEntityId: number, offerId: string): { ok: boolean; message: string } {
-    const s = this.ownStorageAt(playerId, networkEntityId);
-    if (s === null) return { ok: false, message: 'Pick one of your storage structures.' };
-    const market = getBlueprintMarket();
-    const bp = market.peek(offerId);
-    if (bp === null) return { ok: false, message: 'That blueprint has been sold.' };
-    const price = bpBuyPrice(bp, getTradeSink()?.traderRep?.(playerId) ?? 0);
-    const pay = getWallet().debitDeferred(playerId, price, 'blueprint_buy');
-    if (pay === null) return { ok: false, message: `You need ${price}¢ for that blueprint.` };
-    market.remove(offerId);
-    (s.hold ??= { goods: {}, blueprints: [] }).blueprints.push(bp);
-    this.storage.commitChanged([s], [pay]);
-    auditEvent({ event: 'blueprint_traded', sector: this.sectorKey ?? undefined, playerId, side: 'buy', product: bp.product, credits: price });
-    return { ok: true, message: `Bought ${productName(bp.product)} blueprint for ${price}¢.` };
-  }
-
-  /** Economy v2 W6 — sell a blueprint from this base to traders (one group). */
-  private sellBlueprint(playerId: string, networkEntityId: number, uid: string): { ok: boolean; message: string } {
-    const s = this.ownStorageAt(playerId, networkEntityId);
-    if (s === null) return { ok: false, message: 'Pick one of your storage structures.' };
-    const from = this.storage.network(s).find((r) => r.hold?.blueprints.some((b) => b.uid === uid));
-    if (from === undefined) return { ok: false, message: 'That blueprint is not in this base.' };
-    const list = from.hold!.blueprints;
-    const bp = list.find((b) => b.uid === uid)!;
-    const price = bpSellPrice(bp, getTradeSink()?.traderRep?.(playerId) ?? 0);
-    if (price <= 0) return { ok: false, message: 'Traders won\u2019t buy that blueprint.' };
-    list.splice(list.indexOf(bp), 1);
-    const op = getWallet().creditDeferred(playerId, price, 'blueprint_sell');
-    this.storage.commitChanged([from], op ? [op] : []);
-    auditEvent({ event: 'blueprint_traded', sector: this.sectorKey ?? undefined, playerId, side: 'sell', product: bp.product, credits: price });
-    return { ok: true, message: `Sold ${productName(bp.product)} blueprint for ${price}¢.` };
-  }
-
   /** Living World P1a-2 — a short player-facing notice (HUD popup line). */
   private sendNotice(client: Client, text: string): void {
     try { client.send('notice', { type: 'notice', text }); } catch { /* socket closing */ }
@@ -11782,8 +11080,9 @@ export class SectorRoom extends Room<SectorState> {
       return;
     }
     const hold = this.loot.shipHold(c.shipInstanceId);
-    const target = hold !== undefined && !isHoldEmpty(hold)
-      ? this.storage.nearestOwnStorage(c.playerId, c.x, c.y)
+    // Cargo pods 14c: both ends must agree (the ship's switch, the storage's accept).
+    const target = hold !== undefined && !isHoldEmpty(hold) && getPlayerShipStore().get(c.shipInstanceId)?.autoUnload !== false
+      ? this.storage.nearestOwnStorage(c.playerId, c.x, c.y, DEPOSIT_RANGE, true)
       : null;
     if (target === null) {
       if (this.depositDwell.delete(c.playerId)) this.depositProgress.delete(c.shipInstanceId);
@@ -12325,16 +11624,17 @@ export class SectorRoom extends Room<SectorState> {
       // Vaporised (owner 2026-11-15): its hull salvage still aboard × 1.5.
       const extra = vaporised ? vaporisedSalvageExtra(key, rec.shipKind, rec.elite !== undefined, hold.goods.salvage ?? 0) : undefined;
       const spot = this.podSpot(hashString(key), this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, rec.radius, shooterId);
-      // The pod keeps the ship's velocity, so it drifts with the wreck.
-      this.loot.spillShipHold(rec.id, spot.x, spot.y, this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
-        isHaulerId(rec.id) ? 'hauler-raided' : 'kill', extra !== undefined ? { player: false, extra } : { player: false });
+      // The pod keeps the ship's velocity plus a gentle push clear of the wreck.
+      this.loot.spillShipHold(rec.id, spot.x, spot.y,
+        this.sabF32[b + SLOT_VX_OFF]! + spot.ux * DEATH_POD_PUSH, this.sabF32[b + SLOT_VY_OFF]! + spot.uy * DEATH_POD_PUSH,
+        isHaulerId(rec.id) ? 'hauler-raided' : 'kill', { player: false, deathLoss: key, size: podSizeClass(rec.radius), ...(extra !== undefined ? { extra } : {}) });
     }
     else getHoldStore().delete(rec.id, false);
   }
 
   /** `killPodSpot` for a dead ship at (cx, cy), the killer's live pose looked
    *  up by id (pilot, parked hull or swarm ship). Returns the reused `_podSpot`. */
-  private podSpot(seed: number, cx: number, cy: number, hullRadius: number, shooterId?: string): { x: number; y: number } {
+  private podSpot(seed: number, cx: number, cy: number, hullRadius: number, shooterId?: string): { x: number; y: number; ux: number; uy: number } {
     let sx = Number.NaN;
     let sy = Number.NaN;
     if (shooterId !== undefined && shooterId !== '') {
@@ -12345,7 +11645,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     return killPodSpot(this._podSpot, seed, cx, cy, hullRadius, sx, sy);
   }
-  private readonly _podSpot = { x: 0, y: 0 };
+  private readonly _podSpot = { x: 0, y: 0, ux: 0, uy: 0 };
 
   /**
    * C3 — an NPC ship's hold: a trade hauler's real cargo, or (any other NPC)
@@ -12433,53 +11733,8 @@ export class SectorRoom extends Room<SectorState> {
     return (pose.x - x) ** 2 + (pose.y - y) ** 2 <= reach * reach;
   }
 
-  /**
-   * C3 — move the requested items from one hold to another. Player holds
-   * commit together in ONE atomic group; an NPC loot hold (memory only) is
-   * updated in memory and never persisted. Returns what moved.
-   */
-  private moveBetweenHolds(
-    from: { uid: string; persisted: boolean; type: HolderType; owner: string | null },
-    to: { uid: string; persisted: boolean; type: HolderType; owner: string | null },
-    want: CargoRequest,
-    toCapacity: number,
-  ): Hold {
-    const store = getHoldStore();
-    const fromRow = store.get(from.uid);
-    if (fromRow === undefined) return emptyHold();
-    const src = cloneHold(fromRow.hold);
-    const toRow = store.get(to.uid);
-    const dst = cloneHold(toRow?.hold ?? emptyHold());
-    const picked = extractRequested(src, want);
-    const { moved } = transferInto(dst, picked, toCapacity);
-    mergeInto(src, picked);
-    if (isHoldEmpty(moved)) return moved;
-    const puts: HoldRecord[] = [];
-    const deletes: string[] = [];
-    const write = (side: typeof from, row: HoldRecord | undefined, hold: Hold): void => {
-      const rec: HoldRecord = row
-        ? { ...row, hold }
-        : { holderUid: side.uid, holderType: side.type, ownerId: side.owner, sectorKey: null, x: null, y: null, hold, expiresAt: null };
-      if (!side.persisted) {
-        // An NPC loot hold stays even when emptied: its loot was rolled once,
-        // and a missing row would roll it again at death (taken twice).
-        store.put(rec, false);
-        return;
-      }
-      if (isHoldEmpty(hold)) deletes.push(side.uid); else puts.push(rec);
-    };
-    write(from, fromRow, src);
-    write(to, toRow, dst);
-    if (puts.length > 0 || deletes.length > 0) store.commit(puts, deletes, this.sectorKey !== null);
-    return moved;
-  }
-
   /** C3 — open / move a SHIP's cargo (NPC ship, another player's ship, a parked hull). */
-  private shipCargo(
-    playerId: string,
-    ref: { entityId?: number; ship?: string },
-    move: { dir: 'take' | 'put'; items: CargoRequest } | null,
-  ): CargoState {
+  private shipCargo(playerId: string, ref: CargoRef, move: CargoMove | null): CargoState {
     const echo = ref.entityId !== undefined ? { entityId: ref.entityId } : { targetShip: ref.ship! };
     const closed = (message: string, breakIn?: CargoState['breakIn']): CargoState => ({
       type: 'cargo_state', ...echo, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message,
@@ -12492,10 +11747,20 @@ export class SectorRoom extends Room<SectorState> {
     if (!mine?.alive || !mine.isActive || mine.shipInstanceId === '' || getPlayerShipStore().get(mine.shipInstanceId) === null) {
       return closed('You need a ship to move cargo.');
     }
-    if (t.holdUid === mine.shipInstanceId) return closed('That is the ship you are flying.');
-    if (!this.pilotNearPoint(playerId, t.x, t.y, t.radius)) return closed('Fly closer to open its cargo.');
+    if (t.holdUid === mine.shipInstanceId) {
+      // Cargo pods slice 19: "your hold" from the HUD cargo chip (`ownHoldState`).
+      return ownHoldState(getHoldStore().get(mine.shipInstanceId)?.hold ?? emptyHold(), this.shipCargoCapacity(mine.kind, mine.shipInstanceId),
+        getPlayerShipStore().get(mine.shipInstanceId)?.autoUnload !== false, echo, move !== null);
+    }
+    if (!this.pilotNearPoint(playerId, t.x, t.y, t.radius)) {
+      this.lootSearch.advance(playerId, t.id, this.gameClock.now(), false);
+      return closed('Fly closer to open its cargo.');
+    }
     if (!cargoOpensFor(relationOf(playerId, t.owner, this.relationCtx), false) && !this.breakIns.hasGrant(playerId, t.id)) {
-      return closed(`Locked. That ${t.label} is not yours.`, { pct: this.breakIns.progress(playerId, t.id), durationMs: this.breakInMsForShip(t) });
+      // Slice 13: look, don't take (break-in rules unchanged).
+      if (t.npc) this.npcHold(t.npc);
+      return peekCargoState(this.lootSearch, this.gameClock.now(), playerId, t.id, getHoldStore().get(t.holdUid)?.hold ?? emptyHold(), echo, move !== null,
+        `Locked. That ${t.label} is not yours: you can only look.`, { pct: this.breakIns.progress(playerId, t.id), durationMs: this.breakInMsForShip(t) });
     }
     if (t.npc) this.npcHold(t.npc); // roll its loot (once) before anyone looks in
     const myCap = this.shipCargoCapacity(mine.kind, mine.shipInstanceId);
@@ -12503,7 +11768,7 @@ export class SectorRoom extends Room<SectorState> {
     const them = { uid: t.holdUid, persisted: t.persisted, type: (t.npc ? 'hauler' : 'ship') as HolderType, owner: t.npc ? null : t.owner };
     let verdict: { ok: boolean; message: string } | undefined;
     if (move !== null) {
-      const moved = move.dir === 'take' ? this.moveBetweenHolds(them, me, move.items, myCap) : this.moveBetweenHolds(me, them, move.items, t.capacity);
+      const moved = move.dir === 'take' ? moveBetweenHolds(getHoldStore(), this.sectorKey !== null, them, me, move.items, myCap) : moveBetweenHolds(getHoldStore(), this.sectorKey !== null, me, them, move.items, t.capacity);
       verdict = isHoldEmpty(moved)
         ? { ok: false, message: move.dir === 'take' ? 'No room aboard for that.' : 'No room in there for that.' }
         : { ok: true, message: move.dir === 'take' ? 'Loaded aboard.' : 'Unloaded.' };
@@ -12519,7 +11784,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** C3 — how long breaking into a ship takes. */
-  private breakInMsForShip(t: ShipCargoTarget): number {
+  private breakInMsForShip(t: Pick<ShipCargoTarget, 'capacity'>): number {
     return this.testBreakInMs ?? breakInDurationMs(Number.isFinite(t.capacity) ? t.capacity : 1000, 1);
   }
 
@@ -12672,89 +11937,16 @@ export class SectorRoom extends Room<SectorState> {
     });
   }
 
-  /**
-   * Phase 4 WS-B3 — activate a latent weapon mount on a ship instance.
-   *
-   * Validation order (a foreign / unknown / non-latent / already-active request
-   * is a SILENT no-op — no echo, no persistence):
-   *   - ownership (`row.playerId === playerId`);
-   *   - `slotId` names a real `ShipKind.latentMounts` hardpoint (`isLatentSlot`);
-   *   - the slot isn't already activated on this instance.
-   * On success: append `{ slotId, weaponId }` to the roster `mounts` (the
-   * per-instance source of truth, D8 — switching ships switches the loadout) AND
-   * — if this instance is the player's ACTIVE hull in THIS room — mirror it onto
-   * `ShipState.mounts` so the SAME-tick aim/fire/snapshot paths pick it up (the
-   * per-instance mount resolver reads `ship.mounts`). The `weaponId` is already
-   * zod-restricted to the catalogue weapon set. Echoes `mount_activated` with the
-   * full activated list so the modal closes + the roster card refreshes. The
-   * GEOMETRY is looked up CLIENT-SIDE by `(shipKind, slotId)` — never on the wire.
-   */
-  private activateMount(
-    client: Client,
-    playerId: string,
-    shipId: string,
-    slotId: string,
-    weaponId: string,
-  ): void {
-    const store = getPlayerShipStore();
-    const row = store.get(shipId);
-    if (row === null || row.playerId !== playerId) return; // foreign / unknown
-    const kind = getShipKind(row.kind);
-    if (!isLatentSlot(kind, slotId)) {
-      logger.warn(
-        { sessionId: client.sessionId, shipId, slotId },
-        'activate_mount: slotId is not a latent hardpoint — dropped',
-      );
-      return;
-    }
-    // Already active ⇒ no-op (idempotent; never duplicate the index space).
-    if (row.mounts.some((m) => m.slotId === slotId)) return;
-    // P5 — a gated weapon (heat-seeker) needs its blueprint fitted to THIS ship.
-    if (!weaponUnlocked(weaponId, this.fittedOf(shipId))) return;
-
-    const nextMounts: ActivatedMount[] = [...row.mounts, { slotId, weaponId }];
-    // Persist on the roster (the per-instance source of truth, D8).
-    store.setProgress(shipId, { mounts: nextMounts });
-
-    // Mirror onto the live ACTIVE hull (if it's piloted in THIS room) so the
-    // very next tick's aim + fire + snapshot resolve the new mount.
-    const activeShipKey = this.resolveActiveShipKey(playerId);
-    if (activeShipKey === shipId) {
-      const ship = this.state.ships.get(shipId);
-      if (ship !== undefined) ship.mounts = nextMounts;
-    }
-
-    client.send('mount_activated', {
-      type: 'mount_activated',
-      shipInstanceId: shipId,
-      mounts: nextMounts,
-    });
-  }
-
-  /** Hosts the cut field's nav maps in the nav worker; chunk loads and rock
-   *  changes stream to it from here on (navigation slices 4b–5; print-only size + ms). */
-  private hostNavField(cutField: CutFieldSubsystem, opts: ChunkOpts): void {
-    let field: NavField | undefined;
-    const known = cutField.attachNav({
-      chunk: (cx, cy, loaded) => field?.chunk(cx, cy, loaded),
-      rockGone: (key) => field?.rockGone(key),
-      rockMoved: (key, pose) => field?.rockMoved(key, pose),
-    });
-    field = this.navField = getNavWorker(logger).addField(opts, known.gone, known.moved);
-    field.built.then((b) => {
-      logger.info({ sectorKey: this.sectorKey, cols: b.cols, rows: b.rows, kb: Math.round(b.bytes / 1024), ms: Math.round(b.ms * 10) / 10 }, 'nav coarse layer built');
-    }, (err: unknown) => { if (!this.simLoopStopped) logger.error({ err, sectorKey: this.sectorKey }, 'nav field build failed'); });
-  }
-
   override onDispose(): void {
+    this.roomFeatures?.dispose();
     if (this.sceneRunner) unregisterScenePerfRoom(this);
     this.simLoopStopped = true;
     this.gameClock.cancelAll();
     if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
     if (this.teleportRoom) getTeleportBroker().unregister(this.teleportRoom);
     this.cutField?.dispose();
-    this.navField?.detach();
-    this.navField = undefined;
+    this.nav.detach();
+    if (this.aiController) this.aiController.nav = undefined;
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
       this.structureGridTimer.cancel();
@@ -13162,8 +12354,9 @@ export class SectorRoom extends Room<SectorState> {
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
-      aiNeighbourGrid: this.aiNeighboursOn ? this.aiNeighbourGrid : undefined,
-      visitAiNeighbourDrones: this._visitAiNeighbourDrones,
+      aiNeighbourGrid: this.aiGrids.neighbours(),
+      visitAiNeighbourDrones: this.aiGrids.visit,
+      aiWreckGrid: this.aiGrids.wrecks(),
       hasTruce: (pid) => this.playerTruce(pid),
       // Living World P1a-2 (decision 7) — offline hulls are fair game.
       isPlayerConnected: this._isPlayerConnected,
@@ -13234,7 +12427,8 @@ export class SectorRoom extends Room<SectorState> {
         this.markSceneSim(this.sceneSimEnd);
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
-        this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
+        // Wreck-piece queries (hull avoidance) count as neighbour work too.
+        this.sceneWork.aiNeighbours(this.aiGrids.queriesTotal);
         this.sceneWork.wingmen(this.fleet.size, this.hullBrainTicksTotal, 0, 0);
         this.sceneWork.aiDecisions(this.aiController.stats.decisions);
         this.sceneWork.wreckPiecesTick(this.capitalWrecks?.liveCount() ?? 0);
