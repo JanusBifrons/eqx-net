@@ -17,7 +17,7 @@
  */
 import type { ShipKind } from '../../../shared-types/shipKinds.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
-import type { AiEntityPoseOut, AiWorldView } from '../../contracts/IAiBehaviour.js';
+import type { AiEntity, AiEntityPoseOut, AiWorldView, IAiNavRoutes } from '../../contracts/IAiBehaviour.js';
 import {
   addAlignment,
   addCohesion,
@@ -31,7 +31,8 @@ import {
   type FlockOutput,
 } from '../flocking.js';
 import { CALM_CRUISE_FRAC, FLOCK_ACTIVITY_GAP_MUL, FLOCK_CATCH_UP } from '../hostileDroneTuning.js';
-import { DEFAULT_PILOT_PARAMS, facingOf } from '../virtualPilot.js';
+import { arrive, makeSteerOutput, type SteerOutput } from '../steering.js';
+import { brakingSpeed, DEFAULT_PILOT_PARAMS, facingOf } from '../virtualPilot.js';
 import { MODE_GOAL_FLY, type IPilotMode, type PilotModeContext, type PilotModeGoal } from '../tactics/manoeuvre.js';
 
 export class FlockMode implements IPilotMode {
@@ -50,8 +51,11 @@ export class FlockMode implements IPilotMode {
    *  one), and the leader it was measured to: the panel's activity. */
   private gap2 = Infinity;
   private leaderPrev: string | null = null;
-  /** This tick's resolver (set by `sense`). */
+  /** This tick's resolver and routes (set by `sense`). */
   private resolve: AiWorldView['resolveEntityInto'] = undefined;
+  private nav: IAiNavRoutes | null = null;
+  /** Reused arrive() output for the single-file route (invariant #14). */
+  private readonly steer: SteerOutput = makeSteerOutput();
 
   /** Follow `leaderId` with squad `memberIds` (`setFlockFollow`). */
   follow(leaderId: string, memberIds: readonly string[]): void {
@@ -66,6 +70,7 @@ export class FlockMode implements IPilotMode {
   sense(view: AiWorldView): boolean {
     const resolve = view.resolveEntityInto;
     this.resolve = resolve;
+    this.nav = view.nav ?? null;
     return resolve !== undefined && this.leaderId !== null && resolve(this.leaderId, this.leader);
   }
 
@@ -103,10 +108,14 @@ export class FlockMode implements IPilotMode {
       addSeparation(acc, self.x, self.y, mx, my, tuning.flockSeparation);
     }
     addAlignment(acc, this.leader.angle);
-    const flock = resolveFlock(acc, this.out);
+    const h = ctx.handling;
+    const lv = Math.hypot(this.leader.vx, this.leader.vy);
+    const pace = Math.min(h.maxSpeed, Math.max(h.cruiseSpeed * CALM_CRUISE_FRAC, lv * FLOCK_CATCH_UP));
     out.kind = MODE_GOAL_FLY;
     out.boost = false;
     out.params = DEFAULT_PILOT_PARAMS;
+    if (this.singleFile(ctx, self, resolve, leaderX, leaderY, pace, out)) return;
+    const flock = resolveFlock(acc, this.out);
     if (flock.thrustScale <= 1e-4) {
       out.facing = self.angle;
       out.vx = 0;
@@ -121,13 +130,41 @@ export class FlockMode implements IPilotMode {
     // wait) sets the pace: a little over its speed so the pack closes up,
     // never over this ship's top speed and never boosting. An AI pilots' pack
     // leader is throttled below the calm cruise, so its pack is unchanged.
-    const h = ctx.handling;
-    const lv = Math.hypot(this.leader.vx, this.leader.vy);
-    const pace = Math.min(h.maxSpeed, Math.max(h.cruiseSpeed * CALM_CRUISE_FRAC, lv * FLOCK_CATCH_UP));
     const speed = pace * flock.thrustScale;
     out.facing = facingOf(flock.dirX, flock.dirY);
     out.vx = flock.dirX * speed;
     out.vy = flock.dirY * speed;
+  }
+
+  /**
+   * Single file round rock (navigation slice 10, owner 2026-11-17): a
+   * follower routes to the ship ahead of it in squad order (the one before it
+   * in the member list; the first, or one with none found, the leader). Open
+   * space answers straight and the herd flocks as before (false). With rock
+   * between, it flies that route and stops a follow distance behind the ship
+   * ahead, so the squad strings out through the gap one behind the other.
+   */
+  private singleFile(ctx: PilotModeContext, self: AiEntity, resolve: NonNullable<AiWorldView['resolveEntityInto']>, leaderX: number, leaderY: number, pace: number, out: PilotModeGoal): boolean {
+    const nav = this.nav;
+    if (nav === null) return false;
+    let ax = leaderX, ay = leaderY;
+    const ids = this.memberIds;
+    for (let i = ids.indexOf(self.id) - 1; i >= 0; i--) {
+      const id = ids[i]!;
+      if (id === this.leaderId) break;
+      if (resolve(id, this.neighbour)) { ax = this.neighbour.x; ay = this.neighbour.y; break; }
+    }
+    const t = shipTuning(ctx.kind);
+    if (!nav.waypoint(self.id, self.x, self.y, ax, ay, t.navClearance, t.wingmanArrive, true)) return false;
+    const dx = ax - self.x, dy = ay - self.y;
+    if (dx * dx + dy * dy <= t.flockFollow * t.flockFollow) {
+      out.facing = self.angle; out.vx = 0; out.vy = 0;
+      return true;
+    }
+    const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this.steer);
+    const v = Math.min(pace, brakingSpeed(ctx.handling, nav.ahead));
+    out.facing = facingOf(w.dirX, w.dirY); out.vx = w.dirX * v; out.vy = w.dirY * v;
+    return true;
   }
 
   /** Open-ended: the flock ends by order (a new job setter). */

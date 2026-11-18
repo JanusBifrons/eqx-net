@@ -172,7 +172,9 @@ export interface IAiNavRoutes {
    *  before it must have braked (to the waypoint, plus the next leg as far as
    *  it carries on the same way). `clearance` and `arrive` are the hull's
    *  own numbers (`shipTuning`, #18). */
-  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number): boolean;
+  /** `keep`: a moving goal (a squad follower's ship ahead, slice 10): fly the
+   *  old route until the new plan answers, instead of dropping it. */
+  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number, keep?: boolean): boolean;
   readonly wpX: number;
   readonly wpY: number;
   readonly ahead: number;

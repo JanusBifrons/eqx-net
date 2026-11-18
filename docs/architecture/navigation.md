@@ -134,8 +134,9 @@ chunk is loaded and rock is within its reach, else the coarse layer.
    cell points; the ship asks again as it goes (slice 9).
 - Line checks leap by the room to spare and, when tight, visit every 64 u cell
   the segment crosses (a fixed step skipped thin rock).
-- Per-request caps: 30 000 coarse and 60 000 fine expansions; past them, or with no way at this clearance,
-  the answer is `none`. At most 64 waypoints (`NAV_ROUTE_MAX_POINTS`).
+- Per-request caps: 30 000 coarse and 60 000 fine expansions. Past them, or with no way at this
+  clearance, the route ends at the reached cell nearest the goal (`GraphSearch.nearest`, least heuristic),
+  status `nearest`; `none` only when nothing reached is nearer than the start. At most 64 waypoints (`NAV_ROUTE_MAX_POINTS`).
 - Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance}` → `ROUTE {reqId, status,
   points, expanded, ms}` (points transferred, not copied). `NavField.route(...)` returns a Promise;
   `NavWorker.inFlight` counts open requests; a detached field answers `none`; a worker exit rejects
@@ -153,6 +154,18 @@ one it flies straight as before.
 - A new goal (moved more than `arrive`) asks the worker for one plan, at most once a second per ship
   (`NAV_REPLAN_MS`). Until it answers, or when it says `straight` / `none`, there is no waypoint.
   An answer for an older goal is dropped. Ships not asking for 10 s are forgotten.
+- `nearest` (no way fits): the ship flies the route and waits at its end, the last waypoint staying
+  its waypoint, until the goal changes; it asks again every 10 s (`NAV_WAIT_RETRY_MS`) and flies on if
+  the way has opened.
+- Stuck (game time): every 4 s (`NAV_STUCK_MS`) a ship further than 2 × arrive from its goal that moved
+  less than arrive plans again from where it is; after two such plans it waits where it is (retried as
+  above). Counters: `stuckReplans`, `held`, `short`.
+- A waiting ship's fleet status activity is `blocked`, "Can't get closer" (Move and patrol legs,
+  `SectorRoom` `activityOf` via `NavRoutes.waiting`), on the existing `fleet_status` stream.
+- Squads (slice 10): a follower (`tickFlock`) asks for the way to the ship ahead of it in squad order
+  (the member before it; the first, the leader) with `keep` (a moving goal flies the old route until the
+  new plan lands). Open space answers straight and the boids herd is unchanged; rock between ⇒ it flies the
+  route and stops `flockFollow` behind that ship, so the squad crosses single file (owner, 2026-11-17).
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25.
 - `CutFieldSubsystem.rockContacts` counts ship-vs-field-rock contacts (the test gate).
 - Lock: `tests/integration/sectorRoom/navFollowRoute.test.ts`, a fighter told to Move across a rock arrives
@@ -177,3 +190,6 @@ one it flies straight as before.
   layer's room became a true lower bound (padded rocks, value less a cell diagonal).
   2026-11-18 slice 8: moving danger. Drifting field rocks join the wreck-piece debris grid, and move legs
   dodge debris with the combat hull avoidance (extracted to `ai/hullAvoid.ts`); resting rocks stay with routes.
+  2026-11-18 slice 9: no way ⇒ `nearest` route and wait; stuck ⇒ re-plan twice, then wait; fleet status
+  `blocked` ("Can't get closer").
+  2026-11-18 slice 10: squads cross rock single file, each follower routing to the ship ahead of it.
