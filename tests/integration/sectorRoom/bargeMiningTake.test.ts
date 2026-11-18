@@ -41,12 +41,15 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { SHOWCASE_BARGE_MINING_OPTS, SHOWCASE_BARGE_MINING_SPAWN } from '../../../src/server/rooms/showcaseBargeRooms.js';
+import { TRACTOR_DEF } from '../../../src/core/combat/tractorSpec.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { SALVAGE_TIER_SIZES, salvageTier } from '../../../src/core/combat/salvageTargeting.js';
 
 const WRECK_KIND = 4;
 /** Game speed for the take (the sector time scale's top, 4×; the game time is reported). */
 const SPEED = 4;
+/** The tractor's lease (ticks): the trigger must be renewed inside it or the beam lapses. */
+const TRACTOR_LEASE = TRACTOR_DEF.tractor!.leaseTicks;
 /** Barge spawn: the room's own (the filmed pose), mine-rock-a off the port bow. */
 const BOW_ON = { spawnX: SHOWCASE_BARGE_MINING_SPAWN.x, spawnY: SHOWCASE_BARGE_MINING_SPAWN.y };
 
@@ -125,7 +128,11 @@ describe('SectorRoom integration — the barge-mining take: the rock ends up in 
       if (cut && live.length === 0 && int().loot.podCount() === 0) break;
       watchLocks();
       fire('laser'); fire('tractor');
-      await harness.advance(50);
+      // Hold the triggers in GAME time: a tractor lease lasts ${TRACTOR_LEASE} ticks, so renew every
+      // half lease. A wall-time step (50 ms = 12 ticks at 4×) let the beam lapse on a slow CI runner,
+      // restart its pull, and strand the last pod (CI 2026-11-18, every retry on integration shard 4).
+      const fired = int().serverTick;
+      while (int().serverTick - fired < TRACTOR_LEASE / 2) await harness.advance(5);
     }
     const gameSeconds = (int().serverTick - tick0) / 60;
     /** At a stall: where each piece sits, its radius and size tier. */
