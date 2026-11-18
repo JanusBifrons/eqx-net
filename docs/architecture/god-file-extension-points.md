@@ -17,6 +17,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | A new subsystem | Construct it in its feature's register function; return `{ dispose }`; periodic work via `gameClock.every` + `guarded`; never a new field + `new X()` in `onCreate`. | planned |
 | Join / leave / respawn logic | `JoinHandler` (`join/`) / `LeaveHandler` / `RespawnHandler` classes. | live |
 | A tick-phase step | A function taking a narrow ctx, like `runAiTick(ctx)` (`aiTickRunner.ts`). | live |
+| Fire-control lock logic (lock-key resolution, the lock machines' deps, the mount-on-lock gates) | `FireControlLocks` (`features/fireControlLocks.ts`), held as `fireLocks` on the room with a narrow `Pick`-typed host. | live |
 
 ## Server: `src/server/index.ts` (`src/server/CLAUDE.md`)
 
