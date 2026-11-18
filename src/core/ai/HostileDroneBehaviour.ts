@@ -31,7 +31,6 @@ import {
   makeManoeuvreGoal,
   makeTacticalContext,
   MANOEUVRE_FLEE,
-  MANOEUVRE_HOLD,
   type ManoeuvreGoal,
   type ManoeuvreId,
   type TacticalContext,
@@ -251,21 +250,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this._search = new SearchMode(this.sensorRange);
     this._orders = { guard: this._guardReturn, travel: this._travel, search: this._search, flock: this._flock, course: this._patrol };
     this._moveTo = new MoveToHelm(this.kind, this.handling, this.shieldPad, this._avoid);
-    const tac = this._tac;
-    tac.fireRange = this.eng.fireRange;
-    tac.cruiseSpeed = this.handling.cruiseSpeed;
-    tac.maxSpeed = this.handling.maxSpeed;
-    tac.overshoot = shipTuning(this.kind).attackRunOvershoot;
-    tac.bandMin = this.role.rangeBand.min * this.eng.fireRange;
-    tac.bandMax = this.role.rangeBand.max * this.eng.fireRange;
-    tac.turretHalfArc = this.eng.maxTurretHalfArc;
-    tac.sensorRange = this.sensorRange;
-    tac.maxAngvel = this.handling.maxAngvel;
-    tac.accel = this.handling.thrustAccel * 60;
-    tac.brakeAccel = this.handling.reverseAccel * 60;
-    tac.radius = this.kind.radius;
-    tac.shieldPad = this.shieldPad;
+    this._tacFill.init(this._tac, this.kind, this.handling, this.eng, this.role, this.sensorRange, this.shieldPad);
     this._targets = new TargetPick(this.hostileTo, this.allegiance, this.onSightPlayers, this.foesOfPlayers, this.ownerId, this.sensorRange);
+    this._guardReturn.configure(shipTuning(this.kind).guardRadiusMin, this.eng.broadside, this.eng.fireRange, this._targets);
     this._senses = new PilotSenses(this._nbIdx, this.allegiance, this.friendlyToPilots, this.sensorRange, this.eng.fireRange);
     this._decide = new CombatDecision(this._avoid, this._senses, this._moraleP, this._lanes);
     this._steer = new CombatSteer({
@@ -304,14 +291,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   /** Morale: damage this ship took (server damage path → AiController). */
-  noteDamage(amount: number, atTick: number, maxHull?: number): void {
-    this._morale.noteDamage(atTick, amount, maxHull !== undefined && maxHull > 0 ? maxHull : this.kind.maxHealth);
-  }
+  noteDamage(amount: number, atTick: number, maxHull?: number): void { this._moraleP.noteDamage(amount, atTick, maxHull, this.kind.maxHealth); }
 
   /** Morale: the squad's capital died (the next decision rolls). */
-  noteCapitalLost(): void {
-    this._morale.noteCapitalLost();
-  }
+  noteCapitalLost(): void { this._moraleP.noteCapitalLost(); }
 
   /** Test seam: replace the morale die (deterministic outcomes in tests). */
   setMoraleRoll(fn: MoraleRollFn): void { this._moraleP.roll = fn; }
@@ -484,7 +467,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this._guardReturn.x = this._travel.leashX;
       this._guardReturn.y = this._travel.leashY;
     }
-    const leash = this.guardLeash() || roam, g = this._guardReturn;
+    const leash = this._guardReturn.leashes() || roam, g = this._guardReturn;
     const target = tp.pick(self, n, this._tgt.prevTargetId, sinceTicks, ordered, orderedLive, leash, g.x, g.y, g.r, anyHostile);
     const newId = target?.id ?? null;
     if (newId !== this._tgt.prevTargetId) this._tgt.prevTargetSinceTick = view.tick;
@@ -525,8 +508,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const v = this.handling.maxSpeed;
     const boostOk = this._helm.energy >= BOOST_RESERVE_FRAC * this._helm.energyMax;
     const intent = this.fly(self, Math.atan2(-f.dirX, f.dirY), f.dirX * v, f.dirY * v, boostOk, RUN_PILOT_PARAMS);
-    if (f.wantsWarpOut(tick)) this.requestWarpOut(self, intent);
-    return intent;
+    return f.wantsWarpOut(tick) ? this.requestWarpOut(self, intent) : intent;
   }
 
   // ── Peacetime jobs ──────────────────────────────────────────────────
@@ -545,7 +527,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (this._travel.state === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
     if (this._patrol.moveTarget !== null) return JOB_COURSE;
     // Guard leash: nothing to fight ⇒ back to the post.
-    if (this.guardLeash()) return JOB_GUARD;
+    if (this._guardReturn.leashes()) return JOB_GUARD;
     // Hunt: nothing to fight ⇒ search the sector.
     if (this._search.on) return JOB_SEARCH;
     return JOB_ORBIT;
@@ -646,10 +628,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (st.steer(self, nb, view.debris, view.aims, ux, uy, desiredAngle, rangeDist <= this.eng.fireRange, this._goal, reserveOk,
         this.avoidAccel())) this._avoidTicks++;
       intent = this.fly(self, st.facing, st.wvx, st.wvy, st.boost, st.params);
-      if (d.picker.current === MANOEUVRE_FLEE && d.flee.wantsWarpOut(view.tick)) {
-        this.requestWarpOut(self, intent);
-        return intent;
-      }
+      if (d.fleeWarpDue(view.tick)) return this.requestWarpOut(self, intent);
     }
 
     // Fire gating: standard 14° cone at normal distance widens to 26° at
@@ -731,16 +710,17 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * (`intent.warpOut`), then stand down: forget every hostility, leave the
    * squad's flock and hold at the drop point (the same move-to a director
    * order uses). A server without the hook leaves the ship disengaged.
+   * Returns `intent`, which now carries the warp-out.
    */
-  private requestWarpOut(self: AiEntity, intent: AiIntent): void {
+  private requestWarpOut(self: AiEntity, intent: AiIntent): AiIntent {
     const f = this._decide.flee;
     const w = this._leaving.requestWarp(self, f.dirX, f.dirY, WARP_OUT_SENSOR_MUL * this.sensorRange, intent);
     this._tgt.forgetAll();
-    this._moraleP.lockUntil = -1;
-    this.switchManoeuvre(MANOEUVRE_HOLD, this._tac.tick);
+    this._decide.standDown(this._tac);
     this.setMoveTarget(w.x, w.y);
     this._modeCtx.tick = this._tac.tick;
     this._leaving.begin(this._modeCtx);
+    return intent;
   }
 
   /** Test-visible: the last combat context-steering resolve (null if the
@@ -762,10 +742,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   /** A GUARD POST (rules: `GuardReturnMode.post`, `modes/guardReturnMode.ts`). */
-  setGuardPost(x: number, y: number, radius: number, anchorId: string | null = null): void {
-    this._guardReturn.post(x, y, Math.max(radius, shipTuning(this.kind).guardRadiusMin), anchorId, this._orders);
-    this._targets.setLeash(this._guardReturn.r, this.eng.fireRange);
-  }
+  setGuardPost(x: number, y: number, radius: number, anchorId: string | null = null): void { this._guardReturn.post(x, y, radius, anchorId, this._orders); }
 
   clearGuardPost(): void { this._guardReturn.clear(); }
   /** Travel's arrival post (bound once, #14). */
@@ -775,12 +752,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  anchored to it is cleared. */
   noteEntityGone(entityId: string): void {
     if (this._guardReturn.anchorId === entityId) this.clearGuardPost();
-  }
-
-  /** The guard post leashes this ship's target pick: every ship with a post
-   *  but a broadside capital (that one flies `BroadsideHelm.guard`). */
-  private guardLeash(): boolean {
-    return this._guardReturn.on && !this.eng.broadside;
   }
 
   /** On-sight engagement on / off (RTS Part B slice 6): the Aggressive
@@ -821,8 +792,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** One Patrol leg (rules: `TravelMode.patrolLeg`). */
   setPatrolLeg(fromX: number, fromY: number, x: number, y: number): void {
-    this._travel.patrolLeg(fromX, fromY, x, y, shipTuning(this.kind).guardRadiusMin, this._orders);
-    this._targets.setLeash(this._guardReturn.r, this.eng.fireRange);
+    this._travel.patrolLeg(fromX, fromY, x, y, this._guardReturn.minR, this._orders);
+    this._guardReturn.releash();
   }
 
   /** Test-visible: flying a patrol leg? */
@@ -833,12 +804,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   getTravelState(): TravelState { return this._travel.state; }
 
   /** Stop: brake to a halt and guard that spot (rules: `GuardReturnMode.brakePoint`). */
-  stopAt(x: number, y: number, vx: number, vy: number): void {
-    const g = this._guardReturn;
-    g.brakePoint(this.handling, x, y, vx, vy);
-    this.setMoveTarget(g.stopX, g.stopY);
-    this.setGuardPost(g.stopX, g.stopY, 0);
-  }
+  stopAt(x: number, y: number, vx: number, vy: number): void { this._guardReturn.stopAt(this.handling, x, y, vx, vy, this._orders); }
 
   /**
    * What the ship is doing, for the owner's fleet panel (RTS Part B slice 9),
@@ -875,9 +841,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   getFlockLeaderId(): string | null { return this._flock.leaderId; }
 
   /** Test-visible: the effective guard radius (0 with no post). */
-  getGuardRadius(): number {
-    return this._guardReturn.on ? this._guardReturn.r : 0;
-  }
+  getGuardRadius(): number { return this._guardReturn.radius(); }
 
   /** Test-visible: the guard post's centre (null with no post). */
   getGuardPostX(): number | null { return this._guardReturn.on ? this._guardReturn.x : null; }

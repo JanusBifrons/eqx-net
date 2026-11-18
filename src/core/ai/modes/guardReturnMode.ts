@@ -14,6 +14,11 @@ import {
   MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
 } from '../tactics/manoeuvre.js';
 
+/** The target pick's leash reach (`TargetPick.setLeash`). */
+export interface GuardLeashSink {
+  setLeash(guardR: number, fireRange: number): void;
+}
+
 export class GuardReturnMode implements IPilotMode {
   /** Guard post (server-only, set by a director via `setGuardPost`): a
    *  broadside capital with a post fights FROM it instead of holding the
@@ -29,12 +34,44 @@ export class GuardReturnMode implements IPilotMode {
    *  tick into `anchorPose` (`followAnchor`). */
   anchorId: string | null = null;
   private readonly anchorPose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** Wired once by the brain (`configure`): the post radius floor
+   *  (`shipTuning(kind).guardRadiusMin`, #18), whether the ship is a
+   *  broadside capital (no leash: it flies `BroadsideHelm.guard`), its fire
+   *  range and the target pick the post leashes. */
+  minR = 0;
+  private broadside = false;
+  private fireRange = 0;
+  private leash: GuardLeashSink | null = null;
   /** Out of `brakePoint`: where the brakes bring the ship to a halt. */
   stopX = 0;
   stopY = 0;
 
-  /** Take a post (`setGuardPost`): radius `r` already floored by the brain.
-   *  A post is a hold: it ends a hunt and a travel.
+  /** Wire the post to the brain's kind and target pick (once, constructor). */
+  configure(minR: number, broadside: boolean, fireRange: number, leash: GuardLeashSink): void {
+    this.minR = minR;
+    this.broadside = broadside;
+    this.fireRange = fireRange;
+    this.leash = leash;
+  }
+
+  /** The guard post leashes this ship's target pick: every ship with a post
+   *  but a broadside capital (that one flies `BroadsideHelm.guard`). */
+  leashes(): boolean {
+    return this.on && !this.broadside;
+  }
+
+  /** The effective guard radius (0 with no post). */
+  radius(): number {
+    return this.on ? this.r : 0;
+  }
+
+  /** Push the current radius into the target pick's leash reach. */
+  releash(): void {
+    this.leash?.setLeash(this.r, this.fireRange);
+  }
+
+  /** Take a post (`setGuardPost`): radius `r` floored at `minR`, then the
+   *  pick's leash follows it. A post is a hold: it ends a hunt and a travel.
    *
    *  The GUARD POST: the area (centre + radius) it was sent to
    *  defend. A broadside capital with a post fights from it (see
@@ -56,9 +93,10 @@ export class GuardReturnMode implements IPilotMode {
     this.anchorId = anchorId;
     this.x = x;
     this.y = y;
-    this.r = r;
+    this.r = Math.max(r, this.minR);
     o.search.on = false;
     o.travel.state = TRAVEL_NONE;
+    this.releash();
   }
 
   /**
@@ -67,7 +105,7 @@ export class GuardReturnMode implements IPilotMode {
    * (reverse plus damping, this kind's handling) bring it from (vx, vy) at
    * (x, y), so the nose stays on course and it never turns back for a point
    * it has already passed. Ends a travel and a hunt. Server-only. This fills
-   * (`stopX`, `stopY`) with kind handling `h`; the brain posts the guard there.
+   * (`stopX`, `stopY`) with kind handling `h`; `stopAt` posts the guard there.
    */
   brakePoint(h: PilotHandling, x: number, y: number, vx: number, vy: number): void {
     const v = Math.hypot(vx, vy);
@@ -81,6 +119,14 @@ export class GuardReturnMode implements IPilotMode {
     }
     this.stopX = v > 1e-6 ? x + (vx / v) * d : x;
     this.stopY = v > 1e-6 ? y + (vy / v) * d : y;
+  }
+
+  /** Stop (`stopAt`): brake to a halt (`brakePoint`), steer there and
+   *  guard that spot. */
+  stopAt(h: PilotHandling, x: number, y: number, vx: number, vy: number, o: PilotOrderModes): void {
+    this.brakePoint(h, x, y, vx, vy);
+    o.course.setCourse(this.stopX, this.stopY, false, o);
+    this.post(this.stopX, this.stopY, 0, null, o);
   }
 
   /** Drop the post (and its anchor). */
