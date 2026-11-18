@@ -11,7 +11,6 @@ import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, shipSpriteKinds, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
 import { decidePlacementPointer, shouldCentreGhostOnActivate } from './placementPointerDecision.js';
-import { engineProfileForKind } from './pixi/engineGeometry.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
@@ -25,6 +24,8 @@ import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { createBeamCtx, updateBeams, type BeamCtx } from './pixi/beamUpdater.js';
+import { createWarpFxCtx, updateWarpFx, type WarpFxCtx } from './pixi/warpFxUpdater.js';
+import { createEngineShieldFxCtx, updateEngineShieldFx, clearEngineShieldFxIds, type EngineShieldFxCtx } from './pixi/engineShieldFxUpdater.js';
 import { artStats, backdropStats, shipVisualProbe, type ArtStats, type BackdropStats, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
 import { type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
@@ -52,9 +53,6 @@ import { readFxKillSwitches, type FxKillSwitches } from './fxKillSwitches';
 import { createArtService, type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import { litPass } from './art/litPass.js';
-import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach } from './art/lightingSettings.js';
-import { WarpSpoolFx, type SpoolFxShip, type Nozzle } from './pixi/WarpSpoolFx.js';
-import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
 import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
@@ -64,14 +62,10 @@ import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
-import { droneBoostInput } from './pixi/droneEngineInput.js';
-import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
 import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
-import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
+import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, hullZoomFactor, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
-import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
-import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool, type BeamView } from './BeamSpritePool';
@@ -103,7 +97,6 @@ import { setCanvasPointerCapture } from './pointerCapture.js';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
 import { localCameraKey } from './camera/localCameraKey';
 import { isParkedHull } from './shipOwnership.js';
-import { warpFxFeedsShip } from './warpFxGate.js';
 import { forEachShipRekey, moveKey, moveSetKey } from './shipRekey.js';
 import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
@@ -355,7 +348,7 @@ export class PixiRenderer implements IRenderer {
       get sprites() { return r.sprites; }, get artCtx() { return r._artCtx; }, get swarmSpriteKinds() { return r._swarmSpriteKinds; },
       get mountVisuals() { return r.mountVisuals; }, get camera() { return r.camera; }, get starfield() { return r.starfield; },
       get backdrop() { return r._backdrop; }, get effects() { return r.effects; }, get engineDbgScratch() { return r._engineDbgScratch; },
-      get farIcons() { return r._farIcons; }, get warpFx() { return r._warpFx; }, get spoolFx() { return r._spoolFx; },
+      get farIcons() { return r._farIcons; }, get warpFx() { return r._warpFxCtx.warpFx; }, get spoolFx() { return r._warpFxCtx.spoolFx; },
       get helmMarker() { return r.helmMarker; }, get lastMirror() { return r._lastMirror; }, get fxEngines() { return r._fxEngines; },
       get fxExplosions() { return r._fxExplosions; }, get fxProjectiles() { return r._fxProjectiles; }, get fxLiveBeams() { return r._fxLiveBeams; },
       get fxShields() { return r._fxShields; }, get fxShieldsOn() { return r._fxShieldsOn; }, get fxFences() { return r._fxFences; },
@@ -943,9 +936,9 @@ export class PixiRenderer implements IRenderer {
     this.shipContainer.addChild(this.connectorRenderer.gfx);
     // Warp-to visuals (Phase 4): engine build-up, blur streak, burning trails.
     // Cheap sprites, under the hulls; drawn for every render mode.
-    this.shipContainer.addChild(this._warpFx.layer);
+    this.shipContainer.addChild(this._warpFxCtx.warpFx.layer);
     // Warp spool-up: the engines overcharge (glow + sparks, under the hulls).
-    this.shipContainer.addChild(this._spoolFx.layer);
+    this.shipContainer.addChild(this._warpFxCtx.spoolFx.layer);
     // Placed rocks and cut rock pieces: one mesh for all of them (rockBatch.ts),
     // under the hulls and the wreck pieces' cut-edge glow.
     this.shipContainer.addChild(this._cutField.rockBatch.layer);
@@ -1051,10 +1044,12 @@ export class PixiRenderer implements IRenderer {
       // ship (players and drones). Under the hulls; ship sprites are added later.
       this._fxEngines = new FxEngines(art, () => this.effects?.getQuality() ?? 'medium');
       this.shipContainer.addChild(this._fxEngines.trailLayer, this._fxEngines.flameLayer, this._fxEngines.glowLayer);
+      this._engineShieldFxCtx.fxEngines = this._fxEngines;
       this._missileUpdaterCtx.fxExplosions = this._fxExplosions;
       // B5: shields (invisible at rest; hit ripples, held laser contacts,
       // break) and fences (energy line, raise / power-loss / gate).
       this._fxShields = new FxShields(art);
+      this._engineShieldFxCtx.fxShields = this._fxShields;
       this._fxFences = new FxFences(art);
       this.shipContainer.addChild(this._fxShields.container);
       // Fences sit just above the connector web, below the sprites.
@@ -2525,7 +2520,9 @@ export class PixiRenderer implements IRenderer {
       this.frameMarkers.gridLabelCount = 0;
     }
     this.frameMarkers.spriteCount = this.sprites.size;
-    this.drawWarpFx(mirror);
+    // Warp / spool FX: see pixi/warpFxUpdater.ts (ctx pooled; camera scale per frame).
+    this._warpFxCtx.cameraScale = this.world.scale.x;
+    updateWarpFx(mirror, this._warpFxCtx);
 
     // Effects subsystem tick. MUST run AFTER all sprite updates so per-
     // entity effects (shield aura, engine emitters in later milestones)
@@ -2537,8 +2534,10 @@ export class PixiRenderer implements IRenderer {
       // Engine continuous emitters — drive from mirror.boostingShips /
       // thrustingShips Sets (M5 of plan wiggly-puppy). Set diff per frame
       // → setContinuous on transitions only (no-op on identical state).
-      this.drawFxEngines(mirror);
-      this.syncEngineContinuousEffects(mirror);
+      // See pixi/engineShieldFxUpdater.ts; the shield gate is shared with beams + hit FX.
+      this._engineShieldFxCtx.effects = this.effects;
+      this._engineShieldFxCtx.fxShieldsOn = this._fxShieldsOn;
+      updateEngineShieldFx(mirror, this._engineShieldFxCtx);
 
       const nowMs = this.fxNow();
       const dtMs = this.lastEffectsTickNowMs > 0 ? nowMs - this.lastEffectsTickNowMs : 16.67;
@@ -2559,22 +2558,6 @@ export class PixiRenderer implements IRenderer {
     this._perfRing?.push(this.frameMarkers.rendererUpdateMs);
   }
 
-  /** Track which ships currently have an active engine emitter registered
-   *  with EffectsService — lets us detect transitions per frame and only
-   *  call setContinuous on actual changes (setContinuous is re-entrant
-   *  but the per-key check still wins on alloc-pressure). */
-  private readonly _activeThrustIds = new Set<string>();
-  private readonly _activeBoostIds = new Set<string>();
-  /** Set of entityIds (player playerIds OR drone "swarm-N" ids) currently
-   *  carrying an active shield aura. Diff'd against mirror state each
-   *  frame; transitions fire setContinuous('shield', active). */
-  private readonly _activeShieldIds = new Set<string>();
-
-  /** Diff mirror.thrustingShips / boostingShips against our last frame's
-   *  registration set; fire setContinuous(id, kind, true|false) only on
-   *  transitions. Mirrors the existing thrust/boost flame ownership in
-   *  spriteBuilders — those Graphics flames continue to render (they are
-   *  the minimal-tier fallback); EngineEmitter ADDS particle trails. */
   /** The sprite key a shooter id draws under (players and drones as-is,
    *  structures as `swarm-<id>`), or null when it has no sprite. */
   private shooterSpriteKey(id: string): string | null {
@@ -2681,262 +2664,6 @@ export class PixiRenderer implements IRenderer {
     }
   }
 
-  /** New engine exhaust for every ship sprite with Machined art: players
-   *  pass their thrust / boost input, drones (`swarm-*`) follow their speed.
-   *  Scrap is skipped. Reads the sprite's resolved pose
-   *  (one pose per frame). Ships it draws skip today's particle emitter. */
-  /** Warp-to visuals for every visible ship (one resolved sprite pose each). */
-  private drawWarpFx(mirror: RenderMirror): void {
-    const fx = this._warpFx;
-    fx.beginFrame(this.fxNow(), this.world.scale.x);
-    this._spoolFx.beginFrame(this.fxNow(), this.world.scale.x);
-    const local = mirror.localPlayerId;
-    const s = this._warpShipScratch;
-    const hullFed = this._hullWarpFed;
-    for (const [id, ship] of mirror.ships) {
-      // ACTIVE ships always; a parked hull (#17 LINGERING) only while it has a
-      // warp phase (RTS fleet warp S4: its group spools / it just arrived),
-      // and one frame after (warpFxGate.ts).
-      const parked = isParkedHull(mirror, id, ship);
-      if (!warpFxFeedsShip(parked, ship.warp, parked && hullFed.has(id))) continue;
-      if (parked) {
-        if (ship.warp === undefined) hullFed.delete(id); else hullFed.add(id);
-      }
-      const sp = this.sprites.get(id);
-      // A remote ship on its run is hidden but still tracked (its departure).
-      if (!sp || (!sp.visible && ship.warp !== 2)) continue;
-      const kind = ship.kind ?? '';
-      let stern = this._warpStern.get(kind);
-      if (stern === undefined) { stern = engineProfileForKind(ship.kind).sternOffset; this._warpStern.set(kind, stern); }
-      s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = ship.warp; s.stern = stern; s.isLocal = id === local;
-      fx.draw(id, s);
-      this.drawSpoolFx(id, ship.warp, ship.kind, sp, id === local ? mirror.localSpoolMs : undefined);
-    }
-    // Hulls that left (warped out, or the sector changed): forget them.
-    if (hullFed.size > 0) {
-      for (const id of hullFed) if (!mirror.ships.has(id)) hullFed.delete(id); // TODO: alloc-debt (iterator; only while a hull warps)
-    }
-    // W2a — NPCs warping (flagship fleets). Fed while their phase is set and
-    // one frame after it clears, so a cancelled spool settles to idle instead
-    // of WarpFx reading the disappearance as a departure.
-    const fed = this._droneWarpFed;
-    if (mirror.swarm) for (const [eid, e] of mirror.swarm) {
-      if (e.kind !== 1) continue;
-      const key = this.droneWarpKey(eid);
-      if (e.warp === undefined && !fed.has(key)) continue;
-      const sp = this.sprites.get(key);
-      if (!sp) continue;
-      const kindId = e.shipKind ?? '';
-      let stern = this._warpStern.get(kindId);
-      if (stern === undefined) { stern = engineProfileForKind(e.shipKind).sternOffset; this._warpStern.set(kindId, stern); }
-      s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = e.warp; s.stern = stern; s.isLocal = false;
-      fx.draw(key, s);
-      this.drawSpoolFx(key, e.warp, e.shipKind, sp, undefined);
-      if (e.warp === undefined) fed.delete(key); else fed.add(key);
-    }
-    // A ship that died this frame left the mirror because it died, not because
-    // it warped out: no departure (same keys as the sprite maps).
-    if (mirror.explodingShips && mirror.explodingShips.size > 0) {
-      for (const id of mirror.explodingShips) { fx.died(id); fed.delete(id); }
-    }
-    fx.endFrame();
-    this._spoolFx.endFrame();
-  }
-
-  /** One ship's spool-up (progress-driven, sized from its own nozzles). */
-  private drawSpoolFx(id: string, warp: number | undefined, kind: string | undefined, sp: Container, spoolMs: number | undefined): void {
-    const now = this.fxNow();
-    const phase = warp === 1 ? 1 : 0;
-    if (phase !== (this._spoolPhase.get(id) ?? 0)) {
-      if (phase === 1) { this._spoolPhase.set(id, 1); this._spoolStart.set(id, now); }
-      else { this._spoolPhase.delete(id); this._spoolStart.delete(id); }
-    }
-    const kindId = kind ?? 'fighter';
-    let k = this._spoolKind.get(kindId);
-    if (!k) {
-      // Classic-look ships have no baked nozzles: one at the stern.
-      const stern = engineProfileForKind(kindId).sternOffset;
-      k = { half: stern, nozzles: [{ x: 0, y: stern, r: Math.max(2, stern * 0.25) }] };
-      this._spoolKind.set(kindId, k);
-    }
-    const s = this._spoolShip;
-    s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation;
-    const dur = spoolMs ?? (WARP_SPOOL_TICKS / 60) * 1000;
-    s.progress = phase === 1 ? Math.min(1, (now - (this._spoolStart.get(id) ?? now)) / dur) : -1;
-    const art = this._artCtx.handles.get(id)?.ship;
-    s.nozzles = art && art.nozzles.length > 0 ? art.nozzles : k.nozzles;
-    s.half = k.half;
-    this._spoolFx.draw(id, s);
-  }
-
-  private drawFxEngines(mirror: RenderMirror): void {
-    const fx = this._fxEngines;
-    if (!fx) return;
-    const now = this.fxNow();
-    const dt = this._fxEnginesLastMs > 0 ? Math.min(0.1, (now - this._fxEnginesLastMs) / 1000) : 1 / 60;
-    this._fxEnginesLastMs = now;
-    fx.beginFrame();
-    for (const [key, sp] of this.sprites) {
-      if (!sp.visible) continue;
-      const h = this._artCtx.handles.get(key);
-      if (!h || h.job.type !== 'ship' || !h.ship) continue;
-      let thrust: -1 | 0 | 1, boost: -1 | 0 | 1;
-      if (mirror.ships.has(key)) {
-        // Every ship, AI-flown hulls included: their flame bits ride the
-        // same snapshot carriers under their shipInstanceId (RTS Part A S2).
-        thrust = mirror.thrustingShips?.has(key) ? 1 : 0;
-        boost = mirror.boostingShips?.has(key) ? 1 : 0;
-      } else if (key.startsWith('swarm-') && this._swarmSpriteKinds.get(key) === 1) {
-        // Drones only. A capital wreck piece (kind 4) holds its dead ship's
-        // art handle, nozzles and all, so without this gate every drifting
-        // piece drew the battleship's four-flame exhaust and ribbons.
-        // Thrust follows speed (no key on the wire); boost is the AI pilot's
-        // real boost key from the snapshot, the same flame a pilot's gets.
-        thrust = -1;
-        boost = droneBoostInput(mirror.swarm?.get(this.droneEidOf(key)));
-      } else continue;
-      this.drawFxEngineFor(fx, key, sp, h, thrust, boost, dt, now);
-    }
-    fx.endFrame();
-  }
-
-  /** One hull's exhaust (+ GPU-lit engine lights) for `drawFxEngines`. */
-  private drawFxEngineFor(
-    fx: FxEngines,
-    key: string,
-    sp: Container,
-    h: NonNullable<ReturnType<ShipArtCtx['handles']['get']>>,
-    thrust: -1 | 0 | 1,
-    boost: -1 | 0 | 1,
-    dt: number,
-    now: number,
-  ): void {
-    if (h.job.type !== 'ship' || !h.ship) return;
-    let top = this._fxTopSpeed.get(h.job.id), trail = this._fxTrailS.get(h.job.id);
-    if (top === undefined || trail === undefined) {
-      const k = getShipKind(h.job.id);
-      top = k.maxSpeed; trail = shipTuning(k).exhaustTrailS;
-      this._fxTopSpeed.set(h.job.id, top); this._fxTrailS.set(h.job.id, trail);
-    }
-    fx.draw(key, h.ship.nozzles, sp.x, sp.y, sp.rotation, thrust, boost, top, dt, now, trail);
-    // GPU-lit art: each engine is a light in its plume (its own hull takes little).
-    const ls = litPass.settings;
-    if (ls && ls.engineLights && ls.pointLights > 0) {
-      const owner = sp instanceof MachinedShipSprite && sp.lit.length > 0 ? sp.lit[0]!.lightOwnerId : -1;
-      const th = fx.thrustOf(key), c = Math.cos(sp.rotation), s = Math.sin(sp.rotation);
-      for (const nz of h.ship.nozzles) {
-        const ly = nz.y + engineLightAstern(nz.r);
-        litPass.scene.addLight(sp.x + nz.x * c - ly * s, sp.y + nz.x * s + ly * c, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, th), engineLightReach(nz.r), owner);
-      }
-    }
-  }
-
-  private syncEngineContinuousEffects(mirror: RenderMirror): void {
-    if (!this.effects) return;
-    const thrust = mirror.thrustingShips;
-    const boost = mirror.boostingShips;
-    // Ships drawn by the new exhaust don't also get today's particles.
-    const fxe = this._fxEngines;
-
-    if (thrust) {
-      for (const id of thrust) {
-        if (!this._activeThrustIds.has(id) && !fxe?.drew(id)) {
-          // Per-kind nozzle offset + plume scale, computed once at
-          // registration (not per frame) from the ship catalogue.
-          this.effects.setContinuous(id, 'thrust', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
-          this._activeThrustIds.add(id);
-        }
-      }
-      for (const id of this._activeThrustIds) {
-        if (!thrust.has(id) || fxe?.drew(id)) {
-          this.effects.setContinuous(id, 'thrust', false);
-          this._activeThrustIds.delete(id);
-        }
-      }
-    } else if (this._activeThrustIds.size > 0) {
-      for (const id of this._activeThrustIds) this.effects.setContinuous(id, 'thrust', false);
-      this._activeThrustIds.clear();
-    }
-
-    if (boost) {
-      for (const id of boost) {
-        if (!this._activeBoostIds.has(id) && !fxe?.drew(id)) {
-          this.effects.setContinuous(id, 'boost', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
-          this._activeBoostIds.add(id);
-        }
-      }
-      for (const id of this._activeBoostIds) {
-        if (!boost.has(id) || fxe?.drew(id)) {
-          this.effects.setContinuous(id, 'boost', false);
-          this._activeBoostIds.delete(id);
-        }
-      }
-    } else if (this._activeBoostIds.size > 0) {
-      for (const id of this._activeBoostIds) this.effects.setContinuous(id, 'boost', false);
-      this._activeBoostIds.clear();
-    }
-
-    // Shield aura — M8 (plan wiggly-puppy). Drive from mirror.ships's
-    // shieldDown field (populated by handleShield + handleDamage) AND
-    // mirror.swarm's shieldDown (decoded from the binary wire's
-    // SWARM_RECORD_FLAG_SHIELD_DOWN bit). Note inversion: aura is ON
-    // when shield is UP (shieldDown=false / undefined). Drones use
-    // "swarm-<entityId>" id prefix to namespace with the player ids.
-    this.syncShieldAuraEffects(mirror);
-  }
-
-  private syncShieldAuraEffects(mirror: RenderMirror): void {
-    if (!this.effects) return;
-    const seen = this._updateSeenScratch; // already cleared at top of update()
-    seen.clear();
-
-    // Aura is ON unless shieldDown is EXPLICITLY true. Default assumption
-    // is "shield up" — every fresh-spawn ship has full shield (the server
-    // initialises `ship.shield = kind.shieldMax` on spawn), and the
-    // client only learns `shieldDown=true` via the explicit SHIELD_BROKEN
-    // event. Pre-fix the aura was gated on `shieldDown === false`
-    // (explicit), so an unscathed just-spawned ship rendered no aura —
-    // user perception: "I spawn in without a shield up."
-    // Every ship: ACTIVE and LINGERING (R2.32: a parked hull keeps its shield
-    // and shows its aura), #17.
-    for (const [id, ship] of mirror.ships) {
-      if (ship.shieldDown !== true) seen.add(id);
-    }
-    if (mirror.swarm) {
-      for (const [id, sw] of mirror.swarm) {
-        if (sw.shieldDown !== true && sw.kind === 1) seen.add(`swarm-${id}`);
-      }
-    }
-
-    for (const id of seen) {
-      if (!this._activeShieldIds.has(id)) {
-        // The drawn bubble IS the shield collider (owner's rule 2026-11-10):
-        // `shieldBubbleRadiusForEntity` = shieldVisualRadius + shipTuning pad,
-        // the same ball `shipShieldColliderDesc` mounts (#15/#18). Both shield
-        // visuals (the legacy ring and the new FxShields) draw at it.
-        const bubble = shieldBubbleRadiusForEntity(id, mirror)
-          ?? shieldBubbleRadius(getShipKind(DEFAULT_SHIP_KIND));
-        this.effects.setContinuous(id, 'shield', true, bubble);
-        this._activeShieldIds.add(id);
-        this._fxShieldRadius.set(id, bubble);
-      }
-    }
-    for (const id of this._activeShieldIds) {
-      if (!seen.has(id)) {
-        this.effects.setContinuous(id, 'shield', false);
-        this._activeShieldIds.delete(id);
-        this._fxShieldRadius.delete(id);
-      }
-    }
-    // New shields (B5): every shield up this frame, then lay them out (a
-    // shield missing this frame went down and plays its break).
-    this.effects.setShieldAuraHidden(this._fxShieldsOn);
-    if (this._fxShieldsOn) {
-      for (const id of this._activeShieldIds) this._fxShields!.shield(id, this._fxShieldRadius.get(id) ?? 38);
-      this._fxShields!.end(this.fxNow(), this._fxShieldPose);
-    }
-  }
-
   /** Wall-clock of the last `effects.tick` call. Used to derive dt for the
    *  next call. 0 ⇒ first frame (use a default 16.67 ms to seed). */
   private lastEffectsTickNowMs = 0;
@@ -3034,8 +2761,6 @@ export class PixiRenderer implements IRenderer {
   private _fxShields: FxShields | null = null;
   private _fxFences: FxFences | null = null;
   private _fxShieldsOn = false;
-  /** Shield radius per shielded entity (hull radius + pad), set when it comes up. */
-  private readonly _fxShieldRadius = new Map<string, number>();
   /** Pixi-space pose of an entity's sprite, for the new shields. */
   private readonly _fxShieldPose = (id: string, out: { x: number; y: number }): boolean => {
     const sp = this.sprites.get(id);
@@ -3057,15 +2782,13 @@ export class PixiRenderer implements IRenderer {
   private readonly _turretMissileSeen = new Map<number, number>();
   private _turretShotGen = 0;
   private readonly _ownerSpriteKey = new Map<string, string>();
-  private _fxEnginesLastMs = 0;
-  private readonly _warpFx = new WarpFx();
-  private readonly _spoolFx = new WarpSpoolFx();
-  private readonly _spoolShip: SpoolFxShip = { x: 0, y: 0, rotation: 0, progress: -1, nozzles: [], half: 0 };
-  /** Per ship: when its spool started (ms) and its last warp phase. */
-  private readonly _spoolStart = new Map<string, number>();
-  private readonly _spoolPhase = new Map<string, number>();
-  /** Per kind: hull half length and a stern nozzle for classic-look ships. */
-  private readonly _spoolKind = new Map<string, { half: number; nozzles: Nozzle[] }>();
+  /** Pooled warp / spool ctx (pixi/warpFxUpdater.ts), built once here (probes read its effects before `init`). */
+  private readonly _warpFxCtx: WarpFxCtx = createWarpFxCtx({ fxNow: () => this.fxNow(), sprites: this.sprites, artHandles: this._artCtx.handles });
+  /** Pooled engine exhaust + shield aura ctx (pixi/engineShieldFxUpdater.ts); built once here (the handoff reset may run before `init`). */
+  private readonly _engineShieldFxCtx: EngineShieldFxCtx = createEngineShieldFxCtx({
+    fxShieldPose: this._fxShieldPose, fxNow: () => this.fxNow(), sprites: this.sprites, artHandles: this._artCtx.handles,
+    swarmSpriteKinds: this._swarmSpriteKinds, seenScratch: this._updateSeenScratch,
+  });
   /** Phase 4 travel state: the camera the sky is drawn from (shifted by the
    *  trip's approach jump). */
   private readonly _skyCam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 0, screenHeight: 0 };
@@ -3074,42 +2797,8 @@ export class PixiRenderer implements IRenderer {
   private _speedFollowSprite: { readonly x: number; readonly y: number } | null = null;
   private readonly _speedFollowPose = { x: 0, y: 0 };
   private readonly _speedSample = newSpeedFxSample();
-
-  private readonly _warpShipScratch: WarpFxShip = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
-  private readonly _warpStern = new Map<string, number>();
-  /** W2a — drones fed to WarpFx last frame (their sprite keys). */
-  private readonly _droneWarpFed = new Set<string>();
-  /** Parked hulls fed to the warp effects last frame (`warpFxFeedsShip`).
-   *  A hull that left the mirror is dropped on the next frame's sweep. */
-  private readonly _hullWarpFed = new Set<string>();
-  /** W2a — `swarm-<id>` keys, built once per drone (no per-frame string). */
-  private readonly _droneWarpKeys = new Map<number, string>();
-  /** Sprite key `swarm-<eid>` → eid, parsed once per key (#14). */
-  private readonly _droneEidOfKey = new Map<string, number>();
-  private droneEidOf(key: string): number {
-    let eid = this._droneEidOfKey.get(key);
-    if (eid === undefined) {
-      if (this._droneEidOfKey.size > 4096) this._droneEidOfKey.clear(); // bound it; rebuilt on demand
-      eid = parseInt(key.slice(6), 10);
-      this._droneEidOfKey.set(key, eid);
-    }
-    return eid;
-  }
-  private droneWarpKey(eid: number): string {
-    let k = this._droneWarpKeys.get(eid);
-    if (k === undefined) {
-      k = `swarm-${eid}`;
-      if (this._droneWarpKeys.size > 4096) this._droneWarpKeys.clear(); // bound it; rebuilt on demand
-      this._droneWarpKeys.set(eid, k);
-    }
-    return k;
-  }
   /** Scratch for the test-only particle count in `artStats`. */
   private readonly _engineDbgScratch: number[] = [];
-  /** Top speed per ship kind (normalises a drone's engine level). */
-  private readonly _fxTopSpeed = new Map<string, number>();
-  /** Per kind: seconds of path the engine ribbon spans (`shipTuning`). */
-  private readonly _fxTrailS = new Map<string, number>();
 
   /** New weapon effects (`?fx=new`, B3). */
   private _fxLiveBeams: FxBeams | null = null;
@@ -3411,9 +3100,7 @@ export class PixiRenderer implements IRenderer {
     this.helmMarker.reset();
     this._fxShields?.reset();
     this._fxFences?.reset();
-    this._activeThrustIds.clear();
-    this._activeBoostIds.clear();
-    this._activeShieldIds.clear();
+    clearEngineShieldFxIds(this._engineShieldFxCtx);
   }
 
   /** Machined art status (DEV/perf probe): see pixi/rendererProbes.ts. */
@@ -3437,9 +3124,7 @@ export class PixiRenderer implements IRenderer {
       this.effects = null;
     }
     // Clear the per-effect diff trackers so a re-init starts clean.
-    this._activeThrustIds.clear();
-    this._activeBoostIds.clear();
-    this._activeShieldIds.clear();
+    clearEngineShieldFxIds(this._engineShieldFxCtx);
     // Remove canvas pointer / wheel / touch listeners so an in-flight
     // event doesn't reach a destroyed Camera.
     const canvas = this.app?.canvas;
