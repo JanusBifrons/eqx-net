@@ -2,6 +2,7 @@ import { Container, Graphics } from 'pixi.js';
 import type { FleetOverlayShip, RenderMirror } from '@core/contracts/IRenderer';
 import type { BoxRect, HoldArmed } from './input/commandPointerRouter.js';
 import type { FleetPickState } from './input/fleetPick.js';
+import { traceRoute, routeDots } from './routeLine.js';
 
 /**
  * Command-view fleet overlay (RTS stream slice 13a).
@@ -197,18 +198,10 @@ export class FleetOverlay {
   private drawPickRoute(g: Graphics, route: ArrayLike<number>, count: number, project: ProjectFn): void {
     const p = this._scratch;
     if (count > 1) {
-      project(route[(count - 1) * 2]!, -route[(count - 1) * 2 + 1]!, p);
-      g.moveTo(p.x, p.y);
-      for (let i = 0; i < count; i++) {
-        project(route[i * 2]!, -route[i * 2 + 1]!, p);
-        g.lineTo(p.x, p.y);
-      }
+      traceRoute(g, route, 0, count, true, NaN, NaN, project, p);
       g.stroke({ width: 1.5, color: PICK_COLOR, alpha: 0.8 });
     }
-    for (let i = 0; i < count; i++) {
-      project(route[i * 2]!, -route[i * 2 + 1]!, p);
-      g.circle(p.x, p.y, PICK_DOT_PX);
-    }
+    routeDots(g, route, 0, count, PICK_DOT_PX, project, p);
     g.fill({ color: PICK_COLOR, alpha: 0.95 });
     for (let i = 0; i < count; i++) {
       project(route[i * 2]!, -route[i * 2 + 1]!, p);
