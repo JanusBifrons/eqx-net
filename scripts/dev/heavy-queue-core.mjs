@@ -11,7 +11,10 @@
  *    threshold; it claims the single `running` slot with an exclusive create
  *    (`wx`), so of two racers exactly one wins;
  *  - a `running` file whose pid is dead is stale and any waiter deletes it
- *    at once. A live holder is never touched, however overdue;
+ *    at once;
+ *  - watchdog: a live holder past its limit (max(3x, estimate + 10 min) of
+ *    its --minutes, or 45 min with none) is ended, whole process tree, by any
+ *    waiter or by its own wrapper (a reaped shell can leave a hung job behind);
  *  - a queue ticket whose pid is dead (the reaper killed a waiting shell) is
  *    ORPHANED, not deleted: stamped `orphanedAtMs`, left out of the order,
  *    and deleted after ORPHAN_GRACE_MS. A re-run with the same who + kind
@@ -25,7 +28,10 @@ import { spawnSync } from 'node:child_process';
 
 export const KINDS = ['film', 'e2e', 'netgate', 'perf', 'suite', 'other'];
 export const AGING_MS = 10 * 60_000;
-export const NO_ESTIMATE_OVERDUE_MIN = 90;
+/** Watchdog limit for a running job with no --minutes estimate. */
+export const WATCHDOG_NO_ESTIMATE_MIN = 45;
+/** Watchdog slack: a job may always run its estimate + this many minutes. */
+export const WATCHDOG_SLACK_MIN = 10;
 export const RUNNING_FILE = 'running';
 /** An unreadable (half-written) `running` file older than this is stale. */
 export const GARBLED_GRACE_MS = 30_000;
@@ -60,15 +66,58 @@ export function isPidAlive(pid) {
   }
 }
 
-/** Stale = its owner process is gone. Overdue alone never makes it stale. */
+/** Stale = its owner process is gone (an overdue live one is the watchdog's). */
 export function isStale(t, isAlive = isPidAlive) {
   return !isAlive(t.pid);
 }
 
-/** Running past 3x its estimate (or 90 min with none): shown in status only. */
+/** Minutes a job may run: max(3x estimate, estimate + 10), or 45 with none. */
+export function watchdogLimitMin(estimateMin) {
+  if (!(estimateMin > 0)) return WATCHDOG_NO_ESTIMATE_MIN;
+  return Math.max(3 * estimateMin, estimateMin + WATCHDOG_SLACK_MIN);
+}
+
+/**
+ * Watchdog decision for the running holder `r` (pure). `action` is 'end' once
+ * it has run strictly longer than its limit, else 'keep'.
+ */
+export function watchdogDecision(r, now) {
+  const startedAtMs = r.startedAtMs ?? r.joinedAtMs;
+  const limitMin = watchdogLimitMin(r.estimateMin);
+  const limitMs = limitMin * 60_000;
+  const runMs = now - startedAtMs;
+  return {
+    action: runMs > limitMs ? 'end' : 'keep',
+    limitMin, limitMs, runMs, endsAtMs: startedAtMs + limitMs,
+  };
+}
+
+/** Past its watchdog limit (the watchdog ends it). */
 export function holderOverdue(r, now) {
-  const limitMin = r.estimateMin ? r.estimateMin * 3 : NO_ESTIMATE_OVERDUE_MIN;
-  return now - (r.startedAtMs ?? r.joinedAtMs) > limitMin * 60_000;
+  return watchdogDecision(r, now).action === 'end';
+}
+
+/** The one log line for a job the watchdog ended. */
+export function watchdogMessage(r, d) {
+  const est = r.estimateMin ? `est ${r.estimateMin}m` : 'no estimate';
+  return `watchdog ended overdue job: ${r.who} [${r.kind}] pid ${r.pid}, ran ${fmtDur(d.runMs)} vs ${est}`
+    + ` (limit ${d.limitMin}m); re-queue with a realistic --minutes if it really needs longer`;
+}
+
+/**
+ * Kill `pid` and its whole process tree. Windows: taskkill /T /F. POSIX: the
+ * process group of `groupPid` (the wrapper spawns its child detached, so the
+ * child leads its own group), then `pid` itself.
+ */
+export function killTree(pid, groupPid) {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+    return;
+  }
+  for (const target of [groupPid != null ? -groupPid : null, -pid, pid]) {
+    if (target == null) continue;
+    try { process.kill(target, 'SIGKILL'); } catch { /* gone or not a group */ }
+  }
 }
 
 /**
@@ -116,6 +165,11 @@ export function resolveSharedClaudeDir(name, cwd = process.cwd()) {
 export function resolveQueueDir(cwd = process.cwd(), env = process.env) {
   if (env.HEAVY_QUEUE_DIR) return path.resolve(env.HEAVY_QUEUE_DIR);
   return resolveSharedClaudeDir('heavy-queue', cwd);
+}
+
+/** Join argv for a shell, quoting args that need it. */
+export function shellJoin(args) {
+  return args.map((a) => (/^[\w@%+=:,./\\-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`)).join(' ');
 }
 
 export function newTicketId(now = Date.now(), pid = process.pid) {
@@ -226,6 +280,36 @@ export function sweepStale(dir, { isAlive = isPidAlive, now = Date.now() } = {})
 }
 
 /**
+ * Watchdog: end a live running job past its limit (watchdogDecision): kill its
+ * whole process tree, then free the slot if it is still that job's. Run by
+ * every waiter, like sweepStale. Returns `{ holder, decision }` when it ended
+ * one, else null. `kill` is injectable for tests.
+ */
+export function endOverdue(dir, { now = Date.now(), isAlive = isPidAlive, kill = killTree } = {}) {
+  const r = readRunning(dir, now);
+  if (!r || r.garbled) return null;
+  const decision = watchdogDecision(r, now);
+  if (decision.action !== 'end') return null;
+  if (isAlive(r.pid) || (r.childPid != null && isAlive(r.childPid))) kill(r.pid, r.childPid);
+  const file = path.join(dir, RUNNING_FILE);
+  const again = readJson(file);
+  if (again && again.id === r.id) {
+    try { fs.unlinkSync(file); } catch { /* gone */ }
+  }
+  return { holder: r, decision };
+}
+
+/** Record the holder's child pid in the slot (POSIX group kill). Owner only. */
+export function recordRunningChild(dir, id, childPid) {
+  const file = path.join(dir, RUNNING_FILE);
+  const r = readJson(file);
+  if (!r || r.id !== id) return;
+  const tmp = path.join(dir, `.tmp-running-${id}`);
+  fs.writeFileSync(tmp, JSON.stringify({ ...r, childPid }, null, 2));
+  fs.renameSync(tmp, file);
+}
+
+/**
  * Re-join: if an orphan with `t`'s who + kind is within grace, `t` takes its
  * joinedAtMs (so its age and place) and the orphan file is removed. Call after
  * sweepStale and before writeTicket. Returns the adopted orphan or undefined.
@@ -237,6 +321,189 @@ export function adoptOrphan(dir, t, now = Date.now()) {
   t.joinedAt = o.joinedAt ?? new Date(o.joinedAtMs).toISOString();
   removeTicket(dir, o.id);
   return o;
+}
+
+// ── dev-server leases (dev-lease.mjs) ─────────────────────────────────────
+// Hand-started dev servers are NOT queued (a play session would block films);
+// instead each one holds a lease in `<queue dir>/dev/` (same ticket files) and
+// at most EQX_DEV_CAP (default 2) dev SETUPS run machine-wide. A server and a
+// client from the same worktree are one setup. A lease is live while its
+// wrapper or its child process lives; a dead one is swept, never killed.
+
+export const DEV_KINDS = ['server', 'client'];
+export const DEFAULT_DEV_CAP = 2;
+
+/** `<queue dir>/dev`: one lease ticket per running dev server/client. */
+export const devLeaseDir = (queueDir) => path.join(queueDir, 'dev');
+
+/** Why this start skips the cap (it still writes a lease), or null. */
+export function devCapExemption(env = process.env) {
+  if (env.CI) return 'ci';
+  if (env.EQX_HEAVY_QUEUE) return 'queued';
+  const skip = env.EQX_DEV_CAP_SKIP;
+  if (skip && skip !== '0') return skip === '1' ? 'skip' : skip;
+  return null;
+}
+
+/** EQX_DEV_CAP as a positive integer, else the default. */
+export function devCap(env = process.env) {
+  const n = Number(env.EQX_DEV_CAP);
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_DEV_CAP;
+}
+
+/** Live while the wrapper or the command it started is alive. */
+export function isLeaseLive(l, isAlive = isPidAlive) {
+  return isAlive(l.pid) || (l.childPid != null && isAlive(l.childPid));
+}
+
+/** Leases grouped into setups (one per worktree), oldest setup first. */
+export function groupDevSetups(leases) {
+  const byKey = new Map();
+  for (const l of leases) {
+    const key = l.worktree ?? l.cwd;
+    let s = byKey.get(key);
+    if (!s) { s = { worktree: key, who: l.who, startedAtMs: l.startedAtMs, firstId: l.id, leases: [] }; byKey.set(key, s); }
+    s.leases.push(l);
+    if (l.startedAtMs < s.startedAtMs || (l.startedAtMs === s.startedAtMs && l.id < s.firstId)) {
+      s.startedAtMs = l.startedAtMs; s.firstId = l.id; s.who = l.who;
+    }
+  }
+  return [...byKey.values()].sort((a, b) => a.startedAtMs - b.startedAtMs
+    || (a.firstId < b.firstId ? -1 : a.firstId > b.firstId ? 1 : 0));
+}
+
+/**
+ * May lease `meId` (already written, so two racers see each other) run?
+ * Only live, non-exempt leases count; the oldest `cap` setups win, so of two
+ * racers for the last slot the later one refuses. `others` = the other setups.
+ */
+export function devCapDecision({ meId, leases, cap }) {
+  const me = leases.find((l) => l.id === meId);
+  const setups = groupDevSetups(leases.filter((l) => !l.exempt));
+  const key = me ? (me.worktree ?? me.cwd) : undefined;
+  const idx = setups.findIndex((s) => s.worktree === key);
+  const others = setups.filter((s) => s.worktree !== key);
+  if (!me || me.exempt) return { go: true, reason: me ? 'exempt' : 'lease missing', others };
+  if (idx < cap) return { go: true, reason: setups[idx].leases.length > 1 ? 'same-setup' : 'under-cap', others };
+  return { go: false, reason: 'over-cap', others };
+}
+
+/** Delete leases whose processes are all dead. Never touches a process. */
+export function sweepDevLeases(dir, { isAlive = isPidAlive } = {}) {
+  const removed = [];
+  for (const l of readTickets(dir)) {
+    if (!isLeaseLive(l, isAlive)) { removeTicket(dir, l.id); removed.push(l); }
+  }
+  return removed;
+}
+
+/** One line per setup: who, kinds + ports, age, worktree. */
+export function formatDevSetup(s, now) {
+  const parts = s.leases.map((l) => `${l.kind}${l.port ? ` :${l.port}` : ''}`).join(' + ');
+  const ex = s.leases.every((l) => l.exempt) ? ` [exempt: ${s.leases[0].exempt}]` : '';
+  return `${String(s.who).slice(0, 25).padEnd(25)} ${parts}  up ${fmtDur(now - s.startedAtMs)}${ex}  (${s.worktree})`;
+}
+
+export function devRefusalMessage({ others, cap, now }) {
+  return [
+    `[dev-lease] refused: ${others.length} dev setups already run on this machine (cap EQX_DEV_CAP=${cap}):`,
+    ...others.map((s) => `  ${formatDevSetup(s, now)}`),
+    '  Stop your own dev server when done, or reuse a running one (point at its ports).',
+    '  See docs/ops/agent-workflow.md "Heavy-job queue". Debug escape: EQX_DEV_CAP_SKIP=1',
+  ].join('\n');
+}
+
+// ── light lane (light-lane.mjs) ───────────────────────────────────────────
+// Local typecheck / lint (~1 GB each) take one of EQX_LIGHT_CAP (default 2)
+// slots machine-wide; the rest WAIT (never refused). Each run holds a lease in
+// `<queue dir>/light/` (same ticket files): `joinedAtMs` when it lines up,
+// `startedAtMs` once it holds a slot. Waiters go first-come first-served. No
+// watchdog kills: a holder past LIGHT_STALE_MS stops counting and is swept,
+// but its process is left alone. Dead leases (wrapper and child gone) too.
+
+export const LIGHT_KINDS = ['typecheck', 'lint'];
+export const DEFAULT_LIGHT_CAP = 2;
+/** A slot held longer than this stops blocking (swept; never killed). */
+export const LIGHT_STALE_MS = 20 * 60_000;
+
+/** `<queue dir>/light`: one lease per waiting or running typecheck / lint. */
+export const lightLeaseDir = (queueDir) => path.join(queueDir, 'light');
+
+/** Why this run skips the lane entirely (no lease), or null. */
+export function lightSkip(env = process.env) {
+  if (env.CI) return 'ci';
+  if (env.EQX_HEAVY_QUEUE) return 'queued';
+  if (env.EQX_LIGHT_SKIP && env.EQX_LIGHT_SKIP !== '0') return 'skip';
+  return null;
+}
+
+/** EQX_LIGHT_CAP as a positive integer, else the default. */
+export function lightCap(env = process.env) {
+  const n = Number(env.EQX_LIGHT_CAP);
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_LIGHT_CAP;
+}
+
+/** Dead (wrapper and child gone), or held a slot past LIGHT_STALE_MS. */
+export function isLightStale(l, now, isAlive = isPidAlive) {
+  if (!isLeaseLive(l, isAlive)) return true;
+  return l.startedAtMs != null && now - l.startedAtMs > LIGHT_STALE_MS;
+}
+
+const byJoin = (a, b) => a.joinedAtMs - b.joinedAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+/**
+ * May lease `meId` (already written, so racers see each other) take a slot?
+ * Stale leases never count. Holders = leases with a slot; free slots go to the
+ * oldest waiters, so of two racers for the last slot the later one waits.
+ * `holders` (oldest first) is who to name in the wait message.
+ */
+export function lightLaneDecision({ meId, leases, cap, now, isAlive = isPidAlive }) {
+  const live = leases.filter((l) => l.id === meId || !isLightStale(l, now, isAlive));
+  const me = live.find((l) => l.id === meId);
+  const holders = live.filter((l) => l.startedAtMs != null && l.id !== meId).sort(byJoin);
+  if (!me) return { go: false, reason: 'lease missing', holders, position: 0 };
+  if (me.startedAtMs != null) return { go: true, reason: 'holding', holders, position: 0 };
+  const waiters = live.filter((l) => l.startedAtMs == null).sort(byJoin);
+  const position = waiters.findIndex((l) => l.id === meId) + 1;
+  const free = cap - holders.length;
+  if (position <= free) return { go: true, reason: 'free-slot', holders, position };
+  return { go: false, reason: free > 0 ? 'queued' : 'busy', holders, position };
+}
+
+/** Delete dead or stale light leases. Never touches a process. */
+export function sweepLightLeases(dir, { isAlive = isPidAlive, now = Date.now() } = {}) {
+  const removed = [];
+  for (const l of readTickets(dir)) {
+    if (isLightStale(l, now, isAlive)) { removeTicket(dir, l.id); removed.push(l); }
+  }
+  return removed;
+}
+
+/** One line per light lease: who, kind, held/waiting for how long, worktree. */
+export function formatLightLease(l, now) {
+  const running = l.startedAtMs != null;
+  return formatLightRow({ ...l, running, forMs: now - (running ? l.startedAtMs : l.joinedAtMs) });
+}
+
+/** A light-lane row from a status snapshot entry. */
+export function formatLightRow(l) {
+  const state = `${l.running ? 'running' : 'waiting'} ${fmtDur(l.forMs)}`;
+  return `${String(l.who).slice(0, 25).padEnd(25)} ${String(l.kind).padEnd(9)} ${state}  pid ${l.pid}  (${l.cwd})`;
+}
+
+/** Light-lane entries for `pnpm heavy status`, oldest first. */
+export function lightSnapshot(dir, now) {
+  return readTickets(dir).sort(byJoin).map((l) => ({
+    who: l.who, kind: l.kind, pid: l.pid, cwd: l.cwd, running: l.startedAtMs != null,
+    forMs: now - (l.startedAtMs ?? l.joinedAtMs), command: l.command,
+  }));
+}
+
+export function lightWaitMessage({ kind, holders, cap, now }) {
+  return [
+    `[light-lane] ${kind} lane busy (${holders.length}/${cap}): waiting…`,
+    ...holders.map((l) => `  ${formatLightLease(l, now)}`),
+  ].join('\n');
 }
 
 // ── formatting ────────────────────────────────────────────────────────────
@@ -268,14 +535,22 @@ export function snapshot(dir, now = Date.now()) {
   let run = null;
   if (running && running.garbled) run = { garbled: true };
   else if (running) {
+    const wd = watchdogDecision(running, now);
     run = {
       id: running.id, who: running.who, kind: running.kind, pid: running.pid,
       cwd: running.cwd, priority: running.priority,
       runningMs: now - running.startedAtMs, estimateMin: running.estimateMin ?? null,
-      overdue: holderOverdue(running, now), command: running.command,
+      overdue: wd.action === 'end', limitMin: wd.limitMin, command: running.command,
     };
   }
-  return { dir, running: run, queue, orphaned };
+  // Live dev-server setups (the caller sweeps dead leases first).
+  const dev = groupDevSetups(readTickets(devLeaseDir(dir))).map((s) => ({
+    who: s.who, worktree: s.worktree, upMs: now - s.startedAtMs,
+    leases: s.leases.map((l) => ({ kind: l.kind, port: l.port ?? null, pid: l.pid, exempt: l.exempt ?? null })),
+  }));
+  // Light lane (typecheck / lint; the caller sweeps stale leases first).
+  const light = lightSnapshot(lightLeaseDir(dir), now);
+  return { dir, running: run, queue, orphaned, dev, light };
 }
 
 export function formatStatus(snap) {
@@ -285,7 +560,8 @@ export function formatStatus(snap) {
   else if (r.garbled) lines.push('running: (slot being claimed)');
   else {
     lines.push(`running: ${r.who} [${r.kind}] p${r.priority} for ${fmtDur(r.runningMs)}`
-      + `${r.estimateMin ? ` / est ${r.estimateMin}m` : ''}${r.overdue ? ' OVERDUE' : ''} pid ${r.pid}`);
+      + `${r.estimateMin ? ` / est ${r.estimateMin}m` : ''} pid ${r.pid}`
+      + (r.overdue ? ` · OVERDUE, past its ${r.limitMin}m limit` : ` · ends at ${r.limitMin}m if still running`));
   }
   if (snap.queue.length === 0) lines.push('queue: (empty)');
   else {
@@ -299,6 +575,16 @@ export function formatStatus(snap) {
   for (const o of snap.orphaned ?? []) {
     lines.push(`orphaned: ${o.who} [${o.kind}] ${fmtDur(o.orphanedMs)} (joined ${fmtDur(o.waitedMs)} ago),`
       + ` rejoin with same --who to keep place (expires in ${fmtDur(o.expiresInMs)})`);
+  }
+  if (!snap.dev || snap.dev.length === 0) lines.push('dev servers: (none)');
+  else {
+    lines.push('dev servers:');
+    for (const d of snap.dev) lines.push(`  ${formatDevSetup({ ...d, startedAtMs: 0 }, d.upMs)}`);
+  }
+  if (!snap.light || snap.light.length === 0) lines.push('light lane: (none)');
+  else {
+    lines.push('light lane (typecheck / lint):');
+    for (const l of snap.light) lines.push(`  ${formatLightRow(l)}`);
   }
   return lines.join('\n');
 }

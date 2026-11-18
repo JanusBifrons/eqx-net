@@ -272,6 +272,8 @@ import { cutFieldOpts, type ChunkSource } from '../../core/terrain/chunkStreamer
 import { rockFieldBlocker, wreckField } from '../../core/terrain/wreckFieldLayout.js';
 import { WreckFieldSource, type WreckFieldRoomOpts } from './WreckFieldSource.js';
 import { getNavWorker, type NavField } from '../nav/NavWorker.js';
+import { NavRoutes } from '../nav/NavRoutes.js';
+import type { IAiNavRoutes } from '../../core/contracts/IAiBehaviour.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -295,7 +297,7 @@ import {
   findAbandonedShips,
 } from './sectorIdleEvaluator.js';
 import { runAiTick } from './aiTickRunner.js';
-import { AiNeighbourGrid } from './AiNeighbourGrid.js';
+import { AiNeighbourFill } from './AiNeighbourFill.js';
 import { SectorObstacles } from './SectorObstacles.js';
 import { makeInputHandler } from './InputHandler.js';
 import {
@@ -1036,6 +1038,8 @@ export class SectorRoom extends Room<SectorState> {
     activityOf: (id) => {
       const a = this.aiController.getBehaviour(id)?.getActivity?.();
       if (a === undefined) return null;
+      // Navigation slice 9: on its way but no way fits, so it waits short of the goal.
+      if ((a === 'moving' || a === 'patrolling') && this.aiController.nav instanceof NavRoutes && this.aiController.nav.waiting(id)) return 'blocked';
       if (a === 'moving') {
         const w = this.fleet.ordersOf(id);
         if (w !== null && w.mode === 'retreat' && w.order === null) return 'retreating';
@@ -1619,6 +1623,8 @@ export class SectorRoom extends Room<SectorState> {
     /** RTS — the owned ships' orders on lingering hulls. Tests issue orders
      *  through its owner-checked API (`applyOrder(ownerId, [shipId], order)`). */
     fleet: FleetCommandSubsystem;
+    /** Navigation — the AI brains' routes round rock (null ⇒ turn them off, a test's baseline). */
+    aiNav: { get: () => IAiNavRoutes | undefined; set: (nav: IAiNavRoutes | undefined) => void };
     /** RTS Part B — the AI pilot brain registered for an id (an owned hull's
      *  shipInstanceId or a swarm id), or null. */
     aiBrainOf: (id: string) => IAiBehaviour | null;
@@ -1691,6 +1697,8 @@ export class SectorRoom extends Room<SectorState> {
     setNpcLineOfFire: (on: boolean) => void;
     /** AI steering 2c: hand brains the neighbour grid (default on). */
     setAiNeighbours: (on: boolean) => void;
+    /** Off ⇒ brains get no `view.debris` (no wreck-piece avoidance): A/B control. */
+    setAiWreckAvoid: (on: boolean) => void;
     /** Does NPC `id`'s brain treat `otherId` as hostile (stance or ledger)? */
     npcHostileTo: (id: string, otherId: string) => boolean;
     /** Mine Layers' live mines (integration tests). */
@@ -1749,6 +1757,7 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots, forceFields: this.forceFields,
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       fleet: this.fleet,
+      aiNav: { get: () => this.aiController.nav, set: (nav) => { this.aiController.nav = nav; } },
       aiBrainOf: (id) => this.aiController.getBehaviour(id),
       lingeringPoseCache: this.lingeringPoseCache,
       sendFleetStatus: () => this.fleetStatus.sendAll(),
@@ -1786,7 +1795,8 @@ export class SectorRoom extends Room<SectorState> {
         return { checks: g?.checks ?? 0, candidates: g?.candidates ?? 0, narrow: g?.narrow ?? 0 };
       },
       setNpcLineOfFire: (on) => { this.npcLineOfFire = on; },
-      setAiNeighbours: (on) => { this.aiNeighboursOn = on; },
+      setAiNeighbours: (on) => { this.aiGrids.neighboursOn = on; },
+      setAiWreckAvoid: (on) => { this.aiGrids.wreckAvoidOn = on; },
       npcHostileTo: (id, otherId) => this.aiController.isEntityHostileToPlayer(id, otherId),
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
@@ -5315,27 +5325,8 @@ export class SectorRoom extends Room<SectorState> {
   }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
 
-  /** AI steering 2a — per-tick neighbour index over combat drones + pilot
-   *  hulls, rebuilt once per tick in `runAiTick` (alloc-free, #14). */
-  private readonly aiNeighbourGrid = new AiNeighbourGrid();
-  /** Tests (`_internals.setAiNeighbours`): off ⇒ brains get no `view.neighbours`
-   *  (no combat separation), the A/B control for slice 2c. */
-  private aiNeighboursOn = true;
-  /** Add every kind-1 swarm combatant (all allegiances) with its SAB pose.
-   *  Same set `fillSwarmTargets` covers; bound once (#14). */
-  private readonly _visitAiNeighbourDrones = (_grid: AiNeighbourGrid): void => {
-    this.swarmRegistry.forEachRecord(this._addAiNeighbourDrone);
-  };
-  private readonly _addAiNeighbourDrone = (rec: SwarmEntityRecord): void => {
-    if (rec.kind !== SWARM_KIND_DRONE) return;
-    const b = slotBase(rec.slot);
-    this.aiNeighbourGrid.addDrone(
-      rec.id,
-      this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
-      this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
-      rec.radius, allegianceOfKind(rec.shipKind), getShipKind(rec.shipKind ?? null).aiRole === 'capital',
-    );
-  };
+  /** The AI tick's neighbour + debris grids, one registry walk per tick (`AiNeighbourFill`). */
+  private readonly aiGrids = new AiNeighbourFill(this.swarmRegistry, () => this.sabF32);
 
   /**
    * Allegiances P0 — rebuild this tick's swarm-combatant set (kind-1 entities),
@@ -12742,6 +12733,8 @@ export class SectorRoom extends Room<SectorState> {
       rockMoved: (key, pose) => field?.rockMoved(key, pose),
     });
     field = this.navField = getNavWorker(logger).addField(opts, known.gone, known.moved);
+    const f = field;
+    this.aiController.nav = new NavRoutes((sx, sy, tx, ty, c, hd, tr) => f.route(sx, sy, tx, ty, c, hd, tr), () => this.gameClock.now());
     field.built.then((b) => {
       logger.info({ sectorKey: this.sectorKey, cols: b.cols, rows: b.rows, kb: Math.round(b.bytes / 1024), ms: Math.round(b.ms * 10) / 10 }, 'nav coarse layer built');
     }, (err: unknown) => { if (!this.simLoopStopped) logger.error({ err, sectorKey: this.sectorKey }, 'nav field build failed'); });
@@ -12756,6 +12749,7 @@ export class SectorRoom extends Room<SectorState> {
     this.cutField?.dispose();
     this.navField?.detach();
     this.navField = undefined;
+    if (this.aiController) this.aiController.nav = undefined;
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
       this.structureGridTimer.cancel();
@@ -13163,8 +13157,9 @@ export class SectorRoom extends Room<SectorState> {
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
-      aiNeighbourGrid: this.aiNeighboursOn ? this.aiNeighbourGrid : undefined,
-      visitAiNeighbourDrones: this._visitAiNeighbourDrones,
+      aiNeighbourGrid: this.aiGrids.neighbours(),
+      visitAiNeighbourDrones: this.aiGrids.visit,
+      aiWreckGrid: this.aiGrids.wrecks(),
       hasTruce: (pid) => this.playerTruce(pid),
       // Living World P1a-2 (decision 7) — offline hulls are fair game.
       isPlayerConnected: this._isPlayerConnected,
@@ -13235,7 +13230,8 @@ export class SectorRoom extends Room<SectorState> {
         this.markSceneSim(this.sceneSimEnd);
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
-        this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
+        // Wreck-piece queries (hull avoidance) count as neighbour work too.
+        this.sceneWork.aiNeighbours(this.aiGrids.queriesTotal);
         this.sceneWork.wingmen(this.fleet.size, this.hullBrainTicksTotal, 0, 0);
         this.sceneWork.aiDecisions(this.aiController.stats.decisions);
         this.sceneWork.wreckPiecesTick(this.capitalWrecks?.liveCount() ?? 0);

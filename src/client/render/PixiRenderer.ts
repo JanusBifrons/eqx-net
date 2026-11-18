@@ -16,7 +16,7 @@ import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdat
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
+import { WreckArtState, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { deathBlastFor, dyingHullDiameter, hullDeathBlastReplaced, type DeathBlast } from './pixi/deathBlast.js';
 import { spawnVaporiseBlast, stackVaporiseOverBeams } from './pixi/vaporiseBlast.js';
 import { raiseBeamsOverHulls } from './pixi/beamsOverHulls.js';
@@ -24,7 +24,9 @@ import { LegacyExplosionSprites } from './pixi/legacyExplosionSprites.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
-import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
+import { createBeamCtx, updateBeams, type BeamCtx } from './pixi/beamUpdater.js';
+import { artStats, backdropStats, shipVisualProbe, type ArtStats, type BackdropStats, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
+import { type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
 import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
 import { HelmCourseMarker } from './helm/HelmCourseMarker.js';
@@ -64,7 +66,6 @@ import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { droneBoostInput } from './pixi/droneEngineInput.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
-import { shipShotMuzzle } from '@core/combat/muzzle';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
 import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
 import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
@@ -72,8 +73,8 @@ import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
-import { isMachinedSprite, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
-import { BeamSpritePool, type BeamView, type BeamSpriteStyle } from './BeamSpritePool';
+import { updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
+import { BeamSpritePool, type BeamView } from './BeamSpritePool';
 import {
   CameraDirector,
   type CameraTargetLookup,
@@ -85,7 +86,7 @@ import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
 import { fillTractorBeams } from './tractorBeams';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, MINING_BEAM_STYLE, addBeamLights, beamLightBudget } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { CutFieldLayer } from './field/CutFieldLayer';
@@ -95,7 +96,6 @@ import { getShipKind } from '../../shared-types/shipKinds';
 import { zoomFloorFor } from '../../shared-types/shipScale/commandZoom.js';
 import {
   buildGhostGfx,
-  applyMountOffset,
   buildStructureGfx,
 } from './pixi/spriteBuilders.js';
 import { getStructureKind } from '@shared-types/structureKinds';
@@ -104,7 +104,7 @@ import { FrameTimeRing } from '@core/perf/FrameTimeRing';
 import { localCameraKey } from './camera/localCameraKey';
 import { isParkedHull } from './shipOwnership.js';
 import { warpFxFeedsShip } from './warpFxGate.js';
-import { forEachShipRekey, moveKey, moveSetKey, probeIdentity } from './shipRekey.js';
+import { forEachShipRekey, moveKey, moveSetKey } from './shipRekey.js';
 import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
@@ -344,6 +344,26 @@ export class PixiRenderer implements IRenderer {
   /** Reused per-frame seen-set for the missile sprite updater. */
   private readonly _updateMissileSeenScratch = new Set<number>();
   private _missileUpdaterCtx!: MissileSpriteCtx;
+  /** Pooled remote / mining / live beam ctx (pixi/beamUpdater.ts), built once in init. */
+  private _beamCtx!: BeamCtx;
+  /** Live getter view of the state the test / perf probes read (pixi/rendererProbes.ts). */
+  private readonly _probes: RendererProbeState = this.probeState();
+  private probeState(): RendererProbeState {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
+    const r = this;
+    return {
+      get sprites() { return r.sprites; }, get artCtx() { return r._artCtx; }, get swarmSpriteKinds() { return r._swarmSpriteKinds; },
+      get mountVisuals() { return r.mountVisuals; }, get camera() { return r.camera; }, get starfield() { return r.starfield; },
+      get backdrop() { return r._backdrop; }, get effects() { return r.effects; }, get engineDbgScratch() { return r._engineDbgScratch; },
+      get farIcons() { return r._farIcons; }, get warpFx() { return r._warpFx; }, get spoolFx() { return r._spoolFx; },
+      get helmMarker() { return r.helmMarker; }, get lastMirror() { return r._lastMirror; }, get fxEngines() { return r._fxEngines; },
+      get fxExplosions() { return r._fxExplosions; }, get fxProjectiles() { return r._fxProjectiles; }, get fxLiveBeams() { return r._fxLiveBeams; },
+      get fxShields() { return r._fxShields; }, get fxShieldsOn() { return r._fxShieldsOn; }, get fxFences() { return r._fxFences; },
+      get wreckBreaks() { return r._wreckBreaks; }, get wreckBlastsSpawned() { return r._wreckBlastsSpawned; },
+      get wreckRipplesSpawned() { return r._wreckRipplesSpawned; }, get hullBlastsReplaced() { return r._hullBlastsReplaced; },
+      get shipRekeysApplied() { return r._shipRekeysApplied; },
+    };
+  }
   private readonly explosionSprites = new LegacyExplosionSprites();
   // Post-2026-06-01: beams now rendered via sprite pools (no Graphics
   // clear/redraw cycle). The `liveBeamGfx` / `remoteBeamGfx` accessor
@@ -366,66 +386,6 @@ export class PixiRenderer implements IRenderer {
   private _miningBeamPool: BeamSpritePool | null = null;
   private _tractorBeamPool: BeamSpritePool | null = null; private readonly _tractorViews: BeamView[] = []; private _tractorViewCount = 0; // salvage PR 11b (tractorBeams.ts)
   private miningBeamGfx: Container | null = null;
-  /**
-   * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
-   * dirty-flag check on the per-frame Graphics rebuild path.
-   * `liveBeamGfx.clear() + moveTo + lineTo + stroke` ran every frame
-   * while held-fire was active even when the ship hadn't moved or
-   * rotated past visual threshold. Same pattern as HealthBars and
-   * BackgroundGrid — Pixi v8 allocates fresh ShapePath /
-   * GpuGraphicsContext per `stroke()` call. Cached per-mount endpoints
-   * + alpha; epsilon 0.5 world units (sub-pixel at typical zoom).
-   * `_liveBeamCacheCount` is the number of valid entries — used so we
-   * can rebuild from cache without depending on Map size invariants.
-   */
-  private readonly _liveBeamCache: Array<{
-    mountId: string;
-    fromX: number;
-    fromY: number;
-    toX: number;
-    toY: number;
-    solidLen?: number;
-    style?: BeamSpriteStyle | null;
-  }> = [];
-  private _liveBeamCacheCount = 0;
-  /** Same dirty-flag cache for remote shooters' beams (per-shooter +
-   *  per-mount keyed). With multiple drones firing at once the rebuild
-   *  cost was per-frame × per-beam — the cache compounds. Flat array
-   *  matches liveBeam pattern; iteration order is stable across frames
-   *  (JS Map preserves insertion order). */
-  /** Scratch for `remoteBeamLine` (one per frame loop, #14). */
-  private readonly _remoteBeamLine: RemoteBeamLine = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
-  private readonly _beamHitMem = new BeamHitMemory(); // the cut stays lit through a kill follow-through
-  private readonly _remoteBeamCache: Array<{
-    shooterId: string;
-    mountId: string;
-    fromX: number;
-    fromY: number;
-    toX: number;
-    toY: number;
-    alpha: number;
-    /** Per-beam style override (the capital heavy beam); null = pool style. */
-    style: BeamSpriteStyle | null;
-    /** Solid length (`remoteBeamSolidLen`): the heavy beam is solid to its
-     *  hit; undefined = the pool's taper (fighter beams). */
-    solidLen?: number;
-  }> = [];
-  private _remoteBeamCacheCount = 0;
-  /** WS-4 Phase 4 — drill-beam slots routed out of the remote-laser loop into
-   *  the dedicated mining pool. Same slot shape as `_remoteBeamCache` (the pool
-   *  reads only the BeamView subset); reused in place (invariant #14). */
-  private readonly _miningBeamCache: Array<{
-    shooterId: string;
-    mountId: string;
-    fromX: number;
-    fromY: number;
-    toX: number;
-    toY: number;
-    alpha: number;
-    style: BeamSpriteStyle | null;
-    solidLen?: number;
-  }> = [];
-  private _miningBeamCacheCount = 0;
   private initialized = false;
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -1169,6 +1129,16 @@ export class PixiRenderer implements IRenderer {
     // hull (ships spawn later and would otherwise stack above them).
     raiseBeamsOverHulls(this.shipContainer, [this._fxRemoteBeams?.container, this._fxLiveBeams?.container],
       [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool, this._tractorBeamPool]);
+    // Pooled beam ctx (pixi/beamUpdater.ts): every reference is final by here.
+    this._beamCtx = createBeamCtx({
+      beamsDisabled: this._beamsDisabled, fxNow: () => this.fxNow(),
+      remoteBeamPool: this._remoteBeamPool, remoteBeamGfx: this.remoteBeamGfx,
+      miningBeamPool: this._miningBeamPool, miningBeamGfx: this.miningBeamGfx,
+      liveBeamPool: this._liveBeamPool, liveBeamGfx: this.liveBeamGfx,
+      fxRemoteBeams: this._fxRemoteBeams, fxLiveBeams: this._fxLiveBeams,
+      fxShields: this._fxShields, fxFences: this._fxFences, fxShieldPose: this._fxShieldPose,
+      swarmPoseScratch: this.swarmPoseScratch, feedback: this.feedback,
+    });
     stackVaporiseOverBeams(this.shipContainer, this._fxExplosions); // the vaporise flash reads over the beams
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
@@ -2181,276 +2151,17 @@ export class PixiRenderer implements IRenderer {
       this.serverGhost.visible = false;
     }
 
-    // Remote beams from other players — orange, continuously tracking shooter rotation.
-    // Uses shooter's current angle from mirror.ships so the beam sweeps smoothly between
-    // server-acked shot events (every ~167ms).
-    //
-    // Multi-mount/turret refactor (Phase 2c): `mirror.remoteLasers` is now
-    // `Map<shooterId, Map<mountId, laser>>`. We iterate the nested map and
-    // resolve each mount's local offset from the shooter's ship-kind catalogue
-    // entry, so multi-mount ships emit beams from the correct barrel positions
-    // (not all stacked at the ship centre). Legacy single-mount ships have
-    // mount.localX/Y = (0, 0) and baseAngle = 0, so the geometry collapses to
-    // the pre-refactor "ship.pos + 20 u forward" path.
     // New shields (B5): open the frame here; beams and hits feed it below,
     // the shield sync closes it.
     this._fxShieldsOn = this._fxShields !== null && this._fxShields.ready();
     if (this._fxShieldsOn) this._fxShields!.begin();
     this._tractorViewCount = this._beamsDisabled || !this._tractorBeamPool ? 0 : fillTractorBeams(mirror, this.fxNow(), this.world.scale.x, this._tractorViews);
     this._tractorBeamPool?.setBeams(this._tractorViews, this._tractorViewCount, this.world.scale.x);
-    if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
-
-      // Origin tracking: the shooter pose moves every frame (drones each
-      // tick, players while turning), so we recompute every beam's
-      // endpoints from the live mirror/swarm pose and ALWAYS call
-      // `setBeams`. The old `BEAM_EPSILON` dirty-cache (combat-fx-hunt
-      // 2026-05-31) compared this frame's pose to the PREVIOUS frame, not
-      // to the last DRAWN frame — so coasting under the epsilon froze the
-      // drawn beam while the shooter flew on, snapping to catch up only
-      // when one frame exceeded the threshold (the laser-detach bug, smoke
-      // handoff 2026-06-06, Issue 1 Bug #1). `setBeams` is O(count)
-      // transform writes (no Graphics triangulation), so always-calling
-      // for a handful of beams is free and adds no allocation (invariant
-      // #14 — reuses the pooled slot array + pooled sprites).
-      const now = this.fxNow();
-      let slotIdx = 0;
-      // WS-4 Phase 4 — drill beams route to the dedicated mining pool instead.
-      let miningIdx = 0;
-
-      for (const [shooterId, perShooter] of mirror.remoteLasers) {
-        // Player shooters track their live ship pose; the beam sweeps with the
-        // ship's rotation between fire events. AI shooters track their
-        // mirror.swarm pose for the same reason — drones move every tick, so
-        // a wire-frozen beam origin would re-anchor on each fire (visible
-        // jump). Falls back to the wire endpoints if the shooter isn't found
-        // (defensive — e.g. ID mapping mismatch).
-        const shooter = mirror.ships.get(shooterId);
-        let swarmShooter: { x: number; y: number; angle: number; radius: number; shipKind?: string } | null = null;
-        if (!shooter && shooterId.startsWith('swarm-')) {
-          const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
-          if (!Number.isNaN(entityId)) {
-            const sw = mirror.swarm?.get(entityId);
-            if (sw) {
-              // Use the SAME pose the sprite is drawn at — drones (kind=1)
-              // render from `entry.x/y/angle` directly post-2026-05-09 reset
-              // (predWorld pose synced into the mirror each frame). Asteroids
-              // stay on the lerp path for parity with their sprite render.
-              if (sw.kind === 1) {
-                swarmShooter = { x: sw.x, y: sw.y, angle: sw.angle, radius: sw.radius, shipKind: sw.shipKind };
-              } else {
-                const lerped = interpolateSwarmPose(sw, now, this.swarmPoseScratch);
-                swarmShooter = { x: lerped.x, y: lerped.y, angle: lerped.angle, radius: sw.radius, shipKind: sw.shipKind };
-              }
-            }
-          }
-        }
-
-        const shooterKindId = shooter?.kind ?? swarmShooter?.shipKind ?? null;
-        const shooterKind = getShipKind(shooterKindId);
-
-        for (const [mountId, laser] of perShooter) {
-          // Hold full brightness while shooter is actively firing; fade only
-          // in the last 150 ms of TTL (i.e. after they stop shooting). With
-          // WEAPON_COOLDOWN = 167 ms and TTL = 400 ms, each new shot resets
-          // expiresAt well before the fade window, so the beam is solid-on
-          // while space is held.
-          const ttlRemaining = laser.expiresAt - now;
-          const alpha = ttlRemaining > 150 ? 1.0 : Math.max(0, ttlRemaining / 150);
-
-          // Resolve the mount's ship-local offset from the catalogue. Falls
-          // back to a zero-offset zero-baseAngle stub for unknown mount ids
-          // so a pre-2c server (no mountId in the wire) still renders.
-          // Phase 4b.2: pick up the shooter's per-mount slewed angle from
-          // `mirror.ships.get(id).mountAngles` (player shooters); Phase 4c
-          // adds the same for drone shooters via `mirror.swarm.get(id).
-          // mountAngles` (snapshot-anchored, in-interest drones only).
-          const mount = shooterKind.mounts?.find((m) => m.id === mountId);
-          const mountIdx = shooterKind.mounts?.findIndex((m) => m.id === mountId) ?? -1;
-          // Undefined = this viewer has no angle for the turret (an
-          // out-of-interest drone): the beam then aims at the wire end point.
-          let currentMountAngle: number | undefined = 0;
-          if (shooter && mount && mountIdx >= 0) {
-            currentMountAngle = shooter.mountAngles?.[mountIdx] ?? 0;
-          } else if (swarmShooter && mount && mountIdx >= 0) {
-            // Pull the drone's per-mount angle out of the swarm mirror —
-            // ColyseusClient writes it from `snap.drones[].mountAngles`
-            // when the drone is in-interest. Out-of-interest → undefined
-            // → currentMountAngle stays 0 (barrel at baseAngle, no rotation).
-            const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
-            if (!Number.isNaN(entityId)) {
-              const sw = mirror.swarm?.get(entityId);
-              // The angle the turret is DRAWN at (swarmSpriteUpdater), so the
-              // beam leaves down the barrel on screen, not the raw 20 Hz step.
-              currentMountAngle = (sw?.displayMountAngles ?? sw?.mountAngles)?.[mountIdx];
-            }
-          }
-
-          let fromX: number;
-          let fromY: number;
-          let toX: number;
-          let toY: number;
-          const isMining = mountId === 'drill';
-          // The capital heavy beam (plan beam-slices §8) draws thick and violet
-          // in the SAME pool: the style comes from the mount's catalogue weapon
-          // (shooter kind + mountId), no wire field. A styled pulse runs down
-          // the live barrel to the client ray's stop (`laser.dist`), else to
-          // the server's end point (`remoteBeamLine`).
-          const style = isMining ? null : remoteBeamStyleForMount(mount);
-          const line = this._remoteBeamLine;
-          if (shooter) {
-            const origin = applyMountOffset(shooter.x, shooter.y, shooter.angle, mount);
-            // The barrel tip (shared with the server, core/combat/muzzle.ts).
-            const muzzleD = mount ? shipShotMuzzle(shooterKind, mount) : shipTuning(shooterKind).muzzleClearance;
-            remoteBeamLine(
-              style !== null, shooter.angle, mount?.baseAngle ?? 0, currentMountAngle ?? 0,
-              origin.x, origin.y, muzzleD, laser.range, laser.toX, laser.toY, line, laser.dist,
-            );
-            fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
-          } else if (swarmShooter) {
-            const origin = applyMountOffset(swarmShooter.x, swarmShooter.y, swarmShooter.angle, mount);
-            // Drone barrel offset is `radius + 2` along the mount's fire
-            // direction (no mount → centre of drone). Matches the
-            // pre-refactor visual where the beam clears the drone hull.
-            // A drone's turning turret fires from its barrel tip (the server's
-            // AiFireResolver uses the same shared muzzle).
-            const barrelOffset = mount ? shipShotMuzzle(shooterKind, mount, true) : swarmShooter.radius + 2;
-            // A turning mount with no known angle (out of this viewer's
-            // interest, so no `drones[].mountAngles`) aims at the wire end.
-            remoteBeamLine(
-              style !== null, swarmShooter.angle, mount?.baseAngle ?? 0, mount ? currentMountAngle : 0,
-              origin.x, origin.y, barrelOffset, laser.range, laser.toX, laser.toY, line, laser.dist,
-            );
-            fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
-          } else {
-            fromX = laser.fromX;
-            fromY = laser.fromY;
-            toX = laser.toX;
-            toY = laser.toY;
-          }
-          // Fill the reused pooled slot (no per-beam allocation). The Miner's
-          // mining beam (mountId 'drill') routes into the dedicated mining pool
-          // (WS-4 Phase 4) so it draws as a distinct fat amber drill beam and is
-          // isolatable for the E2E; everything else stays in the remote pool.
-          const cache = isMining ? this._miningBeamCache : this._remoteBeamCache;
-          const idx = isMining ? miningIdx : slotIdx;
-          let slot = cache[idx];
-          if (!slot) {
-            slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha, style: null };
-            cache[idx] = slot;
-          }
-          slot.shooterId = shooterId; slot.mountId = mountId;
-          slot.fromX = fromX; slot.fromY = fromY; slot.toX = toX; slot.toY = toY;
-          slot.alpha = alpha;
-          slot.style = style;
-          // ...and burns full width to its hit point (a short fade past a miss).
-          slot.solidLen = remoteBeamSolidLen(style, Math.hypot(toX - fromX, toY - fromY), laser.hit === true);
-          if (!isMining) { this._fxRemoteHit[idx] = laser.hit === true; this._beamHitMem.track(shooterId, mountId, laser.hit === true, slot); }
-          // A beam landing on a shield is a held contact there.
-          if (this._fxShieldsOn && !isMining && laser.hit && laser.targetId) this._fxShields!.beam(laser.targetId, 1 + idx, toX, toY, this._fxShieldPose);
-          // A beam that hit something with no target id stopped on a fence.
-          else if (!isMining && laser.hit && !laser.targetId) this._fxFences?.beam(1 + idx, toX, toY);
-          if (isMining) miningIdx++;
-          else slotIdx++;
-        }
-      }
-      this._remoteBeamCacheCount = slotIdx; this._beamHitMem.endFrame();
-      this._miningBeamCacheCount = miningIdx;
-
-      // Sprite-pool driven render — no clear/redraw, just transforms.
-      // Always re-set: the pool resolves its own pooling + visibility and
-      // the transform writes are cheap (see the always-call rationale above).
-      this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx, this.world.scale.x);
-      this.remoteBeamGfx!.visible = true;
-      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, this.fxNow(), this._fxRemoteHit, this.world.scale.x);
-      if (this._miningBeamPool && this.miningBeamGfx) {
-        this._miningBeamPool.setBeams(this._miningBeamCache, miningIdx);
-        this.miningBeamGfx.visible = miningIdx > 0;
-        this.feedback.miningBeamCount = this._miningBeamPool.liveCount;
-      }
-    } else if (this._remoteBeamPool && this.remoteBeamGfx) {
-      this.remoteBeamGfx.visible = false;
-      this._remoteBeamPool.hideAll();
-      this._fxRemoteBeams?.hideAll();
-      this._remoteBeamCacheCount = 0; this._beamHitMem.endFrame();
-      if (this._miningBeamPool && this.miningBeamGfx) {
-        this.miningBeamGfx.visible = false;
-        this._miningBeamPool.hideAll();
-        this._miningBeamCacheCount = 0;
-        this.feedback.miningBeamCount = 0;
-      }
-    }
-
-    // Live hitscan beams — one per mount in the local ship's active slot.
-    // Derive geometry from the local ship's lerped pose in mirror.ships each
-    // frame so beams stay glued to the ship sprite even during a server-
-    // correction lerp. (Mirrors the remote-beam pattern above — single source
-    // of truth: "where the ship is visually right now".)
-    //
-    // Multi-mount/turret refactor (Phase 2c): `mirror.liveBeams` is now a
-    // per-mount map. Legacy single-mount fighter/scout/heavy has exactly one
-    // entry keyed by `'forward'`; multi-mount kinds (Phase 3) get one entry
-    // per barrel and each draws independently.
-    const localShip = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : null;
-    if (!this._beamsDisabled && mirror.liveBeams && mirror.liveBeams.size > 0 && localShip && this._liveBeamPool) {
-      const localKind = getShipKind(localShip.kind ?? null);
-      const localMounts = localKind.mounts ?? [];
-
-      // Recompute every beam's endpoints from the live ship pose and
-      // ALWAYS call `setBeams`. The old `BEAM_EPSILON` dirty-cache
-      // (combat-fx-hunt 2026-05-31) compared this frame's pose to the
-      // PREVIOUS frame, not to the last DRAWN frame, and overwrote the
-      // cache every frame — so coasting/flying under 4 u/frame never
-      // tripped `dirty`, `setBeams` was never called, and the DRAWN beam
-      // froze in place while the ship flew on (snapping to catch up only
-      // when one frame exceeded 4 u). That is the no-enemy fly-forward
-      // laser-detach repro (smoke handoff 2026-06-06, Issue 1 Bug #1).
-      // `setBeams` is O(count) transform writes — free for 1–2 beams,
-      // adds no allocation (invariant #14 — pooled slots + pooled sprites).
-      let slotIdx = 0;
-      for (const [mountId, beam] of mirror.liveBeams) {
-        const mountIdx = localMounts.findIndex((m) => m.id === mountId);
-        const mount = mountIdx >= 0 ? localMounts[mountIdx] : undefined;
-        const currentMountAngle = mountIdx >= 0 ? (localShip.mountAngles?.[mountIdx] ?? 0) : 0;
-        // From the barrel tip (the shared muzzle the client ray is cast from).
-        const line = liveBeamLine(localKind, mount, localShip.x, localShip.y, localShip.angle, currentMountAngle, beam.dist, this._remoteBeamLine);
-        const fromX = line.fromX, fromY = line.fromY, toX = line.toX, toY = line.toY;
-        let slot = this._liveBeamCache[slotIdx];
-        if (!slot) {
-          slot = { mountId, fromX: 0, fromY: 0, toX: 0, toY: 0 };
-          this._liveBeamCache[slotIdx] = slot;
-        }
-        slot.mountId = mountId;
-        slot.fromX = fromX;
-        slot.fromY = fromY;
-        slot.toX = toX;
-        slot.toY = toY;
-        // P1a — the full-strength solid length (== aim guide / optimal range when
-        // not clipped; beyond it the pool fades the beam to nothing) and the
-        // per-beam style of the mount's weapon.
-        liveBeamLook(mount, beam.dist, beam.solidDist, beam.hitId !== undefined, slot);
-        if (this._fxShieldsOn && beam.hitId) this._fxShields!.beam(beam.hitId, 500 + slotIdx, toX, toY, this._fxShieldPose);
-        // The local beam stops on a fence's prediction collider.
-        if (beam.hitId?.startsWith('predwall-')) this._fxFences?.beam(500 + slotIdx, toX, toY);
-        slotIdx++;
-      }
-      this._liveBeamCacheCount = slotIdx;
-
-      // Sprite-pool driven render (matches remoteBeam path) — always re-set.
-      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx, this.world.scale.x);
-      this.liveBeamGfx!.visible = true;
-      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, this.fxNow(), undefined, this.world.scale.x);
-      // E2E observable: publish the ACTUAL drawn beam origin (the sprite
-      // transform), not a recompute — this is what catches the detach bug.
-      this.feedback.liveBeamRenderedFromX = this._liveBeamPool.renderedFromX;
-      this.feedback.liveBeamRenderedFromY = this._liveBeamPool.renderedFromY;
-    } else {
-      if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
-      this._liveBeamPool?.hideAll();
-      this._fxLiveBeams?.hideAll();
-      this._liveBeamCacheCount = 0;
-      this.feedback.liveBeamRenderedFromX = null;
-      this.feedback.liveBeamRenderedFromY = null;
-    }
+    // Remote, mining + live beams: see pixi/beamUpdater.ts. Ctx pooled to
+    // `this._beamCtx` (built once in init); camera scale + shield gate per frame.
+    this._beamCtx.cameraScale = this.world.scale.x;
+    this._beamCtx.fxShieldsOn = this._fxShieldsOn;
+    updateBeams(mirror, this._beamCtx);
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
     this._speedFollowSprite = null;
@@ -2917,8 +2628,8 @@ export class PixiRenderer implements IRenderer {
       sc.addLight(x, y, 5 * K, color, K > 1 ? 0.36 * K : 0.9, 55 * K);
     }
     if (mirror.missiles) for (const m of mirror.missiles.values()) sc.addLight(m.x, -m.y, 8, 0xffa060, 1.2, 70);
-    for (let i = 0; i < this._liveBeamCacheCount; i++) this.beamLights(this._liveBeamCache[i]!);
-    for (let i = 0; i < this._remoteBeamCacheCount; i++) this.beamLights(this._remoteBeamCache[i]!);
+    for (let i = 0; i < this._beamCtx.liveBeamCacheCount; i++) this.beamLights(this._beamCtx.liveBeamCache[i]!);
+    for (let i = 0; i < this._beamCtx.remoteBeamCacheCount; i++) this.beamLights(this._beamCtx.remoteBeamCache[i]!);
     for (let i = 0; i < this._tractorViewCount; i++) this.beamLights(this._tractorViews[i]!); // tractors glow blue where they hold
   }
 
@@ -3404,19 +3115,13 @@ export class PixiRenderer implements IRenderer {
   private _fxLiveBeams: FxBeams | null = null;
   private _fxRemoteBeams: FxBeams | null = null;
   private _fxProjectiles: FxProjectiles | null = null;
-  /** Per remote beam this frame: did it land on something (FxBeams' flare). */
-  private readonly _fxRemoteHit: boolean[] = [];
 
   /** New backdrop (`?fx=new`), and the sector it shows. */
   private _backdrop: Backdrop | null = null;
   private _sectorKey: string | null = null;
 
   /** DEV/E2E: what the backdrop is showing. */
-  backdropStats(): { classicStars: boolean; motes: { near: number; fore: number } | null; deep: number; on: boolean; nebula: string | null; landmarks: number; sky: string; density: number; speed: number; speedZoom: number; speedLevel: string } {
-    const b = this._backdrop;
-    return { classicStars: this.starfield?.isVisible() === true, motes: b?.moteCounts() ?? null, deep: b?.deepSpace() ?? 0, on: b?.sky.visible === true, nebula: b?.nebulaKey() ?? null, landmarks: b?.visibleLandmarks ?? 0, sky: b?.skySignature ?? '', density: b?.density ?? 0,
-      speed: b?.speed.sf ?? 0, speedZoom: this.camera.speedZoom(), speedLevel: b?.speedLevel ?? 'off' };
-  }
+  backdropStats(): BackdropStats { return backdropStats(this._probes); }
 
   /** See `IRenderer.setFleetOrderMode`. */
   setFleetOrderMode(mode: 'move' | 'attack'): void {
@@ -3652,25 +3357,8 @@ export class PixiRenderer implements IRenderer {
    * ship's screen point, both as the frame renders. Read by the
    * `__eqxFleetRingProbe` DEV hook (`?worker=0`). Not used by gameplay.
    */
-  /**
-   * Test-only (RTS Part A seamless hand-over): the identity of the ship drawn
-   * under `key`: its sprite's and turret cluster's Pixi `uid`, its art handle's
-   * probe id, and how many re-keys this renderer has applied. A spec reads it
-   * before and after taking a ship's controls: the same numbers under the new
-   * key mean nothing was rebuilt. Read by the `__eqxShipVisualProbe` DEV hook
-   * (`?worker=0`). Not used by gameplay.
-   */
-  shipVisualProbe(key: string): { sprite: number | null; cluster: number | null; artHandle: number | null; rekeys: number } {
-    const sp = this.sprites.get(key);
-    const cl = this.mountVisuals.clusterOf(key);
-    const h = this._artCtx.handles.get(key);
-    return {
-      sprite: sp?.uid ?? null,
-      cluster: cl?.uid ?? null,
-      artHandle: h === undefined ? null : probeIdentity(h),
-      rekeys: this._shipRekeysApplied,
-    };
-  }
+  /** Test-only ship identity probe (`__eqxShipVisualProbe`): see pixi/rendererProbes.ts. */
+  shipVisualProbe(key: string): ShipVisualProbe { return shipVisualProbe(this._probes, key); }
 
   fleetRingProbe(): { id: string; ringX: number; ringY: number; shipX: number; shipY: number; frames: number } {
     this._ringProbeOn = true;
@@ -3728,40 +3416,8 @@ export class PixiRenderer implements IRenderer {
     this._activeShieldIds.clear();
   }
 
-  /** Machined art status: the service's counts plus how many ship sprites
-   *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxWakes: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; turretAim: ReturnType<MountVisualManager['aimProbe']>; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number; wreckEngines: number; wreckLit: number; wreckRawMaps: number; wreckFarLod: number; wreckBlasts: number; wreckRipples: number; hullBlastsReplaced: number; litMeshes: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
-    let machined = 0, classic = 0;
-    for (const [id, sp] of this.sprites) {
-      if (isMachinedSprite(sp)) machined++;
-      else if (!id.startsWith('swarm-') || this._artCtx.handles.has(id)) classic++;
-    }
-    // Capital destruction S2b: drawn wreck pieces (visible sprites of kind 4).
-    // S3: textured pieces (parent art), pieces whose cut edges still glow,
-    // and break-ups played.
-    // wreckEngines: pieces drawing engine exhaust this frame. Must stay 0: a
-    // piece wears the dead ship's art handle (nozzles and all), but a wreck
-    // has no engines.
-    let wreckPieces = 0, wreckTextured = 0, wreckGlowing = 0, wreckEngines = 0, wreckLit = 0, wreckRawMaps = 0, wreckFarLod = 0;
-    for (const [id, k] of this._swarmSpriteKinds) {
-      if (k !== 4) continue;
-      if (this._fxEngines?.drew(id) === true) wreckEngines++;
-      const sp = this.sprites.get(id);
-      if (sp?.visible !== true) continue;
-      wreckPieces++;
-      if (sp instanceof WreckPieceSprite) {
-        if (sp.art !== null) wreckTextured++;
-        if (sp.glowAlpha() > 0) wreckGlowing++;
-        if (sp.farZoom) wreckFarLod++;
-        const am = sp.artMode();
-        if (am === 'lit') wreckLit++;
-        else if (am === 'raw-maps') wreckRawMaps++;
-      }
-    }
-    const wreckBreaks = this._wreckBreaks;
-    const art = this._artCtx.art;
-    return { wreckPieces, wreckTextured, wreckGlowing, wreckBreaks, wreckEngines, wreckLit, wreckRawMaps, wreckFarLod, wreckBlasts: this._wreckBlastsSpawned, wreckRipples: this._wreckRipplesSpawned, hullBlastsReplaced: this._hullBlastsReplaced, litMeshes: litPass.settings ? litPass.count : -1, mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxWakes: this._fxProjectiles?.wakeCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), turretAim: this.mountVisuals.aimProbe(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
-  }
+  /** Machined art status (DEV/perf probe): see pixi/rendererProbes.ts. */
+  artStats(): ArtStats { return artStats(this._probes); }
 
   dispose(): void {
     this._artCtx.art?.destroy();

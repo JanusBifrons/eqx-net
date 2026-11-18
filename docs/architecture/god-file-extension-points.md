@@ -22,9 +22,9 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A test / engineering / showcase room | A row in a table-driven room file (`rooms/showcaseRooms.ts`, `definePerfRooms()`), behind `shouldRegisterTestRooms()`. | live |
-| An HTTP route | A router in `src/server/routes/` (like `diagRouter.ts`, `galaxyRouter.ts`), mounted with one line. | live |
-| A boot step | A function in `src/server/boot/`, called from `main()`. | planned |
+| A test / engineering / showcase room | A row in a per-feature room file in `src/server/rooms/testRooms/` (`engineeringRooms.ts`, `scenarioRooms.ts`, `worldRooms.ts`), `rooms/showcaseRooms.ts` or `definePerfRooms()`, all called from `index.ts` behind `shouldRegisterTestRooms()`. Never a `define` in `index.ts`. | live |
+| An HTTP route | A router in `src/server/routes/` (like `diagRouter.ts`, `galaxyRouter.ts`), mounted with one line. Dev-only `/dev/*` and `/test/*` endpoints go in `routes/devRouter.ts` (mounted outside production). | live |
+| A boot step | A step function in `src/server/boot/` (like `persistenceBoot.ts`, `livingWorldBoot.ts`, `economyBoot.ts`) taking a narrow deps object and returning what later steps need; `main()` is the ordered list of calls. Directors it starts go on `WorldHandles` (`boot/worldHandles.ts`). | live |
 
 ## Client: `ColyseusClient.ts` (`src/client/net/CLAUDE.md`)
 
@@ -38,10 +38,10 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A per-frame visual | An updater module `update<X>Sprites(mirror, ctx)` with a pooled ctx built once in `init`, like `pixi/shipSpriteUpdater.ts`. | live |
-| A test / perf probe | `pixi/rendererProbes.ts`. | planned |
+| A per-frame visual | An updater module `update<X>Sprites(mirror, ctx)` with a pooled ctx built once in `init`, like `pixi/shipSpriteUpdater.ts` or `pixi/beamUpdater.ts`. | live |
 | A render-mirror field | The entity's `*RenderState` file under `src/core/contracts/render/`. | live |
 | A renderer method (overlay, camera, radar) | The matching sub-interface (`IFleetView`, `IRadarView`, `ICameraControl`) that `IRenderer` extends. | live |
+| A test / perf probe | A function in `pixi/rendererProbes.ts` taking `RendererProbeState`, plus a one-line delegate in `PixiRenderer`. | live |
 
 ## Core AI: `HostileDroneBehaviour.ts` (`src/core/ai/CLAUDE.md`)
 
