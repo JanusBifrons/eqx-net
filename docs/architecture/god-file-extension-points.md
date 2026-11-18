@@ -47,7 +47,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 |---|---|---|
 | A combat move | An `IManoeuvre` in `src/core/ai/tactics/` (`manoeuvre.ts`). | live |
 | An order / stance / non-combat mode | A mode file in `src/core/ai/modes/`. | planned |
-| A tuning number | `hostileDroneTuning.ts`. | planned |
+| A tuning number | `hostileDroneTuning.ts`. | live |
 
 ## Shared data: `structureKinds.ts` (`src/shared-types/CLAUDE.md`)
 
