@@ -112,7 +112,7 @@ export const SHARED_LIVELOOP_GLOBS: readonly string[] = [
 export const STRUCTURE_GLOBS: readonly string[] = [
   '^src/server/structures/',
   '^src/core/structures/',
-  '^src/shared-types/structureKinds\\.ts$',
+  '^src/shared-types/structureKinds(\\.ts$|/)', // the catalogue and its per-family files
 ];
 
 /**
