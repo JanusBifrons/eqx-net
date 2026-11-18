@@ -138,6 +138,12 @@ export function liveryHullGrey(hex: number, l: Livery | undefined, kindId: strin
   const sub = sh !== undefined && sizeClassOf(getShipKind(kindId)) !== 'capital';
   return sub ? liveryGrey(hex, sh.hullDl, sh.hullS) : liveryGrey(hex);
 }
+/** The paint a ship bake forges its hull in, from a base part colour: the
+ *  livery's hull grey, else the job's own paint, else the colour itself.
+ *  One rule for the forge, a mount's gun and a wreck piece's far speck. */
+export function bakedHullPaint(color: number, kindId: string, paint: number | undefined, l: Livery | undefined): number {
+  return l ? liveryHullGrey(color, l, kindId) : paint ?? color;
+}
 /** The team paint a livery lays on this size class. */
 function liveryTeamPaint(l: Livery, capital: boolean): number {
   const sh = liveryShade(l);
