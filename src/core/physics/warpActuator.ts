@@ -75,7 +75,25 @@ export function applyPilotInput(rec: ShipBody, input: ShipInput): void {
   alignToWarp(rec, rec.warp!, WARP_MIN_TURN);
 }
 
-/** `PhysicsWorld.botWarp` for a live body record (see its doc). */
+/**
+ * Behind `PhysicsWorld.botWarp` (World.ts).
+ *
+ * NPC warp-to (wrap-up W2a, flagship fleets): the same spool → run → drop
+ * machine as a pilot's (`stepWarp`), driven by a held target instead of the
+ * input stream. Server worker only: drones are snapshot-interpolated on the
+ * client, never predicted. `target` null drops the request (cancels a
+ * spool; a run can't be cancelled).
+ *
+ * Returns true while the warp owns the body this tick (spooling, running or
+ * dropping): the caller skips the AI's impulse. While spooling the drive
+ * turns the ship to face its target. A ship flown by control keys (the
+ * pilot layer: `keys` is this tick's AI input, or `null` on a tick
+ * without one) spools the way a pilot's ship does (`applyInput`): its
+ * thrust, boost and reverse still work, its turn keys are ignored, so a
+ * fleeing ship keeps flying along its escape line instead of stopping dead
+ * (take 7, 2026-11-14). A ship that is not (`keys` undefined: the impulse
+ * path, a flagship fleet's capital) holds still while it spools.
+ */
 export function botWarpStep(rec: ShipBody, target: { x: number; y: number } | null, keys?: ShipInputArgs | null): boolean {
   if (target === null && rec.warp === undefined) return false;
   rec.warp ??= newWarpState();

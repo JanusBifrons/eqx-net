@@ -16,6 +16,7 @@ import { polygonArea, verticesToFloat32, type Vec2 } from '../swarm/asteroidShap
 import type { ShipKind } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
 import { shipBodyInertia, shipBodyMass } from '../../shared-types/shipScale/tuning.js';
+import { wallGeometry } from '../structures/ShieldWall.js';
 
 /**
  * Soft-CCD prediction distance (u) for every dynamic body (plan
@@ -72,8 +73,23 @@ export function createShipBody(world: RAPIER.World, kind: ShipKind, x: number, y
   return body;
 }
 
-/** The body of an obstacle (`PhysicsWorld.spawnObstacle`, see its doc for
- *  the parameters). With `parts` it is a multi-part body (gates). */
+/**
+ * Behind `PhysicsWorld.spawnObstacle` (World.ts).
+ *
+ * Spawn a passive dynamic body (asteroid-ish) for collision testing. No damping
+ * on linear or angular motion so an initial velocity / spin persists.
+ *
+ * When `vertices` is provided, the collider is a convex hull built from those
+ * points (entity-local space). Density is scaled by the polygon area so the
+ * resulting body mass matches the requested `mass` exactly. When `vertices`
+ * is omitted, behaviour is unchanged: a `ball(radius)` collider with density
+ * derived from the disc area.
+ *
+ * Obstacles do not have a `ShipKind` and never go through `applyInput`. Their
+ * physics is governed entirely by Rapier's solver plus any AI-driven
+ * `applyImpulse` calls from drone behaviours. With `parts` it is a multi-part
+ * body (gates).
+ */
 export function createObstacleBody(
   world: RAPIER.World,
   x: number,
@@ -200,9 +216,57 @@ export function createProjectileBody(world: RAPIER.World, x: number, y: number, 
   return body;
 }
 
-/** The collider swap of `PhysicsWorld.setHullExposed` (see its doc): replace
- *  every collider on `body` with the hull triangles (`exposed`) or the
- *  shield collider, then re-fold the pinned mass. */
+/**
+ * Behind `PhysicsWorld.spawnWall` (World.ts).
+ *
+ * Spawn a shield-wall span — a STATIC (fixed) cuboid spanning between two pylon
+ * poses (shield-fence plan). It blocks ships physically (an immovable body the
+ * dynamic ship bodies bounce off); weapon absorption is resolved main-thread
+ * (the server has no live Rapier world). The geometry is derived from the two
+ * poses via the shared `wallGeometry` so the server collider, the client
+ * predWorld collider, and the rendered span all agree. Idempotent on `id`.
+ *
+ * NOT given CONTACT_FORCE_EVENTS — a wall never deals ram damage; it just
+ * blocks. Toggle it on stun / power loss via `setWallActive` (cheaper than a
+ * despawn/respawn churn of the body + handle maps).
+ */
+export function createWallBody(
+  world: RAPIER.World, ax: number, ay: number, bx: number, by: number, thickness: number,
+): { body: RAPIER.RigidBody; collider: RAPIER.Collider } | null {
+  const g = wallGeometry(ax, ay, bx, by);
+  if (g.length < 1) return null; // degenerate (coincident pylons) — nothing to span
+  const body = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(g.midX, g.midY).setRotation(g.angle),
+  );
+  const collider = world.createCollider(
+    RAPIER.ColliderDesc.cuboid(g.length / 2, thickness / 2).setRestitution(0.4).setFriction(0),
+    body,
+  );
+  return { body, collider };
+}
+
+/**
+ * Behind `PhysicsWorld.setHullExposed` (World.ts).
+ *
+ * Swap a ship/drone body between its cheap CIRCLE collider (shield up)
+ * and its exact-silhouette HULL POLYGON -- a compound of zero-density
+ * triangle colliders (shield down). The body and body.handle are
+ * preserved (handleToId + the SAB slot stay valid); pose/velocity are
+ * untouched; mass/inertia are untouched (all colliders zero-density --
+ * the body's additional mass props own the dynamics). Idempotent.
+ *
+ * Discrete event (shield 0-cross), NOT per-tick, so allocating the new
+ * colliders here is fine. QUERY-PIPELINE LAG: the new geometry is only
+ * visible to castRay / contact generation on the NEXT world.step()
+ * (Rapier refreshes queries inside step() only). The <=1-tick window
+ * where a query still sees the old (larger) circle after the shield
+ * dropped is acceptable + intentional -- never paper over it with
+ * updateSceneQueries() (the client predWorld won't, so that would
+ * desync lockstep).
+ *
+ * `kind` is passed explicitly because drone body records store the
+ * DEFAULT kind (see spawnObstacle) -- the caller knows the real kind.
+ */
 export function mountShipColliders(world: RAPIER.World, body: RAPIER.RigidBody, kind: ShipKind, exposed: boolean): void {
   // Collect-then-remove: removeCollider mutates the body's collider list,
   // so iterating by live index while removing would skip colliders.
