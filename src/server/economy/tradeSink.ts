@@ -48,6 +48,9 @@ export interface TradeSink {
   /** T4 — remembered teleporter-toll answers, by owner faction. */
   tollPref?(playerId: string, faction: string): 'always' | 'never' | undefined;
   setTollPref?(playerId: string, faction: string, pref: 'always' | 'never'): void;
+  /** Join flow — free capital launches left, and spending one. */
+  freeLaunches?(playerId: string): number;
+  spendFreeLaunch?(playerId: string): boolean;
   /** T4 — an NPC faction collects a toll. */
   creditFaction?(faction: string, credits: number): void;
   /** Robot reputation ≥ ROBOT_TRUCE_AT. Hot-path safe (one Map lookup). */
