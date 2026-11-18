@@ -69,8 +69,8 @@ Locks: `ai/HostileDroneBehaviour.sensor.test.ts`, `ai/tactics/roleProfiles.test.
 
 - **`steering.ts`:** pure `arrive` / `seek` (heading plus a thrust scale that ramps to 0 within a slow radius, so per-kind damping brakes the body to a stop).
 - **`flocking.ts` (boids):** `addCohesion` (toward the leader, with an ARRIVAL ramp so the pull fades to 0 within `FLOCK_FOLLOW_DISTANCE`: "slow down once close"), `addAlignment` and `addSeparation` accumulate into a caller-owned `FlockAccumulator`; `resolveFlock` returns a unit direction and a thrust scale (capped at 1 = calm cruise, NO boost). The feel constants (`FLOCK_*`) are exported.
-  - The non-combat roaming squads use it via `HostileDroneBehaviour.tickFlock`: a leader-led herd at cruise. The leader THROTTLES / WAITS so followers tighten (no boost), and squads spawn CLUSTERED so the herd is tight from birth. See `src/server/CLAUDE.md` "In-sector squad herding — leader + FLOCKING".
-- **Per-kind radii:** `tickFlock` passes `shipTuning(kind).flockFollow` as the cohesion FOLLOW DISTANCE (gain `FLOCK_COHESION_GAIN`) and `flockSeparation` as the separation radius (#18).
+  - The non-combat roaming squads use it via the flock mode (`modes/flockMode.ts`): a leader-led herd at cruise. The leader THROTTLES / WAITS so followers tighten (no boost), and squads spawn CLUSTERED so the herd is tight from birth. See `src/server/CLAUDE.md` "In-sector squad herding — leader + FLOCKING".
+- **Per-kind radii:** `FlockMode` passes `shipTuning(kind).flockFollow` as the cohesion FOLLOW DISTANCE (gain `FLOCK_COHESION_GAIN`) and `flockSeparation` as the separation radius (#18).
 
 ## Context steering
 
@@ -92,7 +92,7 @@ When a ship is not fighting, `HostileDroneBehaviour.pilotJob(order)` is the one 
 - **`JOB_ORDER_TICK`** (what the ship flies): leaving > flock follow > travel / patrol leg > course to the move target (formation slot, leader course, post hold) > guard post (leashed: not a broadside capital) > hunt search > origin orbit. A follower whose leader can't be resolved uses **`JOB_ORDER_NO_FLOCK`** (the same without the flock).
 - **`JOB_ORDER_REPORT`** (what the fleet panel reads): leaving > travel > (a held target: chasing / attacking) > hunt > flock > guard post (any `guardOn`) > idle.
 - **The two orders differ, and both are kept as they were.** The setters make most pairs exclusive, but: (1) a hunter given a move target (`setMoveTarget` / `setFlockLeaderCourse` do not end a hunt) flies the course and reads `searching`; (2) a broadside capital with a post and nothing to fight orbits the origin and reads `guarding` / `moving`; (3) a bare course reads `idle`. Changing either order is a behaviour change, not a refactor.
-- Live modes: `modes/leavingMode.ts` (the warp-out run), `modes/patrolMode.ts` (course + orbit), `modes/travelMode.ts` (travel / patrol leg, `fireOnTheWay`; the brain sets the arrival post), `modes/searchMode.ts` (hunt search). Still in the brain: flock (`tickFlock`), guard return.
+- Live modes: `modes/leavingMode.ts` (the warp-out run), `modes/patrolMode.ts` (course + orbit), `modes/travelMode.ts` (travel / patrol leg, `fireOnTheWay`; the brain sets the arrival post), `modes/searchMode.ts` (hunt search), `modes/flockMode.ts` (flock follow; the brain calls `sense(view)` first and, with the leader gone, flies `JOB_ORDER_NO_FLOCK`), `modes/guardReturnMode.ts` (back to the guard post). Travel's arrival (it sets the post) stays a brain step in `tickTravel`.
 
 Lock: `ai/HostileDroneBehaviour.pilotJob.test.ts` (activity + controls fingerprints per job, recorded before the split).
 

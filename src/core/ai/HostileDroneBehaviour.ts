@@ -19,18 +19,6 @@ import {
 import { pickTarget, type MountTargetView, type PickTargetOptions } from './WeaponMountController.js';
 import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
 import { HullAvoid } from './hullAvoid.js';
-import {
-  type FlockAccumulator,
-  type FlockOutput,
-  makeFlockAccumulator,
-  makeFlockOutput,
-  resetFlock,
-  addCohesion,
-  addAlignment,
-  addSeparation,
-  resolveFlock,
-  FLOCK_COHESION_GAIN,
-} from './flocking.js';
 import type { AiEntityPoseOut, AiShipActivity, IAiNavRoutes } from '../contracts/IAiBehaviour.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { AI_INPUT_BOOST, AI_INPUT_TURN_LEFT, AI_INPUT_TURN_RIGHT } from '../contracts/IAiBehaviour.js';
@@ -74,6 +62,8 @@ import {
   JOB_ORDER_NO_FLOCK, JOB_ORDER_REPORT, JOB_ORDER_TICK, MODE_GOAL_MOVE_TO, makePilotModeContext, makePilotModeGoal,
   type IPilotMode, type PilotJobId, type PilotModeContext, type PilotModeGoal,
 } from './tactics/manoeuvre.js';
+import { FlockMode } from './modes/flockMode.js';
+import { GuardReturnMode } from './modes/guardReturnMode.js';
 import { LeavingMode } from './modes/leavingMode.js';
 import { PatrolMode } from './modes/patrolMode.js';
 import { SearchMode } from './modes/searchMode.js';
@@ -143,8 +133,6 @@ import {
   CALM_CRUISE_FRAC,
   MOVE_ARRIVE_SLOW_RADIUS,
   LEADER_CRUISE_THROTTLE,
-  FLOCK_ACTIVITY_GAP_MUL,
-  FLOCK_CATCH_UP,
   COMBAT_NEIGHBOUR_K,
   COMBAT_SEP_REACH,
   COMBAT_SEP_CORE,
@@ -225,23 +213,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** This tick's routes round rock (`view.nav`, navigation slice 7), debris and tick, for `tickMoveTo`. */
   private _nav: IAiNavRoutes | null = null; private _debris: IAiNeighbourQuery | undefined; private _viewTick = 0;
 
-  /** Leader-led flocking (non-combat herding). When `leaderId !== null` this
-   *  drone is a FOLLOWER and flocks to the leader's live pose each tick instead
-   *  of orbiting / chasing a static slot. Set by the director via
-   *  `setFlockFollow`; cleared by `setMoveTarget` (leader role) / `clearMoveTarget`. */
-  private leaderId: string | null = null;
-  /** Squad member ids for the separation rule. Owned (copied on assignment) so
-   *  the director may reuse its source array. */
-  private readonly _flockMemberIds: string[] = [];
-  /** Alloc-free flocking scratch (invariant #14) — all allocated once here. */
-  private readonly _flockAcc: FlockAccumulator = makeFlockAccumulator();
-  private readonly _flockOut: FlockOutput = makeFlockOutput();
-  private readonly _leaderScratch: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-  /** Squared distance to the flock leader at the last flock tick (Infinity
-   *  until one), and the leader it was measured to: the panel's activity. */
-  private _flockGap2 = Infinity;
-  private _flockLeaderPrev: string | null = null;
-  private readonly _neighborScratch: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** Leader-led flocking (non-combat herding): a FOLLOWER (`leaderId !== null`,
+   *  set by the director via `setFlockFollow`) flocks to its leader's live pose
+   *  each tick (`modes/flockMode.ts`). */
+  private readonly _flock = new FlockMode();
 
   // ── Phase 1: hostility / state machine ────────────────────────────────
   /** Behaviour state. Driven by `markHostile`/`purgeHostility` external
@@ -545,6 +520,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Peacetime modes (`ai/modes/`), preallocated (#14). */
   private readonly _leaving = new LeavingMode();
   private readonly _patrol = new PatrolMode();
+  private readonly _guardReturn = new GuardReturnMode();
   private readonly _travel: TravelMode;
   private readonly _search: SearchMode;
   private _modeCtx!: PilotModeContext;
@@ -1124,11 +1100,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (order === JOB_ORDER_REPORT) {
       if (this.travel === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
       if (this.hunting) return JOB_SEARCH;
-      if (this.leaderId !== null) return JOB_FLOCK;
+      if (this._flock.leaderId !== null) return JOB_FLOCK;
       if (this.guardOn) return JOB_GUARD;
       return JOB_ORBIT;
     }
-    if (order === JOB_ORDER_TICK && this.leaderId !== null) return JOB_FLOCK;
+    if (order === JOB_ORDER_TICK && this._flock.leaderId !== null) return JOB_FLOCK;
     if (this.travel === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
     if (this.moveTarget !== null) return JOB_COURSE;
     // Guard leash: nothing to fight ⇒ back to the post.
@@ -1142,12 +1118,18 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private tickJob(self: AiEntity, view: AiWorldView, order: number): AiIntent {
     const job = this.pilotJob(order);
     switch (job) {
-      case JOB_FLOCK: return this.tickFlock(self, view);
       case JOB_TRAVEL: return this.tickTravel(self, view, null);
-      case JOB_GUARD: return this.tickMoveTo(self, this.guardX, this.guardY);
-      default: // leaving, search, course, orbit: mode files
+      case JOB_FLOCK:
+        // Leader gone (or no resolver): the next job, flock skipped.
+        if (!this._flock.sense(view)) return this.tickJob(self, view, JOB_ORDER_NO_FLOCK);
         this.modeCtx(self, view.tick, job);
-        return this.runMode(job === JOB_LEAVING ? this._leaving : job === JOB_SEARCH ? this._search : this._patrol, self);
+        return this.runMode(this._flock, self);
+      default: // leaving, search, guard, course, orbit: mode files
+        this.modeCtx(self, view.tick, job);
+        return this.runMode(
+          job === JOB_LEAVING ? this._leaving : job === JOB_SEARCH ? this._search : job === JOB_GUARD ? this._guardReturn : this._patrol,
+          self,
+        );
     }
   }
 
@@ -2061,7 +2043,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.guardOn = false;
       this.moveTarget = null;
       this.travel = TRAVEL_NONE;
-      this.leaderId = null;
+      this._flock.leaderId = null;
       this._flockLeaderCruise = false;
       if (!this.hunting) this._search.reset = true;
     }
@@ -2180,8 +2162,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (job === JOB_SEARCH) return 'searching';
     if (job === JOB_FLOCK) {
       // With its pack (RTS squads / escorts): guarding once it is close.
-      const r = FLOCK_ACTIVITY_GAP_MUL * shipTuning(this.kind).flockFollow;
-      return this._flockGap2 > r * r ? 'moving' : 'guarding';
+      return this._flock.isWithPack(this.kind) ? 'guarding' : 'moving';
     }
     if (job === JOB_GUARD) {
       const dx = this._lastX - this.guardX;
@@ -2193,7 +2174,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** The flock leader this ship follows (null = none: it leads or flies
    *  alone). Server-only, test-visible. */
-  getFlockLeaderId(): string | null { return this.leaderId; }
+  getFlockLeaderId(): string | null { return this._flock.leaderId; }
 
   /** Test-visible: the effective guard radius (0 with no post). */
   getGuardRadius(): number {
@@ -2209,7 +2190,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  move independently now), so a former follower promoted to leader stops
    *  flocking. The director re-issues the course each control tick. */
   setMoveTarget(x: number, y: number): void {
-    this.leaderId = null;
+    this._flock.leaderId = null;
     this._flockLeaderCruise = false;
     if (this.moveTarget === null) this.moveTarget = { x, y };
     else { this.moveTarget.x = x; this.moveTarget.y = y; }
@@ -2222,7 +2203,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  old follower-boost; the user's "make the leader wait"). The director sets
    *  the course to the leader's OWN pose to make it hold while the flock gathers. */
   setFlockLeaderCourse(x: number, y: number): void {
-    this.leaderId = null;
+    this._flock.leaderId = null;
     this._flockLeaderCruise = true;
     if (this.moveTarget === null) this.moveTarget = { x, y };
     else { this.moveTarget.x = x; this.moveTarget.y = y; }
@@ -2230,7 +2211,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   clearMoveTarget(): void {
     this.moveTarget = null;
-    this.leaderId = null;
+    this._flock.leaderId = null;
     this._flockLeaderCruise = false;
   }
 
@@ -2240,16 +2221,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  squad) drives the separation rule. Copied into an owned buffer so the
    *  director may reuse its source array. Clears any leader course. */
   setFlockFollow(leaderId: string, memberIds: readonly string[]): void {
-    this.leaderId = leaderId;
     this.moveTarget = null;
     // Following is the ship's job: it ends a travel and a hunt (RTS squads).
     this.travel = TRAVEL_NONE;
     this.hunting = false;
-    if (this._flockLeaderPrev !== leaderId) this._flockGap2 = Infinity;
-    this._flockLeaderPrev = leaderId;
+    this._flock.follow(leaderId, memberIds);
     this._flockLeaderCruise = false;
-    this._flockMemberIds.length = 0;
-    for (let i = 0; i < memberIds.length; i++) this._flockMemberIds.push(memberIds[i]!);
   }
 
   /** Fly to (tx, ty) and stop there: face the slot and ask the pilot for a
@@ -2309,64 +2286,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this._aimY = tr.aimY;
     }
     return intent;
-  }
-
-  /**
-   * Leader-led flocking (non-combat herding) — the FOLLOWER path. Continuously
-   * steer toward a standard boids blend resolved against LIVE poses every tick:
-   * COHESION toward the leader with an ARRIVAL ramp (slows as it nears the
-   * follow-distance — "slow down once close"), ALIGNMENT with the leader's
-   * heading (the herd flies as one along the leader's course), and SEPARATION
-   * from squad neighbours (holds spacing, spreads the blob into a herd). The
-   * wanted velocity is the calm cruise scaled by the boids magnitude — NO
-   * boost: the arrival ramp + the pilot's braking settle the follower into the
-   * cluster with no overshoot/fling, and the LEADER is throttled / waits (see
-   * `LEADER_CRUISE_THROTTLE` + the director) so a full-cruise follower can catch
-   * it. Falls back to orbit when the leader / resolver is gone.
-   */
-  private tickFlock(self: AiEntity, view: AiWorldView): AiIntent {
-    const resolve = view.resolveEntityInto;
-    // Need the leader's live pose; without it (gone / no resolver) → orbit.
-    if (!resolve || this.leaderId === null || !resolve(this.leaderId, this._leaderScratch)) {
-      return this.tickJob(self, view, JOB_ORDER_NO_FLOCK);
-    }
-    const leaderX = this._leaderScratch.x;
-    const leaderY = this._leaderScratch.y;
-    const acc = this._flockAcc;
-    resetFlock(acc);
-    // COHESION toward the leader (its position is the herd's anchor — followers
-    // bunch AROUND it) with the arrival ramp baked into addCohesion. SEPARATION
-    // from every squad neighbour (incl. the leader) so they cluster around it at
-    // a spacing rather than piling on. ALIGNMENT with the leader's heading so the
-    // herd flies the course as one + keeps pace.
-    const tuning = shipTuning(this.kind);
-    addCohesion(acc, self.x, self.y, leaderX, leaderY, FLOCK_COHESION_GAIN, tuning.flockFollow);
-    const gx = leaderX - self.x;
-    const gy = leaderY - self.y;
-    this._flockGap2 = gx * gx + gy * gy;
-    for (let i = 0; i < this._flockMemberIds.length; i++) {
-      const mid = this._flockMemberIds[i]!;
-      if (mid === self.id) continue;
-      const mx = mid === this.leaderId ? leaderX : (resolve(mid, this._neighborScratch) ? this._neighborScratch.x : NaN);
-      if (Number.isNaN(mx)) continue;
-      const my = mid === this.leaderId ? leaderY : this._neighborScratch.y;
-      addSeparation(acc, self.x, self.y, mx, my, tuning.flockSeparation);
-    }
-    addAlignment(acc, this._leaderScratch.angle);
-    const flock = resolveFlock(acc, this._flockOut);
-    if (flock.thrustScale <= 1e-4) return this.fly(self, self.angle, 0, 0, false);
-    // Calm cruise scaled by the boids desired-velocity magnitude. As the follower
-    // settles at the follow-radius, cohesion ramps to ~0 and separation cancels
-    // it, so the magnitude shrinks toward the alignment term alone → the pilot
-    // eases off (and brakes the residual). A leader faster than that (a pilot
-    // flying the squad's lead ship, RTS Part B slice 10; it cannot be made to
-    // wait) sets the pace: a little over its speed so the pack closes up,
-    // never over this ship's top speed and never boosting. An AI pilots' pack
-    // leader is throttled below the calm cruise, so its pack is unchanged.
-    const lv = Math.hypot(this._leaderScratch.vx, this._leaderScratch.vy);
-    const pace = Math.min(this.handling.maxSpeed, Math.max(this.handling.cruiseSpeed * CALM_CRUISE_FRAC, lv * FLOCK_CATCH_UP));
-    const speed = pace * flock.thrustScale;
-    return this.fly(self, facingOf(flock.dirX, flock.dirY), flock.dirX * speed, flock.dirY * speed, false);
   }
 
   /**

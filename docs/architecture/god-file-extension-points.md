@@ -46,7 +46,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | To add | Do this | Status |
 |---|---|---|
 | A combat move | An `IManoeuvre` in `src/core/ai/tactics/` (`manoeuvre.ts`). | live |
-| An order / stance / non-combat mode | An `IPilotMode` file in `src/core/ai/modes/` (lifecycle next to `IManoeuvre` in `tactics/manoeuvre.ts`) plus a case in `pilotJob()`. Live: leaving, patrol (course + orbit); travel / patrol leg, search, flock and guard return still fly in the brain. | live |
+| An order / stance / non-combat mode | An `IPilotMode` file in `src/core/ai/modes/` (lifecycle next to `IManoeuvre` in `tactics/manoeuvre.ts`) plus a case in `pilotJob()`. Live: leaving, patrol (course + orbit), travel / patrol leg, search, flock follow, guard return. | live |
 | A tuning number | `hostileDroneTuning.ts`. | live |
 
 ## Shared data: `structureKinds.ts` (`src/shared-types/CLAUDE.md`)
