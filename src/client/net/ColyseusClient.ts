@@ -16,12 +16,11 @@ import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { GameClock } from '@core/clock/GameClock';
 import { glideToward } from '@shared-types/timeScale';
-import type { SnapshotMessage, DamageEvent, DestroyEvent, RespawnAckMessage, ShieldEventMessage, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
+import type { SnapshotMessage, DamageEvent, DestroyEvent, RespawnAckMessage, ShieldEventMessage } from '@shared-types/messages';
 import type { FleetOrderMessage, SetModeMessage, SetStanceMessage, FormSquadMessage, DisbandSquadMessage } from '@shared-types/messages';
 /** RTS slice 6a: the fleet command messages `sendFleetCommand` dispatches. */
 export type FleetCommandMessage = FleetOrderMessage | SetModeMessage | SetStanceMessage | FormSquadMessage | DisbandSquadMessage;
 import { parseWelcome } from './parseWelcome';
-import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
@@ -146,7 +145,7 @@ import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
-import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
+import { startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, beamHalfWidth } from '@core/combat/Weapons';
 import { shipShotMuzzle } from '@core/combat/muzzle';
@@ -171,7 +170,6 @@ import {
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
-import { flowMaterialToCode } from '../render/pixi/connectorVisual';
 import { mountMuzzleRay, type MuzzleRay } from '../render/beamStyles';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
@@ -1437,6 +1435,7 @@ export class ColyseusGameClient {
     handleDestroy: (evt: DestroyEvent): void => this.handleDestroy(evt),
     shooterKindMounts: (shooterId: string): readonly WeaponMount[] | undefined => this.shooterKindMounts(shooterId),
     enterCommandFromServer: (): void => this.enterCommandFromServer(),
+    dataChannelTransport: (): DataChannelTransport | null => this._dataChannelTransport,
   };
   /** The live connection's client + room binder, set once per `connect()`;
    *  the `transit_ready` handoff (handlers/transitHandlers.ts) consumes the
@@ -1834,22 +1833,6 @@ export class ColyseusGameClient {
       });
     }
 
-    // Signaling handlers are registered regardless of opt-in. The server
-    // won't emit these messages to non-opted-in clients (the manager has
-    // no entry for them), so the handlers are no-ops in that case.
-    room.onMessage('webrtc_answer', (msg: { sdp?: string }) => {
-      if (!this._dataChannelTransport || typeof msg?.sdp !== 'string') return;
-      void this._dataChannelTransport.handleAnswer(msg.sdp);
-    });
-    room.onMessage('webrtc_ice', (msg: { candidate?: string; mid?: string }) => {
-      if (!this._dataChannelTransport) return;
-      if (typeof msg?.candidate !== 'string') return;
-      void this._dataChannelTransport.handleIce(msg.candidate, msg.mid ?? '');
-    });
-    room.onMessage('webrtc_fallback_ack', () => {
-      this._dataChannelTransport?.handleFallbackAck();
-    });
-
     room.onMessage('snapshot', (snap: SnapshotMessage) => {
       // Phase 4 swift-otter — transport-tagged recv telemetry.
       // Was inlined here pre-Phase-4; lifted to `logSnapshotRecvTelemetry`
@@ -1930,57 +1913,6 @@ export class ColyseusGameClient {
       this.hudDispatcher.pushSwarmCount(this.mirror.swarm?.size ?? 0);
     });
 
-    // Structures plan, Phase 3 — discrete grid pulse: light the named
-    // connection segments for FLASH_DURATION_MS. Stored on the mirror so the
-    // (worker) renderer reads them; joined to structure positions by entityId.
-    room.onMessage('grid_pulse', (msg: GridPulseEvent) => {
-      if (!msg || !Array.isArray(msg.flashed)) return;
-      let flashes = this.mirror.gridFlashes;
-      if (!flashes) { flashes = new Map(); this.mirror.gridFlashes = flashes; }
-      // R2.2 — recover the flow DIRECTION the sorted key throws away (the comet
-      // travels source→dest). Sibling map keyed identically; value = the source.
-      let flowSrc = this.mirror.gridFlowSrc;
-      if (!flowSrc) { flowSrc = new Map(); this.mirror.gridFlowSrc = flowSrc; }
-      // WS-D (#12) — per-edge flow MATERIAL (numeric code) for the connector
-      // tint. Sibling map keyed identically; value = flowMaterialToCode(material).
-      let flowMat = this.mirror.gridFlowMaterial;
-      if (!flowMat) { flowMat = new Map(); this.mirror.gridFlowMaterial = flowMat; }
-      // R2.2 — keep the edge lit for a FULL pulse period so consecutive 1 Hz
-      // pulses read as continuous flow (not a 300 ms blink + 700 ms gap); it
-      // fades ~1 s after the flow actually stops being re-stamped.
-      const until = this.clock.now() + GRID_PULSE_WINDOW_MS;
-      const defaultMatCode = flowMaterialToCode(msg.material ?? 'minerals');
-      for (const pair of msg.flashed) {
-        const a = pair[0];
-        const b = pair[1];
-        if (typeof a !== 'number' || typeof b !== 'number') continue;
-        const lo = a < b ? a : b;
-        const hi = a < b ? b : a;
-        const key = lo * 65536 + hi;
-        flashes.set(key, until);
-        // `a` is the route SOURCE (StructureGridSubsystem.flashRoute pushes
-        // [route[i], route[i+1]] in source→dest order; SectorRoom preserves it).
-        flowSrc.set(key, a);
-        // Per-edge material (WS-D #12); a legacy 2-tuple falls back to the
-        // pulse-level `material`.
-        const edgeMat = pair[2];
-        flowMat.set(key, edgeMat !== undefined ? flowMaterialToCode(edgeMat) : defaultMatCode);
-      }
-    });
-
-    // Paradigm plan (quirky-rabbit) Phase 6 — server `gc_pause` events
-    // feed the rolling 30 s health stats ring; the publisher pushes
-    // the aggregate to Zustand at 1 Hz for the DevOverlay.
-    //
-    // plan: imperative-taco-r2 — also log to client diag so phone-smoke
-    // captures can correlate server gc_pause events with client
-    // recv_gap_long events. Without this, the phone capture saw 6
-    // recv_gap_long events with ZERO local longtask overlap and we
-    // had no direct evidence of the server-side root cause.
-    room.onMessage('gc_pause', (evt: GcPauseEventMessage) => {
-      recordServerGcPause(evt.durationMs);
-      logEvent('gc_pause', { durationMs: evt.durationMs, kind: evt.kind });
-    });
     room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
       this.handleRespawnAck(msg);
     });
@@ -1988,7 +1920,8 @@ export class ColyseusGameClient {
     // Feature handler files (handlers/index.ts): missiles, impact FX, toasts,
     // wave HUD, structure panels, drawn shells, ship status, cut field,
     // warp / transit handoff, combat (damage / shield / destroy / hit_ack /
-    // laser_fired / control_mode / bot_aggro).
+    // laser_fired / control_mode / bot_aggro), grid pulse, diagnostics
+    // (gc_pause / session_replaced), WebRTC signalling.
     registerClientHandlers(room, this._handlerCtx);
 
     // Stage 2 of the network-feel roadmap — server-broadcast collision
@@ -2032,14 +1965,6 @@ export class ColyseusGameClient {
         this._syncMirrorRanThisRaf = true;
         this.syncMirror(state);
       }
-    });
-
-    // PR 3a — the same account logged in from another device/tab; the server
-    // is about to disconnect this session (it took over the account's
-    // playerId). Logged so a capture explains the disconnect; there is no
-    // auto-reconnect, so this session simply ends.
-    room.onMessage('session_replaced', () => {
-      logEvent('session_replaced', {});
     });
 
     room.onLeave((code) => {

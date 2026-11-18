@@ -25,6 +25,7 @@
  */
 
 import { Packr, Unpackr } from '@colyseus/msgpackr';
+import type { Room } from 'colyseus.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 
 export interface DataChannelSnapshotReceiverOpts {
@@ -465,4 +466,34 @@ export class DataChannelTransport {
       // is still the path of record at this point.
     }
   }
+}
+
+/** What the WebRTC signalling handlers touch on the client. */
+export interface WebrtcSignallingHandlerCtx {
+  /** The room's live DataChannel transport, or null when not opted in. */
+  dataChannelTransport(): DataChannelTransport | null;
+}
+
+/**
+ * Server → client WebRTC signalling (`webrtc_answer`, `webrtc_ice`,
+ * `webrtc_fallback_ack`), registered from `handlers/index.ts`.
+ * Signaling handlers are registered regardless of opt-in. The server
+ * won't emit these messages to non-opted-in clients (the manager has
+ * no entry for them), so the handlers are no-ops in that case.
+ */
+export function registerWebrtcSignallingHandlers(room: Room, ctx: WebrtcSignallingHandlerCtx): void {
+  room.onMessage('webrtc_answer', (msg: { sdp?: string }) => {
+    const transport = ctx.dataChannelTransport();
+    if (!transport || typeof msg?.sdp !== 'string') return;
+    void transport.handleAnswer(msg.sdp);
+  });
+  room.onMessage('webrtc_ice', (msg: { candidate?: string; mid?: string }) => {
+    const transport = ctx.dataChannelTransport();
+    if (!transport) return;
+    if (typeof msg?.candidate !== 'string') return;
+    void transport.handleIce(msg.candidate, msg.mid ?? '');
+  });
+  room.onMessage('webrtc_fallback_ack', () => {
+    ctx.dataChannelTransport()?.handleFallbackAck();
+  });
 }
