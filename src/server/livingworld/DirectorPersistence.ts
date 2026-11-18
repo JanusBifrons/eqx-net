@@ -69,12 +69,19 @@ export interface PersistedSectorControl {
   sectorKey: string;
   holder: string | null;
   shares: Array<[string, number]>;
+  /** Galaxy feed — when the holder last changed (game ms); absent = no flip saved. */
+  flippedAtMs?: number;
+  /** Galaxy feed — the last hour of control as `[atMs, holder, holderShare]`,
+   *  oldest first, so the sector panel's graph survives a restart. */
+  history?: Array<[number, string | null, number]>;
 }
 
 const PersistedSectorControlSchema = z.object({
   sectorKey: z.string().min(1),
   holder: z.string().min(1).nullable(),
   shares: z.array(z.tuple([z.string().min(1), z.number().finite().min(0).max(100)])),
+  flippedAtMs: z.number().finite().optional(),
+  history: z.array(z.tuple([z.number().finite(), z.string().min(1).nullable(), z.number().finite().min(0).max(100)])).max(120).optional(),
 });
 
 /** Parse-and-drop the saved control entries: a missing or non-array field is

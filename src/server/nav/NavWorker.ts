@@ -33,8 +33,9 @@ export interface NavField {
   /** Plans a route from (sx, sy) to (tx, ty) for a hull of clearance
    *  `clearance` (from `shipTuning`). Asynchronous: the ship keeps flying
    *  meanwhile. After detach it answers `none` at once; a worker failure
-   *  rejects every request in flight. */
-  route(sx: number, sy: number, tx: number, ty: number, clearance: number): Promise<NavRouteMsg>;
+   *  rejects every request in flight. `heading`/`turnRadius`: a capital's
+   *  nose and turning radius (no U-turn planned in a lane); omit for others. */
+  route(sx: number, sy: number, tx: number, ty: number, clearance: number, heading?: number, turnRadius?: number): Promise<NavRouteMsg>;
   /** Free it (on room dispose); later calls do nothing. */
   detach(): void;
 }
@@ -74,14 +75,14 @@ export class NavWorker {
       chunk: (cx, cy, loaded) => post({ type: 'CHUNK', worldId, cx, cy, loaded }),
       rockGone: (key) => post({ type: 'ROCK', worldId, key, gone: true }),
       rockMoved: (key, pose) => post({ type: 'ROCK', worldId, key, pose }),
-      route: (sx, sy, tx, ty, clearance) => {
+      route: (sx, sy, tx, ty, clearance, heading = NaN, turnRadius = 0) => {
         if (!attached) {
           return Promise.resolve({ type: 'ROUTE', worldId, reqId: 0, status: 'none', points: new Float64Array(0), expanded: 0, ms: 0 });
         }
         const reqId = this.nextReqId++;
         return new Promise<NavRouteMsg>((resolve, reject) => {
           this.routes.set(reqId, { resolve, reject });
-          started.then((w) => w.postMessage({ type: 'ROUTE', worldId, reqId, sx, sy, tx, ty, clearance } satisfies NavCommand),
+          started.then((w) => w.postMessage({ type: 'ROUTE', worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius } satisfies NavCommand),
             (err: unknown) => { this.routes.delete(reqId); reject(err); });
         });
       },

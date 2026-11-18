@@ -208,7 +208,7 @@ export default [
       // Real-time services: storage, network, accounts, logs, process boot.
       'src/server/db/**', 'src/server/net/**', 'src/server/transport/**',
       'src/server/auth/**', 'src/server/identity/**', 'src/server/push/**',
-      'src/server/routes/**', 'src/server/audit/**', 'src/server/index.ts',
+      'src/server/routes/**', 'src/server/audit/**', 'src/server/index.ts', 'src/server/boot/**',
       'src/server/rooms/SectorPersistence.ts', 'src/server/rooms/RosterPersistence.ts',
       'src/server/playerShips/PlayerShipStore.ts', 'src/server/livingworld/DirectorPersistence.ts',
       // Client prediction's round-trip timing (real network time).
