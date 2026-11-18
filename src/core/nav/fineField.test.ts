@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FineFieldLayer, FINE_NAV_REACH, FINE_NAV_SIDE } from './fineField.js';
+import { FineFieldLayer, FINE_NAV_PAD, FINE_NAV_REACH, FINE_NAV_SIDE } from './fineField.js';
 import { ClearanceGrid } from './clearance.js';
 import { CHUNK_SIZE, rocksInChunk, type ChunkOpts } from '../terrain/fieldLayout.js';
 import { fieldRockBody } from '../terrain/chunkStreamer.js';
@@ -39,7 +39,7 @@ describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
     f.chunkLoaded(cx, cy);
     // Reference: one grid over 3×3 chunks, every rock in them.
     const ref = new ClearanceGrid(), cell = 64;
-    ref.build((cx - 1) * CHUNK_SIZE, (cy - 1) * CHUNK_SIZE, 3 * CHUNK_SIZE / cell, 3 * CHUNK_SIZE / cell, cell, rocksAround(cx - 1, cy - 1, cx + 1, cy + 1));
+    ref.build((cx - 1) * CHUNK_SIZE, (cy - 1) * CHUNK_SIZE, 3 * CHUNK_SIZE / cell, 3 * CHUNK_SIZE / cell, cell, rocksAround(cx - 1, cy - 1, cx + 1, cy + 1), FINE_NAV_PAD);
     let blocked = 0, checked = 0;
     for (let y = 0; y < CHUNK_SIZE; y += cell) for (let x = 0; x < CHUNK_SIZE; x += cell) {
       const wx = cx * CHUNK_SIZE + x + cell / 2, wy = cy * CHUNK_SIZE + y + cell / 2;
@@ -71,7 +71,7 @@ describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
     expect(f.cellsRebuilt - before).toBe(FINE_NAV_SIDE * FINE_NAV_SIDE); // one chunk, not nine
     // Same as a grid built without it.
     const ref = new ClearanceGrid();
-    ref.build((cx - 1) * CHUNK_SIZE, (cy - 1) * CHUNK_SIZE, 192, 192, 64, rocksAround(cx - 1, cy - 1, cx + 1, cy + 1, new Set([inner.key])));
+    ref.build((cx - 1) * CHUNK_SIZE, (cy - 1) * CHUNK_SIZE, 192, 192, 64, rocksAround(cx - 1, cy - 1, cx + 1, cy + 1, new Set([inner.key])), FINE_NAV_PAD);
     expect(f.clearanceAt(inner.x, inner.y)).toBeCloseTo(Math.min(ref.at(inner.x, inner.y), FINE_NAV_REACH), 2);
     f.rockGone(inner.key); // twice: no work
     expect(f.cellsRebuilt - before).toBe(FINE_NAV_SIDE * FINE_NAV_SIDE);
@@ -87,7 +87,9 @@ describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
     expect(f.clearanceAt(to.x, to.y)).toBe(0);
     f.rockMoved(to.key, null); // back home
     expect(f.clearanceAt(rock.x, rock.y)).toBe(0);
-    expect(f.clearanceAt(to.x, to.y)).toBeGreaterThan(0);
+    const fresh = new FineFieldLayer(opts);
+    fresh.chunkLoaded(cx, cy);
+    expect(f.clearanceAt(to.x, to.y)).toBe(fresh.clearanceAt(to.x, to.y)); // the spot it left is as cut
     f.rockMoved(to.key, to);
     // Known before load: starts where it was left.
     const g = new FineFieldLayer(opts, [], [to]);

@@ -51,11 +51,21 @@ export const GATED_SCENARIO_GLOBS = {
     // STRUCTURE_GLOBS
     '^src/server/structures/',
     '^src/core/structures/',
-    '^src/shared-types/structureKinds\\.ts$',
+    '^src/shared-types/structureKinds(\\.ts$|/)', // the catalogue and its per-family files
     // SCRAP_GLOBS
     '^src/server/spawn/ScrapSpawner\\.ts$',
     '^src/core/geometry/scrapCollider\\.ts$',
     '^src/core/swarm/scrapConstants\\.ts$',
+  ],
+  autopilot: [
+    // AUTOPILOT_GLOBS
+    '^src/core/nav/',
+    '^src/server/nav/',
+    '^src/core/helm/',
+    '^src/client/helm/',
+    '^src/shared-types/messages/navMessages\\.ts$',
+    '^tests/netgate/',
+    '^tests/e2e/netcode-health\\.spec\\.ts$',
   ],
 };
 
