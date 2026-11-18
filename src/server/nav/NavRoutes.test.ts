@@ -75,4 +75,83 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     nav.waypoint('b', 0, 0, 5, 5, 30, 50);
     expect(nav.size).toBe(1);
   });
+  it('no way fits (nearest, slice 9): flies to the route end and waits there until the goal changes', async () => {
+    let now = 0;
+    const s = stub(), nav = new NavRoutes(s.request, () => now);
+    nav.waypoint('a', 0, 0, 1000, 0, 30, 50);
+    await s.answer({ status: 'nearest', points: new Float64Array([300, 200, 600, 0]) });
+    expect(nav.short).toBe(1);
+    expect(nav.routed).toBe(0);
+    expect(nav.waypoint('a', 10, 0, 1000, 0, 30, 50)).toBe(true);
+    expect([nav.wpX, nav.wpY]).toEqual([300, 200]);
+    expect(nav.waypoint('a', 290, 190, 1000, 0, 30, 50)).toBe(true);
+    expect([nav.wpX, nav.wpY]).toEqual([600, 0]);
+    // Arrived at the end: it stays the waypoint (wait), never the goal past it.
+    expect(nav.waypoint('a', 600, 0, 1000, 0, 30, 50)).toBe(true);
+    expect([nav.wpX, nav.wpY]).toEqual([600, 0]);
+    expect(nav.ahead).toBeCloseTo(0, 6);
+    now = 5_000;
+    expect(nav.waypoint('a', 605, 3, 1000, 0, 30, 50)).toBe(true);
+    expect(s.asks.length).toBe(1);
+    // A new goal drops the wait.
+    expect(nav.waypoint('a', 600, 0, 0, 3000, 30, 50)).toBe(false);
+    expect(s.asks.length).toBe(2);
+  });
+  it('stuck (slice 9): no progress for 4 s plans again from here, twice; then it waits there and retries every 10 s', async () => {
+    let now = 0;
+    const s = stub(), nav = new NavRoutes(s.request, () => now);
+    nav.waypoint('a', 0, 0, 2000, 0, 30, 50);
+    await s.answer({ status: 'route', points: new Float64Array([1000, 500, 2000, 0]) });
+    // Moving well: no re-plan.
+    now = 4_000; nav.waypoint('a', 400, 200, 2000, 0, 30, 50);
+    expect(s.asks.length).toBe(1);
+    // Pinned near (420, 210) from here on.
+    now = 8_000; nav.waypoint('a', 420, 210, 2000, 0, 30, 50);
+    expect(s.asks.length).toBe(2);
+    expect(s.asks[1]!.slice(0, 2)).toEqual([420, 210]);
+    await s.answer({ status: 'route', points: new Float64Array([1000, 500, 2000, 0]) });
+    now = 12_000; nav.waypoint('a', 425, 205, 2000, 0, 30, 50);
+    expect(s.asks.length).toBe(3);
+    await s.answer({ status: 'route', points: new Float64Array([1000, 500, 2000, 0]) });
+    expect(nav.stuckReplans).toBe(2);
+    expect(nav.waiting('a')).toBe(false);
+    // Third time: wait where it is.
+    now = 16_000;
+    expect(nav.waypoint('a', 422, 208, 2000, 0, 30, 50)).toBe(true);
+    expect([nav.wpX, nav.wpY]).toEqual([422, 208]);
+    expect(nav.waiting('a')).toBe(true);
+    expect(nav.held).toBe(1);
+    expect(s.asks.length).toBe(3);
+    now = 25_000; nav.waypoint('a', 422, 208, 2000, 0, 30, 50);
+    expect(s.asks.length).toBe(3);
+    now = 26_000; nav.waypoint('a', 422, 208, 2000, 0, 30, 50);
+    expect(s.asks.length).toBe(4);
+    // The way has opened: back to flying.
+    await s.answer({ status: 'straight', points: new Float64Array([2000, 0]) });
+    expect(nav.waiting('a')).toBe(false);
+    expect(nav.waypoint('a', 422, 208, 2000, 0, 30, 50)).toBe(false);
+  });
+
+  it('close to the goal is not stuck (the brain is stopping there)', async () => {
+    let now = 0;
+    const s = stub(), nav = new NavRoutes(s.request, () => now);
+    nav.waypoint('a', 0, 0, 2000, 0, 30, 50);
+    await s.answer({ status: 'straight', points: new Float64Array([2000, 0]) });
+    for (now = 4_000; now <= 20_000; now += 4_000) nav.waypoint('a', 1920, 0, 2000, 0, 30, 50);
+    expect(s.asks.length).toBe(1);
+    expect(nav.stuckReplans).toBe(0);
+  });
+  it('keep (a moving goal, slice 10): the old route flies on until the new plan answers', async () => {
+    let now = 0;
+    const s = stub(), nav = new NavRoutes(s.request, () => now);
+    nav.waypoint('a', 0, 0, 1000, 0, 30, 50, true);
+    await s.answer({ points: new Float64Array([500, 400, 1000, 0]) });
+    now = 1_000;
+    expect(nav.waypoint('a', 10, 0, 1100, 0, 30, 50, true)).toBe(true); // goal moved: re-asks, old route kept
+    expect([nav.wpX, nav.wpY]).toEqual([500, 400]);
+    expect(s.asks.length).toBe(2);
+    await s.answer({ points: new Float64Array([600, 300, 1100, 0]) });
+    expect(nav.waypoint('a', 10, 0, 1100, 0, 30, 50, true)).toBe(true);
+    expect([nav.wpX, nav.wpY]).toEqual([600, 300]);
+  });
 });

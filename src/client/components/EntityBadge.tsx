@@ -23,7 +23,8 @@ export function EntityBadge({
   size = 18,
 }: {
   kind: EntityKind;
-  count: number;
+  /** Omitted ⇒ the bare shape (an icon beside a number shown elsewhere). */
+  count?: number;
   size?: number;
 }): JSX.Element {
   const v = ENTITY_VISUALS[kind];
@@ -33,7 +34,7 @@ export function EntityBadge({
   for (let i = 0; i < pts.length; i += 2) points += `${pts[i]},${pts[i + 1]} `;
   // Count label + per-digit font shrink (caps at "99+") from the shared visual
   // language, so this SVG badge and the Pixi map badge read identically.
-  const { label, scale } = entityBadgeCount(count);
+  const { label, scale } = entityBadgeCount(count ?? 0);
   const fontScale = BADGE_NUM_BASE_SCALE * scale * v.numScale;
   return (
     <svg
@@ -44,6 +45,7 @@ export function EntityBadge({
       aria-hidden
     >
       <polygon points={points.trim()} fill={v.cssColor} />
+      {count !== undefined && (
       <text
         x={0}
         y={v.numCenterYFrac * r}
@@ -56,6 +58,7 @@ export function EntityBadge({
       >
         {label}
       </text>
+      )}
     </svg>
   );
 }
