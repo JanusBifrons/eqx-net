@@ -353,6 +353,7 @@ export class ConvoyDirector {
         pose: pose ? { x: Math.round(pose.x), y: Math.round(pose.y) } : null,
         target: { x: Math.round(c.target.x), y: Math.round(c.target.y) },
         dist: pose ? Math.round(Math.hypot(pose.x - c.target.x, pose.y - c.target.y)) : null,
+        fromBay: c.from.bay ?? null, toBay: c.to.bay ?? null, crane: c.crane?.cargo ?? null,
       };
     });
   }
