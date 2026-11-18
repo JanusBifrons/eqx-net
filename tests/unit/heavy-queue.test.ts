@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 import {
   AGING_MS, ORPHAN_GRACE_MS, adoptOrphan, decide, effectivePriority, formatStatus, holderOverdue,
   orderQueue, readRunning, readTickets, releaseRunning, snapshot, sweepStale, tryClaim, writeTicket,
+  endOverdue, watchdogDecision, watchdogLimitMin, watchdogMessage,
   // @ts-expect-error — plain .mjs, no .d.ts; runtime import is what we test.
 } from '../../scripts/dev/heavy-queue-core.mjs';
 
@@ -20,7 +21,7 @@ const SCRIPT = path.resolve(__dirname, '../../scripts/dev/heavy-queue.mjs');
 const MIN = 60_000;
 const T0 = 1_000_000_000_000;
 
-interface Ticket { id: string; pid: number; priority: number; joinedAtMs: number; estimateMin?: number | null; startedAtMs?: number; who?: string; kind?: string; orphanedAtMs?: number; orphaned?: boolean; expired?: boolean; where?: string }
+interface Ticket { id: string; pid: number; priority: number; joinedAtMs: number; estimateMin?: number | null; startedAtMs?: number; who?: string; kind?: string; orphanedAtMs?: number; childPid?: number; orphaned?: boolean; expired?: boolean; where?: string }
 const tk = (id: string, priority: number, joinedAtMs: number, pid = process.pid): Ticket =>
   ({ id, pid, priority, joinedAtMs, who: id, kind: 'other', estimateMin: null });
 
@@ -88,17 +89,68 @@ describe('running slot', () => {
     const kept = readTickets(dir).sort((a: Ticket, b: Ticket) => a.id.localeCompare(b.id));
     expect(kept.map((t: Ticket) => [t.id, t.orphanedAtMs])).toEqual([['gone', T0], ['live', undefined]]);
 
-    // A live holder far past its estimate stays (overdue is display-only).
+    // sweepStale leaves a live holder alone, even overdue (that is the watchdog's job).
     tryClaim(dir, { ...tk('slow', 3, T0), estimateMin: 1 }, T0);
-    expect(holderOverdue(readRunning(dir), T0 + 10 * MIN)).toBe(true);
-    expect(sweepStale(dir, { now: T0 })).toEqual([]);
+    expect(holderOverdue(readRunning(dir), T0 + 12 * MIN)).toBe(true);
+    expect(sweepStale(dir, { now: T0 + 12 * MIN })).toEqual([]);
     expect(readRunning(dir).id).toBe('slow');
   });
+});
 
-  it('overdue: 3x the estimate, or 90 min with none', () => {
-    expect(holderOverdue({ ...tk('a', 3, T0), estimateMin: 10, startedAtMs: T0 }, T0 + 29 * MIN)).toBe(false);
-    expect(holderOverdue({ ...tk('a', 3, T0), estimateMin: 10, startedAtMs: T0 }, T0 + 31 * MIN)).toBe(true);
-    expect(holderOverdue({ ...tk('a', 3, T0), startedAtMs: T0 }, T0 + 91 * MIN)).toBe(true);
+describe('watchdog (overdue running job is ended)', () => {
+  const run = (estimateMin: number | null) => ({ ...tk('a', 3, T0), estimateMin, startedAtMs: T0 });
+
+  it('limit is max(3x estimate, estimate + 10 min), or 45 min with no estimate', () => {
+    expect(watchdogLimitMin(4)).toBe(14); // the reaped 4-min film: 4 + 10 beats 12
+    expect(watchdogLimitMin(5)).toBe(15); // 3x and +10 meet
+    expect(watchdogLimitMin(20)).toBe(60); // 3x wins
+    expect(watchdogLimitMin(null)).toBe(45);
+    expect(watchdogLimitMin(undefined)).toBe(45);
+    expect(watchdogLimitMin(0)).toBe(45);
+  });
+
+  it('under the limit keeps, over it ends; exactly at the limit still keeps', () => {
+    expect(watchdogDecision(run(4), T0 + 5 * MIN).action).toBe('keep');
+    expect(watchdogDecision(run(4), T0 + 14 * MIN).action).toBe('keep');
+    expect(watchdogDecision(run(4), T0 + 14 * MIN + 1).action).toBe('end');
+    expect(watchdogDecision(run(4), T0 + 44 * MIN).action).toBe('end');
+    expect(watchdogDecision(run(20), T0 + 60 * MIN).action).toBe('keep');
+    expect(watchdogDecision(run(20), T0 + 60 * MIN + 1).action).toBe('end');
+    expect(watchdogDecision(run(null), T0 + 45 * MIN).action).toBe('keep');
+    expect(watchdogDecision(run(null), T0 + 45 * MIN + 1).action).toBe('end');
+    expect(watchdogDecision(run(4), T0)).toMatchObject({ limitMin: 14, endsAtMs: T0 + 14 * MIN, runMs: 0 });
+  });
+
+  it('endOverdue kills the tree and frees the slot only when over the limit', () => {
+    const killed: Array<[number, number | undefined]> = [];
+    const kill = (pid: number, childPid?: number) => { killed.push([pid, childPid]); };
+    tryClaim(dir, { ...tk('film', 3, T0, 4242), kind: 'film', estimateMin: 4, childPid: 4343 } as Ticket, T0);
+    const opts = { isAlive: () => true, kill };
+    expect(endOverdue(dir, { ...opts, now: T0 + 14 * MIN })).toBeNull();
+    expect(killed).toEqual([]);
+    expect(readRunning(dir).id).toBe('film');
+    const ended = endOverdue(dir, { ...opts, now: T0 + 44 * MIN });
+    expect(killed).toEqual([[4242, 4343]]);
+    expect(readRunning(dir)).toBeNull();
+    const msg = watchdogMessage(ended.holder, ended.decision);
+    expect(msg).toContain('film [film] pid 4242');
+    expect(msg).toContain('ran 44m00s vs est 4m (limit 14m)');
+    expect(msg).toContain('re-queue with a realistic --minutes if it really needs longer');
+  });
+
+  it('endOverdue really kills a live dummy process tree', async () => {
+    const dummy = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+    await new Promise((r) => dummy.once('spawn', r));
+    const exited = new Promise((r) => dummy.once('exit', r));
+    tryClaim(dir, { ...tk('hung', 3, T0, dummy.pid as number), estimateMin: 1 }, T0);
+    expect(endOverdue(dir, { now: T0 + 12 * MIN })).not.toBeNull();
+    await exited;
+    expect(readRunning(dir)).toBeNull();
+  }, 15_000);
+
+  it('status shows when the running job will be ended', () => {
+    tryClaim(dir, { ...tk('film', 3, T0), kind: 'film', estimateMin: 4 }, T0);
+    expect(formatStatus(snapshot(dir, T0 + 5 * MIN))).toContain('ends at 14m if still running');
   });
 });
 
