@@ -26,6 +26,9 @@ import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSprit
 import { createBeamCtx, updateBeams, type BeamCtx } from './pixi/beamUpdater.js';
 import { createWarpFxCtx, updateWarpFx, type WarpFxCtx } from './pixi/warpFxUpdater.js';
 import { createEngineShieldFxCtx, updateEngineShieldFx, clearEngineShieldFxIds, type EngineShieldFxCtx } from './pixi/engineShieldFxUpdater.js';
+import { beginShieldFrame, createHitEventCtx, updateHitEvents, type HitEventCtx } from './pixi/hitEventUpdater.js';
+import { createLitSceneCtx, feedLitScene, noteBlastLight, type LitSceneCtx } from './pixi/litSceneUpdater.js';
+import { createTurretShotCtx, noteTurretShots, type TurretShotCtx } from './pixi/turretShotUpdater.js';
 import { RendererInputController, type ForwardedPointerEvent, type RendererInputDeps } from './pixi/rendererInputController.js';
 import { RendererCameraDirector, DEFAULT_GAMEPLAY_ZOOM, type RendererCameraDeps } from './pixi/cameraDirector.js';
 import { artStats, backdropStats, shipVisualProbe, type ArtStats, type BackdropStats, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
@@ -49,14 +52,12 @@ import { readFxKillSwitches, type FxKillSwitches } from './fxKillSwitches';
 import { createArtService, type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import { litPass } from './art/litPass.js';
-import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
 import { speedFxFullSpeed } from './art/fx/depth.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
-import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
 import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, startZoomForScale } from '@shared-types/shipScale/tuning';
@@ -67,7 +68,7 @@ import { BeamSpritePool, type BeamView } from './BeamSpritePool';
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import { fillTractorBeams } from './tractorBeams';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, MINING_BEAM_STYLE, addBeamLights, beamLightBudget } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { CutFieldLayer } from './field/CutFieldLayer';
@@ -274,7 +275,7 @@ export class PixiRenderer implements IRenderer {
       get farIcons() { return r._farIcons; }, get warpFx() { return r._warpFxCtx.warpFx; }, get spoolFx() { return r._warpFxCtx.spoolFx; },
       get helmMarker() { return r.helmMarker; }, get lastMirror() { return r._lastMirror; }, get fxEngines() { return r._fxEngines; },
       get fxExplosions() { return r._fxExplosions; }, get fxProjectiles() { return r._fxProjectiles; }, get fxLiveBeams() { return r._fxLiveBeams; },
-      get fxShields() { return r._fxShields; }, get fxShieldsOn() { return r._fxShieldsOn; }, get fxFences() { return r._fxFences; },
+      get fxShields() { return r._fxShields; }, get fxShieldsOn() { return r._hitEventCtx.fxShieldsOn; }, get fxFences() { return r._fxFences; },
       get wreckBreaks() { return r._wreckBreaks; }, get wreckBlastsSpawned() { return r._wreckBlastsSpawned; },
       get wreckRipplesSpawned() { return r._wreckRipplesSpawned; }, get hullBlastsReplaced() { return r._hullBlastsReplaced; },
       get shipRekeysApplied() { return r._shipRekeysApplied; },
@@ -964,7 +965,7 @@ export class PixiRenderer implements IRenderer {
       // B4: explosions (ship / drone / structure deaths, missile detonations)
       // and missile smoke trails.
       this._fxExplosions = new FxExplosions(art, () => this.effects?.getQuality() ?? 'medium');
-      this._fxExplosions.onSpawn = (x, y, r): void => this.noteBlastLight(x, y, r);
+      this._fxExplosions.onSpawn = (x, y, r): void => noteBlastLight(this._litSceneCtx, x, y, r);
       this._fxMissileTrails = new FxMissileTrails(art);
       this.shipContainer.addChild(this._fxMissileTrails.smokeLayer, this._fxExplosions.smokeLayer, this._fxMissileTrails.glowLayer, this._fxExplosions.fireLayer);
       this._missileUpdaterCtx.fxTrails = this._fxMissileTrails;
@@ -973,16 +974,16 @@ export class PixiRenderer implements IRenderer {
       this._fxEngines = new FxEngines(art, () => this.effects?.getQuality() ?? 'medium');
       this.shipContainer.addChild(this._fxEngines.trailLayer, this._fxEngines.flameLayer, this._fxEngines.glowLayer);
       this._engineShieldFxCtx.fxEngines = this._fxEngines;
-      this._missileUpdaterCtx.fxExplosions = this._fxExplosions;
+      this._missileUpdaterCtx.fxExplosions = this._turretShotCtx.fxExplosions = this._fxExplosions;
       // B5: shields (invisible at rest; hit ripples, held laser contacts,
       // break) and fences (energy line, raise / power-loss / gate).
       this._fxShields = new FxShields(art);
-      this._engineShieldFxCtx.fxShields = this._fxShields;
+      this._engineShieldFxCtx.fxShields = this._hitEventCtx.fxShields = this._fxShields;
       this._fxFences = new FxFences(art);
       this.shipContainer.addChild(this._fxShields.container);
       // Fences sit just above the connector web, below the sprites.
       this.shipContainer.addChildAt(this._fxFences.container, this.shipContainer.getChildIndex(this.connectorRenderer.gfx) + 1);
-      this.connectorRenderer.fxFences = this._fxFences;
+      this.connectorRenderer.fxFences = this._hitEventCtx.fxFences = this._fxFences;
     }
 
     // Effects subsystem (plan `wiggly-puppy` M3+). Constructed inside
@@ -1062,6 +1063,7 @@ export class PixiRenderer implements IRenderer {
       fxShields: this._fxShields, fxFences: this._fxFences, fxShieldPose: this._fxShieldPose,
       swarmPoseScratch: this.swarmPoseScratch, feedback: this.feedback,
     });
+    this._litSceneCtx.beamCtx = this._beamCtx; // GPU-lit beam lights (pixi/litSceneUpdater.ts)
     stackVaporiseOverBeams(this.shipContainer, this._fxExplosions); // the vaporise flash reads over the beams
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
@@ -1363,8 +1365,9 @@ export class PixiRenderer implements IRenderer {
     this._swarmUpdaterCtx.wreckFarLayer = this._wreckFarLayer;
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
     this._farIcons.update(mirror, this.sprites, this.world.scale.x);
-    this.noteTurretShots(mirror);
-    this.feedLitScene(mirror);
+    noteTurretShots(mirror, this._turretShotCtx); // pixi/turretShotUpdater.ts
+    this._litSceneCtx.tractorViewCount = this._tractorViewCount;
+    feedLitScene(mirror, this._litSceneCtx); // pixi/litSceneUpdater.ts
 
     // Sprites whose entity left the mirror this frame. Boost flame and
     // mount-visual cluster are children — destroy({ children: true }) frees
@@ -1401,15 +1404,14 @@ export class PixiRenderer implements IRenderer {
     }
 
     // New shields (B5): open the frame here; beams and hits feed it below,
-    // the shield sync closes it.
-    this._fxShieldsOn = this._fxShields !== null && this._fxShields.ready();
-    if (this._fxShieldsOn) this._fxShields!.begin();
+    // the shield sync closes it (pixi/hitEventUpdater.ts).
+    beginShieldFrame(this._hitEventCtx);
     this._tractorViewCount = this._beamsDisabled || !this._tractorBeamPool ? 0 : fillTractorBeams(mirror, this.fxNow(), this.world.scale.x, this._tractorViews);
     this._tractorBeamPool?.setBeams(this._tractorViews, this._tractorViewCount, this.world.scale.x);
     // Remote, mining + live beams: see pixi/beamUpdater.ts. Ctx pooled to
     // `this._beamCtx` (built once in init); camera scale + shield gate per frame.
     this._beamCtx.cameraScale = this.world.scale.x;
-    this._beamCtx.fxShieldsOn = this._fxShieldsOn;
+    this._beamCtx.fxShieldsOn = this._hitEventCtx.fxShieldsOn;
     updateBeams(mirror, this._beamCtx);
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
@@ -1553,42 +1555,9 @@ export class PixiRenderer implements IRenderer {
       // Drain even when disabled — don't let the queue grow unbounded.
       mirror.pendingDamageNumbers.length = 0;
     }
-    // Effects subsystem (M7 — plan wiggly-puppy): drain the effect-
-    // trigger queue and dispatch to spawnBurst / triggerOneShotFilter.
-    // The queue's length-reset is owned by `perFrameTriggers.consumeOne-
-    // FrameTriggers` on render frames only (worker every-other-RAF
-    // skip-frames must NOT silently drain — same discipline as
-    // explodingShips). DO NOT add `.length = 0` here.
-    if (this.effects && mirror.pendingEffectTriggers) {
-      for (const ev of mirror.pendingEffectTriggers) {
-        if (ev.kind === 'wall-hit') {
-          // A fence stopped a shot: a ripple on the wall (new look), else
-          // shield-tinted sparks (today's look).
-          if (!this._fxFences?.hitAt(ev.worldX, ev.worldY, this.fxNow())) {
-            this.effects.spawnBurst('impact', ev.worldX, ev.worldY, { tint: 0x88ddff });
-          }
-        } else if (ev.kind === 'shield-contact') {
-          // A collision touched a shield: the same flash as a shot's hit,
-          // facing the other body (drawn only if the shield is up).
-          if (ev.entityId) {
-            this.effects.pulseShield(ev.entityId);
-            if (this._fxShieldsOn) this._fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, this.fxNow(), this._fxShieldPose);
-          }
-        } else if (ev.kind === 'destruction-shock' || ev.kind === 'shield-flash') {
-          this.effects.triggerOneShotFilter(ev.kind, ev.worldX, ev.worldY);
-        } else {
-          this.effects.spawnBurst(ev.kind, ev.worldX, ev.worldY, {
-            ...(ev.intensity !== undefined ? { intensity: ev.intensity } : {}),
-            ...(ev.tint !== undefined ? { tint: ev.tint } : {}),
-          });
-          // Shield-hit impacts also pulse the target's shield ring.
-          if (ev.kind === 'impact' && ev.tint === 0x88ddff && ev.entityId) {
-            this.effects.pulseShield(ev.entityId);
-            if (this._fxShieldsOn) this._fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, this.fxNow(), this._fxShieldPose);
-          }
-        }
-      }
-    }
+    // Hit events (impacts, wall hits, shield contacts): see pixi/hitEventUpdater.ts.
+    this._hitEventCtx.effects = this.effects;
+    updateHitEvents(mirror, this._hitEventCtx);
     // weapon-hit-prediction Phase 2 — hard-cancel mispredicted / TTL-expired
     // predicted numbers by tag. Drained AFTER the spawn pass (a predict +
     // rollback in the same frame nets to nothing) and BEFORE update() (a
@@ -1769,7 +1738,7 @@ export class PixiRenderer implements IRenderer {
       // → setContinuous on transitions only (no-op on identical state).
       // See pixi/engineShieldFxUpdater.ts; the shield gate is shared with beams + hit FX.
       this._engineShieldFxCtx.effects = this.effects;
-      this._engineShieldFxCtx.fxShieldsOn = this._fxShieldsOn;
+      this._engineShieldFxCtx.fxShieldsOn = this._hitEventCtx.fxShieldsOn;
       updateEngineShieldFx(mirror, this._engineShieldFxCtx);
 
       const nowMs = this.fxNow();
@@ -1789,112 +1758,6 @@ export class PixiRenderer implements IRenderer {
     // eslint-disable-next-line no-restricted-properties -- real time: cost measurement
     this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
     this._perfRing?.push(this.frameMarkers.rendererUpdateMs);
-  }
-
-  /** The sprite key a shooter id draws under (players and drones as-is,
-   *  structures as `swarm-<id>`), or null when it has no sprite. */
-  private shooterSpriteKey(id: string): string | null {
-    if (this.sprites.has(id)) return id;
-    let k = this._ownerSpriteKey.get(id);
-    if (k === undefined) {
-      if (this._ownerSpriteKey.size > 1024) this._ownerSpriteKey.clear();
-      k = `swarm-${id}`;
-      this._ownerSpriteKey.set(id, k);
-    }
-    return this.sprites.has(k) ? k : null;
-  }
-
-  // ---- GPU-lit art: lights from the frame's weapons fire and explosions.
-  private readonly _blastLights: Array<{ x: number; y: number; r: number; t0: number }> = [];
-  private _blastLightNext = 0;
-
-  /** An explosion lights the hulls around it for ~0.9 s (sprite space). */
-  private noteBlastLight(x: number, y: number, r: number): void {
-    if (!litPass.settings || litPass.settings.pointLights <= 0) return;
-    const L = this._blastLights;
-    if (L.length < 24) { L.push({ x, y, r, t0: this.fxNow() }); return; }
-    const b = L[this._blastLightNext]!;
-    this._blastLightNext = (this._blastLightNext + 1) % L.length;
-    b.x = x; b.y = y; b.r = r; b.t0 = this.fxNow();
-  }
-
-  /**
-   * GPU-lit art: add this frame's lights to the lighting pass (sprite space):
-   * explosions (fading), projectiles in flight (naval shells by calibre),
-   * missiles and beams. Muzzle flashes are lit by the guns themselves
-   * (MountVisualManager, pinned to the flash sprite). Alloc-free.
-   */
-  private feedLitScene(mirror: RenderMirror): void {
-    const ls = litPass.settings;
-    if (!ls || ls.pointLights <= 0) return;
-    const sc = litPass.scene, now = this.fxNow();
-    for (const b of this._blastLights) {
-      const age = (now - b.t0) / 900;
-      if (age < 0 || age >= 1) continue;
-      const k = (1 - age) * (1 - age);
-      sc.addLight(b.x, b.y, 25, 0xff8a30, 3 * k, b.r * 3 + 90);
-    }
-    if (mirror.projectiles) for (const p of mirror.projectiles.values()) {
-      if (p.beam) continue;
-      const w = p.weaponId ?? '';
-      const K = w === 'naval_siege' ? 10 : w === 'naval_xxl' ? 7 : w === 'naval_xl' || w === 'railgun' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
-      // The railgun slug burns white-blue; powder shells and autocannon amber.
-      const color = w === 'railgun' ? 0xcfe8ff : NAVAL_SHELL_WEAPON_IDS.has(w) || w === 'autocannon' ? 0xffc070 : 0x9fd8ff;
-      const x = p.x, y = -p.y;
-      sc.addLight(x, y, 5 * K, color, K > 1 ? 0.36 * K : 0.9, 55 * K);
-    }
-    if (mirror.missiles) for (const m of mirror.missiles.values()) sc.addLight(m.x, -m.y, 8, 0xffa060, 1.2, 70);
-    for (let i = 0; i < this._beamCtx.liveBeamCacheCount; i++) this.beamLights(this._beamCtx.liveBeamCache[i]!);
-    for (let i = 0; i < this._beamCtx.remoteBeamCacheCount; i++) this.beamLights(this._beamCtx.remoteBeamCache[i]!);
-    for (let i = 0; i < this._tractorViewCount; i++) this.beamLights(this._tractorViews[i]!); // tractors glow blue where they hold
-  }
-
-  /** A beam lights where it hits and along its length. */
-  private beamLights(b: BeamView): void {
-    // Game space in, Pixi space to the lit scene (beamStyles `addBeamLights`).
-    addBeamLights(litPass.scene, b, beamLightBudget(litPass.settings?.pointLights ?? 0));
-  }
-
-  /** Firing reactions for Machined guns (turrets T2): held beams by mount
-   *  id, and each bolt / missile the frame it first appears, matched to its
-   *  owner's nearest gun tip. Render-only; no wire change. */
-  private noteTurretShots(mirror: RenderMirror): void {
-    const mv = this.mountVisuals;
-    if (mv.machinedGunCount() <= 0) return;
-    const gen = ++this._turretShotGen;
-    const localId = mirror.localPlayerId;
-    if (localId && mirror.liveBeams) for (const mountId of mirror.liveBeams.keys()) mv.noteBeam(localId, mountId);
-    if (mirror.remoteLasers) {
-      for (const [shooterId, perShooter] of mirror.remoteLasers) {
-        const key = this.shooterSpriteKey(shooterId);
-        if (key) for (const mountId of perShooter.keys()) mv.noteBeam(key, mountId);
-      }
-    }
-    const now = this.fxNow();
-    if (mirror.projectiles) for (const [id, p] of mirror.projectiles) {
-      if (p.beam) continue; // instant beam lines: handled as beams
-      if (!this._turretShotSeen.has(id)) {
-        const key = this.shooterSpriteKey(p.ownerId);
-        if (key) mv.noteShotNear(key, p.x, -p.y, p.weaponId, p.vx, -p.vy);
-      }
-      this._turretShotSeen.set(id, gen);
-    }
-    for (const [id, g] of this._turretShotSeen) if (g !== gen) this._turretShotSeen.delete(id);
-    // Naval shells: burst only where a shell_end says a shell hit (slice 4;
-    // a miss or a shell leaving view never bursts). Game space in, game
-    // space to FxExplosions (review 2026-11-10: a Pixi-space -y here put
-    // the burst at the Y mirror).
-    this._navalShellBursts.frame(this._fxExplosions, now, mirror.pendingShellEnds);
-    if (mirror.missiles) {
-      for (const [id, m] of mirror.missiles) {
-        if (!this._turretMissileSeen.has(id)) {
-          const key = this.shooterSpriteKey(m.ownerId);
-          if (key) mv.noteShotNear(key, m.x, -m.y);
-        }
-        this._turretMissileSeen.set(id, gen);
-      }
-      for (const [id, g] of this._turretMissileSeen) if (g !== gen) this._turretMissileSeen.delete(id);
-    }
   }
 
   /** Wall-clock of the last `effects.tick` call. Used to derive dt for the
@@ -1993,7 +1856,6 @@ export class PixiRenderer implements IRenderer {
   /** New shields + fences (`?fx=new`, B5). */
   private _fxShields: FxShields | null = null;
   private _fxFences: FxFences | null = null;
-  private _fxShieldsOn = false;
   /** Pixi-space pose of an entity's sprite, for the new shields. */
   private readonly _fxShieldPose = (id: string, out: { x: number; y: number }): boolean => {
     const sp = this.sprites.get(id);
@@ -2006,15 +1868,11 @@ export class PixiRenderer implements IRenderer {
   private _fxExplosions: FxExplosions | null = null;
   private _fxMissileTrails: FxMissileTrails | null = null;
   private _fxEngines: FxEngines | null = null;
-  /** Firing reactions (turrets T2): projectile / missile ids seen, stamped
-   *  with the frame's generation so a new one is noticed once, and a cache of
-   *  owner id → sprite key (structures fire as their bare entity id). */
-  private readonly _turretShotSeen = new Map<string, number>();
-  /** Naval shells in flight, for their impact bursts (game space). */
-  private readonly _navalShellBursts = new NavalShellBursts();
-  private readonly _turretMissileSeen = new Map<number, number>();
-  private _turretShotGen = 0;
-  private readonly _ownerSpriteKey = new Map<string, string>();
+  /** Pooled hit-event / shield-gate, GPU-lit and turret-shot ctxs (pixi/hitEventUpdater.ts,
+   *  litSceneUpdater.ts, turretShotUpdater.ts), built once here (the explosions' light hook binds before `init`). */
+  private readonly _hitEventCtx: HitEventCtx = createHitEventCtx({ fxShieldPose: this._fxShieldPose, fxNow: () => this.fxNow() });
+  private readonly _litSceneCtx: LitSceneCtx = createLitSceneCtx({ fxNow: () => this.fxNow(), tractorViews: this._tractorViews });
+  private readonly _turretShotCtx: TurretShotCtx = createTurretShotCtx({ mountVisuals: this.mountVisuals, sprites: this.sprites, fxNow: () => this.fxNow() });
   /** Pooled warp / spool ctx (pixi/warpFxUpdater.ts), built once here (probes read its effects before `init`). */
   private readonly _warpFxCtx: WarpFxCtx = createWarpFxCtx({ fxNow: () => this.fxNow(), sprites: this.sprites, artHandles: this._artCtx.handles });
   /** Pooled engine exhaust + shield aura ctx (pixi/engineShieldFxUpdater.ts); built once here (the handoff reset may run before `init`). */
