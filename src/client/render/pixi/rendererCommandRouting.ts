@@ -288,9 +288,10 @@ export abstract class RendererCommandRouting {
     }
   }
 
-  /** Not own, not an asteroid: something the fleet can be told to attack. */
+  /** Not own, not an asteroid or a cargo pod (shots pass pods): something the
+   *  fleet can be told to attack. */
   private isAttackable(id: string, kind: string, m: RenderMirror): boolean {
-    return kind !== 'asteroid' && !this._selShips.has(id) && !isOwnShipPresent(id, m);
+    return kind !== 'asteroid' && kind !== 'pod' && !this._selShips.has(id) && !isOwnShipPresent(id, m);
   }
 
   /** Command-view right-click: attack a non-own entity under the cursor, else
