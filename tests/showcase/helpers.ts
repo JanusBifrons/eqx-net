@@ -87,3 +87,32 @@ export async function flyTo(page: Page, tx: number, ty: number, arrive: number, 
   for (const k of [...held]) await set(k, false);
   return arrived;
 }
+
+/** Loot the nearest pods the way a player does: fly alongside, tap the pod,
+ *  press Open, wait out the search, Take all found, Close. Pods are never
+ *  picked up by flying over them. Returns how many pods were opened. */
+export async function lootNearestPods(page: Page, maxPods: number, flyMs: number): Promise<number> {
+  let opened = 0;
+  for (let i = 0; i < maxPods; i++) {
+    const pods = await podPositions(page);
+    const me = await localPose(page);
+    if (pods.length === 0 || me === null) break;
+    pods.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+    const pod = pods[0]!;
+    if (!(await flyTo(page, pod.x, pod.y, 60, flyMs))) continue;
+    await page.evaluate(([x, y]) => {
+      (window as unknown as { __eqxSelectAtWorld?: (x: number, y: number) => string | null }).__eqxSelectAtWorld?.(x!, y!);
+    }, [pod.x, pod.y]);
+    const open = page.getByTestId('pod-open');
+    if (!(await open.waitFor({ timeout: 3_000 }).then(() => true, () => false))) continue;
+    await open.click();
+    await page.getByTestId('cargo-panel').waitFor({ timeout: 5_000 });
+    await page.getByTestId('cargo-unknown-tile').first().waitFor({ state: 'detached', timeout: 15_000 }).catch(() => undefined);
+    const take = page.getByTestId('cargo-take-found');
+    if (await take.isEnabled()) await take.click();
+    await page.waitForTimeout(600);
+    await page.getByTestId('loot-window-close').click();
+    opened++;
+  }
+  return opened;
+}

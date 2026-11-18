@@ -3,95 +3,21 @@
  * a scripted run of the real game that RECORDS a video of the new loop:
  *
  *   robots vs drones fight on sight (P0) → kills drop glowing loot pods (P1a-1)
- *   → the pilot flies over them (cargo chip fills) → flies home to their
+ *   → the pilot opens them and takes all found (cargo chip fills) → flies home to their
  *   Capital → holds position → "Banked …" (P1a-2).
  *
  * Run: pnpm exec playwright test --config playwright.showcase.config.ts
  * Output: diag/showcase/p1a/living-world-p1.webm (+ a few key-frame PNGs).
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { type ClientShape, flyTo, lootNearestPods } from './helpers';
 
 const BASE_URL = process.env['BASE_URL'] ?? 'http://localhost:5173/';
 const OUT_DIR = join('diag', 'showcase', 'p1a');
 const CAPITAL = { x: 0, y: -420 }; // re-picked per run (see the placement loop)
-
-interface Pose { x: number; y: number; angle: number }
-
-type ClientShape = {
-  mirror?: {
-    localPlayerId?: string | null;
-    ships?: Map<string, Pose>;
-    swarm?: Map<number, { kind: number; shipKind?: string; x: number; y: number }>;
-  };
-  getRoom?: () => { send: (type: string, msg: unknown) => void } | null;
-};
-
-async function localPose(page: Page): Promise<Pose | null> {
-  return page.evaluate(() => {
-    const c = (window as unknown as { __eqxClient?: ClientShape }).__eqxClient;
-    const id = c?.mirror?.localPlayerId;
-    const s = id ? c?.mirror?.ships?.get(id) : undefined;
-    return s ? { x: s.x, y: s.y, angle: s.angle } : null;
-  });
-}
-
-async function podPositions(page: Page): Promise<Array<{ x: number; y: number }>> {
-  return page.evaluate(() => {
-    const c = (window as unknown as { __eqxClient?: ClientShape }).__eqxClient;
-    const out: Array<{ x: number; y: number }> = [];
-    for (const e of c?.mirror?.swarm?.values() ?? []) {
-      if (e.kind === 3 && e.shipKind === 'cargo-pod') out.push({ x: e.x, y: e.y });
-    }
-    return out;
-  });
-}
-
-function wrapPi(a: number): number {
-  while (a > Math.PI) a -= 2 * Math.PI;
-  while (a < -Math.PI) a += 2 * Math.PI;
-  return a;
-}
-
-/** Steer the local ship to (tx, ty) with the real keyboard (nose = (-sin a, cos a);
- *  turnLeft increases the angle). Returns true when within `arrive` units. */
-async function flyTo(page: Page, tx: number, ty: number, arrive: number, maxMs: number): Promise<boolean> {
-  const held = new Set<string>();
-  const set = async (key: string, on: boolean): Promise<void> => {
-    if (on && !held.has(key)) { await page.keyboard.down(key); held.add(key); }
-    if (!on && held.has(key)) { await page.keyboard.up(key); held.delete(key); }
-  };
-  const end = Date.now() + maxMs;
-  let arrived = false;
-  let prev: { x: number; y: number; t: number } | null = null;
-  while (Date.now() < end) {
-    const p = await localPose(page);
-    if (p) {
-      const now = Date.now();
-      const speed = prev ? Math.hypot(p.x - prev.x, p.y - prev.y) / Math.max(0.001, (now - prev.t) / 1000) : 0;
-      prev = { x: p.x, y: p.y, t: now };
-      const dx = tx - p.x;
-      const dy = ty - p.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < arrive && speed < 150) { arrived = true; break; }
-      const want = Math.atan2(-dx, dy);
-      const diff = wrapPi(want - p.angle);
-      await set('ArrowLeft', diff > 0.08);
-      await set('ArrowRight', diff < -0.08);
-      // Approach speed scales with distance so the ship doesn't overshoot;
-      // brake (reverse thrust) when close and still fast.
-      const cruise = Math.max(120, dist * 0.8);
-      const facing = Math.abs(diff) < 0.6;
-      await set('ArrowUp', facing && speed < cruise);
-      await set('ArrowDown', facing && speed > cruise * 1.3 && dist < 600);
-    }
-    await page.waitForTimeout(50);
-  }
-  for (const k of [...held]) await set(k, false);
-  return arrived;
-}
 
 test('Living World P1: robots vs drones → loot → carry home → bank', async ({ page }, testInfo) => {
   mkdirSync(OUT_DIR, { recursive: true });
@@ -148,15 +74,8 @@ test('Living World P1: robots vs drones → loot → carry home → bank', async
   await page.screenshot({ path: join(OUT_DIR, '1-fight-and-loot.png') });
   await page.waitForTimeout(4_000); // let the fight play out on camera
 
-  // 2) Fly over the pods (nearest first) — the cargo chip fills.
-  for (let i = 0; i < 6; i++) {
-    const pods = await podPositions(page);
-    const me = await localPose(page);
-    if (pods.length === 0 || me === null) break;
-    pods.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
-    await flyTo(page, pods[0]!.x, pods[0]!.y, 50, 12_000);
-    await page.waitForTimeout(400);
-  }
+  // 2) Open the nearest pods and take all found — the cargo chip fills.
+  expect(await lootNearestPods(page, 3, 12_000)).toBeGreaterThan(0);
   await expect(page.getByTestId('cargo-chip')).toBeVisible({ timeout: 10_000 });
   await page.screenshot({ path: join(OUT_DIR, '2-cargo-collected.png') });
 
