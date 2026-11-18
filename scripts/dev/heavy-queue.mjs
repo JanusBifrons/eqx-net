@@ -7,6 +7,8 @@
  *        [--priority 1-5] [--minutes N] [--who label] -- <command...>
  *   node scripts/dev/heavy-queue.mjs status [--json]
  *
+ * The child gets EQX_HEAVY_QUEUE=<ticket id>; heavy scripts refuse to run
+ * without it (heavy-queue-guard.mjs).
  * Env: HEAVY_QUEUE_MIN_GB (default 4; 0 skips the RAM check),
  *      HEAVY_QUEUE_DIR (override the shared dir), HEAVY_QUEUE_POLL_MS (default 2000).
  * No shebang on purpose (CRLF checkouts break vitest imports).
@@ -15,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import {
-  KINDS, adoptOrphan, decide, isOrphaned, fmtDur, formatStatus, newTicketId, readRunning, readTickets,
+  KINDS, adoptOrphan, decide, devLeaseDir, lightLeaseDir, sweepLightLeases, endOverdue, isOrphaned, killTree, recordRunningChild, watchdogDecision, watchdogMessage, shellJoin, sweepDevLeases, fmtDur, formatStatus, newTicketId, readRunning, readTickets,
   releaseRunning, removeTicket, resolveQueueDir, snapshot, sweepStale, tryClaim, writeTicket,
 } from './heavy-queue-core.mjs';
 
@@ -32,6 +34,12 @@ function logSweep(changed) {
     const what = s.orphaned ? 'orphaned' : s.expired ? 'expired orphan' : 'removed stale';
     log(`${what} ${s.where} ticket ${s.who ?? s.id} (pid ${s.pid ?? '?'} gone)`);
   }
+}
+
+/** Watchdog: end an overdue running job (every waiter and status run this). */
+function enforceWatchdog(dir) {
+  const ended = endOverdue(dir);
+  if (ended) log(watchdogMessage(ended.holder, ended.decision));
 }
 
 function usage(code = 2) {
@@ -72,11 +80,6 @@ function parseRunArgs(argv) {
   return { opts, command: argv.slice(sep + 1) };
 }
 
-/** Join argv for a shell, quoting args that need it. */
-function shellJoin(args) {
-  return args.map((a) => (/^[\w@%+=:,./\\-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`)).join(' ');
-}
-
 async function cmdRun(argv) {
   const { opts, command } = parseRunArgs(argv);
   const dir = resolveQueueDir();
@@ -104,7 +107,7 @@ async function cmdRun(argv) {
     if (!child || child.exitCode != null) return;
     // Our own child tree only, never anyone else's process.
     if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true });
-    else child.kill('SIGTERM');
+    else { try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); } }
   };
   process.on('exit', cleanup);
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
@@ -125,6 +128,7 @@ async function cmdRun(argv) {
   let statusAt = Date.now();
   for (;;) {
     logSweep(sweepStale(dir));
+    enforceWatchdog(dir);
     const t = Date.now();
     let tickets = readTickets(dir);
     const mine = tickets.find((x) => x.id === ticket.id);
@@ -157,11 +161,30 @@ async function cmdRun(argv) {
 
   const waited = Date.now() - ticket.joinedAtMs;
   log(`running (waited ${fmtDur(waited)}${freeGb != null ? `, free RAM ${freeGb.toFixed(1)} GB` : ''}): ${ticket.command}`);
-  child = spawn(shellJoin(command), { stdio: 'inherit', shell: true });
+  // EQX_HEAVY_QUEUE tells the heavy scripts' guard (heavy-queue-guard.mjs) this run is queued.
+  // POSIX: detached makes the child lead its own process group, so the
+  // watchdog can kill the whole tree.
+  child = spawn(shellJoin(command), {
+    stdio: 'inherit', shell: true, windowsHide: true, detached: process.platform !== 'win32',
+    env: { ...process.env, EQX_HEAVY_QUEUE: ticket.id },
+  });
+  if (child.pid) recordRunningChild(dir, ticket.id, child.pid);
+  // Own watchdog: fires even with no waiters (e.g. the shell above us was reaped).
+  const startedAtMs = readRunning(dir)?.startedAtMs ?? Date.now();
+  const selfCheck = setInterval(() => {
+    const d = watchdogDecision({ ...ticket, startedAtMs }, Date.now());
+    if (d.action !== 'end') return;
+    clearInterval(selfCheck);
+    log(watchdogMessage(ticket, d));
+    if (child.pid) killTree(child.pid, process.platform === 'win32' ? undefined : child.pid);
+    cleanup();
+    process.exit(124);
+  }, Math.min(POLL_MS * 5, 30_000));
   const code = await new Promise((resolve) => {
     child.on('error', (e) => { log(`spawn failed: ${e.message}`); resolve(1); });
     child.on('exit', (c, sig) => resolve(c ?? (sig ? 128 + (os.constants.signals[sig] ?? 0) : 1)));
   });
+  clearInterval(selfCheck);
   log(`done (exit ${code}) after ${fmtDur(Date.now() - ticket.joinedAtMs - waited)}; slot released`);
   cleanup();
   process.exit(code);
@@ -170,6 +193,9 @@ async function cmdRun(argv) {
 function cmdStatus(argv) {
   const dir = resolveQueueDir();
   sweepStale(dir);
+  enforceWatchdog(dir);
+  sweepDevLeases(devLeaseDir(dir));
+  sweepLightLeases(lightLeaseDir(dir));
   const snap = snapshot(dir);
   if (argv.includes('--json')) process.stdout.write(`${JSON.stringify(snap, null, 2)}\n`);
   else process.stdout.write(`${formatStatus(snap)}\n`);

@@ -174,7 +174,9 @@ brain. The fleet vocabulary (`FleetMode`, `FleetStance`, `FleetOrder`,
     `getActivity()`: travelling ⇒ moving (Retreat ⇒ retreating), a target ⇒
     attacking / chasing (beyond fire range), Hunt with nothing found ⇒
     searching (a new, appended activity), a post ⇒ guarding (moving while
-    outside its radius), a warp-out run ⇒ retreating, else idle. Hold fire
+    outside its radius), a warp-out run ⇒ retreating, else idle. A Move
+    or patrol leg that waits short of its goal (no way round rock fits,
+    or stuck) ⇒ blocked, "Can't get closer" (appended; navigation slice 9). Hold fire
     picks no target, so it reports its job; the stance control shows Hold
     fire. The status `targetId` still comes from the wingman store (the
     order's target).

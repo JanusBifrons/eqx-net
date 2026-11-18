@@ -6,6 +6,7 @@
 import type { Room } from 'colyseus.js';
 import { registerCombatHandlers, type CombatHandlerCtx } from './combatHandlers.js';
 import { registerFieldHandlers, type FieldHandlerCtx } from './fieldHandlers.js';
+import { registerHelmHandlers, type HelmHandlerCtx } from './helmHandlers.js';
 import { registerImpactFxHandlers, type ImpactFxHandlerCtx } from './impactFxHandlers.js';
 import { registerMissileHandlers, type MissileHandlerCtx } from './missileHandlers.js';
 import { registerShellHandlers, type ShellHandlerCtx } from './shellHandlers.js';
@@ -17,6 +18,7 @@ import { registerWaveHandlers, type WaveHandlerCtx } from './waveHandlers.js';
 
 export type ClientHandlerCtx = CombatHandlerCtx &
   FieldHandlerCtx &
+  HelmHandlerCtx &
   ImpactFxHandlerCtx &
   MissileHandlerCtx &
   ShellHandlerCtx &
@@ -37,4 +39,5 @@ export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void 
   registerShellHandlers(room, ctx);
   registerTransitHandlers(room, ctx);
   registerCombatHandlers(room, ctx);
+  registerHelmHandlers(room, ctx);
 }
