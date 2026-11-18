@@ -16,13 +16,15 @@ import { Rectangle, Texture } from 'pixi.js';
 import { FX_SPECS, isFxId, type FxId, type FxSpec } from './fx/fxTextures.js';
 import { Atlas, PageBudget, type AtlasOpts } from './atlas.js';
 import type { Livery, StructLivery } from './fields.js';
-import { bakeKey, runBake, seedVariant, type Baked, type BakeJob, type LitMeta } from './bake.js';
+import { bakeKey, seedVariant, type Baked, type BakeJob, type LitMeta } from './bake.js';
 import type { LightingSettings } from './lightingSettings.js';
 import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
-import { ChunkCutJobs, cutCoarseInline, cutInline, type ChunkOpts, type PackedChunk, type PackedCoarseTile } from './chunkCutJobs.js';
+import { InlineBakeRunner, WorkerBakeRunner, type BakeRunner } from './bakeRunners.js';
+
+export { InlineBakeRunner, WorkerBakeRunner, type BakeRunner };
 
 export type ArtState = 'pending' | 'ready' | 'failed';
 
@@ -106,19 +108,6 @@ export interface ArtPacker {
   /** Free a group's pages and textures; returns pages freed. */
   freeGroup?(group: number): number;
   readonly gpuBytes: number;
-  destroy(): void;
-}
-
-/** Runs bakes somewhere other than the caller's stack. */
-export interface BakeRunner {
-  /** `urgent`: something on screen is waiting for it, so it goes ahead of
-   *  queued warm-up work. */
-  run(job: BakeJob, rig: LightRig, urgent?: boolean): Promise<Baked>;
-  /** Move a queued (not yet started) job to the front. */
-  promote?(job: BakeJob): void;
-  cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk>; // cut-field chunks, off the frame (chunkCutJobs.ts)
-  cutCoarseField?(field: ChunkOpts): Promise<PackedCoarseTile[]>; // the far-zoom tiles (B4), once per sector
-  readonly workers: number;
   destroy(): void;
 }
 
@@ -636,89 +625,6 @@ export class ArtService {
 
 function rigTag(r: LightRig): string {
   return `${r.sunAz.toFixed(4)},${r.sunElev.toFixed(4)},${r.exposure}`;
-}
-
-// ---------------------------------------------------------------- runners
-
-/** Runs bakes on a small pool of module workers. */
-export class WorkerBakeRunner implements BakeRunner {
-  private readonly pool: Worker[] = [];
-  private readonly idle: Worker[] = [];
-  private readonly queue: Array<{ job: BakeJob; rig: LightRig; resolve: (b: Baked) => void; reject: (e: Error) => void }> = [];
-  private readonly cuts = new ChunkCutJobs();
-  private seq = 0;
-
-  constructor(size: number, factory: () => Worker, private readonly delayMs = 0) {
-    for (let i = 0; i < size; i++) {
-      const w = factory();
-      this.pool.push(w);
-      this.idle.push(w);
-    }
-  }
-  get workers(): number { return this.pool.length; }
-  run(job: BakeJob, rig: LightRig, urgent = true): Promise<Baked> {
-    return new Promise((resolve, reject) => {
-      const item = { job, rig, resolve, reject };
-      if (urgent) this.queue.unshift(item); else this.queue.push(item);
-      this.pump();
-    });
-  }
-
-  promote(job: BakeJob): void {
-    const k = bakeKey(job);
-    const i = this.queue.findIndex((q) => bakeKey(q.job) === k);
-    if (i > 0) this.queue.unshift(this.queue.splice(i, 1)[0]!);
-  }
-
-  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk> { const p = this.cuts.add(field, cx, cy); this.pump(); return p; }
-  cutCoarseField(field: ChunkOpts): Promise<PackedCoarseTile[]> { const p = this.cuts.addCoarse(field); this.pump(); return p; }
-  private pump(): void {
-    this.cuts.drain(this.idle, () => this.seq++, (w) => { this.idle.push(w); this.pump(); });
-    while (this.idle.length > 0 && this.queue.length > 0) {
-      const w = this.idle.pop()!;
-      const item = this.queue.shift()!;
-      const seq = this.seq++;
-      const done = (): void => { this.idle.push(w); this.pump(); };
-      w.onmessage = (e: MessageEvent<{ seq: number; baked: Baked }>): void => {
-        const finish = (): void => { item.resolve(e.data.baked); done(); };
-        if (this.delayMs > 0) setTimeout(finish, this.delayMs); else finish();
-      };
-      w.onerror = (err): void => { item.reject(new Error(err.message)); done(); };
-      w.postMessage({ seq, job: item.job, rig: item.rig });
-    }
-  }
-
-  destroy(): void {
-    for (const w of this.pool) w.terminate();
-    this.pool.length = 0;
-    this.idle.length = 0;
-    for (const q of this.queue) q.reject(new Error('art service destroyed'));
-    this.queue.length = 0;
-    this.cuts.rejectAll();
-  }
-}
-
-/** Fallback when workers can't be created: one bake per macrotask on the
- *  current thread. Each bake still blocks for its own duration (up to a few
- *  hundred ms for the biggest structures), so this is a last resort. */
-export class InlineBakeRunner implements BakeRunner {
-  private chain: Promise<unknown> = Promise.resolve();
-  private stopped = false;
-  constructor(private readonly delayMs = 0) {}
-  get workers(): number { return 0; }
-  run(job: BakeJob, rig: LightRig, _urgent = true): Promise<Baked> {
-    const p = this.chain.then(() => new Promise<Baked>((resolve, reject) => {
-      setTimeout(() => {
-        if (this.stopped) { reject(new Error('art service destroyed')); return; }
-        try { resolve(runBake(job, rig)); } catch (e) { reject(e instanceof Error ? e : new Error(String(e))); }
-      }, this.delayMs);
-    }));
-    this.chain = p.catch(() => undefined);
-    return p;
-  }
-  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk> { return cutInline(field, cx, cy, () => this.stopped); }
-  cutCoarseField(field: ChunkOpts): Promise<PackedCoarseTile[]> { return cutCoarseInline(field, () => this.stopped); }
-  destroy(): void { this.stopped = true; }
 }
 
 // ---------------------------------------------------------------- factory

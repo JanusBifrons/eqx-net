@@ -81,12 +81,10 @@ import {
   CameraDirector,
   type CameraTargetLookup,
   type DirectorTarget,
-  type MutableBounds,
-  type MutablePoint,
 } from './camera/CameraDirector';
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
-import { GroupBoundsScanner } from './camera/groupBounds';
-import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
+import { createDirectorLookup, type DirectorLookupHost } from './camera/directorLookup.js';
+import type { CameraCue } from '@core/contracts/cameraScript';
 import { fillTractorBeams } from './tractorBeams';
 import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, MINING_BEAM_STYLE, addBeamLights, beamLightBudget } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
@@ -496,7 +494,7 @@ export class PixiRenderer implements IRenderer {
    *  the local-ship follow and feeds `Camera.setDirectorTarget` instead. */
   private readonly _director = new CameraDirector();
   private readonly _directorOut: DirectorTarget = { x: 0, y: 0, zoom: 1, smoothMs: 0 };
-  private readonly _directorLookup: CameraTargetLookup = this.createDirectorLookup();
+  private readonly _directorLookup: CameraTargetLookup = createDirectorLookup(this._swarmSpriteKinds, this.directorHost());
   private readonly _updateRemoteHitTargetsScratch = new Set<string>();
   private readonly _updateLocalHitTargetsScratch = new Set<string>();
   private readonly _updateProjSeenScratch = new Set<string>();
@@ -3253,54 +3251,11 @@ export class PixiRenderer implements IRenderer {
     return this._director.isActive();
   }
 
-  /** Lookup over the sprite map for the director (pixi space). Built once. */
-  private createDirectorLookup(): CameraTargetLookup {
-    // Group bounds: `GroupBoundsScanner` (alloc-free, #14), which also counts
-    // structures culled off screen (review 2026-11-12, capital-lineup).
-    const groupScanner = new GroupBoundsScanner(this._swarmSpriteKinds);
-    // Ids-bounds accumulator state.
-    let count = 0;
-    let acc: MutableBounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-    // A framed entity contributes its whole extent (radius `r`), not just its
-    // centre: a 10x capital reaches kilometres past its centre (round 3).
-    const add = (x: number, y: number, r = 0): void => {
-      if (count === 0) {
-        acc.minX = x - r; acc.maxX = x + r;
-        acc.minY = y - r; acc.maxY = y + r;
-      } else {
-        if (x - r < acc.minX) acc.minX = x - r;
-        if (x + r > acc.maxX) acc.maxX = x + r;
-        if (y - r < acc.minY) acc.minY = y - r;
-        if (y + r > acc.maxY) acc.maxY = y + r;
-      }
-      count++;
-    };
-    // Half the sprite's longer side: covers any rotation. Cinematic-only path.
-    const extentOf = (sprite: Container): number => Math.max(sprite.width, sprite.height) / 2;
-    return {
-      pose: (id: string, out: MutablePoint): boolean => {
-        const sp = this.cameraSprite(id);
-        if (!sp || !sp.visible) return false;
-        out.x = sp.x;
-        out.y = sp.y;
-        return true;
-      },
-      groupBounds: (g: CameraGroup, out: MutableBounds): number => groupScanner.scan(this.sprites, g, out),
-      idsBounds: (ids: readonly string[], out: MutableBounds): number => {
-        count = 0;
-        acc = out;
-        for (let i = 0; i < ids.length; i++) {
-          const id = ids[i]!;
-          const sp = this.cameraSprite(id);
-          if (sp && sp.visible) add(sp.x, sp.y, extentOf(sp));
-        }
-        return count;
-      },
-      viewport: (out: MutablePoint): void => {
-        out.x = this.camera ? this.camera.screenWidth : 0;
-        out.y = this.camera ? this.camera.screenHeight : 0;
-      },
-    };
+  /** Live view of what the director lookup reads (camera/directorLookup.ts). */
+  private directorHost(): DirectorLookupHost {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
+    const r = this;
+    return { get sprites() { return r.sprites; }, get camera() { return r.camera; }, cameraSprite: (id) => r.cameraSprite(id) };
   }
 
   /** The sprite a camera cue follows. `'local'` resolves through

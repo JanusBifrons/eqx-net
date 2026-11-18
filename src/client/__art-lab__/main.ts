@@ -15,26 +15,25 @@
  *
  * Dev-only page: /__art-lab__/index.html?style=…&scene=…&zoom=…
  */
-import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
+import { Application, Container, RenderTexture, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
 import { FxEngines } from '../render/art/fx/FxEngines.js';
-import { bakeFxImg, type FxId, type Img } from '../render/art/fx/fxTextures.js';
+import { bakeFxImg, type FxId } from '../render/art/fx/fxTextures.js';
 import type { ArtService } from '../render/art/ArtService.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../render/pixi/spriteBuilders.js';
-import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
-import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, structScale, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
-import { ConnectorRenderer } from '../render/pixi/ConnectorRenderer.js';
-import { readLineLook } from '../render/pixi/connectorLineLooks.js';
-import { readRigsFlag, StructureRigView, type StructureRigInput } from '../render/pixi/structureRigs.js';
-import { DOCK_BAY_CX, DOCK_BAY_CY, rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
-import { getStructureKind } from '../../shared-types/structureKinds.js';
-import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
-import { hash01, valueNoise } from '../render/art/fields.js';
+import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type StructArt } from './assets.js';
+import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, structScale, type Cam, type Pose, type Scene, type SceneId } from './scenes.js';
+import { readRigsFlag } from '../render/pixi/structureRigs.js';
+import { DOCK_BAY_CX, DOCK_BAY_CY } from '../../core/articulation/rigCatalogue.js';
+import { hash01 } from '../render/art/fields.js';
 import { readStructLivery } from '../render/art/artMode.js';
 import { ownerLivery } from '../render/art/shipArtSprites.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
 import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipShader.js';
+import { GLOW, imgTexture, nebulaTex, RING, starTile, STREAK } from './labTextures.js';
+import { BALLS, BAND_OFFSET, countSprites, SPARKS, type BoomView, type ShipView, type ShotView, type StructView } from './labViews.js';
+import { buildLabGridLines, buildLabRigs } from './labGameLayers.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
 
 type Style = 'current' | 'machined' | 'pixel' | 'lit';
@@ -80,141 +79,6 @@ const PIX: PixelSettings = {
 const TRAIL = 9;
 const TRAIL_DT = 0.045;
 
-// ---------------------------------------------------------------- textures
-
-function canvasTex(size: number, paint: (ctx: CanvasRenderingContext2D, s: number) => void, nearest = false): Texture {
-  const c = document.createElement('canvas');
-  c.width = size; c.height = size;
-  paint(c.getContext('2d')!, size);
-  const t = Texture.from(c);
-  t.source.scaleMode = nearest ? 'nearest' : 'linear';
-  return t;
-}
-
-/** Soft additive glow: a gaussian-ish radial falloff, white (tinted per use). */
-const GLOW = canvasTex(64, (ctx, s) => {
-  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.18, 'rgba(255,255,255,0.75)');
-  g.addColorStop(0.45, 'rgba(255,255,255,0.22)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-});
-
-/** A horizontal streak: bright middle, soft ends and edges (bolts, beams). */
-const STREAK = canvasTex(64, (ctx, s) => {
-  const g = ctx.createLinearGradient(0, 0, s, 0);
-  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.25, 'rgba(255,255,255,0.9)');
-  g.addColorStop(0.75, 'rgba(255,255,255,0.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-  const v = ctx.createLinearGradient(0, 0, 0, s);
-  v.addColorStop(0, 'rgba(0,0,0,1)'); v.addColorStop(0.5, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,1)');
-  ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = v; ctx.fillRect(0, 0, s, s);
-});
-
-/** Shockwave ring. */
-const RING = canvasTex(128, (ctx, s) => {
-  const g = ctx.createRadialGradient(s / 2, s / 2, s * 0.3, s / 2, s / 2, s / 2);
-  g.addColorStop(0, 'rgba(255,255,255,0)');
-  g.addColorStop(0.75, 'rgba(255,255,255,0.9)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-});
-
-/** A tile of stars (baked once). Pixel style keeps them hard single texels. */
-function starTile(pixel: boolean): Texture {
-  return canvasTex(512, (ctx, s) => {
-    for (let i = 0; i < 260; i++) {
-      const x = Math.floor(hash01(i, 11) * s), y = Math.floor(hash01(i, 23) * s);
-      const b = hash01(i, 37);
-      const warm = hash01(i, 41) > 0.7;
-      const a = 0.25 + 0.75 * b * b;
-      ctx.fillStyle = warm ? `rgba(255,214,170,${a})` : `rgba(190,210,255,${a})`;
-      const r = b > 0.93 ? 2 : 1;
-      if (pixel) ctx.fillRect(x, y, r, r);
-      else { ctx.beginPath(); ctx.arc(x + 0.5, y + 0.5, r * 0.6, 0, Math.PI * 2); ctx.fill(); }
-    }
-  }, pixel);
-}
-
-/** A faint nebula (fbm value noise), baked once, stretched over the view. */
-function nebulaTex(pixel: boolean): Texture {
-  return canvasTex(256, (ctx, s) => {
-    const img = ctx.createImageData(s, s);
-    for (let y = 0; y < s; y++) {
-      for (let x = 0; x < s; x++) {
-        let n = 0, amp = 0.5, f = 3 / s;
-        for (let o = 0; o < 5; o++) { n += amp * valueNoise(x * f, y * f, 0x5eed + o); amp *= 0.5; f *= 2; }
-        const m = Math.max(0, n - 0.42) * 2.2;
-        const p = (y * s + x) * 4;
-        const w = valueNoise(x * 2 / s, y * 2 / s, 99);
-        img.data[p] = 40 + 60 * w; img.data[p + 1] = 30 + 25 * (1 - w); img.data[p + 2] = 90 + 60 * (1 - w);
-        img.data[p + 3] = Math.min(255, m * m * 120);
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-  }, pixel);
-}
-
-// ---------------------------------------------------------------- views
-
-interface ShipView {
-  e: ShipE;
-  pose: Pose;
-  /** Machined: two cross-faded lit frames. Pixel: `a` only. Current: unused. */
-  a: Sprite;
-  b: Sprite;
-  gfx: Graphics | null;
-  /** Machined capital: one sprite per baked row strip (art.tiles). */
-  tileSpr?: Sprite[];
-  /** `lit` style: the GPU-lit hull. */
-  lit?: LitShipMesh;
-  /** `lit` style: a big hull that shades others (box half size, height). */
-  occ?: { hx: number; hy: number; h: number; color: number };
-  trails: Sprite[];
-  nozzles: Sprite[];
-  navs: Sprite[];
-  art: ShipArt | null;
-  /** Pixel art per zoom band (index = band + BAND_OFFSET). */
-  bandArt: Array<ShipArt | undefined>;
-  phase: number;
-  /** FxEngines key (the game's exhaust: flames + ribbons). */
-  fxKey: string;
-}
-
-interface StructView {
-  x: number; y: number;
-  sprite: Sprite | null;
-  gfx: Graphics | null;
-  /** Machined: albedo copy, added on top when an explosion lights the area. */
-  lit: Sprite | null;
-  /** `lit` style with live-lit structures: the GPU-lit structure. */
-  litMesh?: LitShipMesh;
-  rot: number;
-  lamps: Sprite[];
-  lampXY: Array<{ x: number; y: number }>;
-  art: StructArt | null;
-  bandArt: Array<StructArt | undefined>;
-  id: string; seed: number;
-  radius: number;
-}
-
-interface BoomView {
-  flash: Sprite; ring: Sprite; pool: Sprite; balls: Sprite[];
-  x: number; y: number; t0: number; size: number;
-}
-
-/** One weapon stream's sprites, all created up front. */
-interface ShotView {
-  s: Shot;
-  core: Sprite; halo: Sprite; flare: Sprite; rim: Sprite; flash: Sprite;
-  bolts: Sprite[]; sparks: Sprite[];
-}
-const SPARKS = 6;
-
-const BAND_OFFSET = 40;
-const BALLS = 14;
-
 /** Pixel size (screen px per art px) for a zoom; quantised by band. */
 function pxFor(zoom: number): number {
   if (PX_OVERRIDE > 0) return PX_OVERRIDE;
@@ -225,14 +89,6 @@ function bandFor(zoom: number): { band: number; pd: number; px: number } {
   const px = pxFor(zoom);
   const band = Math.round(Math.log2(zoom / px) * 4);
   return { band, pd: Math.pow(2, band / 4), px };
-}
-
-/** An effects image as a texture (the lab bakes the game's fx images itself). */
-function imgTexture(i: Img): Texture {
-  const c = document.createElement('canvas');
-  c.width = i.w; c.height = i.h;
-  c.getContext('2d')!.putImageData(new ImageData(i.data as Uint8ClampedArray<ArrayBuffer>, i.w, i.h), 0, 0);
-  return new Texture({ source: new CanvasSource({ resource: c, scaleMode: 'linear' }) });
 }
 
 async function main(): Promise<void> {
@@ -388,46 +244,8 @@ async function main(): Promise<void> {
     return v;
   });
 
-  // ---- rigs (restyle 2c): one view per structure whose kind has a rig
-  const rigs: Array<{ i: number; view: StructureRigView; input: StructureRigInput | null }> = [];
-  if (RIGS) {
-    scene.structs.forEach((st, i) => {
-      const rig = rigForStructureKind(st.id);
-      if (rig === null) return;
-      const view = new StructureRigView(rig);
-      const k = structScale(st);
-      for (const [g, layer] of [[view.under, rigUnderL], [view.plane, rigPlaneL], [view.over, rigOverL]] as const) {
-        g.position.set(st.x, st.y); g.rotation = st.rot; g.scale.set(k);
-        layer.addChild(g);
-      }
-      rigs.push({ i, view, input: null });
-    });
-  }
-
-  // ---- grid lines: the game's ConnectorRenderer over a minimal mirror
-  // (game space is y-up, so y flips; entity ids are struct index + 1).
-  let lines: { r: ConnectorRenderer; mirror: RenderMirror } | null = null;
-  if (scene.edges && scene.edges.length > 0) {
-    const swarm = new Map<number, SwarmRenderState>();
-    const structures = new Map<number, StructureRenderState>();
-    scene.structs.forEach((st, i) => {
-      swarm.set(i + 1, {
-        x: st.x, y: -st.y, vx: 0, vy: 0, angle: -st.rot, angvel: 0,
-        prevX: st.x, prevY: -st.y, prevAngle: 0, prevArrivalMs: 0, latestArrivalMs: 0, poseRing: [], ringHead: 0,
-        radius: getStructureKind(st.id).radius * structScale(st), kind: 2, shipKind: st.id, sleeping: true, lastUpdateTick: 0,
-      } as unknown as SwarmRenderState);
-      structures.set(i + 1, { powered: true, netPower: 50, connTo: [], built: true, buildPct: 1, deconstructPct: 0, wallActive: true } as unknown as StructureRenderState);
-    });
-    for (const [a, b] of scene.edges) {
-      structures.get(a + 1)!.connTo.push(b + 1);
-      structures.get(b + 1)!.connTo.push(a + 1);
-    }
-    const r = new ConnectorRenderer();
-    r.lineLook = readLineLook(location.search); // 1g `?lineLook=`: odd edges carry flow so the look's pulse shows
-    const gridFlashes = r.lineLook ? new Map(scene.edges.filter((_, i) => i % 2 === 1).map(([p, q]) => [(Math.min(p, q) + 1) * 65536 + Math.max(p, q) + 1, 1e12])) : undefined;
-    lineL.addChild(r.staticGfx, r.gfx);
-    lines = { r, mirror: { swarm, structures, gridFlashes } as unknown as RenderMirror };
-  }
+  const rigs = RIGS ? buildLabRigs(scene, rigUnderL, rigPlaneL, rigOverL) : [];
+  const lines = buildLabGridLines(scene, lineL);
 
   // ---- ships
   const ships: ShipView[] = scene.ships.map((e, i) => {
@@ -838,12 +656,6 @@ async function main(): Promise<void> {
   };
   (window as unknown as { __artlab: typeof api }).__artlab = api;
   update(0);
-}
-
-function countSprites(c: Container): number {
-  let n = 0;
-  for (const ch of c.children) n += 1 + countSprites(ch as Container);
-  return n;
 }
 
 void main().catch((err: unknown) => {
