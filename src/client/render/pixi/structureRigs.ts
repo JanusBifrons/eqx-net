@@ -33,12 +33,14 @@
  *
  * 3e: a rig with an IK chain also carries goods along its arm while a
  * holding clip has a hold length and a cargo direction (`craneCargo.ts`):
- * the cable look's flow pulse (`drawCablePulse`, same colour, width, beat
- * and speed as a cable carrying goods) runs from the clamp into the dock (an
- * unload) and/or back out (a load), timed from the clip on the wire.
+ * the cable look's flow (`drawLineLookFlow`, the connector cable carrying
+ * goods: same colours, beat and speed) runs along the arm's internal cable
+ * (`rigArmCable`, drawn in the beams' static art) from the clamp into the
+ * dock (an unload) and/or back out (a load), timed from the clip on the wire;
+ * one travelling band over the whole arm.
  */
 import { Container, Graphics } from 'pixi.js';
-import { drawCablePulse } from './connectorLineLooks.js';
+import { drawLineLookFlow, lineLookScale, type LineLookOpts } from './connectorLineLooks.js';
 import { connectorVisualInto, type CometSegment, type ConnectorVisual } from './connectorVisual.js';
 import { TRANSFER_PULSE_MS } from '../../../core/structures/structureGridConstants.js';
 import { createRigPose, evaluateRig, type PlayingClip, type RigPose } from '../../../core/articulation/evaluate.js';
@@ -48,7 +50,7 @@ import { JOINT_LIFT, liftProgress, rigClipIndex, rigPartIndex, type DrawLayer, t
 import { DOOR_TURRET_MOUNT, rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
-import { RIG_LOOK_C, rigPartContext, rigSlotContext } from './structureRigLook.js';
+import { RIG_LOOK_C, rigArmCable, rigPartContext, rigSlotContext, type RigArmCable } from './structureRigLook.js';
 
 /** `?rigs=1`: draw structure rig parts (off by default). */
 export function readRigsFlag(search: string): boolean {
@@ -155,6 +157,10 @@ export class StructureRigView {
   private readonly pulseVisual: ConnectorVisual = { color: 0, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0 };
   private readonly comet: CometSegment = { x0: 0, y0: 0, x1: 0, y1: 0 };
   private cargoDrawn = false;
+  /** The arm's internal cable layout, and the flow's look options (its size
+   *  re-based per frame on the zoom, so the flow sits on the static body). */
+  private readonly armCable: RigArmCable;
+  private readonly flowOpts: LineLookOpts = { size: 1, cradles: false };
   /** 3e: the camera scale (CSS px per world u), so the arm's pulse keeps a
    *  cable pulse's on-screen size (`cometSegment` / `lineLookScale`). */
   zoom = 1;
@@ -200,6 +206,7 @@ export class StructureRigView {
       this.plane.addChildAt(this.slot, 0); // under every plane shadow and part
     }
     this.armPath = new Float64Array(2 * (rig.maxChain + 1));
+    this.armCable = rigArmCable(rig);
     if (rig.maxChain > 0) {
       // Over the arm (light on top of the jib; a pulse casts no shadow).
       const g = new Graphics();
@@ -281,7 +288,8 @@ export class StructureRigView {
     const flow = input !== null && input.holdTicks !== undefined && input.cargo !== undefined
       ? craneCargoFlow(nowTick - input.startTick, input.holdTicks, input.cargo)
       : 0;
-    const n = flow !== 0 ? craneArmPath(this.rig, rigClipIndex(this.rig, input!.clipId), this.pose, this.armPath) : 0;
+    const ci = flow !== 0 ? rigClipIndex(this.rig, input!.clipId) : -1;
+    const n = ci >= 0 ? craneArmPath(this.rig, ci, this.pose, this.armPath) : 0;
     if (n < 2) {
       if (this.cargoDrawn) { g.clear(); this.cargoDrawn = false; }
       g.visible = false;
@@ -298,13 +306,24 @@ export class StructureRigView {
     // Phase over the whole arm, 0 = clamp; a load runs root -> clamp.
     const t = v.pulseT ?? 0;
     const at = (flow === CRANE_CARGO_OUT ? 1 - t : t) * total;
+    // The static body is drawn at zoom 1: re-base the size so the flow's
+    // width and stations land on it at this zoom.
+    const cable = this.armCable, opts = this.flowOpts;
+    opts.size = cable.opts.size / lineLookScale('cable', this.zoom);
+    const chain = this.rig.clips[ci]!.chain;
     g.clear();
     let cum = 0;
     for (let k = 0; k + 1 < n; k++) {
       // Host frame (y-up) -> the group's Pixi frame (y-down), like the parts.
       const ax = p[2 * k]!, ay = -p[2 * k + 1]!, bx = p[2 * k + 2]!, by = -p[2 * k + 3]!;
       const len = Math.hypot(bx - ax, by - ay);
-      if (len > 0) drawCablePulse(g, v, this.comet, (at - cum) / len, true, ax, ay, bx, by, this.zoom);
+      // Segment k runs clamp-side -> pivot of chain part n-2-k (reversed:
+      // its far-end collar first).
+      const part = chain[n - 2 - k]!;
+      if (len > 0) {
+        v.pulseT = (at - cum) / len;
+        drawLineLookFlow(g, 'cable', v, this.comet, true, ax, ay, bx, by, this.zoom, cable.rb[part]!, cable.ra[part]!, opts);
+      }
       cum += len;
     }
     g.visible = true;

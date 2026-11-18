@@ -11,6 +11,7 @@ import {
   centroid, chamferBox, chevron, ngon, polyBounds, rivetPolys, scalePts, trussPolys,
   type PolySink, type Pt, type Pts,
 } from './structureStyleKit.js';
+import { drawLineLookBody, lineLookBaseWidth, type LineLookOpts } from './connectorLineLooks.js';
 
 // ---------------------------------------------------------------- the look
 
@@ -26,7 +27,8 @@ export interface RigPartLook {
   rivet: number;
   /** Blue-steel truss chords and posts (the laces are a darker mix). */
   truss: number;
-  /** Soot backing behind a truss's lattice. */
+  /** Soot (the hatch slot's shaft walls). A truss has no backing: its
+   *  lattice is see-through. */
   soot: number;
   /** Hazard yellow (stripes are `edge` over it). */
   hazard: number;
@@ -60,6 +62,11 @@ export interface RigPartLook {
   liftShadowAlphaUp: number;
   /** Hatch slot under the door leaves (seen as they part). */
   slot: number;
+  /** The internal cable laid along an arm's lattice (the connector cable
+   *  look, `lineLook=cable`, without its own cradles: the truss carries it):
+   *  its body width as a fraction of the arm's narrowest truss depth, so
+   *  the open lattice still shows each side of it. */
+  cableFill: number;
 }
 
 export const RIG_LOOK_C: RigPartLook = {
@@ -68,7 +75,7 @@ export const RIG_LOOK_C: RigPartLook = {
   lamp: 0xffa030, boomW: 28, jibW: 22, headScale: 1.6,
   shadowOver: 11, shadowPlane: 6, shadowAlpha: 0.5,
   liftScaleRest: 0.88, liftScaleUp: 1.14, liftShadow: 12, liftShadowAlphaUp: 0.6,
-  slot: 0x020304,
+  slot: 0x020304, cableFill: 0.27,
 };
 
 /** What a part is drawn as, read from the rig's shape (layer, joint,
@@ -207,17 +214,25 @@ function drawPad(ctx: GraphicsContext, pts: Pts, inX: number, inY: number, look:
   }
 }
 
-/** A lattice beam along the part's long axis: soot backing, the kit truss,
+/** A lattice beam along the part's long axis: the kit truss, open (no
+ *  backing, so what is under the arm shows between the struts) over the
+ *  internal cable on an arm (`rigArmCable`),
  *  dark outline, chord rivets; at a joint on the base a slew-ring turntable
  *  and a counterweight (both slew with the beam), at any other joint a pin
  *  hub. */
-function drawBeam(ctx: GraphicsContext, rig: Rig, i: number, look: RigPartLook): void {
+function beamDepth(rig: Rig, i: number, look: RigPartLook): number {
   const b = outlineBounds(rig.parts[i]!.outline!);
   const along = b.x1 - b.x0 >= b.y1 - b.y0;
   let carriesBeam = false;
   for (let k = 0; k < rig.partCount; k++) if (rig.parent[k] === i && isLong(rig.parts[k]!)) carriesBeam = true;
   const thick = along ? b.y1 - b.y0 : b.x1 - b.x0;
-  const W = Math.max(thick, carriesBeam ? look.boomW : look.jibW);
+  return Math.max(thick, carriesBeam ? look.boomW : look.jibW);
+}
+
+function drawBeam(ctx: GraphicsContext, rig: Rig, i: number, look: RigPartLook): void {
+  const b = outlineBounds(rig.parts[i]!.outline!);
+  const along = b.x1 - b.x0 >= b.y1 - b.y0;
+  const W = beamDepth(rig, i, look);
   const mid = along ? (b.y0 + b.y1) / 2 : (b.x0 + b.x1) / 2;
   const s0 = along ? b.x0 : b.y0, s1 = along ? b.x1 : b.y1;
   const P = (s: number, d: number): Pt => (along ? [s, mid + d] : [mid + d, s]);
@@ -239,7 +254,12 @@ function drawBeam(ctx: GraphicsContext, rig: Rig, i: number, look: RigPartLook):
     hazardEdge(ctx, P(cx1, -hw + 5), P(cx1, hw - 5), P(0, 0), 4, look);
   }
   const rect = [P(s0, -W / 2), P(s1, -W / 2), P(s1, W / 2), P(s0, W / 2)];
-  ctx.poly(flat(rect), true).fill({ color: look.soot, alpha: 0.75 });
+  // No backing: the lattice is open, the internal cable (an arm in an IK
+  // chain) runs inside it, under the laces, pivot -> the next joint / tip.
+  const cable = rigArmCable(rig, look);
+  if (cable.onArm[i] === 1) {
+    drawLineLookBody(ctx, 'cable', 0, 0, cable.endX[i]!, cable.endY[i]!, 1, cable.ra[i]!, cable.rb[i]!, cable.opts);
+  }
   trussPolys(sink, P(s0 + 1, 0), P(s1 - 1, 0), W, look.truss, 0);
   ctx.poly(flat(rect), true).stroke({ color: look.edge, width: 2 });
   for (const d of [-1, 1]) rivetPolys(sink, P(s0 + 6, d * (W / 2 - 1.8)), P(s1 - 6, d * (W / 2 - 1.8)), 16, 1.1, look.rivet);
@@ -258,6 +278,56 @@ function drawBeam(ctx: GraphicsContext, rig: Rig, i: number, look: RigPartLook):
   } else if (par >= 0) {
     hub(ctx, 0, 0, W * 0.55, look);
   }
+}
+
+/** A rig's arm cable layout: per part (rig order) whether it carries the
+ *  cable (a beam in some clip's IK chain), its far end in the part's Pixi
+ *  frame (the next chain joint, or the clip tip), its collar radii at the
+ *  pivot (`ra`) and the far end (`rb`), and the shared look options. The
+ *  goods flow (`StructureRigView`) runs the same cable flow over it. */
+export interface RigArmCable {
+  readonly onArm: Uint8Array;
+  readonly endX: Float64Array;
+  readonly endY: Float64Array;
+  readonly ra: Float64Array;
+  readonly rb: Float64Array;
+  /** Cable look size (`LineLookOpts.size`, 1 = a connector's) and no cradles. */
+  readonly opts: LineLookOpts;
+}
+
+const armCables = new Map<string, RigArmCable>();
+
+/** The arm cable of `rig` (built once per rig). */
+export function rigArmCable(rig: Rig, look: RigPartLook = RIG_LOOK_C): RigArmCable {
+  const hit = armCables.get(rig.id);
+  if (hit !== undefined) return hit;
+  const n = rig.partCount;
+  const onArm = new Uint8Array(n), endX = new Float64Array(n), endY = new Float64Array(n);
+  const ra = new Float64Array(n), rb = new Float64Array(n);
+  let minW = Infinity;
+  for (const clip of rig.clips) {
+    const chain = clip.chain;
+    for (let s = 0; s < chain.length; s++) {
+      const i = chain[s]!;
+      const part = rig.parts[i]!;
+      if (part.outline === undefined || rigPartRole(rig, i) !== 'beam') continue;
+      const W = beamDepth(rig, i, look);
+      minW = Math.min(minW, W);
+      onArm[i] = 1;
+      // Game frame (y-up) -> the part's Pixi frame (y-down).
+      const next = s + 1 < chain.length ? rig.parts[chain[s + 1]!]! : null;
+      endX[i] = next !== null ? next.anchorX : clip.tipX;
+      endY[i] = -(next !== null ? next.anchorY : clip.tipY);
+      const par = rig.parent[i]!;
+      // Collars clear the slew ring at the base, a pin hub elsewhere.
+      ra[i] = par >= 0 && rigPartRole(rig, par) === 'base' ? W * 0.85 : W * 0.55;
+      rb[i] = W * 0.55;
+    }
+  }
+  const size = minW < Infinity ? (minW * look.cableFill) / lineLookBaseWidth('cable') : 1;
+  const out: RigArmCable = { onArm, endX, endY, ra, rb, opts: Object.freeze({ size, cradles: false }) };
+  armCables.set(rig.id, out);
+  return out;
 }
 
 /** The fixed slewing base: a chunky octagonal plinth, hazard collar on

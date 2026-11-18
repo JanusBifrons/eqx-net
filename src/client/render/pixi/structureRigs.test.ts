@@ -11,7 +11,8 @@ import {
   readRigsFlag, rigLayerZ, RIG_OVER_Z, RIG_UNDER_Z, partLocalTransform, worldToHost,
   StructureRigView, StructureRigs, type PixiXform,
 } from './structureRigs.js';
-import { rigPartRole, RIG_LOOK_C } from './structureRigLook.js';
+import { rigArmCable, rigPartContext, rigPartRole, RIG_LOOK_C } from './structureRigLook.js';
+import { lineLookBaseWidth } from './connectorLineLooks.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
@@ -23,6 +24,21 @@ import { rigClipIndex } from '../../../core/articulation/rig.js';
 import { rigForStructureKind, DOCK_CRANE_REACH_TICKS, DOOR_TURRET_LIFT } from '../../../core/articulation/rigCatalogue.js';
 import { partWorldFrame, type PartFrame } from '../../../core/articulation/mountBridge.js';
 import { CRANE_CARGO_BOTH, CRANE_CARGO_IN, CRANE_CARGO_OUT, craneArmPath } from '../../../core/articulation/craneCargo.js';
+import { CONNECTOR_FLOW_PULSE_COLOR } from './connectorVisual.js';
+
+/** The bounds of the travelling band (and its clamp sparks): the strokes in
+ *  the gold flow-pulse colour (the rest of the cable flow lights the whole arm). */
+function pulseBounds(g: Graphics): { minX: number; minY: number; maxX: number; maxY: number } {
+  const out = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const i of (g.context as unknown as { instructions: PulseInstr[] }).instructions) {
+    if (i.action !== 'stroke' || i.data.style.color !== CONNECTOR_FLOW_PULSE_COLOR) continue;
+    const b = i.data.path.bounds;
+    out.minX = Math.min(out.minX, b.minX); out.minY = Math.min(out.minY, b.minY);
+    out.maxX = Math.max(out.maxX, b.maxX); out.maxY = Math.max(out.maxY, b.maxY);
+  }
+  return out;
+}
+interface PulseInstr { action: string; data: { style: { color: number }; path: { bounds: { minX: number; minY: number; maxX: number; maxY: number } } } }
 
 function emptyPoseRing(): PoseRingEntry[] {
   const ring: PoseRingEntry[] = [];
@@ -467,7 +483,7 @@ describe('goods flow pulse along the crane arm (3e)', () => {
   /** How far along the arm (arc length from the clamp) the pulse's centre
    *  sits: its nearest point on the posed arm (Pixi frame, y flipped). */
   function fromClamp(view: StructureRigView): number {
-    const b = view.cargo!.getLocalBounds();
+    const b = pulseBounds(view.cargo!);
     const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
     const path = new Float64Array(2 * (rig.maxChain + 1));
     const n = craneArmPath(rig, rigClipIndex(rig, 'arm-hold'), view.pose, path);
@@ -480,7 +496,7 @@ describe('goods flow pulse along the crane arm (3e)', () => {
       if (d < best) { best = d; at = cum + f * len; }
       cum += len;
     }
-    expect(best).toBeLessThan(1); // on the arm
+    expect(best).toBeLessThan(4); // on the arm (clamp sparks sit either side of the band)
     return at;
   }
 
@@ -523,7 +539,7 @@ describe('goods flow pulse along the crane arm (3e)', () => {
 
   it("keeps a cable pulse's on-screen size: zoomed out, it is longer in world units", () => {
     const view = new StructureRigView(rig);
-    const size = (): number => { const b = view.cargo!.getLocalBounds(); return Math.hypot(b.maxX - b.minX, b.maxY - b.minY); };
+    const size = (): number => { const b = pulseBounds(view.cargo!); return Math.hypot(b.maxX - b.minX, b.maxY - b.minY); };
     view.update(hold, 1020 + 20, hx, hy, ha);
     const near = size();
     view.zoom = 0.25;
@@ -539,5 +555,45 @@ describe('goods flow pulse along the crane arm (3e)', () => {
 
   it('a rig without an IK chain gets no pulse', () => {
     expect(new StructureRigView(rigForStructureKind('turret')!).cargo).toBeNull();
+  });
+});
+
+describe('the crane arm is an open lattice with the connector cable inside (restyle gantry cable)', () => {
+  interface FillInstr { action: string; data: { style: { color: number } } }
+  const instrs = (ctx: unknown): FillInstr[] => (ctx as { instructions: FillInstr[] }).instructions;
+
+  it.each(['freight_dock', 'capital'])('%s: no backing behind the struts, the cable body in every arm beam', (kind) => {
+    const rig = rigForStructureKind(kind)!;
+    const cable = rigArmCable(rig);
+    let arms = 0;
+    for (let i = 0; i < rig.partCount; i++) {
+      if (rigPartRole(rig, i) !== 'beam') continue;
+      const list = instrs(rigPartContext(rig, i));
+      expect(list.some((x) => x.action === 'fill' && x.data.style.color === RIG_LOOK_C.soot), 'no soot backing').toBe(false);
+      if (cable.onArm[i] !== 1) continue;
+      arms++;
+      // The cable look's strands, lashings, clamps and collars: many strokes.
+      expect(list.filter((x) => x.action === 'stroke').length).toBeGreaterThan(15);
+    }
+    expect(arms, 'boom and jib').toBe(2);
+    // The widest cable parts (collars, ~2.2 body widths) fit inside the narrowest truss.
+    expect(cable.opts.size * lineLookBaseWidth('cable') * 2.2).toBeLessThan(RIG_LOOK_C.jibW);
+    expect(cable.opts.cradles).toBe(false);
+  });
+
+  it('idle: the cable is in the static art, no flow is drawn', () => {
+    const view = new StructureRigView(rigForStructureKind('freight_dock')!);
+    view.update(null, 100, 0, 0, 0);
+    expect(view.cargo!.visible).toBe(false);
+  });
+
+  it('during a hold the cable flow lights the whole arm, the band rides it', () => {
+    const rig = rigForStructureKind('freight_dock')!;
+    const view = new StructureRigView(rig);
+    view.update({ clipId: 'arm-hold', startTick: 1000, targetX: 60, targetY: 450, holdTicks: 300, cargo: CRANE_CARGO_IN }, 1030, 0, 0, 0);
+    const all = view.cargo!.getLocalBounds();
+    const band = pulseBounds(view.cargo!);
+    const span = (b: { minX: number; minY: number; maxX: number; maxY: number }): number => Math.hypot(b.maxX - b.minX, b.maxY - b.minY);
+    expect(span(all)).toBeGreaterThan(span(band) * 3);
   });
 });
