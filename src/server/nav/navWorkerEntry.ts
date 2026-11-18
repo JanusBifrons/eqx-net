@@ -9,6 +9,7 @@ import { NavHost, type NavCommand } from '../../core/nav/navHost.js';
 const host = new NavHost(() => performance.now());
 parentPort!.on('message', (cmd: NavCommand) => {
   const reply = host.handle(cmd);
-  if (reply) parentPort!.postMessage(reply);
+  if (reply?.type === 'ROUTE') parentPort!.postMessage(reply, [reply.points.buffer as ArrayBuffer]);
+  else if (reply) parentPort!.postMessage(reply);
 });
 parentPort!.postMessage({ type: 'NAV_READY' });

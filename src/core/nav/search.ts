@@ -64,9 +64,10 @@ export class GraphSearch {
   /** Nodes popped and expanded by the last search (work counter). */
   expanded = 0;
 
-  /** Search from `from`; returns the first goal node popped, or -1. After a
-   *  hit, {@link prev} / {@link cost} describe the path. */
-  search(graph: SearchGraph, from: number, goal: SearchGoal): number {
+  /** Search from `from`; returns the first goal node popped, or -1 (none, or
+   *  `limit` nodes expanded first). After a hit, {@link prev} / {@link cost}
+   *  describe the path. */
+  search(graph: SearchGraph, from: number, goal: SearchGoal, limit = Infinity): number {
     this.ensure(graph.nodeCount);
     const run = this.nextRun();
     const g = this.g, prev = this.prevNode, stamp = this.stamp, closed = this.closed;
@@ -82,6 +83,7 @@ export class GraphSearch {
       if (closed[i] === run) continue;
       closed[i] = run;
       if (goal.isGoal(i)) return i;
+      if (this.expanded >= limit) return -1;
       this.expanded++;
       const gi = g[i]!;
       const n = graph.edgeCount(i);
