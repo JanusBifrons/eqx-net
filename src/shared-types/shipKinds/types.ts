@@ -331,7 +331,7 @@ export const ShipKindSchema = z
      *  one place this is read, on server and client alike (#15). */
     cargoCapacity: z.number().int().positive().optional(),
     /** An NPC (swarm kind-1) entity of this kind scoops loot pods into its own
-     *  hold through the player pickup path (`SectorRoom.forEachLootCollector`),
+     *  hold through the player pickup path (`LootCollectors.fill`),
      *  with capacity from `cargoCapacityForMaxHealth`. Default `false`. */
     collectsLoot: z.boolean().optional(),
     /** Immune to `LoadShedder` eviction (haulers, nexi, elites — entities whose
