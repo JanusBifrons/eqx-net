@@ -28,6 +28,9 @@ export interface HoldRecord {
   hold: Hold;
   /** Absolute ms expiry (pods), else null. */
   expiresAt: number | null;
+  /** A pod's look (`podComponentIndex`: size class and glow tier) so a
+   *  restart restores it as it was; absent/null for every other holder. */
+  look?: number | null;
 }
 
 export interface HoldStoreDeps {
@@ -119,6 +122,7 @@ function toPutOp(r: HoldRecord, ts: number): PersistOp {
     y: r.y,
     payloadJson: JSON.stringify(r.hold),
     expiresAt: r.expiresAt,
+    look: r.look ?? null,
     ts,
   };
 }
