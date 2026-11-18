@@ -53,6 +53,8 @@ import { cargoChanged } from './lootView';
 import { setFactionLooks } from '../../shared-types/factions.js';
 import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
 import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
+import type { PredictionStepCtx } from './prediction/predictionStepCtx.js';
+import { FIXED_MS, MAX_CATCH_UP_TICKS, MAX_OVER_PREDICTION_TICKS, stepInputTick, predictFrameEnergy, sendCapSentinel } from './prediction/inputStep.js';
 import { drainScheduledDamageSpawns, updateLocalShipMirror } from './mirror/localShipPass.js';
 import { updateSpectatorPlacement, updateServerGhost, updateSwarmMirror, updateRemoteShipsMirror, updateProjectilesMirror, expireFrameState, updateDroneHostility } from './mirror/worldPasses.js';
 import { fittedCargoMul } from '../../shared-types/blueprints.js';
@@ -112,33 +114,7 @@ import {
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
-import { WARP_SPEED } from '../../core/physics/warpDrive.js';
-/** Phase 4 travel state (sector-to-sector trip), seconds: accelerate out of
- *  the old sector, the shortest trip (it stretches while loading), and the
- *  deceleration into the new one. Feel knobs. */
-const TRAVEL_OUT_S = 3;
-const TRAVEL_MIN_S = 25;
-/** The approach into the new sector: brake from warp speed to a glide
- *  (TRAVEL_BRAKE_S), then glide the last TRAVEL_GLIDE_D slowing evenly to a
- *  stop, so whatever is near the arrival point passes at a speed you can see. */
-const TRAVEL_BRAKE_S = 2.5;
-const TRAVEL_GLIDE_V = 2500;
-const TRAVEL_GLIDE_D = 4000;
-const TRAVEL_GLIDE_S = (2 * TRAVEL_GLIDE_D) / TRAVEL_GLIDE_V;
-const TRAVEL_IN_S = TRAVEL_BRAKE_S + TRAVEL_GLIDE_S;
-const TRAVEL_BRAKE_D = TRAVEL_GLIDE_V * TRAVEL_BRAKE_S + ((WARP_SPEED - TRAVEL_GLIDE_V) * TRAVEL_BRAKE_S) / 3;
-const TRAVEL_IN_D = TRAVEL_BRAKE_D + TRAVEL_GLIDE_D;
-
-/** Approach progress `tau` s in: [distance covered, speed]. Pure. */
-export function travelApproach(tau: number): [number, number] {
-  if (tau <= TRAVEL_BRAKE_S) {
-    const u = Math.max(0, tau) / TRAVEL_BRAKE_S;
-    const span = (WARP_SPEED - TRAVEL_GLIDE_V) * TRAVEL_BRAKE_S;
-    return [TRAVEL_GLIDE_V * tau + span * (u - u * u + (u * u * u) / 3), TRAVEL_GLIDE_V + (WARP_SPEED - TRAVEL_GLIDE_V) * (1 - u) * (1 - u)];
-  }
-  const s = Math.min(TRAVEL_GLIDE_S, tau - TRAVEL_BRAKE_S);
-  return [TRAVEL_BRAKE_D + TRAVEL_GLIDE_V * (s - (s * s) / (2 * TRAVEL_GLIDE_S)), TRAVEL_GLIDE_V * (1 - s / TRAVEL_GLIDE_S)];
-}
+import { stepTravel, TRAVEL_OUT_S, type TravelTrip } from './mirror/travelPass.js';
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
 import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets, type RemoteShipOffset } from './remoteLerpOffsets.js';
@@ -159,9 +135,8 @@ import { mountRangeFactor } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, isMiningTool } from '@core/combat/WeaponCatalogue';
-import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
-import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
-import { RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
+import { spendEnergy, resolveSlotEnergyCost } from '@core/combat/Energy';
+import type { ControlBits } from '@core/combat/disable';
 import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
 import { makeHelmCourseMark, resolveHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
 import { resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
@@ -175,7 +150,7 @@ import {
 import { localFireSpawnsGhost, localFirePredicts } from '../combat/LocalBeam';
 import { mountMuzzleRay, type MuzzleRay } from '../render/beamStyles';
 import type { TouchInput } from '../input/TouchInput';
-import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
+import { IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
 import { FireControlClient } from './FireControlClient';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
@@ -258,14 +233,6 @@ function nextShotId(): string {
 // TOUCH_TURN_TOLERANCE) caused analog-noise toggles at ~10 Hz under
 // steady stick use → sustained prediction-correction spiral on mobile.
 // See `src/client/input/joystickToInput.ts` + its unit lock.
-/** Idle-input heartbeat (network-discipline P4). When the control state has
- *  not changed for this long, we re-send the latest state once anyway, so the
- *  server can detect a missing client (idle != disconnected) and so a UDP
- *  restart-style replacement of the last-applied input still happens. 250 ms
- *  is well below `lastSentInput` perception lag for a held-key change but
- *  well above the per-tick 16.67 ms cadence — net result is a 60 → ~4 Hz
- *  drop on idle. */
-const INPUT_HEARTBEAT_MS = 250;
 
 // Beam draw bands moved to the pure, unit-locked `combat/beamBands.ts` seam
 // (campaign 5.2): optimal/max derive from the weapon catalogue def (the SAME
@@ -1459,6 +1426,27 @@ export class ColyseusGameClient {
     gameFrameMs: (): number => c.gameFrameMs(),
     placeShells: (displayTick: number): void => c.placeShells(displayTick),
     displayHitscan: (): DisplayPoseHitscan => c.displayHitscan(),
+  }))(this);
+  /** The ctx the `tickPhysics` prediction passes (`prediction/`) run with, built once (#14). */
+  private readonly _predStepCtx: PredictionStepCtx = ((c: ColyseusGameClient): PredictionStepCtx => ({
+    get mirror() { return c.mirror; }, get clock() { return c.clock; },
+    get predWorld() { return c.predWorld; }, get reconciler() { return c.reconciler; },
+    get touchInput() { return c.touchInput; }, get localDead() { return c.localDead; },
+    get inputTick() { return c.inputTick; }, set inputTick(v) { c.inputTick = v; },
+    get predEnergy() { return c.predEnergy; }, set predEnergy(v) { c.predEnergy = v; },
+    get energySeeded() { return c._energySeeded; }, set energySeeded(v) { c._energySeeded = v; },
+    get joystickInputState() { return c._joystickInputState; }, set joystickInputState(v) { c._joystickInputState = v; },
+    get warpRequest() { return c.warpRequest; }, set warpRequest(v) { c.warpRequest = v; },
+    get lastSentInputState() { return c.lastSentInputState; }, set lastSentInputState(v) { c.lastSentInputState = v; },
+    get lastSentInputAtMs() { return c.lastSentInputAtMs; }, set lastSentInputAtMs(v) { c.lastSentInputAtMs = v; },
+    get lastLocalTickAtMs() { return c._lastLocalTickAtMs; }, set lastLocalTickAtMs(v) { c._lastLocalTickAtMs = v; },
+    get clockAnchorPerfNow() { return c.clockAnchorPerfNow; }, get clockAnchorServerTick() { return c.clockAnchorServerTick; },
+    get helmOrder() { return c._helmOrder; }, get helmOut() { return c._helmOut; }, get disableBits() { return c._disableBits; },
+    get inputRecScratch() { return c._inputRecScratch; }, get applyInputScratch() { return c._applyInputScratch; },
+    get sendInputScratch() { return c._sendInputScratch; }, get sendWarpInputScratch() { return c._sendWarpInputScratch; },
+    clearHelm: (): void => c.clearHelm(), stepHelm: (): void => c.stepHelm(),
+    isLocallyDisabled: (): boolean => c.isLocallyDisabled(), gameLeadTicks: (): number => c.gameLeadTicks(),
+    applyRemoteInputs: (): void => c.applyRemoteInputs(), tickLocalMountAim: (dt: number): void => c.tickLocalMountAim(dt),
   }))(this);
   /** The live connection's client + room binder, set once per `connect()`;
    *  the `transit_ready` handoff (handlers/transitHandlers.ts) consumes the
@@ -3715,7 +3703,7 @@ export class ColyseusGameClient {
     if (this._travel !== null && localId !== null) {
       const e = this.mirror.ships.get(localId);
       if (e) {
-        this.stepTravel(this._travel, e, localId);
+        stepTravel(pc, this._travel, e, localId);
       }
     }
 
@@ -3849,17 +3837,6 @@ export class ColyseusGameClient {
     // Inbound-drain is now done by `tickInbound` (called from
     // gameRafLoop above the loading pause boundary). tickPhysics is
     // the input-loop + physics-step portion only.
-    const FIXED_MS = 1000 / 60;
-    const MAX_CATCH_UP_TICKS = 4;
-    // Spiral fix (plan: spiral-fix, Phase 2): cap inputTick over-prediction
-    // at 60 ticks beyond ackedTick (~1 sec at 60 Hz). 2× the healthy-network
-    // CEILING_TICKS=30 ticksAhead ceiling, so the cap never engages on the
-    // healthy local profile but bounds bufferbloat-induced spiral on mobile
-    // networks. NOT capping inputTick itself (the 6e4d9c2 anti-pattern) —
-    // capping the CONDITION `inputTick - ackedTick`. Companion change:
-    // `keyboard.read()` hoisted out of the loop so cap-engaged RAFs still
-    // emit a sentinel input + diagnostic log.
-    const MAX_OVER_PREDICTION_TICKS = 60;
     this.followSpeedGlide();
     const ticksSinceAnchor = Math.floor((this.gameClock.now() - this.clockAnchorPerfNow) / FIXED_MS);
     const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.gameLeadTicks();
@@ -3912,281 +3889,7 @@ export class ColyseusGameClient {
         break;
       }
       stepsThisFrame++;
-      let tcThrust = false, tcTurnLeft = false, tcTurnRight = false, tcFire = false;
-      if (this.touchInput) {
-        tcFire = this.touchInput.getFireHeld();
-        const v = this.touchInput.getJoystickVector();
-        const localId = this.mirror.localPlayerId;
-        // Render-jitter-fix Phase 1: read REAL-TIME predWorld angle for
-        // the joystick hysteresis. The mirror angle now carries the
-        // dead-reckon term (up to 32 ms × angvel ≈ 0.08 rad at max
-        // turn rate), which is 2× the joystick hysteresis band
-        // (TURN_OFF_RAD=0.04 in joystickToInput). Reading the mirror
-        // could perturb the engaged/disengaged crossing and cause
-        // phantom turn-direction reversal under sustained held input —
-        // exactly the spiral-fix bug class the joystick hysteresis was
-        // built to prevent. Mirror fallback covers the boot window
-        // before predWorld has a ship body.
-        const predState = localId ? this.predWorld?.getShipState(localId) ?? null : null;
-        const localShip = localId ? this.mirror.ships.get(localId) : null;
-        const realAngle = predState?.angle ?? localShip?.angle ?? null;
-        if (realAngle !== null) {
-          // 2026-05-20 spiral fix: pure resolver with HYSTERESIS bands.
-          // Pre-fix `delta > TOUCH_TURN_TOLERANCE` had no off-threshold;
-          // as the ship rotated toward target, delta crossed 0.08 rad,
-          // turn toggled — analog stick noise then nudged it back across,
-          // toggled again. Empirical ~10 Hz state-change rate → sustained
-          // ~45-70 % rollingCorrRate spiral. Unit-locked in
-          // src/client/input/joystickToInput.test.ts.
-          const next = joystickToInput(v, realAngle, this._joystickInputState);
-          this._joystickInputState = next;
-          tcTurnLeft = next.turnLeft;
-          tcTurnRight = next.turnRight;
-          tcThrust = next.thrust;
-        }
-      }
-      // v4 A — a disabled ship's engines and weapons are off: the SAME shared
-      // gate the server applies to our input (#15), so prediction agrees.
-      // Helm orders: WASD / the stick override (and cancel) a course.
-      if (this._helmOrder.active) {
-        if (kb.thrust || kb.turnLeft || kb.turnRight || kb.reverse || tcThrust || tcTurnLeft || tcTurnRight) this.clearHelm();
-        else this.stepHelm();
-      }
-      const helm = this._helmOrder.active ? this._helmOut : null;
-      const db = this._disableBits;
-      db.thrust = kb.thrust || tcThrust || (helm?.thrust ?? false);
-      db.turnLeft = kb.turnLeft || tcTurnLeft || (helm?.turnLeft ?? false);
-      db.turnRight = kb.turnRight || tcTurnRight || (helm?.turnRight ?? false);
-      db.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false) || aimInput.getBoostHeld();
-      // Reverse is keyboard-only in v1 — no on-screen button on touch yet.
-      db.reverse = kb.reverse;
-      const disabledNow = gateDisabledInput(this.isLocallyDisabled(), db);
-      const thrust    = db.thrust;
-      const turnLeft  = db.turnLeft;
-      const turnRight = db.turnRight;
-      const fireHeld  = !disabledNow && (kb.fireHeld || tcFire);
-      const boost     = db.boost;
-      const reverse   = db.reverse ?? false;
-      const tick = this.inputTick++;
-
-      // Replay-grade input-intent capture (plan: replay infra Phase A).
-      // This is the EXACT raw input state for this tick — what the user
-      // pressed at this client-side wall-clock moment. Required by the
-      // deterministic replay harness to drive the same input stream into
-      // a Node-side ColyseusGameClient instance. Logged BEFORE the
-      // throttle check (`inputSent` is sampled / state-change-gated; this
-      // is the ground truth of what the loop SAW). Joystick vector pulled
-      // raw via `getJoystickVector()` so the replay can reconstruct
-      // analog stick motion (not just the booleans it resolved to).
-      // HIGH_VOLUME_TAGS gate (Phase 5e — invariant #14). Skip the
-      // joystick-vector read + object literal when not in diag mode.
-      if (isFullDiagMode()) {
-        const _jv = this.touchInput?.getJoystickVector() ?? null;
-        logEvent('input_intent', {
-          tick,
-          thrust,
-          turnLeft,
-          turnRight,
-          boost,
-          reverse,
-          fireHeld,
-          joystickX: _jv ? Math.round(_jv.x * 1000) / 1000 : null,
-          joystickY: _jv ? Math.round(_jv.y * 1000) / 1000 : null,
-        });
-      }
-
-      // No client-side drone AI tick (drone-snapshot-interpolation pivot,
-      // 2026-05-18). Drones are pure snapshot-interpolated from the binary
-      // swarm wire; the server simulates every drone authoritatively. No
-      // client brain ⇒ no divergent inputs ⇒ nothing to reconcile/snap.
-      if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
-        const nowMs = this.clock.now();
-        // Boost is now an independent every-tick forward impulse (no longer
-        // gated on thrust), so it MUST be energy-gated to match the server:
-        // `InputHandler` strips the boost bit when the pool can't afford
-        // BOOST_TICK_COST. Predicting an un-gated boost while the server
-        // applies none = continuous per-tick velocity divergence once the
-        // pool empties (the netgate's rollingCorrRate / maxDriftUnits class).
-        // `predEnergy` is hard-reconciled to server energy each snapshot, so
-        // this gate tracks the server's; the fire path gates the same way.
-        // We predict, record, SEND and drain on the SAME gated value so client
-        // and server stay byte-aligned (minimises corrections).
-        const boostApplied = boost && canAfford(this.predEnergy, BOOST_TICK_COST);
-        // Pooled per-tick scratches (data-driven from the 2026-05-30 CDP
-        // profile — `tickPhysics` was rank-2 at 81 KB / 7.5 %). The
-        // Reconciler copies `rec` into its own ring buffer; predWorld
-        // applyInput reads the fields into Rapier. Both safe to reuse.
-        const rec = this._inputRecScratch;
-        rec.tick = tick;
-        rec.thrust = thrust;
-        rec.turnLeft = turnLeft;
-        rec.turnRight = turnRight;
-        rec.boost = boostApplied;
-        rec.reverse = reverse;
-        rec.sentAt = nowMs;
-        const wx = this.warpRequest?.x, wy = this.warpRequest?.y;
-        rec.warpX = wx;
-        rec.warpY = wy;
-        const applyArg = this._applyInputScratch;
-        applyArg.thrust = thrust;
-        applyArg.turnLeft = turnLeft;
-        applyArg.turnRight = turnRight;
-        applyArg.boost = boostApplied;
-        applyArg.reverse = reverse;
-        applyArg.warpX = wx;
-        applyArg.warpY = wy;
-        this.predWorld.applyInput(this.mirror.localPlayerId, applyArg);
-        this.reconciler.recordInput(rec);
-        // Arrived: stop asking (the next input carries none, which also
-        // releases the server's latch on this target).
-        if (this.warpRequest !== null && this.predWorld.warpArrived(this.mirror.localPlayerId)) this.warpRequest = null;
-        // Idle-suppression — narrowed (2026-05-06): throttle ONLY when current
-        // AND last-sent state are both fully idle (all-false). Why: when ANY
-        // key is held, the server's worker queue stays populated and the
-        // held-input branch never fires; if we throttled in that state, the
-        // worker would synthesise an ack trail across held re-applications,
-        // and a subsequent state-change message would jump the ack past the
-        // intermediate synthesised ticks — skipping a tick of physics
-        // application that the client's prediction DID apply locally. Result:
-        // ~8 u of drift per release event on a fast-moving ship. The
-        // all-idle restriction keeps throttling safe because held all-idle
-        // adds zero impulse, so a skipped tick is physically equivalent.
-        const last = this.lastSentInputState;
-        // A held warp request is never idle (the server must keep receiving it).
-        const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined;
-        const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined;
-        const stateChanged = !last
-          || last.thrust !== thrust
-          || last.turnLeft !== turnLeft
-          || last.turnRight !== turnRight
-          || last.boost !== boostApplied
-          || last.reverse !== reverse
-          || last.warpX !== wx
-          || last.warpY !== wy;
-        const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
-        const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
-        if (!throttle) {
-          // Pooled send payload — colyseus.js serialises the literal
-          // before returning so reusing the scratch ref is safe.
-          if (wx !== undefined && wy !== undefined) {
-            const w = this._sendWarpInputScratch;
-            w.tick = tick; w.thrust = thrust; w.turnLeft = turnLeft; w.turnRight = turnRight;
-            w.boost = boostApplied; w.reverse = reverse; w.warpX = wx; w.warpY = wy;
-            this.room.send('input', w);
-          } else {
-          const sendArg = this._sendInputScratch;
-          sendArg.tick = tick;
-          sendArg.thrust = thrust;
-          sendArg.turnLeft = turnLeft;
-          sendArg.turnRight = turnRight;
-          sendArg.boost = boostApplied;
-          sendArg.reverse = reverse;
-          this.room.send('input', sendArg);
-          }
-          // lastSentInputState retains state ACROSS ticks — must NOT
-          // alias the per-tick scratch (would mutate the stored
-          // last-state on the next tick). Reuse the existing record if
-          // present (first-tick falls through to fresh alloc).
-          const stored = this.lastSentInputState;
-          if (stored) {
-            stored.thrust = thrust;
-            stored.turnLeft = turnLeft;
-            stored.turnRight = turnRight;
-            stored.boost = boostApplied;
-            stored.reverse = reverse;
-            stored.warpX = wx;
-            stored.warpY = wy;
-          } else {
-            this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy };
-          }
-          this.lastSentInputAtMs = nowMs;
-          if ((stateChanged || (tick % 60) === 0) && isFullDiagMode()) {
-            logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost: boostApplied, reverse });
-          }
-        }
-        // Show the local exhaust trail without waiting an RTT for the server
-        // to confirm — the next snapshot will overwrite from server truth.
-        // Boost is now thrust-independent, so the trail shows whenever boost is
-        // actually applied (energy-affordable), matching the server's
-        // `boostingPlayers` membership + the predEnergy drain below.
-        if (this.mirror.boostingShips) {
-          if (boostApplied) this.mirror.boostingShips.add(this.mirror.localPlayerId);
-          else this.mirror.boostingShips.delete(this.mirror.localPlayerId);
-        }
-        if (this.mirror.thrustingShips) {
-          if (thrust) this.mirror.thrustingShips.add(this.mirror.localPlayerId);
-          else this.mirror.thrustingShips.delete(this.mirror.localPlayerId);
-        }
-      }
-      // Stage 3 — apply each remote ship's last-known input before advancing
-      // physics, so remote bodies forward-predict in lockstep with the local
-      // input loop. Bounded by STAGE_3_MAX_LOOKAHEAD_TICKS per snapshot;
-      // remotes whose intent isn't tracking (3 consecutive corrections > 5 u)
-      // skip this and integrate with damping only.
-      this.applyRemoteInputs();
-      // (Phase 3 AI tick now runs at the TOP of this iteration, before
-      // applyInput, to match the server's "post-step state → AI" ordering.)
-      // Always advance physics — remote ships and obstacles must keep moving even while dead.
-      if (this.predWorld) {
-        this.predWorld.tick(1 / 60);
-        // Stamp the wall-clock time this state STANDS FOR (when its tick
-        // boundary was due), so `updateMirror`'s dead-reckon is measured
-        // from there. Stamping the processing time drew the ship a tick
-        // ahead after a 2-tick frame and then stalled it: the fly-by judder
-        // (renderTickPhase.ts; lock: capital-flyby-smooth.spec.ts).
-        // ...advanced one tick per tick and only SLEWED toward the anchor-based
-        // due time: the anchor follows snapshot arrival, and a late snapshot
-        // moved it a whole tick, lurching the drawn ship (slewTickDue).
-        const due = tickBoundaryDueMs(
-          this.clockAnchorPerfNow, this.clockAnchorServerTick, this.gameLeadTicks(), this.inputTick, FIXED_MS,
-        );
-        this._lastLocalTickAtMs = this._lastLocalTickAtMs < 0
-          ? due
-          : slewTickDue(this._lastLocalTickAtMs, due, FIXED_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS);
-      }
-
-      // Replay-grade per-tick predicted-pose capture (plan: replay infra
-      // Phase A). After `applyInput` + `world.tick`, the local ship's
-      // predWorld pose IS the prediction for this tick. The replay harness
-      // re-runs the same predWorld through the same input stream and
-      // compares against THIS value to confirm bit-identical simulation
-      // (the ground-truth check that makes the harness a faithful
-      // surrogate for on-device behaviour). Skip-safe when localDead /
-      // pre-init: predWorld may not have a ship body yet.
-      // HIGH_VOLUME_TAGS gate (Phase 5e — invariant #14). Skip the
-      // predWorld read + object literal when not in diag mode.
-      if (!this.localDead && this.predWorld && this.mirror.localPlayerId && isFullDiagMode()) {
-        const _ps = this.predWorld.getShipState(this.mirror.localPlayerId);
-        if (_ps) {
-          logEvent('local_pose_predicted', {
-            tick,
-            x: Math.round(_ps.x * 1000) / 1000,
-            y: Math.round(_ps.y * 1000) / 1000,
-            vx: Math.round(_ps.vx * 1000) / 1000,
-            vy: Math.round(_ps.vy * 1000) / 1000,
-            angle: Math.round(_ps.angle * 10000) / 10000,
-            angvel: _ps.angvel !== undefined ? Math.round(_ps.angvel * 10000) / 10000 : 0,
-          });
-        }
-      }
-
-      // Multi-mount/turret refactor (Phase 4b.2): client-side turret aim
-      // update for the local ship. Runs every physics tick so the
-      // rotation stays continuous and the beams emerge from the slewed
-      // mount direction. Skipped while dead (no aim to compute) and when
-      // the player has no predWorld state yet.
-      this.tickLocalMountAim(1 / 60);
-
-      // (Fire dispatch HOISTED out of this loop — see below. It gates on
-      //  wall-clock cooldown so a stalled inputTick can't suppress fires
-      //  the user feels they've earned. Loop body kept lean.)
-
-      // beam-attach fix (capture pe6rdt): NO hard-clear when fire isn't
-      // held. The local hitscan beam persists ~LIVE_BEAM_PERSIST_MS past
-      // the last shot (expired in updateMirror) and is redrawn from
-      // `mirror.ships` every frame, so a tap / held burst reads as ONE
-      // continuous SHIP-ATTACHED beam — server lag/correction invisible.
-      // Death still clears it via killEntity's liveBeams.clear().
+      stepInputTick(this._predStepCtx, this.room, kb);
     }
 
     // ── Fire dispatch (hoisted from the catch-up loop, 2026-05-27) ──
@@ -4232,23 +3935,7 @@ export class ColyseusGameClient {
     // mirroring the server's tickEnergy. Fire drain happens in sendFire. The
     // snapshot reconcile hard-sets the value, so this only smooths the bar
     // between snapshots. Scalar core helpers ⇒ no allocation.
-    if (this.mirror.localPlayerId && stepsThisFrame > 0) {
-      const localKindId = this.mirror.ships.get(this.mirror.localPlayerId)?.kind;
-      const ek = getShipKind(localKindId ?? null);
-      const emax = ek.energyMax ?? 100;
-      // Before the server's first own-ship energy: start full, as the server
-      // spawned it (only once the kind is known, or we'd seed another kind's max).
-      if (!this._energySeeded && localKindId) {
-        this.predEnergy = emax;
-        this._energySeeded = true;
-      }
-      const eregen = ek.energyRegenRate ?? 0.25;
-      const boosting = this.mirror.boostingShips?.has(this.mirror.localPlayerId) ?? false;
-      for (let s = 0; s < stepsThisFrame; s++) {
-        this.predEnergy = regenEnergyStep(this.predEnergy, emax, eregen);
-        if (boosting) this.predEnergy = spendEnergy(this.predEnergy, BOOST_TICK_COST);
-      }
-    }
+    predictFrameEnergy(this._predStepCtx, stepsThisFrame);
 
     // Sentinel input on zero-iteration cap-engaged RAFs (plan: spiral-fix,
     // Phase 2 step 3). When the cap stops the catch-up loop on its FIRST
@@ -4260,116 +3947,7 @@ export class ColyseusGameClient {
     // baseline)` — no ack regression, idempotent boolean re-apply).
     // Throttle replicates the in-loop idle-suppression to avoid spamming
     // the server with stale all-idle inputs.
-    if (
-      stepsThisFrame === 0
-      && capEngaged
-      && !this.localDead
-      && this.predWorld
-      && this.reconciler
-      && this.mirror.localPlayerId
-    ) {
-      let tcThrust2 = false, tcTurnLeft2 = false, tcTurnRight2 = false, tcFire2 = false;
-      if (this.touchInput) {
-        tcFire2 = this.touchInput.getFireHeld();
-        const v = this.touchInput.getJoystickVector();
-        // Render-jitter-fix Phase 1: same rule as the in-loop joystick
-        // read — hysteresis MUST track REAL-TIME predWorld angle, not
-        // the dead-reckoned mirror angle.
-        const predState = this.predWorld?.getShipState(this.mirror.localPlayerId) ?? null;
-        const localShip = this.mirror.ships.get(this.mirror.localPlayerId);
-        const realAngle = predState?.angle ?? localShip?.angle ?? null;
-        if (realAngle !== null) {
-          const next = joystickToInput(v, realAngle, this._joystickInputState);
-          this._joystickInputState = next;
-          tcTurnLeft2 = next.turnLeft;
-          tcTurnRight2 = next.turnRight;
-          tcThrust2 = next.thrust;
-        }
-      }
-      // Helm: the sentinel re-sends the last helm bits (no new tick to step).
-      const helm2 = this._helmOrder.active ? this._helmOut : null;
-      const db2 = this._disableBits;
-      db2.thrust = kb.thrust || tcThrust2 || (helm2?.thrust ?? false);
-      db2.turnLeft = kb.turnLeft || tcTurnLeft2 || (helm2?.turnLeft ?? false);
-      db2.turnRight = kb.turnRight || tcTurnRight2 || (helm2?.turnRight ?? false);
-      db2.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false) || aimInput.getBoostHeld();
-      db2.reverse = kb.reverse;
-      gateDisabledInput(this.isLocallyDisabled(), db2);
-      const thrust    = db2.thrust;
-      const turnLeft  = db2.turnLeft;
-      const turnRight = db2.turnRight;
-      // tcFire2 is sampled for parity with the in-loop block but the
-      // sentinel never spawns a fire — fire is per-tick and we're not
-      // advancing inputTick. Reading it (rather than dropping the var)
-      // keeps the touch state machine consistent with the in-loop path.
-      void tcFire2;
-      const boost     = db2.boost;
-      // Energy-gate boost identically to the per-tick path so the sentinel
-      // re-send carries the same value the server will apply (and that the
-      // per-tick path predicted) — keeps `lastSentInputState` consistent.
-      const boostApplied = boost && canAfford(this.predEnergy, BOOST_TICK_COST);
-      const reverse   = db2.reverse ?? false;
-      const tick = this.inputTick; // NOT incremented; sentinel rides at the last-sent tick
-      const nowMs = this.clock.now();
-      const last = this.lastSentInputState;
-      const wx = this.warpRequest?.x, wy = this.warpRequest?.y;
-      const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined;
-      const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined;
-      const stateChanged = !last
-        || last.thrust !== thrust
-        || last.turnLeft !== turnLeft
-        || last.turnRight !== turnRight
-        || last.boost !== boostApplied
-        || last.reverse !== reverse
-        || last.warpX !== wx
-        || last.warpY !== wy;
-      const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
-      const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
-      if (!throttle) {
-        // Pooled send payload — reuses the same scratch as the per-tick
-        // path. cap-engaged sentinel fires at-most-once per RAF (60-120
-        // /sec) so the alloc rate here is lower than the per-tick path,
-        // but the pattern duplicates — keep the pool consistent.
-        if (wx !== undefined && wy !== undefined) {
-          const w = this._sendWarpInputScratch;
-          w.tick = tick; w.thrust = thrust; w.turnLeft = turnLeft; w.turnRight = turnRight;
-          w.boost = boostApplied; w.reverse = reverse; w.warpX = wx; w.warpY = wy;
-          this.room.send('input', w);
-        } else {
-        const sendArg = this._sendInputScratch;
-        sendArg.tick = tick;
-        sendArg.thrust = thrust;
-        sendArg.turnLeft = turnLeft;
-        sendArg.turnRight = turnRight;
-        sendArg.boost = boostApplied;
-        sendArg.reverse = reverse;
-        this.room.send('input', sendArg);
-        }
-        // lastSentInputState retains state across ticks — mutate in
-        // place to avoid aliasing the per-tick scratch.
-        const stored = this.lastSentInputState;
-        if (stored) {
-          stored.thrust = thrust;
-          stored.turnLeft = turnLeft;
-          stored.turnRight = turnRight;
-          stored.boost = boostApplied;
-          stored.reverse = reverse;
-          stored.warpX = wx;
-          stored.warpY = wy;
-        } else {
-          this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy };
-        }
-        this.lastSentInputAtMs = nowMs;
-        // Always log on sentinel send (no stateChanged / tick%60 gate) so
-        // `assertInputFlowMaintained` sees the per-RAF cadence during a
-        // sustained cap engagement — this is the explicit anti-regression
-        // for the 6e4d9c2 class. Gated by full-diag-mode at the callsite
-        // (Phase 5e — invariant #14); the assertion only runs under diag.
-        if (isFullDiagMode()) {
-          logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost: boostApplied, reverse });
-        }
-      }
-    }
+    sendCapSentinel(this._predStepCtx, this.room, kb, stepsThisFrame, capEngaged);
 
     // One ring-buffer entry per RAF — diagnostic + replay anchor data.
     // Plan: replay infra Phase A (2026-05-21) — UNSAMPLED. Was every 6th
@@ -4769,66 +4347,7 @@ export class ColyseusGameClient {
 
   /** Phase 4 travel state: the sector-to-sector trip under way (the local
    *  ship's synthetic flight), or null. */
-  private _travel: {
-    x: number; y: number; dx: number; dy: number; angle: number; lastMs: number; startMs: number;
-    phase: 'out' | 'cruise' | 'in'; inStartMs: number; ax: number; ay: number; landed: boolean;
-  } | null = null;
-
-  /**
-   * One frame of the trip (Phase 4 travel state):
-   *  - OUT: accelerate along the heading (ease-in over TRAVEL_OUT_S); the old
-   *    sector stays live and falls behind (the room swap waits until then).
-   *  - CRUISE: warp speed through empty space while the destination loads.
-   *  - IN: once at least TRAVEL_MIN_S - TRAVEL_IN_S has passed and the
-   *    destination is loaded, the ship is placed on approach (TRAVEL_IN_S of
-   *    deceleration out from its arrival point, along its heading) and slows
-   *    into the arrival point, so the new sector comes into view as you fly
-   *    in. The placement jump is recorded (`mirror.travelJumpX/Y`) so the
-   *    renderer carries the sky across it. When the approach ends the trip is
-   *    done: the minimum-display gate opens and the ship arrives for everyone.
-   */
-  private stepTravel(t: NonNullable<typeof this._travel>, e: ShipRenderState, localId: string): void {
-    const now = this.clock.now();
-    const dt = Math.min(0.1, Math.max(0, (now - t.lastMs) / 1000));
-    t.lastMs = now;
-    const el = (now - t.startMs) / 1000;
-    if (t.phase !== 'in') {
-      const arrival = this.predWorld?.getShipState(localId);
-      if (el >= TRAVEL_MIN_S - TRAVEL_IN_S && arrival && useUIStore.getState().firstSnapshotApplied) {
-        // Approach: placed TRAVEL_IN_D out from the arrival point along the heading.
-        const sx = arrival.x - t.dx * TRAVEL_IN_D, sy = arrival.y - t.dy * TRAVEL_IN_D;
-        this.mirror.travelJumpX = (this.mirror.travelJumpX ?? 0) + (sx - t.x);
-        this.mirror.travelJumpY = (this.mirror.travelJumpY ?? 0) + (sy - t.y);
-        t.phase = 'in'; t.inStartMs = now; t.ax = arrival.x; t.ay = arrival.y;
-        t.x = sx; t.y = sy;
-      } else {
-        const ramp = Math.min(1, el / TRAVEL_OUT_S);
-        const v = WARP_SPEED * ramp * ramp;
-        t.x += t.dx * v * dt;
-        t.y += t.dy * v * dt;
-        if (ramp >= 1) t.phase = 'cruise';
-        e.vx = t.dx * v; e.vy = t.dy * v;
-      }
-    }
-    if (t.phase === 'in') {
-      // Brake, then glide onto the arrival point (travelApproach).
-      const tau = (now - t.inStartMs) / 1000;
-      const [d, v] = travelApproach(tau);
-      t.x = t.ax - t.dx * (TRAVEL_IN_D - d);
-      t.y = t.ay - t.dy * (TRAVEL_IN_D - d);
-      e.vx = t.dx * v; e.vy = t.dy * v;
-      if (tau >= TRAVEL_IN_S) {
-        t.landed = true;
-        if (!useUIStore.getState().joinMinimumElapsed) useUIStore.getState().setJoinMinimumElapsed(true);
-      }
-    }
-    this.mirror.travelDeep = t.phase === 'cruise';
-    e.x = t.x; e.y = t.y; e.angle = t.angle;
-    // On the run until the ship has landed (then WarpFx draws the drop, while
-    // the arrival handshake finishes).
-    const w = t.landed ? undefined : 2;
-    if (e.warp !== w) e.warp = w;
-  }
+  private _travel: TravelTrip | null = null;
 
   /** ms until the ship has flown out of the old sector (the room swap waits
    *  for this, so the old sector never vanishes in view). */

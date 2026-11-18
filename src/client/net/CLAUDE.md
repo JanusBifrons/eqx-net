@@ -8,5 +8,6 @@ Rules for the client network layer. `ColyseusClient.ts` is at its size cap (`scr
 - **A per-entity timer or state machine is its own module** (like `drawnShellTiming.ts`, `damageNumberTargets.ts`), never inline in `ColyseusClient.ts`.
 - **Never add a `ColyseusClient` field for one feature;** the feature's module owns its state.
 - **A per-frame mirror pass** is a function in `mirror/` taking the once-built `MirrorPassCtx` (getters for reassigned fields), called in order from `updateMirror`.
+- **A prediction-step pass** is a function in `prediction/` taking the once-built `PredictionStepCtx`, called in order from `tickPhysics`.
 - **`snapshot` and `swarm` stay inline in `connect()`** (hot path).
 - **Fire control and lock state** live in `FireControlClient.ts` (lock line in `fireControl/`); `ColyseusClient` keeps one-line delegates and reaches prediction/fire dispatch for it through `FireControlHost`.

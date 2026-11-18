@@ -33,6 +33,8 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | A server→client message | Its zod schema in `src/shared-types/messages/` and a row in `ServerMessageSchemas` (`src/shared-types/messages.ts`); a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in `handlers/index.ts`. | live |
 | A per-entity timer / state machine | Its own module, like `drawnShellTiming.ts`, `damageNumberTargets.ts`. | live |
 | A per-frame mirror pass | A function `(ctx, frameNowMs, ...)` in `src/client/net/mirror/` taking the once-built `MirrorPassCtx`, plus one call in `updateMirror`, in frame order. | live |
+| A prediction-step pass (input loop, energy, sentinel) | A function `(ctx, ...)` in `src/client/net/prediction/` taking the once-built `PredictionStepCtx` (getters/setters for reassigned fields), plus one call in `tickPhysics`, in the same order. | live |
+| Sector-trip (travel) flight | `src/client/net/mirror/travelPass.ts` (`stepTravel`, the `TRAVEL_*` knobs, `travelApproach`); `updateMirror` calls it last. | live |
 | Fire control / lock state | `FireControlClient` (`src/client/net/FireControlClient.ts`; the lock line in `fireControl/LockLineClient.ts`); `ColyseusClient` keeps one-line delegates and reaches it as `this.fc`. | live |
 
 ## Client: `PixiRenderer.ts` and `IRenderer.ts` (`src/client/render/CLAUDE.md`)
