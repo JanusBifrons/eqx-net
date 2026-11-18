@@ -12,7 +12,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A client→server message | A `register<Feature>(host)` file in `src/server/rooms/features/` that registers each message through `parsedMessage` (zod parse at the boundary, malformed tracker on failure), plus one row in `features/index.ts`. Reference: `registerTeleportMessages` (`features/teleportMessages.ts`). | live |
+| A client→server message | A `register<Feature>(host)` file in `src/server/rooms/features/` that registers each message through `parsedMessage` (zod parse at the boundary, malformed tracker on failure), plus one row in `features/index.ts`. Reference: `registerTeleportMessages` (`features/teleportMessages.ts`). The room registers no message itself: even flight control, transit and pilot seats are features (`controlMessages.ts`, `transitMessages.ts`, `pilotMessages.ts`). | live |
 | A test-only `test_*` handler | `features/devTestMessages.ts`, gated on testMode or `EQX_ALLOW_DEV_OVERRIDES` (`TestMessageHandlers`). | live |
 | A new subsystem | Construct it in its feature's register function; return `{ dispose }`; periodic work via `gameClock.every` + `guarded`; never a new field + `new X()` in `onCreate`. | planned |
 | Join / leave / respawn logic | `JoinHandler` (`join/`) / `LeaveHandler` / `RespawnHandler` classes. | live |

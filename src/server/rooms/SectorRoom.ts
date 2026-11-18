@@ -138,7 +138,7 @@ import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 /** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
 const NPC_BASE_GAP = sectorSpace(900);
 import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
-import { isWarpDropPoint, pocketPadPair, POCKET_PAD_OWNER, SOLAR_HALF_EXTENT, sectorSites } from '../../core/galaxy/sectorSites.js';
+import { pocketPadPair, POCKET_PAD_OWNER, SOLAR_HALF_EXTENT, sectorSites } from '../../core/galaxy/sectorSites.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
@@ -275,7 +275,6 @@ import {
 import { runAiTick } from './aiTickRunner.js';
 import { AiNeighbourFill } from './AiNeighbourFill.js';
 import { SectorObstacles } from './SectorObstacles.js';
-import { makeInputHandler } from './InputHandler.js';
 import {
   TICK_IDX,
   WORKER_TICK_US_IDX,
@@ -341,14 +340,6 @@ import { getBountyBoard } from '../economy/BountyBoard.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
-import {
-  EngageTransitSchema,
-  CancelTransitSchema,
-  ClientReadyMessageSchema,
-  PilotShipSchema,
-  SpectateSchema,
-  CommandSchema,
-} from '../../shared-types/messages.js';
 import type { EntityStatsMessage } from '../../shared-types/messages/selectionMessages.js';
 import { SelectionStatsSubsystem, type Selection } from './SelectionStatsSubsystem.js';
 import {
@@ -442,7 +433,6 @@ const ENV_TIME_SCALE: number | null = (() => {
 })();
 
 
-const MAX_INPUTS_PER_TICK = 3;
 /** Fire control: lock messages per session per tick (all four kinds together).
  *  A pilot sends one on a lock-line change, two when switching groups mid-hold;
  *  a flood beyond this is silently dropped (src/server/CLAUDE.md thresholds). */
@@ -3263,88 +3253,10 @@ export class SectorRoom extends Room<SectorState> {
       this.gameClock,
     );
 
-    this.onMessage('engage_transit', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId || !this.transitOrchestrator) return;
-      const parsed = EngageTransitSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'engage_transit');
-        return;
-      }
-      // RTS fleet warp: the selected ships warp together (Command view).
-      if (parsed.data.shipIds !== undefined) {
-        this.transitOrchestrator.beginFleetTransit(
-          playerId,
-          parsed.data.targetSectorKey,
-          parsed.data.shipIds,
-          parsed.data.arrival,
-        );
-        return;
-      }
-      this.transitOrchestrator.beginTransit(
-        playerId,
-        parsed.data.targetSectorKey,
-        parsed.data.arrival,
-        parsed.data.shipId,
-      );
-    });
-
-    this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId || !this.transitOrchestrator) return;
-      const parsed = CancelTransitSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'cancel_transit');
-        return;
-      }
-      this.transitOrchestrator.cancelTransit(playerId, 'manual');
-      // …and any fleet warp they ordered (a disconnect does not cancel those).
-      this.transitOrchestrator.cancelFleetTransits(playerId, 'manual');
-    });
-
-    this.onMessage('input', makeInputHandler({
-      sessionToPlayer: this.sessionToPlayer,
-      inputCountThisTick: this.inputCountThisTick,
-      maxInputsPerTick: MAX_INPUTS_PER_TICK,
-      playerToSlot: this.playerToSlot,
-      boostingPlayers: this.boostingPlayers,
-      thrustingPlayers: this.thrustingPlayers,
-      postToWorker: (cmd) => this.postToWorker(cmd),
-      serverTick: () => this.serverTick,
-      shipEnergyOf: (playerId) => this.getActiveShip(playerId)?.energy,
-      isDisabled: (playerId) => this.gateGuard.isDisabled(playerId, this.gameClock.now()),
-      onWarpRequest: (playerId, x, y) => this.warpTravel.noteRequest(playerId, x, y),
-      validWarpPoint: (x, y) => this.sectorKey !== null && isWarpDropPoint(this.sectorKey, x, y, this.solar),
-      logger,
-      malformed: this.malformed,
-    }));
-
-    this.onMessage('fire', (client: Client, raw: unknown) => {
-      this.handleFire(client, raw);
-    });
-
-    this.onMessage('respawn', (client: Client) => {
-      this.handleRespawn(client);
-    });
-
-    // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
-    // Client signals it has finished bootstrapping; server picks an
-    // `arrivalTick` and broadcasts `warp_in` to ALL clients (including
-    // the joiner) so the curtain drop + warp-in animation fires in
-    // sync everywhere. Idempotent — duplicate sends are dropped.
-    this.onMessage('client_ready', (client: Client, raw: unknown) => {
-      const parsed = ClientReadyMessageSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'client_ready');
-        return;
-      }
-      this.handleClientReady(client);
-    });
-
-    // Client-message features (features/index.ts): test-only cues, teleporters,
-    // trade, the research lab, blueprints, cargo, structures, structure
-    // settings, bounties, ship upgrades, fleet commands, fire-control locks,
-    // selection stats and WebRTC signalling.
+    // Client-message features (features/index.ts): transit, flight control,
+    // test-only cues, teleporters, trade, the research lab, blueprints, cargo,
+    // structures, structure settings, bounties, ship upgrades, fleet commands,
+    // fire-control locks, selection stats, WebRTC signalling and pilot seats.
     this.roomFeatures = registerRoomFeatures({
       devTest: {
         testMode: this.testMode,
@@ -3410,6 +3322,20 @@ export class SectorRoom extends Room<SectorState> {
       fleetMsgAllowed: (sid) => this.fleetHooks.fleetMsgAllowed(sid),
       fleet: this.fleet,
       fleetTransit: () => this.transitOrchestrator,
+      transitOrchestrator: () => this.transitOrchestrator,
+      inputCountThisTick: this.inputCountThisTick,
+      playerToSlot: this.playerToSlot,
+      boostingPlayers: this.boostingPlayers,
+      thrustingPlayers: this.thrustingPlayers,
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      isPilotDisabled: (playerId) => this.gateGuard.isDisabled(playerId, this.gameClock.now()),
+      noteWarpRequest: (playerId, x, y) => this.warpTravel.noteRequest(playerId, x, y),
+      solar: () => this.solar,
+      handleFire: (client, raw) => this.handleFire(client, raw),
+      handleRespawn: (client) => this.handleRespawn(client),
+      handleClientReady: (client) => this.handleClientReady(client),
+      reclaimLingeringHull: (client, pid, shipId) => this.reclaimLingeringHull(client, pid, shipId),
+      enterSpectate: (pid) => this.fleetHooks.enterSpectate(pid),
       fleetStatusSoon: this.fleetHooks.fleetStatusSoon,
       serverTick: () => this.serverTick,
       playerToActiveShipInstance: this.playerToActiveShipInstance,
@@ -3417,54 +3343,6 @@ export class SectorRoom extends Room<SectorState> {
       fireControlLocks: () => this.locks,
       selectionStats: () => this.selectionStats,
       webrtcChannelManager: () => this.webrtcChannelManager,
-    });
-
-    // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
-    // The player (a spectator after death, or piloting another hull) reclaims
-    // one of their OWN lingering hulls parked in THIS sector and resumes control
-    // IN-ROOM (no leave/rejoin → no spool, no curtain). Owner-gated: the request
-    // is dropped unless `shipId` is a lingering hull (isActive=false) owned by
-    // the requester and present in this sector. A foreign / active / unknown id
-    // is a silent no-op. The reclaim reuses the lingering-hull reactivation
-    // machinery + `RosterPersistence.markActive` and preserves the rekey/abandon
-    // identity invariant. The fresh `welcome` re-anchors the client's prediction.
-    this.onMessage('pilot_ship', (client: Client, raw: unknown) => {
-      const parsed = PilotShipSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'pilot_ship');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      this.reclaimLingeringHull(client, playerId, parsed.data.shipId);
-    });
-
-    // Equinox Phase-5 audit — STOP PILOTING → spectate (the inverse of
-    // `pilot_ship`). The player toggled Spectate while flying an active hull;
-    // DISPLACE it into a lingering hull so it's parked in-world AND surfaces in
-    // the player's own parked hulls for the in-world Pilot dropdown. Owner-
-    // gated by construction (`displaceActiveHullToLingering` only touches the
-    // CALLER's own active hull) + no-op when they have none (already spectating).
-    this.onMessage('spectate', (client: Client, raw: unknown) => {
-      const parsed = SpectateSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'spectate');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      this.fleetHooks.enterSpectate(playerId);
-    });
-    // RTS command layer — `command` enters command view; today an alias of
-    // `spectate` (same code path), so the parked hull becomes a wingman.
-    this.onMessage('command', (client: Client, raw: unknown) => {
-      if (!CommandSchema.safeParse(raw).success) {
-        this.malformed.record(client.sessionId, 'command');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      this.fleetHooks.enterSpectate(playerId);
     });
 
     this.bus.on('SHIP_DESTROYED', (evt) => {
