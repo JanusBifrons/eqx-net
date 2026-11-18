@@ -47,6 +47,9 @@ const GALAXY_LOADING_SX = {
 /** What a logged-out visitor pressed before the login detour. Module scope:
  *  the chrome remounts across the auth phase. */
 let gatedIntent: 'join' | 'spectate' = 'join';
+/** The hull picked in the Hangar before Sign in (login re-loads the account's
+ *  saved kind, so the pick is restored on return). */
+let gatedKind: ShipKindId | null = null;
 
 /**
  * Imperative handle exposed by {@link GalaxyPickerChrome} so the host
@@ -239,6 +242,7 @@ export function GalaxyPickerChrome({
         setSelectedSectorKey(null);
         const spectate = gatedIntent === 'spectate';
         gatedIntent = 'join';
+        if (gatedKind !== null) { useUIStore.getState().setSelectedShipKind(gatedKind); gatedKind = null; }
         if (spectate && onSpawnSpectatorRef.current) onSpawnSpectatorRef.current(key);
         else setPendingSpawnSector(key);
       },
@@ -248,16 +252,21 @@ export function GalaxyPickerChrome({
     return () => { if (apiRef) apiRef.current = null; };
   }, [apiRef]);
 
-  // The map is the homepage for everyone; joining needs a login (or the
-  // remembered guest choice). A logged-out "Join the fight" stashes the sector
-  // and goes to the auth flow; App opens that sector's join on return.
-  const gateJoin = (sector: string, intent: 'join' | 'spectate'): boolean => {
-    const auth = useAuthStore.getState();
-    if (isWarp || auth.user || auth.guest) return false;
+  // The map is the homepage for everyone. Join opens the Hangar for anyone;
+  // the login (or the remembered guest choice) is asked at Launch. Sign in
+  // stashes the sector and hull and goes to the auth flow; App reopens that
+  // sector's Hangar on return. Spectate (no Hangar) still asks up front.
+  const needsSignIn = useAuthStore((s) => !isWarp && s.user === null && !s.guest);
+  const sendToAuth = (sector: string, intent: 'join' | 'spectate'): void => {
     logEvent('join_auth_gate', { sector, intent });
     gatedIntent = intent;
     useUIStore.getState().setPendingPickSector(sector);
     useUIStore.getState().setPhase('auth');
+  };
+  const gateSpectate = (sector: string): boolean => {
+    const auth = useAuthStore.getState();
+    if (isWarp || auth.user || auth.guest) return false;
+    sendToAuth(sector, 'spectate');
     return true;
   };
 
@@ -526,7 +535,6 @@ export function GalaxyPickerChrome({
         }}
         onJoin={(sector) => {
           logEvent('galaxy_drawer_join', { sector });
-          if (gateJoin(sector, 'join')) return;
           setPendingSpawnSector(sector);
           setSelectedSectorKey(null);
         }}
@@ -536,7 +544,7 @@ export function GalaxyPickerChrome({
                 // Equinox Phase 5 (WS-3) — join as spectator, SKIPPING the ship
                 // picker entirely (go straight to the room with spectator:true).
                 logEvent('galaxy_drawer_spectate', { sector });
-                if (gateJoin(sector, 'spectate')) return;
+                if (gateSpectate(sector)) return;
                 onSpawnSpectator(sector);
                 setSelectedSectorKey(null);
               }
@@ -558,6 +566,13 @@ export function GalaxyPickerChrome({
         sectorName={pendingSpawnSector !== null ? (getSector(pendingSpawnSector)?.name ?? pendingSpawnSector) : ''}
         playerId={storedPlayerId}
         selectedKind={selectedShipKindId}
+        needsSignIn={needsSignIn}
+        onSignIn={(kind, sector) => {
+          gatedKind = kind;
+          setPendingSpawnSector(null);
+          sendToAuth(sector, 'join');
+        }}
+        onPlayAsGuest={() => useAuthStore.getState().continueAsGuest()}
         onClose={() => {
           logEvent('ship_picker_close', { pendingSpawnSector, ts: performance.now() });
           setPendingSpawnSector(null);

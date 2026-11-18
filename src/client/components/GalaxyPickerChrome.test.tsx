@@ -65,19 +65,42 @@ describe('GalaxyPickerChrome', () => {
     expect(onSpawnNewShip.mock.calls[0][1]).toBe('sol-prime');
   });
 
-  it('logged out: Join the fight stashes the sector and goes to login; resumeGatedJoin opens its ship picker', () => {
+  it('logged out: Join opens the Hangar; Sign in stashes sector + hull, and resumeGatedJoin reopens it with that hull', () => {
     useAuthStore.setState({ user: null, token: null, guest: false });
-    useUIStore.setState({ phase: 'galaxy-map', pendingPickSector: null });
+    useUIStore.setState({ phase: 'galaxy-map', pendingPickSector: null, selectedShipKind: 'fighter' });
     const apiRef = { current: null as GalaxyPickerApi | null };
     render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
     act(() => { apiRef.current?.openForSector('sol-prime'); });
     fireEvent.click(screen.getByTestId('sector-drawer-join'));
-    expect(screen.queryByTestId('hangar-window')).not.toBeInTheDocument();
+    // No detour at Join: the Hangar opens, and its footer asks for sign-in.
+    expect(screen.getByTestId('hangar-window')).toBeInTheDocument();
+    expect(useUIStore.getState().phase).toBe('galaxy-map');
+    expect(screen.queryByTestId('hangar-launch')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('ship-card-scout').querySelector('button')!);
+    fireEvent.click(screen.getByTestId('hangar-signin'));
     expect(useUIStore.getState().phase).toBe('auth');
     expect(useUIStore.getState().pendingPickSector).toBe('sol-prime');
-    // Back from login: the stashed Join opens the picker for that sector.
+    // Login re-loads the account's saved kind; the stash wins on return.
+    useUIStore.setState({ selectedShipKind: 'fighter' });
     act(() => { apiRef.current?.resumeGatedJoin('sol-prime'); });
     expect(screen.getByTestId('hangar-window')).toBeInTheDocument();
+    expect(useUIStore.getState().selectedShipKind).toBe('scout');
+    expect(screen.getByTestId('ship-card-scout')).toHaveAttribute('data-selected', '1');
+  });
+
+  it('logged out: Play as guest remembers the choice and launches the picked hull', () => {
+    useAuthStore.setState({ user: null, token: null, guest: false });
+    useUIStore.setState({ phase: 'galaxy-map', pendingPickSector: null });
+    const apiRef = { current: null as GalaxyPickerApi | null };
+    const onSpawnNewShip = vi.fn();
+    render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} onSpawnNewShip={onSpawnNewShip} />);
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    fireEvent.click(screen.getByTestId('sector-drawer-join'));
+    fireEvent.click(screen.getByTestId('ship-card-scout').querySelector('button')!);
+    fireEvent.click(screen.getByTestId('hangar-guest'));
+    expect(useAuthStore.getState().guest).toBe(true);
+    expect(onSpawnNewShip).toHaveBeenCalledWith('scout', 'sol-prime');
+    expect(useUIStore.getState().phase).toBe('galaxy-map');
   });
 
   it('logged out: Spectate goes to login, and resumeGatedJoin then spectates (not the picker)', () => {
