@@ -94,9 +94,10 @@ call-site changes. Logout clears the account key.
 
 ## Known follow-ups
 
-- The roster endpoints (`/dev/player-ships`, abandon) still trust a `playerId`
-  query/body parameter. They should take the auth token and derive the playerId
-  server-side.
+- The roster list (`/hangar/ships`, also `/dev/player-ships`) is read by
+  `playerId`, like the other production reads. Abandon
+  (`POST /hangar/ships/:shipId/abandon`) trusts the `playerId` only for a guest
+  ship; an account-bound ship needs that account's Bearer token.
 - Takeover is per-server-process (all rooms are in one process today).
 
 ## Client rules in detail

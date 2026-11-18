@@ -24,6 +24,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | JWT secret | production throws at boot on a missing / placeholder `JWT_SECRET` | auth boot | Fail-closed auth | — |
 | Input rate limit | max 3 inputs per entity per tick in `onMessage`; excess silently dropped | `MAX_INPUTS_PER_TICK`, `src/server/rooms/SectorRoom.ts` (applied in `InputHandler.ts`) | Input flooding | — |
 | Lock message cap | max 3 per session per tick for `lock_request` / `lock_track` / `lock_cancel` / `set_group_mode` together (`lockMsgAllowed`, cleared at the top of `update()`); excess silently dropped | `MAX_LOCK_MSGS_PER_TICK`, `src/server/rooms/SectorRoom.ts` | Fire-control message flooding | `LockSubsystem.test.ts` |
+| Autopilot route requests | one `nav_route_request` in flight per player, at most one per 500 game ms; excess silently dropped | `NAV_ROUTE_MIN_GAP_MS`, `src/shared-types/messages/navMessages.ts` (`AutopilotRoutes`) | Route-planning flood on the nav worker | `AutopilotRoutes.test.ts` |
 | RTS fleet command cap | max 4 per session per tick for `fleet_order` / `set_mode` / `set_stance` / `form_squad` / `disband_squad` together (`fleetMsgAllowed`, cleared at the top of `update()`); excess silently dropped | `MAX_FLEET_MSGS_PER_TICK`, `src/server/rooms/SectorRoom.ts` | Fleet command flooding ([fleet-command](fleet-command.md)) | — |
 
 ### Snapshot, interest and network ([snapshot-cadence](snapshot-cadence.md))
@@ -58,7 +59,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | Shell view (real ranges) | reach × 1.05, aspect 2.4 | `GUN_VIEW_MARGIN`, `MAX_VIEW_ASPECT`, `src/shared-types/shipScale/tuning.ts` | Who receives `shell_salvo` events ([shell-events](shell-events.md)) | `ShellEventHub.test.ts` |
 | Line-of-fire gate | 2022 candidates, 296 narrow tests per tick | `LINE_OF_FIRE_BUDGET`, `src/shared-types/perf/perfBudgets.ts` | NPC friendly-fire hold checks ([allegiances](allegiances.md)) | `LineOfFireGate.test.ts`, `perfSceneCounts.test.ts` |
 | Blocked line hold | a beam or railgun holds once its line to the target has been blocked for 500 ms of game time; resumes the instant it clears | `BLOCKED_LINE_HOLD_MS`, `src/core/combat/blockedLineHold.ts` | Every turret's fire on a blocked line ([fire-control](fire-control.md#blocked-line-hold-beams-and-railguns-owner-2026-11-18)) | `blockedLineHold.test.ts`, `BlockedLineHold.test.ts`, `blockedLineHoldParity.test.ts`, `beamHoldsOnBlockedLine.test.ts` |
-| Blocked-shot memory | recent-block count halves every 30 ticks | `BLOCK_HALF_LIFE_TICKS`, `src/core/ai/HostileDroneBehaviour.ts` | NPC reaction to a blocked line of fire | `npcLineOfFire.test.ts` |
+| Blocked-shot memory | recent-block count halves every 30 ticks | `BLOCK_HALF_LIFE_TICKS`, `src/core/ai/tactics/fireLanes.ts` | NPC reaction to a blocked line of fire | `npcLineOfFire.test.ts` |
 | Hostility decay | 1800 ticks (30 s) | `FORGET_TICKS`, `src/core/ai/HostileDroneBehaviour.ts` | How long a drone stays hostile | `HostileDroneBehaviour.test.ts` |
 | AI neighbour grid cell | 4 × the default fighter `flockSeparation` (#18); "rebuild + 200 K=8 queries" ≈ 0.02 ms | `NEIGHBOUR_CELL_SEPARATIONS`, `src/server/rooms/AiNeighbourGrid.ts`; `benchmarks/ai-allegiance.bench.ts` | Drone-brain proximity queries | `AiNeighbourGrid.test.ts` |
 
