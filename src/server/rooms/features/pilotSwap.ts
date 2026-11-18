@@ -11,6 +11,7 @@
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';
 import type { Bus } from '../../../core/events/Bus.js';
+import { isEngageablePilotHull } from '../../../core/entity/shipLiveness.js';
 import { effectiveShipShieldMax, type StatAlloc as CoreStatAlloc } from '../../../core/leveling/shipStats.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import { factionLooksWelcomeField } from '../../../shared-types/factions.js';
@@ -78,6 +79,61 @@ export interface PilotSwapHost {
 
 export class PilotSwap {
   constructor(private readonly h: PilotSwapHost) {}
+
+  // ── Spectate-parked hulls: who NPC fire control engages (moved from SectorRoom) ──
+  /** Reused result of `engageablePilotHull` (#14). */
+  private readonly _engageable: { ship: ShipState; pose: ShipPhysicsState } = {
+    ship: undefined as unknown as ShipState, pose: undefined as unknown as ShipPhysicsState,
+  };
+
+  /**
+   * The hull NPC fire control engages on pilot `playerId`'s behalf, with its
+   * pose: liveness classes per `isEngageablePilotHull` (ACTIVE, or the
+   * LINGERING hull they parked by Spectate). TRAVELLING is not excluded (as
+   * before for these callers). Null when there is none. The result object is
+   * shared: read it before the next call.
+   */
+  engageablePilotHull(playerId: string): { ship: ShipState; pose: ShipPhysicsState } | null {
+    const out = this._engageable;
+    const active = this.h.getActiveShip(playerId);
+    if (active !== undefined) {
+      // Flying a hull again (respawn, rejoin, reclaim): no longer spectating.
+      if (this.h.spectateParkedHull.size > 0) this.h.spectateParkedHull.delete(playerId);
+      const pose = this.h.shipPoseCache.get(playerId);
+      // A reclaimed parked hull stays in the world through its join handshake
+      // (`inWorld`, as others keep seeing it): taking its controls must not
+      // drop the AI pilots' locks on it.
+      const inWorld = this.h.pendingJoin().size > 0 &&this.h.pendingJoin().get(playerId)?.inWorld === true;
+      if (!pose || !isEngageablePilotHull(active, inWorld)) return null;
+      out.ship = active; out.pose = pose;
+      return out;
+    }
+    const sid = this.h.spectateParkedHull.get(playerId);
+    if (sid === undefined) return null;
+    const ship = this.h.state().ships.get(sid);
+    const pose = this.h.lingeringPoseCache.get(sid);
+    if (!ship || !pose || !this.h.lingeringSlots.has(sid) || ship.playerId !== playerId) {
+      this.h.spectateParkedHull.delete(playerId);
+      return null;
+    }
+    if (!isEngageablePilotHull(ship, true)) return null;
+    out.ship = ship; out.pose = pose;
+    return out;
+  }
+
+  /** WeaponMountTicker dep: visit every connected pilot's spectate-parked
+   *  hull under the PILOT's id (so the capital's per-pilot NPC lock and the
+   *  drone's `hostileTo` both key it). Bound once (#14). */
+  readonly visitParkedPilotHulls = (
+    visit: (pid: string, x: number, y: number, vx: number, vy: number, kindId: string, angle: number, shieldUp: boolean) => void,
+  ): void => {
+    if (this.h.spectateParkedHull.size === 0) return;
+    for (const pid of this.h.spectateParkedHull.keys()) {
+      if (this.h.getActiveShip(pid) !== undefined) continue; // covered by the ACTIVE pass
+      const h = this.engageablePilotHull(pid);
+      if (h) visit(pid, h.pose.x, h.pose.y, h.pose.vx, h.pose.vy, h.ship.kind, h.pose.angle, h.ship.shield > 0);
+    }
+  };
 
   /**
    * A player ship's key moved (playerId ↔ shipInstanceId; lock key

@@ -40,7 +40,8 @@ mature.
 - `onJoin` / `onLeave` lifecycle methods. `onJoin` has 5 branches plus
   one fall-through per [Trap 8](#trap-8-onjoin-branch-list); the body
   spans every subsystem above.
-- `abandonShipToScrap` / `abandonLingeringHullToScrap` — the abandon
+- `abandonShipToScrap` / `abandonLingeringHullToScrap` (now on
+  `OwnerlessShipEvictor`, the room's `ownerlessShipEvictor`) — the abandon
   transactions (an abandoned hull shatters into scrap + frees its slot;
   wrecks were retired P6.3/C3, so these replaced the old
   `convertShipToWreck`/`destroyWreck` + `WreckLifecycleCoordinator`).
@@ -116,7 +117,7 @@ plan next tick's aim. Any future migration of `tickPlayerMounts` into
 > `convertShipToWreck` (an 8-collaborator transaction) + why
 > `WreckLifecycleCoordinator` was its own subsystem. Wrecks are gone:
 > abandon now produces SCRAP via `abandonShipToScrap` /
-> `abandonLingeringHullToScrap` (inline on SectorRoom), which is the
+> `abandonLingeringHullToScrap` (on `OwnerlessShipEvictor`, moved out of SectorRoom), which is the
 > surviving multi-collaborator example. Note it spawns scrap + **DESPAWNs**
 > the body (no wreck rekey) instead of re-keying a slot to a wreck.
 
