@@ -214,6 +214,8 @@ export interface SnapshotBroadcasterDeps {
   fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
   /** Economy v2 W1 — a player's wallet balance (own active ship only). */
   walletOf?: (playerId: string) => number;
+  /** Join flow — the own player's free capital launches left. */
+  freeLaunchesOf?: (playerId: string) => number;
   /** v4 M2 — the faction a patrol ship flies for (undefined for other NPCs). */
   droneFactionOf?: (droneId: string) => string | undefined;
   /** W2a — a drone's NPC warp phase: 1 spool, 2 run, 3 just arrived, 0 none. */
@@ -346,6 +348,7 @@ type MutableStateEntry = {
   lockedByL?: number;
   fitted?: string[];
   wallet?: number;
+  freeLaunches?: number;
   poseEpoch?: number;
   disabledMs?: number;
   warp?: 1 | 2 | 3;
@@ -1008,6 +1011,8 @@ export class SnapshotBroadcaster {
         setOrDrop(entry, 'fitted', fitted !== undefined && fitted.length > 0 ? (fitted as string[]) : undefined);
         // Economy v2 W1 (#16) — the own player's wallet balance (a number, no alloc).
         setOrDrop(entry, 'wallet', ownActive ? this.deps.walletOf?.(ship.playerId) : undefined);
+        // Join flow (#16) — free capital launches left (a number, no alloc).
+        setOrDrop(entry, 'freeLaunches', ownActive ? this.deps.freeLaunchesOf?.(ship.playerId) : undefined);
         // v4 T2 (#16) — teleport epoch: the owner re-seeds prediction on a change.
         setOrDrop(entry, 'poseEpoch', ownActive && ship.poseEpoch > 0 ? ship.poseEpoch : undefined);
         // Phase 4 (#16) — warp phase, PUBLIC: the build-up (1), the run (2:

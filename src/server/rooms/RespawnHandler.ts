@@ -58,6 +58,8 @@ export interface RespawnHandlerDeps {
   mountTicker: WeaponMountTicker;
   postToWorker: (cmd: WorkerCmd) => void;
   logger: Logger;
+  /** Join flow — pay for re-launching `kind`; false refuses the respawn. */
+  chargeRespawn?: (playerId: string, kind: string) => boolean;
 }
 
 export class RespawnHandler {
@@ -73,6 +75,7 @@ export class RespawnHandler {
 
     const slot = d.playerToSlot.get(playerId);
     if (slot === undefined) return;
+    if (d.chargeRespawn && !d.chargeRespawn(playerId, ship.kind)) return;
 
     const storedPos = d.initialSpawnPositions.get(playerId);
     const spawnX = (d.testMode && storedPos)
