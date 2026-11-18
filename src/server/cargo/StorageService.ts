@@ -17,52 +17,19 @@
  *    mining, it can never duplicate player value.
  */
 import { GOOD_DEFS, GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
-import { fittedUid, moduleProduct, parseProduct } from '../../shared-types/blueprints.js';
+import { fittedUid, moduleProduct } from '../../shared-types/blueprints.js';
 import type { BlueprintItem } from '../../shared-types/items.js';
-
-/** The module ids fitted to a ship, from its `fitted` hold (W2 items). */
-export function fittedModuleIds(h: Hold): string[] {
-  const out: string[] = [];
-  for (const b of h.blueprints) {
-    const p = parseProduct(b.product);
-    if (p.ns === 'module') out.push(p.id);
-  }
-  return out;
-}
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { DOCK_DEPOSIT_RANGE, craneBayFor, onStructureCraneBay } from '../../core/articulation/rigCatalogue.js';
+import { depositRangeOf, nearStorage, takesHoverDeposit } from './storageReach.js';
+import { fittedModuleIds, holdCapacityOf, intakeRequest, isOperationalStorage, isStorage, releaseIntoNetwork, sig, stockOf, takeFromNetwork } from './storageHolds.js';
+// SectorRoom reads these from here.
+export { DEPOSIT_DWELL_TICKS, nearStorage } from './storageReach.js';
+export { fittedModuleIds, holdHasIntake, holdIntakeWeight, isOperationalStorage, structureUid } from './storageHolds.js';
 import { cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord, HoldStore } from './HoldStore.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 
-/** Hold within this distance of your own hover drop-off to deposit. */
-export const DEPOSIT_RANGE = 400;
-/** Reach around storage of `kindId` (hover deposit; with the crane bay,
- *  `nearStorage` for module install, cargo access, repair): a freight dock's
- *  covers its whole landing pad
- *  (`DOCK_DEPOSIT_RANGE`, rigCatalogue.ts); other storage uses `DEPOSIT_RANGE`. */
-export function depositRangeOf(kindId: string): number {
-  return kindId === 'freight_dock' ? Math.max(DEPOSIT_RANGE, DOCK_DEPOSIT_RANGE) : DEPOSIT_RANGE;
-}
-/** Is world point (x, y) "at" structure `rec` for install, repair and
- *  cargo reach? Within its `depositRangeOf` circle, or on its own crane bay
- *  (`onStructureCraneBay`: a Capital's bay lies past 400 u). Not the deposit
- *  rule: hover deposit stays `takesHoverDeposit` + `depositRangeOf`. Alloc-free. */
-export function nearStorage(rec: Pick<StructureRecord, 'kind' | 'x' | 'y' | 'rot'>, x: number, y: number): boolean {
-  const r = depositRangeOf(rec.kind);
-  if ((rec.x - x) ** 2 + (rec.y - y) ** 2 <= r * r) return true;
-  return onStructureCraneBay(rec.kind, rec.x, rec.y, rec.rot ?? 0, x, y);
-}
-/** Does storage of `kindId` take the hover deposit (hold within
- *  `depositRangeOf` for `DEPOSIT_DWELL_TICKS`)? A kind with a crane bay
- *  (`craneBayFor`: freight dock, Capital) unloads only a ship parked on its
- *  bay; other storage (Cargo Bay, Storage Vault) takes the hover deposit. */
-export function takesHoverDeposit(kindId: string): boolean {
-  return craneBayFor(kindId) === null;
-}
-/** Hold position this long (60 Hz ticks) to deposit — 2 s. */
-export const DEPOSIT_DWELL_TICKS = 120;
 /** Refine: 1 salvage → this many minerals (weight-neutral: 1 vs 10 × 0.1). */
 export const SALVAGE_TO_MINERALS = 10;
 /** Credit sinks — re-exported from shared-types/goods (#15: the UI labels read the
@@ -103,52 +70,6 @@ export interface TradeTransferResult {
   overflow: Hold;
   x: number;
   y: number;
-}
-
-/** Every unit of each `intake` good aboard `h`, as a `CargoRequest.goods`. */
-function intakeRequest(h: Hold, intake: ReadonlySet<GoodId>): Partial<Record<GoodId, number>> {
-  const out: Partial<Record<GoodId, number>> = {};
-  for (const g of intake) {
-    const n = h.goods[g] ?? 0;
-    if (n > 0) out[g] = n;
-  }
-  return out;
-}
-
-/** Weight a `deposit(…, intake)` would take off `h` (storage room aside):
- *  the whole hold with no filter, else just the intake goods (alloc-free). */
-export function holdIntakeWeight(h: Hold, intake: ReadonlySet<GoodId> | undefined): number {
-  if (intake === undefined) return holdWeight(h);
-  let w = 0;
-  for (const g of intake) w += (h.goods[g] ?? 0) * GOOD_DEFS[g].weight;
-  return w;
-}
-
-/** A structure's own units of `good` (goods hold, plus a bank's minerals). */
-function stockOf(r: StructureRecord, good: GoodId): number {
-  return (r.hold?.goods[good] ?? 0) + (good === 'minerals' ? r.minerals : 0);
-}
-
-/** True when a `deposit(…, intake)` could move something from `h`: any cargo
- *  with no filter, else any good the intake names (alloc-free). */
-export function holdHasIntake(h: Hold, intake: ReadonlySet<GoodId> | undefined): boolean {
-  if (intake === undefined) return !isHoldEmpty(h);
-  for (const g of intake) if ((h.goods[g] ?? 0) > 0) return true;
-  return false;
-}
-
-export function holdCapacityOf(rec: StructureRecord): number {
-  return getStructureKind(rec.kind).holdCapacity ?? 0;
-}
-
-export function isStorage(rec: StructureRecord): boolean {
-  return holdCapacityOf(rec) > 0;
-}
-
-/** Built, or mid-UPGRADE (a re-build of an operational structure) — the same
- *  carve-out the construction funder uses. A fresh blueprint can't store. */
-export function isOperationalStorage(rec: StructureRecord): boolean {
-  return isStorage(rec) && (rec.isConstructed || rec.upgradeTargetLevel !== undefined);
 }
 
 export class StorageService {
@@ -409,16 +330,6 @@ export class StorageService {
     else if (this.d.holdStore.get(uid) !== undefined) this.d.holdStore.delete(uid, this.persist());
   }
 
-  /** Same-owner operational storage in a (non-storage) structure's component. */
-  private networkOf(rec: StructureRecord): StructureRecord[] {
-    const out: StructureRecord[] = [];
-    for (const id of this.d.componentOf(rec.id)) {
-      const r = this.d.registry.get(id);
-      if (r && r.owner === rec.owner && isOperationalStorage(r)) out.push(r);
-    }
-    return out;
-  }
-
   /**
    * Load the best blueprint for `product` from the processor's network storage
    * into its slot (an original first, then the highest quality). A blueprint
@@ -427,7 +338,7 @@ export class StorageService {
    */
   loadBlueprint(proc: StructureRecord, product: string, quality: (bp: BlueprintItem) => number): boolean {
     if (proc.blueprint?.bound === true) return false;
-    const net = this.networkOf(proc);
+    const net = this.networkFor(proc);
     let best: { s: StructureRecord; i: number; bp: BlueprintItem } | null = null;
     for (const s of net) {
       const list = s.hold?.blueprints ?? [];
@@ -455,7 +366,7 @@ export class StorageService {
   unloadBlueprint(proc: StructureRecord): boolean {
     const bp = proc.blueprint;
     if (bp === undefined || bp.bound === true) return false;
-    const target = this.networkOf(proc)[0];
+    const target = this.networkFor(proc)[0];
     if (target === undefined) return false;
     (target.hold ??= emptyHold()).blueprints.push(bp);
     proc.blueprint = undefined;
@@ -543,7 +454,7 @@ export class StorageService {
     if (want <= 0) return 0;
     const touched = new Set<StructureRecord>();
     let moved = 0;
-    for (const s of this.networkOf(pad)) {
+    for (const s of this.networkFor(pad)) {
       if (want <= 0) break;
       const have = s.hold?.goods[good] ?? 0;
       if (have <= 0) continue;
@@ -566,7 +477,7 @@ export class StorageService {
     const h = pad.padHold;
     if (h === undefined || isHoldEmpty(h)) return false;
     const touched: StructureRecord[] = [];
-    for (const s of this.networkOf(pad)) {
+    for (const s of this.networkFor(pad)) {
       if (isHoldEmpty(h)) break;
       const dst = (s.hold ??= emptyHold());
       const r = transferInto(dst, h, holdCapacityOf(s));
@@ -660,29 +571,7 @@ export class StorageService {
     const overflow = emptyHold();
 
     if (spec.take) {
-      const want = spec.take.want;
-      for (const rec of net) {
-        const h = rec.hold;
-        for (const g of GOOD_IDS) {
-          let need = (want.goods[g] ?? 0) - (taken.goods[g] ?? 0);
-          if (need <= 0) continue;
-          const have = h?.goods[g] ?? 0;
-          if (have > 0) {
-            const t = Math.min(have, need);
-            if (have - t > 0) h!.goods[g] = have - t;
-            else delete h!.goods[g];
-            taken.goods[g] = (taken.goods[g] ?? 0) + t;
-            need -= t;
-            touched.add(rec);
-          }
-          if (g === 'minerals' && need > 0 && rec.minerals > 0) {
-            const t = Math.min(rec.minerals, need);
-            rec.minerals -= t;
-            taken.goods.minerals = (taken.goods.minerals ?? 0) + t;
-            touched.add(rec);
-          }
-        }
-      }
+      takeFromNetwork(net, spec.take.want, taken, touched);
       const existing = this.d.holdStore.get(spec.take.intoUid);
       const into = existing ? cloneHold(existing.hold) : emptyHold();
       transferInto(into, cloneHold(taken), Infinity);
@@ -698,24 +587,7 @@ export class StorageService {
       deletes.push(uid);
       if (rec === undefined) continue;
       const src = cloneHold(rec.hold);
-      for (const s of net) {
-        const bankCap = getStructureKind(s.kind).storageCapacity;
-        const m = src.goods.minerals ?? 0;
-        if (bankCap > 0 && m > 0) {
-          const fit = Math.max(0, Math.min(m, bankCap - s.minerals));
-          if (fit > 0) {
-            s.minerals += fit;
-            if (m - fit > 0) src.goods.minerals = m - fit;
-            else delete src.goods.minerals;
-            touched.add(s);
-          }
-        }
-        if (isHoldEmpty(src)) break;
-        const hold = s.hold ?? emptyHold();
-        const r = transferInto(hold, src, holdCapacityOf(s));
-        if (!isHoldEmpty(r.moved)) { s.hold = hold; touched.add(s); }
-        if (isHoldEmpty(src)) break;
-      }
+      releaseIntoNetwork(net, src, touched);
       transferInto(overflow, src, Infinity);
     }
 
@@ -989,30 +861,4 @@ export class StorageService {
     }
     if (puts.length > 0) this.d.holdStore.commit(puts, [], this.persist());
   }
-}
-
-/** Stable payload signature (sorted keys) for dirty detection. 1 Hz, off-tick. */
-function sig(h: Hold): string {
-  const keys = Object.keys(h.goods).sort();
-  let s = `${h.blueprints.length}|${h.packed?.length ?? 0}`;
-  for (const b of h.blueprints) s += `|${b.uid}:${b.runs ?? 'o'}:${b.material}:${b.output}`;
-  for (const k of keys) s += `|${k}:${(h.goods as Record<string, number>)[k]}`;
-  return s;
-}
-
-/** Deterministic, stable structure uid: FNV-1a over (sector, owner, kind,
- *  rounded pose). All four inputs are persisted, so a restore recomputes it. */
-export function structureUid(sectorKey: string | null, owner: string, kind: string, x: number, y: number): string {
-  const s = `${sectorKey ?? 'eng'}|${owner}|${kind}|${Math.round(x)}|${Math.round(y)}`;
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  let h2 = 0x9e3779b1;
-  for (let i = s.length - 1; i >= 0; i--) {
-    h2 ^= s.charCodeAt(i);
-    h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
-  }
-  return `st-${h.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`;
 }

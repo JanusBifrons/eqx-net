@@ -19,7 +19,7 @@ import type { StructureRecord } from '../../../src/server/structures/StructureRe
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { CONVOY_HAULER_ID_PREFIX } from '../../../src/server/livingworld/directorBotIds.js';
 import { CRANE_CARGO_IN, CRANE_CARGO_OUT } from '../../../src/core/articulation/craneCargo.js';
-import type { CraneHaulJob } from '../../../src/server/economy/ConvoyDirector.js';
+import type { CraneHaulJob } from '../../../src/server/economy/convoyRoom.js';
 
 async function until(pred: () => boolean, ms: number): Promise<boolean> {
   const end = Date.now() + ms;
