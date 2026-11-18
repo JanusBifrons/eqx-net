@@ -15,9 +15,8 @@ import { PhysicsWorld } from '../../core/physics/World.js';
 interface Internals {
   updateLiveBeam(): void;
   predWorld: PhysicsWorld | null;
-  _fcPerMount: boolean;
-  _fireSlotOverride: string | null;
-  _fcBearing: Set<string>;
+  /** FireControlClient internals. */
+  fc: { _fcPerMount: boolean; _fireSlotOverride: string | null; _fcBearing: Set<string> };
   mirror: {
     ships: Map<string, { x: number; y: number; vx: number; vy: number; angle: number; kind?: string }>;
     liveBeams?: Map<string, unknown>;
@@ -35,23 +34,23 @@ describe('live beams of a per-mount (capital) group', () => {
     c.predWorld.spawnShip(LOCAL_ID, 0, 0, 'battlecruiser-lance');
     c.mirror.localPlayerId = LOCAL_ID;
     c.mirror.ships.set(LOCAL_ID, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, kind: 'battlecruiser-lance' });
-    c._fcPerMount = true;
-    c._fireSlotOverride = 'main';
+    c.fc._fcPerMount = true;
+    c.fc._fireSlotOverride = 'main';
   });
 
   it('draws only the turrets that bear (the stern turret aimed away draws nothing)', () => {
-    c._fcBearing.add('main-1');
-    c._fcBearing.add('main-2');
+    c.fc._fcBearing.add('main-1');
+    c.fc._fcBearing.add('main-2');
     c.updateLiveBeam();
     expect([...c.mirror.liveBeams!.keys()].sort()).toEqual(['main-1', 'main-2']);
   });
 
   it('a turret that stops bearing loses its beam', () => {
-    c._fcBearing.add('main-1');
-    c._fcBearing.add('main-3');
+    c.fc._fcBearing.add('main-1');
+    c.fc._fcBearing.add('main-3');
     c.updateLiveBeam();
-    c._fcBearing.clear();
-    c._fcBearing.add('main-1');
+    c.fc._fcBearing.clear();
+    c.fc._fcBearing.add('main-1');
     c.updateLiveBeam();
     expect([...c.mirror.liveBeams!.keys()]).toEqual(['main-1']);
   });

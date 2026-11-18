@@ -43,6 +43,8 @@ export interface CargoView {
   blueprints: number;
   /** Economy v2 W2 — packed structures / hulls carried (count). */
   packed?: number;
+  /** Their total weight (a rock chunk weighs hundreds): the chip counts it. */
+  packedWeight?: number;
 }
 
 export interface WarpWarning {
@@ -138,7 +140,7 @@ export type ControlMode = 'fly' | 'command';
 
 /** What kind of entity the selection's focus is (routes the details panel:
  *  `ship`/`structure` use the server `entity_stats` stream). */
-export type SelectionFocusKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering';
+export type SelectionFocusKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod';
 
 /**
  * THE selection (RTS Part A: one selection concept). The renderer owns it

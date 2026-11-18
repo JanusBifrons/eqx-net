@@ -27,6 +27,7 @@
  */
 
 import type { Client, ClientArray } from 'colyseus';
+import { setOwnEconomy, type OwnEconomyDeps } from './snapshotOwnEconomy.js';
 import type { Logger } from 'pino';
 import type { MapSchema } from '@colyseus/schema';
 import {
@@ -59,7 +60,7 @@ import type { ProjectileRecord } from './ProjectilePipeline.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
 import type { ShellKeyRecord } from '../../shared-types/messages/shellEvents.js';
 import type { Hold } from '../../shared-types/goods.js';
-import { isHoldEmpty } from '../../core/cargo/hold.js';
+import { isHoldEmpty, wireHold } from '../../core/cargo/hold.js';
 import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { MountCharges } from './WeaponMountTicker.js';
 
@@ -154,7 +155,7 @@ export interface MissileBroadcasterView {
   }>;
 }
 
-export interface SnapshotBroadcasterDeps {
+export interface SnapshotBroadcasterDeps extends OwnEconomyDeps { // + walletOf / freeLaunchesOf (own active ship)
   serverTick: () => number;
   sabU32: Uint32Array;
   clients: ClientArray<Client>;
@@ -212,9 +213,6 @@ export interface SnapshotBroadcasterDeps {
   /** Living World P5 — the blueprints fitted to a ship instance (own active
    *  ship only on the wire). A SHARED reference; undefined ⇒ none known. */
   fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
-  /** Economy v2 W1 / join flow — wallet balance, free capital launches (own active ship). */
-  walletOf?: (playerId: string) => number;
-  freeLaunchesOf?: (playerId: string) => number;
   /** v4 M2 — the faction a patrol ship flies for (undefined for other NPCs). */
   droneFactionOf?: (droneId: string) => string | undefined;
   /** W2a — a drone's NPC warp phase: 1 spool, 2 run, 3 just arrived, 0 none. */
@@ -982,11 +980,12 @@ export class SnapshotBroadcaster {
         setOrDrop(entry, 'statAlloc',
           ownActive && hasAnyStatAlloc(ship.statAlloc) ? ship.statAlloc : undefined);
         // Living World P1a (#16) — the own ACTIVE hull's carried hold, only when
-        // non-empty (zero bytes otherwise). Shared reference (no per-tick alloc).
+        // non-empty (zero bytes otherwise). Shared reference (no per-tick
+        // alloc); a rock chunk's hidden ore stripped (`wireHold`, cached).
         const hold = ownActive && this.deps.shipHoldOf !== undefined
           ? this.deps.shipHoldOf(ship.shipInstanceId)
           : undefined;
-        setOrDrop(entry, 'cargo', hold !== undefined && !isHoldEmpty(hold) ? hold : undefined);
+        setOrDrop(entry, 'cargo', hold !== undefined && !isHoldEmpty(hold) ? wireHold(hold) : undefined);
         setOrDrop(entry, 'depositing', ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined);
         // Fire control (#16): the own pilot's groups + locks (shared ref).
         setOrDrop(entry, 'groups', ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined);
@@ -1007,8 +1006,7 @@ export class SnapshotBroadcaster {
         const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
         setOrDrop(entry, 'fitted', fitted !== undefined && fitted.length > 0 ? (fitted as string[]) : undefined);
         // Economy v2 W1 / join flow (#16) — own wallet and free launches (numbers, no alloc).
-        setOrDrop(entry, 'wallet', ownActive ? this.deps.walletOf?.(ship.playerId) : undefined);
-        setOrDrop(entry, 'freeLaunches', ownActive ? this.deps.freeLaunchesOf?.(ship.playerId) : undefined);
+        setOwnEconomy(entry, this.deps, ship.playerId, ownActive);
         // v4 T2 (#16) — teleport epoch: the owner re-seeds prediction on a change.
         setOrDrop(entry, 'poseEpoch', ownActive && ship.poseEpoch > 0 ? ship.poseEpoch : undefined);
         // Phase 4 (#16) — warp phase, PUBLIC: the build-up (1), the run (2:

@@ -208,7 +208,8 @@ export const SHIP_KINDS: typeof CATALOGUE_KINDS = BARGE_LOOK_KIND
 // Not bumped for the player capitals (2026-11-17: the five classes and three
 // fits lose `npcOnly` and gain `randomSpawn: false`): no stat changes, and
 // no stored player ship was a capital before.
-export const SHIP_KIND_CATALOGUE_VERSION = 28;
+// 28 → 29 (2026-11-17): cargo-pod gains size classes (16 parts: size × tier).
+export const SHIP_KIND_CATALOGUE_VERSION = 29;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed
