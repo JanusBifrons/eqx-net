@@ -12,9 +12,9 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A client→server message | A `register<Feature>(host)` file in `src/server/rooms/features/` that calls `host.onMessage` with zod parsing at the boundary, plus one row in `features/index.ts`. Reference: `registerTeleportMessages` (`TeleportMessageHandlers.ts`). | planned (pattern live) |
-| A test-only `test_*` handler | `features/devTestMessages.ts`, registered behind the test-room gate. | planned |
-| A new subsystem | Construct it inside its feature's register function and return `{ tick?, dispose? }`; never a new field + `new X()` in `onCreate`. | planned |
+| A client→server message | A `register<Feature>(host)` file in `src/server/rooms/features/` that registers each message through `parsedMessage` (zod parse at the boundary, malformed tracker on failure), plus one row in `features/index.ts`. Reference: `registerTeleportMessages` (`features/teleportMessages.ts`). | live |
+| A test-only `test_*` handler | `features/devTestMessages.ts`, gated on testMode or `EQX_ALLOW_DEV_OVERRIDES` (`TestMessageHandlers`). | live |
+| A new subsystem | Construct it in its feature's register function; return `{ dispose }`; periodic work via `gameClock.every` + `guarded`; never a new field + `new X()` in `onCreate`. | planned |
 | Join / leave / respawn logic | `JoinHandler` / `LeaveHandler` / `RespawnHandler` classes. | Leave/Respawn live; Join planned |
 | A tick-phase step | A function taking a narrow ctx, like `runAiTick(ctx)` (`aiTickRunner.ts`). | live |
 
@@ -22,15 +22,15 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A test / engineering / showcase room | A row in a table-driven room file (`rooms/showcaseRooms.ts`, `definePerfRooms()`), behind `shouldRegisterTestRooms()`. | live |
-| An HTTP route | A router in `src/server/routes/` (like `diagRouter.ts`, `galaxyRouter.ts`), mounted with one line. | live |
-| A boot step | A function in `src/server/boot/`, called from `main()`. | planned |
+| A test / engineering / showcase room | A row in a per-feature room file in `src/server/rooms/testRooms/` (`engineeringRooms.ts`, `scenarioRooms.ts`, `worldRooms.ts`), `rooms/showcaseRooms.ts` or `definePerfRooms()`, all called from `index.ts` behind `shouldRegisterTestRooms()`. Never a `define` in `index.ts`. | live |
+| An HTTP route | A router in `src/server/routes/` (like `diagRouter.ts`, `galaxyRouter.ts`), mounted with one line. Dev-only `/dev/*` and `/test/*` endpoints go in `routes/devRouter.ts` (mounted outside production). | live |
+| A boot step | A step function in `src/server/boot/` (like `persistenceBoot.ts`, `livingWorldBoot.ts`, `economyBoot.ts`) taking a narrow deps object and returning what later steps need; `main()` is the ordered list of calls. Directors it starts go on `WorldHandles` (`boot/worldHandles.ts`). | live |
 
 ## Client: `ColyseusClient.ts` (`src/client/net/CLAUDE.md`)
 
 | To add | Do this | Status |
 |---|---|---|
-| A server→client message | Its zod schema in `src/shared-types/messages/` and a name→schema row in `messageNames.ts`; a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in the handler list. | planned |
+| A server→client message | Its zod schema in `src/shared-types/messages/` and a row in `ServerMessageSchemas` (`src/shared-types/messages.ts`); a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in `handlers/index.ts`. | live |
 | A per-entity timer / state machine | Its own module, like `drawnShellTiming.ts`, `damageNumberTargets.ts`. | live |
 | Fire control / lock state | `FireControlClient`. | planned |
 
@@ -60,7 +60,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | To add | Do this | Status |
 |---|---|---|
 | A ship kind | A record in its family file under `src/shared-types/shipKinds/`, appended to `catalogueOrder.ts`. | live |
-| A structure kind | A record in its family file under `src/shared-types/structureKinds/`, appended to its `catalogueOrder.ts`. | planned |
+| A structure kind | A record in its family file under `src/shared-types/structureKinds/`, appended to its `catalogueOrder.ts`. | live |
 | A weapon | A record in `src/core/combat/WeaponCatalogue.ts`. | live |
 
 ## Roll-out
