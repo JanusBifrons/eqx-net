@@ -37,6 +37,7 @@ import {
   type SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
 import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
+import type { PackedItem } from '../../shared-types/items.js';
 
 /** The minimal structure shape `persist()` reads (a subset of `StructureRecord`). */
 export interface PersistableStructure {
@@ -53,10 +54,13 @@ export interface PersistableStructure {
   recipe?: string;
   prodLoaded?: boolean;
   prodProgress?: number;
+  prodChunk?: PackedItem;
   /** Economy v2 W4b — placed from a packed item (build costs only time). */
   prepaid?: boolean;
   /** T4b — a Freight Dock's standing orders. */
   freightOrders?: Array<{ good: string; mode: 'import' | 'export'; level: number }>;
+  /** Cargo pods 14c — a storage that refuses auto-unload. */
+  acceptAutoUnload?: boolean;
   /** v4 T1 — a teleporter's partner, rules and capacitor charge. */
   tpPartner?: { sectorKey: string; uid: string };
   tpRules?: unknown;
@@ -200,8 +204,10 @@ export class SectorPersistence {
         ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
         ...(s.recipe ? { recipe: s.recipe } : {}),
         ...(s.prodLoaded ? { prodLoaded: true, prodProgress: s.prodProgress ?? 0 } : {}),
+        ...(s.prodLoaded && s.prodChunk ? { prodChunk: { ...s.prodChunk, ore: { ...s.prodChunk.ore } } } : {}),
         ...(s.prepaid ? { prepaid: true } : {}),
         ...(s.freightOrders && s.freightOrders.length > 0 ? { freightOrders: s.freightOrders.map((o) => ({ ...o })) } : {}),
+        ...(s.acceptAutoUnload === false ? { acceptAutoUnload: false } : {}),
         ...(s.tpPartner !== undefined || s.tpRules !== undefined || (s.tpCharge ?? 0) > 0 || s.tpToll !== undefined
           ? { teleport: {
             ...(s.tpToll !== undefined ? { toll: s.tpToll } : {}),

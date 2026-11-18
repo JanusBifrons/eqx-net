@@ -26,7 +26,8 @@ import { sendPilotShip } from '../ships/shipActionsClient';
 import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
-import { CargoAction } from './CargoPanel';
+import { CargoAction, PodOpen } from './LootWindow';
+import { asteroidPanelRow, podPanelRow } from './swarmTerrainInfo';
 import { ForeignTeleporterPanel, TeleporterPanel } from './TeleporterPanel';
 import { isAlienGateKind, isTeleporterKind } from '../../shared-types/teleport';
 import { alienGateLine } from './alienGateInfo';
@@ -170,6 +171,9 @@ interface PanelData {
   /** Economy v2 W5a — an OWNED storage's packed product ids, comma-joined
    *  (the Unpack-hull chips). Absent when it holds none. */
   packed?: string;
+  /** Cargo pods 16 — a selected pod: is my ship within the open reach?
+   *  (the same `withinLootOpenReach` the server gates on). */
+  podOpen?: boolean;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -473,8 +477,9 @@ export function EntityStatsPanel(): JSX.Element | null {
       {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
       {data.isTeleporter === true && data.entityId !== undefined && <TeleporterPanel key={data.entityId} entityId={data.entityId} />}
       {data.isForeignTeleporter === true && data.entityId !== undefined && <ForeignTeleporterPanel key={data.entityId} entityId={data.entityId} />}
-      {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} />}
-      {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} />}
+      {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} title={data.name} />}
+      {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} title={data.name} />}
+      {data.podOpen !== undefined && data.entityId !== undefined && <PodOpen key={data.entityId} entityId={data.entityId} inReach={data.podOpen} {...(data.infoLine !== undefined ? { subtitle: data.infoLine } : {})} />}
       <TargetAction isOwn={data.isOwn === true || data.pilotShipId !== undefined} />
       {data.pilotShipId !== undefined && (
         // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
@@ -508,7 +513,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
-  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine',
+  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -608,7 +613,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       if (subtype !== undefined && isProcessorKind(subtype)) {
         // P2b — what it makes and how it's going.
         data.recipe = effectiveRecipe(subtype, st.recipe);
-        data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing));
+        data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing), data.recipe);
         data.canChangeRecipe = recipesFor(subtype).length > 1;
         data.needsBlueprint = RECIPES[data.recipe].blueprintRequired;
         if (st.bpRuns !== undefined) {
@@ -680,23 +685,12 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     // C3 — an NPC ship carries a hold (its loot); breaking in is a hostile act.
     return { name: droneName(sw.shipKind), hpPct: frac * 100, shieldPct: null, entityId: swarmId, hasCargo: true };
   }
-  // ASTEROID (R2.23) — indestructible rock: no hull bar; show resources when the
-  // rock is being mined, else a SIZE proxy from radius (untouched rocks carry no
-  // resources/mass on the wire — real mass is a future server-touching change).
-  if (kind === 'asteroid' && id.startsWith('swarm-')) {
+  // ASTEROID / CARGO POD — indestructible terrain, no hull bar (swarmTerrainInfo.ts).
+  if ((kind === 'asteroid' || kind === 'pod') && id.startsWith('swarm-')) {
     const swarmId = parseInt(id.slice('swarm-'.length), 10);
     const sw = Number.isNaN(swarmId) ? undefined : client.mirror.swarm?.get(swarmId);
     if (!sw) return null;
-    const hasRes = sw.resourcesMax !== undefined && sw.resourcesMax > 0;
-    return {
-      name: 'Asteroid',
-      hpPct: 0,
-      shieldPct: null,
-      noHull: true,
-      infoLine: hasRes
-        ? `RES ${Math.round(sw.resources ?? 0)} / ${Math.round(sw.resourcesMax!)}`
-        : `SIZE ${Math.round(sw.radius)}`,
-    };
+    return kind === 'asteroid' ? asteroidPanelRow(sw) : podPanelRow(client.mirror, swarmId, sw);
   }
   // LINGERING HULL (R2.23) — the name line already shows WHOSE hull it is (the
   // owner's server-propagated display name); never surface the raw ownerPlayerId
