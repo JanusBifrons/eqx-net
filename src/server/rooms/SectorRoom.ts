@@ -73,7 +73,7 @@ import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 import { wreckSwitchOn } from './wreckSwitch.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
-import type { FieldClearing } from '../../core/terrain/fieldLayout.js';
+import type { ChunkOpts, FieldClearing } from '../../core/terrain/fieldLayout.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { AiInputBatch } from '../../core/ai/AiInputBatch.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
@@ -271,6 +271,7 @@ import { CutFieldSubsystem } from './CutFieldSubsystem.js';
 import { cutFieldOpts, type ChunkSource } from '../../core/terrain/chunkStreamer.js';
 import { rockFieldBlocker, wreckField } from '../../core/terrain/wreckFieldLayout.js';
 import { WreckFieldSource, type WreckFieldRoomOpts } from './WreckFieldSource.js';
+import { getNavWorker, type NavField } from '../nav/NavWorker.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -1275,6 +1276,8 @@ export class SectorRoom extends Room<SectorState> {
   private structureGridTimer: GameTimer | undefined;
   private cutField: CutFieldSubsystem | undefined; // macro terrain v2 (room option `cutField`)
   private wreckFieldSource: WreckFieldSource | undefined; // wreck fields 3b (room option `wreckField`)
+  /** The cut field's nav maps in the nav worker (navigation slice 4b); set once built. */
+  private navField: NavField | undefined;
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
   private structureTurretTimer: GameTimer | undefined;
   /** Click-to-inspect live-stats channel (structures follow-up Item B5) +
@@ -3257,6 +3260,7 @@ export class SectorRoom extends Room<SectorState> {
     const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
     if (roomOpts.wreckField !== undefined && (this.capitalWrecksOn || this.subcapWrecksOn)) chunkSources.push(this.buildWreckFieldSource(roomOpts.wreckField, roomOpts.cutField));
     if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
+    if (this.cutField?.navOpts) this.hostNavField(this.cutField, this.cutField.navOpts);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
@@ -12728,6 +12732,21 @@ export class SectorRoom extends Room<SectorState> {
     });
   }
 
+  /** Hosts the cut field's nav maps in the nav worker; chunk loads and rock
+   *  changes stream to it from here on (navigation slices 4b–5; print-only size + ms). */
+  private hostNavField(cutField: CutFieldSubsystem, opts: ChunkOpts): void {
+    let field: NavField | undefined;
+    const known = cutField.attachNav({
+      chunk: (cx, cy, loaded) => field?.chunk(cx, cy, loaded),
+      rockGone: (key) => field?.rockGone(key),
+      rockMoved: (key, pose) => field?.rockMoved(key, pose),
+    });
+    field = this.navField = getNavWorker(logger).addField(opts, known.gone, known.moved);
+    field.built.then((b) => {
+      logger.info({ sectorKey: this.sectorKey, cols: b.cols, rows: b.rows, kb: Math.round(b.bytes / 1024), ms: Math.round(b.ms * 10) / 10 }, 'nav coarse layer built');
+    }, (err: unknown) => { if (!this.simLoopStopped) logger.error({ err, sectorKey: this.sectorKey }, 'nav field build failed'); });
+  }
+
   override onDispose(): void {
     if (this.sceneRunner) unregisterScenePerfRoom(this);
     this.simLoopStopped = true;
@@ -12735,6 +12754,8 @@ export class SectorRoom extends Room<SectorState> {
     if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
     if (this.teleportRoom) getTeleportBroker().unregister(this.teleportRoom);
     this.cutField?.dispose();
+    this.navField?.detach();
+    this.navField = undefined;
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
       this.structureGridTimer.cancel();

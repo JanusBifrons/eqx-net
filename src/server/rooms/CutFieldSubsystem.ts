@@ -34,6 +34,14 @@ import { loadRecords, type RockRecordStore } from '../db/terrainSql.js';
 import { guarded } from './guardedLoop.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 
+/** Where the field's chunk and rock changes go for navigation (the room's
+ *  nav field, `NavWorker.addField`). Discrete events only. */
+export interface CutFieldNavSink {
+  chunk(cx: number, cy: number, loaded: boolean): void;
+  rockGone(key: number): void;
+  rockMoved(key: number, pose: { x: number; y: number; angle: number } | null): void;
+}
+
 export interface CutFieldRoomHooks {
   /** The SAB slots of every pilot's ship (AI hulls come from the registry). */
   shipSlots(): Iterable<number>;
@@ -95,6 +103,7 @@ export class CutFieldSubsystem {
   private readonly seed: string | null;
   private readonly gameClock: GameClock;
   private readonly opts: ChunkOpts | null;
+  private nav: CutFieldNavSink | null = null;
 
   constructor(
     seed: string | null,
@@ -117,6 +126,9 @@ export class CutFieldSubsystem {
     if ((clearings?.length ?? 0) > MAX_WELCOME_CLEARINGS) throw new Error(`cut field: ${clearings!.length} clearings, the welcome carries ${MAX_WELCOME_CLEARINGS}`);
     this.opts = seed !== null ? cutFieldOpts(seed, clearings) : null;
     this.streamer = new CutFieldStreamer(this.opts, {
+      // Navigation's fine layer follows the loaded chunks (navigation slice 5).
+      chunkLoaded: (cx, cy) => this.nav?.chunk(cx, cy, true),
+      chunkUnloaded: (cx, cy) => this.nav?.chunk(cx, cy, false),
       // Pilots and AI hulls keep rocks loaded. Slow cadence (STEP_EVERY_MS).
       visitShips: (cb) => {
         const sab = hooks.sab();
@@ -195,6 +207,7 @@ export class CutFieldSubsystem {
   private sendPose(key: number): void {
     const p = this.movedPose.get(key);
     this.hooks.broadcast('field_moved', p ? { k: key, x: p.x, y: p.y, a: p.angle } : { k: key, clear: true });
+    this.nav?.rockMoved(key, p ? { x: p.x, y: p.y, angle: p.angle } : null);
   }
 
   /** A fixed field rock wakes when something at least as heavy touches it
@@ -231,6 +244,7 @@ export class CutFieldSubsystem {
     this.movedPose.delete(key);
     this.save(key);
     this.hooks.broadcast('field_consumed', { k: key });
+    this.nav?.rockGone(key);
   }
 
   /** One rock's whole record to the save, an absolute upsert (a discrete
@@ -257,6 +271,19 @@ export class CutFieldSubsystem {
       if (r.pool !== null) this.minedPool.set(r.rockKey, r.pool);
       if (r.pose !== null) this.movedPose.set(r.rockKey, { x: r.pose.x, y: r.pose.y, angle: r.pose.angle });
     }
+  }
+
+  /** The rock field's layout options (the nav maps are built from them, #15); null without rocks. */
+  get navOpts(): ChunkOpts | null { return this.opts; }
+
+  /** Send chunk loads and rock changes to `sink` from now on; returns the rocks
+   *  already broken up or left elsewhere (saved records) to start it with.
+   *  Attach before the first streamer step (the room does, in onCreate). */
+  attachNav(sink: CutFieldNavSink): { gone: number[]; moved: Array<{ key: number; x: number; y: number; angle: number }> } {
+    this.nav = sink;
+    const moved: Array<{ key: number; x: number; y: number; angle: number }> = [];
+    for (const [key, p] of this.movedPose) moved.push({ key, x: p.x, y: p.y, angle: p.angle });
+    return { gone: [...this.consumed], moved };
   }
 
   /** Spread into every welcome: the seed, the clearings (F4, when any), the

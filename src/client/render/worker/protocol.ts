@@ -31,6 +31,7 @@ export type {
   SwarmDeltaMsg,
   SetVisibleMsg,
   SetCurrentSectorMsg,
+  SetGalaxyFocusMsg,
   SetTransitDockedMsg,
   ResizeMsg,
   SetTickerFpsMsg,

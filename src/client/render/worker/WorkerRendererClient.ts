@@ -688,6 +688,9 @@ export class WorkerRendererClient implements IRenderer {
   setLayerCurrentSector(sectorKey: string | null): void {
     this.post({ type: 'SET_CURRENT_SECTOR', sectorKey });
   }
+  setLayerFocus(sectorKey: string | null): void {
+    this.post({ type: 'SET_GALAXY_FOCUS', sectorKey });
+  }
   setLayerTransitDocked(docked: boolean): void {
     this.post({ type: 'SET_TRANSIT_DOCKED', docked });
   }

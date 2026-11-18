@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy';
-import { buildSectorTooltip, shipsInSector } from './galaxyTooltip';
+import { buildSectorTooltip, ownerLine, shipsInSector } from './galaxyTooltip';
+import { splitChallenger } from '../render/galaxy/galaxyTerritories';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot';
 import type { RosterEntry } from '../state/storeTypes';
 
@@ -89,6 +90,28 @@ describe('shipsInSector (Equinox Phase 7 / Item 4 popover sub-list)', () => {
   it('carries kind + active flag + health/pose, never a raw id', () => {
     const out = shipsInSector([ship({ shipId: 's1', kind: 'heavy', isActive: true, health: 42, x: 12, y: -8 })], A, A);
     expect(out[0]).toEqual({ shipId: 's1', kind: 'heavy', isActive: true, health: 42, x: 12, y: -8 });
+  });
+});
+
+describe('ownerLine — the panel/tooltip owner text reads what the hex draws', () => {
+  const ctl = (o: object) => ({ holderShare: 52, challenger: null, challengerShare: 0, trend: 0, threat: 0, flippedAtMs: null, locked: false, ...o });
+
+  it('a held sector with a challenger names both (the hex draws a split)', () => {
+    const live: SectorLiveState = { key: 'sol-prime', players: 0, enemies: 0, neutrals: 0, structures: 0, owner: { factionId: 'core', contested: false }, control: ctl({ challenger: 'robots', challengerShare: 40 }) };
+    const tip = buildSectorTooltip('sol-prime', [live])!;
+    expect(splitChallenger(live.control, 'core')).toBe('robots');
+    expect(ownerLine(tip)).toBe('Sol Dominion · contested by Robot Dominion');
+  });
+
+  it('a held sector with no split names only the holder; no owner reads Neutral', () => {
+    const held = buildSectorTooltip('sol-prime', [{ key: 'sol-prime', players: 0, enemies: 0, neutrals: 0, structures: 0, owner: { factionId: 'core', contested: false }, control: ctl({}) }])!;
+    expect(ownerLine(held)).toBe('Sol Dominion');
+    expect(ownerLine(buildSectorTooltip('orion-belt', [])!)).toBe('Neutral');
+  });
+
+  it('unowned ground below the split threshold shows no challenger, like the hex', () => {
+    const tip = buildSectorTooltip('orion-belt', [{ key: 'orion-belt', players: 0, enemies: 0, neutrals: 0, structures: 0, owner: null, control: ctl({ holderShare: 0, challenger: 'robots', challengerShare: 20 }) }])!;
+    expect(ownerLine(tip)).toBe('Neutral');
   });
 });
 

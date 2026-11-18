@@ -319,6 +319,10 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         renderer?.setSector(msg.sectorKey);
         break;
       }
+      case 'SET_GALAXY_FOCUS': {
+        galaxyLayer?.setFocus(msg.sectorKey);
+        break;
+      }
       case 'SET_TRANSIT_DOCKED': {
         galaxyLayer?.setTransitDocked(msg.docked);
         break;
