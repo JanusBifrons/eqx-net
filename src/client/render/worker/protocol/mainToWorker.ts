@@ -117,6 +117,8 @@ export interface SwarmDeltaMsg {
 /** GalaxyMapLayer overlay state — driven by Zustand useEffects in `App.tsx`. */
 export interface SetVisibleMsg { type: 'SET_VISIBLE'; visible: boolean }
 export interface SetCurrentSectorMsg { type: 'SET_CURRENT_SECTOR'; sectorKey: string | null }
+/** Galaxy map focus view: glide into the selected sector, or back out (null). */
+export interface SetGalaxyFocusMsg { type: 'SET_GALAXY_FOCUS'; sectorKey: string | null }
 export interface SetTransitDockedMsg { type: 'SET_TRANSIT_DOCKED'; docked: boolean }
 /**
  * Switch the worker-hosted GalaxyMapLayer between the in-game additive
@@ -419,6 +421,7 @@ export type MainToWorkerMsg =
   | MirrorUpdateMsg
   | SetVisibleMsg
   | SetCurrentSectorMsg
+  | SetGalaxyFocusMsg
   | SetTransitDockedMsg
   | SetOverlayModeMsg
   | SetGalaxyStatsMsg

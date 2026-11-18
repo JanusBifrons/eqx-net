@@ -22,6 +22,7 @@ import { PhaseRouter } from './app/PhaseRouter';
 import {
   syncGalaxyVisibility,
   syncGalaxyCurrentSector,
+  syncGalaxyFocus,
   syncGalaxyTransitDocked,
   syncGalaxyStats,
   syncGalaxyPresence,
@@ -181,6 +182,7 @@ function GameSurface({
   const clientRef = useRef<ColyseusGameClient | null>(null);
   const rendererRef = useRef<IRenderer | null>(null);
   const galaxyLayerRef = useRef<GalaxyMapLayer | null>(null);
+  const onGalaxyFocus = useCallback((k: string | null) => syncGalaxyFocus(galaxyLayerRef.current, rendererRef.current, k), []);
   const keyboardRef = useRef<Keyboard | null>(null);
   // Phase 5 — WASD free-pan for spectator (desktop). Separate from the gameplay
   // Keyboard (which is disabled in spectator) so W pans the camera but never
@@ -935,6 +937,7 @@ function GameSurface({
       {idle ? (
         <GalaxyPickerChrome
           apiRef={pickerApiRef}
+          onFocusChange={onGalaxyFocus}
           onSelectRoom={onSelectRoom}
           onSpawnExistingShip={onSpawnExistingShip}
           onSpawnNewShip={onSpawnNewShip}
@@ -1004,6 +1007,7 @@ function GameSurface({
         <GalaxyPickerChrome
           context="warp"
           apiRef={pickerApiRef}
+          onFocusChange={onGalaxyFocus}
           onClose={() => useUIStore.getState().setGalaxyMapOpen(false)}
           onWarp={(sectorKey) => {
             handleEngageTransit(sectorKey);

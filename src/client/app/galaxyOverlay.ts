@@ -168,6 +168,7 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   // thread (DOM) path only; the worker hosts its own layer.
   (window as unknown as { __eqxGalaxyTransform?: () => { x: number; y: number; scale: number } })
     .__eqxGalaxyTransform = () => galaxyLayer.getDebugTransform();
+  (window as unknown as { __eqxGalaxyFocus?: () => unknown }).__eqxGalaxyFocus = () => galaxyLayer.getDebugFocus();
   // DEV/E2E hook (2026-06-19 pop-in lock): the REAL count of drawn count badges
   // for a sector, so a spec can assert the icons are present the instant the map
   // reveals (hexes + icons together) — no flaky pixel screenshots. DOM path only;
@@ -238,6 +239,12 @@ export function syncGalaxyCurrentSector(
   if (renderer instanceof WorkerRendererClient) {
     renderer.setLayerCurrentSector(currentSectorKey);
   }
+}
+
+/** Galaxy map focus view: follows the sector the info panel shows (null = out). */
+export function syncGalaxyFocus(galaxyLayer: GalaxyMapLayer | null, renderer: IRenderer | null, sectorKey: string | null): void {
+  galaxyLayer?.setFocus(sectorKey);
+  if (renderer instanceof WorkerRendererClient) renderer.setLayerFocus(sectorKey);
 }
 
 export function syncGalaxyTransitDocked(
