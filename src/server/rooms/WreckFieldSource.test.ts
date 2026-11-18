@@ -57,7 +57,7 @@ function memStore(rows = new Map<number, TerrainRecordRow>()) {
   return { store, rows, puts, warns };
 }
 
-function make(field = FIELD, linger = 1000, mem = memStore()) {
+function make(field = FIELD, linger = 1000, mem = memStore(), fresh = false) {
   const spawned = new Map<string, WreckPieceSpawn>();
   const live = new Set<string>();
   const awake = new Set<string>();
@@ -100,6 +100,7 @@ function make(field = FIELD, linger = 1000, mem = memStore()) {
     tractored: (id) => tractored.has(id),
     warn: (o) => { warns.push(o); },
     records: mem.store,
+    ...(fresh ? { fresh: true } : {}),
   }, linger);
   return { sys, src, spawned, live, awake, removed, warns, moved, tractored, mem };
 }
@@ -137,6 +138,18 @@ describe('WreckFieldSource (wreck fields 3b)', () => {
       expect(SIDES as readonly string[]).toContain(w.owner);
     }
     expect(t.src.stats.hullsLive).toBe(d.hulls.length);
+  });
+
+  it('wreck fields 9 dev look flag: `fresh` hulls load with a deathTick (drawn just killed); the default stays cool', () => {
+    const fresh = make(FIELD, 1000, memStore(), true);
+    fresh.src.step(needed, 100, 0);
+    const descs = fresh.sys.descriptors();
+    expect(descs.length).toBe(d.hulls.length);
+    for (const w of descs) expect(w.deathTick).toBe(1000);
+    const cool = make();
+    cool.src.step(needed, 100, 0);
+    expect(cool.sys.descriptors().length).toBe(d.hulls.length);
+    for (const w of cool.sys.descriptors()) expect(w.deathTick).toBeUndefined();
   });
 
   it('re-entry never double-spawns; untouched hulls retire after the linger and come back', () => {

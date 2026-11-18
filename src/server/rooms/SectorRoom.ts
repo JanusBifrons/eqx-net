@@ -5745,6 +5745,7 @@ export class SectorRoom extends Room<SectorState> {
         return rec != null && ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) === 0;
       },
       tractored: (id) => this.forceFields.isTractored(id),
+      ...(o.fresh === true ? { fresh: true } : {}), // dev look flag (wreck fields 9)
       warn: (obj, msg) => logger.warn(obj, msg), ...(this.persistSector && this.sectorKey !== null ? { records: terrainRecordStoreFor(`${this.sectorKey}|wrecks:${o.seed}`) } : {}), // slice 4: touched hulls' rows
     });
   }

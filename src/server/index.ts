@@ -731,6 +731,11 @@ gameServer.define('wreck-field-test', SectorRoom, {
   testMode: true, cutField: { seed: 'look' }, wreckField: { seed: 'look', x: 60_000, y: 0, sides: ['ashen-league', 'vel-concord'] },
   asteroidConfig: [], droneCount: 0, defaultSpawnX: 60_000, defaultSpawnY: 0, maxClients: 4,
 }).filterBy(['testId']);
+// Its owner-Q4 twin (wreck fields 9): the same field drawn freshly dead (hulls load with a deathTick: hot cut edges, cooling as normal).
+gameServer.define('wreck-field-test-fresh', SectorRoom, {
+  testMode: true, cutField: { seed: 'look' }, wreckField: { seed: 'look', x: 60_000, y: 0, sides: ['ashen-league', 'vel-concord'], fresh: true },
+  asteroidConfig: [], droneCount: 0, defaultSpawnX: 60_000, defaultSpawnY: 0, maxClients: 4,
+}).filterBy(['testId']);
 // Gates (plan soft-leaping-truffle v2, phase V) — two powered Shield Gates:
 // west opens for anyone not hostile, east is owner-only (owner `scenario`).
 // Spawn south of a gate with ?spawnX=±400&spawnY=-1300 and fly north.

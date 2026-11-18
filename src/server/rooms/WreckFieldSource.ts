@@ -109,7 +109,13 @@ export function fieldHullPieces(hull: WreckFieldHull): { pieces: WreckPieceSpec[
  *  its seed, the two sides that fought there (faction ids) and, optionally,
  *  its own open clearings (galaxy sectors: every pocket; else the cut
  *  field's). */
-export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings'>;
+export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings'> & {
+  /** Dev look flag (wreck fields 9, owner Q4 stills): seed hulls spawn
+   *  freshly dead (a `deathTick` at load: hot cut edges that cool on the
+   *  normal schedule) instead of cool. Off by default; dev room
+   *  `wreck-field-test-fresh` only. */
+  fresh?: boolean;
+};
 
 /** A loaded field hull: its lineage root, its pieces as spawned (ids, rest
  *  poses), and whether anything touched it since. */
@@ -146,6 +152,9 @@ export interface WreckFieldSourceDeps {
   /** The field's row partition (`<sectorKey>|wrecks:<seed>`); absent (a
    *  room that saves no sector) ⇒ rows live in memory for the room only. */
   records?: RockRecordStore;
+  /** Dev look flag (`WreckFieldRoomOpts.fresh`): seed hulls spawn with a
+   *  `deathTick` (drawn just killed) instead of cool. Absent: cool. */
+  fresh?: boolean;
   /** Sampled warning sink (pino `warn`). */
   warn(obj: Record<string, unknown>, msg: string): void;
 }
@@ -321,7 +330,7 @@ export class WreckFieldSource implements ChunkSource {
     let n: number;
     try {
       n = wrecks.spawnWreck(h.kindId, `field:${h.key}`, pieces, fracture, getShipKind(h.kindId).maxHealth, h.angle,
-        { held: false, origin: 'field', sleeping: true, cool: true, owner: h.owner });
+        { held: false, origin: 'field', sleeping: true, cool: this.d.fresh !== true, owner: h.owner });
     } finally { this.spawning = null; }
     if (n === 0 || lh.root === 0) return;
     // Its pieces as spawned, in spawn order (pieces carry their index).
