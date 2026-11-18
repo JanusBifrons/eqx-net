@@ -86,6 +86,8 @@ async function openPodAndTake(ctx: ShotContext, step: (s: string) => void): Prom
   await page.getByTestId('cargo-take-found').click({ timeout: 5000 });
   await ctx.sleep(1800);
   step('taken; Close');
-  await page.getByTestId('loot-window-close').click({ timeout: 5000 });
+  // Taking the last item empties the pod and the window closes itself.
+  const close = page.getByTestId('loot-window-close');
+  if (await close.isVisible()) await close.click({ timeout: 5000 });
   step('done');
 }
