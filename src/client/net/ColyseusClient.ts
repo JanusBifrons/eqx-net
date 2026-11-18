@@ -46,18 +46,17 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { pushCollisionShieldContacts } from './collisionShieldContacts';
-import { ShellBlastSchema } from '@shared-types/shellBlast';
-import { ShellEndSchema, ShellSalvoSchema, type ShellEnd } from '@shared-types/messages/shellEvents';
+import type { ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, EntityStatsSchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
 import { ControlModeMessageSchema } from '@shared-types/messages/snapshotMessages';
 import { parseTransitReadyShipIds } from '@shared-types/messages';
 import { isCommanderFleetFollow, transitStartsLocalTrip, stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
 import { cargoChanged } from './lootView';
 import { setFactionLooks } from '../../shared-types/factions.js';
-import { registerClientHandlers } from './handlers/index.js';
+import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
 import { fittedCargoMul } from '../../shared-types/blueprints.js';
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
@@ -70,8 +69,6 @@ function sameIds(a: readonly string[], b: readonly string[] | undefined): boolea
 }
 
 import { cargoCapacityForMaxHealth } from '@shared-types/goods';
-import { applySelectionStats } from './selectionStats.js';
-import { ingestFleetStatus } from '../fleet/fleetStatusIngest.js';
 import {
   createRemotePredictionGuard,
   forgetRemote,
@@ -1431,6 +1428,12 @@ export class ColyseusGameClient {
   /** Shells as events: on when the welcome says so (shell-events.md §7). */
   private _shellEvents = false;
   private readonly _shellStore = new ShellSalvoStore();
+  /** The ctx `handlers/index.ts` registers with, built once (#14). */
+  private readonly _handlerCtx: ClientHandlerCtx = {
+    mirror: this.mirror, shellStore: this._shellStore, cutField: this._cutField,
+    shellEvents: () => this._shellEvents,
+    applyShellEnd: (msg: ShellEnd): void => this.applyShellEnd(msg),
+  };
   /** A naval shell hit's FX wait for its drawn burst (navalHitHold.ts). */
   private readonly _navalHitHold = new NavalHitHold();
   /** The sink `_navalHitHold.release` calls (built once, #14). */
@@ -1953,22 +1956,6 @@ export class ColyseusGameClient {
       }
     });
 
-    // Click-to-inspect (structures follow-up Item B5) — live stats for the
-    // locally-selected entity arrive at ~5 Hz. Defensive zod parse (invariant
-    // #3); on success mutate the `selectionStats` module singleton in place (NO
-    // Zustand write — the panel polls the singleton ~1 Hz, avoiding 5 Hz React
-    // re-renders).
-    room.onMessage('entity_stats', (raw: unknown) => {
-      const parsed = EntityStatsSchema.safeParse(raw);
-      if (!parsed.success) return;
-      applySelectionStats(parsed.data);
-    });
-    // RTS slice 7 — the owner-only fleet status stream (~2 Hz, the whole owned
-    // fleet each time) → the `fleet/fleetStatus` singleton the panel polls.
-    room.onMessage('fleet_status', (raw: unknown) => {
-      ingestFleetStatus(raw);
-    });
-
     room.onMessage('damage', (raw: unknown) => {
       // weapon-hit-prediction Phase 3 — defensive zod parse on receive
       // (invariant #4; mirrors the collision_resolved drop-on-fail). The
@@ -2014,50 +2001,6 @@ export class ColyseusGameClient {
     room.onMessage('destroy', (raw: unknown) => {
       const evt = parseDestroy(raw);
       if (evt !== null) this.handleDestroy(evt);
-    });
-
-    // Phase 4 WS-B1 — a ship instance levelled up (public, D13). Defensive zod
-    // parse (invariant #3/#4 — crosses the trust boundary). The badge refresh
-    // for ALL ships rides the next snapshot's states[].level; THIS handler pops
-    // the owner-facing screenspace level-up icon for the LOCAL player's hull.
-    room.onMessage('ship_level_up', (raw: unknown) => {
-      const parsed = ShipLevelUpEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      this.handleShipLevelUp(parsed.data.shipInstanceId, parsed.data.newLevel);
-    });
-
-    // Phase 4 WS-B2 — the server accepted + persisted a stat allocation / respec.
-    // Publish a discrete Zustand ack so the upgrade modal closes + the roster
-    // refreshes; the physics multipliers re-anchor off the snapshot slice, not
-    // this echo (so this is UI-confirmation only). Defensive zod parse.
-    room.onMessage('ship_upgrade_applied', (raw: unknown) => {
-      const parsed = ShipUpgradeAppliedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      useUIStore.getState().setUpgradeAck({
-        shipInstanceId: parsed.data.shipInstanceId,
-        alloc: parsed.data.alloc,
-        spent: parsed.data.spent,
-        budget: parsed.data.budget,
-      });
-    });
-
-    // Phase 4 WS-B3 — the server accepted + persisted a dynamic-mount activation.
-    // Patch the Zustand roster entry's `mounts` so the upgrade modal's activated
-    // set updates immediately (the roster poll would also catch it within ~3 s,
-    // but the patch makes the modal feel responsive). The IN-WORLD render +
-    // fire come off the snapshot `states[].mounts` slice (the authority), not
-    // this echo. Defensive zod parse.
-    room.onMessage('mount_activated', (raw: unknown) => {
-      const parsed = MountActivatedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const evt = parsed.data;
-      const store = useUIStore.getState();
-      const patched = store.shipRoster.map((r) =>
-        r.shipId === evt.shipInstanceId
-          ? { ...r, mounts: evt.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId })) }
-          : r,
-      );
-      store.setShipRoster(patched);
     });
 
     room.onMessage('hit_ack', (raw: unknown) => {
@@ -2175,34 +2118,8 @@ export class ColyseusGameClient {
     });
 
     // Feature handler files (handlers/index.ts): missiles, impact FX, toasts,
-    // wave HUD, structure panels.
-    registerClientHandlers(room, { mirror: this.mirror });
-
-    // Coastal defences — a siege shell burst: the same explosion visual, at
-    // the size of its blast (the damage arrives as damage events).
-    // Shells as events (shell-events.md slice 2a): salvo + hit records.
-    room.onMessage('field_consumed', (raw: unknown) => this._cutField.onConsumedMessage(raw)); // macro terrain C3
-    room.onMessage('field_moved', (raw: unknown) => this._cutField.onMovedMessage(raw)); // C2 deep sleep
-    room.onMessage('shell_salvo', (raw: unknown) => {
-      if (!this._shellEvents) return;
-      const r = ShellSalvoSchema.safeParse(raw);
-      if (r.success) this._shellStore.applySalvo(r.data);
-    });
-    room.onMessage('shell_end', (raw: unknown) => {
-      if (!this._shellEvents) return;
-      const r = ShellEndSchema.safeParse(raw);
-      if (r.success) this.applyShellEnd(r.data);
-    });
-    room.onMessage('shell_blast', (raw: unknown) => {
-      const result = ShellBlastSchema.safeParse(raw);
-      if (!result.success) return;
-      (this.mirror.pendingMissileExplosions ??= []).push({
-        x: result.data.x,
-        y: result.data.y,
-        splashRadius: result.data.radius,
-        missileId: -1,
-      });
-    });
+    // wave HUD, structure panels, drawn shells, ship status, cut field.
+    registerClientHandlers(room, this._handlerCtx);
 
     // Stage 2 of the network-feel roadmap — server-broadcast collision
     // events. Apply post-collision velocities to predWorld immediately;
@@ -3015,31 +2932,6 @@ export class ColyseusGameClient {
     if (vaporised) this.mirror.vaporisedShips?.add(evt.targetId);
     if (evt.targetId.startsWith('swarm-')) this.killSwarmEntity(evt.targetId);
     else this.killEntity(evt.targetId);
-  }
-
-  /**
-   * Phase 4 WS-B1 — a ship instance just levelled up. The PUBLIC badge for ALL
-   * ships refreshes from the next snapshot's `states[].level` (applyShipLevels);
-   * this only pops the OWNER-facing screenspace level-up icon for the LOCAL
-   * player's own hull (resolved via `localShipInstanceId`). Remote level-ups
-   * just refresh their badge — no icon for other players. Discrete + low-
-   * frequency (a kill threshold), so the single pooled-array push is off the
-   * hot path (mirrors `pendingEffectTriggers` pushes from `handleDamage`).
-   */
-  private handleShipLevelUp(shipInstanceId: string, newLevel: number): void {
-    const localShipInstanceId = this.mirror.localShipInstanceId;
-    const localPlayerId = this.mirror.localPlayerId;
-    if (localShipInstanceId == null || localPlayerId == null) return;
-    if (shipInstanceId !== localShipInstanceId) return; // owner-facing icon only
-    // Pooled one-frame trigger — drained by the renderer, cleared in
-    // consumeOneFrameTriggers. Keyed by playerId so the renderer resolves it to
-    // the local ship's (playerId-keyed) mirror pose for the screenspace anchor.
-    const queue = this.mirror.pendingLevelUps;
-    if (queue) queue.push({ playerId: localPlayerId, newLevel });
-    // Discrete Zustand seam for the upgrade modal (WS-B2 wires the modal open;
-    // here we surface "the local player just hit level N" as a discrete scalar —
-    // purity-clean, Invariant #2). A no-op until WS-B2 reads it.
-    useUIStore.getState().setPendingLevelUp(newLevel);
   }
 
   /**
