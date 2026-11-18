@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
-import { STRUCTURE_KINDS_LIST, structureOutline } from '../../shared-types/structureKinds.js';
+import { CAPITAL, STRUCTURE_KINDS_LIST, getStructureKind, structureOutline } from '../../shared-types/structureKinds.js';
 import { buildRig, liftProgress, rigPartIndex, JOINT_HINGE, JOINT_LIFT, type Rig } from './rig.js';
 import { createRigPose, evaluateRig, rigDeployed, type PlayingClip } from './evaluate.js';
 import { twoBoneIkSolve } from './ikAdapter.js';
 import {
   DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_CRANE_BOOM, DOCK_CRANE_JIB, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, DOCK_CRANE_REACH_TICKS,
   DOCK_BAY_INSET, DOCK_DEPOSIT_RANGE, DOCK_STILL_SPEED, DOCK_UNLOAD_HOLD_LOAD_TICKS, DOCK_UNLOAD_HOLD_MIN_TICKS, DOOR_TURRET_LEAF_TRAVEL, DOOR_TURRET_LIFT, DOOR_TURRET_MOUNT, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
-  RIG_DEFS, SANDBOX_DOOR_TURRET_DEF, dockUnloadHoldTicks, inDockBay, isStillForDock, rigById, rigForStructureKind,
+  CAPITAL_BAY, CRANE_BAYS, FREIGHT_DOCK_BAY, RIG_DEFS, SANDBOX_DOOR_TURRET_DEF, craneBayFor, dockUnloadHoldTicks, inCraneBay, inDockBay, isStillForDock, rigById, rigForStructureKind,
 } from './rigCatalogue.js';
 
 const play = (clipId: string, startTick: number, target?: { x: number; y: number }): PlayingClip =>
@@ -424,5 +424,76 @@ describe('rigDeployed + idle pose (structure-restyle 2h)', () => {
     const dock = RIG_DEFS.find((d) => d.id === 'dock-crane')!;
     const targeted = dock.clips.find((c) => c.ik !== undefined)!;
     expect(() => buildRig({ ...dock, idleClip: targeted.id })).toThrow(/targeted/);
+  });
+});
+describe('crane bays per kind (structure-restyle 3i)', () => {
+  it('freight_dock and capital carry a crane bay and its crane rig; nothing else does', () => {
+    expect(craneBayFor('freight_dock')).toBe(FREIGHT_DOCK_BAY);
+    expect(craneBayFor('capital')).toBe(CAPITAL_BAY);
+    for (const id of ['cargo_bay', 'turret', 'toString', '']) expect(craneBayFor(id)).toBeNull();
+    for (const bay of CRANE_BAYS) {
+      expect(rigForStructureKind(bay.kindId)!.id).toBe(bay.rigId);
+      expect(rigById(bay.rigId)!.clips.map((c) => c.id)).toEqual(['arm-reach', 'arm-hold', 'arm-retract']);
+    }
+  });
+
+  it('each bay IS the keepClear pad of its kind, past the open (+y) edge, the tower on the roof', () => {
+    for (const bay of CRANE_BAYS) {
+      const k = getStructureKind(bay.kindId as 'capital');
+      expect({ cx: bay.cx, cy: bay.cy, w: 2 * bay.padHalfW, h: 2 * bay.padHalfH }).toEqual(k.keepClear);
+      expect(bay.halfH).toBe(k.footprint.h / 2);
+      expect(bay.cy - bay.padHalfH, 'pad starts past the open edge').toBeGreaterThan(bay.halfH);
+      expect(Math.abs(bay.pivotX)).toBeLessThan(bay.halfW);
+      expect(bay.pivotY).toBeGreaterThan(-bay.halfH);
+      expect(bay.pivotY).toBeLessThan(bay.halfH);
+    }
+    // The Capital: 500 × 240, 10 u past its 280 edge, centred on the hull.
+    expect(CAPITAL.keepClear).toEqual({ cx: 0, cy: 410, w: 500, h: 240 });
+  });
+
+  it('inDockBay is the dock bay rule; the Capital bay rule is the same rule on its pad', () => {
+    for (const [x, y] of [[0, 460], [0, 0], [400, 700], [0, 410], [210, 330]] as const) {
+      expect(inDockBay(x, y)).toBe(inCraneBay(FREIGHT_DOCK_BAY, x, y));
+    }
+    const b = CAPITAL_BAY;
+    expect(inCraneBay(b, b.cx, b.cy)).toBe(true);
+    expect(inCraneBay(b, b.cx + b.padHalfW - DOCK_BAY_INSET, b.cy + b.padHalfH - DOCK_BAY_INSET)).toBe(true);
+    expect(inCraneBay(b, b.cx + b.padHalfW - DOCK_BAY_INSET + 1e-6, b.cy)).toBe(false);
+    expect(inCraneBay(b, 0, 0), 'the hull is not the bay').toBe(false);
+    expect(inCraneBay(b, 0, b.halfH + 5), 'nor the gap').toBe(false);
+    expect(inCraneBay(b, 0, -b.cy), 'nor the far side').toBe(false);
+    // A hauler (80 wide) parks with room either side, centre band ≥ 160 deep.
+    expect(2 * (b.padHalfW - DOCK_BAY_INSET)).toBeGreaterThan(3 * 80);
+    expect(2 * (b.padHalfH - DOCK_BAY_INSET)).toBeGreaterThanOrEqual(160);
+  });
+
+  it('the Capital crane reaches every pad point and stows on the roof', () => {
+    const rig = rigById(CAPITAL_BAY.rigId)!;
+    const pose = createRigPose(rig);
+    const clamp = rigPartIndex(rig, 'clamp');
+    const b = CAPITAL_BAY;
+    fc.assert(fc.property(
+      fc.double({ min: b.cx - b.padHalfW, max: b.cx + b.padHalfW, noNaN: true }),
+      fc.double({ min: b.cy - b.padHalfH, max: b.cy + b.padHalfH, noNaN: true }),
+      (x, y) => {
+        evaluateRig(rig, play('arm-reach', 0, { x, y }), DOCK_CRANE_REACH_TICKS, pose, twoBoneIkSolve);
+        return pose.ikReached && Math.hypot(pose.x[clamp]! - x, pose.y[clamp]! - y) < 1e-6;
+      },
+    ), { numRuns: 300 });
+    // Stowed: every arm part, and the boom's far end, on the 560 roof.
+    evaluateRig(rig, null, 0, pose);
+    for (const id of ['plinth', 'boom', 'jib', 'clamp']) {
+      const i = rigPartIndex(rig, id);
+      expect(Math.abs(pose.x[i]!), id).toBeLessThan(b.halfW);
+      expect(Math.abs(pose.y[i]!), id).toBeLessThan(b.halfH);
+    }
+    const boom = rigPartIndex(rig, 'boom');
+    const endX = pose.x[boom]! + (DOCK_CRANE_BOOM + 8) * pose.cos[boom]!;
+    expect(Math.abs(endX)).toBeLessThanOrEqual(b.halfW);
+    // The lip apron starts at the Capital's open edge and covers its pad.
+    const lip = rig.parts[rigPartIndex(rig, 'lip')]!;
+    expect(lip.anchorY).toBe(b.halfH);
+    const ys = lip.outline!.filter((_, k) => k % 2 === 1);
+    expect(lip.anchorY + Math.max(...ys)).toBeGreaterThanOrEqual(b.cy + b.padHalfH);
   });
 });

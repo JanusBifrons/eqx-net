@@ -125,7 +125,7 @@ describe("placementRules — a freight dock's landing pad stays clear", () => {
 
   it('rejects a structure placed onto an existing dock pad (the pad turns with the dock)', () => {
     expect(placementRejection('solar', 0, PAD.cy, [dockAt(0, 0)])).toBe('overlap-pad');
-    expect(PLACEMENT_REJECTION_TEXT['overlap-pad']).toBe("Keep the dock's landing pad clear");
+    expect(PLACEMENT_REJECTION_TEXT['overlap-pad']).toBe("Keep the landing pad clear");
     // Just past the pad's far edge is legal.
     expect(placementRejection('solar', 0, PAD.cy + PAD.h / 2 + SOLAR.h / 2, [dockAt(0, 0)])).toBeNull();
     // Turned 180°, the pad is on the -y side.

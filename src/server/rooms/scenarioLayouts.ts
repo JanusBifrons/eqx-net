@@ -104,7 +104,8 @@ export const RIG_SANDBOX = {
 
 /** Hubs first, so the leaves auto-connect to them. */
 export const RIG_SANDBOX_PREBUILT = [
-  { kind: 'capital', ...RIG_SANDBOX.capital },
+  // Turned 180°: its crane bay pad (3i) faces away from the connector.
+  { kind: 'capital', ...RIG_SANDBOX.capital, rot: 180 },
   { kind: 'connector', ...RIG_SANDBOX.connector },
   { kind: 'freight_dock', ...RIG_SANDBOX.dock },
   { kind: 'turret', ...RIG_SANDBOX.turret },
@@ -154,6 +155,18 @@ export function rigSandboxScene(lead: number): unknown[] {
  */
 export const RIG_UNLOAD = {
   sectorKey: 'showcase-rig-unload',
+} as const;
+
+/**
+ * structure-restyle 3i stills: "first load home". The pilot's own Capital
+ * alone at (0, 0); its built-in crane bay is past its +y edge (pad centre
+ * (0, 410)). A film joins south with a load aboard
+ * (`?spawnX=0&spawnY=1600&initialAngle=3.1416&initialCargo=`), flies onto the
+ * bay and stops; the real bay dwell runs the Capital's crane.
+ */
+export const RIG_HOME = {
+  sectorKey: 'showcase-rig-home',
+  prebuiltStructures: [{ kind: 'capital', x: 0, y: 0 }],
 } as const;
 
 /** E2E: the hauler is already on the pad and the crane reaches at once. */
