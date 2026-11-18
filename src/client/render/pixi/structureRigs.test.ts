@@ -8,9 +8,10 @@ import { describe, it, expect } from 'vitest';
 import { Container } from 'pixi.js';
 import type { Graphics } from 'pixi.js';
 import {
-  readRigsFlag, rigLayerZ, rigPartRole, RIG_OVER_Z, RIG_UNDER_Z, partLocalTransform, worldToHost,
-  StructureRigView, StructureRigs, RIG_LOOK_C, type PixiXform,
+  readRigsFlag, rigLayerZ, RIG_OVER_Z, RIG_UNDER_Z, partLocalTransform, worldToHost,
+  StructureRigView, StructureRigs, type PixiXform,
 } from './structureRigs.js';
+import { rigPartRole, RIG_LOOK_C } from './structureRigLook.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
