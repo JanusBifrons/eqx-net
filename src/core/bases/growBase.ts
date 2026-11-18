@@ -26,13 +26,14 @@ import { COASTAL_DEFENCE_KINDS, getStructureKind, structureHalfExtents, type Str
 import { RECIPES, packRecipeFor, recipesFor, type RecipeId } from '../../shared-types/recipes.js';
 import { BASE_PRICES } from '../../shared-types/economy.js';
 import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
-import { canConnect, segmentIntersectsAabb, type GridNode } from '../structures/Grid.js';
-import { Connection } from '../structures/Connection.js';
-import { keepClearBox, placementRejection } from '../structures/placementRules.js';
-import { isShieldEmitterKind } from '../structures/gateGeometry.js';
+import { keepClearBox } from '../structures/placementRules.js';
+import { Builder, type GrownPlacement } from './growBuilder.js';
+import { roleUnits, type Want } from './roleUnits.js';
 import { seededRandom, type BaseProfile, type BaseTier } from './baseProfile.js';
 import type { SectorFeature } from '../galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
+
+export type { GrownPlacement } from './growBuilder.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base).
@@ -61,18 +62,6 @@ export const TIER_MAX_STRUCTURES: Readonly<Record<BaseTier, number>> = Object.fr
   stronghold: 160,
   citadel: 260,
 });
-
-export interface GrownPlacement {
-  kind: StructureKindId;
-  x: number;
-  y: number;
-  rot?: number;
-  /** Selected recipe (processors). */
-  recipe?: RecipeId;
-  level?: number;
-  /** v4 H — the transit link this teleporter ends (paired at run time). */
-  link?: string;
-}
 
 export interface GrownBase {
   placements: GrownPlacement[];
@@ -214,80 +203,6 @@ function stageOf(kind: StructureKindId, recipe: RecipeId | undefined): number | 
   return 3;
 }
 
-interface Want {
-  kind: StructureKindId;
-  recipe?: RecipeId;
-  /** v4 H — the transit link a teleporter ends. */
-  link?: string;
-}
-
-/** The role's production units, in the order a builder adds them. */
-function roleUnits(profile: BaseProfile, features: readonly SectorFeature[], rnd: () => number): Want[] {
-  const nebula = features.includes('nebula');
-  const big = profile.tier === 'stronghold' || profile.tier === 'citadel';
-  switch (profile.role) {
-    case 'mining': {
-      const out: Want[] = [{ kind: 'miner' }];
-      if (nebula) out.push({ kind: 'gas_collector' });
-      if (big) out.unshift({ kind: 'deep_core_rig' });
-      return out;
-    }
-    case 'refinery': {
-      const out: Want[] = [{ kind: 'smelter', recipe: 'smelt_alloy' }, { kind: 'refinery', recipe: nebula ? 'refine_gas' : 'refine_ice_fuel' }];
-      if (features.includes('minerals') || features.includes('blackhole')) out.push({ kind: 'silicon_works', recipe: 'make_silicon' });
-      out.push({ kind: 'reclaimer', recipe: 'reclaim_salvage' });
-      if (big) out.unshift({ kind: 'ore_processing_complex', recipe: 'opc_alloy' });
-      return out;
-    }
-    case 'workshop': {
-      // Two adjacent stages of one chain, ending in a product it sells.
-      const chains: Want[][] = [
-        [{ kind: 'refinery', recipe: 'refine_ice_fuel' }, { kind: 'hydroponics', recipe: 'grow_provisions' }],
-        [{ kind: 'smelter', recipe: 'smelt_alloy' }, { kind: 'fabricator', recipe: 'fab_components' }],
-        [{ kind: 'refinery', recipe: nebula ? 'refine_gas' : 'refine_ice_fuel' }, { kind: 'munitions_works', recipe: 'make_munitions' }],
-      ];
-      return chains[Math.floor(rnd() * chains.length)]!;
-    }
-    case 'manufactory':
-      return [
-        { kind: 'fabricator', recipe: 'fab_components' },
-        { kind: 'fabricator', recipe: 'fab_electronics' },
-        { kind: 'munitions_works', recipe: 'make_munitions' },
-      ];
-    case 'assembly':
-      return [
-        { kind: 'assembly_plant', recipe: rnd() < 0.5 ? 'assemble_machinery' : 'assemble_consumer_goods' },
-        { kind: 'fabricator', recipe: 'fab_components' },
-        { kind: 'fabricator', recipe: 'fab_electronics' },
-      ];
-    case 'trade':
-      return [{ kind: 'cargo_bay' }];
-    case 'transit':
-      // A hub's business is its teleporters (one per link, added below).
-      return [{ kind: 'cargo_bay' }];
-    case 'military':
-      // v4 M — turret-heavy: every kind of gun, repeated while wealth lasts
-      // (a fenced base puts them on bastions outside the fence). Coastal
-      // defences: the AA screen, 5" mounts and the medium coastal guns too.
-      return [
-        { kind: 'laser_bolt_turret' }, { kind: 'autocannon_turret' }, { kind: 'missile_turret' }, { kind: 'turret' },
-        { kind: 'aa_quad_40mm' }, { kind: 'dp_mount_5in' }, { kind: 'coastal_casemate_8in' }, { kind: 'coastal_turret_11in' },
-      ];
-    case 'colony': {
-      // A habitat station: housing first, spires once it's a settlement or bigger, and
-      // hydroponics to grow part of its own provisions.
-      const out: Want[] = [
-        { kind: 'habitat_module', recipe: 'habitat_upkeep' },
-        { kind: 'habitat_module', recipe: 'habitat_upkeep' },
-      ];
-      if (profile.tier !== 'outpost') {
-        out.push({ kind: 'tower_module', recipe: 'tower_upkeep' }, { kind: 'hydroponics', recipe: 'grow_provisions' });
-      }
-      return out;
-    }
-  }
-}
-
 /** The build list: what the base buys, within its wealth and tier budget. */
 function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd: () => number, drnd: () => number): { wants: Want[]; spent: number } {
   const wants: Want[] = [];
@@ -341,63 +256,6 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
     if (!any) break;
   }
   return { wants, spent };
-}
-
-interface Node extends GridNode {
-  kind: StructureKindId;
-}
-
-class Builder {
-  readonly placements: GrownPlacement[] = [];
-  readonly edges: Array<readonly [number, number]> = [];
-  readonly placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number; kind: StructureKindId; rot: number }> = [];
-  readonly nodes = new Map<string, Node>();
-  readonly adj = new Map<string, Connection[]>();
-  private cid = 0;
-
-  /** Place if the real overlap rule allows; returns the index or -1. */
-  tryPlace(p: GrownPlacement): number {
-    const rot = p.rot ?? 0;
-    if (placementRejection(p.kind, p.x, p.y, this.placed, null, rot) !== null) return -1;
-    const k = getStructureKind(p.kind);
-    const { hw, hh } = structureHalfExtents(p.kind, rot);
-    // Never on top of an existing link (a link needs a clear line of sight).
-    for (const [ea, eb] of this.edges) {
-      const a = this.placements[ea]!, b = this.placements[eb]!;
-      if (segmentIntersectsAabb(a.x, a.y, b.x, b.y, p.x - hw, p.y - hh, p.x + hw, p.y + hh)) return -1;
-    }
-    const i = this.placements.length;
-    this.placements.push(p);
-    this.placed.push({ x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh, kind: p.kind, rot });
-    this.nodes.set(`s${i}`, {
-      id: `s${i}`, kind: p.kind, x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh,
-      isHub: k.isHub, isCapital: p.kind === 'capital', isConnector: p.kind === 'connector',
-      isShieldPylon: isShieldEmitterKind(p.kind), maxConnections: k.maxConnections,
-      connectionRange: k.connectionRange, powerOutput: k.powerOutput, powerConsumption: k.powerConsumption,
-      isConstructed: true,
-    });
-    return i;
-  }
-
-  /** Link if the real connection rule allows. */
-  tryLink(a: number, b: number): boolean {
-    const na = this.nodes.get(`s${a}`)!, nb = this.nodes.get(`s${b}`)!;
-    const r = canConnect(na, nb, this.adj, this.nodes);
-    if (!r.ok) return false;
-    const c = new Connection(this.cid++, na.id, nb.id, 1);
-    (this.adj.get(na.id) ?? this.adj.set(na.id, []).get(na.id)!).push(c);
-    (this.adj.get(nb.id) ?? this.adj.set(nb.id, []).get(nb.id)!).push(c);
-    this.edges.push([a, b]);
-    return true;
-  }
-
-  /** Remove the last placement (a leaf that couldn't be linked). */
-  undoLast(): void {
-    const i = this.placements.length - 1;
-    this.placements.pop();
-    this.placed.pop();
-    this.nodes.delete(`s${i}`);
-  }
 }
 
 /**

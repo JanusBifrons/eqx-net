@@ -12,14 +12,14 @@ import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.
 import { applyShipInput, type ShipInputArgs, type ShipInputMultipliers } from './applyShipInput.js';
 import { newWarpState, spoolHeldForAlign, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_MIN_TURN, WARP_SPEED, type WarpPhase, type WarpState } from './warpDrive.js';
 import { castHitscan } from './hitscanRay.js';
-import { wallGeometry } from '../structures/ShieldWall.js';
 import { applyForceFields, storeForceField, type ForceField } from './forceFields.js';
 import { shipBodyInertia, shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
-import { RIG_PART_COLLISION_GROUPS, withoutRigParts } from './collisionGroups.js';
+import { withoutRigParts } from './collisionGroups.js';
 import type { Rig } from '../articulation/rig.js';
-import { clipFinished, createRigPose, evaluateRig, type RigPose } from '../articulation/evaluate.js';
-import { twoBoneIkSolve } from '../articulation/ikAdapter.js';
+import { RigBodySet } from './rigBodies.js';
+import { ShieldWallBodies } from './shieldWallBodies.js';
+import { SleepSettle } from './sleepSettle.js';
 
 const FIXED_DT = 1 / 60;
 
@@ -44,10 +44,7 @@ export { BOOST_MULTIPLIER } from '../../shared-types/shipKinds.js';
  */
 export const SOFT_CCD_PREDICTION = 48;
 
-/** Fixed steps a settle body (`setSleepSettle`) must stay under its
- *  thresholds before it is put to sleep: half a second (Rapier's own timer
- *  is 2 s, at a 0.4 u/s threshold). */
-export const WRECK_SETTLE_STEPS = 30;
+export { WRECK_SETTLE_STEPS } from './sleepSettle.js';
 
 export interface ShipPhysicsState {
   x: number;
@@ -100,26 +97,6 @@ interface ShipBody {
   piloted?: boolean;
 }
 
-/** One rigged host's solid parts (`PhysicsWorld.attachRig`). */
-interface RigBodies {
-  readonly rig: Rig;
-  readonly pose: RigPose;
-  /** Kinematic body per part (rig order), or null (no collider). */
-  readonly parts: (RAPIER.RigidBody | null)[];
-  /** The clip record, owned and reused (`setRigClip` copies into it). */
-  readonly playing: { clipId: string; startTick: number; target: { x: number; y: number } | undefined };
-  readonly targetScratch: { x: number; y: number };
-  hasClip: boolean;
-  /** Host world pose, cached (structures are static; `setShipState` updates it). */
-  hostX: number;
-  hostY: number;
-  hostAngle: number;
-  /** Must be re-posed (attach, new clip, host moved). */
-  dirty: boolean;
-  /** Nothing will move until a new clip or a host move. */
-  idle: boolean;
-}
-
 export class PhysicsWorld {
   private world: RAPIER.World;
   private accumulator = 0;
@@ -128,22 +105,8 @@ export class PhysicsWorld {
   private readonly forceFields = new Map<string, ForceField>();
   /** Reverse lookup: Rapier rigid-body handle → entity ID, for hitscan results. */
   private handleToId = new Map<number, string>();
-  /** Shield-wall span bodies + colliders, keyed by wall id. Kept SEPARATE from
-   *  `this.bodies` (and out of `handleToId`) so walls never enter the
-   *  ship/obstacle SAB-write + contact iteration (`getAllShipStates`): they are
-   *  static, slot-less, pose-broadcast-free obstacles whose only job is to block
-   *  ships. The collider ref is kept so the wall toggles (stun / power loss) via
-   *  `setEnabled` without re-spawning the body. */
-  private readonly wallBodies = new Map<string, RAPIER.RigidBody>();
-  private readonly wallColliders = new Map<string, RAPIER.Collider>();
-  /** Wall-body Rapier handle → `wall-${id}` sentinel. Walls are kept out of
-   *  `handleToId` (above), but a hitscan beam must still TERMINATE at an up
-   *  wall (R2.28 — the client predicted beam previously ran through it because
-   *  `castHitscan` resolved only via `handleToId`). Consulted ONLY in
-   *  `castHitscan`'s miss-fallback so a wall contact can never mis-resolve to a
-   *  ship id elsewhere. Cleared in `removeWall`; a disabled (down) wall is
-   *  excluded from `castRay` by Rapier so it stays passable without a map edit. */
-  private readonly wallHandleToId = new Map<number, string>();
+  /** Shield-wall span bodies (`shieldWallBodies.ts`), kept apart from `bodies`. */
+  private readonly walls: ShieldWallBodies;
   /** 2026-05-25 heap-growth fix — per-tick pooled scratches for the
    *  Rapier `setTranslation` / `setLinvel` Vector2 arguments. `setShipState`
    *  was called per-drone per-RAF on the client (the since-retired follower for
@@ -158,14 +121,13 @@ export class PhysicsWorld {
    *  2026-11-12: capitals collide solidly). Only capital bodies are ever
    *  registered, so every other body is untouched. See capitalOverlap.ts. */
   private readonly capitals = new CapitalOverlapResolver();
-  /** Rigged hosts' solid parts, by host id (`attachRig`), plus a flat list
-   *  for the allocation-free per-tick walk (`stepRigs`). */
-  private readonly rigs = new Map<string, RigBodies>();
-  private readonly rigList: RigBodies[] = [];
-  private readonly _rigTranslationScratch = { x: 0, y: 0 };
+  /** Rigged hosts' solid parts (`rigBodies.ts`), by host id. */
+  private readonly rigs: RigBodySet;
 
   private constructor(world: RAPIER.World) {
     this.world = world;
+    this.walls = new ShieldWallBodies(world);
+    this.rigs = new RigBodySet(world);
   }
 
   static async create(): Promise<PhysicsWorld> {
@@ -194,7 +156,7 @@ export class PhysicsWorld {
       applyForceFields(this.forceFields, this.bodies, FIXED_DT);
       this.world.step(eventQueue);
       this.capitals.resolve();
-      if (this.settle.size > 0) this.settleStep();
+      if (this.settle.size > 0) this.settle.step();
       this.accumulator -= FIXED_DT;
     }
   }
@@ -443,44 +405,15 @@ export class PhysicsWorld {
     this.handleToId.delete(rec.body.handle);
     this.capitals.remove(rec.body);
     this.settle.delete(id);
-    if (this.rigs.size > 0) this.detachRig(id);
+    if (this.rigs.size > 0) this.rigs.detachRig(id);
     this.world.removeRigidBody(rec.body);
     this.bodies.delete(id);
   }
 
-  /**
-   * Spawn a shield-wall span — a STATIC (fixed) cuboid spanning between two pylon
-   * poses (shield-fence plan). It blocks ships physically (an immovable body the
-   * dynamic ship bodies bounce off); weapon absorption is resolved main-thread
-   * (the server has no live Rapier world). The geometry is derived from the two
-   * poses via the shared `wallGeometry` so the server collider, the client
-   * predWorld collider, and the rendered span all agree. Idempotent on `id`.
-   *
-   * NOT given CONTACT_FORCE_EVENTS — a wall never deals ram damage; it just
-   * blocks. Toggle it on stun / power loss via `setWallActive` (cheaper than a
-   * despawn/respawn churn of the body + handle maps).
-   */
-  spawnWall(id: string, ax: number, ay: number, bx: number, by: number, thickness: number): void {
-    if (this.wallBodies.has(id)) return;
-    const g = wallGeometry(ax, ay, bx, by);
-    if (g.length < 1) return; // degenerate (coincident pylons) — nothing to span
-    const body = this.world.createRigidBody(
-      RAPIER.RigidBodyDesc.fixed().setTranslation(g.midX, g.midY).setRotation(g.angle),
-    );
-    const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(g.length / 2, thickness / 2).setRestitution(0.4).setFriction(0),
-      body,
-    );
-    this.wallBodies.set(id, body);
-    this.wallColliders.set(id, collider);
-    this.wallHandleToId.set(body.handle, 'wall-' + id);
-  }
+  /** Shield-wall spans: see `ShieldWallBodies` (shieldWallBodies.ts). */
+  spawnWall(id: string, ax: number, ay: number, bx: number, by: number, thickness: number): void { this.walls.spawnWall(id, ax, ay, bx, by, thickness); }
 
-  /** Enable/disable a wall's collider (stun / power loss → pass-through). A
-   *  no-op for an unknown id. */
-  setWallActive(id: string, active: boolean): void {
-    this.wallColliders.get(id)?.setEnabled(active);
-  }
+  setWallActive(id: string, active: boolean): void { this.walls.setWallActive(id, active); }
 
   /**
    * Force fields (`forceFields.ts`: kinds `pad` and `tractor`, their
@@ -497,189 +430,19 @@ export class PhysicsWorld {
     this.forceFields.delete(id);
   }
 
-  /** Remove a wall span entirely (pylon destroyed / pair severed). */
-  removeWall(id: string): void {
-    const body = this.wallBodies.get(id);
-    if (!body) return;
-    this.wallHandleToId.delete(body.handle);
-    this.world.removeRigidBody(body); // removes the body AND its collider
-    this.wallBodies.delete(id);
-    this.wallColliders.delete(id);
-  }
+  removeWall(id: string): void { this.walls.removeWall(id); }
 
-  // ── Rig parts (structure-restyle 2d, plan §5 / §8) ──────────────────────────
-  //
-  // Solid (`plane`-layer) rig parts are kinematic-position-based bodies beside
-  // the wall bodies above: kept OUT of `this.bodies` / `handleToId` (no SAB
-  // slot, no pose broadcast, never a contact-drain party: a door never deals
-  // ram damage, it pushes and blocks), and tied to their HOST body's lifecycle
-  // (`despawnShip(host)` removes them). `under` / `over` parts get no body.
-  //
-  // The pose is a pure function of (rig, clip record, tick) (`evaluateRig`),
-  // so the server worker and the client predWorld place the same bodies from
-  // the same inputs through this one method set (#15).
-  //
-  // Parity note (V8 vs JavaScriptCore): `evaluateRig` and the host transform
-  // below use Math.sin / Math.cos, which ECMAScript does not require to be
-  // correctly rounded; V8 (server, Chrome) and JavaScriptCore (iOS Safari) may
-  // differ in the last bit for some arguments. Slides on an unrotated host are
-  // exact either way (cos 0 = 1, sin 0 = 0 everywhere); a hinge or a rotated
-  // host can differ by ~1 ulp (about 1e-13 u at 1e3 u). It does not matter:
-  // the server is authoritative for every pose the client predicts against
-  // (the local ship is corrected from snapshots), the error is many orders
-  // below the reconciler's correction threshold, and it never accumulates:
-  // every step re-poses each part from the absolute tick, never from its
-  // previous pose.
-
-  /** Attach `rig`'s solid parts to the body `hostId` (a structure). One
-   *  kinematic body + convex collider per `plane` part with an outline, in
-   *  `RIG_PART_COLLISION_GROUPS`; the host's own colliders stop colliding with
-   *  rig parts (`withoutRigParts`). Placed at the rest pose at the host's
-   *  current pose. No-op for an unknown host, an already-rigged host, or a rig
-   *  with no solid part (e.g. the dock crane: all under/over). Spawn time
-   *  only (allocates). */
+  /** Rig parts (structure-restyle 2d): see `RigBodySet` (rigBodies.ts). */
   attachRig(hostId: string, rig: Rig): void {
     const host = this.bodies.get(hostId);
-    if (!host || this.rigs.has(hostId)) return;
-    const n = rig.partCount;
-    const parts: (RAPIER.RigidBody | null)[] = new Array<RAPIER.RigidBody | null>(n).fill(null);
-    let any = false;
-    for (let i = 0; i < n; i++) {
-      const def = rig.parts[i]!;
-      if (def.layer !== 'plane' || !def.outline || def.outline.length < 6) continue;
-      const desc = RAPIER.ColliderDesc.convexHull(new Float32Array(def.outline));
-      if (!desc) continue;
-      desc.setRestitution(0.4).setFriction(0).setCollisionGroups(RIG_PART_COLLISION_GROUPS);
-      const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased());
-      this.world.createCollider(desc, body);
-      parts[i] = body;
-      any = true;
-    }
-    if (!any) return;
-    const hb = host.body;
-    for (let c = 0; c < hb.numColliders(); c++) {
-      const col = hb.collider(c);
-      col.setCollisionGroups(withoutRigParts(col.collisionGroups()));
-    }
-    const t = hb.translation();
-    const rec: RigBodies = {
-      rig, pose: createRigPose(rig), parts,
-      playing: { clipId: '', startTick: 0, target: undefined },
-      targetScratch: { x: 0, y: 0 }, hasClip: false,
-      hostX: t.x, hostY: t.y, hostAngle: hb.rotation(),
-      dirty: true, idle: false,
-    };
-    this.rigs.set(hostId, rec);
-    this.rigList.push(rec);
-    // Teleport to the rest pose now (a fresh kinematic body would otherwise
-    // sweep from the origin on its first step).
-    this.poseRig(rec, 0, true);
+    if (host) this.rigs.attachRig(hostId, host.body, rig);
   }
 
-  /** Start (or, with `clipId` null, clear) the clip playing on `hostId`'s rig:
-   *  the `PlayingClip` record `{clipId, startTick, target?}` (game ticks;
-   *  target in the host frame). Copied: no reference is kept. No-op for a
-   *  host without a rig, and for the record already playing (the client
-   *  re-applies its room-state record every snapshot). */
-  setRigClip(hostId: string, clipId: string | null, startTick = 0, targetX?: number, targetY?: number): void {
-    const r = this.rigs.get(hostId);
-    if (!r) return;
-    if (clipId === null ? !r.hasClip : r.hasClip && r.playing.clipId === clipId && r.playing.startTick === startTick
-      && (targetX !== undefined && targetY !== undefined
-        ? r.playing.target !== undefined && r.playing.target.x === targetX && r.playing.target.y === targetY
-        : r.playing.target === undefined)) return;
-    r.hasClip = clipId !== null;
-    r.playing.clipId = clipId ?? '';
-    r.playing.startTick = startTick;
-    if (targetX !== undefined && targetY !== undefined) {
-      r.targetScratch.x = targetX;
-      r.targetScratch.y = targetY;
-      r.playing.target = r.targetScratch;
-    } else {
-      r.playing.target = undefined;
-    }
-    r.dirty = true;
-    r.idle = false;
-  }
+  setRigClip(hostId: string, clipId: string | null, startTick = 0, targetX?: number, targetY?: number): void { this.rigs.setRigClip(hostId, clipId, startTick, targetX, targetY); }
 
-  /**
-   * Set every rig part's NEXT kinematic pose to its pose at `nowTick` (the
-   * tick the coming `tick()` step produces: the server worker passes its sim
-   * tick + 1, the client predWorld the predicted tick + 1). Rapier then moves
-   * each part along that path in the step, so it pushes what it meets.
-   * Cheap skip: a rig whose clip is cleared or finished, and whose host has
-   * not moved, is posed once and then skipped. Allocation-free (#14).
-   */
-  stepRigs(nowTick: number): void {
-    const list = this.rigList;
-    for (let k = 0; k < list.length; k++) {
-      const r = list[k]!;
-      if (r.idle && !r.dirty) continue;
-      this.poseRig(r, nowTick, false);
-    }
-  }
+  stepRigs(nowTick: number): void { this.rigs.stepRigs(nowTick); }
 
-  /** World pose of one rig part's body (tests, debug; allocates), or null. */
-  rigPartPose(hostId: string, partId: string): { x: number; y: number; angle: number } | null {
-    const r = this.rigs.get(hostId);
-    if (!r) return null;
-    const i = r.rig.partIds.indexOf(partId);
-    const b = i >= 0 ? r.parts[i] : null;
-    if (!b) return null;
-    const t = b.translation();
-    return { x: t.x, y: t.y, angle: b.rotation() };
-  }
-
-  /** Evaluate `r` at `nowTick` and pose its bodies: `teleport` sets the pose
-   *  outright (attach), otherwise it is the next kinematic target. */
-  private poseRig(r: RigBodies, nowTick: number, teleport: boolean): void {
-    const playing = r.hasClip ? r.playing : null;
-    evaluateRig(r.rig, playing, nowTick, r.pose, twoBoneIkSolve);
-    const pose = r.pose;
-    const c = Math.cos(r.hostAngle), s = Math.sin(r.hostAngle);
-    const tr = this._rigTranslationScratch;
-    const parts = r.parts;
-    for (let i = 0; i < parts.length; i++) {
-      const b = parts[i];
-      if (!b) continue;
-      const px = pose.x[i]!, py = pose.y[i]!;
-      tr.x = r.hostX + px * c - py * s;
-      tr.y = r.hostY + px * s + py * c;
-      const a = r.hostAngle + pose.angle[i]!;
-      if (teleport) {
-        b.setTranslation(tr, false);
-        b.setRotation(a, false);
-      } else {
-        b.setNextKinematicTranslation(tr);
-        b.setNextKinematicRotation(a);
-      }
-    }
-    r.dirty = false;
-    // Idle once nothing will move until a new clip or a host move: no clip,
-    // or the clip has reached its last key (it holds).
-    r.idle = playing === null || clipFinished(r.rig, playing, nowTick);
-  }
-
-  /** Host moved (`setShipState` on a rigged body): re-pose its parts on the
-   *  next `stepRigs`. Only a real change marks it, so a structure reposed
-   *  every snapshot to the same pose stays idle. */
-  private noteRigHostPose(id: string, x: number, y: number, angle: number): void {
-    const r = this.rigs.get(id);
-    if (!r) return;
-    if (r.hostX === x && r.hostY === y && r.hostAngle === angle) return;
-    r.hostX = x; r.hostY = y; r.hostAngle = angle;
-    r.dirty = true;
-  }
-
-  /** Remove `hostId`'s rig bodies (its host despawned). */
-  private detachRig(hostId: string): void {
-    const r = this.rigs.get(hostId);
-    if (!r) return;
-    for (const b of r.parts) if (b) this.world.removeRigidBody(b);
-    this.rigs.delete(hostId);
-    const k = this.rigList.indexOf(r);
-    if (k >= 0) this.rigList.splice(k, 1);
-  }
+  rigPartPose(hostId: string, partId: string): { x: number; y: number; angle: number } | null { return this.rigs.rigPartPose(hostId, partId); }
 
   /**
    * Swap a ship/drone body between its cheap CIRCLE collider (shield up)
@@ -1189,29 +952,11 @@ export class PhysicsWorld {
    */
   setSleepSettle(id: string, speed: number, spin: number): void {
     const rec = this.bodies.get(id);
-    if (!rec) return;
-    if (!(speed > 0)) { this.settle.delete(id); return; }
-    const s = this.settle.get(id);
-    if (s) { s.speed2 = speed * speed; s.spin = spin; s.count = 0; return; }
-    this.settle.set(id, { body: rec.body, speed2: speed * speed, spin, count: 0 });
+    if (rec) this.settle.set(id, rec.body, speed, spin);
   }
 
-  private readonly settle = new Map<string, { body: RAPIER.RigidBody; speed2: number; spin: number; count: number }>();
-
-  /** One settle pass after a fixed step (alloc-free apart from Rapier's own
-   *  `linvel()` getter, as in `getAllShipStates`). */
-  private settleStep(): void {
-    for (const s of this.settle.values()) {
-      const b = s.body;
-      if (b.isSleeping()) { s.count = 0; continue; }
-      const v = b.linvel();
-      if (v.x * v.x + v.y * v.y < s.speed2 && Math.abs(b.angvel()) < s.spin) {
-        if (++s.count >= WRECK_SETTLE_STEPS) { b.sleep(); s.count = 0; }
-      } else {
-        s.count = 0;
-      }
-    }
-  }
+  /** Settle-to-sleep bodies (`sleepSettle.ts`), stepped after every fixed step. */
+  private readonly settle = new SleepSettle();
 
   /** Dev-only (the worker's wake census, `EQX_WAKE_CENSUS`): the entity id
    *  and speed of the fastest body `id` has a live contact point with, or
@@ -1307,7 +1052,7 @@ export class PhysicsWorld {
     body.setLinvel(v, true);
     body.setRotation(state.angle, true);
     if (state.angvel !== undefined) body.setAngvel(state.angvel, true);
-    if (this.rigs.size > 0) this.noteRigHostPose(id, state.x, state.y, state.angle);
+    if (this.rigs.size > 0) this.rigs.noteRigHostPose(id, state.x, state.y, state.angle);
   }
 
   /**
@@ -1456,7 +1201,7 @@ export class PhysicsWorld {
       dirY,
       maxDist,
       excludeRec?.body,
-      this.wallHandleToId,
+      this.walls.wallHandleToId,
       skipId ? this._rayPredicate : undefined,
       halfWidth,
     );
