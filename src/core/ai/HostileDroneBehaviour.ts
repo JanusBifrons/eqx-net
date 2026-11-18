@@ -19,7 +19,7 @@ import {
 import { type MountTargetView } from './WeaponMountController.js';
 import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
 import { HullAvoid } from './hullAvoid.js';
-import type { AiEntityPoseOut, AiShipActivity, IAiNavRoutes } from '../contracts/IAiBehaviour.js';
+import type { AiShipActivity, IAiNavRoutes } from '../contracts/IAiBehaviour.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { AI_INPUT_BOOST, AI_INPUT_TURN_LEFT, AI_INPUT_TURN_RIGHT } from '../contracts/IAiBehaviour.js';
 import { BOOST_TICK_COST, canAfford, regenEnergyStep, spendEnergy } from '../combat/Energy.js';
@@ -37,17 +37,10 @@ import {
 } from './virtualPilot.js';
 import { missileArmedProfile, roleProfile, roleSensorRange, type RoleProfile } from './tactics/roleProfiles.js';
 import {
-  FACE_AIM_LEAD,
-  FACE_MOVE,
-  MANOEUVRE_ATTACK_RUN,
-  MANOEUVRE_BREAK,
-  MANOEUVRE_KITE,
   makeManoeuvreGoal,
   makeTacticalContext,
-  MANOEUVRE_FALL_BACK,
   MANOEUVRE_FLEE,
   MANOEUVRE_HOLD,
-  type IManoeuvre,
   type ManoeuvreGoal,
   type ManoeuvreId,
   type TacticalContext,
@@ -67,31 +60,19 @@ import { PilotSenses } from './pilot/pilotSenses.js';
 import { TargetPick } from './pilot/targetPick.js';
 import { BroadsideHelm } from './tactics/broadside.js';
 import { TacticalFill } from './tactics/tacticalFill.js';
-import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TailManoeuvre } from './tactics/manoeuvres.js';
-import { FallBackManoeuvre, FleeManoeuvre, KiteManoeuvre, OrbitManoeuvre } from './tactics/stanceManoeuvres.js';
+import { CombatDecision } from './tactics/combatDecision.js';
+import { CombatSteer } from './tactics/combatSteer.js';
 import {
-  MORALE_OUTCOME,
   MoraleTracker,
   type MoraleOutcome,
 } from './tactics/morale.js';
-import { decisionDue, isTailed, ManoeuvrePicker } from './tactics/utility.js';
-import { fnv1a32 } from '../random/rng.js';
 import {
-  addDangerFromPoint,
-  addInterestToward,
   clearContextMaps,
-  createContextMaps,
-  makeContextOutput,
-  resolveContext,
-  type ContextMaps,
   type ContextSteerOutput,
 } from './contextSteering.js';
-import type { IAiAimBoard, IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
+import type { IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
 import {
   FireLaneSteer,
-  fireLaneAvoidanceOn,
-  NUDGE_MAX_OFF,
-  NUDGE_SPEED_FRAC,
 } from './tactics/fireLanes.js';
 import {
   DRONE_AIM_TOLERANCE,
@@ -99,21 +80,13 @@ import {
   POINT_BLANK_RATIO,
   DEFAULT_AIM_RADIUS,
   ENGAGE_DISTANCE_RATIO,
-  COMBAT_PILOT_PARAMS,
   RUN_PILOT_PARAMS,
-  RUN_NOW_PILOT_PARAMS,
   BOOST_RESERVE_FRAC,
   FORGET_TICKS,
   CALM_CRUISE_FRAC,
   MOVE_ARRIVE_SLOW_RADIUS,
   LEADER_CRUISE_THROTTLE,
   COMBAT_NEIGHBOUR_K,
-  COMBAT_SEP_REACH,
-  COMBAT_SEP_CORE,
-  COMBAT_CROWD_SPEED,
-  FACE_MOVE_ENTER,
-  FACE_MOVE_EXIT,
-  FACE_MOVE_MIN_SPEED,
   WARP_OUT_SENSOR_MUL,
   NEVER_RUN_MORALE,
   BROADSIDE_STANDOFF,
@@ -217,21 +190,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  beam toward the target so fore and aft turrets bear. Their turrets fire
    *  under WeaponMountTicker fire control, never with the hull's aim. */
   private readonly broadside: boolean;
-  /** Guard post (server-only, set by a director via `setGuardPost`): a
-   *  broadside capital with a post fights FROM it instead of holding the
-   *  stand-off (which under real naval ranges is ~29 km away from what it
-   *  guards). Every other ship takes it as a LEASH on its target pick (RTS
-   *  Part B slice 5, `guardLeash`). Plain fields, no object, so set/clear
-   *  never allocates (#14). */
-  private guardOn = false;
-  private guardX = 0;
-  private guardY = 0;
-  private guardR = 0;
-  /** The ship the guard post follows (owner 2026-11-15, flagship escorts:
-   *  "the zone follows the flagship"); null ⇒ a fixed post. Resolved each
-   *  tick into `_guardAnchorScratch` (`followGuardAnchor`). */
-  private guardAnchorId: string | null = null;
-  private readonly _guardAnchorScratch: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
   /** On-sight engagement (RTS Part B slice 6, `setEngageOnSight`): off ⇒ this
    *  ship fights only what is on its retaliation ledger (`hostileTo`), the
    *  Defensive attitude. Drones and robots keep it on. */
@@ -241,11 +199,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  its job. `markHostile` still records attackers, so a switch back to
    *  Defensive / Aggressive answers one that hit within `FORGET_TICKS`. */
   private holdFire = false;
-  /** Hunt (RTS Part B slice 6, `setHunt`): no leash, on-sight engagement out
-   *  to the sensor range, and with nothing to fight the ship searches the
-   *  sector in an expanding square round where the search began
-   *  (`modes/searchMode.ts`). Plain fields (#14). */
-  private hunting = false;
   /** RTS Part B slice 8 (`setOrderedTarget`): the owner's attack-order target.
    *  On the retaliation ledger (never forgotten while ordered, so a Defensive
    *  ship fights a neutral), `ORDERED_TARGET_PRIORITY` in the pick, and free of
@@ -254,23 +207,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** The ledger tick the order wrote for its target (-1 = none): lifting the
    *  order forgets the mark unless the target hit this ship since. */
   private orderMarkTick = -1;
-  /** Travel (RTS Part B slice 9, `setTravel`): an owner's Move / Retreat.
-   *  On the way the ship flies to (`travelX`, `travelY`) and never turns to
-   *  fight: it still picks a target (locks, the trigger) and fires only at
-   *  one already in its sights. Arrived ⇒ it guards the point. Set / cleared
-   *  by the job setters (a guard post, a hunt, a stop). */
-  private travel: TravelState = TRAVEL_NONE;
-  private travelX = 0;
-  private travelY = 0;
-  /** Patrol leg (RTS Part B slice 11, `setPatrolLeg`): a travel that FIGHTS.
-   *  The leash is the guard radius round the nearest point of the leg (from
-   *  (`legFromX`, `legFromY`) to the travel point): on the route that is the
-   *  ship's own position, so it engages what it sees near it (Aggressive) or
-   *  answers an attacker (Defensive), and lets go of a target that drags it
-   *  a guard radius off its route, then flies the leg on. Plain fields (#14). */
-  private travelFights = false;
-  private legFromX = 0;
-  private legFromY = 0;
   /** Squared distance to the target picked this tick, and this ship's
    *  position last tick (activity read-out). */
   private _targetDist2 = 0;
@@ -331,8 +267,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _intentScratch: AiIntent = {
     fx: 0, fy: 0, torque: 0, setAngvel: undefined, fire: undefined, warpOut: undefined,
   };
-  /** Reused warp-out request (attached on the one tick it is asked). */
-  private readonly _warpScratch = { x: 0, y: 0 };
   private readonly _fireScratch: { dirX: number; dirY: number; targetId: string; cone: number } = { dirX: 0, dirY: 0, targetId: '', cone: 0 };
   /** The kind's handling as the virtual pilot sees it (body mass as spawned). */
   private readonly handling: PilotHandling;
@@ -348,20 +282,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private set energy(v: number) { this._energyPool.energy = v; }
   private readonly energyMax: number;
   private readonly energyRegen: number;
-  /** Combat context steering (slice 2c): maps, output and neighbour buffer,
-   *  allocated once (#14). */
-  private readonly _ctxMaps: ContextMaps = createContextMaps();
-  private readonly _ctxOut: ContextSteerOutput = makeContextOutput();
+  /** Neighbour buffer, allocated once (#14). */
   private readonly _nbIdx = new Int32Array(COMBAT_NEIGHBOUR_K);
-  /** `shipTuning(kind).combatSeparation`, cached. */
-  private readonly combatSeparation: number;
   /** `shipTuning(kind).shieldPad`, cached: ships collide as their shield
    *  bubbles (hull radius + pad), so hull avoidance clears the bubbles. */
   private readonly shieldPad: number;
   /** Pilot hulls count as same-side neighbours only for a side friendly to players. */
   private readonly friendlyToPilots: boolean;
-  /** Facing latch: true while the nose follows the move heading, not the lead. */
-  private _faceMove = false;
   /** Hull avoidance (ships and debris; latches its dodge side). */
   private readonly _avoid = new HullAvoid();
   /** Test-visible: ticks spent dodging a hull. */
@@ -371,12 +298,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Turn-key reversals (test-visible) and the last turn key held (1 L, −1 R). */
   private _turnReversals = 0;
   private _lastTurnKey = 0;
-  /** Decisions taken while tailed (`isTailed`), and Breaks begun (test-visible). */
-  private _tailedDecisions = 0;
-  private _breaksBegun = 0;
-  private _breakRefused = 0;
-  /** Test-visible: did the last combat tick resolve through context steering? */
-  private _ctxUsed = false;
 
   // ── Decision layer (slice 4): manoeuvres + utility picker ─────────────
   /** The role's tactics profile (`kind.aiRole`). */
@@ -387,25 +308,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _lanes = new FireLaneSteer();
   private readonly _broadsideHelm = new BroadsideHelm();
   private readonly _goal: ManoeuvreGoal = makeManoeuvreGoal();
-  /** Preallocated manoeuvres, indexed by `ManoeuvreId`. */
-  private readonly _flee = new FleeManoeuvre();
-  private readonly _fallBack = new FallBackManoeuvre();
-  private readonly _manoeuvres: readonly IManoeuvre[] = [
-    new HoldManoeuvre(), new TailManoeuvre(), new AttackRunManoeuvre(), new BreakManoeuvre(),
-    new OrbitManoeuvre(), new KiteManoeuvre(), this._fallBack, this._flee,
-  ];
-  /** The attack run (its dive phase takes the fire-lane nudge, slice 5b). */
-  private readonly _attackRun = this._manoeuvres[MANOEUVRE_ATTACK_RUN] as AttackRunManoeuvre;
-  /** The kite (backing off nose on takes the fire-lane nudge; running does not). */
-  private readonly _kite = this._manoeuvres[MANOEUVRE_KITE] as KiteManoeuvre;
   // ── Morale (slice 6b, owner's "roll a dice") ──────────────────────────
   private readonly _morale = new MoraleTracker();
   /** Morale timers and the die (`ai/pilot/pilotMorale.ts`). */
   private readonly _moraleP = new PilotMorale(this._morale);
-  /** fnv1a32 of the entity id (seeds the picker and the morale die). */
-  private _idHash = 0;
-  /** Warp-outs requested (test-visible). */
-  private _warpOuts = 0;
   /** Peacetime modes (`ai/modes/`), preallocated (#14). */
   private readonly _leaving = new LeavingMode();
   private readonly _patrol = new PatrolMode();
@@ -414,16 +320,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _search: SearchMode;
   private _modeCtx!: PilotModeContext;
   private readonly _modeGoal: PilotModeGoal = makePilotModeGoal(DEFAULT_PILOT_PARAMS);
-  private readonly _picker = new ManoeuvrePicker();
-  /** Seeded from the entity id on the first combat tick. */
-  private _seeded = false;
-  /** Decision-cadence slot (staggers the pack's re-scores across ticks). */
-  private _slot = 0;
-  /** AI LOD: no pilot near ⇒ slower decision cadence. */
-  private _lod = false;
-  /** A switch waiting out the role's reaction time (-1 = none). */
-  private _pendingId = -1;
-  private _pendingAt = 0;
+  /** The decision layer's state and cadence, and combat context steering (`ai/tactics/`). */
+  private readonly _decide: CombatDecision;
+  private readonly _steer: CombatSteer;
 
   constructor(kind?: ShipKind | string, opts?: HostileDroneBehaviourOptions) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
@@ -441,7 +340,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.friendlyToPilots = playersSide || isFriendly(this.allegiance, PLAYERS_SIDE);
     this.foesOfPlayers = playersSide;
     this.ownerId = opts?.ownerId ?? null;
-    this.combatSeparation = shipTuning(this.kind).combatSeparation;
     this.shieldPad = shipTuning(this.kind).shieldPad;
     this.role = roleProfile(this.kind.aiRole);
     // The body's mass is the ship kind's (`shipBodyMass`), same as a pilot's.
@@ -526,6 +424,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     tac.shieldPad = this.shieldPad;
     this._targets = new TargetPick(this.hostileTo, this.allegiance, this.onSightPlayers, this.foesOfPlayers, this.ownerId, this.sensorRange);
     this._senses = new PilotSenses(this._nbIdx, this.allegiance, this.friendlyToPilots, this.sensorRange, this.fireRange);
+    this._decide = new CombatDecision(this._avoid, this._senses, this._moraleP, this._lanes);
+    this._steer = new CombatSteer({
+      kind: this.kind, handling: this.handling, allegiance: this.allegiance, friendlyToPilots: this.friendlyToPilots,
+      combatSeparation: shipTuning(this.kind).combatSeparation, shieldPad: this.shieldPad, fireRange: this.fireRange,
+    }, this._pilot, this._tac, this._avoid, this._lanes, this._decide, this._nbIdx);
   }
 
   /** Test-visible engagement profile. */
@@ -574,21 +477,21 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Test-visible: the last morale roll's outcome (-1 = none yet). */
   getLastMoraleOutcome(): MoraleOutcome | -1 { return this._moraleP.last; }
   /** Test-visible: how many times this ship asked to warp out. */
-  getWarpOutCount(): number { return this._warpOuts; }
+  getWarpOutCount(): number { return this._leaving.warpOuts; }
 
   /** Test-visible: the running dogfight manoeuvre (`MANOEUVRE_*`). */
-  getManoeuvre(): ManoeuvreId { return this._picker.current; }
+  getManoeuvre(): ManoeuvreId { return this._decide.picker.current; }
   /** Test-visible: re-scores made so far (the `aiDecisionsPerTick` source). */
-  getDecisionCount(): number { return this._picker.decisions; }
+  getDecisionCount(): number { return this._decide.picker.decisions; }
   /** Test-visible: decisions taken while tailed (the Break trigger held). */
-  getTailedDecisionCount(): number { return this._tailedDecisions; }
+  getTailedDecisionCount(): number { return this._decide.tailedDecisions; }
   /** Test-visible: Breaks begun so far. */
-  getBreakCount(): number { return this._breaksBegun; }
+  getBreakCount(): number { return this._decide.breaksBegun; }
   /** Test-visible: decisions taken while tailed with a Break on offer that
    *  picked something else (a role whose Break weight loses to its fight). */
-  getBreakRefusedCount(): number { return this._breakRefused; }
+  getBreakRefusedCount(): number { return this._decide.breakRefused; }
   /** Test-visible: the last decision's scores, indexed by `MANOEUVRE_*`. */
-  lastManoeuvreScores(): Readonly<Float32Array> { return this._picker.scores; }
+  lastManoeuvreScores(): Readonly<Float32Array> { return this._decide.picker.scores; }
 
   /** Render-side query: is this drone currently treating `playerId` as
    *  a hostile target? Pure, side-effect-free — safe to poll every frame. */
@@ -634,7 +537,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this._leaving.until = -1;
     }
     // An anchored guard post sits on its anchor's live pose this tick.
-    if (this.guardAnchorId !== null) this.followGuardAnchor(view);
+    if (this._guardReturn.anchorId !== null) this._guardReturn.followAnchor(view);
     // Spread targets: drop my claim; the combat pick below re-claims, so while
     // I pick, `view.claims` counts only the OTHER brains of my side.
     view.claims?.claim(self.id, this.allegiance, null);
@@ -671,12 +574,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const holdOrder = this.holdFire && this.orderedTargetId !== null;
     if (this.holdFire && !holdOrder) {
       this.prevTargetId = null;
-      if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
+      if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.tickJob(self, view, JOB_ORDER_TICK);
     }
     const canEngageOnSight = this.engageOnSight && (this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0));
     if (this.state === 'IDLE' && !canEngageOnSight) {
-      if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
+      if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.tickJob(self, view, JOB_ORDER_TICK);
     }
 
@@ -702,7 +605,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const cand = tp.cand;
     // On sight (slice 6): a hunter sights out to its sensor range; Defensive
     // (`engageOnSight` off) sights nothing and fights only its ledger.
-    const engageR = this.hunting ? this.sensorRange : ON_SIGHT_ENGAGE_RANGE;
+    const engageR = this._search.on ? this.sensorRange : ON_SIGHT_ENGAGE_RANGE;
     const engageR2 = engageR * engageR;
     const onSight = this.engageOnSight;
     const ordered = this.orderedTargetId;
@@ -718,7 +621,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       }
       if (!anyHostile) {
         this.prevTargetId = null;
-        if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
+        if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
         return this.tickJob(self, view, JOB_ORDER_TICK);
       }
     }
@@ -736,7 +639,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // An IDLE entity with nothing on-sight-hostile in range keeps patrolling /
     // flocking (it never entered COMBAT; no state change).
     if (this.state === 'IDLE' && !anyHostile) {
-      if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
+      if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.tickJob(self, view, JOB_ORDER_TICK);
     }
 
@@ -753,18 +656,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // uncapped fallback: what leaves the radius is let go.
     const sinceTicks = view.tick - this.prevTargetSinceTick;
     // A patrol leg (slice 11) leashes round the nearest point of its leg.
-    const roam = this.travel === TRAVEL_ON_THE_WAY && this.travelFights && !this.broadside;
-    if (roam) this.legLeashCentre(self);
-    const leash = this.guardLeash() || roam;
-    const target = tp.pick(
-      self, n, this.prevTargetId, sinceTicks, ordered, orderedLive, leash, this.guardX, this.guardY, this.guardR, anyHostile,
-    );
+    const roam = this._travel.state === TRAVEL_ON_THE_WAY && this._travel.fights && !this.broadside;
+    if (roam) {
+      this._travel.legLeashCentre(self);
+      this._guardReturn.x = this._travel.leashX;
+      this._guardReturn.y = this._travel.leashY;
+    }
+    const leash = this.guardLeash() || roam, g = this._guardReturn;
+    const target = tp.pick(self, n, this.prevTargetId, sinceTicks, ordered, orderedLive, leash, g.x, g.y, g.r, anyHostile);
     const newId = target?.id ?? null;
     if (newId !== this.prevTargetId) this.prevTargetSinceTick = view.tick;
     this.prevTargetId = newId;
     view.claims?.claim(self.id, this.allegiance, newId);
     if (target === null) {
-      if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
+      if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       // A follower with nothing to shoot keeps with its pack (RTS Part B
       // slice 10): under fire from out of reach it must not drop out of the
       // flock and fly its old post / the origin orbit.
@@ -777,9 +682,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Travel (slice 9): keep going, shoot only what is already in the sights.
     // A patrol leg (slice 11) turns and fights it, then flies the leg on; a
     // broadside capital keeps its route and lets its turrets fight.
-    if (this.travel === TRAVEL_ON_THE_WAY && (!this.travelFights || this.broadside)) return this.tickTravel(self, view, target);
+    if (this._travel.state === TRAVEL_ON_THE_WAY && (!this._travel.fights || this.broadside)) return this.tickTravel(self, view, target);
     // A hunter that found a fight searches again from wherever it ends.
-    if (this.hunting) this._search.reset = true;
+    if (this._search.on) this._search.reset = true;
     return this.tickCombat(self, view, target);
   }
 
@@ -792,7 +697,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * patrolled instead and drifted in the sector, never warping.
    */
   private tickFleeClear(self: AiEntity, tick: number): AiIntent {
-    const f = this._flee;
+    const f = this._decide.flee;
     f.noteClear(tick);
     this._tac.tick = tick;
     const v = this.handling.maxSpeed;
@@ -808,19 +713,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private pilotJob(order: number): PilotJobId {
     if (this._leaving.until >= 0) return JOB_LEAVING;
     if (order === JOB_ORDER_REPORT) {
-      if (this.travel === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
-      if (this.hunting) return JOB_SEARCH;
+      if (this._travel.state === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
+      if (this._search.on) return JOB_SEARCH;
       if (this._flock.leaderId !== null) return JOB_FLOCK;
-      if (this.guardOn) return JOB_GUARD;
+      if (this._guardReturn.on) return JOB_GUARD;
       return JOB_ORBIT;
     }
     if (order === JOB_ORDER_TICK && this._flock.leaderId !== null) return JOB_FLOCK;
-    if (this.travel === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
+    if (this._travel.state === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
     if (this.moveTarget !== null) return JOB_COURSE;
     // Guard leash: nothing to fight ⇒ back to the post.
     if (this.guardLeash()) return JOB_GUARD;
     // Hunt: nothing to fight ⇒ search the sector.
-    if (this.hunting) return JOB_SEARCH;
+    if (this._search.on) return JOB_SEARCH;
     return JOB_ORBIT;
   }
 
@@ -847,9 +752,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private modeCtx(self: AiEntity, tick: number, job: PilotJobId): PilotModeContext {
     const c = this._modeCtx;
     c.tick = tick; c.job = job; c.self = self; c.energy = this.energy; c.energyMax = this.energyMax;
-    c.escapeX = this._flee.dirX; c.escapeY = this._flee.dirY; c.moveTarget = this.moveTarget;
-    c.guardOn = this.guardOn; c.guardX = this.guardX; c.guardY = this.guardY;
-    c.travelX = this.travelX; c.travelY = this.travelY;
+    c.escapeX = this._decide.flee.dirX; c.escapeY = this._decide.flee.dirY; c.moveTarget = this.moveTarget;
+    c.guardOn = this._guardReturn.on; c.guardX = this._guardReturn.x; c.guardY = this._guardReturn.y;
+    c.travelX = this._travel.x; c.travelY = this._travel.y;
     return c;
   }
 
@@ -951,7 +856,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (along > h.maxSpeed) along = h.maxSpeed;
     else if (along < -h.maxSpeed) along = -h.maxSpeed;
     const nb = view.neighbours;
-    this._ctxUsed = false;
+    this._steer.used = false;
     let intent: AiIntent;
     if (view.isCharging?.(self.id) === true) {
       // A charge is winding up: the shot leaves down the barrel when it ends,
@@ -959,24 +864,28 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       // instead of flying the manoeuvre. A strafing pass carried the ship
       // ~400 u sideways in the 1.2 s wind-up and the shot missed even a
       // parked pilot (chargeLaser.test.ts). The target can still dodge.
-      this._faceMove = false;
+      this._steer.faceMove = false;
       intent = this.fly(self, desiredAngle, target.vx, target.vy, false);
     } else if (nb === undefined) {
       // No neighbour index: the pre-2c stand-off path exactly (A/B control).
-      this._faceMove = false;
+      this._steer.faceMove = false;
       intent = this.fly(self, desiredAngle, ux * along, uy * along, boostOk);
     } else {
       // Decision layer (slice 4): the running manoeuvre writes the goal, the
       // utility picker re-decides on its cadence.
       this._tacFill.fill(this._tac, self, view.tick, target, dist, ux, uy, aimX, aimY, desiredAngle, bearingError, along, boostOk,
         this.handling.cruiseSpeed, this.kind.maxHealth);
-      this.runDecision(self, view, nb);
-      clearContextMaps(this._ctxMaps);
+      const d = this._decide, st = this._steer;
+      d.run(self, view, nb, this._tac, this.role, this.kind.radius);
+      clearContextMaps(st.maps);
       this._goal.spendReserve = false;
       this._goal.throttleNow = false;
-      this._manoeuvres[this._picker.current]!.writeGoal(this._tac, this._ctxMaps, this._goal);
-      intent = this.flyCombatContext(self, nb, view.debris, view.aims, ux, uy, desiredAngle, rangeDist <= this.fireRange, this._goal);
-      if (this._picker.current === MANOEUVRE_FLEE && this._flee.wantsWarpOut(view.tick)) {
+      d.manoeuvres[d.picker.current]!.writeGoal(this._tac, st.maps, this._goal);
+      const reserveOk = this.energy >= BOOST_RESERVE_FRAC * this.energyMax;
+      if (st.steer(self, nb, view.debris, view.aims, ux, uy, desiredAngle, rangeDist <= this.fireRange, this._goal, reserveOk,
+        this.avoidAccel())) this._avoidTicks++;
+      intent = this.fly(self, st.facing, st.wvx, st.wvy, st.boost, st.params);
+      if (d.picker.current === MANOEUVRE_FLEE && d.flee.wantsWarpOut(view.tick)) {
         this.requestWarpOut(self, intent);
         return intent;
       }
@@ -1041,153 +950,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     return intent;
   }
 
-  /**
-   * Combat movement through context steering (AI steering plan slice 2c).
-   * The running manoeuvre (slice 4) has written its INTEREST into the maps
-   * and its speed / facing mode / boost into `goal` (Hold is the pre-slice-4
-   * stand-off: a lobe along the target line at speed `|along|`).
-   * Same-side neighbours inside `combatSeparation × COMBAT_SEP_REACH` add
-   * DANGER toward themselves (full inside `COMBAT_SEP_CORE`), so a ship whose
-   * approach line runs through a wingman picks the nearest clear heading
-   * instead. Crowded ships also get interest straight away from the crowd and
-   * a floor speed, so a pack holding range drifts apart rather than sitting
-   * nose to tail. Obstacles are not written yet (no cheap per-tick query).
-   *
-   * Facing (one nose): the goal's AIM_LEAD / FACE_MOVE, or with FACE_AUTO the
-   * lead point while in fire range, so it still shoots; the move heading when
-   * out of range, or when the move runs more than ~90° off the target bearing
-   * at a real speed (with hysteresis) — the ship turns away to reposition and
-   * comes back round. Allocation-free.
-   */
-  private flyCombatContext(
-    self: AiEntity,
-    nb: IAiNeighbourQuery,
-    debris: IAiNeighbourQuery | undefined,
-    aims: IAiAimBoard | undefined,
-    ux: number,
-    uy: number,
-    leadAngle: number,
-    inRange: boolean,
-    goal: ManoeuvreGoal,
-  ): AiIntent {
-    // Fine aim only while the nose is held on the lead (set again below): a
-    // nose on the move course, a nudge or a dodge has nothing to line up.
-    const aimCone = this._pilot.turn.aimCone;
-    this._pilot.turn.aimCone = 0;
-    // The running manoeuvre has already written its interest into the maps.
-    const m = this._ctxMaps;
-    const goalSpeed = goal.speed;
-
-    const sep = this.combatSeparation;
-    const reach = sep * COMBAT_SEP_REACH;
-    const core = sep * COMBAT_SEP_CORE;
-    const idx = this._nbIdx;
-    const n = nb.queryNeighbours(self.x, self.y, reach, COMBAT_NEIGHBOUR_K, idx, self.id);
-    let pushX = 0;
-    let pushY = 0;
-    let crowd = 0;
-    for (let k = 0; k < n; k++) {
-      const i = idx[k]!;
-      if (nb.isPilotAt(i) ? !this.friendlyToPilots : nb.sideAt(i) !== this.allegiance) continue;
-      const dx = nb.xAt(i) - self.x;
-      const dy = nb.yAt(i) - self.y;
-      const d = Math.hypot(dx, dy);
-      addDangerFromPoint(m, dx, dy, d, core, reach - core, 1);
-      if (d < sep && d > 1e-6) {
-        const c = 1 - d / sep;
-        pushX -= (dx / d) * c;
-        pushY -= (dy / d) * c;
-        if (c > crowd) crowd = c;
-      }
-    }
-    if (crowd > 0) addInterestToward(m, pushX, pushY, crowd, 1);
-
-    // Fire lanes (slice 5b, `tactics/fireLanes.ts`): keep out of wingmen's
-    // lines of fire, and side-step off a line the gate keeps holding.
-    // `nudging`: a short reposition (blocked, or sitting in a wingman's
-    // lane): the nose may swing off the lead so the ship can actually move
-    // sideways (a ship only thrusts along its nose).
-    let nudging = false;
-    if (fireLaneAvoidanceOn()) {
-      const ln = this._lanes, tick = this._tac.tick;
-      if (aims !== undefined && ln.addAllyLanes(self, nb, aims, this._nbIdx, this._ctxMaps, tick, this.fireRange,
-        this.handling.cruiseSpeed, this.kind.radius, this.allegiance)) nudging = true;
-      if (ln.writeBlockedNudge(self, ux, uy, this._ctxMaps, tick, this.combatSeparation,
-        this._picker.current, this._attackRun.diving, this._kite.running)) nudging = true;
-    }
-
-    const out = resolveContext(m, this._ctxOut);
-    this._ctxUsed = true;
-    const h = this.handling;
-    const crowdSpeed = crowd * COMBAT_CROWD_SPEED * h.cruiseSpeed;
-    let speed = goalSpeed > crowdSpeed ? goalSpeed : crowdSpeed;
-    if (nudging && speed < NUDGE_SPEED_FRAC * h.cruiseSpeed) speed = NUDGE_SPEED_FRAC * h.cruiseSpeed;
-    // The resolved heading carries the speed; the crowd push adds an opening
-    // velocity on top (a lateral wingman masks no forward slot, so the
-    // heading alone would never open a side-by-side gap).
-    const pushGain = COMBAT_CROWD_SPEED * h.cruiseSpeed;
-    let wvx = out.dirX * speed + pushX * pushGain;
-    let wvy = out.dirY * speed + pushY * pushGain;
-    const wv = Math.hypot(wvx, wvy);
-    if (wv > h.maxSpeed) {
-      wvx *= h.maxSpeed / wv;
-      wvy *= h.maxSpeed / wv;
-    }
-    // Collision course with a hull (the target included) or a wreck piece?
-    // Dodge it first.
-    if (!h.torqueTurn && this._avoid.check(self, h, this.kind.radius, this.shieldPad, this.avoidAccel(), this._tac.tick, nb, debris)) {
-      this._avoidTicks++;
-      this._faceMove = true;
-      const g = h.maxSpeed, av = this._avoid;
-      return this.fly(self, facingOf(av.x, av.y), self.vx + av.x * g, self.vy + av.y * g,
-        this.energy >= BOOST_RESERVE_FRAC * this.energyMax, COMBAT_PILOT_PARAMS);
-    }
-    const moveAngle = wv > 1e-6 ? facingOf(wvx, wvy) : out.angle;
-
-    // Facing (one nose). The manoeuvre may ask for it outright (an attack
-    // run's pull-off and extend, a break: explicit, time-limited choices).
-    // FACE_AUTO (Hold) is the 2c rule: in fire range the nose stays on the
-    // lead point, so the ship keeps shooting; the separation still acts
-    // through thrust and reverse along it. Out of range it points along the
-    // move while closing, or when wingmen force a detour > 100° off the GOAL
-    // heading. (perf:counts fleet-fight, 2026-11-13: turning the nose to the
-    // move in range had ships facing away ~60 % of in-range ticks and halved
-    // the hits.)
-    const moving = wv > FACE_MOVE_MIN_SPEED * h.cruiseSpeed;
-    if (goal.facing === FACE_AIM_LEAD) {
-      this._faceMove = false;
-    } else if (goal.facing === FACE_MOVE) {
-      this._faceMove = moving;
-    } else {
-      const along = this._tac.holdAlong;
-      const sgn = along < 0 ? -1 : 1;
-      let off = wrapAngle(moveAngle - facingOf(ux * sgn, uy * sgn));
-      if (off < 0) off = -off;
-      const thresh = this._faceMove ? FACE_MOVE_EXIT : FACE_MOVE_ENTER;
-      this._faceMove = moving && !inRange && (along > 0 || off > thresh);
-    }
-    let facing = this._faceMove ? moveAngle : leadAngle;
-    if (nudging && !this._faceMove) {
-      // The gate holds the shot anyway, so a nose held on the lead may swing
-      // toward the side-step (a ship flies along its nose), but no further
-      // than NUDGE_MAX_OFF off the lead: it comes straight back to shoot.
-      // A nose already following the move (Orbit, a running Kite, a Tail
-      // circling to the six, FallBack, Flee) can already side-step: left as is.
-      const off = wrapAngle(moveAngle - leadAngle);
-      facing = leadAngle + (off > NUDGE_MAX_OFF ? NUDGE_MAX_OFF : off < -NUDGE_MAX_OFF ? -NUDGE_MAX_OFF : off);
-    } else if (!this._faceMove) {
-      this._pilot.turn.aimCone = aimCone;
-    }
-    // Afterburner: whenever the manoeuvre wants it, above the reserve; a
-    // Break, or a ship running from a tailer (`spendReserve`), may spend the
-    // reserve (the pool itself still runs dry).
-    const boost = goal.boost
-      && (this.energy >= BOOST_RESERVE_FRAC * this.energyMax || this._picker.current === MANOEUVRE_BREAK
-        || goal.spendReserve);
-    return this.fly(self, facing, wvx, wvy, boost,
-      goal.throttleNow ? RUN_NOW_PILOT_PARAMS : goal.spendReserve ? RUN_PILOT_PARAMS : COMBAT_PILOT_PARAMS);
-  }
-
   /** Test-visible: combat ticks spent inside a wingman's fire lane. */
   getLaneExitTicks(): number { return this._lanes.laneExitTicks; }
 
@@ -1197,93 +959,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Test-visible: ticks spent dodging a hull (hull avoidance). */
   getAvoidTicks(): number { return this._avoidTicks; }
 
+  /** Begin manoeuvre `id` now (tests reach it; `CombatDecision.switchTo`). */
+  private switchManoeuvre(id: ManoeuvreId, tick: number): void { this._decide.switchTo(id, tick, this._tac); }
+
   /** Dodge thrust (u/s²): the afterburner while the pool allows it. */
   private avoidAccel(): number {
     const boostMul = this.energy >= BOOST_RESERVE_FRAC * this.energyMax ? (this.kind.boostMultiplier ?? 1) : 1;
     return this.handling.thrustAccel * 60 * boostMul;
-  }
-
-  /**
-   * The decision layer's cadence: re-score every `DECIDE_PERIOD` ticks
-   * (slot-staggered; `LOD_DECIDE_PERIOD` with no pilot near) or at once when
-   * the running manoeuvre is done. A change of mind waits out the role's
-   * `reactionTicks` (a Break included: noticing the bandit takes time); a
-   * finished manoeuvre is replaced at once.
-   */
-  private runDecision(self: AiEntity, view: AiWorldView, nb: IAiNeighbourQuery): void {
-    const c = this._tac;
-    const p = this._picker;
-    const tick = view.tick;
-    if (!this._seeded) {
-      const h = fnv1a32(self.id);
-      this._idHash = h;
-      c.rng.reseed(h);
-      p.seed(c.rng);
-      this._slot = h % 60;
-      this._seeded = true;
-    }
-    const done = this._manoeuvres[p.current]!.isDone(c);
-    if (done || decisionDue(tick, this._slot, this._lod)) {
-      this._lod = !this._senses.pilotNear(self, view);
-      c.recentHits = this._senses.recentHitsAt(tick);
-      c.recentBlocks = this.getRecentBlocks(tick);
-      this._senses.countSides(self, nb, c);
-      this._senses.scanSensors(self, nb, c);
-      if (view.stats !== undefined) view.stats.decisions++;
-      if (isTailed(c)) this._tailedDecisions++;
-      // Morale: a trigger (hull 50 / 25 %, burst, capital lost, outnumbered)
-      // rolls the die; FallBack / Flee then run locked. A fleeing ship keeps
-      // fleeing.
-      const outcome = this._moraleP.decide(
-        tick, c, p.current === MANOEUVRE_FLEE, this._senses, this.kind.radius, this.role.moraleWeights, this._idHash,
-      );
-      if (outcome === MORALE_OUTCOME.FallBack) {
-        this.switchManoeuvre(MANOEUVRE_FALL_BACK, tick);
-        return;
-      }
-      if (outcome === MORALE_OUTCOME.Flee) {
-        this.switchManoeuvre(MANOEUVRE_FLEE, tick);
-        return;
-      }
-      // Fight on (or no roll): normal scoring below.
-      if (p.current === MANOEUVRE_FLEE) return;
-      if (p.current === MANOEUVRE_FALL_BACK) {
-        // Regroup, then re-engage (owner 2026-11-14): held until it reaches
-        // its friends (capped; the lock is its floor), and handed back to
-        // the normal combat manoeuvres the moment it is among them or has
-        // nobody to reach (`done`), lock or not: a ship held in FallBack at
-        // its anchor parked beside an enemy.
-        if (!done && (tick < this._moraleP.lockUntil || tick < this._moraleP.fallBackCapUntil)) return;
-        // Regrouped, or the cap ran out: choose afresh.
-        this.switchManoeuvre(p.decide(c, this.role, true), tick);
-        return;
-      }
-      // A running Kite is already getting out from under its attacker: a
-      // Break across the line would hand the gap back (take 6: the Heavy
-      // flipped Kite / Break every 1-2 s).
-      const want = p.decide(c, this.role, done, !(p.current === MANOEUVRE_KITE && this._kite.running));
-      // Tailed with a Break on offer (not cooling down) yet another pick won.
-      if (want !== MANOEUVRE_BREAK && p.scores[MANOEUVRE_BREAK]! > 0 && isTailed(c)) this._breakRefused++;
-      if (done) {
-        this.switchManoeuvre(want, tick);
-      } else if (want !== p.current) {
-        if (this._pendingId !== want) {
-          this._pendingId = want;
-          this._pendingAt = tick + this.role.reactionTicks;
-        }
-      } else {
-        this._pendingId = -1;
-      }
-    }
-    if (this._pendingId >= 0 && tick >= this._pendingAt) this.switchManoeuvre(this._pendingId as ManoeuvreId, tick);
-  }
-
-  private switchManoeuvre(id: ManoeuvreId, tick: number): void {
-    if (id === MANOEUVRE_BREAK && this._picker.current !== MANOEUVRE_BREAK) this._breaksBegun++;
-    this._picker.switchTo(id, tick);
-    this._manoeuvres[id]!.begin(this._tac);
-    this._avoid.resetSide();
-    this._pendingId = -1;
   }
 
   /**
@@ -1293,13 +975,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * order uses). A server without the hook leaves the ship disengaged.
    */
   private requestWarpOut(self: AiEntity, intent: AiIntent): void {
-    const d = WARP_OUT_SENSOR_MUL * this.sensorRange;
-    const w = this._warpScratch;
-    w.x = self.x + this._flee.dirX * d;
-    w.y = self.y + this._flee.dirY * d;
-    intent.warpOut = w;
-    intent.fire = undefined;
-    this._warpOuts++;
+    const f = this._decide.flee;
+    const w = this._leaving.requestWarp(self, f.dirX, f.dirY, WARP_OUT_SENSOR_MUL * this.sensorRange, intent);
     this.hostileTo.clear();
     this.lastHitByPlayer.clear();
     this.state = 'IDLE';
@@ -1314,17 +991,17 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Test-visible: the last combat context-steering resolve (null if the
    *  last combat tick had no neighbour query). */
   lastCombatSteer(): Readonly<ContextSteerOutput> | null {
-    return this._ctxUsed ? this._ctxOut : null;
+    return this._steer.used ? this._steer.out : null;
   }
 
   /** Test-visible: is the nose following the move heading (not the lead)? */
-  isFacingMove(): boolean { return this._faceMove; }
+  isFacingMove(): boolean { return this._steer.faceMove; }
 
   /** Broadside flying (`tactics/broadside.ts`); an attack order takes a
    *  guarding capital off its post (slice 8). */
   private tickBroadside(self: AiEntity, target: MountTargetView, dx: number, dy: number, dist: number, rangeDist: number): AiIntent {
-    const b = this._broadsideHelm;
-    if (this.guardOn && target.id !== this.orderedTargetId) b.guard(self, dx, dy, this.guardX, this.guardY, this.guardR, this.kind.maxSpeed);
+    const b = this._broadsideHelm, g = this._guardReturn;
+    if (g.on && target.id !== this.orderedTargetId) b.guard(self, dx, dy, g.x, g.y, g.r, this.kind.maxSpeed);
     else b.fight(self, target, dx, dy, dist, rangeDist, this.fireRange, this.handling.cruiseSpeed);
     return this.fly(self, b.facing, b.wvx, b.wvy, b.boost, b.params);
   }
@@ -1345,41 +1022,30 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  cleared when the anchor leaves the AI controller (`noteEntityGone`).
    *  Omitted / null ⇒ a fixed post at (x, y). */
   setGuardPost(x: number, y: number, radius: number, anchorId: string | null = null): void {
-    this.guardOn = true;
-    this.guardAnchorId = anchorId;
-    this.guardX = x;
-    this.guardY = y;
-    this.guardR = Math.max(radius, shipTuning(this.kind).guardRadiusMin);
-    this._targets.setLeash(this.guardR, this.fireRange);
+    const g = this._guardReturn;
+    g.on = true;
+    g.anchorId = anchorId;
+    g.x = x;
+    g.y = y;
+    g.r = Math.max(radius, shipTuning(this.kind).guardRadiusMin);
+    this._targets.setLeash(g.r, this.fireRange);
     // A post is a hold: it ends a hunt and a travel.
-    this.hunting = false;
-    this.travel = TRAVEL_NONE;
+    this._search.on = false;
+    this._travel.state = TRAVEL_NONE;
   }
 
-  clearGuardPost(): void {
-    this.guardOn = false;
-    this.guardAnchorId = null;
-  }
+  clearGuardPost(): void { this._guardReturn.clear(); }
 
   /** Another AI ship left the controller (died / despawned): a guard post
    *  anchored to it is cleared. */
   noteEntityGone(entityId: string): void {
-    if (this.guardAnchorId === entityId) this.clearGuardPost();
-  }
-
-  /** Move an anchored guard post onto its anchor's live pose; an unresolved
-   *  anchor leaves the post at its last known spot. Alloc-free (#14). */
-  private followGuardAnchor(view: AiWorldView): void {
-    const resolve = view.resolveEntityInto;
-    if (!this.guardOn || resolve === undefined || !resolve(this.guardAnchorId!, this._guardAnchorScratch)) return;
-    this.guardX = this._guardAnchorScratch.x;
-    this.guardY = this._guardAnchorScratch.y;
+    if (this._guardReturn.anchorId === entityId) this.clearGuardPost();
   }
 
   /** The guard post leashes this ship's target pick: every ship with a post
    *  but a broadside capital (that one keeps `tickGuardBroadside`). */
   private guardLeash(): boolean {
-    return this.guardOn && !this.broadside;
+    return this._guardReturn.on && !this.broadside;
   }
 
   /** On-sight engagement on / off (RTS Part B slice 6): the Aggressive
@@ -1449,18 +1115,18 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  guard post (a hold) ends the hunt. Server-only. */
   setHunt(on: boolean): void {
     if (on) {
-      this.guardOn = false;
+      this._guardReturn.on = false;
       this.moveTarget = null;
-      this.travel = TRAVEL_NONE;
+      this._travel.state = TRAVEL_NONE;
       this._flock.leaderId = null;
       this._flockLeaderCruise = false;
-      if (!this.hunting) this._search.reset = true;
+      if (!this._search.on) this._search.reset = true;
     }
-    this.hunting = on;
+    this._search.on = on;
   }
 
   /** Test-visible: hunting? */
-  isHunting(): boolean { return this.hunting; }
+  isHunting(): boolean { return this._search.on; }
 
   /**
    * RTS Part B slice 9: an owner's Move (or a Retreat) to (x, y). The ship
@@ -1476,13 +1142,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    */
   setTravel(x: number, y: number): void {
     this.setMoveTarget(x, y);
-    this.guardOn = false;
-    this.guardAnchorId = null;
-    this.hunting = false;
-    this.travel = TRAVEL_ON_THE_WAY;
-    this.travelX = x;
-    this.travelY = y;
-    this.travelFights = false;
+    this._guardReturn.clear();
+    this._search.on = false;
+    this._travel.state = TRAVEL_ON_THE_WAY;
+    this._travel.x = x;
+    this._travel.y = y;
+    this._travel.fights = false;
   }
 
   /**
@@ -1496,33 +1161,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    */
   setPatrolLeg(fromX: number, fromY: number, x: number, y: number): void {
     this.setTravel(x, y);
-    this.travelFights = true;
-    this.legFromX = fromX;
-    this.legFromY = fromY;
-    this.guardR = shipTuning(this.kind).guardRadiusMin;
-    this._targets.setLeash(this.guardR, this.fireRange);
+    this._travel.fights = true;
+    this._travel.legFromX = fromX;
+    this._travel.legFromY = fromY;
+    this._guardReturn.r = shipTuning(this.kind).guardRadiusMin;
+    this._targets.setLeash(this._guardReturn.r, this.fireRange);
   }
 
   /** Test-visible: flying a patrol leg? */
-  isPatrolling(): boolean { return this.travel === TRAVEL_ON_THE_WAY && this.travelFights; }
-
-  /** Patrol leg: the leash centre (`guardX`, `guardY`, unused while no post
-   *  is held) = the nearest point of the leg to the ship. */
-  private legLeashCentre(self: AiEntity): void {
-    const ax = this.legFromX;
-    const ay = this.legFromY;
-    const bx = this.travelX - ax;
-    const by = this.travelY - ay;
-    const l2 = bx * bx + by * by;
-    let t = l2 > 1e-9 ? ((self.x - ax) * bx + (self.y - ay) * by) / l2 : 1;
-    if (t < 0) t = 0; else if (t > 1) t = 1;
-    this.guardX = ax + bx * t;
-    this.guardY = ay + by * t;
-  }
+  isPatrolling(): boolean { return this._travel.state === TRAVEL_ON_THE_WAY && this._travel.fights; }
 
   /** Travel state: `TRAVEL_NONE`, `TRAVEL_ON_THE_WAY` or `TRAVEL_ARRIVED`
    *  (stays until the next job: a guard post, a hunt, a new travel). */
-  getTravelState(): TravelState { return this.travel; }
+  getTravelState(): TravelState { return this._travel.state; }
 
   /**
    * RTS Part B slice 9: Stop. The ship brakes to a halt along its course and
@@ -1559,8 +1210,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   getActivity(): AiShipActivity {
     const job = this.pilotJob(JOB_ORDER_REPORT);
     if (job === JOB_LEAVING) return 'retreating';
-    if (job === JOB_TRAVEL && (!this.travelFights || this.prevTargetId === null)) {
-      return this.travelFights ? 'patrolling' : 'moving';
+    if (job === JOB_TRAVEL && (!this._travel.fights || this.prevTargetId === null)) {
+      return this._travel.fights ? 'patrolling' : 'moving';
     }
     if (this.prevTargetId !== null) {
       return this._targetDist2 > this.fireRange * this.fireRange ? 'chasing' : 'attacking';
@@ -1571,9 +1222,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       return this._flock.isWithPack(this.kind) ? 'guarding' : 'moving';
     }
     if (job === JOB_GUARD) {
-      const dx = this._lastX - this.guardX;
-      const dy = this._lastY - this.guardY;
-      return dx * dx + dy * dy > this.guardR * this.guardR ? 'moving' : 'guarding';
+      const dx = this._lastX - this._guardReturn.x;
+      const dy = this._lastY - this._guardReturn.y;
+      return dx * dx + dy * dy > this._guardReturn.r * this._guardReturn.r ? 'moving' : 'guarding';
     }
     return 'idle';
   }
@@ -1584,12 +1235,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Test-visible: the effective guard radius (0 with no post). */
   getGuardRadius(): number {
-    return this.guardOn ? this.guardR : 0;
+    return this._guardReturn.on ? this._guardReturn.r : 0;
   }
 
   /** Test-visible: the guard post's centre (null with no post). */
-  getGuardPostX(): number | null { return this.guardOn ? this.guardX : null; }
-  getGuardPostY(): number | null { return this.guardOn ? this.guardY : null; }
+  getGuardPostX(): number | null { return this._guardReturn.on ? this._guardReturn.x : null; }
+  getGuardPostY(): number | null { return this._guardReturn.on ? this._guardReturn.y : null; }
 
   /** Set/clear the in-sector move target — the LEADER's course (or a lone
    *  drone's destination). Setting a course clears any FOLLOWER role (you lead /
@@ -1629,8 +1280,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   setFlockFollow(leaderId: string, memberIds: readonly string[]): void {
     this.moveTarget = null;
     // Following is the ship's job: it ends a travel and a hunt (RTS squads).
-    this.travel = TRAVEL_NONE;
-    this.hunting = false;
+    this._travel.state = TRAVEL_NONE;
+    this._search.on = false;
     this._flock.follow(leaderId, memberIds);
     this._flockLeaderCruise = false;
   }
@@ -1682,7 +1333,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const tr = this._travel;
     if (tr.isDone(c)) {
       this.setGuardPost(c.travelX, c.travelY, 0);
-      this.travel = TRAVEL_ARRIVED;
+      this._travel.state = TRAVEL_ARRIVED;
       return this.runMode(tr, self);
     }
     const intent = this.runMode(tr, self);
