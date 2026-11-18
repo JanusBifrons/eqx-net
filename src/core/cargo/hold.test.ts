@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { addPacked, emptyHold, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, packedCount, packedWeightOf, takePacked, transferInto, transferUpTo } from './hold.js';
+import { addPacked, emptyHold, rollDeathLoss, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, packedCount, packedWeightOf, takePacked, transferInto, wireHold } from './hold.js';
 import { legacyHoldCredits, parseHoldJson, type Hold } from '../../shared-types/goods.js';
 import { legacyBlueprintItem } from '../../shared-types/items.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
+import { stream } from '../random/rng.js';
 
 function h(goods: Hold['goods'], blueprints: string[] = []): Hold {
   return { goods: { ...goods }, blueprints: blueprints.map(legacyBlueprintItem) };
@@ -65,13 +66,6 @@ describe('hold arithmetic (P1a-1)', () => {
     expect(takePacked(dst, 'structure:smelter')!.quality).toBe(30);
     expect(takePacked(dst, 'structure:smelter')).toBeNull();
     expect(dst.packed).toBeUndefined();
-  });
-
-  it('transferUpTo bounds a single step', () => {
-    const dst = emptyHold();
-    const src = h({ salvage: 100 });
-    transferUpTo(dst, src, 1000, 7);
-    expect(dst.goods.salvage).toBe(7);
   });
 
   it('mergeInto empties the source', () => {
@@ -156,5 +150,77 @@ describe('extractRequested (C1 cargo transfer)', () => {
     const out = extractRequested(src, { goods: { alloy: 0, ice: -2 } });
     expect(isHoldEmpty(out)).toBe(true);
     expect(extractRequested(src, { goods: { alloy: 2.9 } }).goods).toEqual({ alloy: 2 });
+  });
+});
+
+describe('rollDeathLoss (owner 2026-11-17: coin flip per stack, EVE)', () => {
+  // Built once: blueprint / packed items carry their own instance ids.
+  const FULL = h({ salvage: 40, minerals: 12, core: 3, munitions: 50 }, ['bp-a', 'bp-b']);
+  addPacked(FULL, 'fighter', 2);
+  const full = (): Hold => JSON.parse(JSON.stringify(FULL)) as Hold;
+
+  it('each stack survives whole or is gone whole, never split', () => {
+    const src = full();
+    for (let seed = 1; seed <= 50; seed++) {
+      const out = rollDeathLoss(src, stream(seed, 'death-loss'));
+      for (const [id, n] of Object.entries(out.goods)) expect(n).toBe(src.goods[id as keyof Hold['goods']]);
+      for (const b of out.blueprints) expect(src.blueprints.map((s) => s.uid)).toContain(b.uid);
+      expect(out.packed?.length ?? 0).toBeLessThanOrEqual(1);
+    }
+    expect(src).toEqual(full()); // the source hold is untouched
+  });
+
+  it('the same seed gives the same survivors', () => {
+    expect(rollDeathLoss(full(), stream(7, 'death-loss'))).toEqual(rollDeathLoss(full(), stream(7, 'death-loss')));
+  });
+
+  it('a fair coin: about half the stacks survive over many deaths', () => {
+    let kept = 0;
+    let stacks = 0;
+    for (let seed = 1; seed <= 400; seed++) {
+      const out = rollDeathLoss(full(), stream(seed, 'death-loss'));
+      kept += Object.keys(out.goods).length + out.blueprints.length + (out.packed?.length ?? 0);
+      stacks += 7;
+    }
+    expect(kept / stacks).toBeGreaterThan(0.45);
+    expect(kept / stacks).toBeLessThan(0.55);
+  });
+
+  it('all heads keeps everything, all tails loses everything', () => {
+    expect(rollDeathLoss(full(), { chance: () => true })).toEqual(full());
+    expect(isHoldEmpty(rollDeathLoss(full(), { chance: () => false }))).toBe(true);
+  });
+});
+
+describe('rock chunks: one-of-a-kind packed items', () => {
+  const chunk = (uid: string, weight: number): NonNullable<Hold['packed']>[number] => ({ product: 'chunk:rock', quality: 0, uid, weight, ore: { minerals: 5000 } });
+
+  it('a chunk weighs its own weight, not its product weight', () => {
+    const h: Hold = { goods: {}, blueprints: [], packed: [chunk('rc-1', 250), chunk('rc-2', 1000)] };
+    expect(holdWeight(h)).toBe(1250);
+  });
+
+  it('takePacked takes a chunk by uid, and never a chunk by product', () => {
+    const h: Hold = { goods: {}, blueprints: [], packed: [chunk('rc-1', 250), chunk('rc-2', 1000)] };
+    expect(takePacked(h, 'chunk:rock')).toBeNull();
+    expect(takePacked(h, 'rc-2')?.weight).toBe(1000);
+    expect(h.packed?.map((p) => p.uid)).toEqual(['rc-1']);
+  });
+
+  it('wireHold hides the ore, keeps the rest, and resends the same copy while unchanged', () => {
+    const h: Hold = { goods: { alloy: 3 }, blueprints: [], packed: [chunk('rc-1', 250), { product: 'structure:smelter', quality: 50 }] };
+    const w = wireHold(h);
+    expect(w.packed?.[0]).toEqual({ product: 'chunk:rock', quality: 0, uid: 'rc-1', weight: 250 });
+    expect(w.packed?.[1]).toBe(h.packed?.[1]);
+    expect(w.goods).toBe(h.goods);
+    expect(h.packed?.[0]?.ore, 'the server copy keeps its ore').toEqual({ minerals: 5000 });
+    expect(wireHold(h), 'cached: no allocation per snapshot').toBe(w);
+    h.packed!.push(chunk('rc-2', 300));
+    expect(wireHold(h).packed).toHaveLength(3);
+  });
+
+  it('wireHold returns the hold itself when nothing is hidden', () => {
+    const h: Hold = { goods: { alloy: 1 }, blueprints: [] };
+    expect(wireHold(h)).toBe(h);
   });
 });

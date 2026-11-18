@@ -16,7 +16,7 @@ import type { ShipBody, ShipInput, ShipPhysicsState } from './worldTypes.js';
 import { applyPilotInput, botWarpStep, restoreWarp } from './warpActuator.js';
 import { createObstacleBody, createProjectileBody, createShipBody, createWallBody, mountShipColliders } from './spawnBodies.js';
 import { addBodyVelocity, applyBodyImpulseAtPoint, applyRigidGroupImpulse as applyGroupImpulse } from './bodyImpulses.js';
-import { SleepSettler } from './sleepSettle.js';
+import { SleepSettle } from './sleepSettle.js';
 import { readAllBodyStates, readBodyState, writeBodyState } from './bodyState.js';
 import { fastestContact as fastestContactOf, queryContactState as queryContactStateOf, type ContactState } from './contactProbe.js';
 
@@ -32,7 +32,8 @@ export { BOOST_MULTIPLIER } from '../../shared-types/shipKinds.js';
 
 export { SOFT_CCD_PREDICTION } from './spawnBodies.js';
 
-export { WRECK_SETTLE_STEPS } from './sleepSettle.js';
+/** Settle-to-sleep constants: sleepSettle.ts. */
+export { WRECK_SETTLE_STEPS, BEAMED_LINEAR_DAMPING } from './sleepSettle.js';
 
 export type { ShipInput, ShipPhysicsState } from './worldTypes.js';
 
@@ -95,7 +96,7 @@ export class PhysicsWorld {
       applyForceFields(this.forceFields, this.bodies, FIXED_DT);
       this.world.step(eventQueue);
       this.capitals.resolve();
-      if (this.settle.size > 0) this.settle.step();
+      if (this.settle.size > 0) this.settle.step(this.forceFields);
       this.accumulator -= FIXED_DT;
     }
   }
@@ -194,7 +195,7 @@ export class PhysicsWorld {
     if (!rec) return;
     this.handleToId.delete(rec.body.handle);
     this.capitals.remove(rec.body);
-    this.settle.delete(id);
+    this.settle.remove(id);
     this.world.removeRigidBody(rec.body);
     this.bodies.delete(id);
   }
@@ -422,15 +423,19 @@ export class PhysicsWorld {
     return rec.body.isSleeping() || rec.body.isFixed(); // fixed (cut-field rock): never simulates, so quiet
   }
 
-  /** Settle-to-sleep below a per-body speed / spin; doc: `SleepSettler.set`
-   *  (sleepSettle.ts). Unknown id ⇒ no-op. */
+  /**
+   * Settle-to-sleep (`sleepSettle.ts`): once body `id` has moved slower than
+   * `speed` (u/s) and spun slower than `spin` (rad/s) for `WRECK_SETTLE_STEPS`
+   * fixed steps in a row it is put to sleep; a body an active tractor field
+   * targets never settles, and while held its linear damping is capped at
+   * `BEAMED_LINEAR_DAMPING`. `speed <= 0` removes it. Unknown id ⇒ no-op.
+   */
   setSleepSettle(id: string, speed: number, spin: number): void {
     const rec = this.bodies.get(id);
-    if (!rec) return;
-    this.settle.set(id, rec.body, speed, spin);
+    if (rec) this.settle.set(id, rec.body, speed, spin);
   }
 
-  private readonly settle = new SleepSettler();
+  private readonly settle = new SleepSettle();
 
   /** Dev-only (the worker's wake census, `EQX_WAKE_CENSUS`): the entity id
    *  and speed of the fastest body `id` has a live contact point with, or
