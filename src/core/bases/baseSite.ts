@@ -55,6 +55,10 @@ export interface ChooseSiteOptions {
   /** Candidate grid spacing (u). */
   step: number;
   seed: number;
+  /** A circle the whole base (plus `margin`) must also lie inside: the
+   *  pocket's rock-free clearing in a cut field (`pocketClearing`). The square
+   *  search alone reaches past a clearing's rim at its corners. */
+  within?: SiteCircle;
 }
 
 export interface BaseSite {
@@ -93,6 +97,13 @@ export function chooseBaseSite(
   const consider = (cx: number, cy: number): void => {
     const x0 = cx + ext.x0 - o.margin, x1 = cx + ext.x1 + o.margin;
     const y0 = cy + ext.y0 - o.margin, y1 = cy + ext.y1 + o.margin;
+    const w = o.within;
+    if (w !== undefined) {
+      // The box's farthest corner from the circle's centre must be inside it.
+      const fx = Math.max(Math.abs(x0 - w.x), Math.abs(x1 - w.x));
+      const fy = Math.max(Math.abs(y0 - w.y), Math.abs(y1 - w.y));
+      if (fx * fx + fy * fy > w.r * w.r) return;
+    }
     let blocked = false;
     for (const b of hard) if (boxHitsBox(x0, x1, y0, y1, b)) { blocked = true; break; }
     if (blocked) return;

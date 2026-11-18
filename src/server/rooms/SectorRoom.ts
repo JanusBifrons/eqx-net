@@ -163,7 +163,7 @@ import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 /** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
 const NPC_BASE_GAP = sectorSpace(900);
 import { HOME_POCKET_HALF_EXTENT, SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
-import { isWarpDropPoint, pocketPadPair, POCKET_PAD_OWNER, SOLAR_HALF_EXTENT, sectorSites } from '../../core/galaxy/sectorSites.js';
+import { isWarpDropPoint, pocketClearing, pocketPadPair, POCKET_PAD_OWNER, SOLAR_HALF_EXTENT, sectorSites } from '../../core/galaxy/sectorSites.js';
 import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
@@ -6280,11 +6280,15 @@ export class SectorRoom extends Room<SectorState> {
       soft.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r: rec.radius });
     }
     const ext = grownExtent(grown.placements);
+    // In a cut field the base also stays inside its pocket's rock-free
+    // clearing (the square's corners reach past the outer pocket's rim).
+    const clearing = pocketClearing(sectorKey, SOLAR_SECTORS, at?.x ?? 0, at?.y ?? 0);
     const site = chooseBaseSite(ext, hard, soft, {
       // The home pocket (today's whole sector; the same bound when solar-system
       // sectors are off).
       halfExtent: HOME_POCKET_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed,
       ...(at ? { centreX: at.x, centreY: at.y } : {}),
+      ...(clearing ? { within: clearing } : {}),
     });
     if (site === null) {
       logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');
