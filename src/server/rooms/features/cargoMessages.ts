@@ -2,8 +2,9 @@
  * Cargo client messages — open / move a structure's or ship's cargo (C1/C3),
  * an NPC Freight Dock's market (T4), break-ins (C2) and a Freight Dock's
  * standing orders (T4b). Moved verbatim out of `SectorRoom`, with the cargo
- * gate (`cargoAccess`), the dock market and the C3 ship cargo move
- * (`shipCargo`, `moveBetweenHolds`) only these handlers used; the room
+ * gate (`cargoAccess`), the dock market and the C3 ship cargo view / move
+ * (`shipCargo`; holds move through cargoWindow's `moveBetweenHolds`) only
+ * these handlers used; the room
  * hands in live accessors so every handler reads the same state it did there.
  */
 import type { Client } from 'colyseus';
@@ -17,15 +18,20 @@ import { getPlayerShipStore, getHoldStore, getWallet } from '../../db/Persistenc
 import { getTradeSink } from '../../economy/tradeSink.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import type { ParsedMessageHost, RoomFeature } from './parsedMessage.js';
-import { cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, transferInto, type CargoRequest } from '../../../core/cargo/hold.js';
-import type { HolderType, HoldRecord } from '../../cargo/HoldStore.js';
+import { emptyHold, holdWeight, isHoldEmpty } from '../../../core/cargo/hold.js';
+import type { HolderType } from '../../cargo/HoldStore.js';
 import { GOOD_DEFS, GOOD_IDS, type Hold } from '../../../shared-types/goods.js';
 import type { GoodId } from '../../../shared-types/goods.js';
-import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { cargoOpensFor, isNpcOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import {
-  BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type CargoState,
+  BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type CargoState,
 } from '../../../shared-types/messages/cargoMessages.js';
+import type { LootSubsystem, LootCollector } from '../../cargo/LootSubsystem.js';
+import type { LootSearch } from '../../cargo/LootSearch.js';
+import {
+  applyAutoUnload, moveBetweenHolds, ownHoldState, parseCargoRequest, peekCargoState, podCargoState, sendCargoState, structureCargoState,
+  type AutoUnloadDeps, type CargoMove, type CargoRef, type StructureCargoDeps,
+} from '../../cargo/cargoWindow.js';
 
 /** C3 — a ship cargo target (see `SectorRoom.shipTarget`). */
 export interface CargoShipTarget {
@@ -43,8 +49,6 @@ export interface CargoShipTarget {
   persisted: boolean;
   npc?: SwarmEntityRecord;
 }
-
-type CargoMove = { dir: 'take' | 'put'; items: CargoRequest };
 
 /** What the handlers need from the room; getters read the live field. */
 export interface CargoMessageHost extends ParsedMessageHost {
@@ -67,68 +71,53 @@ export interface CargoMessageHost extends ParsedMessageHost {
   breakInMsForShip(t: CargoShipTarget): number;
   pilotNear(playerId: string, rec: StructureRecord): boolean;
   pilotNearPoint(playerId: string, x: number, y: number, radius: number): boolean;
+  /** Game-clock now (the loot window's search time). */
+  now(): number;
+  /** Loot pods (plan cargo-pods): a pod opens in the loot window. */
+  loot(): Pick<LootSubsystem, 'isPod' | 'inOpenReach' | 'take'>;
+  lootSearch: LootSearch;
+  pilotCollector(playerId: string): LootCollector | null;
+  /** Cargo pods 14c — the auto-unload switch's ship end. */
+  resolveActiveShipKey(playerId: string): string | undefined;
 }
 
 export function registerCargoMessages(h: CargoMessageHost): RoomFeature {
   // ── C1 (plan soft-leaping-truffle v3) — open a structure's cargo ────────
   // The cargo pane is rebuilt from `cargo_state` replies only (#16).
+  const structureCargo: StructureCargoDeps = {
+    storage: h.storage, holds: getHoldStore, shipRecord: (id) => getPlayerShipStore().get(id), manualCargo: h.manualCargo,
+    sectorKey: h.sectorKey, bankChanged: () => h.rebuildStructuresSlice(),
+  };
   const cargoRequest = (client: Client, kind: 'cargo_query' | 'cargo_move', raw: unknown): void => {
     const playerId = h.sessionToPlayer().get(client.sessionId);
     if (!playerId) return;
-    let ref: { entityId?: number; ship?: string };
-    let move: CargoMove | null = null;
-    if (kind === 'cargo_move') {
-      const p = CargoMoveSchema.safeParse(raw);
-      if (!p.success) { h.malformed.record(client.sessionId, kind); return; }
-      ref = p.data.ship !== undefined ? { ship: p.data.ship } : { entityId: p.data.entityId! };
-      move = { dir: p.data.dir, items: p.data.items };
-    } else {
-      const p = CargoQuerySchema.safeParse(raw);
-      if (!p.success) { h.malformed.record(client.sessionId, kind); return; }
-      ref = p.data.ship !== undefined ? { ship: p.data.ship } : { entityId: p.data.entityId! };
-    }
-    const send = (st: CargoState): void => { try { client.send('cargo_state', st); } catch { /* closing */ } };
+    const req = parseCargoRequest(kind, raw);
+    if (req === null) { h.malformed.record(client.sessionId, kind); return; }
+    const { ref, move } = req;
+    const send = (st: CargoState): void => sendCargoState(client, st);
     // C3 — a ship (an NPC ship by entityId, a player's ship / parked hull).
     if (ref.ship !== undefined || h.swarmRegistry.getByEntityId(ref.entityId!)?.kind === 1) {
       send(shipCargo(h, playerId, ref, move));
       return;
     }
     const entityId = ref.entityId!;
+    // Plan cargo-pods — a loot pod opens in the loot window.
+    const podId = h.swarmRegistry.getByEntityId(entityId)?.id;
+    if (podId !== undefined && h.loot().isPod(podId)) { send(podCargoState(h.loot(), h.lootSearch, getHoldStore(), h.now(), playerId, h.pilotCollector(playerId), entityId, podId, move)); return; }
     const access = cargoAccess(h, playerId, entityId);
     if (!access.ok) {
       const lr = access.locked;
       const breakIn = lr ? { pct: h.breakIns.progress(playerId, lr.id), durationMs: h.breakInMsFor(lr) } : undefined;
+      // Slice 13: close to someone else's storage you may look, not take.
+      if (lr && h.sectorKey() !== null && h.pilotNear(playerId, lr)) {
+        send(peekCargoState(h.lootSearch, h.now(), playerId, lr.id, h.storage().cargoView(lr).hold, { entityId }, move !== null, access.message + ' You can only look.', breakIn));
+        return;
+      }
       send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message: access.message, ...(breakIn ? { breakIn } : {}), ...(move ? { ok: false } : {}) });
       return;
     }
     if (access.market) { send(dockMarket(h, playerId, entityId, access, move)); return; }
-    let verdict: { ok: boolean; message: string } | undefined;
-    if (move !== null) {
-      const moved = move.dir === 'take'
-        ? h.storage().cargoTake(access.shipInstanceId, playerId, access.rec, move.items, access.capacity)
-        : h.storage().cargoPut(access.shipInstanceId, playerId, access.rec, move.items);
-      if (isHoldEmpty(moved)) {
-        verdict = { ok: false, message: move.dir === 'take' ? 'No room aboard for that.' : 'No room in there for that.' };
-      } else {
-        verdict = { ok: true, message: move.dir === 'take' ? 'Loaded aboard.' : 'Unloaded.' };
-        h.manualCargo.add(playerId);
-        auditEvent({
-          event: 'cargo_moved', sector: h.sectorKey() ?? undefined, playerId, shipInstanceId: access.shipInstanceId,
-          owner: access.rec.owner, structureKind: access.rec.kind, dir: move.dir, weight: holdWeight(moved),
-        });
-        // A Capital's mineral bank rides room state.
-        if (getStructureKind(access.rec.kind).storageCapacity > 0) h.rebuildStructuresSlice();
-      }
-    }
-    const view = h.storage().cargoView(access.rec);
-    const shipHold = getHoldStore().get(access.shipInstanceId)?.hold ?? emptyHold();
-    const own = access.rec.owner === playerId && access.rec.kind === 'freight_dock';
-    send({
-      type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity,
-      ship: shipHold, shipCapacity: access.capacity,
-      ...(own ? { orders: (access.rec.freightOrders ?? []).map((o) => ({ ...o })) } : {}),
-      ...(verdict ?? {}),
-    });
+    send(structureCargoState(structureCargo, playerId, entityId, access, move));
   };
   // C2 — break into locked cargo (a hostile act); stop.
   h.onMessage('break_in', (client: Client, raw: unknown) => {
@@ -174,6 +163,14 @@ export function registerCargoMessages(h: CargoMessageHost): RoomFeature {
     rec.freightOrders = [...byGood.values()].slice(0, MAX_FREIGHT_ORDERS);
     if (rec.freightOrders.length === 0) delete rec.freightOrders;
     auditEvent({ event: 'freight_orders_set', sector: h.sectorKey() ?? undefined, playerId: owner, orders: rec.freightOrders?.length ?? 0 });
+  });
+  // Cargo pods 14c — auto-unload on/off, the ship end or the storage end.
+  const autoUnloadDeps: AutoUnloadDeps = {
+    activeShipKey: (pid) => h.resolveActiveShipKey(pid), shipRecord: (id) => getPlayerShipStore().get(id), putShipRecord: (r) => getPlayerShipStore().put(r),
+    structureAt: (eid) => { const sr = h.swarmRegistry.getByEntityId(eid); return sr ? h.structureRegistry.get(sr.id) : undefined; },
+  };
+  h.onMessage('set_auto_unload', (client: Client, raw: unknown) => {
+    if (!applyAutoUnload(raw, h.sessionToPlayer().get(client.sessionId), autoUnloadDeps)) h.malformed.record(client.sessionId, 'set_auto_unload');
   });
   h.onMessage('cargo_query', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_query', raw));
   h.onMessage('cargo_move', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_move', raw));
@@ -307,55 +304,9 @@ function dockMarket(
   return { type: 'cargo_state', entityId, open: true, hold: stock, used: 0, capacity: 0, ship, shipCapacity: access.capacity, market, ...(verdict ?? {}) };
 }
 
-/**
- * C3 — move the requested items from one hold to another. Player holds
- * commit together in ONE atomic group; an NPC loot hold (memory only) is
- * updated in memory and never persisted. Returns what moved.
- */
-function moveBetweenHolds(
-  h: CargoMessageHost,
-  from: { uid: string; persisted: boolean; type: HolderType; owner: string | null },
-  to: { uid: string; persisted: boolean; type: HolderType; owner: string | null },
-  want: CargoRequest,
-  toCapacity: number,
-): Hold {
-  const store = getHoldStore();
-  const fromRow = store.get(from.uid);
-  if (fromRow === undefined) return emptyHold();
-  const src = cloneHold(fromRow.hold);
-  const toRow = store.get(to.uid);
-  const dst = cloneHold(toRow?.hold ?? emptyHold());
-  const picked = extractRequested(src, want);
-  const { moved } = transferInto(dst, picked, toCapacity);
-  mergeInto(src, picked);
-  if (isHoldEmpty(moved)) return moved;
-  const puts: HoldRecord[] = [];
-  const deletes: string[] = [];
-  const write = (side: typeof from, row: HoldRecord | undefined, hold: Hold): void => {
-    const rec: HoldRecord = row
-      ? { ...row, hold }
-      : { holderUid: side.uid, holderType: side.type, ownerId: side.owner, sectorKey: null, x: null, y: null, hold, expiresAt: null };
-    if (!side.persisted) {
-      // An NPC loot hold stays even when emptied: its loot was rolled once,
-      // and a missing row would roll it again at death (taken twice).
-      store.put(rec, false);
-      return;
-    }
-    if (isHoldEmpty(hold)) deletes.push(side.uid); else puts.push(rec);
-  };
-  write(from, fromRow, src);
-  write(to, toRow, dst);
-  if (puts.length > 0 || deletes.length > 0) store.commit(puts, deletes, h.sectorKey() !== null);
-  return moved;
-}
-
-/** C3 — open / move a SHIP's cargo (NPC ship, another player's ship, a parked hull). */
-function shipCargo(
-  h: CargoMessageHost,
-  playerId: string,
-  ref: { entityId?: number; ship?: string },
-  move: { dir: 'take' | 'put'; items: CargoRequest } | null,
-): CargoState {
+/** C3 — open / move a SHIP's cargo (NPC ship, another player's ship, a parked
+ *  hull, or the pilot's own hold from the HUD cargo chip). */
+function shipCargo(h: CargoMessageHost, playerId: string, ref: CargoRef, move: CargoMove | null): CargoState {
   const echo = ref.entityId !== undefined ? { entityId: ref.entityId } : { targetShip: ref.ship! };
   const closed = (message: string, breakIn?: CargoState['breakIn']): CargoState => ({
     type: 'cargo_state', ...echo, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message,
@@ -368,10 +319,20 @@ function shipCargo(
   if (!mine?.alive || !mine.isActive || mine.shipInstanceId === '' || getPlayerShipStore().get(mine.shipInstanceId) === null) {
     return closed('You need a ship to move cargo.');
   }
-  if (t.holdUid === mine.shipInstanceId) return closed('That is the ship you are flying.');
-  if (!h.pilotNearPoint(playerId, t.x, t.y, t.radius)) return closed('Fly closer to open its cargo.');
+  if (t.holdUid === mine.shipInstanceId) {
+    // Cargo pods slice 19: "your hold" from the HUD cargo chip (`ownHoldState`).
+    return ownHoldState(getHoldStore().get(mine.shipInstanceId)?.hold ?? emptyHold(), h.shipCargoCapacity(mine.kind, mine.shipInstanceId),
+      getPlayerShipStore().get(mine.shipInstanceId)?.autoUnload !== false, echo, move !== null);
+  }
+  if (!h.pilotNearPoint(playerId, t.x, t.y, t.radius)) {
+    h.lootSearch.advance(playerId, t.id, h.now(), false);
+    return closed('Fly closer to open its cargo.');
+  }
   if (!cargoOpensFor(relationOf(playerId, t.owner, h.relationCtx), false) && !h.breakIns.hasGrant(playerId, t.id)) {
-    return closed(`Locked. That ${t.label} is not yours.`, { pct: h.breakIns.progress(playerId, t.id), durationMs: h.breakInMsForShip(t) });
+    // Slice 13: look, don't take (break-in rules unchanged).
+    if (t.npc) h.npcHold(t.npc);
+    return peekCargoState(h.lootSearch, h.now(), playerId, t.id, getHoldStore().get(t.holdUid)?.hold ?? emptyHold(), echo, move !== null,
+      `Locked. That ${t.label} is not yours: you can only look.`, { pct: h.breakIns.progress(playerId, t.id), durationMs: h.breakInMsForShip(t) });
   }
   if (t.npc) h.npcHold(t.npc); // roll its loot (once) before anyone looks in
   const myCap = h.shipCargoCapacity(mine.kind, mine.shipInstanceId);
@@ -379,7 +340,8 @@ function shipCargo(
   const them = { uid: t.holdUid, persisted: t.persisted, type: (t.npc ? 'hauler' : 'ship') as HolderType, owner: t.npc ? null : t.owner };
   let verdict: { ok: boolean; message: string } | undefined;
   if (move !== null) {
-    const moved = move.dir === 'take' ? moveBetweenHolds(h, them, me, move.items, myCap) : moveBetweenHolds(h, me, them, move.items, t.capacity);
+    const persist = h.sectorKey() !== null;
+    const moved = move.dir === 'take' ? moveBetweenHolds(getHoldStore(), persist, them, me, move.items, myCap) : moveBetweenHolds(getHoldStore(), persist, me, them, move.items, t.capacity);
     verdict = isHoldEmpty(moved)
       ? { ok: false, message: move.dir === 'take' ? 'No room aboard for that.' : 'No room in there for that.' }
       : { ok: true, message: move.dir === 'take' ? 'Loaded aboard.' : 'Unloaded.' };

@@ -95,7 +95,7 @@ const DRAWER_SX = {
 const MODAL_PROPS = { keepMounted: true } as const;
 // Slide's `mountOnEnter` defaults to `true` — children only mount when
 // the enter transition fires. With `keepMounted` on the Modal that
-// would defer GalaxyTab + ShipRosterPanel mount to first-open
+// would defer GalaxyTab mount to first-open
 // (~1.5 s tail). Pre-mount the children too so the drawer-open
 // transition is purely visual / no React work.
 const SLIDE_PROPS = { mountOnEnter: false, unmountOnExit: false } as const;

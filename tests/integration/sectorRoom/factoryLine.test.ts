@@ -52,7 +52,7 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
   it('laser and tractor leave a consumable piece; a full hold hands it back to the tractor; one at the hull goes into the hold', async () => {
     for (const m of mounts) m.weaponId = m.id === 'cross-l' ? 'mining_laser' : 'tractor';
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true,
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true, keepAllOnDeath: true,
     });
     const pid = randomUUID();
     const client = (await harness.connectActive(pid, {
@@ -83,11 +83,11 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
       const before = new Set(seen);
       const at = int().wreckState(id)!;
       int().spawnTestProjectile('shooter-x', at.x + 600, at.y, -4000, 0, 'laser', 1e6);
-      for (let t = 0; t < 40 && int().swarmRegistry.get(id); t++) { await harness.advance(50); look(); }
+      for (let t = 0; t < 40 && int().swarmRegistry.get(id); t++) { await harness.advance(50); look(); for (const pod of [...int().loot.podIds()]) int().loot.expireNow(pod); } // a death pod (a box since slice 9) would block the knock
       look();
       expect(int().swarmRegistry.get(id) ?? null, `${id} died`).toBeNull();
       const ids = [...seen].filter((p) => !before.has(p));
-      for (const pod of [...int().loot.podIds()]) int().loot.onPodDestroyed(pod); // its loot drop is not under test
+      for (const pod of [...int().loot.podIds()]) int().loot.expireNow(pod); // its loot drop is not under test
       return ids;
     };
 

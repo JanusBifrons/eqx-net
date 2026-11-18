@@ -89,6 +89,25 @@ export const CAPITAL_STYLE_VARIANTS: Readonly<Record<string, readonly string[]>>
   battleship: ['battleship', 'battleship-b', 'battleship-c', 'battleship-rail'],
 };
 
+/** A pilotable warship's fit: the base naval fit or one of the fitted kinds. */
+export type CapitalFitName = 'naval' | 'rail' | 'lance' | 'beam';
+
+/**
+ * Join flow stage 5: which capital class a pilotable warship kind belongs to,
+ * and which fit it carries, so the Hangar folds a class's fits into one tile
+ * without parsing ids. Null for anything else (sub-capitals, the Barge, and
+ * the NPC-only -b / -c hull styles).
+ */
+export function capitalClassAndFitOf(kind: string): { classId: string; fit: CapitalFitName } | null {
+  for (const [classId, kinds] of Object.entries(CAPITAL_STYLE_VARIANTS)) {
+    if (!kinds.includes(kind) || /-(b|c)$/.test(kind)) continue;
+    if (kind === classId) return { classId, fit: 'naval' };
+    const fit = kind.slice(classId.length + 1);
+    if (fit === 'rail' || fit === 'lance' || fit === 'beam') return { classId, fit };
+  }
+  return null;
+}
+
 /**
  * The mining barge (plan partitioned-chasing-lark PR 15): the owner's pick of
  * the look options (A, a container ship) as a real, pilotable kind. No
