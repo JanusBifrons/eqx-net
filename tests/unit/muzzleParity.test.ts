@@ -4,7 +4,7 @@
  * distance; the drawn barrel (client `turretLayout`) ends there, the server
  * fires from there (`PlayerFireResolver`, `AiFireResolver`,
  * `StructureGridSubsystem`) and the client predicts from there
- * (`ColyseusClient` ghosts + live beam, `PixiRenderer` remote beams). Fails if
+ * (`ColyseusClient` ghosts + live beam, `pixi/beamUpdater` remote beams). Fails if
  * the drawn tip and the fire point disagree for any turret, or if any of those
  * sites stops calling the shared function.
  */
@@ -66,9 +66,9 @@ describe('muzzle parity (turrets T3, #15)', () => {
     const client = src('src/client/net/ColyseusClient.ts');
     expect(client).toMatch(/shipShotMuzzle\(kind, mount\)/);
     expect(client.match(/this\.localMuzzle\(mount\)/g)?.length).toBe(2); // live beam + ghosts
-    expect(src('src/client/render/PixiRenderer.ts').match(/shipShotMuzzle\(shooterKind, mount/g)?.length).toBe(2); // player + drone beams
+    expect(src('src/client/render/pixi/beamUpdater.ts').match(/shipShotMuzzle\(shooterKind, mount/g)?.length).toBe(2); // player + drone beams
     // No fire site hardcodes a muzzle distance any more (ship scale).
-    for (const f of ['src/server/rooms/PlayerFireResolver.ts', 'src/server/rooms/AiFireResolver.ts', 'src/client/render/PixiRenderer.ts']) {
+    for (const f of ['src/server/rooms/PlayerFireResolver.ts', 'src/server/rooms/AiFireResolver.ts', 'src/client/render/PixiRenderer.ts', 'src/client/render/pixi/beamUpdater.ts']) {
       expect(src(f), f).not.toMatch(/\?\? (16|20|MUZZLE_CLEARANCE)\b/);
     }
   });
