@@ -9,15 +9,20 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
-import { getPlayerShipStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
-import { getTradeSink } from '../../../src/server/economy/tradeSink.js';
+import { getHoldStore, getPersistence, getPlayerShipStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
+import { EconomyStore } from '../../../src/server/economy/EconomyStore.js';
+import { TradeDirector } from '../../../src/server/economy/TradeDirector.js';
+import { getTradeSink, setTradeSink } from '../../../src/server/economy/tradeSink.js';
 import { DEBT_FLOOR, FREE_LAUNCHES_START, LAUNCH_COST } from '../../../src/shared-types/launch.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
 describe('SectorRoom integration — launch charging (join flow stage 2)', () => {
   let harness: SectorTestHarness;
+  let dir: TradeDirector | undefined;
   afterEach(async () => {
+    setTradeSink(null);
+    dir?.stop();
     if (harness) await harness.cleanup();
   });
 
@@ -31,6 +36,14 @@ describe('SectorRoom integration — launch charging (join flow stage 2)', () =>
       for (const [, s] of (room.state as SectorState).ships) if (s.playerId === pid && s.isActive) return s.kind;
       return '';
     };
+    // The economy (free launches live in its store) runs only in the real
+    // server: start one on this room, as packedBuy.test.ts does. A watcher
+    // stays connected so the room outlives each pilot's leave.
+    const watcher = await harness.connectActive(randomUUID(), { spawnX: 2000, spawnY: 2000, shipKind: 'fighter' });
+    const room = harness.getServerRoom() as unknown as SectorRoom;
+    dir = new TradeDirector(new Map([['sol-prime', room]]), new EconomyStore({ persistence: getPersistence }), getHoldStore(), { wallet: getWallet() });
+    dir.start();
+    setTradeSink(dir);
     const sink = getTradeSink();
     expect(sink?.freeLaunches).toBeDefined();
     const wallet = getWallet();
@@ -71,5 +84,6 @@ describe('SectorRoom integration — launch charging (join flow stage 2)', () =>
     expect(kindOf(rookie)).toBe('battleship');
     expect(wallet.balance(rookie)).toBe(DEBT_FLOOR + 1);
     await c.leave();
+    await watcher.leave();
   });
 });
