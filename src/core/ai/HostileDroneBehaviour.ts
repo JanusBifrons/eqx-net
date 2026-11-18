@@ -6,7 +6,7 @@ import {
 } from '../contracts/IAiBehaviour.js';
 import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { hasTurretFireControl, mountWeaponReach } from '../combat/mountReach.js';
-import { shipAimRadius, shipHitBound, shipHullDistance } from '../combat/shipHitShape.js';
+import { shipHitBound, shipHullDistance } from '../combat/shipHitShape.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 import {
   isOnSightHostile,
@@ -16,7 +16,7 @@ import {
   PLAYERS_SIDE,
   type AllegianceSide,
 } from '../../shared-types/allegiances.js';
-import { pickTarget, type MountTargetView, type PickTargetOptions } from './WeaponMountController.js';
+import { type MountTargetView } from './WeaponMountController.js';
 import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
 import { HullAvoid } from './hullAvoid.js';
 import type { AiEntityPoseOut, AiShipActivity, IAiNavRoutes } from '../contracts/IAiBehaviour.js';
@@ -36,7 +36,6 @@ import {
   type PilotState,
 } from './virtualPilot.js';
 import { missileArmedProfile, roleProfile, roleSensorRange, type RoleProfile } from './tactics/roleProfiles.js';
-import { TARGET_CLAIM_WEIGHT } from './tactics/targetClaims.js';
 import {
   FACE_AIM_LEAD,
   FACE_MOVE,
@@ -69,17 +68,17 @@ import { PatrolMode } from './modes/patrolMode.js';
 import { SearchMode } from './modes/searchMode.js';
 import { TravelMode } from './modes/travelMode.js';
 import { hullFireCone } from './hullFireCone.js';
+import { PilotMorale } from './pilot/pilotMorale.js';
+import { PilotSenses } from './pilot/pilotSenses.js';
+import { TargetPick } from './pilot/targetPick.js';
 import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TailManoeuvre } from './tactics/manoeuvres.js';
 import { FallBackManoeuvre, FleeManoeuvre, KiteManoeuvre, OrbitManoeuvre } from './tactics/stanceManoeuvres.js';
 import {
-  MORALE_LOCK_TICKS,
   MORALE_OUTCOME,
   MoraleTracker,
-  moraleSeed,
-  rollMorale,
   type MoraleOutcome,
 } from './tactics/morale.js';
-import { decisionDue, isTailed, LOD_PILOT_RANGE_MUL, ManoeuvrePicker } from './tactics/utility.js';
+import { decisionDue, isTailed, ManoeuvrePicker } from './tactics/utility.js';
 import { fnv1a32 } from '../random/rng.js';
 import {
   addDangerFromPoint,
@@ -126,10 +125,6 @@ import {
   RUN_NOW_PILOT_PARAMS,
   BOOST_RESERVE_FRAC,
   FORGET_TICKS,
-  DRONE_TARGET_HEALTH_WEIGHT,
-  DRONE_TARGET_DWELL_TICKS,
-  STRUCTURE_PRIORITY_BIAS,
-  ORDERED_TARGET_PRIORITY,
   CALM_CRUISE_FRAC,
   MOVE_ARRIVE_SLOW_RADIUS,
   LEADER_CRUISE_THROTTLE,
@@ -143,10 +138,7 @@ import {
   FACE_MOVE_EXIT,
   FACE_MOVE_MIN_SPEED,
   TICKS_PER_S_SIM,
-  HIT_HALF_LIFE_TICKS,
-  COUNT_RANGE_MUL,
   WARP_OUT_SENSOR_MUL,
-  FALLBACK_MAX_TICKS,
   NEVER_RUN_MORALE,
   BROADSIDE_STANDOFF,
   TRAVEL_NONE,
@@ -171,17 +163,6 @@ export {
 } from './hostileDroneTuning.js';
 
 export { hullFireCone } from './hullFireCone.js';
-
-/** Mutable twin of `MoraleInputs` (one scratch per brain, #14). */
-interface MoraleInputsScratch {
-  hullFrac: number;
-  recentDamageRate: number;
-  alliesNear: number;
-  enemiesNear: number;
-  ownSize: number;
-  enemySize: number;
-  isCapitalNearbyFriendly: boolean;
-}
 
 /**
  * Hostile drone: steers toward nearest player and fires hitscan when in range
@@ -240,41 +221,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Server tick at which `prevTargetId` was last (re)acquired — drives the
    *  `DRONE_TARGET_DWELL_TICKS` switch-delay in the body target pick. */
   private prevTargetSinceTick = 0;
-  /** Wave-system Phase 2 — reusable merged COMBAT candidate buffer (players +
-   *  hostile structures). Filled IN PLACE every tick from `view.players` +
-   *  `view.structures`; objects are created only when the buffer grows, never
-   *  per-tick (#14, this is the hot AI loop). Structures carry `vx=vy=0`
-   *  (static) + their class `priority`; players carry `priority 0`. Server-only
-   *  (the client never ticks the drone brain). */
-  private readonly _combatTargets: Array<{
-    id: string;
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    /** Facing (rad); undefined when unknown (structures, views without it). */
-    angle?: number;
-    health?: number;
-    maxHealth?: number;
-    kindId?: string | null;
-    shieldUp?: boolean;
-    priority: number;
-    /** Spread targets: brains of my side already on it (0 without `view.claims`). */
-    claims: number;
-    /** A ship (pilot hull or swarm combatant), not a structure. */
-    ship: boolean;
-    /** The hit circle a fixed gun aims at (`shipAimRadius` of the view's
-     *  hull shape; the default kind's bubble without one); Infinity for a
-     *  structure (the player window applies). */
-    hitRadius: number;
-    /** Per-candidate hostility (allegiances P0) — ALWAYS set before the pick,
-     *  so `pickTarget` reads it instead of the callback. For a drones-only view
-     *  it equals `hostileTo.has(id)` ⇒ byte-identical to pre-P0. */
-    hostile: boolean;
-    /** Hostile through the retaliation ledger (`hostileTo`), not on sight:
-     *  the guard leash reaches these out to guard radius + weapon reach. */
-    ledger: boolean;
-  }> = [];
   /** Allegiances P0 — this entity's NPC side (from its kind) and whether that
    *  side attacks players ON SIGHT (robots do; drones don't — drones are driven
    *  by waves + retaliation through `hostileTo`). */
@@ -389,21 +335,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  target is kept beyond it, and a known (ledger) hostile beyond it is still
    *  picked when nothing is in range, so director-ordered hunters still go. */
   private readonly sensorRange: number;
-  /** Reused body-pick options (alloc-free, #14); `ticksSincePrevTarget` is
-   *  written each tick. */
-  private readonly _pickOpts: PickTargetOptions;
-  /** Same options without the sensor cap: the out-of-sensor fallback pick. */
-  private readonly _pickOptsUncapped: PickTargetOptions;
-  /** The guard-leash pick (a non-broadside ship with a post): measured from
-   *  the POST, new picks AND the held target only inside the guard radius. */
-  private readonly _pickOptsGuard: PickTargetOptions;
-  /** The guard-leash pick for RETALIATION targets only (slice 6): a ship being
-   *  shot answers out to its guard radius plus its weapon reach, so it fires
-   *  back from the edge of its area. */
-  private readonly _pickOptsGuardRetaliate: PickTargetOptions;
-  /** Bound once (no per-tick closure). Unused while every candidate carries
-   *  its own `hostile` flag, kept for the pickTarget signature. */
-  private readonly _isHostile = (id: string): boolean => this.hostileTo.has(id);
+  /** The target pick: candidate buffer + reused pick options (`ai/pilot/targetPick.ts`). */
+  private readonly _targets: TargetPick;
+  /** Decision-time senses (`ai/pilot/pilotSenses.ts`). */
+  private readonly _senses: PilotSenses;
 
   /** 2026-05-31 — pooled per-instance scratches (Invariant #14). Pre-fix
    *  this class returned a fresh AiIntent literal per tick (~15 drones ×
@@ -494,27 +429,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _kite = this._manoeuvres[MANOEUVRE_KITE] as KiteManoeuvre;
   // ── Morale (slice 6b, owner's "roll a dice") ──────────────────────────
   private readonly _morale = new MoraleTracker();
-  private readonly _moraleIn: MoraleInputsScratch = {
-    hullFrac: 1, recentDamageRate: 0, alliesNear: 0, enemiesNear: 0, ownSize: 1, enemySize: 0, isCapitalNearbyFriendly: false,
-  };
-  private _moraleRoll: MoraleRollFn = rollMorale;
-  /** A forced FallBack holds until this tick (Flee holds until the warp). */
-  private _moraleLockUntil = -1;
-  /** No morale roll before this tick: every roll, Fight on included, holds
-   *  `MORALE_LOCK_TICKS`. Triggers are not checked meanwhile, so one that
-   *  arms inside the lock still rolls once it ends. */
-  private _moraleNextRollAt = -1;
-  /** A FallBack still on its way to its friends gives up at this tick. */
-  private _fallBackCapUntil = -1;
-  /** Last roll's outcome (-1 = never rolled). */
-  private _lastMorale: MoraleOutcome | -1 = -1;
+  /** Morale timers and the die (`ai/pilot/pilotMorale.ts`). */
+  private readonly _moraleP = new PilotMorale(this._morale);
   /** fnv1a32 of the entity id (seeds the picker and the morale die). */
   private _idHash = 0;
-  /** Sensor scan (decision time): allies within sensor range, the enemies'
-   *  summed radii, a friendly capital seen. */
-  private _sensorAllies = 0;
-  private _enemySize = 0;
-  private _capitalNear = false;
   /** Warp-outs requested (test-visible). */
   private _warpOuts = 0;
   /** Peacetime modes (`ai/modes/`), preallocated (#14). */
@@ -539,9 +457,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  on a new target): the slow-target call reads it (`targetSlow`). */
   private _tSpeedAvg = 0;
   private _tSpeedId: string | null = null;
-  /** Recent-hit counter (decays with `HIT_HALF_LIFE_TICKS`), from `markHostile`. */
-  private _hitsVal = 0;
-  private _hitsTick = 0;
 
   constructor(kind?: ShipKind | string, opts?: HostileDroneBehaviourOptions) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
@@ -642,32 +557,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     tac.brakeAccel = this.handling.reverseAccel * 60;
     tac.radius = this.kind.radius;
     tac.shieldPad = this.shieldPad;
-    this._pickOpts = {
-      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
-      dwellTicks: DRONE_TARGET_DWELL_TICKS,
-      ticksSincePrevTarget: 0,
-      priorityBias: STRUCTURE_PRIORITY_BIAS,
-      claimWeight: TARGET_CLAIM_WEIGHT,
-      maxDistance: this.sensorRange,
-      prevMaxDistance: Infinity,
-    };
-    this._pickOptsUncapped = {
-      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
-      dwellTicks: DRONE_TARGET_DWELL_TICKS,
-      ticksSincePrevTarget: 0,
-      priorityBias: STRUCTURE_PRIORITY_BIAS,
-      claimWeight: TARGET_CLAIM_WEIGHT,
-    };
-    this._pickOptsGuard = {
-      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
-      dwellTicks: DRONE_TARGET_DWELL_TICKS,
-      ticksSincePrevTarget: 0,
-      priorityBias: STRUCTURE_PRIORITY_BIAS,
-      claimWeight: TARGET_CLAIM_WEIGHT,
-      maxDistance: 0,
-      prevMaxDistance: 0,
-    };
-    this._pickOptsGuardRetaliate = { ...this._pickOptsGuard };
+    this._targets = new TargetPick(this.hostileTo, this.allegiance, this.onSightPlayers, this.foesOfPlayers, this.ownerId, this.sensorRange);
+    this._senses = new PilotSenses(this._nbIdx, this.allegiance, this.friendlyToPilots, this.sensorRange, this.fireRange);
   }
 
   /** Test-visible engagement profile. */
@@ -698,8 +589,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.state = 'COMBAT';
     // Decision layer: every damage hit lands here (swarmDamageStrategy), so it
     // doubles as the "under fire" signal. Director aggro marks count once too.
-    this._hitsVal = this.recentHitsAt(atTick) + 1;
-    this._hitsTick = atTick;
+    this._senses.noteHit(atTick);
   }
 
   /** Morale: damage this ship took (server damage path → AiController). */
@@ -713,18 +603,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   /** Test seam: replace the morale die (deterministic outcomes in tests). */
-  setMoraleRoll(fn: MoraleRollFn): void { this._moraleRoll = fn; }
+  setMoraleRoll(fn: MoraleRollFn): void { this._moraleP.roll = fn; }
   /** Test-visible: the last morale roll's outcome (-1 = none yet). */
-  getLastMoraleOutcome(): MoraleOutcome | -1 { return this._lastMorale; }
+  getLastMoraleOutcome(): MoraleOutcome | -1 { return this._moraleP.last; }
   /** Test-visible: how many times this ship asked to warp out. */
   getWarpOutCount(): number { return this._warpOuts; }
-
-  /** The decaying recent-hit count at `tick`. */
-  private recentHitsAt(tick: number): number {
-    if (this._hitsVal <= 0) return 0;
-    const age = tick - this._hitsTick;
-    return age <= 0 ? this._hitsVal : this._hitsVal * Math.pow(0.5, age / HIT_HALF_LIFE_TICKS);
-  }
 
   /** Test-visible: the running dogfight manoeuvre (`MANOEUVRE_*`). */
   getManoeuvre(): ManoeuvreId { return this._picker.current; }
@@ -848,120 +731,16 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // (priorityBias has no effect when every priority is 0). Structures only
     // appear here when the server's faction-filtered view includes them AND
     // they're in this drone's `hostileTo` set (so a neutral base is never hit).
-    const cand = this._combatTargets;
+    const tp = this._targets;
+    const cand = tp.cand;
     // On sight (slice 6): a hunter sights out to its sensor range; Defensive
     // (`engageOnSight` off) sights nothing and fights only its ledger.
     const engageR = this.hunting ? this.sensorRange : ON_SIGHT_ENGAGE_RANGE;
     const engageR2 = engageR * engageR;
     const onSight = this.engageOnSight;
-    const ownerId = this.ownerId;
-    const ownerFoe = view.hostileToPlayer;
     const ordered = this.orderedTargetId;
-    let n = 0;
-    let anyHostile = false;
-    for (const p of view.players) {
-      let c = cand[n];
-      if (!c) {
-        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, ledger: false, claims: 0, hitRadius: 0 };
-        cand[n] = c;
-      }
-      c.id = p.id;
-      c.x = p.x;
-      c.y = p.y;
-      c.vx = p.vx;
-      c.vy = p.vy;
-      c.angle = p.angle;
-      c.health = p.health;
-      c.maxHealth = p.maxHealth;
-      c.kindId = p.kindId;
-      c.shieldUp = p.shieldUp;
-      c.priority = p.id === ordered ? ORDERED_TARGET_PRIORITY : 0;
-      c.ship = true;
-      c.hitRadius = p.kindId != null ? shipAimRadius(p.kindId, p.shieldUp === true) : DEFAULT_AIM_RADIUS;
-      let h = this.hostileTo.has(p.id) || (p.ownerId !== undefined && this.hostileTo.has(p.ownerId));
-      if (h && this.ownerId !== null && (p.id === this.ownerId || p.ownerId === this.ownerId)) h = false;
-      c.ledger = h;
-      if (!h && onSight && this.onSightPlayers && p.truce !== true) {
-        const dx = p.x - self.x;
-        const dy = p.y - self.y;
-        h = dx * dx + dy * dy <= engageR2;
-      }
-      c.hostile = h;
-      if (h) anyHostile = true;
-      n++;
-    }
-    const structs = view.structures;
-    if (structs) {
-      for (const s of structs) {
-        let c = cand[n];
-        if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, ledger: false, claims: 0, hitRadius: 0 };
-          cand[n] = c;
-        }
-        c.id = s.id;
-        c.x = s.x;
-        c.y = s.y;
-        c.vx = 0;
-        c.vy = 0;
-        c.angle = undefined;
-        c.health = s.health;
-        c.maxHealth = s.maxHealth;
-        c.kindId = undefined;
-        c.shieldUp = undefined;
-        c.priority = s.id === ordered ? Math.max(s.priority, ORDERED_TARGET_PRIORITY) : s.priority;
-        c.ship = false;
-        c.hitRadius = Infinity; // a footprint box, not a hull: the player window
-        c.hostile = this.hostileTo.has(s.id);
-        c.ledger = c.hostile;
-        if (c.hostile) anyHostile = true;
-        n++;
-      }
-    }
-    // Allegiances P0 — other-allegiance swarm combatants. Only HOSTILE ones are
-    // appended (stance on-sight within range, or retaliation via `hostileTo`),
-    // keeping the candidate list small in a mixed sector.
-    const swarms = view.swarms;
-    if (swarms) {
-      for (const s of swarms) {
-        if (s.id === self.id) continue;
-        let h = this.hostileTo.has(s.id);
-        const ledger = h;
-        // On sight: the stance table, a players-side ship's foes of players,
-        // and (owned ships) anything hostile to the OWNER (slice 6).
-        if (!h && onSight && isNpcAllegianceId(s.allegiance)
-          && (isOnSightHostile(this.allegiance, s.allegiance)
-            || (this.foesOfPlayers && isOnSightHostile(s.allegiance, PLAYERS_SIDE))
-            || (ownerId !== null && ownerFoe !== undefined && ownerFoe(s.id, ownerId)))) {
-          const dx = s.x - self.x;
-          const dy = s.y - self.y;
-          h = dx * dx + dy * dy <= engageR2;
-        }
-        if (!h) continue;
-        let c = cand[n];
-        if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, ledger: false, claims: 0, hitRadius: 0 };
-          cand[n] = c;
-        }
-        c.id = s.id;
-        c.x = s.x;
-        c.y = s.y;
-        c.vx = s.vx;
-        c.vy = s.vy;
-        c.angle = s.angle;
-        c.health = s.health;
-        c.maxHealth = s.maxHealth;
-        c.kindId = s.kindId;
-        c.shieldUp = s.shieldUp;
-        c.priority = s.id === ordered ? ORDERED_TARGET_PRIORITY : 0;
-        c.ship = true;
-        c.hitRadius = s.kindId != null ? shipAimRadius(s.kindId, s.shieldUp === true) : DEFAULT_AIM_RADIUS;
-        c.hostile = true;
-        c.ledger = ledger;
-        anyHostile = true;
-        n++;
-      }
-    }
-    if (cand.length !== n) cand.length = n;
+    const n = tp.build(self, view, engageR2, onSight, ordered);
+    let anyHostile = tp.anyHostile;
     // Hold fire under an attack order: the ordered target is the only foe.
     if (holdOrder) {
       anyHostile = false;
@@ -1010,45 +789,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const roam = this.travel === TRAVEL_ON_THE_WAY && this.travelFights && !this.broadside;
     if (roam) this.legLeashCentre(self);
     const leash = this.guardLeash() || roam;
-    let target: MountTargetView | null;
-    if (orderedLive) {
-      // Attack order (slice 8): go and get it. The ordered target is free of
-      // the sensor cap and the guard leash; it wins on its priority inside the
-      // usual pick. Every other target keeps the leash (inside the guard
-      // radius round the post), narrowed in place (the pick is the last reader).
-      if (leash) {
-        const r2 = this.guardR * this.guardR;
-        for (let i = 0; i < n; i++) {
-          const c = cand[i]!;
-          if (!c.hostile || c.id === ordered) continue;
-          const dx = c.x - this.guardX;
-          const dy = c.y - this.guardY;
-          if (dx * dx + dy * dy > r2) c.hostile = false;
-        }
-      }
-      this._pickOptsUncapped.ticksSincePrevTarget = sinceTicks;
-      target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOptsUncapped);
-    } else if (leash) {
-      this._pickOptsGuard.ticksSincePrevTarget = sinceTicks;
-      target = pickTarget(this.guardX, this.guardY, cand, this.prevTargetId, this._isHostile, this._pickOptsGuard);
-      // Slice 6: a ship being shot answers. Nothing inside the radius ⇒ a
-      // RETALIATION target out to the radius plus the weapon reach (so it
-      // fires back from the edge of its area); on-sight ones stay inside.
-      // Narrows `hostile` to the ledger in place: the pick is the buffer's
-      // last reader this tick.
-      if (target === null && this.hostileTo.size > 0) {
-        for (let i = 0; i < n; i++) { const c = cand[i]!; c.hostile = c.ledger; }
-        this._pickOptsGuardRetaliate.ticksSincePrevTarget = sinceTicks;
-        target = pickTarget(this.guardX, this.guardY, cand, this.prevTargetId, this._isHostile, this._pickOptsGuardRetaliate);
-      }
-    } else {
-      this._pickOpts.ticksSincePrevTarget = sinceTicks;
-      target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOpts);
-    }
-    if (target === null && anyHostile && !leash && !orderedLive) {
-      this._pickOptsUncapped.ticksSincePrevTarget = sinceTicks;
-      target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOptsUncapped);
-    }
+    const target = tp.pick(
+      self, n, this.prevTargetId, sinceTicks, ordered, orderedLive, leash, this.guardX, this.guardY, this.guardR, anyHostile,
+    );
     const newId = target?.id ?? null;
     if (newId !== this.prevTargetId) this.prevTargetSinceTick = view.tick;
     this.prevTargetId = newId;
@@ -1652,33 +1395,28 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     }
     const done = this._manoeuvres[p.current]!.isDone(c);
     if (done || decisionDue(tick, this._slot, this._lod)) {
-      this._lod = !this.pilotNear(self, view);
-      c.recentHits = this.recentHitsAt(tick);
+      this._lod = !this._senses.pilotNear(self, view);
+      c.recentHits = this._senses.recentHitsAt(tick);
       c.recentBlocks = this.getRecentBlocks(tick);
-      this.countSides(self, nb);
-      this.scanSensors(self, nb);
+      this._senses.countSides(self, nb, c);
+      this._senses.scanSensors(self, nb, c);
       if (view.stats !== undefined) view.stats.decisions++;
       if (isTailed(c)) this._tailedDecisions++;
       // Morale: a trigger (hull 50 / 25 %, burst, capital lost, outnumbered)
       // rolls the die; FallBack / Flee then run locked. A fleeing ship keeps
       // fleeing.
-      const trig = tick >= this._moraleNextRollAt ? this._morale.update(tick, c.hullFrac, c.allies, c.enemies) : -1;
-      if (trig !== -1 && p.current !== MANOEUVRE_FLEE) {
-        const outcome = this.rollMoraleNow(tick, c.hullFrac);
-        this._moraleNextRollAt = tick + MORALE_LOCK_TICKS;
-        this._lastMorale = outcome;
-        if (outcome === MORALE_OUTCOME.FallBack) {
-          this.switchManoeuvre(MANOEUVRE_FALL_BACK, tick);
-          this._moraleLockUntil = tick + MORALE_LOCK_TICKS;
-          this._fallBackCapUntil = tick + FALLBACK_MAX_TICKS;
-          return;
-        }
-        if (outcome === MORALE_OUTCOME.Flee) {
-          this.switchManoeuvre(MANOEUVRE_FLEE, tick);
-          return;
-        }
-        // Fight on: normal scoring below.
+      const outcome = this._moraleP.decide(
+        tick, c, p.current === MANOEUVRE_FLEE, this._senses, this.kind.radius, this.role.moraleWeights, this._idHash,
+      );
+      if (outcome === MORALE_OUTCOME.FallBack) {
+        this.switchManoeuvre(MANOEUVRE_FALL_BACK, tick);
+        return;
       }
+      if (outcome === MORALE_OUTCOME.Flee) {
+        this.switchManoeuvre(MANOEUVRE_FLEE, tick);
+        return;
+      }
+      // Fight on (or no roll): normal scoring below.
       if (p.current === MANOEUVRE_FLEE) return;
       if (p.current === MANOEUVRE_FALL_BACK) {
         // Regroup, then re-engage (owner 2026-11-14): held until it reaches
@@ -1686,7 +1424,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         // the normal combat manoeuvres the moment it is among them or has
         // nobody to reach (`done`), lock or not: a ship held in FallBack at
         // its anchor parked beside an enemy.
-        if (!done && (tick < this._moraleLockUntil || tick < this._fallBackCapUntil)) return;
+        if (!done && (tick < this._moraleP.lockUntil || tick < this._moraleP.fallBackCapUntil)) return;
         // Regrouped, or the cap ran out: choose afresh.
         this.switchManoeuvre(p.decide(c, this.role, true), tick);
         return;
@@ -1720,61 +1458,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   /**
-   * Sensor picture at decision time (one K ≤ 8 grid query within sensor
-   * range): same-side ships (their centroid, the nearest friendly capital:
-   * the fall-back anchor) and enemies (count, summed radii, radius-weighted
-   * centroid: what Flee runs from). Plain writes into the context (#14).
-   */
-  private scanSensors(self: AiEntity, nb: IAiNeighbourQuery): void {
-    const c = this._tac;
-    const idx = this._nbIdx;
-    const n = nb.queryNeighbours(self.x, self.y, this.sensorRange, COMBAT_NEIGHBOUR_K, idx, self.id);
-    let allies = 0, ax = 0, ay = 0;
-    let enemies = 0, ew = 0, ex = 0, ey = 0;
-    let capD2 = Infinity, capX = 0, capY = 0;
-    for (let k = 0; k < n; k++) {
-      const i = idx[k]!;
-      const x = nb.xAt(i), y = nb.yAt(i);
-      const pilot = nb.isPilotAt(i);
-      const side = nb.sideAt(i);
-      if (pilot ? this.friendlyToPilots : side === this.allegiance) {
-        allies++;
-        ax += x; ay += y;
-        // A friendly capital anchors morale whoever flies it (a pilot's too).
-        if (nb.isCapitalAt(i)) {
-          const d2 = (x - self.x) * (x - self.x) + (y - self.y) * (y - self.y);
-          if (d2 < capD2) { capD2 = d2; capX = x; capY = y; }
-        }
-      } else if (pilot ? !this.friendlyToPilots : !isNpcAllegianceId(side) || !isFriendly(this.allegiance, side)) {
-        const r = nb.radiusAt(i) > 1 ? nb.radiusAt(i) : 1;
-        enemies++;
-        ew += r; ex += x * r; ey += y * r;
-      }
-    }
-    this._sensorAllies = allies;
-    this._enemySize = ew;
-    this._capitalNear = capD2 < Infinity;
-    c.sensorEnemies = enemies;
-    if (enemies > 0) { c.threatX = ex / ew; c.threatY = ey / ew; }
-    if (this._capitalNear) { c.hasAnchor = true; c.anchorX = capX; c.anchorY = capY; }
-    else if (allies > 0) { c.hasAnchor = true; c.anchorX = ax / allies; c.anchorY = ay / allies; }
-    else c.hasAnchor = false;
-  }
-
-  /** Roll the morale die from the current sensor picture (alloc-free). */
-  private rollMoraleNow(tick: number, hullFrac: number): MoraleOutcome {
-    const m = this._moraleIn;
-    m.hullFrac = hullFrac;
-    m.recentDamageRate = this._morale.windowDamageFrac(tick);
-    m.alliesNear = this._sensorAllies;
-    m.enemiesNear = this._tac.sensorEnemies;
-    m.ownSize = this.kind.radius;
-    m.enemySize = this._enemySize;
-    m.isCapitalNearbyFriendly = this._capitalNear;
-    return this._moraleRoll(m, this.role.moraleWeights, moraleSeed(this._idHash, this._morale.triggerCount));
-  }
-
-  /**
    * Flee's end: ask the server to warp out along the escape heading
    * (`intent.warpOut`), then stand down: forget every hostility, leave the
    * squad's flock and hold at the drop point (the same move-to a director
@@ -1792,37 +1475,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.lastHitByPlayer.clear();
     this.state = 'IDLE';
     this.prevTargetId = null;
-    this._moraleLockUntil = -1;
+    this._moraleP.lockUntil = -1;
     this.switchManoeuvre(MANOEUVRE_HOLD, this._tac.tick);
     this.setMoveTarget(w.x, w.y);
     this._modeCtx.tick = this._tac.tick;
     this._leaving.begin(this._modeCtx);
-  }
-
-  /** Any pilot hull within `LOD_PILOT_RANGE_MUL` × sensor range? */
-  private pilotNear(self: AiEntity, view: AiWorldView): boolean {
-    const r = LOD_PILOT_RANGE_MUL * this.sensorRange;
-    const r2 = r * r;
-    const ps = view.players;
-    for (let i = 0; i < ps.length; i++) {
-      const dx = ps[i]!.x - self.x;
-      const dy = ps[i]!.y - self.y;
-      if (dx * dx + dy * dy <= r2) return true;
-    }
-    return false;
-  }
-
-  /** Same-side and other ships within `COUNT_RANGE_MUL` × fire range (K ≤ 8). */
-  private countSides(self: AiEntity, nb: IAiNeighbourQuery): void {
-    const idx = this._nbIdx;
-    const n = nb.queryNeighbours(self.x, self.y, this.fireRange * COUNT_RANGE_MUL, COMBAT_NEIGHBOUR_K, idx, self.id);
-    let allies = 0;
-    for (let k = 0; k < n; k++) {
-      const i = idx[k]!;
-      if (nb.isPilotAt(i) ? this.friendlyToPilots : nb.sideAt(i) === this.allegiance) allies++;
-    }
-    this._tac.allies = allies;
-    this._tac.enemies = n - allies;
   }
 
   /** Test-visible: the last combat context-steering resolve (null if the
@@ -1938,10 +1595,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.guardX = x;
     this.guardY = y;
     this.guardR = Math.max(radius, shipTuning(this.kind).guardRadiusMin);
-    this._pickOptsGuard.maxDistance = this.guardR;
-    this._pickOptsGuard.prevMaxDistance = this.guardR;
-    this._pickOptsGuardRetaliate.maxDistance = this.guardR + this.fireRange;
-    this._pickOptsGuardRetaliate.prevMaxDistance = this.guardR + this.fireRange;
+    this._targets.setLeash(this.guardR, this.fireRange);
     // A post is a hold: it ends a hunt and a travel.
     this.hunting = false;
     this.travel = TRAVEL_NONE;
@@ -2091,10 +1745,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.legFromX = fromX;
     this.legFromY = fromY;
     this.guardR = shipTuning(this.kind).guardRadiusMin;
-    this._pickOptsGuard.maxDistance = this.guardR;
-    this._pickOptsGuard.prevMaxDistance = this.guardR;
-    this._pickOptsGuardRetaliate.maxDistance = this.guardR + this.fireRange;
-    this._pickOptsGuardRetaliate.prevMaxDistance = this.guardR + this.fireRange;
+    this._targets.setLeash(this.guardR, this.fireRange);
   }
 
   /** Test-visible: flying a patrol leg? */
