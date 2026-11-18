@@ -76,7 +76,7 @@ export class NavRoutes implements IAiNavRoutes {
   /** Ships with a record (diagnostics, tests). */
   get size(): number { return this.ships.size; }
 
-  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number): boolean {
+  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number, keep = false): boolean {
     const now = this.now();
     if (now >= this.nextSweep) this.sweep(now);
     let s = this.ships.get(entityId);
@@ -87,9 +87,8 @@ export class NavRoutes implements IAiNavRoutes {
     s.usedAt = now;
     const gdx = tx - s.goalX, gdy = ty - s.goalY;
     if (!(gdx * gdx + gdy * gdy <= arrive * arrive)) {
-      // A new goal: the old route leads elsewhere.
-      s.route.count = 0;
-      s.short = false;
+      // A new goal: the old route leads elsewhere (a moving goal kept: near enough until the new plan lands).
+      if (!keep) { s.route.count = 0; s.short = false; }
       s.stuck = 0; s.chkAt = now; s.chkX = x; s.chkY = y;
       if (!s.pending && now - s.askedAt >= NAV_REPLAN_MS) this.plan(s, x, y, tx, ty, clearance, now);
     } else if (s.short) {

@@ -162,6 +162,10 @@ one it flies straight as before.
   above). Counters: `stuckReplans`, `held`, `short`.
 - A waiting ship's fleet status activity is `blocked`, "Can't get closer" (Move and patrol legs,
   `SectorRoom` `activityOf` via `NavRoutes.waiting`), on the existing `fleet_status` stream.
+- Squads (slice 10): a follower (`tickFlock`) asks for the way to the ship ahead of it in squad order
+  (the member before it; the first, the leader) with `keep` (a moving goal flies the old route until the
+  new plan lands). Open space answers straight and the boids herd is unchanged; rock between ⇒ it flies the
+  route and stops `flockFollow` behind that ship, so the squad crosses single file (owner, 2026-11-17).
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25.
 - `CutFieldSubsystem.rockContacts` counts ship-vs-field-rock contacts (the test gate).
 - Lock: `tests/integration/sectorRoom/navFollowRoute.test.ts`, a fighter told to Move across a rock arrives
@@ -188,3 +192,4 @@ one it flies straight as before.
   dodge debris with the combat hull avoidance (extracted to `ai/hullAvoid.ts`); resting rocks stay with routes.
   2026-11-18 slice 9: no way ⇒ `nearest` route and wait; stuck ⇒ re-plan twice, then wait; fleet status
   `blocked` ("Can't get closer").
+  2026-11-18 slice 10: squads cross rock single file, each follower routing to the ship ahead of it.

@@ -141,4 +141,17 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     expect(s.asks.length).toBe(1);
     expect(nav.stuckReplans).toBe(0);
   });
+  it('keep (a moving goal, slice 10): the old route flies on until the new plan answers', async () => {
+    let now = 0;
+    const s = stub(), nav = new NavRoutes(s.request, () => now);
+    nav.waypoint('a', 0, 0, 1000, 0, 30, 50, true);
+    await s.answer({ points: new Float64Array([500, 400, 1000, 0]) });
+    now = 1_000;
+    expect(nav.waypoint('a', 10, 0, 1100, 0, 30, 50, true)).toBe(true); // goal moved: re-asks, old route kept
+    expect([nav.wpX, nav.wpY]).toEqual([500, 400]);
+    expect(s.asks.length).toBe(2);
+    await s.answer({ points: new Float64Array([600, 300, 1100, 0]) });
+    expect(nav.waypoint('a', 10, 0, 1100, 0, 30, 50, true)).toBe(true);
+    expect([nav.wpX, nav.wpY]).toEqual([600, 300]);
+  });
 });
