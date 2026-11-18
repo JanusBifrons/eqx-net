@@ -19,6 +19,7 @@ import type { StructureRecord } from '../../../src/server/structures/StructureRe
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { CRANE_CARGO_IN } from '../../../src/core/articulation/craneCargo.js';
 import { CAPITAL_BAY, DOCK_UNLOAD_HOLD_MIN_TICKS } from '../../../src/core/articulation/rigCatalogue.js';
+import { decodeRigHoldCargo, decodeRigHoldTicks } from '../../../src/shared-types/structureStateWire.js';
 
 async function until(pred: () => boolean, ms: number): Promise<boolean> {
   const end = Date.now() + ms;
@@ -72,7 +73,7 @@ describe('SectorRoom integration — Capital crane bay (structure-restyle 3i)', 
   it('park + still on the bay → reach → hold → bank everything at hold end → retract', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
     // 100 right of the bay centre: 422 from the Capital's centre, out of hover range.
-    const { cap, shipId } = await boot(pid, 100, 420);
+    const { cap, cr, shipId } = await boot(pid, 100, 420);
 
     expect(await until(() => clipOf(cap) === 'arm-reach', 5_000), 'a still ship on the bay draws the crane').toBe(true);
     const t = cap.rigClip!.target!;
@@ -82,6 +83,11 @@ describe('SectorRoom integration — Capital crane bay (structure-restyle 3i)', 
     expect(await until(() => clipOf(cap) === 'arm-hold', 3_000)).toBe(true);
     expect(cap.rigClip!.holdTicks).toBeGreaterThanOrEqual(DOCK_UNLOAD_HOLD_MIN_TICKS);
     expect(cap.rigClip!.cargo, 'the Capital only unloads (no outlet)').toBe(CRANE_CARGO_IN);
+    // 3e: the hold length and the cargo direction reach the client row (wire `rigHold`).
+    const holdRow = () => [...cr.state.structures.values()].find((s) => decodeRigHoldTicks(s.rigHold ?? 0) > 0);
+    expect(await until(() => holdRow() !== undefined, 1_000), 'the client row carries the hold').toBe(true);
+    expect(decodeRigHoldTicks(holdRow()!.rigHold!)).toBe(cap.rigClip!.holdTicks);
+    expect(decodeRigHoldCargo(holdRow()!.rigHold!)).toBe(CRANE_CARGO_IN);
     expect(aboard(shipId), 'nothing is banked before the hold ends').toEqual(CARGO.goods);
 
     expect(await until(() => clipOf(cap) === 'arm-retract', 12_000)).toBe(true);
