@@ -30,6 +30,8 @@ const { HelmCourseMarker, helmMarkerLook, HELM_POP_MS, HELM_STEADY_ALPHA } = awa
 const { Container } = await import('pixi.js');
 
 const W = 1280, H = 720;
+/** Container children: the route line, the icon root, the ripple. */
+const ROOT = 1;
 function fakeCamera(scale: number): Camera {
   const stage = new Container();
   return {
@@ -39,8 +41,10 @@ function fakeCamera(scale: number): Camera {
   } as unknown as Camera;
 }
 
-function mirror(course: { x: number; y: number; seq: number } | null): RenderMirror {
-  return { ships: new Map(), localPlayerId: 'me', helmCourse: course } as RenderMirror;
+function mirror(course: { x: number; y: number; seq: number; route?: Float64Array; routeN?: number } | null, ship?: { x: number; y: number }): RenderMirror {
+  const ships = new Map<string, unknown>();
+  if (ship) ships.set('me', ship);
+  return { ships, localPlayerId: 'me', helmCourse: course } as unknown as RenderMirror;
 }
 
 describe('helmMarkerLook', () => {
@@ -66,8 +70,8 @@ describe('HelmCourseMarker', () => {
     m.update(mirror({ x: 1000, y: 2000, seq: 1 }), 0);
     expect(m.isVisible()).toBe(true);
     // Game Y-up → pixi Y-down: screen y = H/2 - gameY * scale.
-    expect(m.container.children[0]!.x).toBeCloseTo(W / 2 + 100);
-    expect(m.container.children[0]!.y).toBeCloseTo(H / 2 - 200);
+    expect(m.container.children[ROOT]!.x).toBeCloseTo(W / 2 + 100);
+    expect(m.container.children[ROOT]!.y).toBeCloseTo(H / 2 - 200);
     m.update(mirror(null), 10);
     expect(m.isVisible()).toBe(false);
   });
@@ -79,16 +83,30 @@ describe('HelmCourseMarker', () => {
     far.update(mirror({ x: 0, y: 0, seq: 1 }), 0);
     near.update(mirror({ x: 0, y: 0, seq: 1 }), 5000);
     far.update(mirror({ x: 0, y: 0, seq: 1 }), 5000);
-    expect(far.container.children[0]!.scale.x).toBe(near.container.children[0]!.scale.x);
+    expect(far.container.children[ROOT]!.scale.x).toBe(near.container.children[ROOT]!.scale.x);
   });
 
   it('replays the pop on each new tap (seq change), not on the same order', () => {
     const m = new HelmCourseMarker(); m.init(fakeCamera(0.1));
     m.update(mirror({ x: 0, y: 0, seq: 1 }), 0);
     m.update(mirror({ x: 0, y: 0, seq: 1 }), 5000);
-    const root = m.container.children[0]!;
+    const root = m.container.children[ROOT]!;
     expect(root.scale.x).toBe(1);
     m.update(mirror({ x: 50, y: 50, seq: 2 }), 5001);
     expect(root.scale.x).toBeGreaterThan(1.3);
+  });
+
+  it('draws the route line from the ship while a course is set (navigation slice 14), not without the ship', () => {
+    const m = new HelmCourseMarker();
+    m.init(fakeCamera(0.1));
+    const route = new Float64Array([500, 0, 1000, 2000]);
+    m.update(mirror({ x: 1000, y: 2000, seq: 1, route, routeN: 2 }, { x: 0, y: 0 }), 0);
+    expect(m.lineVisible()).toBe(true);
+    m.update(mirror({ x: 1000, y: 2000, seq: 1 }, { x: 0, y: 0 }), 10); // no route yet: straight to the point
+    expect(m.lineVisible()).toBe(true);
+    m.update(mirror({ x: 1000, y: 2000, seq: 1 }), 20); // own ship not in the mirror
+    expect(m.lineVisible()).toBe(false);
+    m.update(mirror(null, { x: 0, y: 0 }), 30);
+    expect(m.lineVisible()).toBe(false);
   });
 });

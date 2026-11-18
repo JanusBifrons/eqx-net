@@ -5318,8 +5318,10 @@ export class ColyseusGameClient {
     const p = this._helmPose;
     p.x = s.x; p.y = s.y; p.angle = s.angle; p.vx = s.vx; p.vy = s.vy; p.angvel = s.angvel ?? 0;
     this._helmRoute.tick(this.gameClock.now());
+    const idx = this._helmOrder.route?.idx ?? -1;
     helmStep(this._helmOrder, p, getShipKind(this._helmKindId), this._helmOut);
     if (this._helmOut.arrived) this.clearHelm();
+    else if ((this._helmOrder.route?.idx ?? -1) !== idx) this.syncHelmMark(); // a turn passed: the route line drops it
   }
 
   tickPhysics(elapsedMs: number): void {

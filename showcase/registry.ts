@@ -212,7 +212,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
-  autopilot: 'The helm flies the route on every hull from slice 13 (e2e autopilot-round-rock); the shot comes with the route line on screen (slice 14).',
+  autopilot: 'The helm flies the route with its line on screen (slices 13-14, e2e autopilot-round-rock); the shot is slice 17 of the navigation plan.',
   'real-scale-ranges': 'On by default since 2026-11-14 (EQX_NAVAL_RANGE=legacy opts out); filmed with the coastal-duel shot once the camera can show a 30 km shot (follow-up slice).',
   'contacts-overview':
     'The list earns its place on a capital at real-scale range (16" at 30 km); film it beside the real-scale-ranges shot once that 30 km camera lands, opening the list and locking a far fighter from it.',

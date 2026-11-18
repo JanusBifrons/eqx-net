@@ -20,7 +20,7 @@ describe('resolveHelmCourseMark', () => {
   it('shows the course point for the pilot with an active order', () => {
     const out = makeHelmCourseMark();
     expect(resolveHelmCourseMark(order(true), true, false, 7, out)).toBe(true);
-    expect(out).toEqual({ x: 1200, y: -3400, seq: 7 });
+    expect(out).toMatchObject({ x: 1200, y: -3400, seq: 7, routeN: 0 });
   });
 
   it('is hidden with no order (arrived, WASD override, cleared)', () => {
@@ -41,6 +41,21 @@ describe('resolveHelmCourseMark', () => {
     const same = out;
     resolveHelmCourseMark(order(true, 8, 9), true, false, 2, out);
     expect(out).toBe(same);
-    expect(out).toEqual({ x: 8, y: 9, seq: 2 });
+    expect(out).toMatchObject({ x: 8, y: 9, seq: 2 });
+  });
+
+  it('carries the turns still ahead for the route line (navigation slice 14)', () => {
+    const out = makeHelmCourseMark();
+    const o: HelmOrder = { ...order(true, 30, 40), route: { pts: new Float64Array([10, 0, 20, 0, 30, 40]), n: 3, idx: 1 } };
+    resolveHelmCourseMark(o, true, false, 1, out);
+    expect(out.routeN).toBe(2);
+    expect(Array.from(out.route.subarray(0, 4))).toEqual([20, 0, 30, 40]);
+    const buf = out.route;
+    o.route!.idx = 2;
+    resolveHelmCourseMark(o, true, false, 1, out);
+    expect(out.routeN).toBe(1);
+    expect(out.route).toBe(buf); // reused
+    resolveHelmCourseMark(order(true), true, false, 2, out);
+    expect(out.routeN).toBe(0);
   });
 });

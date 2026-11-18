@@ -218,3 +218,5 @@ one it flies straight as before.
   2026-11-18 slice 12: autopilot wire, `nav_route_request` → `nav_route`, served by `AutopilotRoutes`.
   2026-11-18 slice 13: the helm flies routes on every hull (`HelmOrder.route`, `helmPassRadius`;
   client `HelmRouteClient`); arrival within the hull's own size, not a fixed 20 u.
+  2026-11-18 slice 14: the route line. One trace (`client/render/routeLine.ts`) for the fleet patrol
+  pick and the helm course; `RenderMirror.helmCourse` carries the turns still ahead (`route`, `routeN`).
