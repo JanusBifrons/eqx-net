@@ -12,9 +12,9 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A client→server message | A `register<Feature>(host)` file in `src/server/rooms/features/` that calls `host.onMessage` with zod parsing at the boundary, plus one row in `features/index.ts`. Reference: `registerTeleportMessages` (`TeleportMessageHandlers.ts`). | planned (pattern live) |
-| A test-only `test_*` handler | `features/devTestMessages.ts`, registered behind the test-room gate. | planned |
-| A new subsystem | Construct it inside its feature's register function and return `{ tick?, dispose? }`; never a new field + `new X()` in `onCreate`. | planned |
+| A client→server message | A `register<Feature>(host)` file in `src/server/rooms/features/` that registers each message through `parsedMessage` (zod parse at the boundary, malformed tracker on failure), plus one row in `features/index.ts`. Reference: `registerTeleportMessages` (`features/teleportMessages.ts`). | live |
+| A test-only `test_*` handler | `features/devTestMessages.ts`, gated on testMode or `EQX_ALLOW_DEV_OVERRIDES` (`TestMessageHandlers`). | live |
+| A new subsystem | Construct it in its feature's register function; return `{ dispose }`; periodic work via `gameClock.every` + `guarded`; never a new field + `new X()` in `onCreate`. | planned |
 | Join / leave / respawn logic | `JoinHandler` / `LeaveHandler` / `RespawnHandler` classes. | Leave/Respawn live; Join planned |
 | A tick-phase step | A function taking a narrow ctx, like `runAiTick(ctx)` (`aiTickRunner.ts`). | live |
 

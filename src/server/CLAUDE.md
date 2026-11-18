@@ -109,7 +109,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Cargo access
 
-- **Gate:** `SectorRoom.cargoAccess` is re-checked on every `cargo_query` / `cargo_move`; moves only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell`.
+- **Gate:** `cargoAccess` (`rooms/features/cargoMessages.ts`) is re-checked on every `cargo_query` / `cargo_move`; moves only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell`.
 - **Break-ins** are hostile acts; an NPC's loot is rolled once per spawn (`npcHold`).
 - Full text and locks: [loot-and-cargo.md](../../docs/features/loot-and-cargo.md#server-implementation-notes).
 
