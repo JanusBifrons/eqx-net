@@ -201,7 +201,7 @@ import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSi
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
-import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/messages.js';
+import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
@@ -260,6 +260,7 @@ import { JoinHandler } from './join/JoinHandler.js';
 import { TeleportTolls } from './features/teleportTolls.js';
 import { BreakInHooks } from './features/breakInHooks.js';
 import { TurretTargeting } from './features/turretTargeting.js';
+import { SectorTimeScale } from './features/sectorTimeScale.js';
 import { MineHooks } from './features/mineHooks.js';
 import {
   ALLOW_DEV_OVERRIDES,
@@ -399,9 +400,7 @@ import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { isTerrainLockKind, swarmLockEligible, type LockEntry } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
-import { clampTimeScale, type GameClock } from '../../core/clock/GameClock.js';
-import { LoadSpeedController } from '../../core/clock/LoadSpeedController.js';
-import { glideToward } from '../../shared-types/timeScale.js';
+import type { GameClock } from '../../core/clock/GameClock.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/physics/catchUp.js';
 
 
@@ -2343,7 +2342,7 @@ export class SectorRoom extends Room<SectorState> {
     // ships" digest. Extracted to SnapshotBroadcaster.ts.
     this.snapshotBroadcaster = new SnapshotBroadcaster({
       shellEvents: () => this.shellHub,
-      timeScale: () => (this.timeScaleKey.s === 1 && this.timeScaleKey.t === undefined ? undefined : this.timeScaleKey),
+      timeScale: () => (this.timeScale.timeScaleKey.s === 1 && this.timeScale.timeScaleKey.t === undefined ? undefined : this.timeScale.timeScaleKey),
       serverTick: () => this.serverTick,
       sabU32: this.sabU32,
       clients: this.clients,
@@ -3287,7 +3286,7 @@ export class SectorRoom extends Room<SectorState> {
       if (cap.success) this.testTraverseTicksCap = cap.data;
       else logger.warn({ value: roomOpts.traverseTicksCap }, 'traverseTicksCap: invalid room option, ignored');
     }
-    this.autoSlowdown = !this.testMode || roomOpts.autoTimeScale === true;
+    this.timeScale.autoSlowdown = !this.testMode || roomOpts.autoTimeScale === true;
     if (this.testMode && roomOpts.timeScale !== undefined) {
       const ts = TimeScaleSchema.safeParse(roomOpts.timeScale);
       if (ts.success) this.setTimeScale(ts.data);
@@ -3852,8 +3851,8 @@ export class SectorRoom extends Room<SectorState> {
     // This sector's physics world steps at the same game speed.
     const applyTimeScale = (scale: number): void => {
       this.postToWorker({ type: 'SET_TIME_SCALE', scale });
-      this.timeScaleKey.s = scale;
-      this.timeScaleKey.fromTick = this.serverTick;
+      this.timeScale.timeScaleKey.s = scale;
+      this.timeScale.timeScaleKey.fromTick = this.serverTick;
     };
     this.gameClock.onScaleChange(applyTimeScale);
     // A speed set earlier in onCreate (room option, EQX_TIME_SCALE) applies now.
@@ -6476,74 +6475,16 @@ export class SectorRoom extends Room<SectorState> {
     logger.info({ roomId: this.roomId, lockTimeCapS: capS }, 'lockTimeCapS on (test trigger)');
   }
 
-  /**
-   * Set this sector's game speed (time scale stream; clamped 0.25–4). Its
-   * clock re-anchors, the physics world and the room loop follow, and the
-   * snapshot carries the keyframe while the speed isn't 1. Returns the speed
-   * now in force. Test/recording triggers and `POST /dev/time-scale`.
-   */
-  setTimeScale(scale: number, smooth = false): number {
-    const from = this.targetTimeScale();
-    this.chosenTimeScale = clampTimeScale(scale);
-    this.noteTimeScaleTarget('forced', from);
-    // Setup speeds (room/join option, env, tests) apply at once; `smooth`
-    // glides there like a dimmer (the dev endpoint's default).
-    if (!smooth) this.gameClock.setScale(this.targetTimeScale());
-    return this.targetTimeScale();
-  }
-
-  /** Where the sector's speed is heading: chosen × the load factor. */
-  private targetTimeScale(): number {
-    return clampTimeScale(this.chosenTimeScale * this.loadFactor);
-  }
-  private lastSlewAtMs = -1;
-
-  /**
-   * The dimmer: each update, glide the sector clock toward its target at
-   * the shared `glideToward` (a steady ratio: one doubling or halving per wall
-   * second), so a slowdown or a
-   * speed change eases in rather than lurching (owner 2026-11-12: "a dial like
-   * a dimmer"). Clients follow each small step through the snapshot keyframe
-   * on their eased anchor path.
-   */
-  private slewTimeScale(nowMs: number): void {
-    const dt = this.lastSlewAtMs < 0 ? 0 : Math.min(100, nowMs - this.lastSlewAtMs);
-    this.lastSlewAtMs = nowMs;
-    const tgt = this.targetTimeScale();
-    const cur = this.gameClock.scale;
-    if (cur !== tgt) this.gameClock.setScale(glideToward(cur, tgt, dt / 1000));
-    // The keyframe carries the glide's target so clients glide in step (#15).
-    this.timeScaleKey.t = this.gameClock.scale === tgt ? undefined : tgt;
-  }
-
-  /** The sector's chosen speed (1×, or a forced demo/test speed): the ceiling
-   *  the automatic slowdown works under. */
-  private chosenTimeScale = 1;
-  /** The automatic slowdown's factor, [0.7, 1] (Phase 5). */
-  private loadFactor = 1;
-  private readonly loadSpeed = new LoadSpeedController();
-  /** Whether the automatic slowdown runs here. On in real sectors; test rooms
-   *  opt in with `autoTimeScale: true`. A slow CI runner otherwise slows every
-   *  test room's WHOLE game (timers, pulses, spools), not just its physics as
-   *  the old TiDi did, and shifts every test's timing (12 feature specs timed
-   *  out on CI before this gate). */
-  private autoSlowdown = true;
-  private lastLoadWindowSeq = 0;
-
-  /** Log + audit a change of the sector's TARGET speed (not each slew step). */
-  private noteTimeScaleTarget(reason: 'load' | 'forced', from: number, latenessPct?: number): void {
-    const to = this.targetTimeScale();
-    if (to === from) return;
-    const r2 = (v: number): number => Math.round(v * 100) / 100;
-    logger.info({ roomId: this.roomId, sectorKey: this.sectorKey, from: r2(from), to: r2(to), reason, latenessPct }, 'time scale changed');
-    auditEvent({ event: 'time_scale_changed', sector: this.sectorKey ?? undefined, from: r2(from), to: r2(to), reason, ...(latenessPct !== undefined ? { latenessPct } : {}) });
-  }
+  /** Game time scale — chosen speed, load slowdown, glide, keyframe (`features/sectorTimeScale.ts`). */
+  private readonly timeScale = new SectorTimeScale({
+    gameClock: this.gameClock, tickBudget: this.tickBudget, perfFixedLoad: () => this.perfFixedLoad,
+    roomId: () => this.roomId, sectorKey: () => this.sectorKey, logger,
+  });
+  /** Set this sector's game speed (`SectorTimeScale.setTimeScale`); returns the speed now in force. */
+  setTimeScale(scale: number, smooth = false): number { return this.timeScale.setTimeScale(scale, smooth); }
 
   /** `/dev/time-scale`: this room's sector key (null for engineering rooms). */
   timeScaleSectorKey(): string | null { return this.sectorKey; }
-
-  /** This sector's speed keyframe (shared, mutated on change). */
-  private readonly timeScaleKey: TimeScaleKeyframe = { s: 1, fromTick: 0 };
 
   private findNearestSwarmOfKind(
     x: number,
@@ -9807,7 +9748,7 @@ export class SectorRoom extends Room<SectorState> {
       structures: this.structureRegistry.size,
       work: this.sceneWork.view(this.sceneEluStart ? (this.physicsWorkerProxy?.elu(this.sceneEluStart)?.utilization ?? null) : null),
       simTime: sceneSimTime(this.sceneSimStart, this.sceneSimEnd, this.gameClock.scale),
-      timeScale: { scale: this.gameClock.scale, loadFactor: this.loadFactor, auto: this.autoSlowdown },
+      timeScale: { scale: this.gameClock.scale, loadFactor: this.timeScale.loadFactor, auto: this.timeScale.autoSlowdown },
       wakeCensus: this.physicsWorkerProxy?.lastWakeCensus ?? null,
     };
   }
@@ -10781,23 +10722,8 @@ export class SectorRoom extends Room<SectorState> {
     // turns into a slower clock and shed drones instead of slower ticks.
     if (!this.perfFixedLoad) this.simClock.report(busiestMs);
     const newRate = this.simClock.rate;
-    // Game time scale, Phase 5: the automatic slowdown. Once per telemetry
-    // window, lateness (game time behind real time) + the cost rate set a
-    // load factor; the sector's whole game (its clock, loop, physics world and
-    // clients) runs at chosen × factor. This REPLACES the old TiDi path that
-    // slowed only the physics worker (CLOCK_RATE), which clients saw as
-    // jitter, not slow motion (docs/SHELF.md).
-    if (this.autoSlowdown && !this.perfFixedLoad && this.tickBudget.windowSeq !== this.lastLoadWindowSeq) {
-      this.lastLoadWindowSeq = this.tickBudget.windowSeq;
-      const l = this.tickBudget.lateness();
-      const f = this.loadSpeed.window(l.latenessTicks, l.wallTicks, newRate);
-      if (f !== this.loadFactor) {
-        const from = this.targetTimeScale();
-        this.loadFactor = f;
-        this.noteTimeScaleTarget('load', from, l.wallTicks > 0 ? Math.round((100 * Math.max(0, l.latenessTicks)) / l.wallTicks) : 0);
-      }
-    }
-    this.slewTimeScale(tStart);
+    this.timeScale.applyLoadWindow(newRate);
+    this.timeScale.slewTimeScale(tStart);
     // CLOCK_RATE now carries only `testTimeScale` (testMode physics-only
     // accelerator, default 1). `state.clockRate` mirrors the load factor for
     // the client's audio pitch + TiDi readout.
@@ -10806,7 +10732,7 @@ export class SectorRoom extends Room<SectorState> {
       this.lastSentClockRate = outboundRate;
       this.postToWorker({ type: 'CLOCK_RATE', rate: outboundRate });
     }
-    if (this.state.clockRate !== this.loadFactor) this.state.clockRate = this.loadFactor;
+    if (this.state.clockRate !== this.timeScale.loadFactor) this.state.clockRate = this.timeScale.loadFactor;
     // Phase 6 second-lever: if rate is at floor and we're still over budget,
     // shed far drones in batches. No-op when rate > 0.71 or budget healthy.
     if (!this.perfFixedLoad) this.shedder.consider(newRate, busiestMs);
