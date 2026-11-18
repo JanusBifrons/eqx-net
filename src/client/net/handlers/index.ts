@@ -9,6 +9,7 @@ import { registerCombatHandlers, type CombatHandlerCtx } from './combatHandlers.
 import { registerDiagnosticHandlers } from './diagnosticHandlers.js';
 import { registerFieldHandlers, type FieldHandlerCtx } from './fieldHandlers.js';
 import { registerGridPulseHandlers, type GridPulseHandlerCtx } from './gridPulseHandlers.js';
+import { registerHelmHandlers, type HelmHandlerCtx } from './helmHandlers.js';
 import { registerImpactFxHandlers, type ImpactFxHandlerCtx } from './impactFxHandlers.js';
 import { registerMissileHandlers, type MissileHandlerCtx } from './missileHandlers.js';
 import { registerShellHandlers, type ShellHandlerCtx } from './shellHandlers.js';
@@ -24,6 +25,7 @@ export type ClientHandlerCtx = CollisionHandlerCtx &
   CombatHandlerCtx &
   FieldHandlerCtx &
   GridPulseHandlerCtx &
+  HelmHandlerCtx &
   ImpactFxHandlerCtx &
   MissileHandlerCtx &
   ShellHandlerCtx &
@@ -51,4 +53,5 @@ export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void 
   registerDiagnosticHandlers(room);
   registerWebrtcSignallingHandlers(room, ctx);
   registerCollisionHandlers(room, ctx);
+  registerHelmHandlers(room, ctx);
 }
