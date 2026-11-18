@@ -229,6 +229,8 @@ export async function bootSectorTestServer(opts: {
   tradeEnabled?: boolean;
   /** Economy v2 W5b — switch the ship-picker hull gate on in a test room. */
   enforceHullGate?: boolean;
+  /** Join flow — launch prices on in a test room. */
+  launchCosts?: boolean;
   seedStorageHold?: { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core', number>>; credits?: number };
   haulerRaiders?: number;
   /** A0 scale lattice (plan soft-leaping-truffle v2). */
@@ -314,6 +316,7 @@ export async function bootSectorTestServer(opts: {
     subcapWrecks: opts.subcapWrecks,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
+    launchCosts: opts.launchCosts,
     seedStorageHold: opts.seedStorageHold,
     haulerRaiders: opts.haulerRaiders,
     defaultSpawnX: opts.defaultSpawnX,

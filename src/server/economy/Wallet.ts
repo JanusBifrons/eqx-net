@@ -12,6 +12,10 @@
  * `HoldStore.commit(…, extraOps)` group via the `*Deferred` variants.
  *
  * Every change is a discrete `wallet_tx` audit event (never per tick).
+ *
+ * A balance goes below zero ONLY through `debitAllowingDebt` (launching a
+ * capital on credit, join flow); every other debit is all-or-nothing, so a
+ * pilot in debt can't buy anything until income (a credit) pays it off.
  */
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
@@ -34,7 +38,7 @@ export class Wallet {
    *  canonical id by the caller) SUM. */
   hydrate(rows: ReadonlyArray<{ playerId: string; balance: number }>): void {
     for (const r of rows) {
-      if (!Number.isFinite(r.balance) || r.balance <= 0) continue;
+      if (!Number.isFinite(r.balance) || r.balance === 0) continue;
       this.bal.set(r.playerId, (this.bal.get(r.playerId) ?? 0) + Math.floor(r.balance));
     }
   }
@@ -58,6 +62,18 @@ export class Wallet {
     const amt = Math.ceil(n);
     if (amt <= 0) return true;
     if (playerId === '' || this.balance(playerId) < amt) return false;
+    const next = this.applyDelta(playerId, -amt);
+    this.persist([this.putOp(playerId)]);
+    auditEvent({ event: 'wallet_tx', playerId, delta: -amt, balance: next, reason });
+    return true;
+  }
+
+  /** Take `n` credits even when short, down to `floor` (≤ 0): the debt
+   *  path. False (nothing changes) when it would go below the floor. */
+  debitAllowingDebt(playerId: string, n: number, floor: number, reason: string): boolean {
+    const amt = Math.ceil(n);
+    if (amt <= 0) return true;
+    if (playerId === '' || this.balance(playerId) - amt < Math.min(0, floor)) return false;
     const next = this.applyDelta(playerId, -amt);
     this.persist([this.putOp(playerId)]);
     auditEvent({ event: 'wallet_tx', playerId, delta: -amt, balance: next, reason });
@@ -98,13 +114,14 @@ export class Wallet {
     return { type: 'WALLET_PUT', playerId, balance: this.balance(playerId), ts: this.now() };
   }
 
-  /** Number of funded wallets (inspection). */
+  /** Number of non-zero wallets (inspection). */
   size(): number {
     return this.bal.size;
   }
 
   private applyDelta(playerId: string, delta: number): number {
-    const next = Math.max(0, this.balance(playerId) + delta);
+    // No clamp: only `debitAllowingDebt` lets a delta cross zero.
+    const next = this.balance(playerId) + delta;
     if (next === 0) this.bal.delete(playerId);
     else this.bal.set(playerId, next);
     return next;

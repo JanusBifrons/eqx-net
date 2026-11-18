@@ -86,7 +86,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 **Economy** ([economy-and-trade](../../docs/architecture/economy-and-trade.md#server-implementation-notes), [economy-wallet](../../docs/features/economy-wallet.md), [blueprints](../../docs/features/blueprints.md), [research-lab](../../docs/features/research-lab.md)):
 - 🔴 Each trade visit is ONE `tradeTransfer` group; an NPC hold spills on death, so a kill never mints value. NPC→player hostility is `SectorRoom.npcHostileTo`.
-- Credits never live in a `Hold`: every source/sink goes through the `Wallet` (all-or-nothing; `creditDeferred` / `debitDeferred` when atomic with goods). Guests are full players.
+- Credits never live in a `Hold`: every source/sink goes through the `Wallet` (all-or-nothing; `creditDeferred` / `debitDeferred` when atomic with goods). Guests are full players. Only `debitAllowingDebt` (launch charging, `economy/launchCharge.ts`) goes below zero.
 - Blueprint maths only via `applyBlueprint`; packed items only via `addPacked` / `takePacked`; prices only from `blueprintValue`; `qualityHullFactor` is the one quality source. Lab rules live in `shared-types/research.ts`.
 
 **Capital combat** ([capital-ships](../../docs/features/capital-ships.md#server-implementation-notes), [shell-events](../../docs/architecture/shell-events.md), [real-scale-ranges](../../docs/architecture/real-scale-ranges.md)):

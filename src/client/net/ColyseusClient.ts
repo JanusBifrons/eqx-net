@@ -3784,6 +3784,10 @@ export class ColyseusGameClient {
       if (serverState.wallet !== undefined && !this._fakeCredits && useUIStore.getState().wallet !== serverState.wallet) {
         useUIStore.getState().setWallet(serverState.wallet);
       }
+      // Join flow — free capital launches left (store write only on change).
+      if (serverState.freeLaunches !== undefined && useUIStore.getState().freeLaunches !== serverState.freeLaunches) {
+        useUIStore.getState().setFreeLaunches(serverState.freeLaunches);
+      }
       // Living World P1a-2 — auto-deposit progress ring (quantised to 10 % so
       // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
       const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;

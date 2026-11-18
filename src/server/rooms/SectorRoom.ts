@@ -167,7 +167,8 @@ import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
-import { isLaunchableHull } from '../../shared-types/launch.js';
+import { LAUNCH_COSTS_ON, type LaunchVerdict } from '../../shared-types/launch.js';
+import { chargeLaunch } from '../economy/launchCharge.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector, isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
@@ -1519,6 +1520,8 @@ export class SectorRoom extends Room<SectorState> {
    *  (galaxy rooms). Off in test rooms unless `enforceHullGate` is set, so the
    *  many tests/showcases that join as other kinds are unaffected. */
   private enforceHullGate = false;
+  /** Join flow — launch prices on (LAUNCH_COSTS_ON; test rooms may override). */
+  private launchCostsOn = LAUNCH_COSTS_ON;
   private disableCollisionDamage = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
    *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
@@ -2142,6 +2145,8 @@ export class SectorRoom extends Room<SectorState> {
       prebuiltStructuresOwner?: string;
       /** Economy v2 W5b — test rooms: switch the ship-picker hull gate on. */
       enforceHullGate?: boolean;
+      /** Join flow — test rooms: launch prices on/off (default LAUNCH_COSTS_ON). */
+      launchCosts?: boolean;
       /** P2d (testMode) — goods put into the prebuilt Capital's hold (e.g.
        *  munitions so a showcase's missile turrets can fire). */
       prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
@@ -2195,6 +2200,7 @@ export class SectorRoom extends Room<SectorState> {
     assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
     this.enforceHullGate = !this.testMode || roomOpts.enforceHullGate === true;
+    this.launchCostsOn = this.testMode ? (roomOpts.launchCosts ?? LAUNCH_COSTS_ON) : LAUNCH_COSTS_ON;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
     // Default 1.0 (no acceleration). Only honoured when testMode is true,
     // so a malicious / mis-targeted galaxy join can't ever speed it up.
@@ -2487,6 +2493,8 @@ export class SectorRoom extends Room<SectorState> {
     // Player respawn handler. Composes worker proxy + SAB writer +
     // mount-ticker cleanup. Extracted to RespawnHandler.ts.
     this.respawnHandler = new RespawnHandler({
+      // Join flow — a respawn re-launches the same hull, so it pays like a launch.
+      chargeRespawn: (pid, kind) => !this.launchCharged() || this.chargeLaunchFor(pid, kind).kind !== 'refuse',
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       serverTick: () => this.serverTick,
@@ -2637,6 +2645,8 @@ export class SectorRoom extends Room<SectorState> {
       fittedOf: (shipInstanceId) => this.fittedCache.get(shipInstanceId),
       // Economy v2 W1 — the own player's wallet balance on the snapshot.
       walletOf: (playerId) => getWallet().balance(playerId),
+      // Join flow — free capital launches left (alloc-free Map read).
+      freeLaunchesOf: (playerId) => getTradeSink()?.freeLaunches?.(playerId) ?? 0,
       disabledMsOf: (playerId) => this.gateGuard.remainingMs(playerId, this.gameClock.now()),
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       droneWarpOf: (id) => (this.npcWarps.size > 0 ? this.botWarpPhase(id) : 0),
@@ -8727,6 +8737,22 @@ export class SectorRoom extends Room<SectorState> {
     this.broadcast('warp_warning_clear', msg);
   }
 
+  /** Join flow — this room's launches go through the hull gate and pay. */
+  private launchCharged(): boolean {
+    return this.sectorKey !== null && this.enforceHullGate;
+  }
+
+  /** Join flow — the room's one charging seam (join gate and respawn). */
+  private chargeLaunchFor(playerId: string, kind: string): LaunchVerdict {
+    const sink = getTradeSink();
+    return chargeLaunch({
+      wallet: getWallet(),
+      freeLaunches: (pid) => sink?.freeLaunches?.(pid) ?? 0,
+      spendFreeLaunch: (pid) => sink?.spendFreeLaunch?.(pid) ?? false,
+      costsOn: this.launchCostsOn,
+    }, playerId, kind);
+  }
+
   private handleRespawn(client: Client): void {
     this.respawnHandler.handle(client);
   }
@@ -9862,11 +9888,27 @@ export class SectorRoom extends Room<SectorState> {
     // needs no packed hull; any other kind must be a ship you OWN (a roster
     // row, e.g. one you unpacked). A fresh spawn asking for another kind gets
     // a starter hull instead, and is told how to get the one it wanted.
-    if (!resumedFromStore && this.sectorKey !== null && this.enforceHullGate && !isLaunchableHull(chosenKind)) {
-      const wanted = getShipKind(chosenKind).displayName;
-      chosenKind = DEFAULT_SHIP_KIND;
-      this.sendNotice(client, `You need a ${wanted}: buy a packed one on the Trade tab (or loot one), then unpack it at your storage.`);
-      serverLogEvent('hull_gate_refused', { playerId, wanted });
+    // Join flow — the same gate pays for the launch (`chargeLaunch`: wallet,
+    // free launch or debt); a hull the pilot can't pay for is refused too.
+    // Economy v2 W1 — test-only wallet seed (join option, else the room's),
+    // BEFORE the launch is charged so `?initialWallet` pays for it.
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) {
+      const walletSeed = parsed.data.initialWallet ?? this.testWalletSeed;
+      if (walletSeed > 0) {
+        const have = getWallet().balance(playerId);
+        if (have < walletSeed) getWallet().credit(playerId, walletSeed - have, 'test_seed');
+      }
+    }
+    if (!resumedFromStore && this.launchCharged()) {
+      const verdict = this.chargeLaunchFor(playerId, chosenKind);
+      if (verdict.kind === 'refuse') {
+        const wanted = getShipKind(chosenKind).displayName;
+        chosenKind = DEFAULT_SHIP_KIND;
+        this.sendNotice(client, verdict.reason === 'shipyard'
+          ? `You need a ${wanted}: buy a packed one on the Trade tab (or loot one), then unpack it at your storage.`
+          : `You can't afford a ${wanted} (${verdict.cost.toLocaleString('en-GB')} credits): you launched in a Fighter.`);
+        serverLogEvent('hull_gate_refused', { playerId, wanted, reason: verdict.reason });
+      }
     }
 
     // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
@@ -10049,12 +10091,6 @@ export class SectorRoom extends Room<SectorState> {
       // gate/regen flow is testable in a few ticks instead of seconds.
       if (typeof parsed.data.initialEnergy === 'number') {
         ship.energy = Math.max(0, parsed.data.initialEnergy);
-      }
-      // Economy v2 W1 — test-only wallet seed (join option, else the room's).
-      const walletSeed = parsed.data.initialWallet ?? this.testWalletSeed;
-      if (walletSeed > 0) {
-        const have = getWallet().balance(playerId);
-        if (have < walletSeed) getWallet().credit(playerId, walletSeed - have, 'test_seed');
       }
       // Living World P1a — seed the hull's carried hold (needs a roster-bound
       // shipInstanceId; engineering rooms have none ⇒ no-op).

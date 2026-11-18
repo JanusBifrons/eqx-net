@@ -142,6 +142,8 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'blueprint_installed'; playerId: string; shipInstanceId: string; blueprint: string })
   // Economy v2 W1 — every wallet change (credits are virtual; never in a hold).
   | (AuditEventBase & { event: 'wallet_tx'; playerId: string; delta: number; balance: number; reason: string })
+  // Join flow — a capital launch was paid for (wallet, free launch or debt).
+  | (AuditEventBase & { event: 'launch_charged'; playerId: string; kind: string; how: 'pay' | 'token' | 'debt'; cost: number })
   // Economy v2 W3 — Research Lab jobs (research / copy / combine).
   | (AuditEventBase & { event: 'lab_job_started'; playerId: string; job: string; product: string; fee: number })
   | (AuditEventBase & { event: 'lab_job_cancelled'; playerId: string; job: string })
