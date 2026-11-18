@@ -5,7 +5,6 @@ import type { FleetOverlayModel, FleetPickKindWire, IRenderer, RenderMirror, Ren
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type FrameMarkers } from './worker/protocol';
-import { shipSpriteKinds } from './pixi/shipSpriteUpdater.js';
 import { DyingHullHold } from './pixi/dyingHullHold.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { createWarpFxCtx, type WarpFxCtx } from './pixi/warpFxUpdater.js';
@@ -15,19 +14,19 @@ import { createHudDrainCtx, type HudDrainCtx } from './pixi/hudDrainUpdater.js';
 import { createPlacementGhostCtx, type PlacementGhostCtx } from './pixi/placementGhostUpdater.js';
 import { createLitSceneCtx, type LitSceneCtx } from './pixi/litSceneUpdater.js';
 import { createTurretShotCtx, type TurretShotCtx } from './pixi/turretShotUpdater.js';
-import { resolveInitTarget, buildWorldScene, createGameplayCamera } from './pixi/rendererSetup/initScene.js';
+import { resolveInitTarget, initRendererApp, buildWorldScene, createGameplayCamera } from './pixi/rendererSetup/initScene.js';
 import { createRendererInitState, initSceneAndOverlays, type RendererInitState } from './pixi/rendererSetup/initWiring.js';
-import { inputDepsView, probeStateView, rekeyRefsView, cameraDepsView, frameRefsView, teardownRefsView, type RendererViewHost } from './pixi/rendererSetup/rendererViews.js';
-import { installRendererDomListeners } from './pixi/rendererSetup/initDomListeners.js';
+import { inputDepsView, probeStateView, rekeyRefsView, cameraDepsView, frameRefsView, teardownRefsView, spriteFnsView, type RendererSpriteFns, type RendererViewHost } from './pixi/rendererSetup/rendererViews.js';
+import { installRendererDomListeners, resizeRenderer } from './pixi/rendererSetup/initDomListeners.js';
 import { disposeRenderer, resetEffectsForSectorHandoff, type RendererTeardownRefs } from './pixi/rendererSetup/teardown.js';
-import { installFrameTicker } from './pixi/rendererSetup/initTicker.js';
+import { installFrameTicker, setTickerMaxFPS } from './pixi/rendererSetup/initTicker.js';
 import { createRendererFrameCtx, type RendererFrameCtx } from './pixi/frameCtx.js';
 import { updateEntitySprites, updateProjectilesAndGhost } from './pixi/worldSpriteUpdater.js';
 import { updateBeamsAndCamera, updateBackdrop, updateHudOverlays } from './pixi/frameViewUpdater.js';
-import { createRendererFeedback, writeFrameFeedback, tickFrameEffects } from './pixi/frameFeedbackUpdater.js';
+import { createRendererFeedback, createFrameMarkers, writeFrameFeedback, tickFrameEffects } from './pixi/frameFeedbackUpdater.js';
 import { RendererInputController, type ForwardedPointerEvent } from './pixi/rendererInputController.js';
 import { RendererCameraDirector } from './pixi/cameraDirector.js';
-import { artStats, backdropStats, shipVisualProbe, debugEngine, createFleetRingProbe, fleetRingProbe, type FleetRingProbeState, type FleetRingReading, type ArtStats, type BackdropStats, RendererPerfProbe, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
+import { artStats, backdropStats, shipVisualProbe, debugEngine, cameraCenterGame, worldToScreenGame, createFleetRingProbe, fleetRingProbe, type FleetRingProbeState, type FleetRingReading, type ArtStats, type BackdropStats, RendererPerfProbe, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
 import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
 import { HelmCourseMarker } from './helm/HelmCourseMarker.js';
@@ -43,14 +42,8 @@ import type { CameraCue } from '@core/contracts/cameraScript';
 import { MountVisualManager } from './MountVisualManager';
 import { CutFieldLayer } from './field/CutFieldLayer';
 import { StarfieldBackground } from './StarfieldBackground';
-import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
-import { rekeyShipVisuals, type ShipRekeyRefs } from './shipRekey.js';
+import { type ShipRekeyRefs } from './shipRekey.js';
 import type { RenderPerfReading, PerfProbeOp } from '@core/contracts/IRenderer';
-
-// Most colour + builder constants moved to pixi/spriteBuilders.ts;
-// the constants below are PixiRenderer-specific (background tint,
-// remote-laser colour used by inline beam draw in update()).
-const BACKGROUND_COLOR = 0x05070f;
 
 // Per-frame Pixi stroke-style scratches. The renderer redraws beams
 // every RAF (60–90 Hz) via clear() + moveTo + lineTo + stroke(...). Pre-
@@ -131,7 +124,7 @@ export class PixiRenderer implements IRenderer {
       get app() { return r.app; }, get world() { return r.world; }, get worldHost() { return r.worldHost; }, get camera() { return r.camera; },
       get starfield() { return r.starfield; }, get lastMirror() { return r._lastMirror; }, get galaxyLayer() { return r._galaxyLayer; },
       get spectator() { return r._spectator; }, get lockMarksVisible() { return r._lockMarksVisible; }, get artStatsHook() { return r._artStatsHook; },
-      get shipRekeysApplied() { return r._shipRekeysApplied; }, get sectorKey() { return r._sectorKey; }, get init() { return r._init; },
+      get shipRekeysApplied() { return r._shipRekeysApplied; }, set shipRekeysApplied(v: number) { r._shipRekeysApplied = v; }, get rekeyRefs() { return r._rekeyRefs; }, get sectorKey() { return r._sectorKey; }, get init() { return r._init; },
       get frame() { return r._frame; }, get probes() { return r._probes; }, get artOpts() { return r._artOpts; }, get isTouch() { return r._isTouch; },
       get quality() { return r.quality; }, get sprites() { return r.sprites; }, get mountVisuals() { return r.mountVisuals; }, get artCtx() { return r._artCtx; },
       get swarmSpriteKinds() { return r._swarmSpriteKinds; }, get swarmSpriteSigs() { return r._swarmSpriteSigs; }, get structureMountSlew() { return r._structureMountSlew; },
@@ -143,8 +136,8 @@ export class PixiRenderer implements IRenderer {
       get frameMarkers() { return r.frameMarkers; }, get dyingHulls() { return r._dyingHulls; }, get cutField() { return r._cutField; },
       get wreckFarLayer() { return r._wreckFarLayer; }, get fxClock() { return r.fxClock; }, get seenScratch() { return r._updateSeenScratch; },
       get remoteHitTargets() { return r._updateRemoteHitTargetsScratch; }, get localHitTargets() { return r._updateLocalHitTargetsScratch; },
-      get tractorViews() { return r._tractorViews; }, get spriteShipKind() { return r._spriteShipKind; }, get forgetSprite() { return r._forgetSprite; },
-      get rekeyShip() { return r._rekeyShip; }, get fxShieldPose() { return r._fxShieldPose; }, fxNow: () => r.fxNow(),
+      get tractorViews() { return r._tractorViews; }, get spriteShipKind() { return r._spriteFns.spriteShipKind; }, get forgetSprite() { return r._spriteFns.forgetSprite; },
+      get rekeyShip() { return r._spriteFns.rekeyShip; }, get fxShieldPose() { return r._spriteFns.fxShieldPose; }, fxNow: () => r.fxNow(),
     };
   }
   /** Pointer / touch / wheel input, RTS command routing and THE selection
@@ -198,27 +191,8 @@ export class PixiRenderer implements IRenderer {
   /** Dying capitals drawn at their last pose until their wreck pieces are
    *  (capital-breakup take B, 2026-11-13: the hull vanished ~0.5 s first). */
   private readonly _dyingHulls = new DyingHullHold();
-  /** Sprite key → the ship kind it was built for (every ship, swarm).
-   *  Bound once (no per-frame closure, #14). */
-  private readonly _spriteShipKind = (id: string): string | null | undefined => {
-    const sp = this.sprites.get(id);
-    if (sp !== undefined) return shipSpriteKinds.get(sp) ?? this._swarmSpriteSigs.get(id)?.shipKind;
-    return undefined;
-  };
-  /** The sweep's per-id cleanup; `held` keeps the turret cluster on the
-   *  still-drawn sprite. Bound once (#14). */
-  private readonly _forgetSprite = (id: string, held: boolean): void => {
-    if (held) this.mountVisuals.detachShip(id);
-    else this.mountVisuals.removeShip(id);
-    this._structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
-    this._swarmSpriteKinds.delete(id); // #20 — drop kind tracker with the sprite
-    this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
-    this._artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
-  };
-  /** Bound once (#14): the per-pair step of `applyShipRekeys` (shipRekey.ts `rekeyShipVisuals`). */
-  private readonly _rekeyShip = (from: string, to: string): void => {
-    if (rekeyShipVisuals(this._rekeyRefs, from, to)) this._shipRekeysApplied++;
-  };
+  /** Sprite-kind lookup, sweep cleanup, ship re-key step and shield pose, bound once (rendererSetup/rendererViews.ts). */
+  private readonly _spriteFns: RendererSpriteFns = spriteFnsView(this._host);
   private readonly _rekeyRefs: ShipRekeyRefs = rekeyRefsView(this._host);
 
   /** Re-keys this renderer has applied (diagnostic / E2E). */
@@ -270,30 +244,8 @@ export class PixiRenderer implements IRenderer {
    */
   private readonly feedback: RendererFeedback = createRendererFeedback(); // pixi/frameFeedbackUpdater.ts
 
-  /**
-   * F1 instrumentation — per-frame worker-side sub-costs (warp-spool
-   * perf investigation, `docs/HANDOFF-warp-spool-perf-followup.md`).
-   * Mutated in place at the tail of `update()` (no per-frame alloc); the
-   * worker reads it via `getFrameMarkers()` after `update()` returns and
-   * posts a `FRAME_MARKERS` message ONLY when diagnostics are enabled.
-   * `warpTickMs` is written by the `LoadCurtain` ticker callback (a
-   * separate Pixi ticker, not part of `update()`), so each
-   * `FRAME_MARKERS` carries the most recent curtain-tick cost.
-   *
-   * This is deliberately NOT on `RendererFeedback` — that's a
-   * phase-gated closed-set DI contract (see `IRenderer.ts` /
-   * `src/client/CLAUDE.md`); a separate gated channel keeps the
-   * contract untouched and the production cost at zero.
-   */
-  private readonly frameMarkers: FrameMarkers = {
-    rendererUpdateMs: 0,
-    spriteCount: 0,
-    warpTickMs: 0,
-    gridLabelSpecMs: 0,
-    gridTextCreateMs: 0,
-    gridCleanupMs: 0,
-    gridLabelCount: 0,
-  };
+  /** F1 per-frame worker-side sub-cost markers (pixi/frameFeedbackUpdater.ts `createFrameMarkers`). */
+  private readonly frameMarkers: FrameMarkers = createFrameMarkers();
 
   /** Read the most recent per-frame sub-cost markers. See `FrameMarkers`
    *  + `getFeedback()` for the parallel (but contract-gated) channel. */
@@ -315,28 +267,10 @@ export class PixiRenderer implements IRenderer {
   async init(rawContainer: unknown): Promise<void> {
     // Setup steps live in pixi/rendererSetup/ (each returns what it built).
     const target = resolveInitTarget(rawContainer);
-    const { isDom, initialW, initialH, initialDpr, canvas, domContainer } = target;
+    const { isDom, initialW, initialH, domContainer } = target;
 
     this.app = new Application();
-    await this.app.init({
-      ...(canvas ? { canvas: canvas as unknown as HTMLCanvasElement } : {}),
-      width: initialW,
-      height: initialH,
-      background: BACKGROUND_COLOR,
-      // Graphics quality: `fxaa` swaps multisampling for the post pass on
-      // the world; `off` is neither (graphicsQuality.ts).
-      antialias: this.quality.aa === 'msaa' || this.quality.aa === 'max',
-      resolution: this.resolutionFor(initialDpr, initialW, initialH),
-      autoDensity: isDom,
-      // Pin WebGL: Pixi v8.1+ already defaults autoDetect to WebGL, but
-      // pinning guarantees the worker can never silently select WebGPU
-      // (whose Graphics MSAA path differs from the main-thread fallback's
-      // WebGL), keeping crispness identical across both renderer paths.
-      preference: 'webgl',
-    });
-    if (domContainer) {
-      domContainer.appendChild(this.app.canvas);
-    }
+    await initRendererApp(this.app, target, this.quality, (dpr, w, h) => this.resolutionFor(dpr, w, h)); // rendererSetup/initScene.ts
     this.initialized = true;
 
     // Pixi v8 perf: disable per-sprite hit-test traversal on every
@@ -372,33 +306,9 @@ export class PixiRenderer implements IRenderer {
     }
   }
 
-  /**
-   * Worker-context entry point. The renderer worker calls this when it
-   * receives a RESIZE message — replicates the DOM resize() handler for
-   * the OffscreenCanvas path.
-   */
+  /** Worker-context RESIZE entry point: see pixi/rendererSetup/initDomListeners.ts `resizeRenderer`. */
   resize(width: number, height: number, dpr?: number): void {
-    if (!this.initialized || !this.app?.renderer) return;
-    // Pass resolution through so a DPR change (monitor move / browser
-    // zoom / some rotations) re-derives the backing buffer. Omitting it
-    // (the old behaviour) kept the stale init resolution → blur after
-    // such a change. `width`/`height` are LOGICAL (CSS) px.
-    this.app.renderer.resize(width, height, dpr !== undefined ? this.resolutionFor(dpr, width, height) : this.app.renderer.resolution);
-    this._cameraDirector.setViewSize(width, height);
-    this.starfield?.resize(width, height);
-    if (isDiagEnabled()) {
-      logEvent('render_frame_diag', {
-        phase: 'resize',
-        mode: 'worker',
-        appResolution: this.app.renderer.resolution,
-        canvasW: this.app.canvas.width,
-        canvasH: this.app.canvas.height,
-        inW: width,
-        inH: height,
-        dpr: dpr ?? -1,
-        worldScaleX: this.world.scale.x,
-      });
-    }
+    resizeRenderer(this._frame.r, this.initialized, (d, w, h) => this.resolutionFor(d, w, h), width, height, dpr);
   }
 
   /** Worker-context entry point for forwarded pointer events (see `pixi/rendererInputController.ts`). */
@@ -486,37 +396,10 @@ export class PixiRenderer implements IRenderer {
     if (overlay instanceof GalaxyMapLayer) this._galaxyLayer = overlay;
   }
 
-  /**
-   * Cap the Pixi ticker. Three modes:
-   *   - `undefined` → remove any cap (Pixi default — uncapped vsync).
-   *   - `number` (e.g. 30) → throttle to that max FPS.
-   *   - `null` → **pause the ticker entirely** (no callbacks fire).
-   *
-   * Used by `GameSurface` to manage CPU contention while the
-   * AdvancedDrawer / GalaxyOverviewScreen is open:
-   *   - For real users: throttle to 30 fps so the gameplay underneath
-   *     the drawer remains visible/animated. Drawer is partial-width;
-   *     the canvas is still on-screen.
-   *   - Under Playwright automation (`navigator.webdriver === true`):
-   *     pause entirely. CDP roundtrip otherwise climbs to ~500 ms
-   *     median (measured 2026-05-14 via
-   *     `tests/e2e/drawer-cdp-starvation-probe.spec.ts`), which makes
-   *     interactive drawer specs flake at the boundary of 120 s test
-   *     budgets. Pausing frees the main thread entirely; gameplay
-   *     state still updates via the React rAF loop / Colyseus apply,
-   *     just the Pixi draw is suspended. Invisible to a focused user;
-   *     test-only behavior.
-   *
-   * See `docs/LESSONS.md` 2026-05-13 §6 carry-forward.
-   */
+  /** Cap / pause the Pixi ticker: see pixi/rendererSetup/initTicker.ts `setTickerMaxFPS`. */
   setTickerMaxFPS(fps: number | null | undefined): void {
     if (!this.initialized) return;
-    if (fps === null) {
-      this.app.ticker.stop();
-      return;
-    }
-    if (!this.app.ticker.started) this.app.ticker.start();
-    this.app.ticker.maxFPS = fps ?? 0;
+    setTickerMaxFPS(this.app.ticker, fps);
   }
 
   setLoadCurtain(active: boolean): void {
@@ -557,24 +440,16 @@ export class PixiRenderer implements IRenderer {
     if (prev && sectorKey && prev !== sectorKey) this._artCtx.art?.newVisit();
   }
 
-  /** Pixi-space pose of an entity's sprite, for the new shields. */
-  private readonly _fxShieldPose = (id: string, out: { x: number; y: number }): boolean => {
-    const sp = this.sprites.get(id);
-    if (!sp) return false;
-    out.x = sp.x; out.y = sp.y;
-    return true;
-  };
-
   /** Pooled hit-event / shield-gate, GPU-lit and turret-shot ctxs (pixi/hitEventUpdater.ts,
    *  litSceneUpdater.ts, turretShotUpdater.ts), built once here (the explosions' light hook binds before `init`). */
-  private readonly _hitEventCtx: HitEventCtx = createHitEventCtx({ fxShieldPose: this._fxShieldPose, fxNow: () => this.fxNow() });
+  private readonly _hitEventCtx: HitEventCtx = createHitEventCtx({ fxShieldPose: this._spriteFns.fxShieldPose, fxNow: () => this.fxNow() });
   private readonly _litSceneCtx: LitSceneCtx = createLitSceneCtx({ fxNow: () => this.fxNow(), tractorViews: this._tractorViews });
   private readonly _turretShotCtx: TurretShotCtx = createTurretShotCtx({ mountVisuals: this.mountVisuals, sprites: this.sprites, fxNow: () => this.fxNow() });
   /** Pooled warp / spool ctx (pixi/warpFxUpdater.ts), built once here (probes read its effects before `init`). */
   private readonly _warpFxCtx: WarpFxCtx = createWarpFxCtx({ fxNow: () => this.fxNow(), sprites: this.sprites, artHandles: this._artCtx.handles });
   /** Pooled engine exhaust + shield aura ctx (pixi/engineShieldFxUpdater.ts); built once here (the handoff reset may run before `init`). */
   private readonly _engineShieldFxCtx: EngineShieldFxCtx = createEngineShieldFxCtx({
-    fxShieldPose: this._fxShieldPose, fxNow: () => this.fxNow(), sprites: this.sprites, artHandles: this._artCtx.handles,
+    fxShieldPose: this._spriteFns.fxShieldPose, fxNow: () => this.fxNow(), sprites: this.sprites, artHandles: this._artCtx.handles,
     swarmSpriteKinds: this._swarmSpriteKinds, seenScratch: this._updateSeenScratch,
   });
   /** Pooled ctx of the `update()` frame passes and the ticker (pixi/frameCtx.ts), built once here
@@ -666,27 +541,11 @@ export class PixiRenderer implements IRenderer {
     this.camera.setPanVelocity(vx, vy);
   }
 
-  /**
-   * Test-only (Phase 4 WS-A1) — the world point currently at screen centre, in
-   * GAME space (Y-up). The renderer's `Camera.center` is in pixi-world space
-   * (Y-down, `pixiY = -gameY`), so negate Y. Read by the spectator E2E's
-   * `__eqxCameraCenter` DEV hook (main-thread renderer path, `?worker=0`) to
-   * assert the free-roam camera actually pans. Not consumed by gameplay logic.
-   */
-  getCameraCenterGame(): { x: number; y: number } {
-    const c = this.camera.center;
-    return { x: c.x, y: -c.y };
-  }
+  /** Test-only screen-centre in GAME space (`__eqxCameraCenter`): see pixi/rendererProbes.ts. */
+  getCameraCenterGame(): { x: number; y: number } { return cameraCenterGame(this._probes); }
 
-  /**
-   * Test-only (RTS fleet-command E2E): the canvas-relative screen point of a
-   * GAME-space world point (Y-up → pixi `-y`), so a spec can box-select or
-   * click a ship where it is drawn. Read by the `__eqxWorldToScreen` DEV hook
-   * (main-thread renderer path, `?worker=0`). Not consumed by gameplay logic.
-   */
-  worldToScreenGame(x: number, y: number): { x: number; y: number } {
-    return this.camera.toScreen(x, -y);
-  }
+  /** Test-only GAME point → canvas screen point (`__eqxWorldToScreen`): see pixi/rendererProbes.ts. */
+  worldToScreenGame(x: number, y: number): { x: number; y: number } { return worldToScreenGame(this._probes, x, y); }
 
   /** Test-only ring probe state (pixi/rendererProbes.ts). Off until first read. */
   private readonly _fleetRing: FleetRingProbeState = createFleetRingProbe();

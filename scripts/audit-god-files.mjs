@@ -70,14 +70,6 @@ const ALLOWLIST = {
   },
   'src/client/render/HaloRadar.ts': { cap: 662, target: 600, reason: RATCHET_ONLY },
   'src/client/render/MountVisualManager.ts': { cap: 932, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/PixiRenderer.ts': {
-    cap: 741,
-    target: 340,
-    reason:
-      'v3 plan commits 10-14 split this into 15 collaborators (PixiAppLifecycle, ' +
-      'CameraController, SpriteFactory, SpriteRegistry, ShipSpriteUpdater, etc.); ' +
-      'orchestrator target ~340 LOC.',
-  },
   'src/client/render/art/ArtService.ts': { cap: 757, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fields.ts': { cap: 1161, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fx/fxTextures.ts': { cap: 783, target: 600, reason: RATCHET_ONLY },

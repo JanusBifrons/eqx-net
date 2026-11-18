@@ -21,7 +21,8 @@ import type { IncomingFireWarning } from '../../incoming/IncomingFireWarning.js'
 import type { HelmCourseMarker } from '../../helm/HelmCourseMarker.js';
 import type { CutFieldLayer } from '../../field/CutFieldLayer';
 import type { ShipArtCtx } from '../../art/shipArtSprites.js';
-import type { ShipRekeyRefs } from '../../shipRekey.js';
+import { rekeyShipVisuals, type ShipRekeyRefs } from '../../shipRekey.js';
+import { shipSpriteKinds } from '../shipSpriteUpdater.js';
 import type { FarZoomIcons } from '../FarZoomIcons';
 import type { DyingHullHold } from '../dyingHullHold.js';
 import type { HudDrainCtx } from '../hudDrainUpdater.js';
@@ -41,7 +42,7 @@ import type { InitSceneHost, RendererInitState } from './initWiring.js';
 import type { EffectsService } from '../../../effects/EffectsService';
 
 /** The renderer's members, as one live getter view (`initialized` and
- *  `effects` are written back through setters). */
+ *  `effects` and `shipRekeysApplied` are written back through setters). */
 export interface RendererViewHost extends InitSceneHost {
   initialized: boolean;
   readonly app: Application;
@@ -52,7 +53,8 @@ export interface RendererViewHost extends InitSceneHost {
   readonly spectator: boolean;
   readonly lockMarksVisible: boolean;
   readonly artStatsHook: (() => unknown) | null;
-  readonly shipRekeysApplied: number;
+  shipRekeysApplied: number;
+  readonly rekeyRefs: ShipRekeyRefs;
   readonly init: RendererInitState;
   readonly frame: RendererFrameCtx;
   readonly probes: RendererProbeState;
@@ -174,5 +176,49 @@ export function teardownRefsView(h: RendererViewHost): RendererTeardownRefs {
     get fxShields() { return s.fxShields; }, get fxFences() { return s.fxFences; }, get halo() { return h.halo; },
     artCtx: h.artCtx, engineShieldFxCtx: h.engineShieldFxCtx, input: h.input, hudCtx: h.hudCtx,
     mountVisuals: h.mountVisuals, incomingFire: h.incomingFire, helmMarker: h.helmMarker,
+  };
+}
+
+/** The renderer's per-sprite callbacks (moved from `PixiRenderer`, god-file
+ *  split slice 12), bound once over the view host: no per-frame closure (#14).
+ *  Every member reads the host's live fields at call time. */
+export interface RendererSpriteFns {
+  readonly spriteShipKind: (id: string) => string | null | undefined;
+  readonly forgetSprite: (id: string, held: boolean) => void;
+  readonly rekeyShip: (from: string, to: string) => void;
+  readonly fxShieldPose: (id: string, out: { x: number; y: number }) => boolean;
+}
+
+/** Built once by the renderer, before the ctxs that take its members. */
+export function spriteFnsView(h: RendererViewHost): RendererSpriteFns {
+  return {
+    /** Sprite key → the ship kind it was built for (every ship, swarm).
+     *  Bound once (no per-frame closure, #14). */
+    spriteShipKind: (id: string): string | null | undefined => {
+      const sp = h.sprites.get(id);
+      if (sp !== undefined) return shipSpriteKinds.get(sp) ?? h.swarmSpriteSigs.get(id)?.shipKind;
+      return undefined;
+    },
+    /** The sweep's per-id cleanup; `held` keeps the turret cluster on the
+     *  still-drawn sprite. Bound once (#14). */
+    forgetSprite: (id: string, held: boolean): void => {
+      if (held) h.mountVisuals.detachShip(id);
+      else h.mountVisuals.removeShip(id);
+      h.structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
+      h.swarmSpriteKinds.delete(id); // #20 — drop kind tracker with the sprite
+      h.swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
+      h.artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
+    },
+    /** Bound once (#14): the per-pair step of `applyShipRekeys` (shipRekey.ts `rekeyShipVisuals`). */
+    rekeyShip: (from: string, to: string): void => {
+      if (rekeyShipVisuals(h.rekeyRefs, from, to)) h.shipRekeysApplied++;
+    },
+    /** Pixi-space pose of an entity's sprite, for the new shields. */
+    fxShieldPose: (id: string, out: { x: number; y: number }): boolean => {
+      const sp = h.sprites.get(id);
+      if (!sp) return false;
+      out.x = sp.x; out.y = sp.y;
+      return true;
+    },
   };
 }

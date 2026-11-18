@@ -5,7 +5,7 @@
  * tick reads the pooled frame ctx (`../frameCtx.ts`) and allocates nothing.
  */
 
-import type { Container } from 'pixi.js';
+import type { Container, Ticker } from 'pixi.js';
 import { litPass } from '../../art/litPass.js';
 import { MachinedShipSprite } from '../../art/MachinedShipSprite.js';
 import { MachinedFlatSprite } from '../../art/MachinedFlatSprite.js';
@@ -60,4 +60,37 @@ export function installFrameTicker(ctx: RendererFrameCtx): void {
     }
     if (r.artStatsHook) (globalThis as { __eqxArtStats?: () => unknown }).__eqxArtStats = r.artStatsHook;
   });
+}
+
+/**
+ * Cap the Pixi ticker (`PixiRenderer.setTickerMaxFPS`, once initialised;
+ * moved from `PixiRenderer`, god-file split slice 12). Three modes:
+ *   - `undefined` → remove any cap (Pixi default — uncapped vsync).
+ *   - `number` (e.g. 30) → throttle to that max FPS.
+ *   - `null` → **pause the ticker entirely** (no callbacks fire).
+ *
+ * Used by `GameSurface` to manage CPU contention while the
+ * AdvancedDrawer / GalaxyOverviewScreen is open:
+ *   - For real users: throttle to 30 fps so the gameplay underneath
+ *     the drawer remains visible/animated. Drawer is partial-width;
+ *     the canvas is still on-screen.
+ *   - Under Playwright automation (`navigator.webdriver === true`):
+ *     pause entirely. CDP roundtrip otherwise climbs to ~500 ms
+ *     median (measured 2026-05-14 via
+ *     `tests/e2e/drawer-cdp-starvation-probe.spec.ts`), which makes
+ *     interactive drawer specs flake at the boundary of 120 s test
+ *     budgets. Pausing frees the main thread entirely; gameplay
+ *     state still updates via the React rAF loop / Colyseus apply,
+ *     just the Pixi draw is suspended. Invisible to a focused user;
+ *     test-only behavior.
+ *
+ * See `docs/LESSONS.md` 2026-05-13 §6 carry-forward.
+ */
+export function setTickerMaxFPS(ticker: Ticker, fps: number | null | undefined): void {
+  if (fps === null) {
+    ticker.stop();
+    return;
+  }
+  if (!ticker.started) ticker.start();
+  ticker.maxFPS = fps ?? 0;
 }
