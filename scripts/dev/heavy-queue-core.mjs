@@ -11,7 +11,10 @@
  *    threshold; it claims the single `running` slot with an exclusive create
  *    (`wx`), so of two racers exactly one wins;
  *  - a `running` file whose pid is dead is stale and any waiter deletes it
- *    at once. A live holder is never touched, however overdue;
+ *    at once;
+ *  - watchdog: a live holder past its limit (max(3x, estimate + 10 min) of
+ *    its --minutes, or 45 min with none) is ended, whole process tree, by any
+ *    waiter or by its own wrapper (a reaped shell can leave a hung job behind);
  *  - a queue ticket whose pid is dead (the reaper killed a waiting shell) is
  *    ORPHANED, not deleted: stamped `orphanedAtMs`, left out of the order,
  *    and deleted after ORPHAN_GRACE_MS. A re-run with the same who + kind
@@ -25,7 +28,10 @@ import { spawnSync } from 'node:child_process';
 
 export const KINDS = ['film', 'e2e', 'netgate', 'perf', 'suite', 'other'];
 export const AGING_MS = 10 * 60_000;
-export const NO_ESTIMATE_OVERDUE_MIN = 90;
+/** Watchdog limit for a running job with no --minutes estimate. */
+export const WATCHDOG_NO_ESTIMATE_MIN = 45;
+/** Watchdog slack: a job may always run its estimate + this many minutes. */
+export const WATCHDOG_SLACK_MIN = 10;
 export const RUNNING_FILE = 'running';
 /** An unreadable (half-written) `running` file older than this is stale. */
 export const GARBLED_GRACE_MS = 30_000;
@@ -60,15 +66,58 @@ export function isPidAlive(pid) {
   }
 }
 
-/** Stale = its owner process is gone. Overdue alone never makes it stale. */
+/** Stale = its owner process is gone (an overdue live one is the watchdog's). */
 export function isStale(t, isAlive = isPidAlive) {
   return !isAlive(t.pid);
 }
 
-/** Running past 3x its estimate (or 90 min with none): shown in status only. */
+/** Minutes a job may run: max(3x estimate, estimate + 10), or 45 with none. */
+export function watchdogLimitMin(estimateMin) {
+  if (!(estimateMin > 0)) return WATCHDOG_NO_ESTIMATE_MIN;
+  return Math.max(3 * estimateMin, estimateMin + WATCHDOG_SLACK_MIN);
+}
+
+/**
+ * Watchdog decision for the running holder `r` (pure). `action` is 'end' once
+ * it has run strictly longer than its limit, else 'keep'.
+ */
+export function watchdogDecision(r, now) {
+  const startedAtMs = r.startedAtMs ?? r.joinedAtMs;
+  const limitMin = watchdogLimitMin(r.estimateMin);
+  const limitMs = limitMin * 60_000;
+  const runMs = now - startedAtMs;
+  return {
+    action: runMs > limitMs ? 'end' : 'keep',
+    limitMin, limitMs, runMs, endsAtMs: startedAtMs + limitMs,
+  };
+}
+
+/** Past its watchdog limit (the watchdog ends it). */
 export function holderOverdue(r, now) {
-  const limitMin = r.estimateMin ? r.estimateMin * 3 : NO_ESTIMATE_OVERDUE_MIN;
-  return now - (r.startedAtMs ?? r.joinedAtMs) > limitMin * 60_000;
+  return watchdogDecision(r, now).action === 'end';
+}
+
+/** The one log line for a job the watchdog ended. */
+export function watchdogMessage(r, d) {
+  const est = r.estimateMin ? `est ${r.estimateMin}m` : 'no estimate';
+  return `watchdog ended overdue job: ${r.who} [${r.kind}] pid ${r.pid}, ran ${fmtDur(d.runMs)} vs ${est}`
+    + ` (limit ${d.limitMin}m); re-queue with a realistic --minutes if it really needs longer`;
+}
+
+/**
+ * Kill `pid` and its whole process tree. Windows: taskkill /T /F. POSIX: the
+ * process group of `groupPid` (the wrapper spawns its child detached, so the
+ * child leads its own group), then `pid` itself.
+ */
+export function killTree(pid, groupPid) {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+    return;
+  }
+  for (const target of [groupPid != null ? -groupPid : null, -pid, pid]) {
+    if (target == null) continue;
+    try { process.kill(target, 'SIGKILL'); } catch { /* gone or not a group */ }
+  }
 }
 
 /**
@@ -231,6 +280,36 @@ export function sweepStale(dir, { isAlive = isPidAlive, now = Date.now() } = {})
 }
 
 /**
+ * Watchdog: end a live running job past its limit (watchdogDecision): kill its
+ * whole process tree, then free the slot if it is still that job's. Run by
+ * every waiter, like sweepStale. Returns `{ holder, decision }` when it ended
+ * one, else null. `kill` is injectable for tests.
+ */
+export function endOverdue(dir, { now = Date.now(), isAlive = isPidAlive, kill = killTree } = {}) {
+  const r = readRunning(dir, now);
+  if (!r || r.garbled) return null;
+  const decision = watchdogDecision(r, now);
+  if (decision.action !== 'end') return null;
+  if (isAlive(r.pid) || (r.childPid != null && isAlive(r.childPid))) kill(r.pid, r.childPid);
+  const file = path.join(dir, RUNNING_FILE);
+  const again = readJson(file);
+  if (again && again.id === r.id) {
+    try { fs.unlinkSync(file); } catch { /* gone */ }
+  }
+  return { holder: r, decision };
+}
+
+/** Record the holder's child pid in the slot (POSIX group kill). Owner only. */
+export function recordRunningChild(dir, id, childPid) {
+  const file = path.join(dir, RUNNING_FILE);
+  const r = readJson(file);
+  if (!r || r.id !== id) return;
+  const tmp = path.join(dir, `.tmp-running-${id}`);
+  fs.writeFileSync(tmp, JSON.stringify({ ...r, childPid }, null, 2));
+  fs.renameSync(tmp, file);
+}
+
+/**
  * Re-join: if an orphan with `t`'s who + kind is within grace, `t` takes its
  * joinedAtMs (so its age and place) and the orphan file is removed. Call after
  * sweepStale and before writeTicket. Returns the adopted orphan or undefined.
@@ -363,11 +442,12 @@ export function snapshot(dir, now = Date.now()) {
   let run = null;
   if (running && running.garbled) run = { garbled: true };
   else if (running) {
+    const wd = watchdogDecision(running, now);
     run = {
       id: running.id, who: running.who, kind: running.kind, pid: running.pid,
       cwd: running.cwd, priority: running.priority,
       runningMs: now - running.startedAtMs, estimateMin: running.estimateMin ?? null,
-      overdue: holderOverdue(running, now), command: running.command,
+      overdue: wd.action === 'end', limitMin: wd.limitMin, command: running.command,
     };
   }
   // Live dev-server setups (the caller sweeps dead leases first).
@@ -385,7 +465,8 @@ export function formatStatus(snap) {
   else if (r.garbled) lines.push('running: (slot being claimed)');
   else {
     lines.push(`running: ${r.who} [${r.kind}] p${r.priority} for ${fmtDur(r.runningMs)}`
-      + `${r.estimateMin ? ` / est ${r.estimateMin}m` : ''}${r.overdue ? ' OVERDUE' : ''} pid ${r.pid}`);
+      + `${r.estimateMin ? ` / est ${r.estimateMin}m` : ''} pid ${r.pid}`
+      + (r.overdue ? ` · OVERDUE, past its ${r.limitMin}m limit` : ` · ends at ${r.limitMin}m if still running`));
   }
   if (snap.queue.length === 0) lines.push('queue: (empty)');
   else {
