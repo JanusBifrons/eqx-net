@@ -1,7 +1,6 @@
 import { Application, Graphics, Container, RenderLayer, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
 import { DEFAULT_GRAPHICS_QUALITY, renderResolution, type GraphicsQuality } from './graphicsQuality';
-import { FxaaFilter } from './pixi/FxaaFilter';
 import type { FleetOverlayModel, FleetPickKindWire, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
@@ -9,12 +8,11 @@ import { type FrameMarkers } from './worker/protocol';
 import { LoadCurtain } from './pixi/LoadCurtain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, shipSpriteKinds, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
-import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
+import { type EntityPose } from './pixi/entityPoseFromSprite.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
-import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
-import { WreckArtState, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
+import { type WreckBlast } from './pixi/wreckArt.js';
 import { deathBlastFor, dyingHullDiameter, hullDeathBlastReplaced, type DeathBlast } from './pixi/deathBlast.js';
 import { spawnVaporiseBlast, stackVaporiseOverBeams } from './pixi/vaporiseBlast.js';
 import { raiseBeamsOverHulls } from './pixi/beamsOverHulls.js';
@@ -28,8 +26,13 @@ import { createEngineShieldFxCtx, updateEngineShieldFx, clearEngineShieldFxIds, 
 import { beginShieldFrame, createHitEventCtx, updateHitEvents, type HitEventCtx } from './pixi/hitEventUpdater.js';
 import { createHudDrainCtx, spawnDamageNumbers, updateHudDrains, type HudDrainCtx } from './pixi/hudDrainUpdater.js';
 import { createPlacementGhostCtx, updatePlacementGhost, type PlacementGhostCtx } from './pixi/placementGhostUpdater.js';
-import { createLitSceneCtx, feedLitScene, noteBlastLight, type LitSceneCtx } from './pixi/litSceneUpdater.js';
+import { createLitSceneCtx, feedLitScene, type LitSceneCtx } from './pixi/litSceneUpdater.js';
 import { createTurretShotCtx, noteTurretShots, type TurretShotCtx } from './pixi/turretShotUpdater.js';
+import { resolveInitTarget, buildWorldScene, createGameplayCamera, setupMachinedArt, logInitFrameDiag, buildSceneLayers, buildOverlays } from './pixi/rendererSetup/initScene.js';
+import { buildSpriteUpdaterCtxs } from './pixi/rendererSetup/initUpdaterCtxs.js';
+import { buildFxWeapons, buildBeamPoolsAndEffects } from './pixi/rendererSetup/initFx.js';
+import { installDomListeners } from './pixi/rendererSetup/initDomListeners.js';
+import type { EffectQuality } from '@core/contracts/IEffects';
 import { RendererInputController, type ForwardedPointerEvent, type RendererInputDeps } from './pixi/rendererInputController.js';
 import { RendererCameraDirector, DEFAULT_GAMEPLAY_ZOOM, type RendererCameraDeps } from './pixi/cameraDirector.js';
 import { artStats, backdropStats, shipVisualProbe, type ArtStats, type BackdropStats, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
@@ -38,9 +41,6 @@ import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
 import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
 import { HelmCourseMarker } from './helm/HelmCourseMarker.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
-import { DamageNumberManager } from './DamageNumbers';
-import { LevelUpIconManager } from './LevelUpIcons';
-import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { SelectionBracket } from './SelectionBracket';
 import { AimFeedbackRenderer } from './AimFeedbackRenderer';
@@ -50,18 +50,17 @@ import { decideExplosionPosition } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches, type FxKillSwitches } from './fxKillSwitches';
-import { createArtService, type ArtHandle } from './art/ArtService.js';
+import { type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import { litPass } from './art/litPass.js';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
-import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
 import { speedFxFullSpeed } from './art/fx/depth.js';
 import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
-import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, startZoomForScale } from '@shared-types/shipScale/tuning';
+import { startZoomForScale } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
@@ -69,7 +68,6 @@ import { BeamSpritePool, type BeamView } from './BeamSpritePool';
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import { fillTractorBeams } from './tractorBeams';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { CutFieldLayer } from './field/CutFieldLayer';
@@ -634,44 +632,9 @@ export class PixiRenderer implements IRenderer {
   }
 
   async init(rawContainer: unknown): Promise<void> {
-    // Two init modes:
-    //   - DOM context (main thread): rawContainer is an HTMLElement —
-    //     we create a <canvas>, append it, size from clientWidth/Height.
-    //     Install window resize + canvas event listeners.
-    //   - Worker context (OffscreenCanvas): rawContainer is a
-    //     `{ canvas: OffscreenCanvas; width; height; dpr }` bag — use
-    //     the transferred canvas, size from the bag, no DOM listeners.
-    //
-    // The selector below is structural — checks for `transferControlToOffscreen`
-    // on the host (DOM canvas has it; OffscreenCanvas itself does not).
-    const isDom = typeof window !== 'undefined' && rawContainer instanceof HTMLElement;
-    let initialW: number;
-    let initialH: number;
-    let initialDpr: number;
-    let canvas: HTMLCanvasElement | OffscreenCanvas | undefined;
-    let domContainer: HTMLElement | null = null;
-    // Optional `?zoom=` override (on-device crispness/framing A/B). DOM mode
-    // reads the URL directly; worker mode receives it on the BOOT bag (the
-    // worker has no `window`), forwarded by WorkerRendererClient.
-    let zoom: number | undefined;
-    if (isDom) {
-      domContainer = rawContainer as HTMLElement;
-      initialW = domContainer.clientWidth || window.innerWidth;
-      initialH = domContainer.clientHeight || window.innerHeight;
-      initialDpr = window.devicePixelRatio ?? 1;
-      const z = new URLSearchParams(window.location.search).get('zoom');
-      if (z !== null) zoom = parseFloat(z);
-      // No `canvas:` option — Pixi creates one and we append it.
-    } else {
-      const bag = rawContainer as {
-        canvas: OffscreenCanvas; width: number; height: number; dpr: number; zoom?: number;
-      };
-      canvas = bag.canvas;
-      initialW = bag.width;
-      initialH = bag.height;
-      initialDpr = bag.dpr;
-      zoom = bag.zoom;
-    }
+    // Setup steps live in pixi/rendererSetup/ (each returns what it built).
+    const target = resolveInitTarget(rawContainer);
+    const { isDom, initialW, initialH, initialDpr, canvas, domContainer, zoom } = target;
 
     this.app = new Application();
     await this.app.init({
@@ -704,52 +667,8 @@ export class PixiRenderer implements IRenderer {
       Object.assign(this.app.renderer.events.features, { globalMove: false });
     }
 
-    // Starfield attached to app.stage BEFORE the world so it z-orders
-    // below all gameplay (Pixi insertion-order z).
-    this.starfield = new StarfieldBackground();
-    this.starfield.attach(this.app);
-
-    // World container hosts all camera-tracked gameplay. Pixi's
-    // event-system traversal is opt-out (`eventMode='none'`) for the
-    // gameplay subtree — see pixijs/pixijs#6515. Game-side taps are
-    // routed via the Camera (which the App.tsx forwards canvas events
-    // into), not Pixi's event system.
-    this.world = new Container();
-    this.world.eventMode = 'none';
-    // Graphics quality `?aa=fxaa|max`: one FXAA pass over the world (not the
-    // stage, whose filters the destruction effects own). It sits on an unmoved
-    // host: Pixi maps `filterArea` through the container's own transform, and
-    // the camera moves and scales `world`, so on `world` itself the screen
-    // rect lands off screen and the pass is skipped. The area is the screen,
-    // so Pixi never measures the world's bounds.
-    this.worldHost = this.world;
-    if (this.quality.aa === 'fxaa' || this.quality.aa === 'max') {
-      this.worldHost = new Container();
-      this.worldHost.eventMode = 'none';
-      this.worldHost.addChild(this.world);
-      this.worldHost.filters = [new FxaaFilter(this.quality.aa === 'max')];
-      this.worldHost.filterArea = this.app.screen;
-    }
-    this.app.stage.addChild(this.worldHost);
-
-    // followLerpFactor=1 → instant follow each Pixi tick (60 Hz). This
-    // matches pre-migration pixi-viewport's `viewport.moveCenter(x, y)`
-    // every frame, but driven by the Pixi ticker rather than the per-
-    // `update(mirror)` cadence. Decoupling from MIRROR_UPDATE eliminates
-    // the wheel-zoom vibration that throttled mirror updates introduced
-    // (camera was snapping between zoom-target and centered position
-    // every other frame).
-    this.camera = new Camera(this.world, {
-      // minScale lowered 0.4 → 0.15 (2026-06-03) so the player can zoom
-      // much further out to read the wider battlefield. maxScale (zoom-in)
-      // unchanged.
-      minScale: GAMEPLAY_MIN_ZOOM,
-      // The gameplay zoom-in cap then follows the ship you fly so its whole
-      // hull fits (`applyZoomCap`); 3 stays the cap for ordinary hulls and
-      // the cinematic director's limit.
-      maxScale: GAMEPLAY_MAX_ZOOM,
-      followLerpFactor: 1,
-    });
+    ({ starfield: this.starfield, world: this.world, worldHost: this.worldHost } = buildWorldScene(this.app, this.quality));
+    this.camera = createGameplayCamera(this.world);
     this._cameraDirector.setViewSize(initialW, initialH);
 
     // Read the bisected FX kill switches once at init. Threaded into the
@@ -757,34 +676,14 @@ export class PixiRenderer implements IRenderer {
     // Plan: melodic-engelbart Step 2.
     // Worker path: the switches arrive on BOOT (no `window` here).
     const fxKillSwitches = this._fxKillSwitches ?? readFxKillSwitches();
+    const effectsQuality = (): EffectQuality => this.effects?.getQuality() ?? 'medium';
+    const fxNow = (): number => this.fxNow();
 
-    // Machined art: bakes run on workers; until an entity's art is ready it
-    // draws today's look. The mode is resolved on the main thread (artMode.ts).
-    if (this._artOpts.mode === 'machined') {
-      const art = createArtService({ touch: this._isTouch, delayMs: this._artOpts.delayMs ?? 0, ...(this._artOpts.lighting ? { lighting: this._artOpts.lighting } : {}) });
-      this._artCtx.art = art;
-      this._artCtx.sunAz = art.lightRig.sunAz;
-      // GPU-lit art (`?shiplight=gpu`): lit meshes are built with these.
-      litPass.settings = this._artOpts.lighting ?? null;
-      litPass.texSoft = this.quality.texSoft;
-      // Machined turrets ride the new effects (rings in the bakes, baked guns).
-      this._artCtx.turrets = this._artOpts.fx === true;
-      if (this._artOpts.livery) this._artCtx.livery = this._artOpts.livery;
-      this.mountVisuals.setArt(this._artCtx);
-      // Warm-up: bake the likely art now (this runs on the galaxy map /
-      // warp screen), behind anything that appears on screen meanwhile.
-      art.warmUp(warmUpJobs(this._artOpts.fx === true, this._artOpts.livery));
-      // New backdrop (B2): behind the world, with dust in front of it. Until
-      // its star tiles are baked, today's starfield keeps drawing.
-      if (this._artOpts.fx === true) {
-        const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium', this._artOpts.speedFx === false ? 'off' : 'large', this._artOpts.nebLook);
-        const wi = this.app.stage.getChildIndex(this.worldHost);
-        this.app.stage.addChildAt(bd.sky, wi);
-        this.app.stage.addChildAt(bd.fore, wi + 2);
-        bd.setSector(this._sectorKey);
-        this._backdrop = bd;
-      }
-    }
+    const backdrop = setupMachinedArt({
+      artOpts: this._artOpts, isTouch: this._isTouch, quality: this.quality, artCtx: this._artCtx,
+      mountVisuals: this.mountVisuals, app: this.app, worldHost: this.worldHost, sectorKey: this._sectorKey, effectsQuality,
+    });
+    if (backdrop) this._backdrop = backdrop;
     // DEV/E2E hook (main-thread path, `?worker=0`): what the art service is
     // doing. Assigned from `update()`, so it always follows the LIVE renderer
     // (a dev StrictMode remount can leave a disposed one behind).
@@ -808,175 +707,47 @@ export class PixiRenderer implements IRenderer {
     this._cameraDirector._zoomPinned = resolvedZoom !== startZoomForScale(DEFAULT_GAMEPLAY_ZOOM);
     this.camera.setZoom(resolvedZoom);
 
-    // Frame diagnostic (gated). The decisive crispness metric: the
-    // backing buffer (`app.canvas.width`) MUST equal round(CSS px × dpr)
-    // for true 1:1 HiDPI. Pre-fix the worker path double-applied dpr.
-    // Captured on-device via `?diag=1` (plan: zazzy-engelbart, Phase 0).
-    if (isDiagEnabled()) {
-      logEvent('render_frame_diag', {
-        phase: 'init',
-        mode: isDom ? 'dom' : 'worker',
-        appResolution: this.app.renderer.resolution,
-        rendererType: (this.app.renderer as unknown as { type?: number }).type ?? -1,
-        canvasW: this.app.canvas.width,
-        canvasH: this.app.canvas.height,
-        inW: initialW,
-        inH: initialH,
-        dpr: initialDpr,
-        worldScaleX: this.world.scale.x,
-      });
-    }
+    logInitFrameDiag(this.app, this.world, target);
 
-    // Load curtain — lazy-builds its stage on the first setLoadCurtain.
-    this.curtain = new LoadCurtain(this.app, this.frameMarkers);
+    this._cleanWorld = fxKillSwitches.cleanWorld; // `?cleanworld=1` (showcase capture)
+    const layers = buildSceneLayers({
+      app: this.app, frameMarkers: this.frameMarkers, camera: this.camera, cleanWorld: this._cleanWorld,
+      mountVisuals: this.mountVisuals, cutField: this._cutField, placementGhostCtx: this._placementGhostCtx,
+      wreckFarLayer: this._wreckFarLayer, farIcons: this._farIcons, lockMarksVisible: this._lockMarksVisible, warpFxCtx: this._warpFxCtx,
+    });
+    this.curtain = layers.curtain;
+    if (layers.backgroundGrid) this.backgroundGrid = layers.backgroundGrid;
+    this.shipContainer = layers.shipContainer;
+    this.connectorRenderer = layers.connectorRenderer;
 
-    // `?cleanworld=1` (showcase capture) drops debug-flavoured world overlays:
-    // the spatial grid, turret aim-guides and NPC callsign labels.
-    this._cleanWorld = fxKillSwitches.cleanWorld;
-    this.mountVisuals.setAimLinesVisible(!this._cleanWorld);
-    if (!this._cleanWorld) {
-      this.backgroundGrid = new BackgroundGrid();
-      this.backgroundGrid.attach(this.camera);
-    }
-
-    this.camera.addChild(this._cutField.container); // cut-field rocks: under everything that moves
-    this.shipContainer = new Container();
-    this.camera.addChild(this.shipContainer);
-    this._placementGhostCtx.camera = this.camera; this._placementGhostCtx.shipContainer = this.shipContainer;
-    // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): one batch, under the ship icons.
-    this.camera.addChild(this._wreckFarLayer);
-    // Far-zoom ship icons above the ships they stand in for (FarZoomIcons.ts).
-    this.camera.addChild(this._farIcons.container);
-
-    // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
-    // lines render BEHIND the structure/ship sprites added later.
-    this.connectorRenderer = new ConnectorRenderer(this._cutField);
-    this.connectorRenderer.setTurretOverlaysVisible(this._lockMarksVisible);
-    // A3 — the static layer (idle web, range rings, wall rails) sits behind the
-    // per-frame layer.
-    this.shipContainer.addChild(this.connectorRenderer.staticGfx);
-    this.shipContainer.addChild(this.connectorRenderer.gfx);
-    // Warp-to visuals (Phase 4): engine build-up, blur streak, burning trails.
-    // Cheap sprites, under the hulls; drawn for every render mode.
-    this.shipContainer.addChild(this._warpFxCtx.warpFx.layer);
-    // Warp spool-up: the engines overcharge (glow + sparks, under the hulls).
-    this.shipContainer.addChild(this._warpFxCtx.spoolFx.layer);
-    // Placed rocks and cut rock pieces: one mesh for all of them (rockBatch.ts),
-    // under the hulls and the wreck pieces' cut-edge glow.
-    this.shipContainer.addChild(this._cutField.rockBatch.layer);
-
-    // 2026-05-26 heap-growth gate step 12 — pool ctx objects for the
-    // per-frame sprite updaters. All fields are permanent references;
-    // initialised once here, mutated never. Object identity stable for
-    // the renderer's lifetime. Eliminates ~180-270 obj/s of per-frame
-    // ctx-literal allocation introduced by the god-file refactor.
-    // `!`-declared readonly fields accept the constructor-body
-    // assignment without any cast.
-    this._shipUpdaterCtx = {
-      shipContainer: this.shipContainer,
-      sprites: this.sprites,
-      mountVisuals: this.mountVisuals,
-      remoteHitTargets: this._updateRemoteHitTargetsScratch,
-      localHitTargets: this._updateLocalHitTargetsScratch,
-      seenScratch: this._updateSeenScratch,
-      art: this._artCtx,
-    };
-    this._swarmUpdaterCtx = {
-      shipContainer: this.shipContainer,
-      sprites: this.sprites,
-      mountVisuals: this.mountVisuals,
-      swarmPoseScratch: this.swarmPoseScratch,
-      remoteHitTargets: this._updateRemoteHitTargetsScratch,
-      localHitTargets: this._updateLocalHitTargetsScratch,
-      seenScratch: this._updateSeenScratch,
-      structureMountAngles: this._structureMountSlew,
-      spriteKinds: this._swarmSpriteKinds,
-      spriteBuildSigs: this._swarmSpriteSigs,
-      slewDtSec: 1 / 60, // overwritten per frame before updateSwarmSprites
-      art: this._artCtx,
-      // Capital destruction S2b: wreck piece geometry rebuilt from mirror.wrecks.
-      wrecks: new WreckGeometryStore(),
-      fieldRocks: this._cutField,
-      // S3: each wreck's death clock; a fresh wreck's break-up (dust, shards,
-      // flash at the kill point) goes through the effects system, tier-capped.
-      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel, cut) => {
-        // Money-shot review: a short small core flash + dust + shards
-        // (WreckBreakFx) and fireballs at the kill point, sized by the hull
-        // (FxExplosions, the same blasts every death uses), never a disc
-        // over the whole hull. Once per wreck, each part only where the
-        // wreck's destruction profile asks for it (capitals: both; a
-        // sub-capital never reaches here: its ship's own death blast plays).
-        if (wfx.breakBurst) {
-          this._wreckBreaks++;
-          // A weapon's kill cut: the shards are toned down (WreckBreakFx) so
-          // the cut reads first (beam take 8 review: "confetti").
-          this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}), ...(cut ? { cutKill: true } : {}) });
-          // A railgun channel kill: glowing ash and sparks along the channel
-          // (a line emitter on the same break-up pool, tier-capped there).
-          if (channel !== null) {
-            this.effects?.spawnBurst('wreck-ash', channel.ax, channel.ay, { radius, lineToX: channel.bx, lineToY: channel.by });
-          }
-        }
-        const fx = wfx.killBlasts ? this._fxExplosions : null;
-        if (fx !== null) {
-          const n = wreckBlasts(x, y, radius, seed, this._wreckBlastScratch);
-          const now = this.fxNow();
-          for (let i = 0; i < n; i++) {
-            const b = this._wreckBlastScratch[i]!;
-            if (fx.spawn(b.x, b.y, b.r, now, WRECK_BLAST_LINGER)) this._wreckBlastsSpawned++;
-          }
-        }
-      }, (x, y, r) => {
-        // Cracks spread, then it breaks (owner 2026-11-13): small blasts
-        // ripple along the cracks while the hull holds together. Pooled
-        // FxExplosions bursts; how many per wreck follows the effects tier.
-        if (this._fxExplosions?.spawn(x, y, r, this.fxNow())) this._wreckRipplesSpawned++;
-      }, () => wreckRippleCap(this.effects?.getQuality() ?? 'medium'), () => this.effects?.getQuality() ?? 'medium'),
-      dyingHulls: this._dyingHulls,
-    };
-    this._projectileUpdaterCtx = {
-      shipContainer: this.shipContainer,
-      projectileSprites: this.projectileSprites,
-      projSeenScratch: this._updateProjSeenScratch,
-    };
-    this._missileUpdaterCtx = {
-      shipContainer: this.shipContainer,
-      missileSprites: this.missileSprites,
-      missileSeenScratch: this._updateMissileSeenScratch,
-      activeExplosions: this.missileExplosionsActive,
-    };
+    const ctxs = buildSpriteUpdaterCtxs({
+      shipContainer: this.shipContainer, sprites: this.sprites, mountVisuals: this.mountVisuals,
+      remoteHitTargets: this._updateRemoteHitTargetsScratch, localHitTargets: this._updateLocalHitTargetsScratch,
+      seenScratch: this._updateSeenScratch, art: this._artCtx, swarmPoseScratch: this.swarmPoseScratch,
+      structureMountAngles: this._structureMountSlew, spriteKinds: this._swarmSpriteKinds, spriteBuildSigs: this._swarmSpriteSigs,
+      fieldRocks: this._cutField, dyingHulls: this._dyingHulls,
+      projectileSprites: this.projectileSprites, projSeenScratch: this._updateProjSeenScratch,
+      missileSprites: this.missileSprites, missileSeenScratch: this._updateMissileSeenScratch, activeExplosions: this.missileExplosionsActive,
+      effects: () => this.effects, fxExplosions: () => this._fxExplosions, effectsQuality, fxNow, wreckBlastScratch: this._wreckBlastScratch,
+      noteWreckBreak: () => { this._wreckBreaks++; },
+      noteWreckBlastSpawned: () => { this._wreckBlastsSpawned++; },
+      noteWreckRippleSpawned: () => { this._wreckRipplesSpawned++; },
+    });
+    this._shipUpdaterCtx = ctxs.ship;
+    this._swarmUpdaterCtx = ctxs.swarm;
+    this._projectileUpdaterCtx = ctxs.projectile;
+    this._missileUpdaterCtx = ctxs.missile;
     // New weapons (B3, `?fx=new`): beam glow + flow over today's beam pools,
     // and bolts / tracers as batched sprites. Nothing draws until baked.
     if (this._artOpts.fx === true && this._artCtx.art) {
-      const art = this._artCtx.art;
-      this._fxLiveBeams = new FxBeams(art, 0x6fd0ff);
-      this._fxRemoteBeams = new FxBeams(art, 0xffaa44);
-      // Railgun slug wakes read the effects tier and the game-time fx clock (#20).
-      this._fxProjectiles = new FxProjectiles(art, () => this.effects?.getQuality() ?? 'medium', () => this.fxNow());
-      this.shipContainer.addChild(this._fxRemoteBeams.container, this._fxLiveBeams.container, this._fxProjectiles.wakeLayer, this._fxProjectiles.container);
-      this._projectileUpdaterCtx.fx = this._fxProjectiles;
-      // B4: explosions (ship / drone / structure deaths, missile detonations)
-      // and missile smoke trails.
-      this._fxExplosions = new FxExplosions(art, () => this.effects?.getQuality() ?? 'medium');
-      this._fxExplosions.onSpawn = (x, y, r): void => noteBlastLight(this._litSceneCtx, x, y, r);
-      this._fxMissileTrails = new FxMissileTrails(art);
-      this.shipContainer.addChild(this._fxMissileTrails.smokeLayer, this._fxExplosions.smokeLayer, this._fxMissileTrails.glowLayer, this._fxExplosions.fireLayer);
-      this._missileUpdaterCtx.fxTrails = this._fxMissileTrails;
-      // Engine exhaust: a flame + ribbon at every Machined nozzle, for every
-      // ship (players and drones). Under the hulls; ship sprites are added later.
-      this._fxEngines = new FxEngines(art, () => this.effects?.getQuality() ?? 'medium');
-      this.shipContainer.addChild(this._fxEngines.trailLayer, this._fxEngines.flameLayer, this._fxEngines.glowLayer);
-      this._engineShieldFxCtx.fxEngines = this._fxEngines;
-      this._missileUpdaterCtx.fxExplosions = this._turretShotCtx.fxExplosions = this._fxExplosions;
-      // B5: shields (invisible at rest; hit ripples, held laser contacts,
-      // break) and fences (energy line, raise / power-loss / gate).
-      this._fxShields = new FxShields(art);
-      this._engineShieldFxCtx.fxShields = this._hitEventCtx.fxShields = this._fxShields;
-      this._fxFences = new FxFences(art);
-      this.shipContainer.addChild(this._fxShields.container);
-      // Fences sit just above the connector web, below the sprites.
-      this.shipContainer.addChildAt(this._fxFences.container, this.shipContainer.getChildIndex(this.connectorRenderer.gfx) + 1);
-      this.connectorRenderer.fxFences = this._hitEventCtx.fxFences = this._fxFences;
+      const fx = buildFxWeapons({
+        art: this._artCtx.art, shipContainer: this.shipContainer, connectorRenderer: this.connectorRenderer, effectsQuality, fxNow,
+        litSceneCtx: this._litSceneCtx, projectileUpdaterCtx: this._projectileUpdaterCtx, missileUpdaterCtx: this._missileUpdaterCtx,
+        engineShieldFxCtx: this._engineShieldFxCtx, turretShotCtx: this._turretShotCtx, hitEventCtx: this._hitEventCtx,
+      });
+      this._fxLiveBeams = fx.liveBeams; this._fxRemoteBeams = fx.remoteBeams; this._fxProjectiles = fx.projectiles;
+      this._fxExplosions = fx.explosions; this._fxMissileTrails = fx.missileTrails; this._fxEngines = fx.engines;
+      this._fxShields = fx.shields; this._fxFences = fx.fences;
     }
 
     // Effects subsystem (plan `wiggly-puppy` M3+). Constructed inside
@@ -985,61 +756,16 @@ export class PixiRenderer implements IRenderer {
     // main-thread fallback (touch devices, Safari < 17). ?effects=0 URL
     // hatch skips construction entirely.
     if (!effectsDisabledByUrl()) {
-      // Eagerly create the beam sprite pools (post-2026-06-01 — was
-      // Pixi Graphics). Each pool's Container is exposed as
-      // `liveBeamGfx` / `remoteBeamGfx` so LaserGlow can attach a
-      // GlowFilter to it at construct time. Empty pools render as
-      // nothing — no visual change before first beam.
-      this._liveBeamPool = new BeamSpritePool(LIVE_BEAM_STYLE);
-      this.liveBeamGfx = this._liveBeamPool.container;
-      this.shipContainer.addChild(this.liveBeamGfx, this._liveBeamPool.styledContainer); // heavy beams: unfiltered sibling
-      this._remoteBeamPool = new BeamSpritePool(REMOTE_BEAM_STYLE);
-      this.remoteBeamGfx = this._remoteBeamPool.container;
-      this.shipContainer.addChild(this.remoteBeamGfx, this._remoteBeamPool.styledContainer); // heavy beams: unfiltered sibling
-      // WS-4 Phase 4 — the Miner's mining beam: a distinct fat warm-amber drill
-      // beam, separate pool so its `liveCount` is isolatable + its look differs
-      // from the combat laser. Styles are named consts (beamStyles.ts) so the
-      // distinction is greppable + regression-locked. Sits behind the sprites.
-      this._miningBeamPool = new BeamSpritePool(MINING_BEAM_STYLE);
-      this.miningBeamGfx = this._miningBeamPool.container;
-      this.shipContainer.addChild(this.miningBeamGfx);
-      this._tractorBeamPool = new BeamSpritePool(TRACTOR_BEAM_STYLE); this.shipContainer.addChild(this._tractorBeamPool.container, this._tractorBeamPool.styledContainer); // look A (beamStyles.ts)
-
-      this.effects = new EffectsService({
-        app: this.app,
-        world: this.world,
-        stage: this.app.stage,
-        camera: this.camera,
-        ...(this._artOpts.fx === true && this._artCtx.art ? { fxGlow: this.fxGlowTexture() } : {}),
-        // Per-frame pose lookup. Reads the RENDERED sprite position so
-        // it stays in lockstep with whatever frame the engine emitter
-        // ticks on (one-pose-per-frame invariant for drones too — the
-        // sprite was just set from the resolved swarm pose by
-        // updateSwarmSprites). Returns null for entities not in the
-        // sprite map (despawned, never spawned, off-interest).
-        getEntityPose: (entityId: string) => {
-          // Every ship (parked hulls too, RTS Part A S3) + drones live in
-          // `this.sprites`, so a parked hull's shield aura resolves its pose
-          // (P3.12 / WS-C3: the "lingering ships don't draw a shield" bug).
-          const sp = this.sprites.get(entityId);
-          if (!sp) return null;
-          // Pure seam helper: converts the Pixi sprite pose BACK to game
-          // space (Y-up, angle un-negated). Mutates the reused scratch so
-          // the per-frame poll allocates nothing (Invariant #14); the
-          // emitter reads it synchronously and never stores it.
-          const pose = entityPoseFromSprite(sp, this._enginePoseScratch);
-          // Velocity for speed-scaled emission + coherent streaming. The
-          // sprite carries no velocity; read it from this frame's mirror.
-          // Ships only (drones live in mirror.swarm and don't emit engine
-          // particles) → undefined for non-ships ⇒ 0.
-          const ship = this._lastMirror?.ships.get(entityId);
-          pose.vx = ship?.vx ?? 0;
-          pose.vy = ship?.vy ?? 0;
-          return pose;
-        },
-        beams: { liveBeamGfx: this.liveBeamGfx, remoteBeamGfx: this.remoteBeamGfx },
-        fxKillSwitches,
+      const fx = buildBeamPoolsAndEffects({
+        app: this.app, world: this.world, camera: this.camera, shipContainer: this.shipContainer,
+        fxGlowTexture: this._artOpts.fx === true && this._artCtx.art ? () => this.fxGlowTexture() : null,
+        sprites: this.sprites, enginePoseScratch: this._enginePoseScratch, lastMirror: () => this._lastMirror, fxKillSwitches,
       });
+      this._liveBeamPool = fx.liveBeamPool; this.liveBeamGfx = fx.liveBeamGfx;
+      this._remoteBeamPool = fx.remoteBeamPool; this.remoteBeamGfx = fx.remoteBeamGfx;
+      this._miningBeamPool = fx.miningBeamPool; this.miningBeamGfx = fx.miningBeamGfx;
+      this._tractorBeamPool = fx.tractorBeamPool;
+      this.effects = fx.effects;
     }
 
     // Beams leave from the turrets on top of the hull, so they draw over every
@@ -1058,27 +784,13 @@ export class PixiRenderer implements IRenderer {
     });
     this._litSceneCtx.beamCtx = this._beamCtx; // GPU-lit beam lights (pixi/litSceneUpdater.ts)
     stackVaporiseOverBeams(this.shipContainer, this._fxExplosions); // the vaporise flash reads over the beams
-    // Incoming-fire markers sit under the radar's edge icons.
-    this.incomingFire.init(this.camera);
-    this.helmMarker.init(this.camera);
-    // RTS command view: selection rings / drag box / order flash, screen space.
-    this.fleetOverlay = new FleetOverlay(this.app.stage);
-    this.halo.init(this.camera);
-    this.halo.setIncoming(this.incomingFire);
-    // Damage numbers attach to the world (pan with camera, anchored at
-    // impact world coord) but counter-scale per frame so they stay
-    // legible at any zoom — Camera ref needed for the per-frame
-    // counter-scale.
-    this._hudCtx.damageNumbers = new DamageNumberManager(this.world, this.camera);
-    this._hudCtx.levelUpIcons = new LevelUpIconManager(this.world, this.camera);
-    this._hudCtx.healthBars = new HealthBarManager(this.world);
-    this.labels = new LabelManager(this.world, !this._cleanWorld);
-    // THE selection marker (Item B4; RTS Part A): one 4-corner bracket per
-    // selected entity, screen space on the stage like the fleet overlay, drawn
-    // in the ticker after the camera tick (`drawFleetOverlay`).
-    this.selectionBracket = new SelectionBracket(this.app.stage);
-    this.hoverBracket = new HoverBracket(this.world);
-    this.aimFeedback = new AimFeedbackRenderer(this.world);
+    ({
+      fleetOverlay: this.fleetOverlay, labels: this.labels, selectionBracket: this.selectionBracket,
+      hoverBracket: this.hoverBracket, aimFeedback: this.aimFeedback,
+    } = buildOverlays({
+      app: this.app, camera: this.camera, world: this.world, incomingFire: this.incomingFire,
+      helmMarker: this.helmMarker, halo: this.halo, hudCtx: this._hudCtx, cleanWorld: this._cleanWorld,
+    }));
 
     // Drive Camera momentum + follow each frame (works in both contexts).
     this.app.ticker.add(() => {
@@ -1103,48 +815,11 @@ export class PixiRenderer implements IRenderer {
     });
 
     if (isDom && domContainer) {
-      // Install canvas pointer/wheel listeners → camera state machine.
-      // Camera replaces pixi-viewport's automatic event subscription.
-      // Worker context: events arrive via postMessage and the worker
-      // scaffolding (renderer.worker.ts) calls forwardPointerEvent /
-      // forwardWheelEvent directly — no DOM listener path.
-      this._input.installCanvasEventListeners(this.app.canvas);
-
-      const measureSize = (): { w: number; h: number } => {
-        const vv = window.visualViewport;
-        const w = domContainer.clientWidth || vv?.width || window.innerWidth;
-        const h = domContainer.clientHeight || vv?.height || window.innerHeight;
-        return { w, h };
-      };
-
-      const resize = (): void => {
-        // Late-fire guard: a queued `requestAnimationFrame(resize)` and the
-        // ResizeObserver can both fire AFTER dispose() has destroyed the Pixi
-        // application, leaving `this.app.renderer` null. Bailing on
-        // !this.initialized is enough — dispose() flips that flag.
-        if (!this.initialized || !this.app?.renderer) return;
-        const { w, h } = measureSize();
-        // Re-apply DPR so browser-zoom / monitor-move updates resolution
-        // on the main-thread path too (parity with the worker resize).
-        const dpr = window.devicePixelRatio ?? 1;
-        this.app.renderer.resize(w, h, this.resolutionFor(dpr, w, h));
-        this._cameraDirector.setViewSize(w, h);
-        this.starfield?.resize(w, h);
-      };
-      window.addEventListener('resize', resize);
-      window.addEventListener('orientationchange', resize);
-      window.visualViewport?.addEventListener('resize', resize);
-
-      // Container-driven resize: catches layout settling on mobile (URL bar,
-      // safe-area insets, dvh recalculation) that don't always fire window resize.
-      const ro = new ResizeObserver(resize);
-      ro.observe(domContainer);
-
-      (this.app as unknown as Record<string, unknown>)['_resizeHandler'] = resize;
-      (this.app as unknown as Record<string, unknown>)['_resizeObserver'] = ro;
-
-      // Force one resize after the next frame to capture post-mount layout.
-      requestAnimationFrame(resize);
+      installDomListeners({
+        app: () => this.app, domContainer, input: this._input, cameraDirector: this._cameraDirector,
+        isInitialized: () => this.initialized, resolutionFor: (dpr, w, h) => this.resolutionFor(dpr, w, h),
+        starfield: () => this.starfield,
+      });
     }
   }
 

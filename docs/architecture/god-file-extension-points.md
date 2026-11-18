@@ -40,6 +40,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 |---|---|---|
 | A per-frame visual | An updater module `update<X>Sprites(mirror, ctx)` with a pooled ctx built once in `init`, like `pixi/shipSpriteUpdater.ts` or `pixi/beamUpdater.ts`. | live |
 | A test / perf probe | A function in `pixi/rendererProbes.ts` taking `RendererProbeState`, plus a one-line delegate in `PixiRenderer`. | live |
+| An `init` setup step (scene layers, fx systems, updater ctx wiring, DOM listeners) | A function in `pixi/rendererSetup/` taking a narrow deps object and returning what it built; `init` stays a short call sequence that assigns the results. | live |
 | Pointer / touch / wheel input, an RTS command gesture or selection rule | `pixi/rendererInputController.ts` (listeners, forwarded events, placement pointers) or its base `pixi/rendererCommandRouting.ts` (command routing, THE selection); PixiRenderer keeps one-line delegates. | live |
 | Camera framing (hull zoom range, caps) or the cinematic director | `pixi/cameraDirector.ts` (`RendererCameraDirector`, built once; `updateFrame` per frame). | live |
 | A render-mirror field | The entity's `*RenderState` file under `src/core/contracts/render/`. | planned |
