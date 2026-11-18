@@ -14,8 +14,8 @@
  * and `LockSalvageLookup` (SectorRoom side: the room's registries behind
  * three narrow callbacks). Allocation-free (#14): module scratch.
  */
-import { LOCK_CONSUMABLE, LOCK_SALVAGE, lockTierBits } from '../../core/combat/turretLockPick.js';
-import { mountTier, salvageConsumable, salvageConsumeMass, salvageTier } from '../../core/combat/salvageTargeting.js';
+import { LOCK_CONSUMABLE, LOCK_HAUL, LOCK_SALVAGE, lockTierBits } from '../../core/combat/turretLockPick.js';
+import { mountTier, rockHaulable, salvageConsumable, salvageConsumeMass, salvageTier, tractorRungOf } from '../../core/combat/salvageTargeting.js';
 import { SWARM_KIND_ASTEROID, SWARM_KIND_WRECK, isLootPod } from '../../shared-types/swarmWireFormat.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
@@ -47,13 +47,15 @@ export interface LockSalvageDeps {
 /** Which lineage a lock key belongs to, and its live members. */
 export interface LockLineageSource {
   /** The lineage root (`LiveWreck.root`) of lock key `key`: a live rock or
-   *  wreck piece, or an ore pod cut from one; -1 for anything else. */
+   *  wreck piece; -1 for anything else (a pod is never in a lineage). */
   rootOf(key: string): number;
-  /** Push the lock keys of lineage `root`'s live pieces (then, `pods`, its
-   *  live ore pods) onto `out`. Runs only when a lock's target leaves. */
-  keysOf(root: number, pods: boolean, out: string[]): void;
+  /** Push the lock keys of lineage `root`'s live pieces onto `out` (never
+   *  a pod). Runs only when a lock's target leaves. */
+  keysOf(root: number, out: string[]): void;
 }
 
+/** The kind's mounts when it has none (a stable key for the rung cache). */
+const NO_MOUNTS: ReadonlyArray<WeaponMount> = [];
 const view: LockSalvageView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0, freeHold: 0, pod: false };
 /** An ore pod's bits: salvage on the bottom rung (AA), never consumable (it
  *  is taken in on touching the hull, or in a tractor's hold zone). */
@@ -70,6 +72,9 @@ export function lockSalvageFlags(
   if (view.pod === true) return POD_FLAGS;
   const f = LOCK_SALVAGE | lockTierBits(salvageTier(view.mass));
   if (ship === null) return f;
+  // A rock piece is never consumable (nothing would bring it in): hauled whole
+  // when a tractor can pull it and its chunk fits, else cut on.
+  if (view.ore !== undefined) return rockHaulable(view, Math.max(tractorRungOf(ship.kind.mounts ?? NO_MOUNTS), tractorRungOf(ship.activated)), view.freeHold) ? f | LOCK_HAUL : f;
   return salvageConsumable(view, salvageConsumeMass(ship.kind), view.freeHold) ? f | LOCK_CONSUMABLE : f;
 }
 
@@ -105,8 +110,6 @@ export interface LockSalvageRoom<S> {
   freeHold(ship: S): number;
   /** The live wreck lineages (CapitalWreckSubsystem), when the room has any. */
   wrecks?(): { lineageRootOf(id: string): number | null; forEachLineagePiece(root: number, visit: (id: string) => void): void } | null | undefined;
-  /** The ore pods (LootSubsystem), each with the lineage it was cut from. */
-  pods?(): { podIds(): Iterable<string>; podRoot(id: string): number } | undefined;
   /** The swarm entity id of live record `id`, or -1. */
   entity?(id: string): number;
 }
@@ -121,15 +124,13 @@ export class LockSalvageLookup<S> implements LockLineageSource {
     const n = swarmLockId(key);
     const rec = n < 0 ? null : this.r.swarm(n);
     if (rec == null) return -1;
-    if (isLootPod(rec)) return this.r.pods?.()?.podRoot(rec.id) ?? -1;
+    if (isLootPod(rec)) return -1;
     return this.r.wrecks?.()?.lineageRootOf(rec.id) ?? -1;
   }
 
-  keysOf(root: number, pods: boolean, out: string[]): void {
+  keysOf(root: number, out: string[]): void {
     this.out = out;
     this.r.wrecks?.()?.forEachLineagePiece(root, this.push);
-    const p = pods ? this.r.pods?.() : undefined;
-    if (p !== undefined) for (const id of p.podIds()) if (p.podRoot(id) === root) this.push(id);
   }
 
   private out: string[] = [];

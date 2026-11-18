@@ -24,6 +24,7 @@ import type { BlueprintItem, PackedItem } from './items.js';
 import { STRUCTURE_KINDS_LIST, getStructureKind, isBuildableStructureKind, isStructureKindId } from './structureKinds.js';
 import { PLAYABLE_SHIP_KINDS_LIST, getShipKind, isPlayableShipKindId } from './shipKinds.js';
 import { RECIPES, RECIPE_IDS, type RecipeId } from './recipes.js';
+import { LAUNCHABLE_HULL_KINDS } from './launch.js';
 
 function isRecipeId(id: string): id is RecipeId {
   return (RECIPE_IDS as readonly string[]).includes(id);
@@ -129,14 +130,9 @@ export const STARTER_STRUCTURE_KINDS: readonly string[] = [
   // Sector control: a lock builds from minerals (its 20k cost), never packed.
   'territory_lock',
 ];
-/** Hulls anyone can fly without building one: the starters and the player
- *  capitals (owner 2026-11-17: free on the ship screen; the -b/-c hull styles
- *  stay NPC-only). */
-export const STARTER_HULL_KINDS: readonly string[] = [
-  'scout', 'fighter',
-  'destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser', 'battleship',
-  'battleship-rail', 'heavy-cruiser-beam', 'battlecruiser-lance',
-];
+/** Hulls anyone can fly without building one: the launch table's keys
+ *  (`shared-types/launch.ts`, one list: sub-capitals free, capitals priced). */
+export const STARTER_HULL_KINDS: readonly string[] = LAUNCHABLE_HULL_KINDS;
 
 export function moduleProduct(id: string): string {
   return `module:${id}`;
