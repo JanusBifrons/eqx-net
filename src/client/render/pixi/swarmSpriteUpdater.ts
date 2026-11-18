@@ -135,6 +135,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
   ctx.wreckArt?.retain(wreckDescs ?? NO_WRECKS);
   const rigs = ctx.structureRigs; // restyle 2c (`?rigs=1`); undefined = flag off
   rigs?.begin();
+  if (rigs !== undefined && ctx.cameraScale !== undefined) rigs.zoom = ctx.cameraScale; // 3e: pulse sized like a cable's
   // Restyle 2e: rig clips run on the client tick clock against their server
   // start tick (no clock in tests / before welcome: the fx clock, in ticks).
   const rigTick = mirror.rigTick ?? fxNow / (1000 / RIG_TICKS_PER_SEC);

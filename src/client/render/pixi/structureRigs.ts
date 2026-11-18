@@ -572,6 +572,9 @@ export class StructureRigView {
   private readonly pulseVisual: ConnectorVisual = { color: 0, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0 };
   private readonly comet: CometSegment = { x0: 0, y0: 0, x1: 0, y1: 0 };
   private cargoDrawn = false;
+  /** 3e: the camera scale (CSS px per world u), so the arm's pulse keeps a
+   *  cable pulse's on-screen size (`cometSegment` / `lineLookScale`). */
+  zoom = 1;
 
   constructor(readonly rig: Rig) {
     this.pose = createRigPose(rig);
@@ -705,7 +708,7 @@ export class StructureRigView {
     // beat), its comet crossing in CONNECTOR_PULSE_PERIOD_MS, on game time.
     const nowMs = (nowTick * 1000) / RIG_TICKS_PER_SEC;
     const flashUntil = (Math.floor(nowMs / TRANSFER_PULSE_MS) + 1) * TRANSFER_PULSE_MS;
-    const v = connectorVisualInto(this.pulseVisual, flashUntil, nowMs, 1);
+    const v = connectorVisualInto(this.pulseVisual, flashUntil, nowMs, this.zoom);
     const p = this.armPath;
     let total = 0;
     for (let k = 0; k + 1 < n; k++) total += Math.hypot(p[2 * k + 2]! - p[2 * k]!, p[2 * k + 3]! - p[2 * k + 1]!);
@@ -718,7 +721,7 @@ export class StructureRigView {
       // Host frame (y-up) -> the group's Pixi frame (y-down), like the parts.
       const ax = p[2 * k]!, ay = -p[2 * k + 1]!, bx = p[2 * k + 2]!, by = -p[2 * k + 3]!;
       const len = Math.hypot(bx - ax, by - ay);
-      if (len > 0) drawCablePulse(g, v, this.comet, (at - cum) / len, true, ax, ay, bx, by, 1);
+      if (len > 0) drawCablePulse(g, v, this.comet, (at - cum) / len, true, ax, ay, bx, by, this.zoom);
       cum += len;
     }
     g.visible = true;
@@ -767,6 +770,9 @@ export class StructureRigs {
   private readonly worldInput: StructureRigInput = { clipId: '', startTick: 0 };
   private readonly entries = new Map<string, GameRigEntry>();
   private stamp = 0;
+  /** The camera scale this frame (set by the caller before `update`): the
+   *  views' goods pulse sizes from it like a cable's (3e). */
+  zoom = 1;
   private readonly sweepFn = (e: GameRigEntry, key: string): void => {
     if (e.stamp !== this.stamp) this.drop(key, e);
   };
@@ -844,6 +850,7 @@ export class StructureRigs {
         input.targetY = undefined;
       }
     }
+    view.zoom = this.zoom;
     view.update(input, nowTick, hx, hy, ha, 1);
     followHost(view.over, sprite);
     followHost(view.under, sprite);

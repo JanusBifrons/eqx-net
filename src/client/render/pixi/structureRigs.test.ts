@@ -520,6 +520,16 @@ describe('goods flow pulse along the crane arm (3e)', () => {
     expect(fromClamp(view)).toBeLessThan(outA - 300);
   });
 
+  it("keeps a cable pulse's on-screen size: zoomed out, it is longer in world units", () => {
+    const view = new StructureRigView(rig);
+    const size = (): number => { const b = view.cargo!.getLocalBounds(); return Math.hypot(b.maxX - b.minX, b.maxY - b.minY); };
+    view.update(hold, 1020 + 20, hx, hy, ha);
+    const near = size();
+    view.zoom = 0.25;
+    view.update(hold, 1020 + 20, hx, hy, ha);
+    expect(size()).toBeGreaterThan(near * 3);
+  });
+
   it('no hold on the wire (a staged / older clip): no pulse', () => {
     const view = new StructureRigView(rig);
     view.update({ clipId: 'arm-hold', startTick: 0, targetX: hx, targetY: hy + 450 }, 50, hx, hy, ha);
