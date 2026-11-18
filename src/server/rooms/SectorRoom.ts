@@ -11805,23 +11805,25 @@ export class SectorRoom extends Room<SectorState> {
   /** Bound once (no per-tick closure allocation, #14). */
   private readonly visitDepositor = (c: LootCollector): void => {
     if (this.manualCargo.has(c.playerId)) {
-      // Moved cargo by hand: no auto-deposit until they leave their storage.
-      if (this.storage.nearestOwnStorage(c.playerId, c.x, c.y) === null) this.manualCargo.delete(c.playerId);
+      // Moved cargo by hand: no auto-deposit until they leave their storage
+      // (its reach, or its crane bay: a Capital's bay lies past 400 u).
+      if (this.storage.nearestOwnStorage(c.playerId, c.x, c.y) === null && this.ownDockBayAt(c.playerId, c.x, c.y) === null) {
+        this.manualCargo.delete(c.playerId);
+      }
       this.dropDepositDwell(c.playerId);
       return;
     }
     const hold = this.loot.shipHold(c.shipInstanceId);
     // 3b / 3i: a ship on its own crane bay (a freight dock's or the Capital's)
-    // belongs to that bay, ahead of the nearest-centre pick (a Capital nearer
-    // the ship never steals a dock's ship). The Capital also keeps its plain
-    // hover deposit off the bay.
+    // belongs to that bay (stop = go). Off a bay, only a hover drop-off
+    // (`takesHoverDeposit`: no crane bay, e.g. a Cargo Bay) banks a ship
+    // holding near it (3f: crane-bay kinds never take the hover deposit).
     const bayDock = this.ownDockBayAt(c.playerId, c.x, c.y);
     if (bayDock !== null) { this.dockDwell(c, bayDock, hold); return; }
     const target = hold !== undefined && !isHoldEmpty(hold)
-      ? this.storage.nearestOwnStorage(c.playerId, c.x, c.y)
+      ? this.storage.nearestHoverDropOff(c.playerId, c.x, c.y)
       : null;
-    // A freight dock serves only a ship parked on its bay (stop = go).
-    if (target === null || target.kind === 'freight_dock') {
+    if (target === null) {
       this.dropDepositDwell(c.playerId);
       return;
     }

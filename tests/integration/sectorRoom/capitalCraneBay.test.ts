@@ -3,8 +3,8 @@
  * home"). The same dock crane cycle as a freight dock (`dockCraneDwell`):
  * park still on the bay → `arm-reach` → `arm-hold` → bank at hold END →
  * `arm-retract`; one ship per crane. The Capital has no import list (it
- * takes everything) and no outlet (it loads nothing). Off the bay the old
- * 400 u hover deposit still works (retired later, slice 3f).
+ * takes everything) and no outlet (it loads nothing). 3f: the bay is the
+ * Capital's only drop-off; the 400 u hover deposit stays for a Cargo Bay.
  *
  * Capital at (0, 0), rot 0: its bay is `CAPITAL.keepClear`, 500 × 240 past
  * its +y edge, centre world (0, 410) (`CAPITAL_BAY`).
@@ -104,12 +104,30 @@ describe('SectorRoom integration — Capital crane bay (structure-restyle 3i)', 
     expect(Math.abs(cap.rigClip!.target!.x + 120)).toBeLessThan(30);
   });
 
-  it('off the bay the 400 u hover deposit still works (no crane)', { timeout: 30_000 }, async () => {
+  it('off the bay the Capital takes no hover deposit (3f: park in its bay instead)', { timeout: 30_000 }, async () => {
     const pid = randomUUID();
     // Beside the Capital (-x side), inside 400 u of its centre, nowhere near the bay.
-    const { cap, shipId } = await boot(pid, -340, 0);
-    expect(await until(() => getHoldStore().get(shipId) === undefined, 6_000), 'hover deposit banks the hold').toBe(true);
+    const { cap, cr, shipId } = await boot(pid, -340, 0);
+    await harness!.advance(3_000); // past the 2 s hover dwell
+    expect(aboard(shipId), 'hovering by the Capital banks nothing').toEqual(CARGO.goods);
     expect(clipOf(cap)).toBeUndefined();
-    expect(cap.hold?.goods).toEqual(CARGO.goods);
+    expect(cap.hold?.goods ?? {}).toEqual({});
+    const snap = await harness!.waitForSnapshot(cr, 2_000);
+    expect(snap.states?.[shipId]?.depositing, 'no deposit bar either').toBeUndefined();
+  });
+
+  it('a Cargo Bay keeps the hover deposit, even with the Capital nearer', { timeout: 30_000 }, async () => {
+    const pid = randomUUID();
+    // Ship 340 u from the Capital, 380 u from the Cargo Bay: both in range, the
+    // Capital nearer; only the Cargo Bay is a hover drop-off.
+    const { room, cap, cr, shipId } = await boot(pid, -340, 0);
+    cr.send('place_structure', { type: 'place_structure', kind: 'cargo_bay', x: -720, y: 0 });
+    const reg = room._internals.structureRegistry;
+    expect(await until(() => [...reg.all()].some((r) => r.owner === pid && r.kind === 'cargo_bay'), 5_000)).toBe(true);
+    const bay = [...reg.all()].find((r) => r.owner === pid && r.kind === 'cargo_bay')!;
+    bay.isConstructed = true; // skip the build: only a built bay is storage
+    expect(await until(() => getHoldStore().get(shipId) === undefined, 6_000), 'hover deposit banks the hold').toBe(true);
+    expect(bay.hold?.goods).toEqual(CARGO.goods);
+    expect(cap.hold?.goods ?? {}).toEqual({});
   });
 });

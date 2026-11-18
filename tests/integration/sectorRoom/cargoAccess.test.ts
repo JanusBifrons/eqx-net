@@ -61,9 +61,10 @@ describe('SectorRoom integration — cargo access (C1)', () => {
     let shipId = '';
     for (const [, s] of (r.state as SectorState).ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
 
-    // 350 u centre to centre: inside auto-deposit range (400), so a withdrawal
-    // would be banked straight back without the manual-cargo rule.
-    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: 350 });
+    // Parked on the Capital's crane bay (bay centre = Capital + (0, 410), 410 u
+    // centre to centre, past the 400 u hover range): the crane would bank a
+    // withdrawal straight back without the manual-cargo rule.
+    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: -410 });
     expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5_000)).toBe(true);
     const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
     cap.hold = { goods: { alloy: 10 }, blueprints: [] };
@@ -85,6 +86,7 @@ describe('SectorRoom integration — cargo access (C1)', () => {
 
     // The 2 s auto-deposit dwell would have banked it by now; it must not.
     await new Promise((res) => setTimeout(res, 3000));
+    expect(cap.rigClip?.clipId, 'the crane must not reach for a withdrawal').toBeUndefined();
     expect(getHoldStore().get(shipId)?.hold.goods.alloy, 'a withdrawal must stick').toBe(3);
   });
 

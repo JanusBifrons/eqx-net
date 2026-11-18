@@ -5,7 +5,7 @@
  * Moving / leaving during reach or hold aborts (retract, nothing banked); one
  * ship per crane; the dock's import orders filter what it takes (no orders at
  * all ⇒ everything; export-only ⇒ nothing); the bay beats a nearer Capital.
- * The plain Capital hover deposit is locked by `storageDeposit.test.ts`.
+ * The hover deposit (Cargo Bay only, 3f) is locked by `capitalCraneBay.test.ts`.
  *
  * Dock at (0, 0), rot 0: its bay centre is world (0, 460) (`DOCK_BAY_CY`).
  * Real game rules, real time: one cycle ≈ 0.75 s settle + 1 s reach + 3 s
