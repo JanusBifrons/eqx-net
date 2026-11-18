@@ -38,7 +38,7 @@ Signalling (offer / answer / ICE candidates) rides the existing Colyseus WebSock
 
 ## Server-side
 
-[`src/server/transport/webrtcChannel.ts`](../../src/server/transport/webrtcChannel.ts) — `WebRtcChannelManager` (one per SectorRoom). Owns a `Map<sessionId, Entry>` where Entry holds `{ pc, dc, signaling, degraded, sentViaDc, sentViaWs, dcThrows, dcBackpressureHits, dcSlowSends }`. Native binding lives in [`webrtcChannelFactory.ts`](../../src/server/transport/webrtcChannelFactory.ts) — separate module so unit tests of the manager don't pay the `node-datachannel` native-init cost.
+[`src/server/transport/webrtcChannel.ts`](../../src/server/transport/webrtcChannel.ts) — `WebRtcChannelManager` (one per SectorRoom). The room's `webrtc_offer` / `webrtc_ice` / `webrtc_fallback` handlers are in [`src/server/rooms/features/webrtcMessages.ts`](../../src/server/rooms/features/webrtcMessages.ts). Owns a `Map<sessionId, Entry>` where Entry holds `{ pc, dc, signaling, degraded, sentViaDc, sentViaWs, dcThrows, dcBackpressureHits, dcSlowSends }`. Native binding lives in [`webrtcChannelFactory.ts`](../../src/server/transport/webrtcChannelFactory.ts) — separate module so unit tests of the manager don't pay the `node-datachannel` native-init cost.
 
 Three-signal back-pressure (hostile review #4 from the plan):
 

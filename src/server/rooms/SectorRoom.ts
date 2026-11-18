@@ -71,7 +71,6 @@ import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPose
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { mountPriority, targetClassOfKind, STRUCTURE_TARGET_CLASS } from '../../core/combat/mountTargeting.js';
-import { decodeAim } from '../../core/combat/manualAim.js';
 import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
@@ -223,11 +222,6 @@ import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
 import { WebRtcChannelManager, type WebRtcEntryCounters } from '../transport/webrtcChannel.js';
 import { nodeDataChannelPeerConnectionFactory } from '../transport/webrtcChannelFactory.js';
-import {
-  WebRtcOfferMessageSchema,
-  WebRtcIceMessageSchema,
-  WebRtcFallbackMessageSchema,
-} from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { isEngageablePilotHull, isLingeringHull, isPilotedActive } from '../../core/entity/shipLiveness.js';
@@ -354,12 +348,6 @@ import {
   PilotShipSchema,
   SpectateSchema,
   CommandSchema,
-  LockRequestSchema,
-  LockCancelSchema,
-  LockTrackSchema,
-  SetGroupModeSchema,
-  SelectEntitySchema,
-  DeselectEntitySchema,
 } from '../../shared-types/messages.js';
 import type { EntityStatsMessage } from '../../shared-types/messages/selectionMessages.js';
 import { SelectionStatsSubsystem, type Selection } from './SelectionStatsSubsystem.js';
@@ -3396,7 +3384,8 @@ export class SectorRoom extends Room<SectorState> {
 
     // Client-message features (features/index.ts): test-only cues, teleporters,
     // trade, the research lab, blueprints, cargo, structures, structure
-    // settings, bounties and ship upgrades.
+    // settings, bounties, ship upgrades, fleet commands, fire-control locks,
+    // selection stats and WebRTC signalling.
     this.roomFeatures = registerRoomFeatures({
       devTest: {
         testMode: this.testMode,
@@ -3465,6 +3454,10 @@ export class SectorRoom extends Room<SectorState> {
       fleetStatusSoon: this.fleetStatusSoon,
       serverTick: () => this.serverTick,
       playerToActiveShipInstance: this.playerToActiveShipInstance,
+      lockMsgAllowed: (sid) => this.lockMsgAllowed(sid),
+      fireControlLocks: () => this.locks,
+      selectionStats: () => this.selectionStats,
+      webrtcChannelManager: () => this.webrtcChannelManager,
     });
 
     // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
@@ -3513,109 +3506,6 @@ export class SectorRoom extends Room<SectorState> {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
       this.enterSpectate(playerId);
-    });
-
-    // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────
-    // The renderer tells the main thread which entity is selected; the client
-    // forwards ship/structure selections here. The ~5 Hz emit happens on
-    // `selectionStatsTimer` (off the hot path); these handlers only register /
-    // clear the per-connection selection. Per-session cleanup on disconnect /
-    // transit lives in `onLeave` (no 5 Hz leak).
-    // Fire control: lock / unlock / group mode. The four lock messages share a
-    // per-session cap of MAX_LOCK_MSGS_PER_TICK per tick (like inputs); the
-    // excess is silently dropped.
-    this.onMessage('lock_request', (client: Client, raw: unknown) => {
-      if (!this.lockMsgAllowed(client.sessionId)) return;
-      const parsed = LockRequestSchema.safeParse(raw);
-      if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_request'); return; }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid !== undefined) this.locks.requestLock(pid, parsed.data.groupId, parsed.data.target);
-    });
-    this.onMessage('lock_track', (client: Client, raw: unknown) => {
-      if (!this.lockMsgAllowed(client.sessionId)) return;
-      const parsed = LockTrackSchema.safeParse(raw);
-      if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_track'); return; }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      const b = parsed.data.b;
-      if (pid !== undefined) this.locks.trackLock(pid, parsed.data.groupId, parsed.data.target, b === undefined ? undefined : decodeAim(b));
-    });
-    this.onMessage('lock_cancel', (client: Client, raw: unknown) => {
-      if (!this.lockMsgAllowed(client.sessionId)) return;
-      const parsed = LockCancelSchema.safeParse(raw);
-      if (!parsed.success) { this.malformed.record(client.sessionId, 'lock_cancel'); return; }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid !== undefined) this.locks.cancelLock(pid, parsed.data.groupId, parsed.data.target);
-    });
-    this.onMessage('set_group_mode', (client: Client, raw: unknown) => {
-      if (!this.lockMsgAllowed(client.sessionId)) return;
-      const parsed = SetGroupModeSchema.safeParse(raw);
-      if (!parsed.success) { this.malformed.record(client.sessionId, 'set_group_mode'); return; }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid !== undefined) this.locks.setMode(pid, parsed.data.groupId, parsed.data.mode);
-    });
-
-    this.onMessage('select_entity', (client: Client, raw: unknown) => {
-      const parsed = SelectEntitySchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'select_entity');
-        return;
-      }
-      this.selectionStats.select(client.sessionId, parsed.data.id, parsed.data.kind);
-    });
-
-    this.onMessage('deselect_entity', (client: Client, raw: unknown) => {
-      const parsed = DeselectEntitySchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'deselect_entity');
-        return;
-      }
-      this.selectionStats.deselect(client.sessionId);
-    });
-
-    // ── Phase 1 swift-otter — WebRTC signaling handlers ─────────────────
-    //
-    // Client is the offerer; server is the answerer. Drop silently on
-    // schema failure per the validation contract — sampled warn so a
-    // malicious client can't flood the log. The manager handles
-    // out-of-order ICE (counts iceDroppedBeforeOffer if a candidate
-    // arrives before the offer).
-    this.onMessage('webrtc_offer', (client: Client, raw: unknown) => {
-      const parsed = WebRtcOfferMessageSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'webrtc_offer');
-        return;
-      }
-      this.webrtcChannelManager?.handleOffer(client.sessionId, parsed.data.sdp);
-    });
-
-    this.onMessage('webrtc_ice', (client: Client, raw: unknown) => {
-      const parsed = WebRtcIceMessageSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'webrtc_ice');
-        return;
-      }
-      this.webrtcChannelManager?.handleIce(
-        client.sessionId,
-        parsed.data.candidate,
-        parsed.data.mid,
-      );
-    });
-
-    // Hostile #9 — client declares fallback explicitly. We clean up the
-    // PC immediately (no waiting for ICE-deadline expiry) and ACK so the
-    // client knows it can stop sending signaling.
-    this.onMessage('webrtc_fallback', (client: Client, raw: unknown) => {
-      const parsed = WebRtcFallbackMessageSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'webrtc_fallback');
-        return;
-      }
-      serverLogEvent('webrtc_client_fallback', {
-        sessionId: client.sessionId,
-        reason: parsed.data.reason ?? 'unspecified',
-      });
-      this.webrtcChannelManager?.cleanup(client.sessionId);
-      client.send('webrtc_fallback_ack', { type: 'webrtc_fallback_ack' });
     });
 
     this.bus.on('SHIP_DESTROYED', (evt) => {

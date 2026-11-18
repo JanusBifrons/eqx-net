@@ -162,6 +162,8 @@ volley, then its turrets went home.
   nothing" (no length cap since 2026-11-14: locks work at any distance).
 - `lock_request`, `lock_track`, `lock_cancel` and `set_group_mode` share a cap of
   `MAX_LOCK_MSGS_PER_TICK` (3) per session per tick; the excess is dropped.
+  Handlers: `src/server/rooms/features/fireControlMessages.ts` (cap checked
+  before the parse, via the room's `lockMsgAllowed`).
 
 **Cost.** NPC lock step is O(pilots × hostile NPCs) at 10 Hz:
 `benchmarks/npc-locks.bench.ts` measures ~0.015 ms for 56 drones × 4 pilots and
