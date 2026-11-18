@@ -21,8 +21,6 @@
  * (extracted to `LivingWorldRoom.ts` so the type lives beside the
  * sub-modules that consume it).
  */
-import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
-import { nearestSite, sectorSites } from '../../core/galaxy/sectorSites.js';
 import type { Bus, BusEventPayloads } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
@@ -30,19 +28,12 @@ import { guarded } from '../rooms/guardedLoop.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { BotTransitController } from './BotTransitController.js';
 import {
-  sectorEdgePose,
-  squadEdgePose,
-  SQUAD_RESPAWN_EPOCH_MS,
   nextHopToward,
-  pickEntrySector,
   liveEntrySectors,
-  pickRoamGoal,
   enemyBotCountsBySector,
   type Rng,
 } from './population.js';
-import { getNeighbours, isEntrySector } from '../../core/galaxy/galaxy.js';
 import { sectorController } from '../../core/galaxy/control.js';
-import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { BotCarry } from './botTypes.js';
 import type { SectorLiveState, SectorOwner } from '../../shared-types/galaxySnapshot.js';
 import type { WorldEventView } from '../../shared-types/worldEvents.js';
@@ -61,7 +52,9 @@ import {
 import { DRONE_BOT_ID_PREFIX } from './directorBotIds.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { WaveSquadBehaviour } from './director/SquadBehaviour.js';
-import { planClusterJoins, type ClusterCandidate } from './director/clusterJoins.js';
+import { SquadHerding } from './director/SquadHerding.js';
+import { HunterBotRespawner } from './director/HunterBotRespawner.js';
+import type { DirectorActivity } from './director/DirectorActivity.js';
 import { EscalatingWavePattern } from './director/WavePattern.js';
 import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
 import { IncomingRegistry } from './IncomingRegistry.js';
@@ -271,15 +264,6 @@ export interface LivingWorldHooks {
   sectorEvent?: (sectorKey: string) => WorldEventView | null;
 }
 
-/** Deterministic per-bot scatter around a respawn anchor (no pile-up on one point). */
-function anchorJitter(botId: string): { x: number; y: number } {
-  let h = 2166136261;
-  for (let i = 0; i < botId.length; i++) h = Math.imul(h ^ botId.charCodeAt(i), 16777619) >>> 0;
-  const a = (h % 360) * (Math.PI / 180);
-  const r = 140 + (h % 120);
-  return { x: Math.cos(a) * r, y: Math.sin(a) * r };
-}
-
 /** Display label for a squad's homogeneous hull in the warp-in warning
  *  ("8 × Legionnaires"). v1 squads are all `fighter`, shown as "Legionnaire"
  *  (a flavour codename, NOT a ship-kind — invariant #11; the wire `shipKind`
@@ -360,38 +344,7 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   mergeClusters: false,
 };
 
-/** Leader-course tunables (non-combat herding). Radius (game units) of the ring
- *  the LEADER's in-sector A→B course points are drawn from, centred on origin.
- *  Legs are LONG chords of this ring (up to ~2× the radius) so the herd CRUISES
- *  edge-to-edge ACROSS the sector — over the long roam dwell it traverses the
- *  central zone (encounterable) while ARRIVING at the edge, never popping in on
- *  top of a player at the centre (the 2026-06-19 playtest "spawned on top" fix —
- *  the central-arrival experiment was reverted; visibility comes from the long
- *  dwell + long legs, not from arriving on top). */
-export const FORMATION_DEST_RANGE = sectorSpace(2000);
-
-/** Centre a roaming squad's flock course circles: the pocket nearest (x, y)
- *  in a solar-system sector, else the sector origin (today). */
-export function flockCentre(sectorKey: string, x: number, y: number): { x: number; y: number } {
-  if (!SOLAR_SECTORS) return { x: 0, y: 0 };
-  const site = nearestSite(sectorSites(sectorKey), x, y);
-  return site ? { x: site.x, y: site.y } : { x: 0, y: 0 };
-}
-/** Re-pick the leader's course once it's within this distance of it (so the herd
- *  continuously flies new A→B legs rather than parking). */
-const FORMATION_DEST_ARRIVE = 250;
-/** Angular spread (rad) around the "fly to the far side" bearing for course
- *  variety. The leader always aims roughly ACROSS the central zone (opposite its
- *  current bearing) so every leg is LONG — otherwise a random absolute point can
- *  land next to the leader and it just mills in place (the milling bug). */
-const FORMATION_LEG_SPREAD = Math.PI / 2;
-/** Non-combat herding: the squad is "gathered" (the leader may cruise its course)
- *  while every follower is within this distance of the leader. When the farthest
- *  follower is beyond it, the director HOLDS the leader at its own pose so the
- *  flock catches up — the user's "you can also just make the leader wait". Set
- *  comfortably above the boids settle band (separation floor → follow radius ≈
- *  150–220) so a gathered herd isn't whipsawed back into a hold by minor drift. */
-const FLOCK_GATHER_RADIUS = 500;
+export { FORMATION_DEST_RANGE, flockCentre } from './director/SquadHerding.js';
 
 /** Throttle (ms) for the director's crash-defence state persist inside the
  *  control loop — matches the 60 s sector-snapshot cadence. The PRIMARY persist
@@ -429,17 +382,13 @@ export class LivingWorldDirector {
   /** Phase-3 — cached live per-sector snapshot for `GET /galaxy/snapshot`,
    *  recomputed once per ~1.5 s control tick so HTTP requests are O(1). */
   private galaxyStatsCache: SectorLiveState[] = [];
-  /** squadId → wall-clock the squad may next pick a new roam goal (the
-   *  slow-roam dwell). Idle squads drift one roam hop per `roamIntervalMs`. */
-  private readonly squadRoamNextAtMs = new Map<string, number>();
-  /** Merged clusters (`mergeClusters`): joiner squadId → host squadId. */
-  private clusterJoins: Map<string, string> = new Map();
-  /** Non-combat herding: squadId → the LEADER's current IN-SECTOR A→B course
-   *  point (the leader cruises to it; followers flock to the leader). Re-picked
-   *  once the leader arrives. */
-  private readonly squadFormationDest = new Map<string, { x: number; y: number }>();
-  /** Reused scratch for the active-members-in-sector list (alloc-free). */
-  private readonly _formationMembers: string[] = [];
+  /** Roam + merged clusters + in-sector herding (`director/SquadHerding.ts`). */
+  private readonly herding: SquadHerding;
+  /** Respawn ingress + arrival resolvers (`director/HunterBotRespawner.ts`). */
+  private readonly respawner: HunterBotRespawner;
+  /** Extension point: control-tick world activities, run in order (step 2b).
+   *  A new activity is a `DirectorActivity` file + one entry here. */
+  private readonly activities: readonly DirectorActivity[];
   /** Per-room (bus, handler) pairs for clean teardown. */
   private readonly subs: Array<{
     bus: Bus;
@@ -510,6 +459,10 @@ export class LivingWorldDirector {
       onUnknownDest: (destSectorKey, id) =>
         serverLogEvent('warp_warning_no_room', { destSectorKey, id }),
     });
+    const shared = { rooms: this.rooms, sectorKeys: this.sectorKeys, pool: this.pool, squadPool: this.squadPool, rng: this.rng, opts: this.opts };
+    this.respawner = new HunterBotRespawner({ ...shared, hooks: this.hooks, lastShedAtMs: () => this.lastShedAtMs });
+    this.herding = new SquadHerding({ ...shared, advanceMembersTowardGoal: (sq) => this.advanceMembersTowardGoal(sq) });
+    this.activities = [this.herding];
   }
 
   /** Begin the control loop. Idempotent. The interval is `unref`'d so it
@@ -708,12 +661,9 @@ export class LivingWorldDirector {
       for (const step of this.waveDirector.plan(now)) this.executeWaveStep(step);
     }
 
-    // ── 2b. roam idle/unassigned squads (the ambient floor replacement) ──
-    this.roamStep(now);
-
-    // ── 2b-ii. herd gathered idle squads: leader cruises a course, the rest
-    //          FLOCK to it (continuous boids in the drone brain) ──
-    this.flockStep();
+    // ── 2b. world activities, in order: roam idle/unassigned squads, then
+    //        herd gathered ones (leader course + flock roles) — `SquadHerding` ──
+    for (let i = 0; i < this.activities.length; i++) this.activities[i]!.step(now);
 
     // ── 2c. clear "incoming" banners for squads that have arrived ────────
     this.reconcileIncoming();
@@ -861,169 +811,19 @@ export class LivingWorldDirector {
     }
   }
 
-  /**
-   * Slow-roam idle, UNASSIGNED squads around the galaxy graph (the ambient
-   * patrol floor replacement). A squad drifts one roam hop per `roamIntervalMs`
-   * once it has gathered at its current goal: pick a random LIVE neighbour as
-   * the new goal, then advance members toward it hop-by-hop. Roaming squads stay
-   * NEUTRAL — hostility is marked ONLY in the wave `attack` branch, never here —
-   * so a roaming pack that drifts through a base-less player's sector does not
-   * hunt them. Roam hops are real despawn→spawn pairs (`bot_transit_commit`),
-   * never from-nowhere ingress, so they may legally enter interior sectors.
-   *
-   * WS-E #22 — roaming squads AVOID active-combat sectors. The roam-goal pick is
-   * given an `avoidCombat` predicate built from each room's `recentCombat()`
-   * (a non-null summary ⇒ combat within the ~5-min sliding window), so a neutral
-   * pack re-routes around a firefight; if every live neighbour is in combat the
-   * squad HOLDS at its current sector. An avoidance that changed the outcome is
-   * audit-logged (`roam_avoid_combat`).
-   */
-  private roamStep(now: number): void {
-    const avoidCombat = (sectorKey: string): boolean => this.sectorInRecentCombat(sectorKey);
-    if (this.opts.mergeClusters) this.planClusters();
-    for (const sq of this.squadPool.all()) {
-      if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
-      // A squad merged into a cluster takes its host's goal (set when the host
-      // picks one, below) instead of choosing its own.
-      if (this.clusterJoins.has(sq.squadId)) {
-        this.advanceMembersTowardGoal(sq);
-        continue;
-      }
-      const sched = this.squadRoamNextAtMs.get(sq.squadId);
-      if (sched === undefined) {
-        // First sighting: dwell at the home edge before the first drift.
-        this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
-      } else if (now >= sched && this.squadGatheredAt(sq, sq.sectorKey)) {
-        const from = sq.sectorKey;
-        // Did we skip ANY live neighbour for being in combat? Compute it BEFORE
-        // the (single) RNG-consuming pick so we don't perturb the draw — the
-        // audit wants the name of a representative skipped sector.
-        const avoided = this.firstCombatNeighbour(from);
-        const goal = pickRoamGoal(this.rng, from, this.sectorKeys, avoidCombat);
-        sq.sectorKey = goal;
-        this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
-        // Its merged squads travel with it.
-        for (const [joinerId, hostId] of this.clusterJoins) {
-          if (hostId !== sq.squadId) continue;
-          const joiner = this.squadPool.get(joinerId);
-          if (joiner === undefined) continue;
-          joiner.sectorKey = goal;
-          this.squadRoamNextAtMs.set(joinerId, now + this.opts.roamIntervalMs);
-        }
-        // Audit a combat-driven re-route: a neighbour was skipped for combat and
-        // the squad picked elsewhere (or held at `from` because all were unsafe).
-        if (avoided !== null && goal !== avoided) {
-          auditEvent({
-            event: 'roam_avoid_combat',
-            sector: from,
-            squadId: sq.squadId,
-            from,
-            avoided,
-            to: goal,
-          });
-          serverLogEvent('roam_avoid_combat', { squadId: sq.squadId, from, avoided, to: goal });
-        }
-      }
-      // Always drift toward the current goal (no-op once gathered there).
-      this.advanceMembersTowardGoal(sq);
-    }
-  }
-
-  /** WS-E #22 — true iff `sectorKey`'s room reports combat within its recent
-   *  window (`recentCombat()` returns non-null). The room owns the ~5-min
-   *  sliding `RecentCombatLog`; the director just queries it for roam routing.
-   *  Off the 60 Hz loop (the ~1.5 s control tick). */
-  private sectorInRecentCombat(sectorKey: string): boolean {
-    return this.rooms.get(sectorKey)?.recentCombat?.() != null;
-  }
-
-  /** WS-E #22 — a representative LIVE neighbour of `from` that's in active combat
-   *  (for the `roam_avoid_combat` audit's `avoided` field), or null when none.
-   *  Order follows the galaxy graph adjacency so it's deterministic. Control-tick
-   *  cadence — off the 60 Hz loop. */
-  private firstCombatNeighbour(from: string): string | null {
-    for (const n of getNeighbours(from)) {
-      if (this.rooms.has(n.key) && this.sectorInRecentCombat(n.key)) return n.key;
-    }
-    return null;
-  }
-
-  /** True iff the squad has ≥1 active member, ALL its active members are in
-   *  `sector`, and none is in flight — i.e. the squad has fully gathered there.
-   *  Respawning members (warping in from the edge) are ignored: a squad with a
-   *  reinforcement still inbound is "gathered" for roam-decision purposes and
-   *  the reinforcement simply chases the next goal. */
+  /** True iff the squad has fully gathered in `sector` (see `SquadHerding`). */
   private squadGatheredAt(squad: SquadRecord, sector: string): boolean {
-    let active = 0;
-    for (const botId of squad.botIds) {
-      const rec = this.pool.get(botId);
-      if (!rec) continue;
-      if (rec.state === 'in-transit') return false;
-      if (rec.state === 'active') {
-        if (rec.sectorKey !== sector) return false;
-        active++;
-      }
-    }
-    return active > 0;
+    return this.herding.squadGatheredAt(squad, sector);
   }
 
-  /**
-   * Non-combat herding ("AI bots which are 'roaming' just sit there… designate a
-   * leader given a course, then use flocking/herding to guide the rest").
-   * Replaces the old fixed-wedge-slot scheme (which assigned each follower a
-   * STATIC world point every ~1.5 s and `arrive`d/STOPPED at it — a static blob,
-   * not a formation). For every IDLE, unassigned squad gathered in one sector,
-   * designate the first active member the LEADER, cruise it along a wandering
-   * in-sector A→B course, and mark every OTHER member a FOLLOWER that FLOCKS to
-   * the leader.
-   *
-   * THE STEERING IS PER-TICK IN THE DRONE BRAIN (60 Hz, `HostileDroneBehaviour.
-   * tickFlock`): continuous cohesion/alignment/separation against the leader's +
-   * neighbours' LIVE poses. This method only assigns ROLES at the control-loop
-   * cadence (1.5 s is fine for ROLE assignment — only the steering must be 60 Hz,
-   * which is exactly why the old slot-at-1.5 s scheme failed).
-   *
-   * Combat overrides this: a hostile (waved) drone is in COMBAT and never reads
-   * the flock role, so a squad under attack pursues normally.
-   */
-  /** Re-plan merged clusters (`mergeClusters`): squads idle in the same
-   *  sector join the first one there (`planClusterJoins`). Control cadence. */
-  private planClusters(): void {
-    const cands: ClusterCandidate[] = [];
-    for (const sq of this.squadPool.all()) {
-      let live = 0;
-      for (const botId of sq.botIds) {
-        const rec = this.pool.get(botId);
-        if (rec && (rec.state === 'active' || rec.state === 'in-transit')) live++;
-      }
-      cands.push({
-        squadId: sq.squadId,
-        sectorKey: sq.sectorKey,
-        eligible: sq.state === 'idle' && sq.targetFactionId === null,
-        gathered: this.squadGatheredAt(sq, sq.sectorKey),
-        size: live,
-      });
-    }
-    const next = planClusterJoins(cands, this.clusterJoins);
-    for (const [j, h] of next) {
-      if (this.clusterJoins.get(j) !== h) serverLogEvent('robot_cluster_merged', { squadId: j, hostId: h, sector: this.squadPool.get(h)?.sectorKey });
-    }
-    this.clusterJoins = next;
+  /** Roam dwell schedule (owned by `SquadHerding`; tests reach it by name). */
+  private get squadRoamNextAtMs(): Map<string, number> {
+    return this.herding.squadRoamNextAtMs;
   }
 
-  /** The cluster (host + joined squads) bots in `sectorKey`, host's first —
-   *  the first is the cluster's leader. Control cadence (allocates). */
+  /** The cluster (host + joined squads) bots in `sectorKey`, host's first. */
   clusterMembersOf(hostId: string, sectorKey: string): string[] {
-    const out: string[] = [];
-    const add = (sq: SquadRecord | undefined): void => {
-      for (const botId of sq?.botIds ?? []) {
-        const rec = this.pool.get(botId);
-        if (rec && rec.state === 'active' && rec.sectorKey === sectorKey) out.push(botId);
-      }
-    };
-    add(this.squadPool.get(hostId));
-    for (const [j, h] of this.clusterJoins) if (h === hostId) add(this.squadPool.get(j));
-    return out;
+    return this.herding.clusterMembersOf(hostId, sectorKey);
   }
 
   /** A squad's current goal sector (inspection / tests). */
@@ -1033,145 +833,7 @@ export class LivingWorldDirector {
 
   /** Merged clusters (inspection / tests): joiner squadId → host squadId. */
   clusters(): ReadonlyMap<string, string> {
-    return this.clusterJoins;
-  }
-
-  private flockStep(): void {
-    // Env-gated herd diagnostics (`EQX_BOT_*`-style): off by default, inert in
-    // production. Emits one `flock_debug` per idle squad per control tick (skip
-    // reason or herd metrics: leaderR / maxGap / gathered / dest) → read via
-    // GET /dev/events. The live-diagnosis + tuning lever for the herd.
-    const dbg = process.env['EQX_FLOCK_DEBUG'] === '1';
-    for (const sq of this.squadPool.all()) {
-      if (sq.state !== 'idle' || sq.targetFactionId !== null) {
-        if (dbg)
-          serverLogEvent('flock_debug', {
-            squadId: sq.squadId,
-            sector: sq.sectorKey,
-            skip: sq.state !== 'idle' ? `state=${sq.state}` : `targetFaction=${sq.targetFactionId}`,
-          });
-        continue;
-      }
-      const room = this.rooms.get(sq.sectorKey);
-      if (!room) {
-        if (dbg) serverLogEvent('flock_debug', { squadId: sq.squadId, sector: sq.sectorKey, skip: 'no-room' });
-        continue;
-      }
-
-      // A merged cluster flocks as ONE pack on the HOST's leader: a joined
-      // squad's bots follow it (with the whole cluster for separation).
-      const hostId = this.clusterJoins.get(sq.squadId);
-      if (hostId !== undefined) {
-        const pack = this.clusterMembersOf(hostId, sq.sectorKey);
-        const hostLeader = pack[0];
-        const hostSq = this.squadPool.get(hostId);
-        if (hostLeader !== undefined && hostSq !== undefined && hostSq.botIds.includes(hostLeader)) {
-          for (const botId of pack) if (sq.botIds.includes(botId)) room.setBotFlockFollow(botId, hostLeader, pack);
-          continue;
-        }
-      }
-
-      // Active members present in this sector, in stable botIds order so the
-      // leader designation is deterministic.
-      const members = this._formationMembers;
-      members.length = 0;
-      let nTransit = 0;
-      let nElsewhere = 0;
-      for (const botId of sq.botIds) {
-        const rec = this.pool.get(botId);
-        if (!rec) continue;
-        if (rec.state === 'active' && rec.sectorKey === sq.sectorKey) members.push(botId);
-        else if (rec.state === 'in-transit') nTransit++;
-        else if (rec.state === 'active') nElsewhere++;
-      }
-      if (members.length === 0) {
-        if (dbg)
-          serverLogEvent('flock_debug', {
-            squadId: sq.squadId,
-            sector: sq.sectorKey,
-            skip: 'no-active-members',
-            inTransit: nTransit,
-            activeElsewhere: nElsewhere,
-          });
-        continue;
-      }
-
-      const leaderId = members[0]!;
-      const leaderPose = room.getBotPose(leaderId);
-      if (!leaderPose) {
-        if (dbg) serverLogEvent('flock_debug', { squadId: sq.squadId, sector: sq.sectorKey, skip: 'no-leader-pose' });
-        continue;
-      }
-
-      // Pick / refresh the leader's COURSE once it has (nearly) arrived (or has
-      // none yet). Aim ACROSS the central zone — a point on the radius-RANGE ring
-      // roughly OPPOSITE the leader's current bearing (± a spread for variety) —
-      // so every leg is LONG and the leader genuinely CRUISES (the herd flies
-      // with it) instead of milling near a randomly-close point.
-      let dest = this.squadFormationDest.get(sq.squadId);
-      if (
-        dest === undefined ||
-        Math.hypot(dest.x - leaderPose.x, dest.y - leaderPose.y) < FORMATION_DEST_ARRIVE
-      ) {
-        // The course circles the squad's POCKET (solar-system sectors, Phase 4:
-        // the one nearest the leader; off = the sector origin, as today), so a
-        // squad that arrived at a gate pocket flocks there instead of setting
-        // off on a 170 km drift toward home.
-        const c = flockCentre(sq.sectorKey, leaderPose.x, leaderPose.y);
-        const awayAng =
-          Math.atan2(leaderPose.y - c.y, leaderPose.x - c.x) + Math.PI + (this.rng() - 0.5) * FORMATION_LEG_SPREAD;
-        dest = {
-          x: c.x + Math.cos(awayAng) * FORMATION_DEST_RANGE,
-          y: c.y + Math.sin(awayAng) * FORMATION_DEST_RANGE,
-        };
-        this.squadFormationDest.set(sq.squadId, dest);
-      }
-
-      // "Make the leader wait": measure how spread the squad is (the farthest
-      // follower's gap to the leader). While the herd is gathered the leader
-      // cruises its far course (throttled in the brain so followers tighten);
-      // while it's spread the leader HOLDS at its own pose so the flock catches
-      // up. Either way the leader role is THROTTLED via setBotFlockLeaderCourse —
-      // followers move at full cruise and converge.
-      let maxGap = 0;
-      for (let i = 1; i < members.length; i++) {
-        const fp = room.getBotPose(members[i]!);
-        if (!fp) continue;
-        const g = Math.hypot(fp.x - leaderPose.x, fp.y - leaderPose.y);
-        if (g > maxGap) maxGap = g;
-      }
-      const gathered = maxGap <= FLOCK_GATHER_RADIUS;
-      if (dbg)
-        serverLogEvent('flock_debug', {
-          squadId: sq.squadId,
-          sector: sq.sectorKey,
-          herded: true,
-          members: members.length,
-          inTransit: nTransit,
-          activeElsewhere: nElsewhere,
-          maxGap: Math.round(maxGap),
-          gathered,
-          leaderR: Math.round(Math.hypot(leaderPose.x, leaderPose.y)),
-          leaderX: Math.round(leaderPose.x),
-          leaderY: Math.round(leaderPose.y),
-          destX: Math.round(dest.x),
-          destY: Math.round(dest.y),
-        });
-      if (gathered) {
-        room.setBotFlockLeaderCourse(leaderId, dest.x, dest.y);
-      } else {
-        room.setBotFlockLeaderCourse(leaderId, leaderPose.x, leaderPose.y);
-      }
-
-      // Every other member FLOCKS to the leader (continuous boids in the brain,
-      // resolved against the leader's LIVE pose — not a stale slot). `members`
-      // includes the leader; the follower brain skips self + the leader in its
-      // separation loop. Passing the reused `members` array is safe —
-      // `setFlockFollow` copies it synchronously.
-      for (let i = 1; i < members.length; i++) {
-        room.setBotFlockFollow(members[i]!, leaderId, members);
-      }
-    }
+    return this.herding.clusters();
   }
 
   /** Execute one WaveDirector step (the side-effecting half — the planning is
@@ -1442,142 +1104,25 @@ export class LivingWorldDirector {
     this.incoming.forEachInbound(destSectorKey, send);
   }
 
-  /**
-   * WS-E #15 — build the optional `hostileToFaction` spawn spec for a bot landing
-   * in `sectorKey`. A member is marked hostile INLINE at spawn ONLY when its
-   * squad is on a wave (`targetFactionId` set) AND that wave targets THIS very
-   * sector (the squad has reached its goal). Resolved against the destination
-   * room (the only place that holds the faction's structure ids). Returns `{}`
-   * (spread to nothing) for a roaming/neutral spawn or an intermediate hop — so a
-   * member only flips hostile on landing AT the base, never mid-traverse.
-   *
-   * This closes the warp-arrive race: the old path spawned the member on a
-   * macrotask AFTER the control tick's `markSquadHostileToFaction` ran, so the
-   * arriving record didn't exist yet (`!rec` early-return) and the member stayed
-   * neutral until the next ~1.5 s pulse.
-   */
+  /** WS-E #15 — inline-hostility spawn spec (body in `HunterBotRespawner`). */
   private hostileSpecFor(
     botId: string,
     sectorKey: string,
   ): { hostileToFaction?: { playerId: string; structureIds: readonly string[] } } {
-    const squad = this.squadPool.squadOf(botId);
-    if (!squad || squad.targetFactionId === null) return {};
-    // Only mark hostile when the member is landing in the squad's TARGET sector
-    // (the base). An intermediate-hop arrival stays neutral until it reaches the
-    // base, matching the wave's `attack`-only hostility pulse.
-    if (squad.sectorKey !== sectorKey) return {};
-    const room = this.rooms.get(sectorKey);
-    if (!room || !room.factionHostility) return {};
-    return { hostileToFaction: room.factionHostility(squad.targetFactionId) };
+    return this.respawner.hostileSpecFor(botId, sectorKey);
   }
 
-  /**
-   * WS-E #13/#19 — the ARRIVAL pose for a hopping member. A WAVE hop (squad has a
-   * `targetFactionId`) carries the bot's pre-despawn SAB pose (CLAMPED to the
-   * destination bounds — the same defense-in-depth `clampToSectorBounds` the
-   * player `TransitOrchestrator.commitTransit` uses), so a squad's members arrive
-   * SPREAD near where they each were in the source sector instead of all snapping
-   * to one clustered edge anchor (the "all attacking drones appear in exactly the
-   * same place" report). A ROAM hop (no target) returns null ⇒ the controller
-   * falls back to the EDGE spawn, preserving the "roamers enter from the edge,
-   * never pop in on top of a player at the centre" invariant (2026-06-19).
-   */
+  /** WS-E #13/#19 — arrival pose for a hopping member (body in `HunterBotRespawner`). */
   private arrivalPoseFor(
     botId: string,
     to: string,
     carry: BotCarry,
   ): { x: number; y: number; vx: number; vy: number } | null {
-    const squad = this.squadPool.squadOf(botId);
-    if (!squad || squad.targetFactionId === null) return null; // roaming ⇒ edge spawn
-    // TestMode rooms may name the landing point (the wave E2E's base is at the
-    // origin; a carry pose up to ~7000 u away made the attack land in its
-    // window by luck). Members are spread on a small ring, at rest.
-    const fixed = this.rooms.get(to)?.testWaveArrival?.() ?? null;
-    if (fixed) {
-      const i = Math.max(0, squad.botIds.indexOf(botId));
-      const a = (i / Math.max(1, squad.botIds.length)) * Math.PI * 2;
-      return { x: fixed.x + Math.cos(a) * 60, y: fixed.y + Math.sin(a) * 60, vx: 0, vy: 0 };
-    }
-    const { x, y } = clampToSectorBounds(carry.x, carry.y);
-    return { x, y, vx: carry.vx, vy: carry.vy };
+    return this.respawner.arrivalPoseFor(botId, to, carry);
   }
 
-  /** Step 1 of `tick`: warp-in respawning bots when their delay elapses
-   *  AND shed recovery has cleared. */
+  /** Step 1 of `tick` (body in `HunterBotRespawner`). */
   private respawnStep(now: number): void {
-    const shedRecovered = now - this.lastShedAtMs > this.opts.shedRecoveryMs;
-    for (const rec of this.pool.values()) {
-      if (rec.state !== 'respawning' || rec.respawnAtMs > now || !shedRecovered) continue;
-      // Ingress is ALWAYS at an entry (edge) sector — a (re)spawning bot "warps
-      // in from outside known space" at the galaxy edge, NEVER in place in an
-      // interior sector (the drone-warp-in invariant). If the squad's goal is
-      // itself a live entry sector (an idle/forming squad gathered at its home
-      // entry), the bot rejoins there directly — cohesive; otherwise (the goal
-      // is an interior base / roam target) it enters at a random edge sector and
-      // traverses back hop-by-hop via `advanceMembersTowardGoal`.
-      // P3 — the robots-only ingress exception: while a respawn ANCHOR exists
-      // (a living robot nexus), reinforcements spawn AT it instead of entering
-      // from the galaxy edge.
-      const anchor = this.hooks.respawnAnchor?.() ?? null;
-      if (anchor !== null && this.rooms.has(anchor.sectorKey)) {
-        const aRoom = this.rooms.get(anchor.sectorKey)!;
-        if (!aRoom.hasFreeSlot()) { rec.respawnAtMs = now; continue; }
-        const j = anchorJitter(rec.botId);
-        const ok = aRoom.spawnLivingWorldBot({
-          botId: rec.botId, kind: rec.kind, x: anchor.x + j.x, y: anchor.y + j.y,
-        });
-        if (ok) {
-          rec.state = 'active';
-          rec.sectorKey = anchor.sectorKey;
-          rec.arrivedAtMs = now;
-          serverLogEvent('bot_spawn', { botId: rec.botId, sectorKey: anchor.sectorKey, kind: rec.kind, anchor: true });
-        } else {
-          rec.respawnAtMs = now;
-        }
-        continue;
-      }
-      const goal = this.squadPool.respawnSectorFor(rec.botId);
-      const sector =
-        goal !== null && this.rooms.has(goal) && isEntrySector(goal)
-          ? goal
-          : pickEntrySector(this.rng, this.sectorKeys);
-      const room = this.rooms.get(sector);
-      if (!room || !room.hasFreeSlot()) {
-        rec.respawnAtMs = now; // keep retrying next tick
-        continue;
-      }
-      // Spawn CLUSTERED with squadmates (the herd warps in together) when the
-      // bot belongs to a squad; the per-squad+sector anchor means a whole squad
-      // seeding/respawning into the same sector lands as one tight group.
-      // Campaign 4.1: the anchor bearing rotates per RESPAWN EPOCH (time
-      // bucket) — same-window respawns still cluster, but the same bot never
-      // rematerialises at one fixed, farmable point forever (the "all
-      // attackers appear at the exact same spot NE of 0,0" report).
-      const squadKey = this.squadPool.squadOf(rec.botId)?.squadId;
-      const epoch = Math.floor(now / SQUAD_RESPAWN_EPOCH_MS);
-      const pose = squadKey
-        ? squadEdgePose(squadKey, sector, rec.botId, epoch)
-        : sectorEdgePose(this.rng, sector);
-      const ok = room.spawnLivingWorldBot({
-        botId: rec.botId,
-        kind: rec.kind,
-        x: pose.x,
-        y: pose.y,
-        vx: pose.vx,
-        vy: pose.vy,
-        // WS-E #15 — if this (re)spawning member belongs to a squad that's
-        // ATTACKING the faction whose base lives in THIS sector, mark hostility
-        // INLINE at spawn so a combat respawn rejoins hostile, not neutral.
-        ...this.hostileSpecFor(rec.botId, sector),
-      });
-      if (ok) {
-        rec.state = 'active';
-        rec.sectorKey = sector;
-        rec.arrivedAtMs = now;
-        serverLogEvent('bot_spawn', { botId: rec.botId, sectorKey: sector, kind: rec.kind });
-      } else {
-        rec.respawnAtMs = now;
-      }
-    }
+    this.respawner.respawnStep(now);
   }
 }
