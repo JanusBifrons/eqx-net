@@ -21,6 +21,9 @@ import type { EngineShieldFxCtx } from '../engineShieldFxUpdater.js';
 import type { TurretShotCtx } from '../turretShotUpdater.js';
 import type { HitEventCtx } from '../hitEventUpdater.js';
 import { noteBlastLight, type LitSceneCtx } from '../litSceneUpdater.js';
+import { createBeamCtx, type BeamCtx, type BeamCtxRefs } from '../beamUpdater.js';
+import { raiseBeamsOverHulls } from '../beamsOverHulls.js';
+import { stackVaporiseOverBeams } from '../vaporiseBlast.js';
 import { entityPoseFromSprite, type EntityPose } from '../entityPoseFromSprite.js';
 import { BeamSpritePool } from '../../BeamSpritePool.js';
 import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, MINING_BEAM_STYLE } from '../../beamStyles.js';
@@ -170,4 +173,26 @@ export function buildBeamPoolsAndEffects(deps: EffectsDeps): BeamPoolsAndEffects
     fxKillSwitches: deps.fxKillSwitches,
   });
   return { liveBeamPool, liveBeamGfx, remoteBeamPool, remoteBeamGfx, miningBeamPool, miningBeamGfx, tractorBeamPool, effects };
+}
+
+export interface BeamCtxDeps extends BeamCtxRefs {
+  shipContainer: Container;
+  tractorBeamPool: BeamSpritePool | null;
+  fxExplosions: FxExplosions | null;
+  litSceneCtx: LitSceneCtx;
+}
+
+/** Stack the beams over the hulls and build the pooled beam ctx
+ *  (`../beamUpdater.ts`); every reference is final by here. */
+export function buildBeamCtx(deps: BeamCtxDeps): BeamCtx {
+  const { shipContainer, tractorBeamPool, fxExplosions, litSceneCtx, ...refs } = deps;
+  // Beams leave from the turrets on top of the hull, so they draw over every
+  // hull (ships spawn later and would otherwise stack above them).
+  raiseBeamsOverHulls(shipContainer, [refs.fxRemoteBeams?.container, refs.fxLiveBeams?.container],
+    [refs.liveBeamPool, refs.remoteBeamPool, refs.miningBeamPool, tractorBeamPool]);
+  // Pooled beam ctx (pixi/beamUpdater.ts): every reference is final by here.
+  const beamCtx = createBeamCtx(refs);
+  litSceneCtx.beamCtx = beamCtx; // GPU-lit beam lights (pixi/litSceneUpdater.ts)
+  stackVaporiseOverBeams(shipContainer, fxExplosions); // the vaporise flash reads over the beams
+  return beamCtx;
 }

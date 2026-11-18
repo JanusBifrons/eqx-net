@@ -71,7 +71,7 @@ const ALLOWLIST = {
   'src/client/render/HaloRadar.ts': { cap: 662, target: 600, reason: RATCHET_ONLY },
   'src/client/render/MountVisualManager.ts': { cap: 932, target: 600, reason: RATCHET_ONLY },
   'src/client/render/PixiRenderer.ts': {
-    cap: 1687,
+    cap: 1229,
     target: 340,
     reason:
       'v3 plan commits 10-14 split this into 15 collaborators (PixiAppLifecycle, ' +
