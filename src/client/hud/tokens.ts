@@ -33,6 +33,15 @@ export const HUD = {
     credits: '#ffd76a',
     boost: '#ff8c3a',
     danger: '#ff4d6a',
+    /** Window paper (Hangar, menus): near-black blue. */
+    paper: '#070b15',
+    /** A tile / picture well inside a window. */
+    cell: '#0b1222',
+    /** Stronger edge for tiles and buttons. */
+    edge2: 'rgba(160,200,255,0.28)',
+    /** Capital tier edge (blue) and owned-hull edge (gold). */
+    tier1: 'rgba(74,168,255,0.6)',
+    tier2: 'rgba(255,200,58,0.7)',
   },
   /** Minimum invisible touch target (Apple HIG / Material: 44–48 px). */
   touchMin: 44,

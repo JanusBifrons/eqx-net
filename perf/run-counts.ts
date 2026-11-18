@@ -22,6 +22,9 @@
  * another session's run. It refuses to start if anything already listens on
  * its ports (it never kills a process it didn't start).
  *
+ * Scenes in `CLIENT_COUNT_PRINT_ONLY` (perfBudgets.ts) have no budget yet:
+ * they play by default, print a `print-only` line and never fail the run.
+ *
  * Exit: 0 within budget, 1 over budget or invalid, 2 crashed / ports busy.
  * `--calibrate` prints the readings and the budgets they would set, exit 0.
  */
@@ -32,7 +35,7 @@ import path from 'node:path';
 import { CaptureServers, defaultPorts } from '../showcase/servers.js';
 import { listListeners } from '../showcase/hostLoad.js';
 import { perfSceneById } from '../src/shared-types/perf/perfScenes.js';
-import { CLIENT_COUNT_BUDGETS } from '../src/shared-types/perf/perfBudgets.js';
+import { CLIENT_COUNT_BUDGETS, CLIENT_COUNT_PRINT_ONLY } from '../src/shared-types/perf/perfBudgets.js';
 import { judgeCounts, calibrate, poolReadings, type ClientCountReading } from './countsGate.js';
 
 /** Software GL everywhere: the same rasteriser on a laptop, a desktop and CI. */
@@ -58,7 +61,7 @@ interface Args { scenes: string[]; shiplight: string[]; worker: string | null; c
 function parseArgs(argv: string[]): Args {
   const get = (k: string): string | undefined => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
   return {
-    scenes: (get('--scenes') ?? 'fleet-fight,wide-view').split(',').filter(Boolean),
+    scenes: (get('--scenes') ?? ['fleet-fight', 'wide-view', ...CLIENT_COUNT_PRINT_ONLY].join(',')).split(',').filter(Boolean),
     shiplight: (get('--shiplight') ?? 'baked,high').split(',').filter(Boolean),
     worker: get('--worker') ?? null,
     calibrate: argv.includes('--calibrate'),
@@ -177,6 +180,11 @@ async function main(): Promise<void> {
       continue;
     }
     const b = CLIENT_COUNT_BUDGETS[row.key];
+    if (!b && CLIENT_COUNT_PRINT_ONLY.includes(row.key.split('/')[0]!)) {
+      const r = row.reading;
+      console.log(`print-only ${row.key}: draw calls p95 ${r.drawCallsP95} · display objects ${r.displayObjects} · upload texels ${r.uploadTexels} · atlas pages ${r.atlasPages} (no budget yet)`);
+      continue;
+    }
     if (!b) { failed++; console.log(`NO BUDGET ${row.key}: add one to CLIENT_COUNT_BUDGETS (perfBudgets.ts)`); continue; }
     const f = judgeCounts(row.reading, b);
     if (f.length) { failed++; console.log(`OVER ${row.key}: ${f.join('; ')} (${b.measured})`); } else console.log(`ok   ${row.key}`);

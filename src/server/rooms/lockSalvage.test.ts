@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { LockSalvageLookup, lockSalvageFlags, type LockSalvageView } from './lockSalvage.js';
-import { LOCK_CONSUMABLE, LOCK_SALVAGE, lockTierBits, lockTierOf } from '../../core/combat/turretLockPick.js';
+import { LOCK_CONSUMABLE, LOCK_HAUL, LOCK_SALVAGE, lockTierOf } from '../../core/combat/turretLockPick.js';
 import { mountTier } from '../../core/combat/salvageTargeting.js';
 import { SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 
 // Ore pods are the last step of the size ladder (owner 2026-11-16): every
-// tractor pulls one (the bottom rung, AA), no laser cuts one, and a rock
-// piece is never taken in whole.
+// tractor pulls one (the bottom rung, AA) and no laser cuts one. A rock
+// piece goes into the hold whole as one chunk while its weight fits
+// (owner 2026-11-17).
 describe('lock salvage bits: ore pods and rock pieces', () => {
   const barge = { kind: getShipKind('barge'), activated: [] };
+  let pieceMass = 1;
+  let pieceWeight = 3;
   const swarm: Record<number, { kind: number; id: string; shipKind?: string | null }> = {
     1: { kind: SWARM_KIND_SCRAP, id: 'pod-a', shipKind: 'cargo-pod' },
     2: { kind: SWARM_KIND_SCRAP, id: 'scrap-b', shipKind: 'fighter' },
@@ -19,7 +22,7 @@ describe('lock salvage bits: ore pods and rock pieces', () => {
   const lookup = new LockSalvageLookup<object>({
     swarm: (n) => swarm[n],
     piece: (id, out) => {
-      out.mass = 1; out.radius = 5; out.qty = 3; out.holdWeight = 3;
+      out.mass = pieceMass; out.radius = 5; out.qty = 3; out.holdWeight = pieceWeight;
       out.ore = id === 'wreck-rock' ? { rockId: 'r', resource: 'rock', perArea: 1 } : undefined;
       return true;
     },
@@ -38,8 +41,18 @@ describe('lock salvage bits: ore pods and rock pieces', () => {
     expect(flags('s:2')).toBe(0);
   });
 
-  it('a rock piece at hold size is not consumable; a wreck piece is', () => {
-    expect(flags('s:3')).toBe(LOCK_SALVAGE | lockTierBits(mountTier('AA')));
+  it('a rock piece a tractor pulls and whose chunk fits is HAULED (never consumable); a wreck piece at hold size is consumable', () => {
+    pieceMass = 1; pieceWeight = 3;
+    expect(flags('s:3') & (LOCK_SALVAGE | LOCK_HAUL | LOCK_CONSUMABLE)).toBe(LOCK_SALVAGE | LOCK_HAUL);
     expect(flags('s:4') & LOCK_CONSUMABLE).toBe(LOCK_CONSUMABLE);
+    expect(flags('s:4') & LOCK_HAUL).toBe(0);
+  });
+
+  it('a rock piece too big for every tractor, or too heavy for the free hold, is cut on (no haul bit)', () => {
+    pieceMass = 1e12; pieceWeight = 3;
+    expect(flags('s:3') & (LOCK_HAUL | LOCK_CONSUMABLE)).toBe(0);
+    pieceMass = 1; pieceWeight = 5000;
+    expect(flags('s:3') & (LOCK_HAUL | LOCK_CONSUMABLE)).toBe(0);
+    pieceMass = 1; pieceWeight = 3;
   });
 });
