@@ -99,7 +99,7 @@ Two gates, both on every PR, both on any machine:
 | Gate | Where | What it asserts |
 |---|---|---|
 | **Server** | `tests/integration/sectorRoom/perfSceneCounts.test.ts` (integration-tests job) | per scene (`fleet-fight`, `teleport-raid`, `wide-view`, and the capital baseline `capital-fleet` / `capital-duel`, wrap-up W2d: rx and busyness only, no work budget yet): no refused spawns, the scene busy enough, rx KB/s, and the work per tick over the first 720 **scene ticks**: bodies stepped, AI agents ticked, binary swarm records and bytes encoded, entities per JSON snapshot |
-| **Client** | `pnpm perf:counts` (`perf/run-counts.ts`, CI job `perf-counts`, advisory) | per scene × `shiplight` (`fleet-fight`, `wide-view` × `baked`, `high`): WebGL draw calls per frame (p95), display objects, texels uploaded in the window, atlas pages |
+| **Client** | `pnpm perf:counts` (`perf/run-counts.ts`, CI job `perf-counts`, advisory) | per scene × `shiplight` (`fleet-fight`, `wide-view` × `baked`, `high`; plus the print-only `wreck-field`, `wreck-field-far`): WebGL draw calls per frame (p95), display objects, texels uploaded in the window, atlas pages |
 
 Budgets live in `src/shared-types/perf/perfBudgets.ts` (`COUNT_BUDGETS`, `CLIENT_COUNT_BUDGETS`): max of the calibration runs + 25 %, rounded up, each naming its runs in `measured`. Both tests report EVERY budget a run broke, not just the first.
 
@@ -122,7 +122,7 @@ Budgets live in `src/shared-types/perf/perfBudgets.ts` (`COUNT_BUDGETS`, `CLIENT
 - Client: 40 shapes with alternating blend modes (each breaks the batch) put wide-view at 61–62 draw calls p95 against budgets of 28 / 32: both failed.
 
 ```
-pnpm perf:counts                          # gate: 2 scenes × 2 lighting levels, ~2–3 min
+pnpm perf:counts                          # gate: 2 scenes × 2 lighting levels (+ 2 print-only wreck scenes), ~4–6 min
 pnpm perf:counts --calibrate              # print readings + the budgets they'd set
 pnpm perf:counts --scenes wide-view --shiplight baked --worker 0
 pnpm perf:counts --runs 2                  # pool 2 runs per window (CI: SwiftShader renders 15–18 frames a run; frames add, counts take the worst run)
@@ -212,6 +212,12 @@ pnpm perf:scenes --scenes galaxy-field --device phone-proxy --cpu-rate 2 --base 
 ```
 
 First reading: [macro-terrain](macro-terrain.md) (Galaxy sectors, phone cost).
+
+## The wreck field scenes (`wreck-field`, `wreck-field-far`)
+
+The client draw cost of a fully loaded old battlefield (macro-terrain F3, wreck fields slice 6). The room takes the opt-in room option `wreckField` alone (layout seed `a` at 0,0, no rocks, `persistSector: false`). Seed `a` has the worst 5 × 5 chunk ring measured (56 live pieces, `FIELD_RING_WORST_PIECES`); the idle pilot spawns in its centre chunk (4, 0), so the streamer loads that whole ring. `wreck-field` holds the normal play zoom (0.6) on the densest view in the ring (7 pieces, all in full art); `wreck-field-far` holds the fighter's zoom-out floor (0.15) over the ring's centre (21 pieces: fighter and frigate pieces become `wreckPieceFarLod` specks, the light cruiser's stay art).
+
+**Print-only.** Both are in `CLIENT_COUNT_PRINT_ONLY` (`perfBudgets.ts`): `pnpm perf:counts` plays them by default and prints `print-only wreck-field/<shiplight>: draw calls p95 … · display objects …` at the end of its log (CI job `perf-counts`, step "Client count gate", and the `perf-counts` artifact JSON), never failing the run. They get `CLIENT_COUNT_BUDGETS` rows (and leave the list) once local AND CI numbers exist. Both are `soak` scenes, so a default `pnpm perf:scenes` skips them; the phone-proxy timing is slice 10.
 
 ## Adding a scene
 

@@ -31,6 +31,7 @@ import { measureWobble, wobbleProblem, wobbleSummary, netProblem, netSummary, po
 import { encodeClip, encodeCard, assemble, qaClip, deviceLayout, encodedUniqueFps, clipFramePsnr } from './compositor.js';
 import { captionOverlay, deviceFrame, endCard, sectionCard, titleCard } from './cards.js';
 import { captionBottomPx } from './captionPlacement.js';
+import { requireHeavyQueue, shellLine } from '../scripts/dev/heavy-queue-guard.mjs';
 import { browserPid, clearTracked, gitSha, reapStale, resolveFfmpeg, trackPid } from './tools.js';
 
 interface Args {
@@ -119,6 +120,8 @@ function loadManifest(file: string): Record<string, ClipRecord> {
 }
 
 async function main(): Promise<void> {
+  // Films and stills are heavy: only through `pnpm heavy run` (or CI).
+  requireHeavyQueue({ kind: 'film', command: `pnpm showcase ${shellLine(process.argv.slice(2))}`.trim() });
   const args = parseArgs(process.argv.slice(2));
   resolveFfmpeg(); // fail fast with an install hint
   const repo = process.cwd();
