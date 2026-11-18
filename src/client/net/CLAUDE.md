@@ -9,6 +9,7 @@ Rules for the client network layer. `ColyseusClient.ts` is at its size cap (`scr
 - **Never add a `ColyseusClient` field for one feature;** the feature's module owns its state.
 - **A per-frame mirror pass** is a function in `mirror/` taking the once-built `MirrorPassCtx` (getters for reassigned fields), called in order from `updateMirror`.
 - **A prediction-step pass** is a function in `prediction/` taking the once-built `PredictionStepCtx`, called in order from `tickPhysics`.
+- **Per-sector state** is reset in `prediction/resetPrediction.ts`; **join / transport / room lifecycle** lives in `connection/roomConnection.ts`.
 - **`snapshot` and `swarm` stay inline in `connect()`** (hot path).
 - **Fire control and lock state** live in `FireControlClient.ts` (lock line in `fireControl/`); `ColyseusClient` keeps one-line delegates and reaches prediction/fire dispatch for it through `FireControlHost`.
 - **The local ship's own fire** (`sendFire`, the live beam) lives in `fireControl/LocalFireClient.ts`; **damage and death** (`handleDamage`, `killEntity`, ...) in `damagePath.ts`. Each takes a host/ctx built once in `ColyseusClient`.
