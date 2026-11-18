@@ -207,7 +207,7 @@ Plan soft-leaping-truffle v3, phase C1. Auto-deposit banks everything you carry;
 
 **What the player does.** Fly up to a storage structure (a Capital, Cargo Bay, Storage Vault…) and open its cargo. One pane is the structure's contents, including a Capital's mineral bank; the other is your ship's hold. Move items either way: **take** loads them aboard, **put** unloads them into that structure.
 
-**When it opens** (server-checked on every message, `SectorRoom.cargoAccess`):
+**When it opens** (server-checked on every message, `cargoAccess` in `src/server/rooms/features/cargoMessages.ts`):
 - **Who:** the relation allows it. `cargoOpensFor(relationOf(you, owner))` opens for your own and friendly cargo; allied cargo only if the owner allows it, and there is no owner setting yet, so not today. Neutral and hostile cargo is **locked**, and later needs a break-in (C2). An NPC trader base is neutral, so it is locked.
 - **A live ship:** ACTIVE, alive, with a roster row (#17, the same liveness as loot pickup).
 - **In range:** within `CARGO_ACCESS_RANGE` (400 u) of the structure's **footprint edge**, not its centre (large structures).
@@ -252,7 +252,7 @@ Every generated NPC base has a Freight Dock, and its gates open for anyone not h
 - **Prices:** the trade board's, for you, here. That means the regional factor (T3) and your trader standing: the dock charges more than it pays (the spread), and traders who refuse to deal with you keep it closed.
 - **Clamps:** each trade is clamped to the stock, your cargo space, your credits and your hourly trade volume.
 - **Atomic, and part of the economy.** Each good is ONE atomic group: the ship row, the storage and the wallet op. Every fill moves the galaxy market and counts toward volume, exactly like a deal.
-- **Code:** `SectorRoom.cargoAccess` (market mode) → `dockMarket`; `StorageService.marketBuy` / `marketSell`; the trade sink's `dockQuote` / `volumeLeft` / `recordDockFill`. Audit: `dock_trade`.
+- **Code:** `cargoAccess` in `src/server/rooms/features/cargoMessages.ts` (market mode) → `dockMarket`; `StorageService.marketBuy` / `marketSell`; the trade sink's `dockQuote` / `volumeLeft` / `recordDockFill`. Audit: `dock_trade`.
 - **Your own Freight Dock (T4b):** the cargo panel adds **Standing orders**: "buy up to N" or "sell above N" per good. NPC convoys fill them at the board price; see [production-chains.md](../architecture/production-chains.md#standing-orders-at-a-players-freight-dock-t4b).
 - **Locks:** `tests/integration/sectorRoom/dockMarket.test.ts` (buy and sell at the board price; wallet, hold and base stock all move), `StorageService.test.ts` (the wallet op rides the same group), `CargoPanel.test.tsx` (market mode: priced Buy/Sell, goods only).
 
@@ -328,7 +328,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
 
-- **Gate:** `SectorRoom.cargoAccess` opens a structure's cargo only when ALL of these hold. Every `cargo_query` / `cargo_move` re-checks it.
+- **Gate:** `cargoAccess` in `src/server/rooms/features/cargoMessages.ts` opens a structure's cargo only when ALL of these hold. Every `cargo_query` / `cargo_move` re-checks it.
   - `cargoOpensFor(relationOf(…))` passes: own and friendly; neutral and hostile are locked until the C2 break-in.
   - The pilot has a live ship: ACTIVE, alive, with a roster row (#17).
   - The ship is within `CARGO_ACCESS_RANGE` of the footprint edge.
@@ -371,7 +371,7 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 #### Cargo access
 
-- **Gate:** `SectorRoom.cargoAccess` (relation, live ACTIVE ship #17, `CARGO_ACCESS_RANGE`) is re-checked on every `cargo_query` / `cargo_move`.
+- **Gate:** `cargoAccess` in `src/server/rooms/features/cargoMessages.ts` (relation, live ACTIVE ship #17, `CARGO_ACCESS_RANGE`) is re-checked on every `cargo_query` / `cargo_move`.
 - **Moves:** only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell` (one hold group each, wallet ops as `extraOps`); never let a market fill skip `recordDockFill`. A manual move sets `manualCargo` (auto-deposit off).
 - **Break-ins and ship cargo:** starting a break-in is a hostile act and any hit cancels it; an NPC's loot is rolled once per spawn (`npcHold`), so stolen loot never drops twice. Standing-order wallet ops land in the same group as the goods. Lock: `cargoAccess.test.ts`.
 - Detail: [loot-and-cargo.md](../../docs/features/loot-and-cargo.md#server-implementation-notes).

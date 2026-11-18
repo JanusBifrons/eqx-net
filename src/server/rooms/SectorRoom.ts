@@ -227,8 +227,7 @@ import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
-import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
-import type { ActivatedMount } from '../playerShips/PlayerShipStore.js';
+import { resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
@@ -332,7 +331,7 @@ import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
-import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
+import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
@@ -342,9 +341,9 @@ import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold }
 import { rollKillBounty } from '../../shared-types/lootTables.js';
 import { deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
-import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
+import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
 import {
-  qualityHullFactor, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked,
+  qualityHullFactor, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, fittedCargoMul, fittedHullMul, fittedUid, productName,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
@@ -363,10 +362,6 @@ import {
   RemoveStructureSchema,
   StructureActionSchema,
   UpgradeStructureSchema,
-  SetGateAccessSchema,
-  SetRecipeSchema,
-  RefineSalvageSchema,
-  RepairShipSchema,
   PilotShipSchema,
   SpectateSchema,
   CommandSchema,
@@ -376,9 +371,6 @@ import {
   SetStanceSchema,
   FormSquadSchema,
   DisbandSquadSchema,
-  ApplyShipUpgradeSchema,
-  RespecShipSchema,
-  ActivateMountSchema,
   LockRequestSchema,
   LockCancelSchema, LockTrackSchema,
   SetGroupModeSchema,
@@ -3749,29 +3741,9 @@ export class SectorRoom extends Room<SectorState> {
       }
     });
 
-    // ── Gates — set who a gate opens for (owner-gated) ──
-    // ── P2b — the owner picks a processor's recipe ──
-    // Owner-gated; a foreign / non-processor / wrong-recipe request is a no-op.
-    this.onMessage('set_recipe', (client: Client, raw: unknown) => {
-      const parsed = SetRecipeSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'set_recipe');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      if (!swarmRec) return;
-      const rec = this.structureRegistry.get(swarmRec.id);
-      if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
-      if (this.production.setRecipe(rec, parsed.data.recipe)) {
-        this.storage.flushDirty();
-        this.rebuildStructuresSlice();
-      }
-    });
-
     // Client-message features (features/index.ts): test-only cues, teleporters,
-    // trade, the research lab, blueprints and cargo.
+    // trade, the research lab, blueprints, cargo, structure settings, bounties
+    // and ship upgrades.
     this.roomFeatures = registerRoomFeatures({
       devTest: {
         testMode: this.testMode,
@@ -3825,59 +3797,10 @@ export class SectorRoom extends Room<SectorState> {
       breakInMsForShip: (t) => this.breakInMsForShip(t),
       pilotNear: (pid, rec) => this.pilotNear(pid, rec),
       pilotNearPoint: (pid, x, y, r) => this.pilotNearPoint(pid, x, y, r),
-    });
-
-    this.onMessage('set_gate_access', (client: Client, raw: unknown) => {
-      const parsed = SetGateAccessSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'set_gate_access');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      if (!swarmRec) return;
-      const rec = this.structureRegistry.get(swarmRec.id);
-      if (!rec || rec.owner !== owner || gateTypeOf(rec.kind) === null) return;
-      rec.gateAccess = gateAccessIndex(parsed.data.access);
-      this.rebuildStructuresSlice();
-    });
-
-    // ── Living World P1a-2 — refine salvage into a Capital's mineral bank ──
-    // Owner-gated; a foreign / non-Capital / empty request is a silent no-op.
-    this.onMessage('refine_salvage', (client: Client, raw: unknown) => {
-      const parsed = RefineSalvageSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'refine_salvage');
-        return;
-      }
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      if (!owner) return;
-      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      if (!swarmRec) return;
-      const rec = this.structureRegistry.get(swarmRec.id);
-      if (!rec || rec.owner !== owner) return; // own-only
-      const refined = this.storage.refine(rec, parsed.data.qty);
-      if (refined > 0) {
-        auditEvent({ event: 'salvage_refined', sector: this.sectorKey ?? undefined, owner, salvage: refined });
-        this.rebuildStructuresSlice(); // the bank (minerals) rides the slice
-      }
-    });
-
-    // ── Living World P4c-2 — place a player bounty ───────────────────────────
-    this.onMessage('place_bounty', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      const board = getBountyBoard();
-      if (!playerId || !board) return;
-      const p = PlaceBountySchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'place_bounty'); return; }
-      const reply = (ok: boolean, message: string): void => {
-        try { client.send('bounty_result', { type: 'bounty_result', ok, message } satisfies BountyResult); } catch { /* closing */ }
-      };
-      if (this.sectorKey === null) { reply(false, 'Bounties are only available in the galaxy.'); return; }
-      // Economy v2 W1 — paid from the placer's WALLET (anywhere; guests too).
-      const v = board.place(this, playerId, p.data.targetPlayerId, p.data.amount);
-      reply(v.ok, v.message);
+      bountyRoom: { broadcastWorldNotice: (notice) => this.broadcastWorldNotice(notice) },
+      sendNotice: (client, text) => this.sendNotice(client, text),
+      applyShipUpgrade: (client, pid, shipId, alloc) => this.applyShipUpgrade(client, pid, shipId, alloc),
+      logger,
     });
 
     // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
@@ -4000,93 +3923,6 @@ export class SectorRoom extends Room<SectorState> {
       if (pid === undefined) return;
       this.fleet.disbandSquad(pid, p.data.squadId);
       this.fleetStatusSoon.request(client.sessionId, this.serverTick);
-    });
-
-    // ── Phase 4 WS-B2 — ship stat upgrades (free allocation + respec) ──────
-    // Spend the ship instance's upgrade points (budget = level - 1) across the
-    // stat pool, FREELY (re-distribute any way within the budget). Owner-gated +
-    // budget-gated server-side; the multipliers are applied at the ONE seam the
-    // clamps live (applyShipInput, identical server + client) so prediction
-    // stays in lockstep (risk #1).
-    this.onMessage('apply_ship_upgrade', (client: Client, raw: unknown) => {
-      const parsed = ApplyShipUpgradeSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'apply_ship_upgrade');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      this.applyShipUpgrade(client, playerId, parsed.data.shipId, parsed.data.alloc as CoreStatAlloc);
-    });
-
-    this.onMessage('respec_ship', (client: Client, raw: unknown) => {
-      const parsed = RespecShipSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'respec_ship');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      // A respec is a CREDIT SINK: RESPEC_CREDIT_COST from the WALLET (economy
-      // v2 — anywhere). Charged only for an OWNED ship with points to refund.
-      const row = this.sectorKey !== null ? getPlayerShipStore().get(parsed.data.shipId) : null;
-      if (row === null || row.playerId !== playerId || Object.keys(row.statAlloc).length === 0) return;
-      if (!getWallet().debit(playerId, RESPEC_CREDIT_COST, 'respec')) {
-        this.sendNotice(client, `Respec costs ${RESPEC_CREDIT_COST} cr — not enough credits`);
-        return;
-      }
-      auditEvent({ event: 'credits_spent', sector: this.sectorKey ?? undefined, playerId, amount: RESPEC_CREDIT_COST, reason: 'respec' });
-      // A respec is "apply the empty allocation" — refund every spent point.
-      this.applyShipUpgrade(client, playerId, parsed.data.shipId, {});
-    });
-
-    // ── Living World P1a-2 — instant repair at your own storage (credit sink) ──
-    // Repairs the sender's ACTIVE hull to full while it sits within
-    // DEPOSIT_RANGE of its own operational storage; costs REPAIR_CREDITS_PER_HP
-    // per missing hull point from the credits banked in this sector.
-    this.onMessage('repair_ship', (client: Client, raw: unknown) => {
-      const parsed = RepairShipSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'repair_ship');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      const ship = this.getActiveShip(playerId);
-      const pose = this.shipPoseCache.get(playerId);
-      if (!ship?.alive || !ship.isActive || !pose) return;
-      const missing = ship.maxHealth - ship.health;
-      if (missing <= 0) return;
-      if (this.storage.nearestOwnStorage(playerId, pose.x, pose.y) === null) {
-        this.sendNotice(client, 'Fly to your own Capital or Cargo Bay to repair');
-        return;
-      }
-      const cost = Math.ceil(missing * REPAIR_CREDITS_PER_HP);
-      if (!getWallet().debit(playerId, cost, 'repair')) {
-        this.sendNotice(client, `Repair costs ${cost} cr — not enough credits`);
-        return;
-      }
-      ship.health = ship.maxHealth;
-      auditEvent({ event: 'credits_spent', sector: this.sectorKey ?? undefined, playerId, amount: cost, reason: 'repair' });
-      this.sendNotice(client, `Repaired for ${cost} cr`);
-    });
-
-    // ── Phase 4 WS-B3 — dynamic weapon mounts (activate a latent slot) ──────
-    // Activate a latent hardpoint on a ship instance + bind a weapon to it.
-    // Owner-gated + valid-latent-slot-gated server-side; the activated mount is
-    // persisted on the roster, mirrored onto the live ShipState, and fed through
-    // the SAME per-instance mount resolver the aim + fire path use, so it fires
-    // from the first tick (geometry looked up by slotId on both sides — no wire
-    // bump, the scrap-collider trick).
-    this.onMessage('activate_mount', (client: Client, raw: unknown) => {
-      const parsed = ActivateMountSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'activate_mount');
-        return;
-      }
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      this.activateMount(client, playerId, parsed.data.shipId, parsed.data.slotId, parsed.data.weaponId);
     });
 
     // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────
@@ -12117,65 +11953,6 @@ export class SectorRoom extends Room<SectorState> {
       alloc,
       spent: spentPoints(alloc),
       budget: pointBudget(row.level),
-    });
-  }
-
-  /**
-   * Phase 4 WS-B3 — activate a latent weapon mount on a ship instance.
-   *
-   * Validation order (a foreign / unknown / non-latent / already-active request
-   * is a SILENT no-op — no echo, no persistence):
-   *   - ownership (`row.playerId === playerId`);
-   *   - `slotId` names a real `ShipKind.latentMounts` hardpoint (`isLatentSlot`);
-   *   - the slot isn't already activated on this instance.
-   * On success: append `{ slotId, weaponId }` to the roster `mounts` (the
-   * per-instance source of truth, D8 — switching ships switches the loadout) AND
-   * — if this instance is the player's ACTIVE hull in THIS room — mirror it onto
-   * `ShipState.mounts` so the SAME-tick aim/fire/snapshot paths pick it up (the
-   * per-instance mount resolver reads `ship.mounts`). The `weaponId` is already
-   * zod-restricted to the catalogue weapon set. Echoes `mount_activated` with the
-   * full activated list so the modal closes + the roster card refreshes. The
-   * GEOMETRY is looked up CLIENT-SIDE by `(shipKind, slotId)` — never on the wire.
-   */
-  private activateMount(
-    client: Client,
-    playerId: string,
-    shipId: string,
-    slotId: string,
-    weaponId: string,
-  ): void {
-    const store = getPlayerShipStore();
-    const row = store.get(shipId);
-    if (row === null || row.playerId !== playerId) return; // foreign / unknown
-    const kind = getShipKind(row.kind);
-    if (!isLatentSlot(kind, slotId)) {
-      logger.warn(
-        { sessionId: client.sessionId, shipId, slotId },
-        'activate_mount: slotId is not a latent hardpoint — dropped',
-      );
-      return;
-    }
-    // Already active ⇒ no-op (idempotent; never duplicate the index space).
-    if (row.mounts.some((m) => m.slotId === slotId)) return;
-    // P5 — a gated weapon (heat-seeker) needs its blueprint fitted to THIS ship.
-    if (!weaponUnlocked(weaponId, this.fittedOf(shipId))) return;
-
-    const nextMounts: ActivatedMount[] = [...row.mounts, { slotId, weaponId }];
-    // Persist on the roster (the per-instance source of truth, D8).
-    store.setProgress(shipId, { mounts: nextMounts });
-
-    // Mirror onto the live ACTIVE hull (if it's piloted in THIS room) so the
-    // very next tick's aim + fire + snapshot resolve the new mount.
-    const activeShipKey = this.resolveActiveShipKey(playerId);
-    if (activeShipKey === shipId) {
-      const ship = this.state.ships.get(shipId);
-      if (ship !== undefined) ship.mounts = nextMounts;
-    }
-
-    client.send('mount_activated', {
-      type: 'mount_activated',
-      shipInstanceId: shipId,
-      mounts: nextMounts,
     });
   }
 
