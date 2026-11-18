@@ -10,7 +10,6 @@ import { LoadCurtain } from './pixi/LoadCurtain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, shipSpriteKinds, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
-import { shouldCentreGhostOnActivate } from './placementPointerDecision.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
@@ -27,6 +26,8 @@ import { createBeamCtx, updateBeams, type BeamCtx } from './pixi/beamUpdater.js'
 import { createWarpFxCtx, updateWarpFx, type WarpFxCtx } from './pixi/warpFxUpdater.js';
 import { createEngineShieldFxCtx, updateEngineShieldFx, clearEngineShieldFxIds, type EngineShieldFxCtx } from './pixi/engineShieldFxUpdater.js';
 import { beginShieldFrame, createHitEventCtx, updateHitEvents, type HitEventCtx } from './pixi/hitEventUpdater.js';
+import { createHudDrainCtx, spawnDamageNumbers, updateHudDrains, type HudDrainCtx } from './pixi/hudDrainUpdater.js';
+import { createPlacementGhostCtx, updatePlacementGhost, type PlacementGhostCtx } from './pixi/placementGhostUpdater.js';
 import { createLitSceneCtx, feedLitScene, noteBlastLight, type LitSceneCtx } from './pixi/litSceneUpdater.js';
 import { createTurretShotCtx, noteTurretShots, type TurretShotCtx } from './pixi/turretShotUpdater.js';
 import { RendererInputController, type ForwardedPointerEvent, type RendererInputDeps } from './pixi/rendererInputController.js';
@@ -76,9 +77,7 @@ import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import {
   buildGhostGfx,
-  buildStructureGfx,
 } from './pixi/spriteBuilders.js';
-import { getStructureKind } from '@shared-types/structureKinds';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
 import { forEachShipRekey, moveKey, moveSetKey } from './shipRekey.js';
 import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
@@ -131,6 +130,7 @@ export class PixiRenderer implements IRenderer {
 
   constructor(isTouch = false, art: ArtOptions = ART_OFF, fxKillSwitches?: FxKillSwitches) {
     this._isTouch = isTouch;
+    this._placementGhostCtx = createPlacementGhostCtx({ isTouch, input: this._input, feedback: this.feedback });
     this._artOpts = art; this._cutField.setOreStyle(art.ore ?? 'veins');
     this.quality = art.quality ?? DEFAULT_GRAPHICS_QUALITY;
     this._fxKillSwitches = fxKillSwitches;
@@ -159,11 +159,8 @@ export class PixiRenderer implements IRenderer {
   /** Camera controller — owns world's transform via pointer/wheel events. */
   private camera!: Camera;
   private shipContainer!: Container;
-  /** Structure placement ghost (Issue 5) — lazily built translucent blueprint
-   *  silhouette, rebuilt when the previewed kind changes. Lives in
-   *  `shipContainer` (world space) so it pans/zooms with the structures. */
-  private _placementGhost: Graphics | null = null;
-  private _placementGhostKind: string | null = null;
+  /** Structure placement ghost ctx (pixi/placementGhostUpdater.ts), built in the constructor (it needs `_isTouch`). */
+  private readonly _placementGhostCtx: PlacementGhostCtx;
   /** Phase 4 WS-A1 — spectator/construction free-roam camera. While true,
    *  `update()` does NOT re-issue the local-ship follow, so the camera holds
    *  wherever the player panned it (and there may be no local ship at all). */
@@ -197,13 +194,10 @@ export class PixiRenderer implements IRenderer {
   // GPU heat to specific subsystems (beams / damage numbers / health
   // bars). Same pattern as `filtersDisabled` / `particlesDisabled`.
   private _beamsDisabled = false;
-  private _dmgNumbersDisabled = false;
-  private _selfDmgNumbersDisabled = false;
   private _cleanWorld = false;
   /** HUD-mode lock marks (`setHudOverlays`): false below the full HUD. Stored,
    *  not pushed, because the setter can arrive before `init` built the layers. */
   private _lockMarksVisible = true;
-  private _healthBarsDisabled = false;
   private sprites = new Map<string, Container>();
   /** Screen-size LOD (capital-ship R&D round 3 E1): tiny ships draw as dots. */
   private readonly _farIcons = new FarZoomIcons();
@@ -363,7 +357,7 @@ export class PixiRenderer implements IRenderer {
     moveKey(this.sprites, from, to);
     moveKey(this._artCtx.handles, from, to);
     this.mountVisuals.rekeyShip(from, to);
-    this.healthBars?.rekey(from, to);
+    this._hudCtx.healthBars?.rekey(from, to);
     this.labels?.rekey(from, to);
     this._farIcons.forgetShip(from, sprite);
     this._fxEngines?.rekey(from, to);
@@ -447,10 +441,8 @@ export class PixiRenderer implements IRenderer {
   private readonly incomingFire = new IncomingFireWarning();
   /** Helm move marker: the green RTS icon at the pilot's course point. */
   private readonly helmMarker = new HelmCourseMarker();
-  private damageNumbers: DamageNumberManager | null = null;
-  /** Phase 4 WS-B1 — pooled screenspace level-up icon (own ship). */
-  private levelUpIcons: LevelUpIconManager | null = null;
-  private healthBars: HealthBarManager | null = null;
+  /** Damage numbers, level-up icons, health bars + their kill switches (pixi/hudDrainUpdater.ts), built once here (`rekey` / `dispose` read it). */
+  private readonly _hudCtx: HudDrainCtx = createHudDrainCtx();
   private labels: LabelManager | null = null;
   private selectionBracket: SelectionBracket | null = null;
   /** Experimental HUD aim feedback (lock bracket / aim line / ship arcs). */
@@ -798,9 +790,9 @@ export class PixiRenderer implements IRenderer {
     // (a dev StrictMode remount can leave a disposed one behind).
     if (isDom) this._artStatsHook = () => this.artStats();
     this._beamsDisabled = fxKillSwitches.beamsDisabled;
-    this._dmgNumbersDisabled = fxKillSwitches.dmgNumbersDisabled;
-    this._selfDmgNumbersDisabled = fxKillSwitches.selfDmgNumbersDisabled;
-    this._healthBarsDisabled = fxKillSwitches.healthBarsDisabled;
+    this._hudCtx.dmgNumbersDisabled = fxKillSwitches.dmgNumbersDisabled;
+    this._hudCtx.selfDmgNumbersDisabled = fxKillSwitches.selfDmgNumbersDisabled;
+    this._hudCtx.healthBarsDisabled = fxKillSwitches.healthBarsDisabled;
 
     // Default gameplay zoom. Historically the gameplay camera ran at the
     // Pixi default scale 1.0 (the worker Camera replaced pixi-viewport,
@@ -850,6 +842,7 @@ export class PixiRenderer implements IRenderer {
     this.camera.addChild(this._cutField.container); // cut-field rocks: under everything that moves
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
+    this._placementGhostCtx.camera = this.camera; this._placementGhostCtx.shipContainer = this.shipContainer;
     // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): one batch, under the ship icons.
     this.camera.addChild(this._wreckFarLayer);
     // Far-zoom ship icons above the ships they stand in for (FarZoomIcons.ts).
@@ -1076,9 +1069,9 @@ export class PixiRenderer implements IRenderer {
     // impact world coord) but counter-scale per frame so they stay
     // legible at any zoom — Camera ref needed for the per-frame
     // counter-scale.
-    this.damageNumbers = new DamageNumberManager(this.world, this.camera);
-    this.levelUpIcons = new LevelUpIconManager(this.world, this.camera);
-    this.healthBars = new HealthBarManager(this.world);
+    this._hudCtx.damageNumbers = new DamageNumberManager(this.world, this.camera);
+    this._hudCtx.levelUpIcons = new LevelUpIconManager(this.world, this.camera);
+    this._hudCtx.healthBars = new HealthBarManager(this.world);
     this.labels = new LabelManager(this.world, !this._cleanWorld);
     // THE selection marker (Item B4; RTS Part A): one 4-corner bracket per
     // selected entity, screen space on the stage like the fleet overlay, drawn
@@ -1422,77 +1415,9 @@ export class PixiRenderer implements IRenderer {
     // the follow target; the gameplay pointer path keeps panning/zooming it.
     this._speedFollowSprite = this._cameraDirector.updateFrame(mirror, local);
 
-    // Structure placement ghost + world→screen projection for the confirm
-    // (smoke handoff 2026-06-06, Issue 5). Draw a translucent blueprint
-    // silhouette at the previewed world pose and project that pose to screen
-    // so the world-anchored confirm UI can sit on top of it. The ghost lives
-    // in `shipContainer` (world space) so it pans/zooms with real structures;
-    // Y-flip per the pixiY = -gameY convention. Only active during placement
-    // mode (preview set), so the rebuild + `toScreen` alloc is transient UI,
-    // never steady-state. (Phase-A3: the create/rebuild/hide branching could
-    // move to a pure spriteUpdateDecisions helper if a 3rd preview type lands.)
-    const preview = mirror.pendingPlacementPreview;
-    // A "pending" preview is the dim post-Confirm ghost (playtest 2026-06-10
-    // Issue 7): placement is DONE, so it must NOT capture pointers (the camera
-    // pans again) and it draws at the SENT point, dimmer.
-    const pendingGhost = preview != null && preview.pending === true;
-    this._input._placementActive = preview != null && !pendingGhost;
-    // P6.1 (touch only) — seed the ghost at SCREEN-CENTRE on placement-start so
-    // it's visible instead of hidden under the speed-dial at the ahead-of-ship
-    // pose. Park it (`following=false`) so the Confirm banner is ready at centre;
-    // a tap/drag then repositions it. Desktop is gated out (hover-follow + the
-    // ahead-of-ship preview is fine when the cursor is already on screen).
-    if (preview && shouldCentreGhostOnActivate(this._isTouch, this._input._placementChosenX !== null, pendingGhost, this._spectator)) {
-      const c = this.camera.center; // world coord (pixi-down) currently at screen centre
-      this._input._placementChosenX = c.x;
-      this._input._placementChosenY = -c.y; // game Y = -worldY
-      // Park ONLY on touch (no hover → the Confirm banner waits at centre). On
-      // DESKTOP (incl. desktop SPECTATOR, which also centre-seeds because there's
-      // no ship to anchor) keep hover-follow ON so the ghost snaps to the cursor
-      // on the first move — otherwise the spectator build ghost sat at centre and
-      // never tracked the mouse (Equinox Phase-5 audit: "doesn't follow").
-      this._input._placementFollowing = !this._isTouch;
-    }
-    if (preview) {
-      if (!this._placementGhost || this._placementGhostKind !== preview.kind) {
-        if (this._placementGhost) {
-          this.shipContainer.removeChild(this._placementGhost);
-          this._placementGhost.destroy();
-        }
-        const radius = getStructureKind(preview.kind).radius;
-        const g = buildStructureGfx(preview.kind, radius);
-        this.shipContainer.addChild(g);
-        this._placementGhost = g;
-        this._placementGhostKind = preview.kind;
-      }
-      // Live ghost: draw at the pointer-chosen world point once positioned,
-      // else the ahead-of-ship preview pose. Pending ghost: the SENT point.
-      // Dim the pending ghost so it reads as "sent, awaiting" vs positioning.
-      this._placementGhost.alpha = pendingGhost ? 0.18 : 0.4;
-      const gx = pendingGhost ? preview.x : (this._input._placementChosenX ?? preview.x);
-      const gy = pendingGhost ? preview.y : (this._input._placementChosenY ?? preview.y);
-      this._placementGhost.visible = true;
-      this._placementGhost.x = gx;
-      this._placementGhost.y = -gy; // Y-flip
-      this._placementGhost.rotation = -preview.angle;
-      const screen = this.camera.toScreen(gx, -gy);
-      this.feedback.placementScreenX = screen.x;
-      this.feedback.placementScreenY = screen.y;
-      this.feedback.placementChosenWorldX = gx;
-      this.feedback.placementChosenWorldY = gy;
-      this.feedback.placementStuck = !this._input._placementFollowing;
-    } else {
-      if (this._placementGhost) this._placementGhost.visible = false;
-      this.feedback.placementScreenX = null;
-      this.feedback.placementScreenY = null;
-      this.feedback.placementChosenWorldX = null;
-      this.feedback.placementChosenWorldY = null;
-      this.feedback.placementStuck = false;
-      // Reset for the next placement (start in follow mode, no chosen point).
-      this._input._placementFollowing = true;
-      this._input._placementChosenX = null;
-      this._input._placementChosenY = null;
-    }
+    // Structure placement ghost + confirm-UI projection: see pixi/placementGhostUpdater.ts.
+    this._placementGhostCtx.spectator = this._spectator;
+    updatePlacementGhost(mirror, this._placementGhostCtx);
 
     // Background layers — run AFTER moveCenter so they use this frame's
     // camera position (otherwise stars and grid lag by one frame).
@@ -1535,64 +1460,13 @@ export class PixiRenderer implements IRenderer {
     else this.starfield?.update(this.camera);
     this.backgroundGrid?.update(this.camera);
 
-    // Drain pending damage numbers and spawn floating text. update()
-    // must be OUTSIDE the spawn-drain block — sub-managers need to
-    // tick every frame to advance lifetime + counter-scale.
-    if (!this._dmgNumbersDisabled && this.damageNumbers && mirror.pendingDamageNumbers) {
-      for (const dn of mirror.pendingDamageNumbers) {
-        if (this._selfDmgNumbersDisabled && dn.targetId === mirror.localPlayerId) continue;
-        this.damageNumbers.spawn(dn.targetId, dn.x, dn.y, dn.damage, dn.tag);
-      }
-      mirror.pendingDamageNumbers.length = 0;
-      // A ship that exploded this frame closes its number AFTER the drain,
-      // so the killing blow still lands in it but nothing later does (late
-      // hits climbed it over the wreck: fight-clip review 2026-11-13). The
-      // set is a one-frame trigger, empty on almost every frame.
-      if (mirror.explodingShips && mirror.explodingShips.size > 0) {
-        for (const id of mirror.explodingShips) this.damageNumbers.markDead(id);
-      }
-    } else if (this._dmgNumbersDisabled && mirror.pendingDamageNumbers) {
-      // Drain even when disabled — don't let the queue grow unbounded.
-      mirror.pendingDamageNumbers.length = 0;
-    }
+    // Damage numbers (spawn drain, before hit events): see pixi/hudDrainUpdater.ts.
+    spawnDamageNumbers(mirror, this._hudCtx);
     // Hit events (impacts, wall hits, shield contacts): see pixi/hitEventUpdater.ts.
     this._hitEventCtx.effects = this.effects;
     updateHitEvents(mirror, this._hitEventCtx);
-    // weapon-hit-prediction Phase 2 — hard-cancel mispredicted / TTL-expired
-    // predicted numbers by tag. Drained AFTER the spawn pass (a predict +
-    // rollback in the same frame nets to nothing) and BEFORE update() (a
-    // cancelled number gets zero frames of life).
-    if (this.damageNumbers && mirror.pendingDamageNumberCancels) {
-      for (const tag of mirror.pendingDamageNumberCancels) {
-        this.damageNumbers.cancelByTag(tag);
-      }
-      mirror.pendingDamageNumberCancels.length = 0;
-    }
-    if (!this._dmgNumbersDisabled) this.damageNumbers?.update(mirror.timeScale ?? 1); // game-time lifetime
-
-    // Phase 4 WS-B1 — drain the level-up icon queue and pop a pooled
-    // screenspace icon over the named ship's CURRENT pose. The queue's
-    // length-reset is owned by `consumeOneFrameTriggers` on render frames only
-    // (same skip-frame discipline as explodingShips / pendingEffectTriggers).
-    // DO NOT add `.length = 0` here.
-    if (this.levelUpIcons && mirror.pendingLevelUps) {
-      for (const ev of mirror.pendingLevelUps) {
-        const ship = mirror.ships.get(ev.playerId);
-        if (!ship) continue;
-        this.levelUpIcons.spawn(ship.x, ship.y, ev.newLevel);
-      }
-    }
-    this.levelUpIcons?.update();
-
-    if (!this._healthBarsDisabled && this.healthBars && mirror.pendingHealthBarHits) {
-      for (const hb of mirror.pendingHealthBarHits) {
-        this.healthBars.onHit(hb.entityId, hb.healthPct, hb.shieldPct, hb.preHealthPct);
-      }
-      mirror.pendingHealthBarHits.length = 0;
-    } else if (this._healthBarsDisabled && mirror.pendingHealthBarHits) {
-      mirror.pendingHealthBarHits.length = 0;
-    }
-    if (!this._healthBarsDisabled) this.healthBars?.update(mirror);
+    // Damage-number cancels + tick, level-up icons, health bars: see pixi/hudDrainUpdater.ts.
+    updateHudDrains(mirror, this._hudCtx);
     if (this._lockMarksVisible) this.aimFeedback?.update(mirror, this.camera.scale.x);
     else this.aimFeedback?.hide();
 
@@ -1670,7 +1544,7 @@ export class PixiRenderer implements IRenderer {
       if (count > 0) this.feedback.mountCounts.set(shipId, count);
     }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
-    this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
+    this.feedback.damageNumberActiveCount = this._hudCtx.damageNumbers?.getActiveCount() ?? 0;
     const vb = this.camera.visibleBoundsInto(this._swarmViewScratch); // Pixi space: y flips back to game
     this.feedback.viewX = (vb[0]! + vb[2]!) / 2; this.feedback.viewY = -(vb[1]! + vb[3]!) / 2; this.feedback.viewHalf = Math.max(vb[2]! - vb[0]!, vb[3]! - vb[1]!) / 2;
     // Join-render readiness signal: latch true once we've painted a frame the
@@ -2117,9 +1991,9 @@ export class PixiRenderer implements IRenderer {
     }
     const ro = (this.app as unknown as Record<string, unknown>)['_resizeObserver'];
     if (ro instanceof ResizeObserver) ro.disconnect();
-    this.damageNumbers?.destroy();
-    this.levelUpIcons?.destroy();
-    this.healthBars?.destroy();
+    this._hudCtx.damageNumbers?.destroy();
+    this._hudCtx.levelUpIcons?.destroy();
+    this._hudCtx.healthBars?.destroy();
     this.labels?.destroy();
     this.selectionBracket?.destroy();
     this.hoverBracket?.destroy();
