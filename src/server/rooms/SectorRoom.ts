@@ -12737,7 +12737,7 @@ export class SectorRoom extends Room<SectorState> {
     });
     field = this.navField = getNavWorker(logger).addField(opts, known.gone, known.moved);
     const f = field;
-    this.aiController.nav = new NavRoutes((sx, sy, tx, ty, c) => f.route(sx, sy, tx, ty, c), () => this.gameClock.now());
+    this.aiController.nav = new NavRoutes((sx, sy, tx, ty, c, hd, tr) => f.route(sx, sy, tx, ty, c, hd, tr), () => this.gameClock.now());
     field.built.then((b) => {
       logger.info({ sectorKey: this.sectorKey, cols: b.cols, rows: b.rows, kb: Math.round(b.bytes / 1024), ms: Math.round(b.ms * 10) / 10 }, 'nav coarse layer built');
     }, (err: unknown) => { if (!this.simLoopStopped) logger.error({ err, sectorKey: this.sectorKey }, 'nav field build failed'); });

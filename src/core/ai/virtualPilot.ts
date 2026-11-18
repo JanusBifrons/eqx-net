@@ -69,6 +69,12 @@ export interface PilotHandling {
 }
 
 /** Derive the pilot's view of `kind`'s handling for a body of `mass`. */
+/** The ship's turning radius at cruise (u): how wide a circle it needs to
+ *  turn round without slowing. A capital's is wider than a lane (navigation). */
+export function pilotTurnRadius(h: PilotHandling): number {
+  return h.cruiseSpeed / Math.max(h.maxAngvel, 1e-3);
+}
+
 export function makePilotHandling(kind: ShipKind, mass: number): PilotHandling {
   const torque = kind.turnTorque ?? 0;
   const inertia = shipAngularInertia(mass, kind.radius);

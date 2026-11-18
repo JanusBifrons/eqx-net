@@ -48,6 +48,7 @@ import {
   type PilotHandling,
   type PilotParams,
   type PilotState,
+  pilotTurnRadius,
 } from './virtualPilot.js';
 import { missileArmedProfile, roleProfile, roleSensorRange, type RoleProfile } from './tactics/roleProfiles.js';
 import { TARGET_CLAIM_WEIGHT } from './tactics/targetClaims.js';
@@ -2513,7 +2514,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       return this.fly(self, facingOf(av.x, av.y), self.vx + av.x * h.maxSpeed, self.vy + av.y * h.maxSpeed, boostOk);
     }
     // Round rock: fly the route's next waypoint, braking for what lies ahead on it.
-    if (nav !== null && nav.waypoint(self.id, self.x, self.y, tx, ty, t.navClearance, t.wingmanArrive)) {
+    // A capital plans with its nose and turning radius: no U-turn where it has no room (slice 11).
+    const cap = this.kind.sizeClass === 'capital';
+    if (nav !== null && nav.waypoint(self.id, self.x, self.y, tx, ty, t.navClearance, t.wingmanArrive, false,
+      cap ? self.angle : NaN, cap ? pilotTurnRadius(h) : 0)) {
       const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this._steerScratch), v = Math.min(cruiseCap >= 0 ? cruiseCap : this.handling.cruiseSpeed * CALM_CRUISE_FRAC, brakingSpeed(this.handling, nav.ahead));
       return this.fly(self, facingOf(w.dirX, w.dirY), w.dirX * v, w.dirY * v, boostOk);
     }
