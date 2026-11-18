@@ -34,7 +34,7 @@ describe('LostConnectionOverlay', () => {
   });
 
   it('renders nothing when disconnected outside the game phase', () => {
-    useUIStore.getState().setPhase('meta');
+    useUIStore.getState().setPhase('galaxy-map');
     useUIStore.getState().setConnectionStatus('disconnected');
     render(<LostConnectionOverlay />);
     act(() => { vi.advanceTimersByTime(SHOW_DEBOUNCE_MS + 100); });
@@ -107,19 +107,19 @@ describe('LostConnectionOverlay', () => {
     expect(screen.getByTestId('lost-connection-countdown').textContent).toMatch(/11s/);
   });
 
-  it('routes to "meta" phase when the countdown expires', () => {
+  it('routes to the galaxy map when the countdown expires', () => {
     useUIStore.getState().setConnectionStatus('disconnected');
     render(<LostConnectionOverlay />);
     act(() => { vi.advanceTimersByTime(SHOW_DEBOUNCE_MS + 100); });
     act(() => { vi.advanceTimersByTime(15_000); });
-    expect(useUIStore.getState().phase).toBe('meta');
+    expect(useUIStore.getState().phase).toBe('galaxy-map');
   });
 
-  it('routes to "meta" phase immediately when the manual button is clicked', () => {
+  it('routes to the galaxy map immediately when the manual button is clicked', () => {
     useUIStore.getState().setConnectionStatus('disconnected');
     render(<LostConnectionOverlay />);
     act(() => { vi.advanceTimersByTime(SHOW_DEBOUNCE_MS + 100); });
     fireEvent.click(screen.getByTestId('lost-connection-return-button'));
-    expect(useUIStore.getState().phase).toBe('meta');
+    expect(useUIStore.getState().phase).toBe('galaxy-map');
   });
 });

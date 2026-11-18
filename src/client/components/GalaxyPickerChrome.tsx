@@ -1,13 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Box,
-  Button,
   Typography,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Stack,
   Alert,
   CircularProgress,
   Portal,
@@ -17,6 +11,7 @@ import { loadStoredPlayerId } from '../identity/token';
 import { ShipPickerModal } from './ShipPickerModal';
 import { acquireRosterPolling, releaseRosterPolling } from './rosterPoller';
 import { useUIStore } from '../state/store';
+import { useAuthStore } from '../auth/authStore';
 import { fleetWarpRequest } from '../app/fleetWarp';
 import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
@@ -27,12 +22,6 @@ import { isSectorWarpable } from '../render/galaxy/galaxyLayerDecisions';
 import { isTouchDevice } from '../input/TouchInput';
 import { Z } from '../layout/zIndex';
 import type { MutableRefObject } from 'react';
-
-interface EngineeringRoom {
-  roomName: string;
-  label: string;
-  description: string;
-}
 
 /** Phase 2 #2 — one-shot loading overlay (static sx, hoisted per the drawer-perf
  *  rule) shown over the galaxy map until the first `/galaxy/snapshot` resolves, so
@@ -55,18 +44,9 @@ const GALAXY_LOADING_SX = {
   zIndex: 2000,
 };
 
-const ENGINEERING_ROOMS: EngineeringRoom[] = [
-  { roomName: 'sector',          label: 'Sector (legacy)',     description: 'Original Phase-1..7 default room. 30-drone hostile ring, no persistence.' },
-  { roomName: 'test-sector',     label: 'Test Sector',         description: 'Deterministic E2E room. Zero drones, zero asteroids.' },
-  { roomName: 'shield-test',     label: 'Shield Test (5)',     description: 'Five non-hostile drones (one of each non-fighter kind) in a 200 u ring. Ram + shoot to verify shield bubble math. Drones only turn hostile after they take damage.' },
-  { roomName: 'hull-collision-test', label: 'Hull Collision (T-pair)', description: 'Two stationary Crossguard T-ships, shields off, stem-tips facing with a 20 u gap. Bounding circles overlap massively but polygon hulls do NOT touch. Negative control for concave-hull collision correctness — server log should show NO collision_resolved between the pair.' },
-  { roomName: 'hull-collision-overlap-test', label: 'Hull Collision (overlap +control)', description: 'Two Crossguards stacked at (0,0), shields off. POSITIVE control: polygons fully overlap so collision_resolved + ram_damage must fire constantly. If they do NOT, the test surface is dead.' },
-  { roomName: 'mount-test',      label: 'Mount Test (6)',      description: 'Phase 4c turret refactor room. 6 interceptor+gunship drones in a 250 u ring for verifying rotating-mount visuals.' },
-  { roomName: 'feel-test',       label: 'Feel Test (10)',      description: 'AI lockstep / network-feel test room. 10 drones in a 300 u ring around origin; player spawns at (0,0).' },
-  { roomName: 'swarm-soak',      label: 'Swarm Soak (500)',    description: 'Phase 5e bandwidth + perf soak. 500 mixed entities. Stress room — server can hitch under combat.' },
-  { roomName: 'swarm-tidi',      label: 'Swarm TiDi (4000)',   description: 'Phase 6 stress room. 4000 entities; TiDi rarely engages.' },
-  { roomName: 'swarm-tidi-burn', label: 'Swarm TiDi (burn)',   description: 'Phase 6 synthetic burn. Forces TiDi to ramp to its 0.7× floor.' },
-];
+/** What a logged-out visitor pressed before the login detour. Module scope:
+ *  the chrome remounts across the auth phase. */
+let gatedIntent: 'join' | 'spectate' = 'join';
 
 /**
  * Imperative handle exposed by {@link GalaxyPickerChrome} so the host
@@ -82,6 +62,9 @@ export interface GalaxyPickerApi {
    * the host's onSelectorPick wiring).
    */
   openForSector(sectorKey: string): void;
+  /** Resume what a logged-out visitor pressed before the login detour:
+   *  "Join the fight" opens the sector's ship picker, Spectate goes in. */
+  resumeGatedJoin(sectorKey: string): void;
   /**
    * Equinox Phase 9 — BLUR/deselect: close the SectorInfoDrawer + clear the
    * selection. Fired by the host when a galaxy tap hits no hex (empty space).
@@ -92,15 +75,12 @@ export interface GalaxyPickerApi {
 export interface GalaxyPickerChromeProps {
   /** Set by the chrome on mount so the host can drive the picker. */
   apiRef?: MutableRefObject<GalaxyPickerApi | null>;
-  /** Engineering-room / single-player entry points. */
-  onSelectRoom?: (roomName: string) => void;
   onSpawnExistingShip?: (shipId: string, sectorKey: string) => void;
   onSpawnNewShip?: (kind: ShipKindId, sectorKey: string) => void;
   /** Equinox Phase 5 (WS-3) — join a sector as a SPECTATOR (no ship picker;
    *  free-roam camera + construction, hull parks as a pilotable lingering
    *  hull). Landing context only. */
   onSpawnSpectator?: (sectorKey: string) => void;
-  onSelectLocal?: () => void;
   /** Pre-resolved limbo sector; when omitted the chrome runs its own
    *  /dev/limbo lookup (matches the legacy spawn-screen behaviour). */
   activeLimboSectorKey?: string | null;
@@ -126,8 +106,8 @@ export interface GalaxyPickerChromeProps {
  * `GalaxyOverviewScreen` (spawn mode) so the second Pixi `Application`
  * can be retired. Preserves every load-bearing testid:
  * `galaxy-map-screen`, `limbo-resume-banner` (+ `data-limbo-sector-key`),
- * the roster panel, `single-player-button`, `engineering-rooms-button`,
- * and the `ship-picker-modal`.
+ * the roster panel and the `ship-picker-modal`. Dev rooms and single-player
+ * have no button here: they are reached by direct link (`?room=`, `?local=1`).
  *
  * The root is `pointerEvents: 'none'` so taps in empty regions fall
  * through to the canvas (the galaxy layer's hit-test); interactive
@@ -135,11 +115,9 @@ export interface GalaxyPickerChromeProps {
  */
 export function GalaxyPickerChrome({
   apiRef,
-  onSelectRoom,
   onSpawnExistingShip,
   onSpawnNewShip,
   onSpawnSpectator,
-  onSelectLocal,
   activeLimboSectorKey,
   context = 'landing',
   onWarp,
@@ -156,6 +134,10 @@ export function GalaxyPickerChrome({
   // Living Galaxy Phase 6 — hovered sector + live stats drive the tooltip.
   const galaxyHover = useUIStore((s) => s.galaxyHover);
   const galaxyStats = useUIStore((s) => s.galaxyStats);
+  // When the feed last arrived (each poll writes a new array): the panel's
+  // "UPDATED n S AGO". Null before the first poll.
+  const [statsAtMs, setStatsAtMs] = useState<number | null>(null);
+  useEffect(() => { if (galaxyStats.length > 0) setStatsAtMs(Date.now()); }, [galaxyStats]);
   // False until the first /galaxy/snapshot poll resolves (one-shot spinner).
   const galaxyStatsLoaded = useUIStore((s) => s.galaxyStatsLoaded);
   // 2026-06-19 pop-in fix — the badges come from THREE async sources: global
@@ -190,7 +172,6 @@ export function GalaxyPickerChrome({
   const galaxyReady =
     galaxyStatsLoaded && (storedPlayerId === '' || (galaxyPresenceLoaded && rosterLoaded));
 
-  const [engineeringOpen, setEngineeringOpen] = useState(false);
   const [pendingSpawnSector, setPendingSpawnSector] = useState<string | null>(null);
   // Equinox Phase 9 (item 2) — a hex tap SELECTS a sector, opening the docked
   // SectorInfoDrawer (replaces the old fixed popover; the desktop hover tooltip is
@@ -235,6 +216,8 @@ export function GalaxyPickerChrome({
   }, [activeLimboSectorKey]);
   const limboSector = limboSectorKey ? getSector(limboSectorKey) : null;
 
+  const onSpawnSpectatorRef = useRef(onSpawnSpectator);
+  onSpawnSpectatorRef.current = onSpawnSpectator;
   // Expose the imperative opener to the host (the shared-canvas owner).
   useEffect(() => {
     if (!apiRef) return;
@@ -252,11 +235,31 @@ export function GalaxyPickerChrome({
         // closure never goes stale.
         setSelectedSectorKey((cur) => (cur === key ? null : key));
       },
+      resumeGatedJoin: (key: string) => {
+        setSelectedSectorKey(null);
+        const spectate = gatedIntent === 'spectate';
+        gatedIntent = 'join';
+        if (spectate && onSpawnSpectatorRef.current) onSpawnSpectatorRef.current(key);
+        else setPendingSpawnSector(key);
+      },
       // Empty-space tap (blur) → close the drawer + deselect.
       deselect: () => { setSelectedSectorKey(null); },
     };
     return () => { if (apiRef) apiRef.current = null; };
   }, [apiRef]);
+
+  // The map is the homepage for everyone; joining needs a login (or the
+  // remembered guest choice). A logged-out "Join the fight" stashes the sector
+  // and goes to the auth flow; App opens that sector's join on return.
+  const gateJoin = (sector: string, intent: 'join' | 'spectate'): boolean => {
+    const auth = useAuthStore.getState();
+    if (isWarp || auth.user || auth.guest) return false;
+    logEvent('join_auth_gate', { sector, intent });
+    gatedIntent = intent;
+    useUIStore.getState().setPendingPickSector(sector);
+    useUIStore.getState().setPhase('auth');
+    return true;
+  };
 
   // Living Galaxy Phase 6 — derive the hovered-sector tooltip content (pure).
   const sectorTip = galaxyHover ? buildSectorTooltip(galaxyHover.sectorKey, galaxyStats) : null;
@@ -319,7 +322,7 @@ export function GalaxyPickerChrome({
       )}
 
       {/* Living Galaxy P5 — folded landing info over the map (replaces the
-       *  retired MetaLandingScreen's banner + hype count). Non-interactive,
+       *  deleted splash screen's banner + hype count). Non-interactive,
        *  small per the start-tiny rule. The server-health banner is the
        *  load-bearing surface while the server cold-boots. */}
       <Box
@@ -381,50 +384,10 @@ export function GalaxyPickerChrome({
             ? 'Tap a sector for info · highlighted neighbours are warp targets.'
             : limboSector
               ? 'Other sectors are locked while your ship is in flight.'
-              : 'Tap a sector to spawn a new ship · tap a card to resume an existing one.'}
+              : 'Tap a sector to see the fight.'}
         </Typography>
       </Box>
 
-      {!isWarp && !selectedSectorKey && (
-      <Stack
-        direction="row"
-        spacing={2}
-        sx={{
-          position: 'absolute',
-          bottom: 16,
-          right: 16,
-          alignItems: 'center',
-          pointerEvents: 'auto',
-          // Above the roster panel (zIndex 2). The roster column hugs the
-          // viewport's right edge now (the chrome is transparent over the
-          // full-bleed shared canvas, not a centred max-width box like the
-          // retired GalaxyOverviewScreen), so these CTAs would otherwise sit
-          // under the roster's pointer-capture region.
-          zIndex: 3,
-        }}
-      >
-        {onSelectLocal && (
-          <Button
-            variant="text"
-            size="small"
-            onClick={onSelectLocal}
-            sx={{ color: '#ff8800', '&:hover': { bgcolor: 'rgba(255,136,0,0.08)' } }}
-            data-testid="single-player-button"
-          >
-            Single-Player Diagnostic
-          </Button>
-        )}
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={() => setEngineeringOpen(true)}
-          sx={{ color: '#9aa0b4', borderColor: '#2a2f40', '&:hover': { borderColor: '#9aa0b4' } }}
-          data-testid="engineering-rooms-button"
-        >
-          Engineering rooms
-        </Button>
-      </Stack>
-      )}
 
       {/* Equinox Phase 7 (Item 1) — Close button for the in-game warp map.
        *  Portal'd to <body> at Z.overlay: inside this chrome its z-index was
@@ -551,6 +514,7 @@ export function GalaxyPickerChrome({
         tip={drawerTip}
         ships={drawerShips}
         recentCombat={drawerRecentCombat}
+        updatedAtMs={statsAtMs}
         context={context}
         warpable={drawerWarpable}
         currentSectorKey={currentSectorKey}
@@ -562,6 +526,7 @@ export function GalaxyPickerChrome({
         }}
         onJoin={(sector) => {
           logEvent('galaxy_drawer_join', { sector });
+          if (gateJoin(sector, 'join')) return;
           setPendingSpawnSector(sector);
           setSelectedSectorKey(null);
         }}
@@ -571,6 +536,7 @@ export function GalaxyPickerChrome({
                 // Equinox Phase 5 (WS-3) — join as spectator, SKIPPING the ship
                 // picker entirely (go straight to the room with spectator:true).
                 logEvent('galaxy_drawer_spectate', { sector });
+                if (gateJoin(sector, 'spectate')) return;
                 onSpawnSpectator(sector);
                 setSelectedSectorKey(null);
               }
@@ -607,37 +573,6 @@ export function GalaxyPickerChrome({
           }
         }}
       />
-
-      <Dialog open={engineeringOpen} onClose={() => setEngineeringOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88' }}>Engineering rooms</DialogTitle>
-        <DialogContent sx={{ bgcolor: '#0c1020', color: '#ccc' }}>
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Engineering rooms have no persistence. Disconnects lose all state.
-          </Alert>
-          <Stack spacing={1.5}>
-            {ENGINEERING_ROOMS.map((r) => (
-              <Box
-                key={r.roomName}
-                sx={{
-                  p: 1.5,
-                  border: '1px solid #2a2f40',
-                  borderRadius: 1,
-                  cursor: 'pointer',
-                  '&:hover': { borderColor: '#1f7a4d', bgcolor: 'rgba(0,255,136,0.04)' },
-                }}
-                onClick={() => onSelectRoom?.(r.roomName)}
-                data-testid={`engineering-room-${r.roomName}`}
-              >
-                <Typography variant="subtitle2" sx={{ color: '#00ff88' }}>{r.label}</Typography>
-                <Typography variant="caption" sx={{ color: '#888' }}>{r.description}</Typography>
-              </Box>
-            ))}
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ bgcolor: '#0c1020' }}>
-          <Button onClick={() => setEngineeringOpen(false)} sx={{ color: '#9aa0b4' }}>Close</Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 }

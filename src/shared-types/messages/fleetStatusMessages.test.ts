@@ -65,6 +65,7 @@ describe('fleet_status wire format', () => {
     expect(FLEET_STATUS_ACTIVITIES.slice(0, 8)).toEqual(
       ['idle', 'moving', 'patrolling', 'chasing', 'attacking', 'retreating', 'formingUp', 'guarding'],
     );
-    expect(FLEET_STATUS_ACTIVITIES.length).toBe(9); // + searching (RTS Part B slice 9)
+    expect(FLEET_STATUS_ACTIVITIES.length).toBe(10); // + searching (RTS Part B slice 9), blocked (navigation slice 9)
+    expect(FLEET_STATUS_ACTIVITIES[9]).toBe('blocked');
   });
 });

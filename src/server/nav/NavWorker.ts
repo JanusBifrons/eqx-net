@@ -5,13 +5,13 @@
  * `bundleWorker`, started with `eval`, `unref()`'d so it never keeps a
  * process or test runner alive, and each sector room gets a `worldId` its
  * replies are routed by. One worker per process: the work is building maps
- * once per sector and (later) answering route requests, not stepping a world.
+ * once per sector and answering route requests, not stepping a world.
  */
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import type { Logger } from 'pino';
 import type { ChunkOpts } from '../../core/terrain/fieldLayout.js';
-import type { NavCommand, NavFieldBuiltMsg, NavReply } from '../../core/nav/navHost.js';
+import type { NavCommand, NavFieldBuiltMsg, NavReply, NavRouteMsg } from '../../core/nav/navHost.js';
 import type { NavRockPose } from '../../core/nav/fineField.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
 
@@ -30,14 +30,25 @@ export interface NavField {
   rockGone(key: number): void;
   /** A rock rests somewhere new (null: back at its cut pose). */
   rockMoved(key: number, pose: { x: number; y: number; angle: number } | null): void;
+  /** Plans a route from (sx, sy) to (tx, ty) for a hull of clearance
+   *  `clearance` (from `shipTuning`). Asynchronous: the ship keeps flying
+   *  meanwhile. After detach it answers `none` at once; a worker failure
+   *  rejects every request in flight. `heading`/`turnRadius`: a capital's
+   *  nose and turning radius (no U-turn planned in a lane); omit for others. */
+  route(sx: number, sy: number, tx: number, ty: number, clearance: number, heading?: number, turnRadius?: number): Promise<NavRouteMsg>;
   /** Free it (on room dispose); later calls do nothing. */
   detach(): void;
 }
 
 export class NavWorker {
   private worker: Promise<Worker> | null = null;
-  private readonly waiting = new Map<number, (msg: NavReply) => void>();
+  private readonly waiting = new Map<number, (msg: NavFieldBuiltMsg) => void>();
   private nextWorldId = 1;
+  private readonly routes = new Map<number, { resolve: (msg: NavRouteMsg) => void; reject: (err: unknown) => void }>();
+  private nextReqId = 1;
+
+  /** Route requests posted and not yet answered (the count gate's in-flight counter). */
+  get inFlight(): number { return this.routes.size; }
 
   constructor(private readonly logger: Logger, private readonly entryPath = NAV_WORKER_TS_PATH) {}
 
@@ -64,6 +75,17 @@ export class NavWorker {
       chunk: (cx, cy, loaded) => post({ type: 'CHUNK', worldId, cx, cy, loaded }),
       rockGone: (key) => post({ type: 'ROCK', worldId, key, gone: true }),
       rockMoved: (key, pose) => post({ type: 'ROCK', worldId, key, pose }),
+      route: (sx, sy, tx, ty, clearance, heading = NaN, turnRadius = 0) => {
+        if (!attached) {
+          return Promise.resolve({ type: 'ROUTE', worldId, reqId: 0, status: 'none', points: new Float64Array(0), expanded: 0, ms: 0 });
+        }
+        const reqId = this.nextReqId++;
+        return new Promise<NavRouteMsg>((resolve, reject) => {
+          this.routes.set(reqId, { resolve, reject });
+          started.then((w) => w.postMessage({ type: 'ROUTE', worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius } satisfies NavCommand),
+            (err: unknown) => { this.routes.delete(reqId); reject(err); });
+        });
+      },
       detach: () => {
         if (!attached) return;
         post({ type: 'REMOVE_FIELD', worldId });
@@ -72,6 +94,11 @@ export class NavWorker {
         this.waiting.delete(worldId);
       },
     };
+  }
+
+  private failRoutes(err: unknown): void {
+    for (const r of this.routes.values()) r.reject(err);
+    this.routes.clear();
   }
 
   private start(): Promise<Worker> {
@@ -84,14 +111,22 @@ export class NavWorker {
         const timer = setTimeout(() => reject(new Error('nav worker did not start within 10 s')), 10_000);
         worker.on('message', (msg: NavReply | { type: 'NAV_READY' }) => {
           if (msg.type === 'NAV_READY') { clearTimeout(timer); resolve(worker); return; }
+          if (msg.type === 'ROUTE') {
+            const r = this.routes.get(msg.reqId);
+            this.routes.delete(msg.reqId);
+            r?.resolve(msg);
+            return;
+          }
           this.waiting.get(msg.worldId)?.(msg);
         });
         worker.on('error', (err) => {
           this.logger.error({ err, errMessage: (err as Error)?.message }, 'nav worker error');
+          this.failRoutes(err);
           reject(err);
         });
         worker.on('exit', (code) => {
           if (code !== 0) this.logger.error({ code }, 'nav worker exited unexpectedly');
+          this.failRoutes(new Error(`nav worker exited (${code})`));
           this.worker = null;
         });
       });

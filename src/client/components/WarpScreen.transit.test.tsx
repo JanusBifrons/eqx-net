@@ -21,7 +21,7 @@
  * Playwright-drivable) and a "compute statusText" unit test would miss
  * the `data-warp-visible` coupling + the gate drift.
  *
- * Pattern: `MetaLandingScreen.test.tsx` (store-driven RTL). WarpScreen
+ * Pattern: store-driven RTL. WarpScreen
  * renders through `<Slot anchor="fullscreen">` which portals into a
  * `LayoutProvider`-registered host, so the test supplies a minimal
  * `LayoutContext` with a real `fullscreen` host element.

@@ -1,5 +1,7 @@
 # EQX Peri God-File Refactor — Single-PR Plan (Hardened v2, post-`8ab9946`)
 
+> **Superseded.** Written when the god files were a third of today's size. The current plan is [god-file extension points](../architecture/god-file-extension-points.md): small move-only PRs, each adding a named extension point.
+
 ## Context
 
 Four hot-path files have grown into orchestrator monoliths that any feature work has to load wholesale: `SectorRoom.ts` (4348 LOC), `ColyseusClient.ts` (**4237**), `PixiRenderer.ts` (2272), `App.tsx` (1263). Together with secondary-tier files (diagRouter 765, shipKinds 738, HaloRadar 625, WorkerRendererClient 556, World 553, store 540, messages 525), they cost ~16k LOC ≈ 160k tokens to read before an agent can make a coherent edit to weapons, prediction, rendering, or perf.

@@ -7,29 +7,19 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  * mount the in-game HUD. Symptom of the bug: the screen goes black after
  * sector selection — gameplay never mounts.
  *
- * Uses the engineering-rooms-button path because it exercises the same
- * App.tsx `handleSelectRoom` callback the Pixi hex click feeds, but doesn't
- * require pixel-precise canvas interaction. If this passes but the user
- * still sees black on a Pixi click, the bug is isolated to the Pixi-side
- * onPick wiring; if it fails, the regression is in the phase transition or
- * GameSurface bootstrap.
+ * The first test opens the dev test-sector by direct link (`?room=`; the
+ * homepage has no dev buttons), so it locks the phase transition and
+ * GameSurface bootstrap without canvas interaction. The second drives a real
+ * galaxy sector pick through the focus view and ship picker.
  */
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
-test('post-auth spawn-select → click sector → game surface mounts', async ({ page }) => {
+test('post-auth direct room link → game surface mounts', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  // Living Galaxy P5 — the galaxy map is the landing screen on load (no meta CTA).
-
-  // Spawn-select screen should appear.
-  await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
-
-  // Pick a sector via the engineering-rooms path (deterministic, no Pixi).
-  await page.locator('[data-testid="engineering-rooms-button"]').click();
-  await page.locator('[data-testid="engineering-room-test-sector"]').click();
+  await page.goto(`${BASE_URL}/?room=test-sector`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
   // Ship stats card mounts only when the game surface has actually
   // connected and welcomed; if we hit a black-screen regression, this

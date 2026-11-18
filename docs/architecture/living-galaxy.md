@@ -54,9 +54,9 @@ architecture, across four threads:
 |---|---|---|
 | Galaxy graph | `src/core/galaxy/galaxy.ts` | Pure, hand-authored, **determinism-locked** (`galaxy.test.ts` enforces symmetric edges, no dangling neighbours). 7-sector sunflower. `getEntrySectors()` derives the edge ring by **max hex-distance**. `axialToPixel` projects hex→pixel for the map. |
 | Galaxy map renderer | `src/client/render/galaxy/GalaxyMapLayer.ts` | **Single** Pixi `Container` on the shared gameplay canvas (the 2nd `Application`/`GalaxyOverviewScreen` was deleted 2026-06-05 — `galaxy-graph.md` is stale on this). Two modes (`galaxyLayerDecisions.ts`): `selector` (full-screen picker, pan/zoom) and `overlay` (in-game transparent HUD, neighbours-only). Builds hexes once, `repaint()` on state change, pulses the current sector. **Lives worker-side** — state crosses via `SET_VISIBLE / SET_CURRENT_SECTOR / SET_TRANSIT_DOCKED / SET_OVERLAY_MODE / RESIZE` protocol messages. |
-| Picker chrome | `src/client/components/GalaxyPickerChrome.tsx` | React overlay on the selector: roster panel, `ShipPickerModal`, engineering rooms, limbo stub. Hex tap → `App.handleSelectorPick` → `openForSector`. |
+| Picker chrome | `src/client/components/GalaxyPickerChrome.tsx` | React overlay on the selector: roster panel, `ShipPickerModal`, limbo stub. Hex tap → `App.handleSelectorPick` → `openForSector`. |
 | Warp/transit | `HyperspaceOverlay.tsx`, `net/transitClient.ts`, server `TransitOrchestrator` | Spool→IN_TRANSIT→arrive; neighbour-validated server-side. Overlay map taps a neighbour → `engageTransit`. |
-| Landing flow | `src/client/app/PhaseRouter.tsx`, `App.tsx`, store `phase` | `meta` (`MetaLandingScreen` "Join the fight!") → `auth` (`LoginPage`) → `galaxy-map` (GameSurface idle + selector + chrome) → `connecting` → `game`. `?room=`/`?galaxy=` deep-links skip to `game`. |
+| Landing flow | `src/client/app/PhaseRouter.tsx`, `App.tsx`, store `phase` | `galaxy-map` (the homepage: GameSurface idle + selector + chrome) → tap a sector → "Join the fight" (logged-out: `auth` `LoginPage` and back) → `connecting` → `game`. Logout, lost connection and Settings "Return to menu" all return to `galaxy-map`. `?room=`/`?galaxy=` deep-links skip to `game`. |
 | Galaxy REST | `src/server/routes/galaxyRouter.ts` | Only `GET /galaxy/sectors` (static graph). No live state. |
 | Director | `src/server/livingworld/LivingWorldDirector.ts` + `director/SquadPool.ts` (`LIVING_WORLD_SQUAD_COUNT=3`, `SQUAD_SIZE=8` → 24 bots), `population.ts`, `WaveDirector.ts` | Squads home at entry sectors, roam one hop/45s in formation, warp hop-by-hop, attack ready faction bases (≤1 squad/5min/faction, nearest dispatched). Concentrates on players; idle galaxy spreads. Holds all `galaxy-*` rooms → natural aggregation point for `/galaxy/snapshot`. |
 | Room wiring | `src/server/index.ts`, `galaxy/GalaxyRegistry.ts` | Iterates `GALAXY_SECTORS`, `gameServer.define('galaxy-${key}')` + eager `matchMaker.createRoom`. Scales automatically with the graph. |
@@ -301,8 +301,8 @@ ship-select → game`. Collapse the standalone "Join the fight!" screen into the
   ship picker for the stashed sector. If `user` → open `ShipPickerModal` as today.
 - **Retire `meta` from the default path.** Fold `MetaLandingScreen`'s useful bits
   (server-health banner, live player count) into a light HUD/banner over the map.
-  Keep the `MetaLandingScreen` component initially (don't delete) but out of the
-  default flow; revisit deletion later.
+  (Done: the `meta` phase and `MetaLandingScreen` were deleted when the map
+  became the homepage — see "Homepage" under the map look.)
 - **Preserve:** `AppHeader` (login/profile/settings), renderer idle-boot,
   `GalaxyPickerChrome` roster/picker, limbo handling, the `?room=`/`?galaxy=`
   deep-link skip-to-`game` escape hatches, and the DEV `__eqxGalaxyPick` hook.
@@ -545,16 +545,37 @@ The feed changes every 10 s; the map stays alive in between, driven by the exist
 
 Tapping a sector on the full-page map opens a focus view. The pure decisions are in `render/galaxy/galaxyFocus.ts` (state machine, framing, hop arrows, tap and hover rules, panel dock); `galaxyFocusView.ts` is the Pixi side, owned by `GalaxyMapLayer`.
 
-- **Driven by the selection.** The sector the info drawer shows (`GalaxyPickerChrome` `selectedSectorKey`) is the focus: `onFocusChange` → `syncGalaxyFocus` → `layer.setFocus` on the DOM path, `SET_GALAXY_FOCUS` to the worker. Closing the drawer (✕, swipe, Join/Warp/Spawn) backs out.
+- **Driven by the selection.** The sector the info drawer shows (`GalaxyPickerChrome` `selectedSectorKey`) is the focus: `onFocusChange` → `syncGalaxyFocus` → `layer.setFocus` on the DOM path, `SET_GALAXY_FOCUS` to the worker. Closing the drawer (its "◀ Galaxy" control, swipe, Join/Warp/Spawn) backs out.
 - **Camera.** The layer's existing pan/zoom `Camera` glides there: `glideTo(x, y, ms, scale)` eases the centre and, when given a scale, the zoom (geometric) over 650 ms (`FOCUS_GLIDE_MS`). Backing out glides to the view you had before the first tap; a hop between sectors keeps that home. A drag or pinch mid-glide stops the glide where it is. Reduced motion snaps.
 - **Framing.** The focused hex fills 92% of the height (or width) of the screen the panel leaves free (`focusPanelInsets`), centred in it, capped at the camera's 4x. Neighbours show round it, partly cut by the screen edge on a sideways phone.
-- **Veil and hop targets.** A veil in the backdrop colour covers every sector except the focused one and its linked neighbours (one hex per veiled sector, drawn on a focus change). The neighbours are the REAL hexes: each gets a bright edge in its owner's border colour and a small arrow on the edge it shares with the focused hex, pointing into the neighbour (`hopArrow`; it stays in the rim band, clear of the neighbour's name). Tapping a lit neighbour hops the focus there; tapping the focused hex does nothing; any other tap backs out (on a phone every hex round the focus is a neighbour, so the panel's ✕ is the way out). Hover-shrink is off while focused.
+- **Veil and hop targets.** A veil in the backdrop colour covers every sector except the focused one and its linked neighbours (one hex per veiled sector, drawn on a focus change). The neighbours are the REAL hexes: each gets a bright edge in its owner's border colour and a small arrow on the edge it shares with the focused hex, pointing into the neighbour (`hopArrow`; it stays in the rim band, clear of the neighbour's name). Tapping a lit neighbour hops the focus there; tapping the focused hex does nothing; any other tap backs out (on a phone every hex round the focus is a neighbour, so the panel's "◀ Galaxy" control is the way out). Hover-shrink is off while focused.
 - **Hover tooltip.** Hidden while the camera glides and over the focused hex (`focusHidesHover`); lit neighbours keep theirs.
-- **Owner line.** The panel header and the desktop tooltip read `ownerLine`: the feed's `owner` for the holder and `control` through `splitChallenger` for "contested by", the same fields the hex draws its split from.
+- **Owner line.** The desktop tooltip reads `ownerLine`: the feed's `owner` for the holder and `control` through `splitChallenger` for "contested by", the same fields the hex draws its split from. The panel names the same holder and challenger; `buildSectorTooltip` also carries their owner ids (for livery colours only, never shown) and the raw `control`.
 - **Panel dock.** `focusPanelDock` is shared with `SectorInfoDrawer`: any landscape screen docks the panel right (296 px on desktop; on a phone 30% of the width, 200 to 296 px, starting 56 px down so the top-right full-screen chip stays clear); an upright screen uses a bottom sheet (40% of the height, at most 340 px). The landing buttons bottom-right already hide while a sector is selected.
-- **History.** The drawer shows control over the last hour (`SectorHistorySparkline`): one `GET /galaxy/sector/:key/history` fetch per sector opened, zod-checked, no polling. Line height is the holder's share; dashed ticks mark a change of hands (`sectorSparkline.ts`).
+- **Panel layout.** `SectorInfoDrawer` keeps the drawer shell, header and action bar; its sections are in `sectorPanelParts.tsx`. Each section is left out when its data is absent. Top to bottom:
+  - **Header:** a "◀ Galaxy" back control (the drawer close, testid `sector-drawer-close`), the sector name, and a mono caps line "HELD BY <holder> · UPDATED n S AGO" ("UNCLAIMED" with no owner). The update age is wall time since the last `/galaxy/snapshot` poll landed (`GalaxyPickerChrome` stamps each new `galaxyStats`); the drawer ticks once a second while open.
+  - **Control** (only when the feed has `control`): a bar with the holder's share in its livery colour (`factionColor`), the challenger's share in theirs and a white tick between; then the gaining line from history (`controlTrend`: the holder's share change over the last 10 one-minute samples, counted from 0 if the holder took the sector inside the window): "<holder> gaining · +8% in 10 min", "<challenger> gaining …" or "Steady". On a phone it shrinks to a short label beside the heading ("Sol +8% / 10 min").
+  - **Last hour** (`SectorHistorySparkline`): the holder's share, a dashed 50 % "changes hands" line, orange ticks where the holder changed, a white dot on the latest sample, "<n> MIN AGO" (the minutes the one-a-minute samples cover, 60 once the hour fills) and "NOW" under it. Under two samples, or when the fetch fails, it shows "History builds up over the next hour" instead of an empty box.
+  - **In the sector:** a 2×2 grid (entity icon, number, caps label) of pilots, hostiles, structures and neutral drones from the feed counts, then any event, capital or elite line.
+  - **Recent:** loss lines (last 5 min, when any), "Last changed hands <n> ago" when `control.flippedAtMs` is set (server game time is epoch-based and equals wall time at 1×, so the client compares it with `Date.now()`), and "None of your ships here" / "<n> of your ships here" with a Spawn card per ship.
+  - **Action bar:** Join the fight + Spectate on the landing map, Warp here in game.
+- **History.** `useSectorHistory` makes one `GET /galaxy/sector/:key/history` fetch per sector opened, zod-checked, no polling; the gaining line and the sparkline share it. The pure maths (`sparklinePath`, `controlTrend`, `trendLine` / `trendShort`, `agoLabel`) is in `sectorSparkline.ts`.
 - **Cost.** Drawing happens on a focus change only; the per-frame tick fades the veil and waits for the glide to land, and does nothing while idle.
 - **E2E hook.** `__eqxGalaxyFocus()` (DOM path) returns the phase, sector and lit neighbour keys.
+
+### Homepage
+
+The map is the first thing every visitor sees; there is no other landing screen and no `meta` phase.
+
+- **No login to look.** A logged-out tap opens the focus view like anyone else's. Login is asked for only on the panel's **Join the fight** (and Spectate): `GalaxyPickerChrome.gateJoin` stashes the sector (`pendingPickSector`) and what was pressed, then goes to `auth`. A remembered guest passes.
+- **Back from login.** App's idle-mount effect calls `resumeGatedJoin(sector)`: a Join opens that sector's ship picker straight away; a Spectate goes in as a spectator. No re-tap.
+- **Every exit lands here.** Logout (`useLogout`), the lost-connection overlay and Settings "Return to menu" set `galaxy-map`.
+- **Touch avatar.** `MobileAvatarBadge` mounts on the map (touch, logged in), since phones have no AppBar.
+- **No dev buttons.** The public page shows only the map, the pilot count and the fullscreen chip; the hint reads "Tap a sector to see the fight." Dev tools are reached by direct link only:
+  - single-player diagnostic: `/?local=1`;
+  - dev rooms: `/?room=<name>`, with `sector` (legacy 30-drone ring), `test-sector` (no drones or rocks; the E2E room), `shield-test`, `hull-collision-test`, `hull-collision-overlap-test`, `mount-test`, `feel-test`, `swarm-soak` (500), `swarm-tidi` (4000), `swarm-tidi-burn`;
+  - Visual FX Sandbox (dev server): `/__offscreen-spike__/visual-effects-sandbox.html`.
+- **Locks.** `GalaxyPickerChrome.test.tsx` (gate + resume), `galaxy-landing-flow.spec.ts`, `avatar-menu-logout.spec.ts`, `layout-slots.spec.ts`.
 
 ## Client rules in detail
 
@@ -598,12 +619,12 @@ The galaxy map is the site homepage, so every viewer reads ONE shared feed that 
 | `challenger`, `challengerShare` | The strongest side working against the holder (`challengerOf`; the leader on neutral ground), or null / 0. |
 | `trend` | −1 holder losing ground, 0 steady, +1 gaining (`holderTrend`). |
 | `threat` | 0–3, below. |
-| `flippedAtMs` | Game-time ms of the last holder change this process saw (not persisted: null after a restart until the next flip). |
+| `flippedAtMs` | Game-time ms of the last holder change; saved with the sector's control entry, so it survives a restart (null until the sector first changes hands). |
 | `locked` | The holder has a live lock here (a Territory Lock structure, or the robots' nexus): `RobotTerritory.locksFor`. |
 
 **Threat** (`controlThreat`, pure, in sectorControl.ts). The holder is threatened when its share is falling (`trend` −1) OR one of its structures was hit within **3 min** of game time (`THREAT_STRUCTURE_HIT_WINDOW_MS`; `SectorRoom.sideStructuresHitWithin`, the per-side generalisation of `tradeBaseUnderAttack` over the same `structureAttackAuditAtMs` throttle map, so a hit registers at most once per 15 s per structure). Each sign counts 1. A threatened holder gains 1 more when the sector has `recentCombat` or its share is at or under **40** (`THREAT_LOW_SHARE`; release is at 20). Neutral ground is 0.
 
-**History.** `GET /galaxy/sector/:key/history` returns `{ key, samples: [{ atMs, holder, holderShare }] }`, oldest first: one sample a minute (game time), **60 samples** (an hour) per sector, in a ring preallocated per sector ([sectorControlHistory.ts](../../src/server/livingworld/sectorControlHistory.ts)) and written from the control tick without allocating. `:key` must be a known sector (else 404). Not persisted: the ring refills after a restart. Same `Cache-Control` as the snapshot.
+**History.** `GET /galaxy/sector/:key/history` returns `{ key, samples: [{ atMs, holder, holderShare }] }`, oldest first: one sample a minute (game time), **60 samples** (an hour) per sector, in a ring preallocated per sector ([sectorControlHistory.ts](../../src/server/livingworld/sectorControlHistory.ts)) and written from the control tick without allocating. `:key` must be a known sector (else 404). Saved in the robot director's state row with the sector's control entry (`history: [atMs, holder, holderShare][]`, once a minute and on shutdown), so the panel's graph survives a restart; on restore, samples older than an hour are dropped. Same `Cache-Control` as the snapshot.
 
 **Client.** `useGalaxyStats` and `useGalaxyPresence` both poll on `GALAXY_FEED_INTERVAL_MS` (10 s). Presence (`/galaxy/presence`) is per player and not memoised, so pilot counts stay exact.
 
