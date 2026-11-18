@@ -29,7 +29,7 @@ export const AllKinds: Story = {
       {ENTITY_KIND_ORDER.map((kind) => (
         <div key={kind} style={{ textAlign: 'center', color: '#cfe', font: '13px sans-serif' }}>
           <EntityBadge kind={kind} count={args.count} size={args.size} />
-          <div style={{ marginTop: 8 }}>{entityLabel(kind, args.count)}</div>
+          <div style={{ marginTop: 8 }}>{entityLabel(kind, args.count ?? 0)}</div>
         </div>
       ))}
     </div>

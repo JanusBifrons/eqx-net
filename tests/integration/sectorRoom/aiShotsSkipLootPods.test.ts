@@ -10,11 +10,8 @@
  * and structures only), but every shot through the wreck landed on it.
  *
  * Fix: AI pilot bolts and beams (and structure turret beams) pass through
- * loot pods. A pilot's own gun still hits them; only a mining tool (mining
- * laser, tractor: `isMiningTool`) passes them, a pilot's included
- * (barge-mining stills 2026-11-15: the barge's own mining lasers destroyed
- * 34 of its 100 ore pods on their way to the rock; owner 2026-11-16: only
- * mining tools skip pods).
+ * loot pods. Owner 2026-11-17: NO weapon touches a pod, a pilot's own gun
+ * included (a pod is indestructible and never a shield).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -82,9 +79,24 @@ describe('SectorRoom integration — AI pilot shots pass through loot pods', () 
     expect(mine.every((h) => h.target === 'lp-target'), 'the beam passed the pod: ' + JSON.stringify(mine)).toBe(true);
     expect(podAlive, 'the pod is untouched').toBe(true);
   });
+
+  // Owner 2026-11-17: a pod is a black box. Damage that reaches it anyway
+  // (missile splash, a ram: the damage choke point) never destroys it.
+  it('direct damage on a loot pod never destroys it', { timeout: 30_000 }, async () => {
+    harness = await bootSectorTestServer({ sectorKey: null, droneCount: 0, asteroidConfig: [], testMode: true, peacefulDrones: true, defaultSpawnX: -4000, defaultSpawnY: -4000 });
+    await harness.connectAs(randomUUID());
+    const room = harness.getServerRoom()!;
+    const internals = room._internals;
+    const podId = internals.loot.drop({ goods: { salvage: 5 }, blueprints: [] }, 0, 0, 0, 0)!;
+    const apply = (room as unknown as { applyDamage: (t: string, s: string, d: number) => boolean }).applyDamage.bind(room);
+    for (let i = 0; i < 10; i++) expect(apply(podId, 'someone', 1_000), 'the hit destroyed the pod').toBe(false);
+    await harness.advance(100);
+    expect(internals.swarmRegistry.get(podId), 'the pod is still in the world').toBeDefined();
+    expect(internals.loot.isPod(podId), 'the pod keeps its contents').toBe(true);
+  });
 });
 
-describe('SectorRoom integration: only a pilot\'s mining tool passes loot pods', () => {
+describe('SectorRoom integration: a pilot\'s weapons pass loot pods too', () => {
   let harness: SectorTestHarness;
   afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
 
@@ -129,8 +141,8 @@ describe('SectorRoom integration: only a pilot\'s mining tool passes loot pods',
     expect(onPod, 'the beam passed the pod: ' + JSON.stringify(mine)).toBe(false);
   });
 
-  it('a pilot\'s normal gun still hits the pod in its path', { timeout: 40_000 }, async () => {
+  it('a pilot\'s normal gun passes the pod too (owner 2026-11-17: no weapon touches a pod)', { timeout: 40_000 }, async () => {
     const { mine, onPod } = await pilotFiresPastPod('hitscan');
-    expect(onPod, 'the gun stopped on the pod: ' + JSON.stringify(mine)).toBe(true);
+    expect(onPod, 'the gun passed the pod: ' + JSON.stringify(mine)).toBe(false);
   });
 });

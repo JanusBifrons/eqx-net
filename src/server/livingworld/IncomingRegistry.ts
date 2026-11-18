@@ -7,7 +7,7 @@
  * broadcast a `warp_warning` from the wave step's FINAL-approach branch — roaming
  * squads, lone fighters and players never reached it (3rd failed-fix root cause).
  * The registry is fed off the ONE universal cross-sector hop choke point
- * (`LivingWorldDirector.startSquadMemberTransit`) plus the player-transit path, so
+ * (`SquadTraversal.startSquadMemberTransit`) plus the player-transit path, so
  * EVERY warp decision into an occupied sector is announced + cleared by
  * construction, not by enumerating cases.
  *
