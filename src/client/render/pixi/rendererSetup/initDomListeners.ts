@@ -8,6 +8,7 @@ import type { Application } from 'pixi.js';
 import type { RendererInputController } from '../rendererInputController.js';
 import type { RendererCameraDirector } from '../cameraDirector.js';
 import type { StarfieldBackground } from '../../StarfieldBackground.js';
+import type { RendererFrameRefs } from '../frameCtx.js';
 
 export interface DomListenerDeps {
   app: () => Application | undefined;
@@ -81,4 +82,15 @@ export function removeDomListeners(app: Application | undefined, input: Renderer
   }
   const ro = (app as unknown as Record<string, unknown>)['_resizeObserver'];
   if (ro instanceof ResizeObserver) ro.disconnect();
+}
+
+/** `installDomListeners` over the renderer's frame refs (the `init` call site). */
+export function installRendererDomListeners(
+  r: Pick<RendererFrameRefs, 'app' | 'input' | 'cameraDirector' | 'starfield'>, domContainer: HTMLElement,
+  isInitialized: () => boolean, resolutionFor: (dpr: number, w: number, h: number) => number,
+): void {
+  installDomListeners({
+    app: () => r.app, domContainer, input: r.input, cameraDirector: r.cameraDirector,
+    isInitialized, resolutionFor, starfield: () => r.starfield,
+  });
 }
