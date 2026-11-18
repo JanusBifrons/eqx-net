@@ -9,7 +9,30 @@ import { rigClipIndex, type Rig } from './rig.js';
 import { createRigPose, evaluateRig } from './evaluate.js';
 import { twoBoneIkSolve } from './ikAdapter.js';
 import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, rigForStructureKind } from './rigCatalogue.js';
-import { CRANE_CARGO_BOTH, CRANE_CARGO_IN, CRANE_CARGO_OUT, craneArmPath, craneCargoFlow } from './craneCargo.js';
+import { CRANE_CARGO_BOTH, CRANE_CARGO_IN, CRANE_CARGO_OUT, craneArmPath, craneCargoFlow, craneCargoReadout } from './craneCargo.js';
+
+describe('craneCargoReadout (own-ship HUD)', () => {
+  const H = 300;
+  const S = 1000;
+
+  it('before the hold it names the first move at 0 (unload first)', () => {
+    expect(craneCargoReadout(0, 0, CRANE_CARGO_IN, S)).toBe(CRANE_CARGO_IN * S);
+    expect(craneCargoReadout(0, H, CRANE_CARGO_OUT, S)).toBe(CRANE_CARGO_OUT * S);
+    expect(craneCargoReadout(0, H, CRANE_CARGO_BOTH, S)).toBe(CRANE_CARGO_IN * S);
+    expect(craneCargoReadout(0, H, 0, S)).toBe(0);
+  });
+
+  it('runs 0..99 through one move, capped below 100 (the trade lands at hold end)', () => {
+    expect(craneCargoReadout(H / 2, H, CRANE_CARGO_IN, S)).toBe(CRANE_CARGO_IN * S + 50);
+    expect(craneCargoReadout(H, H, CRANE_CARGO_IN, S)).toBe(CRANE_CARGO_IN * S + 99);
+  });
+
+  it('a mixed dock counts its unload half and load half separately', () => {
+    expect(craneCargoReadout(H / 4, H, CRANE_CARGO_BOTH, S)).toBe(CRANE_CARGO_IN * S + 50);
+    expect(craneCargoReadout(H / 2, H, CRANE_CARGO_BOTH, S)).toBe(CRANE_CARGO_OUT * S + 0);
+    expect(craneCargoReadout((3 * H) / 4, H, CRANE_CARGO_BOTH, S)).toBe(CRANE_CARGO_OUT * S + 50);
+  });
+});
 
 describe('craneCargoFlow (hold timing)', () => {
   const H = 300;

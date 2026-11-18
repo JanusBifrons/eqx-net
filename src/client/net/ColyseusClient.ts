@@ -3362,7 +3362,7 @@ export class ColyseusGameClient {
       }
       // Living World P1a-2 — auto-deposit progress ring (quantised to 10 % so
       // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
-      // `DEPOSIT_WAITING` (3e: the dock crane is busy) passes through as is.
+      // `DEPOSIT_WAITING` (3e: the dock crane is busy) passes through as is; a crane's flow (`DEPOSIT_FLOW_STEP`) survives the step.
       const raw = serverState.depositing;
       const dep = raw === undefined ? null : raw === DEPOSIT_WAITING ? DEPOSIT_WAITING : Math.floor(raw / 10) * 10;
       if (useUIStore.getState().depositPct !== dep) useUIStore.getState().setDepositPct(dep);
