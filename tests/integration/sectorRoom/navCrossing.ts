@@ -24,7 +24,7 @@ export function crossing(): { ax: number; ay: number; bx: number; by: number } {
     for (let d = r.radius + 300; d < r.radius + 1500; d += 100) {
       const ax = r.x - d, bx = r.x + d;
       if (p.roomAt(ax, r.y) >= room && p.roomAt(bx, r.y) >= room && !p.segmentClear(ax, r.y, bx, r.y, c) &&
-        p.plan(coarse, fine, ax, r.y, bx, r.y, c, out) > 1) return { ax, ay: r.y, bx, by: r.y };
+        p.plan(coarse, fine, ax, r.y, bx, r.y, c, out) > 1 && p.status === 'route') return { ax, ay: r.y, bx, by: r.y };
     }
   }
   throw new Error('no crossing');
