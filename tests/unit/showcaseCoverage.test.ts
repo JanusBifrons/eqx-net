@@ -90,7 +90,9 @@ describe('showcase coverage', () => {
   });
 
   it('every shot targets a room or galaxy sector the server defines', () => {
-    const index = readFileSync(path.join(ROOT, 'src/server/index.ts'), 'utf8');
+    // index.ts + the per-feature test-room modules it calls (rooms/testRooms/).
+    const index = ['src/server/index.ts', 'src/server/rooms/testRooms/engineeringRooms.ts', 'src/server/rooms/testRooms/scenarioRooms.ts', 'src/server/rooms/testRooms/worldRooms.ts']
+      .map((f) => readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
     const defined = new Set([...index.matchAll(/define\(\s*'([a-z0-9-]+)'/g)].map((m) => m[1]!));
     for (const name of Object.keys(SHOWCASE_ROOMS)) defined.add(name);
     // Perf-scene rooms are defined in a loop (`perf-${scene.id}`, index.ts).

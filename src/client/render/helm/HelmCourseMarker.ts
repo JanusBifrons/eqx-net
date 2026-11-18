@@ -12,15 +12,22 @@
  * bright and eases to its steady size, while a ripple ring expands and fades.
  * Then it holds steady and subtle until the order ends.
  *
+ * The route line (navigation slice 14, owner 2026-11-17 "whole route line"):
+ * a thin green line from the ship through the autopilot's turns still ahead
+ * to the point, a small dot at each turn, traced by the shared `routeLine`
+ * (as the fleet patrol pick). Redrawn per frame from the mirror (the ship
+ * moves); with no route yet it runs straight to the point.
+ *
  * Screen-space container on the stage (like the incoming-fire markers), so it
  * keeps one pixel size at any zoom, which capitals need (they zoom out to
  * ~0.005). Graphics are painted once; per frame only position, scale and
- * alpha move: no allocation (#14). Runs inside `PixiRenderer.update`, so the
+ * alpha move (the line's Graphics is retraced, as `FleetOverlay` does): no new collections (#14). Runs inside `PixiRenderer.update`, so the
  * main-thread and worker render paths both draw it.
  */
 import { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { Camera } from '../worker/Camera';
+import { traceRoute, routeDots, type RouteProjectFn } from '../routeLine.js';
 
 export const HELM_MARKER_COLOR = 0x3ddc84;
 /** Ring radius, px. */
@@ -38,6 +45,10 @@ const RIPPLE_MS = 480;
 const POP_SCALE = 1.7;
 /** Steady alpha after the pop. */
 export const HELM_STEADY_ALPHA = 0.75;
+/** Route line: width and alpha, over a dark under-stroke; turn dot radius, px. */
+const LINE_PX = 2;
+const LINE_ALPHA = 0.55;
+const TURN_DOT_PX = 3;
 
 export interface HelmMarkerLook { scale: number; alpha: number; ripple: number; rippleAlpha: number }
 
@@ -58,6 +69,9 @@ export class HelmCourseMarker {
   private readonly root = new Container();
   private readonly icon = new Graphics();
   private readonly ripple = new Graphics();
+  private readonly line = new Graphics();
+  private readonly lp = { x: 0, y: 0 };
+  private readonly project: RouteProjectFn = (x, y, out) => { this.camera!.toScreenInto(x, y, out); };
   private camera: Camera | null = null;
   private lastSeq = -1;
   private popAtMs = 0;
@@ -71,7 +85,8 @@ export class HelmCourseMarker {
     paintIcon(this.icon);
     paintRipple(this.ripple);
     // The ripple is a sibling of the root so its scale doesn't stack on the pop.
-    this.container.addChild(this.root, this.ripple);
+    this.container.addChild(this.line, this.root, this.ripple);
+    this.line.visible = false;
     this.root.addChild(this.icon);
     this.ripple.visible = false;
   }
@@ -89,8 +104,10 @@ export class HelmCourseMarker {
     if (c == null || cam === null || mirror.travelling === true) {
       this.root.visible = false;
       this.ripple.visible = false;
+      this.line.visible = false;
       return;
     }
+    this.drawLine(mirror, c);
     if (c.seq !== this.lastSeq) {
       this.lastSeq = c.seq;
       this.popAtMs = nowMs;
@@ -115,6 +132,32 @@ export class HelmCourseMarker {
     }
   }
 
+  /** The route line: ship → turns still ahead → the point. */
+  private drawLine(mirror: RenderMirror, c: NonNullable<RenderMirror['helmCourse']>): void {
+    const g = this.line;
+    const id = mirror.localPlayerId;
+    const ship = id ? mirror.ships.get(id) : undefined;
+    g.clear();
+    if (ship === undefined) { g.visible = false; return; }
+    const n = c.route !== undefined ? c.routeN ?? 0 : 0;
+    this.trace(c, n, ship.x, ship.y);
+    g.stroke({ color: 0x000000, width: LINE_PX + 2, alpha: LINE_ALPHA * 0.6 });
+    this.trace(c, n, ship.x, ship.y);
+    g.stroke({ color: HELM_MARKER_COLOR, width: LINE_PX, alpha: LINE_ALPHA });
+    if (n > 1) { routeDots(g, c.route!, 0, n - 1, TURN_DOT_PX, this.project, this.lp); g.fill({ color: HELM_MARKER_COLOR, alpha: LINE_ALPHA + 0.2 }); }
+    g.visible = true;
+  }
+
+  private trace(c: NonNullable<RenderMirror['helmCourse']>, n: number, sx: number, sy: number): void {
+    if (n > 0) { traceRoute(this.line, c.route!, 0, n, false, sx, sy, this.project, this.lp); return; }
+    const g = this.line;
+    this.project(sx, -sy, this.lp); g.moveTo(this.lp.x, this.lp.y);
+    this.project(c.x, -c.y, this.lp); g.lineTo(this.lp.x, this.lp.y);
+  }
+
+  /** Test / E2E: is the route line drawn this frame. */
+  lineVisible(): boolean { return this.line.visible; }
+
   /** Test / E2E: is the marker drawn this frame. */
   isVisible(): boolean {
     return this.root.visible;
@@ -123,6 +166,7 @@ export class HelmCourseMarker {
   /** Sector handoff: the course point belongs to the old sector. */
   reset(): void {
     this.root.visible = false;
+    this.line.visible = false;
     this.ripple.visible = false;
     this.lastSeq = -1;
   }

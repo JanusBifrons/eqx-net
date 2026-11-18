@@ -163,6 +163,7 @@ import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_T
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
 import { RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
 import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
+import { HelmRouteClient } from '../helm/helmRoute.js';
 import { makeHelmCourseMark, resolveHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
 import { resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
@@ -933,6 +934,8 @@ export class ColyseusGameClient {
    *  every tick (#14). */
   private readonly _helmOrder: HelmOrder = { active: false, tx: 0, ty: 0, speed: 3 };
   private readonly _helmOut = makeHelmOutput();
+  /** Autopilot (navigation slice 13): asks the server for a way to the course point. */
+  private readonly _helmRoute = new HelmRouteClient((t, m) => this.room?.send(t, m));
   private readonly _helmPose: HelmPose = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 };
   private _helmKindId: string | null = null;
   private _helmAvailable = false;
@@ -1433,6 +1436,7 @@ export class ColyseusGameClient {
     shooterKindMounts: (shooterId: string): readonly WeaponMount[] | undefined => this.shooterKindMounts(shooterId),
     enterCommandFromServer: (): void => this.enterCommandFromServer(),
     dataChannelTransport: (): DataChannelTransport | null => this._dataChannelTransport,
+    onNavRoute: (raw: unknown): void => { const r = this._helmRoute.onReply(raw, this._helmOrder); if (r === 'end') this.clearHelm(); else if (r === 'route') this.publishHelm(); },
   };
   /** The ctx the `updateMirror` passes (`mirror/`) run with, built once (#14). */
   private readonly _mirrorPassCtx: MirrorPassCtx = ((c: ColyseusGameClient): MirrorPassCtx => ({
@@ -3778,13 +3782,13 @@ export class ColyseusGameClient {
   /** The camera (`RendererFeedback.viewX/viewY/viewHalf`), each frame: the cut field draws around it too. */
   setFieldView(x: number, y: number, viewHalf: number): void { this._cutField.setView(x, y, viewHalf); }
 
-  /** Helm orders: set the course point (game space). Only a ship that takes
-   *  helm orders (a capital) accepts one. */
+  /** Helm orders: set the course point (game space); the autopilot asks for a way there. */
   setHelmCourse(x: number, y: number): void {
     if (!this._helmAvailable) return;
     this._helmOrder.tx = x;
     this._helmOrder.ty = y;
     this._helmOrder.active = true;
+    this._helmRoute.course(this._helmOrder, this.gameClock.now());
     this._helmCourseSeq++;
     this.publishHelm();
   }
@@ -3799,6 +3803,7 @@ export class ColyseusGameClient {
   clearHelm(): void {
     if (!this._helmOrder.active) return;
     this._helmOrder.active = false;
+    this._helmRoute.clear(this._helmOrder);
     this._helmOut.thrust = false; this._helmOut.turnLeft = false; this._helmOut.turnRight = false;
     this.publishHelm();
   }
@@ -3826,8 +3831,8 @@ export class ColyseusGameClient {
     const kindId = id ? this.mirror.ships.get(id)?.kind ?? null : null;
     if (kindId === this._helmKindId) return;
     this._helmKindId = kindId;
-    this._helmAvailable = kindId !== null && getShipKind(kindId).sizeClass === 'capital';
-    if (!this._helmAvailable) this._helmOrder.active = false;
+    this._helmAvailable = kindId !== null; // every hull takes helm orders (navigation slice 13)
+    if (!this._helmAvailable) this.clearHelm();
     this.publishHelm();
   }
 
@@ -3838,8 +3843,11 @@ export class ColyseusGameClient {
     if (s === null || this._helmKindId === null) return;
     const p = this._helmPose;
     p.x = s.x; p.y = s.y; p.angle = s.angle; p.vx = s.vx; p.vy = s.vy; p.angvel = s.angvel ?? 0;
+    this._helmRoute.tick(this.gameClock.now());
+    const idx = this._helmOrder.route?.idx ?? -1;
     helmStep(this._helmOrder, p, getShipKind(this._helmKindId), this._helmOut);
     if (this._helmOut.arrived) this.clearHelm();
+    else if ((this._helmOrder.route?.idx ?? -1) !== idx) this.syncHelmMark(); // a turn passed: the route line drops it
   }
 
   tickPhysics(elapsedMs: number): void {

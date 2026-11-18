@@ -2,7 +2,7 @@ import { Application, Graphics, Container, RenderLayer, type Texture } from 'pix
 import { Camera } from './worker/Camera';
 import { DEFAULT_GRAPHICS_QUALITY, renderResolution, type GraphicsQuality } from './graphicsQuality';
 import { FxaaFilter } from './pixi/FxaaFilter';
-import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetPickKindWire, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type FrameMarkers } from './worker/protocol';
@@ -10,13 +10,12 @@ import { LoadCurtain } from './pixi/LoadCurtain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, shipSpriteKinds, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
-import { decidePlacementPointer, shouldCentreGhostOnActivate } from './placementPointerDecision.js';
-import { engineProfileForKind } from './pixi/engineGeometry.js';
+import { shouldCentreGhostOnActivate } from './placementPointerDecision.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
+import { WreckArtState, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { deathBlastFor, dyingHullDiameter, hullDeathBlastReplaced, type DeathBlast } from './pixi/deathBlast.js';
 import { spawnVaporiseBlast, stackVaporiseOverBeams } from './pixi/vaporiseBlast.js';
 import { raiseBeamsOverHulls } from './pixi/beamsOverHulls.js';
@@ -24,7 +23,13 @@ import { LegacyExplosionSprites } from './pixi/legacyExplosionSprites.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
-import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
+import { createBeamCtx, updateBeams, type BeamCtx } from './pixi/beamUpdater.js';
+import { createWarpFxCtx, updateWarpFx, type WarpFxCtx } from './pixi/warpFxUpdater.js';
+import { createEngineShieldFxCtx, updateEngineShieldFx, clearEngineShieldFxIds, type EngineShieldFxCtx } from './pixi/engineShieldFxUpdater.js';
+import { RendererInputController, type ForwardedPointerEvent, type RendererInputDeps } from './pixi/rendererInputController.js';
+import { RendererCameraDirector, DEFAULT_GAMEPLAY_ZOOM, type RendererCameraDeps } from './pixi/cameraDirector.js';
+import { artStats, backdropStats, shipVisualProbe, type ArtStats, type BackdropStats, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
+import { type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
 import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
 import { HelmCourseMarker } from './helm/HelmCourseMarker.js';
@@ -36,13 +41,7 @@ import { LabelManager } from './Labels';
 import { SelectionBracket } from './SelectionBracket';
 import { AimFeedbackRenderer } from './AimFeedbackRenderer';
 import { HoverBracket } from './HoverBracket';
-import { pickEntityAt, type PickedEntityKind } from './pickEntity';
-import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from './input/commandPointerRouter.js';
-import { decideTapAction, type FleetOrderMode } from './input/tapAction.js';
-import { DoubleTapTracker } from './input/doubleTap.js';
-import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from './input/fleetPick.js';
-import { applySelection, boxSelectOwn, collectFleetShips, focusSurvives, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from './fleetSelection.js';
-import { FleetOverlay, type OrderFlash } from './FleetOverlay.js';
+import { FleetOverlay } from './FleetOverlay.js';
 import { decideExplosionPosition } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
@@ -50,9 +49,6 @@ import { readFxKillSwitches, type FxKillSwitches } from './fxKillSwitches';
 import { createArtService, type ArtHandle } from './art/ArtService.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import { litPass } from './art/litPass.js';
-import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach } from './art/lightingSettings.js';
-import { WarpSpoolFx, type SpoolFxShip, type Nozzle } from './pixi/WarpSpoolFx.js';
-import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
 import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
@@ -62,63 +58,34 @@ import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
-import { droneBoostInput } from './pixi/droneEngineInput.js';
-import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
-import { shipShotMuzzle } from '@core/combat/muzzle';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
-import { NAVAL_RANGE } from '@shared-types/combat/navalRange';
-import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, hullZoomFactor, shieldBubbleRadius, shipTuning, startZoomForScale, zoomRangeForKind } from '@shared-types/shipScale/tuning';
+import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, startZoomForScale } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
-import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
-import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
-import { isMachinedSprite, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
-import { BeamSpritePool, type BeamView, type BeamSpriteStyle } from './BeamSpritePool';
-import {
-  CameraDirector,
-  type CameraTargetLookup,
-  type DirectorTarget,
-  type MutableBounds,
-  type MutablePoint,
-} from './camera/CameraDirector';
+import { updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
+import { BeamSpritePool, type BeamView } from './BeamSpritePool';
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
-import { GroupBoundsScanner } from './camera/groupBounds';
-import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
+import type { CameraCue } from '@core/contracts/cameraScript';
 import { fillTractorBeams } from './tractorBeams';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, MINING_BEAM_STYLE, addBeamLights, beamLightBudget } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { CutFieldLayer } from './field/CutFieldLayer';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
-import { getShipKind } from '../../shared-types/shipKinds';
-import { zoomFloorFor } from '../../shared-types/shipScale/commandZoom.js';
 import {
   buildGhostGfx,
-  applyMountOffset,
   buildStructureGfx,
 } from './pixi/spriteBuilders.js';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { setCanvasPointerCapture } from './pointerCapture.js';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
-import { localCameraKey } from './camera/localCameraKey';
-import { isParkedHull } from './shipOwnership.js';
-import { warpFxFeedsShip } from './warpFxGate.js';
-import { forEachShipRekey, moveKey, moveSetKey, probeIdentity } from './shipRekey.js';
+import { forEachShipRekey, moveKey, moveSetKey } from './shipRekey.js';
 import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
 // the constants below are PixiRenderer-specific (background tint,
 // remote-laser colour used by inline beam draw in update()).
 const BACKGROUND_COLOR = 0x05070f;
-// Default gameplay camera zoom (world Container scale). 1.0 preserves the
-// historical framing; tune here once the `?zoom=` on-device A/B settles.
-// 2026-06-03 zoom-range tweak: the gameplay camera now allows zooming
-// much further OUT (clampZoom minScale 0.4 → 0.15 below) so the player can
-// take in the wider battlefield. The DEFAULT start zoom moved from 1.0 to
-// 0.5 — close to the OLD max zoom-out (0.4), raised slightly — so you spawn
-// seeing more of the sector. `?zoom=` still overrides for on-device A/B.
-const DEFAULT_GAMEPLAY_ZOOM = 0.5;
 
 // Per-frame Pixi stroke-style scratches. The renderer redraws beams
 // every RAF (60–90 Hz) via clear() + moveTo + lineTo + stroke(...). Pre-
@@ -156,14 +123,6 @@ export class PixiRenderer implements IRenderer {
 
   /** Which look to draw (resolved on the main thread; default today's look). */
   private readonly _artOpts: ArtOptions;
-  /** Zoom range follows the ship you fly (capital-ship round 3 D): the kind id
-   *  last applied, its hull zoom factor, and whether `?zoom=` pinned the start. */
-  private _zoomKindId: string | null = null;
-  private _zoomFactor = 1;
-  private _viewW = 0;
-  private _viewH = 0;
-  private _zoomPinned = false;
-  private readonly _zoomRange = { minScale: GAMEPLAY_MIN_ZOOM, startZoom: 0, maxScale: GAMEPLAY_MAX_ZOOM };
 
   /** FX kill switches handed in by the worker BOOT (resolved on the main
    *  thread — the worker has no `window`). Absent ⇒ read the URL at init. */
@@ -204,65 +163,22 @@ export class PixiRenderer implements IRenderer {
    *  `shipContainer` (world space) so it pans/zooms with the structures. */
   private _placementGhost: Graphics | null = null;
   private _placementGhostKind: string | null = null;
-  /** Tap/drag-to-position placement state (2026-06-07). `_placementActive` is
-   *  set each frame from `mirror.pendingPlacementPreview`. While active, canvas
-   *  pointer events position the blueprint ghost (game-space) instead of
-   *  panning the camera. `_placementChosenX/Y` is the chosen GAME point (null =
-   *  not yet positioned → fall back to the ahead-of-ship preview).
-   *  `_placementFollowing` true ⇒ the ghost tracks the pointer (desktop hover /
-   *  mobile drag); set false on pointer-up so the ghost parks and the Confirm
-   *  banner appears. */
-  private _placementActive = false;
-  private _placementFollowing = true;
-  private _placementChosenX: number | null = null;
-  private _placementChosenY: number | null = null;
   /** Phase 4 WS-A1 — spectator/construction free-roam camera. While true,
    *  `update()` does NOT re-issue the local-ship follow, so the camera holds
    *  wherever the player panned it (and there may be no local ship at all). */
   private _spectator = false;
-  /**
-   * RTS command view (slice 13a). Enabled while spectating (command mode);
-   * decides what a pointer gesture means (camera / box / tap-select / order).
-   */
-  private readonly _cmdRouter = new CommandPointerRouter(false);
-  /** Own-ship fleet selection (ids per the pick convention). Replaced (never
-   *  mutated) on a gesture; pruned in place in `update()` when a ship leaves. */
-  private _selShips: Set<string> = new Set();
-  /** RTS slice 10: double tap / click on an own parked ship = take the controls. */
-  private readonly _doubleTap = new DoubleTapTracker();
-  /** Drag box in screen px while a box gesture is live (reused object). */
-  private readonly _fleetBoxRect: BoxRect = { x0: 0, y0: 0, x1: 0, y1: 0 };
-  private _fleetBoxActive = false;
-  private readonly _orderFlash: OrderFlash = { x: 0, y: 0, attack: false, t0: -1 };
-  /** Touch tap-order mode (slice 12), pushed from the strip's Zustand toggle. */
-  private _fleetOrderMode: FleetOrderMode = 'move';
-  /** "Pick on the map" for patrol / escort / retreat (slice 14b). While a
-   *  kind is set, map taps go here and never change the selection. */
-  private readonly _fleetPick = createFleetPickState();
-  /** Own ships' squads + orders by id (slice 15a), replaced on each
-   *  `setFleetOverlayModel` (main-thread fleet status version change). */
-  private _fleetModel: Map<string, FleetOverlayShip> = new Map();
-  private readonly _squadOf = (id: string): string | null | undefined => this._fleetModel.get(id)?.squadId;
-  /** Hold-to-box cue scratch (reused per frame). */
-  private readonly _holdArmed: HoldArmed = { x: 0, y: 0, armedMs: 0 };
+  /** Pointer / touch / wheel input, RTS command routing and THE selection
+   *  (pixi/rendererInputController.ts), built once. */
+  private readonly _input = new RendererInputController(this.inputDeps());
+  private inputDeps(): RendererInputDeps {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
+    const r = this;
+    return {
+      get camera() { return r.camera; }, get lastMirror() { return r._lastMirror; }, get galaxyLayer() { return r._galaxyLayer; },
+      get feedback() { return r.feedback; }, get selectionBracket() { return r.selectionBracket; }, get fleetOverlay() { return r.fleetOverlay; },
+    };
+  }
   private fleetOverlay: FleetOverlay | null = null;
-  private readonly _fleetProject = (wx: number, wy: number, out: { x: number; y: number }): void => {
-    this.camera.toScreenInto(wx, wy, out);
-  };
-  /**
-   * Click-to-inspect selection (structures follow-up Item B2). The renderer
-   * OWNS the selected entity — set on a gameplay tap that resolves to an
-   * entity, toggled off on a re-tap of the SAME entity, cleared on an
-   * empty-space tap. Published each frame via `feedback.selectedPickId/Kind`
-   * (the main thread mirrors it into Zustand for panel visibility). The id form
-   * matches the `HealthBarManager`/`SelectionBracket` lookup convention.
-   */
-  private _focusId: string | null = null;
-  private _focusKind: PickedEntityKind | null = null;
-  /** WS-10 (R2.4) — the entity the desktop pointer is HOVERING over (set from
-   *  pointer-move via `pickEntityAt`). Renderer-local, NEVER Zustand (updates at
-   *  move cadence — invariant #2). Drives the lighter `HoverBracket` outline. */
-  private _hoveredId: string | null = null;
   /** Structures plan, Phase 3 — grid connector web renderer. */
   private connectorRenderer!: ConnectorRenderer;
   /** A3 — visible rect for culling structure sprites (reused per frame). */
@@ -344,6 +260,26 @@ export class PixiRenderer implements IRenderer {
   /** Reused per-frame seen-set for the missile sprite updater. */
   private readonly _updateMissileSeenScratch = new Set<number>();
   private _missileUpdaterCtx!: MissileSpriteCtx;
+  /** Pooled remote / mining / live beam ctx (pixi/beamUpdater.ts), built once in init. */
+  private _beamCtx!: BeamCtx;
+  /** Live getter view of the state the test / perf probes read (pixi/rendererProbes.ts). */
+  private readonly _probes: RendererProbeState = this.probeState();
+  private probeState(): RendererProbeState {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
+    const r = this;
+    return {
+      get sprites() { return r.sprites; }, get artCtx() { return r._artCtx; }, get swarmSpriteKinds() { return r._swarmSpriteKinds; },
+      get mountVisuals() { return r.mountVisuals; }, get camera() { return r.camera; }, get starfield() { return r.starfield; },
+      get backdrop() { return r._backdrop; }, get effects() { return r.effects; }, get engineDbgScratch() { return r._engineDbgScratch; },
+      get farIcons() { return r._farIcons; }, get warpFx() { return r._warpFxCtx.warpFx; }, get spoolFx() { return r._warpFxCtx.spoolFx; },
+      get helmMarker() { return r.helmMarker; }, get lastMirror() { return r._lastMirror; }, get fxEngines() { return r._fxEngines; },
+      get fxExplosions() { return r._fxExplosions; }, get fxProjectiles() { return r._fxProjectiles; }, get fxLiveBeams() { return r._fxLiveBeams; },
+      get fxShields() { return r._fxShields; }, get fxShieldsOn() { return r._fxShieldsOn; }, get fxFences() { return r._fxFences; },
+      get wreckBreaks() { return r._wreckBreaks; }, get wreckBlastsSpawned() { return r._wreckBlastsSpawned; },
+      get wreckRipplesSpawned() { return r._wreckRipplesSpawned; }, get hullBlastsReplaced() { return r._hullBlastsReplaced; },
+      get shipRekeysApplied() { return r._shipRekeysApplied; },
+    };
+  }
   private readonly explosionSprites = new LegacyExplosionSprites();
   // Post-2026-06-01: beams now rendered via sprite pools (no Graphics
   // clear/redraw cycle). The `liveBeamGfx` / `remoteBeamGfx` accessor
@@ -366,66 +302,6 @@ export class PixiRenderer implements IRenderer {
   private _miningBeamPool: BeamSpritePool | null = null;
   private _tractorBeamPool: BeamSpritePool | null = null; private readonly _tractorViews: BeamView[] = []; private _tractorViewCount = 0; // salvage PR 11b (tractorBeams.ts)
   private miningBeamGfx: Container | null = null;
-  /**
-   * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
-   * dirty-flag check on the per-frame Graphics rebuild path.
-   * `liveBeamGfx.clear() + moveTo + lineTo + stroke` ran every frame
-   * while held-fire was active even when the ship hadn't moved or
-   * rotated past visual threshold. Same pattern as HealthBars and
-   * BackgroundGrid — Pixi v8 allocates fresh ShapePath /
-   * GpuGraphicsContext per `stroke()` call. Cached per-mount endpoints
-   * + alpha; epsilon 0.5 world units (sub-pixel at typical zoom).
-   * `_liveBeamCacheCount` is the number of valid entries — used so we
-   * can rebuild from cache without depending on Map size invariants.
-   */
-  private readonly _liveBeamCache: Array<{
-    mountId: string;
-    fromX: number;
-    fromY: number;
-    toX: number;
-    toY: number;
-    solidLen?: number;
-    style?: BeamSpriteStyle | null;
-  }> = [];
-  private _liveBeamCacheCount = 0;
-  /** Same dirty-flag cache for remote shooters' beams (per-shooter +
-   *  per-mount keyed). With multiple drones firing at once the rebuild
-   *  cost was per-frame × per-beam — the cache compounds. Flat array
-   *  matches liveBeam pattern; iteration order is stable across frames
-   *  (JS Map preserves insertion order). */
-  /** Scratch for `remoteBeamLine` (one per frame loop, #14). */
-  private readonly _remoteBeamLine: RemoteBeamLine = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
-  private readonly _beamHitMem = new BeamHitMemory(); // the cut stays lit through a kill follow-through
-  private readonly _remoteBeamCache: Array<{
-    shooterId: string;
-    mountId: string;
-    fromX: number;
-    fromY: number;
-    toX: number;
-    toY: number;
-    alpha: number;
-    /** Per-beam style override (the capital heavy beam); null = pool style. */
-    style: BeamSpriteStyle | null;
-    /** Solid length (`remoteBeamSolidLen`): the heavy beam is solid to its
-     *  hit; undefined = the pool's taper (fighter beams). */
-    solidLen?: number;
-  }> = [];
-  private _remoteBeamCacheCount = 0;
-  /** WS-4 Phase 4 — drill-beam slots routed out of the remote-laser loop into
-   *  the dedicated mining pool. Same slot shape as `_remoteBeamCache` (the pool
-   *  reads only the BeamView subset); reused in place (invariant #14). */
-  private readonly _miningBeamCache: Array<{
-    shooterId: string;
-    mountId: string;
-    fromX: number;
-    fromY: number;
-    toX: number;
-    toY: number;
-    alpha: number;
-    style: BeamSpriteStyle | null;
-    solidLen?: number;
-  }> = [];
-  private _miningBeamCacheCount = 0;
   private initialized = false;
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -491,9 +367,9 @@ export class PixiRenderer implements IRenderer {
     this._farIcons.forgetShip(from, sprite);
     this._fxEngines?.rekey(from, to);
     this._fxShields?.rekey(from, to);
-    if (this._focusId === from) this._focusId = to;
-    if (this._hoveredId === from) this._hoveredId = to;
-    if (moveSetKey(this._selShips, from, to)) this.publishFleetSelection();
+    if (this._input._focusId === from) this._input._focusId = to;
+    if (this._input._hoveredId === from) this._input._hoveredId = to;
+    if (moveSetKey(this._input._selShips, from, to)) this._input.publishFleetSelection();
     this._shipRekeysApplied++;
   }
 
@@ -526,12 +402,17 @@ export class PixiRenderer implements IRenderer {
    *  first statement of `update`; the effects tick at the tail of the same
    *  call reads it, so it's always this frame's mirror. */
   private _lastMirror: RenderMirror | null = null;
-  /** Cinematic camera (docs/architecture/cinematic-camera.md). While a script
-   *  plays the director is the sole camera driver: `update()` stops re-issuing
-   *  the local-ship follow and feeds `Camera.setDirectorTarget` instead. */
-  private readonly _director = new CameraDirector();
-  private readonly _directorOut: DirectorTarget = { x: 0, y: 0, zoom: 1, smoothMs: 0 };
-  private readonly _directorLookup: CameraTargetLookup = this.createDirectorLookup();
+  /** Camera framing + cinematic director (pixi/cameraDirector.ts), built once. */
+  private readonly _cameraDirector = new RendererCameraDirector(this.cameraDeps());
+  private cameraDeps(): RendererCameraDeps {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
+    const r = this;
+    return {
+      get camera() { return r.camera; }, get lastMirror() { return r._lastMirror; }, get sprites() { return r.sprites; },
+      get swarmSpriteKinds() { return r._swarmSpriteKinds; }, get spectator() { return r._spectator; },
+      get initialized() { return r.initialized; }, get halo() { return r.halo; },
+    };
+  }
   private readonly _updateRemoteHitTargetsScratch = new Set<string>();
   private readonly _updateLocalHitTargetsScratch = new Set<string>();
   private readonly _updateProjSeenScratch = new Set<string>();
@@ -876,7 +757,7 @@ export class PixiRenderer implements IRenderer {
       maxScale: GAMEPLAY_MAX_ZOOM,
       followLerpFactor: 1,
     });
-    this.setViewSize(initialW, initialH);
+    this._cameraDirector.setViewSize(initialW, initialH);
 
     // Read the bisected FX kill switches once at init. Threaded into the
     // EffectsService refs (per-effect bypasses).
@@ -931,7 +812,7 @@ export class PixiRenderer implements IRenderer {
       zoom !== undefined && Number.isFinite(zoom) && zoom > 0
         ? zoom
         : startZoomForScale(DEFAULT_GAMEPLAY_ZOOM); // ship scale (shipScale/tuning)
-    this._zoomPinned = resolvedZoom !== startZoomForScale(DEFAULT_GAMEPLAY_ZOOM);
+    this._cameraDirector._zoomPinned = resolvedZoom !== startZoomForScale(DEFAULT_GAMEPLAY_ZOOM);
     this.camera.setZoom(resolvedZoom);
 
     // Frame diagnostic (gated). The decisive crispness metric: the
@@ -983,9 +864,9 @@ export class PixiRenderer implements IRenderer {
     this.shipContainer.addChild(this.connectorRenderer.gfx);
     // Warp-to visuals (Phase 4): engine build-up, blur streak, burning trails.
     // Cheap sprites, under the hulls; drawn for every render mode.
-    this.shipContainer.addChild(this._warpFx.layer);
+    this.shipContainer.addChild(this._warpFxCtx.warpFx.layer);
     // Warp spool-up: the engines overcharge (glow + sparks, under the hulls).
-    this.shipContainer.addChild(this._spoolFx.layer);
+    this.shipContainer.addChild(this._warpFxCtx.spoolFx.layer);
     // Placed rocks and cut rock pieces: one mesh for all of them (rockBatch.ts),
     // under the hulls and the wreck pieces' cut-edge glow.
     this.shipContainer.addChild(this._cutField.rockBatch.layer);
@@ -1091,10 +972,12 @@ export class PixiRenderer implements IRenderer {
       // ship (players and drones). Under the hulls; ship sprites are added later.
       this._fxEngines = new FxEngines(art, () => this.effects?.getQuality() ?? 'medium');
       this.shipContainer.addChild(this._fxEngines.trailLayer, this._fxEngines.flameLayer, this._fxEngines.glowLayer);
+      this._engineShieldFxCtx.fxEngines = this._fxEngines;
       this._missileUpdaterCtx.fxExplosions = this._fxExplosions;
       // B5: shields (invisible at rest; hit ripples, held laser contacts,
       // break) and fences (energy line, raise / power-loss / gate).
       this._fxShields = new FxShields(art);
+      this._engineShieldFxCtx.fxShields = this._fxShields;
       this._fxFences = new FxFences(art);
       this.shipContainer.addChild(this._fxShields.container);
       // Fences sit just above the connector web, below the sprites.
@@ -1169,6 +1052,16 @@ export class PixiRenderer implements IRenderer {
     // hull (ships spawn later and would otherwise stack above them).
     raiseBeamsOverHulls(this.shipContainer, [this._fxRemoteBeams?.container, this._fxLiveBeams?.container],
       [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool, this._tractorBeamPool]);
+    // Pooled beam ctx (pixi/beamUpdater.ts): every reference is final by here.
+    this._beamCtx = createBeamCtx({
+      beamsDisabled: this._beamsDisabled, fxNow: () => this.fxNow(),
+      remoteBeamPool: this._remoteBeamPool, remoteBeamGfx: this.remoteBeamGfx,
+      miningBeamPool: this._miningBeamPool, miningBeamGfx: this.miningBeamGfx,
+      liveBeamPool: this._liveBeamPool, liveBeamGfx: this.liveBeamGfx,
+      fxRemoteBeams: this._fxRemoteBeams, fxLiveBeams: this._fxLiveBeams,
+      fxShields: this._fxShields, fxFences: this._fxFences, fxShieldPose: this._fxShieldPose,
+      swarmPoseScratch: this.swarmPoseScratch, feedback: this.feedback,
+    });
     stackVaporiseOverBeams(this.shipContainer, this._fxExplosions); // the vaporise flash reads over the beams
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
@@ -1199,7 +1092,7 @@ export class PixiRenderer implements IRenderer {
       this.camera.tick(this.app.ticker.deltaMS);
       // Screen-space overlays project through THIS frame's camera (after its
       // tick), the transform the world renders with below.
-      this.drawFleetOverlay();
+      this._input.drawFleetOverlay();
       if (this._ringProbeOn) this.captureFleetRingProbe();
       // Machined art: pack finished bakes every frame — including on the
       // galaxy map / warp screen, where `update()` doesn't run, so the
@@ -1220,7 +1113,7 @@ export class PixiRenderer implements IRenderer {
       // Worker context: events arrive via postMessage and the worker
       // scaffolding (renderer.worker.ts) calls forwardPointerEvent /
       // forwardWheelEvent directly — no DOM listener path.
-      this.installCanvasEventListeners(this.app.canvas);
+      this._input.installCanvasEventListeners(this.app.canvas);
 
       const measureSize = (): { w: number; h: number } => {
         const vv = window.visualViewport;
@@ -1240,7 +1133,7 @@ export class PixiRenderer implements IRenderer {
         // on the main-thread path too (parity with the worker resize).
         const dpr = window.devicePixelRatio ?? 1;
         this.app.renderer.resize(w, h, this.resolutionFor(dpr, w, h));
-        this.setViewSize(w, h);
+        this._cameraDirector.setViewSize(w, h);
         this.starfield?.resize(w, h);
       };
       window.addEventListener('resize', resize);
@@ -1272,7 +1165,7 @@ export class PixiRenderer implements IRenderer {
     // (the old behaviour) kept the stale init resolution → blur after
     // such a change. `width`/`height` are LOGICAL (CSS) px.
     this.app.renderer.resize(width, height, dpr !== undefined ? this.resolutionFor(dpr, width, height) : this.app.renderer.resolution);
-    this.setViewSize(width, height);
+    this._cameraDirector.setViewSize(width, height);
     this.starfield?.resize(width, height);
     if (isDiagEnabled()) {
       logEvent('render_frame_diag', {
@@ -1289,402 +1182,11 @@ export class PixiRenderer implements IRenderer {
     }
   }
 
-  /**
-   * Worker-context entry point for synthesised pointer events forwarded
-   * from the main thread. The Camera consumes via its state machine.
-   */
-  forwardPointerEvent(e: { type: string; pointerId: number; offsetX: number; offsetY: number; stamp: number; button?: number; buttons?: number; shiftKey?: boolean; pointerType?: string }): void {
-    // Galaxy selector (spawn/warp picker) owns pointer input for free
-    // pan/zoom; a tap is resolved to a sector inside the layer. Otherwise
-    // the world camera consumes it (gameplay pan/zoom + tap).
-    const gl = this._galaxyLayer;
-    if (gl !== null && gl.isPanZoomActive()) {
-      switch (e.type) {
-        case 'pointerdown': gl.onPointerDown(e.pointerId, e.offsetX, e.offsetY, e.stamp); break;
-        case 'pointermove': gl.onPointerMove(e.pointerId, e.offsetX, e.offsetY); break;
-        case 'pointerup': gl.onPointerUp(e.pointerId, e.offsetX, e.offsetY, e.stamp); break;
-        case 'pointercancel':
-        case 'pointerleave': gl.onPointerCancel(e.pointerId); break;
-      }
-      return;
-    }
-    // Structure placement positions the ghost instead of panning (worker path).
-    if (this._placementActive) {
-      this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button ?? -1, e.pointerType ?? 'mouse');
-      return;
-    }
-    // RTS command view (slice 13a): the router decides camera / box / select /
-    // order. Its `camera` actions run the camera below with taps ignored.
-    if (this.commandRoutingActive()) {
-      this.routeCommandPointer(e.type, e.pointerId, e.offsetX, e.offsetY, e.stamp,
-        e.button ?? 0, e.buttons ?? 0, e.shiftKey === true, e.pointerType ?? 'mouse');
-      return;
-    }
-    const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, e.stamp);
-    if (wasTap) {
-      // Confirmed tap (single pointer, short duration, small distance):
-      // route to the registered tap-handler. The worker uses this to
-      // hit-test the GalaxyMapLayer (since Pixi's event subsystem
-      // isn't initialised without a DOM event source).
-      if (this.onTap) this.onTap(e.offsetX, e.offsetY);
-      // Click-to-inspect (Item B2): a gameplay tap selects an entity, gated
-      // off galaxy + placement so it never cross-fires with warp/picker/build.
-      if (!this.galaxyTapSuppressed() && !this._placementActive) {
-        this.handleGameplayTap(e.offsetX, e.offsetY);
-      }
-    }
-  }
+  /** Worker-context entry point for forwarded pointer events (see `pixi/rendererInputController.ts`). */
+  forwardPointerEvent(e: ForwardedPointerEvent): void { this._input.forwardPointerEvent(e); }
 
-  /**
-   * The camera half of pointer handling (both render paths). Returns the
-   * camera's `wasTap` on pointerup; callers decide whether a tap means anything
-   * (command view ignores it: the router owns taps there).
-   */
-  private cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number): boolean {
-    switch (type) {
-      case 'pointerdown':
-        this.camera.onPointerDown(pointerId, x, y, stamp);
-        return false;
-      case 'pointermove':
-        this.camera.onPointerMove(pointerId, x, y);
-        // WS-10 (R2.4) — desktop hover outline. Renderer-local; gated like
-        // selection so it never fires over the galaxy layer / during placement.
-        if (!this.galaxyTapSuppressed() && !this._placementActive) {
-          this.handleGameplayHover(x, y);
-        }
-        return false;
-      case 'pointerup':
-        return this.camera.onPointerUp(pointerId, x, y, stamp).wasTap;
-      case 'pointercancel':
-      case 'pointerleave':
-        this.camera.onPointerCancel(pointerId);
-        return false;
-    }
-    return false;
-  }
-
-  /** Command view routes pointers through the router (never over the galaxy
-   *  overlay, whose taps stay warp taps; placement is routed before this). */
-  private commandRoutingActive(): boolean {
-    return this._cmdRouter.enabled && !this.galaxyTapSuppressed() && !this._placementActive;
-  }
-
-  private routeCommandPointer(
-    type: string, pointerId: number, x: number, y: number, stamp: number,
-    button: number, buttons: number, shiftKey: boolean, pointerType: string,
-  ): void {
-    if (type === 'pointerleave') {
-      // Not a router event: a leave after a lift is noise, and a live gesture
-      // keeps going (the DOM path captures the pointer in command view).
-      return;
-    }
-    if (type !== 'pointerdown' && type !== 'pointermove' && type !== 'pointerup' && type !== 'pointercancel') return;
-    // Allocated per input event (not a frame-loop path): the router keeps the
-    // down event of a gesture by reference.
-    const ev: RouterPointerEvent = { type, pointerId, button, buttons, x, y, shiftKey, pointerType, timeMs: stamp };
-    const actions = this._cmdRouter.handle(ev);
-    for (let i = 0; i < actions.length; i++) this.applyRouterAction(actions[i]!);
-  }
-
-  private applyRouterAction(a: RouterAction): void {
-    if (this._fleetPick.kind !== null && a.kind !== 'camera') {
-      this.applyPickRouterAction(a);
-      return;
-    }
-    switch (a.kind) {
-      case 'camera':
-        this.cameraPointer(a.ev.type, a.ev.pointerId, a.ev.x, a.ev.y, a.ev.timeMs);
-        return;
-      case 'boxStart':
-      case 'boxUpdate':
-        this._fleetBoxRect.x0 = a.x0; this._fleetBoxRect.y0 = a.y0;
-        this._fleetBoxRect.x1 = a.x1; this._fleetBoxRect.y1 = a.y1;
-        this._fleetBoxActive = true;
-        return;
-      case 'boxCancel':
-        this._fleetBoxActive = false;
-        return;
-      case 'boxEnd':
-        this._fleetBoxActive = false;
-        this.commandBoxSelect(a.x0, a.y0, a.x1, a.y1, a.additive);
-        return;
-      case 'tapSelect':
-        this.commandTap(a.x, a.y, a.additive, a.pointerType);
-        return;
-      case 'order':
-        this.commandOrder(a.x, a.y);
-        return;
-    }
-  }
-
-  /**
-   * Router actions while a fleet pick is on (slice 14b): a tap (or a box
-   * gesture's end, which a finger easily makes) is a pick, never a selection;
-   * a mouse right-click is Done for a patrol and a pick otherwise. Boxes are
-   * not drawn.
-   */
-  private applyPickRouterAction(a: RouterAction): void {
-    switch (a.kind) {
-      case 'tapSelect':
-      case 'order':
-        if (a.kind === 'order' && this._fleetPick.kind === 'patrol') {
-          this.commitFleetPick();
-          return;
-        }
-        this.pickTap(a.x, a.y);
-        return;
-      case 'boxStart':
-      case 'boxUpdate':
-      case 'boxCancel':
-      case 'boxEnd':
-        this._fleetBoxActive = false;
-        return;
-      case 'camera':
-        return;
-    }
-  }
-
-  /** A map tap during a fleet pick (`decidePickTap`). */
-  private pickTap(screenX: number, screenY: number): void {
-    const m = this._lastMirror;
-    if (m === null) return;
-    const w = this.camera.screenToWorld(screenX, screenY);
-    const gx = w.x;
-    const gy = -w.y;
-    const pick = this._fleetPick;
-    const own = pick.kind === 'escort' ? pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId) : null;
-    switch (decidePickTap(pick.kind, own, own !== null && this._selShips.has(own), pick.count)) {
-      case 'addPoint':
-        pickAddPoint(pick, gx, gy);
-        this.feedback.fleetPickPoints = pick.count;
-        return;
-      case 'retreatHere':
-        this.publishPickResult({ kind: 'retreat', x: gx, y: gy });
-        return;
-      case 'escortShip':
-        this.publishPickResult({ kind: 'escort', escortId: own! });
-        return;
-      case 'ignore':
-        return;
-    }
-  }
-
-  /** End the pick and hand its result to the main thread (sent once per seq). */
-  private publishPickResult(result: FleetPickResult): void {
-    pickStart(this._fleetPick, null);
-    const fb = this.feedback;
-    fb.fleetPickPoints = 0;
-    fb.fleetPickResult = result;
-    fb.fleetPickSeq++;
-  }
-
-  /** Box (screen px) → own ships whose centre is inside it (game space). */
-  private commandBoxSelect(x0: number, y0: number, x1: number, y1: number, additive: boolean): void {
-    const m = this._lastMirror;
-    if (m === null) return;
-    const a = this.camera.screenToWorld(x0, y0);
-    const b = this.camera.screenToWorld(x1, y1);
-    const hits = boxSelectOwn(a.x, -a.y, b.x, -b.y, collectFleetShips(m), m.localPlayerId, this._squadOf);
-    // The focus stays only if it is still one of the selected ships.
-    this.setSelection(applySelection(this._selShips, hits, additive), this._focusId, this._focusKind);
-  }
-
-  /** Command-view tap (`decideTapAction`): an own ship selects it; a touch/pen
-   *  tap with a selection gives an order per `_fleetOrderMode`; otherwise it
-   *  falls through to the inspect select (a plain tap clears the selection). */
-  private commandTap(screenX: number, screenY: number, additive: boolean, pointerType: string): void {
-    const m = this._lastMirror;
-    if (m === null) return;
-    const w = this.camera.screenToWorld(screenX, screenY);
-    const gx = w.x;
-    const gy = -w.y;
-    const fleet = collectFleetShips(m);
-    const own = pickOwnShipAt(gx, gy, fleet, m.localPlayerId);
-    const touchOrder = own === null && pointerType !== 'mouse' && this._selShips.size > 0;
-    // Pick only when an order needs to know what is under the finger.
-    const hit = touchOrder ? pickEntityAt(gx, gy, m) : null;
-    const attackable = hit !== null && this.isAttackable(hit.id, hit.kind, m);
-    const action = decideTapAction({
-      pointerType,
-      hitOwn: own !== null,
-      hitEntity: hit !== null,
-      hitAttackable: attackable,
-      hasSelection: this._selShips.size > 0,
-      orderMode: this._fleetOrderMode,
-      additive,
-    });
-    // RTS slice 10: a second tap on the same own PARKED ship (not the active
-    // one, which is flown already) takes its controls. Any other tap breaks
-    // the pair.
-    const parked = own !== null && own !== m.localPlayerId ? own : null;
-    // eslint-disable-next-line no-restricted-properties -- real time: pointer stamps are Date.now() (both paths)
-    if (this._doubleTap.tap(parked, Date.now(), screenX, screenY)) {
-      this.feedback.takeControlsId = parked;
-      this.feedback.takeControlsSeq++;
-      return;
-    }
-    switch (action) {
-      case 'select': {
-        // Slice 15a: whole squad; a tap on an exactly-selected squad narrows.
-        // The tapped ship becomes the focus (its details panel); shift-tapping
-        // it off keeps the old focus if that is still selected.
-        const next = tapSelectOwn(this._selShips, own!, additive, fleet, m.localPlayerId, this._squadOf);
-        if (next.has(own!)) {
-          const entry = m.ships.get(own!);
-          this.setSelection(next, own, entry !== undefined && isParkedHull(m, own!, entry) ? 'lingering' : 'ship');
-        } else {
-          this.setSelection(next, this._focusId, this._focusKind);
-        }
-        return;
-      }
-      case 'orderMove':
-        this.publishOrder(gx, gy, null);
-        return;
-      case 'orderAttack':
-        this.publishOrder(gx, gy, hit!.id);
-        return;
-      case 'none':
-        return;
-      case 'deselect':
-        this.setSelection(new Set(), null, null);
-        this.handleGameplayTap(screenX, screenY);
-        return;
-      case 'inspect':
-        this.handleGameplayTap(screenX, screenY);
-        return;
-    }
-  }
-
-  /** Not own, not an asteroid: something the fleet can be told to attack. */
-  private isAttackable(id: string, kind: string, m: RenderMirror): boolean {
-    return kind !== 'asteroid' && !this._selShips.has(id) && !isOwnShipPresent(id, m);
-  }
-
-  /** Command-view right-click: attack a non-own entity under the cursor, else
-   *  move to the point. Needs a selection. */
-  private commandOrder(screenX: number, screenY: number): void {
-    const m = this._lastMirror;
-    if (m === null || this._selShips.size === 0) return;
-    const w = this.camera.screenToWorld(screenX, screenY);
-    const gx = w.x;
-    const gy = -w.y;
-    const hit = pickEntityAt(gx, gy, m);
-    this.publishOrder(gx, gy, hit !== null && this.isAttackable(hit.id, hit.kind, m) ? hit.id : null);
-  }
-
-  /** Publish an order via feedback (`gameRafLoop` sends it once per seq):
-   *  attack `targetId`, or move to (gx, gy) game space when null. */
-  private publishOrder(gx: number, gy: number, targetId: string | null): void {
-    const attack = targetId !== null;
-    const fb = this.feedback;
-    fb.orderKind = attack ? 'attack' : 'move';
-    fb.orderTargetId = targetId;
-    fb.orderX = gx;
-    fb.orderY = gy;
-    fb.orderSeq++;
-    this._orderFlash.x = gx;
-    this._orderFlash.y = gy;
-    this._orderFlash.attack = attack;
-    // eslint-disable-next-line no-restricted-properties -- real time: the order flash is UI
-    this._orderFlash.t0 = performance.now();
-  }
-
-  /**
-   * THE selection (RTS Part A: one selection concept): the selected ships
-   * (`_selShips`, each gets the same `SelectionBracket` marker) and the focus
-   * (`_focusId/_focusKind`, the entity whose details panel shows: the one you
-   * clicked). Rule: with ships selected, the focus is one of them or null;
-   * with none it can be anything you tapped. Publishes the ship set only when
-   * it changed; the focus is published every frame in `update()`.
-   */
-  private setSelection(nextShips: Set<string>, focusId: string | null, focusKind: PickedEntityKind | null): void {
-    const keepFocus = focusSurvives(nextShips, focusId);
-    this._focusId = keepFocus ? focusId : null;
-    this._focusKind = keepFocus ? focusKind : null;
-    if (sameSelection(this._selShips, nextShips)) return;
-    this._selShips = nextShips;
-    this.publishFleetSelection();
-  }
-
-  /** Focus an entity (inspect tap). Focusing one that is not a selected ship
-   *  ends the ship selection (the rule in {@link setSelection}). */
-  private setFocus(id: string | null, kind: PickedEntityKind | null): void {
-    if (id !== null && this._selShips.size > 0 && !this._selShips.has(id)) this.setSelection(new Set(), id, kind);
-    else this.setSelection(this._selShips, id, kind);
-  }
-
-  /**
-   * Per frame: drop selected ids that are no longer own ships in the mirror
-   * (in place, no allocation unless one went); a dropped focus goes with them.
-   * The markers and the overlay are drawn in the ticker, after this frame's
-   * camera tick.
-   */
-  private updateFleetSelection(mirror: RenderMirror): void {
-    if (this._selShips.size > 0) {
-      let pruned = false;
-      for (const id of this._selShips) {
-        if (!isOwnShipPresent(id, mirror)) {
-          this._selShips.delete(id);
-          if (id === this._focusId) {
-            this._focusId = null;
-            this._focusKind = null;
-          }
-          pruned = true;
-        }
-      }
-      if (pruned) this.publishFleetSelection();
-    }
-  }
-
-  /**
-   * Redraw the selection markers and the command-view overlay (box, order
-   * lines, flash, hold cue, pick route). Runs in the Pixi ticker AFTER
-   * `camera.tick`, right before the frame renders, so both project through
-   * the SAME camera transform the world is drawn with this frame. The overlay
-   * used to run inside `update()`, i.e. with the camera as it stood BEFORE
-   * this frame's tick: during a pan or a glide every marker sat a frame of
-   * camera motion (~20 px) off its ship and the ships "snapped into" them
-   * when the camera stopped (RTS review 2026-11-14; lock
-   * `tests/e2e/fleet-overlay-camera.spec.ts`).
-   */
-  private drawFleetOverlay(): void {
-    const mirror = this._lastMirror;
-    if (mirror === null) return;
-    this.selectionBracket?.draw(mirror, this._selShips, this._focusId, this._fleetProject, this.camera.scale.x);
-    if (this.fleetOverlay === null) return;
-    this.fleetOverlay.update(
-      mirror,
-      this._selShips,
-      this._fleetBoxActive ? this._fleetBoxRect : null,
-      this._orderFlash,
-      // eslint-disable-next-line no-restricted-properties -- real time: the selection overlay is UI
-      performance.now(),
-      this._fleetProject,
-      // eslint-disable-next-line no-restricted-properties -- real time: pointer stamps are Date.now() (both paths)
-      this._cmdRouter.holdArmedAt(Date.now(), this._holdArmed),
-      this._fleetModel,
-      this._fleetPick,
-    );
-  }
-
-  private publishFleetSelection(): void {
-    // Allocates on a selection change only (a gesture or a ship leaving).
-    this.feedback.fleetSelIds = Array.from(this._selShips);
-    this.feedback.fleetSelSeq++;
-  }
-
-  /**
-   * Register a confirmed-tap handler. Fired by `forwardPointerEvent`
-   * when Camera resolves a tap (short, low-distance pointer cycle).
-   * Coords passed in are the canvas-local pixel position of the tap
-   * (DPR-scaled per `WorkerRendererClient.serialisePointer`).
-   *
-   * Worker-only — DOM-mode Pixi uses its native event system instead.
-   */
-  private onTap: ((screenX: number, screenY: number) => void) | null = null;
-  setOnTap(handler: ((screenX: number, screenY: number) => void) | null): void {
-    this.onTap = handler;
-  }
+  /** Register a confirmed-tap handler (worker path; see the controller). */
+  setOnTap(handler: ((screenX: number, screenY: number) => void) | null): void { this._input.setOnTap(handler); }
 
   /**
    * Add a screen-space galaxy-map overlay to the stage and register a
@@ -1701,296 +1203,13 @@ export class PixiRenderer implements IRenderer {
   }
 
   /** Worker-context wheel forwarding. */
-  forwardWheelEvent(deltaY: number, offsetX: number, offsetY: number): void {
-    const gl = this._galaxyLayer;
-    if (gl !== null && gl.isPanZoomActive()) {
-      gl.onWheel(deltaY, offsetX, offsetY);
-      return;
-    }
-    this.camera.onWheel(deltaY, offsetX, offsetY);
-  }
+  forwardWheelEvent(deltaY: number, offsetX: number, offsetY: number): void { this._input.forwardWheelEvent(deltaY, offsetX, offsetY); }
 
-  /**
-   * Install pointer/wheel/touch listeners on the canvas and forward
-   * them into the Camera. Replaces pixi-viewport's automatic
-   * `events: app.renderer.events` subscription. Touch hijacking is
-   * suppressed via `{ passive: false }` + `preventDefault`.
-   */
-  private readonly canvasListeners: Array<{ type: string; handler: EventListener; options?: AddEventListenerOptions }> = [];
-  /** P3.5 — the window-level placement-drag pointermove handler (so the ghost
-   *  follows the pointer off-canvas / over overlays). Removed in dispose(). */
-  private _placementWindowMoveHandler: EventListener | null = null;
-  private installCanvasEventListeners(canvas: HTMLCanvasElement): void {
-    const onPointer = (e: PointerEvent): void => {
-      // eslint-disable-next-line no-restricted-properties -- real time: input event stamp
-      const stamp = Date.now();
-      // Galaxy selector owns pointer input (free pan/zoom; tap → sector).
-      const gl = this._galaxyLayer;
-      if (gl !== null && gl.isPanZoomActive()) {
-        switch (e.type) {
-          case 'pointerdown': gl.onPointerDown(e.pointerId, e.offsetX, e.offsetY, stamp); break;
-          case 'pointermove': gl.onPointerMove(e.pointerId, e.offsetX, e.offsetY); break;
-          case 'pointerup': gl.onPointerUp(e.pointerId, e.offsetX, e.offsetY, stamp); break;
-          case 'pointercancel':
-          case 'pointerleave': gl.onPointerCancel(e.pointerId); break;
-        }
-        return;
-      }
-      // Structure placement: position the blueprint ghost instead of panning.
-      // The Camera's `screenToWorld` gives pixi-world coords (y = -gameY).
-      if (this._placementActive) {
-        // Capture the pointer for the duration of the placement drag (playtest
-        // 2026-06-10 Issue 9 — "desktop build-drag breaks"). A fast drag that
-        // leaves the canvas (or another element grabbing the pointer) stops
-        // delivering pointermove, stalling the ghost. Capture keeps every
-        // move/up routed here until release.
-        setCanvasPointerCapture(canvas, e.type, e.pointerId);
-        this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button, e.pointerType);
-        return;
-      }
-      // RTS command view (slice 13a): router owns the gesture. Capture the
-      // pointer so a drag box keeps updating when it leaves the canvas.
-      if (this.commandRoutingActive()) {
-        setCanvasPointerCapture(canvas, e.type, e.pointerId);
-        this.routeCommandPointer(e.type, e.pointerId, e.offsetX, e.offsetY, stamp,
-          e.button, e.buttons, e.shiftKey, e.pointerType);
-        return;
-      }
-      const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, stamp);
-      // Click-to-inspect (Item B2): a confirmed gameplay tap (not a drag)
-      // selects an entity. Gated off the galaxy layer + placement so it
-      // never cross-fires. The galaxy `isPanZoomActive` branch above
-      // already returned for the selector; `galaxyTapSuppressed()` also
-      // covers the in-game overlay (warp taps).
-      if (wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
-        this.handleGameplayTap(e.offsetX, e.offsetY);
-      }
-    };
-    const onWheel = (e: WheelEvent): void => {
-      e.preventDefault();
-      const gl = this._galaxyLayer;
-      if (gl !== null && gl.isPanZoomActive()) {
-        gl.onWheel(e.deltaY, e.offsetX, e.offsetY);
-        return;
-      }
-      this.camera.onWheel(e.deltaY, e.offsetX, e.offsetY);
-    };
-    const onTouchMove = (e: TouchEvent): void => {
-      e.preventDefault();
-    };
-    const add = (type: string, handler: EventListener, options?: AddEventListenerOptions): void => {
-      canvas.addEventListener(type, handler, options);
-      this.canvasListeners.push({ type, handler, options });
-    };
-    add('pointerdown', onPointer as EventListener);
-    add('pointermove', onPointer as EventListener);
-    add('pointerup', onPointer as EventListener);
-    add('pointercancel', onPointer as EventListener);
-    add('pointerleave', onPointer as EventListener);
-    add('wheel', onWheel as EventListener, { passive: false });
-    add('touchmove', onTouchMove as EventListener, { passive: false });
+  /** DEV/E2E-only hover at a GAME-space point (see the controller). */
+  devHoverAtWorld(gameX: number, gameY: number): string | null { return this._input.devHoverAtWorld(gameX, gameY); }
 
-    // P3.5 — desktop placement drag: while placing, the ghost must keep
-    // following the pointer even when it leaves the canvas or crosses an HUD
-    // overlay (canvas `pointermove` isn't delivered there — the user's repeated
-    // "desktop drag breaks"). ALSO listen on the WINDOW and route window moves
-    // (converted to canvas-local) to the ghost while placement is active.
-    // GATE on `e.target !== canvas`: moves OVER the canvas are already routed by
-    // the canvas listener above using the native, canvas-relative `e.offsetX`.
-    // Re-routing those here with `clientX - rect.left` would DOUBLE-handle them,
-    // and the window value would clobber the canvas one — on the worker path the
-    // two computations diverge, so the chosen point snapped to a wrong world
-    // coord (feature E regression). Only handle the off-canvas / over-overlay
-    // case the canvas listener can't see.
-    //
-    // CAPTURE PHASE (P3.5 follow-still-broken, 2026-06-13): registered with
-    // `{ capture: true }` so it fires on the way DOWN, BEFORE any element under
-    // the pointer (the MUI speed-dial / its tooltips) can `stopPropagation` a
-    // bubble-phase listener away. `window` is the outermost capture target, so
-    // nothing can intercept it — this is the true "connect to the ENTIRE window
-    // mouse move" the placement follow needs. Removed (with matching capture
-    // flag) in dispose().
-    const onWindowPlacementMove = (e: PointerEvent): void => {
-      if (!this._placementActive || e.target === canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      this.routePlacementPointer('pointermove', e.clientX - rect.left, e.clientY - rect.top, e.button, e.pointerType);
-    };
-    window.addEventListener('pointermove', onWindowPlacementMove, true);
-    this._placementWindowMoveHandler = onWindowPlacementMove as EventListener;
-  }
-
-  /**
-   * Position the placement blueprint ghost from a canvas pointer event. Shared
-   * by the main-thread path (`installCanvasEventListeners`) and the worker path
-   * (`forwardPointerEvent`). `screenX/Y` are canvas-relative. `screenToWorld`
-   * returns pixi-world coords, so `gameY = -that.y`.
-   *
-   * Follow model: `_placementFollowing` starts true when placement begins, so
-   * the ghost tracks the pointer (desktop HOVER move / mobile DRAG). Releasing
-   * (pointer-up) parks the ghost (`following = false`).
-   *
-   * WS-10 (R2.5) — DESKTOP one-click placement: a MOUSE left-click (pointerup,
-   * `button === 0`, `pointerType === 'mouse'`) COMMITS the blueprint at the
-   * cursor by bumping `feedback.placementConfirmSeq` (gameRafLoop edge-detects it
-   * and places at the chosen point, then clears `placementKind`). TOUCH never
-   * commits here — a touch pointer-up just parks the ghost so the Confirm banner
-   * appears (the tap-to-position flow), so the two-step touch UX is unchanged.
-   */
-  private routePlacementPointer(
-    type: string,
-    screenX: number,
-    screenY: number,
-    button: number,
-    pointerType: string,
-  ): void {
-    const w = this.camera.screenToWorld(screenX, screenY);
-    const gameX = w.x;
-    const gameY = -w.y;
-    // Pure state machine (placementPointerDecision.ts) — the load-bearing rule
-    // is that `pointerleave` does NOT park the follow (P3.5 follow-still-broken):
-    // desktop hover-follow has no pointer capture, so leaving the canvas (over
-    // the speed-dial / off-screen) must not break the lock. Unit-locked.
-    const outcome = decidePlacementPointer(type, pointerType, button, this._placementFollowing);
-    if (outcome.following !== null) this._placementFollowing = outcome.following;
-    if (outcome.updateChosen) {
-      this._placementChosenX = gameX;
-      this._placementChosenY = gameY;
-    }
-    if (outcome.commit) this.feedback.placementConfirmSeq++;
-  }
-
-  /**
-   * Click-to-inspect (Item B2). A confirmed gameplay tap (NOT a drag) resolves
-   * to the nearest entity under the tap via the pure `pickEntityAt`. The
-   * renderer OWNS the selection:
-   *   - tap empty space        → clear selection
-   *   - tap a new entity       → select it
-   *   - re-tap the SAME entity → toggle it off (deselect)
-   * The result is published each frame in `feedback.selectedPickId/Kind`.
-   *
-   * Gated by the callers on `!galaxyTapSuppressed() && !_placementActive` so it
-   * never cross-fires with the galaxy selector/overlay or blueprint placement.
-   * `screenX/Y` are canvas-relative pixels; `screenToWorld` returns pixi-world
-   * coords (y = -gameY), so the pick runs in GAME space.
-   */
-  private handleGameplayTap(screenX: number, screenY: number): void {
-    if (this._lastMirror === null) return;
-    const w = this.camera.screenToWorld(screenX, screenY);
-    const gameX = w.x;
-    const gameY = -w.y;
-    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
-    if (hit === null) {
-      this.setFocus(null, null);
-      // Helm orders: a capital pilot's tap on empty space sets the course.
-      const m = this._lastMirror;
-      const own = m.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
-      if (own !== undefined && getShipKind(own.kind ?? null).sizeClass === 'capital') {
-        this.feedback.helmCourseX = gameX;
-        this.feedback.helmCourseY = gameY;
-        this.feedback.helmCourseSeq++;
-      }
-    } else if (hit.id === this._focusId) {
-      this.setFocus(null, null); // re-tap toggles off
-    } else {
-      this.setFocus(hit.id, hit.kind);
-    }
-  }
-
-  /**
-   * Hover outline (WS-10 / R2.4). On desktop pointer-MOVE (no button), resolve
-   * the entity under the cursor via the SAME pure `pickEntityAt` the tap uses and
-   * stash it in `_hoveredId` (renderer-local — NEVER Zustand, #2). The per-frame
-   * `update()` draws the lighter `HoverBracket` around it. Reads the already-
-   * resolved `_lastMirror` (one-pose-per-frame; pickEntityAt reads `entry.x/y`
-   * for kind 1/2, never re-interpolates). Gated by the callers on
-   * `!galaxyTapSuppressed() && !_placementActive` (same as selection) so it never
-   * fires over the galaxy layer or during blueprint placement.
-   */
-  private handleGameplayHover(screenX: number, screenY: number): void {
-    if (this._lastMirror === null) {
-      this._hoveredId = null;
-      return;
-    }
-    const w = this.camera.screenToWorld(screenX, screenY);
-    const hit = pickEntityAt(w.x, -w.y, this._lastMirror);
-    this._hoveredId = hit?.id ?? null;
-  }
-
-  /**
-   * DEV/E2E-only deterministic hover at a GAME-space point — bypasses
-   * screen→world projection (camera-transform fragility) so a Playwright spec can
-   * hover an entity at its known world position. Mirrors `devSelectAtWorld`; runs
-   * the SAME `pickEntityAt` the real pointer-move hover uses. Returns the id.
-   */
-  devHoverAtWorld(gameX: number, gameY: number): string | null {
-    if (this._lastMirror === null) return null;
-    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
-    this._hoveredId = hit?.id ?? null;
-    return this._hoveredId;
-  }
-
-  /** True while the galaxy layer should swallow gameplay taps — either the
-   *  full-screen selector (pan/zoom active) OR the in-game additive overlay is
-   *  up (a tap there warps to a neighbour). Selection must not fire in either. */
-  private galaxyTapSuppressed(): boolean {
-    const gl = this._galaxyLayer;
-    return gl !== null && (gl.isPanZoomActive() || gl.visible);
-  }
-
-  /**
-   * DEV/E2E-only deterministic selection at a GAME-space point — bypasses
-   * screen→world projection so a Playwright spec can select an entity at its
-   * known world position without the camera-transform fragility a real screen
-   * tap would carry. Mirrors the `__eqxGalaxyPick` DEV-hook pattern. Runs the
-   * SAME `pickEntityAt` + toggle logic the real tap uses, so it exercises the
-   * full pick → select → bracket → feedback path. Returns the resolved id.
-   */
-  devSelectAtWorld(gameX: number, gameY: number): string | null {
-    if (this._lastMirror === null) return null;
-    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
-    if (hit === null || hit.id === this._focusId) this.setFocus(null, null);
-    else this.setFocus(hit.id, hit.kind);
-    return this._focusId;
-  }
-
-  /** The zoom range follows the ship you fly: on a change of kind, the
-   *  zoom-out floor moves, and a different-sized hull starts at its own zoom
-   *  (unless `?zoom=` pinned it). Compares ids only, so steady state is free. */
-  private applyHullZoom(mirror: RenderMirror): void {
-    const ship = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : undefined;
-    const id = ship?.kind ?? null;
-    if (id === null || id === this._zoomKindId) return;
-    this._zoomKindId = id;
-    const kind = getShipKind(id);
-    zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, this._viewW, this._viewH);
-    this.applyZoomCap();
-    const f = hullZoomFactor(kind);
-    if (f !== this._zoomFactor) {
-      this._zoomFactor = f;
-      if (!this._zoomPinned) this.camera.setZoom(this._zoomRange.startZoom);
-    }
-  }
-
-  /** Every viewport-size change goes through here: the camera's screen size,
-   *  and (once a hull is known) the zoom-out floor, which for a capital in
-   *  `real` naval-range mode depends on the viewport (`zoomFloorForView`). */
-  private setViewSize(w: number, h: number): void {
-    this._viewW = w;
-    this._viewH = h;
-    this.camera.setScreenSize(w, h);
-    if (this._zoomKindId === null) return;
-    zoomRangeForKind(getShipKind(this._zoomKindId), DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, w, h);
-    this.applyZoomCap();
-  }
-
-  /** The zoom-in cap: the hull you fly fits on screen (`zoomCeilingForView`,
-   *  owner decision 2026-11-12), eased down by the Camera, never snapped.
-   *  Spectator keeps the ordinary cap (there may be no ship to fit). Also the
-   *  zoom-out floor: command view reaches the widest ship floor (`zoomFloorFor`). */
-  private applyZoomCap(): void {
-    if (this._zoomKindId !== null) this.camera.setMinScale(zoomFloorFor(getShipKind(this._zoomKindId), this._spectator, this._viewW, this._viewH, NAVAL_RANGE));
-    this.camera.setMaxScale(this._spectator || this._zoomKindId === null ? GAMEPLAY_MAX_ZOOM : this._zoomRange.maxScale);
-  }
+  /** DEV/E2E-only selection at a GAME-space point (see the controller). */
+  devSelectAtWorld(gameX: number, gameY: number): string | null { return this._input.devSelectAtWorld(gameX, gameY); }
 
   /**
    * Presentation time (time scale stream): game time at the sector's speed,
@@ -2036,7 +1255,7 @@ export class PixiRenderer implements IRenderer {
     // `this._shipUpdaterCtx` (heap-growth gate step 12) — same fields
     // every frame, no per-call literal allocation.
     this.mountVisuals.setLocalAim(mirror.localPlayerId, mirror.localAimMountIds);
-    this.applyHullZoom(mirror);
+    this._cameraDirector.applyHullZoom(mirror);
     this.mountVisuals.setFrame(this.fxNow(), this.effects?.getQuality() ?? 'medium');
     // Seamless hand-over (RTS Part A): move re-keyed ships' state BEFORE the
     // sprite pass, so it finds each sprite under its new key (no rebuild).
@@ -2107,12 +1326,12 @@ export class PixiRenderer implements IRenderer {
     // Item C: feed the connector preview the pointer-chosen ghost point (so the
     // preview lines emanate from where the ghost is actually drawn), then read
     // the would-connect count back into the feedback channel.
-    this.connectorRenderer.ghostWorldX = this._placementChosenX;
-    this.connectorRenderer.ghostWorldY = this._placementChosenY;
+    this.connectorRenderer.ghostWorldX = this._input._placementChosenX;
+    this.connectorRenderer.ghostWorldY = this._input._placementChosenY;
     // Phase 5 — bolder defensive range ring on the hovered/selected turret. The
     // selection/hover ids are `swarm-<entityId>` (structures ride the swarm
     // channel); prefer the selected one.
-    const highlightedSel = this._focusId ?? this._hoveredId;
+    const highlightedSel = this._input._focusId ?? this._input._hoveredId;
     this.connectorRenderer.highlightedStructureId =
       highlightedSel !== null && highlightedSel.startsWith('swarm-')
         ? parseInt(highlightedSel.slice('swarm-'.length), 10)
@@ -2181,276 +1400,17 @@ export class PixiRenderer implements IRenderer {
       this.serverGhost.visible = false;
     }
 
-    // Remote beams from other players — orange, continuously tracking shooter rotation.
-    // Uses shooter's current angle from mirror.ships so the beam sweeps smoothly between
-    // server-acked shot events (every ~167ms).
-    //
-    // Multi-mount/turret refactor (Phase 2c): `mirror.remoteLasers` is now
-    // `Map<shooterId, Map<mountId, laser>>`. We iterate the nested map and
-    // resolve each mount's local offset from the shooter's ship-kind catalogue
-    // entry, so multi-mount ships emit beams from the correct barrel positions
-    // (not all stacked at the ship centre). Legacy single-mount ships have
-    // mount.localX/Y = (0, 0) and baseAngle = 0, so the geometry collapses to
-    // the pre-refactor "ship.pos + 20 u forward" path.
     // New shields (B5): open the frame here; beams and hits feed it below,
     // the shield sync closes it.
     this._fxShieldsOn = this._fxShields !== null && this._fxShields.ready();
     if (this._fxShieldsOn) this._fxShields!.begin();
     this._tractorViewCount = this._beamsDisabled || !this._tractorBeamPool ? 0 : fillTractorBeams(mirror, this.fxNow(), this.world.scale.x, this._tractorViews);
     this._tractorBeamPool?.setBeams(this._tractorViews, this._tractorViewCount, this.world.scale.x);
-    if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
-
-      // Origin tracking: the shooter pose moves every frame (drones each
-      // tick, players while turning), so we recompute every beam's
-      // endpoints from the live mirror/swarm pose and ALWAYS call
-      // `setBeams`. The old `BEAM_EPSILON` dirty-cache (combat-fx-hunt
-      // 2026-05-31) compared this frame's pose to the PREVIOUS frame, not
-      // to the last DRAWN frame — so coasting under the epsilon froze the
-      // drawn beam while the shooter flew on, snapping to catch up only
-      // when one frame exceeded the threshold (the laser-detach bug, smoke
-      // handoff 2026-06-06, Issue 1 Bug #1). `setBeams` is O(count)
-      // transform writes (no Graphics triangulation), so always-calling
-      // for a handful of beams is free and adds no allocation (invariant
-      // #14 — reuses the pooled slot array + pooled sprites).
-      const now = this.fxNow();
-      let slotIdx = 0;
-      // WS-4 Phase 4 — drill beams route to the dedicated mining pool instead.
-      let miningIdx = 0;
-
-      for (const [shooterId, perShooter] of mirror.remoteLasers) {
-        // Player shooters track their live ship pose; the beam sweeps with the
-        // ship's rotation between fire events. AI shooters track their
-        // mirror.swarm pose for the same reason — drones move every tick, so
-        // a wire-frozen beam origin would re-anchor on each fire (visible
-        // jump). Falls back to the wire endpoints if the shooter isn't found
-        // (defensive — e.g. ID mapping mismatch).
-        const shooter = mirror.ships.get(shooterId);
-        let swarmShooter: { x: number; y: number; angle: number; radius: number; shipKind?: string } | null = null;
-        if (!shooter && shooterId.startsWith('swarm-')) {
-          const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
-          if (!Number.isNaN(entityId)) {
-            const sw = mirror.swarm?.get(entityId);
-            if (sw) {
-              // Use the SAME pose the sprite is drawn at — drones (kind=1)
-              // render from `entry.x/y/angle` directly post-2026-05-09 reset
-              // (predWorld pose synced into the mirror each frame). Asteroids
-              // stay on the lerp path for parity with their sprite render.
-              if (sw.kind === 1) {
-                swarmShooter = { x: sw.x, y: sw.y, angle: sw.angle, radius: sw.radius, shipKind: sw.shipKind };
-              } else {
-                const lerped = interpolateSwarmPose(sw, now, this.swarmPoseScratch);
-                swarmShooter = { x: lerped.x, y: lerped.y, angle: lerped.angle, radius: sw.radius, shipKind: sw.shipKind };
-              }
-            }
-          }
-        }
-
-        const shooterKindId = shooter?.kind ?? swarmShooter?.shipKind ?? null;
-        const shooterKind = getShipKind(shooterKindId);
-
-        for (const [mountId, laser] of perShooter) {
-          // Hold full brightness while shooter is actively firing; fade only
-          // in the last 150 ms of TTL (i.e. after they stop shooting). With
-          // WEAPON_COOLDOWN = 167 ms and TTL = 400 ms, each new shot resets
-          // expiresAt well before the fade window, so the beam is solid-on
-          // while space is held.
-          const ttlRemaining = laser.expiresAt - now;
-          const alpha = ttlRemaining > 150 ? 1.0 : Math.max(0, ttlRemaining / 150);
-
-          // Resolve the mount's ship-local offset from the catalogue. Falls
-          // back to a zero-offset zero-baseAngle stub for unknown mount ids
-          // so a pre-2c server (no mountId in the wire) still renders.
-          // Phase 4b.2: pick up the shooter's per-mount slewed angle from
-          // `mirror.ships.get(id).mountAngles` (player shooters); Phase 4c
-          // adds the same for drone shooters via `mirror.swarm.get(id).
-          // mountAngles` (snapshot-anchored, in-interest drones only).
-          const mount = shooterKind.mounts?.find((m) => m.id === mountId);
-          const mountIdx = shooterKind.mounts?.findIndex((m) => m.id === mountId) ?? -1;
-          // Undefined = this viewer has no angle for the turret (an
-          // out-of-interest drone): the beam then aims at the wire end point.
-          let currentMountAngle: number | undefined = 0;
-          if (shooter && mount && mountIdx >= 0) {
-            currentMountAngle = shooter.mountAngles?.[mountIdx] ?? 0;
-          } else if (swarmShooter && mount && mountIdx >= 0) {
-            // Pull the drone's per-mount angle out of the swarm mirror —
-            // ColyseusClient writes it from `snap.drones[].mountAngles`
-            // when the drone is in-interest. Out-of-interest → undefined
-            // → currentMountAngle stays 0 (barrel at baseAngle, no rotation).
-            const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
-            if (!Number.isNaN(entityId)) {
-              const sw = mirror.swarm?.get(entityId);
-              // The angle the turret is DRAWN at (swarmSpriteUpdater), so the
-              // beam leaves down the barrel on screen, not the raw 20 Hz step.
-              currentMountAngle = (sw?.displayMountAngles ?? sw?.mountAngles)?.[mountIdx];
-            }
-          }
-
-          let fromX: number;
-          let fromY: number;
-          let toX: number;
-          let toY: number;
-          const isMining = mountId === 'drill';
-          // The capital heavy beam (plan beam-slices §8) draws thick and violet
-          // in the SAME pool: the style comes from the mount's catalogue weapon
-          // (shooter kind + mountId), no wire field. A styled pulse runs down
-          // the live barrel to the client ray's stop (`laser.dist`), else to
-          // the server's end point (`remoteBeamLine`).
-          const style = isMining ? null : remoteBeamStyleForMount(mount);
-          const line = this._remoteBeamLine;
-          if (shooter) {
-            const origin = applyMountOffset(shooter.x, shooter.y, shooter.angle, mount);
-            // The barrel tip (shared with the server, core/combat/muzzle.ts).
-            const muzzleD = mount ? shipShotMuzzle(shooterKind, mount) : shipTuning(shooterKind).muzzleClearance;
-            remoteBeamLine(
-              style !== null, shooter.angle, mount?.baseAngle ?? 0, currentMountAngle ?? 0,
-              origin.x, origin.y, muzzleD, laser.range, laser.toX, laser.toY, line, laser.dist,
-            );
-            fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
-          } else if (swarmShooter) {
-            const origin = applyMountOffset(swarmShooter.x, swarmShooter.y, swarmShooter.angle, mount);
-            // Drone barrel offset is `radius + 2` along the mount's fire
-            // direction (no mount → centre of drone). Matches the
-            // pre-refactor visual where the beam clears the drone hull.
-            // A drone's turning turret fires from its barrel tip (the server's
-            // AiFireResolver uses the same shared muzzle).
-            const barrelOffset = mount ? shipShotMuzzle(shooterKind, mount, true) : swarmShooter.radius + 2;
-            // A turning mount with no known angle (out of this viewer's
-            // interest, so no `drones[].mountAngles`) aims at the wire end.
-            remoteBeamLine(
-              style !== null, swarmShooter.angle, mount?.baseAngle ?? 0, mount ? currentMountAngle : 0,
-              origin.x, origin.y, barrelOffset, laser.range, laser.toX, laser.toY, line, laser.dist,
-            );
-            fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
-          } else {
-            fromX = laser.fromX;
-            fromY = laser.fromY;
-            toX = laser.toX;
-            toY = laser.toY;
-          }
-          // Fill the reused pooled slot (no per-beam allocation). The Miner's
-          // mining beam (mountId 'drill') routes into the dedicated mining pool
-          // (WS-4 Phase 4) so it draws as a distinct fat amber drill beam and is
-          // isolatable for the E2E; everything else stays in the remote pool.
-          const cache = isMining ? this._miningBeamCache : this._remoteBeamCache;
-          const idx = isMining ? miningIdx : slotIdx;
-          let slot = cache[idx];
-          if (!slot) {
-            slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha, style: null };
-            cache[idx] = slot;
-          }
-          slot.shooterId = shooterId; slot.mountId = mountId;
-          slot.fromX = fromX; slot.fromY = fromY; slot.toX = toX; slot.toY = toY;
-          slot.alpha = alpha;
-          slot.style = style;
-          // ...and burns full width to its hit point (a short fade past a miss).
-          slot.solidLen = remoteBeamSolidLen(style, Math.hypot(toX - fromX, toY - fromY), laser.hit === true);
-          if (!isMining) { this._fxRemoteHit[idx] = laser.hit === true; this._beamHitMem.track(shooterId, mountId, laser.hit === true, slot); }
-          // A beam landing on a shield is a held contact there.
-          if (this._fxShieldsOn && !isMining && laser.hit && laser.targetId) this._fxShields!.beam(laser.targetId, 1 + idx, toX, toY, this._fxShieldPose);
-          // A beam that hit something with no target id stopped on a fence.
-          else if (!isMining && laser.hit && !laser.targetId) this._fxFences?.beam(1 + idx, toX, toY);
-          if (isMining) miningIdx++;
-          else slotIdx++;
-        }
-      }
-      this._remoteBeamCacheCount = slotIdx; this._beamHitMem.endFrame();
-      this._miningBeamCacheCount = miningIdx;
-
-      // Sprite-pool driven render — no clear/redraw, just transforms.
-      // Always re-set: the pool resolves its own pooling + visibility and
-      // the transform writes are cheap (see the always-call rationale above).
-      this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx, this.world.scale.x);
-      this.remoteBeamGfx!.visible = true;
-      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, this.fxNow(), this._fxRemoteHit, this.world.scale.x);
-      if (this._miningBeamPool && this.miningBeamGfx) {
-        this._miningBeamPool.setBeams(this._miningBeamCache, miningIdx);
-        this.miningBeamGfx.visible = miningIdx > 0;
-        this.feedback.miningBeamCount = this._miningBeamPool.liveCount;
-      }
-    } else if (this._remoteBeamPool && this.remoteBeamGfx) {
-      this.remoteBeamGfx.visible = false;
-      this._remoteBeamPool.hideAll();
-      this._fxRemoteBeams?.hideAll();
-      this._remoteBeamCacheCount = 0; this._beamHitMem.endFrame();
-      if (this._miningBeamPool && this.miningBeamGfx) {
-        this.miningBeamGfx.visible = false;
-        this._miningBeamPool.hideAll();
-        this._miningBeamCacheCount = 0;
-        this.feedback.miningBeamCount = 0;
-      }
-    }
-
-    // Live hitscan beams — one per mount in the local ship's active slot.
-    // Derive geometry from the local ship's lerped pose in mirror.ships each
-    // frame so beams stay glued to the ship sprite even during a server-
-    // correction lerp. (Mirrors the remote-beam pattern above — single source
-    // of truth: "where the ship is visually right now".)
-    //
-    // Multi-mount/turret refactor (Phase 2c): `mirror.liveBeams` is now a
-    // per-mount map. Legacy single-mount fighter/scout/heavy has exactly one
-    // entry keyed by `'forward'`; multi-mount kinds (Phase 3) get one entry
-    // per barrel and each draws independently.
-    const localShip = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : null;
-    if (!this._beamsDisabled && mirror.liveBeams && mirror.liveBeams.size > 0 && localShip && this._liveBeamPool) {
-      const localKind = getShipKind(localShip.kind ?? null);
-      const localMounts = localKind.mounts ?? [];
-
-      // Recompute every beam's endpoints from the live ship pose and
-      // ALWAYS call `setBeams`. The old `BEAM_EPSILON` dirty-cache
-      // (combat-fx-hunt 2026-05-31) compared this frame's pose to the
-      // PREVIOUS frame, not to the last DRAWN frame, and overwrote the
-      // cache every frame — so coasting/flying under 4 u/frame never
-      // tripped `dirty`, `setBeams` was never called, and the DRAWN beam
-      // froze in place while the ship flew on (snapping to catch up only
-      // when one frame exceeded 4 u). That is the no-enemy fly-forward
-      // laser-detach repro (smoke handoff 2026-06-06, Issue 1 Bug #1).
-      // `setBeams` is O(count) transform writes — free for 1–2 beams,
-      // adds no allocation (invariant #14 — pooled slots + pooled sprites).
-      let slotIdx = 0;
-      for (const [mountId, beam] of mirror.liveBeams) {
-        const mountIdx = localMounts.findIndex((m) => m.id === mountId);
-        const mount = mountIdx >= 0 ? localMounts[mountIdx] : undefined;
-        const currentMountAngle = mountIdx >= 0 ? (localShip.mountAngles?.[mountIdx] ?? 0) : 0;
-        // From the barrel tip (the shared muzzle the client ray is cast from).
-        const line = liveBeamLine(localKind, mount, localShip.x, localShip.y, localShip.angle, currentMountAngle, beam.dist, this._remoteBeamLine);
-        const fromX = line.fromX, fromY = line.fromY, toX = line.toX, toY = line.toY;
-        let slot = this._liveBeamCache[slotIdx];
-        if (!slot) {
-          slot = { mountId, fromX: 0, fromY: 0, toX: 0, toY: 0 };
-          this._liveBeamCache[slotIdx] = slot;
-        }
-        slot.mountId = mountId;
-        slot.fromX = fromX;
-        slot.fromY = fromY;
-        slot.toX = toX;
-        slot.toY = toY;
-        // P1a — the full-strength solid length (== aim guide / optimal range when
-        // not clipped; beyond it the pool fades the beam to nothing) and the
-        // per-beam style of the mount's weapon.
-        liveBeamLook(mount, beam.dist, beam.solidDist, beam.hitId !== undefined, slot);
-        if (this._fxShieldsOn && beam.hitId) this._fxShields!.beam(beam.hitId, 500 + slotIdx, toX, toY, this._fxShieldPose);
-        // The local beam stops on a fence's prediction collider.
-        if (beam.hitId?.startsWith('predwall-')) this._fxFences?.beam(500 + slotIdx, toX, toY);
-        slotIdx++;
-      }
-      this._liveBeamCacheCount = slotIdx;
-
-      // Sprite-pool driven render (matches remoteBeam path) — always re-set.
-      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx, this.world.scale.x);
-      this.liveBeamGfx!.visible = true;
-      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, this.fxNow(), undefined, this.world.scale.x);
-      // E2E observable: publish the ACTUAL drawn beam origin (the sprite
-      // transform), not a recompute — this is what catches the detach bug.
-      this.feedback.liveBeamRenderedFromX = this._liveBeamPool.renderedFromX;
-      this.feedback.liveBeamRenderedFromY = this._liveBeamPool.renderedFromY;
-    } else {
-      if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
-      this._liveBeamPool?.hideAll();
-      this._fxLiveBeams?.hideAll();
-      this._liveBeamCacheCount = 0;
-      this.feedback.liveBeamRenderedFromX = null;
-      this.feedback.liveBeamRenderedFromY = null;
-    }
+    // Remote, mining + live beams: see pixi/beamUpdater.ts. Ctx pooled to
+    // `this._beamCtx` (built once in init); camera scale + shield gate per frame.
+    this._beamCtx.cameraScale = this.world.scale.x;
+    this._beamCtx.fxShieldsOn = this._fxShieldsOn;
+    updateBeams(mirror, this._beamCtx);
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
     this._speedFollowSprite = null;
@@ -2458,28 +1418,7 @@ export class PixiRenderer implements IRenderer {
     // NOT re-issue the local-ship follow (which would yank the view back / snap
     // to a ship that no longer exists). `setSpectator(true)` already detached
     // the follow target; the gameplay pointer path keeps panning/zooming it.
-    if (this._director.isActive()) {
-      // Cinematic script owns the camera — resolved from THIS frame's rendered
-      // sprites (updated above), smoothed by the Camera's spring in tick().
-      // eslint-disable-next-line no-restricted-properties -- real time: the camera director (UI)
-      const status = this._director.update(performance.now(), this._directorLookup, this._directorOut, mirror.frameTimeMs);
-      if (status === 'active') {
-        const d = this._directorOut;
-        this.camera.setDirectorTarget(d.x, d.y, d.zoom, d.smoothMs);
-      } else if (status === 'released') {
-        this.camera.clearDirector();
-        this.halo.setCameraRelative(false);
-      }
-    } else if (local && !this._spectator) {
-      // `follow` (not `moveCenter`) — the camera's per-tick interpolator
-      // applies this target every Pixi frame (60 Hz), independent of
-      // `update()` cadence. With `followLerpFactor: 1` the follow is
-      // instant — matches the original every-frame `moveCenter` feel
-      // but runs at ticker speed not MIRROR_UPDATE speed. See Camera
-      // construction in init() for the rationale.
-      this.camera.follow({ x: local.x, y: local.y });
-      this._speedFollowSprite = local;
-    }
+    this._speedFollowSprite = this._cameraDirector.updateFrame(mirror, local);
 
     // Structure placement ghost + world→screen projection for the confirm
     // (smoke handoff 2026-06-06, Issue 5). Draw a translucent blueprint
@@ -2495,22 +1434,22 @@ export class PixiRenderer implements IRenderer {
     // Issue 7): placement is DONE, so it must NOT capture pointers (the camera
     // pans again) and it draws at the SENT point, dimmer.
     const pendingGhost = preview != null && preview.pending === true;
-    this._placementActive = preview != null && !pendingGhost;
+    this._input._placementActive = preview != null && !pendingGhost;
     // P6.1 (touch only) — seed the ghost at SCREEN-CENTRE on placement-start so
     // it's visible instead of hidden under the speed-dial at the ahead-of-ship
     // pose. Park it (`following=false`) so the Confirm banner is ready at centre;
     // a tap/drag then repositions it. Desktop is gated out (hover-follow + the
     // ahead-of-ship preview is fine when the cursor is already on screen).
-    if (preview && shouldCentreGhostOnActivate(this._isTouch, this._placementChosenX !== null, pendingGhost, this._spectator)) {
+    if (preview && shouldCentreGhostOnActivate(this._isTouch, this._input._placementChosenX !== null, pendingGhost, this._spectator)) {
       const c = this.camera.center; // world coord (pixi-down) currently at screen centre
-      this._placementChosenX = c.x;
-      this._placementChosenY = -c.y; // game Y = -worldY
+      this._input._placementChosenX = c.x;
+      this._input._placementChosenY = -c.y; // game Y = -worldY
       // Park ONLY on touch (no hover → the Confirm banner waits at centre). On
       // DESKTOP (incl. desktop SPECTATOR, which also centre-seeds because there's
       // no ship to anchor) keep hover-follow ON so the ghost snaps to the cursor
       // on the first move — otherwise the spectator build ghost sat at centre and
       // never tracked the mouse (Equinox Phase-5 audit: "doesn't follow").
-      this._placementFollowing = !this._isTouch;
+      this._input._placementFollowing = !this._isTouch;
     }
     if (preview) {
       if (!this._placementGhost || this._placementGhostKind !== preview.kind) {
@@ -2528,8 +1467,8 @@ export class PixiRenderer implements IRenderer {
       // else the ahead-of-ship preview pose. Pending ghost: the SENT point.
       // Dim the pending ghost so it reads as "sent, awaiting" vs positioning.
       this._placementGhost.alpha = pendingGhost ? 0.18 : 0.4;
-      const gx = pendingGhost ? preview.x : (this._placementChosenX ?? preview.x);
-      const gy = pendingGhost ? preview.y : (this._placementChosenY ?? preview.y);
+      const gx = pendingGhost ? preview.x : (this._input._placementChosenX ?? preview.x);
+      const gy = pendingGhost ? preview.y : (this._input._placementChosenY ?? preview.y);
       this._placementGhost.visible = true;
       this._placementGhost.x = gx;
       this._placementGhost.y = -gy; // Y-flip
@@ -2539,7 +1478,7 @@ export class PixiRenderer implements IRenderer {
       this.feedback.placementScreenY = screen.y;
       this.feedback.placementChosenWorldX = gx;
       this.feedback.placementChosenWorldY = gy;
-      this.feedback.placementStuck = !this._placementFollowing;
+      this.feedback.placementStuck = !this._input._placementFollowing;
     } else {
       if (this._placementGhost) this._placementGhost.visible = false;
       this.feedback.placementScreenX = null;
@@ -2548,9 +1487,9 @@ export class PixiRenderer implements IRenderer {
       this.feedback.placementChosenWorldY = null;
       this.feedback.placementStuck = false;
       // Reset for the next placement (start in follow mode, no chosen point).
-      this._placementFollowing = true;
-      this._placementChosenX = null;
-      this._placementChosenY = null;
+      this._input._placementFollowing = true;
+      this._input._placementChosenX = null;
+      this._input._placementChosenY = null;
     }
 
     // Background layers — run AFTER moveCenter so they use this frame's
@@ -2585,7 +1524,7 @@ export class PixiRenderer implements IRenderer {
     // other effect (at 1× `at(t)` is `t`).
     const speedFrameMs = mirror.frameTimeMs !== undefined ? this.fxClock.at(mirror.frameTimeMs) : undefined;
     // Command view's free camera is moved by hand, not flown: no speed effects.
-    const speedSample = speedFxSampleInto(this._speedSample, followed ? follow : null, speedFrameMs, skyCam.center, this.fxNow(), this._spectator && !this._director.isActive());
+    const speedSample = speedFxSampleInto(this._speedSample, followed ? follow : null, speedFrameMs, skyCam.center, this.fxNow(), this._spectator && !this._cameraDirector.isCameraScripted());
     const backdropOn = this._backdrop?.update(skyCam, this.fxNow(), speedFxFullSpeed(speedShip?.kind), speedSample) ?? false;
     // Speed effects (C3): the backdrop's eased speed asks the camera to zoom
     // out a little; applied on the camera's next tick (none while it's baking).
@@ -2693,29 +1632,29 @@ export class PixiRenderer implements IRenderer {
     // (the markers themselves are drawn in the ticker, `drawFleetOverlay`). If
     // the focus has vanished from the mirror (despawned / left interest), clear
     // it so the panel + stats channel tear down.
-    const focusPresent = this.selectionBracket?.resolveFocus(mirror, this._focusId) ?? false;
-    if (!focusPresent && this._focusId !== null) {
-      this._focusId = null;
-      this._focusKind = null;
+    const focusPresent = this.selectionBracket?.resolveFocus(mirror, this._input._focusId) ?? false;
+    if (!focusPresent && this._input._focusId !== null) {
+      this._input._focusId = null;
+      this._input._focusKind = null;
     }
     // Publish the current selection for the main thread → Zustand bridge.
-    this.feedback.selectedPickId = this._focusId;
-    this.feedback.selectedPickKind = this._focusKind;
+    this.feedback.selectedPickId = this._input._focusId;
+    this.feedback.selectedPickKind = this._input._focusKind;
 
     // WS-10 (R2.4) — hover outline. Suppress it on the already-SELECTED entity so
     // the two brackets never stack on the same target. If the hovered entity
     // vanished from the mirror, clear `_hoveredId`. Renderer-local id published
     // for the E2E bridge (data-hover-pick-id) — NEVER Zustand (#2).
     // Below the full HUD (showcase `?hud=`) the hover outline is not drawn.
-    const hovered = this._hoveredId;
-    const hoverTarget = hovered === null || hovered === this._focusId || this._selShips.has(hovered) || !this._lockMarksVisible ? null : hovered;
+    const hovered = this._input._hoveredId;
+    const hoverTarget = hovered === null || hovered === this._input._focusId || this._input._selShips.has(hovered) || !this._lockMarksVisible ? null : hovered;
     if (hoverTarget !== null) {
       const stillHovered = this.hoverBracket?.update(mirror, hoverTarget) ?? false;
-      if (!stillHovered) this._hoveredId = null;
+      if (!stillHovered) this._input._hoveredId = null;
     } else {
       this.hoverBracket?.update(mirror, null);
     }
-    this.feedback.hoveredPickId = this._hoveredId;
+    this.feedback.hoveredPickId = this._input._hoveredId;
     // WS-9 (R2.30) — project the bracket's above-entity point to SCREEN so the
     // stats box floats over the entity (any kind). Alloc-free toScreenInto (#14).
     const selWX = this.selectionBracket?.lastWorldX ?? null;
@@ -2745,7 +1684,7 @@ export class PixiRenderer implements IRenderer {
     this.incomingFire.update(mirror, this.fxNow()); // countdowns are game seconds
     // eslint-disable-next-line no-restricted-properties -- real time: the helm order marker is UI
     this.helmMarker.update(mirror, performance.now());
-    this.updateFleetSelection(mirror);
+    this._input.updateFleetSelection(mirror);
     this.halo.update(mirror);
 
     // ---------- RendererFeedback (end-of-frame, main-thread readable) ----------
@@ -2814,7 +1753,9 @@ export class PixiRenderer implements IRenderer {
       this.frameMarkers.gridLabelCount = 0;
     }
     this.frameMarkers.spriteCount = this.sprites.size;
-    this.drawWarpFx(mirror);
+    // Warp / spool FX: see pixi/warpFxUpdater.ts (ctx pooled; camera scale per frame).
+    this._warpFxCtx.cameraScale = this.world.scale.x;
+    updateWarpFx(mirror, this._warpFxCtx);
 
     // Effects subsystem tick. MUST run AFTER all sprite updates so per-
     // entity effects (shield aura, engine emitters in later milestones)
@@ -2826,8 +1767,10 @@ export class PixiRenderer implements IRenderer {
       // Engine continuous emitters — drive from mirror.boostingShips /
       // thrustingShips Sets (M5 of plan wiggly-puppy). Set diff per frame
       // → setContinuous on transitions only (no-op on identical state).
-      this.drawFxEngines(mirror);
-      this.syncEngineContinuousEffects(mirror);
+      // See pixi/engineShieldFxUpdater.ts; the shield gate is shared with beams + hit FX.
+      this._engineShieldFxCtx.effects = this.effects;
+      this._engineShieldFxCtx.fxShieldsOn = this._fxShieldsOn;
+      updateEngineShieldFx(mirror, this._engineShieldFxCtx);
 
       const nowMs = this.fxNow();
       const dtMs = this.lastEffectsTickNowMs > 0 ? nowMs - this.lastEffectsTickNowMs : 16.67;
@@ -2848,22 +1791,6 @@ export class PixiRenderer implements IRenderer {
     this._perfRing?.push(this.frameMarkers.rendererUpdateMs);
   }
 
-  /** Track which ships currently have an active engine emitter registered
-   *  with EffectsService — lets us detect transitions per frame and only
-   *  call setContinuous on actual changes (setContinuous is re-entrant
-   *  but the per-key check still wins on alloc-pressure). */
-  private readonly _activeThrustIds = new Set<string>();
-  private readonly _activeBoostIds = new Set<string>();
-  /** Set of entityIds (player playerIds OR drone "swarm-N" ids) currently
-   *  carrying an active shield aura. Diff'd against mirror state each
-   *  frame; transitions fire setContinuous('shield', active). */
-  private readonly _activeShieldIds = new Set<string>();
-
-  /** Diff mirror.thrustingShips / boostingShips against our last frame's
-   *  registration set; fire setContinuous(id, kind, true|false) only on
-   *  transitions. Mirrors the existing thrust/boost flame ownership in
-   *  spriteBuilders — those Graphics flames continue to render (they are
-   *  the minimal-tier fallback); EngineEmitter ADDS particle trails. */
   /** The sprite key a shooter id draws under (players and drones as-is,
    *  structures as `swarm-<id>`), or null when it has no sprite. */
   private shooterSpriteKey(id: string): string | null {
@@ -2917,8 +1844,8 @@ export class PixiRenderer implements IRenderer {
       sc.addLight(x, y, 5 * K, color, K > 1 ? 0.36 * K : 0.9, 55 * K);
     }
     if (mirror.missiles) for (const m of mirror.missiles.values()) sc.addLight(m.x, -m.y, 8, 0xffa060, 1.2, 70);
-    for (let i = 0; i < this._liveBeamCacheCount; i++) this.beamLights(this._liveBeamCache[i]!);
-    for (let i = 0; i < this._remoteBeamCacheCount; i++) this.beamLights(this._remoteBeamCache[i]!);
+    for (let i = 0; i < this._beamCtx.liveBeamCacheCount; i++) this.beamLights(this._beamCtx.liveBeamCache[i]!);
+    for (let i = 0; i < this._beamCtx.remoteBeamCacheCount; i++) this.beamLights(this._beamCtx.remoteBeamCache[i]!);
     for (let i = 0; i < this._tractorViewCount; i++) this.beamLights(this._tractorViews[i]!); // tractors glow blue where they hold
   }
 
@@ -2967,262 +1894,6 @@ export class PixiRenderer implements IRenderer {
         this._turretMissileSeen.set(id, gen);
       }
       for (const [id, g] of this._turretMissileSeen) if (g !== gen) this._turretMissileSeen.delete(id);
-    }
-  }
-
-  /** New engine exhaust for every ship sprite with Machined art: players
-   *  pass their thrust / boost input, drones (`swarm-*`) follow their speed.
-   *  Scrap is skipped. Reads the sprite's resolved pose
-   *  (one pose per frame). Ships it draws skip today's particle emitter. */
-  /** Warp-to visuals for every visible ship (one resolved sprite pose each). */
-  private drawWarpFx(mirror: RenderMirror): void {
-    const fx = this._warpFx;
-    fx.beginFrame(this.fxNow(), this.world.scale.x);
-    this._spoolFx.beginFrame(this.fxNow(), this.world.scale.x);
-    const local = mirror.localPlayerId;
-    const s = this._warpShipScratch;
-    const hullFed = this._hullWarpFed;
-    for (const [id, ship] of mirror.ships) {
-      // ACTIVE ships always; a parked hull (#17 LINGERING) only while it has a
-      // warp phase (RTS fleet warp S4: its group spools / it just arrived),
-      // and one frame after (warpFxGate.ts).
-      const parked = isParkedHull(mirror, id, ship);
-      if (!warpFxFeedsShip(parked, ship.warp, parked && hullFed.has(id))) continue;
-      if (parked) {
-        if (ship.warp === undefined) hullFed.delete(id); else hullFed.add(id);
-      }
-      const sp = this.sprites.get(id);
-      // A remote ship on its run is hidden but still tracked (its departure).
-      if (!sp || (!sp.visible && ship.warp !== 2)) continue;
-      const kind = ship.kind ?? '';
-      let stern = this._warpStern.get(kind);
-      if (stern === undefined) { stern = engineProfileForKind(ship.kind).sternOffset; this._warpStern.set(kind, stern); }
-      s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = ship.warp; s.stern = stern; s.isLocal = id === local;
-      fx.draw(id, s);
-      this.drawSpoolFx(id, ship.warp, ship.kind, sp, id === local ? mirror.localSpoolMs : undefined);
-    }
-    // Hulls that left (warped out, or the sector changed): forget them.
-    if (hullFed.size > 0) {
-      for (const id of hullFed) if (!mirror.ships.has(id)) hullFed.delete(id); // TODO: alloc-debt (iterator; only while a hull warps)
-    }
-    // W2a — NPCs warping (flagship fleets). Fed while their phase is set and
-    // one frame after it clears, so a cancelled spool settles to idle instead
-    // of WarpFx reading the disappearance as a departure.
-    const fed = this._droneWarpFed;
-    if (mirror.swarm) for (const [eid, e] of mirror.swarm) {
-      if (e.kind !== 1) continue;
-      const key = this.droneWarpKey(eid);
-      if (e.warp === undefined && !fed.has(key)) continue;
-      const sp = this.sprites.get(key);
-      if (!sp) continue;
-      const kindId = e.shipKind ?? '';
-      let stern = this._warpStern.get(kindId);
-      if (stern === undefined) { stern = engineProfileForKind(e.shipKind).sternOffset; this._warpStern.set(kindId, stern); }
-      s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = e.warp; s.stern = stern; s.isLocal = false;
-      fx.draw(key, s);
-      this.drawSpoolFx(key, e.warp, e.shipKind, sp, undefined);
-      if (e.warp === undefined) fed.delete(key); else fed.add(key);
-    }
-    // A ship that died this frame left the mirror because it died, not because
-    // it warped out: no departure (same keys as the sprite maps).
-    if (mirror.explodingShips && mirror.explodingShips.size > 0) {
-      for (const id of mirror.explodingShips) { fx.died(id); fed.delete(id); }
-    }
-    fx.endFrame();
-    this._spoolFx.endFrame();
-  }
-
-  /** One ship's spool-up (progress-driven, sized from its own nozzles). */
-  private drawSpoolFx(id: string, warp: number | undefined, kind: string | undefined, sp: Container, spoolMs: number | undefined): void {
-    const now = this.fxNow();
-    const phase = warp === 1 ? 1 : 0;
-    if (phase !== (this._spoolPhase.get(id) ?? 0)) {
-      if (phase === 1) { this._spoolPhase.set(id, 1); this._spoolStart.set(id, now); }
-      else { this._spoolPhase.delete(id); this._spoolStart.delete(id); }
-    }
-    const kindId = kind ?? 'fighter';
-    let k = this._spoolKind.get(kindId);
-    if (!k) {
-      // Classic-look ships have no baked nozzles: one at the stern.
-      const stern = engineProfileForKind(kindId).sternOffset;
-      k = { half: stern, nozzles: [{ x: 0, y: stern, r: Math.max(2, stern * 0.25) }] };
-      this._spoolKind.set(kindId, k);
-    }
-    const s = this._spoolShip;
-    s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation;
-    const dur = spoolMs ?? (WARP_SPOOL_TICKS / 60) * 1000;
-    s.progress = phase === 1 ? Math.min(1, (now - (this._spoolStart.get(id) ?? now)) / dur) : -1;
-    const art = this._artCtx.handles.get(id)?.ship;
-    s.nozzles = art && art.nozzles.length > 0 ? art.nozzles : k.nozzles;
-    s.half = k.half;
-    this._spoolFx.draw(id, s);
-  }
-
-  private drawFxEngines(mirror: RenderMirror): void {
-    const fx = this._fxEngines;
-    if (!fx) return;
-    const now = this.fxNow();
-    const dt = this._fxEnginesLastMs > 0 ? Math.min(0.1, (now - this._fxEnginesLastMs) / 1000) : 1 / 60;
-    this._fxEnginesLastMs = now;
-    fx.beginFrame();
-    for (const [key, sp] of this.sprites) {
-      if (!sp.visible) continue;
-      const h = this._artCtx.handles.get(key);
-      if (!h || h.job.type !== 'ship' || !h.ship) continue;
-      let thrust: -1 | 0 | 1, boost: -1 | 0 | 1;
-      if (mirror.ships.has(key)) {
-        // Every ship, AI-flown hulls included: their flame bits ride the
-        // same snapshot carriers under their shipInstanceId (RTS Part A S2).
-        thrust = mirror.thrustingShips?.has(key) ? 1 : 0;
-        boost = mirror.boostingShips?.has(key) ? 1 : 0;
-      } else if (key.startsWith('swarm-') && this._swarmSpriteKinds.get(key) === 1) {
-        // Drones only. A capital wreck piece (kind 4) holds its dead ship's
-        // art handle, nozzles and all, so without this gate every drifting
-        // piece drew the battleship's four-flame exhaust and ribbons.
-        // Thrust follows speed (no key on the wire); boost is the AI pilot's
-        // real boost key from the snapshot, the same flame a pilot's gets.
-        thrust = -1;
-        boost = droneBoostInput(mirror.swarm?.get(this.droneEidOf(key)));
-      } else continue;
-      this.drawFxEngineFor(fx, key, sp, h, thrust, boost, dt, now);
-    }
-    fx.endFrame();
-  }
-
-  /** One hull's exhaust (+ GPU-lit engine lights) for `drawFxEngines`. */
-  private drawFxEngineFor(
-    fx: FxEngines,
-    key: string,
-    sp: Container,
-    h: NonNullable<ReturnType<ShipArtCtx['handles']['get']>>,
-    thrust: -1 | 0 | 1,
-    boost: -1 | 0 | 1,
-    dt: number,
-    now: number,
-  ): void {
-    if (h.job.type !== 'ship' || !h.ship) return;
-    let top = this._fxTopSpeed.get(h.job.id), trail = this._fxTrailS.get(h.job.id);
-    if (top === undefined || trail === undefined) {
-      const k = getShipKind(h.job.id);
-      top = k.maxSpeed; trail = shipTuning(k).exhaustTrailS;
-      this._fxTopSpeed.set(h.job.id, top); this._fxTrailS.set(h.job.id, trail);
-    }
-    fx.draw(key, h.ship.nozzles, sp.x, sp.y, sp.rotation, thrust, boost, top, dt, now, trail);
-    // GPU-lit art: each engine is a light in its plume (its own hull takes little).
-    const ls = litPass.settings;
-    if (ls && ls.engineLights && ls.pointLights > 0) {
-      const owner = sp instanceof MachinedShipSprite && sp.lit.length > 0 ? sp.lit[0]!.lightOwnerId : -1;
-      const th = fx.thrustOf(key), c = Math.cos(sp.rotation), s = Math.sin(sp.rotation);
-      for (const nz of h.ship.nozzles) {
-        const ly = nz.y + engineLightAstern(nz.r);
-        litPass.scene.addLight(sp.x + nz.x * c - ly * s, sp.y + nz.x * s + ly * c, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, th), engineLightReach(nz.r), owner);
-      }
-    }
-  }
-
-  private syncEngineContinuousEffects(mirror: RenderMirror): void {
-    if (!this.effects) return;
-    const thrust = mirror.thrustingShips;
-    const boost = mirror.boostingShips;
-    // Ships drawn by the new exhaust don't also get today's particles.
-    const fxe = this._fxEngines;
-
-    if (thrust) {
-      for (const id of thrust) {
-        if (!this._activeThrustIds.has(id) && !fxe?.drew(id)) {
-          // Per-kind nozzle offset + plume scale, computed once at
-          // registration (not per frame) from the ship catalogue.
-          this.effects.setContinuous(id, 'thrust', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
-          this._activeThrustIds.add(id);
-        }
-      }
-      for (const id of this._activeThrustIds) {
-        if (!thrust.has(id) || fxe?.drew(id)) {
-          this.effects.setContinuous(id, 'thrust', false);
-          this._activeThrustIds.delete(id);
-        }
-      }
-    } else if (this._activeThrustIds.size > 0) {
-      for (const id of this._activeThrustIds) this.effects.setContinuous(id, 'thrust', false);
-      this._activeThrustIds.clear();
-    }
-
-    if (boost) {
-      for (const id of boost) {
-        if (!this._activeBoostIds.has(id) && !fxe?.drew(id)) {
-          this.effects.setContinuous(id, 'boost', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
-          this._activeBoostIds.add(id);
-        }
-      }
-      for (const id of this._activeBoostIds) {
-        if (!boost.has(id) || fxe?.drew(id)) {
-          this.effects.setContinuous(id, 'boost', false);
-          this._activeBoostIds.delete(id);
-        }
-      }
-    } else if (this._activeBoostIds.size > 0) {
-      for (const id of this._activeBoostIds) this.effects.setContinuous(id, 'boost', false);
-      this._activeBoostIds.clear();
-    }
-
-    // Shield aura — M8 (plan wiggly-puppy). Drive from mirror.ships's
-    // shieldDown field (populated by handleShield + handleDamage) AND
-    // mirror.swarm's shieldDown (decoded from the binary wire's
-    // SWARM_RECORD_FLAG_SHIELD_DOWN bit). Note inversion: aura is ON
-    // when shield is UP (shieldDown=false / undefined). Drones use
-    // "swarm-<entityId>" id prefix to namespace with the player ids.
-    this.syncShieldAuraEffects(mirror);
-  }
-
-  private syncShieldAuraEffects(mirror: RenderMirror): void {
-    if (!this.effects) return;
-    const seen = this._updateSeenScratch; // already cleared at top of update()
-    seen.clear();
-
-    // Aura is ON unless shieldDown is EXPLICITLY true. Default assumption
-    // is "shield up" — every fresh-spawn ship has full shield (the server
-    // initialises `ship.shield = kind.shieldMax` on spawn), and the
-    // client only learns `shieldDown=true` via the explicit SHIELD_BROKEN
-    // event. Pre-fix the aura was gated on `shieldDown === false`
-    // (explicit), so an unscathed just-spawned ship rendered no aura —
-    // user perception: "I spawn in without a shield up."
-    // Every ship: ACTIVE and LINGERING (R2.32: a parked hull keeps its shield
-    // and shows its aura), #17.
-    for (const [id, ship] of mirror.ships) {
-      if (ship.shieldDown !== true) seen.add(id);
-    }
-    if (mirror.swarm) {
-      for (const [id, sw] of mirror.swarm) {
-        if (sw.shieldDown !== true && sw.kind === 1) seen.add(`swarm-${id}`);
-      }
-    }
-
-    for (const id of seen) {
-      if (!this._activeShieldIds.has(id)) {
-        // The drawn bubble IS the shield collider (owner's rule 2026-11-10):
-        // `shieldBubbleRadiusForEntity` = shieldVisualRadius + shipTuning pad,
-        // the same ball `shipShieldColliderDesc` mounts (#15/#18). Both shield
-        // visuals (the legacy ring and the new FxShields) draw at it.
-        const bubble = shieldBubbleRadiusForEntity(id, mirror)
-          ?? shieldBubbleRadius(getShipKind(DEFAULT_SHIP_KIND));
-        this.effects.setContinuous(id, 'shield', true, bubble);
-        this._activeShieldIds.add(id);
-        this._fxShieldRadius.set(id, bubble);
-      }
-    }
-    for (const id of this._activeShieldIds) {
-      if (!seen.has(id)) {
-        this.effects.setContinuous(id, 'shield', false);
-        this._activeShieldIds.delete(id);
-        this._fxShieldRadius.delete(id);
-      }
-    }
-    // New shields (B5): every shield up this frame, then lay them out (a
-    // shield missing this frame went down and plays its break).
-    this.effects.setShieldAuraHidden(this._fxShieldsOn);
-    if (this._fxShieldsOn) {
-      for (const id of this._activeShieldIds) this._fxShields!.shield(id, this._fxShieldRadius.get(id) ?? 38);
-      this._fxShields!.end(this.fxNow(), this._fxShieldPose);
     }
   }
 
@@ -3323,8 +1994,6 @@ export class PixiRenderer implements IRenderer {
   private _fxShields: FxShields | null = null;
   private _fxFences: FxFences | null = null;
   private _fxShieldsOn = false;
-  /** Shield radius per shielded entity (hull radius + pad), set when it comes up. */
-  private readonly _fxShieldRadius = new Map<string, number>();
   /** Pixi-space pose of an entity's sprite, for the new shields. */
   private readonly _fxShieldPose = (id: string, out: { x: number; y: number }): boolean => {
     const sp = this.sprites.get(id);
@@ -3346,15 +2015,13 @@ export class PixiRenderer implements IRenderer {
   private readonly _turretMissileSeen = new Map<number, number>();
   private _turretShotGen = 0;
   private readonly _ownerSpriteKey = new Map<string, string>();
-  private _fxEnginesLastMs = 0;
-  private readonly _warpFx = new WarpFx();
-  private readonly _spoolFx = new WarpSpoolFx();
-  private readonly _spoolShip: SpoolFxShip = { x: 0, y: 0, rotation: 0, progress: -1, nozzles: [], half: 0 };
-  /** Per ship: when its spool started (ms) and its last warp phase. */
-  private readonly _spoolStart = new Map<string, number>();
-  private readonly _spoolPhase = new Map<string, number>();
-  /** Per kind: hull half length and a stern nozzle for classic-look ships. */
-  private readonly _spoolKind = new Map<string, { half: number; nozzles: Nozzle[] }>();
+  /** Pooled warp / spool ctx (pixi/warpFxUpdater.ts), built once here (probes read its effects before `init`). */
+  private readonly _warpFxCtx: WarpFxCtx = createWarpFxCtx({ fxNow: () => this.fxNow(), sprites: this.sprites, artHandles: this._artCtx.handles });
+  /** Pooled engine exhaust + shield aura ctx (pixi/engineShieldFxUpdater.ts); built once here (the handoff reset may run before `init`). */
+  private readonly _engineShieldFxCtx: EngineShieldFxCtx = createEngineShieldFxCtx({
+    fxShieldPose: this._fxShieldPose, fxNow: () => this.fxNow(), sprites: this.sprites, artHandles: this._artCtx.handles,
+    swarmSpriteKinds: this._swarmSpriteKinds, seenScratch: this._updateSeenScratch,
+  });
   /** Phase 4 travel state: the camera the sky is drawn from (shifted by the
    *  trip's approach jump). */
   private readonly _skyCam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 0, screenHeight: 0 };
@@ -3363,101 +2030,39 @@ export class PixiRenderer implements IRenderer {
   private _speedFollowSprite: { readonly x: number; readonly y: number } | null = null;
   private readonly _speedFollowPose = { x: 0, y: 0 };
   private readonly _speedSample = newSpeedFxSample();
-
-  private readonly _warpShipScratch: WarpFxShip = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
-  private readonly _warpStern = new Map<string, number>();
-  /** W2a — drones fed to WarpFx last frame (their sprite keys). */
-  private readonly _droneWarpFed = new Set<string>();
-  /** Parked hulls fed to the warp effects last frame (`warpFxFeedsShip`).
-   *  A hull that left the mirror is dropped on the next frame's sweep. */
-  private readonly _hullWarpFed = new Set<string>();
-  /** W2a — `swarm-<id>` keys, built once per drone (no per-frame string). */
-  private readonly _droneWarpKeys = new Map<number, string>();
-  /** Sprite key `swarm-<eid>` → eid, parsed once per key (#14). */
-  private readonly _droneEidOfKey = new Map<string, number>();
-  private droneEidOf(key: string): number {
-    let eid = this._droneEidOfKey.get(key);
-    if (eid === undefined) {
-      if (this._droneEidOfKey.size > 4096) this._droneEidOfKey.clear(); // bound it; rebuilt on demand
-      eid = parseInt(key.slice(6), 10);
-      this._droneEidOfKey.set(key, eid);
-    }
-    return eid;
-  }
-  private droneWarpKey(eid: number): string {
-    let k = this._droneWarpKeys.get(eid);
-    if (k === undefined) {
-      k = `swarm-${eid}`;
-      if (this._droneWarpKeys.size > 4096) this._droneWarpKeys.clear(); // bound it; rebuilt on demand
-      this._droneWarpKeys.set(eid, k);
-    }
-    return k;
-  }
   /** Scratch for the test-only particle count in `artStats`. */
   private readonly _engineDbgScratch: number[] = [];
-  /** Top speed per ship kind (normalises a drone's engine level). */
-  private readonly _fxTopSpeed = new Map<string, number>();
-  /** Per kind: seconds of path the engine ribbon spans (`shipTuning`). */
-  private readonly _fxTrailS = new Map<string, number>();
 
   /** New weapon effects (`?fx=new`, B3). */
   private _fxLiveBeams: FxBeams | null = null;
   private _fxRemoteBeams: FxBeams | null = null;
   private _fxProjectiles: FxProjectiles | null = null;
-  /** Per remote beam this frame: did it land on something (FxBeams' flare). */
-  private readonly _fxRemoteHit: boolean[] = [];
 
   /** New backdrop (`?fx=new`), and the sector it shows. */
   private _backdrop: Backdrop | null = null;
   private _sectorKey: string | null = null;
 
   /** DEV/E2E: what the backdrop is showing. */
-  backdropStats(): { classicStars: boolean; motes: { near: number; fore: number } | null; deep: number; on: boolean; nebula: string | null; landmarks: number; sky: string; density: number; speed: number; speedZoom: number; speedLevel: string } {
-    const b = this._backdrop;
-    return { classicStars: this.starfield?.isVisible() === true, motes: b?.moteCounts() ?? null, deep: b?.deepSpace() ?? 0, on: b?.sky.visible === true, nebula: b?.nebulaKey() ?? null, landmarks: b?.visibleLandmarks ?? 0, sky: b?.skySignature ?? '', density: b?.density ?? 0,
-      speed: b?.speed.sf ?? 0, speedZoom: this.camera.speedZoom(), speedLevel: b?.speedLevel ?? 'off' };
-  }
+  backdropStats(): BackdropStats { return backdropStats(this._probes); }
 
   /** See `IRenderer.setFleetOrderMode`. */
-  setFleetOrderMode(mode: 'move' | 'attack'): void {
-    this._fleetOrderMode = mode;
-  }
-
+  setFleetOrderMode(mode: 'move' | 'attack'): void { this._input.setFleetOrderMode(mode); }
   /** See `IRenderer.setFleetPick`. */
-  setFleetPick(kind: FleetPickKindWire | null): void {
-    pickStart(this._fleetPick, kind);
-    this.feedback.fleetPickPoints = 0;
-    if (kind !== null) this._fleetBoxActive = false;
-  }
-
-  /** See `IRenderer.commitFleetPick`. A no-op until the route is long enough. */
-  commitFleetPick(): void {
-    const result = pickFinishPatrol(this._fleetPick);
-    if (result !== null) this.publishPickResult(result);
-  }
-
-  /** See `IRenderer.setFleetOverlayModel`. Allocates on a status change only. */
-  setFleetOverlayModel(model: FleetOverlayModel): void {
-    const next = new Map<string, FleetOverlayShip>();
-    for (const s of model.ships) next.set(s.id, s);
-    this._fleetModel = next;
-  }
+  setFleetPick(kind: FleetPickKindWire | null): void { this._input.setFleetPick(kind); }
+  /** See `IRenderer.commitFleetPick`. */
+  commitFleetPick(): void { this._input.commitFleetPick(); }
+  /** See `IRenderer.setFleetOverlayModel`. */
+  setFleetOverlayModel(model: FleetOverlayModel): void { this._input.setFleetOverlayModel(model); }
 
   setSpectator(active: boolean): void {
     this._spectator = active;
-    // RTS command view == spectating for now (a later slice renames it).
-    // Leaving it drops any live box and clears the ship selection (and the
-    // focus with it when the focus was one of those ships).
-    const cancel = this._cmdRouter.setEnabled(active);
-    for (let i = 0; i < cancel.length; i++) this.applyRouterAction(cancel[i]!);
-    if (!active && this._selShips.size > 0) this.setSelection(new Set(), null, null);
-    if (!active) this.setFleetPick(null);
+    this._input.setCommandView(active);
     // The radar is camera-relative while spectating. Pushed here (not read
     // from the store) so it works on the worker path too.
     this.halo.setSpectator(active);
     if (!this.initialized) return;
     if (active) this.camera.follow(null);
-    this.applyZoomCap();
+    this._cameraDirector.applyZoomCap();
   }
 
   /** See `IRenderer.setRadarPrefs`. */
@@ -3502,102 +2107,14 @@ export class PixiRenderer implements IRenderer {
     this.camera.glideTo(gameX, -gameY, durationMs);
   }
 
-  /** RTS fleet warp (S8) — these own ships become THE selection (focus
-   *  cleared), through the one `setSelection`. Ids that are not own ships in
-   *  the last mirror are skipped (the per-frame prune would drop them). */
-  selectFleetShips(ids: readonly string[]): void {
-    const m = this._lastMirror;
-    const next = new Set<string>();
-    for (const id of ids) if (m === null || isOwnShipPresent(id, m)) next.add(id);
-    this.setSelection(next, null, null);
-  }
+  /** RTS fleet warp (S8) — see `RendererInputController.selectFleetShips`. */
+  selectFleetShips(ids: readonly string[]): void { this._input.selectFleetShips(ids); }
 
-  /**
-   * Cinematic camera — play a cue script, or `null` to stop and hand the camera
-   * back to gameplay. See `IRenderer.setCameraScript`. The halo ring re-anchors
-   * on the camera centre while a script plays (the subject may not be the ship).
-   */
-  setCameraScript(cues: readonly CameraCue[] | null): void {
-    if (cues === null || cues.length === 0) {
-      this._director.stop();
-      if (this.initialized) this.camera.clearDirector();
-      this.halo.setCameraRelative(false);
-      return;
-    }
-    // eslint-disable-next-line no-restricted-properties -- real time: the camera director (UI)
-    this._director.play(cues, performance.now());
-    this.halo.setCameraRelative(true);
-  }
+  /** Cinematic camera — see `RendererCameraDirector.setCameraScript`. */
+  setCameraScript(cues: readonly CameraCue[] | null): void { this._cameraDirector.setCameraScript(cues); }
 
   /** Test/automation — true while a cinematic script owns the camera. */
-  isCameraScripted(): boolean {
-    return this._director.isActive();
-  }
-
-  /** Lookup over the sprite map for the director (pixi space). Built once. */
-  private createDirectorLookup(): CameraTargetLookup {
-    // Group bounds: `GroupBoundsScanner` (alloc-free, #14), which also counts
-    // structures culled off screen (review 2026-11-12, capital-lineup).
-    const groupScanner = new GroupBoundsScanner(this._swarmSpriteKinds);
-    // Ids-bounds accumulator state.
-    let count = 0;
-    let acc: MutableBounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-    // A framed entity contributes its whole extent (radius `r`), not just its
-    // centre: a 10x capital reaches kilometres past its centre (round 3).
-    const add = (x: number, y: number, r = 0): void => {
-      if (count === 0) {
-        acc.minX = x - r; acc.maxX = x + r;
-        acc.minY = y - r; acc.maxY = y + r;
-      } else {
-        if (x - r < acc.minX) acc.minX = x - r;
-        if (x + r > acc.maxX) acc.maxX = x + r;
-        if (y - r < acc.minY) acc.minY = y - r;
-        if (y + r > acc.maxY) acc.maxY = y + r;
-      }
-      count++;
-    };
-    // Half the sprite's longer side: covers any rotation. Cinematic-only path.
-    const extentOf = (sprite: Container): number => Math.max(sprite.width, sprite.height) / 2;
-    return {
-      pose: (id: string, out: MutablePoint): boolean => {
-        const sp = this.cameraSprite(id);
-        if (!sp || !sp.visible) return false;
-        out.x = sp.x;
-        out.y = sp.y;
-        return true;
-      },
-      groupBounds: (g: CameraGroup, out: MutableBounds): number => groupScanner.scan(this.sprites, g, out),
-      idsBounds: (ids: readonly string[], out: MutableBounds): number => {
-        count = 0;
-        acc = out;
-        for (let i = 0; i < ids.length; i++) {
-          const id = ids[i]!;
-          const sp = this.cameraSprite(id);
-          if (sp && sp.visible) add(sp.x, sp.y, extentOf(sp));
-        }
-        return count;
-      },
-      viewport: (out: MutablePoint): void => {
-        out.x = this.camera ? this.camera.screenWidth : 0;
-        out.y = this.camera ? this.camera.screenHeight : 0;
-      },
-    };
-  }
-
-  /** The sprite a camera cue follows. `'local'` resolves through
-   *  `localCameraKey`: the pilot's ship, or their parked hull while spectating
-   *  (review 2026-11-12: a 'local' cue did nothing once spectating). */
-  private cameraSprite(id: string): Container | undefined {
-    if (id !== 'local') return this.sprites.get(id);
-    const m = this._lastMirror;
-    const lk = localCameraKey(m ?? null, this._isDrawnSprite);
-    if (lk === null) return undefined;
-    return this.sprites.get(lk.key);
-  }
-  private readonly _isDrawnSprite = (key: string): boolean => {
-    const sp = this.sprites.get(key);
-    return sp !== undefined && sp.visible;
-  };
+  isCameraScripted(): boolean { return this._cameraDirector.isCameraScripted(); }
 
   /** Phase 5 — set the spectator WASD free-pan velocity (SCREEN px/sec). */
   setPanVelocity(vx: number, vy: number): void {
@@ -3652,25 +2169,8 @@ export class PixiRenderer implements IRenderer {
    * ship's screen point, both as the frame renders. Read by the
    * `__eqxFleetRingProbe` DEV hook (`?worker=0`). Not used by gameplay.
    */
-  /**
-   * Test-only (RTS Part A seamless hand-over): the identity of the ship drawn
-   * under `key`: its sprite's and turret cluster's Pixi `uid`, its art handle's
-   * probe id, and how many re-keys this renderer has applied. A spec reads it
-   * before and after taking a ship's controls: the same numbers under the new
-   * key mean nothing was rebuilt. Read by the `__eqxShipVisualProbe` DEV hook
-   * (`?worker=0`). Not used by gameplay.
-   */
-  shipVisualProbe(key: string): { sprite: number | null; cluster: number | null; artHandle: number | null; rekeys: number } {
-    const sp = this.sprites.get(key);
-    const cl = this.mountVisuals.clusterOf(key);
-    const h = this._artCtx.handles.get(key);
-    return {
-      sprite: sp?.uid ?? null,
-      cluster: cl?.uid ?? null,
-      artHandle: h === undefined ? null : probeIdentity(h),
-      rekeys: this._shipRekeysApplied,
-    };
-  }
+  /** Test-only ship identity probe (`__eqxShipVisualProbe`): see pixi/rendererProbes.ts. */
+  shipVisualProbe(key: string): ShipVisualProbe { return shipVisualProbe(this._probes, key); }
 
   fleetRingProbe(): { id: string; ringX: number; ringY: number; shipX: number; shipY: number; frames: number } {
     this._ringProbeOn = true;
@@ -3723,45 +2223,11 @@ export class PixiRenderer implements IRenderer {
     this.helmMarker.reset();
     this._fxShields?.reset();
     this._fxFences?.reset();
-    this._activeThrustIds.clear();
-    this._activeBoostIds.clear();
-    this._activeShieldIds.clear();
+    clearEngineShieldFxIds(this._engineShieldFxCtx);
   }
 
-  /** Machined art status: the service's counts plus how many ship sprites
-   *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxWakes: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; turretAim: ReturnType<MountVisualManager['aimProbe']>; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number; wreckEngines: number; wreckLit: number; wreckRawMaps: number; wreckFarLod: number; wreckBlasts: number; wreckRipples: number; hullBlastsReplaced: number; litMeshes: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
-    let machined = 0, classic = 0;
-    for (const [id, sp] of this.sprites) {
-      if (isMachinedSprite(sp)) machined++;
-      else if (!id.startsWith('swarm-') || this._artCtx.handles.has(id)) classic++;
-    }
-    // Capital destruction S2b: drawn wreck pieces (visible sprites of kind 4).
-    // S3: textured pieces (parent art), pieces whose cut edges still glow,
-    // and break-ups played.
-    // wreckEngines: pieces drawing engine exhaust this frame. Must stay 0: a
-    // piece wears the dead ship's art handle (nozzles and all), but a wreck
-    // has no engines.
-    let wreckPieces = 0, wreckTextured = 0, wreckGlowing = 0, wreckEngines = 0, wreckLit = 0, wreckRawMaps = 0, wreckFarLod = 0;
-    for (const [id, k] of this._swarmSpriteKinds) {
-      if (k !== 4) continue;
-      if (this._fxEngines?.drew(id) === true) wreckEngines++;
-      const sp = this.sprites.get(id);
-      if (sp?.visible !== true) continue;
-      wreckPieces++;
-      if (sp instanceof WreckPieceSprite) {
-        if (sp.art !== null) wreckTextured++;
-        if (sp.glowAlpha() > 0) wreckGlowing++;
-        if (sp.farZoom) wreckFarLod++;
-        const am = sp.artMode();
-        if (am === 'lit') wreckLit++;
-        else if (am === 'raw-maps') wreckRawMaps++;
-      }
-    }
-    const wreckBreaks = this._wreckBreaks;
-    const art = this._artCtx.art;
-    return { wreckPieces, wreckTextured, wreckGlowing, wreckBreaks, wreckEngines, wreckLit, wreckRawMaps, wreckFarLod, wreckBlasts: this._wreckBlastsSpawned, wreckRipples: this._wreckRipplesSpawned, hullBlastsReplaced: this._hullBlastsReplaced, litMeshes: litPass.settings ? litPass.count : -1, mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxWakes: this._fxProjectiles?.wakeCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), turretAim: this.mountVisuals.aimProbe(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
-  }
+  /** Machined art status (DEV/perf probe): see pixi/rendererProbes.ts. */
+  artStats(): ArtStats { return artStats(this._probes); }
 
   dispose(): void {
     this._artCtx.art?.destroy();
@@ -3781,24 +2247,10 @@ export class PixiRenderer implements IRenderer {
       this.effects = null;
     }
     // Clear the per-effect diff trackers so a re-init starts clean.
-    this._activeThrustIds.clear();
-    this._activeBoostIds.clear();
-    this._activeShieldIds.clear();
+    clearEngineShieldFxIds(this._engineShieldFxCtx);
     // Remove canvas pointer / wheel / touch listeners so an in-flight
     // event doesn't reach a destroyed Camera.
-    const canvas = this.app?.canvas;
-    if (canvas) {
-      for (const { type, handler, options } of this.canvasListeners) {
-        canvas.removeEventListener(type, handler, options);
-      }
-    }
-    this.canvasListeners.length = 0;
-    // P3.5 — the window-level placement-drag pointermove (lives on `window`,
-    // capture phase — the removal flag MUST match the add or it won't detach).
-    if (this._placementWindowMoveHandler) {
-      window.removeEventListener('pointermove', this._placementWindowMoveHandler, true);
-      this._placementWindowMoveHandler = null;
-    }
+    this._input.removeEventListeners(this.app?.canvas);
     const handler = (this.app as unknown as Record<string, unknown>)['_resizeHandler'];
     if (typeof handler === 'function') {
       window.removeEventListener('resize', handler as EventListener);
