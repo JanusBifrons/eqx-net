@@ -40,8 +40,8 @@ Status column: **live** = the extension point exists today; **planned** = being 
 |---|---|---|
 | A per-frame visual | An updater module `update<X>Sprites(mirror, ctx)` with a pooled ctx built once in `init`, like `pixi/shipSpriteUpdater.ts`. | live |
 | A test / perf probe | `pixi/rendererProbes.ts`. | planned |
-| A render-mirror field | The entity's `*RenderState` file under `src/core/contracts/render/`. | planned |
-| A renderer method (overlay, camera, radar) | The matching sub-interface (`IFleetView`, `IRadarView`, `ICameraControl`) that `IRenderer` extends. | planned |
+| A render-mirror field | The entity's `*RenderState` file under `src/core/contracts/render/`. | live |
+| A renderer method (overlay, camera, radar) | The matching sub-interface (`IFleetView`, `IRadarView`, `ICameraControl`) that `IRenderer` extends. | live |
 
 ## Core AI: `HostileDroneBehaviour.ts` (`src/core/ai/CLAUDE.md`)
 
