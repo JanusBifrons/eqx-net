@@ -167,8 +167,8 @@ import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
-import { LAUNCH_COSTS_ON, type LaunchVerdict } from '../../shared-types/launch.js';
-import { chargeLaunch } from '../economy/launchCharge.js';
+import { LAUNCH_COSTS_ON } from '../../shared-types/launch.js';
+import { chargeLaunchFor, gateLaunch, seedTestWallet } from './launchGate.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector, isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
@@ -2494,7 +2494,7 @@ export class SectorRoom extends Room<SectorState> {
     // mount-ticker cleanup. Extracted to RespawnHandler.ts.
     this.respawnHandler = new RespawnHandler({
       // Join flow — a respawn re-launches the same hull, so it pays like a launch.
-      chargeRespawn: (pid, kind) => !this.launchCharged() || this.chargeLaunchFor(pid, kind).kind !== 'refuse',
+      chargeRespawn: (pid, kind) => !this.launchCharged() || chargeLaunchFor(this.launchCostsOn, pid, kind).kind !== 'refuse',
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       serverTick: () => this.serverTick,
@@ -8742,17 +8742,6 @@ export class SectorRoom extends Room<SectorState> {
     return this.sectorKey !== null && this.enforceHullGate;
   }
 
-  /** Join flow — the room's one charging seam (join gate and respawn). */
-  private chargeLaunchFor(playerId: string, kind: string): LaunchVerdict {
-    const sink = getTradeSink();
-    return chargeLaunch({
-      wallet: getWallet(),
-      freeLaunches: (pid) => sink?.freeLaunches?.(pid) ?? 0,
-      spendFreeLaunch: (pid) => sink?.spendFreeLaunch?.(pid) ?? false,
-      costsOn: this.launchCostsOn,
-    }, playerId, kind);
-  }
-
   private handleRespawn(client: Client): void {
     this.respawnHandler.handle(client);
   }
@@ -9883,33 +9872,10 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
 
-    // Economy v2 W5b — the ship-picker gate. A launchable hull (the launch
-    // table, shared-types/launch.ts: sub-capitals and the player capitals)
-    // needs no packed hull; any other kind must be a ship you OWN (a roster
-    // row, e.g. one you unpacked). A fresh spawn asking for another kind gets
-    // a starter hull instead, and is told how to get the one it wanted.
-    // Join flow — the same gate pays for the launch (`chargeLaunch`: wallet,
-    // free launch or debt); a hull the pilot can't pay for is refused too.
-    // Economy v2 W1 — test-only wallet seed (join option, else the room's),
-    // BEFORE the launch is charged so `?initialWallet` pays for it.
-    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) {
-      const walletSeed = parsed.data.initialWallet ?? this.testWalletSeed;
-      if (walletSeed > 0) {
-        const have = getWallet().balance(playerId);
-        if (have < walletSeed) getWallet().credit(playerId, walletSeed - have, 'test_seed');
-      }
-    }
-    if (!resumedFromStore && this.launchCharged()) {
-      const verdict = this.chargeLaunchFor(playerId, chosenKind);
-      if (verdict.kind === 'refuse') {
-        const wanted = getShipKind(chosenKind).displayName;
-        chosenKind = DEFAULT_SHIP_KIND;
-        this.sendNotice(client, verdict.reason === 'shipyard'
-          ? `You need a ${wanted}: buy a packed one on the Trade tab (or loot one), then unpack it at your storage.`
-          : `You can't afford a ${wanted} (${verdict.cost.toLocaleString('en-GB')} credits): you launched in a Fighter.`);
-        serverLogEvent('hull_gate_refused', { playerId, wanted, reason: verdict.reason });
-      }
-    }
+    // Economy v2 W5b + join flow — the ship-picker gate, which pays for the
+    // launch (rooms/launchGate.ts). Test wallet seed first, so it pays.
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) seedTestWallet(playerId, parsed.data.initialWallet ?? this.testWalletSeed);
+    if (!resumedFromStore && this.launchCharged()) chosenKind = gateLaunch(this.launchCostsOn, playerId, chosenKind, (m) => this.sendNotice(client, m));
 
     // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
     // resumes by shipId — the roster shipId-restore above, which is now the

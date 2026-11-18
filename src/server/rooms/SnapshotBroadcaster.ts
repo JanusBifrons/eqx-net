@@ -212,9 +212,8 @@ export interface SnapshotBroadcasterDeps {
   /** Living World P5 — the blueprints fitted to a ship instance (own active
    *  ship only on the wire). A SHARED reference; undefined ⇒ none known. */
   fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
-  /** Economy v2 W1 — a player's wallet balance (own active ship only). */
+  /** Economy v2 W1 / join flow — wallet balance, free capital launches (own active ship). */
   walletOf?: (playerId: string) => number;
-  /** Join flow — the own player's free capital launches left. */
   freeLaunchesOf?: (playerId: string) => number;
   /** v4 M2 — the faction a patrol ship flies for (undefined for other NPCs). */
   droneFactionOf?: (droneId: string) => string | undefined;
@@ -347,8 +346,7 @@ type MutableStateEntry = {
   lockedByN?: number;
   lockedByL?: number;
   fitted?: string[];
-  wallet?: number;
-  freeLaunches?: number;
+  wallet?: number; freeLaunches?: number;
   poseEpoch?: number;
   disabledMs?: number;
   warp?: 1 | 2 | 3;
@@ -1005,13 +1003,11 @@ export class SnapshotBroadcaster {
         if (capped) for (let i = 0; i < lockedBy.length; i++) if (lockedBy[i]!.s === 2) lockedRows++;
         const lockedByL = capped ? (this.deps.lockedByLockedOf?.(ship.playerId) ?? 0) : 0;
         setOrDrop(entry, 'lockedByL', lockedByL > lockedRows ? lockedByL : undefined);
-        // P5 (#16) — the own ACTIVE hull's fitted blueprints, emit-when-non-empty
-        // (shared reference; the encoder never mutates it).
+        // P5 (#16) — own ACTIVE hull's fitted blueprints, when non-empty (shared ref, never mutated).
         const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
         setOrDrop(entry, 'fitted', fitted !== undefined && fitted.length > 0 ? (fitted as string[]) : undefined);
-        // Economy v2 W1 (#16) — the own player's wallet balance (a number, no alloc).
+        // Economy v2 W1 / join flow (#16) — own wallet and free launches (numbers, no alloc).
         setOrDrop(entry, 'wallet', ownActive ? this.deps.walletOf?.(ship.playerId) : undefined);
-        // Join flow (#16) — free capital launches left (a number, no alloc).
         setOrDrop(entry, 'freeLaunches', ownActive ? this.deps.freeLaunchesOf?.(ship.playerId) : undefined);
         // v4 T2 (#16) — teleport epoch: the owner re-seeds prediction on a change.
         setOrDrop(entry, 'poseEpoch', ownActive && ship.poseEpoch > 0 ? ship.poseEpoch : undefined);
