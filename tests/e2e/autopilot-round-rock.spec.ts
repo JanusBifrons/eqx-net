@@ -12,9 +12,12 @@
  *   3. it never touched the rock: no server `collision_resolved` with a
  *      `field:` body, and the drawn ship centre never inside a rock outline.
  *
- * Scenario (`cut-field-test` room, seed `look`): a ~700 u rock sits on the
- * straight line between spawn S and course point G (through its centre), with
- * ~450 u of open water on one side. The fighter spawns at S facing G.
+ * Scenario (`cut-field-test` room, seed `look`): at the field's eastern rim, a
+ * ~400 u rim rock sits on the straight line between spawn S and course point G
+ * (both in open water outside the field), with ~1.5 km of open water past it
+ * on one side. The fighter spawns at S facing G. (Inside the field the rock
+ * tiles the space: a fighter crosses packed chunks only by street, so a rock
+ * to go round in open water is found at the rim; navigation guide, fine layer.)
  */
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
@@ -28,9 +31,10 @@ interface ServerLogEntry { ts: number; tag: string; data: Record<string, unknown
 type HelmRead = { active: boolean; tx: number; ty: number; route?: { n: number; idx: number } | null };
 type EqxWindow = { __eqxClient?: { cutFieldStats?: { predBodies: number }; setHelmCourse(x: number, y: number): void; getHelmOrder(): HelmRead } };
 
-const S = { x: -36_274, y: 19_284 };
-const G = { x: -37_188, y: 21_491 };
-const ROCK_CENTRE = { x: -36_731, y: 20_387 };
+const S = { x: -16_084, y: 3_300 };
+const G = { x: -13_984, y: 2_700 };
+/** The deepest point of rock on the straight line S→G (~210 u inside). */
+const ROCK_CENTRE = { x: -15_506, y: 3_135 };
 /** Nose along S→G: forward is (-sin θ, cos θ). */
 const FACING = Math.atan2(-(G.x - S.x), G.y - S.y);
 const ROCKS = fieldRocksNear(S);
@@ -39,12 +43,12 @@ const MAX_DEPTH = 20;
 /** Done this near the point (the fighter's helm arrival is a few tens of u). */
 const ARRIVED_WITHIN = 150;
 
-// Infra budget: cold Vite compile + join + chunk cut; the flight is ~3 km at fighter speed (~6 s).
+// Infra budget: cold Vite compile + join + chunk cut; the flight is ~2.5 km at fighter speed (~6 s).
 test.setTimeout(60_000);
 
 test('a fighter on autopilot flies round a field rock to the far side', async ({ browser }) => {
   // Precondition (from the seed): the rock sits on the straight line, the ends are clear.
-  expect(Math.max(...ROCKS.map((r) => depthInsideOutline(r.outline, ROCK_CENTRE))), 'a rock covers the straight line').toBeGreaterThan(300);
+  expect(Math.max(...ROCKS.map((r) => depthInsideOutline(r.outline, ROCK_CENTRE))), 'a rock covers the straight line').toBeGreaterThan(150);
   for (const p of [S, G]) expect(Math.max(...ROCKS.map((r) => depthInsideOutline(r.outline, p))), 'spawn and goal are open water').toBeLessThan(-200);
 
   const ctx = await browser.newContext();

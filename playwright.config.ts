@@ -196,6 +196,7 @@ const FEATURE_SPECS: string[] = [
   '**/tship-collision-probe.spec.ts',
   '**/structure-ram-blocked.spec.ts',
   '**/cut-field-collision.spec.ts',
+  '**/autopilot-round-rock.spec.ts',
   // Phase V gates — fly through an open gate, stopped by a locked one.
   '**/gate-fly-through.spec.ts',
   '**/ramming-probe-armpit.spec.ts',

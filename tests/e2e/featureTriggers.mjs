@@ -51,6 +51,12 @@ export const FEATURE_TRIGGERS = [
     specs: ['capital-helm'],
   },
   {
+    // Autopilot: the helm flies the planner's route round rocks (navigation slices 12-14).
+    area: 'autopilot',
+    paths: ['src/core/nav/', 'src/server/nav/', 'src/core/helm/', 'src/client/helm/', 'src/shared-types/messages/navMessages'],
+    specs: ['autopilot-round-rock'],
+  },
+  {
     // Capital destruction: wreck pieces on the wire, rebuilt + drawn on the client.
     area: 'capital wrecks',
     paths: ['src/core/destruction/', 'src/server/rooms/CapitalWreckSubsystem', 'src/client/net/wreckGeometryStore',
