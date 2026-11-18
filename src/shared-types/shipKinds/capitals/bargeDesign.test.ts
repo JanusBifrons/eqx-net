@@ -5,12 +5,13 @@
  *    lasers AND tractor placeholders in every size S/M/L/XL down both sides,
  *    oversized stern engines, no naval guns, no allegiance, never in a random
  *    spawn pool, and a cargo hold;
+ *  - the catalogue barge side mounts swing ±45° (owner 2026-11-18);
  *  - the dev switch: unset, the catalogue is unchanged (no `barge-look`).
  */
 import { describe, expect, it } from 'vitest';
 import { defineCapitalShipKind } from '../../shipScale/defineShipKind.js';
 import { getShipKind, isShipKindId, SHIP_KINDS, SHIP_KINDS_LIST } from '../../shipKinds.js';
-import { BARGE_LOOKS, BARGE_LOOK_KIND_ID, TRACTOR_WEAPON, bargeDesign } from './bargeDesign.js';
+import { BARGE_LOOKS, BARGE_LOOK_KIND_ID, SIDE_MOUNT_ARC, TRACTOR_WEAPON, bargeDesign } from './bargeDesign.js';
 import { BARGE_LOOK, resolveBargeLook } from './bargeLookConfig.js';
 import { inRandomSpawnPool } from '../../shipKinds.js';
 
@@ -79,6 +80,21 @@ describe.each(BARGE_LOOKS)('barge look %s', (look) => {
     // The module protrudes past the hull: the stern is the module's aft face.
     const hull = (kind.shape as { hull: Array<[number, number]> }).hull;
     expect(Math.max(...hull.map(([, y]) => y))).toBeCloseTo(d.length / 2, 0);
+  });
+});
+
+describe('the catalogue barge side mounts', () => {
+  // Owner 2026-11-18: lasers and tractor dishes down the flanks swing in a
+  // cone of ±45° about their side-facing rest bearing, not the whole flank.
+  it('each side mount (laser and tractor) covers a ±45° cone about its side bearing', () => {
+    const m = getShipKind('barge').mounts ?? [];
+    const side = m.filter((x) => Math.abs(Math.abs(x.baseAngle) - Math.PI / 2) < 1e-9);
+    expect(side.some((x) => x.id.startsWith('laser-'))).toBe(true);
+    expect(side.some((x) => x.id.startsWith('tractor-'))).toBe(true);
+    for (const x of side) {
+      expect([x.id, x.arcMin, x.arcMax]).toEqual([x.id, -SIDE_MOUNT_ARC, SIDE_MOUNT_ARC]);
+    }
+    expect(SIDE_MOUNT_ARC).toBeCloseTo(Math.PI / 4, 12);
   });
 });
 
