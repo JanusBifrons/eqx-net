@@ -58,9 +58,11 @@ export interface TerrainRecordRow {
   lineage: string | null;
 }
 
-/** A rock row: not a lineage row, not the reserved serial row. */
+/** A keyed row: a rock, or a wreck-field hull (`rock_key = rockKey(cx, cy,
+ *  hullSlot)`, its lineage JSON in `lineage`; wreck fields slice 4). Not a
+ *  battle lineage row (negative key), not the reserved serial row. */
 export function isRockRow(r: TerrainRecordRow): boolean {
-  return r.lineage === null && r.rockKey !== LINEAGE_SERIAL_ROW_KEY;
+  return r.rockKey !== LINEAGE_SERIAL_ROW_KEY && !(r.lineage !== null && r.rockKey < 0);
 }
 
 /** Every saved rock of one sector, any layout version (the cut field drops
@@ -81,8 +83,8 @@ export function loadTerrainRecords(db: Pick<DatabaseSync, 'prepare'>, sectorKey:
  *  read-only connection, writes on the CRITICAL lane. */
 export interface RockRecordStore {
   readonly sectorKey: string;
-  /** The partition's rock rows only (lineage rows and the serial row are
-   *  left out, so the cut field never reads them as rocks). */
+  /** The partition's keyed rows only (`isRockRow`: battle lineage rows and
+   *  the serial row are left out, so the cut field never reads them). */
   load(): readonly TerrainRecordRow[];
   put(op: TerrainRecordPutOp): void;
   warn(fields: object, msg: string): void;
@@ -163,7 +165,7 @@ export function terrainRecordStore(
     },
     deleteRecord: (rockKey) => { sink.enqueueCritical({ type: 'TERRAIN_RECORD_DELETE', sectorKey, rockKey, ts: now() }); },
     lineages: () => all()
-      .filter((r) => r.lineage !== null)
+      .filter((r) => r.lineage !== null && r.rockKey < 0)
       .map((r) => ({ serial: -r.rockKey, json: r.lineage as string }))
       .sort((a, b) => a.serial - b.serial),
   };

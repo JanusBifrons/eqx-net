@@ -130,10 +130,10 @@ describe('GalaxyPickerChrome', () => {
     // unified visual language), so each kind is legible at a glance. Players
     // render as the ▲ ship badge.
     const breakdown = screen.getByTestId('sector-drawer-breakdown');
-    expect(breakdown).toHaveTextContent('ship');           // players 1 → ship (singular)
-    expect(breakdown).toHaveTextContent('hostiles');       // 2 → plural
-    expect(breakdown).toHaveTextContent('neutral drones'); // 8 → plural
-    expect(breakdown).toHaveTextContent('structures');     // 3 → plural
+    expect(breakdown).toHaveTextContent('pilots');         // players → the PILOTS stat
+    expect(breakdown).toHaveTextContent('hostiles');
+    expect(breakdown).toHaveTextContent('neutral drones');
+    expect(breakdown).toHaveTextContent('structures');
   });
 });
 

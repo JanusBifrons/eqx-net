@@ -1,7 +1,7 @@
 /**
  * The client half of fire control's blocked-line hold (core
  * `blockedLineHold.ts`; server `BlockedLineHold`, #15, #19): the local fire
- * pass (`ColyseusClient.fcGroupBears` / `fcMountBears` / `fcFireMounts`) asks
+ * pass (`FireControlClient.fcGroupBears` / `fcMountBears` / `fcFireMounts`) asks
  * here before a beam or railgun mount may fire, so the client never draws a
  * predicted beam the server will refuse.
  *

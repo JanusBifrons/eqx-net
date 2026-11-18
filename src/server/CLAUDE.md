@@ -73,7 +73,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 **Allegiances and friendly fire** ([allegiances](../../docs/architecture/allegiances.md#server-implementation-notes)):
 - 🔴 Classify by the registry kind, never an id prefix. `isHostileToPlayer` = stance OR ledger; only a hit on a DRONE escalates the `FactionLedger`. Allegiance decides targeting, never what a shot hits.
 - 🔴 Every shot hits the first thing in its path, own side included (skips: shooter, a capital's own deck, loot pods); friendly hits never mark hostile.
-- AI pilots (AI-flown owned hulls too) hold fire on a friendly line only via `LineOfFireGate`. Every shooter's beam or railgun holds on a line blocked by any body for the tolerance only via `BlockedLineHold` (fire-control.md). Drone-brain proximity queries use `AiNeighbourGrid`.
+- AI pilots (AI-flown owned hulls too) hold fire on a friendly line only via `LineOfFireGate`. Beams/railguns hold on any blocked line past tolerance only via `BlockedLineHold` (fire-control). Drone-brain proximity queries use `AiNeighbourGrid`.
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md#server-implementation-notes)):
 - 🔴 Value only moves (`transferInto`), never copies; every transfer is ONE atomic `GROUP`; `HoldStore` is the authority. Every death and abandon seam spills the hold.
@@ -109,7 +109,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Cargo access
 
-- **Gate:** `SectorRoom.cargoAccess` is re-checked on every `cargo_query` / `cargo_move`; moves only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell`.
+- **Gate:** `cargoAccess` (`rooms/features/cargoMessages.ts`) is re-checked on every `cargo_query` / `cargo_move`; moves only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell`.
 - **Break-ins** are hostile acts; an NPC's loot is rolled once per spawn (`npcHold`).
 - Full text and locks: [loot-and-cargo.md](../../docs/features/loot-and-cargo.md#server-implementation-notes).
 
@@ -195,6 +195,8 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - **Decision logic over state:** hand-rolled mocks (`src/server/transit/TransitOrchestrator.test.ts` is the model).
 - **Anything on the snapshot wire or broadcast gates, and every new visible entity type:** an integration test on `tests/integration/sectorRoom/harness.ts` (`pnpm test:integration`).
 - **A test that needs a live hull uses `harness.connectActive`** (sends `client_ready`); `connectAs` alone never activates. Detail: [DETERMINISM.md](../../tests/integration/sectorRoom/DETERMINISM.md#server-testing-patterns).
+- **A new test/engineering room is a row in `rooms/testRooms/`** (behind `shouldRegisterTestRooms`), never a `define` in `index.ts`.
+- **A new HTTP route is a router in `routes/`** (dev-only ones in `devRouter.ts`), mounted with one line.
 
 ## Generic Entity Pipeline
 

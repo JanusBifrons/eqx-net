@@ -55,11 +55,11 @@ export function sendCargoState(client: Client, st: CargoState): void {
 
 /** Collaborators for an open structure's cargo. */
 export interface StructureCargoDeps {
-  storage: () => StorageService;
+  storage: () => Pick<StorageService, 'cargoTake' | 'cargoPut' | 'cargoView'>;
   holds: () => HoldStore;
   shipRecord: (shipInstanceId: string) => PlayerShipRecord | null;
   /** Pilots who moved cargo by hand (the auto-deposit stands back). */
-  manualCargo: Set<string>;
+  manualCargo: Pick<Set<string>, 'add'>;
   sectorKey: () => string | null;
   /** A Capital's mineral bank rides room state. */
   bankChanged: () => void;
@@ -147,7 +147,7 @@ export function moveBetweenHolds(
 /** A loot pod opened in the loot window (plan cargo-pods slice 11): free
  *  for all within `LOOT_OPEN_REACH`; `take` only (a pod is never filled). */
 export function podCargoState(
-  loot: LootSubsystem, search: LootSearch, holds: HoldStore, now: number,
+  loot: Pick<LootSubsystem, 'inOpenReach' | 'take'>, search: LootSearch, holds: Pick<HoldStore, 'get'>, now: number,
   playerId: string, c: LootCollector | null, entityId: number, podId: string, move: CargoMove | null,
 ): CargoState {
   const closed = (message: string): CargoState => ({

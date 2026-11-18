@@ -20,13 +20,15 @@ interface Internals {
   predEnergy: number;
   inputTick: number;
   gameClock: { now: () => number };
-  _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }>;
-  _fcLastFireMs: Map<string, number>;
   _swarmBodyKeyCache: Map<number, string>;
   sendFire: (tick: number) => void;
   updateLiveBeam: () => void;
-  fcFireTick: (spaceHeld: boolean) => void;
-  fcMountBears: (mountId: string, weaponId: string, size: undefined, ox: number, oy: number, angle: number) => boolean;
+  fc: {
+    _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }>;
+    _fcLastFireMs: Map<string, number>;
+    fcFireTick: (spaceHeld: boolean) => void;
+    fcMountBears: (mountId: string, weaponId: string, size: undefined, ox: number, oy: number, angle: number) => boolean;
+  };
   mirror: {
     ships: Map<string, { x: number; y: number; vx: number; vy: number; angle: number; kind?: string; mountAngles?: number[] }>;
     swarm: Map<number, SwarmRenderState>;
@@ -63,7 +65,7 @@ describe('client fire pass: the blocked-line hold mirror', () => {
     c.mirror.ships.set(ME, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, kind: 'interceptor', mountAngles: [0, 0] });
     c.mirror.swarm = new Map([[1, { kind: 1, shipKind: 'fighter', x: 0, y: TY, vx: 0, vy: 0, angle: 0, radius: 12 } as unknown as SwarmRenderState]]);
     c._swarmBodyKeyCache.set(1, 'swarm-1');
-    c._fcGroups = [{ id: 'primary', m: 0, l: [{ t: 's:1', s: 2, p: 100 }] }];
+    c.fc._fcGroups = [{ id: 'primary', m: 0, l: [{ t: 's:1', s: 2, p: 100 }] }];
     c.sendFire = () => { sends++; };
     c.updateLiveBeam = () => { beams++; };
   });
@@ -71,9 +73,9 @@ describe('client fire pass: the blocked-line hold mirror', () => {
   /** One fire pass at game time `t`: did it draw the beam / send the shot? */
   function pass(t: number): { beam: boolean; sent: boolean } {
     now = t;
-    c._fcLastFireMs.clear();
+    c.fc._fcLastFireMs.clear();
     const b = beams, s = sends;
-    c.fcFireTick(false);
+    c.fc.fcFireTick(false);
     return { beam: beams > b, sent: sends > s };
   }
 
@@ -87,7 +89,7 @@ describe('client fire pass: the blocked-line hold mirror', () => {
     expect(pass(10_000 + BLOCKED_LINE_HOLD_MS / 2), 'a brief block changes nothing').toEqual({ beam: true, sent: true });
     expect(pass(10_000 + BLOCKED_LINE_HOLD_MS), 'held').toEqual({ beam: false, sent: false });
     // The per-mount ghost gate agrees.
-    expect(c.fcMountBears('wing-l', 'hitscan', undefined, -8, 2, 0)).toBe(false);
+    expect(c.fc.fcMountBears('wing-l', 'hitscan', undefined, -8, 2, 0)).toBe(false);
     rock = false;
     expect(pass(10_000 + BLOCKED_LINE_HOLD_MS + 16), 'the line clears: fire resumes at once').toEqual({ beam: true, sent: true });
   });
