@@ -4,7 +4,7 @@
  * (`applyDamage` → `onWreckHit` → `RockCutter`) wear an asteroid until it
  * breaks along the beam into >= 2 movable wreck pieces (kind 4, a rock
  * descriptor on the wire); other weapons never wear it; grinding the pieces
- * ends in ore pods carrying the rock's resource. A real `fire` of the mining
+ * ends in slivers that stay pieces, never pods. A real `fire` of the mining
  * laser cuts a small rock too (the fire path hands the hit point and line).
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -34,7 +34,7 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
     return { cr, room, pid, shipId };
   }
 
-  it('wears a rock to a break along the beam; other weapons do not; the pieces grind down to ore pods', { timeout: 40_000 }, async () => {
+  it('wears a rock to a break along the beam; other weapons do not; the pieces grind down to slivers, never pods', { timeout: 40_000 }, async () => {
     const { room, pid } = await setup(60);
     const int = room._internals;
     int.setWreckSeed(9);
@@ -68,10 +68,12 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
     expect(xs.some((x) => x > 6)).toBe(true);
     for (const p of pieces) expect(p.shipKind, 'no ship byte on a rock piece').toBeUndefined();
 
-    // Grind the smallest pieces with the mining laser until one is an ore pod.
+    // Grind the smallest pieces with the mining laser: they re-cut down to
+    // slivers that stay pieces (each goes into a hold whole as one rock
+    // chunk); a rock never drops a pod (owner 2026-11-17).
     const pods0 = int.loot.podCount();
     const size = (id: string): number => int.wreckIntegrity(id) ?? 0;
-    for (let i = 0; i < 80 && int.loot.podCount() === pods0; i++) {
+    for (let i = 0; i < 80; i++) {
       const live = [...int.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND);
       if (live.length === 0) break;
       const small = live.reduce((a, b) => (size(b.id) < size(a.id) ? b : a));
@@ -79,11 +81,8 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
       int.applyDamage(small.id, pid, size(small.id) + 1, p.x - 1, p.y, 1, 0, 'mining_laser');
       await harness.advance(20);
     }
-    expect(int.loot.podCount(), 'an ore pod dropped').toBeGreaterThan(pods0);
-    const pod = [...int.loot.podIds()][0]!;
-    const goods = int.loot.shipHold(pod)?.goods ?? {};
-    expect(goods.minerals ?? 0, 'a plain rock pods minerals (asteroidYield)').toBeGreaterThan(0);
-    expect(goods.salvage ?? 0, 'never salvage').toBe(0);
+    expect(int.loot.podCount(), 'never a pod').toBe(pods0);
+    expect([...int.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND).length, 'the slivers stay').toBeGreaterThan(0);
   });
 
   it('locks on a rock follow its pieces when it breaks, biggest first, still LOCKED (plan partitioned-chasing-lark)', { timeout: 30_000 }, async () => {
@@ -189,7 +188,7 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
       await harness.advance(100);
     }
     expect(room._internals.swarmRegistry.get('rock-1'), 'the beam wore the rock out').toBeNull();
-    expect(room._internals.wreckDescriptors().some((d) => d.rock?.id === 'rock-1') || room._internals.loot.podCount() > 0,
-      'it left pieces (or, all slivers, ore pods)').toBe(true);
+    expect(room._internals.wreckDescriptors().some((d) => d.rock?.id === 'rock-1'),
+      'it left pieces').toBe(true);
   });
 });
