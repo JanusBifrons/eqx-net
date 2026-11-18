@@ -16,12 +16,11 @@ import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { GameClock } from '@core/clock/GameClock';
 import { glideToward } from '@shared-types/timeScale';
-import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
+import type { SnapshotMessage, DamageEvent, DestroyEvent, RespawnAckMessage, ShieldEventMessage, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
 import type { FleetOrderMessage, SetModeMessage, SetStanceMessage, FormSquadMessage, DisbandSquadMessage } from '@shared-types/messages';
 /** RTS slice 6a: the fleet command messages `sendFleetCommand` dispatches. */
 export type FleetCommandMessage = FleetOrderMessage | SetModeMessage | SetStanceMessage | FormSquadMessage | DisbandSquadMessage;
 import { parseWelcome } from './parseWelcome';
-import { parseDestroy } from './parseDestroy';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import type { PadForceField } from '@core/physics/forceFields';
@@ -49,8 +48,7 @@ import type { ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
-import { ControlModeMessageSchema } from '@shared-types/messages/snapshotMessages';
+import { CollisionResolvedMessageSchema } from '@shared-types/messages';
 import { stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
 import { cargoChanged } from './lootView';
 import { setFactionLooks } from '../../shared-types/factions.js';
@@ -168,15 +166,13 @@ import { resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
   predictShotOutcome,
-  reconcileAckToFeedback,
-  reconcileDamageToFeedback,
   type PredictedFeedbackSink,
   type ReconcileFeedbackSink,
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
-import { findMount, isSustainedBeamMount, mountMuzzleRay, remoteBeamTtlMs, type MuzzleRay } from '../render/beamStyles';
+import { mountMuzzleRay, type MuzzleRay } from '../render/beamStyles';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
@@ -976,23 +972,12 @@ export class ColyseusGameClient {
       }
     },
   };
-  /** 2026-05-25 heap-growth gate step 8 — pooled `{targetId, damage}`
-   *  literal for the per-damage-event reconcileDamageToFeedback call.
-   *  Under 25-drone combat at ~75 hits/sec, the pre-fix per-event
-   *  literal was a real allocator. Mutate the scratch each call. */
-  private readonly _damageReconcileScratch: { targetId: string; damage: number } = { targetId: '', damage: 0 };
   /** 2026-05-25 heap-growth gate steps 8-10 — 1Hz HUD-store dispatcher.
    *  Owns swarm-count + hull-pct + shield-pct dedupe + 1Hz throttle so
    *  per-event handlers (handleDamage / handleShield / swarm-decoder)
    *  pay zero Zustand-notification cost on no-op updates. Extracted to
    *  `HudDispatcher.ts`. */
   private readonly hudDispatcher = new HudDispatcher();
-  /** 2026-05-26 heap-growth gate step 11 — pooled `{hit, targetId, damage}`
-   *  literal for the per-hit_ack reconcileAckToFeedback call. Same shape
-   *  as `_damageReconcileScratch`: `PredictedAck` consumer reads the
-   *  fields synchronously inside `HitPredictionLedger.reconcileAck` and
-   *  never retains the reference (verified at HitPrediction.ts:142). */
-  private readonly _hitAckReconcileScratch: { hit: boolean; targetId?: string; damage?: number } = { hit: false, targetId: undefined, damage: undefined };
   /** 2026-05-26 heap-growth gate step 11 — pooled per-snapshot replay-
    *  grade serverState capture. Pre-fix `recPositions` was a 10-field
    *  object literal allocated per snapshot (20 Hz). Both consumers
@@ -1444,6 +1429,14 @@ export class ColyseusGameClient {
       this.room = room;
       this._seat?.bindRoomHandlers(room);
     },
+    hitLedger: this._hitLedger, reconcileSink: this._reconcileSink,
+    ghostManager: this.ghostManager, shellTiming: this._shellTiming, aiController: this._aiController,
+    inputTick: (): number => this.inputTick,
+    handleDamage: (evt: DamageEvent, suppressNumber: boolean): void => this.handleDamage(evt, suppressNumber),
+    handleShield: (evt: ShieldEventMessage): void => this.handleShield(evt),
+    handleDestroy: (evt: DestroyEvent): void => this.handleDestroy(evt),
+    shooterKindMounts: (shooterId: string): readonly WeaponMount[] | undefined => this.shooterKindMounts(shooterId),
+    enterCommandFromServer: (): void => this.enterCommandFromServer(),
   };
   /** The live connection's client + room binder, set once per `connect()`;
    *  the `transit_ready` handoff (handlers/transitHandlers.ts) consumes the
@@ -1975,33 +1968,6 @@ export class ColyseusGameClient {
       }
     });
 
-    room.onMessage('damage', (raw: unknown) => {
-      // weapon-hit-prediction Phase 3 — defensive zod parse on receive
-      // (invariant #4; mirrors the collision_resolved drop-on-fail). The
-      // client now CONSUMES this message for prediction de-dupe, so it
-      // crosses the trust boundary.
-      const parsed = DamageEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const evt = parsed.data;
-      // Single reconcile path: if a prediction already showed this number,
-      // suppress handleDamage's duplicate. handleDamage stays the SOLE
-      // HP/HUD authority — only the number push is gated.
-      // step 8: pooled scratch (was per-event literal).
-      this._damageReconcileScratch.targetId = evt.targetId;
-      this._damageReconcileScratch.damage = evt.damage;
-      const suppressNumber = reconcileDamageToFeedback(
-        this._hitLedger,
-        this._damageReconcileScratch,
-        evt.shooterId === this.mirror.localPlayerId,
-        this.clock.now(),
-      );
-      this.handleDamage(evt, suppressNumber);
-    });
-
-    room.onMessage('shield', (evt: ShieldEventMessage) => {
-      this.handleShield(evt);
-    });
-
     // Paradigm plan (quirky-rabbit) Phase 6 — server `gc_pause` events
     // feed the rolling 30 s health stats ring; the publisher pushes
     // the aggregate to Zustand at 1 Hz for the DevOverlay.
@@ -2015,130 +1981,14 @@ export class ColyseusGameClient {
       recordServerGcPause(evt.durationMs);
       logEvent('gc_pause', { durationMs: evt.durationMs, kind: evt.kind });
     });
-    // Defensive zod parse (invariant #3): malformed dropped with a sampled
-    // warning; `vaporised` (fracture v11) rides into handleDestroy.
-    room.onMessage('destroy', (raw: unknown) => {
-      const evt = parseDestroy(raw);
-      if (evt !== null) this.handleDestroy(evt);
-    });
-
-    room.onMessage('hit_ack', (raw: unknown) => {
-      // weapon-hit-prediction Phase 3 — defensive zod parse (invariant #4;
-      // the client now consumes hit_ack as its single reconcile path, so
-      // it crosses the trust boundary). Drop-on-fail like collision_resolved.
-      const parsed = HitAckSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const ack = parsed.data;
-      // THE single reconcile path — runs BEFORE ghostManager.resolve so a
-      // mispredicted number is hard-cancelled the same frame the ghost
-      // fades. resolve() itself is unchanged (still fades the ghost salvo
-      // by clientShotId on the wire ack).
-      // 2026-05-26 heap-growth gate step 11: pooled scratch instead of
-      // a fresh `{hit, targetId, damage}` literal per hit_ack. Same
-      // pattern as `_damageReconcileScratch` (step 8) — the consumer
-      // (`HitPredictionLedger.reconcileAck`, HitPrediction.ts:142)
-      // reads fields synchronously and never retains the reference.
-      this._hitAckReconcileScratch.hit = ack.hit;
-      this._hitAckReconcileScratch.targetId = ack.targetId;
-      this._hitAckReconcileScratch.damage = ack.damage;
-      reconcileAckToFeedback(
-        this._hitLedger,
-        ack.clientShotId,
-        this._hitAckReconcileScratch,
-        this._reconcileSink,
-        this.clock.now(),
-      );
-      this.ghostManager.resolve(ack.clientShotId, ack.hit);
-      if (ack.rejected) {
-        // Surface rejection events in the diagnostic ring buffer. The 2026-05-06
-        // cooldown-restore bug ("most/all of my shots are rejected") was diagnosed
-        // by inference because no fire/hit_ack events were ever logged. Future
-        // captures of similar issues should now show the rejection cluster
-        // directly.
-        logEvent('fireRejected', { clientShotId: ack.clientShotId, hit: ack.hit, targetId: ack.targetId });
-        // The raw 'shot_rejected' id is a diagnostic, not a player message —
-        // it stays in the log only.
-      }
-    });
-
-    room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
-      this._shellTiming.onBeamFired(evt);
-      // Own shots are already shown as liveBeams — only store remote ones.
-      if (evt.shooterId === this.mirror.localPlayerId) return;
-      const dx = evt.toX - evt.fromX;
-      const dy = evt.toY - evt.fromY;
-      const range = Math.hypot(dx, dy);
-      // Upsert: replaces the previous beam from this (shooter, mount) so
-      // there is never more than one entry per mount and the TTL resets on
-      // each shot. Player beams are HELD weapons (cooldown 167 ms at 60 Hz;
-      // TTL 400 ms keeps the visual continuous while space is held).
-      //
-      // For AI shooters (`swarm-${entityId}`) the iteration we converged on:
-      //   - First attempt 400 ms: the beam endpoints were stamped at fire time
-      //     and stayed frozen, but the drone moved underneath, so each new
-      //     fire teleported the beam origin → "jittery and laggy" (5c smoke).
-      //   - Second attempt 80 ms: gave a discrete flash, but cooldown is 167 ms,
-      //     so there's an 87 ms gap between flashes → visible flicker.
-      //   - Settled: 250 ms TTL (overlaps cooldown by ~83 ms, no gap) AND the
-      //     renderer re-derives the beam ORIGIN from `mirror.swarm[entityId]`
-      //     each frame so it tracks the moving drone smoothly. Same pattern
-      //     player beams use against `mirror.ships[localId]`.
-      //
-      // Multi-mount/turret refactor (Phase 2c): keyed by (shooterId, mountId).
-      // Pre-2c servers omit `mountId`; we synthesise `'forward'` so the entry
-      // still has a stable key and legacy single-mount rendering is unchanged.
-      const isAiShooter = evt.shooterId.startsWith('swarm-');
-      const mountKey = evt.mountId ?? 'forward';
-      // The capital heavy beam (cooldown 10 ticks) holds longer so it reads as
-      // one continuous burn, not a strobe (beamStyles `remoteBeamTtlMs`). Its
-      // mount is looked up on the shooter's kind: no wire field.
-      const ttlMs = remoteBeamTtlMs(isAiShooter, isSustainedBeamMount(findMount(this.shooterKindMounts(evt.shooterId), evt.mountId)));
-      const lasers = (this.mirror.remoteLasers ??= new Map());
-      let perShooter = lasers.get(evt.shooterId);
-      if (!perShooter) {
-        perShooter = new Map();
-        lasers.set(evt.shooterId, perShooter);
-      }
-      // 2026-05-25 heap-growth gate step 7: pool the per-fire entry.
-      // Pre-fix this handler allocated a fresh 8-field object literal
-      // per drone fire (~150 allocs/sec under 25-drone combat).
-      // Isolation experiment 2026-05-25 showed the 3 message handlers
-      // (swarm/damage/laser_fired) drive 0.435 MB/s heap growth +
-      // 80% of major-GC stalls. Reusing the entry object per
-      // (shooter, mount) is safe — the renderer reads fields
-      // synchronously each frame; upsert semantics are preserved.
-      const expiresAt = this.clock.now() + ttlMs;
-      const existing = perShooter.get(mountKey);
-      if (existing) {
-        existing.range = range;
-        existing.hit = evt.hit;
-        existing.targetId = evt.targetId;
-        existing.expiresAt = expiresAt;
-        existing.fromX = evt.fromX;
-        existing.fromY = evt.fromY;
-        existing.toX = evt.toX;
-        existing.toY = evt.toY;
-      } else {
-        perShooter.set(mountKey, {
-          range,
-          hit: evt.hit,
-          targetId: evt.targetId,
-          expiresAt,
-          fromX: evt.fromX,
-          fromY: evt.fromY,
-          toX: evt.toX,
-          toY: evt.toY,
-        });
-      }
-    });
-
     room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
       this.handleRespawnAck(msg);
     });
 
     // Feature handler files (handlers/index.ts): missiles, impact FX, toasts,
     // wave HUD, structure panels, drawn shells, ship status, cut field,
-    // warp / transit handoff.
+    // warp / transit handoff, combat (damage / shield / destroy / hit_ack /
+    // laser_fired / control_mode / bot_aggro).
     registerClientHandlers(room, this._handlerCtx);
 
     // Stage 2 of the network-feel roadmap — server-broadcast collision
@@ -2163,32 +2013,6 @@ export class ColyseusGameClient {
       if (this.mirror.pendingEffectTriggers) {
         pushCollisionShieldContacts(result.data, this.mirror, this.clock.now(), this._shieldContactAt, this.mirror.pendingEffectTriggers);
       }
-    });
-
-    // Living World P1a — pickup popup (UI accelerator only; cargo truth rides
-    // the own-ship snapshot slice). zod-validated (invariant #3).
-    // RTS slice 10 — a command-view join: the server parked our hull at the
-    // arrival flip. Enter command view now (the snapshot carries the parked
-    // hull as lingering, #16; this only makes the flip immediate). zod (#3).
-    room.onMessage('control_mode', (raw: unknown) => {
-      const parsed = ControlModeMessageSchema.safeParse(raw);
-      if (!parsed.success || parsed.data.mode !== 'command') return;
-      this.enterCommandFromServer();
-    });
-
-    // Living World — server→client twin of the damage→markHostile mirror.
-    // When the director makes a bot proactively hostile to a player, the
-    // server marks its own HostileDroneBehaviour AND broadcasts this; the
-    // client feeds it into ITS predicted AiController so the in-interest
-    // drone's predicted brain matches the authoritative one (no
-    // swarm-wire bump — the existing, proven hostility channel). The
-    // client AiController is keyed on the bare numeric entity id (see the
-    // damage handler), so strip the `swarm-` prefix exactly as that path
-    // does. A dropped packet self-heals on the next director re-mark.
-    room.onMessage('bot_aggro', (evt: BotAggroEvent) => {
-      if (!evt.botEntityId.startsWith('swarm-') || !evt.targetPlayerId) return;
-      const numeric = evt.botEntityId.slice('swarm-'.length);
-      this._aiController.markHostile(numeric, evt.targetPlayerId, this.inputTick);
     });
 
     room.onStateChange((state: unknown) => {

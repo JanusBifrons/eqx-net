@@ -4,6 +4,7 @@
  * ctx to `ClientHandlerCtx` and one call below.
  */
 import type { Room } from 'colyseus.js';
+import { registerCombatHandlers, type CombatHandlerCtx } from './combatHandlers.js';
 import { registerFieldHandlers, type FieldHandlerCtx } from './fieldHandlers.js';
 import { registerImpactFxHandlers, type ImpactFxHandlerCtx } from './impactFxHandlers.js';
 import { registerMissileHandlers, type MissileHandlerCtx } from './missileHandlers.js';
@@ -14,7 +15,8 @@ import { registerToastHandlers, type ToastHandlerCtx } from './toastHandlers.js'
 import { registerTransitHandlers, type TransitHandlerCtx } from './transitHandlers.js';
 import { registerWaveHandlers, type WaveHandlerCtx } from './waveHandlers.js';
 
-export type ClientHandlerCtx = FieldHandlerCtx &
+export type ClientHandlerCtx = CombatHandlerCtx &
+  FieldHandlerCtx &
   ImpactFxHandlerCtx &
   MissileHandlerCtx &
   ShellHandlerCtx &
@@ -34,4 +36,5 @@ export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void 
   registerFieldHandlers(room, ctx);
   registerShellHandlers(room, ctx);
   registerTransitHandlers(room, ctx);
+  registerCombatHandlers(room, ctx);
 }
