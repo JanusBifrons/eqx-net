@@ -5,7 +5,6 @@ import type { FleetOverlayModel, FleetPickKindWire, IRenderer, RenderMirror, Ren
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type FrameMarkers } from './worker/protocol';
-import { LoadCurtain } from './pixi/LoadCurtain.js';
 import { shipSpriteKinds } from './pixi/shipSpriteUpdater.js';
 import { DyingHullHold } from './pixi/dyingHullHold.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
@@ -16,39 +15,32 @@ import { createHudDrainCtx, type HudDrainCtx } from './pixi/hudDrainUpdater.js';
 import { createPlacementGhostCtx, type PlacementGhostCtx } from './pixi/placementGhostUpdater.js';
 import { createLitSceneCtx, type LitSceneCtx } from './pixi/litSceneUpdater.js';
 import { createTurretShotCtx, type TurretShotCtx } from './pixi/turretShotUpdater.js';
-import { resolveInitTarget, buildWorldScene, createGameplayCamera, setupMachinedArt, applyStartZoom, logInitFrameDiag, buildSceneLayers, buildOverlays } from './pixi/rendererSetup/initScene.js';
-import { createRendererInitState, applyFxKillSwitches, wireUpdatersAndFx, type RendererInitState } from './pixi/rendererSetup/initWiring.js';
+import { resolveInitTarget, buildWorldScene, createGameplayCamera } from './pixi/rendererSetup/initScene.js';
+import { createRendererInitState, initSceneAndOverlays, type RendererInitState } from './pixi/rendererSetup/initWiring.js';
+import { inputDepsView, probeStateView, rekeyRefsView, cameraDepsView, frameRefsView, teardownRefsView, type RendererViewHost } from './pixi/rendererSetup/rendererViews.js';
 import { installRendererDomListeners } from './pixi/rendererSetup/initDomListeners.js';
 import { disposeRenderer, resetEffectsForSectorHandoff, type RendererTeardownRefs } from './pixi/rendererSetup/teardown.js';
 import { installFrameTicker } from './pixi/rendererSetup/initTicker.js';
-import { createRendererFrameCtx, type RendererFrameCtx, type RendererFrameRefs } from './pixi/frameCtx.js';
+import { createRendererFrameCtx, type RendererFrameCtx } from './pixi/frameCtx.js';
 import { updateEntitySprites, updateProjectilesAndGhost } from './pixi/worldSpriteUpdater.js';
 import { updateBeamsAndCamera, updateBackdrop, updateHudOverlays } from './pixi/frameViewUpdater.js';
 import { createRendererFeedback, writeFrameFeedback, tickFrameEffects } from './pixi/frameFeedbackUpdater.js';
-import type { EffectQuality } from '@core/contracts/IEffects';
-import { RendererInputController, type ForwardedPointerEvent, type RendererInputDeps } from './pixi/rendererInputController.js';
-import { RendererCameraDirector, type RendererCameraDeps } from './pixi/cameraDirector.js';
-import { artStats, backdropStats, shipVisualProbe, debugEngine, createFleetRingProbe, captureFleetRingProbe, fleetRingProbe, type FleetRingProbeState, type FleetRingReading, type ArtStats, type BackdropStats, RendererPerfProbe, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
+import { RendererInputController, type ForwardedPointerEvent } from './pixi/rendererInputController.js';
+import { RendererCameraDirector } from './pixi/cameraDirector.js';
+import { artStats, backdropStats, shipVisualProbe, debugEngine, createFleetRingProbe, fleetRingProbe, type FleetRingProbeState, type FleetRingReading, type ArtStats, type BackdropStats, RendererPerfProbe, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
 import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
 import { HelmCourseMarker } from './helm/HelmCourseMarker.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
-import { LabelManager } from './Labels';
-import { SelectionBracket } from './SelectionBracket';
-import { AimFeedbackRenderer } from './AimFeedbackRenderer';
-import { HoverBracket } from './HoverBracket';
-import { FleetOverlay } from './FleetOverlay.js';
 import { EffectsService } from '../effects/EffectsService';
 import { readFxKillSwitches, type FxKillSwitches } from './fxKillSwitches';
 import { litPass } from './art/litPass.js';
-import { Backdrop } from './art/fx/Backdrop.js';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { type ShipArtCtx } from './art/shipArtSprites.js';
 import { type BeamView } from './BeamSpritePool';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import { MountVisualManager } from './MountVisualManager';
-import { BackgroundGrid } from './BackgroundGrid';
 import { CutFieldLayer } from './field/CutFieldLayer';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
@@ -120,29 +112,44 @@ export class PixiRenderer implements IRenderer {
   private worldHost!: Container;
   /** Camera controller — owns world's transform via pointer/wheel events. */
   private camera!: Camera;
-  private shipContainer!: Container;
   /** Structure placement ghost ctx (pixi/placementGhostUpdater.ts), built in the constructor (it needs `_isTouch`). */
   private readonly _placementGhostCtx: PlacementGhostCtx;
   /** Phase 4 WS-A1 — spectator/construction free-roam camera. While true,
    *  `update()` does NOT re-issue the local-ship follow, so the camera holds
    *  wherever the player panned it (and there may be no local ship at all). */
   private _spectator = false;
-  /** Pointer / touch / wheel input, RTS command routing and THE selection
-   *  (pixi/rendererInputController.ts), built once. */
-  private readonly _input = new RendererInputController(this.inputDeps());
-  private inputDeps(): RendererInputDeps {
+  /** Live getter view of the renderer's members, built first: every other getter
+   *  view (input / camera deps, probes, rekey, frame, teardown) is built once from
+   *  it, at its own field below (pixi/rendererSetup/rendererViews.ts). */
+  private readonly _host: RendererViewHost = this.viewHost();
+  private viewHost(): RendererViewHost {
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
     const r = this;
     return {
-      get camera() { return r.camera; }, get lastMirror() { return r._lastMirror; }, get galaxyLayer() { return r._galaxyLayer; },
-      get feedback() { return r.feedback; }, get selectionBracket() { return r.selectionBracket; }, get fleetOverlay() { return r.fleetOverlay; },
+      get initialized() { return r.initialized; }, set initialized(v: boolean) { r.initialized = v; },
+      get effects() { return r.effects; }, set effects(v: EffectsService | null) { r.effects = v; },
+      get app() { return r.app; }, get world() { return r.world; }, get worldHost() { return r.worldHost; }, get camera() { return r.camera; },
+      get starfield() { return r.starfield; }, get lastMirror() { return r._lastMirror; }, get galaxyLayer() { return r._galaxyLayer; },
+      get spectator() { return r._spectator; }, get lockMarksVisible() { return r._lockMarksVisible; }, get artStatsHook() { return r._artStatsHook; },
+      get shipRekeysApplied() { return r._shipRekeysApplied; }, get sectorKey() { return r._sectorKey; }, get init() { return r._init; },
+      get frame() { return r._frame; }, get probes() { return r._probes; }, get artOpts() { return r._artOpts; }, get isTouch() { return r._isTouch; },
+      get quality() { return r.quality; }, get sprites() { return r.sprites; }, get mountVisuals() { return r.mountVisuals; }, get artCtx() { return r._artCtx; },
+      get swarmSpriteKinds() { return r._swarmSpriteKinds; }, get swarmSpriteSigs() { return r._swarmSpriteSigs; }, get structureMountSlew() { return r._structureMountSlew; },
+      get engineDbgScratch() { return r._engineDbgScratch; }, get farIcons() { return r._farIcons; }, get warpFxCtx() { return r._warpFxCtx; },
+      get helmMarker() { return r.helmMarker; }, get incomingFire() { return r.incomingFire; }, get halo() { return r.halo; }, get hitEventCtx() { return r._hitEventCtx; },
+      get litSceneCtx() { return r._litSceneCtx; }, get turretShotCtx() { return r._turretShotCtx; }, get engineShieldFxCtx() { return r._engineShieldFxCtx; },
+      get placementGhostCtx() { return r._placementGhostCtx; }, get hudCtx() { return r._hudCtx; }, get input() { return r._input; },
+      get cameraDirector() { return r._cameraDirector; }, get fleetRing() { return r._fleetRing; }, get feedback() { return r.feedback; },
+      get frameMarkers() { return r.frameMarkers; }, get dyingHulls() { return r._dyingHulls; }, get cutField() { return r._cutField; },
+      get wreckFarLayer() { return r._wreckFarLayer; }, get fxClock() { return r.fxClock; }, get seenScratch() { return r._updateSeenScratch; },
+      get remoteHitTargets() { return r._updateRemoteHitTargetsScratch; }, get localHitTargets() { return r._updateLocalHitTargetsScratch; },
+      get tractorViews() { return r._tractorViews; }, get spriteShipKind() { return r._spriteShipKind; }, get forgetSprite() { return r._forgetSprite; },
+      get rekeyShip() { return r._rekeyShip; }, get fxShieldPose() { return r._fxShieldPose; }, fxNow: () => r.fxNow(),
     };
   }
-  private fleetOverlay: FleetOverlay | null = null;
-  /** Structures plan, Phase 3 — grid connector web renderer. */
-  private connectorRenderer!: ConnectorRenderer;
-  /** Load curtain (full-canvas dark overlay at join). Constructed in `init()`. */
-  private curtain!: LoadCurtain;
+  /** Pointer / touch / wheel input, RTS command routing and THE selection
+   *  (pixi/rendererInputController.ts), built once. */
+  private readonly _input = new RendererInputController(inputDepsView(this._host));
   /** Effects subsystem (plan `wiggly-puppy`). Owns destruction particles,
    *  engine emitters, shield aura, impact sparks, etc. Constructed in
    *  `init()` AFTER `app`, `world`, `shipContainer`, and `curtain` exist.
@@ -174,23 +181,7 @@ export class PixiRenderer implements IRenderer {
    *  mount-local offset and baseAngle rotation. */
   private mountVisuals = new MountVisualManager();
   /** Live getter view of the state the test / perf probes read (pixi/rendererProbes.ts). */
-  private readonly _probes: RendererProbeState = this.probeState();
-  private probeState(): RendererProbeState {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
-    const r = this;
-    return {
-      get app() { return r.app; }, get sprites() { return r.sprites; }, get artCtx() { return r._artCtx; }, get swarmSpriteKinds() { return r._swarmSpriteKinds; },
-      get mountVisuals() { return r.mountVisuals; }, get camera() { return r.camera; }, get starfield() { return r.starfield; },
-      get backdrop() { return r._backdrop; }, get effects() { return r.effects; }, get engineDbgScratch() { return r._engineDbgScratch; },
-      get farIcons() { return r._farIcons; }, get warpFx() { return r._warpFxCtx.warpFx; }, get spoolFx() { return r._warpFxCtx.spoolFx; },
-      get helmMarker() { return r.helmMarker; }, get lastMirror() { return r._lastMirror; }, get fxEngines() { return r._init.fxEngines; },
-      get fxExplosions() { return r._init.fxExplosions; }, get fxProjectiles() { return r._init.fxProjectiles; }, get fxLiveBeams() { return r._init.fxLiveBeams; },
-      get fxShields() { return r._init.fxShields; }, get fxShieldsOn() { return r._hitEventCtx.fxShieldsOn; }, get fxFences() { return r._init.fxFences; },
-      get wreckBreaks() { return r._init.wreckBreaks; }, get wreckBlastsSpawned() { return r._init.wreckBlastsSpawned; },
-      get wreckRipplesSpawned() { return r._init.wreckRipplesSpawned; }, get hullBlastsReplaced() { return r._frame.hullBlastsReplaced; },
-      get shipRekeysApplied() { return r._shipRekeysApplied; }, get selectionBracket() { return r.selectionBracket; }, get fleetRing() { return r._fleetRing; },
-    };
-  }
+  private readonly _probes: RendererProbeState = probeStateView(this._host);
   /** The galaxy overlay layer (set when installed). When it reports
    *  `isPanZoomActive()` (selector/spawn mode + visible), the canvas
    *  pointer/wheel handlers route to ITS camera (free pan/zoom of the
@@ -228,16 +219,7 @@ export class PixiRenderer implements IRenderer {
   private readonly _rekeyShip = (from: string, to: string): void => {
     if (rekeyShipVisuals(this._rekeyRefs, from, to)) this._shipRekeysApplied++;
   };
-  private readonly _rekeyRefs: ShipRekeyRefs = this.rekeyRefs();
-  private rekeyRefs(): ShipRekeyRefs {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
-    const r = this;
-    return {
-      get sprites() { return r.sprites; }, get artHandles() { return r._artCtx.handles; }, get mountVisuals() { return r.mountVisuals; },
-      get healthBars() { return r._hudCtx.healthBars; }, get labels() { return r.labels; }, get farIcons() { return r._farIcons; },
-      get fxEngines() { return r._init.fxEngines; }, get fxShields() { return r._init.fxShields; }, get input() { return r._input; }, forgetSprite: this._forgetSprite,
-    };
-  }
+  private readonly _rekeyRefs: ShipRekeyRefs = rekeyRefsView(this._host);
 
   /** Re-keys this renderer has applied (diagnostic / E2E). */
   private _shipRekeysApplied = 0;
@@ -261,16 +243,7 @@ export class PixiRenderer implements IRenderer {
    *  call reads it, so it's always this frame's mirror. */
   private _lastMirror: RenderMirror | null = null;
   /** Camera framing + cinematic director (pixi/cameraDirector.ts), built once. */
-  private readonly _cameraDirector = new RendererCameraDirector(this.cameraDeps());
-  private cameraDeps(): RendererCameraDeps {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
-    const r = this;
-    return {
-      get camera() { return r.camera; }, get lastMirror() { return r._lastMirror; }, get sprites() { return r.sprites; },
-      get swarmSpriteKinds() { return r._swarmSpriteKinds; }, get spectator() { return r._spectator; },
-      get initialized() { return r.initialized; }, get halo() { return r.halo; },
-    };
-  }
+  private readonly _cameraDirector = new RendererCameraDirector(cameraDepsView(this._host));
   private readonly _updateRemoteHitTargetsScratch = new Set<string>();
   private readonly _updateLocalHitTargetsScratch = new Set<string>();
   /** Off-screen ring/edge indicator. Constructed in the constructor body
@@ -285,12 +258,6 @@ export class PixiRenderer implements IRenderer {
   private readonly helmMarker = new HelmCourseMarker();
   /** Damage numbers, level-up icons, health bars + their kill switches (pixi/hudDrainUpdater.ts), built once here (`rekey` / `dispose` read it). */
   private readonly _hudCtx: HudDrainCtx = createHudDrainCtx();
-  private labels: LabelManager | null = null;
-  private selectionBracket: SelectionBracket | null = null;
-  /** Experimental HUD aim feedback (lock bracket / aim line / ship arcs). */
-  private aimFeedback: AimFeedbackRenderer | null = null;
-  private hoverBracket: HoverBracket | null = null;
-  private backgroundGrid: BackgroundGrid | null = null;
   private starfield: StarfieldBackground | null = null;
   /**
    * Renderer → main-thread feedback (see `RendererFeedback`). Populated
@@ -348,7 +315,7 @@ export class PixiRenderer implements IRenderer {
   async init(rawContainer: unknown): Promise<void> {
     // Setup steps live in pixi/rendererSetup/ (each returns what it built).
     const target = resolveInitTarget(rawContainer);
-    const { isDom, initialW, initialH, initialDpr, canvas, domContainer, zoom } = target;
+    const { isDom, initialW, initialH, initialDpr, canvas, domContainer } = target;
 
     this.app = new Application();
     await this.app.init({
@@ -390,46 +357,13 @@ export class PixiRenderer implements IRenderer {
     // Plan: melodic-engelbart Step 2.
     // Worker path: the switches arrive on BOOT (no `window` here).
     const fxKillSwitches = this._fxKillSwitches ?? readFxKillSwitches();
-    const effectsQuality = (): EffectQuality => this.effects?.getQuality() ?? 'medium';
-
-    const backdrop = setupMachinedArt({
-      artOpts: this._artOpts, isTouch: this._isTouch, quality: this.quality, artCtx: this._artCtx,
-      mountVisuals: this.mountVisuals, app: this.app, worldHost: this.worldHost, sectorKey: this._sectorKey, effectsQuality,
-    });
-    if (backdrop) this._backdrop = backdrop;
     // DEV/E2E hook (main-thread path, `?worker=0`): what the art service is
     // doing. Assigned from `update()`, so it always follows the LIVE renderer
     // (a dev StrictMode remount can leave a disposed one behind).
     if (isDom) this._artStatsHook = () => this.artStats();
-    applyFxKillSwitches(this._init, this._hudCtx, fxKillSwitches); // rendererSetup/initWiring.ts
-
-    applyStartZoom(this.camera, this._cameraDirector, zoom); // rendererSetup/initScene.ts
-
-    logInitFrameDiag(this.app, this.world, target);
-
-    this._init.cleanWorld = fxKillSwitches.cleanWorld; // `?cleanworld=1` (showcase capture)
-    const layers = buildSceneLayers({
-      app: this.app, frameMarkers: this.frameMarkers, camera: this.camera, cleanWorld: this._init.cleanWorld,
-      mountVisuals: this.mountVisuals, cutField: this._cutField, placementGhostCtx: this._placementGhostCtx,
-      wreckFarLayer: this._wreckFarLayer, farIcons: this._farIcons, lockMarksVisible: this._lockMarksVisible, warpFxCtx: this._warpFxCtx,
-    });
-    this.curtain = layers.curtain;
-    if (layers.backgroundGrid) this.backgroundGrid = layers.backgroundGrid;
-    this.shipContainer = layers.shipContainer;
-    this.connectorRenderer = layers.connectorRenderer;
-
-    const effects = wireUpdatersAndFx(this._init, this._frame.r, { // ctxs, ?fx=new weapons, beam pools + effects, beam ctx (rendererSetup/initWiring.ts)
-      artOpts: this._artOpts, effectsQuality, fxKillSwitches, structureMountAngles: this._structureMountSlew, spriteKinds: this._swarmSpriteKinds,
-      spriteBuildSigs: this._swarmSpriteSigs, fxShieldPose: this._fxShieldPose, lastMirror: () => this._lastMirror,
-    });
-    if (effects) this.effects = effects;
-    ({
-      fleetOverlay: this.fleetOverlay, labels: this.labels, selectionBracket: this.selectionBracket,
-      hoverBracket: this.hoverBracket, aimFeedback: this.aimFeedback,
-    } = buildOverlays({
-      app: this.app, camera: this.camera, world: this.world, incomingFire: this.incomingFire,
-      helmMarker: this.helmMarker, halo: this.halo, hudCtx: this._hudCtx, cleanWorld: this._init.cleanWorld,
-    }));
+    // Machined art, kill switches, start zoom, frame diag, scene layers, ctxs /
+    // ?fx=new weapons / beam pools + effects / beam ctx, overlays (rendererSetup/initWiring.ts).
+    initSceneAndOverlays(this._init, this._host, this._frame.r, target, fxKillSwitches);
 
     installFrameTicker(this._frame); // camera tick, fleet overlay, art pack / light / collect (rendererSetup/initTicker.ts)
 
@@ -587,7 +521,7 @@ export class PixiRenderer implements IRenderer {
 
   setLoadCurtain(active: boolean): void {
     if (!this.initialized) return;
-    this.curtain.setLoadCurtain(active);
+    this._init.curtain.setLoadCurtain(active);
   }
 
   /**
@@ -616,7 +550,7 @@ export class PixiRenderer implements IRenderer {
     // pass reads the rig each frame); baked art re-bakes, keyed by the rig.
     const art = this._artCtx.art;
     if (art) { art.setSector(sectorKey); this._artCtx.sunAz = art.lightRig.sunAz; }
-    this._backdrop?.setSector(sectorKey);
+    this._init.backdrop?.setSector(sectorKey);
     // Moving to another sector starts a new art visit: its art goes into
     // fresh pages, and the old sector's are freed once nothing draws them
     // (collectUnusedArt). The first sector joined is the warm-up's visit.
@@ -645,37 +579,11 @@ export class PixiRenderer implements IRenderer {
   });
   /** Pooled ctx of the `update()` frame passes and the ticker (pixi/frameCtx.ts), built once here
    *  (every constant member it holds is declared above; `init`-assigned ones are getters). */
-  private readonly _frame: RendererFrameCtx = createRendererFrameCtx(this.frameRefs());
-  private frameRefs(): RendererFrameRefs {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
-    const r = this;
-    return {
-      get app() { return r.app; }, get camera() { return r.camera; }, get world() { return r.world; },
-      get shipContainer() { return r.shipContainer; }, get connectorRenderer() { return r.connectorRenderer; },
-      get effects() { return r.effects; }, get fxExplosions() { return r._init.fxExplosions; }, get backdrop() { return r._backdrop; },
-      get starfield() { return r.starfield; }, get backgroundGrid() { return r.backgroundGrid; }, get labels() { return r.labels; },
-      get selectionBracket() { return r.selectionBracket; }, get hoverBracket() { return r.hoverBracket; },
-      get aimFeedback() { return r.aimFeedback; }, get tractorBeamPool() { return r._init.tractorBeamPool; },
-      get shipUpdaterCtx() { return r._init.shipUpdaterCtx; }, get swarmUpdaterCtx() { return r._init.swarmUpdaterCtx; },
-      get projectileUpdaterCtx() { return r._init.projectileUpdaterCtx; }, get missileUpdaterCtx() { return r._init.missileUpdaterCtx; },
-      get beamCtx() { return r._init.beamCtx; }, get spectator() { return r._spectator; }, get lockMarksVisible() { return r._lockMarksVisible; },
-      get cleanWorld() { return r._init.cleanWorld; }, get beamsDisabled() { return r._init.beamsDisabled; }, get ringProbeOn() { return r._fleetRing.on; },
-      get artStatsHook() { return r._artStatsHook; }, get placementGhostCtx() { return r._placementGhostCtx; }, get halo() { return r.halo; },
-      sprites: this.sprites, mountVisuals: this.mountVisuals, cameraDirector: this._cameraDirector, input: this._input,
-      feedback: this.feedback, frameMarkers: this.frameMarkers, hudCtx: this._hudCtx, hitEventCtx: this._hitEventCtx,
-      litSceneCtx: this._litSceneCtx, turretShotCtx: this._turretShotCtx, warpFxCtx: this._warpFxCtx, engineShieldFxCtx: this._engineShieldFxCtx,
-      dyingHulls: this._dyingHulls, farIcons: this._farIcons, cutField: this._cutField, wreckFarLayer: this._wreckFarLayer,
-      incomingFire: this.incomingFire, helmMarker: this.helmMarker, fxClock: this.fxClock, artCtx: this._artCtx,
-      seenScratch: this._updateSeenScratch, remoteHitTargets: this._updateRemoteHitTargetsScratch, localHitTargets: this._updateLocalHitTargetsScratch,
-      tractorViews: this._tractorViews, spriteShipKind: this._spriteShipKind, forgetSprite: this._forgetSprite, rekeyShip: this._rekeyShip,
-      captureFleetRingProbe: () => captureFleetRingProbe(this._probes), fxNow: () => this.fxNow(),
-    };
-  }
+  private readonly _frame: RendererFrameCtx = createRendererFrameCtx(frameRefsView(this._host));
   /** Scratch for the test-only particle count in `artStats`. */
   private readonly _engineDbgScratch: number[] = [];
 
-  /** New backdrop (`?fx=new`), and the sector it shows. */
-  private _backdrop: Backdrop | null = null;
+  /** The sector the new backdrop (`?fx=new`, on `_init`) shows. */
   private _sectorKey: string | null = null;
 
   /** DEV/E2E: what the backdrop is showing. */
@@ -723,7 +631,7 @@ export class PixiRenderer implements IRenderer {
   setHudOverlays(lockMarks: boolean, radar: boolean): void {
     this._lockMarksVisible = lockMarks;
     // `connectorRenderer` is built in `init`; it picks the flag up there.
-    (this.connectorRenderer as ConnectorRenderer | undefined)?.setTurretOverlaysVisible(lockMarks);
+    (this._init.connectorRenderer as ConnectorRenderer | undefined)?.setTurretOverlaysVisible(lockMarks);
     this.halo.setHidden(!radar);
   }
 
@@ -828,19 +736,5 @@ export class PixiRenderer implements IRenderer {
 
   dispose(): void { disposeRenderer(this._teardown); } // pixi/rendererSetup/teardown.ts
   /** Live getter view of the state teardown reads (pixi/rendererSetup/teardown.ts), built once. */
-  private readonly _teardown: RendererTeardownRefs = this.teardownRefs();
-  private teardownRefs(): RendererTeardownRefs {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
-    const r = this;
-    return {
-      get initialized() { return r.initialized; }, set initialized(v: boolean) { r.initialized = v; },
-      get effects() { return r.effects; }, set effects(v: EffectsService | null) { r.effects = v; },
-      get app() { return r.app; }, get curtain() { return r.curtain; }, get labels() { return r.labels; },
-      get selectionBracket() { return r.selectionBracket; }, get hoverBracket() { return r.hoverBracket; }, get fleetOverlay() { return r.fleetOverlay; },
-      get backgroundGrid() { return r.backgroundGrid; }, get starfield() { return r.starfield; }, get fxExplosions() { return r._init.fxExplosions; },
-      get fxShields() { return r._init.fxShields; }, get fxFences() { return r._init.fxFences; },
-      artCtx: this._artCtx, engineShieldFxCtx: this._engineShieldFxCtx, input: this._input, hudCtx: this._hudCtx,
-      mountVisuals: this.mountVisuals, halo: this.halo, incomingFire: this.incomingFire, helmMarker: this.helmMarker,
-    };
-  }
+  private readonly _teardown: RendererTeardownRefs = teardownRefsView(this._host);
 }
