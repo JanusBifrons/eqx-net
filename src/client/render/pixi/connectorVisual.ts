@@ -374,6 +374,9 @@ const COMET_HALF_PX = 12;
  * the visible direction cue). Coords are in whatever space the caller passes
  * (the renderer passes Pixi-space, already Y-negated) — pure linear interp, so
  * the space is irrelevant. The segment is clamped to the edge at the ends.
+ * A `t` outside [0, 1) (a comet running over a polyline, one edge at a
+ * time: `drawLineLookPulse`) gives the part on this edge, or an empty
+ * segment (x0 = x1, y0 = y1) when the comet is wholly off it.
  */
 export function cometSegment(
   out: CometSegment,
@@ -392,7 +395,7 @@ export function cometSegment(
   const safeScale = scale > 0 ? scale : 1;
   const dt = edgeLen > 0.001 ? Math.min(0.45, Math.max(COMET_HALF_PX / safeScale, COMET_HALF_PX) / edgeLen) : 0;
   const t0 = Math.max(0, tt - dt);
-  const t1 = Math.min(1, tt + dt);
+  const t1 = Math.max(t0, Math.min(1, tt + dt));
   out.x0 = ax + dx * t0;
   out.y0 = ay + dy * t0;
   out.x1 = ax + dx * t1;

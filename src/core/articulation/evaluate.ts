@@ -34,6 +34,11 @@ export interface PlayingClip {
   readonly startTick: number;
   /** Target point in the HOST frame, for a targeted clip. */
   readonly target?: { readonly x: number; readonly y: number };
+  /** 3e: a holding clip's length in ticks (the pose ignores it; the cargo
+   *  carried along the arm is timed from it, `craneCargo.ts`). */
+  readonly holdTicks?: number;
+  /** 3e: which way that cargo moves (`CRANE_CARGO_*`); absent = none. */
+  readonly cargo?: number;
 }
 
 /** What an IK solver is asked (one reused object per pose, no allocation). */

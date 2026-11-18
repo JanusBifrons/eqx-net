@@ -119,6 +119,11 @@ export interface SessionReplacedMessage {
  *  is the application range). */
 export const SESSION_REPLACED_CLOSE_CODE = 4002;
 
+/** Structure-restyle 3e — the own-ship `depositing` value for "parked on a
+ *  freight dock's bay, waiting: the crane is serving another ship" (first
+ *  come, first served). Progress is otherwise 0..100. */
+export const DEPOSIT_WAITING = -1;
+
 export {
   WRECK_ID_END,
   MAX_WRECK_PIECE_INDEX,
@@ -336,7 +341,8 @@ export interface SnapshotMessage {
        *  non-empty). Drives the cargo capacity + the upgrade modal's weapon gate. */
       fitted?: string[];
       /** Living World P1a-2 — auto-deposit progress 0..100 (own active ship only;
-       *  absent ⇒ not depositing). Drives the HUD deposit ring. */
+       *  absent ⇒ not depositing), or `DEPOSIT_WAITING` (parked on a freight
+       *  dock whose crane is serving another ship). Drives the HUD deposit bar. */
       depositing?: number;
       /** Fire control (exp/fire-control) — the OWN active pilot's weapon groups:
        *  id, mode (m: 0 auto / 1 manual) and lock queue (t: target key,

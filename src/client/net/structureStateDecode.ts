@@ -20,6 +20,8 @@ import {
   STRUCTURE_DEFAULTS as D,
   STRUCTURE_RIG_CLIP_TARGET,
   decodeRigClipIndex,
+  decodeRigHoldCargo,
+  decodeRigHoldTicks,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
@@ -124,6 +126,9 @@ function decodeRigClip(v: StructureStateView, out: StructureRenderState, rigKind
   const r = (out.rigClip ??= { clipId: '', startTick: 0 });
   r.clipId = clip.id;
   r.startTick = v.rigStart ?? D.rigStart;
+  const hold = v.rigHold ?? D.rigHold;
+  r.holdTicks = hold !== 0 ? decodeRigHoldTicks(hold) : undefined;
+  r.cargo = hold !== 0 ? decodeRigHoldCargo(hold) : undefined;
   if ((code & STRUCTURE_RIG_CLIP_TARGET) !== 0) {
     r.targetX = v.rigTx ?? D.rigTx;
     r.targetY = v.rigTy ?? D.rigTy;

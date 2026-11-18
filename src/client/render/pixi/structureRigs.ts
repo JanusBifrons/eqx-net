@@ -30,11 +30,21 @@
  * `GraphicsContext` per (rig, part), drawn once and only transformed per
  * frame. Lifted parts (over, plane) also get a drop shadow: a second
  * Graphics on the same context, tinted black, offset down-right.
+ *
+ * 3e: a rig with an IK chain also carries goods along its arm while a
+ * holding clip has a hold length and a cargo direction (`craneCargo.ts`):
+ * the cable look's flow pulse (`drawCablePulse`, same colour, width, beat
+ * and speed as a cable carrying goods) runs from the clamp into the dock (an
+ * unload) and/or back out (a load), timed from the clip on the wire.
  */
 import { Container, Graphics, GraphicsContext } from 'pixi.js';
+import { drawCablePulse } from './connectorLineLooks.js';
+import { connectorVisualInto, type CometSegment, type ConnectorVisual } from './connectorVisual.js';
+import { TRANSFER_PULSE_MS } from '../../../core/structures/structureGridConstants.js';
 import { createRigPose, evaluateRig, type PlayingClip, type RigPose } from '../../../core/articulation/evaluate.js';
+import { CRANE_CARGO_OUT, craneArmPath, craneCargoFlow } from '../../../core/articulation/craneCargo.js';
 import { twoBoneIkSolve } from '../../../core/articulation/ikAdapter.js';
-import { JOINT_LIFT, liftProgress, rigPartIndex, type DrawLayer, type PartDef, type Rig } from '../../../core/articulation/rig.js';
+import { JOINT_LIFT, liftProgress, rigClipIndex, rigPartIndex, type DrawLayer, type PartDef, type Rig } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
@@ -59,6 +69,10 @@ export interface StructureRigInput {
   startTick: number;
   targetX?: number;
   targetY?: number;
+  /** 3e: a holding clip's length (ticks) and cargo direction
+   *  (`CRANE_CARGO_*`); absent = no cargo shown. */
+  holdTicks?: number;
+  cargo?: number;
 }
 
 /** zIndex of the over band: above every hull (0), below the beams. */
@@ -551,6 +565,16 @@ export class StructureRigView {
   private readonly playing: MutablePlaying = { clipId: '', startTick: 0, target: undefined };
   private readonly targetScratch = { x: 0, y: 0 };
   private readonly xf: PixiXform = { x: 0, y: 0, rotation: 0 };
+  /** 3e: the goods flow pulse along the arm, redrawn per frame (null: no IK chain). */
+  readonly cargo: Graphics | null = null;
+  /** 3e scratch: the arm path (x, y pairs, clamp -> root), the pulse visual, its comet. */
+  private readonly armPath: Float64Array;
+  private readonly pulseVisual: ConnectorVisual = { color: 0, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0 };
+  private readonly comet: CometSegment = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  private cargoDrawn = false;
+  /** 3e: the camera scale (CSS px per world u), so the arm's pulse keeps a
+   *  cable pulse's on-screen size (`cometSegment` / `lineLookScale`). */
+  zoom = 1;
 
   constructor(readonly rig: Rig) {
     this.pose = createRigPose(rig);
@@ -591,6 +615,15 @@ export class StructureRigView {
     if (this.slot !== null) {
       this.slot.label = 'rig-slot';
       this.plane.addChildAt(this.slot, 0); // under every plane shadow and part
+    }
+    this.armPath = new Float64Array(2 * (rig.maxChain + 1));
+    if (rig.maxChain > 0) {
+      // Over the arm (light on top of the jib; a pulse casts no shadow).
+      const g = new Graphics();
+      g.label = 'rig-cargo-pulse';
+      g.visible = false;
+      this.over.addChild(g);
+      this.cargo = g;
     }
   }
 
@@ -654,6 +687,45 @@ export class StructureRigView {
         sh.rotation = xf.rotation;
       }
     }
+    this.poseCargo(input, nowTick);
+  }
+
+  /** 3e: run the cable flow pulse along the arm for the playing hold
+   *  (clamp -> dock on an unload, dock -> clamp on a load), or hide it. */
+  private poseCargo(input: StructureRigInput | null, nowTick: number): void {
+    const g = this.cargo;
+    if (g === null) return;
+    const flow = input !== null && input.holdTicks !== undefined && input.cargo !== undefined
+      ? craneCargoFlow(nowTick - input.startTick, input.holdTicks, input.cargo)
+      : 0;
+    const n = flow !== 0 ? craneArmPath(this.rig, rigClipIndex(this.rig, input!.clipId), this.pose, this.armPath) : 0;
+    if (n < 2) {
+      if (this.cargoDrawn) { g.clear(); this.cargoDrawn = false; }
+      g.visible = false;
+      return;
+    }
+    // A cable carrying goods: re-pulsed every TRANSFER_PULSE_MS (the 1 Hz
+    // beat), its comet crossing in CONNECTOR_PULSE_PERIOD_MS, on game time.
+    const nowMs = (nowTick * 1000) / RIG_TICKS_PER_SEC;
+    const flashUntil = (Math.floor(nowMs / TRANSFER_PULSE_MS) + 1) * TRANSFER_PULSE_MS;
+    const v = connectorVisualInto(this.pulseVisual, flashUntil, nowMs, this.zoom);
+    const p = this.armPath;
+    let total = 0;
+    for (let k = 0; k + 1 < n; k++) total += Math.hypot(p[2 * k + 2]! - p[2 * k]!, p[2 * k + 3]! - p[2 * k + 1]!);
+    // Phase over the whole arm, 0 = clamp; a load runs root -> clamp.
+    const t = v.pulseT ?? 0;
+    const at = (flow === CRANE_CARGO_OUT ? 1 - t : t) * total;
+    g.clear();
+    let cum = 0;
+    for (let k = 0; k + 1 < n; k++) {
+      // Host frame (y-up) -> the group's Pixi frame (y-down), like the parts.
+      const ax = p[2 * k]!, ay = -p[2 * k + 1]!, bx = p[2 * k + 2]!, by = -p[2 * k + 3]!;
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len > 0) drawCablePulse(g, v, this.comet, (at - cum) / len, true, ax, ay, bx, by, this.zoom);
+      cum += len;
+    }
+    g.visible = true;
+    this.cargoDrawn = true;
   }
 
   /** Ride a mount cluster (children laid out in the host frame) on the
@@ -698,6 +770,9 @@ export class StructureRigs {
   private readonly worldInput: StructureRigInput = { clipId: '', startTick: 0 };
   private readonly entries = new Map<string, GameRigEntry>();
   private stamp = 0;
+  /** The camera scale this frame (set by the caller before `update`): the
+   *  views' goods pulse sizes from it like a cable's (3e). */
+  zoom = 1;
   private readonly sweepFn = (e: GameRigEntry, key: string): void => {
     if (e.stamp !== this.stamp) this.drop(key, e);
   };
@@ -763,6 +838,8 @@ export class StructureRigs {
       input = this.worldInput;
       input.clipId = clip.clipId;
       input.startTick = clip.startTick;
+      input.holdTicks = clip.holdTicks;
+      input.cargo = clip.cargo;
       if (clip.targetX !== undefined && clip.targetY !== undefined) {
         // Host frame → world game coords (the view takes a world target).
         const c = Math.cos(ha), s = Math.sin(ha);
@@ -773,6 +850,7 @@ export class StructureRigs {
         input.targetY = undefined;
       }
     }
+    view.zoom = this.zoom;
     view.update(input, nowTick, hx, hy, ha, 1);
     followHost(view.over, sprite);
     followHost(view.under, sprite);

@@ -16,7 +16,7 @@ import { createRigPose, evaluateRig } from '../../core/articulation/evaluate.js'
 import { twoBoneIkSolve } from '../../core/articulation/ikAdapter.js';
 import { rigClipIndex } from '../../core/articulation/rig.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
-import { encodeRigClip, STRUCTURE_DEFAULTS as SD } from '../../shared-types/structureStateWire.js';
+import { encodeRigClip, encodeRigHold, STRUCTURE_DEFAULTS as SD } from '../../shared-types/structureStateWire.js';
 import type { StructureState } from '../rooms/schema/SectorState.js';
 import type { StructureRecord } from './StructureRegistry.js';
 
@@ -32,7 +32,9 @@ export interface RigClipCmd {
 
 /**
  * Start clip `clipId` on `rec` at game tick `startTick` (null clears it: the
- * rig rests), with an optional target in the structure's frame. Returns false
+ * rig rests), with an optional target in the structure's frame and (3e) an
+ * optional hold (`holdTicks` + `cargo` direction: presentation only, the
+ * worker never needs it). Returns false
  * (and changes nothing) when the kind has no rig or the rig has no such clip.
  */
 export function startStructureRigClip(
@@ -41,6 +43,7 @@ export function startStructureRigClip(
   startTick: number,
   post: (cmd: RigClipCmd) => void,
   target?: { readonly x: number; readonly y: number },
+  hold?: { readonly holdTicks: number; readonly cargo: number },
 ): boolean {
   const rig = rigForStructureKind(rec.kind);
   if (!rig) return false;
@@ -54,8 +57,8 @@ export function startStructureRigClip(
   const tx = target ? Math.fround(target.x) : 0;
   const ty = target ? Math.fround(target.y) : 0;
   rec.rigClip = target
-    ? { clipId, startTick, target: { x: tx, y: ty } }
-    : { clipId, startTick };
+    ? { clipId, startTick, target: { x: tx, y: ty }, ...hold }
+    : { clipId, startTick, ...hold };
   post(target
     ? { type: 'RIG_CLIP', id: rec.id, clipId, startTick, targetX: tx, targetY: ty }
     : { type: 'RIG_CLIP', id: rec.id, clipId, startTick });
@@ -74,6 +77,8 @@ export function writeRigClipRow(rec: StructureRecord, st: StructureState): void 
   if ((st.rigClip ?? SD.rigClip) !== code) st.rigClip = code;
   if (code === 0 || p === null) return;
   if ((st.rigStart ?? SD.rigStart) !== p.startTick) st.rigStart = p.startTick;
+  const hold = encodeRigHold(p.holdTicks ?? 0, p.cargo ?? 0);
+  if ((st.rigHold ?? SD.rigHold) !== hold) st.rigHold = hold;
   if (p.target !== undefined) {
     if ((st.rigTx ?? SD.rigTx) !== p.target.x) st.rigTx = p.target.x;
     if ((st.rigTy ?? SD.rigTy) !== p.target.y) st.rigTy = p.target.y;

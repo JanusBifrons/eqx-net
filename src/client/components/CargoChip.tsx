@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { Box } from '@mui/material';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { GOOD_DEFS, GOOD_IDS } from '../../shared-types/goods';
+import { DEPOSIT_WAITING } from '../../shared-types/messages/snapshotMessages';
 import { cargoFillState, cargoWeight } from '../net/lootView';
 
 const FILL_COLOR = { ok: 'rgba(255,255,255,0.85)', high: '#ffbb33', full: '#ff4444' } as const;
@@ -52,6 +53,14 @@ const DEPOSIT_TRACK_SX = {
   overflow: 'hidden' as const,
   pointerEvents: 'none' as const,
 };
+/** 3e: the deposit row while a freight dock's crane serves another ship. */
+const DEPOSIT_WAIT_SX = {
+  ml: 0.75,
+  fontSize: { xs: 9, sm: 12 },
+  color: '#5fd6c4',
+  pointerEvents: 'none' as const,
+  textShadow: '0 0 4px rgba(0,0,0,0.9)',
+};
 const DEPOSIT_FILL_SX = {
   height: '100%',
   backgroundColor: '#5fd6c4',
@@ -73,7 +82,7 @@ export function CargoChip(): JSX.Element | null {
   const depositPct = useUIStore((s) => s.depositPct);
   const [open, setOpen] = useState(false);
   if (!shouldRender) return null;
-  if (cargo === null && feed.length === 0) return null;
+  if (cargo === null && feed.length === 0 && depositPct === null) return null;
 
   const weight = Math.round(cargoWeight(cargo));
   const fill = cargoFillState(weight, capacity);
@@ -93,7 +102,15 @@ export function CargoChip(): JSX.Element | null {
           {(cargo.packed ?? 0) > 0 && <span style={{ color: '#9ad0ff' }} data-testid="cargo-packed">▢{cargo.packed}</span>}
         </Box>
       )}
-      {depositPct !== null && cargo !== null && (
+      {depositPct === DEPOSIT_WAITING && (
+        // Structure-restyle 3e — parked on a freight dock whose crane is
+        // serving another ship: first come, first served. Shown with an empty hold
+        // too (a ship parked to LOAD at an outlet dock).
+        <Box data-testid="cargo-depositing" data-deposit-pct={depositPct} data-deposit-waiting="1" sx={DEPOSIT_WAIT_SX}>
+          waiting for crane…
+        </Box>
+      )}
+      {depositPct !== null && depositPct !== DEPOSIT_WAITING && (
         // Living World P1a-2 — auto-deposit progress (hold position by your
         // storage). The CSS transition smooths the 10 % steps.
         <Box data-testid="cargo-depositing" data-deposit-pct={depositPct} sx={DEPOSIT_TRACK_SX}>

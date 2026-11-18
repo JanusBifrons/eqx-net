@@ -54,7 +54,7 @@ import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
-import { ControlModeMessageSchema } from '@shared-types/messages/snapshotMessages';
+import { ControlModeMessageSchema, DEPOSIT_WAITING } from '@shared-types/messages/snapshotMessages';
 import { parseTransitReadyShipIds } from '@shared-types/messages';
 import { isCommanderFleetFollow, transitStartsLocalTrip, stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
@@ -3786,7 +3786,9 @@ export class ColyseusGameClient {
       }
       // Living World P1a-2 — auto-deposit progress ring (quantised to 10 % so
       // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
-      const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;
+      // `DEPOSIT_WAITING` (3e: the dock crane is busy) passes through as is.
+      const raw = serverState.depositing;
+      const dep = raw === undefined ? null : raw === DEPOSIT_WAITING ? DEPOSIT_WAITING : Math.floor(raw / 10) * 10;
       if (useUIStore.getState().depositPct !== dep) useUIStore.getState().setDepositPct(dep);
       // Fire control (#16): the pilot's groups + locks, always applied.
       this.applyFcGroups(serverState.groups);

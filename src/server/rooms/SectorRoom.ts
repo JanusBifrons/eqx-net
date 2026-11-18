@@ -104,6 +104,8 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';
+import { CRANE_CARGO_IN, CRANE_CARGO_OUT } from '../../core/articulation/craneCargo.js';
+import { DEPOSIT_WAITING } from '../../shared-types/messages/snapshotMessages.js';
 import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, dockUnloadHoldTicks, inDockBay, isStillForDock } from '../../core/articulation/rigCatalogue.js';
 import { rigClipTip, startStructureRigClip, worldToRigHost, writeRigClipRow } from '../structures/structureRigClip.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
@@ -453,6 +455,8 @@ interface DepositDwell {
   clipTick?: number;
   /** Clamp hold length (`dockUnloadHoldTicks`), fixed at reach start. */
   holdTicks?: number;
+  /** 3e: which way the cargo goes during the hold (`CRANE_CARGO_*`). */
+  cargo?: number;
   /** Last autoDepositTick this ship was visited: a crane claim whose ship
    *  vanished (left, died) is released by the sweep. */
   seenTick?: number;
@@ -1478,10 +1482,13 @@ export class SectorRoom extends Room<SectorState> {
    *  solid parts in the physics worker. False when the structure, its rig or
    *  the clip is unknown. Writes the structure's room-state row now (2e), so
    *  the clip reaches clients in the next patch, not the next pulse. */
-  startStructureRigClip(id: string, clipId: string | null, target?: { readonly x: number; readonly y: number }): boolean {
+  startStructureRigClip(
+    id: string, clipId: string | null, target?: { readonly x: number; readonly y: number },
+    hold?: { readonly holdTicks: number; readonly cargo: number },
+  ): boolean {
     const rec = this.structureRegistry.get(id);
     if (!rec) return false;
-    if (!startStructureRigClip(rec, clipId, this.serverTick, (cmd) => this.postToWorker(cmd), target)) return false;
+    if (!startStructureRigClip(rec, clipId, this.serverTick, (cmd) => this.postToWorker(cmd), target, hold)) return false;
     const st = rec.stateKey !== undefined ? (this.state as SectorState).structures.get(rec.stateKey) : undefined;
     if (st) writeRigClipRow(rec, st);
     return true;
@@ -11844,7 +11851,8 @@ export class SectorRoom extends Room<SectorState> {
    * retracts: one cycle serves a mixed dock, unload first. Moving or
    * leaving during reach / hold aborts: the arm retracts from where it is and
    * nothing is banked. One ship per crane, first come first served: a second
-   * settled ship waits (progress 0) until the arm is back at rest.
+   * settled ship waits (`DEPOSIT_WAITING` on its readout, 3e) until the arm
+   * is back at rest.
    */
   private dockDwell(c: LootCollector, dock: StructureRecord, hold: Hold | undefined): void {
     const tick = this.serverTick;
@@ -11859,7 +11867,7 @@ export class SectorRoom extends Room<SectorState> {
         if (tick - d.clipTick! < DOCK_CRANE_REACH_TICKS) { this.setDockProgress(d, tick); return; }
         d.phase = 'hold';
         d.clipTick = tick;
-        this.startStructureRigClip(dock.id, 'arm-hold', dock.rigClip?.target);
+        this.startStructureRigClip(dock.id, 'arm-hold', dock.rigClip?.target, { holdTicks: d.holdTicks!, cargo: d.cargo ?? 0 });
       }
       if (tick - d.clipTick! < d.holdTicks!) { this.setDockProgress(d, tick); return; }
       const moved = this.storage.deposit(c.shipInstanceId, c.playerId, dock, dockIntakeGoods(dock));
@@ -11885,13 +11893,16 @@ export class SectorRoom extends Room<SectorState> {
       this.depositProgress.set(c.shipInstanceId, 0);
       return;
     }
-    // Settling, or waiting for the crane (another ship's cycle): progress 0.
-    if (tick - d.sinceTick < DOCK_SETTLE_TICKS || this.dockCraneBusy(dock)) return;
+    // Settling: progress 0. Waiting for the crane (another ship's cycle):
+    // the readout says so (3e), not a stuck 0 % bar.
+    if (tick - d.sinceTick < DOCK_SETTLE_TICKS) return;
+    if (this.dockCraneBusy(dock)) { this.depositProgress.set(c.shipInstanceId, DEPOSIT_WAITING); return; }
     if (!this.startStructureRigClip(dock.id, 'arm-reach', worldToRigHost(dock, c.x, c.y))) return;
     d.phase = 'reach';
     d.clipTick = tick;
     d.seenTick = tick;
     d.holdTicks = dockUnloadHoldTicks(Math.max(0, unloadW) + loadW, c.capacity);
+    d.cargo = (unloadW >= 0 ? CRANE_CARGO_IN : 0) | (loadW > 0 ? CRANE_CARGO_OUT : 0);
   }
 
   /** Crane-cycle progress 0..99 over reach + hold (own-ship readout). */

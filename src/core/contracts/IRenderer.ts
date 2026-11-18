@@ -352,8 +352,10 @@ export interface StructureRenderState {
   bpQuality?: number;
   /** Structure-restyle 2e: the rig clip playing on this structure, from its
    *  room-state row (late-join safe). `startTick` is a server tick; the
-   *  target is in the HOST frame (y-up, unscaled). Absent: the rig rests. */
-  rigClip?: { clipId: string; startTick: number; targetX?: number; targetY?: number };
+   *  target is in the HOST frame (y-up, unscaled). Absent: the rig rests.
+   *  3e: `holdTicks` / `cargo` time the cargo carried along a holding arm
+   *  (`core/articulation/craneCargo.ts`); absent = none. */
+  rigClip?: { clipId: string; startTick: number; targetX?: number; targetY?: number; holdTicks?: number; cargo?: number };
   /** v4 T1 — a teleporter: present only for teleporter kinds. */
   teleport?: {
     phase: number;

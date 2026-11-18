@@ -130,6 +130,7 @@ export const STRUCTURE_DEFAULTS = {
   rigStart: 0,
   rigTx: 0,
   rigTy: 0,
+  rigHold: 0,
 } as const;
 
 /**
@@ -153,6 +154,32 @@ export function encodeRigClip(clipIndex: number, hasTarget: boolean): number {
 /** The clip index a `rigClip` byte names, or -1 (no clip). */
 export function decodeRigClipIndex(v: number): number {
   return (v & RIG_CLIP_INDEX_MASK) - 1;
+}
+
+/**
+ * Structure-restyle 3e — a holding clip's hold length (ticks, low 12 bits)
+ * and the direction of the cargo the arm carries during it
+ * (`CRANE_CARGO_*`, bits 12-13) ride the same row as `rigHold` (0 = no
+ * hold), so every client times the cargo from the clip already on the wire.
+ * Both sides use these helpers (#15).
+ */
+const RIG_HOLD_TICKS_MASK = 0x0fff;
+const RIG_HOLD_CARGO_SHIFT = 12;
+
+/** The `rigHold` value for a hold of `holdTicks` moving `cargo`. */
+export function encodeRigHold(holdTicks: number, cargo: number): number {
+  const t = Math.max(0, Math.min(RIG_HOLD_TICKS_MASK, Math.round(holdTicks)));
+  return t === 0 ? 0 : t | ((cargo & 3) << RIG_HOLD_CARGO_SHIFT);
+}
+
+/** The hold length (ticks) a `rigHold` value carries (0 = none). */
+export function decodeRigHoldTicks(v: number): number {
+  return v & RIG_HOLD_TICKS_MASK;
+}
+
+/** The cargo direction a `rigHold` value carries (0 = none). */
+export function decodeRigHoldCargo(v: number): number {
+  return (v >> RIG_HOLD_CARGO_SHIFT) & 3;
 }
 
 /** The fields the client reads from a room-state structure row (absent ⇒
@@ -199,5 +226,8 @@ export interface StructureStateView {
   rigStart?: number;
   rigTx?: number;
   rigTy?: number;
+  /** Structure-restyle 3e — a holding clip's length and cargo direction
+   *  (`encodeRigHold`); 0 = none. */
+  rigHold?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
 }

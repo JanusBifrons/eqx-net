@@ -2,10 +2,11 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { CargoChip } from './CargoChip';
 import { useUIStore } from '../state/store';
+import { DEPOSIT_WAITING } from '../../shared-types/messages/snapshotMessages';
 
 function reset(): void {
   act(() => {
-    useUIStore.setState({ cargo: null, cargoCapacity: 0, lootFeed: [] });
+    useUIStore.setState({ cargo: null, cargoCapacity: 0, lootFeed: [], depositPct: null });
   });
 }
 
@@ -43,5 +44,18 @@ describe('CargoChip (P1a-1)', () => {
     });
     render(<CargoChip />);
     expect(screen.getByTestId('loot-feed-line').textContent).toBe('+7 Salvage');
+  });
+  it('an empty hold parked to load still shows the crane progress and the waiting row (3e)', () => {
+    act(() => {
+      useUIStore.setState({ depositPct: 40 });
+    });
+    const { unmount } = render(<CargoChip />);
+    expect(screen.getByTestId('cargo-depositing').getAttribute('data-deposit-pct')).toBe('40');
+    unmount();
+    act(() => {
+      useUIStore.setState({ depositPct: DEPOSIT_WAITING });
+    });
+    render(<CargoChip />);
+    expect(screen.getByTestId('cargo-depositing').getAttribute('data-deposit-waiting')).toBe('1');
   });
 });
