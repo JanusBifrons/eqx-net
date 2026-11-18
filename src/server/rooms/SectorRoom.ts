@@ -68,12 +68,11 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut, IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
-import type { FleetOrder } from '../../shared-types/messages/fleetStatusMessages.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { mountPriority, targetClassOfKind, STRUCTURE_TARGET_CLASS } from '../../core/combat/mountTargeting.js';
 import { decodeAim } from '../../core/combat/manualAim.js';
-import { isFriendly, isOnSightHostile, PLAYERS_SIDE } from '../../shared-types/allegiances.js';
+import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
@@ -154,8 +153,6 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
-/** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
-const KEEP_SQUAD = Object.freeze({ keepSquad: true });
 const WRECK_WELCOME: WreckWelcomeFields = Object.freeze({ capitalWrecks: true as const });
 const SUBCAP_WRECK_WELCOME: WreckWelcomeFields = Object.freeze({ subcapWrecks: true as const });
 const BOTH_WRECK_WELCOME: WreckWelcomeFields = Object.freeze({ capitalWrecks: true as const, subcapWrecks: true as const });
@@ -211,7 +208,7 @@ import { NpcLockSubsystem } from './NpcLockSubsystem.js';
 import { LockSalvageLookup, swarmLockId } from './lockSalvage.js';
 import { relayPieceSplit } from './lockSplit.js';
 import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
-import { weaponIdReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
+import { weaponIdReach } from '../../core/combat/mountReach.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
@@ -250,14 +247,15 @@ import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
-import { FleetCommandSubsystem, pilotKindFor, type FleetPose, type FleetModeData, type FleetShipOrders } from '../fleet/FleetCommandSubsystem.js';
-import { clearFleetOrder, defendAt, stepFleetPatrol } from '../fleet/fleetShipOrders.js';
+import { FleetCommandSubsystem } from '../fleet/FleetCommandSubsystem.js';
+import { clearFleetOrder } from '../fleet/fleetShipOrders.js';
 import { FleetStatusStream } from '../fleet/FleetStatusStream.js';
 import { FleetStatusSoon, FLEET_STATUS_SOON_TICKS } from '../fleet/FleetStatusSoon.js';
-import { decodeAiInputBits, type AiInputBits } from '../../core/contracts/IAiBehaviour.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { JoinHandler } from './join/JoinHandler.js';
 import { TeleportTolls } from './features/teleportTolls.js';
+import { WingmanPilots } from './features/wingmanPilots.js';
+import { FLEET_STOP_ORDER } from './features/fleetMessages.js';
 import { BreakInHooks } from './features/breakInHooks.js';
 import { TurretTargeting } from './features/turretTargeting.js';
 import { SectorTimeScale } from './features/sectorTimeScale.js';
@@ -356,11 +354,6 @@ import {
   PilotShipSchema,
   SpectateSchema,
   CommandSchema,
-  FleetOrderSchema,
-  SetModeSchema,
-  SetStanceSchema,
-  FormSquadSchema,
-  DisbandSquadSchema,
   LockRequestSchema,
   LockCancelSchema,
   LockTrackSchema,
@@ -472,11 +465,6 @@ export const MAX_LOCK_MSGS_PER_TICK = 3;
  *  client sends one per click / key / panel button; a flood beyond this is
  *  silently dropped (src/server/CLAUDE.md thresholds). */
 export const MAX_FLEET_MSGS_PER_TICK = 4;
-/** The one `stop` order object (the brain only reads it). */
-const FLEET_STOP_ORDER = { kind: 'stop' } as const;
-/** RTS Part B: an owned hull's AI controller registration (keys as pilot
- *  INPUT, no AI fire path). */
-const HULL_AI_REGISTRATION = Object.freeze({ hull: true });
 
 /** A player's ship (a pilot's ACTIVE ship, keyed by playerId, or a LINGERING
  *  hull, keyed by shipInstanceId) as a `LineOfFireGate` body: players' ships
@@ -710,10 +698,10 @@ export class SectorRoom extends Room<SectorState> {
    *  `detachWingman`); the AI pilot brain registered there flies it with the
    *  pilot's INPUT command on the hull's slot. Liveness covered: LINGERING
    *  only (#17) — an ACTIVE hull is flown by its pilot, a DEAD one is gone. */
-  private readonly fleet = new FleetCommandSubsystem({
+  private readonly fleet: FleetCommandSubsystem = new FleetCommandSubsystem({
     ownerOf: (id) => (this.lingeringSlots.has(id) ? (this.state.ships.get(id)?.playerId ?? null) : null),
     // A group move spreads the ships round the point from where they sit.
-    readPose: (id, out) => this.readLingeringPose(id, out),
+    readPose: (id, out) => this.wingmen.readLingeringPose(id, out),
     // The ship the caller flies, in the fleet's id space (its shipInstanceId,
     // so a squad member the owner pilots is recognised and leads; slice 4b).
     // The client names its active ship by playerId: `set_mode` maps an escort
@@ -723,31 +711,10 @@ export class SectorRoom extends Room<SectorState> {
       return ship?.alive && this.playerToSlot.has(playerId) ? ship.shipInstanceId : null;
     },
     // RTS Part B: an owner's order reaches the AI pilot brain flying the hull.
-    // Move (slice 9): travel there, shooting only what is in its sights on
-    // the way, then guard the point (`completeHullTravel` completes the
-    // order). Stop: brake to a halt and guard the spot (the guard leash,
-    // slice 5). Attack (slice 8): the target gets priority in the brain's
-    // pick (`syncHullOrder`); the post stays, so the ship goes back to it
-    // (an attack that replaces a Move holds where the hull is).
-    orderIssued: (id, order) => {
-      const brain = this.aiController.getBehaviour(id);
-      if (brain === null) return;
-      this.syncHullOrder(brain, order);
-      if (order.kind === 'move') {
-        if (brain.setTravel !== undefined) brain.setTravel(order.x, order.y);
-        else this.holdHullAt(brain, order.x, order.y);
-        return;
-      }
-      const p = this.lingeringPoseCache.get(id);
-      if (p === undefined) return;
-      if (order.kind === 'stop') {
-        if (brain.stopAt !== undefined) brain.stopAt(p.x, p.y, p.vx, p.vy);
-        else this.holdHullAt(brain, p.x, p.y);
-      } else if (brain.getTravelState?.() === 1) this.holdHullAt(brain, p.x, p.y);
-    },
+    orderIssued: (id, order) => this.wingmen.orderIssued(id, order),
     // RTS Part B: the standing mode and the attitude reach the AI pilot brain.
-    modeSet: (id) => this.applyHullMode(id),
-    stanceSet: (id) => this.applyHullStance(id),
+    modeSet: (id) => this.wingmen.applyHullMode(id),
+    stanceSet: (id) => this.wingmen.applyHullStance(id),
     // RTS Part B slice 9: the panel's activity comes from the AI pilot brain
     // (a Retreat on its way reads "retreating").
     activityOf: (id) => {
@@ -760,20 +727,10 @@ export class SectorRoom extends Room<SectorState> {
       return a;
     },
   });
-  /** Reused `set_mode` parameters (#14; the brain copies the route). */
-  private readonly fleetModeScratch: FleetModeData = {};
-  /** Scratch for a wingman attack target's pose (#14). */
-  private readonly wingmanTargetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
   /** The AI view's `resolveEntityInto`: a swarm ship, else an owned hull or a
    *  pilot's active ship (`entityPoseInto`). Bound once (#14). */
   private readonly _resolveAiEntityInto = (id: string, out: AiEntityPoseOut): boolean =>
-    this.swarmEntityPoseInto(id, out) || this.entityPoseInto(id, out);
-  /** Scratch: a pack's member ids for `setFlockFollow` (it copies them). */
-  private readonly hullPackIds: string[] = [];
-  /** Reused wingman INPUT command (postMessage clones synchronously, #14). */
-  private readonly wingmanInputCmd: Extract<WorkerCmd, { type: 'INPUT' }> = {
-    type: 'INPUT', slot: 0, inputTick: 0, thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false,
-  };
+    this.swarmEntityPoseInto(id, out) || this.wingmen.entityPoseInto(id, out);
   /** playerId → shipInstanceId of the hull the pilot parked by toggling
    *  Spectate (owner decision 2026-11-12: NPCs keep their locks and keep
    *  firing at it). Set by the `spectate` handler; cleared when the pilot
@@ -1995,13 +1952,13 @@ export class SectorRoom extends Room<SectorState> {
         // RTS Part B: a player-owned hull's keys are its PILOT INPUT (the
         // flame shows; a reclaim's INPUT replaces them, `aiInputHeld` is
         // never set on the hull's slot).
-        if (hullId !== undefined) { this.postHullInput(hullId, bits); return; }
+        if (hullId !== undefined) { this.wingmen.postHullInput(hullId, bits); return; }
         // v4 A — a disabled NPC ship's engines are off (no keys held).
         this.aiInputBatch.push(slot, this.gateGuard.isSlotDisabled(slot, this.gameClock.now()) ? 0 : bits);
       },
       // RTS Part B: THE hull fire branch: the brain holds the hull's trigger
       // this tick (`tickWingmanFire` pulls it through the player pipeline).
-      postHullFire: (hullId, targetId) => { this.hullTrigger.set(hullId, targetId); },
+      postHullFire: (hullId, targetId) => { this.wingmen.hullTrigger.set(hullId, targetId); },
       flushInputs: () => {
         if (this.aiInputBatch.count === 0) return;
         this.postToWorker(this.aiInputBatch.cmd);
@@ -2164,7 +2121,7 @@ export class SectorRoom extends Room<SectorState> {
         this.escalateFactionOnDroneHit(droneId, sourceId, atTick),
       isFriendlyFire: (victimId, sourceId) => this.isFriendlyFire(victimId, sourceId),
       // RTS slice 5: a wingman's hit counts against its OWNER (hostility mirror).
-      hostileActorOf: (sourceId) => this.hostileActorOf(sourceId),
+      hostileActorOf: (sourceId) => this.wingmen.hostileActorOf(sourceId),
       // Scrap-on-death (Phase 2b-ii) — a composite-kind drone breaks into scrap
       // the instant before it's evicted on death. Deferred-eval closure (the
       // ScrapSpawner is constructed later in the ctor, before any death fires).
@@ -2492,7 +2449,7 @@ export class SectorRoom extends Room<SectorState> {
       landingPoint: (pid, x, y, kind) => this.landingPoint(pid, x, y, kind),
       evictSessionForTakeover: (sessionId) => this.evictSessionForTakeover(sessionId),
       evictOwnerlessShip: (id) => this.evictOwnerlessShip(id),
-      attachWingman: (id) => this.attachWingman(id),
+      attachWingman: (id) => this.wingmen.attachWingman(id),
       applyStatMulToWorker: (bodyKey, alloc) => this.applyStatMulToWorker(bodyKey, alloc),
       bindRosterEntry: (playerId, userId, kind, pose, preferredShipId = '', forceFreshCreate = false) =>
         this.rosterPersistence.bind(playerId, userId, kind, pose, preferredShipId, forceFreshCreate),
@@ -3502,6 +3459,12 @@ export class SectorRoom extends Room<SectorState> {
       testSeedStorageHold: () => this.testSeedStorageHold,
       findPacked: (owner, product) => this.findPacked(owner, product),
       logger,
+      fleetMsgAllowed: (sid) => this.fleetMsgAllowed(sid),
+      fleet: this.fleet,
+      fleetTransit: () => this.transitOrchestrator,
+      fleetStatusSoon: this.fleetStatusSoon,
+      serverTick: () => this.serverTick,
+      playerToActiveShipInstance: this.playerToActiveShipInstance,
     });
 
     // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
@@ -3550,80 +3513,6 @@ export class SectorRoom extends Room<SectorState> {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
       this.enterSpectate(playerId);
-    });
-
-    // ── RTS command layer (slice 6b) — fleet commands ──────────────────────
-    // Routed to the owner-checked `FleetCommandSubsystem` with the caller's
-    // playerId. Ids are checked PER ID there: a foreign / unknown id drops
-    // silently, and so does the caller's ACTIVE ship (its id is the playerId
-    // in the client's selection; it is never attached because the player is
-    // flying it). Rate-limited per session per tick like lock messages.
-    this.onMessage('fleet_order', (client: Client, raw: unknown) => {
-      if (!this.fleetMsgAllowed(client.sessionId)) return;
-      const p = FleetOrderSchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'fleet_order'); return; }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid === undefined) return;
-      const d = p.data;
-      // One order object per accepted command: the brain keeps it as its order.
-      let accepted: readonly string[];
-      if (d.kind === 'move') accepted = this.fleet.applyOrder(pid, d.shipIds, { kind: 'move', x: d.x!, y: d.y! });
-      else if (d.kind === 'attack') accepted = this.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
-      else accepted = this.fleet.applyOrder(pid, d.shipIds, FLEET_STOP_ORDER);
-      // RTS fleet warp: a new order to a spooling ship takes it out of the warp.
-      this.transitOrchestrator?.fleetCommandIssued(pid, accepted, false);
-      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
-    });
-    this.onMessage('set_mode', (client: Client, raw: unknown) => {
-      if (!this.fleetMsgAllowed(client.sessionId)) return;
-      const p = SetModeSchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'set_mode'); return; }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid === undefined) return;
-      const md = this.fleetModeScratch;
-      // x/y: the retreat point (a lone x or y is ignored: no point).
-      const hasPoint = p.data.x !== undefined && p.data.y !== undefined;
-      md.x = hasPoint ? p.data.x : undefined;
-      md.y = hasPoint ? p.data.y : undefined;
-      md.route = p.data.route;
-      // The client names its own active ship by playerId; the fleet knows it
-      // by shipInstanceId (`pilotShipOf`, slice 4b).
-      const esc = p.data.escortId;
-      md.escortId = esc === pid ? (this.playerToActiveShipInstance.get(pid) ?? esc) : esc;
-      const accepted = this.fleet.setMode(pid, p.data.shipIds, p.data.mode, md);
-      md.route = undefined; md.escortId = undefined; md.x = undefined; md.y = undefined;
-      // RTS fleet warp: the ship drops out and obeys (its hold is let go).
-      this.transitOrchestrator?.fleetCommandIssued(pid, accepted, true);
-      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
-    });
-    this.onMessage('set_stance', (client: Client, raw: unknown) => {
-      if (!this.fleetMsgAllowed(client.sessionId)) return;
-      const p = SetStanceSchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'set_stance'); return; }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid === undefined) return;
-      const accepted = this.fleet.setStance(pid, p.data.shipIds, p.data.stance);
-      // RTS fleet warp: the ship drops out and obeys (its hold is let go).
-      this.transitOrchestrator?.fleetCommandIssued(pid, accepted, true);
-      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
-    });
-    this.onMessage('form_squad', (client: Client, raw: unknown) => {
-      if (!this.fleetMsgAllowed(client.sessionId)) return;
-      const p = FormSquadSchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'form_squad'); return; }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid === undefined) return;
-      this.fleet.formSquad(pid, p.data.shipIds);
-      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
-    });
-    this.onMessage('disband_squad', (client: Client, raw: unknown) => {
-      if (!this.fleetMsgAllowed(client.sessionId)) return;
-      const p = DisbandSquadSchema.safeParse(raw);
-      if (!p.success) { this.malformed.record(client.sessionId, 'disband_squad'); return; }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid === undefined) return;
-      this.fleet.disbandSquad(pid, p.data.squadId);
-      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
     });
 
     // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────
@@ -3996,7 +3885,7 @@ export class SectorRoom extends Room<SectorState> {
     const sibling = fromLocks === this.locks ? this.wingmanLocks : this.locks;
     if (toLocks !== sibling) sibling.shipKeyMoved(from, to, sibling);
     // AI pilots' cached target → lock key (`wingmanLockKey`) may name the old key.
-    this.wingmanFireKeys.clear();
+    this.wingmen.wingmanFireKeys.clear();
     this.fleet.shipKeyMoved(from, to);
     this.mountTicker.shipKeyMoved(from, to);
   }
@@ -4800,7 +4689,7 @@ export class SectorRoom extends Room<SectorState> {
       : weaponLayerMul(getWeapon(weaponId), this.structureRegistry.get(targetId) !== undefined, this._layerMul);
     const eff = this.damageRouter.effectiveDamage(targetId, damage, layerMul);
     // RTS slice 5: a wingman's hit is its OWNER's act for standing / economy.
-    const hitActor = eff > 0 && this.fleet.size > 0 ? this.hostileActorOf(shooterId) : shooterId;
+    const hitActor = eff > 0 && this.fleet.size > 0 ? this.wingmen.hostileActorOf(shooterId) : shooterId;
     if (eff > 0) { this.noteEconomicHit(targetId, hitActor); this.noteStandingHit(targetId, hitActor); }
     // An NPC's own hit on a pilot keeps it hostile (owner 2026-11-12).
     if (eff > 0 && this.playerToSlot.has(targetId)) this.refreshNpcAttackHostility(shooterId, targetId);
@@ -5935,7 +5824,7 @@ export class SectorRoom extends Room<SectorState> {
       // upgrade multipliers like the original body had (the brain's stats
       // assume them).
       this.applyStatMulToWorker(bodyKey, ship.statAlloc);
-      this.attachWingman(r.shipInstanceId);
+      this.wingmen.attachWingman(r.shipInstanceId);
       serverLogEvent('lingering_hull_reconstructed', {
         shipInstanceId: r.shipInstanceId,
         playerId: r.playerId,
@@ -6336,7 +6225,7 @@ export class SectorRoom extends Room<SectorState> {
     const ship = this.state.ships.get(shipInstanceId);
     const slot = this.lingeringSlots.get(shipInstanceId);
     if (ship === undefined || slot === undefined) return false;
-    this.detachWingman(shipInstanceId);
+    this.wingmen.detachWingman(shipInstanceId);
     this.lingeringSlots.delete(shipInstanceId);
     this.lingeringPoseCache.delete(shipInstanceId);
     this.freeSlots.push(slot);
@@ -7853,10 +7742,10 @@ export class SectorRoom extends Room<SectorState> {
     sid: string, fx: number, fy: number, dx: number, dy: number, weaponId: WeaponId, svx: number, svy: number, size: WeaponMount['size'],
   ): boolean {
     if (!this.npcLineOfFire) return false;
-    const targetId = this.hullTrigger.get(sid) ?? this.wingmanFireKeys.get(sid)?.id;
+    const targetId = this.wingmen.hullTrigger.get(sid) ?? this.wingmen.wingmanFireKeys.get(sid)?.id;
     const ship = this.state.ships.get(sid);
     const p = this.hullLofTarget;
-    if (targetId === undefined || ship === undefined || !this.entityPoseInto(targetId, p)) return false;
+    if (targetId === undefined || ship === undefined || !this.wingmen.entityPoseInto(targetId, p)) return false;
     this.lofShooterKind = 3;
     this.lofOwner = ship.playerId;
     this.lofOwnerIsNpc = false;
@@ -8220,7 +8109,7 @@ export class SectorRoom extends Room<SectorState> {
    * keep showing a sector the player can no longer enter.
    */
   private evictOwnerlessShip(shipInstanceId: string): void {
-    this.detachWingman(shipInstanceId); // RTS slice 4 (no-op unless a lingering hull)
+    this.wingmen.detachWingman(shipInstanceId); // RTS slice 4 (no-op unless a lingering hull)
     this.ownerlessShipEvictor.evict(shipInstanceId);
   }
 
@@ -8259,480 +8148,18 @@ export class SectorRoom extends Room<SectorState> {
    * (keyed by shipInstanceId) so the displaced hull keeps broadcasting. No-op when
    * the player has no live active hull (the spectator case).
    */
-  // ── RTS — AI pilots on lingering hulls ────────────────────────────────────
-
-  /**
-   * Hand a just-parked lingering hull to an AI pilot (fresh orders: Defend
-   * at its current spot, Defensive stance). Call right AFTER the hull's
-   * `lingeringSlots.set` and any `REKEY_SHIP` / `SPAWN` for its body, so the
-   * fresh (neutral) controls posted here land after the rekey cleared the
-   * slot's held input. Re-attaching replaces the brain. No-op under
-   * `EQX_DISABLE_WINGMEN`.
-   */
-  private attachWingman(shipInstanceId: string): void {
-    const ship = this.state.ships.get(shipInstanceId);
-    const slot = this.lingeringSlots.get(shipInstanceId);
-    if (ship === undefined || slot === undefined || this.fleet.isDisabled) return;
-    const b = slotBase(slot);
-    this.fleet.attach(
-      shipInstanceId,
-      ship.playerId,
-      { kind: getShipKind(ship.kind) },
-      { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! },
-    );
-    // RTS slice 5: the hull locks and fires through the player pipeline. Its
-    // groups start in MAN (the stance picks targets); the owner's testMode
-    // `instantLock` carries over. Fresh locks on every (re)attach.
-    if (this.fleet.isAttached(shipInstanceId)) {
-      this.wingmanLocks.forget(shipInstanceId);
-      this.wingmanLocks.enable(shipInstanceId, this.locks.isInstant(ship.playerId), 'manual');
-      // RTS Part B: the shared AI pilot brain flies the hull (players side,
-      // the owner's, the hull's one energy pool), from the kind as this ship
-      // flies it (upgrades in). It holds where it was parked: with no post an
-      // idle brain orbits the world origin. The fleet keeps only the ship's
-      // orders (data) and squad; this brain is the one that flies.
-      const brain = new HostileDroneBehaviour(pilotKindFor(getShipKind(ship.kind), ship.statAlloc), {
-        side: PLAYERS_SIDE, ownerId: ship.playerId, energyPool: ship,
-      });
-      this.holdHullAt(brain, this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!);
-      this.aiController.unregister(shipInstanceId);
-      this.aiController.register(shipInstanceId, slot, brain, HULL_AI_REGISTRATION);
-      // The ship's standing mode and attitude (a restored Hunt / Aggressive).
-      this.applyHullMode(shipInstanceId);
-      this.applyHullStance(shipInstanceId);
-      // The unregister above cleared every guard post anchored to this ship.
-      this.reapplyEscortsOf(shipInstanceId);
-    }
-    // Fresh neutral controls until the AI pilot's first keys arrive.
-    const cmd = this.wingmanInputCmd;
-    cmd.slot = slot;
-    cmd.inputTick = this.serverTick;
-    cmd.thrust = false; cmd.turnLeft = false; cmd.turnRight = false; cmd.boost = false; cmd.reverse = false;
-    this.postToWorker(cmd);
-    this.hullHeldBits.set(shipInstanceId, 0);
-  }
-
-  /** RTS Part B slice 9: the travel half of order completion (the attack
-   *  half is in `tickWingmanTargets`, slice 8). A Move whose travel ended
-   *  (arrived, or replaced in the brain) is done: the fleet orders' post
-   *  becomes the point and the mode resumes from there (`applyHullMode`:
-   *  Defend guards it, Hunt searches from it, Retreat carries on). A Stop
-   *  is done at once: Defend the halt spot (the old wingman's rule; a squad
-   *  member just clears it). A Retreat that arrived defends its point. Each
-   *  sends the owner's status soon. */
-  private completeHullTravel(i: number, sid: string, hb: IAiBehaviour): void {
-    const fleet = this.fleet;
-    const w = fleet.ordersAt(i);
-    const o = w.order;
-    const travel = hb.getTravelState!();
-    if (o !== null && o.kind === 'move') {
-      if (travel === 1) return;
-      clearFleetOrder(w);
-      w.guardPostX = o.x;
-      w.guardPostY = o.y;
-      this.applyHullMode(sid);
-    } else if (o !== null && o.kind === 'stop') {
-      clearFleetOrder(w);
-      if (fleet.squadFollowOf(sid) === null) {
-        const p = this.lingeringPoseCache.get(sid);
-        defendAt(w, hb.getGuardPostX?.() ?? p?.x ?? 0, hb.getGuardPostY?.() ?? p?.y ?? 0);
-      } else this.applyHullMode(sid);
-    } else if (o === null && w.mode === 'retreat' && travel === 2) {
-      const p = this.lingeringPoseCache.get(sid);
-      defendAt(w, hb.getGuardPostX?.() ?? p?.x ?? 0, hb.getGuardPostY?.() ?? p?.y ?? 0);
-    } else return;
-    this.fleetStatusSoonFor(fleet.ownerAt(i));
-  }
-
-  /** RTS Part B slice 11: an owned hull in Patrol mode at (x, y) walks its
-   *  fleet route (the ONE route, on its fleet orders): `stepFleetPatrol` steps it
-   *  with the shared `stepRoute` (the garrison patrols' stepper), looping;
-   *  a new waypoint (or a brain no longer on its leg: a fight lost it, a
-   *  travel arrived) gets a fresh patrol leg from the last waypoint (from the
-   *  hull on the first leg). `fresh` forces the leg (the mode was just set).
-   *  Called from `applyHullMode` and the ~10 Hz target step. */
-  private stepHullPatrol(w: FleetShipOrders, brain: IAiBehaviour, x: number, y: number, fresh: boolean): void {
-    if (brain.setPatrolLeg === undefined) return;
-    const before = w.routeIdx;
-    const i = stepFleetPatrol(w, x, y);
-    if (i < 0) return;
-    const moved = i !== before;
-    if (!fresh && !moved && brain.isPatrolling?.() === true) return;
-    const fromLast = moved && !fresh;
-    const r = w.route;
-    brain.setPatrolLeg(
-      fromLast ? r[before * 2]! : x, fromLast ? r[before * 2 + 1]! : y,
-      r[i * 2]!, r[i * 2 + 1]!,
-    );
-  }
-
-  /** RTS Part B: an owned hull's brain holds at (x, y): its move target, and
-   *  its guard post (the guard leash: it engages only inside the guard
-   *  radius round it; a broadside capital fights from it). A squad's AI
-   *  leader (`leads`, slice 10) takes it as the flock leader's course, so it
-   *  cruises slower than its pack and they keep up, as an AI pilots' pack. */
-  private holdHullAt(brain: IAiBehaviour, x: number, y: number, leads = false): void {
-    if (leads && brain.setFlockLeaderCourse !== undefined) brain.setFlockLeaderCourse(x, y);
-    else brain.setMoveTarget?.(x, y);
-    brain.setGuardPost?.(x, y, 0);
-  }
-
-  /** RTS Part B slice 8: the hull's order → its AI pilot brain's ordered
-   *  target (an attack order's target, by the id the brain's candidates
-   *  carry: a swarm ship by its record id), else none. Idempotent; a no-op
-   *  while unchanged. Called on every order and from the ~10 Hz target step,
-   *  so a completed, replaced or re-keyed order follows. */
-  private syncHullOrder(brain: IAiBehaviour, order: Readonly<FleetOrder> | null): void {
-    if (brain.setOrderedTarget === undefined) return;
-    let t: string | null = null;
-    if (order !== null && order.kind === 'attack') t = this.swarmRecByAnyId(order.targetId)?.id ?? order.targetId;
-    if (brain.getOrderedTarget?.() !== t) brain.setOrderedTarget(t, this.serverTick);
-  }
-
-  /** RTS Part B: the fleet orders' mode → the AI pilot brain flying hull
-   *  `id`. A Move order in hand owns the brain (slice 9): it travels on, and
-   *  the mode applies when the order completes. Defend guards its post (the
-   *  given point, else where the hull is; slice 5). Hunt lifts the leash and
-   *  searches the sector (slice 6). Retreat (slice 9) travels to its point
-   *  (else the post) like a Move, then defends there. Patrol (slice 11)
-   *  flies the fleet route leg by leg from the waypoint nearest the hull
-   *  (`stepHullPatrol`).
-   *
-   *  Squads and Escort (slice 10), on the AI pilots' pack seams: a squad
-   *  member flies as a loose pack on its leader (`setFlockFollow`; the AI
-   *  leader flies the squad mode, `holdHullAt` `leads`, a patrol on its
-   *  legs). Escort (a ship's own, or its squad's) packs on the escorted ship
-   *  and guards a zone that follows it (`setGuardPost` anchored to it, as a
-   *  flagship's escorts); hits on it turn the escorts (`ownedHullRetaliates`).
-   *  An escorted ship that cannot be found: hold where the hull is. */
-  private applyHullMode(id: string): void {
-    const brain = this.aiController.getBehaviour(id);
-    const fleet = this.fleet;
-    const w = fleet.ordersOf(id);
-    if (brain === null || w === null) return;
-    const o = w.order;
-    if (o !== null && o.kind === 'move' && brain.setTravel !== undefined) { brain.setTravel(o.x, o.y); return; }
-    const sq = fleet.squadOf(id);
-    const pack = this.hullPackIds;
-    const esc = fleet.escortTargetOf(id);
-    if (esc !== null && brain.setFlockFollow !== undefined && this.entityPoseInto(esc, this.wingmanTargetPose)) {
-      pack.length = 0;
-      if (sq !== null) for (let k = 0; k < sq.memberIds.length; k++) pack.push(sq.memberIds[k]!);
-      else pack.push(id);
-      pack.push(esc);
-      brain.setHunt?.(false);
-      brain.setFlockFollow(esc, pack);
-      brain.setGuardPost?.(this.wingmanTargetPose.x, this.wingmanTargetPose.y, 0, esc);
-      return;
-    }
-    const lead = fleet.squadFollowOf(id);
-    if (lead !== null && sq !== null && brain.setFlockFollow !== undefined) {
-      brain.setHunt?.(false);
-      brain.clearGuardPost?.();
-      brain.setFlockFollow(lead, sq.memberIds);
-      return;
-    }
-    if (w.mode === 'hunt') { brain.setHunt?.(true); return; }
-    brain.setHunt?.(false);
-    const p = this.lingeringPoseCache.get(id);
-    if (w.mode === 'patrol' && w.routeLen > 0 && brain.setPatrolLeg !== undefined) {
-      w.routeSeek = true;
-      this.stepHullPatrol(w, brain, p?.x ?? w.route[0]!, p?.y ?? w.route[1]!, true);
-      return;
-    }
-    const rx = w.mode === 'retreat' ? w.retreatPointX : null;
-    const x = rx ?? w.guardPostX ?? p?.x;
-    const y = (rx !== null ? w.retreatPointY : null) ?? w.guardPostY ?? p?.y;
-    if (x === undefined || y === undefined) return;
-    if (w.mode === 'retreat' && brain.setTravel !== undefined) brain.setTravel(x, y);
-    else this.holdHullAt(brain, x, y, sq !== null && sq.leaderId === id);
-  }
-
-  /** Slice 10: the ship `gone` left the AI controller (its owner took the
-   *  controls, or it died). Unregistering it cleared the guard post of every
-   *  brain anchored to it (`noteEntityGone`): re-apply each escort of it,
-   *  which packs on it again where its pilot flies it, else holds where it
-   *  is. Rare (a hand-over or a death), never per tick. */
-  private reapplyEscortsOf(gone: string): void {
-    const fleet = this.fleet;
-    for (let i = 0; i < fleet.size; i++) {
-      const id = fleet.idAt(i);
-      if (id !== gone && fleet.escortTargetOf(id) === gone) this.applyHullMode(id);
-    }
-  }
-
-  /** RTS Part B slice 6: the stance's attitude → the AI pilot brain. Aggressive
-   *  engages anything hostile it sees (robots and drones hostile to players,
-   *  and whatever is hostile to the owner); Defensive only hits back (the
-   *  retaliation ledger). Hold fire (slice 7) picks no target at all: no
-   *  fire, no chase, the ship flies its job; attackers stay on the ledger,
-   *  so a switch back to Defensive answers a recent one. Leaving hold fire
-   *  restores the attitude of the stance chosen. */
-  private applyHullStance(id: string): void {
-    const brain = this.aiController.getBehaviour(id);
-    const w = this.fleet.ordersOf(id);
-    if (brain === null || w === null) return;
-    brain.setHoldFire?.(w.stance === 'holdFire');
-    if (w.stance === 'aggressive') brain.setEngageOnSight?.(true);
-    else if (w.stance === 'defensive') brain.setEngageOnSight?.(false);
-  }
-
-  /** Stop flying a hull: its owner reclaimed it, or it left the world. Call
-   *  next to every `lingeringSlots.delete` (BEFORE it, and before a reclaim's
-   *  REKEY back). Posts neutral controls last, so a wingman INPUT still queued
-   *  in the worker can't become the reclaimed hull's held input (the worker
-   *  holds the last input until the pilot's first arrives). Idempotent. */
-  private detachWingman(shipInstanceId: string, keepSquad = false): void {
-    // RTS fleet warp: the ONE drop point. A hull leaving lingering leaves any
-    // fleet warp it is spooling in (the orchestrator ignores its own commit's
-    // removals and a reclaim it was told about via `noteTakeControls`).
-    this.transitOrchestrator?.dropHull(shipInstanceId);
-    this.boostingPlayers.delete(shipInstanceId);
-    // RTS Part B: the AI pilot brain lets go (idempotent).
-    this.aiController.unregister(shipInstanceId);
-    this.reapplyEscortsOf(shipInstanceId);
-    this.hullHeldBits.delete(shipInstanceId);
-    this.hullTrigger.delete(shipInstanceId);
-    if (!this.fleet.isAttached(shipInstanceId)) return;
-    this.fleet.detach(shipInstanceId, keepSquad ? KEEP_SQUAD : undefined);
-    // RTS slice 5: drop the hull's wingman fire state (locks, turret angles,
-    // cooldown ledger, target cache). A reclaimed hull fires as its pilot.
-    this.wingmanLocks.forget(shipInstanceId);
-    this.mountTicker.playerMountAngles.delete(shipInstanceId);
-    this.lastFireClientTick.delete(shipInstanceId);
-    this._lockActivated.delete(shipInstanceId);
-    this.wingmanFireKeys.delete(shipInstanceId);
-    const slot = this.lingeringSlots.get(shipInstanceId);
-    if (slot === undefined) return;
-    const cmd = this.wingmanInputCmd;
-    cmd.slot = slot;
-    cmd.inputTick = this.serverTick;
-    cmd.thrust = false; cmd.turnLeft = false; cmd.turnRight = false; cmd.boost = false; cmd.reverse = false;
-    this.postToWorker(cmd);
-  }
-
-  /** Fleet hook: a lingering hull's live SAB pose; false once it isn't one. */
-  private readLingeringPose(shipInstanceId: string, out: FleetPose): boolean {
-    const slot = this.lingeringSlots.get(shipInstanceId);
-    if (slot === undefined) return false;
-    const b = slotBase(slot);
-    out.x = this.sabF32[b + SLOT_X_OFF]!;
-    out.y = this.sabF32[b + SLOT_Y_OFF]!;
-    out.vx = this.sabF32[b + SLOT_VX_OFF]!;
-    out.vy = this.sabF32[b + SLOT_VY_OFF]!;
-    out.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
-    out.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
-    return true;
-  }
-
-  /** Fleet hook: a pilot's ACTIVE ship's live SAB pose, keyed by playerId
-   *  (escort / attack target). False when they have no live active ship. */
-  private readActiveShipPose(playerId: string, out: FleetPose): boolean {
-    const slot = this.playerToSlot.get(playerId);
-    if (slot === undefined || !this.getActiveShip(playerId)?.alive) return false;
-    const b = slotBase(slot);
-    out.x = this.sabF32[b + SLOT_X_OFF]!;
-    out.y = this.sabF32[b + SLOT_Y_OFF]!;
-    out.vx = this.sabF32[b + SLOT_VX_OFF]!;
-    out.vy = this.sabF32[b + SLOT_VY_OFF]!;
-    out.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
-    out.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
-    return true;
-  }
-
-  /** Last control keys posted per AI-flown hull (the worker holds them). */
-  private readonly hullHeldBits = new Map<string, AiInputBits>();
-  /** RTS Part B: hulls whose AI pilot holds the trigger THIS tick, and at
-   *  what (its `intent.fire`, via the sink's `postHullFire`). Filled by
-   *  the AI tick, consumed and cleared by `tickWingmanFire` the same tick. */
-  private readonly hullTrigger = new Map<string, string>();
-  /** Running total of AI pilot decisions for owned hulls (perf scene count). */
-  private hullBrainTicksTotal = 0;
-
-  /**
-   * RTS Part B — THE hull branch of the AI input sink: an owned hull's control
-   * keys go to its slot as the pilot INPUT command (the same command a pilot's
-   * keys produce), never `AI_INPUTS`, so the slot's flame flags show and a
-   * reclaim's own INPUT simply replaces them. Posted only when the keys
-   * change (the worker holds the last INPUT, input-queue rule #3). Boost is
-   * paid by the brain from the hull's pool (`HostileDroneBehaviour.fly`), so the
-   * hull never joins `boostingPlayers`. One reused command (#14).
-   */
-  private postHullInput(shipInstanceId: string, bits: AiInputBits): void {
-    this.hullBrainTicksTotal++;
-    const slot = this.lingeringSlots.get(shipInstanceId);
-    if (slot === undefined) return;
-    if (this.hullHeldBits.get(shipInstanceId) === bits) return;
-    this.hullHeldBits.set(shipInstanceId, bits);
-    const cmd = this.wingmanInputCmd;
-    cmd.slot = slot;
-    cmd.inputTick = this.serverTick;
-    decodeAiInputBits(bits, cmd);
-    this.postToWorker(cmd);
-  }
-
-  // ── RTS slice 5 — wingmen fight ────────────────────────────────────────────
-  //
-  // Fire path: the PLAYER pipeline (`wingmanLocks` → `WeaponMountTicker.tickHull`
-  // → `PlayerFireResolver.fireHull`), never `AiFireResolver`: a parked hull is
-  // a player's ship, so it locks, aims, spends energy and scales damage exactly
-  // as its pilot would (owner rule), and the player side keeps its one resolver.
-
-  /** Per wingman: the target it is locking and that target's lock key. */
-  private readonly wingmanFireKeys = new Map<string, { id: string; key: string }>();
-  /** A swarm record by registry id or wire id (`swarm-<entityId>`, what the
-   *  client's attack order names). Alloc-free digit parse. */
-  private swarmRecByAnyId(id: string): SwarmEntityRecord | null {
-    const rec = this.swarmRegistry.get(id);
-    if (rec) return rec;
-    if (!id.startsWith('swarm-') || id.length <= 6) return null;
-    let n = 0;
-    for (let i = 6; i < id.length; i++) {
-      const c = id.charCodeAt(i) - 48;
-      if (c < 0 || c > 9) return null;
-      n = n * 10 + c;
-    }
-    return this.swarmRegistry.getByEntityId(n);
-  }
-
-  /** Live pose of any entity a wingman may name: a lingering hull, a pilot's
-   *  active ship (by playerId) or a swarm entity (registry or wire id). */
-  private entityPoseInto(id: string, out: FleetPose): boolean {
-    if (this.readLingeringPose(id, out) || this.readActiveShipPose(id, out)) return true;
-    // A pilot's ACTIVE ship by its shipInstanceId (slice 4b: `pilotShipOf`).
-    const owner = this.state.ships.get(id)?.playerId;
-    if (owner !== undefined && this.playerToActiveShipInstance.get(owner) === id && this.readActiveShipPose(owner, out)) return true;
-    const rec = this.swarmRecByAnyId(id);
-    return rec !== null && this.swarmEntityPoseInto(rec.id, out);
-  }
-
-  /** RTS slice 5: whose hostility a hit counts for — the owning player of a
-   *  hull (keyed by shipInstanceId: a wingman's shot), else the source. */
-  private hostileActorOf(sourceId: string): string {
-    return this.state.ships.get(sourceId)?.playerId ?? sourceId;
-  }
-
-  /** Lock key for a wingman target id: `s:<entityId>` (NPC ship / structure)
-   *  or `p:<id>` (another player's ship: a pilot's active ship by playerId or
-   *  an AI-flown hull by shipInstanceId; only ever an explicit order or a
-   *  retaliation). Cached per wingman: a string is built only when the target
-   *  changes. Null ⇒ not lockable (asteroid, scrap). `resolveLockTarget`
-   *  still refuses the owner's own ships. */
-  private wingmanLockKey(sid: string, targetId: string): string | null {
-    const cached = this.wingmanFireKeys.get(sid);
-    if (cached !== undefined && cached.id === targetId) return cached.key;
-    let key: string | null = null;
-    const rec = this.swarmRecByAnyId(targetId);
-    if (rec !== null) {
-      if (rec.kind === SWARM_KIND_DRONE || rec.kind === 2) key = `s:${rec.entityId}`;
-    } else if (this.getActiveShip(targetId)?.alive || this.lingeringSlots.has(targetId)) {
-      key = `p:${targetId}`;
-    } else {
-      // A ship named by its shipInstanceId that its owner now flies: its lock
-      // key is the pilot's (`resolveLockTarget`), so the lock follows the ship.
-      const ship = this.state.ships.get(targetId);
-      if (ship?.alive && ship.playerId !== '' && this.resolveActiveShipKey(ship.playerId) === targetId) key = `p:${ship.playerId}`;
-    }
-    if (key === null) return null;
-    if (cached !== undefined) { cached.id = targetId; cached.key = key; } else this.wingmanFireKeys.set(sid, { id: targetId, key });
-    return key;
-  }
-
-  /**
-   * Every ~10 Hz (the lock step cadence): each AI-flown hull points every
-   * weapon group's lock at its AI pilot brain's target (`getTargetId`; MAN
-   * groups: `requestLock`; a new target drops the old locks). Hold fire, or
-   * no target ⇒ every lock is cancelled (RTS Part B slice 2). The trigger is
-   * the brain's `intent.fire` (`tickWingmanFire`). The lock still takes the
-   * time a pilot's would (fights aren't instant), and a neutral target runs
-   * the failsafe.
-   */
-  private tickWingmanTargets(): void {
-    const fleet = this.fleet;
-    for (let i = 0; i < fleet.size; i++) {
-      const sid = fleet.idAt(i);
-      const ship = this.state.ships.get(sid);
-      const pose = this.lingeringPoseCache.get(sid);
-      if (!ship?.alive || !pose) continue;
-      // Slice 8: an attack order whose target is gone is done (the status
-      // shows the ship's mode again); otherwise the brain follows the order
-      // (a replaced order, a squad command, a re-keyed target).
-      const w = fleet.ordersAt(i);
-      const o = w.order;
-      const hb = this.aiController.getBehaviour(sid);
-      let ordered: string | null = null;
-      if (o !== null && o.kind === 'attack') {
-        if (this.entityPoseInto(o.targetId, this.wingmanTargetPose)) ordered = o.targetId;
-        else {
-          clearFleetOrder(w);
-          // A Retreat carries on to its point (slice 9).
-          if (w.mode === 'retreat') this.applyHullMode(sid);
-          this.fleetStatusSoonFor(fleet.ownerAt(i));
-        }
-      } else if (hb !== null && hb.getTravelState !== undefined) this.completeHullTravel(i, sid, hb);
-      // Slice 11: a patrolling hull walks its route.
-      if (hb !== null && w.order === null && w.mode === 'patrol' && fleet.squadFollowOf(sid) === null) this.stepHullPatrol(w, hb, pose.x, pose.y, false);
-      if (hb !== null) this.syncHullOrder(hb, w.order);
-      // The brain's target; with none, a live ordered target keeps the locks
-      // (its pilot's take-controls handshake hides it from the brain's
-      // candidates for a few ticks; the lock must not restart).
-      // Hold fire locks only an ordered target (an attack order is obeyed).
-      const target = w.stance === 'holdFire'
-        ? ordered
-        : (hb?.getTargetId?.() ?? ordered);
-      const key = target === null ? null : this.wingmanLockKey(sid, target);
-      const groups = this.wingmanLocks.wireFor(sid);
-      if (key === null) {
-        if (groups !== undefined) for (let g = 0; g < groups.length; g++) {
-          if (groups[g]!.l.length > 0) this.wingmanLocks.cancelLock(sid, groups[g]!.id);
-        }
-        continue;
-      }
-      const gs = groups ?? this.wingmanLocks.ensureGroups(sid);
-      if (gs === undefined) continue;
-      for (let g = 0; g < gs.length; g++) {
-        const grp = gs[g]!;
-        if (grp.l.length === 1 && grp.l[0]!.t === key) continue;
-        if (grp.l.length > 0) this.wingmanLocks.cancelLock(sid, grp.id);
-        this.wingmanLocks.requestLock(sid, grp.id, key);
-      }
-    }
-  }
-
-  /**
-   * Every tick: each owned hull's turrets slew to their group locks (the
-   * pilot's `tickPlayer` rule), and the hull pulls its trigger through the
-   * player resolver (lock gate, bearing, line of fire, cooldown and energy are
-   * its own) on every group holding a LOCKED target, but only while its AI
-   * pilot holds the trigger (RTS Part B slice 3): the brain's `intent.fire`
-   * at the target the locks follow, so the hull fires only when the brain
-   * would (aim tolerance, range, charge wind-up room). A turret-fire-control
-   * hull (a capital) has no brain trigger (its brain never fires; the
-   * turrets do as each bears, like an AI pilot's capital), so its trigger is
-   * its lock. Liveness: LINGERING hulls with a brain only (#17).
-   */
-  private tickWingmanFire(): void {
-    const fleet = this.fleet;
-    for (let i = 0; i < fleet.size; i++) {
-      const sid = fleet.idAt(i);
-      const ship = this.state.ships.get(sid);
-      const pose = this.lingeringPoseCache.get(sid);
-      if (!ship?.alive || !pose) continue;
-      this.mountTicker.tickHull(sid, ship, pose);
-      const groups = this.wingmanLocks.wireFor(sid);
-      if (groups === undefined) continue;
-      if (!hasTurretFireControl(getShipKind(ship.kind))) {
-        const held = this.hullTrigger.get(sid);
-        if (held === undefined || this.wingmanFireKeys.get(sid)?.id !== held) continue;
-      }
-      for (let g = 0; g < groups.length; g++) {
-        const grp = groups[g]!;
-        if (grp.l.length === 0 || !this.wingmanLocks.hasLocked(sid, grp.id)) continue;
-        this.playerFireResolver.fireHull(sid, ship, grp.id);
-      }
-    }
-    this.hullTrigger.clear();
-  }
+  // ── RTS — AI pilots on lingering hulls (`features/wingmanPilots.ts`) ────────
+  private readonly wingmen: WingmanPilots = new WingmanPilots({
+    state: () => this.state, fleet: this.fleet, lingeringSlots: this.lingeringSlots, lingeringPoseCache: this.lingeringPoseCache,
+    playerToActiveShipInstance: this.playerToActiveShipInstance, playerToSlot: () => this.playerToSlot,
+    boostingPlayers: this.boostingPlayers, lastFireClientTick: this.lastFireClientTick, lockActivated: () => this._lockActivated,
+    swarmRegistry: this.swarmRegistry, sabF32: () => this.sabF32, serverTick: () => this.serverTick,
+    aiController: () => this.aiController, wingmanLocks: () => this.wingmanLocks, locks: () => this.locks,
+    mountTicker: () => this.mountTicker, playerFireResolver: () => this.playerFireResolver,
+    transitOrchestrator: () => this.transitOrchestrator, postToWorker: (cmd) => this.postToWorker(cmd),
+    getActiveShip: (pid) => this.getActiveShip(pid), swarmEntityPoseInto: (id, out) => this.swarmEntityPoseInto(id, out),
+    resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid), fleetStatusSoonFor: (pid) => this.fleetStatusSoonFor(pid),
+  });
 
   /** RTS Part B slice 4: an owned ship was hit — it and every squadmate of
    *  the same owner turn on the shooter through the shared AI's retaliation
@@ -8757,7 +8184,7 @@ export class SectorRoom extends Room<SectorState> {
       shipId = active;
       ownerId = hitId;
     }
-    const actor = shooterId === '' ? '' : this.hostileActorOf(shooterId);
+    const actor = shooterId === '' ? '' : this.wingmen.hostileActorOf(shooterId);
     if (actor === '' || actor === ownerId) return;
     const tick = this.serverTick;
     const ai = this.aiController;
@@ -8845,7 +8272,7 @@ export class SectorRoom extends Room<SectorState> {
     this.playerToActiveShipInstance.delete(playerId);
     ship.isActive = false;
     this.postToWorker({ type: 'REKEY_SHIP', oldId: playerId, newId: `linger-${shipInstanceId}` });
-    this.attachWingman(shipInstanceId);
+    this.wingmen.attachWingman(shipInstanceId);
     // Same ship, new key: its locks (held on it and its own) follow it to the AI pilot.
     this.shipKeyMoved(playerId, shipInstanceId, this.locks, this.fleet.isAttached(shipInstanceId) ? this.wingmanLocks : null);
     serverLogEvent('pilot_swap_displaced', { playerId, shipInstanceId, sectorKey: this.sectorKey });
@@ -8919,7 +8346,7 @@ export class SectorRoom extends Room<SectorState> {
     this.transitOrchestrator?.noteTakeControls(playerId, shipId);
     // The owner takes the helm: a squad member stays in its squad, which forms
     // up on it (pilot-led) and gets it back as AI leader on release (4b).
-    this.detachWingman(shipId, true);
+    this.wingmen.detachWingman(shipId, true);
     this.lingeringSlots.delete(shipId);
     this.lingeringPoseCache.delete(shipId);
     const ownerlessTimer = this.ownerlessShips.get(shipId);
@@ -9086,7 +8513,7 @@ export class SectorRoom extends Room<SectorState> {
     this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
     this.spillOrLoseShipHold(shipInstanceId, ship.playerId, pose, 'abandoned');
 
-    this.detachWingman(shipInstanceId);
+    this.wingmen.detachWingman(shipInstanceId);
     this.lingeringSlots.delete(shipInstanceId);
     this.lingeringPoseCache.delete(shipInstanceId);
     this.freeSlots.push(slot);
@@ -9142,7 +8569,7 @@ export class SectorRoom extends Room<SectorState> {
     vaporised = false,
   ): void {
     // RTS slice 4: the dying hull stops being flown before the leaf frees its slot.
-    this.detachWingman(ship.shipInstanceId);
+    this.wingmen.detachWingman(ship.shipInstanceId);
     this.awardKillXp(sourceId, getShipKind(ship.kind).maxHealth);
     // Hardcore: the dead hull's hold spills where it died (atomic with the
     // ship-hold delete), with its hull salvage. With no pose both are lost.
@@ -10189,7 +9616,7 @@ export class SectorRoom extends Room<SectorState> {
       const ship = this.state.ships.get(shipId);
       if (ship !== undefined) ship.statAlloc = alloc;
       this.applyStatMulToWorker(`linger-${shipId}`, alloc);
-      if (this.fleet.isAttached(shipId)) this.attachWingman(shipId);
+      if (this.fleet.isAttached(shipId)) this.wingmen.attachWingman(shipId);
     }
 
     client.send('ship_upgrade_applied', {
@@ -10613,7 +10040,7 @@ export class SectorRoom extends Room<SectorState> {
       this.locks.step();
       // RTS slice 5: wingmen pick their stance target, then their locks advance.
       if (this.fleet.size > 0) {
-        this.tickWingmanTargets();
+        this.wingmen.tickWingmanTargets();
         this.wingmanLocks.step();
       }
       this.npcLocks.step();
@@ -10661,7 +10088,7 @@ export class SectorRoom extends Room<SectorState> {
     // through the snapshot extension below.
     this.tickPlayerMounts();
     // RTS slice 5: wingman turrets aim + fire through the player pipeline.
-    if (this.fleet.size > 0) this.tickWingmanFire();
+    if (this.fleet.size > 0) this.wingmen.tickWingmanFire();
     phaseTime('playerMounts');
 
     // Phase 4c (2026-05-11) — server-authoritative turret rotation for
@@ -10706,7 +10133,7 @@ export class SectorRoom extends Room<SectorState> {
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
         this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
-        this.sceneWork.wingmen(this.fleet.size, this.hullBrainTicksTotal, 0, 0);
+        this.sceneWork.wingmen(this.fleet.size, this.wingmen.hullBrainTicksTotal, 0, 0);
         this.sceneWork.aiDecisions(this.aiController.stats.decisions);
         this.sceneWork.wreckPiecesTick(this.capitalWrecks?.liveCount() ?? 0);
       }
