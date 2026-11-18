@@ -25,13 +25,13 @@ export const HIDE_DEBOUNCE_MS = 1_500;
  * tower hop / WS reconnect blip never paints the overlay; only
  * genuinely-sustained loss does.
  *
- * Distinct from the pre-game `MetaLandingScreen` banner:
+ * Distinct from the galaxy map's server-health banner (`GalaxyPickerChrome`):
  *   - Pre-game (`phase !== 'game'`): the banner gates the Join CTA.
  *   - In-game (this component): full-screen takeover, no gameplay
  *     interaction possible.
  *
  * Auto-return: while visible, a {@link AUTO_RETURN_SECONDS} countdown
- * routes the player back to the meta landing. Manual "Return to menu"
+ * routes the player back to the galaxy map (the homepage). Manual "Return to menu"
  * button is the immediate-exit alternative.
  */
 export function LostConnectionOverlay(): JSX.Element | null {
@@ -88,7 +88,7 @@ export function LostConnectionOverlay(): JSX.Element | null {
   useEffect(() => {
     if (visible && remaining === 0) {
       logEvent('lost_connection_overlay_auto_return', {});
-      setPhase('meta');
+      setPhase('galaxy-map');
     }
   }, [visible, remaining, setPhase]);
 
@@ -96,7 +96,7 @@ export function LostConnectionOverlay(): JSX.Element | null {
 
   const handleReturnClick = (): void => {
     logEvent('lost_connection_overlay_manual_return', {});
-    setPhase('meta');
+    setPhase('galaxy-map');
   };
 
   return (
