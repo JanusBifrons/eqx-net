@@ -204,10 +204,20 @@ export class StructureRegistry {
   /** Set whenever topology changes (add/sever/construct); the grid subsystem
    *  rebuilds components + drops the route cache only when this is true. */
   topologyDirty = true;
+  /** Told of every structure added or really removed (discrete; navigation's
+   *  static obstacles). Structures never move after placement. */
+  private readonly changeListeners: Array<(rec: StructureRecord, added: boolean) => void> = [];
+
+  /** Subscribes to adds / removes; returns the unsubscribe. */
+  onChange(fn: (rec: StructureRecord, added: boolean) => void): () => void {
+    this.changeListeners.push(fn);
+    return () => { const i = this.changeListeners.indexOf(fn); if (i >= 0) this.changeListeners.splice(i, 1); };
+  }
 
   add(rec: StructureRecord): void {
     this.byId.set(rec.id, rec);
     this.topologyDirty = true;
+    for (const fn of this.changeListeners) fn(rec, true);
   }
 
   get(id: string): StructureRecord | undefined {
@@ -227,6 +237,7 @@ export class StructureRegistry {
       this.byId.delete(id);
       this.everConnected.delete(id); // structure gone — no leak
       this.topologyDirty = true;
+      for (const fn of this.changeListeners) fn(rec, false);
     }
     return rec;
   }

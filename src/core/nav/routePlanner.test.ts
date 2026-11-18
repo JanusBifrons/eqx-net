@@ -161,6 +161,27 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect(p.expanded).toBeLessThanOrEqual(NAV_COARSE_EXPAND_CAP + NAV_FINE_EXPAND_CAP);
   });
 
+  it('a fighter flies round a structure in open space (a static obstacle, not a rock)', () => {
+    const { coarse, fine } = world();
+    const c = shipTuning(getShipKind('fighter')).navClearance;
+    const x = 100.5 * CHUNK_SIZE, y = 0.5 * CHUNK_SIZE, hw = 150, hh = 600;
+    fine.obstacleSet(1, { x, y, radius: Math.hypot(hw, hh), angle: 0, parts: [[{ x: -hw, y: -hh }, { x: hw, y: -hh }, { x: hw, y: hh }, { x: -hw, y: hh }]] });
+    const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
+    const sx = x - 1500, tx = x + 1500;
+    const n = p.plan(coarse, fine, sx, y, tx, y, c, out);
+    console.log(`[nav route] fighter round a structure: ${n} waypoints, ${p.expanded} expansions, status ${p.status}`);
+    expect(p.status).toBe('route');
+    expect(n).toBeGreaterThan(1); // not the straight line through it
+    let px = sx, py = y, min = Infinity;
+    for (let k = 0; k < n; k++) {
+      const bx = out[k * 2]!, by = out[k * 2 + 1]!, len = Math.hypot(bx - px, by - py);
+      for (let t = 0; t <= len; t += 2) min = Math.min(min, fine.exactAt(px + ((bx - px) * t) / len, py + ((by - py) * t) / len, FINE_NAV_REACH));
+      px = bx; py = by;
+    }
+    expect(min).toBeGreaterThanOrEqual(c - 2);
+    expect(p.expanded).toBeLessThanOrEqual(NAV_COARSE_EXPAND_CAP + NAV_FINE_EXPAND_CAP);
+  });
+
   it('a battleship crossing the field keeps to wide space (lanes / round the outside), never a street', () => {
     const { coarse, fine } = world();
     const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);

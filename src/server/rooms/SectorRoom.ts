@@ -1259,7 +1259,7 @@ export class SectorRoom extends Room<SectorState> {
   private wreckFieldSource: WreckFieldSource | undefined; // wreck fields 3b (room option `wreckField`)
   /** Navigation: the cut field's nav maps, AI routes and autopilot requests (`nav/RoomNav.ts`). */
   private readonly nav: RoomNav = new RoomNav({
-    now: () => this.gameClock.now(), logger, sectorKey: () => this.sectorKey, stopped: () => this.simLoopStopped,
+    now: () => this.gameClock.now(), logger, sectorKey: () => this.sectorKey, stopped: () => this.simLoopStopped, structures: () => this.structureRegistry,
     hullOf: (sid) => {
       const playerId = this.sessionToPlayer.get(sid), ship = playerId ? this.getActiveShip(playerId) : undefined;
       const pose = playerId ? this.shipPoseCache.get(playerId) : undefined;
