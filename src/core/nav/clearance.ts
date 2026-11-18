@@ -5,9 +5,12 @@
  * centre is from the nearest blocked cell's centre, in world units: an exact
  * Euclidean distance transform (Felzenszwalb & Huttenlocher, separable 1-D
  * lower envelopes of parabolas), not a chamfer estimate. A cell is blocked
- * when its centre lies inside an obstacle: inside one of its convex `parts`
- * when it has them, else inside its circle. A hull of clearance `c` fits at a
- * cell whose value is >= c (to within one cell).
+ * when its centre lies inside an obstacle grown by `pad`: within `pad` of one
+ * of its convex `parts` when it has them, else of its circle. A hull of
+ * clearance `c` fits at a cell whose value is >= c (to within one cell).
+ * With `pad` half a cell diagonal no rock slips between cell centres, and
+ * value − cell diagonal is a true lower bound anywhere in the cell (the
+ * fine nav layer's use).
  *
  * Input is the same `GridObstacle[]` the room's one obstacle gatherer fills
  * (`SectorObstacles.rocks`), so placement, line of sight and navigation all
@@ -20,15 +23,24 @@ import type { GridObstacle } from '../structures/Grid.js';
 
 type Part = ReadonlyArray<{ readonly x: number; readonly y: number }>;
 
-/** Is local point (px, py) inside convex CCW polygon `poly` (edges included)? */
-function insideConvex(poly: Part, px: number, py: number): boolean {
+/** Is local point (px, py) inside convex CCW polygon `poly` (edges included),
+ *  or within `pad` of it? */
+function nearConvex(poly: Part, px: number, py: number, pad: number): boolean {
   const n = poly.length;
   if (n < 3) return false;
+  let inside = true;
   for (let i = 0, j = n - 1; i < n; j = i++) {
     const a = poly[j]!, b = poly[i]!;
-    if ((b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x) < 0) return false;
+    const ex = b.x - a.x, ey = b.y - a.y;
+    if (ex * (py - a.y) - ey * (px - a.x) >= 0) continue;
+    inside = false;
+    if (pad <= 0) return false;
+    // Outside this edge: near if within pad of the edge segment.
+    const l2 = ex * ex + ey * ey, t = l2 > 0 ? Math.max(0, Math.min(1, ((px - a.x) * ex + (py - a.y) * ey) / l2)) : 0;
+    const dx = px - a.x - ex * t, dy = py - a.y - ey * t;
+    if (dx * dx + dy * dy <= pad * pad) return true;
   }
-  return true;
+  return inside;
 }
 
 export class ClearanceGrid {
@@ -53,8 +65,8 @@ export class ClearanceGrid {
   private z = new Float64Array(0);
 
   /** Rebuilds the map for a `cols`×`rows` grid of `cell`-sized cells whose
-   *  lower-left corner is (originX, originY). */
-  build(originX: number, originY: number, cols: number, rows: number, cell: number, obstacles: readonly GridObstacle[]): void {
+   *  lower-left corner is (originX, originY); obstacles grown by `pad`. */
+  build(originX: number, originY: number, cols: number, rows: number, cell: number, obstacles: readonly GridObstacle[], pad = 0): void {
     this.originX = originX; this.originY = originY; this.cell = cell;
     this.cols = cols; this.rows = rows;
     const n = cols * rows;
@@ -62,7 +74,7 @@ export class ClearanceGrid {
     const sq = this.sq;
     sq.fill(Infinity, 0, n);
     this.blockedCount = 0;
-    for (let k = 0; k < obstacles.length; k++) this.stamp(obstacles[k]!);
+    for (let k = 0; k < obstacles.length; k++) this.stamp(obstacles[k]!, pad);
     // Columns, then rows (separable exact EDT on squared distances).
     const f = this.f, d = this.d;
     for (let x = 0; x < cols; x++) {
@@ -88,10 +100,10 @@ export class ClearanceGrid {
     return this.dist[cy * this.cols + cx]!;
   }
 
-  /** Marks every cell whose centre lies inside `o`. */
-  private stamp(o: GridObstacle): void {
+  /** Marks every cell whose centre lies inside `o` grown by `pad`. */
+  private stamp(o: GridObstacle, pad: number): void {
     const { cols, rows, cell, originX, originY, sq } = this;
-    const r = o.radius;
+    const r = o.radius + pad;
     const x0 = Math.max(0, Math.ceil((o.x - r - originX) / cell - 0.5));
     const x1 = Math.min(cols - 1, Math.floor((o.x + r - originX) / cell - 0.5));
     const y0 = Math.max(0, Math.ceil((o.y - r - originY) / cell - 0.5));
@@ -111,7 +123,7 @@ export class ClearanceGrid {
         } else {
           const lx = wx * c - wy * s, ly = wx * s + wy * c;
           hit = false;
-          for (let p = 0; p < parts.length && !hit; p++) hit = insideConvex(parts[p]!, lx, ly);
+          for (let p = 0; p < parts.length && !hit; p++) hit = nearConvex(parts[p]!, lx, ly, pad);
         }
         if (hit) { sq[i] = 0; this.blockedCount++; }
       }

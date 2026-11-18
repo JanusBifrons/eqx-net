@@ -37,7 +37,7 @@ import { wreckSourceOf } from '../../core/destruction/wreckSource.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { WreckDescriptor } from '../../shared-types/messages/wreckDescriptor.js';
-import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
+import type { CapitalWreckDeps, LiveWreck, PieceKnock, WreckOrigin } from './capitalWreckTypes.js';
 import { spawnWreckPieces, type WreckChildSpawn, type WreckPiecePose, type WreckResplitHost } from './wreckResplit.js';
 
 /** Game ms between lineage flushes: a crash loses at most this much wreck
@@ -67,6 +67,23 @@ export interface WreckLineageState {
 
 const POSE: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 
+/** What `collectLineage` reads, over the wreck system's maps: one per saver
+ *  (battle saves here, field hulls in `WreckFieldSource`). */
+export function lineageRecordDeps(s: WreckLineageState): WreckLineageDeps {
+  return {
+    forEachWreck: (visit) => { for (const w of s.wrecks.values()) visit(w); },
+    forEachLivePiece: (wreckId, visit) => {
+      const w = s.wrecks.get(wreckId);
+      if (w === undefined || w.pieces <= 0 || s.d.piecePoseInto === undefined) return;
+      for (const id of w.ids) {
+        const k = s.knock.get(id);
+        if (k === undefined || s.pieceWreck.get(id) !== wreckId || !s.d.piecePoseInto(id, POSE)) continue;
+        visit(k.index, POSE.x, POSE.y, POSE.angle, k.integrity);
+      }
+    },
+  };
+}
+
 export class BattleWreckSaves {
   private readonly dirty = new Set<number>();
   /** Lineage root wreck id → its row serial. */
@@ -74,18 +91,7 @@ export class BattleWreckSaves {
   private readonly deps: WreckLineageDeps;
 
   constructor(private readonly s: WreckLineageState, private readonly store: TerrainRecordStore) {
-    this.deps = {
-      forEachWreck: (visit) => { for (const w of s.wrecks.values()) visit(w); },
-      forEachLivePiece: (wreckId, visit) => {
-        const w = s.wrecks.get(wreckId);
-        if (w === undefined || w.pieces <= 0 || s.d.piecePoseInto === undefined) return;
-        for (const id of w.ids) {
-          const k = s.knock.get(id);
-          if (k === undefined || s.pieceWreck.get(id) !== wreckId || !s.d.piecePoseInto(id, POSE)) continue;
-          visit(k.index, POSE.x, POSE.y, POSE.angle, k.integrity);
-        }
-      },
-    };
+    this.deps = lineageRecordDeps(s);
   }
 
   /** Lineage `root` changed (`CapitalWreckDeps.lineageTouched`). */
@@ -167,9 +173,10 @@ function rootInputs(d: WreckDescriptor): WreckFractureInputs {
 /**
  * Rebuild one saved lineage. Returns its new root wreck id, or null when
  * nothing came back (geometry did not resolve, or no piece could spawn);
- * then nothing is left behind.
+ * then nothing is left behind. `origin`: a battle lineage (the evicting
+ * FIFOs) or a wreck-field hull's (the field list, wreck fields slice 4).
  */
-export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord): number | null {
+export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord, origin: WreckOrigin = 'battle'): number | null {
   const nodes = rec.nodes;
   const n = nodes.length;
   // Keep a node with a live piece, and every ancestor of one.
@@ -203,7 +210,7 @@ export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord): n
   const quiet: CapitalWreckDeps = { ...d, pieceSplit: undefined, dropSalvage: undefined, spawnPiece: (spec) => d.spawnPiece({ ...spec, sleeping: true }) };
   const chainRoot = rootInputs(descs[0]!);
   const src = wreckSourceOf(chainRoot);
-  const fifo = host.fifo(src.profile.id === 'capital', 'battle');
+  const fifo = host.fifo(src.profile.id === 'capital', origin);
   const like = knockLike(src.ship, geoms[0]!);
   const ids: number[] = new Array<number>(n).fill(0);
   const serial: number[] = new Array<number>(n).fill(0);
@@ -244,7 +251,7 @@ export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord): n
     const ore = nd.ore;
     host.addWreck({
       desc, pieces: r.ids.length, ids: r.ids, mass: r.mass, holdUntil: tick,
-      chain: { root: chainRoot, steps: nd.steps }, parent: i > 0 ? ids[nd.parent]! : 0, children: 0, src,
+      chain: { root: chainRoot, steps: nd.steps }, parent: i > 0 ? ids[nd.parent]! : 0, children: 0, src, origin,
       ...(ore !== undefined ? { ore } : {}),
     }, i > 0 ? added[nd.parent]! : null);
     added[i] = s.wrecks.get(ids[i]!) ?? null;
