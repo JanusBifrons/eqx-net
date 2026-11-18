@@ -27,9 +27,7 @@ import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
 import { CargoAction, PodOpen } from './LootWindow';
-import { isLootPod } from '@shared-types/swarmWireFormat';
-import { podSizeOf } from '@shared-types/shipKinds/cargoPod';
-import { withinLootOpenReach } from '@core/cargo/lootReach';
+import { asteroidPanelRow, podPanelRow } from './swarmTerrainInfo';
 import { ForeignTeleporterPanel, TeleporterPanel } from './TeleporterPanel';
 import { isAlienGateKind, isTeleporterKind } from '../../shared-types/teleport';
 import { alienGateLine } from './alienGateInfo';
@@ -687,38 +685,12 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     // C3 — an NPC ship carries a hold (its loot); breaking in is a hostile act.
     return { name: droneName(sw.shipKind), hpPct: frac * 100, shieldPct: null, entityId: swarmId, hasCargo: true };
   }
-  // ASTEROID (R2.23) — indestructible rock: no hull bar; show resources when the
-  // rock is being mined, else a SIZE proxy from radius (untouched rocks carry no
-  // resources/mass on the wire — real mass is a future server-touching change).
-  if (kind === 'asteroid' && id.startsWith('swarm-')) {
+  // ASTEROID / CARGO POD — indestructible terrain, no hull bar (swarmTerrainInfo.ts).
+  if ((kind === 'asteroid' || kind === 'pod') && id.startsWith('swarm-')) {
     const swarmId = parseInt(id.slice('swarm-'.length), 10);
     const sw = Number.isNaN(swarmId) ? undefined : client.mirror.swarm?.get(swarmId);
     if (!sw) return null;
-    const hasRes = sw.resourcesMax !== undefined && sw.resourcesMax > 0;
-    return {
-      name: 'Asteroid',
-      hpPct: 0,
-      shieldPct: null,
-      noHull: true,
-      infoLine: hasRes
-        ? `RES ${Math.round(sw.resources ?? 0)} / ${Math.round(sw.resourcesMax!)}`
-        : `SIZE ${Math.round(sw.radius)}`,
-    };
-  }
-  // CARGO POD (cargo pods 15/16) — indestructible loot: no hull bar; Open
-  // works within about a ship length (the server re-checks every request).
-  if (kind === 'pod' && id.startsWith('swarm-')) {
-    const swarmId = parseInt(id.slice('swarm-'.length), 10);
-    const sw = Number.isNaN(swarmId) ? undefined : client.mirror.swarm?.get(swarmId);
-    if (!sw || !isLootPod(sw)) return null;
-    const localId = client.mirror.localPlayerId;
-    const me = localId !== null ? client.mirror.ships.get(localId) : undefined;
-    const near = me !== undefined && withinLootOpenReach(me.kind, me.shieldDown !== true, sw.x, sw.y, me.x, me.y, me.angle);
-    return {
-      name: 'Cargo pod', hpPct: 0, shieldPct: null, noHull: true,
-      infoLine: POD_SIZE_NAMES[podSizeOf(sw.componentIndex ?? 0)] ?? '',
-      entityId: swarmId, podOpen: near,
-    };
+    return kind === 'asteroid' ? asteroidPanelRow(sw) : podPanelRow(client.mirror, swarmId, sw);
   }
   // LINGERING HULL (R2.23) — the name line already shows WHOSE hull it is (the
   // owner's server-propagated display name); never surface the raw ownerPlayerId
@@ -746,9 +718,6 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
   }
   return null;
 }
-
-/** Pod size class → the panel's size line (a fighter's pod up to a capital's). */
-const POD_SIZE_NAMES: readonly string[] = ['Small', 'Medium', 'Large', 'Huge'];
 
 /** Parse the numeric swarm entityId from a selection id (`swarm-<n>` or `<n>`).
  *  Undefined when not numeric. */

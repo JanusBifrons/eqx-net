@@ -24,6 +24,7 @@ import { HEART_SUPER_GUNS, heartSuperGunFunds } from '../../core/bases/galaxyBas
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { SHOWCASE_BARGE_ROOMS } from './showcaseBargeRooms.js';
+import { SHOWCASE_LEVELUP_OPTS, SHOWCASE_LOOT_OPTS } from './showcaseLevelupRooms.js';
 
 export const SHOWCASE_PILOT_ID = '5ca5e000-0000-4000-8000-000000000001';
 
@@ -269,40 +270,6 @@ export const SHOWCASE_BASE_OPTS = {
   defaultSpawnX: 900,
   defaultSpawnY: 900,
   maxClients: 4,
-} as const;
-
-/**
- * Roster-backed (real sectorKey, NOT in the galaxy graph, so the director never
- * routes bots here) with one hull-exposed target. Join with `initialXp` just
- * under the threshold + `startHostile=1`: one kill levels the ship up.
- */
-export const SHOWCASE_LEVELUP_OPTS = {
-  sectorKey: 'showcase-levelup',
-  testMode: true,
-  droneCount: 0,
-  asteroidConfig: [],
-  peacefulDrones: true,
-  // Within the interceptor's 250 u auto-fire range of the spawn.
-  dronePoses: [{ kind: 'heavy', x: 0, y: 140, angle: 0, hullExposed: true }],
-  defaultSpawnX: 0,
-  defaultSpawnY: -60,
-  maxClients: 4,
-} as const;
-
-/**
- * The "open a pod" loot shot: levelup with four peaceful, hull-exposed
- * heavies in auto-fire reach. Each death's coin flip is a fresh roll, so one
- * kill leaves a pod only about half the time; four kills almost always do.
- */
-export const SHOWCASE_LOOT_OPTS = {
-  ...SHOWCASE_LEVELUP_OPTS,
-  sectorKey: 'showcase-loot',
-  dronePoses: [
-    { kind: 'heavy', x: 0, y: 140, angle: 0, hullExposed: true },
-    { kind: 'heavy', x: -150, y: 90, angle: 0, hullExposed: true },
-    { kind: 'heavy', x: 150, y: 90, angle: 0, hullExposed: true },
-    { kind: 'heavy', x: 0, y: -220, angle: 0, hullExposed: true },
-  ],
 } as const;
 
 /**
@@ -579,8 +546,8 @@ export const SHOWCASE_HUB_OPTS = {
   maxClients: 4,
 };
 
-/** Cut-field shots: showcaseCutFieldRooms.ts. */
-export { CUT_FIELD_LOOK_SEED, SHOWCASE_CUT_FIELD_OPTS };
+/** Cut-field shots: showcaseCutFieldRooms.ts; level-up / loot shots: showcaseLevelupRooms.ts. */
+export { CUT_FIELD_LOOK_SEED, SHOWCASE_CUT_FIELD_OPTS, SHOWCASE_LEVELUP_OPTS, SHOWCASE_LOOT_OPTS };
 
 /** Room name → options, registered in `index.ts`. */
 export const SHOWCASE_ROOMS = {
