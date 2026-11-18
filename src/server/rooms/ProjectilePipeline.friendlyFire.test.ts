@@ -88,7 +88,6 @@ describe('ProjectilePipeline — loot pods', () => {
       playerSweep: () => null,
       swarmRegistry: { all: () => recs.map((r) => ({ id: r.id, slot: r.slot, radius: 12, kind: r.kind, shipKind: r.shipKind })) },
       lingeringSlots: new Map(),
-      shotHitsLootPods: (owner) => owner === 'player-1',
       applyDamage: (target, shooter) => { hits.push({ target, shooter }); },
     });
     return { pipe, hits };
@@ -101,15 +100,8 @@ describe('ProjectilePipeline — loot pods', () => {
     expect(hits).toEqual([{ target: 'r-enemy', shooter: 'd-shooter' }]);
   });
 
-  it('a pilot\'s own gun bolt still lands on the loot pod (only mining tools pass it)', () => {
-    const { pipe, hits } = podPipeline();
-    pipe.spawn('player-1', 20, 0, 1200, 0, 10, 4, 120, 'laser');
-    fly(pipe, 30);
-    expect(hits).toEqual([{ target: 'pod-1', shooter: 'player-1' }]);
-  });
-
-  it('a pilot\'s mining tool passes the loot pod (owner: only mining tools skip pods)', () => {
-    for (const w of ['mining_laser', 'tractor'] as const) {
+  it('every pilot weapon passes the loot pod (owner 2026-11-17: no weapon touches a pod)', () => {
+    for (const w of ['laser', 'mining_laser', 'tractor'] as const) {
       const { pipe, hits } = podPipeline();
       pipe.spawn('player-1', 20, 0, 1200, 0, 10, 4, 120, w);
       fly(pipe, 30);

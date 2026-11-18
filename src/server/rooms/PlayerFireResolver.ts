@@ -34,7 +34,7 @@ import {
   MissileWeaponDef,
   WeaponId,
   getWeapon,
-  hitscanFalloffFrac, isMiningTool,
+  hitscanFalloffFrac,
 } from '../../core/combat/WeaponCatalogue.js';
 import {
   rayHitsSphere,
@@ -664,7 +664,7 @@ export class PlayerFireResolver implements WeaponFireSink {
 
     // 3. Swarm (drones + asteroids).
     for (const rec of d.swarmRegistry.all()) {
-      if (isLootPod(rec) && isMiningTool(this._weaponId)) continue; // only a mining tool passes a loot pod (#15: displayPoseHitscan)
+      if (isLootPod(rec)) continue; // no weapon touches a cargo pod (owner 2026-11-17; #15: displayPoseHitscan)
       const rewound = d.snapshotRing.getPoseAt(rec.id, effTick);
       const b = slotBase(rec.slot);
       const cx = rewound?.x ?? d.sabF32[b + SLOT_X_OFF]!;
