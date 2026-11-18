@@ -1,3 +1,4 @@
+import type { RosterEntry } from '../state/storeTypes';
 import { RESPEC_CREDIT_COST } from '../../shared-types/goods';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -26,7 +27,6 @@ import {
   remainingPoints,
   draftToAlloc,
 } from './upgradeModalDraft';
-import type { RosterShipEntry } from './ShipRosterCard';
 import { GAME_DIALOG_CONTENT_SX, GAME_DIALOG_PAPER_SX, GAME_DIALOG_TITLE_SX } from './gameDialogChrome';
 
 /**
@@ -44,7 +44,7 @@ import { GAME_DIALOG_CONTENT_SX, GAME_DIALOG_PAPER_SX, GAME_DIALOG_TITLE_SX } fr
  * Stateless about the wire: the parent owns the send callbacks + the close.
  */
 interface UpgradeModalProps {
-  ship: RosterShipEntry;
+  ship: RosterEntry;
   open: boolean;
   onClose: () => void;
   onApply: (shipId: string, alloc: Record<string, number>) => void;
