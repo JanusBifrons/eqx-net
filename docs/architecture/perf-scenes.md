@@ -213,6 +213,16 @@ pnpm perf:scenes --scenes galaxy-field --device phone-proxy --cpu-rate 2 --base 
 
 First reading: [macro-terrain](macro-terrain.md) (Galaxy sectors, phone cost).
 
+## The navigation scene (`galaxy-field-nav`)
+
+The `galaxy-field` sector plus a squad of eight owned fighters spawned beside the pilot and given a fleet MOVE (the `fleet` step's `moveTo`) about 10 000 u inward across the belt, so every hull asks the nav worker for a route round the rock. The work view prints the route work over the window (print-only, not yet calibrated): `navRoutes` (routes asked), `navExpanded` (cells their searches expanded), `navMessages` (commands posted to the nav worker: routes plus chunk, rock and obstacle events) and `navInFlightMax` (most routes unanswered at once). The A/B arm with no field (and so no nav field) is the same commit:
+
+```
+pnpm perf:scenes --scenes galaxy-field-nav --device phone-proxy --cpu-rate 2 --base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0
+```
+
+Readings: [navigation](navigation.md).
+
 ## Adding a scene
 
 Add one entry to `PERF_SCENES` with:

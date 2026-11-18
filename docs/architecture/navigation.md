@@ -270,3 +270,4 @@ one it flies straight as before.
   (`NavDetailPool`), not ahead of time per loaded chunk.
   2026-11-18 fine rebuild slice C1: structures as static obstacles (`OBSTACLE`, `obstacleSet`).
   2026-11-18 fine rebuild slice C2: resting wrecks / scrap / plain asteroids (`RestingObstacles`).
+  2026-11-18 slice 16: perf scene `galaxy-field-nav` and the scene work view's nav counters (`NavField.stats`).
