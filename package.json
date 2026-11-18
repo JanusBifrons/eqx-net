@@ -11,6 +11,7 @@
   "scripts": {
     "typecheck": "tsc -b tsconfig.core.json tsconfig.server.json tsconfig.client.json && tsc -p tsconfig.showcase.json",
     "showcase": "tsx showcase/run-showcase.ts",
+    "ships:portraits": "tsx scripts/art-lab/portraits.ts",
     "showcase:fc": "tsx showcase/run-showcase.ts --shot \"fc-*\" --no-assemble --export showcase-out/fc",
     "perf:scenes": "tsx perf/run-perf.ts",
     "heavy": "node scripts/dev/heavy-queue.mjs",

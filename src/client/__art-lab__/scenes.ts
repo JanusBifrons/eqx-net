@@ -55,7 +55,7 @@ export interface Scene {
   duration: number;
 }
 
-export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat', 'spin', 'spinfleet', 'capfleet', 'broadside'] as const;
+export const SCENE_IDS = ['ships', 'factions', 'structures', 'base', 'explosion', 'sweep', 'bench', 'fleet', 'capitals', 'industry', 'mega', 'combat', 'spin', 'spinfleet', 'capfleet', 'broadside', 'portrait'] as const;
 
 /** Sheet scenes fit their content into this view (the capture size). */
 const SHEET_W = 1600, SHEET_H = 900;
@@ -309,6 +309,22 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40): Scene {
         booms: [],
         duration: 8,
         camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = 1.6; },
+      };
+    }
+    case 'portrait': {
+      // Join flow — one ship, centred and posed, for the Hangar's baked ship
+      // pictures (`pnpm ships:portraits`). `?kind=` picks the hull; `?zm=`
+      // scales the fit (capitals render small in the lab, so they zoom in);
+      // `?th=` is engine thrust (0 hides a capital's detached engine glows).
+      const q = new URLSearchParams(location.search);
+      const kid = q.get('kind') ?? 'fighter';
+      const zm = q.has('zm') ? Number(q.get('zm')) : 1;
+      const th = q.has('th') ? Number(q.get('th')) : 0.6;
+      const fit = Math.min(SHEET_W, SHEET_H) * 0.9 / (shipExtent(kid) * 2.4);
+      return {
+        ships: [{ id: kid, trail: false, pose: (_t: number, o: Pose) => { o.x = 0; o.y = 0; o.rot = -0.6; o.thrust = th; } }],
+        structs: [], booms: [], duration: 8,
+        camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = fit * zm; },
       };
     }
     case 'fleet':
