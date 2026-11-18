@@ -4,7 +4,9 @@
  * ctx to `ClientHandlerCtx` and one call below.
  */
 import type { Room } from 'colyseus.js';
+import { registerBeamHandlers, type BeamHandlerCtx } from './beamHandlers.js';
 import { registerFieldHandlers, type FieldHandlerCtx } from './fieldHandlers.js';
+import { registerGridPulseHandlers, type GridPulseHandlerCtx } from './gridPulseHandlers.js';
 import { registerImpactFxHandlers, type ImpactFxHandlerCtx } from './impactFxHandlers.js';
 import { registerMissileHandlers, type MissileHandlerCtx } from './missileHandlers.js';
 import { registerShellHandlers, type ShellHandlerCtx } from './shellHandlers.js';
@@ -13,7 +15,9 @@ import { registerStructurePanelHandlers, type StructurePanelHandlerCtx } from '.
 import { registerToastHandlers, type ToastHandlerCtx } from './toastHandlers.js';
 import { registerWaveHandlers, type WaveHandlerCtx } from './waveHandlers.js';
 
-export type ClientHandlerCtx = FieldHandlerCtx &
+export type ClientHandlerCtx = BeamHandlerCtx &
+  FieldHandlerCtx &
+  GridPulseHandlerCtx &
   ImpactFxHandlerCtx &
   MissileHandlerCtx &
   ShellHandlerCtx &
@@ -23,6 +27,8 @@ export type ClientHandlerCtx = FieldHandlerCtx &
   WaveHandlerCtx;
 
 export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void {
+  registerGridPulseHandlers(room, ctx);
+  registerBeamHandlers(room, ctx);
   registerShipStatusHandlers(room, ctx);
   registerMissileHandlers(room, ctx);
   registerImpactFxHandlers(room, ctx);
