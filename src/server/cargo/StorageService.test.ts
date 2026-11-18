@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { StorageService, structureUid, depositRangeOf, DEPOSIT_RANGE, SALVAGE_TO_MINERALS } from './StorageService.js';
+import { StorageService, structureUid, depositRangeOf, takesHoverDeposit, DEPOSIT_RANGE, SALVAGE_TO_MINERALS } from './StorageService.js';
 import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W } from '../../core/articulation/rigCatalogue.js';
 import { HoldStore } from './HoldStore.js';
 import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';
@@ -133,6 +133,20 @@ describe('StorageService (P1a-2)', () => {
     const u = setup();
     u.registry.add(rec('b', 'cargo_bay', 0, 0));
     expect(u.svc.nearestOwnStorage('p1', DOCK_BAY_HALF_W, DOCK_BAY_CY + DOCK_BAY_HALF_H)).toBeNull();
+  });
+
+  it('structure-restyle 3f: a crane-bay kind (Capital, freight dock) takes no hover deposit; other storage does', () => {
+    expect(takesHoverDeposit('capital')).toBe(false);
+    expect(takesHoverDeposit('freight_dock')).toBe(false);
+    expect(takesHoverDeposit('cargo_bay')).toBe(true);
+    expect(takesHoverDeposit('storage_vault')).toBe(true);
+    const t = setup();
+    t.registry.add(rec('c', 'capital', 0, 0));
+    expect(t.svc.nearestHoverDropOff('p1', 100, 0), 'the Capital is no hover drop-off').toBeNull();
+    expect(t.svc.nearestOwnStorage('p1', 100, 0)?.id, 'but it is still your storage (install, repair)').toBe('c');
+    // A Cargo Bay in range is found even with the Capital nearer.
+    t.registry.add(rec('b', 'cargo_bay', 450, 0));
+    expect(t.svc.nearestHoverDropOff('p1', 100, 0)?.id).toBe('b');
   });
 
   it('refine turns network salvage into Capital minerals', () => {

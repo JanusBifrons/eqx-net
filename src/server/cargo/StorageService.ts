@@ -31,18 +31,25 @@ export function fittedModuleIds(h: Hold): string[] {
 }
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { DOCK_DEPOSIT_RANGE } from '../../core/articulation/rigCatalogue.js';
+import { DOCK_DEPOSIT_RANGE, craneBayFor } from '../../core/articulation/rigCatalogue.js';
 import { cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord, HoldStore } from './HoldStore.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 
-/** Fly within this distance of your own storage to deposit. */
+/** Hold within this distance of your own hover drop-off to deposit. */
 export const DEPOSIT_RANGE = 400;
-/** Deposit range around storage of `kindId`: a freight dock's covers its
- *  whole landing pad (`DOCK_DEPOSIT_RANGE`, rigCatalogue.ts); other storage
- *  uses `DEPOSIT_RANGE`. */
+/** Reach around storage of `kindId` (hover deposit, module install, cargo
+ *  access, repair): a freight dock's covers its whole landing pad
+ *  (`DOCK_DEPOSIT_RANGE`, rigCatalogue.ts); other storage uses `DEPOSIT_RANGE`. */
 export function depositRangeOf(kindId: string): number {
   return kindId === 'freight_dock' ? Math.max(DEPOSIT_RANGE, DOCK_DEPOSIT_RANGE) : DEPOSIT_RANGE;
+}
+/** Does storage of `kindId` take the hover deposit (hold within
+ *  `depositRangeOf` for `DEPOSIT_DWELL_TICKS`)? A kind with a crane bay
+ *  (`craneBayFor`: freight dock, Capital) unloads only a ship parked on its
+ *  bay; other storage (Cargo Bay, Storage Vault) takes the hover deposit. */
+export function takesHoverDeposit(kindId: string): boolean {
+  return craneBayFor(kindId) === null;
 }
 /** Hold position this long (60 Hz ticks) to deposit — 2 s. */
 export const DEPOSIT_DWELL_TICKS = 120;
@@ -203,10 +210,22 @@ export class StorageService {
    *  (x, y): each structure's own `depositRangeOf(kind)`, or `range` for all
    *  when given. */
   nearestOwnStorage(owner: string, x: number, y: number, range?: number): StructureRecord | null {
+    return this.nearestOwn(owner, x, y, range, false);
+  }
+
+  /** Nearest OPERATIONAL hover drop-off (`takesHoverDeposit`) owned by
+   *  `owner` within its `depositRangeOf` of (x, y): the auto-deposit target.
+   *  A nearer Capital or freight dock never hides a Cargo Bay in range. */
+  nearestHoverDropOff(owner: string, x: number, y: number): StructureRecord | null {
+    return this.nearestOwn(owner, x, y, undefined, true);
+  }
+
+  private nearestOwn(owner: string, x: number, y: number, range: number | undefined, hoverOnly: boolean): StructureRecord | null {
     let best: StructureRecord | null = null;
     let bestD2 = Infinity;
     for (const rec of this.d.registry.all()) {
       if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
+      if (hoverOnly && !takesHoverDeposit(rec.kind)) continue;
       const d2 = (rec.x - x) ** 2 + (rec.y - y) ** 2;
       const r = range ?? depositRangeOf(rec.kind);
       if (d2 <= r * r && d2 <= bestD2) { bestD2 = d2; best = rec; }

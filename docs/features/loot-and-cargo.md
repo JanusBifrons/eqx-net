@@ -148,9 +148,10 @@ counts the hull roll).
 ## Part 2 (P1a-2): base storage, auto-deposit, derelicts, credit sinks
 
 ### What the player sees
-- **Bring it home.** Fly within 400 u of your own Capital or **Cargo Bay** and
-  hold position for 2 s. A bar under the cargo chip fills, then everything you
-  carry is banked ("Banked +9 Salvage · +77 cr").
+- **Bring it home.** Park still in your own Capital's bay (the marked pad
+  past its edge): its crane reaches out and unloads everything you carry. At a
+  **Cargo Bay**, fly within 400 u and hold position for 2 s instead. A bar
+  under the cargo chip fills, then everything you carry is banked ("Banked +9 Salvage · +77 cr").
   - Minerals go to the Capital's construction bank, so loot funds building.
   - Everything else fills the storage hold by weight. Capital 5000, Cargo Bay
     2000.
@@ -218,7 +219,7 @@ Plan soft-leaping-truffle v3, phase C1. Auto-deposit banks everything you carry;
 - **Minerals.** A take draws a Capital's minerals from its goods hold first, then its bank. A put fills the bank first, like a deposit.
 - **Atomic.** The ship row and the structure row commit as ONE hold group.
 
-**A withdrawal sticks.** After a manual move, auto-deposit stays off for that pilot until they fly out of deposit range of their storage (`SectorRoom.manualCargo`). Otherwise anything you took from your own storage would be banked straight back 2 s later.
+**A withdrawal sticks.** After a manual move, auto-deposit stays off for that pilot until they fly out of deposit range of their storage and off its crane bay (`SectorRoom.manualCargo`). Otherwise anything you took from your own storage would be banked straight back 2 s later.
 
 **Wire (#16).** `cargo_query` / `cargo_move` → `cargo_state` (`shared-types/messages/cargoMessages.ts`). `cargo_state` carries BOTH the structure's hold and the pilot's ship hold, so the two panes always agree; the panel is rebuilt from it only. The inspector's hold readout (`entity_stats`) shows to anyone the cargo would open for. Each move is audited as `cargo_moved`.
 

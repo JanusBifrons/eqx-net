@@ -224,12 +224,12 @@ describe('SectorRoom integration — packed loot (economy v2 W4a)', () => {
     }
     expect(sawPacked, 'the own-ship cargo slice must carry the packed item (#16)').toBe(true);
 
-    // Park next to my own Capital: the dwell deposit banks it.
-    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 150, y: 0 });
+    // Park on my own Capital's crane bay (bay centre = Capital + (0, 410)): the crane banks it.
+    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: -410 });
     expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5_000)).toBe(true);
     const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
-    const banked = await until(() => (cap.hold?.packed?.length ?? 0) === 1, 8_000);
-    expect(banked, 'the dwell deposit must move the packed structure into storage').toBe(true);
+    const banked = await until(() => (cap.hold?.packed?.length ?? 0) === 1, 15_000);
+    expect(banked, 'the crane must move the packed structure into storage').toBe(true);
     expect(cap.hold!.packed![0]).toEqual({ product: 'structure:smelter', quality: 42 });
     expect(getHoldStore().get(shipId)?.hold.packed ?? []).toEqual([]);
   });
