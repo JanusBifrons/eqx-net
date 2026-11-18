@@ -215,10 +215,17 @@ one it flies straight as before.
   (the member before it; the first, the leader) with `keep` (a moving goal flies the old route until the
   new plan lands). Open space answers straight and the boids herd is unchanged; rock between ⇒ it flies the
   route and stops `flockFollow` behind that ship, so the squad crosses single file (owner, 2026-11-17).
+- Turns are flown, not cut (`stepNavRoute`): a waypoint before the goal is passed only once the ship,
+  inside `arrive`, has drawn level with it along its incoming leg (from the waypoint before, or for the
+  first, the plan's start, which `NavRoutes` stores with the route). The planner's turns sit at the
+  hull's clearance from rock; leaving one from a fighter's 80 u arrive flew the chord across a street
+  corner at 0 u from rock (clearance 30 u). The goal still arrives by distance alone.
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25.
 - `CutFieldSubsystem.rockContacts` counts ship-vs-field-rock contacts (the test gate).
 - Lock: `tests/integration/sectorRoom/navFollowRoute.test.ts`, a fighter told to Move across a rock arrives
-  with no rock contact; the same order with routes off hits it.
+  with no rock contact; the same order with routes off hits it; and on the field's street crossing (the
+  big rock's 8-turn way through the packed rocks beside it, longer than the harness's 8 s flight) it makes
+  way with no rock contact. The arrival case takes a crossing whose route fits that flight (≤ 2 400 u).
 
 ## The player's autopilot asks (`server/nav/AutopilotRoutes.ts`)
 - Wire (slice 12): client → server `nav_route_request {reqId, tx, ty}` (strict; the client names only the
@@ -265,7 +272,8 @@ one it flies straight as before.
   2026-11-18 slice 15: netgate scenario `autopilot` (the plan's D1 guard). Found while choosing its route:
   the fine layer closes the field's streets to fighters (fine layer, above).
   2026-11-18 fine rebuild slice A: exact distance in tight cells (`exactAt`); fighters cross packed
-  chunks by their streets.
+  chunks by their streets. Ships fly each turn instead of leaving it from the arrive radius (the
+  streets left no margin for the cut).
   2026-11-18 fine rebuild slice B: detail built on first read into one capped LRU pool per worker
   (`NavDetailPool`), not ahead of time per loaded chunk.
   2026-11-18 fine rebuild slice C1: structures as static obstacles (`OBSTACLE`, `obstacleSet`).
