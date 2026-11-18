@@ -14,7 +14,8 @@
  *    structures; soft circles: the room's swarm asteroids, i.e. the resolved
  *    `asteroidConfig` at their seed positions (cut-field rocks are not
  *    obstacles there);
- *  - `chooseBaseSite` with the room's options.
+ *  - `chooseBaseSite` with the room's options, including `within` the
+ *    pocket's clearing (`pocketClearing`).
  * Structures the room's `place` would reject are counted in, so the footprint
  * here can only be larger than the real one.
  *
@@ -23,7 +24,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { GALAXY_SECTORS, getSector } from '../../core/galaxy/galaxy.js';
-import { sectorCutField, sectorSites } from '../../core/galaxy/sectorSites.js';
+import { pocketClearing, sectorCutField, sectorSites } from '../../core/galaxy/sectorSites.js';
 import { galaxyBasePlan } from '../../core/bases/galaxyBases.js';
 import { growBase, type GrownPlacement } from '../../core/bases/growBase.js';
 import { chooseBaseSite, grownExtent, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
@@ -65,9 +66,11 @@ function measure(): Fit[] {
       const at = outer && i === plans.length - 1 ? { x: outer.x, y: outer.y } : null;
       const grown = growBase(plan.profile, plan.seed, features);
       const ext = grownExtent(grown.placements);
+      const within = pocketClearing(s.key, SOLAR_SECTORS, at?.x ?? 0, at?.y ?? 0);
       const site = chooseBaseSite(ext, hard, soft, {
         halfExtent: HOME_POCKET_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed: plan.seed,
         ...(at ? { centreX: at.x, centreY: at.y } : {}),
+        ...(within ? { within } : {}),
       });
       expect(site, `${s.key}/${plan.baseId} finds a site`).not.toBeNull();
       const cx = at?.x ?? 0, cy = at?.y ?? 0;
@@ -116,15 +119,11 @@ describe.runIf(SOLAR_SECTORS)('galaxy bases fit their cut-field clearings', () =
     expect(home.filter((f) => f.over > 0).map(line)).toEqual([]);
   });
 
-  // KNOWN GAP, not fixed here (the fix, a bigger clearing margin or a
-  // tighter search round the outer pocket, is a decision for later): the
-  // outer base pocket is searched over the home square (HOME_POCKET_HALF_EXTENT
-  // - margin = 4750 u each way, corners 6718 u out) but its clearing is
-  // site.r + FIELD_CLEARING_MARGIN = 6500 u, and chooseBaseSite prefers sites
-  // far from the centre, so a base can poke up to 218 u into the rock wall.
-  // At 9ee2842a: orion-belt/hub, thornfield/b1, tideglass/b1 +218 u (corner
-  // structure), kepler-spur/hub +19 u (freight dock pad). Flip to it() once fixed.
-  it.fails('every base footprint (structures and dock pads) lies inside its clearing', () => {
+  // The outer base pocket is searched over the home square (corners 6718 u
+  // out) but its clearing is 6500 u: without `within`, bases poked up to
+  // 218 u into the rock wall (orion-belt/hub, thornfield/b1, tideglass/b1,
+  // kepler-spur/hub's dock pad).
+  it('every base footprint (structures and dock pads) lies inside its clearing', () => {
     const fits = measure();
     expect(fits.length).toBeGreaterThan(0);
     expect(fits.filter((f) => f.over > 0).map(line)).toEqual([]);

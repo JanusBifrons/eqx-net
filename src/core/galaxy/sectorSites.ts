@@ -251,3 +251,12 @@ export function sectorCutField(sectorKey: string, enabled: boolean): SectorCutFi
   }
   return { seed: `galaxy:${sectorKey}:v${SECTOR_FIELD_VERSION}`, clearings };
 }
+
+/** The cut-field clearing round the pocket centred at (x, y), or null when
+ *  the sector has no cut field or the pocket lies beyond its reach (no rocks
+ *  round it). A base grown in that pocket stays inside it (`chooseBaseSite`
+ *  `within`). */
+export function pocketClearing(sectorKey: string, enabled: boolean, x: number, y: number): FieldClearing | null {
+  const field = sectorCutField(sectorKey, enabled);
+  return field?.clearings.find((c) => c.x === x && c.y === y) ?? null;
+}

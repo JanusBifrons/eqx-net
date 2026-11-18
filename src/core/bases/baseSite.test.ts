@@ -116,3 +116,28 @@ describe('chooseBaseSite centred on a solar-system pocket (Phase 4)', () => {
     expect(Math.abs(site.y + 60_000)).toBeLessThanOrEqual(5000);
   });
 });
+
+describe('chooseBaseSite within a bounding circle (cut-field clearing)', () => {
+  it('keeps the whole base plus margin inside the circle, where the square alone reaches past it', () => {
+    const ext = { x0: -400, x1: 400, y0: -300, y1: 300 };
+    const o = { halfExtent: 5000, margin: 250, step: 250, seed: 3, centreX: 20_000, centreY: -10_000 };
+    const far = (s: { x: number; y: number }): number => Math.hypot(
+      Math.max(Math.abs(s.x + ext.x0 - o.margin - o.centreX), Math.abs(s.x + ext.x1 + o.margin - o.centreX)),
+      Math.max(Math.abs(s.y + ext.y0 - o.margin - o.centreY), Math.abs(s.y + ext.y1 + o.margin - o.centreY)),
+    );
+    // Unbounded, the far-from-centre preference picks a square corner.
+    const square = chooseBaseSite(ext, [], [], o)!;
+    expect(far(square)).toBeGreaterThan(5000);
+    const within = { x: o.centreX, y: o.centreY, r: 5000 };
+    const site = chooseBaseSite(ext, [], [], { ...o, within })!;
+    expect(site).not.toBeNull();
+    expect(far(site)).toBeLessThanOrEqual(within.r);
+    // Still prefers far sites: it lands near the rim, not the centre.
+    expect(far(site)).toBeGreaterThan(within.r - 400);
+  });
+
+  it('returns null when the base cannot fit inside the circle', () => {
+    const ext = { x0: -400, x1: 400, y0: -300, y1: 300 };
+    expect(chooseBaseSite(ext, [], [], { ...OPTS, within: { x: 0, y: 0, r: 600 } })).toBeNull();
+  });
+});
