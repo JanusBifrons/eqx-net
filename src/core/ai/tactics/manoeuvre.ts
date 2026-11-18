@@ -14,6 +14,9 @@
  */
 import type { ContextMaps } from '../contextSteering.js';
 import { Rng } from '../../random/rng.js';
+import type { AiEntity } from '../../contracts/IAiBehaviour.js';
+import type { ShipKind } from '../../../shared-types/shipKinds.js';
+import type { PilotHandling, PilotParams } from '../virtualPilot.js';
 
 /** Manoeuvre ids (dense, used as array indices and the test-visible value). */
 export const MANOEUVRE_HOLD = 0;
@@ -274,4 +277,100 @@ export interface IManoeuvre {
   /** True once the manoeuvre has run its course (the picker then re-decides
    *  at once). Open-ended manoeuvres return false. */
   isDone(ctx: TacticalContext): boolean;
+}
+
+// ── Peacetime modes ────────────────────────────────────────────────────
+// A pilot's job when it is not fighting (leaving, a course, the patrol orbit,
+// ...) runs with the SAME lifecycle as a manoeuvre: `begin` once when the job
+// starts, `writeGoal` each tick, `isDone` to end it. Which job runs is the
+// brain's `pilotJob()` (one precedence). Instances live in `ai/modes/`, are
+// preallocated per brain, and the context is a reused scratch struct (#14).
+// A peacetime goal is a plain facing + wanted velocity (or a fly-to point),
+// not context-steering interest, so modes are not `IManoeuvre`s.
+
+/** Peacetime job ids (dense; `pilotJob()` returns one). */
+export const JOB_LEAVING = 0;
+export const JOB_FLOCK = 1;
+export const JOB_TRAVEL = 2;
+/** A course to `moveTarget` (formation slot, leader course, post hold). */
+export const JOB_COURSE = 3;
+/** Back to / at the guard post. */
+export const JOB_GUARD = 4;
+export const JOB_SEARCH = 5;
+/** The origin orbit (nothing else to do). */
+export const JOB_ORBIT = 6;
+export const JOB_COUNT = 7;
+export type PilotJobId = number;
+
+/** `pilotJob()` orders. TICK: what `tick()` flies when it does not fight
+ *  (leaving, flock, travel / patrol leg, course, guard post, hunt search,
+ *  orbit). NO_FLOCK: the same for a follower whose leader can't be resolved.
+ *  REPORT: the order `getActivity()` reports by, which differs (travel and
+ *  hunt before the flock, the post without the broadside exception, a bare
+ *  course reads idle). */
+export const JOB_ORDER_TICK = 0;
+export const JOB_ORDER_NO_FLOCK = 1;
+export const JOB_ORDER_REPORT = 2;
+
+/** What a peacetime mode reads, refreshed by the brain before each call. */
+export interface PilotModeContext {
+  tick: number;
+  /** The job this call runs for (one mode may serve two jobs). */
+  job: PilotJobId;
+  self: AiEntity;
+  kind: ShipKind;
+  handling: PilotHandling;
+  energy: number;
+  energyMax: number;
+  /** Flee's escape line (unit). */
+  escapeX: number;
+  escapeY: number;
+  moveTarget: { x: number; y: number } | null;
+  guardOn: boolean;
+  guardX: number;
+  guardY: number;
+}
+
+/** Placeholder `self` until the brain's first mode call. */
+const NO_SELF: AiEntity = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+
+export function makePilotModeContext(kind: ShipKind, handling: PilotHandling): PilotModeContext {
+  return {
+    tick: 0, job: JOB_ORBIT, self: NO_SELF, kind, handling, energy: 0, energyMax: 0,
+    escapeX: 0, escapeY: 1, moveTarget: null, guardOn: false, guardX: 0, guardY: 0,
+  };
+}
+
+/** Fly `facing` + (`vx`, `vy`) through the virtual pilot with `params`. */
+export const MODE_GOAL_FLY = 0;
+/** The brain's shared fly-to helper (`tickMoveTo(tx, ty, cruiseCap, boost)`). */
+export const MODE_GOAL_MOVE_TO = 1;
+
+/** A peacetime mode's goal for this tick, written in place. */
+export interface PilotModeGoal {
+  kind: number;
+  facing: number;
+  vx: number;
+  vy: number;
+  boost: boolean;
+  params: Readonly<PilotParams>;
+  tx: number;
+  ty: number;
+  /** Fly-to cruise cap (-1 = the calm cruise). */
+  cruiseCap: number;
+}
+
+export function makePilotModeGoal(params: Readonly<PilotParams>): PilotModeGoal {
+  return { kind: MODE_GOAL_FLY, facing: 0, vx: 0, vy: 0, boost: false, params, tx: 0, ty: 0, cruiseCap: -1 };
+}
+
+/** One peacetime job, with the manoeuvre lifecycle. Stateful per brain;
+ *  never allocates. */
+export interface IPilotMode {
+  /** Called once when the job starts. */
+  begin(ctx: PilotModeContext): void;
+  /** Fill `out` with this tick's goal. */
+  writeGoal(ctx: PilotModeContext, out: PilotModeGoal): void;
+  /** True once the job has run its course; open-ended jobs return false. */
+  isDone(ctx: PilotModeContext): boolean;
 }
