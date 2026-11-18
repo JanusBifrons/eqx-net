@@ -45,7 +45,7 @@ test.describe('avatar-menu logout (desktop)', () => {
     await ctx.close();
   });
 
-  test('Logout shows a confirm dialog and routes to meta on confirm', async ({ browser }) => {
+  test('Logout shows a confirm dialog and routes to the galaxy map on confirm', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
@@ -56,12 +56,12 @@ test.describe('avatar-menu logout (desktop)', () => {
     const confirmDialog = page.locator('[data-testid="avatar-logout-confirm-dialog"]');
     await expect(confirmDialog).toBeVisible();
     // Not logged out yet — the confirm gate must hold.
-    await expect(page.locator('[data-testid="meta-landing"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toHaveCount(0);
 
     await page.locator('[data-testid="avatar-logout-confirm-button"]').click();
 
-    // Real logout: back to the main menu + token cleared.
-    await expect(page.locator('[data-testid="meta-landing"]')).toBeVisible();
+    // Real logout: back to the galaxy map (the homepage) + token cleared.
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
     const token = await page.evaluate(() => localStorage.getItem('eqxAuthToken'));
     expect(token).toBeNull();
 

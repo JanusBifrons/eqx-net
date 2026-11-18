@@ -1,114 +1,83 @@
 /**
  * Galaxy map FOCUS VIEW — the pure decisions (no Pixi). Tapping a hex on the
- * full-page map eases the map camera into that sector so it fills most of the
- * screen, with its linked neighbours drawn as small "door" hexes round its rim;
- * the sector info panel docks beside it. `galaxyFocusView.ts` is the Pixi side;
- * the camera move is the existing `Camera.glideTo` (with its optional zoom).
+ * full-page map eases the map camera into that sector so it fills the height
+ * of the screen space the info panel leaves free; its linked neighbours (the
+ * REAL hexes round it) light up with an arrow on the shared edge, and tapping
+ * one hops the focus there. `galaxyFocusView.ts` is the Pixi side; the camera
+ * move is the existing `Camera.glideTo` (with its optional zoom).
  *
  * Everything here runs on a focus change or a tap, never per frame.
  */
 
 /** Glide in / hop / back out duration (wall ms; UI motion, not game time). */
 export const FOCUS_GLIDE_MS = 650;
-/** Door centre distance from the focused hex centre, in hex radii. */
-export const DOOR_RING = 1.45;
-/** Door hex radius, in focused-hex radii. */
-export const DOOR_SIZE = 0.3;
-/** Smallest angle between two doors (rad) so their hexes never overlap. */
-export const DOOR_MIN_SEP = (DOOR_SIZE * 2.3) / DOOR_RING;
-/** Share of the free screen area the hex + its doors may take. */
+/** Share of the free screen height (or width) the focused hex may take. */
 export const FOCUS_FIT = 0.92;
 /** The map camera's zoom range (`GalaxyMapLayer` builds its `Camera` with it). */
 export const FOCUS_MAX_SCALE = 4;
 
 // ── Panel dock (shared with SectorInfoDrawer so the two never disagree) ──
 
-/** Desktop docks the info panel on the right; a phone (touch) or any portrait
- *  screen uses a bottom sheet. */
+/** Any landscape screen (desktop or a phone held sideways) docks the info
+ *  panel down the right; an upright screen uses a bottom sheet. */
 export type FocusPanelDock = 'right' | 'bottom';
 
-export function focusPanelDock(portrait: boolean, touch: boolean): FocusPanelDock {
-  return portrait || touch ? 'bottom' : 'right';
+export function focusPanelDock(portrait: boolean): FocusPanelDock {
+  return portrait ? 'bottom' : 'right';
 }
 
-/** Right panel width (CSS px; never more than 92% of the screen). */
+/** Right panel width (CSS px). A phone gets a narrower panel: a share of the
+ *  screen width, between the floor and the desktop width. */
 export const PANEL_RIGHT_W = 296;
-/** Bottom sheet: share of the visible height (portrait, landscape) and cap. */
+export const PANEL_TOUCH_FRAC = 0.3;
+export const PANEL_TOUCH_MIN_W = 200;
+/** On a phone the panel starts below the top-right toolbar (full-screen chip). */
+export const PANEL_TOUCH_TOP = 56;
+/** Bottom sheet (portrait): share of the visible height, and its cap. */
 export const SHEET_FRAC_PORTRAIT = 0.4;
-export const SHEET_FRAC_LANDSCAPE = 0.5;
 export const SHEET_MAX_H = 340;
-/** The app bar above the map (`--app-bar-h` fallback). */
+/** The desktop app bar above the map (`--app-bar-h`; 0 on touch). */
 export const APP_BAR_H = 48;
+
+export function focusPanelWidth(screenW: number, touch: boolean): number {
+  if (!touch) return Math.min(PANEL_RIGHT_W, screenW * 0.92);
+  return Math.round(Math.min(PANEL_RIGHT_W, Math.max(PANEL_TOUCH_MIN_W, screenW * PANEL_TOUCH_FRAC)));
+}
 
 export interface ScreenInsets { top: number; right: number; bottom: number }
 
-/** The screen strips the panel and app bar cover, for framing the focus. */
-export function focusPanelInsets(dock: FocusPanelDock, screenW: number, screenH: number): ScreenInsets {
-  if (dock === 'right') {
-    return { top: APP_BAR_H, right: Math.min(PANEL_RIGHT_W, screenW * 0.92), bottom: 0 };
-  }
-  const frac = screenH >= screenW ? SHEET_FRAC_PORTRAIT : SHEET_FRAC_LANDSCAPE;
-  return { top: APP_BAR_H, right: 0, bottom: Math.min(screenH * frac, SHEET_MAX_H) };
+/** The screen strips the panel and app bar cover, for framing the focus. The
+ *  phone panel's top gap sits under the toolbar, not over the map, so the hex
+ *  keeps the full height. */
+export function focusPanelInsets(dock: FocusPanelDock, screenW: number, screenH: number, touch: boolean): ScreenInsets {
+  const top = touch ? 0 : APP_BAR_H;
+  if (dock === 'right') return { top, right: focusPanelWidth(screenW, touch), bottom: 0 };
+  return { top, right: 0, bottom: Math.min(screenH * SHEET_FRAC_PORTRAIT, SHEET_MAX_H) };
 }
 
-// ── Door layout ──
+// ── Hop arrows ──
 
-export interface DoorSlot {
-  key: string;
-  /** Door centre, map space (the same space as the hex centres). */
-  x: number;
-  y: number;
-  /** Direction from the focused hex (rad). */
-  angle: number;
-}
+/** Arrow on the edge the focused hex shares with a neighbour, pointing into
+ *  the neighbour: base and tip distance from the focused centre, in hex radii
+ *  (the shared edge is at sqrt(3)/2), and half its width. It stays in the rim
+ *  band, well clear of the neighbour's name in the middle of its hex. */
+export const ARROW_BASE = 0.88;
+export const ARROW_TIP = 1.02;
+export const ARROW_HALF = 0.08;
 
-/**
- * Place one door per linked neighbour on a ring round the focused hex, each in
- * the direction of that neighbour, spread apart so no two overlap. Order of
- * the result follows the angle round the ring.
- */
-export function layoutDoors(
-  cx: number, cy: number, hexR: number,
-  neighbours: ReadonlyArray<{ key: string; x: number; y: number }>,
-): DoorSlot[] {
-  const slots = neighbours.map((n) => ({ key: n.key, angle: Math.atan2(n.y - cy, n.x - cx) }));
-  slots.sort((a, b) => a.angle - b.angle);
-  spreadAngles(slots, DOOR_MIN_SEP);
-  const ring = hexR * DOOR_RING;
-  return slots.map((s) => ({ key: s.key, angle: s.angle, x: cx + Math.cos(s.angle) * ring, y: cy + Math.sin(s.angle) * ring }));
-}
-
-/** Push sorted angles apart (circularly) until every gap is at least `sep`.
- *  A few relaxation passes; the ring always has room for the 6 doors a
- *  sector can have. */
-function spreadAngles(slots: Array<{ angle: number }>, sep: number): void {
-  const n = slots.length;
-  if (n < 2) return;
-  const gap = Math.min(sep, (Math.PI * 2) / n);
-  for (let pass = 0; pass < 24; pass++) {
-    let moved = false;
-    for (let i = 0; i < n; i++) {
-      const a = slots[i]!;
-      const b = slots[(i + 1) % n]!;
-      let d = b.angle - a.angle;
-      if (i === n - 1) d += Math.PI * 2;
-      if (d < gap - 1e-9) {
-        const push = (gap - d) / 2;
-        a.angle -= push;
-        b.angle += push;
-        moved = true;
-      }
-    }
-    if (!moved) break;
-  }
-}
-
-/** The door under a map-space point, or null. */
-export function doorAt(doors: readonly DoorSlot[], x: number, y: number, doorR: number): string | null {
-  for (const d of doors) {
-    if (Math.hypot(x - d.x, y - d.y) <= doorR) return d.key;
-  }
-  return null;
+/** The hop arrow's triangle (map space, flat x,y list) for a neighbour. */
+export function hopArrow(cx: number, cy: number, nx: number, ny: number, hexR: number): number[] {
+  const d = Math.hypot(nx - cx, ny - cy) || 1;
+  const ux = (nx - cx) / d;
+  const uy = (ny - cy) / d;
+  const tip = hexR * ARROW_TIP;
+  const base = hexR * ARROW_BASE;
+  const half = hexR * ARROW_HALF;
+  return [
+    cx + ux * tip, cy + uy * tip,
+    cx + ux * base - uy * half, cy + uy * base + ux * half,
+    cx + ux * base + uy * half, cy + uy * base - ux * half,
+  ];
 }
 
 // ── Framing ──
@@ -116,25 +85,18 @@ export function doorAt(doors: readonly DoorSlot[], x: number, y: number, doorR: 
 export interface FocusFrame { scale: number; cx: number; cy: number }
 
 /**
- * The camera frame that shows the focused hex (pointy-top, radius `hexR`) and
- * its doors as large as fits in the screen area the panel leaves free, centred
- * in that area. `cx/cy` is the map point for the SCREEN centre (what
+ * The camera frame that shows the focused hex (pointy-top, radius `hexR`) as
+ * large as fits in the screen area the panel leaves free, centred in that
+ * area. `cx/cy` is the map point for the SCREEN centre (what
  * `Camera.glideTo` takes), so the hex lands in the middle of the free area.
  */
 export function focusFrame(
-  hexX: number, hexY: number, hexR: number, doors: readonly DoorSlot[],
+  hexX: number, hexY: number, hexR: number,
   screenW: number, screenH: number, insets: ScreenInsets,
 ): FocusFrame {
-  let ex = hexR * (Math.sqrt(3) / 2);
-  let ey = hexR;
-  const doorR = hexR * DOOR_SIZE;
-  for (const d of doors) {
-    ex = Math.max(ex, Math.abs(d.x - hexX) + doorR);
-    ey = Math.max(ey, Math.abs(d.y - hexY) + doorR);
-  }
   const freeW = Math.max(1, screenW - insets.right);
   const freeH = Math.max(1, screenH - insets.top - insets.bottom);
-  const scale = Math.min(FOCUS_MAX_SCALE, FOCUS_FIT * Math.min(freeW / (2 * ex), freeH / (2 * ey)));
+  const scale = Math.min(FOCUS_MAX_SCALE, FOCUS_FIT * Math.min(freeW / (Math.sqrt(3) * hexR), freeH / (2 * hexR)));
   // The free area's centre sits off the screen centre by this many px.
   const offX = screenW / 2 - freeW / 2;
   const offY = screenH / 2 - (insets.top + freeH / 2);
@@ -186,19 +148,25 @@ export function focusStep(s: FocusState, e: FocusEvent): { state: FocusState; gl
   }
 }
 
-// ── Taps ──
+// ── Taps and hover ──
 
 export type FocusTap = { kind: 'select'; key: string } | { kind: 'deselect' } | { kind: 'none' };
 
 /**
  * What a confirmed tap does. Without a focus it is the plain map (a hex
- * selects, empty space deselects). In focus a door hops to its sector, the
- * focused hex itself does nothing (its panel is already open), and anything
- * else backs out.
+ * selects, empty space deselects). In focus a lit neighbour hops to its
+ * sector, the focused hex itself does nothing (its panel is already open),
+ * and anything else backs out.
  */
-export function focusTapResult(focusKey: string | null, doorKey: string | null, hexKey: string | null): FocusTap {
+export function focusTapResult(focusKey: string | null, neighbours: readonly string[], hexKey: string | null): FocusTap {
   if (focusKey === null) return hexKey !== null ? { kind: 'select', key: hexKey } : { kind: 'deselect' };
-  if (doorKey !== null) return { kind: 'select', key: doorKey };
   if (hexKey === focusKey) return { kind: 'none' };
+  if (hexKey !== null && neighbours.includes(hexKey)) return { kind: 'select', key: hexKey };
   return { kind: 'deselect' };
+}
+
+/** No hover tooltip while the camera glides, nor over the focused hex (the
+ *  panel already says it all and the tooltip would cover the hex). */
+export function focusHidesHover(phase: FocusPhase, focusKey: string | null, hoverKey: string): boolean {
+  return phase === 'in' || phase === 'out' || (phase === 'focused' && hoverKey === focusKey);
 }

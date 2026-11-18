@@ -120,7 +120,7 @@ describe('serverHealthPoller', () => {
   // Regression lock (plan squishy-canyon): the server's /healthz gained an
   // optional `persistence` ops block (R4). The schema is `.strict()`, so before
   // it was declared optional the extra key failed safeParse → playersOnline/
-  // ready silently dropped → meta-landing "—" + join CTA stuck disabled (PR #19
+  // ready silently dropped → landing "—" + join CTA stuck disabled (PR #19
   // e2e-smoke failures). A body WITH persistence must still parse healthy.
   it('parses a /healthz body that includes the optional persistence block', async () => {
     const withPersistence = {

@@ -22,7 +22,7 @@ import {
 function resetForTest(): void {
   // Restore a representative baseline so per-test mutations don't leak.
   useUIStore.setState({
-    phase: 'meta',
+    phase: 'galaxy-map',
     connectionStatus: 'disconnected',
     localShipInstanceId: null,
     rendererFirstFrameRendered: false,
@@ -138,7 +138,7 @@ describe('computeIsLoadingActive — phase × ready × kill switch decision matr
     expect(computeIsLoadingActive(useUIStore.getState())).toBe(true);
   });
 
-  it.each(['meta', 'auth', 'galaxy-map', 'local'] as const)(
+  it.each(['auth', 'galaxy-map', 'local'] as const)(
     'phase==="%s" → loading NOT active (curtain only paints in game/connecting)',
     (p) => {
       useUIStore.setState({ phase: p });

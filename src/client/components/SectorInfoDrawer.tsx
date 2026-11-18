@@ -1,32 +1,37 @@
-import { useRef } from 'react';
-import { Box, Button, Drawer, IconButton, Portal, Stack, Typography } from '@mui/material';
+import { useEffect, useRef, useState } from 'react';
+import { Box, Button, Drawer, Portal, Typography } from '@mui/material';
 import { useMediaQuery } from '@mui/material';
-import CloseIcon from '@mui/icons-material/Close';
-import { getShipKind } from '../../shared-types/shipKinds';
-import { ShipSilhouette } from '../render/shipShapeSvg';
-import { EntityBadge } from './EntityBadge';
-import { entityLabel, type EntityKind } from '../render/entityVisuals';
 import { Z } from '../layout/zIndex';
 import type { SectorTooltipData, SectorShipEntry } from './galaxyTooltip';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot';
 import { isTouchDevice } from '../input/TouchInput';
-import { focusPanelDock, SHEET_FRAC_LANDSCAPE, SHEET_FRAC_PORTRAIT, SHEET_MAX_H } from '../render/galaxy/galaxyFocus';
-import { SectorHistorySparkline } from './SectorHistorySparkline';
+import {
+  focusPanelDock, PANEL_RIGHT_W, PANEL_TOUCH_FRAC, PANEL_TOUCH_MIN_W, PANEL_TOUCH_TOP, SHEET_FRAC_PORTRAIT, SHEET_MAX_H,
+} from '../render/galaxy/galaxyFocus';
+import { useSectorHistory } from './SectorHistorySparkline';
+import { ControlSection, MONO, RecentSection, SectorStats } from './sectorPanelParts';
 
 /**
  * Equinox Phase 9 (item 2) — the sector info DRAWER. Replaces the old fixed
- * popover (the desktop hover tooltip is separate + kept). Docks RIGHT on a
- * landscape desktop and as a BOTTOM sheet on a phone or in portrait (the map's
- * focus view frames the sector in the space left: `focusPanelDock`). OVERLAYS the
+ * popover (the desktop hover tooltip is separate + kept). Docks RIGHT on any
+ * landscape screen (narrower on a phone, below its top-right toolbar) and as a
+ * BOTTOM sheet upright (the map's focus view frames the sector in the space
+ * left: `focusPanelDock` / `focusPanelInsets`). OVERLAYS the
  * map without a scrim (MUI `persistent` variant — NOT a `temporary`/Modal
  * drawer, so the map behind stays interactive + re-selectable, and there are no
  * global touch listeners → the SwipeableDrawer RTT regression is avoided). A
  * scoped swipe on the grab handle closes it (deselects the sector); the body
- * scrolls on overflow; a fixed action bar (red ✕ + a wide Join/Warp CTA) sits
+ * scrolls on overflow; a fixed action bar (Join / Spectate, or Warp) sits
  * outside the scroll.
  *
- * Presentational: GalaxyPickerChrome owns the data (the same pure
- * buildSectorTooltip / shipsInSector the popover used) + the spawn/warp wiring.
+ * Layout, top to bottom: "◀ Galaxy" back control, name, "HELD BY … · UPDATED
+ * n S AGO"; CONTROL (bar, gaining line, last-hour sparkline); IN THE SECTOR
+ * (2×2 live counts); RECENT (losses, last change of hands, your ships). The
+ * sections live in `sectorPanelParts.tsx`.
+ *
+ * GalaxyPickerChrome owns the feed data (the pure buildSectorTooltip /
+ * shipsInSector) + the spawn/warp wiring; the drawer fetches the sector's
+ * history itself (`useSectorHistory`, once per sector opened).
  */
 
 const SWIPE_CLOSE_PX = 56; // swipe distance (in the dock-out direction) that closes
@@ -51,7 +56,7 @@ const PAPER_COMMON = {
 
 const PAPER_RIGHT = {
   ...PAPER_COMMON,
-  width: 296,
+  width: PANEL_RIGHT_W,
   maxWidth: '92vw',
   top: 'var(--app-bar-h, 48px)',
   // dvh tracks the VISIBLE viewport (mobile address/nav bars), so the panel
@@ -73,18 +78,29 @@ const PAPER_BOTTOM = {
   borderRadius: '10px 10px 0 0',
 } as const;
 
-/** Phone held sideways: the sheet takes half the (short) height. */
-const PAPER_SHEET_LANDSCAPE = { ...PAPER_BOTTOM, height: `min(${SHEET_FRAC_LANDSCAPE * 100}dvh, ${SHEET_MAX_H}px)` } as const;
+/** Phone held sideways: a narrow side panel (`focusPanelWidth`) that starts
+ *  below the top-right toolbar (full-screen chip), so the hex keeps the height. */
+const PAPER_RIGHT_TOUCH = {
+  ...PAPER_RIGHT,
+  width: `clamp(${PANEL_TOUCH_MIN_W}px, ${PANEL_TOUCH_FRAC * 100}vw, ${PANEL_RIGHT_W}px)`,
+  top: `${PANEL_TOUCH_TOP}px`,
+  height: `calc(100dvh - ${PANEL_TOUCH_TOP}px)`,
+} as const;
 
 const HEADER_SX = {
   display: 'flex',
-  alignItems: 'center',
+  alignItems: 'flex-start',
   justifyContent: 'space-between',
   px: 1.25,
-  pt: 0.5,
   pb: 0.5,
   gap: 1,
 } as const;
+
+const BACK_SX = {
+  p: 0, minWidth: 0, color: '#9aa0b4', fontSize: 9, fontWeight: 700, letterSpacing: 1, fontFamily: MONO,
+  textTransform: 'uppercase', lineHeight: 1.6, '&:hover': { color: '#fff', bgcolor: 'transparent' },
+} as const;
+const META_SX = { color: '#8fe9c0', fontSize: 9, letterSpacing: 0.75, textTransform: 'uppercase', fontFamily: MONO } as const;
 
 const SCROLL_SX = {
   flex: 1,
@@ -115,29 +131,6 @@ const ACTIONBAR_SX = {
   flex: '0 0 auto',
 } as const;
 
-const SECTION_LABEL_SX = {
-  color: '#66ffcc',
-  fontSize: 9,
-  letterSpacing: 0.5,
-  textTransform: 'uppercase',
-  mt: 1,
-} as const;
-
-/** A breakdown / recent-activity row: the shared EntityBadge (shape + colour +
- *  cutout count — the game's visual language, identical to the galaxy-map count
- *  badges) followed by a plain-language label that explains it. */
-const BADGE_ROW_SX = { display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.4 } as const;
-const BADGE_LABEL_SX = { color: '#cfe', fontSize: 11, lineHeight: 1.3 } as const;
-
-const SHIP_CARD_SX = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 1,
-  p: 0.5,
-  border: '1px solid #2a3550',
-  borderRadius: 1,
-} as const;
-
 const HANDLE_WRAP_SX = {
   display: 'flex',
   justifyContent: 'center',
@@ -159,7 +152,9 @@ export interface SectorInfoDrawerProps {
   context: 'landing' | 'warp';
   warpable: boolean;
   currentSectorKey: string | null;
-  /** ✕ / swipe → deselect + close. */
+  /** When the galaxy feed last arrived (wall ms), for "UPDATED n S AGO"; null = not yet. */
+  updatedAtMs?: number | null;
+  /** "◀ Galaxy" / swipe → deselect + close (the focus view backs out). */
   onClose: () => void;
   /** Resume one of the player's existing ships in this sector. */
   onSpawnExistingShip: (shipId: string, sectorKey: string) => void;
@@ -177,29 +172,6 @@ export interface SectorInfoDrawerProps {
   onSpectate?: (sectorKey: string) => void;
 }
 
-function kindLabel(k: string): string {
-  return k.charAt(0).toUpperCase() + k.slice(1);
-}
-
-/** A badge + label row in the SHARED entity visual language (EntityBadge = solid
- *  shape + colour + cutout count). `labelSuffix` appends e.g. " destroyed" for the
- *  recent-activity rows. The label is conditionally pluralised by entityLabel. */
-function BadgeRow({ kind, count, labelSuffix = '' }: { kind: EntityKind; count: number; labelSuffix?: string }): JSX.Element {
-  return (
-    <Box sx={BADGE_ROW_SX}>
-      <EntityBadge kind={kind} count={count} size={18} />
-      <Typography sx={BADGE_LABEL_SX}>{entityLabel(kind, count)}{labelSuffix}</Typography>
-    </Box>
-  );
-}
-
-/** Hull-bar colour by fraction: green (healthy) → amber → red (critical). */
-function hullColor(frac: number): string {
-  if (frac > 0.5) return '#6bff9b';
-  if (frac > 0.2) return '#ffd479';
-  return '#ff6b6b';
-}
-
 export function SectorInfoDrawer({
   open,
   sectorKey,
@@ -215,10 +187,22 @@ export function SectorInfoDrawer({
   onWarp,
   onSpectate,
   warpBlockedHint = null,
+  updatedAtMs = null,
 }: SectorInfoDrawerProps): JSX.Element {
   const portrait = useMediaQuery('(orientation: portrait)');
-  const anchor = focusPanelDock(portrait, isTouchDevice());
+  const anchor = focusPanelDock(portrait);
   const isWarp = context === 'warp';
+  // A phone (sideways side panel or upright sheet) gets the tighter layout.
+  const compact = anchor === 'bottom' || isTouchDevice();
+  const samples = useSectorHistory(open ? sectorKey : null);
+  // Wall clock for the relative times, ticking once a second while open.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!open) return undefined;
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [open]);
 
   // Scoped swipe-to-close on the grab handle (no global listeners — avoids the
   // SwipeableDrawer RTT regression). The Paper FOLLOWS the finger in the
@@ -263,7 +247,6 @@ export function SectorInfoDrawer({
     if (p) { p.style.transition = ''; p.style.transform = ''; }
   };
 
-  const total = tip ? tip.players + tip.enemies + tip.neutrals + tip.structures : 0;
 
   return (
     // Portal to <body> so the drawer escapes the host chrome / GameSurface
@@ -279,7 +262,7 @@ export function SectorInfoDrawer({
       data-testid="sector-info-drawer"
       PaperProps={{
         ref: paperRef,
-        sx: anchor === 'right' ? PAPER_RIGHT : portrait ? PAPER_BOTTOM : PAPER_SHEET_LANDSCAPE,
+        sx: anchor === 'bottom' ? PAPER_BOTTOM : isTouchDevice() ? PAPER_RIGHT_TOUCH : PAPER_RIGHT,
         // E2E hook for the live selection.
         ['data-drawer-sector' as string]: sectorKey ?? '',
       }}
@@ -318,21 +301,30 @@ export function SectorInfoDrawer({
         <>
           <Box sx={HEADER_SX}>
             <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ color: '#dffff0', fontSize: 14, fontWeight: 700, lineHeight: 1.15 }} noWrap>
+              {/* Back out of the focus view (the drawer close: deselects). */}
+              <Button
+                size="small"
+                disableRipple
+                data-testid="sector-drawer-close"
+                aria-label="Back to the galaxy"
+                onClick={onClose}
+                sx={BACK_SX}
+              >
+                ◀ Galaxy
+              </Button>
+              <Typography sx={{ color: '#dffff0', fontSize: compact ? 16 : 20, fontWeight: 700, lineHeight: 1.15 }} noWrap>
                 {tip.name}
               </Typography>
-              <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                {/* Everything is NEUTRAL today (no capture/faction mechanics — Phase 9
-                    item 1); the server's region `owner` is cosmetic-static. Show
-                    Neutral until real ownership exists, then switch to `tip.status`. */}
-                Neutral
+              <Typography data-testid="sector-drawer-meta" sx={META_SX}>
+                {tip.holderId !== null ? `Held by ${tip.faction}` : 'Unclaimed'}
+                {updatedAtMs !== null && ` · Updated ${Math.max(0, Math.round((nowMs - updatedAtMs) / 1000))} s ago`}
               </Typography>
             </Box>
             {recentCombat && (
               <Typography
                 data-testid="sector-drawer-combat-icon"
                 title="Recent combat"
-                sx={{ color: '#ff7043', fontSize: 14, flex: '0 0 auto' }}
+                sx={{ color: '#ff7043', fontSize: 14, flex: '0 0 auto', mt: 2 }}
               >
                 ⚔
               </Typography>
@@ -340,128 +332,19 @@ export function SectorInfoDrawer({
           </Box>
 
           <Box sx={SCROLL_SX}>
-            {/* Above-the-fold breakdown — the SHARED entity badges (same visual
-                language as the galaxy-map count badges) + plain-language labels
-                that explain each one. */}
-            {total > 0 ? (
-              <Stack spacing={0} sx={{ mt: 0.5 }} data-testid="sector-drawer-breakdown">
-                {tip.enemies > 0 && <BadgeRow kind="hostile" count={tip.enemies} />}
-                {tip.neutrals > 0 && <BadgeRow kind="neutral" count={tip.neutrals} />}
-                {tip.players > 0 && <BadgeRow kind="ship" count={tip.players} />}
-                {tip.structures > 0 && <BadgeRow kind="structure" count={tip.structures} />}
-              </Stack>
-            ) : (
-              <Typography sx={{ color: '#6b7280', fontSize: 10, mt: 0.5 }} data-testid="sector-drawer-breakdown">
-                No ships or structures here.
-              </Typography>
-            )}
-            {tip.event !== null && (
-              <Typography sx={{ color: '#ff9f43', fontSize: 10, mt: 0.5 }} data-testid="sector-drawer-event">
-                ⚑ Event: {tip.event}
-              </Typography>
-            )}
-            {tip.capital !== null && (
-              <Typography sx={{ color: '#9ec9ff', fontSize: 10, mt: 0.5 }} data-testid="sector-drawer-capital">
-                ⚓ Capital sighted: the {tip.capital}
-              </Typography>
-            )}
-            {tip.elite !== null && (
-              <Typography sx={{ color: '#ffc850', fontSize: 10, mt: 0.5 }} data-testid="sector-drawer-elite">
-                ★ Elite: {tip.elite}
-              </Typography>
-            )}
-            {tip.features.length > 0 && (
-              <Typography sx={{ color: '#7a8499', fontSize: 9, mt: 0.25, textTransform: 'capitalize' }}>
-                {tip.features.join(' · ')}
-              </Typography>
-            )}
-
-            <SectorHistorySparkline sectorKey={sectorKey} />
-
-            {/* Recent events (Equinox Phase 9 item 5) — same entity badges + labels. */}
-            <Typography sx={SECTION_LABEL_SX}>Recent activity</Typography>
-            {recentCombat && (recentCombat.shipsDestroyed > 0 || recentCombat.structuresDestroyed > 0) ? (
-              <Box data-testid="sector-drawer-recent">
-                {recentCombat.shipsDestroyed > 0 && (
-                  <BadgeRow kind="ship" count={recentCombat.shipsDestroyed} labelSuffix=" destroyed" />
-                )}
-                {recentCombat.structuresDestroyed > 0 && (
-                  <BadgeRow kind="structure" count={recentCombat.structuresDestroyed} labelSuffix=" destroyed" />
-                )}
-                <Typography sx={{ color: '#7a8499', fontSize: 8, mt: 0.4 }}>last 5 min</Typography>
-              </Box>
-            ) : (
-              <Typography data-testid="sector-drawer-recent" sx={{ color: '#6b7280', fontSize: 10, mt: 0.25 }}>
-                No recent activity
-              </Typography>
-            )}
-
-            {/* Ships in sector — per-ship cards. */}
-            <Typography sx={SECTION_LABEL_SX}>Your ships in sector</Typography>
-            {ships.length > 0 ? (
-              <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-                {ships.map((s) => {
-                  const kind = getShipKind(s.kind);
-                  const frac = kind.maxHealth > 0 ? Math.max(0, Math.min(1, s.health / kind.maxHealth)) : 0;
-                  const pct = Math.round(frac * 100);
-                  return (
-                  <Box key={s.shipId} sx={SHIP_CARD_SX} data-testid={`sector-drawer-ship-${s.shipId}`}>
-                    <Box sx={{ flex: '0 0 auto', lineHeight: 0 }}>
-                      <ShipSilhouette shape={kind.shape} size={28} />
-                    </Box>
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography sx={{ color: '#cfe', fontSize: 11, lineHeight: 1.1 }} noWrap>
-                        {kindLabel(s.kind)}
-                        {s.isActive ? ' · active' : ''}
-                      </Typography>
-                      {/* Hull bar (health / kind maxHealth) + last-known position. */}
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
-                        <Box sx={{ flex: 1, height: 4, borderRadius: 2, bgcolor: '#26304a', overflow: 'hidden' }}>
-                          <Box
-                            data-testid={`sector-drawer-hull-${s.shipId}`}
-                            data-hull-pct={pct}
-                            sx={{ width: `${pct}%`, height: '100%', bgcolor: hullColor(frac) }}
-                          />
-                        </Box>
-                        <Typography sx={{ color: '#8a93a8', fontSize: 8, flex: '0 0 auto' }}>{pct}%</Typography>
-                      </Box>
-                      <Typography sx={{ color: '#7a8499', fontSize: 8, lineHeight: 1.1 }} noWrap>
-                        ({Math.round(s.x)}, {Math.round(s.y)})
-                      </Typography>
-                    </Box>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      data-testid={`sector-drawer-spawn-${s.shipId}`}
-                      onClick={() => sectorKey && onSpawnExistingShip(s.shipId, sectorKey)}
-                      sx={{
-                        flex: '0 0 auto', color: '#cfe', borderColor: '#2a3550',
-                        fontSize: 10, py: 0.1, px: 1, textTransform: 'none',
-                        '&:hover': { borderColor: '#66ffcc' },
-                      }}
-                    >
-                      Spawn
-                    </Button>
-                  </Box>
-                  );
-                })}
-              </Stack>
-            ) : (
-              <Typography sx={{ color: '#6b7280', fontSize: 10, mt: 0.5 }}>None</Typography>
-            )}
+            <ControlSection tip={tip} samples={samples} compact={compact} />
+            <SectorStats tip={tip} compact={compact} />
+            <RecentSection
+              tip={tip}
+              recentCombat={recentCombat}
+              ships={ships}
+              nowMs={nowMs}
+              onSpawn={(shipId) => onSpawnExistingShip(shipId, sectorKey)}
+            />
           </Box>
 
-          {/* Fixed action bar — red ✕ + wide Join/Warp CTA. */}
+          {/* Fixed action bar — Join the fight + Spectate (or Warp here). */}
           <Box sx={ACTIONBAR_SX}>
-            <IconButton
-              size="small"
-              data-testid="sector-drawer-close"
-              aria-label="Close sector info"
-              onClick={onClose}
-              sx={{ flex: '0 0 auto', color: '#ff6b6b', border: '1px solid #5a2530', borderRadius: 1, '&:hover': { bgcolor: 'rgba(255,107,107,0.12)' } }}
-            >
-              <CloseIcon sx={{ fontSize: 18 }} />
-            </IconButton>
             {isWarp ? (
               warpable ? (
                 <Box sx={WARP_CELL_SX}>
@@ -497,7 +380,7 @@ export function SectorInfoDrawer({
                   onClick={() => sectorKey && onJoin(sectorKey)}
                   sx={{ flex: 1, bgcolor: '#00aa55', color: '#04140b', fontWeight: 700, fontSize: 12, '&:hover': { bgcolor: '#00cc66' } }}
                 >
-                  Join sector
+                  Join the fight
                 </Button>
                 {onSpectate && (
                   // Equinox Phase 5 (WS-3) — join as a SPECTATOR, skipping the

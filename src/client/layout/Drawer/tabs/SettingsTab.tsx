@@ -68,7 +68,7 @@ export function SettingsTab(): JSX.Element {
   };
 
   const onReturnToMenu = (): void => {
-    setPhase('meta');
+    setPhase('galaxy-map');
     setDrawerOpen(false);
   };
 

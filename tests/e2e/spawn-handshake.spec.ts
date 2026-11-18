@@ -45,17 +45,11 @@ test.describe('spawn handshake — curtain must drop within a reasonable window'
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
-    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    // Living Galaxy P5 — the galaxy map is the landing screen on load (no meta CTA).
-    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
-
-    // Engineering test-sector path — deterministic, no Pixi click.
-    // Goes through the same handleSelectRoom flow as the galaxy-pick
-    // path; on the server the test-sector room is testMode=true but
-    // still hits the spawn-handshake onJoin code path (the joiner is
-    // still spawned with isActive=false unless a bypass is wired).
-    await page.locator('[data-testid="engineering-rooms-button"]').click();
-    await page.locator('[data-testid="engineering-room-test-sector"]').click();
+    // Dev test-sector by direct link (no homepage button) — deterministic,
+    // no Pixi click. On the server the test-sector room is testMode=true but
+    // still hits the spawn-handshake onJoin code path (the joiner is still
+    // spawned with isActive=false unless a bypass is wired).
+    await page.goto(`${BASE_URL}/?room=test-sector`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
     // Loading curtain is up: data-loading-active === "1".
     // HudTestAttributes is the always-mounted contract surface.

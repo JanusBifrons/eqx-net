@@ -26,7 +26,7 @@ function initials(displayName: string | null, email: string | null): string {
  * Logout button gated by a confirm dialog. Logged-out users get a small
  * "Sign in" CTA that routes back through the auth phase.
  *
- * Logout fires `clearAuth()` AND `setPhase('meta')` explicitly — the App's
+ * Logout fires `clearAuth()` AND `setPhase('galaxy-map')` explicitly — the App's
  * passive `!user` useEffect only catches galaxy-map, so the in-game Logout
  * needs to drive the phase transition itself.
  */

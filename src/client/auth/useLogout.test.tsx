@@ -18,14 +18,14 @@ describe('useLogout', () => {
     useUIStore.setState({ phase: 'game', isDrawerOpen: true });
   });
 
-  it('clears auth, returns to meta, and closes the drawer in one call', () => {
+  it('clears auth, returns to the galaxy map, and closes the drawer in one call', () => {
     const { result } = renderHook(() => useLogout());
 
     act(() => result.current());
 
     expect(useAuthStore.getState().token).toBeNull();
     expect(useAuthStore.getState().user).toBeNull();
-    expect(useUIStore.getState().phase).toBe('meta');
+    expect(useUIStore.getState().phase).toBe('galaxy-map');
     expect(useUIStore.getState().isDrawerOpen).toBe(false);
   });
 

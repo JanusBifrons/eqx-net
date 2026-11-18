@@ -1,8 +1,10 @@
 import { getSector } from '../../core/galaxy/galaxy';
 import type { SectorFeature } from '../../core/galaxy/galaxy';
-import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
+import type { SectorControl, SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { RosterEntry } from '../state/storeTypes';
 import { factionDisplayName } from '../../shared-types/factions.js';
+import { splitChallenger } from '../render/galaxy/galaxyTerritories';
+import { NEUTRAL_OWNER } from '../render/galaxy/sectorOwnership';
 
 /**
  * Living Galaxy Phase 6 — the content of the galaxy-map sector tooltip, derived
@@ -16,6 +18,8 @@ export interface SectorTooltipData {
   /** Readable region/faction label (title-cased), never a raw id. */
   faction: string;
   status: 'Neutral' | 'Held' | 'Contested';
+  /** The power pushing in (the hex's split, `splitChallenger`), by name, or null. */
+  challenger: string | null;
   features: readonly SectorFeature[];
   players: number;
   enemies: number;
@@ -27,6 +31,12 @@ export interface SectorTooltipData {
   capital: string | null;
   /** Living World P4b — the title of the world event running here, or null. */
   event: string | null;
+  /** Holder owner id (livery colour lookups only, never shown), or null. */
+  holderId: string | null;
+  /** The split's challenger owner id (as `challenger`), or null. */
+  challengerId: string | null;
+  /** The feed's live control meter, or null when the feed has none. */
+  control: SectorControl | null;
 }
 
 /** Title-case a kebab/underscore/space region key for display. */
@@ -36,9 +46,28 @@ export interface SectorTooltipData {
  * sectors are neutral ground (the region is geography only).
  */
 function factionLabel(owner: string | null, region: string): string {
-  if (owner === 'robots') return 'Robot Dominion';
-  if (owner !== null) return factionDisplayName(owner) ?? titleCase(owner);
+  if (owner !== null) return powerName(owner);
   return `Neutral ground, ${titleCase(region)}`;
+}
+
+/** A power's display name from its owner id (never the raw id). */
+export function powerName(id: string): string {
+  if (id === 'robots') return 'Robot Dominion';
+  return factionDisplayName(id) ?? titleCase(id);
+}
+
+/**
+ * The owner line under a sector name (panel header, desktop tooltip). Reads
+ * the same feed fields the hex draws from: `owner` for the holder and
+ * `control` (via `splitChallenger`) for the split, so text and hex agree.
+ */
+export function ownerLine(tip: Pick<SectorTooltipData, 'faction' | 'status' | 'challenger'>): string {
+  const holder = tip.status === 'Neutral' ? 'Neutral' : tip.faction;
+  return tip.challenger !== null ? `${holder} · contested by ${tip.challenger}` : holder;
+}
+
+function challengerId(live: SectorLiveState | null): string | null {
+  return splitChallenger(live?.control, live?.owner?.factionId ?? NEUTRAL_OWNER);
 }
 
 function titleCase(s: string): string {
@@ -68,10 +97,12 @@ export function buildSectorTooltip(
       ? 'Contested'
       : 'Held'
     : 'Neutral';
+  const challenger = challengerId(live);
   return {
     name: sector.name,
     faction: factionLabel(live?.owner?.factionId ?? null, sector.region),
     status,
+    challenger: challenger !== null ? powerName(challenger) : null,
     features: sector.features,
     players: live?.players ?? 0,
     enemies: live?.enemies ?? 0,
@@ -80,6 +111,9 @@ export function buildSectorTooltip(
     elite: live?.elite ?? null,
     capital: live?.capital?.name ?? null,
     event: live?.event?.title ?? null,
+    holderId: live?.owner?.factionId ?? null,
+    challengerId: challenger,
+    control: live?.control ?? null,
   };
 }
 

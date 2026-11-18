@@ -23,7 +23,7 @@ import { wreckChildGeometry, wreckChildSeed, wreckResplitOptions, type WreckChil
 import { wreckCanResplit, wreckHullArea, wreckPieceIntegrity, wreckSalvageQty, WRECK_RESPLITS_PER_TICK } from '../../core/destruction/wreckIntegrity.js';
 import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
-import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
+import type { CapitalWreckDeps, LiveWreck, PieceKnock, WreckOrigin } from './capitalWreckTypes.js';
 import type { WreckPieceGeometry } from '../../core/destruction/wreckPieceFrame.js';
 import { killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import { wreckSourceOf, type WreckSource } from '../../core/destruction/wreckSource.js';
@@ -141,19 +141,22 @@ export function placeWreckPieces(
 
 /** The wreck state `WreckResplitter` touches, owned by `CapitalWreckSubsystem`. */
 export interface WreckResplitHost {
-  /** The FIFO a kind's pieces live in (capital or sub-cap) and its cap. */
-  fifo(capital: boolean): string[];
-  cap(capital: boolean): number;
+  /** The list a lineage's pieces live in (by origin, then capital or
+   *  sub-cap) and its cap (wreckFifos.ts: a battle FIFO's eviction cap, the
+   *  field list's re-split cap). */
+  fifo(capital: boolean, origin: WreckOrigin): string[];
+  cap(capital: boolean, origin: WreckOrigin): number;
   /** A free wreck id and a fresh piece-id serial. */
   newWreck(): [wreckId: number, serial: number];
   /** Track a spawned piece (its per-piece entry, FIFO slot and wreck). */
   addPiece(id: string, wreckId: number, entry: PieceKnock, fifo: string[]): void;
-  /** Track a new wreck: a child (its parent's child count goes up), or a
-   *  root (`parent` null: a mined-out rock's, rockCut.ts). */
-  addWreck(w: Omit<LiveWreck, 'root'>, parent: LiveWreck | null): void;
+  /** Track a new wreck: a child (its parent's child count goes up; it takes
+   *  its parent's root and origin), or a root (`parent` null: a mined-out
+   *  rock's, rockCut.ts; `origin` absent ⇒ battle). */
+  addWreck(w: Omit<LiveWreck, 'root' | 'origin'> & { origin?: WreckOrigin }, parent: LiveWreck | null): void;
   /** Remove a live piece (FIFO, body, its wreck's count). */
   dropPiece(id: string, fifo: string[]): void;
-  /** Evict the oldest pieces of one FIFO down to its cap (a ship death's path). */
+  /** Evict the oldest pieces of one BATTLE FIFO down to its cap (a ship death's path; field pieces never). */
   enforceCap(capital: boolean): void;
 }
 
@@ -199,12 +202,15 @@ export class WreckResplitter {
     }
     this.splitsThisTick++;
     const capital = src.profile.id === 'capital';
-    const fifo = this.h.fifo(capital);
-    if (fifo.length - 1 + rs.fracture.maxPieces <= this.h.cap(capital) && wreckCanResplit(src, parent.area, parent.radius)) {
+    // The lineage's own list and cap: a battle piece counts battle pieces
+    // only; a field piece `fieldLive - 1 + maxPieces <= FIELD_LIVE_CAP`.
+    const fifo = this.h.fifo(capital, w.origin);
+    const cap = this.h.cap(capital, w.origin);
+    if (fifo.length - 1 + rs.fracture.maxPieces <= cap && wreckCanResplit(src, parent.area, parent.radius)) {
       const plan = planWreckResplit(w.chain, parent, pose, hitX, hitY, dirX, dirY, weaponId, k.burn, tick);
       // v12: several beams' cuts may leave more children than one fracture's
       // cap; the FIFO must still hold them all.
-      if (plan.children.length >= 2 && fifo.length - 1 + plan.children.length <= this.h.cap(capital)
+      if (plan.children.length >= 2 && fifo.length - 1 + plan.children.length <= cap
         && this.spawnChildren(id, k, wreckId, w, plan, fifo, tick)) return true;
     }
     if (this.d.dropSalvage === undefined) {

@@ -77,7 +77,7 @@ In-game React overlays are positioned via **named slot anchors** ([layout/](layo
 - **Structure placement:** only the discrete `placementKind` lives in Zustand; the ghost pose rides `RenderMirror.pendingPlacementPreview`; pointer→world conversion stays in the renderer (it owns the `Camera`) and returns via `RendererFeedback`. Desktop click and touch Confirm share `commitChosenPlacement`; `contextmenu` cancels only for a mouse gesture. Structures draw `structureRenderVerts` (the collider's Y-flip), never raw points. Detail: [structures](../../docs/architecture/structures-and-power-grid.md).
 - **Grid render:** the placement preview runs the server's `canConnect`, allocates nothing per frame, and draws no line to another owner's structure; an owner shows as "you", their display name or "Unknown", never a raw playerId. Detail: same guide.
 - **`useIsCompact()` and `isTouchDevice()` are independent axes** — don't fuse them.
-- **Phase machine lives in Zustand:** the initial phase is `galaxy-map`; spawning is auth-gated on the sector pick.
+- **Phase machine lives in Zustand:** the galaxy map (`galaxy-map`) is the homepage and the only landing; there is no splash phase. A tap opens a sector for anyone; joining is auth-gated on "Join the fight" (`GalaxyPickerChrome` `gateJoin`).
 
 ## Audio
 

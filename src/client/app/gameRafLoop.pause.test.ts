@@ -29,7 +29,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const storeState = vi.hoisted(() => ({
   clientReadySent: false,
   loadingCosmeticOnly: false,
-  phase: 'game' as 'meta' | 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local',
+  phase: 'game' as 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local',
   connectionStatus: 'connected' as 'connecting' | 'connected' | 'disconnected' | 'error',
   localShipInstanceId: 'ship-1' as string | null,
   rendererFirstFrameRendered: true,

@@ -5,9 +5,9 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  * Regression lock for the Phase 1 (2026-05-12) galaxy polish.
  *
  * SHIPPED BEHAVIOUR THIS SPEC LOCKS:
- *  1. The post-auth Galaxy Map screen (`galaxy-map-screen`) is NOT the
- *     marketing landing — no "Equinox" banner / hero copy. That belongs
- *     to `MetaLandingScreen`, which is unmounted by phase='galaxy-map'.
+ *  1. The Galaxy Map screen (`galaxy-map-screen`, the homepage) carries no
+ *     old splash-style "Equinox" banner / hero copy over the map (the
+ *     standalone splash screen was deleted when the map became the homepage).
  *  (The former FullscreenCTA lock was retired when the component was
  *   deleted: full screen is offered only by FullscreenToggle, whose
  *   "Tap for full screen" label shows briefly when a phone turns sideways.)
@@ -40,15 +40,11 @@ test('galaxy-map-screen: no Equinox banner inside the spawn-mode landing', async
   await goToGalaxyMap(page);
 
   const screen = page.locator('[data-testid="galaxy-map-screen"]');
-  // The banner lives in `MetaLandingScreen` (h2 with the "Equinox" text).
-  // After phase advances to 'galaxy-map' the meta screen is unmounted, so
-  // the heading must not be present in the DOM at all.
+  // No splash heading (h2 "Equinox") over the map.
   await expect(
     screen.locator('h2', { hasText: 'Equinox' }),
     'Equinox marketing banner must not appear on the galaxy-map screen. ' +
-      'If you see this fail, the meta-landing hero copy has leaked into the ' +
-      'post-auth landing — check `MetaLandingScreen` mount conditions or ' +
-      'any new <Typography variant="h2"> added under `GalaxyOverviewScreen` (spawn mode).',
+      'Check any new <Typography variant="h2"> added under `GalaxyPickerChrome`.',
   ).toHaveCount(0);
 
   // The body text inside index.html `<title>Equinox</title>` is fine —
@@ -57,6 +53,6 @@ test('galaxy-map-screen: no Equinox banner inside the spawn-mode landing', async
   expect(
     innerText.toLowerCase(),
     'Galaxy-map-screen body must not contain "multiplayer space combat" tagline. ' +
-      'Source of regression: meta-landing tagline copied into spawn mode.',
+      'Source of regression: the old splash tagline copied onto the map.',
   ).not.toContain('multiplayer space combat');
 });

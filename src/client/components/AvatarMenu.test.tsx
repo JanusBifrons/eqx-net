@@ -6,7 +6,7 @@
  *     and does NOT log out;
  *   - "Logout" opens a confirm dialog and does NOT immediately clear auth
  *     (the confirm-dialog gate — user decision);
- *   - confirming clears auth and returns to the meta phase (real logout).
+ *   - confirming clears auth and returns to the galaxy map (real logout).
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -59,14 +59,14 @@ describe('AvatarMenu', () => {
     expect(useUIStore.getState().phase).toBe('game');
   });
 
-  it('confirming logout clears auth and returns to the meta phase', () => {
+  it('confirming logout clears auth and returns to the galaxy map', () => {
     render(<AvatarMenu onProfileClick={() => {}} />);
     fireEvent.click(screen.getByTestId('avatar-menu-trigger'));
     fireEvent.click(screen.getByTestId('avatar-menu-logout'));
     fireEvent.click(screen.getByTestId('avatar-logout-confirm-button'));
     expect(useAuthStore.getState().user).toBeNull();
     expect(useAuthStore.getState().token).toBeNull();
-    expect(useUIStore.getState().phase).toBe('meta');
+    expect(useUIStore.getState().phase).toBe('galaxy-map');
   });
 
   it('mobile variant renders the badge trigger testid', () => {

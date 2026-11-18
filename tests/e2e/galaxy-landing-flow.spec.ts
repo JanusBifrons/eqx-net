@@ -3,14 +3,13 @@ import type { Page } from '@playwright/test';
 import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
- * Living Galaxy P5 — landing-flow merge regression locks.
+ * The galaxy map is the homepage — regression locks.
  *
- * The live galaxy map is now the FIRST screen on load (initial phase
- * 'galaxy-map'); the standalone "Join the fight!" MetaLandingScreen is retired
- * from the default path. Spawning is auth-gated ON THE PICK: a logged-out pilot
- * can browse the map freely, but picking a sector routes through the auth flow
- * and, on return, the picker auto-opens for the STASHED sector (no re-tap).
- * Deep-links (?room=/?galaxy=) still skip straight to the game.
+ * The live galaxy map is the FIRST screen on load for every visitor (initial
+ * phase 'galaxy-map'; there is no other landing screen). A logged-out visitor
+ * can tap any sector and see its focus view; login is asked for only on
+ * "Join the fight", and on return the ship picker opens for the STASHED sector
+ * (no re-tap). Deep-links (?room=/?galaxy=) still skip straight to the game.
  */
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
@@ -31,8 +30,6 @@ const pickSector = (page: Page, key = 'sol-prime'): Promise<void> =>
 test('map-on-load: the living galaxy map is the first screen, with folded landing info', async ({ page }) => {
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
-  // The retired MetaLandingScreen is out of the default load path.
-  await expect(page.locator('[data-testid="meta-landing"]')).toHaveCount(0);
   // Folded landing info (live player count) is surfaced over the map.
   await expect(page.locator('[data-testid="galaxy-landing-player-count"]')).toBeVisible();
 });
@@ -63,31 +60,34 @@ test('deep-link ?room= still skips straight to the game', async ({ page }) => {
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toHaveCount(0);
 });
 
-test.describe('logged-out (auth-gated pick)', () => {
+test.describe('logged-out (auth-gated Join the fight)', () => {
   // Clean, logged-out context — overrides the global pre-auth storageState.
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test('picking a sector while logged-out routes to the auth flow', async ({ page }) => {
+  test('a logged-out tap opens the sector; only Join the fight asks for login', async ({ page }) => {
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
     await waitForGalaxyPickHook(page);
     await pickSector(page);
-    // The auth flow (LoginPage "Continue as guest") — NOT the ship picker.
+    // The tap shows the sector (no login wall)...
+    await expect(page.getByTestId('sector-drawer-join')).toHaveText(/Join the fight/, { timeout: 8_000 });
+    await expect(page.locator('text=Continue as guest')).toHaveCount(0);
+    // ...and Join the fight goes to the auth flow, NOT the ship picker.
+    await page.getByTestId('sector-drawer-join').click();
     await expect(page.locator('text=Continue as guest')).toBeVisible({ timeout: 8_000 });
     await expect(page.getByTestId('ship-picker-modal')).toHaveCount(0);
   });
 
-  test('after auth (guest), the picker auto-opens for the stashed sector', async ({ page }) => {
+  test('after auth (guest), the ship picker opens for the stashed sector', async ({ page }) => {
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
     await waitForGalaxyPickHook(page);
     await pickSector(page);
-    await page.locator('text=Continue as guest').click();
-    // Back on the map; the popover auto-opens for the stashed sector (no re-tap);
-    // "Join the fight" then opens the ship picker (Equinox Phase 7 / Item 4).
-    await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 10_000 });
     await page.getByTestId('sector-drawer-join').click();
-    await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
+    await page.locator('text=Continue as guest').click();
+    // Back on the map, the Join they pressed carries on: the ship picker opens
+    // for the stashed sector with no re-tap and no second Join.
+    await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 10_000 });
   });
 
   /**
@@ -102,8 +102,11 @@ test.describe('logged-out (auth-gated pick)', () => {
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
     await waitForGalaxyPickHook(page);
     await pickSector(page);
+    await page.getByTestId('sector-drawer-join').click();
     await page.locator('text=Continue as guest').click();
-    await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId('ship-picker-close').click();
+    await expect(page.getByTestId('ship-picker-modal')).toHaveCount(0);
     // A second pick, made by the guest themselves. A DIFFERENT sector: re-tapping
     // the sector whose drawer is open closes it by design, so picking sol-prime
     // again raced the close against the Join click (flaked on CI: "element was

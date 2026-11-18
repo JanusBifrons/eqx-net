@@ -1,55 +1,49 @@
-import { Container, Graphics, Text, TextStyle } from 'pixi.js';
-import { axialToPixel, getSector } from '@core/galaxy/galaxy';
+import { Container, Graphics } from 'pixi.js';
+import { axialToPixel, getSector, GALAXY_SECTORS } from '@core/galaxy/galaxy';
 import type { Camera } from '../worker/Camera';
 import { hexFlat } from './galaxyHexDraw';
-import { factionBorderColor, factionColor, mixColor } from './galaxyTerritories';
+import { factionBorderColor } from './galaxyTerritories';
 import {
-  DOOR_SIZE,
   FOCUS_GLIDE_MS,
   FOCUS_IDLE,
-  doorAt,
   focusFrame,
+  focusHidesHover,
   focusPanelDock,
   focusPanelInsets,
   focusStep,
   focusTapResult,
-  layoutDoors,
-  type DoorSlot,
+  hopArrow,
   type FocusEvent,
   type FocusFrame,
   type FocusState,
   type FocusTap,
 } from './galaxyFocus';
 
-/** Veil over the rest of the map while a sector is in focus (backdrop colour). */
+/** Veil over the sectors that are neither focused nor a hop target. */
 const VEIL_COLOR = 0x05070d;
 const VEIL_ALPHA = 0.74;
 /** Veil fade rate (alpha per ms) — reaches full in about the glide time. */
 const VEIL_RATE = VEIL_ALPHA / 450;
-/** How far the veil reaches round the focused hex (map px; covers the cluster). */
-const VEIL_REACH = 6000;
-const DOOR_LABEL_FONT = 28;
-const DOOR_LABEL_SCALE = 0.22;
-const COLOR_DOOR_LABEL = 0xdffff0;
-const COLOR_LINK = 0x8fe9c0;
-
-interface DoorSprite { g: Graphics; label: Text }
+/** A lit neighbour's edge (map px; the camera zooms it with the hex). */
+const LIT_EDGE_W = 2.2;
 
 /**
  * The Pixi side of the galaxy map FOCUS VIEW (decisions in `galaxyFocus.ts`).
  * Owned by `GalaxyMapLayer`: it drives the layer's existing pan/zoom `Camera`
- * with `glideTo` (centre + zoom), veils the rest of the map, and draws the
- * focused sector's linked neighbours as tappable door hexes. Everything is
- * redrawn on a focus change only; the per-frame `tick` just fades the veil
- * and watches for the glide to land, and does nothing at all while idle.
+ * with `glideTo` (centre + zoom), veils every sector except the focused one
+ * and its linked neighbours, and lights those neighbours (a bright edge in the
+ * owner's border colour plus an arrow on the shared edge) as hop targets.
+ * Everything is redrawn on a focus change only; the per-frame `tick` just fades
+ * the veil and watches for the glide to land, and does nothing at all while idle.
  */
 export class GalaxyFocusView {
   private state: FocusState = FOCUS_IDLE;
-  private doors: DoorSlot[] = [];
-  private readonly doorSprites: DoorSprite[] = [];
+  private neighbours: string[] = [];
+  private readonly litSprites: Graphics[] = [];
   private readonly veil = new Graphics();
-  private readonly doorLayer = new Container();
-  private readonly flat: number[];
+  private readonly litLayer = new Container();
+  private readonly veilFlat: number[];
+  private readonly litFlat: number[];
   private screenW = 0;
   private screenH = 0;
   private touch = false;
@@ -62,11 +56,12 @@ export class GalaxyFocusView {
     /** Live owner of a sector (the layer's `resolveSectorOwner`). */
     private readonly ownerOf: (key: string) => string,
   ) {
-    this.flat = hexFlat(hexR * 1.04);
+    this.veilFlat = hexFlat(hexR * 1.02);
+    this.litFlat = hexFlat(hexR * 0.97);
     this.veil.alpha = 0;
     this.veil.visible = false;
-    this.doorLayer.visible = false;
-    root.addChild(this.veil, this.doorLayer);
+    this.litLayer.visible = false;
+    root.addChild(this.veil, this.litLayer);
   }
 
   /** The focused sector (null when idle or backing out). */
@@ -90,7 +85,7 @@ export class GalaxyFocusView {
     this.state = FOCUS_IDLE;
     this.veil.alpha = 0;
     this.veil.visible = false;
-    this.doorLayer.visible = false;
+    this.litLayer.visible = false;
   }
 
   /** A pointer went down: a drag or pinch mid-glide stops the glide there. */
@@ -102,13 +97,13 @@ export class GalaxyFocusView {
   }
 
   /** Resolve a confirmed tap (`hexKey` = the layer's own hit test). */
-  tap(screenX: number, screenY: number, hexKey: string | null): FocusTap {
-    let door: string | null = null;
-    if (this.state.key !== null && this.doorLayer.visible) {
-      const s = this.root.scale.x;
-      if (s !== 0) door = doorAt(this.doors, (screenX - this.root.x) / s, (screenY - this.root.y) / s, this.hexR * DOOR_SIZE);
-    }
-    return focusTapResult(this.state.key, door, hexKey);
+  tap(hexKey: string | null): FocusTap {
+    return focusTapResult(this.state.key, this.neighbours, hexKey);
+  }
+
+  /** Hide the hover tooltip for this hex? (gliding, or the focused hex) */
+  hidesHover(hoverKey: string): boolean {
+    return focusHidesHover(this.state.phase, this.state.key, hoverKey);
   }
 
   /** The screen changed size (the layer has just re-seeded its camera):
@@ -121,9 +116,9 @@ export class GalaxyFocusView {
     this.glideToKey(1);
   }
 
-  /** The feed changed owners: recolour the doors. */
+  /** The feed changed owners: recolour the lit neighbours. */
   refresh(): void {
-    if (this.state.key !== null) this.drawDoors(this.state.key);
+    if (this.state.key !== null) this.drawLit(this.state.key);
   }
 
   /** Per frame (selector map only). Allocates nothing; idle does nothing. */
@@ -135,16 +130,16 @@ export class GalaxyFocusView {
     const a = this.veil.alpha;
     const step = this.reducedMotion ? 1 : VEIL_RATE * dtMs;
     this.veil.alpha = want > a ? Math.min(want, a + step) : Math.max(want, a - step);
-    this.doorLayer.alpha = this.veil.alpha / VEIL_ALPHA;
+    this.litLayer.alpha = this.veil.alpha / VEIL_ALPHA;
     if (this.state.phase === 'idle' && this.veil.alpha === 0) {
       this.veil.visible = false;
-      this.doorLayer.visible = false;
+      this.litLayer.visible = false;
     }
   }
 
-  /** DEV/E2E: the focus phase, sector and door keys. */
-  debug(): { phase: string; key: string | null; doors: string[] } {
-    return { phase: this.state.phase, key: this.state.key, doors: this.doors.map((d) => d.key) };
+  /** DEV/E2E: the focus phase, sector and its lit (hop target) neighbours. */
+  debug(): { phase: string; key: string | null; neighbours: string[] } {
+    return { phase: this.state.phase, key: this.state.key, neighbours: this.neighbours.slice() };
   }
 
   private apply(e: FocusEvent): void {
@@ -164,8 +159,9 @@ export class GalaxyFocusView {
     const sec = key !== null ? getSector(key) : undefined;
     if (!sec || this.screenW === 0 || this.screenH === 0) return;
     const p = axialToPixel(sec.hex, this.hexR);
-    const insets = focusPanelInsets(focusPanelDock(this.screenH > this.screenW, this.touch), this.screenW, this.screenH);
-    const f = focusFrame(p.x, p.y, this.hexR, this.doors, this.screenW, this.screenH, insets);
+    const dock = focusPanelDock(this.screenH > this.screenW);
+    const insets = focusPanelInsets(dock, this.screenW, this.screenH, this.touch);
+    const f = focusFrame(p.x, p.y, this.hexR, this.screenW, this.screenH, insets);
     this.camera.glideTo(f.cx, f.cy, ms, f.scale);
   }
 
@@ -174,85 +170,62 @@ export class GalaxyFocusView {
     return { scale: this.root.scale.x, cx: c.x, cy: c.y };
   }
 
-  /** Veil with a hole for the focused hex, then its doors. */
+  /** Veil every sector but the focused one and its linked neighbours, then
+   *  light the neighbours. (Focus change only — not per frame.) */
   private drawFocus(key: string): void {
     const sec = getSector(key);
     if (!sec) return;
-    const p = axialToPixel(sec.hex, this.hexR);
+    this.neighbours = sec.neighbours.filter((k) => getSector(k) !== undefined);
     const v = this.veil;
     v.clear();
-    v.rect(p.x - VEIL_REACH, p.y - VEIL_REACH, VEIL_REACH * 2, VEIL_REACH * 2).fill(VEIL_COLOR);
-    v.position.set(0, 0);
-    const hole: number[] = [];
-    for (let k = 0; k < this.flat.length; k += 2) hole.push(this.flat[k]! + p.x, this.flat[k + 1]! + p.y);
-    v.poly(hole).cut();
+    const hole: number[] = new Array(this.veilFlat.length);
+    for (const s of GALAXY_SECTORS) {
+      if (s.key === key || this.neighbours.includes(s.key)) continue;
+      const p = axialToPixel(s.hex, this.hexR);
+      for (let k = 0; k < this.veilFlat.length; k += 2) {
+        hole[k] = this.veilFlat[k]! + p.x;
+        hole[k + 1] = this.veilFlat[k + 1]! + p.y;
+      }
+      v.poly(hole).fill(VEIL_COLOR);
+    }
     v.visible = true;
-    this.drawDoors(key);
+    this.drawLit(key);
   }
 
-  private drawDoors(key: string): void {
+  /** Each neighbour: a bright edge in its owner's border colour and an arrow
+   *  on the edge it shares with the focused hex, pointing into it. */
+  private drawLit(key: string): void {
     const sec = getSector(key);
     if (!sec) return;
-    const p = axialToPixel(sec.hex, this.hexR);
-    const neighbours = [];
-    for (const nk of sec.neighbours) {
-      const ns = getSector(nk);
-      if (ns) neighbours.push({ key: nk, ...axialToPixel(ns.hex, this.hexR) });
-    }
-    this.doors = layoutDoors(p.x, p.y, this.hexR, neighbours);
-    const doorR = this.hexR * DOOR_SIZE;
-    const doorFlat = hexFlat(doorR);
-    for (let i = 0; i < this.doorSprites.length; i++) this.doorSprites[i]!.g.visible = this.doorSprites[i]!.label.visible = false;
-    for (let i = 0; i < this.doors.length; i++) {
-      const d = this.doors[i]!;
-      const sprite = this.doorSprite(i);
-      const owner = this.ownerOf(d.key);
-      const g = sprite.g;
+    const c = axialToPixel(sec.hex, this.hexR);
+    for (const g of this.litSprites) g.visible = false;
+    for (let i = 0; i < this.neighbours.length; i++) {
+      const ns = getSector(this.neighbours[i]!);
+      if (!ns) continue;
+      const n = axialToPixel(ns.hex, this.hexR);
+      const color = factionBorderColor(this.ownerOf(ns.key));
+      const g = this.litSprite(i);
       g.clear();
-      // The link: from the focused hex's rim out to the door.
-      const cos = Math.cos(d.angle);
-      const sin = Math.sin(d.angle);
-      const r0 = this.hexR * 0.9;
-      const r1 = Math.hypot(d.x - p.x, d.y - p.y) - doorR;
-      g.moveTo(p.x + cos * r0 - d.x, p.y + sin * r0 - d.y).lineTo(p.x + cos * r1 - d.x, p.y + sin * r1 - d.y)
-        .stroke({ color: COLOR_LINK, width: 1.5, alpha: 0.7 });
-      g.poly(doorFlat).fill(mixColor(VEIL_COLOR, factionColor(owner), 0.62)).stroke({ color: factionBorderColor(owner), width: 1.5 });
-      // A chevron on the far side: this way to that sector.
-      const tip = doorR * 1.32;
-      const base = doorR * 1.08;
-      const half = doorR * 0.22;
-      g.poly([cos * tip, sin * tip, cos * base - sin * half, sin * base + cos * half, cos * base + sin * half, sin * base - cos * half])
-        .fill(COLOR_LINK);
-      g.position.set(d.x, d.y);
+      g.poly(this.litFlat).stroke({ color, width: LIT_EDGE_W, alpha: 0.95 });
+      g.position.set(n.x, n.y);
+      const arrow = hopArrow(c.x, c.y, n.x, n.y, this.hexR);
+      for (let k = 0; k < arrow.length; k += 2) {
+        arrow[k] = arrow[k]! - n.x;
+        arrow[k + 1] = arrow[k + 1]! - n.y;
+      }
+      g.poly(arrow).fill(color);
       g.visible = true;
-      const label = sprite.label;
-      label.text = getSector(d.key)?.name ?? d.key;
-      label.position.set(d.x, d.y);
-      label.visible = true;
     }
-    this.doorLayer.visible = true;
+    this.litLayer.visible = true;
   }
 
-  private doorSprite(i: number): DoorSprite {
-    let s = this.doorSprites[i];
-    if (!s) {
-      const g = new Graphics();
-      const label = new Text({
-        text: '',
-        resolution: 2,
-        roundPixels: true,
-        style: new TextStyle({
-          fontFamily: 'sans-serif', fontSize: DOOR_LABEL_FONT, fontWeight: '700', fill: COLOR_DOOR_LABEL,
-          align: 'center', wordWrap: true, wordWrapWidth: (this.hexR * DOOR_SIZE * 1.6) / DOOR_LABEL_SCALE,
-          lineHeight: DOOR_LABEL_FONT * 1.05,
-        }),
-      });
-      label.anchor.set(0.5);
-      label.scale.set(DOOR_LABEL_SCALE);
-      this.doorLayer.addChild(g, label);
-      s = { g, label };
-      this.doorSprites.push(s);
+  private litSprite(i: number): Graphics {
+    let g = this.litSprites[i];
+    if (!g) {
+      g = new Graphics();
+      this.litLayer.addChild(g);
+      this.litSprites.push(g);
     }
-    return s;
+    return g;
   }
 }

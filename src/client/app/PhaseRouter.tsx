@@ -3,8 +3,8 @@
  *
  * Each phase renders a different shell (AppHeader + body + modal
  * pair). The 'game' phase mounts GameSurface; 'local' mounts the
- * diagnostic LocalSurface; 'meta' is the landing screen; 'auth' is
- * the login flow; 'galaxy-map' (default) is the hex picker, with a
+ * diagnostic LocalSurface; 'auth' is the login flow; 'galaxy-map'
+ * (default) is the homepage for every visitor (the hex map), with a
  * transient 'connecting' beat that paints a black background while
  * the global WarpScreen overlay does the show.
  *
@@ -17,15 +17,12 @@ import { AppHeader } from '../components/AppHeader';
 import { LoginPage } from '../components/LoginPage';
 import { ProfileModal } from '../components/ProfileModal';
 import { SettingsModal } from '../components/SettingsModal';
-import { MetaLandingScreen } from '../components/MetaLandingScreen';
 import { LocalSurface } from '../components/LocalSurface';
 import { MobileAvatarBadge } from '../layout/MobileAvatarBadge';
-import type { AuthUser } from '../../shared-types/auth.js';
 import type { Phase } from '../state/storeTypes';
 
 export interface PhaseRouterProps {
   phase: Phase;
-  user: AuthUser | null;
   profileOpen: boolean;
   setProfileOpen: (open: boolean) => void;
   settingsOpen: boolean;
@@ -41,9 +38,6 @@ export interface PhaseRouterProps {
    * element by App.
    */
   gameSurface: JSX.Element;
-  // 'meta' phase deps.
-  onJoinFromMeta: () => void;
-  onSelectLocal: () => void;
   // 'auth' phase deps.
   onAuthSuccess: () => void;
   /** "Continue as guest": remember the choice, then back to the map. */
@@ -52,8 +46,8 @@ export interface PhaseRouterProps {
 
 export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
   const {
-    phase, user, profileOpen, setProfileOpen, settingsOpen, openSettings, closeSettings,
-    setPhase, gameSurface, onJoinFromMeta, onSelectLocal, onAuthSuccess, onContinueAsGuest,
+    phase, profileOpen, setProfileOpen, settingsOpen, openSettings, closeSettings,
+    setPhase, gameSurface, onAuthSuccess, onContinueAsGuest,
   } = props;
 
   const headerWithLogin = (
@@ -81,19 +75,6 @@ export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
   }
   if (phase === 'local') {
     return <LocalSurface />;
-  }
-  if (phase === 'meta') {
-    return (
-      <>
-        {headerWithLogin}
-        <MetaLandingScreen
-          onJoin={onJoinFromMeta}
-          onSelectLocal={user ? onSelectLocal : undefined}
-        />
-        <MobileAvatarBadge onProfileClick={() => setProfileOpen(true)} />
-        {modals}
-      </>
-    );
   }
   if (phase === 'auth') {
     return (
@@ -132,6 +113,9 @@ export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
         // Application. Spawn callbacks are wired into the element by App.
         gameSurface
       )}
+      {/* Touch has no AppBar: the avatar pip is the logged-in cue on the
+       *  homepage map (in game the drawer's Profile tab covers it). */}
+      {phase === 'galaxy-map' && <MobileAvatarBadge onProfileClick={() => setProfileOpen(true)} />}
       {modals}
     </>
   );

@@ -23,7 +23,7 @@ interface Props {
   onProfileClick: () => void;
   /**
    * `desktop` (default) — the small `AppHeader` avatar. `mobile` — the larger
-   * glowing badge used on the meta-landing splash where the header is hidden.
+   * glowing badge used on the touch galaxy map, where the header is hidden.
    * The trigger styling differs; the popover menu + logout flow are shared.
    */
   variant?: Variant;
