@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { StorageService, structureUid, depositRangeOf, takesHoverDeposit, DEPOSIT_RANGE, SALVAGE_TO_MINERALS } from './StorageService.js';
-import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W } from '../../core/articulation/rigCatalogue.js';
+import { StorageService, structureUid, depositRangeOf, nearStorage, takesHoverDeposit, DEPOSIT_RANGE, SALVAGE_TO_MINERALS } from './StorageService.js';
+import { CAPITAL_BAY, DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_BAY_INSET } from '../../core/articulation/rigCatalogue.js';
 import { HoldStore } from './HoldStore.js';
 import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';
 import { structureKindToIndex, type StructureKindId } from '../../shared-types/structureKinds.js';
@@ -147,6 +147,35 @@ describe('StorageService (P1a-2)', () => {
     // A Cargo Bay in range is found even with the Capital nearer.
     t.registry.add(rec('b', 'cargo_bay', 450, 0));
     expect(t.svc.nearestHoverDropOff('p1', 100, 0)?.id).toBe('b');
+  });
+
+  it('nearStorage: the deposit circle OR the structure\'s own crane bay (install, repair, cargo reach)', () => {
+    const b = CAPITAL_BAY;
+    const farY = b.cy + b.padHalfH - DOCK_BAY_INSET; // the bay's far edge: 490 out
+    const cap = rec('c', 'capital', 1000, -200);
+    // Beyond 400 u, yet on the bay: centre (410) and far edge / corner.
+    expect(Math.hypot(0, b.cy)).toBeGreaterThan(DEPOSIT_RANGE);
+    expect(nearStorage(cap, 1000, -200 + b.cy)).toBe(true);
+    expect(nearStorage(cap, 1000, -200 + farY)).toBe(true);
+    expect(nearStorage(cap, 1000 + b.padHalfW - DOCK_BAY_INSET, -200 + farY)).toBe(true);
+    // Off the bay and out of the circle: 600 u off the side, or past the pad.
+    expect(nearStorage(cap, 1600, -200)).toBe(false);
+    expect(nearStorage(cap, 1000, -200 + farY + 20)).toBe(false);
+    // The bay turns with the hull: rot 90 puts it on the -x side.
+    const turned = rec('r', 'capital', 0, 0, { rot: 90 });
+    expect(nearStorage(turned, -b.cy, 0)).toBe(true);
+    expect(nearStorage(turned, 0, b.cy)).toBe(false);
+    // A kind with no bay keeps the plain circle.
+    const cb = rec('b', 'cargo_bay', 0, 0);
+    expect(nearStorage(cb, 0, DEPOSIT_RANGE)).toBe(true);
+    expect(nearStorage(cb, 0, b.cy)).toBe(false);
+    // nearestOwnStorage (install, repair) finds the Capital from its bay;
+    // the hover deposit does not (3f).
+    const t = setup();
+    t.registry.add(cap);
+    expect(t.svc.nearestOwnStorage('p1', 1000, -200 + farY)?.id).toBe('c');
+    expect(t.svc.nearestHoverDropOff('p1', 1000, -200 + farY)).toBeNull();
+    expect(t.svc.nearestOwnStorage('p1', 1600, -200)).toBeNull();
   });
 
   it('refine turns network salvage into Capital minerals', () => {
