@@ -6,10 +6,8 @@ import {
 } from '../contracts/IAiBehaviour.js';
 import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { hasTurretFireControl, mountWeaponReach } from '../combat/mountReach.js';
-import { FC_MOUNT_FIRE_TOLERANCE } from '../combat/fireControlBearing.js';
 import { shipAimRadius, shipHitBound, shipHullDistance } from '../combat/shipHitShape.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
-import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import {
   isOnSightHostile,
   isFriendly,
@@ -78,6 +76,9 @@ import {
 } from './tactics/manoeuvre.js';
 import { LeavingMode } from './modes/leavingMode.js';
 import { PatrolMode } from './modes/patrolMode.js';
+import { SearchMode } from './modes/searchMode.js';
+import { TravelMode } from './modes/travelMode.js';
+import { hullFireCone } from './hullFireCone.js';
 import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TailManoeuvre } from './tactics/manoeuvres.js';
 import { FallBackManoeuvre, FleeManoeuvre, KiteManoeuvre, OrbitManoeuvre } from './tactics/stanceManoeuvres.js';
 import {
@@ -141,10 +142,6 @@ import {
   ORDERED_TARGET_PRIORITY,
   CALM_CRUISE_FRAC,
   MOVE_ARRIVE_SLOW_RADIUS,
-  TRAVEL_LONG_LEG_GUARD_MUL,
-  TRAVEL_ARRIVE_SPEED_FRAC,
-  HUNT_LEG_SPACING_MUL,
-  HUNT_EDGE_FRAC,
   LEADER_CRUISE_THROTTLE,
   FLOCK_ACTIVITY_GAP_MUL,
   FLOCK_CATCH_UP,
@@ -185,18 +182,7 @@ export {
   type HostileDroneBehaviourOptions,
 } from './hostileDroneTuning.js';
 
-/**
- * Fixed-gun trigger discipline (owner 2026-11-14: fire only when the shot will
- * hit; pilot skill, not a special power). The cone (rad) the target's hull
- * covers seen from `dist`: atan(hitRadius / dist), never wider than the
- * player's fixed-gun window `FC_MOUNT_FIRE_TOLERANCE`. `hitRadius` is the
- * target's hit circle plus the shot's own radius; Infinity ⇒ the window.
- */
-export function hullFireCone(hitRadius: number, dist: number): number {
-  if (!(dist > 0)) return FC_MOUNT_FIRE_TOLERANCE;
-  const c = Math.atan(hitRadius / dist);
-  return c < FC_MOUNT_FIRE_TOLERANCE ? c : FC_MOUNT_FIRE_TOLERANCE;
-}
+export { hullFireCone } from './hullFireCone.js';
 
 /** Mutable twin of `MoraleInputs` (one scratch per brain, #14). */
 interface MoraleInputsScratch {
@@ -360,7 +346,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Hunt (RTS Part B slice 6, `setHunt`): no leash, on-sight engagement out
    *  to the sensor range, and with nothing to fight the ship searches the
    *  sector in an expanding square round where the search began
-   *  (`tickSearch`). Plain fields (#14). */
+   *  (`modes/searchMode.ts`). Plain fields (#14). */
   private hunting = false;
   /** RTS Part B slice 8 (`setOrderedTarget`): the owner's attack-order target.
    *  On the retaliation ledger (never forgotten while ordered, so a Defensive
@@ -392,14 +378,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _targetDist2 = 0;
   private _lastX = 0;
   private _lastY = 0;
-  /** The search (re)starts from where the ship is on its next idle tick. */
-  private searchReset = true;
-  /** Current leg (0-based), its unit direction and its end point. */
-  private searchLeg = 0;
-  private searchDirX = 0;
-  private searchDirY = 1;
-  private searchWpX = 0;
-  private searchWpY = 0;
 
   // ── Weapon-aware engagement (weapons/energy/AI overhaul §4) ───────────
   // Computed once in the constructor from this drone's bound weapon (no
@@ -567,6 +545,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Peacetime modes (`ai/modes/`), preallocated (#14). */
   private readonly _leaving = new LeavingMode();
   private readonly _patrol = new PatrolMode();
+  private readonly _travel: TravelMode;
+  private readonly _search: SearchMode;
   private _modeCtx!: PilotModeContext;
   private readonly _modeGoal: PilotModeGoal = makePilotModeGoal(DEFAULT_PILOT_PARAMS);
   private readonly _picker = new ManoeuvrePicker();
@@ -667,6 +647,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // A players-side ship never runs: every morale roll comes out Fight on.
     if (playersSide) this.role = Object.freeze({ ...this.role, moraleWeights: NEVER_RUN_MORALE });
     this.sensorRange = roleSensorRange(this.kind.aiRole, this.fireRange);
+    this._travel = new TravelMode({
+      broadside: this.broadside, fireRange: this.fireRange, leadMuzzleSpeed: this.leadMuzzleSpeed,
+      shotRadius: this.shotRadius, maxTurretHalfArc: this.maxTurretHalfArc,
+    }, this._fireScratch);
+    this._search = new SearchMode(this.sensorRange);
     const tac = this._tac;
     tac.fireRange = this.fireRange;
     tac.cruiseSpeed = this.handling.cruiseSpeed;
@@ -1108,7 +1093,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // broadside capital keeps its route and lets its turrets fight.
     if (this.travel === TRAVEL_ON_THE_WAY && (!this.travelFights || this.broadside)) return this.tickTravel(self, view, target);
     // A hunter that found a fight searches again from wherever it ends.
-    if (this.hunting) this.searchReset = true;
+    if (this.hunting) this._search.reset = true;
     return this.tickCombat(self, view, target);
   }
 
@@ -1158,12 +1143,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const job = this.pilotJob(order);
     switch (job) {
       case JOB_FLOCK: return this.tickFlock(self, view);
-      case JOB_TRAVEL: return this.tickTravel(self, null, null);
+      case JOB_TRAVEL: return this.tickTravel(self, view, null);
       case JOB_GUARD: return this.tickMoveTo(self, this.guardX, this.guardY);
-      case JOB_SEARCH: return this.tickSearch(self);
-      default: // leaving, course, orbit: mode files
+      default: // leaving, search, course, orbit: mode files
         this.modeCtx(self, view.tick, job);
-        return this.runMode(job === JOB_LEAVING ? this._leaving : this._patrol, self);
+        return this.runMode(job === JOB_LEAVING ? this._leaving : job === JOB_SEARCH ? this._search : this._patrol, self);
     }
   }
 
@@ -1173,6 +1157,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     c.tick = tick; c.job = job; c.self = self; c.energy = this.energy; c.energyMax = this.energyMax;
     c.escapeX = this._flee.dirX; c.escapeY = this._flee.dirY; c.moveTarget = this.moveTarget;
     c.guardOn = this.guardOn; c.guardX = this.guardX; c.guardY = this.guardY;
+    c.travelX = this.travelX; c.travelY = this.travelY;
     return c;
   }
 
@@ -2069,7 +2054,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Hunt on / off (RTS Part B slice 6): on lifts the guard leash and the
    *  move target, widens on-sight engagement to the sensor range, and with
-   *  nothing to fight the ship searches the sector (`tickSearch`). A later
+   *  nothing to fight the ship searches the sector (`modes/searchMode.ts`). A later
    *  guard post (a hold) ends the hunt. Server-only. */
   setHunt(on: boolean): void {
     if (on) {
@@ -2078,7 +2063,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.travel = TRAVEL_NONE;
       this.leaderId = null;
       this._flockLeaderCruise = false;
-      if (!this.hunting) this.searchReset = true;
+      if (!this.hunting) this._search.reset = true;
     }
     this.hunting = on;
   }
@@ -2206,62 +2191,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     return 'idle';
   }
 
-  /**
-   * Hunt search: an expanding square (the standard search pattern) round
-   * where the search began, legs `HUNT_LEG_SPACING_MUL` sighting ranges
-   * apart (d, d, 2d, 2d, 3d, ...; each turn 90° left), the first leg along
-   * the nose. Each leg is a plain fly-to (`tickMoveTo`, player controls); a
-   * leg counts as flown once inside the arrive radius, so the ship rolls on
-   * without stopping. Waypoints are clamped inside the sector; once the
-   * square outgrows the sector the search starts again from where the ship
-   * is. A fight that ends restarts it from there (`searchReset`, set by
-   * the combat branch).
-   */
-  private tickSearch(self: AiEntity): AiIntent {
-    const lim = SECTOR_PLAYABLE_HALF_EXTENT * HUNT_EDGE_FRAC;
-    const d = HUNT_LEG_SPACING_MUL * this.sensorRange;
-    if (this.searchReset) {
-      this.searchReset = false;
-      this.searchLeg = 0;
-      this.searchDirX = -Math.sin(self.angle);
-      this.searchDirY = Math.cos(self.angle);
-      this.searchWpX = self.x;
-      this.searchWpY = self.y;
-      this.nextSearchLeg(d, lim);
-    }
-    // This leg flown (or clamped to where the ship already is): the next.
-    for (let i = 0; i < 4; i++) {
-      const dx = this.searchWpX - self.x;
-      const dy = this.searchWpY - self.y;
-      if (dx * dx + dy * dy > MOVE_ARRIVE_SLOW_RADIUS * MOVE_ARRIVE_SLOW_RADIUS) break;
-      this.searchLeg++;
-      // Turn 90° left: (x, y) → (-y, x).
-      const t = this.searchDirX;
-      this.searchDirX = -this.searchDirY;
-      this.searchDirY = t;
-      if ((Math.floor(this.searchLeg / 2) + 1) * d > 2 * lim) {
-        // The square covers the sector: a new one from here.
-        this.searchLeg = 0;
-        this.searchWpX = self.x;
-        this.searchWpY = self.y;
-      }
-      this.nextSearchLeg(d, lim);
-    }
-    return this.tickMoveTo(self, this.searchWpX, this.searchWpY);
-  }
-
-  /** The end of leg `searchLeg` from the last waypoint, clamped inside the
-   *  sector. */
-  private nextSearchLeg(d: number, lim: number): void {
-    const len = (Math.floor(this.searchLeg / 2) + 1) * d;
-    let x = this.searchWpX + this.searchDirX * len;
-    let y = this.searchWpY + this.searchDirY * len;
-    if (x > lim) x = lim; else if (x < -lim) x = -lim;
-    if (y > lim) y = lim; else if (y < -lim) y = -lim;
-    this.searchWpX = x;
-    this.searchWpY = y;
-  }
-
   /** The flock leader this ship follows (null = none: it leads or flies
    *  alone). Server-only, test-visible. */
   getFlockLeaderId(): string | null { return this.leaderId; }
@@ -2326,7 +2255,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Fly to (tx, ty) and stop there: face the slot and ask the pilot for a
    *  speed it can still brake from (the arrive ramp), capped at the calm
    *  cruise (or `cruiseCap`: an owner's Move flies at the full cruise, a
-   *  long leg at the top speed with `boostOk`, `tickTravel`). At the slot
+   *  long leg at the top speed with `boostOk`, `modes/travelMode.ts`). At the slot
    *  the wanted velocity is zero and the nose stays put, so the pilot brakes
    *  to a stop with reverse instead of turning around.
    */
@@ -2362,84 +2291,24 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     return this.fly(self, facing, steer.dirX * speed, steer.dirY * speed, boostOk);
   }
 
-  /**
-   * Travel (RTS Part B slice 9, `setTravel`): fly the leg and arrive. The
-   * full cruise; a leg longer than `TRAVEL_LONG_LEG_GUARD_MUL` guard radii
-   * asks for the top speed and lets the pilot boost (its own gate: nose on
-   * course, a real speed gap, the pool pays), the old wingman's long-leg
-   * rule. Arrived (inside `wingmanArrive`, nearly stopped) ⇒ it guards the
-   * point. `target` (picked this tick, or null): fired at only when it is
-   * already in the sights; the ship never turns toward it.
-   */
-  private tickTravel(self: AiEntity, view: AiWorldView | null, target: MountTargetView | null): AiIntent {
-    const x = this.travelX;
-    const y = this.travelY;
-    const t = shipTuning(this.kind);
-    const h = this.handling;
-    const dx = x - self.x;
-    const dy = y - self.y;
-    const d2 = dx * dx + dy * dy;
-    if (d2 <= t.wingmanArrive * t.wingmanArrive
-      && Math.hypot(self.vx, self.vy) <= h.maxSpeed * TRAVEL_ARRIVE_SPEED_FRAC) {
-      // Arrived: guard the point (the post ends the travel).
-      this.setGuardPost(x, y, 0);
+  /** Travel (`setTravel` / `setPatrolLeg`, `modes/travelMode.ts`): fly the
+   *  leg; arrived, guard the point (the post ends the travel). `target`
+   *  (picked this tick, or null): fired at only when already in the sights. */
+  private tickTravel(self: AiEntity, view: AiWorldView, target: MountTargetView | null): AiIntent {
+    const c = this.modeCtx(self, view.tick, JOB_TRAVEL);
+    const tr = this._travel;
+    if (tr.isDone(c)) {
+      this.setGuardPost(c.travelX, c.travelY, 0);
       this.travel = TRAVEL_ARRIVED;
-      return this.tickMoveTo(self, x, y);
+      return this.runMode(tr, self);
     }
-    const long = d2 > (TRAVEL_LONG_LEG_GUARD_MUL * t.guardRadiusMin) ** 2;
-    const intent = this.tickMoveTo(self, x, y, long ? h.maxSpeed : h.cruiseSpeed, long);
-    if (target !== null && view !== null) this.fireOnTheWay(self, view, target, intent);
+    const intent = this.runMode(tr, self);
+    if (target !== null && tr.fireOnTheWay(c, view, target, intent)) {
+      this._aimValid = true;
+      this._aimX = tr.aimX;
+      this._aimY = tr.aimY;
+    }
     return intent;
-  }
-
-  /**
-   * Travel's trigger: hold it at `target` only while the nose (or a turret's
-   * arc) already covers the lead point and it is in range, by the same aim
-   * rules as `tickCombat`'s fire gate (the hull cone for fixed guns, the
-   * turret half-arc added for turret kinds). Never steers. A charge weapon
-   * has no line to hold here (an owned hull's player pipeline has no
-   * wind-up), so the charge rule does not apply.
-   */
-  private fireOnTheWay(self: AiEntity, view: AiWorldView, target: MountTargetView, intent: AiIntent): void {
-    if (this.broadside) return;
-    const rawDx = target.x - self.x;
-    const rawDy = target.y - self.y;
-    const dist = Math.hypot(rawDx, rawDy);
-    if (dist < 1e-3) return;
-    let rangeDist = dist;
-    if (target.kindId != null) {
-      const far = dist - shipHitBound(target.kindId);
-      rangeDist = far > this.fireRange
-        ? far
-        : shipHullDistance(target.kindId, target.shieldUp === true, self.x, self.y, target.x, target.y, target.angle ?? 0);
-    }
-    if (rangeDist > this.fireRange) return;
-    const lead = dist / this.leadMuzzleSpeed;
-    const aimX = target.x + (target.vx - self.vx) * lead;
-    const aimY = target.y + (target.vy - self.vy) * lead;
-    const aimDx = aimX - self.x;
-    const aimDy = aimY - self.y;
-    const aimLen = Math.hypot(aimDx, aimDy);
-    view.aims?.write(self.id, aimX, aimY, view.tick);
-    const hullCone = hullFireCone(((target as { hitRadius?: number }).hitRadius ?? DEFAULT_AIM_RADIUS) + this.shotRadius, aimLen);
-    const tolerance = this.maxTurretHalfArc > 0
-      ? (rangeDist < this.fireRange * POINT_BLANK_RATIO ? DRONE_AIM_TOLERANCE_CLOSE : DRONE_AIM_TOLERANCE) + this.maxTurretHalfArc
-      : hullCone;
-    if (Math.abs(wrapAngle(facingOf(aimDx, aimDy) - self.angle)) > tolerance) return;
-    this._aimValid = true;
-    this._aimX = aimX;
-    this._aimY = aimY;
-    const f = this._fireScratch;
-    if (aimLen > 1e-6) {
-      f.dirX = aimDx / aimLen;
-      f.dirY = aimDy / aimLen;
-    } else {
-      f.dirX = -Math.sin(self.angle);
-      f.dirY = Math.cos(self.angle);
-    }
-    f.targetId = target.id;
-    f.cone = hullCone;
-    intent.fire = f;
   }
 
   /**

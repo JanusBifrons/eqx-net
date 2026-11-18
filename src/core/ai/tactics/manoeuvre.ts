@@ -329,6 +329,9 @@ export interface PilotModeContext {
   guardOn: boolean;
   guardX: number;
   guardY: number;
+  /** The travel point (an owner's Move / patrol leg end). */
+  travelX: number;
+  travelY: number;
 }
 
 /** Placeholder `self` until the brain's first mode call. */
@@ -338,6 +341,7 @@ export function makePilotModeContext(kind: ShipKind, handling: PilotHandling): P
   return {
     tick: 0, job: JOB_ORBIT, self: NO_SELF, kind, handling, energy: 0, energyMax: 0,
     escapeX: 0, escapeY: 1, moveTarget: null, guardOn: false, guardX: 0, guardY: 0,
+    travelX: 0, travelY: 0,
   };
 }
 

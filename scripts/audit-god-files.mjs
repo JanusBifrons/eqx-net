@@ -92,7 +92,7 @@ const ALLOWLIST = {
     reason: RATCHET_ONLY,
   },
   'src/client/state/storeTypes.ts': { cap: 686, target: 600, reason: RATCHET_ONLY },
-  'src/core/ai/HostileDroneBehaviour.ts': { cap: 2631, target: 600, reason: RATCHET_ONLY },
+  'src/core/ai/HostileDroneBehaviour.ts': { cap: 2500, target: 600, reason: RATCHET_ONLY },
   'src/core/ai/tactics/manoeuvres.ts': { cap: 679, target: 600, reason: RATCHET_ONLY },
   'src/core/bases/growBase.ts': { cap: 740, target: 600, reason: RATCHET_ONLY },
   'src/core/contracts/IRenderer.ts': { cap: 1298, target: 600, reason: RATCHET_ONLY },
