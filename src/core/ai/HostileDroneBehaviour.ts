@@ -72,7 +72,12 @@ import {
   type ManoeuvreGoal,
   type ManoeuvreId,
   type TacticalContext,
+  JOB_COURSE, JOB_FLOCK, JOB_GUARD, JOB_LEAVING, JOB_ORBIT, JOB_SEARCH, JOB_TRAVEL,
+  JOB_ORDER_NO_FLOCK, JOB_ORDER_REPORT, JOB_ORDER_TICK, MODE_GOAL_MOVE_TO, makePilotModeContext, makePilotModeGoal,
+  type IPilotMode, type PilotJobId, type PilotModeContext, type PilotModeGoal,
 } from './tactics/manoeuvre.js';
+import { LeavingMode } from './modes/leavingMode.js';
+import { PatrolMode } from './modes/patrolMode.js';
 import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TailManoeuvre } from './tactics/manoeuvres.js';
 import { FallBackManoeuvre, FleeManoeuvre, KiteManoeuvre, OrbitManoeuvre } from './tactics/stanceManoeuvres.js';
 import {
@@ -134,11 +139,7 @@ import {
   DRONE_TARGET_DWELL_TICKS,
   STRUCTURE_PRIORITY_BIAS,
   ORDERED_TARGET_PRIORITY,
-  PATROL_RADIUS,
   CALM_CRUISE_FRAC,
-  LEAVING_RUN_TICKS,
-  PATROL_SPEED_FRAC,
-  PATROL_INWARD_GAIN,
   MOVE_ARRIVE_SLOW_RADIUS,
   TRAVEL_LONG_LEG_GUARD_MUL,
   TRAVEL_ARRIVE_SPEED_FRAC,
@@ -570,9 +571,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _capitalNear = false;
   /** Warp-outs requested (test-visible). */
   private _warpOuts = 0;
-  /** After asking to warp out: keep running until this tick (the room's
-   *  spool, with slack), then hold at the drop point. -1 = not leaving. */
-  private _leavingUntil = -1;
+  /** Peacetime modes (`ai/modes/`), preallocated (#14). */
+  private readonly _leaving = new LeavingMode();
+  private readonly _patrol = new PatrolMode();
+  private _modeCtx!: PilotModeContext;
+  private readonly _modeGoal: PilotModeGoal = makePilotModeGoal(DEFAULT_PILOT_PARAMS);
   private readonly _picker = new ManoeuvrePicker();
   /** Seeded from the entity id on the first combat tick. */
   private _seeded = false;
@@ -612,6 +615,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.role = roleProfile(this.kind.aiRole);
     // The body's mass is the ship kind's (`shipBodyMass`), same as a pilot's.
     this.handling = makePilotHandling(this.kind, shipBodyMass(this.kind));
+    this._modeCtx = makePilotModeContext(this.kind, this.handling);
     this.energyMax = this.kind.energyMax ?? 100;
     this.energyRegen = this.kind.energyRegenRate ?? 0.25;
     this._energyPool = opts?.energyPool ?? { energy: this.energyMax };
@@ -820,9 +824,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Asked to warp out: run on along the escape line while the room spools
     // the warp, as a pilot's ship flies on through its spool (take 7: it
     // eased to the calm cruise and looked parked, then vanished).
-    if (this._leavingUntil >= 0) {
-      if (view.tick <= this._leavingUntil) return this.tickLeaving(self);
-      this._leavingUntil = -1;
+    if (this.pilotJob(JOB_ORDER_TICK) === JOB_LEAVING) {
+      if (!this._leaving.isDone(this.modeCtx(self, view.tick, JOB_LEAVING))) return this.runMode(this._leaving, self);
+      this._leaving.until = -1;
     }
     // An anchored guard post sits on its anchor's live pose this tick.
     if (this.guardAnchorId !== null) this.followGuardAnchor(view);
@@ -863,12 +867,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (this.holdFire && !holdOrder) {
       this.prevTargetId = null;
       if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
-      return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
+      return this.tickJob(self, view, JOB_ORDER_TICK);
     }
     const canEngageOnSight = this.engageOnSight && (this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0));
     if (this.state === 'IDLE' && !canEngageOnSight) {
       if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
-      return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
+      return this.tickJob(self, view, JOB_ORDER_TICK);
     }
 
     // 3) COMBAT — pick the *hostile* player to engage. Non-hostile players
@@ -1014,7 +1018,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (!anyHostile) {
         this.prevTargetId = null;
         if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
-        return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
+        return this.tickJob(self, view, JOB_ORDER_TICK);
       }
     }
     // Spread targets (owner 2026-11-14): how many of my side already hold each
@@ -1032,7 +1036,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // flocking (it never entered COMBAT; no state change).
     if (this.state === 'IDLE' && !anyHostile) {
       if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
-      return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
+      return this.tickJob(self, view, JOB_ORDER_TICK);
     }
 
     // Sensor cap (AI overhaul slice 3): NEW picks only within the role's
@@ -1099,7 +1103,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       // A follower with nothing to shoot keeps with its pack (RTS Part B
       // slice 10): under fire from out of reach it must not drop out of the
       // flock and fly its old post / the origin orbit.
-      return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
+      return this.tickJob(self, view, JOB_ORDER_TICK);
     }
 
     const tdx = target.x - self.x;
@@ -1133,70 +1137,58 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     return intent;
   }
 
-  /** Warping out: full speed along the escape line, boosting while the
-   *  reserve allows (the spool's drive keeps the nose on the warp heading). */
-  private tickLeaving(self: AiEntity): AiIntent {
-    const f = this._flee;
-    const v = this.handling.maxSpeed;
-    const boostOk = this.energy >= BOOST_RESERVE_FRAC * this.energyMax;
-    return this.fly(self, Math.atan2(-f.dirX, f.dirY), f.dirX * v, f.dirY * v, boostOk, RUN_PILOT_PARAMS);
+  // ── Peacetime jobs ──────────────────────────────────────────────────
+  /** The one place that decides the pilot's peacetime job, in the order
+   *  `order` names (`JOB_ORDER_*`, ai-pilots.md "pilotJob() precedence"). */
+  private pilotJob(order: number): PilotJobId {
+    if (this._leaving.until >= 0) return JOB_LEAVING;
+    if (order === JOB_ORDER_REPORT) {
+      if (this.travel === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
+      if (this.hunting) return JOB_SEARCH;
+      if (this.leaderId !== null) return JOB_FLOCK;
+      if (this.guardOn) return JOB_GUARD;
+      return JOB_ORBIT;
+    }
+    if (order === JOB_ORDER_TICK && this.leaderId !== null) return JOB_FLOCK;
+    if (this.travel === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
+    if (this.moveTarget !== null) return JOB_COURSE;
+    // Guard leash: nothing to fight ⇒ back to the post.
+    if (this.guardLeash()) return JOB_GUARD;
+    // Hunt: nothing to fight ⇒ search the sector.
+    if (this.hunting) return JOB_SEARCH;
+    return JOB_ORBIT;
   }
 
-  // ── Patrol ──────────────────────────────────────────────────────────
-  /**
-   * Idle behaviour: orbit the sector centre (0, 0) counter-clockwise at
-   * `PATROL_RADIUS`. When the drone is outside the radius we blend an
-   * inward bias into the desired heading so drones spiral back toward the
-   * orbit instead of diverging — this is also the structural fix for the
-   * "drone drifted to (4 133 782, -1 093 669) over a long session" bug.
-   * Flown through the virtual pilot at a slow patrol speed.
-   */
-  private tickPatrol(self: AiEntity): AiIntent {
-    // Roaming-formation (Phase 5): when the director has assigned a move target
-    // (formation slot / squad destination), fly to it and slow to a stop there,
-    // instead of the default origin orbit. This is how a roaming squad flies in
-    // formation toward an arbitrary A→B destination.
-    if (this.travel === TRAVEL_ON_THE_WAY) return this.tickTravel(self, null, null);
-    if (this.moveTarget !== null) {
-      // Holding a post (slice 9): inside the arrive radius of it the ship
-      // stays where it is and only brakes. With the nose kept (`tickMoveTo`
-      // close in) a few units off the exact point to the side could never be
-      // closed: it tapped forward and back across it every second.
-      const mt = this.moveTarget;
-      if (this.guardOn && mt.x === this.guardX && mt.y === this.guardY) {
-        const dx = mt.x - self.x;
-        const dy = mt.y - self.y;
-        const r = shipTuning(this.kind).wingmanArrive;
-        if (dx * dx + dy * dy <= r * r) return this.fly(self, self.angle, 0, 0, false);
-      }
-      return this.tickMoveTo(self, mt.x, mt.y);
+  /** Fly the peacetime job: a mode file (`ai/modes/`) or a brain helper. */
+  private tickJob(self: AiEntity, view: AiWorldView, order: number): AiIntent {
+    const job = this.pilotJob(order);
+    switch (job) {
+      case JOB_FLOCK: return this.tickFlock(self, view);
+      case JOB_TRAVEL: return this.tickTravel(self, null, null);
+      case JOB_GUARD: return this.tickMoveTo(self, this.guardX, this.guardY);
+      case JOB_SEARCH: return this.tickSearch(self);
+      default: // leaving, course, orbit: mode files
+        this.modeCtx(self, view.tick, job);
+        return this.runMode(job === JOB_LEAVING ? this._leaving : this._patrol, self);
     }
-    // Guard leash: nothing to fight ⇒ back to the post.
-    if (this.guardLeash()) return this.tickMoveTo(self, this.guardX, this.guardY);
-    // Hunt: nothing to fight ⇒ search the sector.
-    if (this.hunting) return this.tickSearch(self);
-    const r = Math.hypot(self.x, self.y);
-    const safeR = Math.max(r, 1);
+  }
 
-    // Tangent to the circle around origin (counter-clockwise: rotate the
-    // outward-radial vector by +90°). At (x, y), the unit radial is
-    // (x, y)/r and its CCW perpendicular is (-y, x)/r.
-    let dirX = -self.y / safeR;
-    let dirY = self.x / safeR;
+  /** Refresh the reused mode context (#14). */
+  private modeCtx(self: AiEntity, tick: number, job: PilotJobId): PilotModeContext {
+    const c = this._modeCtx;
+    c.tick = tick; c.job = job; c.self = self; c.energy = this.energy; c.energyMax = this.energyMax;
+    c.escapeX = this._flee.dirX; c.escapeY = this._flee.dirY; c.moveTarget = this.moveTarget;
+    c.guardOn = this.guardOn; c.guardX = this.guardX; c.guardY = this.guardY;
+    return c;
+  }
 
-    // Inward bias: outside the radius, blend the heading toward the origin
-    // so the drone spirals back. Clamped to [0, 1] at 2× the patrol radius.
-    if (r > PATROL_RADIUS) {
-      const overshoot = (r - PATROL_RADIUS) / PATROL_RADIUS;
-      const bias = Math.min(1, overshoot * PATROL_INWARD_GAIN);
-      dirX = dirX * (1 - bias) + (-self.x / safeR) * bias;
-      dirY = dirY * (1 - bias) + (-self.y / safeR) * bias;
-      const len = Math.hypot(dirX, dirY);
-      if (len > 1e-6) { dirX /= len; dirY /= len; }
-    }
-
-    const speed = this.handling.cruiseSpeed * CALM_CRUISE_FRAC * PATROL_SPEED_FRAC;
-    return this.fly(self, facingOf(dirX, dirY), dirX * speed, dirY * speed, false);
+  /** Run a mode on the context `modeCtx` just filled: it writes a goal, the
+   *  brain flies it (the shared fly-to for a point). */
+  private runMode(mode: IPilotMode, self: AiEntity): AiIntent {
+    const g = this._modeGoal;
+    mode.writeGoal(this._modeCtx, g);
+    if (g.kind === MODE_GOAL_MOVE_TO) return this.tickMoveTo(self, g.tx, g.ty, g.cruiseCap, g.boost);
+    return this.fly(self, g.facing, g.vx, g.vy, g.boost, g.params);
   }
 
   // ── Combat ──────────────────────────────────────────────────────────
@@ -1906,7 +1898,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this._moraleLockUntil = -1;
     this.switchManoeuvre(MANOEUVRE_HOLD, this._tac.tick);
     this.setMoveTarget(w.x, w.y);
-    this._leavingUntil = this._tac.tick + LEAVING_RUN_TICKS;
+    this._modeCtx.tick = this._tac.tick;
+    this._leaving.begin(this._modeCtx);
   }
 
   /** Any pilot hull within `LOD_PILOT_RANGE_MUL` × sensor range? */
@@ -2261,20 +2254,21 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * Hold fire picks no target, so it reports the job it flies.
    */
   getActivity(): AiShipActivity {
-    if (this._leavingUntil >= 0) return 'retreating';
-    if (this.travel === TRAVEL_ON_THE_WAY && (!this.travelFights || this.prevTargetId === null)) {
+    const job = this.pilotJob(JOB_ORDER_REPORT);
+    if (job === JOB_LEAVING) return 'retreating';
+    if (job === JOB_TRAVEL && (!this.travelFights || this.prevTargetId === null)) {
       return this.travelFights ? 'patrolling' : 'moving';
     }
     if (this.prevTargetId !== null) {
       return this._targetDist2 > this.fireRange * this.fireRange ? 'chasing' : 'attacking';
     }
-    if (this.hunting) return 'searching';
-    if (this.leaderId !== null) {
+    if (job === JOB_SEARCH) return 'searching';
+    if (job === JOB_FLOCK) {
       // With its pack (RTS squads / escorts): guarding once it is close.
       const r = FLOCK_ACTIVITY_GAP_MUL * shipTuning(this.kind).flockFollow;
       return this._flockGap2 > r * r ? 'moving' : 'guarding';
     }
-    if (this.guardOn) {
+    if (job === JOB_GUARD) {
       const dx = this._lastX - this.guardX;
       const dy = this._lastY - this.guardY;
       return dx * dx + dy * dy > this.guardR * this.guardR ? 'moving' : 'guarding';
@@ -2524,7 +2518,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const resolve = view.resolveEntityInto;
     // Need the leader's live pose; without it (gone / no resolver) → orbit.
     if (!resolve || this.leaderId === null || !resolve(this.leaderId, this._leaderScratch)) {
-      return this.tickPatrol(self);
+      return this.tickJob(self, view, JOB_ORDER_NO_FLOCK);
     }
     const leaderX = this._leaderScratch.x;
     const leaderY = this._leaderScratch.y;

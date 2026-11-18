@@ -83,6 +83,17 @@ Locks: `ai/HostileDroneBehaviour.sensor.test.ts`, `ai/tactics/roleProfiles.test.
 
 Lock: `contextSteering.test.ts`; bench `benchmarks/ai-context-steering.bench.ts`.
 
+## Peacetime jobs: `pilotJob()` precedence
+
+When a ship is not fighting, `HostileDroneBehaviour.pilotJob(order)` is the one place that names its job (a dense `JOB_*` id from `tactics/manoeuvre.ts`, no allocation). `tick()` flies the job it returns; `getActivity()` reports from it. A job is either a mode file in `src/core/ai/modes/` (an `IPilotMode`: `begin` / `writeGoal` / `isDone`, the manoeuvre lifecycle; its goal is a facing + wanted velocity, or a point flown by the brain's shared fly-to `tickMoveTo`) or, until it moves out, a brain helper.
+
+- **`JOB_ORDER_TICK`** (what the ship flies): leaving > flock follow > travel / patrol leg > course to the move target (formation slot, leader course, post hold) > guard post (leashed: not a broadside capital) > hunt search > origin orbit. A follower whose leader can't be resolved uses **`JOB_ORDER_NO_FLOCK`** (the same without the flock).
+- **`JOB_ORDER_REPORT`** (what the fleet panel reads): leaving > travel > (a held target: chasing / attacking) > hunt > flock > guard post (any `guardOn`) > idle.
+- **The two orders differ, and both are kept as they were.** The setters make most pairs exclusive, but: (1) a hunter given a move target (`setMoveTarget` / `setFlockLeaderCourse` do not end a hunt) flies the course and reads `searching`; (2) a broadside capital with a post and nothing to fight orbits the origin and reads `guarding` / `moving`; (3) a bare course reads `idle`. Changing either order is a behaviour change, not a refactor.
+- Live modes: `modes/leavingMode.ts` (the warp-out run), `modes/patrolMode.ts` (course + orbit). Still in the brain: travel / patrol leg (`tickTravel`), search (`tickSearch`), flock (`tickFlock`), guard return.
+
+Lock: `ai/HostileDroneBehaviour.pilotJob.test.ts` (activity + controls fingerprints per job, recorded before the split).
+
 ## History
 
 - **2026-06-18:** flocking added (`flocking.ts`); formation slots became unused.

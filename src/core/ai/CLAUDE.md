@@ -5,3 +5,4 @@ Zone rules: [src/core/CLAUDE.md](../CLAUDE.md). Where each kind of change goes: 
 - `HostileDroneBehaviour.ts` is at its size cap (`scripts/audit-god-files.mjs`). New behaviour goes in a new file under `ai/`, never in that file.
 - Tuning numbers for hostile pilots (ranges, gains, tick counts, pilot params) and their pure-data types go in `hostileDroneTuning.ts`, never inline in `HostileDroneBehaviour.ts`. It holds values only, no logic.
 - A new combat move is an `IManoeuvre` in `tactics/` (`manoeuvre.ts`), picked by the utility layer (`tactics/utility.ts`). Never a new branch in `tickCombat`.
+- A new order / stance / peacetime behaviour is a mode file in `modes/` with the manoeuvre lifecycle (`IPilotMode`, `tactics/manoeuvre.ts`) plus a case in `pilotJob()`. Never a new `tick*` branch in `HostileDroneBehaviour`.
