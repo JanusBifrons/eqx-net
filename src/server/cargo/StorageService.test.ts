@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { StorageService, structureUid, depositRangeOf, nearStorage, takesHoverDeposit, DEPOSIT_RANGE, SALVAGE_TO_MINERALS } from './StorageService.js';
+import { StorageService, SALVAGE_TO_MINERALS } from './StorageService.js';
+import { structureUid } from './storageHolds.js';
+import { depositRangeOf, nearStorage, takesHoverDeposit, DEPOSIT_RANGE } from './storageReach.js';
 import { CAPITAL_BAY, DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_BAY_INSET } from '../../core/articulation/rigCatalogue.js';
 import { HoldStore } from './HoldStore.js';
 import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';

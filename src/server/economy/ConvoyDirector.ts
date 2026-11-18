@@ -48,16 +48,17 @@ import type { Bus } from '../../core/events/Bus.js';
 import { emptyHold } from '../../core/cargo/hold.js';
 import { matchConvoys, type BaseTradeView, type ConvoyPlan } from '../../core/economy/convoys.js';
 import type { Hold, GoodId } from '../../shared-types/goods.js';
-import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { HOME_POCKET_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
-import { sectorSites } from '../../core/galaxy/sectorSites.js';
-import { axialToPixel } from '../../core/galaxy/galaxy.js';
+import type { ConvoyBay, ConvoyPayments, ConvoyRoom, CraneHaulJob, NpcBaseTrade } from './convoyRoom.js';
+import { convoyDockTarget, edgeNear, solarLanePoint } from './convoyDocking.js';
+// SectorRoom reads these from here.
+export { bayBehindFence } from './convoyDocking.js';
+export type { CraneHaulJob, NpcBaseTrade } from './convoyRoom.js';
 
 /** Speed a convoy phase is budgeted at (u/s): well under the hauler's 420 u/s
  *  cruise, so a long solar-system leg (170 km ≈ 7 min) is never cut short. */
 const HAULER_BUDGET_SPEED = 200;
 import type { HoldStore } from '../cargo/HoldStore.js';
-import type { TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import { CONVOY_HAULER_ID_PREFIX } from '../livingworld/directorBotIds.js';
 import { transitRouteHops } from '../../core/bases/galaxyBases.js';
 import { LINK_HOP_COST } from '../../core/bases/transitNetwork.js';
@@ -68,8 +69,6 @@ import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { guarded } from '../rooms/guardedLoop.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
-import type { Wallet } from './Wallet.js';
-import type { TradeSink } from './tradeSink.js';
 import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 import { holdWeight } from '../../core/cargo/hold.js';
 
@@ -77,69 +76,6 @@ import { holdWeight } from '../../core/cargo/hold.js';
 export function isConvoysDisabled(env: Record<string, string | undefined> = process.env): boolean {
   const v = env['EQX_DISABLE_CONVOYS'];
   return v === '1' || v === 'true';
-}
-
-/** One NPC base as its room reports it. */
-export interface NpcBaseTrade {
-  owner: string;
-  /** Uid of a storage structure in the base's network (the trade anchor). */
-  networkUid: string;
-  view: Omit<BaseTradeView, 'key' | 'sectorKey'>;
-  /** The base's footprint box (world). */
-  box: { x0: number; x1: number; y0: number; y1: number };
-  /** T4b — a player's Freight Dock with standing orders (owner = playerId).
-   *  Trades only with NPC bases, and is paid / charged through the wallet. */
-  player?: { imports: GoodId[]; exports: GoodId[] };
-  /** structure-restyle 3h — a Freight Dock bay a hauler can reach (world
-   *  centre); absent = dock at the footprint box's edge (`dockPoint`). */
-  bay?: ConvoyBay;
-}
-
-/** 3h — a dock's crane bay a convoy hauler parks on. */
-export interface ConvoyBay { dockId: string; x: number; y: number }
-
-/** 3h — what a convoy hauler asks a dock's crane for (`ConvoyRoom.craneServe`). */
-export interface CraneHaulJob {
-  dockId: string;
-  /** The base's owner: the dock must still be theirs. */
-  owner: string;
-  /** Load at pickup, unload at delivery (the crane's cargo direction). */
-  cargo: 'load' | 'unload';
-  /** Cargo weight moved (sizes the crane's hold, `dockUnloadHoldTicks`). */
-  weight: number;
-  /** Runs once, in the room tick, at the end of the crane's hold. */
-  atHoldEnd: () => void;
-}
-
-/** T4b — what the director needs to charge and pay players. */
-export interface ConvoyPayments {
-  wallet: Pick<Wallet, 'balance' | 'credit' | 'creditDeferred' | 'debitDeferred'>;
-  sink: () => TradeSink | null;
-}
-
-/** The room surface the convoy director drives (SectorRoom implements it). */
-export interface ConvoyRoom {
-  eventBus(): Bus;
-  hasFreeSlot(): boolean;
-  spawnLivingWorldBot(spec: { botId: string; kind: ShipKindId; x: number; y: number }): boolean;
-  despawnLivingWorldBot(botId: string): unknown;
-  getBotPose(botId: string): { x: number; y: number; angle: number } | null;
-  setBotMoveTarget(botId: string, x: number, y: number): void;
-  tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null;
-  tradeDropAt(hold: Hold, x: number, y: number): void;
-  /** T2 — this room's NPC bases. */
-  npcBaseTrade(): NpcBaseTrade[];
-  /** T2 — the nearest point clear of every structure (hauler spawns). */
-  clearPointNear(x: number, y: number): { x: number; y: number };
-  /** 3h — have `job.dockId`'s crane serve hauler `botId` (the bay dwell
-   *  players get: settle, wait its turn, reach, hold, retract). 'serving'
-   *  while it is on its way onto the bay or being served; 'none' when that
-   *  dock can't serve it (gone, not `job.owner`'s, unpowered): trade
-   *  atomically instead. The first job per hauler stands until it runs or
-   *  is cancelled. */
-  craneServe?(botId: string, job: CraneHaulJob): 'serving' | 'none';
-  /** 3h — drop hauler `botId`'s crane job (an arm out retracts, nothing moves). */
-  craneCancel?(botId: string): void;
 }
 
 export interface ConvoyDirectorOptions {
@@ -216,88 +152,6 @@ interface Convoy {
 
 /** One end of a convoy: the base it trades with. */
 interface ConvoyEnd { owner: string; uid: string; box: NpcBaseTrade['box']; bay?: ConvoyBay }
-
-/**
- * 3h — where a hauler docks at a base: its Freight Dock's bay centre when it
- * has a reachable one, else the nearest point of its box expanded by `m`.
- */
-export function convoyDockTarget(end: { box: NpcBaseTrade['box']; bay?: ConvoyBay }, m: number, x: number, y: number): { x: number; y: number } {
-  return end.bay ? { x: end.bay.x, y: end.bay.y } : dockPoint(end.box, m, x, y);
-}
-
-/**
- * 3h — true when bay centre (x, y) lies inside the fence ring `pylons`
- * (the box of the owner's shield emitters: a grown base's fence is a
- * rectangle around everything, its pads included). Gates open only for
- * pilots, so a hauler can never reach a bay behind a fence. Fewer than two
- * emitters is no fence.
- */
-export function bayBehindFence(x: number, y: number, pylons: ReadonlyArray<{ x: number; y: number }>): boolean {
-  if (pylons.length < 2) return false;
-  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-  for (const p of pylons) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
-  return x > x0 && x < x1 && y > y0 && y < y1;
-}
-
-/** Nearest point of `box` expanded by `m` to (x, y) — a dock outside the base. */
-export function dockPoint(box: NpcBaseTrade['box'], m: number, x: number, y: number): { x: number; y: number } {
-  const x0 = box.x0 - m, x1 = box.x1 + m, y0 = box.y0 - m, y1 = box.y1 + m;
-  let px = Math.min(Math.max(x, x0), x1);
-  let py = Math.min(Math.max(y, y0), y1);
-  if (px > x0 && px < x1 && py > y0 && py < y1) {
-    // Inside: push to the nearest side.
-    const d = [px - x0, x1 - px, py - y0, y1 - py];
-    const i = d.indexOf(Math.min(...d));
-    if (i === 0) px = x0; else if (i === 1) px = x1; else if (i === 2) py = y0; else py = y1;
-  }
-  return { x: px, y: py };
-}
-
-/**
- * Where a hauler enters and leaves a sector for this base: the edge point on
- * the base's own side (haulers fly ~40 u/s, so a far-side entry made every leg
- * minutes long), stepped back toward the centre until it is `clear` u outside
- * the footprint box (a base can reach the edge; never spawn inside its fence).
- */
-export function edgeNear(box: NpcBaseTrade['box'], r: number, clear: number): { x: number; y: number } {
-  const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
-  const len = Math.hypot(cx, cy);
-  const dx = len < 1 ? 1 : cx / len, dy = len < 1 ? 0 : cy / len;
-  const outside = (x: number, y: number): boolean =>
-    x < box.x0 - clear || x > box.x1 + clear || y < box.y0 - clear || y > box.y1 + clear;
-  for (let d = r; d >= 0; d -= 200) {
-    if (outside(dx * d, dy * d)) return { x: dx * d, y: dy * d };
-  }
-  // The box covers the whole ray (a base around the centre): its nearest side.
-  return dockPoint(box, clear, 0, 0);
-}
-
-/**
- * Solar-system sectors: where a hauler enters / leaves `sectorKey` toward
- * `otherSector`: the rim of the gate pocket facing that way, on the side of
- * the base. Not a neighbour: the gate whose neighbour lies nearest the far
- * sector on the map; same sector: the gate nearest the base. Null when the
- * sector has no gate pockets.
- */
-export function solarLanePoint(sectorKey: string, otherSector: string, box: { x0: number; y0: number; x1: number; y1: number }): { x: number; y: number } | null {
-  const gates = sectorSites(sectorKey).filter((g) => g.kind === 'gate');
-  if (gates.length === 0) return null;
-  const bx = (box.x0 + box.x1) / 2, by = (box.y0 + box.y1) / 2;
-  let gate = gates.find((g) => g.neighbour === otherSector);
-  if (!gate) {
-    const far = otherSector !== sectorKey ? getSector(otherSector) : undefined;
-    const fp = far ? axialToPixel(far.hex, 1) : null;
-    let best = Infinity;
-    for (const g of gates) {
-      const ns = g.neighbour ? getSector(g.neighbour) : undefined;
-      const np = ns ? axialToPixel(ns.hex, 1) : null;
-      const d = fp && np ? Math.hypot(np.x - fp.x, np.y - fp.y) : Math.hypot(g.x - bx, g.y - by);
-      if (d < best) { best = d; gate = g; }
-    }
-  }
-  const dx = bx - gate!.x, dy = by - gate!.y, len = Math.hypot(dx, dy) || 1;
-  return { x: Math.round(gate!.x + (dx / len) * gate!.r), y: Math.round(gate!.y + (dy / len) * gate!.r) };
-}
 
 export class ConvoyDirector {
   /** v4 H2 — route length in hops (rides the transit links by default). */

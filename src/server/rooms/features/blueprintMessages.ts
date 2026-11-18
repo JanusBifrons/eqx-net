@@ -12,7 +12,9 @@ import type { ProductionSubsystem } from '../../structures/ProductionSubsystem.j
 import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { ShipState } from '../schema/SectorState.js';
-import { isOperationalStorage, nearStorage, type StorageService } from '../../cargo/StorageService.js';
+import type { StorageService } from '../../cargo/StorageService.js';
+import { isOperationalStorage } from '../../cargo/storageHolds.js';
+import { nearStorage } from '../../cargo/storageReach.js';
 import { getPlayerShipStore, getHoldStore, getWallet } from '../../db/PersistenceWorker.js';
 import { getTradeSink } from '../../economy/tradeSink.js';
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../../economy/BlueprintMarket.js';
