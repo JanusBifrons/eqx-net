@@ -35,6 +35,7 @@ import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from './catchUp.js';
 import { WakeCensus, WAKE_CENSUS_EVERY_TICKS } from './wakeCensus.js';
+import { SLEEP_HYSTERESIS_TICKS, spawnAsleep } from './sleepHysteresis.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -67,9 +68,6 @@ import {
 } from '../../shared-types/sabLayout.js';
 
 const TICK_MS = 1000 / 60;
-/** Ticks a body must report sleeping consecutively before FLAG_SLEEPING is set.
- *  Suppresses flap on slow-drift entities under rapier2d-compat's threshold. */
-const SLEEP_HYSTERESIS_TICKS = 12;
 /** Stage 2 — minimum contact-force magnitude (N) to broadcast as a CONTACT
  *  event. ~200 N at the 60 Hz step ≈ 3.3 N·s impulse, which catches every
  *  meaningful ship-vs-asteroid / ship-vs-drone collision but filters out
@@ -81,7 +79,7 @@ const CONTACT_FORCE_FLOOR = 200;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean | 'fixed'; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean | 'fixed'; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number; sleeping?: boolean }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 /** Pilot layer: every AI slot driven by control keys this tick, in ONE message
  *  (replaces a post per drone). `slots[i]` flies with keys `bits[i]` (packed
@@ -333,6 +331,8 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         if (cmd.shipKindId !== undefined) physics.setPilotKind(cmd.obstacleId, getShipKind(shipKindFromIndex(cmd.shipKindId)));
         playerToSlot.set(cmd.obstacleId, cmd.slot);
         slotToPlayer.set(cmd.slot, cmd.obstacleId);
+        // Wreck fields: a piece laid out at rest spawns asleep (sleepHysteresis.ts).
+        if (cmd.sleeping === true) spawnAsleep(physics, sleepCount, cmd.slot, cmd.obstacleId, cmd.x, cmd.y, cmd.angle ?? 0);
         break;
       }
       case 'BOT_WARP': {
