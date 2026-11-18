@@ -1,10 +1,8 @@
 import { Room, Client } from 'colyseus';
-import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
 import { playerInMiningBeam, MINING_BEAM_HALF_WIDTH } from '../../core/combat/miningBeamHazard.js';
 // clampFireTick now used inside PlayerFireResolver.ts
 import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
 import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
 import { SimulationClock } from '../../core/clock/SimulationClock.js';
@@ -20,13 +18,9 @@ import { wireShipBodyId } from '../../shared-types/shipBodyIds.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import type { GridFlowMaterial } from '../../shared-types/messages.js';
 import { SESSION_REPLACED_CLOSE_CODE, type SessionReplacedMessage } from '../../shared-types/messages.js';
-import { getAccountPlayerRegistry, canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
-import { consumeTransitIdentity } from '../identity/TransitIdentityTokens.js';
+import { canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
 import {
-  registerPlayerSession,
   unregisterPlayerSession,
-  getPlayerSession,
-  takeOverPlayerSession,
 } from '../identity/PlayerSessionRegistry.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
 import { isDirectorBotId, isHaulerId } from '../livingworld/directorBotIds.js';
@@ -51,7 +45,6 @@ import {
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
-import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
@@ -77,9 +70,8 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut, IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { FleetOrder } from '../../shared-types/messages/fleetStatusMessages.js';
-import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { mountPriority, targetClass, targetClassOfKind, STRUCTURE_TARGET_CLASS } from '../../core/combat/mountTargeting.js';
 import { decodeAim } from '../../core/combat/manualAim.js';
 import type { TurretTargetView } from '../structures/StructureMountTicker.js';
@@ -92,7 +84,7 @@ import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
 import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { pushNotifier } from '../push/PushNotifier.js';
-import { registerConnectedPlayer, unregisterConnectedPlayer } from '../push/connectedPlayers.js';
+import { unregisterConnectedPlayer } from '../push/connectedPlayers.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
@@ -171,12 +163,6 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
 /** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
 const KEEP_SQUAD = Object.freeze({ keepSquad: true });
-/** Welcome extras for a room that breaks capitals into wrecks (shared, frozen). */
-type WreckWelcomeFields = {
-  capitalWrecks?: true;
-  subcapWrecks?: true;
-  wrecks?: import('../../shared-types/messages.js').WreckDescriptor[];
-};
 const WRECK_WELCOME: WreckWelcomeFields = Object.freeze({ capitalWrecks: true as const });
 const SUBCAP_WRECK_WELCOME: WreckWelcomeFields = Object.freeze({ subcapWrecks: true as const });
 const BOTH_WRECK_WELCOME: WreckWelcomeFields = Object.freeze({ capitalWrecks: true as const, subcapWrecks: true as const });
@@ -279,6 +265,17 @@ import { FleetStatusStream } from '../fleet/FleetStatusStream.js';
 import { FleetStatusSoon, FLEET_STATUS_SOON_TICKS } from '../fleet/FleetStatusSoon.js';
 import { decodeAiInputBits, type AiInputBits } from '../../core/contracts/IAiBehaviour.js';
 import { LeaveHandler } from './LeaveHandler.js';
+import { JoinHandler } from './join/JoinHandler.js';
+import {
+  ALLOW_DEV_OVERRIDES,
+  CLIENT_READY_TIMEOUT_TICKS,
+  JOIN_BROADCAST_GRACE_TICKS,
+  hullExtent,
+  withShipScale,
+  type PendingJoinRecord,
+  type WreckWelcomeFields,
+} from './join/joinConstants.js';
+import { ChargeTicksCapSchema, LockTimeCapSchema, TimeScaleSchema, TraverseTicksCapSchema } from './join/joinOptions.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
 import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
 import { recordLagCompPoses } from './lagCompRecorder.js';
@@ -317,8 +314,8 @@ import {
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 import { ARRIVED_TICKS, WarpTravelTracker } from './warpTravel.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
-import { validateToken, getUser } from '../auth/AuthService.js';
-import { recordGameJoin, recordKill, saveSnapshot } from '../stats/StatsService.js';
+import { getUser } from '../auth/AuthService.js';
+import { recordKill, saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
 import type {
   SectorSnapshotStructure,
@@ -337,13 +334,16 @@ import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEm
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY, liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { isLiveTerritoryLock, territoryLockRefusal } from '../structures/territoryLockRules.js';
-import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
+import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty } from '../../shared-types/lootTables.js';
 import { deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
 import {
-  qualityHullFactor, STARTER_HULL_KINDS, fittedCargoMul, fittedHullMul, fittedUid,
+  qualityHullFactor,
+  fittedCargoMul,
+  fittedHullMul,
+  fittedUid,
 } from '../../shared-types/blueprints.js';
 
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
@@ -353,7 +353,6 @@ import { getBountyBoard } from '../economy/BountyBoard.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
-import { setSession } from '../transit/sessionRegistry.js';
 import {
   EngageTransitSchema,
   CancelTransitSchema,
@@ -361,14 +360,14 @@ import {
   PilotShipSchema,
   SpectateSchema,
   CommandSchema,
-  StartModeSchema,
   FleetOrderSchema,
   SetModeSchema,
   SetStanceSchema,
   FormSquadSchema,
   DisbandSquadSchema,
   LockRequestSchema,
-  LockCancelSchema, LockTrackSchema,
+  LockCancelSchema,
+  LockTrackSchema,
   SetGroupModeSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
@@ -403,18 +402,13 @@ import { rockViewOf } from './rockCut.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
-import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
-import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
 import { isTerrainLockKind, swarmLockEligible, type LockEntry } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
-import { MIN_TIME_SCALE, MAX_TIME_SCALE, clampTimeScale, type GameClock } from '../../core/clock/GameClock.js';
+import { clampTimeScale, type GameClock } from '../../core/clock/GameClock.js';
 import { LoadSpeedController } from '../../core/clock/LoadSpeedController.js';
 import { glideToward } from '../../shared-types/timeScale.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/physics/catchUp.js';
 
-/** Stamp the ship scale and the naval range mode onto a welcome (shared
- *  contracts: shipScale/welcomeScale.ts, combat/navalRange.ts). */
-const withShipScale = (w: WelcomeMessage): WelcomeMessage => stampNavalRange(stampShipScale(w));
 
 /** One parked hull for `handOffHullsTo`: where it lands in the far sector. */
 interface HullMove {
@@ -445,13 +439,7 @@ const NPC_HOLD_CAPACITY = 1000;
 /** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
 const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
 /** T4b — the level of `good`'s order on a dock (0 when none). */
-const NO_SITE_CIRCLES: readonly SiteCircle[] = [];
 
-/** A hull's extent for spawn clearance against other hulls: its radius plus
- *  its shield pad (#18, both from the kind's size). */
-function hullExtent(kind: string): number {
-  return getShipKind(kind).radius + tuningFor(kind).shieldPad;
-}
 
 function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
   return r.freightOrders?.find((o) => o.good === good)?.level ?? 0;
@@ -469,13 +457,6 @@ const WORKER_TS_PATH = fileURLToPath(
   new URL('../../core/physics/worker.ts', import.meta.url),
 );
 
-// Dev-only override gate. When set, `testMode`-only join options
-// (`initialHull`, `initialShield`, `startHostile`) ALSO apply on
-// galaxy rooms — required by the phone-stall repro spec
-// (tests/mobile-perf/phone-galaxy-stall-repro.spec.ts) to harden test
-// conditions (near-invulnerable ship under heavy combat). Off in
-// production; set via `EQX_ALLOW_DEV_OVERRIDES=1` for E2E only.
-const ALLOW_DEV_OVERRIDES = process.env['EQX_ALLOW_DEV_OVERRIDES'] === '1';
 
 /** `EQX_TIME_SCALE`: every sector's starting game speed (dev, demos, video).
  *  Ignored in production unless `EQX_ALLOW_DEV_OVERRIDES=1`. */
@@ -487,181 +468,6 @@ const ENV_TIME_SCALE: number | null = (() => {
   return Number.isFinite(n) && n > 0 ? n : null;
 })();
 
-/**
- * testMode `lockTimeCapS` (room option, join option, URL `?lockTimeCapS=`):
- * the longest any NON-player lock may take, in seconds. 0 = the first step.
- * Applied by `capLockSeconds` (core/combat/lockTime.ts).
- */
-const LockTimeCapSchema = z.number().finite().min(0).max(600);
-
-/**
- * testMode `chargeTicksCap` (room option, join option, URL `?chargeTicksCap=`):
- * the longest any capital-turret charge may take, in ticks (the railgun's ~6 s
- * wind-up without the wait). 0 = it fires on the next tick it may.
- */
-const ChargeTicksCapSchema = z.number().int().min(0).max(36_000);
-
-/**
- * testMode `traverseTicksCap` (room option, join option, URL `?traverseTicksCap=`):
- * the longest any capital turret may take to train across a full turn, in
- * ticks (a 16" trains at ~4 deg/s, so ~15 s onto a target abeam). 0 = snap.
- */
-const TraverseTicksCapSchema = z.number().int().min(0).max(36_000);
-
-/**
- * Game speed override for a sector (time scale stream): testMode room option,
- * join option and URL `?timeScale=`, or `EQX_TIME_SCALE` outside production.
- * The automatic load controller (Phase 5) may still slow a sector below it.
- */
-const TimeScaleSchema = z.number().finite().min(MIN_TIME_SCALE).max(MAX_TIME_SCALE);
-
-
-
-const JoinOptionsSchema = z
-  .object({
-    playerId: z.string().nullable().optional(),
-    authToken: z.string().optional(),
-    /** PR 3a — server-issued single-use transit proof (set by the source
-     *  room's TransitOrchestrator in the seat reservation, never by a client). */
-    transitToken: z.string().max(64).optional(),
-    spawnX: z.number().optional(),
-    spawnY: z.number().optional(),
-    /** Test-only initial hull override. Honoured only when the room has
-     *  `testMode === true` (engineering rooms like `test-sector`). Lets
-     *  E2E specs that just need "do they die when shot?" spawn with
-     *  1 HP so the kill resolves in a single beam tick instead of
-     *  fighting full 500 HP + shield. Ignored on galaxy rooms. */
-    initialHull: z.number().int().min(1).optional(),
-    /** Test-only initial shield override; same testMode gate. 0 lets the
-     *  first beam hit hull immediately. */
-    initialShield: z.number().int().min(0).optional(),
-    /** Living World P1a — test-only: seed the joining ship's carried hold (so
-     *  spill / deposit specs don't have to farm loot first). testMode-gated. */
-    initialCargo: HoldSchema.optional(),
-    /** Economy v2 W1 — test-only: top the joining player's WALLET up to this
-     *  many credits (credits are virtual; never seeded into a hold). */
-    initialWallet: z.number().int().min(0).max(10_000_000).optional(),
-    /** Test-only initial energy override; same testMode gate. Lets energy
-     *  specs start near-empty so the fire-gate / regen flow resolves in a
-     *  few ticks. (weapons/energy/AI overhaul §3) */
-    initialEnergy: z.number().int().min(0).optional(),
-    /** Mobile-perf gate test-only leak rate (bytes per RAF tick). Server
-     *  accepts and ignores — the value is consumed CLIENT-SIDE by
-     *  `src/client/debug/testLeakHook.ts` reading the URL param directly.
-     *  Validated here only for schema parity with the other test
-     *  primitives + so the URL → joinOption echo round-trips cleanly. */
-    injectLeak: z.number().int().min(0).max(10_000_000).optional(),
-    /** Test-only initial angle override (radians, standard math CCW).
-     *  Lets a spec spawn pointing at a specific target without burning
-     *  ~2 seconds rotating the ship via keyboard input. testMode gate. */
-    initialAngle: z.number().finite().optional(),
-    /** Per-test room isolation knob. Combined with the test rooms'
-     *  `filterBy(['testId'])` (in `src/server/index.ts`), passing a
-     *  unique testId routes each Playwright spec to its own physics-
-     *  worker-backed Colyseus room — enabling safe `fullyParallel`
-     *  execution across specs without cross-test state pollution.
-     *  Omit (default) → shared room for back-compat with pre-filterBy
-     *  specs. The server doesn't otherwise consume this field; Colyseus
-     *  routes by it at the matchmaker layer. */
-    testId: z.string().optional(),
-    /** Player-chosen ship kind id (e.g. 'scout' | 'fighter' | 'heavy').
-     *  Validated against `isShipKindId` in `onJoin`; unknown / missing values
-     *  fall back to `DEFAULT_SHIP_KIND`. Ignored on Limbo rebind paths so a
-     *  bad-actor client cannot mid-session swap kind. */
-    shipKind: z.string().optional(),
-    /** Phase 3 multi-ship roster — the specific roster entry to spawn into.
-     *  Validated against `getPlayerShipStore().get(shipId).playerId === playerId`
-     *  in `onJoin`; unowned / missing ids fall through to the legacy
-     *  Limbo-restore-or-fresh-spawn path. Present ⇒ hydrate from the named
-     *  roster row's stored pose / kind / health; ignore Limbo for this join. */
-    shipId: z.string().optional(),
-    /** Phase 3 multi-ship roster — force fresh creation even when the
-     *  player already has entries in their roster. Sent by the galaxy
-     *  map's "spawn a new ship in this sector" flow (sector click →
-     *  kind picker). Without this flag, the dual-write defaults to
-     *  reusing the most-recent roster row, which would mean clicking a
-     *  fresh sector silently resumed the player's old ship. */
-    isNewShip: z.boolean().optional(),
-    /** Test-only: pre-mark every drone in this sector hostile to the
-     *  joining player at spawn time. Lets a 20-25 s CDP allocation
-     *  profile (or any combat-shaped E2E) measure steady-state combat
-     *  without the IDLE→COMBAT transition tail polluting the window.
-     *  testMode-gated; ignored on galaxy rooms so a malicious client
-     *  can't force-aggro a live sector. plan: imperative-taco. */
-    startHostile: z.boolean().optional(),
-    /** Test-only bespoke trigger (fire control): every lock of this pilot
-     *  completes on the next lock step, so a spec that isn't about locking can
-     *  fire without waiting ~1.5 s per lock. It does NOT widen AUTO targeting
-     *  (that is `anyTarget`). testMode-gated (ignored on galaxy rooms). */
-    instantLock: z.boolean().optional(),
-    /** Test-only bespoke trigger (fire control): the longest any NON-player
-     *  lock in this room may take, in seconds (NPC drones and capitals on
-     *  pilots, capital turrets on structures, structure and coastal turrets).
-     *  0 = locks complete on the first step. Room-wide: read in `onCreate`
-     *  (room option, or the room-creating client's join option) and on any
-     *  join that passes it. testMode-gated. */
-    lockTimeCapS: LockTimeCapSchema.optional(),
-    /** Test-only bespoke trigger (charge-up): the longest any capital-turret
-     *  charge in this room may take, in ticks. Room-wide; testMode-gated. */
-    chargeTicksCap: ChargeTicksCapSchema.optional(),
-    /** Test-only bespoke trigger (turret traverse): the longest any capital
-     *  turret takes to train a full turn, in ticks. Room-wide; testMode-gated. */
-    traverseTicksCap: TraverseTicksCapSchema.optional(),
-    /** Test/recording trigger (time scale): set this sector's game speed
-     *  (0.25–4). Room-wide. testMode-gated. */
-    timeScale: TimeScaleSchema.optional(),
-    /** Test-only bespoke trigger (fire control): this pilot's AUTO groups
-     *  also pick NON-hostile targets (NPC ships, structures not their own) in
-     *  reach + arc. Never players. Usually paired with `instantLock`.
-     *  testMode-gated (ignored on galaxy rooms). */
-    anyTarget: z.boolean().optional(),
-    /** Test-only bespoke trigger (fire control): every weapon group of this
-     *  pilot starts in MAN, so AUTO never self-picks a target before the test
-     *  sets the group it wants (`anyTarget` + `instantLock` let AUTO lock anything at once,
-     *  which can kill a fragile target first). testMode-gated. */
-    groupMode: z.enum(['manual']).optional(),
-    /** Test-only: override the disconnect-linger TTL (ms) for THIS player.
-     *  On disconnect the room normally lingers the hull for
-     *  `LIMBO_DISCONNECT_TTL_MS` (15 min) before the ownerless-evict timer
-     *  returns it to the virtual pool. That's far too long for an E2E to
-     *  observe the despawn→return-to-pool transition, so the linger E2E
-     *  suite passes e.g. `?lingerMs=2000` to make the evict fire in ~2 s.
-     *  testMode-gated (honoured only on `galaxy-test` / engineering rooms);
-     *  ignored on live galaxy rooms so a malicious client can't force a
-     *  short or huge linger window. */
-    lingerMs: z.number().int().min(1).max(900_000).optional(),
-    /** Showcase / E2E bespoke trigger — pre-load the joining ship's roster XP
-     *  so ONE kill crosses a level threshold (the level-up + upgrade-modal
-     *  shot) instead of a dozen. testMode-gated; needs a roster row (a room
-     *  with a real sectorKey). Level is unchanged — only the XP bar fills. */
-    initialXp: z.number().int().min(0).max(100_000).optional(),
-    /** Structures plan (Phase 3/4) test-only override of the grid pulse
-     *  interval (ms). On the room-creating client it reaches `onCreate` and
-     *  sets the pulse timer; lets the mining/construction E2E fast-forward the
-     *  wall-clock pulse (which `testTimeScale` can't, being physics-tick-only).
-     *  testMode-gated. */
-    structureGridPulseMs: z.number().int().min(20).max(2000).optional(),
-    /** Equinox Phase 5 (WS-3) — join the sector as a SPECTATOR. The galaxy
-     *  "Join as spectator" CTA sends this (skipping the ship-kind picker). The
-     *  hull still spawns through the normal handshake (so the client's join
-     *  readiness lifts the load curtain the proven way), but at the arrival
-     *  flip it is PARKED as a lingering hull — the player has NO active hull
-     *  and arrives in free-roam spectator mode (pilotable later via the in-
-     *  world Pilot dropdown). Galaxy rooms only (`sectorKey !== null`); ignored
-     *  on engineering rooms which have no roster to park a lingering hull into.
-     *  NOT testMode-gated — it's a real player-facing entry mode. */
-    spectator: z.boolean().optional(),
-    /** RTS command layer (slice 10) — how the player lands: `command` parks
-     *  the hull as an AI-flown lingering hull at the arrival flip (the same
-     *  path as the `command` / `spectate` messages) and tells the client
-     *  (`control_mode`), so they arrive in command view; `fly` (and absent)
-     *  = at the controls, as before. Galaxy rooms only (an engineering room
-     *  has no roster to park into, nor a way to take the helm back). The
-     *  client sends `command` for normal galaxy play; server-reserved transit
-     *  arrivals carry none, so a pilot who warps keeps flying. */
-    startMode: StartModeSchema.optional(),
-  })
-  .passthrough();
 
 const MAX_INPUTS_PER_TICK = 3;
 /** Fire control: lock messages per session per tick (all four kinds together).
@@ -712,27 +518,6 @@ const SELECTION_STATS_INTERVAL_MS = 200;
  *  60 Hz physics. */
 const IDLE_THRESHOLD_TICKS = 60;
 
-/** Ticks after ANY player join/spawn during which snapshot broadcasts
- *  are forced ON regardless of sector idle state. 300 ticks = 5 s at
- *  60 Hz.
- *
- *  Why: a player who joins a quiet sector (initial join, sector
- *  transit, reconnect) spawns stationary. With no motion the idle
- *  tracker never fires, so after `IDLE_THRESHOLD_TICKS` the broadcast
- *  loop short-circuits — and the freshly-joined client NEVER receives
- *  a snapshot to reconcile its prediction world against the real
- *  spawn pose. It free-runs its (stale, post-transit) prediction,
- *  renders the ship at the wrong place, and the moment the player
- *  moves the sector un-idles, the first snapshot lands, and the
- *  reconciler snaps the ship hundreds of units (the user-reported
- *  "warp in → stay still → move → teleport" bug, capture
- *  2026-05-15T20-35-04-862Z-0ibj77 showed an 803-unit correction
- *  after a 5.25 s snapshot blackout). The grace window guarantees the
- *  new client gets a steady snapshot stream long enough to reconcile;
- *  once reconciled a stationary ship's prediction matches the server
- *  so subsequent idle-suppression is harmless. 5 s also matches the
- *  client's `joinMinimumElapsed` curtain floor. */
-const JOIN_BROADCAST_GRACE_TICKS = 300;
 
 /**
  * Plan: crispy-kazoo, Commit 9 — synchronised warp-in handshake.
@@ -760,43 +545,7 @@ const JOIN_BROADCAST_GRACE_TICKS = 300;
  */
 const ARRIVAL_OFFSET_TICKS = 36;
 
-/**
- * Plan: crispy-kazoo, Commit 2 — `client_ready` watchdog.
- *
- * If the client never sends `client_ready` (broken bootstrap, network
- * drop mid-load) the watchdog force-activates the ship at this tick
- * so the player appears even if their client is wedged. 30 s at
- * 60 Hz = 1800 ticks. Better than an invisible ghost; the Limbo
- * 15 min TTL eventually catches truly-dead sessions.
- */
-const CLIENT_READY_TIMEOUT_TICKS = 1800;
 
-/**
- * Per-pending-join record. Lives in `pendingJoin: Map<playerId, ...>`
- * on the room. Removed when the ship activates (normal or watchdog).
- */
-interface PendingJoinRecord {
-  joinTick: number;
-  watchdogTick: number;
-  /** Set when `client_ready` is received and the server picks the
-   *  activation tick. `null` while waiting for client_ready. */
-  arrivalTick: number | null;
-  spawnX: number;
-  spawnY: number;
-  sessionId: string;
-  /** Equinox Phase 5 (WS-3) — join-as-spectator. When `true`, `drainPendingJoin`
-   *  PARKS the hull as a lingering hull at the arrival flip (via
-   *  `displaceActiveHullToLingering`) instead of flipping `isActive = true`, so
-   *  the player arrives with no active hull. Only set on a galaxy-room fresh
-   *  spawn whose join carried `spectator: true`. */
-  spectator?: boolean;
-  /** RTS Part A seamless take controls — the hull was ALREADY in the world
-   *  (a parked hull reclaimed by `pilot_ship`). Others keep receiving it
-   *  through the handshake (as the parked hull it still is) instead of it
-   *  vanishing and coming back active: their clients move it to its pilot's
-   *  key without a flicker. A fresh spawn stays hidden until it arrives. */
-  inWorld?: boolean;
-}
 
 /** Stage 5 — motion epsilon. A ship is considered "moving" if its speed
  *  squared exceeds this. 0.05 u/s²  → ~0.22 u/s actual speed; below
@@ -1086,6 +835,8 @@ export class SectorRoom extends Room<SectorState> {
   private ownerlessShipEvictor!: OwnerlessShipEvictor;
   /** Player onLeave handler (lingering / transit / despawn branches). Extracted to `LeaveHandler.ts`. */
   private leaveHandler!: LeaveHandler;
+  /** Player onJoin handler (identity / spectator / rebind / fresh spawn). Extracted to `join/JoinHandler.ts`. */
+  private joinHandler!: JoinHandler;
   private swarmSpawner!: SwarmSpawner;
   /** Scrap-on-death (Phase 2b-ii) — breaks a dying composite ship/drone into
    *  floating scrap pieces; owns the global FIFO cap. */
@@ -2662,6 +2413,77 @@ export class SectorRoom extends Room<SectorState> {
       // Capital destruction S2b: the wreck descriptors (null when off).
       getWrecks: () => this.capitalWrecks?.descriptors() ?? null,
       wrecksVersion: () => this.capitalWrecks?.version ?? 0,
+    });
+
+    // Player onJoin handler. Identity / spectator / rebind / fresh-spawn
+    // paths. Extracted to join/JoinHandler.ts. Room scalars are live getters
+    // (setters where the join writes them) so the handler always sees the
+    // room's current value.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters below read the room's private fields live
+    const room = this;
+    this.joinHandler = new JoinHandler({
+      get sectorKey() { return room.sectorKey; },
+      get roomId() { return room.roomId; },
+      get testMode() { return room.testMode; },
+      get enforceHullGate() { return room.enforceHullGate; },
+      get defaultSpawnX() { return room.defaultSpawnX; },
+      get defaultSpawnY() { return room.defaultSpawnY; },
+      get testWalletSeed() { return room.testWalletSeed; },
+      get serverTick() { return room.serverTick; },
+      get forceBroadcastUntilTick() { return room.forceBroadcastUntilTick; },
+      set forceBroadcastUntilTick(v: number) { room.forceBroadcastUntilTick = v; },
+      get testChargeTicksCap() { return room.testChargeTicksCap; },
+      set testChargeTicksCap(v: number | undefined) { room.testChargeTicksCap = v; },
+      get testTraverseTicksCap() { return room.testTraverseTicksCap; },
+      set testTraverseTicksCap(v: number | undefined) { room.testTraverseTicksCap = v; },
+      get sabF32() { return room.sabF32; },
+      get sabU32() { return room.sabU32; },
+      get shipsMap() { return room.state.ships; },
+      get sessionToPlayer() { return room.sessionToPlayer; },
+      get playerToSession() { return room.playerToSession; },
+      get sessionRegisteredPlayer() { return room.sessionRegisteredPlayer; },
+      get playerToUser() { return room.playerToUser; },
+      get playerToSlot() { return room.playerToSlot; },
+      get slotToPlayer() { return room.slotToPlayer; },
+      get freeSlots() { return room.freeSlots; },
+      get playerToActiveShipInstance() { return room.playerToActiveShipInstance; },
+      get lingeringSlots() { return room.lingeringSlots; },
+      get ownerlessShips() { return room.ownerlessShips; },
+      get initialSpawnPositions() { return room.initialSpawnPositions; },
+      get shipPoseCache() { return room.shipPoseCache; },
+      get lastFireClientTick() { return room.lastFireClientTick; },
+      get playerToLingerMs() { return room.playerToLingerMs; },
+      get pendingJoin() { return room.pendingJoin; },
+      get pendingCommandStart() { return room.pendingCommandStart; },
+      get sandboxHostileDroneIds() { return room.sandboxHostileDroneIds; },
+      get obstacles() { return room.obstacles; },
+      get cutField() { return room.cutField; },
+      get bus() { return room.bus; },
+      get swarmRegistry() { return room.swarmRegistry; },
+      get structureRegistry() { return room.structureRegistry; },
+      get structureGrid() { return room.structureGrid; },
+      get snapshotRing() { return room.snapshotRing; },
+      get locks() { return room.locks; },
+      get aiController() { return room.aiController; },
+      logger,
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      broadcast: (type, message) => this.broadcast(type, message),
+      wreckWelcomeFields: () => this.wreckWelcomeFields(),
+      shellWelcomeFields: (client, playerId) => this.shellWelcomeFields(client, playerId),
+      shipHullMax: (kindMax, alloc, id) => this.shipHullMax(kindMax, alloc, id),
+      setTimeScale: (scale) => this.setTimeScale(scale),
+      setLockTimeCap: (capS) => this.setLockTimeCap(capS),
+      sendNotice: (client, text) => this.sendNotice(client, text),
+      resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid),
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      markAllDronesHostileTo: (pid) => this.markAllDronesHostileTo(pid),
+      landingPoint: (pid, x, y, kind) => this.landingPoint(pid, x, y, kind),
+      evictSessionForTakeover: (sessionId) => this.evictSessionForTakeover(sessionId),
+      evictOwnerlessShip: (id) => this.evictOwnerlessShip(id),
+      attachWingman: (id) => this.attachWingman(id),
+      applyStatMulToWorker: (bodyKey, alloc) => this.applyStatMulToWorker(bodyKey, alloc),
+      bindRosterEntry: (playerId, userId, kind, pose, preferredShipId = '', forceFreshCreate = false) =>
+        this.rosterPersistence.bind(playerId, userId, kind, pose, preferredShipId, forceFreshCreate),
     });
 
     // Player onLeave handler. Three branches: shouldLinger / transit-
@@ -8828,913 +8650,7 @@ export class SectorRoom extends Room<SectorState> {
   // ── Colyseus room hooks ─────────────────────────────────────────────────
 
   override async onJoin(client: Client, options: unknown): Promise<void> {
-    logger.info({ sessionId: client.sessionId, options }, 'onJoin called');
-    const parsed = JoinOptionsSchema.safeParse(options);
-    const requestedId = parsed.success ? parsed.data.playerId : null;
-
-    const authToken = parsed.success ? parsed.data.authToken : undefined;
-    let userId = authToken ? await validateToken(authToken) : null;
-
-    // ── PR 3a — account-bound identity ────────────────────────────────────
-    // The playerId (owner of ships / structures / hulls) belongs to the
-    // ACCOUNT, not the browser. See identity/AccountPlayerRegistry.ts.
-    const identity = getAccountPlayerRegistry();
-    const transitToken = parsed.success ? parsed.data.transitToken : undefined;
-    let playerId: string;
-    // Test-fixture accounts (the shared E2E login) keep per-browser ids.
-    const accountBound = userId !== null && !identity.isExempt(userId);
-    if (accountBound) {
-      // Logged in → always the account's canonical id (the claim is ignored
-      // once the account is bound; a first login adopts this browser's id).
-      playerId = identity.resolveForUser(userId as string, requestedId);
-    } else if (transitToken !== undefined && consumeTransitIdentity(transitToken, requestedId)) {
-      // Server-reserved transit arrival — the token proves the identity; the
-      // account (if any) is recovered from the registry.
-      playerId = requestedId as string;
-      userId = userId ?? identity.userForPlayer(playerId);
-    } else {
-      // Anonymous → may NOT claim an id that belongs to an account (that would
-      // let a logged-out browser pilot the account's ships). Historical alias
-      // ids are account-bound too.
-      playerId = assignPlayerId(requestedId);
-      if (identity.isAccountBound(playerId)) playerId = assignPlayerId(null);
-    }
-
-    // Same id already piloted by another session. A logged-in (or transiting)
-    // player TAKES OVER — the old session, in whichever room it lives, is
-    // told `session_replaced` and disconnected first, then this join rebinds
-    // to the hull like a normal reconnect. An anonymous duplicate (two tabs
-    // sharing one localStorage) keeps the legacy behaviour: a fresh identity.
-    if ((accountBound || identity.isAccountBound(playerId)) && getPlayerSession(playerId) !== undefined) {
-      await takeOverPlayerSession(playerId);
-    }
-
-    // Validated ship-kind id from JoinOptions, or the catalogue default. Used
-    // by the fresh-spawn and Limbo paths below; explicitly NOT consulted on
-    // the rebind path (a bad-actor client must not be able to mid-session
-    // swap kind by reconnecting — the existing ShipState.kind is preserved).
-    const requestedKind = parsed.success
-        && typeof parsed.data.shipKind === 'string'
-        && isPlayableShipKindId(parsed.data.shipKind)
-      ? parsed.data.shipKind
-      : DEFAULT_SHIP_KIND;
-
-    // If the requested ID is STILL held by an active session in this room
-    // (anonymous two-tabs case, or a takeover that timed out), assign a fresh
-    // UUID — two sessions must never pilot one id.
-    if (this.playerToSession.has(playerId)) {
-      playerId = assignPlayerId(null);
-    }
-
-    // PR 3a — register this session as the current pilot of `playerId` so a
-    // later login on another device can take it over (any room, this server).
-    const joinSessionId = client.sessionId;
-    this.sessionRegisteredPlayer.set(joinSessionId, playerId);
-    registerPlayerSession(playerId, {
-      roomId: this.roomId,
-      sessionId: joinSessionId,
-      evict: () => this.evictSessionForTakeover(joinSessionId),
-    });
-
-    // ── Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR ─────────────────────────
-    // The galaxy "Spectate" CTA joins with `{ spectator: true }`. The player
-    // drops into the sector as a free-roam camera with NO ship at all — no
-    // hull, no slot, no roster row, nothing in the world (the user's "there
-    // should be no hull or wreck or ship involved"). Short-circuit BEFORE the
-    // rebind / fresh-spawn paths so a spectator never spawns or displaces a
-    // hull. Galaxy rooms only (engineering rooms have no roster/persistence;
-    // they fall through to the normal pilot join).
-    if (parsed.success && parsed.data.spectator === true && this.sectorKey !== null) {
-      // RTS fleet warp (S7): a commander following their fleet arrives with
-      // the fleet's anchor as spawnX/spawnY (the seat reservation's options).
-      const spawn = parsed.data.spawnX !== undefined && parsed.data.spawnY !== undefined
-        ? clampToSectorBounds(parsed.data.spawnX, parsed.data.spawnY)
-        : null;
-      this.joinAsSpectator(client, playerId, userId, spawn);
-      return;
-    }
-
-    // RTS slice 10 — `startMode: 'command'`: spawn / rebind as normal (the
-    // client's join readiness runs the proven handshake), then park the hull
-    // at the arrival flip so the player lands in command view. Galaxy rooms
-    // only; absent / `fly` keeps the pilot join.
-    if (parsed.success && parsed.data.startMode === 'command' && this.sectorKey !== null) {
-      this.pendingCommandStart.add(playerId);
-    } else {
-      this.pendingCommandStart.delete(playerId);
-    }
-
-    // ── Phase 8 sub-phase B — REBIND PATH ──────────────────────────────────
-    // If this player has an ownerless ship still drifting in the sector
-    // (disconnected within the TTL window), reattach the new session to
-    // the existing ship instead of fresh-spawning. The ship's pose / vel /
-    // angle / health reflect what happened during the offline window
-    // (drift decayed by drag, possibly damage from passing drones).
-    //
-    // Phase 3 multi-ship: the player can intentionally bypass rebind by
-    // (a) sending `isNewShip:true` (sector-click → kind picker → fresh
-    // spawn), or (b) sending a `shipId` that doesn't match the lingering
-    // ship's `shipInstanceId` (roster card → resume a DIFFERENT stored
-    // ship). When either is set, evict the lingering ship to stored
-    // state (it stays in the roster, the slot is freed) and fall
-    // through to the fresh-spawn path below.
-    // Phase 6b cleanup — ownerlessShips is now keyed by the lingering hull's
-    // shipInstanceId. Resolve via the playerToActiveShipInstance indirection
-    // that was set up at original spawn and preserved through onLeave's
-    // linger branch.
-    const lingeringShipId = this.resolveActiveShipKey(playerId);
-    const ownerlessTimer = lingeringShipId !== undefined
-      ? this.ownerlessShips.get(lingeringShipId)
-      : undefined;
-    if (this.sectorKey !== null && ownerlessTimer !== undefined) {
-      const existingShip = this.getActiveShip(playerId);
-      const wantsNewShip = parsed.success && parsed.data.isNewShip === true;
-      const requestedShipIdForRebindCheck = parsed.success && typeof parsed.data.shipId === 'string'
-        ? parsed.data.shipId
-        : '';
-      const wantsDifferentShip = requestedShipIdForRebindCheck !== ''
-        && existingShip !== undefined
-        && existingShip.shipInstanceId !== ''
-        && existingShip.shipInstanceId !== requestedShipIdForRebindCheck;
-      if (wantsNewShip || wantsDifferentShip) {
-        logger.info(
-          { playerId, wantsNewShip, wantsDifferentShip, existingShipId: existingShip?.shipInstanceId, requestedShipId: requestedShipIdForRebindCheck },
-          'rebind skipped — player picked a different / new ship; keeping lingering hull in sector',
-        );
-        // Phase 6b — DON'T evict the lingering hull. Promote it to the
-        // lingeringSlots map so the snapshot loop continues to broadcast
-        // it; clear the active indirection so the fresh ship can take
-        // playerToActiveShipInstance[playerId] in its onJoin path.
-        //
-        // The ownerlessShips entry is keyed by the lingering hull's
-        // shipInstanceId, so the displaced hull keeps its presence marker
-        // across this transition (the player's fresh hull is tracked
-        // separately). WS-12 / R2.26: that marker is a persist-forever `null`
-        // (no despawn timer) — the displaced hull stays in the world until the
-        // owner abandons it (→ scrap) or it is destroyed; it never times out.
-        const lingeringSlot = this.playerToSlot.get(playerId);
-        if (lingeringSlot !== undefined && existingShip && existingShip.shipInstanceId !== '') {
-          this.lingeringSlots.set(existingShip.shipInstanceId, lingeringSlot);
-          // The hull is no longer "the player's active hull"; the fresh
-          // spawn will overwrite playerToActiveShipInstance below.
-          this.playerToActiveShipInstance.delete(playerId);
-          // existingShip.isActive was already false from the original
-          // onLeave linger branch — leave it false so the client
-          // continues to render with the lingering tint.
-
-          // Phase 6b push-fix (2026-05-13, diag
-          // 2026-05-13T19-33-59-440Z-04j2mm — the "fly into the
-          // abandoned ship, moves then snaps back" smoke-test bug).
-          //
-          // Rekey the worker's Rapier body identity from `playerId` to
-          // a unique `linger-${shipInstanceId}`. Without this, the
-          // imminent fresh-spawn `SPAWN { playerId, slot: newSlot }`
-          // calls `World.spawnShip(playerId, ...)` which does
-          // `bodies.set(playerId, newBody)` and ORPHANS the old body —
-          // it remains alive in Rapier (still collidable, still
-          // pushable) but its pose is no longer iterated by
-          // `getAllShipStates()`, so the worker stops writing its
-          // updated pose to SAB. The main thread reads the lingering
-          // slot's SAB cells (stale forever) and broadcasts the
-          // original abandon-point pose to clients every snapshot.
-          // Visible bug: client predicts the hull moving on collision
-          // → snapshot pulls it back to the stale pose → repeat.
-          //
-          // playerToSlot in the worker also gets remapped to the new
-          // key, so SAB writes continue to land in the correct (now-
-          // lingering) slot.
-          this.postToWorker({
-            type: 'REKEY_SHIP',
-            oldId: playerId,
-            newId: `linger-${existingShip.shipInstanceId}`,
-          });
-          this.attachWingman(existingShip.shipInstanceId);
-        }
-        // Fall through to the fresh-spawn / shipId-restore path below.
-        // The fresh spawn will allocate a NEW slot from freeSlots
-        // (the lingering slot stays allocated, tracked by lingeringSlots).
-        // playerToSlot[playerId] gets overwritten with the new slot.
-      } else {
-        // Original rebind behaviour: reattach to the existing slot.
-        // Phase 6b cleanup — ownerlessShips keyed by shipInstanceId. R2.26: a
-        // persist-forever lingering hull holds a `null` marker (no timer) — only
-        // a real Timeout needs clearing; the presence entry is always deleted.
-        if (ownerlessTimer) clearTimeout(ownerlessTimer);
-        if (lingeringShipId !== undefined) this.ownerlessShips.delete(lingeringShipId);
-        const existingSlot = this.playerToSlot.get(playerId);
-        if (existingSlot !== undefined && existingShip) {
-        // Plan: crispy-kazoo, Commit 2 — invariant: every join goes
-        // through the synchronised handshake (`pendingJoin` →
-        // `client_ready` → `warp_in` → arrivalTick → isActive=true).
-        // The rebind path used to flip `isActive = true` directly,
-        // skipping the handshake — works for the player (the ship is
-        // already alive) but BREAKS the client's bootstrap which sits
-        // waiting for `warp_in` to flip `arrival_acked`. Repro: phone
-        // smoke capture 2026-05-31T15-36-08Z-7eqj1a + the React
-        // StrictMode dev-mount cycle.
-        //
-        // The fix is to register the rebind in `pendingJoin` exactly
-        // as a fresh spawn does: isActive=false initially, watchdog
-        // armed, waiting for the client's `client_ready` to broadcast
-        // `warp_in`. `drainPendingJoin` flips `isActive=true` at the
-        // arrivalTick. The hull stays at its current live pose (we
-        // don't move it); only the visibility + handshake state are
-        // re-driven through the unified path.
-        existingShip.isActive = false;
-        this.sessionToPlayer.set(client.sessionId, playerId);
-        this.playerToSession.set(playerId, client.sessionId);
-
-        // WS-B (Phase 5): Limbo is retired. The live ShipState/SAB is the
-        // source of truth for the rebound hull; the anonymous-reconnect userId
-        // fallback now comes from the userId retained on this room from the
-        // original session, else the roster row (markLinger preserved it).
-        const rosterUserId = existingShip
-          ? (getPlayerShipStore().get(existingShip.shipInstanceId)?.userId ?? null)
-          : null;
-        const effectiveUserId = userId ?? this.playerToUser.get(playerId) ?? rosterUserId;
-        this.playerToUser.set(playerId, effectiveUserId);
-
-        // lastFireClientTick is already retained from the original session;
-        // do NOT reset — preserves cooldown across reconnect.
-
-        const b = slotBase(existingSlot);
-        const liveX = this.sabF32[b + SLOT_X_OFF]!;
-        const liveY = this.sabF32[b + SLOT_Y_OFF]!;
-
-        const tickAtRebind = Atomics.load(this.sabU32, TICK_IDX);
-        const welcome: WelcomeMessage = {
-          type: 'welcome',
-          playerId,
-          serverTick: tickAtRebind,
-          sectorKey: this.sectorKey,
-          shipInstanceId: existingShip?.shipInstanceId ?? '',
-        };
-        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
-
-        setSession(client.sessionId, {
-          roomId: this.roomId,
-          playerId,
-          sectorKey: this.sectorKey,
-        });
-
-        // Note: we do NOT call recordGameJoin again — the original
-        // session's joined_at remains canonical. From a stats perspective
-        // a disconnect+reconnect is one continuous play session.
-
-        this.bus.emit('SHIP_SPAWNED', {
-          type: 'SHIP_SPAWNED' as const,
-          playerId,
-          x: liveX,
-          y: liveY,
-        });
-        // Reconnect-restore path: force snapshot broadcasts so the
-        // returning client reconciles its prediction before
-        // idle-suppression can kick in. See JOIN_BROADCAST_GRACE_TICKS.
-        this.forceBroadcastUntilTick =
-          Atomics.load(this.sabU32, TICK_IDX) + JOIN_BROADCAST_GRACE_TICKS;
-        serverLogEvent('player_rebind', {
-          playerId,
-          sessionId: client.sessionId,
-          x: liveX,
-          y: liveY,
-          health: existingShip.health,
-        });
-        logger.info(
-          { playerId, sessionId: client.sessionId, x: liveX, y: liveY, health: existingShip.health, alive: existingShip.alive },
-          'player rebound to lingering ship',
-        );
-
-        // Plan: crispy-kazoo invariant — register the rebind in
-        // `pendingJoin` so `client_ready` → `warp_in` → arrivalTick →
-        // isActive=true follows the same path as a fresh spawn. The
-        // hull pose stays live (no SAB reset); only the visibility +
-        // handshake state are re-driven through the unified path.
-        this.pendingJoin.set(playerId, {
-          joinTick: tickAtRebind,
-          watchdogTick: tickAtRebind + CLIENT_READY_TIMEOUT_TICKS,
-          arrivalTick: null,
-          spawnX: liveX,
-          spawnY: liveY,
-          sessionId: client.sessionId,
-        });
-        serverLogEvent('pending_join_registered', {
-          playerId,
-          sessionId: client.sessionId,
-          watchdogTick: tickAtRebind + CLIENT_READY_TIMEOUT_TICKS,
-          source: 'rebind',
-        });
-        return;
-      }
-        // Stale entry: ownerlessShips had this player but the slot/ShipState
-        // is gone (e.g. a race we didn't anticipate). Fall through to
-        // fresh-spawn — better to recover than throw.
-        logger.warn({ playerId }, 'stale ownerless entry — falling through to fresh spawn');
-      }
-    }
-
-    // ── FRESH SPAWN PATH ───────────────────────────────────────────────────
-    this.sessionToPlayer.set(client.sessionId, playerId);
-    this.playerToSession.set(playerId, client.sessionId);
-
-    const slot = this.freeSlots.pop();
-    if (slot === undefined) {
-      logger.error({ playerId }, 'no free SAB slots — room is full');
-      client.leave(1001);
-      return;
-    }
-    this.playerToSlot.set(playerId, slot);
-    this.slotToPlayer.set(slot, playerId);
-    this.snapshotRing.registerEntity(playerId);
-
-    // URL-param wins; else room-level `defaultSpawnX/Y` (engineering test
-    // rooms anchor at a known point); else legacy ±200 u random scatter.
-    let spawnX = parsed.success && parsed.data.spawnX !== undefined
-      ? parsed.data.spawnX
-      : (this.defaultSpawnX ?? (Math.random() - 0.5) * 400);
-    let spawnY = parsed.success && parsed.data.spawnY !== undefined
-      ? parsed.data.spawnY
-      : (this.defaultSpawnY ?? (Math.random() - 0.5) * 400);
-    let resumedHealth: number | null = null;
-    let resumedUserId: string | null = null;
-    let resumedLastFireTick: number | null = null;
-    let resumedVx = 0;
-    let resumedVy = 0;
-    let resumedAngle = 0;
-    let resumedAngvel = 0;
-    let resumedFromStore = false;
-    /** Phase 3 — when the client supplied a valid `shipId` in JoinOptions,
-     *  the bindRosterEntry call resolves to this exact row instead of the
-     *  most-recent-updated default. Empty string means "no preference". */
-    let preferredShipId = '';
-    /** Kind to spawn with. Defaults to the requested kind; Limbo or
-     *  shipId-restore override. */
-    let chosenKind: string = requestedKind;
-
-    // Phase 3 multi-ship roster — shipId-based restore. The client picked a
-    // specific roster entry from the galaxy-map panel; hydrate from that row
-    // and skip the Limbo path entirely. Owned-by-this-player check guards
-    // against a malicious client claiming someone else's roster row.
-    const requestedShipId = parsed.success && typeof parsed.data.shipId === 'string'
-      ? parsed.data.shipId
-      : '';
-    if (this.sectorKey !== null && requestedShipId !== '') {
-      let rec = getPlayerShipStore().get(requestedShipId);
-      if (rec !== null && rec.playerId === playerId && rec.lastSectorKey === this.sectorKey) {
-        // EVICT-THEN-RESTORE (playtest 2026-06-10 Issue 6 — "respawn as an
-        // existing ship → locked/broken"). If the requested hull is STILL
-        // LINGERING in this room (the player disconnected, or it was displaced
-        // by a fresh spawn), it owns a `lingeringSlots` entry, a `linger-<id>`
-        // worker body, AND an armed ownerless-evict timer keyed by this same
-        // shipInstanceId. Without tearing those down first, the bind +
-        // `state.ships.set(<id>)` below CLOBBERS the lingering ShipState under
-        // the same key while the orphan body + timer survive: the body pins the
-        // fresh hull (it never reads as active to the client — the user's
-        // "fire/accelerate do nothing, snaps back to a static hull"), and the
-        // surviving timer later DELETES the now-active ship. Reachable from any
-        // "resume a ship that lingered in the target sector". `evictOwnerlessShip`
-        // despawns `linger-<id>`, cancels the timer, frees the slot, deletes the
-        // stale schema entry, and markStored's the hull's LIVE pose. That write
-        // REPLACES the roster record (`put` stores a new object), so re-read the
-        // row: the `rec` fetched above still holds the pose from when the hull
-        // was parked, and a hull bumped or pushed since then came back at its
-        // old spot (2026-11-13, exposed by the arcade-handling retune).
-        if (this.lingeringSlots.has(requestedShipId) || this.ownerlessShips.has(requestedShipId)) {
-          serverLogEvent('respawn_evict_lingering', { playerId, shipInstanceId: requestedShipId });
-          this.evictOwnerlessShip(requestedShipId);
-          rec = getPlayerShipStore().get(requestedShipId) ?? rec;
-        }
-        spawnX = rec.lastX;
-        spawnY = rec.lastY;
-        // Defensive: a stored health <= 0 should be impossible (the
-        // ship would have been destroyed and the roster row deleted),
-        // but we observed it 2026-05-13 after a 15-min lingering ship
-        // was spawned back as 0/maxHealth. Most likely a race in the
-        // linger-eviction path where ship.health was driven to 0 by
-        // drones but SHIP_DESTROYED didn't propagate before the
-        // evictOwnerlessShip call. Treat 0 as "give the user a fresh
-        // hull" and log so we can find the underlying gap.
-        const kind = getShipKind(rec.kind);
-        if (rec.health <= 0) {
-          logger.warn(
-            { playerId, shipId: rec.shipId, storedHealth: rec.health, kind: rec.kind },
-            'roster row has non-positive health on spawn — issuing fresh hull (root-cause TBD)',
-          );
-          resumedHealth = kind.maxHealth;
-        } else {
-          resumedHealth = rec.health;
-        }
-        resumedUserId = rec.userId;
-        resumedLastFireTick = rec.lastFireClientTick;
-        resumedVx = rec.lastVx;
-        resumedVy = rec.lastVy;
-        resumedAngle = rec.lastAngle;
-        resumedAngvel = rec.lastAngvel;
-        resumedFromStore = true;
-        chosenKind = rec.kind;
-        preferredShipId = rec.shipId;
-        logger.info(
-          { playerId, shipId: rec.shipId, sectorKey: this.sectorKey, x: spawnX, y: spawnY, health: resumedHealth },
-          'restored from roster shipId',
-        );
-      } else if (rec === null) {
-        logger.warn({ playerId, shipId: requestedShipId }, 'JoinOptions.shipId not found; fresh spawn');
-      } else if (rec.playerId !== playerId) {
-        logger.warn({ playerId, shipOwner: rec.playerId }, 'JoinOptions.shipId not owned by caller; fresh spawn');
-      } else {
-        logger.warn(
-          { playerId, shipId: requestedShipId, shipSector: rec.lastSectorKey, joinSector: this.sectorKey },
-          'JoinOptions.shipId is in a different sector; fresh spawn',
-        );
-      }
-    }
-
-    // Economy v2 W5b — the ship-picker gate. Starter hulls (scout, fighter)
-    // are always free; any other kind must be a ship you OWN (a roster row,
-    // e.g. one you unpacked). A fresh spawn asking for another kind gets a
-    // starter hull instead, and is told how to get the one it wanted.
-    if (!resumedFromStore && this.sectorKey !== null && this.enforceHullGate && !STARTER_HULL_KINDS.includes(chosenKind)) {
-      const wanted = getShipKind(chosenKind).displayName;
-      chosenKind = DEFAULT_SHIP_KIND;
-      this.sendNotice(client, `You need a ${wanted}: buy a packed one on the Trade tab (or loot one), then unpack it at your storage.`);
-      serverLogEvent('hull_gate_refused', { playerId, wanted });
-    }
-
-    // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
-    // resumes by shipId — the roster shipId-restore above, which is now the
-    // path for BOTH reconnect and transit-arrival — and a lingering hull
-    // persists in-world via the sector snapshot (`lingeringHulls[]`). A join
-    // without a resolvable owned shipId fresh-spawns.
-
-    // A sector trip lands clear of other pilots' ships and parked hulls (and
-    // asteroids), like an in-sector warp. Every trip lands on the same point,
-    // and a ship dropped on top of parked hulls is shoved away by the physics
-    // (phone run 2026-11-07: "I arrived inside the base"). Only trip arrivals:
-    // other joins keep their exact placement (tests set up collisions).
-    if (transitToken !== undefined) {
-      const clear = this.landingPoint(playerId, spawnX, spawnY, chosenKind);
-      spawnX = clear.x;
-      spawnY = clear.y;
-    } else {
-      // T1 — never spawn inside a structure (an NPC base can fill much of a
-      // sector): nudge to the nearest clear point. Join path, not the hot loop.
-      // A spawn without explicit coordinates also keeps the JOINING hull clear
-      // of every other hull (#18: its own size, not a fighter's). Owner clip
-      // 2026-11-12: a heavy cruiser joining the capital line-up was nudged off
-      // a structure straight into the NPC heavy cruiser. Explicit spawnX/Y keep
-      // their exact placement (tests set up collisions on purpose), and a
-      // resumed hull comes back where it really is.
-      const explicit = parsed.success && (parsed.data.spawnX !== undefined || parsed.data.spawnY !== undefined);
-      const hulls = explicit || resumedFromStore ? NO_SITE_CIRCLES : this.obstacles.hullCircles(playerId);
-      if (this.structureRegistry.size > 0 || hulls.length > 0) {
-        const boxes = this.obstacles.structureBoxes();
-        const clear = nearestClearPoint(spawnX, spawnY, boxes, tuningFor(chosenKind).spawnClearance, 6000, hulls, hullExtent(chosenKind));
-        spawnX = clear.x;
-        spawnY = clear.y;
-      }
-    }
-
-    this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
-
-    // Pre-populate the SAB slot so the update() loop sees a sane position
-    // immediately, before the worker processes the SPAWN command.
-    const base = slotBase(slot);
-    this.sabF32[base + SLOT_X_OFF] = spawnX;
-    this.sabF32[base + SLOT_Y_OFF] = spawnY;
-    if (resumedFromStore) {
-      this.sabF32[base + SLOT_VX_OFF]     = resumedVx;
-      this.sabF32[base + SLOT_VY_OFF]     = resumedVy;
-      this.sabF32[base + SLOT_ANGLE_OFF]  = resumedAngle;
-      this.sabF32[base + SLOT_ANGVEL_OFF] = resumedAngvel;
-    } else {
-      // Fresh spawn: zero the velocity/angle fields. This SAB slot may hold
-      // STALE values from a previous occupant of the slot; the physics worker
-      // would otherwise read them and drift the just-spawned ship (~30 u over
-      // the first 500 ms — the spawn-position E2E regression). Position is set
-      // unconditionally above; velocity must be too.
-      this.sabF32[base + SLOT_VX_OFF]     = 0;
-      this.sabF32[base + SLOT_VY_OFF]     = 0;
-      this.sabF32[base + SLOT_ANGLE_OFF]  = 0;
-      this.sabF32[base + SLOT_ANGVEL_OFF] = 0;
-    }
-
-    // Create Colyseus schema entry. The schema only carries identity +
-    // health/alive + kind — pose lives in `shipPoseCache` (see field doc).
-    const ship = new ShipState();
-    ship.playerId = playerId;
-    ship.kind = chosenKind;
-    // Presence — mark this player connected (any room) so the Web Push trigger
-    // only alerts OFFLINE base owners. Decremented in onLeave. Refcounted, so
-    // a transit's brief leave→join (or two tabs) never flips them to offline.
-    registerConnectedPlayer(playerId);
-    if (resumedHealth !== null) ship.health = resumedHealth;
-    // Phase 3 dual-write — pick or create a `player_ships` row for this
-    // ship and stamp its UUID onto the schema. Engineering rooms skip
-    // persistence and leave shipInstanceId empty. When the client supplied
-    // a valid `shipId`, that row is the one we bind; when `isNewShip`
-    // is set, we force a fresh row (subject to ROSTER_SOFT_GUARD); otherwise we
-    // pick the most-recently-updated row (or create a fresh one).
-    const forceFreshCreate = parsed.success && parsed.data.isNewShip === true;
-    ship.shipInstanceId = this.bindRosterEntry(playerId, userId ?? resumedUserId, chosenKind, {
-      x: spawnX,
-      y: spawnY,
-      vx: resumedFromStore ? resumedVx : 0,
-      vy: resumedFromStore ? resumedVy : 0,
-      angle: resumedFromStore ? resumedAngle : 0,
-      angvel: resumedFromStore ? resumedAngvel : 0,
-      health: resumedHealth ?? ship.health,
-      lastFireClientTick: resumedLastFireTick ?? 0,
-    }, preferredShipId, forceFreshCreate);
-    // Phase 6a — engineering rooms (`sectorKey === null`) bypass the
-    // roster entirely, so `bindRosterEntry` returns ''. Generate a
-    // synthetic UUID so the snapshot wire key + downstream lookups
-    // (PlayerShipStore.get etc.) never see an empty id. Two players in
-    // the same engineering room each get a unique synthetic id, so
-    // there's no collision.
-    //
-    // 2026-05-13 fix: scope to engineering rooms ONLY. A previous
-    // version of this fallback fired unconditionally when
-    // shipInstanceId was '', which also caught the GALAXY-room
-    // roster-full case (bindRosterEntry returns '' on RosterFullError).
-    // The synthetic UUID then had no roster row, so the 30-tick
-    // abandon-detection sweep saw `store.get(syntheticUUID) === null`
-    // and immediately reaped the ship — 18 ms after spawn.
-    // Regression test:
-    // `tests/integration/sectorRoom/rosterFullNoReap.test.ts`.
-    if (ship.shipInstanceId === '' && this.sectorKey === null) {
-      ship.shipInstanceId = randomUUID();
-    }
-    // Phase 4 (Leveling & XP, WS-B1) — seed the live level mirror from the
-    // roster row so a previously-levelled ship shows its public badge from the
-    // first snapshot. Engineering rooms / fresh ships have no row ⇒ level 1.
-    // WS-B2 — also seed the per-instance stat allocation so a previously-upgraded
-    // ship's multipliers take effect from the first tick (the SET_STAT_MUL post
-    // is below, after the worker SPAWN).
-    if (ship.shipInstanceId !== '') {
-      const row = getPlayerShipStore().get(ship.shipInstanceId);
-      ship.level = row?.level ?? 1;
-      ship.statAlloc = row?.statAlloc ?? {};
-      // WS-B3 — seed the per-instance activated latent mounts so a previously-
-      // upgraded ship fires + renders its extra turrets from the first tick.
-      ship.mounts = row?.mounts ?? [];
-    }
-    ship.isActive = true;
-    // Populate the indirection map BEFORE setting the schema entry so
-    // any synchronous observer (e.g. a re-entrant fire-handler) can
-    // already resolve the player's active hull.
-    this.playerToActiveShipInstance.set(playerId, ship.shipInstanceId);
-    // Tripwire (playtest 2026-06-10 Issue 6): a fresh-spawn bind must never land
-    // on a shipInstanceId already in the schema map — that means a lingering
-    // hull under the same key was NOT torn down first (the evict-then-
-    // restore above is the guard). Log loudly so any future regression of that
-    // invariant is visible instead of silently clobbering a live ShipState.
-    if (this.state.ships.has(ship.shipInstanceId)) {
-      logger.error(
-        { playerId, shipInstanceId: ship.shipInstanceId, sectorKey: this.sectorKey },
-        'duplicate state.ships key on fresh-spawn bind — lingering hull not evicted (Issue 6)',
-      );
-      serverLogEvent('ships_set_duplicate_key', { playerId, shipInstanceId: ship.shipInstanceId });
-    }
-    // Phase 6b — schema map is keyed by shipInstanceId. This supports
-    // multiple entries per player (active + lingering hulls). All the
-    // `state.ships.get(playerId)` callsites have been migrated to the
-    // `getActiveShip(playerId)` helper which translates via
-    // resolveActiveShipKey. The Colyseus diff broadcast now carries
-    // ship records keyed by shipInstanceId; the snapshot wire format
-    // already matched this since Phase 6a.
-    this.state.ships.set(ship.shipInstanceId, ship);
-    // Phase 4 WS-B2 review must-fix #1 — the NON-PHYSICS stat upgrades
-    // (maxHull / shield / energy) are applied server-authoritatively at their
-    // seed sites via the `effectiveShip*` helpers (ONE source each, so the
-    // hull-pct DENOMINATOR + the seed always agree). An un-upgraded ship gets
-    // the rounded kind base (byte-identical for whole bases). `ship.statAlloc`
-    // was seeded from the roster above (or `{}` for engineering rooms).
-    const spawnKind = getShipKind(ship.kind);
-    // Hull max — the active-spawn path never set ship.maxHealth before (it sat
-    // at the schema default), so the hull-pct denominator was wrong; seed it
-    // from the kind base × maxHull mul, matching the lingering-reconstruct path.
-    ship.maxHealth = this.shipHullMax(spawnKind.maxHealth, ship.statAlloc, ship.shipInstanceId);
-    // A fresh spawn (no resumed roster health) seeds full hull at the upgraded
-    // max; a resumed hull keeps its stored (already-clamped) health.
-    if (resumedHealth === null) ship.health = ship.maxHealth;
-    // Shield seeds full on spawn (transient - never persisted; only hull
-    // persists). Body spawns circle (exposed:false in spawnShip).
-    ship.shield = effectiveShipShieldMax(spawnKind.shieldMax, ship.statAlloc);
-    // Energy seeds full on spawn (transient like shield; weapons/energy/AI
-    // overhaul §3). Fallback covers any kind that pre-dates the energy field.
-    ship.energy = effectiveShipEnergyMax(spawnKind.energyMax ?? 100, ship.statAlloc);
-    // Test-only initialHull / initialShield overrides. Gated to testMode
-    // rooms (engineering, never galaxy) so live gameplay can't be nerfed
-    // via the wire. Applied AFTER the kind-default hull/shield are
-    // installed so the test spec gets the exact override it asked for.
-    // E2E specs that just need "do they die when shot?" spawn with
-    // initialHull=1, initialShield=0 → one beam tick kills.
-    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) {
-      if (typeof parsed.data.initialHull === 'number') {
-        ship.health = Math.max(1, parsed.data.initialHull);
-      }
-      if (typeof parsed.data.initialShield === 'number') {
-        ship.shield = Math.max(0, parsed.data.initialShield);
-      }
-      // initialEnergy override — lets energy specs start near-empty so the
-      // gate/regen flow is testable in a few ticks instead of seconds.
-      if (typeof parsed.data.initialEnergy === 'number') {
-        ship.energy = Math.max(0, parsed.data.initialEnergy);
-      }
-      // Economy v2 W1 — test-only wallet seed (join option, else the room's).
-      const walletSeed = parsed.data.initialWallet ?? this.testWalletSeed;
-      if (walletSeed > 0) {
-        const have = getWallet().balance(playerId);
-        if (have < walletSeed) getWallet().credit(playerId, walletSeed - have, 'test_seed');
-      }
-      // Living World P1a — seed the hull's carried hold (needs a roster-bound
-      // shipInstanceId; engineering rooms have none ⇒ no-op).
-      if (parsed.data.initialCargo !== undefined && ship.shipInstanceId !== '' && this.sectorKey !== null) {
-        const c = parsed.data.initialCargo;
-        getHoldStore().put({
-          holderUid: ship.shipInstanceId, holderType: 'ship', ownerId: playerId,
-          sectorKey: null, x: null, y: null,
-          hold: { goods: { ...c.goods }, blueprints: [...c.blueprints] },
-          expiresAt: null,
-        });
-      }
-      // initialAngle is applied below — the angle lives in
-      // `shipPoseCache` + the Rapier body (via SET_POSITION post-SPAWN),
-      // not on the ShipState schema (per the spatial-fields-off-schema
-      // invariant at the top of `SectorState.ts`).
-      // lingerMs override — captured per-player so the NEXT onLeave uses a
-      // short linger TTL (lets the despawn→return-to-pool E2E observe the
-      // evict without waiting out the 15-min production window).
-      if (typeof parsed.data.lingerMs === 'number') {
-        this.playerToLingerMs.set(playerId, parsed.data.lingerMs);
-      }
-      // initialXp — pre-load the roster row's XP so a single kill levels the
-      // ship (showcase level-up shot). Roster-backed rooms only; level kept.
-      if (typeof parsed.data.initialXp === 'number' && ship.shipInstanceId !== '') {
-        getPlayerShipStore().setProgress(ship.shipInstanceId, { xp: parsed.data.initialXp });
-      }
-    }
-    ship.shieldLastDamageTick = this.serverTick;
-
-    // plan: imperative-taco — pre-mark every drone hostile to this player
-    // so a CDP allocation profile (combat-allocation-profile-hostile.spec.ts)
-    // measures steady-state combat instead of the IDLE→COMBAT transition.
-    // Mirrors the `markBotHostile` pattern in LivingWorldBotHooks: per-player
-    // `aiController.markHostile` + `bot_aggro` broadcast so the client's
-    // hostility ledger stays in lockstep. testMode-gated for safety.
-    // Radar sandbox — pose drones flagged `hostile` render as hostile contacts
-    // for every joiner (same channel as startHostile: ledger + bot_aggro).
-    if (this.testMode && this.sandboxHostileDroneIds.length > 0) {
-      const tick = this.serverTick;
-      for (const id of this.sandboxHostileDroneIds) {
-        const rec = this.swarmRegistry.get(id);
-        if (!rec) continue;
-        this.aiController.markHostile(rec.id, playerId, tick);
-        this.broadcast('bot_aggro', {
-          type: 'bot_aggro',
-          botEntityId: `swarm-${rec.entityId}`,
-          targetPlayerId: playerId,
-          tick,
-        });
-      }
-    }
-
-    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.startHostile === true) {
-      this.markAllDronesHostileTo(playerId);
-    }
-    // Fire control (universal): every pilot is tracked; its groups fire only
-    // at LOCKED targets. `instantLock` (locks complete at once) and
-    // `anyTarget` (AUTO picks non-hostile targets too) are testMode shortcuts.
-    const instantLock = (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.instantLock === true;
-    const anyTarget = (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.anyTarget === true;
-    const groupMode = (this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success ? parsed.data.groupMode ?? null : null;
-    this.locks.enable(playerId, instantLock, groupMode, anyTarget);
-    // Structure turrets lock too; an `instantLock` joiner makes this room's
-    // structure locks instant as well (room-wide, test rooms only).
-    if (instantLock) this.structureGrid.setInstantTurretLocks(true);
-    // `lockTimeCapS` on a join caps every NON-player lock in this room.
-    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.lockTimeCapS !== undefined) {
-      this.setLockTimeCap(parsed.data.lockTimeCapS);
-    }
-    // `chargeTicksCap` on a join caps every capital-turret charge in this room.
-    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.chargeTicksCap !== undefined) {
-      this.testChargeTicksCap = parsed.data.chargeTicksCap;
-    }
-    // `traverseTicksCap` on a join caps every capital turret's training in this room.
-    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.traverseTicksCap !== undefined) {
-      this.testTraverseTicksCap = parsed.data.traverseTicksCap;
-    }
-    // `timeScale` on a join sets this sector's game speed (test/recording).
-    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.timeScale !== undefined) {
-      this.setTimeScale(parsed.data.timeScale);
-    }
-
-    // Seed the pose cache with the spawn pose so any pre-update read sees a
-    // sane value (e.g. a fire request resolved on this same client.send turn).
-    this.shipPoseCache.set(playerId, {
-      x: spawnX,
-      y: spawnY,
-      vx: resumedFromStore ? resumedVx : 0,
-      vy: resumedFromStore ? resumedVy : 0,
-      angle: resumedFromStore ? resumedAngle : 0,
-      angvel: resumedFromStore ? resumedAngvel : 0,
-    });
-
-    this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY, kindId: chosenKind });
-    // Phase 4 WS-B2 — push the per-instance physics multipliers to the freshly
-    // spawned worker body (no-op when un-upgraded) so the very first applyInput
-    // tick scales movement by the upgraded factors, identically to the client.
-    this.applyStatMulToWorker(playerId, ship.statAlloc);
-
-    // Test-only initialAngle: SPAWN creates the body at angle 0; force
-    // the requested heading immediately via SET_POSITION so the spec
-    // doesn't have to drive 2 s of keyboard rotation. Pose cache + ship
-    // schema were already populated above; this just brings the Rapier
-    // body in line with them.
-    if (this.testMode && parsed.success && typeof parsed.data.initialAngle === 'number') {
-      const a = parsed.data.initialAngle;
-      this.postToWorker({
-        type: 'SET_POSITION',
-        entityId: playerId,
-        x: spawnX, y: spawnY, angle: a,
-        vx: 0, vy: 0, angvel: 0,
-      });
-      const poseEntry = this.shipPoseCache.get(playerId);
-      if (poseEntry) poseEntry.angle = a;
-    }
-
-    const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
-
-    if (resumedLastFireTick !== null && shouldHonourResumedCooldown(resumedLastFireTick, currentServerTick)) {
-      this.lastFireClientTick.set(playerId, resumedLastFireTick);
-    }
-    const welcome: WelcomeMessage = {
-      type: 'welcome',
-      playerId,
-      serverTick: currentServerTick,
-      sectorKey: this.sectorKey,
-      shipInstanceId: ship.shipInstanceId,
-    };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
-
-    // Prefer the auth-validated userId from this connect; fall back to the
-    // Limbo-resumed value when this connect was anonymous (covers the
-    // "close-tab, reopen-without-relogging" path on the same browser).
-    const effectiveUserId = userId ?? resumedUserId;
-    this.playerToUser.set(playerId, effectiveUserId);
-    recordGameJoin(effectiveUserId, playerId, this.sectorKey ?? this.roomId);
-
-    // Phase 1 — propagate the player's display label so other clients can
-    // render a name above their ship. `displayName` is preferred; the
-    // email is the documented fallback (see plan). Anonymous players
-    // leave an empty string and the client falls back to `Pilot ${id}`.
-    if (effectiveUserId) {
-      const user = getUser(effectiveUserId);
-      if (user) ship.displayName = user.displayName ?? user.email ?? '';
-    }
-
-    // Phase 8 sub-phase B — register session for diag inspection and future
-    // multi-VM transit routing.
-    setSession(client.sessionId, {
-      roomId: this.roomId,
-      playerId,
-      sectorKey: this.sectorKey,
-    });
-
-    this.bus.emit('SHIP_SPAWNED', { type: 'SHIP_SPAWNED' as const, playerId, x: spawnX, y: spawnY });
-    // Fresh-spawn path: force snapshot broadcasts for a grace window so
-    // the new client receives a steady stream to reconcile its
-    // prediction world against the spawn pose BEFORE idle-suppression
-    // short-circuits the broadcast loop. Without this, a stationary
-    // freshly-spawned ship in an otherwise-quiet sector gets zero
-    // snapshots until the player moves — then the first snapshot snaps
-    // the (stale, free-run) prediction hundreds of units. See
-    // JOIN_BROADCAST_GRACE_TICKS.
-    this.forceBroadcastUntilTick = currentServerTick + JOIN_BROADCAST_GRACE_TICKS;
-    serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
-    auditEvent({ event: 'player_joined', sector: this.sectorKey ?? undefined, playerId });
-    logger.info(
-      { playerId, sessionId: client.sessionId, userId: effectiveUserId, resumedFromStore },
-      'player joined',
-    );
-
-    // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
-    // Ship enters the sector INVISIBLY (isActive=false). Drones won't
-    // target it (aiTickRunner / LivingWorldBotHooks both filter on
-    // `ship.isActive`); the snapshot translator on remote clients
-    // skips isActive=false entries; the client snapshot apply on the
-    // joining player ignores their own ship (predWorld is authoritative
-    // for the local pose anyway). The ship becomes visible to all
-    // observers — including the joiner — at the synchronised
-    // `arrivalTick` once the client has called `client_ready`.
-    //
-    // Note: the LOCAL CLIENT's `mirror.ships[playerId]` is populated
-    // from the bootstrap path (welcome → predWorld), so the joiner
-    // still has a ship to predict / render — but the loading curtain
-    // (Commit 1's `useIsLoadingActive`) hides it until the curtain
-    // drops at `arrivalTick`.
-    ship.isActive = false;
-    this.pendingJoin.set(playerId, {
-      joinTick: currentServerTick,
-      watchdogTick: currentServerTick + CLIENT_READY_TIMEOUT_TICKS,
-      arrivalTick: null,
-      spawnX,
-      spawnY,
-      sessionId: client.sessionId,
-    });
-    serverLogEvent('pending_join_registered', {
-      playerId,
-      sessionId: client.sessionId,
-      watchdogTick: currentServerTick + CLIENT_READY_TIMEOUT_TICKS,
-    });
-
-    // NOTE: the previous immediate `warp_in` broadcast (to other
-    // occupants, with `except: client`) is REMOVED. The unified
-    // handshake broadcasts `warp_in` from the `client_ready` handler
-    // (or the watchdog) to ALL clients with an `arrivalTick`, so the
-    // flash fires in sync everywhere.
-  }
-
-  /**
-   * Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR. The player joins the sector as
-   * a free-roam camera with NO ship at all: no `state.ships` entry, no slot, no
-   * roster row — nothing in the world. They still receive snapshots (to watch
-   * the sector) and can `place_structure` (construction-without-a-ship). Galaxy
-   * rooms only (gated by the caller).
-   *
-   * The only seam that assumes a connected client has a ship is the
-   * `SnapshotBroadcaster` recipient gate (it SKIPs a recipient with no
-   * `shipPoseCache` entry), so we seed a FIXED origin pose-cache entry — the
-   * spectator's snapshot interest is then culled around the sector centre (the
-   * binary swarm channel sends all drones/asteroids unculled, since there's no
-   * slot ⇒ no interest set ⇒ broadcast-all). Camera-relative interest is a
-   * follow-up; origin covers the common case (action clusters near centre).
-   * `shipPoseCache` is cleaned up by `LeaveHandler` on leave (the despawn path,
-   * which a shipless session takes since `shouldLinger` is false).
-   *
-   * Readiness: we still drive the unified warp-in handshake (`client_ready` →
-   * `warp_in` → `arrivalAcked`) off a SHIPLESS `pendingJoin` entry so the
-   * client's load curtain lifts the proven way; `drainPendingJoin`'s activation
-   * branch no-ops for a shipless entry (`getActiveShip` is undefined).
-   */
-  private joinAsSpectator(
-    client: Client, playerId: string, userId: string | null,
-    spawn: { x: number; y: number } | null = null,
-  ): void {
-    this.sessionToPlayer.set(client.sessionId, playerId);
-    this.playerToSession.set(playerId, client.sessionId);
-    // Presence — mark connected (push-offline gate); decremented in onLeave.
-    registerConnectedPlayer(playerId);
-    this.playerToUser.set(playerId, userId);
-
-    // Seed a fixed pose so the per-recipient snapshot broadcaster does not
-    // skip this shipless spectator (see the method doc): the origin, or the
-    // given spawn point (RTS fleet warp: the commander's interest window
-    // starts on the fleet they followed in, so its ships stream in at once).
-    const sx = spawn?.x ?? 0, sy = spawn?.y ?? 0;
-    this.shipPoseCache.set(playerId, { x: sx, y: sy, vx: 0, vy: 0, angle: 0, angvel: 0 });
-
-    const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
-    const welcome: WelcomeMessage = {
-      type: 'welcome',
-      playerId,
-      serverTick: currentServerTick,
-      sectorKey: this.sectorKey,
-      shipInstanceId: '',
-      spectator: true,
-    };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
-
-    setSession(client.sessionId, {
-      roomId: this.roomId,
-      playerId,
-      sectorKey: this.sectorKey,
-    });
-    recordGameJoin(userId, playerId, this.sectorKey ?? this.roomId);
-
-    // Force snapshot broadcasts for the grace window so `firstSnapshotApplied`
-    // fires on the client (curtain readiness) even in a quiet sector.
-    this.forceBroadcastUntilTick = currentServerTick + JOIN_BROADCAST_GRACE_TICKS;
-
-    // Shipless pending-join: drives `client_ready` → `warp_in` → `arrivalAcked`
-    // exactly as a normal join, but there's no hull to activate at the arrival
-    // flip (drainPendingJoin's `else if (rec.spectator)` branch).
-    this.pendingJoin.set(playerId, {
-      joinTick: currentServerTick,
-      watchdogTick: currentServerTick + CLIENT_READY_TIMEOUT_TICKS,
-      arrivalTick: null,
-      spawnX: sx,
-      spawnY: sy,
-      sessionId: client.sessionId,
-      spectator: true,
-    });
-
-    serverLogEvent('spectator_join', {
-      playerId,
-      sessionId: client.sessionId,
-      sectorKey: this.sectorKey,
-    });
-    auditEvent({ event: 'player_joined', sector: this.sectorKey ?? undefined, playerId });
-    logger.info({ playerId, sessionId: client.sessionId }, 'player joined as spectator (no hull)');
+    await this.joinHandler.handle(client, options);
   }
 
   override onLeave(client: Client, consented: boolean): void {
@@ -9833,29 +8749,6 @@ export class SectorRoom extends Room<SectorState> {
   //
   // Galaxy rooms only (sectorKey !== null). Engineering rooms have no
   // persistent identity and skip the dual-write entirely.
-
-  /**
-   * Upsert a `player_ships` row for the newly-bound ship. Looks up
-   * existing roster entries for the player and reuses the most-recent;
-   * creates a fresh row if none exists. Returns the row's `shipId` so
-   * the caller can stamp it onto `ShipState.shipInstanceId`. Returns
-   * empty string for engineering rooms or when the operation fails
-   * (e.g. roster cap on a fresh-spawn fallback — caller continues; the
-   * ship still spawns, just without a roster row).
-   */
-  private bindRosterEntry(
-    playerId: string,
-    userId: string | null,
-    kind: string,
-    pose: {
-      x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
-      health: number; lastFireClientTick: number;
-    },
-    preferredShipId: string = '',
-    forceFreshCreate: boolean = false,
-  ): string {
-    return this.rosterPersistence.bind(playerId, userId, kind, pose, preferredShipId, forceFreshCreate);
-  }
 
   private markRosterLinger(
     shipInstanceId: string,
