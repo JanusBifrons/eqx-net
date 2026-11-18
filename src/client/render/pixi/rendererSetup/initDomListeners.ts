@@ -66,3 +66,19 @@ export function installDomListeners(deps: DomListenerDeps): void {
   // Force one resize after the next frame to capture post-mount layout.
   requestAnimationFrame(resize);
 }
+
+/** The teardown of `installDomListeners` (from `dispose`): canvas pointer /
+ *  wheel / touch listeners, then the resize handler and observer. */
+export function removeDomListeners(app: Application | undefined, input: RendererInputController): void {
+  // Remove canvas pointer / wheel / touch listeners so an in-flight
+  // event doesn't reach a destroyed Camera.
+  input.removeEventListeners(app?.canvas);
+  const handler = (app as unknown as Record<string, unknown>)['_resizeHandler'];
+  if (typeof handler === 'function') {
+    window.removeEventListener('resize', handler as EventListener);
+    window.removeEventListener('orientationchange', handler as EventListener);
+    window.visualViewport?.removeEventListener('resize', handler as EventListener);
+  }
+  const ro = (app as unknown as Record<string, unknown>)['_resizeObserver'];
+  if (ro instanceof ResizeObserver) ro.disconnect();
+}

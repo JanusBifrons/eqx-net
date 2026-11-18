@@ -27,6 +27,7 @@ import { WreckPieceSprite } from './wreckArt.js';
 import type { FarZoomIcons } from './FarZoomIcons';
 import type { WarpFx } from './WarpFx.js';
 import type { WarpSpoolFx } from './WarpSpoolFx.js';
+import type { SelectionBracket } from '../SelectionBracket';
 
 /** The renderer state the probes read (live values: getters on the renderer). */
 export interface RendererProbeState {
@@ -57,11 +58,60 @@ export interface RendererProbeState {
   readonly wreckRipplesSpawned: number;
   readonly hullBlastsReplaced: number;
   readonly shipRekeysApplied: number;
+  readonly selectionBracket: SelectionBracket | null;
+  readonly fleetRing: FleetRingProbeState;
 }
 
 export interface BackdropStats { classicStars: boolean; motes: { near: number; fore: number } | null; deep: number; on: boolean; nebula: string | null; landmarks: number; sky: string; density: number; speed: number; speedZoom: number; speedLevel: string }
 
 export type ArtStats = { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: BackdropStats; fxProjectiles: number; fxWakes: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; turretAim: ReturnType<MountVisualManager['aimProbe']>; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number; wreckEngines: number; wreckLit: number; wreckRawMaps: number; wreckFarLod: number; wreckBlasts: number; wreckRipples: number; hullBlastsReplaced: number; litMeshes: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>>;
+
+export interface FleetRingReading { id: string; ringX: number; ringY: number; shipX: number; shipY: number; frames: number }
+
+/** Test-only ring probe state (RTS review 2026-11-14). Off until first read. Built once. */
+export interface FleetRingProbeState { on: boolean; readonly probe: FleetRingReading; readonly pt: { x: number; y: number } }
+export function createFleetRingProbe(): FleetRingProbeState {
+  return { on: false, probe: { id: '', ringX: NaN, ringY: NaN, shipX: NaN, shipY: NaN, frames: 0 }, pt: { x: 0, y: 0 } };
+}
+
+/** Ticker, after the camera tick (the transform this frame renders with):
+ *  the first selection marker as drawn vs its ship sprite's screen point. */
+export function captureFleetRingProbe(r: RendererProbeState): void {
+  const o = r.selectionBracket;
+  const id = o?.lastMarkerId ?? null;
+  if (o === null || id === null) return;
+  const sp = r.sprites.get(id);
+  if (sp === undefined) return;
+  const g = sp.parent ? sp.parent.toGlobal(sp.position, r.fleetRing.pt) : null;
+  if (g === null) return;
+  const p = r.fleetRing.probe;
+  p.id = id; p.ringX = o.lastMarker.x; p.ringY = o.lastMarker.y; p.shipX = g.x; p.shipY = g.y; p.frames++;
+}
+
+/**
+ * Test-only (RTS review 2026-11-14): turns the per-frame ring probe on and
+ * returns the latest capture: the first selection marker's drawn centre and its
+ * ship's screen point, both as the frame renders. Read by the
+ * `__eqxFleetRingProbe` DEV hook (`?worker=0`). Not used by gameplay.
+ */
+export function fleetRingProbe(r: RendererProbeState): FleetRingReading {
+  r.fleetRing.on = true;
+  return { ...r.fleetRing.probe };
+}
+
+/** DEBUG (exhaust-side investigation): the local ship sprite WORLD position
+ *  + engine particle world positions (pixi coords; gfx.y = -gameY). */
+export function debugEngine(r: RendererProbeState): { ship: { x: number; y: number; vx: number; vy: number }; particles: number[] } | null {
+  const localId = r.lastMirror?.localPlayerId;
+  if (!localId || !r.effects) return null;
+  const sp = r.sprites.get(localId);
+  if (!sp) return null;
+  const out: number[] = [];
+  const n = r.effects.debugCopyEngineParticleWorld(out);
+  out.length = n * 4;
+  const sv = r.lastMirror?.ships.get(localId);
+  return { ship: { x: sp.x, y: sp.y, vx: sv?.vx ?? 0, vy: sv?.vy ?? 0 }, particles: out };
+}
 
 export interface ShipVisualProbe { sprite: number | null; cluster: number | null; artHandle: number | null; rekeys: number }
 

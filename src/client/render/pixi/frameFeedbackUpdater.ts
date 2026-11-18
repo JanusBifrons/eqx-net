@@ -9,11 +9,54 @@
  * (`frameCtx.ts`) and allocate nothing (#14).
  */
 
-import type { RenderMirror } from '@core/contracts/IRenderer';
+import type { RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { updateWarpFx } from './warpFxUpdater.js';
 import { updateEngineShieldFx } from './engineShieldFxUpdater.js';
 import { shouldLatchFirstFrame } from '../firstFrameLatch.js';
 import type { RendererFrameCtx } from './frameCtx.js';
+
+/** The renderer's feedback struct, built once by the renderer and mutated in
+ *  place each frame (`writeFrameFeedback`); its identity is stable. */
+export function createRendererFeedback(): RendererFeedback {
+  return {
+    mountCounts: new Map<string, number>(),
+    haloArrowCount: 0,
+    damageNumberActiveCount: 0,
+    shieldRingVisibleCount: 0,
+    firstFrameRendered: false,
+    artReady: false,
+    liveBeamRenderedFromX: null,
+    liveBeamRenderedFromY: null,
+    placementScreenX: null,
+    placementScreenY: null,
+    selectionScreenX: null,
+    selectionScreenY: null,
+    placementChosenWorldX: null,
+    placementChosenWorldY: null,
+    placementStuck: false,
+    placementConfirmSeq: 0,
+    helmCourseSeq: 0,
+    helmCourseX: 0,
+    helmCourseY: 0,
+    fleetSelSeq: 0,
+    fleetSelIds: [],
+    orderSeq: 0,
+    orderKind: 'move',
+    orderX: 0,
+    orderY: 0,
+    orderTargetId: null,
+    takeControlsSeq: 0,
+    takeControlsId: null,
+    fleetPickPoints: 0,
+    fleetPickSeq: 0,
+    fleetPickResult: null,
+    placementPreviewConnectionCount: 0,
+    selectedPickId: null,
+    selectedPickKind: null,
+    hoveredPickId: null,
+    miningBeamCount: 0, viewX: 0, viewY: 0, viewHalf: 0,
+  };
+}
 
 /** RendererFeedback, F1 frame markers and the warp / spool FX. */
 export function writeFrameFeedback(mirror: RenderMirror, ctx: RendererFrameCtx): void {

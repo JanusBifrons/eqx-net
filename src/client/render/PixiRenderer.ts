@@ -16,25 +16,26 @@ import { type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { type BeamCtx } from './pixi/beamUpdater.js';
 import { createWarpFxCtx, type WarpFxCtx } from './pixi/warpFxUpdater.js';
-import { createEngineShieldFxCtx, clearEngineShieldFxIds, type EngineShieldFxCtx } from './pixi/engineShieldFxUpdater.js';
+import { createEngineShieldFxCtx, type EngineShieldFxCtx } from './pixi/engineShieldFxUpdater.js';
 import { createHitEventCtx, type HitEventCtx } from './pixi/hitEventUpdater.js';
 import { createHudDrainCtx, type HudDrainCtx } from './pixi/hudDrainUpdater.js';
 import { createPlacementGhostCtx, type PlacementGhostCtx } from './pixi/placementGhostUpdater.js';
 import { createLitSceneCtx, type LitSceneCtx } from './pixi/litSceneUpdater.js';
 import { createTurretShotCtx, type TurretShotCtx } from './pixi/turretShotUpdater.js';
-import { resolveInitTarget, buildWorldScene, createGameplayCamera, setupMachinedArt, logInitFrameDiag, buildSceneLayers, buildOverlays } from './pixi/rendererSetup/initScene.js';
+import { resolveInitTarget, buildWorldScene, createGameplayCamera, setupMachinedArt, applyStartZoom, logInitFrameDiag, buildSceneLayers, buildOverlays } from './pixi/rendererSetup/initScene.js';
 import { buildSpriteUpdaterCtxs } from './pixi/rendererSetup/initUpdaterCtxs.js';
 import { buildFxWeapons, buildBeamPoolsAndEffects, buildBeamCtx } from './pixi/rendererSetup/initFx.js';
 import { installDomListeners } from './pixi/rendererSetup/initDomListeners.js';
+import { disposeRenderer, resetEffectsForSectorHandoff, type RendererTeardownRefs } from './pixi/rendererSetup/teardown.js';
 import { installFrameTicker } from './pixi/rendererSetup/initTicker.js';
 import { createRendererFrameCtx, type RendererFrameCtx, type RendererFrameRefs } from './pixi/frameCtx.js';
 import { updateEntitySprites, updateProjectilesAndGhost } from './pixi/worldSpriteUpdater.js';
 import { updateBeamsAndCamera, updateBackdrop, updateHudOverlays } from './pixi/frameViewUpdater.js';
-import { writeFrameFeedback, tickFrameEffects } from './pixi/frameFeedbackUpdater.js';
+import { createRendererFeedback, writeFrameFeedback, tickFrameEffects } from './pixi/frameFeedbackUpdater.js';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import { RendererInputController, type ForwardedPointerEvent, type RendererInputDeps } from './pixi/rendererInputController.js';
-import { RendererCameraDirector, DEFAULT_GAMEPLAY_ZOOM, type RendererCameraDeps } from './pixi/cameraDirector.js';
-import { artStats, backdropStats, shipVisualProbe, type ArtStats, type BackdropStats, RendererPerfProbe, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
+import { RendererCameraDirector, type RendererCameraDeps } from './pixi/cameraDirector.js';
+import { artStats, backdropStats, shipVisualProbe, debugEngine, createFleetRingProbe, captureFleetRingProbe, fleetRingProbe, type FleetRingProbeState, type FleetRingReading, type ArtStats, type BackdropStats, RendererPerfProbe, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
 import { type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar, type RadarDebugIcon } from './HaloRadar';
 import { IncomingFireWarning } from './incoming/IncomingFireWarning.js';
@@ -53,7 +54,6 @@ import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { FxEngines } from './art/fx/FxEngines.js';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
-import { startZoomForScale } from '@shared-types/shipScale/tuning';
 import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { type ShipArtCtx } from './art/shipArtSprites.js';
@@ -215,7 +215,7 @@ export class PixiRenderer implements IRenderer {
       get fxShields() { return r._fxShields; }, get fxShieldsOn() { return r._hitEventCtx.fxShieldsOn; }, get fxFences() { return r._fxFences; },
       get wreckBreaks() { return r._wreckBreaks; }, get wreckBlastsSpawned() { return r._wreckBlastsSpawned; },
       get wreckRipplesSpawned() { return r._wreckRipplesSpawned; }, get hullBlastsReplaced() { return r._frame.hullBlastsReplaced; },
-      get shipRekeysApplied() { return r._shipRekeysApplied; },
+      get shipRekeysApplied() { return r._shipRekeysApplied; }, get selectionBracket() { return r.selectionBracket; }, get fleetRing() { return r._fleetRing; },
     };
   }
   // Post-2026-06-01: beams now rendered via sprite pools (no Graphics
@@ -367,44 +367,7 @@ export class PixiRenderer implements IRenderer {
    * per-frame GC pressure. The Map is cleared + repopulated; the outer
    * object identity is stable.
    */
-  private readonly feedback: RendererFeedback = {
-    mountCounts: new Map<string, number>(),
-    haloArrowCount: 0,
-    damageNumberActiveCount: 0,
-    shieldRingVisibleCount: 0,
-    firstFrameRendered: false,
-    artReady: false,
-    liveBeamRenderedFromX: null,
-    liveBeamRenderedFromY: null,
-    placementScreenX: null,
-    placementScreenY: null,
-    selectionScreenX: null,
-    selectionScreenY: null,
-    placementChosenWorldX: null,
-    placementChosenWorldY: null,
-    placementStuck: false,
-    placementConfirmSeq: 0,
-    helmCourseSeq: 0,
-    helmCourseX: 0,
-    helmCourseY: 0,
-    fleetSelSeq: 0,
-    fleetSelIds: [],
-    orderSeq: 0,
-    orderKind: 'move',
-    orderX: 0,
-    orderY: 0,
-    orderTargetId: null,
-    takeControlsSeq: 0,
-    takeControlsId: null,
-    fleetPickPoints: 0,
-    fleetPickSeq: 0,
-    fleetPickResult: null,
-    placementPreviewConnectionCount: 0,
-    selectedPickId: null,
-    selectedPickKind: null,
-    hoveredPickId: null,
-    miningBeamCount: 0, viewX: 0, viewY: 0, viewHalf: 0,
-  };
+  private readonly feedback: RendererFeedback = createRendererFeedback(); // pixi/frameFeedbackUpdater.ts
 
   /**
    * F1 instrumentation — per-frame worker-side sub-costs (warp-spool
@@ -445,19 +408,8 @@ export class PixiRenderer implements IRenderer {
     return Promise.resolve(this.perfProbeSync(op));
   }
 
-  /** DEBUG (exhaust-side investigation): the local ship sprite WORLD position
-   *  + engine particle world positions (pixi coords; gfx.y = -gameY). */
-  __debugEngine(): { ship: { x: number; y: number; vx: number; vy: number }; particles: number[] } | null {
-    const localId = this._lastMirror?.localPlayerId;
-    if (!localId || !this.effects) return null;
-    const sp = this.sprites.get(localId);
-    if (!sp) return null;
-    const out: number[] = [];
-    const n = this.effects.debugCopyEngineParticleWorld(out);
-    out.length = n * 4;
-    const sv = this._lastMirror?.ships.get(localId);
-    return { ship: { x: sp.x, y: sp.y, vx: sv?.vx ?? 0, vy: sv?.vy ?? 0 }, particles: out };
-  }
+  /** DEBUG (exhaust-side investigation): see pixi/rendererProbes.ts `debugEngine`. */
+  __debugEngine(): ReturnType<typeof debugEngine> { return debugEngine(this._probes); }
 
   async init(rawContainer: unknown): Promise<void> {
     // Setup steps live in pixi/rendererSetup/ (each returns what it built).
@@ -521,19 +473,7 @@ export class PixiRenderer implements IRenderer {
     this._hudCtx.selfDmgNumbersDisabled = fxKillSwitches.selfDmgNumbersDisabled;
     this._hudCtx.healthBarsDisabled = fxKillSwitches.healthBarsDisabled;
 
-    // Default gameplay zoom. Historically the gameplay camera ran at the
-    // Pixi default scale 1.0 (the worker Camera replaced pixi-viewport,
-    // which only ever `moveCenter`d the gameplay world — it never set a
-    // zoom; cf. GalaxyOverviewRenderer's setZoom(0.7), a separate map).
-    // `DEFAULT_GAMEPLAY_ZOOM` makes that explicit + one-line tunable, and
-    // the `?zoom=` URL override lets us A/B the sweet spot on-device
-    // before baking a new default in. (plan: zazzy-engelbart, Phase 2.)
-    const resolvedZoom =
-      zoom !== undefined && Number.isFinite(zoom) && zoom > 0
-        ? zoom
-        : startZoomForScale(DEFAULT_GAMEPLAY_ZOOM); // ship scale (shipScale/tuning)
-    this._cameraDirector._zoomPinned = resolvedZoom !== startZoomForScale(DEFAULT_GAMEPLAY_ZOOM);
-    this.camera.setZoom(resolvedZoom);
+    applyStartZoom(this.camera, this._cameraDirector, zoom); // rendererSetup/initScene.ts
 
     logInitFrameDiag(this.app, this.world, target);
 
@@ -859,7 +799,7 @@ export class PixiRenderer implements IRenderer {
       get shipUpdaterCtx() { return r._shipUpdaterCtx; }, get swarmUpdaterCtx() { return r._swarmUpdaterCtx; },
       get projectileUpdaterCtx() { return r._projectileUpdaterCtx; }, get missileUpdaterCtx() { return r._missileUpdaterCtx; },
       get beamCtx() { return r._beamCtx; }, get spectator() { return r._spectator; }, get lockMarksVisible() { return r._lockMarksVisible; },
-      get cleanWorld() { return r._cleanWorld; }, get beamsDisabled() { return r._beamsDisabled; }, get ringProbeOn() { return r._ringProbeOn; },
+      get cleanWorld() { return r._cleanWorld; }, get beamsDisabled() { return r._beamsDisabled; }, get ringProbeOn() { return r._fleetRing.on; },
       get artStatsHook() { return r._artStatsHook; }, get placementGhostCtx() { return r._placementGhostCtx; }, get halo() { return r.halo; },
       sprites: this.sprites, mountVisuals: this.mountVisuals, cameraDirector: this._cameraDirector, input: this._input,
       feedback: this.feedback, frameMarkers: this.frameMarkers, hudCtx: this._hudCtx, hitEventCtx: this._hitEventCtx,
@@ -868,7 +808,7 @@ export class PixiRenderer implements IRenderer {
       incomingFire: this.incomingFire, helmMarker: this.helmMarker, fxClock: this.fxClock, artCtx: this._artCtx,
       seenScratch: this._updateSeenScratch, remoteHitTargets: this._updateRemoteHitTargetsScratch, localHitTargets: this._updateLocalHitTargetsScratch,
       tractorViews: this._tractorViews, spriteShipKind: this._spriteShipKind, forgetSprite: this._forgetSprite, rekeyShip: this._rekeyShip,
-      captureFleetRingProbe: () => this.captureFleetRingProbe(), fxNow: () => this.fxNow(),
+      captureFleetRingProbe: () => captureFleetRingProbe(this._probes), fxNow: () => this.fxNow(),
     };
   }
   /** Scratch for the test-only particle count in `artStats`. */
@@ -985,38 +925,14 @@ export class PixiRenderer implements IRenderer {
     return this.camera.toScreen(x, -y);
   }
 
-  /** Test-only ring probe state (RTS review 2026-11-14). Off until first read. */
-  private _ringProbeOn = false;
-  private readonly _ringProbe = { id: '', ringX: NaN, ringY: NaN, shipX: NaN, shipY: NaN, frames: 0 };
-  private readonly _ringProbePt = { x: 0, y: 0 };
+  /** Test-only ring probe state (pixi/rendererProbes.ts). Off until first read. */
+  private readonly _fleetRing: FleetRingProbeState = createFleetRingProbe();
 
-  /** Ticker, after the camera tick (the transform this frame renders with):
-   *  the first selection marker as drawn vs its ship sprite's screen point. */
-  private captureFleetRingProbe(): void {
-    const o = this.selectionBracket;
-    const id = o?.lastMarkerId ?? null;
-    if (o === null || id === null) return;
-    const sp = this.sprites.get(id);
-    if (sp === undefined) return;
-    const g = sp.parent ? sp.parent.toGlobal(sp.position, this._ringProbePt) : null;
-    if (g === null) return;
-    const p = this._ringProbe;
-    p.id = id; p.ringX = o.lastMarker.x; p.ringY = o.lastMarker.y; p.shipX = g.x; p.shipY = g.y; p.frames++;
-  }
-
-  /**
-   * Test-only (RTS review 2026-11-14): turns the per-frame ring probe on and
-   * returns the latest capture: the first selection marker's drawn centre and its
-   * ship's screen point, both as the frame renders. Read by the
-   * `__eqxFleetRingProbe` DEV hook (`?worker=0`). Not used by gameplay.
-   */
   /** Test-only ship identity probe (`__eqxShipVisualProbe`): see pixi/rendererProbes.ts. */
   shipVisualProbe(key: string): ShipVisualProbe { return shipVisualProbe(this._probes, key); }
 
-  fleetRingProbe(): { id: string; ringX: number; ringY: number; shipX: number; shipY: number; frames: number } {
-    this._ringProbeOn = true;
-    return { ...this._ringProbe };
-  }
+  /** Test-only fleet ring probe (`__eqxFleetRingProbe`): see pixi/rendererProbes.ts. */
+  fleetRingProbe(): FleetRingReading { return fleetRingProbe(this._probes); }
 
   /**
    * Read the most recent feedback the renderer wrote at the tail of its
@@ -1049,72 +965,27 @@ export class PixiRenderer implements IRenderer {
     return this.feedback.mountCounts.get(shipId) ?? 0;
   }
 
-  /**
-   * Effects subsystem (plan `wiggly-puppy` M9). Wipe per-entity continuous
-   * emitters + in-flight bursts + shield rings. Called from
-   * `ColyseusClient.resetPredictionState()`'s sibling-line in the
-   * `transit_ready` handler. The diff trackers are cleared too so the
-   * destination sector's first frame re-registers emitters against the
-   * fresh mirror state.
-   */
-  resetEffectsForSectorHandoff(): void {
-    this.effects?.resetForSectorHandoff();
-    this._fxExplosions?.reset();
-    this.incomingFire.reset();
-    this.helmMarker.reset();
-    this._fxShields?.reset();
-    this._fxFences?.reset();
-    clearEngineShieldFxIds(this._engineShieldFxCtx);
-  }
+  /** Sector-handoff effects reset: see pixi/rendererSetup/teardown.ts. */
+  resetEffectsForSectorHandoff(): void { resetEffectsForSectorHandoff(this._teardown); }
 
   /** Machined art status (DEV/perf probe): see pixi/rendererProbes.ts. */
   artStats(): ArtStats { return artStats(this._probes); }
 
-  dispose(): void {
-    this._artCtx.art?.destroy();
-    this._artCtx.art = null;
-    this._artCtx.handles.clear();
-    if (!this.initialized) return;
-    // Flip the flag FIRST so any rAF / ResizeObserver callback that fires
-    // between here and the actual destroy() short-circuits cleanly. Without
-    // this, the queued requestAnimationFrame(resize) at the end of init()
-    // could land post-destroy and read a null renderer.
-    this.initialized = false;
-    // Tear down the warp filter chain (removes its ticker handler).
-    this.curtain.destroy();
-    // Wipe effects subsystem pools (particles, shock filters, etc.).
-    if (this.effects) {
-      this.effects.resetForSectorHandoff();
-      this.effects = null;
-    }
-    // Clear the per-effect diff trackers so a re-init starts clean.
-    clearEngineShieldFxIds(this._engineShieldFxCtx);
-    // Remove canvas pointer / wheel / touch listeners so an in-flight
-    // event doesn't reach a destroyed Camera.
-    this._input.removeEventListeners(this.app?.canvas);
-    const handler = (this.app as unknown as Record<string, unknown>)['_resizeHandler'];
-    if (typeof handler === 'function') {
-      window.removeEventListener('resize', handler as EventListener);
-      window.removeEventListener('orientationchange', handler as EventListener);
-      window.visualViewport?.removeEventListener('resize', handler as EventListener);
-    }
-    const ro = (this.app as unknown as Record<string, unknown>)['_resizeObserver'];
-    if (ro instanceof ResizeObserver) ro.disconnect();
-    this._hudCtx.damageNumbers?.destroy();
-    this._hudCtx.levelUpIcons?.destroy();
-    this._hudCtx.healthBars?.destroy();
-    this.labels?.destroy();
-    this.selectionBracket?.destroy();
-    this.hoverBracket?.destroy();
-    this.mountVisuals.disposeAll();
-    this.halo.destroy();
-    this.incomingFire.destroy();
-    this.helmMarker.destroy();
-    this.fleetOverlay?.destroy();
-    this.backgroundGrid?.destroy();
-    this.starfield?.destroy();
-    // Warp stage + filters live on app.stage so `app.destroy({ children: true })`
-    // tears them down. warp.destroy() already removed the ticker handler.
-    this.app.destroy(true, { children: true });
+  dispose(): void { disposeRenderer(this._teardown); } // pixi/rendererSetup/teardown.ts
+  /** Live getter view of the state teardown reads (pixi/rendererSetup/teardown.ts), built once. */
+  private readonly _teardown: RendererTeardownRefs = this.teardownRefs();
+  private teardownRefs(): RendererTeardownRefs {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- getters read the renderer's live fields
+    const r = this;
+    return {
+      get initialized() { return r.initialized; }, set initialized(v: boolean) { r.initialized = v; },
+      get effects() { return r.effects; }, set effects(v: EffectsService | null) { r.effects = v; },
+      get app() { return r.app; }, get curtain() { return r.curtain; }, get labels() { return r.labels; },
+      get selectionBracket() { return r.selectionBracket; }, get hoverBracket() { return r.hoverBracket; }, get fleetOverlay() { return r.fleetOverlay; },
+      get backgroundGrid() { return r.backgroundGrid; }, get starfield() { return r.starfield; }, get fxExplosions() { return r._fxExplosions; },
+      get fxShields() { return r._fxShields; }, get fxFences() { return r._fxFences; },
+      artCtx: this._artCtx, engineShieldFxCtx: this._engineShieldFxCtx, input: this._input, hudCtx: this._hudCtx,
+      mountVisuals: this.mountVisuals, halo: this.halo, incomingFire: this.incomingFire, helmMarker: this.helmMarker,
+    };
   }
 }

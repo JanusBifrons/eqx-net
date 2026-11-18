@@ -21,7 +21,8 @@ import { StarfieldBackground } from '../../StarfieldBackground.js';
 import { BackgroundGrid } from '../../BackgroundGrid.js';
 import type { CutFieldLayer } from '../../field/CutFieldLayer.js';
 import type { RenderLayer } from 'pixi.js';
-import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM } from '@shared-types/shipScale/tuning';
+import { GAMEPLAY_MAX_ZOOM, GAMEPLAY_MIN_ZOOM, startZoomForScale } from '@shared-types/shipScale/tuning';
+import { DEFAULT_GAMEPLAY_ZOOM, type RendererCameraDirector } from '../cameraDirector.js';
 import { createArtService } from '../../art/ArtService.js';
 import { litPass } from '../../art/litPass.js';
 import { warmUpJobs } from '../../art/warmUp.js';
@@ -147,6 +148,23 @@ export function createGameplayCamera(world: Container): Camera {
     maxScale: GAMEPLAY_MAX_ZOOM,
     followLerpFactor: 1,
   });
+}
+
+/** The gameplay camera's start zoom (`?zoom=` override, else the ship-scale default). */
+export function applyStartZoom(camera: Camera, cameraDirector: RendererCameraDirector, zoom: number | undefined): void {
+  // Default gameplay zoom. Historically the gameplay camera ran at the
+  // Pixi default scale 1.0 (the worker Camera replaced pixi-viewport,
+  // which only ever `moveCenter`d the gameplay world — it never set a
+  // zoom; cf. GalaxyOverviewRenderer's setZoom(0.7), a separate map).
+  // `DEFAULT_GAMEPLAY_ZOOM` makes that explicit + one-line tunable, and
+  // the `?zoom=` URL override lets us A/B the sweet spot on-device
+  // before baking a new default in. (plan: zazzy-engelbart, Phase 2.)
+  const resolvedZoom =
+    zoom !== undefined && Number.isFinite(zoom) && zoom > 0
+      ? zoom
+      : startZoomForScale(DEFAULT_GAMEPLAY_ZOOM); // ship scale (shipScale/tuning)
+  cameraDirector._zoomPinned = resolvedZoom !== startZoomForScale(DEFAULT_GAMEPLAY_ZOOM);
+  camera.setZoom(resolvedZoom);
 }
 
 export interface MachinedArtDeps {
