@@ -10,6 +10,9 @@ import type { AiController } from '@core/ai/AiController';
 import type { ClientSpawnCtx } from '../entity/IClientEntityLeaf.js';
 import type { ClientEntityFactory } from '../entity/ClientEntityFactory.js';
 import type { WreckGeometryStore } from '../wreckGeometryStore.js';
+import type { RemotePredictionGuard } from '../remotePredictionGuard';
+import type { RemoteShipOffset } from '../remoteLerpOffsets.js';
+import type { RemoteInput } from '../snapshotRemoteSync.js';
 
 /** One `keyboard.read()` (stateless, hoisted out of the input loop). */
 export interface KeyboardBits {
@@ -85,4 +88,15 @@ export interface PredictionStepCtx {
   readonly swarmAnchorScratch: { x: number; y: number; vx: number; vy: number; angle: number; angvel: number };
   readonly welcomePerfNow: number;
   localPoseResolvedLogged: boolean;
+  // Ship re-key + remote bodies (`predWorldSync.ts`): per-ship prediction state that moves / goes with a body.
+  readonly predRemoteShipIds: Set<string>;
+  readonly remoteShipOffsets: Map<string, RemoteShipOffset>;
+  readonly remoteLastInputs: Map<string, RemoteInput>;
+  readonly remoteForwardTicks: Map<string, number>;
+  readonly predGuard: RemotePredictionGuard;
+  readonly arrivalSnapped: Set<string>;
+  /** Remote snapshot history per ship (entries opaque here: only moved / dropped). */
+  readonly remoteHistory: Map<string, unknown>;
+  readonly damageFlashFrames: Map<string, number>;
+  rekeyLockState(from: string, to: string): void;
 }

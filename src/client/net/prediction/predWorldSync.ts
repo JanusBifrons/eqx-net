@@ -1,8 +1,9 @@
 /**
  * The prediction world's own bodies, outside the per-frame step: the local
  * ship's body + Reconciler bootstrap (`tryInitPredWorld`, from the welcome /
- * first state) and the swarm bodies (`syncSwarmIntoPredWorld`, after every
- * binary `swarm` packet). Both run with `ColyseusClient`'s once-built
+ * first state), the swarm bodies (`syncSwarmIntoPredWorld`, after every
+ * binary `swarm` packet), and the ship re-key / remote-body group
+ * (`rekeyShip`, `dropRemoteShip`, `ensureRemoteShipBody`). All run with `ColyseusClient`'s once-built
  * `PredictionStepCtx` (#14); the client keeps one-line delegates.
  */
 import { Reconciler } from '@core/prediction/Reconciler';
@@ -13,6 +14,10 @@ import { wantPredBody } from '../../structures/predStructureStreaming.js';
 import { useUIStore } from '../../state/store';
 import { logEvent } from '../../debug/ClientLogger';
 import { authoritativeSwarmStateAt, isRemoteMovingSwarmKind } from '../snapshotRemoteSync.js';
+import type { ShipPhysicsState } from '@core/physics/World';
+import { forgetRemote } from '../remotePredictionGuard';
+import { isOwnedByMe, isParkedHull } from '../../render/shipOwnership.js';
+import { moveKey, moveSetKey } from '../../render/shipRekey.js';
 import type { PredictionStepCtx } from './predictionStepCtx.js';
 
 /** Spawn the local ship's predWorld body + Reconciler once its mirror entry exists. */
@@ -172,4 +177,148 @@ export function syncSwarmIntoPredWorld(c: PredictionStepCtx): void {
       }
     }
   }
+}
+
+/**
+ * THE one way a remote ship's predWorld body and per-ship prediction state
+ * go away (RTS Part A S0; replaced four inline copies: transit, killEntity,
+ * the syncMirror departed sweep, the warp-run despawn). Clears the body,
+ * `predRemoteShipIds`, the render lerp offset, the forward-prediction
+ * inputs / lookahead counter, the prediction guard and the arrival snap.
+ *
+ * `'gone'` (default) also drops the mirror entry and its history: the ship
+ * left. `'outOfWorld'` keeps them: a ship on its warp run is still listed,
+ * it just has no body until it lands (`syncRemoteWarpBodies`).
+ * Harmless on the local key (the syncMirror sweep may pass it): the local
+ * body is never in `predRemoteShipIds`, so it is not despawned here; it has
+ * its own ownership site.
+ */
+/**
+ * Welcome-time re-key of our own ship from its parked-hull key (see the
+ * welcome handler). With a real welcome ship id, takes EXACTLY that hull —
+ * never a same-player OLD hull the player just displaced (seeding the local
+ * body at the stale hull's pose was the 2026-06-03 displace bug). Only with
+ * NO instance id (engineering rooms) does it fall back to the first parked
+ * hull we own. The move is `rekeyShip` (the ONE re-key): the hull's remote
+ * body goes BEFORE `tryInitPredWorld` spawns the local one (never two
+ * overlapping bodies), and the SAME entry object moves to the playerId, so
+ * the local body spawns at the hull's drawn pose and the renderer keeps the
+ * ship's sprite, art, turrets and effects (seamless hand-over). Lock:
+ * `ColyseusClient.pilotSwap.test.ts`, `tests/e2e/rts-take-controls.spec.ts`.
+ */
+export function rekeyOwnShipFromHull(c: PredictionStepCtx, playerId: string, welcomeShipInstanceId: string): void {
+  let hullKey: string | null = null;
+  if (welcomeShipInstanceId !== '') {
+    const e = c.mirror.ships.get(welcomeShipInstanceId);
+    if (e !== undefined && isParkedHull(c.mirror, welcomeShipInstanceId, e)) hullKey = welcomeShipInstanceId;
+  } else {
+    for (const [key, e] of c.mirror.ships) {
+      if (isParkedHull(c.mirror, key, e) && isOwnedByMe(c.mirror, key, e)) { hullKey = key; break; }
+    }
+  }
+  if (hullKey === null || hullKey === playerId) return;
+  const hull = c.mirror.ships.get(hullKey)!;
+  rekeyShip(c, hullKey, playerId);
+  logEvent('rescued_own_ship_from_lingering', {
+    shipInstanceId: hullKey,
+    playerId,
+    x: hull.x,
+    y: hull.y,
+  });
+}
+
+export function dropRemoteShip(c: PredictionStepCtx, key: string, mode: 'gone' | 'outOfWorld' = 'gone'): void {
+  if (c.predRemoteShipIds.delete(key)) c.predWorld?.despawnShip(key);
+  c.remoteShipOffsets.delete(key);
+  c.remoteLastInputs.delete(key);
+  c.remoteForwardTicks.delete(key);
+  forgetRemote(c.predGuard, key);
+  c.arrivalSnapped.delete(key);
+  if (mode === 'gone') {
+    c.mirror.ships.delete(key);
+    c.remoteHistory.delete(key);
+  }
+}
+
+/**
+ * THE one ship re-key (RTS Part A, seamless take controls). A ship's mirror
+ * key changes when someone takes its controls (shipInstanceId -> pilot's
+ * playerId) or lets go of them (playerId -> shipInstanceId): the welcome
+ * (`rekeyOwnShipFromHull`), Command / Spectate (`dropLocalShipForCommand`),
+ * and another player's swap seen by the router / `syncMirror`
+ * (`findRekeySource`). The SAME entry object moves (pose, kind, turrets,
+ * level, shield state kept), with its body and per-ship prediction state:
+ *  - remote -> remote: the body is respawned under the new key at its own
+ *    state, offsets / inputs / lookahead / history move with it;
+ *  - remote -> local: the remote body goes (`tryInitPredWorld` then spawns
+ *    the local body at the entry's drawn pose);
+ *  - local -> remote: the local body becomes a remote body at its state (a
+ *    real pose, never the schema's: B2) and the reconciler goes.
+ * The pair is queued on `mirror.pendingShipRekeys`, so the renderer moves its
+ * per-ship state too instead of rebuilding the ship. A stale entry already
+ * under `to` is dropped first. Rare (a hand-over), never per frame.
+ */
+export function rekeyShip(c: PredictionStepCtx, from: string, to: string): void {
+  if (from === to) return;
+  const entry = c.mirror.ships.get(from);
+  if (entry === undefined) return;
+  const localId = c.mirror.localPlayerId;
+  const pw = c.predWorld;
+  if (c.mirror.ships.has(to)) {
+    if (to === localId) c.mirror.ships.delete(to);
+    else dropRemoteShip(c, to);
+  }
+  let body: ShipPhysicsState | null = null;
+  if (from === localId) {
+    if (pw?.hasShip(from)) {
+      body = pw.getShipState(from);
+      pw.despawnShip(from);
+      c.reconciler = null;
+    }
+  } else {
+    if (c.predRemoteShipIds.has(from)) body = pw?.getShipState(from) ?? null;
+    if (to !== localId) {
+      moveKey(c.remoteShipOffsets, from, to);
+      moveKey(c.remoteLastInputs, from, to);
+      moveKey(c.remoteForwardTicks, from, to);
+      moveKey(c.remoteHistory, from, to);
+      moveSetKey(c.arrivalSnapped, from, to);
+    }
+    dropRemoteShip(c, from, 'outOfWorld');
+  }
+  c.mirror.ships.delete(from);
+  c.mirror.ships.set(to, entry);
+  if (to !== localId && body !== null && entry.kind !== undefined && localId !== null) {
+    ensureRemoteShipBody(c, to, body, entry.kind);
+  }
+  moveKey(c.damageFlashFrames, from, to);
+  c.rekeyLockState(from, to);
+  c.mirror.pendingShipRekeys?.push(from, to);
+  logEvent('ship_rekeyed', { from, to });
+}
+
+/**
+ * THE one way a remote ship's predWorld body is spawned (RTS Part A S0;
+ * replaced the syncMirror, tryInitPredWorld-retro and warp-arrival copies).
+ * Spawns at `pose` and tracks it in `predRemoteShipIds`; a no-op returning
+ * false when the body already exists. Callers keep their own gates (known
+ * local id, not on a warp run).
+ *
+ * ONE spawn rule (RTS Part A blocker B2): a remote body (another pilot's
+ * ship OR a parked / AI-flown hull) spawns ONLY from a real SNAPSHOT pose.
+ * The callers are the per-snapshot `spawnRemoteShipBodies`, the
+ * warp-arrival snap, and `rekeyShip`, which carries a body's OWN state
+ * across a re-key (a predicted body is a real pose too). Never the schema
+ * diff (which carries no pose: its x/y are 0): a body spawned at (0,0)
+ * parked an invisible, shootable ghost at the world origin (the 2026-06-03
+ * "laser stops short at (0,0)" bug). Lock:
+ * `ColyseusClient.lingeringJitter.test.ts`.
+ */
+export function ensureRemoteShipBody(c: PredictionStepCtx, key: string, pose: ShipPhysicsState, kind: string): boolean {
+  const pw = c.predWorld;
+  if (!pw || pw.hasShip(key)) return false;
+  pw.spawnShip(key, pose.x, pose.y, kind);
+  pw.setShipState(key, pose);
+  c.predRemoteShipIds.add(key);
+  return true;
 }
