@@ -411,6 +411,29 @@ describe('ConvoyDirector — the crane bay (structure-restyle 3h)', () => {
     expect(dir.active()[0]?.phase).toBe('delivery');
   });
 
+  it('a hauler that reaches the bay late in its leg still gets the crane (no timeout mid-hold)', () => {
+    const { exporter, room, clock, dir } = craneSetup();
+    // The hauler is stuck (e.g. frozen in a sector with no pilot) for most
+    // of its leg budget, then reaches the bay with one second to spare.
+    const move = room.setBotMoveTarget.bind(room);
+    room.setBotMoveTarget = () => {};
+    dir.tick();
+    const c = dir.active()[0]!;
+    const pose = room.poses.get(c.haulerId)!;
+    const leg = DEFAULT_CONVOY_OPTIONS.phaseTimeoutMs + (Math.hypot(pose.x - 2500, pose.y - 3460) / 200) * 1000;
+    clock.t += leg - 1000;
+    move(c.haulerId, 2500, 3460);
+    room.setBotMoveTarget = move;
+    dir.tick();
+    expect(room.jobs.size, 'served on arrival').toBe(1);
+    // The crane's settle + reach + hold run on past the old leg budget.
+    for (let i = 0; i < 10; i++) { clock.t += 1000; dir.tick(); }
+    expect(room.cancelled, 'not cut off mid-hold').toBe(0);
+    expect(exporter.stock.alloy).toBe(1000);
+    room.holdEnds();
+    expect(exporter.stock.alloy).toBeLessThan(1000);
+  });
+
   it('a hold end after the convoy is gone (raided) trades nothing', () => {
     const { exporter, room, dir, clock } = craneSetup();
     dir.tick();

@@ -553,7 +553,7 @@ export class ConvoyDirector {
     // 3h — at a reachable bay the dock's crane serves the hauler; the trade
     // runs at the end of its hold (`atHoldEnd` → `dock`). Timed out, or
     // the dock can't serve: cancel and trade atomically, as before.
-    if (arrived && !timedOut && this.craneServes(c, room)) {
+    if (arrived && !timedOut && this.craneServes(c, room, now)) {
       room.setBotMoveTarget(c.haulerId, c.target.x, c.target.y);
       return;
     }
@@ -562,10 +562,14 @@ export class ConvoyDirector {
   }
 
   /** 3h — ask the bay's crane to serve this visit; true while it does. */
-  private craneServes(c: Convoy, room: ConvoyRoom): boolean {
+  private craneServes(c: Convoy, room: ConvoyRoom, now: number): boolean {
     const end = c.phase === 'pickup' ? c.from : c.phase === 'delivery' ? c.to : null;
     if (end?.bay === undefined || room.craneServe === undefined) return false;
     if (c.crane === undefined) {
+      // On the bay: the crane gets its own `phaseTimeoutMs` from now. A leg
+      // that ran long (a hauler waits, frozen, in a sector with no pilot)
+      // must not time out mid-hold and cut the crane off.
+      c.phaseBudgetMs = Math.max(c.phaseBudgetMs, now - c.phaseAtMs + this.opts.phaseTimeoutMs);
       let weight: number;
       if (c.phase === 'pickup') {
         const want = emptyHold();
