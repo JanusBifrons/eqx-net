@@ -33,6 +33,7 @@ describe('SectorRoom integration — robot nexus + territory (P3)', () => {
       sectors: ['greenfall', 'emerald-span'],
       botCount: 6,
       seed: 21,
+      keepAllOnDeath: true, // pins the nexus / harvester spills (no death coin flip)
       director: {
         ...ROBOT_DIRECTOR_OPTIONS,
         botCount: 6,

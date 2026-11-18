@@ -87,6 +87,8 @@ export type CutFieldSource = ChunkSource & { dormantObstacles?(box: ObstacleBox,
 export class CutFieldSubsystem {
   readonly streamer: CutFieldStreamer;
   private readonly timer: GameTimer;
+  /** Contacts between a field rock and anything else (navigation's count: routed ships touch none). */
+  rockContacts = 0;
   private wakeTick = -1;
   private wakesThisTick = 0;
   /** The field's ore seed (`oreSeed`), as the client draws it. */
@@ -184,6 +186,7 @@ export class CutFieldSubsystem {
 
   /** A contact between `aId` and `bId` (contact batch, per aggregated pair). */
   onContact(aId: string, bId: string, closingSpeed: number, tick: number): void {
+    if ((this.registry.get(aId)?.fieldRock === true) !== (this.registry.get(bId)?.fieldRock === true)) this.rockContacts++;
     this.wake(aId, bId, closingSpeed, tick);
     this.wake(bId, aId, closingSpeed, tick);
   }

@@ -63,6 +63,10 @@ export class GraphSearch {
   private seq = 0;
   /** Nodes popped and expanded by the last search (work counter). */
   expanded = 0;
+  /** The popped node closest to the goal (least heuristic, first popped on a
+   *  tie) in the last search: where to go when the goal cannot be reached. */
+  nearest = -1;
+  private nearestH = Infinity;
 
   /** Search from `from`; returns the first goal node popped, or -1 (none, or
    *  `limit` nodes expanded first). After a hit, {@link prev} / {@link cost}
@@ -74,6 +78,8 @@ export class GraphSearch {
     this.heapLen = 0;
     this.seq = 0;
     this.expanded = 0;
+    this.nearest = -1;
+    this.nearestH = Infinity;
     stamp[from] = run;
     g[from] = 0;
     prev[from] = -1;
@@ -82,6 +88,8 @@ export class GraphSearch {
       const i = this.pop();
       if (closed[i] === run) continue;
       closed[i] = run;
+      const h = goal.heuristic(i);
+      if (h < this.nearestH) { this.nearestH = h; this.nearest = i; }
       if (goal.isGoal(i)) return i;
       if (this.expanded >= limit) return -1;
       this.expanded++;

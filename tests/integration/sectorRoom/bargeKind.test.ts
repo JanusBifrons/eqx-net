@@ -68,7 +68,7 @@ describe('SectorRoom integration — the mining barge kind', () => {
       int().spawnTestProjectile('shooter-x', at.x + side * 600, at.y, -side * 4000, 0, 'laser', 1e6);
     }
     for (let t = 0; t < 40 && (int().swarmRegistry.get('f-rock-p') || int().swarmRegistry.get('f-rock-n')); t++) await harness.advance(50);
-    for (const pod of [...int().loot.podIds()]) int().loot.onPodDestroyed(pod); // their loot drop is not under test
+    for (const pod of [...int().loot.podIds()]) int().loot.expireNow(pod); // their loot drop is not under test
     const pieces = [...int().swarmRegistry.all()].filter((r) => r.kind === 4).map((r) => r.id);
     expect(pieces.length, 'the fighters broke into wreck pieces').toBeGreaterThan(0);
 

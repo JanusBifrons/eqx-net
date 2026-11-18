@@ -1,6 +1,6 @@
 import { getSector } from '../../core/galaxy/galaxy';
 import type { SectorFeature } from '../../core/galaxy/galaxy';
-import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
+import type { SectorControl, SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { RosterEntry } from '../state/storeTypes';
 import { factionDisplayName } from '../../shared-types/factions.js';
 import { splitChallenger } from '../render/galaxy/galaxyTerritories';
@@ -31,6 +31,12 @@ export interface SectorTooltipData {
   capital: string | null;
   /** Living World P4b — the title of the world event running here, or null. */
   event: string | null;
+  /** Holder owner id (livery colour lookups only, never shown), or null. */
+  holderId: string | null;
+  /** The split's challenger owner id (as `challenger`), or null. */
+  challengerId: string | null;
+  /** The feed's live control meter, or null when the feed has none. */
+  control: SectorControl | null;
 }
 
 /** Title-case a kebab/underscore/space region key for display. */
@@ -44,7 +50,8 @@ function factionLabel(owner: string | null, region: string): string {
   return `Neutral ground, ${titleCase(region)}`;
 }
 
-function powerName(id: string): string {
+/** A power's display name from its owner id (never the raw id). */
+export function powerName(id: string): string {
   if (id === 'robots') return 'Robot Dominion';
   return factionDisplayName(id) ?? titleCase(id);
 }
@@ -59,9 +66,8 @@ export function ownerLine(tip: Pick<SectorTooltipData, 'faction' | 'status' | 'c
   return tip.challenger !== null ? `${holder} · contested by ${tip.challenger}` : holder;
 }
 
-function challengerName(live: SectorLiveState | null): string | null {
-  const c = splitChallenger(live?.control, live?.owner?.factionId ?? NEUTRAL_OWNER);
-  return c !== null ? powerName(c) : null;
+function challengerId(live: SectorLiveState | null): string | null {
+  return splitChallenger(live?.control, live?.owner?.factionId ?? NEUTRAL_OWNER);
 }
 
 function titleCase(s: string): string {
@@ -91,11 +97,12 @@ export function buildSectorTooltip(
       ? 'Contested'
       : 'Held'
     : 'Neutral';
+  const challenger = challengerId(live);
   return {
     name: sector.name,
     faction: factionLabel(live?.owner?.factionId ?? null, sector.region),
     status,
-    challenger: challengerName(live),
+    challenger: challenger !== null ? powerName(challenger) : null,
     features: sector.features,
     players: live?.players ?? 0,
     enemies: live?.enemies ?? 0,
@@ -104,6 +111,9 @@ export function buildSectorTooltip(
     elite: live?.elite ?? null,
     capital: live?.capital?.name ?? null,
     event: live?.event?.title ?? null,
+    holderId: live?.owner?.factionId ?? null,
+    challengerId: challenger,
+    control: live?.control ?? null,
   };
 }
 
