@@ -32,7 +32,7 @@ import {
   resolveFlock,
   FLOCK_COHESION_GAIN,
 } from './flocking.js';
-import type { AiEntityPoseOut, AiShipActivity } from '../contracts/IAiBehaviour.js';
+import type { AiEntityPoseOut, AiShipActivity, IAiNavRoutes } from '../contracts/IAiBehaviour.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { AI_INPUT_BOOST, AI_INPUT_TURN_LEFT, AI_INPUT_TURN_RIGHT } from '../contracts/IAiBehaviour.js';
 import { BOOST_TICK_COST, canAfford, regenEnergyStep, spendEnergy } from '../combat/Energy.js';
@@ -423,6 +423,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _flockLeaderCruise = false;
   /** Reused arrive() output (alloc-free hot path, invariant #14). */
   private readonly _steerScratch: SteerOutput = makeSteerOutput();
+  /** This tick's routes round rock (`view.nav`, navigation slice 7), for `tickMoveTo`. */ private _nav: IAiNavRoutes | null = null;
 
   /** Leader-led flocking (non-combat herding). When `leaderId !== null` this
    *  drone is a FOLLOWER and flocks to the leader's live pose each tick instead
@@ -996,6 +997,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   tick(self: AiEntity, view: AiWorldView): AiIntent {
     this._aimValid = false;
+    this._nav = view.nav ?? null;
     this._lastX = self.x;
     this._lastY = self.y;
     this._pilot.turn.aimCone = 0;
@@ -2591,6 +2593,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  to a stop with reverse instead of turning around.
    */
   private tickMoveTo(self: AiEntity, tx: number, ty: number, cruiseCap = -1, boostOk = false): AiIntent {
+    const t = shipTuning(this.kind), nav = this._nav; // round rock: fly the route's next waypoint, braking for what lies ahead on it
+    if (nav !== null && nav.waypoint(self.id, self.x, self.y, tx, ty, t.navClearance, t.wingmanArrive)) {
+      const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this._steerScratch), v = Math.min(cruiseCap >= 0 ? cruiseCap : this.handling.cruiseSpeed * CALM_CRUISE_FRAC, brakingSpeed(this.handling, nav.ahead));
+      return this.fly(self, facingOf(w.dirX, w.dirY), w.dirX * v, w.dirY * v, boostOk);
+    }
     const steer = arrive(self.x, self.y, tx, ty, MOVE_ARRIVE_SLOW_RADIUS, this._steerScratch);
     // Arrived: inside the distance one tap of thrust carries this hull before
     // damping stops it (live thrust per tick / damping), any press can only
@@ -2607,7 +2614,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const speed = Math.min(cruise, brakingSpeed(this.handling, steer.dist));
     // Close in: keep the nose where it is and just brake (no turn-around for
     // an overshoot of a few lengths).
-    const facing = steer.dist > shipTuning(this.kind).flockFollow ? facingOf(steer.dirX, steer.dirY) : self.angle;
+    const facing = steer.dist > t.flockFollow ? facingOf(steer.dirX, steer.dirY) : self.angle;
     return this.fly(self, facing, steer.dirX * speed, steer.dirY * speed, boostOk);
   }
 

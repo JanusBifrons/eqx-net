@@ -152,6 +152,25 @@ export interface AiWorldView {
    *  what is hostile to its OWNER (RTS Part B slice 6). SERVER-ONLY, no wire
    *  surface. Absent ⇒ never. */
   hostileToPlayer?(entityId: string, playerId: string): boolean;
+  /** Routes round rock (navigation slice 7): the waypoint to fly to now on
+   *  the way to a goal. SERVER-ONLY, no wire surface (the client runs no
+   *  drone brain). Absent (no field in the sector) ⇒ fly straight. */
+  readonly nav?: IAiNavRoutes;
+}
+
+/** Each ship's route to its current goal (`server/nav/NavRoutes`). Asking
+ *  with a new goal starts a plan on the nav worker; until it answers, and when
+ *  the straight line is clear, there is no waypoint (fly straight).
+ *  Alloc-free per call: results in `wpX` / `wpY` / `ahead`. */
+export interface IAiNavRoutes {
+  /** True ⇒ fly to (`wpX`, `wpY`); `ahead` is how far the ship can run
+   *  before it must have braked (to the waypoint, plus the next leg as far as
+   *  it carries on the same way). `clearance` and `arrive` are the hull's
+   *  own numbers (`shipTuning`, #18). */
+  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number): boolean;
+  readonly wpX: number;
+  readonly wpY: number;
+  readonly ahead: number;
 }
 
 /** Body-target claims per NPC side (spread targets). One claim per brain;

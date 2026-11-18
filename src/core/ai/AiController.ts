@@ -1,4 +1,5 @@
 import type {
+  IAiNavRoutes,
   IAiBehaviour,
   AiEntity,
   AiEntityPoseOut,
@@ -128,6 +129,9 @@ export class AiController {
    *  ships engage what is hostile to their owner). The server sets it to its
    *  truce-aware query; the default asks the registered brains. Bound once. */
   hostileToPlayer: (entityId: string, playerId: string) => boolean = (e, p) => this.isEntityHostileToPlayer(e, p);
+  /** Routes round rock handed to brains as `view.nav` (the room's
+   *  `NavRoutes` when its sector has a cut field). SERVER-ONLY. */
+  nav: IAiNavRoutes | undefined = undefined;
 
   constructor(private readonly sink: AiIntentSink) {}
 
@@ -322,7 +326,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims, isCharging: this.isCharging, hostileToPlayer: this.hostileToPlayer };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims, isCharging: this.isCharging, hostileToPlayer: this.hostileToPlayer, nav: this.nav };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);

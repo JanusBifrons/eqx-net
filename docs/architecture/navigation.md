@@ -59,8 +59,8 @@ a tick. Ship and wall sources reach it as visitors (`HullSink`, `WallSink`;
 from the nearest blocked cell's centre (world units). It is an exact Euclidean distance transform
 (Felzenszwalb–Huttenlocher, columns then rows on squared distances), checked against brute force on
 random layouts, so a lane between two walls reads exactly its half-width at the middle.
-- A cell is blocked when its centre is inside an obstacle: inside one of its convex `parts` (turned by
-  `angle`) when it has them, else inside its circle. Input is `GridObstacle[]`, the same records
+- A cell is blocked when its centre is inside an obstacle grown by `pad`: within `pad` of one of its
+  convex `parts` (turned by `angle`) when it has them, else of its circle. Input is `GridObstacle[]`, the same records
   `SectorObstacles.rocks` fills, so the map sees what placement and line of sight see.
 - A hull with clearance `c` fits at a cell reading `>= c`, to within one cell. `at(x, y)` reads the cell
   (clamped to the edge).
@@ -92,6 +92,11 @@ One free-space map (`ClearanceGrid`) of 64 u cells per **loaded** field chunk, b
 rocks. The worker cuts them itself with the same pure `rocksInChunk` + `fieldRockBody` the room and the
 client use (#15), so no rock shape crosses a thread; only "chunk loaded / dropped" and "rock broken up /
 left somewhere else" do.
+- Rocks grow by half a cell diagonal (`FINE_NAV_PAD`) before stamping, and the planner reads a cell's
+  value less a cell diagonal (`FINE_NAV_DIAG`, ~91 u): a true lower bound anywhere in the cell, not just
+  at its centre. Without it a route rated "64 u of room" ran a fighter into rock between cell centres.
+  The cost: in the packed chunks (80+ rocks) almost no cell has fighter room off the streets, so fighters
+  cross those by street; in sparse chunks they thread between rocks.
 - Each chunk's grid reaches 1024 u past the chunk on every side (96×96 cells, 36 KB), so a rock over
   the border counts. Clearance reads are capped at that reach (past it the coarse layer decides) and read
   -1 where the chunk is not loaded.
@@ -124,10 +129,10 @@ chunk is loaded and rock is within its reach, else the coarse layer.
 1. Straight line clear ⇒ that is the route, no search (most requests).
 2. Coarse A* over the whole field (cells with room for the hull): which way round, which lane.
 3. Fine A* over 64 u cells in a 5×5-chunk window round the start, to the goal or to where the coarse path
-   leaves the window. Diagonals never cut a corner.
+   leaves the window (a goal inside the window skips the coarse search: it reads the field as solid). Diagonals never cut a corner.
 4. String-pull: keep only the turns a straight line can't skip. Past the window the route follows coarse
    cell points; the ship asks again as it goes (slice 9).
-- Line checks leap by the room to spare (minus a cell diagonal) and, when tight, visit every 64 u cell
+- Line checks leap by the room to spare and, when tight, visit every 64 u cell
   the segment crosses (a fixed step skipped thin rock).
 - Per-request caps: 30 000 coarse and 60 000 fine expansions; past them, or with no way at this clearance,
   the answer is `none`. At most 64 waypoints (`NAV_ROUTE_MAX_POINTS`).
@@ -137,8 +142,21 @@ chunk is loaded and rock is within its reach, else the coarse layer.
   every open request.
 - A ship keeps its route in a `NavRoute` (`core/ai/stepRoute.ts`), walked by the one `stepRoute` in
   open mode (runs out at the goal instead of looping; `stepNavRoute` returns -1 when finished).
-- Measured (desktop, print-only): a fighter round a rock 447 expansions, ~3.5 ms, 4 698 u against a
-  4 871 u grid path; a battleship across the field 6 waypoints, ~9 200 expansions, ~18 ms in the worker.
+- Measured (desktop, print-only): a fighter round a rock (sparse chunk 20,10) 307 expansions, ~2 ms,
+  2 051 u against a 2 084 u grid path; a battleship across the field 6 waypoints, ~9 200 expansions, ~18 ms in the worker.
+
+## Ships fly the routes (`server/nav/NavRoutes.ts`)
+The room hands every brain one `IAiNavRoutes` as `view.nav` (server only: the client runs no drone
+brain, so no wire change). `tickMoveTo` asks it for the waypoint to fly now; with one it flies there,
+braking for `ahead` (distance to the waypoint plus the next leg as far as it runs the same way); without
+one it flies straight as before.
+- A new goal (moved more than `arrive`) asks the worker for one plan, at most once a second per ship
+  (`NAV_REPLAN_MS`). Until it answers, or when it says `straight` / `none`, there is no waypoint.
+  An answer for an older goal is dropped. Ships not asking for 10 s are forgotten.
+- Clearance: `shipTuning(kind).navClearance` = radius × 1.25.
+- `CutFieldSubsystem.rockContacts` counts ship-vs-field-rock contacts (the test gate).
+- Lock: `tests/integration/sectorRoom/navFollowRoute.test.ts`, a fighter told to Move across a rock arrives
+  with no rock contact; the same order with routes off hits it.
 
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
@@ -155,3 +173,5 @@ chunk is loaded and rock is within its reach, else the coarse layer.
   Slice 5: the fine layer, per loaded chunk from the cut rocks, kept current as rocks break up or move.
   Slice 6: the route planner on the worker (`ROUTE`), `NavField.route`, `stepRoute` open mode and the
   `NavRoute` record. Not yet flown by any ship (slice 7).
+  2026-11-18 slice 7: AI-flown ships follow routes (`NavRoutes`, `view.nav`, `tickMoveTo`). The fine
+  layer's room became a true lower bound (padded rocks, value less a cell diagonal).

@@ -22,7 +22,7 @@
 import { CHUNK_SIZE } from '../terrain/fieldLayout.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from './search.js';
 import type { CoarseFieldMap } from './coarseField.js';
-import { FINE_NAV_CELL, FINE_NAV_REACH, type FineFieldLayer } from './fineField.js';
+import { FINE_NAV_CELL, FINE_NAV_DIAG, FINE_NAV_REACH, type FineFieldLayer } from './fineField.js';
 
 /** Most waypoints one route carries (the rest comes from asking again). */
 export const NAV_ROUTE_MAX_POINTS = 64;
@@ -133,18 +133,18 @@ export class RoutePlanner {
   status: NavRouteStatus = 'none';
 
   /** Room (max hull clearance) at (x, y): the fine layer where it knows (a
-   *  loaded chunk, rock within its reach), else the coarse layer. */
+   *  loaded chunk, rock within its reach), else the coarse layer. The fine
+   *  value less a cell diagonal: true anywhere in the cell, not just its centre. */
   roomAt(x: number, y: number): number {
     const f = this.fine!.clearanceAt(x, y);
-    if (f >= 0 && f < FINE_NAV_REACH) return f;
+    if (f >= 0 && f < FINE_NAV_REACH) return Math.max(0, f - FINE_NAV_DIAG);
     const r = this.coarse!.roomAt(x, y);
-    return f >= 0 ? Math.max(r, FINE_NAV_REACH) : r;
+    return f >= 0 ? Math.max(r, FINE_NAV_REACH - FINE_NAV_DIAG) : r;
   }
 
-  /** Can a hull of clearance `c` fly straight from a to b? The fine layer's
-   *  room is one value per 64 u cell, so with room to spare the check leaps
-   *  (a skipped point's cell is no nearer rock than its distance plus a cell
-   *  diagonal), and when tight it visits every cell the segment crosses. */
+  /** Can a hull of clearance `c` fly straight from a to b? Room is a lower
+   *  bound for the whole 64 u cell, so with room to spare the check leaps by
+   *  it, and when tight it visits every cell the segment crosses. */
   segmentClear(ax: number, ay: number, bx: number, by: number, c: number): boolean {
     const dx = bx - ax, dy = by - ay, len = Math.sqrt(dx * dx + dy * dy);
     if (len === 0) return this.roomAt(ax, ay) >= c;
@@ -154,7 +154,7 @@ export class RoutePlanner {
       const x = ax + ux * t, y = ay + uy * t, r = this.roomAt(x, y);
       if (r < c) return false;
       if (t >= len) return true;
-      const leap = Math.min(r - c, FINE_NAV_REACH) - DIAG;
+      const leap = Math.min(r - c, FINE_NAV_REACH);
       // Distance to the next cell boundary along the segment (a hair past it).
       const gx = Math.floor(x / FINE_NAV_CELL), gy = Math.floor(y / FINE_NAV_CELL);
       const tx = ux > 0 ? ((gx + 1) * FINE_NAV_CELL - x) / ux : ux < 0 ? (gx * FINE_NAV_CELL - x) / ux : Infinity;
@@ -175,11 +175,22 @@ export class RoutePlanner {
       return 1;
     }
     this.status = 'none';
-    // 1. Coarse: which way round.
+    // The fine window round the start.
+    const win = this.win;
+    win.ox = (Math.floor(sx / CHUNK_SIZE) - HALF_WIN) * CHUNK_SIZE;
+    win.oy = (Math.floor(sy / CHUNK_SIZE) - HALF_WIN) * CHUNK_SIZE;
+    win.c = c; win.sx = sx; win.sy = sy;
+    win.startRoom = Math.min(c, this.roomAt(sx, sy));
+    win.reset();
+    const lo = FINE_NAV_CELL, hiX = win.ox + W * FINE_NAV_CELL - lo, hiY = win.oy + W * FINE_NAV_CELL - lo;
+    const loX = win.ox + lo, loY = win.oy + lo;
+    const inside = (x: number, y: number): boolean => x > loX && x < hiX && y > loY && y < hiY;
+    // 1. Coarse: which way round (not needed with the goal in the window,
+    //    and the coarse layer reads the field's inside as solid).
     const cs = clampedCell(coarse, sx, sy), cg = clampedCell(coarse, tx, ty);
     let cLen = 1;
     this.cPath[0] = cs;
-    if (cs !== cg) {
+    if (cs !== cg && !inside(tx, ty)) {
       coarse.clearance = c;
       this.cGoal.map = coarse; this.cGoal.target = cg;
       const hit = this.search.search(coarse, cs, this.cGoal, NAV_COARSE_EXPAND_CAP);
@@ -194,16 +205,7 @@ export class RoutePlanner {
     this.push(sx, sy);
     for (let k = 1; k < cLen - 1; k++) this.push(coarse.bestX[this.cPath[k]!]!, coarse.bestY[this.cPath[k]!]!);
     this.push(tx, ty);
-    // 2. Fine window round the start; its target: the goal, or where the coarse path leaves.
-    const win = this.win;
-    win.ox = (Math.floor(sx / CHUNK_SIZE) - HALF_WIN) * CHUNK_SIZE;
-    win.oy = (Math.floor(sy / CHUNK_SIZE) - HALF_WIN) * CHUNK_SIZE;
-    win.c = c; win.sx = sx; win.sy = sy;
-    win.startRoom = Math.min(c, this.roomAt(sx, sy));
-    win.reset();
-    const lo = FINE_NAV_CELL, hiX = win.ox + W * FINE_NAV_CELL - lo, hiY = win.oy + W * FINE_NAV_CELL - lo;
-    const loX = win.ox + lo, loY = win.oy + lo;
-    const inside = (x: number, y: number): boolean => x > loX && x < hiX && y > loY && y < hiY;
+    // 2. Fine search in the window to the goal, or to where the coarse path leaves it.
     const P = this.poly, n = this.polyLen;
     let k = 0; // last coarse point inside the window
     while (k + 1 < n && inside(P[(k + 1) * 2]!, P[(k + 1) * 2 + 1]!)) k++;

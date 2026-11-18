@@ -269,6 +269,8 @@ import { guarded } from './guardedLoop.js';
 import { BattleWreckSaves, battleWreckStore, WRECK_LINEAGE_FLUSH_MS } from './wreckLineageSaves.js';
 import { CutFieldSubsystem } from './CutFieldSubsystem.js';
 import { getNavWorker, type NavField } from '../nav/NavWorker.js';
+import { NavRoutes } from '../nav/NavRoutes.js';
+import type { IAiNavRoutes } from '../../core/contracts/IAiBehaviour.js';
 import type { ChunkSource } from '../../core/terrain/chunkStreamer.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
@@ -1616,6 +1618,8 @@ export class SectorRoom extends Room<SectorState> {
     /** RTS — the owned ships' orders on lingering hulls. Tests issue orders
      *  through its owner-checked API (`applyOrder(ownerId, [shipId], order)`). */
     fleet: FleetCommandSubsystem;
+    /** Navigation — the AI brains' routes round rock (null ⇒ turn them off, a test's baseline). */
+    aiNav: { get: () => IAiNavRoutes | undefined; set: (nav: IAiNavRoutes | undefined) => void };
     /** RTS Part B — the AI pilot brain registered for an id (an owned hull's
      *  shipInstanceId or a swarm id), or null. */
     aiBrainOf: (id: string) => IAiBehaviour | null;
@@ -1746,6 +1750,7 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots, forceFields: this.forceFields,
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       fleet: this.fleet,
+      aiNav: { get: () => this.aiController.nav, set: (nav) => { this.aiController.nav = nav; } },
       aiBrainOf: (id) => this.aiController.getBehaviour(id),
       lingeringPoseCache: this.lingeringPoseCache,
       sendFleetStatus: () => this.fleetStatus.sendAll(),
@@ -12710,6 +12715,8 @@ export class SectorRoom extends Room<SectorState> {
       rockMoved: (key, pose) => field?.rockMoved(key, pose),
     });
     field = this.navField = getNavWorker(logger).addField(opts, known.gone, known.moved);
+    const f = field;
+    this.aiController.nav = new NavRoutes((sx, sy, tx, ty, c) => f.route(sx, sy, tx, ty, c), () => this.gameClock.now());
     field.built.then((b) => {
       logger.info({ sectorKey: this.sectorKey, cols: b.cols, rows: b.rows, kb: Math.round(b.bytes / 1024), ms: Math.round(b.ms * 10) / 10 }, 'nav coarse layer built');
     }, (err: unknown) => { if (!this.simLoopStopped) logger.error({ err, sectorKey: this.sectorKey }, 'nav field build failed'); });
@@ -12724,6 +12731,7 @@ export class SectorRoom extends Room<SectorState> {
     this.cutField?.dispose();
     this.navField?.detach();
     this.navField = undefined;
+    if (this.aiController) this.aiController.nav = undefined;
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
       this.structureGridTimer.cancel();
