@@ -6,7 +6,7 @@ import type { GridObstacle } from '../../core/structures/Grid.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
-import { CutFieldSubsystem, toRestFrame } from './CutFieldSubsystem.js';
+import { CutFieldSubsystem, toRestFrame, type CutFieldNavSink } from './CutFieldSubsystem.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { FIELD_LAYOUT_VERSION, rocksInChunk } from '../../core/terrain/fieldLayout.js';
@@ -70,7 +70,7 @@ describe('toRestFrame (F1b: an awake rock samples its ore where it was cut)', ()
 describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
   /** A real streamer over a fake spawner: one ship in the `look` field's lane,
    *  flown away (its chunks unload after the linger) and back (they re-cut). */
-  function field(store?: RockRecordStore) {
+  function field(store?: RockRecordStore, nav?: (sub: CutFieldSubsystem) => void) {
     let now = 0;
     const recs = new Map<string, SwarmEntityRecord>();
     const sent: number[] = [];
@@ -98,6 +98,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
       expect(recs.size, 'all chunks unloaded').toBe(0);
       back();
     };
+    nav?.(sub); // the room attaches its nav field before the first step
     at(-30_120, 26_501); settle();
     /** Wake `rec` and put it at (x, y, angle) (its SAB pose). */
     const move = (rec: SwarmEntityRecord, x: number, y: number, angle: number) => {
@@ -246,6 +247,41 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     expect(spawned.get(rock.fieldKey!)).toEqual({ ...pose, restX: rock.restX, restY: rock.restY });
     expect(byKey(rock.fieldKey!)!.resources).toBe(40);
     expect(byKey(rock.fieldKey!)!.fieldMoved).toBe(true);
+  });
+
+  it('streams chunk loads, broken-up rocks and moved rocks, and starts from the save', () => {
+    const rows = [] as TerrainRecordRow[];
+    const events: string[] = [];
+    let known: ReturnType<CutFieldSubsystem['attachNav']> | undefined;
+    const sink: CutFieldNavSink = {
+      chunk: (cx, cy, loaded) => events.push(`chunk ${cx},${cy} ${loaded ? 'in' : 'out'}`),
+      rockGone: (k) => events.push(`gone ${k}`),
+      rockMoved: (k, p) => events.push(`moved ${k} ${p ? 'pose' : 'home'}`),
+    };
+    // A first run to learn some rock keys.
+    const probe = field();
+    const [a, b] = [...probe.recs.values()];
+    probe.sub.dispose();
+    rows.push(
+      { rockKey: a!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, pose: null, lineage: null },
+      { rockKey: b!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: false, pose: { x: 1, y: 2, angle: 3 }, lineage: null },
+    );
+    const st = { sectorKey: 'sec', load: () => rows, put: () => {}, warn: () => {} } as RockRecordStore;
+    const { sub, recs, away, move } = field(st, (s) => { known = s.attachNav(sink); });
+    expect(known).toEqual({ gone: [a!.fieldKey], moved: [{ key: b!.fieldKey, x: 1, y: 2, angle: 3 }] });
+    const loads = events.filter((e) => e.endsWith(' in'));
+    expect(loads.length).toBeGreaterThan(0);
+    events.length = 0;
+    const rock = [...recs.values()].find((r) => r.fieldKey !== b!.fieldKey)!;
+    sub.markConsumed(rock.fieldKey!);
+    sub.markConsumed(rock.fieldKey!);
+    expect(events).toEqual([`gone ${rock.fieldKey}`]);
+    events.length = 0;
+    const other = [...recs.values()].find((r) => r.fieldKey !== rock.fieldKey && r.fieldKey !== b!.fieldKey)!;
+    move(other, other.restX! + 500, other.restY!, 0.2);
+    away();
+    expect(events).toContain(`moved ${other.fieldKey} pose`);
+    expect(events.filter((e) => e.endsWith(' out')).sort()).toEqual(loads.map((e) => e.replace(' in', ' out')).sort());
   });
 });
 

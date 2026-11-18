@@ -7,6 +7,7 @@ const TIP: SectorTooltipData = {
   name: 'Sol Prime',
   faction: 'Core',
   status: 'Neutral',
+  challenger: null,
   features: ['asteroid'],
   players: 1,
   enemies: 2,
@@ -38,6 +39,12 @@ describe('SectorInfoDrawer', () => {
     renderDrawer({ sectorKey: null, tip: null });
     expect(screen.getByText('Select a sector')).toBeInTheDocument();
     expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
+  });
+
+  it('the header names the holder and challenger the hex draws, not a fixed "Neutral"', () => {
+    renderDrawer({ tip: { ...TIP, faction: 'Sol Dominion', status: 'Held', challenger: 'Robot Dominion' } });
+    expect(screen.getByText('Sol Dominion · contested by Robot Dominion')).toBeInTheDocument();
+    expect(screen.queryByText('Neutral')).not.toBeInTheDocument();
   });
 
   it('renders the sector name + shared entity-badge breakdown with conditional plurals', () => {

@@ -188,7 +188,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Threading
 
-- **A new CPU-heavy subsystem defaults to a worker**, not the main thread. Physics runs on `PhysicsWorkerPool` (several sector worlds per worker); sqlite writes run on their own worker. Detail: [sector-room-anatomy.md](../../docs/architecture/sector-room-anatomy.md#threading).
+- **A new CPU-heavy subsystem defaults to a worker**, not the main thread. Physics runs on `PhysicsWorkerPool` (several sector worlds per worker); sqlite writes run on their own worker. Navigation maps and route searches run on the one nav worker (`nav/NavWorker.ts`, [navigation](../../docs/architecture/navigation.md)). Detail: [sector-room-anatomy.md](../../docs/architecture/sector-room-anatomy.md#threading).
 
 ## Testing patterns
 
