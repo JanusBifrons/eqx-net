@@ -46,11 +46,27 @@ describe('Wallet (economy v2 W1 — credits are virtual)', () => {
       { playerId: 'p', balance: 100 },
       { playerId: 'p', balance: 25 },
       { playerId: 'q', balance: -5 },
+      { playerId: 'q', balance: -7 },
       { playerId: 'r', balance: Number.NaN },
     ]);
     expect(w.balance('p')).toBe(125);
-    expect(w.balance('q')).toBe(0);
+    expect(w.balance('q')).toBe(-12); // debt survives a restart
     expect(w.balance('r')).toBe(0);
+  });
+
+  it('debitAllowingDebt goes below zero down to the floor; plain debits stay all-or-nothing', () => {
+    const { sink, groups } = recordingSink();
+    const w = new Wallet({ persistence: () => sink, now: () => 1 });
+    w.credit('p', 100, 'x');
+    expect(w.debitAllowingDebt('p', 300, -1000, 'launch_debt')).toBe(true);
+    expect(w.balance('p')).toBe(-200);
+    expect(groups.flat().at(-1)).toEqual({ type: 'WALLET_PUT', playerId: 'p', balance: -200, ts: 1 });
+    expect(w.debitAllowingDebt('p', 801, -1000, 'launch_debt')).toBe(false); // past the floor
+    expect(w.balance('p')).toBe(-200);
+    expect(w.debit('p', 1, 'repair')).toBe(false); // in debt ⇒ can't buy
+    expect(w.debitDeferred('p', 1, 'trade_buy')).toBeNull();
+    expect(w.credit('p', 250, 'kill_bounty')).toBe(50); // income pays it off
+    expect(w.debitAllowingDebt('', 1, -1000, 'x')).toBe(false);
   });
 });
 
