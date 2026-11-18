@@ -476,7 +476,8 @@ const NONE: DestructionProfile = {
  *  mining-and-salvage.md "Mining asteroids"). Never a ship's profile: a
  *  rock's wreck source (`rockWreckSource`) names it. It breaks like a
  *  sub-capital re-split, 2-3 chunky pieces along its burn lines, again and
- *  again; a worn-out piece under 6 % of the rock turns into an ore pod.
+ *  again; a piece under 6 % of the rock no longer breaks or wears: it goes
+ *  into a hold whole as one rock chunk (never a pod).
  *  Integrity per area is `ROCK_INTEGRITY_PER_AREA` (× `integrityMul` 1).
  *  Pieces part gently, collide with each other and settle like sub-cap
  *  debris; shots never shove them. `salvagePerHull` is unused: a rock's

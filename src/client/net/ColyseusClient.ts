@@ -42,7 +42,7 @@ import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
 import type { FleetArrival, FleetArrivalWatch } from './fleetWarpFollow';
-import { cargoChanged } from './lootView';
+import { cargoChanged, cargoViewOf, type WireCargo } from './lootView';
 import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
 import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
 import type { PredictionStepCtx } from './prediction/predictionStepCtx.js';
@@ -3047,7 +3047,7 @@ export class ColyseusGameClient {
    */
   private applyLocalCargo(
     localId: string,
-    cargo: { goods: Partial<Record<string, number>>; blueprints: readonly unknown[]; packed?: readonly unknown[] } | undefined,
+    cargo: WireCargo | undefined,
     fitted?: string[],
   ): void {
     const s = useUIStore.getState();
@@ -3059,7 +3059,7 @@ export class ColyseusGameClient {
     );
     if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
     s.setCargo(
-      cargo === undefined ? null : { goods: { ...cargo.goods }, blueprints: cargo.blueprints.length, packed: cargo.packed?.length ?? 0 },
+      cargo === undefined ? null : cargoViewOf(cargo),
       capacity,
     );
   }
