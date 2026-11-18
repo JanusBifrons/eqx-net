@@ -31,11 +31,14 @@ interface Internals {
   predWorld: { getShipState: (id: string) => { x: number; y: number; angle: number } | null } | null;
   predEnergy: number;
   inputTick: number;
-  _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }>;
-  _fcSalvo: Set<string>;
   sendFire: (tick: number) => void;
-  fcFireTick: (spaceHeld: boolean) => void;
-  fcTargetPose: (key: string, out: FireTargetShape) => boolean;
+  /** FireControlClient internals. */
+  fc: {
+    _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number }> }>;
+    _fcSalvo: Set<string>;
+    fcFireTick: (spaceHeld: boolean) => void;
+    fcTargetPose: (key: string, out: FireTargetShape) => boolean;
+  };
   mirror: {
     ships: Map<string, { x: number; y: number; vx: number; vy: number; angle: number; kind?: string; mountAngles?: number[]; shieldDown?: boolean }>;
     swarm: Map<number, SwarmRenderState>;
@@ -65,7 +68,7 @@ describe('client fire pass: per-mount range to the hull (fcFireMounts)', () => {
     c.mirror.localPlayerId = ME;
     c.mirror.swarm = new Map();
     salvos = [];
-    c.sendFire = () => { salvos.push([...c._fcSalvo]); };
+    c.sendFire = () => { salvos.push([...c.fc._fcSalvo]); };
   });
 
   /** Own battleship at the origin facing +y, every turret trained on (tx, ty). */
@@ -73,7 +76,7 @@ describe('client fire pass: per-mount range to the hull (fcFireMounts)', () => {
     const mounts = getShipKind('battleship').mounts;
     const mountAngles = mounts.map((m) => wrap(Math.atan2(-(tx - m.localX), ty - m.localY) - m.baseAngle));
     c.mirror.ships.set(ME, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, kind: 'battleship', mountAngles });
-    c._fcGroups = [{ id: 'aa', m: 0, l: [{ t: 's:1', s: 2, p: 100 }] }];
+    c.fc._fcGroups = [{ id: 'aa', m: 0, l: [{ t: 's:1', s: 2, p: 100 }] }];
   }
 
   /** The AA mounts the shared gate passes for the SERVER's view of the target. */
@@ -96,7 +99,7 @@ describe('client fire pass: per-mount range to the hull (fcFireMounts)', () => {
     const target = swarmShip('battleship', 1_700, 0);
     c.mirror.swarm.set(1, target);
     placeOwnShip(1_700, 0);
-    c.fcFireTick(false);
+    c.fc.fcFireTick(false);
     const want = serverAaMounts(target);
     expect(want, 'the shared gate passes some starboard AA mount').toContain('aa-s1');
     expect(salvos.length, 'the client sent the AA salvo').toBe(1);
@@ -107,7 +110,7 @@ describe('client fire pass: per-mount range to the hull (fcFireMounts)', () => {
     const target = swarmShip('heavy', 1_550, 0);
     c.mirror.swarm.set(1, target);
     placeOwnShip(1_550, 0);
-    c.fcFireTick(false);
+    c.fc.fcFireTick(false);
     expect(serverAaMounts(target)).toEqual([]);
     expect(salvos.length).toBe(0);
   });
@@ -122,13 +125,13 @@ describe('client fire pass: per-mount range to the hull (fcFireMounts)', () => {
     ];
     for (const [id, e] of cases) {
       c.mirror.swarm.set(id, e);
-      expect(c.fcTargetPose(`s:${id}`, got)).toBe(true);
+      expect(c.fc.fcTargetPose(`s:${id}`, got)).toBe(true);
       fillFireTargetShape(want, e.x, e.y, e.angle, e.kind === 1, e.shipKind ?? null, e.shieldDown !== true, e.radius);
       expect(got).toEqual(want);
     }
     // A pilot: server fills from ShipState (kind, shield > 0) + the pose cache.
     c.mirror.ships.set('other', { x: 5, y: 6, vx: 0, vy: 0, angle: 1, kind: 'gunship', shieldDown: true });
-    expect(c.fcTargetPose('p:other', got)).toBe(true);
+    expect(c.fc.fcTargetPose('p:other', got)).toBe(true);
     fillFireTargetShape(want, 5, 6, 1, true, 'gunship', false, 0);
     expect(got).toEqual(want);
   });

@@ -62,7 +62,7 @@ const ALLOWLIST = {
   'src/client/__art-lab__/main.ts': { cap: 702, target: 600, reason: RATCHET_ONLY },
   'src/client/components/EntityStatsPanel.tsx': { cap: 893, target: 600, reason: RATCHET_ONLY },
   'src/client/net/ColyseusClient.ts': {
-    cap: 7008,
+    cap: 6455,
     target: 350,
     reason:
       'v3 plan commits 16-19 split this into 15 collaborators (PredictionStateManager, ' +
@@ -92,7 +92,7 @@ const ALLOWLIST = {
     reason: RATCHET_ONLY,
   },
   'src/client/state/storeTypes.ts': { cap: 686, target: 600, reason: RATCHET_ONLY },
-  'src/core/ai/HostileDroneBehaviour.ts': { cap: 2880, target: 600, reason: RATCHET_ONLY },
+  'src/core/ai/HostileDroneBehaviour.ts': { cap: 1444, target: 600, reason: RATCHET_ONLY },
   'src/core/ai/tactics/manoeuvres.ts': { cap: 679, target: 600, reason: RATCHET_ONLY },
   'src/core/bases/growBase.ts': { cap: 740, target: 600, reason: RATCHET_ONLY },
   'src/core/destruction/fractureHull.ts': { cap: 1610, target: 600, reason: RATCHET_ONLY },
