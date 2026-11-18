@@ -122,7 +122,6 @@ const ALLOWLIST = {
     target: 600,
     reason: RATCHET_ONLY,
   },
-  'src/shared-types/structureKinds.ts': { cap: 1447, target: 600, reason: RATCHET_ONLY },
 };
 
 /**
