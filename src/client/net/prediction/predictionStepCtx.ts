@@ -5,6 +5,8 @@ import type { InputRecord, Reconciler } from '@core/prediction/Reconciler';
 import type { ControlBits } from '@core/combat/disable';
 import type { HelmOrder, HelmOutput, HelmPose } from '@core/helm/helm';
 import type { HelmCourseMark } from '../../helm/helmCourseMark.js';
+import type { HelmRouteClient } from '../../helm/helmRoute.js';
+import type { GameClock } from '@core/clock/GameClock';
 import type { FireControlClient } from '../FireControlClient.js';
 import type { TouchInput } from '../../input/TouchInput';
 import type { JoystickInputState } from '../../input/joystickToInput';
@@ -76,6 +78,9 @@ export interface PredictionStepCtx {
   // Helm orders + local mount aim (`inputStep.ts`).
   readonly helmPose: HelmPose;
   readonly helmMark: HelmCourseMark;
+  /** Autopilot (navigation slice 13): asks the server for a way to the course point. */
+  readonly helmRoute: HelmRouteClient;
+  readonly gameClock: GameClock;
   helmKindId: string | null;
   helmAvailable: boolean;
   helmCourseSeq: number;

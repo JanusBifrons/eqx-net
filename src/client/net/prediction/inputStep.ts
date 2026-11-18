@@ -463,13 +463,13 @@ export function sendCapSentinel(
 
 // ── Helm orders + local mount aim (moved verbatim out of ColyseusClient) ──
 
-/** Helm orders: set the course point (game space). Only a ship that takes
- *  helm orders (a capital) accepts one. */
+/** Helm orders: set the course point (game space); the autopilot asks for a way there. */
 export function setHelmCourse(ctx: PredictionStepCtx, x: number, y: number): void {
   if (!ctx.helmAvailable) return;
   ctx.helmOrder.tx = x;
   ctx.helmOrder.ty = y;
   ctx.helmOrder.active = true;
+  ctx.helmRoute.course(ctx.helmOrder, ctx.gameClock.now());
   ctx.helmCourseSeq++;
   publishHelm(ctx);
 }
@@ -484,11 +484,12 @@ export function setHelmSpeed(ctx: PredictionStepCtx, speed: HelmSpeed): void {
 export function clearHelm(ctx: PredictionStepCtx): void {
   if (!ctx.helmOrder.active) return;
   ctx.helmOrder.active = false;
+  ctx.helmRoute.clear(ctx.helmOrder);
   ctx.helmOut.thrust = false; ctx.helmOut.turnLeft = false; ctx.helmOut.turnRight = false;
   publishHelm(ctx);
 }
 
-function publishHelm(ctx: PredictionStepCtx): void {
+export function publishHelm(ctx: PredictionStepCtx): void {
   useUIStore.getState().setHelmState(ctx.helmAvailable, ctx.helmOrder.active, ctx.helmOrder.speed);
   syncHelmMark(ctx);
 }
@@ -508,8 +509,8 @@ export function updateHelmAvailability(ctx: PredictionStepCtx): void {
   const kindId = id ? ctx.mirror.ships.get(id)?.kind ?? null : null;
   if (kindId === ctx.helmKindId) return;
   ctx.helmKindId = kindId;
-  ctx.helmAvailable = kindId !== null && getShipKind(kindId).sizeClass === 'capital';
-  if (!ctx.helmAvailable) ctx.helmOrder.active = false;
+  ctx.helmAvailable = kindId !== null; // every hull takes helm orders (navigation slice 13)
+  if (!ctx.helmAvailable) clearHelm(ctx);
   publishHelm(ctx);
 }
 
@@ -520,8 +521,11 @@ export function stepHelm(ctx: PredictionStepCtx): void {
   if (s === null || ctx.helmKindId === null) return;
   const p = ctx.helmPose;
   p.x = s.x; p.y = s.y; p.angle = s.angle; p.vx = s.vx; p.vy = s.vy; p.angvel = s.angvel ?? 0;
+  ctx.helmRoute.tick(ctx.gameClock.now());
+  const idx = ctx.helmOrder.route?.idx ?? -1;
   helmStep(ctx.helmOrder, p, getShipKind(ctx.helmKindId), ctx.helmOut);
   if (ctx.helmOut.arrived) clearHelm(ctx);
+  else if ((ctx.helmOrder.route?.idx ?? -1) !== idx) syncHelmMark(ctx); // a turn passed: the route line drops it
 }
 
 /**

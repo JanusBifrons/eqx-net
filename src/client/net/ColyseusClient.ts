@@ -47,7 +47,7 @@ import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.
 import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
 import type { PredictionStepCtx } from './prediction/predictionStepCtx.js';
 import { FIXED_MS, MAX_CATCH_UP_TICKS, MAX_OVER_PREDICTION_TICKS, stepInputTick, predictFrameEnergy, sendCapSentinel,
-  setHelmCourse, setHelmSpeed, clearHelm, syncHelmMark, updateHelmAvailability, stepHelm, tickLocalMountAim } from './prediction/inputStep.js';
+  setHelmCourse, setHelmSpeed, clearHelm, publishHelm, syncHelmMark, updateHelmAvailability, stepHelm, tickLocalMountAim } from './prediction/inputStep.js';
 import { drainScheduledDamageSpawns, updateLocalShipMirror } from './mirror/localShipPass.js';
 import { updateSpectatorPlacement, updateServerGhost, updateSwarmMirror, updateRemoteShipsMirror, updateProjectilesMirror, expireFrameState, updateDroneHostility } from './mirror/worldPasses.js';
 import { fittedCargoMul } from '../../shared-types/blueprints.js';
@@ -130,6 +130,7 @@ const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon } from '@core/combat/WeaponCatalogue';
 import type { ControlBits } from '@core/combat/disable';
 import { makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
+import { HelmRouteClient } from '../helm/helmRoute.js';
 import { makeHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import { type ReconcileFeedbackSink } from '../combat/HitPrediction.client';
@@ -680,6 +681,8 @@ export class ColyseusGameClient {
    *  every tick (#14). */
   private readonly _helmOrder: HelmOrder = { active: false, tx: 0, ty: 0, speed: 3 };
   private readonly _helmOut = makeHelmOutput();
+  /** Autopilot (navigation slice 13): asks the server for a way to the course point. */
+  private readonly _helmRoute = new HelmRouteClient((t, m) => this.room?.send(t, m));
   private readonly _helmPose: HelmPose = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 };
   private _helmKindId: string | null = null;
   private _helmAvailable = false;
@@ -1152,6 +1155,7 @@ export class ColyseusGameClient {
       rekeyOwnShipFromHull: (playerId: string, shipId: string): void => c.rekeyOwnShipFromHull(playerId, shipId),
       tryInitPredWorld: (playerId: string): void => c.tryInitPredWorld(playerId),
     }))(this),
+    onNavRoute: (raw: unknown): void => { const r = this._helmRoute.onReply(raw, this._helmOrder); if (r === 'end') this.clearHelm(); else if (r === 'route') this.publishHelm(); },
   };
   /** The ctx the `updateMirror` passes (`mirror/`) run with, built once (#14). */
   private readonly _mirrorPassCtx: MirrorPassCtx = ((c: ColyseusGameClient): MirrorPassCtx => ({
@@ -1199,6 +1203,7 @@ export class ColyseusGameClient {
     get sendInputScratch() { return c._sendInputScratch; }, get sendWarpInputScratch() { return c._sendWarpInputScratch; },
     clearHelm: (): void => c.clearHelm(), stepHelm: (): void => c.stepHelm(),
     get helmPose() { return c._helmPose; }, get helmMark() { return c._helmMark; },
+    get helmRoute() { return c._helmRoute; }, get gameClock() { return c.gameClock; },
     get helmKindId() { return c._helmKindId; }, set helmKindId(v) { c._helmKindId = v; },
     get helmAvailable() { return c._helmAvailable; }, set helmAvailable(v) { c._helmAvailable = v; },
     get helmCourseSeq() { return c._helmCourseSeq; }, set helmCourseSeq(v) { c._helmCourseSeq = v; },
@@ -2559,6 +2564,7 @@ export class ColyseusGameClient {
   clearHelm(): void { clearHelm(this._predStepCtx); }
   /** Test/showcase read of the helm (`__eqxHelm`). */
   getHelmOrder(): Readonly<HelmOrder> { return this._helmOrder; }
+  private publishHelm(): void { publishHelm(this._predStepCtx); }
   private syncHelmMark(): void { syncHelmMark(this._predStepCtx); }
   private updateHelmAvailability(): void { updateHelmAvailability(this._predStepCtx); }
   private stepHelm(): void { stepHelm(this._predStepCtx); }

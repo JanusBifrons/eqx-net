@@ -30,6 +30,10 @@ export interface ShipArt {
   /** Frame size in texels and texels per world unit. */
   w: number;
   h: number;
+  /** Tiles per sun frame along the hull (1 = untiled), and rows per tile: a
+   *  capital's frames are sun-major (`sun * tiles + tile`), as in the game. */
+  tiles: number;
+  tileH: number;
   density: number;
   nozzles: Fields['nozzles'];
   navLights: Fields['navLights'];
@@ -191,8 +195,10 @@ export class ArtCache {
     return seedVariant(seed);
   }
 
-  machinedShip(id: string, paint?: number): ShipArt {
-    const job: BakeJob = { type: 'ship', id, paint };
+  /** `rings`: cut turret rings into the hull, as the game does for a hull
+   *  that draws its turrets. */
+  machinedShip(id: string, paint?: number, rings = false): ShipArt {
+    const job: BakeJob = { type: 'ship', id, paint, ...(rings ? { rings } : {}) };
     const key = bakeKey(job);
     const hit = this.ships.get(key);
     if (hit) return hit;
@@ -201,11 +207,26 @@ export class ArtCache {
     const frames: Texture[] = [];
     for (let j = 0; j < b.frames.length; j++) this.smooth.add(b.frames[j]!, frames, j);
     this.smooth.commit();
-    const art: ShipArt = { frames, w: b.w, h: b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights };
+    const art: ShipArt = { frames, w: b.w, h: b.h, tiles: b.tiles ?? 1, tileH: b.tileH ?? b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights };
     this.ships.set(key, art);
     this.bakeMs.ships += performance.now() - t0;
     return art;
   }
+
+  /** A turret's turning gun (`turretBakeJobs`): sun frames, like a ship. */
+  machinedTurret(job: BakeJob & { type: 'turret' }): { frames: Texture[]; density: number } {
+    const key = bakeKey(job);
+    const hit = this.guns.get(key);
+    if (hit) return hit;
+    const b = this.baked(job);
+    const frames: Texture[] = [];
+    for (let j = 0; j < b.frames.length; j++) this.smooth.add(b.frames[j]!, frames, j);
+    this.smooth.commit();
+    const art = { frames, density: b.density };
+    this.guns.set(key, art);
+    return art;
+  }
+  private guns = new Map<string, { frames: Texture[]; density: number }>();
 
   machinedStruct(id: string, rawSeed = 1, accent?: number): StructArt {
     const job: BakeJob = { type: 'struct', id, seed: seedVariant(rawSeed), accent };
@@ -238,7 +259,7 @@ export class ArtCache {
       this.pixel.add(fr, frames, k);
     }
     this.pixel.commit();
-    const art: ShipArt = { frames, w: size, h: size, density: pd, nozzles: f.nozzles, navLights: f.navLights };
+    const art: ShipArt = { frames, w: size, h: size, tiles: 1, tileH: size, density: pd, nozzles: f.nozzles, navLights: f.navLights };
     this.ships.set(key, art);
     this.bakeMs.pixelShips += performance.now() - t0;
     return art;
