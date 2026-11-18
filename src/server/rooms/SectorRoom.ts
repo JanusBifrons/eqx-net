@@ -233,6 +233,7 @@ import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
 import { LockSalvageLookup, swarmLockId } from './lockSalvage.js';
+import { tractorLineClear, type TractorLineHost } from './tractorLineOfSight.js';
 import { relayPieceSplit } from './lockSplit.js';
 import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { weaponIdReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
@@ -709,8 +710,6 @@ type LofBody = SwarmEntityRecord | LofShipBody;
 /** A tractor beam's line of sight is blocked by any body but a loot pod
  *  (pre-bound for `LineOfFireGate.firstOnLine`, #14). */
 const notLootPod = (rec: LofBody): boolean => !isLootPod(rec);
-/** No mounts (`tractorLineClear`, #14). */
-const NO_LOS_MOUNTS: ReadonlyArray<WeaponMount> = [];
 /** RTS fleet warp: `handOffHulls` until slice S3 moves hulls. */
 const NO_HULLS_MOVED: readonly string[] = [];
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
@@ -4241,6 +4240,12 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _lockTarget: LockTargetView = newLockTargetView();
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
+  /** Tractor line of sight for the lock hand-over (tractorLineOfSight.ts). */
+  private readonly _tractorLos: TractorLineHost = {
+    target: (key, out) => { const r = this.swarmRegistry.getByEntityId(swarmLockId(key)); if (r == null) return false; const b = slotBase(r.slot); out.x = this.sabF32[b + SLOT_X_OFF]!; out.y = this.sabF32[b + SLOT_Y_OFF]!; out.id = r.id; return true; },
+    activatedMounts: (id) => this._lockActivated.get(id)?.mounts,
+    firstOnLine: (fx, fy, tx, ty, e, tg) => this.lofGate().firstOnLine(fx, fy, tx, ty, e, tg, notLootPod),
+  };
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
     piece: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, // salvage lock bits (lockSalvage.ts)
     wrecks: () => this.capitalWrecks, entity: (id) => this.swarmRegistry.get(id)?.entityId ?? -1, // lock lineage (lockSplit.ts)
@@ -4346,37 +4351,6 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** A wingman lock machine's hull: the LINGERING (AI-flown) ship `sid`. */
-  /**
-   * The lock hand-over's tractor line of sight (lockSalvage.ts
-   * `tractorLineClear`): does a tractor dish of `ship` (gate body
-   * `emitterId`, pose `p`) have a clear line to lock key `key`? The beam's
-   * own query (`firstOnLine` from each dish's muzzle, as `setTractorMuzzle`
-   * places it), stopping at the first clear dish. Not a swarm key, no pose or
-   * no tractor: clear. Allocation-free (#14).
-   */
-  private tractorLineClear(
-    emitterId: string, ship: ShipState | undefined, p: { x: number; y: number; angle: number } | undefined, key: string,
-  ): boolean {
-    if (ship === undefined || p === undefined) return true;
-    const rec = this.swarmRegistry.getByEntityId(swarmLockId(key));
-    if (rec == null) return true;
-    const b = slotBase(rec.slot);
-    const tx = this.sabF32[b + SLOT_X_OFF]!, ty = this.sabF32[b + SLOT_Y_OFF]!;
-    const c = Math.cos(p.angle), s = Math.sin(p.angle);
-    let any = false;
-    for (let pass = 0; pass < 2; pass++) {
-      const mounts = pass === 0 ? getShipKind(ship.kind).mounts ?? NO_LOS_MOUNTS : this._lockActivated.get(emitterId)?.mounts ?? NO_LOS_MOUNTS;
-      for (let i = 0; i < mounts.length; i++) {
-        const m = mounts[i]!;
-        if (getWeapon(m.weaponId).tractor === undefined) continue;
-        any = true;
-        const mx = p.x + (m.localX * c - m.localY * s), my = p.y + (m.localX * s + m.localY * c);
-        if (this.lofGate().firstOnLine(mx, my, tx, ty, emitterId, rec.id, notLootPod) === '') return true;
-      }
-    }
-    return !any;
-  }
-
   private wingmanHull(sid: string): ShipState | undefined {
     return this.lingeringSlots.has(sid) ? this.state.ships.get(sid) : undefined;
   }
@@ -4405,7 +4379,7 @@ export class SectorRoom extends Room<SectorState> {
       shipOf: (sid) => this.lockShipOf(sid, this.wingmanHull(sid)),
       autoPick: () => null,
       salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out), lineage: this._lockSalvage,
-      tractorLineClear: (sid, key) => this.tractorLineClear(sid, this.wingmanHull(sid), this.lingeringPoseCache.get(sid), key),
+      tractorLineClear: (sid, key) => tractorLineClear(this._tractorLos, sid, this.wingmanHull(sid)?.kind as ShipKindId | undefined, this.lingeringPoseCache.get(sid), key),
       commitHostileAct: (sid, key) => {
         const owner = this.fleet.ownerOfAttached(sid);
         if (owner !== null) this.commitLockHostileAct(owner, key);
@@ -4421,7 +4395,7 @@ export class SectorRoom extends Room<SectorState> {
     return new LockSubsystem({
       resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
       salvageOf: (pid, key, out) => this._lockSalvage.fill(this.getActiveShip(pid), key, out), lineage: this._lockSalvage,
-      tractorLineClear: (pid, key) => this.tractorLineClear(pid, this.getActiveShip(pid), this.shipPoseCache.get(pid), key),
+      tractorLineClear: (pid, key) => tractorLineClear(this._tractorLos, pid, this.getActiveShip(pid)?.kind as ShipKindId | undefined, this.shipPoseCache.get(pid), key),
       shooterPose: (pid, out) => {
         const p = this.shipPoseCache.get(pid);
         const ship = this.getActiveShip(pid);
