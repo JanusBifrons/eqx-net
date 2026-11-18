@@ -46,30 +46,23 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { pushCollisionShieldContacts } from './collisionShieldContacts';
-import { MineDetonatedSchema } from '@shared-types/mines';
 import { ShellBlastSchema } from '@shared-types/shellBlast';
 import { ShellEndSchema, ShellSalvoSchema, type ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
-import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { ControlModeMessageSchema } from '@shared-types/messages/snapshotMessages';
 import { parseTransitReadyShipIds } from '@shared-types/messages';
 import { isCommanderFleetFollow, transitStartsLocalTrip, stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
-import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
-import { toastForNotice } from './tradeView';
-import { TradeNoticeSchema } from '../../shared-types/economy.js';
-import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
-import { BountyResultSchema } from '../../shared-types/contracts.js';
+import { cargoChanged } from './lootView';
 import { setFactionLooks } from '../../shared-types/factions.js';
-import { ClaimFactionLookResultSchema } from '../../shared-types/messages/factionMessages.js';
-import { onFactionLookClaimed } from './factionLookSync.js';
+import { registerClientHandlers } from './handlers/index.js';
 import { LabStateSchema } from '../../shared-types/messages/labMessages.js';
-import { BreakInNoticeSchema, CargoStateSchema } from '../../shared-types/messages/cargoMessages.js';
+import { CargoStateSchema } from '../../shared-types/messages/cargoMessages.js';
 import { BpMarketStateSchema } from '../../shared-types/blueprintMarket.js';
 import { PackedStockSchema } from '../../shared-types/packedStock.js';
-import { BlueprintResultSchema, fittedCargoMul } from '../../shared-types/blueprints.js';
+import { fittedCargoMul } from '../../shared-types/blueprints.js';
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
 /** Same id list (order-sensitive; absent ≡ empty). Alloc-free. */
@@ -80,8 +73,6 @@ function sameIds(a: readonly string[], b: readonly string[] | undefined): boolea
   return true;
 }
 
-/** Living World P2 — how long a trade toast stays up. */
-const TRADE_TOAST_TTL_MS = 6_000;
 import { cargoCapacityForMaxHealth } from '@shared-types/goods';
 import { applySelectionStats } from './selectionStats.js';
 import { ingestFleetStatus } from '../fleet/fleetStatusIngest.js';
@@ -2212,26 +2203,8 @@ export class ColyseusGameClient {
       });
     });
 
-    // A shield fence stopped a bolt or missile: draw the impact on the wall
-    // (fence-hit fix). An accelerator only — nothing persistent depends on it.
-    room.onMessage('wall_hit', (raw: unknown) => {
-      const result = WallHitEventSchema.safeParse(raw);
-      if (!result.success) return;
-      this.mirror.pendingEffectTriggers?.push({ kind: 'wall-hit', worldX: result.data.x, worldY: result.data.y });
-    });
-
-    // Mine Layer — a mine went off: the same explosion visual as a missile
-    // (an accelerator; the mine leaving room state is the truth).
-    room.onMessage('mine_detonated', (raw: unknown) => {
-      const result = MineDetonatedSchema.safeParse(raw);
-      if (!result.success) return;
-      (this.mirror.pendingMissileExplosions ??= []).push({
-        x: result.data.x,
-        y: result.data.y,
-        splashRadius: result.data.radius,
-        missileId: -1,
-      });
-    });
+    // Feature handler files (handlers/index.ts): impact FX, toasts, loot feed.
+    registerClientHandlers(room, { mirror: this.mirror });
 
     // Coastal defences — a siege shell burst: the same explosion visual, at
     // the size of its blast (the damage arrives as damage events).
@@ -2390,44 +2363,6 @@ export class ColyseusGameClient {
       if (!parsed.success || parsed.data.mode !== 'command') return;
       this.enterCommandFromServer();
     });
-    room.onMessage('notice', (raw: unknown) => {
-      const parsed = NoticeEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushLootFeed(parsed.data.text);
-      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
-    });
-    // Living World P2 — trade toasts + Trade-tab badge. An ACCELERATOR only:
-    // the tab's truth is `GET /trade/economy` (it refetches on tradeNoticeSeq).
-    // C2 — a break-in alarm (owner) or result (actor). Accelerator only.
-    room.onMessage('break_in_notice', (raw: unknown) => {
-      const parsed = BreakInNoticeSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.tone, false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Living World P5 — a blueprint install verdict (accelerator only).
-    room.onMessage('blueprint_result', (raw: unknown) => {
-      const parsed = BlueprintResultSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Living World P4c-2 — a bounty placement verdict (accelerator only).
-    room.onMessage('bounty_result', (raw: unknown) => {
-      const parsed = BountyResultSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // A faction ship-look claim verdict (accelerator only).
-    room.onMessage('claim_faction_look_result', (raw: unknown) => {
-      const parsed = ClaimFactionLookResultSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Someone claimed a ship look (accelerator; the welcome carries them all).
-    room.onMessage('faction_look_claimed', onFactionLookClaimed);
     // Economy v2 W3 — the Research Lab panel's view (a reply to lab_query /
     // lab_start / lab_cancel; the panel is rebuilt from it alone).
     // C1 — a structure's cargo (and our hold) for the cargo panel (#16).
@@ -2465,37 +2400,6 @@ export class ColyseusGameClient {
       const parsed = LabStateSchema.safeParse(raw);
       if (!parsed.success) return;
       useUIStore.getState().setLabState(parsed.data);
-    });
-    room.onMessage('trade_notice', (raw: unknown) => {
-      const parsed = TradeNoticeSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const { tone, unread } = toastForNotice(parsed.data);
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, tone, unread);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    // Living World P4 — galaxy-wide world notices (elite sighted / destroyed).
-    // An accelerator only (#16): the elite itself rides the snapshot + map.
-    room.onMessage('world_notice', (raw: unknown) => {
-      const parsed = WorldNoticeSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const id = useUIStore.getState().pushTradeToast(parsed.data.message, 'world', false);
-      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
-    });
-    room.onMessage('cargo_deposited', (raw: unknown) => {
-      const parsed = CargoDepositedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const text = formatLootPickup(parsed.data);
-      if (text === '') return;
-      const id = useUIStore.getState().pushLootFeed(`Banked ${text}`);
-      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
-    });
-    room.onMessage('loot_collected', (raw: unknown) => {
-      const parsed = LootCollectedEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      const text = formatLootPickup(parsed.data);
-      if (text === '') return;
-      const id = useUIStore.getState().pushLootFeed(text);
-      setTimeout(() => useUIStore.getState().expireLootFeed(id), LOOT_FEED_TTL_MS);
     });
     room.onMessage('warp_warning_clear', (raw: unknown) => {
       const parsed = WarpWarningClearSchema.safeParse(raw);

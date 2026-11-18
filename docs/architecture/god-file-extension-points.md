@@ -1,5 +1,7 @@
 # God-file extension points
 
+<!-- showcase-exempt: process and architecture rules page, nothing to film -->
+
 The file-size ratchet (`scripts/audit-god-files.mjs`, CI step "File-size ratchet") fails any `src/**` file over 600 LOC that is not allowlisted, and any allowlisted file that grows past its cap. The limits do not move. When a feature needs room, the code goes to the file's **extension point**: a new small file plus at most one line in the big file. Trimming comments or raising a cap is never the fix.
 
 Each section below says: to add X, create file Y and add one row to Z. The nested `CLAUDE.md` next to each area carries the same rules in short form, and is loaded when an agent works in that folder.
@@ -28,7 +30,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A server→client message | Its zod schema in `src/shared-types/messages/` and a name→schema row in `messageNames.ts`; a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in the handler list. | planned |
+| A server→client message | Its zod schema in `src/shared-types/messages/` and a row in `ServerMessageSchemas` (`src/shared-types/messages.ts`); a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in `handlers/index.ts`. | live |
 | A per-entity timer / state machine | Its own module, like `drawnShellTiming.ts`, `damageNumberTargets.ts`. | live |
 | Fire control / lock state | `FireControlClient`. | planned |
 
