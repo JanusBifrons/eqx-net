@@ -106,7 +106,8 @@ export const HoldSchema = z
       .array(z.union([BlueprintItemSchema, z.string().min(1).max(64)]))
       .max(64)
       .transform((arr) => arr.map((b) => (typeof b === 'string' ? legacyBlueprintItem(b) : b))),
-    packed: z.array(PackedItemSchema).max(64).optional(),
+    // A barge holds hundreds of rock chunks (each its own item).
+    packed: z.array(PackedItemSchema).max(1024).optional(),
   })
   .strict();
 
