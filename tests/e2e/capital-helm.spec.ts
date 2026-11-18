@@ -6,8 +6,8 @@
  * takes over: the panel reads "course set" and the ship moves under its own
  * inputs (server-authoritative pose via `data-ship-x/y`), with the green
  * move marker drawn at the course point. Pressing W cancels
- * the course (WASD overrides the helm). A fighter in the same room gets no
- * helm panel.
+ * the course (WASD overrides the helm). A fighter in the same room shows no
+ * helm panel until it has a course (the autopilot, `autopilot-round-rock.spec.ts`).
  */
 import { test, expect } from '@playwright/test';
 import { launchTestClient } from './helpers/gameScenario';
@@ -73,7 +73,7 @@ test('a battleship pilot taps a course, the helm flies it, W cancels', async ({ 
   }
 });
 
-test('a fighter gets no helm panel', async ({ browser }) => {
+test('a fighter shows no helm panel without a course', async ({ browser }) => {
   const { ctx, page } = await launchTestClient(browser, {
     room: ROOM, ...SPAWN, shipKind: 'fighter', extraParams: { worker: '0' },
   });

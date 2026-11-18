@@ -1881,10 +1881,10 @@ export class PixiRenderer implements IRenderer {
     const hit = pickEntityAt(gameX, gameY, this._lastMirror);
     if (hit === null) {
       this.setFocus(null, null);
-      // Helm orders: a capital pilot's tap on empty space sets the course.
+      // Helm orders: the pilot's tap on empty space sets the course (every
+      // hull: the autopilot, navigation slice 13).
       const m = this._lastMirror;
-      const own = m.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
-      if (own !== undefined && getShipKind(own.kind ?? null).sizeClass === 'capital') {
+      if (m.localPlayerId !== null && m.ships.has(m.localPlayerId)) {
         this.feedback.helmCourseX = gameX;
         this.feedback.helmCourseY = gameY;
         this.feedback.helmCourseSeq++;

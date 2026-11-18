@@ -2,7 +2,7 @@
  * Helm move marker: whether the local pilot sees the green course marker,
  * and where. The order lives in `ColyseusClient` (main thread); the marker
  * rides `RenderMirror.helmCourse` to the renderer (spatial ⇒ never Zustand,
- * #2). Shown only for the ship you fly, only a capital (helm `available`),
+ * #2). Shown only for the ship you fly (helm `available`, every hull),
  * only while an order is active, never while spectating. Other players' and
  * NPC ships have no helm order on this client, so they never get a marker.
  *

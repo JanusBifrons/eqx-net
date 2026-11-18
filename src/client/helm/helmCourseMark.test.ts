@@ -5,7 +5,7 @@
  * piloted or selected (or is not allied/owned)."
  *
  * The client decides, from its own helm order, whether the marker shows and
- * where: only for the local pilot's own capital while an order is active,
+ * where: only for the local pilot's own ship while an order is active,
  * never while spectating. The renderer just draws `mirror.helmCourse`.
  */
 import { describe, expect, it } from 'vitest';
@@ -17,7 +17,7 @@ function order(active: boolean, tx = 1200, ty = -3400): HelmOrder {
 }
 
 describe('resolveHelmCourseMark', () => {
-  it('shows the course point for the pilot of a capital with an active order', () => {
+  it('shows the course point for the pilot with an active order', () => {
     const out = makeHelmCourseMark();
     expect(resolveHelmCourseMark(order(true), true, false, 7, out)).toBe(true);
     expect(out).toEqual({ x: 1200, y: -3400, seq: 7 });
@@ -27,7 +27,7 @@ describe('resolveHelmCourseMark', () => {
     expect(resolveHelmCourseMark(order(false), true, false, 7, makeHelmCourseMark())).toBe(false);
   });
 
-  it('is hidden when the ship flown takes no helm orders (not a capital / no ship)', () => {
+  it('is hidden when the ship flown takes no helm orders (no ship)', () => {
     expect(resolveHelmCourseMark(order(true), false, false, 7, makeHelmCourseMark())).toBe(false);
   });
 

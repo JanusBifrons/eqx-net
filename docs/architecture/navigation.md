@@ -216,3 +216,5 @@ one it flies straight as before.
   2026-11-18 slice 11: capital commitment. Capitals plan with nose and turning radius: no U-turn in a
   lane, turns and lane entry cost turning radii.
   2026-11-18 slice 12: autopilot wire, `nav_route_request` → `nav_route`, served by `AutopilotRoutes`.
+  2026-11-18 slice 13: the helm flies routes on every hull (`HelmOrder.route`, `helmPassRadius`;
+  client `HelmRouteClient`); arrival within the hull's own size, not a fixed 20 u.

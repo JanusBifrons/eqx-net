@@ -14,8 +14,12 @@ The autopilot flies your ship to a point you pick and takes it round rock on the
 ## Limits
 
 - One route request at a time per player, and at most two a second; extra requests are ignored, and the client simply asks again.
+- **Setting a course:** tap empty space (every hull). WASD or the stick cancels it. A capital always shows the helm panel; a smaller hull shows it only while a course is set.
+- **Flying the route:** the helm steers at each turn in order and moves on to the next one as soon as it is within its turn lead (`helmPassRadius`: about how far the ship travels while it comes round), so it sweeps through bends rather than stopping at each. Only the last leg brakes and arrives; arrival is within the hull's own size (`helmArriveRadius`).
+- **Reply lost or late:** a reply older than the current course is ignored; one that never comes is asked for again after 5 s, and the ship flies straight at the point meanwhile.
 
 ## Status
 
-- Slice 12 (2026-11-18): the request and reply on the wire, served by the room. The helm flying it (slice 13) and the route line on screen (slice 14) follow.
+- Slice 12 (2026-11-18): the request and reply on the wire, served by the room.
+- Slice 13 (2026-11-18): the helm flies the route on every hull (`core/helm/helm.ts` route + pass radius; `client/helm/helmRoute.ts` asks and loads the reply). Locks: `helm.test.ts`, `helmRoute.test.ts`, e2e `autopilot-round-rock.spec.ts` (a fighter flies round a field rock to the far side). The route line on screen follows (slice 14).
 - Internals: [navigation](../architecture/navigation.md#the-players-autopilot-asks-servernavautopilotroutests).

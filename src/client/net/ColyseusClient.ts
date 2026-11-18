@@ -183,6 +183,7 @@ import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_T
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
 import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
 import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
+import { HelmRouteClient } from '../helm/helmRoute.js';
 import { makeHelmCourseMark, resolveHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
 import { resolveSlotMounts, resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
@@ -968,9 +969,12 @@ export class ColyseusGameClient {
    *  every tick (#14). */
   private readonly _helmOrder: HelmOrder = { active: false, tx: 0, ty: 0, speed: 3 };
   private readonly _helmOut = makeHelmOutput();
+  /** Autopilot (navigation slice 13): asks the server for a way to the course point. */
+  private readonly _helmRoute = new HelmRouteClient((t, m) => this.room?.send(t, m));
   private readonly _helmPose: HelmPose = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 };
   private _helmKindId: string | null = null;
   private _helmAvailable = false;
+  private _helmPanelAlways = false;
   /** Helm move marker: bumps per course tap; the marker record is written
    *  into `mirror.helmCourse` (spatial ⇒ mirror, never Zustand, #2). */
   private _helmCourseSeq = 0;
@@ -2455,6 +2459,10 @@ export class ColyseusGameClient {
     room.onMessage('teleport_pair_request', (raw: unknown) => {
       const parsed = PairRequestPromptSchema.safeParse(raw);
       if (parsed.success) useUIStore.getState().addPairRequest(parsed.data);
+    });
+    room.onMessage('nav_route', (raw: unknown) => {
+      const r = this._helmRoute.onReply(raw, this._helmOrder);
+      if (r === 'end') this.clearHelm(); else if (r === 'route') this.publishHelm(); // the point may move (nearest): no new pop
     });
     room.onMessage('teleport_candidates', (raw: unknown) => {
       const parsed = TeleportCandidatesReplySchema.safeParse(raw);
@@ -5248,13 +5256,13 @@ export class ColyseusGameClient {
   /** The camera (`RendererFeedback.viewX/viewY/viewHalf`), each frame: the cut field draws around it too. */
   setFieldView(x: number, y: number, viewHalf: number): void { this._cutField.setView(x, y, viewHalf); }
 
-  /** Helm orders: set the course point (game space). Only a ship that takes
-   *  helm orders (a capital) accepts one. */
+  /** Helm orders: set the course point (game space); the autopilot asks for a way there. */
   setHelmCourse(x: number, y: number): void {
     if (!this._helmAvailable) return;
     this._helmOrder.tx = x;
     this._helmOrder.ty = y;
     this._helmOrder.active = true;
+    this._helmRoute.course(this._helmOrder, this.gameClock.now());
     this._helmCourseSeq++;
     this.publishHelm();
   }
@@ -5269,6 +5277,8 @@ export class ColyseusGameClient {
   clearHelm(): void {
     if (!this._helmOrder.active) return;
     this._helmOrder.active = false;
+    this._helmOrder.route = null;
+    this._helmRoute.clear();
     this._helmOut.thrust = false; this._helmOut.turnLeft = false; this._helmOut.turnRight = false;
     this.publishHelm();
   }
@@ -5277,7 +5287,9 @@ export class ColyseusGameClient {
   getHelmOrder(): Readonly<HelmOrder> { return this._helmOrder; }
 
   private publishHelm(): void {
-    useUIStore.getState().setHelmState(this._helmAvailable, this._helmOrder.active, this._helmOrder.speed);
+    // The panel: always for a capital; for smaller hulls only while a course is set.
+    const panel = this._helmAvailable && (this._helmPanelAlways || this._helmOrder.active);
+    useUIStore.getState().setHelmState(panel, this._helmOrder.active, this._helmOrder.speed);
     this.syncHelmMark();
   }
 
@@ -5296,8 +5308,9 @@ export class ColyseusGameClient {
     const kindId = id ? this.mirror.ships.get(id)?.kind ?? null : null;
     if (kindId === this._helmKindId) return;
     this._helmKindId = kindId;
-    this._helmAvailable = kindId !== null && getShipKind(kindId).sizeClass === 'capital';
-    if (!this._helmAvailable) this._helmOrder.active = false;
+    this._helmAvailable = kindId !== null; // every hull takes helm orders (navigation slice 13)
+    this._helmPanelAlways = kindId !== null && getShipKind(kindId).sizeClass === 'capital';
+    if (!this._helmAvailable) this.clearHelm();
     this.publishHelm();
   }
 
@@ -5308,6 +5321,7 @@ export class ColyseusGameClient {
     if (s === null || this._helmKindId === null) return;
     const p = this._helmPose;
     p.x = s.x; p.y = s.y; p.angle = s.angle; p.vx = s.vx; p.vy = s.vy; p.angvel = s.angvel ?? 0;
+    this._helmRoute.tick(this.gameClock.now());
     helmStep(this._helmOrder, p, getShipKind(this._helmKindId), this._helmOut);
     if (this._helmOut.arrived) this.clearHelm();
   }
