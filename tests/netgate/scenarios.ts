@@ -27,8 +27,29 @@
  */
 import type { GatedMetric, MetricBudget } from './netHealthBudget';
 
-/** Keyed interaction the spec drives for a scenario. Only one today. */
-export type InteractionId = 'strafe-fire';
+/** Keyed interaction the spec drives for a scenario. */
+export type InteractionId = 'strafe-fire' | 'autopilot-course';
+
+/** `autopilot` scenario (navigation slice 15): a fighter spawned in open
+ *  water at the cut field's rim (seed `look`) sets a helm course past a rim
+ *  rock; the server's route has one turn round it (same pair as
+ *  `tests/e2e/autopilot-round-rock.spec.ts`). Inside packed chunks a fighter
+ *  gets no route today (navigation guide, fine layer), so the guard flies the rim. */
+export const AUTOPILOT_SPAWN = { x: -7_192, y: 13_288 } as const;
+export const AUTOPILOT_COURSE = { x: -6_792, y: 10_392 } as const;
+const AUTOPILOT_FACING = Math.atan2(-(AUTOPILOT_COURSE.x - AUTOPILOT_SPAWN.x), AUTOPILOT_COURSE.y - AUTOPILOT_SPAWN.y);
+
+/** Autopilot paths: the planner, the helm and the route wire, plus the
+ *  netgate harness itself. Mirrored in `select-scenarios.mjs`. */
+const AUTOPILOT_GLOBS = [
+  '^src/core/nav/',
+  '^src/server/nav/',
+  '^src/core/helm/',
+  '^src/client/helm/',
+  '^src/shared-types/messages/navMessages\\.ts$',
+  '^tests/netgate/',
+  '^tests/e2e/netcode-health\\.spec\\.ts$',
+];
 
 export interface NetgateScenario {
   /** Stable id — the NETGATE_SCENARIOS CSV token, the CI selection key,
@@ -129,6 +150,19 @@ export const SCENARIOS: readonly NetgateScenario[] = [
     // SHARED ∪ STRUCTURE ∪ SCRAP — core is the catch-all local-feel gate,
     // so a structures/scrap change fires it (closing the path-filter hole).
     triggerGlobs: [...SHARED_LIVELOOP_GLOBS, ...STRUCTURE_GLOBS, ...SCRAP_GLOBS],
+  },
+  // Autopilot (navigation slice 15, the plan's D1 guard): the helm flies a
+  // server route round a rock with ordinary player inputs; the local
+  // prediction must stay as healthy as the baseline's.
+  {
+    name: 'autopilot',
+    room: 'cut-field-test',
+    urlParams: `&spawnX=${AUTOPILOT_SPAWN.x}&spawnY=${AUTOPILOT_SPAWN.y}&initialAngle=${AUTOPILOT_FACING.toFixed(4)}`,
+    liveSelector: '[data-testid="ship-count"]',
+    interaction: 'autopilot-course',
+    reps: 8,
+    gating: 'gate',
+    triggerGlobs: AUTOPILOT_GLOBS,
   },
   // Game time scale (stream/time-scale): the core strafe in a sector forced
   // to 0.7× and 2×. PRINT-ONLY by necessity: the baseline arm is origin/main,

@@ -32,7 +32,7 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import { evaluateNetHealth, type NetHealthArm } from '../netgate/netHealthBudget';
-import { resolveScenarios, type InteractionId, type NetgateScenario } from '../netgate/scenarios';
+import { AUTOPILOT_COURSE, resolveScenarios, type InteractionId, type NetgateScenario } from '../netgate/scenarios';
 
 interface ArmSpec {
   name: string;
@@ -98,6 +98,15 @@ async function runInteraction(page: Page, interaction: InteractionId): Promise<v
       await page.keyboard.up('w').catch(() => undefined);
       await page.keyboard.up('Space').catch(() => undefined);
       await page.waitForTimeout(RUN_MS * 0.1);
+      return;
+    case 'autopilot-course':
+      // The helm takes orders once its panel shows (past the loading curtain);
+      // then the helm alone flies the route for the run.
+      await page.getByTestId('helm-panel').waitFor({ timeout: 15_000 });
+      await page.evaluate(([x, y]) => {
+        (window as unknown as { __eqxClient: { setHelmCourse(x: number, y: number): void } }).__eqxClient.setHelmCourse(x!, y!);
+      }, [AUTOPILOT_COURSE.x, AUTOPILOT_COURSE.y]);
+      await page.waitForTimeout(RUN_MS);
       return;
   }
 }

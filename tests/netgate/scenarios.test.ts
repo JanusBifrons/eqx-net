@@ -57,6 +57,9 @@ describe('select-scenarios.mjs — SoT consistency with scenarios.ts', () => {
   });
 });
 
+/** Every gated scenario, in catalogue order (what fail-closed runs). */
+const ALL_GATED = SCENARIOS.filter((s) => s.gating === 'gate').map((s) => s.name);
+
 describe('selectScenarios — fail-CLOSED routing (hostile review M3)', () => {
   it('docs / diag / unrelated-only diff ⇒ empty (gate legitimately skips)', () => {
     expect(selectScenarios(['docs/x.md', 'README.md'])).toEqual([]);
@@ -78,15 +81,24 @@ describe('selectScenarios — fail-CLOSED routing (hostile review M3)', () => {
   });
 
   it('empty / null / non-array changed-file list ⇒ ALL gated (fail-closed)', () => {
-    expect(selectScenarios([])).toEqual(['core']);
-    expect(selectScenarios(null)).toEqual(['core']);
-    expect(selectScenarios(undefined)).toEqual(['core']);
+    expect(selectScenarios([])).toEqual(ALL_GATED);
+    expect(selectScenarios(null)).toEqual(ALL_GATED);
+    expect(selectScenarios(undefined)).toEqual(ALL_GATED);
   });
 
   it('a NEW unenumerated file in a live-loop dir ⇒ ALL gated (default-deny safety net)', () => {
     // Not in any specific scenario glob, but under a live-loop prefix.
-    expect(selectScenarios(['src/server/rooms/SomeBrandNewBroadcaster.ts'])).toEqual(['core']);
-    expect(selectScenarios(['src/core/combat/NewWeapon.ts'])).toEqual(['core']);
+    expect(selectScenarios(['src/server/rooms/SomeBrandNewBroadcaster.ts'])).toEqual(ALL_GATED);
+    expect(selectScenarios(['src/core/combat/NewWeapon.ts'])).toEqual(ALL_GATED);
+  });
+
+  it('an autopilot change (planner, helm, route wire) routes to autopilot only (navigation slice 15)', () => {
+    expect(selectScenarios(['src/core/nav/routePlanner.ts'])).toEqual(['autopilot']);
+    expect(selectScenarios(['src/server/nav/AutopilotRoutes.ts'])).toEqual(['autopilot']);
+    expect(selectScenarios(['src/client/helm/helmRoute.ts'])).toEqual(['autopilot']);
+    expect(selectScenarios(['src/core/helm/helm.ts'])).toEqual(['autopilot']);
+    // The route wire sits under messages/, a shared live-loop path: both run.
+    expect(selectScenarios(['src/shared-types/messages/navMessages.ts'])).toEqual(['core', 'autopilot']);
   });
 
   it('normalises backslash paths (Windows diff lists)', () => {

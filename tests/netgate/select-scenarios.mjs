@@ -57,6 +57,16 @@ export const GATED_SCENARIO_GLOBS = {
     '^src/core/geometry/scrapCollider\\.ts$',
     '^src/core/swarm/scrapConstants\\.ts$',
   ],
+  autopilot: [
+    // AUTOPILOT_GLOBS
+    '^src/core/nav/',
+    '^src/server/nav/',
+    '^src/core/helm/',
+    '^src/client/helm/',
+    '^src/shared-types/messages/navMessages\\.ts$',
+    '^tests/netgate/',
+    '^tests/e2e/netcode-health\\.spec\\.ts$',
+  ],
 };
 
 /**
