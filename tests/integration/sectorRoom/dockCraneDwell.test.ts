@@ -155,8 +155,11 @@ describe('SectorRoom integration — dock crane dwell (structure-restyle 3b)', (
     // The hold length and the cargo direction ride the clip (wire `rigHold`).
     expect(dock.rigClip!.holdTicks).toBeGreaterThanOrEqual(DOCK_UNLOAD_HOLD_MIN_TICKS);
     expect(dock.rigClip!.cargo, 'a dock with no orders only unloads').toBe(CRANE_CARGO_IN);
-    const st = [...cr.state.structures.values()].find((s) => decodeRigHoldTicks(s.rigHold ?? 0) > 0);
-    expect(st, 'the client row carries the hold').toBeDefined();
+    // The server writes the row when the hold starts; the client sees it at
+    // the next state patch, so wait for that patch rather than read at once.
+    const holdRow = () => [...cr.state.structures.values()].find((s) => decodeRigHoldTicks(s.rigHold ?? 0) > 0);
+    expect(await until(() => holdRow() !== undefined, 1_000), 'the client row carries the hold').toBe(true);
+    const st = holdRow();
     expect(decodeRigHoldTicks(st!.rigHold!)).toBe(dock.rigClip!.holdTicks);
     const last = seen[seen.length - 1];
     expect(last !== undefined && last >= 0, 'served: the readout is progress again').toBe(true);
