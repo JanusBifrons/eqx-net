@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { isFullPlaywrightRun, requireHeavyQueue, shellLine } from './scripts/dev/heavy-queue-guard.mjs';
 import {
   DEFAULT_BASE_URL,
   E2E_CLIENT_PORT,
@@ -236,6 +237,14 @@ const E2E_STORAGE_STATE = 'tests/e2e/.auth/e2e-storage-state.json';
 // instead of silently testing another worktree's stale code.
 const IS_OFFSET_LANE = E2E_PORT_OFFSET !== 0;
 
+// A full local e2e run is heavy: only through `pnpm heavy run` (or CI). Checked
+// here, before the webServers boot. Only the `playwright test` runner process
+// has `test` in argv (workers re-load this file with no args); a spec file,
+// --grep or --list makes the run light and never blocks.
+if (isFullPlaywrightRun(process.argv.slice(2))) {
+  requireHeavyQueue({ kind: 'e2e', command: `pnpm exec playwright ${shellLine(process.argv.slice(2))}` });
+}
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 30_000,
@@ -337,6 +346,9 @@ export default defineConfig({
             // so a spec can speed a real sector's game clock: rts-fleet-warp
             // joins at timeScale=4 so the 30 s warp spool takes 7.5 s.
             EQX_ALLOW_DEV_OVERRIDES: '1',
+            // Test servers live only for the run: exempt from the dev-server
+            // cap (scripts/dev/dev-lease.mjs), never refused.
+            EQX_DEV_CAP_SKIP: 'playwright',
             ...(IS_OFFSET_LANE ? { PORT: String(E2E_SERVER_PORT) } : {}),
           },
         },
@@ -347,10 +359,13 @@ export default defineConfig({
           port: E2E_CLIENT_PORT,
           reuseExistingServer: !IS_OFFSET_LANE,
           // Offset lane: point Vite's proxy at the lane's server and move HMR
-          // off the shared 24678. (Offset 0 passes no env, exactly as before.)
-          ...(IS_OFFSET_LANE
-            ? { env: { EQX_SERVER_PORT: String(E2E_SERVER_PORT), VITE_HMR_PORT: String(E2E_HMR_PORT) } }
-            : {}),
+          // off the shared 24678. Always exempt from the dev-server cap.
+          env: {
+            EQX_DEV_CAP_SKIP: 'playwright',
+            ...(IS_OFFSET_LANE
+              ? { EQX_SERVER_PORT: String(E2E_SERVER_PORT), VITE_HMR_PORT: String(E2E_HMR_PORT) }
+              : {}),
+          },
           timeout: 60_000,
         },
       ],
