@@ -86,10 +86,34 @@ export function lineageRekey(
   return true;
 }
 
+/** The one reused split order of `splitGroupLocks` and its ranks (#14). */
+const SPLIT: string[] = [];
+const SPLIT_RANK: number[] = [];
+
+/** Fill `SPLIT` with the first `count` of `pieceKeys`, ranked for group `g`
+ *  as the lineage hand-over ranks members (`memberRank`: one a mount of the
+ *  group can work first), stable (biggest first among equals). Without `c`,
+ *  the order as given. */
+function rankSplit(g: LineageGroup, pieceKeys: ReadonlyArray<string>, count: number, c: LineageCtx | undefined): void {
+  SPLIT.length = 0;
+  SPLIT_RANK.length = 0;
+  for (let i = 0; i < count; i++) {
+    const key = pieceKeys[i]!;
+    const r = c === undefined ? 0 : memberRank(g, lockSalvageFlags(c.d, c.ship, c.playerId, key));
+    let j = SPLIT.length;
+    SPLIT.push(key); SPLIT_RANK.push(r);
+    while (j > 0 && SPLIT_RANK[j - 1]! < r) { SPLIT[j] = SPLIT[j - 1]!; SPLIT_RANK[j] = SPLIT_RANK[j - 1]!; j--; }
+    SPLIT[j] = key; SPLIT_RANK[j] = r;
+  }
+}
+
 /** Re-key one group's lock on `fromKey` to the first of the first `count`
  *  piece keys it does not already lock, then add locks on the next ones up
- *  to its `capacity`. A group already locking every one (or given none)
- *  hands the old lock to another live member of its lineage
+ *  to its `capacity`; with `c`, the ones a mount of the group can work come
+ *  first (`memberRank`, as `lineageRekey`): a tractor group's locks go to the
+ *  ore pods before pieces too big for any of its tractors, which it could
+ *  only idle on while the pods drift off. A group already locking every one
+ *  (or given none) hands the old lock to another live member of its lineage
  *  (`lineageRekey`, with `c`), else drops it. True when the group changed
  *  (the caller re-syncs its wire). */
 export function splitGroupLocks(
@@ -98,9 +122,10 @@ export function splitGroupLocks(
   let src: LockEntry | undefined;
   for (const e of g.locks) if (e.target === fromKey) { src = e; break; }
   if (src === undefined) return false;
+  rankSplit(g, pieceKeys, count, c);
   let moved = false;
-  for (let i = 0; i < count; i++) {
-    const key = pieceKeys[i]!;
+  for (let i = 0; i < SPLIT.length; i++) {
+    const key = SPLIT[i]!;
     let held = false;
     for (const e of g.locks) if (e.target === key) { held = true; break; }
     if (held) continue;
