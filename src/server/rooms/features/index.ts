@@ -13,6 +13,7 @@ import { registerDevTestMessages, type DevTestMessageHost } from './devTestMessa
 import { registerFireControlMessages, type FireControlMessageHost } from './fireControlMessages.js';
 import { registerFleetMessages, type FleetMessageHost } from './fleetMessages.js';
 import { registerLabMessages, type LabMessageHost } from './labMessages.js';
+import { registerNavMessages, type NavMessageHost } from './navMessages.js';
 import type { RoomFeature } from './parsedMessage.js';
 import { registerPilotMessages, type PilotMessageHost } from './pilotMessages.js';
 import { registerSelectionMessages, type SelectionMessageHost } from './selectionMessages.js';
@@ -42,7 +43,8 @@ export type RoomFeaturesHost =
   & FireControlMessageHost
   & SelectionMessageHost
   & WebRtcMessageHost
-  & PilotMessageHost;
+  & PilotMessageHost
+  & NavMessageHost;
 
 const FEATURES: ReadonlyArray<(host: RoomFeaturesHost) => RoomFeature> = [
   registerTransitMessages,
@@ -62,6 +64,7 @@ const FEATURES: ReadonlyArray<(host: RoomFeaturesHost) => RoomFeature> = [
   registerSelectionMessages,
   registerWebRtcMessages,
   registerPilotMessages,
+  registerNavMessages,
 ];
 
 export function registerRoomFeatures(host: RoomFeaturesHost): Required<RoomFeature> {

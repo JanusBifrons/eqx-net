@@ -23,7 +23,6 @@ import type { HostileActLedger } from '../../../core/relations/HostileActLedger.
 import { relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import { getShipKind, type ShipKind, type WeaponMount } from '../../../shared-types/shipKinds.js';
 import type { CapitalWreckSubsystem } from '../CapitalWreckSubsystem.js';
-import type { LootSubsystem } from '../../cargo/LootSubsystem.js';
 import { serverLogEvent } from '../../debug/ServerEventLog.js';
 import type { FleetCommandSubsystem } from '../../fleet/FleetCommandSubsystem.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
@@ -51,7 +50,6 @@ export interface FireControlLocksHost {
   lingeringPoseCache: ReadonlyMap<string, ShipPhysicsState>;
   shipPoseCache: ReadonlyMap<string, ShipPhysicsState>;
   capitalWrecks(): CapitalWreckSubsystem | null;
-  loot(): LootSubsystem;
   serverTick(): number;
   aiController(): Pick<AiController, 'markHostile'>;
   testLockTimeCapS(): number | undefined;
@@ -76,7 +74,7 @@ export class FireControlLocks {
   readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.h.swarmRegistry.getByEntityId(n),
     piece: (id, out) => this.h.capitalWrecks()?.pieceStore(id, out) === true, // salvage lock bits (lockSalvage.ts)
-    wrecks: () => this.h.capitalWrecks(), pods: () => this.h.loot(), entity: (id) => this.h.swarmRegistry.get(id)?.entityId ?? -1, // lock lineage (lockSplit.ts)
+    wrecks: () => this.h.capitalWrecks(), entity: (id) => this.h.swarmRegistry.get(id)?.entityId ?? -1, // lock lineage (lockSplit.ts)
     // No hold (no roster row, e.g. a showcase room with no sectorKey): it takes nothing in, so nothing is consumable.
     freeHold: (s) => (this.h.hasHold(s.shipInstanceId) ? this.h.shipCargoCapacity(s.kind, s.shipInstanceId) - this.h.holdWeight(s.shipInstanceId) : 0) });
 
