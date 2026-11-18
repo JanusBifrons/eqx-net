@@ -22,8 +22,8 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A test / engineering / showcase room | A row in a table-driven room file (`rooms/showcaseRooms.ts`, `definePerfRooms()`), behind `shouldRegisterTestRooms()`. | live |
-| An HTTP route | A router in `src/server/routes/` (like `diagRouter.ts`, `galaxyRouter.ts`), mounted with one line. | live |
+| A test / engineering / showcase room | A row in a per-feature room file in `src/server/rooms/testRooms/` (`engineeringRooms.ts`, `scenarioRooms.ts`, `worldRooms.ts`), `rooms/showcaseRooms.ts` or `definePerfRooms()`, all called from `index.ts` behind `shouldRegisterTestRooms()`. Never a `define` in `index.ts`. | live |
+| An HTTP route | A router in `src/server/routes/` (like `diagRouter.ts`, `galaxyRouter.ts`), mounted with one line. Dev-only `/dev/*` and `/test/*` endpoints go in `routes/devRouter.ts` (mounted outside production). | live |
 | A boot step | A function in `src/server/boot/`, called from `main()`. | planned |
 
 ## Client: `ColyseusClient.ts` (`src/client/net/CLAUDE.md`)

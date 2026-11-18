@@ -163,4 +163,16 @@ describe('GraphSearch', () => {
     expect(s.search(graph, 0, goal)).toBe(-1);
     expect(s.firstHop(0, 3)).toBe(-1);
   });
+  it('an unreachable goal: nearest is the reached node with the least heuristic', () => {
+    // A line 0-1-2-3 and, cut off, 4 (the goal). Heuristic: |i - 4|.
+    const g = new UnitGraph([[1], [0, 2], [1, 3], [2], []]);
+    const goal = { isGoal: (i: number) => i === 4, heuristic: (i: number) => Math.abs(i - 4) };
+    const s = new GraphSearch();
+    expect(s.search(g, 0, goal)).toBe(-1);
+    expect(s.nearest).toBe(3);
+    expect(s.hops(3)).toBe(3);
+    // Reached: nearest is the goal itself.
+    expect(s.search(g, 3, { isGoal: (i: number) => i === 0, heuristic: (i: number) => i })).toBe(0);
+    expect(s.nearest).toBe(0);
+  });
 });

@@ -33,7 +33,9 @@ export const NAV_COARSE_EXPAND_CAP = 30_000;
 export const NAV_FINE_EXPAND_CAP = 60_000;
 
 /** `straight`: the line is clear; `route`: waypoints found; `none`: no way at this clearance. */
-export type NavRouteStatus = 'straight' | 'route' | 'none';
+/** `nearest`: no way fits, the route ends at the reachable point nearest the
+ *  goal (owner, 2026-11-17: go there and wait). */
+export type NavRouteStatus = 'straight' | 'route' | 'nearest' | 'none';
 
 const W = (NAV_FINE_WINDOW_CHUNKS * CHUNK_SIZE) / FINE_NAV_CELL;
 const HALF_WIN = Math.floor(NAV_FINE_WINDOW_CHUNKS / 2);
@@ -188,14 +190,19 @@ export class RoutePlanner {
     // 1. Coarse: which way round (not needed with the goal in the window,
     //    and the coarse layer reads the field's inside as solid).
     const cs = clampedCell(coarse, sx, sy), cg = clampedCell(coarse, tx, ty);
-    let cLen = 1;
+    let cLen = 1, partial = false, gx = tx, gy = ty;
     this.cPath[0] = cs;
     if (cs !== cg && !inside(tx, ty)) {
       coarse.clearance = c;
       this.cGoal.map = coarse; this.cGoal.target = cg;
-      const hit = this.search.search(coarse, cs, this.cGoal, NAV_COARSE_EXPAND_CAP);
+      let hit = this.search.search(coarse, cs, this.cGoal, NAV_COARSE_EXPAND_CAP);
       this.expanded += this.search.expanded;
-      if (hit < 0) return 0;
+      if (hit < 0) {
+        // No way: head for the reached cell nearest the goal, if nearer than here.
+        hit = this.search.nearest;
+        if (hit < 0 || hit === cs) return 0;
+        partial = true; gx = coarse.bestX[hit]!; gy = coarse.bestY[hit]!;
+      }
       cLen = this.search.hops(hit) + 1;
       if (this.cPath.length < cLen) this.cPath = new Int32Array(cLen * 2);
       for (let t = hit, k = cLen - 1; k >= 0; t = this.search.prev(t), k--) this.cPath[k] = t;
@@ -204,14 +211,14 @@ export class RoutePlanner {
     this.polyLen = 0;
     this.push(sx, sy);
     for (let k = 1; k < cLen - 1; k++) this.push(coarse.bestX[this.cPath[k]!]!, coarse.bestY[this.cPath[k]!]!);
-    this.push(tx, ty);
+    this.push(gx, gy);
     // 2. Fine search in the window to the goal, or to where the coarse path leaves it.
     const P = this.poly, n = this.polyLen;
     let k = 0; // last coarse point inside the window
     while (k + 1 < n && inside(P[(k + 1) * 2]!, P[(k + 1) * 2 + 1]!)) k++;
     let fx: number, fy: number, restFrom: number;
     if (k === n - 1) {
-      fx = tx; fy = ty; restFrom = n; this.fGoal.radius = FINE_NAV_CELL * 0.75;
+      fx = gx; fy = gy; restFrom = n; this.fGoal.radius = FINE_NAV_CELL * 0.75;
     } else {
       // Where segment k → k+1 leaves the window.
       const ax = P[k * 2]!, ay = P[k * 2 + 1]!, bx = P[(k + 1) * 2]!, by = P[(k + 1) * 2 + 1]!;
@@ -227,12 +234,18 @@ export class RoutePlanner {
     }
     this.fGoal.tx = fx; this.fGoal.ty = fy;
     const from = win.cellAt(sx, sy);
-    const hit = this.search.search(win, from, this.fGoal, NAV_FINE_EXPAND_CAP);
+    let hit = this.search.search(win, from, this.fGoal, NAV_FINE_EXPAND_CAP);
     this.expanded += this.search.expanded;
-    if (hit < 0) return 0;
+    let fineEnd = false;
+    if (hit < 0) {
+      // No way (or the cap): the reached cell nearest the goal, if nearer than here.
+      hit = this.search.nearest;
+      if (hit < 0 || hit === from) return 0;
+      partial = true; fineEnd = true;
+    }
     // Joined path into `poly`, after the coarse rest (kept at its tail for now).
     const fineCells = this.search.hops(hit);
-    const restLen = n - restFrom;
+    const restLen = fineEnd ? 0 : n - restFrom;
     const need = (1 + fineCells + 1 + restLen) * 2;
     if (this.poly.length < need * 2) this.growPoly(need * 2);
     const Q = this.poly;
@@ -243,10 +256,12 @@ export class RoutePlanner {
     Q[0] = sx; Q[1] = sy;
     for (let t = hit, j = fineCells; j >= 1; t = this.search.prev(t), j--) { Q[j * 2] = win.x(t); Q[j * 2 + 1] = win.y(t); }
     let len = fineCells + 1;
-    if (restLen === 0) {
+    if (fineEnd) {
+      // Ends on the nearest cell's centre (already the last point).
+    } else if (restLen === 0) {
       // The goal itself replaces the last cell centre (it is in that cell's reach).
       if (len > 1) len--;
-      Q[len * 2] = tx; Q[len * 2 + 1] = ty; len++;
+      Q[len * 2] = gx; Q[len * 2 + 1] = gy; len++;
     } else {
       Q.copyWithin(len * 2, restAt, restAt + restLen * 2);
       len += restLen;
@@ -261,7 +276,7 @@ export class RoutePlanner {
       count++;
       a = j;
     }
-    this.status = 'route';
+    this.status = partial ? 'nearest' : 'route';
     return count;
   }
 
