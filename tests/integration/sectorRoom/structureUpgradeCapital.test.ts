@@ -47,7 +47,7 @@ describe('SectorRoom integration — Capital Upgrade does not hang / brick the g
       // Capital (the bank + the structure we upgrade) + a Connector relay + a
       // Turret leaf (the SECOND structure that must keep getting funded).
       prebuiltStructures: [
-        { kind: 'capital', x: 0, y: 0 },
+        { kind: 'capital', x: 0, y: 0, rot: 180 }, // crane bay pad south, clear of the +y relay
         { kind: 'connector', ...SCENARIO.connectorN },
         { kind: 'turret', x: 130, y: 420 }, // beside the N relay (phase V footprints)
       ],

@@ -42,7 +42,7 @@ describe('SectorRoom integration — structure leveling / Upgrade (WS-B4)', () =
       // a Turret leaf. Owned by the joining player (a valid UUID — see OWNER_UUID)
       // so the Upgrade owner-gate matches.
       prebuiltStructures: [
-        { kind: 'capital', x: 0, y: 0 },
+        { kind: 'capital', x: 0, y: 0, rot: 180 }, // crane bay pad south, clear of the +y relay
         { kind: 'connector', ...SCENARIO.connectorN },
         { kind: 'turret', x: 130, y: 420 }, // beside the N relay (phase V footprints)
       ],

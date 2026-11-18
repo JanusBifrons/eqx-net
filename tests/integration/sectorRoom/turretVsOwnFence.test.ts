@@ -27,7 +27,7 @@ describe('SectorRoom integration — turret fire vs its own fence', () => {
       testMode: true,
       peacefulDrones: true,
       prebuiltStructures: [
-        { kind: 'capital', x: 0, y: 0 },
+        { kind: 'capital', x: 0, y: 0, rot: 180 }, // crane bay pad south, clear of the +y relay
         { kind: 'connector', x: 400, y: 0 },
         { kind: 'shield_pylon', x: 520, y: 0 },
         { kind: 'shield_pylon', x: 520, y: 500 },

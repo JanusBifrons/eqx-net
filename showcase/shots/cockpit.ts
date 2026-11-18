@@ -5,7 +5,7 @@
  */
 import type { Shot } from '../types.js';
 import { AS_PILOT, SURVIVE } from './_helpers.js';
-import { CAPITAL_BAY } from '../../src/core/articulation/rigCatalogue.js';
+import { keepClearBox } from '../../src/core/structures/placementRules.js';
 import { SCENARIO } from '../../src/server/rooms/scenarioLayouts.js';
 import { face, flyRoute, flyTo, localPose, parkAt } from './_pilot.js';
 
@@ -51,7 +51,8 @@ export const cockpitStronghold: Shot = {
 /** Fly cargo home past the Miner drilling its asteroid, park in the Capital's
  *  crane bay (its only drop-off, structure-restyle 3f) and let its crane unload
  *  you: settle, reach, hold (3..10 s with load), bank, retract. The homestead
- *  Capital sits at rot 0, so its bay is the local-frame offset as is. */
+ *  Capital is turned (`SCENARIO.capital.rot`), so its bay opens west, on the
+ *  way in from the Miner. */
 export const cockpitHaul: Shot = {
   id: 'cockpit-haul',
   section: 'mechanics',
@@ -70,9 +71,10 @@ export const cockpitHaul: Shot = {
   async run(ctx) {
     const t0 = Date.now();
     await ctx.sleep(500);
-    // Past the Miner, up the Capital's west side to its open (+y) edge.
-    await flyRoute(ctx, [[-950, -950], [-560, -200], [-480, 680]], { cruise: 200, arrive: 200, maxMs: 9000 });
-    const bay = { x: SCENARIO.capital.x + CAPITAL_BAY.cx, y: SCENARIO.capital.y + CAPITAL_BAY.cy };
+    // Past the Miner to the Capital's west side, where its bay opens.
+    await flyRoute(ctx, [[-950, -950], [-560, -200]], { cruise: 200, arrive: 200, maxMs: 9000 });
+    const { x: bx, y: by } = keepClearBox('capital', SCENARIO.capital.x, SCENARIO.capital.y, SCENARIO.capital.rot)!;
+    const bay = { x: bx, y: by };
     if (!(await parkAt(ctx, bay.x, bay.y, 10_000))) ctx.log('cockpit-haul: not still on the bay');
     // Hands off while the crane works; the take ends once it has banked the
     // hold and swung back.
