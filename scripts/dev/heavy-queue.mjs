@@ -7,6 +7,8 @@
  *        [--priority 1-5] [--minutes N] [--who label] -- <command...>
  *   node scripts/dev/heavy-queue.mjs status [--json]
  *
+ * The child gets EQX_HEAVY_QUEUE=<ticket id>; heavy scripts refuse to run
+ * without it (heavy-queue-guard.mjs).
  * Env: HEAVY_QUEUE_MIN_GB (default 4; 0 skips the RAM check),
  *      HEAVY_QUEUE_DIR (override the shared dir), HEAVY_QUEUE_POLL_MS (default 2000).
  * No shebang on purpose (CRLF checkouts break vitest imports).
@@ -157,7 +159,10 @@ async function cmdRun(argv) {
 
   const waited = Date.now() - ticket.joinedAtMs;
   log(`running (waited ${fmtDur(waited)}${freeGb != null ? `, free RAM ${freeGb.toFixed(1)} GB` : ''}): ${ticket.command}`);
-  child = spawn(shellJoin(command), { stdio: 'inherit', shell: true });
+  // EQX_HEAVY_QUEUE tells the heavy scripts' guard (heavy-queue-guard.mjs) this run is queued.
+  child = spawn(shellJoin(command), {
+    stdio: 'inherit', shell: true, env: { ...process.env, EQX_HEAVY_QUEUE: ticket.id },
+  });
   const code = await new Promise((resolve) => {
     child.on('error', (e) => { log(`spawn failed: ${e.message}`); resolve(1); });
     child.on('exit', (c, sig) => resolve(c ?? (sig ? 128 + (os.constants.signals[sig] ?? 0) : 1)));

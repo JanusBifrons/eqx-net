@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { isFullPlaywrightRun, requireHeavyQueue, shellLine } from './scripts/dev/heavy-queue-guard.mjs';
 import {
   DEFAULT_BASE_URL,
   E2E_CLIENT_PORT,
@@ -235,6 +236,14 @@ const E2E_STORAGE_STATE = 'tests/e2e/.auth/e2e-storage-state.json';
 // lane: it never reuses an existing server, so a taken port fails loudly
 // instead of silently testing another worktree's stale code.
 const IS_OFFSET_LANE = E2E_PORT_OFFSET !== 0;
+
+// A full local e2e run is heavy: only through `pnpm heavy run` (or CI). Checked
+// here, before the webServers boot. Only the `playwright test` runner process
+// has `test` in argv (workers re-load this file with no args); a spec file,
+// --grep or --list makes the run light and never blocks.
+if (isFullPlaywrightRun(process.argv.slice(2))) {
+  requireHeavyQueue({ kind: 'e2e', command: `pnpm exec playwright ${shellLine(process.argv.slice(2))}` });
+}
 
 export default defineConfig({
   testDir: './tests/e2e',
