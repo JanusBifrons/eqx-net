@@ -107,7 +107,7 @@ const ALLOWLIST = {
   'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/PlayerFireResolver.ts': { cap: 766, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/SectorRoom.ts': {
-    cap: 13281,
+    cap: 12734,
     target: 450,
     reason:
       'v3 plan commits 20-23 split this into 17 collaborators (PhysicsWorkerProxy, ' +
