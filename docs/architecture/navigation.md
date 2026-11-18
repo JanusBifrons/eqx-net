@@ -95,8 +95,11 @@ left somewhere else" do.
 - Rocks grow by half a cell diagonal (`FINE_NAV_PAD`) before stamping, and the planner reads a cell's
   value less a cell diagonal (`FINE_NAV_DIAG`, ~91 u): a true lower bound anywhere in the cell, not just
   at its centre. Without it a route rated "64 u of room" ran a fighter into rock between cell centres.
-  The cost: in the packed chunks (80+ rocks) almost no cell has fighter room off the streets, so fighters
-  cross those by street; in sparse chunks they thread between rocks.
+  The cost: in the packed chunks (80+ rocks) almost no cell has fighter room. Measured 2026-11-18 (seed
+  `look`): 1.5–5.5 % of a packed chunk's cells pass a fighter (`navClearance` 30 u), about 88 % read as
+  rock. The streets (48 u at the core, 288 u at the rim) lose the 45 u pad on each side plus the 91 u
+  diagonal, so the fine layer closes them too: a fighter's route into a packed chunk ends at the nearest
+  reachable spot. In sparse chunks and outside the field fighters thread between rocks.
 - Each chunk's grid reaches 1024 u past the chunk on every side (96×96 cells, 36 KB), so a rock over
   the border counts. Clearance reads are capped at that reach (past it the coarse layer decides) and read
   -1 where the chunk is not loaded.
@@ -190,6 +193,9 @@ one it flies straight as before.
 - One request in flight per player and one per 500 game ms; excess is dropped silently. The reply is advice
   for the client's helm, not state (#16 holds: a lost reply only means asking again).
 - Player guide: [autopilot](../features/autopilot.md).
+- Netgate scenario `autopilot` (gated, slice 15): a fighter at the field's rim flies a server route round
+  a rock on the helm alone; the local prediction is held to the baseline's health. Triggered by
+  `core/nav`, `server/nav`, `core/helm`, `client/helm` and the route wire (`tests/netgate/scenarios.ts`).
 
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
@@ -220,3 +226,5 @@ one it flies straight as before.
   client `HelmRouteClient`); arrival within the hull's own size, not a fixed 20 u.
   2026-11-18 slice 14: the route line. One trace (`client/render/routeLine.ts`) for the fleet patrol
   pick and the helm course; `RenderMirror.helmCourse` carries the turns still ahead (`route`, `routeN`).
+  2026-11-18 slice 15: netgate scenario `autopilot` (the plan's D1 guard). Found while choosing its route:
+  the fine layer closes the field's streets to fighters (fine layer, above).
