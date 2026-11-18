@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { EconomyStore, STANDING_SCALE_VERSION } from './EconomyStore.js';
+import { FREE_LAUNCHES_START } from '../../shared-types/launch.js';
 import { factionLookOf, setFactionLooks, teamSigilOf } from '../../shared-types/factions.js';
 
 const P = '6a7e0000-0000-4000-8000-0000000000a1';
@@ -158,5 +159,26 @@ describe('EconomyStore teleporter tolls (T4)', () => {
     s2.hydrate({ players: [{ player_id: P, payload_json: player.payloadJson }], deals: [], market: null, treasuries: tre.payloadJson });
     expect(s2.tollPref(P, 'core')).toBe('always');
     expect(s2.treasury('traders')).toBe(42);
+  });
+});
+
+describe('EconomyStore free capital launches (join flow stage 2)', () => {
+  it('a new pilot starts with the allowance; spending persists and hydrates back', () => {
+    const { s } = store();
+    expect(s.freeLaunches(P)).toBe(FREE_LAUNCHES_START);
+    for (let i = 0; i < FREE_LAUNCHES_START; i++) expect(s.spendFreeLaunch(P)).toBe(true);
+    expect(s.spendFreeLaunch(P)).toBe(false);
+    expect(s.freeLaunches(P)).toBe(0);
+    const op = s.playerOp(P) as Extract<PersistOp, { type: 'ECON_PLAYER_PUT' }>;
+    const { s: s2 } = store();
+    s2.hydrate({ players: [{ player_id: P, payload_json: op.payloadJson }], deals: [], market: null });
+    expect(s2.freeLaunches(P)).toBe(0);
+    expect(s2.freeLaunches(Q)).toBe(FREE_LAUNCHES_START);
+  });
+
+  it('a junk saved count is clamped to the allowance', () => {
+    const { s } = store();
+    s.hydrate({ players: [{ player_id: P, payload_json: JSON.stringify({ freeLaunches: 99 }) }], deals: [], market: null });
+    expect(s.freeLaunches(P)).toBe(FREE_LAUNCHES_START);
   });
 });

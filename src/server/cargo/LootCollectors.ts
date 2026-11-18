@@ -58,6 +58,12 @@ export class LootCollectors {
     return this.d.sectorKey() !== null && this.npc(rec, c);
   }
 
+  /** Pilot `pid`'s collector (the reused scratch: read it before the next
+   *  call), or null with no live hold-carrying hull (the loot window's reach). */
+  pilotCollector(pid: string): LootCollector | null {
+    return this.d.sectorKey() !== null && this.pilot(pid, this.c) ? this.c : null;
+  }
+
   /** Fill `c` with pilot `pid`'s collector; false = none (#17: a live ACTIVE hull with a hold). */
   private pilot(pid: string, c: LootCollector): boolean {
     const ship = this.d.activeShip(pid);

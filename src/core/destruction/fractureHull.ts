@@ -29,13 +29,22 @@
  * applies only to what callers do per frame with the result, which is plain
  * read-only data).
  */
-import decomp from 'poly-decomp';
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import { ANGLE_STEPS, unitDirFromSteps } from '../geometry/unitDir.js';
 import {
-  applyExtraCuts, cutStrip, dedupe, ringArea, splitBoth, splitByLine, type FractureLine, type P,
+  applyExtraCuts, cutStrip, ringArea, splitBoth, splitByLine, type FractureLine, type P,
 } from './fractureSplit.js';
+import {
+  EDGE_CRACK, EDGE_CUT, EDGE_PRIMARY, EDGE_SECTION, FRACTURE_QUANTUM, allAtLeast, normaliseHull, q, quantiseRings, toPiece,
+  type FractureEdgeKind,
+} from './fractureRings.js';
+import { jagCutEdges, weldTJunctions } from './fractureJag.js';
+
+// Moved verbatim to the siblings (fractureRings.ts: grid, edge kinds, ring
+// helpers, piece output; fractureJag.ts: jagged cut edges); re-exported so
+// importers keep using this module.
+export { EDGE_CUT, EDGE_HULL, FRACTURE_QUANTUM, type FractureEdgeKind } from './fractureRings.js';
 
 /** Bump on ANY change to the produced geometry (rides the S2 descriptor).
  *  v2: primary break line through the kill point, seeded clean snap,
@@ -90,8 +99,6 @@ export const FRACTURE_MAX_EXTRA_CUTS = 3;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
 export const FRACTURE_SNAP_CHANCE = 0.2;
-/** Output grid: every vertex is a multiple of this. */
-export const FRACTURE_QUANTUM = 1 / 64;
 /** Hard ceiling on pieces (the S2 wire carries the piece index in a u8). */
 export const FRACTURE_MAX_PIECES = 64;
 
@@ -128,17 +135,10 @@ const FAR_MIN_LENGTH_BEAMS = 4.5;
 const FAR_CLEAR_BEAMS = 1.2;
 const FAR_END_CLEAR_BEAMS = 1.2;
 const FAR_TILT = 0.4;
-/** Jag sub-segment target length as a fraction of sqrt(hull area). */
-const JAG_SEG_FRAC = 0.02;
 /** Maximum midpoint-subdivision depth (2^depth segments per cut edge). */
 const JAG_MAX_DEPTH = 4;
 /** Midpoint displacement amplitude per level, as a fraction of the sub-segment length. */
 const JAG_ROUGHNESS = 0.22;
-/** v6: passes that straighten one broken jag per piece before giving up on
- *  a piece's jags altogether. */
-const JAG_FIX_PASSES = 48;
-/** v6: a vertex this many quanta from a cut edge lies on it (T-junction weld). */
-const WELD_TOL = 2;
 
 /** Largest tilt of the primary line off square-across-the-keel, as the
  *  keel-wise component of its (unnormalised) direction: 0.35 ≈ 19°. */
@@ -164,20 +164,6 @@ const TIP_SECTION_SPAN = 0.2;
 const SOUND_MIN_SHARE = 0.15;
 const SOUND_SHIFTS: readonly number[] = [0, 0.25, 0.5, 0.75, 1];
 
-/** Edge kinds: what made each outline edge (`FracturePiece.cutEdges`).
- *  `EDGE_HULL` (0) is the original hull outline; every other kind is a new
- *  cut, so a kind's truthiness reads as "is a cut". */
-export const EDGE_HULL = 0;
-const EDGE_VORONOI = 1;
-const EDGE_SECTION = 2;
-const EDGE_PRIMARY = 3;
-/** v6: a crack of the fan or a far crack (jagged like a Voronoi cut). */
-const EDGE_CRACK = 4;
-/** v9: a weapon's kill cut (`FractureInput.cut`): the slice line or a
- *  channel wall. Dead straight, like a section cut. */
-export const EDGE_CUT = 5;
-/** One of the `EDGE_*` kinds above. */
-export type FractureEdgeKind = number;
 /** v9: a slice that would leave a piece under the profile minimum slides
  *  toward the hull's centroid in this many equal steps (the line keeps the
  *  shot's direction). */
@@ -207,12 +193,6 @@ const SPLINTER_BRANCH_SPAN = 0.2;
  *  so a splinter reads as torn metal at capital zoom beside the dead-straight
  *  cut (film review 2026-11-15: the v9 cracks read as straight lines). */
 const SPLINTER_ROUGHNESS = 0.4;
-/** Cut edges that get jagged: Voronoi cuts, and since v6 the cracks and the
- *  primary line (cracks, not bulkheads); section cuts and kill cuts stay
- *  straight. */
-function jagged(k: number): boolean {
-  return k === EDGE_VORONOI || k === EDGE_CRACK || k === EDGE_PRIMARY;
-}
 
 export interface FractureCut {
   readonly a: Vec2;
@@ -1233,387 +1213,4 @@ function convexHullOf(ring: ReadonlyArray<{ x: number; y: number }>): Array<{ x:
   lower.pop();
   upper.pop();
   return lower.concat(upper);
-}
-
-// ───────────────────────────── quantise ─────────────────────────────
-
-function q(v: number): number {
-  return Math.round(v / FRACTURE_QUANTUM) * FRACTURE_QUANTUM;
-}
-
-function quantiseRings(rings: P[][], minArea: number): P[][] {
-  const out: P[][] = [];
-  for (const r of rings) {
-    const qr = dedupe(r.map((p) => ({ x: q(p.x), y: q(p.y), k: p.k })));
-    const clean = stripSpikes(qr);
-    if (clean.length >= 3 && ringArea(clean) > minArea) out.push(clean);
-  }
-  return out;
-}
-
-// ───────────────────────────── jagged edges ─────────────────────────────
-
-function edgeKey(ax: number, ay: number, bx: number, by: number): string {
-  const ia = Math.round(ax / FRACTURE_QUANTUM);
-  const ja = Math.round(ay / FRACTURE_QUANTUM);
-  const ib = Math.round(bx / FRACTURE_QUANTUM);
-  const jb = Math.round(by / FRACTURE_QUANTUM);
-  return ia < ib || (ia === ib && ja < jb) ? `${ia},${ja},${ib},${jb}` : `${ib},${jb},${ia},${ja}`;
-}
-
-/** Jag polyline interior points from canonical a → b (a lexicographically first). */
-function jagPoints(a: Vec2, b: Vec2, seed: number, segLen: number, maxDepth: number, roughness: number): Vec2[] {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len = Math.sqrt(dx * dx + dy * dy);
-  let depth = 0;
-  let seg = len;
-  while (seg > segLen * 2 && depth < maxDepth) {
-    seg /= 2;
-    depth++;
-  }
-  if (depth === 0) return [];
-  const N = 1 << depth;
-  const off = new Array<number>(N + 1).fill(0);
-  let h = fnvMixU32(seed ^ 0x9e3779b9, Math.round(a.x / FRACTURE_QUANTUM) >>> 0);
-  h = fnvMixU32(h, Math.round(a.y / FRACTURE_QUANTUM) >>> 0);
-  h = fnvMixU32(h, Math.round(b.x / FRACTURE_QUANTUM) >>> 0);
-  h = fnvMixU32(h, Math.round(b.y / FRACTURE_QUANTUM) >>> 0);
-  const rng = new Rng(h);
-  for (let lvl = 1; lvl <= depth; lvl++) {
-    const step = N >> lvl;
-    const amp = (roughness * len) / (1 << lvl);
-    for (let i = step; i < N; i += 2 * step) {
-      const r = rng.u32() / 4294967296;
-      off[i] = (off[i - step]! + off[i + step]!) / 2 + (r * 2 - 1) * amp;
-    }
-  }
-  const px = -dy / len;
-  const py = dx / len;
-  const pts: Vec2[] = [];
-  for (let i = 1; i < N; i++) {
-    const t = i / N;
-    pts.push({ x: q(a.x + dx * t + px * off[i]!), y: q(a.y + dy * t + py * off[i]!) });
-  }
-  return pts;
-}
-
-/**
- * v6: weld T-junctions on cut edges. A crack between a big piece and a wedge
- * that Voronoi cells split again is ONE edge on the big piece and several on
- * the wedge side, so no sub-edge was shared by exactly two pieces and the
- * crack stayed straight. Every vertex of another ring lying on a cut edge
- * (within `WELD_TOL` quanta: the vertices are already on the grid) is
- * inserted into it, so both sides list the same sub-edges. Deterministic:
- * rings and vertices in a fixed order, insertions sorted along the edge.
- */
-function weldTJunctions(rings: P[][]): P[][] {
-  const tol = WELD_TOL * FRACTURE_QUANTUM;
-  const box: Array<[number, number, number, number]> = rings.map((r) => ringBox(r));
-  const out: P[][] = [];
-  for (let ri = 0; ri < rings.length; ri++) {
-    const r = rings[ri]!;
-    const [rx0, ry0, rx1, ry1] = box[ri]!;
-    const res: P[] = [];
-    for (let i = 0; i < r.length; i++) {
-      const a = r[i]!;
-      const b = r[(i + 1) % r.length]!;
-      res.push(a);
-      if (a.k === EDGE_HULL) continue;
-      const ex = b.x - a.x;
-      const ey = b.y - a.y;
-      const l2 = ex * ex + ey * ey;
-      if (l2 === 0) continue;
-      const len = Math.sqrt(l2);
-      const ins: Array<{ t: number; x: number; y: number }> = [];
-      for (let rj = 0; rj < rings.length; rj++) {
-        if (rj === ri) continue;
-        const [sx0, sy0, sx1, sy1] = box[rj]!;
-        if (sx1 < rx0 - tol || sx0 > rx1 + tol || sy1 < ry0 - tol || sy0 > ry1 + tol) continue;
-        for (const v of rings[rj]!) {
-          if ((v.x === a.x && v.y === a.y) || (v.x === b.x && v.y === b.y)) continue;
-          const t = ((v.x - a.x) * ex + (v.y - a.y) * ey) / l2;
-          if (t <= 0 || t >= 1) continue;
-          const d = Math.abs((v.x - a.x) * ey - (v.y - a.y) * ex) / len;
-          if (d > tol) continue;
-          let dup = false;
-          for (const p of ins) if (p.x === v.x && p.y === v.y) { dup = true; break; }
-          if (!dup) ins.push({ t, x: v.x, y: v.y });
-        }
-      }
-      ins.sort((p, q) => p.t - q.t || p.x - q.x || p.y - q.y);
-      for (const p of ins) res.push({ x: p.x, y: p.y, k: a.k });
-    }
-    out.push(stripSpikes(dedupe(res)));
-  }
-  return out;
-}
-
-/** `softer` (v10, a capital cut kill): a jag that breaks a piece is first
- *  redrawn at this gentler roughness, and only straightened if that breaks
- *  a piece too. Absent: straightened at once (byte-identical to v9). */
-function jagCutEdges(rings: P[][], seed: number, scale: number, maxDepth: number, roughness: number, softer?: number): P[][] {
-  // Count each Voronoi cut edge; only edges shared by exactly two pieces are
-  // jagged, so both neighbours always draw the same line.
-  const count = new Map<string, number>();
-  for (const r of rings) {
-    for (let i = 0; i < r.length; i++) {
-      if (!jagged(r[i]!.k)) continue;
-      const b = r[(i + 1) % r.length]!;
-      const key = edgeKey(r[i]!.x, r[i]!.y, b.x, b.y);
-      count.set(key, (count.get(key) ?? 0) + 1);
-    }
-  }
-  const segLen = JAG_SEG_FRAC * scale;
-  const cache = new Map<string, Vec2[]>();
-  const straight = new Set<string>();
-  const softened = new Set<string>();
-  const build = (r: P[]): { ring: P[]; keys: string[] } => {
-    const out: P[] = [];
-    const keys: string[] = [];
-    for (let i = 0; i < r.length; i++) {
-      const a = r[i]!;
-      const b = r[(i + 1) % r.length]!;
-      out.push(a);
-      if (!jagged(a.k)) continue;
-      const key = edgeKey(a.x, a.y, b.x, b.y);
-      if (count.get(key) !== 2 || straight.has(key)) continue;
-      const forward = a.x < b.x || (a.x === b.x && a.y < b.y);
-      let pts = cache.get(key);
-      if (!pts) {
-        const rough = softened.has(key) ? softer! : roughness;
-        pts = forward ? jagPoints(a, b, seed, segLen, maxDepth, rough) : jagPoints(b, a, seed, segLen, maxDepth, rough);
-        cache.set(key, pts);
-      }
-      if (pts.length === 0) continue;
-      keys.push(key);
-      if (forward) for (let m = 0; m < pts.length; m++) out.push({ x: pts[m]!.x, y: pts[m]!.y, k: a.k });
-      else for (let m = pts.length - 1; m >= 0; m--) out.push({ x: pts[m]!.x, y: pts[m]!.y, k: a.k });
-    }
-    return { ring: stripSpikes(dedupe(out)), keys };
-  };
-  // Straighten (globally, so both sides agree) any jag that breaks a piece.
-  // v6: one edge at a time (the one with the most jag points first), so a
-  // thin wedge doesn't straighten every crack around it; after
-  // `JAG_FIX_PASSES` passes, every jag of a still-broken piece goes.
-  for (let pass = 0; pass < 2 * JAG_FIX_PASSES; pass++) {
-    let changed = false;
-    for (const r of rings) {
-      const { ring, keys } = build(r);
-      if (keys.length > 0 && !isSimpleRing(ring)) {
-        if (pass < JAG_FIX_PASSES) {
-          let best = keys[0]!;
-          for (const k of keys) if ((cache.get(k)?.length ?? 0) > (cache.get(best)?.length ?? 0)) best = k;
-          if (softer !== undefined && !softened.has(best)) {
-            softened.add(best);
-            cache.delete(best);
-          } else straight.add(best);
-        } else for (const k of keys) straight.add(k);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-  return rings.map((r) => build(r).ring);
-}
-
-// ───────────────────────────── piece output ─────────────────────────────
-
-function toPiece(r: P[]): FracturePiece {
-  const outline = r.map((p) => ({ x: p.x, y: p.y }));
-  const cutEdges = r.map((p) => p.k);
-  let a2 = 0;
-  let cx = 0;
-  let cy = 0;
-  for (let i = 0; i < outline.length; i++) {
-    const p = outline[i]!;
-    const n = outline[(i + 1) % outline.length]!;
-    const cr = p.x * n.y - n.x * p.y;
-    a2 += cr;
-    cx += (p.x + n.x) * cr;
-    cy += (p.y + n.y) * cr;
-  }
-  const area = a2 / 2;
-  return {
-    outline,
-    cutEdges,
-    convexParts: convexDecompose(outline, area),
-    area,
-    centroid: { x: cx / (3 * a2), y: cy / (3 * a2) },
-  };
-}
-
-function convexDecompose(outline: Vec2[], area: number): Vec2[][] {
-  // Strip exactly-collinear vertices (exact on the 1/64 grid).
-  const pts: [number, number][] = [];
-  const n = outline.length;
-  for (let i = 0; i < n; i++) {
-    const a = outline[(i - 1 + n) % n]!;
-    const b = outline[i]!;
-    const c = outline[(i + 1) % n]!;
-    if ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x) !== 0) pts.push([b.x, b.y]);
-  }
-  if (pts.length >= 3) {
-    decomp.makeCCW(pts);
-    const parts = decomp.quickDecomp(pts);
-    let sum = 0;
-    let convex = parts.length > 0;
-    for (const part of parts) {
-      sum += tupleArea(part);
-      if (!isConvexTuples(part)) convex = false;
-    }
-    if (convex && Math.abs(sum - area) <= Math.abs(area) * 1e-9 + 1e-9) {
-      return parts.map((part) => part.map(([x, y]) => ({ x, y })));
-    }
-  }
-  return earClip(outline);
-}
-
-/** Fallback: ear clipping (triangles are convex). Exact on the 1/64 grid. */
-function earClip(outline: Vec2[]): Vec2[][] {
-  const idx: number[] = [];
-  for (let i = 0; i < outline.length; i++) idx.push(i);
-  const tris: Vec2[][] = [];
-  let guard = outline.length * outline.length + 8;
-  while (idx.length > 3 && guard-- > 0) {
-    let clipped = false;
-    for (let i = 0; i < idx.length; i++) {
-      const a = outline[idx[(i - 1 + idx.length) % idx.length]!]!;
-      const b = outline[idx[i]!]!;
-      const c = outline[idx[(i + 1) % idx.length]!]!;
-      if (orient(a, b, c) <= 0) continue;
-      let blocked = false;
-      for (let j = 0; j < idx.length && !blocked; j++) {
-        const p = outline[idx[j]!]!;
-        if (p === a || p === b || p === c) continue;
-        if (orient(a, b, p) >= 0 && orient(b, c, p) >= 0 && orient(c, a, p) >= 0) blocked = true;
-      }
-      if (blocked) continue;
-      tris.push([{ x: a.x, y: a.y }, { x: b.x, y: b.y }, { x: c.x, y: c.y }]);
-      idx.splice(i, 1);
-      clipped = true;
-      break;
-    }
-    if (!clipped) break;
-  }
-  if (idx.length === 3) {
-    const [a, b, c] = [outline[idx[0]!]!, outline[idx[1]!]!, outline[idx[2]!]!];
-    if (orient(a, b, c) > 0) tris.push([{ x: a.x, y: a.y }, { x: b.x, y: b.y }, { x: c.x, y: c.y }]);
-  }
-  return tris;
-}
-
-// ───────────────────────────── geometry helpers ─────────────────────────────
-
-function normaliseHull(hull: ReadonlyArray<readonly [number, number]>): P[] {
-  let ring = dedupe(hull.map(([x, y]) => ({ x, y, k: EDGE_HULL })));
-  if (ringArea(ring) < 0) ring = ring.reverse();
-  return ring;
-}
-
-/** Remove zero-width spikes (b where a→b→c folds straight back). */
-function stripSpikes(r: P[]): P[] {
-  const pts = r.slice();
-  let changed = true;
-  while (changed && pts.length >= 3) {
-    changed = false;
-    for (let i = 0; i < pts.length; i++) {
-      const n = pts.length;
-      const a = pts[(i - 1 + n) % n]!;
-      const b = pts[i]!;
-      const c = pts[(i + 1) % n]!;
-      const cr = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
-      const dot = (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y);
-      if (cr === 0 && dot < 0) {
-        pts.splice(i, 1);
-        changed = true;
-        break;
-      }
-    }
-    const d = dedupe(pts);
-    if (d.length !== pts.length) {
-      pts.length = 0;
-      for (const p of d) pts.push(p);
-      changed = true;
-    }
-  }
-  return pts;
-}
-
-/** v11: every ring holds at least `min` area. */
-function allAtLeast(rings: ReadonlyArray<P[]>, min: number): boolean {
-  for (const r of rings) if (ringArea(r) < min) return false;
-  return true;
-}
-
-function tupleArea(r: ReadonlyArray<readonly [number, number]>): number {
-  let s = 0;
-  for (let i = 0; i < r.length; i++) {
-    const a = r[i]!;
-    const b = r[(i + 1) % r.length]!;
-    s += a[0] * b[1] - b[0] * a[1];
-  }
-  return s / 2;
-}
-
-function isConvexTuples(r: ReadonlyArray<readonly [number, number]>): boolean {
-  if (r.length < 3) return false;
-  let span = 0;
-  for (const p of r) span = Math.max(span, Math.abs(p[0]), Math.abs(p[1]));
-  const eps = 1e-9 * span * span;
-  for (let i = 0; i < r.length; i++) {
-    const a = r[i]!;
-    const b = r[(i + 1) % r.length]!;
-    const c = r[(i + 2) % r.length]!;
-    if ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) < -eps) return false;
-  }
-  return tupleArea(r) > 0;
-}
-
-function ringBox(r: P[]): [number, number, number, number] {
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (const p of r) {
-    if (p.x < x0) x0 = p.x;
-    if (p.y < y0) y0 = p.y;
-    if (p.x > x1) x1 = p.x;
-    if (p.y > y1) y1 = p.y;
-  }
-  return [x0, y0, x1, y1];
-}
-
-function orient(a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }): number {
-  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-}
-
-function segTouch(a: P, b: P, c: P, d: P): boolean {
-  const o1 = orient(a, b, c);
-  const o2 = orient(a, b, d);
-  const o3 = orient(c, d, a);
-  const o4 = orient(c, d, b);
-  if (((o1 > 0 && o2 < 0) || (o1 < 0 && o2 > 0)) && ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0))) return true;
-  const on = (p: P, s: P, e: P): boolean =>
-    Math.min(s.x, e.x) <= p.x && p.x <= Math.max(s.x, e.x) && Math.min(s.y, e.y) <= p.y && p.y <= Math.max(s.y, e.y);
-  return (o1 === 0 && on(c, a, b)) || (o2 === 0 && on(d, a, b)) || (o3 === 0 && on(a, c, d)) || (o4 === 0 && on(b, c, d));
-}
-
-/** Exact (on the 1/64 grid) simplicity test: no repeated vertex, no
- *  touching non-adjacent edges, positive area. O(n²); n is small. */
-function isSimpleRing(r: P[]): boolean {
-  const n = r.length;
-  if (n < 3 || ringArea(r) <= 0) return false;
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) if (r[i]!.x === r[j]!.x && r[i]!.y === r[j]!.y) return false;
-  }
-  for (let i = 0; i < n; i++) {
-    const a = r[i]!;
-    const b = r[(i + 1) % n]!;
-    for (let j = i + 2; j < n; j++) {
-      if (i === 0 && j === n - 1) continue;
-      if (segTouch(a, b, r[j]!, r[(j + 1) % n]!)) return false;
-    }
-  }
-  return true;
 }

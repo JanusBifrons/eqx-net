@@ -139,6 +139,18 @@ describe('SectorPersistence — structures survive a server restart', () => {
     expect(restored[0]!.freightOrders).toEqual(orders);
   });
 
+  it('a refinery breaking down a rock chunk keeps the chunk and its ore left through persist → hydrate', () => {
+    const chunk = { product: 'chunk:rock', quality: 0, uid: 'rc-1', weight: 250, ore: { minerals: 7000 } };
+    const struct = makeStructure({ kind: 'refinery', recipe: 'refine_rock_chunk', prodLoaded: true, prodProgress: 3, prodChunk: chunk });
+    let restored: readonly SectorSnapshotStructure[] = [];
+    const { deps } = makeDeps([struct], (rows) => { restored = rows; });
+    const persistence = new SectorPersistence(deps);
+    persistence.persist();
+    chunk.ore.minerals = 1; // the saved row is a copy, not the live chunk
+    persistence.hydrate();
+    expect(restored[0]!.prodChunk).toEqual({ product: 'chunk:rock', quality: 0, uid: 'rc-1', weight: 250, ore: { minerals: 7000 } });
+  });
+
   it('persist() skips NPC-owned structures (B2: NPC bases regenerate from their seed)', () => {
     const mine = makeStructure();
     const npc = makeStructure({ entityId: 'pstruct-8', owner: 'npc:traders:t1' });
