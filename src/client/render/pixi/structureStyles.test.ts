@@ -6,7 +6,7 @@ import { buildStructureVisual } from './structureVisuals.js';
 import { parseStructureStyle, STRUCTURE_STYLE_IDS, STRUCTURE_STYLES, structureStyleDrawer } from './structureStyles.js';
 import { insidePoly, outlinePx, polyEdgeDist } from './structureStyleKit.js';
 import { bakeKey, type BakeJob } from '../art/bake.js';
-import { readStructStyle } from '../art/artMode.js';
+import { DEFAULT_STRUCT_STYLE, readStructStyle } from '../art/artMode.js';
 import { forgeStructure, MAT, type Fields } from '../art/fields.js';
 import { structHandleFor, type ShipArtCtx } from '../art/shipArtSprites.js';
 import type { ArtHandle, ArtService } from '../art/ArtService.js';
@@ -22,11 +22,14 @@ describe('style registry', () => {
     expect(parseStructureStyle(null)).toBe('current');
     expect(parseStructureStyle('zzz')).toBe('current');
   });
-  it('readStructStyle: only a registered non-current style', () => {
+  it('readStructStyle: style c by default; off / current = the old bakes', () => {
+    expect(DEFAULT_STRUCT_STYLE).toBe('c');
     expect(readStructStyle('?art=machined&restyle=a')).toBe('a');
+    expect(readStructStyle('')).toBe(DEFAULT_STRUCT_STYLE);
+    expect(readStructStyle('?room=rig-home')).toBe(DEFAULT_STRUCT_STYLE);
+    expect(readStructStyle('?restyle=zzz')).toBe(DEFAULT_STRUCT_STYLE);
     expect(readStructStyle('?restyle=current')).toBeUndefined();
-    expect(readStructStyle('?restyle=zzz')).toBeUndefined();
-    expect(readStructStyle('')).toBeUndefined();
+    expect(readStructStyle('?restyle=off')).toBeUndefined();
   });
   it('style A restyles exactly the six outpost pieces', () => {
     expect(Object.keys(STRUCTURE_STYLES.a.kinds).sort()).toEqual([...OUTPOST].sort());

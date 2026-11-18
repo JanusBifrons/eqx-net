@@ -269,6 +269,42 @@ Locks: `artMode.test.ts`, `fields.livery.test.ts`, `shipLivery.test.ts`,
 - 2026-11-15: owner: "Land it with flag on". `b8` is the default;
   `?livery=off` turns it off.
 
+## Structure restyle look (default)
+
+The structure restyle look ships ON for every player. Each piece keeps a URL
+switch back to the old look, for tests and A/B looks only:
+
+| Piece | Default | Old look | Other values | Reader |
+|---|---|---|---|---|
+| Structure style (bakes) | `c` (shipyard brutalist) | `?restyle=off` (or `current`) | `a`, `b` | `readStructStyle` (`art/artMode.ts`) |
+| Grid line look | `cable` | `?lineLook=off` | `pipe`, `conduit` | `readLineLook` (`pixi/connectorLineLooks.ts`) |
+| Articulated rigs (Capital crane-bay pad and crane, dock crane, pop-up turret doors) | on | `?rigs=0` | | `readRigsFlag` (`pixi/structureRigs.ts`) |
+
+An absent or unknown value gets the default. The structure style is a
+Machined-art bake, so classic art (and automated browsers, which get classic
+unless they pass `?art=machined`) keeps the old structure bakes; the pad and
+crane are rig parts and draw on either art mode.
+
+**Main thread only.** The line look and the rigs are built only by the
+main-thread renderer (touch devices, `?worker=0`); the desktop render worker
+keeps the old thin line and draws no rig parts yet. The structure style
+reaches both (it is part of the art options).
+
+**Phone cost.** With rigs on, every visible rigged structure (Capital, freight
+dock, turret) gets a `StructureRigView` posed each frame: one `evaluateRig`
+(with the two-bone IK for the crane), a transform write per part and shadow,
+and a cable-pulse redraw (`Graphics.clear` + strokes) only while a crane hold
+is moving goods; off-screen structures are hidden, not posed. The first rig
+turns on `shipContainer.sortableChildren`, so Pixi re-sorts that container
+when its children change. Phone timing is owed (`pnpm perf:scenes` on a quiet
+host).
+
+**History.**
+- 2026-11-18: owner: ship the new structure look on by default for everyone
+  (the Capital's crane-bay pad and crane must always show, since ships can
+  only unload at the Capital by parking in its bay); the old look stays as a
+  test setting.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.

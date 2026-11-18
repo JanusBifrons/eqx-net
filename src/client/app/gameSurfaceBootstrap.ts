@@ -75,7 +75,7 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   if (livery) art.livery = livery;
   // Structure livery (look R&D, off by default): `?structLivery=1`.
   if (art.mode === 'machined' && readStructLivery(search)) art.structLivery = true;
-  // Structure style (look R&D, structure restyle): `?restyle=a`.
+  // Structure style (structure restyle): `c` by default, `?restyle=off` = the old bakes.
   const structStyle = art.mode === 'machined' ? readStructStyle(search) : undefined;
   if (structStyle) art.structStyle = structStyle;
   const ore = readOreLook(search); // cut-field ore look trial (F1c)

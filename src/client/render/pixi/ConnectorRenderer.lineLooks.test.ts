@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ConnectorRenderer } from './ConnectorRenderer.js';
-import { LINE_LOOKS, lineLookScale, mixColor, readLineLook } from './connectorLineLooks.js';
+import { DEFAULT_LINE_LOOK, LINE_LOOKS, lineLookScale, mixColor, readLineLook } from './connectorLineLooks.js';
 import { CONNECTOR_IDLE_ALPHA, CONNECTOR_IDLE_COLOR } from './connectorVisual.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 
@@ -33,15 +33,22 @@ interface Instr { action: string; data: { style: { color: number; alpha: number;
 const instructions = (g: { context: unknown }): Instr[] => (g.context as { instructions: Instr[] }).instructions;
 
 describe('readLineLook (structure restyle 1g)', () => {
-  it('parses the three looks and nothing else', () => {
+  it('parses the three looks; absent or unknown = the cable default', () => {
     expect(readLineLook('?lineLook=pipe')).toBe('pipe');
     expect(readLineLook('?style=machined&lineLook=cable&dpr=1')).toBe('cable');
     expect(readLineLook('&lineLook=conduit')).toBe('conduit');
-    expect(readLineLook('')).toBeNull();
-    expect(readLineLook('?lineLook=')).toBeNull();
-    expect(readLineLook('?lineLook=rope')).toBeNull();
-    expect(readLineLook('?lineLook=piped')).toBeNull();
-    expect(readLineLook('?xlineLook=pipe')).toBeNull();
+    expect(DEFAULT_LINE_LOOK).toBe('cable');
+    expect(readLineLook('')).toBe(DEFAULT_LINE_LOOK);
+    expect(readLineLook('?room=rig-home')).toBe(DEFAULT_LINE_LOOK);
+    expect(readLineLook('?lineLook=')).toBe(DEFAULT_LINE_LOOK);
+    expect(readLineLook('?lineLook=rope')).toBe(DEFAULT_LINE_LOOK);
+    expect(readLineLook('?lineLook=piped')).toBe(DEFAULT_LINE_LOOK);
+    expect(readLineLook('?xlineLook=pipe')).toBe(DEFAULT_LINE_LOOK);
+  });
+  it('lineLook=off picks the old thin line', () => {
+    expect(readLineLook('?lineLook=off')).toBeNull();
+    expect(readLineLook('?room=x&lineLook=off&dpr=1')).toBeNull();
+    expect(readLineLook('?lineLook=offx')).toBe(DEFAULT_LINE_LOOK);
   });
 
   it('blends colours and floors the size when zoomed out', () => {

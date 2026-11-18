@@ -398,7 +398,7 @@ export class PixiRenderer implements IRenderer {
   /** Dying capitals drawn at their last pose until their wreck pieces are
    *  (capital-breakup take B, 2026-11-13: the hull vanished ~0.5 s first). */
   private readonly _dyingHulls = new DyingHullHold();
-  /** Structure restyle 2c (`?rigs=1`, main thread): rig views, posed from each
+  /** Structure restyle 2c (default on, `?rigs=0` off; main thread): rig views, posed from each
    *  structure row's `rigClip` (2e). Null with the flag off. */
   structureRigs: StructureRigs | null = null;
   /** Sprite key → the ship kind it was built for (every ship, swarm).
@@ -942,7 +942,7 @@ export class PixiRenderer implements IRenderer {
     // lines render BEHIND the structure/ship sprites added later.
     this.connectorRenderer = new ConnectorRenderer(this._cutField);
     this.connectorRenderer.setTurretOverlaysVisible(this._lockMarksVisible);
-    // Structure restyle 1g line looks (look R&D; main-thread renderer only): `?lineLook=pipe|cable|conduit`.
+    // Structure restyle 1g line looks (main-thread renderer only): default cable, `?lineLook=off|pipe|conduit`.
     if (isDom) this.connectorRenderer.lineLook = readLineLook(window.location.search);
     // A3 — the static layer (idle web, range rings, wall rails) sits behind the
     // per-frame layer.
@@ -1026,7 +1026,7 @@ export class PixiRenderer implements IRenderer {
       }, () => wreckRippleCap(this.effects?.getQuality() ?? 'medium'), () => this.effects?.getQuality() ?? 'medium'),
       dyingHulls: this._dyingHulls,
     };
-    // Structure restyle 2c rig parts (look R&D; main-thread renderer only): `?rigs=1`.
+    // Structure restyle 2c rig parts (main-thread renderer only): on by default, `?rigs=0` off.
     if (isDom && readRigsFlag(window.location.search)) {
       this.structureRigs = new StructureRigs(this.shipContainer);
       this._swarmUpdaterCtx.structureRigs = this.structureRigs;

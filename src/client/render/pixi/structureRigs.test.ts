@@ -80,13 +80,15 @@ function labelsUnder(c: Container, out: string[] = []): string[] {
 }
 
 describe('readRigsFlag', () => {
-  it('is on only for rigs=1', () => {
+  it('is on by default; only rigs=0 turns it off', () => {
+    expect(readRigsFlag('')).toBe(true);
+    expect(readRigsFlag('?room=rig-home')).toBe(true);
     expect(readRigsFlag('?rigs=1')).toBe(true);
     expect(readRigsFlag('?style=machined&rigs=1&x=2')).toBe(true);
-    expect(readRigsFlag('')).toBe(false);
     expect(readRigsFlag('?rigs=0')).toBe(false);
-    expect(readRigsFlag('?rigs=10')).toBe(false);
-    expect(readRigsFlag('?norigs=1')).toBe(false);
+    expect(readRigsFlag('?style=machined&rigs=0&x=2')).toBe(false);
+    expect(readRigsFlag('?rigs=01')).toBe(true);
+    expect(readRigsFlag('?norigs=0')).toBe(true);
   });
 });
 

@@ -3,8 +3,8 @@
  * Drawing helpers for `ConnectorRenderer` (not a renderer of their own): the
  * steady body of each look goes on its static layer (rebuilt only when the web
  * or zoom changes), the flow on its per-frame layer (only while an edge is
- * carrying flow, as today). Absent flag ⇒ `ConnectorRenderer` keeps today's
- * thin line, untouched.
+ * carrying flow, as today). Default `cable`; `?lineLook=off` ⇒
+ * `ConnectorRenderer` keeps the old thin line, untouched.
  *
  * Lines stay pass-through and draw under ships (same layer as today). Colours
  * stay the connector palette: the idle blue tints the body, the per-material
@@ -19,10 +19,15 @@ import { CONNECTOR_IDLE_COLOR, cometSegment, type CometSegment, type ConnectorVi
 export type LineLook = 'pipe' | 'cable' | 'conduit';
 export const LINE_LOOKS: readonly LineLook[] = ['pipe', 'cable', 'conduit'];
 
-/** `?lineLook=pipe|cable|conduit`, or null (today's line). */
+/** The line look every player sees (owner, structure restyle: on by default). */
+export const DEFAULT_LINE_LOOK: LineLook = 'cable';
+
+/** `?lineLook=pipe|cable|conduit`; `?lineLook=off` = null (the pre-restyle
+ *  thin line); absent or unknown = `DEFAULT_LINE_LOOK`. */
 export function readLineLook(search: string): LineLook | null {
-  const m = /[?&]lineLook=(pipe|cable|conduit)\b/.exec(search);
-  return m ? (m[1] as LineLook) : null;
+  const m = /[?&]lineLook=(pipe|cable|conduit|off)\b/.exec(search);
+  if (m === null) return DEFAULT_LINE_LOOK;
+  return m[1] === 'off' ? null : (m[1] as LineLook);
 }
 
 /** Blend two 0xRRGGBB colours (`t` = 0 ⇒ `a`). */
