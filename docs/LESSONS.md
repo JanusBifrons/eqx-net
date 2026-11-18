@@ -3180,3 +3180,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** the resting touch stick fades to 40 % opacity, and a dark wash added to its own background faded with it, so the ring stayed invisible over bright asteroid rock however dark the wash was.
 - **Rule:** a readability backing goes on its own element beside the faded one (`FloatingStick`'s `-backing` layer moves with the ring but keeps full opacity); HUD panels use `HUD.color.panel` (0.72) so they read over rock.
+
+## 2026-11-18 — a new placement rule silently drops hand-written layouts
+
+- **Finding:** the Capital gained a crane bay pad (`keepClear`), and every prebuilt layout with a relay or solar just north of a rot-0 Capital lost those structures at room seed (`overlap-pad`, a log line only): the scenario, gate, wave, defence and homestead bases ran short and some gates went unpowered.
+- **Rule:** after changing a footprint, a pad or `placementRejection`, run `src/server/rooms/prebuiltLayouts.test.ts`; it seeds every exported layout through the real placement seam. Prefer turning the Capital (`rot`) so its pad faces open space over moving the base.

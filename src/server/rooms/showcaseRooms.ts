@@ -219,16 +219,18 @@ export const SHOWCASE_DEFENCE_OPTS = {
     // Phase V footprints (Capital ±280): four relays round the Capital, a
     // solar on each side relay + a solar and battery north, the two turrets on
     // the south relay, and the shield wall across the southern approach (each
-    // pylon taps a side relay; the pair links across the gap).
+    // pylon taps a side relay; the pair links across the gap). Every side is
+    // in use, so the north relay, solar and battery sit just past the
+    // Capital's crane bay pad (its +y `keepClear`, y 290..530) instead.
     { kind: 'capital', x: 0, y: 0 },
     { kind: 'connector', x: 400, y: 0 },
     { kind: 'connector', x: -400, y: 0 },
-    { kind: 'connector', x: 0, y: 400 },
+    { kind: 'connector', x: 0, y: 570 },
     { kind: 'connector', x: 0, y: -400 },
     { kind: 'solar', x: 650, y: 0 },
     { kind: 'solar', x: -650, y: 0 },
-    { kind: 'solar', x: -250, y: 470 },
-    { kind: 'battery', x: 230, y: 470 },
+    { kind: 'solar', x: -250, y: 640 },
+    { kind: 'battery', x: 230, y: 640 },
     { kind: 'shield_pylon', x: -300, y: -560 },
     { kind: 'shield_pylon', x: 300, y: -560 },
     { kind: 'laser_bolt_turret', x: -150, y: -400 },

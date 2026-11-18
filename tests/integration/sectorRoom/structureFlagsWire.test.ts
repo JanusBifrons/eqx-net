@@ -36,7 +36,7 @@ describe('SectorRoom integration — structure flag bits reach clients (all kind
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
       prebuiltStructures: [
-        { kind: 'capital', x: 0, y: 0 }, { kind: 'connector', x: 0, y: 350 },
+        { kind: 'capital', x: 0, y: 0, rot: 180 }, { kind: 'connector', x: 0, y: 350 },
         { kind: 'reactor', x: 800, y: 800 }, { kind: 'miner', x: -180, y: 420 },
       ],
       prebuiltStructuresOwner: owner,
