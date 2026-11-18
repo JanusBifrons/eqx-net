@@ -12,11 +12,15 @@
  * The standard powered grid ("structure scenario"):
  *
  *           Solar NW (-250, 400)   Connector N (0, 350)   Solar NE (250, 400)
- *                                   Capital (0, 0)
+ *                    Bay  Capital (0, 0) rot 90
  *           Miner SW (-200, -420)  Connector S (0, -350)  Turret SE (150, -400)
  *
  *   Capital 50 + 2 Solars 60 − Miner 60 − Turret 15 = +35 ⇒ powered.
  *   An asteroid sits in the Miner's range; a drone in the Turret's range.
+ *   The Capital is turned 90° so its crane bay (structure-restyle 3i, its
+ *   `keepClear` pad) opens WEST onto empty space: at rot 0 the pad covers
+ *   Connector N and both Solars and placement drops them (`overlap-pad`).
+ *   `prebuiltLayouts.test.ts` guards every layout here.
  */
 
 export interface LayoutPoint {
@@ -29,7 +33,8 @@ export interface LayoutPoint {
  * it, side by side. The WEST gate opens for anyone not hostile; the EAST gate
  * opens for its owner only — and the owner is `scenario`, so a visiting pilot
  * is locked out. Ships spawned south of a gate and flown north (+y) test both.
- * Power: Capital 50 + Solar 30 = 80 ≥ 2 gates × 30.
+ * Power: Capital 50 + Solar 30 = 80 ≥ 2 gates × 30. The Capital is turned 90°
+ * so its crane bay pad (west) clears the north Connector and Solar.
  */
 export const GATE_TEST = {
   openGate: { x: -400, y: -900 },
@@ -37,7 +42,7 @@ export const GATE_TEST = {
 } as const;
 
 export const GATE_TEST_PREBUILT = [
-  { kind: 'capital', x: 0, y: 0 },
+  { kind: 'capital', x: 0, y: 0, rot: 90 },
   { kind: 'connector', x: 0, y: 350 },
   { kind: 'solar', x: 250, y: 400 },
   { kind: 'connector', x: 0, y: -350 },
@@ -46,7 +51,8 @@ export const GATE_TEST_PREBUILT = [
 ] as const;
 
 export const SCENARIO = {
-  capital: { x: 0, y: 0 },
+  /** Turned 90°: its crane bay pad faces west, centre world (-410, 0). */
+  capital: { x: 0, y: 0, rot: 90 },
   connectorN: { x: 0, y: 350 },
   connectorS: { x: 0, y: -350 },
   solarNE: { x: 250, y: 400 },
