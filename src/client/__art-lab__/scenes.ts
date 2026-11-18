@@ -315,16 +315,20 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40): Scene {
       // Join flow — one ship, centred and posed, for the Hangar's baked ship
       // pictures (`pnpm ships:portraits`). `?kind=` picks the hull; `?zm=`
       // scales the fit (capitals render small in the lab, so they zoom in);
-      // `?th=` is engine thrust (0 hides a capital's detached engine glows).
+      // `?th=` is engine thrust (0 hides a capital's detached engine glows);
+      // `?cz=` sets the camera zoom outright (capitals share one, to scale);
+      // `?rot=` turns the hull (radians; a long capital lies corner to corner).
       const q = new URLSearchParams(location.search);
       const kid = q.get('kind') ?? 'fighter';
       const zm = q.has('zm') ? Number(q.get('zm')) : 1;
       const th = q.has('th') ? Number(q.get('th')) : 0.6;
+      const cz = q.has('cz') ? Number(q.get('cz')) : 0;
+      const rot = q.has('rot') ? Number(q.get('rot')) : -0.6;
       const fit = Math.min(SHEET_W, SHEET_H) * 0.9 / (shipExtent(kid) * 2.4);
       return {
-        ships: [{ id: kid, trail: false, pose: (_t: number, o: Pose) => { o.x = 0; o.y = 0; o.rot = -0.6; o.thrust = th; } }],
+        ships: [{ id: kid, trail: false, pose: (_t: number, o: Pose) => { o.x = 0; o.y = 0; o.rot = rot; o.thrust = th; } }],
         structs: [], booms: [], duration: 8,
-        camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = fit * zm; },
+        camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = cz > 0 ? cz : fit * zm; },
       };
     }
     case 'fleet':

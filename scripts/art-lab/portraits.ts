@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium, type Page } from '@playwright/test';
-import { PORTRAIT_KINDS, portraitFraming } from '../../src/client/render/art/shipPortraits.js';
+import { PORTRAIT_KINDS, portraitQuery } from '../../src/client/render/art/shipPortraits.js';
 
 const args = process.argv.slice(2);
 const flag = (k: string): string | undefined => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; };
@@ -79,8 +79,7 @@ async function main(): Promise<void> {
     const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
     let bytes = 0;
     for (const kind of kinds) {
-      const { zm, th } = portraitFraming(kind);
-      await open(page, `style=machined&scene=portrait&kind=${kind}&zm=${zm}&th=${th}`);
+      await open(page, portraitQuery(kind));
       await page.evaluate((m) => (window as unknown as { __artlab: { seek(ms: number): void } }).__artlab.seek(m), 2000);
       await page.waitForTimeout(300);
       if ((await litPixels(page)) < 3) throw new Error(`blank portrait: ${kind}`);
@@ -95,10 +94,13 @@ async function main(): Promise<void> {
     await browser.close();
     console.log(`${kinds.length} pictures, ${(bytes / 1024).toFixed(0)} KB total -> ${OUT}`);
   } finally {
-    vite.kill();
+    // Windows: kill the whole tree FIRST. Killing the shell first orphans
+    // vite (taskkill /T then finds no tree), which keeps the port and, via its
+    // inherited pipes, keeps this script from exiting.
     if (process.platform === 'win32' && vite.pid) {
       try { execFileSync('taskkill', ['/pid', String(vite.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* gone */ }
     }
+    vite.kill();
     rmSync(tmp, { recursive: true, force: true });
   }
 }

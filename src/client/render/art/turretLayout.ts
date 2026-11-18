@@ -18,8 +18,9 @@ import { getWeapon, type WeaponId } from '../../../core/combat/WeaponCatalogue.j
 import { familyFor, type TurretFamily } from './fx/turretFx.js';
 import {
   isChinMount, navalTurret, shipBarrelLength, shipBarrelWidth, shipCapRadius, shipMountMuzzle, structureMountMuzzle,
-  structureNavalTurret, structureTurretMuzzle, structureTurretRadius,
+  structureNavalTurret, structureTurretMuzzle, structureTurretRadius, NAVAL_BARREL_SPAN,
 } from '../../../core/combat/muzzle.js';
+import type { BakeJob } from './bake.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 
 export interface TurretPlace {
@@ -108,6 +109,39 @@ export function structureTurrets(kindId: string): TurretPlace[] {
     const cap = R * 0.34;
     return { mount: m, family, px: m.localX, py: -m.localY, len: R * 0.68, wid: R * 0.13, cap, ring: cap * 1.3, chin: false, muzzle };
   });
+}
+
+/** A gun's bake job (`bake.ts` `turret`). */
+export type TurretBakeJob = Extract<BakeJob, { type: 'turret' }>;
+
+/**
+ * The bake jobs for a turret's turning gun: the gun (for a multi-barrel naval
+ * AA mount, its gunhouse only) and, for that AA mount, one barrel job drawn
+ * at each of `xs` across the house. One source for the game
+ * (`MountVisualManager`) and the art lab's ship pictures.
+ */
+export function turretBakeJobs(
+  place: TurretPlace, paint: number, structure: boolean,
+): { gun: TurretBakeJob; aa: { job: TurretBakeJob; xs: Float32Array } | null } {
+  const base = { type: 'turret' as const, id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap };
+  // Capital naval turrets are big: bake them at a density that keeps the
+  // long side near 160 px (plenty at play zoom), or a capital fleet blows
+  // the texture budget (capital R&D, measured 365 MB at the fighter ppu).
+  const navalPpu = place.naval ? Math.min(6, 160 / (place.naval.houseL / 2 + place.len)) : 0;
+  const aaHouse = !!place.naval && place.naval.barrels > 1 && place.mount.size === 'AA';
+  const gun: TurretBakeJob = {
+    ...base,
+    // Structure naval guns (coastal defences) follow the naval rule too.
+    // A big non-naval gun (a barge emitter) keeps its long side near 600 px.
+    ppu: place.naval ? navalPpu : structure ? 2.5 : Math.min(6, 600 / Math.max(1, place.len + place.cap)),
+    ...(place.naval ? { naval: aaHouse ? { ...place.naval, part: 'house' as const } : place.naval } : {}),
+  };
+  if (!aaHouse || !place.naval) return { gun, aa: null };
+  const n = place.naval.barrels;
+  const pitch = (place.naval.houseW * NAVAL_BARREL_SPAN) / (n - 1);
+  const xs = new Float32Array(n);
+  for (let k = 0; k < n; k++) xs[k] = (k - (n - 1) / 2) * pitch;
+  return { gun, aa: { job: { ...base, ppu: navalPpu, naval: { ...place.naval, part: 'barrel' } }, xs } };
 }
 
 /** Distance from the pivot to where the shot leaves (the gun tip). */

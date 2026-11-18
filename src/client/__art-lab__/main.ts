@@ -22,11 +22,16 @@ import type { ArtService } from '../render/art/ArtService.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../render/pixi/spriteBuilders.js';
-import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
+import { ArtCache, PIXEL_ROT_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
 import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
 import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipShader.js';
+import { MachinedShipSprite } from '../render/art/MachinedShipSprite.js';
+import { isCapitalKind } from '../render/art/bake.js';
+import { applySunBlend } from '../render/art/machinedShipLight.js';
+import { hasTurrets, shipTurrets, turretBakeJobs } from '../render/art/turretLayout.js';
+import { shipPrimaryColor } from '../../core/geometry/shipHullOutline.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
 
 type Style = 'current' | 'machined' | 'pixel' | 'lit';
@@ -52,6 +57,16 @@ const PIX: PixelSettings = {
   dither: qs.has('dither') ? Number(qs.get('dither')) : 0.35,
   outline: qs.get('outline') !== '0',
 };
+/** `?turrets=1` (machined): draw each hull's turrets as the game does (ring
+ *  cut into the hull bake, the baked gun at its mount's resting angle). The
+ *  Hangar's ship pictures use it. */
+const TURRETS = qs.get('turrets') === '1' && STYLE === 'machined';
+const turreted = (id: string): boolean => TURRETS && hasTurrets(id, false);
+/** The guns a turreted hull draws: bake jobs + where each sits. */
+function gunsOf(id: string, paint: number | undefined): Array<{ px: number; py: number; rot: number; jobs: ReturnType<typeof turretBakeJobs> }> {
+  const color = paint ?? shipPrimaryColor(getShipKind(id));
+  return shipTurrets(id).map((p) => ({ px: p.px, py: p.py, rot: -p.mount.baseAngle, jobs: turretBakeJobs(p, color, false) }));
+}
 const TRAIL = 9;
 const TRAIL_DT = 0.045;
 
@@ -140,6 +155,10 @@ interface ShipView {
   a: Sprite;
   b: Sprite;
   gfx: Graphics | null;
+  /** Machined: the hull (the game's sprite; tiles a capital). */
+  hull?: MachinedShipSprite;
+  /** `?turrets=1`: the hull's guns, posed with it (sun frames per gun). */
+  guns?: { root: Container; layers: Array<{ a: Sprite; b: Sprite; frames: Texture[]; rot: number }> };
   /** `lit` style: the GPU-lit hull. */
   lit?: LitShipMesh;
   /** `lit` style: a big hull that shades others (box half size, height). */
@@ -229,7 +248,10 @@ async function main(): Promise<void> {
   if (MACHINED && qs.get('workers') !== '0') {
     const jobs: BakeJob[] = [];
     for (const st of scene.structs) jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed) });
-    for (const sh of scene.ships) jobs.push({ type: 'ship', id: sh.id, paint: sh.paint });
+    for (const sh of scene.ships) {
+      jobs.push({ type: 'ship', id: sh.id, paint: sh.paint, ...(turreted(sh.id) ? { rings: true } : {}) });
+      if (turreted(sh.id)) for (const g of gunsOf(sh.id, sh.paint)) { jobs.push(g.jobs.gun); if (g.jobs.aa) jobs.push(g.jobs.aa.job); }
+    }
     await cache.prebake(jobs, Number(qs.get('workers') ?? 4), qs.get('persist') !== '0');
   }
 
@@ -358,9 +380,30 @@ async function main(): Promise<void> {
       }
       shipL.addChild(v.lit);
     } else if (STYLE === 'machined') {
-      v.art = cache.machinedShip(e.id, e.paint);
-      v.a.scale.set(1 / v.art.density); v.b.scale.set(1 / v.art.density);
-      shipL.addChild(v.a, v.b);
+      v.art = cache.machinedShip(e.id, e.paint, turreted(e.id));
+      // The game's hull sprite: it draws a tiled capital whole (every tile,
+      // the capital sun steps), where a lone frame pair showed only the bow.
+      v.hull = new MachinedShipSprite(v.art, isCapitalKind(e.id));
+      shipL.addChild(v.hull);
+      if (turreted(e.id)) {
+        const root = new Container();
+        const layers: NonNullable<ShipView['guns']>['layers'] = [];
+        for (const g of gunsOf(e.id, e.paint)) {
+          const pivot = new Container();
+          pivot.position.set(g.px, g.py);
+          pivot.rotation = g.rot;
+          root.addChild(pivot);
+          const put = (art: { frames: Texture[]; density: number }, x: number): void => {
+            const a = new Sprite(art.frames[0]!), b = new Sprite(art.frames[1 % art.frames.length]!);
+            for (const sp of [a, b]) { sp.anchor.set(0.5); sp.scale.set(1 / art.density); sp.x = x; pivot.addChild(sp); }
+            layers.push({ a, b, frames: art.frames, rot: g.rot });
+          };
+          put(cache.machinedTurret(g.jobs.gun), 0);
+          if (g.jobs.aa) { const aa = cache.machinedTurret(g.jobs.aa.job); for (const x of g.jobs.aa.xs) put(aa, x); }
+        }
+        v.hull.addChild(root); // guns ride the hull, as the game parents them
+        v.guns = { root, layers };
+      }
     } else {
       for (const b of bands) v.bandArt[b + BAND_OFFSET] = cache.pixelShip(e.id, Math.pow(2, b / 4), PIX, e.paint);
       v.art = v.bandArt[[...bands][0]! + BAND_OFFSET]!;
@@ -463,14 +506,10 @@ async function main(): Promise<void> {
         v.lit.position.set(p.x, p.y); v.lit.rotation = p.rot;
         if (v.occ) litScene.addOccluder(v.lit.occluderId, p.x, p.y, p.rot, v.occ.hx, v.occ.hy, v.occ.h, v.occ.color, 0.8);
       } else if (STYLE === 'machined') {
-        const localAz = cache.rig.sunAz - p.rot;
-        let u = (localAz / (Math.PI * 2)) * SUN_STEPS;
-        u = ((u % SUN_STEPS) + SUN_STEPS) % SUN_STEPS;
-        const j0 = Math.floor(u), fr = u - j0;
-        v.a.texture = art.frames[j0]!; v.b.texture = art.frames[(j0 + 1) % SUN_STEPS]!;
-        v.b.alpha = fr;
-        v.a.position.set(p.x, p.y); v.b.position.set(p.x, p.y);
-        v.a.rotation = p.rot; v.b.rotation = p.rot;
+        const hull = v.hull!;
+        hull.position.set(p.x, p.y); hull.rotation = p.rot;
+        hull.updateLight(cache.rig.sunAz);
+        if (v.guns) for (const l of v.guns.layers) applySunBlend(l, l.frames, cache.rig.sunAz, p.rot + l.rot);
       } else {
         let k = Math.round((p.rot / (Math.PI * 2)) * PIXEL_ROT_STEPS);
         k = ((k % PIXEL_ROT_STEPS) + PIXEL_ROT_STEPS) % PIXEL_ROT_STEPS;

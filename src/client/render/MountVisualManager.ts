@@ -39,7 +39,7 @@
 import { Container, Graphics, Matrix, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
-import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
+import { muzzleReach, shipTurrets, structureTurrets, turretBakeJobs, type TurretPlace } from './art/turretLayout.js';
 import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff, railGeom, railHeatAt, railVentPuff, railVentPuffs, RAIL_VENTS, RAIL_FLASH_LIGHT, RAIL_FLASH_TINT, type RailGeom, type RailPuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
@@ -747,31 +747,11 @@ export class MountVisualManager {
     pivot.position.set(place.px, place.py);
     pivot.rotation = -mount.baseAngle;
     container.addChild(pivot);
-    const handle = actx.art.acquire({
-      // Capital naval turrets are big: bake them at a density that keeps the
-      // long side near 160 px (plenty at play zoom), or a capital fleet blows
-      // the texture budget (capital R&D, measured 365 MB at the fighter ppu).
-      type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap,
-      // Structure naval guns (coastal defences) follow the naval rule too.
-      // A big non-naval gun (a barge emitter) keeps its long side near 600 px.
-      ppu: place.naval ? Math.min(6, 160 / (place.naval.houseL / 2 + place.len)) : structure ? 2.5 : Math.min(6, 600 / Math.max(1, place.len + place.cap)),
-      ...(place.naval ? { naval: place.naval.barrels > 1 && mount.size === 'AA' ? { ...place.naval, part: 'house' as const } : place.naval } : {}),
-    });
-    let aa: AaBarrels | null = null;
-    if (place.naval && mount.size === 'AA' && place.naval.barrels > 1) {
-      const n = place.naval.barrels;
-      const pitch = (place.naval.houseW * NAVAL_BARREL_SPAN) / (n - 1);
-      const xs = new Float32Array(n);
-      for (let k = 0; k < n; k++) xs[k] = (k - (n - 1) / 2) * pitch;
-      aa = {
-        handle: actx.art.acquire({
-          type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap,
-          ppu: Math.min(6, 160 / (place.naval.houseL / 2 + place.len)),
-          naval: { ...place.naval, part: 'barrel' },
-        }),
-        xs, shot: new Float64Array(n).fill(-9), sprites: null, last: -1,
-      };
-    }
+    const jobs = turretBakeJobs(place, paint, structure);
+    const handle = actx.art.acquire(jobs.gun);
+    const aa: AaBarrels | null = jobs.aa
+      ? { handle: actx.art.acquire(jobs.aa.job), xs: jobs.aa.xs, shot: new Float64Array(jobs.aa.xs.length).fill(-9), sprites: null, last: -1 }
+      : null;
     const reach = muzzleReach(place);
     const w = isWeaponId(mount.weaponId) ? getWeapon(mount.weaponId) : null;
     const travel = w && w.mode !== 'hitscan' ? w.speed * SHOT_FIRST_SEEN_S : 0;
