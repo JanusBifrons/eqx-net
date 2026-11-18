@@ -104,6 +104,26 @@ describe('a salvage lock ends with its lineage, not its piece', () => {
     expect(h.keys('tractor'), 'no piece left: the tractors end (pods are not the lineage)').toEqual([]);
   });
 
+  it('a cut into pieces no tractor can pull and ore pods: the tractor locks go to the pods, the laser locks to the pieces', () => {
+    // Seen in the barge-mining take (CI 2026-11-18): the tractors' locks followed each cut onto the
+    // biggest pieces (too big for any tractor) and stayed there while the pods dropped beside them sat
+    // unpulled, until the drifting pieces knocked a pod out of every tractor's reach for good.
+    const { h, pieces } = cut();
+    const tractorLocked = h.keys('tractor');
+    expect(tractorLocked.length, 'the tractors hold pieces of the first cut (no pod yet)').toBeGreaterThan(0);
+    const from = tractorLocked[0]!;
+    const bits = ['s:21', 's:22', 's:23'];
+    const pods = ['s:201', 's:202'];
+    for (const k of bits) h.add(k);
+    for (const k of pods) h.add(k, true);
+    h.locks.targetSplit(from, [...bits, ...pods], pods.length);
+    h.targets.delete(from);
+    h.locks.step();
+    expect(h.keys('tractor').filter((k) => pods.includes(k)), 'a tractor lock moved onto a pod it can pull').not.toEqual([]);
+    expect(h.keys('tractor').filter((k) => bits.includes(k)), 'no tractor lock moved onto a piece it cannot pull').toEqual([]);
+    for (const k of h.keys('laser')) expect([...pieces, ...bits], `laser lock ${k} is on a piece`).toContain(k);
+  });
+
   it('a held piece leaving with no split (taken in, or gone): the group moves on to a sibling it did not hold', () => {
     const { h } = cut();
     const before = h.keys('laser');
