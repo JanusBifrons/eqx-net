@@ -72,7 +72,7 @@ async function boot(poses: Array<{ kind: string; x: number; y: number; angle: nu
 interface KiteStats { n: number; ok: number; kite: number; running: number; runFast: number; minD: number }
 
 async function kiteScene(harness: SectorTestHarness, room: Room, me: string, foe: string, b: HostileDroneBehaviour, bandMin: number, ms: number): Promise<KiteStats> {
-  const kite = (b as unknown as { _kite: { running: boolean } })._kite;
+  const kite = (b as unknown as { _decide: { kite: { running: boolean } } })._decide.kite;
   const cruise = b.getCruiseSpeed();
   await harness.advance(1000);
   const s: KiteStats = { n: 0, ok: 0, kite: 0, running: 0, runFast: 0, minD: Infinity };

@@ -161,11 +161,12 @@ export class StorageService {
   }
 
   /** Nearest OPERATIONAL storage owned by `owner` within `range` of (x, y). */
-  nearestOwnStorage(owner: string, x: number, y: number, range = DEPOSIT_RANGE): StructureRecord | null {
+  nearestOwnStorage(owner: string, x: number, y: number, range = DEPOSIT_RANGE, autoUnload = false): StructureRecord | null {
     let best: StructureRecord | null = null;
     let bestD2 = range * range;
     for (const rec of this.d.registry.all()) {
       if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
+      if (autoUnload && rec.acceptAutoUnload === false) continue; // cargo pods 14c: refuses auto-unload
       const d2 = (rec.x - x) ** 2 + (rec.y - y) ** 2;
       if (d2 <= bestD2) { bestD2 = d2; best = rec; }
     }
