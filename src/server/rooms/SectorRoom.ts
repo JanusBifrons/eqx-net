@@ -28,8 +28,7 @@ import { getTradeSink } from '../economy/tradeSink.js';
 import type { TradeNetworkSnapshot, TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import type { TradeNotice } from '../../shared-types/economy.js';
 import { MineState, SectorState, ShipState, StructureState } from './schema/SectorState.js';
-import { MineFieldSubsystem, type MineRecord, type MineTarget } from '../structures/MineFieldSubsystem.js';
-import { MINE_BLAST_RADIUS, MINE_CLEARANCE, MINE_DAMAGE, type MineDetonated } from '../../shared-types/mines.js';
+import { MineFieldSubsystem, type MineTarget } from '../structures/MineFieldSubsystem.js';
 import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import {
   STRUCTURE_ETA_NONE,
@@ -72,9 +71,8 @@ import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPose
 import type { FleetOrder } from '../../shared-types/messages/fleetStatusMessages.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
-import { mountPriority, targetClass, targetClassOfKind, STRUCTURE_TARGET_CLASS } from '../../core/combat/mountTargeting.js';
+import { mountPriority, targetClassOfKind, STRUCTURE_TARGET_CLASS } from '../../core/combat/mountTargeting.js';
 import { decodeAim } from '../../core/combat/manualAim.js';
-import type { TurretTargetView } from '../structures/StructureMountTicker.js';
 import { isFriendly, isOnSightHostile, PLAYERS_SIDE } from '../../shared-types/allegiances.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
@@ -105,7 +103,6 @@ import { GATE_SPAN_THICKNESS, isShieldEmitterKind, gateTypeOf } from '../../core
 import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
-import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
 import { CARGO_ACCESS_RANGE, MAX_FREIGHT_ORDERS, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
@@ -181,7 +178,6 @@ import {
   factionDisplayName,
   factionLooksWelcomeField,
   isNpcFactionId,
-  policyActsOnStanding,
   type FactionPolicy,
 } from '../../shared-types/factions.js';
 import type { FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
@@ -263,6 +259,8 @@ import { LeaveHandler } from './LeaveHandler.js';
 import { JoinHandler } from './join/JoinHandler.js';
 import { TeleportTolls } from './features/teleportTolls.js';
 import { BreakInHooks } from './features/breakInHooks.js';
+import { TurretTargeting } from './features/turretTargeting.js';
+import { MineHooks } from './features/mineHooks.js';
 import {
   ALLOW_DEV_OVERRIDES,
   CLIENT_READY_TIMEOUT_TICKS,
@@ -393,7 +391,7 @@ import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { landingReach } from '../../shared-types/shipScale/landingReach.js';
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
-import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
+import { mayBeInReach, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
 import { rockViewOf } from './rockCut.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
@@ -2828,9 +2826,9 @@ export class SectorRoom extends Room<SectorState> {
       takeGoods: (rec, goods) => this.production.takeGoods(rec, goods),
       // Allegiances P0: base turrets defend against combat allegiances (drones,
       // robots) but never open fire on NEUTRAL traders (their haulers).
-      findNearestDrone: (x, y, range, owner) => this.findNearestTurretTarget(x, y, range, owner),
+      findNearestDrone: (x, y, range, owner) => this.turretTargeting.findNearestTurretTarget(x, y, range, owner),
       // Coastal defences — every hostile in reach, for per-mount fire control.
-      turretTargets: (x, y, range, owner, out) => this.collectTurretTargets(x, y, range, owner, out),
+      turretTargets: (x, y, range, owner, out) => this.turretTargeting.collectTurretTargets(x, y, range, owner, out),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       // Friendly fire: a turret beam lands on the first thing in its path.
@@ -2896,9 +2894,9 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
       takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
-      isClear: (x, y) => this.mineSpotClear(x, y),
+      isClear: (x, y) => this.mineHooks.mineSpotClear(x, y),
       findHostile: (x, y, range, owner) => {
-        const t = this.findNearestTurretTarget(x, y, range, owner);
+        const t = this.turretTargeting.findNearestTurretTarget(x, y, range, owner);
         if (t === null) return null;
         const out = this._mineTarget;
         out.id = t.playerId ?? t.id;
@@ -2906,7 +2904,7 @@ export class SectorRoom extends Room<SectorState> {
         out.y = t.y;
         return out;
       },
-      detonate: (mine, target) => this.detonateMine(mine, target),
+      detonate: (mine, target) => this.mineHooks.detonateMine(mine, target),
       onLaid: (mine) => {
         const st = new MineState();
         st.ownerIdx = this.internStructureOwner(mine.owner);
@@ -5143,8 +5141,8 @@ export class SectorRoom extends Room<SectorState> {
   ): void {
     // A turret's kill mid-tick must not leave the evicted drone selectable by
     // the next turret in the same tick (the linear scan never saw it).
-    this.turretTargetGridFresh = false;
-    this.npcTargetGridFresh = false;
+    this.turretTargeting.turretTargetGridFresh = false;
+    this.turretTargeting.npcTargetGridFresh = false;
     // P3c — a removed shooter's pending charge never fires.
     this.aiFireResolver.forget(rec.id);
     this.capitalWrecks?.forget(rec.id);
@@ -5988,8 +5986,8 @@ export class SectorRoom extends Room<SectorState> {
     const nowMs = this.gameClock.now();
     // A1 — the turret target grid is rebuilt (lazily, on the first query) once
     // per turret tick, instead of every turret scanning every swarm entity.
-    this.turretTargetGridFresh = false;
-    this.npcTargetGridFresh = false;
+    this.turretTargeting.turretTargetGridFresh = false;
+    this.turretTargeting.npcTargetGridFresh = false;
     this.relationCtx.nowMs = nowMs;
     this.structureGrid.tickTurrets(nowMs);
     this.rebuildStructureMountAngles();
@@ -6099,140 +6097,22 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _isTurretTargetable = (rec: SwarmEntityRecord): boolean =>
     allegianceOfKind(rec.shipKind) !== 'traders';
 
-  /**
-   * A1 (plan soft-leaping-truffle v2) — turret targets via a uniform grid.
-   * The A0 measurement put the per-turret linear scan of EVERY swarm entity at
-   * 5 ms median / 12.6 ms max per 10 Hz tick at citadel scale. The grid holds
-   * the turret-targetable kind-1 records (same filter, same registry order, so
-   * `NearestPointGrid`'s tie rule reproduces the scan's winner exactly), built
-   * once per turret tick in O(E) and rebuilt after any eviction. Allocation-free
-   * in steady state: the result object is reused (callers consume it at once —
-   * `tickTurrets` keeps only the entityId).
-   */
-  private readonly turretTargetGrid = new NearestPointGrid(512, DRONE_MAX_BOUNDS, 512);
-  private readonly turretTargetRecs: SwarmEntityRecord[] = [];
-  private turretTargetGridFresh = false;
-  private readonly turretTargetOut: { id: string; entityId: number; x: number; y: number; radius: number; playerId?: string } =
-    { id: '', entityId: 0, x: 0, y: 0, radius: 0, playerId: undefined };
-
-  /**
-   * B2 (plan soft-leaping-truffle v3) — targets for NPC-owned turrets: every
-   * NPC ship (drones, robots, traders) plus every ACTIVE player ship (#17:
-   * lingering and pending hulls are not turret targets, the same set that opens
-   * gates). Built lazily once per turret tick, like the drone grid; a turret
-   * then keeps only candidates `relationOf` says are hostile to its owner.
-   */
-  private readonly npcTargetGrid = new NearestPointGrid(512, DRONE_MAX_BOUNDS, 512);
-  private readonly npcTargetParty: string[] = [];
-  private readonly npcTargetRecs: (SwarmEntityRecord | null)[] = [];
-  private npcTargetGridFresh = false;
-  private npcTurretOwner = '';
-  private readonly _npcTargetAccept = (i: number): boolean =>
-    relationOf(this.npcTargetParty[i]!, this.npcTurretOwner, this.relationCtx) === 'hostile';
-
-  private readonly _addParkedNpcTarget = (pid: string, x: number, y: number): void => {
-    const i = this.npcTargetGrid.add(x, y);
-    this.npcTargetParty[i] = pid;
-    this.npcTargetRecs[i] = null;
-  };
-
-  private buildNpcTargetGrid(): void {
-    const g = this.npcTargetGrid;
-    g.reset();
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1) continue;
-      const base = slotBase(rec.slot);
-      const i = g.add(this.sabF32[base + SLOT_X_OFF]!, this.sabF32[base + SLOT_Y_OFF]!);
-      this.npcTargetParty[i] = NPC_SIDE_PARTY[allegianceOfKind(rec.shipKind)];
-      this.npcTargetRecs[i] = rec;
-    }
-    for (const [playerId] of this.playerToSlot) {
-      const ship = this.getActiveShip(playerId);
-      if (!ship || !ship.alive || !ship.isActive) continue;
-      const pose = this.shipPoseCache.get(playerId);
-      if (!pose) continue;
-      const i = g.add(pose.x, pose.y);
-      this.npcTargetParty[i] = playerId;
-      this.npcTargetRecs[i] = null;
-    }
-    // ...plus the spectate-parked LINGERING hulls (#17: the ENGAGEABLE pilot
-    // hull class; owner decision 2026-11-12), under the pilot's id.
-    this._visitParkedPilotHulls(this._addParkedNpcTarget);
-    g.build();
-    this.npcTargetGridFresh = true;
-  }
-
-  private findNearestNpcTurretTarget(
-    x: number,
-    y: number,
-    range: number,
-    owner: string,
-  ): { id: string; entityId: number; x: number; y: number; radius: number; playerId?: string } | null {
-    if (!this.npcTargetGridFresh) this.buildNpcTargetGrid();
-    this.npcTurretOwner = owner;
-    const g = this.npcTargetGrid;
-    const i = g.nearestWhere(x, y, range, this._npcTargetAccept);
-    if (i < 0) return null;
-    const out = this.turretTargetOut;
-    out.x = g.x(i);
-    out.y = g.y(i);
-    const rec = this.npcTargetRecs[i];
-    if (rec) {
-      out.id = rec.id;
-      out.entityId = rec.entityId;
-      out.radius = rec.radius;
-      out.playerId = undefined;
-    } else {
-      const playerId = this.npcTargetParty[i]!;
-      out.id = playerId;
-      out.entityId = -1;
-      out.radius = getShipKind(this.engageablePilotHull(playerId)?.ship.kind).radius;
-      out.playerId = playerId;
-    }
-    return out;
-  }
-
-  /** A1 — the player-turret drone grid, built once per turret tick. */
-  private ensureTurretTargetGrid(): void {
-    if (this.turretTargetGridFresh) return;
-    const g = this.turretTargetGrid;
-    const recs = this.turretTargetRecs;
-    g.reset();
-    recs.length = 0;
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1 || !this._isTurretTargetable(rec)) continue;
-      const base = slotBase(rec.slot);
-      g.add(this.sabF32[base + SLOT_X_OFF]!, this.sabF32[base + SLOT_Y_OFF]!);
-      recs.push(rec);
-    }
-    g.build();
-    this.turretTargetGridFresh = true;
-  }
-
-  /** Coastal defences — pooled target views + grid-index scratch for
-   *  `collectTurretTargets` (grow once, reused every tick, #14). */
-  private readonly turretViewPool: TurretTargetView[] = [];
-  private readonly turretIdxScratch: number[] = [];
-
-  /** Write pool view `n` (made on first use) and return it. */
-  private turretView(n: number): TurretTargetView {
-    let v = this.turretViewPool[n];
-    if (!v) { v = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: 1 }; this.turretViewPool[n] = v; }
-    return v;
-  }
-
-  private writeSwarmTurretView(n: number, rec: SwarmEntityRecord): TurretTargetView {
-    const v = this.turretView(n);
-    const b = slotBase(rec.slot);
-    v.id = rec.id; v.entityId = rec.entityId; v.playerId = undefined;
-    v.x = this.sabF32[b + SLOT_X_OFF]!; v.y = this.sabF32[b + SLOT_Y_OFF]!;
-    v.vx = this.sabF32[b + SLOT_VX_OFF]!; v.vy = this.sabF32[b + SLOT_VY_OFF]!;
-    const kind = getShipKind(rec.shipKind);
-    v.cls = targetClass(kind);
-    v.signature = rec.kind === 1 ? kind.radius : rec.radius;
-    this.writeSwarmRangeShape(v, rec);
-    return v;
-  }
+  /** A1/B2/C2 — structure-turret targeting (`features/turretTargeting.ts`). */
+  private readonly turretTargeting = new TurretTargeting({
+    swarmRegistry: this.swarmRegistry, sabF32: () => this.sabF32, playerToSlot: () => this.playerToSlot,
+    getActiveShip: (pid) => this.getActiveShip(pid), shipPoseCache: this.shipPoseCache, spectateParkedHull: this.spectateParkedHull,
+    engageablePilotHull: (pid) => this.engageablePilotHull(pid), visitParkedPilotHulls: this._visitParkedPilotHulls,
+    relationCtx: this.relationCtx, hostileActs: this.hostileActs, isTurretTargetable: this._isTurretTargetable,
+    writeSwarmRangeShape: (v, rec) => this.writeSwarmRangeShape(v, rec), npcSideParty: NPC_SIDE_PARTY,
+    policyOf: ROOM_POLICY, gridBounds: DRONE_MAX_BOUNDS,
+  });
+  /** Mine Layers — spot check and blast (`features/mineHooks.ts`). */
+  private readonly mineHooks = new MineHooks({
+    structureRegistry: this.structureRegistry, swarmRegistry: this.swarmRegistry, sabF32: () => this.sabF32,
+    mineField: () => this.mineField, applyDamage: (t, s, d, x, y) => this.applyDamage(t, s, d, x, y),
+    broadcast: (type, msg) => { this.broadcast(type, msg); },
+  });
+  private readonly _mineTarget: MineTarget = { id: '', x: 0, y: 0 };
 
   /** A swarm entity's hit shape for the turrets' hull range gate
    *  (`mountInReach`): a ship by kind, heading and shield, else its radius. */
@@ -6244,193 +6124,6 @@ export class SectorRoom extends Room<SectorState> {
     fillRangeShape(v, angle, ship, rec.shipKind ?? null, ship && !rec.shieldDown, rec.radius);
   }
 
-  private writePilotTurretView(n: number, playerId: string): TurretTargetView | null {
-    // #17: the ENGAGEABLE pilot hull (ACTIVE, or parked by Spectate).
-    const h = this.engageablePilotHull(playerId);
-    if (!h) return null;
-    const pose = h.pose;
-    const v = this.turretView(n);
-    v.id = playerId; v.entityId = -1; v.playerId = playerId;
-    v.x = pose.x; v.y = pose.y; v.vx = pose.vx; v.vy = pose.vy;
-    const kind = getShipKind(h.ship.kind);
-    v.cls = targetClass(kind);
-    v.signature = kind.radius;
-    fillRangeShape(v, pose.angle, true, h.ship.kind, h.ship.shield > 0, 0);
-    return v;
-  }
-
-  /**
-   * Coastal defences (plan coastal-defences) — EVERY target hostile to `owner`
-   * within `range` of (x, y), with its velocity and target class, for the
-   * per-mount fire control (each gun picks by its calibre's priority). Same
-   * target rules as `findNearestTurretTarget`: an NPC turret takes whatever
-   * `relationOf` says is hostile (players included); a player turret takes
-   * combat drones/robots (never traders) and, once anyone has committed a
-   * hostile act or by policy, hostile pilots. Allocation-free in steady state.
-   */
-  private collectTurretTargets(x: number, y: number, range: number, owner: string, out: TurretTargetView[]): number {
-    const idx = this.turretIdxScratch;
-    let n = 0;
-    // Fire range is measured from each mount to the target's hull (owner
-    // 2026-11-14): gather every ship whose hull MAY come within `range`
-    // (grid query widened by the largest ship bound, then each candidate by
-    // its own bound, `mountRangeBound`); the mounts' `mountCanEngage` decides.
-    const wide = range + maxShipRangeBound();
-    if (isNpcOwner(owner)) {
-      if (!this.npcTargetGridFresh) this.buildNpcTargetGrid();
-      this.npcTurretOwner = owner;
-      const k = this.npcTargetGrid.within(x, y, wide, idx);
-      for (let j = 0; j < k; j++) {
-        const i = idx[j]!;
-        if (!this._npcTargetAccept(i)) continue;
-        const rec = this.npcTargetRecs[i];
-        const v = rec ? this.writeSwarmTurretView(n, rec) : this.writePilotTurretView(n, this.npcTargetParty[i]!);
-        if (v && mayBeInReach(v.x - x, v.y - y, range, v)) out[n++] = v;
-      }
-      return n;
-    }
-    this.ensureTurretTargetGrid();
-    const k = this.turretTargetGrid.within(x, y, wide, idx);
-    for (let j = 0; j < k; j++) {
-      const v = this.writeSwarmTurretView(n, this.turretTargetRecs[idx[j]!]!);
-      if (mayBeInReach(v.x - x, v.y - y, range, v)) out[n++] = v;
-    }
-    if (this.hostileActs.size() > 0 || policyActsOnStanding(ROOM_POLICY(parseOwner(owner).faction))) {
-      const r2 = wide * wide;
-      for (const [pid] of this.playerToSlot) {
-        if (pid === owner) continue;
-        const ship = this.getActiveShip(pid);
-        if (!ship?.alive || !ship.isActive) continue;
-        const pose = this.shipPoseCache.get(pid);
-        if (!pose || (pose.x - x) ** 2 + (pose.y - y) ** 2 > r2) continue;
-        if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
-        const v = this.writePilotTurretView(n, pid);
-        if (v && mayBeInReach(v.x - x, v.y - y, range, v)) out[n++] = v;
-      }
-      // #17 ENGAGEABLE pilot hulls: the spectate-parked LINGERING ones too.
-      for (const pid of this.spectateParkedHull.keys()) {
-        if (pid === owner) continue;
-        const h = this.engageablePilotHull(pid);
-        if (!h || h.ship.isActive) continue; // ACTIVE: covered above
-        if ((h.pose.x - x) ** 2 + (h.pose.y - y) ** 2 > r2) continue;
-        if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
-        const v = this.writePilotTurretView(n, pid);
-        if (v && mayBeInReach(v.x - x, v.y - y, range, v)) out[n++] = v;
-      }
-    }
-    return n;
-  }
-
-  private findNearestTurretTarget(
-    x: number,
-    y: number,
-    range: number,
-    owner: string,
-  ): { id: string; entityId: number; x: number; y: number; radius: number; playerId?: string } | null {
-    // B2 — NPC-owned turrets engage by relation (players included); player
-    // turrets keep the A1 drone grid below, unchanged.
-    if (isNpcOwner(owner)) return this.findNearestNpcTurretTarget(x, y, range, owner);
-    this.ensureTurretTargetGrid();
-    const i = this.turretTargetGrid.nearest(x, y, range);
-    // C2 — a player's turrets also engage pilots hostile to their owner (a
-    // break-in is a hostile act). Skipped entirely while nobody has committed
-    // one, so the A1 drone path stays byte-identical.
-    // F3 — a player whose policy fires on low standing scans pilots too.
-    const pilot = this.hostileActs.size() > 0 || policyActsOnStanding(ROOM_POLICY(parseOwner(owner).faction))
-      ? this.nearestHostilePilot(x, y, range, owner)
-      : null;
-    if (pilot !== null) {
-      const droneD2 = i < 0 ? Infinity : (this.turretTargetGrid.x(i) - x) ** 2 + (this.turretTargetGrid.y(i) - y) ** 2;
-      if (pilot.d2 <= droneD2) {
-        const out = this.turretTargetOut;
-        out.id = pilot.playerId;
-        out.entityId = -1;
-        out.x = pilot.x;
-        out.y = pilot.y;
-        out.radius = getShipKind(this.engageablePilotHull(pilot.playerId)?.ship.kind).radius;
-        out.playerId = pilot.playerId;
-        return out;
-      }
-    }
-    if (i < 0) return null;
-    const rec = this.turretTargetRecs[i]!;
-    const out = this.turretTargetOut;
-    out.playerId = undefined;
-    out.id = rec.id;
-    out.entityId = rec.entityId;
-    out.x = this.turretTargetGrid.x(i);
-    out.y = this.turretTargetGrid.y(i);
-    out.radius = rec.radius;
-    return out;
-  }
-
-  private readonly _mineTarget: MineTarget = { id: '', x: 0, y: 0 };
-
-  /** A mine spot keeps clear of structure boxes, asteroids, other mines and
-   *  the sector edge. Called only when a layer lays (rare). */
-  private mineSpotClear(x: number, y: number): boolean {
-    const c = MINE_CLEARANCE;
-    if (Math.abs(x) > SECTOR_PLAYABLE_HALF_EXTENT - c || Math.abs(y) > SECTOR_PLAYABLE_HALF_EXTENT - c) return false;
-    for (const r of this.structureRegistry.all()) {
-      const dx = Math.max(Math.abs(x - r.x) - (r.halfW ?? r.radius), 0);
-      const dy = Math.max(Math.abs(y - r.y) - (r.halfH ?? r.radius), 0);
-      if (dx * dx + dy * dy < c * c) return false;
-    }
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 0) continue;
-      const b = slotBase(rec.slot);
-      const d = rec.radius + c;
-      if ((this.sabF32[b + SLOT_X_OFF]! - x) ** 2 + (this.sabF32[b + SLOT_Y_OFF]! - y) ** 2 < d * d) return false;
-    }
-    for (const m of this.mineField.mines.values()) {
-      if ((m.x - x) ** 2 + (m.y - y) ** 2 < 4 * c * c) return false;
-    }
-    return true;
-  }
-
-  /** A mine went off: hurt the ship that set it off (the layer is the
-   *  attacker, like a turret) and show the blast to everyone. */
-  private detonateMine(mine: MineRecord, target: MineTarget): void {
-    this.applyDamage(target.id, mine.layerId, MINE_DAMAGE, mine.x, mine.y);
-    const msg: MineDetonated = { type: 'mine_detonated', x: mine.x, y: mine.y, radius: MINE_BLAST_RADIUS };
-    this.broadcast('mine_detonated', msg);
-  }
-
-  /** C2 — the nearest ENGAGEABLE pilot hull (#17: ACTIVE alive, or parked by
-   *  Spectate) within range whose pilot is hostile to `owner` (an act in the
-   *  ledger). Few players: a plain scan. */
-  private nearestHostilePilot(x: number, y: number, range: number, owner: string): { playerId: string; x: number; y: number; d2: number } | null {
-    const out = this._hostilePilotOut;
-    let best = range * range;
-    let found = false;
-    for (const [pid] of this.playerToSlot) {
-      if (pid === owner) continue;
-      const ship = this.getActiveShip(pid);
-      if (!ship?.alive || !ship.isActive) continue;
-      const pose = this.shipPoseCache.get(pid);
-      if (!pose) continue;
-      const d2 = (pose.x - x) ** 2 + (pose.y - y) ** 2;
-      if (d2 > best) continue;
-      if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
-      best = d2;
-      out.playerId = pid; out.x = pose.x; out.y = pose.y; out.d2 = d2;
-      found = true;
-    }
-    // #17 ENGAGEABLE pilot hulls: the spectate-parked LINGERING ones too.
-    for (const pid of this.spectateParkedHull.keys()) {
-      if (pid === owner) continue;
-      const h = this.engageablePilotHull(pid);
-      if (!h || h.ship.isActive) continue; // ACTIVE: covered above
-      const d2 = (h.pose.x - x) ** 2 + (h.pose.y - y) ** 2;
-      if (d2 > best) continue;
-      if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
-      best = d2;
-      out.playerId = pid; out.x = h.pose.x; out.y = h.pose.y; out.d2 = d2;
-      found = true;
-    }
-    return found ? out : null;
-  }
-  private readonly _hostilePilotOut = { playerId: '', x: 0, y: 0, d2: 0 };
 
   private sendToPlayerHere(pid: string, type: string, msg: unknown): boolean {
     const sid = this.playerToSession.get(pid);
