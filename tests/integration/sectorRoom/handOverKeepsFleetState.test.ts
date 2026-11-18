@@ -36,7 +36,7 @@ async function waitUntil(pred: () => boolean, ms: number, what: string): Promise
 
 /** Private room paths the test drives directly (synchronous, no tick in between). */
 interface RoomPeek {
-  enterSpectate(playerId: string): void;
+  fleetHooks: { enterSpectate(playerId: string): void };
   reclaimLingeringHull(client: Client, playerId: string, shipId: string): void;
   mountTicker: { playerMountAngles: Map<string, Float32Array> };
   clients: Iterable<Client>;
@@ -133,7 +133,7 @@ describe('SectorRoom integration — a ship changing hands keeps its fleet state
     const before = Array.from(angles.get(bPid)!);
 
     // Let go: same server step, the ship is the AI pilot's.
-    peek().enterSpectate(bPid);
+    peek().fleetHooks.enterSpectate(bPid);
     expect(room()._internals.lingeringSlots.has(hull)).toBe(true);
     expect(Array.from(angles.get(hull) ?? []), 'turret angles moved with the ship').toEqual(before);
     expect(angles.has(bPid)).toBe(false);

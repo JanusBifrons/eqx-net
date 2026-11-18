@@ -111,7 +111,7 @@ import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
 import { getTeleportBroker, type HandedOffHull, type RiderBatch, type TeleportRoom } from '../teleport/TeleportBroker.js';
 import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
-import { fleetArrivalPoses, largestHullIndex, type FleetArrivalPose, type FleetHullPose } from '../transit/fleetArrivalPoses.js';
+import { fleetArrivalPoses, largestHullIndex, type FleetArrivalPose } from '../transit/fleetArrivalPoses.js';
 import { linkEnds } from '../../core/bases/transitNetwork.js';
 import { hopDistance } from '../livingworld/population.js';
 import {
@@ -243,12 +243,11 @@ import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { FleetCommandSubsystem } from '../fleet/FleetCommandSubsystem.js';
 import { clearFleetOrder } from '../fleet/fleetShipOrders.js';
-import { FleetStatusStream } from '../fleet/FleetStatusStream.js';
-import { FleetStatusSoon, FLEET_STATUS_SOON_TICKS } from '../fleet/FleetStatusSoon.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { JoinHandler } from './join/JoinHandler.js';
 import { TeleportTolls } from './features/teleportTolls.js';
 import { WingmanPilots } from './features/wingmanPilots.js';
+import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { FireControlLocks } from './features/fireControlLocks.js';
 import { FLEET_STOP_ORDER } from './features/fleetMessages.js';
 import { BreakInHooks } from './features/breakInHooks.js';
@@ -448,11 +447,6 @@ const MAX_INPUTS_PER_TICK = 3;
  *  A pilot sends one on a lock-line change, two when switching groups mid-hold;
  *  a flood beyond this is silently dropped (src/server/CLAUDE.md thresholds). */
 export const MAX_LOCK_MSGS_PER_TICK = 3;
-/** RTS fleet commands per session per tick (all five kinds together). The
- *  client sends one per click / key / panel button; a flood beyond this is
- *  silently dropped (src/server/CLAUDE.md thresholds). */
-export const MAX_FLEET_MSGS_PER_TICK = 4;
-
 /** A player's ship (a pilot's ACTIVE ship, keyed by playerId, or a LINGERING
  *  hull, keyed by shipInstanceId) as a `LineOfFireGate` body: players' ships
  *  are not swarm records. One per ship key, reused (#14). */
@@ -727,7 +721,7 @@ export class SectorRoom extends Room<SectorState> {
    *  Read through `engageablePilotHull`. */
   private readonly spectateParkedHull = new Map<string, string>();
   /** RTS slice 10 — players whose join asked `startMode: 'command'` (galaxy
-   *  rooms only). `drainPendingJoin` parks their hull via `enterSpectate` at
+   *  rooms only). `drainPendingJoin` parks their hull via `fleetHooks.enterSpectate` at
    *  the arrival flip and sends `control_mode`; cleared there, on leave and on
    *  an in-sector reclaim. */
   private readonly pendingCommandStart = new Set<string>();
@@ -1080,26 +1074,6 @@ export class SectorRoom extends Room<SectorState> {
     this.lockMsgCountThisTick.set(sessionId, n + 1);
     return true;
   }
-  /** RTS fleet commands (`fleet_order` / `set_mode` / `set_stance` /
-   *  `form_squad` / `disband_squad`) received this tick, per session. */
-  private readonly fleetMsgCountThisTick = new Map<string, number>();
-  /** Count one fleet command for `sessionId`; false = over this tick's cap (drop it). */
-  private fleetMsgAllowed(sessionId: string): boolean {
-    const n = this.fleetMsgCountThisTick.get(sessionId) ?? 0;
-    if (n >= MAX_FLEET_MSGS_PER_TICK) return false;
-    this.fleetMsgCountThisTick.set(sessionId, n + 1);
-    return true;
-  }
-  /** RTS slice 7 — the owner-only `fleet_status` stream (on the selection-stats timer). */
-  private fleetStatus!: FleetStatusStream;
-  /** RTS review 2026-11-14 — an accepted fleet command sends its owner's
-   *  status right after the ships re-plan, not on the next timer fire. */
-  private readonly fleetStatusSoon = new FleetStatusSoon(FLEET_STATUS_SOON_TICKS);
-  /** Bound sender for `fleetStatusSoon.flush` (no per-tick closure, #14). */
-  private readonly sendFleetStatusNow = (sessionId: string): void => {
-    const pid = this.sessionToPlayer.get(sessionId);
-    if (pid !== undefined) this.fleetStatus.sendTo(sessionId, pid);
-  };
   /** PlayerIds currently holding boost (energy-affordable), regardless of
    *  thrust. Surfaced on every snapshot so all clients can render an exhaust
    *  trail for that ship; also drives the per-tick boost energy drain.
@@ -1439,7 +1413,7 @@ export class SectorRoom extends Room<SectorState> {
       aiNav: { get: () => this.aiController.nav, set: (nav) => { this.aiController.nav = nav; } },
       aiBrainOf: (id) => this.aiController.getBehaviour(id),
       lingeringPoseCache: this.lingeringPoseCache,
-      sendFleetStatus: () => this.fleetStatus.sendAll(),
+      sendFleetStatus: () => this.fleetHooks.fleetStatus.sendAll(),
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
       forceLock: (pid, key, groupId) => this.locks.forceLock(pid, key, groupId),
@@ -2979,33 +2953,11 @@ export class SectorRoom extends Room<SectorState> {
         client?.send('entity_stats', this.ownerGateStats(sessionId, msg));
       },
     });
-    // RTS slice 7 — owner-only fleet status rides the same timer, every other
-    // fire (~2.5 Hz). Private per owner, so a message, not a snapshot field.
-    this.fleetStatus = new FleetStatusStream({
-      fleet: this.fleet,
-      forEachSession: (cb) => {
-        for (const c of this.clients) {
-          const pid = this.sessionToPlayer.get(c.sessionId);
-          if (pid !== undefined) cb(c.sessionId, pid);
-        }
-      },
-      shieldPct: (id) => {
-        const s = this.state.ships.get(id);
-        if (!s) return null;
-        const max = effectiveShipShieldMax(getShipKind(s.kind).shieldMax, s.statAlloc);
-        return max > 0 ? (s.shield / max) * 100 : null;
-      },
-      send: (sessionId, msg) => {
-        const client = this.clients.find((c) => c.sessionId === sessionId);
-        try { client?.send('fleet_status', msg); } catch { /* closing */ }
-      },
-      // The ship the owner flies goes back out under their playerId (4b).
-      wireShipId: (ownerId, id) => (this.playerToActiveShipInstance.get(ownerId) === id ? ownerId : id),
-    });
+    this.fleetHooks.createFleetStatus();
     // eslint-disable-next-line no-restricted-globals -- real time: a UI refresh rate for the inspector and fleet panel, not game time
     this.selectionStatsTimer = setInterval(guarded('selection-stats-tick', () => {
       this.selectionStats.tick();
-      this.fleetStatus.tick();
+      this.fleetHooks.fleetStatus.tick();
     }), SELECTION_STATS_INTERVAL_MS);
     this.selectionStatsTimer.unref?.();
 
@@ -3455,10 +3407,10 @@ export class SectorRoom extends Room<SectorState> {
       testSeedStorageHold: () => this.testSeedStorageHold,
       findPacked: (owner, product) => this.findPacked(owner, product),
       logger,
-      fleetMsgAllowed: (sid) => this.fleetMsgAllowed(sid),
+      fleetMsgAllowed: (sid) => this.fleetHooks.fleetMsgAllowed(sid),
       fleet: this.fleet,
       fleetTransit: () => this.transitOrchestrator,
-      fleetStatusSoon: this.fleetStatusSoon,
+      fleetStatusSoon: this.fleetHooks.fleetStatusSoon,
       serverTick: () => this.serverTick,
       playerToActiveShipInstance: this.playerToActiveShipInstance,
       lockMsgAllowed: (sid) => this.lockMsgAllowed(sid),
@@ -3501,7 +3453,7 @@ export class SectorRoom extends Room<SectorState> {
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
-      this.enterSpectate(playerId);
+      this.fleetHooks.enterSpectate(playerId);
     });
     // RTS command layer — `command` enters command view; today an alias of
     // `spectate` (same code path), so the parked hull becomes a wingman.
@@ -3512,7 +3464,7 @@ export class SectorRoom extends Room<SectorState> {
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
-      this.enterSpectate(playerId);
+      this.fleetHooks.enterSpectate(playerId);
     });
 
     this.bus.on('SHIP_DESTROYED', (evt) => {
@@ -4364,11 +4316,11 @@ export class SectorRoom extends Room<SectorState> {
     const ownedHullBefore = damage > 0 && this.fleet.size > 0 && this.fleet.isAttached(targetId)
       ? this.state.ships.get(targetId)?.health ?? -1
       : -1;
-    if (ownedHullBefore >= 0) this.ownedHullRetaliates(targetId, shooterId);
+    if (ownedHullBefore >= 0) this.fleetHooks.ownedHullRetaliates(targetId, shooterId);
     // Slice 10: a hit on the ship a pilot flies turns its squad and escorts.
-    else if (damage > 0 && this.fleet.size > 0 && this.playerToSlot.has(targetId)) this.ownedHullRetaliates(targetId, shooterId);
+    else if (damage > 0 && this.fleet.size > 0 && this.playerToSlot.has(targetId)) this.fleetHooks.ownedHullRetaliates(targetId, shooterId);
     const destroyed = this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY, layerMul);
-    if (ownedHullBefore >= 0) this.noteOwnedHullDamage(targetId, ownedHullBefore);
+    if (ownedHullBefore >= 0) this.fleetHooks.noteOwnedHullDamage(targetId, ownedHullBefore);
     return destroyed;
   }
 
@@ -7031,7 +6983,7 @@ export class SectorRoom extends Room<SectorState> {
           });
           // RTS slice 10 — a command-view join: park the just-activated hull
           // (an AI-flown wingman) and tell the client to enter command view.
-          if (this.pendingCommandStart.delete(playerId)) this.startInCommand(playerId, rec.sessionId);
+          if (this.pendingCommandStart.delete(playerId)) this.fleetHooks.startInCommand(playerId, rec.sessionId);
         } else if (rec.spectator === true) {
           // Equinox Phase 5 (WS-3) — join-as-spectator: there is NO hull to
           // activate (the player joined with no ship at all). The warp-in
@@ -7648,9 +7600,9 @@ export class SectorRoom extends Room<SectorState> {
     // ~5 Hz stats emitter doesn't keep resolving for a gone session (covers
     // disconnect AND inter-sector transit, both of which fire onLeave).
     this.selectionStats?.clearSession(client.sessionId);
-    this.fleetStatus?.clearSession(client.sessionId);
-    this.fleetStatusSoon.clear(client.sessionId);
-    this.fleetMsgCountThisTick.delete(client.sessionId);
+    this.fleetHooks.fleetStatus?.clearSession(client.sessionId);
+    this.fleetHooks.fleetStatusSoon.clear(client.sessionId);
+    this.fleetHooks.fleetMsgCountThisTick.delete(client.sessionId);
     // Interest window + scratch set of a gone connection.
     this.snapshotBroadcaster.forgetInterestWindow(client.sessionId);
 
@@ -7761,86 +7713,16 @@ export class SectorRoom extends Room<SectorState> {
     mountTicker: () => this.mountTicker, playerFireResolver: () => this.playerFireResolver,
     transitOrchestrator: () => this.transitOrchestrator, postToWorker: (cmd) => this.postToWorker(cmd),
     getActiveShip: (pid) => this.getActiveShip(pid), swarmEntityPoseInto: (id, out) => this.swarmEntityPoseInto(id, out),
-    resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid), fleetStatusSoonFor: (pid) => this.fleetStatusSoonFor(pid),
+    resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid), fleetStatusSoonFor: (pid) => this.fleetHooks.fleetStatusSoonFor(pid),
   });
-
-  /** RTS Part B slice 4: an owned ship was hit — it and every squadmate of
-   *  the same owner turn on the shooter through the shared AI's retaliation
-   *  ledger (`AiController.markHostile`). The shooter is keyed by its owner
-   *  (`hostileActorOf`: a hull's shot counts for its owning player), so one
-   *  mark covers that player's active ship and parked hulls. The owner's own
-   *  fire never turns their ships. Only ships an AI pilot flies are marked
-   *  (the pilot's own ship is theirs to fly). Slice 10 (owner 2026-11-15): a
-   *  guarded ship counts as a member of the squad (or lone ship) escorting
-   *  it, so a hit on it turns its escorts and a hit on an escort turns the
-   *  guarded ship when an AI pilot flies it. `hitId`: an AI-flown hull, or
-   *  any other ship (a pilot's by playerId) that may be escorted.
-   *  Event-driven, alloc-free. */
-  private ownedHullRetaliates(hitId: string, shooterId: string): void {
-    const fleet = this.fleet;
-    let shipId = hitId;
-    let ownerId = fleet.ownerOfAttached(hitId);
-    if (ownerId === null) {
-      // A pilot's active ship (by playerId), in the fleet's id space.
-      const active = this.playerToActiveShipInstance.get(hitId);
-      if (active === undefined) return;
-      shipId = active;
-      ownerId = hitId;
-    }
-    const actor = shooterId === '' ? '' : this.wingmen.hostileActorOf(shooterId);
-    if (actor === '' || actor === ownerId) return;
-    const tick = this.serverTick;
-    const ai = this.aiController;
-    if (shipId === hitId) ai.markHostile(hitId, actor, tick);
-    const sq = fleet.squadOf(shipId);
-    if (sq !== null && sq.ownerId === ownerId) {
-      for (let i = 0; i < sq.memberIds.length; i++) {
-        const mid = sq.memberIds[i]!;
-        if (mid !== shipId && fleet.ownerOfAttached(mid) === ownerId) ai.markHostile(mid, actor, tick);
-      }
-    }
-    // The guarded ship is one of its escorts' squad: the ship this one
-    // escorts, and every ship escorting this one.
-    const guarded = fleet.escortTargetOf(shipId);
-    if (guarded !== null && fleet.ownerOfAttached(guarded) === ownerId) ai.markHostile(guarded, actor, tick);
-    for (let i = 0; i < fleet.size; i++) {
-      const id = fleet.idAt(i);
-      if (id !== shipId && fleet.ownerAt(i) === ownerId && fleet.escortTargetOf(id) === shipId) ai.markHostile(id, actor, tick);
-    }
-  }
-
-  /** RTS Part B slice 4: the hull an owned ship lost to a hit, into the AI
-   *  pilot brain's morale data (`AiController.noteDamage`; owned ships roll
-   *  but never run: players-side morale weights). `hullBefore` is the hull
-   *  before the hit; a hit the shield soaked notes nothing. */
-  private noteOwnedHullDamage(hullId: string, hullBefore: number): void {
-    const ship = this.state.ships.get(hullId);
-    if (!ship || !ship.alive) return;
-    const hullLost = hullBefore - Math.max(0, ship.health);
-    if (hullLost > 0) this.aiController.noteDamage(hullId, hullLost, this.serverTick, ship.maxHealth > 0 ? ship.maxHealth : undefined);
-  }
-
-  /** STOP PILOTING (the `spectate` and `command` messages): park the caller's
-   *  active hull as a lingering wingman and remember it as their parked hull. */
-  private enterSpectate(playerId: string): void {
-    const parked = this.getActiveShip(playerId)?.shipInstanceId;
-    this.displaceActiveHullToLingering(playerId);
-    // Owner decision 2026-11-12: the parked hull is still there. NPC fire
-    // control keeps engaging it on the pilot's behalf (their locks hold).
-    if (parked && this.lingeringSlots.has(parked)) this.spectateParkedHull.set(playerId, parked);
-  }
-
-  /** RTS slice 10 — a `startMode: 'command'` join reached its arrival flip:
-   *  park the hull through the same path as the `command` message and tell the
-   *  client (`control_mode`) so it drops its prediction body and enters command
-   *  view. The snapshot (own hull inactive, a parked hull in `mirror.ships`) carries the
-   *  state (#16); the message only makes the flip immediate. */
-  private startInCommand(playerId: string, sessionId: string): void {
-    this.enterSpectate(playerId);
-    const client = this.clients.find((c) => c.sessionId === sessionId);
-    client?.send('control_mode', { type: 'control_mode', mode: 'command' });
-    serverLogEvent('command_start', { playerId, sectorKey: this.sectorKey });
-  }
+  private readonly fleetHooks: FleetRoomHooks = new FleetRoomHooks({
+    state: () => this.state, fleet: this.fleet, clients: () => this.clients, sessionToPlayer: () => this.sessionToPlayer,
+    playerToSession: () => this.playerToSession, playerToActiveShipInstance: this.playerToActiveShipInstance,
+    lingeringSlots: this.lingeringSlots, spectateParkedHull: this.spectateParkedHull, sabF32: () => this.sabF32,
+    serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, aiController: () => this.aiController,
+    wingmen: () => this.wingmen, getActiveShip: (pid) => this.getActiveShip(pid),
+    displaceActiveHullToLingering: (pid) => this.displaceActiveHullToLingering(pid),
+  });
 
   private displaceActiveHullToLingering(playerId: string): void {
     const ship = this.getActiveShip(playerId);
@@ -9391,7 +9273,7 @@ export class SectorRoom extends Room<SectorState> {
       // The existing fleet `stop` order holds them while they spool.
       holdFleetShips: (commanderId: string, shipIds: readonly string[]): void => {
         this.fleet.applyOrder(commanderId, shipIds, FLEET_STOP_ORDER);
-        this.fleetStatusSoonFor(commanderId);
+        this.fleetHooks.fleetStatusSoonFor(commanderId);
       },
       // Clear the hold: each ship goes back to its mode (a squad's leader to
       // the squad mode; members follow it).
@@ -9402,12 +9284,12 @@ export class SectorRoom extends Room<SectorState> {
           const w = this.fleet.ordersOf(id);
           if (w !== null) clearFleetOrder(w);
         }
-        this.fleetStatusSoonFor(commanderId);
+        this.fleetHooks.fleetStatusSoonFor(commanderId);
       },
       // The LARGEST hull's live pose (the `fleetArrivalPoses` rule: it lands
       // on the anchor and the others keep their offsets from it).
       fleetAnchor: (shipIds: readonly string[]): { x: number; y: number } | null => {
-        const hulls = this.fleetHullPoses(shipIds, null);
+        const hulls = this.fleetHooks.fleetHullPoses(shipIds, null);
         const lead = largestHullIndex(hulls);
         return lead === -1 ? null : { x: hulls[lead]!.x, y: hulls[lead]!.y };
       },
@@ -9417,7 +9299,7 @@ export class SectorRoom extends Room<SectorState> {
         const toRoom = getTeleportBroker().room(destSectorKey);
         if (toRoom === null) return NO_HULLS_MOVED;
         const ids: string[] = [];
-        const hulls = this.fleetHullPoses(shipIds, ids);
+        const hulls = this.fleetHooks.fleetHullPoses(shipIds, ids);
         const poses: FleetArrivalPose[] = [];
         if (fleetArrivalPoses(hulls, anchor, poses) === -1) return NO_HULLS_MOVED;
         const moves: HullMove[] = [];
@@ -9431,29 +9313,6 @@ export class SectorRoom extends Room<SectorState> {
         return this.handOffHullsTo(toRoom, moves, 'warp');
       },
     };
-  }
-
-  /** Live pose + extent of each of `shipIds` that is a parked hull here (a
-   *  fleet warp; discrete, allocates). `idsOut` (when given) gets the ids in
-   *  the same order. */
-  private fleetHullPoses(shipIds: readonly string[], idsOut: string[] | null): FleetHullPose[] {
-    const out: FleetHullPose[] = [];
-    for (let i = 0; i < shipIds.length; i++) {
-      const id = shipIds[i]!;
-      const slot = this.lingeringSlots.get(id);
-      const ship = this.state.ships.get(id);
-      if (slot === undefined || ship === undefined) continue;
-      const b = slotBase(slot);
-      out.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, radius: hullExtent(ship.kind) });
-      idsOut?.push(id);
-    }
-    return out;
-  }
-
-  /** Send the commander's fleet status soon (after a warp hold / release). */
-  private fleetStatusSoonFor(playerId: string): void {
-    const sessionId = this.playerToSession.get(playerId);
-    if (sessionId !== undefined) this.fleetStatusSoon.request(sessionId, this.serverTick);
   }
 
   // ── Phase 8 — sector snapshot persistence ───────────────────────────────
@@ -9481,7 +9340,7 @@ export class SectorRoom extends Room<SectorState> {
     this.roomUpdateCount++;
     this.inputCountThisTick.clear();
     this.lockMsgCountThisTick.clear();
-    this.fleetMsgCountThisTick.clear();
+    this.fleetHooks.fleetMsgCountThisTick.clear();
     // Phase 8 — galaxy sectors always run the simulation step regardless of
     // player count, so the world feels alive (drones patrol, asteroids drift,
     // sleep transitions fire) even when nobody's logged in. Engineering rooms
@@ -9684,7 +9543,7 @@ export class SectorRoom extends Room<SectorState> {
     });
     // RTS Part B: squad bookkeeping only (the AI pilot brain flies the hulls).
     this.fleet.refreshSquads();
-    this.fleetStatusSoon.flush(this.serverTick, this.sendFleetStatusNow);
+    this.fleetHooks.fleetStatusSoon.flush(this.serverTick, this.fleetHooks.sendFleetStatusNow);
     // Living World P3c — fire every NPC charge weapon whose wind-up elapsed.
     this.aiFireResolver.releaseCharges(this.serverTick);
 

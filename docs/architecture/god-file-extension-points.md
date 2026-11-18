@@ -18,6 +18,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | Join / leave / respawn logic | `JoinHandler` (`join/`) / `LeaveHandler` / `RespawnHandler` classes. | live |
 | A tick-phase step | A function taking a narrow ctx, like `runAiTick(ctx)` (`aiTickRunner.ts`). | live |
 | Fire-control lock logic (lock-key resolution, the lock machines' deps, the mount-on-lock gates) | `FireControlLocks` (`features/fireControlLocks.ts`), held as `fireLocks` on the room with a narrow `Pick`-typed host. | live |
+| Room-side fleet hooks (the per-tick fleet command cap, the `fleet_status` stream and its send-soon flush, owned-hull retaliation and morale notes, spectate / command-view entry, fleet-warp hull poses) | `FleetRoomHooks` (`features/fleetRoomHooks.ts`), held as `fleetHooks` on the room with a narrow `Pick`-typed host; the fleet message handlers stay `registerFleetMessages` (`features/fleetMessages.ts`). | live |
 
 ## Server: `src/server/index.ts` (`src/server/CLAUDE.md`)
 
