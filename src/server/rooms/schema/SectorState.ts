@@ -196,6 +196,9 @@ export class StructureState extends Schema {
   @type('uint32') rigStart?: number;
   @type('float32') rigTx?: number;
   @type('float32') rigTy?: number;
+  /** Structure-restyle 3e — a holding clip's length + cargo direction
+   *  (`encodeRigHold`; 0 = none). */
+  @type('uint16') rigHold?: number;
   /** Connected structures' entityIds. */
   @type(['uint16']) connTo = new ArraySchema<number>();
 }

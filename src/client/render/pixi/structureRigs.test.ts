@@ -20,6 +20,7 @@ import type {
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 import { rigForStructureKind, DOCK_CRANE_REACH_TICKS, DOOR_TURRET_LIFT } from '../../../core/articulation/rigCatalogue.js';
 import { partWorldFrame, type PartFrame } from '../../../core/articulation/mountBridge.js';
+import { CRANE_CARGO_IN } from '../../../core/articulation/craneCargo.js';
 
 function emptyPoseRing(): PoseRingEntry[] {
   const ring: PoseRingEntry[] = [];
@@ -452,5 +453,41 @@ describe('rig part look (2c+)', () => {
     const boom = rig.parts.findIndex((p) => p.id === 'boom');
     expect(a.shadows[boom]!.x).toBeGreaterThan(a.parts[boom]!.x);
     expect(a.shadows[boom]!.rotation).toBe(a.parts[boom]!.rotation);
+  });
+});
+
+describe('cargo along the crane arm (3e)', () => {
+  const rig = rigForStructureKind('freight_dock')!;
+  const hx = 200, hy = -100, ha = 0.4;
+  const hold = { clipId: 'arm-hold', startTick: 1000, targetX: hx + 60, targetY: hy + 450, holdTicks: 300, cargo: CRANE_CARGO_IN };
+
+  it('rides the arm from the clamp into the dock over the hold, over the arm parts', () => {
+    const view = new StructureRigView(rig);
+    const g = view.cargo!;
+    expect(g.parent).toBe(view.over);
+    expect(view.over.getChildIndex(g)).toBe(view.over.children.length - 1);
+    view.update(hold, 1010, hx, hy, ha);
+    expect(g.visible).toBe(true);
+    // At the clamp: the clamp part's Pixi position (host frame, y flipped).
+    const clamp = rig.parts.findIndex((p) => p.id === 'clamp');
+    expect(Math.hypot(g.x - view.parts[clamp]!.x, g.y - view.parts[clamp]!.y)).toBeLessThan(1);
+    view.update(hold, 1000 + 150, hx, hy, ha);
+    const midDist = Math.hypot(g.x - view.parts[clamp]!.x, g.y - view.parts[clamp]!.y);
+    expect(midDist).toBeGreaterThan(100);
+    // Inside the dock for the last beat, and gone once the hold is over.
+    view.update(hold, 1000 + 290, hx, hy, ha);
+    expect(g.visible).toBe(false);
+    view.update({ ...hold, clipId: 'arm-retract', holdTicks: undefined, cargo: undefined }, 1400, hx, hy, ha);
+    expect(g.visible).toBe(false);
+  });
+
+  it('no hold on the wire (a staged / older clip): no crate', () => {
+    const view = new StructureRigView(rig);
+    view.update({ clipId: 'arm-hold', startTick: 0, targetX: hx, targetY: hy + 450 }, 50, hx, hy, ha);
+    expect(view.cargo!.visible).toBe(false);
+  });
+
+  it('a rig without an IK chain gets no crate', () => {
+    expect(new StructureRigView(rigForStructureKind('turret')!).cargo).toBeNull();
   });
 });

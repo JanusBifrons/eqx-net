@@ -26,7 +26,11 @@ import {
   STRUCTURE_RIG_CLIP_TARGET,
   encodeRigClip,
   decodeRigClipIndex,
+  decodeRigHoldCargo,
+  decodeRigHoldTicks,
+  encodeRigHold,
 } from '../../../src/shared-types/structureStateWire.js';
+import { CRANE_CARGO_BOTH, CRANE_CARGO_IN } from '../../../src/core/articulation/craneCargo.js';
 import { writeRigClipRow } from '../../../src/server/structures/structureRigClip.js';
 import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
 
@@ -154,6 +158,29 @@ describe('structure rig clip on the wire (restyle 2e, late-join safe)', () => {
     out = emptyStructureRow();
     decodeStructureState(roundTrip({ '5': st3 }).structures.get('5')!, OWNERS, out, 'freight_dock');
     expect(out.rigClip).toBeUndefined();
+  });
+
+  it('3e: a holding clip carries its hold length and cargo direction; the next clip drops them', () => {
+    const st = new StructureState();
+    const rec = rigRec({ clipId: 'arm-hold', startTick: 500, target: { x: 10, y: 460 }, holdTicks: 420, cargo: CRANE_CARGO_BOTH });
+    writeRigClipRow(rec, st);
+    expect(st.rigHold).toBe(encodeRigHold(420, CRANE_CARGO_BOTH));
+    const out = emptyStructureRow();
+    decodeStructureState(roundTrip({ '5': st }).structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip).toEqual({ clipId: 'arm-hold', startTick: 500, targetX: 10, targetY: 460, holdTicks: 420, cargo: CRANE_CARGO_BOTH });
+
+    rec.rigClip = { clipId: 'arm-retract', startTick: 920, target: { x: 10, y: 460 } };
+    writeRigClipRow(rec, st);
+    expect(st.rigHold).toBe(0);
+    const st2 = new StructureState();
+    writeRigClipRow(rec, st2);
+    decodeStructureState(roundTrip({ '5': st2 }).structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip!.holdTicks).toBeUndefined();
+    expect(out.rigClip!.cargo).toBeUndefined();
+
+    expect(decodeRigHoldTicks(encodeRigHold(600, CRANE_CARGO_IN))).toBe(600);
+    expect(decodeRigHoldCargo(encodeRigHold(600, CRANE_CARGO_IN))).toBe(CRANE_CARGO_IN);
+    expect(encodeRigHold(0, CRANE_CARGO_IN)).toBe(0);
   });
 
   it('the clip code packs index + 1 with a target bit', () => {

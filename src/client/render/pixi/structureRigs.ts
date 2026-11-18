@@ -30,11 +30,17 @@
  * `GraphicsContext` per (rig, part), drawn once and only transformed per
  * frame. Lifted parts (over, plane) also get a drop shadow: a second
  * Graphics on the same context, tinted black, offset down-right.
+ *
+ * 3e: a rig with an IK chain also gets a cargo crate on the over group,
+ * shown while a holding clip carries a hold length and a cargo direction
+ * (`craneCargo.ts`): it rides the arm from the clamp into the dock (an
+ * unload) and/or back out (a load), timed from the clip on the wire.
  */
 import { Container, Graphics, GraphicsContext } from 'pixi.js';
 import { createRigPose, evaluateRig, type PlayingClip, type RigPose } from '../../../core/articulation/evaluate.js';
+import { craneCargoAlong, craneCargoPoint, type ArmPoint } from '../../../core/articulation/craneCargo.js';
 import { twoBoneIkSolve } from '../../../core/articulation/ikAdapter.js';
-import { JOINT_LIFT, liftProgress, rigPartIndex, type DrawLayer, type PartDef, type Rig } from '../../../core/articulation/rig.js';
+import { JOINT_LIFT, liftProgress, rigClipIndex, rigPartIndex, type DrawLayer, type PartDef, type Rig } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
@@ -59,6 +65,10 @@ export interface StructureRigInput {
   startTick: number;
   targetX?: number;
   targetY?: number;
+  /** 3e: a holding clip's length (ticks) and cargo direction
+   *  (`CRANE_CARGO_*`); absent = no cargo shown. */
+  holdTicks?: number;
+  cargo?: number;
 }
 
 /** zIndex of the over band: above every hull (0), below the beams. */
@@ -513,6 +523,31 @@ export function rigPartContext(rig: Rig, i: number, look: RigPartLook = RIG_LOOK
   return ctx;
 }
 
+/** 3e cargo crate: a ribbed freight container, long axis along the arm
+ *  (host units, centred on its origin). */
+export const RIG_CARGO_LOOK = {
+  w: 46, h: 32, fill: 0xa65a2a, rib: 0x6e3518, edge: 0x0a0c0e, band: 0xd9a92a,
+} as const;
+
+let cargoContext: GraphicsContext | null = null;
+
+/** The shared crate art (built once). */
+export function rigCargoContext(): GraphicsContext {
+  if (cargoContext !== null) return cargoContext;
+  const L = RIG_CARGO_LOOK, hw = L.w / 2, hh = L.h / 2;
+  const ctx = new GraphicsContext();
+  ctx.rect(-hw, -hh, L.w, L.h).fill(L.fill).stroke({ color: L.edge, width: 2.5 });
+  for (let k = 1; k < 6; k++) {
+    const x = -hw + (L.w * k) / 6;
+    ctx.moveTo(x, -hh + 3).lineTo(x, hh - 3).stroke({ color: L.rib, width: 2 });
+  }
+  // Lifting bands where the clamp grips it.
+  ctx.rect(-hw + 4, -hh, 5, L.h).fill(L.band);
+  ctx.rect(hw - 9, -hh, 5, L.h).fill(L.band);
+  cargoContext = ctx;
+  return ctx;
+}
+
 // ---------------------------------------------------------------- one structure
 
 /** A mutable `PlayingClip` (the evaluator reads it; nothing is allocated). */
@@ -551,6 +586,10 @@ export class StructureRigView {
   private readonly playing: MutablePlaying = { clipId: '', startTick: 0, target: undefined };
   private readonly targetScratch = { x: 0, y: 0 };
   private readonly xf: PixiXform = { x: 0, y: 0, rotation: 0 };
+  /** 3e: the cargo crate riding the arm, and its shadow (null: no IK chain). */
+  readonly cargo: Graphics | null = null;
+  private readonly cargoShadow: Graphics | null = null;
+  private readonly armPt: ArmPoint = { x: 0, y: 0, angle: 0 };
 
   constructor(readonly rig: Rig) {
     this.pose = createRigPose(rig);
@@ -591,6 +630,22 @@ export class StructureRigView {
     if (this.slot !== null) {
       this.slot.label = 'rig-slot';
       this.plane.addChildAt(this.slot, 0); // under every plane shadow and part
+    }
+    if (rig.maxChain > 0) {
+      // Over the arm (it rides on top of the jib), its shadow with the others.
+      const ctx = rigCargoContext();
+      const sh = new Graphics(ctx);
+      sh.label = 'rig-cargo-shadow';
+      sh.tint = 0x000000;
+      sh.alpha = RIG_LOOK_C.shadowAlpha;
+      sh.visible = false;
+      this.over.addChildAt(sh, shadowsOver);
+      const g = new Graphics(ctx);
+      g.label = 'rig-cargo';
+      g.visible = false;
+      this.over.addChild(g);
+      this.cargo = g;
+      this.cargoShadow = sh;
     }
   }
 
@@ -654,6 +709,27 @@ export class StructureRigView {
         sh.rotation = xf.rotation;
       }
     }
+    this.poseCargo(input, nowTick);
+  }
+
+  /** 3e: place the crate along the arm for the playing hold, or hide it. */
+  private poseCargo(input: StructureRigInput | null, nowTick: number): void {
+    const g = this.cargo, sh = this.cargoShadow;
+    if (g === null || sh === null) return;
+    const along = input !== null && input.holdTicks !== undefined && input.cargo !== undefined
+      ? craneCargoAlong(nowTick - input.startTick, input.holdTicks, input.cargo)
+      : -1;
+    const pt = this.armPt;
+    const show = along >= 0 && craneCargoPoint(this.rig, rigClipIndex(this.rig, input!.clipId), this.pose, along, pt);
+    g.visible = show;
+    sh.visible = show;
+    if (!show) return;
+    // Host frame (y-up) -> the group's Pixi frame (y-down), like the parts.
+    const d = RIG_LOOK_C.shadowOver;
+    g.position.set(pt.x, -pt.y);
+    g.rotation = -pt.angle;
+    sh.position.set(pt.x + d, -pt.y + d);
+    sh.rotation = -pt.angle;
   }
 
   /** Ride a mount cluster (children laid out in the host frame) on the
@@ -763,6 +839,8 @@ export class StructureRigs {
       input = this.worldInput;
       input.clipId = clip.clipId;
       input.startTick = clip.startTick;
+      input.holdTicks = clip.holdTicks;
+      input.cargo = clip.cargo;
       if (clip.targetX !== undefined && clip.targetY !== undefined) {
         // Host frame → world game coords (the view takes a world target).
         const c = Math.cos(ha), s = Math.sin(ha);

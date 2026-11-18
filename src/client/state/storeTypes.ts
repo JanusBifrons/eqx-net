@@ -356,7 +356,8 @@ export interface UIStore {
   /** Bumped on every `trade_notice`, so an open Trade tab refetches at once. */
   tradeNoticeSeq: number;
   /** Living World P1a-2 — auto-deposit progress 0..100 (10 % steps), null when
-   *  not depositing. Drives the chip's deposit bar. */
+   *  not depositing, `DEPOSIT_WAITING` (-1) while parked on a busy freight
+   *  dock (3e). Drives the chip's deposit bar / "waiting" readout. */
   depositPct: number | null;
   /** Fire control (exp/fire-control): the pilot's weapon groups — id, name,
    *  mode and lock queue (target key + stage 0 failsafe / 1 acquiring /

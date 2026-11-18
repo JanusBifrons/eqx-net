@@ -19,6 +19,10 @@ import type { SectorState } from '../../../src/server/rooms/schema/SectorState.j
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
+import { DEPOSIT_WAITING } from '../../../src/shared-types/messages/snapshotMessages.js';
+import { decodeRigHoldTicks } from '../../../src/shared-types/structureStateWire.js';
+import { CRANE_CARGO_IN } from '../../../src/core/articulation/craneCargo.js';
+import { DOCK_UNLOAD_HOLD_MIN_TICKS } from '../../../src/core/articulation/rigCatalogue.js';
 
 async function until(pred: () => boolean, ms: number): Promise<boolean> {
   const end = Date.now() + ms;
@@ -125,6 +129,39 @@ describe('SectorRoom integration — dock crane dwell (structure-restyle 3b)', (
     room.startStructureRigClip(dock.id, 'arm-retract', { x: -300, y: 600 });
     expect(await until(() => clipOf(dock) === 'arm-reach', 4_000)).toBe(true);
     expect(Math.abs(dock.rigClip!.target!.x - 150)).toBeLessThan(30);
+  });
+
+  it('3e: the waiting ship reads "waiting" (not a stuck 0 %), then is served with a timed cargo hold', { timeout: 40_000 }, async () => {
+    // Same staging as above: another ship's cycle holds the arm.
+    const pid = randomUUID();
+    const { room, dock, cr, shipId } = await boot(pid, 150, 460, {
+      before: (r, d) => { r.startStructureRigClip(d.id, 'arm-hold', { x: -300, y: 600 }); },
+    });
+    // The own-ship `depositing` readout, as the client receives it.
+    const seen: Array<number | undefined> = [];
+    cr.onMessage('snapshot', (snap: { states?: Record<string, { playerId?: string; depositing?: number }> }) => {
+      for (const k in snap.states ?? {}) {
+        const s = snap.states![k]!;
+        if (s.playerId === pid) seen.push(s.depositing);
+      }
+    });
+    expect(await until(() => seen.includes(DEPOSIT_WAITING), 4_000), 'a parked ship on a busy dock reads waiting').toBe(true);
+    expect(seen.some((v) => v !== undefined && v > 0), 'no progress while waiting').toBe(false);
+    expect(aboard(shipId)).toEqual(CARGO.goods);
+
+    // The other ship's cycle ends: this ship is next, its readout counts up.
+    room.startStructureRigClip(dock.id, 'arm-retract', { x: -300, y: 600 });
+    expect(await until(() => clipOf(dock) === 'arm-hold' && dock.rigClip!.startTick > 0 && dock.rigClip!.holdTicks !== undefined, 6_000)).toBe(true);
+    // The hold length and the cargo direction ride the clip (wire `rigHold`).
+    expect(dock.rigClip!.holdTicks).toBeGreaterThanOrEqual(DOCK_UNLOAD_HOLD_MIN_TICKS);
+    expect(dock.rigClip!.cargo, 'a dock with no orders only unloads').toBe(CRANE_CARGO_IN);
+    const st = [...cr.state.structures.values()].find((s) => decodeRigHoldTicks(s.rigHold ?? 0) > 0);
+    expect(st, 'the client row carries the hold').toBeDefined();
+    expect(decodeRigHoldTicks(st!.rigHold!)).toBe(dock.rigClip!.holdTicks);
+    const last = seen[seen.length - 1];
+    expect(last !== undefined && last >= 0, 'served: the readout is progress again').toBe(true);
+    expect(await until(() => clipOf(dock) === 'arm-retract', 12_000)).toBe(true);
+    expect(getHoldStore().get(shipId), 'served after the first ship').toBeUndefined();
   });
 
   it('an export-only dock (an outlet) takes nothing and draws no crane', { timeout: 30_000 }, async () => {
