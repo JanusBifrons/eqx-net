@@ -3,10 +3,11 @@
  * flight, moved verbatim out of `ColyseusClient` (god-file split). The client
  * holds one `TravelTrip | null`; `updateMirror` calls `stepTravel` LAST.
  */
-import type { ShipRenderState } from '@core/contracts/IRenderer';
+import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
+import type { Clock } from '@core/clock/Clock';
+import type { PhysicsWorld } from '@core/physics/World';
 import { WARP_SPEED } from '../../../core/physics/warpDrive.js';
 import { useUIStore } from '../../state/store.js';
-import type { MirrorPassCtx } from './mirrorPassCtx.js';
 
 /** Phase 4 travel state (sector-to-sector trip), seconds: accelerate out of
  *  the old sector, the shortest trip (it stretches while loading), and the
@@ -35,6 +36,13 @@ export function travelApproach(tau: number): [number, number] {
   return [TRAVEL_BRAKE_D + TRAVEL_GLIDE_V * (s - (s * s) / (2 * TRAVEL_GLIDE_S)), TRAVEL_GLIDE_V * (1 - s / TRAVEL_GLIDE_S)];
 }
 
+/** What `stepTravel` reads (the `MirrorPassCtx` satisfies it). */
+export interface TravelCtx {
+  readonly mirror: RenderMirror;
+  readonly clock: Clock;
+  readonly predWorld: PhysicsWorld | null;
+}
+
 /** The sector-to-sector trip under way. */
 export interface TravelTrip {
   x: number; y: number; dx: number; dy: number; angle: number; lastMs: number; startMs: number;
@@ -54,7 +62,7 @@ export interface TravelTrip {
  *    renderer carries the sky across it. When the approach ends the trip is
  *    done: the minimum-display gate opens and the ship arrives for everyone.
  */
-export function stepTravel(ctx: MirrorPassCtx, t: TravelTrip, e: ShipRenderState, localId: string): void {
+export function stepTravel(ctx: TravelCtx, t: TravelTrip, e: ShipRenderState, localId: string): void {
   const now = ctx.clock.now();
   const dt = Math.min(0.1, Math.max(0, (now - t.lastMs) / 1000));
   t.lastMs = now;
