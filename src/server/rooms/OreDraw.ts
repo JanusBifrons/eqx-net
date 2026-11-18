@@ -5,10 +5,11 @@
  * - `draw` decrements a rock's finite pool (the grid Miner's hook);
  * - `mine` draws into a hold, sized to its free weight first (robot
  *   harvesters);
- * - `cutYield`: the mining laser pays NO ore per hit (owner 2026-11-17: all
- *   mined ore arrives as ore pods). It cuts the rock, the rock's whole pool
- *   is shared out to its pieces by area, and each worn-out piece's pod
- *   carries its share (rockCut.ts, `dropPieceSalvage`).
+ * - `chunkYield`: the mining laser pays NO ore per hit. It cuts the rock
+ *   into pieces (rockCut.ts); a piece tractored to a hull goes into the hold
+ *   whole as a rock CHUNK (owner 2026-11-17: never a pod, never ore on
+ *   pickup), and this is the hidden ore it carries, which only a refinery
+ *   turns into goods. Steep: ore grows with the chunk's weight squared.
  * - A cut-field rock (macro terrain v2) yields the field's ore at its centre
  *   (`oreAtCentre` → `oreRow`); other rocks use their
  *   `asteroidResource`.
@@ -20,6 +21,11 @@ import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { ASTEROID_YIELD, asteroidYield, asteroidYieldWeightPerUnit, oreRow, yieldInto, type AsteroidResourceId, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { getHoldStore } from '../db/PersistenceWorker.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
+
+/** A rock chunk's ore units per (cargo weight)²: the payoff curve
+ *  (`OreDraw.chunkYield`). A 250 chunk holds 5,000 units, a 4,000 one
+ *  1,280,000 (owner 2026-11-17: "very steep"). */
+export const ROCK_CHUNK_ORE_PER_WEIGHT_SQ = 0.08;
 
 export interface OreDrawDeps {
   swarmRegistry: {
@@ -94,15 +100,19 @@ export class OreDraw {
     return holdWeight(hold) - before;
   }
 
-  /** Rock cut: the ONE ore hook of a cut rock (rockCut.ts). A piece of rock
-   *  `rockId` (its stable id; the rock itself is gone) became an ore pod
-   *  centred at world (x, y) carrying `units` of its ore: the goods it holds,
-   *  split by the rock's yield (`asteroidYield`, as every draw is). The
-   *  rock's pool was shared out to its pieces by area when it broke, so this
-   *  draws nothing more from the registry. The point is the hook's key for
-   *  a later per-point ore tint (macro terrain). */
-  cutYield(rockId: string, x: number, y: number, units: number, resource: AsteroidResourceId): Partial<Record<GoodId, number>> {
+  /** Rock cut: the ONE ore hook of a cut rock. A piece of rock `rockId`
+   *  (its stable id; the rock itself is gone) went into a hold at world
+   *  (x, y) as a chunk of cargo `weight`: the ore it holds, hidden until a
+   *  refinery breaks it down. `ROCK_CHUNK_ORE_PER_WEIGHT_SQ` × weight² units
+   *  (owner 2026-11-17, "very steep": 250 → 5,000; 1,000 → 80,000), split by
+   *  the rock's yield (`asteroidYield`, as every draw is). The rock's pool
+   *  was shared out to its pieces when it broke, so this draws nothing more
+   *  from the registry. The point is the hook's key for a later per-point
+   *  vein (macro terrain: a cut-field rock's `oreAtRest`). Allocates (one
+   *  intake, never per tick). */
+  chunkYield(rockId: string, x: number, y: number, weight: number, resource: AsteroidResourceId): Partial<Record<GoodId, number>> {
     void rockId; void x; void y;
-    return units > 0 ? asteroidYield(resource, Math.floor(units)) : {};
+    const units = Math.floor(ROCK_CHUNK_ORE_PER_WEIGHT_SQ * weight * weight);
+    return units > 0 ? asteroidYield(resource, units) : {};
   }
 }

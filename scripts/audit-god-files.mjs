@@ -62,7 +62,7 @@ const ALLOWLIST = {
   'src/client/__art-lab__/main.ts': { cap: 702, target: 600, reason: RATCHET_ONLY },
   'src/client/components/EntityStatsPanel.tsx': { cap: 893, target: 600, reason: RATCHET_ONLY },
   'src/client/net/ColyseusClient.ts': {
-    cap: 7354,
+    cap: 6455,
     target: 350,
     reason:
       'v3 plan commits 16-19 split this into 15 collaborators (PredictionStateManager, ' +
@@ -71,7 +71,7 @@ const ALLOWLIST = {
   'src/client/render/HaloRadar.ts': { cap: 662, target: 600, reason: RATCHET_ONLY },
   'src/client/render/MountVisualManager.ts': { cap: 932, target: 600, reason: RATCHET_ONLY },
   'src/client/render/PixiRenderer.ts': {
-    cap: 3964,
+    cap: 2279,
     target: 340,
     reason:
       'v3 plan commits 10-14 split this into 15 collaborators (PixiAppLifecycle, ' +
@@ -92,18 +92,16 @@ const ALLOWLIST = {
     reason: RATCHET_ONLY,
   },
   'src/client/state/storeTypes.ts': { cap: 686, target: 600, reason: RATCHET_ONLY },
-  'src/core/ai/HostileDroneBehaviour.ts': { cap: 2880, target: 600, reason: RATCHET_ONLY },
+  'src/core/ai/HostileDroneBehaviour.ts': { cap: 1444, target: 600, reason: RATCHET_ONLY },
   'src/core/ai/tactics/manoeuvres.ts': { cap: 679, target: 600, reason: RATCHET_ONLY },
   'src/core/bases/growBase.ts': { cap: 740, target: 600, reason: RATCHET_ONLY },
   'src/core/contracts/IRenderer.ts': { cap: 1298, target: 600, reason: RATCHET_ONLY },
-  'src/core/destruction/fractureHull.ts': { cap: 1610, target: 600, reason: RATCHET_ONLY },
+  'src/core/destruction/fractureHull.ts': { cap: 1218, target: 600, reason: RATCHET_ONLY },
   'src/core/physics/World.ts': { cap: 1263, target: 600, reason: RATCHET_ONLY },
   'src/core/physics/worker.ts': { cap: 792, target: 600, reason: RATCHET_ONLY },
   'src/server/cargo/StorageService.ts': { cap: 901, target: 600, reason: RATCHET_ONLY },
   'src/server/economy/ConvoyDirector.ts': { cap: 605, target: 600, reason: RATCHET_ONLY },
   'src/server/economy/TradeDirector.ts': { cap: 891, target: 600, reason: RATCHET_ONLY },
-  'src/server/index.ts': { cap: 1699, target: 600, reason: RATCHET_ONLY },
-  'src/server/livingworld/LivingWorldDirector.ts': { cap: 1575, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/LockSubsystem.ts': { cap: 684, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/PlayerFireResolver.ts': { cap: 766, target: 600, reason: RATCHET_ONLY },
@@ -122,7 +120,6 @@ const ALLOWLIST = {
     target: 600,
     reason: RATCHET_ONLY,
   },
-  'src/shared-types/structureKinds.ts': { cap: 1447, target: 600, reason: RATCHET_ONLY },
 };
 
 /**

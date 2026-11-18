@@ -24,6 +24,8 @@
 
 import type { Logger } from 'pino';
 import { z } from 'zod';
+import { serverLogEvent } from '../debug/ServerEventLog.js';
+import { canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
 
 /**
  * Bump to discard every persisted director-state row and fall back to a clean
@@ -69,12 +71,19 @@ export interface PersistedSectorControl {
   sectorKey: string;
   holder: string | null;
   shares: Array<[string, number]>;
+  /** Galaxy feed — when the holder last changed (game ms); absent = no flip saved. */
+  flippedAtMs?: number;
+  /** Galaxy feed — the last hour of control as `[atMs, holder, holderShare]`,
+   *  oldest first, so the sector panel's graph survives a restart. */
+  history?: Array<[number, string | null, number]>;
 }
 
 const PersistedSectorControlSchema = z.object({
   sectorKey: z.string().min(1),
   holder: z.string().min(1).nullable(),
   shares: z.array(z.tuple([z.string().min(1), z.number().finite().min(0).max(100)])),
+  flippedAtMs: z.number().finite().optional(),
+  history: z.array(z.tuple([z.number().finite(), z.string().min(1).nullable(), z.number().finite().min(0).max(100)])).max(120).optional(),
 });
 
 /** Parse-and-drop the saved control entries: a missing or non-array field is
@@ -168,4 +177,68 @@ export class DirectorPersistence {
       return null;
     }
   }
+}
+
+/** Throttle (ms) for the director's crash-defence state persist inside the
+ *  control loop — matches the 60 s sector-snapshot cadence. The PRIMARY persist
+ *  is on graceful shutdown (index.ts); this bounds loss if the process is killed
+ *  uncleanly. It's a CRITICAL enqueue from the 1.5 s control loop, NOT the 60 Hz
+ *  `update()`, so it stays off the live loop. */
+export const DIRECTOR_PERSIST_INTERVAL_MS = 60_000;
+
+/** The director parts a save/restore reads and writes (built once by the
+ *  director; structural so this module never imports the director's pools). */
+export interface DirectorStateHost {
+  squadPool: {
+    serialize(): DirectorSquadState[];
+    restoreStates(states: readonly DirectorSquadState[]): void;
+  };
+  waveDirector: {
+    serialize(): { waveCount: Array<[string, number]>; lastDispatchAtMs: Array<[string, number]> };
+    restore(state: {
+      waveCount: ReadonlyArray<readonly [string, number]>;
+      lastDispatchAtMs: ReadonlyArray<readonly [string, number]>;
+    }): void;
+  };
+  /** The director's hooks object (mutated in place by `setHooks`, so read live). */
+  hooks: {
+    saveSectorControl?: () => PersistedSectorControl[];
+    restoreSectorControl?: (entries: readonly PersistedSectorControl[]) => void;
+  };
+}
+
+/** Build the director's ABSTRACT continuity payload (per-squad
+ *  sector/target/state + wave bookkeeping + optional sector control). */
+export function buildDirectorState(host: DirectorStateHost, savedAtMs: number): DirectorStatePayload {
+  const wave = host.waveDirector.serialize();
+  const control = host.hooks.saveSectorControl?.();
+  return {
+    version: DIRECTOR_STATE_VERSION,
+    savedAtMs,
+    squads: host.squadPool.serialize(),
+    waveCount: wave.waveCount,
+    lastDispatchAtMs: wave.lastDispatchAtMs,
+    ...(control !== undefined ? { sectorControl: control } : {}),
+  };
+}
+
+/**
+ * Overlay a hydrated payload onto the freshly-seeded director: restore each
+ * known squad's sector/target/state + the wave bookkeeping (+ sector control).
+ * The existing respawn + plan machinery then re-spawns bots at the restored
+ * sectors and resumes / stands down.
+ */
+export function applyDirectorState(host: DirectorStateHost, p: DirectorStatePayload): void {
+  // PR 3a — a wave target (faction id == owner playerId) persisted under one
+  // of the account's historical per-browser ids maps to the canonical id.
+  host.squadPool.restoreStates(p.squads.map((s) => ({
+    ...s,
+    targetFactionId: s.targetFactionId === null ? null : canonicalPlayerId(s.targetFactionId),
+  })));
+  host.waveDirector.restore({
+    waveCount: p.waveCount.map(([k, v]) => [canonicalPlayerId(k), v] as [string, number]),
+    lastDispatchAtMs: p.lastDispatchAtMs.map(([k, v]) => [canonicalPlayerId(k), v] as [string, number]),
+  });
+  if (p.sectorControl !== undefined) host.hooks.restoreSectorControl?.(p.sectorControl);
+  serverLogEvent('director_state_restored', { squads: p.squads.length, sectorControl: p.sectorControl?.length ?? 0 });
 }

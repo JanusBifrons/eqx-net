@@ -54,13 +54,13 @@ describe('NavHost (nav worker commands)', () => {
     const host = new NavHost(() => (t += 2));
     host.handle({ type: 'ADD_FIELD', worldId: 1, opts: opts('look') });
     const R = 150_000 * 1.2, c = getShipKind('battleship').radius;
-    const reply = host.handle({ type: 'ROUTE', worldId: 1, reqId: 9, sx: -R, sy: 0, tx: R, ty: 0, clearance: c });
+    const reply = host.handle({ type: 'ROUTE', worldId: 1, reqId: 9, sx: -R, sy: 0, tx: R, ty: 0, clearance: c, heading: NaN, turnRadius: 0 });
     const direct = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
     const n = direct.plan(host.coarse(1)!, host.fine(1)!, -R, 0, R, 0, c, out);
     expect(reply).toEqual({
       type: 'ROUTE', worldId: 1, reqId: 9, status: 'route', points: out.slice(0, n * 2), expanded: direct.expanded, ms: 2,
     });
-    expect(host.handle({ type: 'ROUTE', worldId: 5, reqId: 10, sx: 0, sy: 0, tx: 1, ty: 1, clearance: c })).toMatchObject({
+    expect(host.handle({ type: 'ROUTE', worldId: 5, reqId: 10, sx: 0, sy: 0, tx: 1, ty: 1, clearance: c, heading: NaN, turnRadius: 0 })).toMatchObject({
       type: 'ROUTE', worldId: 5, reqId: 10, status: 'none', points: new Float64Array(0), expanded: 0,
     });
   });
