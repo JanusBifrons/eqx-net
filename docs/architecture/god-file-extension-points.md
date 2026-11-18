@@ -36,6 +36,8 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | A prediction-step pass (input loop, energy, sentinel) | A function `(ctx, ...)` in `src/client/net/prediction/` taking the once-built `PredictionStepCtx` (getters/setters for reassigned fields), plus one call in `tickPhysics`, in the same order. | live |
 | Sector-trip (travel) flight | `src/client/net/mirror/travelPass.ts` (`stepTravel`, the `TRAVEL_*` knobs, `travelApproach`); `updateMirror` calls it last. | live |
 | Fire control / lock state | `FireControlClient` (`src/client/net/FireControlClient.ts`; the lock line in `fireControl/LockLineClient.ts`); `ColyseusClient` keeps one-line delegates and reaches it as `this.fc`. | live |
+| Local fire / live beam | `LocalFireClient` (`src/client/net/fireControl/LocalFireClient.ts`: `sendFire`, `updateLiveBeam`, `localShipMounts`) with the once-built `LocalFireHost`; `ColyseusClient` keeps one-line delegates. | live |
+| Damage / shield / death state | A function `(ctx, ...)` in `src/client/net/damagePath.ts` taking the once-built `DamagePathCtx`; the wire side stays in `handlers/combatHandlers.ts`. | live |
 
 ## Client: `PixiRenderer.ts` and `IRenderer.ts` (`src/client/render/CLAUDE.md`)
 

@@ -153,7 +153,6 @@ import {
   type PendingPlacement,
   type ShipPose,
 } from '../structures/structurePlacementClient.js';
-import { shouldEnterSpectatorOnDeath } from '../spectator/spectatorMode.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 
 export interface ColyseusClientCallbacks {
@@ -232,7 +231,7 @@ const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
 
 export { isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './damageNumberTargets.js';
-import { isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './damageNumberTargets.js';
+import { applyDamageFx, handleDamage, handleDestroy, handleShield, killEntity, killSwarmEntity, type DamagePathCtx } from './damagePath.js';
 
 export class ColyseusGameClient {
   /**
@@ -1441,6 +1440,19 @@ export class ColyseusGameClient {
   private readonly _heldDamageSink = {
     applyHeldDamage: (h: HeldDamage): void => this.applyDamageFx(h.evt, h.suppressNumber),
   };
+  /** The ctx the damage / death path (`damagePath.ts`) runs with, built once (#14). */
+  private readonly _damageCtx: DamagePathCtx = ((c: ColyseusGameClient): DamagePathCtx => ({
+    get mirror() { return c.mirror; }, get clock() { return c.clock; }, get predWorld() { return c.predWorld; },
+    get hudDispatcher() { return c.hudDispatcher; }, get aiController() { return c._aiController; },
+    get inputTick() { return c.inputTick; }, get shellTiming() { return c._shellTiming; },
+    get damageFlashFrames() { return c._damageFlashFrames; }, get scheduledDamageSpawns() { return c._scheduledDamageSpawns; },
+    get navalHitHold() { return c._navalHitHold; }, get heldDamageSink() { return c._heldDamageSink; },
+    get ghostManager() { return c.ghostManager; }, get predSwarmKeys() { return c.predSwarmKeys; },
+    get movingSwarmKeys() { return c._movingSwarmKeys; }, get welcomePerfNow() { return c.welcomePerfNow; },
+    get localDead() { return c.localDead; }, set localDead(v) { c.localDead = v; },
+    get diedAtMs() { return c.diedAtMs; }, set diedAtMs(v) { c.diedAtMs = v; },
+    dropRemoteShip: (key: string): void => c.dropRemoteShip(key),
+  }))(this);
 
   private resetPredictionState(): void {
     // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
@@ -2000,169 +2012,18 @@ export class ColyseusGameClient {
 
   // ── Combat event handlers ────────────────────────────────────────────────
 
-  /**
-   * Discrete shield-state transition (Phase 3b). Sets the local
-   * shieldPct anchor; the HUD bar tweens between anchors via CSS. On
-   * 'restored' the local predWorld collider swaps back to the cheap
-   * circle (authoritative; client never computes the 0-cross).
-   */
-  private handleShield(evt: ShieldEventMessage): void {
-    // M8 (plan wiggly-puppy): handleShield ONLY receives 'restored' /
-    // 'regen_complete' events (never 'broken' — the 0-cross is carried
-    // by DamageEvent.newShield=0 and handled in handleDamage). So any
-    // event here means the shield is back UP. Mirror the bit for ANY
-    // target so the shield aura updates remote ships too.
-    const targetEntry = this.mirror.ships.get(evt.targetId);
-    if (targetEntry && targetEntry.shieldDown !== false) {
-      targetEntry.shieldDown = false;
-    }
-
-    if (evt.targetId !== this.mirror.localPlayerId) return;
-    const pct = evt.shieldMax > 0 ? Math.round((evt.shield / evt.shieldMax) * 100) : 0;
-    // step 10: stash for the 1Hz dispatcher; CSS bar animates between.
-    this.hudDispatcher.stashShield(pct);
-    if (evt.phase === 'restored' && this.predWorld?.hasShip(evt.targetId)) {
-      this.predWorld.setHullExposed(evt.targetId, false, getShipKind(this.mirror.ships.get(evt.targetId)?.kind ?? null));
-    }
-  }
-
-  private handleDamage(evt: DamageEvent, suppressNumber = false): void {
-    // Campaign 1.2 — a 0-damage event is a STATE carrier only (the server
-    // emits one solely for a shield 0-cross or a destruction; this is also
-    // defense-in-depth against fractional damage from a pre-guard server).
-    // State below (HUD stash, collider swap, shieldDown bit, hostility)
-    // still applies; the FX pipeline (flash / floating number / health-bar
-    // hit / impact spark) is gated so the player never sees a "0" + sparks.
-    const showFx = evt.damage > 0;
-    const localId = this.mirror.localPlayerId;
-    if (evt.targetId === localId) {
-      // Phase 7 — use the event-provided PER-KIND maxes, not the global
-      // SHIP_MAX_HEALTH constant (the latent bug: a kind whose maxHealth
-      // != 500 rendered a wrong %). newHealth is the HULL value.
-      const hullPct = evt.hullMax > 0 ? Math.round((evt.newHealth / evt.hullMax) * 100) : 0;
-      const shPct = evt.shieldMax > 0 ? Math.round((evt.newShield / evt.shieldMax) * 100) : 0;
-      // step 10: just stash the latest target value; the 1Hz dispatcher
-      // in updateMirror() pushes to Zustand. Bar's 1s CSS transition
-      // animates smoothly between samples.
-      this.hudDispatcher.stashHull(hullPct);
-      this.hudDispatcher.stashShield(shPct);
-      // Authoritative shield break -> mirror the collider swap into the
-      // local predWorld so client hit/ramming prediction matches the
-      // server. The client NEVER computes the 0-cross (reacts to the
-      // authoritative event only — no predict-flap).
-      if (evt.newShield === 0 && this.predWorld?.hasShip(localId)) {
-        this.predWorld.setHullExposed(localId, true, getShipKind(this.mirror.ships.get(localId)?.kind ?? null));
-      }
-    }
-    // Shield-layer hit → flag the target's shield-down state in the
-    // mirror (M8 wiggly-puppy). The handleShield event is local-only
-    // (line 1479 returns when targetId !== localPlayerId), but every
-    // DamageEvent carries `newShield` for every target — so this is the
-    // single ownership site for ALL ships' shieldDown bit. The
-    // shieldDown=false case (regen back above 0) lands in handleShield
-    // for the local player; remote players' regen ramps don't broadcast,
-    // so a remote ship's ring will linger UP until its next DamageEvent
-    // — accepted limitation, documented in src/client/CLAUDE.md Effects
-    // section.
-    const targetEntry = this.mirror.ships.get(evt.targetId);
-    if (targetEntry) {
-      const wasDown = targetEntry.shieldDown === true;
-      const isDown = evt.newShield <= 0;
-      if (isDown !== wasDown) targetEntry.shieldDown = isDown;
-    }
-
-    // Phase 1 AI: mirror the server's hostility-marking on every damage
-    // event for swarm targets. Server fires the same call from its own
-    // `applyDamage`. Both sides receive identical events so each drone's
-    // per-instance `hostileTo` set converges without a wire-format bump.
-    // Client AI controller is keyed on the bare numeric id (see register
-    // call `\`${entityId}\``), so strip the `swarm-` prefix here.
-    if (evt.targetId.startsWith('swarm-') && evt.shooterId) {
-      const numeric = evt.targetId.slice('swarm-'.length);
-      this._aiController.markHostile(numeric, evt.shooterId, this.inputTick);
-    }
-
-    // Visuals (flash / number / health bar / spark). A naval shell hit waits
-    // for the frame its shell's burst is drawn at the display tick, so the
-    // flash coincides with the drawn impact instead of leading it by the
-    // display delay + RTT/2 (navalHitHold.ts). State above is never held.
-    if (!showFx) return;
-    if (this._shellTiming.holdHit(evt, suppressNumber)) return;
-    this.applyDamageFx(evt, suppressNumber);
-  }
+  private handleShield(evt: ShieldEventMessage): void { handleShield(this._damageCtx, evt); }
+  private handleDamage(evt: DamageEvent, suppressNumber = false): void { handleDamage(this._damageCtx, evt, suppressNumber); }
+  private applyDamageFx(evt: DamageEvent, suppressNumber: boolean): void { applyDamageFx(this._damageCtx, evt, suppressNumber); }
+  private killEntity(id: string): void { killEntity(this._damageCtx, id); }
+  private handleDestroy(evt: DestroyEvent): void { handleDestroy(this._damageCtx, evt); }
+  private killSwarmEntity(wireId: string): void { killSwarmEntity(this._damageCtx, wireId); }
 
   /** A `shell_end` (`DrawnShellTiming.onShellEnd`). */
   private applyShellEnd(msg: ShellEnd): void { this._shellTiming.onShellEnd(msg); }
 
   /** One frame of event shells at `displayTick` (`DrawnShellTiming.place`). */
   private placeShells(displayTick: number): void { this._shellTiming.place(displayTick); }
-
-  /** The FX half of a damage event with positive damage: hull flash,
-   *  floating number, health-bar hit, impact spark. */
-  private applyDamageFx(evt: DamageEvent, suppressNumber: boolean): void {
-    const localId = this.mirror.localPlayerId;
-    // Flash the damaged ship for 6 frames.
-    this._damageFlashFrames.set(evt.targetId, 6);
-    // Debris (a wreck piece): spark and flash only, no number or health bar.
-    const debris = isWreckPieceTarget(evt.targetId, this.mirror.swarm);
-
-    // Floating damage number at hit location. weapon-hit-prediction
-    // Phase 3 — suppressed when a confirmed/settled prediction already
-    // showed this number (de-dupe: exactly one number per confirmed hit).
-    // Everything else in handleDamage stays unconditional — this remains
-    // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    // A swarm target the client never drew (spawned and killed between two
-    // snapshots: the salvage pod a beam wore out of a wreck piece and burned
-    // with its next pulse) gets no number: it would float over empty space.
-    const targetShip = this.mirror.ships.get(evt.targetId);
-    const unseen = targetShip === undefined && isUnseenSwarmTarget(evt.targetId, this.mirror.swarm);
-    if (!suppressNumber && !debris && !unseen && !isNoDamageNumberTarget(evt.targetId, this.mirror.swarm) && this.mirror.pendingDamageNumbers) {
-      const x = evt.hitX ?? targetShip?.x ?? 0;
-      const y = evt.hitY ?? targetShip?.y ?? 0;
-      this.mirror.pendingDamageNumbers.push({ targetId: evt.targetId, x, y, damage: evt.damage });
-    }
-
-    // Health bar on hit — only show for targets the local player is shooting.
-    // Push BOTH hull% AND shield% so HealthBarManager can render a
-    // two-segment bar. Without the shield half, shield damage on drones
-    // looks like zero damage: the hull bar stays at 100% while shield
-    // absorbs (no-spillover) the first N hits, and drones have no other
-    // shield-feedback surface (only player ships have a HUD ShieldHullBar).
-    if (evt.shooterId === localId && !debris && this.mirror.pendingHealthBarHits) {
-      const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
-      const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
-      // Pre-hit HULL fraction for the chip-damage band: a HULL hit removed
-      // `damage` from hull, so health was `newHealth + damage` before it. A
-      // SHIELD hit left hull untouched ⇒ pre == post (no chip). All
-      // client-derived from the already-received DamageEvent — no wire cost.
-      const preHealthPct =
-        evt.hullMax > 0 && evt.hitLayer === 'hull'
-          ? Math.min(1, (evt.newHealth + evt.damage) / evt.hullMax)
-          : healthPct;
-      this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct, shieldPct, preHealthPct });
-    }
-
-    // Impact sparks — visual-effects subsystem M7 (plan wiggly-puppy).
-    // Push to the pending queue; the renderer drains it inside update()
-    // on shouldRender frames (perFrameTriggers gate). Authoritative-only
-    // on first pass per the plan's asymmetry with damage numbers
-    // (predicted hits get the number immediately but sparks follow the
-    // server's DamageEvent — RTT/2 lag is acceptable for the decorative
-    // spark vs the load-bearing damage number).
-    if (this.mirror.pendingEffectTriggers) {
-      const targetShipForFallback = this.mirror.ships.get(evt.targetId);
-      const sparkX = evt.hitX ?? targetShipForFallback?.x ?? 0;
-      const sparkY = evt.hitY ?? targetShipForFallback?.y ?? 0;
-      const tint = evt.hitLayer === 'shield' ? 0x88ddff : 0xff8844;
-      this.mirror.pendingEffectTriggers.push({
-        kind: 'impact',
-        worldX: sparkX,
-        worldY: sparkY,
-        tint,
-        entityId: evt.targetId, // for shield-ring pulse on shield-layer hits
-      });
-    }
-  }
 
   /**
    * THE one way a remote ship's predWorld body and per-ship prediction state
@@ -2306,120 +2167,6 @@ export class ColyseusGameClient {
     pw.setShipState(key, pose);
     this.predRemoteShipIds.add(key);
     return true;
-  }
-
-  /**
-   * Single authoritative path for removing any entity from the simulation.
-   * Called immediately on destroy event for both local and remote ships.
-   * syncMirror acts as a defensive fallback only.
-   */
-  private killEntity(id: string): void {
-    // Trigger explosion sprite on this frame (renderer consumes then App.tsx clears).
-    this.mirror.explodingShips?.add(id);
-    this.flushQueuedDamageFx(id);
-
-    // Immediately remove physics body so hitscan and collisions cannot hit it.
-    this.predWorld?.despawnShip(id);
-
-    // Remove from render mirror so the sprite is culled this frame.
-    this.mirror.ships.delete(id);
-
-    if (id === this.mirror.localPlayerId) {
-      this.localDead = true;
-      this.diedAtMs = this.clock.now();
-      // Plan: crispy-kazoo, Commit 3 — death is the cascade trigger.
-      // Pre-Commit 3 the capture lifecycle.ndjson had ZERO local_died
-      // events; we reconstructed death from indirect breadcrumbs
-      // (GalaxyOverviewScreen mount in 'spawn' mode). This event lets
-      // future captures measure death-to-respawn directly.
-      const msSinceWelcome = this.welcomePerfNow > 0
-        ? Math.round(this.diedAtMs - this.welcomePerfNow)
-        : -1;
-      logEvent('local_died', { playerId: id, msSinceWelcome });
-      this.mirror.liveBeams?.clear();
-      this.ghostManager.clearForShip(id);
-      useUIStore.getState().setHullPct(0);
-      // Phase 4 WS-A1 (D3) — death transitions INSTANTLY into spectator (no
-      // death modal). The old blocking DeathOverlay path is removed; the player
-      // free-roams the sector as an invulnerable, un-networked camera with full
-      // construction. `isDead` is intentionally NOT set (it gated the modal);
-      // `pilotMode='spectator'` is the discrete flag the camera/input/build
-      // branches read. Remote interpolation keeps running so drones stay smooth.
-      // RTS slice 10: that IS command view (`selectControlMode` → 'command'),
-      // a free camera over the rest of the fleet, never a dead-hull follow.
-      if (shouldEnterSpectatorOnDeath(id, this.mirror.localPlayerId)) {
-        useUIStore.getState().setPilotMode('spectator');
-      }
-      useUIStore.getState().setSectorAlert('SHIP DESTROYED');
-      setTimeout(() => useUIStore.getState().setSectorAlert(null), 3000);
-    } else {
-      this.dropRemoteShip(id);
-    }
-  }
-
-  private handleDestroy(evt: DestroyEvent): void {
-    const vaporised = evt.vaporised === true;
-    // Held for its drawn shell: the release marks it vaporised in its frame.
-    if (this._shellTiming.deferKill(evt.targetId, vaporised)) return;
-    // A cut kill that left no wreck piece (fracture v11): the renderer plays
-    // the vaporise blast and holds no dying hull. Same key as explodingShips.
-    if (vaporised) this.mirror.vaporisedShips?.add(evt.targetId);
-    if (evt.targetId.startsWith('swarm-')) this.killSwarmEntity(evt.targetId);
-    else this.killEntity(evt.targetId);
-  }
-
-  /**
-   * Remove a swarm entity (drone) immediately on a destroy event. Sweeps the
-   * mirror entry, the predWorld body, and the damage-flash tracker. The next
-   * binary swarm packet will confirm the entity is gone (delta packets won't
-   * mention it; the next 60-tick full snapshot will sweep on the server's say-so).
-   */
-  private killSwarmEntity(wireId: string): void {
-    const entityIdStr = wireId.slice('swarm-'.length);
-    const entityId = parseInt(entityIdStr, 10);
-    if (Number.isNaN(entityId)) return;
-    this.mirror.swarm?.delete(entityId);
-    if (this.predWorld?.hasShip(wireId)) this.predWorld.despawnShip(wireId);
-    this.predSwarmKeys.delete(wireId);
-    this._movingSwarmKeys.delete(wireId);
-    this._damageFlashFrames.delete(wireId);
-    // Reuse the explosion sprite path — the renderer keys explosions off
-    // sprite position (looked up by id), and `swarm-${entityId}` is the
-    // sprite key, so the existing explosion machinery just works.
-    this.mirror.explodingShips?.add(wireId);
-    this.flushQueuedDamageFx(wireId);
-    useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
-  }
-
-  /**
-   * The target just died: release, NOW, every hit visual still queued for
-   * it, so its number completes in the explosion's frame and never climbs
-   * over the wreck afterwards (fight-clip review 2026-11-13). Two queues
-   * delay a real hit's number on purpose: the smooth-beam splits of a
-   * predicted hitscan hit, and naval hits held for their drawn shell burst.
-   * The hits were dealt before the death, so they are flushed, not dropped;
-   * the renderer then closes the number (`DamageNumberManager.markDead`, fed
-   * by the same `explodingShips` frame). Rare path (a death).
-   */
-  private flushQueuedDamageFx(targetId: string): void {
-    const scheduled = this._scheduledDamageSpawns;
-    if (scheduled.length > 0) {
-      const pending = this.mirror.pendingDamageNumbers;
-      // Forward, so the splits land in schedule order.
-      let w = 0;
-      for (let r = 0; r < scheduled.length; r++) {
-        const s = scheduled[r]!;
-        if (s.targetId === targetId) {
-          pending?.push({ targetId: s.targetId, x: s.x, y: s.y, damage: s.damage, tag: s.tag });
-        } else {
-          scheduled[w++] = s;
-        }
-      }
-      scheduled.length = w;
-    }
-    if (this._navalHitHold.size > 0) {
-      this._navalHitHold.flushTarget(targetId, this._heldDamageSink);
-    }
   }
 
   private handleRespawnAck(msg: RespawnAckMessage): void {

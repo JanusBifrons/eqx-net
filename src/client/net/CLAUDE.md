@@ -11,3 +11,4 @@ Rules for the client network layer. `ColyseusClient.ts` is at its size cap (`scr
 - **A prediction-step pass** is a function in `prediction/` taking the once-built `PredictionStepCtx`, called in order from `tickPhysics`.
 - **`snapshot` and `swarm` stay inline in `connect()`** (hot path).
 - **Fire control and lock state** live in `FireControlClient.ts` (lock line in `fireControl/`); `ColyseusClient` keeps one-line delegates and reaches prediction/fire dispatch for it through `FireControlHost`.
+- **The local ship's own fire** (`sendFire`, the live beam) lives in `fireControl/LocalFireClient.ts`; **damage and death** (`handleDamage`, `killEntity`, ...) in `damagePath.ts`. Each takes a host/ctx built once in `ColyseusClient`.
