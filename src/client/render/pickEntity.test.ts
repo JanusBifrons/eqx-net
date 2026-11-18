@@ -99,6 +99,14 @@ describe('pickEntityAt', () => {
     expect(hit).toEqual({ id: 'swarm-7', kind: 'asteroid' });
   });
 
+  it('a cargo pod is selectable as a pod; plain scrap is not (cargo pods 15)', () => {
+    const pod = { ...swarm(0, 0, 3, 20), shipKind: 'cargo-pod' } as SwarmRenderState;
+    const scrap = { ...swarm(200, 0, 3, 20), shipKind: 'fighter' } as SwarmRenderState;
+    const m = mirror({ swarm: new Map([[5, pod], [6, scrap]]) });
+    expect(pickEntityAt(0, 0, m)).toEqual({ id: 'swarm-5', kind: 'pod' });
+    expect(pickEntityAt(200, 0, m)).toBeNull();
+  });
+
   it('lingering hulls ARE selectable by shipInstanceId (WS-9/R2.23)', () => {
     const m = mirror({
       ships: new Map([['linger-xyz', lingering(300, 300, 'owner-1')]]),

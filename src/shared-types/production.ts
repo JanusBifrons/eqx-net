@@ -77,7 +77,8 @@ export function encodeBpRuns(bp: { kind: 'bpo' | 'bpc'; runs: number | null } | 
 }
 
 /** "Waiting for Minerals" style status line for the inspector. */
-export function prodStatusLine(state: ProdState, missing: GoodId | undefined): string {
+export function prodStatusLine(state: ProdState, missing: GoodId | undefined, recipe?: RecipeId): string {
+  if (state === PROD_STATE.starved && recipe !== undefined && RECIPES[recipe].chunkInput !== undefined) return 'Waiting for a rock chunk';
   if (state === PROD_STATE.starved && missing !== undefined) return `Waiting for ${GOOD_DEFS[missing].displayName}`;
   return PROD_STATE_LABELS[state];
 }
