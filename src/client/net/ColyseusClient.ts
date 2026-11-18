@@ -974,7 +974,6 @@ export class ColyseusGameClient {
   private readonly _helmPose: HelmPose = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 };
   private _helmKindId: string | null = null;
   private _helmAvailable = false;
-  private _helmPanelAlways = false;
   /** Helm move marker: bumps per course tap; the marker record is written
    *  into `mirror.helmCourse` (spatial ⇒ mirror, never Zustand, #2). */
   private _helmCourseSeq = 0;
@@ -5287,9 +5286,7 @@ export class ColyseusGameClient {
   getHelmOrder(): Readonly<HelmOrder> { return this._helmOrder; }
 
   private publishHelm(): void {
-    // The panel: always for a capital; for smaller hulls only while a course is set.
-    const panel = this._helmAvailable && (this._helmPanelAlways || this._helmOrder.active);
-    useUIStore.getState().setHelmState(panel, this._helmOrder.active, this._helmOrder.speed);
+    useUIStore.getState().setHelmState(this._helmAvailable, this._helmOrder.active, this._helmOrder.speed);
     this.syncHelmMark();
   }
 
@@ -5309,7 +5306,6 @@ export class ColyseusGameClient {
     if (kindId === this._helmKindId) return;
     this._helmKindId = kindId;
     this._helmAvailable = kindId !== null; // every hull takes helm orders (navigation slice 13)
-    this._helmPanelAlways = kindId !== null && getShipKind(kindId).sizeClass === 'capital';
     if (!this._helmAvailable) this.clearHelm();
     this.publishHelm();
   }

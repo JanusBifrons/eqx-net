@@ -14,7 +14,7 @@ The autopilot flies your ship to a point you pick and takes it round rock on the
 ## Limits
 
 - One route request at a time per player, and at most two a second; extra requests are ignored, and the client simply asks again.
-- **Setting a course:** tap empty space (every hull). WASD or the stick cancels it. A capital always shows the helm panel; a smaller hull shows it only while a course is set.
+- **Setting a course:** tap empty space (every hull). WASD or the stick cancels it. Every hull shows the helm panel (owner, 2026-11-18).
 - **Flying the route:** the helm steers at each turn in order and moves on to the next one as soon as it is within its turn lead (`helmPassRadius`: about how far the ship travels while it comes round), so it sweeps through bends rather than stopping at each. Only the last leg brakes and arrives; arrival is within the hull's own size (`helmArriveRadius`).
 - **Reply lost or late:** a reply older than the current course is ignored; one that never comes is asked for again after 5 s, and the ship flies straight at the point meanwhile.
 

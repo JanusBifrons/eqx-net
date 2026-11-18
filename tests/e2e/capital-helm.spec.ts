@@ -6,8 +6,9 @@
  * takes over: the panel reads "course set" and the ship moves under its own
  * inputs (server-authoritative pose via `data-ship-x/y`), with the green
  * move marker drawn at the course point. Pressing W cancels
- * the course (WASD overrides the helm). A fighter in the same room shows no
- * helm panel until it has a course (the autopilot, `autopilot-round-rock.spec.ts`).
+ * the course (WASD overrides the helm). A fighter in the same room shows the
+ * helm panel too: every hull takes helm orders (owner, 2026-11-18; the
+ * autopilot, `autopilot-round-rock.spec.ts`).
  */
 import { test, expect } from '@playwright/test';
 import { launchTestClient } from './helpers/gameScenario';
@@ -73,14 +74,14 @@ test('a battleship pilot taps a course, the helm flies it, W cancels', async ({ 
   }
 });
 
-test('a fighter shows no helm panel without a course', async ({ browser }) => {
+test('a fighter shows the helm panel too', async ({ browser }) => {
   const { ctx, page } = await launchTestClient(browser, {
     room: ROOM, ...SPAWN, shipKind: 'fighter', extraParams: { worker: '0' },
   });
   try {
     // Once the local ship is in the mirror, helm availability has been decided.
     await page.waitForFunction(() => !Number.isNaN(Number((document.querySelector('[data-ship-x]') as HTMLElement | null)?.dataset['shipX'])));
-    await expect(page.getByTestId('helm-panel')).toHaveCount(0);
+    await expect(page.getByTestId('helm-panel')).toBeVisible({ timeout: 15_000 });
   } finally {
     await ctx.close();
   }
