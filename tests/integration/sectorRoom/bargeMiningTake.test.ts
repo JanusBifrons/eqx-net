@@ -129,8 +129,9 @@ describe('SectorRoom integration — the barge-mining take: the rock ends up in 
       watchLocks();
       fire('laser'); fire('tractor');
       // Hold the triggers in GAME time: a tractor lease lasts ${TRACTOR_LEASE} ticks, so renew every
-      // half lease. A wall-time step (50 ms = 12 ticks at 4×) let the beam lapse on a slow CI runner,
-      // restart its pull, and strand the last pod (CI 2026-11-18, every retry on integration shard 4).
+      // half lease. A wall-time step (50 ms = 12 ticks at 4×) let the beam lapse on a slow CI runner.
+      // The pod stranded on CI 2026-11-18 (every retry, shard 4) was the tractor locks idling on pieces
+      // too big to pull while a pod drifted out of reach (lockSplit.ts `splitGroupLocks`, lockLineage.test.ts).
       const fired = int().serverTick;
       while (int().serverTick - fired < TRACTOR_LEASE / 2) await harness.advance(5);
     }
