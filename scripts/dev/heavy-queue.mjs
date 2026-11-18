@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import {
-  KINDS, adoptOrphan, decide, isOrphaned, fmtDur, formatStatus, newTicketId, readRunning, readTickets,
+  KINDS, adoptOrphan, decide, devLeaseDir, isOrphaned, shellJoin, sweepDevLeases, fmtDur, formatStatus, newTicketId, readRunning, readTickets,
   releaseRunning, removeTicket, resolveQueueDir, snapshot, sweepStale, tryClaim, writeTicket,
 } from './heavy-queue-core.mjs';
 
@@ -72,11 +72,6 @@ function parseRunArgs(argv) {
   if (!Number.isInteger(opts.priority) || opts.priority < 1 || opts.priority > 5) { log('--priority must be 1-5'); usage(); }
   if (opts.minutes != null && !(opts.minutes > 0)) { log('--minutes must be > 0'); usage(); }
   return { opts, command: argv.slice(sep + 1) };
-}
-
-/** Join argv for a shell, quoting args that need it. */
-function shellJoin(args) {
-  return args.map((a) => (/^[\w@%+=:,./\\-]+$/.test(a) ? a : `"${a.replace(/"/g, '\\"')}"`)).join(' ');
 }
 
 async function cmdRun(argv) {
@@ -175,6 +170,7 @@ async function cmdRun(argv) {
 function cmdStatus(argv) {
   const dir = resolveQueueDir();
   sweepStale(dir);
+  sweepDevLeases(devLeaseDir(dir));
   const snap = snapshot(dir);
   if (argv.includes('--json')) process.stdout.write(`${JSON.stringify(snap, null, 2)}\n`);
   else process.stdout.write(`${formatStatus(snap)}\n`);
