@@ -66,7 +66,7 @@ function structExtra(): { accent?: number; livery?: { team: number; sigil: numbe
     ...(RESTYLE !== 'current' ? { style: RESTYLE } : {}),
   };
 }
-/** `?rigs=1` (restyle 2c): structures draw their articulation rig parts,
+/** Rigs on unless `?rigs=0` (restyle 2c, the game's default): structures draw their articulation rig parts,
  *  driven by `__artlab.playRig`. */
 const RIGS = readRigsFlag(location.search);
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
 
   const scene: Scene = buildScene(SCENE, ZOOM, BENCH_N, { w: W, h: H });
   // Restyle 2c: the outpost gets a pop-up turret (rig sandbox) north of the
-  // power station, only with `?rigs=1` (the scene is unchanged without it).
+  // power station while rigs are on (`?rigs=0` = the scene without it).
   if (RIGS && SCENE === 'outpost') {
     scene.structs.push({ id: 'turret', x: 1000, y: -800, rot: 0, seed: 13, size: 200 });
     scene.edges?.push([6, scene.structs.length - 1]);

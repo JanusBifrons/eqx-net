@@ -299,8 +299,8 @@ export function initSceneAndOverlays(s: RendererInitState, h: InitSceneHost, r: 
     spriteBuildSigs: h.swarmSpriteSigs, fxShieldPose: h.fxShieldPose, lastMirror: () => h.lastMirror,
   });
   if (effects) h.effects = effects;
-  // Structure restyle look R&D (main-thread renderer only): 1g line looks
-  // (`?lineLook=pipe|cable|conduit`) and 2c rig parts (`?rigs=1`).
+  // Structure restyle (main-thread renderer only), on by default: 1g cable line look
+  // (`?lineLook=off|pipe|conduit`) and 2c rig parts (`?rigs=0` off).
   if (target.isDom) {
     s.connectorRenderer.lineLook = readLineLook(window.location.search);
     if (readRigsFlag(window.location.search)) s.swarmUpdaterCtx.structureRigs = new StructureRigs(s.shipContainer);

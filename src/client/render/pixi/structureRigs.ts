@@ -1,7 +1,8 @@
 /**
  * Structure restyle 2c — draws a structure's articulation rig parts
  * (`core/articulation`: crane boom/jib/clamp, dock lip, hatch doors, pop-up
- * turret slide) behind `?rigs=1`. Flag off ⇒ nothing here is constructed and
+ * turret slide); on by default, `?rigs=0` turns them off. Off ⇒ nothing here
+ * is constructed and
  * the structure render path is untouched.
  *
  * Not a renderer of its own: the parts hang off the structure's existing
@@ -50,9 +51,10 @@ import type { StructureRenderState } from '../../../core/contracts/IRenderer.js'
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
 import { RIG_LOOK_C, rigPartContext, rigSlotContext } from './structureRigLook.js';
 
-/** `?rigs=1`: draw structure rig parts (off by default). */
+/** Draw structure rig parts: on by default (owner, structure restyle);
+ *  `?rigs=0` turns them off (the pre-restyle structures). */
 export function readRigsFlag(search: string): boolean {
-  return /[?&]rigs=1\b/.test(search);
+  return !/[?&]rigs=0(?![\w.])/.test(search);
 }
 
 /**

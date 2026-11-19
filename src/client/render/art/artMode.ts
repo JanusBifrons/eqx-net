@@ -105,11 +105,18 @@ export function readStructLivery(search: string): boolean {
   return /[?&]structLivery=1\b/.test(search);
 }
 
-/** `?restyle=<id>`: a structure style from `structureStyles.ts`, or
- *  undefined for `current`, an unknown id or no param. */
+/** The structure style every Machined-art player sees (owner, structure
+ *  restyle: on by default; `?restyle=off` / `current` = today's bakes). */
+export const DEFAULT_STRUCT_STYLE = 'c';
+
+/** `?restyle=<id>`: a structure style from `structureStyles.ts`;
+ *  undefined for `off` / `current` (the pre-restyle bakes); absent or an
+ *  unknown id = `DEFAULT_STRUCT_STYLE`. */
 export function readStructStyle(search: string): string | undefined {
-  const s = parseStructureStyle(new URLSearchParams(search).get('restyle'));
-  return s === 'current' ? undefined : s;
+  const raw = new URLSearchParams(search).get('restyle');
+  if (raw === 'off' || raw === 'current') return undefined;
+  const s = parseStructureStyle(raw);
+  return s === 'current' ? DEFAULT_STRUCT_STYLE : s;
 }
 
 /** `?shiplight=gpu|high|medium|low|baked` (gpu = high), or null. */
