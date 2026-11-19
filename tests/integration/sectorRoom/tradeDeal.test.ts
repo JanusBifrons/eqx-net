@@ -38,6 +38,9 @@ async function boot(): Promise<Ctx> {
     droneCount: 0,
     testMode: true,
     asteroidConfig: [],
+    // The raided hauler spills ALL its goods: no death-loss coin flips (random
+    // salt per room), which would drop the 10 alloy half the time.
+    keepAllOnDeath: true,
     prebuiltStructures: [{ kind: 'capital', x: 0, y: 0 }],
     prebuiltStructuresOwner: OWNER,
   } as never);
