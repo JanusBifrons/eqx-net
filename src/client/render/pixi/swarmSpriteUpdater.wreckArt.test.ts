@@ -19,8 +19,11 @@ import {
   WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX, WRECK_RIPPLE_MAX, WRECK_BLAST_MAIN,
   WRECK_RIPPLE_R_MIN, WRECK_RIPPLE_R_MAX, WRECK_CRACK_FRONT_MS, WRECK_GLOW_END_S, wreckGlowTexture,
   WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow, WRECK_GLOW_TEX_ROWS, GLOW_ROW, GLOW_ROWS_PER_TINT, GLOW_TINT_SLICE, GLOW_TINT_CHANNEL,
-  WRECK_BLAST_LINGER, wreckBlasts, type WreckBlast, wreckPieceFarLod,
+  WRECK_BLAST_LINGER, wreckBlasts, type WreckBlast, wreckPieceFarLod, wreckPieceSpeckColor,
 } from './wreckArt.js';
+import { wreckPieceColors } from './spriteBuilders.js';
+import { bakedHullPaint } from '../art/liveryForge.js';
+import { shipPrimaryColor } from '../../../core/geometry/shipHullOutline.js';
 import { FxExplosions } from '../art/fx/FxExplosions.js';
 import { WreckBreakFx } from '../../effects/perEffect/WreckBreakFx.js';
 import type { Sprite } from 'pixi.js';
@@ -373,6 +376,65 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
     } finally {
       litPass.settings = prev;
     }
+  });
+
+  // Stills 2026-11-18 (ashfront, zoom 0.15, art=machined&fx=new): far specks
+  // drew as flat bright green / purple blocks while the same pieces up close
+  // wore the grey livery hull. The speck took the plain-art kind colour, not
+  // the colour the piece's art was forged in.
+  it('a far speck takes the hull paint its art was forged in: the livery grey under full art, the kind colour without art', () => {
+    const page = new TextureSource({ width: 2048, height: 2048 });
+    const frames: Texture[] = [];
+    for (let t = 0; t < TILES; t++) frames.push(new Texture({ source: page, frame: new Rectangle(0, t * TILE_H, W, Math.min(TILE_H, H - t * TILE_H)) }));
+    const art: ShipArt = { frames, w: W, h: H, tiles: TILES, tileH: TILE_H, density: 0.2, nozzles: [], navLights: [], lit: { w: W, h: H, ppu: 0.2, maxH: 30, emisMax: 1 } };
+    const jobs: ArtHandle['job'][] = [];
+    const svc = {
+      lightRig: {},
+      ship: (id: string, paint?: number, _urgent?: boolean, rings = false, dead = false, livery?: Livery) => {
+        const job = { type: 'ship' as const, id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}), ...(livery ? { livery } : {}) };
+        jobs.push(job);
+        return { key: bakeKey(job), job, rig: {} as ArtHandle['rig'], state: 'ready', ship: art, struct: null } as ArtHandle;
+      },
+    } as unknown as ArtService;
+    const prev = litPass.settings;
+    litPass.settings = LOOK_NIGHT;
+    try {
+      const ctx = makeCtx(svc, []);
+      ctx.art.livery = 'b8';
+      const R = getShipKind('battleship').radius;
+      const d = desc(DEATH_TICK);
+      ctx.cameraScale = 5 / (2 * R);
+      updateSwarmSprites(mirrorFor(d, DEATH_TICK + 4), ctx);
+      const job = jobs[0]!;
+      expect(job.type === 'ship' && job.livery !== undefined, 'the pieces wear a livery bake').toBe(true);
+      const lv = job.type === 'ship' ? job.livery : undefined;
+      const hull = bakedHullPaint(shipPrimaryColor(getShipKind('battleship')), 'battleship', undefined, lv);
+      const kindFill = wreckPieceColors('battleship').fill;
+      expect(hull).not.toBe(kindFill);
+      const mul = (a: number, b: number): number => {
+        let o = 0;
+        for (const s of [16, 8, 0]) o |= ((((a >> s) & 255) * ((b >> s) & 255)) / 255) << s; // as `mulColor`: truncated
+        return o;
+      };
+      let n = 0;
+      for (const s of ctx.sprites.values() as IterableIterator<WreckPieceSprite>) {
+        expect(s.farZoom).toBe(true);
+        const speck = s.children.find((c): c is PixiSprite => c instanceof PixiSprite && c.renderable)!;
+        // The up-close lit tiles carry the same burnt multiply as the speck.
+        const near = s.children.find((c): c is LitShipMesh => c instanceof LitShipMesh)!;
+        expect(speck.tint, 'speck = the art hull paint x the piece tint').toBe(mul(hull, near.tint));
+        n++;
+      }
+      expect(n).toBeGreaterThan(1);
+      for (const s of ctx.sprites.values()) s.destroy({ children: true });
+    } finally {
+      litPass.settings = prev;
+    }
+    // No ship art (plain look): the plain piece's kind colour.
+    expect(wreckPieceSpeckColor('battleship', undefined)).toBe(wreckPieceColors('battleship').fill);
+    // Full art with no livery: the bake's own paint, else the kind colour it was forged in.
+    expect(wreckPieceSpeckColor('battleship', { type: 'ship', id: 'battleship' })).toBe(shipPrimaryColor(getShipKind('battleship')));
+    expect(wreckPieceSpeckColor('battleship', { type: 'ship', id: 'battleship', paint: 0x123456 })).toBe(0x123456);
   });
 
   // Filmed 2026-11-15 (beam-slice, the default look, livery b8 on since the

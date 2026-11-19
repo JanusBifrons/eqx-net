@@ -137,9 +137,22 @@ describe('SectorRoom integration — wreck field streaming (wreck fields 3b)', (
     // Touch one hull: shove one of its pieces 60 u.
     const id = src.pieceIds()[0]!;
     const p = { ...int().wreckState(id)! };
-    const moved = { x: p.x + 60, y: p.y - 25 };
+    const moved = { x: p.x + 60, y: p.y - 25 }; // the shove target
     int().postToWorker({ type: 'SET_POSITION', entityId: id, x: moved.x, y: moved.y, angle: p.angle, vx: 0, vy: 0, angvel: 0 });
-    await harness!.advance(300);
+    await harness!.advance(500);
+    // In the dense field (wreck fields 11+) the shove can land the piece on a
+    // neighbour, which pushes it on: the row keeps where it was LEFT, so wait
+    // until it is slow AND its pose holds between two checks (a zero speed alone
+    // can be the instant before contact resolves; an unchanged pose alone can be
+    // a worker pose not yet refreshed on a loaded host) and read that pose.
+    let last = { ...int().wreckState(id)! };
+    await until(() => `shoved piece at rest: ${JSON.stringify(int().wreckState(id))}`, () => {
+      const s = int().wreckState(id)!;
+      const still = Math.hypot(s.vx, s.vy) < 1e-3 && Math.abs(s.angvel) < 1e-4 && Math.hypot(s.x - last.x, s.y - last.y) < 0.01;
+      last = { ...s };
+      return still;
+    });
+    const left = { ...int().wreckState(id)! };
 
     // Leave for longer than the linger: untouched hulls retire, the touched one unloads into its row.
     const away = { x: spot.x + 12 * CHUNK_SIZE, y: spot.y };
@@ -156,7 +169,7 @@ describe('SectorRoom integration — wreck field streaming (wreck fields 3b)', (
     expect(src.stats.hullsRestored).toBe(1);
     expect(fieldPieces(int())).toBe(want);
     expect(src.stats.hullsLive).toBe(spot.hulls.length);
-    const near = src.pieceIds().some((q) => { const s = int().wreckState(q); return s !== null && Math.hypot(s.x - moved.x, s.y - moved.y) < 0.5; });
+    const near = src.pieceIds().some((q) => { const s = int().wreckState(q); return s !== null && Math.hypot(s.x - left.x, s.y - left.y) < 0.5; });
     expect(near, 'a reloaded piece sits where the moved one was left').toBe(true);
   });
 

@@ -42,7 +42,7 @@ export interface ResolvedSectorConfig {
    * the rocks (`rockFieldBlocker` from `cutField`). Absent = no field.
    * Becomes `roomOpts.wreckField`.
    */
-  wreckField?: Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings'>;
+  wreckField?: Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings' | 'arrivals'>;
 }
 
 export function resolveSectorConfig(key: string): ResolvedSectorConfig {
