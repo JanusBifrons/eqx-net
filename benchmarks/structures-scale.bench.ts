@@ -20,6 +20,10 @@ import { getStructureKind } from '../src/shared-types/structureKinds.js';
 import { Grid, canConnect, type GridNode } from '../src/core/structures/Grid.js';
 import { Connection } from '../src/core/structures/Connection.js';
 import { buildStructureLattice } from '../src/core/structures/structureLattice.js';
+import {
+  CABLE_BLOCK_STATS, CABLE_CURVE_FLOATS, flattenCableCurve, isCablePolylineBlocked, makeCableBox,
+  type CableEnd,
+} from '../src/core/structures/cableCurve.js';
 
 interface Built {
   nodes: Map<string, GridNode>;
@@ -74,6 +78,39 @@ function suite(label: string, b: Built): void {
       let ok = 0;
       for (const other of b.nodes.values()) if (canConnect(probe, other, b.adj, b.nodes).ok) ok++;
       if (ok < 0) throw new Error('unreachable');
+    });
+    // 0d slice 3: the build preview's per-frame cable test. One socket-to-socket
+    // curve from the probe to each of its 16 nearest nodes, each tested against
+    // all N (what the preview's canConnect will do every frame once it uses the
+    // curve). Sockets face each other along the centre line; the probe end is a
+    // connector (short tail). The narrow-phase count is printed once (print-only:
+    // not yet calibrated on CI).
+    const near = [...b.nodes.values()]
+      .sort((p, q) => Math.hypot(p.x - probe.x, p.y - probe.y) - Math.hypot(q.x - probe.x, q.y - probe.y))
+      .slice(0, 16);
+    const poly = new Float64Array(CABLE_CURVE_FLOATS);
+    const box = makeCableBox();
+    const sa: CableEnd = { x: 0, y: 0, nx: 0, ny: 0 };
+    const sb: CableEnd = { x: 0, y: 0, nx: 0, ny: 0 };
+    const ma = sa as { x: number; y: number; nx: number; ny: number };
+    const mb = sb as { x: number; y: number; nx: number; ny: number };
+    const curveSweep = (): number => {
+      let blocked = 0;
+      for (const other of near) {
+        const dx = other.x - probe.x, dy = other.y - probe.y, d = Math.hypot(dx, dy) || 1;
+        const ux = dx / d, uy = dy / d;
+        ma.x = probe.x + ux * probe.radius; ma.y = probe.y + uy * probe.radius; ma.nx = ux; ma.ny = uy;
+        mb.x = other.x - ux * other.radius; mb.y = other.y - uy * other.radius; mb.nx = -ux; mb.ny = -uy;
+        flattenCableCurve(sa, true, sb, false, poly, box);
+        if (isCablePolylineBlocked(probe, other, poly, box, b.nodes)) blocked++;
+      }
+      return blocked;
+    };
+    CABLE_BLOCK_STATS.narrow = 0;
+    const blocked0 = curveSweep();
+    console.log(`[cable-curve] ${label}: 16 curves vs ${b.nodes.size} nodes, blocked=${blocked0}, narrow tests=${CABLE_BLOCK_STATS.narrow}`);
+    bench('preview cable sweep: flatten + block, 16 nearest vs all N', () => {
+      if (curveSweep() < 0) throw new Error('unreachable');
     });
   });
 }
