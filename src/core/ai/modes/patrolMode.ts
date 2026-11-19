@@ -25,21 +25,55 @@ import {
   type IPilotMode,
   type PilotModeContext,
   type PilotModeGoal,
+  type PilotOrderModes,
 } from '../tactics/manoeuvre.js';
 
 export class PatrolMode implements IPilotMode {
+  /** Roaming-formation (Phase 5): the in-sector point the director wants this
+   *  drone to fly to while IDLE (its formation slot / the squad destination for
+   *  the leader). `null` ⇒ default origin orbit. Server-only — set via the
+   *  brain's `setMoveTarget`; the client never ticks the drone brain. */
+  moveTarget: { x: number; y: number } | null = null;
+  /** True when this drone is a flock LEADER cruising a course (set by
+   *  `setFlockLeaderCourse`, cleared by `setMoveTarget`/`setFlockFollow`). While
+   *  set, the fly-to (`pilot/moveTo.ts`) throttles forward thrust by
+   *  `LEADER_CRUISE_THROTTLE` so the leader travels slower than its
+   *  full-cruise followers and they tighten into the herd. A plain
+   *  `setMoveTarget` (lone drone / tests) is full-thrust. */
+  leaderCruise = false;
+
+  /** The guard post (`GuardReturnMode`, read live): a course onto the post is a hold. */
+  constructor(private readonly guard: Readonly<{ on: boolean; x: number; y: number }>) {}
+
+  /** Set the course (`setMoveTarget` / `setFlockLeaderCourse`): it clears any
+   *  FOLLOWER role (the ship leads / moves independently now). */
+  setCourse(x: number, y: number, leaderCruise: boolean, o: PilotOrderModes): void {
+    o.flock.leaderId = null;
+    this.leaderCruise = leaderCruise;
+    if (this.moveTarget === null) this.moveTarget = { x, y };
+    else { this.moveTarget.x = x; this.moveTarget.y = y; }
+  }
+
+  /** Drop the course and any follower role (`clearMoveTarget`). */
+  clearCourse(o: PilotOrderModes): void {
+    this.moveTarget = null;
+    o.flock.leaderId = null;
+    this.leaderCruise = false;
+  }
+
   begin(_ctx: PilotModeContext): void {}
 
   writeGoal(ctx: PilotModeContext, out: PilotModeGoal): void {
     const self = ctx.self;
     out.params = DEFAULT_PILOT_PARAMS;
-    const mt = ctx.moveTarget;
+    const mt = this.moveTarget;
     if (ctx.job === JOB_COURSE && mt !== null) {
       // Holding a post (slice 9): inside the arrive radius of it the ship
       // stays where it is and only brakes. With the nose kept (the fly-to
       // close in) a few units off the exact point to the side could never be
       // closed: it tapped forward and back across it every second.
-      if (ctx.guardOn && mt.x === ctx.guardX && mt.y === ctx.guardY) {
+      const g = this.guard;
+      if (g.on && mt.x === g.x && mt.y === g.y) {
         const dx = mt.x - self.x;
         const dy = mt.y - self.y;
         const r = shipTuning(ctx.kind).wingmanArrive;
