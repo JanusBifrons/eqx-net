@@ -21,8 +21,8 @@ import { isHaulerId } from '../livingworld/directorBotIds.js';
 import { getTradeSink } from '../economy/tradeSink.js';
 import type { TradeNetworkSnapshot, TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import type { TradeNotice } from '../../shared-types/economy.js';
-import { MineState, SectorState, ShipState } from './schema/SectorState.js';
-import { MineFieldSubsystem, type MineTarget } from '../structures/MineFieldSubsystem.js';
+import { SectorState, ShipState } from './schema/SectorState.js';
+import type { MineFieldSubsystem } from '../structures/MineFieldSubsystem.js';
 import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import type { SectorRoomOptions } from './sectorRoomOptions.js';
@@ -196,7 +196,7 @@ import { HullHandOff } from './features/hullHandOff.js';
 import { BreakInHooks } from './features/breakInHooks.js';
 import { TurretTargeting } from './features/turretTargeting.js';
 import { SectorTimeScale } from './features/sectorTimeScale.js';
-import { MineHooks } from './features/mineHooks.js';
+import { MineHooks, buildMineField } from './features/mineHooks.js';
 import { StorageRaid } from './features/tradeMessages.js';
 import {
   ALLOW_DEV_OVERRIDES,
@@ -2254,32 +2254,13 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: () => this.sectorKey,
       now: () => this.gameClock.now(),
     });
-    // Mine Layers: lay mines from munitions; a mine goes off on a ship hostile
-    // to its owner (the owner's turret-targeting rule).
-    this.mineField = new MineFieldSubsystem({
-      registry: this.structureRegistry,
+    // Mine Layers (`features/mineHooks.ts`).
+    this.mineField = buildMineField({
+      structureRegistry: this.structureRegistry, mineHooks: this.mineHooks, turretTargeting: this.turretTargeting,
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
       takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
-      isClear: (x, y) => this.mineHooks.mineSpotClear(x, y),
-      findHostile: (x, y, range, owner) => {
-        const t = this.turretTargeting.findNearestTurretTarget(x, y, range, owner);
-        if (t === null) return null;
-        const out = this._mineTarget;
-        out.id = t.playerId ?? t.id;
-        out.x = t.x;
-        out.y = t.y;
-        return out;
-      },
-      detonate: (mine, target) => this.mineHooks.detonateMine(mine, target),
-      onLaid: (mine) => {
-        const st = new MineState();
-        st.ownerIdx = this.internStructureOwner(mine.owner);
-        st.x = Math.round(mine.x);
-        st.y = Math.round(mine.y);
-        (this.state as SectorState).mines.set(mine.id, st);
-      },
-      onRemoved: (mine) => { (this.state as SectorState).mines.delete(mine.id); },
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
+      mines: () => (this.state as SectorState).mines, internStructureOwner: (o) => this.internStructureOwner(o),
     });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
     // Forms the blocking span between paired pylons + drives its physics
@@ -3520,7 +3501,6 @@ export class SectorRoom extends Room<SectorState> {
     mineField: () => this.mineField, applyDamage: (t, s, d, x, y) => this.applyDamage(t, s, d, x, y),
     broadcast: (type, msg) => { this.broadcast(type, msg); },
   });
-  private readonly _mineTarget: MineTarget = { id: '', x: 0, y: 0 };
   /** P3c — robot harvesters raid a player's storage (`features/tradeMessages.ts`). */
   private readonly storageRaid = new StorageRaid({
     storage: () => this.storage, sectorKey: () => this.sectorKey, now: () => this.gameClock.now(),

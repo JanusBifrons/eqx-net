@@ -5,7 +5,10 @@
  */
 import type { StructureRegistry } from '../../structures/StructureRegistry.js';
 import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
-import type { MineFieldSubsystem, MineRecord, MineTarget } from '../../structures/MineFieldSubsystem.js';
+import { MineFieldSubsystem, type MineFieldDeps, type MineRecord, type MineTarget } from '../../structures/MineFieldSubsystem.js';
+import type { MapSchema } from '@colyseus/schema';
+import { MineState } from '../schema/SectorState.js';
+import type { TurretTargeting } from './turretTargeting.js';
 import { MINE_BLAST_RADIUS, MINE_CLEARANCE, MINE_DAMAGE, type MineDetonated } from '../../../shared-types/mines.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../../shared-types/sectorBounds.js';
 import { slotBase, SLOT_X_OFF, SLOT_Y_OFF } from '../../../shared-types/sabLayout.js';
@@ -52,4 +55,49 @@ export class MineHooks {
     const msg: MineDetonated = { type: 'mine_detonated', x: mine.x, y: mine.y, radius: MINE_BLAST_RADIUS };
     this.h.broadcast('mine_detonated', msg);
   }
+}
+
+/** What building the room's mine field needs; getters read the live field. */
+export interface MineFieldBuildHost extends Required<Pick<MineFieldDeps, 'powered' | 'takeMunition' | 'setActive'>> {
+  structureRegistry: StructureRegistry;
+  mineHooks: Pick<MineHooks, 'mineSpotClear' | 'detonateMine'>;
+  turretTargeting: Pick<TurretTargeting, 'findNearestTurretTarget'>;
+  /** The synced `SectorState.mines` map (laid mines the clients draw). */
+  mines(): MapSchema<MineState>;
+  internStructureOwner(owner: string): number;
+}
+
+/**
+ * Mine Layers — build the room's `MineFieldSubsystem`: lay mines from
+ * munitions; a mine goes off on a ship hostile to its owner (the owner's
+ * turret-targeting rule). Moved verbatim out of `SectorRoom.onCreate`, which
+ * calls it at the same point.
+ */
+export function buildMineField(h: MineFieldBuildHost): MineFieldSubsystem {
+  const mineTarget: MineTarget = { id: '', x: 0, y: 0 };
+  return new MineFieldSubsystem({
+    registry: h.structureRegistry,
+    powered: (id) => h.powered(id),
+    takeMunition: (rec) => h.takeMunition(rec),
+    isClear: (x, y) => h.mineHooks.mineSpotClear(x, y),
+    findHostile: (x, y, range, owner) => {
+      const t = h.turretTargeting.findNearestTurretTarget(x, y, range, owner);
+      if (t === null) return null;
+      const out = mineTarget;
+      out.id = t.playerId ?? t.id;
+      out.x = t.x;
+      out.y = t.y;
+      return out;
+    },
+    detonate: (mine, target) => h.mineHooks.detonateMine(mine, target),
+    onLaid: (mine) => {
+      const st = new MineState();
+      st.ownerIdx = h.internStructureOwner(mine.owner);
+      st.x = Math.round(mine.x);
+      st.y = Math.round(mine.y);
+      h.mines().set(mine.id, st);
+    },
+    onRemoved: (mine) => { h.mines().delete(mine.id); },
+    setActive: (rec, active) => h.setActive(rec, active),
+  });
 }
