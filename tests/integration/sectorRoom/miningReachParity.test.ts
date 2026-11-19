@@ -33,9 +33,11 @@ function serverGate(d: number): Gate {
     locksFor: () => ({ aimKeyFor: () => 'r:1' }),
     lockOwner: (pid: string) => pid,
     resolveLockTarget: (_owner: string, _key: string, out: FireTargetShape) => fillRock(out, d),
+    _lockTargetId: '',
+    lineHeld: () => false, // the blocked-line hold is not under test: a clear line
   };
   const fn = (SectorRoom.prototype as unknown as Record<string, (...a: unknown[]) => boolean>)['mountBearsOnLock']!;
-  return (mountId, weaponId, size, ox, oy, angle) => fn.call(self, 'p1', mountId, ox, oy, angle, weaponId, size);
+  return (mountId, weaponId, size, ox, oy, angle) => fn.call(self, 'p1', mountId, 0, ox, oy, angle, weaponId, size);
 }
 
 /** The client gate, on a client stub whose group aim resolves to the rock. */
