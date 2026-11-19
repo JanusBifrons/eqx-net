@@ -89,7 +89,7 @@ export function makeInputHandler(
     const reverse = bits.reverse ?? false;
     // Energy-gate boost: strip the bit before it reaches the worker when the
     // ship can't afford a tick of boost. One owner / two sites, same tick —
-    // this gate prevents applying a boost the drain (tickEnergy) would make
+    // this gate prevents applying a boost the drain (tickShipEnergy) would make
     // negative (Invariant #12). The worker is unchanged.
     if (boost && !canAfford(ctx.shipEnergyOf(playerId) ?? 0, BOOST_TICK_COST)) {
       boost = false;
@@ -109,7 +109,7 @@ export function makeInputHandler(
     // applied whenever boost is held (energy-affordable — the bit was stripped
     // above when the pool couldn't afford a tick). It no longer requires
     // thrust. `boostingPlayers` drives both the per-tick energy drain
-    // (tickEnergy) and the exhaust trail (renderer layers it on top of the
+    // (tickShipEnergy) and the exhaust trail (renderer layers it on top of the
     // baseline thrust flame).
     if (boost) ctx.boostingPlayers.add(playerId);
     else ctx.boostingPlayers.delete(playerId);

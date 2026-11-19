@@ -70,7 +70,7 @@ export class ShipState extends Schema {
   // ride the OWN-ship snapshot slice so the client predWorld scales movement
   // identically (risk #1). The non-physics factors (hull/energy/damage/shield)
   // are read off THIS field by the server caps + fire path — `effectiveShip*`
-  // (maxHull/shield/energy seed + denominators in ShieldHullRouter/tickEnergy/
+  // (maxHull/shield/energy seed + denominators in ShieldHullRouter/tickShipEnergy/
   // entity_stats) and `mul.damage` in PlayerFireResolver (review must-fix #1,
   // 2026-06-20 — these were dead code before). `{}` = un-upgraded.
   statAlloc: StatAlloc = {};
@@ -106,7 +106,7 @@ export class ShipState extends Schema {
   // off the diff). Seeded to kind.energyMax on spawn/respawn. Transient like
   // shield (respawns full, never persisted ⇒ exempt from the catalogue
   // hull-drift clamp). Drained per slot-fire trigger + per boost tick;
-  // regenerated every tick by SectorRoom.tickEnergy.
+  // regenerated every tick by tickShipEnergy.
   energy = 0;
 }
 
