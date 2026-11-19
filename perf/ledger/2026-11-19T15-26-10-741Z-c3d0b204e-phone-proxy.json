@@ -1,0 +1,2086 @@
+{
+  "when": "2026-11-19T15:26:10.741Z",
+  "device": "phone-proxy",
+  "reps": 8,
+  "cpuRate": 2,
+  "noiseCheck": false,
+  "host": {
+    "hostname": "2T9394",
+    "platform": "win32 10.0.26200",
+    "node": "v24.14.0",
+    "cpuModel": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "threads": 16,
+    "totalMemMb": 31849,
+    "freeMemMbAtStart": 3936,
+    "gpuRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5070 Ti (0x00002C05) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "browserArgs": [
+      "--use-angle=d3d11",
+      "--ignore-gpu-blocklist",
+      "--enable-gpu-rasterization",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows"
+    ],
+    "headed": false
+  },
+  "load": {
+    "gate": true,
+    "limits": {
+      "minFreeMemMb": 1024,
+      "maxCpuPct": 25
+    },
+    "ignorePorts": [],
+    "portOffset": 300,
+    "atStart": {
+      "at": "2026-11-19T15:12:12.198Z",
+      "cpuPct": 12.8,
+      "cpuWindowMs": 1000,
+      "threads": 16,
+      "freeMemMb": 14839,
+      "totalMemMb": 31849,
+      "foreignListeners": [],
+      "foreignProcs": {
+        "node": 39,
+        "chrome": 9
+      }
+    }
+  },
+  "arms": [
+    {
+      "name": "base",
+      "sha": "c3d0b204e",
+      "clientParams": {
+        "shipKind": "fighter",
+        "initialHull": "1000000",
+        "art": "machined",
+        "fx": "new",
+        "diag": "0",
+        "perfprobe": "1"
+      },
+      "serverEnv": {
+        "EQX_SCENE_GALAXY_FIELD": "0"
+      }
+    },
+    {
+      "name": "head",
+      "sha": "c3d0b204e",
+      "clientParams": {
+        "shipKind": "fighter",
+        "initialHull": "1000000",
+        "art": "machined",
+        "fx": "new",
+        "diag": "0",
+        "perfprobe": "1"
+      },
+      "serverEnv": {}
+    }
+  ],
+  "scenes": {
+    "galaxy-field-nav": {
+      "title": "A galaxy asteroid sector: a squad of fighters routed across the belt",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": {
+        "status": "RED",
+        "rows": [
+          {
+            "metric": "displayObjects",
+            "base": 999,
+            "head": 1166,
+            "ratio": 1.17,
+            "p": 0,
+            "status": "RED"
+          },
+          {
+            "metric": "clientFrameP95",
+            "base": 16.7,
+            "head": 16.7,
+            "ratio": 1,
+            "p": 0.45,
+            "status": "GREEN"
+          },
+          {
+            "metric": "clientHitchesPerMin",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 0.45,
+            "status": "GREEN"
+          },
+          {
+            "metric": "renderP95",
+            "base": 0.6,
+            "head": 0.75,
+            "ratio": 1.25,
+            "p": 0.32,
+            "status": "GREEN"
+          },
+          {
+            "metric": "rxKBps",
+            "base": 49.84,
+            "head": 50.76,
+            "ratio": 1.02,
+            "p": 0,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickP95",
+            "base": 0.26,
+            "head": 0.44,
+            "ratio": 1.67,
+            "p": 0.12,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickP99",
+            "base": 0.36,
+            "head": 0.55,
+            "ratio": 1.53,
+            "p": 0.22,
+            "status": "GREEN"
+          },
+          {
+            "metric": "clientFrameP99",
+            "base": 16.8,
+            "head": 16.8,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "heapMb",
+            "base": 95.5,
+            "head": 98.5,
+            "ratio": 1.03,
+            "p": 0.86,
+            "status": "PRINT"
+          },
+          {
+            "metric": "longTaskMsPerMin",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navExpanded",
+            "base": 0,
+            "head": 40505,
+            "ratio": null,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navInFlightMax",
+            "base": 0,
+            "head": 8,
+            "ratio": null,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navMessages",
+            "base": 0,
+            "head": 24,
+            "ratio": null,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navRoutes",
+            "base": 0,
+            "head": 8,
+            "ratio": null,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "renderP99",
+            "base": 0.9,
+            "head": 1,
+            "ratio": 1.11,
+            "p": 0.35,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverAiAgentsPerTick",
+            "base": 7.84,
+            "head": 7.84,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverBodiesPerTick",
+            "base": 8.83,
+            "head": 9.99,
+            "ratio": 1.13,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverContactsPerTick",
+            "base": 0.19,
+            "head": 0.53,
+            "ratio": 2.84,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverCpuMsPerTick",
+            "base": 16.4,
+            "head": 17.59,
+            "ratio": 1.07,
+            "p": 0.06,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverEntitiesPerSnapshot",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverSwarmBytesPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverSwarmRecordsPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverTickMax",
+            "base": 6.08,
+            "head": 6.96,
+            "ratio": 1.14,
+            "p": 0.31,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverUpdateCpuMsPerTick",
+            "base": 0,
+            "head": 0.22,
+            "ratio": null,
+            "p": 0.18,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmanHostileQueriesPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmanHostileScansPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmanReplansPerTick",
+            "base": 7.84,
+            "head": 7.84,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmenPerTick",
+            "base": 7.84,
+            "head": 7.84,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "sprites",
+            "base": 9,
+            "head": 9,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "swarmAtEnd",
+            "base": 0,
+            "head": 290.5,
+            "ratio": null,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerElu",
+            "base": 0.01,
+            "head": 0.03,
+            "ratio": 3.63,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerTickP95",
+            "base": 0.16,
+            "head": 0.75,
+            "ratio": 4.66,
+            "p": 0,
+            "status": "PRINT"
+          }
+        ]
+      },
+      "base": [
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 42% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:12:22.542Z",
+              "cpuPct": 41.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 9992,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 25,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:12:23.937Z",
+              "cpuPct": 32,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 9986,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 45% > 25% of 16 threads; foreign game server/Vite listening: :2567 pid 24548 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:12:40.336Z",
+              "cpuPct": 45.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 8824,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2567,
+                  "pid": 24548,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/Documen"
+                }
+              ],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:12:41.746Z",
+              "cpuPct": 29.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 8473,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2567,
+                  "pid": 24548,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/Documen"
+                }
+              ],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.25,
+            "serverTickP99": 0.34,
+            "serverTickMax": 6.17,
+            "workerTickP95": 0.17,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.6,
+            "renderP99": 0.9,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.161,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.01
+          },
+          "counts": {
+            "rxKBps": 49.79671360059026,
+            "displayObjects": 999,
+            "sprites": 9,
+            "swarmAtEnd": 0,
+            "heapMb": 82,
+            "serverBodiesPerTick": 8.84,
+            "serverContactsPerTick": 0.17,
+            "serverAiAgentsPerTick": 7.84,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.84,
+            "serverWingmanReplansPerTick": 7.84,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:12:58.139Z",
+              "cpuPct": 3.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 9453,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 22,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:13:33.863Z",
+              "cpuPct": 11.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 7167,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 22,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 26% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:15:28.969Z",
+              "cpuPct": 26.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1888,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:15:30.364Z",
+              "cpuPct": 31.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1910,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 30% > 25% of 16 threads; foreign game server/Vite listening: :3355 pid 25832 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:15:46.768Z",
+              "cpuPct": 29.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2288,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 3355,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 24,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:15:48.161Z",
+              "cpuPct": 24.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2096,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 3167,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 24,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 33% > 25% of 16 threads; foreign game server/Vite listening: :2623 pid 25832 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:16:04.565Z",
+              "cpuPct": 33,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1641,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2623,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:16:05.956Z",
+              "cpuPct": 32.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1621,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2623,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 35% > 25% of 16 threads; foreign game server/Vite listening: :2623 pid 25832 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:16:07.372Z",
+              "cpuPct": 34.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1639,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2623,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:16:08.758Z",
+              "cpuPct": 29.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1610,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2623,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 39% > 25% of 16 threads; foreign game server/Vite listening: :2623 pid 25832 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:16:25.227Z",
+              "cpuPct": 38.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2823,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2623,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:16:26.612Z",
+              "cpuPct": 29.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2838,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2623,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 24,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 30% > 25% of 16 threads; foreign game server/Vite listening: :3223 pid 25832 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:16:43.016Z",
+              "cpuPct": 29.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1796,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 3223,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:16:44.419Z",
+              "cpuPct": 31.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1657,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 3223,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.27,
+            "serverTickP99": 0.38,
+            "serverTickMax": 5.98,
+            "workerTickP95": 0.14,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.6,
+            "renderP99": 0.9,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.047,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.008
+          },
+          "counts": {
+            "rxKBps": 49.655171350070745,
+            "displayObjects": 999,
+            "sprites": 9,
+            "swarmAtEnd": 0,
+            "heapMb": 82,
+            "serverBodiesPerTick": 8.83,
+            "serverContactsPerTick": 0.1,
+            "serverAiAgentsPerTick": 7.84,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.84,
+            "serverWingmanReplansPerTick": 7.84,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:18:51.848Z",
+              "cpuPct": 10.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 4912,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 22,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:19:27.284Z",
+              "cpuPct": 16.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 6706,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 22,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.23,
+            "serverTickP99": 0.31,
+            "serverTickMax": 2.11,
+            "workerTickP95": 0.13,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.6,
+            "renderP99": 0.9,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.327,
+            "serverUpdateCpuMsPerTick": 0.251,
+            "workerElu": 0.008
+          },
+          "counts": {
+            "rxKBps": 49.57094761044507,
+            "displayObjects": 999,
+            "sprites": 9,
+            "swarmAtEnd": 0,
+            "heapMb": 98,
+            "serverBodiesPerTick": 8.83,
+            "serverContactsPerTick": 0.14,
+            "serverAiAgentsPerTick": 7.84,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.84,
+            "serverWingmanReplansPerTick": 7.84,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:19:28.671Z",
+              "cpuPct": 11,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 6760,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 22,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:20:04.218Z",
+              "cpuPct": 26.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 7595,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.51,
+            "serverTickP99": 1.03,
+            "serverTickMax": 6.59,
+            "workerTickP95": 0.23,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 5.911135923286592,
+            "renderP95": 1.1,
+            "renderP99": 3.1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.283,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.012
+          },
+          "counts": {
+            "rxKBps": 49.88117436619487,
+            "displayObjects": 999,
+            "sprites": 9,
+            "swarmAtEnd": 0,
+            "heapMb": 104,
+            "serverBodiesPerTick": 8.84,
+            "serverContactsPerTick": 0.27,
+            "serverAiAgentsPerTick": 7.85,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.85,
+            "serverWingmanReplansPerTick": 7.85,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:22:34.209Z",
+              "cpuPct": 16,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13109,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:23:09.794Z",
+              "cpuPct": 18.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13232,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.25,
+            "serverTickP99": 0.32,
+            "serverTickMax": 2.67,
+            "workerTickP95": 0.15,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.6,
+            "renderP99": 0.9,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.468,
+            "serverUpdateCpuMsPerTick": 0.087,
+            "workerElu": 0.009
+          },
+          "counts": {
+            "rxKBps": 50.08698010710768,
+            "displayObjects": 999,
+            "sprites": 9,
+            "swarmAtEnd": 0,
+            "heapMb": 93,
+            "serverBodiesPerTick": 8.83,
+            "serverContactsPerTick": 0.29,
+            "serverAiAgentsPerTick": 7.84,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.84,
+            "serverWingmanReplansPerTick": 7.84,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:23:11.180Z",
+              "cpuPct": 15.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13271,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:23:46.662Z",
+              "cpuPct": 19.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13280,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 39% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:25:16.734Z",
+              "cpuPct": 38.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2947,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:25:18.148Z",
+              "cpuPct": 30.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2936,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.48,
+            "serverTickP99": 1.57,
+            "serverTickMax": 32.74,
+            "workerTickP95": 0.21,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 3.939204937136854,
+            "renderP95": 1.3,
+            "renderP99": 4.4,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 15.929,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.013
+          },
+          "counts": {
+            "rxKBps": 49.907976223205196,
+            "displayObjects": 999,
+            "sprites": 9,
+            "swarmAtEnd": 0,
+            "heapMb": 111,
+            "serverBodiesPerTick": 8.83,
+            "serverContactsPerTick": 0.2,
+            "serverAiAgentsPerTick": 7.84,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.84,
+            "serverWingmanReplansPerTick": 7.84,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:25:34.550Z",
+              "cpuPct": 24.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3955,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 27,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:26:10.322Z",
+              "cpuPct": 27.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2387,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 41,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        }
+      ],
+      "head": [
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 66% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:13:45.718Z",
+              "cpuPct": 66.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 4663,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:13:47.554Z",
+              "cpuPct": 60.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 4473,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.44,
+            "serverTickP99": 0.55,
+            "serverTickMax": 7.53,
+            "workerTickP95": 0.71,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.8,
+            "renderP99": 1.1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.744,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.034
+          },
+          "counts": {
+            "rxKBps": 50.83933407188577,
+            "displayObjects": 1166,
+            "sprites": 9,
+            "swarmAtEnd": 299,
+            "heapMb": 82,
+            "serverBodiesPerTick": 10.35,
+            "serverContactsPerTick": 0.52,
+            "serverAiAgentsPerTick": 7.84,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.84,
+            "serverWingmanReplansPerTick": 7.84,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 8,
+            "navExpanded": 40505,
+            "navMessages": 29,
+            "navInFlightMax": 8
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:14:03.938Z",
+              "cpuPct": 20.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3414,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:14:40.124Z",
+              "cpuPct": 26.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2757,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 25% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:14:41.550Z",
+              "cpuPct": 25.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2801,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:14:42.940Z",
+              "cpuPct": 25.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2758,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 68% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:14:59.635Z",
+              "cpuPct": 68,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2046,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 24,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:15:01.102Z",
+              "cpuPct": 59.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1912,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 24,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 31% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:15:17.583Z",
+              "cpuPct": 30.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2332,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:15:19.008Z",
+              "cpuPct": 31.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2311,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 32% > 25% of 16 threads; foreign game server/Vite listening: :3199 pid 25832 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:16:53.830Z",
+              "cpuPct": 31.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1596,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 3199,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:16:55.276Z",
+              "cpuPct": 35.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1635,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2954,
+                  "pid": 25832,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 29% > 25% of 16 threads; foreign game server/Vite listening: :3010 pid 24180 (node.exe), :3046 pid 6516 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:17:11.676Z",
+              "cpuPct": 28.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1491,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 3010,
+                  "pid": 24180,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\godfile-room-23\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sector"
+                },
+                {
+                  "port": 3046,
+                  "pid": 6516,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:17:13.070Z",
+              "cpuPct": 21,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1291,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 3010,
+                  "pid": 24180,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\godfile-room-23\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sector"
+                },
+                {
+                  "port": 3046,
+                  "pid": 6516,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                }
+              ],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 28% > 25% of 16 threads; foreign game server/Vite listening: :2789 pid 6516 (node.exe), :3429 pid 20208 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:17:29.450Z",
+              "cpuPct": 28.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2626,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2789,
+                  "pid": 6516,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                },
+                {
+                  "port": 3429,
+                  "pid": 20208,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\godfile-room-23\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sector"
+                }
+              ],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:17:30.848Z",
+              "cpuPct": 27.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2635,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2789,
+                  "pid": 6516,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                },
+                {
+                  "port": 3429,
+                  "pid": 20208,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\godfile-room-23\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sector"
+                }
+              ],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 29% > 25% of 16 threads; foreign game server/Vite listening: :2789 pid 6516 (node.exe), :3429 pid 20208 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:17:32.254Z",
+              "cpuPct": 28.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2629,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2789,
+                  "pid": 6516,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                },
+                {
+                  "port": 3429,
+                  "pid": 20208,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\godfile-room-23\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sector"
+                }
+              ],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:17:33.632Z",
+              "cpuPct": 29.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2812,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 3303,
+                  "pid": 6516,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\keep-all-on-death\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sect"
+                },
+                {
+                  "port": 3429,
+                  "pid": 20208,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\godfile-room-23\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sector"
+                }
+              ],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: foreign game server/Vite listening: :3350 pid 20208 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:17:50.022Z",
+              "cpuPct": 22.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3599,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 3350,
+                  "pid": 20208,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\godfile-room-23\\node_modules\\.bin\\\\..\\vitest\\vitest.mjs\" \"run\" \"-c\" \"vitest.integration.config.ts\" \"tests/integration/sector"
+                }
+              ],
+              "foreignProcs": {
+                "node": 24,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:17:51.488Z",
+              "cpuPct": 30.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3715,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 41,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.43,
+            "serverTickP99": 0.55,
+            "serverTickMax": 7.52,
+            "workerTickP95": 0.7,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.8,
+            "renderP99": 1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.433,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.032
+          },
+          "counts": {
+            "rxKBps": 50.62889379703881,
+            "displayObjects": 1166,
+            "sprites": 9,
+            "swarmAtEnd": 282,
+            "heapMb": 104,
+            "serverBodiesPerTick": 9.7,
+            "serverContactsPerTick": 0.45,
+            "serverAiAgentsPerTick": 7.84,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.84,
+            "serverWingmanReplansPerTick": 7.84,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 8,
+            "navExpanded": 40505,
+            "navMessages": 19,
+            "navInFlightMax": 8
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:18:07.866Z",
+              "cpuPct": 16,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 4354,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 22,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:18:43.404Z",
+              "cpuPct": 21.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 4914,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 22,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 42% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:20:19.260Z",
+              "cpuPct": 41.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2552,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:20:20.664Z",
+              "cpuPct": 40.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2494,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 27% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:20:37.055Z",
+              "cpuPct": 27,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3010,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:20:38.455Z",
+              "cpuPct": 27.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3057,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.43,
+            "serverTickP99": 0.53,
+            "serverTickMax": 6.34,
+            "workerTickP95": 0.77,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.7,
+            "renderP99": 1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.673,
+            "serverUpdateCpuMsPerTick": 0.607,
+            "workerElu": 0.037
+          },
+          "counts": {
+            "rxKBps": 51.97588888911708,
+            "displayObjects": 1166,
+            "sprites": 9,
+            "swarmAtEnd": 299,
+            "heapMb": 104,
+            "serverBodiesPerTick": 10.29,
+            "serverContactsPerTick": 1.34,
+            "serverAiAgentsPerTick": 7.85,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.85,
+            "serverWingmanReplansPerTick": 7.85,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 10,
+            "navExpanded": 43403,
+            "navMessages": 31,
+            "navInFlightMax": 8
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:20:54.825Z",
+              "cpuPct": 6.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3446,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 22,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:21:30.338Z",
+              "cpuPct": 16.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 15157,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 25,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 29% > 25% of 16 threads",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:21:31.775Z",
+              "cpuPct": 28.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 16125,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 25,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:21:33.168Z",
+              "cpuPct": 34,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 15389,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 25,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.56,
+            "serverTickP99": 0.76,
+            "serverTickMax": 3.7,
+            "workerTickP95": 0.72,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.7,
+            "renderP99": 1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.508,
+            "serverUpdateCpuMsPerTick": 1.115,
+            "workerElu": 0.034
+          },
+          "counts": {
+            "rxKBps": 50.426912638473425,
+            "displayObjects": 1166,
+            "sprites": 9,
+            "swarmAtEnd": 282,
+            "heapMb": 93,
+            "serverBodiesPerTick": 9.57,
+            "serverContactsPerTick": 0.47,
+            "serverAiAgentsPerTick": 7.84,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.84,
+            "serverWingmanReplansPerTick": 7.84,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 8,
+            "navExpanded": 40505,
+            "navMessages": 17,
+            "navInFlightMax": 8
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:21:49.607Z",
+              "cpuPct": 12.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 16514,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 22,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:22:25.043Z",
+              "cpuPct": 14.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14085,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 26,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.34,
+            "serverTickP99": 0.45,
+            "serverTickMax": 6.39,
+            "workerTickP95": 0.82,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.7,
+            "renderP99": 1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 18.211,
+            "serverUpdateCpuMsPerTick": 0.35,
+            "workerElu": 0.035
+          },
+          "counts": {
+            "rxKBps": 51.393636334738815,
+            "displayObjects": 1166,
+            "sprites": 9,
+            "swarmAtEnd": 299,
+            "heapMb": 104,
+            "serverBodiesPerTick": 10.29,
+            "serverContactsPerTick": 1.5,
+            "serverAiAgentsPerTick": 7.85,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.85,
+            "serverWingmanReplansPerTick": 7.85,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 13,
+            "navExpanded": 44391,
+            "navMessages": 34,
+            "navInFlightMax": 8
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:23:54.900Z",
+              "cpuPct": 14.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 12394,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:24:30.414Z",
+              "cpuPct": 9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13092,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.01,
+            "serverTickP99": 2.7,
+            "serverTickMax": 12.84,
+            "workerTickP95": 1.23,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 0.8,
+            "renderP99": 1.1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 15.632,
+            "serverUpdateCpuMsPerTick": 0.087,
+            "workerElu": 0.044
+          },
+          "counts": {
+            "rxKBps": 50.67174363076898,
+            "displayObjects": 1166,
+            "sprites": 9,
+            "swarmAtEnd": 282,
+            "heapMb": 93,
+            "serverBodiesPerTick": 9.62,
+            "serverContactsPerTick": 0.53,
+            "serverAiAgentsPerTick": 7.84,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 7.84,
+            "serverWingmanReplansPerTick": 7.84,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 8,
+            "navExpanded": 40505,
+            "navMessages": 19,
+            "navInFlightMax": 8
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-19T15:24:31.794Z",
+              "cpuPct": 11.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13146,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 9
+              }
+            },
+            "after": {
+              "at": "2026-11-19T15:25:07.472Z",
+              "cpuPct": 15.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 4241,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 24,
+                "chrome": 9
+              }
+            }
+          },
+          "raw": null
+        }
+      ]
+    }
+  }
+}
