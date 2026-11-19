@@ -83,9 +83,8 @@ import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerRoomFeatures } from './features/index.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { TeleporterSubsystem, seedAlienGates, seedPocketPads, type NpcGateSeedHost } from '../structures/TeleporterSubsystem.js';
+import { TeleporterSubsystem, findAlienTwin, findLinkTwin, seedAlienGates, seedPocketPads, type GateTwinHost, type NpcGateSeedHost } from '../structures/TeleporterSubsystem.js';
 import { getTeleportBroker, type TeleportRoom } from '../teleport/TeleportBroker.js';
-import { linkEnds } from '../../core/bases/transitNetwork.js';
 import {
   PAD_SPECS,
   isTeleporterKind,
@@ -141,7 +140,7 @@ import { getStructureKind, type StructureKindId } from '../../shared-types/struc
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
 import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
-import { ALIEN_GATE_OWNER, alienGateSites } from '../../core/galaxy/alienGates.js';
+import { alienGateSites } from '../../core/galaxy/alienGates.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
@@ -2607,8 +2606,8 @@ export class SectorRoom extends Room<SectorState> {
         return f && f.room !== this.teleportRoom ? { rec: f.rec, sys: f.room.teleporters } : null;
       },
       hopsTo: (sk) => this.padRiders.hopsToSector(sk),
-      findAlienTwin: (rec) => this.findAlienTwin(rec),
-      findLinkTwin: (rec) => this.findLinkTwin(rec),
+      findAlienTwin: (rec) => findAlienTwin(this.gateTwinHost, rec),
+      findLinkTwin: (rec) => findLinkTwin(this.gateTwinHost, rec),
       // T4 — tolls: offered at arming, settled at the swap.
       onArmed: (rec) => this.tolls.offerToll(rec),
       onTollSettle: (rec) => this.tolls.settleToll(rec),
@@ -3965,49 +3964,17 @@ export class SectorRoom extends Room<SectorState> {
     this.swarmEvictor.evict(rec, opts);
   }
 
+  /** Gate-twin lookups for the teleporters (`findLinkTwin` / `findAlienTwin`, `TeleporterSubsystem.ts`). */
+  private readonly gateTwinHost: GateTwinHost = { sectorKey: () => this.sectorKey, structureRegistry: () => this.structureRegistry };
+
   /** The 1 Hz grid pulse (body: `StructuresSliceSync.gridTick`, `structuresSlice.ts`). */
   private structureGridTick(): void { this.structuresSliceSync.gridTick(); }
 
   /** Structures plan (Phase 3-5) — seed a testMode scenario: PRE-BUILT,
    *  auto-connected structures (owner `scenario`) + parked drones + asteroids.
    *  Gives E2E a fully-functional powered grid without the place-ahead UI
-   *  (which overlaps stacked placements) or the construction wait. */
-  /** v4 H — the teleporter at the other end of `rec.npcLink` (another sector's
-   *  room, found through the broker; it carries the same link id). */
-  private findLinkTwin(rec: StructureRecord): { sectorKey: string; uid: string } | null {
-    const id = rec.npcLink;
-    if (id === undefined || this.sectorKey === null) return null;
-    const ends = linkEnds(id);
-    if (ends === null) return null;
-    const there = ends[0].sector === this.sectorKey ? ends[1].sector : ends[0].sector;
-    // Both ends in this sector: look here (another instance of a test room may
-    // share the sector key in the broker).
-    let candidates: Iterable<StructureRecord>;
-    if (there === this.sectorKey) candidates = this.structureRegistry.all();
-    else {
-      const room = getTeleportBroker().room(there);
-      if (room === null) return null;
-      candidates = room.structures();
-    }
-    for (const r of candidates) {
-      if (r !== rec && r.npcLink === id && r.uid !== undefined && r.isConstructed) return { sectorKey: there, uid: r.uid };
-    }
-    return null;
-  }
-
-  /** v4 A — the alien gate in `rec.alienNeighbour`'s room that faces back here. */
-  private findAlienTwin(rec: StructureRecord): { sectorKey: string; uid: string } | null {
-    const there = rec.alienNeighbour;
-    if (there === undefined || this.sectorKey === null) return null;
-    const room = getTeleportBroker().room(there);
-    if (room === null) return null;
-    for (const g of room.ownTeleporters(ALIEN_GATE_OWNER)) {
-      if (g.alienNeighbour === this.sectorKey && g.uid !== undefined) return { sectorKey: there, uid: g.uid };
-    }
-    return null;
-  }
-
-  /** testMode structure scenario seeding (`scenarioLayouts.seedStructureScenario`). */
+   *  (which overlaps stacked placements) or the construction wait.
+   *  testMode structure scenario seeding (`scenarioLayouts.seedStructureScenario`). */
   private readonly structureScenarioHost: StructureScenarioHost = {
     structureRegistry: this.structureRegistry, logger, structurePlacement: () => this.structurePlacement,
     teleporters: () => this.teleporters, swarmSpawner: () => this.swarmSpawner, swarmHealth: () => this.swarmHealth,
