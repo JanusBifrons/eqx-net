@@ -213,6 +213,16 @@ pnpm perf:scenes --scenes galaxy-field --device phone-proxy --cpu-rate 2 --base 
 
 First reading: [macro-terrain](macro-terrain.md) (Galaxy sectors, phone cost).
 
+## The navigation scene (`galaxy-field-nav`)
+
+The `galaxy-field` sector plus a squad of eight owned fighters spawned beside the pilot and given a fleet MOVE (the `fleet` step's `moveTo`) about 10 000 u inward across the belt, so every hull asks the nav worker for a route round the rock. The work view prints the route work over the window (print-only, not yet calibrated): `navRoutes` (routes asked), `navExpanded` (cells their searches expanded), `navMessages` (commands posted to the nav worker: routes plus chunk, rock and obstacle events) and `navInFlightMax` (most routes unanswered at once). The A/B arm with no field (and so no nav field) is the same commit:
+
+```
+pnpm perf:scenes --scenes galaxy-field-nav --device phone-proxy --cpu-rate 2 --base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0
+```
+
+Readings: [navigation](navigation.md).
+
 ## The wreck field scenes (`wreck-field`, `wreck-field-far`)
 
 The client draw cost of a fully loaded old battlefield (macro-terrain F3, wreck fields slice 6). The room takes the opt-in room option `wreckField` alone (layout seed `a` at 0,0, no rocks, `persistSector: false`). Seed `a` has the worst 5 × 5 chunk ring measured (56 live pieces, `FIELD_RING_WORST_PIECES`); the idle pilot spawns in its centre chunk (4, 0), so the streamer loads that whole ring. `wreck-field` holds the normal play zoom (0.6) on the densest view in the ring (7 pieces, all in full art); `wreck-field-far` holds the fighter's zoom-out floor (0.15) over the ring's centre (21 pieces: fighter and frigate pieces become `wreckPieceFarLod` specks, the light cruiser's stay art).

@@ -39,11 +39,22 @@ describe('SceneWorkCounters', () => {
     expect(v).toMatchObject({ wingmenPerTick: 40, wingmanReplansPerTick: 5.25, wingmanHostileQueriesPerTick: 60, wingmanHostileScansPerTick: 0.75 });
   });
 
+  it('nav: route, expansion and message totals counted from the first counted tick; peak in flight', () => {
+    const w = new SceneWorkCounters();
+    w.nav(50, 5000, 900, 9); // inactive: ignored
+    w.active = true;
+    w.nav(10, 1000, 300, 0);
+    w.nav(14, 1800, 320, 3);
+    w.nav(18, 2600, 330, 1);
+    expect(w.view(null)).toMatchObject({ navRoutes: 8, navExpanded: 1600, navMessages: 30, navInFlightMax: 3 });
+  });
+
   it('an empty window reads zeros, never NaN', () => {
     const v = new SceneWorkCounters().view(null);
     expect(v.ticks).toBe(0);
     expect(v.bodiesPerTick).toBe(0);
     expect(v.entitiesPerSnapshot).toBe(0);
     expect(v.wreckPiecesPerTick).toBe(0);
+    expect(v).toMatchObject({ navRoutes: 0, navExpanded: 0, navMessages: 0, navInFlightMax: 0 });
   });
 });

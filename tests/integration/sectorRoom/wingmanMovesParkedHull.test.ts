@@ -92,8 +92,8 @@ describe('SectorRoom integration — a wingman flies the parked hull (RTS slice 
 
     // Count AI pilot inputs for this hull from here on.
     let wingmanInputs = 0;
-    const r = room as unknown as { postHullInput: (id: string, bits: number) => void };
-    const orig = r.postHullInput.bind(room);
+    const r = (room as unknown as { wingmen: { postHullInput: (id: string, bits: number) => void } }).wingmen;
+    const orig = r.postHullInput.bind(r);
     r.postHullInput = (id, bits) => { if (id === shipId) wingmanInputs++; orig(id, bits); };
 
     // Reclaim: the owner takes the helm back.
