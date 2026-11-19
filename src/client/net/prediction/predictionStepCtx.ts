@@ -3,7 +3,11 @@ import type { Clock } from '@core/clock/Clock';
 import type { PhysicsWorld } from '@core/physics/World';
 import type { InputRecord, Reconciler } from '@core/prediction/Reconciler';
 import type { ControlBits } from '@core/combat/disable';
-import type { HelmOrder, HelmOutput } from '@core/helm/helm';
+import type { HelmOrder, HelmOutput, HelmPose } from '@core/helm/helm';
+import type { HelmCourseMark } from '../../helm/helmCourseMark.js';
+import type { HelmRouteClient } from '../../helm/helmRoute.js';
+import type { GameClock } from '@core/clock/GameClock';
+import type { FireControlClient } from '../FireControlClient.js';
 import type { TouchInput } from '../../input/TouchInput';
 import type { JoystickInputState } from '../../input/joystickToInput';
 import type { AiController } from '@core/ai/AiController';
@@ -71,6 +75,16 @@ export interface PredictionStepCtx {
   readonly sendWarpInputScratch: SendWarpInputScratch;
   clearHelm(): void;
   stepHelm(): void;
+  // Helm orders + local mount aim (`inputStep.ts`).
+  readonly helmPose: HelmPose;
+  readonly helmMark: HelmCourseMark;
+  /** Autopilot (navigation slice 13): asks the server for a way to the course point. */
+  readonly helmRoute: HelmRouteClient;
+  readonly gameClock: GameClock;
+  helmKindId: string | null;
+  helmAvailable: boolean;
+  helmCourseSeq: number;
+  readonly fc: Pick<FireControlClient, 'fcSyncKind' | 'fcTickMountAngles'>;
   isLocallyDisabled(): boolean;
   gameLeadTicks(): number;
   applyRemoteInputs(): void;

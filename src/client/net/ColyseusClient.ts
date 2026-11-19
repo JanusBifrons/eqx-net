@@ -46,7 +46,8 @@ import { cargoChanged, cargoViewOf, type WireCargo } from './lootView';
 import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
 import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
 import type { PredictionStepCtx } from './prediction/predictionStepCtx.js';
-import { FIXED_MS, MAX_CATCH_UP_TICKS, MAX_OVER_PREDICTION_TICKS, stepInputTick, predictFrameEnergy, sendCapSentinel } from './prediction/inputStep.js';
+import { FIXED_MS, MAX_CATCH_UP_TICKS, MAX_OVER_PREDICTION_TICKS, stepInputTick, predictFrameEnergy, sendCapSentinel,
+  setHelmCourse, setHelmSpeed, clearHelm, publishHelm, syncHelmMark, updateHelmAvailability, stepHelm, tickLocalMountAim } from './prediction/inputStep.js';
 import { drainScheduledDamageSpawns, updateLocalShipMirror } from './mirror/localShipPass.js';
 import { updateSpectatorPlacement, updateServerGhost, updateSwarmMirror, updateRemoteShipsMirror, updateProjectilesMirror, expireFrameState, updateDroneHostility } from './mirror/worldPasses.js';
 import { fittedCargoMul } from '../../shared-types/blueprints.js';
@@ -128,10 +129,9 @@ import { GhostManager } from '../combat/GhostProjectile';
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon } from '@core/combat/WeaponCatalogue';
 import type { ControlBits } from '@core/combat/disable';
-import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
+import { makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
 import { HelmRouteClient } from '../helm/helmRoute.js';
-import { makeHelmCourseMark, resolveHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
-import { resolveInstanceMounts } from '@shared-types/shipKinds/slots';
+import { makeHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import { type ReconcileFeedbackSink } from '../combat/HitPrediction.client';
 import type { TouchInput } from '../input/TouchInput';
@@ -1203,6 +1203,12 @@ export class ColyseusGameClient {
     get inputRecScratch() { return c._inputRecScratch; }, get applyInputScratch() { return c._applyInputScratch; },
     get sendInputScratch() { return c._sendInputScratch; }, get sendWarpInputScratch() { return c._sendWarpInputScratch; },
     clearHelm: (): void => c.clearHelm(), stepHelm: (): void => c.stepHelm(),
+    get helmPose() { return c._helmPose; }, get helmMark() { return c._helmMark; },
+    get helmRoute() { return c._helmRoute; }, get gameClock() { return c.gameClock; },
+    get helmKindId() { return c._helmKindId; }, set helmKindId(v) { c._helmKindId = v; },
+    get helmAvailable() { return c._helmAvailable; }, set helmAvailable(v) { c._helmAvailable = v; },
+    get helmCourseSeq() { return c._helmCourseSeq; }, set helmCourseSeq(v) { c._helmCourseSeq = v; },
+    get fc() { return c.fc; },
     isLocallyDisabled: (): boolean => c.isLocallyDisabled(), gameLeadTicks: (): number => c.gameLeadTicks(),
     applyRemoteInputs: (): void => c.applyRemoteInputs(), tickLocalMountAim: (dt: number): void => c.tickLocalMountAim(dt),
     get swarmSyncSeenScratch() { return c._swarmSyncSeenScratch; }, get swarmBodyKeyCache() { return c._swarmBodyKeyCache; },
@@ -2549,73 +2555,16 @@ export class ColyseusGameClient {
   /** The camera (`RendererFeedback.viewX/viewY/viewHalf`), each frame: the cut field draws around it too. */
   setFieldView(x: number, y: number, viewHalf: number): void { this._cutField.setView(x, y, viewHalf); }
 
-  /** Helm orders: set the course point (game space); the autopilot asks for a way there. */
-  setHelmCourse(x: number, y: number): void {
-    if (!this._helmAvailable) return;
-    this._helmOrder.tx = x;
-    this._helmOrder.ty = y;
-    this._helmOrder.active = true;
-    this._helmRoute.course(this._helmOrder, this.gameClock.now());
-    this._helmCourseSeq++;
-    this.publishHelm();
-  }
-
-  /** Helm orders: stop, one third, two thirds or full. */
-  setHelmSpeed(speed: HelmSpeed): void {
-    this._helmOrder.speed = speed;
-    this.publishHelm();
-  }
-
-  /** Cancel the course (WASD does this too). */
-  clearHelm(): void {
-    if (!this._helmOrder.active) return;
-    this._helmOrder.active = false;
-    this._helmRoute.clear(this._helmOrder);
-    this._helmOut.thrust = false; this._helmOut.turnLeft = false; this._helmOut.turnRight = false;
-    this.publishHelm();
-  }
-
+  // ── Helm orders: `prediction/inputStep.ts` (one-line delegates) ────
+  setHelmCourse(x: number, y: number): void { setHelmCourse(this._predStepCtx, x, y); }
+  setHelmSpeed(speed: HelmSpeed): void { setHelmSpeed(this._predStepCtx, speed); }
+  clearHelm(): void { clearHelm(this._predStepCtx); }
   /** Test/showcase read of the helm (`__eqxHelm`). */
   getHelmOrder(): Readonly<HelmOrder> { return this._helmOrder; }
-
-  private publishHelm(): void {
-    useUIStore.getState().setHelmState(this._helmAvailable, this._helmOrder.active, this._helmOrder.speed);
-    this.syncHelmMark();
-  }
-
-  /** Helm move marker: show the course point only for the pilot's own
-   *  capital under an active order, never while spectating. Alloc-free. */
-  private syncHelmMark(): void {
-    const spectating = useUIStore.getState().pilotMode === 'spectator';
-    const show = resolveHelmCourseMark(this._helmOrder, this._helmAvailable, spectating, this._helmCourseSeq, this._helmMark);
-    const next = show ? this._helmMark : null;
-    if (this.mirror.helmCourse !== next) this.mirror.helmCourse = next;
-  }
-
-  /** Helm availability follows the ship you fly (id compare; free when unchanged). */
-  private updateHelmAvailability(): void {
-    const id = this.mirror.localPlayerId;
-    const kindId = id ? this.mirror.ships.get(id)?.kind ?? null : null;
-    if (kindId === this._helmKindId) return;
-    this._helmKindId = kindId;
-    this._helmAvailable = kindId !== null; // every hull takes helm orders (navigation slice 13)
-    if (!this._helmAvailable) this.clearHelm();
-    this.publishHelm();
-  }
-
-  /** One helm tick off the real-time predicted pose (same source the stick reads). */
-  private stepHelm(): void {
-    const id = this.mirror.localPlayerId;
-    const s = id ? this.predWorld?.getShipState(id) ?? null : null;
-    if (s === null || this._helmKindId === null) return;
-    const p = this._helmPose;
-    p.x = s.x; p.y = s.y; p.angle = s.angle; p.vx = s.vx; p.vy = s.vy; p.angvel = s.angvel ?? 0;
-    this._helmRoute.tick(this.gameClock.now());
-    const idx = this._helmOrder.route?.idx ?? -1;
-    helmStep(this._helmOrder, p, getShipKind(this._helmKindId), this._helmOut);
-    if (this._helmOut.arrived) this.clearHelm();
-    else if ((this._helmOrder.route?.idx ?? -1) !== idx) this.syncHelmMark(); // a turn passed: the route line drops it
-  }
+  private publishHelm(): void { publishHelm(this._predStepCtx); }
+  private syncHelmMark(): void { syncHelmMark(this._predStepCtx); }
+  private updateHelmAvailability(): void { updateHelmAvailability(this._predStepCtx); }
+  private stepHelm(): void { stepHelm(this._predStepCtx); }
 
   tickPhysics(elapsedMs: number): void {
     if (!this.room || !this.keyboard) return;
@@ -2792,40 +2741,8 @@ export class ColyseusGameClient {
     applyRemoteShipInputs(this.predWorld, this.predRemoteShipIds, this._remoteLastInputs, this._remoteForwardTicks, this._predGuard);
   }
 
-  /**
-   * The local ship's predicted turret angles (#12): each mount slews toward
-   * its weapon group's lock (first LOCKED target, else the one being
-   * acquired, so the barrel pre-slews), or back to base when the group holds
-   * none — `fcTickMountAngles`, the client mount-angle path, mirroring the
-   * server's WeaponMountTicker (#15). Aims from the RENDERED (mirror) pose the
-   * beam is drawn from, never the lagging predicted pose (locked by
-   * ColyseusClient.liveBeamMountAimPose.test.ts).
-   *
-   * `mountAngles` is CATALOGUE-indexed everywhere it is read (the renderer
-   * beam direction + the turret sprites): the array is sized by the full
-   * per-instance mount list `[...kind.mounts, ...activated latent]` (WS-B3),
-   * the same index space the server ticker writes.
-   */
-  private tickLocalMountAim(dtSec: number): void {
-    const localId = this.mirror.localPlayerId;
-    if (!localId || !this.predWorld) return;
-    const ship = this.mirror.ships.get(localId);
-    if (!ship) return;
-    if (!this.predWorld.getShipState(localId)) return;
-    const catalogueMounts = resolveInstanceMounts(getShipKind(ship.kind ?? null), ship.activatedMounts);
-    if (catalogueMounts.length === 0) {
-      if (ship.mountAngles) ship.mountAngles = undefined;
-      return;
-    }
-    // number[] is fine — N is small (1–3) and the array survives many frames.
-    let angles = ship.mountAngles;
-    if (!angles || angles.length !== catalogueMounts.length) {
-      angles = new Array<number>(catalogueMounts.length).fill(0);
-      ship.mountAngles = angles;
-    }
-    this.fc.fcSyncKind(ship.kind ?? null);
-    this.fc.fcTickMountAngles(angles, catalogueMounts, ship.x, ship.y, ship.angle, dtSec);
-  }
+  /** The local ship's predicted turret angles (#12): `prediction/inputStep.ts`. */
+  private tickLocalMountAim(dtSec: number): void { tickLocalMountAim(this._predStepCtx, dtSec); }
 
   /** The beam / hit-prediction ray world, pointed at the live predWorld and
    *  swarm mirror (both can be replaced across a sector handoff). */
