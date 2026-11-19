@@ -1,6 +1,8 @@
 import { RendererCommandRouting } from './rendererCommandRouting.js';
 import { decidePlacementPointer } from '../placementPointerDecision.js';
 import { setCanvasPointerCapture } from '../pointerCapture.js';
+import type { RenderMirror } from '@core/contracts/IRenderer';
+import type { HoverBracket } from '../HoverBracket';
 
 export type { RendererInputDeps } from './rendererCommandRouting.js';
 
@@ -276,6 +278,54 @@ export class RendererInputController extends RendererCommandRouting {
     if (this._placementWindowMoveHandler) {
       window.removeEventListener('pointermove', this._placementWindowMoveHandler, true);
       this._placementWindowMoveHandler = null;
+    }
+  }
+
+  /** WS-9 (R2.30) — reused scratch for the selection screen-projection (#14). */
+  private readonly _selScreenScratch = { x: 0, y: 0 };
+
+  /** Per frame (frameViewUpdater `updateHudOverlays`): resolve the selection
+   *  focus and the hover outline, and publish both to the feedback. */
+  updateSelectionBrackets(mirror: RenderMirror, hoverBracket: HoverBracket | null, lockMarksVisible: boolean): void {
+    // The selection's focus (Item B4; RTS Part A). The renderer owns
+    // `_focusId`; the bracket resolves its live pose from the mirror each frame
+    // (the markers themselves are drawn in the ticker, `drawFleetOverlay`). If
+    // the focus has vanished from the mirror (despawned / left interest), clear
+    // it so the panel + stats channel tear down.
+    const focusPresent = this.selectionBracket?.resolveFocus(mirror, this._focusId) ?? false;
+    if (!focusPresent && this._focusId !== null) {
+      this._focusId = null;
+      this._focusKind = null;
+    }
+    // Publish the current selection for the main thread → Zustand bridge.
+    this.feedback.selectedPickId = this._focusId;
+    this.feedback.selectedPickKind = this._focusKind;
+
+    // WS-10 (R2.4) — hover outline. Suppress it on the already-SELECTED entity so
+    // the two brackets never stack on the same target. If the hovered entity
+    // vanished from the mirror, clear `_hoveredId`. Renderer-local id published
+    // for the E2E bridge (data-hover-pick-id) — NEVER Zustand (#2).
+    // Below the full HUD (showcase `?hud=`) the hover outline is not drawn.
+    const hovered = this._hoveredId;
+    const hoverTarget = hovered === null || hovered === this._focusId || this._selShips.has(hovered) || !lockMarksVisible ? null : hovered;
+    if (hoverTarget !== null) {
+      const stillHovered = hoverBracket?.update(mirror, hoverTarget) ?? false;
+      if (!stillHovered) this._hoveredId = null;
+    } else {
+      hoverBracket?.update(mirror, null);
+    }
+    this.feedback.hoveredPickId = this._hoveredId;
+    // WS-9 (R2.30) — project the bracket's above-entity point to SCREEN so the
+    // stats box floats over the entity (any kind). Alloc-free toScreenInto (#14).
+    const selWX = this.selectionBracket?.lastWorldX ?? null;
+    const selWY = this.selectionBracket?.lastWorldY ?? null;
+    if (selWX !== null && selWY !== null) {
+      this.camera.toScreenInto(selWX, selWY, this._selScreenScratch);
+      this.feedback.selectionScreenX = this._selScreenScratch.x;
+      this.feedback.selectionScreenY = this._selScreenScratch.y;
+    } else {
+      this.feedback.selectionScreenX = null;
+      this.feedback.selectionScreenY = null;
     }
   }
 }

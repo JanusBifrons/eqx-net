@@ -3190,3 +3190,19 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** `?artDelayMs=8000` held each bake worker for 8 s, so the 36 warm-up bakes queued at load made the pilot's own ship wait two or more rounds on CI's 3-worker pool and join-art-ready ran past its 30 s wait. Whether the delay applied at all depended on a race (the cut field's lazy import could create the shared pool first, without the delay), so the spec failed only on some CI runs and never locally.
 - **Rule:** a test delay holds back the result, never the shared resource; a page-wide pool reads its test options from the URL, not from whichever caller creates it first.
+
+## 2026-11-18 — a per-cell worst-case bound closes gaps narrower than its slack
+
+The nav fine layer stored, per 64 u cell, a room bound valid anywhere in the cell (rocks padded half a
+diagonal, the reader subtracts a diagonal: ~136 u lost in all). The cut field's streets pinch to
+60–68 u, so every street read as rock, and no finer padded grid (down to 8 u) reopened them. Measure
+the gap against the exact distance first; then refine exactly only where the bound is too rough to
+decide (`docs/architecture/navigation.md`, fine layer), instead of shrinking cells everywhere.
+
+## 2026-11-18 — a route follower that leaves turns early needs the planner's slack
+
+AI ships moved to the next nav waypoint once within their arrive radius (a fighter's 80 u). That flies
+the chord across each corner, so the ship's path was never the planned one; it held only while the fine
+layer's rough bound left ~90 u of slack round every turn. Once routes took the field's streets at the
+hull's clearance (30 u), the chord crossed rock. A follower must stay on the route it was handed: pass a
+turn only once level with it (`stepNavRoute`), and test the follower against a route with no slack.
