@@ -105,7 +105,7 @@ broadcast path.
 | `structure_built` | `StructureGridSubsystem` `onConstructed` hook (1 Hz pulse) |
 | `wave_dispatched` | `WaveDirector.assignReadyFactions` |
 | `wave_incoming` | `IncomingRegistry.register` |
-| `base_ready` | `SectorRoom.factionBaseReadiness` (one-shot) |
+| `base_ready` | `FactionLedger.baseReadiness` (one-shot; polled via `SectorRoom.factionBaseReadiness`) |
 | `wave_repelled` | `LivingWorldDirector` retreat step |
 | `ship_destroyed` / `player_killed` | `SectorRoom` `SHIP_DESTROYED` bus handler |
 | `ship_abandoned` | `abandonShipToScrap` / `abandonLingeringHullToScrap` |

@@ -80,8 +80,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
-import { FactionLedger } from '../faction/FactionLedger.js';
-import { isBaseReady } from '../../core/faction/Faction.js';
+import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { tallyFaction, type FactionPresenceMap } from '../livingworld/factionPresence.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
@@ -115,22 +114,19 @@ import {
   TP_RULE_LOADED,
   isTeleporterKind,
 } from '../../shared-types/teleport.js';
-import { isNpcBasesDisabled, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
+import { isNpcBasesDisabled, npcBaseTrade, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
 import { hashString } from '../../core/bases/baseProfile.js';
 import { nearestClearPoint } from '../../core/bases/baseSite.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites.js';
-import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
-import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
-import { RECIPES } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { LAUNCH_COSTS_ON } from '../../shared-types/launch.js';
 import { chargeLaunchFor } from './launchGate.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector, isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
-import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
@@ -361,15 +357,6 @@ import type { GameClock } from '../../core/clock/GameClock.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/physics/catchUp.js';
 
 
-
-/** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
-const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
-/** T4b — the level of `good`'s order on a dock (0 when none). */
-
-
-function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
-  return r.freightOrders?.find((o) => o.good === good)?.level ?? 0;
-}
 
 const logger = pino({
   name: 'SectorRoom',
@@ -5672,89 +5659,13 @@ export class SectorRoom extends Room<SectorState> {
     return true;
   }
 
-  /**
-   * Wave-system Phase 4 — per-(owner, sector) faction base summary the
-   * WaveDirector polls (~1.5 s, NOT the hot loop, so allocation here is fine).
-   * Engineering rooms (`sectorKey === null`) return [] (waves are galaxy-only).
-   * One entry per player owning ≥1 constructed structure here.
-   */
-  factionBaseReadiness(): FactionBaseReadiness[] {
-    const sectorKey = this.sectorKey;
-    if (sectorKey === null || this.structureRegistry.size === 0) return [];
-    interface Agg {
-      hasCapital: boolean;
-      minerCount: number;
-      solarCount: number;
-      turretCount: number;
-    }
-    const byOwner = new Map<string, Agg>();
-    for (const rec of this.structureRegistry.all()) {
-      // B2 — NPC bases are never a wave target (they aren't a player faction).
-      if (!rec.isConstructed || isNpcOwner(rec.owner)) continue;
-      let agg = byOwner.get(rec.owner);
-      if (!agg) {
-        agg = { hasCapital: false, minerCount: 0, solarCount: 0, turretCount: 0 };
-        byOwner.set(rec.owner, agg);
-      }
-      switch (rec.kind) {
-        case 'capital':
-          agg.hasCapital = true;
-          break;
-        case 'miner':
-          agg.minerCount++;
-          break;
-        case 'solar':
-          agg.solarCount++;
-          break;
-        case 'turret':
-          agg.turretCount++;
-          break;
-        default:
-          break;
-      }
-    }
-    const out: FactionBaseReadiness[] = [];
-    for (const [factionId, agg] of byOwner) {
-      const ownerPresent = this.getActiveShip(factionId)?.isActive === true;
-      const ready = isBaseReady(agg) && (!this.waveNeedsOwner || ownerPresent);
-      // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the
-      // first time a base qualifies for waves; re-arm when it drops below ready
-      // (a razed-then-rebuilt base re-toasts). Evaluated at the director's
-      // control cadence (this method is the canonical readiness poll), so it
-      // fires within ~one control tick of the base completing.
-      if (ready) {
-        if (this.factionLedger.markReadyNotified(factionId)) {
-          this.broadcast('base_ready', { type: 'base_ready', factionId, sectorKey });
-          auditEvent({
-            event: 'base_ready',
-            sector: sectorKey,
-            owner: factionId,
-            composition: {
-              miner: agg.minerCount,
-              solar: agg.solarCount,
-              turret: agg.turretCount,
-            },
-          });
-        }
-      } else {
-        this.factionLedger.clearReadyNotified(factionId);
-      }
-      const state = this.factionLedger.get(factionId);
-      out.push({
-        factionId,
-        sectorKey,
-        ready,
-        // The owner is "present" when they have an active hull in this sector.
-        ownerPresent,
-        minerCount: agg.minerCount,
-        hostileToDrones: state?.hostileToDrones ?? false,
-        underWave: state?.underWave ?? false,
-        lastDealtDamageTick: state?.lastDealtDamageTick ?? -Infinity,
-        serverTick: this.serverTick,
-      });
-    }
-    return out;
-  }
+  /** Wave-system Phase 4 — the WaveDirector's base-readiness poll (`FactionLedger.baseReadiness`). */
+  factionBaseReadiness(): FactionBaseReadiness[] { return this.factionLedger.baseReadiness(this.baseReadinessHost); }
+  private readonly baseReadinessHost: BaseReadinessHost = {
+    sectorKey: () => this.sectorKey, serverTick: () => this.serverTick, waveNeedsOwner: () => this.waveNeedsOwner,
+    ownerPresent: (id) => this.getActiveShip(id)?.isActive === true,
+    broadcastBaseReady: (factionId, sectorKey) => this.broadcast('base_ready', { type: 'base_ready', factionId, sectorKey }),
+  };
 
   /** Wave-system Phase 4 — set/clear a faction's active-wave flag (gates the
    *  drone-AI structure-target visibility built in `fillStructureTargets`). */
@@ -6794,77 +6705,8 @@ export class SectorRoom extends Room<SectorState> {
     return this.storage.tradeSnapshot(ownerId, networkUid);
   }
 
-  /**
-   * T2 — this room's NPC bases for convoy planning (ConvoyDirector, every
-   * ~15 s; off-tick, so building arrays here is fine). Per base: its storage
-   * stock, free space, footprint box, and per-minute use/make rates read from
-   * its own structures (processor recipes, Reactor fuel, ammo turrets, drills,
-   * gas collectors).
-   */
-  npcBaseTrade(): NpcBaseTrade[] {
-    const byOwner = new Map<string, StructureRecord[]>();
-    for (const r of this.structureRegistry.all()) {
-      if (!r.isConstructed || !isNpcOwner(r.owner)) continue;
-      const list = byOwner.get(r.owner);
-      if (list) list.push(r); else byOwner.set(r.owner, [r]);
-    }
-    const out: NpcBaseTrade[] = [];
-    for (const [owner, recs] of byOwner) {
-      const anchor = recs.find((r) => r.kind === 'capital' && r.uid !== undefined)
-        ?? recs.find((r) => r.uid !== undefined && (getStructureKind(r.kind).holdCapacity ?? 0) > 0);
-      if (!anchor?.uid) continue;
-      const snap = this.storage.tradeSnapshot(owner, anchor.uid);
-      if (snap === null) continue;
-      const uses: Partial<Record<GoodId, number>> = {};
-      const makes: Partial<Record<GoodId, number>> = {};
-      const add = (m: Partial<Record<GoodId, number>>, g: GoodId, n: number): void => { m[g] = (m[g] ?? 0) + n; };
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-      for (const r of recs) {
-        const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
-        x0 = Math.min(x0, r.x - hw); x1 = Math.max(x1, r.x + hw);
-        y0 = Math.min(y0, r.y - hh); y1 = Math.max(y1, r.y + hh);
-        const k = getStructureKind(r.kind);
-        if (isProcessorKind(r.kind)) {
-          const def = RECIPES[r.recipe ?? defaultRecipeFor(r.kind)];
-          const perMin = 60 / Math.max(1, def.cyclePulses);
-          for (const [g, n] of Object.entries(def.inputs)) add(uses, g as GoodId, (n ?? 0) * perMin);
-          for (const o of def.outputs) if ('good' in o) add(makes, o.good, o.n * perMin);
-        }
-        if (k.fuelEveryPulses) add(uses, 'fuel', 60 / k.fuelEveryPulses);
-        if (usesAmmo(r.kind)) add(uses, 'munitions', NPC_TURRET_MUNITIONS_PER_MIN);
-        if (k.miningRate) add(makes, 'minerals', k.miningRate * 60);
-        if (k.gasRate) add(makes, 'gas', k.gasRate * 60);
-      }
-      out.push({ owner, networkUid: anchor.uid, view: { stock: snap.goods, freeCapacity: snap.freeCapacity, uses, makes }, box: { x0, x1, y0, y1 } });
-    }
-    // T4b — a player's Freight Dock with standing orders trades too, but only
-    // in the goods it has orders for: "use" is shaped so an import keeps the
-    // network up to its level and an export offers anything above it.
-    for (const r of this.structureRegistry.all()) {
-      if (r.kind !== 'freight_dock' || !r.isConstructed || !r.freightOrders?.length || isNpcOwner(r.owner) || r.uid === undefined) continue;
-      const snap = this.storage.tradeSnapshot(r.owner, r.uid);
-      if (snap === null) continue;
-      const stock: Partial<Record<GoodId, number>> = {};
-      const uses: Partial<Record<GoodId, number>> = {};
-      const imports: GoodId[] = [];
-      const exports: GoodId[] = [];
-      for (const o of r.freightOrders) {
-        stock[o.good] = snap.goods[o.good] ?? 0;
-        uses[o.good] = o.level / CONVOY_TARGET_MINUTES;
-        (o.mode === 'import' ? imports : exports).push(o.good);
-      }
-      // Import goods are never offered (only exports are spare); export goods
-      // are never asked for.
-      for (const g of imports) if ((stock[g] ?? 0) > o_level(r, g)) stock[g] = o_level(r, g);
-      const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
-      out.push({
-        owner: r.owner, networkUid: r.uid, player: { imports, exports },
-        view: { stock, freeCapacity: snap.freeCapacity, uses, makes: {} },
-        box: { x0: r.x - hw, x1: r.x + hw, y0: r.y - hh, y1: r.y + hh },
-      });
-    }
-    return out;
-  }
+  /** T2 — this room's NPC bases (and ordered player Freight Docks) for convoy planning (`bases/NpcBaseSubsystem.ts`). */
+  npcBaseTrade(): NpcBaseTrade[] { return npcBaseTrade(this.structureRegistry, this.storage); }
 
   /**
    * Phase 4 warp travel — where a warping ship lands: the nearest spot to its
