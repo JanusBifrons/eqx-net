@@ -300,4 +300,38 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
     expect(r.cables.size).toBe(0);
     expect(instructions(r.staticGfx).filter((i) => i.action === 'stroke')).toHaveLength(2);
   });
+
+  it('slice 9: flow frames redraw only the animated layer; the receiving collar flashes as comets arrive', () => {
+    const { mirror } = base();
+    const key = 1 * 65536 + 2;
+    // Flow from the connector (2) into the solar (1): the solar end, the
+    // polyline's first point, receives.
+    Object.assign(mirror, { gridFlashes: new Map([[key, 1e12]]), gridFlowSrc: new Map([[key, 2]]) });
+    const r = new ConnectorRenderer();
+    r.socketCables = true;
+    r.update(mirror, 0.5, 0);
+    const rebuilds = r.staticRebuilds, flattens = r.cables.flattens;
+    const c = r.cables.peek(key)!;
+    let flashFrames = 0, frames = 0;
+    for (let t = 50; t <= 6000; t += 50) {
+      r.update(mirror, 0.5, t);
+      frames++;
+      if (strokedPaths(r.gfx, 2).some((p) => p[0] === c.poly[0] && p[1] === c.poly[1])) flashFrames++;
+    }
+    expect(r.staticRebuilds).toBe(rebuilds);
+    expect(r.cables.flattens).toBe(flattens);
+    expect(flashFrames).toBeGreaterThan(0);
+    expect(flashFrames).toBeLessThan(frames / 2); // a brief flash per arrival, not a steady glow
+  });
+
+  it('flag off: a flowing link keeps today\'s straight comet, no cables', () => {
+    const { mirror } = base();
+    (mirror as { gridFlashes?: Map<number, number> }).gridFlashes = new Map([[1 * 65536 + 2, 1e12]]);
+    const r = new ConnectorRenderer();
+    r.update(mirror, 0.5, 100);
+    expect(r.cables.size).toBe(0);
+    // Glow, line and comet stay straight two-point strokes; nothing runs a cable.
+    expect(strokedPaths(r.gfx, 2).length).toBeGreaterThanOrEqual(3);
+    expect(strokedPaths(r.gfx, CABLE_POINTS)).toHaveLength(0);
+  });
 });

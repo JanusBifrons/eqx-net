@@ -574,7 +574,7 @@ export class ConnectorRenderer {
         if (!v.pulseActive) continue; // idle: drawn on the static layer
         const bx = b.x;
         const by = -b.y;
-        if (this.socketCables) { drawSocketCableFlow(g, this.linkCable(id, st, ci, a, b), v, src === undefined || src === id, scale); continue; }
+        if (this.socketCables) { drawSocketCableFlow(g, this.linkCable(id, st, ci, a, b), v, src === undefined || src === id, scale, nowMs, material); continue; }
         if (this.lineLook) { drawLineLookFlow(g, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale, a.radius, b.radius); continue; }
         // Glow underlay first (so the core line sits on top).
         if (v.glowAlpha > 0) {
