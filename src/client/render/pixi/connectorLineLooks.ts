@@ -25,8 +25,12 @@ export type LinePath = Graphics | GraphicsContext;
 /** Per-call options. `size` scales the look's authored sizes (widths and
  *  station pitch) on top of its zoom floor; `cradles: false` drops the cable
  *  look's own truss cradles (a run laid inside a lattice that already carries
- *  it: the crane arm). Callers pass a shared constant or a reused scratch. */
-export interface LineLookOpts { size: number; cradles: boolean }
+ *  it: the crane arm). `lit` gives the cable look a lighter sheath and a
+ *  brighter lit edge (same palette), for a run laid inside a bright lattice
+ *  where the connector's dark rubber strands would vanish (the crane arm);
+ *  connectors leave it unset. Callers pass a shared constant or a reused
+ *  scratch. */
+export interface LineLookOpts { size: number; cradles: boolean; lit?: boolean }
 
 /** Today's connector look: authored size, with its cradles. */
 export const LINE_LOOK_FULL: LineLookOpts = Object.freeze({ size: 1, cradles: true });
@@ -135,7 +139,7 @@ export function drawLineLookBody(
     if (marks(g, ax, ay, ux, uy, len, 70 * k, 30 * k, w * 0.06, 0, 0, 0) > 0) stroke(g, SHADOW, 0.6, w * 1.5);
     return;
   }
-  if (look === 'cable') { drawCableBody(g, ax, ay, ux, uy, nx, ny, len, w, k, ra, rb, opts.cradles); return; }
+  if (look === 'cable') { drawCableBody(g, ax, ay, ux, uy, nx, ny, len, w, k, ra, rb, opts.cradles, opts.lit === true); return; }
   // Conduit: a row of sleeper plates over a recessed, faintly lit channel.
   run(g, ax, ay, bx, by, nx, ny, 0); stroke(g, SHADOW, 0.45, w * 1.05);
   if (marks(g, ax, ay, ux, uy, len, 22 * k, 6 * k, 8 * k, 0, 0, 0) > 0) stroke(g, BODY, 0.95, w);
@@ -203,6 +207,11 @@ const CABLE_OUTLINE = 0x0a0d0f;
 const CABLE_SHEATH = mixColor(CONNECTOR_IDLE_COLOR, 0x2b3033, 0.84);
 const CABLE_CORE_SHEATH = mixColor(CONNECTOR_IDLE_COLOR, 0x3a342b, 0.86);
 const CABLE_HI = mixColor(CONNECTOR_IDLE_COLOR, 0x8e979b, 0.82);
+/** The lit variant (`LineLookOpts.lit`): the same sheath / core / edge, raised
+ *  toward pale steel so it holds up under a bright lattice on a phone. */
+export const CABLE_LIT_SHEATH = mixColor(CONNECTOR_IDLE_COLOR, 0xa3aaad, 0.84);
+const LIT_CORE_SHEATH = mixColor(CONNECTOR_IDLE_COLOR, 0xb0a48e, 0.86);
+const LIT_HI = mixColor(CONNECTOR_IDLE_COLOR, 0xeef2f3, 0.85);
 const TRUSS = mixColor(CONNECTOR_IDLE_COLOR, 0x5c6264, 0.86);
 const CLAMP = mixColor(CONNECTOR_IDLE_COLOR, 0x7a7466, 0.88);
 const LASH = 0x14181a;
@@ -303,13 +312,17 @@ function atStations(
 
 function drawCableBody(
   g: LinePath, ax: number, ay: number, ux: number, uy: number, nx: number, ny: number,
-  len: number, w: number, k: number, ra: number, rb: number, cradles: boolean,
+  len: number, w: number, k: number, ra: number, rb: number, cradles: boolean, lit: boolean,
 ): void {
   cableLayout(len, ra, rb, k);
+  const sheath = lit ? CABLE_LIT_SHEATH : CABLE_SHEATH;
+  const core = lit ? LIT_CORE_SHEATH : CABLE_CORE_SHEATH;
+  const hi = lit ? LIT_HI : CABLE_HI;
+  const hiA = lit ? 0.85 : 0.38;
   const sw = w * 0.5; // one strand
   const sp = w * 0.55; // strand spacing (pinched at stations)
   const bow = sp * 0.45; // extra spread between stations (quadratic control)
-  const lit = nx * LIGHT_X + ny * LIGHT_Y >= 0 ? 1 : -1; // lit side along the normal
+  const side = nx * LIGHT_X + ny * LIGHT_Y >= 0 ? 1 : -1; // lit side along the normal
   const shx = -LIGHT_X * w * 0.45;
   const shy = -LIGHT_Y * w * 0.45;
   const cradleC = sp * 1.35 + sw + w * 0.65; // cradle half-span across
@@ -332,8 +345,8 @@ function drawCableBody(
     const o = i * sp;
     const b = i * bow;
     strand(g, ax, ay, ux, uy, nx, ny, len, o, b); stroke(g, CABLE_OUTLINE, 0.95, sw + w * 0.16);
-    strand(g, ax, ay, ux, uy, nx, ny, len, o, b); stroke(g, i === 0 ? CABLE_CORE_SHEATH : CABLE_SHEATH, 1, sw);
-    strand(g, ax, ay, ux, uy, nx, ny, len, o + lit * sw * 0.24, b); stroke(g, CABLE_HI, 0.38, sw * 0.22);
+    strand(g, ax, ay, ux, uy, nx, ny, len, o, b); stroke(g, i === 0 ? core : sheath, 1, sw);
+    strand(g, ax, ay, ux, uy, nx, ny, len, o + side * sw * 0.24, b); stroke(g, hi, hiA, sw * 0.22);
   }
   if (_nSeg === 0) return;
   // Lashings pull the bundle together between cradles.
