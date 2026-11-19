@@ -25,7 +25,7 @@
  */
 import { Graphics, GraphicsContext, type Container } from 'pixi.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
-import { CABLE_NO_SOCKET } from '../../../core/structures/cableCurve.js';
+import { CABLE_SOCKET_MASK_BITS, socketListMask } from '../../../core/structures/cableCurve.js';
 import {
   isStructureKindId, structureSockets, type MutStructureSocket, type StructureKindId, type StructureSocket,
 } from '../../../shared-types/structureKinds.js';
@@ -35,7 +35,7 @@ import { STRUCTURE_FAMILY, type StructureFamilyId } from './structureFamilies.js
 
 /** Sockets past this index have no bit in the used mask (the most any kind
  *  has today is 24). */
-export const MAX_NUB_SOCKETS = 32;
+export const MAX_NUB_SOCKETS = CABLE_SOCKET_MASK_BITS;
 
 /** Nub size (world units, fixed: drawn once into a shared context). Half
  *  width along the edge, depth outward past the edge and inward under it. */
@@ -51,13 +51,7 @@ function postSocketKind(kind: string): boolean {
 /** Bit mask of the sockets this structure has a cable in (its own end of
  *  each link, `connSockSelf`). Alloc-free. */
 export function socketUsedMask(connSockSelf: readonly number[] | undefined): number {
-  let m = 0;
-  if (connSockSelf === undefined) return 0;
-  for (let c = 0; c < connSockSelf.length; c++) {
-    const s = connSockSelf[c]!;
-    if (s !== CABLE_NO_SOCKET && s >= 0 && s < MAX_NUB_SOCKETS) m = (m | (1 << s)) >>> 0;
-  }
-  return m;
+  return socketListMask(connSockSelf); // the one mask the server's socket pick uses
 }
 
 /** A socket in the structure's local PIXI frame (y down): game local (x, y)
