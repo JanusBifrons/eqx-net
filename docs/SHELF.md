@@ -4,6 +4,28 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## Time dilation can't absorb an overloaded host (parked 2026-11-19)
+
+Found chasing flaky integration tests (#947,
+[game-time-scale.md](architecture/game-time-scale.md)). The automatic
+slowdown is meant to slow the whole sector when the host can't keep up, so
+nothing skips. Two gaps:
+
+- **Off in test rooms.** `SectorTimeScale.autoSlowdown` runs only outside
+  testMode (or with `autoTimeScale`), so a test room asked for 4× stays at
+  4× on a slow host. CI simulated the barge-mining scene at ~0.8× real time.
+- **Floors at 0.7.** `loadFactor` lives in [0.7, 1], so a host that can run
+  only a fifth of the asked speed still falls behind.
+
+Past the catch-up cap (`CATCH_UP_MAX_TICKS`) the room drops ticks while the
+game clock runs on, so the main loop and the physics worker drift apart:
+one CI run of `bargeMiningTake` ran 360 game s and brought in 0 chunks.
+
+**Doing it properly:** extend the slowdown (never a second mechanism): let
+the factor go below 0.7 while lateness keeps growing, so dropped ticks are
+the last resort, not the steady state; decide whether test rooms run it. A
+live-loop change: netgate, and a failing test first.
+
 ## Graphics-quality leftovers (parked 2026-11-16)
 
 Found while adding the edge-smoothing, render-sharpness and texture-softening
