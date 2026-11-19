@@ -190,10 +190,14 @@ Types: solar, battery, battery bank, reactor. Owner answers (2026-11-19):
   - The cable is a smooth bend: it leaves each socket straight, then curves.
   - Buildings have more sockets than link slots. The slot limits stay as today (Capital 4, line
     node 6, everything else 1).
-  - A link is legal only if a free socket pair exists with a small bend at each end (about 35°,
-    exact value to be tuned), a curve that does not cross another building, and a length within the
-    600 reach. Otherwise the link is refused. To put many loads on one side of a hub, the player
-    builds line nodes or chains them.
+  - Links only ever go to connectors, as `canConnect` already enforces (hub rule plus
+    capital-only-connectors).
+  - The bend must be forgiving, never fickle. A building's socket reaches anything in front of it
+    (up to 90° off straight-out) but never wraps round behind the building. A connector takes a
+    cable from any side. Sockets sit on every side, so angle alone never refuses a nearby link.
+    What refuses a link is a building on the cable's curve, the 600 reach, or a full connector.
+    To put many loads on one side, the player builds or chains connectors. (The owner rejected a
+    35° limit as too fickle.)
   - The server's link check and the build preview share one socket rule. This extends today's link
     rules (`canConnect`, line blocking in `Grid.ts`, `ConnectorRenderer`); it is not a second system.
     It needs its own brief and hostile duplicate review before code.
