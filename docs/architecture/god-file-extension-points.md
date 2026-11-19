@@ -94,15 +94,18 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 ## Core: `fractureHull.ts` (`src/core/CLAUDE.md`)
 
-`fractureHull.ts` keeps the plan, the crack lines and the piece split; it re-exports the moved public names (`FRACTURE_QUANTUM`, `EDGE_HULL`, `EDGE_CUT`, `FractureEdgeKind`). Every sibling stays under the determinism rules in its header and bumps `FRACTURE_ALGO_VERSION` on any output change.
+`fractureHull.ts` keeps the plan, the sound primary and the piece split; it re-exports the moved public names (`FRACTURE_QUANTUM`, `EDGE_HULL`, `EDGE_CUT`, `FRACTURE_MAX_PIECES` and the `Fracture*` types). Every sibling stays under the determinism rules in its header and bumps `FRACTURE_ALGO_VERSION` on any output change.
 
 | To add | Do this | Status |
 |---|---|---|
 | A new edge kind (`EDGE_*`) | `destruction/fractureRings.ts`; if it is jagged, add it to `jagged()` in `fractureJag.ts`. | live |
-| A ring predicate, quantising rule or piece-output field (`FracturePiece`, convex decomposition) | `destruction/fractureRings.ts`. | live |
+| A ring predicate, quantising rule or the piece builder (convex decomposition) | `destruction/fractureRings.ts`. | live |
+| An input option, plan field or piece-output field (`FractureInput`, `FracturePlan`, `FracturePiece`) | `destruction/fractureTypes.ts` (types and piece limits only, so every sibling imports it without a cycle). | live |
+| A hull measure (keel, beam, centroid, outline projection, chunky guard) | `destruction/fractureMeasure.ts`. | live |
 | A jag shape, jag repair pass or T-junction weld rule | `destruction/fractureJag.ts`. | live |
 | A splitting primitive (line clip, strip, extra cut) | `destruction/fractureSplit.ts`. | live |
-| A new crack family or plan draw | `fractureHull.ts` (`crackLines` / `planFor`) until a crack-lines module is split out. | planned |
+| A new crack family (zone, fan, far, extra chunk, splinters) | `destruction/fractureCracks.ts` (its own seeded stream). | live |
+| A plan draw | `fractureHull.ts` (`planFor`). | live |
 
 ## Shared data: `structureKinds.ts` (`src/shared-types/CLAUDE.md`)
 
