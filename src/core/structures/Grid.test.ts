@@ -83,11 +83,23 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
   const con = connector('con', 200, 0);
   const sol = solar('sol', 200, 200);
 
-  it('REJECTS leaf ↔ leaf (hub required)', () => {
+  it('REJECTS leaf ↔ leaf (connector required)', () => {
     const s1 = solar('s1', 0, 0);
     const s2 = solar('s2', 150, 0);
     const r = canConnect(s1, s2, new Map(), new Map([['s1', s1], ['s2', s2]]));
-    expect(r).toEqual({ ok: false, reason: 'hub-required' });
+    expect(r).toEqual({ ok: false, reason: 'connector-required' });
+  });
+
+  it('REJECTS leaf ↔ big-building hub (shipyard): every link goes through a Connector', () => {
+    // A shipyard is `isHub` with 4 slots, but it is not a relay — a solar must
+    // reach it via a Connector, and the shipyard itself joins via a Connector.
+    const yard = node('yard', { x: 0, y: 0, radius: 100, isHub: true, maxConnections: 4 });
+    const s = solar('s', 200, 0);
+    const c = connector('c', 0, 200);
+    const nodes = new Map([['yard', yard], ['s', s], ['c', c]]);
+    expect(canConnect(s, yard, new Map(), nodes)).toEqual({ ok: false, reason: 'connector-required' });
+    expect(canConnect(yard, s, new Map(), nodes)).toEqual({ ok: false, reason: 'connector-required' });
+    expect(canConnect(yard, c, new Map(), nodes).ok).toBe(true);
   });
 
   it('ACCEPTS leaf ↔ connector (the relay path)', () => {

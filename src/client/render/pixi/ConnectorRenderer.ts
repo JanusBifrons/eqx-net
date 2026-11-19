@@ -821,7 +821,7 @@ export class ConnectorRenderer {
       } else if (res.reason === 'blocked') {
         this.drawPreviewSegment(ax, ay, node, 'blocked', scale);
       }
-      // else out-of-range / hub-required / full / self / duplicate → not drawn.
+      // else out-of-range / connector-required / full / self / duplicate → not drawn.
     }
 
     // Sort ok-hubs nearest-first, ties broken by id (matches the server's
