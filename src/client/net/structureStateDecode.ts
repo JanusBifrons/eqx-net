@@ -19,6 +19,9 @@ import {
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_DEFAULTS as D,
   STRUCTURE_RIG_CLIP_TARGET,
+  CONN_SOCK_UNKNOWN,
+  decodeConnSockOther,
+  decodeConnSockSelf,
   decodeRigClipIndex,
   decodeRigHoldCargo,
   decodeRigHoldTicks,
@@ -27,7 +30,7 @@ import {
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 
 export function emptyStructureRow(): StructureRenderState {
-  return { powered: false, netPower: 0, connTo: [], built: false, buildPct: 0, deconstructPct: 0 };
+  return { powered: false, netPower: 0, connTo: [], connSockSelf: [], connSockOther: [], built: false, buildPct: 0, deconstructPct: 0 };
 }
 
 /** Interned owner tables (index → id / display name), rebuilt by the caller
@@ -111,6 +114,23 @@ export function decodeStructureState(
   const conn = out.connTo;
   conn.length = 0;
   for (let i = 0; i < v.connTo.length; i++) conn.push(v.connTo.at(i)!);
+  decodeConnSock(v, out);
+}
+
+/** 0d slice 6: each link's cable sockets (`connSock`, parallel to `connTo`)
+ *  onto `connSockSelf` / `connSockOther`, in place (the two arrays are
+ *  allocated once per row). A missing entry reads as no socket (-1). */
+function decodeConnSock(v: StructureStateView, out: StructureRenderState): void {
+  const self = (out.connSockSelf ??= []);
+  const other = (out.connSockOther ??= []);
+  self.length = 0;
+  other.length = 0;
+  const cs = v.connSock;
+  for (let i = 0; i < v.connTo.length; i++) {
+    const packed = cs !== undefined && i < cs.length ? cs.at(i)! : CONN_SOCK_UNKNOWN;
+    self.push(decodeConnSockSelf(packed));
+    other.push(decodeConnSockOther(packed));
+  }
 }
 
 /** Structure-restyle 2e: the row's rig clip onto `out.rigClip` (reused in

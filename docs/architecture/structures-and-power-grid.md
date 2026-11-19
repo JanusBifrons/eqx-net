@@ -538,6 +538,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - **Where structures come from.** `mirror.structures` is filled from Colyseus room state (`room.state.structures`, join payload + delta patches) by `ColyseusClient.syncStructures`. It decodes each row IN PLACE via `net/structureStateDecode.ts` `decodeStructureState`, applying `STRUCTURE_DEFAULTS` for unset fields and resolving the owner through the interned owner tables.
 - **What the snapshot carries:** only `structureTargets` (turret / mining targets). There is no per-snapshot structures slice anymore.
 - **Shape unchanged.** The mirror row shape is the same, so the renderer, inspector and E2E hooks are untouched.
+- **Cable sockets (`connSock`, structure-restyle 0d).** Parallel to `connTo`, one uint16 per link packing this end's socket (low byte) and the other end's (high byte), 255 = no socket (fence link); written with `connTo` in `writeConnToRow`'s one change check, packed/unpacked only by `encodeConnSock` / `decodeConnSockSelf` / `decodeConnSockOther` (`shared-types/structureStateWire.ts`), decoded onto `StructureRenderState.connSockSelf` / `connSockOther` (-1 = none). uint16, not uint8: kinds reach 24 sockets.
 - **Lifetime.** The binary full refresh NO LONGER deletes structures (`BinarySwarmDecoder` skips kind 2). The room-state row owns their lifetime: when a row goes, `syncStructures` drops both the mirror row and the swarm pose entry.
 - **Locks:** `tests/integration/wire/structureStateWire.test.ts` (#15) and `BinarySwarmDecoder.test.ts`.
 

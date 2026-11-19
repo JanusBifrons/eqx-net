@@ -1,11 +1,11 @@
 /**
  * Structure room-state row writers moved out of SectorRoom verbatim: a
- * teleporter's fields and a structure's `connTo` list. Each field is
+ * teleporter's fields and a structure's `connTo` / `connSock` lists. Each field is
  * assigned only on change (A2), and nothing allocates when nothing changed.
  */
 import { holdWeight } from '../../core/cargo/hold.js';
 import { encodeGood } from '../../shared-types/production.js';
-import { STRUCTURE_DEFAULTS as SD } from '../../shared-types/structureStateWire.js';
+import { STRUCTURE_DEFAULTS as SD, encodeConnSock } from '../../shared-types/structureStateWire.js';
 import {
   TP_PARTNER_REMOTE,
   TP_RULE_BOARDS,
@@ -58,8 +58,11 @@ export function writeTeleporterRow(
   if ((st.padWeight ?? SD.padWeight) !== w) st.padWeight = w;
 }
 
-/** Mirror a structure's connections into its room-state `connTo` only when
- *  the set changed (compared in place — no allocation when unchanged).
+/** Mirror a structure's connections into its room-state `connTo` and, in
+ *  the same change check, each link's cable sockets into the parallel
+ *  `connSock` (this end + the other end, `encodeConnSock`). Both arrays are
+ *  rewritten together when either differs, so their entries always line up;
+ *  compared in place — no allocation when unchanged.
  *  `entityIdOf` maps a structure id to its swarm entity id. */
 export function writeConnToRow(
   id: string, st: StructureState, registry: Pick<StructureRegistry, 'connectionsOf'>,
@@ -74,14 +77,18 @@ export function writeConnToRow(
     const eid = entityIdOf(other);
     if (eid === undefined) continue;
     if (n >= st.connTo.length || st.connTo.at(n) !== eid) same = false;
+    else if (n >= st.connSock.length || st.connSock.at(n) !== encodeConnSock(c.socketAt(id), c.socketAt(other))) same = false;
     n++;
   }
-  if (same && n === st.connTo.length) return;
+  if (same && n === st.connTo.length && n === st.connSock.length) return;
   st.connTo.clear();
+  st.connSock.clear();
   for (const c of conns) {
     const other = c.getOtherNode(id);
     if (other === null) continue;
     const eid = entityIdOf(other);
-    if (eid !== undefined) st.connTo.push(eid);
+    if (eid === undefined) continue;
+    st.connTo.push(eid);
+    st.connSock.push(encodeConnSock(c.socketAt(id), c.socketAt(other)));
   }
 }
