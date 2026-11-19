@@ -48,6 +48,17 @@ export class PilotMorale {
 
   constructor(private readonly _morale: MoraleTracker) {}
 
+  /** Damage this ship took (server damage path → AiController); `maxHull`
+   *  falls back to the kind's `maxHealth` when absent or not positive. */
+  noteDamage(amount: number, atTick: number, maxHull: number | undefined, kindMaxHull: number): void {
+    this._morale.noteDamage(atTick, amount, maxHull !== undefined && maxHull > 0 ? maxHull : kindMaxHull);
+  }
+
+  /** The squad's capital died (the next decision rolls). */
+  noteCapitalLost(): void {
+    this._morale.noteCapitalLost();
+  }
+
   /**
    * A trigger (hull 50 / 25 %, burst, capital lost, outnumbered) rolls the
    * die; FallBack then runs locked. A fleeing ship keeps fleeing (no roll).

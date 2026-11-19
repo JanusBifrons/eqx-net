@@ -24,7 +24,7 @@ import type { WreckOre } from '../rooms/capitalWreckTypes.js';
 import { cloneHold, emptyHold, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, rollDeathLoss, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import { stream } from '../../core/random/rng.js';
 import { hashString } from '../../core/bases/baseProfile.js';
-import { POD_TIER_SPILL, podComponentIndex } from '../../shared-types/shipKinds/cargoPod.js';
+import { POD_TIER_SPILL, podComponentIndex, podSizeOf, podTierOf } from '../../shared-types/shipKinds/cargoPod.js';
 import type { HoldRecord, HoldStore } from './HoldStore.js';
 import { shipHitBound, shipWithinHullReach } from '../../core/combat/shipHitShape.js';
 import { withinLootOpenReach } from '../../core/cargo/lootReach.js';
@@ -204,10 +204,11 @@ export class LootSubsystem {
       const rec = this.d.holdStore.get(target)!;
       const merged: HoldRecord = { ...rec, hold: cloneHold(rec.hold) };
       mergeInto(merged.hold, cloneHold(hold));
-      this.d.holdStore.commit([merged], extraDeletes, this.persist());
       // A player spill stays the bright "scramble" tier once merged into.
       const live = this.pods.get(target)!;
       const tier = opts.spill || live.tier === POD_TIER_SPILL ? POD_TIER_SPILL : holdBestTier(merged.hold);
+      merged.look = podComponentIndex(live.size, tier);
+      this.d.holdStore.commit([merged], extraDeletes, this.persist());
       if (tier !== live.tier) {
         live.tier = tier;
         this.d.setPodTier(target, podComponentIndex(live.size, tier));
@@ -230,6 +231,7 @@ export class LootSubsystem {
       [{
         holderUid: id, holderType: derelict ? 'derelict' : 'pod', ownerId: null, sectorKey: this.d.sectorKey(),
         x, y, hold: cloneHold(hold), expiresAt: this.d.now() + (derelict ? DERELICT_TTL_MS : LOOT_POD_TTL_MS),
+        look: podComponentIndex(size, tier),
       }],
       extraDeletes,
       this.persist(),
@@ -477,10 +479,12 @@ export class LootSubsystem {
       const derelict = type === 'derelict';
       for (const rec of this.d.holdStore.inSector(key, type)) {
         if (rec.x === null || rec.y === null) continue;
-        const tier = derelict ? POD_TIER_SPILL : holdBestTier(rec.hold);
-        if (!this.d.spawnPodEntity(rec.holderUid, rec.x, rec.y, 0, 0, tier)) continue;
-        // Size is not persisted: a restored pod comes back at size 0.
-        this.pods.set(rec.holderUid, { tier, size: 0, savedX: rec.x, savedY: rec.y, derelict });
+        // The saved look (size class + glow tier) brings it back as it was; a
+        // record saved before looks were kept falls back to size 0.
+        const look = rec.look ?? podComponentIndex(0, derelict ? POD_TIER_SPILL : holdBestTier(rec.hold));
+        const size = podSizeOf(look), tier = podTierOf(look);
+        if (!this.d.spawnPodEntity(rec.holderUid, rec.x, rec.y, 0, 0, look)) continue;
+        this.pods.set(rec.holderUid, { tier, size, savedX: rec.x, savedY: rec.y, derelict });
         n++;
       }
     }

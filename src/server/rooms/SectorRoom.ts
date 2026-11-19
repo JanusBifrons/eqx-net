@@ -7725,6 +7725,7 @@ export class SectorRoom extends Room<SectorState> {
         if (!this.lingeringSlots.has(shipId)) return false;
         this.fleet.setStance(owner, [shipId], opts.stance);
         this.fleet.setMode(owner, [shipId], opts.mode);
+        if (opts.moveTo) this.fleet.applyOrder(owner, [shipId], { kind: 'move', x: opts.moveTo.x, y: opts.moveTo.y });
         return true;
       },
       // Rock-cut scene: still rocks, then each mined to a break (RockCutter.sceneCut).
@@ -8430,6 +8431,7 @@ export class SectorRoom extends Room<SectorState> {
         this.sceneWork.aiNeighbours(this.aiGrids.queriesTotal);
         this.sceneWork.wingmen(this.fleet.size, this.wingmen.hullBrainTicksTotal, 0, 0);
         this.sceneWork.aiDecisions(this.aiController.stats.decisions);
+        const ns = this.nav.stats; if (ns) this.sceneWork.nav(ns.routes, ns.expanded, ns.posts, ns.inFlight);
         this.sceneWork.wreckPiecesTick(this.capitalWrecks?.liveCount() ?? 0);
       }
       this.sceneWork.active = running;

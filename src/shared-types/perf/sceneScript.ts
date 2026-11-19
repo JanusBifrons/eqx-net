@@ -44,6 +44,8 @@ const FleetStep = z.object({
   mode: z.enum(['defend', 'hunt']).optional(),
   stance: z.enum(['aggressive', 'defensive', 'holdFire']).optional(),
   health: z.number().positive().max(10_000_000).optional(),
+  /** Then order each hull to fly here (a fleet MOVE, routed by navigation). */
+  moveTo: z.object({ x: z.number().finite(), y: z.number().finite() }).strict().optional(),
 }).strict();
 
 /** Rock cut perf (salvage stream): `count` still rocks of `radius` in a disc,
