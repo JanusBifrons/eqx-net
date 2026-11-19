@@ -17,6 +17,7 @@
  */
 import type { ShipKind } from '../../../shared-types/shipKinds.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
+import { navComfort } from '../../../shared-types/shipScale/navTuning.js';
 import type { AiEntity, AiEntityPoseOut, AiWorldView, IAiNavRoutes } from '../../contracts/IAiBehaviour.js';
 import {
   addAlignment,
@@ -41,6 +42,9 @@ export class FlockMode implements IPilotMode {
   /** The leader this ship follows; null = none (it leads or flies alone).
    *  The brain's `pilotJob()` reads it. */
   leaderId: string | null = null;
+  /** The last `sense()` found the leader: false ⇒ `tick()` flew the next
+   *  job instead, and the panel reports that one. */
+  live = false;
   /** Squad member ids for the separation rule. Owned (copied on assignment)
    *  so the director may reuse its source array. */
   private readonly memberIds: string[] = [];
@@ -83,7 +87,8 @@ export class FlockMode implements IPilotMode {
     const resolve = view.resolveEntityInto;
     this.resolve = resolve;
     this.nav = view.nav ?? null;
-    return resolve !== undefined && this.leaderId !== null && resolve(this.leaderId, this.leader);
+    this.live = resolve !== undefined && this.leaderId !== null && resolve(this.leaderId, this.leader);
+    return this.live;
   }
 
   /** Activity: close enough to its pack to count as guarding it. */
@@ -167,7 +172,7 @@ export class FlockMode implements IPilotMode {
       if (resolve(id, this.neighbour)) { ax = this.neighbour.x; ay = this.neighbour.y; break; }
     }
     const t = shipTuning(ctx.kind);
-    if (!nav.waypoint(self.id, self.x, self.y, ax, ay, t.navClearance, t.wingmanArrive, true)) return false;
+    if (!nav.waypoint(self.id, self.x, self.y, ax, ay, t.navClearance, t.wingmanArrive, true, NaN, 0, navComfort(ctx.kind))) return false;
     const dx = ax - self.x, dy = ay - self.y;
     if (dx * dx + dy * dy <= t.flockFollow * t.flockFollow) {
       out.facing = self.angle; out.vx = 0; out.vy = 0;
