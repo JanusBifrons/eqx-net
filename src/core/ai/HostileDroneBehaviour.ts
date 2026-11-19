@@ -142,6 +142,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** This tick flew the fight (`tickCombat`), not a peacetime job: the
    *  panel reads chasing / attacking. */
   private _fought = false;
+  /** This tick ran clear of a fight (`tickFleeClear`): the panel reads
+   *  retreating. */
+  private _fleeing = false;
   private _lastX = 0;
   private _lastY = 0;
 
@@ -343,6 +346,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   tick(self: AiEntity, view: AiWorldView): AiIntent {
     this._aim.reset();
     this._fought = false;
+    this._fleeing = false;
     this._moveTo.sense(view);
     this._lastX = self.x;
     this._lastY = self.y;
@@ -507,6 +511,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * patrolled instead and drifted in the sector, never warping.
    */
   private tickFleeClear(self: AiEntity, tick: number): AiIntent {
+    this._fleeing = true;
     const f = this._decide.flee;
     f.noteClear(tick);
     this._tac.tick = tick;
@@ -807,7 +812,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /**
    * What the ship is doing, for the owner's fleet panel (RTS Part B slice 9):
    * the job `tick()` flies, picked by the same `pilotJob()` order (one
-   * source of truth). A warp-out run ⇒ `retreating`; the fight ⇒ `chasing`
+   * source of truth). A warp-out run or running clear (`tickFleeClear`) ⇒
+   * `retreating`; the fight ⇒ `chasing`
    * (target beyond its fire range) or `attacking`; travel ⇒ `moving`
    * (`patrolling` on a patrol leg; it stays so while a non-fighting leg or a
    * broadside capital's route fires on the move); a flock ⇒ `guarding` once
@@ -818,7 +824,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    */
   getActivity(): AiShipActivity {
     let job = this.pilotJob(JOB_ORDER_TICK);
-    if (job === JOB_LEAVING) return 'retreating';
+    if (job === JOB_LEAVING || this._fleeing) return 'retreating';
     if (this._fought) {
       return this._targetDist2 > this.eng.fireRange * this.eng.fireRange ? 'chasing' : 'attacking';
     }

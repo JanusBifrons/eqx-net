@@ -14,6 +14,7 @@ import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { AiEntityPoseOut, AiIntent, AiSwarmView, AiWorldView, IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
 import { MORALE_OUTCOME } from './tactics/morale.js';
+import { MANOEUVRE_FLEE } from './tactics/manoeuvre.js';
 import { stepKinematic } from './pilotTestKit.js';
 import { TRAVEL_ARRIVED } from './hostileDroneTuning.js';
 
@@ -248,6 +249,38 @@ describe('HostileDroneBehaviour — getActivity() reports the job tick() flies',
     }
     expect(picked).toBe(true);
     expect([...seen]).toEqual(['patrolling']);
+  });
+
+  it('a fleeing ship that lost its target runs clear and reads retreating', () => {
+    const b = brain();
+    b.setMoraleRoll(() => MORALE_OUTCOME.Flee);
+    b.markHostile('enemy', 0);
+    const swarms: AiSwarmView[] = [{ id: 'enemy', x: 0, y: 600, vx: 0, vy: 0, allegiance: 'traders' }];
+    const self = body(0, 0, 0);
+    self.health = 0.2 * KIND.maxHealth;
+    const nb: IAiNeighbourQuery = {
+      count: 0,
+      queryNeighbours: () => 0,
+      idAt: () => '', xAt: () => 0, yAt: () => 0, vxAt: () => 0, vyAt: () => 0,
+      radiusAt: () => 20, sideAt: () => '', isPilotAt: () => false, isCapitalAt: () => false,
+    };
+    // Fight until the morale roll turns it to flee.
+    let t = 1;
+    for (; t < 600 && b.getManoeuvre() !== MANOEUVRE_FLEE; t++) {
+      stepKinematic(self, KIND, b.tick(self, { players: [], tick: t, dtSec: 1 / 60, swarms, neighbours: nb }));
+    }
+    expect(b.getManoeuvre()).toBe(MANOEUVRE_FLEE);
+    // The enemy drops out of view: the ship runs clear until it asks to warp out.
+    const seen = new Set<string>();
+    let clearTicks = 0;
+    for (; t < 3000 && b.getWarpOutCount() === 0; t++) {
+      const intent = b.tick(self, { players: [], tick: t, dtSec: 1 / 60, swarms: [], neighbours: nb });
+      if (b.getWarpOutCount() === 0) { seen.add(b.getActivity()); clearTicks++; }
+      stepKinematic(self, KIND, intent);
+    }
+    expect(b.getWarpOutCount()).toBe(1);
+    expect(clearTicks).toBeGreaterThan(0);
+    expect([...seen]).toEqual(['retreating']);
   });
 
   it('a follower whose leader is gone flies its next job (the orbit) and reads idle', () => {
