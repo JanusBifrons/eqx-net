@@ -93,7 +93,7 @@ describe('SectorRoom integration — a wingman boosts on its own energy (RTS sli
     let unaffordableBoostPosts = 0;
     let droppedForEnergy = 0;
     let prevBoost = false;
-    const r = room as unknown as { readLingeringPose: (id: string, out: Pose) => boolean };
+    const r = room as unknown as { wingmen: { readLingeringPose: (id: string, out: Pose) => boolean } };
     const boostedFly = boostedBrain.fly.bind(boostedBrain);
     boostedBrain.fly = (self, facing, vx, vy, boostOk, params) => {
       const before = boostedBrain.getEnergy();
@@ -122,8 +122,8 @@ describe('SectorRoom integration — a wingman boosts on its own energy (RTS sli
     const controlShip = state.ships.get(control)!;
     for (let i = 0; i < 60; i++) {
       await harness.advance(100);
-      if (r.readLingeringPose(boosted, pose)) peakBoosted = Math.max(peakBoosted, Math.hypot(pose.vx, pose.vy));
-      if (r.readLingeringPose(control, pose)) peakControl = Math.max(peakControl, Math.hypot(pose.vx, pose.vy));
+      if (r.wingmen.readLingeringPose(boosted, pose)) peakBoosted = Math.max(peakBoosted, Math.hypot(pose.vx, pose.vy));
+      if (r.wingmen.readLingeringPose(control, pose)) peakControl = Math.max(peakControl, Math.hypot(pose.vx, pose.vy));
       minEnergy = Math.min(minEnergy, ship.energy);
       controlMinEnergy = Math.min(controlMinEnergy, controlShip.energy);
     }
