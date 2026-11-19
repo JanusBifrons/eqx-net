@@ -516,7 +516,8 @@ in-sector and never touches another room.
   and releases the ships. Hulls the hand-off did not move are released.
 - **The hull hand-off (S3).** `handOffHulls` and the teleporter's
   cross-sector branch (`dispatchRiders`) share ONE helper,
-  `SectorRoom.handOffHullsTo(toRoom, moves, arrival)`. Per hull: the far room's
+  `HullHandOff.handOffHullsTo(toRoom, moves, arrival)` (`rooms/features/hullHandOff.ts`,
+  held as `hullHandOff` on the room). Per hull: the far room's
   `canReceiveHull(id)` (a free physics slot, id not already there) is asked
   BEFORE anything changes here, so a hull that can't fit stays put (and is
   released); then `fleet.exportShip(id)`, `removeLingeringHullQuietly`,
@@ -549,7 +550,7 @@ in-sector and never touches another room.
   carries `warp: 1` (the existing `transitSpooling` dep, keyed by
   shipInstanceId); just after the hand-off the destination sends `warp: 3`
   from the room's `WarpTravelTracker` (`markArrived` in
-  `receiveHandedOffHull`). `PixiRenderer.drawWarpFx` feeds such a hull to the
+  `HullHandOff.receiveHandedOffHull`). `PixiRenderer.drawWarpFx` feeds such a hull to the
   existing `WarpFx` (gate `render/warpFxGate.ts`): spool glow, departure and
   arrival flash.
 - **The view follows (S7/S8).** `transit_ready` carries the moved `shipIds`
