@@ -30,15 +30,15 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     expect(s.asks).toEqual([[0, 0, 1000, 0, 30]]);
     await s.answer({ points: new Float64Array([500, 400, 1000, 0]) });
     expect(nav.waypoint('a', 10, 0, 1000, 0, 30, 50)).toBe(true);
-    expect([nav.wpX, nav.wpY]).toEqual([500, 400]);
+    expect([nav.turnX, nav.turnY]).toEqual([500, 400]);
     // Ahead: to the corner plus the next leg as far as it runs the same way.
     const d = Math.hypot(490, 400), leg = Math.hypot(500, 400), cos = (490 * 500 + 400 * -400) / (d * leg);
     expect(nav.ahead).toBeCloseTo(d + leg * Math.max(0, cos), 6);
     // Inside arrive but short of the turn (the plan started at (0, 0)): it holds the turn.
     expect(nav.waypoint('a', 480, 390, 1000, 0, 30, 50)).toBe(true);
-    expect([nav.wpX, nav.wpY]).toEqual([500, 400]);
+    expect([nav.turnX, nav.turnY]).toEqual([500, 400]);
     expect(nav.waypoint('a', 505, 398, 1000, 0, 30, 50)).toBe(true); // level with the turn (a turn is flown, not cut)
-    expect([nav.wpX, nav.wpY]).toEqual([1000, 0]);
+    expect([nav.turnX, nav.turnY]).toEqual([1000, 0]);
     expect(nav.ahead).toBeCloseTo(Math.hypot(495, 398), 6); // last leg: brake for the goal
     expect(nav.waypoint('a', 990, 0, 1000, 0, 30, 50)).toBe(false); // finished: fly the last bit as before
     expect(nav.requests).toBe(1);
@@ -88,12 +88,12 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     expect(nav.short).toBe(1);
     expect(nav.routed).toBe(0);
     expect(nav.waypoint('a', 10, 0, 1000, 0, 30, 50)).toBe(true);
-    expect([nav.wpX, nav.wpY]).toEqual([300, 200]);
+    expect([nav.turnX, nav.turnY]).toEqual([300, 200]);
     expect(nav.waypoint('a', 302, 199, 1000, 0, 30, 50)).toBe(true); // level with the turn
-    expect([nav.wpX, nav.wpY]).toEqual([600, 0]);
+    expect([nav.turnX, nav.turnY]).toEqual([600, 0]);
     // Arrived at the end: it stays the waypoint (wait), never the goal past it.
     expect(nav.waypoint('a', 600, 0, 1000, 0, 30, 50)).toBe(true);
-    expect([nav.wpX, nav.wpY]).toEqual([600, 0]);
+    expect([nav.turnX, nav.turnY]).toEqual([600, 0]);
     expect(nav.ahead).toBeCloseTo(0, 6);
     now = 5_000;
     expect(nav.waypoint('a', 605, 3, 1000, 0, 30, 50)).toBe(true);
@@ -123,7 +123,7 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     // Third time: wait where it is.
     now = 16_000;
     expect(nav.waypoint('a', 422, 208, 2000, 0, 30, 50)).toBe(true);
-    expect([nav.wpX, nav.wpY]).toEqual([422, 208]);
+    expect([nav.turnX, nav.turnY]).toEqual([422, 208]);
     expect(nav.waiting('a')).toBe(true);
     expect(nav.held).toBe(1);
     expect(s.asks.length).toBe(3);
@@ -153,11 +153,26 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     await s.answer({ points: new Float64Array([500, 400, 1000, 0]) });
     now = 1_000;
     expect(nav.waypoint('a', 10, 0, 1100, 0, 30, 50, true)).toBe(true); // goal moved: re-asks, old route kept
-    expect([nav.wpX, nav.wpY]).toEqual([500, 400]);
+    expect([nav.turnX, nav.turnY]).toEqual([500, 400]);
     expect(s.asks.length).toBe(2);
     await s.answer({ points: new Float64Array([600, 300, 1100, 0]) });
     expect(nav.waypoint('a', 10, 0, 1100, 0, 30, 50, true)).toBe(true);
-    expect([nav.wpX, nav.wpY]).toEqual([600, 300]);
+    expect([nav.turnX, nav.turnY]).toEqual([600, 300]);
+  });
+
+  it('aims along the leg, not at its corner: a ship off the line steers back onto it', async () => {
+    const s = stub(), nav = new NavRoutes(s.request, () => 0);
+    nav.waypoint('a', 0, 0, 1000, 0, 30, 50);
+    await s.answer({ points: new Float64Array([500, 0, 1000, 500]) });
+    // 40 u off the first leg at x = 100: aim at x = 100 + arrive on the line itself.
+    expect(nav.waypoint('a', 100, 40, 1000, 0, 30, 50)).toBe(true);
+    expect([nav.turnX, nav.turnY]).toEqual([500, 0]);
+    expect(nav.wpX).toBeCloseTo(150, 6);
+    expect(nav.wpY).toBeCloseTo(0, 6);
+    expect(nav.ahead).toBeGreaterThanOrEqual(Math.hypot(400, 40)); // braking still counts from the corner
+    // Within arrive of the corner along the leg: aim at the corner.
+    expect(nav.waypoint('a', 470, 10, 1000, 0, 30, 50)).toBe(true);
+    expect([nav.wpX, nav.wpY]).toEqual([500, 0]);
   });
 
   it('passes a capital nose and turning radius on to its plan; a plain ask sends none (slice 11)', () => {

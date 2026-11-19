@@ -59,6 +59,9 @@ interface ShipNav {
 export class NavRoutes implements IAiNavRoutes {
   wpX = 0;
   wpY = 0;
+  /** The route corner the ship is flying to now (`wpX`/`wpY` is the aim point on its leg). */
+  turnX = 0;
+  turnY = 0;
   ahead = 0;
   /** Plans asked for (count gate), and answered with a route. */
   requests = 0;
@@ -119,7 +122,19 @@ export class NavRoutes implements IAiNavRoutes {
       const nx = p[leg * 2 + 2]! - wx, ny = p[leg * 2 + 3]! - wy, nl = Math.sqrt(nx * nx + ny * ny);
       if (nl > 1e-6) ahead += nl * Math.max(0, (dx * nx + dy * ny) / (d * nl));
     }
-    this.wpX = wx; this.wpY = wy; this.ahead = ahead;
+    // Fly the leg, not at its corner: aim one arrive distance ahead of the ship's
+    // place on the leg (never past the corner), so a ship swung wide by a turn
+    // comes back onto the route's line instead of cutting across towards rock.
+    let ax = wx, ay = wy;
+    const px = leg > 0 ? p[leg * 2 - 2]! : s.route.sx, py = leg > 0 ? p[leg * 2 - 1]! : s.route.sy;
+    if (px === px && py === py) { // the incoming leg is known (not NaN)
+      const lx = wx - px, ly = wy - py, len = Math.sqrt(lx * lx + ly * ly);
+      if (len > 1e-6) {
+        const along = Math.max(0, ((x - px) * lx + (y - py) * ly) / len) + arrive;
+        if (along < len) { ax = px + (lx * along) / len; ay = py + (ly * along) / len; }
+      }
+    }
+    this.wpX = ax; this.wpY = ay; this.turnX = wx; this.turnY = wy; this.ahead = ahead;
     return true;
   }
 
