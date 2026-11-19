@@ -168,6 +168,21 @@ nearest week; re-estimate after Family 1.
 
 (Each family's brief, owner answers, and stills/clip links get added here as it runs.)
 
+### Family 1: power + solar (started 2026-11-19)
+
+Types: solar, battery, battery bank, reactor. Owner answers (2026-11-19):
+- **Solar:** a bigger array, about 700×300, with about 4× the power for about 4× the cost.
+- **Sun:** panels turn to face the sector's sun. Look only; output does not change.
+- **Battery + bank:** cells on the body light up with the charge. The floating bar and number go;
+  the tap panel keeps the exact figure.
+- **Reactor:** dims when dry: core dark, fans stop, a small no-fuel icon.
+- **Sizes:** reactor and battery bank grow to medium, about 600 across, with the same power and
+  storage. The battery stays 190 (small). Bases get re-laid and saves are wiped (§3).
+- **Destroyed power buildings:** parked on `docs/SHELF.md`.
+
+Found while briefing: the battery bank never charged or discharged (every battery rule checked the
+kind name), and the client ignored structure level for power. Fixed on main in PR #958.
+
 ## Open questions for the owner
 
 None. Answered 2026-11-19 (§3). The owner OK'd starting Phase 0 and the Family 1 brief.

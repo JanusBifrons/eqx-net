@@ -279,3 +279,16 @@ was closed as superseded.
 common frame, then release its canvas (or a data page's byte buffer) after
 the first upload, with texture GC off for it; handle WebGL context loss
 (re-bake from the bake cache). Folded into the GPU-lit heap follow-up.
+
+## Destroyed power buildings (structure restyle Family 1, 2026-11-19)
+
+**Was:** while settling Family 1 (power + solar), the owner parked what a
+destroyed power building should do: a reactor going up in a bigger blast, a
+battery or battery bank spitting a spark burst as its charge dumps.
+
+**Today:** power buildings break up like any other structure; nothing
+depends on stored charge or fuel.
+
+**To revive:** decide whether it is cosmetic only or deals damage (gameplay,
+owner call), then hook the existing structure-destroyed path; never a second
+death system.
