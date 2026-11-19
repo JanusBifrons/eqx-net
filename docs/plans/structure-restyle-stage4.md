@@ -90,6 +90,30 @@ What Stages 1–3 built is the **foundation**, and it does not need building aga
 - The existing `base` scene builds from the real `growBase(profile, seed)` instead of its hand list,
   so every checkpoint shows the real generator's base at each tier.
 
+**0d: Cable sockets (owner-approved design 2026-11-19, gameplay, before any family's look).** Every
+family draws its sockets and its way in, so this is foundation, not polish. Brief, still to get its
+hostile duplicate review:
+- **One socket source in core.** One function gives a kind's sockets (position plus outward
+  direction, in local space) from its catalogue footprint by one default rule: some per side,
+  scaled by side length; connectors get six faces. A family may override its layout in its own
+  file. Server, build preview and both renderers all read this one function.
+- **The link rule extends `canConnect`** (`Grid.ts:256`); it is not a new check. After the hub and
+  capital-only rules, find a free socket pair: the building's socket faces the partner (≤ 90°, never
+  wrapping behind the building), a connector takes any side, the cable's curve does not cross
+  another building (this replaces the straight centre line in `isConnectionLineBlocked`, `Grid.ts:189`),
+  and socket to socket is within `CONNECTION_MAX_RANGE` (600, today measured edge to edge by
+  `edgeDistance`). It returns the chosen pair, or a reason in the same `CanConnectResult` style.
+- **The chosen sockets are stored on the connection,** so a cable never jumps when other links come
+  and go. Saves are wiped anyway (§3).
+- **Drawing:** `ConnectorRenderer` draws the smooth bend between the stored sockets instead of centre
+  to centre; the socket nubs are drawn from the same list; both renderers.
+- **Supply in:** the cable pulses that exist today end with a flash at the socket collar. How the
+  colour then spreads across the building (the inner channel) is a hook that each family fills in
+  its own look step; the fancy spread effects come in a final polish pass.
+- **Placement and AI:** auto-link on placement, base growth and the AI builders all go through
+  `canConnect`, so they follow the rule without their own copies. The base-layout rethink (§9)
+  is designed around connectors placed with the sockets in mind.
+
 **0c (parked):** Capital-tier sizing is out of scope (§3). Remove the art lab's `OUTPOST_SIZES` so the lab draws catalogue sizes (rule 11).
 
 ## 5. The recipe for one family
