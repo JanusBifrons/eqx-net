@@ -108,12 +108,20 @@ left somewhere else" do.
   such a node is traced exactly. Line checks sphere-trace the exact distance there, leaping by the slack
   (at least 2 u, so a line may graze a rock 2 u inside the clearance; local avoidance covers that).
   Counted in `exactQueries`: a fighter crossing packed chunk (-9, 5) takes ~25 000 (gate 32 000),
-  ~30–50 ms on the desktop. Next (owner, 2026-11-18): nothing built ahead of time, detail only where
-  route searches go, in one fixed-size pool per server with the least recently used dropped; static and
-  sleeping obstacles of every kind from `SectorObstacles`, not only rocks.
+  ~30–50 ms on the desktop.
+- **On demand, in one capped pool.** A loaded chunk builds nothing until a route search first reads it;
+  then its grid and rock index go into the worker's one `NavDetailPool` (`NAV_DETAIL_POOL_BYTES`,
+  8 MB, every field together), which drops the least recently read chunk when full; a dropped chunk is
+  rebuilt identical on its next read. A rock broken up or moved drops the built chunks it reaches (whole
+  chunks: a rock arriving lowers distances out to the reach), rebuilt when next read; a removed field
+  hands its chunks back. So memory follows autopilot use, never the sector or loaded-chunk count.
+  Measured 2026-11-18: a chunk is ~50 KB (grid 36 KB + index), 8 MB holds ~160; the packed-chunk
+  fighter route builds 2 of the 25 loaded chunks (gate 4). No background refinement: detail is made
+  when a search needs it. Next: static and sleeping obstacles of every kind from `SectorObstacles`,
+  not only rocks.
 - Each chunk's grid reaches 1024 u past the chunk on every side (96×96 cells, 36 KB), so a rock over
   the border counts. Clearance reads are capped at that reach (past it the coarse layer decides) and read
-  -1 where the chunk is not loaded.
+  -1 where the chunk is not loaded (a loaded chunk is built on that read).
 - A broken-up or moved rock rebuilds only the loaded chunks its circle reaches (counted in
   `cellsRebuilt`; a rock deep inside a chunk rebuilds one chunk, not nine). Rocks already gone or left
   elsewhere when the room started come from the saved records (`CutFieldSubsystem.attachNav`).
@@ -249,3 +257,5 @@ one it flies straight as before.
   2026-11-18 fine rebuild slice A: exact distance in tight cells (`exactAt`); fighters cross packed
   chunks by their streets. Ships fly each turn instead of leaving it from the arrive radius (the
   streets left no margin for the cut).
+  2026-11-18 fine rebuild slice B: detail built on first read into one capped LRU pool per worker
+  (`NavDetailPool`), not ahead of time per loaded chunk.
