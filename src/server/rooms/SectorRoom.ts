@@ -141,7 +141,6 @@ const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcO
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
-import type { FactionId } from '../../shared-types/factions.js';
 import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateSites } from '../../core/galaxy/alienGates.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
@@ -2753,6 +2752,8 @@ export class SectorRoom extends Room<SectorState> {
       broadcastBotAggro: (msg) => this.broadcast('bot_aggro', msg),
       bus: this.bus,
       clients: this.clients,
+      patrols: this.patrols,
+      testHaulerRaiders: () => this.testHaulerRaiders,
     });
 
     if (useSingleAsteroid) {
@@ -4380,45 +4381,8 @@ export class SectorRoom extends Room<SectorState> {
     return this.bus;
   }
 
-  /**
-   * Spawn a Living World bot into this sector. Reuses the standard swarm
-   * spawn path (slot alloc, SAB prime, worker SPAWN_OBSTACLE, registry,
-   * AI register) with a forced kind, primes drone health, opens the
-   * join-broadcast grace window so the just-warped-in body streams
-   * snapshots for client reconciliation (same rationale as a player
-   * join — see JOIN_BROADCAST_GRACE_TICKS), and emits the warp-in visual
-   * + discrete bus event. Returns false WITHOUT mutating when the slot
-   * pool is exhausted (the director retries elsewhere next tick).
-   */
-  spawnLivingWorldBot(spec: {
-    botId: string;
-    kind: ShipKindId;
-    x: number;
-    y: number;
-    vx?: number;
-    vy?: number;
-    health?: number;
-    hostileToFaction?: { playerId: string; structureIds: readonly string[] };
-    factionId?: FactionId;
-  }): boolean {
-    const ok = this.livingWorldBotHooks.spawnBot(spec);
-    if (ok && spec.factionId !== undefined) this.patrols.attachShip(spec.botId, spec.factionId, npcOwner(spec.factionId));
-    // P2 bespoke trigger (testMode): robot raiders meet an incoming hauler
-    // ~45 % of the way from its entry point to the sector centre.
-    if (ok && this.testHaulerRaiders > 0 && isHaulerId(spec.botId)) {
-      for (let i = 0; i < this.testHaulerRaiders; i++) {
-        const a = (i / this.testHaulerRaiders) * Math.PI * 2;
-        const x = spec.x * 0.55 + Math.cos(a) * 160;
-        const y = spec.y * 0.55 + Math.sin(a) * 160;
-        // `swarm-` prefix ⇒ classified as an NPC attacker (never booked as piracy).
-        const id = `swarm-raider-${spec.botId}-${i}`;
-        if (this.swarmSpawner.spawnDrone({ id, x, y, kind: 'robot-square' })) {
-          this.swarmHealth.set(id, getDroneMaxHealth('robot-square') ?? 120);
-        }
-      }
-    }
-    return ok;
-  }
+  /** Living World bot spawn (LivingWorldRoom contract): see LivingWorldBotHooks. */
+  spawnLivingWorldBot(spec: Parameters<LivingWorldBotHooks['spawnLivingWorldBot']>[0]): boolean { return this.livingWorldBotHooks.spawnLivingWorldBot(spec); }
 
   /** WS-E #15 — resolve a faction's hostility members here (owning player +
    *  owned structure ids). The director uses this to pre-populate
