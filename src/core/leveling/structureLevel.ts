@@ -171,7 +171,9 @@ export function effectiveStructureMaxHealth(baseMaxHealth: number, level: number
  * for every kind except the ones that take cables from ANY side: the connector
  * (6 faces, up to 10 links) and the shield emitters (pylon, gate, airlock),
  * whose fence links share posts. For a socket-bound kind the socket count is a
- * hard link limit (owner: "max 4 cables" on a 4-socket chamfer kind).
+ * hard link limit (owner: "max 4 cables" on a 4-socket chamfer kind), and
+ * each cable takes a socket no other cable holds. The ONE any-side source:
+ * the cable picker's `takesAnySide` (cableCurve.ts) is its negation.
  */
 export function structureLinksBoundBySockets(kindId: string): boolean {
   return kindId !== 'connector' && !isShieldEmitterKind(kindId);
@@ -192,22 +194,20 @@ export function clampLinksToSockets(cap: number, kindId: string): number {
 
 /**
  * Leveled effective connection cap (`base + (level-1)·STRUCTURE_CONNECTIONS_PER_LEVEL`),
- * clamped to the kind's sockets (`clampLinksToSockets`) when `kindId` is
- * given. ADDITIVE (slots are whole). The single helper that BOTH the server
+ * clamped to the kind's sockets (`clampLinksToSockets`). ADDITIVE (slots are whole). The single helper that BOTH the server
  * GridNode projection (`structureToGridNode`) and the client preview projection
  * (`mirrorToGridNode`) read, so the live grid + the placement preview agree on
  * how many links a leveled structure can hold (Equinox Phase-5 audit: upgrading a
  * connector now actually adds slots). Level ≤ 1 ⇒ the base cap. `canConnect`
- * applies the same socket clamp to every node, so a caller that omits
- * `kindId` still can't over-fill a socket-bound kind.
+ * applies the same socket clamp to every node as well.
  */
 export function effectiveStructureMaxConnections(
   baseMaxConnections: number,
   level: number | undefined,
-  kindId?: string,
+  kindId: string,
 ): number {
   const cap = baseMaxConnections + (clampStructureLevel(level) - 1) * STRUCTURE_CONNECTIONS_PER_LEVEL;
-  return kindId === undefined ? cap : clampLinksToSockets(cap, kindId);
+  return clampLinksToSockets(cap, kindId);
 }
 
 /**

@@ -23,7 +23,8 @@ import {
   segmentHitsObstacle, segmentIntersectsAabb, type CanConnectReason, type GridNode, type GridObstacle,
 } from './Grid.js';
 import { structureSockets, structureSocketToWorld } from '../../shared-types/structureKinds.js';
-import { CABLE_NO_SOCKET } from './Connection.js';
+import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
+import { structureLinksBoundBySockets } from '../leveling/structureLevel.js';
 
 /** Segments in a flattened cable curve (points = segments + 1). */
 export const CABLE_CURVE_SEGMENTS = 12;
@@ -236,20 +237,54 @@ function growPairs(n: number): void {
   pairJ = new Int32Array(pairCap);
 }
 
-/** Ends that take a cable from any side (no facing filter, short tail): a
- *  connector, and a shield emitter (pylon / gate / airlock), whose sockets are
- *  its round posts rather than wall faces. Without the emitter case a gate
- *  could never be tapped from beside its middle (the base generator's row-end
- *  taps and the scale lattice both do that). */
-// Emitters count as any-side because a gate's posts point along the wall, not at its taps.
+/** Ends that take a cable from any side (no facing filter, short tail, may
+ *  share a socket): the kinds whose links are NOT socket-bound
+ *  (`structureLinksBoundBySockets`, the one source): a connector, and a shield
+ *  emitter (pylon / gate / airlock), whose sockets are its round posts rather
+ *  than wall faces. Without the emitter case a gate could never be tapped from
+ *  beside its middle (the base generator's row-end taps and the scale lattice
+ *  both do that): a gate's posts point along the wall, not at its taps. */
 function takesAnySide(n: GridNode): boolean {
-  return n.isConnector || n.isShieldPylon === true;
+  return !structureLinksBoundBySockets(n.kind);
+}
+
+/** Bits in a used-socket mask (one per socket index). Every kind has fewer
+ *  sockets than this (pinned by a test); a higher index is never marked. */
+export const CABLE_SOCKET_MASK_BITS = 32;
+
+/** Is socket `i` marked in `mask`? */
+function socketUsed(mask: number, i: number): boolean {
+  return i < CABLE_SOCKET_MASK_BITS && ((mask >>> i) & 1) === 1;
+}
+
+/** Mark socket `s` in `mask` (a fence link's `CABLE_NO_SOCKET` marks nothing). */
+function markSocket(mask: number, s: number): number {
+  return s >= 0 && s < CABLE_SOCKET_MASK_BITS ? (mask | (1 << s)) >>> 0 : mask;
+}
+
+/** Bit mask of the sockets node `id`'s stored links hold (`socketAt(id)` of
+ *  each). Allocation-free; `canConnect` reads it from the adjacency. */
+export function linkSocketMask(id: string, conns: readonly Connection[]): number {
+  let m = 0;
+  for (let c = 0; c < conns.length; c++) m = markSocket(m, conns[c]!.socketAt(id));
+  return m;
+}
+
+/** The same mask from a per-link socket list (the client mirror's
+ *  `connSockSelf`, parallel to `connTo`). Allocation-free. */
+export function socketListMask(sockets: readonly number[] | undefined): number {
+  let m = 0;
+  if (sockets !== undefined) for (let c = 0; c < sockets.length; c++) m = markSocket(m, sockets[c]!);
+  return m;
 }
 
 /**
  * The socket half of `canConnect` (0d slice 4, owner-approved rule): find the
  * socket pair a cable from `a` to `b` runs between, writing it into `out`.
  *
+ *  0. One cable per stud (owner rule): on a socket-bound end a socket already
+ *     holding a cable (`usedA` / `usedB`, bit masks: `linkSocketMask`) is
+ *     skipped. An any-side end (`takesAnySide`) ignores its mask and shares.
  *  1. Facing filter: a building socket takes a cable only to a partner socket
  *     in front of it (within 90° of its outward normal, never behind the
  *     building); a connector or emitter-post end takes a cable from any side
@@ -260,8 +295,8 @@ function takesAnySide(n: GridNode): boolean {
  *     (`flattenCableCurve`, any-side ends short-tailed) is not blocked
  *     (`isCablePolylineBlocked`) wins.
  *
- * Returns null on success, else the refusal: `'no-facing-socket'` (no pair
- * faces at all), `'out-of-range'` (none facing is in reach) or `'blocked'`
+ * Returns null on success, else the refusal: `'no-facing-socket'` (no free
+ * pair faces at all), `'out-of-range'` (none facing is in reach) or `'blocked'`
  * (every facing pair in reach crosses something). `out` is written only on
  * success. Allocation-free after warm-up.
  */
@@ -272,6 +307,8 @@ export function pickCableSocketPair(
   nodes: ReadonlyMap<string, GridNode>,
   obstacles: readonly GridObstacle[] | undefined,
   out: CableSocketPick | undefined,
+  usedA = 0,
+  usedB = 0,
 ): CanConnectReason | null {
   const la = structureSockets(a.kind);
   const lb = structureSockets(b.kind);
@@ -287,11 +324,14 @@ export function pickCableSocketPair(
     bx[j] = wSock.x; by[j] = wSock.y; bNx[j] = wSock.nx; bNy[j] = wSock.ny;
   }
   const aAny = takesAnySide(a), bAny = takesAnySide(b);
+  const ua = aAny ? 0 : usedA, ub = bAny ? 0 : usedB;
   const max2 = maxRange * maxRange;
   let facing = false;
   let n = 0;
   for (let i = 0; i < na; i++) {
+    if (socketUsed(ua, i)) continue;
     for (let j = 0; j < nb; j++) {
+      if (socketUsed(ub, j)) continue;
       const dx = bx[j]! - ax[i]!, dy = by[j]! - ay[i]!;
       if (!aAny && aNx[i]! * dx + aNy[i]! * dy < 0) continue;
       if (!bAny && bNx[j]! * dx + bNy[j]! * dy > 0) continue;

@@ -9,7 +9,7 @@ import {
   structureSocketToWorld,
 } from '../../shared-types/structureKinds.js';
 import { GATE_POSTS, AIRLOCK_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
-import { STRUCTURE_LEVEL_CAP, effectiveStructureMaxConnections, structureLinksBoundBySockets } from '../leveling/structureLevel.js';
+import { STRUCTURE_CONNECTIONS_PER_LEVEL, STRUCTURE_LEVEL_CAP, effectiveStructureMaxConnections, structureLinksBoundBySockets } from '../leveling/structureLevel.js';
 import { emitterAnchor, gateTypeOf } from './gateGeometry.js';
 
 type P = { x: number; y: number };
@@ -57,7 +57,7 @@ describe('structureSockets', () => {
       }
       // The level-1 cap is never clamped (the base catalogue already fits).
       expect(effectiveStructureMaxConnections(kind.maxConnections, 1, kind.id), kind.id).toBe(kind.maxConnections);
-      if (effectiveStructureMaxConnections(kind.maxConnections, STRUCTURE_LEVEL_CAP) > sockets.length) clamped.push(kind.id);
+      if (kind.maxConnections + (STRUCTURE_LEVEL_CAP - 1) * STRUCTURE_CONNECTIONS_PER_LEVEL > sockets.length) clamped.push(kind.id);
     }
     console.log(`[structureSockets] top-level cap clamped to sockets: ${clamped.join(', ')}`);
   });
