@@ -66,7 +66,7 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut, IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js';
-import { effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
+import { effectiveShipMaxHealth, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
@@ -93,7 +93,7 @@ import { GATE_SPAN_THICKNESS, isShieldEmitterKind, gateTypeOf } from '../../core
 import type { GateAccess } from '../../shared-types/gateAccess.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
-import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
+import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
 import { CARGO_ACCESS_RANGE } from '../../shared-types/messages/cargoMessages.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
@@ -321,8 +321,8 @@ import { getBountyBoard } from '../economy/BountyBoard.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
-import type { EntityStatsMessage } from '../../shared-types/messages/selectionMessages.js';
-import { SelectionStatsSubsystem, type Selection } from './SelectionStatsSubsystem.js';
+import { SelectionStatsSubsystem } from './SelectionStatsSubsystem.js';
+import { ownerGateStats, resolveSelectionStats, type SelectionStatsResolveHost } from './selectionStatsResolve.js';
 import {
   rayHitsSphere,
   rayHitsConvexPolygon,
@@ -2837,11 +2837,15 @@ export class SectorRoom extends Room<SectorState> {
     // Click-to-inspect live-stats channel (structures follow-up Item B5). Its
     // own ~5 Hz timer (200 ms), unref'd + OFF the snapshot/physics tick — the
     // emitter only does work while a client has an entity selected.
+    const statsHost: SelectionStatsResolveHost = {
+      ships: () => this.state.ships, swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry,
+      swarmHealth: () => this.swarmHealth, sessionToPlayer: () => this.sessionToPlayer, relationCtx: this.relationCtx,
+    };
     this.selectionStats = new SelectionStatsSubsystem({
-      resolveStats: (sel) => this.resolveSelectionStats(sel),
+      resolveStats: (sel) => resolveSelectionStats(statsHost, sel),
       sendTo: (sessionId, msg) => {
         const client = this.clients.find((c) => c.sessionId === sessionId);
-        client?.send('entity_stats', this.ownerGateStats(sessionId, msg));
+        client?.send('entity_stats', ownerGateStats(statsHost, sessionId, msg));
       },
     });
     this.fleetHooks.createFleetStatus();
@@ -5087,87 +5091,6 @@ export class SectorRoom extends Room<SectorState> {
       const eid = this.swarmRegistry.get(other)?.entityId;
       if (eid !== undefined) st.connTo.push(eid);
     }
-  }
-
-  /**
-   * Resolve live stats for a click-to-inspect selection (Item B5). Returns null
-   * when the entity is gone (dead / despawned / lingering-only) — the
-   * `SelectionStatsSubsystem` auto-clears the selection on null so the ~5 Hz
-   * emitter never leaks. Only ship + structure ids reach here (drones
-   * read health client-side from the mirror).
-   *
-   *   - ship      → `id` is a playerId; resolve `state.ships.get(id)`. A
-   *                 lingering hull (`isActive === false`) is treated as gone.
-   *   - structure → `id` is the numeric swarm `entityId`; resolve the swarm
-   *                 record → its registry id → `structureRegistry` + `swarmHealth`.
-   */
-  private resolveSelectionStats(sel: Selection): EntityStatsMessage | null {
-    if (sel.kind === 'ship') {
-      const ship = this.state.ships.get(sel.id);
-      if (!ship || !ship.isActive || !ship.alive) return null;
-      const kind = getShipKind(ship.kind);
-      return {
-        type: 'entity_stats',
-        id: sel.id,
-        kind: 'ship',
-        name: ship.displayName,
-        hp: Math.max(0, Math.round(ship.health)),
-        hpMax: Math.round(ship.maxHealth),
-        shield: Math.max(0, Math.round(ship.shield)),
-        // Effective shield cap (kind base × per-instance shield upgrade) so the
-        // inspector's shield bar denominator matches the upgraded ship (review
-        // must-fix #1). hpMax already reads the upgraded ship.maxHealth.
-        shieldMax: effectiveShipShieldMax(kind.shieldMax, ship.statAlloc),
-      };
-    }
-    // structure — id is the numeric swarm entityId (as a string).
-    const entityId = Number(sel.id);
-    if (!Number.isFinite(entityId)) return null;
-    const swarmRec = this.swarmRegistry.getByEntityId(entityId);
-    if (!swarmRec) return null;
-    const struct = this.structureRegistry.get(swarmRec.id);
-    if (!struct) return null;
-    const hp = this.swarmHealth.get(swarmRec.id);
-    if (hp === undefined) return null;
-    const kind = getStructureKind(struct.kind);
-    // Living World P1a-2 — storage contents (owner-only: stripped in sendTo).
-    const holdCap = kind.holdCapacity ?? 0;
-    const h = struct.hold;
-    return {
-      type: 'entity_stats',
-      id: sel.id,
-      kind: 'structure',
-      name: kind.displayName,
-      hp: Math.max(0, Math.round(hp)),
-      hpMax: Math.round(effectiveStructureMaxHealth(kind.maxHealth, struct.level, struct.packedQuality)),
-      ...(holdCap > 0
-        ? {
-            hold: {
-              goods: h ? { ...h.goods } : {}, blueprints: h?.blueprints.length ?? 0,
-              // W2 — the stored blueprints' PRODUCT ids (owner-only like the rest):
-              // the Install action picks the module ones; the panel names them.
-              blueprintIds: h ? h.blueprints.slice(0, 64).map((b) => b.product) : [],
-              packed: h?.packed?.length ?? 0,
-              // W5a — the stored packed items' PRODUCT ids (the Unpack chips).
-              packedIds: h?.packed ? h.packed.slice(0, 64).map((p) => p.product) : [],
-            },
-            holdCapacity: holdCap,
-          }
-        : {}),
-    };
-  }
-
-  /** Living World P1a-2 — a storage hold is private: strip it from an
-   *  `entity_stats` sent to anyone but the structure's owner. */
-  private ownerGateStats(sessionId: string, msg: EntityStatsMessage): EntityStatsMessage {
-    if (msg.hold === undefined) return msg;
-    const viewer = this.sessionToPlayer.get(sessionId);
-    const swarmRec = this.swarmRegistry.getByEntityId(Number(msg.id));
-    const owner = swarmRec ? this.structureRegistry.get(swarmRec.id)?.owner : undefined;
-    // C1 — the hold shows to anyone it would open for (own + friendly today).
-    if (viewer !== undefined && owner !== undefined && cargoOpensFor(relationOf(viewer, owner, this.relationCtx), false)) return msg;
-    const { hold: _h, holdCapacity: _c, ...rest } = msg;
-    return rest;
   }
 
   // ── Living World Director hooks ─────────────────────────────────────────
