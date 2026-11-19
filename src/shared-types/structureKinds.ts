@@ -71,6 +71,14 @@ export {
 export { STRUCTURE_OUTLINE_FAMILY, structureOutline } from './structureKinds/outline.js';
 export type { StructureOutlineFamily } from './structureKinds/outline.js';
 export {
+  STRUCTURE_SOCKET_SPACING,
+  STRUCTURE_SOCKET_OVERRIDES,
+  structureSockets,
+  rotateStructureSocket,
+  structureSocketToWorld,
+} from './structureKinds/structureSockets.js';
+export type { StructureSocket, MutStructureSocket } from './structureKinds/structureSockets.js';
+export {
   structureHullPoints,
   STRUCTURE_ROTATIONS,
   normaliseStructureRotation,
