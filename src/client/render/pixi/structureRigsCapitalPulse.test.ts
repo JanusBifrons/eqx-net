@@ -6,7 +6,23 @@
 import { describe, it, expect } from 'vitest';
 import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import { CRANE_CARGO_IN } from '../../../core/articulation/craneCargo.js';
+import type { Graphics } from 'pixi.js';
 import { StructureRigView } from './structureRigs.js';
+import { CONNECTOR_FLOW_PULSE_COLOR } from './connectorVisual.js';
+
+/** The bounds of the travelling band (and its clamp sparks): the strokes in
+ *  the gold flow-pulse colour (the rest of the cable flow lights the whole arm). */
+function pulseBounds(g: Graphics): { minX: number; minY: number; maxX: number; maxY: number } {
+  const out = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const i of (g.context as unknown as { instructions: PulseInstr[] }).instructions) {
+    if (i.action !== 'stroke' || i.data.style.color !== CONNECTOR_FLOW_PULSE_COLOR) continue;
+    const b = i.data.path.bounds;
+    out.minX = Math.min(out.minX, b.minX); out.minY = Math.min(out.minY, b.minY);
+    out.maxX = Math.max(out.maxX, b.maxX); out.maxY = Math.max(out.maxY, b.maxY);
+  }
+  return out;
+}
+interface PulseInstr { action: string; data: { style: { color: number }; path: { bounds: { minX: number; minY: number; maxX: number; maxY: number } } } }
 
 describe('Capital crane arm goods pulse (3e on the Capital bay)', () => {
   // The hold the real run carries: target host (0, 452), 360-tick unload.
@@ -20,7 +36,7 @@ describe('Capital crane arm goods pulse (3e on the Capital bay)', () => {
     for (const t of [1004, 1020, 1040]) {
       view.update(hold, t, 0, 0, 0);
       expect(g.visible, `tick ${t}`).toBe(true);
-      const b = g.getLocalBounds();
+      const b = pulseBounds(g);
       expect(b.maxX - b.minX + (b.maxY - b.minY), 'a drawn comet').toBeGreaterThan(1);
       centres.push((b.minX + b.maxX) / 2);
     }
