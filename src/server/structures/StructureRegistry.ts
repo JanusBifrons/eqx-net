@@ -13,7 +13,7 @@ import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import type { Hold } from '../../shared-types/goods.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { TeleportPartner, TeleportRules, TeleportToll, TpPhase } from '../../shared-types/teleport.js';
-import { Connection } from '../../core/structures/Connection.js';
+import { CABLE_NO_SOCKET, Connection } from '../../core/structures/Connection.js';
 import type { PlayingClip } from '../../core/articulation/evaluate.js';
 
 export interface StructureRecord {
@@ -315,12 +315,17 @@ export class StructureRegistry {
     return this.connById.get(id);
   }
 
-  /** Create + register a connection between two structures. */
-  addConnection(aId: string, bId: string, throughput: number): Connection {
+  /** Create + register a connection between two structures. `socketA` /
+   *  `socketB` are the cable sockets `canConnect` picked for `aId` / `bId`
+   *  (0d cable sockets; `CABLE_NO_SOCKET` for a fence link). */
+  addConnection(
+    aId: string, bId: string, throughput: number,
+    socketA: number = CABLE_NO_SOCKET, socketB: number = CABLE_NO_SOCKET,
+  ): Connection {
     // Phase 5 — both endpoints have now connected at least once (sweep-skip).
     this.everConnected.add(aId);
     this.everConnected.add(bId);
-    const c = new Connection(this.connCounter++, aId, bId, throughput);
+    const c = new Connection(this.connCounter++, aId, bId, throughput, socketA, socketB);
     let aList = this.adjacency.get(aId);
     if (!aList) { aList = []; this.adjacency.set(aId, aList); }
     aList.push(c);

@@ -13,8 +13,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
-import { autoConnectStructure, linkReachBox, structureToGridNode } from './structureGridView.js';
-import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { autoConnectStructure, buildGridNodes, connectExplicit, linkReachBox, structureToGridNode } from './structureGridView.js';
+import { getStructureKind, structureSockets, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { canConnect } from '../../core/structures/Grid.js';
+import { CABLE_NO_SOCKET, CABLE_TAIL_MAX, makeCableSocketPick } from '../../core/structures/cableCurve.js';
 
 const OWNER = 'owner-1';
 
@@ -152,7 +154,7 @@ describe('structureToGridNode — mid-upgrade Capital stays operational (must-fi
 });
 
 describe('linkReachBox — the box auto-connect asks obstacles over (macro terrain C5g)', () => {
-  it('bounds the centres of same-owner structures in link range; false when none', () => {
+  it('bounds the same-owner structures in link range, each padded by its extent plus the cable tail; false when none', () => {
     const registry = new StructureRegistry();
     registry.add(record('a', 'connector', 0, 0));
     const box = { x0: 0, y0: 0, x1: 0, y1: 0 };
@@ -161,6 +163,66 @@ describe('linkReachBox — the box auto-connect asks obstacles over (macro terra
     registry.add(record('far', 'connector', -5_000, 0)); // out of range
     registry.add({ ...record('foreign', 'connector', 0, 300), owner: 'owner-2' }); // another grid
     expect(linkReachBox(registry, 'a', box)).toBe(true);
-    expect(box).toEqual({ x0: 0, y0: -100, x1: 400, y1: 0 });
+    // Cables bend out from sockets on each outline: pad by half extent + CABLE_TAIL_MAX.
+    const e = getStructureKind('connector').footprint.w / 2 + CABLE_TAIL_MAX;
+    const f = getStructureKind('connector').footprint.h / 2 + CABLE_TAIL_MAX;
+    expect(box).toEqual({ x0: -e, y0: -100 - f, x1: 400 + e, y1: f });
+  });
+});
+
+describe('links store the cable sockets canConnect picked (0d slice 5)', () => {
+  function pickFor(registry: StructureRegistry, aId: string, bId: string): { a: number; b: number } {
+    const nodes = buildGridNodes(registry);
+    const pick = makeCableSocketPick();
+    expect(canConnect(nodes.get(aId)!, nodes.get(bId)!, registry.adjacencyMap(), nodes, undefined, pick).ok).toBe(true);
+    return { a: pick.a, b: pick.b };
+  }
+
+  it('auto-connect stores the new structure socket as socketA, the hub socket as socketB', () => {
+    const registry = new StructureRegistry();
+    registry.add(record('hub', 'connector', 300, 40));
+    registry.add(record('sol', 'solar', 0, 0));
+    const want = pickFor(registry, 'sol', 'hub');
+    expect(want.a).toBeGreaterThanOrEqual(0);
+    expect(want.b).toBeGreaterThanOrEqual(0);
+    expect(autoConnectStructure(registry, 'sol')).toBe('hub');
+    const [c] = registry.connectionsOf('sol');
+    expect(c!.aId).toBe('sol');
+    expect([c!.socketA, c!.socketB]).toEqual([want.a, want.b]);
+    expect(c!.socketAt('sol')).toBe(want.a);
+    expect(c!.socketAt('hub')).toBe(want.b);
+  });
+
+  it('connectExplicit maps the pick to nodeA / nodeB in either argument order', () => {
+    const make = (): StructureRegistry => {
+      const r = new StructureRegistry();
+      r.add(record('hub', 'connector', 300, 40));
+      r.add(record('sol', 'solar', 0, 0));
+      return r;
+    };
+    const fwd = make();
+    const wantFwd = pickFor(fwd, 'sol', 'hub');
+    expect(connectExplicit(fwd, 'sol', 'hub')).toBe(true);
+    const cf = fwd.connectionsOf('sol')[0]!;
+    expect([cf.aId, cf.socketA, cf.bId, cf.socketB]).toEqual(['sol', wantFwd.a, 'hub', wantFwd.b]);
+
+    const rev = make();
+    const wantRev = pickFor(rev, 'hub', 'sol');
+    expect(connectExplicit(rev, 'hub', 'sol')).toBe(true);
+    const cr = rev.connectionsOf('sol')[0]!;
+    expect([cr.aId, cr.socketA, cr.bId, cr.socketB]).toEqual(['hub', wantRev.a, 'sol', wantRev.b]);
+    // Each index belongs to its own end socket list, whichever order.
+    expect(cr.socketAt('sol')).toBeLessThan(structureSockets('solar').length);
+    expect(cr.socketAt('hub')).toBeLessThan(structureSockets('connector').length);
+    expect(cr.socketAt('sol')).toBeGreaterThanOrEqual(0);
+  });
+
+  it('a fence link (pylon to pylon) stores CABLE_NO_SOCKET at both ends', () => {
+    const registry = new StructureRegistry();
+    registry.add(record('p1', 'shield_pylon', 0, 0));
+    registry.add(record('p2', 'shield_pylon', 300, 0));
+    expect(connectExplicit(registry, 'p1', 'p2')).toBe(true);
+    const c = registry.connectionsOf('p1')[0]!;
+    expect([c.socketA, c.socketB]).toEqual([CABLE_NO_SOCKET, CABLE_NO_SOCKET]);
   });
 });

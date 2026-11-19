@@ -23,7 +23,13 @@ import {
   CONNECTION_THROUGHPUT,
   PLACEMENT_MAX_CONNECTIONS,
 } from '../../core/structures/structureGridConstants.js';
+import { CABLE_TAIL_MAX, makeCableSocketPick } from '../../core/structures/cableCurve.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+
+/** Scratch socket pick for every link made here: `canConnect` writes the
+ *  chosen pair, `addConnection` stores it on the `Connection` (0d slice 5).
+ *  Module-level, reused (root invariant #14). */
+const linkPick = makeCableSocketPick();
 
 export function structureToGridNode(rec: StructureRecord): GridNode {
   const kind = getStructureKind(rec.kind);
@@ -146,8 +152,9 @@ export function autoConnectStructure(
     const otherNode = nodes.get(cand.id)!;
     // Re-check against the live adjacency: an earlier addition may have filled
     // this hub or the new node's own slots.
-    if (!canConnect(newNode, otherNode, adjacency, nodes, obstacles).ok) continue;
-    registry.addConnection(newId, cand.id, CONNECTION_THROUGHPUT);
+    if (!canConnect(newNode, otherNode, adjacency, nodes, obstacles, linkPick).ok) continue;
+    // canConnect(newNode, other) ⇒ pick.a is newId's socket, pick.b cand's.
+    registry.addConnection(newId, cand.id, CONNECTION_THROUGHPUT, linkPick.a, linkPick.b);
     made++;
     if (firstConnected === null) firstConnected = cand.id;
   }
@@ -158,26 +165,33 @@ export function autoConnectStructure(
  * The world box every link `autoConnectStructure` could make from `id` lies
  * in: the bounds of its centre and the centres of the same-owner structures
  * within link range (`CONNECTION_MAX_RANGE`, edge to edge, as `canConnect`).
- * A link runs centre to centre, so an obstacle that can block one reaches
- * this box: the `near` box for `getObstacles`, so rocks with no body (an
- * unloaded cut-field chunk, macro terrain C5) block links too. False when
- * nothing is in range: there is no link to make. Writes `out`; no allocation.
+ * A link's cable (0d cable sockets) runs between sockets on each end's
+ * outline and bends out at most `CABLE_TAIL_MAX` along their normals, so
+ * each end widens the box by its half extent plus that tail: an obstacle
+ * that can block one reaches this box. It is the `near` box for
+ * `getObstacles`, so rocks with no body (an unloaded cut-field chunk, macro
+ * terrain C5) block links too. False when nothing is in range: there is no
+ * link to make. Writes `out`; no allocation.
  */
 export function linkReachBox(registry: StructureRegistry, id: string, out: ObstacleBox): boolean {
   const rec = registry.get(id);
   if (!rec) return false;
-  out.x0 = out.x1 = rec.x;
-  out.y0 = out.y1 = rec.y;
   const rw = rec.halfW ?? rec.radius, rh = rec.halfH ?? rec.radius;
+  out.x0 = rec.x - rw - CABLE_TAIL_MAX; out.x1 = rec.x + rw + CABLE_TAIL_MAX;
+  out.y0 = rec.y - rh - CABLE_TAIL_MAX; out.y1 = rec.y + rh + CABLE_TAIL_MAX;
   let found = false;
   for (const o of registry.all()) {
     if (o.id === id || o.owner !== rec.owner) continue;
-    const dx = Math.max(0, Math.abs(o.x - rec.x) - (rw + (o.halfW ?? o.radius)));
-    const dy = Math.max(0, Math.abs(o.y - rec.y) - (rh + (o.halfH ?? o.radius)));
+    const ow = o.halfW ?? o.radius, oh = o.halfH ?? o.radius;
+    const dx = Math.max(0, Math.abs(o.x - rec.x) - (rw + ow));
+    const dy = Math.max(0, Math.abs(o.y - rec.y) - (rh + oh));
     if (dx * dx + dy * dy > CONNECTION_MAX_RANGE * CONNECTION_MAX_RANGE) continue;
     found = true;
-    if (o.x < out.x0) out.x0 = o.x; else if (o.x > out.x1) out.x1 = o.x;
-    if (o.y < out.y0) out.y0 = o.y; else if (o.y > out.y1) out.y1 = o.y;
+    const px = ow + CABLE_TAIL_MAX, py = oh + CABLE_TAIL_MAX;
+    if (o.x - px < out.x0) out.x0 = o.x - px;
+    if (o.x + px > out.x1) out.x1 = o.x + px;
+    if (o.y - py < out.y0) out.y0 = o.y - py;
+    if (o.y + py > out.y1) out.y1 = o.y + py;
   }
   return found;
 }
@@ -204,7 +218,7 @@ export function connectExplicit(
   const na = nodes.get(aId);
   const nb = nodes.get(bId);
   if (!na || !nb) return false;
-  if (!canConnect(na, nb, registry.adjacencyMap(), nodes, obstacles).ok) return false;
-  registry.addConnection(aId, bId, CONNECTION_THROUGHPUT);
+  if (!canConnect(na, nb, registry.adjacencyMap(), nodes, obstacles, linkPick).ok) return false;
+  registry.addConnection(aId, bId, CONNECTION_THROUGHPUT, linkPick.a, linkPick.b);
   return true;
 }

@@ -50,8 +50,10 @@ export type { GrownPlacement } from './growBuilder.js';
  *  side; a spine relay that would land on a pad moves just past it.
  *  14→15 (structure-restyle 0d slice 4): link reach is socket to socket, so
  *  the fence sits 50 u closer (`FENCE_MARGIN`) to keep the row-end taps in
- *  reach of the gate posts and pylons. */
-export const BASE_GROWTH_VERSION = 15;
+ *  reach of the gate posts and pylons.
+ *  15→16 (structure-restyle 0d slice 5): a placement may not sit on an
+ *  existing link's curved socket-to-socket cable (was the straight centre line). */
+export const BASE_GROWTH_VERSION = 16;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
