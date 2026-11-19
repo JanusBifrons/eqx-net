@@ -10,6 +10,8 @@ import { buildStructureVisual } from '../render/pixi/structureVisuals.js';
 import { parseStructureStyle, STRUCTURE_STYLE_IDS, type StructureStyleId } from '../render/pixi/structureStyles.js';
 import { shipExtent } from '../render/art/fields.js';
 import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W } from '../../core/articulation/rigCatalogue.js';
+import { grownBaseScene } from './grownBaseScene.js';
+import { labSearch, parseGrownBaseParams, parseKinds } from './labSceneParams.js';
 
 export interface Pose { x: number; y: number; rot: number; thrust: number }
 
@@ -23,9 +25,6 @@ export interface ShipE {
 
 export interface StructE {
   id: string; x: number; y: number; rot: number; seed: number;
-  /** Art-lab-only size override: the longest side of the footprint, in world
-   *  units (the restyle's Ladder A). The structure catalogue is untouched. */
-  size?: number;
   /** A caption drawn under the structure (e.g. a dock's "INTAKE"). */
   label?: string;
 }
@@ -76,23 +75,10 @@ export const STRUCT_STYLES = STRUCTURE_STYLE_IDS;
 export type StructStyle = StructureStyleId;
 export const parseStructStyle = parseStructureStyle;
 
-/** The restyle's "Ladder A" sizes (Small 150–300, Medium 600–1,200) for the
- *  refining outpost, as the longest side in world units. Art lab only. */
-export const OUTPOST_SIZES: Record<string, number> = {
-  capital: 900, connector: 160, reactor: 700, cargo_bay: 300, refinery: 900, freight_dock: 1000,
-};
-
-/** Today's footprint (w × h, world units) of a structure kind. */
+/** The catalogue footprint (w × h, world units) of a structure kind. */
 export function structFootprint(id: string): { w: number; h: number } {
   const fp = buildStructureVisual(id, { accent: getStructureKind(id).color, seed: 1, omitSpans: true }).footprint;
   return { w: fp.w, h: fp.h };
-}
-
-/** Scale that takes today's art to the struct's `size` override (1 if none). */
-export function structScale(st: StructE): number {
-  if (st.size === undefined) return 1;
-  const fp = structFootprint(st.id);
-  return st.size / Math.max(fp.w, fp.h);
 }
 
 /** The viewport a scene is framed for (CSS px). */
@@ -153,7 +139,7 @@ function spinner(id: string, x: number, y: number, phase: number, rate: number, 
 }
 
 /** A ship following path p(t); rotation from the path's tangent. */
-function flyer(id: string, p: (t: number) => [number, number], paint?: number): ShipE {
+export function flyer(id: string, p: (t: number) => [number, number], paint?: number): ShipE {
   return {
     id, paint, trail: true,
     pose: (t, o) => {
@@ -166,7 +152,9 @@ function flyer(id: string, p: (t: number) => [number, number], paint?: number): 
   };
 }
 
-function baseStructs(): StructE[] {
+/** The hand-placed base for scenes aimed at fixed points (explosion, sweep,
+ *  broadside; the fx lab uses its first 9). `scene=base` grows a real one. */
+export function baseStructs(): StructE[] {
   return [
     { id: 'capital', x: 0, y: 0, rot: 0, seed: 1 },
     { id: 'connector', x: 360, y: 0, rot: 0, seed: 2 },
@@ -197,7 +185,7 @@ function fleet(t0: number): ShipE[] {
 }
 
 /**
- * The small refining outpost (structure restyle §2/§4) at Ladder A sizes:
+ * The small refining outpost (structure restyle §2/§4) at catalogue sizes:
  * beacon (the capital) at the centre, four line nodes around it, a reactor,
  * three cargo holds, a refinery and two freight docks (intake + outlet),
  * with a fighter, a parked hauler and a destroyer for scale. The destroyer
@@ -212,8 +200,7 @@ const DOCK_Y = -1250;
 const HAULER_SPACING = 240;
 
 export function outpostScene(view: View, zoomOr: (z: number) => number): Scene {
-  const s = OUTPOST_SIZES;
-  const at = (id: string, x: number, y: number, seed: number, label?: string): StructE => ({ id, x, y, rot: 0, seed, size: s[id], label });
+  const at = (id: string, x: number, y: number, seed: number, label?: string): StructE => ({ id, x, y, rot: 0, seed, label });
   const structs: StructE[] = [
     at('capital', 0, 0, 1), // 0 beacon
     at('connector', 0, -640, 2), // 1 N node
@@ -242,16 +229,16 @@ export function outpostScene(view: View, zoomOr: (z: number) => number): Scene {
     // Fighter: a slow pass above the docks' pads.
     flyer('fighter', (t) => [150 + t * 60, DOCK_Y - DOCK_BAY_CY - DOCK_BAY_HALF_H - 100 + Math.sin(t * 0.7) * 40]),
   ];
-  // Bounds of every structure (at its override size) and ship, for the fit.
+  // Bounds of every structure and ship, for the fit.
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const st of structs) {
-    const fp = structFootprint(st.id), k = structScale(st);
-    x0 = Math.min(x0, st.x - (fp.w * k) / 2); x1 = Math.max(x1, st.x + (fp.w * k) / 2);
-    y0 = Math.min(y0, st.y - (fp.h * k) / 2); y1 = Math.max(y1, st.y + (fp.h * k) / 2);
+    const fp = structFootprint(st.id);
+    x0 = Math.min(x0, st.x - fp.w / 2); x1 = Math.max(x1, st.x + fp.w / 2);
+    y0 = Math.min(y0, st.y - fp.h / 2); y1 = Math.max(y1, st.y + fp.h / 2);
     if (st.id === 'freight_dock') {
       // The loading pad, outside the dock's open edge (scene -y).
-      x0 = Math.min(x0, st.x - DOCK_BAY_HALF_W * k); x1 = Math.max(x1, st.x + DOCK_BAY_HALF_W * k);
-      y0 = Math.min(y0, st.y - (DOCK_BAY_CY + DOCK_BAY_HALF_H) * k);
+      x0 = Math.min(x0, st.x - DOCK_BAY_HALF_W); x1 = Math.max(x1, st.x + DOCK_BAY_HALF_W);
+      y0 = Math.min(y0, st.y - (DOCK_BAY_CY + DOCK_BAY_HALF_H));
     }
   }
   const p: Pose = { x: 0, y: 0, rot: 0, thrust: 0 };
@@ -289,7 +276,10 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40, view: Vie
       const ships = fac.map((f, i) => spinner('heavy', i * 64, 0, 0.6, 0.3, f ? npcFactionDef(f)?.color : undefined));
       return { ships, structs: [], booms: [], duration: 6, camera: (_t, c) => { c.x = 160; c.y = 0; c.zoom = zoomOr(2.6); } };
     }
-    case 'structures':
+    case 'structures': {
+      // `?kinds=a,b,c` shows just those kinds, shelf-packed (Stage 4 0b).
+      const kinds = parseKinds(labSearch());
+      if (kinds !== null) return structSheet(kinds, SHEET_W / SHEET_H, zoomOr);
       return {
         ships: [],
         structs: [
@@ -302,8 +292,9 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40, view: Vie
         duration: 4,
         camera: (_t, c) => { c.x = -120; c.y = 0; c.zoom = zoomOr(0.62); },
       };
+    }
     case 'base':
-      return { ships: fleet(3.2), structs: baseStructs(), booms: [], duration: 10, camera: (_t, c) => { c.x = 0; c.y = -60; c.zoom = zoomOr(0.5); } };
+      return grownBaseScene(parseGrownBaseParams(labSearch()), view, zoomOr);
     case 'explosion':
       return {
         ships: [flyer('fighter', (t) => [200 + t * 140, 120 - t * 30]), flyer('fighter', (t) => [520 - t * 60, 620 - t * 150])],

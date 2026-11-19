@@ -10,7 +10,7 @@ import { StructureRigView, type StructureRigInput } from '../render/pixi/structu
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
-import { structScale, type Scene } from './scenes.js';
+import type { Scene } from './scenes.js';
 
 export interface LabRig { i: number; view: StructureRigView; input: StructureRigInput | null }
 
@@ -22,9 +22,8 @@ export function buildLabRigs(scene: Scene, rigUnderL: Container, rigPlaneL: Cont
     const rig = rigForStructureKind(st.id);
     if (rig === null) return;
     const view = new StructureRigView(rig);
-    const k = structScale(st);
     for (const [g, layer] of [[view.under, rigUnderL], [view.plane, rigPlaneL], [view.over, rigOverL]] as const) {
-      g.position.set(st.x, st.y); g.rotation = st.rot; g.scale.set(k);
+      g.position.set(st.x, st.y); g.rotation = st.rot;
       layer.addChild(g);
     }
     rigs.push({ i, view, input: null });
@@ -43,7 +42,7 @@ export function buildLabGridLines(scene: Scene, lineL: Container): { r: Connecto
     swarm.set(i + 1, {
       x: st.x, y: -st.y, vx: 0, vy: 0, angle: -st.rot, angvel: 0,
       prevX: st.x, prevY: -st.y, prevAngle: 0, prevArrivalMs: 0, latestArrivalMs: 0, poseRing: [], ringHead: 0,
-      radius: getStructureKind(st.id).radius * structScale(st), kind: 2, shipKind: st.id, sleeping: true, lastUpdateTick: 0,
+      radius: getStructureKind(st.id).radius, kind: 2, shipKind: st.id, sleeping: true, lastUpdateTick: 0,
     } as unknown as SwarmRenderState);
     structures.set(i + 1, { powered: true, netPower: 50, connTo: [], built: true, buildPct: 1, deconstructPct: 0, wallActive: true } as unknown as StructureRenderState);
   });
