@@ -3230,3 +3230,11 @@ to the corner. Far off, that bearing points almost straight down the route, so a
 shallow: the brake distance jumped to 450-700 u and a fighter entered a 75° turn at ~260 u/s, running
 ~32 u off its line into rock. Use the angle between the incoming and outgoing legs, and cap the carried
 speed by how far the ship may swing sideways (`NAV_TURN_SWING`).
+
+## 2026-11-19 — a seed that follows the server tick rerolls every integration run
+
+A wreck's fracture seed is `fnvMixU32(fnv1a32(id), serverTick)`, and in an integration room the death
+tick follows the wall clock of `harness.advance`, so "pieces >= 1.5 radii apart 1 s after the break"
+drew four new seeds each run; a rare 3-piece split (1.3-1.5 radii) failed it a few runs in ten. A
+test that asserts on a break-up's shape pins the seed (`setWreckSeed(fnvMixU32(fnv1a32(id), TICK))`)
+and sweeps seeds offline, never trusting the tick it happens to die on.

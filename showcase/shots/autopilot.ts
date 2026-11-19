@@ -9,13 +9,15 @@ import { artSettled } from './capitals.js';
  * `tests/e2e/autopilot-round-rock.spec.ts`). The helm asks the server for a
  * route, its line shows round the rock, and the fighter flies it.
  *
- * Start and goal (from the planner on seed `look`, fighter clearance): the
- * straight line between them crosses the rock; the route bends east round it
- * (three waypoints). Both sit inside one phone screen at the fighter's widest zoom
- * (±2 800 × ±1 300 u), so the tap is a real tap on the drawn goal.
+ * Start and goal (from the planner on seed `look`, fighter clearance and
+ * comfort): the straight line between them clips the rim rock's tip; the route
+ * bends east round it (corner near (-6664, 11960)). Both sit inside one phone
+ * screen at the fighter's widest zoom (±2 800 × ±1 300 u), and the goal lies down
+ * and right of the ship, clear of the bottom-centre HUD pill, so the tap is a
+ * real tap on the drawn goal in open space.
  */
-const S = { x: -7_072, y: 12_419 };
-const G = { x: -6_904, y: 11_203 };
+const S = { x: -7_350, y: 12_500 };
+const G = { x: -6_514, y: 11_504 };
 /** Nose toward the goal: forward is (-sin θ, cos θ). */
 const FACING = Math.round(Math.atan2(-(G.x - S.x), G.y - S.y) * 1000) / 1000;
 
@@ -34,7 +36,7 @@ export const autopilotRoundRock: Shot = {
     params: { shipKind: 'fighter', art: 'machined', fx: 'new', spawnX: S.x, spawnY: S.y, initialAngle: FACING, initialHull: 1_000_000 },
   },
   hud: 'full',
-  durationMs: 24_000,
+  durationMs: 16_000,
   async startWhen(ctx) {
     await artSettled(ctx);
   },
@@ -62,8 +64,8 @@ export const autopilotRoundRock: Shot = {
       if (on) break;
       await ctx.sleep(300);
     }
-    // The route comes back and the helm flies it (~1.4 km at fighter speed).
-    await ctx.sleep(16_000);
+    // The route comes back and the helm flies it (~1.35 km, about 7 s), then holds on the goal.
+    await ctx.sleep(8_000);
     await pad.dispose();
   },
 };
