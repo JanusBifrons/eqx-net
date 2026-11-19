@@ -63,7 +63,8 @@ export interface RigPartLook {
   /** Hatch slot under the door leaves (seen as they part). */
   slot: number;
   /** The internal cable laid along an arm's lattice (the connector cable
-   *  look, `lineLook=cable`, without its own cradles: the truss carries it):
+   *  look, `lineLook=cable`, without its own cradles: the truss carries it;
+   *  with its lit sheath, so it still reads under the bright lattice):
    *  its body width as a fraction of each beam's own truss depth (sized
    *  per segment), so the open lattice still shows each side of it. */
   cableFill: number;
@@ -258,7 +259,7 @@ function drawBeam(ctx: GraphicsContext, rig: Rig, i: number, look: RigPartLook):
   // chain) runs inside it, under the laces, pivot -> the next joint / tip.
   const cable = rigArmCable(rig, look);
   if (cable.onArm[i] === 1) {
-    drawLineLookBody(ctx, 'cable', 0, 0, cable.endX[i]!, cable.endY[i]!, 1, cable.ra[i]!, cable.rb[i]!, { size: cable.size[i]!, cradles: false });
+    drawLineLookBody(ctx, 'cable', 0, 0, cable.endX[i]!, cable.endY[i]!, 1, cable.ra[i]!, cable.rb[i]!, { size: cable.size[i]!, cradles: false, lit: true });
   }
   trussPolys(sink, P(s0 + 1, 0), P(s1 - 1, 0), W, look.truss, 0);
   ctx.poly(flat(rect), true).stroke({ color: look.edge, width: 2 });

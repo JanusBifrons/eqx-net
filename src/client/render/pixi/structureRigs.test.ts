@@ -5,14 +5,14 @@
  * display tree (the heap side is structureRigs.heapDelta.test.ts).
  */
 import { describe, it, expect } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container, GraphicsContext } from 'pixi.js';
 import type { Graphics } from 'pixi.js';
 import {
   readRigsFlag, rigLayerZ, RIG_OVER_Z, RIG_UNDER_Z, partLocalTransform, worldToHost,
   StructureRigView, StructureRigs, type PixiXform,
 } from './structureRigs.js';
 import { rigArmCable, rigPartContext, rigPartRole, RIG_LOOK_C } from './structureRigLook.js';
-import { lineLookBaseWidth } from './connectorLineLooks.js';
+import { CABLE_LIT_SHEATH, drawLineLookBody, lineLookBaseWidth } from './connectorLineLooks.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
@@ -598,6 +598,25 @@ describe('the crane arm is an open lattice with the connector cable inside (rest
     // The boom is deeper than the jib, so its cable is thicker.
     expect(Math.max(...sizes)).toBeGreaterThan(Math.min(...sizes));
     expect(cable.size.every((v, i) => (cable.onArm[i] === 1) === (v > 0))).toBe(true);
+  });
+
+  it.each(['freight_dock', 'capital'])('%s: the arm cable wears the lit sheath (reads under the bright lattice when idle)', (kind) => {
+    const rig = rigForStructureKind(kind)!;
+    const cable = rigArmCable(rig);
+    for (let i = 0; i < rig.partCount; i++) {
+      if (cable.onArm[i] !== 1) continue;
+      const strokes = instrs(rigPartContext(rig, i)).filter((x) => x.action === 'stroke');
+      // Two outer strands in the lit sheath, lighter than the connector's rubber.
+      expect(strokes.filter((x) => x.data.style.color === CABLE_LIT_SHEATH).length).toBe(2);
+    }
+  });
+
+  it('a connector link keeps its dark rubber sheath (only the arm wears the lit sheath)', () => {
+    const ctx = new GraphicsContext();
+    drawLineLookBody(ctx, 'cable', 0, 0, 400, 0, 1, 20, 20);
+    const strokes = instrs(ctx).filter((x) => x.action === 'stroke');
+    expect(strokes.length).toBeGreaterThan(15);
+    expect(strokes.some((x) => x.data.style.color === CABLE_LIT_SHEATH)).toBe(false);
   });
 
   it('idle: the cable is in the static art, no flow is drawn', () => {
