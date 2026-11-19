@@ -1,4 +1,4 @@
-import { podSizeOf } from '../../shared-types/shipKinds/cargoPod.js';
+import { podSizeOf, podComponentIndex, POD_TIER_SPILL } from '../../shared-types/shipKinds/cargoPod.js';
 import { describe, expect, it } from 'vitest';
 import { LootSubsystem, LOOT_POD_TTL_MS, MAX_LIVE_LOOT_PER_SECTOR, type LootCollector, type LootSubsystemDeps } from './LootSubsystem.js';
 import { HoldStore } from './HoldStore.js';
@@ -226,6 +226,18 @@ describe('LootSubsystem (P1a-1)', () => {
     expect(t.loot.take({ ...SHIP, capacity: 1000 }, hulk, null).ok).toBe(true);
     expect(t.store.get(hulk)).toBeUndefined();
     expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(40);
+  });
+
+  it('a pod restored after a restart keeps its size and its glow (owner 2026-11-18: essential)', () => {
+    const t = setup();
+    const big = t.loot.drop(h({ salvage: 30 }), 5, 6, 0, 0, { alone: true, size: 3, spill: true })!;
+    const look = t.indexes.get(big)!;
+    expect(look).toBe(podComponentIndex(3, POD_TIER_SPILL));
+    // A fresh room (server restart) hydrates the saved record and respawns it.
+    const after = setup();
+    after.store.hydrate([t.store.get(big)!]);
+    expect(after.loot.restore()).toBe(1);
+    expect(after.indexes.get(big)).toBe(look);
   });
 
   it('restore() brings derelicts back as derelicts', () => {

@@ -33,10 +33,13 @@ interface ShipLike {
   x: number; y: number; vx: number; vy: number; angle: number; kind?: string; shieldDown?: boolean;
 }
 interface Internals {
-  shieldEdgeDist(
-    hit: { hitId: string; dist: number },
-    fromX: number, fromY: number, fwdX: number, fwdY: number,
-  ): number;
+  /** The live beam moved to `fireControl/LocalFireClient.ts` (god-file split, slice 10). */
+  _localFire: {
+    shieldEdgeDist(
+      hit: { hitId: string; dist: number },
+      fromX: number, fromY: number, fwdX: number, fwdY: number,
+    ): number;
+  };
   mirror: {
     swarm?: Map<number, SwarmLike>;
     ships: Map<string, ShipLike>;
@@ -66,7 +69,7 @@ describe('live-beam endpoint snaps to the shield ring for shield-up targets', ()
     // Since 2026-11-13 the ring is the ship kind's own bubble (`shipHitShape.ts`),
     // not the record radius + pad: an NPC fighter is the same target as a player one.
     internals.mirror.swarm!.set(5, { x: 0, y: DRONE_DIST, vx: 0, vy: 0, radius: DRONE_R, kind: 1, shipKind: 'fighter', shieldDown: false });
-    const got = internals.shieldEdgeDist({ hitId: 'swarm-5', dist: COLLIDER_HIT_DIST }, FROM_X, FROM_Y, FWD_X, FWD_Y);
+    const got = internals._localFire.shieldEdgeDist({ hitId: 'swarm-5', dist: COLLIDER_HIT_DIST }, FROM_X, FROM_Y, FWD_X, FWD_Y);
     const fk = getShipKind('fighter');
     expect(got).toBeCloseTo(DRONE_DIST - (fk.radius + shipTuning(fk).shieldPad), 5);
     expect(got).toBeLessThan(COLLIDER_HIT_DIST); // ring is `pad` closer to shooter
@@ -74,13 +77,13 @@ describe('live-beam endpoint snaps to the shield ring for shield-up targets', ()
 
   it('leaves a shield-DOWN drone hit on the predWorld (hull) distance', () => {
     internals.mirror.swarm!.set(5, { x: 0, y: DRONE_DIST, vx: 0, vy: 0, radius: DRONE_R, kind: 1, shieldDown: true });
-    const got = internals.shieldEdgeDist({ hitId: 'swarm-5', dist: COLLIDER_HIT_DIST }, FROM_X, FROM_Y, FWD_X, FWD_Y);
+    const got = internals._localFire.shieldEdgeDist({ hitId: 'swarm-5', dist: COLLIDER_HIT_DIST }, FROM_X, FROM_Y, FWD_X, FWD_Y);
     expect(got).toBe(COLLIDER_HIT_DIST);
   });
 
   it('leaves an asteroid (kind 0) hit unchanged — asteroids have no shield', () => {
     internals.mirror.swarm!.set(5, { x: 0, y: DRONE_DIST, vx: 0, vy: 0, radius: DRONE_R, kind: 0, shieldDown: false });
-    const got = internals.shieldEdgeDist({ hitId: 'swarm-5', dist: COLLIDER_HIT_DIST }, FROM_X, FROM_Y, FWD_X, FWD_Y);
+    const got = internals._localFire.shieldEdgeDist({ hitId: 'swarm-5', dist: COLLIDER_HIT_DIST }, FROM_X, FROM_Y, FWD_X, FWD_Y);
     expect(got).toBe(COLLIDER_HIT_DIST);
   });
 
@@ -88,14 +91,14 @@ describe('live-beam endpoint snaps to the shield ring for shield-up targets', ()
     internals.mirror.ships.set('p2', { x: 0, y: DRONE_DIST, vx: 0, vy: 0, angle: 0, kind: 'fighter', shieldDown: false });
     const fk = getShipKind('fighter');
     const r = fk.radius + shipTuning(fk).shieldPad;
-    const got = internals.shieldEdgeDist({ hitId: 'p2', dist: 999 }, FROM_X, FROM_Y, FWD_X, FWD_Y);
+    const got = internals._localFire.shieldEdgeDist({ hitId: 'p2', dist: 999 }, FROM_X, FROM_Y, FWD_X, FWD_Y);
     expect(got).toBeCloseTo(DRONE_DIST - r, 5);
   });
 
   it('falls through to predWorld distance when the analytical ray misses the sphere', () => {
     // Drone off to the side — the straight-up ray never enters its sphere.
     internals.mirror.swarm!.set(5, { x: 500, y: DRONE_DIST, vx: 0, vy: 0, radius: DRONE_R, kind: 1, shieldDown: false });
-    const got = internals.shieldEdgeDist({ hitId: 'swarm-5', dist: COLLIDER_HIT_DIST }, FROM_X, FROM_Y, FWD_X, FWD_Y);
+    const got = internals._localFire.shieldEdgeDist({ hitId: 'swarm-5', dist: COLLIDER_HIT_DIST }, FROM_X, FROM_Y, FWD_X, FWD_Y);
     expect(got).toBe(COLLIDER_HIT_DIST);
   });
 });

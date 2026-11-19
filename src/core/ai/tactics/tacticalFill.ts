@@ -5,7 +5,12 @@
  * slow still-memory. Allocation-free.
  */
 import type { AiEntity } from '../../contracts/IAiBehaviour.js';
+import type { ShipKind } from '../../../shared-types/shipKinds.js';
+import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 import type { MountTargetView } from '../WeaponMountController.js';
+import type { EngagementProfile } from '../pilot/engagementProfile.js';
+import type { PilotHandling } from '../virtualPilot.js';
+import type { RoleProfile } from './roleProfiles.js';
 import { TARGET_SPEED_GAIN, TICKS_PER_S_SIM } from '../hostileDroneTuning.js';
 import {
   PARKED_SPEED_FRAC,
@@ -29,6 +34,27 @@ export class TacticalFill {
    *  on a new target): the slow-target call reads it (`targetSlow`). */
   private _tSpeedAvg = 0;
   private _tSpeedId: string | null = null;
+
+  /** The context's fixed fields, filled once in the brain's constructor:
+   *  the kind's handling, the weapon profile and the role's range band. */
+  init(
+    tac: TacticalContext, kind: ShipKind, handling: PilotHandling, eng: EngagementProfile, role: RoleProfile,
+    sensorRange: number, shieldPad: number,
+  ): void {
+    tac.fireRange = eng.fireRange;
+    tac.cruiseSpeed = handling.cruiseSpeed;
+    tac.maxSpeed = handling.maxSpeed;
+    tac.overshoot = shipTuning(kind).attackRunOvershoot;
+    tac.bandMin = role.rangeBand.min * eng.fireRange;
+    tac.bandMax = role.rangeBand.max * eng.fireRange;
+    tac.turretHalfArc = eng.maxTurretHalfArc;
+    tac.sensorRange = sensorRange;
+    tac.maxAngvel = handling.maxAngvel;
+    tac.accel = handling.thrustAccel * 60;
+    tac.brakeAccel = handling.reverseAccel * 60;
+    tac.radius = kind.radius;
+    tac.shieldPad = shieldPad;
+  }
 
   /** Refresh the tactical context for this combat tick (plain writes, #14). */
   fill(

@@ -7,7 +7,7 @@
  */
 import decomp from 'poly-decomp';
 import type { Vec2 } from '../swarm/asteroidShape.js';
-import type { FracturePiece } from './fractureHull.js';
+import type { FracturePiece } from './fractureTypes.js';
 import { dedupe, ringArea, type P } from './fractureSplit.js';
 
 /** Output grid: every vertex is a multiple of this. */
@@ -25,8 +25,8 @@ export const EDGE_CRACK = 4;
 /** v9: a weapon's kill cut (`FractureInput.cut`): the slice line or a
  *  channel wall. Dead straight, like a section cut. */
 export const EDGE_CUT = 5;
-/** One of the `EDGE_*` kinds above. */
-export type FractureEdgeKind = number;
+/** One of the `EDGE_*` kinds above (declared in fractureTypes.ts). */
+export type { FractureEdgeKind } from './fractureTypes.js';
 
 // ───────────────────────────── quantise ─────────────────────────────
 

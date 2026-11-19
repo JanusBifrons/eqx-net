@@ -3,6 +3,10 @@
  * route round it (`tickMoveTo` asks `view.nav` for the next waypoint) and
  * touches no rock. Baseline in the same room with the routes turned off: the
  * straight line runs into the rock (contacts > 0), so the fixture is real.
+ *
+ * Streets (fine rebuild slice A): the big rock's fighter route threads the
+ * packed rocks beside it, its turns at the hull's clearance; the ship flies
+ * each turn rather than cutting it from its arrive radius (`stepNavRoute`).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -11,14 +15,15 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
-import { crossing } from './navCrossing.js';
+import { crossing, type Crossing } from './navCrossing.js';
 
 let harness: SectorTestHarness | undefined;
 afterEach(async () => { await harness?.cleanup(); harness = undefined; }, 10_000);
 
 const fighter = getShipKind('fighter');
-async function flyAcross(nav: boolean): Promise<{ contacts: number; miss: number }> {
-  const at = crossing();
+/** Longest route the 8 s flight below covers (a fighter at its calm cruise, braking for turns). */
+const FLIGHT_ROUTE_MAX = 2_400;
+async function flyAcross(nav: boolean, at: Crossing = crossing(FLIGHT_ROUTE_MAX)): Promise<{ contacts: number; miss: number }> {
   harness = await bootSectorTestServer({ sectorKey: null, testMode: true, cutField: { seed: 'look' }, asteroidConfig: [], droneCount: 0 });
   const pid = randomUUID();
   const client = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: Math.round(at.ax), spawnY: Math.round(at.ay) });
@@ -47,6 +52,16 @@ describe('SectorRoom integration — AI follows nav routes round rock (navigatio
     console.log(`[nav follow] routed: rock contacts ${r.contacts}, ends ${r.miss.toFixed(0)} u from the goal`);
     expect(r.contacts).toBe(0);
     expect(r.miss).toBeLessThan(shipTuning(fighter).wingmanArrive * 3);
+  }, 90_000);
+
+  it('through the field\'s streets: flies every turn and touches no rock', async () => {
+    const at = crossing();
+    const start = Math.hypot(at.bx - at.ax, at.by - at.ay);
+    const r = await flyAcross(true, at);
+    console.log(`[nav follow] streets (${at.routeLen.toFixed(0)} u route): rock contacts ${r.contacts}, ends ${r.miss.toFixed(0)} u from the goal`);
+    expect(at.routeLen, 'the street crossing is longer than the 8 s flight').toBeGreaterThan(FLIGHT_ROUTE_MAX);
+    expect(r.contacts).toBe(0);
+    expect(start - r.miss, 'it makes way along the route (not held short)').toBeGreaterThan(1_000);
   }, 90_000);
 
   it('baseline without routes: the straight line hits the rock', async () => {

@@ -46,6 +46,8 @@ export interface SwarmEvictorDeps {
   mountTicker: WeaponMountTicker;
   /** Free-slot list — push the released SAB slot. */
   freeSlots: number[];
+  /** Navigation — drop the body's resting obstacle (optional: test rigs). */
+  nav?: { swarmGone(id: string): void };
 }
 
 export interface EvictSwarmOpts {
@@ -78,6 +80,7 @@ export class SwarmEvictor {
     d.postToWorker({ type: 'DESPAWN', slot: rec.slot, playerId: rec.id });
     d.interestGrid.remove(rec.entityId);
     d.swarmRegistry.unregister(rec.id);
+    d.nav?.swarmGone(rec.id);
     d.aiController.unregister(rec.id);
     d.shieldHullRouter.swarmHealth.delete(rec.id);
     d.shieldHullRouter.swarmShield.delete(rec.id);
