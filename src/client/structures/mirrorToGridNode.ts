@@ -132,6 +132,27 @@ export class RockObstacleShapes {
 /** 0 = asteroid in the swarm-channel `kind` byte (drone=1, structure=2). */
 const SWARM_KIND_ASTEROID = 0;
 
+/** A blank `GridNode` — fields are overwritten in place by the projection
+ *  helpers. */
+export function blankGridNode(): GridNode {
+  return {
+    id: '',
+    kind: '',
+    x: 0,
+    y: 0,
+    rot: 0,
+    radius: 0,
+    isHub: false,
+    isCapital: false,
+    isConnector: false,
+    isShieldPylon: false,
+    maxConnections: 0,
+    powerOutput: 0,
+    powerConsumption: 0,
+    isConstructed: false,
+  };
+}
+
 /**
  * Project a placed structure (its grid slice + its swarm pose entry) into a
  * `GridNode`, writing into the caller-owned `out` (invariant #14 — the renderer
@@ -152,8 +173,10 @@ export function structureMirrorToGridNode(
 ): GridNode {
   const kind = getStructureKind(swarmEntry.shipKind);
   out.id = id;
+  out.kind = swarmEntry.shipKind ?? '';
   out.x = swarmEntry.x;
   out.y = swarmEntry.y;
+  out.rot = swarmEntry.angle;
   out.radius = kind.radius;
   // Phase V — the rotated footprint box (the structure's swarm angle carries
   // its quarter-turn rotation). Must match the server's structureToGridNode.
@@ -196,11 +219,17 @@ export const GHOST_NODE_ID = '__ghost__';
 export function ghostToGridNode(
   preview: { kind: string; x: number; y: number; angle?: number },
   out: GridNode,
+  /** Pose override (the pointer-chosen point the ghost is drawn at); the
+   *  preview's `angle` is always kept, so a rotated ghost gets its own box. */
+  x: number = preview.x,
+  y: number = preview.y,
 ): GridNode {
   const kind = getStructureKind(preview.kind as StructureKindId);
   out.id = GHOST_NODE_ID;
-  out.x = preview.x;
-  out.y = preview.y;
+  out.kind = preview.kind;
+  out.x = x;
+  out.y = y;
+  out.rot = preview.angle ?? 0;
   out.radius = kind.radius;
   const ext = structureHalfExtents(preview.kind, ((preview.angle ?? 0) * 180) / Math.PI);
   out.halfW = ext.hw;

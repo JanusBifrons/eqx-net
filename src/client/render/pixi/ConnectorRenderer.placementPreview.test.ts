@@ -460,3 +460,30 @@ describe('ConnectorRenderer — placement connection preview', () => {
     expect(r.placementPreviewConnectionCount).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('ConnectorRenderer placement preview: the ghost keeps its rotation (0d)', () => {
+  it('a rotated non-square ghost is checked with its rotated box, kind and rot', () => {
+    const kind = (['shipyard', 'shield_gate', 'solar'] as const).find((k) => {
+      const fp = getStructureKind(k).footprint;
+      return fp.w !== fp.h;
+    })!;
+    const fp = getStructureKind(kind).footprint;
+    const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([[1, structureState({ connTo: [] })]]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind, x: 0, y: 300, angle: Math.PI / 2 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    // Before the fix the preview dropped the angle: an unrotated box, rot 0.
+    const ghost = (r as unknown as { _ghostNode: { kind: string; rot: number; halfW: number; halfH: number } })._ghostNode;
+    expect(ghost.kind).toBe(kind);
+    expect(ghost.rot).toBeCloseTo(Math.PI / 2, 12);
+    expect(ghost.halfW).toBe(fp.h / 2);
+    expect(ghost.halfH).toBe(fp.w / 2);
+  });
+});

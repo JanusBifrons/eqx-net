@@ -14,7 +14,7 @@ import { isShieldEmitterKind } from './gateGeometry.js';
 function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode {
   const k = getStructureKind(kind);
   return {
-    id, x, y, radius: k.radius,
+    id, kind, x, y, rot: (rot * Math.PI) / 180, radius: k.radius,
     halfW: structureHalfExtents(kind, rot).hw,
     halfH: structureHalfExtents(kind, rot).hh,
     isHub: k.isHub,

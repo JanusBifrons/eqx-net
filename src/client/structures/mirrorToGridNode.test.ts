@@ -26,8 +26,10 @@ import type {
 function blankNode(): GridNode {
   return {
     id: '',
+    kind: '',
     x: 0,
     y: 0,
+    rot: 0,
     radius: 0,
     isHub: false,
     isCapital: false,
