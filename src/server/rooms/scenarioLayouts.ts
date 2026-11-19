@@ -386,3 +386,40 @@ export function structureRowsForTests(state: StructureRowsState, slice: readonly
   });
   return rows;
 }
+
+/** Perf scene `base-flow`: a working player base whose cables carry flow every
+ *  grid pulse. The Capital (pad west) feeds three arms through connectors:
+ *  north and south each hold two Miners on rocks plus a three-Solar spur, east
+ *  is six Solars. 410 power for 240 of Miners, so every Miner drills and its
+ *  minerals ride the cables to the Capital each second. */
+function baseFlowArm(sy: 1 | -1): { kind: string; x: number; y: number }[] {
+  return [
+    { kind: 'connector', x: 0, y: 470 * sy },
+    { kind: 'miner', x: -400, y: 800 * sy },
+    { kind: 'miner', x: 400, y: 800 * sy },
+    { kind: 'connector', x: 0, y: 1000 * sy },
+    { kind: 'solar', x: -300, y: 1200 * sy },
+    { kind: 'solar', x: 300, y: 1200 * sy },
+    { kind: 'solar', x: 0, y: 1450 * sy },
+  ];
+}
+export const BASE_FLOW_OPTS = {
+  prebuiltStructures: [
+    { kind: 'capital', x: 0, y: 0, rot: 90 },
+    ...baseFlowArm(1),
+    ...baseFlowArm(-1),
+    { kind: 'connector', x: 470, y: 0 },
+    { kind: 'solar', x: 800, y: -300 },
+    { kind: 'solar', x: 800, y: 300 },
+    { kind: 'connector', x: 1000, y: 0 },
+    { kind: 'solar', x: 1300, y: -300 },
+    { kind: 'solar', x: 1300, y: 300 },
+    { kind: 'solar', x: 1450, y: 0 },
+  ],
+  prebuiltStructuresOwner: 'perf-base',
+  /** One rock beside each Miner (≈ 460 u, inside its 800 u range). */
+  scenarioAsteroids: [
+    { x: -750, y: 1100, radius: 40 }, { x: 750, y: 1100, radius: 40 },
+    { x: -750, y: -1100, radius: 40 }, { x: 750, y: -1100, radius: 40 },
+  ],
+};
