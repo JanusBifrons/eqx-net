@@ -206,6 +206,7 @@ import { BreakInHooks } from './features/breakInHooks.js';
 import { TurretTargeting } from './features/turretTargeting.js';
 import { SectorTimeScale } from './features/sectorTimeScale.js';
 import { MineHooks } from './features/mineHooks.js';
+import { StorageRaid } from './features/tradeMessages.js';
 import {
   ALLOW_DEV_OVERRIDES,
   JOIN_BROADCAST_GRACE_TICKS,
@@ -265,9 +266,9 @@ import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid } from '../cargo/StorageService.js';
 import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked } from '../../core/cargo/hold.js';
-import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY, liveSectorHolder } from '../livingworld/RobotTerritory.js';
+import { liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { territoryLockRefusal } from '../structures/territoryLockRules.js';
-import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
+import { cargoCapacityForMaxHealth, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
 import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
@@ -677,8 +678,6 @@ export class SectorRoom extends Room<SectorState> {
   /** P5 — fitted blueprints per ship instance (filled at hull seed / install;
    *  read by the snapshot without allocating). */
   private readonly fittedCache = new Map<string, readonly string[]>();
-  /** P3c — last raid warning per owner (throttle). */
-  private readonly raidNoticeAtMs = new Map<string, number>();
   /** Web Push throttle — structureId → wall-clock ms of the last "base under
    *  attack" PUSH notification (separate, far longer window than the audit map
    *  above). Same alloc-free steady state; cleared in `evictSwarmEntity`. */
@@ -4161,6 +4160,11 @@ export class SectorRoom extends Room<SectorState> {
     broadcast: (type, msg) => { this.broadcast(type, msg); },
   });
   private readonly _mineTarget: MineTarget = { id: '', x: 0, y: 0 };
+  /** P3c — robot harvesters raid a player's storage (`features/tradeMessages.ts`). */
+  private readonly storageRaid = new StorageRaid({
+    storage: () => this.storage, sectorKey: () => this.sectorKey, now: () => this.gameClock.now(),
+    tradeTransfer: (o, u, s) => this.tradeTransfer(o, u, s), tradeNotify: (p, n) => { this.tradeNotify(p, n); },
+  });
 
   /** A swarm entity's hit shape for the turrets' hull range gate
    *  (`mountInReach`): a ship by kind, heading and shield, else its radius. */
@@ -5443,9 +5447,6 @@ export class SectorRoom extends Room<SectorState> {
     return worth > 0 ? { uid: rec.uid, owner: rec.owner, x: rec.x, y: rec.y } : null;
   }
 
-  /** P3c — a harvester steals up to `stepWeight` (rarest goods first, plus up
-   *  credits — never: they're virtual) from the storage network at `uid`, as
-   *  ONE atomic `tradeTransfer` group into its own ownerless hold. */
   /** W6 — LivingWorldRoom hook: nearest asteroid with ore left. Control cadence. */
   nearestOreAsteroid(x: number, y: number, range: number): { entityId: number; x: number; y: number; radius: number } | null {
     const a = this.findNearestAsteroid(x, y, range);
@@ -5459,33 +5460,8 @@ export class SectorRoom extends Room<SectorState> {
     return this.oreDraw.mine(harvesterId, null, entityId, maxUnits, capacity);
   }
 
-  raidStorage(harvesterId: string, owner: string, uid: string, stepWeight: number): number {
-    const snap = this.storage.tradeSnapshot(owner, uid);
-    if (snap === null || stepWeight <= 0) return 0;
-    const want = emptyHold();
-    let room = stepWeight;
-    for (const g of RAID_PRIORITY) {
-      const w = GOOD_DEFS[g].weight;
-      const n = Math.min(snap.goods[g] ?? 0, Math.floor(room / w));
-      if (n <= 0) continue;
-      want.goods[g] = n;
-      room -= n * w;
-    }
-    if (isHoldEmpty(want)) return 0;
-    const res = this.tradeTransfer(owner, uid, { take: { want, intoUid: harvesterId, intoOwner: null } });
-    if (res === null || isHoldEmpty(res.taken)) return 0;
-    const weight = holdWeight(res.taken);
-    auditEvent({ event: 'storage_raided', sector: this.sectorKey ?? undefined, playerId: owner, raider: harvesterId, weight });
-    const now = this.gameClock.now();
-    if (now - (this.raidNoticeAtMs.get(owner) ?? 0) >= RAID_NOTICE_THROTTLE_MS) {
-      this.raidNoticeAtMs.set(owner, now);
-      this.tradeNotify(owner, {
-        type: 'trade_notice', dealId: '', event: 'raided',
-        message: 'Robot harvesters are raiding your storage! Defend your base.', econVersion: 0,
-      });
-    }
-    return weight;
-  }
+  /** P3c — LivingWorldRoom hook: a harvester raids a storage network (`features/tradeMessages.ts`). */
+  raidStorage(harvesterId: string, owner: string, uid: string, stepWeight: number): number { return this.storageRaid.raid(harvesterId, owner, uid, stepWeight); }
 
   // ── Living World P2 — TradeRoom hooks (driven by the TradeDirector) ──────
 
