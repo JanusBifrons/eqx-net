@@ -36,7 +36,7 @@
  * shared pure data, so server and client still agree.
  */
 import { GATE_POSTS, AIRLOCK_POSTS } from './gatePosts.js';
-import { DEFAULT_STRUCTURE_KIND, isStructureKindId } from './lookup.js';
+import { DEFAULT_STRUCTURE_KIND, getStructureKind, isStructureKindId } from './lookup.js';
 import { PAD_SPECS, TELEPORTER_KINDS, padPostCenters, type TeleporterKind } from '../teleport.js';
 import { STRUCTURE_OUTLINE_FAMILY, structureOutline } from './outline.js';
 import type { StructureKindId } from './types.js';
@@ -121,6 +121,21 @@ function rayHitsOutline(poly: readonly P[], skip: number, px: number, py: number
   return false;
 }
 
+/** Kinds whose landing-pad side takes no cable. */
+const PAD_SIDE_CLOSED: ReadonlySet<StructureKindId> = new Set<StructureKindId>(['freight_dock']);
+
+/** Does the outward ray from (px, py) along (nx, ny) enter the keep-clear box? */
+function facesPad(pad: { cx: number; cy: number; w: number; h: number }, px: number, py: number, nx: number, ny: number): boolean {
+  const hx = pad.w / 2, hy = pad.h / 2;
+  let t0 = 0, t1 = Infinity;
+  for (const [p, d, c, h] of [[px, nx, pad.cx, hx], [py, ny, pad.cy, hy]] as const) {
+    if (Math.abs(d) < 1e-9) { if (p < c - h || p > c + h) return false; continue; }
+    const a = (c - h - p) / d, b = (c + h - p) / d;
+    t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b));
+  }
+  return t0 <= t1;
+}
+
 function postSockets(posts: readonly (readonly [number, number])[]): readonly StructureSocket[] {
   return Object.freeze(
     posts.map(([x, y]) => {
@@ -150,6 +165,11 @@ function isPadKind(id: string): id is TeleporterKind {
 
 function outlineSockets(id: StructureKindId): readonly StructureSocket[] {
   const poly = structureOutline(id, SOCKET_OUTLINE_STYLE);
+  // The freight dock's open edge faces its landing pad (`keepClear`), where
+  // ships set down: no cable plugs into that side (the stud would sit under
+  // the hazard strip and the cable would run across the pad). The Capital's
+  // crane bay keeps its studs for now (base layouts link through that side).
+  const pad = PAD_SIDE_CLOSED.has(id) ? getStructureKind(id).keepClear : undefined;
   const n = poly.length;
   const oneFace = id === 'connector';
   // House-look outlines of every non-hex family alternate cut corner, long
@@ -178,6 +198,7 @@ function outlineSockets(id: StructureKindId): readonly StructureSocket[] {
       const x = a.x + ex * t;
       const y = a.y + ey * t;
       if (rayHitsOutline(poly, i, x, y, nx, ny, reach)) continue;
+      if (pad !== undefined && facesPad(pad, x, y, nx, ny)) continue;
       out.push(freezeSocket(x, y, nx, ny));
     }
   }

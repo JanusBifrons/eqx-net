@@ -93,6 +93,8 @@ describe('structureSockets', () => {
       expect(diagonal, `${kind.id} corner sockets`).toBe(0);
       for (const [nx, ny] of [[1, 0], [0, 1], [-1, 0], [0, -1]] as const) {
         const side = sockets.filter((s) => Math.abs(s.nx - nx) < 1e-9 && Math.abs(s.ny - ny) < 1e-9).length;
+        // The freight dock's open (+y) edge faces its landing pad: no studs.
+        if (kind.id === 'freight_dock' && ny === 1) { expect(side, 'freight dock pad side').toBe(0); continue; }
         expect(side, `${kind.id} side ${nx},${ny}`).toBeGreaterThan(0);
       }
     }
