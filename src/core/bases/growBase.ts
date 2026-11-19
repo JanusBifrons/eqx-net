@@ -27,7 +27,7 @@ import { RECIPES, packRecipeFor, recipesFor, type RecipeId } from '../../shared-
 import { BASE_PRICES } from '../../shared-types/economy.js';
 import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
 import { keepClearBox } from '../structures/placementRules.js';
-import { Builder, type GrownPlacement } from './growBuilder.js';
+import { Builder, linkGap, type GrownPlacement } from './growBuilder.js';
 import { roleUnits, type Want } from './roleUnits.js';
 import { seededRandom, type BaseProfile, type BaseTier } from './baseProfile.js';
 import type { SectorFeature } from '../galaxy/galaxy.js';
@@ -54,8 +54,10 @@ export type { GrownPlacement } from './growBuilder.js';
  *  15→16 (structure-restyle 0d slice 5): a placement may not sit on an
  *  existing link's curved socket-to-socket cable (was the straight centre line).
  *  16→17 (structure-restyle stud audit): sockets sit on the house-look
- *  outline (style c), so cable ends and socket-to-socket reach moved. */
-export const BASE_GROWTH_VERSION = 17;
+ *  outline (style c), so cable ends and socket-to-socket reach moved.
+ *  17→18: each leaf stands `linkGap` off its connector (`MIN_CABLE_LENGTH`);
+ *  a spine relay pushed onto its row line is dropped. */
+export const BASE_GROWTH_VERSION = 18;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -329,9 +331,12 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   else for (let b = 0; b < batteries; b++) normal.push({ kind: 'battery' });
 
   // Tallest normal leaf sets the row spacing.
-  let tallest = 0;
-  for (const w of normal) tallest = Math.max(tallest, getStructureKind(w.kind).footprint.h);
-  const reach = CONN_HALF + GAP + tallest; // a leaf's far edge from its row line
+  // (Each leaf stands its `linkGap` off its connector: "keep buildings apart".)
+  let reach = 0; // a leaf's far edge from its row line
+  for (const w of normal) for (const s of [1, -1]) {
+    const k = getStructureKind(w.kind); // (a keep-clear kind turns its apron away: below)
+    reach = Math.max(reach, CONN_HALF + linkGap(w.kind, 0, s, k.keepClear !== undefined && s < 0 ? 180 : 0) + k.footprint.h);
+  }
   const pitchY = 2 * reach + GAP;
   // Columns per side: enough slots for the base with a square-ish shape.
   // (A heart's Territory Lock is one extra leaf: it takes a free slot, never
@@ -367,6 +372,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   const addRow = (j: number): boolean => {
     if (rowConn.has(j)) return true;
     const from = j - Math.sign(j);
+    if (!spineAt.has(from)) return false; // the row nearer 0 never formed
     const y = rowY.get(j) ?? nextRowY(from, Math.sign(j));
     rowY.set(j, y);
     let spine = spineAt.get(j);
@@ -385,6 +391,9 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
           if (pad === null || Math.abs(pad.x) >= pad.hw + CONN_HALF || Math.abs(ry - pad.y) >= pad.hh + CONN_HALF) continue;
           ry = pad.y + Math.sign(j) * (pad.hh + CONN_HALF + GAP);
         }
+        // A relay pushed past a pad onto the row line is dropped: the spine
+        // links the previous one directly (or the row fails, as before).
+        if (Math.sign(j) * (y - ry) < 2 * CONN_HALF + linkGap('connector', 0, Math.sign(j))) continue;
         const ri = B.tryPlace({ kind: 'connector', x: 0, y: ry });
         if (ri < 0 || !B.tryLink(prev, ri)) return false;
         prev = ri;
@@ -431,6 +440,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
             // A kind with a keep-clear apron (a dock's landing pad, on its +y
             // side) turns it away from its row, out over open space.
             else if (getStructureKind(w.kind).keepClear !== undefined && side < 0) p.rot = 180;
+            p.y = conn.y + side * (CONN_HALF + linkGap(w.kind, 0, side, p.rot ?? 0) + fp.h / 2);
             if (w.recipe) p.recipe = w.recipe;
             if (w.link) p.link = w.link;
             const li = B.tryPlace(p);
@@ -463,7 +473,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     // Its own short spine extension, then the huge kind beyond it.
     const ext = B.tryPlace({ kind: 'connector', x: 0, y: B.placements[spine]!.y + reach });
     if (ext < 0 || !B.tryLink(spine, ext)) continue;
-    const p: GrownPlacement = { kind: w.kind, x: 0, y: B.placements[ext]!.y + CONN_HALF + GAP + fp.h / 2 };
+    const p: GrownPlacement = { kind: w.kind, x: 0, y: B.placements[ext]!.y + CONN_HALF + linkGap(w.kind, 0, 1) + fp.h / 2 };
     if (w.recipe) p.recipe = w.recipe;
     const li = B.tryPlace(p);
     if (li >= 0 && !B.tryLink(ext, li)) B.undoLast();
@@ -593,8 +603,8 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
         // The outward gun stands off past the hub so guns above and below it
         // (up to OUTWARD_CLEAR half-width) still fit beside it.
         const p: GrownPlacement = slot === 0
-          ? { kind: w.kind, x: hx + h.sideX * (CONN_HALF + GAP + OUTWARD_CLEAR + hw), y: h.y }
-          : { kind: w.kind, x: hx, y: h.y + slot * (CONN_HALF + GAP + hh) };
+          ? { kind: w.kind, x: hx + h.sideX * (CONN_HALF + linkGap(w.kind, h.sideX, 0, rot) + OUTWARD_CLEAR + hw), y: h.y }
+          : { kind: w.kind, x: hx, y: h.y + slot * (CONN_HALF + linkGap(w.kind, 0, slot, rot) + hh) };
         if (rot !== 0) p.rot = rot;
         const li = B.tryPlace(p);
         if (li < 0) continue; // try a smaller gun in this slot

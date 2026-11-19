@@ -58,6 +58,7 @@ import { HelmPanel } from './components/HelmPanel';
 import { WarpPicker, WarpStatusChip } from './components/WarpPicker';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
+import { PlacementLinkHint } from './components/PlacementLinkHint';
 import { TeleportWarning } from './components/TeleportWarning';
 import { TeleportPrompts } from './components/TeleportPrompts';
 import { DisabledIndicator } from './components/DisabledIndicator';
@@ -972,6 +973,7 @@ function GameSurface({
        *  moves it to the projected on-screen position of the blueprint ghost. */}
       <StructurePlacementBanner />
       <PlacementFenceHint />
+      <PlacementLinkHint />
       <LostConnectionOverlay />
       {/* Equinox Phase 7 (Item 1) — the in-game full-page WARP map: the SAME
        *  GalaxyPickerChrome (context='warp') over the full-page selector layer

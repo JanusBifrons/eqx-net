@@ -18,6 +18,7 @@ import { CONNECTOR_IDLE_COLOR, cometSegment, type CometSegment, type ConnectorVi
 import {
   W, along, bowSpan, cablePath, edgePath, frameAt, oneSegment, pt, rawPath, setCablePath, smoothAt, type CablePath,
 } from './connectorCablePath.js';
+import { MIN_CABLE_LENGTH } from '../../../core/structures/structureGridConstants.js';
 
 export type { CablePath } from './connectorCablePath.js';
 
@@ -222,6 +223,11 @@ const CLAMP = mixColor(CONNECTOR_IDLE_COLOR, 0x7a7466, 0.88);
 const LASH = 0x14181a;
 /** Station pitch (world units at 1x): collar, lashing, cradle, lashing, ... */
 const CABLE_PITCH = 55;
+/** Shortest span between the end collars that lays out stations (world units
+ *  at 1x); shorter draws the collars only. The gameplay minimum
+ *  (`MIN_CABLE_LENGTH`) less the two collar insets (half a body width each):
+ *  56 - 12 = 44 = 0.8 pitches, so a link the grid allows always shows bundle. */
+const SHORT_RUN_SPAN = MIN_CABLE_LENGTH - BASE_W.cable;
 /** Light comes from the top-left of the screen (pixi y-down). */
 const LIGHT_X = -0.6;
 const LIGHT_Y = -0.8;
@@ -245,7 +251,7 @@ function cableLayout(len: number, e0: number, e1: number, k: number, endCollars 
   const pitch = CABLE_PITCH * k;
   _s0 = e0;
   _shortCollars = false;
-  if (span < pitch * 0.8) {
+  if (span < SHORT_RUN_SPAN * k) {
     _nSeg = 0; _seg = 0; _s1 = len - e1;
     _shortCollars = endCollars && _s1 > _s0;
     return;
