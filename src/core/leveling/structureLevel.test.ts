@@ -9,6 +9,7 @@ import {
   structureLevelMultipliers,
   effectiveStructureMaxHealth,
   effectiveStructureMaxConnections,
+  structureLinksBoundBySockets,
   STRUCTURE_CONNECTIONS_PER_LEVEL,
   NEUTRAL_STRUCTURE_LEVEL_MULTIPLIERS,
 } from './structureLevel.js';
@@ -112,6 +113,18 @@ describe('structureLevel — effective connection cap (Equinox Phase-5 audit)', 
   it('clamps an out-of-range level (never below the base cap)', () => {
     expect(effectiveStructureMaxConnections(6, 0)).toBe(6);
     expect(effectiveStructureMaxConnections(6, 99)).toBe(effectiveStructureMaxConnections(6, STRUCTURE_LEVEL_CAP));
+  });
+  it('a socket-bound kind is clamped to its sockets; connectors and shield emitters are not', () => {
+    // Battery: 4 sockets, so a top-level battery holds 4 links, not 1 + 4.
+    expect(effectiveStructureMaxConnections(1, STRUCTURE_LEVEL_CAP, 'battery')).toBe(4);
+    expect(effectiveStructureMaxConnections(1, 1, 'battery')).toBe(1);
+    // Connector: 6 faces but takes cables from any side, so 10 at the top.
+    expect(effectiveStructureMaxConnections(6, STRUCTURE_LEVEL_CAP, 'connector')).toBe(10);
+    expect(structureLinksBoundBySockets('connector')).toBe(false);
+    expect(structureLinksBoundBySockets('shield_pylon')).toBe(false);
+    expect(structureLinksBoundBySockets('shield_gate')).toBe(false);
+    expect(structureLinksBoundBySockets('shield_airlock')).toBe(false);
+    expect(structureLinksBoundBySockets('battery')).toBe(true);
   });
 });
 
