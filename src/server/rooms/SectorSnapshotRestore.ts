@@ -320,7 +320,7 @@ export class SectorSnapshotRestore {
     // subsystem re-validates ownership + escort targets; squads follow in
     // `restoreFleetSquads`. Rows without the fields (older snapshots) keep the
     // default brain; a cross-sector hand-off row arrives as "defend here"
-    // (`receiveHandedOffHull`).
+    // (`HullHandOff.receiveHandedOffHull`).
     for (const r of rows) {
       if (r.mode === undefined && r.stance === undefined) continue;
       if (!this.h.fleet.isAttached(r.shipInstanceId)) continue;

@@ -31,9 +31,12 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     await s.answer({ points: new Float64Array([500, 400, 1000, 0]) });
     expect(nav.waypoint('a', 10, 0, 1000, 0, 30, 50)).toBe(true);
     expect([nav.turnX, nav.turnY]).toEqual([500, 400]);
-    // Ahead: to the corner plus the next leg as far as it runs the same way.
-    const d = Math.hypot(490, 400), leg = Math.hypot(500, 400), cos = (490 * 500 + 400 * -400) / (d * leg);
-    expect(nav.ahead).toBeCloseTo(d + leg * Math.max(0, cos), 6);
+    // Ahead: to the corner plus the next leg as far as it runs the same way as the
+    // incoming leg (from the plan's start), capped by what the ship can still turn
+    // within its swing (a fifth of its clearance): swing / sin²θ.
+    const d = Math.hypot(490, 400), leg = Math.hypot(500, 400), cos = (500 * 500 + 400 * -400) / (leg * leg);
+    expect(nav.ahead).toBeCloseTo(d + Math.min(leg * cos, (30 * 0.2) / (1 - cos * cos)), 6);
+    expect(nav.ahead).toBeLessThan(d + 10); // a 77° corner: brake almost to it
     // Inside arrive but short of the turn (the plan started at (0, 0)): it holds the turn.
     expect(nav.waypoint('a', 480, 390, 1000, 0, 30, 50)).toBe(true);
     expect([nav.turnX, nav.turnY]).toEqual([500, 400]);

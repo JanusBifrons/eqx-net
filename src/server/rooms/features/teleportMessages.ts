@@ -207,8 +207,8 @@ export interface TeleportRiderHost {
  * v4 T2/T3 — who rides a teleporter jump and how they move: same-sector pad
  * swaps, the cross-sector swap through the broker (collect both ends, then
  * dispatch), the boarding count and the iris spans. Moved verbatim out of
- * `SectorRoom`; the hull hand-off itself stays the room's `handOffHullsTo`
- * (shared with the fleet warp). Discrete events (once per jump).
+ * `SectorRoom`; the hull hand-off itself is `HullHandOff.handOffHullsTo`
+ * (`features/hullHandOff.ts`, shared with the fleet warp). Discrete events (once per jump).
  */
 export class TeleportPadRiders {
   constructor(private readonly h: TeleportRiderHost) {}

@@ -292,6 +292,11 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
           serverWingmanHostileQueriesPerTick: s['work'].wingmanHostileQueriesPerTick,
           serverWingmanHostileScansPerTick: s['work'].wingmanHostileScansPerTick,
         } : {}),
+        // Navigation (print-only): routes asked, cells expanded, worker posts, routes-in-flight peak.
+        ...(s['work']?.navRoutes != null ? {
+          navRoutes: s['work'].navRoutes, navExpanded: s['work'].navExpanded,
+          navMessages: s['work'].navMessages, navInFlightMax: s['work'].navInFlightMax,
+        } : {}),
       },
       raw: { client, server: s },
       ...(series.length ? { series } : {}),

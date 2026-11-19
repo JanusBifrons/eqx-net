@@ -35,10 +35,11 @@ import {
   type ManoeuvreId,
   type TacticalContext,
   JOB_COURSE, JOB_FLOCK, JOB_GUARD, JOB_LEAVING, JOB_ORBIT, JOB_SEARCH, JOB_TRAVEL,
-  JOB_ORDER_NO_FLOCK, JOB_ORDER_REPORT, JOB_ORDER_TICK, MODE_GOAL_MOVE_TO, makePilotModeContext, makePilotModeGoal,
+  JOB_ORDER_NO_FLOCK, JOB_ORDER_TICK, MODE_GOAL_MOVE_TO, makePilotModeContext, makePilotModeGoal,
   type IPilotMode, type PilotJobId, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
 } from './tactics/manoeuvre.js';
 import { FlockMode } from './modes/flockMode.js';
+import { ActivityTick, pilotActivity } from './pilotActivity.js';
 import { GuardReturnMode } from './modes/guardReturnMode.js';
 import { LeavingMode } from './modes/leavingMode.js';
 import { PatrolMode } from './modes/patrolMode.js';
@@ -136,11 +137,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly ownerId: string | null;
   /** Weapon-aware engagement profile (`ai/pilot/engagementProfile.ts`), filled once. */
   private readonly eng: EngagementProfile;
-  /** Squared distance to the target picked this tick, and this ship's
-   *  position last tick (activity read-out). */
+  /** Squared distance to the target picked this tick (activity read-out). */
   private _targetDist2 = 0;
-  private _lastX = 0;
-  private _lastY = 0;
+  /** What this tick flew, for the fleet panel (`pilotActivity.ts`). */
+  private readonly _act = new ActivityTick();
 
   /** Sensor range (world units): NEW body-target picks are capped here
    *  (`roleSensorRange(kind.aiRole, fireRange)`, AI overhaul slice 3). A held
@@ -339,9 +339,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   tick(self: AiEntity, view: AiWorldView): AiIntent {
     this._aim.reset();
+    this._act.fought = false;
+    this._act.fleeing = false;
     this._moveTo.sense(view);
-    this._lastX = self.x;
-    this._lastY = self.y;
+    this._act.x = self.x;
+    this._act.y = self.y;
     this._pilot.turn.aimCone = 0;
     this._helm.regen();
     // Asked to warp out: run on along the escape line while the room spools
@@ -490,6 +492,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (this._travel.state === TRAVEL_ON_THE_WAY && (!this._travel.fights || this.eng.broadside)) return this.tickTravel(self, view, target);
     // A hunter that found a fight searches again from wherever it ends.
     if (this._search.on) this._search.reset = true;
+    this._act.fought = true;
     return this.tickCombat(self, view, target);
   }
 
@@ -502,6 +505,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * patrolled instead and drifted in the sector, never warping.
    */
   private tickFleeClear(self: AiEntity, tick: number): AiIntent {
+    this._act.fleeing = true;
     const f = this._decide.flee;
     f.noteClear(tick);
     this._tac.tick = tick;
@@ -516,13 +520,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  `order` names (`JOB_ORDER_*`, ai-pilots.md "pilotJob() precedence"). */
   private pilotJob(order: number): PilotJobId {
     if (this._leaving.until >= 0) return JOB_LEAVING;
-    if (order === JOB_ORDER_REPORT) {
-      if (this._travel.state === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
-      if (this._search.on) return JOB_SEARCH;
-      if (this._flock.leaderId !== null) return JOB_FLOCK;
-      if (this._guardReturn.on) return JOB_GUARD;
-      return JOB_ORBIT;
-    }
     if (order === JOB_ORDER_TICK && this._flock.leaderId !== null) return JOB_FLOCK;
     if (this._travel.state === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
     if (this._patrol.moveTarget !== null) return JOB_COURSE;
@@ -806,34 +803,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Stop: brake to a halt and guard that spot (rules: `GuardReturnMode.brakePoint`). */
   stopAt(x: number, y: number, vx: number, vy: number): void { this._guardReturn.stopAt(this.handling, x, y, vx, vy, this._orders); }
 
-  /**
-   * What the ship is doing, for the owner's fleet panel (RTS Part B slice 9),
-   * from this brain's own state: travelling ⇒ `moving`; fighting ⇒
-   * `chasing` (target beyond its fire range) or `attacking`; hunting with
-   * nothing found ⇒ `searching`; a post ⇒ `guarding` (`moving` while
-   * flying back to it); a warp-out run ⇒ `retreating`; else `idle`.
-   * Hold fire picks no target, so it reports the job it flies.
-   */
+  /** What the ship is doing, for the owner's fleet panel: the job `tick()`
+   *  flew (same `pilotJob()` order), mapped by `pilotActivity`. */
   getActivity(): AiShipActivity {
-    const job = this.pilotJob(JOB_ORDER_REPORT);
-    if (job === JOB_LEAVING) return 'retreating';
-    if (job === JOB_TRAVEL && (!this._travel.fights || this._tgt.prevTargetId === null)) {
-      return this._travel.fights ? 'patrolling' : 'moving';
-    }
-    if (this._tgt.prevTargetId !== null) {
-      return this._targetDist2 > this.eng.fireRange * this.eng.fireRange ? 'chasing' : 'attacking';
-    }
-    if (job === JOB_SEARCH) return 'searching';
-    if (job === JOB_FLOCK) {
-      // With its pack (RTS squads / escorts): guarding once it is close.
-      return this._flock.isWithPack(this.kind) ? 'guarding' : 'moving';
-    }
-    if (job === JOB_GUARD) {
-      const dx = this._lastX - this._guardReturn.x;
-      const dy = this._lastY - this._guardReturn.y;
-      return dx * dx + dy * dy > this._guardReturn.r * this._guardReturn.r ? 'moving' : 'guarding';
-    }
-    return 'idle';
+    const a = this._act;
+    a.job = this.pilotJob(JOB_ORDER_TICK);
+    // Leader not found this tick: `tick()` flew the next job.
+    if (a.job === JOB_FLOCK && !this._flock.live) a.job = this.pilotJob(JOB_ORDER_NO_FLOCK);
+    a.outOfRange = this._targetDist2 > this.eng.fireRange * this.eng.fireRange;
+    a.travelFights = this._travel.fights;
+    a.withPack = a.job === JOB_FLOCK && this._flock.isWithPack(this.kind);
+    a.post = this._guardReturn;
+    a.moveTarget = this._patrol.moveTarget;
+    a.arrive = shipTuning(this.kind).wingmanArrive;
+    return pilotActivity(a);
   }
 
   /** The flock leader this ship follows (null = none: it leads or flies

@@ -96,7 +96,7 @@ User decisions taken during planning:
 - **Root cause (FOUND, confirmed in code)**: an id-namespace mismatch between the wire and the mirror.
   `pickEntityAt` returns structure ids in mirror form `swarm-<entityId>`; `toSelectWire`
   (`src/client/net/selectionClient.ts:19-29`) strips the prefix and sends the bare numeric id; the
-  server (`SectorRoom.resolveSelectionStats`, ~line 2542) resolves it fine and **echoes the stripped
+  server (`resolveSelectionStats`, then in SectorRoom ~line 2542; now `src/server/rooms/selectionStatsResolve.ts`) resolves it fine and **echoes the stripped
   id back**. But `EntityStatsPanel.readData` (`src/client/components/EntityStatsPanel.tsx:72`) guards
   `selectionStats.id !== id` against the Zustand selection id — the UNSTRIPPED `swarm-<entityId>` —
   so for structures the guard never matches and the panel permanently renders the placeholder
