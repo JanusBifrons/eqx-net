@@ -10,7 +10,7 @@
  * tick: the gun keeps aiming and the lock stays. A player-owned hull flown by
  * the AI pilot (RTS) is gated too; a pilot's own fire never is.
  *
- * What counts as friendly is the caller's predicate (`SectorRoom.lofFriendly`);
+ * What counts as friendly is the caller's predicate (`NpcLineOfFire.lofFriendly`);
  * this class only finds the bodies on the segment: the registry's, plus the
  * players' ships (`ships`: pilots' active ships and parked hulls, which are
  * not swarm records) binned in the same grid.
@@ -19,7 +19,7 @@
  * swarm registry (the projectile broadphase type, #428), built lazily on the
  * first check of a tick and rebuilt only if membership changes. Each check is
  * one grid query over the segment's box; the predicate runs per candidate and
- * the narrow phase (the same ray shapes as `nonPlayerRayHit`) only for the
+ * the narrow phase (the same ray shapes as `SectorRoom.nonPlayerRayHit`) only for the
  * friendly ones, stopping at the first hit. `checks`, `candidates` and
  * `narrow` are running COUNTS (host-independent); the budget lives in
  * `perfBudgets.ts` (`LINE_OF_FIRE_*`). Allocation-free in steady state (#14).

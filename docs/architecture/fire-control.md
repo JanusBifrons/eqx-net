@@ -421,7 +421,7 @@ and turn, so really it's laser beams and railguns."
   `slotLineHeld`: each mount on its own weapon and timer, so a held beam drops
   out while the bolt gun beside it fires), capital turrets
   (`npcShipLineBlocked`, beside the friendly-line check), structure turrets
-  (`structureLineBlocked`).
+  (`structureLineBlocked`); all on `NpcLineOfFire` (`features/npcLineOfFire.ts`).
 - **State:** one blocked-since timer per shooter key and mount, the core
   `BlockedLineTimers` (both sides), held by the server's
   `BlockedLineHold` (`src/server/rooms/BlockedLineHold.ts`), owned by
