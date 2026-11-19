@@ -42,7 +42,6 @@ import { ScrapSpawner, spawnScrapFromDrone, type DroneScrapHost } from '../spawn
 import { wreckSwitchOn } from './wreckSwitch.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
-import type { FieldClearing } from '../../core/terrain/fieldLayout.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { AiInputBatch } from '../../core/ai/AiInputBatch.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
@@ -55,7 +54,6 @@ import { isFriendly } from '../../shared-types/allegiances.js';
 import { effectiveShipMaxHealth, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
-import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
 import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { pushNotifier } from '../push/PushNotifier.js';
@@ -165,9 +163,8 @@ import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { BattleWreckSaves, battleWreckStore, WRECK_LINEAGE_FLUSH_MS } from './wreckLineageSaves.js';
 import { CutFieldSubsystem } from './CutFieldSubsystem.js';
-import { cutFieldOpts, type ChunkSource } from '../../core/terrain/chunkStreamer.js';
-import { rockFieldBlocker, wreckField } from '../../core/terrain/wreckFieldLayout.js';
-import { WreckFieldSource, type WreckFieldRoomOpts } from './WreckFieldSource.js';
+import type { ChunkSource } from '../../core/terrain/chunkStreamer.js';
+import type { WreckFieldSource } from './WreckFieldSource.js';
 import { RoomNav } from '../nav/RoomNav.js';
 import type { SectorRoomInternals } from './sectorRoomInternals.js';
 import { SectorPersistence } from './SectorPersistence.js';
@@ -188,6 +185,7 @@ import { WingmanPilots } from './features/wingmanPilots.js';
 import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { PilotSwap } from './features/pilotSwap.js';
 import { RoomRayHits, playerHitscanDist, swarmRayHit } from './features/rayHits.js';
+import { RoomWreckSpawns } from './features/wreckSpawns.js';
 import { FireControlLocks } from './features/fireControlLocks.js';
 import { swarmLockId } from './lockSalvage.js';
 import { transitHostRoom } from './features/transitMessages.js';
@@ -236,7 +234,6 @@ import {
   FLAG_SLEEPING,
   // SEQLOCK_IDX + SLOT_APPLIED_TICK_OFF moved into SabPoseMirror.ts
   slotBase,
-  slotPoseInto,
   SAB_TOTAL_BYTES,
   MAX_ENTITIES,
 } from '../../shared-types/sabLayout.js';
@@ -715,7 +712,7 @@ export class SectorRoom extends Room<SectorState> {
   });
   private readonly liveCountsHost: SectorLiveCountsHost = { playerToSlot: () => this.playerToSlot, getActiveShip: (pid) => this.getActiveShip(pid), swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry, patrols: this.patrols, npcHostileTo: (e, p) => this.npcHostileTo(e, p) };
   private readonly combatAuditHost: CombatDestructionAuditHost = { sectorKey: () => this.sectorKey, structureRegistry: this.structureRegistry, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), payEliteBounty: (k, n, c) => this.payEliteBounty(k, n, c), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h) };
-  private readonly shipDestroyedHost: ShipDestroyedHost = { sectorKey: () => this.sectorKey, roomId: () => this.roomId, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h), getActiveShip: (pid) => this.getActiveShip(pid), ships: () => this.state.ships, forgetSquadMember: (id) => this.fleet.forgetSquadMember(id), vaporisedActiveDeath: () => this.vaporisedActiveDeath, clearVaporisedActiveDeath: () => { this.vaporisedActiveDeath = null; }, playerToUser: () => this.playerToUser, bountyRoom: () => this, playerToSlot: () => this.playerToSlot, shipPoseCache: () => this.shipPoseCache, sabF32: () => this.sabF32, spillOrLoseShipHold: (...a) => this.spillOrLoseShipHold(...a), deleteRosterRow: (id) => this.deleteRosterRow(id), ownerlessShips: () => this.ownerlessShips, evictOwnerlessShip: (id) => this.evictOwnerlessShip(id), scrapSpawner: () => this.scrapSpawner };
+  private readonly shipDestroyedHost: ShipDestroyedHost = { sectorKey: () => this.sectorKey, roomId: () => this.roomId, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h), getActiveShip: (pid) => this.getActiveShip(pid), ships: () => this.state.ships, forgetSquadMember: (id) => this.fleet.forgetSquadMember(id), vaporisedActiveDeath: () => this.wreckSpawns.vaporisedActiveDeath, clearVaporisedActiveDeath: () => { this.wreckSpawns.vaporisedActiveDeath = null; }, playerToUser: () => this.playerToUser, bountyRoom: () => this, playerToSlot: () => this.playerToSlot, shipPoseCache: () => this.shipPoseCache, sabF32: () => this.sabF32, spillOrLoseShipHold: (...a) => this.spillOrLoseShipHold(...a), deleteRosterRow: (id) => this.deleteRosterRow(id), ownerlessShips: () => this.ownerlessShips, evictOwnerlessShip: (id) => this.evictOwnerlessShip(id), scrapSpawner: () => this.scrapSpawner };
   /** v4 A — the alien gates' guns: who is disabled, and for how long. */
   private readonly gateGuard = new AlienGateGuard({
     swarmSlotOf: (id) => this.swarmRegistry.get(id)?.slot,
@@ -1146,7 +1143,7 @@ export class SectorRoom extends Room<SectorState> {
         return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, angle: this.sabF32[b + SLOT_ANGLE_OFF]! };
       },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
-      wreckState: (id) => this.wreckPose(id),
+      wreckState: (id) => this.wreckSpawns.wreckPose(id),
       wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, wreckMass: (id) => { const v = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0 }; return this.capitalWrecks?.pieceStore(id, v) === true ? v.mass : undefined; },
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
@@ -1483,7 +1480,7 @@ export class SectorRoom extends Room<SectorState> {
     // Damage routing. Three branches (lingering / active /
     // swarm), each composing ShieldHullRouter + evictSwarmEntity.
     // Extracted to DamageRouter.ts.
-    const droneScrapHost: DroneScrapHost = { sabF32: () => this.sabF32, scrapSpawner: () => this.scrapSpawner, hasCapitalWrecks: () => this.capitalWrecks !== null, wreckKindAllowed: (k) => this.wreckKindAllowed(k), spawnCapitalWreck: (...a) => this.spawnCapitalWreck(...a) };
+    const droneScrapHost: DroneScrapHost = { sabF32: () => this.sabF32, scrapSpawner: () => this.scrapSpawner, hasCapitalWrecks: () => this.capitalWrecks !== null, wreckKindAllowed: (k) => this.wreckSpawns.wreckKindAllowed(k), spawnCapitalWreck: (...a) => this.wreckSpawns.spawnCapitalWreck(...a) };
     this.damageRouter = new DamageRouter({
       serverTick: () => this.serverTick,
       shipsMap: this.state.ships,
@@ -1515,12 +1512,12 @@ export class SectorRoom extends Room<SectorState> {
         // linger-<id> body is despawned by the death policy right after).
         const ship = this.state.ships.get(shipInstanceId);
         // The parked body (linger-<id>) goes before the pieces spawn.
-        const vaporised = this.spawnCapitalWreck(shipInstanceId, kind, pose, ship?.maxHealth ?? getShipKind(kind).maxHealth,
+        const vaporised = this.wreckSpawns.spawnCapitalWreck(shipInstanceId, kind, pose, ship?.maxHealth ?? getShipKind(kind).maxHealth,
           this.lingeringSlots.get(shipInstanceId), `linger-${shipInstanceId}`);
         this.spawnHullScrap(kind, pose, shipInstanceId);
         return vaporised;
       },
-      spawnWreckFromActiveHull: (playerId) => this.spawnActiveHullWreck(playerId),
+      spawnWreckFromActiveHull: (playerId) => this.wreckSpawns.spawnActiveHullWreck(playerId),
       // A1 — a lingering hull died in combat: the SHIP_DESTROYED handler can't
       // find it (already out of shipsMap), so the roster wipe + XP happen here.
       onLingeringHullDeath: (ship, pose, sourceId, vaporised) => this.ownerlessShipEvictor.onLingeringHullDeath(ship, pose, sourceId, vaporised === true),
@@ -1910,7 +1907,7 @@ export class SectorRoom extends Room<SectorState> {
       serverLogEvent,
       getActiveShip: (pid) => this.getActiveShip(pid), fleet: this.fleet, wingmen: () => this.wingmen,
       clients: () => this.clients, playerToSession: () => this.playerToSession, sessionToPlayer: () => this.sessionToPlayer,
-      spawnCapitalWreck: (id, kind, pose, maxHull, slot, bodyId) => this.spawnCapitalWreck(id, kind, pose, maxHull, slot, bodyId),
+      spawnCapitalWreck: (id, kind, pose, maxHull, slot, bodyId) => this.wreckSpawns.spawnCapitalWreck(id, kind, pose, maxHull, slot, bodyId),
       spawnHullScrap: (kind, pose, sid) => this.spawnHullScrap(kind, pose, sid),
       spillOrLoseShipHold: (sid, pid, pose, cause, death) => this.spillOrLoseShipHold(sid, pid, pose, cause, death),
       awardKillXp: (killerId, maxHealth) => this.shipProgression.awardKillXp(killerId, maxHealth),
@@ -2294,8 +2291,8 @@ export class SectorRoom extends Room<SectorState> {
     this.capitalWrecksOn = wreckSwitchOn(process.env['EQX_CAPITAL_WRECKS'], roomOpts.capitalWrecks);
     this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks);
     const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
-    if (roomOpts.wreckField !== undefined && (this.capitalWrecksOn || this.subcapWrecksOn)) chunkSources.push(this.buildWreckFieldSource(roomOpts.wreckField, roomOpts.cutField));
-    if ((this.capitalWrecksOn || this.subcapWrecksOn) && this.persistSector && this.sectorKey !== null) chunkSources.push(this.wreckSaves = new BattleWreckSaves(() => this.capitalWrecks?.lineageState() ?? null, battleWreckStore(this.sectorKey), { piecePoseInto: (id, out) => this.wreckPose(id, out) !== null, tractored: (id) => this.forceFields.isTractored(id), streaming: !this.testMode || roomOpts.battleWreckStreaming === true })); // wreck fields 0b: battle lineages stream on the one streamer
+    if (roomOpts.wreckField !== undefined && (this.capitalWrecksOn || this.subcapWrecksOn)) chunkSources.push(this.wreckFieldSource = this.wreckSpawns.buildWreckFieldSource(roomOpts.wreckField, roomOpts.cutField));
+    if ((this.capitalWrecksOn || this.subcapWrecksOn) && this.persistSector && this.sectorKey !== null) chunkSources.push(this.wreckSaves = new BattleWreckSaves(() => this.capitalWrecks?.lineageState() ?? null, battleWreckStore(this.sectorKey), { piecePoseInto: (id, out) => this.wreckSpawns.wreckPose(id, out) !== null, tractored: (id) => this.forceFields.isTractored(id), streaming: !this.testMode || roomOpts.battleWreckStreaming === true })); // wreck fields 0b: battle lineages stream on the one streamer
     if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), forEachLingeringSlot: (visit) => { for (const [sid, slot] of this.lingeringSlots) { const sh = this.state.ships.get(sid); if (sh !== undefined && isLingeringHull(sh)) visit(slot); } }, sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
     if (this.cutField?.navOpts) this.aiController.nav = this.nav.host(this.cutField, this.cutField.navOpts);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
@@ -2398,7 +2395,7 @@ export class SectorRoom extends Room<SectorState> {
       this.setTimeScale(ENV_TIME_SCALE);
     }
     // (Wreck switches: read before the streaming host, above.)
-    if (this.capitalWrecksOn || this.subcapWrecksOn) this.capitalWrecks = buildCapitalWrecks({ serverTick: () => this.serverTick, swarmRegistry: this.swarmRegistry, wreckKindAllowed: (k) => this.wreckKindAllowed(k), getActiveShip: (pid) => this.getActiveShip(pid), state: () => this.state, patrols: this.patrols, shipPoseCache: this.shipPoseCache, lingeringPoseCache: this.lingeringPoseCache, sabF32: () => this.sabF32, sabU32: () => this.sabU32, swarmSpawner: () => this.swarmSpawner, physicsWorkerProxy: () => this.physicsWorkerProxy, evictSwarmEntity: (rec, o) => this.evictSwarmEntity(rec, o), wreckPose: (id, out) => this.wreckPose(id, out), wreckPoseScratch: this._wreckPose, postToWorker: (c) => this.postToWorker(c), wreckImpulseCmd: this._wreckImpulseCmd, wreckRigidImpulseCmd: this._wreckRigidImpulseCmd, playerToSlot: () => this.playerToSlot, lingeringSlots: this.lingeringSlots, loot: () => this.loot, locks: () => this.locks, wingmanLocks: () => this.wingmanLocks, wreckSaves: () => this.wreckSaves, wreckFieldSource: () => this.wreckFieldSource });
+    if (this.capitalWrecksOn || this.subcapWrecksOn) this.capitalWrecks = buildCapitalWrecks({ serverTick: () => this.serverTick, swarmRegistry: this.swarmRegistry, wreckKindAllowed: (k) => this.wreckSpawns.wreckKindAllowed(k), getActiveShip: (pid) => this.getActiveShip(pid), state: () => this.state, patrols: this.patrols, shipPoseCache: this.shipPoseCache, lingeringPoseCache: this.lingeringPoseCache, sabF32: () => this.sabF32, sabU32: () => this.sabU32, swarmSpawner: () => this.swarmSpawner, physicsWorkerProxy: () => this.physicsWorkerProxy, evictSwarmEntity: (rec, o) => this.evictSwarmEntity(rec, o), wreckPose: (id, out) => this.wreckSpawns.wreckPose(id, out), wreckPoseScratch: this._wreckPose, postToWorker: (c) => this.postToWorker(c), wreckImpulseCmd: this._wreckImpulseCmd, wreckRigidImpulseCmd: this._wreckRigidImpulseCmd, playerToSlot: () => this.playerToSlot, lingeringSlots: this.lingeringSlots, loot: () => this.loot, locks: () => this.locks, wingmanLocks: () => this.wingmanLocks, wreckSaves: () => this.wreckSaves, wreckFieldSource: () => this.wreckFieldSource });
     if (this.wreckSaves !== null && this.wreckSaves.loadRows() >= 0) this.gameClock.every(WRECK_LINEAGE_FLUSH_MS, guarded('wreck-lineage-flush', () => this.wreckSaves?.flush(false)));
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
@@ -3090,87 +3087,14 @@ export class SectorRoom extends Room<SectorState> {
     return destroyed;
   }
 
-  /** Wreck fields 3b: the room option `wreckField` as a chunk source of the
-   *  ONE streamer (`WreckFieldSource`; macro-terrain.md F3), laid out once
-   *  at boot around the cut field's rocks and clearings, under the room's
-   *  wreck switches. */
-  private buildWreckFieldSource(o: WreckFieldRoomOpts, cut: { seed: string; clearings?: FieldClearing[] } | undefined): WreckFieldSource {
-    const field = wreckField({
-      ...o, capitalWrecksOn: this.capitalWrecksOn, subcapWrecksOn: this.subcapWrecksOn,
-      ...(!o.clearings && cut?.clearings ? { clearings: cut.clearings } : {}),
-      ...(cut ? { blocked: rockFieldBlocker(cutFieldOpts(cut.seed, cut.clearings)) } : {}),
-    });
-    logger.info({ seed: o.seed, hulls: field.hulls.length, dropped: field.dropped }, 'wreck field laid out');
-    return this.wreckFieldSource = new WreckFieldSource(field, {
-      wrecks: () => this.capitalWrecks ?? undefined,
-      piecePoseInto: (id, out) => this.wreckPose(id, out) !== null,
-      pieceAwake: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        return rec != null && ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) === 0;
-      },
-      tractored: (id) => this.forceFields.isTractored(id),
-      ...(o.fresh === true ? { fresh: true } : {}), // dev look flag (wreck fields 9)
-      warn: (obj, msg) => logger.warn(obj, msg), ...(this.persistSector && this.sectorKey !== null ? { records: terrainRecordStoreFor(`${this.sectorKey}|wrecks:${o.seed}`) } : {}), // slice 4: touched hulls' rows
-    });
-  }
-
-  /** A live wreck piece's SAB pose into `out` (#14 with a reused `out`), or null when gone. */
-  private wreckPose(id: string, out: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }): WreckPiecePose | null {
-    const rec = this.swarmRegistry.get(id);
-    return rec ? slotPoseInto(this.sabF32, rec.slot, out) : null;
-  }
-
-  /** Does a ship of `kindId` break into wreck pieces in this room? Read from
-   *  its destruction profile (#18): `capital` with `capitalWrecks`; `subcap`
-   *  with `subcapWrecks`, except composite kinds (havok), which keep their
-   *  per-component scrap; `none` never. */
-  private wreckKindAllowed(kindId: string): boolean {
-    return wreckKindAllowed(kindId, this.capitalWrecksOn, this.subcapWrecksOn);
-  }
-
-  /** S2a: a dying ACTIVE hull breaks into wreck bodies, its worker body
-   *  despawned (the slot stays for respawn / pilot swap). Called by its death
-   *  policy BEFORE the `destroy` broadcast; true = vaporised (fracture v11).
-   *  A vaporised death is noted for the `SHIP_DESTROYED` handler's pod
-   *  (`vaporisedActiveDeath`: emitted right after, same call stack). */
-  private spawnActiveHullWreck(playerId: string): boolean {
-    this.vaporisedActiveDeath = null;
-    const activeHull = this.getActiveShip(playerId);
-    const slot = this.playerToSlot.get(playerId);
-    if (activeHull === undefined || slot === undefined || activeHull.alive !== false || this.capitalWrecks === null || !this.wreckKindAllowed(activeHull.kind)) return false;
-    // The pose every hit test this tick used (`shipPoseCache`), so a kill
-    // cut lands where the killing shot hit (the burned gap stays on the
-    // beam's line even when the worker stepped on since); the SAB otherwise.
-    const pose = this.shipPoseCache.get(playerId) ?? slotPoseInto(this.sabF32, slot, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 });
-    const vaporised = this.spawnCapitalWreck(playerId, activeHull.kind, pose,
-      activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth, slot, playerId);
-    if (vaporised) this.vaporisedActiveDeath = playerId;
-    return vaporised;
-  }
-  /** The playerId whose ACTIVE hull was just vaporised, for its pod's
-   *  vaporised salvage; read and cleared by the `SHIP_DESTROYED` handler. */
-  private vaporisedActiveDeath: string | null = null;
-
-  /** S2a: a dying capital (any liveness class) breaks into wreck bodies.
-   *  `targetId` is the id its hits were tracked under. True when a cut kill
-   *  vaporised it (fracture v11). Call while the dying body is live; `bodySlot` / `bodyId` name its worker body, which
-   *  is despawned BEFORE the pieces spawn (the worker may step between two
-   *  commands, so a later despawn left the pieces overlapping the hull for
-   *  a step; `CapitalWreckSubsystem.onDeath`). The caller's own despawn
-   *  after this is then a no-op for the body. */
-  private spawnCapitalWreck(
-    targetId: string, kindId: string,
-    pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel?: number },
-    maxHull: number,
-    bodySlot?: number, bodyId?: string,
-  ): boolean {
-    if (this.capitalWrecks === null || !this.wreckKindAllowed(kindId)) return false;
-    const despawn = bodySlot !== undefined && bodyId !== undefined
-      ? () => this.postToWorker({ type: 'DESPAWN', slot: bodySlot, playerId: bodyId })
-      : undefined;
-    return this.capitalWrecks.onDeath(targetId, kindId as ShipKindId,
-      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull, despawn).vaporised;
-  }
+  /** Wreck spawns: which kinds break here, a dying hull's break-up and the
+   *  wreck-field chunk source (`features/wreckSpawns.ts`). */
+  private readonly wreckSpawns = new RoomWreckSpawns({
+    logger, swarmRegistry: this.swarmRegistry, forceFields: this.forceFields, shipPoseCache: this.shipPoseCache,
+    capitalWrecks: () => this.capitalWrecks, capitalWrecksOn: () => this.capitalWrecksOn, subcapWrecksOn: () => this.subcapWrecksOn,
+    persistSector: () => this.persistSector, sectorKey: () => this.sectorKey, sabF32: () => this.sabF32, sabU32: () => this.sabU32,
+    playerToSlot: () => this.playerToSlot, getActiveShip: (pid) => this.getActiveShip(pid), postToWorker: (cmd) => this.postToWorker(cmd),
+  });
 
   /** LoadShedder: can ANY connected player see this drone? The same view the
    *  swarm broadcast uses: each client's interest window (`interestScratch`,
