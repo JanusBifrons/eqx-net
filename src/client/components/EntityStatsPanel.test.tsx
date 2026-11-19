@@ -117,6 +117,20 @@ describe('EntityStatsPanel', () => {
     expect(panel).toHaveAttribute('data-self-power', '30');
   });
 
+  it('a LEVELED solar shows its level-scaled generation (#15 — the server grid scales by level)', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[7, { powered: true, netPower: 45, connTo: [], built: true, buildPct: 1, deconstructPct: 0, level: 3 }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '7', name: 'Solar', hp: 300, hpMax: 300 });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
+    render(<EntityStatsPanel />);
+    // Base 30 × level factor 1.5 (level 3) = +45.
+    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +45');
+  });
+
   // ── Phase-4 C5 — the panel shows the SELECTED building's own drain/surplus,
   // not the shared grid aggregate (which was identical for every building in a
   // grid). Pure catalogue lookup (powerOutput − powerConsumption). ──
