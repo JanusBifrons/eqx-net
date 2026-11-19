@@ -246,11 +246,11 @@ import { WarpTravelTracker } from './warpTravel.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
 import { saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
-import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { SectorSnapshotRestore } from './SectorSnapshotRestore.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard, terrainRecordStoreFor } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
-import { LootSubsystem } from '../cargo/LootSubsystem.js';
+import type { LootSubsystem } from '../cargo/LootSubsystem.js';
+import { buildLootPods } from './features/lootPods.js';
 import { NpcLootHolds } from '../cargo/NpcLootHolds.js';
 import { LootSearch } from '../cargo/LootSearch.js';
 import { dropTestPodRow } from '../cargo/cargoWindow.js';
@@ -648,7 +648,6 @@ export class SectorRoom extends Room<SectorState> {
   /** Reused `WRECK_RIGID_IMPULSE` command (a hit during the crack hold, #14). */
   private readonly _wreckRigidImpulseCmd: { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number } =
     { type: 'WRECK_RIGID_IMPULSE', entityIds: [], jx: 0, jy: 0, px: 0, py: 0 };
-  private readonly _podPoseScratch = { x: 0, y: 0 };
   /** The hulls that collect loot: the pickup pass, a pod's hull contact, auto-deposit (and its dwell state, `manualCargo`). */
   private readonly lootCollectors = new LootCollectors({ sectorKey: () => this.sectorKey, pilots: this.playerToSlot, activeShip: (pid) => this.getActiveShip(pid), hasHold: (id) => this.hasHold(id), pilotPose: (pid) => this.shipPoseCache.get(pid), cargoCapacity: (k, id) => this.shipCargoCapacity(k, id), swarm: this.swarmRegistry, sab: () => this.sabF32,
     structureCount: () => this.structureRegistry.size, storage: () => this.storage, shipHold: (id) => this.loot.shipHold(id), serverTick: () => this.serverTick,
@@ -2069,52 +2068,12 @@ export class SectorRoom extends Room<SectorState> {
       },
     });
 
-    // ── Living World P1a — loot pods + fly-over pickup + spill-on-death ──
-    // Pods are scrap-kind swarm entities (parentShipKind 'cargo-pod',
-    // componentIndex = glow tier) spawned DIRECTLY (never through the
-    // ScrapSpawner FIFO, whose eviction would delete value) and persisted only
-    // via the holds table (never the sector snapshot) — hostile-review A3.
-    this.loot = new LootSubsystem({
-      holdStore: getHoldStore(),
-      sectorKey: () => this.sectorKey,
-      ...(roomOpts.testMode === true && roomOpts.keepAllOnDeath === true ? { keepAllOnDeath: true } : {}),
-      now: () => this.gameClock.now(),
-      spawnPodEntity: (id, x, y, vx, vy, tier) => {
-        if (this.swarmRegistry.has(id)) return false;
-        const geom = scrapColliderFor('cargo-pod', tier);
-        if (geom === null) return false;
-        // No health entry: a pod is immune to damage, like an asteroid
-        // (`swarmHealthBinding` → `applied: false`; owner 2026-11-17).
-        return this.swarmSpawner.spawnScrap({
-          id, x, y, vx, vy, angle: 0, radius: geom.radius,
-          parentShipKind: 'cargo-pod', componentIndex: tier, vertices: geom.vertices,
-        });
-      },
-      despawnPodEntity: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
-      },
-      setPodTier: (id, tier) => {
-        const rec = this.swarmRegistry.get(id);
-        if (rec) rec.componentIndex = tier;
-      },
-      podPose: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        if (rec == null) return null;
-        const b = slotBase(rec.slot);
-        const p = this._podPoseScratch;
-        p.x = this.sabF32[b + SLOT_X_OFF]!;
-        p.y = this.sabF32[b + SLOT_Y_OFF]!;
-        return p;
-      },
-      forEachCollector: (visit) => this.lootCollectors.forEach(visit), fillCollector: (id, c) => this.lootCollectors.fill(id, c),
-      // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole; a consumable piece near the hull too.
-      inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
-      heldPieces: { any: () => this.forceFields.tractorCount > 0 || (this.capitalWrecks?.liveCount() ?? 0) > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), near: (x, y, reach, maxM, visit) => this.capitalWrecks?.forEachPieceNear(x, y, reach, maxM, visit), store: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, remove: (id) => this.capitalWrecks?.storePiece(id) },
-      chunkOre: (ore, x, y, weight) => this.oreDraw.chunkYield(ore.rockId, x, y, weight, ore.resource),
-      onCollected: (c, moved, podId) => this.lootCollectors.onLootCollected(c, moved, podId),
-      onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
-      onDestroyed: (podId, hold, cause) => auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
+    // ── Living World P1a — loot pods (features/lootPods.ts) ──
+    this.loot = buildLootPods({
+      sectorKey: () => this.sectorKey, keepAllOnDeath: roomOpts.testMode === true && roomOpts.keepAllOnDeath === true,
+      now: () => this.gameClock.now(), swarmRegistry: this.swarmRegistry, swarmSpawner: () => this.swarmSpawner,
+      evictSwarmEntity: (rec, opts) => this.evictSwarmEntity(rec, opts), sabF32: () => this.sabF32,
+      lootCollectors: this.lootCollectors, forceFields: this.forceFields, capitalWrecks: () => this.capitalWrecks, oreDraw: this.oreDraw,
     });
 
     // ── Structure placement (structures plan, Phase 2) ──────────────────
