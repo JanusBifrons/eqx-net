@@ -37,6 +37,20 @@ import {
   CAPITAL_BAY, DOCK_CRANE_BOOM, DOCK_CRANE_JIB, DOCK_CRANE_REACH_TICKS, FREIGHT_DOCK_BAY, rigById, type CraneBay,
 } from './rigCatalogue.js';
 
+/**
+ * Joint speed caps (rad/tick), from the clip length. Each half of a reach or
+ * retract is DOCK_CRANE_REACH_TICKS / 2 = 30 ticks on smoothstep, whose peak
+ * speed is 1.5x its mean. The stow <-> READY half swings the boom a quarter
+ * turn: 1.5 * (π/2) / 30 ≈ 0.0785, the arm's design speed (STOW_SPEED). The
+ * straight half moves the joints by a travel that depends on the target (up
+ * to ~2.4 rad of jib unfold to the dock pad's far corners), so no joint may
+ * outrun that travel evenly eased: 1.5 * travel / 30, +10 % for sampling
+ * (and never under STOW_SPEED). The whip broke both: 0.144 at the dock pad's
+ * centre, 0.090 at the Capital bay's.
+ */
+const STOW_SPEED = 0.08;
+const PACE_SLACK = 1.1;
+
 function describeCranePath(bay: CraneBay, tipOnApron: boolean, extra: readonly { x: number; y: number }[]): void {
   const rig: Rig = rigById(bay.rigId)!;
   const pose: RigPose = createRigPose(rig);
@@ -209,6 +223,46 @@ function describeCranePath(bay: CraneBay, tipOnApron: boolean, extra: readonly {
           expect(d, `${label} retract t=${t} swings back`).toBeGreaterThanOrEqual(prevD - 1e-6);
           expect(fold(p.jib), `${label} retract t=${t} fold flipped`).toBe(f0);
           prevD = d;
+        }
+      }
+    });
+
+    it('motion: no joint whips: boom and jib never outrun the stow swing or their straight-line travel, evenly eased', () => {
+      // Bug (boom-ease): the straight tip line starts by the boom pivot (the
+      // READY tip, jib folded), where the IK angles turn fastest per unit of
+      // tip travel, so an evenly eased tip whipped the boom at the start of
+      // the line (and at the end of the retract): 0.144 rad/tick at the dock
+      // pad's centre, 0.090 at the Capital bay's.
+      const HALF = DOCK_CRANE_REACH_TICKS / 2;
+      for (const target of NAMED) {
+        // The straight half's joint travel: the largest joint change per
+        // fine step, summed (the same whatever the timing along the line).
+        const reach: PlayingClip = { clipId: 'arm-reach', startTick: 0, target };
+        let travel = 0;
+        evaluateRig(rig, reach, HALF, pose, twoBoneIkSolve);
+        let qb = pose.value[BOOM]!, qj = pose.value[JIB]!;
+        for (let t = HALF + 0.05; t <= DOCK_CRANE_REACH_TICKS + 1e-9; t += 0.05) {
+          evaluateRig(rig, reach, t, pose, twoBoneIkSolve);
+          const b = pose.value[BOOM]!, j = pose.value[JIB]!;
+          travel += Math.max(Math.abs(b - qb), Math.abs(j - qj));
+          qb = b; qj = j;
+        }
+        const cap = Math.max(STOW_SPEED, (1.5 * travel / HALF) * PACE_SLACK);
+        for (const clipId of ['arm-reach', 'arm-retract']) {
+          const playing: PlayingClip = { clipId, startTick: 0, target };
+          let pb = NaN, pj = NaN, mb = 0, mj = 0;
+          for (let t = 0; t <= DOCK_CRANE_REACH_TICKS; t += 0.5) {
+            evaluateRig(rig, playing, t, pose, twoBoneIkSolve);
+            const b = pose.value[BOOM]!, j = pose.value[JIB]!;
+            if (t > 0) {
+              mb = Math.max(mb, Math.abs(b - pb) / 0.5);
+              mj = Math.max(mj, Math.abs(j - pj) / 0.5);
+            }
+            pb = b; pj = j;
+          }
+          const label = `${clipId} → (${target.x}, ${target.y})`;
+          expect(mb, `${label} boom (travel ${travel.toFixed(2)})`).toBeLessThan(cap);
+          expect(mj, `${label} jib (travel ${travel.toFixed(2)})`).toBeLessThan(cap);
         }
       }
     });

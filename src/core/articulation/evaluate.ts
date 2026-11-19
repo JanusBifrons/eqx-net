@@ -28,7 +28,9 @@
  * is `fromTarget`, the chain is solved for the eased point on the straight
  * line between the two keys' tips, on the fold the target's solve took, so
  * the clamp travels straight at (or back from) its target and stops at rest
- * on it. A `foldMirror` waypoint key flips to `-value` when that fold is
+ * on it. The ease is timed in JOINT travel, not tip distance (`retimeTipPath`):
+ * near the chain root a little tip travel turns the joints a lot, so an evenly
+ * eased tip whipped the crane boom where the line leaves its folded pose. A `foldMirror` waypoint key flips to `-value` when that fold is
  * not the clip's `bend`, so the segment starts in place on either fold.
  */
 import { applyEase } from './easing.js';
@@ -99,10 +101,25 @@ export interface RigPose {
   readonly pathA: Float64Array;
   readonly pathB: Float64Array;
   readonly pathOut: Float64Array;
+  /** Tip-path retiming scratch (`retimeTipPath`): the previous sample's chain
+   *  values, the cumulative joint travel at each of the TIP_PATH_SAMPLES + 1
+   *  points of the line, and the segment that table is for (a cache key). */
+  readonly pathPrev: Float64Array;
+  readonly pathCum: Float64Array;
+  pathKeyClip: CompiledClip | null;
+  pathKeyK: number;
+  pathKeyFold: number;
+  pathKeyAx: number;
+  pathKeyAy: number;
+  pathKeyBx: number;
+  pathKeyBy: number;
   readonly ikReq: IkRequest;
   /** Last IK verdict for the playing clip (true when none was asked). */
   ikReached: boolean;
 }
+
+/** Points along a tip path at which its joint travel is tabled (`retimeTipPath`). */
+const TIP_PATH_SAMPLES = 32;
 
 /** Pre-size the evaluation scratch for `rig` (build time). */
 export function createRigPose(rig: Rig): RigPose {
@@ -112,6 +129,8 @@ export function createRigPose(rig: Rig): RigPose {
     angle: new Float64Array(n), cos: new Float64Array(n), sin: new Float64Array(n),
     ikOut: new Float64Array(rig.maxChain),
     pathA: new Float64Array(rig.maxChain), pathB: new Float64Array(rig.maxChain), pathOut: new Float64Array(rig.maxChain),
+    pathPrev: new Float64Array(rig.maxChain), pathCum: new Float64Array(TIP_PATH_SAMPLES + 1),
+    pathKeyClip: null, pathKeyK: -1, pathKeyFold: 0, pathKeyAx: NaN, pathKeyAy: NaN, pathKeyBx: NaN, pathKeyBy: NaN,
     ikReq: {
       rig, chain: new Int16Array(0), originX: 0, originY: 0, originAngle: 0,
       tipX: 0, tipY: 0, bend: 1, sideX: 0, sideY: 0, targetX: 0, targetY: 0, fold: 1,
@@ -228,18 +247,67 @@ function solveTipPath(rig: Rig, clip: CompiledClip, t: number, flip: boolean, fo
   chainTip(req, pathA);
   const ax = fkX, ay = fkY;
   chainTip(req, pathB);
-  const f = applyEase(root.ease[k]!, (t - t0) / (t1 - t0));
-  req.targetX = ax + (fkX - ax) * f;
-  req.targetY = ay + (fkY - ay) * f;
+  const bx = fkX, by = fkY;
   req.bend = fold;
   req.sideX = 0;
   req.sideY = 0;
+  if (out.pathKeyClip !== clip || out.pathKeyK !== k || out.pathKeyFold !== fold
+    || out.pathKeyAx !== ax || out.pathKeyAy !== ay || out.pathKeyBx !== bx || out.pathKeyBy !== by) {
+    retimeTipPath(rig, clip, ax, ay, bx, by, out, ik);
+    out.pathKeyClip = clip; out.pathKeyK = k; out.pathKeyFold = fold;
+    out.pathKeyAx = ax; out.pathKeyAy = ay; out.pathKeyBx = bx; out.pathKeyBy = by;
+  }
+  const f = tipFraction(out.pathCum, applyEase(root.ease[k]!, (t - t0) / (t1 - t0)));
+  req.targetX = ax + (bx - ax) * f;
+  req.targetY = ay + (by - ay) * f;
   ik(req, pathOut);
   for (let s = 0; s < n; s++) {
     const pi = clip.chain[s]!;
     pathOut[s] = nearestTurn(pathOut[s]!, pathA[s]!, rig.min[pi]!, rig.max[pi]!);
   }
   return true;
+}
+
+/**
+ * Table the joint travel along the tip line A -> B (`req` set up for the
+ * segment's fold): `pathCum[i]` is the travel from A to the i-th of
+ * TIP_PATH_SAMPLES even steps, each step's travel the LARGEST change of any
+ * chain joint (so no joint outruns the eased travel). Starts from `pathA`.
+ */
+function retimeTipPath(rig: Rig, clip: CompiledClip, ax: number, ay: number, bx: number, by: number, out: RigPose, ik: IkSolve): void {
+  const { pathA, pathOut, pathPrev, pathCum, ikReq: req } = out;
+  const n = clip.chain.length;
+  for (let s = 0; s < n; s++) pathPrev[s] = pathA[s]!;
+  pathCum[0] = 0;
+  for (let i = 1; i <= TIP_PATH_SAMPLES; i++) {
+    const g = i / TIP_PATH_SAMPLES;
+    req.targetX = ax + (bx - ax) * g;
+    req.targetY = ay + (by - ay) * g;
+    ik(req, pathOut);
+    let d = 0;
+    for (let s = 0; s < n; s++) {
+      const pi = clip.chain[s]!;
+      const v = nearestTurn(pathOut[s]!, pathPrev[s]!, rig.min[pi]!, rig.max[pi]!);
+      const dv = Math.abs(v - pathPrev[s]!);
+      if (dv > d) d = dv;
+      pathPrev[s] = v;
+    }
+    pathCum[i] = pathCum[i - 1]! + d;
+  }
+}
+
+/** The fraction of the tip line at which the joints have done eased share
+ *  `e` of their travel (`pathCum`, piecewise linear); `e` itself when
+ *  the joints do not move. */
+function tipFraction(pathCum: Float64Array, e: number): number {
+  const total = pathCum[TIP_PATH_SAMPLES]!;
+  if (!(total > 0)) return e;
+  const u = e * total;
+  let i = 0;
+  while (i < TIP_PATH_SAMPLES - 1 && pathCum[i + 1]! < u) i++;
+  const lo = pathCum[i]!, span = pathCum[i + 1]! - lo;
+  const w = span > 0 ? (u - lo) / span : 0;
+  return (i + (w < 0 ? 0 : w > 1 ? 1 : w)) / TIP_PATH_SAMPLES;
 }
 
 /**

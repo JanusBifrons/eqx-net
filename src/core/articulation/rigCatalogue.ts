@@ -298,7 +298,9 @@ function craneParts(bay: CraneBay): readonly PartDef[] {
 //    between ticks, so an abort never catches the one pose with no unique IK);
 //  - READY -> target is a straight TIP path (`tipPath`, smoothstep): the
 //    clamp runs straight at the target on the target's fold and stops at rest
-//    on it, so the reach's end IS the hold pose with no pop. The old joint
+//    on it, so the reach's end IS the hold pose with no pop. The smoothstep is
+//    timed in joint travel (`evaluate.ts retimeTipPath`): the line leaves
+//    READY by the pivot, where an evenly eased tip whipped the boom. The old joint
 //    blend (jib linear, boom cubic 'in') swung the clamp out sideways and away
 //    from the ship first, then whipped it across at full speed into the hold
 //    (the Capital bay take);
