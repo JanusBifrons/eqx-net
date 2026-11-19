@@ -3220,6 +3220,9 @@ taking the lower cap, and fix a flake's cause the first time. Post-mortem:
 
 Every ship death (NPC too) keeps each good in its hold only on a coin flip, salted at random per room
 (`LootSubsystem.deathSalt`). `walletKillBounty` and `tradeDeal` asserted a pod with known contents after
+a kill and failed about 40% and 50% of runs, on main as much as on any branch. The integration harness now
+defaults `keepAllOnDeath` ON; a test of the loss itself passes `false` and pins the roll.
+
 a kill and failed about 40% and 50% of runs, on main as much as on any branch. A test that asserts
 what a death drops boots with `keepAllOnDeath: true`; a test of the loss itself pins the roll.
 
