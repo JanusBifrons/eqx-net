@@ -70,6 +70,8 @@ function structExtra(): { accent?: number; livery?: { team: number; sigil: numbe
  *  driven by `__artlab.playRig`. */
 const RIGS = readRigsFlag(location.search);
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
+/** `?cx=&cy=`: hold the camera on this scene point (stills of one corner of a scene). */
+const CAM_AT = qs.has('cx') ? { x: Number(qs.get('cx')), y: Number(qs.get('cy') ?? 0) } : null;
 const BENCH_N = qs.has('n') ? Number(qs.get('n')) : 40;
 const PX_OVERRIDE = qs.has('px') ? Number(qs.get('px')) : 0;
 const PIX: PixelSettings = {
@@ -336,6 +338,7 @@ async function main(): Promise<void> {
     curT = t;
     litScene.begin();
     scene.camera(t, cam);
+    if (CAM_AT) { cam.x = CAM_AT.x; cam.y = CAM_AT.y; }
     let zoom = cam.zoom;
     let px = 1;
     if (pixel) {

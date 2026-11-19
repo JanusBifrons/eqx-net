@@ -9,7 +9,9 @@ import { describe, it, expect } from 'vitest';
 import { ConnectorRenderer } from './ConnectorRenderer.js';
 import { getStructureKind, structureHalfExtents } from '../../../shared-types/structureKinds.js';
 import { canConnect, type GridNode, type GridObstacle } from '../../../core/structures/Grid.js';
-import { CABLE_NO_SOCKET, makeCableSocketPick } from '../../../core/structures/cableCurve.js';
+import {
+  CABLE_CURVE_FLOATS, CABLE_NO_SOCKET, flattenLinkCable, makeCableBox, makeCableSocketPick,
+} from '../../../core/structures/cableCurve.js';
 import { GHOST_NODE_ID } from '../../structures/mirrorToGridNode.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 
@@ -133,5 +135,40 @@ describe('build preview link verdict = core canConnect (structure-restyle 0d sli
       { id: 5, kind: 'battery_bank', x: 200, y: 400, owner: THEM },
     ], [{ id: 9, x: -200, y: 850, radius: 50 }]);
     expect(v.map((x) => x.reason)).toEqual([v[0]!.reason, null, 'out-of-range']);
+  });
+});
+
+describe('build preview line runs the verdict cable (structure-restyle 0d slice 8)', () => {
+  it('with socket cables on, the ok line is core flattenLinkCable between the picked sockets', () => {
+    const ghost = { kind: 'connector', x: 0, y: 850 };
+    const placed: Placed[] = [{ id: 1, kind: 'capital', x: 0, y: 0, owner: ME }];
+    const [core] = coreVerdicts(ghost, placed, []);
+    expect(core!.ok).toBe(true);
+    const swarm = new Map<number, SwarmRenderState>([[1, swarmEntry(2, 0, 0, getStructureKind('capital').radius, 'capital')]]);
+    const structures = new Map<number, StructureRenderState>([[1, {
+      powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: ME,
+    } as StructureRenderState]]);
+    const mirror = { swarm, structures, localPlayerId: ME, pendingPlacementPreview: { ...ghost, angle: 0 } } as unknown as RenderMirror;
+    const lines = (cables: boolean): number[][] => {
+      const r = new ConnectorRenderer();
+      r.socketCables = cables;
+      r.update(mirror, 1, 0);
+      const out: number[][] = [];
+      type PathInstr = { action: string; data: { path?: { instructions: Array<{ action: string; data: number[] }> } } };
+      for (const i of (r.gfx.context as unknown as { instructions: PathInstr[] }).instructions) {
+        if (i.action !== 'stroke' || !i.data.path) continue;
+        const pts: number[] = [];
+        for (const p of i.data.path.instructions) if (p.action === 'moveTo' || p.action === 'lineTo') pts.push(p.data[0]!, p.data[1]!);
+        if (pts.length >= 4) out.push(pts);
+      }
+      return out;
+    };
+    const g = serverNode(GHOST_NODE_ID, ghost.kind, ghost.x, ghost.y);
+    const world = new Float64Array(CABLE_CURVE_FLOATS);
+    flattenLinkCable(g, core!.sockA, serverNode('1', 'capital', 0, 0), core!.sockB, world, makeCableBox());
+    const expected = Array.from(world, (v, i) => (i % 2 === 1 ? -v : v));
+    expect(lines(true)).toContainEqual(expected);
+    // Off: today's straight centre-to-centre line.
+    expect(lines(false)).toContainEqual([0, -850, 0, 0]);
   });
 });

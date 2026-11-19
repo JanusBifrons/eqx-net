@@ -11,6 +11,11 @@ import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import type { Scene } from './scenes.js';
+import { CONNECTION_MAX_RANGE } from '../../core/structures/structureGridConstants.js';
+import { CABLE_NO_SOCKET, makeCableSocketPick, pickCableSocketPair } from '../../core/structures/cableCurve.js';
+import type { GridNode } from '../../core/structures/Grid.js';
+import { blankGridNode, structureMirrorToGridNode } from '../structures/mirrorToGridNode.js';
+import { resolveFxMode } from '../render/art/artMode.js';
 
 export interface LabRig { i: number; view: StructureRigView; input: StructureRigInput | null }
 
@@ -46,11 +51,24 @@ export function buildLabGridLines(scene: Scene, lineL: Container): { r: Connecto
     } as unknown as SwarmRenderState);
     structures.set(i + 1, { powered: true, netPower: 50, connTo: [], built: true, buildPct: 1, deconstructPct: 0, wallActive: true } as unknown as StructureRenderState);
   });
+  // 0d: each link's cable sockets, picked by the game's own rule over every
+  // structure (the same pair the base generator linked with: its later
+  // placements never land on an existing cable).
+  const nodes = new Map<string, GridNode>();
+  for (const [id, e] of swarm) nodes.set(String(id), structureMirrorToGridNode(String(id), structures.get(id)!, e, blankGridNode()));
+  const pick = makeCableSocketPick();
   for (const [a, b] of scene.edges) {
-    structures.get(a + 1)!.connTo.push(b + 1);
-    structures.get(b + 1)!.connTo.push(a + 1);
+    const sa = structures.get(a + 1)!, sb = structures.get(b + 1)!;
+    const na = nodes.get(String(a + 1))!, nb = nodes.get(String(b + 1))!;
+    // A fence link (emitter to emitter) stays straight post to post, as `canConnect`.
+    const fence = na.isShieldPylon === true && nb.isShieldPylon === true;
+    const ok = !fence && pickCableSocketPair(na, nb, CONNECTION_MAX_RANGE, nodes, undefined, pick) === null;
+    const pa = ok ? pick.a : CABLE_NO_SOCKET, pb = ok ? pick.b : CABLE_NO_SOCKET;
+    sa.connTo.push(b + 1); (sa.connSockSelf ??= []).push(pa); (sa.connSockOther ??= []).push(pb);
+    sb.connTo.push(a + 1); (sb.connSockSelf ??= []).push(pb); (sb.connSockOther ??= []).push(pa);
   }
   const r = new ConnectorRenderer();
+  r.socketCables = resolveFxMode(location.search, 'machined', true); // 0d socket cables: `?fx=new`
   r.lineLook = readLineLook(location.search); // 1g `?lineLook=`: odd edges carry flow so the look's pulse shows
   const gridFlashes = r.lineLook ? new Map(scene.edges.filter((_, i) => i % 2 === 1).map(([p, q]) => [(Math.min(p, q) + 1) * 65536 + Math.max(p, q) + 1, 1e12])) : undefined;
   lineL.addChild(r.staticGfx, r.gfx);

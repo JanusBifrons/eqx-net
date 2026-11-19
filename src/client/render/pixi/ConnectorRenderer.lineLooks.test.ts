@@ -9,6 +9,13 @@ import { ConnectorRenderer } from './ConnectorRenderer.js';
 import { DEFAULT_LINE_LOOK, LINE_LOOKS, lineLookScale, mixColor, readLineLook } from './connectorLineLooks.js';
 import { CONNECTOR_IDLE_ALPHA, CONNECTOR_IDLE_COLOR } from './connectorVisual.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
+import { CABLE_POINTS } from './connectorCables.js';
+import {
+  CABLE_CURVE_FLOATS, CABLE_NO_SOCKET, flattenLinkCable, makeCableBox, makeCableSocketPick, pickCableSocketPair,
+} from '../../../core/structures/cableCurve.js';
+import type { GridNode } from '../../../core/structures/Grid.js';
+import { getStructureKind, structureSockets, structureSocketToWorld } from '../../../shared-types/structureKinds.js';
+import { blankGridNode, structureMirrorToGridNode } from '../../structures/mirrorToGridNode.js';
 
 /** Three connector nodes in a row: edges 1–2 and 2–3. */
 function row(flowing: boolean): RenderMirror {
@@ -159,5 +166,138 @@ describe('cable look upgrade (structure restyle 1i)', () => {
     r.update(mirror, 0.5, 0);
     const perEdge = instructions(r.staticGfx).filter((i) => i.action === 'stroke').length / 2;
     expect(perEdge).toBe(1 + 9);
+  });
+});
+
+describe('socket cables (structure-restyle 0d slice 8)', () => {
+  /** A solar panel (turned a quarter) linked to a connector, sockets picked
+   *  by core's rule; plus a fence link between two shield pylons. */
+  function base(): { mirror: RenderMirror; nodes: Map<string, GridNode>; sa: number; sb: number } {
+    const placed: Array<[number, string, number, number, number]> = [
+      [1, 'solar', 0, 0, Math.PI / 2], [2, 'connector', 380, 140, 0],
+      [3, 'shield_pylon', -600, -400, 0], [4, 'shield_pylon', -200, -400, 0],
+    ];
+    const swarm = new Map<number, SwarmRenderState>();
+    const structures = new Map<number, StructureRenderState>();
+    const nodes = new Map<string, GridNode>();
+    for (const [id, kind, x, y, angle] of placed) {
+      const e = {
+        x, y, vx: 0, vy: 0, angle, angvel: 0, prevX: x, prevY: y, prevAngle: angle, prevArrivalMs: 0, latestArrivalMs: 0,
+        poseRing: [], ringHead: 0, radius: getStructureKind(kind).radius, kind: 2, shipKind: kind, sleeping: true, lastUpdateTick: 0,
+      } as unknown as SwarmRenderState;
+      swarm.set(id, e);
+      const st = {
+        powered: true, netPower: 50, connTo: [], connSockSelf: [], connSockOther: [], built: true, buildPct: 1, deconstructPct: 0, wallActive: false,
+      } as unknown as StructureRenderState;
+      structures.set(id, st);
+      nodes.set(String(id), structureMirrorToGridNode(String(id), st, e, blankGridNode()));
+    }
+    const pick = makeCableSocketPick();
+    expect(pickCableSocketPair(nodes.get('1')!, nodes.get('2')!, 600, nodes, undefined, pick)).toBeNull();
+    const link = (a: number, b: number, sa: number, sb: number): void => {
+      const A = structures.get(a)!, B = structures.get(b)!;
+      A.connTo.push(b); A.connSockSelf!.push(sa); A.connSockOther!.push(sb);
+      B.connTo.push(a); B.connSockSelf!.push(sb); B.connSockOther!.push(sa);
+    };
+    link(1, 2, pick.a, pick.b);
+    link(3, 4, CABLE_NO_SOCKET, CABLE_NO_SOCKET);
+    return { mirror: { swarm, structures } as unknown as RenderMirror, nodes, sa: pick.a, sb: pick.b };
+  }
+
+  interface PathInstr { action: string; data: { path: { instructions: Array<{ action: string; data: number[] }> } } }
+  /** The points of every stroked path on `g` that has `n` points. */
+  function strokedPaths(g: { context: unknown }, n: number): number[][] {
+    const out: number[][] = [];
+    for (const i of (g.context as { instructions: PathInstr[] }).instructions) {
+      if (i.action !== 'stroke') continue;
+      const pts: number[] = [];
+      for (const p of i.data.path.instructions) if (p.action === 'moveTo' || p.action === 'lineTo') pts.push(p.data[0]!, p.data[1]!);
+      if (pts.length === n * 2) out.push(pts);
+    }
+    return out;
+  }
+
+  it('the drawn cable is core flattenLinkCable between the stored sockets (y flipped)', () => {
+    const { mirror, nodes, sa, sb } = base();
+    const r = new ConnectorRenderer();
+    r.socketCables = true;
+    r.update(mirror, 0.5, 0);
+    const world = new Float64Array(CABLE_CURVE_FLOATS);
+    flattenLinkCable(nodes.get('1')!, sa, nodes.get('2')!, sb, world, makeCableBox());
+    const expected = Array.from(world, (v, i) => (i % 2 === 1 ? -v : v));
+    const c = r.cables.peek(1 * 65536 + 2)!;
+    expect(c.socketed).toBe(true);
+    expect(Array.from(c.poly)).toEqual(expected);
+    // The outline / sheath / core strokes run exactly that polyline.
+    const drawn = strokedPaths(r.staticGfx, CABLE_POINTS).filter((p) => p[0] === expected[0] && p[1] === expected[1]);
+    expect(drawn.length).toBeGreaterThanOrEqual(3);
+    for (const p of drawn) expect(p).toEqual(expected);
+    // It leaves the socket along the socket's outward normal.
+    const n = { x: 0, y: 0, nx: 0, ny: 0 };
+    structureSocketToWorld(structureSockets('solar')[sa]!, 0, 0, Math.PI / 2, n);
+    const dx = world[2]! - world[0]!, dy = world[3]! - world[1]!;
+    expect((dx * n.nx + dy * n.ny) / Math.hypot(dx, dy)).toBeGreaterThan(0.99);
+  });
+
+  it('a fence link stays straight post to post, no collars', () => {
+    const { mirror } = base();
+    const r = new ConnectorRenderer();
+    r.socketCables = true;
+    r.update(mirror, 0.5, 0);
+    const c = r.cables.peek(3 * 65536 + 4)!;
+    expect(c.socketed).toBe(false);
+    for (let i = 0; i < CABLE_POINTS; i++) {
+      expect(c.poly[i * 2 + 1]).toBeCloseTo(400); // pixi y = -(-400)
+      expect(c.poly[i * 2]).toBeCloseTo(-600 + (400 * i) / (CABLE_POINTS - 1));
+    }
+  });
+
+  it('caches per link: no re-flatten on a redraw or zoom; a socket change re-lays that link', () => {
+    const { mirror } = base();
+    const r = new ConnectorRenderer();
+    r.socketCables = true;
+    r.update(mirror, 0.5, 0);
+    expect(r.cables.flattens).toBe(2);
+    expect(r.cables.size).toBe(2);
+    const rebuilds = r.staticRebuilds;
+    r.update(mirror, 0.5, 16);
+    expect(r.staticRebuilds).toBe(rebuilds);
+    r.update(mirror, 0.9, 32); // zoom: the body is redrawn, the curves are not re-flattened
+    expect(r.staticRebuilds).toBe(rebuilds + 1);
+    expect(r.cables.flattens).toBe(2);
+    const before = Array.from(r.cables.peek(1 * 65536 + 2)!.poly);
+    // The server re-picks the solar's socket.
+    const st1 = mirror.structures.get(1)!, st2 = mirror.structures.get(2)!;
+    const other = (st1.connSockSelf![0]! + 1) % structureSockets('solar').length;
+    st1.connSockSelf![0] = other; st2.connSockOther![0] = other;
+    r.update(mirror, 0.9, 48);
+    expect(r.staticRebuilds).toBe(rebuilds + 2);
+    expect(r.cables.flattens).toBe(3);
+    expect(Array.from(r.cables.peek(1 * 65536 + 2)!.poly)).not.toEqual(before);
+    // A link that goes away leaves the cache.
+    for (const st of [st1, st2]) { st.connTo.length = 0; st.connSockSelf!.length = 0; st.connSockOther!.length = 0; }
+    r.update(mirror, 0.9, 64);
+    expect(r.cables.size).toBe(1);
+  });
+
+  it('a flowing link draws its flow along the same cached cable', () => {
+    const { mirror } = base();
+    (mirror as { gridFlashes?: Map<number, number> }).gridFlashes = new Map([[1 * 65536 + 2, 1e12]]);
+    const r = new ConnectorRenderer();
+    r.socketCables = true;
+    r.update(mirror, 0.5, 100);
+    const c = r.cables.peek(1 * 65536 + 2)!;
+    const flow = strokedPaths(r.gfx, CABLE_POINTS);
+    expect(flow.length).toBeGreaterThanOrEqual(2); // bleed + lit core
+    for (const p of flow) expect(p).toEqual(Array.from(c.poly));
+    expect(r.cables.flattens).toBe(2);
+  });
+
+  it('flag off: today\'s straight thin line, no cable cache', () => {
+    const { mirror } = base();
+    const r = new ConnectorRenderer();
+    r.update(mirror, 0.5, 0);
+    expect(r.cables.size).toBe(0);
+    expect(instructions(r.staticGfx).filter((i) => i.action === 'stroke')).toHaveLength(2);
   });
 });

@@ -1,7 +1,8 @@
 /**
  * Structure restyle scene options, for BOTH renderer paths: the 1g grid line
- * look (`?lineLook=off|pipe|conduit`, cable by default) and the 2c rig parts
- * (`?rigs=0` off). Read from the URL on the main thread (`selectRenderer`) and
+ * look (`?lineLook=off|pipe|conduit`, cable by default), the 2c rig parts
+ * (`?rigs=0` off) and the 0d socket cables (the new-effects flag
+ * `ArtOptions.fx`, `?fx=new`: off = the straight lines above). Read from the URL on the main thread (`selectRenderer`) and
  * carried on `ArtOptions` — the render worker has no `window`, so it gets them
  * on BOOT like the structure style. Absent on `ArtOptions` (a renderer built
  * without them, e.g. a test) ⇒ the URL on the main thread, the defaults in a
@@ -36,7 +37,7 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
 /** Init step (`initSceneAndOverlays`): set the connector line look and build the
  *  one `StructureRigs` the swarm updater poses, on either renderer path. */
 export function applyRestyleLook(
-  connectorRenderer: { lineLook: LineLook | null },
+  connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean },
   swarmUpdaterCtx: { structureRigs?: StructureRigs },
   shipContainer: Container,
   art: ArtOptions,
@@ -44,6 +45,8 @@ export function applyRestyleLook(
 ): RestyleLook {
   const look = resolveRestyleLook(art, search);
   connectorRenderer.lineLook = look.lineLook;
+  // 0d slice 8: links drawn as socket cables on the server's curve.
+  connectorRenderer.socketCables = art.fx === true;
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   return look;
 }
