@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { RoutePlanner, NAV_ROUTE_MAX_POINTS, NAV_COARSE_EXPAND_CAP, NAV_FINE_EXPAND_CAP } from './routePlanner.js';
 import { CoarseFieldMap } from './coarseField.js';
-import { FineFieldLayer, FINE_NAV_CELL } from './fineField.js';
+import { FineFieldLayer, FINE_NAV_CELL, FINE_NAV_REACH } from './fineField.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from './search.js';
 import { CHUNK_SIZE, SLICED, rocksInChunk, type ChunkOpts } from '../terrain/fieldLayout.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -35,12 +35,16 @@ function routeLength(sx: number, sy: number, out: Float64Array, n: number): numb
   return len;
 }
 
-/** Smallest room met along the route, sampled every 8 u. */
-function minRoomAlong(p: RoutePlanner, sx: number, sy: number, out: Float64Array, n: number): number {
+/** Smallest room met along the route, sampled every 8 u: the cell bound, or
+ *  for a hull of clearance `c` the exact room where the bound can't tell. */
+function minRoomAlong(p: RoutePlanner, sx: number, sy: number, out: Float64Array, n: number, c = 0): number {
   let min = Infinity, x = sx, y = sy;
   for (let k = 0; k < n; k++) {
     const bx = out[k * 2]!, by = out[k * 2 + 1]!, len = Math.hypot(bx - x, by - y);
-    for (let t = 0; t <= len; t += 8) min = Math.min(min, p.roomAt(x + ((bx - x) * t) / len, y + ((by - y) * t) / len));
+    for (let t = 0; t <= len; t += 8) {
+      const px = x + ((bx - x) * t) / len, py = y + ((by - y) * t) / len, r = p.roomAt(px, py);
+      min = Math.min(min, r < c && p.tight(px, py, c) ? p.exactRoom(px, py, c) : r);
+    }
     x = bx; y = by;
   }
   return min;
@@ -112,7 +116,7 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect(p.status).toBe('route');
     expect(n).toBeGreaterThan(1);
     expect([out[(n - 1) * 2], out[(n - 1) * 2 + 1]]).toEqual([tx, ty]);
-    expect(minRoomAlong(p, sx, sy, out, n)).toBeGreaterThanOrEqual(fighter - 1e-6);
+    expect(minRoomAlong(p, sx, sy, out, n, fighter)).toBeGreaterThanOrEqual(fighter - 2);
     // Lower bound: the 8-way grid path over the same cells is at most 1.0824× the true shortest.
     const grid = refPath(p, at.cx, at.cy, sx, sy, tx, ty)!.cost;
     const lower = grid / 1.0824 - 2 * FINE_NAV_CELL; // cell centres vs the exact ends
@@ -124,6 +128,58 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     const again = new Float64Array(out.length);
     expect(p.plan(coarse, fine, sx, sy, tx, ty, fighter, again)).toBe(n);
     expect(Array.from(again)).toEqual(Array.from(out));
+  });
+
+  it('a fighter crosses a packed chunk by its street: exact room along the route, within the exact-query gate', () => {
+    // Packed chunk (-9, 5): every 64 u cell bound closes its streets (gaps pinch to
+    // 60-68 u, fighter clearance 30), so before the exact refinement (fine rebuild
+    // slice A) this was 'nearest'. Ends 300 u inside the chunk's west and east edges.
+    const at = { cx: -9, cy: 5 }, c = shipTuning(getShipKind('fighter')).navClearance;
+    const { coarse, fine } = world(at);
+    const sx = at.cx * CHUNK_SIZE + 300, sy = 23_404, tx = (at.cx + 1) * CHUNK_SIZE - 300, ty = 20_812;
+    const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
+    const q0 = fine.exactQueries, t0 = performance.now();
+    const n = p.plan(coarse, fine, sx, sy, tx, ty, c, out);
+    const ms = performance.now() - t0, queries = fine.exactQueries - q0;
+    const built = fine.liveCount, bytes = fine.poolBytes;
+    console.log(`[nav route] fighter across packed chunk: ${n} waypoints, ${p.expanded} expansions, ${queries} exact queries, ` +
+      `${built}/${fine.loadedCount} loaded chunks built (${(bytes / 1024).toFixed(0)} KB of the pool), ${ms.toFixed(1)} ms`);
+    expect(p.status).toBe('route');
+    expect([out[(n - 1) * 2], out[(n - 1) * 2 + 1]]).toEqual([tx, ty]);
+    // Every point of the route, every 2 u, has the exact room (less the trace's shortest step).
+    let x = sx, y = sy, min = Infinity;
+    for (let k = 0; k < n; k++) {
+      const bx = out[k * 2]!, by = out[k * 2 + 1]!, len = Math.hypot(bx - x, by - y);
+      for (let t = 0; t <= len; t += 2) min = Math.min(min, fine.exactAt(x + ((bx - x) * t) / len, y + ((by - y) * t) / len, FINE_NAV_REACH));
+      x = bx; y = by;
+    }
+    expect(min).toBeGreaterThanOrEqual(c - 2);
+    // Count gate (measured 25 452 locally, 2026-11-18; raise only on a new measurement).
+    expect(queries).toBeLessThanOrEqual(32_000);
+    // On demand: detail only for the chunks the search reached (measured 2 of 25, 100 KB).
+    expect(built).toBeLessThanOrEqual(4);
+    expect(p.expanded).toBeLessThanOrEqual(NAV_COARSE_EXPAND_CAP + NAV_FINE_EXPAND_CAP);
+  });
+
+  it('a fighter flies round a structure in open space (a static obstacle, not a rock)', () => {
+    const { coarse, fine } = world();
+    const c = shipTuning(getShipKind('fighter')).navClearance;
+    const x = 100.5 * CHUNK_SIZE, y = 0.5 * CHUNK_SIZE, hw = 150, hh = 600;
+    fine.obstacleSet(1, { x, y, radius: Math.hypot(hw, hh), angle: 0, parts: [[{ x: -hw, y: -hh }, { x: hw, y: -hh }, { x: hw, y: hh }, { x: -hw, y: hh }]] });
+    const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
+    const sx = x - 1500, tx = x + 1500;
+    const n = p.plan(coarse, fine, sx, y, tx, y, c, out);
+    console.log(`[nav route] fighter round a structure: ${n} waypoints, ${p.expanded} expansions, status ${p.status}`);
+    expect(p.status).toBe('route');
+    expect(n).toBeGreaterThan(1); // not the straight line through it
+    let px = sx, py = y, min = Infinity;
+    for (let k = 0; k < n; k++) {
+      const bx = out[k * 2]!, by = out[k * 2 + 1]!, len = Math.hypot(bx - px, by - py);
+      for (let t = 0; t <= len; t += 2) min = Math.min(min, fine.exactAt(px + ((bx - px) * t) / len, py + ((by - py) * t) / len, FINE_NAV_REACH));
+      px = bx; py = by;
+    }
+    expect(min).toBeGreaterThanOrEqual(c - 2);
+    expect(p.expanded).toBeLessThanOrEqual(NAV_COARSE_EXPAND_CAP + NAV_FINE_EXPAND_CAP);
   });
 
   it('a battleship crossing the field keeps to wide space (lanes / round the outside), never a street', () => {
@@ -159,8 +215,9 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect(n).toBeGreaterThan(0);
     const ex = out[(n - 1) * 2]!, ey = out[(n - 1) * 2 + 1]!;
     expect(Math.hypot(ex - rock.x, ey - rock.y)).toBeLessThan(Math.hypot(sx - rock.x, 0) - 300);
-    expect(p.roomAt(ex, ey)).toBeGreaterThanOrEqual(fighter);
-    expect(minRoomAlong(p, sx, rock.y, out, n)).toBeGreaterThanOrEqual(fighter - 1e-6);
+    // The end is a cell node: its centre, or its roomiest exact sample (fine rebuild slice A).
+    expect(p.roomAt(ex, ey) >= fighter || p.exactRoom(ex, ey, fighter) >= fighter).toBe(true);
+    expect(minRoomAlong(p, sx, rock.y, out, n, fighter)).toBeGreaterThanOrEqual(fighter - 2);
     expect(p.expanded).toBeGreaterThan(0);
     expect(p.expanded).toBeLessThanOrEqual(NAV_COARSE_EXPAND_CAP + NAV_FINE_EXPAND_CAP);
   });

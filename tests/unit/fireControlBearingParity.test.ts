@@ -38,7 +38,8 @@ describe('barrelBearsOn (#15)', () => {
     // `features/fireControlLocks.ts`; the rest of the room in `SectorRoom.ts`.
     const server = readFileSync('src/server/rooms/SectorRoom.ts', 'utf8') +
       readFileSync('src/server/rooms/features/fireControlLocks.ts', 'utf8');
-    const client = readFileSync('src/client/net/FireControlClient.ts', 'utf8') + readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
+    const client = readFileSync('src/client/net/FireControlClient.ts', 'utf8') + readFileSync('src/client/net/ColyseusClient.ts', 'utf8')
+      + readFileSync('src/client/net/fireControl/LocalFireClient.ts', 'utf8');
     // `mountFiresOn` = per-mount range to the hull (`mountInReach`) AND
     // the per-weapon bearing rule (`mountBearsOn`), on a shape both fill with
     // `fillFireTargetShape`.

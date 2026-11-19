@@ -63,7 +63,8 @@ describe('muzzle parity (turrets T3, #15)', () => {
     expect(grid).toMatch(/const muzzle = structureMountMuzzle\(rec\.kind, mount\)/);
     expect(grid).not.toMatch(/structureTurretMuzzle\(/);
     expect(grid).not.toMatch(/radius \+ 8/);
-    const client = src('src/client/net/ColyseusClient.ts');
+    // The local ship's fire + live beam (god-file split, slice 10).
+    const client = src('src/client/net/fireControl/LocalFireClient.ts');
     expect(client).toMatch(/shipShotMuzzle\(kind, mount\)/);
     expect(client.match(/this\.localMuzzle\(mount\)/g)?.length).toBe(2); // live beam + ghosts
     expect(src('src/client/render/pixi/beamUpdater.ts').match(/shipShotMuzzle\(shooterKind, mount/g)?.length).toBe(2); // player + drone beams
