@@ -10,9 +10,15 @@ import { FineFieldLayer } from '../../../src/core/nav/fineField.js';
 const fighter = getShipKind('fighter');
 const opts: ChunkOpts = { seed: 'look', battleshipLength: getShipKind('battleship').radius * 2, fighterLength: fighter.radius * 2 };
 
+/** A crossing: two open spots either side of a big rock, and the fighter route's length. */
+export interface Crossing { ax: number; ay: number; bx: number; by: number; routeLen: number }
+
 /** Two open spots either side of a big rock in a sparse chunk (the straight
- *  line between them blocked, a fighter route round it). */
-export function crossing(): { ax: number; ay: number; bx: number; by: number } {
+ *  line between them blocked, a fighter route round it), the biggest rock
+ *  first, whose fighter route is at most `maxRouteLen` long. Unbounded, it is
+ *  the field's own street crossing (fine rebuild slice A: the big rock's way
+ *  round threads the packed rocks beside it, 8 waypoints, ~3 900 u). */
+export function crossing(maxRouteLen = Infinity): Crossing {
   const coarse = new CoarseFieldMap(); coarse.build(opts);
   const fine = new FineFieldLayer(opts);
   const p = new RoutePlanner(), c = shipTuning(fighter).navClearance, room = 6 * fighter.radius;
@@ -23,10 +29,13 @@ export function crossing(): { ax: number; ay: number; bx: number; by: number } {
     if (r.radius < 6 * fighter.radius) continue;
     for (let d = r.radius + 300; d < r.radius + 1500; d += 100) {
       const ax = r.x - d, bx = r.x + d;
-      if (p.roomAt(ax, r.y) >= room && p.roomAt(bx, r.y) >= room && !p.segmentClear(ax, r.y, bx, r.y, c) &&
-        p.plan(coarse, fine, ax, r.y, bx, r.y, c, out) > 1 && p.status === 'route') return { ax, ay: r.y, bx, by: r.y };
+      if (p.roomAt(ax, r.y) < room || p.roomAt(bx, r.y) < room || p.segmentClear(ax, r.y, bx, r.y, c)) continue;
+      const n = p.plan(coarse, fine, ax, r.y, bx, r.y, c, out);
+      if (n <= 1 || p.status !== 'route') continue;
+      let routeLen = Math.hypot(out[0]! - ax, out[1]! - r.y);
+      for (let k = 1; k < n; k++) routeLen += Math.hypot(out[2 * k]! - out[2 * k - 2]!, out[2 * k + 1]! - out[2 * k - 1]!);
+      if (routeLen <= maxRouteLen) return { ax, ay: r.y, bx, by: r.y, routeLen };
     }
   }
   throw new Error('no crossing');
 }
-
