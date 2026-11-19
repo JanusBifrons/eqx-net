@@ -10,6 +10,11 @@
  *    to post line.
  *  - The cable look (static body + per-frame flow) and the placement preview
  *    line, drawn along a cached polyline by arc length.
+ *  - Slice 9: the flow is a train of comets leaving the source socket at a
+ *    per-material speed in game time, and each comet that reaches the
+ *    receiving socket flashes its collar (`flowTrainInto`, `collarFlash`).
+ *    Only state the client has (#16): the link's flow flash, source and
+ *    material; when flow starts is noted on the cached link.
  *
  * The look is behind the new-effects flag (`ArtOptions.fx`, `?fx=new`):
  * `ConnectorRenderer.socketCables`. Off = today's straight lines, untouched.
@@ -25,7 +30,7 @@ import {
 import { isShieldEmitterKind } from '../../../core/structures/gateGeometry.js';
 import { blankGridNode } from '../../structures/mirrorToGridNode.js';
 import { lineLookBaseWidth, lineLookScale, mixColor, type LinePath } from './connectorLineLooks.js';
-import { CONNECTOR_IDLE_COLOR, type ConnectorVisual } from './connectorVisual.js';
+import { CONNECTOR_IDLE_COLOR, type ConnectorFlowMaterial, type ConnectorVisual } from './connectorVisual.js';
 
 /** Points in a cable polyline. */
 export const CABLE_POINTS = CABLE_CURVE_SEGMENTS + 1;
@@ -46,12 +51,17 @@ export interface LinkCable {
   ax: number; ay: number; aa: number; ak: string; sa: number;
   bx: number; by: number; ba: number; bk: string; sb: number;
   gen: number;
+  /** Slice 9: game ms this link's current run of flow started, and the
+   *  last frame it was drawn flowing (a gap means the flow stopped). */
+  flowSince: number;
+  flowSeen: number;
 }
 
 export function makeLinkCable(): LinkCable {
   return {
     poly: new Float64Array(CABLE_CURVE_FLOATS), cum: new Float64Array(CABLE_POINTS), n: 0, len: 0, socketed: false,
     ax: NaN, ay: 0, aa: 0, ak: '', sa: CABLE_NO_SOCKET, bx: 0, by: 0, ba: 0, bk: '', sb: CABLE_NO_SOCKET, gen: 0,
+    flowSince: 0, flowSeen: -Infinity,
   };
 }
 
@@ -126,6 +136,7 @@ export class LinkCableCache {
     if (c === undefined) {
       c = this.free.pop() ?? makeLinkCable();
       c.ax = NaN;
+      c.flowSeen = -Infinity;
       this.map.set(key, c);
     }
     c.gen = this.gen;
@@ -219,25 +230,41 @@ export function socketCableWidth(scale: number): number {
   return lineLookBaseWidth('cable') * lineLookScale('cable', scale) * 0.62;
 }
 
-/** A strain-relief collar at a socket: a short plate band across the cable
- *  where it leaves the socket, with a cyan accent line at its outer edge.
- *  `atEnd` = the polyline's last point (direction reversed). */
-function collar(g: LinePath, c: LinkCable, atEnd: boolean, w: number): void {
+/** Where a socket's collar sits: the socket point and the unit direction
+ *  into the cable, the collar length `L`, and its accent ring point. */
+interface CollarFrame { x: number; y: number; ux: number; uy: number; L: number; rx: number; ry: number }
+const _frame: CollarFrame = { x: 0, y: 0, ux: 0, uy: 0, L: 0, rx: 0, ry: 0 };
+
+/** Fill `out` with the collar at the polyline's first point, or its last
+ *  (`atEnd`, direction reversed). False when the end segment is degenerate. */
+function collarFrame(c: LinkCable, atEnd: boolean, w: number, out: CollarFrame): boolean {
   const p = c.poly;
   const i0 = atEnd ? c.n - 1 : 0, i1 = atEnd ? c.n - 2 : 1;
   const x = p[i0 * 2]!, y = p[i0 * 2 + 1]!;
   const dx = p[i1 * 2]! - x, dy = p[i1 * 2 + 1]! - y;
   const d = Math.hypot(dx, dy);
-  if (d < 1e-6) return;
-  const ux = dx / d, uy = dy / d;
-  const L = Math.min(w * 1.1, d * 0.8);
+  if (d < 1e-6) return false;
+  out.x = x; out.y = y;
+  out.ux = dx / d; out.uy = dy / d;
+  out.L = Math.min(w * 1.1, d * 0.8);
+  out.rx = x + out.ux * out.L * 0.78; out.ry = y + out.uy * out.L * 0.78;
+  return true;
+}
+
+/** A strain-relief collar at a socket: a short plate band across the cable
+ *  where it leaves the socket, with a cyan accent line at its outer edge.
+ *  `atEnd` = the polyline's last point (direction reversed). */
+function collar(g: LinePath, c: LinkCable, atEnd: boolean, w: number): void {
+  const f = _frame;
+  if (!collarFrame(c, atEnd, w, f)) return;
+  const x = f.x, y = f.y, ux = f.ux, uy = f.uy, L = f.L;
   g.moveTo(x, y).lineTo(x + ux * L, y + uy * L); stroke(g, OUTLINE, 1, w * 1.75);
   g.moveTo(x, y).lineTo(x + ux * L * 0.92, y + uy * L * 0.92); stroke(g, PLATE, 1, w * 1.45);
   // Lit top edge of the plate, then the accent ring at its outer edge.
   g.moveTo(x - uy * w * 0.5, y + ux * w * 0.5).lineTo(x + ux * L * 0.85 - uy * w * 0.5, y + uy * L * 0.85 + ux * w * 0.5);
   stroke(g, PLATE_HI, 0.35, w * 0.16);
-  const ax = x + ux * L * 0.78, ay = y + uy * L * 0.78, h = w * 0.72;
-  g.moveTo(ax - uy * h, ay + ux * h).lineTo(ax + uy * h, ay - ux * h); stroke(g, ACCENT, 0.85, w * 0.2);
+  const h = w * 0.72;
+  g.moveTo(f.rx - uy * h, f.ry + ux * h).lineTo(f.rx + uy * h, f.ry - ux * h); stroke(g, ACCENT, 0.85, w * 0.2);
 }
 
 /** The cable's steady body (static layer): cast shadow, dark outline,
@@ -255,26 +282,102 @@ export function drawSocketCableBody(g: LinePath, c: LinkCable, scale: number): v
   }
 }
 
+// ── Flow (slice 9): a comet train by arc length, in game time ───────────────
+
 /** Comet half length (screen px), as `cometSegment`. */
 const COMET_HALF_PX = 12;
+/** Most comets on one cable at once (bounds the per-frame path work). */
+export const MAX_CABLE_COMETS = 4;
+/** A link not drawn flowing for this long (game ms) starts a new run: its
+ *  first comet leaves the source socket again. */
+export const FLOW_RESTART_GAP_MS = 1000;
+/** How long a socket collar flashes when a comet reaches it (game ms). */
+export const COLLAR_FLASH_MS = 240;
+
+/** Comet speed (world units per game second) and spacing (world units) per
+ *  flow material. The client knows a link's material but not its throughput
+ *  (#16: no new wire field), so the material sets the pace: ore crawls in a
+ *  dense train, power races. */
+const TRAIN_SPEED: Readonly<Record<ConnectorFlowMaterial, number>> = { minerals: 220, repair: 280, construction: 320, power: 440 };
+const TRAIN_SPACING: Readonly<Record<ConnectorFlowMaterial, number>> = { minerals: 170, repair: 200, construction: 210, power: 170 };
+
+/** One link's comet train this frame. Comet `k` (0 = the first to leave)
+ *  is at arc length `d - k * spacing` from the source; it is drawn while
+ *  that lies on the cable. */
+export interface FlowTrain {
+  /** World units per game second. */
+  speed: number;
+  /** Arc length between comets (widened on a long cable so at most
+   *  `MAX_CABLE_COMETS` ride it). */
+  spacing: number;
+  /** How far the first comet has travelled since the flow started. */
+  d: number;
+}
+
+/** The train of a cable `len` long that has flowed for `elapsedMs` game ms. */
+export function flowTrainInto(out: FlowTrain, len: number, elapsedMs: number, material: ConnectorFlowMaterial): FlowTrain {
+  out.speed = TRAIN_SPEED[material];
+  out.spacing = Math.max(TRAIN_SPACING[material], len / MAX_CABLE_COMETS);
+  out.d = Math.max(0, elapsedMs) * out.speed / 1000;
+  return out;
+}
+
+/** Arc length (from the source) of the comet nearest the receiving end that
+ *  is still on the cable; the rest follow `spacing` behind it. */
+export function leadCometArc(t: FlowTrain, len: number): number {
+  if (t.d <= len) return t.d;
+  return len - ((t.d - len) % t.spacing);
+}
+
+/** The receiving collar's flash: 1 the instant a comet arrives, easing to 0
+ *  over `COLLAR_FLASH_MS`; 0 before the first arrival. */
+export function collarFlash(t: FlowTrain, len: number): number {
+  if (t.d < len || t.speed <= 0) return 0;
+  const sinceMs = ((t.d - len) % t.spacing) / t.speed * 1000;
+  return sinceMs < COLLAR_FLASH_MS ? 1 - sinceMs / COLLAR_FLASH_MS : 0;
+}
+
+const _train: FlowTrain = { speed: 0, spacing: 0, d: 0 };
 
 /** The flow of an ACTIVE link (per-frame layer): a faint bleed, the lit core
- *  in the flow colour, and the travelling pulse by arc length, source to
- *  destination (`sourceIsLo`: the flow runs from the polyline's first point). */
-export function drawSocketCableFlow(g: LinePath, c: LinkCable, v: ConnectorVisual, sourceIsLo: boolean, scale: number): void {
+ *  in the flow colour, the comet train leaving the source socket
+ *  (`sourceIsLo`: the polyline's first point) at the material's pace in game
+ *  time (`nowMs` = `fxNow`, #20), all comets in one stroke, and the
+ *  receiving socket's collar flash as each comet arrives. The static body
+ *  is not touched. */
+export function drawSocketCableFlow(
+  g: LinePath, c: LinkCable, v: ConnectorVisual, sourceIsLo: boolean, scale: number,
+  nowMs: number, material: ConnectorFlowMaterial,
+): void {
   if (c.n < 2 || c.len < 1) return;
+  // A new run of flow (first frame, or after a gap): the train restarts.
+  if (!(nowMs - c.flowSeen <= FLOW_RESTART_GAP_MS) || nowMs < c.flowSeen) c.flowSince = nowMs;
+  c.flowSeen = nowMs;
   const w = socketCableWidth(scale);
   if (v.glowAlpha > 0) { path(g, c); stroke(g, v.color, v.glowAlpha * 0.6, w * 1.9); }
   path(g, c); stroke(g, v.color, v.alpha, w * 0.34);
   const pa = v.pulseAlpha ?? 0;
   if (!v.pulseActive || pa <= 0) return;
-  const t = v.pulseT ?? 0;
-  const s = (sourceIsLo ? t : 1 - t) * c.len;
+  const t = flowTrainInto(_train, c.len, nowMs - c.flowSince, material);
   const safe = scale > 0 ? scale : 1;
   const half = Math.min(c.len * 0.45, Math.max(COMET_HALF_PX / safe, COMET_HALF_PX));
-  const s0 = Math.max(0, s - half), s1 = Math.min(c.len, s + half);
-  if (s1 <= s0) return;
-  pathRange(g, c, s0, s1); stroke(g, v.pulseColor ?? 0, pa, w * 0.5);
+  let drawn = 0;
+  for (let s = leadCometArc(t, c.len), k = 0; s > -half && k <= MAX_CABLE_COMETS; s -= t.spacing, k++) {
+    const lo = Math.max(0, s - half), hi = Math.min(c.len, s + half);
+    if (hi <= lo) continue;
+    // Arc length from the source -> from the polyline's first point.
+    if (sourceIsLo) pathRange(g, c, lo, hi); else pathRange(g, c, c.len - hi, c.len - lo);
+    drawn++;
+  }
+  if (drawn > 0) stroke(g, v.pulseColor ?? 0, pa, w * 0.5);
+  if (!c.socketed) return;
+  const flash = collarFlash(t, c.len);
+  if (flash <= 0 || !collarFrame(c, sourceIsLo, w, _frame)) return;
+  // The receiving collar lights in the flow colour, its accent ring in the
+  // pulse colour (same geometry as the static collar under it).
+  const f = _frame, h = w * 0.9;
+  g.moveTo(f.x, f.y).lineTo(f.x + f.ux * f.L, f.y + f.uy * f.L); stroke(g, v.color, 0.55 * flash, w * 2.4);
+  g.moveTo(f.rx - f.uy * h, f.ry + f.ux * h).lineTo(f.rx + f.uy * h, f.ry - f.ux * h); stroke(g, v.pulseColor ?? 0, flash, w * 0.34);
 }
 
 /** One placement-preview line along `c` (glow underlay, then the core; a
