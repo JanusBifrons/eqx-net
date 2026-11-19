@@ -13,6 +13,7 @@ import type { Logger } from 'pino';
 import type { ChunkOpts } from '../../core/terrain/fieldLayout.js';
 import type { NavCommand, NavFieldBuiltMsg, NavReply, NavRouteMsg } from '../../core/nav/navHost.js';
 import type { NavRockPose } from '../../core/nav/fineField.js';
+import type { GridObstacle } from '../../core/structures/Grid.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
 
 const NAV_WORKER_TS_PATH = fileURLToPath(new URL('./navWorkerEntry.ts', import.meta.url));
@@ -28,6 +29,8 @@ export interface NavField {
   chunk(cx: number, cy: number, loaded: boolean): void;
   /** A rock was broken up. */
   rockGone(key: number): void;
+  /** A static obstacle other than a rock (a structure) is at `shape`; null: removed. */
+  obstacle(id: number, shape: GridObstacle | null): void;
   /** A rock rests somewhere new (null: back at its cut pose). */
   rockMoved(key: number, pose: { x: number; y: number; angle: number } | null): void;
   /** Plans a route from (sx, sy) to (tx, ty) for a hull of clearance
@@ -75,6 +78,7 @@ export class NavWorker {
       chunk: (cx, cy, loaded) => post({ type: 'CHUNK', worldId, cx, cy, loaded }),
       rockGone: (key) => post({ type: 'ROCK', worldId, key, gone: true }),
       rockMoved: (key, pose) => post({ type: 'ROCK', worldId, key, pose }),
+      obstacle: (id, shape) => post({ type: 'OBSTACLE', worldId, id, shape }),
       route: (sx, sy, tx, ty, clearance, heading = NaN, turnRadius = 0) => {
         if (!attached) {
           return Promise.resolve({ type: 'ROUTE', worldId, reqId: 0, status: 'none', points: new Float64Array(0), expanded: 0, ms: 0 });
