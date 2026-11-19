@@ -35,7 +35,7 @@ describe('SectorRoom integration — named elites (P4a)', () => {
   }, 15_000);
 
   it('spawns a named elite that clients see, and it drops a rare haul when killed', { timeout: 40_000 }, async () => {
-    h = await bootLivingWorldTestServer({ sectors: ['greenfall', 'emerald-span'], botCount: 0, seed: 3 });
+    h = await bootLivingWorldTestServer({ sectors: ['greenfall', 'emerald-span'], botCount: 0, seed: 3, keepAllOnDeath: true }); // pins the kill's haul (no death coin flip)
     const clock = { now: 1_000_000 };
     const rooms = new Map<string, LivingWorldRoom>([
       ['greenfall', h.getRoom('greenfall') as unknown as LivingWorldRoom],
