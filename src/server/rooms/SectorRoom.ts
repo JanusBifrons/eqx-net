@@ -180,7 +180,6 @@ import { podSizeClass } from '../../shared-types/shipKinds/cargoPod.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import type { LockSubsystem } from './LockSubsystem.js';
 import type { NpcLockSubsystem } from './NpcLockSubsystem.js';
-import { relayPieceSplit } from './lockSplit.js';
 import { fillRangeShape } from '../../core/combat/fireControlBearing.js';
 import { weaponIdReach } from '../../core/combat/mountReach.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
@@ -346,7 +345,8 @@ import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/look
 import { landingReach } from '../../shared-types/shipScale/landingReach.js';
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import type { MountRangeTarget } from '../../core/combat/mountReach.js';
-import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
+import type { CapitalWreckSubsystem, WreckPiecePose } from './CapitalWreckSubsystem.js';
+import { buildCapitalWrecks } from './capitalWreckRoomWiring.js';
 import { rockViewOf } from './rockCut.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
@@ -3098,7 +3098,7 @@ export class SectorRoom extends Room<SectorState> {
       this.setTimeScale(ENV_TIME_SCALE);
     }
     // (Wreck switches: read before the streaming host, above.)
-    if (this.capitalWrecksOn || this.subcapWrecksOn) this.initCapitalWrecks();
+    if (this.capitalWrecksOn || this.subcapWrecksOn) this.capitalWrecks = buildCapitalWrecks({ serverTick: () => this.serverTick, swarmRegistry: this.swarmRegistry, wreckKindAllowed: (k) => this.wreckKindAllowed(k), getActiveShip: (pid) => this.getActiveShip(pid), state: () => this.state, patrols: this.patrols, shipPoseCache: this.shipPoseCache, lingeringPoseCache: this.lingeringPoseCache, sabF32: () => this.sabF32, sabU32: () => this.sabU32, swarmSpawner: () => this.swarmSpawner, physicsWorkerProxy: () => this.physicsWorkerProxy, evictSwarmEntity: (rec, o) => this.evictSwarmEntity(rec, o), wreckPose: (id, out) => this.wreckPose(id, out), wreckPoseScratch: this._wreckPose, postToWorker: (c) => this.postToWorker(c), wreckImpulseCmd: this._wreckImpulseCmd, wreckRigidImpulseCmd: this._wreckRigidImpulseCmd, playerToSlot: () => this.playerToSlot, lingeringSlots: this.lingeringSlots, loot: () => this.loot, locks: () => this.locks, wingmanLocks: () => this.wingmanLocks, wreckSaves: () => this.wreckSaves, wreckFieldSource: () => this.wreckFieldSource });
     if (this.wreckSaves !== null && this.wreckSaves.loadRows() >= 0) this.gameClock.every(WRECK_LINEAGE_FLUSH_MS, guarded('wreck-lineage-flush', () => this.wreckSaves?.flush(false)));
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
@@ -4044,77 +4044,6 @@ export class SectorRoom extends Room<SectorState> {
     const destroyed = this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY, layerMul);
     if (ownedHullBefore >= 0) this.fleetHooks.noteOwnedHullDamage(targetId, ownedHullBefore);
     return destroyed;
-  }
-
-  /** Capital destruction S2a: build the wreck subsystem (flag on only). */
-  private initCapitalWrecks(): void {
-    this.capitalWrecks = new CapitalWreckSubsystem({
-      serverTick: () => this.serverTick,
-      wreckKindOf: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        if (rec) return rec.kind === SWARM_KIND_DRONE && rec.shipKind && this.wreckKindAllowed(rec.shipKind) ? (rec.shipKind as ShipKindId) : null;
-        const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
-        return ship !== undefined && this.wreckKindAllowed(ship.kind) ? (ship.kind as ShipKindId) : null;
-      },
-      // The livery owner, as the client resolves it for the live hull: a
-      // player hull (active by playerId, parked by shipInstanceId) its
-      // pilot's id, a patrol its faction (snapshot `fac`), else none.
-      ownerOf: (id) => {
-        if (this.swarmRegistry.has(id)) return this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined;
-        const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
-        return ship !== undefined && ship.playerId !== '' ? ship.playerId : undefined;
-      },
-      positionOf: (id) => {
-        const p = this.shipPoseCache.get(id) ?? this.lingeringPoseCache.get(id);
-        if (p) return { x: p.x, y: p.y };
-        const rec = this.swarmRegistry.get(id);
-        if (!rec) return null;
-        const b = slotBase(rec.slot);
-        return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
-      },
-      spawnPiece: (spec) => (this.swarmRegistry.has(spec.id) ? false : this.swarmSpawner.spawnWreck(spec)),
-      beginBatch: () => this.physicsWorkerProxy.beginBatch(),
-      endBatch: () => this.physicsWorkerProxy.endBatch(),
-      removePiece: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        if (rec) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
-      },
-      isLive: (id) => this.swarmRegistry.has(id),
-      pieceAngle: (id) => this.wreckPose(id, this._wreckPose)?.angle ?? null,
-      kickPiece: (id, dvx, dvy, dw) => this.postToWorker({ type: 'WRECK_KICK', entityId: id, dvx, dvy, dw }),
-      // A reused command (#14): postMessage clones it synchronously.
-      impulsePiece: (id, jx, jy, px, py) => {
-        const c = this._wreckImpulseCmd;
-        c.entityId = id; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
-        this.postToWorker(c);
-      },
-      // A piece's body sits on its centroid: its SAB pose is the centre (#14).
-      pieceCentreInto: (id, out) => this.wreckPose(id, out) !== null,
-      // During the crack hold: the whole wreck as one rigid body (#14 as above).
-      impulseWreck: (ids, jx, jy, px, py) => {
-        const c = this._wreckRigidImpulseCmd;
-        c.entityIds = ids; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
-        this.postToWorker(c);
-      },
-      pieceAsleep: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        return rec != null && ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
-      },
-      piecePose: (id) => this.wreckPose(id),
-      piecePoseInto: (id, out) => this.wreckPose(id, out) !== null,
-      // Fracture v12 multi-cut: a live hull's SAB pose at a cutting hit (a
-      // drone by its record, an active hull by playerId, a parked one by
-      // shipInstanceId), the frame its burn line is kept in. #14: into `out`.
-      hullPoseInto: (id, out) => {
-        const slot = this.swarmRegistry.get(id)?.slot ?? this.playerToSlot.get(id) ?? this.lingeringSlots.get(id);
-        if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
-        return slot !== undefined;
-      },
-      dropSalvage: (qty, x, y, vx, vy) => this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }),
-      rockOf: (id) => rockViewOf(this.swarmRegistry, id),
-      pieceSplit: (from, ids, masses) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks),
-      lineageTouched: (root) => { this.wreckSaves?.touch(root); this.wreckFieldSource?.touched(root); }, evictRetire: (id) => this.wreckSaves?.evictPiece(id) ?? false,
-    });
   }
 
   /** Wreck fields 3b: the room option `wreckField` as a chunk source of the
