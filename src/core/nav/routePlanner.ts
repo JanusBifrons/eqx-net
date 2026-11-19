@@ -42,12 +42,20 @@ const HALF_WIN = Math.floor(NAV_FINE_WINDOW_CHUNKS / 2);
 const NDX = [1, -1, 0, 0, 1, 1, -1, -1];
 const NDY = [0, 0, 1, -1, 1, -1, 1, -1];
 const DIAG = FINE_NAV_CELL * Math.SQRT2;
+/** Exact samples on a side of a tight cell (16 u apart for 64 u cells). */
+const FINE_SAMPLES = 4;
+/** Shortest step of an exact sphere trace (world u): a line grazing a rock
+ *  closer than this past the hull's clearance still counts as clear. */
+const EXACT_MIN_STEP = 2;
 /** How near an intermediate fine target counts as reached (it may sit on a rock). */
 const FINE_HANDOFF_RADIUS = FINE_NAV_CELL * 6;
 
 /** The fine window as a search graph: cell `i` is admitted when the hull fits
  *  there (near the start, wherever it fits no worse than at the start, so a
- *  ship tight against a rock can still back out). */
+ *  ship tight against a rock can still back out). Where the cell's bound is
+ *  too rough to tell (a tight street), the cell is sampled exactly
+ *  (`FINE_SAMPLES`² points) and its node moves to the roomiest sample; an
+ *  edge touching such a node is checked exactly. */
 class FineWindow implements SearchGraph {
   readonly nodeCount = W * W;
   ox = 0;
@@ -58,6 +66,10 @@ class FineWindow implements SearchGraph {
   startRoom = 0;
   private readonly room = new Float32Array(W * W);
   private readonly seen = new Uint32Array(W * W);
+  /** Node point of a cell sampled exactly this run (else its centre). */
+  private readonly nx = new Float32Array(W * W);
+  private readonly ny = new Float32Array(W * W);
+  private readonly exact = new Uint8Array(W * W);
   private run = 0;
 
   constructor(private readonly p: RoutePlanner) {}
@@ -65,19 +77,38 @@ class FineWindow implements SearchGraph {
   reset(): void {
     if (++this.run === 0xffffffff) { this.seen.fill(0); this.run = 1; }
   }
-  x(i: number): number { return this.ox + ((i % W) + 0.5) * FINE_NAV_CELL; }
-  y(i: number): number { return this.oy + (((i / W) | 0) + 0.5) * FINE_NAV_CELL; }
+  x(i: number): number { return this.seen[i] === this.run && this.exact[i] ? this.nx[i]! : this.cx(i); }
+  y(i: number): number { return this.seen[i] === this.run && this.exact[i] ? this.ny[i]! : this.cy(i); }
+  private cx(i: number): number { return this.ox + ((i % W) + 0.5) * FINE_NAV_CELL; }
+  private cy(i: number): number { return this.oy + (((i / W) | 0) + 0.5) * FINE_NAV_CELL; }
   /** Cell holding (x, y), or -1 outside the window. */
   cellAt(x: number, y: number): number {
     const gx = Math.floor((x - this.ox) / FINE_NAV_CELL), gy = Math.floor((y - this.oy) / FINE_NAV_CELL);
     return gx < 0 || gy < 0 || gx >= W || gy >= W ? -1 : gy * W + gx;
   }
   private admits(i: number): boolean {
-    if (this.seen[i] !== this.run) { this.seen[i] = this.run; this.room[i] = this.p.roomAt(this.x(i), this.y(i)); }
+    if (this.seen[i] !== this.run) this.sample(i);
     const r = this.room[i]!;
     if (r >= this.c) return true;
-    const dx = this.x(i) - this.sx, dy = this.y(i) - this.sy, near = this.c + 2 * FINE_NAV_CELL;
+    const dx = this.cx(i) - this.sx, dy = this.cy(i) - this.sy, near = this.c + 2 * FINE_NAV_CELL;
     return dx * dx + dy * dy <= near * near && r >= this.startRoom;
+  }
+  /** Works out cell `i`'s room this run: its bound, or when that is too
+   *  rough for this hull, the best of its exact samples. */
+  private sample(i: number): void {
+    const x0 = this.cx(i), y0 = this.cy(i), c = this.c;
+    this.seen[i] = this.run; this.exact[i] = 0;
+    let r = this.p.roomAt(x0, y0);
+    if (r < c && this.p.tight(x0, y0, c)) {
+      const step = FINE_NAV_CELL / FINE_SAMPLES, lo = -FINE_NAV_CELL / 2 + step / 2;
+      let best = -1, bx = x0, by = y0;
+      for (let a = 0; a < FINE_SAMPLES; a++) for (let b = 0; b < FINE_SAMPLES; b++) {
+        const px = x0 + lo + b * step, py = y0 + lo + a * step, e = this.p.exactRoom(px, py, c);
+        if (e > best) { best = e; bx = px; by = py; }
+      }
+      if (best >= c) { r = best; this.exact[i] = 1; this.nx[i] = bx; this.ny[i] = by; }
+    }
+    this.room[i] = r;
   }
   edgeCount(): number { return 8; }
   edgeTo(i: number, k: number): number {
@@ -85,6 +116,10 @@ class FineWindow implements SearchGraph {
     if (gx < 0 || gy < 0 || gx >= W || gy >= W) return i;
     const j = gy * W + gx;
     if (!this.admits(j)) return i;
+    // A node moved to an exact sample: the edge itself is checked exactly.
+    if (this.exact[j] || (this.seen[i] === this.run && this.exact[i])) {
+      return this.p.segmentClear(this.x(i), this.y(i), this.x(j), this.y(j), this.c) ? j : i;
+    }
     // A diagonal never cuts a corner: both cells beside it must admit too.
     if (k >= 4 && (!this.admits(gy * W + (i % W)) || !this.admits(((i / W) | 0) * W + gx))) return i;
     return j;
@@ -147,16 +182,40 @@ export class RoutePlanner {
     return f >= 0 ? Math.max(r, FINE_NAV_REACH - FINE_NAV_DIAG) : r;
   }
 
+  /** Is the fine cell bound at (x, y) too rough to tell whether a hull of
+   *  clearance `c` fits there? (The true room is at most the cell value plus
+   *  a diagonal: half for the stamping pad, half for the cell.) */
+  tight(x: number, y: number, c: number): boolean {
+    const f = this.fine!.clearanceAt(x, y);
+    return f >= 0 && f < FINE_NAV_REACH && f - FINE_NAV_DIAG < c && f + FINE_NAV_DIAG >= c;
+  }
+
+  /** The exact room at (x, y) (distance to the nearest rock outline), capped
+   *  a cell past `c`. Only where {@link tight} says the bound can't tell. */
+  exactRoom(x: number, y: number, c: number): number {
+    return this.fine!.exactAt(x, y, Math.min(FINE_NAV_REACH, c + FINE_NAV_CELL));
+  }
+
   /** Can a hull of clearance `c` fly straight from a to b? Room is a lower
    *  bound for the whole 64 u cell, so with room to spare the check leaps by
-   *  it, and when tight it visits every cell the segment crosses. */
+   *  it, and when tight it visits every cell the segment crosses. Where the
+   *  bound is too rough ({@link tight}) it traces the exact distance instead,
+   *  leaping by the exact slack (at least `EXACT_MIN_STEP`). */
   segmentClear(ax: number, ay: number, bx: number, by: number, c: number): boolean {
     const dx = bx - ax, dy = by - ay, len = Math.sqrt(dx * dx + dy * dy);
     if (len === 0) return this.roomAt(ax, ay) >= c;
     const ux = dx / len, uy = dy / len;
     let t = 0;
     for (;;) {
-      const x = ax + ux * t, y = ay + uy * t, r = this.roomAt(x, y);
+      const x = ax + ux * t, y = ay + uy * t;
+      let r = this.roomAt(x, y);
+      if (r < c && this.tight(x, y, c)) {
+        r = this.exactRoom(x, y, c);
+        if (r < c) return false;
+        if (t >= len) return true;
+        t = Math.min(len, t + Math.max(r - c, EXACT_MIN_STEP));
+        continue;
+      }
       if (r < c) return false;
       if (t >= len) return true;
       const leap = Math.min(r - c, FINE_NAV_REACH);
