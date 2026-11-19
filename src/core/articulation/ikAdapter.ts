@@ -97,6 +97,7 @@ export const twoBoneIkSolve: IkSolve = (req, out) => {
     const alongAlt = (scratchAlt.elbowX - baseX) * req.sideX + (scratchAlt.elbowY - baseY) * req.sideY;
     if (alongAlt > along) best = scratchAlt;
   }
+  req.fold = best === scratchOut ? req.bend : req.bend < 0 ? 1 : -1;
   out[0] = best.shoulder;
   out[1] = best.elbow - k;
   return best.reached;

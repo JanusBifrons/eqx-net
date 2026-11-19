@@ -157,6 +157,62 @@ function describeCranePath(bay: CraneBay, tipOnApron: boolean, extra: readonly {
       ), { numRuns: 400 });
     });
 
+    it('motion: from READY the clamp runs straight at the target and stops on it, one fold, no pop into hold', () => {
+      // Bug (Capital bay take): the jib unfolded first (linear) while the boom
+      // leant last (cubic 'in'), so the clamp swung out sideways and down
+      // away from the ship, then the boom whipped it across at full speed and
+      // the arm stopped dead in the hold pose (a one-frame snap). The retract
+      // did the same in reverse.
+      const READY_T = DOCK_CRANE_REACH_TICKS / 2;
+      const fold = (v: number): number => (Math.sin(v) >= 0 ? 1 : -1);
+      for (const target of NAMED) {
+        const label = `(${target.x}, ${target.y})`;
+        const reach: PlayingClip = { clipId: 'arm-reach', startTick: 0, target };
+        const at = (p: PlayingClip, t: number) => {
+          evaluateRig(rig, p, p.startTick + t, pose, twoBoneIkSolve);
+          return { boom: pose.value[BOOM]!, jib: pose.value[JIB]!, x: pose.x[CLAMP]!, y: pose.y[CLAMP]! };
+        };
+        const start = at(reach, READY_T);
+        const len = Math.hypot(target.x - start.x, target.y - start.y);
+        const ux = (target.x - start.x) / len, uy = (target.y - start.y) / len;
+        const f0 = fold(start.jib);
+        let prev = start;
+        for (let t = READY_T + 0.5; t <= DOCK_CRANE_REACH_TICKS; t += 0.5) {
+          const p = at(reach, t);
+          const dx = p.x - start.x, dy = p.y - start.y;
+          // On the line from the READY tip to the target, never off to the side.
+          expect(Math.abs(dx * uy - dy * ux), `${label} reach t=${t} off the line`).toBeLessThan(1);
+          // Never moving away from the target.
+          const d = Math.hypot(target.x - p.x, target.y - p.y);
+          expect(d, `${label} reach t=${t} backs off`).toBeLessThanOrEqual(Math.hypot(target.x - prev.x, target.y - prev.y) + 1e-6);
+          expect(fold(p.jib), `${label} reach t=${t} fold flipped`).toBe(f0);
+          prev = p;
+        }
+        // Comes to rest on the target: the last half tick barely moves.
+        const end = at(reach, DOCK_CRANE_REACH_TICKS);
+        const late = at(reach, DOCK_CRANE_REACH_TICKS - 0.5);
+        expect(Math.abs(end.boom - late.boom) + Math.abs(end.jib - late.jib), `${label} reach ends at speed`).toBeLessThan(1e-2);
+        // Reach end == hold == retract start (no pop), same fold.
+        const hold = at({ clipId: 'arm-hold', startTick: 100, target }, 0);
+        const ret = at({ clipId: 'arm-retract', startTick: 200, target }, 0);
+        for (const q of [hold, ret]) {
+          expect(Math.abs(q.boom - end.boom) + Math.abs(q.jib - end.jib), `${label} pose pops`).toBeLessThan(1e-9);
+        }
+        // Retract back to READY: straight away from the target, same fold, leaving at rest.
+        const retract: PlayingClip = { clipId: 'arm-retract', startTick: 0, target };
+        const r1 = at(retract, 0.5);
+        expect(Math.abs(r1.boom - end.boom) + Math.abs(r1.jib - end.jib), `${label} retract leaves at speed`).toBeLessThan(1e-2);
+        let prevD = 0;
+        for (let t = 0.5; t <= READY_T; t += 0.5) {
+          const p = at(retract, t);
+          const d = Math.hypot(target.x - p.x, target.y - p.y);
+          expect(d, `${label} retract t=${t} swings back`).toBeGreaterThanOrEqual(prevD - 1e-6);
+          expect(fold(p.jib), `${label} retract t=${t} fold flipped`).toBe(f0);
+          prevD = d;
+        }
+      }
+    });
+
     it.runIf(bay === FREIGHT_DOCK_BAY)('regression: aborting a reach to the far left corner (-445.1, 710) at tick 53 stays on the apron', () => {
       // fast-check counterexample [{"x":-445.1157531738281,"y":710},53]: the
       // retract from that mid-reach tip used to lift the clamp out to y 722.0,

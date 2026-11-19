@@ -292,20 +292,25 @@ function craneParts(bay: CraneBay): readonly PartDef[] {
 //  - a READY waypoint halfway: the boom first swings up from the roof to +y
 //    with the jib still folded, then reaches. A straight blend from the stow
 //    unfolded the jib while the boom swung, so the jib swept down through the
-//    dock house (the far-corner bug). From READY the jib unfolds linearly
-//    while the boom leans on a cubic 'in' (boom ∝ jib travel³), so the jib
-//    clears the edge before the boom leans over;
-//  - retract is the exact reverse (boom 'out', jib linear back to READY).
-//    Because boom ∝ jib³ is a power law, a retract started from ANY mid-reach
-//    pose (an aborted reach retracts from its current tip) retraces the same
-//    joint path back to READY. The old jib 'out' / boom 'inOut' pair was not
-//    scale-invariant: retracting from a mid-reach pose rotated the
-//    near-straight arm about the pivot first and lifted the clamp past the
-//    apron's far edge (pad corner (-445, 710) aborted at tick 53 → y 722.0).
+//    dock house (the far-corner bug). READY's jib is `foldMirror`: on a CW
+//    reach it is the mirrored fold, so the jib slews over the boom in this
+//    first half (ease 'out': it crosses the exact fold, tip on the pivot,
+//    between ticks, so an abort never catches the one pose with no unique IK);
+//  - READY -> target is a straight TIP path (`tipPath`, smoothstep): the
+//    clamp runs straight at the target on the target's fold and stops at rest
+//    on it, so the reach's end IS the hold pose with no pop. The old joint
+//    blend (jib linear, boom cubic 'in') swung the clamp out sideways and away
+//    from the ship first, then whipped it across at full speed into the hold
+//    (the Capital bay take);
+//  - retract is the exact reverse (straight back to READY, then the boom
+//    down). An aborted reach retracts from its current tip, which lies on the
+//    reach's line, so it retraces the same path.
 //  holds the zone property for reach, retract and abort.
 const CRANE_IK = {
   chain: ['boom', 'jib'], tipX: DOCK_CRANE_JIB, tipY: 0, bend: 1, swingSide: { x: 0, y: 1 },
 } as const;
+/** Reach / retract: the tip runs straight between READY and the target. */
+const CRANE_PATH_IK = { ...CRANE_IK, tipPath: true } as const;
 const READY = DOCK_CRANE_REACH_TICKS / 2;
 const BOOM_READY = 0;
 
@@ -316,10 +321,10 @@ export function craneRigDef(bay: CraneBay): RigDef {
     parts: craneParts(bay),
     clips: [
       {
-        id: 'arm-reach', ik: CRANE_IK,
+        id: 'arm-reach', ik: CRANE_PATH_IK,
         tracks: [
-          { part: 'boom', keys: [{ tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true, ease: 'in' }] },
-          { part: 'jib', keys: [{ tick: READY, value: JIB_FOLD }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true, ease: 'linear' }] },
+          { part: 'boom', keys: [{ tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true }] },
+          { part: 'jib', keys: [{ tick: READY, value: JIB_FOLD, foldMirror: true, ease: 'out' }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true }] },
         ],
       },
       {
@@ -330,10 +335,10 @@ export function craneRigDef(bay: CraneBay): RigDef {
         ],
       },
       {
-        id: 'arm-retract', ik: CRANE_IK,
+        id: 'arm-retract', ik: CRANE_PATH_IK,
         tracks: [
-          { part: 'boom', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: BOOM_READY, ease: 'out' }, { tick: DOCK_CRANE_REACH_TICKS, value: BOOM_REST }] },
-          { part: 'jib', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: JIB_FOLD, ease: 'linear' }, { tick: DOCK_CRANE_REACH_TICKS, value: JIB_FOLD }] },
+          { part: 'boom', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, value: BOOM_REST }] },
+          { part: 'jib', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: JIB_FOLD, foldMirror: true }, { tick: DOCK_CRANE_REACH_TICKS, value: JIB_FOLD, ease: 'in' }] },
         ],
       },
     ],

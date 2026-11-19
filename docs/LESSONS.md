@@ -3220,3 +3220,8 @@ cap table in `scripts/audit-god-files.mjs`, and flaky required tests (a wall-clo
 reset the clock. Merge only a stack's top (one round lands the whole chain), resolve cap conflicts by
 taking the lower cap, and fix a flake's cause the first time. Post-mortem:
 `docs/HANDOFF-2026-11-19-pr-backlog.md`.
+
+## 2026-11-18 — a joint blend between two IK poses is not a path
+
+- **Finding:** the crane reach blended its joints from a waypoint to the IK pose with different eases (jib linear, boom cubic in). Both ends were right, so pose tests passed, but the clamp swung out sideways away from the ship, then the boom whipped it into the hold pose at full speed: a one-frame snap on film.
+- **Rule:** an arm that must travel AT a target uses `tipPath` (straight eased tip line, fold fixed); test a clip by sampling it every half tick (on the line, never backing off, one fold, ending at rest), not just its end poses (`cranePath.test.ts`).
