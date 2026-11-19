@@ -11,6 +11,7 @@
  * cut rocks). `ROUTE` asks the route planner (slice 6) for a way across.
  */
 import type { ChunkOpts } from '../terrain/fieldLayout.js';
+import type { GridObstacle } from '../structures/Grid.js';
 import { CoarseFieldMap } from './coarseField.js';
 import { FineFieldLayer, NavDetailPool, type NavRockPose } from './fineField.js';
 import { RoutePlanner, NAV_ROUTE_MAX_POINTS, type NavRouteStatus } from './routePlanner.js';
@@ -24,12 +25,14 @@ export interface NavRemoveFieldCmd { type: 'REMOVE_FIELD'; worldId: number }
 export interface NavChunkCmd { type: 'CHUNK'; worldId: number; cx: number; cy: number; loaded: boolean }
 /** A rock was broken up (`gone`), or rests somewhere new (`pose`; null: back
  *  at its cut pose). */
+/** A static obstacle other than a field rock (structure box) was set; `shape` null: removed. */
+export interface NavObstacleCmd { type: 'OBSTACLE'; worldId: number; id: number; shape: GridObstacle | null }
 export interface NavRockCmd { type: 'ROCK'; worldId: number; key: number; gone?: true; pose?: { x: number; y: number; angle: number } | null }
 /** Plan a route from (sx, sy) to (tx, ty) for a hull of clearance `clearance`
  *  (from `shipTuning`, #18); `reqId` matches the reply. */
 /** `heading`/`turnRadius`: a capital's nose and turning radius (slice 11); NaN/0 plans without. */
 export interface NavRouteCmd { type: 'ROUTE'; worldId: number; reqId: number; sx: number; sy: number; tx: number; ty: number; clearance: number; heading: number; turnRadius: number }
-export type NavCommand = NavAddFieldCmd | NavRemoveFieldCmd | NavChunkCmd | NavRockCmd | NavRouteCmd;
+export type NavCommand = NavAddFieldCmd | NavRemoveFieldCmd | NavChunkCmd | NavRockCmd | NavObstacleCmd | NavRouteCmd;
 
 /** Reply to `ADD_FIELD`: the coarse layer is built. */
 export interface NavFieldBuiltMsg {
@@ -107,6 +110,9 @@ export class NavHost {
         else if (cmd.pose !== undefined) fine?.rockMoved(cmd.key, cmd.pose);
         return null;
       }
+      case 'OBSTACLE':
+        this.worlds.get(cmd.worldId)?.fine.obstacleSet(cmd.id, cmd.shape);
+        return null;
       case 'ROUTE': {
         const t0 = this.now(), w = this.worlds.get(cmd.worldId);
         let n = 0;

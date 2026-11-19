@@ -33,6 +33,11 @@ function busyChunk(): { cx: number; cy: number } {
   throw new Error('no busy chunk');
 }
 
+
+/** A structure-like solid box (convex CCW part) at (x, y). */
+function boxAt(x: number, y: number, hw: number, hh: number): GridObstacle {
+  return { x, y, radius: Math.hypot(hw, hh), angle: 0, parts: [[{ x: -hw, y: -hh }, { x: hw, y: -hh }, { x: hw, y: hh }, { x: -hw, y: hh }]] };
+}
 describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
   it('matches one big grid over the chunk and its neighbours, rocks over the border included', () => {
     const { cx, cy } = busyChunk();
@@ -153,6 +158,30 @@ describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
     expect(b.exactAt(...pt(1), 300)).toBe(one.exactAt(...pt(1), 300));
     a.dispose(); b.dispose();
     expect(pool.bytes).toBe(0);
+  });
+
+  it('a static obstacle (structure box) in open space: detail there though no field chunk is loaded; exact box distance; removal frees it', () => {
+    const f = new FineFieldLayer(opts);
+    const x = 100.5 * CHUNK_SIZE, y = 0.5 * CHUNK_SIZE; // far outside the field: no rocks, nothing loaded
+    expect(f.clearanceAt(x + 600, y)).toBe(-1);
+    f.obstacleSet(7, boxAt(x, y, 400, 100));
+    expect(f.extraCount).toBe(1);
+    expect(f.clearanceAt(x, y)).toBe(0);
+    expect(f.exactAt(x + 600, y, FINE_NAV_REACH)).toBeCloseTo(200, 6); // 600 - half width 400
+    expect(f.exactAt(x, y + 250, FINE_NAV_REACH)).toBeCloseTo(150, 6);
+    expect(f.clearanceAt(x + 1500, y)).toBe(FINE_NAV_REACH); // same chunk, beyond reach of the box
+    expect(f.clearanceAt(x + 3000, y)).toBe(-1); // the next chunk: the box does not reach it
+    const built = f.liveCount, cells = f.cellsRebuilt;
+    expect(built).toBe(1);
+    f.obstacleSet(7, boxAt(x + 1000, y, 400, 100)); // moved: the reached chunk is dropped, rebuilt on read
+    expect(f.liveCount).toBe(0);
+    expect(f.exactAt(x + 600, y, FINE_NAV_REACH)).toBeCloseTo(0, 6);
+    expect(f.cellsRebuilt - cells).toBe(FINE_NAV_SIDE * FINE_NAV_SIDE);
+    f.obstacleSet(7, null);
+    expect(f.extraCount).toBe(0);
+    expect(f.liveCount).toBe(0);
+    expect(f.clearanceAt(x, y)).toBe(-1); // nothing there to know about any more
+    expect(f.poolBytes).toBe(0);
   });
 
   it('unloading frees the grid and the cut rocks nothing needs; reuses grids (prints ms per chunk)', () => {

@@ -111,6 +111,12 @@ export class FineFieldLayer {
   private readonly moved = new Map<number, NavRockPose>();
   private readonly builder = new ClearanceGrid();
   private readonly obs: GridObstacle[] = [];
+  /** Static obstacles other than the field's rocks (structures; resting
+   *  wrecks later), by nav id: discrete add/remove only, never per tick. */
+  private readonly extras = new Map<number, GridObstacle>();
+  /** Per chunk: the ids of extras reaching its grid area. Such a chunk may
+   *  be built though the field streamer has not loaded it. */
+  private readonly extrasByChunk = new Map<number, Set<number>>();
 
   /** Exact point-to-rock distances worked out so far (the count gate's work counter). */
   exactQueries = 0;
@@ -132,6 +138,8 @@ export class FineFieldLayer {
   /** Chunks the room has loaded. */
   get loadedCount(): number { return this.loaded.size; }
   get cutCount(): number { return this.cut.size; }
+  /** Static obstacles other than rocks held now. */
+  get extraCount(): number { return this.extras.size; }
   /** Bytes the shared pool holds now (every field). */
   get poolBytes(): number { return this.pool.bytes; }
 
@@ -176,7 +184,7 @@ export class FineFieldLayer {
     const key = ck(cx, cy);
     let d = this.live.get(key);
     if (!d) {
-      if (!this.loaded.has(key)) return undefined;
+      if (!this.loaded.has(key) && !this.extrasByChunk.has(key)) return undefined;
       d = this.build(cx, cy);
     }
     d.used = ++this.pool.clock;
@@ -200,6 +208,43 @@ export class FineFieldLayer {
     const ox = r.x, oy = r.y;
     r.x = pose?.x ?? r.restX; r.y = pose?.y ?? r.restY; r.angle = pose?.angle ?? 0;
     if (!this.gone.has(key)) this.dirtyAround(ox, oy, r.radius, r.x, r.y);
+  }
+
+  /** A static obstacle that is not a field rock (a structure's solid box;
+   *  `o.parts` convex CCW, relative to (x, y), turned by `o.angle`) is now
+   *  at `o`; null: it is gone. Drops the built chunks its old and new
+   *  circles reach (rebuilt when next read). */
+  obstacleSet(id: number, o: GridObstacle | null): void {
+    const old = this.extras.get(id);
+    if (old) {
+      this.extras.delete(id);
+      this.markChunks(id, old, false);
+      this.dirtyAround(old.x, old.y, old.radius);
+    }
+    if (!o) return;
+    const own: GridObstacle = { x: o.x, y: o.y, radius: o.radius, angle: o.angle ?? 0, parts: o.parts };
+    this.extras.set(id, own);
+    this.markChunks(id, own, true);
+    this.dirtyAround(own.x, own.y, own.radius);
+  }
+
+  /** Adds or removes `id` on every chunk whose grid area `o`'s circle reaches. */
+  private markChunks(id: number, o: GridObstacle, on: boolean): void {
+    const m = o.radius + FINE_NAV_REACH;
+    const cx0 = Math.floor((o.x - m) / CHUNK_SIZE), cx1 = Math.floor((o.x + m) / CHUNK_SIZE);
+    const cy0 = Math.floor((o.y - m) / CHUNK_SIZE), cy1 = Math.floor((o.y + m) / CHUNK_SIZE);
+    for (let cx = cx0; cx <= cx1; cx++) for (let cy = cy0; cy <= cy1; cy++) {
+      if (!this.reaches(cx, cy, o.x, o.y, o.radius)) continue;
+      const key = ck(cx, cy);
+      let ids = this.extrasByChunk.get(key);
+      if (on) {
+        if (!ids) this.extrasByChunk.set(key, ids = new Set());
+        ids.add(id);
+      } else if (ids) {
+        ids.delete(id);
+        if (ids.size === 0) this.extrasByChunk.delete(key);
+      }
+    }
   }
 
   /** Clearance at world (x, y), capped at `FINE_NAV_REACH`; -1 when its
@@ -266,6 +311,8 @@ export class FineFieldLayer {
         if (!this.gone.has(r.key) && this.reaches(cx, cy, r.x, r.y, r.radius)) obs.push(r);
       }
     }
+    const extra = this.extrasByChunk.get(ck(cx, cy));
+    if (extra) for (const id of extra) obs.push(this.extras.get(id)!);
     const b = this.builder;
     b.build(cx * CHUNK_SIZE - FINE_NAV_REACH, cy * CHUNK_SIZE - FINE_NAV_REACH, FINE_NAV_SIDE, FINE_NAV_SIDE, FINE_NAV_CELL, obs, FINE_NAV_PAD);
     const index = indexRocks(cx, cy, obs);

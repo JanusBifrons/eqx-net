@@ -28,7 +28,7 @@ describe('localFirePredicts', () => {
   });
 
   it('the fire path asks it for the ghost and for the instant hit', () => {
-    const src = readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
+    const src = readFileSync('src/client/net/fireControl/LocalFireClient.ts', 'utf8');
     // The ghost decision and the predicted-hit call are both gated by it.
     expect(src).toMatch(/spawnGhost\s*=\s*[^;]*localFirePredicts\(/);
     expect(src).toMatch(/if \(localFirePredicts\(slotWeapon\)\) \{\s*predictShotOutcome\(/);
