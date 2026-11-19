@@ -31,7 +31,8 @@ export interface GridNode {
   x: number;
   y: number;
   radius: number;
-  /** Connector / Capital — at least one endpoint of every link must be a hub. */
+  /** Catalogue flag (Connector, Capital, shield emitters, big buildings). NOT
+   *  read by `canConnect`: every link needs a Connector end (`isConnector`). */
   isHub: boolean;
   /** The grid root + storage source (the Capital). Drives `powered`. */
   isCapital: boolean;
@@ -68,7 +69,10 @@ export interface GridNode {
 export type CanConnectReason =
   | 'self'
   | 'duplicate'
-  | 'hub-required'
+  /** Neither endpoint is a Connector (nor a shield emitter, whose own
+   *  `pylon-rule` governs it): every link goes through a Connector, big
+   *  buildings included. */
+  | 'connector-required'
   | 'capital-only'
   | 'a-full'
   | 'b-full'
@@ -250,7 +254,7 @@ function shieldPylonRejection(
 
 /**
  * The hub model — who may connect to whom. Ports eqx-peri's rules exactly:
- * hub-required, per-kind connection cap, edge-to-edge range, no self / no
+ * connector-required, per-kind connection cap, edge-to-edge range, no self / no
  * duplicate, line-of-sight.
  */
 export function canConnect(
@@ -261,10 +265,6 @@ export function canConnect(
   obstacles?: readonly GridObstacle[],
 ): CanConnectResult {
   if (a.id === b.id) return { ok: false, reason: 'self' };
-  // Hub rule: at least one endpoint must be a Connector or the Capital. A leaf
-  // can NEVER attach to another leaf.
-  if (!a.isHub && !b.isHub) return { ok: false, reason: 'hub-required' };
-
   // WS-5 (R2.10) — capital-only-connectors: the Capital may ONLY link to a
   // Connector. Anything else attaching to it (a leaf, OR a non-connector hub
   // such as a Shield Pylon) is rejected — route through a Connector relay. This
@@ -272,6 +272,15 @@ export function canConnect(
   // leaf at a full Capital reads `capital-only`, not `a-full`).
   if ((a.isCapital && !b.isConnector) || (b.isCapital && !a.isConnector)) {
     return { ok: false, reason: 'capital-only' };
+  }
+
+  // Connector rule: every link has a Connector at one end. Big buildings
+  // (shipyard, deep-core rig, ...) are NOT relays — they join the network
+  // through a Connector like any leaf. A shield emitter (pylon / gate / airlock)
+  // endpoint is exempt here: its `pylon-rule` below already allows only
+  // connector + emitter links, so emitter↔emitter fence links are unchanged.
+  if (!a.isConnector && !b.isConnector && a.isShieldPylon !== true && b.isShieldPylon !== true) {
+    return { ok: false, reason: 'connector-required' };
   }
 
   const aConns = adjacency.get(a.id) ?? [];

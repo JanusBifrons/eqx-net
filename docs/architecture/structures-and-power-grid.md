@@ -122,7 +122,9 @@ so it unit-tests like `TransitOrchestrator`):
 view, never the server `StructureRegistry`):
 - `Connection.ts` — an undirected intra-sector link (`getOtherNode`, flash
   window, `connectionLength`).
-- `Grid.ts` — `canConnect` (the hub model: hub-required / per-kind
+- `Grid.ts` — `canConnect` (the hub model: connector-required: every link has a Connector
+  end, except shield emitter↔emitter fence links, which the `pylon-rule` governs;
+  big buildings such as the shipyard are NOT relays / per-kind
   `maxConnections` cap / edge-to-edge `CONNECTION_MAX_RANGE` / no-self/dup /
   line-of-sight: the centre-to-centre line must miss every other structure's
   footprint box and every obstacle; an asteroid's box is the broad phase and,
@@ -711,4 +713,5 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 ## History
 
+- **Every link goes through a Connector.** `canConnect` used to need only ONE end to be `isHub`, so a solar could plug straight into a shipyard, deep-core rig, ore processing complex or assembly plant. Now one end must be a Connector (`connector-required`); shield emitter↔emitter links are unchanged. Generated bases already linked every leaf to a Connector (output unchanged).
 - **Structure rotation reaches the physics body.** `SwarmSpawner` forwards the spawn angle for structures (kind 2) as well as scrap, and primes the SAB angle. (It used to forward it for scrap only, so rotated structures collided and drew at 0° — locked by `structureRotation.test.ts`.)
