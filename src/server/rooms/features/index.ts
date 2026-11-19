@@ -9,6 +9,7 @@ import { registerBlueprintMessages, type BlueprintMessageHost } from './blueprin
 import { registerBountyMessages, type BountyMessageHost } from './bountyMessages.js';
 import { registerCargoMessages, type CargoMessageHost } from './cargoMessages.js';
 import { registerDevTestMessages, type DevTestMessageHost } from './devTestMessages.js';
+import { registerFleetMessages, type FleetMessageHost } from './fleetMessages.js';
 import { registerLabMessages, type LabMessageHost } from './labMessages.js';
 import { registerNavMessages, type NavMessageHost } from './navMessages.js';
 import type { RoomFeature } from './parsedMessage.js';
@@ -30,6 +31,7 @@ export type RoomFeaturesHost =
   & StructureSettingMessageHost
   & BountyMessageHost
   & ShipUpgradeMessageHost
+  & FleetMessageHost
   & NavMessageHost;
 
 const FEATURES: ReadonlyArray<(host: RoomFeaturesHost) => RoomFeature> = [
@@ -43,6 +45,7 @@ const FEATURES: ReadonlyArray<(host: RoomFeaturesHost) => RoomFeature> = [
   registerStructureSettingMessages,
   registerBountyMessages,
   registerShipUpgradeMessages,
+  registerFleetMessages,
   registerNavMessages,
 ];
 
