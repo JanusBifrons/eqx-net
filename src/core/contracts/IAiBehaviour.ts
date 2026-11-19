@@ -175,9 +175,11 @@ export interface IAiNavRoutes {
   /** `keep`: a moving goal (a squad follower's ship ahead, slice 10): fly the
    *  old route until the new plan answers, instead of dropping it.
    *  `heading` (ship angle) and `turnRadius` (slice 11, capitals): plan with
-   *  the way the ship points, no U-turn where it has no room to turn. */
+   *  the way the ship points, no U-turn where it has no room to turn.
+   *  `comfort` (`navComfort(kind)`): the room the route keeps where any
+   *  way fits it; it squeezes to `clearance` only where none does. */
   waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number, keep?: boolean,
-    heading?: number, turnRadius?: number): boolean;
+    heading?: number, turnRadius?: number, comfort?: number): boolean;
   readonly wpX: number;
   readonly wpY: number;
   readonly ahead: number;

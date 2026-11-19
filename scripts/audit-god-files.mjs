@@ -84,7 +84,7 @@ const ALLOWLIST = {
     reason: RATCHET_ONLY,
   },
   'src/client/state/storeTypes.ts': { cap: 686, target: 600, reason: RATCHET_ONLY },
-  'src/core/ai/HostileDroneBehaviour.ts': { cap: 928, target: 600, reason: RATCHET_ONLY },
+  'src/core/ai/HostileDroneBehaviour.ts': { cap: 910, target: 600, reason: RATCHET_ONLY },
   'src/core/ai/tactics/manoeuvres.ts': { cap: 679, target: 600, reason: RATCHET_ONLY },
   'src/core/bases/growBase.ts': { cap: 655, target: 600, reason: RATCHET_ONLY },
   'src/core/destruction/fractureHull.ts': { cap: 1218, target: 600, reason: RATCHET_ONLY },
@@ -96,7 +96,7 @@ const ALLOWLIST = {
   'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/PlayerFireResolver.ts': { cap: 766, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/SectorRoom.ts': {
-    cap: 7854,
+    cap: 7165,
     target: 450,
     reason:
       'v3 plan commits 20-23 split this into 17 collaborators (PhysicsWorkerProxy, ' +

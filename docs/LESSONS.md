@@ -3226,3 +3226,18 @@ taking the lower cap, and fix a flake's cause the first time. Post-mortem:
 - **Finding:** the crane reach blended its joints from a waypoint to the IK pose with different eases (jib linear, boom cubic in). Both ends were right, so pose tests passed, but the clamp swung out sideways away from the ship, then the boom whipped it into the hold pose at full speed: a one-frame snap on film.
 - **Rule:** an arm that must travel AT a target uses `tipPath` (straight eased tip line, fold fixed); test a clip by sampling it every half tick (on the line, never backing off, one fold, ending at rest), not just its end poses (`cranePath.test.ts`).
 - **Follow-up (boom ease):** an evenly eased TIP is not an evenly eased ARM. Near the chain root (a folded arm) a little tip travel turns the joints a lot, so the boom whipped where the line left READY. `tipPath` now eases joint travel along the line (`retimeTipPath`); test joint speed per half tick against the travel's even pace, not only the tip.
+
+## 2026-11-19 — a death-loss coin flip makes "the kill drops a pod" a flake
+
+Every ship death (NPC too) keeps each good in its hold only on a coin flip, salted at random per room
+(`LootSubsystem.deathSalt`). `walletKillBounty` and `tradeDeal` asserted a pod with known contents after
+a kill and failed about 40% and 50% of runs, on main as much as on any branch. The integration harness now
+defaults `keepAllOnDeath` ON; a test of the loss itself passes `false` and pins the roll.
+
+## 2026-11-19 — brake for a corner from the angle between legs, not the bearing to it
+
+The follower braked for a route corner by how far the next leg runs the same way as the ship's bearing
+to the corner. Far off, that bearing points almost straight down the route, so a sharp street turn looked
+shallow: the brake distance jumped to 450-700 u and a fighter entered a 75° turn at ~260 u/s, running
+~32 u off its line into rock. Use the angle between the incoming and outgoing legs, and cap the carried
+speed by how far the ship may swing sideways (`NAV_TURN_SWING`).

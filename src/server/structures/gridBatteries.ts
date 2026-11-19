@@ -5,30 +5,40 @@
  * Allocation-free.
  */
 import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
+import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { StructureRegistry } from './StructureRegistry.js';
 
 type Registry = Pick<StructureRegistry, 'get'>;
 
-/** Charge a component's not-yet-full batteries with `surplus`, split evenly.
+/** Stored-power capacity of a structure kind — > 0 for every power store
+ *  (Battery, Battery Bank), 0 otherwise. The battery functions key on this,
+ *  never on a kind id, so each store charges up to its OWN capacity. */
+export function powerStoreCap(kind: string): number {
+  return getStructureKind(kind).powerStorageCapacity ?? 0;
+}
+
+/** Charge a component's not-yet-full power stores (every kind with a
+ *  `powerStorageCapacity`, each capped at its own) with `surplus`, split evenly.
  *  Returns the surplus the batteries could not take (v4 T1: it charges
  *  teleporter capacitors). */
 export function chargeComponentBatteries(
   registry: Registry,
   members: readonly string[],
-  capacity: number,
   surplus: number,
 ): number {
   let count = 0;
   for (const id of members) {
     const rec = registry.get(id);
-    if (rec && rec.kind === 'battery' && rec.storedPower < capacity) count++;
+    if (rec && rec.storedPower < powerStoreCap(rec.kind)) count++;
   }
   if (count === 0) return surplus;
   const share = surplus / count;
   let used = 0;
   for (const id of members) {
     const rec = registry.get(id);
-    if (!rec || rec.kind !== 'battery' || rec.storedPower >= capacity) continue;
+    if (!rec) continue;
+    const capacity = powerStoreCap(rec.kind);
+    if (rec.storedPower >= capacity) continue;
     const before = rec.storedPower;
     rec.storedPower = chargeStep(rec.storedPower, capacity, share).stored;
     used += rec.storedPower - before;
@@ -48,7 +58,7 @@ export function dischargeComponentBatteries(
   let total = 0;
   for (const id of members) {
     const rec = registry.get(id);
-    if (rec && rec.kind === 'battery') total += rec.storedPower;
+    if (rec && powerStoreCap(rec.kind) > 0) total += rec.storedPower;
   }
   if (total < deficit) return; // can't sustain the load → brownout, hold charge
   for (const id of members) rescued.add(id);
@@ -56,7 +66,7 @@ export function dischargeComponentBatteries(
   for (const id of members) {
     if (remaining <= 0) break;
     const rec = registry.get(id);
-    if (!rec || rec.kind !== 'battery' || rec.storedPower <= 0) continue;
+    if (!rec || rec.storedPower <= 0 || powerStoreCap(rec.kind) <= 0) continue;
     const r = dischargeStep(rec.storedPower, remaining);
     rec.storedPower = r.stored;
     remaining -= r.supplied;
@@ -68,7 +78,7 @@ export function batteryChargeOf(registry: Registry, members: Iterable<string>): 
   let total = 0;
   for (const mid of members) {
     const rec = registry.get(mid);
-    if (rec && rec.kind === 'battery') total += rec.storedPower;
+    if (rec && powerStoreCap(rec.kind) > 0) total += rec.storedPower;
   }
   return total;
 }
@@ -80,7 +90,7 @@ export function drainBatteries(registry: Registry, members: Iterable<string>, am
   for (const mid of members) {
     if (remaining <= 0) break;
     const rec = registry.get(mid);
-    if (!rec || rec.kind !== 'battery' || rec.storedPower <= 0) continue;
+    if (!rec || rec.storedPower <= 0 || powerStoreCap(rec.kind) <= 0) continue;
     const r = drainPower(rec.storedPower, remaining);
     rec.storedPower = r.stored;
     remaining -= r.drained;

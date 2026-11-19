@@ -217,7 +217,9 @@ export async function bootSectorTestServer(opts: {
   teleportFullCharge?: boolean;
   /** Drones never attack (the room option). */
   peacefulDrones?: boolean;
-  /** Deaths keep every stack (no coin flip): the room option. */
+  /** Deaths keep every stack (no coin flip): the room option. Default ON in
+   *  the harness (the flip is salted at random per room); pass `false` to
+   *  test the loss itself. */
   keepAllOnDeath?: boolean;
   /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
   capitalWrecks?: boolean;
@@ -316,7 +318,7 @@ export async function bootSectorTestServer(opts: {
     teleportShipBoards: opts.teleportShipBoards,
     teleportFullCharge: opts.teleportFullCharge,
     peacefulDrones: opts.peacefulDrones,
-    keepAllOnDeath: opts.keepAllOnDeath,
+    keepAllOnDeath: opts.keepAllOnDeath ?? true,
     capitalWrecks: opts.capitalWrecks,
     subcapWrecks: opts.subcapWrecks,
     battleWreckStreaming: opts.battleWreckStreaming,
@@ -527,8 +529,8 @@ export async function bootLivingWorldTestServer(opts: {
   teleportCycleScale?: number;
   /** testMode player warp spool in every sector (ms; production 5 min). */
   transitSpoolMsOverride?: number;
-  /** Deaths keep every stack in every sector (no death coin flip), for tests
-   *  that pin what a kill drops. */
+  /** Deaths keep every stack in every sector (no death coin flip). Default ON
+   *  (the flip is salted at random per room); pass `false` to test the loss. */
   keepAllOnDeath?: boolean;
   /** v4 A — seed the alien gates in every sector (off by default). */
   alienGates?: boolean;
@@ -573,7 +575,7 @@ export async function bootLivingWorldTestServer(opts: {
       ...(opts.transitSpoolMsOverride !== undefined ? { transitSpoolMsOverride: opts.transitSpoolMsOverride } : {}),
       ...(opts.alienGates === true ? { alienGates: true } : {}),
       ...(opts.galaxyBases === true ? { galaxyBases: true } : {}),
-      ...(opts.keepAllOnDeath === true ? { keepAllOnDeath: true } : {}),
+      ...(opts.keepAllOnDeath !== false ? { keepAllOnDeath: true } : {}),
       // Seed a base ⇒ also clear the ambient asteroid field: placement is
       // obstacle-aware, so a stray rock would block a structure (e.g. the solar)
       // and leave the base un-ready. Mirrors structureScenario.test's

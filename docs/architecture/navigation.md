@@ -66,7 +66,7 @@ random layouts, so a lane between two walls reads exactly its half-width at the 
   (clamped to the edge).
 - Allocation-free once warm; arrays grow only for a bigger grid.
 - Cost (print-only, desktop): one fine chunk (4 096 u at 64 u cells, 64×64) with 120 rocks builds in
-  ~0.14 ms. Phone timing comes with the perf scene (slice 16).
+  ~0.14 ms. At scale: see "Cost at scale" below.
 
 ## The coarse layer (`core/nav/coarseField.ts`)
 `CoarseFieldMap` covers a whole cut field (plus room to go round it) with 2 048 u cells, from the
@@ -186,7 +186,7 @@ chunk is loaded and rock is within its reach, else the coarse layer.
   does (battleship across the field, nose on: ~12 900 expansions). The straight answer and the
   string-pull obey the same 45° rule where there is no room to turn. A capital (clearance past the fine
   layer's reach) plans on the coarse layer alone. Fighters send neither and see the plain graph.
-- Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius}` → `ROUTE {reqId, status,
+- Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius, comfort}` → `ROUTE {reqId, status,
   points, expanded, ms}` (points transferred, not copied). `NavField.route(...)` returns a Promise;
   `NavWorker.inFlight` counts open requests; a detached field answers `none`; a worker exit rejects
   every open request.
@@ -220,7 +220,24 @@ one it flies straight as before.
   first, the plan's start, which `NavRoutes` stores with the route). The planner's turns sit at the
   hull's clearance from rock; leaving one from a fighter's 80 u arrive flew the chord across a street
   corner at 0 u from rock (clearance 30 u). The goal still arrives by distance alone.
-- Clearance: `shipTuning(kind).navClearance` = radius × 1.25.
+- Legs are flown, not just their corners (`NavRoutes.waypoint`): the brain aims at the point one `arrive`
+  ahead of the ship's place on its leg (`wpX`/`wpY`, never past the corner `turnX`/`turnY`), so a ship
+  swung wide by a turn comes back onto the line instead of cutting across to the next corner. Braking
+  (`ahead`) still counts from the corner.
+- Corners are braked for (`NavRoutes.waypoint`): `ahead` adds the next leg only as far as it runs the
+  same way as the incoming leg (the angle between the legs, not the ship's bearing to the corner, which
+  swings wide as it closes and let a fighter enter a 75° street turn at ~260 u/s and run ~32 u off the
+  line), capped at `NAV_TURN_SWING` × clearance / sin²θ: the speed whose sideways part dies within that
+  swing. `NAV_TURN_SWING` = 0.2 (6 u for a fighter): the street flight hit rock 0/4 runs, where 24 u
+  still brushed it 2/4 (2026-11-19).
+- Clearance: `shipTuning(kind).navClearance` = radius × 1.25, the least room a route may have (owner:
+  stays 30 u for a fighter).
+- Comfort (owner 2026-11-19, "margin where room"): `navComfort(kind)` (`shipScale/navTuning.ts`) = max(clearance,
+  radius + 1.5 × shield pad), 54 u for a fighter (its shield ball is 44 u; a battleship's comfort is its
+  clearance). `RoutePlanner.plan` plans at comfort first and keeps that route when one fits; only when
+  none does does it plan again at clearance, and its string-pull still keeps comfort on every shortcut
+  where the unpulled path has it. So a route squeezes to 30 u only through a gap that is otherwise
+  impassable, and open routes are unchanged.
 - `CutFieldSubsystem.rockContacts` counts ship-vs-field-rock contacts (the test gate).
 - Lock: `tests/integration/sectorRoom/navFollowRoute.test.ts`, a fighter told to Move across a rock arrives
   with no rock contact; the same order with routes off hits it; and on the field's street crossing (the
@@ -239,6 +256,25 @@ one it flies straight as before.
 - Netgate scenario `autopilot` (gated, slice 15): a fighter at the field's rim flies a server route round
   a rock on the helm alone; the local prediction is held to the baseline's health. Triggered by
   `core/nav`, `server/nav`, `core/helm`, `client/helm` and the route wire (`tests/netgate/scenarios.ts`).
+
+## Cost at scale (perf scene `galaxy-field-nav`)
+Eight owned fighters given a fleet MOVE ~10 000 u across the sol-prime belt, A/B against the same scene
+with the field off (`--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`), 2026-11-19 at c3d0b204
+(ledgers `perf/ledger/2026-11-19T15-26-10-741Z-*-phone-proxy.json` and `...T15-38-38-977Z-*-desktop.json`):
+
+| | phone-proxy (cpu-rate 2) | desktop |
+|---|---|---|
+| server tick p95 | 0.26 → 0.44 ms (GREEN) | 0.28 → 0.33 ms (GREEN) |
+| server tick p99 | 0.36 → 0.55 ms (GREEN) | 0.38 → 0.45 ms (GREEN) |
+| client frame p95 / hitches | 16.7 → 16.7 ms, 0 → 0 (GREEN) | 16.7 → 16.7 ms, 0 → 0 (GREEN) |
+| render p95 | 0.6 → 0.75 ms (GREEN) | 0.4 → 0.4 ms (GREEN) |
+| physics worker tick p95 | 0.16 → 0.75 ms | 0.17 → 0.72 ms |
+| nav: routes / expansions / messages / in flight max | 8 / 40 505 / 24 / 8 | 8 / 40 505 / 19 / 8 |
+
+The verdict's one RED is `displayObjects` (999 → 1166): the head draws the field and the base does
+not, so it is the scene's rock, not navigation. The worker tick rise is the field's rock bodies. Eight
+routes cost ~5 000 cell expansions each on the nav worker, off the main thread; the main-thread tick
+stays under 0.6 ms p99.
 
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
@@ -279,3 +315,8 @@ one it flies straight as before.
   2026-11-18 fine rebuild slice C1: structures as static obstacles (`OBSTACLE`, `obstacleSet`).
   2026-11-18 fine rebuild slice C2: resting wrecks / scrap / plain asteroids (`RestingObstacles`).
   2026-11-18 slice 16: perf scene `galaxy-field-nav` and the scene work view's nav counters (`NavField.stats`).
+  2026-11-19: the slice 16 A/B readings ("Cost at scale"); `perf:scenes` prints the nav counters.
+  2026-11-19: the follower aims along the leg, not at its corner (an overshoot after a street turn cut
+  toward rock). Then: corner braking from the angle between legs (`NAV_TURN_SWING`), and the comfort
+  margin (two-pass plan; clearance stays 30 u). The streets flight: ~27 rock contacts on a branch with
+  lingering hulls streaming chunks, 0 in 4/4 runs after.

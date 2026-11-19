@@ -40,8 +40,9 @@ export interface SectorObstacleSources {
   swarm: { all(): Iterable<SwarmEntityRecord> };
   sab(): Float32Array;
   /** Field rocks reaching into `box` that have no body now (cut field only);
-   *  with `wrecks`, also the wreck field's unloaded hull pieces. */
-  dormantRocks?(box: ObstacleBox, out: GridObstacle[], wrecks?: boolean): void;
+   *  with `wrecks`, also the wreck field's unloaded hull pieces, or with
+   *  `'footprints'` each unloaded hull as one footprint circle. */
+  dormantRocks?(box: ObstacleBox, out: GridObstacle[], wrecks?: boolean | 'footprints'): void;
   /** Every pilot's active ship and parked hull. */
   forEachHull(sink: HullSink): void;
   /** Every wall that blocks right now. */
@@ -135,8 +136,10 @@ export class SectorObstacles implements HullSink, WallSink {
   }
 
   /** Everything a landing ship must stay clear of within `near` of (x, y):
-   *  structure boxes, every swarm body (rocks, drones, scrap, wrecks, pods)
-   *  and field rocks with no body, other pilots' ships and parked hulls (the
+   *  structure boxes, every swarm body (rocks, drones, scrap, wrecks, pods),
+   *  field rocks with no body and wreck-field hulls not loaded (each its
+   *  footprint, wreck fields 14: a warp drop is computed while the ship is
+   *  still far off, before the hulls round the drop load), other pilots' ships and parked hulls (the
    *  pilot's own are skipped; with `onlySkipShipId` only that ship is), and
    *  blocking walls. Fills `boxes`, `circles`, `walls`. */
   landing(playerId: string, x: number, y: number, near: number, onlySkipShipId?: string): void {
@@ -153,7 +156,7 @@ export class SectorObstacles implements HullSink, WallSink {
       const box = this.nearBox, d = this.dormant;
       box.x0 = x - near; box.y0 = y - near; box.x1 = x + near; box.y1 = y + near;
       d.length = 0;
-      this.src.dormantRocks(box, d);
+      this.src.dormantRocks(box, d, 'footprints');
       for (const o of d) n = this.pushCircle(n, o.x, o.y, o.radius);
     }
     circles.length = n;

@@ -2,64 +2,72 @@
 // (wreck fields slice 9, owner Q4): AGED (what ships: field hulls load cool, no
 // glowing cut edges) vs FRESH (the dev room `wreck-field-test-fresh`: the same
 // hulls load with a death tick, so they draw as if just killed and then cool on
-// the normal schedule). Per look, each shot centred on the wreck it names:
-//   <look>-capital.png — the capital hull nearest the field centre, its broken
-//                        sections, at the zoom-out floor (the only gameplay
-//                        zoom a ~4 000 u long cruiser mostly fits at);
-//   <look>-subcap.png  — the biggest sub-capital hull, up close;
-//   <look>-group.png   — the densest group of small hulls that fits one screen
-//                        at the zoom-out floor (logs if it has fewer than 3);
-//   <look>-wide.png    — the hull nearest the field centre at the normal play zoom (no ?zoom);
-//   <look>-far.png     — the same hull at the gameplay zoom-out floor.
-//   fresh-capital-first-sight.png — the fresh capital before its art settles (hot edges).
-// Shots wait for the ship art to settle (`__eqxArtStats`), as `showcase/shots/capitals.ts` does.
+// the normal schedule). Per look:
+//   <look>-capital.png — a capital hull's pieces up close (2-3 big sections);
+//   <look>-cluster.png — a sub-capital / fighter cluster;
+//   <look>-wide.png    — the field at the normal play zoom (no ?zoom);
+//   <look>-far.png     — the gameplay zoom-out floor, centred on the core;
+//   <look>-dense.png   — the normal play zoom on the densest phone view
+//                        (wreck fields 11: the "tighter AND more wrecks" check).
+// Wreck fields 11: aged only (owner chose the cold look); the fresh arm is
+// still in LOOKS, commented out.
 // The real game as a phone player sees it: Pixel 7 held sideways (touch,
 // isMobile), the player's look (PLAYER_LOOK) and the full HUD (FILM_HUD). Each
 // shot joins its own room (fresh testId), so the fresh look is shot straight
-// after the hulls load (the glow is a clock from the death tick); the log
-// gives each fresh shot's wreck age so a cooled glow is reported, not hidden.
+// after the hulls load (the glow is a clock from the death tick).
 //
-// Wreck fields 9 fix (first run, 2026-11-18): the capital shot parked the ship
-// a footprint (1.5 hull radii, ~3 000 u) off the cruiser's centre while the
-// floor zoom shows only ~1 370 u above and below the ship, so the hull sat off
-// screen; and its "wrecks on screen" was the mirror's whole wreck list. Now a
-// probe join reads the live pieces, parks the ship beside the hull's long side
-// and every shot counts only the pieces inside the viewport.
-//
-//   node scripts/showcase/wreck-field-stills.mjs [outDir]
+//   node scripts/showcase/wreck-field-stills.mjs [outDir] [--sector <key> ...]
+// --sector (wreck fields 11): shoot a real galaxy sector's field instead of the
+// dev room (which sits in a dense rock field), joined as a player would
+// (`?room=galaxy-<key>`: the room `resolveSectorConfig` gives its
+// `wreckField`), laid out here the same way. Per sector:
+//   <key>-arrival.png — the normal play zoom on the arrival spot where a warp
+//                       from the home pocket drops you (warpDropPoint: an
+//                       arrival spot on the battle pocket's rim, wrecks seated
+//                       round it; wreck fields 14);
+//   <key>-dense.png   — the normal play zoom on the densest phone view;
+//   <key>-far.png     — the gameplay zoom-out floor, centred on the core
+//                       (the battle pocket's open centre: no hull within
+//                       ~1.8 km; wreck fields 13);
+//   <key>-dense-far.png — the zoom-out floor on the densest view (the far-zoom
+//                       pieces and specks, wreckArt.ts setFarZoom);
+//   <key>-command.png — the densest view in Command view (a plain galaxy
+//                       join, startMode.ts): the parked hull streams the field;
+//   <key>-capital.png — the field's smallest capital, whole: the ship parks
+//                       beside it on the screen's long axis (wreck fields 13;
+//                       was below it at the 0.15 zoom clamp: a sliver showed).
+// The server log's 'wreck field laid out' lines are echoed at the end, so the
+// joined room's real hull count can be checked against the planned one.
 // Boots its own capture server + Vite (showcase/servers.ts) on the
 // EQX_SHOWCASE_PORT_OFFSET lane and stops them at the end.
 import { chromium, devices } from '@playwright/test';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { tsImport } from 'tsx/esm/api';
 
-const out = path.resolve(process.argv[2] ?? 'diag/showcase/wreck-fields');
+const args = process.argv.slice(2);
+const sectors = [];
+const pos = [];
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--sector') sectors.push(args[++i]);
+  else pos.push(args[i]);
+}
+const out = path.resolve(pos[0] ?? 'diag/showcase/wreck-fields');
 mkdirSync(out, { recursive: true });
 const here = import.meta.url;
 const { CaptureServers, defaultPorts } = await tsImport('../../showcase/servers.ts', here);
 const { PLAYER_LOOK, FILM_HUD } = await tsImport('../../showcase/recorder.ts', here);
-const { wreckField, wreckFieldKinds, rockFieldBlocker } = await tsImport('../../src/core/terrain/wreckFieldLayout.ts', here);
+const { wreckField, wreckFieldKinds, rockFieldBlocker, WRECK_FIELD } = await tsImport('../../src/core/terrain/wreckFieldLayout.ts', here);
 const { cutFieldOpts } = await tsImport('../../src/core/terrain/chunkStreamer.ts', here);
-const { GAMEPLAY_MIN_ZOOM, GAMEPLAY_MAX_ZOOM, startZoomForScale } = await tsImport('../../src/shared-types/shipScale/tuning.ts', here);
+const { sectorWreckField, sectorCutField, sectorSites, warpDropPoint } = await tsImport('../../src/core/galaxy/sectorSites.ts', here);
+const { SOLAR_SECTORS } = await tsImport('../../src/shared-types/sectorBounds.ts', here);
+const { GAMEPLAY_MIN_ZOOM } = await tsImport('../../src/shared-types/shipScale/tuning.ts', here);
+const FLOOR = GAMEPLAY_MIN_ZOOM.toFixed(3); // every kind's zoom-out floor is at or below it
 
-// The dev rooms' field (src/server/index.ts `wreck-field-test`), laid out as the
-// room does (SectorRoom.buildWreckFieldSource): around the 'look' cut field's rocks.
-const FIELD = wreckField({
-  seed: 'look', x: 60_000, y: 0, sides: ['ashen-league', 'vel-concord'],
-  blocked: rockFieldBlocker(cutFieldOpts('look', undefined)),
-});
 const capitalKinds = new Set(wreckFieldKinds(true, true).capitals);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const centre = { x: FIELD.x, y: FIELD.y };
-const byCentre = (a, b) => dist(a, centre) - dist(b, centre);
-const capital = FIELD.hulls.filter((h) => capitalKinds.has(h.kindId)).sort(byCentre)[0];
-const small = FIELD.hulls.filter((h) => !capitalKinds.has(h.kindId));
-if (!capital || small.length === 0) throw new Error(`field has no capital/small hull (hulls ${FIELD.hulls.length})`);
-const subcap = [...small].sort((a, b) => b.footprint - a.footprint || byCentre(a, b))[0];
-const nearest = [...FIELD.hulls].sort(byCentre)[0];
 
 // Pixel 7 held sideways (phones play landscape only).
 const P7 = devices['Pixel 7'];
@@ -70,175 +78,190 @@ const PHONE = {
   isMobile: true,
   hasTouch: true,
 };
-const VIEW_W = PHONE.viewport.width, VIEW_H = PHONE.viewport.height;
-const FLOOR = GAMEPLAY_MIN_ZOOM; // every kind's zoom-out floor is at or below it
-const DEFAULT_ZOOM = startZoomForScale(0.5); // PixiRenderer DEFAULT_GAMEPLAY_ZOOM at the ship scale
-const clampZoom = (z) => Math.max(FLOOR, Math.min(GAMEPLAY_MAX_ZOOM, z));
+const VIEW_H = PHONE.viewport.height;
+const VIEW_W = PHONE.viewport.width;
+// Ship parked just off the hull (outside its footprint), zoomed so the hull fits the short side.
+const fit = (r) => Math.max(GAMEPLAY_MIN_ZOOM, Math.min(1, VIEW_H / (2 * r + 500))).toFixed(3);
 
-// The densest group of small hulls that fits one screen at the floor zoom (20 % margin).
-const winW = 0.8 * VIEW_W / FLOOR, winH = 0.8 * VIEW_H / FLOOR;
-let group = [small[0]];
-for (const a of small) for (const b of small) {
-  const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
-  const g = small.filter((o) => Math.abs(o.x - cx) < winW / 2 && Math.abs(o.y - cy) < winH / 2);
-  if (g.length > group.length) group = g;
+/** The capital shot: the ship parks beside the hull (its body radius plus a
+ *  margin off its centre, on the side clear of every other footprint), zoomed
+ *  so the whole hull fits the long side of the sideways screen. */
+function capitalShot(FIELD, capital) {
+  const body = capital.footprint / WRECK_FIELD.capitalFootprintMul, off = body + 250;
+  const clear = (p) => !FIELD.hulls.some((h) => h !== capital && dist(h, p) < h.footprint + 80);
+  const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({ x: capital.x + dx * off, y: capital.y + dy * off }));
+  const spot = sides.find(clear) ?? sides[0];
+  const zoom = Math.max(GAMEPLAY_MIN_ZOOM, Math.min(1, VIEW_W / (2 * (off + body + 150)))).toFixed(3);
+  return { spawnX: spot.x, spawnY: spot.y, zoom };
 }
-const gx0 = Math.min(...group.map((h) => h.x)), gx1 = Math.max(...group.map((h) => h.x));
-const gy0 = Math.min(...group.map((h) => h.y)), gy1 = Math.max(...group.map((h) => h.y));
-const groupMid = { x: (gx0 + gx1) / 2, y: (gy0 + gy1) / 2 };
-// The group inside the middle 60 % of the view (clear of the corner HUD).
-const groupZoom = clampZoom(Math.min(0.6 * VIEW_W / (gx1 - gx0 + 1), 0.6 * VIEW_H / (gy1 - gy0 + 1)));
 
-console.log(`field: ${FIELD.hulls.length} hulls (${small.length} sub-cap/fighter)`);
-console.log(`  capital ${capital.kindId} at (${capital.x | 0}, ${capital.y | 0}) footprint ${capital.footprint | 0}`);
-console.log(`  biggest sub-cap ${subcap.kindId} at (${subcap.x | 0}, ${subcap.y | 0})`);
-console.log(`  nearest the centre: ${nearest.kindId} at (${nearest.x | 0}, ${nearest.y | 0})`);
-console.log(group.length >= 3
-  ? `  densest group: ${group.length} hulls in one floor-zoom screen`
-  : `  NO group of 3+ sub-cap/fighter hulls fits one screen even at the zoom-out floor (${(winW | 0)} x ${(winH | 0)} u); densest is ${group.length}: ${group.map((h) => `${h.kindId} (${h.x | 0}, ${h.y | 0})`).join(', ')}`);
+/** A field's targets: the smallest capital (nearest the core first; it frames
+ *  whole), the busiest cluster and
+ *  the densest normal-zoom view (the ship parks at its nearest clear point). */
+function planShots(FIELD, label) {
+  const centre = { x: FIELD.x, y: FIELD.y };
+  const capital = FIELD.hulls.filter((h) => capitalKinds.has(h.kindId)).sort((a, b) => a.footprint - b.footprint || dist(a, centre) - dist(b, centre))[0];
+  const small = FIELD.hulls.filter((h) => !capitalKinds.has(h.kindId));
+  let cluster = small[0];
+  let best = -1;
+  for (const h of small) {
+    const n = small.filter((o) => dist(o, h) < 900).length;
+    if (n > best) { best = n; cluster = h; }
+  }
+  // The densest sideways-phone view at the normal zoom (~2,600 x 1,160 u): most
+  // pieces' hulls touching it.
+  let dense = { x: FIELD.x, y: FIELD.y, n: -1 };
+  for (let dx = -9000; dx <= 9000; dx += 200) for (let dy = -9000; dy <= 9000; dy += 200) {
+    const vx = FIELD.x + dx, vy = FIELD.y + dy;
+    let n = 0;
+    for (const h of FIELD.hulls) {
+      const ex = Math.max(0, Math.abs(h.x - vx) - 1300), ey = Math.max(0, Math.abs(h.y - vy) - 580);
+      if (ex * ex + ey * ey < h.footprint * h.footprint) n++;
+    }
+    if (n > dense.n) dense = { x: vx, y: vy, n };
+  }
+  const clearOf = (p) => !FIELD.hulls.some((h) => dist(h, p) < h.footprint + 80);
+  let denseSpawn = { x: dense.x, y: dense.y };
+  for (let k = 0; k < 400 && !clearOf(denseSpawn); k++) denseSpawn = { x: dense.x + ((k % 20) - 10) * 60, y: dense.y + (Math.floor(k / 20) - 10) * 60 };
+  if (!capital && !cluster) throw new Error(`${label}: field has no hulls (${FIELD.hulls.length})`);
+  if (!capital) console.log(`${label}: field has no capital: the capital shot is skipped`);
+  const kinds = {};
+  for (const h of FIELD.hulls) kinds[h.kindId] = (kinds[h.kindId] ?? 0) + 1;
+  console.log(`${label}: densest view: ${dense.n} hulls round (${dense.x | 0}, ${dense.y | 0}), ship at (${denseSpawn.x | 0}, ${denseSpawn.y | 0})`);
+  console.log(`${label}: field at (${FIELD.x | 0}, ${FIELD.y | 0}): ${FIELD.hulls.length} hulls ${JSON.stringify(kinds)}, ${FIELD.dropped} dropped; capital ${capital?.kindId} at (${capital?.x | 0}, ${capital?.y | 0}) r ${capital?.footprint | 0}; cluster of ${best} round ${cluster?.kindId}`);
+  return { capital, cluster, denseSpawn };
+}
 
-const LOOKS = [
-  { look: 'aged', room: 'wreck-field-test' },
-  { look: 'fresh', room: 'wreck-field-test-fresh' },
-];
+/** The shot list: the dev room's looks, or each --sector's real field. */
+const RUNS = [];
+if (sectors.length === 0) {
+  // The dev rooms' field (src/server/index.ts `wreck-field-test`), laid out as the
+  // room does (SectorRoom.buildWreckFieldSource): around the 'look' cut field's rocks.
+  const FIELD = wreckField({
+    seed: 'look', x: 60_000, y: 0, sides: ['ashen-league', 'vel-concord'],
+    blocked: rockFieldBlocker(cutFieldOpts('look', undefined)),
+  });
+  const { capital, cluster, denseSpawn } = planShots(FIELD, 'wreck-field-test');
+  const SHOTS = [
+    ...(capital ? [{ name: 'capital', ...capitalShot(FIELD, capital) }] : []),
+    { name: 'cluster', spawnX: cluster.x, spawnY: cluster.y - cluster.footprint - 120, zoom: fit(700) },
+    { name: 'wide', spawnX: FIELD.x, spawnY: FIELD.y },
+    { name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: FLOOR },
+    { name: 'dense', spawnX: denseSpawn.x, spawnY: denseSpawn.y },
+  ];
+  const LOOKS = [
+    { look: 'aged', room: 'wreck-field-test' },
+    // { look: 'fresh', room: 'wreck-field-test-fresh' },
+  ];
+  for (const { look, room } of LOOKS) for (const s of SHOTS) RUNS.push({ prefix: look, room, ...s });
+} else {
+  for (const key of sectors) {
+    // As the galaxy room is configured (resolveSectorConfig) and lays it out
+    // (SectorRoom.buildWreckFieldSource: round the rock field, if any).
+    const wf = sectorWreckField(key, SOLAR_SECTORS);
+    if (!wf) throw new Error(`sector '${key}' has no wreck field (solar sectors ${SOLAR_SECTORS})`);
+    const cut = sectorCutField(key, SOLAR_SECTORS);
+    const FIELD = wreckField({ ...wf, ...(cut ? { blocked: rockFieldBlocker(cutFieldOpts(cut.seed, cut.clearings)) } : {}) });
+    const { capital, denseSpawn } = planShots(FIELD, key);
+    const sites = sectorSites(key);
+    const pocket = sites.find((s) => s.wreckCentre);
+    const home = sites.find((s) => s.kind === 'home') ?? { x: 0, y: 0 };
+    const arrive = warpDropPoint(pocket, home.x, home.y);
+    console.log(`${key}: rock field ${cut ? 'yes' : 'none'}; battle pocket ${pocket.id} at (${pocket.x | 0}, ${pocket.y | 0}) r ${pocket.r}; arrival (warp from home) at spot (${arrive.x}, ${arrive.y})`);
+    const room = `galaxy-${key}`;
+    RUNS.push({ prefix: key, room, name: 'arrival', spawnX: arrive.x, spawnY: arrive.y });
+    RUNS.push({ prefix: key, room, name: 'dense', spawnX: denseSpawn.x, spawnY: denseSpawn.y });
+    RUNS.push({ prefix: key, room, name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: FLOOR });
+    RUNS.push({ prefix: key, room, name: 'dense-far', spawnX: denseSpawn.x, spawnY: denseSpawn.y, zoom: FLOOR });
+    RUNS.push({ prefix: key, room, name: 'command', spawnX: denseSpawn.x, spawnY: denseSpawn.y, startMode: 'command' });
+    if (capital) RUNS.push({ prefix: key, room, name: 'capital', ...capitalShot(FIELD, capital) });
+  }
+}
 
 const runDir = mkdtempSync(path.join(os.tmpdir(), 'eqx-wreck-stills-'));
 const servers = new CaptureServers(process.cwd(), runDir, defaultPorts());
 let browser;
-
-/** Join `room` with the ship parked at `spawn`, wait until in game and wreck pieces arrive. */
-async function join(room, spawn, zoom) {
-  const ctx = await browser.newContext(PHONE);
-  const page = await ctx.newPage();
-  const q = new URLSearchParams({
-    room, testId: randomUUID(), worker: '0', diag: '0', hud: FILM_HUD, ...PLAYER_LOOK,
-    spawnX: String(Math.round(spawn.x)), spawnY: String(Math.round(spawn.y)),
-    ...(zoom !== undefined ? { zoom: zoom.toFixed(3) } : {}),
-  });
-  await page.goto(`${servers.baseUrl}/?${q}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
-  // In game (the recorder's join gate), then the field's pieces in the mirror.
-  await page.waitForFunction(() => {
-    const st = window.__eqxStore?.getState();
-    return !!st && st.phase === 'game' && !!st.firstSnapshotApplied && !!st.rendererFirstFrameRendered && !!st.joinMinimumElapsed;
-  }, undefined, { timeout: 240000 });
-  await page.waitForFunction(() => {
-    for (const e of window.__eqxClient?.mirror?.swarm?.values() ?? []) if (e.kind === 4) return true;
-    return false;
-  }, undefined, { timeout: 60000 }).catch(() => console.log(`  ${room}: no wreck pieces in the mirror after 60 s`));
-  return { ctx, page };
-}
-
-/** The live wreck pieces (kind 4) within `r` of `c`, plus the local ship and wreck clock. */
-function readMirror(page, c, r, halfW, halfH) {
-  return page.evaluate(({ c, r, halfW, halfH }) => {
-    const m = window.__eqxClient?.mirror;
-    const me = m?.localPlayerId != null ? m.ships?.get(m.localPlayerId) : undefined;
-    const cam = me ? { x: me.x, y: me.y } : null;
-    const near = [];
-    let onScreen = 0, maxTick = 0;
-    for (const e of m?.swarm?.values() ?? []) {
-      for (const p of e.poseRing ?? []) if (!p.empty && p.serverTick > maxTick) maxTick = p.serverTick;
-      if (e.kind !== 4) continue;
-      if (Math.hypot(e.x - c.x, e.y - c.y) < r) near.push({ x: e.x, y: e.y, r: e.radius });
-      if (cam && Math.abs(e.x - cam.x) < halfW && Math.abs(e.y - cam.y) < halfH) onScreen++;
-    }
-    let hot = 0, minAgeMs = Infinity;
-    for (const d of m?.wrecks?.values() ?? []) if (d.deathTick !== undefined) {
-      hot++;
-      minAgeMs = Math.min(minAgeMs, Math.max(0, maxTick - d.deathTick) * (1000 / 60));
-    }
-    return { cam, near, onScreen, wrecks: m?.wrecks?.size ?? 0, hot, minAgeMs };
-  }, { c, r, halfW, halfH });
-}
-
 try {
   await servers.ensure('lean');
   browser = await chromium.launch({
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'],
   });
-
-  // Probe: the capital's live pieces, read from a ship parked clear of the
-  // whole hull circle (radius = footprint / 1.5). Their spread gives the hull's
-  // long axis; the shot parks the ship just off its long side so the broken
-  // sections fill the floor-zoom view. It also checks the live room laid the
-  // hull where this script's layout says.
-  const hullR = capital.footprint / 1.5;
-  let capSpawn = { x: capital.x - (hullR + 250), y: capital.y };
-  {
-    const { ctx, page } = await join(LOOKS[0].room, { x: capital.x, y: capital.y + hullR + 400 }, FLOOR);
-    await page.waitForTimeout(1500);
-    const { near, cam } = await readMirror(page, capital, hullR + 300, 0, 0);
-    console.log(`probe: ship at (${cam?.x | 0}, ${cam?.y | 0}); ${near.length} live wreck pieces within ${hullR + 300 | 0} u of the layout's ${capital.kindId} centre`);
-    if (near.length >= 2) {
-      let mx = 0, my = 0;
-      for (const p of near) { mx += p.x; my += p.y; }
-      mx /= near.length; my /= near.length;
-      let sxx = 0, syy = 0, sxy = 0;
-      for (const p of near) { const dx = p.x - mx, dy = p.y - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
-      const a = 0.5 * Math.atan2(2 * sxy, sxx - syy); // the long axis
-      const px = -Math.sin(a), py = Math.cos(a); // across it
-      let side = 0;
-      for (const p of near) side = Math.max(side, Math.abs((p.x - mx) * px + (p.y - my) * py) + p.r);
-      side = Math.min(side, 0.6 * VIEW_H / 2 / FLOOR); // keep the hull's middle on screen
-      capSpawn = { x: mx + px * (side + 200), y: my + py * (side + 200) };
-      console.log(`  pieces' centre (${mx | 0}, ${my | 0}) (layout said (${capital.x | 0}, ${capital.y | 0})), long axis ${(a * 180 / Math.PI).toFixed(0)} deg, half-width ${side | 0} u -> park at (${capSpawn.x | 0}, ${capSpawn.y | 0})`);
-    } else {
-      console.log(`  too few live pieces: the live hull is NOT where the layout says; falling back to a side park`);
-    }
-    await ctx.close();
-  }
-
-  const beside = (h, zoom) => ({ x: h.x - Math.min(h.footprint + 120, 0.45 * VIEW_W / 2 / zoom), y: h.y });
-  const SHOTS = [
-    { name: 'capital', target: capital, spawn: capSpawn, zoom: FLOOR },
-    { name: 'subcap', target: subcap, spawn: beside(subcap, 1.5), zoom: 1.5 },
-    { name: 'group', target: groupMid, spawn: { x: groupMid.x, y: groupMid.y - 150 }, zoom: groupZoom },
-    { name: 'wide', target: nearest, spawn: beside(nearest, DEFAULT_ZOOM), zoom: undefined },
-    { name: 'far', target: nearest, spawn: beside(nearest, FLOOR), zoom: FLOOR },
-  ];
-  // Art first: a wreck piece draws as a plain polygon until its dead ship's
-  // art has baked (capitals take seconds on a phone), so every look is shot
-  // once the art has settled, as a player sees it after the first moments.
-  // The fresh glow is a clock from the death tick (seconds), so it has cooled
-  // by then; FRESH_FIRST shoots the fresh capital at first sight as well, the
-  // glow over whatever art is ready, so the look question sees both.
-  const FRESH_FIRST = 'capital';
-  const plan = [];
-  for (const l of LOOKS) for (const s of SHOTS) {
-    plan.push({ ...l, s, settle: true, file: `${l.look}-${s.name}.png` });
-    if (l.look === 'fresh' && s.name === FRESH_FIRST) plan.push({ ...l, s, settle: false, file: `${l.look}-${s.name}-first-sight.png` });
-  }
-  // One shot's failed join (2026-11-18: the 11th join never left the join
-  // screen in 240 s) is logged and skipped, not fatal to the rest.
-  for (const { room, s, settle, file: name } of plan) {
-    let ctx;
+  // One shot's failed join is logged and skipped, not fatal to the rest (#849 fix).
+  for (const s of RUNS) {
+    const { prefix, room } = s;
+    const ctx = await browser.newContext(PHONE);
     try {
-      const joined = await join(room, s.spawn, s.zoom);
-      ctx = joined.ctx;
-      const page = joined.page;
-      let art = 'not waited';
-      if (settle) {
-        const t0 = Date.now();
-        art = await page.waitForFunction(() => {
-          const st = globalThis.__eqxArtStats?.();
-          return !!st && (st.ready ?? 0) > 0 && (st.pending ?? 1) === 0;
-        }, null, { timeout: 120_000, polling: 500 }).then(() => `settled in ${((Date.now() - t0) / 1000).toFixed(1)} s`, () => 'NOT settled after 120 s');
+      const page = await ctx.newPage();
+      const q = new URLSearchParams({
+        room, testId: randomUUID(), worker: '0', diag: '0', hud: FILM_HUD, ...PLAYER_LOOK,
+        spawnX: String(Math.round(s.spawnX)), spawnY: String(Math.round(s.spawnY)),
+        ...(s.zoom ? { zoom: s.zoom } : {}),
+        // A galaxy join lands in command view (startMode.ts); a pilot warping in,
+        // or launching a ship from the map, flies: shoot from the helm.
+        // The 'command' shot lands as a plain galaxy join does.
+        ...(room.startsWith('galaxy-') ? { startMode: s.startMode ?? 'fly' } : {}),
+      });
+      await page.goto(`${servers.baseUrl}/?${q}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
+      // In game (the recorder's join gate), then the field's pieces drawn.
+      await page.waitForFunction(() => {
+        const st = window.__eqxStore?.getState();
+        return !!st && st.phase === 'game' && !!st.firstSnapshotApplied && !!st.rendererFirstFrameRendered && !!st.joinMinimumElapsed;
+      }, undefined, { timeout: 240000 });
+      // The load curtain lags the join flags (the recorder's waitForInGame): a
+      // galaxy sector still shows LOADING SECTOR here while the on-screen
+      // wreck pieces bake their Machined art (slow under SwiftShader).
+      const curtainT0 = Date.now();
+      await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"], body:not(:has([data-testid="warp-screen"]))', { timeout: 300000 })
+        .then(() => console.log(`  ${prefix}-${s.name}: curtain down ${((Date.now() - curtainT0) / 1000).toFixed(1)} s after the join flags`))
+        .catch(async () => {
+          const g = await page.evaluate(() => {
+            const st = window.__eqxStore?.getState() ?? {};
+            const keys = ['connectionStatus', 'localShipInstanceId', 'localPoseResolved', 'pilotMode', 'clientReadySent', 'arrivalTickFromServer', 'arrivalAcked'];
+            return Object.fromEntries(keys.map((k) => [k, st[k]]));
+          });
+          console.log(`  ${prefix}-${s.name}: load curtain still up after 300 s ${JSON.stringify(g)}`);
+        });
+      await page.waitForFunction(() => (window.__eqxClient?.mirror?.wrecks?.size ?? 0) > 0, undefined, { timeout: 60000 })
+        .catch(() => console.log(`  ${prefix}-${s.name}: no wreck descriptors in the mirror after 60 s`));
+      // The pieces round the ship stream in after the curtain (at once when
+      // nothing was on screen to bake): wait for their count to hold for 4 s.
+      let last = -1, steady = 0;
+      for (let t = 0; t < 90 && steady < 8; t++) {
+        await page.waitForTimeout(500);
+        const n = await page.evaluate(() => {
+          let c = 0;
+          for (const e of window.__eqxClient?.mirror?.swarm?.values() ?? []) if (e.kind === 4) c++;
+          return c;
+        });
+        steady = n === last && n > 0 ? steady + 1 : 0;
+        last = n;
       }
       await page.waitForTimeout(1200); // the arrival flash
-      const z = s.zoom ?? DEFAULT_ZOOM;
-      const info = await readMirror(page, s.target, 1e9, VIEW_W / 2 / z, VIEW_H / 2 / z);
-      const file = path.join(out, name);
+      const info = await page.evaluate(() => {
+        const m = window.__eqxClient?.mirror;
+        let pieces = 0;
+        for (const e of m?.swarm?.values() ?? []) if (e.kind === 4) pieces++;
+        let hot = 0;
+        for (const d of m?.wrecks?.values() ?? []) if (d.deathTick !== undefined) hot++;
+        return { wrecks: m?.wrecks?.size ?? 0, hot, pieces };
+      });
+      const file = path.join(out, `${prefix}-${s.name}.png`);
       await page.screenshot({ path: file });
-      const tgt = info.cam ? `target ${dist(info.cam, s.target) | 0} u from the ship` : 'no local ship';
-      const age = info.hot > 0 ? `, youngest wreck ${(info.minAgeMs / 1000).toFixed(1)} s old by the newest swarm tick seen (low when every piece sleeps)` : '';
-      console.log(`shot ${file}: zoom ${z.toFixed(3)}${s.zoom === undefined ? ' (default)' : ''}, ship (${info.cam?.x | 0}, ${info.cam?.y | 0}), ${tgt}; art ${art}; pieces in view ${info.onScreen}; wrecks known ${info.wrecks} (with deathTick ${info.hot}${age})`);
+      console.log(`shot ${file} (wrecks ${info.wrecks}, with deathTick ${info.hot}, pieces ${info.pieces}, zoom ${s.zoom ?? 'default'})`);
     } catch (e) {
-      console.log(`FAILED ${name}: ${e?.message?.split(String.fromCharCode(10))[0] ?? e}`);
+      console.log(`FAILED ${prefix}-${s.name}: ${e?.message?.split(String.fromCharCode(10))[0] ?? e}`);
     } finally {
-      await ctx?.close();
+      await ctx.close();
     }
   }
 } finally {
   await browser?.close();
   servers.stop();
+  // The rooms' own layout (SectorRoom.buildWreckFieldSource logs it).
+  const log = path.join(runDir, 'server.log');
+  // eslint-disable-next-line no-control-regex -- strip the pretty log's colours
+  const lines = existsSync(log) ? readFileSync(log, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').split('\n') : [];
+  lines.forEach((line, i) => {
+    if (line.includes('wreck field laid out')) console.log(`server: ${[line, ...lines.slice(i + 1, i + 5)].map((l) => l.trim()).join(' ')}`);
+  });
 }

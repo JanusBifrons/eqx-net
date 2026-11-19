@@ -140,6 +140,16 @@ describe('WreckFieldSource (wreck fields 3b)', () => {
     expect(t.src.stats.hullsLive).toBe(d.hulls.length);
   });
 
+  it('wreck fields 13: every piece rests inside its hull footprint (a capital has the tighter one), drift included', () => {
+    let capitals = 0;
+    for (const h of FIELD.hulls) {
+      const k = getShipKind(h.kindId);
+      if (k.sizeClass === 'capital') capitals++;
+      for (const p of fieldHullPieces(h).pieces) expect(Math.hypot(p.x - h.x, p.y - h.y), h.kindId).toBeLessThan(h.footprint - (h.footprint - k.radius) * 0.4);
+    }
+    expect(capitals).toBeGreaterThan(0);
+  });
+
   it('wreck fields 9 dev look flag: `fresh` hulls load with a deathTick (drawn just killed); the default stays cool', () => {
     const fresh = make(FIELD, 1000, memStore(), true);
     fresh.src.step(needed, 100, 0);
@@ -365,7 +375,7 @@ describe('WreckFieldSource.dormantObstacles (wreck fields 7: placement sees unlo
     expect(out).toContainEqual(expect.objectContaining({ x: big.x, y: big.y, radius: big.radius, angle: big.angle }));
     expect(out.find((o) => o.x === big.x)!.parts).toEqual(big.parts);
     expect(placementRejection('connector', big.x, big.y, [], out)).toBe('overlap-obstacle');
-    // Wrecks off (link line of sight, landing): the host gives no hull.
+    // Wrecks off (link line of sight): the host gives no hull.
     const off: GridObstacle[] = [];
     host(t.src).dormantObstacles(box(big.x, big.y), off);
     expect(off).toEqual([]);
@@ -384,6 +394,17 @@ describe('WreckFieldSource.dormantObstacles (wreck fields 7: placement sees unlo
     console.log(`[wreck-fields 7] placement query over an unloaded ${cap.kindId}: p50 ${ms[4]!.toFixed(2)} ms`);
   });
 
+  it('wreck fields 14: landing (footprints) gets an unloaded hull as one footprint circle, a loaded one nothing', () => {
+    const t = make();
+    const fp: GridObstacle[] = [];
+    host(t.src).dormantObstacles(box(hull.x, hull.y), fp, 'footprints');
+    expect(fp).toEqual([{ x: hull.x, y: hull.y, radius: hull.footprint }]);
+    t.src.step(needed, 100, 0);
+    const live: GridObstacle[] = [];
+    host(t.src).dormantObstacles(box(hull.x, hull.y), live, 'footprints');
+    expect(live).toEqual([]);
+  });
+
   it('a loaded hull gives nothing (its live pieces are already obstacles); a consumed one nothing; a saved one its row poses', () => {
     const t = make();
     t.src.step(needed, 100, 0);
@@ -400,7 +421,8 @@ describe('WreckFieldSource.dormantObstacles (wreck fields 7: placement sees unlo
     expect(t.src.rowOf(hull.key)).toBe('lineage');
     const saved: GridObstacle[] = [];
     t.src.dormantObstacles(near, saved);
-    const mine = saved.filter((o) => Math.hypot(o.x - hull.x, o.y - hull.y) < hull.footprint);
+    // The moved piece may sit just past the footprint (by the move).
+    const mine = saved.filter((o) => Math.hypot(o.x - hull.x, o.y - hull.y) < hull.footprint + Math.hypot(37, 11));
     expect(mine.length).toBe(ids.length);
     expect(mine.some((o) => Math.abs(o.x - (first.x + 37)) < 1e-9 && Math.abs(o.y - (first.y - 11)) < 1e-9)).toBe(true);
     // Every piece gone: consumed, nothing.

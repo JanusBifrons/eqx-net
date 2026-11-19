@@ -577,13 +577,11 @@ export class StructureGridSubsystem {
    */
   private processBatteryPower(): void {
     this.batteryRescued.clear();
-    const capacity = getStructureKind('battery').powerStorageCapacity ?? 0;
-    if (capacity <= 0) return;
     this.grid.forEachComponent((members, netPower, hasCapital) => {
       // A capital-less island is unpowered (raw rule) — batteries inert there.
       if (!hasCapital) return;
       if (netPower > 0) {
-        const left = chargeComponentBatteries(this.hooks.registry, members, capacity, netPower);
+        const left = chargeComponentBatteries(this.hooks.registry, members, netPower);
         if (left > 0) this.hooks.chargeCapacitors?.(members, left);
       }
       else if (netPower < 0) dischargeComponentBatteries(this.hooks.registry, members, -netPower, this.batteryRescued);

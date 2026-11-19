@@ -21,7 +21,31 @@
  *   `keepClear` pad) opens WEST onto empty space: at rot 0 the pad covers
  *   Connector N and both Solars and placement drops them (`overlap-pad`).
  *   `prebuiltLayouts.test.ts` guards every layout here.
+ *
+ * Also here: applying a layout (`seedStructureScenario`, the testMode room
+ * opts) and the pre-A2 structure row test view (`structureRowsForTests`).
  */
+
+import type { GoodId } from '../../shared-types/goods.js';
+import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
+import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import { getStructureKind } from '../../shared-types/structureKinds.js';
+import {
+  STRUCTURE_ETA_NONE,
+  STRUCTURE_ETA_STALLED,
+  STRUCTURE_FLAG_BUILT,
+  STRUCTURE_FLAG_DECONSTRUCTING,
+  STRUCTURE_FLAG_POWERED,
+  STRUCTURE_FLAG_WALL_ACTIVE,
+  STRUCTURE_TARGET_NONE,
+  STRUCTURE_DEFAULTS as SD,
+} from '../../shared-types/structureStateWire.js';
+import { DEFAULT_TELEPORT_RULES, isTeleporterKind } from '../../shared-types/teleport.js';
+import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
+import type { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
+import type { StructureRegistry } from '../structures/StructureRegistry.js';
+import type { TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
+import { getDroneMaxHealth } from './droneKindHelpers.js';
 
 export interface LayoutPoint {
   x: number;
@@ -180,3 +204,185 @@ export const RIG_SANDBOX_E2E_SCENE: unknown[] = [
   { atMs: 0, action: 'spawn', tag: 'hauler', kind: 'trader-hauler', count: 1, ...RIG_SANDBOX.pad },
   { atMs: 200, action: 'rigClip', structure: 'freight_dock', clip: 'arm-reach', targetShip: 'hauler' },
 ];
+/** Room opts read by `seedStructureScenario` (testMode only). */
+export interface StructureScenarioOpts {
+  prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
+  prebuiltStructuresOwner?: string;
+  prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
+  pairTeleporters?: boolean;
+  teleportShipBoards?: boolean;
+  scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
+  scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
+}
+
+/** What `seedStructureScenario` reads from the room; getters for the fields
+ *  the room assigns in `onCreate`. */
+export interface StructureScenarioHost {
+  structureRegistry: StructureRegistry;
+  logger: { warn(obj: object, msg: string): void };
+  structurePlacement: () => Pick<StructurePlacementSubsystem, 'place'>;
+  teleporters: () => Pick<TeleporterSubsystem, 'pair'>;
+  swarmSpawner: () => Pick<SwarmSpawner, 'spawnAsteroid' | 'spawnDrone'>;
+  swarmHealth: () => Map<string, number>;
+  swarmShield: () => Map<string, number>;
+  structureGridTick: () => void;
+}
+
+/**
+ * Seed a PRE-BUILT, auto-connected, powered grid + parked drones + asteroids
+ * from the room opts (owner `scenario` unless `prebuiltStructuresOwner`),
+ * through the same `structurePlacement.place` seam players and the snapshot
+ * restore use. The caller gates it on testMode; runs once at `onCreate`.
+ */
+export function seedStructureScenario(h: StructureScenarioHost, roomOpts: StructureScenarioOpts): void {
+  const prebuilt = roomOpts.prebuiltStructures;
+  // Wave-system E2E: an explicit owner lets a test seed a base the joining
+  // player OWNS (so the FactionLedger sees a player-owned faction the
+  // WaveDirector can wave) instead of the inert `scenario` owner. Default
+  // `scenario` preserves the structure-scenario-test behaviour.
+  const owner = roomOpts.prebuiltStructuresOwner ?? 'scenario';
+  if (prebuilt && prebuilt.length > 0) {
+    for (const ps of prebuilt) {
+      const extra = ps as { rot?: number; gateAccess?: GateAccess };
+      const id = h.structurePlacement().place(owner, ps.kind as string, ps.x, ps.y, { rot: extra.rot });
+      if (id === null) {
+        h.logger.warn({ kind: ps.kind, x: ps.x, y: ps.y }, 'scenario prebuilt structure rejected');
+        continue;
+      }
+      const rec = h.structureRegistry.get(id);
+      if (rec && extra.gateAccess && GATE_ACCESS_IDS.includes(extra.gateAccess)) {
+        rec.gateAccess = gateAccessIndex(extra.gateAccess);
+      }
+      if (rec && !rec.isConstructed) {
+        rec.isConstructed = true;
+        rec.constructionProgress = rec.constructionCost;
+        h.swarmHealth().set(id, getStructureKind(rec.kind).maxHealth);
+      }
+    }
+    h.structureRegistry.topologyDirty = true;
+    // P2d — stock the prebuilt Capital (e.g. munitions for a showcase's
+    // missile turrets), so ammo-using turrets can fire.
+    const goods = roomOpts.prebuiltStorageGoods;
+    if (goods) {
+      for (const rec of h.structureRegistry.all()) {
+        if (rec.owner !== owner || rec.kind !== 'capital') continue;
+        rec.hold ??= { goods: {}, blueprints: [] };
+        for (const [g, n] of Object.entries(goods)) rec.hold.goods[g as GoodId] = (rec.hold.goods[g as GoodId] ?? 0) + (n ?? 0);
+        break;
+      }
+    }
+    // v4 T1 — pair the seeded teleporters in order (1st with 2nd, …).
+    if (roomOpts.pairTeleporters === true) {
+      const tps = [...h.structureRegistry.all()].filter((r) => r.owner === owner && isTeleporterKind(r.kind));
+      for (let i = 0; i + 1 < tps.length; i += 2) h.teleporters().pair(tps[i]!, tps[i + 1]!);
+      if (roomOpts.teleportShipBoards === true) {
+        for (const t of tps) t.tpRules = { ...DEFAULT_TELEPORT_RULES, shipBoards: true };
+      }
+    }
+    // One pulse rebuilds the grid (powered components) + refreshes the slice.
+    h.structureGridTick();
+  }
+  let scenarioSwarmId = 0;
+  for (const a of roomOpts.scenarioAsteroids ?? []) {
+    h.swarmSpawner().spawnAsteroid({
+      id: `scenario-rock-${scenarioSwarmId++}`, x: a.x, y: a.y, vx: 0, vy: 0, radius: a.radius ?? 30, mass: 1,
+    });
+  }
+  for (const d of roomOpts.scenarioDrones ?? []) {
+    const droneId = `scenario-drone-${scenarioSwarmId++}`;
+    if (h.swarmSpawner().spawnDrone({ id: droneId, x: d.x, y: d.y, kind: 'fighter' })) {
+      h.swarmHealth().set(droneId, getDroneMaxHealth('fighter') ?? 40);
+      h.swarmShield().set(droneId, 0); // hull exposed so turret damage lands
+    }
+  }
+}
+
+/** The pre-A2 per-structure row (test view — see `structureRowsForTests`). */
+export interface StructureRowView {
+  id: number;
+  hpPct: number;
+  powered: boolean;
+  netPower: number;
+  owner: string;
+  built: boolean;
+  ownerName?: string;
+  level?: number;
+  connTo?: number[];
+  minerals?: number;
+  buildPct?: number;
+  etaMs?: number | null;
+  isDeconstructing?: boolean;
+  deconstructPct?: number;
+  miningTargetId?: number;
+  turretTargetId?: number;
+  storedPower?: number;
+  storedPowerMax?: number;
+  shieldWallTo?: number;
+  wallActive?: boolean;
+}
+
+/** The room state `structureRowsForTests` reads (`SectorState`'s structure
+ *  maps), typed structurally: the showcase build imports this file and must
+ *  not pull in the decorated schema. */
+type StructureStateFields = 'ownerIdx' | 'flags' | 'hpPct' | 'netPower' | 'level' | 'minerals' | 'etaMs'
+  | 'buildPct' | 'deconstructPct' | 'storedPower' | 'storedPowerMax' | 'shieldWallTo';
+export interface StructureRowsState {
+  structures: {
+    readonly size: number;
+    forEach(cb: (st: { [K in StructureStateFields]?: number } & { connTo: ArrayLike<number> & Iterable<number> }, key: string) => void): void;
+  };
+  structureOwners: { get(key: string): string | undefined };
+  structureOwnerNames: { get(key: string): string | undefined };
+}
+
+/** Test view (`_internals.getStructuresSlice`): the pre-A2 row shape,
+ *  rebuilt from room state + the targets slice (`[entityId, turretTarget,
+ *  miningTarget]` triples). Allocates; test-only. */
+export function structureRowsForTests(state: StructureRowsState, slice: readonly number[] | undefined): StructureRowView[] | undefined {
+  const map = state.structures;
+  if (map.size === 0) return undefined;
+  const tgt = new Map<number, [number, number]>();
+  const t = slice ?? [];
+  for (let i = 0; i < t.length; i += 3) tgt.set(t[i]!, [t[i + 1]!, t[i + 2]!]);
+  const rows: StructureRowView[] = [];
+  map.forEach((st, key) => {
+    const id = Number(key);
+    const ownerKey = String(st.ownerIdx ?? SD.ownerIdx);
+    const flags = st.flags ?? SD.flags;
+    const row: StructureRowView = {
+      id,
+      hpPct: st.hpPct ?? SD.hpPct,
+      powered: (flags & STRUCTURE_FLAG_POWERED) !== 0,
+      netPower: st.netPower ?? SD.netPower,
+      owner: state.structureOwners.get(ownerKey) ?? '',
+      built: (flags & STRUCTURE_FLAG_BUILT) !== 0,
+    };
+    const ownerName = state.structureOwnerNames.get(ownerKey) ?? '';
+    if (ownerName !== '') row.ownerName = ownerName;
+    if ((st.level ?? SD.level) > 1) row.level = st.level;
+    if (st.connTo.length > 0) row.connTo = Array.from(st.connTo);
+    if ((st.minerals ?? SD.minerals) > 0) row.minerals = st.minerals;
+    const eta = st.etaMs ?? SD.etaMs;
+    if (eta !== STRUCTURE_ETA_NONE) {
+      row.buildPct = st.buildPct ?? SD.buildPct;
+      row.etaMs = eta === STRUCTURE_ETA_STALLED ? null : eta;
+    }
+    if ((flags & STRUCTURE_FLAG_DECONSTRUCTING) !== 0) {
+      row.isDeconstructing = true;
+      row.deconstructPct = st.deconstructPct ?? SD.deconstructPct;
+    }
+    const tg = tgt.get(id);
+    if (tg && tg[0] !== STRUCTURE_TARGET_NONE) row.turretTargetId = tg[0];
+    if (tg && tg[1] !== STRUCTURE_TARGET_NONE) row.miningTargetId = tg[1];
+    if ((st.storedPowerMax ?? SD.storedPowerMax) > 0) {
+      row.storedPower = st.storedPower ?? SD.storedPower;
+      row.storedPowerMax = st.storedPowerMax;
+    }
+    if ((st.shieldWallTo ?? SD.shieldWallTo) >= 0) {
+      row.shieldWallTo = st.shieldWallTo;
+      row.wallActive = (flags & STRUCTURE_FLAG_WALL_ACTIVE) !== 0;
+    }
+    rows.push(row);
+  });
+  return rows;
+}

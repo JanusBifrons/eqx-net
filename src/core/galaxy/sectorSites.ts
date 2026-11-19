@@ -41,6 +41,9 @@ export interface SectorSite {
   r: number;
   /** For a gate pocket: the sector it faces. */
   neighbour?: string;
+  /** The centre of the sector's wreck field (`sectorWreckField`): warp drops
+   *  land on its arrival spots (`wreckArrivalSpots`), among the wrecks. */
+  wreckCentre?: true;
 }
 
 const RADII: Record<SiteKind, number> = { home: 5000, gate: 3000, belt: 4000, base: 4000, combat: 3000 };
@@ -115,6 +118,10 @@ export function sectorSites(sectorKey: string): SectorSite[] {
     }
     if (placed) sites.push(placed);
   }
+  if (sector.features.includes('wrecks')) {
+    const centre = sites.find((s) => s.kind === 'combat') ?? sites.find((s) => s.kind === 'base');
+    if (centre) centre.wreckCentre = true;
+  }
   return sites;
 }
 
@@ -183,14 +190,42 @@ export function pocketCentre(sectorKey: string, kind: SiteKind, enabled: boolean
 /** How far off a pocket's rim a warp drop point may be (u). */
 export const WARP_DROP_TOLERANCE = 400;
 
+/** A wreck field's arrival spots (wreck fields 14, owner "arrive among
+ *  wrecks"): how many round the battle pocket's rim, and how far each is kept
+ *  clear of every hull footprint (u): more than any non-capital kind's spawn
+ *  clearance, so the room's landing (`SectorRoom.landingPoint`) never moves a
+ *  fighter or sub-cap off it. A capital needs more room: the landing moves it
+ *  to the nearest point clear of the hulls. */
+export const WRECK_ARRIVAL = { spots: 8, clear: 300 } as const;
+
+/** The arrival spots of a wreck field's centre pocket (none for any other
+ *  pocket): `WRECK_ARRIVAL.spots` points evenly round its rim, the first due
+ *  east. The layout keeps each clear and seats wrecks round it
+ *  (`WreckFieldOpts.arrivals`). */
+export function wreckArrivalSpots(site: SectorSite): Array<{ x: number; y: number }> {
+  if (!site.wreckCentre) return [];
+  const out: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < WRECK_ARRIVAL.spots; i++) {
+    const a = (i / WRECK_ARRIVAL.spots) * 2 * Math.PI;
+    out.push({ x: Math.round(site.x + Math.cos(a) * site.r), y: Math.round(site.y + Math.sin(a) * site.r) });
+  }
+  return out;
+}
+
 /**
  * Warp-to (Phase 4): the drop point for warping from (x, y) to `site`: its
  * rim on the side facing the ship ("the arrival point is just sensibly
- * calculated", user 2026-11-07). Computed by the client; the server only
- * checks it with `isWarpDropPoint`.
+ * calculated", user 2026-11-07); at a wreck field's centre, the arrival spot
+ * nearest that side (wreck fields 14), so the ship lands among the wrecks.
+ * Computed by the client; the server only checks it with `isWarpDropPoint`.
  */
 export function warpDropPoint(site: SectorSite, x: number, y: number): { x: number; y: number } {
   const dx = x - site.x, dy = y - site.y, len = Math.hypot(dx, dy) || 1;
+  if (site.wreckCentre) {
+    const n = WRECK_ARRIVAL.spots, step = (2 * Math.PI) / n;
+    const i = ((Math.round(Math.atan2(dy, dx) / step) % n) + n) % n;
+    return wreckArrivalSpots(site)[i]!;
+  }
   return { x: Math.round(site.x + (dx / len) * site.r), y: Math.round(site.y + (dy / len) * site.r) };
 }
 
@@ -261,6 +296,20 @@ export function pocketClearing(sectorKey: string, enabled: boolean, x: number, y
   return field?.clearings.find((c) => c.x === x && c.y === y) ?? null;
 }
 
+/** The wreck-free centre of a wreck field's battle pocket, × its radius
+ *  (wreck fields 13, owner "wrecks in view"): hulls reach into the pocket's
+ *  outer ring, so a warp drop on the rim lands among wrecks, and the centre
+ *  (~3.6 km across) stays open to fight in. The drops land on the rim's
+ *  arrival spots, kept clear (`SectorWreckField.arrivals`). The pocket's rock clearing (`fieldClearingRadius`, rim + 2.5 km)
+ *  would empty most of the 7 km wreck core (`WRECK_FIELD.coreRadius`). */
+export const BATTLE_POCKET_OPEN_CENTRE = 0.6;
+
+/** A pocket's wreck clearing: its rock clearing, but the field's own battle
+ *  pocket only its open centre (`BATTLE_POCKET_OPEN_CENTRE`). */
+export function wreckClearingRadius(site: SectorSite, centre: SectorSite): number {
+  return site.id === centre.id ? site.r * BATTLE_POCKET_OPEN_CENTRE : fieldClearingRadius(site);
+}
+
 export interface SectorWreckField {
   /** The layout seed (`wreckField` hashes `wrecks:<seed>`): the sector key. */
   seed: string;
@@ -269,8 +318,13 @@ export interface SectorWreckField {
   y: number;
   /** The two sides that fought here (faction ids: region powers). */
   sides: readonly [string, string];
-  /** Every pocket kept open (the battle pocket too: hulls ring it). */
+  /** Every pocket kept open (the battle pocket too, at
+   *  `wreckClearingRadius`: hulls ring it). */
   clearings: FieldClearing[];
+  /** The battle pocket's arrival spots, where warp drops land
+   *  (`wreckArrivalSpots`): kept `WRECK_ARRIVAL.clear` clear, wrecks seated
+   *  round them (`WreckFieldOpts.arrivals`). */
+  arrivals: FieldClearing[];
 }
 
 /**
@@ -287,11 +341,12 @@ export function sectorWreckField(sectorKey: string, enabled: boolean): SectorWre
   const sector = getSector(sectorKey);
   if (!sector || !sector.features.includes('wrecks')) return null;
   const sites = sectorSites(sectorKey);
-  const centre = sites.find((s) => s.kind === 'combat') ?? sites.find((s) => s.kind === 'base');
+  const centre = sites.find((s) => s.wreckCentre);
   if (!centre) return null;
   return {
     seed: sectorKey, x: centre.x, y: centre.y, sides: [sector.region, wreckRival(sector)],
-    clearings: sites.map((s) => ({ x: s.x, y: s.y, r: fieldClearingRadius(s) })),
+    clearings: sites.map((s) => ({ x: s.x, y: s.y, r: wreckClearingRadius(s, centre) })),
+    arrivals: wreckArrivalSpots(centre).map((p) => ({ x: p.x, y: p.y, r: WRECK_ARRIVAL.clear })),
   };
 }
 

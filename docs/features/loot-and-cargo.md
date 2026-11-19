@@ -350,7 +350,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - The ship is within `CARGO_ACCESS_RANGE` of the footprint edge.
 - **Moves:** `StorageService.cargoTake` / `cargoPut`, each ONE hold group with the ship row. Never move items between a ship and a structure any other way.
 - **A manual move switches auto-deposit off for that pilot** (`manualCargo`) until they leave deposit range. Without it, a withdrawal from your own storage is banked straight back.
-- **`entity_stats` holds** show to anyone the cargo opens for (`ownerGateStats`).
+- **`entity_stats` holds** show to anyone the cargo opens for (`ownerGateStats`, `src/server/rooms/selectionStatsResolve.ts`).
 - **Market mode (T4):** an NPC `freight_dock` opens as a market for a non-hostile pilot (`dockMarket`): Take buys, Put sells.
   - **Prices:** the trade sink's `dockQuote`, the same quote as the board.
   - **Clamped** to stock, space, wallet and volume.

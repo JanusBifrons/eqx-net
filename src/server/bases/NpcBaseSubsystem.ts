@@ -381,3 +381,4 @@ export function seedNpcBases(h: NpcBaseSeedHost, specs: readonly NpcBaseSpec[]):
   }
   h.structureGridTick();
 }
+

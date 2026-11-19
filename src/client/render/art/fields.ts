@@ -19,12 +19,12 @@ import { planBowFeatures, type BowFeature } from './bowDetail.js';
 import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
 import { hash01, lin, MAT, newFields, paintOf, PALETTE, setAlbedo, valueNoise, type Fields, type Livery, type StructLivery } from './fieldsCore.js';
 import { stampSigils, stampSigilSlot } from './sigil.js';
-import { liveryHullGrey, liveryLayout, liveryPaint, paintEnamel, paintLivery, weatherLivery } from './liveryForge.js';
+import { bakedHullPaint, liveryHullGrey, liveryLayout, liveryPaint, paintEnamel, paintLivery, weatherLivery } from './liveryForge.js';
 
 // Primitives and livery live in their own modules; re-exported so callers keep one import.
 export { hash01, lin, MAT, paintOf, PALETTE, valueNoise, type Fields, type Livery, type LiveryEdge, type LiveryTreatment, type StructLivery } from './fieldsCore.js';
 export {
-  LIVERY_SHADES, liveryGrey, liveryHullGrey, liveryPaint, liveryShade, paintLivery, TURRET_COVER_REACH, type LiveryShade,
+  bakedHullPaint, LIVERY_SHADES, liveryGrey, liveryHullGrey, liveryPaint, liveryShade, paintLivery, TURRET_COVER_REACH, type LiveryShade,
 } from './liveryForge.js';
 export { forgeTurretGun, type GunFamily, type NavalTurretSpec, type TurretGunSpec } from './turretForge.js';
 
@@ -112,7 +112,7 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   const parts = opts.parts ?? shipParts(kind);
   const g = gridFor(parts.map((p) => p.pts), opts.ppu, 3);
   const livery = opts.livery;
-  const basePaint = livery ? liveryHullGrey(parts[0]!.color, livery, kindId) : opts.paint ?? parts[0]!.color;
+  const basePaint = bakedHullPaint(parts[0]!.color, kindId, opts.paint, livery);
   const f = newFields(g, paintOf(basePaint));
   if (livery) f.livery = livery;
   const n = g.w * g.h;

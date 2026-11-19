@@ -1,8 +1,8 @@
 /**
  * Per-side presence in one sector, for the control meter for every side
  * (`core/territory/sectorControl` `stepMultiControl`). Filled by
- * `SectorRoom.liveCounts()` on the director's ~1.5 s control tick, never the
- * 60 Hz loop.
+ * `sectorLiveCounts` (`rooms/sectorLiveCounts.ts`, behind `SectorRoom.liveCounts()`)
+ * on the director's ~1.5 s control tick, never the 60 Hz loop.
  *
  * Who a thing counts for:
  *  - a player hull → its pilot (every player is their own faction);

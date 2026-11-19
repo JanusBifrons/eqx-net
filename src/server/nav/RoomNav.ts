@@ -59,8 +59,8 @@ export class RoomNav {
   /** The AI brains' routes (set once a field is hosted). */
   routes: NavRoutes | undefined;
   /** Stable (asking allocates no closure). */
-  private readonly routeFn = (sx: number, sy: number, tx: number, ty: number, c: number, hd: number, tr: number) =>
-    this.field!.route(sx, sy, tx, ty, c, hd, tr);
+  private readonly routeFn = (sx: number, sy: number, tx: number, ty: number, c: number, hd: number, tr: number, cf: number) =>
+    this.field!.route(sx, sy, tx, ty, c, hd, tr, cf);
   readonly autopilot: AutopilotRoutes;
 
   constructor(private readonly deps: RoomNavDeps) {

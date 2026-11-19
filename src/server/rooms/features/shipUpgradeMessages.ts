@@ -2,8 +2,8 @@
  * Ship-upgrade client messages — stat allocation + respec (WS-B2), instant
  * repair at your own storage (P1a-2) and latent weapon mounts (WS-B3). Moved
  * verbatim out of `SectorRoom.onCreate`, with `activateMount` (only these
- * handlers used it); `applyShipUpgrade` stays on the room (it rebuilds a
- * lingering wingman's brain) and is reached through the host.
+ * handlers used it); `applyShipUpgrade` lives on `ShipProgression`
+ * (`features/shipProgression.ts`) and is reached through the host.
  */
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';

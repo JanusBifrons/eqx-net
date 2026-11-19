@@ -24,7 +24,7 @@ import {
   type StructureKindId,
   structureHalfExtents,
 } from '../../shared-types/structureKinds.js';
-import { effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
+import { effectiveStructureMaxConnections, effectiveStructurePowerOutput } from '../../core/leveling/structureLevel.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
 import { CONNECTION_MAX_RANGE } from '../../core/structures/structureGridConstants.js';
 import { rockObstacleParts, type GridNode, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
@@ -170,7 +170,10 @@ export function structureMirrorToGridNode(
   out.maxConnections = effectiveStructureMaxConnections(kind.maxConnections, structureState.level);
   out.connectionRange = kind.connectionRange;
   // D1 — a Reactor with no fuel produces nothing (the server's same rule).
-  out.powerOutput = structureState.built && structureState.noFuel !== true ? kind.powerOutput : 0;
+  // Leveled output via the shared helper the server grid reads (#15).
+  out.powerOutput = structureState.built && structureState.noFuel !== true
+    ? effectiveStructurePowerOutput(kind.powerOutput, structureState.level)
+    : 0;
   // Active power — the server's same rule (full while active, else idle trickle).
   out.powerConsumption = structureState.built ? structureDraw(kind.powerConsumption, structureState.drawFull === true) : 0;
   out.isConstructed = structureState.built;
