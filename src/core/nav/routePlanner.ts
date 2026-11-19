@@ -166,6 +166,8 @@ export class RoutePlanner {
   /** The joined path before string-pulling, packed x, y. */
   private poly = new Float64Array(1024);
   private polyLen = 0;
+  /** This request's comfort clearance (`plan`). */
+  private comfort = 0;
 
   /** Nodes expanded by the last request, both layers (the count gate's work counter). */
   expanded = 0;
@@ -233,11 +235,27 @@ export class RoutePlanner {
    *  With a `heading` (ship angle) and `turnRadius` the coarse search knows
    *  which way the ship points (slice 11): no turn past 45° a step where the
    *  room is under the turning radius, turns cost. A hull wider than the fine
-   *  layer's reach (a capital) then plans on the coarse layer alone. */
+   *  layer's reach (a capital) then plans on the coarse layer alone.
+   *  `comfort` (≥ `c`; owner 2026-11-19, "margin where room"): the clearance a
+   *  route keeps when any way fits it (the hull's shield clear of rock). Only
+   *  when none does is it planned again at `c`, its shortcuts still keeping
+   *  `comfort` wherever the unpulled path does. */
   plan(coarse: CoarseFieldMap, fine: FineFieldLayer, sx: number, sy: number, tx: number, ty: number, c: number, out: Float64Array,
-    heading = NaN, turnRadius = 0): number {
+    heading = NaN, turnRadius = 0, comfort = c): number {
     this.coarse = coarse; this.fine = fine;
     this.expanded = 0;
+    if (comfort > c) {
+      this.comfort = comfort;
+      const n = this.planAt(sx, sy, tx, ty, comfort, out, heading, turnRadius);
+      if (this.status === 'straight' || this.status === 'route') return n;
+    }
+    this.comfort = Math.max(c, comfort);
+    return this.planAt(sx, sy, tx, ty, c, out, heading, turnRadius);
+  }
+
+  /** One plan at clearance `c` (adds to {@link expanded}). */
+  private planAt(sx: number, sy: number, tx: number, ty: number, c: number, out: Float64Array, heading: number, turnRadius: number): number {
+    const coarse = this.coarse!;
     if (this.segmentClear(sx, sy, tx, ty, c) && !this.turnsInTight(sx, sy, tx, ty, c, heading, turnRadius)) {
       out[0] = tx; out[1] = ty;
       this.status = 'straight';
@@ -373,15 +391,22 @@ export class RoutePlanner {
    *  With a turning radius (slice 11) a shortcut from a point with no room to
    *  turn may not swing more than 45° off the way the ship arrives there. */
   private pull(len: number, c: number, out: Float64Array, heading: number, turnRadius: number): number {
-    const Q = this.poly, max = out.length >> 1;
+    const Q = this.poly, max = out.length >> 1, cf = this.comfort;
     const headed = turnRadius > 0 && Number.isFinite(heading);
     let hx = headed ? -Math.sin(heading) : 0, hy = headed ? Math.cos(heading) : 0;
     let a = 0, count = 0;
     while (a < len - 1 && count < max) {
       const ax = Q[a * 2]!, ay = Q[a * 2 + 1]!;
       let j = a + 1;
-      while (j + 1 < len && this.segmentClear(ax, ay, Q[(j + 1) * 2]!, Q[(j + 1) * 2 + 1]!, c) &&
-        !(headed && this.turnsInTightDir(ax, ay, Q[(j + 1) * 2]!, Q[(j + 1) * 2 + 1]!, c, hx, hy, turnRadius))) j++;
+      // Does the unpulled path a..j keep `comfort`? While it does, a shortcut must too.
+      let roomy = cf > c && this.segmentClear(ax, ay, Q[j * 2]!, Q[j * 2 + 1]!, cf);
+      while (j + 1 < len) {
+        const bx = Q[(j + 1) * 2]!, by = Q[(j + 1) * 2 + 1]!;
+        if (roomy) roomy = this.segmentClear(Q[j * 2]!, Q[j * 2 + 1]!, bx, by, cf);
+        if (!this.segmentClear(ax, ay, bx, by, roomy ? cf : c) ||
+          (headed && this.turnsInTightDir(ax, ay, bx, by, c, hx, hy, turnRadius))) break;
+        j++;
+      }
       const bx = Q[j * 2]!, by = Q[j * 2 + 1]!;
       out[count * 2] = bx; out[count * 2 + 1] = by;
       count++;

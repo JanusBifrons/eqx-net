@@ -3215,3 +3215,11 @@ cap table in `scripts/audit-god-files.mjs`, and flaky required tests (a wall-clo
 reset the clock. Merge only a stack's top (one round lands the whole chain), resolve cap conflicts by
 taking the lower cap, and fix a flake's cause the first time. Post-mortem:
 `docs/HANDOFF-2026-11-19-pr-backlog.md`.
+
+## 2026-11-19 — brake for a corner from the angle between legs, not the bearing to it
+
+The follower braked for a route corner by how far the next leg runs the same way as the ship's bearing
+to the corner. Far off, that bearing points almost straight down the route, so a sharp street turn looked
+shallow: the brake distance jumped to 450-700 u and a fighter entered a 75° turn at ~260 u/s, running
+~32 u off its line into rock. Use the angle between the incoming and outgoing legs, and cap the carried
+speed by how far the ship may swing sideways (`NAV_TURN_SWING`).

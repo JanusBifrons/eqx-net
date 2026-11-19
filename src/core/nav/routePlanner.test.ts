@@ -161,6 +161,28 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect(p.expanded).toBeLessThanOrEqual(NAV_COARSE_EXPAND_CAP + NAV_FINE_EXPAND_CAP);
   });
 
+  it('comfort (owner 2026-11-19): round a rock the route keeps the shield clear; a packed street falls back to clearance', () => {
+    const t = shipTuning(getShipKind('fighter')), c = t.navClearance, cf = t.navComfort;
+    expect(cf).toBeGreaterThan(c);
+    const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
+    // Round a rock in a sparse chunk: room for the shield, so the route keeps it.
+    const at = busyChunk(), w = world(at);
+    const { sx, sy, tx, ty } = acrossARock(p, w.coarse, w.fine, at.cx, at.cy);
+    const n = p.plan(w.coarse, w.fine, sx, sy, tx, ty, c, out, NaN, 0, cf);
+    expect(p.status).toBe('route');
+    expect([out[(n - 1) * 2], out[(n - 1) * 2 + 1]]).toEqual([tx, ty]);
+    expect(minRoomAlong(p, sx, sy, out, n, cf)).toBeGreaterThanOrEqual(cf - 2);
+    // Packed chunk (-9, 5): its street pinches below the shield (no plan at 44 u gets through),
+    // so the plan squeezes down to the clearance: the same route as without comfort.
+    const st = { cx: -9, cy: 5 }, v = world(st);
+    const ax = st.cx * CHUNK_SIZE + 300, ay = 23_404, bx = (st.cx + 1) * CHUNK_SIZE - 300, by = 20_812;
+    const m = p.plan(v.coarse, v.fine, ax, ay, bx, by, c, out);
+    const plain = Array.from(out.subarray(0, m * 2));
+    expect(p.plan(v.coarse, v.fine, ax, ay, bx, by, c, out, NaN, 0, cf)).toBe(m);
+    expect(p.status).toBe('route');
+    expect(Array.from(out.subarray(0, m * 2))).toEqual(plain);
+  });
+
   it('a fighter flies round a structure in open space (a static obstacle, not a rock)', () => {
     const { coarse, fine } = world();
     const c = shipTuning(getShipKind('fighter')).navClearance;

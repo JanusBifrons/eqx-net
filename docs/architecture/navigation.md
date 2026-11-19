@@ -186,7 +186,7 @@ chunk is loaded and rock is within its reach, else the coarse layer.
   does (battleship across the field, nose on: ~12 900 expansions). The straight answer and the
   string-pull obey the same 45° rule where there is no room to turn. A capital (clearance past the fine
   layer's reach) plans on the coarse layer alone. Fighters send neither and see the plain graph.
-- Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius}` → `ROUTE {reqId, status,
+- Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius, comfort}` → `ROUTE {reqId, status,
   points, expanded, ms}` (points transferred, not copied). `NavField.route(...)` returns a Promise;
   `NavWorker.inFlight` counts open requests; a detached field answers `none`; a worker exit rejects
   every open request.
@@ -224,7 +224,20 @@ one it flies straight as before.
   ahead of the ship's place on its leg (`wpX`/`wpY`, never past the corner `turnX`/`turnY`), so a ship
   swung wide by a turn comes back onto the line instead of cutting across to the next corner. Braking
   (`ahead`) still counts from the corner.
-- Clearance: `shipTuning(kind).navClearance` = radius × 1.25.
+- Corners are braked for (`NavRoutes.waypoint`): `ahead` adds the next leg only as far as it runs the
+  same way as the incoming leg (the angle between the legs, not the ship's bearing to the corner, which
+  swings wide as it closes and let a fighter enter a 75° street turn at ~260 u/s and run ~32 u off the
+  line), capped at `NAV_TURN_SWING` × clearance / sin²θ: the speed whose sideways part dies within that
+  swing. `NAV_TURN_SWING` = 0.2 (6 u for a fighter): the street flight hit rock 0/4 runs, where 24 u
+  still brushed it 2/4 (2026-11-19).
+- Clearance: `shipTuning(kind).navClearance` = radius × 1.25, the least room a route may have (owner:
+  stays 30 u for a fighter).
+- Comfort (owner 2026-11-19, "margin where room"): `shipTuning(kind).navComfort` = max(clearance,
+  radius + 1.5 × shield pad), 54 u for a fighter (its shield ball is 44 u; a battleship's comfort is its
+  clearance). `RoutePlanner.plan` plans at comfort first and keeps that route when one fits; only when
+  none does does it plan again at clearance, and its string-pull still keeps comfort on every shortcut
+  where the unpulled path has it. So a route squeezes to 30 u only through a gap that is otherwise
+  impassable, and open routes are unchanged.
 - `CutFieldSubsystem.rockContacts` counts ship-vs-field-rock contacts (the test gate).
 - Lock: `tests/integration/sectorRoom/navFollowRoute.test.ts`, a fighter told to Move across a rock arrives
   with no rock contact; the same order with routes off hits it; and on the field's street crossing (the
@@ -284,5 +297,6 @@ one it flies straight as before.
   2026-11-18 fine rebuild slice C2: resting wrecks / scrap / plain asteroids (`RestingObstacles`).
   2026-11-18 slice 16: perf scene `galaxy-field-nav` and the scene work view's nav counters (`NavField.stats`).
   2026-11-19: the follower aims along the leg, not at its corner (an overshoot after a street turn cut
-  toward rock). Open: the fighter's shield ball (34 u) is wider than its route clearance (30 u), so a
-  perfectly flown tight leg can still brush rock.
+  toward rock). Then: corner braking from the angle between legs (`NAV_TURN_SWING`), and the comfort
+  margin (two-pass plan; clearance stays 30 u). The streets flight: ~27 rock contacts on a branch with
+  lingering hulls streaming chunks, 0 in 4/4 runs after.

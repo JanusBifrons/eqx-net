@@ -19,7 +19,7 @@ import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js
 import { NAV_ROUTE_MIN_GAP_MS, type NavRouteReply } from '../../shared-types/messages/navMessages.js';
 
 /** Plans a route (the room's `NavField.route`), or null when the room has no field. */
-export type AutopilotRouteFn = ((sx: number, sy: number, tx: number, ty: number, clearance: number, heading: number, turnRadius: number) => Promise<NavRouteMsg>) | null;
+export type AutopilotRouteFn = ((sx: number, sy: number, tx: number, ty: number, clearance: number, heading: number, turnRadius: number, comfort: number) => Promise<NavRouteMsg>) | null;
 
 /** The asker's hull, as the room reads it. */
 export interface AutopilotHull { x: number; y: number; angle: number; kind: string }
@@ -53,7 +53,7 @@ export class AutopilotRoutes {
     const capital = kind.sizeClass === 'capital';
     a.inFlight = true;
     const asker = a;
-    fn(hull.x, hull.y, tx, ty, shipTuning(kind).navClearance, capital ? hull.angle : NaN, capital ? this.turnRadius(hull.kind) : 0).then((msg) => {
+    fn(hull.x, hull.y, tx, ty, shipTuning(kind).navClearance, capital ? hull.angle : NaN, capital ? this.turnRadius(hull.kind) : 0, shipTuning(kind).navComfort).then((msg) => {
       asker.inFlight = false;
       this.answered++;
       send({ type: 'nav_route', reqId, status: msg.status, points: Array.from(msg.points) });
