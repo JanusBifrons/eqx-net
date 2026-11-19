@@ -27,10 +27,18 @@ import {
   SLOT_VY_OFF,
   SLOT_ANGLE_OFF,
   SLOT_ANGVEL_OFF,
+  SLOT_FLAGS_OFF,
+  FLAG_WARP_SPOOL,
+  FLAG_WARP_CRUISE,
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import { DEFAULT_SHIP_KIND, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites.js';
+import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { getDroneMaxHealth } from './droneKindHelpers.js';
+import { ARRIVED_TICKS } from './warpTravel.js';
+import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
@@ -61,10 +69,35 @@ export type EvictFn = (
   opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
 ) => void;
 
+/** Ticks a ship that fled stays in the room on its warp run before it leaves
+ *  (0.5 s, as long as the arrival window): long enough for every client's
+ *  snapshot to carry the run, so each draws the departure. */
+const LEAVE_RUN_TICKS = 30;
+
+/** W2a NPC warp-to: one bot sent on a warp (`warpBot`). */
+export interface NpcWarp {
+  entityId: number;
+  lastPhase: 0 | 1 | 2;
+  arrivedUntil: number;
+  started: boolean;
+  idleTicks: number;
+  leave: boolean;
+  leaveAt: number;
+  leaveX: number;
+  leaveY: number;
+}
+
 export interface LivingWorldBotHooksDeps {
   serverTick: () => number;
   sectorKey: () => string | null;
   sabF32: Float32Array;
+  /** SAB flags view (NPC warp phase, `tickNpcWarps`). */
+  sabU32: Uint32Array;
+  /** Solar sector (wider playable extent); the room reassigns it in onCreate. */
+  solar: () => boolean;
+  /** Nearest clear landing spot for a ship of `kind` (the room's obstacles). */
+  landingPoint: (id: string, x: number, y: number, kind: string | undefined) => { x: number; y: number };
+  postToWorker: (cmd: WorkerCmd) => void;
   /** Iterable of `[playerId, slot]` for the markHostile loop. */
   playerToSlot: Iterable<[string, number]>;
   /** Active-ship resolver for the hostile-target filter. */
@@ -90,7 +123,104 @@ export interface LivingWorldBotHooksDeps {
 }
 
 export class LivingWorldBotHooks {
+  /** W2a NPC warp-to: bots sent on a warp (`warpBot`), until they have
+   *  landed and their arrival window has passed. Empty in normal play. */
+  readonly npcWarps = new Map<string, NpcWarp>();
+
   constructor(private readonly deps: LivingWorldBotHooksDeps) {}
+
+  /**
+   * W2a NPC warp-to (flagship fleets): send a living-world bot on a warp to
+   * (x, y) through the same spool → run → drop machine as a pilot's
+   * (World.botWarp). The bot's AI is overridden while it spools and runs;
+   * point its move target at the destination too, so it carries on from
+   * there. Returns false for an unknown or non-ship id.
+   */
+  warpBot(botId: string, x: number, y: number): boolean {
+    const d = this.deps;
+    const rec = d.swarmRegistry.get(botId);
+    if (!rec || rec.kind !== 1) return false;
+    const lim = d.solar() ? SOLAR_HALF_EXTENT : SECTOR_PLAYABLE_HALF_EXTENT;
+    // Land clear of rocks, structures and ships, like a pilot's warp (a drop
+    // inside an asteroid belt rock killed an escort in the first test run).
+    const p = d.landingPoint(botId, Math.max(-lim, Math.min(lim, x)), Math.max(-lim, Math.min(lim, y)), rec.shipKind);
+    d.postToWorker({ type: 'BOT_WARP', slot: rec.slot, x: p.x, y: p.y });
+    if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { entityId: rec.entityId, lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0, leave: false, leaveAt: -1, leaveX: 0, leaveY: 0 });
+    return true;
+  }
+
+  /** Morale flee (AI slice 6b): a fleeing NPC asked to warp out to (x, y)
+   *  (`AiIntent.warpOut`, drained by `runAiTick` via the room's
+   *  `_handleAiWarpOut`). The same NPC warp as a flagship fleet's
+   *  (`warpBot`) spool, but a ship that fled LEAVES the sector once its spool
+   *  ends (`tickNpcWarps`): the same departure as any NPC leaving a sector
+   *  (`despawnBot`: `warp_out` where it stood, quiet evict, `BOT_DESPAWNED`).
+   *  Before 2026-11-14 it ran the in-sector warp and parked at the drop,
+   *  still in the room. It stays in the room for LEAVE_RUN_TICKS of its run
+   *  first, so every client sees the run begin (`drones[].warp` 2 while the
+   *  ship is still in the swarm stream) and draws the departure (take 7:
+   *  removed on the run's first tick, the ship just vanished). Rare. */
+  warpOut(botId: string, x: number, y: number): void {
+    if (!this.warpBot(botId, x, y)) return;
+    const w = this.npcWarps.get(botId);
+    if (w !== undefined) w.leave = true;
+    serverLogEvent('npc_morale_warp_out', { botId, sectorKey: this.deps.sectorKey() ?? '' });
+  }
+
+  /** Drop a bot's warp request (cancels a spool; a run can't be stopped). */
+  cancelBotWarp(botId: string): void {
+    const rec = this.deps.swarmRegistry.get(botId);
+    if (rec) this.deps.postToWorker({ type: 'BOT_WARP', slot: rec.slot });
+  }
+
+  /** A bot's NPC warp phase: 1 spool, 2 run, 3 just arrived, 0 none. */
+  botWarpPhase(botId: string): 0 | 1 | 2 | 3 {
+    const w = this.npcWarps.get(botId);
+    if (w === undefined) return 0;
+    if (w.lastPhase !== 0) return w.lastPhase;
+    return w.arrivedUntil >= this.deps.serverTick() ? 3 : 0;
+  }
+
+  /** W2a: follow each warping bot's phase from its SAB flags; mark a drop as
+   *  "just arrived" for ARRIVED_TICKS (clients draw the drop flash). Called
+   *  once per tick from the room's update while `npcWarps` is non-empty. */
+  tickNpcWarps(): void {
+    const d = this.deps;
+    for (const [id, w] of this.npcWarps) {
+      const rec = d.swarmRegistry.get(id);
+      if (!rec) { this.npcWarps.delete(id); continue; }
+      const f = d.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0;
+      const phase: 0 | 1 | 2 = f & FLAG_WARP_CRUISE ? 2 : f & FLAG_WARP_SPOOL ? 1 : 0;
+      if (phase !== 0) w.started = true;
+      // A morale warp-out leaves the sector once its run has begun: the
+      // room's departure (`warp_out` where the run started), not a drop in
+      // this room. The run is shown for LEAVE_RUN_TICKS first: a client draws
+      // a ship's departure when it sees the run start (WarpFx, the same as a
+      // pilot's), and the swarm stream and the snapshot are separate packets,
+      // so removing the ship on the run's first tick could reach a client
+      // before (or without) the phase that draws it.
+      if (w.leave && w.started && (phase === 2 || w.leaveAt >= 0)) {
+        if (w.leaveAt < 0) {
+          w.leaveAt = d.serverTick() + LEAVE_RUN_TICKS;
+          // Where the run starts (the SAB pose of the run's first tick is at
+          // most one tick's run along it).
+          const b = slotBase(rec.slot);
+          w.leaveX = d.sabF32[b + SLOT_X_OFF]!;
+          w.leaveY = d.sabF32[b + SLOT_Y_OFF]!;
+        }
+        w.lastPhase = 2;
+        if (d.serverTick() < w.leaveAt && phase === 2) continue;
+        this.npcWarps.delete(id);
+        if (this.despawnBot(id, 'fled', w.leaveX, w.leaveY) !== null) serverLogEvent('npc_morale_departed', { botId: id, sectorKey: d.sectorKey() ?? '' });
+        continue;
+      }
+      if (w.lastPhase === 2 && phase === 0) w.arrivedUntil = d.serverTick() + ARRIVED_TICKS;
+      w.lastPhase = phase;
+      // Done: idle after the arrival window (or a spool that was cancelled /
+      // never began within a second of the request).
+      if (phase === 0 && d.serverTick() > w.arrivedUntil && (w.started || ++w.idleTicks > 60)) this.npcWarps.delete(id);
+    }
+  }
 
   spawnBot(spec: {
     botId: string;
