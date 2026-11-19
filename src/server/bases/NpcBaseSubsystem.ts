@@ -34,6 +34,16 @@ import { gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
+import type { Logger } from 'pino';
+import { chooseBaseSite, grownExtent, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
+import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBases.js';
+import { getSector } from '../../core/galaxy/galaxy.js';
+import { sectorSites } from '../../core/galaxy/sectorSites.js';
+import { HOME_POCKET_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
+import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
+import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
+import type { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
+import type { PatrolSubsystem } from './PatrolSubsystem.js';
 
 export interface NpcBaseSpec {
   /** Stable id within the sector (part of the owner string). */
@@ -220,4 +230,150 @@ export class NpcBaseSubsystem {
       }
     }
   }
+}
+
+// ── Boot seeding (moved verbatim from SectorRoom) ──────────────────────────
+
+/** Clear space kept between two NPC bases in one sector (bastions, mines, traffic). */
+const NPC_BASE_GAP = sectorSpace(900);
+
+/** What the boot seeders need from the room; getters read fields the room
+ *  assigns in `onCreate`. Built once on the room (`npcSeedHost`). */
+export interface NpcBaseSeedHost {
+  readonly structureRegistry: StructureRegistry;
+  readonly swarmRegistry: Pick<SwarmEntityRegistry, 'all'>;
+  readonly lingeringPoseCache: ReadonlyMap<string, { x: number; y: number }>;
+  readonly patrols: Pick<PatrolSubsystem, 'addBase'>;
+  readonly obstacles: { rocks(near?: ObstacleBox): GridObstacle[] };
+  readonly logger: Pick<Logger, 'info' | 'warn'>;
+  sabF32(): Float32Array;
+  structurePlacement(): Pick<StructurePlacementSubsystem, 'place'>;
+  swarmHealth(): Pick<Map<string, number>, 'set'>;
+  sectorKey(): string | null;
+  evictSwarmEntity(rec: SwarmEntityRecord, opts: { broadcast: boolean; emitDestroyed: boolean }): void;
+  structureGridTick(): void;
+}
+
+/**
+ * T1 — grow this galaxy sector's NPC base from its profile and seed it at a
+ * site that fits: clear of saved player structures and parked hulls (they
+ * always win the space), on the fewest asteroids (those under the footprint
+ * are cleared: the builders cleared the rock), as far from the spawn at the
+ * origin as it fits. Not persisted: a restart regrows it from the seed.
+ */
+export function seedGalaxyBase(h: NpcBaseSeedHost, sectorKey: string): void {
+  // A sector holds one to three NPC bases (galaxyBasePlan); base 0 is the
+  // sector's original base. Each later one keeps well clear of the earlier.
+  const sector = getSector(sectorKey)!;
+  const sub = new NpcBaseSubsystem({
+    registry: h.structureRegistry,
+    place: (owner, kind, x, y, rot) => h.structurePlacement().place(owner, kind, x, y, { skipAutoConnect: true, rot }),
+    setHealth: (id, hp) => h.swarmHealth().set(id, hp),
+    getObstacles: (near) => h.obstacles.rocks(near),
+  });
+  const seededBases: SiteBox[] = [];
+  const plans = galaxyBasePlan(sectorKey);
+  // Solar-system sectors (Phase 4): with two or more bases, the last grows
+  // at the sector's outer base pocket, out in the system, not at home.
+  const outer = SOLAR_SECTORS && plans.length >= 2 ? sectorSites(sectorKey).find((s) => s.kind === 'base') ?? null : null;
+  plans.forEach((plan, i) => {
+    const at = outer && i === plans.length - 1 ? { x: outer.x, y: outer.y } : null;
+    const box = seedOneGalaxyBase(h, sectorKey, sector.features, plan, sub, seededBases, at);
+    if (box !== null) seededBases.push(box);
+  });
+  h.structureGridTick();
+}
+
+/** Seed one planned galaxy base; returns its footprint box, inflated by the
+ *  gap a later base must keep, or null when no site fits. */
+function seedOneGalaxyBase(
+  h: NpcBaseSeedHost,
+  sectorKey: string,
+  features: readonly SectorFeature[],
+  plan: GalaxyBasePlan,
+  sub: NpcBaseSubsystem,
+  seededBases: readonly SiteBox[],
+  /** Grow round this point instead of in the home pocket (outer base pocket). */
+  at: { x: number; y: number } | null = null,
+): SiteBox | null {
+  const { seed, profile } = plan;
+  const spec: NpcBaseSpec = {
+    baseId: plan.baseId, role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
+    side: profile.ownerFaction, features: [...features], profile,
+  };
+  const grown = sub.grow(spec);
+  const hard: SiteBox[] = [...seededBases];
+  for (const r of h.structureRegistry.all()) hard.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
+  for (const p of h.lingeringPoseCache.values()) hard.push({ x: p.x, y: p.y, hw: 150, hh: 150 });
+  const rocks: SwarmEntityRecord[] = [];
+  const soft: SiteCircle[] = [];
+  for (const rec of h.swarmRegistry.all()) {
+    if (rec.kind !== 0) continue;
+    const b = slotBase(rec.slot);
+    rocks.push(rec);
+    soft.push({ x: h.sabF32()[b + SLOT_X_OFF]!, y: h.sabF32()[b + SLOT_Y_OFF]!, r: rec.radius });
+  }
+  const ext = grownExtent(grown.placements);
+  const site = chooseBaseSite(ext, hard, soft, {
+    // The home pocket (today's whole sector; the same bound when solar-system
+    // sectors are off).
+    halfExtent: HOME_POCKET_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed,
+    ...(at ? { centreX: at.x, centreY: at.y } : {}),
+  });
+  if (site === null) {
+    h.logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');
+    return null;
+  }
+  for (const i of site.overlapped) h.evictSwarmEntity(rocks[i]!, { broadcast: false, emitDestroyed: false });
+  const r = sub.seed({ ...spec, x: site.x, y: site.y }, grown);
+  // v4 M2 — a garrison flies a patrol round its approaches.
+  if (profile.role === 'military') addGarrisonPatrol(h, `${sectorKey}-${plan.baseId}`, r.owner, profile.ownerFaction, profile.tier, site.x, site.y);
+  h.logger.info({
+    sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role, owner: r.owner, x: Math.round(site.x), y: Math.round(site.y),
+    placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge, asteroidsCleared: site.overlapped.length,
+  }, 'galaxy npc base seeded');
+  // Later bases keep this far from this one's footprint (room for its
+  // bastions, its minefield and traffic between the two).
+  const gap = NPC_BASE_GAP;
+  return {
+    x: site.x + (ext.x0 + ext.x1) / 2,
+    y: site.y + (ext.y0 + ext.y1) / 2,
+    hw: (ext.x1 - ext.x0) / 2 + gap,
+    hh: (ext.y1 - ext.y0) / 2 + gap,
+  };
+}
+
+/** v4 M2 — give a seeded garrison its patrol: corners from the base's
+ *  footprint, 3 ships (4 for a stronghold or citadel). */
+function addGarrisonPatrol(h: NpcBaseSeedHost, tag: string, owner: string, faction: FactionId, tier: string, cx: number, cy: number): void {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const rec of h.structureRegistry.all()) {
+    if (rec.owner !== owner) continue;
+    const hw = rec.halfW ?? rec.radius, hh = rec.halfH ?? rec.radius;
+    x0 = Math.min(x0, rec.x - hw); x1 = Math.max(x1, rec.x + hw);
+    y0 = Math.min(y0, rec.y - hh); y1 = Math.max(y1, rec.y + hh);
+  }
+  if (!Number.isFinite(x0)) return;
+  const count = tier === 'stronghold' || tier === 'citadel' ? 4 : 3;
+  h.patrols.addBase(tag, owner, faction, { x0, x1, y0, y1 }, cx, cy, count);
+}
+
+/** D2 — seed NPC bases from the generator (built, stocked, recipes + bound
+ *  blueprints loaded), then run one grid pulse so power settles. */
+export function seedNpcBases(h: NpcBaseSeedHost, specs: readonly NpcBaseSpec[]): void {
+  const sub = new NpcBaseSubsystem({
+    registry: h.structureRegistry,
+    place: (owner, kind, x, y, rot) => h.structurePlacement().place(owner, kind, x, y, { skipAutoConnect: true, rot }),
+    setHealth: (id, hp) => h.swarmHealth().set(id, hp),
+    getObstacles: (near) => h.obstacles.rocks(near),
+  });
+  for (const spec of specs.slice(0, 8)) {
+    const r = sub.seed(spec);
+    // v4 M2 — a garrison flies its patrol here too (showcase / test rooms).
+    if (spec.role === 'military') {
+      addGarrisonPatrol(h, `${h.sectorKey() ?? 'room'}-${spec.baseId}`, r.owner, spec.profile?.ownerFaction ?? spec.side ?? 'traders', spec.tier, spec.x, spec.y);
+    }
+    h.logger.info({ baseId: spec.baseId, role: spec.role, tier: spec.tier, owner: r.owner, placed: r.placed, rejectedPlace: r.rejectedPlace, rejectedEdge: r.rejectedEdge }, 'npc base seeded');
+  }
+  h.structureGridTick();
 }

@@ -17,6 +17,7 @@ import { getWeapon, type WeaponDef, type WeaponId } from '@core/combat/WeaponCat
 import { canAfford, resolveSlotEnergyCost } from '@core/combat/Energy';
 import { resolveSlotMounts } from '@shared-types/shipKinds/slots';
 import { LockLineClient } from './fireControl/LockLineClient';
+import { BlockedLineMirror, type LineRay } from '../combat/blockedLineMirror.js';
 import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
 import { rotateMountToward, wrapPi } from '@core/ai/WeaponMountController';
 import type { FcGroupSummary } from '../state/storeTypes';
@@ -38,6 +39,12 @@ export interface FireControlHost {
   fired(tick: number): void;
   /** A hitscan group fired at `nowMs` (`_lastHitscanFireMs`). */
   hitscanFired(nowMs: number): void;
+  /** The client's first-hit ray (`displayHitscan()`, the drawn beam's ray) for the blocked-line hold. */
+  lineRay(): LineRay;
+  /** Game-time ms (`gameClock.now()`): the blocked-line timers step in game time. */
+  gameNow(): number;
+  /** A swarm id's predWorld body key (`_swarmBodyKeyCache`), or undefined. */
+  swarmBodyKey(swarm: number): string | undefined;
 }
 
 export class FireControlClient {
@@ -382,15 +389,17 @@ export class FireControlClient {
     const angles = ship?.mountAngles;
     const cosA = Math.cos(shipAngle);
     const sinA = Math.sin(shipAngle);
+    let bears = false; // every mount looks (its blocked-line timer steps, as the server's per-mount gate)
     for (let i = 0; i < mounts.length; i++) {
       const m = mounts[i]!;
       // Not this group, or no aim (a mining laser leaves a haulable piece to the tractors, as the server).
-      if (this._fcMountGroup.get(m.id) !== groupId || this.fcMountAimKey(m.id, sx, sy, shipAngle) === null) continue;
+      const key = this._fcMountGroup.get(m.id) === groupId ? this.fcMountAimKey(m.id, sx, sy, shipAngle) : null;
+      if (key === null) continue;
       const ox = sx + (m.localX * cosA - m.localY * sinA);
       const oy = sy + (m.localX * sinA + m.localY * cosA);
-      if (mountFiresOn(m.weaponId, mountWeaponReach(m), ox, oy, shipAngle + m.baseAngle + (angles?.[i] ?? 0), t)) return true;
+      if (mountFiresOn(m.weaponId, mountWeaponReach(m), ox, oy, shipAngle + m.baseAngle + (angles?.[i] ?? 0), t) && !this.fcLineHeld(key, i, m.weaponId, ox, oy, t)) bears = true;
     }
-    return false;
+    return bears;
   }
 
   /** May this one mount (world origin + barrel angle) fire at its group's aim target (`mountFiresOn`)?
@@ -402,9 +411,28 @@ export class FireControlClient {
     const ship = localId ? this.mirror.ships.get(localId) : undefined;
     const key = this.fcMountAimKey(mountId, ship?.x ?? ox, ship?.y ?? oy, ship?.angle ?? 0);
     if (key === null || !this.fcTargetPose(key, this._fcBearPose)) return false;
-    return mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._fcBearPose);
+    if (!mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._fcBearPose)) return false;
+    const mounts = getShipKind(ship?.kind ?? null).mounts ?? [];
+    let idx = 0;
+    while (idx < mounts.length && mounts[idx]!.id !== mountId) idx++;
+    return !this.fcLineHeld(key, idx, weaponId, ox, oy, this._fcBearPose);
   }
   private readonly _fcBearPose: FireTargetShape = newFireTargetShape();
+  /** Fire control's blocked-line hold, mirrored (`BlockedLineMirror`, #15). */
+  private readonly _fcLineHold = new BlockedLineMirror();
+
+  /** Does this beam or slug mount (catalogue index `idx`, muzzle (ox, oy)) hold on a line to lock `key`'s
+   *  target `t` blocked for the tolerance? The server's `BlockedLineHold`, on the drawn beam's ray, in game time. */
+  private fcLineHeld(key: string, idx: number, weaponId: WeaponId, ox: number, oy: number, t: FireTargetShape): boolean {
+    const localId = this.mirror.localPlayerId;
+    if (!localId) return false;
+    const k = this.fcKey(key);
+    const target = k.player ?? this.host.swarmBodyKey(k.swarm) ?? '';
+    return this._fcLineHold.held(this.host.lineRay(), localId, idx, weaponId, ox, oy, t.x, t.y, localId, target, this.host.gameNow());
+  }
+
+  /** Sector handoff: the blocked-line timers belong to the old sector. */
+  clearLineHold(): void { this._fcLineHold.clear(); }
 
   fcFireTick(spaceHeld: boolean): void {
     const localId = this.mirror.localPlayerId;
@@ -495,6 +523,7 @@ export class FireControlClient {
       const oy = st.y + (m.localX * sinA + m.localY * cosA);
       // In the mount's own reach of the target's hull AND on bearing (#15).
       if (!mountFiresOn(m.weaponId, def.reach, ox, oy, st.angle + m.baseAngle + (angles?.[i] ?? 0), this._fcPose)) continue;
+      if (this.fcLineHeld(key, i, m.weaponId, ox, oy, this._fcPose)) continue; // blocked line: held, as the server
       bears = true;
       this._fcBearing.add(m.id);
       const cd = getWeapon(m.weaponId).cooldownTicks;

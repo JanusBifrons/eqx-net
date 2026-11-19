@@ -84,6 +84,12 @@ export interface JoinHandlerDeps {
   evictOwnerlessShip(shipInstanceId: string): void;
   attachWingman(shipInstanceId: string): void;
   applyStatMulToWorker(bodyKey: string, alloc: CoreStatAlloc | undefined): void;
+  /** Perf scenes: start the scene clock at the first arrival (no-op without a scene). */
+  startSceneClock(arrivalTick: number): void;
+  /** The arrival effect a joining ship drops in with (`WarpTravelTracker.markArrived`). */
+  markWarpArrived(playerId: string, tick: number): void;
+  /** RTS command-view join: park the just-activated hull (`FleetRoomHooks.startInCommand`). */
+  startInCommand(playerId: string, sessionId: string): void;
   /**
    * Upsert a `player_ships` row for the newly-bound ship. Looks up
    * existing roster entries for the player and reuses the most-recent;

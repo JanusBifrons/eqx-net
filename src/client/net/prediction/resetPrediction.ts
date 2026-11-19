@@ -51,6 +51,8 @@ export interface PredictionResetCtx {
   lastLocalTickAtMs: number;
   dataChannelTransport: DataChannelTransport | null;
   applyLocalDisabled(ms: number): void;
+  /** Fire control's blocked-line timers (`FireControlClient.clearLineHold`). */
+  clearLineHold(): void;
 }
 
 /**
@@ -108,8 +110,9 @@ export function resetPredictionState(ctx: PredictionResetCtx): void {
   ctx.cutField.stop(); // the cut field belongs to the old sector; the next welcome re-arms it
   // Deaths held for their drawn shell belong to the old sector too.
   ctx.shellTiming.reset();
-  // Fire control: NPC locks belong to the old sector.
+  // Fire control: NPC locks and blocked-line timers belong to the old sector.
   ctx.mirror.localLockedBy = NO_LOCKED_BY;
+  ctx.clearLineHold();
   // A new sector / ship: seed the energy pool again from the new ship.
   ctx.energySeeded = false;
   // v4 T2 — a new sector's first snapshot only records the teleport epoch.

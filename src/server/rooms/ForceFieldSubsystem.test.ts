@@ -44,6 +44,7 @@ function rig(over: Partial<TractorDeps> = {}) {
       out.x = p.x; out.y = p.y; out.angle = p.angle;
       return true;
     },
+    lineBlocker: () => '',
     lineBodies: (_fx, _fy, _tx, _ty, _w, a, b, ids, cap) => {
       let n = 0;
       for (const id of st.line) if (id !== a && id !== b && n < cap) ids[n++] = id;

@@ -5,7 +5,7 @@
  *
  * The player lock key `p:<id>` names a pilot's ACTIVE ship by playerId, or a
  * parked (AI-flown) hull by its shipInstanceId: the key the client's one ship
- * list already uses for that hull. `SectorRoom.resolveLockTarget` is the one
+ * list already uses for that hull. `FireControlLocks.resolveLockTarget` is the one
  * resolver; the rules are the active-ship rules (another player: failsafe
  * first, then locked; your own ship: never lockable).
  *

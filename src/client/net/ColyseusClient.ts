@@ -1290,6 +1290,7 @@ export class ColyseusGameClient {
     get lastLocalTickAtMs() { return c._lastLocalTickAtMs; }, set lastLocalTickAtMs(v) { c._lastLocalTickAtMs = v; },
     get dataChannelTransport() { return c._dataChannelTransport; }, set dataChannelTransport(v) { c._dataChannelTransport = v; },
     applyLocalDisabled: (ms: number): void => c.applyLocalDisabled(ms),
+    clearLineHold: (): void => c.fc.clearLineHold(),
     get disposed() { return c.disposed; }, set disposed(v) { c.disposed = v; },
     get localDead() { return c.localDead; }, set localDead(v) { c.localDead = v; },
     get diedAtMs() { return c.diedAtMs; }, set diedAtMs(v) { c.diedAtMs = v; },
@@ -2781,6 +2782,7 @@ export class ColyseusGameClient {
     updateLiveBeam: () => this.updateLiveBeam(),
     fired: (tick) => { this.lastFiredAtTick = tick; },
     hitscanFired: (nowMs) => { this._lastHitscanFireMs = nowMs; },
+    lineRay: () => this.displayHitscan(), gameNow: () => this.gameClock.now(), swarmBodyKey: (n) => this._swarmBodyKeyCache.get(n),
   });
   requestLock(groupId: string, targetKey: string): void { this.fc.requestLock(groupId, targetKey); }
   fcGroupReach(groupId: string): number { return this.fc.fcGroupReach(groupId); }
