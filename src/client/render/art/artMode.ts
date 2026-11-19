@@ -48,6 +48,11 @@ export interface ArtOptions {
    *  direction from `structureStyles.ts`. Absent (or `current`) = today's
    *  structure bakes, byte-identical. Machined only. */
   structStyle?: string;
+  /** Structure restyle grid line look (`?lineLook=`); null = off (the thin
+   *  line). Absent = the URL / default (`rendererSetup/restyleLook.ts`). */
+  lineLook?: import('../pixi/connectorLineLooks.js').LineLook | null;
+  /** Structure restyle rig parts (`?rigs=0` = false). Absent = the URL / on. */
+  rigs?: boolean;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);
