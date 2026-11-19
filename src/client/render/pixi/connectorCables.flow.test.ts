@@ -11,16 +11,16 @@ import {
 } from './connectorCables.js';
 import { CABLE_CURVE_SEGMENTS } from '../../../core/structures/cableCurve.js';
 import { connectorVisualInto, type ConnectorVisual } from './connectorVisual.js';
-import type { LinePath } from './connectorLineLooks.js';
+import { cableLookWidth, cableStudInset, type LinePath } from './connectorLineLooks.js';
 
 /** Records path verbs and strokes like a Pixi Graphics. */
 class FakePath {
-  readonly paths: Array<{ pts: number[]; color: number; alpha: number }> = [];
+  readonly paths: Array<{ pts: number[]; color: number; alpha: number; width: number }> = [];
   verbs = 0;
   private pts: number[] = [];
   moveTo(x: number, y: number): this { this.pts.push(NaN, NaN, x, y); this.verbs++; return this; }
   lineTo(x: number, y: number): this { this.pts.push(x, y); this.verbs++; return this; }
-  stroke(s: { color: number; alpha: number }): this { this.paths.push({ pts: this.pts, color: s.color, alpha: s.alpha }); this.pts = []; return this; }
+  stroke(s: { color: number; alpha: number; width: number }): this { this.paths.push({ pts: this.pts, color: s.color, alpha: s.alpha, width: s.width }); this.pts = []; return this; }
   clear(): void { this.paths.length = 0; this.verbs = 0; }
   get g(): LinePath { return this as unknown as LinePath; }
 }
@@ -146,24 +146,33 @@ describe('socket collar flash (0d slice 9)', () => {
       drawSocketCableFlow(f.g, c, v, sourceIsLo, 1, at, 'minerals');
       return f;
     };
+    // The flash: the end collar's band in the flow colour (wider than the
+    // bundle), square to the cable, just in from the receiving stud.
+    const w = cableLookWidth(1);
+    const flashOf = (f: FakePath) => f.paths.filter((p) => p.color === v.color && p.width === w * 1.4);
     const lit = draw(true, true, arrive + 10);
-    const flash = lit.paths.filter((p) => p.color === v.color && p.alpha > 0.4 && subPaths(p.pts)[0]!.length === 4);
+    const flash = flashOf(lit);
     expect(flash).toHaveLength(1);
-    // At the receiving (last) point, (100, 100).
-    expect(flash[0]!.pts[2]).toBeCloseTo(100); expect(flash[0]!.pts[3]).toBeCloseTo(100);
+    // At the receiving (last) point, (100, 100), on the last leg (vertical): a
+    // horizontal bar centred cableStudInset up from the stud.
+    const [bar] = subPaths(flash[0]!.pts);
+    expect((bar![0]! + bar![2]!) / 2).toBeCloseTo(100); expect(bar![1]).toBeCloseTo(bar![3]!);
+    expect(bar![1]).toBeCloseTo(100 - cableStudInset(1, 200));
     const rev = draw(true, false, arrive + 10);
-    const rflash = rev.paths.filter((p) => p.color === v.color && p.alpha > 0.4 && subPaths(p.pts)[0]!.length === 4);
-    expect(rflash[0]!.pts[2]).toBeCloseTo(0); expect(rflash[0]!.pts[3]).toBeCloseTo(0);
+    const [rbar] = subPaths(flashOf(rev)[0]!.pts);
+    expect((rbar![1]! + rbar![3]!) / 2).toBeCloseTo(0); expect(rbar![0]).toBeCloseTo(rbar![2]!);
+    expect(rbar![0]).toBeCloseTo(cableStudInset(1, 200));
     // Before any arrival, after the flash, and on a fence link: no flash.
     const strokes = (f: FakePath) => f.paths.length;
     expect(strokes(draw(true, true, arrive - 50))).toBe(strokes(draw(true, true, arrive + COLLAR_FLASH_MS + 20)));
-    expect(strokes(draw(false, true, arrive + 10))).toBe(strokes(lit) - 2);
+    expect(flashOf(draw(false, true, arrive + 10))).toHaveLength(0);
   });
 });
 
 describe('per-frame draw work of one animated cable (counts, not time)', () => {
-  /** Strokes: bleed, core, one for every comet, two for the flash. */
-  const MAX_STROKES = 5;
+  /** Strokes: bleed, core, one for every comet, one for every spark, two
+   *  for the flash. */
+  const MAX_STROKES = 6;
   it('stays within the stroke and path-verb budget at every zoom and phase', () => {
     const c = makeLinkCable();
     // A full-length 13-point curve: a wide arc.
@@ -188,7 +197,10 @@ describe('per-frame draw work of one animated cable (counts, not time)', () => {
       }
     }
     expect(maxStrokes).toBeLessThanOrEqual(MAX_STROKES);
-    // Bleed + core run the polyline (2 x n verbs); comets and flash on top.
-    expect(maxVerbs).toBeLessThanOrEqual(2 * n + (MAX_CABLE_COMETS + 1) * 8 + 4);
+    // Bleed + core run the polyline (2 x n verbs, plus two per gap between
+    // frames); comets (each up to 8 verbs) and their clamp sparks (two
+    // cradles in reach, 8 verbs each) and the flash on top.
+    const gaps = 2 * Math.ceil(c.len / (55 * 0.8));
+    expect(maxVerbs).toBeLessThanOrEqual(2 * n + 2 * gaps + (MAX_CABLE_COMETS + 1) * (8 + 16) + 4);
   });
 });

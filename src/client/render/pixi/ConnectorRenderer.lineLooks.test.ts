@@ -228,10 +228,13 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
     const c = r.cables.peek(1 * 65536 + 2)!;
     expect(c.socketed).toBe(true);
     expect(Array.from(c.poly)).toEqual(expected);
-    // The outline / sheath / core strokes run exactly that polyline.
+    // The bundle's centre strand (outline + core sheath) runs that polyline,
+    // stud to stud.
     const drawn = strokedPaths(r.staticGfx, CABLE_POINTS).filter((p) => p[0] === expected[0] && p[1] === expected[1]);
-    expect(drawn.length).toBeGreaterThanOrEqual(3);
-    for (const p of drawn) expect(p).toEqual(expected);
+    expect(drawn.length).toBeGreaterThanOrEqual(2);
+    for (const p of drawn) p.forEach((v, i) => expect(v).toBeCloseTo(expected[i]!, 6));
+    // It is the cable line look (bundle, frames, collars), not a thin tube.
+    expect(instructions(r.staticGfx).filter((i) => i.action === 'stroke').length).toBeGreaterThan(20);
     // It leaves the socket along the socket's outward normal.
     const n = { x: 0, y: 0, nx: 0, ny: 0 };
     structureSocketToWorld(structureSockets('solar')[sa]!, 0, 0, Math.PI / 2, n);
@@ -288,7 +291,7 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
     r.update(mirror, 0.5, 100);
     const c = r.cables.peek(1 * 65536 + 2)!;
     const flow = strokedPaths(r.gfx, CABLE_POINTS);
-    expect(flow.length).toBeGreaterThanOrEqual(2); // bleed + lit core
+    expect(flow.length).toBeGreaterThanOrEqual(1); // the bleed (the lit core shows between the frames)
     for (const p of flow) expect(p).toEqual(Array.from(c.poly));
     expect(r.cables.flattens).toBe(2);
   });
@@ -312,11 +315,17 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
     r.update(mirror, 0.5, 0);
     const rebuilds = r.staticRebuilds, flattens = r.cables.flattens;
     const c = r.cables.peek(key)!;
+    // The flash: the receiving end collar (just off the solar's stud) lit in
+    // a band wider than any other flow stroke.
+    const flashed = (): boolean => (r.gfx.context as unknown as { instructions: Array<PathInstr & { data: { style: { width: number } } }> }).instructions
+      .some((i) => i.action === 'stroke' && i.data.style.width > 14 && i.data.path.instructions.length === 2
+        && Math.hypot((i.data.path.instructions[0]!.data[0]! + i.data.path.instructions[1]!.data[0]!) / 2 - c.poly[0]!,
+          (i.data.path.instructions[0]!.data[1]! + i.data.path.instructions[1]!.data[1]!) / 2 - c.poly[1]!) < 12);
     let flashFrames = 0, frames = 0;
     for (let t = 50; t <= 6000; t += 50) {
       r.update(mirror, 0.5, t);
       frames++;
-      if (strokedPaths(r.gfx, 2).some((p) => p[0] === c.poly[0] && p[1] === c.poly[1])) flashFrames++;
+      if (flashed()) flashFrames++;
     }
     expect(r.staticRebuilds).toBe(rebuilds);
     expect(r.cables.flattens).toBe(flattens);
