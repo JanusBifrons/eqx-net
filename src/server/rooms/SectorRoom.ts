@@ -952,7 +952,8 @@ export class SectorRoom extends Room<SectorState> {
   private wreckFieldSource: WreckFieldSource | undefined; // wreck fields 3b (room option `wreckField`)
   /** Navigation: the cut field's nav maps, AI routes and autopilot requests (`nav/RoomNav.ts`). */
   private readonly nav: RoomNav = new RoomNav({
-    now: () => this.gameClock.now(), logger, sectorKey: () => this.sectorKey, stopped: () => this.simLoopStopped,
+    now: () => this.gameClock.now(), logger, sectorKey: () => this.sectorKey, stopped: () => this.simLoopStopped, structures: () => this.structureRegistry,
+    resting: () => ({ swarm: this.swarmRegistry, sabF32: () => this.sabF32, sabU32: () => this.sabU32, bus: this.bus }),
     hullOf: (sid) => {
       const playerId = this.sessionToPlayer.get(sid), ship = playerId ? this.getActiveShip(playerId) : undefined;
       const pose = playerId ? this.shipPoseCache.get(playerId) : undefined;
@@ -1145,7 +1146,7 @@ export class SectorRoom extends Room<SectorState> {
   /** The one obstacle gatherer (placement, line of sight, landing, spawns). */
   private readonly obstacles = new SectorObstacles({
     structures: this.structureRegistry, swarm: this.swarmRegistry, sab: () => this.sabF32,
-    dormantRocks: (box, out) => this.cutField?.dormantObstacles(box, out),
+    dormantRocks: (box, out, wrecks) => this.cutField?.dormantObstacles(box, out, wrecks),
     forEachHull: (sink) => {
       for (const [pid, pose] of this.shipPoseCache) sink.hull(pose.x, pose.y, this.getActiveShip(pid)?.kind, pid, undefined, this.pendingJoin.has(pid));
       for (const [shipId, pose] of this.lingeringPoseCache) { const h = this.state.ships.get(shipId); sink.hull(pose.x, pose.y, h?.kind || undefined, h?.playerId, shipId, false); }
@@ -2194,7 +2195,7 @@ export class SectorRoom extends Room<SectorState> {
       snapshotRing: this.snapshotRing,
       shieldHullRouter: this.shieldHullRouter,
       mountTicker: this.mountTicker,
-      freeSlots: this.freeSlots,
+      freeSlots: this.freeSlots, nav: this.nav,
     });
 
     // Player respawn handler. Composes worker proxy + SAB writer +
@@ -2766,8 +2767,9 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       // Asteroids (swarm kind=0) block placement and a connector's line of sight
       // (Item D); shared with the grid-pulse reconnect sweep. Placement also
-      // passes `near` for unloaded cut-field rocks (C5, links C5g). Off the hot loop.
-      getObstacles: (near) => this.obstacles.rocks(near),
+      // passes `near` for unloaded cut-field rocks (C5, links C5g), and `wrecks`
+      // for wreck pieces, loaded and not (wreck fields 7). Off the hot loop.
+      getObstacles: (near, wrecks) => this.obstacles.rocks(near, wrecks),
       // Economy v2 W4b — a player's non-starter structure is placed from a
       // PACKED item (now buyable from traders, and lootable). Consumed only
       // after the structure registers; its build then costs only time.
@@ -9166,6 +9168,7 @@ export class SectorRoom extends Room<SectorState> {
         if (!this.lingeringSlots.has(shipId)) return false;
         this.fleet.setStance(owner, [shipId], opts.stance);
         this.fleet.setMode(owner, [shipId], opts.mode);
+        if (opts.moveTo) this.fleet.applyOrder(owner, [shipId], { kind: 'move', x: opts.moveTo.x, y: opts.moveTo.y });
         return true;
       },
       // Rock-cut scene: still rocks, then each mined to a break (RockCutter.sceneCut).
@@ -10007,6 +10010,7 @@ export class SectorRoom extends Room<SectorState> {
         this.sceneWork.aiNeighbours(this.aiGrids.queriesTotal);
         this.sceneWork.wingmen(this.fleet.size, this.wingmen.hullBrainTicksTotal, 0, 0);
         this.sceneWork.aiDecisions(this.aiController.stats.decisions);
+        const ns = this.nav.stats; if (ns) this.sceneWork.nav(ns.routes, ns.expanded, ns.posts, ns.inFlight);
         this.sceneWork.wreckPiecesTick(this.capitalWrecks?.liveCount() ?? 0);
       }
       this.sceneWork.active = running;

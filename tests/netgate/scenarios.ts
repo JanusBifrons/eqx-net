@@ -33,8 +33,7 @@ export type InteractionId = 'strafe-fire' | 'autopilot-course';
 /** `autopilot` scenario (navigation slice 15): a fighter spawned in open
  *  water at the cut field's rim (seed `look`) sets a helm course past a rim
  *  rock; the server's route has one turn round it (same pair as
- *  `tests/e2e/autopilot-round-rock.spec.ts`). Inside packed chunks a fighter
- *  gets no route today (navigation guide, fine layer), so the guard flies the rim. */
+ *  `tests/e2e/autopilot-round-rock.spec.ts`). */
 export const AUTOPILOT_SPAWN = { x: -7_192, y: 13_288 } as const;
 export const AUTOPILOT_COURSE = { x: -6_792, y: 10_392 } as const;
 const AUTOPILOT_FACING = Math.atan2(-(AUTOPILOT_COURSE.x - AUTOPILOT_SPAWN.x), AUTOPILOT_COURSE.y - AUTOPILOT_SPAWN.y);

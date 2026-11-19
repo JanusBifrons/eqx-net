@@ -7,7 +7,8 @@
  * minimum-display gate (the ship then arrives for everyone).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ColyseusGameClient, travelApproach } from './ColyseusClient.js';
+import { ColyseusGameClient } from './ColyseusClient.js';
+import { travelApproach } from './mirror/travelPass.js';
 import { WARP_SPEED } from '../../core/physics/warpDrive.js';
 import { PhysicsWorld } from '../../core/physics/World.js';
 import { useUIStore } from '../state/store.js';

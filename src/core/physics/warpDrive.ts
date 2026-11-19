@@ -26,7 +26,7 @@ export const WARP_SPEED = 20_000;
 /** Speed on dropping out (u/s), along the run's direction. */
 export const WARP_EXIT_SPEED = 150;
 /** While spooling the ship turns to face its target: turn rate (rad/s) per
- *  radian off, capped at the kind's turn rate (World.alignToWarp). */
+ *  radian off, capped at the kind's turn rate (warpActuator.ts alignToWarp). */
 export const WARP_ALIGN_GAIN = 8;
 
 /** A ship engages only once within this of facing its target (rad), pilot

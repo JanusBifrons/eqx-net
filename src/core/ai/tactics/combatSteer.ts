@@ -24,13 +24,14 @@ import {
   COMBAT_PILOT_PARAMS,
   COMBAT_SEP_CORE,
   COMBAT_SEP_REACH,
+  ENGAGE_DISTANCE_RATIO,
   FACE_MOVE_ENTER,
   FACE_MOVE_EXIT,
   FACE_MOVE_MIN_SPEED,
   RUN_NOW_PILOT_PARAMS,
   RUN_PILOT_PARAMS,
 } from '../hostileDroneTuning.js';
-import { facingOf, wrapAngle, type PilotHandling, type PilotParams, type PilotState } from '../virtualPilot.js';
+import { brakingSpeed, facingOf, wrapAngle, type PilotHandling, type PilotParams, type PilotState } from '../virtualPilot.js';
 import type { CombatDecision } from './combatDecision.js';
 import { type FireLaneSteer, fireLaneAvoidanceOn, NUDGE_MAX_OFF, NUDGE_SPEED_FRAC } from './fireLanes.js';
 import { FACE_AIM_LEAD, FACE_MOVE, MANOEUVRE_BREAK, type ManoeuvreGoal, type TacticalContext } from './manoeuvre.js';
@@ -45,6 +46,10 @@ export interface CombatSteerTune {
   readonly combatSeparation: number;
   readonly shieldPad: number;
   readonly fireRange: number;
+  /** Stand-off: STOP_DIST = fireRange × `stopDistFactor`; a missile kite
+   *  backs off inside fireRange × `backoffInsideFactor` (0 = never). */
+  readonly stopDistFactor: number;
+  readonly backoffInsideFactor: number;
 }
 
 export class CombatSteer {
@@ -62,6 +67,10 @@ export class CombatSteer {
   wvy = 0;
   boost = false;
   params: Readonly<PilotParams> = COMBAT_PILOT_PARAMS;
+  /** Out of `standOff`: the wanted speed along the target line and whether
+   *  the far engagement may boost. */
+  along = 0;
+  standBoost = false;
 
   constructor(
     private readonly tune: CombatSteerTune,
@@ -73,6 +82,44 @@ export class CombatSteer {
     /** The neighbour buffer (`COMBAT_NEIGHBOUR_K`), shared with the senses. */
     private readonly nbIdx: Int32Array,
   ) {}
+
+  /**
+   * Weapon-aware stand-off (weapons/energy/AI overhaul §4): beam bores to
+   * ~50 % of its short reach, bolt holds the mid-range dogfight, missile
+   * kites at ~90 % of its long reach and backs off when the target closes
+   * inside `fireRange × backoffInsideFactor`. Expressed as a wanted speed
+   * along the target line (+ = closing, `along`), on top of the target's own
+   * speed along it (`targetAlong`), so a moving target is matched rather
+   * than chased past.
+   */
+  standOff(rangeDist: number, targetAlong: number): void {
+    const tu = this.tune;
+    const h = tu.handling;
+    const STOP_DIST = tu.fireRange * tu.stopDistFactor;
+    let closing: number;
+    let boostOk = false;
+    if (tu.backoffInsideFactor > 0 && rangeDist < tu.fireRange * tu.backoffInsideFactor) {
+      // Missile kite — too close for artillery: open the gap.
+      closing = -h.cruiseSpeed;
+    } else if (rangeDist > tu.fireRange * ENGAGE_DISTANCE_RATIO) {
+      // Far engagement — close at full speed, boosting while it can.
+      closing = Math.min(h.maxSpeed, brakingSpeed(h, rangeDist - STOP_DIST));
+      boostOk = true;
+    } else if (rangeDist > STOP_DIST) {
+      // Approach window: never faster than it can brake from by STOP_DIST
+      // (the "flies past way too quickly… never approaches" fix, now by the
+      // pilot's own reverse instead of an AI-only brake impulse).
+      closing = Math.min(h.cruiseSpeed, brakingSpeed(h, rangeDist - STOP_DIST));
+    } else {
+      // Inside the stop distance — hold the range (brake any closing speed).
+      closing = 0;
+    }
+    let along = targetAlong + closing;
+    if (along > h.maxSpeed) along = h.maxSpeed;
+    else if (along < -h.maxSpeed) along = -h.maxSpeed;
+    this.along = along;
+    this.standBoost = boostOk;
+  }
 
   /**
    * The running manoeuvre (slice 4) has written its INTEREST into the maps

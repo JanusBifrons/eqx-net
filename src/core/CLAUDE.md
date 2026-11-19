@@ -42,6 +42,7 @@ Core never instantiates a renderer, audio, network or persistence concretion: it
 - **Spawned bodies:** drones take their kind's `linearDamping` (client predWorld drone body stays undamped); asteroids are ballistic; structures (kind 2) are LOCKED on spawn, as in the predWorld.
 - **Soft CCD on every dynamic body** (`SOFT_CCD_PREDICTION`), never full `setCcdEnabled(true)`. **Handling feel is per class** (`shared-types/shipScale/arcadeHandling.ts`), never per record.
 - **Capitals collide through `CapitalOverlapResolver`**, never a global `lengthUnit` change. **Stiff solver** (16 iterations + `switchToSmallStepsPgsSolver()`): never revert without measuring `tests/e2e/ramming-probe-armpit.spec.ts`.
+- **`World.ts` stays thin (≤ 600 lines):** new body builders go in `physics/spawnBodies.ts`, warp body code in `physics/warpActuator.ts`, shared types in `physics/worldTypes.ts`, other homes in the map. [god-file-extension-points](../../docs/architecture/god-file-extension-points.md).
 - Why and the locking tests: [ship-physics-handling](../../docs/architecture/ship-physics-handling.md#physics-rules-reference).
 
 ---
