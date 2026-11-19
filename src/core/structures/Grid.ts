@@ -23,6 +23,9 @@ import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
 import { rayHitsConvexPolygon } from '../combat/Weapons.js';
 import { convexHullCCW } from '../swarm/asteroidShape.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js';
+// Function-only cycle (cableCurve uses Grid's segment tests): neither module
+// reads the other at load time.
+import { CABLE_NO_SOCKET, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -84,6 +87,9 @@ export type CanConnectReason =
   | 'b-full'
   | 'out-of-range'
   | 'blocked'
+  /** 0d cable sockets: no socket pair faces (a building socket takes a cable
+   *  only within 90° of its outward side, never behind the building). */
+  | 'no-facing-socket'
   /** Phase 5 — a shield-pylon dual-cap violation: a 2nd connector, a 4th pylon,
    *  or a pylon↔non-(connector|pylon) target. */
   | 'pylon-rule';
@@ -260,8 +266,12 @@ function shieldPylonRejection(
 
 /**
  * The hub model — who may connect to whom. Ports eqx-peri's rules exactly:
- * connector-required, per-kind connection cap, edge-to-edge range, no self / no
- * duplicate, line-of-sight.
+ * connector-required, per-kind connection cap, no self / no duplicate; then
+ * the 0d cable-socket rule (`pickCableSocketPair`): a facing socket pair in
+ * reach (socket to socket) whose curved cable crosses nothing. On success the
+ * chosen pair goes into the optional scratch `sockets`. A fence link (shield
+ * emitter to emitter) keeps its straight post-to-post rule (edge range +
+ * centre line of sight) and writes `CABLE_NO_SOCKET` for both ends.
  */
 export function canConnect(
   a: GridNode,
@@ -269,6 +279,7 @@ export function canConnect(
   adjacency: ReadonlyMap<string, readonly Connection[]>,
   nodes: ReadonlyMap<string, GridNode>,
   obstacles?: readonly GridObstacle[],
+  sockets?: CableSocketPick,
 ): CanConnectResult {
   if (a.id === b.id) return { ok: false, reason: 'self' };
   // WS-5 (R2.10) — capital-only-connectors: the Capital may ONLY link to a
@@ -322,8 +333,16 @@ export function canConnect(
     a.connectionRange ?? CONNECTION_MAX_RANGE,
     b.connectionRange ?? CONNECTION_MAX_RANGE,
   );
+  // Edge distance never exceeds socket distance: the cheap far reject.
   if (edgeDistance(a, b) > maxRange) return { ok: false, reason: 'out-of-range' };
-  if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
+  if (a.isShieldPylon === true && b.isShieldPylon === true) {
+    // Fence link: straight post to post, along the wall.
+    if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
+    if (sockets) { sockets.a = CABLE_NO_SOCKET; sockets.b = CABLE_NO_SOCKET; }
+    return { ok: true };
+  }
+  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets);
+  if (refusal !== null) return { ok: false, reason: refusal };
   return { ok: true };
 }
 

@@ -16,9 +16,13 @@
  * segment tests, with the polyline's box as a broad phase. It lives here, not
  * in Grid.ts, to keep Grid.ts under the god-file ceiling.
  *
- * Nothing calls these yet: `canConnect` switches over in a later slice.
+ * `pickCableSocketPair` (slice 4) is the socket half of `canConnect`: it picks the
+ * pair a cable runs between. It lives here for the same reason.
  */
-import { segmentHitsObstacle, segmentIntersectsAabb, type GridNode, type GridObstacle } from './Grid.js';
+import {
+  segmentHitsObstacle, segmentIntersectsAabb, type CanConnectReason, type GridNode, type GridObstacle,
+} from './Grid.js';
+import { structureSockets, structureSocketToWorld } from '../../shared-types/structureKinds.js';
 
 /** Segments in a flattened cable curve (points = segments + 1). */
 export const CABLE_CURVE_SEGMENTS = 12;
@@ -145,4 +149,135 @@ export function isCablePolylineBlocked(
     }
   }
   return false;
+}
+
+/** No socket: a fence link (emitter post to post) runs straight, centre to
+ *  centre, as before the sockets. */
+export const CABLE_NO_SOCKET = -1;
+
+/**
+ * The socket pair `canConnect` picked, as indices into each end's
+ * `structureSockets(kind)` list (`a` for its first node argument, `b` for its
+ * second). `CABLE_NO_SOCKET` on both for a fence link. Caller-owned scratch:
+ * allocate once with `makeCableSocketPick`, pass it on every call.
+ */
+export interface CableSocketPick { a: number; b: number }
+
+/** A fresh scratch pick (allocate once, reuse). */
+export function makeCableSocketPick(): CableSocketPick {
+  return { a: CABLE_NO_SOCKET, b: CABLE_NO_SOCKET };
+}
+
+// Module scratch for the picker (root invariant #14: the build preview calls
+// `canConnect` every frame). World sockets per end, then the candidate pairs
+// in nearest-first order. Grown (doubled) only when a kind has more sockets
+// than ever seen before, so steady state allocates nothing.
+let sockCap = 32;
+let ax = new Float64Array(sockCap), ay = new Float64Array(sockCap), aNx = new Float64Array(sockCap), aNy = new Float64Array(sockCap);
+let bx = new Float64Array(sockCap), by = new Float64Array(sockCap), bNx = new Float64Array(sockCap), bNy = new Float64Array(sockCap);
+let pairCap = 256;
+let pairD2 = new Float64Array(pairCap);
+let pairI = new Int32Array(pairCap);
+let pairJ = new Int32Array(pairCap);
+const wSock = { x: 0, y: 0, nx: 0, ny: 0 };
+const endA = { x: 0, y: 0, nx: 0, ny: 0 };
+const endB = { x: 0, y: 0, nx: 0, ny: 0 };
+const pickPoly = new Float64Array(CABLE_CURVE_FLOATS);
+const pickBox = makeCableBox();
+
+function growSockets(n: number): void {
+  while (sockCap < n) sockCap *= 2;
+  ax = new Float64Array(sockCap); ay = new Float64Array(sockCap); aNx = new Float64Array(sockCap); aNy = new Float64Array(sockCap);
+  bx = new Float64Array(sockCap); by = new Float64Array(sockCap); bNx = new Float64Array(sockCap); bNy = new Float64Array(sockCap);
+}
+
+function growPairs(n: number): void {
+  while (pairCap < n) pairCap *= 2;
+  pairD2 = new Float64Array(pairCap);
+  pairI = new Int32Array(pairCap);
+  pairJ = new Int32Array(pairCap);
+}
+
+/** Ends that take a cable from any side (no facing filter, short tail): a
+ *  connector, and a shield emitter (pylon / gate / airlock), whose sockets are
+ *  its round posts rather than wall faces. Without the emitter case a gate
+ *  could never be tapped from beside its middle (the base generator's row-end
+ *  taps and the scale lattice both do that). */
+// Emitters count as any-side because a gate's posts point along the wall, not at its taps.
+function takesAnySide(n: GridNode): boolean {
+  return n.isConnector || n.isShieldPylon === true;
+}
+
+/**
+ * The socket half of `canConnect` (0d slice 4, owner-approved rule): find the
+ * socket pair a cable from `a` to `b` runs between, writing it into `out`.
+ *
+ *  1. Facing filter: a building socket takes a cable only to a partner socket
+ *     in front of it (within 90° of its outward normal, never behind the
+ *     building); a connector or emitter-post end takes a cable from any side
+ *     (`takesAnySide`).
+ *  2. Reach: socket to socket within `maxRange`.
+ *  3. The survivors are tried nearest first (ties: `a`'s socket order, then
+ *     `b`'s, so the pick is deterministic), and the first whose curve
+ *     (`flattenCableCurve`, any-side ends short-tailed) is not blocked
+ *     (`isCablePolylineBlocked`) wins.
+ *
+ * Returns null on success, else the refusal: `'no-facing-socket'` (no pair
+ * faces at all), `'out-of-range'` (none facing is in reach) or `'blocked'`
+ * (every facing pair in reach crosses something). `out` is written only on
+ * success. Allocation-free after warm-up.
+ */
+export function pickCableSocketPair(
+  a: GridNode,
+  b: GridNode,
+  maxRange: number,
+  nodes: ReadonlyMap<string, GridNode>,
+  obstacles: readonly GridObstacle[] | undefined,
+  out: CableSocketPick | undefined,
+): CanConnectReason | null {
+  const la = structureSockets(a.kind);
+  const lb = structureSockets(b.kind);
+  const na = la.length, nb = lb.length;
+  if (na > sockCap || nb > sockCap) growSockets(Math.max(na, nb));
+  if (na * nb > pairCap) growPairs(na * nb);
+  for (let i = 0; i < na; i++) {
+    structureSocketToWorld(la[i]!, a.x, a.y, a.rot, wSock);
+    ax[i] = wSock.x; ay[i] = wSock.y; aNx[i] = wSock.nx; aNy[i] = wSock.ny;
+  }
+  for (let j = 0; j < nb; j++) {
+    structureSocketToWorld(lb[j]!, b.x, b.y, b.rot, wSock);
+    bx[j] = wSock.x; by[j] = wSock.y; bNx[j] = wSock.nx; bNy[j] = wSock.ny;
+  }
+  const aAny = takesAnySide(a), bAny = takesAnySide(b);
+  const max2 = maxRange * maxRange;
+  let facing = false;
+  let n = 0;
+  for (let i = 0; i < na; i++) {
+    for (let j = 0; j < nb; j++) {
+      const dx = bx[j]! - ax[i]!, dy = by[j]! - ay[i]!;
+      if (!aAny && aNx[i]! * dx + aNy[i]! * dy < 0) continue;
+      if (!bAny && bNx[j]! * dx + bNy[j]! * dy > 0) continue;
+      facing = true;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > max2) continue;
+      // Insertion into the sorted list; equal distances keep (i, j) order.
+      let k = n++;
+      while (k > 0 && pairD2[k - 1]! > d2) {
+        pairD2[k] = pairD2[k - 1]!; pairI[k] = pairI[k - 1]!; pairJ[k] = pairJ[k - 1]!;
+        k--;
+      }
+      pairD2[k] = d2; pairI[k] = i; pairJ[k] = j;
+    }
+  }
+  if (n === 0) return facing ? 'out-of-range' : 'no-facing-socket';
+  for (let k = 0; k < n; k++) {
+    const i = pairI[k]!, j = pairJ[k]!;
+    endA.x = ax[i]!; endA.y = ay[i]!; endA.nx = aNx[i]!; endA.ny = aNy[i]!;
+    endB.x = bx[j]!; endB.y = by[j]!; endB.nx = bNx[j]!; endB.ny = bNy[j]!;
+    flattenCableCurve(endA, aAny, endB, bAny, pickPoly, pickBox);
+    if (isCablePolylineBlocked(a, b, pickPoly, pickBox, nodes, obstacles)) continue;
+    if (out) { out.a = i; out.b = j; }
+    return null;
+  }
+  return 'blocked';
 }
