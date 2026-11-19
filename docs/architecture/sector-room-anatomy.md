@@ -51,7 +51,7 @@ mature.
   [Trap 4](#trap-4-no-multi-subscriber-fan-out)) to the right
   subsystems. Per the trap, the inline pattern is preserved
   deliberately — there is no multi-subscriber bus fan-out today.
-- `spawnWorker()` itself — its body builds the worker bundle, attaches
+- `createPhysicsWorker()` (`contactFilter.ts`, was `spawnWorker()`) — builds the worker bundle, attaches
   message handlers, and resolves the `READY` promise. Calls
   `this.physics.setWorker(...)` to wire the bridge.
 

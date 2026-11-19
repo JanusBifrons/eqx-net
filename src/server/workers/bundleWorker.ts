@@ -3,7 +3,7 @@ import { build } from 'esbuild';
 /**
  * Bundle a `worker_threads` entrypoint to a self-contained CJS string at
  * runtime. Reused by:
- *   - `SectorRoom.spawnWorker()` for the physics worker (with Rapier external).
+ *   - `createPhysicsWorker()` (contactFilter.ts) via PhysicsWorkerProxy for the physics worker (with Rapier external).
  *   - `PersistenceWorker.initWorker()` for the DB worker (no externals).
  *
  * tsx's ESM loader hook does not reliably rewrite `.js`-extension imports

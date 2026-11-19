@@ -154,7 +154,7 @@ import type { NpcLockSubsystem } from './NpcLockSubsystem.js';
 import { fillRangeShape } from '../../core/combat/fireControlBearing.js';
 import { weaponIdReach } from '../../core/combat/mountReach.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
-import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
+import type { PhysicsWorkerProxy, WorkerCmd } from './PhysicsWorkerProxy.js';
 import { classifyAttacker } from './classifyAttacker.js';
 import { ShipProgression } from './features/shipProgression.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
@@ -216,7 +216,7 @@ import {
 } from './join/joinConstants.js';
 import { ChargeTicksCapSchema, LockTimeCapSchema, TimeScaleSchema, TraverseTicksCapSchema } from './join/joinOptions.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
-import { handleContactBatch, type ContactBatchHost } from './contactFilter.js';
+import { createPhysicsWorker } from './contactFilter.js';
 import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
 import { recordLagCompPoses } from './lagCompRecorder.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
@@ -1261,7 +1261,16 @@ export class SectorRoom extends Room<SectorState> {
     this.sabU32 = new Uint32Array(this.sab);
     this.sabF32 = new Float32Array(this.sab);
 
-    await this.spawnWorker();
+    // Bundle + spawn the physics worker (`createPhysicsWorker`, contactFilter.ts).
+    this.physicsWorkerProxy = createPhysicsWorker({
+      sceneWork: this.sceneWork, collisionGate: this.collisionGate, cutField: () => this.cutField, bus: () => this.bus,
+      broadcast: (type, msg) => { this.broadcast(type, msg); }, disableCollisionDamage: () => this.disableCollisionDamage,
+      loot: () => this.loot, applyDamage: (target, shooter, dmg) => this.applyDamage(target, shooter, dmg),
+      swarmRegistry: this.swarmRegistry, lingeringSlots: this.lingeringSlots, ships: () => this.state.ships,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      workerEntryPath: WORKER_TS_PATH, sab: this.sab, logger, playerToSlot: () => this.playerToSlot,
+    });
+    await this.physicsWorkerProxy.start();
 
     // gameServer.define()'s 3rd arg flows into onCreate(options). test-sector
     // passes { testMode: true, asteroidConfig: [] } to run with no obstacles.
@@ -4972,45 +4981,6 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   // ── Worker lifecycle ────────────────────────────────────────────────────
-
-  /**
-   * Bundle + spawn the physics worker through the PhysicsWorkerProxy.
-   * The proxy owns the Worker instance, the READY handshake, and the
-   * SLEEP_TRANSITION / CONTACT_BATCH routing — this room provides
-   * the handlers (bus emit, broadcast, ramming damage) via callbacks.
-   */
-  private async spawnWorker(): Promise<void> {
-    // Contact batches: collision broadcast + ramming damage (`contactFilter.ts`).
-    const contactHost: ContactBatchHost = {
-      sceneWork: this.sceneWork, collisionGate: this.collisionGate, cutField: () => this.cutField, bus: () => this.bus,
-      broadcast: (type, msg) => { this.broadcast(type, msg); }, disableCollisionDamage: () => this.disableCollisionDamage,
-      loot: () => this.loot, applyDamage: (target, shooter, dmg) => this.applyDamage(target, shooter, dmg),
-      swarmRegistry: this.swarmRegistry, lingeringSlots: this.lingeringSlots, ships: () => this.state.ships,
-      getActiveShip: (pid) => this.getActiveShip(pid),
-    };
-    this.physicsWorkerProxy = new PhysicsWorkerProxy({
-      workerEntryPath: WORKER_TS_PATH,
-      sab: this.sab,
-      logger,
-      stats: () => ({
-        playerCount: this.playerToSlot.size,
-        swarmCount: this.swarmRegistry.size(),
-      }),
-      onSleepTransition: (entityId, sleeping) => {
-        // Re-emit on the local bus as a discrete event. Phase 5
-        // subscribers (binary swarm broadcast in 5c, audio/UI in later
-        // phases) consume these to freeze interpolation / play wake
-        // SFX. Pino sampling rule for high-frequency events applies.
-        if (sleeping) {
-          this.bus.emit('ENTITY_SLEPT', { type: 'ENTITY_SLEPT', entityId });
-        } else {
-          this.bus.emit('ENTITY_WOKE', { type: 'ENTITY_WOKE', entityId });
-        }
-      },
-      onContactBatch: (tick, contacts) => { handleContactBatch(contactHost, tick, contacts); },
-    });
-    await this.physicsWorkerProxy.start();
-  }
 
   private postToWorker(cmd: WorkerCmd): void {
     this.physicsWorkerProxy.postCommand(cmd);
