@@ -3206,3 +3206,12 @@ the chord across each corner, so the ship's path was never the planned one; it h
 layer's rough bound left ~90 u of slack round every turn. Once routes took the field's streets at the
 hull's clearance (30 u), the chord crossed rock. A follower must stay on the route it was handed: pass a
 turn only once level with it (`stepNavRoute`), and test the follower against a route with no slack.
+
+## 2026-11-19 — a stack merged bottom-up costs one CI round per link
+
+Seventy-odd PRs, mostly god-file split chains up to 16 deep, backed up for a day: each link waited for
+a full ~1 h CI round after the one below it, every merge put the siblings into conflict on the shared
+cap table in `scripts/audit-god-files.mjs`, and flaky required tests (a wall-clock bound, a coin flip)
+reset the clock. Merge only a stack's top (one round lands the whole chain), resolve cap conflicts by
+taking the lower cap, and fix a flake's cause the first time. Post-mortem:
+`docs/HANDOFF-2026-11-19-pr-backlog.md`.
