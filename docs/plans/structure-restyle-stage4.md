@@ -1,0 +1,187 @@
+# Structure restyle: Stage 4 plan (every building, family by family)
+
+Draft 2026-11-19, **for owner approval**. Checked by a hostile review against the code, with its
+findings applied. Builds on `docs/plans/structure-restyle.md` (Stages 1–3). Branch
+`feat/structure-restyle`, **unreleased** until the owner says so.
+
+## 1. Where we really are
+
+This is a top-down redesign of every structure: how each one looks, moves, is sized, is placed, and
+plays. It is gameplay, not a reskin.
+
+| | Done | Left |
+|---|---|---|
+| Building types with the new look | 6 of 45: Capital, connector, freight dock, reactor, cargo bay, refinery | 39 |
+| Moving parts | crane (freight dock + Capital bay), turret pop-up hatch | every other family |
+| Sizes | Only the freight dock has been deliberately resized (1000×400). By longest side, 21 types already fall inside a ladder band, 20 sit in the 300–600 gap, and 4 are off the ladder: connector 64, shield pylon 72 and turret 140 are below "small", and the alien gate at 1600 is between medium and large. The Capital is 560, nowhere near its 8–15k tier. | decide the rules, then resize |
+| Collision shapes | still the footprint box for every type (hex and outline colliders were on the Stage 3 list and are not done) | all |
+| Full new-look base shown to the owner | none | all |
+| Bases re-seeded for new sizes | none (only dock pads kept clear) | all |
+
+What Stages 1–3 built is the **foundation**, and it does not need building again:
+- the style kit;
+- the moving-parts system, which ships can use too;
+- the cable lines;
+- dock and crane unloading;
+- the new look on by default;
+- the main-sync process.
+
+## 2. Lessons, now rules (every family slice follows these)
+
+1. **Gameplay questions first, in plain words.** Before any drawing, write down what the family does
+   in play and every way the redesign could change it. The owner answers before code. The questions
+   are about what happens in play ("what should happen when..."), never "which look".
+2. **Stills before clips, clips before merge.** In-game stills on a Pixel 7 held sideways (915×412),
+   full art, sent to the owner first. One recording per round, then a quick review, then send it.
+   Taste changes go to the owner; bug fixes don't.
+3. **Hostile duplicate review before code.** Every family brief is checked against the code. We extend
+   the existing system and never build a sibling (this plan's own review caught three would-be
+   duplicates).
+4. **Both renderers, every time.** The phone draws on the main thread and the desktop draws in a
+   worker. Stage 3 drew rigs on the phone only, which hid the bay on desktop. A family is done only
+   when the desktop screenshot matches the phone still.
+5. **Moving parts are cosmetic unless they change play.** If a part decides something (when a turret
+   can fire, where a shot starts), the server owns it, as the turret hatch does. Otherwise it is
+   client-only.
+6. **Small slices.** One change plus its tests per agent, about 10–20 minutes. Heavy runs go through
+   `pnpm heavy`; while one waits, the next independent slice starts.
+7. **No shared hot files.** Each family edits only its own files (see Phase 0). Size changes run one at
+   a time in the size lane. God-file caps only go down: new code goes into new modules. This is the
+   lesson from the 2026-11-19 PR backlog.
+8. **Sync main daily.** The stream branch drifted 444 commits in a day, and the merge had to chase code
+   main had moved into new files. Merge `origin/main` at the start of every working day, in its own
+   slice.
+9. **Tests bound by game time, not wall time;** randomness is pinned with a test room option.
+10. **Look at what you send.** Every still and clip is checked by eye first; a staged shot is labelled
+    as staged.
+11. **One size source.** A type's size is its catalogue footprint, full stop. No per-scene or
+    per-structure size tables (the art lab's `OUTPOST_SIZES` goes when the Capital/connector sizes
+    land).
+
+## 3. Decisions the owner makes once, up front
+
+How saving works decides some of this for us. Any change to the structure catalogue version throws
+away every saved player structure on deploy (`SectorPersistence.ts`). Sizes live in that shared
+catalogue, which the server and client must agree on, so **a size change cannot be switched on and
+off by a setting**. Only the look can.
+
+- **Sizes.** Hold every type to the ladder (small 150–300, medium 600–1,200, large 2–4k, Capital
+  8–15k), or treat the ladder as a guide? What about the four types below "small" (connector, pylon,
+  basic turret)? Should "extra small" be a tier?
+- **The Capital.** Does it really grow to 8–15k (it is 560 now)? That moves its crane bay, puts the
+  400 u install/repair reach inside its own hull, and reshapes every base and NPC trade box. **It
+  sets the spacing for everything else, so it is decided and done first.**
+- **Release.** All at once at the end: one wipe of saved structures, and one consistent game (the
+  current choice). Or size batches land on main as they finish: a wipe each time, with the look behind
+  a setting until it's complete.
+
+## 4. Phase 0: set-up (before any family)
+
+**0a: Split the shared files** so family sessions never touch the same lines:
+- **Drawings:** one file per family, `structureStyleC.<family>.ts`, created **empty for all families
+  up front**. The style table spreads them all. The 6 finished drawers move into their files. The
+  style test reads coverage from these files instead of a fixed list of six.
+- **Moving parts:** the same for rigs, in `src/core/articulation/rigs/<family>.ts`. Rig-part drawing
+  gets a per-family hook instead of one switch, and the turret-hatch special case moves into the
+  turrets file.
+- **Art cache:** `FORGE_VERSION` (one string shared by all baked art) gets a per-family part, so a
+  family's drawing change refreshes players' cached art without every family editing the same line.
+- **Family names:** a family is a gameplay grouping, which is not the same as the catalogue's data
+  files (`grid`, `production`, ...). One test asserts that every type belongs to exactly one family.
+
+**0b: Art lab, extending what's there (no new scenes):**
+- The existing `structures` scene gets a `kinds=` parameter. Before/after = the same capture at the
+  old look and at `restyle=c`. This replaces the old design-sheet script for this job; that script only
+  knows 12 types and never draws style C.
+- The existing `base` scene builds from the real `growBase(profile, seed)` instead of its hand list,
+  so every checkpoint shows the real generator's base at each tier.
+
+**0c: Capital + connector size slice (size lane, first).** After the owner's §3 answers, set their
+sizes. Then move the Capital bay, check install/repair and trade reach, and re-measure the hand
+layouts (`scenarioLayouts`, `showcaseRooms`, `structureLattice`, test rooms), base growth, and
+perf budgets. Show one full grown base. Everything after is judged against this.
+
+## 5. The recipe for one family
+
+| Step | What | Who decides | Parallel? |
+|---|---|---|---|
+| A | **Brief:** what the family does in play; every system that reads its size or shape (checklist below); gameplay questions in plain words | owner answers | yes |
+| B | **Hostile duplicate review** of the brief against the code | — | yes |
+| C | **Look:** drawings in the family's own file; stills on phone (sideways) and desktop; before/after from the art lab | owner picks | yes |
+| D | **Moving parts:** rig defs in the family's rig file, cosmetic or server-owned (rule 5); one short clip | owner approves | yes |
+| E | **Size + shape + gameplay** in the **size lane** (one family at a time): footprint, collision shape, reach and ranges, keep-clear zones, mounts; then re-measure hand layouts and base growth, with one catalogue-version bump per batch | owner approved in A | **no, serial** |
+| F | **Finish:** both renderers, phone timing (`perf:scenes`), unit tests, merge `--no-ff` into the stream | — | yes |
+
+**Brief checklist: what reads a structure's size or shape.**
+- **Linking:** link reach (600 u, edge to edge) and line blocking. Any resize changes spacing and which
+  lines get blocked.
+- **Collision and movement:**
+  - the collision shape (`structureHullPoints`);
+  - NPC pathing (`RoomNav`);
+  - AI target picking;
+  - projectile broadphase.
+- **Turret muzzles:** where shots start (`muzzle.ts`) depends on the footprint.
+- **Reach:** deposit, mining, install and repair reach are all measured from the centre.
+- **Base layout:**
+  - placement rules and keep-clear zones;
+  - base growth and site choice;
+  - NPC trade boxes;
+  - structure budgets.
+- **Wrecks:** wreck and break-up pieces.
+- **Hand layouts and tests:** the hand layouts and the test rooms.
+
+**Checkpoint after every two families:** stills and a short fly-through of a full grown base (art-lab
+`base` scene plus one in-game NPC base) at small, medium and large. This is how the owner judges the
+whole feel and the placement.
+
+## 6. Families and order
+
+| # | Family | Types | Gameplay to settle (examples) |
+|---|---|---|---|
+| 0 | Set-up, then Capital + connector sizes | capital, connector | see §3 and 0c |
+| 1 | **Power + solar** (owner's pick) | solar, battery, battery bank, reactor (revisit) | Does panel area set output? Solar tracking the star (cosmetic)? Spacing? Fuel shown flowing? |
+| 2 | Fences + gates | shield pylon, shield gate, airlock, territory lock | Walls run between pylon centres, and gate post sizes are constants (`gateGeometry.ts`); gate doors move onto the rig system (owner, earlier) |
+| ✓ | Checkpoint 1: full base | | |
+| 3 | Light production | smelter, silicon works, hydroponics, fabricator, munitions works, reclaimer, gas collector, research lab, refinery (revisit) | Production shown working without new rules? |
+| 4 | Mining | miner, deep core rig | Mining reach is measured from the centre, so a resize changes reach |
+| ✓ | Checkpoint 2 | | |
+| 5 | Heavy industry | ore processing complex, assembly plant, shipyard | The shipyard makes ships as stored goods (no launch point today): does a finished ship visibly roll out? (new gameplay = owner call) |
+| 6 | Turrets | turret, laser bolt, missile, autocannon, mine layer | Hatch exists already; the muzzle position comes from the footprint, so a resize moves where shots start |
+| ✓ | Checkpoint 3 | | |
+| 7 | Coastal guns | AA quad, 5 in, 8 in casemate, 11 in, 16 in barbette, Lindemann, 80 cm siege gun | Off-centre guns move the muzzle (server); arcs and facing are gameplay |
+| 8 | Storage + habitation | storage vault, habitat, tower, cargo bay (revisit) | Deposit range is measured from the centre |
+| 9 | Transport + docks | teleporter, large teleporter, pocket pad, alien gate, freight dock (revisit) | Pad size = teleport volume (`PAD_SPECS`) as well as the footprint |
+| ✓ | Final: every base re-seeded, collision shapes done, full suite + e2e, owner sign-off, PR(s) per §3 | | |
+
+Shield pylons sit with the fences, not power, because the walls are built from their positions.
+
+## 7. How the work splits
+
+- **Sessions:** this stream session is the conductor. It owns the stream branch, the size lane (step
+  E), the daily main sync, merges and checkpoints. Each family gets its own session in its own
+  worktree for steps A–D and F. After Phase 0, no two families share a file.
+- **How many at once:** realistically two family sessions. The limits are the heavy-job queue (one
+  heavy job at a time on this PC) and the owner's review rounds, not code. A third session can write
+  briefs ahead of time (step A, read-only).
+- **Handoffs:** each family session writes `.resume/restyle-<family>.md`. Its brief, the owner's answers
+  and links to its stills and clips go in §9 of this doc.
+
+## 8. Rough size
+
+Stage 3 took about two days for docks, mostly building the systems. A family that reuses them is mostly
+drawing plus one owner round for stills and one for the clip. Estimate: **1–2 days per family**, about
+**2–3 weeks** for everything with two sessions, gated mostly by review rounds. It is honest only to the
+nearest week; re-estimate after Family 1.
+
+## 9. Family log
+
+(Each family's brief, owner answers, and stills/clip links get added here as it runs.)
+
+## Open questions for the owner
+
+1. Sizes: hold every type to the ladder, or size per family? Add an "extra small" tier for connectors,
+   pylons and basic turrets?
+2. The Capital: grow it to the 8–15k tier, or keep it near today's size?
+3. Release: all at once at the end (one wipe), or size batches landing on main as they finish (a wipe
+   each time)?
+4. OK to start Phase 0 now, and Family 1's brief (power + solar) in parallel?
