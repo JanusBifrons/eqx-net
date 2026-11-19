@@ -5,11 +5,11 @@
  */
 import { ScriptedPathBehaviour } from '../../../core/ai/ScriptedPathBehaviour.js';
 import { shipBodyMass } from '../../../shared-types/shipScale/tuning.js';
-import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../../shared-types/sabLayout.js';
+import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../../shared-types/sabLayout.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import type { StructureRecord, StructureRegistry } from '../../structures/StructureRegistry.js';
-import { rigClipTip, startStructureRigClip, worldToRigHost, writeRigClipRow, type RigClipCmd } from '../../structures/structureRigClip.js';
+import { craneGripTarget, rigClipTip, startStructureRigClip, writeRigClipRow, type RigClipCmd } from '../../structures/structureRigClip.js';
 import type { SceneHooks, SceneRigTarget } from '../scene/SceneScriptRunner.js';
 import type { StructureState } from '../schema/SectorState.js';
 
@@ -77,7 +77,7 @@ export class RigScene {
       const ship = this.h.swarm.get(target.id);
       if (!ship) return false;
       const b = slotBase(ship.slot), sab = this.h.sab();
-      t = worldToRigHost(host, sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!);
+      t = craneGripTarget(host, sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!, sab[b + SLOT_ANGLE_OFF]!, ship.shipKind);
     } else if (target.from === 'keep') {
       t = host.rigClip?.target;
     } else if (target.from === 'tip') {
