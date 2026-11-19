@@ -2,9 +2,9 @@
  * The pooled ctx of `PixiRenderer.update()`'s frame passes and its ticker
  * callback — lifted out of `PixiRenderer` (god-file split, slice 7).
  *
- * `refs` is the renderer's live-field view: a getter object built once by the
- * renderer (fields it reassigns in `init` are read through getters, constant
- * members are plain). The rest is the passes' own state and scratch (follow
+ * `refs` is the renderer's live-field view: a getter object built once
+ * (`rendererSetup/rendererViews.ts` `frameRefsView`; fields the renderer
+ * reassigns in `init` are read through getters, constant members are plain). The rest is the passes' own state and scratch (follow
  * sprite, server ghost, dt stamps, art-readiness flags, view/screen scratch),
  * created once by `createRendererFrameCtx`. Nothing here allocates per frame
  * (invariant #14).

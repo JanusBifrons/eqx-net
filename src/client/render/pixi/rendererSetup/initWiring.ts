@@ -2,7 +2,9 @@
  * `PixiRenderer.init` wiring step: the FX kill switches, the pooled sprite
  * updater ctxs, the new weapon effects (`?fx=new`), the beam pools +
  * `EffectsService` and the pooled beam ctx — lifted out of `PixiRenderer`
- * (god-file split, slice 10). Bodies and call order moved verbatim.
+ * (god-file split, slice 10) — and the init sequence around it (machined art,
+ * start zoom, scene layers, overlays: `initSceneAndOverlays`, slice 11).
+ * Bodies and call order moved verbatim.
  *
  * `RendererInitState` is the holder of what this step builds (and the
  * scratch that only feeds those ctxs): created once with the renderer, its
@@ -13,6 +15,16 @@
  */
 import type { Container, Graphics, Texture } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
+import type { GraphicsQuality } from '../../graphicsQuality.js';
+import type { Backdrop } from '../../art/fx/Backdrop.js';
+import type { BackgroundGrid } from '../../BackgroundGrid.js';
+import type { LabelManager } from '../../Labels.js';
+import type { SelectionBracket } from '../../SelectionBracket.js';
+import type { AimFeedbackRenderer } from '../../AimFeedbackRenderer.js';
+import type { HoverBracket } from '../../HoverBracket.js';
+import type { FleetOverlay } from '../../FleetOverlay.js';
+import type { LoadCurtain } from '../LoadCurtain.js';
+import type { ConnectorRenderer } from '../ConnectorRenderer.js';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { FxBeams, FxProjectiles } from '../../art/fx/FxWeapons.js';
 import type { FxExplosions, FxMissileTrails } from '../../art/fx/FxExplosions.js';
@@ -35,10 +47,25 @@ import type { HudDrainCtx } from '../hudDrainUpdater.js';
 import type { RendererFrameRefs } from '../frameCtx.js';
 import { buildSpriteUpdaterCtxs } from './initUpdaterCtxs.js';
 import { buildFxWeapons, buildBeamPoolsAndEffects, buildBeamCtx } from './initFx.js';
+import { setupMachinedArt, applyStartZoom, logInitFrameDiag, buildSceneLayers, buildOverlays, type InitTarget } from './initScene.js';
 
 /** What `init` builds for the sprite / beam / fx passes, plus the scratch
  *  that only feeds those ctxs. Built once with the renderer. */
 export interface RendererInitState {
+  /** Load curtain (full-canvas dark overlay at join). Constructed in `init()`. */
+  curtain: LoadCurtain;
+  backgroundGrid: BackgroundGrid | null;
+  shipContainer: Container;
+  /** Structures plan, Phase 3 — grid connector web renderer. */
+  connectorRenderer: ConnectorRenderer;
+  fleetOverlay: FleetOverlay | null;
+  labels: LabelManager | null;
+  selectionBracket: SelectionBracket | null;
+  /** Experimental HUD aim feedback (lock bracket / aim line / ship arcs). */
+  aimFeedback: AimFeedbackRenderer | null;
+  hoverBracket: HoverBracket | null;
+  /** New backdrop (`?fx=new`); the sector it shows is the renderer's `_sectorKey`. */
+  backdrop: Backdrop | null;
   // Phone-stall thermal-isolation switches. Read once at init via
   // `readFxKillSwitches`; gated at render-time call sites to attribute
   // GPU heat to specific subsystems (beams / damage numbers / health
@@ -114,6 +141,8 @@ export interface RendererInitState {
 /** The holder, empty until `init` (ctxs are assigned there before any read). */
 export function createRendererInitState(): RendererInitState {
   return {
+    curtain: null!, backgroundGrid: null, shipContainer: null!, connectorRenderer: null!,
+    fleetOverlay: null, labels: null, selectionBracket: null, aimFeedback: null, hoverBracket: null, backdrop: null,
     beamsDisabled: false, cleanWorld: false,
     projectileSprites: new Map(), missileSprites: new Map(), missileExplosionsActive: [],
     updateMissileSeenScratch: new Set(), updateProjSeenScratch: new Set(),
@@ -218,4 +247,61 @@ export function wireUpdatersAndFx(s: RendererInitState, r: RendererFrameRefs, de
     shipContainer: r.shipContainer, tractorBeamPool: s.tractorBeamPool, fxExplosions: s.fxExplosions, litSceneCtx: r.litSceneCtx,
   });
   return effects;
+}
+
+/** The renderer members the init scene step needs beyond its frame refs (a
+ *  getter view: `RendererViewHost`, rendererViews.ts; `effects` is written back). */
+export interface InitSceneHost {
+  effects: EffectsService | null;
+  readonly worldHost: Container;
+  readonly artOpts: ArtOptions;
+  readonly isTouch: boolean;
+  readonly quality: GraphicsQuality;
+  readonly sectorKey: string | null;
+  readonly lastMirror: RenderMirror | null;
+  readonly structureMountSlew: Map<string, number[]>;
+  readonly swarmSpriteKinds: Map<string, number>;
+  readonly swarmSpriteSigs: Map<string, SpriteBuildSig>;
+  readonly fxShieldPose: (id: string, out: { x: number; y: number }) => boolean;
+}
+
+/** `init` after the camera exists: machined art, kill switches, start zoom,
+ *  frame diag, scene layers, the wiring above, overlays — in that order. */
+export function initSceneAndOverlays(s: RendererInitState, h: InitSceneHost, r: RendererFrameRefs, target: InitTarget, fxKillSwitches: FxKillSwitches): void {
+  const effectsQuality = (): EffectQuality => h.effects?.getQuality() ?? 'medium';
+
+  const backdrop = setupMachinedArt({
+    artOpts: h.artOpts, isTouch: h.isTouch, quality: h.quality, artCtx: r.artCtx,
+    mountVisuals: r.mountVisuals, app: r.app, worldHost: h.worldHost, sectorKey: h.sectorKey, effectsQuality,
+  });
+  if (backdrop) s.backdrop = backdrop;
+  applyFxKillSwitches(s, r.hudCtx, fxKillSwitches);
+
+  applyStartZoom(r.camera, r.cameraDirector, target.zoom); // rendererSetup/initScene.ts
+
+  logInitFrameDiag(r.app, r.world, target);
+
+  s.cleanWorld = fxKillSwitches.cleanWorld; // `?cleanworld=1` (showcase capture)
+  const layers = buildSceneLayers({
+    app: r.app, frameMarkers: r.frameMarkers, camera: r.camera, cleanWorld: s.cleanWorld,
+    mountVisuals: r.mountVisuals, cutField: r.cutField, placementGhostCtx: r.placementGhostCtx,
+    wreckFarLayer: r.wreckFarLayer, farIcons: r.farIcons, lockMarksVisible: r.lockMarksVisible, warpFxCtx: r.warpFxCtx,
+  });
+  s.curtain = layers.curtain;
+  if (layers.backgroundGrid) s.backgroundGrid = layers.backgroundGrid;
+  s.shipContainer = layers.shipContainer;
+  s.connectorRenderer = layers.connectorRenderer;
+
+  const effects = wireUpdatersAndFx(s, r, { // ctxs, ?fx=new weapons, beam pools + effects, beam ctx
+    artOpts: h.artOpts, effectsQuality, fxKillSwitches, structureMountAngles: h.structureMountSlew, spriteKinds: h.swarmSpriteKinds,
+    spriteBuildSigs: h.swarmSpriteSigs, fxShieldPose: h.fxShieldPose, lastMirror: () => h.lastMirror,
+  });
+  if (effects) h.effects = effects;
+  ({
+    fleetOverlay: s.fleetOverlay, labels: s.labels, selectionBracket: s.selectionBracket,
+    hoverBracket: s.hoverBracket, aimFeedback: s.aimFeedback,
+  } = buildOverlays({
+    app: r.app, camera: r.camera, world: r.world, incomingFire: r.incomingFire,
+    helmMarker: r.helmMarker, halo: r.halo, hudCtx: r.hudCtx, cleanWorld: s.cleanWorld,
+  }));
 }

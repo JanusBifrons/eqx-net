@@ -99,6 +99,28 @@ export function fleetRingProbe(r: RendererProbeState): FleetRingReading {
   return { ...r.fleetRing.probe };
 }
 
+/**
+ * Test-only (Phase 4 WS-A1) — the world point currently at screen centre, in
+ * GAME space (Y-up). The renderer's `Camera.center` is in pixi-world space
+ * (Y-down, `pixiY = -gameY`), so negate Y. Read by the spectator E2E's
+ * `__eqxCameraCenter` DEV hook (main-thread renderer path, `?worker=0`) to
+ * assert the free-roam camera actually pans. Not consumed by gameplay logic.
+ */
+export function cameraCenterGame(r: RendererProbeState): { x: number; y: number } {
+  const c = r.camera.center;
+  return { x: c.x, y: -c.y };
+}
+
+/**
+ * Test-only (RTS fleet-command E2E): the canvas-relative screen point of a
+ * GAME-space world point (Y-up → pixi `-y`), so a spec can box-select or
+ * click a ship where it is drawn. Read by the `__eqxWorldToScreen` DEV hook
+ * (main-thread renderer path, `?worker=0`). Not consumed by gameplay logic.
+ */
+export function worldToScreenGame(r: RendererProbeState, x: number, y: number): { x: number; y: number } {
+  return r.camera.toScreen(x, -y);
+}
+
 /** DEBUG (exhaust-side investigation): the local ship sprite WORLD position
  *  + engine particle world positions (pixi coords; gfx.y = -gameY). */
 export function debugEngine(r: RendererProbeState): { ship: { x: number; y: number; vx: number; vy: number }; particles: number[] } | null {
