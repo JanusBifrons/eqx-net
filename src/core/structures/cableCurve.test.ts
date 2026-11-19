@@ -14,7 +14,7 @@ import {
 
 function node(id: string, x: number, y: number, half = 40): GridNode {
   return {
-    id, x, y, radius: half, halfW: half, halfH: half, isHub: false, isCapital: false, isConnector: false,
+    id, kind: 'solar_panel', x, y, rot: 0, radius: half, halfW: half, halfH: half, isHub: false, isCapital: false, isConnector: false,
     maxConnections: 4, powerOutput: 0, powerConsumption: 0, isConstructed: true,
   };
 }
