@@ -252,7 +252,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // Structures (pose-core kind 2): a per-subtype tinted polygon read from
         // the shared shipKind byte (structures plan, Phase 2).
         const stKind = entry.shipKind, stRadius = entry.radius;
-        sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius));
+        sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius, 1, ctx.art.structStyle));
         // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
         // at its `miningRange` radius. Built HERE (the once-per-sprite create
         // path, invariant #14 — never per-frame) and parented to the body so it

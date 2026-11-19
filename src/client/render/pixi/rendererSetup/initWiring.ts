@@ -276,6 +276,7 @@ export function initSceneAndOverlays(s: RendererInitState, h: InitSceneHost, r: 
     mountVisuals: r.mountVisuals, app: r.app, worldHost: h.worldHost, sectorKey: h.sectorKey, effectsQuality,
   });
   if (backdrop) s.backdrop = backdrop;
+  r.placementGhostCtx.structStyle = r.artCtx.structStyle; // the ghost draws the placed structures' style
   applyFxKillSwitches(s, r.hudCtx, fxKillSwitches);
 
   applyStartZoom(r.camera, r.cameraDirector, target.zoom); // rendererSetup/initScene.ts
