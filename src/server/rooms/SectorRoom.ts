@@ -259,6 +259,7 @@ import { SectorSnapshotRestore } from './SectorSnapshotRestore.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard, terrainRecordStoreFor } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
 import { LootSubsystem } from '../cargo/LootSubsystem.js';
+import { NpcLootHolds } from '../cargo/NpcLootHolds.js';
 import { LootSearch } from '../cargo/LootSearch.js';
 import { dropTestPodRow } from '../cargo/cargoWindow.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
@@ -268,7 +269,7 @@ import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, pa
 import { liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
-import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
+import { DEATH_POD_PUSH, deathHullLoot } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
 import {
@@ -3062,7 +3063,7 @@ export class SectorRoom extends Room<SectorState> {
       manualCargo: this.lootCollectors.manualCargo,
       getActiveShip: (pid) => this.getActiveShip(pid),
       shipCargoCapacity: (kind, id) => this.shipCargoCapacity(kind, id),
-      npcHold: (rec) => this.npcHold(rec),
+      npcHold: (rec) => this.npcLoot.hold(rec),
       shipTarget: (ref) => this.breakInHooks.shipTarget(ref),
       breakInMsFor: (rec) => this.breakInHooks.breakInMsFor(rec),
       breakInMsForShip: (t) => this.breakInHooks.breakInMsForShip(t),
@@ -3950,14 +3951,14 @@ export class SectorRoom extends Room<SectorState> {
     // pod has no health, so combat never evicts one: only the LootSubsystem
     // despawns pods (emptied / TTL).
     if (opts.emitDestroyed && rec.kind === SWARM_KIND_DRONE) {
-      this.dropKillLoot(rec, opts.shooterId, opts.vaporised === true);
+      this.npcLoot.dropKillLoot(rec, opts.shooterId, opts.vaporised === true);
     }
     // C3 — an NPC loot hold (memory only) goes with its ship. Trade and convoy
     // haulers keep theirs: their cargo travels with them between sectors.
     if (rec.kind === SWARM_KIND_DRONE && !isHaulerId(rec.id) && getHoldStore().get(rec.id)?.holderType === 'hauler') {
       getHoldStore().delete(rec.id, false);
     }
-    if (rec.kind === SWARM_KIND_DRONE) this.npcLootRolled.delete(`${rec.id}:${rec.entityId}`);
+    if (rec.kind === SWARM_KIND_DRONE) this.npcLoot.forget(rec);
     if (rec.kind === SWARM_KIND_SCRAP) {
       this.scrapSpawner.notifyRemoved(rec.id);
     }
@@ -5112,7 +5113,7 @@ export class SectorRoom extends Room<SectorState> {
     if (pose !== undefined) {
       if (death !== undefined) {
         const hull = deathHullLoot(shipInstanceId, death.kind, death.vaporised);
-        const spot = this.podSpot(hashString(shipInstanceId), pose.x, pose.y, getShipKind(death.kind).radius, death.shooterId);
+        const spot = this.npcLoot.podSpot(hashString(shipInstanceId), pose.x, pose.y, getShipKind(death.kind).radius, death.shooterId);
         this.loot.spillShipHold(shipInstanceId, spot.x, spot.y, pose.vx + spot.ux * DEATH_POD_PUSH, pose.vy + spot.uy * DEATH_POD_PUSH, cause, {
           player: true, extra: hull, deathLoss: `${shipInstanceId}:${this.gameClock.now()}`,
           size: podSizeClass(getShipKind(death.kind).radius),
@@ -5507,69 +5508,8 @@ export class SectorRoom extends Room<SectorState> {
     return this.aiController.isEntityHostileToPlayer(entityId, playerId, this.playerTruce(playerId));
   }
 
-  private dropKillLoot(rec: SwarmEntityRecord, shooterId?: string, vaporised = false): void {
-    const b = slotBase(rec.slot);
-    // C3 — an NPC ship's loot IS its hold: rolled once from a seed (so a
-    // break-in that already took some leaves less to drop), and a trade
-    // hauler's hold is its cargo. Anything with a hold spills where it died.
-    const hold = this.npcHold(rec);
-    // An NPC drop is an ordinary pod (its contents' tier), never the bright
-    // dead-player spill tier (owner 2026-11-13).
-    if (!isHoldEmpty(hold)) {
-      const key = `${rec.id}:${rec.entityId}`;
-      // Vaporised (owner 2026-11-15): its hull salvage still aboard × 1.5.
-      const extra = vaporised ? vaporisedSalvageExtra(key, rec.shipKind, rec.elite !== undefined, hold.goods.salvage ?? 0) : undefined;
-      const spot = this.podSpot(hashString(key), this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, rec.radius, shooterId);
-      // The pod keeps the ship's velocity plus a gentle push clear of the wreck.
-      this.loot.spillShipHold(rec.id, spot.x, spot.y,
-        this.sabF32[b + SLOT_VX_OFF]! + spot.ux * DEATH_POD_PUSH, this.sabF32[b + SLOT_VY_OFF]! + spot.uy * DEATH_POD_PUSH,
-        isHaulerId(rec.id) ? 'hauler-raided' : 'kill', { player: false, deathLoss: key, size: podSizeClass(rec.radius), ...(extra !== undefined ? { extra } : {}) });
-    }
-    else getHoldStore().delete(rec.id, false);
-  }
-
-  /** `killPodSpot` for a dead ship at (cx, cy), the killer's live pose looked
-   *  up by id (pilot, parked hull or swarm ship). Returns the reused `_podSpot`. */
-  private podSpot(seed: number, cx: number, cy: number, hullRadius: number, shooterId?: string): { x: number; y: number; ux: number; uy: number } {
-    let sx = Number.NaN;
-    let sy = Number.NaN;
-    if (shooterId !== undefined && shooterId !== '') {
-      const p = this.shipPoseCache.get(shooterId) ?? this.lingeringPoseCache.get(shooterId);
-      const srec = p === undefined ? this.swarmRegistry.get(shooterId) : undefined;
-      if (p !== undefined) { sx = p.x; sy = p.y; }
-      else if (srec) { sx = this.sabF32[slotBase(srec.slot) + SLOT_X_OFF]!; sy = this.sabF32[slotBase(srec.slot) + SLOT_Y_OFF]!; }
-    }
-    return killPodSpot(this._podSpot, seed, cx, cy, hullRadius, sx, sy);
-  }
-  private readonly _podSpot = { x: 0, y: 0, ux: 0, uy: 0 };
-
-  /**
-   * C3 — an NPC ship's hold: a trade hauler's real cargo, or (any other NPC)
-   * its kind's loot — an elite's guaranteed rare haul — rolled ONCE from a
-   * seed (its id + this spawn's entityId) the first time it's needed (opened,
-   * broken into, or killed). NPC loot holds live in memory only.
-   */
-  private npcHold(rec: SwarmEntityRecord): Hold {
-    const store = getHoldStore();
-    const key = `${rec.id}:${rec.entityId}`;
-    const row = store.get(rec.id);
-    if (this.npcLootRolled.has(key)) return row?.hold ?? emptyHold();
-    // Roll this spawn's loot table ONCE, on top of anything it already
-    // carries (a nexus hoard, a harvester's scoop, a hauler's cargo).
-    this.npcLootRolled.add(key);
-    const loot = rollHullLoot(key, rec.shipKind, rec.elite !== undefined);
-    if (row !== undefined) {
-      if (isHoldEmpty(loot)) return row.hold;
-      const merged = cloneHold(row.hold);
-      mergeInto(merged, loot);
-      store.put({ ...row, hold: merged }, false);
-      return merged;
-    }
-    store.put({ holderUid: rec.id, holderType: 'hauler', ownerId: null, sectorKey: this.sectorKey, x: null, y: null, hold: loot, expiresAt: null }, false);
-    return loot;
-  }
-  /** C3 — NPC spawns (`id:entityId`) whose loot table is already in their hold. */
-  private readonly npcLootRolled = new Set<string>();
+  /** C3 — NPC loot holds and kill pods (`cargo/NpcLootHolds.ts`). */
+  private readonly npcLoot = new NpcLootHolds({ sectorKey: () => this.sectorKey, sabF32: () => this.sabF32, loot: () => this.loot, swarmRegistry: this.swarmRegistry, shipPoseCache: this.shipPoseCache, lingeringPoseCache: this.lingeringPoseCache });
 
   override onDispose(): void {
     this.roomFeatures?.dispose();

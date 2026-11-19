@@ -120,7 +120,7 @@ player be special?" A ship's hull loot is its kind's loot table (`rollLoot`,
 an elite's `rollEliteLoot`), rolled from a seed by the one helper
 `rollHullLoot` (`src/server/cargo/hullLoot.ts`):
 
-- **AI-flown:** rolled ONCE per spawn into its hold (`npcHold`, seed
+- **AI-flown:** rolled ONCE per spawn into its hold (`NpcLootHolds.hold`, seed
   `<id>:<entityId>`), so a break-in that took some leaves less to drop.
 - **Player-flown:** rolled as it dies (seed: its `shipInstanceId`) and
   dropped in the SAME pod as its carried hold (`spillOrLoseShipHold`'s
@@ -139,7 +139,7 @@ carried cargo, alloy, cores, blueprints and packed items don't. For an AI
 ship the bonus is on the hull salvage still aboard (`min(rolled, aboard)`), so
 cargo salvage a harvester scooped is never multiplied. Each death path knows
 the outcome before it drops: a drone through `evictSwarmEntity({ vaporised })`
-→ `dropKillLoot`, a lingering hull through `onLingeringHullDeath(…,
+→ `NpcLootHolds.dropKillLoot`, a lingering hull through `onLingeringHullDeath(…,
 vaporised)`, an active hull through `spawnActiveHullWreck` noting
 `vaporisedActiveDeath` for the `SHIP_DESTROYED` handler.
 
@@ -300,7 +300,7 @@ Ships have cargo you can open too. Select one and use **Open cargo**:
 - **Targets on the wire.** `cargo_query` / `cargo_move` / `break_in` take exactly one of `entityId` (a structure or NPC ship) or `ship` (a playerId for an active ship, or a shipInstanceId for a parked hull). `cargo_state.targetShip` echoes the ship target.
 - **Liveness (#17).** A player target is an ACTIVE ship (by playerId) or a LINGERING hull (by shipInstanceId); DEAD ships aren't targets. NPC targets are live swarm drones.
 - **Holds.** Player hulls and trade/convoy haulers keep persisted holds. NPC loot holds live in memory only and are dropped when the NPC is evicted.
-- **Code:** `SectorRoom.shipTarget` / `shipCargo` / `npcHold` / `onShipBreakInStart`.
+- **Code:** `SectorRoom.shipTarget` / `shipCargo` / `onShipBreakInStart`, `cargo/NpcLootHolds.ts` (`hold`, `dropKillLoot`, `podSpot`).
 - **Locks:** `tests/integration/sectorRoom/shipCargo.test.ts` (a PvP break-in alarms the owner and moves goods between both holds; an NPC ship robbed clean drops no pod) and the wire-parity ship cases.
 
 ## Tests
@@ -360,7 +360,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - **Hits cancel it.** `applyDamage` calls `onActorDamaged` for any hit.
   - **A grant opens `cargoAccess`** for 60 s.
   - **Player turrets** also engage pilots hostile to their owner (`nearestHostilePilot`). The scan only runs while `hostileActs.size() > 0`.
-- **Ship cargo (C3):** cargo messages target an `entityId` OR a `ship` (playerId of an ACTIVE ship / shipInstanceId of a LINGERING hull). `npcHold` rolls an NPC's loot table ONCE per spawn (seeded, memory-only, merged onto any stash it carries) and `dropKillLoot` spills that same hold, so stolen loot never drops twice. Break-ins tick BEFORE `structureTurretTick`'s no-structures early return (a sector with no structures can still have a ship break-in).
+- **Ship cargo (C3):** cargo messages target an `entityId` OR a `ship` (playerId of an ACTIVE ship / shipInstanceId of a LINGERING hull). `NpcLootHolds.hold` rolls an NPC's loot table ONCE per spawn (seeded, memory-only, merged onto any stash it carries) and `NpcLootHolds.dropKillLoot` spills that same hold, so stolen loot never drops twice. Break-ins tick BEFORE `structureTurretTick`'s no-structures early return (a sector with no structures can still have a ship break-in).
 - **Standing orders (T4b):** `set_freight_orders` (owner, built `freight_dock`) → `rec.freightOrders` (persisted). The dock joins convoy planning as a `player` base.
   - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
   - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.
