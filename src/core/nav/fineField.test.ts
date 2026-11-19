@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { FineFieldLayer, FINE_NAV_PAD, FINE_NAV_REACH, FINE_NAV_SIDE } from './fineField.js';
+import { FineFieldLayer, NavDetailPool, FINE_NAV_PAD, FINE_NAV_REACH, FINE_NAV_SIDE } from './fineField.js';
 import { ClearanceGrid } from './clearance.js';
 import { CHUNK_SIZE, rocksInChunk, type ChunkOpts } from '../terrain/fieldLayout.js';
 import { fieldRockBody } from '../terrain/chunkStreamer.js';
 import { rockObstacleParts, type GridObstacle } from '../structures/Grid.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { pointToShipPolygonDistance } from '../combat/Weapons.js';
 
 const opts: ChunkOpts = {
   seed: 'look', battleshipLength: getShipKind('battleship').radius * 2, fighterLength: getShipKind('fighter').radius * 2,
@@ -32,6 +33,11 @@ function busyChunk(): { cx: number; cy: number } {
   throw new Error('no busy chunk');
 }
 
+
+/** A structure-like solid box (convex CCW part) at (x, y). */
+function boxAt(x: number, y: number, hw: number, hh: number): GridObstacle {
+  return { x, y, radius: Math.hypot(hw, hh), angle: 0, parts: [[{ x: -hw, y: -hh }, { x: hw, y: -hh }, { x: hw, y: hh }, { x: -hw, y: hh }]] };
+}
 describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
   it('matches one big grid over the chunk and its neighbours, rocks over the border included', () => {
     const { cx, cy } = busyChunk();
@@ -55,10 +61,13 @@ describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
     expect(f.clearanceAt(cx * CHUNK_SIZE - 10, cy * CHUNK_SIZE + 10)).toBe(-1); // the neighbour is not loaded
   });
 
-  it('a broken-up rock rebuilds only the loaded chunks it reaches (count gate) and opens its spot', () => {
+  it('a broken-up rock drops only the built chunks it reaches (count gate), rebuilt when next read, and opens its spot', () => {
     const { cx, cy } = busyChunk();
     const f = new FineFieldLayer(opts);
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) f.chunkLoaded(cx + dx, cy + dy);
+    expect(f.liveCount).toBe(0); // nothing built ahead of time
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) f.clearanceAt((cx + dx + 0.5) * CHUNK_SIZE, (cy + dy + 0.5) * CHUNK_SIZE);
+    expect(f.liveCount).toBe(9);
     const rocks = rocksAround(cx, cy, cx, cy);
     // The biggest rock away from the chunk's edges reaches only its own chunk's grid.
     const inner = rocks.filter((r) => {
@@ -68,12 +77,15 @@ describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
     expect(f.clearanceAt(inner.x, inner.y)).toBe(0);
     const before = f.cellsRebuilt;
     f.rockGone(inner.key);
-    expect(f.cellsRebuilt - before).toBe(FINE_NAV_SIDE * FINE_NAV_SIDE); // one chunk, not nine
+    expect(f.liveCount).toBe(8); // one chunk dropped, not nine
+    expect(f.cellsRebuilt).toBe(before); // no work until it is read
     // Same as a grid built without it.
     const ref = new ClearanceGrid();
     ref.build((cx - 1) * CHUNK_SIZE, (cy - 1) * CHUNK_SIZE, 192, 192, 64, rocksAround(cx - 1, cy - 1, cx + 1, cy + 1, new Set([inner.key])), FINE_NAV_PAD);
     expect(f.clearanceAt(inner.x, inner.y)).toBeCloseTo(Math.min(ref.at(inner.x, inner.y), FINE_NAV_REACH), 2);
+    expect(f.cellsRebuilt - before).toBe(FINE_NAV_SIDE * FINE_NAV_SIDE); // the read rebuilt that one chunk
     f.rockGone(inner.key); // twice: no work
+    expect(f.liveCount).toBe(9);
     expect(f.cellsRebuilt - before).toBe(FINE_NAV_SIDE * FINE_NAV_SIDE);
   });
 
@@ -105,11 +117,82 @@ describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
     expect(f.clearanceAt(rock.x, rock.y)).toBe(h.clearanceAt(rock.x, rock.y));
   });
 
+  it('exactAt is the exact distance to the nearest rock outline (brute force over every rock), a moved rock included', () => {
+    const { cx, cy } = busyChunk();
+    const rocks = rocksAround(cx - 1, cy - 1, cx + 1, cy + 1);
+    const f = new FineFieldLayer(opts);
+    f.chunkLoaded(cx, cy);
+    const big = rocks.filter((r) => Math.floor(r.x / CHUNK_SIZE) === cx && Math.floor(r.y / CHUNK_SIZE) === cy).sort((a, b) => b.radius - a.radius)[0]!;
+    const to = { key: big.key, x: big.x + 37, y: big.y - 21, angle: 0.7 };
+    f.rockMoved(to.key, to);
+    Object.assign(big, to);
+    const cap = 200;
+    let seed = 7, checked = 0;
+    const rnd = (): number => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let k = 0; k < 400; k++) {
+      const x = cx * CHUNK_SIZE + rnd() * CHUNK_SIZE, y = cy * CHUNK_SIZE + rnd() * CHUNK_SIZE;
+      let want = cap;
+      for (const r of rocks) want = Math.min(want, pointToShipPolygonDistance(x, y, r.x, r.y, r.angle ?? 0, r.parts!));
+      expect(f.exactAt(x, y, cap)).toBeCloseTo(want, 6);
+      if (want > 0 && want < cap) checked++;
+    }
+    expect(checked).toBeGreaterThan(50); // most samples sit near a rock, not in one or far off
+    expect(f.exactAt(cx * CHUNK_SIZE + 5 * CHUNK_SIZE, cy * CHUNK_SIZE, cap)).toBe(-1); // not loaded
+  });
+
+  it('one fixed-size pool for every field: over budget the least recently read chunk goes, rebuilt identical; dispose frees all', () => {
+    const { cx, cy } = busyChunk();
+    const one = new FineFieldLayer(opts); // its own (default) pool: the reference
+    const pool = new NavDetailPool(3 * FINE_NAV_SIDE * FINE_NAV_SIDE * 4 + 64 * 1024); // room for 3 chunks
+    const a = new FineFieldLayer(opts, [], [], pool), b = new FineFieldLayer(opts, [], [], pool);
+    const pt = (dx: number): [number, number] => [(cx + dx) * CHUNK_SIZE + 700, cy * CHUNK_SIZE + 900];
+    for (let dx = 0; dx < 4; dx++) { a.chunkLoaded(cx + dx, cy); b.chunkLoaded(cx + dx, cy); one.chunkLoaded(cx + dx, cy); }
+    a.clearanceAt(...pt(0)); b.clearanceAt(...pt(1)); a.clearanceAt(...pt(2));
+    expect(pool.evictions).toBe(0);
+    a.clearanceAt(...pt(0)); // read again: now b's chunk is the oldest
+    b.clearanceAt(...pt(3)); // a fourth chunk: one must go
+    expect(pool.evictions).toBe(1);
+    expect(b.liveCount + a.liveCount).toBe(3);
+    expect(pool.bytes).toBeLessThanOrEqual(pool.capBytes);
+    expect(b.clearanceAt(...pt(1))).toBe(one.clearanceAt(...pt(1))); // rebuilt, identical
+    expect(b.exactAt(...pt(1), 300)).toBe(one.exactAt(...pt(1), 300));
+    a.dispose(); b.dispose();
+    expect(pool.bytes).toBe(0);
+  });
+
+  it('a static obstacle (structure box) in open space: detail there though no field chunk is loaded; exact box distance; removal frees it', () => {
+    const f = new FineFieldLayer(opts);
+    const x = 100.5 * CHUNK_SIZE, y = 0.5 * CHUNK_SIZE; // far outside the field: no rocks, nothing loaded
+    expect(f.clearanceAt(x + 600, y)).toBe(-1);
+    f.obstacleSet(7, boxAt(x, y, 400, 100));
+    expect(f.extraCount).toBe(1);
+    expect(f.clearanceAt(x, y)).toBe(0);
+    expect(f.exactAt(x + 600, y, FINE_NAV_REACH)).toBeCloseTo(200, 6); // 600 - half width 400
+    expect(f.exactAt(x, y + 250, FINE_NAV_REACH)).toBeCloseTo(150, 6);
+    expect(f.clearanceAt(x + 1500, y)).toBe(FINE_NAV_REACH); // same chunk, beyond reach of the box
+    expect(f.clearanceAt(x + 3000, y)).toBe(-1); // the next chunk: the box does not reach it
+    const built = f.liveCount, cells = f.cellsRebuilt;
+    expect(built).toBe(1);
+    f.obstacleSet(7, boxAt(x + 1000, y, 400, 100)); // moved: the reached chunk is dropped, rebuilt on read
+    expect(f.liveCount).toBe(0);
+    expect(f.exactAt(x + 600, y, FINE_NAV_REACH)).toBeCloseTo(0, 6);
+    expect(f.cellsRebuilt - cells).toBe(FINE_NAV_SIDE * FINE_NAV_SIDE);
+    f.obstacleSet(7, null);
+    expect(f.extraCount).toBe(0);
+    expect(f.liveCount).toBe(0);
+    expect(f.clearanceAt(x, y)).toBe(-1); // nothing there to know about any more
+    expect(f.poolBytes).toBe(0);
+  });
+
   it('unloading frees the grid and the cut rocks nothing needs; reuses grids (prints ms per chunk)', () => {
     const { cx, cy } = busyChunk();
     const f = new FineFieldLayer(opts);
     f.chunkLoaded(cx, cy);
     f.chunkLoaded(cx + 1, cy);
+    expect(f.liveCount).toBe(0);
+    expect(f.cutCount).toBe(0); // nothing cut before a read
+    f.clearanceAt(cx * CHUNK_SIZE + 5, cy * CHUNK_SIZE + 5);
+    f.clearanceAt((cx + 1) * CHUNK_SIZE + 5, cy * CHUNK_SIZE + 5);
     expect(f.liveCount).toBe(2);
     expect(f.cutCount).toBe(12); // 3×4 block of chunks around the two
     f.chunkUnloaded(cx, cy);
@@ -119,9 +202,11 @@ describe('FineFieldLayer (per-chunk clearance from the cut rocks)', () => {
     expect(f.cutCount).toBe(0);
     // Build time: a chunk whose rocks are already cut (re-cut is the field's own cost).
     const g = new FineFieldLayer(opts);
+    const at = (): number => g.clearanceAt(cx * CHUNK_SIZE + 5, cy * CHUNK_SIZE + 5);
     g.chunkLoaded(cx, cy);
+    at();
     const runs = 20, t0 = performance.now();
-    for (let k = 0; k < runs; k++) { g.chunkUnloaded(cx, cy); g.chunkLoaded(cx, cy); }
+    for (let k = 0; k < runs; k++) { g.chunkUnloaded(cx, cy); g.chunkLoaded(cx, cy); at(); }
     const ms = (performance.now() - t0) / runs;
     console.log(`[nav fine] chunk ${cx},${cy}: ${FINE_NAV_SIDE}x${FINE_NAV_SIDE} cells, ${(FINE_NAV_SIDE ** 2 * 4 / 1024).toFixed(0)} KB, ` +
       `cut+build ${ms.toFixed(1)} ms (9 chunks cut each time)`);
