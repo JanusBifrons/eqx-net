@@ -117,8 +117,25 @@ left somewhere else" do.
   hands its chunks back. So memory follows autopilot use, never the sector or loaded-chunk count.
   Measured 2026-11-18: a chunk is ~50 KB (grid 36 KB + index), 8 MB holds ~160; the packed-chunk
   fighter route builds 2 of the 25 loaded chunks (gate 4). No background refinement: detail is made
-  when a search needs it. Next: static and sleeping obstacles of every kind from `SectorObstacles`,
-  not only rocks.
+  when a search needs it.
+- **Structures are static obstacles too.** `StructureRegistry.onChange` (the one seam every add and
+  real removal passes through; structures never move after placement) feeds `RoomNav`, which sends
+  each structure's collider (`structureNavObstacle`: the parts `SwarmSpawner.spawnStructure` builds the
+  body from, gate posts as separate parts so the gap stays open, at its quarter-turn angle) as an
+  `OBSTACLE` command to `FineFieldLayer.obstacleSet`. A chunk that such an obstacle reaches may be
+  built though the streamer never loaded it, so bases in open space are avoided. Not yet covered
+  (parked): shield walls and closed gate spans (`PhysicsWorld.wallBodies`, a fenced base is
+  see-through to autopilot); sectors with no asteroid field (no nav field there at all); the coarse
+  layer, blind to structures, so a capital (coarse-only past the fine reach) leans on its steering
+  near a base.
+- **Resting wrecks, scrap and plain asteroids too** (`nav/RestingObstacles.ts`). On the room bus's
+  `ENTITY_SLEPT` (plus a sweep of `FLAG_SLEEPING` slots when navigation starts, since wreck fields
+  spawn asleep) a wreck piece, scrap (never a loot pod: pods are tractored) or a non-field asteroid of
+  radius ≥ half a fine cell is sent as an obstacle with its collider parts (`rockParts`). A wake does
+  not remove it, and a re-rest within `RESTING_POSE_QUANTUM` (8 u, 0.05 rad) of the last send sends
+  nothing, so nudge flapping never rebuilds chunks; a real move re-sends under the same id.
+  `SwarmEvictor.evict`, the one removal site, calls `RoomNav.swarmGone`. Field rocks keep their own
+  cut-field path, structures C1's, drones are steered round.
 - Each chunk's grid reaches 1024 u past the chunk on every side (96×96 cells, 36 KB), so a rock over
   the border counts. Clearance reads are capped at that reach (past it the coarse layer decides) and read
   -1 where the chunk is not loaded (a loaded chunk is built on that read).
@@ -259,3 +276,5 @@ one it flies straight as before.
   streets left no margin for the cut).
   2026-11-18 fine rebuild slice B: detail built on first read into one capped LRU pool per worker
   (`NavDetailPool`), not ahead of time per loaded chunk.
+  2026-11-18 fine rebuild slice C1: structures as static obstacles (`OBSTACLE`, `obstacleSet`).
+  2026-11-18 fine rebuild slice C2: resting wrecks / scrap / plain asteroids (`RestingObstacles`).

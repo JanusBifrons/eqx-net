@@ -1013,7 +1013,8 @@ export class SectorRoom extends Room<SectorState> {
   private wreckFieldSource: WreckFieldSource | undefined; // wreck fields 3b (room option `wreckField`)
   /** Navigation: the cut field's nav maps, AI routes and autopilot requests (`nav/RoomNav.ts`). */
   private readonly nav: RoomNav = new RoomNav({
-    now: () => this.gameClock.now(), logger, sectorKey: () => this.sectorKey, stopped: () => this.simLoopStopped,
+    now: () => this.gameClock.now(), logger, sectorKey: () => this.sectorKey, stopped: () => this.simLoopStopped, structures: () => this.structureRegistry,
+    resting: () => ({ swarm: this.swarmRegistry, sabF32: () => this.sabF32, sabU32: () => this.sabU32, bus: this.bus }),
     hullOf: (sid) => {
       const playerId = this.sessionToPlayer.get(sid), ship = playerId ? this.getActiveShip(playerId) : undefined;
       const pose = playerId ? this.shipPoseCache.get(playerId) : undefined;
@@ -2237,7 +2238,7 @@ export class SectorRoom extends Room<SectorState> {
       snapshotRing: this.snapshotRing,
       shieldHullRouter: this.shieldHullRouter,
       mountTicker: this.mountTicker,
-      freeSlots: this.freeSlots,
+      freeSlots: this.freeSlots, nav: this.nav,
     });
 
     // Player respawn handler. Composes worker proxy + SAB writer +
