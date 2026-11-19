@@ -178,6 +178,8 @@ Types: solar, battery, battery bank, reactor. Owner answers (2026-11-19):
 - **Reactor:** dims when dry: core dark, fans stop, a small no-fuel icon.
 - **Sizes:** reactor and battery bank grow to medium, about 600 across, with the same power and
   storage. The battery stays 190 (small). Bases get re-laid and saves are wiped (§3).
+- **Reactor power:** 240 → 960, so it stays worth about eight solars (solar 30 → 120).
+- Wireframes the owner judged from: https://claude.ai/artifact/JEHqz4FtLLy1oVe6egAmsH
 - **Destroyed power buildings:** parked on `docs/SHELF.md`.
 
 Found while briefing: the battery bank never charged or discharged (every battery rule checked the
