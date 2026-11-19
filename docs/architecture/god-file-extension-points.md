@@ -41,7 +41,17 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | A server→client message | Its zod schema in `src/shared-types/messages/` and a row in `ServerMessageSchemas` (`src/shared-types/messages.ts`); a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in `handlers/index.ts`. | live |
 | A per-entity timer / state machine | Its own module, like `drawnShellTiming.ts`, `damageNumberTargets.ts`. | live |
 | A per-frame mirror pass | A function `(ctx, frameNowMs, ...)` in `src/client/net/mirror/` taking the once-built `MirrorPassCtx`, plus one call in `updateMirror`, in frame order. | live |
+| A prediction-step pass (input loop, energy, sentinel) | A function `(ctx, ...)` in `src/client/net/prediction/` taking the once-built `PredictionStepCtx` (getters/setters for reassigned fields), plus one call in `tickPhysics`, in the same order. | live |
+| Sector-trip (travel) flight | `src/client/net/mirror/travelPass.ts` (`stepTravel`, the `TRAVEL_*` knobs, `travelApproach`); `updateMirror` calls it last. | live |
 | Fire control / lock state | `FireControlClient` (`src/client/net/FireControlClient.ts`; the lock line in `fireControl/LockLineClient.ts`); `ColyseusClient` keeps one-line delegates and reaches it as `this.fc`. | live |
+| Local fire / live beam | `LocalFireClient` (`src/client/net/fireControl/LocalFireClient.ts`: `sendFire`, `updateLiveBeam`, `localShipMounts`) with the once-built `LocalFireHost`; `ColyseusClient` keeps one-line delegates. | live |
+| Damage / shield / death state | A function `(ctx, ...)` in `src/client/net/damagePath.ts` taking the once-built `DamagePathCtx`; the wire side stays in `handlers/combatHandlers.ts`. | live |
+| Connection / join / room lifecycle | `src/client/net/connection/roomConnection.ts` (URL transport flags, join with timeout, DEV bandwidth tally, the DataChannel snapshot transport, `onLeave` / `onError`); `connect()` keeps the order of calls. The `welcome` handshake is `handlers/welcomeHandlers.ts` (its `WelcomeTarget` built once). | live |
+| Sector-handoff prediction reset | `resetPredictionState(ctx)` in `src/client/net/prediction/resetPrediction.ts` with the once-built `PredictionResetCtx`; `ColyseusClient` keeps a one-line delegate. New per-sector state is reset there. | live |
+| PredWorld body sync (local-body bootstrap, swarm bodies) | `tryInitPredWorld` / `syncSwarmIntoPredWorld` in `src/client/net/prediction/predWorldSync.ts`, run with the once-built `PredictionStepCtx`; `ColyseusClient` keeps one-line delegates. | live |
+| An outbound room command (pilot swap, spectate / command view, fleet orders, ship upgrades, mount activation, respawn, `client_ready`) | A function `(ctx, ...)` in `src/client/net/connection/roomCommands.ts` taking the once-built `RoomCommandsCtx`; `ColyseusClient` keeps a one-line public delegate. | live |
+| Client teardown (`dispose()`) | `disposeClient(ctx)` in `src/client/net/connection/clientTeardown.ts` with the once-built `ClientTeardownCtx` (the sector-reset ctx plus teardown-only fields). A new subsystem is disposed / cleared there. | live |
+| Room-state mines into the mirror | `MineSync` (`src/client/net/mirror/mineSync.ts`), built once; `syncStructures` calls `sync()`. | live |
 
 ## Client: `PixiRenderer.ts` and `IRenderer.ts` (`src/client/render/CLAUDE.md`)
 

@@ -1,4 +1,3 @@
-import { beamShieldEdgeDist } from '../combat/remoteBeamRay.js';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
@@ -17,10 +16,8 @@ import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { GameClock } from '@core/clock/GameClock';
 import { glideToward } from '@shared-types/timeScale';
 import type { SnapshotMessage, DamageEvent, DestroyEvent, RespawnAckMessage, ShieldEventMessage } from '@shared-types/messages';
-import type { FleetOrderMessage, SetModeMessage, SetStanceMessage, FormSquadMessage, DisbandSquadMessage } from '@shared-types/messages';
 /** RTS slice 6a: the fleet command messages `sendFleetCommand` dispatches. */
-export type FleetCommandMessage = FleetOrderMessage | SetModeMessage | SetStanceMessage | FormSquadMessage | DisbandSquadMessage;
-import { parseWelcome } from './parseWelcome';
+export type { FleetCommandMessage } from './connection/roomCommands.js';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
@@ -35,24 +32,21 @@ function padFieldId(id: number): string {
   return s;
 }
 import { pointSegmentDistance, wantPredBody } from '../structures/predStructureStreaming.js';
-import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_WRECK_RADIUS } from '../../shared-types/structureBudgets.js';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import {
-  applyCollisionResolved,
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { pushCollisionShieldContacts } from './collisionShieldContacts';
 import type { ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { DrawnShellTiming } from './drawnShellTiming';
-import { CollisionResolvedMessageSchema } from '@shared-types/messages';
-import { stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
+import type { FleetArrival, FleetArrivalWatch } from './fleetWarpFollow';
 import { cargoChanged, cargoViewOf, type WireCargo } from './lootView';
-import { setFactionLooks } from '../../shared-types/factions.js';
 import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
 import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
+import type { PredictionStepCtx } from './prediction/predictionStepCtx.js';
+import { FIXED_MS, MAX_CATCH_UP_TICKS, MAX_OVER_PREDICTION_TICKS, stepInputTick, predictFrameEnergy, sendCapSentinel } from './prediction/inputStep.js';
 import { drainScheduledDamageSpawns, updateLocalShipMirror } from './mirror/localShipPass.js';
 import { updateSpectatorPlacement, updateServerGhost, updateSwarmMirror, updateRemoteShipsMirror, updateProjectilesMirror, expireFrameState, updateDroneHostility } from './mirror/worldPasses.js';
 import { fittedCargoMul } from '../../shared-types/blueprints.js';
@@ -69,14 +63,12 @@ function sameIds(a: readonly string[], b: readonly string[] | undefined): boolea
 import { cargoCapacityForMaxHealth } from '@shared-types/goods';
 import {
   createRemotePredictionGuard,
-  forgetRemote,
   type RemotePredictionGuard,
 } from './remotePredictionGuard';
 import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
-import { isOwnedByMe, isParkedHull } from '../render/shipOwnership.js';
+import { isParkedHull } from '../render/shipOwnership.js';
 import { findRekeySource } from './shipRekey.js';
 import { copySchemaHealth } from './shipSchemaHealth.js';
-import { moveKey, moveSetKey } from '../render/shipRekey.js';
 import {
   createWelford,
   type WelfordState,
@@ -89,20 +81,30 @@ import {
   createDropDetector,
   type DropDetector,
 } from './snapshotDropDetector';
+import { resetPredictionState } from './prediction/resetPrediction.js';
+import { tryInitPredWorld, syncSwarmIntoPredWorld, rekeyOwnShipFromHull, dropRemoteShip, rekeyShip, ensureRemoteShipBody } from './prediction/predWorldSync.js';
+import { disposeClient, type ClientTeardownCtx } from './connection/clientTeardown.js';
+import {
+  pilotInSectorShip, sendSpectate, sendCommand, enterCommandFromServer, sendFleetCommand, applyShipUpgrade, respecShip, activateMount,
+  consumePendingCameraGlide, consumePendingFleetArrival, handleRespawnAck, respawnShip, devKillLocalShip, sendClientReady,
+  type RoomCommandsCtx, type FleetCommandMessage,
+} from './connection/roomCommands.js';
+import { MineSync } from './mirror/mineSync.js';
+import type { WelcomeTarget } from './handlers/welcomeHandlers.js';
+import {
+  readConnectionFlags, installConnectionDiagnostics, joinRoom, installBwStats, bwStats, createSnapshotDataChannel,
+  registerRoomLifecycle, type RoomLifecycleCtx, type SnapshotSink,
+} from './connection/roomConnection.js';
 import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction } from './inputTickRecovery';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
 import { createGameCutField, type CutFieldSummary } from './cutFieldWiring.js';
-import { clearMirror } from './clearMirror.js';
 import { WreckGeometryStore } from './wreckGeometryStore.js';
-import { SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
 import { DataChannelTransport } from './dataChannelTransport.js';
-import { webrtcEnabledFromSearch } from './webrtcEnable.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles } from './SnapshotSyncHelpers.js';
 import { applyMissileSnapshot } from '../combat/MissileMirror.js';
-import { beamOptimalDist, beamMaxDist, beamNoHitSolidDist } from '../combat/beamBands.js';
 import { RafStallDetector } from './RafStallDetector.js';
 import {
   routeSnapshotShipStates,
@@ -112,80 +114,37 @@ import {
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
-import { WARP_SPEED } from '../../core/physics/warpDrive.js';
-/** Phase 4 travel state (sector-to-sector trip), seconds: accelerate out of
- *  the old sector, the shortest trip (it stretches while loading), and the
- *  deceleration into the new one. Feel knobs. */
-const TRAVEL_OUT_S = 3;
-const TRAVEL_MIN_S = 25;
-/** The approach into the new sector: brake from warp speed to a glide
- *  (TRAVEL_BRAKE_S), then glide the last TRAVEL_GLIDE_D slowing evenly to a
- *  stop, so whatever is near the arrival point passes at a speed you can see. */
-const TRAVEL_BRAKE_S = 2.5;
-const TRAVEL_GLIDE_V = 2500;
-const TRAVEL_GLIDE_D = 4000;
-const TRAVEL_GLIDE_S = (2 * TRAVEL_GLIDE_D) / TRAVEL_GLIDE_V;
-const TRAVEL_IN_S = TRAVEL_BRAKE_S + TRAVEL_GLIDE_S;
-const TRAVEL_BRAKE_D = TRAVEL_GLIDE_V * TRAVEL_BRAKE_S + ((WARP_SPEED - TRAVEL_GLIDE_V) * TRAVEL_BRAKE_S) / 3;
-const TRAVEL_IN_D = TRAVEL_BRAKE_D + TRAVEL_GLIDE_D;
-
-/** Approach progress `tau` s in: [distance covered, speed]. Pure. */
-export function travelApproach(tau: number): [number, number] {
-  if (tau <= TRAVEL_BRAKE_S) {
-    const u = Math.max(0, tau) / TRAVEL_BRAKE_S;
-    const span = (WARP_SPEED - TRAVEL_GLIDE_V) * TRAVEL_BRAKE_S;
-    return [TRAVEL_GLIDE_V * tau + span * (u - u * u + (u * u * u) / 3), TRAVEL_GLIDE_V + (WARP_SPEED - TRAVEL_GLIDE_V) * (1 - u) * (1 - u)];
-  }
-  const s = Math.min(TRAVEL_GLIDE_S, tau - TRAVEL_BRAKE_S);
-  return [TRAVEL_BRAKE_D + TRAVEL_GLIDE_V * (s - (s * s) / (2 * TRAVEL_GLIDE_S)), TRAVEL_GLIDE_V * (1 - s / TRAVEL_GLIDE_S)];
-}
+import { stepTravel, TRAVEL_OUT_S, type TravelTrip } from './mirror/travelPass.js';
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
-import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets, type RemoteShipOffset } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
-import { logEvent, isDiagEnabled, isFullDiagMode, isGhostProbeEnabled } from '../debug/ClientLogger';
+import { logEvent, isDiagEnabled, isFullDiagMode } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
-import { installLongtaskObserver } from '../debug/longtaskObserver';
-import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
-import { startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE, beamHalfWidth } from '@core/combat/Weapons';
-import { shipShotMuzzle } from '@core/combat/muzzle';
-import { tuningFor } from '@shared-types/shipScale/lookup';
 
-// A group fires only when a barrel bears on its lock: the shared rule (#15).
-import { mountRangeFactor } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon } from '@core/combat/WeaponCatalogue';
-import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
-import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
-import { RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
+import type { ControlBits } from '@core/combat/disable';
 import { helmStep, makeHelmOutput, type HelmOrder, type HelmPose, type HelmSpeed } from '@core/helm/helm';
 import { HelmRouteClient } from '../helm/helmRoute.js';
 import { makeHelmCourseMark, resolveHelmCourseMark, type HelmCourseMark } from '../helm/helmCourseMark.js';
-import { resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
+import { resolveInstanceMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
-import {
-  predictShotOutcome,
-  type PredictedFeedbackSink,
-  type ReconcileFeedbackSink,
-  type MountFireGeom,
-} from '../combat/HitPrediction.client';
-import { localFireSpawnsGhost, localFirePredicts } from '../combat/LocalBeam';
-import { mountMuzzleRay, type MuzzleRay } from '../render/beamStyles';
+import { type ReconcileFeedbackSink } from '../combat/HitPrediction.client';
 import type { TouchInput } from '../input/TouchInput';
-import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
+import { IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
 import { FireControlClient } from './FireControlClient';
+import { LocalFireClient, type LocalFireHost } from './fireControl/LocalFireClient.js';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   setSwarmDisplaySpeed,
   type InterpolatedPose,
 } from './swarmInterpolation';
 import { updateAnchor } from './clockAnchor';
-import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
 import {
@@ -193,7 +152,6 @@ import {
   type PendingPlacement,
   type ShipPose,
 } from '../structures/structurePlacementClient.js';
-import { shouldEnterSpectatorOnDeath } from '../spectator/spectatorMode.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 
 export interface ColyseusClientCallbacks {
@@ -223,35 +181,13 @@ const HISTORY_MAX = 30;
 export type { PredictionStats } from './predictionStats.js';
 import type { PredictionStats } from './predictionStats.js';
 
-/** Phase 5e DEV-only inbound bandwidth tally surfaced on `window.__EQX_BW_STATS`. */
-interface BwStats {
-  startedAt: number;
-  swarmBytes: number;
-  swarmPackets: number;
-  snapshotBytes: number;
-  snapshotCount: number;
-  reset(): void;
-}
-
-function bwStats(): BwStats | null {
-  if (!import.meta.env.DEV) return null;
-  return (window as unknown as { __EQX_BW_STATS?: BwStats }).__EQX_BW_STATS ?? null;
-}
-
 // Prediction tuning constants + remoteOffsetHalfLifeForDrift moved to
 // ./predictionTuning.ts — pure read-only tuning values, no `this`-state.
 import {
   NOISE_THRESHOLD,
   ANGLE_NOISE_THRESHOLD,
 } from './predictionTuning.js';
-import { shipScaleMismatch } from '@shared-types/shipScale/welcomeScale';
-import { navalRangeMismatch } from '@shared-types/combat/navalRange';
 
-/** Simple monotonically incrementing shot ID generator. */
-let _shotCounter = 0;
-function nextShotId(): string {
-  return `shot-${_shotCounter++}`;
-}
 
 // 2026-05-20 spiral fix: joystick→input thresholds (with hysteresis)
 // moved into the pure `joystickToInput` helper. The single-band constants
@@ -259,14 +195,6 @@ function nextShotId(): string {
 // TOUCH_TURN_TOLERANCE) caused analog-noise toggles at ~10 Hz under
 // steady stick use → sustained prediction-correction spiral on mobile.
 // See `src/client/input/joystickToInput.ts` + its unit lock.
-/** Idle-input heartbeat (network-discipline P4). When the control state has
- *  not changed for this long, we re-send the latest state once anyway, so the
- *  server can detect a missing client (idle != disconnected) and so a UDP
- *  restart-style replacement of the last-applied input still happens. 250 ms
- *  is well below `lastSentInput` perception lag for a held-key change but
- *  well above the per-tick 16.67 ms cadence — net result is a 60 → ~4 Hz
- *  drop on idle. */
-const INPUT_HEARTBEAT_MS = 250;
 
 // Beam draw bands moved to the pure, unit-locked `combat/beamBands.ts` seam
 // (campaign 5.2): optimal/max derive from the weapon catalogue def (the SAME
@@ -281,11 +209,9 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 
 /** Shared empty `lockedBy` (no allocation per snapshot). */
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
-/** A welcome from a wreck room with no live wreck (slice 3). */
-const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
 
 export { isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './damageNumberTargets.js';
-import { isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './damageNumberTargets.js';
+import { applyDamageFx, handleDamage, handleDestroy, handleShield, killEntity, killSwarmEntity, type DamagePathCtx } from './damagePath.js';
 import { syncOwnEconomy } from './ownEconomySync';
 
 export class ColyseusGameClient {
@@ -389,39 +315,10 @@ export class ColyseusGameClient {
     this.gameClock = new GameClock(() => clock.now());
     ColyseusGameClient._liveInstanceN += 1;
     logEvent('client_constructed', { liveInstanceN: ColyseusGameClient._liveInstanceN });
-    // Probe 6 — `?coalesce=0` disables snapshot coalescing for A/B
-    // testing. Default ON. Tests construct with the mock URL absent →
-    // coalesce defaults ON, matching production behaviour.
-    let coalesceParam: string | null = null;
-    try {
-      if (typeof window !== 'undefined' && window.location?.search) {
-        coalesceParam = new URLSearchParams(window.location.search).get('coalesce');
-      }
-    } catch {
-      // Non-browser context — keep default.
-    }
-    this.snapshotCoalescer = new SnapshotCoalescer(coalesceParam !== '0');
-    // swift-otter — WebRTC DataChannel snapshot transport. Default flipped
-    // ON for real users (2026-06-06): on-device the DC carries ~99% of
-    // snapshots over UDP, avoiding the WS/TCP head-of-line amplification that
-    // stretches a brief WiFi-radio stall into a ~530 ms snapshot gap (the
-    // on-device "jumps"). Reliable WS is retained as automatic fallback when
-    // the DC can't establish (NAT/cellular), so default-on is safe. Default
-    // OFF under Playwright automation (navigator.webdriver) so the E2E suite
-    // stays WS-deterministic AND the netgate keeps measuring the proxied WS
-    // path (the DC is P2P UDP and bypasses the injected-latency proxy).
-    // `?webrtc=0`/`=1` override. Pure decision lives in `webrtcEnable.ts`.
-    let webrtcEnabled = false;
-    try {
-      if (typeof window !== 'undefined' && window.location) {
-        const isAutomation =
-          typeof navigator !== 'undefined' && navigator.webdriver === true;
-        webrtcEnabled = webrtcEnabledFromSearch(window.location.search, isAutomation);
-      }
-    } catch {
-      // Non-browser context — keep default OFF (no RTCPeerConnection).
-    }
-    this._webrtcEnabled = webrtcEnabled;
+    // `?coalesce=0` / `?webrtc=` transport flags (connection/roomConnection.ts).
+    const flags = readConnectionFlags();
+    this.snapshotCoalescer = new SnapshotCoalescer(flags.coalesce);
+    this._webrtcEnabled = flags.webrtc;
   }
 
   /** Phase 6 — IAudio sink for TiDi pitch-shift. Optional: tests / headless
@@ -613,197 +510,47 @@ export class ColyseusGameClient {
     };
   }
 
-  /**
-   * Phase 4 WS-A2 — same-sector instant pilot swap. Sends `pilot_ship { shipId }`
-   * over the LIVE room (no leave/rejoin → no spool, no curtain), then primes the
-   * client-side transition: despawn the local predWorld body so the fresh
-   * `welcome` re-anchors self-prediction at the new authoritative pose (one
-   * ownership site — same discipline as `resetPredictionState`), and stash the
-   * target shipId so the welcome handler clears spectator + arms the camera glide.
-   * Returns true when the swap was dispatched (false when there's no live room).
-   */
-  pilotInSectorShip(shipId: string): boolean {
-    if (!this.room || shipId === '') return false;
-    this.room.send('pilot_ship', { type: 'pilot_ship', shipId });
-    this._pendingPilotSwapShipId = shipId;
-    // Despawn the local predWorld body so the welcome's `tryInitPredWorld`
-    // reseeds it at the new ship's AUTHORITATIVE pose (the spectator case has
-    // none; the switch-from-another-hull case must drop the OLD body). The
-    // `welcome` handler nulls + rebuilds the Reconciler via tryInitPredWorld.
-    const localId = this.mirror.localPlayerId;
-    if (localId && this.predWorld?.hasShip(localId)) {
-      this.predWorld.despawnShip(localId);
-      this.reconciler = null;
-    }
-    this.localDead = false;
-    logEvent('pilot_swap_requested', { shipId });
-    return true;
-  }
+  /** The ctx the room commands (`connection/roomCommands.ts`) run with, built once (#14). */
+  private readonly _roomCmdCtx: RoomCommandsCtx = ((c: ColyseusGameClient): RoomCommandsCtx => ({
+    get room() { return c.room; }, get mirror() { return c.mirror; }, get clock() { return c.clock; },
+    get gameClock() { return c.gameClock; }, get predWorld() { return c.predWorld; }, get disposed() { return c.disposed; },
+    get reconciler() { return c.reconciler; }, set reconciler(v) { c.reconciler = v; },
+    get localDead() { return c.localDead; }, set localDead(v) { c.localDead = v; },
+    get pendingPilotSwapShipId() { return c._pendingPilotSwapShipId; }, set pendingPilotSwapShipId(v) { c._pendingPilotSwapShipId = v; },
+    get pilotSwapGlidePending() { return c._pilotSwapGlidePending; }, set pilotSwapGlidePending(v) { c._pilotSwapGlidePending = v; },
+    get fleetArrival() { return c._fleetArrival; }, set fleetArrival(v) { c._fleetArrival = v; },
+    get inputTick() { return c.inputTick; }, set inputTick(v) { c.inputTick = v; },
+    get serverTickAtWelcome() { return c.serverTickAtWelcome; }, set serverTickAtWelcome(v) { c.serverTickAtWelcome = v; },
+    get welcomePerfNow() { return c.welcomePerfNow; }, set welcomePerfNow(v) { c.welcomePerfNow = v; },
+    get clockAnchorServerTick() { return c.clockAnchorServerTick; }, set clockAnchorServerTick(v) { c.clockAnchorServerTick = v; },
+    get clockAnchorPerfNow() { return c.clockAnchorPerfNow; }, set clockAnchorPerfNow(v) { c.clockAnchorPerfNow = v; },
+    get anchorInitialised() { return c._anchorInitialised; }, set anchorInitialised(v) { c._anchorInitialised = v; },
+    get anchorFreshAtMs() { return c._anchorFreshAtMs; }, set anchorFreshAtMs(v) { c._anchorFreshAtMs = v; },
+    get lastSentInputState() { return c.lastSentInputState; }, set lastSentInputState(v) { c.lastSentInputState = v; },
+    get lastSentInputAtMs() { return c.lastSentInputAtMs; }, set lastSentInputAtMs(v) { c.lastSentInputAtMs = v; },
+    rekeyShip: (from: string, to: string): void => c.rekeyShip(from, to),
+    killEntity: (id: string): void => c.killEntity(id),
+  }))(this);
 
-  /**
-   * Equinox Phase-5 audit — STOP PILOTING → spectate. The inverse of
-   * {@link pilotInSectorShip}: tell the server to displace our active hull into a
-   * lingering hull (so it parks in-world AND surfaces in our own parked hulls
-   * for the Pilot dropdown). Drop the local predWorld body — same one-ownership-
-   * site discipline as the pilot swap / death — so prediction doesn't fight the
-   * now-parked hull; re-piloting re-anchors via the fresh `welcome`. No-op
-   * server-side when we have no active hull. Returns true when dispatched.
-   */
-  sendSpectate(): boolean {
-    if (!this.room) return false;
-    this.room.send('spectate', { type: 'spectate' });
-    this.dropLocalShipForCommand();
-    logEvent('spectate_requested', {});
-    return true;
-  }
-
-  /**
-   * RTS command layer (slice 10) — let go of the controls: enter command view.
-   * Sends `command` (the server parks the hull as an AI-flown wingman, the same
-   * path as `spectate`) and does the same local drop. The caller flips
-   * `pilotMode` first (as the toggle does for spectate). Returns true when
-   * dispatched.
-   */
-  sendCommand(): boolean {
-    if (!this.room) return false;
-    this.room.send('command', { type: 'command' });
-    this.dropLocalShipForCommand();
-    logEvent('command_requested', {});
-    return true;
-  }
-
-  /** RTS slice 10 — the server's `control_mode: command` (a command-view join
-   *  parked our hull at the arrival flip): flip the mode, then drop the local
-   *  ship exactly as a toggle-to-command does. Idempotent. Public for tests. */
-  enterCommandFromServer(): void {
-    const ui = useUIStore.getState();
-    if (ui.pilotMode !== 'spectator') ui.setPilotMode('spectator');
-    this.dropLocalShipForCommand();
-    logEvent('command_view_entered', { source: 'join' });
-  }
-
-  /** The local half of stop-piloting (spectate / command / a command-view
-   *  join): drop the predWorld body (one ownership site, like the pilot swap /
-   *  death) and the own drawn entry. The hull is parked now and comes back as a
-   *  lingering hull (syncMirror skips the own ship while spectating). */
-  private dropLocalShipForCommand(): void {
-    const localId = this.mirror.localPlayerId;
-    // Seamless hand-over (RTS Part A): the ship we let go of keeps being drawn
-    // as the parked hull it becomes. Its entry, body and renderer state MOVE
-    // to its shipInstanceId (`rekeyShip`); the router keys our still-ACTIVE
-    // wire entry there too until the server parks it (`shipMirrorKey`).
-    const sid = this.mirror.localShipInstanceId ?? null;
-    const own = localId !== null ? this.mirror.ships.get(localId) : undefined;
-    if (localId !== null && own !== undefined && sid !== null && sid !== localId) {
-      own.isActive = false;
-      own.ownerPlayerId = localId;
-      own.shipInstanceId = sid;
-      this.rekeyShip(localId, sid);
-      return;
-    }
-    if (localId && this.predWorld?.hasShip(localId)) {
-      this.predWorld.despawnShip(localId);
-      this.reconciler = null;
-    }
-    if (localId) this.mirror.ships.delete(localId);
-  }
-
-  /**
-   * RTS command layer (slice 6a): send a fleet command message
-   * (`fleet_order` / `set_mode` / `set_stance` / `form_squad` /
-   * `disband_squad`). Pure dispatch — no local state; the server owns the
-   * wingman brains. Returns true when dispatched (false with no live room).
-   */
-  sendFleetCommand(msg: FleetCommandMessage): boolean {
-    if (!this.room) return false;
-    this.room.send(msg.type, msg);
-    return true;
-  }
-
-  /**
-   * Phase 4 WS-B2 — send a free stat allocation for a ship instance. The server
-   * validates ownership + the point budget, persists, applies the multipliers,
-   * and echoes `ship_upgrade_applied`. The physics re-anchor happens off the
-   * authoritative own-ship `statAlloc` snapshot slice (not this send), so the
-   * client never predicts the upgrade — it waits for the server's truth. Returns
-   * true when dispatched (false when there's no live room / blank id).
-   */
-  applyShipUpgrade(shipId: string, alloc: Record<string, number>): boolean {
-    if (!this.room || shipId === '') return false;
-    this.room.send('apply_ship_upgrade', { type: 'apply_ship_upgrade', shipId, alloc });
-    logEvent('ship_upgrade_requested', { shipId });
-    return true;
-  }
-
-  /**
-   * Phase 4 WS-B2 — respec a ship instance (refund every spent point). The
-   * server resets the roster `statAlloc` to `{}`, re-anchors the multipliers to
-   * neutral, and echoes `ship_upgrade_applied` with the empty alloc. Returns
-   * true when dispatched.
-   */
-  respecShip(shipId: string): boolean {
-    if (!this.room || shipId === '') return false;
-    this.room.send('respec_ship', { type: 'respec_ship', shipId });
-    logEvent('ship_respec_requested', { shipId });
-    return true;
-  }
-
-  /**
-   * Phase 4 WS-B3 — activate a latent weapon mount on a ship instance + bind a
-   * weapon to it. The server validates ownership + that `slotId` is a real
-   * latent hardpoint, persists the activation on the roster, mirrors it onto the
-   * live hull, and echoes `mount_activated`. The activated mount fires + renders
-   * from the next snapshot (PUBLIC via `states[].mounts`; geometry looked up
-   * client-side by `(kind, slotId)`). Returns true when dispatched.
-   */
+  // Outbound room commands (`connection/roomCommands.ts`); callers and tests use these.
+  pilotInSectorShip(shipId: string): boolean { return pilotInSectorShip(this._roomCmdCtx, shipId); }
+  sendSpectate(): boolean { return sendSpectate(this._roomCmdCtx); }
+  sendCommand(): boolean { return sendCommand(this._roomCmdCtx); }
+  /** Public for tests (a command-view join). */
+  enterCommandFromServer(): void { enterCommandFromServer(this._roomCmdCtx); }
+  sendFleetCommand(msg: FleetCommandMessage): boolean { return sendFleetCommand(this._roomCmdCtx, msg); }
+  applyShipUpgrade(shipId: string, alloc: Record<string, number>): boolean { return applyShipUpgrade(this._roomCmdCtx, shipId, alloc); }
+  respecShip(shipId: string): boolean { return respecShip(this._roomCmdCtx, shipId); }
   activateMount(shipId: string, slotId: string, weaponId: 'hitscan' | 'laser' | 'heat-seeker'): boolean {
-    if (!this.room || shipId === '' || slotId === '') return false;
-    this.room.send('activate_mount', { type: 'activate_mount', shipId, slotId, weaponId });
-    logEvent('mount_activation_requested', { shipId, slotId, weaponId });
-    return true;
+    return activateMount(this._roomCmdCtx, shipId, slotId, weaponId);
   }
-
-  /**
-   * Phase 4 WS-A2 — one-shot read of the pending pilot-swap camera glide target.
-   * Returns the NEW local ship's GAME-space pose ONCE the welcome has landed AND
-   * the new pose is in the mirror, then clears the flag; null otherwise. The RAF
-   * loop calls this each frame and, on a non-null return, drives the renderer's
-   * `glideCameraTo` (the smooth ship-switch). Driven off the mirror pose, not
-   * pose interpolation — independent of the snapshot teleport guard (Risk #4).
-   */
-  consumePendingCameraGlide(): { x: number; y: number } | null {
-    if (!this._pilotSwapGlidePending) return null;
-    const localId = this.mirror.localPlayerId;
-    const ship = localId ? this.mirror.ships.get(localId) : undefined;
-    if (!ship) return null; // wait until the new pose is mirrored
-    this._pilotSwapGlidePending = false;
-    return { x: ship.x, y: ship.y };
-  }
+  consumePendingCameraGlide(): { x: number; y: number } | null { return consumePendingCameraGlide(this._roomCmdCtx); }
 
   /** RTS fleet warp (S8): the ships a commander followed, waiting to show up
    *  in the destination's mirror (armed in the `transit_ready` handler). */
   private _fleetArrival: FleetArrivalWatch | null = null;
 
-  /**
-   * RTS fleet warp (S8) — one-shot: once the ships the commander followed are
-   * in the destination's mirror, returns their ids (to re-select: the ONE
-   * selection lives in the renderer) and their centroid (the camera glide
-   * target), then clears. Null while waiting or when nothing is pending. The
-   * RAF loop calls it each frame, like `consumePendingCameraGlide`.
-   */
-  consumePendingFleetArrival(): FleetArrival | null {
-    const w = this._fleetArrival;
-    if (w === null) return null;
-    const r = stepFleetArrival(w, this.mirror.ships, this.clock.now());
-    if (r === null) return null;
-    this._fleetArrival = null;
-    if (r === 'drop') {
-      logEvent('fleet_warp_follow_lost', { ids: w.ids.length });
-      return null;
-    }
-    logEvent('fleet_warp_follow_arrived', { ids: r.ids.length, of: w.ids.length });
-    return r;
-  }
+  consumePendingFleetArrival(): FleetArrival | null { return consumePendingFleetArrival(this._roomCmdCtx); }
 
   private inputTick = 0;
   /** Raw server snapshot position — shown as the orange ghost ship. */
@@ -1027,8 +774,6 @@ export class ColyseusGameClient {
    */
   private _syncMirrorRanThisRaf = false;
   private _pendingStateForSync: unknown = null;
-  private readonly _liveBeamMountIdsScratch = new Set<string>();
-  private readonly _liveRayScratch: MuzzleRay = { fromX: 0, fromY: 0, fwdX: 0, fwdY: 0 };
   private readonly _syncProjectilesSeenScratch = new Set<string>();
   /** Pre-bound drop path for the `routeSnapshotShipStates` ctx (bound once,
    *  no per-snapshot closure; heap-growth gate step 12). */
@@ -1350,55 +1095,6 @@ export class ColyseusGameClient {
     this.audio = audio;
   }
 
-  /**
-   * Wipe the Stage 4 prediction-loop state so the next snapshot from a
-   * fresh sector room behaves like a first-connect snapshot.
-   *
-   * Why this exists: the `transit_ready` handler hot-swaps the room's
-   * WebSocket via `consumeSeatReservation` but reuses the same
-   * `ColyseusClient` instance. Without an explicit reset, the welford
-   * RTT mean/σ, the spring-smoothed `leadTicks`, the snapshot-interval
-   * EWMA, the drop detector, and the clock anchor all carry across
-   * the 5+ s transit gap. The first wave of post-transit snapshots
-   * push gap-contaminated `lastRtt` samples (clamped to 250 ms by Stage 4
-   * hotfix #1, but still pushed when `intervalMs` lands back in the
-   * [35, 75] band by hotfix #3) into the surviving welford, the running
-   * mean drifts up, `mean + 2σ` saturates the 30-tick `CEILING_TICKS`
-   * cap in `lookaheadController`, and the client predicts ~600 ms
-   * ahead of authoritative state. Symptoms: `srvTick − ackedTick` locks
-   * at ~−37 for the rest of the session, the local ship renders far
-   * from where the server thinks it is, large reconcile drifts, and
-   * 60–70% of snapshots produce a correction that lerping must mask.
-   *
-   * Diagnosed from cap `2026-05-09T07-49-57-470Z-81numi` (post-warp,
-   * 67% correction rate, every snapshot at offset −37); cap
-   * `2026-05-09T07-51-26-622Z-wc5fm0` (steady-state long after the same
-   * session, offset settled to −15) is the clean baseline.
-   *
-   * Spatial seed (2026-05-16 fix). The pre-2026-05-16 version reset only
-   * the RTT/timing state above and left the local `predWorld` ship body
-   * + the `Reconciler` instance untouched. The `transit_ready`
-   * mirror-cleanup loop preserves the local ship, so `tryInitPredWorld`
-   * early-returned on `predWorld.hasShip(localId)` at the destination and
-   * the body arrived still at the SOURCE-sector pose. The destination's
-   * first `handleSnapshot` then reconciled that stale body against the
-   * arrival pose, surfacing the entire source→destination delta as
-   * "drift" (210-380 u on-device, diag
-   * `2026-05-16T11-59-43-103Z-tl56wa`), which the reconciler lerped out
-   * over ~1.3 s post-curtain — the warp-out jank. So this also despawns
-   * the local predWorld body and NULLS the reconciler: the destination's
-   * first state-diff / snapshot reseeds via the existing
-   * `tryInitPredWorld` path AT THE AUTHORITATIVE ARRIVAL POSE (which
-   * rebuilds the `Reconciler`), making the "fresh-connect seed" the
-   * comment above promises true for the spatial body too. Nulling the
-   * reconciler also subsumes the old `reconciler.lastRtt = 0` (there is
-   * no surviving reconciler to re-poison the welford). `handleSnapshot`
-   * + `tickPhysics` both already guard `!this.reconciler` (the
-   * pre-first-welcome state) — the fix re-enters that well-tested state,
-   * it does not invent one. One ownership site; no second correction
-   * path (Invariant #12 philosophy). Locked by
-   * `ColyseusClient.transitArrivalDrift.test.ts`.
-   */
   /** Shells as events: on when the welcome says so (shell-events.md §7). */
   private _shellEvents = false;
   private readonly _shellStore = new ShellSalvoStore();
@@ -1437,6 +1133,29 @@ export class ColyseusGameClient {
     shooterKindMounts: (shooterId: string): readonly WeaponMount[] | undefined => this.shooterKindMounts(shooterId),
     enterCommandFromServer: (): void => this.enterCommandFromServer(),
     dataChannelTransport: (): DataChannelTransport | null => this._dataChannelTransport,
+    predWorld: (): PhysicsWorld | null => this.predWorld,
+    collisionGuard: this._collisionGuard, stats: this.stats, shieldContactAt: this._shieldContactAt,
+    welcome: ((c: ColyseusGameClient): WelcomeTarget => ({
+      get mirror() { return c.mirror; }, get clock() { return c.clock; }, get gameClock() { return c.gameClock; },
+      get cutField() { return c._cutField; }, get wrecks() { return c._wrecks; }, get shellTiming() { return c._shellTiming; },
+      get room() { return c.room; }, get webrtcEnabled() { return c._webrtcEnabled; },
+      get dataChannelTransport() { return c._dataChannelTransport; }, get storedPlayerId() { return c._seat?.storedPlayerId ?? null; },
+      get shellEvents() { return c._shellEvents; }, set shellEvents(v) { c._shellEvents = v; },
+      get serverTickAtWelcome() { return c.serverTickAtWelcome; }, set serverTickAtWelcome(v) { c.serverTickAtWelcome = v; },
+      get welcomePerfNow() { return c.welcomePerfNow; }, set welcomePerfNow(v) { c.welcomePerfNow = v; },
+      get clockAnchorServerTick() { return c.clockAnchorServerTick; }, set clockAnchorServerTick(v) { c.clockAnchorServerTick = v; },
+      get clockAnchorPerfNow() { return c.clockAnchorPerfNow; }, set clockAnchorPerfNow(v) { c.clockAnchorPerfNow = v; },
+      get anchorInitialised() { return c._anchorInitialised; }, set anchorInitialised(v) { c._anchorInitialised = v; },
+      get anchorFreshAtMs() { return c._anchorFreshAtMs; }, set anchorFreshAtMs(v) { c._anchorFreshAtMs = v; },
+      get inputTick() { return c.inputTick; }, set inputTick(v) { c.inputTick = v; },
+      get lastSentInputState() { return c.lastSentInputState; }, set lastSentInputState(v) { c.lastSentInputState = v; },
+      get lastSentInputAtMs() { return c.lastSentInputAtMs; }, set lastSentInputAtMs(v) { c.lastSentInputAtMs = v; },
+      get pendingPilotSwapShipId() { return c._pendingPilotSwapShipId; }, set pendingPilotSwapShipId(v) { c._pendingPilotSwapShipId = v; },
+      get pilotSwapGlidePending() { return c._pilotSwapGlidePending; }, set pilotSwapGlidePending(v) { c._pilotSwapGlidePending = v; },
+      onPlayerId: (id: string): void => c._seat?.callbacks.onPlayerId(id),
+      rekeyOwnShipFromHull: (playerId: string, shipId: string): void => c.rekeyOwnShipFromHull(playerId, shipId),
+      tryInitPredWorld: (playerId: string): void => c.tryInitPredWorld(playerId),
+    }))(this),
     onNavRoute: (raw: unknown): void => { const r = this._helmRoute.onReply(raw, this._helmOrder); if (r === 'end') this.clearHelm(); else if (r === 'route') this.publishHelm(); },
   };
   /** The ctx the `updateMirror` passes (`mirror/`) run with, built once (#14). */
@@ -1465,6 +1184,39 @@ export class ColyseusGameClient {
     placeShells: (displayTick: number): void => c.placeShells(displayTick),
     displayHitscan: (): DisplayPoseHitscan => c.displayHitscan(),
   }))(this);
+  /** The ctx the `tickPhysics` prediction passes (`prediction/`) run with, built once (#14). */
+  private readonly _predStepCtx: PredictionStepCtx = ((c: ColyseusGameClient): PredictionStepCtx => ({
+    get mirror() { return c.mirror; }, get clock() { return c.clock; },
+    get predWorld() { return c.predWorld; },
+    get reconciler() { return c.reconciler; }, set reconciler(v) { c.reconciler = v; },
+    get touchInput() { return c.touchInput; }, get localDead() { return c.localDead; },
+    get inputTick() { return c.inputTick; }, set inputTick(v) { c.inputTick = v; },
+    get predEnergy() { return c.predEnergy; }, set predEnergy(v) { c.predEnergy = v; },
+    get energySeeded() { return c._energySeeded; }, set energySeeded(v) { c._energySeeded = v; },
+    get joystickInputState() { return c._joystickInputState; }, set joystickInputState(v) { c._joystickInputState = v; },
+    get warpRequest() { return c.warpRequest; }, set warpRequest(v) { c.warpRequest = v; },
+    get lastSentInputState() { return c.lastSentInputState; }, set lastSentInputState(v) { c.lastSentInputState = v; },
+    get lastSentInputAtMs() { return c.lastSentInputAtMs; }, set lastSentInputAtMs(v) { c.lastSentInputAtMs = v; },
+    get lastLocalTickAtMs() { return c._lastLocalTickAtMs; }, set lastLocalTickAtMs(v) { c._lastLocalTickAtMs = v; },
+    get clockAnchorPerfNow() { return c.clockAnchorPerfNow; }, get clockAnchorServerTick() { return c.clockAnchorServerTick; },
+    get helmOrder() { return c._helmOrder; }, get helmOut() { return c._helmOut; }, get disableBits() { return c._disableBits; },
+    get inputRecScratch() { return c._inputRecScratch; }, get applyInputScratch() { return c._applyInputScratch; },
+    get sendInputScratch() { return c._sendInputScratch; }, get sendWarpInputScratch() { return c._sendWarpInputScratch; },
+    clearHelm: (): void => c.clearHelm(), stepHelm: (): void => c.stepHelm(),
+    isLocallyDisabled: (): boolean => c.isLocallyDisabled(), gameLeadTicks: (): number => c.gameLeadTicks(),
+    applyRemoteInputs: (): void => c.applyRemoteInputs(), tickLocalMountAim: (dt: number): void => c.tickLocalMountAim(dt),
+    get swarmSyncSeenScratch() { return c._swarmSyncSeenScratch; }, get swarmBodyKeyCache() { return c._swarmBodyKeyCache; },
+    get clientSpawnCtx() { return c._clientSpawnCtx; }, get entityFactory() { return c._entityFactory; }, get wrecks() { return c._wrecks; },
+    get aiRegisteredIds() { return c._aiRegisteredIds; }, get aiController() { return c._aiController; },
+    get predSwarmKeys() { return c.predSwarmKeys; }, get movingSwarmKeys() { return c._movingSwarmKeys; },
+    get swarmAnchorScratch() { return c._swarmAnchorScratch; }, get welcomePerfNow() { return c.welcomePerfNow; },
+    get localPoseResolvedLogged() { return c._localPoseResolvedLogged; }, set localPoseResolvedLogged(v) { c._localPoseResolvedLogged = v; },
+    get predRemoteShipIds() { return c.predRemoteShipIds; }, get remoteShipOffsets() { return c._remoteShipOffsets; },
+    get remoteLastInputs() { return c._remoteLastInputs; }, get remoteForwardTicks() { return c._remoteForwardTicks; },
+    get predGuard() { return c._predGuard; }, get arrivalSnapped() { return c._arrivalSnapped; },
+    get remoteHistory() { return c.remoteHistory; }, get damageFlashFrames() { return c._damageFlashFrames; },
+    rekeyLockState: (from: string, to: string): void => c.fc.rekeyLockState(from, to),
+  }))(this);
   /** The live connection's client + room binder, set once per `connect()`;
    *  the `transit_ready` handoff (handlers/transitHandlers.ts) consumes the
    *  destination seat through it. */
@@ -1472,114 +1224,84 @@ export class ColyseusGameClient {
     client: Client;
     bindRoomHandlers: (room: Room) => void;
     callbacks: ColyseusClientCallbacks;
+    storedPlayerId: string | null;
   } | null = null;
+  /** The ctx the room's leave handler (`connection/roomConnection.ts`) runs with, built once (#14). */
+  private readonly _lifecycleCtx: RoomLifecycleCtx = ((c: ColyseusGameClient): RoomLifecycleCtx => ({
+    get dataChannelTransport() { return c._dataChannelTransport; }, set dataChannelTransport(v) { c._dataChannelTransport = v; },
+    detachInput: (): void => { c.keyboard = null; c.touchInput = null; },
+  }))(this);
+  /** Where DataChannel snapshots go (`createSnapshotDataChannel`), built once (#14). */
+  private readonly _snapshotSink: SnapshotSink = ((c: ColyseusGameClient): SnapshotSink => ({
+    get snapshotCoalescer() { return c.snapshotCoalescer; },
+    logSnapshotRecvTelemetry: (snap: SnapshotMessage, via: 'ws' | 'dc'): void => c.logSnapshotRecvTelemetry(snap, via),
+    applySnapshotNow: (snap: SnapshotMessage): void => c.applySnapshotNow(snap),
+  }))(this);
   /** A naval shell hit's FX wait for its drawn burst (navalHitHold.ts). */
   private readonly _navalHitHold = new NavalHitHold();
   /** The sink `_navalHitHold.release` calls (built once, #14). */
   private readonly _heldDamageSink = {
     applyHeldDamage: (h: HeldDamage): void => this.applyDamageFx(h.evt, h.suppressNumber),
   };
+  /** The ctx the damage / death path (`damagePath.ts`) runs with, built once (#14). */
+  private readonly _damageCtx: DamagePathCtx = ((c: ColyseusGameClient): DamagePathCtx => ({
+    get mirror() { return c.mirror; }, get clock() { return c.clock; }, get predWorld() { return c.predWorld; },
+    get hudDispatcher() { return c.hudDispatcher; }, get aiController() { return c._aiController; },
+    get inputTick() { return c.inputTick; }, get shellTiming() { return c._shellTiming; },
+    get damageFlashFrames() { return c._damageFlashFrames; }, get scheduledDamageSpawns() { return c._scheduledDamageSpawns; },
+    get navalHitHold() { return c._navalHitHold; }, get heldDamageSink() { return c._heldDamageSink; },
+    get ghostManager() { return c.ghostManager; }, get predSwarmKeys() { return c.predSwarmKeys; },
+    get movingSwarmKeys() { return c._movingSwarmKeys; }, get welcomePerfNow() { return c.welcomePerfNow; },
+    get localDead() { return c.localDead; }, set localDead(v) { c.localDead = v; },
+    get diedAtMs() { return c.diedAtMs; }, set diedAtMs(v) { c.diedAtMs = v; },
+    dropRemoteShip: (key: string): void => c.dropRemoteShip(key),
+  }))(this);
 
-  private resetPredictionState(): void {
-    // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
-    this._wrecks.clear();
-    this._cutField.stop(); // the cut field belongs to the old sector; the next welcome re-arms it
-    // Deaths held for their drawn shell belong to the old sector too.
-    this._shellTiming.reset();
-    // Fire control: NPC locks belong to the old sector.
-    this.mirror.localLockedBy = NO_LOCKED_BY;
-    // A new sector / ship: seed the energy pool again from the new ship.
-    this._energySeeded = false;
-    // v4 T2 — a new sector's first snapshot only records the teleport epoch.
-    this._localPoseEpoch = -1;
-    // v4 A — a disable belongs to the room that applied it.
-    this.applyLocalDisabled(0);
-    // Phase 4 — a warp drop point belongs to its sector.
-    this.warpRequest = null;
-    this._rttWelford = createWelford();
-    this._lookaheadCtrl = createLookaheadController(6);
-    this._dropDetector = createDropDetector();
-    this.leadTicks = 6;
-    this._anchorInitialised = false;
-    this._anchorFreshAtMs = -Infinity;
-    this._stallHoldSinceMs = -1;
-    this.lastSnapshotAt = 0;
-    this._recentIntervals.length = 0;
-    this._recentCorrFlags.length = 0;
-    // Drone display-delay cadence tracking — reset so the destination
-    // sector's binary cadence is learned fresh (a stale cross-warp gap
-    // must not seed the adaptive delay at the ceiling).
-    this._swarmBinaryLastMs = -1;
-    this._swarmBinaryEwma = 0;
-    // Spatial seed (2026-05-16) — see the method doc comment. Despawn the
-    // local predWorld ship body and drop the Reconciler so the
-    // destination's first state-diff / snapshot reseeds the body AT THE
-    // AUTHORITATIVE ARRIVAL POSE via `tryInitPredWorld` (which rebuilds
-    // the Reconciler). Without this the body carries the source pose into
-    // the destination and the first reconcile lerps out the full
-    // inter-sector delta — the warp-out drift jank. Subsumes the old
-    // `reconciler.lastRtt = 0` (no surviving reconciler to re-poison the
-    // welford).
-    const localId = this.mirror.localPlayerId;
-    if (localId && this.predWorld?.hasShip(localId)) {
-      this.predWorld.despawnShip(localId);
-    }
-    this.reconciler = null;
-    // Phase 4 WS-B2 — the local predWorld body is despawned, so its physics stat
-    // multipliers go with it; clear the guard so the destination's first
-    // own-ship `statAlloc` slice re-anchors the fresh body (otherwise an
-    // identical key would suppress the re-push and the new body would run
-    // un-upgraded prediction).
-    this._lastStatAllocKey = '';
-    // Phase 3 — drop AI registrations on sector handoff. The destination
-    // sector has a different swarm; old behaviours would hold stale
-    // `lastFireTick` and target stale player IDs that may not exist there.
-    for (const id of this._aiRegisteredIds) {
-      this._aiController.unregister(`${id}`);
-    }
-    this._aiRegisteredIds.clear();
-    // Shield-fence plan — drop predWorld shield-wall colliders on handoff; the
-    // destination sector's fences re-sync from its own structure slice.
-    for (const w of this._predWalls.values()) this.predWorld?.removeWall(w.id);
-    this._predWalls.clear();
-    // Join-render diagnostic latch — re-arm so the destination room's
-    // `tryInitPredWorld` success fires a fresh `local_pose_resolved`.
-    this._localPoseResolvedLogged = false;
-
-    // Render-jitter-fix Phase 1 (2026-05-21): the dead-reckon anchor is
-    // part of the prediction window — its sample is from the source
-    // sector's predWorld and dead-reckoning forward from it across a
-    // transit gap would produce nonsense motion. Reset to -1 sentinel;
-    // next physics tick post-transit re-stamps it.
-    this._lastLocalTickAtMs = -1;
-
-    // Phase 2 swift-otter — close the DataChannel transport on sector
-    // handoff. The source room's PeerConnection is torn down; the
-    // destination room's welcome handler will start a fresh one when
-    // the `_webrtcEnabled` flag is set. Reset the reordering guard so
-    // the destination's serverTick is accepted.
-    if (this._dataChannelTransport) {
-      this._dataChannelTransport.close('sector-handoff');
-      this._dataChannelTransport = null;
-    }
-
-    // Smooth-beam (2026-05-22): drop scheduled visual splits. The source
-    // sector's prediction state is dead; any pending splits would spawn
-    // damage numbers at coordinates from the source pose against the
-    // destination mirror.
-    this._scheduledDamageSpawns.length = 0;
-
-    // Effects subsystem (M9 — plan wiggly-puppy). The pendingEffectTriggers
-    // queue holds source-sector world coords; draining them in the
-    // destination would spawn effects at the wrong place. Drop them.
-    // Per-entity continuous emitters + shield rings live in the renderer's
-    // EffectsService instance, which the renderer cleans up on its own
-    // (PixiRenderer.dispose or syncEngine/ShieldAura's diff-against-empty-
-    // mirror on the first destination frame). The mirror.ships clear that
-    // happens elsewhere will already empty the diff sets that drive the
-    // setContinuous calls, so emitters get unregistered naturally.
-    if (this.mirror.pendingEffectTriggers) this.mirror.pendingEffectTriggers.length = 0;
-  }
+  /** The ctx the sector-handoff reset (`prediction/resetPrediction.ts`) and `dispose()`
+   *  (`connection/clientTeardown.ts`) run with, built once (#14). */
+  private readonly _predResetCtx: ClientTeardownCtx = ((c: ColyseusGameClient): ClientTeardownCtx => ({
+    get mirror() { return c.mirror; }, get wrecks() { return c._wrecks; }, get cutField() { return c._cutField; },
+    get shellTiming() { return c._shellTiming; }, get predWorld() { return c.predWorld; }, set predWorld(v) { c.predWorld = v; },
+    get aiController() { return c._aiController; }, get aiRegisteredIds() { return c._aiRegisteredIds; },
+    get predWalls() { return c._predWalls; }, get recentIntervals() { return c._recentIntervals; },
+    get recentCorrFlags() { return c._recentCorrFlags; }, get scheduledDamageSpawns() { return c._scheduledDamageSpawns; },
+    get energySeeded() { return c._energySeeded; }, set energySeeded(v) { c._energySeeded = v; },
+    get localPoseEpoch() { return c._localPoseEpoch; }, set localPoseEpoch(v) { c._localPoseEpoch = v; },
+    get warpRequest() { return c.warpRequest; }, set warpRequest(v) { c.warpRequest = v; },
+    get rttWelford() { return c._rttWelford; }, set rttWelford(v) { c._rttWelford = v; },
+    get lookaheadCtrl() { return c._lookaheadCtrl; }, set lookaheadCtrl(v) { c._lookaheadCtrl = v; },
+    get dropDetector() { return c._dropDetector; }, set dropDetector(v) { c._dropDetector = v; },
+    get leadTicks() { return c.leadTicks; }, set leadTicks(v) { c.leadTicks = v; },
+    get anchorInitialised() { return c._anchorInitialised; }, set anchorInitialised(v) { c._anchorInitialised = v; },
+    get anchorFreshAtMs() { return c._anchorFreshAtMs; }, set anchorFreshAtMs(v) { c._anchorFreshAtMs = v; },
+    get stallHoldSinceMs() { return c._stallHoldSinceMs; }, set stallHoldSinceMs(v) { c._stallHoldSinceMs = v; },
+    get lastSnapshotAt() { return c.lastSnapshotAt; }, set lastSnapshotAt(v) { c.lastSnapshotAt = v; },
+    get swarmBinaryLastMs() { return c._swarmBinaryLastMs; }, set swarmBinaryLastMs(v) { c._swarmBinaryLastMs = v; },
+    get swarmBinaryEwma() { return c._swarmBinaryEwma; }, set swarmBinaryEwma(v) { c._swarmBinaryEwma = v; },
+    get reconciler() { return c.reconciler; }, set reconciler(v) { c.reconciler = v; },
+    get lastStatAllocKey() { return c._lastStatAllocKey; }, set lastStatAllocKey(v) { c._lastStatAllocKey = v; },
+    get localPoseResolvedLogged() { return c._localPoseResolvedLogged; }, set localPoseResolvedLogged(v) { c._localPoseResolvedLogged = v; },
+    get lastLocalTickAtMs() { return c._lastLocalTickAtMs; }, set lastLocalTickAtMs(v) { c._lastLocalTickAtMs = v; },
+    get dataChannelTransport() { return c._dataChannelTransport; }, set dataChannelTransport(v) { c._dataChannelTransport = v; },
+    applyLocalDisabled: (ms: number): void => c.applyLocalDisabled(ms),
+    get disposed() { return c.disposed; }, set disposed(v) { c.disposed = v; },
+    get localDead() { return c.localDead; }, set localDead(v) { c.localDead = v; },
+    get diedAtMs() { return c.diedAtMs; }, set diedAtMs(v) { c.diedAtMs = v; },
+    get keyboard() { return c.keyboard; }, set keyboard(v) { c.keyboard = v; },
+    get touchInput() { return c.touchInput; }, set touchInput(v) { c.touchInput = v; },
+    get audio() { return c.audio; }, set audio(v) { c.audio = v; }, get room() { return c.room; }, set room(v) { c.room = v; },
+    get snapshotCoalescer() { return c.snapshotCoalescer; }, get transitInstr() { return c.transitInstr; },
+    get rafStallDetector() { return c.rafStallDetector; }, get hudDispatcher() { return c.hudDispatcher; },
+    get ghostManager() { return c.ghostManager; }, get remoteHistory() { return c.remoteHistory; },
+    get predRemoteShipIds() { return c.predRemoteShipIds; }, get remoteShipOffsets() { return c._remoteShipOffsets; },
+    get predSwarmKeys() { return c.predSwarmKeys; }, get movingSwarmKeys() { return c._movingSwarmKeys; },
+    get damageFlashFrames() { return c._damageFlashFrames; },
+    get lastSentInputAtMs() { return c.lastSentInputAtMs; }, set lastSentInputAtMs(v) { c.lastSentInputAtMs = v; },
+    get lastSentInputState() { return c.lastSentInputState; }, set lastSentInputState(v) { c.lastSentInputState = v; },
+    get liveInstanceN() { return ColyseusGameClient._liveInstanceN; }, set liveInstanceN(v) { ColyseusGameClient._liveInstanceN = v; },
+  }))(this);
+  /** Sector-handoff reset (`prediction/resetPrediction.ts`); tests call it. */
+  private resetPredictionState(): void { resetPredictionState(this._predResetCtx); }
 
   async connect(
     wsUrl: string,
@@ -1590,21 +1312,7 @@ export class ColyseusGameClient {
     extraJoinOptions: Record<string, unknown> = {},
     touchInput?: TouchInput,
   ): Promise<void> {
-    // Mobile main-thread block detector — see `longtaskObserver.ts` for the
-    // motivating capture (`2026-05-09T07-23-39-893Z-651792`: two ~500–600 ms
-    // client-receive gaps with the server emitting cleanly throughout).
-    // Idempotent; safe to call again on reconnect.
-    installLongtaskObserver();
-    // r2 evidence pass — visibility / freeze / resume / connection
-    // change listeners. Distinguishes "page backgrounded" throttle
-    // from "phone CPU throttle" in effectiveHz drops.
-    installPageLifecycleObserver();
-    // Paradigm plan (quirky-rabbit) Phase 6 — kick the rolling-30 s
-    // health-stats publisher. Idempotent at the function-level: the
-    // setInterval is set per call, but every connect() call is in fact
-    // a fresh ColyseusClient instance via clientSingleton, so it lands
-    // exactly once per session.
-    startHealthStatsPublisher((s) => useUIStore.getState().setHealthStats(s));
+    installConnectionDiagnostics(); // longtask, page lifecycle, health stats (connection/roomConnection.ts)
 
     // Init client-side prediction world before joining so it is ready as soon as
     // we receive our playerId.
@@ -1614,31 +1322,7 @@ export class ColyseusGameClient {
     logEvent('cc_connecting', { wsUrl, playerId: storedPlayerId ?? null });
     const client = new Client(wsUrl);
 
-    let resolvedRoom: Room;
-    try {
-      logEvent('cc_join_attempt', {});
-      const { loadToken } = await import('../auth/tokenStorage.js');
-      const authToken = loadToken();
-      // Pull the player's selected ship kind out of the UI store at the moment
-      // we open the room. Server validates and falls back to the catalogue
-      // default on any unknown id (`isShipKindId`), so a mid-build kind change
-      // can't crash the spawn path. Limbo / rebind paths ignore this.
-      const shipKind = useUIStore.getState().selectedShipKind;
-      const joinPromise = client.joinOrCreate<unknown>(roomName, {
-        playerId: storedPlayerId,
-        ...(authToken ? { authToken } : {}),
-        shipKind,
-        ...extraJoinOptions,
-      });
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('joinOrCreate timed out after 12 s — WS proxy likely broken')), 12000),
-      );
-      resolvedRoom = await Promise.race([joinPromise, timeoutPromise]);
-    } catch (err) {
-      logEvent('cc_join_failed', { err: String(err) });
-      callbacks.onConnectionStatus('error');
-      throw err;
-    }
+    const resolvedRoom = await joinRoom(client, roomName, storedPlayerId, extraJoinOptions, callbacks);
 
     if (this.disposed) {
       resolvedRoom.leave();
@@ -1648,218 +1332,16 @@ export class ColyseusGameClient {
     this.room = resolvedRoom;
     logEvent('cc_join_resolved', { roomId: this.room.roomId });
 
-    // Phase 5e: DEV-only inbound-bandwidth tally exposed on `window` so the
-    // swarm-bandwidth E2E can sample bytes/sec without DPI-level WS plumbing.
-    // Tracks `swarmBytes` (binary channel — the dominant cost) and
-    // `snapshotBytes` (JSON-shape approximation). Production builds tree-
-    // shake the window assignment via the import.meta.env.DEV branch.
-    if (import.meta.env.DEV) {
-      const w = window as unknown as { __EQX_BW_STATS?: BwStats };
-      if (!w.__EQX_BW_STATS) {
-        // Closure-capture the injected clock so the `reset()` method (where
-        // `this` rebinds to `stats`) still uses the right time source.
-        const devClock = this.clock;
-        const stats: BwStats = {
-          startedAt: devClock.now(),
-          swarmBytes: 0,
-          swarmPackets: 0,
-          snapshotBytes: 0,
-          snapshotCount: 0,
-          reset(): void {
-            this.startedAt = devClock.now();
-            this.swarmBytes = 0;
-            this.swarmPackets = 0;
-            this.snapshotBytes = 0;
-            this.snapshotCount = 0;
-          },
-        };
-        w.__EQX_BW_STATS = stats;
-      }
-    }
+    installBwStats(this.clock); // DEV-only bandwidth tally (connection/roomConnection.ts)
 
     // Phase 8 sub-phase B — extracted handler binding so the same set of
     // listeners can be re-attached to the destination room post-transit
     // (after `client.consumeSeatReservation`). Closure-captures
-    // `storedPlayerId` / `callbacks` / `bwStats` so the body stays identical
-    // to the pre-extraction version. Called once below for the initial
-    // room, and again from the `transit_ready` handler for the destination.
+    // `callbacks`. Called once below for the initial room, and again from
+    // the `transit_ready` handler for the destination.
     const bindRoomHandlers = (room: Room): void => {
-      // Campaign 6.1 (invariant #3): `welcome` was the last load-bearing
-      // handler consuming a raw cast — parse-and-drop via the pure guard
-      // before anything reaches prediction anchoring / the phase machine.
-      room.onMessage('welcome', (raw: unknown) => {
-      const msg = parseWelcome(raw);
-      if (msg === null) return;
-      // Ship scale: the catalogue is built at load from this client's own
-      // config; a server at another scale would desync physics and hits.
-      const scaleMismatch = shipScaleMismatch(msg);
-      if (scaleMismatch) logEvent('ship_scale_mismatch', scaleMismatch);
-      // Naval range mode: the client draws range and lock rings from its own
-      // catalogue, the server fires from its own (invariant #15).
-      const navalMismatch = navalRangeMismatch(msg);
-      if (navalMismatch) logEvent('naval_range_mismatch', navalMismatch);
-      // Shells as events: read shell_salvo / shell_end only when the server
-      // says it sends them (#15), and take the shells already in flight (#16).
-      this._shellEvents = msg.shellEvents === true;
-      // Capital wrecks on: a dying capital explodes at its kill point (the
-      // wreck break-up), not as a hull-sized blast (money-shot review).
-      this.mirror.capitalWrecks = msg.capitalWrecks === true;
-      // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
-      this.mirror.subcapWrecks = msg.subcapWrecks === true;
-      // Cut field on: cut the same rocks as the server from its seed (#16).
-      this._cutField.setSeed(msg.cutField?.seed ?? null, msg.cutField?.consumed, msg.cutField?.moved, msg.cutField?.clearings);
-      // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
-      // set (#16); snapshots then carry only adds, removes and a slow resync.
-      if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
-        this._wrecks.apply(msg.wrecks ?? NO_WRECK_LIST);
-        this.mirror.wrecks = this._wrecks.descriptors;
-      }
-      this._shellTiming.onWelcome(this._shellEvents, msg.shellsInFlight);
-      // Every claimed faction ship look (#16); later claims: faction_look_claimed.
-      if (msg.factionLooks) setFactionLooks(msg.factionLooks);
-      const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
-      logEvent('cc_welcome', {
-        playerId: msg.playerId,
-        serverReassigned: Boolean(idChanged),
-        serverTick: msg.serverTick,
-      });
-      this.serverTickAtWelcome = msg.serverTick;
-      this.welcomePerfNow = this.clock.now();
-      this.clockAnchorServerTick = msg.serverTick;
-      this.clockAnchorPerfNow = this.gameClock.at(this.welcomePerfNow);
-      // The welcome handshake gives us a perfect anchor; let the next
-      // snapshot drop straight into EWMA-smoothing instead of snapping.
-      this._anchorInitialised = true;
-      this._anchorFreshAtMs = this.welcomePerfNow;
-      this.inputTick = msg.serverTick; // Sync to server tick space so fire messages pass temporal plausibility check.
-      // Reset idle-input throttle: the first input after a (re)connect must
-      // always reach the server so it has a baseline before tick advance.
-      this.lastSentInputState = null;
-      this.lastSentInputAtMs = 0;
-      logEvent('welcome', { playerId: msg.playerId, serverTick: msg.serverTick, idReassigned: !!idChanged });
-      this.mirror.localPlayerId = msg.playerId;
-      // The local ACTIVE ship's id. Own-ship snapshot routing keys on this,
-      // not just playerId, because a displaced player owns BOTH a lingering
-      // hull and a fresh active ship under one playerId (2026-06-03 "pinned
-      // in my old interceptor" bug).
-      this.mirror.localShipInstanceId =
-        msg.shipInstanceId && msg.shipInstanceId !== '' ? msg.shipInstanceId : null;
-      callbacks.onPlayerId(msg.playerId);
-      // Phase 8 — surface the stable galaxy sector key for HUD + galaxy-map
-      // overlay consumers. `null` for engineering rooms. The display name is
-      // also refreshed here so post-transit reconnects update the HUD; the
-      // initial App.tsx setSectorName covers engineering rooms (key=null).
-      const ui = useUIStore.getState();
-      ui.setCurrentSectorKey(msg.sectorKey);
-      if (msg.sectorKey) {
-        const sec = getSector(msg.sectorKey);
-        if (sec) ui.setSectorName(sec.name);
-      }
-      // Phase 5 — identify the ship the LOCAL browser session is bound to.
-      // Distinct from any `ship.isActive` flag on the roster (which stays
-      // true through the 15-min reconnect linger window even when no
-      // session is driving it). The roster panel + detail modal use this
-      // to drive the "Piloting" disabled state and the switch-confirm.
-      // Empty string from engineering rooms or pre-Phase-5 servers ⇒ null.
-      ui.setLocalShipInstanceId(msg.shipInstanceId && msg.shipInstanceId !== '' ? msg.shipInstanceId : null);
-
-      // Plan: crispy-kazoo, Commit 8 — re-key our own ship from its hull key.
-      // Pre-welcome our own ship is `isActive=false` (server's spawn-
-      // handshake design) and the snapshot router + syncMirror both key it
-      // by shipInstanceId as a parked hull, because they don't yet know our
-      // localPlayerId. A take-controls swap (WS-A2 / RTS) does the same: the
-      // hull we take was a parked, AI-flown hull under its shipInstanceId,
-      // with its own remote predWorld body. Now that welcome has arrived,
-      // re-key it to our playerId: drop the hull key through the ONE drop
-      // path FIRST (its remote body goes, so `tryInitPredWorld` below never
-      // overlaps two bodies; RTS Part A S3), then seed the local entry at
-      // the hull's last pose.
-      this.rekeyOwnShipFromHull(msg.playerId, msg.shipInstanceId);
-
-      // Phase 4 WS-A2 — a SAME-SECTOR pilot swap re-anchors via this same
-      // welcome path. When the welcome's shipInstanceId matches the swap we
-      // requested, this is a successful in-room reclaim: leave spectator
-      // (re-enable pilot input + self-prediction) and ARM the one-shot camera
-      // glide to the new ship (fired by the RAF loop once its pose is mirrored).
-      if (
-        this._pendingPilotSwapShipId !== null &&
-        msg.shipInstanceId !== '' &&
-        msg.shipInstanceId === this._pendingPilotSwapShipId
-      ) {
-        this._pendingPilotSwapShipId = null;
-        this._pilotSwapGlidePending = true;
-        useUIStore.getState().setPilotMode('pilot');
-        // The server reclaims the hull through the join handshake (pending
-        // until `client_ready` → `warp_in` → arrival). `sendClientReady` is
-        // latched once per room join, so answer the swap's handshake here:
-        // without it the flown hull stayed "joining" until the 30 s watchdog
-        // (no own-ship slices, hidden from others; RTS review 2026-11-14,
-        // lock `tests/e2e/rts-take-controls.spec.ts`). Only once the room's
-        // own handshake is done: before that the RAF loop sends it.
-        if (useUIStore.getState().clientReadySent && this.room) {
-          this.room.send('client_ready', { type: 'client_ready' });
-          logEvent('client_ready_sent', { msSinceWelcome: 0, pilotSwap: true });
-        }
-        logEvent('pilot_swap_welcomed', { shipInstanceId: msg.shipInstanceId });
-      }
-
-      // Equinox Phase 5 (WS-3) — JOIN-AS-SPECTATOR. The player joins with NO
-      // ship at all (free-roam camera). There is no local hull to bootstrap, so
-      // SKIP `tryInitPredWorld` and mark `localPoseResolved` vacuously true (no
-      // pose to resolve) — the load curtain instead lifts via the spectator
-      // branch in `computeBootstrapReadyFromState` (which drops the
-      // `localShipInstanceId`/`localPoseResolved` ship gates) + the normal
-      // `client_ready` → `warp_in` → `arrivalAcked` handshake. The spectating
-      // effects (camera free-roam + input disable + `setSpectator`) are already
-      // wired off `pilotMode` (the death→spectator path). A pilot-swap welcome
-      // (handled just above) never carries `spectator`, so the two never collide.
-      if (msg.spectator === true) {
-        const ui = useUIStore.getState();
-        ui.setPilotMode('spectator');
-        ui.setLocalPoseResolved(true);
-        logEvent('joined_as_spectator', { playerId: msg.playerId, sectorKey: msg.sectorKey });
-      } else {
-        // If state already arrived, bootstrap the prediction world now.
-        this.tryInitPredWorld(msg.playerId);
-      }
-      // Phase 2 swift-otter — kick off the DC handshake after welcome.
-      // The transport's start() is idempotent so a stale call from a
-      // pre-welcome retry is safe.
-      if (this._webrtcEnabled && this._dataChannelTransport) {
-        void this._dataChannelTransport.start();
-      }
-    });
-
-    // Phase 2/4 swift-otter — instantiate the DataChannel transport
-    // SYNCHRONOUSLY before any room handlers so the welcome handler is
-    // guaranteed to have a non-null `_dataChannelTransport` when it
-    // fires. The first Phase 4 E2E run failed because a dynamic
-    // `import('./dataChannelTransport.js')` left the field null past
-    // welcome; start() never ran; DC never opened. Static import has
-    // no native-binding cost on the client (RTCPeerConnection is a
-    // browser global; @colyseus/msgpackr is already in the Colyseus
-    // import graph) so the only cost paid by non-opted-in sessions is
-    // a few KB of dead JS — acceptable for measurement parity.
-    if (this._webrtcEnabled) {
-      this._dataChannelTransport = new DataChannelTransport({
-        send: (type, payload) => room.send(type, payload),
-        onSnapshot: (snap) => {
-          // Phase 4 swift-otter — log transport-tagged recv telemetry
-          // BEFORE the coalescer enqueue so the measurement reflects DC
-          // arrival (not apply). Mirrors the WS-path call above.
-          this.logSnapshotRecvTelemetry(snap, 'dc');
-          // Mirror the WS-path coalescer behaviour: queue when enabled,
-          // otherwise apply immediately. Both paths converge at
-          // applySnapshotNow → handleSnapshot.
-          if (this.snapshotCoalescer.isEnabled()) {
-            this.snapshotCoalescer.enqueue(snap);
-          } else {
-            this.applySnapshotNow(snap);
-          }
-        },
-        onDiag: (tag, data) => logEvent(tag, data),
-      });
-    }
+    // The DataChannel transport exists before the welcome handler can fire (connection/roomConnection.ts).
+    if (this._webrtcEnabled) this._dataChannelTransport = createSnapshotDataChannel(room, this._snapshotSink);
 
     room.onMessage('snapshot', (snap: SnapshotMessage) => {
       // Phase 4 swift-otter — transport-tagged recv telemetry.
@@ -1942,39 +1424,15 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
-      this.handleRespawnAck(msg);
+      handleRespawnAck(this._roomCmdCtx, msg);
     });
 
-    // Feature handler files (handlers/index.ts): missiles, impact FX, toasts,
+    // Feature handler files (handlers/index.ts): welcome, missiles, impact FX, toasts,
     // wave HUD, structure panels, drawn shells, ship status, cut field,
     // warp / transit handoff, combat (damage / shield / destroy / hit_ack /
     // laser_fired / control_mode / bot_aggro), grid pulse, diagnostics
-    // (gc_pause / session_replaced), WebRTC signalling.
+    // (gc_pause / session_replaced), WebRTC signalling, collision_resolved.
     registerClientHandlers(room, this._handlerCtx);
-
-    // Stage 2 of the network-feel roadmap — server-broadcast collision
-    // events. Apply post-collision velocities to predWorld immediately;
-    // eliminates the ~50 ms snapshot wait for the same correction.
-    // Defensive zod parse on receive: malformed payloads dropped silently
-    // (mirrors the server's invariant on inbound messages).
-    room.onMessage('collision_resolved', (raw: unknown) => {
-      const result = CollisionResolvedMessageSchema.safeParse(raw);
-      if (!result.success) return;
-      if (!this.predWorld) return;
-      const outcome = applyCollisionResolved(
-        result.data,
-        this.predWorld,
-        this._collisionGuard,
-        this.clock.now(),
-      );
-      if (outcome.applied.length > 0) {
-        this.stats.collisionEventsApplied++;
-      }
-      // A raised shield shows the contact, like a shot's hit (user 2026-11-07).
-      if (this.mirror.pendingEffectTriggers) {
-        pushCollisionShieldContacts(result.data, this.mirror, this.clock.now(), this._shieldContactAt, this.mirror.pendingEffectTriggers);
-      }
-    });
 
     room.onStateChange((state: unknown) => {
       this.transitInstr.markOnce('first_state');
@@ -1995,39 +1453,10 @@ export class ColyseusGameClient {
       }
     });
 
-    room.onLeave((code) => {
-      logEvent('cc_left_room', { code });
-      logEvent('disconnected', { code });
-      // Phase 2 swift-otter — close the DataChannel on every onLeave.
-      // Sector handoffs short-circuit below, so the transport teardown
-      // there is `resetPredictionState` (called by the transit-arrival
-      // path); this is the non-transit disconnect path.
-      const cur = useUIStore.getState();
-      if (cur.transitState !== 'IN_TRANSIT' && cur.transitState !== 'SPOOLING') {
-        if (this._dataChannelTransport) {
-          this._dataChannelTransport.close('room-leave');
-          this._dataChannelTransport = null;
-        }
-      }
-      // During transit `consumeSeatReservation` we'll see an onLeave on the
-      // source room as the WS is replaced. Don't flip status to disconnected
-      // when a transit is mid-flight — the destination is already being
-      // bound. The post-consume rebind sets connected status implicitly via
-      // the new room's flow.
-      if (cur.transitState === 'IN_TRANSIT' || cur.transitState === 'SPOOLING') return;
-      callbacks.onConnectionStatus('disconnected');
-      this.keyboard = null;
-      this.touchInput = null;
-    });
-
-    room.onError((code, message) => {
-      logEvent('cc_room_error', { code, message });
-      logEvent('room_error', { code, message });
-      callbacks.onConnectionStatus('error');
-    });
+    registerRoomLifecycle(room, this._lifecycleCtx, callbacks);
     };
 
-    this._seat = { client, bindRoomHandlers, callbacks };
+    this._seat = { client, bindRoomHandlers, callbacks, storedPlayerId };
     bindRoomHandlers(this.room);
 
     callbacks.onConnectionStatus('connected');
@@ -2038,96 +1467,12 @@ export class ColyseusGameClient {
 
   // ── Combat event handlers ────────────────────────────────────────────────
 
-  /**
-   * Discrete shield-state transition (Phase 3b). Sets the local
-   * shieldPct anchor; the HUD bar tweens between anchors via CSS. On
-   * 'restored' the local predWorld collider swaps back to the cheap
-   * circle (authoritative; client never computes the 0-cross).
-   */
-  private handleShield(evt: ShieldEventMessage): void {
-    // M8 (plan wiggly-puppy): handleShield ONLY receives 'restored' /
-    // 'regen_complete' events (never 'broken' — the 0-cross is carried
-    // by DamageEvent.newShield=0 and handled in handleDamage). So any
-    // event here means the shield is back UP. Mirror the bit for ANY
-    // target so the shield aura updates remote ships too.
-    const targetEntry = this.mirror.ships.get(evt.targetId);
-    if (targetEntry && targetEntry.shieldDown !== false) {
-      targetEntry.shieldDown = false;
-    }
-
-    if (evt.targetId !== this.mirror.localPlayerId) return;
-    const pct = evt.shieldMax > 0 ? Math.round((evt.shield / evt.shieldMax) * 100) : 0;
-    // step 10: stash for the 1Hz dispatcher; CSS bar animates between.
-    this.hudDispatcher.stashShield(pct);
-    if (evt.phase === 'restored' && this.predWorld?.hasShip(evt.targetId)) {
-      this.predWorld.setHullExposed(evt.targetId, false, getShipKind(this.mirror.ships.get(evt.targetId)?.kind ?? null));
-    }
-  }
-
-  private handleDamage(evt: DamageEvent, suppressNumber = false): void {
-    // Campaign 1.2 — a 0-damage event is a STATE carrier only (the server
-    // emits one solely for a shield 0-cross or a destruction; this is also
-    // defense-in-depth against fractional damage from a pre-guard server).
-    // State below (HUD stash, collider swap, shieldDown bit, hostility)
-    // still applies; the FX pipeline (flash / floating number / health-bar
-    // hit / impact spark) is gated so the player never sees a "0" + sparks.
-    const showFx = evt.damage > 0;
-    const localId = this.mirror.localPlayerId;
-    if (evt.targetId === localId) {
-      // Phase 7 — use the event-provided PER-KIND maxes, not the global
-      // SHIP_MAX_HEALTH constant (the latent bug: a kind whose maxHealth
-      // != 500 rendered a wrong %). newHealth is the HULL value.
-      const hullPct = evt.hullMax > 0 ? Math.round((evt.newHealth / evt.hullMax) * 100) : 0;
-      const shPct = evt.shieldMax > 0 ? Math.round((evt.newShield / evt.shieldMax) * 100) : 0;
-      // step 10: just stash the latest target value; the 1Hz dispatcher
-      // in updateMirror() pushes to Zustand. Bar's 1s CSS transition
-      // animates smoothly between samples.
-      this.hudDispatcher.stashHull(hullPct);
-      this.hudDispatcher.stashShield(shPct);
-      // Authoritative shield break -> mirror the collider swap into the
-      // local predWorld so client hit/ramming prediction matches the
-      // server. The client NEVER computes the 0-cross (reacts to the
-      // authoritative event only — no predict-flap).
-      if (evt.newShield === 0 && this.predWorld?.hasShip(localId)) {
-        this.predWorld.setHullExposed(localId, true, getShipKind(this.mirror.ships.get(localId)?.kind ?? null));
-      }
-    }
-    // Shield-layer hit → flag the target's shield-down state in the
-    // mirror (M8 wiggly-puppy). The handleShield event is local-only
-    // (line 1479 returns when targetId !== localPlayerId), but every
-    // DamageEvent carries `newShield` for every target — so this is the
-    // single ownership site for ALL ships' shieldDown bit. The
-    // shieldDown=false case (regen back above 0) lands in handleShield
-    // for the local player; remote players' regen ramps don't broadcast,
-    // so a remote ship's ring will linger UP until its next DamageEvent
-    // — accepted limitation, documented in src/client/CLAUDE.md Effects
-    // section.
-    const targetEntry = this.mirror.ships.get(evt.targetId);
-    if (targetEntry) {
-      const wasDown = targetEntry.shieldDown === true;
-      const isDown = evt.newShield <= 0;
-      if (isDown !== wasDown) targetEntry.shieldDown = isDown;
-    }
-
-    // Phase 1 AI: mirror the server's hostility-marking on every damage
-    // event for swarm targets. Server fires the same call from its own
-    // `applyDamage`. Both sides receive identical events so each drone's
-    // per-instance `hostileTo` set converges without a wire-format bump.
-    // Client AI controller is keyed on the bare numeric id (see register
-    // call `\`${entityId}\``), so strip the `swarm-` prefix here.
-    if (evt.targetId.startsWith('swarm-') && evt.shooterId) {
-      const numeric = evt.targetId.slice('swarm-'.length);
-      this._aiController.markHostile(numeric, evt.shooterId, this.inputTick);
-    }
-
-    // Visuals (flash / number / health bar / spark). A naval shell hit waits
-    // for the frame its shell's burst is drawn at the display tick, so the
-    // flash coincides with the drawn impact instead of leading it by the
-    // display delay + RTT/2 (navalHitHold.ts). State above is never held.
-    if (!showFx) return;
-    if (this._shellTiming.holdHit(evt, suppressNumber)) return;
-    this.applyDamageFx(evt, suppressNumber);
-  }
+  private handleShield(evt: ShieldEventMessage): void { handleShield(this._damageCtx, evt); }
+  private handleDamage(evt: DamageEvent, suppressNumber = false): void { handleDamage(this._damageCtx, evt, suppressNumber); }
+  private applyDamageFx(evt: DamageEvent, suppressNumber: boolean): void { applyDamageFx(this._damageCtx, evt, suppressNumber); }
+  private killEntity(id: string): void { killEntity(this._damageCtx, id); }
+  private handleDestroy(evt: DestroyEvent): void { handleDestroy(this._damageCtx, evt); }
+  private killSwarmEntity(wireId: string): void { killSwarmEntity(this._damageCtx, wireId); }
 
   /** A `shell_end` (`DrawnShellTiming.onShellEnd`). */
   private applyShellEnd(msg: ShellEnd): void { this._shellTiming.onShellEnd(msg); }
@@ -2135,459 +1480,21 @@ export class ColyseusGameClient {
   /** One frame of event shells at `displayTick` (`DrawnShellTiming.place`). */
   private placeShells(displayTick: number): void { this._shellTiming.place(displayTick); }
 
-  /** The FX half of a damage event with positive damage: hull flash,
-   *  floating number, health-bar hit, impact spark. */
-  private applyDamageFx(evt: DamageEvent, suppressNumber: boolean): void {
-    const localId = this.mirror.localPlayerId;
-    // Flash the damaged ship for 6 frames.
-    this._damageFlashFrames.set(evt.targetId, 6);
-    // Debris (a wreck piece): spark and flash only, no number or health bar.
-    const debris = isWreckPieceTarget(evt.targetId, this.mirror.swarm);
+  // Ship re-key + remote bodies (`prediction/predWorldSync.ts`); handlers and tests use these.
+  private rekeyOwnShipFromHull(playerId: string, welcomeShipInstanceId: string): void { rekeyOwnShipFromHull(this._predStepCtx, playerId, welcomeShipInstanceId); }
+  private dropRemoteShip(key: string, mode: 'gone' | 'outOfWorld' = 'gone'): void { dropRemoteShip(this._predStepCtx, key, mode); }
+  private rekeyShip(from: string, to: string): void { rekeyShip(this._predStepCtx, from, to); }
+  private ensureRemoteShipBody(key: string, pose: ShipPhysicsState, kind: string): boolean { return ensureRemoteShipBody(this._predStepCtx, key, pose, kind); }
 
-    // Floating damage number at hit location. weapon-hit-prediction
-    // Phase 3 — suppressed when a confirmed/settled prediction already
-    // showed this number (de-dupe: exactly one number per confirmed hit).
-    // Everything else in handleDamage stays unconditional — this remains
-    // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    // A swarm target the client never drew (spawned and killed between two
-    // snapshots: the salvage pod a beam wore out of a wreck piece and burned
-    // with its next pulse) gets no number: it would float over empty space.
-    const targetShip = this.mirror.ships.get(evt.targetId);
-    const unseen = targetShip === undefined && isUnseenSwarmTarget(evt.targetId, this.mirror.swarm);
-    if (!suppressNumber && !debris && !unseen && !isNoDamageNumberTarget(evt.targetId, this.mirror.swarm) && this.mirror.pendingDamageNumbers) {
-      const x = evt.hitX ?? targetShip?.x ?? 0;
-      const y = evt.hitY ?? targetShip?.y ?? 0;
-      this.mirror.pendingDamageNumbers.push({ targetId: evt.targetId, x, y, damage: evt.damage });
-    }
-
-    // Health bar on hit — only show for targets the local player is shooting.
-    // Push BOTH hull% AND shield% so HealthBarManager can render a
-    // two-segment bar. Without the shield half, shield damage on drones
-    // looks like zero damage: the hull bar stays at 100% while shield
-    // absorbs (no-spillover) the first N hits, and drones have no other
-    // shield-feedback surface (only player ships have a HUD ShieldHullBar).
-    if (evt.shooterId === localId && !debris && this.mirror.pendingHealthBarHits) {
-      const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
-      const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
-      // Pre-hit HULL fraction for the chip-damage band: a HULL hit removed
-      // `damage` from hull, so health was `newHealth + damage` before it. A
-      // SHIELD hit left hull untouched ⇒ pre == post (no chip). All
-      // client-derived from the already-received DamageEvent — no wire cost.
-      const preHealthPct =
-        evt.hullMax > 0 && evt.hitLayer === 'hull'
-          ? Math.min(1, (evt.newHealth + evt.damage) / evt.hullMax)
-          : healthPct;
-      this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct, shieldPct, preHealthPct });
-    }
-
-    // Impact sparks — visual-effects subsystem M7 (plan wiggly-puppy).
-    // Push to the pending queue; the renderer drains it inside update()
-    // on shouldRender frames (perFrameTriggers gate). Authoritative-only
-    // on first pass per the plan's asymmetry with damage numbers
-    // (predicted hits get the number immediately but sparks follow the
-    // server's DamageEvent — RTT/2 lag is acceptable for the decorative
-    // spark vs the load-bearing damage number).
-    if (this.mirror.pendingEffectTriggers) {
-      const targetShipForFallback = this.mirror.ships.get(evt.targetId);
-      const sparkX = evt.hitX ?? targetShipForFallback?.x ?? 0;
-      const sparkY = evt.hitY ?? targetShipForFallback?.y ?? 0;
-      const tint = evt.hitLayer === 'shield' ? 0x88ddff : 0xff8844;
-      this.mirror.pendingEffectTriggers.push({
-        kind: 'impact',
-        worldX: sparkX,
-        worldY: sparkY,
-        tint,
-        entityId: evt.targetId, // for shield-ring pulse on shield-layer hits
-      });
-    }
-  }
-
-  /**
-   * THE one way a remote ship's predWorld body and per-ship prediction state
-   * go away (RTS Part A S0; replaced four inline copies: transit, killEntity,
-   * the syncMirror departed sweep, the warp-run despawn). Clears the body,
-   * `predRemoteShipIds`, the render lerp offset, the forward-prediction
-   * inputs / lookahead counter, the prediction guard and the arrival snap.
-   *
-   * `'gone'` (default) also drops the mirror entry and its history: the ship
-   * left. `'outOfWorld'` keeps them: a ship on its warp run is still listed,
-   * it just has no body until it lands (`syncRemoteWarpBodies`).
-   * Harmless on the local key (the syncMirror sweep may pass it): the local
-   * body is never in `predRemoteShipIds`, so it is not despawned here; it has
-   * its own ownership site.
-   */
-  /**
-   * Welcome-time re-key of our own ship from its parked-hull key (see the
-   * welcome handler). With a real welcome ship id, takes EXACTLY that hull —
-   * never a same-player OLD hull the player just displaced (seeding the local
-   * body at the stale hull's pose was the 2026-06-03 displace bug). Only with
-   * NO instance id (engineering rooms) does it fall back to the first parked
-   * hull we own. The move is `rekeyShip` (the ONE re-key): the hull's remote
-   * body goes BEFORE `tryInitPredWorld` spawns the local one (never two
-   * overlapping bodies), and the SAME entry object moves to the playerId, so
-   * the local body spawns at the hull's drawn pose and the renderer keeps the
-   * ship's sprite, art, turrets and effects (seamless hand-over). Lock:
-   * `ColyseusClient.pilotSwap.test.ts`, `tests/e2e/rts-take-controls.spec.ts`.
-   */
-  private rekeyOwnShipFromHull(playerId: string, welcomeShipInstanceId: string): void {
-    let hullKey: string | null = null;
-    if (welcomeShipInstanceId !== '') {
-      const e = this.mirror.ships.get(welcomeShipInstanceId);
-      if (e !== undefined && isParkedHull(this.mirror, welcomeShipInstanceId, e)) hullKey = welcomeShipInstanceId;
-    } else {
-      for (const [key, e] of this.mirror.ships) {
-        if (isParkedHull(this.mirror, key, e) && isOwnedByMe(this.mirror, key, e)) { hullKey = key; break; }
-      }
-    }
-    if (hullKey === null || hullKey === playerId) return;
-    const hull = this.mirror.ships.get(hullKey)!;
-    this.rekeyShip(hullKey, playerId);
-    logEvent('rescued_own_ship_from_lingering', {
-      shipInstanceId: hullKey,
-      playerId,
-      x: hull.x,
-      y: hull.y,
-    });
-  }
-
-  private dropRemoteShip(key: string, mode: 'gone' | 'outOfWorld' = 'gone'): void {
-    if (this.predRemoteShipIds.delete(key)) this.predWorld?.despawnShip(key);
-    this._remoteShipOffsets.delete(key);
-    this._remoteLastInputs.delete(key);
-    this._remoteForwardTicks.delete(key);
-    forgetRemote(this._predGuard, key);
-    this._arrivalSnapped.delete(key);
-    if (mode === 'gone') {
-      this.mirror.ships.delete(key);
-      this.remoteHistory.delete(key);
-    }
-  }
-
-  /**
-   * THE one ship re-key (RTS Part A, seamless take controls). A ship's mirror
-   * key changes when someone takes its controls (shipInstanceId -> pilot's
-   * playerId) or lets go of them (playerId -> shipInstanceId): the welcome
-   * (`rekeyOwnShipFromHull`), Command / Spectate (`dropLocalShipForCommand`),
-   * and another player's swap seen by the router / `syncMirror`
-   * (`findRekeySource`). The SAME entry object moves (pose, kind, turrets,
-   * level, shield state kept), with its body and per-ship prediction state:
-   *  - remote -> remote: the body is respawned under the new key at its own
-   *    state, offsets / inputs / lookahead / history move with it;
-   *  - remote -> local: the remote body goes (`tryInitPredWorld` then spawns
-   *    the local body at the entry's drawn pose);
-   *  - local -> remote: the local body becomes a remote body at its state (a
-   *    real pose, never the schema's: B2) and the reconciler goes.
-   * The pair is queued on `mirror.pendingShipRekeys`, so the renderer moves its
-   * per-ship state too instead of rebuilding the ship. A stale entry already
-   * under `to` is dropped first. Rare (a hand-over), never per frame.
-   */
-  private rekeyShip(from: string, to: string): void {
-    if (from === to) return;
-    const entry = this.mirror.ships.get(from);
-    if (entry === undefined) return;
-    const localId = this.mirror.localPlayerId;
-    const pw = this.predWorld;
-    if (this.mirror.ships.has(to)) {
-      if (to === localId) this.mirror.ships.delete(to);
-      else this.dropRemoteShip(to);
-    }
-    let body: ShipPhysicsState | null = null;
-    if (from === localId) {
-      if (pw?.hasShip(from)) {
-        body = pw.getShipState(from);
-        pw.despawnShip(from);
-        this.reconciler = null;
-      }
-    } else {
-      if (this.predRemoteShipIds.has(from)) body = pw?.getShipState(from) ?? null;
-      if (to !== localId) {
-        moveKey(this._remoteShipOffsets, from, to);
-        moveKey(this._remoteLastInputs, from, to);
-        moveKey(this._remoteForwardTicks, from, to);
-        moveKey(this.remoteHistory, from, to);
-        moveSetKey(this._arrivalSnapped, from, to);
-      }
-      this.dropRemoteShip(from, 'outOfWorld');
-    }
-    this.mirror.ships.delete(from);
-    this.mirror.ships.set(to, entry);
-    if (to !== localId && body !== null && entry.kind !== undefined && localId !== null) {
-      this.ensureRemoteShipBody(to, body, entry.kind);
-    }
-    moveKey(this._damageFlashFrames, from, to);
-    this.fc.rekeyLockState(from, to);
-    this.mirror.pendingShipRekeys?.push(from, to);
-    logEvent('ship_rekeyed', { from, to });
-  }
-
-  /**
-   * THE one way a remote ship's predWorld body is spawned (RTS Part A S0;
-   * replaced the syncMirror, tryInitPredWorld-retro and warp-arrival copies).
-   * Spawns at `pose` and tracks it in `predRemoteShipIds`; a no-op returning
-   * false when the body already exists. Callers keep their own gates (known
-   * local id, not on a warp run).
-   *
-   * ONE spawn rule (RTS Part A blocker B2): a remote body (another pilot's
-   * ship OR a parked / AI-flown hull) spawns ONLY from a real SNAPSHOT pose.
-   * The callers are the per-snapshot `spawnRemoteShipBodies`, the
-   * warp-arrival snap, and `rekeyShip`, which carries a body's OWN state
-   * across a re-key (a predicted body is a real pose too). Never the schema
-   * diff (which carries no pose: its x/y are 0): a body spawned at (0,0)
-   * parked an invisible, shootable ghost at the world origin (the 2026-06-03
-   * "laser stops short at (0,0)" bug). Lock:
-   * `ColyseusClient.lingeringJitter.test.ts`.
-   */
-  private ensureRemoteShipBody(key: string, pose: ShipPhysicsState, kind: string): boolean {
-    const pw = this.predWorld;
-    if (!pw || pw.hasShip(key)) return false;
-    pw.spawnShip(key, pose.x, pose.y, kind);
-    pw.setShipState(key, pose);
-    this.predRemoteShipIds.add(key);
-    return true;
-  }
-
-  /**
-   * Single authoritative path for removing any entity from the simulation.
-   * Called immediately on destroy event for both local and remote ships.
-   * syncMirror acts as a defensive fallback only.
-   */
-  private killEntity(id: string): void {
-    // Trigger explosion sprite on this frame (renderer consumes then App.tsx clears).
-    this.mirror.explodingShips?.add(id);
-    this.flushQueuedDamageFx(id);
-
-    // Immediately remove physics body so hitscan and collisions cannot hit it.
-    this.predWorld?.despawnShip(id);
-
-    // Remove from render mirror so the sprite is culled this frame.
-    this.mirror.ships.delete(id);
-
-    if (id === this.mirror.localPlayerId) {
-      this.localDead = true;
-      this.diedAtMs = this.clock.now();
-      // Plan: crispy-kazoo, Commit 3 — death is the cascade trigger.
-      // Pre-Commit 3 the capture lifecycle.ndjson had ZERO local_died
-      // events; we reconstructed death from indirect breadcrumbs
-      // (GalaxyOverviewScreen mount in 'spawn' mode). This event lets
-      // future captures measure death-to-respawn directly.
-      const msSinceWelcome = this.welcomePerfNow > 0
-        ? Math.round(this.diedAtMs - this.welcomePerfNow)
-        : -1;
-      logEvent('local_died', { playerId: id, msSinceWelcome });
-      this.mirror.liveBeams?.clear();
-      this.ghostManager.clearForShip(id);
-      useUIStore.getState().setHullPct(0);
-      // Phase 4 WS-A1 (D3) — death transitions INSTANTLY into spectator (no
-      // death modal). The old blocking DeathOverlay path is removed; the player
-      // free-roams the sector as an invulnerable, un-networked camera with full
-      // construction. `isDead` is intentionally NOT set (it gated the modal);
-      // `pilotMode='spectator'` is the discrete flag the camera/input/build
-      // branches read. Remote interpolation keeps running so drones stay smooth.
-      // RTS slice 10: that IS command view (`selectControlMode` → 'command'),
-      // a free camera over the rest of the fleet, never a dead-hull follow.
-      if (shouldEnterSpectatorOnDeath(id, this.mirror.localPlayerId)) {
-        useUIStore.getState().setPilotMode('spectator');
-      }
-      useUIStore.getState().setSectorAlert('SHIP DESTROYED');
-      setTimeout(() => useUIStore.getState().setSectorAlert(null), 3000);
-    } else {
-      this.dropRemoteShip(id);
-    }
-  }
-
-  private handleDestroy(evt: DestroyEvent): void {
-    const vaporised = evt.vaporised === true;
-    // Held for its drawn shell: the release marks it vaporised in its frame.
-    if (this._shellTiming.deferKill(evt.targetId, vaporised)) return;
-    // A cut kill that left no wreck piece (fracture v11): the renderer plays
-    // the vaporise blast and holds no dying hull. Same key as explodingShips.
-    if (vaporised) this.mirror.vaporisedShips?.add(evt.targetId);
-    if (evt.targetId.startsWith('swarm-')) this.killSwarmEntity(evt.targetId);
-    else this.killEntity(evt.targetId);
-  }
-
-  /**
-   * Remove a swarm entity (drone) immediately on a destroy event. Sweeps the
-   * mirror entry, the predWorld body, and the damage-flash tracker. The next
-   * binary swarm packet will confirm the entity is gone (delta packets won't
-   * mention it; the next 60-tick full snapshot will sweep on the server's say-so).
-   */
-  private killSwarmEntity(wireId: string): void {
-    const entityIdStr = wireId.slice('swarm-'.length);
-    const entityId = parseInt(entityIdStr, 10);
-    if (Number.isNaN(entityId)) return;
-    this.mirror.swarm?.delete(entityId);
-    if (this.predWorld?.hasShip(wireId)) this.predWorld.despawnShip(wireId);
-    this.predSwarmKeys.delete(wireId);
-    this._movingSwarmKeys.delete(wireId);
-    this._damageFlashFrames.delete(wireId);
-    // Reuse the explosion sprite path — the renderer keys explosions off
-    // sprite position (looked up by id), and `swarm-${entityId}` is the
-    // sprite key, so the existing explosion machinery just works.
-    this.mirror.explodingShips?.add(wireId);
-    this.flushQueuedDamageFx(wireId);
-    useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
-  }
-
-  /**
-   * The target just died: release, NOW, every hit visual still queued for
-   * it, so its number completes in the explosion's frame and never climbs
-   * over the wreck afterwards (fight-clip review 2026-11-13). Two queues
-   * delay a real hit's number on purpose: the smooth-beam splits of a
-   * predicted hitscan hit, and naval hits held for their drawn shell burst.
-   * The hits were dealt before the death, so they are flushed, not dropped;
-   * the renderer then closes the number (`DamageNumberManager.markDead`, fed
-   * by the same `explodingShips` frame). Rare path (a death).
-   */
-  private flushQueuedDamageFx(targetId: string): void {
-    const scheduled = this._scheduledDamageSpawns;
-    if (scheduled.length > 0) {
-      const pending = this.mirror.pendingDamageNumbers;
-      // Forward, so the splits land in schedule order.
-      let w = 0;
-      for (let r = 0; r < scheduled.length; r++) {
-        const s = scheduled[r]!;
-        if (s.targetId === targetId) {
-          pending?.push({ targetId: s.targetId, x: s.x, y: s.y, damage: s.damage, tag: s.tag });
-        } else {
-          scheduled[w++] = s;
-        }
-      }
-      scheduled.length = w;
-    }
-    if (this._navalHitHold.size > 0) {
-      this._navalHitHold.flushTarget(targetId, this._heldDamageSink);
-    }
-  }
-
-  private handleRespawnAck(msg: RespawnAckMessage): void {
-    const playerId = this.mirror.localPlayerId;
-    if (!playerId || !this.predWorld) return;
-
-    // Spawn new physics body at server-assigned position.
-    this.predWorld.spawnShip(playerId, msg.x, msg.y);
-
-    // Re-initialise reconciler so it doesn't try to replay inputs from before death.
-    this.reconciler = new Reconciler(this.predWorld, playerId, this.clock);
-
-    // Sync input tick to server tick so first fire passes temporal plausibility,
-    // and re-anchor the clock so tickPhysics()'s `targetTick` derivation stays
-    // consistent with the new tick base.
-    this.inputTick = msg.serverTick;
-    this.serverTickAtWelcome = msg.serverTick;
-    this.welcomePerfNow = this.clock.now();
-    this.clockAnchorServerTick = msg.serverTick;
-    this.clockAnchorPerfNow = this.gameClock.at(this.welcomePerfNow);
-    this._anchorInitialised = true;
-    this._anchorFreshAtMs = this.welcomePerfNow;
-    // Reset the idle-input throttle so the first post-respawn input always sends.
-    this.lastSentInputState = null;
-    this.lastSentInputAtMs = 0;
-
-    // Bootstrap mirror so the renderer shows the ship immediately (before next syncMirror).
-    this.mirror.ships.set(playerId, { x: msg.x, y: msg.y, vx: 0, vy: 0, angle: 0 });
-
-    this.localDead = false;
-    useUIStore.getState().setDead(false);
-    useUIStore.getState().setHullPct(100);
-    useUIStore.getState().setSectorAlert(null);
-
-    logEvent('cc_respawned', { x: msg.x, y: msg.y });
-  }
-
-  /** Send a respawn request to the server. Only valid while the local ship is dead. */
-  respawnShip(): void {
-    if (!this.room || !this.localDead) return;
-    this.room.send('respawn', { type: 'respawn' });
-  }
-
-  /**
-   * Test-only (Phase 4 WS-A1) — drive the CLIENT-LOCAL death path for the local
-   * ship, exactly as a `destroy` event would (kill the body + mirror entry +
-   * flip into spectator). Spectator is client-local + un-networked (D5), so the
-   * spectator-mode E2E exercises the transition deterministically here instead
-   * of waiting out hostile-fire TTK. Exposed only via the DEV-gated
-   * `__eqxKillLocalShip` window hook in App.tsx; production tree-shakes the hook.
-   */
-  devKillLocalShip(): void {
-    const id = this.mirror.localPlayerId;
-    if (!id) return;
-    this.killEntity(id);
-  }
-
-  /**
-   * Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
-   *
-   * Tells the server "I have finished bootstrapping; please activate
-   * my ship and broadcast the warp-in". Idempotent: a second call
-   * (e.g. from the per-RAF trigger in gameRafLoop after the first
-   * fire) is a no-op. The Zustand `clientReadySent` flag flips here
-   * so future callers also short-circuit.
-   *
-   * Called from the per-RAF check in `gameRafLoop` once all
-   * bootstrap gates pass (`computeBootstrapReadyFromState === true`).
-   */
-  sendClientReady(): void {
-    if (!this.room || this.disposed) return;
-    const state = useUIStore.getState();
-    if (state.clientReadySent) return;
-    state.setClientReadySent(true);
-    this.room.send('client_ready', { type: 'client_ready' });
-    const msSinceWelcome = this.welcomePerfNow > 0
-      ? Math.round(this.clock.now() - this.welcomePerfNow)
-      : -1;
-    logEvent('client_ready_sent', { msSinceWelcome });
-  }
+  respawnShip(): void { respawnShip(this._roomCmdCtx); }
+  /** Test-only: the client-local death of the local ship (DEV `__eqxKillLocalShip`). */
+  devKillLocalShip(): void { devKillLocalShip(this._roomCmdCtx); }
+  sendClientReady(): void { sendClientReady(this._roomCmdCtx); }
 
   // ── Prediction bootstrap ────────────────────────────────────────────────
 
-  private tryInitPredWorld(playerId: string): void {
-    if (!this.predWorld || this.predWorld.hasShip(playerId)) return;
-    const existing = this.mirror.ships.get(playerId);
-    if (!existing) {
-      // Telemetry: tryInitPredWorld was called but the local ship's
-      // mirror entry isn't ready yet. Common during the 1-tick window
-      // between welcome and the first state-diff for the local ship.
-      logEvent('predworld_init_deferred', { playerId, reason: 'no-mirror-entry' });
-      return;
-    }
-    this.predWorld.spawnShip(playerId, existing.x, existing.y, existing.kind);
-    this.predWorld.setShipState(playerId, existing);
-    this.reconciler = new Reconciler(this.predWorld, playerId, this.clock);
-    logEvent('predworld_init', {
-      playerId,
-      x: existing.x, y: existing.y, kind: existing.kind ?? null,
-    });
-    // Join-render diagnostic: this is the moment the local ship's
-    // pose is observable in the mirror at server-authoritative coords.
-    // Fire ONCE per (re)connect — `resetPredictionState` resets the latch.
-    if (!this._localPoseResolvedLogged) {
-      this._localPoseResolvedLogged = true;
-      const msSinceWelcome = this.welcomePerfNow > 0
-        ? Math.round(this.clock.now() - this.welcomePerfNow)
-        : -1;
-      logEvent('local_pose_resolved', {
-        playerId,
-        x: existing.x,
-        y: existing.y,
-        kind: existing.kind ?? null,
-        msSinceWelcome,
-      });
-    }
-    // Plan: crispy-kazoo, Commit 2 — surface the localPoseResolved
-    // gate to Zustand so `computeBootstrapReadyFromState` flips true
-    // when the predWorld + reconciler are live. Idempotent; the
-    // setter is a no-op if already true.
-    useUIStore.getState().setLocalPoseResolved(true);
-    logEvent('cc_predworld_init', { x: existing.x, y: existing.y });
-    // Remote ships (other pilots and parked hulls) get their bodies from the
-    // next snapshot (`spawnRemoteShipBodies`): one spawn rule, snapshot pose
-    // only (B2). The old retro spawn here used the mirror's pose, which for a
-    // ship known only from the schema diff was (0,0).
-    // Swarm entries: a binary `swarm` packet may have arrived
-    // before predWorld existed; bring those bodies up now.
-    this.syncSwarmIntoPredWorld();
-  }
+  /** Local predWorld body + Reconciler (`prediction/predWorldSync.ts`); tests call it. */
+  private tryInitPredWorld(playerId: string): void { tryInitPredWorld(this._predStepCtx, playerId); }
 
   // ── Snapshot / reconciliation ───────────────────────────────────────────
 
@@ -3160,115 +2067,8 @@ export class ColyseusGameClient {
     return sw?.shipKind ? getShipKind(sw.shipKind).mounts : undefined;
   }
 
-  /**
-   * Sync swarm entries into the prediction world. Called after every binary
-   * `swarm` packet decode. New entries spawn predWorld bodies (so the local
-   * ship can collide with them and the local hitscan can target them);
-   * existing entries get setShipState; entries that vanish from the mirror
-   * get despawned. The predWorld key is `swarm-${entityId}`, matching the
-   * sprite key in PixiRenderer and the `targetId` the server emits in
-   * `laser_fired` for swarm hits.
-   */
-  private syncSwarmIntoPredWorld(): void {
-    if (!this.predWorld || !this.mirror.swarm) return;
-    // 2026-05-25 heap-growth gate step 5: persistent scratch Set +
-    // cached key strings (shared with the updateMirror kinematic loop).
-    const seen = this._swarmSyncSeenScratch;
-    seen.clear();
-    const keyCache = this._swarmBodyKeyCache;
-    // Generic Entity Pipeline B4: route construction through the client
-    // EntityFactory (the OOP peer of the server leaves). The reused ctx keeps
-    // this allocation-free (invariant #14); `ColyseusClient` stays the owner of
-    // predSwarmKeys / _swarmBodyKeyCache / _aiRegisteredIds — the leaves only
-    // read the ctx and call predWorld / aiController. `staticBody` (lock + pose)
-    // is now derived from the core descriptor inside the leaf base; the per-kind
-    // collider / mass / AI-ledger / shield-swap details live in the leaves.
-    const ctx = this._clientSpawnCtx;
-    ctx.predWorld = this.predWorld;
-    // A3 — structures stream in by distance from the local ship (every
-    // correction replays the whole prediction world). No local ship ⇒ keep all.
-    const localId = this.mirror.localPlayerId;
-    const me = localId ? this.mirror.ships.get(localId) : undefined;
-    // Wreck pieces stream by the GAP between hulls: the local hull's radius
-    // (213 u for a 2× crossguard) is not part of the PREDWORLD_WRECK_RADIUS
-    // travel budget.
-    const myHull = me ? getShipKind(me.kind ?? null).radius : 0;
-    for (const [entityId, entry] of this.mirror.swarm) {
-      // HC#2: an unrecognised pose-core kind resolves to `null` and is SKIPPED —
-      // it never falls through to the drone path (the old `else`-is-drone branch
-      // that would mis-register a kind=2 structure as a HostileDroneBehaviour).
-      const leaf = this._entityFactory.leafFor(entry.kind);
-      if (leaf === null) continue;
-      let key = keyCache.get(entityId);
-      if (key === undefined) {
-        key = `swarm-${entityId}`;
-        keyCache.set(entityId, key);
-      }
-      // S2b: a wreck piece needs its wreck's descriptor for its geometry; until
-      // it arrives (≤ 0.5 s for a late joiner) the piece has no body yet.
-      if (entry.kind === SWARM_KIND_WRECK && (entry.wreckId === undefined || !this._wrecks.has(entry.wreckId))) continue;
-      // Wreck pieces stream in the same way (soak 2026-11-13: ~700 pieces in
-      // the predWorld put 56 % of the client main thread into Rapier's step).
-      // A piece only matters to prediction where the local ship can touch it.
-      if ((entry.kind === 2 || entry.kind === SWARM_KIND_WRECK) && me) {
-        const wreck = entry.kind === SWARM_KIND_WRECK;
-        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius - (wreck ? myHull : 0);
-        const radius = wreck ? PREDWORLD_WRECK_RADIUS : PREDWORLD_STRUCTURE_RADIUS;
-        if (!wantPredBody(this.predWorld.hasShip(key), edge, radius)) continue; // unseen ⇒ swept below
-      }
-      seen.add(key);
-      ctx.entityId = entityId;
-      ctx.key = key;
-      ctx.entry = entry;
-      if (!this.predWorld.hasShip(key)) {
-        ctx.registeredAiId = null;
-        leaf.spawnBody(ctx);
-        // Fold any AI-ledger registration the leaf made (drone only) into the
-        // client-owned set — single cache ownership stays here.
-        if (ctx.registeredAiId !== null) {
-          this._aiRegisteredIds.add(ctx.registeredAiId);
-        }
-        this.predSwarmKeys.add(key);
-        if (isRemoteMovingSwarmKind(entry.kind)) {
-          this._movingSwarmKeys.add(key);
-          // Seed the new body with its latest server state (velocity
-          // included) so it moves from birth; the next snapshot's
-          // remote-entity anchor puts it on the prediction timeline.
-          if (authoritativeSwarmStateAt(entry, entry.lastUpdateTick, this._swarmAnchorScratch)) {
-            this.predWorld.setShipState(key, this._swarmAnchorScratch);
-          }
-        }
-      }
-      // Idempotent per-sync upkeep: shield-collider swap (drone) or static
-      // repose (asteroid / structure). Drones and scrap are NOT re-posed
-      // here: their body pose has ONE writer, the per-snapshot remote-entity
-      // anchor (`anchorRemoteSwarmBodies`); the leaf's onSync only swaps the
-      // shield collider (same body, pose and velocity kept).
-      leaf.onSync(ctx);
-    }
-    // Sweep predWorld bodies whose entityId no longer appears in mirror.swarm.
-    for (const key of this.predSwarmKeys) {
-      if (!seen.has(key)) {
-        this.predWorld.despawnShip(key);
-        this.predSwarmKeys.delete(key);
-        this._movingSwarmKeys.delete(key);
-        // If the swept body was a drone, unregister it from the hostility
-        // ledger (`_aiController` is ledger-only post-pivot — never ticked).
-        // Numeric entityId is encoded in the key as `swarm-${id}`.
-        const idStr = key.startsWith('swarm-') ? key.slice(6) : '';
-        const id = Number(idStr);
-        if (Number.isFinite(id)) {
-          // Step 5 cleanup: also evict the cached key string so the
-          // cache doesn't grow unbounded across entity churn.
-          this._swarmBodyKeyCache.delete(id);
-        }
-        if (Number.isFinite(id) && this._aiRegisteredIds.has(id)) {
-          this._aiController.unregister(`${id}`);
-          this._aiRegisteredIds.delete(id);
-        }
-      }
-    }
-  }
+  /** Swarm entries into the prediction world (`prediction/predWorldSync.ts`); tests call it. */
+  private syncSwarmIntoPredWorld(): void { syncSwarmIntoPredWorld(this._predStepCtx); }
 
   /** Sync authoritative projectile positions from the per-recipient snapshot.
    *  Wire-discipline P3: projectiles no longer live on the Colyseus schema —
@@ -3294,38 +2094,8 @@ export class ColyseusGameClient {
   private _structureMap: Map<number, StructureRenderState> | null = null;
   /** Interned owner tables (index → id / name), refreshed from room state. */
   private readonly _structureOwners: { ids: string[]; names: string[] } = { ids: [], names: [] };
-  /** Mine Layer — sync generation for the mines sweep. */
-  private _mineGen = 0;
-  private readonly _decodeMine = (v: { ownerIdx?: number; x?: number; y?: number }, k: string): void => {
-    const map = this.mirror.mines!;
-    let row = map.get(k);
-    if (!row) {
-      row = { x: 0, y: 0, own: false, gen: 0 };
-      map.set(k, row);
-    }
-    row.x = v.x ?? 0;
-    row.y = v.y ?? 0;
-    row.own = this._structureOwners.ids[v.ownerIdx ?? 0] === this.mirror.localPlayerId;
-    row.gen = this._mineGen;
-  };
-
-  /** Mine Layer — mirror room-state `mines` (join payload + patches) into
-   *  `mirror.mines` in place; a mine gone from room state is gone. */
-  private syncMines(): void {
-    const rows = (this.room?.state as { mines?: { size: number; forEach(cb: (v: { ownerIdx?: number; x?: number; y?: number }, k: string) => void): void } } | undefined)?.mines;
-    let map = this.mirror.mines;
-    if (!rows || rows.size === 0) {
-      if (map && map.size > 0) map.clear();
-      return;
-    }
-    if (!map) {
-      map = new Map();
-      this.mirror.mines = map;
-    }
-    this._mineGen++;
-    rows.forEach(this._decodeMine);
-    for (const [id, row] of map) if (row.gen !== this._mineGen) map.delete(id);
-  }
+  /** Mine Layer — room-state `mines` into `mirror.mines` (`mirror/mineSync.ts`). */
+  private readonly _mines = new MineSync(this.mirror, this._structureOwners, () => this.room);
   private readonly _readStructureOwner = (v: string, k: string): void => { this._structureOwners.ids[Number(k)] = v; };
   private readonly _readStructureOwnerName = (v: string, k: string): void => { this._structureOwners.names[Number(k)] = v; };
   /** Bound once (no per-snapshot closure): decode one room-state row into
@@ -3422,7 +2192,7 @@ export class ColyseusGameClient {
     this._tractors.sync(targets, this._beamLinkVisitor, this.predWorld);
     this.syncPredWalls();
     this.syncForceFields();
-    this.syncMines();
+    this._mines.sync();
   }
 
   /** Scratch for `syncForceFields` (`setForceField` copies it; no per-frame object). */
@@ -3716,7 +2486,7 @@ export class ColyseusGameClient {
     if (this._travel !== null && localId !== null) {
       const e = this.mirror.ships.get(localId);
       if (e) {
-        this.stepTravel(this._travel, e, localId);
+        stepTravel(pc, this._travel, e, localId);
       }
     }
 
@@ -3854,17 +2624,6 @@ export class ColyseusGameClient {
     // Inbound-drain is now done by `tickInbound` (called from
     // gameRafLoop above the loading pause boundary). tickPhysics is
     // the input-loop + physics-step portion only.
-    const FIXED_MS = 1000 / 60;
-    const MAX_CATCH_UP_TICKS = 4;
-    // Spiral fix (plan: spiral-fix, Phase 2): cap inputTick over-prediction
-    // at 60 ticks beyond ackedTick (~1 sec at 60 Hz). 2× the healthy-network
-    // CEILING_TICKS=30 ticksAhead ceiling, so the cap never engages on the
-    // healthy local profile but bounds bufferbloat-induced spiral on mobile
-    // networks. NOT capping inputTick itself (the 6e4d9c2 anti-pattern) —
-    // capping the CONDITION `inputTick - ackedTick`. Companion change:
-    // `keyboard.read()` hoisted out of the loop so cap-engaged RAFs still
-    // emit a sentinel input + diagnostic log.
-    const MAX_OVER_PREDICTION_TICKS = 60;
     this.followSpeedGlide();
     const ticksSinceAnchor = Math.floor((this.gameClock.now() - this.clockAnchorPerfNow) / FIXED_MS);
     const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.gameLeadTicks();
@@ -3917,281 +2676,7 @@ export class ColyseusGameClient {
         break;
       }
       stepsThisFrame++;
-      let tcThrust = false, tcTurnLeft = false, tcTurnRight = false, tcFire = false;
-      if (this.touchInput) {
-        tcFire = this.touchInput.getFireHeld();
-        const v = this.touchInput.getJoystickVector();
-        const localId = this.mirror.localPlayerId;
-        // Render-jitter-fix Phase 1: read REAL-TIME predWorld angle for
-        // the joystick hysteresis. The mirror angle now carries the
-        // dead-reckon term (up to 32 ms × angvel ≈ 0.08 rad at max
-        // turn rate), which is 2× the joystick hysteresis band
-        // (TURN_OFF_RAD=0.04 in joystickToInput). Reading the mirror
-        // could perturb the engaged/disengaged crossing and cause
-        // phantom turn-direction reversal under sustained held input —
-        // exactly the spiral-fix bug class the joystick hysteresis was
-        // built to prevent. Mirror fallback covers the boot window
-        // before predWorld has a ship body.
-        const predState = localId ? this.predWorld?.getShipState(localId) ?? null : null;
-        const localShip = localId ? this.mirror.ships.get(localId) : null;
-        const realAngle = predState?.angle ?? localShip?.angle ?? null;
-        if (realAngle !== null) {
-          // 2026-05-20 spiral fix: pure resolver with HYSTERESIS bands.
-          // Pre-fix `delta > TOUCH_TURN_TOLERANCE` had no off-threshold;
-          // as the ship rotated toward target, delta crossed 0.08 rad,
-          // turn toggled — analog stick noise then nudged it back across,
-          // toggled again. Empirical ~10 Hz state-change rate → sustained
-          // ~45-70 % rollingCorrRate spiral. Unit-locked in
-          // src/client/input/joystickToInput.test.ts.
-          const next = joystickToInput(v, realAngle, this._joystickInputState);
-          this._joystickInputState = next;
-          tcTurnLeft = next.turnLeft;
-          tcTurnRight = next.turnRight;
-          tcThrust = next.thrust;
-        }
-      }
-      // v4 A — a disabled ship's engines and weapons are off: the SAME shared
-      // gate the server applies to our input (#15), so prediction agrees.
-      // Helm orders: WASD / the stick override (and cancel) a course.
-      if (this._helmOrder.active) {
-        if (kb.thrust || kb.turnLeft || kb.turnRight || kb.reverse || tcThrust || tcTurnLeft || tcTurnRight) this.clearHelm();
-        else this.stepHelm();
-      }
-      const helm = this._helmOrder.active ? this._helmOut : null;
-      const db = this._disableBits;
-      db.thrust = kb.thrust || tcThrust || (helm?.thrust ?? false);
-      db.turnLeft = kb.turnLeft || tcTurnLeft || (helm?.turnLeft ?? false);
-      db.turnRight = kb.turnRight || tcTurnRight || (helm?.turnRight ?? false);
-      db.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false) || aimInput.getBoostHeld();
-      // Reverse is keyboard-only in v1 — no on-screen button on touch yet.
-      db.reverse = kb.reverse;
-      const disabledNow = gateDisabledInput(this.isLocallyDisabled(), db);
-      const thrust    = db.thrust;
-      const turnLeft  = db.turnLeft;
-      const turnRight = db.turnRight;
-      const fireHeld  = !disabledNow && (kb.fireHeld || tcFire);
-      const boost     = db.boost;
-      const reverse   = db.reverse ?? false;
-      const tick = this.inputTick++;
-
-      // Replay-grade input-intent capture (plan: replay infra Phase A).
-      // This is the EXACT raw input state for this tick — what the user
-      // pressed at this client-side wall-clock moment. Required by the
-      // deterministic replay harness to drive the same input stream into
-      // a Node-side ColyseusGameClient instance. Logged BEFORE the
-      // throttle check (`inputSent` is sampled / state-change-gated; this
-      // is the ground truth of what the loop SAW). Joystick vector pulled
-      // raw via `getJoystickVector()` so the replay can reconstruct
-      // analog stick motion (not just the booleans it resolved to).
-      // HIGH_VOLUME_TAGS gate (Phase 5e — invariant #14). Skip the
-      // joystick-vector read + object literal when not in diag mode.
-      if (isFullDiagMode()) {
-        const _jv = this.touchInput?.getJoystickVector() ?? null;
-        logEvent('input_intent', {
-          tick,
-          thrust,
-          turnLeft,
-          turnRight,
-          boost,
-          reverse,
-          fireHeld,
-          joystickX: _jv ? Math.round(_jv.x * 1000) / 1000 : null,
-          joystickY: _jv ? Math.round(_jv.y * 1000) / 1000 : null,
-        });
-      }
-
-      // No client-side drone AI tick (drone-snapshot-interpolation pivot,
-      // 2026-05-18). Drones are pure snapshot-interpolated from the binary
-      // swarm wire; the server simulates every drone authoritatively. No
-      // client brain ⇒ no divergent inputs ⇒ nothing to reconcile/snap.
-      if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
-        const nowMs = this.clock.now();
-        // Boost is now an independent every-tick forward impulse (no longer
-        // gated on thrust), so it MUST be energy-gated to match the server:
-        // `InputHandler` strips the boost bit when the pool can't afford
-        // BOOST_TICK_COST. Predicting an un-gated boost while the server
-        // applies none = continuous per-tick velocity divergence once the
-        // pool empties (the netgate's rollingCorrRate / maxDriftUnits class).
-        // `predEnergy` is hard-reconciled to server energy each snapshot, so
-        // this gate tracks the server's; the fire path gates the same way.
-        // We predict, record, SEND and drain on the SAME gated value so client
-        // and server stay byte-aligned (minimises corrections).
-        const boostApplied = boost && canAfford(this.predEnergy, BOOST_TICK_COST);
-        // Pooled per-tick scratches (data-driven from the 2026-05-30 CDP
-        // profile — `tickPhysics` was rank-2 at 81 KB / 7.5 %). The
-        // Reconciler copies `rec` into its own ring buffer; predWorld
-        // applyInput reads the fields into Rapier. Both safe to reuse.
-        const rec = this._inputRecScratch;
-        rec.tick = tick;
-        rec.thrust = thrust;
-        rec.turnLeft = turnLeft;
-        rec.turnRight = turnRight;
-        rec.boost = boostApplied;
-        rec.reverse = reverse;
-        rec.sentAt = nowMs;
-        const wx = this.warpRequest?.x, wy = this.warpRequest?.y;
-        rec.warpX = wx;
-        rec.warpY = wy;
-        const applyArg = this._applyInputScratch;
-        applyArg.thrust = thrust;
-        applyArg.turnLeft = turnLeft;
-        applyArg.turnRight = turnRight;
-        applyArg.boost = boostApplied;
-        applyArg.reverse = reverse;
-        applyArg.warpX = wx;
-        applyArg.warpY = wy;
-        this.predWorld.applyInput(this.mirror.localPlayerId, applyArg);
-        this.reconciler.recordInput(rec);
-        // Arrived: stop asking (the next input carries none, which also
-        // releases the server's latch on this target).
-        if (this.warpRequest !== null && this.predWorld.warpArrived(this.mirror.localPlayerId)) this.warpRequest = null;
-        // Idle-suppression — narrowed (2026-05-06): throttle ONLY when current
-        // AND last-sent state are both fully idle (all-false). Why: when ANY
-        // key is held, the server's worker queue stays populated and the
-        // held-input branch never fires; if we throttled in that state, the
-        // worker would synthesise an ack trail across held re-applications,
-        // and a subsequent state-change message would jump the ack past the
-        // intermediate synthesised ticks — skipping a tick of physics
-        // application that the client's prediction DID apply locally. Result:
-        // ~8 u of drift per release event on a fast-moving ship. The
-        // all-idle restriction keeps throttling safe because held all-idle
-        // adds zero impulse, so a skipped tick is physically equivalent.
-        const last = this.lastSentInputState;
-        // A held warp request is never idle (the server must keep receiving it).
-        const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined;
-        const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined;
-        const stateChanged = !last
-          || last.thrust !== thrust
-          || last.turnLeft !== turnLeft
-          || last.turnRight !== turnRight
-          || last.boost !== boostApplied
-          || last.reverse !== reverse
-          || last.warpX !== wx
-          || last.warpY !== wy;
-        const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
-        const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
-        if (!throttle) {
-          // Pooled send payload — colyseus.js serialises the literal
-          // before returning so reusing the scratch ref is safe.
-          if (wx !== undefined && wy !== undefined) {
-            const w = this._sendWarpInputScratch;
-            w.tick = tick; w.thrust = thrust; w.turnLeft = turnLeft; w.turnRight = turnRight;
-            w.boost = boostApplied; w.reverse = reverse; w.warpX = wx; w.warpY = wy;
-            this.room.send('input', w);
-          } else {
-          const sendArg = this._sendInputScratch;
-          sendArg.tick = tick;
-          sendArg.thrust = thrust;
-          sendArg.turnLeft = turnLeft;
-          sendArg.turnRight = turnRight;
-          sendArg.boost = boostApplied;
-          sendArg.reverse = reverse;
-          this.room.send('input', sendArg);
-          }
-          // lastSentInputState retains state ACROSS ticks — must NOT
-          // alias the per-tick scratch (would mutate the stored
-          // last-state on the next tick). Reuse the existing record if
-          // present (first-tick falls through to fresh alloc).
-          const stored = this.lastSentInputState;
-          if (stored) {
-            stored.thrust = thrust;
-            stored.turnLeft = turnLeft;
-            stored.turnRight = turnRight;
-            stored.boost = boostApplied;
-            stored.reverse = reverse;
-            stored.warpX = wx;
-            stored.warpY = wy;
-          } else {
-            this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy };
-          }
-          this.lastSentInputAtMs = nowMs;
-          if ((stateChanged || (tick % 60) === 0) && isFullDiagMode()) {
-            logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost: boostApplied, reverse });
-          }
-        }
-        // Show the local exhaust trail without waiting an RTT for the server
-        // to confirm — the next snapshot will overwrite from server truth.
-        // Boost is now thrust-independent, so the trail shows whenever boost is
-        // actually applied (energy-affordable), matching the server's
-        // `boostingPlayers` membership + the predEnergy drain below.
-        if (this.mirror.boostingShips) {
-          if (boostApplied) this.mirror.boostingShips.add(this.mirror.localPlayerId);
-          else this.mirror.boostingShips.delete(this.mirror.localPlayerId);
-        }
-        if (this.mirror.thrustingShips) {
-          if (thrust) this.mirror.thrustingShips.add(this.mirror.localPlayerId);
-          else this.mirror.thrustingShips.delete(this.mirror.localPlayerId);
-        }
-      }
-      // Stage 3 — apply each remote ship's last-known input before advancing
-      // physics, so remote bodies forward-predict in lockstep with the local
-      // input loop. Bounded by STAGE_3_MAX_LOOKAHEAD_TICKS per snapshot;
-      // remotes whose intent isn't tracking (3 consecutive corrections > 5 u)
-      // skip this and integrate with damping only.
-      this.applyRemoteInputs();
-      // (Phase 3 AI tick now runs at the TOP of this iteration, before
-      // applyInput, to match the server's "post-step state → AI" ordering.)
-      // Always advance physics — remote ships and obstacles must keep moving even while dead.
-      if (this.predWorld) {
-        this.predWorld.tick(1 / 60);
-        // Stamp the wall-clock time this state STANDS FOR (when its tick
-        // boundary was due), so `updateMirror`'s dead-reckon is measured
-        // from there. Stamping the processing time drew the ship a tick
-        // ahead after a 2-tick frame and then stalled it: the fly-by judder
-        // (renderTickPhase.ts; lock: capital-flyby-smooth.spec.ts).
-        // ...advanced one tick per tick and only SLEWED toward the anchor-based
-        // due time: the anchor follows snapshot arrival, and a late snapshot
-        // moved it a whole tick, lurching the drawn ship (slewTickDue).
-        const due = tickBoundaryDueMs(
-          this.clockAnchorPerfNow, this.clockAnchorServerTick, this.gameLeadTicks(), this.inputTick, FIXED_MS,
-        );
-        this._lastLocalTickAtMs = this._lastLocalTickAtMs < 0
-          ? due
-          : slewTickDue(this._lastLocalTickAtMs, due, FIXED_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS);
-      }
-
-      // Replay-grade per-tick predicted-pose capture (plan: replay infra
-      // Phase A). After `applyInput` + `world.tick`, the local ship's
-      // predWorld pose IS the prediction for this tick. The replay harness
-      // re-runs the same predWorld through the same input stream and
-      // compares against THIS value to confirm bit-identical simulation
-      // (the ground-truth check that makes the harness a faithful
-      // surrogate for on-device behaviour). Skip-safe when localDead /
-      // pre-init: predWorld may not have a ship body yet.
-      // HIGH_VOLUME_TAGS gate (Phase 5e — invariant #14). Skip the
-      // predWorld read + object literal when not in diag mode.
-      if (!this.localDead && this.predWorld && this.mirror.localPlayerId && isFullDiagMode()) {
-        const _ps = this.predWorld.getShipState(this.mirror.localPlayerId);
-        if (_ps) {
-          logEvent('local_pose_predicted', {
-            tick,
-            x: Math.round(_ps.x * 1000) / 1000,
-            y: Math.round(_ps.y * 1000) / 1000,
-            vx: Math.round(_ps.vx * 1000) / 1000,
-            vy: Math.round(_ps.vy * 1000) / 1000,
-            angle: Math.round(_ps.angle * 10000) / 10000,
-            angvel: _ps.angvel !== undefined ? Math.round(_ps.angvel * 10000) / 10000 : 0,
-          });
-        }
-      }
-
-      // Multi-mount/turret refactor (Phase 4b.2): client-side turret aim
-      // update for the local ship. Runs every physics tick so the
-      // rotation stays continuous and the beams emerge from the slewed
-      // mount direction. Skipped while dead (no aim to compute) and when
-      // the player has no predWorld state yet.
-      this.tickLocalMountAim(1 / 60);
-
-      // (Fire dispatch HOISTED out of this loop — see below. It gates on
-      //  wall-clock cooldown so a stalled inputTick can't suppress fires
-      //  the user feels they've earned. Loop body kept lean.)
-
-      // beam-attach fix (capture pe6rdt): NO hard-clear when fire isn't
-      // held. The local hitscan beam persists ~LIVE_BEAM_PERSIST_MS past
-      // the last shot (expired in updateMirror) and is redrawn from
-      // `mirror.ships` every frame, so a tap / held burst reads as ONE
-      // continuous SHIP-ATTACHED beam — server lag/correction invisible.
-      // Death still clears it via killEntity's liveBeams.clear().
+      stepInputTick(this._predStepCtx, this.room, kb);
     }
 
     // ── Fire dispatch (hoisted from the catch-up loop, 2026-05-27) ──
@@ -4237,23 +2722,7 @@ export class ColyseusGameClient {
     // mirroring the server's tickEnergy. Fire drain happens in sendFire. The
     // snapshot reconcile hard-sets the value, so this only smooths the bar
     // between snapshots. Scalar core helpers ⇒ no allocation.
-    if (this.mirror.localPlayerId && stepsThisFrame > 0) {
-      const localKindId = this.mirror.ships.get(this.mirror.localPlayerId)?.kind;
-      const ek = getShipKind(localKindId ?? null);
-      const emax = ek.energyMax ?? 100;
-      // Before the server's first own-ship energy: start full, as the server
-      // spawned it (only once the kind is known, or we'd seed another kind's max).
-      if (!this._energySeeded && localKindId) {
-        this.predEnergy = emax;
-        this._energySeeded = true;
-      }
-      const eregen = ek.energyRegenRate ?? 0.25;
-      const boosting = this.mirror.boostingShips?.has(this.mirror.localPlayerId) ?? false;
-      for (let s = 0; s < stepsThisFrame; s++) {
-        this.predEnergy = regenEnergyStep(this.predEnergy, emax, eregen);
-        if (boosting) this.predEnergy = spendEnergy(this.predEnergy, BOOST_TICK_COST);
-      }
-    }
+    predictFrameEnergy(this._predStepCtx, stepsThisFrame);
 
     // Sentinel input on zero-iteration cap-engaged RAFs (plan: spiral-fix,
     // Phase 2 step 3). When the cap stops the catch-up loop on its FIRST
@@ -4265,116 +2734,7 @@ export class ColyseusGameClient {
     // baseline)` — no ack regression, idempotent boolean re-apply).
     // Throttle replicates the in-loop idle-suppression to avoid spamming
     // the server with stale all-idle inputs.
-    if (
-      stepsThisFrame === 0
-      && capEngaged
-      && !this.localDead
-      && this.predWorld
-      && this.reconciler
-      && this.mirror.localPlayerId
-    ) {
-      let tcThrust2 = false, tcTurnLeft2 = false, tcTurnRight2 = false, tcFire2 = false;
-      if (this.touchInput) {
-        tcFire2 = this.touchInput.getFireHeld();
-        const v = this.touchInput.getJoystickVector();
-        // Render-jitter-fix Phase 1: same rule as the in-loop joystick
-        // read — hysteresis MUST track REAL-TIME predWorld angle, not
-        // the dead-reckoned mirror angle.
-        const predState = this.predWorld?.getShipState(this.mirror.localPlayerId) ?? null;
-        const localShip = this.mirror.ships.get(this.mirror.localPlayerId);
-        const realAngle = predState?.angle ?? localShip?.angle ?? null;
-        if (realAngle !== null) {
-          const next = joystickToInput(v, realAngle, this._joystickInputState);
-          this._joystickInputState = next;
-          tcTurnLeft2 = next.turnLeft;
-          tcTurnRight2 = next.turnRight;
-          tcThrust2 = next.thrust;
-        }
-      }
-      // Helm: the sentinel re-sends the last helm bits (no new tick to step).
-      const helm2 = this._helmOrder.active ? this._helmOut : null;
-      const db2 = this._disableBits;
-      db2.thrust = kb.thrust || tcThrust2 || (helm2?.thrust ?? false);
-      db2.turnLeft = kb.turnLeft || tcTurnLeft2 || (helm2?.turnLeft ?? false);
-      db2.turnRight = kb.turnRight || tcTurnRight2 || (helm2?.turnRight ?? false);
-      db2.boost = kb.boost || (this.touchInput?.getBoostHeld() ?? false) || aimInput.getBoostHeld();
-      db2.reverse = kb.reverse;
-      gateDisabledInput(this.isLocallyDisabled(), db2);
-      const thrust    = db2.thrust;
-      const turnLeft  = db2.turnLeft;
-      const turnRight = db2.turnRight;
-      // tcFire2 is sampled for parity with the in-loop block but the
-      // sentinel never spawns a fire — fire is per-tick and we're not
-      // advancing inputTick. Reading it (rather than dropping the var)
-      // keeps the touch state machine consistent with the in-loop path.
-      void tcFire2;
-      const boost     = db2.boost;
-      // Energy-gate boost identically to the per-tick path so the sentinel
-      // re-send carries the same value the server will apply (and that the
-      // per-tick path predicted) — keeps `lastSentInputState` consistent.
-      const boostApplied = boost && canAfford(this.predEnergy, BOOST_TICK_COST);
-      const reverse   = db2.reverse ?? false;
-      const tick = this.inputTick; // NOT incremented; sentinel rides at the last-sent tick
-      const nowMs = this.clock.now();
-      const last = this.lastSentInputState;
-      const wx = this.warpRequest?.x, wy = this.warpRequest?.y;
-      const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse && wx === undefined;
-      const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse && last.warpX === undefined;
-      const stateChanged = !last
-        || last.thrust !== thrust
-        || last.turnLeft !== turnLeft
-        || last.turnRight !== turnRight
-        || last.boost !== boostApplied
-        || last.reverse !== reverse
-        || last.warpX !== wx
-        || last.warpY !== wy;
-      const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
-      const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
-      if (!throttle) {
-        // Pooled send payload — reuses the same scratch as the per-tick
-        // path. cap-engaged sentinel fires at-most-once per RAF (60-120
-        // /sec) so the alloc rate here is lower than the per-tick path,
-        // but the pattern duplicates — keep the pool consistent.
-        if (wx !== undefined && wy !== undefined) {
-          const w = this._sendWarpInputScratch;
-          w.tick = tick; w.thrust = thrust; w.turnLeft = turnLeft; w.turnRight = turnRight;
-          w.boost = boostApplied; w.reverse = reverse; w.warpX = wx; w.warpY = wy;
-          this.room.send('input', w);
-        } else {
-        const sendArg = this._sendInputScratch;
-        sendArg.tick = tick;
-        sendArg.thrust = thrust;
-        sendArg.turnLeft = turnLeft;
-        sendArg.turnRight = turnRight;
-        sendArg.boost = boostApplied;
-        sendArg.reverse = reverse;
-        this.room.send('input', sendArg);
-        }
-        // lastSentInputState retains state across ticks — mutate in
-        // place to avoid aliasing the per-tick scratch.
-        const stored = this.lastSentInputState;
-        if (stored) {
-          stored.thrust = thrust;
-          stored.turnLeft = turnLeft;
-          stored.turnRight = turnRight;
-          stored.boost = boostApplied;
-          stored.reverse = reverse;
-          stored.warpX = wx;
-          stored.warpY = wy;
-        } else {
-          this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse, warpX: wx, warpY: wy };
-        }
-        this.lastSentInputAtMs = nowMs;
-        // Always log on sentinel send (no stateChanged / tick%60 gate) so
-        // `assertInputFlowMaintained` sees the per-RAF cadence during a
-        // sustained cap engagement — this is the explicit anti-regression
-        // for the 6e4d9c2 class. Gated by full-diag-mode at the callsite
-        // (Phase 5e — invariant #14); the assertion only runs under diag.
-        if (isFullDiagMode()) {
-          logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost: boostApplied, reverse });
-        }
-      }
-    }
+    sendCapSentinel(this._predStepCtx, this.room, kb, stepsThisFrame, capEngaged);
 
     // One ring-buffer entry per RAF — diagnostic + replay anchor data.
     // Plan: replay infra Phase A (2026-05-21) — UNSAMPLED. Was every 6th
@@ -4467,17 +2827,6 @@ export class ColyseusGameClient {
     this.fc.fcTickMountAngles(angles, catalogueMounts, ship.x, ship.y, ship.angle, dtSec);
   }
 
-  /** Compute (and cache in `mirror.liveBeams`) the local player's hitscan
-   *  beam state — one entry per mount in the firing slot. Multi-mount/turret
-   *  refactor (Phase 2c): replaces the pre-2c single `liveBeam` write. For
-   *  legacy single-mount ships the map has exactly one entry keyed by
-   *  `'forward'`; multi-mount kinds (interceptor / gunship, Phase 3) get one
-   *  entry per barrel so each renders independently.
-   *
-   *  Mount origin = `ship.pos + rotate(mount.local, ship.angle)`. Mount fire
-   *  direction = `ship.angle + mount.baseAngle + currentMountAngle` (4b.2
-   *  adds rotation; pre-4b.2 the current angle was always 0). The 20 u
-   *  barrel offset is applied along the mount's world fire direction. */
   /** The beam / hit-prediction ray world, pointed at the live predWorld and
    *  swarm mirror (both can be replaced across a sector handoff). */
   private displayHitscan(): DisplayPoseHitscan {
@@ -4488,156 +2837,20 @@ export class ColyseusGameClient {
     return h;
   }
 
-  private updateLiveBeam(): void {
-    const localId = this.mirror.localPlayerId;
-    if (!localId || !this.predWorld) return;
-    // Cast the visual beam from the SAME rendered (mirror) pose the
-    // renderer draws it from (PixiRenderer `applyMountOffset(ship.x/y/angle)`
-    // + `mirror.liveBeams[mount].dist`), NOT the raw predWorld pose. The
-    // predicted pose lags the mirror by the reconciler lerp offset (up to
-    // ~45 u during a correction), so casting `dist` from predWorld made it
-    // belong to a different ray than the one drawn — the far endpoint
-    // popped frame-to-frame (laser detach/jitter; on-device capture
-    // 2026-06-02T15-04-54Z-e628gi). Locked by
-    // ColyseusClient.liveBeamPose.test.ts.
-    const ship = this.mirror.ships.get(localId);
-    // The predWorld body is the collision world the ray is cast INTO; it
-    // must still exist, but its POSE is not used for the beam geometry.
-    if (!ship || !this.predWorld.getShipState(localId)) return;
-
-    const liveBeams = (this.mirror.liveBeams ??= new Map());
-    const mounts = this.localShipMounts();
-    if (mounts.length === 0) {
-      // Defensive: ship-kind has no mounts. Clear any stale beams.
-      liveBeams.clear();
-      return;
-    }
-
-    // ?nohitscan=1 — A/B switch to bypass the per-mount-per-frame Rapier
-    // ray cast against predWorld. Beam length defaults to full
-    // HITSCAN_RANGE (beams visually shoot through everything). The
-    // hitscan is suspected of being a non-trivial per-frame cost under
-    // heavy combat (35 drones × 1 cast against 40+ bodies). PURE
-    // VISUAL test; server-authoritative hit resolution is unaffected.
-    const skipHitscan = ColyseusGameClient.SKIP_HITSCAN_VISUAL_FLAG;
-
-    // Drop entries for mounts no longer present (e.g. ship-kind changed
-    // mid-life — currently impossible but cheap to guard).
-    // A capital group fires each turret only while it bears (`fcFireMounts`):
-    // a turret aimed away draws no beam (it once drew one to max range).
-    const bearingOnly = this.fc._fcPerMount && this.fc._fireSlotOverride !== null;
-    const mountIds = this._liveBeamMountIdsScratch;
-    mountIds.clear();
-    for (const m of mounts) if (!bearingOnly || this.fc._fcBearing.has(m.id)) mountIds.add(m.id);
-    for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
-
-    const mountAngles = ship.mountAngles;
-    for (let i = 0; i < mounts.length; i++) {
-      const mount = mounts[i]!;
-      if (!mountIds.has(mount.id)) continue;
-      const angleIdx = this.instanceMountIndex(ship.kind, ship.activatedMounts, mount.id);
-      const currentMountAngle = angleIdx >= 0 ? (mountAngles?.[angleIdx] ?? 0) : 0;
-      // The shared muzzle maths (beamStyles `mountMuzzleRay`), as the remote heavy beam's ray.
-      const r = mountMuzzleRay(ship.x, ship.y, ship.angle, mount, currentMountAngle, this.localMuzzle(mount), this._liveRayScratch);
-      const fromX = r.fromX, fromY = r.fromY, fwdX = r.fwdX, fwdY = r.fwdY;
-      // P3.13 / campaign 5.2 — the beam bands DERIVE from the catalogue def
-      // via the unit-locked `beamBands` seam (the SAME numbers the server
-      // damage falloff reads, so the visible taper == the damage band by
-      // construction). SOLID to optimal (== the aim guide), fading to nothing
-      // across optimal→max. Alloc-free: cached lookup + scalar helpers (#14).
-      const wdef = getWeapon(mount.weaponId);
-      const rangeMul = mountRangeFactor(mount.weaponId, mount.size); // a mining tool's sized beam, as the server ray
-      const optimalDist = beamOptimalDist(wdef, rangeMul);
-      const beamMax = beamMaxDist(wdef, rangeMul);
-      // Remote drones/scrap are tested at their DRAWN pose (the pose the
-      // turret aims at), not their predicted-timeline body.
-      const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId, beamHalfWidth(wdef));
-      // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
-      // 2026-06-03). When the beam stops on a body whose pose is within
-      // ε of world origin, log the hitId — its namespace prefix names the
-      // culprit class (`swarm-`/raw playerId or shipInstanceId). Gate is
-      // cached + webdriver-OFF, so production / E2E / netgate allocate
-      // nothing here; the object literal is only built on a rare actual
-      // origin-hit while the probe is on. Confirms the lingering-hull fix
-      // on-device (and would surface any OTHER origin-body path).
-      if (isGhostProbeEnabled() && hit) {
-        const hitPose = this.predWorld.getShipState(hit.hitId);
-        if (hitPose && Math.abs(hitPose.x) < 2 && Math.abs(hitPose.y) < 2) {
-          logEvent('beam_hit_origin', { hitId: hit.hitId, x: hitPose.x, y: hitPose.y });
-        }
-      }
-      // Clipped at a real hit ⇒ solid all the way to the target (solidDist===dist,
-      // no fade). No hit ⇒ draw to max with the solid part capped at the optimal
-      // range and a fade beyond it to nothing.
-      const drawDist = hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY, beamMax, beamHalfWidth(wdef)) : beamMax;
-      liveBeams.set(mount.id, {
-        dist: drawDist,
-        // No hit ⇒ the SOLID core is only VISUAL_BEAM_SOLID_FRAC of the optimal
-        // range so the beam fades over a long, gradual tail to nothing at maxRange
-        // (visual taper only — never affects damage). A hit stays solid to target.
-        solidDist: hit ? drawDist : beamNoHitSolidDist(optimalDist, drawDist),
-        hitId: hit?.hitId,
-      });
-    }
-  }
-
-  /**
-   * Snap the visible beam endpoint to the rendered SHIELD ring when the
-   * ray stops on a shield-up target (2026-06-03). The shield collider IS
-   * `targetRadius + SHIELD_RADIUS_PAD` — the same radius the cyan aura is
-   * drawn at — but the predWorld collider can lag the shield by one
-   * physics step right after a shield 0-cross or a drone's first
-   * in-interest tick (Rapier query-pipeline lag), so the raw
-   * `timeOfImpact` makes the endpoint pop slightly off the aura edge.
-   * Recomputing the distance to the shield sphere ANALYTICALLY guarantees
-   * the beam terminates exactly on the ring. Returns the predWorld dist
-   * unchanged for a shield-DOWN/hull hit, an asteroid, or a miss.
-   * A wide beam (`halfWidth`, the heavy beam) meets the ring grown by its half-width (#15).
-   * Allocation-free — `rayHitsSphere` is pure scalar (Invariant #14).
-   */
-  private shieldEdgeDist(
-    hit: { hitId: string; dist: number },
-    fromX: number, fromY: number, fwdX: number, fwdY: number,
-    maxRange: number = HITSCAN_RANGE, halfWidth = 0,
-  ): number {
-    return beamShieldEdgeDist(this.mirror, hit, fromX, fromY, fwdX, fwdY, maxRange, halfWidth);
-  }
-
-  /** Resolve the local player's currently-active slot's mount list. Returns
-   *  the first slot's mounts when no `slotId` is in play (today's only path;
-   *  multi-slot UI lands in a future phase). Empty array if the ship-kind
-   *  has no mounts/slots or the local player hasn't joined yet. */
-  /** Where the local ship's shot leaves a mount: the barrel tip of a turning
-   *  turret, else the shared clearance — the SAME function the server's
-   *  PlayerFireResolver uses (core/combat/muzzle.ts, invariant #15). */
-  private localMuzzle(mount: WeaponMount): number {
-    const kind = getShipKind(this.mirror.ships.get(this.mirror.localPlayerId ?? '')?.kind ?? null);
-    return shipShotMuzzle(kind, mount);
-  }
-
-  // Per-instance mount list cache (kind + activated-mounts identity), so the
-  // per-frame index lookup below never re-resolves or allocates (#14).
-  private _instMountsKind: string | null | undefined = undefined;
-  private _instMountsAct: unknown = undefined;
-  private _instMounts: ReadonlyArray<WeaponMount> = [];
-
-  /**
-   * Index of `mountId` in the ship's full per-instance mount list
-   * (`[...kind.mounts, ...activated]`) — the index space `mountAngles` is
-   * written in on both sides. The fire set is a SUBSET/REORDER of that list
-   * once a ship has several weapon groups, so reading `mountAngles[i]` by
-   * fire-set position aimed the wrong barrel (exp/fire-control P0).
-   */
-  private instanceMountIndex(kindId: string | null | undefined, activated: unknown, mountId: string): number {
-    if (kindId !== this._instMountsKind || activated !== this._instMountsAct) {
-      this._instMountsKind = kindId;
-      this._instMountsAct = activated;
-      this._instMounts = resolveInstanceMounts(getShipKind(kindId ?? null), activated as Parameters<typeof resolveInstanceMounts>[1]);
-    }
-    const list = this._instMounts;
-    for (let i = 0; i < list.length; i++) if (list[i]!.id === mountId) return i;
-    return -1;
-  }
+  // ── Local fire + live beam: `LocalFireClient` (one-line delegates) ────
+  private readonly _localFire = new LocalFireClient(((c: ColyseusGameClient): LocalFireHost => ({
+    get mirror() { return c.mirror; }, get predWorld() { return c.predWorld; }, get room() { return c.room; },
+    get reconciler() { return c.reconciler; }, get fc() { return c.fc; }, get ghostManager() { return c.ghostManager; },
+    get clock() { return c.clock; },
+    get predEnergy() { return c.predEnergy; }, set predEnergy(v) { c.predEnergy = v; },
+    get scheduledDamageSpawns() { return c._scheduledDamageSpawns; },
+    get damageFlashFrames() { return c._damageFlashFrames; }, get hitLedger() { return c._hitLedger; },
+    get skipHitscanVisual() { return ColyseusGameClient.SKIP_HITSCAN_VISUAL_FLAG; },
+    displayHitscan: (): DisplayPoseHitscan => c.displayHitscan(),
+  }))(this));
+  private updateLiveBeam(): void { this._localFire.updateLiveBeam(); }
+  private localShipMounts(): ReadonlyArray<WeaponMount> { return this._localFire.localShipMounts(); }
+  private sendFire(tick: number): void { this._localFire.sendFire(tick); }
 
   // ── Fire control: `FireControlClient` (one-line delegates) ────
   private readonly fc = new FireControlClient(this.mirror, {
@@ -4661,19 +2874,6 @@ export class ColyseusGameClient {
   guideLock(bearing: number): void { this.fc.guideLock(bearing); }
   releaseLockGuide(): void { this.fc.releaseLockGuide(); }
   lockSelected(): boolean { return this.fc.lockSelected(); }
-
-  private localShipMounts(): ReadonlyArray<WeaponMount> {
-    const localId = this.mirror.localPlayerId;
-    if (!localId) return [];
-    const ship = this.mirror.ships.get(localId);
-    const kindId = ship?.kind ?? null;
-    // Active-slot mounts (weapons/energy/AI overhaul §5.2) PLUS any WS-B3
-    // activated latent mounts (they always fire). The pilot selects the slot;
-    // the server fires each mount's bound weapon. Same shared resolver the
-    // server uses (resolveInstanceFireMounts) so client ghost geometry matches.
-    // Un-upgraded ⇒ exactly the active slot (byte-identical).
-    return resolveInstanceFireMounts(getShipKind(kindId), ship?.activatedMounts, this.fc._fireSlotOverride ?? useUIStore.getState().activeSlotId);
-  }
 
   /**
    * Test-only fire trigger. Sets `activeWeapon` in Zustand and calls
@@ -4774,66 +2974,7 @@ export class ColyseusGameClient {
 
   /** Phase 4 travel state: the sector-to-sector trip under way (the local
    *  ship's synthetic flight), or null. */
-  private _travel: {
-    x: number; y: number; dx: number; dy: number; angle: number; lastMs: number; startMs: number;
-    phase: 'out' | 'cruise' | 'in'; inStartMs: number; ax: number; ay: number; landed: boolean;
-  } | null = null;
-
-  /**
-   * One frame of the trip (Phase 4 travel state):
-   *  - OUT: accelerate along the heading (ease-in over TRAVEL_OUT_S); the old
-   *    sector stays live and falls behind (the room swap waits until then).
-   *  - CRUISE: warp speed through empty space while the destination loads.
-   *  - IN: once at least TRAVEL_MIN_S - TRAVEL_IN_S has passed and the
-   *    destination is loaded, the ship is placed on approach (TRAVEL_IN_S of
-   *    deceleration out from its arrival point, along its heading) and slows
-   *    into the arrival point, so the new sector comes into view as you fly
-   *    in. The placement jump is recorded (`mirror.travelJumpX/Y`) so the
-   *    renderer carries the sky across it. When the approach ends the trip is
-   *    done: the minimum-display gate opens and the ship arrives for everyone.
-   */
-  private stepTravel(t: NonNullable<typeof this._travel>, e: ShipRenderState, localId: string): void {
-    const now = this.clock.now();
-    const dt = Math.min(0.1, Math.max(0, (now - t.lastMs) / 1000));
-    t.lastMs = now;
-    const el = (now - t.startMs) / 1000;
-    if (t.phase !== 'in') {
-      const arrival = this.predWorld?.getShipState(localId);
-      if (el >= TRAVEL_MIN_S - TRAVEL_IN_S && arrival && useUIStore.getState().firstSnapshotApplied) {
-        // Approach: placed TRAVEL_IN_D out from the arrival point along the heading.
-        const sx = arrival.x - t.dx * TRAVEL_IN_D, sy = arrival.y - t.dy * TRAVEL_IN_D;
-        this.mirror.travelJumpX = (this.mirror.travelJumpX ?? 0) + (sx - t.x);
-        this.mirror.travelJumpY = (this.mirror.travelJumpY ?? 0) + (sy - t.y);
-        t.phase = 'in'; t.inStartMs = now; t.ax = arrival.x; t.ay = arrival.y;
-        t.x = sx; t.y = sy;
-      } else {
-        const ramp = Math.min(1, el / TRAVEL_OUT_S);
-        const v = WARP_SPEED * ramp * ramp;
-        t.x += t.dx * v * dt;
-        t.y += t.dy * v * dt;
-        if (ramp >= 1) t.phase = 'cruise';
-        e.vx = t.dx * v; e.vy = t.dy * v;
-      }
-    }
-    if (t.phase === 'in') {
-      // Brake, then glide onto the arrival point (travelApproach).
-      const tau = (now - t.inStartMs) / 1000;
-      const [d, v] = travelApproach(tau);
-      t.x = t.ax - t.dx * (TRAVEL_IN_D - d);
-      t.y = t.ay - t.dy * (TRAVEL_IN_D - d);
-      e.vx = t.dx * v; e.vy = t.dy * v;
-      if (tau >= TRAVEL_IN_S) {
-        t.landed = true;
-        if (!useUIStore.getState().joinMinimumElapsed) useUIStore.getState().setJoinMinimumElapsed(true);
-      }
-    }
-    this.mirror.travelDeep = t.phase === 'cruise';
-    e.x = t.x; e.y = t.y; e.angle = t.angle;
-    // On the run until the ship has landed (then WarpFx draws the drop, while
-    // the arrival handshake finishes).
-    const w = t.landed ? undefined : 2;
-    if (e.warp !== w) e.warp = w;
-  }
+  private _travel: TravelTrip | null = null;
 
   /** ms until the ship has flown out of the old sector (the room swap waits
    *  for this, so the old sector never vanishes in view). */
@@ -4972,356 +3113,7 @@ export class ColyseusGameClient {
     }
   }
 
-  private sendFire(tick: number): void {
-    const localId = this.mirror.localPlayerId;
-    if (!localId || !this.predWorld || !this.room) return;
-    const state = this.predWorld.getShipState(localId);
-    if (!state) return;
-    const activeSlotId = this.fc._fireSlotOverride ?? useUIStore.getState().activeSlotId;
-    const shotId = nextShotId();
-
-    // Multi-mount/turret refactor (Phase 3 fix-up): spawn one ghost per mount
-    // in the active slot, at each mount's world origin. Pre-fix the single
-    // ghost spawned at `state.x/y + 20 u forward` rendered a third visual
-    // between the two wing beams on the interceptor (and similarly between
-    // the gunship's fore/aft mounts) because the ghost sat at the ship
-    // centre rather than at the firing barrel. All N ghosts share one wire
-    // `clientShotId` (shotGroup) so the single `hit_ack` fades the whole
-    // salvo together.
-    const mounts = this.localShipMounts();
-    // Each barrel fires its catalogue-bound weapon (slots are homogeneous
-    // today, so the first mount's weapon sets the salvo's ghost sprite + the
-    // hitscan/projectile branch). Replaces the removed client weapon picker.
-    const slotWeapon = mounts[0]?.weaponId ?? 'hitscan';
-    const cosA = Math.cos(state.angle);
-    const sinA = Math.sin(state.angle);
-    const localShip = this.mirror.ships.get(localId);
-    const mountAngles = localShip?.mountAngles;
-    // weapon-hit-prediction Phase 2 — collect each mount's fire ray
-    // (identical geometry to the ghost spawn) so the predicted-hit
-    // resolver can aggregate the closest mount-hit, exactly as the server
-    // aggregates its hit_ack.
-    const mountGeom: MountFireGeom[] = [];
-    // beam-attach fix (capture 2026-05-19T10-55-36-274Z-pe6rdt): a LOCAL
-    // hitscan fire spawns NO ghost. The continuous liveBeam — recomputed
-    // from the ship's RENDERED pose (`mirror.ships`) every frame — is the
-    // sole local hitscan visual, so it is rigidly ship-attached and
-    // server lag/correction is invisible. A ghost frozen at this
-    // input-tick `predWorld` sample is the redundant layer that visibly
-    // detached from the ship under lag. Projectiles still ghost — the
-    // bolt actually travels. `mountGeom` is collected regardless (the
-    // predicted-hit resolver still needs every mount's ray).
-    // Naval shells are not predicted (no ghost, no instant hit): they reach
-    // the client as shell_salvo events and fly for tens of seconds.
-    const spawnGhost = localFireSpawnsGhost(getWeapon(slotWeapon).mode) && localFirePredicts(slotWeapon);
-    if (mounts.length === 0) {
-      // Defensive fallback: no mounts → (projectile only) spawn the
-      // legacy single ghost at ship centre. Should not happen for any
-      // shipped kind today.
-      const fwdX = -Math.sin(state.angle);
-      const fwdY = Math.cos(state.angle);
-      const clear = tuningFor(this.mirror.ships.get(localId)?.kind).muzzleClearance;
-      const fromX = state.x + fwdX * clear;
-      const fromY = state.y + fwdY * clear;
-      if (spawnGhost) {
-        this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, slotWeapon, state.vx, state.vy);
-      }
-      mountGeom.push({ fromX, fromY, fwdX, fwdY });
-    } else {
-      for (let i = 0; i < mounts.length; i++) {
-        const mount = mounts[i]!;
-        const mountWorldX = state.x + (mount.localX * cosA - mount.localY * sinA);
-        const mountWorldY = state.y + (mount.localX * sinA + mount.localY * cosA);
-        // Phase 4b.2: include the per-mount slewed angle in the fire
-        // direction so the ghost emerges in the same direction the
-        // visible barrel is aimed.
-        const localShip = this.mirror.ships.get(localId);
-        const angleIdx = this.instanceMountIndex(localShip?.kind, localShip?.activatedMounts, mount.id);
-        const currentMountAngle = angleIdx >= 0 ? (mountAngles?.[angleIdx] ?? 0) : 0;
-        const mountFireAngle = state.angle + mount.baseAngle + currentMountAngle;
-        // Fire control: the server fires only mounts that bear on their lock,
-        // so a mount that doesn't gets no predicted bolt (the "ghost bolts"
-        // from capital turrets still slewing). Same rule, shared (#15).
-        if (this.fc._fireSlotOverride !== null && !this.fc.fcMountBears(mount.id, mount.weaponId, mount.size, mountWorldX, mountWorldY, mountFireAngle)) continue;
-        const fwdX = -Math.sin(mountFireAngle);
-        const fwdY = Math.cos(mountFireAngle);
-        const muzzleD = this.localMuzzle(mount);
-        const fromX = mountWorldX + fwdX * muzzleD;
-        const fromY = mountWorldY + fwdY * muzzleD;
-        if (spawnGhost) {
-          this.ghostManager.spawn(
-            shotId,
-            localId,
-            fromX,
-            fromY,
-            fwdX,
-            fwdY,
-            mount.weaponId,
-            state.vx,
-            state.vy,
-            mount.id,
-          );
-        }
-        mountGeom.push({ fromX, fromY, fwdX, fwdY });
-      }
-    }
-
-    this.room.send('fire', {
-      type: 'fire',
-      tick,
-      clientShotId: shotId,
-      weapon: slotWeapon,
-      slotId: activeSlotId,
-      dirAngle: state.angle,
-    });
-
-    // Predict the slot's energy drain (weapons/energy/AI overhaul §3.2):
-    // drain ONCE per trigger (not per mount), matching the server. The
-    // snapshot reconcile hard-sets predEnergy each frame, so a small
-    // mispredict is invisible.
-    this.predEnergy = spendEnergy(
-      this.predEnergy,
-      resolveSlotEnergyCost(getShipKind(this.mirror.ships.get(localId)?.kind ?? null), activeSlotId),
-    );
-
-    // Stamp the wall-clock fire time into Zustand (`lastFireMs`) for the
-    // HUD's cooldown readouts.
-    // Low-cadence — at most every cooldown interval (167 ms hitscan to
-    // 3 s heat-seeker) — so the Zustand notification cost is bounded.
-    useUIStore.getState().setLastFireMs(this.clock.now());
-
-    // weapon-hit-prediction Phase 2 — predict the outcome against the pose
-    // the player SEES (predWorld.hitscan, the exact seam updateLiveBeam
-    // uses; NO client lag-comp ring) and show immediate tagged feedback.
-    // Presentation-only: the server stays 100% hit-authoritative. The
-    // prediction just TTL-expires until Phase 3 wires the single
-    // hit_ack/DamageEvent reconcile path. Mode/damage read off the
-    // catalogue def (no weapon-id branch). Projectile uses the same ray as
-    // a straight-flight proxy for the predicted target (decision #2: the
-    // bolt itself is untouched and reconciles via the eventual DamageEvent).
-    const weaponDef = getWeapon(slotWeapon);
-    const predMaxDist =
-      weaponDef.mode === 'hitscan'
-        ? HITSCAN_RANGE
-        : weaponDef.mode === 'projectile'
-          ? (weaponDef.speed * weaponDef.maxTicks) / 60
-          : (weaponDef.speed * weaponDef.lifetimeTicks) / 60;
-    // Smooth-beam visual splitting (2026-05-22). Hitscan: split the
-    // predicted damage into N small ticks spread across the cooldown
-    // window so the on-screen damage feels continuous; server stays at
-    // the original cadence so wire load is unchanged. Projectile keeps
-    // the single-spawn behaviour — its bolt is its own visual stream.
-    // Splits share one `clientShotId` so cancelByTag /
-    // reconcileDamageToFeedback wipe them together on misprediction.
-    const isHitscan = weaponDef.mode === 'hitscan';
-    const SMOOTH_BEAM_SPLITS = 5;
-    const splitIntervalMs = isHitscan
-      ? (weaponDef.cooldownTicks / 60) * 1000 / SMOOTH_BEAM_SPLITS
-      : 0;
-    const scheduledRef = this._scheduledDamageSpawns;
-    const clockNow = this.clock.now();
-    const predSink: PredictedFeedbackSink = {
-      pushDamageNumber: (targetId, x, y, damage, tag) => {
-        // Debris and rocks: never a number (the authoritative path skips them too).
-        if (isNoDamageNumberTarget(targetId, this.mirror.swarm)) return;
-        if (!isHitscan || damage <= 0) {
-          this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage, tag });
-          // Probe 4 (mobile-perf-investigation, 2026-05-24) — replaced the
-          // five-events-at-the-same-ts pattern with one event per shot
-          // (schedule) + one event per actual spawn (damage_number_spawned
-          // in the drain). `count: 1` here distinguishes the
-          // single-spawn projectile/no-damage path from the hitscan
-          // split path below.
-          logEvent('damage_number_scheduled', {
-            tag,
-            totalDamage: damage,
-            count: 1,
-            intervalMs: 0,
-            firstSpawnImmediate: true,
-          });
-          return;
-        }
-        // Hitscan: schedule N visual ticks. Floor-divide the damage,
-        // put the remainder on the last tick so the cumulative shown
-        // matches the authoritative damage exactly (reconcile/suppress
-        // can then match cleanly).
-        const base = Math.floor(damage / SMOOTH_BEAM_SPLITS);
-        const remainder = damage - base * SMOOTH_BEAM_SPLITS;
-        let actualCount = 0;
-        for (let i = 0; i < SMOOTH_BEAM_SPLITS; i++) {
-          const tickDamage = i === SMOOTH_BEAM_SPLITS - 1 ? base + remainder : base;
-          if (tickDamage <= 0) continue;
-          actualCount++;
-          if (i === 0) {
-            // First tick spawns immediately so the player feels the
-            // first hit without any latency.
-            this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage: tickDamage, tag });
-          } else {
-            scheduledRef.push({
-              atMs: clockNow + i * splitIntervalMs,
-              targetId,
-              x, y,
-              damage: tickDamage,
-              tag,
-            });
-          }
-        }
-        // Single per-shot event — the count vs actual `damage_number_spawned`
-        // count diff (with `cancelled` subtracted) reveals dropped spawns,
-        // which would explain the user-reported "damage applying
-        // inconsistently".
-        logEvent('damage_number_scheduled', {
-          tag,
-          totalDamage: damage,
-          count: actualCount,
-          intervalMs: parseFloat(splitIntervalMs.toFixed(2)),
-          firstSpawnImmediate: true,
-        });
-      },
-      flashTarget: (id) => {
-        this._damageFlashFrames.set(id, 6);
-      },
-    };
-    if (localFirePredicts(slotWeapon)) {
-    predictShotOutcome({
-      ledger: this._hitLedger,
-      sink: predSink,
-      world: this.displayHitscan(),
-      clientShotId: shotId,
-      mode: weaponDef.mode, halfWidth: beamHalfWidth(weaponDef),
-      damage: weaponDef.damage,
-      mounts: mountGeom,
-      maxDist: predMaxDist,
-      excludeId: localId,
-      nowMs: this.clock.now(),
-    });
-    }
-    // Diagnostic — captures the three reference points needed to debug
-    // "lasers firing from the wrong place". `spawnPos` is the legacy
-    // ship-centre+20-u-forward reference (NOT per-mount post-Phase-3, so
-    // the diagnostic stays comparable across single-mount and multi-mount
-    // ships); per-mount geometry is reconstructable from `predState` + the
-    // ship-kind catalogue if a capture needs it. The visible ship is
-    // rendered from `mirror.ships[localId]` which DOES include the
-    // reconciler's lerp offset, so `predState` vs `mirrorPose` shows the
-    // current divergence. The server's lag-comp validates the shot against
-    // the SnapshotRing pose at `tick`, captured in `fire_received`.
-    const mirrorPose = this.mirror.ships.get(localId);
-    const lerpOff = this.reconciler?.lerpOffset;
-    const lerpAng = this.reconciler?.lerpAngleOffset ?? 0;
-    const legacyFwdX = -Math.sin(state.angle);
-    const legacyFwdY = Math.cos(state.angle);
-    logEvent('fire', {
-      tick,
-      shotId,
-      weapon: slotWeapon,
-      mountCount: mounts.length,
-      predState: {
-        x: parseFloat(state.x.toFixed(3)),
-        y: parseFloat(state.y.toFixed(3)),
-        angle: parseFloat(state.angle.toFixed(4)),
-      },
-      mirrorPose: mirrorPose ? {
-        x: parseFloat(mirrorPose.x.toFixed(3)),
-        y: parseFloat(mirrorPose.y.toFixed(3)),
-        angle: parseFloat(mirrorPose.angle.toFixed(4)),
-      } : null,
-      lerpOffset: lerpOff ? {
-        x: parseFloat(lerpOff.x.toFixed(3)),
-        y: parseFloat(lerpOff.y.toFixed(3)),
-        angle: parseFloat(lerpAng.toFixed(4)),
-      } : null,
-      spawnPos: {
-        x: parseFloat((state.x + legacyFwdX * 20).toFixed(3)),
-        y: parseFloat((state.y + legacyFwdY * 20).toFixed(3)),
-      },
-      lerping: this.reconciler?.isLerping ?? false,
-    });
-  }
-
   get cutFieldStats(): CutFieldSummary { return this._cutField.summary(); } // cut-field-collision.spec.ts waits on it
 
-  dispose(): void {
-    this._cutField.stop();
-    // Game time scale: the next session starts at 1× until its snapshots say otherwise.
-    useUIStore.getState().setTimeScale(1);
-    this.disposed = true;
-    this.localDead = false;
-    this.diedAtMs = 0;
-    useUIStore.getState().setDead(false);
-    // Phase 4 WS-A1 — a fresh GameSurface mount (new join / respawn-via-galaxy)
-    // builds a new client; reset the spectator flag so the next session starts
-    // piloting. (Spectator is client-local and never crosses a room boundary.)
-    useUIStore.getState().setPilotMode('pilot');
-    this.keyboard = null;
-    this.touchInput = null;
-    // Phase 4 swift-otter — close the DC transport BEFORE the room leave
-    // so the PeerConnection's signaling channel is shut down before the
-    // WS closes. In React 18 StrictMode dev mode the useEffect cleanup
-    // → re-mount cycle was creating two ColyseusClients per page load,
-    // each with its own DataChannelTransport / PeerConnection. The
-    // first instance's PC stayed open (the original dispose() didn't
-    // touch it) and continued receiving the brief window of snapshots
-    // that landed between its DC opening and the WS-level room.leave()
-    // taking effect on the server — those snapshots logged with via=dc
-    // alongside the second instance's, and any tick races between the
-    // two receivers' `_lastSeenServerTick` produced `snap_dropped_old`
-    // events the test surfaced as the integration bug.
-    if (this._dataChannelTransport) {
-      this._dataChannelTransport.close('client-dispose');
-      this._dataChannelTransport = null;
-    }
-    this.room?.leave();
-    this.room = null;
-
-    // Plan: crispy-kazoo, Commit 6 — subsystem disposes.
-    // The pre-Commit-6 dispose covered ~14 fields and missed 20+
-    // surfaces, which is the proximate cascade-trigger root cause: a
-    // stale ColyseusGameClient retained via uncleared subscriptions /
-    // timers / Maps. Each subsystem's dispose is idempotent.
-    this.snapshotCoalescer.dispose();
-    this.transitInstr.dispose();
-    this.rafStallDetector.dispose();
-    this.hudDispatcher.dispose();
-    this.ghostManager.dispose();
-    this._aiController.clear();
-
-    this.predWorld?.dispose();
-    this.predWorld = null;
-    this.reconciler = null;
-    this.remoteHistory.clear();
-    this.predRemoteShipIds.clear();
-    this._remoteShipOffsets.clear();
-    this.predSwarmKeys.clear();
-    this._movingSwarmKeys.clear();
-
-    // Maps + sets on the client itself (combat surfaces).
-    this._damageFlashFrames.clear();
-    this._scheduledDamageSpawns.length = 0;
-
-    // Reflection-based clear: every Map / Set / Array on `mirror` empties.
-    clearMirror(this.mirror); // ./clearMirror.ts
-
-    // Stats + per-connection accumulators — reset to freshly-constructed
-    // (non-nullable types) so a re-mount sees a clean baseline.
-    this._rttWelford = createWelford();
-    this._lookaheadCtrl = createLookaheadController(6);
-    this._dropDetector = createDropDetector();
-    this._anchorInitialised = false;
-    this._anchorFreshAtMs = -Infinity;
-    this._stallHoldSinceMs = -1;
-    this._localPoseResolvedLogged = false;
-    this.lastSentInputAtMs = 0;
-    this.lastSentInputState = null;
-
-    // Audio reference released — GameSurface owns the lifecycle.
-    this.audio = null;
-
-    ColyseusGameClient._liveInstanceN = Math.max(0, ColyseusGameClient._liveInstanceN - 1);
-    logEvent('dispose_complete', {
-      liveInstanceN: ColyseusGameClient._liveInstanceN,
-      mirrorShipsRemaining: this.mirror.ships.size,
-      mirrorSwarmRemaining: this.mirror.swarm?.size ?? 0,
-    });
-  }
+  dispose(): void { disposeClient(this._predResetCtx); }
 }

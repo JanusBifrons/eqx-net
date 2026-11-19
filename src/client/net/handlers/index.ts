@@ -4,6 +4,7 @@
  * ctx to `ClientHandlerCtx` and one call below.
  */
 import type { Room } from 'colyseus.js';
+import { registerCollisionHandlers, type CollisionHandlerCtx } from './collisionHandlers.js';
 import { registerCombatHandlers, type CombatHandlerCtx } from './combatHandlers.js';
 import { registerDiagnosticHandlers } from './diagnosticHandlers.js';
 import { registerFieldHandlers, type FieldHandlerCtx } from './fieldHandlers.js';
@@ -17,9 +18,11 @@ import { registerStructurePanelHandlers, type StructurePanelHandlerCtx } from '.
 import { registerToastHandlers, type ToastHandlerCtx } from './toastHandlers.js';
 import { registerTransitHandlers, type TransitHandlerCtx } from './transitHandlers.js';
 import { registerWaveHandlers, type WaveHandlerCtx } from './waveHandlers.js';
+import { registerWelcomeHandlers, type WelcomeHandlerCtx } from './welcomeHandlers.js';
 import { registerWebrtcSignallingHandlers, type WebrtcSignallingHandlerCtx } from '../dataChannelTransport.js';
 
-export type ClientHandlerCtx = CombatHandlerCtx &
+export type ClientHandlerCtx = CollisionHandlerCtx &
+  CombatHandlerCtx &
   FieldHandlerCtx &
   GridPulseHandlerCtx &
   HelmHandlerCtx &
@@ -31,9 +34,11 @@ export type ClientHandlerCtx = CombatHandlerCtx &
   ToastHandlerCtx &
   TransitHandlerCtx &
   WaveHandlerCtx &
-  WebrtcSignallingHandlerCtx;
+  WebrtcSignallingHandlerCtx &
+  WelcomeHandlerCtx;
 
 export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void {
+  registerWelcomeHandlers(room, ctx);
   registerShipStatusHandlers(room, ctx);
   registerMissileHandlers(room, ctx);
   registerImpactFxHandlers(room, ctx);
@@ -47,5 +52,6 @@ export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void 
   registerGridPulseHandlers(room, ctx);
   registerDiagnosticHandlers(room);
   registerWebrtcSignallingHandlers(room, ctx);
+  registerCollisionHandlers(room, ctx);
   registerHelmHandlers(room, ctx);
 }
