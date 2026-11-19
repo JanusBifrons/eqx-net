@@ -77,6 +77,31 @@ describe('socket nub positions', () => {
     }
   });
 
+  it('connector hub: six nubs, one on each face of its flat-top hex (the socket points)', () => {
+    const list = structureSockets('connector');
+    expect(list.length).toBe(6);
+    // Flat-top hex: one face straight up, one straight down; normals 60° apart,
+    // every socket the same distance (the apothem) out from the centre.
+    const angles = list.map((s) => Math.round((Math.atan2(s.ny, s.nx) * 180) / Math.PI + 360) % 360).sort((a, b) => a - b);
+    expect(angles).toEqual([30, 90, 150, 210, 270, 330]);
+    const r0 = Math.hypot(list[0]!.x, list[0]!.y);
+    for (const s of list) {
+      expect(Math.hypot(s.x, s.y)).toBeCloseTo(r0, 6);
+      expect(s.x / r0).toBeCloseTo(s.nx, 6); // face midpoint lies on its own normal
+      expect(s.y / r0).toBeCloseTo(s.ny, 6);
+    }
+    const { g, segs } = recorder();
+    drawSocketNubs(g, 'connector', 0);
+    const loc: MutStructureSocket = { x: 0, y: 0, nx: 0, ny: 0 };
+    // Each nub's plate outline is the first stroke of its nub: one per socket.
+    const plates = segs.filter((q) => list.some((s) => {
+      socketNubLocal(s, loc);
+      return Math.abs(q.x0 - (loc.x - loc.nx * NUB_IN)) < 1e-9 && Math.abs(q.y0 - (loc.y - loc.ny * NUB_IN)) < 1e-9
+        && Math.abs(q.x1 - (loc.x + loc.nx * NUB_OUT)) < 1e-9 && Math.abs(q.y1 - (loc.y + loc.ny * NUB_OUT)) < 1e-9;
+    }));
+    expect(plates.length).toBe(6);
+  });
+
   it('shield gate / airlock (post sockets) get no nub', () => {
     for (const kind of ['shield_gate', 'shield_airlock']) {
       const { g, segs } = recorder();

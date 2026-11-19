@@ -10,7 +10,7 @@ import { DEFAULT_STRUCT_STYLE, readStructStyle } from '../art/artMode.js';
 import { forgeStructure, MAT, type Fields } from '../art/fields.js';
 import { structHandleFor, type ShipArtCtx } from '../art/shipArtSprites.js';
 import type { ArtHandle, ArtService } from '../art/ArtService.js';
-import { STRUCTURE_KINDS_LIST } from '../../../shared-types/structureKinds.js';
+import { STRUCTURE_KINDS_LIST, structureSockets } from '../../../shared-types/structureKinds.js';
 import { STYLE_C_FAMILIES } from './structureStyleC.js';
 
 /** The kinds style C draws, read from its family files (`structureStyleC.<family>.ts`). */
@@ -151,6 +151,23 @@ describe('style C (shipyard brutalist, 1f)', () => {
     }
     const cap = buildStructureVisual('capital', { accent: 0, style: 'c', livery: true }).sigils!;
     expect(cap.find((s) => s.screen === true)).toMatchObject({ x: 0, y: 0 });
+  });
+  it('connector hub: a hex core with one strut out to each of its six sockets', () => {
+    const v = buildStructureVisual('connector', { accent: 0x66ccaa, style: 'c' });
+    const socks = structureSockets('connector');
+    expect(socks.length).toBe(6);
+    // Struts: the 4-point strips whose centre line runs out along a socket
+    // normal (Pixi frame: y flipped), one per socket.
+    const struts = v.polys!.filter((p) => p.pts.length === 4 && p.mat === 'metal');
+    const along = socks.map((s) => struts.filter((p) => {
+      const mx = p.pts.reduce((a, q) => a + q[0], 0) / 4, my = p.pts.reduce((a, q) => a + q[1], 0) / 4;
+      const r = Math.hypot(mx, my);
+      return r > 15 && r < 27 && Math.abs(mx / r - s.nx) < 1e-6 && Math.abs(my / r + s.ny) < 1e-6;
+    }).length);
+    expect(along).toEqual([1, 1, 1, 1, 1, 1]);
+    // The body is the flat-top hex outline (its deck is the outline itself).
+    expect(v.polys![0]!.pts).toEqual(outlinePx('connector', 'c'));
+    expect(v.polys![0]!.pts.length).toBe(6);
   });
   it('forge: bakes differently from today and from style A', () => {
     for (const id of C_KINDS) {

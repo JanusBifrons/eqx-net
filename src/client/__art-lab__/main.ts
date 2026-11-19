@@ -27,7 +27,7 @@ import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, type Cam, typ
 import { readRigsFlag } from '../render/pixi/structureRigs.js';
 import { DOCK_BAY_CX, DOCK_BAY_CY } from '../../core/articulation/rigCatalogue.js';
 import { hash01 } from '../render/art/fields.js';
-import { readStructLivery } from '../render/art/artMode.js';
+import { readStructLivery, readStructStyle } from '../render/art/artMode.js';
 import { ownerLivery } from '../render/art/shipArtSprites.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
 import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipShader.js';
@@ -52,9 +52,11 @@ const litScene = new LitScene();
 /** A capital is this many times taller than its baked relief (towering hulls). */
 const CAPITAL_HEIGHT_FRAC = 0.12;
 const SCENE = ((SCENE_IDS as readonly string[]).includes(qs.get('scene') ?? '') ? qs.get('scene') : 'ships') as SceneId;
-/** Structure style direction (restyle §4), `?restyle=current` (only arm so far).
+/** Structure style direction (restyle §4), `?restyle=`: on a Machined arm the
+ *  game's own default (`readStructStyle`: absent = the player style), so a
+ *  lab still shows what a player sees; `?restyle=off` / `current` = today's art.
  *  Not `?style=`: that already picks the lab's render arm (current/machined/…). */
-const RESTYLE = parseStructStyle(qs.get('restyle'));
+const RESTYLE = parseStructStyle(MACHINED ? readStructStyle(location.search) : qs.get('restyle'));
 /** `?structLivery=1`: structures wear an owner's livery (the game's
  *  `ownerLivery`, for a stand-in owner), as in game. */
 const STRUCT_LIVERY = readStructLivery(location.search) ? ownerLivery('art-lab-owner') : undefined;
