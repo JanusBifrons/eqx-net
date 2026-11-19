@@ -135,7 +135,11 @@ hostile duplicate review:
 - Phone cost: the preview runs `canConnect` every frame, so use facing filter, fixed nearest-first
   order, first pass wins, ~12 segments, no allocation (scratch out-param), plus a count bench. Cache
   flattened polylines per edge on the static layer; a `perf:scenes` A/B for the flow layer.
-- Slices: (1) `structureSockets`; (2) GridNode kind+rotation + ghost angle; (3) curve flatten +
+- **Owner answers (2026-11-19):** connectors only. Shipyard, deep core rig, ore processing complex
+  and assembly plant stop taking direct links and join through a connector like everything else
+  (slice 0: the hub rule in `canConnect`). Fence links (pylon/gate/airlock posts) stay straight post
+  to post, along the wall.
+- Slices: (0) connectors-only hub rule; (1) `structureSockets`; (2) GridNode kind+rotation + ghost angle; (3) curve flatten +
   polyline blocking + bench; (4) `canConnect` picks the pair; (5) store on `Connection`, growBuilder,
   version bump; (6) wire `connSock`; (7) preview; (8) static curve + cable look by arc length;
   (9) flow comet + socket flash + perf A/B; (10) socket nubs + per-family inner-channel hook.
