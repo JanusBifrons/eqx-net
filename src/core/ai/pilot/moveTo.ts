@@ -14,7 +14,7 @@
  */
 import type { ShipKind } from '../../../shared-types/shipKinds.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
-import { navComfort } from '../../../shared-types/shipScale/navTuning.js';
+import { navHull } from '../../../shared-types/shipScale/navTuning.js';
 import type { AiEntity, AiWorldView, IAiNavRoutes, IAiNeighbourQuery } from '../../contracts/IAiBehaviour.js';
 import { CALM_CRUISE_FRAC, LEADER_CRUISE_THROTTLE, MOVE_ARRIVE_SLOW_RADIUS } from '../hostileDroneTuning.js';
 import type { HullAvoid } from '../hullAvoid.js';
@@ -66,8 +66,8 @@ export class MoveToHelm {
     // Round rock: fly the route's next waypoint, braking for what lies ahead on it.
     // A capital plans with its nose and turning radius: no U-turn where it has no room (slice 11).
     const cap = this.kind.sizeClass === 'capital';
-    if (nav !== null && nav.waypoint(self.id, self.x, self.y, tx, ty, t.navClearance, t.wingmanArrive, false,
-      cap ? self.angle : NaN, cap ? pilotTurnRadius(h) : 0, navComfort(this.kind))) {
+    if (nav !== null && nav.waypoint(self.id, self.x, self.y, tx, ty, navHull(this.kind), t.wingmanArrive, false,
+      cap ? self.angle : NaN, cap ? pilotTurnRadius(h) : 0)) {
       const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this.steerScratch), v = Math.min(cruiseCap >= 0 ? cruiseCap : this.handling.cruiseSpeed * CALM_CRUISE_FRAC, brakingSpeed(this.handling, nav.ahead));
       this.out(facingOf(w.dirX, w.dirY), w.dirX * v, w.dirY * v, boostOk);
       return false;

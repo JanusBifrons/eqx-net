@@ -3230,3 +3230,13 @@ to the corner. Far off, that bearing points almost straight down the route, so a
 shallow: the brake distance jumped to 450-700 u and a fighter entered a 75° turn at ~260 u/s, running
 ~32 u off its line into rock. Use the angle between the incoming and outgoing legs, and cap the carried
 speed by how far the ship may swing sideways (`NAV_TURN_SWING`).
+
+## 2026-11-19 — a long hull planned as a disc of its length never fits a lane
+
+The route planner kept a battleship's centre a full hull length (3 595 u) from rock everywhere. Lanes are
+laid out only ~560 u wider than that, so any bend in the wall shut them and capitals went round the
+outside. A long hull needs its beam on a straight and its length only where it turns (`navHull`,
+`navTurnRoom`). Once lanes opened, the heading graph let a wide-turning hull stack four 45° steps into a
+U-turn inside a lane; the fix is a just-turned bit (go straight a cell after each turn when the turning
+radius is wider than a cell), and the string-pull must not skip a doubling-back point or it hides where
+the turn really happens.

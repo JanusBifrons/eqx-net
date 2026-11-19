@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CoarseFieldMap, COARSE_NAV_CELL, HeadingCoarseGraph, NAV_LANE_ENTRY_COST, NAV_TURN_STEP_COST } from './coarseField.js';
+import { CoarseFieldMap, COARSE_NAV_CELL, HEADING_NODES_PER_CELL, HeadingCoarseGraph, NAV_LANE_ENTRY_COST, NAV_TURN_STEP_COST } from './coarseField.js';
 import { GraphSearch, type SearchGoal } from './search.js';
 import { SLICED, slicedFieldLanes, cutFieldPad, type ChunkOpts } from '../terrain/fieldLayout.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -110,15 +110,15 @@ describe('HeadingCoarseGraph (navigation slice 11, capital commitment)', () => {
   // Steps: k 0 +x, 1 −x, 2 +y, 3 −y; arrival code (node & 7) 0 = +x, 4 = −x, 2 = +y.
   it('in a lane cell only steps within 45° of the way in are open; open space turns freely', () => {
     const g = grid([4]);
-    const inLaneGoingX = 4 * 8 + 0;
-    expect(g.edgeTo(inLaneGoingX, 0)).toBe(5 * 8 + 0); // on forward
-    expect(g.edgeTo(inLaneGoingX, 4)).toBe(8 * 8); // +x+y: 45°, into open space (one node)
+    const inLaneGoingX = 4 * HEADING_NODES_PER_CELL + 0;
+    expect(g.edgeTo(inLaneGoingX, 0)).toBe(5 * HEADING_NODES_PER_CELL + 0); // on forward
+    expect(g.edgeTo(inLaneGoingX, 4)).toBe(8 * HEADING_NODES_PER_CELL); // +x+y: 45°, into open space (one node)
     expect(g.edgeTo(inLaneGoingX, 1)).toBe(inLaneGoingX); // U-turn: closed
     expect(g.edgeTo(inLaneGoingX, 2)).toBe(inLaneGoingX); // 90°: closed
-    const open = 0 * 8;
-    expect(g.edgeTo(open, 2)).toBe(3 * 8); // 90° in open space: allowed, and open cells are one node
-    expect(g.edgeTo(open, 4)).toBe(4 * 8 + 1); // into the lane: arrives pointing +x+y
-    expect(g.startNode(4, -Math.PI / 2)).toBe(4 * 8 + 0); // in the lane: the nose counts
+    const open = 0 * HEADING_NODES_PER_CELL;
+    expect(g.edgeTo(open, 2)).toBe(3 * HEADING_NODES_PER_CELL); // 90° in open space: allowed, and open cells are one node
+    expect(g.edgeTo(open, 4)).toBe(4 * HEADING_NODES_PER_CELL + 1); // into the lane: arrives pointing +x+y
+    expect(g.startNode(4, -Math.PI / 2)).toBe(4 * HEADING_NODES_PER_CELL + 0); // in the lane: the nose counts
     expect(g.startNode(0, 2)).toBe(0); // in open space it doesn't
   });
 
@@ -126,9 +126,25 @@ describe('HeadingCoarseGraph (navigation slice 11, capital commitment)', () => {
     const g = grid([4]);
     const r = 50;
     expect(g.edgeCost(0, 2)).toBeCloseTo(1000, 3); // open space: turning is free
-    expect(g.edgeCost(3 * 8, 0)).toBeCloseTo(1000 + NAV_LANE_ENTRY_COST * r, 3); // into the lane
-    expect(g.edgeCost(4 * 8 + 0, 0)).toBeCloseTo(1000, 3); // straight out of it
-    expect(g.edgeCost(4 * 8 + 0, 4)).toBeCloseTo(1000 * Math.SQRT2 + NAV_TURN_STEP_COST * r, 3); // 45° out of it
+    expect(g.edgeCost(3 * HEADING_NODES_PER_CELL, 0)).toBeCloseTo(1000 + NAV_LANE_ENTRY_COST * r, 3); // into the lane
+    expect(g.edgeCost(4 * HEADING_NODES_PER_CELL + 0, 0)).toBeCloseTo(1000, 3); // straight out of it
+    expect(g.edgeCost(4 * HEADING_NODES_PER_CELL + 0, 4)).toBeCloseTo(1000 * Math.SQRT2 + NAV_TURN_STEP_COST * r, 3); // 45° out of it
+  });
+
+  it('a hull turning wider than a cell goes straight a step after each turn in a lane (no U-turn from bunched 45° steps)', () => {
+    const N = HEADING_NODES_PER_CELL, all = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    const g = grid(all);
+    g.turnRadius = 3000; // wider than a 2048 u map cell; room 30 < 20 + 3000: every cell is tight
+    const turned = g.edgeTo(0 * N + 1, 0); // in cell 0 going +x+y, 45° onto +x
+    expect(turned >> 4).toBe(1);
+    expect(turned & 7).toBe(0);
+    expect(g.edgeTo(turned, 4)).toBe(turned); // 45° again at once: closed
+    const straight = g.edgeTo(turned, 0); // straight on: allowed, and the next turn is open again
+    expect(straight).toBe(2 * N + 0);
+    // A hull that turns tighter than a cell may turn at every step (slice 11 as it was).
+    const narrow = grid(all);
+    const t = narrow.edgeTo(0 * N + 1, 0);
+    expect(narrow.edgeTo(t, 4)).toBe(5 * N + 1);
   });
 
   it('stepOf maps a ship angle to its compass step (0 faces +y)', () => {
