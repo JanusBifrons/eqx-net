@@ -2669,7 +2669,7 @@ export class ColyseusGameClient {
 
     // Predict the energy pool for the frame (weapons/energy/AI overhaul
     // §3.2): regen every stepped tick + drain a boost tick while boosting,
-    // mirroring the server's tickEnergy. Fire drain happens in sendFire. The
+    // mirroring the server's tickShipEnergy. Fire drain happens in sendFire. The
     // snapshot reconcile hard-sets the value, so this only smooths the bar
     // between snapshots. Scalar core helpers ⇒ no allocation.
     predictFrameEnergy(this._predStepCtx, stepsThisFrame);

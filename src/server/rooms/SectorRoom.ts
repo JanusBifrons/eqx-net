@@ -52,7 +52,7 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { isFriendly } from '../../shared-types/allegiances.js';
-import { effectiveShipMaxHealth, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
+import { effectiveShipMaxHealth, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
@@ -70,7 +70,7 @@ import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
-import { StructurePlacementSubsystem, type PackedGateResult } from '../structures/StructurePlacementSubsystem.js';
+import { StructurePlacementSubsystem, packedGateForBuild, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
@@ -171,7 +171,7 @@ import { WebRtcChannelManager, type WebRtcEntryCounters } from '../transport/web
 import { nodeDataChannelPeerConnectionFactory } from '../transport/webrtcChannelFactory.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { EntitySyncRouter } from './EntitySyncRouter.js';
-import { isLingeringHull, isPilotedActive } from '../../core/entity/shipLiveness.js';
+import { isLingeringHull } from '../../core/entity/shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { BattleWreckSaves, battleWreckStore, WRECK_LINEAGE_FLUSH_MS } from './wreckLineageSaves.js';
@@ -265,7 +265,7 @@ import { dropTestPodRow } from '../cargo/cargoWindow.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid } from '../cargo/StorageService.js';
-import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked } from '../../core/cargo/hold.js';
+import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount } from '../../core/cargo/hold.js';
 import { liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
@@ -304,7 +304,7 @@ import {
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import { getWeapon, weaponLayerMul, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
-import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
+import { tickShipEnergy, type ShipEnergyTickHost } from './shipEnergyTick.js';
 import { shipBodyMass, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import { createRoomShellHub, type ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
@@ -919,6 +919,8 @@ export class SectorRoom extends Room<SectorState> {
    *  and its flame reaches the snapshot via the broadcaster's slot-FLAGS read
    *  (RTS Part A S2). */
   private readonly boostingPlayers = new Set<string>();
+  /** Built once (no per-tick allocation, #14); `ships()` reads the live state. */
+  private readonly energyTickHost: ShipEnergyTickHost = { ships: () => this.state.ships, boostingPlayers: this.boostingPlayers, getActiveShip: (pid) => this.getActiveShip(pid) };
   /** PlayerIds currently holding thrust (regardless of boost). Surfaced on
    *  every snapshot so observers can see a baseline thrust flame whenever
    *  a ship is accelerating. No longer a strict superset of `boostingPlayers`
@@ -2411,6 +2413,10 @@ export class SectorRoom extends Room<SectorState> {
     // clamp / id). A placed structure rides the existing kind=2 swarm path, so
     // it broadcasts + takes damage for free; the only structure-specific seam
     // is `swarmHealth` (presence = damageable) + the StructureRegistry record.
+    const packedGateHost: PackedGateHost = {
+      storage: () => this.storage, holdStore: () => getHoldStore(), sectorKey: () => this.sectorKey,
+      findPacked: (owner, product) => this.findPacked(owner, product),
+    };
     this.structurePlacement = new StructurePlacementSubsystem({
       spawnStructure: (s) => this.swarmSpawner.spawnStructure(s),
       seedHealth: (id, hp) => {
@@ -2445,7 +2451,7 @@ export class SectorRoom extends Room<SectorState> {
       // PACKED item (now buyable from traders, and lootable). Consumed only
       // after the structure registers; its build then costs only time.
       sectorKey: () => this.sectorKey,
-      packedGateForBuild: (owner, kindId) => this.packedGateForBuild(owner, kindId),
+      packedGateForBuild: (owner, kindId) => packedGateForBuild(packedGateHost, owner, kindId),
       placementRefusal: (owner, kindId) => territoryLockRefusal(owner, kindId, this.sectorKey ?? '', liveSectorHolder(this.sectorKey ?? ''), this.structureRegistry.all()),
     });
 
@@ -3627,40 +3633,6 @@ export class SectorRoom extends Room<SectorState> {
 
   private tickShieldRegen(): void {
     this.shieldHullRouter.tickShieldRegen();
-  }
-
-  /**
-   * Energy authority (weapons/energy/AI overhaul §3.1). The single owner of
-   * the energy pool lives on the main thread, alongside shield regen + the
-   * fire-path drain. Each tick: regen every active ship's pool (no
-   * post-spend delay — the bar always feels alive), then drain one boost
-   * tick for every player currently boosting (`boostingPlayers` = boost held,
-   * regardless of thrust). The boost bit was stripped in the input handler
-   * when the pool couldn't afford a tick, so this drain can't drive it
-   * negative; `spendEnergy` clamps at 0 anyway. Scalar core helpers ⇒ zero
-   * per-tick allocation (Invariant #14).
-   */
-  private tickEnergy(): void {
-    for (const [, ship] of this.state.ships) {
-      // Covers ACTIVE hulls only (invariant #17) — semantics unchanged,
-      // now via the named shared predicate.
-      if (!isPilotedActive(ship)) continue;
-      const kind = getShipKind(ship.kind);
-      // Effective energy cap = kind base × per-instance energy upgrade (review
-      // must-fix #1) so an energy-upgraded ship regenerates to its larger pool.
-      const energyMax = effectiveShipEnergyMax(kind.energyMax ?? 100, ship.statAlloc);
-      ship.energy = regenEnergyStep(ship.energy, energyMax, kind.energyRegenRate ?? 0.25);
-    }
-    // Keys: a pilot's playerId (ACTIVE ship, #17).
-    for (const id of this.boostingPlayers) {
-      const ship = this.getActiveShip(id);
-      if (!ship) continue;
-      ship.energy = spendEnergy(ship.energy, BOOST_TICK_COST);
-    }
-    // An AI-flown LINGERING hull's pool (boost AND guns) is regenerated and
-    // its boost paid ONCE per tick by its AI pilot brain (RTS Part B: the
-    // brain owns the pool, `HostileDroneBehaviour.tick`), never here too. A
-    // brainless parked hull (wingmen off) idles.
   }
 
   /** The one damage choke point. (hitX, hitY) is where the shot landed,
@@ -5217,32 +5189,6 @@ export class SectorRoom extends Room<SectorState> {
     return null;
   }
 
-  /** The `packedGateForBuild` hook: ok when `owner` has a packed `kindId`
-   *  here; `commit` takes one (best quality first) as ONE hold group. */
-  private packedGateForBuild(owner: string, kindId: StructureKindId): PackedGateResult {
-    const product = `structure:${kindId}`;
-    const src = this.findPacked(owner, product);
-    if (src === null) return { ok: false, commit: () => null };
-    return {
-      ok: true,
-      commit: () => {
-        if ('rec' in src) {
-          const item = takePacked(src.rec.hold!, product);
-          this.storage.commitChanged([src.rec], []);
-          return item?.quality ?? null;
-        }
-        const row = getHoldStore().get(src.shipId);
-        if (row === undefined) return null;
-        const h = cloneHold(row.hold);
-        const item = takePacked(h, product);
-        const persist = this.sectorKey !== null;
-        if (isHoldEmpty(h)) getHoldStore().commit([], [src.shipId], persist);
-        else getHoldStore().commit([{ ...row, hold: h }], [], persist);
-        return item?.quality ?? null;
-      },
-    };
-  }
-
   /**
    * Economy v2 — repack a PREPAID structure that finished deconstructing: the
    * packed item (same kind, same quality) goes into the owner's storage in its
@@ -5903,7 +5849,7 @@ export class SectorRoom extends Room<SectorState> {
       });
     }
     this.tickShieldRegen();
-    this.tickEnergy();
+    tickShipEnergy(this.energyTickHost);
     phaseTime('projectiles');
 
     // Phase 8 — sector persistence. Galaxy rooms snapshot their volatile
