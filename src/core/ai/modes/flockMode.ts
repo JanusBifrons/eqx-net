@@ -17,6 +17,7 @@
  */
 import type { ShipKind } from '../../../shared-types/shipKinds.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
+import { navComfort } from '../../../shared-types/shipScale/navTuning.js';
 import type { AiEntity, AiEntityPoseOut, AiWorldView, IAiNavRoutes } from '../../contracts/IAiBehaviour.js';
 import {
   addAlignment,
@@ -171,7 +172,7 @@ export class FlockMode implements IPilotMode {
       if (resolve(id, this.neighbour)) { ax = this.neighbour.x; ay = this.neighbour.y; break; }
     }
     const t = shipTuning(ctx.kind);
-    if (!nav.waypoint(self.id, self.x, self.y, ax, ay, t.navClearance, t.wingmanArrive, true)) return false;
+    if (!nav.waypoint(self.id, self.x, self.y, ax, ay, t.navClearance, t.wingmanArrive, true, NaN, 0, navComfort(ctx.kind))) return false;
     const dx = ax - self.x, dy = ay - self.y;
     if (dx * dx + dy * dy <= t.flockFollow * t.flockFollow) {
       out.facing = self.angle; out.vx = 0; out.vy = 0;

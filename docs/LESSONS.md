@@ -3222,3 +3222,11 @@ Every ship death (NPC too) keeps each good in its hold only on a coin flip, salt
 (`LootSubsystem.deathSalt`). `walletKillBounty` and `tradeDeal` asserted a pod with known contents after
 a kill and failed about 40% and 50% of runs, on main as much as on any branch. The integration harness now
 defaults `keepAllOnDeath` ON; a test of the loss itself passes `false` and pins the roll.
+
+## 2026-11-19 — brake for a corner from the angle between legs, not the bearing to it
+
+The follower braked for a route corner by how far the next leg runs the same way as the ship's bearing
+to the corner. Far off, that bearing points almost straight down the route, so a sharp street turn looked
+shallow: the brake distance jumped to 450-700 u and a fighter entered a 75° turn at ~260 u/s, running
+~32 u off its line into rock. Use the angle between the incoming and outgoing legs, and cap the carried
+speed by how far the ship may swing sideways (`NAV_TURN_SWING`).
