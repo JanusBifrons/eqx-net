@@ -65,8 +65,7 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut, IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js';
-import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
-import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
+import { effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
@@ -192,6 +191,8 @@ import { fillRangeShape } from '../../core/combat/fireControlBearing.js';
 import { weaponIdReach } from '../../core/combat/mountReach.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
+import { classifyAttacker } from './classifyAttacker.js';
+import { ShipProgression } from './features/shipProgression.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
@@ -483,19 +484,6 @@ const STRUCTURE_ATTACK_AUDIT_WINDOW_MS = 15_000;
  *  much longer than the audit window above, because a phone alert should be
  *  rare (one per base per 15 min) rather than once per sustained-fire burst. */
 const STRUCTURE_ATTACK_PUSH_WINDOW_MS = 15 * 60_000;
-
-/**
- * Coarse audit attribution from a shooter id's prefix — drone (`swarm-` /
- * `lwbot-`), structure turret (`pstruct-`), or a player otherwise. The raw
- * `attackerId` is always logged too, so this is a convenience label for
- * "what destroyed my base?" (a drone? a player?), not a precise lookup.
- */
-function classifyAttacker(id?: string): string | undefined {
-  if (!id) return undefined;
-  if (id.startsWith('pstruct-')) return 'structure';
-  if (id.startsWith('swarm-') || isDirectorBotId(id) || id.startsWith('scenario-drone')) return 'drone';
-  return 'player';
-}
 
 /** The pre-A2 per-structure row (test view — see `structureRowsForTests`). */
 export interface StructureRowView {
@@ -2349,7 +2337,7 @@ export class SectorRoom extends Room<SectorState> {
       evictSessionForTakeover: (sessionId) => this.evictSessionForTakeover(sessionId),
       evictOwnerlessShip: (id) => this.evictOwnerlessShip(id),
       attachWingman: (id) => this.wingmen.attachWingman(id),
-      applyStatMulToWorker: (bodyKey, alloc) => this.applyStatMulToWorker(bodyKey, alloc),
+      applyStatMulToWorker: (bodyKey, alloc) => this.shipProgression.applyStatMulToWorker(bodyKey, alloc),
       startSceneClock: (tick) => this.sceneRunner?.start(tick),
       markWarpArrived: (pid, tick) => this.warpTravel.markArrived(pid, tick),
       startInCommand: (pid, sessionId) => this.fleetHooks.startInCommand(pid, sessionId),
@@ -2424,7 +2412,7 @@ export class SectorRoom extends Room<SectorState> {
       spawnCapitalWreck: (id, kind, pose, maxHull, slot, bodyId) => this.spawnCapitalWreck(id, kind, pose, maxHull, slot, bodyId),
       spawnHullScrap: (kind, pose, sid) => this.spawnHullScrap(kind, pose, sid),
       spillOrLoseShipHold: (sid, pid, pose, cause, death) => this.spillOrLoseShipHold(sid, pid, pose, cause, death),
-      awardKillXp: (killerId, maxHealth) => this.awardKillXp(killerId, maxHealth),
+      awardKillXp: (killerId, maxHealth) => this.shipProgression.awardKillXp(killerId, maxHealth),
       deleteRosterRow: (sid) => this.deleteRosterRow(sid),
     });
 
@@ -3272,7 +3260,7 @@ export class SectorRoom extends Room<SectorState> {
       pilotCollector: (pid) => this.lootCollectors.pilotCollector(pid),
       bountyRoom: { broadcastWorldNotice: (notice) => this.broadcastWorldNotice(notice) },
       sendNotice: (client, text) => this.sendNotice(client, text),
-      applyShipUpgrade: (client, pid, shipId, alloc) => this.applyShipUpgrade(client, pid, shipId, alloc),
+      applyShipUpgrade: (client, pid, shipId, alloc) => this.shipProgression.applyShipUpgrade(client, pid, shipId, alloc),
       structurePlacement: () => this.structurePlacement,
       structureGrid: () => this.structureGrid,
       sectorPersistence: () => this.sectorPersistence,
@@ -3358,7 +3346,7 @@ export class SectorRoom extends Room<SectorState> {
       // its kind is known.
       if (destroyedShip !== undefined) {
         const victimMaxHealth = getShipKind(destroyedShip.kind).maxHealth;
-        this.awardKillXp(evt.shooterId, victimMaxHealth);
+        this.shipProgression.awardKillXp(evt.shooterId, victimMaxHealth);
       }
       // Phase 3 dual-write — drop the destroyed ship from the roster. D9 — the
       // whole roster row (level / xp / statAlloc / mounts) is dropped together
@@ -4463,7 +4451,7 @@ export class SectorRoom extends Room<SectorState> {
       // (per-kind maxHealth — tougher drones = more XP, D10). PvP hull kills are
       // awarded separately in the SHIP_DESTROYED handler.
       const droneMaxHealth = droneMaxHealthOf(rec) ?? 40;
-      this.awardKillXp(shooterId ?? '', droneMaxHealth);
+      this.shipProgression.awardKillXp(shooterId ?? '', droneMaxHealth);
       // Economy v2 W1 — every NPC kill pays a bounty straight into the killer's
       // WALLET (credits are virtual; pods carry goods only).
       if (shooterId && classifyAttacker(shooterId) === 'player') {
@@ -4680,7 +4668,7 @@ export class SectorRoom extends Room<SectorState> {
     lingeringPoseCache: this.lingeringPoseCache, ownerlessShips: this.ownerlessShips, snapshotRing: this.snapshotRing,
     fleet: this.fleet, logger, structureGridTick: () => this.structureGridTick(),
     shipHullMax: (kindMax, alloc, id) => this.shipHullMax(kindMax, alloc, id), postToWorker: (cmd) => this.postToWorker(cmd),
-    applyStatMulToWorker: (bodyKey, alloc) => this.applyStatMulToWorker(bodyKey, alloc),
+    applyStatMulToWorker: (bodyKey, alloc) => this.shipProgression.applyStatMulToWorker(bodyKey, alloc),
   });
 
   /**
@@ -6598,9 +6586,16 @@ export class SectorRoom extends Room<SectorState> {
     transitOrchestrator: () => this.transitOrchestrator, rosterPersistence: () => this.rosterPersistence,
     cutField: () => this.cutField, bus: () => this.bus, logger,
     getActiveShip: (pid) => this.getActiveShip(pid), postToWorker: (cmd) => this.postToWorker(cmd),
-    applyStatMulToWorker: (key, alloc) => this.applyStatMulToWorker(key, alloc),
+    applyStatMulToWorker: (key, alloc) => this.shipProgression.applyStatMulToWorker(key, alloc),
     shipHullMax: (kindMax, alloc, sid) => this.shipHullMax(kindMax, alloc, sid),
     shellWelcomeFields: (client, pid) => this.shellWelcomeFields(client, pid), wreckWelcomeFields: () => this.wreckWelcomeFields(),
+  });
+  // ── Phase 4 — ship progression: kill XP, upgrades (`features/shipProgression.ts`) ──
+  private readonly shipProgression: ShipProgression = new ShipProgression({
+    state: () => this.state, lingeringSlots: this.lingeringSlots, fleet: this.fleet, wingmen: () => this.wingmen,
+    bus: () => this.bus, broadcast: (type, msg) => this.broadcast(type, msg), logger,
+    resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid), postToWorker: (cmd) => this.postToWorker(cmd),
+    shipHullMax: (kindMax, alloc, sid) => this.shipHullMax(kindMax, alloc, sid),
   });
 
   /**
@@ -7300,155 +7295,6 @@ export class SectorRoom extends Room<SectorState> {
   }
   /** C3 — NPC spawns (`id:entityId`) whose loot table is already in their hold. */
   private readonly npcLootRolled = new Set<string>();
-
-  /**
-   * Phase 4 (Leveling & XP, WS-B1) — award XP to the KILLER SHIP INSTANCE on a
-   * kill, weighted by the victim's `maxHealth` (tougher = more, D10). XP is
-   * PER SHIP INSTANCE (D8): the killer's playerId resolves to the hull THAT
-   * PLAYER is currently piloting (`resolveActiveShipKey`), and the XP rides
-   * that hull's persistent roster row — switching ships switches progression.
-   *
-   * Only PLAYER killers earn XP — a drone/structure killer (`swarm-`/`lwbot-`/
-   * `pstruct-` prefix) has no roster ship instance, so it's skipped. Engineering
-   * rooms (no roster) and unbound killers are no-ops.
-   *
-   * On crossing a threshold the ship's `level` increments, the roster persists
-   * the new `(level, xp)`, the live `ShipState.level` mirror updates (so the
-   * next snapshot ships the public badge), a discrete `SHIP_LEVEL_UP` fires on
-   * the bus, and a `ship_level_up` Colyseus message broadcasts to every client.
-   */
-  private awardKillXp(killerId: string, victimMaxHealth: number): void {
-    if (classifyAttacker(killerId) !== 'player') return; // drones/structures don't level
-    const store = getPlayerShipStore();
-    // RTS slice: a wingman (AI-flown lingering hull) fires under its own
-    // shipInstanceId, so the killer id IS the hull's roster key (D8: the ship
-    // that made the kill earns the XP). Otherwise it is a pilot's playerId.
-    const killerShipInstanceId = this.lingeringSlots.has(killerId)
-      ? killerId
-      : this.resolveActiveShipKey(killerId);
-    if (killerShipInstanceId === undefined || killerShipInstanceId === '') return;
-    const row = store.get(killerShipInstanceId);
-    if (row === null) return; // no roster row (engineering room / not persisted)
-
-    const gained = xpForKill(victimMaxHealth);
-    const result = applyKillXp(row.level, row.xp, gained);
-    // Persist the new progression (level/xp) on the killer's instance.
-    store.setProgress(killerShipInstanceId, { level: result.level, xp: result.xp });
-
-    // Mirror the level onto the live ShipState so the broadcaster ships the
-    // public badge on the next snapshot.
-    const killerShip = this.state.ships.get(killerShipInstanceId);
-    if (killerShip !== undefined) killerShip.level = result.level;
-
-    if (result.levelsGained > 0) {
-      this.bus.emit('SHIP_LEVEL_UP', {
-        type: 'SHIP_LEVEL_UP',
-        shipInstanceId: killerShipInstanceId,
-        newLevel: result.level,
-      });
-      this.broadcast('ship_level_up', {
-        type: 'ship_level_up',
-        shipInstanceId: killerShipInstanceId,
-        newLevel: result.level,
-      });
-    }
-  }
-
-  /**
-   * Phase 4 WS-B2 — push a ship instance's per-instance PHYSICS multipliers
-   * (`topSpeed`/`turnRate`, derived from its spent stat allocation) to its
-   * worker body via `SET_STAT_MUL`. `bodyKey` is the worker body id (the
-   * active player's is `playerId`; a lingering hull's is `linger-<shipId>`).
-   * An empty / un-upgraded allocation resets the body to the un-upgraded
-   * factors (both undefined). Allocation-free beyond the small derived literal
-   * (called only on spawn + on a discrete upgrade — never per tick).
-   */
-  private applyStatMulToWorker(bodyKey: string, alloc: CoreStatAlloc | undefined): void {
-    const mul = deriveStatMultipliers(alloc);
-    // Send the physics pair only. Neutral (both 1) ⇒ send the factors anyway so
-    // a respec/clear visibly resets the body; SET_STAT_MUL with 1/1 is a no-op
-    // beyond writing the (identity) multipliers.
-    this.postToWorker({ type: 'SET_STAT_MUL', id: bodyKey, topSpeed: mul.topSpeed, turnRate: mul.turnRate });
-  }
-
-  /**
-   * Phase 4 WS-B2 — apply a free stat allocation (or a respec, `alloc = {}`) to a
-   * ship INSTANCE the requester owns. The single server entry for both messages.
-   *
-   * Validates, in order:
-   *   - ownership (the roster row's `playerId === requester`),
-   *   - the point budget (`isAllocValid(alloc, row.level)` — the budget CANNOT be
-   *     exceeded, the authoritative gate).
-   * A foreign / unknown / over-budget request is a silent no-op (no echo, no
-   * persistence). On success: persist the new `statAlloc` on the roster row, and
-   * — if this instance is the player's ACTIVE hull in THIS room — update the live
-   * `ShipState.statAlloc` mirror AND push the physics multipliers to its worker
-   * body (so the next tick scales movement; the OWN-ship snapshot slice carries
-   * the alloc so the client re-anchors its predWorld identically). Finally echo
-   * `ship_upgrade_applied` so the modal closes + the roster card refreshes.
-   */
-  private applyShipUpgrade(
-    client: Client,
-    playerId: string,
-    shipId: string,
-    alloc: CoreStatAlloc,
-  ): void {
-    const store = getPlayerShipStore();
-    const row = store.get(shipId);
-    if (row === null || row.playerId !== playerId) return; // foreign / unknown
-    if (!isAllocValid(alloc, row.level)) {
-      logger.warn(
-        { sessionId: client.sessionId, shipId, level: row.level },
-        'apply_ship_upgrade over budget / invalid — dropped',
-      );
-      return;
-    }
-    // Persist on the roster (the per-instance source of truth, D8).
-    store.setProgress(shipId, { statAlloc: alloc });
-
-    // If this instance is the player's ACTIVE hull in THIS room, mirror the
-    // alloc + re-anchor the worker body's physics multipliers immediately.
-    const activeShipKey = this.resolveActiveShipKey(playerId);
-    if (activeShipKey === shipId) {
-      const ship = this.state.ships.get(shipId);
-      if (ship !== undefined) {
-        ship.statAlloc = alloc;
-        // Review must-fix #1 — a LIVE upgrade/respec must recompute the NON-
-        // PHYSICS caps from the new alloc and CLAMP the current value down to
-        // the new max (a respec that lowers a cap must not leave current above
-        // it). NO free heal — clamp only; the bar shrinks, it never refills.
-        // One source: the `effectiveShip*` helpers (so the seed + denominator
-        // agree). hpMax/shieldMax/energyMax all ride the OWN-ship snapshot
-        // slice / discrete DamageEvent so the client re-reads the new caps.
-        const upgKind = getShipKind(ship.kind);
-        ship.maxHealth = this.shipHullMax(upgKind.maxHealth, alloc, ship.shipInstanceId);
-        if (ship.health > ship.maxHealth) ship.health = ship.maxHealth;
-        const newShieldMax = effectiveShipShieldMax(upgKind.shieldMax, alloc);
-        if (ship.shield > newShieldMax) ship.shield = newShieldMax;
-        const newEnergyMax = effectiveShipEnergyMax(upgKind.energyMax ?? 100, alloc);
-        if (ship.energy > newEnergyMax) ship.energy = newEnergyMax;
-      }
-      // The active player's worker body is keyed by playerId.
-      this.applyStatMulToWorker(playerId, alloc);
-    } else if (this.lingeringSlots.has(shipId)) {
-      // RTS slice 4: a LINGERING hull here is flown by a wingman. Its body
-      // takes the new physics multipliers now (keyed `linger-<id>`) and the
-      // brain is rebuilt from the new alloc so its stats match the body.
-      // Non-physics caps are re-seeded on reclaim, as before.
-      const ship = this.state.ships.get(shipId);
-      if (ship !== undefined) ship.statAlloc = alloc;
-      this.applyStatMulToWorker(`linger-${shipId}`, alloc);
-      if (this.fleet.isAttached(shipId)) this.wingmen.attachWingman(shipId);
-    }
-
-    client.send('ship_upgrade_applied', {
-      type: 'ship_upgrade_applied',
-      shipInstanceId: shipId,
-      alloc,
-      spent: spentPoints(alloc),
-      budget: pointBudget(row.level),
-    });
-  }
 
   override onDispose(): void {
     this.roomFeatures?.dispose();
