@@ -17,7 +17,7 @@ import { SESSION_REPLACED_CLOSE_CODE, type SessionReplacedMessage } from '../../
 import {
   unregisterPlayerSession,
 } from '../identity/PlayerSessionRegistry.js';
-import { isDirectorBotId, isHaulerId } from '../livingworld/directorBotIds.js';
+import { isHaulerId } from '../livingworld/directorBotIds.js';
 import { getTradeSink } from '../economy/tradeSink.js';
 import type { TradeNetworkSnapshot, TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import type { TradeNotice } from '../../shared-types/economy.js';
@@ -51,7 +51,7 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut, IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
-import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js';
+import { isFriendly } from '../../shared-types/allegiances.js';
 import { effectiveShipMaxHealth, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
@@ -2647,7 +2647,7 @@ export class SectorRoom extends Room<SectorState> {
       spawnProjectile: (shooterId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(shooterId, x, y, vx, vy, dmg, r, mt, wId),
       // WS-8 (R2.15) — a Missile Turret launches a homing missile (ownerId = the
-      // turret's pstruct- id, which isMissileTargetHostile restricts to drones).
+      // turret's pstruct- id, which turretTargeting.isMissileTargetHostile restricts to drones).
       spawnMissile: (shooterId, x, y, dx, dy, def) =>
         this.spawnServerMissile(shooterId, x, y, dx, dy, def),
       // Reconnect sweep honours current asteroid LOS (Issue 2), unloaded rocks in `near` too (C5g).
@@ -3694,64 +3694,10 @@ export class SectorRoom extends Room<SectorState> {
     }
   };
 
-  /** Allegiances P0 — pooled per-tick swarm-combatant views (never reallocated
-   *  once grown, #14). Targeting only. */
-  private readonly _swarmViewPool: Array<{
-    id: string; x: number; y: number; vx: number; vy: number;
-    allegiance: string; health?: number; maxHealth?: number; radius: number;
-    kindId: string | null; angle: number; shieldUp: boolean;
-  }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
 
   /** The AI tick's neighbour + debris grids, one registry walk per tick (`AiNeighbourFill`). */
-  private readonly aiGrids = new AiNeighbourFill(this.swarmRegistry, () => this.sabF32);
-
-  /**
-   * Allegiances P0 — rebuild this tick's swarm-combatant set (kind-1 entities),
-   * ONCE per tick (#14). Only populated when ≥ 2 allegiances are present in the
-   * sector: a drones-only sector leaves `out` empty, so the AI view's `swarms`
-   * is absent and the brain takes its pre-P0 fast path (byte-identical, zero
-   * per-drone cost). Targeting only: the beam hits whatever it meets.
-   */
-  private fillSwarmTargets(out: AiSwarmView[]): void {
-    out.length = 0;
-    let first: string | null = null;
-    let mixed = false;
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== SWARM_KIND_DRONE) continue;
-      const a = allegianceOfKind(rec.shipKind);
-      if (first === null) first = a;
-      else if (a !== first) { mixed = true; break; }
-    }
-    // AI-flown owned hulls (players side) fight swarm ships too: fill whenever
-    // one exists, even in a single-allegiance sector (RTS Part B).
-    if (!mixed && this.fleet.size === 0) return;
-    const pool = this._swarmViewPool;
-    let n = 0;
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== SWARM_KIND_DRONE) continue;
-      const b = slotBase(rec.slot);
-      let v = pool[n];
-      if (!v) {
-        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, allegiance: 'drones', radius: 0, kindId: null, angle: 0, shieldUp: false };
-        pool[n] = v;
-      }
-      v.id = rec.id;
-      v.x = this.sabF32[b + SLOT_X_OFF]!;
-      v.y = this.sabF32[b + SLOT_Y_OFF]!;
-      v.vx = this.sabF32[b + SLOT_VX_OFF]!;
-      v.vy = this.sabF32[b + SLOT_VY_OFF]!;
-      v.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
-      v.allegiance = allegianceOfKind(rec.shipKind);
-      v.health = this.swarmHealth.get(rec.id);
-      v.maxHealth = getShipKind(rec.shipKind).maxHealth;
-      v.radius = rec.radius;
-      v.kindId = rec.shipKind ?? null;
-      v.shieldUp = !rec.shieldDown;
-      out.push(v);
-      n++;
-    }
-  }
+  private readonly aiGrids = new AiNeighbourFill(this.swarmRegistry, () => this.sabF32, { fleetSize: () => this.fleet.size, swarmHealth: () => this.swarmHealth });
 
   /**
    * AI fire path. Mirrors the player hitscan logic but skips the message
@@ -3781,65 +3727,6 @@ export class SectorRoom extends Room<SectorState> {
     this.projectiles.spawn(ownerId, x, y, vx, vy, damage, radius, maxTicks, weaponId);
   }
 
-  /** Hostility predicate the missile lock-on uses.
-   *
-   *  Player-fired missiles target any non-owner entity. Asteroid
-   *  exclusion is handled at the candidate-build site in
-   *  `MissileSimulation.lockOnTarget` (filtered by `rec.kind === 0`)
-   *  rather than here, because galaxy asteroids spawn with bare
-   *  `asteroid-N` ids — NO `swarm-` prefix — and string-prefix
-   *  filtering misses them. Kind is the source of truth.
-   *
-   *  AI-fired missiles defer to the `aiController`'s hostility ledger
-   *  (the existing `markHostile` / `bot_aggro` channel) — drones and
-   *  bots only fire at players they've already been antagonised by.
-   */
-  private isMissileTargetHostile(ownerId: string): (targetId: string) => boolean {
-    // WS-8 (R2.15) — a STRUCTURE-fired (`pstruct-`) missile is a DEFENCE weapon:
-    // it locks onto HOSTILE DRONES ONLY (swarm kind 1), matching the beam/bolt
-    // turret's `findNearestDrone`. Without this branch a `pstruct-` owner falls
-    // through to the player-shooter case below and would target other players +
-    // friendly structures (the candidate set includes kind 1 AND kind 2). Kind
-    // is the source of truth (lwbot drones are kind 1 too, swarm-/lwbot-prefixed).
-    if (ownerId.startsWith('pstruct-')) {
-      // B2 — an NPC-owned turret's missile homes on what is hostile to its owner
-      // (the same rule as its targeting); a player turret's stays drones-only.
-      const structOwner = this.structureRegistry.get(ownerId)?.owner ?? '';
-      if (isNpcOwner(structOwner)) {
-        return (id) => {
-          const rec = this.swarmRegistry.get(id);
-          let party: string | null = null;
-          if (rec != null) {
-            if (rec.kind === 1) party = NPC_SIDE_PARTY[allegianceOfKind(rec.shipKind)];
-          } else if (this.getActiveShip(id)?.isActive === true) {
-            party = id;
-          }
-          return party !== null && relationOf(party, structOwner, this.relationCtx) === 'hostile';
-        };
-      }
-      return (id) => {
-        const rec = this.swarmRegistry.get(id);
-        return rec != null && rec.kind === 1 && this._isTurretTargetable(rec);
-      };
-    }
-    // Allegiances P0 — classify the shooter by the REGISTRY (a live kind-1
-    // swarm entity is an AI shooter whatever its id prefix), not by prefix.
-    const ownerRec = this.swarmRegistry.get(ownerId);
-    const isAiShooter = (ownerRec != null && ownerRec.kind === 1)
-      || ownerId.startsWith('swarm-') || isDirectorBotId(ownerId);
-    if (!isAiShooter) {
-      return (id) => id !== ownerId;
-    }
-    const ownerAllegiance = allegianceOfKind(ownerRec?.shipKind);
-    return (id) => {
-      if (this.npcHostileTo(ownerId, id)) return true;
-      // Cross-allegiance swarm targets (drones ↔ robots ↔ traders) by stance.
-      const rec = this.swarmRegistry.get(id);
-      if (rec == null || rec.kind !== 1 || id === ownerId) return false;
-      return isOnSightHostile(ownerAllegiance, allegianceOfKind(rec.shipKind));
-    };
-  }
-
   private spawnServerMissile(
     ownerId: string,
     spawnX: number,
@@ -3850,7 +3737,7 @@ export class SectorRoom extends Room<SectorState> {
   ): number | null {
     return this.missileSim.spawn(
       ownerId, spawnX, spawnY, dirX, dirY, def,
-      this.isMissileTargetHostile(ownerId),
+      this.turretTargeting.isMissileTargetHostile(ownerId),
     );
   }
 
@@ -4519,6 +4406,7 @@ export class SectorRoom extends Room<SectorState> {
     getActiveShip: (pid) => this.getActiveShip(pid), shipPoseCache: this.shipPoseCache, spectateParkedHull: this.spectateParkedHull,
     engageablePilotHull: (pid) => this.pilotSwap.engageablePilotHull(pid), visitParkedPilotHulls: (visit) => this.pilotSwap.visitParkedPilotHulls(visit),
     relationCtx: this.relationCtx, hostileActs: this.hostileActs, isTurretTargetable: this._isTurretTargetable,
+    structureRegistry: this.structureRegistry, npcHostileTo: (e, p) => this.npcHostileTo(e, p),
     writeSwarmRangeShape: (v, rec) => this.writeSwarmRangeShape(v, rec), npcSideParty: NPC_SIDE_PARTY,
     policyOf: ROOM_POLICY, gridBounds: DRONE_MAX_BOUNDS,
   });
@@ -6505,7 +6393,7 @@ export class SectorRoom extends Room<SectorState> {
       aiStructureScratch: this.aiStructureScratch,
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
-      fillSwarmTargets: (out) => this.fillSwarmTargets(out),
+      fillSwarmTargets: this.aiGrids.fillSwarmTargets,
       aiNeighbourGrid: this.aiGrids.neighbours(),
       visitAiNeighbourDrones: this.aiGrids.visit,
       aiWreckGrid: this.aiGrids.wrecks(),
