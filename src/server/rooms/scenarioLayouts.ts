@@ -56,6 +56,7 @@ import { buildGridNodes, connectExplicit } from '../structures/structureGridView
 import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { SectorSnapshotScrap } from './SectorSnapshot.js';
+import type { SectorRoomOptions } from './sectorRoomOptions.js';
 
 export interface LayoutPoint {
   x: number;
@@ -377,28 +378,9 @@ export function structureRowsForTests(state: StructureRowsState, slice: readonly
   return rows;
 }
 
-/** Room opts read by `seedRoomStartup` (shapes mirror the `SectorRoom.onCreate` options). */
-export interface StartupSeedOpts {
-  droneCount?: number;
-  droneRadius?: number;
-  swarmCount?: number;
-  swarmRatio?: number;
-  swarmRadius?: number;
-  swarmAtRest?: boolean;
-  dronePoses?: ReadonlyArray<{
-    kind: ShipKindId;
-    x: number;
-    y: number;
-    angle?: number;
-    vx?: number;
-    vy?: number;
-    hullExposed?: boolean;
-    path?: { toX: number; toY: number; speed: number; loop?: boolean };
-    hostile?: boolean;
-    elite?: { name: string; healthMul?: number; bounty?: number };
-  }>;
-  structurePoses?: ReadonlyArray<{ id?: string; x: number; y: number; radius?: number; mass?: number }>;
-}
+/** Room opts read by `seedRoomStartup` (a slice of the `SectorRoom.onCreate` options). */
+export type StartupSeedOpts = Pick<SectorRoomOptions,
+  'droneCount' | 'droneRadius' | 'swarmCount' | 'swarmRatio' | 'swarmRadius' | 'swarmAtRest' | 'dronePoses' | 'structurePoses'>;
 
 /** Which startup seed the room picked (computed early in `onCreate`, where it
  *  also gates the legacy asteroid roster). */

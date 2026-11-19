@@ -18,7 +18,7 @@ A defence structure that seeds a base's approaches with proximity mines (plan so
 ## How it works
 
 - **Constants** live in `src/shared-types/mines.ts` (shared by both sides, #15).
-- **Server.** `src/server/structures/MineFieldSubsystem.ts` holds decision logic over injected hooks and is ticked with the 10 Hz structure tick, after the turrets.
+- **Server.** `src/server/structures/MineFieldSubsystem.ts` holds decision logic over injected hooks (wired by `buildMineField` in `src/server/rooms/features/mineHooks.ts`) and is ticked with the 10 Hz structure tick, after the turrets.
   - It uses the turrets' target grids (`findNearestTurretTarget`).
   - It shares the turrets' magazine field (`rec.ammo`, `AMMO_SHOTS_PER_UNIT.mine_layer`).
   - It uses the same active-power switch (`setActive`).

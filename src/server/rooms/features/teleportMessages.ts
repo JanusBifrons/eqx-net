@@ -1,14 +1,18 @@
 /**
  * Teleporter client messages — pair, unpair, fire, rules, tolls, pad
  * load/unload and cross-sector pair requests (v4 T1-T4), plus the pad riders
- * (`TeleportPadRiders`: who rides a jump and how they move). Moved verbatim out
- * of `SectorRoom.onCreate`; the room hands in live accessors so every handler
+ * (`TeleportPadRiders`: who rides a jump and how they move) and the build of the
+ * room's `TeleporterSubsystem` + broker `TeleportRoom` (`buildTeleporters`).
+ * Moved verbatim out of `SectorRoom.onCreate`; the room hands in live accessors so every handler
  * reads the same state it did when it lived there.
  */
 import type { Client } from 'colyseus';
 import { randomUUID } from 'node:crypto';
 import type { StructureRecord, StructureRegistry } from '../../structures/StructureRegistry.js';
-import type { PartnerLink, TeleporterSubsystem } from '../../structures/TeleporterSubsystem.js';
+import { TeleporterSubsystem, findAlienTwin, findLinkTwin, type GateTwinHost, type PartnerLink } from '../../structures/TeleporterSubsystem.js';
+import { GATE_SPAN_THICKNESS } from '../../../core/structures/gateGeometry.js';
+import type { ForceFieldSubsystem } from '../ForceFieldSubsystem.js';
+import type { TeleportTolls } from './teleportTolls.js';
 import { getTeleportBroker, type RiderBatch, type TeleportRoom } from '../../teleport/TeleportBroker.js';
 import type { MapSchema } from '@colyseus/schema';
 import type { ShipState } from '../schema/SectorState.js';
@@ -413,4 +417,95 @@ export class TeleportPadRiders {
       serverLogEvent('teleport_swap', { sectorKey: this.h.sectorKey() ?? '', riders: moves.length });
     }
   }
+}
+
+/** What building the room's teleporters needs; getters read the live field. */
+export interface TeleporterBuildHost extends Pick<TeleportRoom, 'canReceiveHull' | 'receiveLingeringHull' | 'receiveFleetSquads' | 'sendToPlayer'> {
+  structureRegistry: StructureRegistry;
+  storage(): StorageService;
+  sectorKey(): string | null;
+  /** The test-room phase speed-up (`teleportCycleScale`); undefined = real time. */
+  testCycleScale: number | undefined;
+  powered(id: string): boolean;
+  padRiders: TeleportPadRiders;
+  tolls: Pick<TeleportTolls, 'offerToll' | 'settleToll'>;
+  forceFields: Pick<ForceFieldSubsystem, 'set' | 'remove'>;
+  rebuildStructuresSlice(): void;
+  postToWorker(cmd: WorkerCmd): void;
+}
+
+/**
+ * v4 T1-T4 — build the room's `TeleporterSubsystem` and the `TeleportRoom` the
+ * broker reaches it through from other sectors, then register that room with
+ * the broker. Moved verbatim out of `SectorRoom.onCreate`, which calls it at the
+ * same point (before the startup seeding that places alien gates and pads).
+ */
+export function buildTeleporters(h: TeleporterBuildHost): { teleporters: TeleporterSubsystem; teleportRoom: TeleportRoom } {
+  const tpScale = h.testCycleScale !== undefined ? Math.max(0.001, Math.min(1, h.testCycleScale)) : 1;
+  const gateTwinHost: GateTwinHost = { sectorKey: h.sectorKey, structureRegistry: () => h.structureRegistry };
+  const sectorKey = h.sectorKey();
+  const storage = h.storage();
+  let teleportRoom: TeleportRoom | undefined;
+  const teleporters = new TeleporterSubsystem({
+    registry: h.structureRegistry,
+    storage,
+    sectorKey: h.sectorKey,
+    isPowered: (rec) => rec.isConstructed && h.powered(rec.id),
+    cycleScale: () => tpScale,
+    shipsOnPad: (rec) => h.padRiders.shipsOnPad(rec),
+    onChanged: () => h.rebuildStructuresSlice(),
+    // T2 — ships ride the swap; the iris and the closing push in the worker.
+    onSwapShips: (a, b) => h.padRiders.swapPadShips(a, b),
+    // T3 — partners in other sectors, reached through the broker.
+    onSwapRemote: (a, link) => h.padRiders.swapAcross(a, link),
+    remoteFind: (sk, uid) => {
+      const f = getTeleportBroker().find(sk, uid);
+      return f && f.room !== teleportRoom ? { rec: f.rec, sys: f.room.teleporters } : null;
+    },
+    hopsTo: (sk) => h.padRiders.hopsToSector(sk),
+    findAlienTwin: (rec) => findAlienTwin(gateTwinHost, rec),
+    findLinkTwin: (rec) => findLinkTwin(gateTwinHost, rec),
+    // T4 — tolls: offered at arming, settled at the swap.
+    onArmed: (rec) => h.tolls.offerToll(rec),
+    onTollSettle: (rec) => h.tolls.settleToll(rec),
+    spawnIris: (rec) => h.padRiders.forIrisSpan(rec, (id, s) => {
+      h.postToWorker({ type: 'SPAWN_WALL', id, ax: rec.x + s.ax, ay: rec.y + s.ay, bx: rec.x + s.bx, by: rec.y + s.by, thickness: GATE_SPAN_THICKNESS });
+      h.postToWorker({ type: 'SET_WALL_ACTIVE', id, active: false });
+    }),
+    setIrisActive: (rec, active) => h.padRiders.forIrisSpan(rec, (id) => h.postToWorker({ type: 'SET_WALL_ACTIVE', id, active })),
+    removeIris: (rec) => {
+      h.padRiders.forIrisSpan(rec, (id) => h.postToWorker({ type: 'REMOVE_WALL', id }));
+      h.forceFields.remove(`tpfield-${rec.id}`);
+    },
+    setPadField: (rec, active) => {
+      if (!isTeleporterKind(rec.kind)) return;
+      h.forceFields.set(`tpfield-${rec.id}`, { kind: 'pad', cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
+    },
+  });
+  // v4 T3 — the broker reaches this room's teleporters from other sectors.
+  teleportRoom = {
+    sectorKey,
+    teleporters,
+    storage,
+    teleporterByUid: (uid) => {
+      const r = teleporters.byUid(uid);
+      return r && r.isConstructed ? r : null;
+    },
+    structures: () => h.structureRegistry.all(),
+    ownTeleporters: (owner) => {
+      const out: StructureRecord[] = [];
+      for (const r of h.structureRegistry.all()) {
+        if (r.owner === owner && r.isConstructed && isTeleporterKind(r.kind)) out.push(r);
+      }
+      return out;
+    },
+    collectRiders: (from) => h.padRiders.collectRiders(from),
+    dispatchRiders: (batch, toRoom, to) => h.padRiders.dispatchRiders(batch, toRoom, to),
+    canReceiveHull: (shipInstanceId) => h.canReceiveHull(shipInstanceId),
+    receiveLingeringHull: (row) => h.receiveLingeringHull(row),
+    receiveFleetSquads: (rows) => h.receiveFleetSquads(rows),
+    sendToPlayer: (pid, type, msg) => h.sendToPlayer(pid, type, msg),
+  };
+  if (sectorKey !== null) getTeleportBroker().register(teleportRoom);
+  return { teleporters, teleportRoom };
 }
