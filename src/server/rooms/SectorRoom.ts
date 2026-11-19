@@ -38,7 +38,7 @@ import {
 } from '../net/snapshotScheduler.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import { ScriptedPathBehaviour } from '../../core/ai/ScriptedPathBehaviour.js';
-import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
+import { ScrapSpawner, spawnScrapFromDrone, type DroneScrapHost } from '../spawn/ScrapSpawner.js';
 import { wreckSwitchOn } from './wreckSwitch.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
@@ -63,7 +63,7 @@ import { unregisterConnectedPlayer } from '../push/connectedPlayers.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
-import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
+import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
 import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.js';
@@ -1772,6 +1772,7 @@ export class SectorRoom extends Room<SectorState> {
     // Damage routing. Three branches (lingering / active /
     // swarm), each composing ShieldHullRouter + evictSwarmEntity.
     // Extracted to DamageRouter.ts.
+    const droneScrapHost: DroneScrapHost = { sabF32: () => this.sabF32, scrapSpawner: () => this.scrapSpawner, hasCapitalWrecks: () => this.capitalWrecks !== null, wreckKindAllowed: (k) => this.wreckKindAllowed(k), spawnCapitalWreck: (...a) => this.spawnCapitalWreck(...a) };
     this.damageRouter = new DamageRouter({
       serverTick: () => this.serverTick,
       shipsMap: this.state.ships,
@@ -1793,7 +1794,7 @@ export class SectorRoom extends Room<SectorState> {
       // Scrap-on-death (Phase 2b-ii) — a composite-kind drone breaks into scrap
       // the instant before it's evicted on death. Deferred-eval closure (the
       // ScrapSpawner is constructed later in the ctor, before any death fires).
-      spawnScrapFromDrone: (rec) => this.spawnScrapFromDrone(rec as SwarmEntityRecord),
+      spawnScrapFromDrone: (rec) => spawnScrapFromDrone(droneScrapHost, rec as SwarmEntityRecord),
       // P6.3 (Equinox Phase 6) — a composite LINGERING hull breaks into scrap
       // too. The lingering death policy reads the dying pose from
       // lingeringPoseCache (before its own teardown) and hands it here; we guard
@@ -3880,50 +3881,13 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /**
-   * Scrap-on-death (Phase 2b-ii) — break a dying DRONE into floating scrap.
-   * Called from the swarm death policy (`createSwarmDeath`) the instant before
-   * `evictSwarmEntity` frees the slot, so the dying drone's pose is still live
-   * in the SAB. Composite-kind drones (e.g. havok) yield one scrap body per
-   * component; polygon kinds (fighter/scout/…) yield nothing. Reads the pose
-   * off the SAB via `rec.slot`.
-   */
-  private spawnScrapFromDrone(rec: SwarmEntityRecord): boolean {
-    // Anti-recursion: a dying SCRAP piece (kind 3) routes through the same
-    // drone-leaf death policy, but its rec.shipKind is the PARENT composite
-    // kind (which has scrap groups) — without this guard a destroyed scrap
-    // piece would shatter into more scrap forever. Only a DRONE (kind 1) death
-    // spawns scrap here.
-    if (rec.kind === SWARM_KIND_SCRAP) return false;
-    // S2a — a capital drone breaks into wreck bodies (flag on). Pose from the
-    // SAB: the drone's body is still live here (evicted right after).
-    // Sub-capital break-up slice 2: any kind whose profile breaks (flags).
-    let vaporised = false; // fracture v11: the eviction's `destroy` says so
-    if (this.capitalWrecks !== null && rec.kind === SWARM_KIND_DRONE && rec.shipKind && this.wreckKindAllowed(rec.shipKind)) {
-      vaporised = this.spawnCapitalWreck(rec.id, rec.shipKind!, slotPoseInto(this.sabF32, rec.slot, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }),
-        droneMaxHealthOf(rec) ?? 1, rec.slot, rec.id);
-    }
-    const kind = getShipKind(rec.shipKind);
-    if (shipScrapGroups(kind.id).length === 0) return vaporised; // polygon kind ⇒ no scrap
-    const b = slotBase(rec.slot);
-    const pose = {
-      x:     this.sabF32[b + SLOT_X_OFF]!,
-      y:     this.sabF32[b + SLOT_Y_OFF]!,
-      vx:    this.sabF32[b + SLOT_VX_OFF]!,
-      vy:    this.sabF32[b + SLOT_VY_OFF]!,
-      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
-    };
-    this.scrapSpawner.spawnFromDeath(kind.id, pose, `scrap-${rec.id}`);
-    return vaporised;
-  }
-
-  /**
    * Spawn scrap from a HULL that is leaving the world (Equinox P6.3) — a
    * composite-kind hull (e.g. havok) yields one scrap body per component;
    * polygon kinds (fighter/scout/…) yield nothing. The single guard+spawn used
    * by EVERY hull-removal path that has a pose in hand: the lingering-hull death
    * policy (`spawnScrapFromLingeringHull` LeafDeps seam), and the abandon paths
    * (`abandonShipToScrap` / `abandonLingeringHullToScrap`). Mirrors the drone
-   * (`spawnScrapFromDrone`) + active-hull (`SHIP_DESTROYED`) scrap paths.
+   * (`ScrapSpawner.spawnScrapFromDrone`) + active-hull (`SHIP_DESTROYED`) scrap paths.
    */
   private spawnHullScrap(
     kind: ShipKindId,
