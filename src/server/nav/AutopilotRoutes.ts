@@ -16,6 +16,7 @@ import type { NavRouteMsg } from '../../core/nav/navHost.js';
 import { makePilotHandling, pilotTurnRadius } from '../../core/ai/virtualPilot.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { navComfort } from '../../shared-types/shipScale/navTuning.js';
 import { NAV_ROUTE_MIN_GAP_MS, type NavRouteReply } from '../../shared-types/messages/navMessages.js';
 
 /** Plans a route (the room's `NavField.route`), or null when the room has no field. */
@@ -53,7 +54,7 @@ export class AutopilotRoutes {
     const capital = kind.sizeClass === 'capital';
     a.inFlight = true;
     const asker = a;
-    fn(hull.x, hull.y, tx, ty, shipTuning(kind).navClearance, capital ? hull.angle : NaN, capital ? this.turnRadius(hull.kind) : 0, shipTuning(kind).navComfort).then((msg) => {
+    fn(hull.x, hull.y, tx, ty, shipTuning(kind).navClearance, capital ? hull.angle : NaN, capital ? this.turnRadius(hull.kind) : 0, navComfort(kind)).then((msg) => {
       asker.inFlight = false;
       this.answered++;
       send({ type: 'nav_route', reqId, status: msg.status, points: Array.from(msg.points) });

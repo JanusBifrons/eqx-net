@@ -258,10 +258,6 @@ export interface ShipTuning {
   exhaustTrailS: number;
   spawnClearance: number;
   navClearance: number; // hull centre to rock on a nav route (navigation slice 7): radius + a quarter
-  /** What a nav route keeps from rock where it has room: the shield ball
-   *  (radius + shieldPad) plus half a pad for steering error; squeezes down
-   *  to `navClearance` only in tight streets (owner 2026-11-19). */
-  navComfort: number;
   lootPickup: number;
   flockFollow: number;
   flockSeparation: number;
@@ -374,7 +370,6 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     exhaustTrailS: (BASE.exhaustTrailS * s) / motionFactors(s).speed,
     spawnClearance: ct.clearHull ? Math.max(BASE.spawnClearance * sp, kind.radius * 2) : BASE.spawnClearance * sp,
     navClearance: kind.radius * 1.25,
-    navComfort: Math.max(kind.radius * 1.25, kind.radius + BASE.shieldPad * g * 1.5),
     lootPickup: ct.clearHull ? Math.max(BASE.lootPickup * sp, kind.radius * 1.3) : BASE.lootPickup * sp,
     flockFollow: ct.clearHull ? Math.max(BASE.flockFollow * sp, kind.radius * 3.3) : BASE.flockFollow * sp,
     flockSeparation: ct.clearHull ? Math.max(BASE.flockSeparation * sp, kind.radius * 2.2) : BASE.flockSeparation * sp,

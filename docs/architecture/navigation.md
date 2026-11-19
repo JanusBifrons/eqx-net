@@ -232,7 +232,7 @@ one it flies straight as before.
   still brushed it 2/4 (2026-11-19).
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25, the least room a route may have (owner:
   stays 30 u for a fighter).
-- Comfort (owner 2026-11-19, "margin where room"): `shipTuning(kind).navComfort` = max(clearance,
+- Comfort (owner 2026-11-19, "margin where room"): `navComfort(kind)` (`shipScale/navTuning.ts`) = max(clearance,
   radius + 1.5 × shield pad), 54 u for a fighter (its shield ball is 44 u; a battleship's comfort is its
   clearance). `RoutePlanner.plan` plans at comfort first and keeps that route when one fits; only when
   none does does it plan again at clearance, and its string-pull still keeps comfort on every shortcut

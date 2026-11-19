@@ -9,6 +9,7 @@ import { fieldRockBody } from '../terrain/chunkStreamer.js';
 import { HeadingCoarseGraph } from './coarseField.js';
 import { makePilotHandling, pilotTurnRadius } from '../ai/virtualPilot.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { navComfort } from '../../shared-types/shipScale/navTuning.js';
 
 const fighter = getShipKind('fighter').radius;
 const battleship = getShipKind('battleship').radius;
@@ -162,7 +163,7 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
   });
 
   it('comfort (owner 2026-11-19): round a rock the route keeps the shield clear; a packed street falls back to clearance', () => {
-    const t = shipTuning(getShipKind('fighter')), c = t.navClearance, cf = t.navComfort;
+    const t = shipTuning(getShipKind('fighter')), c = t.navClearance, cf = navComfort(getShipKind('fighter'));
     expect(cf).toBeGreaterThan(c);
     const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
     // Round a rock in a sparse chunk: room for the shield, so the route keeps it.
