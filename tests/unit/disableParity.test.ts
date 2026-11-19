@@ -58,7 +58,7 @@ describe('the disabled input gate (v4 A, #15)', () => {
 
   it('both sides call the shared gate (no private copy on either side)', () => {
     const server = readFileSync(new URL('../../src/server/rooms/InputHandler.ts', import.meta.url), 'utf8');
-    const client = readFileSync(new URL('../../src/client/net/ColyseusClient.ts', import.meta.url), 'utf8');
+    const client = readFileSync(new URL('../../src/client/net/prediction/inputStep.ts', import.meta.url), 'utf8');
     expect(server).toContain('gateDisabledInput(');
     // The per-tick path and the idle-heartbeat path both gate.
     expect(client.split('gateDisabledInput(').length - 1).toBeGreaterThanOrEqual(2);

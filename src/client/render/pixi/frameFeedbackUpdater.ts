@@ -14,6 +14,7 @@ import { updateWarpFx } from './warpFxUpdater.js';
 import { updateEngineShieldFx } from './engineShieldFxUpdater.js';
 import { shouldLatchFirstFrame } from '../firstFrameLatch.js';
 import type { RendererFrameCtx } from './frameCtx.js';
+import type { FrameMarkers } from '../worker/protocol.js';
 
 /** The renderer's feedback struct, built once by the renderer and mutated in
  *  place each frame (`writeFrameFeedback`); its identity is stable. */
@@ -55,6 +56,34 @@ export function createRendererFeedback(): RendererFeedback {
     selectedPickKind: null,
     hoveredPickId: null,
     miningBeamCount: 0, viewX: 0, viewY: 0, viewHalf: 0,
+  };
+}
+
+/**
+ * F1 instrumentation — per-frame worker-side sub-costs (warp-spool
+ * perf investigation, `docs/HANDOFF-warp-spool-perf-followup.md`).
+ * Mutated in place at the tail of `update()` (no per-frame alloc); the
+ * worker reads it via `getFrameMarkers()` after `update()` returns and
+ * posts a `FRAME_MARKERS` message ONLY when diagnostics are enabled.
+ * `warpTickMs` is written by the `LoadCurtain` ticker callback (a
+ * separate Pixi ticker, not part of `update()`), so each
+ * `FRAME_MARKERS` carries the most recent curtain-tick cost.
+ *
+ * This is deliberately NOT on `RendererFeedback` — that's a
+ * phase-gated closed-set DI contract (see `IRenderer.ts` /
+ * `src/client/CLAUDE.md`); a separate gated channel keeps the
+ * contract untouched and the production cost at zero.
+ * Built once by the renderer (moved from `PixiRenderer`, god-file split slice 12).
+ */
+export function createFrameMarkers(): FrameMarkers {
+  return {
+    rendererUpdateMs: 0,
+    spriteCount: 0,
+    warpTickMs: 0,
+    gridLabelSpecMs: 0,
+    gridTextCreateMs: 0,
+    gridCleanupMs: 0,
+    gridLabelCount: 0,
   };
 }
 

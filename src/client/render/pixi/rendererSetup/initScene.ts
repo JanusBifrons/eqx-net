@@ -97,6 +97,39 @@ export function resolveInitTarget(rawContainer: unknown): InitTarget {
   return { isDom, initialW, initialH, initialDpr, canvas, domContainer, zoom };
 }
 
+// Most colour + builder constants moved to pixi/spriteBuilders.ts;
+// the constants below are PixiRenderer-specific (background tint,
+// remote-laser colour used by inline beam draw in update()).
+const BACKGROUND_COLOR = 0x05070f;
+
+/** Initialise the renderer's Pixi `Application` on the init target and
+ *  append its canvas to the DOM container (moved from `PixiRenderer.init`,
+ *  god-file split slice 12). */
+export async function initRendererApp(
+  app: Application, target: InitTarget, quality: GraphicsQuality, resolutionFor: (dpr: number, w: number, h: number) => number,
+): Promise<void> {
+  const { isDom, initialW, initialH, initialDpr, canvas, domContainer } = target;
+  await app.init({
+    ...(canvas ? { canvas: canvas as unknown as HTMLCanvasElement } : {}),
+    width: initialW,
+    height: initialH,
+    background: BACKGROUND_COLOR,
+    // Graphics quality: `fxaa` swaps multisampling for the post pass on
+    // the world; `off` is neither (graphicsQuality.ts).
+    antialias: quality.aa === 'msaa' || quality.aa === 'max',
+    resolution: resolutionFor(initialDpr, initialW, initialH),
+    autoDensity: isDom,
+    // Pin WebGL: Pixi v8.1+ already defaults autoDetect to WebGL, but
+    // pinning guarantees the worker can never silently select WebGPU
+    // (whose Graphics MSAA path differs from the main-thread fallback's
+    // WebGL), keeping crispness identical across both renderer paths.
+    preference: 'webgl',
+  });
+  if (domContainer) {
+    domContainer.appendChild(app.canvas);
+  }
+}
+
 /** The starfield, the camera-tracked world and the host the FXAA pass sits on. */
 export function buildWorldScene(app: Application, quality: GraphicsQuality): { starfield: StarfieldBackground; world: Container; worldHost: Container } {
   // Starfield attached to app.stage BEFORE the world so it z-orders

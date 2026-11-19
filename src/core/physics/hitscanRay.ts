@@ -205,3 +205,22 @@ function discVisit(collider: RAPIER.Collider): boolean {
   }
   return true;
 }
+
+/** The `filterPredicate` behind `PhysicsWorld.hitscan`'s `skipId`. Built once
+ *  per world, not per call (invariant #14): keeps a collider unless its
+ *  body's id is skipped. Walls (not in `handleToId`) are never skipped. */
+export class RaySkipFilter {
+  /** The skip test for the `hitscan` call in progress (null outside one). */
+  skip: ((id: string) => boolean) | null = null;
+
+  constructor(private readonly handleToId: ReadonlyMap<number, string>) {}
+
+  readonly predicate = (collider: RAPIER.Collider): boolean => {
+    const skip = this.skip;
+    if (skip === null) return true;
+    const parent = collider.parent();
+    if (!parent) return true;
+    const id = this.handleToId.get(parent.handle);
+    return id === undefined || !skip(id);
+  };
+}

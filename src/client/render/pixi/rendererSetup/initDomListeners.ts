@@ -9,6 +9,7 @@ import type { RendererInputController } from '../rendererInputController.js';
 import type { RendererCameraDirector } from '../cameraDirector.js';
 import type { StarfieldBackground } from '../../StarfieldBackground.js';
 import type { RendererFrameRefs } from '../frameCtx.js';
+import { logEvent, isDiagEnabled } from '../../../debug/ClientLogger.js';
 
 export interface DomListenerDeps {
   app: () => Application | undefined;
@@ -93,4 +94,37 @@ export function installRendererDomListeners(
     app: () => r.app, domContainer, input: r.input, cameraDirector: r.cameraDirector,
     isInitialized, resolutionFor, starfield: () => r.starfield,
   });
+}
+
+/**
+ * Worker-context resize (`PixiRenderer.resize`; moved from `PixiRenderer`,
+ * god-file split slice 12). The renderer worker calls it when it
+ * receives a RESIZE message — replicates the DOM resize() handler for
+ * the OffscreenCanvas path.
+ */
+export function resizeRenderer(
+  r: Pick<RendererFrameRefs, 'app' | 'cameraDirector' | 'starfield' | 'world'>, initialized: boolean,
+  resolutionFor: (dpr: number, w: number, h: number) => number, width: number, height: number, dpr?: number,
+): void {
+  if (!initialized || !r.app?.renderer) return;
+  // Pass resolution through so a DPR change (monitor move / browser
+  // zoom / some rotations) re-derives the backing buffer. Omitting it
+  // (the old behaviour) kept the stale init resolution → blur after
+  // such a change. `width`/`height` are LOGICAL (CSS) px.
+  r.app.renderer.resize(width, height, dpr !== undefined ? resolutionFor(dpr, width, height) : r.app.renderer.resolution);
+  r.cameraDirector.setViewSize(width, height);
+  r.starfield?.resize(width, height);
+  if (isDiagEnabled()) {
+    logEvent('render_frame_diag', {
+      phase: 'resize',
+      mode: 'worker',
+      appResolution: r.app.renderer.resolution,
+      canvasW: r.app.canvas.width,
+      canvasH: r.app.canvas.height,
+      inW: width,
+      inH: height,
+      dpr: dpr ?? -1,
+      worldScaleX: r.world.scale.x,
+    });
+  }
 }
