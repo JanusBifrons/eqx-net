@@ -306,12 +306,10 @@ export type PilotJobId = number;
 /** `pilotJob()` orders. TICK: what `tick()` flies when it does not fight
  *  (leaving, flock, travel / patrol leg, course, guard post, hunt search,
  *  orbit). NO_FLOCK: the same for a follower whose leader can't be resolved.
- *  REPORT: the order `getActivity()` reports by, which differs (travel and
- *  hunt before the flock, the post without the broadside exception, a bare
- *  course reads idle). */
+ *  `getActivity()` reports by the same orders, so the panel reads the job
+ *  the ship flies. */
 export const JOB_ORDER_TICK = 0;
 export const JOB_ORDER_NO_FLOCK = 1;
-export const JOB_ORDER_REPORT = 2;
 
 /** What a peacetime mode reads, refreshed by the brain before each call. */
 export interface PilotModeContext {
