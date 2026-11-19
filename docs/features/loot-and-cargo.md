@@ -74,11 +74,14 @@ never half-apply, and a failing group rolls back alone without discarding
 other players' writes. Replays are idempotent.
 
 **Pods ride the scrap wire.** A pod is a scrap-kind swarm entity whose parent
-ship kind is `cargo-pod` and whose `componentIndex` is its glow tier. The
+ship kind is `cargo-pod` and whose `componentIndex` is its look: size class × 4 + glow tier. The
 client already draws scrap by `(parentKind, componentIndex)`, so pods needed
 no wire change. Pods are kept OUT of the scrap FIFO (its eviction would delete
 value) and OUT of the sector snapshot. They persist only via the `holds` table
-and are restored on room hydrate, so there is no double-restore.
+and are restored on room hydrate, so there is no double-restore. The row's
+`look` column keeps that `componentIndex`, so a pod comes back after a
+restart at its own size and glow (a row saved before the column existed comes
+back at size 0).
 
 **Caps.** At most 64 live pods per sector. A drop within 60 u of a pod, or any
 drop at the cap, merges into a pod instead of evicting one.

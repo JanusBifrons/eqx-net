@@ -76,8 +76,8 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | To add | Do this | Status |
 |---|---|---|
 | A combat move | An `IManoeuvre` in `src/core/ai/tactics/` (`manoeuvre.ts`). | live |
-| An order / stance / non-combat mode | An `IPilotMode` file in `src/core/ai/modes/` (lifecycle next to `IManoeuvre` in `tactics/manoeuvre.ts`) plus a case in `pilotJob()`. Live: leaving, patrol (course + orbit), travel / patrol leg, search, flock follow, guard return. An order's state (post, travel, hunt) is fields on its mode, not the brain. | live |
-| A pilot helper the brain owns (senses, target pick, morale state) | A class in `src/core/ai/pilot/` built once in the constructor (`PilotSenses`, `TargetPick`, `PilotMorale`). Combat-side helpers (`TacticalFill`, `BroadsideHelm`, `FireLaneSteer`, `CombatDecision`, `CombatSteer`) are classes in `src/core/ai/tactics/`, built the same way. | live |
+| An order / stance / non-combat mode | An `IPilotMode` file in `src/core/ai/modes/` (lifecycle next to `IManoeuvre` in `tactics/manoeuvre.ts`) plus a case in `pilotJob()`. Live: leaving, patrol (course + orbit), travel / patrol leg, search, flock follow, guard return. An order's state (post, travel, hunt, course) is fields on its mode (the guard post also owns its radius floor, leash test and the pick's leash reach), and its setter, with the order's rules in its doc, is a method on that mode (the brain keeps a one-line delegate; cross-mode effects through `PilotOrderModes`). | live |
+| A pilot helper the brain owns (senses, target pick, morale state) | A class in `src/core/ai/pilot/` built once in the constructor (`PilotSenses`, `TargetPick`, `PilotTargeting` the hostility ledger and targeting orders, `PilotMorale` the morale timers, die and hooks (`noteDamage`, `noteCapitalLost`), `MoveToHelm` the shared fly-to, `PilotHelm` the energy pool and virtual-pilot actuation (`fly`, `trySpendEnergy`); `PilotAim` the combat lead and turret aim point (`aimPoint`); the weapon engagement profile is `engagementProfile()` in `pilot/engagementProfile.ts`, filled once). Combat-side helpers (`TacticalFill` incl. the context's fixed fields (`init`), `BroadsideHelm`, `FireLaneSteer`, `CombatDecision` incl. Flee's warp-out test and stand-down, `CombatSteer`) are classes in `src/core/ai/tactics/`, built the same way. | live |
 | A tuning number | `hostileDroneTuning.ts`. | live |
 
 ## Core: `World.ts` (`src/core/CLAUDE.md`)
@@ -95,15 +95,18 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 ## Core: `fractureHull.ts` (`src/core/CLAUDE.md`)
 
-`fractureHull.ts` keeps the plan, the crack lines and the piece split; it re-exports the moved public names (`FRACTURE_QUANTUM`, `EDGE_HULL`, `EDGE_CUT`, `FractureEdgeKind`). Every sibling stays under the determinism rules in its header and bumps `FRACTURE_ALGO_VERSION` on any output change.
+`fractureHull.ts` keeps the plan, the sound primary and the piece split; it re-exports the moved public names (`FRACTURE_QUANTUM`, `EDGE_HULL`, `EDGE_CUT`, `FRACTURE_MAX_PIECES` and the `Fracture*` types). Every sibling stays under the determinism rules in its header and bumps `FRACTURE_ALGO_VERSION` on any output change.
 
 | To add | Do this | Status |
 |---|---|---|
 | A new edge kind (`EDGE_*`) | `destruction/fractureRings.ts`; if it is jagged, add it to `jagged()` in `fractureJag.ts`. | live |
-| A ring predicate, quantising rule or piece-output field (`FracturePiece`, convex decomposition) | `destruction/fractureRings.ts`. | live |
+| A ring predicate, quantising rule or the piece builder (convex decomposition) | `destruction/fractureRings.ts`. | live |
+| An input option, plan field or piece-output field (`FractureInput`, `FracturePlan`, `FracturePiece`) | `destruction/fractureTypes.ts` (types and piece limits only, so every sibling imports it without a cycle). | live |
+| A hull measure (keel, beam, centroid, outline projection, chunky guard) | `destruction/fractureMeasure.ts`. | live |
 | A jag shape, jag repair pass or T-junction weld rule | `destruction/fractureJag.ts`. | live |
 | A splitting primitive (line clip, strip, extra cut) | `destruction/fractureSplit.ts`. | live |
-| A new crack family or plan draw | `fractureHull.ts` (`crackLines` / `planFor`) until a crack-lines module is split out. | planned |
+| A new crack family (zone, fan, far, extra chunk, splinters) | `destruction/fractureCracks.ts` (its own seeded stream). | live |
+| A plan draw | `fractureHull.ts` (`planFor`). | live |
 
 ## Shared data: `structureKinds.ts` (`src/shared-types/CLAUDE.md`)
 
