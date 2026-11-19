@@ -81,3 +81,17 @@ export function buildLabGridLines(scene: Scene, lineL: Container, nubL?: Contain
   });
   return { r, mirror: { swarm, structures, gridFlashes } as unknown as RenderMirror };
 }
+
+/** Stud sheets (`?nubs=all|mix`, stud audit): with no grid lines in the
+ *  scene, every structure's socket nubs straight from the socket list, all
+ *  lit (`all`) or every other one lit (`mix`). Null when off. */
+export function buildLabSheetNubs(scene: Scene, nubL: Container, mode: string | null): number | null {
+  if (mode !== 'all' && mode !== 'mix') return null;
+  const mask = mode === 'all' ? 0xffffffff : 0x55555555;
+  scene.structs.forEach((st) => {
+    const g = new Graphics(socketNubContext(st.id, mask));
+    g.position.set(st.x, st.y); g.rotation = st.rot;
+    nubL.addChild(g);
+  });
+  return scene.structs.length;
+}

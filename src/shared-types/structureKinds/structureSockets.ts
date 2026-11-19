@@ -8,27 +8,36 @@
  * (the direction a cable leaves in).
  *
  * Rules, in order:
- *   1. A per-kind override (`STRUCTURE_SOCKET_OVERRIDES`), filled by a
- *      family's own file when its look step needs a bespoke layout. Empty today.
+ *   1. A per-kind override (`STRUCTURE_SOCKET_OVERRIDES`): a bespoke list for a
+ *      kind whose drawn art does not fill its outline (see there; a family's
+ *      look step drops its entry once it draws the outline deck).
  *   2. Shield gate / airlock: the emitter POSTS (`gatePosts.ts`, the same data
  *      `emitterAnchor` uses), normal pointing from the centre through the post.
  *      Fence links stay straight post to post, so these are post centres, not
  *      outline points.
+ *   2b. Teleporter pads (`TELEPORTER_KINDS`): the pad is open and its POSTS
+ *      are the only solid parts (`padPostCenters`), so one socket per post,
+ *      on the post's outer face (the footprint edge), normal straight out.
  *   3. Connector: the six faces of its hex, one socket per face midpoint. A
  *      connector takes cables from ANY side, so its socket count is not a link
  *      limit (a levelled connector reaches 10 links on 6 faces).
- *   4. Default: sockets on the kind's (unstyled) `structureOutline` edges,
+ *   4. Default: sockets on the edges of the kind's house-look outline
+ *      (`structureOutline(kind, SOCKET_OUTLINE_STYLE)`, the edge players see),
  *      `ceil(len / STRUCTURE_SOCKET_SPACING)` per edge (at least one), evenly
  *      spaced at segment midpoints. On a concave outline an edge segment whose
  *      outward ray runs back into the building (a pocket) gets no socket. On a
- *      `chamfer` outline the short cut-corner edges get no socket (owner:
- *      "drop corner studs"), except on a shield pylon, which takes any side.
+ *      chamfered outline (every non-hex family in the house look) the short
+ *      cut-corner edges get no socket (owner: "drop corner studs"), except on
+ *      a shield pylon, which takes any side.
  *
- * Sockets use the UNSTYLED outline (no `styleId`), because the server has no
- * style: a style that re-seeds the outline draws its nubs from this list.
+ * Sockets sit on the HOUSE-LOOK outline (style `c`, the clean symmetric
+ * chamfer players see), not the seeded unstyled one: the server has no style,
+ * but a stud must sit on the edge the player sees (stud audit). The outline is
+ * shared pure data, so server and client still agree.
  */
 import { GATE_POSTS, AIRLOCK_POSTS } from './gatePosts.js';
 import { DEFAULT_STRUCTURE_KIND, isStructureKindId } from './lookup.js';
+import { PAD_SPECS, TELEPORTER_KINDS, padPostCenters, type TeleporterKind } from '../teleport.js';
 import { STRUCTURE_OUTLINE_FAMILY, structureOutline } from './outline.js';
 import type { StructureKindId } from './types.js';
 
@@ -53,15 +62,43 @@ export interface MutStructureSocket {
  *  and so on. */
 export const STRUCTURE_SOCKET_SPACING = 300;
 
-/** Per-kind override: a family file registers a bespoke socket list here. Empty
- *  until a family's look step needs one. */
-export const STRUCTURE_SOCKET_OVERRIDES: Partial<Record<StructureKindId, readonly StructureSocket[]>> = {};
+/** The structure style whose outline the sockets sit on: the house look
+ *  (`DEFAULT_STRUCT_STYLE` in client artMode.ts; a test keeps them equal). */
+export const SOCKET_OUTLINE_STYLE = 'c';
 
 type P = { x: number; y: number };
 
 function freezeSocket(x: number, y: number, nx: number, ny: number): StructureSocket {
   return Object.freeze({ x, y, nx, ny });
 }
+
+/**
+ * Per-kind override: a bespoke socket list for a kind whose drawn art (today's
+ * plan in client `structureVisuals.ts`; no style C drawer yet) leaves its
+ * outline edge empty, so outline studs would float in space (stud audit).
+ * Each stud sits on a solid edge of that art, long sides only, one per started
+ * `STRUCTURE_SOCKET_SPACING`. When the kind's family gets its style C look
+ * (which draws the outline deck), drop its entry so it returns to rule 4.
+ */
+export const STRUCTURE_SOCKET_OVERRIDES: Partial<Record<StructureKindId, readonly StructureSocket[]>> = {
+  // Armoured emplacement: a square plate (the hex outline is never drawn).
+  missile_turret: Object.freeze([
+    freezeSocket(95, 0, 1, 0), freezeSocket(0, 95, 0, 1), freezeSocket(-95, 0, -1, 0), freezeSocket(0, -95, 0, -1),
+  ]),
+  // Rail gun: the 270 u carriage block (396 u long: two a side) and the two
+  // rail ends; the railed runs between are rungs over a 210 u spine.
+  siege_gun_80cm: Object.freeze([
+    freezeSocket(0, -450, 0, -1),
+    freezeSocket(135, -99, 1, 0), freezeSocket(135, 99, 1, 0),
+    freezeSocket(0, 450, 0, 1),
+    freezeSocket(-135, 99, -1, 0), freezeSocket(-135, -99, -1, 0),
+  ]),
+  // The spire: the broadcast spine's two ends and the lantern tower's two
+  // ends; the antenna fins between them are open.
+  territory_lock: Object.freeze([
+    freezeSocket(200, 0, 1, 0), freezeSocket(0, 140, 0, 1), freezeSocket(-200, 0, -1, 0), freezeSocket(0, -140, 0, -1),
+  ]),
+};
 
 /** Does the ray from (px, py) along (dx, dy) hit any outline edge other than
  *  edge `skip` (within `maxT`)? Used to drop sockets in concave pockets. */
@@ -93,13 +130,32 @@ function postSockets(posts: readonly (readonly [number, number])[]): readonly St
   );
 }
 
+const SIDE_NORMALS = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;
+
+/** A teleporter pad: one socket per post, on its outer face. `padPostCenters`
+ *  lists `posts / 4` posts per side, sides in order bottom, right, top, left. */
+function padSockets(kind: TeleporterKind): readonly StructureSocket[] {
+  const posts = padPostCenters(kind);
+  const perSide = Math.max(1, Math.round(posts.length / 4));
+  const half = PAD_SPECS[kind].post / 2;
+  return Object.freeze(posts.map(([x, y], i) => {
+    const [nx, ny] = SIDE_NORMALS[Math.floor(i / perSide) % 4]!;
+    return freezeSocket(x + nx * half, y + ny * half, nx, ny);
+  }));
+}
+
+function isPadKind(id: string): id is TeleporterKind {
+  return (TELEPORTER_KINDS as readonly string[]).includes(id);
+}
+
 function outlineSockets(id: StructureKindId): readonly StructureSocket[] {
-  const poly = structureOutline(id);
+  const poly = structureOutline(id, SOCKET_OUTLINE_STYLE);
   const n = poly.length;
   const oneFace = id === 'connector';
-  // Chamfer outlines alternate cut corner, long side (`chamferOutline`): the
-  // cut edges are the diagonal ones. The pylon keeps them (it takes any side).
-  const skipCorners = STRUCTURE_OUTLINE_FAMILY[id] === 'chamfer' && id !== 'shield_pylon';
+  // House-look outlines of every non-hex family alternate cut corner, long
+  // side (`symmetricChamferOutline`): the cut edges are the diagonal ones.
+  // The pylon keeps them (it takes any side).
+  const skipCorners = STRUCTURE_OUTLINE_FAMILY[id] !== 'hex' && id !== 'shield_pylon';
   // Ray reach for the pocket test: past the whole outline.
   let reach = 0;
   for (const p of poly) reach = Math.max(reach, Math.hypot(p.x, p.y));
@@ -145,7 +201,8 @@ export function structureSockets(kindId: string | null | undefined): readonly St
       STRUCTURE_SOCKET_OVERRIDES[id] ??
       (id === 'shield_gate' ? postSockets(GATE_POSTS)
         : id === 'shield_airlock' ? postSockets(AIRLOCK_POSTS)
-          : outlineSockets(id));
+          : isPadKind(id) ? padSockets(id)
+            : outlineSockets(id));
     CACHE.set(id, list);
   }
   return list;

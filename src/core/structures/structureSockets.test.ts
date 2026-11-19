@@ -4,6 +4,8 @@ import {
   getStructureKind,
   structureOutline,
   STRUCTURE_OUTLINE_FAMILY,
+  STRUCTURE_SOCKET_OVERRIDES,
+  SOCKET_OUTLINE_STYLE,
   structureSockets,
   rotateStructureSocket,
   structureSocketToWorld,
@@ -11,6 +13,7 @@ import {
 import { GATE_POSTS, AIRLOCK_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
 import { STRUCTURE_CONNECTIONS_PER_LEVEL, STRUCTURE_LEVEL_CAP, effectiveStructureMaxConnections, structureLinksBoundBySockets } from '../leveling/structureLevel.js';
 import { emitterAnchor, gateTypeOf } from './gateGeometry.js';
+import { TELEPORTER_KINDS } from '../../shared-types/teleport.js';
 
 type P = { x: number; y: number };
 
@@ -38,6 +41,9 @@ function inside(p: P, poly: readonly P[]): boolean {
 }
 
 const isGate = (k: string): boolean => gateTypeOf(k) !== null;
+/** Kinds off rule 4 (outline): bespoke overrides and teleporter pads (posts). */
+const offOutline = (k: string): boolean =>
+  k in STRUCTURE_SOCKET_OVERRIDES || (TELEPORTER_KINDS as readonly string[]).includes(k);
 
 describe('structureSockets', () => {
   it('every socket-bound kind: link cap at every level fits its sockets (one cable per socket)', () => {
@@ -62,10 +68,10 @@ describe('structureSockets', () => {
     console.log(`[structureSockets] top-level cap clamped to sockets: ${clamped.join(', ')}`);
   });
 
-  it('every outline socket lies on the outline with a unit outward normal', () => {
+  it('every outline socket lies on the house-look outline with a unit outward normal', () => {
     for (const kind of STRUCTURE_KINDS_LIST) {
-      if (isGate(kind.id)) continue;
-      const poly = structureOutline(kind.id);
+      if (isGate(kind.id) || offOutline(kind.id)) continue;
+      const poly = structureOutline(kind.id, SOCKET_OUTLINE_STYLE);
       for (const s of structureSockets(kind.id)) {
         expect(distToOutline(s, poly), kind.id).toBeLessThan(1e-6);
         expect(Math.hypot(s.nx, s.ny), kind.id).toBeCloseTo(1, 9);
@@ -75,9 +81,9 @@ describe('structureSockets', () => {
     }
   });
 
-  it('chamfer kinds: no socket on a cut corner, at least one on each long side (pylon keeps its corners)', () => {
+  it('non-hex kinds (chamfered in the house look): no socket on a cut corner, one on each long side (pylon keeps its corners)', () => {
     for (const kind of STRUCTURE_KINDS_LIST) {
-      if (STRUCTURE_OUTLINE_FAMILY[kind.id] !== 'chamfer' || isGate(kind.id)) continue;
+      if (STRUCTURE_OUTLINE_FAMILY[kind.id] === 'hex' || isGate(kind.id)) continue;
       const sockets = structureSockets(kind.id);
       const diagonal = sockets.filter((s) => Math.abs(s.nx) > 1e-9 && Math.abs(s.ny) > 1e-9).length;
       if (kind.id === 'shield_pylon') {

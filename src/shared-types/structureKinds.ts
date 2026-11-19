@@ -73,6 +73,7 @@ export type { StructureOutlineFamily } from './structureKinds/outline.js';
 export {
   STRUCTURE_SOCKET_SPACING,
   STRUCTURE_SOCKET_OVERRIDES,
+  SOCKET_OUTLINE_STYLE,
   structureSockets,
   rotateStructureSocket,
   structureSocketToWorld,

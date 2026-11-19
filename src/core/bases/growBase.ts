@@ -52,8 +52,10 @@ export type { GrownPlacement } from './growBuilder.js';
  *  the fence sits 50 u closer (`FENCE_MARGIN`) to keep the row-end taps in
  *  reach of the gate posts and pylons.
  *  15→16 (structure-restyle 0d slice 5): a placement may not sit on an
- *  existing link's curved socket-to-socket cable (was the straight centre line). */
-export const BASE_GROWTH_VERSION = 16;
+ *  existing link's curved socket-to-socket cable (was the straight centre line).
+ *  16→17 (structure-restyle stud audit): sockets sit on the house-look
+ *  outline (style c), so cable ends and socket-to-socket reach moved. */
+export const BASE_GROWTH_VERSION = 17;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured

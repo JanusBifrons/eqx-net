@@ -33,7 +33,7 @@ import { seedVariant, type BakeJob } from '../render/art/bake.js';
 import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipShader.js';
 import { GLOW, imgTexture, nebulaTex, RING, starTile, STREAK } from './labTextures.js';
 import { BALLS, BAND_OFFSET, countSprites, SPARKS, type BoomView, type ShipView, type ShotView, type StructView } from './labViews.js';
-import { buildLabGridLines, buildLabRigs } from './labGameLayers.js';
+import { buildLabGridLines, buildLabRigs, buildLabSheetNubs } from './labGameLayers.js';
 import { buildLabHull, labGunJobs, labTurreted, lightLabGuns } from './labTurrets.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
 
@@ -256,6 +256,7 @@ async function main(): Promise<void> {
 
   const rigs = RIGS ? buildLabRigs(scene, rigUnderL, rigPlaneL, rigOverL) : [];
   const lines = buildLabGridLines(scene, lineL, structL);
+  if (!lines) buildLabSheetNubs(scene, structL, qs.get('nubs'));
 
   // ---- ships
   const ships: ShipView[] = scene.ships.map((e, i) => {
