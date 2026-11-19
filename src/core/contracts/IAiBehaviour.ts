@@ -10,6 +10,7 @@
  * import server or client code — they are deterministic functions of their
  * arguments. Authority over physics and projectiles stays with the server.
  */
+import type { NavHull } from '../../shared-types/shipScale/navTuning.js';
 
 export interface AiPlayerView {
   readonly id: string;
@@ -170,16 +171,17 @@ export interface AiWorldView {
 export interface IAiNavRoutes {
   /** True ⇒ fly to (`wpX`, `wpY`); `ahead` is how far the ship can run
    *  before it must have braked (to the waypoint, plus the next leg as far as
-   *  it carries on the same way). `clearance` and `arrive` are the hull's
+   *  it carries on the same way). `hull` and `arrive` are the hull's
    *  own numbers (`shipTuning`, #18). */
   /** `keep`: a moving goal (a squad follower's ship ahead, slice 10): fly the
    *  old route until the new plan answers, instead of dropping it.
    *  `heading` (ship angle) and `turnRadius` (slice 11, capitals): plan with
    *  the way the ship points, no U-turn where it has no room to turn.
-   *  `comfort` (`navComfort(kind)`): the room the route keeps where any
-   *  way fits it; it squeezes to `clearance` only where none does. */
-  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number, keep?: boolean,
-    heading?: number, turnRadius?: number, comfort?: number): boolean;
+   *  `hull` (`navHull(kind)`): its clearance, the comfort room the route
+   *  keeps where any way fits it, and the beam a long hull's straight runs
+   *  need (its full length only where it turns). */
+  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, hull: NavHull, arrive: number, keep?: boolean,
+    heading?: number, turnRadius?: number): boolean;
   readonly wpX: number;
   readonly wpY: number;
   readonly ahead: number;

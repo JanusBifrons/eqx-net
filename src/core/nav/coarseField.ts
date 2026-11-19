@@ -8,9 +8,9 @@
  *
  * Each cell stores its best point (the most open spot inside it) and the room
  * there: the biggest hull clearance that fits at that point. A cell centre
- * would be wrong here: a lane is only ~560 u wider than a battleship needs, so
- * a cell that the lane's centre line crosses must be judged on that line, not
- * at its centre.
+ * would be wrong here: a lane is laid out only ~560 u wider than a
+ * battleship's length disc, so a cell that the lane's centre line crosses must
+ * be judged on that line, not at its centre.
  *
  * Room at a point is the best of:
  * - outside the field: distance past its rim, less the warp pad;
@@ -56,9 +56,11 @@ export class CoarseFieldMap implements SearchGraph {
   private clearings: readonly FieldClearing[] = [];
 
   /** Builds the map over the field plus `margin` of open space round it (by
-   *  default room for any hull to go round the outside).
+   *  default room for any hull to go round the outside: past the warp pad,
+   *  more than a battleship's length plus its turning radius, so it can turn
+   *  round out there).
    *  Generation-time (once per sector), never per tick. */
-  build(o: ChunkOpts, margin = cutFieldPad() + COARSE_NAV_CELL * 4): void {
+  build(o: ChunkOpts, margin = cutFieldPad() + COARSE_NAV_CELL * 8): void {
     this.R = o.radius ?? SLICED.radius;
     this.F = o.fighterLength;
     this.lanes = slicedFieldLanes({ seed: o.seed, battleshipLength: o.battleshipLength, radius: this.R });
@@ -142,6 +144,11 @@ export class CoarseFieldMap implements SearchGraph {
   }
 }
 
+/** Heading-graph nodes per coarse cell: the way in (0..7) and a "just turned" bit. */
+export const HEADING_NODES_PER_CELL = 16;
+/** `node >> HEADING_NODE_SHIFT` is the node's cell. */
+export const HEADING_NODE_SHIFT = 4;
+const JUST_TURNED = 8;
 /** Each of the 8 neighbour steps as a turn index round the compass (0..7, 45° apart). */
 const STEP_DIR = [0, 4, 2, 6, 1, 7, 3, 5];
 /** A step's cost per 45° it turns from the way the ship arrived, in turning radii. */
@@ -154,18 +161,27 @@ export const NAV_LANE_ENTRY_COST = 1;
  * The coarse cells with the way the ship came in (navigation slice 11, capital
  * commitment). A cell with less room than the clearance plus the hull's
  * turning radius (a lane, to a capital) is one node per compass step the ship
- * arrived by (cell × 8 + step), and its next step may turn at most 45°:
+ * arrived by (cell × 16 + step), and its next step may turn at most 45°:
  * forward only, no U-turn planned inside it; each such turn costs
  * `NAV_TURN_STEP_COST` turning radii per 45°. A cell with room to turn is one
- * node (cell × 8), free to leave any way, so open space searches as cheaply as
+ * node (cell × 16), free to leave any way, so open space searches as cheaply as
  * the plain graph. Entering a lane from open space costs
  * `NAV_LANE_ENTRY_COST` turning radii: once in, the ship is committed to its
- * far end. A view over the one `CoarseFieldMap`, its rooms and best points.
+ * far end. A hull that turns wider than a cell also carries a just-turned bit
+ * (16 nodes a cell): after a 45° turn in tight space it goes straight a step,
+ * so turns can't stack into a U-turn in a lane (width on straights, owner
+ * 2026-11-19). A view over the one `CoarseFieldMap`, its rooms and best points.
  */
 export class HeadingCoarseGraph implements SearchGraph {
   map: CoarseFieldMap | null = null;
   turnRadius = 0;
-  get nodeCount(): number { return this.map!.nodeCount * 8; }
+  /** The hull's full clearance (its length), for "room to turn round"; 0 ⇒
+   *  the map's admitting clearance. Set apart from it when the map admits
+   *  cells on the hull's beam ("width on straights", owner 2026-11-19). */
+  turnClear = 0;
+  /** Room a 45° step needs in a tight cell (the hull's sweep, `navTurnRoom`); 0 ⇒ none beyond admission. */
+  turnRoom45 = 0;
+  get nodeCount(): number { return this.map!.nodeCount * HEADING_NODES_PER_CELL; }
   edgeCount(): number { return 8; }
   /** The compass step (0..7) nearest a heading (ship angle: 0 faces +y). */
   static stepOf(heading: number): number {
@@ -175,28 +191,37 @@ export class HeadingCoarseGraph implements SearchGraph {
   /** No room to turn round in this cell. */
   tight(cell: number): boolean {
     const m = this.map!;
-    return m.room[cell]! < m.clearance + this.turnRadius;
+    return m.room[cell]! < (this.turnClear > 0 ? this.turnClear : m.clearance) + this.turnRadius;
   }
   /** The search's start node: in `cell`, pointing along `heading`. */
   startNode(cell: number, heading: number): number {
-    return cell * 8 + (this.tight(cell) ? HeadingCoarseGraph.stepOf(heading) : 0);
+    return (cell << HEADING_NODE_SHIFT) + (this.tight(cell) ? HeadingCoarseGraph.stepOf(heading) : 0);
   }
   /** 45° steps turned from the way in, for a step out of a lane cell; 0 out of open space. */
   private turnSteps(node: number, k: number): number {
-    if (!this.tight(node >> 3)) return 0;
+    if (!this.tight(node >> HEADING_NODE_SHIFT)) return 0;
     const d = Math.abs(STEP_DIR[k]! - (node & 7));
     return d > 4 ? 8 - d : d;
   }
   edgeTo(node: number, k: number): number {
-    const cell = node >> 3, j = this.map!.edgeTo(cell, k);
-    if (j === cell || this.turnSteps(node, k) > 1) return node;
-    return j * 8 + (this.tight(j) ? STEP_DIR[k]! : 0);
+    const cell = node >> HEADING_NODE_SHIFT, j = this.map!.edgeTo(cell, k);
+    if (j === cell) return node;
+    // A turn sits in the cell it leaves (an open cell's way in is not kept: room to turn anyway).
+    const s = this.turnSteps(node, k);
+    if (s > 1 || (s === 1 && this.map!.room[cell]! < this.turnRoom45)) return node;
+    // A hull that turns wider than a cell goes straight on for a step after
+    // each turn in tight space, so its turns can't bunch into a U-turn in a
+    // lane (four 45° steps), while a long gentle curve still can.
+    const wide = this.turnRadius > this.map!.cell;
+    if (s === 1 && wide && (node & JUST_TURNED) !== 0) return node;
+    if (!this.tight(j)) return j << HEADING_NODE_SHIFT;
+    return (j << HEADING_NODE_SHIFT) + STEP_DIR[k]! + (s === 1 && wide ? JUST_TURNED : 0);
   }
   edgeCost(node: number, k: number): number {
     const to = this.edgeTo(node, k);
     if (to === node) return Infinity;
-    const cell = node >> 3;
-    const entry = this.tight(to >> 3) && !this.tight(cell) ? NAV_LANE_ENTRY_COST : 0;
+    const cell = node >> HEADING_NODE_SHIFT;
+    const entry = this.tight(to >> HEADING_NODE_SHIFT) && !this.tight(cell) ? NAV_LANE_ENTRY_COST : 0;
     return this.map!.edgeCost(cell, k) + (this.turnSteps(node, k) * NAV_TURN_STEP_COST + entry) * this.turnRadius;
   }
 }
