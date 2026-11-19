@@ -58,22 +58,17 @@ What Stages 1–3 built is the **foundation**, and it does not need building aga
     per-structure size tables (the art lab's `OUTPOST_SIZES` goes when the Capital/connector sizes
     land).
 
-## 3. Decisions the owner makes once, up front
+## 3. Owner decisions (2026-11-19)
 
-How saving works decides some of this for us. Any change to the structure catalogue version throws
-away every saved player structure on deploy (`SectorPersistence.ts`). Sizes live in that shared
-catalogue, which the server and client must agree on, so **a size change cannot be switched on and
-off by a setting**. Only the look can.
-
-- **Sizes.** Hold every type to the ladder (small 150–300, medium 600–1,200, large 2–4k, Capital
-  8–15k), or treat the ladder as a guide? What about the four types below "small" (connector, pylon,
-  basic turret)? Should "extra small" be a tier?
-- **The Capital.** Does it really grow to 8–15k (it is 560 now)? That moves its crane bay, puts the
-  400 u install/repair reach inside its own hull, and reshapes every base and NPC trade box. **It
-  sets the spacing for everything else, so it is decided and done first.**
-- **Release.** All at once at the end: one wipe of saved structures, and one consistent game (the
-  current choice). Or size batches land on main as they finish: a wipe each time, with the look behind
-  a setting until it's complete.
+- **Sizes: the ladder is a guide.** Each family is sized on its own merits when it comes up; tiny
+  types (connector, pylon, basic turret) may stay tiny.
+- **Scope: small and medium structures only.** The Capital keeps its size (560) and its current
+  look and crane bay. Capital-tier sizing and the large types (large teleporter, alien gate) are
+  parked.
+- **Wipes are fine.** The game is in active development: saved structures can be wiped whenever a
+  size batch needs it. So finished batches can land on main when ready; the look can still sit behind
+  a setting until it is complete. Sizes live in the shared catalogue and can't be hidden behind a
+  setting.
 
 ## 4. Phase 0: set-up (before any family)
 
@@ -96,10 +91,7 @@ off by a setting**. Only the look can.
 - The existing `base` scene builds from the real `growBase(profile, seed)` instead of its hand list,
   so every checkpoint shows the real generator's base at each tier.
 
-**0c: Capital + connector size slice (size lane, first).** After the owner's §3 answers, set their
-sizes. Then move the Capital bay, check install/repair and trade reach, and re-measure the hand
-layouts (`scenarioLayouts`, `showcaseRooms`, `structureLattice`, test rooms), base growth, and
-perf budgets. Show one full grown base. Everything after is judged against this.
+**0c (parked):** Capital-tier sizing is out of scope (§3). Remove the art lab's `OUTPOST_SIZES` so the lab draws catalogue sizes (rule 11).
 
 ## 5. The recipe for one family
 
@@ -138,7 +130,7 @@ whole feel and the placement.
 
 | # | Family | Types | Gameplay to settle (examples) |
 |---|---|---|---|
-| 0 | Set-up, then Capital + connector sizes | capital, connector | see §3 and 0c |
+| 0 | Set-up | — | see Phase 0 |
 | 1 | **Power + solar** (owner's pick) | solar, battery, battery bank, reactor (revisit) | Does panel area set output? Solar tracking the star (cosmetic)? Spacing? Fuel shown flowing? |
 | 2 | Fences + gates | shield pylon, shield gate, airlock, territory lock | Walls run between pylon centres, and gate post sizes are constants (`gateGeometry.ts`); gate doors move onto the rig system (owner, earlier) |
 | ✓ | Checkpoint 1: full base | | |
@@ -150,7 +142,7 @@ whole feel and the placement.
 | ✓ | Checkpoint 3 | | |
 | 7 | Coastal guns | AA quad, 5 in, 8 in casemate, 11 in, 16 in barbette, Lindemann, 80 cm siege gun | Off-centre guns move the muzzle (server); arcs and facing are gameplay |
 | 8 | Storage + habitation | storage vault, habitat, tower, cargo bay (revisit) | Deposit range is measured from the centre |
-| 9 | Transport + docks | teleporter, large teleporter, pocket pad, alien gate, freight dock (revisit) | Pad size = teleport volume (`PAD_SPECS`) as well as the footprint |
+| 9 | Transport + docks | teleporter, pocket pad, freight dock (revisit); large teleporter + alien gate parked (large) | Pad size = teleport volume (`PAD_SPECS`) as well as the footprint |
 | ✓ | Final: every base re-seeded, collision shapes done, full suite + e2e, owner sign-off, PR(s) per §3 | | |
 
 Shield pylons sit with the fences, not power, because the walls are built from their positions.
@@ -179,9 +171,4 @@ nearest week; re-estimate after Family 1.
 
 ## Open questions for the owner
 
-1. Sizes: hold every type to the ladder, or size per family? Add an "extra small" tier for connectors,
-   pylons and basic turrets?
-2. The Capital: grow it to the 8–15k tier, or keep it near today's size?
-3. Release: all at once at the end (one wipe), or size batches landing on main as they finish (a wipe
-   each time)?
-4. OK to start Phase 0 now, and Family 1's brief (power + solar) in parallel?
+None. Answered 2026-11-19 (§3). The owner OK'd starting Phase 0 and the Family 1 brief.
