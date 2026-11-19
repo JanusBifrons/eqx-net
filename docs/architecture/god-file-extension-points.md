@@ -79,6 +79,19 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | A pilot helper the brain owns (senses, target pick, morale state) | A class in `src/core/ai/pilot/` built once in the constructor (`PilotSenses`, `TargetPick`, `PilotMorale`). Combat-side helpers (`TacticalFill`, `BroadsideHelm`, `FireLaneSteer`, `CombatDecision`, `CombatSteer`) are classes in `src/core/ai/tactics/`, built the same way. | live |
 | A tuning number | `hostileDroneTuning.ts`. | live |
 
+## Core: `World.ts` (`src/core/CLAUDE.md`)
+
+| To add | Do this | Status |
+|---|---|---|
+| A new body shape or collider set | A builder in `src/core/physics/spawnBodies.ts` (`createShipBody`, `createObstacleBody`, `createProjectileBody`, `createWallBody`, `mountShipColliders`) called from the `PhysicsWorld` spawn method; collider settings stay in `colliderConfig.ts`. | live |
+| Warp body behaviour (spool turn, run, drop) | `src/core/physics/warpActuator.ts` (`applyPilotInput`, `botWarpStep`, `restoreWarp`); the warp state machine stays in `warpDrive.ts`. `PhysicsWorld` keeps one-line delegates. | live |
+| A shared World record type | `src/core/physics/worldTypes.ts` (`ShipBody`, `ShipInput`, `ShipPhysicsState`), so extension modules never import `World.ts`. | live |
+| A per-step pass | Its own module with a class or function called from `tick`, like `CapitalOverlapResolver` (`capitalOverlap.ts`), `SleepSettler` (`sleepSettle.ts`) or `applyForceFields` (`forceFields.ts`); scratch built once (#14). | live |
+| A ray / hitscan query | `hitscanRay.ts`; `PhysicsWorld.hitscan` stays a thin wrapper (its skip filter is `RaySkipFilter`). | live |
+| A velocity kick or impulse beyond `applyImpulse` | `src/core/physics/bodyImpulses.ts` (`addBodyVelocity`, `applyBodyImpulseAtPoint`, `applyRigidGroupImpulse`); scratch is module state built once (#14). | live |
+| Reading or writing a body pose as `ShipPhysicsState` | `src/core/physics/bodyState.ts` (`writeBodyState`, `readBodyState`, `readAllBodyStates`). | live |
+| A dev / diagnostic contact probe | `src/core/physics/contactProbe.ts` (`fastestContact`, `queryContactState`); not on a hot path. | live |
+
 ## Core: `fractureHull.ts` (`src/core/CLAUDE.md`)
 
 `fractureHull.ts` keeps the plan, the crack lines and the piece split; it re-exports the moved public names (`FRACTURE_QUANTUM`, `EDGE_HULL`, `EDGE_CUT`, `FractureEdgeKind`). Every sibling stays under the determinism rules in its header and bumps `FRACTURE_ALGO_VERSION` on any output change.
