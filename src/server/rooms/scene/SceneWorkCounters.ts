@@ -78,6 +78,13 @@ export interface SceneWorkView {
   /** Print-only: live wreck pieces per tick (capital + sub-cap break-up),
    *  so a count gate can tell how much of `bodiesPerTick` is debris. */
   wreckPiecesPerTick: number;
+  /** Print-only (navigation slice 16): over the window, routes asked, cells
+   *  their searches expanded, commands posted to the nav worker (routes,
+   *  chunk / rock / obstacle events), and the most routes unanswered at once. */
+  navRoutes: number;
+  navExpanded: number;
+  navMessages: number;
+  navInFlightMax: number;
 }
 
 type ThreadCpu = () => { user: number; system: number };
@@ -159,6 +166,23 @@ export class SceneWorkCounters {
     this.decisions = total - this.decBase;
   }
 
+  /** Nav totals at the first counted tick, the latest deltas, the peak in flight. */
+  private navBase: { routes: number; expanded: number; posts: number } | null = null;
+  private navRoutes = 0;
+  private navExpanded = 0;
+  private navPosts = 0;
+  private navInFlightMax = 0;
+
+  /** Called each counted tick with the room's nav field totals (#14: no allocation after the first). */
+  nav(routes: number, expanded: number, posts: number, inFlight: number): void {
+    if (!this.active) return;
+    if (this.navBase === null) this.navBase = { routes, expanded, posts };
+    this.navRoutes = routes - this.navBase.routes;
+    this.navExpanded = expanded - this.navBase.expanded;
+    this.navPosts = posts - this.navBase.posts;
+    if (inFlight > this.navInFlightMax) this.navInFlightMax = inFlight;
+  }
+
   // CPU batches (print-only).
   private batchTicks = 0;
   private batchCpu: NodeJS.CpuUsage | null = null;
@@ -225,6 +249,10 @@ export class SceneWorkCounters {
       wingmanHostileScansPerTick: r(this.wmScans / t),
       aiDecisionsPerTick: r(this.decisions / t),
       wreckPiecesPerTick: r(this.wreckPieces / t),
+      navRoutes: this.navRoutes,
+      navExpanded: this.navExpanded,
+      navMessages: this.navPosts,
+      navInFlightMax: this.navInFlightMax,
     };
   }
 }
