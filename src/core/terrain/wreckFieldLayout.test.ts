@@ -5,6 +5,8 @@ import { cutFieldOpts } from './chunkStreamer.js';
 import { wreckPieceGeometry } from '../destruction/wreckPieces.js';
 import { wreckKindAllowed } from '../destruction/wreckKindAllowed.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { hullPieceCounts, screenLine, worstRing } from './wreckFieldTestKit.js';
+import { WRECK_FIELD } from './wreckFieldLayout.js';
 
 const SIDES = ['ashen-league', 'vel-concord'] as const;
 const typical = (seed = 'thornfield', extra: Partial<WreckFieldOpts> = {}): WreckField =>
@@ -56,6 +58,54 @@ describe('wreckFieldLayout', () => {
     const clearings = [{ x: 0, y: 0, r: 8000 }, { x: 15_000, y: -5000, r: 4000 }];
     const f = typical('thornfield', { clearings });
     for (const h of f.hulls) for (const k of clearings) expect(Math.hypot(h.x - k.x, h.y - k.y)).toBeGreaterThanOrEqual(k.r + h.footprint);
+  });
+
+  it('wreck fields 13 "more big wrecks": sub-caps outnumber fighters, mostly missile frigates; capitals mostly destroyers and cruisers', () => {
+    const tally: Record<string, number> = {};
+    let sub = 0, ftr = 0;
+    for (const seed of ['thornfield', 'a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+      for (const h of typical(seed).hulls) {
+        const k = getShipKind(h.kindId);
+        tally[h.kindId] = (tally[h.kindId] ?? 0) + 1;
+        if (k.sizeClass !== 'capital') { if (k.radius >= WRECK_FIELD.subcapMinRadius) sub++; else ftr++; }
+      }
+    }
+    expect(sub).toBeGreaterThan(ftr);
+    const n = (id: string): number => tally[id] ?? 0;
+    expect(n('missile-frigate')).toBeGreaterThan(n('heavy') + n('gunship'));
+    const small = n('destroyer') + n('light-cruiser') + n('heavy-cruiser') + n('heavy-cruiser-beam');
+    const big = n('battlecruiser') + n('battlecruiser-lance') + n('battleship') + n('battleship-rail') + n('barge');
+    expect(small).toBeGreaterThan(big);
+  });
+
+  it('wreck fields 13: a capital lies in the field (centre within capitalOverhang footprints of the core rim), even round a big clearing', () => {
+    const fields = [typical('thornfield'), typical('a'), typical('b', { clearings: [{ x: 0, y: 0, r: 3000 }] }), wreckField({ seed: 'look', x: 60_000, y: 0, sides: SIDES, blocked: rockFieldBlocker(cutFieldOpts('look', undefined)) })];
+    let caps = 0;
+    for (const f of fields) for (const h of f.hulls) {
+      if (getShipKind(h.kindId).sizeClass !== 'capital') continue;
+      caps++;
+      expect(Math.hypot(h.x - f.x, h.y - f.y), `${f.seed} ${h.kindId}`).toBeLessThanOrEqual(WRECK_FIELD.coreRadius + h.footprint * WRECK_FIELD.capitalOverhang);
+    }
+    expect(caps).toBeGreaterThan(0);
+  });
+
+  it('wreck fields 14: an arrival spot stays clear, with wrecks seated round it on every side of a phone view', () => {
+    const spots = [0, 1, 2, 3].map((i) => ({ x: Math.cos(i * Math.PI / 2) * 3000, y: Math.sin(i * Math.PI / 2) * 3000, r: 300 }));
+    const plain = typical('thornfield', { clearings: [{ x: 0, y: 0, r: 1800 }] });
+    const f = typical('thornfield', { clearings: [{ x: 0, y: 0, r: 1800 }], arrivals: spots });
+    // The same hulls, only placed differently.
+    expect(f.hulls.length + f.dropped).toBe(plain.hulls.length + plain.dropped);
+    for (const s of spots) {
+      for (const h of f.hulls) expect(Math.hypot(h.x - s.x, h.y - s.y)).toBeGreaterThanOrEqual(s.r + h.footprint);
+      // Its seated hulls lie in the box round it, on most of its sides (the
+      // quarters the box's diagonals cut).
+      const seated = f.hulls.filter((h) => Math.abs(h.x - s.x) <= WRECK_FIELD.arrivalHalfW && Math.abs(h.y - s.y) <= WRECK_FIELD.arrivalHalfH);
+      expect(seated.length).toBeGreaterThanOrEqual(WRECK_FIELD.arrivalHulls);
+      const sides = new Set(seated.map((h) => Math.round(Math.atan2((h.y - s.y) / WRECK_FIELD.arrivalHalfH, (h.x - s.x) / WRECK_FIELD.arrivalHalfW) / (Math.PI / 2)) & 3));
+      expect(sides.size).toBeGreaterThanOrEqual(3);
+    }
+    // No arrivals: the layout is unchanged by the option's absence.
+    expect(typical('thornfield', { clearings: [{ x: 0, y: 0, r: 1800 }], arrivals: [] }).hulls).toEqual(plain.hulls);
   });
 
   it('never overlaps rocks when given the rock field', () => {
@@ -125,5 +175,11 @@ describe('wreckFieldLayout', () => {
       rows.push(`${seed.padEnd(10)} hulls ${f.hulls.length} (cap ${byClass.cap} sub ${byClass.sub} ftr ${byClass.ftr}, dropped ${f.dropped}) pieces ${totalPieces} | chunks ${f.byChunk.size} (${CHUNK_SIZE} u) | per chunk: hulls max ${Math.max(...hullCounts)} mean ${(f.hulls.length / f.byChunk.size).toFixed(1)}, pieces max ${Math.max(...pieces.values())} mean ${(totalPieces / f.byChunk.size).toFixed(1)} | worst 5x5 ring: hulls ${ringHulls} pieces ${ringPieces}`);
     }
     console.log(`wreck field per chunk:\n${rows.join('\n')}`);
+    // Wreck fields 11: how full a sideways phone screen is, across the core.
+    const lines = ['thornfield', 'a', 'b'].map((seed) => {
+      const f = typical(seed), p = hullPieceCounts(f), ring = worstRing(f, p);
+      return `${seed.padEnd(10)} ${screenLine(f, p, WRECK_FIELD.coreRadius)} | worst ring ${ring.pieces} pieces (${ring.hulls} hulls) at chunk (${ring.cx}, ${ring.cy})`;
+    });
+    console.log(`wreck field per phone screen:\n${lines.join('\n')}`);
   });
 });

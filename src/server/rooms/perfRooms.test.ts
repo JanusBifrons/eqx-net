@@ -5,7 +5,8 @@ import { resolveSectorConfig } from '../galaxy/GalaxyRegistry.js';
 import { wreckField, hullsInChunk, wreckFieldHullFracture } from '../../core/terrain/wreckFieldLayout.js';
 import { chunkOf } from '../../core/terrain/fieldLayout.js';
 import { wreckPieceGeometry } from '../../core/destruction/wreckPieces.js';
-import { FIELD_RING_WORST_PIECES } from './wreckFifos.js';
+import { FIELD_LIVE_CAP } from './wreckFifos.js';
+import { hullPieceCounts, worstRing } from '../../core/terrain/wreckFieldTestKit.js';
 import type { WreckFieldRoomOpts } from './WreckFieldSource.js';
 
 describe('perfRoomOptions', () => {
@@ -24,7 +25,16 @@ describe('perfRoomOptions', () => {
     expect(o['perfFixedLoad']).toBe(true);
   });
 
-  it('wreck-field scenes: the pilot loads the worst measured ring of their wreckField', () => {
+  it('wreck-field scenes: EQX_SCENE_WRECK_FIELD=0 leaves the field off', () => {
+    for (const id of ['wreck-field', 'wreck-field-far']) {
+      const scene = perfSceneById(id)!;
+      expect(perfRoomOptions(scene, {})['wreckField']).toBeDefined();
+      expect(perfRoomOptions(scene, { EQX_SCENE_WRECK_FIELD: '0' })['wreckField']).toBeUndefined();
+    }
+    expect(perfRoomOptions(perfSceneById('cut-field')!, { EQX_SCENE_WRECK_FIELD: '0' })['cutField']).toEqual({ seed: 'look' });
+  });
+
+  it('wreck-field scenes: the pilot loads the worst ring of their wreckField, under the field cap', () => {
     for (const id of ['wreck-field', 'wreck-field-far']) {
       const scene = perfSceneById(id)!;
       const wf = perfRoomOptions(scene, {})['wreckField'] as WreckFieldRoomOpts;
@@ -34,7 +44,11 @@ describe('perfRoomOptions', () => {
       for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
         for (const h of hullsInChunk(field, cx + dx, cy + dy)) pieces += wreckPieceGeometry(wreckFieldHullFracture(h)).length;
       }
-      expect(pieces, `${id}: live pieces in the pilot's 5 x 5 ring`).toBe(FIELD_RING_WORST_PIECES);
+      const worst = worstRing(field, hullPieceCounts(field));
+      expect(pieces, `${id}: live pieces in the pilot's 5 x 5 ring`).toBe(worst.pieces);
+      expect({ cx, cy }).toEqual({ cx: worst.cx, cy: worst.cy });
+      expect(pieces).toBeLessThanOrEqual(FIELD_LIVE_CAP);
+      for (const h of field.hulls) expect(Math.hypot(h.x - scene.spawn.x, h.y - scene.spawn.y), `${id}: spawn clear of ${h.kindId}`).toBeGreaterThan(h.footprint);
     }
   });
 });

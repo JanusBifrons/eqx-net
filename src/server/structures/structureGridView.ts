@@ -10,7 +10,7 @@
 import { structureDraw } from '../../shared-types/structurePower.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
-import { structureLevelFactor, effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
+import { effectiveStructurePowerOutput, effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
 import {
   canConnect,
   edgeDistance,
@@ -28,10 +28,9 @@ import type { StructureRecord, StructureRegistry } from './StructureRegistry.js'
 export function structureToGridNode(rec: StructureRecord): GridNode {
   const kind = getStructureKind(rec.kind);
   // Phase 4 WS-B4 — a leveled generator (solar / capital) outputs MORE power.
-  // The single scalar factor scales `powerOutput`; consumption is unscaled
-  // (a leveled consumer still draws its base, so the leveled grant is a pure
-  // surplus boost). Level 1 is the identity (factor 1).
-  const lvlMul = structureLevelFactor(rec.level);
+  // `effectiveStructurePowerOutput` scales `powerOutput` (shared with the
+  // client mirror, #15); consumption is unscaled (a leveled consumer still
+  // draws its base, so the leveled grant is a pure surplus boost).
   // Review must-fix #2 (2026-06-20, plan effervescent-umbrella): a Capital that
   // is MID-UPGRADE (`rec.isConstructed=false` but `upgradeTargetLevel` set) is
   // an already-operational bank being RE-built, NOT a fresh blueprint — so in
@@ -65,7 +64,7 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     // mid-upgrade Capital (see above) is treated as operational so it keeps
     // funding power + minerals through its own re-build.
     // D1 — a fuel-burning kind (Reactor) outputs only while fuelled.
-    powerOutput: operational && (kind.fuelEveryPulses == null || rec.fueled === true) ? kind.powerOutput * lvlMul : 0,
+    powerOutput: operational && (kind.fuelEveryPulses == null || rec.fueled === true) ? effectiveStructurePowerOutput(kind.powerOutput, rec.level) : 0,
     // Active power — full draw while active, an idle trickle otherwise.
     powerConsumption: operational ? structureDraw(kind.powerConsumption, rec.drawFull === true) : 0,
     isConstructed: operational,
