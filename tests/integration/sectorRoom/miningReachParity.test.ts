@@ -28,12 +28,12 @@ function fillRock(out: FireTargetShape, d: number): boolean {
 
 /** The server gate, on a lock-helper stub (stub host) whose lock resolves to the rock. */
 function serverGate(d: number): Gate {
-  const self = Object.assign(new FireControlLocks({} as unknown as FireControlLocksHost), {
+  const self = Object.assign(new FireControlLocks({ lineHeld: () => false } as unknown as FireControlLocksHost), {
     locksFor: () => ({ aimKeyFor: () => 'r:1' }),
     lockOwner: (pid: string) => pid,
     resolveLockTarget: (_owner: string, _key: string, out: FireTargetShape) => fillRock(out, d),
   });
-  return (mountId, weaponId, size, ox, oy, angle) => self.mountBearsOnLock('p1', mountId, ox, oy, angle, weaponId, size);
+  return (mountId, weaponId, size, ox, oy, angle) => self.mountBearsOnLock('p1', mountId, 0, ox, oy, angle, weaponId, size);
 }
 
 /** The client gate, on a client stub whose group aim resolves to the rock. */

@@ -233,6 +233,7 @@ import { WingmanPilots } from './features/wingmanPilots.js';
 import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { PilotSwap } from './features/pilotSwap.js';
 import { FireControlLocks } from './features/fireControlLocks.js';
+import { swarmLockId } from './lockSalvage.js';
 import { transitHostRoom, type HullMove } from './features/transitMessages.js';
 import { BreakInHooks } from './features/breakInHooks.js';
 import { TurretTargeting } from './features/turretTargeting.js';
@@ -352,6 +353,7 @@ import { rockViewOf } from './rockCut.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
+import { LofShipBody, type LofBody } from './lofShipBody.js';
 import { isTerrainLockKind, type LockEntry } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
 import type { GameClock } from '../../core/clock/GameClock.js';
@@ -396,25 +398,9 @@ const ENV_TIME_SCALE: number | null = (() => {
  *  A pilot sends one on a lock-line change, two when switching groups mid-hold;
  *  a flood beyond this is silently dropped (src/server/CLAUDE.md thresholds). */
 export const MAX_LOCK_MSGS_PER_TICK = 3;
-/** A player's ship (a pilot's ACTIVE ship, keyed by playerId, or a LINGERING
- *  hull, keyed by shipInstanceId) as a `LineOfFireGate` body: players' ships
- *  are not swarm records. One per ship key, reused (#14). */
-class LofShipBody {
-  id = '';
-  slot = 0;
-  /** Broadphase bound: kind 1 + `shipKind` bins by `shipHitBound`. */
-  radius = 0;
-  readonly kind = 1;
-  shipKind = '';
-  /** Owning player. */
-  owner = '';
-  /** The ship's instance id (= `id` for a lingering hull). */
-  sid = '';
-  ship: ShipState | null = null;
-  /** Build generation it was last filled in (stale-body sweep). */
-  gen = 0;
-}
-type LofBody = SwarmEntityRecord | LofShipBody;
+/** A tractor beam's line of sight is blocked by any body but a loot pod
+ *  (pre-bound for `LineOfFireGate.firstOnLine`, #14). */
+const notLootPod = (rec: LofBody): boolean => !isLootPod(rec);
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
 
 /** Click-to-inspect live-stats emit cadence (Item B5). ~5 Hz on its OWN
@@ -719,6 +705,8 @@ export class SectorRoom extends Room<SectorState> {
   private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd), tractors: {
     tick: () => this.serverTick, poseOf: (id, out) => this.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
     lineBodies: (fx, fy, tx, ty, w, a, b, ids, cap) => this.lofGate().lineBodies(fx, fy, tx, ty, w, a, b, ids, cap),
+    // Line of sight: what a shot would hit first (loot pods pass, as for every beam).
+    lineBlocker: (fx, fy, tx, ty, e, t) => this.lofGate().firstOnLine(fx, fy, tx, ty, e, t, notLootPod),
     inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1), isWreckPiece: (id) => { const r = this.swarmRegistry.get(id); return r != null && isWreckPiece(r); },
     // Tractoring a ship is a hostile act, like a hit (weapon-mounts.md "Tractor beam"); terrain is neutral.
     onShipTractored: (e, t) => { this.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
@@ -1895,7 +1883,7 @@ export class SectorRoom extends Room<SectorState> {
       fireDroneMount: (id, i, target, killAt, from) => this.aiFireResolver.fireMount(id, i, target, killAt, from),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       // Friendly fire slice 2: a turret holds while an escort is on its line.
-      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max) => this.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max),
+      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max, w, k) => this.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max, w, k),
       // Capital turrets engage hostile structures too (the AI's per-tick set).
       hostileStructures: () => this.hostileStructureCircles,
       lockTimeCapS: () => this.testLockTimeCapS,
@@ -1944,7 +1932,7 @@ export class SectorRoom extends Room<SectorState> {
       malformed: this.malformed,
       // RTS slice 5: a wingman's hull (shipInstanceId) gates on its own locks.
       fireAllowed: (pid, slotId) => this.fireLocks.locksFor(pid).hasLocked(pid, slotId),
-      mountBearsOnLock: (pid, mountId, ox, oy, angle, weaponId, size) => this.fireLocks.mountBearsOnLock(pid, mountId, ox, oy, angle, weaponId, size),
+      mountBearsOnLock: (pid, mountId, k, ox, oy, angle, weaponId, size) => this.fireLocks.mountBearsOnLock(pid, mountId, k, ox, oy, angle, weaponId, size),
       hullLineBlocked: (sid, fx, fy, dx, dy, weaponId, svx, svy, size) => this.hullLineBlocked(sid, fx, fy, dx, dy, weaponId, svx, svy, size),
       fireTractor: (pid, m) => this.forceFields.renewTractor(pid, m, lockKeyBodyId(this.locks.aimKeyFor(pid, m.id), this.swarmRegistry)),
     });
@@ -1960,6 +1948,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       // Friendly fire slice 2: a drone holds while an ally is in the way.
       lineOfFireBlocked: (id, targetId, fx, fy, dx, dy) => this.droneLineBlocked(id, targetId, fx, fy, dx, dy),
+      slotLineHeld: (id, targetId, k, w, fx, fy, tx, ty) => this.lineHeld(id, k, w, fx, fy, tx, ty, id, targetId),
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       targetShape: (id, out) => this.aiFireTargetShape(id, out),
@@ -2710,7 +2699,7 @@ export class SectorRoom extends Room<SectorState> {
       // Friendly fire: a turret beam lands on the first thing in its path.
       beamFirstHit: (fx, fy, dx, dy, maxDist, skipId) => this.turretBeamFirstHit(fx, fy, dx, dy, maxDist, skipId),
       // Friendly fire slice 2: a turret holds over its own base / its owner.
-      lineOfFireBlocked: (rec, targetId, fx, fy, dx, dy, max) => this.structureLineBlocked(rec, targetId, fx, fy, dx, dy, max),
+      lineOfFireBlocked: (rec, targetId, fx, fy, dx, dy, max, w, k) => this.structureLineBlocked(rec, targetId, fx, fy, dx, dy, max, w, k),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
           type: 'laser_fired',
@@ -3493,7 +3482,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   // ── Fire control (exp/fire-control): lock helpers, `features/fireControlLocks.ts` ──
-  private readonly fireLocks = new FireControlLocks({
+  private readonly fireLocks: FireControlLocks = new FireControlLocks({
     state: () => this.state, locks: () => this.locks, wingmanLocks: () => this.wingmanLocks, fleet: this.fleet,
     swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry, relationCtx: this.relationCtx,
     hostileActs: this.hostileActs, gameClock: this.gameClock, lingeringSlots: this.lingeringSlots,
@@ -3504,6 +3493,12 @@ export class SectorRoom extends Room<SectorState> {
     npcHostileTo: (id, pid) => this.npcHostileTo(id, pid), refreshNpcAttackHostility: (id, pid) => this.refreshNpcAttackHostility(id, pid),
     swarmEntityPoseInto: (id, out) => this.swarmEntityPoseInto(id, out), resolveInstanceMounts: (s) => this.resolveInstanceMounts(s),
     hasHold: (sid) => this.hasHold(sid), shipCargoCapacity: (k, sid) => this.shipCargoCapacity(k, sid), holdWeight: (uid) => this.holdWeight(uid),
+    tractorLos: {
+      target: (key, out) => { const r = this.swarmRegistry.getByEntityId(swarmLockId(key)); if (r == null) return false; const b = slotBase(r.slot); out.x = this.sabF32[b + SLOT_X_OFF]!; out.y = this.sabF32[b + SLOT_Y_OFF]!; out.id = r.id; return true; },
+      activatedMounts: (id): ReadonlyArray<WeaponMount> | undefined => this.fireLocks._lockActivated.get(id)?.mounts,
+      firstOnLine: (fx, fy, tx, ty, e, tg) => this.lofGate().firstOnLine(fx, fy, tx, ty, e, tg, notLootPod),
+    },
+    lineHeld: (k, i, w, fx, fy, tx, ty, skip, tgt) => this.lineHeld(k, i, w, fx, fy, tx, ty, skip, tgt),
   });
 
   /**
@@ -6221,8 +6216,9 @@ export class SectorRoom extends Room<SectorState> {
 
   /** An NPC ship's line of fire (drone slot or capital turret). */
   private npcShipLineBlocked(
-    shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number, weaponId?: WeaponId, mountIdx = 0,
   ): boolean {
+    if (weaponId !== undefined && this.lineHeld(shooterId, mountIdx, weaponId, fx, fy, fx + dx * maxDist, fy + dy * maxDist, shooterId, targetId)) return true;
     if (!this.npcLineOfFire) return false;
     const rec = this.swarmRegistry.get(shooterId);
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
@@ -6272,8 +6268,9 @@ export class SectorRoom extends Room<SectorState> {
 
   /** A structure turret's line of fire. */
   private structureLineBlocked(
-    rec: StructureRecord, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    rec: StructureRecord, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number, weaponId?: WeaponId, mountIdx = 0,
   ): boolean {
+    if (weaponId !== undefined && this.lineHeld(rec.id, mountIdx, weaponId, fx, fy, fx + dx * maxDist, fy + dy * maxDist, rec.id, targetId)) return true;
     if (!this.npcLineOfFire) return false;
     this.lofShooterKind = 2;
     this.lofOwner = rec.owner;
@@ -6281,6 +6278,11 @@ export class SectorRoom extends Room<SectorState> {
     // A player's turret never fires through its owner's own ships (the gate's
     // player-ship bodies: the active ship and parked hulls).
     return this.lofGate().blocked(fx, fy, dx, dy, maxDist, rec.id, targetId, this.lofFriendly);
+  }
+
+  /** Fire control's blocked-line hold (`BlockedLineHold`) on the one line-of-fire grid, in game time. */
+  private lineHeld(key: string, idx: number, weaponId: WeaponId, fx: number, fy: number, tx: number, ty: number, skipId: string, targetId: string): boolean {
+    return this.mountTicker.lineHold.held(this.lofGate(), key, idx, weaponId, fx, fy, tx, ty, skipId, targetId, this.gameClock.now());
   }
 
   /** Scratch: an owned hull's target pose (`hullLineBlocked`). */

@@ -164,9 +164,11 @@ export interface StructureGridHooks {
    *  a player's turret, the owner's own ship and structures) lies on the shot
    *  from (fx, fy) along unit (dx, dy) for `maxDist` (to `targetId`), so the
    *  mount holds fire this turret tick: it keeps aiming, the lock stays and
-   *  the reload is not spent. Absent ⇒ never blocked (unit harnesses). */
+   *  the reload is not spent. With `weaponId` (mount `mountIdx`), a beam or
+   *  slug also holds on a line blocked by any solid body for the tolerance
+   *  (`BlockedLineHold`). Absent ⇒ never blocked (unit harnesses). */
   lineOfFireBlocked?(
-    rec: StructureRecord, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    rec: StructureRecord, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number, weaponId?: WeaponId, mountIdx?: number,
   ): boolean;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
   broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string, mountId?: string): void;
@@ -359,7 +361,7 @@ export class StructureGridSubsystem {
       const lx = target.x - rec.x, ly = target.y - rec.y;
       const ll = Math.hypot(lx, ly);
       if (ll > muzzle && this.hooks.lineOfFireBlocked(
-        rec, target.id, rec.x + (lx / ll) * muzzle, rec.y + (ly / ll) * muzzle, lx / ll, ly / ll, ll - muzzle,
+        rec, target.id, rec.x + (lx / ll) * muzzle, rec.y + (ly / ll) * muzzle, lx / ll, ly / ll, ll - muzzle, def.id, _mountIdx,
       )) return false;
     }
     if (def.mode === 'hitscan') {

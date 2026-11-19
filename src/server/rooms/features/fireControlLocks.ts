@@ -30,6 +30,8 @@ import type { StructureRegistry } from '../../structures/StructureRegistry.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from '../LockSubsystem.js';
 import { LockSalvageLookup, swarmLockId } from '../lockSalvage.js';
 import { NpcLockSubsystem } from '../NpcLockSubsystem.js';
+import { tractorLineClear, type TractorLineHost } from '../tractorLineOfSight.js';
+import type { ShipKindId } from '../../../shared-types/shipKinds.js';
 import type { ShipState } from '../schema/SectorState.js';
 
 /** Empty mount list for a kind with none (fire-range test; #14). */
@@ -63,6 +65,10 @@ export interface FireControlLocksHost {
   hasHold(shipInstanceId: string): boolean;
   shipCargoCapacity(kind: string, shipInstanceId: string): number;
   holdWeight(uid: string): number;
+  /** Tractor line of sight for the lock hand-over (tractorLineOfSight.ts). */
+  tractorLos: TractorLineHost;
+  /** Fire control's blocked-line hold (`BlockedLineHold`) on the room's line-of-fire grid, in game time. */
+  lineHeld(key: string, idx: number, weaponId: WeaponId, fx: number, fy: number, tx: number, ty: number, skipId: string, targetId: string): boolean;
 }
 
 export class FireControlLocks {
@@ -70,6 +76,7 @@ export class FireControlLocks {
 
   private readonly _lockPose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
   private readonly _lockTarget: LockTargetView = newLockTargetView();
+  private _lockTargetId = ''; // the body id `resolveLockTarget` last resolved (the blocked-line hold's target)
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.h.swarmRegistry.getByEntityId(n),
@@ -163,6 +170,7 @@ export class FireControlLocks {
       shipOf: (sid) => this.lockShipOf(sid, this.wingmanHull(sid)),
       autoPick: () => null,
       salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out), lineage: this._lockSalvage,
+      tractorLineClear: (sid, key) => tractorLineClear(this.h.tractorLos, sid, this.wingmanHull(sid)?.kind as ShipKindId | undefined, this.h.lingeringPoseCache.get(sid), key),
       commitHostileAct: (sid, key) => {
         const owner = this.h.fleet.ownerOfAttached(sid);
         if (owner !== null) this.commitLockHostileAct(owner, key);
@@ -178,6 +186,7 @@ export class FireControlLocks {
     return new LockSubsystem({
       resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
       salvageOf: (pid, key, out) => this._lockSalvage.fill(this.h.getActiveShip(pid), key, out), lineage: this._lockSalvage,
+      tractorLineClear: (pid, key) => tractorLineClear(this.h.tractorLos, pid, this.h.getActiveShip(pid)?.kind as ShipKindId | undefined, this.h.shipPoseCache.get(pid), key),
       shooterPose: (pid, out) => {
         const p = this.h.shipPoseCache.get(pid);
         const ship = this.h.getActiveShip(pid);
@@ -251,6 +260,7 @@ export class FireControlLocks {
       }
       if (!this.h.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
       out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
+      this._lockTargetId = rec.id;
       this.fillSwarmFireShape(rec, this._lockPose, out);
       return true;
     }
@@ -274,6 +284,7 @@ export class FireControlLocks {
       // Fire shape: the hit shape the pilot's ship is hit on (shipHitShape).
       fillFireTargetShape(out, p.x, p.y, p.angle, true, ship.kind, ship.shield > 0, 0);
       out.hostile = false; out.terrain = false; // PvP always runs the failsafe first
+      this._lockTargetId = other;
       return true;
     }
     return false;
@@ -340,12 +351,14 @@ export class FireControlLocks {
    * the mount, and its barrel bears on it (shared `mountFiresOn`, the same
    * call as the client's fire passes, #15). A turret clamped at its arc
    * limit with the target outside the arc fails, so it can't fire. `size`: the mount's (mining reach, `weaponIdReach`).
+   * A beam or slug also holds once its line to the lock has been blocked for the tolerance (`lineHeld`).
    */
-  mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId, size: WeaponMount['size']): boolean {
+  mountBearsOnLock(pid: string, mountId: string, mountIdx: number, ox: number, oy: number, angle: number, weaponId: WeaponId, size: WeaponMount['size']): boolean {
     // A wingman's locks live in `wingmanLocks` and resolve as its owner (RTS).
     const key = this.locksFor(pid).aimKeyFor(pid, mountId);
     if (key === null || !this.resolveLockTarget(this.lockOwner(pid), key, this._lockTarget)) return false;
-    return mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._lockTarget);
+    if (!mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._lockTarget)) return false;
+    return !this.h.lineHeld(pid, mountIdx, weaponId, ox, oy, this._lockTarget.x, this._lockTarget.y, pid, this._lockTargetId);
   }
 
   /** Turret aim: the pose of the mount's group lock target (false = none). */

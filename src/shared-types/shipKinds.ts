@@ -209,7 +209,9 @@ export const SHIP_KINDS: typeof CATALOGUE_KINDS = BARGE_LOOK_KIND
 // fits lose `npcOnly` and gain `randomSpawn: false`): no stat changes, and
 // no stored player ship was a capital before.
 // 28 → 29 (2026-11-17): cargo-pod gains size classes (16 parts: size × tier).
-export const SHIP_KIND_CATALOGUE_VERSION = 29;
+// 29 → 30 (2026-11-18): the barge's side mounts (lasers and tractor dishes)
+// swing ±45° (`SIDE_MOUNT_ARC`), not ±1.6 rad.
+export const SHIP_KIND_CATALOGUE_VERSION = 30;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed

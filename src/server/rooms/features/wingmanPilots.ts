@@ -51,7 +51,7 @@ export interface WingmanPilotsHost {
   aiController(): AiController;
   wingmanLocks(): LockSubsystem;
   locks(): Pick<LockSubsystem, 'isInstant'>;
-  mountTicker(): Pick<WeaponMountTicker, 'playerMountAngles' | 'tickHull'>;
+  mountTicker(): Pick<WeaponMountTicker, 'playerMountAngles' | 'tickHull' | 'lineHold'>;
   playerFireResolver(): Pick<PlayerFireResolver, 'fireHull'>;
   transitOrchestrator(): Pick<TransitOrchestrator, 'dropHull'> | null;
   postToWorker(cmd: WorkerCmd): void;
@@ -337,6 +337,7 @@ export class WingmanPilots {
     // cooldown ledger, target cache). A reclaimed hull fires as its pilot.
     this.h.wingmanLocks().forget(shipInstanceId);
     this.h.mountTicker().playerMountAngles.delete(shipInstanceId);
+    this.h.mountTicker().lineHold.forget(shipInstanceId);
     this.h.lastFireClientTick.delete(shipInstanceId);
     this.h.lockActivated().delete(shipInstanceId);
     this.wingmanFireKeys.delete(shipInstanceId);

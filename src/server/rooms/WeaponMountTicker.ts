@@ -32,11 +32,13 @@ import {
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { mountLineClear, mountPriority, targetClass, STRUCTURE_TARGET_CLASS, type TargetClass } from '../../core/combat/mountTargeting.js';
 import { turretShotBears, leadArcBearing, mountCanEngage } from '../../core/combat/mountFireControl.js';
-import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShotMuzzle } from '../../core/combat/muzzle.js';
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
-import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
-import { LOCK_TUNING, WEAPON_LOCK_PROFILE, sensorFor, type MountSize } from '../../shared-types/combat/lockProfile.js';
+import type { LockInputs } from '../../core/combat/lockTime.js';
+import { LOCK_TUNING, sensorFor } from '../../shared-types/combat/lockProfile.js';
+import { structureLockSecs } from './structureLockSecs.js';
+import { BlockedLineHold } from './BlockedLineHold.js';
 
 import {
   DEFAULT_SHIP_KIND,
@@ -152,9 +154,11 @@ export interface WeaponMountTickerDeps {
   /** NPC line of fire (friendly fire slice 2): true ⇒ a FRIENDLY body lies on
    *  this turret's shot from its muzzle (fx, fy) along unit (dx, dy) for
    *  `maxDist` (to the target), so it holds fire this tick: it keeps aiming,
-   *  the lock stays and the reload is not spent. Absent ⇒ never blocked. */
+   *  the lock stays and the reload is not spent. Absent ⇒ never blocked.
+   *  With `weaponId` (mount `mountIdx`), a beam or slug also holds on a line
+   *  blocked by any solid body for the tolerance (`BlockedLineHold`). */
   lineOfFireBlocked?: (
-    droneId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    droneId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number, weaponId?: WeaponId, mountIdx?: number,
   ) => boolean;
   /** Structures hostile to the drones this tick (the AI's structure target
    *  set, built once per tick by the room). Capital turrets engage them too,
@@ -269,6 +273,8 @@ export class WeaponMountTicker {
   /** Per-drone equivalent. Allocated lazily — drones with all-static
    *  mounts (legacy fighter/scout/heavy) never get an entry. */
   readonly droneMountAngles = new Map<string, Float32Array>();
+  /** Blocked-line hold timers per shooter key and mount (pilots, hulls, drones, structures; fire-control.md). */
+  readonly lineHold = new BlockedLineHold();
   /** Sticky targetId per shooter (for pickTarget hysteresis). */
   readonly playerSlotTargets = new Map<string, string | null>();
 
@@ -687,7 +693,7 @@ export class WeaponMountTicker {
           // `maxSeconds` for a sub-capital gun, by the shared ship lock rules)
           // is no target for it: lock to fire. A heavy gun locks a small
           // structure slowly, never impossibly (owner 2026-11-13).
-          if (sig[j]! >= 0 && !Number.isFinite(this.structureLockSecs(mount, reach, sensor, sig[j]!, t, mx, my, selfVx, selfVy))) continue;
+          if (sig[j]! >= 0 && !Number.isFinite(structureLockSecs(this.lockIn, mount, reach, sensor, sig[j]!, t, mx, my, selfVx, selfVy, d.lockTimeCapS?.()))) continue;
           bestPri = pri; bestD2 = d2; best = j;
         }
         if (best >= 0 && best !== held) { engageable = true; lastOk[i] = tick; }
@@ -712,7 +718,7 @@ export class WeaponMountTicker {
         if (lock.target !== t.id) resetLock(lock, t.id);
         if (lock.stage === 'locked') structLocked = true;
         else {
-          const secs = this.structureLockSecs(mount, reach, sensor, sig[best]!, t, mx, my, selfVx, selfVy);
+          const secs = structureLockSecs(this.lockIn, mount, reach, sensor, sig[best]!, t, mx, my, selfVx, selfVy, d.lockTimeCapS?.());
           const ev = stepLock(lock, DT_SEC, secs, secs * LOCK_TUNING.failsafeMul, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
           if (ev === 'dropped') resetLock(lock, t.id);
           structLocked = ev === 'locked';
@@ -752,7 +758,7 @@ export class WeaponMountTicker {
         const a = ang + mount.baseAngle + angles[i]!;
         const ndx = -Math.sin(a), ndy = Math.cos(a);
         const muzzle = shipShotMuzzle(kind, mount, true);
-        if (d.lineOfFireBlocked(droneId, t.id, mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, dist - muzzle)) continue;
+        if (d.lineOfFireBlocked(droneId, t.id, mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, dist - muzzle, mount.weaponId, i)) continue;
       }
       // A charge weapon that is loaded, locked and bearing begins its charge
       // instead of firing (the turret keeps tracking).
@@ -793,6 +799,7 @@ export class WeaponMountTicker {
     this.playerMountAngles.delete(from);
     if (angles !== undefined) this.playerMountAngles.set(to, angles);
     else this.playerMountAngles.delete(to);
+    this.lineHold.moved(from, to);
     if (this.playerSlotTargets.has(from)) {
       this.playerSlotTargets.set(to, this.playerSlotTargets.get(from)!);
       this.playerSlotTargets.delete(from);
@@ -880,7 +887,7 @@ export class WeaponMountTicker {
   clearPlayer(playerId: string): void {
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
-
+    this.lineHold.forget(playerId);
     this.deps.onClearPlayer?.(playerId);
   }
 
@@ -915,28 +922,6 @@ export class WeaponMountTicker {
     return out;
   }
 
-  /** Seconds for a capital turret at (mx, my) to lock structure `t`
-   *  (signature `sig`): the shared `lockSeconds` with the mount's size
-   *  profile, its gun's reach and the hull's sensor. Infinity = can't. */
-  private structureLockSecs(
-    mount: WeaponMount, reach: number, sensor: number, sig: number, t: MountTargetView,
-    mx: number, my: number, selfVx: number, selfVy: number,
-  ): number {
-    const p = WEAPON_LOCK_PROFILE[(mount.size ?? 'none') as MountSize | 'none'];
-    const inp = this.lockIn;
-    inp.refSize = p.refSize;
-    inp.tracking = p.tracking;
-    inp.absRange = p.absRange;
-    inp.reach = reach;
-    inp.sensor = sensor;
-    inp.signature = sig;
-    inp.dx = t.x - mx;
-    inp.dy = t.y - my;
-    inp.dvx = t.vx - selfVx;
-    inp.dvy = t.vy - selfVy;
-    return capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, this.deps.lockTimeCapS?.());
-  }
-
   /** Cleanup hook: drop all per-drone state on eviction/destroy/shed. */
   clearDrone(droneId: string): void {
     this.droneMountLocks.delete(droneId);
@@ -948,6 +933,7 @@ export class WeaponMountTicker {
     this.droneMountLastOk.delete(droneId);
     this.droneMountFollowUntil.delete(droneId);
     this.droneMountFollowPoint.delete(droneId);
+    this.lineHold.forget(droneId);
   }
 }
 

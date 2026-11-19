@@ -262,3 +262,52 @@ describe('AiFireResolver — energy gate', () => {
     expect(rayHalfWidths).toEqual([hw, hw]);
   });
 });
+
+// Blocked-line hold (owner 2026-11-18, fire-control.md "Blocked line hold"):
+// each slot mount of an AI pilot is held on its OWN weapon and timer (mount
+// index), never the first slot's: a beam whose line is blocked holds while the
+// bolt gun in the same slot keeps firing.
+describe('AiFireResolver — per-slot blocked-line hold', () => {
+  function slotResolver(held: (idx: number, weaponId: string) => boolean) {
+    const base = getShipKind('fighter').mounts[0]!;
+    const mounts = [{ ...base, id: 'm-beam', weaponId: 'hitscan' as const }, { ...base, id: 'm-bolt', weaponId: 'laser' as const }];
+    const asked: Array<[number, string, string]> = [];
+    let bolts = 0;
+    const beams: unknown[] = [];
+    const deps: AiFireResolverDeps = {
+      nonPlayerRayHit: () => { beams.push(1); return null; },
+      lastFireClientTick: new Map(),
+      swarmEntitySnapshot: () => ({ id: 'n', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }),
+      swarmRegistry: { get: () => ({ entityId: 1, shipKind: 'fighter' }) },
+      resolveSlotMounts: () => mounts,
+      mountWorldOrigin: (x, y) => ({ x, y }),
+      droneMountAngles: new Map(),
+      playerToSlot: new Map(),
+      getActiveShip: () => undefined,
+      shipPoseCache: new Map(),
+      playerHitscanDist: () => null,
+      applyDamage: () => {},
+      broadcast: () => {},
+      spawnServerProjectile: () => { bolts++; },
+      spawnServerMissile: () => 1,
+      targetShape: (_id, out) => { out.x = 0; out.y = 300; out.kindId = null; out.angle = 0; out.shieldUp = false; out.radius = 20; return true; },
+      slotLineHeld: (_id, targetId, idx, weaponId) => { asked.push([idx, weaponId, targetId]); return held(idx, weaponId); },
+    };
+    return { resolver: new AiFireResolver(deps), asked, bolts: () => bolts, beams, deps };
+  }
+
+  it('a held beam slot mount does not fire; the bolt mount beside it still does', () => {
+    const r = slotResolver((_i, w) => w === 'hitscan');
+    r.resolver.resolve('n', 0, 1, 100, 't');
+    expect(r.asked, 'each mount asked with its own index and weapon').toEqual([[0, 'hitscan', 't'], [1, 'laser', 't']]);
+    expect(r.beams.length, 'the held beam never cast').toBe(0);
+    expect(r.bolts(), 'the bolt gun fired').toBeGreaterThan(0);
+  });
+
+  it('every mount held ⇒ no shot and the cooldown is not spent', () => {
+    const r = slotResolver(() => true);
+    r.resolver.resolve('n', 0, 1, 100, 't');
+    expect(r.beams.length + r.bolts()).toBe(0);
+    expect(r.deps.lastFireClientTick.has('n')).toBe(false);
+  });
+});

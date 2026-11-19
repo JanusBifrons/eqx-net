@@ -42,6 +42,11 @@ export interface LockSalvageDeps {
    *  rock's or wreck's piece moves on to the next live piece of it. Absent:
    *  a lock ends with its target. */
   lineage?: LockLineageSource;
+  /** True when a tractor dish of `playerId`'s ship has a clear line to lock
+   *  target `key` (`LineOfFireGate.firstOnLine`, the tractor's own line of
+   *  sight). A tractor group's lineage lock prefers a clear piece
+   *  (lockSplit.ts `memberRank`). Absent: every line counts as clear. */
+  tractorLineClear?(playerId: string, key: string): boolean;
 }
 
 /** Which lineage a lock key belongs to, and its live members. */
