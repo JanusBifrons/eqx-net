@@ -465,7 +465,7 @@ leveling").
 The place-ahead UI stacks multiple placements at the same spot (overlap →
 rejected), and construction takes seconds — both hostile to a deterministic E2E.
 The fix is a **pre-built scenario trigger** (testMode room opts, seeded in
-`onCreate` via `seedStructureScenario`): `prebuiltStructures` (placed through the
+`onCreate` via `seedStructureScenario` in `rooms/scenarioLayouts.ts`): `prebuiltStructures` (placed through the
 real subsystem, then forced `isConstructed` + full HP + auto-connected, owner
 `scenario`), `scenarioDrones`, `scenarioAsteroids`. The `structure-scenario-test`
 engineering room bakes a full powered grid (Capital + 2 Solar + Miner@asteroid +
@@ -629,7 +629,7 @@ a structure missile falls through to the player-shooter branch and targets other
 players + friendly structures. Missile SPLASH is unchanged (CAN hit the owner's
 base — realistic, by user choice). 🔴 netgate (new projectile/missile
 spawn+broadcast). The testMode **scenario trigger** (`prebuiltStructures`/`scenarioDrones`/
-`scenarioAsteroids` → `seedStructureScenario`, the `structure-scenario-test`
+`scenarioAsteroids` → `scenarioLayouts.seedStructureScenario`, the `structure-scenario-test`
 room) seeds a pre-built powered grid for E2E (the place-ahead UI overlaps stacked
 placements; this seeds the end state). **Batteries (batteries plan)** add a full
 stored-power buffer: `processBatteryPower()` runs each pulse (before the

@@ -45,6 +45,11 @@ export interface CutFieldNavSink {
 export interface CutFieldRoomHooks {
   /** The SAB slots of every pilot's ship (AI hulls come from the registry). */
   shipSlots(): Iterable<number>;
+  /** Each live LINGERING hull's SAB slot (`isLingeringHull`: parked in
+   *  Command view, AI-flown, displaced or disconnected) into `visit`. A
+   *  parked hull is in the world, so it keeps the chunks round it loaded as
+   *  a pilot's does. Absent: none. */
+  forEachLingeringSlot?(visit: (slot: number) => void): void;
   sab(): Float32Array;
   post(cmd: WorkerCmd): void;
   /** Remove a rock; `broadcast` when it is awake (on the wire). */
@@ -81,8 +86,9 @@ const MOVED_EPS_ANGLE = 1e-3;
 interface RockPose { x: number; y: number; angle: number }
 
 /** A chunk source on the room's one streamer; with `dormantObstacles`,
- *  its unloaded bodies join placement's obstacles (wreck fields 7). */
-export type CutFieldSource = ChunkSource & { dormantObstacles?(box: ObstacleBox, out: GridObstacle[]): void };
+ *  its unloaded bodies join placement's obstacles (wreck fields 7), or with
+ *  `footprints` landing's, as one circle per unloaded hull (wreck fields 14). */
+export type CutFieldSource = ChunkSource & { dormantObstacles?(box: ObstacleBox, out: GridObstacle[], footprints?: boolean): void };
 
 export class CutFieldSubsystem {
   readonly streamer: CutFieldStreamer;
@@ -111,6 +117,13 @@ export class CutFieldSubsystem {
   private readonly opts: ChunkOpts | null;
   private nav: CutFieldNavSink | null = null;
   private readonly sources: readonly CutFieldSource[];
+  /** The streamer's ship callback for the scan in progress, and the
+   *  made-once visitor that feeds it a lingering hull's pose (#14). */
+  private visitShip: (x: number, y: number) => void = () => {};
+  private readonly visitSlot = (slot: number): void => {
+    const sab = this.hooks.sab(), b = slotBase(slot);
+    this.visitShip(sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!);
+  };
 
   constructor(
     seed: string | null,
@@ -137,10 +150,14 @@ export class CutFieldSubsystem {
       // Navigation's fine layer follows the loaded chunks (navigation slice 5).
       chunkLoaded: (cx, cy) => this.nav?.chunk(cx, cy, true),
       chunkUnloaded: (cx, cy) => this.nav?.chunk(cx, cy, false),
-      // Pilots and AI hulls keep rocks loaded. Slow cadence (STEP_EVERY_MS).
+      // Pilots, parked hulls and AI hulls keep chunks loaded (#17: ACTIVE
+      // and LINGERING ships, live drones; DEAD never). Slow cadence
+      // (STEP_EVERY_MS).
       visitShips: (cb) => {
         const sab = hooks.sab();
         for (const slot of hooks.shipSlots()) cb(sab[slotBase(slot) + SLOT_X_OFF]!, sab[slotBase(slot) + SLOT_Y_OFF]!);
+        this.visitShip = cb;
+        hooks.forEachLingeringSlot?.(this.visitSlot);
         for (const rec of registry.all()) {
           if (rec.kind === SWARM_KIND_DRONE) cb(sab[slotBase(rec.slot) + SLOT_X_OFF]!, sab[slotBase(rec.slot) + SLOT_Y_OFF]!);
         }
@@ -325,11 +342,13 @@ export class CutFieldSubsystem {
    *  as the collider), at rest: the same obstacle a live rock gives (C5b). A
    *  broken-up rock is gone; a live one is already in `out` from the registry.
    *  A discrete player action, never per tick.
-   *  `wrecks` (placement only, wreck fields 7): also the other sources'
+   *  `wrecks` (placement, wreck fields 7): also the other sources'
    *  unloaded pieces (a wreck field's hulls, `WreckFieldSource`): one
-   *  query, two sources. Off for connection line of sight and landing. */
-  dormantObstacles(box: ObstacleBox, out: GridObstacle[], wrecks = false): void {
-    if (wrecks) for (const s of this.sources) s.dormantObstacles?.(box, out);
+   *  query, two sources; `'footprints'` (landing, wreck fields 14): each
+   *  unloaded hull as one footprint circle instead (no fracture). Off for
+   *  connection line of sight. */
+  dormantObstacles(box: ObstacleBox, out: GridObstacle[], wrecks: boolean | 'footprints' = false): void {
+    if (wrecks !== false) for (const s of this.sources) s.dormantObstacles?.(box, out, wrecks === 'footprints');
     if (this.opts === null) return;
     for (const r of fieldRocksInBox(this.opts, box.x0, box.y0, box.x1, box.y1)) {
       if (this.consumed.has(r.key) || this.registry.get(fieldRockId(r.key))) continue;

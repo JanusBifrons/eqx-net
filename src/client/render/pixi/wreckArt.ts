@@ -59,7 +59,9 @@ import { buildWreckPieceGfx, wreckPieceColors } from './spriteBuilders.js';
 import { isIconOnly } from './FarZoomIcons.js';
 import { rockPieceSpeckColor, type RockPieceArt } from './rockPieceArt.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
-import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
+import { shipPrimaryColor, shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
+import type { BakeJob } from '../art/bake.js';
+import { bakedHullPaint } from '../art/liveryForge.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
 import { EDGE_CUT } from '../../../core/destruction/fractureHull.js';
 import {
@@ -1051,6 +1053,15 @@ function mulColor(a: number, b: number): number {
  * stroke on its cut edges while they are hot. Positioned and rotated by the
  * swarm updater like any sprite; `update` once per frame after that.
  */
+/** A ship wreck piece's far-zoom speck colour: the hull paint its art was
+ *  forged in (`bakedHullPaint`: the livery grey under full art), so the
+ *  speck matches the piece it stands in for; with no ship art, the plain
+ *  piece's fill. Pure. */
+export function wreckPieceSpeckColor(parentKind: string, artJob: BakeJob | undefined): number {
+  if (artJob?.type !== 'ship') return wreckPieceColors(parentKind).fill;
+  return bakedHullPaint(shipPrimaryColor(getShipKind(parentKind)), parentKind, artJob.paint, artJob.livery);
+}
+
 export class WreckPieceSprite extends Container {
   private readonly meshes: Mesh[] = [];
   private readonly meshTile: number[] = [];
@@ -1114,6 +1125,8 @@ export class WreckPieceSprite extends Container {
     piece: WreckPieceGeometry, parentKind: string, readonly art: ShipArt | null, readonly info: WreckInfo,
     /** This piece's index in its wreck (its ripples); a rock piece's art (`buildRockPieceArt`, no ship lookups). */
     readonly pieceIndex = 0, readonly rockArt: RockPieceArt | null = null,
+    /** The far speck's colour (`wreckPieceSpeckColor` of `art`'s bake); null = the plain piece's fill. */
+    private readonly speckFill: number | null = null,
   ) {
     super();
     this.piece = piece;
@@ -1462,8 +1475,8 @@ export class WreckPieceSprite extends Container {
    * the zoom where the parent ship would be an icon (`wreckPieceFarLod`), a
    * GPU-lit piece stops drawing its lit tiles (each its own draw call: a
    * custom shader) and shows a flat speck instead: one white-texture Sprite
-   * over the piece's bounding box, tinted the hull's piece colour (burnt for
-   * a capital). With a `layer`, the speck and any cooling glow are drawn
+   * over the piece's bounding box, tinted the hull paint its art was forged
+   * in (`wreckPieceSpeckColor`; burnt for a capital). With a `layer`, the speck and any cooling glow are drawn
    * there (one `RenderLayer` for every piece), so all specks make one batch
    * instead of one run per gap between the lit ships and rocks they sit
    * among in the ship container. The piece is then a few px across: the box
@@ -1492,7 +1505,7 @@ export class WreckPieceSprite extends Container {
       g.position.set((x0 + x1) / 2, -(y0 + y1) / 2); // pixiY = -gameY
       g.width = Math.max(1e-3, x1 - x0);
       g.height = Math.max(1e-3, y1 - y0);
-      const fill = this.rockArt !== null ? rockPieceSpeckColor(this.rockArt.rock) : wreckPieceColors(this.parentKind).fill;
+      const fill = this.rockArt !== null ? rockPieceSpeckColor(this.rockArt.rock) : this.speckFill ?? wreckPieceColors(this.parentKind).fill;
       g.tint = this.info.fx.burntArt ? mulColor(fill, burntTint(this.piece, this.info)) : mulColor(fill, this.artTint);
       this.addChildAt(g, 0); // under the glow
       this.farGfx = g;

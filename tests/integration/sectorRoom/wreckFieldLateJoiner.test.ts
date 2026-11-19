@@ -14,7 +14,7 @@
  * server's pose.
  *
  * Prints (never asserts) the welcome's wreck bytes and the resync cycle time
- * for the worst-case ring (layout seed `a`: 56 pieces, `FIELD_RING_WORST_PIECES`)
+ * for seed `a`'s worst ring (nearly its whole field since wreck fields 11)
  * with one ship parked at its densest point. Read them from the
  * `[wreck-field late joiner]` lines in the test output.
  */
@@ -24,12 +24,11 @@ import { Packr } from '@colyseus/msgpackr';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { CELL_SIZE } from '../../../src/server/interest/SpatialGrid.js';
-import { FIELD_CAP_SHIPS, FIELD_LIVE_CAP, FIELD_RING_WORST_PIECES } from '../../../src/server/rooms/wreckFifos.js';
+import { FIELD_CAP_SHIPS, FIELD_LIVE_CAP } from '../../../src/server/rooms/wreckFifos.js';
 import { WRECK_RESYNC_CHUNK, WRECK_RESYNC_EVERY } from '../../../src/server/rooms/WreckWireDeltas.js';
-import { wreckField, hullsInChunk, wreckFieldHullFracture, WRECK_FIELD, type WreckFieldHull } from '../../../src/core/terrain/wreckFieldLayout.js';
+import { wreckField, hullsInChunk, wreckFieldHullFracture, type WreckFieldHull } from '../../../src/core/terrain/wreckFieldLayout.js';
 import { wreckPieceGeometry } from '../../../src/core/destruction/wreckPieces.js';
 import { CHUNK_SIZE } from '../../../src/core/terrain/fieldLayout.js';
-import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { decodeSwarmPacket } from '../../../src/client/net/BinarySwarmDecoder.js';
 import { WreckGeometryStore } from '../../../src/client/net/wreckGeometryStore.js';
 import type { RenderMirror } from '../../../src/core/contracts/IRenderer.js';
@@ -41,7 +40,7 @@ type WreckRec = { id: string; kind: number; entityId: number; wreckId?: number; 
 const SPEED = 4;
 /** Room updates (= broadcast counters) per GAME second (SectorRoom tick loop). */
 const UPDATES_PER_GAME_S = 60;
-/** Seed `a` is the layout's worst 5 x 5 ring (wreckFieldLayout.test.ts: 56 pieces). */
+/** Layout seed `a`: its densest 5 x 5 ring is nearly the whole field (wreckFieldLayout.test.ts prints it). */
 const OPTS = { seed: 'a', x: 0, y: 0, sides: ['ashen-league', 'vel-concord'] as const };
 const FIELD = wreckField(OPTS);
 const RING = 2; // the streamer's wake ring (5×5 chunks)
@@ -58,8 +57,10 @@ function ring(cx: number, cy: number): { hulls: WreckFieldHull[]; pieces: number
   return { hulls, pieces };
 }
 
-/** The densest ring, and a spawn point in its centre chunk clear of every hull
- *  (same search as wreckFieldStreaming.test.ts). */
+/** The densest ring, and the spawn point in its centre chunk farthest from
+ *  every hull footprint (each hull's own, so capitals count at their size). The
+ *  dense field (wreck fields 11+) leaves no 1/8-grid point 600 u clear, so the
+ *  search is finer and takes the widest gap. */
 function densest(): { x: number; y: number; hulls: WreckFieldHull[]; pieces: number } {
   let best = { cx: 0, cy: 0, hulls: [] as WreckFieldHull[], pieces: -1 };
   const seen = new Set<string>();
@@ -69,14 +70,18 @@ function densest(): { x: number; y: number; hulls: WreckFieldHull[]; pieces: num
     const r = ring(h.cx, h.cy);
     if (r.pieces > best.pieces) best = { cx: h.cx, cy: h.cy, ...r };
   }
-  for (let i = 1; i < 8; i++) {
-    for (let j = 1; j < 8; j++) {
-      const x = (best.cx + i / 8) * CHUNK_SIZE, y = (best.cy + j / 8) * CHUNK_SIZE;
-      const clear = FIELD.hulls.every((h) => Math.hypot(h.x - x, h.y - y) > getShipKind(h.kindId).radius * WRECK_FIELD.footprintMul + 600);
-      if (clear) return { hulls: best.hulls, pieces: best.pieces, x, y };
+  const N = 32;
+  let at = { x: 0, y: 0, gap: -Infinity };
+  for (let i = 1; i < N; i++) {
+    for (let j = 1; j < N; j++) {
+      const x = (best.cx + i / N) * CHUNK_SIZE, y = (best.cy + j / N) * CHUNK_SIZE;
+      let gap = Infinity;
+      for (const h of FIELD.hulls) gap = Math.min(gap, Math.hypot(h.x - x, h.y - y) - h.footprint);
+      if (gap > at.gap) at = { x, y, gap };
     }
   }
-  throw new Error('no clear spawn point in the densest chunk');
+  if (at.gap > 300) return { hulls: best.hulls, pieces: best.pieces, x: at.x, y: at.y };
+  throw new Error(`no clear spawn point in the densest chunk (widest gap ${at.gap.toFixed(0)} u)`);
 }
 
 /** A descriptor without its absent (undefined / nil) fields, for comparing
@@ -115,7 +120,7 @@ describe('SectorRoom integration — late joiner sees the wreck field (wreck fie
     const src = int().wreckFieldSource!;
     const fieldPieces = (): number => src.livePieces();
     const want = Math.min(spot.pieces, FIELD_LIVE_CAP);
-    expect(spot.pieces, 'seed a is the measured worst ring').toBe(FIELD_RING_WORST_PIECES);
+    expect(spot.pieces, 'the ring fits under the field cap').toBeLessThanOrEqual(FIELD_LIVE_CAP);
     await until('ring loaded', () => fieldPieces() >= want);
 
     /** The live field piece nearest (x, y): the one the joiner will have in interest. */

@@ -112,7 +112,7 @@ Locks:
 **Why no off-screen economy.** Every galaxy room is created at boot and simulates when empty, so every NPC base already runs its real production pulse. The plan's `advanceBaseEconomy` (with its 2 % equivalence test) isn't needed. Trade between bases is just convoys.
 
 **Planning** (`src/core/economy/convoys.ts`, pure; every 15 s):
-- **Rates.** Each room reports its NPC bases (`SectorRoom.npcBaseTrade`): storage stock, free space, footprint box, and per-minute use/make rates read from the base's own structures (processor recipes, Reactor fuel, ammo turrets, drills, gas collectors).
+- **Rates.** Each room reports its NPC bases (`SectorRoom.npcBaseTrade`, built by `npcBaseTrade` in `bases/NpcBaseSubsystem.ts`): storage stock, free space, footprint box, and per-minute use/make rates read from the base's own structures (processor recipes, Reactor fuel, ammo turrets, drills, gas collectors).
 - **Need and spare.** A base **needs** an input below half of `TARGET_MINUTES` (10) of use, and is refilled to the target. It **offers** anything beyond its own 10 minutes, when that is at least `MIN_LOAD_WEIGHT` (20).
 - **Matching.** `matchConvoys` serves the most-starved importer first, from the nearest exporter by galaxy hops, capped at a hauler-load (400 weight). Goods promised to convoys still on their way to pick up are not spare.
 

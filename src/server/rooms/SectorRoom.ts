@@ -40,6 +40,7 @@ import {
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
+import { seedStructureScenario, structureRowsForTests, type StructureRowView, type StructureScenarioHost } from './scenarioLayouts.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -65,8 +66,7 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut, IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js';
-import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
-import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
+import { effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
@@ -80,8 +80,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
-import { FactionLedger } from '../faction/FactionLedger.js';
-import { isBaseReady } from '../../core/faction/Faction.js';
+import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { tallyFaction, type FactionPresenceMap } from '../livingworld/factionPresence.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
@@ -91,7 +90,7 @@ import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js'
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
 import { GATE_SPAN_THICKNESS, isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
+import type { GateAccess } from '../../shared-types/gateAccess.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
@@ -106,7 +105,6 @@ import { getTeleportBroker, type HandedOffHull, type TeleportRoom } from '../tel
 import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
 import { linkEnds } from '../../core/bases/transitNetwork.js';
 import {
-  DEFAULT_TELEPORT_RULES,
   PAD_SPECS,
   TP_RULE_TOLL_HOSTILE,
   TP_PARTNER_REMOTE,
@@ -116,22 +114,19 @@ import {
   TP_RULE_LOADED,
   isTeleporterKind,
 } from '../../shared-types/teleport.js';
-import { isNpcBasesDisabled, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
+import { isNpcBasesDisabled, npcBaseTrade, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
 import { hashString } from '../../core/bases/baseProfile.js';
 import { nearestClearPoint } from '../../core/bases/baseSite.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites.js';
-import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
-import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
-import { RECIPES } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { LAUNCH_COSTS_ON } from '../../shared-types/launch.js';
 import { chargeLaunchFor } from './launchGate.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector, isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
-import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
@@ -192,6 +187,8 @@ import { fillRangeShape } from '../../core/combat/fireControlBearing.js';
 import { weaponIdReach } from '../../core/combat/mountReach.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
+import { classifyAttacker } from './classifyAttacker.js';
+import { ShipProgression } from './features/shipProgression.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
@@ -361,15 +358,6 @@ import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/ph
 
 
 
-/** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
-const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
-/** T4b — the level of `good`'s order on a dock (0 when none). */
-
-
-function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
-  return r.freightOrders?.find((o) => o.good === good)?.level ?? 0;
-}
-
 const logger = pino({
   name: 'SectorRoom',
   transport:
@@ -483,43 +471,6 @@ const STRUCTURE_ATTACK_AUDIT_WINDOW_MS = 15_000;
  *  much longer than the audit window above, because a phone alert should be
  *  rare (one per base per 15 min) rather than once per sustained-fire burst. */
 const STRUCTURE_ATTACK_PUSH_WINDOW_MS = 15 * 60_000;
-
-/**
- * Coarse audit attribution from a shooter id's prefix — drone (`swarm-` /
- * `lwbot-`), structure turret (`pstruct-`), or a player otherwise. The raw
- * `attackerId` is always logged too, so this is a convenience label for
- * "what destroyed my base?" (a drone? a player?), not a precise lookup.
- */
-function classifyAttacker(id?: string): string | undefined {
-  if (!id) return undefined;
-  if (id.startsWith('pstruct-')) return 'structure';
-  if (id.startsWith('swarm-') || isDirectorBotId(id) || id.startsWith('scenario-drone')) return 'drone';
-  return 'player';
-}
-
-/** The pre-A2 per-structure row (test view — see `structureRowsForTests`). */
-export interface StructureRowView {
-  id: number;
-  hpPct: number;
-  powered: boolean;
-  netPower: number;
-  owner: string;
-  built: boolean;
-  ownerName?: string;
-  level?: number;
-  connTo?: number[];
-  minerals?: number;
-  buildPct?: number;
-  etaMs?: number | null;
-  isDeconstructing?: boolean;
-  deconstructPct?: number;
-  miningTargetId?: number;
-  turretTargetId?: number;
-  storedPower?: number;
-  storedPowerMax?: number;
-  shieldWallTo?: number;
-  wallActive?: boolean;
-}
 
 /** Ticks a ship that fled stays in the room on its warp run before it leaves
  *  (0.5 s, as long as the arrival window): long enough for every client's
@@ -1344,7 +1295,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmHealth: this.swarmHealth,
       structureRegistry: this.structureRegistry,
       pulseStructureGrid: () => this.structureGridTick(),
-      getStructuresSlice: () => this.structureRowsForTests(),
+      getStructuresSlice: () => structureRowsForTests(this.state as SectorState, this.structuresSlice),
       upgradeStructure: (id) => this.structureGrid.upgradeStructure(id),
       reconnectStructure: (id) => this.structureGrid.reconnect(id),
       spawnTestAsteroid: (id, x, y, radius, resource) =>
@@ -2349,7 +2300,7 @@ export class SectorRoom extends Room<SectorState> {
       evictSessionForTakeover: (sessionId) => this.evictSessionForTakeover(sessionId),
       evictOwnerlessShip: (id) => this.evictOwnerlessShip(id),
       attachWingman: (id) => this.wingmen.attachWingman(id),
-      applyStatMulToWorker: (bodyKey, alloc) => this.applyStatMulToWorker(bodyKey, alloc),
+      applyStatMulToWorker: (bodyKey, alloc) => this.shipProgression.applyStatMulToWorker(bodyKey, alloc),
       startSceneClock: (tick) => this.sceneRunner?.start(tick),
       markWarpArrived: (pid, tick) => this.warpTravel.markArrived(pid, tick),
       startInCommand: (pid, sessionId) => this.fleetHooks.startInCommand(pid, sessionId),
@@ -2424,7 +2375,7 @@ export class SectorRoom extends Room<SectorState> {
       spawnCapitalWreck: (id, kind, pose, maxHull, slot, bodyId) => this.spawnCapitalWreck(id, kind, pose, maxHull, slot, bodyId),
       spawnHullScrap: (kind, pose, sid) => this.spawnHullScrap(kind, pose, sid),
       spillOrLoseShipHold: (sid, pid, pose, cause, death) => this.spillOrLoseShipHold(sid, pid, pose, cause, death),
-      awardKillXp: (killerId, maxHealth) => this.awardKillXp(killerId, maxHealth),
+      awardKillXp: (killerId, maxHealth) => this.shipProgression.awardKillXp(killerId, maxHealth),
       deleteRosterRow: (sid) => this.deleteRosterRow(sid),
     });
 
@@ -2913,12 +2864,12 @@ export class SectorRoom extends Room<SectorState> {
     const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
     if (roomOpts.wreckField !== undefined && (this.capitalWrecksOn || this.subcapWrecksOn)) chunkSources.push(this.buildWreckFieldSource(roomOpts.wreckField, roomOpts.cutField));
     if ((this.capitalWrecksOn || this.subcapWrecksOn) && this.persistSector && this.sectorKey !== null) chunkSources.push(this.wreckSaves = new BattleWreckSaves(() => this.capitalWrecks?.lineageState() ?? null, battleWreckStore(this.sectorKey), { piecePoseInto: (id, out) => this.wreckPose(id, out) !== null, tractored: (id) => this.forceFields.isTractored(id), streaming: !this.testMode || roomOpts.battleWreckStreaming === true })); // wreck fields 0b: battle lineages stream on the one streamer
-    if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
+    if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), forEachLingeringSlot: (visit) => { for (const [sid, slot] of this.lingeringSlots) { const sh = this.state.ships.get(sid); if (sh !== undefined && isLingeringHull(sh)) visit(slot); } }, sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
     if (this.cutField?.navOpts) this.aiController.nav = this.nav.host(this.cutField, this.cutField.navOpts);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
-    if (this.testMode) this.seedStructureScenario(roomOpts);
+    if (this.testMode) seedStructureScenario(this.structureScenarioHost, roomOpts);
     this.testTeleportFullCharge = this.testMode && roomOpts.teleportFullCharge === true;
     if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
     // D2 (plan soft-leaping-truffle v3) — NPC bases grown from the generator.
@@ -3272,7 +3223,7 @@ export class SectorRoom extends Room<SectorState> {
       pilotCollector: (pid) => this.lootCollectors.pilotCollector(pid),
       bountyRoom: { broadcastWorldNotice: (notice) => this.broadcastWorldNotice(notice) },
       sendNotice: (client, text) => this.sendNotice(client, text),
-      applyShipUpgrade: (client, pid, shipId, alloc) => this.applyShipUpgrade(client, pid, shipId, alloc),
+      applyShipUpgrade: (client, pid, shipId, alloc) => this.shipProgression.applyShipUpgrade(client, pid, shipId, alloc),
       structurePlacement: () => this.structurePlacement,
       structureGrid: () => this.structureGrid,
       sectorPersistence: () => this.sectorPersistence,
@@ -3358,7 +3309,7 @@ export class SectorRoom extends Room<SectorState> {
       // its kind is known.
       if (destroyedShip !== undefined) {
         const victimMaxHealth = getShipKind(destroyedShip.kind).maxHealth;
-        this.awardKillXp(evt.shooterId, victimMaxHealth);
+        this.shipProgression.awardKillXp(evt.shooterId, victimMaxHealth);
       }
       // Phase 3 dual-write — drop the destroyed ship from the roster. D9 — the
       // whole roster row (level / xp / statAlloc / mounts) is dropped together
@@ -4463,7 +4414,7 @@ export class SectorRoom extends Room<SectorState> {
       // (per-kind maxHealth — tougher drones = more XP, D10). PvP hull kills are
       // awarded separately in the SHIP_DESTROYED handler.
       const droneMaxHealth = droneMaxHealthOf(rec) ?? 40;
-      this.awardKillXp(shooterId ?? '', droneMaxHealth);
+      this.shipProgression.awardKillXp(shooterId ?? '', droneMaxHealth);
       // Economy v2 W1 — every NPC kill pays a bounty straight into the killer's
       // WALLET (credits are virtual; pods carry goods only).
       if (shooterId && classifyAttacker(shooterId) === 'player') {
@@ -4588,76 +4539,12 @@ export class SectorRoom extends Room<SectorState> {
     );
   }
 
-  private seedStructureScenario(roomOpts: {
-    prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
-    prebuiltStructuresOwner?: string;
-    prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
-    pairTeleporters?: boolean;
-    teleportShipBoards?: boolean;
-    scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
-    scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
-  }): void {
-    const prebuilt = roomOpts.prebuiltStructures;
-    // Wave-system E2E: an explicit owner lets a test seed a base the joining
-    // player OWNS (so the FactionLedger sees a player-owned faction the
-    // WaveDirector can wave) instead of the inert `scenario` owner. Default
-    // `scenario` preserves the structure-scenario-test behaviour.
-    const owner = roomOpts.prebuiltStructuresOwner ?? 'scenario';
-    if (prebuilt && prebuilt.length > 0) {
-      for (const ps of prebuilt) {
-        const extra = ps as { rot?: number; gateAccess?: GateAccess };
-        const id = this.structurePlacement.place(owner, ps.kind as string, ps.x, ps.y, { rot: extra.rot });
-        if (id === null) {
-          logger.warn({ kind: ps.kind, x: ps.x, y: ps.y }, 'scenario prebuilt structure rejected');
-          continue;
-        }
-        const rec = this.structureRegistry.get(id);
-        if (rec && extra.gateAccess && GATE_ACCESS_IDS.includes(extra.gateAccess)) {
-          rec.gateAccess = gateAccessIndex(extra.gateAccess);
-        }
-        if (rec && !rec.isConstructed) {
-          rec.isConstructed = true;
-          rec.constructionProgress = rec.constructionCost;
-          this.swarmHealth.set(id, getStructureKind(rec.kind).maxHealth);
-        }
-      }
-      this.structureRegistry.topologyDirty = true;
-      // P2d — stock the prebuilt Capital (e.g. munitions for a showcase's
-      // missile turrets), so ammo-using turrets can fire.
-      const goods = roomOpts.prebuiltStorageGoods;
-      if (goods) {
-        for (const rec of this.structureRegistry.all()) {
-          if (rec.owner !== owner || rec.kind !== 'capital') continue;
-          rec.hold ??= { goods: {}, blueprints: [] };
-          for (const [g, n] of Object.entries(goods)) rec.hold.goods[g as GoodId] = (rec.hold.goods[g as GoodId] ?? 0) + (n ?? 0);
-          break;
-        }
-      }
-      // v4 T1 — pair the seeded teleporters in order (1st with 2nd, …).
-      if (roomOpts.pairTeleporters === true) {
-        const tps = [...this.structureRegistry.all()].filter((r) => r.owner === owner && isTeleporterKind(r.kind));
-        for (let i = 0; i + 1 < tps.length; i += 2) this.teleporters.pair(tps[i]!, tps[i + 1]!);
-        if (roomOpts.teleportShipBoards === true) {
-          for (const t of tps) t.tpRules = { ...DEFAULT_TELEPORT_RULES, shipBoards: true };
-        }
-      }
-      // One pulse rebuilds the grid (powered components) + refreshes the slice.
-      this.structureGridTick();
-    }
-    let scenarioSwarmId = 0;
-    for (const a of roomOpts.scenarioAsteroids ?? []) {
-      this.swarmSpawner.spawnAsteroid({
-        id: `scenario-rock-${scenarioSwarmId++}`, x: a.x, y: a.y, vx: 0, vy: 0, radius: a.radius ?? 30, mass: 1,
-      });
-    }
-    for (const d of roomOpts.scenarioDrones ?? []) {
-      const droneId = `scenario-drone-${scenarioSwarmId++}`;
-      if (this.swarmSpawner.spawnDrone({ id: droneId, x: d.x, y: d.y, kind: 'fighter' })) {
-        this.swarmHealth.set(droneId, getDroneMaxHealth('fighter') ?? 40);
-        this.swarmShield.set(droneId, 0); // hull exposed so turret damage lands
-      }
-    }
-  }
+  /** testMode structure scenario seeding (`scenarioLayouts.seedStructureScenario`). */
+  private readonly structureScenarioHost: StructureScenarioHost = {
+    structureRegistry: this.structureRegistry, logger, structurePlacement: () => this.structurePlacement,
+    teleporters: () => this.teleporters, swarmSpawner: () => this.swarmSpawner, swarmHealth: () => this.swarmHealth,
+    swarmShield: () => this.swarmShield, structureGridTick: () => this.structureGridTick(),
+  };
 
   /** Boot seeding of NPC structures: galaxy / test bases (`bases/NpcBaseSubsystem.ts`),
    *  alien gates and pocket pads (`structures/TeleporterSubsystem.ts`). */
@@ -4680,7 +4567,7 @@ export class SectorRoom extends Room<SectorState> {
     lingeringPoseCache: this.lingeringPoseCache, ownerlessShips: this.ownerlessShips, snapshotRing: this.snapshotRing,
     fleet: this.fleet, logger, structureGridTick: () => this.structureGridTick(),
     shipHullMax: (kindMax, alloc, id) => this.shipHullMax(kindMax, alloc, id), postToWorker: (cmd) => this.postToWorker(cmd),
-    applyStatMulToWorker: (bodyKey, alloc) => this.applyStatMulToWorker(bodyKey, alloc),
+    applyStatMulToWorker: (bodyKey, alloc) => this.shipProgression.applyStatMulToWorker(bodyKey, alloc),
   });
 
   /**
@@ -5324,57 +5211,6 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
-  /** Test view (`_internals.getStructuresSlice`): the pre-A2 row shape,
-   *  rebuilt from room state + the targets slice. Allocates; test-only. */
-  private structureRowsForTests(): StructureRowView[] | undefined {
-    const map = (this.state as SectorState).structures;
-    if (map.size === 0) return undefined;
-    const tgt = new Map<number, [number, number]>();
-    const t = this.structuresSlice ?? [];
-    for (let i = 0; i < t.length; i += 3) tgt.set(t[i]!, [t[i + 1]!, t[i + 2]!]);
-    const rows: StructureRowView[] = [];
-    map.forEach((st, key) => {
-      const id = Number(key);
-      const ownerKey = String(st.ownerIdx ?? SD.ownerIdx);
-      const flags = st.flags ?? SD.flags;
-      const row: StructureRowView = {
-        id,
-        hpPct: st.hpPct ?? SD.hpPct,
-        powered: (flags & STRUCTURE_FLAG_POWERED) !== 0,
-        netPower: st.netPower ?? SD.netPower,
-        owner: (this.state as SectorState).structureOwners.get(ownerKey) ?? '',
-        built: (flags & STRUCTURE_FLAG_BUILT) !== 0,
-      };
-      const ownerName = (this.state as SectorState).structureOwnerNames.get(ownerKey) ?? '';
-      if (ownerName !== '') row.ownerName = ownerName;
-      if ((st.level ?? SD.level) > 1) row.level = st.level;
-      if (st.connTo.length > 0) row.connTo = Array.from(st.connTo);
-      if ((st.minerals ?? SD.minerals) > 0) row.minerals = st.minerals;
-      const eta = st.etaMs ?? SD.etaMs;
-      if (eta !== STRUCTURE_ETA_NONE) {
-        row.buildPct = st.buildPct ?? SD.buildPct;
-        row.etaMs = eta === STRUCTURE_ETA_STALLED ? null : eta;
-      }
-      if ((flags & STRUCTURE_FLAG_DECONSTRUCTING) !== 0) {
-        row.isDeconstructing = true;
-        row.deconstructPct = st.deconstructPct ?? SD.deconstructPct;
-      }
-      const tg = tgt.get(id);
-      if (tg && tg[0] !== STRUCTURE_TARGET_NONE) row.turretTargetId = tg[0];
-      if (tg && tg[1] !== STRUCTURE_TARGET_NONE) row.miningTargetId = tg[1];
-      if ((st.storedPowerMax ?? SD.storedPowerMax) > 0) {
-        row.storedPower = st.storedPower ?? SD.storedPower;
-        row.storedPowerMax = st.storedPowerMax;
-      }
-      if ((st.shieldWallTo ?? SD.shieldWallTo) >= 0) {
-        row.shieldWallTo = st.shieldWallTo;
-        row.wallActive = (flags & STRUCTURE_FLAG_WALL_ACTIVE) !== 0;
-      }
-      rows.push(row);
-    });
-    return rows;
-  }
-
   /**
    * Resolve live stats for a click-to-inspect selection (Item B5). Returns null
    * when the entity is gone (dead / despawned / lingering-only) — the
@@ -5823,89 +5659,13 @@ export class SectorRoom extends Room<SectorState> {
     return true;
   }
 
-  /**
-   * Wave-system Phase 4 — per-(owner, sector) faction base summary the
-   * WaveDirector polls (~1.5 s, NOT the hot loop, so allocation here is fine).
-   * Engineering rooms (`sectorKey === null`) return [] (waves are galaxy-only).
-   * One entry per player owning ≥1 constructed structure here.
-   */
-  factionBaseReadiness(): FactionBaseReadiness[] {
-    const sectorKey = this.sectorKey;
-    if (sectorKey === null || this.structureRegistry.size === 0) return [];
-    interface Agg {
-      hasCapital: boolean;
-      minerCount: number;
-      solarCount: number;
-      turretCount: number;
-    }
-    const byOwner = new Map<string, Agg>();
-    for (const rec of this.structureRegistry.all()) {
-      // B2 — NPC bases are never a wave target (they aren't a player faction).
-      if (!rec.isConstructed || isNpcOwner(rec.owner)) continue;
-      let agg = byOwner.get(rec.owner);
-      if (!agg) {
-        agg = { hasCapital: false, minerCount: 0, solarCount: 0, turretCount: 0 };
-        byOwner.set(rec.owner, agg);
-      }
-      switch (rec.kind) {
-        case 'capital':
-          agg.hasCapital = true;
-          break;
-        case 'miner':
-          agg.minerCount++;
-          break;
-        case 'solar':
-          agg.solarCount++;
-          break;
-        case 'turret':
-          agg.turretCount++;
-          break;
-        default:
-          break;
-      }
-    }
-    const out: FactionBaseReadiness[] = [];
-    for (const [factionId, agg] of byOwner) {
-      const ownerPresent = this.getActiveShip(factionId)?.isActive === true;
-      const ready = isBaseReady(agg) && (!this.waveNeedsOwner || ownerPresent);
-      // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the
-      // first time a base qualifies for waves; re-arm when it drops below ready
-      // (a razed-then-rebuilt base re-toasts). Evaluated at the director's
-      // control cadence (this method is the canonical readiness poll), so it
-      // fires within ~one control tick of the base completing.
-      if (ready) {
-        if (this.factionLedger.markReadyNotified(factionId)) {
-          this.broadcast('base_ready', { type: 'base_ready', factionId, sectorKey });
-          auditEvent({
-            event: 'base_ready',
-            sector: sectorKey,
-            owner: factionId,
-            composition: {
-              miner: agg.minerCount,
-              solar: agg.solarCount,
-              turret: agg.turretCount,
-            },
-          });
-        }
-      } else {
-        this.factionLedger.clearReadyNotified(factionId);
-      }
-      const state = this.factionLedger.get(factionId);
-      out.push({
-        factionId,
-        sectorKey,
-        ready,
-        // The owner is "present" when they have an active hull in this sector.
-        ownerPresent,
-        minerCount: agg.minerCount,
-        hostileToDrones: state?.hostileToDrones ?? false,
-        underWave: state?.underWave ?? false,
-        lastDealtDamageTick: state?.lastDealtDamageTick ?? -Infinity,
-        serverTick: this.serverTick,
-      });
-    }
-    return out;
-  }
+  /** Wave-system Phase 4 — the WaveDirector's base-readiness poll (`FactionLedger.baseReadiness`). */
+  factionBaseReadiness(): FactionBaseReadiness[] { return this.factionLedger.baseReadiness(this.baseReadinessHost); }
+  private readonly baseReadinessHost: BaseReadinessHost = {
+    sectorKey: () => this.sectorKey, serverTick: () => this.serverTick, waveNeedsOwner: () => this.waveNeedsOwner,
+    ownerPresent: (id) => this.getActiveShip(id)?.isActive === true,
+    broadcastBaseReady: (factionId, sectorKey) => this.broadcast('base_ready', { type: 'base_ready', factionId, sectorKey }),
+  };
 
   /** Wave-system Phase 4 — set/clear a faction's active-wave flag (gates the
    *  drone-AI structure-target visibility built in `fillStructureTargets`). */
@@ -6598,9 +6358,16 @@ export class SectorRoom extends Room<SectorState> {
     transitOrchestrator: () => this.transitOrchestrator, rosterPersistence: () => this.rosterPersistence,
     cutField: () => this.cutField, bus: () => this.bus, logger,
     getActiveShip: (pid) => this.getActiveShip(pid), postToWorker: (cmd) => this.postToWorker(cmd),
-    applyStatMulToWorker: (key, alloc) => this.applyStatMulToWorker(key, alloc),
+    applyStatMulToWorker: (key, alloc) => this.shipProgression.applyStatMulToWorker(key, alloc),
     shipHullMax: (kindMax, alloc, sid) => this.shipHullMax(kindMax, alloc, sid),
     shellWelcomeFields: (client, pid) => this.shellWelcomeFields(client, pid), wreckWelcomeFields: () => this.wreckWelcomeFields(),
+  });
+  // ── Phase 4 — ship progression: kill XP, upgrades (`features/shipProgression.ts`) ──
+  private readonly shipProgression: ShipProgression = new ShipProgression({
+    state: () => this.state, lingeringSlots: this.lingeringSlots, fleet: this.fleet, wingmen: () => this.wingmen,
+    bus: () => this.bus, broadcast: (type, msg) => this.broadcast(type, msg), logger,
+    resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid), postToWorker: (cmd) => this.postToWorker(cmd),
+    shipHullMax: (kindMax, alloc, sid) => this.shipHullMax(kindMax, alloc, sid),
   });
 
   /**
@@ -6938,77 +6705,8 @@ export class SectorRoom extends Room<SectorState> {
     return this.storage.tradeSnapshot(ownerId, networkUid);
   }
 
-  /**
-   * T2 — this room's NPC bases for convoy planning (ConvoyDirector, every
-   * ~15 s; off-tick, so building arrays here is fine). Per base: its storage
-   * stock, free space, footprint box, and per-minute use/make rates read from
-   * its own structures (processor recipes, Reactor fuel, ammo turrets, drills,
-   * gas collectors).
-   */
-  npcBaseTrade(): NpcBaseTrade[] {
-    const byOwner = new Map<string, StructureRecord[]>();
-    for (const r of this.structureRegistry.all()) {
-      if (!r.isConstructed || !isNpcOwner(r.owner)) continue;
-      const list = byOwner.get(r.owner);
-      if (list) list.push(r); else byOwner.set(r.owner, [r]);
-    }
-    const out: NpcBaseTrade[] = [];
-    for (const [owner, recs] of byOwner) {
-      const anchor = recs.find((r) => r.kind === 'capital' && r.uid !== undefined)
-        ?? recs.find((r) => r.uid !== undefined && (getStructureKind(r.kind).holdCapacity ?? 0) > 0);
-      if (!anchor?.uid) continue;
-      const snap = this.storage.tradeSnapshot(owner, anchor.uid);
-      if (snap === null) continue;
-      const uses: Partial<Record<GoodId, number>> = {};
-      const makes: Partial<Record<GoodId, number>> = {};
-      const add = (m: Partial<Record<GoodId, number>>, g: GoodId, n: number): void => { m[g] = (m[g] ?? 0) + n; };
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-      for (const r of recs) {
-        const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
-        x0 = Math.min(x0, r.x - hw); x1 = Math.max(x1, r.x + hw);
-        y0 = Math.min(y0, r.y - hh); y1 = Math.max(y1, r.y + hh);
-        const k = getStructureKind(r.kind);
-        if (isProcessorKind(r.kind)) {
-          const def = RECIPES[r.recipe ?? defaultRecipeFor(r.kind)];
-          const perMin = 60 / Math.max(1, def.cyclePulses);
-          for (const [g, n] of Object.entries(def.inputs)) add(uses, g as GoodId, (n ?? 0) * perMin);
-          for (const o of def.outputs) if ('good' in o) add(makes, o.good, o.n * perMin);
-        }
-        if (k.fuelEveryPulses) add(uses, 'fuel', 60 / k.fuelEveryPulses);
-        if (usesAmmo(r.kind)) add(uses, 'munitions', NPC_TURRET_MUNITIONS_PER_MIN);
-        if (k.miningRate) add(makes, 'minerals', k.miningRate * 60);
-        if (k.gasRate) add(makes, 'gas', k.gasRate * 60);
-      }
-      out.push({ owner, networkUid: anchor.uid, view: { stock: snap.goods, freeCapacity: snap.freeCapacity, uses, makes }, box: { x0, x1, y0, y1 } });
-    }
-    // T4b — a player's Freight Dock with standing orders trades too, but only
-    // in the goods it has orders for: "use" is shaped so an import keeps the
-    // network up to its level and an export offers anything above it.
-    for (const r of this.structureRegistry.all()) {
-      if (r.kind !== 'freight_dock' || !r.isConstructed || !r.freightOrders?.length || isNpcOwner(r.owner) || r.uid === undefined) continue;
-      const snap = this.storage.tradeSnapshot(r.owner, r.uid);
-      if (snap === null) continue;
-      const stock: Partial<Record<GoodId, number>> = {};
-      const uses: Partial<Record<GoodId, number>> = {};
-      const imports: GoodId[] = [];
-      const exports: GoodId[] = [];
-      for (const o of r.freightOrders) {
-        stock[o.good] = snap.goods[o.good] ?? 0;
-        uses[o.good] = o.level / CONVOY_TARGET_MINUTES;
-        (o.mode === 'import' ? imports : exports).push(o.good);
-      }
-      // Import goods are never offered (only exports are spare); export goods
-      // are never asked for.
-      for (const g of imports) if ((stock[g] ?? 0) > o_level(r, g)) stock[g] = o_level(r, g);
-      const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
-      out.push({
-        owner: r.owner, networkUid: r.uid, player: { imports, exports },
-        view: { stock, freeCapacity: snap.freeCapacity, uses, makes: {} },
-        box: { x0: r.x - hw, x1: r.x + hw, y0: r.y - hh, y1: r.y + hh },
-      });
-    }
-    return out;
-  }
+  /** T2 — this room's NPC bases (and ordered player Freight Docks) for convoy planning (`bases/NpcBaseSubsystem.ts`). */
+  npcBaseTrade(): NpcBaseTrade[] { return npcBaseTrade(this.structureRegistry, this.storage); }
 
   /**
    * Phase 4 warp travel — where a warping ship lands: the nearest spot to its
@@ -7300,155 +6998,6 @@ export class SectorRoom extends Room<SectorState> {
   }
   /** C3 — NPC spawns (`id:entityId`) whose loot table is already in their hold. */
   private readonly npcLootRolled = new Set<string>();
-
-  /**
-   * Phase 4 (Leveling & XP, WS-B1) — award XP to the KILLER SHIP INSTANCE on a
-   * kill, weighted by the victim's `maxHealth` (tougher = more, D10). XP is
-   * PER SHIP INSTANCE (D8): the killer's playerId resolves to the hull THAT
-   * PLAYER is currently piloting (`resolveActiveShipKey`), and the XP rides
-   * that hull's persistent roster row — switching ships switches progression.
-   *
-   * Only PLAYER killers earn XP — a drone/structure killer (`swarm-`/`lwbot-`/
-   * `pstruct-` prefix) has no roster ship instance, so it's skipped. Engineering
-   * rooms (no roster) and unbound killers are no-ops.
-   *
-   * On crossing a threshold the ship's `level` increments, the roster persists
-   * the new `(level, xp)`, the live `ShipState.level` mirror updates (so the
-   * next snapshot ships the public badge), a discrete `SHIP_LEVEL_UP` fires on
-   * the bus, and a `ship_level_up` Colyseus message broadcasts to every client.
-   */
-  private awardKillXp(killerId: string, victimMaxHealth: number): void {
-    if (classifyAttacker(killerId) !== 'player') return; // drones/structures don't level
-    const store = getPlayerShipStore();
-    // RTS slice: a wingman (AI-flown lingering hull) fires under its own
-    // shipInstanceId, so the killer id IS the hull's roster key (D8: the ship
-    // that made the kill earns the XP). Otherwise it is a pilot's playerId.
-    const killerShipInstanceId = this.lingeringSlots.has(killerId)
-      ? killerId
-      : this.resolveActiveShipKey(killerId);
-    if (killerShipInstanceId === undefined || killerShipInstanceId === '') return;
-    const row = store.get(killerShipInstanceId);
-    if (row === null) return; // no roster row (engineering room / not persisted)
-
-    const gained = xpForKill(victimMaxHealth);
-    const result = applyKillXp(row.level, row.xp, gained);
-    // Persist the new progression (level/xp) on the killer's instance.
-    store.setProgress(killerShipInstanceId, { level: result.level, xp: result.xp });
-
-    // Mirror the level onto the live ShipState so the broadcaster ships the
-    // public badge on the next snapshot.
-    const killerShip = this.state.ships.get(killerShipInstanceId);
-    if (killerShip !== undefined) killerShip.level = result.level;
-
-    if (result.levelsGained > 0) {
-      this.bus.emit('SHIP_LEVEL_UP', {
-        type: 'SHIP_LEVEL_UP',
-        shipInstanceId: killerShipInstanceId,
-        newLevel: result.level,
-      });
-      this.broadcast('ship_level_up', {
-        type: 'ship_level_up',
-        shipInstanceId: killerShipInstanceId,
-        newLevel: result.level,
-      });
-    }
-  }
-
-  /**
-   * Phase 4 WS-B2 — push a ship instance's per-instance PHYSICS multipliers
-   * (`topSpeed`/`turnRate`, derived from its spent stat allocation) to its
-   * worker body via `SET_STAT_MUL`. `bodyKey` is the worker body id (the
-   * active player's is `playerId`; a lingering hull's is `linger-<shipId>`).
-   * An empty / un-upgraded allocation resets the body to the un-upgraded
-   * factors (both undefined). Allocation-free beyond the small derived literal
-   * (called only on spawn + on a discrete upgrade — never per tick).
-   */
-  private applyStatMulToWorker(bodyKey: string, alloc: CoreStatAlloc | undefined): void {
-    const mul = deriveStatMultipliers(alloc);
-    // Send the physics pair only. Neutral (both 1) ⇒ send the factors anyway so
-    // a respec/clear visibly resets the body; SET_STAT_MUL with 1/1 is a no-op
-    // beyond writing the (identity) multipliers.
-    this.postToWorker({ type: 'SET_STAT_MUL', id: bodyKey, topSpeed: mul.topSpeed, turnRate: mul.turnRate });
-  }
-
-  /**
-   * Phase 4 WS-B2 — apply a free stat allocation (or a respec, `alloc = {}`) to a
-   * ship INSTANCE the requester owns. The single server entry for both messages.
-   *
-   * Validates, in order:
-   *   - ownership (the roster row's `playerId === requester`),
-   *   - the point budget (`isAllocValid(alloc, row.level)` — the budget CANNOT be
-   *     exceeded, the authoritative gate).
-   * A foreign / unknown / over-budget request is a silent no-op (no echo, no
-   * persistence). On success: persist the new `statAlloc` on the roster row, and
-   * — if this instance is the player's ACTIVE hull in THIS room — update the live
-   * `ShipState.statAlloc` mirror AND push the physics multipliers to its worker
-   * body (so the next tick scales movement; the OWN-ship snapshot slice carries
-   * the alloc so the client re-anchors its predWorld identically). Finally echo
-   * `ship_upgrade_applied` so the modal closes + the roster card refreshes.
-   */
-  private applyShipUpgrade(
-    client: Client,
-    playerId: string,
-    shipId: string,
-    alloc: CoreStatAlloc,
-  ): void {
-    const store = getPlayerShipStore();
-    const row = store.get(shipId);
-    if (row === null || row.playerId !== playerId) return; // foreign / unknown
-    if (!isAllocValid(alloc, row.level)) {
-      logger.warn(
-        { sessionId: client.sessionId, shipId, level: row.level },
-        'apply_ship_upgrade over budget / invalid — dropped',
-      );
-      return;
-    }
-    // Persist on the roster (the per-instance source of truth, D8).
-    store.setProgress(shipId, { statAlloc: alloc });
-
-    // If this instance is the player's ACTIVE hull in THIS room, mirror the
-    // alloc + re-anchor the worker body's physics multipliers immediately.
-    const activeShipKey = this.resolveActiveShipKey(playerId);
-    if (activeShipKey === shipId) {
-      const ship = this.state.ships.get(shipId);
-      if (ship !== undefined) {
-        ship.statAlloc = alloc;
-        // Review must-fix #1 — a LIVE upgrade/respec must recompute the NON-
-        // PHYSICS caps from the new alloc and CLAMP the current value down to
-        // the new max (a respec that lowers a cap must not leave current above
-        // it). NO free heal — clamp only; the bar shrinks, it never refills.
-        // One source: the `effectiveShip*` helpers (so the seed + denominator
-        // agree). hpMax/shieldMax/energyMax all ride the OWN-ship snapshot
-        // slice / discrete DamageEvent so the client re-reads the new caps.
-        const upgKind = getShipKind(ship.kind);
-        ship.maxHealth = this.shipHullMax(upgKind.maxHealth, alloc, ship.shipInstanceId);
-        if (ship.health > ship.maxHealth) ship.health = ship.maxHealth;
-        const newShieldMax = effectiveShipShieldMax(upgKind.shieldMax, alloc);
-        if (ship.shield > newShieldMax) ship.shield = newShieldMax;
-        const newEnergyMax = effectiveShipEnergyMax(upgKind.energyMax ?? 100, alloc);
-        if (ship.energy > newEnergyMax) ship.energy = newEnergyMax;
-      }
-      // The active player's worker body is keyed by playerId.
-      this.applyStatMulToWorker(playerId, alloc);
-    } else if (this.lingeringSlots.has(shipId)) {
-      // RTS slice 4: a LINGERING hull here is flown by a wingman. Its body
-      // takes the new physics multipliers now (keyed `linger-<id>`) and the
-      // brain is rebuilt from the new alloc so its stats match the body.
-      // Non-physics caps are re-seeded on reclaim, as before.
-      const ship = this.state.ships.get(shipId);
-      if (ship !== undefined) ship.statAlloc = alloc;
-      this.applyStatMulToWorker(`linger-${shipId}`, alloc);
-      if (this.fleet.isAttached(shipId)) this.wingmen.attachWingman(shipId);
-    }
-
-    client.send('ship_upgrade_applied', {
-      type: 'ship_upgrade_applied',
-      shipInstanceId: shipId,
-      alloc,
-      spent: spentPoints(alloc),
-      budget: pointBudget(row.level),
-    });
-  }
 
   override onDispose(): void {
     this.roomFeatures?.dispose();

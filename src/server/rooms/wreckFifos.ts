@@ -22,9 +22,14 @@ import { MAX_LIVE_SUBCAP_WRECK_PIECES, MAX_LIVE_WRECK_PIECES } from '../../core/
 import type { WreckOrigin } from './capitalWreckTypes.js';
 
 /** Worst live field pieces in ONE ship's 5 x 5 chunk ring, measured by
- *  `wreckFieldLayout.test.ts` (slice 1, seed `a`: 56; `thornfield` 37, `b`
- *  21). The streamer keeps that ring loaded around each ship
- *  (macro-terrain.md "One streamer, several sources"). */
+ *  `wreckFieldLayout.test.ts` on the version-1 layout (seed `a`: 56;
+ *  `thornfield` 37, `b` 21): what the cap below was sized from, kept as is.
+ *  Since wreck fields 11 (a 7 km core) one ring holds nearly a whole field,
+ *  so the worst loaded set with any number of ships is one whole field
+ *  (wreck fields 13: at most 357 pieces, test seed `thornfield`; galaxy
+ *  fields at most 350 since wreck fields 14), under the cap
+ *  (macro-terrain.md "F3"). The streamer keeps that ring loaded around each
+ *  ship (macro-terrain.md "One streamer, several sources"). */
 export const FIELD_RING_WORST_PIECES = 56;
 /** Ships the cap allows to sit in separate parts of the field at once: a
  *  sector room's `maxClients` (16, `GalaxyRegistry` / `index.ts`). */
