@@ -3156,6 +3156,11 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Finding:** the barge-mining showcase stalled: the lasers cut the rock into a few pieces, stopped, and the hold stayed at 0. The showcase room had no `sectorKey`, so no roster, so the loot pickup (`forEachLootCollector`) never visited the barge; but the lock step judged "consumable" from cargo capacity minus hold weight (both fine with no roster), so every laser and tractor left pieces nothing would ever take in.
 - **Rule:** when a rule hands work to another system ("nobody targets it, the pickup takes it in"), its gate asks the same predicate that system uses (`SectorRoom.hasHold`), so the two cannot disagree. A showcase or test room that films holds or cargo needs a real `sectorKey`. Lock: `tests/integration/sectorRoom/bargeMiningTake.test.ts`.
 
+## 2026-11-17 — settle-to-sleep zeroes velocity, so a slow tow never arrived
+
+- **Finding:** in the barge mining test, heavy rock pieces under a tractor beam crept ~10 u a minute and never reached the hull. The beam's pull (inverse-square, not mass-scaled) kept a 2,000-mass piece far below its settle speed, so `World.settleStep` put it to sleep every 30 steps, and sleep zeroes the velocity the beam had built up; 10× rock drag ate the rest.
+- **Rule:** a per-body rule that stops bodies (settle, sleep, clamp) must exempt bodies another force is deliberately moving, and drag tuned for loose debris must not apply to a body being hauled. `World.settleStep` skips a tractor-held body and caps its damping at `BEAMED_LINEAR_DAMPING`. Lock: `World.sleepSettle.test.ts` (tow keeps its speed; beamed piece has plain drag), `tests/integration/sectorRoom/bargeMiningTake.test.ts`.
+
 ## 2026-11-17 — an installed iPhone web app has its own cookie jar
 
 - **Finding (design):** behind a cookie gate, a page that works in Safari would open to "forbidden" once added to the home screen: the installed app does not share Safari's cookies, and the browser fetches the manifest without credentials by default.
@@ -3180,3 +3185,19 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** the resting touch stick fades to 40 % opacity, and a dark wash added to its own background faded with it, so the ring stayed invisible over bright asteroid rock however dark the wash was.
 - **Rule:** a readability backing goes on its own element beside the faded one (`FloatingStick`'s `-backing` layer moves with the ring but keeps full opacity); HUD panels use `HUD.color.panel` (0.72) so they read over rock.
+
+## 2026-11-18 — a per-cell worst-case bound closes gaps narrower than its slack
+
+The nav fine layer stored, per 64 u cell, a room bound valid anywhere in the cell (rocks padded half a
+diagonal, the reader subtracts a diagonal: ~136 u lost in all). The cut field's streets pinch to
+60–68 u, so every street read as rock, and no finer padded grid (down to 8 u) reopened them. Measure
+the gap against the exact distance first; then refine exactly only where the bound is too rough to
+decide (`docs/architecture/navigation.md`, fine layer), instead of shrinking cells everywhere.
+
+## 2026-11-18 — a route follower that leaves turns early needs the planner's slack
+
+AI ships moved to the next nav waypoint once within their arrive radius (a fighter's 80 u). That flies
+the chord across each corner, so the ship's path was never the planned one; it held only while the fine
+layer's rough bound left ~90 u of slack round every turn. Once routes took the field's streets at the
+hull's clearance (30 u), the chord crossed rock. A follower must stay on the route it was handed: pass a
+turn only once level with it (`stepNavRoute`), and test the follower against a route with no slack.
