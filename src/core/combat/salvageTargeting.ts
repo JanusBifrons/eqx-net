@@ -19,10 +19,12 @@
  * needed size in the group (`laserRungMask`), the next smaller size it has
  * takes them (the barge has no S laser: its AA lasers cut the M-tier
  * pieces). A tractor on rung k pulls only pieces at or below k
- * (`tractorTakesTier`). Nothing cuts an AA-tier piece. The last step is
- * the ORE POD: a rock piece is never taken in whole; the lasers cut until
- * its pieces wear out under the rock's re-split floor into ore pods, which
- * every tractor pulls and the hull takes in on touch (LootSubsystem). The
+ * (`tractorTakesTier`). Nothing cuts an AA-tier piece. A rock piece of any
+ * size goes into a hold whole as one rock chunk when it touches the hull
+ * and its weight fits (`rockChunkWeight`; owner 2026-11-17: mined rock is
+ * never a pod). A rock piece one of the ship's tractors can pull and whose
+ * chunk fits the free hold is HAULED (`rockHaulable`): the lasers leave it
+ * whole and the tractors drag it to the hull; a bigger one is cut on. The
  * big/small split: `salvagePrefersBig`.
  *
  * **Consumable by me** (owner 2026-11-16, the factory line): a WRECK piece at hold
@@ -198,13 +200,52 @@ export function salvageConsumeMass(kind: { readonly mounts?: ReadonlyArray<Weapo
   return kind.mounts !== undefined && hasMiningTool(kind.mounts) ? tierMasses()[1]! : 0;
 }
 
-/** Can this ship take `c` in whole: a WRECK piece (`ore` unset: a rock
- *  piece never is, the lasers cut it down to ore pods) at hold size (mass ≤
- *  `consumeMass`, from `salvageConsumeMass`: the AA tier) AND its hold
- *  weight fits the free hold? Then nothing targets it and the loot pickup
+/** Can this ship take `c` in whole? A WRECK piece: at hold size (mass ≤
+ *  `consumeMass`, from `salvageConsumeMass`: the AA tier) and its hold
+ *  weight fits the free hold. A ROCK piece (`ore` set) goes in as a chunk
+ *  of any size: only its weight (`rockChunkWeight`) must fit (owner
+ *  2026-11-17: weight is the only limit). Either way the ship needs a mining
+ *  tool (`consumeMass > 0`). Then nothing targets it and the loot pickup
  *  takes it in when it touches the hull. */
 export function salvageConsumable(
   c: Pick<SalvageCandidate, 'mass' | 'holdWeight'> & { readonly ore?: unknown }, consumeMass: number, freeHold: number,
 ): boolean {
-  return c.ore === undefined && consumeMass > 0 && c.mass <= consumeMass && c.holdWeight <= freeHold;
+  if (!(consumeMass > 0) || !(c.holdWeight <= freeHold)) return false;
+  return c.ore !== undefined || c.mass <= consumeMass;
+}
+
+const tractorRungCache = new WeakMap<ReadonlyArray<WeaponMount>, number>();
+
+/** The highest rung among this mount list's tractors (`mountTier`), 0 with
+ *  none. Cached per mount list. */
+export function tractorRungOf(mounts: ReadonlyArray<WeaponMount>): number {
+  const hit = tractorRungCache.get(mounts);
+  if (hit !== undefined) return hit;
+  let rung = 0;
+  for (const m of mounts) if (getWeapon(m.weaponId).tractor !== undefined) rung = Math.max(rung, mountTier(m.size));
+  tractorRungCache.set(mounts, rung);
+  return rung;
+}
+
+/** Does a ship whose biggest tractor is on rung `tractorRung` haul ROCK
+ *  piece `c` (`ore` set) in whole: a tractor can pull its tier and its
+ *  chunk weight fits the free hold. Then the lasers leave it uncut and the
+ *  tractors bring it to the hull (owner 2026-11-17); otherwise the lasers cut
+ *  it on (a piece no tractor moves would never reach the hull). Pure. */
+export function rockHaulable(
+  c: Pick<SalvageCandidate, 'mass' | 'holdWeight'> & { readonly ore?: unknown }, tractorRung: number, freeHold: number,
+): boolean {
+  return c.ore !== undefined && c.holdWeight <= freeHold && tractorTakesTier(tractorRung, salvageTier(c.mass));
+}
+
+/** The lightest rock chunk (owner 2026-11-17: a scout carries 1, a fighter 2). */
+export const ROCK_CHUNK_MIN_WEIGHT = 250;
+
+/** A cut rock piece's cargo weight as a chunk: `ROCK_CHUNK_MIN_WEIGHT` per
+ *  AA-tier mass of body (the smallest tractor's load), never under the
+ *  minimum, so a chunk an S tractor drags weighs about 4× one an AA drags.
+ *  Pure, allocation-free. */
+export function rockChunkWeight(mass: number): number {
+  const aa = tierMasses()[1]!;
+  return Math.max(ROCK_CHUNK_MIN_WEIGHT, Math.round((ROCK_CHUNK_MIN_WEIGHT * Math.max(0, mass)) / aa));
 }

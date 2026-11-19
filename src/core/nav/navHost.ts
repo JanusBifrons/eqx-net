@@ -12,7 +12,7 @@
  */
 import type { ChunkOpts } from '../terrain/fieldLayout.js';
 import { CoarseFieldMap } from './coarseField.js';
-import { FineFieldLayer, type NavRockPose } from './fineField.js';
+import { FineFieldLayer, NavDetailPool, type NavRockPose } from './fineField.js';
 import { RoutePlanner, NAV_ROUTE_MAX_POINTS, type NavRouteStatus } from './routePlanner.js';
 
 /** Host a cut field's nav maps for one sector room. `gone` / `moved`: rocks
@@ -63,8 +63,10 @@ export class NavHost {
   private readonly planner = new RoutePlanner();
   private readonly scratch = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
 
-  /** `now`: a millisecond clock for print-only build timings (real time). */
-  constructor(private readonly now: () => number) {}
+  /** `now`: a millisecond clock for print-only build timings (real time).
+   *  `detailPool`: every field's fine detail in one fixed-size store, so the
+   *  worker's memory never grows with the sector count (owner, 2026-11-18). */
+  constructor(private readonly now: () => number, readonly detailPool = new NavDetailPool()) {}
 
   /** Fields hosted (diagnostics, tests). */
   get fieldCount(): number { return this.worlds.size; }
@@ -82,13 +84,15 @@ export class NavHost {
         const t0 = this.now();
         const coarse = this.worlds.get(cmd.worldId)?.coarse ?? new CoarseFieldMap();
         coarse.build(cmd.opts);
-        this.worlds.set(cmd.worldId, { coarse, fine: new FineFieldLayer(cmd.opts, cmd.gone, cmd.moved) });
+        this.worlds.get(cmd.worldId)?.fine.dispose(); // a re-add replaces the field
+        this.worlds.set(cmd.worldId, { coarse, fine: new FineFieldLayer(cmd.opts, cmd.gone, cmd.moved, this.detailPool) });
         return {
           type: 'FIELD_BUILT', worldId: cmd.worldId, cols: coarse.cols, rows: coarse.rows,
           bytes: coarse.room.byteLength + coarse.bestX.byteLength + coarse.bestY.byteLength, ms: this.now() - t0,
         };
       }
       case 'REMOVE_FIELD':
+        this.worlds.get(cmd.worldId)?.fine.dispose();
         this.worlds.delete(cmd.worldId);
         return null;
       case 'CHUNK': {

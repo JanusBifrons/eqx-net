@@ -4,16 +4,15 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
 /**
  * Drawer → Galaxy flow locks (2026-05-13 user-smoke regressions).
  *
- * Two distinct test()s, each keeping its own timeout budget (the open/close lag
- * guard relies on the tight 25 s cap + 3 s per-step ceiling; the roster-card
- * flow needs the generous 120 s budget for its extra CDP roundtrips). Do NOT
- * collapse the two timeouts.
+ * The open/close lag guard relies on the tight 25 s cap + 3 s per-step
+ * ceiling.
  *
  * Equinox Phase 8 (Bug 4): "Show galaxy map" now opens the REAL full-page galaxy
  * map (the warp-context GalaxyPickerChrome / `galaxy-map-screen`), not the old
- * roster-scrim overview (GalaxyOverviewSelectChrome, now retired). Test 1 locks
- * the open→close lag of the full-page map; Test 2 locks the drawer Galaxy-tab's
- * own roster card → ShipDetailModal path (the in-game ship-swap surface).
+ * roster-scrim overview (GalaxyOverviewSelectChrome, now retired). The test locks
+ * the open→close lag of the full-page map. The roster card → ShipDetailModal
+ * test went with the roster (join flow stage 5): ship swap is now map →
+ * sector → Hangar, covered by happy-path-switch-ship.spec.ts.
  */
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
@@ -22,7 +21,6 @@ interface StoreState {
   playerId: string | null;
   localShipInstanceId: string | null;
   isDrawerOpen: boolean;
-  isGalaxyOverviewOpen: boolean;
   setDrawerOpen: (v: boolean) => void;
   setDrawerTab: (id: string) => void;
 }
@@ -161,92 +159,4 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
   expect(errors, errors.join('\n')).toEqual([]);
   await page.close();
   await ctx.close();
-});
-
-// ---------------------------------------------------------------------------
-// Test 2 — roster card → ShipDetailModal opens (real clicks).
-// (was drawer-galaxy-overview-spawn.spec.ts)
-//
-// 2026-05-13 refactor regression lock: the drawer-opened overview is the
-// non-warp 'select' mode; clicking a roster card must open ShipDetailModal
-// (the user reported "no modal at all"). ship-roster-panel.spec.ts only
-// asserts the card RENDERS — it does NOT cover the click→modal path, so this
-// coverage lives only here.
-// ---------------------------------------------------------------------------
-test('drawer Galaxy tab → roster card opens detail modal (real clicks)', async ({ page }) => {
-  // FUNCTIONAL only, not a perf budget. The main thread is saturated by Pixi
-  // tick + Colyseus snapshot apply, so every CDP roundtrip needs generous
-  // timeouts. (The lag budget lives in Test 1 above.)
-  test.setTimeout(120_000);
-
-  const errors: string[] = [];
-  page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
-
-  // === 1. Spawn via auto-join URL. ===
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime&startMode=fly`, {
-    waitUntil: 'domcontentloaded',
-    timeout: 30_000,
-  });
-  await waitForLocalShip(page, 25_000);
-  const playerId = await page.evaluate(() => {
-    const win = window as unknown as StoreWindow;
-    return win.__eqxStore!.getState().playerId;
-  });
-  expect(playerId).toBeTruthy();
-
-  // === 2. Open drawer + galaxy tab. Real click first, Zustand fallback. ===
-  await page.locator('[data-testid="drawer-toggle"]').click({ force: true });
-  try {
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
-  } catch {
-    await page.evaluate(() => {
-      const win = window as unknown as StoreWindow;
-      const s = win.__eqxStore!.getState();
-      s.setDrawerTab('galaxy');
-      s.setDrawerOpen(true);
-    });
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 15_000 });
-  }
-  await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible({ timeout: 30_000 });
-  // Phase 8 (Bug 4): the roster panel lives in the drawer's Galaxy tab itself —
-  // its card opens ShipDetailModal directly. The old "Show galaxy map → overview
-  // roster scrim → card" path is retired (the button now opens the full-page map,
-  // covered by galaxy-map-overlay.spec.ts).
-  await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible({ timeout: 15_000 });
-
-  // === 3. REAL click on the roster card in the drawer's Galaxy tab. ===
-  const localShipInstanceId = await page.evaluate(() => {
-    const win = window as unknown as StoreWindow;
-    return win.__eqxStore!.getState().localShipInstanceId;
-  });
-  expect(localShipInstanceId).toBeTruthy();
-
-  // `noWaitAfter: true` is essential. Roster-card onClick is a pure Zustand
-  // setState (no navigation). Without it Playwright's waitForScheduledNavigations
-  // hangs the full 5 s on Pixi's continuous rAF, misreading it as "navigation
-  // pending". The next assertion (ship-detail-modal) is the sync point.
-  // The drawer slides in from the right: wait until the card has arrived on
-  // screen, or the click lands mid-slide ("Element is outside of the viewport").
-  const card = page.locator(`[data-testid="ship-roster-card-${localShipInstanceId}"]`).first();
-  await expect(card).toBeInViewport({ timeout: 10_000 });
-  await card.click({ force: true, timeout: 5_000, noWaitAfter: true });
-
-  // === 6. ShipDetailModal mounts. ===
-  await expect(page.locator('[data-testid="ship-detail-modal"]')).toBeVisible({ timeout: 5_000 });
-  // Sanity: the Spawn button exists (disabled, since this is the active hull).
-  await expect(page.locator('[data-testid="ship-detail-spawn"]')).toBeVisible({ timeout: 2_000 });
-  await expect(page.locator('[data-testid="ship-detail-spawn"]')).toBeDisabled();
-
-  // === 7. Sanity: close the modal cleanly. ===
-  // Programmatic JS click is the only method that reliably fires the React
-  // onClose handler: `force:true` on a MUI Button bypasses ButtonBase's
-  // pointerdown/up sequencing (no onClick), and a plain click is intercepted
-  // by the gameplay canvas's `translateZ(0)` stacking context.
-  await page.evaluate(() => {
-    const btn = document.querySelector('[data-testid="ship-detail-close"]') as HTMLElement | null;
-    btn?.click();
-  });
-  await expect(page.locator('[data-testid="ship-detail-modal"]')).toHaveCount(0, { timeout: 10_000 });
-
-  expect(errors, errors.join('\n')).toEqual([]);
 });
