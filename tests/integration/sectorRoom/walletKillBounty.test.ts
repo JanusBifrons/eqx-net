@@ -28,7 +28,9 @@ function room(id: string): SectorRoom {
 describe('SectorRoom integration — the wallet (economy v2 W1)', () => {
   let harness: SectorTestHarness;
   beforeEach(async () => {
-    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
+    // keepAllOnDeath: the death-loss coin flips (random salt per room) would
+    // otherwise lose the cube's whole hold ~40% of kills, leaving no pod.
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], keepAllOnDeath: true });
   }, 15_000);
   afterEach(async () => {
     if (harness) await harness.cleanup();

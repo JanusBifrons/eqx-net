@@ -62,7 +62,7 @@ import {
   interpolateSwarmPose,
 } from '../../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
-import { WreckPieceSprite, coolWreckInfo } from './wreckArt.js';
+import { WreckPieceSprite, coolWreckInfo, wreckPieceSpeckColor } from './wreckArt.js';
 import { buildRockPieceArt, classicRockTint, isRockWreck } from './rockPieceArt.js';
 import { isFieldRockMesh } from '../field/CutFieldLayer.js';
 import { placedRockMeshData } from '../field/placedRockMesh.js';
@@ -290,6 +290,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         if (wreckRock && pieceRock === undefined) continue; // rock piece without its rock: not drawn
         sprite = new WreckPieceSprite(
           g, wreckParent, shipArt, info, index, pieceRock !== undefined ? buildRockPieceArt(g, pieceRock, ctx.fieldRocks ?? null) : null,
+          shipArt !== null ? wreckPieceSpeckColor(wreckParent, wreckArtHandle!.job) : null,
         );
       } else {
         // An awake cut-field rock keeps its cut shape and rock surface; a

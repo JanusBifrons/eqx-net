@@ -3216,6 +3216,13 @@ reset the clock. Merge only a stack's top (one round lands the whole chain), res
 taking the lower cap, and fix a flake's cause the first time. Post-mortem:
 `docs/HANDOFF-2026-11-19-pr-backlog.md`.
 
+## 2026-11-19 — a death-loss coin flip makes "the kill drops a pod" a flake
+
+Every ship death (NPC too) keeps each good in its hold only on a coin flip, salted at random per room
+(`LootSubsystem.deathSalt`). `walletKillBounty` and `tradeDeal` asserted a pod with known contents after
+a kill and failed about 40% and 50% of runs, on main as much as on any branch. A test that asserts
+what a death drops boots with `keepAllOnDeath: true`; a test of the loss itself pins the roll.
+
 ## 2026-11-19 — brake for a corner from the angle between legs, not the bearing to it
 
 The follower braked for a route corner by how far the next leg runs the same way as the ship's bearing

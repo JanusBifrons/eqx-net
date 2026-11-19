@@ -19,13 +19,27 @@
  */
 
 import { isNpcOwner } from '../../shared-types/relations.js';
-import { createFactionState, type FactionState } from '../../core/faction/Faction.js';
+import { createFactionState, isBaseReady, type FactionState } from '../../core/faction/Faction.js';
 import type { StructureRecord } from '../structures/StructureRegistry.js';
+import type { FactionBaseReadiness } from '../livingworld/LivingWorldRoom.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
 
 export interface FactionLedgerDeps {
   /** Live structures in this room (typically `registry.all()`). Iterated on
    *  demand for membership + reverse lookup; never retained. */
   structures: () => Iterable<StructureRecord>;
+}
+
+/** What `baseReadiness` reads from the room (getters for fields it reassigns). */
+export interface BaseReadinessHost {
+  sectorKey(): string | null;
+  serverTick(): number;
+  /** A wave starts only against a present owner (room option `waveNeedsOwner`). */
+  waveNeedsOwner(): boolean;
+  /** The owner has an ACTIVE hull in this sector. */
+  ownerPresent(factionId: string): boolean;
+  /** Broadcast the one-shot `base_ready` toast. */
+  broadcastBaseReady(factionId: string, sectorKey: string): void;
 }
 
 export class FactionLedger {
@@ -133,5 +147,90 @@ export class FactionLedger {
    *  bounded; safe to call for an unknown id. */
   forget(id: string): void {
     this.byId.delete(id);
+  }
+
+  /**
+   * Wave-system Phase 4 — per-(owner, sector) faction base summary the
+   * WaveDirector polls through `SectorRoom.factionBaseReadiness` (~1.5 s, NOT
+   * the hot loop, so allocation here is fine). Engineering rooms
+   * (`sectorKey === null`) return [] (waves are galaxy-only). One entry per
+   * player owning ≥1 constructed structure here.
+   */
+  baseReadiness(h: BaseReadinessHost): FactionBaseReadiness[] {
+    const sectorKey = h.sectorKey();
+    if (sectorKey === null) return [];
+    interface Agg {
+      hasCapital: boolean;
+      minerCount: number;
+      solarCount: number;
+      turretCount: number;
+    }
+    const byOwner = new Map<string, Agg>();
+    for (const rec of this.deps.structures()) {
+      // B2 — NPC bases are never a wave target (they aren't a player faction).
+      if (!rec.isConstructed || isNpcOwner(rec.owner)) continue;
+      let agg = byOwner.get(rec.owner);
+      if (!agg) {
+        agg = { hasCapital: false, minerCount: 0, solarCount: 0, turretCount: 0 };
+        byOwner.set(rec.owner, agg);
+      }
+      switch (rec.kind) {
+        case 'capital':
+          agg.hasCapital = true;
+          break;
+        case 'miner':
+          agg.minerCount++;
+          break;
+        case 'solar':
+          agg.solarCount++;
+          break;
+        case 'turret':
+          agg.turretCount++;
+          break;
+        default:
+          break;
+      }
+    }
+    const out: FactionBaseReadiness[] = [];
+    for (const [factionId, agg] of byOwner) {
+      const ownerPresent = h.ownerPresent(factionId);
+      const ready = isBaseReady(agg) && (!h.waveNeedsOwner() || ownerPresent);
+      // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the
+      // first time a base qualifies for waves; re-arm when it drops below ready
+      // (a razed-then-rebuilt base re-toasts). Evaluated at the director's
+      // control cadence (this method is the canonical readiness poll), so it
+      // fires within ~one control tick of the base completing.
+      if (ready) {
+        if (this.markReadyNotified(factionId)) {
+          h.broadcastBaseReady(factionId, sectorKey);
+          auditEvent({
+            event: 'base_ready',
+            sector: sectorKey,
+            owner: factionId,
+            composition: {
+              miner: agg.minerCount,
+              solar: agg.solarCount,
+              turret: agg.turretCount,
+            },
+          });
+        }
+      } else {
+        this.clearReadyNotified(factionId);
+      }
+      const state = this.get(factionId);
+      out.push({
+        factionId,
+        sectorKey,
+        ready,
+        // The owner is "present" when they have an active hull in this sector.
+        ownerPresent,
+        minerCount: agg.minerCount,
+        hostileToDrones: state?.hostileToDrones ?? false,
+        underWave: state?.underWave ?? false,
+        lastDealtDamageTick: state?.lastDealtDamageTick ?? -Infinity,
+        serverTick: h.serverTick(),
+      });
+    }
+    return out;
   }
 }
