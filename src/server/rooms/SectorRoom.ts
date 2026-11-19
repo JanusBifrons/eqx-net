@@ -40,6 +40,7 @@ import {
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
+import { seedStructureScenario, structureRowsForTests, type StructureRowView, type StructureScenarioHost } from './scenarioLayouts.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -79,8 +80,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
-import { FactionLedger } from '../faction/FactionLedger.js';
-import { isBaseReady } from '../../core/faction/Faction.js';
+import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { tallyFaction, type FactionPresenceMap } from '../livingworld/factionPresence.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
@@ -90,7 +90,7 @@ import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js'
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
 import { GATE_SPAN_THICKNESS, isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
+import type { GateAccess } from '../../shared-types/gateAccess.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
@@ -105,7 +105,6 @@ import { getTeleportBroker, type HandedOffHull, type TeleportRoom } from '../tel
 import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
 import { linkEnds } from '../../core/bases/transitNetwork.js';
 import {
-  DEFAULT_TELEPORT_RULES,
   PAD_SPECS,
   TP_RULE_TOLL_HOSTILE,
   TP_PARTNER_REMOTE,
@@ -115,22 +114,19 @@ import {
   TP_RULE_LOADED,
   isTeleporterKind,
 } from '../../shared-types/teleport.js';
-import { isNpcBasesDisabled, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
+import { isNpcBasesDisabled, npcBaseTrade, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost, type NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
 import { hashString } from '../../core/bases/baseProfile.js';
 import { nearestClearPoint } from '../../core/bases/baseSite.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites.js';
-import { PROD_STATE, defaultRecipeFor, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
-import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
-import { RECIPES } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { LAUNCH_COSTS_ON } from '../../shared-types/launch.js';
 import { chargeLaunchFor } from './launchGate.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector, isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
-import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
@@ -362,15 +358,6 @@ import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/ph
 
 
 
-/** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
-const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
-/** T4b — the level of `good`'s order on a dock (0 when none). */
-
-
-function o_level(r: { freightOrders?: Array<{ good: GoodId; level: number }> }, good: GoodId): number {
-  return r.freightOrders?.find((o) => o.good === good)?.level ?? 0;
-}
-
 const logger = pino({
   name: 'SectorRoom',
   transport:
@@ -484,30 +471,6 @@ const STRUCTURE_ATTACK_AUDIT_WINDOW_MS = 15_000;
  *  much longer than the audit window above, because a phone alert should be
  *  rare (one per base per 15 min) rather than once per sustained-fire burst. */
 const STRUCTURE_ATTACK_PUSH_WINDOW_MS = 15 * 60_000;
-
-/** The pre-A2 per-structure row (test view — see `structureRowsForTests`). */
-export interface StructureRowView {
-  id: number;
-  hpPct: number;
-  powered: boolean;
-  netPower: number;
-  owner: string;
-  built: boolean;
-  ownerName?: string;
-  level?: number;
-  connTo?: number[];
-  minerals?: number;
-  buildPct?: number;
-  etaMs?: number | null;
-  isDeconstructing?: boolean;
-  deconstructPct?: number;
-  miningTargetId?: number;
-  turretTargetId?: number;
-  storedPower?: number;
-  storedPowerMax?: number;
-  shieldWallTo?: number;
-  wallActive?: boolean;
-}
 
 /** Ticks a ship that fled stays in the room on its warp run before it leaves
  *  (0.5 s, as long as the arrival window): long enough for every client's
@@ -1332,7 +1295,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmHealth: this.swarmHealth,
       structureRegistry: this.structureRegistry,
       pulseStructureGrid: () => this.structureGridTick(),
-      getStructuresSlice: () => this.structureRowsForTests(),
+      getStructuresSlice: () => structureRowsForTests(this.state as SectorState, this.structuresSlice),
       upgradeStructure: (id) => this.structureGrid.upgradeStructure(id),
       reconnectStructure: (id) => this.structureGrid.reconnect(id),
       spawnTestAsteroid: (id, x, y, radius, resource) =>
@@ -2906,7 +2869,7 @@ export class SectorRoom extends Room<SectorState> {
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
-    if (this.testMode) this.seedStructureScenario(roomOpts);
+    if (this.testMode) seedStructureScenario(this.structureScenarioHost, roomOpts);
     this.testTeleportFullCharge = this.testMode && roomOpts.teleportFullCharge === true;
     if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
     // D2 (plan soft-leaping-truffle v3) — NPC bases grown from the generator.
@@ -4576,76 +4539,12 @@ export class SectorRoom extends Room<SectorState> {
     );
   }
 
-  private seedStructureScenario(roomOpts: {
-    prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
-    prebuiltStructuresOwner?: string;
-    prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
-    pairTeleporters?: boolean;
-    teleportShipBoards?: boolean;
-    scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
-    scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
-  }): void {
-    const prebuilt = roomOpts.prebuiltStructures;
-    // Wave-system E2E: an explicit owner lets a test seed a base the joining
-    // player OWNS (so the FactionLedger sees a player-owned faction the
-    // WaveDirector can wave) instead of the inert `scenario` owner. Default
-    // `scenario` preserves the structure-scenario-test behaviour.
-    const owner = roomOpts.prebuiltStructuresOwner ?? 'scenario';
-    if (prebuilt && prebuilt.length > 0) {
-      for (const ps of prebuilt) {
-        const extra = ps as { rot?: number; gateAccess?: GateAccess };
-        const id = this.structurePlacement.place(owner, ps.kind as string, ps.x, ps.y, { rot: extra.rot });
-        if (id === null) {
-          logger.warn({ kind: ps.kind, x: ps.x, y: ps.y }, 'scenario prebuilt structure rejected');
-          continue;
-        }
-        const rec = this.structureRegistry.get(id);
-        if (rec && extra.gateAccess && GATE_ACCESS_IDS.includes(extra.gateAccess)) {
-          rec.gateAccess = gateAccessIndex(extra.gateAccess);
-        }
-        if (rec && !rec.isConstructed) {
-          rec.isConstructed = true;
-          rec.constructionProgress = rec.constructionCost;
-          this.swarmHealth.set(id, getStructureKind(rec.kind).maxHealth);
-        }
-      }
-      this.structureRegistry.topologyDirty = true;
-      // P2d — stock the prebuilt Capital (e.g. munitions for a showcase's
-      // missile turrets), so ammo-using turrets can fire.
-      const goods = roomOpts.prebuiltStorageGoods;
-      if (goods) {
-        for (const rec of this.structureRegistry.all()) {
-          if (rec.owner !== owner || rec.kind !== 'capital') continue;
-          rec.hold ??= { goods: {}, blueprints: [] };
-          for (const [g, n] of Object.entries(goods)) rec.hold.goods[g as GoodId] = (rec.hold.goods[g as GoodId] ?? 0) + (n ?? 0);
-          break;
-        }
-      }
-      // v4 T1 — pair the seeded teleporters in order (1st with 2nd, …).
-      if (roomOpts.pairTeleporters === true) {
-        const tps = [...this.structureRegistry.all()].filter((r) => r.owner === owner && isTeleporterKind(r.kind));
-        for (let i = 0; i + 1 < tps.length; i += 2) this.teleporters.pair(tps[i]!, tps[i + 1]!);
-        if (roomOpts.teleportShipBoards === true) {
-          for (const t of tps) t.tpRules = { ...DEFAULT_TELEPORT_RULES, shipBoards: true };
-        }
-      }
-      // One pulse rebuilds the grid (powered components) + refreshes the slice.
-      this.structureGridTick();
-    }
-    let scenarioSwarmId = 0;
-    for (const a of roomOpts.scenarioAsteroids ?? []) {
-      this.swarmSpawner.spawnAsteroid({
-        id: `scenario-rock-${scenarioSwarmId++}`, x: a.x, y: a.y, vx: 0, vy: 0, radius: a.radius ?? 30, mass: 1,
-      });
-    }
-    for (const d of roomOpts.scenarioDrones ?? []) {
-      const droneId = `scenario-drone-${scenarioSwarmId++}`;
-      if (this.swarmSpawner.spawnDrone({ id: droneId, x: d.x, y: d.y, kind: 'fighter' })) {
-        this.swarmHealth.set(droneId, getDroneMaxHealth('fighter') ?? 40);
-        this.swarmShield.set(droneId, 0); // hull exposed so turret damage lands
-      }
-    }
-  }
+  /** testMode structure scenario seeding (`scenarioLayouts.seedStructureScenario`). */
+  private readonly structureScenarioHost: StructureScenarioHost = {
+    structureRegistry: this.structureRegistry, logger, structurePlacement: () => this.structurePlacement,
+    teleporters: () => this.teleporters, swarmSpawner: () => this.swarmSpawner, swarmHealth: () => this.swarmHealth,
+    swarmShield: () => this.swarmShield, structureGridTick: () => this.structureGridTick(),
+  };
 
   /** Boot seeding of NPC structures: galaxy / test bases (`bases/NpcBaseSubsystem.ts`),
    *  alien gates and pocket pads (`structures/TeleporterSubsystem.ts`). */
@@ -5312,57 +5211,6 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
-  /** Test view (`_internals.getStructuresSlice`): the pre-A2 row shape,
-   *  rebuilt from room state + the targets slice. Allocates; test-only. */
-  private structureRowsForTests(): StructureRowView[] | undefined {
-    const map = (this.state as SectorState).structures;
-    if (map.size === 0) return undefined;
-    const tgt = new Map<number, [number, number]>();
-    const t = this.structuresSlice ?? [];
-    for (let i = 0; i < t.length; i += 3) tgt.set(t[i]!, [t[i + 1]!, t[i + 2]!]);
-    const rows: StructureRowView[] = [];
-    map.forEach((st, key) => {
-      const id = Number(key);
-      const ownerKey = String(st.ownerIdx ?? SD.ownerIdx);
-      const flags = st.flags ?? SD.flags;
-      const row: StructureRowView = {
-        id,
-        hpPct: st.hpPct ?? SD.hpPct,
-        powered: (flags & STRUCTURE_FLAG_POWERED) !== 0,
-        netPower: st.netPower ?? SD.netPower,
-        owner: (this.state as SectorState).structureOwners.get(ownerKey) ?? '',
-        built: (flags & STRUCTURE_FLAG_BUILT) !== 0,
-      };
-      const ownerName = (this.state as SectorState).structureOwnerNames.get(ownerKey) ?? '';
-      if (ownerName !== '') row.ownerName = ownerName;
-      if ((st.level ?? SD.level) > 1) row.level = st.level;
-      if (st.connTo.length > 0) row.connTo = Array.from(st.connTo);
-      if ((st.minerals ?? SD.minerals) > 0) row.minerals = st.minerals;
-      const eta = st.etaMs ?? SD.etaMs;
-      if (eta !== STRUCTURE_ETA_NONE) {
-        row.buildPct = st.buildPct ?? SD.buildPct;
-        row.etaMs = eta === STRUCTURE_ETA_STALLED ? null : eta;
-      }
-      if ((flags & STRUCTURE_FLAG_DECONSTRUCTING) !== 0) {
-        row.isDeconstructing = true;
-        row.deconstructPct = st.deconstructPct ?? SD.deconstructPct;
-      }
-      const tg = tgt.get(id);
-      if (tg && tg[0] !== STRUCTURE_TARGET_NONE) row.turretTargetId = tg[0];
-      if (tg && tg[1] !== STRUCTURE_TARGET_NONE) row.miningTargetId = tg[1];
-      if ((st.storedPowerMax ?? SD.storedPowerMax) > 0) {
-        row.storedPower = st.storedPower ?? SD.storedPower;
-        row.storedPowerMax = st.storedPowerMax;
-      }
-      if ((st.shieldWallTo ?? SD.shieldWallTo) >= 0) {
-        row.shieldWallTo = st.shieldWallTo;
-        row.wallActive = (flags & STRUCTURE_FLAG_WALL_ACTIVE) !== 0;
-      }
-      rows.push(row);
-    });
-    return rows;
-  }
-
   /**
    * Resolve live stats for a click-to-inspect selection (Item B5). Returns null
    * when the entity is gone (dead / despawned / lingering-only) — the
@@ -5811,89 +5659,13 @@ export class SectorRoom extends Room<SectorState> {
     return true;
   }
 
-  /**
-   * Wave-system Phase 4 — per-(owner, sector) faction base summary the
-   * WaveDirector polls (~1.5 s, NOT the hot loop, so allocation here is fine).
-   * Engineering rooms (`sectorKey === null`) return [] (waves are galaxy-only).
-   * One entry per player owning ≥1 constructed structure here.
-   */
-  factionBaseReadiness(): FactionBaseReadiness[] {
-    const sectorKey = this.sectorKey;
-    if (sectorKey === null || this.structureRegistry.size === 0) return [];
-    interface Agg {
-      hasCapital: boolean;
-      minerCount: number;
-      solarCount: number;
-      turretCount: number;
-    }
-    const byOwner = new Map<string, Agg>();
-    for (const rec of this.structureRegistry.all()) {
-      // B2 — NPC bases are never a wave target (they aren't a player faction).
-      if (!rec.isConstructed || isNpcOwner(rec.owner)) continue;
-      let agg = byOwner.get(rec.owner);
-      if (!agg) {
-        agg = { hasCapital: false, minerCount: 0, solarCount: 0, turretCount: 0 };
-        byOwner.set(rec.owner, agg);
-      }
-      switch (rec.kind) {
-        case 'capital':
-          agg.hasCapital = true;
-          break;
-        case 'miner':
-          agg.minerCount++;
-          break;
-        case 'solar':
-          agg.solarCount++;
-          break;
-        case 'turret':
-          agg.turretCount++;
-          break;
-        default:
-          break;
-      }
-    }
-    const out: FactionBaseReadiness[] = [];
-    for (const [factionId, agg] of byOwner) {
-      const ownerPresent = this.getActiveShip(factionId)?.isActive === true;
-      const ready = isBaseReady(agg) && (!this.waveNeedsOwner || ownerPresent);
-      // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the
-      // first time a base qualifies for waves; re-arm when it drops below ready
-      // (a razed-then-rebuilt base re-toasts). Evaluated at the director's
-      // control cadence (this method is the canonical readiness poll), so it
-      // fires within ~one control tick of the base completing.
-      if (ready) {
-        if (this.factionLedger.markReadyNotified(factionId)) {
-          this.broadcast('base_ready', { type: 'base_ready', factionId, sectorKey });
-          auditEvent({
-            event: 'base_ready',
-            sector: sectorKey,
-            owner: factionId,
-            composition: {
-              miner: agg.minerCount,
-              solar: agg.solarCount,
-              turret: agg.turretCount,
-            },
-          });
-        }
-      } else {
-        this.factionLedger.clearReadyNotified(factionId);
-      }
-      const state = this.factionLedger.get(factionId);
-      out.push({
-        factionId,
-        sectorKey,
-        ready,
-        // The owner is "present" when they have an active hull in this sector.
-        ownerPresent,
-        minerCount: agg.minerCount,
-        hostileToDrones: state?.hostileToDrones ?? false,
-        underWave: state?.underWave ?? false,
-        lastDealtDamageTick: state?.lastDealtDamageTick ?? -Infinity,
-        serverTick: this.serverTick,
-      });
-    }
-    return out;
-  }
+  /** Wave-system Phase 4 — the WaveDirector's base-readiness poll (`FactionLedger.baseReadiness`). */
+  factionBaseReadiness(): FactionBaseReadiness[] { return this.factionLedger.baseReadiness(this.baseReadinessHost); }
+  private readonly baseReadinessHost: BaseReadinessHost = {
+    sectorKey: () => this.sectorKey, serverTick: () => this.serverTick, waveNeedsOwner: () => this.waveNeedsOwner,
+    ownerPresent: (id) => this.getActiveShip(id)?.isActive === true,
+    broadcastBaseReady: (factionId, sectorKey) => this.broadcast('base_ready', { type: 'base_ready', factionId, sectorKey }),
+  };
 
   /** Wave-system Phase 4 — set/clear a faction's active-wave flag (gates the
    *  drone-AI structure-target visibility built in `fillStructureTargets`). */
@@ -6933,77 +6705,8 @@ export class SectorRoom extends Room<SectorState> {
     return this.storage.tradeSnapshot(ownerId, networkUid);
   }
 
-  /**
-   * T2 — this room's NPC bases for convoy planning (ConvoyDirector, every
-   * ~15 s; off-tick, so building arrays here is fine). Per base: its storage
-   * stock, free space, footprint box, and per-minute use/make rates read from
-   * its own structures (processor recipes, Reactor fuel, ammo turrets, drills,
-   * gas collectors).
-   */
-  npcBaseTrade(): NpcBaseTrade[] {
-    const byOwner = new Map<string, StructureRecord[]>();
-    for (const r of this.structureRegistry.all()) {
-      if (!r.isConstructed || !isNpcOwner(r.owner)) continue;
-      const list = byOwner.get(r.owner);
-      if (list) list.push(r); else byOwner.set(r.owner, [r]);
-    }
-    const out: NpcBaseTrade[] = [];
-    for (const [owner, recs] of byOwner) {
-      const anchor = recs.find((r) => r.kind === 'capital' && r.uid !== undefined)
-        ?? recs.find((r) => r.uid !== undefined && (getStructureKind(r.kind).holdCapacity ?? 0) > 0);
-      if (!anchor?.uid) continue;
-      const snap = this.storage.tradeSnapshot(owner, anchor.uid);
-      if (snap === null) continue;
-      const uses: Partial<Record<GoodId, number>> = {};
-      const makes: Partial<Record<GoodId, number>> = {};
-      const add = (m: Partial<Record<GoodId, number>>, g: GoodId, n: number): void => { m[g] = (m[g] ?? 0) + n; };
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-      for (const r of recs) {
-        const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
-        x0 = Math.min(x0, r.x - hw); x1 = Math.max(x1, r.x + hw);
-        y0 = Math.min(y0, r.y - hh); y1 = Math.max(y1, r.y + hh);
-        const k = getStructureKind(r.kind);
-        if (isProcessorKind(r.kind)) {
-          const def = RECIPES[r.recipe ?? defaultRecipeFor(r.kind)];
-          const perMin = 60 / Math.max(1, def.cyclePulses);
-          for (const [g, n] of Object.entries(def.inputs)) add(uses, g as GoodId, (n ?? 0) * perMin);
-          for (const o of def.outputs) if ('good' in o) add(makes, o.good, o.n * perMin);
-        }
-        if (k.fuelEveryPulses) add(uses, 'fuel', 60 / k.fuelEveryPulses);
-        if (usesAmmo(r.kind)) add(uses, 'munitions', NPC_TURRET_MUNITIONS_PER_MIN);
-        if (k.miningRate) add(makes, 'minerals', k.miningRate * 60);
-        if (k.gasRate) add(makes, 'gas', k.gasRate * 60);
-      }
-      out.push({ owner, networkUid: anchor.uid, view: { stock: snap.goods, freeCapacity: snap.freeCapacity, uses, makes }, box: { x0, x1, y0, y1 } });
-    }
-    // T4b — a player's Freight Dock with standing orders trades too, but only
-    // in the goods it has orders for: "use" is shaped so an import keeps the
-    // network up to its level and an export offers anything above it.
-    for (const r of this.structureRegistry.all()) {
-      if (r.kind !== 'freight_dock' || !r.isConstructed || !r.freightOrders?.length || isNpcOwner(r.owner) || r.uid === undefined) continue;
-      const snap = this.storage.tradeSnapshot(r.owner, r.uid);
-      if (snap === null) continue;
-      const stock: Partial<Record<GoodId, number>> = {};
-      const uses: Partial<Record<GoodId, number>> = {};
-      const imports: GoodId[] = [];
-      const exports: GoodId[] = [];
-      for (const o of r.freightOrders) {
-        stock[o.good] = snap.goods[o.good] ?? 0;
-        uses[o.good] = o.level / CONVOY_TARGET_MINUTES;
-        (o.mode === 'import' ? imports : exports).push(o.good);
-      }
-      // Import goods are never offered (only exports are spare); export goods
-      // are never asked for.
-      for (const g of imports) if ((stock[g] ?? 0) > o_level(r, g)) stock[g] = o_level(r, g);
-      const hw = r.halfW ?? r.radius, hh = r.halfH ?? r.radius;
-      out.push({
-        owner: r.owner, networkUid: r.uid, player: { imports, exports },
-        view: { stock, freeCapacity: snap.freeCapacity, uses, makes: {} },
-        box: { x0: r.x - hw, x1: r.x + hw, y0: r.y - hh, y1: r.y + hh },
-      });
-    }
-    return out;
-  }
+  /** T2 — this room's NPC bases (and ordered player Freight Docks) for convoy planning (`bases/NpcBaseSubsystem.ts`). */
+  npcBaseTrade(): NpcBaseTrade[] { return npcBaseTrade(this.structureRegistry, this.storage); }
 
   /**
    * Phase 4 warp travel — where a warping ship lands: the nearest spot to its
