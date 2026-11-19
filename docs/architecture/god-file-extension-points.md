@@ -77,9 +77,9 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | A bound per-sprite callback handed to the frame passes or a ctx (sprite kind, sweep cleanup, re-key step, shield pose) | A member of `RendererSpriteFns` (`spriteFnsView` in `pixi/rendererSetup/rendererViews.ts`), built once over the host view and reading its live fields at call time; never a closure field on PixiRenderer. | live |
 | A `RendererFeedback` field | Its initial value in `createRendererFeedback` and its per-frame write in `writeFrameFeedback` (`pixi/frameFeedbackUpdater.ts`). | live |
 | Pointer / touch / wheel input, an RTS command gesture or selection rule | `pixi/rendererInputController.ts` (listeners, forwarded events, placement pointers) or its base `pixi/rendererCommandRouting.ts` (command routing, THE selection); the per-frame selection / hover brackets are its `updateSelectionBrackets`. PixiRenderer keeps one-line delegates. | live |
+| A render-mirror field | The entity's `*RenderState` file under `src/core/contracts/render/`. | live |
+| A renderer method (overlay, camera, radar) | The matching sub-interface (`IFleetView`, `IRadarView`, `ICameraControl`) that `IRenderer` extends. | live |
 | Camera framing (hull zoom range, caps) or the cinematic director | `pixi/cameraDirector.ts` (`RendererCameraDirector`, built once; `updateFrame` per frame). | live |
-| A render-mirror field | The entity's `*RenderState` file under `src/core/contracts/render/`. | planned |
-| A renderer method (overlay, camera, radar) | The matching sub-interface (`IFleetView`, `IRadarView`, `ICameraControl`) that `IRenderer` extends. | planned |
 
 ## Core AI: `HostileDroneBehaviour.ts` (`src/core/ai/CLAUDE.md`)
 
