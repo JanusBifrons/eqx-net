@@ -40,6 +40,7 @@ import {
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
+import { seedStructureScenario, structureRowsForTests, type StructureRowView, type StructureScenarioHost } from './scenarioLayouts.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -90,7 +91,7 @@ import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js'
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
 import { GATE_SPAN_THICKNESS, isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
+import type { GateAccess } from '../../shared-types/gateAccess.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
@@ -105,7 +106,6 @@ import { getTeleportBroker, type HandedOffHull, type TeleportRoom } from '../tel
 import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
 import { linkEnds } from '../../core/bases/transitNetwork.js';
 import {
-  DEFAULT_TELEPORT_RULES,
   PAD_SPECS,
   TP_RULE_TOLL_HOSTILE,
   TP_PARTNER_REMOTE,
@@ -484,30 +484,6 @@ const STRUCTURE_ATTACK_AUDIT_WINDOW_MS = 15_000;
  *  much longer than the audit window above, because a phone alert should be
  *  rare (one per base per 15 min) rather than once per sustained-fire burst. */
 const STRUCTURE_ATTACK_PUSH_WINDOW_MS = 15 * 60_000;
-
-/** The pre-A2 per-structure row (test view — see `structureRowsForTests`). */
-export interface StructureRowView {
-  id: number;
-  hpPct: number;
-  powered: boolean;
-  netPower: number;
-  owner: string;
-  built: boolean;
-  ownerName?: string;
-  level?: number;
-  connTo?: number[];
-  minerals?: number;
-  buildPct?: number;
-  etaMs?: number | null;
-  isDeconstructing?: boolean;
-  deconstructPct?: number;
-  miningTargetId?: number;
-  turretTargetId?: number;
-  storedPower?: number;
-  storedPowerMax?: number;
-  shieldWallTo?: number;
-  wallActive?: boolean;
-}
 
 /** Ticks a ship that fled stays in the room on its warp run before it leaves
  *  (0.5 s, as long as the arrival window): long enough for every client's
@@ -1332,7 +1308,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmHealth: this.swarmHealth,
       structureRegistry: this.structureRegistry,
       pulseStructureGrid: () => this.structureGridTick(),
-      getStructuresSlice: () => this.structureRowsForTests(),
+      getStructuresSlice: () => structureRowsForTests(this.state as SectorState, this.structuresSlice),
       upgradeStructure: (id) => this.structureGrid.upgradeStructure(id),
       reconnectStructure: (id) => this.structureGrid.reconnect(id),
       spawnTestAsteroid: (id, x, y, radius, resource) =>
@@ -2906,7 +2882,7 @@ export class SectorRoom extends Room<SectorState> {
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
-    if (this.testMode) this.seedStructureScenario(roomOpts);
+    if (this.testMode) seedStructureScenario(this.structureScenarioHost, roomOpts);
     this.testTeleportFullCharge = this.testMode && roomOpts.teleportFullCharge === true;
     if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
     // D2 (plan soft-leaping-truffle v3) — NPC bases grown from the generator.
@@ -4576,76 +4552,12 @@ export class SectorRoom extends Room<SectorState> {
     );
   }
 
-  private seedStructureScenario(roomOpts: {
-    prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
-    prebuiltStructuresOwner?: string;
-    prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
-    pairTeleporters?: boolean;
-    teleportShipBoards?: boolean;
-    scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
-    scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
-  }): void {
-    const prebuilt = roomOpts.prebuiltStructures;
-    // Wave-system E2E: an explicit owner lets a test seed a base the joining
-    // player OWNS (so the FactionLedger sees a player-owned faction the
-    // WaveDirector can wave) instead of the inert `scenario` owner. Default
-    // `scenario` preserves the structure-scenario-test behaviour.
-    const owner = roomOpts.prebuiltStructuresOwner ?? 'scenario';
-    if (prebuilt && prebuilt.length > 0) {
-      for (const ps of prebuilt) {
-        const extra = ps as { rot?: number; gateAccess?: GateAccess };
-        const id = this.structurePlacement.place(owner, ps.kind as string, ps.x, ps.y, { rot: extra.rot });
-        if (id === null) {
-          logger.warn({ kind: ps.kind, x: ps.x, y: ps.y }, 'scenario prebuilt structure rejected');
-          continue;
-        }
-        const rec = this.structureRegistry.get(id);
-        if (rec && extra.gateAccess && GATE_ACCESS_IDS.includes(extra.gateAccess)) {
-          rec.gateAccess = gateAccessIndex(extra.gateAccess);
-        }
-        if (rec && !rec.isConstructed) {
-          rec.isConstructed = true;
-          rec.constructionProgress = rec.constructionCost;
-          this.swarmHealth.set(id, getStructureKind(rec.kind).maxHealth);
-        }
-      }
-      this.structureRegistry.topologyDirty = true;
-      // P2d — stock the prebuilt Capital (e.g. munitions for a showcase's
-      // missile turrets), so ammo-using turrets can fire.
-      const goods = roomOpts.prebuiltStorageGoods;
-      if (goods) {
-        for (const rec of this.structureRegistry.all()) {
-          if (rec.owner !== owner || rec.kind !== 'capital') continue;
-          rec.hold ??= { goods: {}, blueprints: [] };
-          for (const [g, n] of Object.entries(goods)) rec.hold.goods[g as GoodId] = (rec.hold.goods[g as GoodId] ?? 0) + (n ?? 0);
-          break;
-        }
-      }
-      // v4 T1 — pair the seeded teleporters in order (1st with 2nd, …).
-      if (roomOpts.pairTeleporters === true) {
-        const tps = [...this.structureRegistry.all()].filter((r) => r.owner === owner && isTeleporterKind(r.kind));
-        for (let i = 0; i + 1 < tps.length; i += 2) this.teleporters.pair(tps[i]!, tps[i + 1]!);
-        if (roomOpts.teleportShipBoards === true) {
-          for (const t of tps) t.tpRules = { ...DEFAULT_TELEPORT_RULES, shipBoards: true };
-        }
-      }
-      // One pulse rebuilds the grid (powered components) + refreshes the slice.
-      this.structureGridTick();
-    }
-    let scenarioSwarmId = 0;
-    for (const a of roomOpts.scenarioAsteroids ?? []) {
-      this.swarmSpawner.spawnAsteroid({
-        id: `scenario-rock-${scenarioSwarmId++}`, x: a.x, y: a.y, vx: 0, vy: 0, radius: a.radius ?? 30, mass: 1,
-      });
-    }
-    for (const d of roomOpts.scenarioDrones ?? []) {
-      const droneId = `scenario-drone-${scenarioSwarmId++}`;
-      if (this.swarmSpawner.spawnDrone({ id: droneId, x: d.x, y: d.y, kind: 'fighter' })) {
-        this.swarmHealth.set(droneId, getDroneMaxHealth('fighter') ?? 40);
-        this.swarmShield.set(droneId, 0); // hull exposed so turret damage lands
-      }
-    }
-  }
+  /** testMode structure scenario seeding (`scenarioLayouts.seedStructureScenario`). */
+  private readonly structureScenarioHost: StructureScenarioHost = {
+    structureRegistry: this.structureRegistry, logger, structurePlacement: () => this.structurePlacement,
+    teleporters: () => this.teleporters, swarmSpawner: () => this.swarmSpawner, swarmHealth: () => this.swarmHealth,
+    swarmShield: () => this.swarmShield, structureGridTick: () => this.structureGridTick(),
+  };
 
   /** Boot seeding of NPC structures: galaxy / test bases (`bases/NpcBaseSubsystem.ts`),
    *  alien gates and pocket pads (`structures/TeleporterSubsystem.ts`). */
@@ -5310,57 +5222,6 @@ export class SectorRoom extends Room<SectorState> {
       const eid = this.swarmRegistry.get(other)?.entityId;
       if (eid !== undefined) st.connTo.push(eid);
     }
-  }
-
-  /** Test view (`_internals.getStructuresSlice`): the pre-A2 row shape,
-   *  rebuilt from room state + the targets slice. Allocates; test-only. */
-  private structureRowsForTests(): StructureRowView[] | undefined {
-    const map = (this.state as SectorState).structures;
-    if (map.size === 0) return undefined;
-    const tgt = new Map<number, [number, number]>();
-    const t = this.structuresSlice ?? [];
-    for (let i = 0; i < t.length; i += 3) tgt.set(t[i]!, [t[i + 1]!, t[i + 2]!]);
-    const rows: StructureRowView[] = [];
-    map.forEach((st, key) => {
-      const id = Number(key);
-      const ownerKey = String(st.ownerIdx ?? SD.ownerIdx);
-      const flags = st.flags ?? SD.flags;
-      const row: StructureRowView = {
-        id,
-        hpPct: st.hpPct ?? SD.hpPct,
-        powered: (flags & STRUCTURE_FLAG_POWERED) !== 0,
-        netPower: st.netPower ?? SD.netPower,
-        owner: (this.state as SectorState).structureOwners.get(ownerKey) ?? '',
-        built: (flags & STRUCTURE_FLAG_BUILT) !== 0,
-      };
-      const ownerName = (this.state as SectorState).structureOwnerNames.get(ownerKey) ?? '';
-      if (ownerName !== '') row.ownerName = ownerName;
-      if ((st.level ?? SD.level) > 1) row.level = st.level;
-      if (st.connTo.length > 0) row.connTo = Array.from(st.connTo);
-      if ((st.minerals ?? SD.minerals) > 0) row.minerals = st.minerals;
-      const eta = st.etaMs ?? SD.etaMs;
-      if (eta !== STRUCTURE_ETA_NONE) {
-        row.buildPct = st.buildPct ?? SD.buildPct;
-        row.etaMs = eta === STRUCTURE_ETA_STALLED ? null : eta;
-      }
-      if ((flags & STRUCTURE_FLAG_DECONSTRUCTING) !== 0) {
-        row.isDeconstructing = true;
-        row.deconstructPct = st.deconstructPct ?? SD.deconstructPct;
-      }
-      const tg = tgt.get(id);
-      if (tg && tg[0] !== STRUCTURE_TARGET_NONE) row.turretTargetId = tg[0];
-      if (tg && tg[1] !== STRUCTURE_TARGET_NONE) row.miningTargetId = tg[1];
-      if ((st.storedPowerMax ?? SD.storedPowerMax) > 0) {
-        row.storedPower = st.storedPower ?? SD.storedPower;
-        row.storedPowerMax = st.storedPowerMax;
-      }
-      if ((st.shieldWallTo ?? SD.shieldWallTo) >= 0) {
-        row.shieldWallTo = st.shieldWallTo;
-        row.wallActive = (flags & STRUCTURE_FLAG_WALL_ACTIVE) !== 0;
-      }
-      rows.push(row);
-    });
-    return rows;
   }
 
   /**
