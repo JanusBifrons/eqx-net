@@ -181,9 +181,29 @@ Types: solar, battery, battery bank, reactor. Owner answers (2026-11-19):
 - **Reactor power:** 240 → 960, so it stays worth about eight solars (solar 30 → 120).
 - Wireframes the owner judged from: https://claude.ai/artifact/JEHqz4FtLLy1oVe6egAmsH
 - **Destroyed power buildings:** parked on `docs/SHELF.md`.
+- **Reactor cost:** raised to about 4,000 to match its 960 power.
+- **Base layouts:** existing hand layouts, growth spacing and test layouts are not fitted around the
+  bigger solar. They get rethought from scratch ("due a rethink anyway").
+- **Cable sockets (gameplay, all families):** buildings get fixed sockets that stick out from the
+  edge, and cables plug into them instead of aiming at the centre. Goods and power visibly enter
+  through the socket, then follow a short inner channel to where they are used or stored.
+  - The cable is a smooth bend: it leaves each socket straight, then curves.
+  - Buildings have more sockets than link slots. The slot limits stay as today (Capital 4, line
+    node 6, everything else 1).
+  - A link is legal only if a free socket pair exists with a small bend at each end (about 35°,
+    exact value to be tuned), a curve that does not cross another building, and a length within the
+    600 reach. Otherwise the link is refused. To put many loads on one side of a hub, the player
+    builds line nodes or chains them.
+  - The server's link check and the build preview share one socket rule. This extends today's link
+    rules (`canConnect`, line blocking in `Grid.ts`, `ConnectorRenderer`); it is not a second system.
+    It needs its own brief and hostile duplicate review before code.
+  - Concept the owner agreed from: https://claude.ai/artifact/BzZmgbLtj93fZj1298qNHn
+- **New-player cost (open, from the review):** the first solar costs 4× today's. Check the starting
+  credits still buy a working first base.
 
 Found while briefing: the battery bank never charged or discharged (every battery rule checked the
-kind name), and the client ignored structure level for power. Fixed on main in PR #958.
+kind name), and the client ignored structure level for power. The fix is in PR #958 (not yet merged
+when this was written).
 
 ## Open questions for the owner
 
