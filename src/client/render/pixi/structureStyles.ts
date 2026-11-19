@@ -32,3 +32,12 @@ export function structureStyleDrawer(style: string | undefined, kindId: string):
   const def = (STRUCTURE_STYLES as Record<string, StructureStyleDef | undefined>)[style];
   return def?.kinds[kindId];
 }
+
+/** The style's drawing version for a kind (its family file's `version`,
+ *  style C), or ''. Part of the bake key (`bakeKey` `:S<style>.<v>`), so a
+ *  family's drawing change re-bakes only that family's cached art. */
+export function structureStyleVersion(style: string | undefined, kindId: string): string {
+  if (!style || style === 'current') return '';
+  const def = (STRUCTURE_STYLES as Record<string, StructureStyleDef | undefined>)[style];
+  return def?.kindVersions?.[kindId] ?? '';
+}

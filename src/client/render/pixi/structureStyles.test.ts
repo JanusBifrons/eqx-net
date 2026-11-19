@@ -11,8 +11,12 @@ import { forgeStructure, MAT, type Fields } from '../art/fields.js';
 import { structHandleFor, type ShipArtCtx } from '../art/shipArtSprites.js';
 import type { ArtHandle, ArtService } from '../art/ArtService.js';
 import { STRUCTURE_KINDS_LIST } from '../../../shared-types/structureKinds.js';
+import { STYLE_C_FAMILIES } from './structureStyleC.js';
 
-const OUTPOST = ['capital', 'connector', 'freight_dock', 'reactor', 'cargo_bay', 'refinery'] as const;
+/** The kinds style C draws, read from its family files (`structureStyleC.<family>.ts`). */
+const C_KINDS = Object.values(STYLE_C_FAMILIES).flatMap((f) => Object.keys(f.kinds));
+/** The six outpost pieces styles A and B draw (their own tables). */
+const OUTPOST = Object.keys(STRUCTURE_STYLES.a.kinds);
 const bytes = (f: Fields): Buffer[] => [f.albedo, f.height, f.emis, f.mat, f.key, f.cov].map((a) => Buffer.from(a.buffer));
 
 describe('style registry', () => {
@@ -31,8 +35,9 @@ describe('style registry', () => {
     expect(readStructStyle('?restyle=current')).toBeUndefined();
     expect(readStructStyle('?restyle=off')).toBeUndefined();
   });
-  it('style A restyles exactly the six outpost pieces', () => {
-    expect(Object.keys(STRUCTURE_STYLES.a.kinds).sort()).toEqual([...OUTPOST].sort());
+  it('style A restyles six outpost pieces, each also drawn by style C', () => {
+    expect(OUTPOST).toHaveLength(6);
+    for (const id of OUTPOST) expect(C_KINDS, id).toContain(id);
     expect(structureStyleDrawer('current', 'capital')).toBeUndefined();
     expect(structureStyleDrawer(undefined, 'capital')).toBeUndefined();
   });
@@ -56,7 +61,7 @@ describe('restyle=current is byte-identical to today', () => {
     expect(bakeKey({ ...job, lit: true, style: 'a' })).toContain(':Sa');
   });
   it('forge: current = the opts-free bake, byte for byte', () => {
-    for (const id of OUTPOST) {
+    for (const id of C_KINDS) {
       const a = bytes(forgeStructure(id, { ppu: 0.5, seed: 1 }));
       const b = bytes(forgeStructure(id, { ppu: 0.5, seed: 1, style: 'current' }));
       a.forEach((x, i) => expect(x.equals(b[i]!), id).toBe(true));
@@ -118,12 +123,12 @@ describe('style A', () => {
 });
 
 describe('style C (shipyard brutalist, 1f)', () => {
-  it('is registered, parses, and has a drawer for every outpost kind', () => {
+  it('is registered, parses, and has a drawer for every kind in its family files', () => {
     expect(STRUCTURE_STYLE_IDS).toContain('c');
     expect(parseStructureStyle('c')).toBe('c');
     expect(readStructStyle('?restyle=c')).toBe('c');
-    expect(Object.keys(STRUCTURE_STYLES.c.kinds).sort()).toEqual([...OUTPOST].sort());
-    for (const id of OUTPOST) expect(typeof structureStyleDrawer('c', id), id).toBe('function');
+    expect(Object.keys(STRUCTURE_STYLES.c.kinds).sort()).toEqual([...C_KINDS].sort());
+    for (const id of C_KINDS) expect(typeof structureStyleDrawer('c', id), id).toBe('function');
   });
   it('bake key differs from today and from style A', () => {
     const job: BakeJob = { type: 'struct', id: 'capital', seed: 1, rot: 0 };
@@ -132,7 +137,7 @@ describe('style C (shipyard brutalist, 1f)', () => {
     expect(bakeKey({ ...job, style: 'c' })).not.toBe(bakeKey({ ...job, style: 'a' }));
   });
   it('draws inside the outline, with livery bands, and differs from style A', () => {
-    for (const id of OUTPOST) {
+    for (const id of C_KINDS) {
       const v = buildStructureVisual(id, { accent: 0x66ccaa, style: 'c', livery: true });
       const a = buildStructureVisual(id, { accent: 0x66ccaa, style: 'a', livery: true });
       expect(v.polys!.length, id).toBeGreaterThan(3);
@@ -148,7 +153,7 @@ describe('style C (shipyard brutalist, 1f)', () => {
     expect(cap.find((s) => s.screen === true)).toMatchObject({ x: 0, y: 0 });
   });
   it('forge: bakes differently from today and from style A', () => {
-    for (const id of OUTPOST) {
+    for (const id of C_KINDS) {
       const livery = { team: 0x3a7bff, sigil: 0xffd23a };
       const c = forgeStructure(id, { ppu: 0.5, seed: 1, style: 'c', livery });
       const a = forgeStructure(id, { ppu: 0.5, seed: 1, style: 'a', livery });

@@ -13,6 +13,7 @@ import { bakeFxImg, FX_VERSION, isFxId } from './fx/fxTextures.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
 import { encodeLitMaps } from './litMaps.js';
 import { linToSrgb } from './color.js';
+import { structureStyleVersion } from '../pixi/structureStyles.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 import { SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
@@ -97,7 +98,7 @@ export function bakeKey(j: BakeJob): string {
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
-  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? `:S${j.style}` : ''}`;
+  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}`;
 }
 
 /** A kind's turret bases (pivot + 1.4 x the larger of ring and cap): what a
@@ -105,6 +106,13 @@ export function bakeKey(j: BakeJob): string {
  *  barrel is a thin, moving line, so its sweep is not counted. */
 export function turretCoverOf(id: string): Array<{ x: number; y: number; reach: number }> {
   return shipTurrets(id).map((t) => ({ x: t.px, y: t.py, reach: TURRET_COVER_REACH * Math.max(t.ring, t.cap) }));
+}
+
+/** A styled structure's key suffix (`?restyle=`): the style id, plus its
+ *  family's drawing version when set (`structureStyleVersion`). */
+function styleTag(style: string, id: string): string {
+  const v = structureStyleVersion(style, id);
+  return v ? `:S${style}.${v}` : `:S${style}`;
 }
 
 /** A liveried structure's key suffix (`?structLivery=1`; absent adds nothing). */
@@ -116,7 +124,7 @@ function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toStrin
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
  *  structures and rocks (the mesh turns; the maps don't change). */
 function litKeyBody(j: Exclude<BakeJob, { type: 'fx' }>): string {
-  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? `:S${j.style}` : ''}`;
+  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}`;
   return bakeKey({ ...j, lit: false });
 }
