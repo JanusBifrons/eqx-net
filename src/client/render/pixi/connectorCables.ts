@@ -8,7 +8,8 @@
  *    server's `canConnect` tested (root invariant #15): it leaves each socket
  *    along its outward normal; a fence link (no socket) is the straight post
  *    to post line.
- *  - The cable look (static body + per-frame flow) and the placement preview
+ *  - The cable look (static body + per-frame flow: the cable line look,
+ *    "bundle on the curve", laid stud to stud) and the placement preview
  *    line, drawn along a cached polyline by arc length.
  *  - Slice 9: the flow is a train of comets leaving the source socket at a
  *    per-material speed in game time, and each comet that reaches the
@@ -29,7 +30,10 @@ import {
 } from '../../../core/structures/cableCurve.js';
 import { isShieldEmitterKind } from '../../../core/structures/gateGeometry.js';
 import { blankGridNode } from '../../structures/mirrorToGridNode.js';
-import { lineLookBaseWidth, lineLookScale, mixColor, type LinePath } from './connectorLineLooks.js';
+import {
+  addCablePathSparks, cablePulseWidth, cableStudInset, drawCablePathBody, drawCablePathCollarFlash, drawCablePathGlow,
+  mixColor, strokeCableSparks, type LinePath,
+} from './connectorLineLooks.js';
 import { CONNECTOR_IDLE_COLOR, type ConnectorFlowMaterial, type ConnectorVisual } from './connectorVisual.js';
 
 /** Points in a cable polyline. */
@@ -211,77 +215,35 @@ function pathRange(g: LinePath, c: LinkCable, s0: number, s1: number): void {
   g.lineTo(lerpAt(c, i, s1, 0), lerpAt(c, i, s1, 1));
 }
 
-// House style: dark grey plates, cyan accents; a breath of the idle blue
-// keeps the sheath in the connector palette.
-const SHADOW = 0x081014;
+// The socket palette (dark grey plates, cyan accents), shared with the socket
+// nubs (`structureSocketNubs.ts`). The cable itself is the cable line look.
 const OUTLINE = 0x0a0d0f;
-const SHEATH = mixColor(CONNECTOR_IDLE_COLOR, 0x2a3035, 0.86);
-const CORE_HI = mixColor(CONNECTOR_IDLE_COLOR, 0x7f8c93, 0.8);
 const PLATE = mixColor(CONNECTOR_IDLE_COLOR, 0x4b5459, 0.88);
 const PLATE_HI = 0x9aa5ab;
 const ACCENT = 0x5fd8ff;
-/** The collar's palette, shared with the socket nubs (`structureSocketNubs.ts`). */
 export { OUTLINE as SOCKET_OUTLINE, PLATE as SOCKET_PLATE, PLATE_HI as SOCKET_PLATE_HI, ACCENT as SOCKET_ACCENT };
-/** Light from the top-left of the screen (as the line looks). */
-const SHADOW_DX = 0.6;
-const SHADOW_DY = 0.8;
 
-/** One cable's sheath width (world units) at this zoom: the cable line
- *  look's authored width with its zoom floor, a single strand. */
-export function socketCableWidth(scale: number): number {
-  return lineLookBaseWidth('cable') * lineLookScale('cable', scale) * 0.62;
+// End-collar insets of the cable being drawn (`insets`).
+let _e0 = 0;
+let _e1 = 0;
+
+/** Where the end collars sit: just off each stud on a socket cable (the
+ *  curve already runs stud to stud), just outside each post on a straight
+ *  fence link (centre to centre, as the straight line look). */
+function insets(c: LinkCable, scale: number, ra: number, rb: number): void {
+  if (c.socketed) { _e0 = _e1 = cableStudInset(scale, c.len); return; }
+  _e0 = Math.min(ra * 0.9, c.len * 0.3);
+  _e1 = Math.min(rb * 0.9, c.len * 0.3);
 }
 
-/** Where a socket's collar sits: the socket point and the unit direction
- *  into the cable, the collar length `L`, and its accent ring point. */
-interface CollarFrame { x: number; y: number; ux: number; uy: number; L: number; rx: number; ry: number }
-const _frame: CollarFrame = { x: 0, y: 0, ux: 0, uy: 0, L: 0, rx: 0, ry: 0 };
-
-/** Fill `out` with the collar at the polyline's first point, or its last
- *  (`atEnd`, direction reversed). False when the end segment is degenerate. */
-function collarFrame(c: LinkCable, atEnd: boolean, w: number, out: CollarFrame): boolean {
-  const p = c.poly;
-  const i0 = atEnd ? c.n - 1 : 0, i1 = atEnd ? c.n - 2 : 1;
-  const x = p[i0 * 2]!, y = p[i0 * 2 + 1]!;
-  const dx = p[i1 * 2]! - x, dy = p[i1 * 2 + 1]! - y;
-  const d = Math.hypot(dx, dy);
-  if (d < 1e-6) return false;
-  out.x = x; out.y = y;
-  out.ux = dx / d; out.uy = dy / d;
-  out.L = Math.min(w * 1.1, d * 0.8);
-  out.rx = x + out.ux * out.L * 0.78; out.ry = y + out.uy * out.L * 0.78;
-  return true;
-}
-
-/** A strain-relief collar at a socket: a short plate band across the cable
- *  where it leaves the socket, with a cyan accent line at its outer edge.
- *  `atEnd` = the polyline's last point (direction reversed). */
-function collar(g: LinePath, c: LinkCable, atEnd: boolean, w: number): void {
-  const f = _frame;
-  if (!collarFrame(c, atEnd, w, f)) return;
-  const x = f.x, y = f.y, ux = f.ux, uy = f.uy, L = f.L;
-  g.moveTo(x, y).lineTo(x + ux * L, y + uy * L); stroke(g, OUTLINE, 1, w * 1.75);
-  g.moveTo(x, y).lineTo(x + ux * L * 0.92, y + uy * L * 0.92); stroke(g, PLATE, 1, w * 1.45);
-  // Lit top edge of the plate, then the accent ring at its outer edge.
-  g.moveTo(x - uy * w * 0.5, y + ux * w * 0.5).lineTo(x + ux * L * 0.85 - uy * w * 0.5, y + uy * L * 0.85 + ux * w * 0.5);
-  stroke(g, PLATE_HI, 0.35, w * 0.16);
-  const h = w * 0.72;
-  g.moveTo(f.rx - uy * h, f.ry + ux * h).lineTo(f.rx + uy * h, f.ry - ux * h); stroke(g, ACCENT, 0.85, w * 0.2);
-}
-
-/** The cable's steady body (static layer): cast shadow, dark outline,
- *  sheath, a lighter core highlight, and a collar at each socket. */
-export function drawSocketCableBody(g: LinePath, c: LinkCable, scale: number): void {
+/** The cable's steady body (static layer): the cable line look (bundle,
+ *  lit core, support frames, end collars) laid along the link's
+ *  curve, stud to stud. `ra` / `rb`: the end nodes' radii (a fence link's
+ *  collars sit outside its posts). */
+export function drawSocketCableBody(g: LinePath, c: LinkCable, scale: number, ra = 0, rb = 0): void {
   if (c.n < 2 || c.len < 1) return;
-  const w = socketCableWidth(scale);
-  path(g, c, SHADOW_DX * w * 0.5, SHADOW_DY * w * 0.5); stroke(g, SHADOW, 0.5, w * 1.5);
-  path(g, c); stroke(g, OUTLINE, 0.95, w * 1.3);
-  path(g, c); stroke(g, SHEATH, 1, w);
-  path(g, c); stroke(g, CORE_HI, 0.55, w * 0.26);
-  if (c.socketed) {
-    collar(g, c, false, w);
-    collar(g, c, true, w);
-  }
+  insets(c, scale, ra, rb);
+  drawCablePathBody(g, c, scale, _e0, _e1, c.socketed);
 }
 
 // ── Flow (slice 9): a comet train by arc length, in game time ───────────────
@@ -340,24 +302,25 @@ export function collarFlash(t: FlowTrain, len: number): number {
 }
 
 const _train: FlowTrain = { speed: 0, spacing: 0, d: 0 };
+/** This frame's comets: arc lengths [lo, hi] from the polyline's first point. */
+const _comets = new Float64Array((MAX_CABLE_COMETS + 1) * 2);
 
-/** The flow of an ACTIVE link (per-frame layer): a faint bleed, the lit core
- *  in the flow colour, the comet train leaving the source socket
- *  (`sourceIsLo`: the polyline's first point) at the material's pace in game
- *  time (`nowMs` = `fxNow`, #20), all comets in one stroke, and the
- *  receiving socket's collar flash as each comet arrives. The static body
- *  is not touched. */
+/** The flow of an ACTIVE link (per-frame layer): the cable look's glow along
+ *  the curve (bleed + lit core between the frames), the comet train leaving
+ *  the source socket (`sourceIsLo`: the polyline's first point) at the
+ *  material's pace in game time (`nowMs` = `fxNow`, #20), all comets in one
+ *  stroke, clamp sparks at frames a comet passes through, and the receiving
+ *  end collar's flash as each comet arrives. The static body is not touched. */
 export function drawSocketCableFlow(
   g: LinePath, c: LinkCable, v: ConnectorVisual, sourceIsLo: boolean, scale: number,
-  nowMs: number, material: ConnectorFlowMaterial,
+  nowMs: number, material: ConnectorFlowMaterial, ra = 0, rb = 0,
 ): void {
   if (c.n < 2 || c.len < 1) return;
   // A new run of flow (first frame, or after a gap): the train restarts.
   if (!(nowMs - c.flowSeen <= FLOW_RESTART_GAP_MS) || nowMs < c.flowSeen) c.flowSince = nowMs;
   c.flowSeen = nowMs;
-  const w = socketCableWidth(scale);
-  if (v.glowAlpha > 0) { path(g, c); stroke(g, v.color, v.glowAlpha * 0.6, w * 1.9); }
-  path(g, c); stroke(g, v.color, v.alpha, w * 0.34);
+  insets(c, scale, ra, rb);
+  drawCablePathGlow(g, c, v, scale, _e0, _e1, c.socketed);
   const pa = v.pulseAlpha ?? 0;
   if (!v.pulseActive || pa <= 0) return;
   const t = flowTrainInto(_train, c.len, nowMs - c.flowSince, material);
@@ -368,18 +331,19 @@ export function drawSocketCableFlow(
     const lo = Math.max(0, s - half), hi = Math.min(c.len, s + half);
     if (hi <= lo) continue;
     // Arc length from the source -> from the polyline's first point.
-    if (sourceIsLo) pathRange(g, c, lo, hi); else pathRange(g, c, c.len - hi, c.len - lo);
+    const a = sourceIsLo ? lo : c.len - hi, b = sourceIsLo ? hi : c.len - lo;
+    pathRange(g, c, a, b);
+    _comets[drawn * 2] = a; _comets[drawn * 2 + 1] = b;
     drawn++;
   }
-  if (drawn > 0) stroke(g, v.pulseColor ?? 0, pa, w * 0.5);
+  if (drawn > 0) stroke(g, v.pulseColor ?? 0, pa, cablePulseWidth(scale));
+  let sparks = 0;
+  for (let i = 0; i < drawn; i++) sparks += addCablePathSparks(g, (_comets[i * 2]! + _comets[i * 2 + 1]!) * 0.5, scale);
+  if (sparks > 0) strokeCableSparks(g, v, scale);
   if (!c.socketed) return;
   const flash = collarFlash(t, c.len);
-  if (flash <= 0 || !collarFrame(c, sourceIsLo, w, _frame)) return;
-  // The receiving collar lights in the flow colour, its accent ring in the
-  // pulse colour (same geometry as the static collar under it).
-  const f = _frame, h = w * 0.9;
-  g.moveTo(f.x, f.y).lineTo(f.x + f.ux * f.L, f.y + f.uy * f.L); stroke(g, v.color, 0.55 * flash, w * 2.4);
-  g.moveTo(f.rx - f.uy * h, f.ry + f.ux * h).lineTo(f.rx + f.uy * h, f.ry - f.ux * h); stroke(g, v.pulseColor ?? 0, flash, w * 0.34);
+  // The receiving collar lights in the flow colour, its ring in the pulse colour.
+  if (flash > 0) drawCablePathCollarFlash(g, v, sourceIsLo, scale, flash);
 }
 
 /** One placement-preview line along `c` (glow underlay, then the core; a

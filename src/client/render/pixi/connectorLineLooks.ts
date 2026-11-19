@@ -15,6 +15,11 @@
  */
 import type { Graphics, GraphicsContext } from 'pixi.js';
 import { CONNECTOR_IDLE_COLOR, cometSegment, type CometSegment, type ConnectorVisual } from './connectorVisual.js';
+import {
+  W, along, bowSpan, cablePath, edgePath, frameAt, oneSegment, pt, rawPath, setCablePath, smoothAt, type CablePath,
+} from './connectorCablePath.js';
+
+export type { CablePath } from './connectorCablePath.js';
 
 export type LineLook = 'pipe' | 'cable' | 'conduit';
 
@@ -139,7 +144,7 @@ export function drawLineLookBody(
     if (marks(g, ax, ay, ux, uy, len, 70 * k, 30 * k, w * 0.06, 0, 0, 0) > 0) stroke(g, SHADOW, 0.6, w * 1.5);
     return;
   }
-  if (look === 'cable') { drawCableBody(g, ax, ay, ux, uy, nx, ny, len, w, k, ra, rb, opts.cradles, opts.lit === true); return; }
+  if (look === 'cable') { drawCableBodyEdge(g, ax, ay, bx, by, len, w, k, ra, rb, opts.cradles, opts.lit === true); return; }
   // Conduit: a row of sleeper plates over a recessed, faintly lit channel.
   run(g, ax, ay, bx, by, nx, ny, 0); stroke(g, SHADOW, 0.45, w * 1.05);
   if (marks(g, ax, ay, ux, uy, len, 22 * k, 6 * k, 8 * k, 0, 0, 0) > 0) stroke(g, BODY, 0.95, w);
@@ -221,51 +226,71 @@ const CABLE_PITCH = 55;
 const LIGHT_X = -0.6;
 const LIGHT_Y = -0.8;
 
+
 // Station layout scratch (module-level, written by `cableLayout`).
 let _s0 = 0;
 let _seg = 0;
 let _nSeg = 0;
+/** Arc length of the far collar. */
+let _s1 = 0;
+/** A run too short for cradles still gets its two end collars (a stud-to-
+ *  stud cable between close neighbours). */
+let _shortCollars = false;
 
-/** Lay the stations out along an edge: collars at `s0` and `s0 + nSeg*seg`
- *  (just outside each node), cradles at even inner stations, lashings at odd
+/** Lay the stations out along the path: collars at `_s0` = `e0` and `_s1`
+ *  (`e1` from the far end), cradles at even inner stations, lashings at odd
  *  ones. `nSeg` is even, or 0 when the run is too short for any. */
-function cableLayout(len: number, ra: number, rb: number, k: number): void {
-  const e0 = Math.min(ra * 0.9, len * 0.3);
-  const e1 = Math.min(rb * 0.9, len * 0.3);
+function cableLayout(len: number, e0: number, e1: number, k: number, endCollars = false): void {
   const span = len - e0 - e1;
   const pitch = CABLE_PITCH * k;
   _s0 = e0;
-  if (span < pitch * 0.8) { _nSeg = 0; _seg = 0; return; }
+  _shortCollars = false;
+  if (span < pitch * 0.8) {
+    _nSeg = 0; _seg = 0; _s1 = len - e1;
+    _shortCollars = endCollars && _s1 > _s0;
+    return;
+  }
   _nSeg = 2 * Math.max(1, Math.round(span / (2 * pitch)));
   _seg = span / _nSeg;
+  _s1 = _s0 + _nSeg * _seg;
 }
 
-/** One strand: straight to the first collar, bowing `bow` further out between
- *  stations, straight from the last collar. `o` = offset along the normal. */
-function strand(
-  g: LinePath, ax: number, ay: number, ux: number, uy: number, nx: number, ny: number,
-  len: number, o: number, bow: number,
-): void {
-  if (_nSeg === 0 || bow === 0) { run(g, ax, ay, ax + ux * len, ay + uy * len, nx, ny, o); return; }
-  g.moveTo(ax + nx * o, ay + ny * o);
-  g.lineTo(ax + ux * _s0 + nx * o, ay + uy * _s0 + ny * o);
+/** One strand: along the path to the first collar, bowing `bow` further out
+ *  between stations, along the path from the last collar. `o` = offset
+ *  along the normal. */
+function strand(g: LinePath, len: number, o: number, bow: number): void {
+  if (_nSeg === 0 || bow === 0) { along(g, 0, len, o, 0, 0); return; }
+  along(g, 0, _s0, o, 0, 0);
   const oc = o + bow;
   for (let j = 0; j < _nSeg; j++) {
+    const ta = _s0 + j * _seg;
     const tm = _s0 + (j + 0.5) * _seg;
     const tb = _s0 + (j + 1) * _seg;
-    g.quadraticCurveTo(ax + ux * tm + nx * oc, ay + uy * tm + ny * oc, ax + ux * tb + nx * o, ay + uy * tb + ny * o);
+    if (!oneSegment(ta, tb)) { bowSpan(g, ta, tb, o, bow); continue; }
+    pt(tm, oc);
+    const cx = W.px, cy = W.py;
+    pt(tb, o);
+    g.quadraticCurveTo(cx, cy, W.px, W.py);
   }
-  g.lineTo(ax + ux * len + nx * o, ay + uy * len + ny * o);
+  pt(len, o); g.lineTo(W.px, W.py);
 }
 
-/** A segment at along-distance `t`, from (`a0`, `c0`) to (`a1`, `c1`) in
- *  (along, across) coordinates relative to that station. */
-function seg(
-  g: LinePath, ax: number, ay: number, ux: number, uy: number, nx: number, ny: number,
-  t: number, a0: number, c0: number, a1: number, c1: number,
-): void {
-  g.moveTo(ax + ux * (t + a0) + nx * c0, ay + uy * (t + a0) + ny * c0)
-    .lineTo(ax + ux * (t + a1) + nx * c1, ay + uy * (t + a1) + ny * c1);
+/** A segment at arc length `t`, from (`a0`, `c0`) to (`a1`, `c1`) in
+ *  (along, across) coordinates of the local frame there, shifted (`ox`, `oy`). */
+function seg(g: LinePath, t: number, a0: number, c0: number, a1: number, c1: number, ox: number, oy: number): void {
+  if (cablePath().n > 2) {
+    // On a curve: square to the smoothed tangent at t.
+    smoothAt(t);
+    const qx = W.px + ox, qy = W.py + oy;
+    g.moveTo(qx + W.ux * a0 + W.nx * c0, qy + W.uy * a0 + W.ny * c0)
+      .lineTo(qx + W.ux * a1 + W.nx * c1, qy + W.uy * a1 + W.ny * c1);
+    return;
+  }
+  frameAt(t);
+  const px = W.ox + ox;
+  const py = W.oy + oy;
+  g.moveTo(px + W.ux * (t + a0) + W.nx * c0, py + W.uy * (t + a0) + W.ny * c0)
+    .lineTo(px + W.ux * (t + a1) + W.nx * c1, py + W.uy * (t + a1) + W.ny * c1);
 }
 
 const ST_CRADLE = 0;
@@ -275,46 +300,41 @@ const SH_RAILS = 0;
 const SH_BRACES = 1;
 const SH_FEET = 2;
 const SH_BAR = 3;
-/** Add one shape at every station of `kind`, offset (`ox`, `oy`). Shapes:
+/** Add one shape at every station of `kind`, shifted (`ox`, `oy`). Shapes:
  *  rails (two across-bars at +-a), braces (X lattice, two bays), feet (pads
  *  along the edge at +-c), bar (one across-bar of half-length c at along a).
  *  Returns how many stations were drawn (0 => nothing to stroke). */
-function atStations(
-  g: LinePath, kind: number, shape: number, ax: number, ay: number, ux: number, uy: number,
-  nx: number, ny: number, a: number, c: number, ox: number, oy: number,
-): number {
-  if (_nSeg === 0) return 0;
+function atStations(g: LinePath, kind: number, shape: number, a: number, c: number, ox: number, oy: number): number {
+  if (_nSeg === 0 && !(_shortCollars && kind === ST_COLLAR)) return 0;
+  const last = _nSeg === 0 ? 1 : _nSeg;
   let n = 0;
-  const px = ax + ox;
-  const py = ay + oy;
-  for (let j = 0; j <= _nSeg; j++) {
-    const st = j === 0 || j === _nSeg ? ST_COLLAR : (j & 1) === 1 ? ST_LASH : ST_CRADLE;
+  for (let j = 0; j <= last; j++) {
+    const st = j === 0 || j === last ? ST_COLLAR : (j & 1) === 1 ? ST_LASH : ST_CRADLE;
     if (st !== kind) continue;
-    const t = _s0 + j * _seg;
+    const t = j === last ? _s1 : _s0 + j * _seg;
     if (shape === SH_RAILS) {
-      seg(g, px, py, ux, uy, nx, ny, t, -a, -c, -a, c);
-      seg(g, px, py, ux, uy, nx, ny, t, a, -c, a, c);
+      seg(g, t, -a, -c, -a, c, ox, oy);
+      seg(g, t, a, -c, a, c, ox, oy);
     } else if (shape === SH_BRACES) {
-      seg(g, px, py, ux, uy, nx, ny, t, -a, -c, a, 0);
-      seg(g, px, py, ux, uy, nx, ny, t, a, -c, -a, 0);
-      seg(g, px, py, ux, uy, nx, ny, t, -a, 0, a, c);
-      seg(g, px, py, ux, uy, nx, ny, t, a, 0, -a, c);
+      seg(g, t, -a, -c, a, 0, ox, oy);
+      seg(g, t, a, -c, -a, 0, ox, oy);
+      seg(g, t, -a, 0, a, c, ox, oy);
+      seg(g, t, a, 0, -a, c, ox, oy);
     } else if (shape === SH_FEET) {
-      seg(g, px, py, ux, uy, nx, ny, t, -a, -c, a, -c);
-      seg(g, px, py, ux, uy, nx, ny, t, -a, c, a, c);
+      seg(g, t, -a, -c, a, -c, ox, oy);
+      seg(g, t, -a, c, a, c, ox, oy);
     } else {
-      seg(g, px, py, ux, uy, nx, ny, t, a, -c, a, c);
+      seg(g, t, a, -c, a, c, ox, oy);
     }
     n++;
   }
   return n;
 }
 
-function drawCableBody(
-  g: LinePath, ax: number, ay: number, ux: number, uy: number, nx: number, ny: number,
-  len: number, w: number, k: number, ra: number, rb: number, cradles: boolean, lit: boolean,
-): void {
-  cableLayout(len, ra, rb, k);
+/** The cable body along the walked path (laid out by the caller's `cableLayout`). */
+function drawCableBody(g: LinePath, w: number, cradles: boolean, lit: boolean): void {
+  const P = cablePath();
+  const len = P.len;
   const sheath = lit ? CABLE_LIT_SHEATH : CABLE_SHEATH;
   const core = lit ? LIT_CORE_SHEATH : CABLE_CORE_SHEATH;
   const hi = lit ? LIT_HI : CABLE_HI;
@@ -322,55 +342,109 @@ function drawCableBody(
   const sw = w * 0.5; // one strand
   const sp = w * 0.55; // strand spacing (pinched at stations)
   const bow = sp * 0.45; // extra spread between stations (quadratic control)
-  const side = nx * LIGHT_X + ny * LIGHT_Y >= 0 ? 1 : -1; // lit side along the normal
+  // Lit side along the normal, by the chord (end to end): one side all along.
+  const q = P.poly, m = (P.n - 1) * 2;
+  const cdx = q[m]! - q[0]!, cdy = q[m + 1]! - q[1]!;
+  const cl = Math.hypot(cdx, cdy);
+  const side = cl > 0 && -(cdy / cl) * LIGHT_X + (cdx / cl) * LIGHT_Y < 0 ? -1 : 1;
   const shx = -LIGHT_X * w * 0.45;
   const shy = -LIGHT_Y * w * 0.45;
   const cradleC = sp * 1.35 + sw + w * 0.65; // cradle half-span across
   const cradleA = w * 0.75; // cradle half-depth along
   // Cast shadows: the bundle, then each cradle's footprint.
-  g.moveTo(ax + shx, ay + shy).lineTo(ax + ux * len + shx, ay + uy * len + shy);
+  along(g, 0, len, 0, shx, shy);
   stroke(g, SHADOW, 0.5, sp * 2.4 + sw * 1.5);
-  if (cradles && atStations(g, ST_CRADLE, SH_BAR, ax, ay, ux, uy, nx, ny, 0, cradleC, shx, shy) > 0) {
+  if (cradles && atStations(g, ST_CRADLE, SH_BAR, 0, cradleC, shx, shy) > 0) {
     stroke(g, SHADOW, 0.55, cradleA * 2.4);
     // Truss cradles: dark under-strokes, then the steel lattice and feet.
-    atStations(g, ST_CRADLE, SH_RAILS, ax, ay, ux, uy, nx, ny, cradleA, cradleC, 0, 0); stroke(g, CABLE_OUTLINE, 0.95, w * 0.28);
-    atStations(g, ST_CRADLE, SH_BRACES, ax, ay, ux, uy, nx, ny, cradleA, cradleC, 0, 0); stroke(g, CABLE_OUTLINE, 0.9, w * 0.2);
-    atStations(g, ST_CRADLE, SH_RAILS, ax, ay, ux, uy, nx, ny, cradleA, cradleC, 0, 0); stroke(g, TRUSS, 1, w * 0.15);
-    atStations(g, ST_CRADLE, SH_BRACES, ax, ay, ux, uy, nx, ny, cradleA, cradleC, 0, 0); stroke(g, TRUSS, 0.95, w * 0.09);
-    atStations(g, ST_CRADLE, SH_FEET, ax, ay, ux, uy, nx, ny, cradleA * 1.3, cradleC, 0, 0); stroke(g, CABLE_OUTLINE, 1, w * 0.36);
-    atStations(g, ST_CRADLE, SH_FEET, ax, ay, ux, uy, nx, ny, cradleA * 1.15, cradleC, 0, 0); stroke(g, STEEL_DARK, 1, w * 0.22);
+    atStations(g, ST_CRADLE, SH_RAILS, cradleA, cradleC, 0, 0); stroke(g, CABLE_OUTLINE, 0.95, w * 0.28);
+    atStations(g, ST_CRADLE, SH_BRACES, cradleA, cradleC, 0, 0); stroke(g, CABLE_OUTLINE, 0.9, w * 0.2);
+    atStations(g, ST_CRADLE, SH_RAILS, cradleA, cradleC, 0, 0); stroke(g, TRUSS, 1, w * 0.15);
+    atStations(g, ST_CRADLE, SH_BRACES, cradleA, cradleC, 0, 0); stroke(g, TRUSS, 0.95, w * 0.09);
+    atStations(g, ST_CRADLE, SH_FEET, cradleA * 1.3, cradleC, 0, 0); stroke(g, CABLE_OUTLINE, 1, w * 0.36);
+    atStations(g, ST_CRADLE, SH_FEET, cradleA * 1.15, cradleC, 0, 0); stroke(g, STEEL_DARK, 1, w * 0.22);
   }
   // Strands: outline, sheath, lit edge. The outer two bow apart between stations.
   for (let i = -1; i <= 1; i++) {
     const o = i * sp;
     const b = i * bow;
-    strand(g, ax, ay, ux, uy, nx, ny, len, o, b); stroke(g, CABLE_OUTLINE, 0.95, sw + w * 0.16);
-    strand(g, ax, ay, ux, uy, nx, ny, len, o, b); stroke(g, i === 0 ? core : sheath, 1, sw);
-    strand(g, ax, ay, ux, uy, nx, ny, len, o + side * sw * 0.24, b); stroke(g, hi, hiA, sw * 0.22);
+    strand(g, len, o, b); stroke(g, CABLE_OUTLINE, 0.95, sw + w * 0.16);
+    strand(g, len, o, b); stroke(g, i === 0 ? core : sheath, 1, sw);
+    strand(g, len, o + side * sw * 0.24, b); stroke(g, hi, hiA, sw * 0.22);
   }
-  if (_nSeg === 0) return;
-  // Lashings pull the bundle together between cradles.
-  const lashC = sp + sw * 0.7;
-  atStations(g, ST_LASH, SH_BAR, ax, ay, ux, uy, nx, ny, 0, lashC, 0, 0); stroke(g, LASH, 1, w * 0.32);
-  atStations(g, ST_LASH, SH_BAR, ax, ay, ux, uy, nx, ny, -w * 0.06, lashC * 0.92, 0, 0); stroke(g, CABLE_HI, 0.28, w * 0.07);
-  // Clamp plates on the cradles, bolted at each end.
-  const clampC = sp + sw * 0.8;
-  if (atStations(g, ST_CRADLE, SH_BAR, ax, ay, ux, uy, nx, ny, 0, clampC + w * 0.06, 0, 0) > 0) {
-    stroke(g, CABLE_OUTLINE, 1, w * 0.56);
-    atStations(g, ST_CRADLE, SH_BAR, ax, ay, ux, uy, nx, ny, 0, clampC, 0, 0); stroke(g, CLAMP, 1, w * 0.42);
-    atStations(g, ST_CRADLE, SH_BAR, ax, ay, ux, uy, nx, ny, -w * 0.1, clampC * 0.9, 0, 0); stroke(g, CABLE_HI, 0.35, w * 0.08);
-    atStations(g, ST_CRADLE, SH_FEET, ax, ay, ux, uy, nx, ny, w * 0.09, clampC * 0.82, 0, 0); stroke(g, CABLE_OUTLINE, 1, w * 0.2);
-  }
+  if (_nSeg > 0) {
+    // Lashings pull the bundle together between cradles.
+    const lashC = sp + sw * 0.7;
+    atStations(g, ST_LASH, SH_BAR, 0, lashC, 0, 0); stroke(g, LASH, 1, w * 0.32);
+    atStations(g, ST_LASH, SH_BAR, -w * 0.06, lashC * 0.92, 0, 0); stroke(g, CABLE_HI, 0.28, w * 0.07);
+    // Clamp plates on the cradles, bolted at each end.
+    const clampC = sp + sw * 0.8;
+    if (atStations(g, ST_CRADLE, SH_BAR, 0, clampC + w * 0.06, 0, 0) > 0) {
+      stroke(g, CABLE_OUTLINE, 1, w * 0.56);
+      atStations(g, ST_CRADLE, SH_BAR, 0, clampC, 0, 0); stroke(g, CLAMP, 1, w * 0.42);
+      atStations(g, ST_CRADLE, SH_BAR, -w * 0.1, clampC * 0.9, 0, 0); stroke(g, CABLE_HI, 0.35, w * 0.08);
+      atStations(g, ST_CRADLE, SH_FEET, w * 0.09, clampC * 0.82, 0, 0); stroke(g, CABLE_OUTLINE, 1, w * 0.2);
+    }
+  } else if (!_shortCollars) return;
   // Strain-relief collars where the run meets each node.
   const collarC = sp + sw * 0.95;
-  atStations(g, ST_COLLAR, SH_BAR, ax, ay, ux, uy, nx, ny, 0, collarC + w * 0.07, 0, 0); stroke(g, CABLE_OUTLINE, 1, w * 0.95);
-  atStations(g, ST_COLLAR, SH_BAR, ax, ay, ux, uy, nx, ny, 0, collarC, 0, 0); stroke(g, TRUSS, 1, w * 0.78);
-  atStations(g, ST_COLLAR, SH_BAR, ax, ay, ux, uy, nx, ny, 0, collarC, 0, 0); stroke(g, CABLE_OUTLINE, 0.8, w * 0.1);
-  atStations(g, ST_COLLAR, SH_BAR, ax, ay, ux, uy, nx, ny, -w * 0.26, collarC * 0.92, 0, 0); stroke(g, CABLE_HI, 0.4, w * 0.08);
+  atStations(g, ST_COLLAR, SH_BAR, 0, collarC + w * 0.07, 0, 0); stroke(g, CABLE_OUTLINE, 1, w * 0.95);
+  atStations(g, ST_COLLAR, SH_BAR, 0, collarC, 0, 0); stroke(g, TRUSS, 1, w * 0.78);
+  atStations(g, ST_COLLAR, SH_BAR, 0, collarC, 0, 0); stroke(g, CABLE_OUTLINE, 0.8, w * 0.1);
+  atStations(g, ST_COLLAR, SH_BAR, -w * 0.26, collarC * 0.92, 0, 0); stroke(g, CABLE_HI, 0.4, w * 0.08);
 }
 
-/** Cable flow: energy inside the core strand, glimpsed between the stations
- *  (lashings, cradles and collars hide it), a lit band riding it, and a few
+/** The cable's flowing glow along the walked path (laid out): a faint bleed around the
+ *  bundle, and the lit core in the gaps between stations (lashings, cradles
+ *  and collars hide it). */
+function cableGlow(g: LinePath, v: ConnectorVisual, w: number): void {
+  rawPath(g); stroke(g, v.color, v.glowAlpha * 0.6, w * 1.2);
+  if (_nSeg === 0) rawPath(g);
+  else {
+    const gap = w * 0.45;
+    for (let j = 0; j < _nSeg; j++) {
+      const t0 = _s0 + j * _seg + gap;
+      const t1 = _s0 + (j + 1) * _seg - gap;
+      if (t1 > t0) along(g, t0, t1, 0, 0, 0);
+    }
+  }
+  stroke(g, v.color, v.alpha, w * 0.5 * 0.42);
+}
+
+/** Sparks at the clamp ends of every cradle within reach of arc length `d`
+ *  (a lit band passing through). Returns how many (0 => nothing to stroke). */
+function cableSparks(g: LinePath, d: number, w: number): number {
+  const reach = w * 1.6;
+  const s = w * 0.28;
+  const clampC = w * 0.55 + w * 0.5 * 0.8;
+  let n = 0;
+  for (let j = 2; j < _nSeg; j += 2) {
+    const t = _s0 + j * _seg;
+    if (Math.abs(t - d) > reach) continue;
+    for (let side = -1; side <= 1; side += 2) {
+      const cc = side * clampC;
+      seg(g, t, -s, cc - s, s, cc + s, 0, 0);
+      seg(g, t, -s, cc + s, s, cc - s, 0, 0);
+      n++;
+    }
+  }
+  return n;
+}
+
+function sparkWidth(w: number, scale: number): number {
+  return Math.max(w * 0.1, 1 / (scale > 0 ? scale : 1));
+}
+
+function drawCableBodyEdge(
+  g: LinePath, ax: number, ay: number, bx: number, by: number, len: number,
+  w: number, k: number, ra: number, rb: number, cradles: boolean, lit: boolean,
+): void {
+  setCablePath(edgePath(ax, ay, bx, by, len));
+  cableLayout(len, Math.min(ra * 0.9, len * 0.3), Math.min(rb * 0.9, len * 0.3), k);
+  drawCableBody(g, w, cradles, lit);
+}
+
+/** Cable flow on a straight edge: the glow, a lit band riding it, and a few
  *  sparks at a cradle's clamp as the band passes through. */
 function drawCableFlow(
   g: LinePath, v: ConnectorVisual, comet: CometSegment, sourceIsLo: boolean,
@@ -382,42 +456,81 @@ function drawCableFlow(
   if (len < 1) return;
   const ux = dx / len;
   const uy = dy / len;
-  const nx = -uy;
-  const ny = ux;
-  cableLayout(len, ra, rb, w / BASE_W.cable);
-  const sw = w * 0.5;
-  const sp = w * 0.55;
-  // Faint bleed around the bundle.
-  g.moveTo(ax, ay).lineTo(bx, by); stroke(g, v.color, v.glowAlpha * 0.6, w * 1.2);
-  // The lit core, in the gaps between stations.
-  if (_nSeg === 0) g.moveTo(ax, ay).lineTo(bx, by);
-  else {
-    const gap = w * 0.45;
-    for (let j = 0; j < _nSeg; j++) {
-      const t0 = _s0 + j * _seg + gap;
-      const t1 = _s0 + (j + 1) * _seg - gap;
-      if (t1 > t0) g.moveTo(ax + ux * t0, ay + uy * t0).lineTo(ax + ux * t1, ay + uy * t1);
-    }
-  }
-  stroke(g, v.color, v.alpha, sw * 0.42);
+  setCablePath(edgePath(ax, ay, bx, by, len));
+  cableLayout(len, Math.min(ra * 0.9, len * 0.3), Math.min(rb * 0.9, len * 0.3), w / BASE_W.cable);
+  cableGlow(g, v, w);
   // The travelling lit band.
   const c = drawCablePulse(g, v, comet, v.pulseT ?? 0, sourceIsLo, ax, ay, bx, by, scale, size);
   if (_nSeg === 0 || c === null) return;
-  // Sparks at the clamp ends of a cradle the band is passing through.
   const d = ((c.x0 + c.x1) * 0.5 - ax) * ux + ((c.y0 + c.y1) * 0.5 - ay) * uy;
-  const reach = w * 1.6;
-  const s = w * 0.28;
-  const clampC = sp + sw * 0.8;
-  let n = 0;
-  for (let j = 2; j < _nSeg; j += 2) {
-    const t = _s0 + j * _seg;
-    if (Math.abs(t - d) > reach) continue;
-    for (let side = -1; side <= 1; side += 2) {
-      const cc = side * clampC;
-      seg(g, ax, ay, ux, uy, nx, ny, t, -s, cc - s, s, cc + s);
-      seg(g, ax, ay, ux, uy, nx, ny, t, -s, cc + s, s, cc - s);
-      n++;
-    }
-  }
-  if (n > 0) stroke(g, v.pulseColor ?? 0, (v.pulseAlpha ?? 0) * 0.9, Math.max(w * 0.1, 1 / (scale > 0 ? scale : 1)));
+  if (cableSparks(g, d, w) > 0) stroke(g, v.pulseColor ?? 0, (v.pulseAlpha ?? 0) * 0.9, sparkWidth(w, scale));
+}
+
+// ── The cable look along a socket cable's curve (stud to stud) ──────────────
+
+/** The cable look's body width (world units) at this zoom. */
+export function cableLookWidth(scale: number, size = 1): number {
+  return BASE_W.cable * lineLookScale('cable', scale) * size;
+}
+
+/** How far in from a stud its end collar sits (the collar band starts at
+ *  the stud). */
+export function cableStudInset(scale: number, len: number): number {
+  return Math.min(cableLookWidth(scale) * 0.5, len * 0.3);
+}
+
+/** The cable look's steady body along `path`, end collars `e0` / `e1` in
+ *  from its ends. `endCollars`: a run too short for cradles still gets its
+ *  end collars (a socket cable between close neighbours). */
+export function drawCablePathBody(
+  g: LinePath, path: CablePath, scale: number, e0: number, e1: number, endCollars: boolean,
+  opts: LineLookOpts = LINE_LOOK_FULL,
+): void {
+  if (path.n < 2 || path.len < 1) return;
+  const k = lineLookScale('cable', scale) * opts.size;
+  setCablePath(path);
+  cableLayout(path.len, e0, e1, k, endCollars);
+  drawCableBody(g, BASE_W.cable * k, opts.cradles, opts.lit === true);
+}
+
+/** The cable look's flow glow along `path` (bleed + lit core between the
+ *  stations), laid out as `drawCablePathBody`. Leaves that layout for
+ *  `addCablePathSparks` / `drawCablePathCollarFlash` on the same path. */
+export function drawCablePathGlow(
+  g: LinePath, path: CablePath, v: ConnectorVisual, scale: number, e0: number, e1: number, endCollars: boolean,
+): void {
+  if (path.n < 2 || path.len < 1) return;
+  const w = cableLookWidth(scale);
+  setCablePath(path);
+  cableLayout(path.len, e0, e1, w / BASE_W.cable, endCollars);
+  cableGlow(g, v, w);
+}
+
+/** The cable look's lit-band width (as `drawCablePulse`). */
+export function cablePulseWidth(scale: number): number {
+  return cableLookWidth(scale) * 0.5 * 0.7;
+}
+
+/** Add the clamp sparks for a band at arc length `d` on the path last laid
+ *  out by `drawCablePathGlow`; returns how many (then `strokeCableSparks`). */
+export function addCablePathSparks(g: LinePath, d: number, scale: number): number {
+  return _nSeg === 0 ? 0 : cableSparks(g, d, cableLookWidth(scale));
+}
+
+export function strokeCableSparks(g: LinePath, v: ConnectorVisual, scale: number): void {
+  stroke(g, v.pulseColor ?? 0, (v.pulseAlpha ?? 0) * 0.9, sparkWidth(cableLookWidth(scale), scale));
+}
+
+/** The receiving end collar (`atEnd`: at the path's last point) lit by an
+ *  arriving band, strength `flash` in (0, 1]: the collar band in the flow
+ *  colour, a ring in the pulse colour, on the path last laid out by
+ *  `drawCablePathGlow`. False when that path has no collars. */
+export function drawCablePathCollarFlash(g: LinePath, v: ConnectorVisual, atEnd: boolean, scale: number, flash: number): boolean {
+  if (_nSeg === 0 && !_shortCollars) return false;
+  const w = cableLookWidth(scale);
+  const t = atEnd ? _s1 : _s0;
+  const c = w * 0.55 + w * 0.5 * 0.95;
+  seg(g, t, 0, -c * 1.15, 0, c * 1.15, 0, 0); stroke(g, v.color, 0.55 * flash, w * 1.4);
+  seg(g, t, atEnd ? -w * 0.3 : w * 0.3, -c, atEnd ? -w * 0.3 : w * 0.3, c, 0, 0); stroke(g, v.pulseColor ?? 0, flash, w * 0.2);
+  return true;
 }
