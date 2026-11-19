@@ -8,7 +8,11 @@
  * fields, no object, so set / clear never allocates (#14).
  */
 import type { AiEntityPoseOut, AiWorldView } from '../../contracts/IAiBehaviour.js';
-import { MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal } from '../tactics/manoeuvre.js';
+import { TRAVEL_NONE } from '../hostileDroneTuning.js';
+import type { PilotHandling } from '../virtualPilot.js';
+import {
+  MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
+} from '../tactics/manoeuvre.js';
 
 export class GuardReturnMode implements IPilotMode {
   /** Guard post (server-only, set by a director via `setGuardPost`): a
@@ -25,6 +29,40 @@ export class GuardReturnMode implements IPilotMode {
    *  tick into `anchorPose` (`followAnchor`). */
   anchorId: string | null = null;
   private readonly anchorPose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** Out of `brakePoint`: where the brakes bring the ship to a halt. */
+  stopX = 0;
+  stopY = 0;
+
+  /** Take a post (`setGuardPost`): radius `r` already floored by the brain.
+   *  A post is a hold: it ends a hunt and a travel. */
+  post(x: number, y: number, r: number, anchorId: string | null, o: PilotOrderModes): void {
+    this.on = true;
+    this.anchorId = anchorId;
+    this.x = x;
+    this.y = y;
+    this.r = r;
+    o.search.on = false;
+    o.travel.state = TRAVEL_NONE;
+  }
+
+  /**
+   * Stop (`stopAt`): the spot the pilot's brakes (reverse plus damping, this
+   * kind's handling `h`) bring it to from (vx, vy) at (x, y), along its
+   * course, into (`stopX`, `stopY`). The brain posts the guard there.
+   */
+  brakePoint(h: PilotHandling, x: number, y: number, vx: number, vy: number): void {
+    const v = Math.hypot(vx, vy);
+    const a = h.reverseAccel * 60;
+    const k = h.linearDamping;
+    let d = 0;
+    if (v > 1e-6) {
+      if (a <= 0) d = k > 0 ? v / k : 0;
+      else if (k <= 1e-9) d = (v * v) / (2 * a);
+      else d = v / k - (a / (k * k)) * Math.log(1 + (k * v) / a);
+    }
+    this.stopX = v > 1e-6 ? x + (vx / v) * d : x;
+    this.stopY = v > 1e-6 ? y + (vy / v) * d : y;
+  }
 
   /** Drop the post (and its anchor). */
   clear(): void {
@@ -43,10 +81,10 @@ export class GuardReturnMode implements IPilotMode {
 
   begin(_ctx: PilotModeContext): void {}
 
-  writeGoal(ctx: PilotModeContext, out: PilotModeGoal): void {
+  writeGoal(_ctx: PilotModeContext, out: PilotModeGoal): void {
     out.kind = MODE_GOAL_MOVE_TO;
-    out.tx = ctx.guardX;
-    out.ty = ctx.guardY;
+    out.tx = this.x;
+    out.ty = this.y;
     out.cruiseCap = -1;
     out.boost = false;
   }

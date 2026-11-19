@@ -24,14 +24,18 @@ import {
   DRONE_AIM_TOLERANCE,
   DRONE_AIM_TOLERANCE_CLOSE,
   POINT_BLANK_RATIO,
+  TRAVEL_ARRIVED,
   TRAVEL_ARRIVE_SPEED_FRAC,
   TRAVEL_LONG_LEG_GUARD_MUL,
   TRAVEL_NONE,
+  TRAVEL_ON_THE_WAY,
   type TravelState,
 } from '../hostileDroneTuning.js';
 import { hullFireCone } from '../hullFireCone.js';
 import { facingOf, wrapAngle } from '../virtualPilot.js';
-import { MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal } from '../tactics/manoeuvre.js';
+import {
+  MODE_GOAL_MOVE_TO, type IPilotMode, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
+} from '../tactics/manoeuvre.js';
 
 /** The brain's fixed gun numbers (set once at construction). */
 export interface TravelFireTune {
@@ -74,6 +78,28 @@ export class TravelMode implements IPilotMode {
 
   begin(_ctx: PilotModeContext): void {}
 
+  /** An owner's Move to (x, y) (`setTravel`): the course is set, the post
+   *  and a hunt end. */
+  go(x: number, y: number, o: PilotOrderModes): void {
+    o.course.setCourse(x, y, false, o);
+    o.guard.clear();
+    o.search.on = false;
+    this.state = TRAVEL_ON_THE_WAY;
+    this.x = x;
+    this.y = y;
+    this.fights = false;
+  }
+
+  /** One patrol leg from (fromX, fromY) to (x, y) (`setPatrolLeg`): a travel
+   *  that fights, leashed at `guardR` (the kind's `guardRadiusMin`). */
+  patrolLeg(fromX: number, fromY: number, x: number, y: number, guardR: number, o: PilotOrderModes): void {
+    this.go(x, y, o);
+    this.fights = true;
+    this.legFromX = fromX;
+    this.legFromY = fromY;
+    o.guard.r = guardR;
+  }
+
   /** Patrol leg: the leash centre (`leashX`, `leashY`) = the nearest point
    *  of the leg to the ship. */
   legLeashCentre(self: AiEntity): void {
@@ -92,16 +118,26 @@ export class TravelMode implements IPilotMode {
   isDone(ctx: PilotModeContext): boolean {
     const self = ctx.self;
     const t = shipTuning(ctx.kind);
-    const dx = ctx.travelX - self.x;
-    const dy = ctx.travelY - self.y;
+    const dx = this.x - self.x;
+    const dy = this.y - self.y;
     return dx * dx + dy * dy <= t.wingmanArrive * t.wingmanArrive
       && Math.hypot(self.vx, self.vy) <= ctx.handling.maxSpeed * TRAVEL_ARRIVE_SPEED_FRAC;
   }
 
+  /** The arrival step: arrived (`isDone`) ⇒ guard the travel point through
+   *  the brain's post setter `post` (bound once) and mark the travel
+   *  arrived. True when it arrived this call. */
+  arriveIfDone(ctx: PilotModeContext, post: (x: number, y: number) => void): boolean {
+    if (!this.isDone(ctx)) return false;
+    post(this.x, this.y);
+    this.state = TRAVEL_ARRIVED;
+    return true;
+  }
+
   writeGoal(ctx: PilotModeContext, out: PilotModeGoal): void {
     out.kind = MODE_GOAL_MOVE_TO;
-    out.tx = ctx.travelX;
-    out.ty = ctx.travelY;
+    out.tx = this.x;
+    out.ty = this.y;
     if (this.isDone(ctx)) {
       // Arrived: the calm fly-to holds the point.
       out.cruiseCap = -1;
@@ -110,8 +146,8 @@ export class TravelMode implements IPilotMode {
     }
     const t = shipTuning(ctx.kind);
     const h = ctx.handling;
-    const dx = ctx.travelX - ctx.self.x;
-    const dy = ctx.travelY - ctx.self.y;
+    const dx = this.x - ctx.self.x;
+    const dy = this.y - ctx.self.y;
     const long = dx * dx + dy * dy > (TRAVEL_LONG_LEG_GUARD_MUL * t.guardRadiusMin) ** 2;
     out.cruiseCap = long ? h.maxSpeed : h.cruiseSpeed;
     out.boost = long;

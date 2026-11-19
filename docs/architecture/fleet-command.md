@@ -33,7 +33,7 @@ brain. The fleet vocabulary (`FleetMode`, `FleetStance`, `FleetOrder`,
   path.
 - **Holds where it was parked:** attach sets the brain's move target and
   guard post at the hull's spot (`holdHullAt`); an idle brain with neither
-  orbits the world origin (`tickPatrol`).
+  orbits the world origin (`modes/patrolMode.ts`).
 - **Guard leash (slice 5):** Stop (`orderIssued`: guard where the hull is),
   Move (guard the destination) and `set_mode` Defend (the `modeSet` hook:
   the wingman store's resolved post, else the hull's spot) all go through
