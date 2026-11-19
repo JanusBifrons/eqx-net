@@ -99,20 +99,20 @@ describe('structureLevel — effective max health', () => {
 
 describe('structureLevel — effective connection cap (Equinox Phase-5 audit)', () => {
   it('a level-1 connector keeps its base slot count', () => {
-    expect(effectiveStructureMaxConnections(6, 1)).toBe(6);
-    expect(effectiveStructureMaxConnections(6, undefined)).toBe(6);
+    expect(effectiveStructureMaxConnections(6, 1, 'connector')).toBe(6);
+    expect(effectiveStructureMaxConnections(6, undefined, 'connector')).toBe(6);
   });
   it('UPGRADING adds slots — each level grants STRUCTURE_CONNECTIONS_PER_LEVEL more', () => {
     // The whole point of the bug fix: an upgraded connector can hold MORE links.
-    expect(effectiveStructureMaxConnections(6, 2)).toBe(6 + STRUCTURE_CONNECTIONS_PER_LEVEL);
-    expect(effectiveStructureMaxConnections(6, 3)).toBe(6 + 2 * STRUCTURE_CONNECTIONS_PER_LEVEL);
+    expect(effectiveStructureMaxConnections(6, 2, 'connector')).toBe(6 + STRUCTURE_CONNECTIONS_PER_LEVEL);
+    expect(effectiveStructureMaxConnections(6, 3, 'connector')).toBe(6 + 2 * STRUCTURE_CONNECTIONS_PER_LEVEL);
     // A maxed connector (cap 5) reaches base + 4 grants.
-    expect(effectiveStructureMaxConnections(6, 5)).toBe(6 + 4 * STRUCTURE_CONNECTIONS_PER_LEVEL);
-    expect(effectiveStructureMaxConnections(6, 5)).toBeGreaterThan(6);
+    expect(effectiveStructureMaxConnections(6, 5, 'connector')).toBe(6 + 4 * STRUCTURE_CONNECTIONS_PER_LEVEL);
+    expect(effectiveStructureMaxConnections(6, 5, 'connector')).toBeGreaterThan(6);
   });
   it('clamps an out-of-range level (never below the base cap)', () => {
-    expect(effectiveStructureMaxConnections(6, 0)).toBe(6);
-    expect(effectiveStructureMaxConnections(6, 99)).toBe(effectiveStructureMaxConnections(6, STRUCTURE_LEVEL_CAP));
+    expect(effectiveStructureMaxConnections(6, 0, 'connector')).toBe(6);
+    expect(effectiveStructureMaxConnections(6, 99, 'connector')).toBe(effectiveStructureMaxConnections(6, STRUCTURE_LEVEL_CAP, 'connector'));
   });
   it('a socket-bound kind is clamped to its sockets; connectors and shield emitters are not', () => {
     // Battery: 4 sockets, so a top-level battery holds 4 links, not 1 + 4.

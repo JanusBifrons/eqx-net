@@ -11,7 +11,7 @@ import {
 } from './Grid.js';
 import { Connection } from './Connection.js';
 import { getStructureKind, structureSockets } from '../../shared-types/structureKinds.js';
-import { STRUCTURE_LEVEL_CAP, effectiveStructureMaxConnections } from '../leveling/structureLevel.js';
+import { STRUCTURE_CONNECTIONS_PER_LEVEL, STRUCTURE_LEVEL_CAP, effectiveStructureMaxConnections } from '../leveling/structureLevel.js';
 import {
   CONNECTION_MAX_RANGE,
   CONNECTION_THROUGHPUT,
@@ -156,7 +156,7 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
   it('a top-level battery refuses a 5th link: one cable per socket (owner: max 4 cables)', () => {
     const k = getStructureKind('battery');
     expect(structureSockets('battery')).toHaveLength(4);
-    const unclamped = effectiveStructureMaxConnections(k.maxConnections, STRUCTURE_LEVEL_CAP);
+    const unclamped = k.maxConnections + (STRUCTURE_LEVEL_CAP - 1) * STRUCTURE_CONNECTIONS_PER_LEVEL;
     const clamped = effectiveStructureMaxConnections(k.maxConnections, STRUCTURE_LEVEL_CAP, 'battery');
     expect(unclamped).toBe(5);
     expect(clamped).toBe(4);

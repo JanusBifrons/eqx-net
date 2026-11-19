@@ -26,7 +26,7 @@ import { convexHullCCW } from '../swarm/asteroidShape.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js';
 // Function-only cycle (cableCurve uses Grid's segment tests): neither module
 // reads the other at load time.
-import { CABLE_NO_SOCKET, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
+import { CABLE_NO_SOCKET, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -74,6 +74,10 @@ export interface GridNode {
   powerConsumption: number;
   /** Blueprints are dead-ends in traversal (see file docstring). */
   isConstructed: boolean;
+  /** Bit mask of the sockets this node's links already hold, for a caller
+   *  whose adjacency entries carry no sockets (the client build preview,
+   *  from `connSockSelf`). ABSENT ⇒ `canConnect` reads the adjacency. */
+  usedSockets?: number;
 }
 
 export type CanConnectReason =
@@ -344,7 +348,9 @@ export function canConnect(
     if (sockets) { sockets.a = CABLE_NO_SOCKET; sockets.b = CABLE_NO_SOCKET; }
     return { ok: true };
   }
-  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets);
+  // One cable per stud: the sockets each end's links already hold.
+  const usedA = a.usedSockets ?? linkSocketMask(a.id, aConns), usedB = b.usedSockets ?? linkSocketMask(b.id, bConns);
+  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB);
   if (refusal !== null) return { ok: false, reason: refusal };
   return { ok: true };
 }

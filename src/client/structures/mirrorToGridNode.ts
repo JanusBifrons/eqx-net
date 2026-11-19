@@ -26,6 +26,7 @@ import {
 } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxConnections, effectiveStructurePowerOutput } from '../../core/leveling/structureLevel.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
+import { socketListMask } from '../../core/structures/cableCurve.js';
 import { rockObstacleParts, type GridNode, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
 import type {
   StructureRenderState,
@@ -189,7 +190,9 @@ export function structureMirrorToGridNode(
   // Leveled connection cap — an upgraded connector holds MORE links (Equinox
   // Phase-5 audit). Must match the server's `structureToGridNode` so the preview
   // + the live grid agree.
-  out.maxConnections = effectiveStructureMaxConnections(kind.maxConnections, structureState.level);
+  out.maxConnections = effectiveStructureMaxConnections(kind.maxConnections, structureState.level, out.kind);
+  // The sockets its links hold: the preview's adjacency carries none (#15).
+  out.usedSockets = socketListMask(structureState.connSockSelf);
   out.connectionRange = kind.connectionRange;
   // D1 — a Reactor with no fuel produces nothing (the server's same rule).
   // Leveled output via the shared helper the server grid reads (#15).
