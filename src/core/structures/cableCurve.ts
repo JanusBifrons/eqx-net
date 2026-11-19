@@ -99,6 +99,44 @@ export function flattenCableCurve(
   box.y1 = y1;
 }
 
+/** A link end as the reach box sees it: centre plus footprint half extents
+ *  (absent ⇒ a square of `radius`). A `GridNode` and a server
+ *  `StructureRecord` both fit. */
+export interface LinkReachEnd {
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly halfW?: number | undefined;
+  readonly halfH?: number | undefined;
+}
+
+/** Start the box every link from `end` lies in (0d slice 7, one rule for the
+ *  server's `linkReachBox` and the build preview, #15): `end`'s footprint
+ *  padded by `CABLE_TAIL_MAX`, since a cable leaves a socket on the outline
+ *  and bends out at most that far along its normal. Writes `out`. */
+export function linkReachBoxStart(end: LinkReachEnd, out: CableBox): void {
+  const pw = (end.halfW ?? end.radius) + CABLE_TAIL_MAX, ph = (end.halfH ?? end.radius) + CABLE_TAIL_MAX;
+  out.x0 = end.x - pw; out.x1 = end.x + pw;
+  out.y0 = end.y - ph; out.y1 = end.y + ph;
+}
+
+/** Widen `out` (from `linkReachBoxStart(self)`) by `partner`'s padded
+ *  footprint when it is within `maxRange` of `self` edge to edge (as
+ *  `canConnect`'s far reject); returns whether it was. Allocation-free. */
+export function linkReachBoxAdd(self: LinkReachEnd, partner: LinkReachEnd, maxRange: number, out: CableBox): boolean {
+  const sw = self.halfW ?? self.radius, sh = self.halfH ?? self.radius;
+  const ow = partner.halfW ?? partner.radius, oh = partner.halfH ?? partner.radius;
+  const dx = Math.max(0, Math.abs(partner.x - self.x) - (sw + ow));
+  const dy = Math.max(0, Math.abs(partner.y - self.y) - (sh + oh));
+  if (dx * dx + dy * dy > maxRange * maxRange) return false;
+  const px = ow + CABLE_TAIL_MAX, py = oh + CABLE_TAIL_MAX;
+  if (partner.x - px < out.x0) out.x0 = partner.x - px;
+  if (partner.x + px > out.x1) out.x1 = partner.x + px;
+  if (partner.y - py < out.y0) out.y0 = partner.y - py;
+  if (partner.y + py > out.y1) out.y1 = partner.y + py;
+  return true;
+}
+
 /** Narrow-phase counter (count gate for tests and the scale bench): how many
  *  nodes / obstacles passed the box broad phase and got per-segment tests.
  *  Callers may reset `narrow` to 0; nothing else reads it. */

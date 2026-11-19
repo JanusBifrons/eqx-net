@@ -112,25 +112,32 @@ describe('ConnectorRenderer — placement connection preview', () => {
   });
 
   it('counts 0 when an asteroid sits ON the only ghost→hub segment (blocked, server-faithful)', () => {
+    // 0d cable sockets: the cable runs socket to socket (capital's top face,
+    // y ≈ 220..247, to the connector's bottom post), not centre to centre.
+    // The capital's footprint is 560 square, so the old fixture (ghost at
+    // y=300, rock at y=150) had the rock INSIDE the capital and the ghost
+    // touching it: the cable ran above the rock. Here the ghost sits 538 u
+    // edge to edge above the capital and the rock fills the gap, so every
+    // facing socket pair in reach crosses it.
     const capitalId = 1;
+    const clear = new Map<number, SwarmRenderState>([[capitalId, structureEntry('capital', 0, 0)]]);
     const swarm = new Map<number, SwarmRenderState>([
       [capitalId, structureEntry('capital', 0, 0)],
-      // Asteroid squarely between the ghost (0,300) and the capital (0,0).
-      [2, asteroidEntry(0, 150, 60)],
+      // Asteroid squarely between the capital's top face and the ghost.
+      [2, asteroidEntry(0, 540, 200)],
     ]);
     const structures = new Map<number, StructureRenderState>([
       [capitalId, structureState({ connTo: [] })],
     ]);
-    const mirror: RenderMirror = {
-      swarm,
-      structures,
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0 },
-    } as unknown as RenderMirror;
-
+    const preview = { kind: 'connector', x: 0, y: 850, angle: 0 };
     const r = new ConnectorRenderer();
-    r.update(mirror, 1, 0);
+    r.update({ swarm: clear, structures, pendingPlacementPreview: preview } as unknown as RenderMirror, 1, 0);
+    expect(r.placementPreviewConnectionCount, 'control: without the rock it links').toBe(1);
 
+    r.update({ swarm, structures, pendingPlacementPreview: preview } as unknown as RenderMirror, 1, 0);
     expect(r.placementPreviewConnectionCount).toBe(0);
+    expect(r.previewVerdictCount).toBe(1);
+    expect(r.previewVerdicts[0]!.reason).toBe('blocked');
   });
 
   it('counts 0 when there is no placement preview', () => {

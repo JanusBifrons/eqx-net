@@ -26,7 +26,6 @@ import {
 } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxConnections, effectiveStructurePowerOutput } from '../../core/leveling/structureLevel.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
-import { CONNECTION_MAX_RANGE } from '../../core/structures/structureGridConstants.js';
 import { rockObstacleParts, type GridNode, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
 import type {
   StructureRenderState,
@@ -244,20 +243,6 @@ export function ghostToGridNode(
   out.powerOutput = 0;
   out.powerConsumption = 0;
   out.isConstructed = false;
-  return out;
-}
-
-/**
- * The box every candidate link of `ghost` lies in, written into `out` (C5h,
- * the preview's twin of the server's `linkReachBox`): a partner's centre is
- * within `CONNECTION_MAX_RANGE` of the ghost's edge plus the partner's own
- * extent, `partnerExt` the widest partner's. Field rocks reaching into it
- * join the preview's obstacles, as the server's dormant rocks do.
- */
-export function linkReachBoxOf(ghost: GridNode, partnerExt: number, out: ObstacleBox): ObstacleBox {
-  const reach = CONNECTION_MAX_RANGE + Math.max(ghost.halfW ?? ghost.radius, ghost.halfH ?? ghost.radius) + partnerExt;
-  out.x0 = ghost.x - reach; out.y0 = ghost.y - reach;
-  out.x1 = ghost.x + reach; out.y1 = ghost.y + reach;
   return out;
 }
 
