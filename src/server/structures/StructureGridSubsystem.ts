@@ -69,6 +69,13 @@ const FALLBACK_TARGET_SIGNATURE = 10;
  *  leg is deferred — see `resolveMiningClip`). Module const ⇒ no per-pulse alloc. */
 const EMPTY_MINING_OBSTACLES: readonly MiningBeamObstacle[] = [];
 
+/** Stored-power capacity of a structure kind — > 0 for every power store
+ *  (Battery, Battery Bank), 0 otherwise. The battery functions key on this,
+ *  never on a kind id, so each store charges up to its OWN capacity. */
+function powerStoreCap(kind: string): number {
+  return getStructureKind(kind).powerStorageCapacity ?? 0;
+}
+
 /**
  * Resolve a laser turret's CONTINUOUS-beam firing params (playtest 2026-06-10
  * Issue 5 — "defence structures fire in pulses instead of constantly, like the
@@ -545,38 +552,38 @@ export class StructureGridSubsystem {
    */
   private processBatteryPower(): void {
     this.batteryRescued.clear();
-    const capacity = getStructureKind('battery').powerStorageCapacity ?? 0;
-    if (capacity <= 0) return;
     this.grid.forEachComponent((members, netPower, hasCapital) => {
       // A capital-less island is unpowered (raw rule) — batteries inert there.
       if (!hasCapital) return;
       if (netPower > 0) {
-        const left = this.chargeComponentBatteries(members, capacity, netPower);
+        const left = this.chargeComponentBatteries(members, netPower);
         if (left > 0) this.hooks.chargeCapacitors?.(members, left);
       }
       else if (netPower < 0) this.dischargeComponentBatteries(members, -netPower);
     });
   }
 
-  /** Charge a component's not-yet-full batteries with `surplus`, split evenly.
+  /** Charge a component's not-yet-full power stores (every kind with a
+   *  `powerStorageCapacity`, each capped at its own) with `surplus`, split evenly.
    *  Returns the surplus the batteries could not take (v4 T1: it charges
    *  teleporter capacitors). */
   private chargeComponentBatteries(
     members: readonly string[],
-    capacity: number,
     surplus: number,
   ): number {
     let count = 0;
     for (const id of members) {
       const rec = this.hooks.registry.get(id);
-      if (rec && rec.kind === 'battery' && rec.storedPower < capacity) count++;
+      if (rec && rec.storedPower < powerStoreCap(rec.kind)) count++;
     }
     if (count === 0) return surplus;
     const share = surplus / count;
     let used = 0;
     for (const id of members) {
       const rec = this.hooks.registry.get(id);
-      if (!rec || rec.kind !== 'battery' || rec.storedPower >= capacity) continue;
+      if (!rec) continue;
+      const capacity = powerStoreCap(rec.kind);
+      if (rec.storedPower >= capacity) continue;
       const before = rec.storedPower;
       rec.storedPower = chargeStep(rec.storedPower, capacity, share).stored;
       used += rec.storedPower - before;
@@ -591,7 +598,7 @@ export class StructureGridSubsystem {
     let total = 0;
     for (const id of members) {
       const rec = this.hooks.registry.get(id);
-      if (rec && rec.kind === 'battery') total += rec.storedPower;
+      if (rec && powerStoreCap(rec.kind) > 0) total += rec.storedPower;
     }
     if (total < deficit) return; // can't sustain the load → brownout, hold charge
     for (const id of members) this.batteryRescued.add(id);
@@ -599,7 +606,7 @@ export class StructureGridSubsystem {
     for (const id of members) {
       if (remaining <= 0) break;
       const rec = this.hooks.registry.get(id);
-      if (!rec || rec.kind !== 'battery' || rec.storedPower <= 0) continue;
+      if (!rec || rec.storedPower <= 0 || powerStoreCap(rec.kind) <= 0) continue;
       const r = dischargeStep(rec.storedPower, remaining);
       rec.storedPower = r.stored;
       remaining -= r.supplied;
@@ -618,7 +625,7 @@ export class StructureGridSubsystem {
     let total = 0;
     for (const mid of this.grid.componentMembers(id)) {
       const rec = this.hooks.registry.get(mid);
-      if (rec && rec.kind === 'battery') total += rec.storedPower;
+      if (rec && powerStoreCap(rec.kind) > 0) total += rec.storedPower;
     }
     return total;
   }
@@ -630,7 +637,7 @@ export class StructureGridSubsystem {
     for (const mid of this.grid.componentMembers(id)) {
       if (remaining <= 0) break;
       const rec = this.hooks.registry.get(mid);
-      if (!rec || rec.kind !== 'battery' || rec.storedPower <= 0) continue;
+      if (!rec || rec.storedPower <= 0 || powerStoreCap(rec.kind) <= 0) continue;
       const r = drainPower(rec.storedPower, remaining);
       rec.storedPower = r.stored;
       remaining -= r.drained;
