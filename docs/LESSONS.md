@@ -3248,3 +3248,11 @@ tick follows the wall clock of `harness.advance`, so "pieces >= 1.5 radii apart 
 drew four new seeds each run; a rare 3-piece split (1.3-1.5 radii) failed it a few runs in ten. A
 test that asserts on a break-up's shape pins the seed (`setWreckSeed(fnvMixU32(fnv1a32(id), TICK))`)
 and sweeps seeds offline, never trusting the tick it happens to die on.
+
+## 2026-11-19 — a per-wait cap shorter than the shared join budget flakes on slow CI runners
+
+`join-art-ready.spec.ts` waited 30 s for its curtain to lift, though the reveal there holds every bake
+8 s (`?artDelayMs`) on top of the bakes, the main-thread SwiftShader frame and the arrival handshake,
+and every other join (`waitForInPlay`) gets 60 s. It failed only at that reveal wait, only on the
+slowest e2e-smoke (1) runners (5 of 26 jobs; one went 3 of 3). A spec that watches the join itself
+keeps the shared join budget plus its own deliberate hold, and logs which gate held on a timeout.
