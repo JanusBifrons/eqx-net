@@ -55,8 +55,7 @@ What Stages 1–3 built is the **foundation**, and it does not need building aga
 10. **Look at what you send.** Every still and clip is checked by eye first; a staged shot is labelled
     as staged.
 11. **One size source.** A type's size is its catalogue footprint, full stop. No per-scene or
-    per-structure size tables (the art lab's `OUTPOST_SIZES` goes in Phase 0c
-    land).
+    per-structure size tables (the art lab's `OUTPOST_SIZES` goes in Phase 0c).
 
 ## 3. Owner decisions (2026-11-19)
 
