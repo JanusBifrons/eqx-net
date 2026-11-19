@@ -13,12 +13,11 @@ import {
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
-import type { GridFlowMaterial } from '../../shared-types/messages.js';
 import { SESSION_REPLACED_CLOSE_CODE, type SessionReplacedMessage } from '../../shared-types/messages.js';
 import {
   unregisterPlayerSession,
 } from '../identity/PlayerSessionRegistry.js';
-import { isDirectorBotId, isHaulerId } from '../livingworld/directorBotIds.js';
+import { isHaulerId } from '../livingworld/directorBotIds.js';
 import { getTradeSink } from '../economy/tradeSink.js';
 import type { TradeNetworkSnapshot, TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import type { TradeNotice } from '../../shared-types/economy.js';
@@ -27,7 +26,7 @@ import { MineFieldSubsystem, type MineTarget } from '../structures/MineFieldSubs
 import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { StructuresSliceSync } from './structuresSlice.js';
-import { seedStructureScenario, structureRowsForTests, type StructureRowView, type StructureScenarioHost } from './scenarioLayouts.js';
+import { seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -50,9 +49,9 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
-import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut, IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
+import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
-import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js';
+import { isFriendly } from '../../shared-types/allegiances.js';
 import { effectiveShipMaxHealth, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
@@ -131,7 +130,6 @@ import {
   type FactionPolicy,
 } from '../../shared-types/factions.js';
 import type { FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
-import { encodeStructureMountAngles } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
  *  once so turret and missile queries never build strings. */
@@ -150,7 +148,6 @@ import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateSites } from '../../core/galaxy/alienGates.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
-import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
@@ -187,7 +184,7 @@ import { cutFieldOpts, type ChunkSource } from '../../core/terrain/chunkStreamer
 import { rockFieldBlocker, wreckField } from '../../core/terrain/wreckFieldLayout.js';
 import { WreckFieldSource, type WreckFieldRoomOpts } from './WreckFieldSource.js';
 import { RoomNav } from '../nav/RoomNav.js';
-import type { IAiNavRoutes } from '../../core/contracts/IAiBehaviour.js';
+import type { SectorRoomInternals } from './sectorRoomInternals.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import type { SceneScriptRunner, SceneStatus } from './scene/SceneScriptRunner.js';
@@ -262,10 +259,7 @@ import { WarpTravelTracker } from './warpTravel.js';
 import { getUser } from '../auth/AuthService.js';
 import { recordKill, saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
-import type {
-  SectorSnapshotScrap,
-  SectorSnapshotLingeringHull,
-} from './SectorSnapshot.js';
+import type { SectorSnapshotScrap } from './SectorSnapshot.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { SectorSnapshotRestore } from './SectorSnapshotRestore.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard, terrainRecordStoreFor } from '../db/PersistenceWorker.js';
@@ -330,7 +324,7 @@ import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { LofShipBody, type LofBody } from './lofShipBody.js';
-import { isTerrainLockKind, type LockEntry } from '../../core/combat/lockState.js';
+import { isTerrainLockKind } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
 import type { GameClock } from '../../core/clock/GameClock.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/physics/catchUp.js';
@@ -783,16 +777,18 @@ export class SectorRoom extends Room<SectorState> {
   /** A2 — the snapshot's slim cosmetic slice (turret / mining targets only);
    *  structure grid state itself lives in `state.structures`. */
   private structuresSlice: number[] | undefined = undefined;
-  /** Coastal defences — the defence turrets' angles, rebuilt each turret tick
-   *  into one reused array (#14); undefined while every turret rests. */
-  private readonly structureMountAnglesBuf: number[] = [];
-  private structureMountAnglesSlice: SnapshotMessage['structureMountAngles'] = undefined;
-  /** A2 — the `state.structures` sync + stale-row sweep (`structuresSlice.ts`), built once. */
+  /** A2 — the `state.structures` sync + stale-row sweep, plus the grid pulse and
+   *  turret tick cadences (`structuresSlice.ts`), built once. */
   private readonly structuresSliceSync = new StructuresSliceSync({
     state: () => this.state as SectorState, gameClock: this.gameClock, structureRegistry: this.structureRegistry,
     swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, breakIns: this.breakIns,
     structureGrid: () => this.structureGrid, shieldWalls: () => this.shieldWalls, gates: () => this.gates,
     teleporters: () => this.teleporters, internStructureOwner: (o) => this.internStructureOwner(o),
+    hostileActs: () => this.hostileActs, patrols: this.patrols, gateGuard: this.gateGuard, production: () => this.production,
+    researchLabs: () => this.researchLabs, storage: () => this.storage, mineField: () => this.mineField,
+    turretTargeting: () => this.turretTargeting, relationCtx: () => this.relationCtx,
+    testTeleportFullCharge: () => this.testTeleportFullCharge, rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
+    broadcastGridPulse: (msg) => { this.broadcast('grid_pulse', msg); },
   });
   /** B2 (plan soft-leaping-truffle v3) — hostile acts against owners in this
    *  room (attacking an NPC base's structure), read by `relationOf`. */
@@ -1086,6 +1082,12 @@ export class SectorRoom extends Room<SectorState> {
    *  runs in ~2 s instead of 15 min. Cleared on leave. */
   private readonly playerToLingerMs = new Map<string, number>();
 
+  /** A fence stopped a shot: tell clients where, so they draw the impact
+   *  (fence-hit fix). The point comes from the wall test just made. */
+  private broadcastWallHit(kind: 'bolt' | 'missile'): void {
+    this.broadcast('wall_hit', { type: 'wall_hit', x: this.shieldWalls.lastHitX, y: this.shieldWalls.lastHitY, kind });
+  }
+
   /**
    * Test-only piercing surface (see src/server/CLAUDE.md "Testing
    * patterns"). Exposes private collaborators that integration tests
@@ -1094,158 +1096,7 @@ export class SectorRoom extends Room<SectorState> {
    * dropped it (it was still referenced by 4 integration files, leaving
    * them RED). Each access reads through to the live field/method.
    */
-  /** A fence stopped a shot: tell clients where, so they draw the impact
-   *  (fence-hit fix). The point comes from the wall test just made. */
-  private broadcastWallHit(kind: 'bolt' | 'missile'): void {
-    this.broadcast('wall_hit', { type: 'wall_hit', x: this.shieldWalls.lastHitX, y: this.shieldWalls.lastHitY, kind });
-  }
-
-  get _internals(): {
-    cutField: CutFieldSubsystem['streamer'] | undefined; cutFieldSub: CutFieldSubsystem | undefined; wreckFieldSource: WreckFieldSource | undefined; serverTick: number;
-    /** Room update() calls so far (the AI-pilot cadence; serverTick is the
-     *  physics worker's step count and can drift a step or two from it). */
-    roomUpdates: number;
-    /** Ticks the physics worker's catch-up cap dropped (a starved host). */
-    droppedTicks: number;
-    /** The shield-wall beam block the player/AI fire resolvers call. */
-    blockShotAtWall: (fx: number, fy: number, dx: number, dy: number, maxDist: number, damage: number) => number | null;
-    /** PR 3a — which playerId each connected session was bound to (the
-     *  account-bound identity integration test asserts on it). */
-    sessionToPlayer: ReadonlyMap<string, string>;
-    ownerlessShips: Map<string, ReturnType<typeof setTimeout> | null>;
-    /** Lingering-hull slot map (shipInstanceId → slot). Lets the resume-as-
-     *  existing-ship integration test assert a lingering hull was evicted
-     *  before the fresh-spawn restore (playtest 2026-06-10 Issue 6). */
-    lingeringSlots: Map<string, number>; forceFields: ForceFieldSubsystem;
-    /** Phase 5 (persistence v5) — drive the lingering-hull boot reconstruction
-     *  directly (no DB cycle) for the round-trip integration test. */
-    restoreLingeringHulls: (rows: readonly SectorSnapshotLingeringHull[]) => void;
-    /** RTS — the owned ships' orders on lingering hulls. Tests issue orders
-     *  through its owner-checked API (`applyOrder(ownerId, [shipId], order)`). */
-    fleet: FleetCommandSubsystem;
-    /** Navigation — the AI brains' routes round rock (null ⇒ turn them off, a test's baseline). */
-    aiNav: { get: () => IAiNavRoutes | undefined; set: (nav: IAiNavRoutes | undefined) => void };
-    /** RTS Part B — the AI pilot brain registered for an id (an owned hull's
-     *  shipInstanceId or a swarm id), or null. */
-    aiBrainOf: (id: string) => IAiBehaviour | null;
-    /** Parked hulls' live poses (shipInstanceId → pose), refreshed each tick. */
-    lingeringPoseCache: ReadonlyMap<string, ShipPhysicsState>;
-    /** RTS slice 7 — send the owner-only `fleet_status` to every client now
-     *  (tests; the timer sends it every other selection-stats fire). */
-    sendFleetStatus: () => void;
-    aiPlayerScratch: AiPlayerView[];
-    postToWorker: (cmd: WorkerCmd) => void;
-    /** Fire control test hook: make `targetKey` (`s:<entityId>` | `p:<playerId>`)
-     *  a completed lock of `groupId` (every group when absent) for `playerId`,
-     *  so a test that isn't about locking can fire (lock-to-fire is universal).
-     *  Returns how many groups took it. */
-    forceLock: (playerId: string, targetKey: string, groupId?: string) => number;
-    /** The weapon-group lock slice of a ship (a pilot by playerId, an AI-flown hull by shipInstanceId). */
-    locksOf: (id: string) => ReadonlyArray<{ id: string; l: ReadonlyArray<{ t: string; s: number }> }> | undefined;
-    /** The room damage choke point; true iff this call destroyed the target. */
-    applyDamage: (
-      targetId: string,
-      shooterId: string,
-      damage: number,
-      hitX?: number,
-      hitY?: number,
-      dirX?: number,
-      dirY?: number,
-      weaponId?: WeaponId,
-    ) => boolean;
-    /** GEP P4 — lets the structureEntity integration test find a kind=2 record
-     *  and assert it is damageable (seeded into swarmHealth). */
-    swarmRegistry: {
-      all(): Iterable<{ id: string; kind: number; entityId: number; shipKind?: string }>;
-      get(id: string): { id: string; kind: number; entityId: number; shipKind?: string } | null | undefined;
-    };
-    swarmHealth: Map<string, number>;
-    /** Structures plan, Phase 2 — lets the placement integration test assert
-     *  the blueprint vs pre-built record state from the player-driven path. */
-    structureRegistry: StructureRegistry;
-    /** Structures plan, Phase 3 — drive the grid pulse deterministically (no
-     *  wall-clock wait) + read the cached snapshot slice. */
-    pulseStructureGrid: () => void;
-    /** Test view: the pre-A2 per-structure row shape, rebuilt from room state
-     *  + the targets slice (structure state no longer rides the snapshot). */
-    getStructuresSlice: () => StructureRowView[] | undefined;
-    /** Phase 4 WS-B4 — drive a structure UPGRADE build phase directly (no
-     *  message round-trip) for the leveling integration test. Returns whether
-     *  the upgrade started (the subsystem's owner-agnostic gate). */
-    upgradeStructure: (id: string) => boolean;
-    /** Phase 5 — drive a MANUAL reconnect (the player's structure-action) so the
-     *  integration test can prove an orphaned leaf heals only on an explicit
-     *  reconnect, not via the auto-sweep. Returns the subsystem's gate result. */
-    reconnectStructure: (id: string) => boolean;
-    /** Phase 4 — seed a mineable asteroid for the mining integration test. */
-    spawnTestAsteroid: (id: string, x: number, y: number, radius: number, resource?: AsteroidResourceId) => boolean;
-    /** Phase 5 — seed a drone + drive the turret tick for the turret test.
-     *  `kind` (default 'fighter') lets a test seed a COMPOSITE-kind drone (e.g.
-     *  'havok') to exercise scrap-on-death (Phase 2b-ii). */
-    spawnTestDrone: (id: string, x: number, y: number, kind?: ShipKindId) => boolean;
-    tickStructureTurrets: () => void;
-    /** Mount `i`'s lock on structure `id` (for `lockTimeCapS` tests). */
-    structureTurretLock: (id: string, i: number) => Readonly<LockEntry> | undefined;
-    /** Fence-hit fix: spawn a bolt (integration tests aim it at a fence).
-     *  `weaponId` (default 'laser') lets a test fire a real naval shell. */
-    spawnTestProjectile: (ownerId: string, x: number, y: number, vx: number, vy: number, weaponId?: WeaponId, damage?: number) => void;
-    /** Friendly fire — drive one AI fire (the real `handleAiFire` path). */
-    aiFire: (shooterId: string, dirX: number, dirY: number, targetId: string) => void;
-    /** NPC line of fire: running counts (checks, broadphase candidates, narrow tests). */
-    lineOfFireCounts: () => { checks: number; candidates: number; narrow: number };
-    /** NPC line of fire on/off (the slice-1 friendly fire tests turn it off). */
-    setNpcLineOfFire: (on: boolean) => void;
-    /** AI steering 2c: hand brains the neighbour grid (default on). */
-    setAiNeighbours: (on: boolean) => void;
-    /** Off ⇒ brains get no `view.debris` (no wreck-piece avoidance): A/B control. */
-    setAiWreckAvoid: (on: boolean) => void;
-    /** Does NPC `id`'s brain treat `otherId` as hostile (stance or ledger)? */
-    npcHostileTo: (id: string, otherId: string) => boolean;
-    /** Mine Layers' live mines (integration tests). */
-    mineField: MineFieldSubsystem;
-    /** A0 scale measurement — rebuild the structures snapshot slice directly. */
-    rebuildStructuresSlice: () => void;
-    /** The authoritative SAB pose of a swarm entity (null ⇒ unknown id). */
-    swarmPose: (id: string) => { x: number; y: number; angle: number } | null;
-    /** v4 T2 — an active player's SAB pose and teleport epoch. */
-    playerPose: (playerId: string) => { x: number; y: number; angle: number; poseEpoch: number } | null;
-    /** Gates: open bits for a gate structure id. */
-    gateMask: (id: string) => number;
-    /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
-     *  shield/hull (generic optional shield) from the STRUCTURE catalogue, not
-     *  the fighter fallback. Returns the layered-damage result (reported
-     *  shieldMax/hullMax drive the client stats %). */
-    damageSwarmLayered: (
-      rec: { id: string; entityId: number; kind?: number; shipKind?: ShipKindId | null; shieldDown?: boolean },
-      damage: number,
-    ) => { newShield: number; shieldMax: number; hullMax: number; hitLayer: 'shield' | 'hull' } | null;
-    /** Living World P1a — the loot subsystem (seed pods, read holds, drive pickup). */
-    loot: LootSubsystem;
-    /** S2a — a swarm entity's full SAB state (pose, velocity, spin). */
-    wreckState: (id: string) => { x: number; y: number; vx: number; vy: number; angle: number; angvel: number } | null;
-    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none); its whole-piece salvage (0: none); its mass (undefined: not a live piece); rock cut's per-hit rock view (one reused object) or null. */
-    wreckIntegrity: (id: string) => number | undefined; wreckSalvage: (id: string) => number; wreckMass: (id: string) => number | undefined; rockOf: (id: string) => ReturnType<typeof rockViewOf>;
-    /** S2a — a wreck piece's convex parts (body-local), or null. */
-    wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
-    /** S2a — fix the fracture seed (null = per death). */
-    setWreckSeed: (seed: number | null) => void;
-    /** Sub-cap break-up slice 2 — the worker's FLAG_SLEEPING for a swarm
-     *  entity (its body has slept SLEEP_HYSTERESIS_TICKS in Rapier), or null. */
-    swarmSleeping: (id: string) => boolean | null;
-    /** Sub-cap break-up slice 2 — live wreck piece counts (capital FIFO +
-     *  sub-cap FIFO) and a smaller sub-cap cap for the eviction test. */
-    wreckCounts: () => { total: number; subcap: number };
-    setSubcapWreckCap: (cap: number | null) => void;
-    /** S2b — the live wreck descriptors (the snapshot's `wrecks[]`). */
-    wreckDescriptors: () => readonly import('../../shared-types/messages.js').WreckDescriptor[];
-    /** Wreck fields 0a2c — write the battle-wreck lineage rows now. */
-    flushWreckSaves: (all: boolean) => void;
-    /** Slice 3 — remove a swarm entity the normal way (a wreck piece reaches
-     *  `pieceGone`, so its wreck's descriptor retires once all are gone). */
-    evictSwarm: (id: string) => void;
-    /** The first non-player thing a ray meets (NPC / turret beam path). */
-    rayHit: (fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string) => { id: string; dist: number } | null;
-  } {
+  get _internals(): SectorRoomInternals {
     return {
       loot: this.loot,
       cutField: this.cutField?.streamer, cutFieldSub: this.cutField, wreckFieldSource: this.wreckFieldSource,
@@ -2204,7 +2055,7 @@ export class SectorRoom extends Room<SectorState> {
       // Structures plan, Phase 3 — the cached slice (rebuilt at the 1 Hz grid
       // pulse / on placement), attached by reference to every recipient.
       getStructuresSlice: () => this.forceFields.beamLinks(this.structuresSlice),
-      getStructureMountAngles: () => this.structureMountAnglesSlice,
+      getStructureMountAngles: () => this.structuresSliceSync.structureMountAnglesSlice,
       // Capital destruction S2b: the wreck descriptors (null when off).
       getWrecks: () => this.capitalWrecks?.descriptors() ?? null,
       wrecksVersion: () => this.capitalWrecks?.version ?? 0,
@@ -2648,7 +2499,7 @@ export class SectorRoom extends Room<SectorState> {
       spawnProjectile: (shooterId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(shooterId, x, y, vx, vy, dmg, r, mt, wId),
       // WS-8 (R2.15) — a Missile Turret launches a homing missile (ownerId = the
-      // turret's pstruct- id, which isMissileTargetHostile restricts to drones).
+      // turret's pstruct- id, which turretTargeting.isMissileTargetHostile restricts to drones).
       spawnMissile: (shooterId, x, y, dx, dy, def) =>
         this.spawnServerMissile(shooterId, x, y, dx, dy, def),
       // Reconnect sweep honours current asteroid LOS (Issue 2), unloaded rocks in `near` too (C5g).
@@ -3695,64 +3546,10 @@ export class SectorRoom extends Room<SectorState> {
     }
   };
 
-  /** Allegiances P0 — pooled per-tick swarm-combatant views (never reallocated
-   *  once grown, #14). Targeting only. */
-  private readonly _swarmViewPool: Array<{
-    id: string; x: number; y: number; vx: number; vy: number;
-    allegiance: string; health?: number; maxHealth?: number; radius: number;
-    kindId: string | null; angle: number; shieldUp: boolean;
-  }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
 
   /** The AI tick's neighbour + debris grids, one registry walk per tick (`AiNeighbourFill`). */
-  private readonly aiGrids = new AiNeighbourFill(this.swarmRegistry, () => this.sabF32);
-
-  /**
-   * Allegiances P0 — rebuild this tick's swarm-combatant set (kind-1 entities),
-   * ONCE per tick (#14). Only populated when ≥ 2 allegiances are present in the
-   * sector: a drones-only sector leaves `out` empty, so the AI view's `swarms`
-   * is absent and the brain takes its pre-P0 fast path (byte-identical, zero
-   * per-drone cost). Targeting only: the beam hits whatever it meets.
-   */
-  private fillSwarmTargets(out: AiSwarmView[]): void {
-    out.length = 0;
-    let first: string | null = null;
-    let mixed = false;
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== SWARM_KIND_DRONE) continue;
-      const a = allegianceOfKind(rec.shipKind);
-      if (first === null) first = a;
-      else if (a !== first) { mixed = true; break; }
-    }
-    // AI-flown owned hulls (players side) fight swarm ships too: fill whenever
-    // one exists, even in a single-allegiance sector (RTS Part B).
-    if (!mixed && this.fleet.size === 0) return;
-    const pool = this._swarmViewPool;
-    let n = 0;
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== SWARM_KIND_DRONE) continue;
-      const b = slotBase(rec.slot);
-      let v = pool[n];
-      if (!v) {
-        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, allegiance: 'drones', radius: 0, kindId: null, angle: 0, shieldUp: false };
-        pool[n] = v;
-      }
-      v.id = rec.id;
-      v.x = this.sabF32[b + SLOT_X_OFF]!;
-      v.y = this.sabF32[b + SLOT_Y_OFF]!;
-      v.vx = this.sabF32[b + SLOT_VX_OFF]!;
-      v.vy = this.sabF32[b + SLOT_VY_OFF]!;
-      v.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
-      v.allegiance = allegianceOfKind(rec.shipKind);
-      v.health = this.swarmHealth.get(rec.id);
-      v.maxHealth = getShipKind(rec.shipKind).maxHealth;
-      v.radius = rec.radius;
-      v.kindId = rec.shipKind ?? null;
-      v.shieldUp = !rec.shieldDown;
-      out.push(v);
-      n++;
-    }
-  }
+  private readonly aiGrids = new AiNeighbourFill(this.swarmRegistry, () => this.sabF32, { fleetSize: () => this.fleet.size, swarmHealth: () => this.swarmHealth });
 
   /**
    * AI fire path. Mirrors the player hitscan logic but skips the message
@@ -3782,65 +3579,6 @@ export class SectorRoom extends Room<SectorState> {
     this.projectiles.spawn(ownerId, x, y, vx, vy, damage, radius, maxTicks, weaponId);
   }
 
-  /** Hostility predicate the missile lock-on uses.
-   *
-   *  Player-fired missiles target any non-owner entity. Asteroid
-   *  exclusion is handled at the candidate-build site in
-   *  `MissileSimulation.lockOnTarget` (filtered by `rec.kind === 0`)
-   *  rather than here, because galaxy asteroids spawn with bare
-   *  `asteroid-N` ids — NO `swarm-` prefix — and string-prefix
-   *  filtering misses them. Kind is the source of truth.
-   *
-   *  AI-fired missiles defer to the `aiController`'s hostility ledger
-   *  (the existing `markHostile` / `bot_aggro` channel) — drones and
-   *  bots only fire at players they've already been antagonised by.
-   */
-  private isMissileTargetHostile(ownerId: string): (targetId: string) => boolean {
-    // WS-8 (R2.15) — a STRUCTURE-fired (`pstruct-`) missile is a DEFENCE weapon:
-    // it locks onto HOSTILE DRONES ONLY (swarm kind 1), matching the beam/bolt
-    // turret's `findNearestDrone`. Without this branch a `pstruct-` owner falls
-    // through to the player-shooter case below and would target other players +
-    // friendly structures (the candidate set includes kind 1 AND kind 2). Kind
-    // is the source of truth (lwbot drones are kind 1 too, swarm-/lwbot-prefixed).
-    if (ownerId.startsWith('pstruct-')) {
-      // B2 — an NPC-owned turret's missile homes on what is hostile to its owner
-      // (the same rule as its targeting); a player turret's stays drones-only.
-      const structOwner = this.structureRegistry.get(ownerId)?.owner ?? '';
-      if (isNpcOwner(structOwner)) {
-        return (id) => {
-          const rec = this.swarmRegistry.get(id);
-          let party: string | null = null;
-          if (rec != null) {
-            if (rec.kind === 1) party = NPC_SIDE_PARTY[allegianceOfKind(rec.shipKind)];
-          } else if (this.getActiveShip(id)?.isActive === true) {
-            party = id;
-          }
-          return party !== null && relationOf(party, structOwner, this.relationCtx) === 'hostile';
-        };
-      }
-      return (id) => {
-        const rec = this.swarmRegistry.get(id);
-        return rec != null && rec.kind === 1 && this._isTurretTargetable(rec);
-      };
-    }
-    // Allegiances P0 — classify the shooter by the REGISTRY (a live kind-1
-    // swarm entity is an AI shooter whatever its id prefix), not by prefix.
-    const ownerRec = this.swarmRegistry.get(ownerId);
-    const isAiShooter = (ownerRec != null && ownerRec.kind === 1)
-      || ownerId.startsWith('swarm-') || isDirectorBotId(ownerId);
-    if (!isAiShooter) {
-      return (id) => id !== ownerId;
-    }
-    const ownerAllegiance = allegianceOfKind(ownerRec?.shipKind);
-    return (id) => {
-      if (this.npcHostileTo(ownerId, id)) return true;
-      // Cross-allegiance swarm targets (drones ↔ robots ↔ traders) by stance.
-      const rec = this.swarmRegistry.get(id);
-      if (rec == null || rec.kind !== 1 || id === ownerId) return false;
-      return isOnSightHostile(ownerAllegiance, allegianceOfKind(rec.shipKind));
-    };
-  }
-
   private spawnServerMissile(
     ownerId: string,
     spawnX: number,
@@ -3851,7 +3589,7 @@ export class SectorRoom extends Room<SectorState> {
   ): number | null {
     return this.missileSim.spawn(
       ownerId, spawnX, spawnY, dirX, dirY, def,
-      this.isMissileTargetHostile(ownerId),
+      this.turretTargeting.isMissileTargetHostile(ownerId),
     );
   }
 
@@ -4283,45 +4021,8 @@ export class SectorRoom extends Room<SectorState> {
     this.swarmEvictor.evict(rec, opts);
   }
 
-  // ── Structure grid pulse (structures plan, Phase 3) ──────────────────────
-
-  /** One 1 Hz grid heartbeat: pulse the logistics web, refresh the snapshot
-   *  slice, and broadcast the discrete `grid_pulse` flash event. No-op (and no
-   *  broadcast) when the sector has no structures. */
-  private structureGridTick(): void {
-    this.hostileActs.sweep(this.gameClock.now());
-    if (this.patrols.count > 0) this.patrols.tick(this.gameClock.now());
-    this.gateGuard.sweep(this.gameClock.now());
-    if (this.structureRegistry.size === 0) return;
-    const result = this.structureGrid.pulse(this.gameClock.now());
-    // P2b — processors take inputs from and put outputs into network storage.
-    this.production.pulse();
-    // v4 T1 — teleporter pads unload arrivals and top up "keep loaded".
-    this.teleporters.pulse();
-    // Economy v2 W3 — powered Research Labs advance their jobs.
-    this.researchLabs.pulse();
-    // Living World P1a-2 — persist storage payloads the pulse just changed
-    // (mining / hauling / construction flows mutate the bank directly).
-    this.storage.flushDirty();
-    // Form/teardown pylon-pair walls + refresh their active state on the fresh
-    // topology BEFORE the slice rebuild so `shieldWallTo`/`wallActive` are current.
-    this.shieldWalls.update(this.gameClock.now());
-    this.rebuildStructuresSlice();
-    if (result.flashed.length > 0) {
-      // Map the registry's string-id pairs to dense entityIds for the wire,
-      // carrying each edge's flow MATERIAL (WS-D #12) so the client tints
-      // per-edge (repair/minerals/construction can co-occur in one pulse).
-      const flashed: Array<[number, number, GridFlowMaterial]> = [];
-      for (const [a, b, material] of result.flashed) {
-        const ea = this.swarmRegistry.get(a)?.entityId;
-        const eb = this.swarmRegistry.get(b)?.entityId;
-        if (ea !== undefined && eb !== undefined) flashed.push([ea, eb, material]);
-      }
-      if (flashed.length > 0) {
-        this.broadcast('grid_pulse', { type: 'grid_pulse', flashed, material: result.material });
-      }
-    }
-  }
+  /** The 1 Hz grid pulse (body: `StructuresSliceSync.gridTick`, `structuresSlice.ts`). */
+  private structureGridTick(): void { this.structuresSliceSync.gridTick(); }
 
   /** Structures plan (Phase 3-5) — seed a testMode scenario: PRE-BUILT,
    *  auto-connected structures (owner `scenario`) + parked drones + asteroids.
@@ -4465,63 +4166,8 @@ export class SectorRoom extends Room<SectorState> {
     logger.info({ requested: count, parent: PARENT, groups }, 'scenario scrap seeded');
   }
 
-  /** Coastal defences — pack every defence turret that is off its rest
-   *  bearing into the snapshot's `structureMountAngles` (the server's slewed
-   *  angles, the only writer, #12). One reused array (#14). */
-  private rebuildStructureMountAngles(): void {
-    const buf = this.structureMountAnglesBuf;
-    let n = 0;
-    for (const rec of this.structureRegistry.all()) {
-      const angles = this.structureGrid.mountAnglesOf(rec.id);
-      if (angles === undefined) continue;
-      const entityId = this.swarmRegistry.get(rec.id)?.entityId;
-      if (entityId === undefined) continue;
-      n = encodeStructureMountAngles(buf, n, entityId, angles);
-    }
-    buf.length = n;
-    this.structureMountAnglesSlice = n > 0 ? buf : undefined;
-  }
-
-  /** Phase 5 — turret aim/fire tick (faster cadence than the grid pulse).
-   *  No-op when the sector has no structures. */
-  private structureTurretTick(): void {
-    // C2/C3 — break-ins tick even in a sector with no structures (ship targets).
-    this.breakIns.tick();
-    if (this.structureRegistry.size === 0) {
-      // Mines whose layer is gone still have to leave.
-      if (this.mineField.mines.size > 0) this.mineField.tick(this.gameClock.now());
-      return;
-    }
-    const nowMs = this.gameClock.now();
-    // A1 — the turret target grid is rebuilt (lazily, on the first query) once
-    // per turret tick, instead of every turret scanning every swarm entity.
-    this.turretTargeting.turretTargetGridFresh = false;
-    this.turretTargeting.npcTargetGridFresh = false;
-    this.relationCtx.nowMs = nowMs;
-    this.structureGrid.tickTurrets(nowMs);
-    this.rebuildStructureMountAngles();
-    // Mine Layers lay and mines go off (same target grids as the turrets).
-    this.mineField.tick(nowMs);
-    // v4 T1 — teleporter rules and jump cycles.
-    if (this.testTeleportFullCharge) {
-      for (const r of this.structureRegistry.all()) {
-        if (isTeleporterKind(r.kind) && r.tpPartner !== undefined) r.tpCharge = Math.max(r.tpCharge ?? 0, this.teleporters.required(r));
-      }
-    }
-    this.teleporters.update(nowMs);
-    // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
-    // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
-    this.structureGrid.tickMiners(nowMs);
-    // Gates open/close on approach at this cadence; the wall refresh below
-    // then drops (or restores) each span's collider.
-    this.gates.update(nowMs);
-    // Refresh wall active states at the turret cadence so a stun lifts (and a
-    // power-loss drop registers) within ~100 ms, not a full grid pulse later.
-    this.shieldWalls.update(this.gameClock.now());
-    // Refresh the slice so the client's turret aim line tracks at the turret
-    // cadence (not just the 1 Hz pulse). Cheap — few structures, off the tick.
-    this.rebuildStructuresSlice();
-  }
+  /** Phase 5 — the turret aim/fire tick (body: `StructuresSliceSync.turretTick`, `structuresSlice.ts`). */
+  private structureTurretTick(): void { this.structuresSliceSync.turretTick(); }
 
   /** Gates: every ACTIVE player ship (#17 — lingering hulls are parked and
    *  never open gates), into the controller's reused buffer. */
@@ -4612,6 +4258,7 @@ export class SectorRoom extends Room<SectorState> {
     getActiveShip: (pid) => this.getActiveShip(pid), shipPoseCache: this.shipPoseCache, spectateParkedHull: this.spectateParkedHull,
     engageablePilotHull: (pid) => this.pilotSwap.engageablePilotHull(pid), visitParkedPilotHulls: (visit) => this.pilotSwap.visitParkedPilotHulls(visit),
     relationCtx: this.relationCtx, hostileActs: this.hostileActs, isTurretTargetable: this._isTurretTargetable,
+    structureRegistry: this.structureRegistry, npcHostileTo: (e, p) => this.npcHostileTo(e, p),
     writeSwarmRangeShape: (v, rec) => this.writeSwarmRangeShape(v, rec), npcSideParty: NPC_SIDE_PARTY,
     policyOf: ROOM_POLICY, gridBounds: DRONE_MAX_BOUNDS,
   });
@@ -6598,7 +6245,7 @@ export class SectorRoom extends Room<SectorState> {
       aiStructureScratch: this.aiStructureScratch,
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
-      fillSwarmTargets: (out) => this.fillSwarmTargets(out),
+      fillSwarmTargets: this.aiGrids.fillSwarmTargets,
       aiNeighbourGrid: this.aiGrids.neighbours(),
       visitAiNeighbourDrones: this.aiGrids.visit,
       aiWreckGrid: this.aiGrids.wrecks(),
