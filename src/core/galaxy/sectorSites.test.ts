@@ -285,12 +285,12 @@ describe('sectorWreckField (wreck fields F3, slice 8)', () => {
       }
       console.log(`[wreck fields] ${s.key}${cut ? ' (+rocks)' : ''}: ${field.hulls.length} hulls (cap ${byClass.cap} sub ${byClass.sub} ftr ${byClass.ftr}) ${JSON.stringify(kinds)}, ${field.dropped} dropped, ${total} pieces, sides ${f.sides.join(' vs ')} | ${screenLine(field, p, WRECK_FIELD.coreRadius)} | worst ring ${ring.pieces} pieces (${ring.hulls} hulls) | arrival (default view, ${arr.samples} spots): hulls mean ${arr.hullsMean.toFixed(1)} fewest ${arr.hullsFewest}, empty ${arr.empty}, fewest sides ${arr.sidesFewest}/4, drop blocked ${arr.dropBlocked} | destroyer: moved up to ${Math.round(capMoved)} u, stuck ${capStuck}`);
       // Wreck fields 14 ("arrive among wrecks"): every drop lands clear, with
-      // wrecks on at least three sides of a default phone screen (measured:
-      // 7.8-8.4 hulls mean, 4-6 fewest, 3-4 sides fewest).
+      // wrecks on all four sides of a default phone screen (wreck fields 16,
+      // owner: Ashfront's were all to one side; measured after: every spot 4/4).
       expect(arr.dropBlocked, `${s.key}: a drop inside a footprint`).toBe(0);
       expect(arr.empty, `${s.key}: drops with no wreck in view`).toBe(0);
       expect(arr.hullsFewest, `${s.key}: fewest hulls in view`).toBeGreaterThanOrEqual(3);
-      expect(arr.sidesFewest, `${s.key}: fewest sides with wrecks`).toBeGreaterThanOrEqual(3);
+      expect(arr.sidesFewest, `${s.key}: fewest sides with wrecks`).toBe(4);
       expect(capStuck, `${s.key}: a destroyer found no clear landing`).toBe(0);
       // The open centre stays clear of every footprint.
       for (const h of field.hulls) expect(Math.hypot(h.x - f.x, h.y - f.y) - h.footprint).toBeGreaterThanOrEqual(centre.r * BATTLE_POCKET_OPEN_CENTRE);

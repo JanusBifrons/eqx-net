@@ -27,7 +27,7 @@ import { fieldRocksInBox } from './chunkStreamer.js';
 
 /** Bump on ANY change to the hulls a seed gives: saved field-hull records are
  *  keyed by it (`layout_version`), and a mismatch discards them. */
-export const WRECK_FIELD_VERSION = 4;
+export const WRECK_FIELD_VERSION = 5;
 
 /** The layout's knobs (owner Q1: a few mid-size fields plus a couple of
  *  debris trails). Counts are tuned against owner stills: 2026-11-18 the
@@ -84,7 +84,9 @@ export const WRECK_FIELD = {
   /** Hulls seated round each arrival spot (`WreckFieldOpts.arrivals`,
    *  wreck fields 14, owner "arrive among wrecks"): sub-caps and fighters
    *  taken from the core's share, spread round the spot so a warp drop there
-   *  sees wrecks on every side. */
+   *  sees wrecks on every side: the k-th sits on the view's side k mod 4
+   *  (right, top, left, bottom; wreck fields 16, owner: Ashfront's were all
+   *  to one side), so the extra two go to the long sides. */
   arrivalHulls: 6,
   /** Half extents (u) of the box round an arrival spot its hulls sit in:
    *  inside a sideways phone's default view (2,600 x 1,160 u), less a
@@ -250,13 +252,20 @@ export function wreckField(o: WreckFieldOpts): WreckField {
     if (isSmallCore(h) && small++ % stride === 0) seat.set(h, { spot: seat.size % arrivals.length, k: Math.floor(seat.size / arrivals.length) });
   }
   const placed: Array<{ x: number; y: number; r: number }> = [];
-  const free = (x: number, y: number, r: number): boolean => {
+  // Capitals (placed first) keep their footprint out of each arrival spot's
+  // box (wreck fields 16: a battleship's filled one side of Ashfront's), so
+  // the seated hulls fit on every side.
+  const free = (x: number, y: number, r: number, capital = false): boolean => {
     for (const p of placed) {
       const dx = p.x - x, dy = p.y - y, m = p.r + r + W.gap;
       if (dx * dx + dy * dy < m * m) return false;
     }
     for (const k of clearings) {
       const dx = k.x - x, dy = k.y - y, m = k.r + r;
+      if (dx * dx + dy * dy < m * m) return false;
+    }
+    if (capital) for (const k of arrivals) {
+      const dx = k.x - x, dy = k.y - y, m = W.arrivalHalfW + r;
       if (dx * dx + dy * dy < m * m) return false;
     }
     return !o.blocked || !o.blocked(x, y, r);
@@ -273,10 +282,11 @@ export function wreckField(o: WreckFieldOpts): WreckField {
     for (let a = 0; a < W.attempts && !spot; a++) {
       let x: number, y: number;
       if (seatAt !== undefined && a < W.attempts / 2) {
-        // Seated round an arrival spot: its own slice of the turn (the
-        // spot's hulls spread round it), out toward the box's edge.
+        // Seated round an arrival spot on its own side of the view (right,
+        // top, left, bottom: the quarters the view's diagonals cut), out
+        // toward the box's edge.
         const s = arrivals[seatAt.spot]!;
-        const turn = ((seatAt.k + unit(place)) / W.arrivalHulls) * 2 * Math.PI, t = 0.4 + 0.6 * unit(place);
+        const turn = ((seatAt.k % 4) + 0.8 * (unit(place) - 0.5)) * (Math.PI / 2), t = 0.4 + 0.6 * unit(place);
         x = s.x + Math.cos(turn) * W.arrivalHalfW * t; y = s.y + Math.sin(turn) * W.arrivalHalfH * t;
       } else if (core || trails.length === 0) {
         // Uniform over the core disc. A capital's centre may lie up to
@@ -294,7 +304,7 @@ export function wreckField(o: WreckFieldOpts): WreckField {
         const side = (unit(place) * 2 - 1) * W.trailHalfWidth * (1 - (1 - W.trailTaper) * t) + tr.bend * t * t * tr.length;
         x = o.x + tr.dx * along - tr.dy * side; y = o.y + tr.dy * along + tr.dx * side;
       }
-      if (free(x, y, r)) spot = { x, y, zone: core || trails.length === 0 ? 'core' : 'trail' };
+      if (free(x, y, r, capital)) spot = { x, y, zone: core || trails.length === 0 ? 'core' : 'trail' };
     }
     if (!spot) { dropped++; continue; }
     placed.push({ x: spot.x, y: spot.y, r });
