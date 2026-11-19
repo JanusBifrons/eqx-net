@@ -455,6 +455,28 @@ export const PERF_SCENES: readonly PerfScene[] = [
     soak: true,
   },
   {
+    // Navigation slice 16: the galaxy-field scene plus a squad of eight owned
+    // fighters ordered ~10 000 u inward across sol-prime's belt (a fleet MOVE,
+    // so every hull asks the nav worker for a route round the rock). The work
+    // view prints navRoutes / navExpanded / navMessages / navInFlightMax.
+    // Timing A/B vs the field off: `--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`.
+    id: 'galaxy-field-nav',
+    title: 'A galaxy asteroid sector: a squad of fighters routed across the belt',
+    room: {
+      droneCount: 0, asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'fleet', tag: 'squad', kind: 'fighter', count: 8, x: 94_400, y: 77_939, spread: 500, stance: 'holdFire', health: 1_000_000, moveTo: { x: 85_870, y: 71_538 } },
+        { atMs: 30_000, action: 'end' },
+      ],
+    },
+    galaxyField: 'sol-prime',
+    spawn: { x: 93_553, y: 77_939 },
+    camera: { x: 89_700, y: 74_700, zoom: 0.08 },
+    durationMs: 30_000,
+    minSwarm: 0,
+    soak: true,
+  },
+  {
     // Wreck fields slice 6 (macro-terrain F3): the client draw cost of a
     // loaded old battlefield. Layout seed `thornfield` (centre 0,0; wreck
     // fields 13 tuning, the most pieces of the test seeds) has its worst

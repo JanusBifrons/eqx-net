@@ -1,6 +1,6 @@
 /**
  * Lock eligibility by swarm kind — the one predicate the server
- * (`SectorRoom.resolveLockTarget`), the client lock line
+ * (`FireControlLocks.resolveLockTarget`), the client lock line
  * (`ColyseusClient.updateLockGuide`) and missile seekers share (#15).
  */
 import { describe, it, expect } from 'vitest';

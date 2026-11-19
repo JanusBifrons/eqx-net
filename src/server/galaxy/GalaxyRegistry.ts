@@ -25,9 +25,9 @@ export interface ResolvedSectorConfig {
   droneCount: number;
   /** Per-room player cap. */
   maxClients: number;
-  /** T1 — grow the sector's NPC base (`SectorRoom.seedGalaxyBase`). */
+  /** T1 — grow the sector's NPC base (`NpcBaseSubsystem.seedGalaxyBase`). */
   galaxyBases: boolean;
-  /** v4 A — seed the Ancients' border gates (`SectorRoom.seedAlienGates`). */
+  /** v4 A — seed the Ancients' border gates (`TeleporterSubsystem.seedAlienGates`). */
   alienGates: boolean;
   /**
    * Macro terrain F4: an `asteroid`-marked sector gets ONE cut field centred

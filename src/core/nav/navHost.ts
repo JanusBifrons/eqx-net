@@ -11,8 +11,9 @@
  * cut rocks). `ROUTE` asks the route planner (slice 6) for a way across.
  */
 import type { ChunkOpts } from '../terrain/fieldLayout.js';
+import type { GridObstacle } from '../structures/Grid.js';
 import { CoarseFieldMap } from './coarseField.js';
-import { FineFieldLayer, type NavRockPose } from './fineField.js';
+import { FineFieldLayer, NavDetailPool, type NavRockPose } from './fineField.js';
 import { RoutePlanner, NAV_ROUTE_MAX_POINTS, type NavRouteStatus } from './routePlanner.js';
 
 /** Host a cut field's nav maps for one sector room. `gone` / `moved`: rocks
@@ -24,11 +25,14 @@ export interface NavRemoveFieldCmd { type: 'REMOVE_FIELD'; worldId: number }
 export interface NavChunkCmd { type: 'CHUNK'; worldId: number; cx: number; cy: number; loaded: boolean }
 /** A rock was broken up (`gone`), or rests somewhere new (`pose`; null: back
  *  at its cut pose). */
+/** A static obstacle other than a field rock (structure box) was set; `shape` null: removed. */
+export interface NavObstacleCmd { type: 'OBSTACLE'; worldId: number; id: number; shape: GridObstacle | null }
 export interface NavRockCmd { type: 'ROCK'; worldId: number; key: number; gone?: true; pose?: { x: number; y: number; angle: number } | null }
 /** Plan a route from (sx, sy) to (tx, ty) for a hull of clearance `clearance`
  *  (from `shipTuning`, #18); `reqId` matches the reply. */
-export interface NavRouteCmd { type: 'ROUTE'; worldId: number; reqId: number; sx: number; sy: number; tx: number; ty: number; clearance: number }
-export type NavCommand = NavAddFieldCmd | NavRemoveFieldCmd | NavChunkCmd | NavRockCmd | NavRouteCmd;
+/** `heading`/`turnRadius`: a capital's nose and turning radius (slice 11); NaN/0 plans without. */
+export interface NavRouteCmd { type: 'ROUTE'; worldId: number; reqId: number; sx: number; sy: number; tx: number; ty: number; clearance: number; heading: number; turnRadius: number }
+export type NavCommand = NavAddFieldCmd | NavRemoveFieldCmd | NavChunkCmd | NavRockCmd | NavObstacleCmd | NavRouteCmd;
 
 /** Reply to `ADD_FIELD`: the coarse layer is built. */
 export interface NavFieldBuiltMsg {
@@ -62,8 +66,10 @@ export class NavHost {
   private readonly planner = new RoutePlanner();
   private readonly scratch = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
 
-  /** `now`: a millisecond clock for print-only build timings (real time). */
-  constructor(private readonly now: () => number) {}
+  /** `now`: a millisecond clock for print-only build timings (real time).
+   *  `detailPool`: every field's fine detail in one fixed-size store, so the
+   *  worker's memory never grows with the sector count (owner, 2026-11-18). */
+  constructor(private readonly now: () => number, readonly detailPool = new NavDetailPool()) {}
 
   /** Fields hosted (diagnostics, tests). */
   get fieldCount(): number { return this.worlds.size; }
@@ -81,13 +87,15 @@ export class NavHost {
         const t0 = this.now();
         const coarse = this.worlds.get(cmd.worldId)?.coarse ?? new CoarseFieldMap();
         coarse.build(cmd.opts);
-        this.worlds.set(cmd.worldId, { coarse, fine: new FineFieldLayer(cmd.opts, cmd.gone, cmd.moved) });
+        this.worlds.get(cmd.worldId)?.fine.dispose(); // a re-add replaces the field
+        this.worlds.set(cmd.worldId, { coarse, fine: new FineFieldLayer(cmd.opts, cmd.gone, cmd.moved, this.detailPool) });
         return {
           type: 'FIELD_BUILT', worldId: cmd.worldId, cols: coarse.cols, rows: coarse.rows,
           bytes: coarse.room.byteLength + coarse.bestX.byteLength + coarse.bestY.byteLength, ms: this.now() - t0,
         };
       }
       case 'REMOVE_FIELD':
+        this.worlds.get(cmd.worldId)?.fine.dispose();
         this.worlds.delete(cmd.worldId);
         return null;
       case 'CHUNK': {
@@ -102,10 +110,13 @@ export class NavHost {
         else if (cmd.pose !== undefined) fine?.rockMoved(cmd.key, cmd.pose);
         return null;
       }
+      case 'OBSTACLE':
+        this.worlds.get(cmd.worldId)?.fine.obstacleSet(cmd.id, cmd.shape);
+        return null;
       case 'ROUTE': {
         const t0 = this.now(), w = this.worlds.get(cmd.worldId);
         let n = 0;
-        if (w) n = this.planner.plan(w.coarse, w.fine, cmd.sx, cmd.sy, cmd.tx, cmd.ty, cmd.clearance, this.scratch);
+        if (w) n = this.planner.plan(w.coarse, w.fine, cmd.sx, cmd.sy, cmd.tx, cmd.ty, cmd.clearance, this.scratch, cmd.heading, cmd.turnRadius);
         return {
           type: 'ROUTE', worldId: cmd.worldId, reqId: cmd.reqId,
           status: w ? this.planner.status : 'none',

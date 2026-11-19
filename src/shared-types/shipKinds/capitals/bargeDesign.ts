@@ -64,6 +64,10 @@ const HOUSE: Readonly<Record<MountSize, number>> = { AA: 70, S: 100, M: 150, L: 
 /** Traverse (rad/s): mining turrets slew faster than naval guns. */
 const SLEW: Readonly<Record<MountSize, number>> = { AA: 0.7, S: 0.5, M: 0.35, L: 0.25, XL: 0.18 };
 /** The weapon a `tractor-*` mount carries. */
+/** Side-mount cone, each way about the side-facing rest bearing (owner
+ *  2026-11-18: a cone of ±45°, not the whole flank). Every mount takes it
+ *  unless it passes its own arc. */
+export const SIDE_MOUNT_ARC = Math.PI / 4;
 export const TRACTOR_WEAPON = 'tractor';
 /** Cargo capacity (weight units) per u² of plan cargo footprint: a hold
  *  several times a battleship's (look A ≈ 105,000). */
@@ -163,8 +167,9 @@ export function bargeDesign(look: BargeLook, map: CapitalMap = 'C', kindId: stri
   const hold = (points: Pt[], color: number): void => { holdArea += area(points); part(points, color, 'cargo'); };
 
   /** A mining laser or a tractor dish on a deck plate. `facing`: rest
-   *  bearing in the mount frame (0 forward, −π/2 starboard, +π/2 port). */
-  const mount = (kind: 'laser' | 'tractor', size: MountSize, x: number, y: number, facing: number, arc = 1.6): void => {
+   *  bearing in the mount frame (0 forward, −π/2 starboard, +π/2 port);
+   *  `arc`: the swing each way about it (default `SIDE_MOUNT_ARC`). */
+  const mount = (kind: 'laser' | 'tractor', size: MountSize, x: number, y: number, facing: number, arc = SIDE_MOUNT_ARC): void => {
     const scale = HOUSE[size] / (CAPITAL_TURRETS[size].houseW * Bc);
     part(circle(x, y, HOUSE[size] * 0.62, 16), COLORS.plate, 'housing');
     const n = (kind === 'laser' ? lasers : tractors)[size]++;
@@ -258,8 +263,8 @@ export function bargeDesign(look: BargeLook, map: CapitalMap = 'C', kindId: stri
     // Big lasers: the bow corners angled forward, the aft corners outboard-forward.
     mount('laser', 'XL', B * 0.25, hy(0.1), -0.3, 1.9);
     mount('laser', 'XL', -B * 0.25, hy(0.1), 0.3, 1.9);
-    mount('laser', 'L', B * 0.36, hy(0.9), -0.9);
-    mount('laser', 'L', -B * 0.36, hy(0.9), 0.9);
+    mount('laser', 'L', B * 0.36, hy(0.9), -0.9, 1.6);
+    mount('laser', 'L', -B * 0.36, hy(0.9), 0.9, 1.6);
   } else if (look === 'B') {
     // Two pontoons with blunt, full-width bows (structure, not spikes) round a
     // mouth between them; a flat transom across both meets the engine module.

@@ -52,7 +52,7 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
   it('laser and tractor leave a consumable piece; a full hold hands it back to the tractor; one at the hull goes into the hold', async () => {
     for (const m of mounts) m.weaponId = m.id === 'cross-l' ? 'mining_laser' : 'tractor';
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true,
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true, keepAllOnDeath: true,
     });
     const pid = randomUUID();
     const client = (await harness.connectActive(pid, {
@@ -83,11 +83,11 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
       const before = new Set(seen);
       const at = int().wreckState(id)!;
       int().spawnTestProjectile('shooter-x', at.x + 600, at.y, -4000, 0, 'laser', 1e6);
-      for (let t = 0; t < 40 && int().swarmRegistry.get(id); t++) { await harness.advance(50); look(); }
+      for (let t = 0; t < 40 && int().swarmRegistry.get(id); t++) { await harness.advance(50); look(); for (const pod of [...int().loot.podIds()]) int().loot.expireNow(pod); } // a death pod (a box since slice 9) would block the knock
       look();
       expect(int().swarmRegistry.get(id) ?? null, `${id} died`).toBeNull();
       const ids = [...seen].filter((p) => !before.has(p));
-      for (const pod of [...int().loot.podIds()]) int().loot.onPodDestroyed(pod); // its loot drop is not under test
+      for (const pod of [...int().loot.podIds()]) int().loot.expireNow(pod); // its loot drop is not under test
       return ids;
     };
 
@@ -133,7 +133,10 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
     // Its shield is up: the bubble is the surface they meet.
     let side = 0;
     while (shipWithinHullReach(kind.id, true, side + 2, 0, 0, 0, 0, 0)) side += 2;
-    await breakFighter('f2', side + 30, 0);
+    // 20 u off the bubble, not 30: since sized death pods (cargo pods) the break-up's
+    // pieces scatter sideways with almost no knock toward the hull (vx ≈ -2 u/s), and
+    // from 30 u they rarely reached it. The pickup on touch is what is under test.
+    await breakFighter('f2', side + 20, 0);
     // (Some may glance off the bubble and drift clear: those stay out; some go in before the test sees them.)
     await waitUntil(() => salvageLoads > loads0, 15_000, 'the pieces that touch the hull are taken in');
     expect(hold().salvage ?? 0, 'their salvage is in the hold').toBeGreaterThan(0);

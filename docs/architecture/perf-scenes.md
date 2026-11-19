@@ -213,6 +213,16 @@ pnpm perf:scenes --scenes galaxy-field --device phone-proxy --cpu-rate 2 --base 
 
 First reading: [macro-terrain](macro-terrain.md) (Galaxy sectors, phone cost).
 
+## The navigation scene (`galaxy-field-nav`)
+
+The `galaxy-field` sector plus a squad of eight owned fighters spawned beside the pilot and given a fleet MOVE (the `fleet` step's `moveTo`) about 10 000 u inward across the belt, so every hull asks the nav worker for a route round the rock. The work view prints the route work over the window (print-only, not yet calibrated): `navRoutes` (routes asked), `navExpanded` (cells their searches expanded), `navMessages` (commands posted to the nav worker: routes plus chunk, rock and obstacle events) and `navInFlightMax` (most routes unanswered at once). The A/B arm with no field (and so no nav field) is the same commit:
+
+```
+pnpm perf:scenes --scenes galaxy-field-nav --device phone-proxy --cpu-rate 2 --base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0
+```
+
+Readings: [navigation](navigation.md).
+
 ## The wreck field scenes (`wreck-field`, `wreck-field-far`)
 
 The client draw cost of a fully loaded old battlefield (macro-terrain F3, wreck fields slice 6; spots re-picked for the wreck fields 13 tuning). The room takes the opt-in room option `wreckField` alone (layout seed `thornfield` at 0,0, the most pieces of the test seeds; no rocks, `persistSector: false`). Its worst 5 × 5 chunk ring is centred on chunk (-1, 0): 337 live pieces of 158 hulls, nearly the whole field; the idle pilot spawns in that chunk at (-2200, 2500), clear of every footprint, so the streamer loads that whole ring (`perfRooms.test.ts` checks it is the worst ring and under `FIELD_LIVE_CAP`). `wreck-field` holds the normal play zoom (0.6) on the densest sideways-phone view in the ring (-700, -3500: 11 hulls, 25 pieces); `wreck-field-far` holds the fighter's zoom-out floor (0.15) on the densest floor view (-2200, -3000: 27 hulls, 61 pieces; fighter and frigate pieces become `wreckPieceFarLod` specks, capital pieces stay art). **Field off:** `EQX_SCENE_WRECK_FIELD=0` drops the `wreckField` option (the A/B's no-field arm: `--base HEAD --base-env EQX_SCENE_WRECK_FIELD=0`), as `EQX_SCENE_GALAXY_FIELD=0` does for `galaxy-field`; so both scenes have `minSwarm` 0, and the field arm's swarm count is read from the verdict.

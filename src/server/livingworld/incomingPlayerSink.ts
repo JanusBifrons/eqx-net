@@ -26,7 +26,7 @@ export interface IncomingPlayerSink {
   clearIncomingPlayer(playerId: string, destSectorKey: string): void;
   /** Send a pilot who just arrived in `destSectorKey` every warning still
    *  inbound there, with the countdown left (the broadcast only reached the
-   *  occupants at the time). Called once per join from `handleClientReady`. */
+   *  occupants at the time). Called once per join from `handleClientReady` (`join/joinHandshake.ts`). */
   replayIncomingTo(destSectorKey: string, send: (msg: WarpWarningEvent) => void): void;
 }
 

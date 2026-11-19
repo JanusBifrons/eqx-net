@@ -22,7 +22,7 @@ A defence structure that seeds a base's approaches with proximity mines (plan so
   - It uses the turrets' target grids (`findNearestTurretTarget`).
   - It shares the turrets' magazine field (`rec.ammo`, `AMMO_SHOTS_PER_UNIT.mine_layer`).
   - It uses the same active-power switch (`setActive`).
-  - Spots are chosen by the golden angle round the ring, skipping any spot within 90 u of a structure, asteroid or other mine, or the sector edge (`SectorRoom.mineSpotClear`).
+  - Spots are chosen by the golden angle round the ring, skipping any spot within 90 u of a structure, asteroid or other mine, or the sector edge (`MineHooks.mineSpotClear`).
 - **Wire.** Mines are static, so they live in **room state**: `SectorState.mines`, a `MineState { ownerIdx, x, y }` keyed by mine id. The join payload has every mine; laying or detonating one is one patch (#16). `mine_detonated` is only an accelerator for the blast visual.
 - **Client.** `ColyseusClient.syncMines` mirrors room state into `mirror.mines` in place, and `ConnectorRenderer.drawMines` draws them on the per-frame layer.
 - **Not persisted.** Mines are laid again after a restart.

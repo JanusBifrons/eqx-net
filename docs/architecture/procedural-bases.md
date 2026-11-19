@@ -20,7 +20,7 @@
 3. **Seeding.** `src/server/bases/NpcBaseSubsystem.ts` places the result in a
    live room through the normal placement path (`skipAutoConnect`, then
    explicit edges). Every galaxy sector seeds its own base this way (T1:
-   `SectorRoom.seedGalaxyBase` picks a site with `chooseBaseSite`, after the
+   `seedGalaxyBase` (`bases/NpcBaseSubsystem.ts`) picks a site with `chooseBaseSite`, after the
    snapshot restore, and spawns are nudged out of structures). It builds everything at its level, loads recipes and bound
    blueprints, opens the gates for anyone not hostile, and stocks fuel,
    munitions and inputs.

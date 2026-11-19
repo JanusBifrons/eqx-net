@@ -3,7 +3,7 @@
 > PR 3a of plan `sparkling-wondering-rose` (2026-10-31). Code:
 > `src/server/identity/` (`AccountPlayerRegistry`, `accountPlayerMerge`,
 > `TransitIdentityTokens`, `PlayerSessionRegistry`), the identity block at the
-> top of `SectorRoom.onJoin`, and `src/client/identity/token.ts`.
+> top of `JoinHandler.handle` (`src/server/rooms/join/JoinHandler.ts`), and `src/client/identity/token.ts`.
 
 ## The problem
 
@@ -32,7 +32,7 @@ the shared E2E fixture account spread over ~394 ids.
 `AccountPlayerRegistry` is the in-memory hot path (hydrated at boot, CRITICAL-lane
 write-through, the `PlayerShipStore` pattern).
 
-### Join rules (`SectorRoom.onJoin`)
+### Join rules (`JoinHandler.handle`, SectorRoom onJoin)
 
 1. **Logged in** → `resolveForUser(userId, claimedId)`: the account's canonical
    id. The first logged-in join of an unbound account **adopts this browser's
@@ -94,9 +94,10 @@ call-site changes. Logout clears the account key.
 
 ## Known follow-ups
 
-- The roster endpoints (`/dev/player-ships`, abandon) still trust a `playerId`
-  query/body parameter. They should take the auth token and derive the playerId
-  server-side.
+- The roster list (`/hangar/ships`, also `/dev/player-ships`) is read by
+  `playerId`, like the other production reads. Abandon
+  (`POST /hangar/ships/:shipId/abandon`) trusts the `playerId` only for a guest
+  ship; an account-bound ship needs that account's Bearer token.
 - Takeover is per-server-process (all rooms are in one process today).
 
 ## Client rules in detail

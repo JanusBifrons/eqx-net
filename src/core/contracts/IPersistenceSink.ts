@@ -57,6 +57,8 @@ export type PersistOp =
       mountsJson: string;
       /** Economy v2 — an unpacked hull's quality (absent ⇒ 0). */
       hullQuality?: number;
+      /** Cargo pods 14c — auto-unload at the owner's storage (absent ⇒ on). */
+      autoUnload?: boolean;
       ts: number;
     }
   | { type: 'PLAYER_SHIP_DELETE'; shipId: string; ts: number }
@@ -100,6 +102,8 @@ export type PersistOp =
       y: number | null;
       payloadJson: string;
       expiresAt: number | null;
+      /** A pod's look (size class + glow tier); null for other holders. */
+      look?: number | null;
       ts: number;
     }
   | { type: 'HOLD_DELETE'; holderUid: string; ts: number }

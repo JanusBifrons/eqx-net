@@ -6,6 +6,11 @@
  * instead of deleting them (nothing is ever deleted), and a dispose flush
  * leaves rows holding every piece the battle made.
  *
+ * A lineage that comes back near the ship (`restoreLineage`) gets fresh
+ * piece ids, so the pieces the battle made are the distinct ids seen less
+ * the restored pieces (`stats.restoredPieces`); restores run in the step,
+ * so the ids are sampled after each advance too, before a kill can evict.
+ *
  * The sub-cap cap is lowered to 200 so the sub-cap FIFO evicts too within a
  * few hundred kills; the capital cap is the real one (768).
  *
@@ -74,8 +79,10 @@ describe('SectorRoom integration: battle wrecks stream (wreck fields 0b)', () =>
     internal.setSubcapWreckCap(SUBCAP_CAP);
 
     const seen = new Set<string>();
+    const stats = (harness.getServerRoom() as unknown as { wreckSaves: { stats: { restoredPieces: number } } }).wreckSaves.stats;
+    const made = (): number => seen.size - stats.restoredPieces;
     let maxLive = 0, maxSubcap = 0, n = 0;
-    for (let batch = 0; batch < 200 && seen.size < TARGET_PIECES; batch++) {
+    for (let batch = 0; batch < 200 && made() < TARGET_PIECES; batch++) {
       const ids: string[] = [];
       for (let i = 0; i < 8; i++) {
         const id = `d${n++}`;
@@ -83,19 +90,20 @@ describe('SectorRoom integration: battle wrecks stream (wreck fields 0b)', () =>
         if (internal.spawnTestDrone(id, (i - 4) * 2000, (batch % 3) * 2500, kind)) ids.push(id);
       }
       await harness.advance(50);
+      for (const r of internal.swarmRegistry.all()) if (r.kind === WRECK_KIND) seen.add(r.id);
       for (const id of ids) internal.applyDamage(id, 'shooter-x', 1e9);
       for (const r of internal.swarmRegistry.all()) if (r.kind === WRECK_KIND) seen.add(r.id);
       const c = internal.wreckCounts();
       maxLive = Math.max(maxLive, c.total);
       maxSubcap = Math.max(maxSubcap, c.subcap);
     }
-    expect(seen.size, 'the battle made 3000 pieces').toBeGreaterThanOrEqual(TARGET_PIECES);
+    expect(made(), 'the battle made 3000 pieces').toBeGreaterThanOrEqual(TARGET_PIECES);
     expect(maxSubcap, 'sub-cap live <= its cap').toBeLessThanOrEqual(SUBCAP_CAP);
     expect(maxLive, 'live <= both battle caps').toBeLessThanOrEqual(MAX_LIVE_WRECK_PIECES + SUBCAP_CAP);
     expect(table.deletes(), 'eviction deleted no row').toBe(0);
 
     internal.flushWreckSaves(true);
-    expect(table.savedPieces(), 'saved = every piece the battle made').toBe(seen.size);
-    console.log(`[wreck stream] ${seen.size} pieces made, live max ${maxLive} (sub-cap ${maxSubcap}), saved ${table.savedPieces()}`);
+    expect(table.savedPieces(), 'saved = every piece the battle made').toBe(made());
+    console.log(`[wreck stream] ${made()} pieces made (${stats.restoredPieces} restored), live max ${maxLive} (sub-cap ${maxSubcap}), saved ${table.savedPieces()}`);
   }, 120_000);
 });

@@ -1,5 +1,7 @@
 # EQX Peri God-File Refactor — Hardened v3 (post-hostile-review)
 
+> **Superseded.** Written when the god files were a third of today's size. The current plan is [god-file extension points](../architecture/god-file-extension-points.md): small move-only PRs, each adding a named extension point.
+
 ## Context
 
 The v2 plan (`docs/plans/refactor-god-files.md` on branch `claude/refactor-god-files-plan-Hcoap`) is broadly sound: 11 god files, 6 new DI contracts, ~27 commits, single mega-PR. A hostile review against the working tree found several falsifiable claims and three god files it missed. This v3 keeps the v2's single-mega-PR ambition (per user direction) but plugs the leaks before any further decomposition commits land.

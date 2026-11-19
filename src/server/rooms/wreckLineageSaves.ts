@@ -121,7 +121,7 @@ export interface BattleWreckStreamDeps {
 }
 
 /** Counters for tests and perf (counts only). */
-export interface BattleWreckStats { saved: number; retired: number; restored: number; evicted: number; capWaits: number; unitsThisStep: number }
+export interface BattleWreckStats { saved: number; retired: number; restored: number; restoredPieces: number; evicted: number; capWaits: number; unitsThisStep: number }
 
 /** The default linger: the streamer's (`CutFieldStreamer`), as field hulls. */
 const BATTLE_LINGER_MS = 10_000;
@@ -141,7 +141,7 @@ export class BattleWreckSaves implements ChunkSource {
   /** True while this source removes pieces (their touches are its own). */
   private retiring = false;
   private nowMs = 0;
-  readonly stats: BattleWreckStats = { saved: 0, retired: 0, restored: 0, evicted: 0, capWaits: 0, unitsThisStep: 0 };
+  readonly stats: BattleWreckStats = { saved: 0, retired: 0, restored: 0, restoredPieces: 0, evicted: 0, capWaits: 0, unitsThisStep: 0 };
 
   constructor(
     /** The room's wreck maps; null until the wreck system exists (the
@@ -283,7 +283,7 @@ export class BattleWreckSaves implements ChunkSource {
           if (s.host.fifo(row.capital, 'battle').length + row.rec.pieces.length > s.host.cap(row.capital, 'battle')) { this.stats.capWaits++; continue; }
           spent += row.units;
           this.unindex(serial, row);
-          if (this.restoreRow(s, serial, row.rec)) this.stats.restored++;
+          if (this.restoreRow(s, serial, row.rec)) { this.stats.restored++; this.stats.restoredPieces += row.rec.pieces.length; }
           if (i > list.length) i = list.length;
         }
       }

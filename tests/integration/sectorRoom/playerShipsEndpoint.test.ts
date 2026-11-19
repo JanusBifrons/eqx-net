@@ -16,7 +16,7 @@
  *   - Multi-player join → isolated by playerId (no cross-contamination).
  *   - Disconnect → row LINGERS in the store with isActive still true
  *     until the 15-min eviction window. (Behaviour locked at:
- *     `SectorRoom.markRosterLinger` calls `markActive` with the
+ *     `PilotSwap.markRosterLinger` calls `markActive` with the
  *     LIMBO_DISCONNECT_TTL_MS expires-at; the prune sweep then later
  *     flips it on time-out.) We do not exercise the wall-clock 15-min
  *     branch here — the LIMBO_DISCONNECT_TTL_MS constant is locked at

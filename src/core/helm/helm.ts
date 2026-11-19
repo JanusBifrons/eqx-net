@@ -14,7 +14,14 @@
  * and stops thrusting when the remaining distance is within the coast
  * distance, so a slow-to-respond hull settles on its heading and its point
  * instead of overshooting. No allocation: the caller owns `out`.
+ *
+ * Autopilot (navigation slice 13): an order may carry the server's route
+ * (`nav_route`). The helm then passes through each waypoint without slowing,
+ * turning onto the next leg a turn's lead before it, and stops only at the
+ * last point. Every hull takes helm orders.
  */
+import type { ShipKind } from '../../shared-types/shipKinds.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 
 /** Speed settings: stop, one third, two thirds, full. */
 export type HelmSpeed = 0 | 1 | 2 | 3;
@@ -27,6 +34,18 @@ export interface HelmOrder {
   tx: number;
   ty: number;
   speed: HelmSpeed;
+  /** The way there (autopilot): waypoints flown in order; absent ⇒ straight at (tx, ty). */
+  route?: HelmRoute | null;
+}
+
+/** A route the helm flies (caller-owned, reused). */
+export interface HelmRoute {
+  /** Waypoints packed x, y; the last is the order's point. */
+  pts: Float64Array;
+  /** Waypoints held. */
+  n: number;
+  /** The waypoint being flown to; the helm advances it as it passes them. */
+  idx: number;
 }
 
 export interface HelmPose {
@@ -34,15 +53,8 @@ export interface HelmPose {
   vx: number; vy: number; angvel: number;
 }
 
-/** The kind fields the helm reads (a `ShipKind` satisfies it). */
-export interface HelmKind {
-  radius: number;
-  maxSpeed: number;
-  linearDamping: number;
-  angularDamping: number;
-  /** Top turn rate (rad/s): with speed it sets the turning circle. */
-  maxAngvel: number;
-}
+/** The kind the helm flies (its handling, and its tuning for the arrival radius). */
+export type HelmKind = ShipKind;
 
 export interface HelmOutput {
   thrust: boolean;
@@ -63,9 +75,20 @@ export const HELM_THRUST_CONE = Math.PI / 2;
 /** Speed hysteresis: thrust resumes below this fraction of the set speed. */
 export const HELM_SPEED_HYSTERESIS = 0.97;
 
-/** Arrival radius: a quarter of the hull, at least 20 u. */
+/** Arrival radius: a quarter of the hull, at least the ship's hit radius
+ *  (`shipTuning.hitRadius`, scaled with the ship, #18; it was a fixed 20). */
 export function helmArriveRadius(kind: HelmKind): number {
-  return Math.max(20, kind.radius * 0.25);
+  return Math.max(shipTuning(kind).hitRadius, kind.radius * 0.25);
+}
+
+/** Fraction of the turning radius a waypoint is passed early: a 45° turn's
+ *  lead (tan 22.5° ≈ 0.41), the sharpest a capital's route makes in a lane. */
+export const HELM_PASS_TURN_LEAD = 0.41;
+
+/** How near a waypoint counts as passed at `speed`: the turn's lead, at least twice the arrival radius. */
+export function helmPassRadius(kind: HelmKind, speed: number): number {
+  const turn = kind.maxAngvel > 0 ? speed / kind.maxAngvel : 0;
+  return Math.max(2 * helmArriveRadius(kind), HELM_PASS_TURN_LEAD * turn);
 }
 
 function wrapPi(a: number): number {
@@ -103,15 +126,23 @@ export function helmStep(order: HelmOrder, pose: HelmPose, kind: HelmKind, out: 
   out.thrust = false; out.turnLeft = false; out.turnRight = false; out.arrived = false;
   if (!order.active) return out;
 
-  const dx = order.tx - pose.x, dy = order.ty - pose.y;
+  const speed = Math.sqrt(pose.vx * pose.vx + pose.vy * pose.vy);
+  // The leg flown now: the route's next waypoint, or the order's point.
+  let tx = order.tx, ty = order.ty, last = true;
+  const r = order.route;
+  if (r != null && r.idx < r.n - 1) {
+    const pass = helmPassRadius(kind, speed);
+    while (r.idx < r.n - 1 && Math.hypot(r.pts[2 * r.idx]! - pose.x, r.pts[2 * r.idx + 1]! - pose.y) <= pass) r.idx++;
+    if (r.idx < r.n - 1) { tx = r.pts[2 * r.idx]!; ty = r.pts[2 * r.idx + 1]!; last = false; }
+  }
+  const dx = tx - pose.x, dy = ty - pose.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
   // Forward is (-sin θ, cos θ) (see applyShipInput), so the course heading is:
   const fx = -Math.sin(pose.angle), fy = Math.cos(pose.angle);
   const vFwd = pose.vx * fx + pose.vy * fy;
-  const speed = Math.sqrt(pose.vx * pose.vx + pose.vy * pose.vy);
   const arrive = helmArriveRadius(kind);
 
-  if (dist <= arrive) {
+  if (last && dist <= arrive) {
     out.arrived = speed < kind.maxSpeed * 0.05;
     return out; // on station: coast to a stop
   }
@@ -131,9 +162,9 @@ export function helmStep(order: HelmOrder, pose: HelmPose, kind: HelmKind, out: 
   const coastDist = kind.linearDamping > 0 ? Math.max(0, vFwd) / kind.linearDamping : 0;
   // Aim the coast at the point itself, so the ship ends inside the arrival
   // radius rather than on its rim.
-  const braking = dist <= coastDist;
+  const braking = last && dist <= coastDist; // a waypoint is passed, not stopped at
   const threshold = wasThrusting ? set : set * HELM_SPEED_HYSTERESIS;
   out.thrust = set > 0 && !braking && Math.abs(err) < HELM_THRUST_CONE && vFwd < threshold
-    && !insideTurnCircle(pose, fx, fy, speed, err, order.tx, order.ty, kind.maxAngvel);
+    && !insideTurnCircle(pose, fx, fy, speed, err, tx, ty, kind.maxAngvel);
   return out;
 }

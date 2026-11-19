@@ -63,6 +63,8 @@ const { wreckField, wreckFieldKinds, rockFieldBlocker, WRECK_FIELD } = await tsI
 const { cutFieldOpts } = await tsImport('../../src/core/terrain/chunkStreamer.ts', here);
 const { sectorWreckField, sectorCutField, sectorSites, warpDropPoint } = await tsImport('../../src/core/galaxy/sectorSites.ts', here);
 const { SOLAR_SECTORS } = await tsImport('../../src/shared-types/sectorBounds.ts', here);
+const { GAMEPLAY_MIN_ZOOM } = await tsImport('../../src/shared-types/shipScale/tuning.ts', here);
+const FLOOR = GAMEPLAY_MIN_ZOOM.toFixed(3); // every kind's zoom-out floor is at or below it
 
 const capitalKinds = new Set(wreckFieldKinds(true, true).capitals);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -79,7 +81,7 @@ const PHONE = {
 const VIEW_H = PHONE.viewport.height;
 const VIEW_W = PHONE.viewport.width;
 // Ship parked just off the hull (outside its footprint), zoomed so the hull fits the short side.
-const fit = (r) => Math.max(0.15, Math.min(1, VIEW_H / (2 * r + 500))).toFixed(3);
+const fit = (r) => Math.max(GAMEPLAY_MIN_ZOOM, Math.min(1, VIEW_H / (2 * r + 500))).toFixed(3);
 
 /** The capital shot: the ship parks beside the hull (its body radius plus a
  *  margin off its centre, on the side clear of every other footprint), zoomed
@@ -89,7 +91,7 @@ function capitalShot(FIELD, capital) {
   const clear = (p) => !FIELD.hulls.some((h) => h !== capital && dist(h, p) < h.footprint + 80);
   const sides = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({ x: capital.x + dx * off, y: capital.y + dy * off }));
   const spot = sides.find(clear) ?? sides[0];
-  const zoom = Math.max(0.15, Math.min(1, VIEW_W / (2 * (off + body + 150)))).toFixed(3);
+  const zoom = Math.max(GAMEPLAY_MIN_ZOOM, Math.min(1, VIEW_W / (2 * (off + body + 150)))).toFixed(3);
   return { spawnX: spot.x, spawnY: spot.y, zoom };
 }
 
@@ -144,7 +146,7 @@ if (sectors.length === 0) {
     ...(capital ? [{ name: 'capital', ...capitalShot(FIELD, capital) }] : []),
     { name: 'cluster', spawnX: cluster.x, spawnY: cluster.y - cluster.footprint - 120, zoom: fit(700) },
     { name: 'wide', spawnX: FIELD.x, spawnY: FIELD.y },
-    { name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: '0.15' },
+    { name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: FLOOR },
     { name: 'dense', spawnX: denseSpawn.x, spawnY: denseSpawn.y },
   ];
   const LOOKS = [
@@ -169,8 +171,8 @@ if (sectors.length === 0) {
     const room = `galaxy-${key}`;
     RUNS.push({ prefix: key, room, name: 'arrival', spawnX: arrive.x, spawnY: arrive.y });
     RUNS.push({ prefix: key, room, name: 'dense', spawnX: denseSpawn.x, spawnY: denseSpawn.y });
-    RUNS.push({ prefix: key, room, name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: '0.15' });
-    RUNS.push({ prefix: key, room, name: 'dense-far', spawnX: denseSpawn.x, spawnY: denseSpawn.y, zoom: '0.15' });
+    RUNS.push({ prefix: key, room, name: 'far', spawnX: FIELD.x, spawnY: FIELD.y, zoom: FLOOR });
+    RUNS.push({ prefix: key, room, name: 'dense-far', spawnX: denseSpawn.x, spawnY: denseSpawn.y, zoom: FLOOR });
     RUNS.push({ prefix: key, room, name: 'command', spawnX: denseSpawn.x, spawnY: denseSpawn.y, startMode: 'command' });
     if (capital) RUNS.push({ prefix: key, room, name: 'capital', ...capitalShot(FIELD, capital) });
   }
@@ -184,67 +186,73 @@ try {
   browser = await chromium.launch({
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'],
   });
+  // One shot's failed join is logged and skipped, not fatal to the rest (#849 fix).
   for (const s of RUNS) {
     const { prefix, room } = s;
     const ctx = await browser.newContext(PHONE);
-    const page = await ctx.newPage();
-    const q = new URLSearchParams({
-      room, testId: randomUUID(), worker: '0', diag: '0', hud: FILM_HUD, ...PLAYER_LOOK,
-      spawnX: String(Math.round(s.spawnX)), spawnY: String(Math.round(s.spawnY)),
-      ...(s.zoom ? { zoom: s.zoom } : {}),
-      // A galaxy join lands in command view (startMode.ts); a pilot warping in,
-      // or launching a ship from the map, flies: shoot from the helm.
-      // The 'command' shot lands as a plain galaxy join does.
-      ...(room.startsWith('galaxy-') ? { startMode: s.startMode ?? 'fly' } : {}),
-    });
-    await page.goto(`${servers.baseUrl}/?${q}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
-    // In game (the recorder's join gate), then the field's pieces drawn.
-    await page.waitForFunction(() => {
-      const st = window.__eqxStore?.getState();
-      return !!st && st.phase === 'game' && !!st.firstSnapshotApplied && !!st.rendererFirstFrameRendered && !!st.joinMinimumElapsed;
-    }, undefined, { timeout: 240000 });
-    // The load curtain lags the join flags (the recorder's waitForInGame): a
-    // galaxy sector still shows LOADING SECTOR here while the on-screen
-    // wreck pieces bake their Machined art (slow under SwiftShader).
-    const curtainT0 = Date.now();
-    await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"], body:not(:has([data-testid="warp-screen"]))', { timeout: 300000 })
-      .then(() => console.log(`  ${prefix}-${s.name}: curtain down ${((Date.now() - curtainT0) / 1000).toFixed(1)} s after the join flags`))
-      .catch(async () => {
-        const g = await page.evaluate(() => {
-          const st = window.__eqxStore?.getState() ?? {};
-          const keys = ['connectionStatus', 'localShipInstanceId', 'localPoseResolved', 'pilotMode', 'clientReadySent', 'arrivalTickFromServer', 'arrivalAcked'];
-          return Object.fromEntries(keys.map((k) => [k, st[k]]));
+    try {
+      const page = await ctx.newPage();
+      const q = new URLSearchParams({
+        room, testId: randomUUID(), worker: '0', diag: '0', hud: FILM_HUD, ...PLAYER_LOOK,
+        spawnX: String(Math.round(s.spawnX)), spawnY: String(Math.round(s.spawnY)),
+        ...(s.zoom ? { zoom: s.zoom } : {}),
+        // A galaxy join lands in command view (startMode.ts); a pilot warping in,
+        // or launching a ship from the map, flies: shoot from the helm.
+        // The 'command' shot lands as a plain galaxy join does.
+        ...(room.startsWith('galaxy-') ? { startMode: s.startMode ?? 'fly' } : {}),
+      });
+      await page.goto(`${servers.baseUrl}/?${q}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
+      // In game (the recorder's join gate), then the field's pieces drawn.
+      await page.waitForFunction(() => {
+        const st = window.__eqxStore?.getState();
+        return !!st && st.phase === 'game' && !!st.firstSnapshotApplied && !!st.rendererFirstFrameRendered && !!st.joinMinimumElapsed;
+      }, undefined, { timeout: 240000 });
+      // The load curtain lags the join flags (the recorder's waitForInGame): a
+      // galaxy sector still shows LOADING SECTOR here while the on-screen
+      // wreck pieces bake their Machined art (slow under SwiftShader).
+      const curtainT0 = Date.now();
+      await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"], body:not(:has([data-testid="warp-screen"]))', { timeout: 300000 })
+        .then(() => console.log(`  ${prefix}-${s.name}: curtain down ${((Date.now() - curtainT0) / 1000).toFixed(1)} s after the join flags`))
+        .catch(async () => {
+          const g = await page.evaluate(() => {
+            const st = window.__eqxStore?.getState() ?? {};
+            const keys = ['connectionStatus', 'localShipInstanceId', 'localPoseResolved', 'pilotMode', 'clientReadySent', 'arrivalTickFromServer', 'arrivalAcked'];
+            return Object.fromEntries(keys.map((k) => [k, st[k]]));
+          });
+          console.log(`  ${prefix}-${s.name}: load curtain still up after 300 s ${JSON.stringify(g)}`);
         });
-        console.log(`  ${prefix}-${s.name}: load curtain still up after 300 s ${JSON.stringify(g)}`);
+      await page.waitForFunction(() => (window.__eqxClient?.mirror?.wrecks?.size ?? 0) > 0, undefined, { timeout: 60000 })
+        .catch(() => console.log(`  ${prefix}-${s.name}: no wreck descriptors in the mirror after 60 s`));
+      // The pieces round the ship stream in after the curtain (at once when
+      // nothing was on screen to bake): wait for their count to hold for 4 s.
+      let last = -1, steady = 0;
+      for (let t = 0; t < 90 && steady < 8; t++) {
+        await page.waitForTimeout(500);
+        const n = await page.evaluate(() => {
+          let c = 0;
+          for (const e of window.__eqxClient?.mirror?.swarm?.values() ?? []) if (e.kind === 4) c++;
+          return c;
+        });
+        steady = n === last && n > 0 ? steady + 1 : 0;
+        last = n;
+      }
+      await page.waitForTimeout(1200); // the arrival flash
+      const info = await page.evaluate(() => {
+        const m = window.__eqxClient?.mirror;
+        let pieces = 0;
+        for (const e of m?.swarm?.values() ?? []) if (e.kind === 4) pieces++;
+        let hot = 0;
+        for (const d of m?.wrecks?.values() ?? []) if (d.deathTick !== undefined) hot++;
+        return { wrecks: m?.wrecks?.size ?? 0, hot, pieces };
       });
-    await page.waitForFunction(() => (window.__eqxClient?.mirror?.wrecks?.size ?? 0) > 0, undefined, { timeout: 60000 })
-      .catch(() => console.log(`  ${prefix}-${s.name}: no wreck descriptors in the mirror after 60 s`));
-    // The pieces round the ship stream in after the curtain (at once when
-    // nothing was on screen to bake): wait for their count to hold for 4 s.
-    let last = -1, steady = 0;
-    for (let t = 0; t < 90 && steady < 8; t++) {
-      await page.waitForTimeout(500);
-      const n = await page.evaluate(() => {
-        let c = 0;
-        for (const e of window.__eqxClient?.mirror?.swarm?.values() ?? []) if (e.kind === 4) c++;
-        return c;
-      });
-      steady = n === last && n > 0 ? steady + 1 : 0;
-      last = n;
+      const file = path.join(out, `${prefix}-${s.name}.png`);
+      await page.screenshot({ path: file });
+      console.log(`shot ${file} (wrecks ${info.wrecks}, with deathTick ${info.hot}, pieces ${info.pieces}, zoom ${s.zoom ?? 'default'})`);
+    } catch (e) {
+      console.log(`FAILED ${prefix}-${s.name}: ${e?.message?.split(String.fromCharCode(10))[0] ?? e}`);
+    } finally {
+      await ctx.close();
     }
-    await page.waitForTimeout(1200); // the arrival flash
-    const info = await page.evaluate(() => {
-      const m = window.__eqxClient?.mirror;
-      let pieces = 0;
-      for (const e of m?.swarm?.values() ?? []) if (e.kind === 4) pieces++;
-      let hot = 0;
-      for (const d of m?.wrecks?.values() ?? []) if (d.deathTick !== undefined) hot++;
-      return { wrecks: m?.wrecks?.size ?? 0, hot, pieces };
-    });
-    const file = path.join(out, `${prefix}-${s.name}.png`);
-    await page.screenshot({ path: file });
-    console.log(`shot ${file} (wrecks ${info.wrecks}, with deathTick ${info.hot}, pieces ${info.pieces}, zoom ${s.zoom ?? 'default'})`);
-    await ctx.close();
   }
 } finally {
   await browser?.close();

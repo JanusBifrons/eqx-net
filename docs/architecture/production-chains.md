@@ -60,6 +60,7 @@ Other rules:
   - **Load and unload:** the owner sends `load_blueprint`, which takes the best one from base storage (an original first, then the highest quality), or `unload_blueprint`. Each move is ONE hold group, and the slot persists as the `bpslot:<uid>` hold. Bound NPC blueprints can't be unloaded.
   - **Effects:** Living World's `applyBlueprint` trims the inputs. A copy spends one run per cycle and leaves the slot when used up. Output quality gives a chance of one extra unit per goods output, rolled deterministically per processor and cycle. A packed structure carries the quality.
   - **Destruction:** a destroyed processor spills its (unbound) blueprint.
+- **Rock chunks** (owner 2026-11-17). A refinery set to **Break down rock chunks** (`refine_rock_chunk`, a recipe with `chunkInput`) takes ONE rock chunk (a packed `chunk:rock` item, moved like any other cargo) from the network storage by its `uid` instead of goods, and keeps it loaded (`rec.prodChunk`, persisted with the cycle). Each cycle (10 pulses) pays out up to `CHUNK_REFINE_BATCH` (5,000) units of the chunk's hidden ore (`OreDraw.chunkYield`), all or nothing, until it is empty; a huge chunk drains over many cycles instead of jamming a full store. With no chunk it is **starved** ("Waiting for a rock chunk"); changing recipe hands the chunk back whole with the ore it has left. The recipe has no goods inputs or outputs, so the value-ladder and stage rules skip it (`recipes.test.ts`). Locks: `ProductionSubsystem.test.ts`, `production.test.ts`, `SectorPersistence.structures.test.ts`.
 - **Cost:** 60 smelters with 20 storages take under 0.3 ms per pulse, locked by `ProductionSubsystem.test.ts`. Processors in one component share a single network lookup.
 - **Wire:** room-state bytes `recipe`, `prodState` and `prodMissing`, sent only when not 0 (#16). Late joiners read them from the join payload.
 
@@ -86,7 +87,7 @@ User ruling (2026-11-01): "not everything should drain full power all of the tim
 
 ## NPC bases in the galaxy (T1)
 
-Every galaxy sector grows its own NPC base when its room is created (`SectorRoom.seedGalaxyBase`, enabled for every galaxy room by `resolveSectorConfig`):
+Every galaxy sector grows its own NPC base when its room is created (`seedGalaxyBase` in `bases/NpcBaseSubsystem.ts`, enabled for every galaxy room by `resolveSectorConfig`):
 - **Profile and growth.** `contextForSector` → `baseProfileFor` (tier, role, wealth, level cap, fence) → `growBase`. The seed is `hashString(sectorKey)`, so a sector's base is stable across restarts.
 - **After the restore.** Seeding runs AFTER the sector snapshot restore, so saved player structures and parked hulls are already in place and always win the space.
 - **Site.** The pure `chooseBaseSite` (`src/core/bases/baseSite.ts`) scans the sector on a 250 u grid for a Capital position where the whole base, plus a 250 u margin, fits inside the sector and touches no player structure or parked hull. It prefers the fewest asteroids, then the site farthest from the origin (where players spawn). Asteroids under the chosen footprint are cleared quietly (no destroy event).
@@ -363,7 +364,7 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 #### Production
 
-- **Production:** `ProductionSubsystem` runs on the 1 Hz pulse before `storage.flushDirty()`; inputs are taken all-or-nothing at cycle start, outputs put all-or-nothing at the end; it stays allocation-free (0.3 ms per pulse at 60 processors). `set_recipe` is owner-gated.
+- **Production:** `ProductionSubsystem` runs on the 1 Hz pulse before `storage.flushDirty()`; inputs are taken all-or-nothing at cycle start, outputs put all-or-nothing at the end (a chunk recipe: one chunk in by `uid`, one all-or-nothing ore batch per cycle); it stays allocation-free (0.3 ms per pulse at 60 processors). `set_recipe` is owner-gated.
 - **Blueprint slots:** move a blueprint only via `StorageService.loadBlueprint` / `unloadBlueprint` / `takeSlotForSpill` (one hold group each). Only the player's `place_structure` passes `requirePacked: true`.
 - **Drills and ammo:** a drill never mines into a full network (`canDepositGoods`); a turret calls `spendAmmo` before every shot and holds fire with none (`rec.noAmmo`). Locks: `extraction.test.ts`, `ProductionSubsystem.test.ts`, `production.test.ts`.
 - **Active power:** `StructureGridSubsystem.setActive(rec, active)` is the one switch; never write `rec.drawFull`. A new power consumer that works must call it.

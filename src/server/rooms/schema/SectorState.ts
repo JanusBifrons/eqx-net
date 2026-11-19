@@ -122,7 +122,7 @@ export class ShipState extends Schema {
 
 // Wrecks RETIRED (Equinox P6.3 / C3, 2026-06-15). An abandoned hull now
 // shatters into SCRAP (kind 3) and leaves the world — see
-// `SectorRoom.abandonShipToScrap` / `abandonLingeringHullToScrap`. The
+// `OwnerlessShipEvictor.abandonShipToScrap` / `abandonLingeringHullToScrap`. The
 // former `WreckState` schema + `state.wrecks` MapSchema are removed; nothing
 // creates a wreck any more.
 

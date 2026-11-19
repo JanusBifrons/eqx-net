@@ -74,10 +74,10 @@ describe('SectorRoom integration — squads fly as a pack; Escort (RTS Part B sl
     expect(state.ships.get(A)?.isActive, 'the owner flies A').toBe(true);
     for (const id of [B, C]) expect(internals.aiBrainOf(id)?.getFlockLeaderId?.()).toBe(A);
 
-    const r = room as unknown as { entityPoseInto: (id: string, out: Pose) => boolean };
+    const r = room as unknown as { wingmen: { entityPoseInto: (id: string, out: Pose) => boolean } };
     const pose: Pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
     const at = (id: string): { x: number; y: number } => {
-      expect(r.entityPoseInto(id, pose)).toBe(true);
+      expect(r.wingmen.entityPoseInto(id, pose)).toBe(true);
       return { x: pose.x, y: pose.y };
     };
     const gapOf = (): number => {
@@ -120,10 +120,10 @@ describe('SectorRoom integration — squads fly as a pack; Escort (RTS Part B sl
     internals.applyDamage(M, 'gone-attacker', 1);
     // The whole squad moves 1400 u north (short of a boosted leg).
     expect(fleet.applyOrder(pid, [L, M], { kind: 'move', x: 6000, y: 1400 }).length).toBe(2);
-    const r = room as unknown as { entityPoseInto: (id: string, out: Pose) => boolean };
+    const r = room as unknown as { wingmen: { entityPoseInto: (id: string, out: Pose) => boolean } };
     const pose: Pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
     const at = (id: string): { x: number; y: number } => {
-      expect(r.entityPoseInto(id, pose)).toBe(true);
+      expect(r.wingmen.entityPoseInto(id, pose)).toBe(true);
       return { x: pose.x, y: pose.y };
     };
     let maxGap = 0;
@@ -166,9 +166,9 @@ describe('SectorRoom integration — squads fly as a pack; Escort (RTS Part B sl
       expect(b.getFlockLeaderId?.(), `${id} packs on P`).toBe(P);
     }
     // The guard zone sits on P.
-    const r = room as unknown as { entityPoseInto: (id: string, out: Pose) => boolean };
+    const r = room as unknown as { wingmen: { entityPoseInto: (id: string, out: Pose) => boolean } };
     const pose: Pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-    expect(r.entityPoseInto(P, pose)).toBe(true);
+    expect(r.wingmen.entityPoseInto(P, pose)).toBe(true);
     const post = internals.aiBrainOf(E1)!;
     expect(Math.hypot((post.getGuardPostX?.() ?? NaN) - pose.x, (post.getGuardPostY?.() ?? NaN) - pose.y)).toBeLessThan(1);
 

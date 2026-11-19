@@ -4,10 +4,18 @@ import type { ShipKind } from '../../shared-types/shipKinds.js';
 /**
  * Pure per-tick player input → physics transformation.
  *
- * Drifty-arcade model with four stages — see the original comment in
- * `World.applyInput` for the design rationale. This module owns the
- * math; `World.applyInput` is now a thin wrapper that looks up
- * `(body, kind)` and forwards.
+ * Drifty-arcade model with four stages. This module owns the math;
+ * `World.applyInput` (via `applyPilotInput`, warpActuator.ts) is a thin
+ * wrapper that looks up `(body, kind)` and forwards. Design rationale (moved
+ * here from `World.applyInput`): steady-state speed is the natural terminal
+ * of `impulse / (1 - e^(-damping/60))`, and the per-kind numbers in
+ * `shipKinds.ts` are derived from that formula. The turn matches a top-down
+ * arcade-car feel: when you steer the ship responds, when you let go the yaw
+ * winds down. Earlier versions tried torque-impulse easing but were silently
+ * underpowered by ~70× because `applyTorqueImpulse` divides by
+ * moment-of-inertia (`0.5 * m * r²`), not mass. `grip = 0` reproduces the
+ * old space-feel; the max-speed clamp keeps ships from running away from the
+ * camera.
  *
  *   1. Throttle — forward + reverse impulse (no boost multiplier).
  *   1b. Boost — an INDEPENDENT forward impulse along the ship's facing

@@ -11,7 +11,11 @@
  * the weapon's `leaseTicks`. `tickTractors` re-poses each live lease's field
  * every tick (muzzle = the mount's world origin, its velocity by difference,
  * the beam-line set from the room's shared line query) and removes it on
- * expiry. `beamLinks` puts the live leases on the snapshot beside the
+ * expiry. A beam needs line of sight (owner 2026-11-18): when a solid body
+ * lies between the dish and the locked target, the field acts on that FIRST
+ * body (`lineBlocker`, one ray per live lease per tick) and the snapshot
+ * names it, so the client draws and predicts the beam on it too (#15, #16).
+ * The lock stays on the target; clearing the line is the pilot's job. `beamLinks` puts the live leases on the snapshot beside the
  * structure beams (one encoding, `shared-types/beamLinksWire.ts`).
  * Guide: docs/architecture/physics-worker.md "Force fields".
  */
@@ -58,6 +62,9 @@ export interface TractorDeps {
    *  (`LineOfFireGate.lineBodies`); returns the count. */
   lineBodies(fx: number, fy: number, tx: number, ty: number, halfWidth: number,
     skipA: string, skipB: string, ids: string[], cap: number): number;
+  /** The first solid body on the line from the muzzle to `target` (skipping
+   *  `emitter`), or '' when the line is clear (`LineOfFireGate.firstOnLine`). */
+  lineBlocker(fx: number, fy: number, tx: number, ty: number, emitter: string, target: string): string;
   /** True while `id` is a wreck piece in its crack hold (no pull then). */
   inCrackHold(id: string): boolean;
   /** Snapshot ref of a body: a swarm entity's numeric id, else the id. */
@@ -82,6 +89,9 @@ interface TractorLease {
   readonly emitter: string;
   readonly mount: WeaponMount;
   target: string;
+  /** The body the beam acts on: `target`, or the first body blocking the
+   *  line to it (set each tick by `tickTractors`). */
+  acting: string;
   startTick: number;
   endTick: number;
   /** Last muzzle position (for the muzzle velocity); NaN until first tick. */
@@ -159,7 +169,7 @@ export class ForceFieldSubsystem {
       // Once per (emitter, mount): fire is a discrete, cooldown-gated event.
       if (byMount === undefined) { byMount = new Map(); this.leases.set(emitterId, byMount); }
       lease = {
-        fieldId: `tractor:${emitterId}:${mount.id}`, emitter: emitterId, mount, target: '',
+        fieldId: `tractor:${emitterId}:${mount.id}`, emitter: emitterId, mount, target: '', acting: '',
         startTick: tick, endTick: tick, px: NaN, py: NaN,
         field: {
           kind: 'tractor', active: false, mx: 0, my: 0, mvx: 0, mvy: 0, target: '', emitter: emitterId,
@@ -172,6 +182,7 @@ export class ForceFieldSubsystem {
     }
     if (lease.target !== targetId || tick >= lease.endTick) {
       lease.target = targetId;
+      lease.acting = targetId;
       lease.startTick = tick;
       lease.px = NaN;
     }
@@ -197,7 +208,7 @@ export class ForceFieldSubsystem {
     if (t === undefined || byMount === undefined) return false;
     const tick = t.tick();
     for (const lease of byMount.values()) {
-      if (lease.target === targetId && inHoldZone(lease, tick, x, y)) return true;
+      if (lease.acting === targetId && inHoldZone(lease, tick, x, y)) return true;
     }
     return false;
   }
@@ -217,8 +228,8 @@ export class ForceFieldSubsystem {
     if (t?.isWreckPiece === undefined || byMount === undefined) return;
     const tick = t.tick();
     for (const lease of byMount.values()) {
-      if (!t.isWreckPiece(lease.target) || !t.poseOf(lease.target, _tpose)) continue;
-      if (inHoldZone(lease, tick, _tpose.x, _tpose.y)) visit(lease.target);
+      if (!t.isWreckPiece(lease.acting) || !t.poseOf(lease.acting, _tpose)) continue;
+      if (inHoldZone(lease, tick, _tpose.x, _tpose.y)) visit(lease.acting);
     }
   }
 
@@ -230,7 +241,7 @@ export class ForceFieldSubsystem {
     if (t === undefined || this.leaseCount === 0) return false;
     const tick = t.tick();
     for (const byMount of this.leases.values()) {
-      for (const lease of byMount.values()) if (lease.target === targetId && tick < lease.endTick) return true;
+      for (const lease of byMount.values()) if ((lease.target === targetId || lease.acting === targetId) && tick < lease.endTick) return true;
     }
     return false;
   }
@@ -255,6 +266,15 @@ export class ForceFieldSubsystem {
         }
         const f = lease.field;
         setTractorMuzzle(f, _pose.x, _pose.y, _pose.angle ?? 0, lease.mount);
+        // Line of sight: the beam acts on the first body between the dish and
+        // the target (one ray per live lease per tick).
+        const blocker = t.lineBlocker(f.mx, f.my, _tpose.x, _tpose.y, emitter, lease.target);
+        if (blocker !== '' && t.poseOf(blocker, _tpose)) lease.acting = blocker;
+        else {
+          if (blocker !== '') t.poseOf(lease.target, _tpose); // the blocker just went: target pose again
+          lease.acting = lease.target;
+        }
+        f.target = lease.acting;
         // The cushion keeps the load off the emitter's own hull (shared, #15).
         setTractorHold(f, lease.mount, _pose.kindId, _pose.angle ?? 0, _tpose.x, _tpose.y, _tpose.radius ?? 0);
         // Game ticks are fixed 1/60 s steps (time scale changes their rate).
@@ -264,9 +284,9 @@ export class ForceFieldSubsystem {
         lease.px = f.mx; lease.py = f.my;
         // A freshly broken wreck moves only as one rigid body until its crack
         // hold ends: the beam holds on but does not pull yet.
-        f.active = !t.inCrackHold(lease.target);
+        f.active = !t.inCrackHold(lease.acting);
         f.lineCount = f.active
-          ? t.lineBodies(f.mx, f.my, _tpose.x, _tpose.y, f.lineHalfWidth, emitter, lease.target, f.lineIds, TRACTOR_LINE_CAP)
+          ? t.lineBodies(f.mx, f.my, _tpose.x, _tpose.y, f.lineHalfWidth, emitter, lease.acting, f.lineIds, TRACTOR_LINE_CAP)
           : 0;
         this.set(lease.fieldId, f);
       }
@@ -277,7 +297,8 @@ export class ForceFieldSubsystem {
   /**
    * The snapshot's beam links: `structure` (the structure beam triples) as is
    * when no tractor is live (byte-identical), else a reused array holding them
-   * followed by one tractor record per live lease (`encodeTractorLink`).
+   * followed by one tractor record per live lease (`encodeTractorLink`), naming
+   * the body the beam acts on (the line-of-sight blocker, else the target).
    */
   beamLinks(structure: BeamLinks | undefined): BeamLinks | undefined {
     const t = this.d.tractors;
@@ -287,7 +308,7 @@ export class ForceFieldSubsystem {
     if (structure !== undefined) for (let i = 0; i < structure.length; i++) out[at++] = structure[i]!;
     for (const [emitter, byMount] of this.leases) {
       for (const lease of byMount.values()) {
-        at = encodeTractorLink(out, at, t.wireRef(emitter), lease.mount.id, t.wireRef(lease.target), lease.startTick, lease.endTick);
+        at = encodeTractorLink(out, at, t.wireRef(emitter), lease.mount.id, t.wireRef(lease.acting), lease.startTick, lease.endTick);
       }
     }
     out.length = at;
