@@ -123,7 +123,6 @@ import {
   STANDING_HIT_DELTA,
   STANDING_HIT_WINDOW_MS,
   defaultFactionPolicy,
-  factionDisplayName,
   isNpcFactionId,
   type FactionPolicy,
 } from '../../shared-types/factions.js';
@@ -253,7 +252,6 @@ import {
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 import { WarpTravelTracker } from './warpTravel.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
-import { getUser } from '../auth/AuthService.js';
 import { recordKill, saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
@@ -877,7 +875,7 @@ export class SectorRoom extends Room<SectorState> {
     playerToSlot: () => this.playerToSlot, sabF32: () => this.sabF32, getActiveShip: (pid) => this.getActiveShip(pid),
     teleporters: () => this.teleporters, swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry,
     relationCtx: this.relationCtx, hostileActs: this.hostileActs, now: () => this.gameClock.now(), sectorKey: () => this.sectorKey,
-    resolveOwnerName: (o) => this.resolveOwnerName(o), sendToPlayerHere: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
+    resolveOwnerName: (o) => this.rosterPersistence.resolveOwnerName(o), sendToPlayerHere: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
     adjustStanding: (from, to, d) => this.adjustStanding(from, to, d),
   });
   /** v4 T2/T3 — who rides a teleporter jump (`features/teleportMessages.ts`). */
@@ -896,7 +894,7 @@ export class SectorRoom extends Room<SectorState> {
     structureRegistry: this.structureRegistry, swarmRegistry: this.swarmRegistry, sabF32: () => this.sabF32,
     hostileActs: this.hostileActs, relationCtx: this.relationCtx, aiController: () => this.aiController,
     now: () => this.gameClock.now(), serverTick: () => this.serverTick, sectorKey: () => this.sectorKey,
-    adjustStanding: (from, to, d) => this.adjustStanding(from, to, d), resolveOwnerName: (o) => this.resolveOwnerName(o),
+    adjustStanding: (from, to, d) => this.adjustStanding(from, to, d), resolveOwnerName: (o) => this.rosterPersistence.resolveOwnerName(o),
     swarmGet: (id) => this.swarmRegistry.get(id), swarmByEntityId: (eid) => this.swarmRegistry.getByEntityId(eid),
     state: () => this.state as SectorState, getActiveShip: (pid) => this.getActiveShip(pid), playerToSlot: () => this.playerToSlot,
     shipPoseCache: () => this.shipPoseCache, lingeringSlots: this.lingeringSlots, lingeringPoseCache: this.lingeringPoseCache,
@@ -1830,6 +1828,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: () => this.sectorKey,
       roomId: () => this.roomId,
       logger,
+      playerToUser: this.playerToUser,
     });
 
     // Swarm entity eviction. Single canonical teardown for combat-kill
@@ -3029,7 +3028,7 @@ export class SectorRoom extends Room<SectorState> {
       storage: () => this.storage,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
       answerToll: (pid, padId, answer) => this.tolls.answerToll(pid, padId, answer),
-      resolveOwnerName: (owner) => this.resolveOwnerName(owner),
+      resolveOwnerName: (owner) => this.rosterPersistence.resolveOwnerName(owner),
       relationCtx: this.relationCtx,
       tradeRegisteredKey: () => this.tradeRegisteredKey,
       ensureTradeRegistered: () => this.ensureTradeRegistered(),
@@ -4279,44 +4278,6 @@ export class SectorRoom extends Room<SectorState> {
   /** Rebuild the cached structures snapshot slice from the registry + grid.
    *  Called at the 1 Hz pulse and after each placement/removal — never on the
    *  60 Hz tick, so the array allocation here is off the hot loop. */
-  /** playerId → resolved owner display name (or null = orphan). Cached: structure
-   *  owners are static, so we resolve + log-orphan-once per owner, not every pulse. */
-  private readonly _ownerNameCache = new Map<string, string | null>();
-
-  /** Resolve a structure owner's DISPLAY NAME (DB-backed). Online via
-   *  `playerToUser`, offline via the persistent roster (playerId→userId→user).
-   *  Every owner SHOULD map to a DB user; a null result is an ORPHANED structure
-   *  (owner gone / never a real user) — logged ONCE per owner as an issue. */
-  private resolveOwnerName(owner: string): string | null {
-    const cached = this._ownerNameCache.get(owner);
-    if (cached !== undefined) return cached;
-    // B2 — an NPC base is named for its side (never a raw id; client rule).
-    const party = parseOwner(owner);
-    if (party.kind === 'npc') {
-      // v4 A — the alien gates belong to the Ancients, not a base.
-      const name = owner === ALIEN_GATE_OWNER
-        ? (factionDisplayName(party.faction) ?? 'The Ancients')
-        : `${factionDisplayName(party.faction) ?? 'NPC'} base`;
-      this._ownerNameCache.set(owner, name);
-      return name;
-    }
-    const userId =
-      this.playerToUser.get(owner) ??
-      getPlayerShipStore().listByPlayer(owner)[0]?.userId ??
-      null;
-    const user = userId ? getUser(userId) : null;
-    const name = user ? (user.displayName ?? user.email ?? null) : null;
-    this._ownerNameCache.set(owner, name);
-    if (name === null) {
-      serverLogEvent('structure_owner_unresolved', { owner, sectorKey: this.sectorKey ?? '' });
-      logger.warn(
-        { owner, sectorKey: this.sectorKey },
-        'structure owner does not map to a DB user — orphaned structure',
-      );
-    }
-    return name;
-  }
-
   /** A2 — sync `state.structures` + the slim targets slice (body: `structuresSlice.ts`). */
   private rebuildStructuresSlice(): void { this.structuresSlice = this.structuresSliceSync.rebuild(); }
 
@@ -4332,7 +4293,7 @@ export class SectorRoom extends Room<SectorState> {
       st.structureOwners.set(this.structureOwnerKeys[idx]!, owner);
     }
     const key = this.structureOwnerKeys[idx]!;
-    const name = this.resolveOwnerName(owner) ?? '';
+    const name = this.rosterPersistence.resolveOwnerName(owner) ?? '';
     if (st.structureOwnerNames.get(key) !== name) st.structureOwnerNames.set(key, name);
     return idx;
   }
@@ -4440,7 +4401,7 @@ export class SectorRoom extends Room<SectorState> {
     if (credits <= 0 || classifyAttacker(killerId) !== 'player') return;
     getWallet().credit(killerId, credits, 'elite_bounty');
     auditEvent({ event: 'bounty_claimed', sector: this.sectorKey ?? undefined, playerId: killerId, target: targetName, credits });
-    const who = this.resolveOwnerName(killerId) ?? 'A pilot';
+    const who = this.rosterPersistence.resolveOwnerName(killerId) ?? 'A pilot';
     this.broadcastWorldNotice({
       type: 'world_notice', kind: 'bounty',
       message: `${who} claimed the ${credits}¢ bounty on ${targetName}!`,
