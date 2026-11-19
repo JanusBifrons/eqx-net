@@ -2,7 +2,8 @@
  * Living World P1a (plan peppy-jumping-pinwheel) — the cargo HUD chip.
  *
  * Top-left, under the shield/hull bar: `▣ 340/500  ¢1,250  ★1`. Amber at 80 %
- * full, red when full. Tap to expand a per-good breakdown. Below it, the short
+ * full, red when full. Tap to open "your hold" (cargo pods slice 19: the loot
+ * window on your own ship, everything visible). Below it, the short
  * pickup popups ("+7 Salvage · +30 cr") from the `loot_collected` accelerator.
  *
  * Reads only discrete Zustand state (cargo changes on a pickup / spill — never
@@ -12,8 +13,8 @@
 import { useState } from 'react';
 import { Box } from '@mui/material';
 import { useUIStore, useShouldRenderHud } from '../state/store';
-import { GOOD_DEFS, GOOD_IDS } from '../../shared-types/goods';
 import { cargoFillState, cargoWeight } from '../net/lootView';
+import { LootWindow } from './LootWindow';
 
 const FILL_COLOR = { ok: 'rgba(255,255,255,0.85)', high: '#ffbb33', full: '#ff4444' } as const;
 
@@ -36,12 +37,6 @@ const CHIP_SX = {
   cursor: 'pointer',
   pointerEvents: 'auto' as const,
   width: 'fit-content',
-};
-const DETAIL_SX = {
-  px: 0.75,
-  fontSize: { xs: 9, sm: 12 },
-  color: 'rgba(255,255,255,0.7)',
-  pointerEvents: 'none' as const,
 };
 const DEPOSIT_TRACK_SX = {
   width: { xs: 64, sm: 140 },
@@ -71,6 +66,7 @@ export function CargoChip(): JSX.Element | null {
   const capacity = useUIStore((s) => s.cargoCapacity);
   const feed = useUIStore((s) => s.lootFeed);
   const depositPct = useUIStore((s) => s.depositPct);
+  const playerId = useUIStore((s) => s.playerId);
   const [open, setOpen] = useState(false);
   if (!shouldRender) return null;
   if (cargo === null && feed.length === 0) return null;
@@ -86,7 +82,7 @@ export function CargoChip(): JSX.Element | null {
           data-cargo-capacity={capacity}
           data-cargo-fill={fill}
           sx={CHIP_SX}
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setOpen(true)}
         >
           <span style={{ color: FILL_COLOR[fill] }}>▣ {weight}/{capacity}</span>
           {cargo.blueprints > 0 && <span style={{ color: '#ffc83a' }}>★{cargo.blueprints}</span>}
@@ -100,12 +96,8 @@ export function CargoChip(): JSX.Element | null {
           <Box sx={{ ...DEPOSIT_FILL_SX, width: `${depositPct}%` }} />
         </Box>
       )}
-      {open && cargo !== null && (
-        <Box data-testid="cargo-breakdown" sx={DETAIL_SX}>
-          {GOOD_IDS.filter((id) => (cargo.goods[id] ?? 0) > 0).map((id) => (
-            <div key={id}>{GOOD_DEFS[id].displayName} ×{cargo.goods[id]}</div>
-          ))}
-        </Box>
+      {playerId !== null && (
+        <LootWindow open={open && cargo !== null} title="Your ship · Hold" ship={playerId} onClose={() => setOpen(false)} />
       )}
       {feed.map((e) => (
         <Box key={e.id} data-testid="loot-feed-line" sx={FEED_SX}>{e.text}</Box>

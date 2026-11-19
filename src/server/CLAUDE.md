@@ -72,7 +72,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 **Allegiances and friendly fire** ([allegiances](../../docs/architecture/allegiances.md#server-implementation-notes)):
 - 🔴 Classify by the registry kind, never an id prefix. `isHostileToPlayer` = stance OR ledger; only a hit on a DRONE escalates the `FactionLedger`. Allegiance decides targeting, never what a shot hits.
-- 🔴 Every shot hits the first thing in its path, own side included (skips: shooter, a capital's own deck, loot pods for non-pilot shots and mining tools); friendly hits never mark hostile.
+- 🔴 Every shot hits the first thing in its path, own side included (skips: shooter, a capital's own deck, loot pods); friendly hits never mark hostile.
 - AI pilots (AI-flown owned hulls too) hold fire on a friendly line only via `LineOfFireGate`; players are never gated. Drone-brain proximity queries use `AiNeighbourGrid`.
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md#server-implementation-notes)):
@@ -81,12 +81,12 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 **NPC sides** ([robots](../../docs/features/robots.md), [robot-territory](../../docs/features/robot-territory.md), [bounties-and-events](../../docs/features/bounties-and-events.md)):
 - 🔴 Classify a director bot id with `isDirectorBotId`, never a prefix literal (a new director adds its prefix there). The robot director persists to its own `allegiance_director_state` row.
-- Only the robot director gets a `respawnAnchor`. Rock ore leaves only through `OreDraw` (harvesters via `SectorRoom.mineAsteroid`; the mining laser pays only through its cut pieces' pods, `cutYield`); a raid step is one `StorageService.tradeTransfer` group. Charge weapons fire via `releaseCharges`; `evictSwarmEntity` forgets the shooter.
+- Only the robot director gets a `respawnAnchor`. Rock ore leaves only through `OreDraw` (harvesters via `SectorRoom.mineAsteroid`; the mining laser pays only as rock chunks taken in whole, `chunkYield`); a raid step is one `StorageService.tradeTransfer` group. Charge weapons fire via `releaseCharges`; `evictSwarmEntity` forgets the shooter.
 - 🔴 An elite is a tag on the swarm record (`markElite`), never a new kind; every per-entity max hull goes through `droneMaxHealthOf`. Elites and event NPCs are never load-shed.
 
 **Economy** ([economy-and-trade](../../docs/architecture/economy-and-trade.md#server-implementation-notes), [economy-wallet](../../docs/features/economy-wallet.md), [blueprints](../../docs/features/blueprints.md), [research-lab](../../docs/features/research-lab.md)):
 - 🔴 Each trade visit is ONE `tradeTransfer` group; an NPC hold spills on death, so a kill never mints value. NPC→player hostility is `SectorRoom.npcHostileTo`.
-- Credits never live in a `Hold`: every source/sink goes through the `Wallet` (all-or-nothing; `creditDeferred` / `debitDeferred` when atomic with goods). Guests are full players.
+- Credits never live in a `Hold`: every source/sink goes through the `Wallet`, all-or-nothing (`creditDeferred` / `debitDeferred` when atomic with goods); only launch charging's `debitAllowingDebt` goes below zero. Guests are full players.
 - Blueprint maths only via `applyBlueprint`; packed items only via `addPacked` / `takePacked`; prices only from `blueprintValue`; `qualityHullFactor` is the one quality source. Lab rules live in `shared-types/research.ts`.
 
 **Capital combat** ([capital-ships](../../docs/features/capital-ships.md#server-implementation-notes), [shell-events](../../docs/architecture/shell-events.md), [real-scale-ranges](../../docs/architecture/real-scale-ranges.md)):
@@ -212,7 +212,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Abandon → scrap or wreck
 
-- **An abandoned hull (active or lingering) breaks up exactly as its death would** (`spawnCapitalWreck` then `spawnHullScrap`) and leaves the world. The lingering path is `shipInstanceId`-keyed and never touches a `playerId`-keyed map. Locks: `abandonToScrap.test.ts`, `abandonLingeringToScrap.test.ts`, `abandonCapitalToWreck.test.ts`. Detail: [composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md#server-implementation-notes).
+- **An abandoned hull (active or lingering) breaks up exactly as its death would** (`spawnCapitalWreck` then `spawnHullScrap`) and leaves the world. The lingering path is `shipInstanceId`-keyed and never touches a `playerId`-keyed map. Detail: [composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md#server-implementation-notes).
 
 ## Same-sector instant pilot swap — `pilot_ship`
 
@@ -226,7 +226,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Scrap-on-death
 
-- **Every death path spawns scrap BEFORE the slot is freed**; a dying scrap piece never re-shatters. Scrap is saved in the sector snapshot and FIFO-capped; battle wrecks are saved as lineage rows (`wreckLineageSaves.ts`), never in the snapshot; wire changes need the netgate. Locks: `ScrapSpawner.test.ts`, `scrapOnDeath.test.ts`, `lingeringScrapOnDeath.test.ts`. Detail: [composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md#server-implementation-notes).
+- **Every death path spawns scrap BEFORE the slot is freed**; a dying scrap piece never re-shatters. Scrap is saved in the sector snapshot and FIFO-capped; battle wrecks are saved as lineage rows (`wreckLineageSaves.ts`), never in the snapshot; wire changes need the netgate. Detail: [composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md#server-implementation-notes).
 
 ## Capital wrecks
 

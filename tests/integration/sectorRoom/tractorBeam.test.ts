@@ -83,7 +83,7 @@ describe('SectorRoom integration — tractor beam weapon', () => {
     const at = int().wreckState('f1')!;
     int().spawnTestProjectile('shooter-x', at.x + 600, at.y, -4000, 0, 'laser', 1e6);
     for (let t = 0; t < 40 && int().swarmRegistry.get('f1'); t++) await harness.advance(50);
-    for (const pod of [...int().loot.podIds()]) int().loot.onPodDestroyed(pod); // its loot drop is not under test
+    for (const pod of [...int().loot.podIds()]) int().loot.expireNow(pod); // its loot drop is not under test
     expect(int().spawnTestDrone('bystander', 600, 600, 'fighter')).toBe(true);
     const rock = [...int().swarmRegistry.all()].find((r) => r.kind === 4)!;
     const key = `s:${rock.entityId}`;

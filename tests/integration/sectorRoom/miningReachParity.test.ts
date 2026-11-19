@@ -3,14 +3,14 @@
  * partitioned-chasing-lark): a mining laser's fire gate reach scales with its
  * mount size (`mountWeaponReach`: XL keeps 12,000 u, S ≈ 5,455 u). The server's
  * player fire gate (`SectorRoom.mountBearsOnLock`, via `PlayerFireResolver`)
- * and the client's ghost gate (`ColyseusGameClient.fcMountBears`) must give the
+ * and the client's ghost gate (`FireControlClient.fcMountBears`) must give the
  * same answer for the same mount and target, or the client predicts beams the
  * server refuses (or misses ones it fires). Fails when either side drops the
  * mount size.
  */
 import { describe, it, expect } from 'vitest';
 import { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
-import { ColyseusGameClient } from '../../../src/client/net/ColyseusClient.js';
+import { FireControlClient } from '../../../src/client/net/FireControlClient.js';
 import { fillFireTargetShape, newFireTargetShape, type FireTargetShape } from '../../../src/core/combat/fireControlBearing.js';
 import { mountWeaponReach } from '../../../src/core/combat/mountReach.js';
 import type { WeaponMount } from '../../../src/shared-types/shipKinds.js';
@@ -40,7 +40,7 @@ function serverGate(d: number): Gate {
 
 /** The client gate, on a client stub whose group aim resolves to the rock. */
 function clientGate(d: number): Gate {
-  const self = Object.create(ColyseusGameClient.prototype) as Record<string, unknown>;
+  const self = Object.create(FireControlClient.prototype) as Record<string, unknown>;
   Object.assign(self, {
     _fcSalvo: new Set<string>(),
     _fcBearPose: newFireTargetShape(),
