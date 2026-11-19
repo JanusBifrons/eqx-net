@@ -36,13 +36,13 @@ function node(id: string, opts: Partial<GridNode> = {}): GridNode {
   };
 }
 const capital = (id: string, x: number, y: number, built = true): GridNode =>
-  node(id, { x, y, radius: 80, isHub: true, isCapital: true, maxConnections: 4, powerOutput: 50, isConstructed: built });
+  node(id, { kind: 'capital', x, y, radius: 80, isHub: true, isCapital: true, maxConnections: 4, powerOutput: 50, isConstructed: built });
 const connector = (id: string, x: number, y: number, built = true): GridNode =>
-  node(id, { x, y, radius: 10, isHub: true, isConnector: true, maxConnections: 6, isConstructed: built });
+  node(id, { kind: 'connector', x, y, radius: 10, isHub: true, isConnector: true, maxConnections: 6, isConstructed: built });
 const solar = (id: string, x: number, y: number, built = true): GridNode =>
   node(id, { x, y, radius: 40, maxConnections: 1, powerOutput: 30, isConstructed: built });
 const pylon = (id: string, x: number, y: number, built = true): GridNode =>
-  node(id, { x, y, radius: 12, isHub: true, isShieldPylon: true, maxConnections: 3, isConstructed: built });
+  node(id, { kind: 'shield_pylon', x, y, radius: 12, isHub: true, isShieldPylon: true, maxConnections: 3, isConstructed: built });
 
 /** Build an adjacency map from a flat connection list. */
 function adjacencyFrom(conns: Connection[]): Map<string, Connection[]> {
@@ -82,7 +82,7 @@ describe('geometry helpers', () => {
 
 describe('canConnect — the hub model (eqx-peri rules)', () => {
   const cap = capital('cap', 0, 0);
-  const con = connector('con', 200, 0);
+  const con = connector('con', 400, 0); // clear of the real capital outline (its sockets)
   const sol = solar('sol', 200, 200);
 
   it('REJECTS leaf ↔ leaf (connector required)', () => {
@@ -174,12 +174,14 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
 
   it('rejects a line-of-sight-blocked link', () => {
     // Within range so the LOS rule, not the range gate, is what rejects.
+    // 0d slice 4: the blocker spans every cable curve between the two
+    // connectors (short tails keep them within ~70 u of the centre line).
     // Two Connectors (not the Capital) so the global 600 u range applies — at
     // 580 u edge (600 centre − 2·r10) they're in range, so the LOS/obstacle
     // rule is what rejects, not the Capital's shorter 300 u reach (WS-5).
     const a = connector('a', -300, 0);
     const b = connector('b', 300, 0);
-    const blocker = connector('blk', 0, 0, true);
+    const blocker = node('blk', { x: 0, y: 0, radius: 120 });
     const nodes = new Map([['a', a], ['b', b], ['blk', blocker]]);
     expect(canConnect(a, b, new Map(), nodes)).toEqual({ ok: false, reason: 'blocked' });
   });
@@ -263,7 +265,8 @@ describe('canConnect / isConnectionLineBlocked — obstacle blocking (Item D)', 
     const a = connector('a', -300, 0);
     const b = connector('b', 300, 0);
     const nodes = new Map([['a', a], ['b', b]]);
-    const asteroid: GridObstacle = { x: 0, y: 0, radius: 60 };
+    // 0d slice 4: big enough to cross every cable curve between them.
+    const asteroid: GridObstacle = { x: 0, y: 0, radius: 150 };
     expect(canConnect(a, b, new Map(), nodes, [asteroid])).toEqual({
       ok: false,
       reason: 'blocked',

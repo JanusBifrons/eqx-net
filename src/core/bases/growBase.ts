@@ -47,8 +47,11 @@ export type { GrownPlacement } from './growBuilder.js';
  *  12→13 (structure-restyle main sync): merged main's territory lock into
  *  the stream's generator, so bases saved under the stream's 12 regrow.
  *  13→14 (structure-restyle 3i): the Capital has a crane bay pad on its +y
- *  side; a spine relay that would land on a pad moves just past it. */
-export const BASE_GROWTH_VERSION = 14;
+ *  side; a spine relay that would land on a pad moves just past it.
+ *  14→15 (structure-restyle 0d slice 4): link reach is socket to socket, so
+ *  the fence sits 50 u closer (`FENCE_MARGIN`) to keep the row-end taps in
+ *  reach of the gate posts and pylons. */
+export const BASE_GROWTH_VERSION = 15;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -79,7 +82,9 @@ export interface GrownBase {
 
 const PITCH_X = 640;
 const GAP = 20;
-const FENCE_MARGIN = 150;
+/** Fence clearance past the outermost structure. Link reach is socket to
+ *  socket, so this keeps a row-end connector's tap to the side emitter ≤ 600 u. */
+const FENCE_MARGIN = 100;
 /** Pylon spacing: centre to centre, under the 600 u edge-to-edge range. */
 const FENCE_STEP = 660;
 
