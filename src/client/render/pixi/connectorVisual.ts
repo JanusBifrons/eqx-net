@@ -151,6 +151,7 @@ export type PreviewLineKind =
   | 'selected'
   | 'deferred'
   | 'blocked'
+  | 'too-short'
   | 'overflow'
   | 'skip';
 
@@ -202,6 +203,19 @@ export function previewLineVisualParams(kind: PreviewLineKind, scale: number): C
       width,
       glowAlpha: 0.18,
       glowWidth: width * 2.5,
+    };
+  }
+  if (kind === 'too-short') {
+    // Refused: the studs are under `MIN_CABLE_LENGTH` apart. The run is short
+    // (a few screen px at most zooms), so it is the boldest red the preview
+    // draws, with a glow: the player must see why nothing links.
+    const width = Math.max(1.5 / safeScale, 3);
+    return {
+      color: PREVIEW_OVERFLOW_COLOR,
+      alpha: 0.95,
+      width,
+      glowAlpha: 0.4,
+      glowWidth: width * 3,
     };
   }
   if (kind === 'blocked') {

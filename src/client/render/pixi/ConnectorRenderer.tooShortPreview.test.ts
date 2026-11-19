@@ -7,6 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ConnectorRenderer } from './ConnectorRenderer.js';
 import { countPreviewRefusals } from './previewLinkRefusals.js';
+import { PREVIEW_OVERFLOW_COLOR, previewLineVisualParams } from './connectorVisual.js';
 import { showTooCloseHint, TOO_CLOSE_LINK_TEXT } from '../../structures/placementHints.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { CABLE_NO_SOCKET } from '../../../core/structures/cableCurve.js';
@@ -42,10 +43,10 @@ describe('ConnectorRenderer: too-short preview link', () => {
     expect(r.placementPreviewConnectionCount).toBe(0);
     expect(r.previewVerdictCount).toBe(1);
     expect(r.previewVerdicts[0]!.reason).toBe('too-short');
-    // One red ('blocked' style) segment between real studs, not centres.
+    // One bold red ('too-short' style) segment between real studs, not centres.
     expect(draw).toHaveBeenCalledTimes(1);
     const [, , , sockA, , sockB, style] = draw.mock.calls[0]!;
-    expect(style).toBe('blocked');
+    expect(style).toBe('too-short');
     expect(sockA).not.toBe(CABLE_NO_SOCKET);
     expect(sockB).not.toBe(CABLE_NO_SOCKET);
     // The message: the renderer's count (RendererFeedback.placementPreviewTooShortCount).
@@ -61,12 +62,25 @@ describe('ConnectorRenderer: too-short preview link', () => {
     r.update(mirrorWithGhostAt(at(MIN_CABLE_LENGTH + 20)), 1, 0);
     expect(r.placementPreviewConnectionCount).toBe(1);
     expect(countPreviewRefusals(r, 'too-short')).toBe(0);
-    for (const c of draw.mock.calls) expect(c[6]).not.toBe('blocked');
+    for (const c of draw.mock.calls) expect(c[6]).not.toBe('too-short');
     expect(showTooCloseHint(r.placementPreviewConnectionCount, 0)).toBe(false);
   });
 
   it('no message while some other link still forms', () => {
     expect(showTooCloseHint(1, 2)).toBe(false);
     expect(showTooCloseHint(0, 0)).toBe(false);
+  });
+});
+
+describe('too-short preview line: the boldest red the preview draws', () => {
+  it('is wider, brighter and glows more than a blocked line (the owner must see it)', () => {
+    for (const scale of [0.25, 1, 3]) {
+      const short = previewLineVisualParams('too-short', scale);
+      const blocked = previewLineVisualParams('blocked', scale);
+      expect(short.width).toBeGreaterThan(blocked.width);
+      expect(short.alpha).toBeGreaterThan(blocked.alpha);
+      expect(short.glowAlpha).toBeGreaterThan(0);
+      expect(short.color).toBe(PREVIEW_OVERFLOW_COLOR);
+    }
   });
 });

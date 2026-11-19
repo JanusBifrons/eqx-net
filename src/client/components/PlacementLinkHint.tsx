@@ -17,8 +17,8 @@ const HINT_SX = {
   position: 'fixed',
   left: '50%',
   top: '66%',
-  // Below the anchor point (the ghost), under the fence hint's line.
-  transform: 'translate(-50%, 40px)',
+  // Centred under the ghost: `top` is set just past its lower edge.
+  transform: 'translateX(-50%)',
   zIndex: 1450,
   pointerEvents: 'none',
   px: 0.75,
