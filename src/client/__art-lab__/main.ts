@@ -253,7 +253,7 @@ async function main(): Promise<void> {
   });
 
   const rigs = RIGS ? buildLabRigs(scene, rigUnderL, rigPlaneL, rigOverL) : [];
-  const lines = buildLabGridLines(scene, lineL);
+  const lines = buildLabGridLines(scene, lineL, structL);
 
   // ---- ships
   const ships: ShipView[] = scene.ships.map((e, i) => {

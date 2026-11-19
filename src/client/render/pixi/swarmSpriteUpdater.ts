@@ -83,6 +83,7 @@ function wreckDeadArtFor(kindId: string): boolean {
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
 import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
+import { updateSocketNubs } from './structureSocketNubs.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -398,6 +399,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           rigView = rigs.update(spriteKey, entry.shipKind, sprite, lerped.x, lerped.y, lerped.angle, clip, rigTick);
         } else rigs.hide(spriteKey);
       }
+      // 0d slice 10: socket nubs, redrawn only when the used sockets change.
+      if (ctx.socketNubs === true && sprite.visible) updateSocketNubs(sprite, entry.shipKind, mirror.structures?.get(entityId));
       // Structures (turret 'barrel' / miner 'drill') carry a mounts entry in
       // the catalogue but NO mountAngles on any wire — the snapshot
       // `structures[]` slice ships only turretTargetId / miningTargetId. So
