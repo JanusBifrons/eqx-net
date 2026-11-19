@@ -26,7 +26,7 @@ import { MineFieldSubsystem, type MineTarget } from '../structures/MineFieldSubs
 import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { StructuresSliceSync } from './structuresSlice.js';
-import { seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
+import { seedScaleGrid, seedScenarioScrap, seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -76,8 +76,6 @@ import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
 import { GATE_SPAN_THICKNESS } from '../../core/structures/gateGeometry.js';
 import type { GateAccess } from '../../shared-types/gateAccess.js';
-import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
-import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
 import { CARGO_ACCESS_RANGE } from '../../shared-types/messages/cargoMessages.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
@@ -125,7 +123,6 @@ import {
   STANDING_HIT_DELTA,
   STANDING_HIT_WINDOW_MS,
   defaultFactionPolicy,
-  factionDisplayName,
   isNpcFactionId,
   type FactionPolicy,
 } from '../../shared-types/factions.js';
@@ -143,7 +140,6 @@ const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcO
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
-import type { FactionId } from '../../shared-types/factions.js';
 import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateSites } from '../../core/galaxy/alienGates.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
@@ -256,10 +252,8 @@ import {
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 import { WarpTravelTracker } from './warpTravel.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
-import { getUser } from '../auth/AuthService.js';
 import { recordKill, saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
-import type { SectorSnapshotScrap } from './SectorSnapshot.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { SectorSnapshotRestore } from './SectorSnapshotRestore.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard, terrainRecordStoreFor } from '../db/PersistenceWorker.js';
@@ -881,7 +875,7 @@ export class SectorRoom extends Room<SectorState> {
     playerToSlot: () => this.playerToSlot, sabF32: () => this.sabF32, getActiveShip: (pid) => this.getActiveShip(pid),
     teleporters: () => this.teleporters, swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry,
     relationCtx: this.relationCtx, hostileActs: this.hostileActs, now: () => this.gameClock.now(), sectorKey: () => this.sectorKey,
-    resolveOwnerName: (o) => this.resolveOwnerName(o), sendToPlayerHere: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
+    resolveOwnerName: (o) => this.rosterPersistence.resolveOwnerName(o), sendToPlayerHere: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
     adjustStanding: (from, to, d) => this.adjustStanding(from, to, d),
   });
   /** v4 T2/T3 — who rides a teleporter jump (`features/teleportMessages.ts`). */
@@ -900,7 +894,7 @@ export class SectorRoom extends Room<SectorState> {
     structureRegistry: this.structureRegistry, swarmRegistry: this.swarmRegistry, sabF32: () => this.sabF32,
     hostileActs: this.hostileActs, relationCtx: this.relationCtx, aiController: () => this.aiController,
     now: () => this.gameClock.now(), serverTick: () => this.serverTick, sectorKey: () => this.sectorKey,
-    adjustStanding: (from, to, d) => this.adjustStanding(from, to, d), resolveOwnerName: (o) => this.resolveOwnerName(o),
+    adjustStanding: (from, to, d) => this.adjustStanding(from, to, d), resolveOwnerName: (o) => this.rosterPersistence.resolveOwnerName(o),
     swarmGet: (id) => this.swarmRegistry.get(id), swarmByEntityId: (eid) => this.swarmRegistry.getByEntityId(eid),
     state: () => this.state as SectorState, getActiveShip: (pid) => this.getActiveShip(pid), playerToSlot: () => this.playerToSlot,
     shipPoseCache: () => this.shipPoseCache, lingeringSlots: this.lingeringSlots, lingeringPoseCache: this.lingeringPoseCache,
@@ -1834,6 +1828,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: () => this.sectorKey,
       roomId: () => this.roomId,
       logger,
+      playerToUser: this.playerToUser,
     });
 
     // Swarm entity eviction. Single canonical teardown for combat-kill
@@ -2703,7 +2698,7 @@ export class SectorRoom extends Room<SectorState> {
     // overlap, no construction wait).
     if (this.testMode) seedStructureScenario(this.structureScenarioHost, roomOpts);
     this.testTeleportFullCharge = this.testMode && roomOpts.teleportFullCharge === true;
-    if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
+    if (this.testMode && roomOpts.scaleGrid) seedScaleGrid(this.structureScenarioHost, roomOpts.scaleGrid);
     // D2 (plan soft-leaping-truffle v3) — NPC bases grown from the generator.
     if (roomOpts.npcBases && roomOpts.npcBases.length > 0) seedNpcBases(this.npcSeedHost, roomOpts.npcBases);
     if (this.testMode && roomOpts.tradeEnabled === true && this.sectorKey !== null) {
@@ -2729,7 +2724,7 @@ export class SectorRoom extends Room<SectorState> {
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
-      this.seedScenarioScrap(roomOpts.scenarioScrapCount!);
+      seedScenarioScrap({ logger, restoreScrap: (rows) => this.snapshotRestore.restoreScrap(rows) }, roomOpts.scenarioScrapCount!);
     }
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
     // These satisfy the LivingWorldRoom contract; bots are server-
@@ -2756,6 +2751,8 @@ export class SectorRoom extends Room<SectorState> {
       broadcastBotAggro: (msg) => this.broadcast('bot_aggro', msg),
       bus: this.bus,
       clients: this.clients,
+      patrols: this.patrols,
+      testHaulerRaiders: () => this.testHaulerRaiders,
     });
 
     if (useSingleAsteroid) {
@@ -3031,7 +3028,7 @@ export class SectorRoom extends Room<SectorState> {
       storage: () => this.storage,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
       answerToll: (pid, padId, answer) => this.tolls.answerToll(pid, padId, answer),
-      resolveOwnerName: (owner) => this.resolveOwnerName(owner),
+      resolveOwnerName: (owner) => this.rosterPersistence.resolveOwnerName(owner),
       relationCtx: this.relationCtx,
       tradeRegisteredKey: () => this.tradeRegisteredKey,
       ensureTradeRegistered: () => this.ensureTradeRegistered(),
@@ -4063,43 +4060,6 @@ export class SectorRoom extends Room<SectorState> {
     return null;
   }
 
-  /**
-   * A0 scale lattice: place every structure WITHOUT greedy auto-connect, then
-   * apply the lattice's intended edges through `connectExplicit` (the real
-   * `canConnect` re-checked), force-build, and run one grid tick. Owner
-   * `scenario`. Rejections are counted and logged — the lattice is rule-valid
-   * by construction (structureLattice.test.ts), so any rejection is a bug.
-   */
-  private seedScaleGrid(opts: { n: number; seed: number; fence?: boolean }): void {
-    const n = Math.max(1, Math.min(4000, Math.floor(opts.n)));
-    const lat = buildStructureLattice({ n, seed: opts.seed, fence: opts.fence === true });
-    const ids: Array<string | null> = [];
-    let rejectedPlace = 0;
-    for (const p of lat.placements) {
-      const id = this.structurePlacement.place('scenario', p.kind, p.x, p.y, { skipAutoConnect: true, rot: p.rot });
-      if (id === null) rejectedPlace++;
-      ids.push(id);
-      const rec = id ? this.structureRegistry.get(id) : undefined;
-      if (rec && !rec.isConstructed) {
-        rec.isConstructed = true;
-        rec.constructionProgress = rec.constructionCost;
-        this.swarmHealth.set(rec.id, getStructureKind(rec.kind).maxHealth);
-      }
-    }
-    const nodes = buildGridNodes(this.structureRegistry);
-    let rejectedEdge = 0;
-    for (const [a, b] of lat.edges) {
-      const ia = ids[a], ib = ids[b];
-      if (!ia || !ib || !connectExplicit(this.structureRegistry, ia, ib, nodes)) rejectedEdge++;
-    }
-    this.structureRegistry.topologyDirty = true;
-    this.structureGridTick();
-    logger.info(
-      { n, placed: lat.placements.length - rejectedPlace, edges: lat.edges.length, rejectedPlace, rejectedEdge, fencePylons: lat.fencePylons },
-      'scale lattice seeded',
-    );
-  }
-
   /** testMode structure scenario seeding (`scenarioLayouts.seedStructureScenario`). */
   private readonly structureScenarioHost: StructureScenarioHost = {
     structureRegistry: this.structureRegistry, logger, structurePlacement: () => this.structurePlacement,
@@ -4130,41 +4090,6 @@ export class SectorRoom extends Room<SectorState> {
     shipHullMax: (kindMax, alloc, id) => this.shipHullMax(kindMax, alloc, id), postToWorker: (cmd) => this.postToWorker(cmd),
     applyStatMulToWorker: (bodyKey, alloc) => this.shipProgression.applyStatMulToWorker(bodyKey, alloc),
   });
-
-  /**
-   * Phase-1 issue 5 — seed `count` free-floating scrap pieces in a dense
-   * corridor AHEAD of spawn (+y, the forward dir at angle 0), via the SAME
-   * `SectorSnapshotRestore.restoreScrap` path the persistence layer uses (so the bodies
-   * are byte-identical to real death-spawned scrap). The player flies straight
-   * through this for the reconciliation stress E2E. testMode-only.
-   */
-  private seedScenarioScrap(count: number): void {
-    const PARENT = 'havok' as ShipKindId; // a composite kind with scrap groups
-    const groups = shipScrapGroups(PARENT).length;
-    if (groups === 0) return;
-    const COLS = 7;
-    const COL_SPACING = 48; // dense wall — a straight flight can't avoid clipping many
-    const ROW_SPACING = 60;
-    const Y0 = 250; // first row ahead of spawn, clear of the hull
-    const rows: SectorSnapshotScrap[] = [];
-    for (let i = 0; i < count; i++) {
-      const col = i % COLS;
-      const row = Math.floor(i / COLS);
-      rows.push({
-        entityId: `scrap-stress-${i}`,
-        x: (col - (COLS - 1) / 2) * COL_SPACING,
-        y: Y0 + row * ROW_SPACING,
-        vx: 0,
-        vy: 0,
-        angle: 0,
-        health: 30,
-        parentShipKind: PARENT,
-        componentIndex: i % groups,
-      });
-    }
-    this.snapshotRestore.restoreScrap(rows);
-    logger.info({ requested: count, parent: PARENT, groups }, 'scenario scrap seeded');
-  }
 
   /** Phase 5 — the turret aim/fire tick (body: `StructuresSliceSync.turretTick`, `structuresSlice.ts`). */
   private structureTurretTick(): void { this.structuresSliceSync.turretTick(); }
@@ -4353,44 +4278,6 @@ export class SectorRoom extends Room<SectorState> {
   /** Rebuild the cached structures snapshot slice from the registry + grid.
    *  Called at the 1 Hz pulse and after each placement/removal — never on the
    *  60 Hz tick, so the array allocation here is off the hot loop. */
-  /** playerId → resolved owner display name (or null = orphan). Cached: structure
-   *  owners are static, so we resolve + log-orphan-once per owner, not every pulse. */
-  private readonly _ownerNameCache = new Map<string, string | null>();
-
-  /** Resolve a structure owner's DISPLAY NAME (DB-backed). Online via
-   *  `playerToUser`, offline via the persistent roster (playerId→userId→user).
-   *  Every owner SHOULD map to a DB user; a null result is an ORPHANED structure
-   *  (owner gone / never a real user) — logged ONCE per owner as an issue. */
-  private resolveOwnerName(owner: string): string | null {
-    const cached = this._ownerNameCache.get(owner);
-    if (cached !== undefined) return cached;
-    // B2 — an NPC base is named for its side (never a raw id; client rule).
-    const party = parseOwner(owner);
-    if (party.kind === 'npc') {
-      // v4 A — the alien gates belong to the Ancients, not a base.
-      const name = owner === ALIEN_GATE_OWNER
-        ? (factionDisplayName(party.faction) ?? 'The Ancients')
-        : `${factionDisplayName(party.faction) ?? 'NPC'} base`;
-      this._ownerNameCache.set(owner, name);
-      return name;
-    }
-    const userId =
-      this.playerToUser.get(owner) ??
-      getPlayerShipStore().listByPlayer(owner)[0]?.userId ??
-      null;
-    const user = userId ? getUser(userId) : null;
-    const name = user ? (user.displayName ?? user.email ?? null) : null;
-    this._ownerNameCache.set(owner, name);
-    if (name === null) {
-      serverLogEvent('structure_owner_unresolved', { owner, sectorKey: this.sectorKey ?? '' });
-      logger.warn(
-        { owner, sectorKey: this.sectorKey },
-        'structure owner does not map to a DB user — orphaned structure',
-      );
-    }
-    return name;
-  }
-
   /** A2 — sync `state.structures` + the slim targets slice (body: `structuresSlice.ts`). */
   private rebuildStructuresSlice(): void { this.structuresSlice = this.structuresSliceSync.rebuild(); }
 
@@ -4406,7 +4293,7 @@ export class SectorRoom extends Room<SectorState> {
       st.structureOwners.set(this.structureOwnerKeys[idx]!, owner);
     }
     const key = this.structureOwnerKeys[idx]!;
-    const name = this.resolveOwnerName(owner) ?? '';
+    const name = this.rosterPersistence.resolveOwnerName(owner) ?? '';
     if (st.structureOwnerNames.get(key) !== name) st.structureOwnerNames.set(key, name);
     return idx;
   }
@@ -4455,45 +4342,8 @@ export class SectorRoom extends Room<SectorState> {
     return this.bus;
   }
 
-  /**
-   * Spawn a Living World bot into this sector. Reuses the standard swarm
-   * spawn path (slot alloc, SAB prime, worker SPAWN_OBSTACLE, registry,
-   * AI register) with a forced kind, primes drone health, opens the
-   * join-broadcast grace window so the just-warped-in body streams
-   * snapshots for client reconciliation (same rationale as a player
-   * join — see JOIN_BROADCAST_GRACE_TICKS), and emits the warp-in visual
-   * + discrete bus event. Returns false WITHOUT mutating when the slot
-   * pool is exhausted (the director retries elsewhere next tick).
-   */
-  spawnLivingWorldBot(spec: {
-    botId: string;
-    kind: ShipKindId;
-    x: number;
-    y: number;
-    vx?: number;
-    vy?: number;
-    health?: number;
-    hostileToFaction?: { playerId: string; structureIds: readonly string[] };
-    factionId?: FactionId;
-  }): boolean {
-    const ok = this.livingWorldBotHooks.spawnBot(spec);
-    if (ok && spec.factionId !== undefined) this.patrols.attachShip(spec.botId, spec.factionId, npcOwner(spec.factionId));
-    // P2 bespoke trigger (testMode): robot raiders meet an incoming hauler
-    // ~45 % of the way from its entry point to the sector centre.
-    if (ok && this.testHaulerRaiders > 0 && isHaulerId(spec.botId)) {
-      for (let i = 0; i < this.testHaulerRaiders; i++) {
-        const a = (i / this.testHaulerRaiders) * Math.PI * 2;
-        const x = spec.x * 0.55 + Math.cos(a) * 160;
-        const y = spec.y * 0.55 + Math.sin(a) * 160;
-        // `swarm-` prefix ⇒ classified as an NPC attacker (never booked as piracy).
-        const id = `swarm-raider-${spec.botId}-${i}`;
-        if (this.swarmSpawner.spawnDrone({ id, x, y, kind: 'robot-square' })) {
-          this.swarmHealth.set(id, getDroneMaxHealth('robot-square') ?? 120);
-        }
-      }
-    }
-    return ok;
-  }
+  /** Living World bot spawn (LivingWorldRoom contract): see LivingWorldBotHooks. */
+  spawnLivingWorldBot(spec: Parameters<LivingWorldBotHooks['spawnLivingWorldBot']>[0]): boolean { return this.livingWorldBotHooks.spawnLivingWorldBot(spec); }
 
   /** WS-E #15 — resolve a faction's hostility members here (owning player +
    *  owned structure ids). The director uses this to pre-populate
@@ -4551,7 +4401,7 @@ export class SectorRoom extends Room<SectorState> {
     if (credits <= 0 || classifyAttacker(killerId) !== 'player') return;
     getWallet().credit(killerId, credits, 'elite_bounty');
     auditEvent({ event: 'bounty_claimed', sector: this.sectorKey ?? undefined, playerId: killerId, target: targetName, credits });
-    const who = this.resolveOwnerName(killerId) ?? 'A pilot';
+    const who = this.rosterPersistence.resolveOwnerName(killerId) ?? 'A pilot';
     this.broadcastWorldNotice({
       type: 'world_notice', kind: 'bounty',
       message: `${who} claimed the ${credits}¢ bounty on ${targetName}!`,

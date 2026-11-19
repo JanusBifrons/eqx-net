@@ -7,12 +7,18 @@
  * `sectorKey === null` and no roster).
  *
  * Extracted from SectorRoom (commit 21 partial). Pure adapter over
- * PlayerShipStore — no extra state of its own.
+ * PlayerShipStore, plus the structure owner-name lookup (playerId→userId→
+ * display name) and its per-owner cache (god-file split slice 36).
  */
 
 import type { Logger } from 'pino';
 import { getPlayerShipStore } from '../db/PersistenceWorker.js';
 import { RosterFullError, PLAYER_SHIP_ACTIVE_LINGER_MS } from '../playerShips/PlayerShipStore.js';
+import { getUser } from '../auth/AuthService.js';
+import { serverLogEvent } from '../debug/ServerEventLog.js';
+import { parseOwner } from '../../shared-types/relations.js';
+import { factionDisplayName } from '../../shared-types/factions.js';
+import { ALIEN_GATE_OWNER } from '../../core/galaxy/alienGates.js';
 
 export interface RosterPose {
   x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
@@ -26,6 +32,8 @@ export interface RosterPersistenceDeps {
    *  worker can correlate to the room that owns the ship. */
   roomId: () => string;
   logger: Logger;
+  /** Online playerId → userId (the room's live map; read-only here). */
+  playerToUser: ReadonlyMap<string, string | null>;
 }
 
 export class RosterPersistence {
@@ -130,5 +138,43 @@ export class RosterPersistence {
     const d = this.deps;
     if (d.sectorKey() === null || shipInstanceId === '') return;
     getPlayerShipStore().delete(shipInstanceId);
+  }
+
+  /** playerId → resolved owner display name (or null = orphan). Cached: structure
+   *  owners are static, so we resolve + log-orphan-once per owner, not every pulse. */
+  private readonly _ownerNameCache = new Map<string, string | null>();
+
+  /** Resolve a structure owner's DISPLAY NAME (DB-backed). Online via
+   *  `playerToUser`, offline via the persistent roster (playerId→userId→user).
+   *  Every owner SHOULD map to a DB user; a null result is an ORPHANED structure
+   *  (owner gone / never a real user) — logged ONCE per owner as an issue. */
+  resolveOwnerName(owner: string): string | null {
+    const cached = this._ownerNameCache.get(owner);
+    if (cached !== undefined) return cached;
+    // B2 — an NPC base is named for its side (never a raw id; client rule).
+    const party = parseOwner(owner);
+    if (party.kind === 'npc') {
+      // v4 A — the alien gates belong to the Ancients, not a base.
+      const name = owner === ALIEN_GATE_OWNER
+        ? (factionDisplayName(party.faction) ?? 'The Ancients')
+        : `${factionDisplayName(party.faction) ?? 'NPC'} base`;
+      this._ownerNameCache.set(owner, name);
+      return name;
+    }
+    const userId =
+      this.deps.playerToUser.get(owner) ??
+      getPlayerShipStore().listByPlayer(owner)[0]?.userId ??
+      null;
+    const user = userId ? getUser(userId) : null;
+    const name = user ? (user.displayName ?? user.email ?? null) : null;
+    this._ownerNameCache.set(owner, name);
+    if (name === null) {
+      serverLogEvent('structure_owner_unresolved', { owner, sectorKey: this.deps.sectorKey() ?? '' });
+      this.deps.logger.warn(
+        { owner, sectorKey: this.deps.sectorKey() },
+        'structure owner does not map to a DB user — orphaned structure',
+      );
+    }
+    return name;
   }
 }
