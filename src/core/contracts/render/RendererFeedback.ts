@@ -189,6 +189,13 @@ export interface RendererFeedback {
    */
   placementPreviewConnectionCount: number;
   /**
+   * How many of the placement ghost's candidate links the same preview pass
+   * refused as `'too-short'` (stud to stud under `MIN_CABLE_LENGTH`). With no
+   * link forming, the main thread shows "Can't connect: too close" under the
+   * ghost (`placementLinkHint.ts`). `0` with no preview.
+   */
+  placementPreviewTooShortCount: number;
+  /**
    * Click-to-inspect selection (structures follow-up Item B2). The renderer
    * owns the selected entity (set on a gameplay tap that resolves to an
    * entity via `pickEntityAt`, toggled off on re-tap, cleared on empty-space

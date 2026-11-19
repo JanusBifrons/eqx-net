@@ -100,6 +100,7 @@ function emptyFeedback(): RendererFeedback {
     fleetPickSeq: 0,
     fleetPickResult: null,
     placementPreviewConnectionCount: 0,
+    placementPreviewTooShortCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
     hoveredPickId: null,
@@ -813,6 +814,7 @@ export class WorkerRendererClient implements IRenderer {
         }
         this.feedback.placementPreviewConnectionCount =
           msg.feedback.placementPreviewConnectionCount;
+        this.feedback.placementPreviewTooShortCount = msg.feedback.placementPreviewTooShortCount;
         this.feedback.selectedPickId = msg.feedback.selectedPickId;
         this.feedback.selectedPickKind = msg.feedback.selectedPickKind;
         this.feedback.hoveredPickId = msg.feedback.hoveredPickId;

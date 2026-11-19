@@ -13,6 +13,7 @@ import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 import { GALAXY_SECTORS } from '../galaxy/galaxy.js';
 import { BASE_ROLES, baseProfileFor, contextForSector, type BaseProfile, type BaseRole, type BaseTier } from './baseProfile.js';
 import { TIER_MAX_STRUCTURES, TURRET_KINDS, growBase, type GrownBase } from './growBase.js';
+import { galaxyBasePlan } from './galaxyBases.js';
 
 function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode {
   const k = getStructureKind(kind);
@@ -224,5 +225,25 @@ describe('growBase — coastal defences (plan coastal-defences)', () => {
     const a = guns(growBase(profile('citadel', 'military'), 11, [])).map((g) => `${g.kind}@${g.x},${g.y},${g.rot ?? 0}`);
     const b = guns(growBase(profile('citadel', 'military'), 11, [])).map((g) => `${g.kind}@${g.x},${g.y},${g.rot ?? 0}`);
     expect(a).toEqual(b);
+  });
+});
+
+describe('growBase — minimum cable length (owner: keep buildings apart)', () => {
+  it('every galaxy base links every building, and a fenced one keeps its reserve batteries', () => {
+    // A leaf stands LINK_GAP (= MIN_CABLE_LENGTH) off its connector; a row
+    // whose spine relay lands on the row line moves out instead of failing
+    // (it once dropped two batteries from three military bases).
+    for (const s of GALAXY_SECTORS) {
+      for (const p of galaxyBasePlan(s.key)) {
+        const b = growBase(p.profile, p.seed, s.features);
+        expect(verify(b).reached, `${s.key}/${p.baseId}`).toBe(b.placements.length);
+        if (!p.profile.fenced) continue;
+        const bank = b.placements.some((q) => q.kind === 'battery_bank');
+        const bats = b.placements.filter((q) => q.kind === 'battery').length;
+        // (a garrison settlement banks four: the case that once lost two)
+        const want = p.profile.role === 'military' && p.profile.tier === 'settlement' ? 4 : 3;
+        expect(bank || bats >= want, `${s.key}/${p.baseId} batteries ${bats}`).toBe(true);
+      }
+    }
   });
 });

@@ -9,6 +9,7 @@ import {
 } from '../structures/cableCurve.js';
 import { placementRejection } from '../structures/placementRules.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
+import { MIN_CABLE_LENGTH } from '../structures/structureGridConstants.js';
 import type { RecipeId } from '../../shared-types/recipes.js';
 
 export interface GrownPlacement {
@@ -93,4 +94,28 @@ export class Builder {
     this.placed.pop();
     this.nodes.delete(`s${i}`);
   }
+}
+
+const linkGaps = new Map<string, number>();
+/** The smallest box gap (from `minGap`, in steps of 2) at which `kind`,
+ *  turned `rot`, set square off a lone connector in direction (`dx`, `dy`),
+ *  links it under the real `canConnect`: stud to stud at least
+ *  `MIN_CABLE_LENGTH` ("keep buildings apart"). Studs square on to the
+ *  connector need more gap than a kind whose nearest studs sit off-centre.
+ *  Cached per kind, direction and turn (seed-time only). */
+export function linkGap(kind: StructureKindId, dx: number, dy: number, rot = 0, minGap = 20): number {
+  const key = `${kind}|${dx}|${dy}|${rot}|${minGap}`;
+  const hit = linkGaps.get(key);
+  if (hit !== undefined) return hit;
+  const ch = getStructureKind('connector').footprint.h / 2;
+  const { hw, hh } = structureHalfExtents(kind, rot);
+  let g = minGap;
+  for (; g < MIN_CABLE_LENGTH + 2 * ch; g += 2) {
+    const b = new Builder();
+    b.tryPlace({ kind: 'connector', x: 0, y: 0 });
+    const off = ch + g + (dx !== 0 ? hw : hh);
+    if (b.tryPlace({ kind, x: dx * off, y: dy * off, rot }) >= 0 && b.tryLink(0, 1)) break;
+  }
+  linkGaps.set(key, g);
+  return g;
 }

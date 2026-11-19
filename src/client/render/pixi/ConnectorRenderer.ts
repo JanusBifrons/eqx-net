@@ -847,8 +847,8 @@ export class ConnectorRenderer {
         okDists.push(edgeDistance(ghost, node));
         okSockA.push(pick.a);
         okSockB.push(pick.b);
-      } else if (res.reason === 'blocked') {
-        this.drawPreviewSegment(ax, ay, ghost, CABLE_NO_SOCKET, node, CABLE_NO_SOCKET, 'blocked', scale);
+      } else if (res.reason === 'blocked' || res.reason === 'too-short') { // red; too-short stud to stud (the pick)
+        this.drawPreviewSegment(ax, ay, ghost, pick.a, node, pick.b, 'blocked', scale);
       }
       // else out-of-range / no-facing-socket / connector-required / full / self / duplicate → not drawn.
     }

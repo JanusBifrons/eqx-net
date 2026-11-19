@@ -26,6 +26,7 @@
  * Pure + zone-blind (no I/O). Not on a hot path (built once per room create).
  */
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { MIN_CABLE_LENGTH } from './structureGridConstants.js';
 
 export interface LatticePlacement {
   kind: StructureKindId;
@@ -55,8 +56,9 @@ export interface LatticeOptions {
 
 /** Connector pitch. Connector edge distance 640 − 64 = 576 ≤ 600 range. */
 export const LATTICE_PITCH = 640;
-/** Gap between a connector's box and its leaf's box. */
-const LEAF_GAP = 20;
+/** Gap between a connector's box and its leaf's box: the shortest cable
+ *  (`MIN_CABLE_LENGTH`), so every leaf link is a real run. */
+const LEAF_GAP = MIN_CABLE_LENGTH;
 /** Fence clearance beyond the outermost leaves. */
 const FENCE_MARGIN = 150;
 

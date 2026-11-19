@@ -25,6 +25,11 @@ import {
 import { structureSockets, structureSocketToWorld } from '../../shared-types/structureKinds.js';
 import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
 import { structureLinksBoundBySockets } from '../leveling/structureLevel.js';
+import { MIN_CABLE_LENGTH } from './structureGridConstants.js';
+
+/** Facing-test tolerance (world units of dot product): a socket at right
+ *  angles to its partner counts as facing it, whatever the float noise. */
+const FACE_EPS = 1e-6;
 
 /** Segments in a flattened cable curve (points = segments + 1). */
 export const CABLE_CURVE_SEGMENTS = 12;
@@ -287,18 +292,25 @@ export function socketListMask(sockets: readonly number[] | undefined): number {
  *     skipped. An any-side end (`takesAnySide`) ignores its mask and shares.
  *  1. Facing filter: a building socket takes a cable only to a partner socket
  *     in front of it (within 90° of its outward normal, never behind the
- *     building); a connector or emitter-post end takes a cable from any side
+ *     building). A connector takes a cable from any side, but on a face
+ *     turned toward the partner (within 90°), so a cable never runs back
+ *     across its own hub; an emitter-post end takes it from any side
  *     (`takesAnySide`).
- *  2. Reach: socket to socket within `maxRange`.
+ *  2. Reach: socket to socket within `maxRange`, and at least
+ *     `MIN_CABLE_LENGTH` (owner: "keep buildings apart"). A shorter pair is
+ *     skipped, so a longer free facing pair still links.
  *  3. The survivors are tried nearest first (ties: `a`'s socket order, then
  *     `b`'s, so the pick is deterministic), and the first whose curve
  *     (`flattenCableCurve`, any-side ends short-tailed) is not blocked
  *     (`isCablePolylineBlocked`) wins.
  *
  * Returns null on success, else the refusal: `'no-facing-socket'` (no free
- * pair faces at all), `'out-of-range'` (none facing is in reach) or `'blocked'`
- * (every facing pair in reach crosses something). `out` is written only on
- * success. Allocation-free after warm-up.
+ * pair faces at all), `'out-of-range'` (none facing is in reach), `'too-short'`
+ * (a facing pair in reach is under `MIN_CABLE_LENGTH`, and no pair long enough
+ * links) or `'blocked'` (every facing pair in reach crosses something). `out`
+ * gets the pick on success, the nearest too-short pair on `'too-short'` (the
+ * build preview draws it refused, stud to stud), `CABLE_NO_SOCKET` on
+ * `'blocked'`, and is left alone otherwise. Allocation-free after warm-up.
  */
 export function pickCableSocketPair(
   a: GridNode,
@@ -324,20 +336,29 @@ export function pickCableSocketPair(
     bx[j] = wSock.x; by[j] = wSock.y; bNx[j] = wSock.nx; bNy[j] = wSock.ny;
   }
   const aAny = takesAnySide(a), bAny = takesAnySide(b);
+  // A connector's faces still face the partner (no cable back across the hub).
+  const aFace = !aAny || a.isConnector, bFace = !bAny || b.isConnector;
   const ua = aAny ? 0 : usedA, ub = bAny ? 0 : usedB;
   const max2 = maxRange * maxRange;
+  const min2 = MIN_CABLE_LENGTH * MIN_CABLE_LENGTH;
   let facing = false;
   let n = 0;
+  let shortD2 = Infinity, shortI = CABLE_NO_SOCKET, shortJ = CABLE_NO_SOCKET;
   for (let i = 0; i < na; i++) {
     if (socketUsed(ua, i)) continue;
     for (let j = 0; j < nb; j++) {
       if (socketUsed(ub, j)) continue;
       const dx = bx[j]! - ax[i]!, dy = by[j]! - ay[i]!;
-      if (!aAny && aNx[i]! * dx + aNy[i]! * dy < 0) continue;
-      if (!bAny && bNx[j]! * dx + bNy[j]! * dy > 0) continue;
+      // (FACE_EPS: a stud at exactly 90° faces; its normal's float noise never turns it away.)
+      if (aFace && aNx[i]! * dx + aNy[i]! * dy < -FACE_EPS) continue;
+      if (bFace && bNx[j]! * dx + bNy[j]! * dy > FACE_EPS) continue;
       facing = true;
       const d2 = dx * dx + dy * dy;
       if (d2 > max2) continue;
+      if (d2 < min2) {
+        if (d2 < shortD2) { shortD2 = d2; shortI = i; shortJ = j; }
+        continue;
+      }
       // Insertion into the sorted list; equal distances keep (i, j) order.
       let k = n++;
       while (k > 0 && pairD2[k - 1]! > d2) {
@@ -347,7 +368,7 @@ export function pickCableSocketPair(
       pairD2[k] = d2; pairI[k] = i; pairJ[k] = j;
     }
   }
-  if (n === 0) return facing ? 'out-of-range' : 'no-facing-socket';
+  if (n === 0 && shortI === CABLE_NO_SOCKET) return facing ? 'out-of-range' : 'no-facing-socket';
   for (let k = 0; k < n; k++) {
     const i = pairI[k]!, j = pairJ[k]!;
     endA.x = ax[i]!; endA.y = ay[i]!; endA.nx = aNx[i]!; endA.ny = aNy[i]!;
@@ -357,6 +378,11 @@ export function pickCableSocketPair(
     if (out) { out.a = i; out.b = j; }
     return null;
   }
+  if (shortI !== CABLE_NO_SOCKET) {
+    if (out) { out.a = shortI; out.b = shortJ; }
+    return 'too-short';
+  }
+  if (out) { out.a = CABLE_NO_SOCKET; out.b = CABLE_NO_SOCKET; }
   return 'blocked';
 }
 

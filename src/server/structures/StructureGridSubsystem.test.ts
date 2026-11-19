@@ -514,7 +514,7 @@ describe('StructureGridSubsystem — construction flow economy', () => {
   it('dead-end: a leaf behind an UNBUILT connector receives nothing until it completes', () => {
     h.placement.place(OWNER, 'capital', 0, 0);
     const con = h.placeRaw(OWNER, 'connector', 400, 0)!;
-    const sol = h.placeRaw(OWNER, 'solar', 650, 0)!;
+    const sol = h.placeRaw(OWNER, 'solar', 700, 0)!;
     const conRec = h.registry.get(con)!;
     const solRec = h.registry.get(sol)!;
     // Solar should hang off the connector (nearest hub), not the capital.
@@ -983,7 +983,7 @@ describe('StructureGridSubsystem — power summary', () => {
     const h = makeHarness();
     h.placement.place(OWNER, 'capital', 0, 0);
     const con = h.placeRaw(OWNER, 'connector', 400, 0)!;
-    const sol = h.placeRaw(OWNER, 'solar', 650, 0)!;
+    const sol = h.placeRaw(OWNER, 'solar', 700, 0)!;
     // Build connector then solar (drive enough pulses for both).
     for (let i = 0; i < 60; i++) h.pulse();
     expect(h.registry.get(con)!.isConstructed).toBe(true);

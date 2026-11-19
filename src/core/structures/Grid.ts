@@ -95,6 +95,9 @@ export type CanConnectReason =
   /** 0d cable sockets: no socket pair faces (a building socket takes a cable
    *  only within 90° of its outward side, never behind the building). */
   | 'no-facing-socket'
+  /** Every free facing socket pair in reach is under `MIN_CABLE_LENGTH`
+   *  stud to stud (owner: "keep buildings apart"). Socket cables only. */
+  | 'too-short'
   /** Phase 5 — a shield-pylon dual-cap violation: a 2nd connector, a 4th pylon,
    *  or a pylon↔non-(connector|pylon) target. */
   | 'pylon-rule';
@@ -273,8 +276,10 @@ function shieldPylonRejection(
  * The hub model — who may connect to whom. Ports eqx-peri's rules exactly:
  * connector-required, per-kind connection cap, no self / no duplicate; then
  * the 0d cable-socket rule (`pickCableSocketPair`): a facing socket pair in
- * reach (socket to socket) whose curved cable crosses nothing. On success the
- * chosen pair goes into the optional scratch `sockets`. A fence link (shield
+ * reach (socket to socket), at least `MIN_CABLE_LENGTH` long, whose curved
+ * cable crosses nothing. On success the chosen pair goes into the optional
+ * scratch `sockets`; on `'too-short'` the refused pair, on `'blocked'`
+ * `CABLE_NO_SOCKET` (the build preview draws both red). A fence link (shield
  * emitter to emitter) keeps its straight post-to-post rule (edge range +
  * centre line of sight) and writes `CABLE_NO_SOCKET` for both ends.
  */
@@ -344,8 +349,8 @@ export function canConnect(
   if (edgeDistance(a, b) > maxRange) return { ok: false, reason: 'out-of-range' };
   if (a.isShieldPylon === true && b.isShieldPylon === true) {
     // Fence link: straight post to post, along the wall.
-    if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
     if (sockets) { sockets.a = CABLE_NO_SOCKET; sockets.b = CABLE_NO_SOCKET; }
+    if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
     return { ok: true };
   }
   // One cable per stud: the sockets each end's links already hold.

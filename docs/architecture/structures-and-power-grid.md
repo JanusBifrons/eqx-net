@@ -153,6 +153,24 @@ view, never the server `StructureRegistry`):
 - `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
   `CONSTRUCTION_PULSE_AMOUNT`, `REPAIR_*`, `DECONSTRUCTION_RATE_KG`,
   `CAPITAL_STARTING_MINERALS`, `FLASH_DURATION_MS`.
+- **Minimum cable length** (owner rule "keep buildings apart"):
+  `MIN_CABLE_LENGTH = 56` u, stud to stud. 56 = a 1× cable's two collars
+  (6 u each) plus the short-run span (44 u, `connectorLineLooks.ts` draws
+  collars only below it), so the shortest cable still shows a lashing and
+  some bundle; the cable look reads the same constant. `pickCableSocketPair`
+  skips a pair under it and takes the next longer free facing pair; with none,
+  `canConnect` refuses `'too-short'` and writes the refused pair to the pick
+  (a connector end still uses a face turned toward the partner, so the cable
+  never runs back across its own hub). Fence links (post to post,
+  `CABLE_NO_SOCKET`) are exempt. The build preview draws a too-short link red,
+  stud to stud, and when it is the only link the ghost would make shows
+  "Can't connect: too close" (`RendererFeedback.placementPreviewTooShortCount`
+  → `placementHints.ts`, `PlacementLinkHint`). The base generator stands each
+  leaf its `linkGap` off its connector (the smallest gap the real rule
+  links, `growBuilder.ts`); the stress lattice uses the full 56 u.
+  Locks: `minCableLength.test.ts`,
+  `ConnectorRenderer.tooShortPreview.test.ts`, `placementHints.test.tsx`,
+  `growBase.test.ts` (minimum cable length).
 
 **Server** (`src/server/structures/`):
 - `StructureRegistry` carries the connection adjacency (+ flat conn map),
