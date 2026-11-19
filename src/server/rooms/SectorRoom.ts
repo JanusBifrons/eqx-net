@@ -109,10 +109,7 @@ function withAsteroidResources<T extends { id: string }>(roster: readonly T[], f
 }
 import { NPC_ALLEGIANCE_IDS, type NpcAllegianceId } from '../../shared-types/allegiances.js';
 import {
-  STANDING_HIT_DELTA,
-  STANDING_HIT_WINDOW_MS,
   defaultFactionPolicy,
-  isNpcFactionId,
   type FactionPolicy,
 } from '../../shared-types/factions.js';
 import type { FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
@@ -129,7 +126,6 @@ const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcO
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
-import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { alienGateSites } from '../../core/galaxy/alienGates.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
@@ -143,6 +139,7 @@ import type { NpcLockSubsystem } from './NpcLockSubsystem.js';
 import { fillRangeShape } from '../../core/combat/fireControlBearing.js';
 import type { PhysicsWorkerProxy, WorkerCmd } from './PhysicsWorkerProxy.js';
 import { classifyAttacker } from './classifyAttacker.js';
+import { RoomHitStanding, adjustStanding } from './features/hitStanding.js';
 import { ShipProgression } from './features/shipProgression.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
@@ -583,6 +580,8 @@ export class SectorRoom extends Room<SectorState> {
   /** This sector's game clock (game speed is per sector, time scale stream).
    *  Every gameplay read and timer in the room uses it; at 1× it IS Date.now(). */
   readonly gameClock: GameClock = createSectorClock();
+  /** Hit-side standing + economy notes (`features/hitStanding.ts`); `applyDamage` and the tractor call them. */
+  private readonly hitStanding = new RoomHitStanding({ swarmRegistry: this.swarmRegistry, gameClock: this.gameClock, playerToSlot: () => this.playerToSlot, structureRegistry: () => this.structureRegistry });
 
   /** C2 — break-ins (channels + access grants); ticked with the structure tick. */
   private readonly breakIns = new BreakInSubsystem({
@@ -606,7 +605,7 @@ export class SectorRoom extends Room<SectorState> {
     lineBlocker: (fx, fy, tx, ty, e, t) => this.lineOfFire.gate().firstOnLine(fx, fy, tx, ty, e, t, notLootPod),
     inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1), isWreckPiece: (id) => { const r = this.swarmRegistry.get(id); return r != null && isWreckPiece(r); },
     // Tractoring a ship is a hostile act, like a hit (weapon-mounts.md "Tractor beam"); terrain is neutral.
-    onShipTractored: (e, t) => { this.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
+    onShipTractored: (e, t) => { this.hitStanding.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
   } });
   /** C2 bespoke trigger (testMode `breakInMs`). */
   private testBreakInMs: number | null = null;
@@ -858,7 +857,7 @@ export class SectorRoom extends Room<SectorState> {
     teleporters: () => this.teleporters, swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry,
     relationCtx: this.relationCtx, hostileActs: this.hostileActs, now: () => this.gameClock.now(), sectorKey: () => this.sectorKey,
     resolveOwnerName: (o) => this.rosterPersistence.resolveOwnerName(o), sendToPlayerHere: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
-    adjustStanding: (from, to, d) => this.adjustStanding(from, to, d),
+    adjustStanding,
   });
   /** v4 T2/T3 — who rides a teleporter jump (`features/teleportMessages.ts`). */
   private readonly padRiders = new TeleportPadRiders({
@@ -876,7 +875,7 @@ export class SectorRoom extends Room<SectorState> {
     structureRegistry: this.structureRegistry, swarmRegistry: this.swarmRegistry, sabF32: () => this.sabF32,
     hostileActs: this.hostileActs, relationCtx: this.relationCtx, aiController: () => this.aiController,
     now: () => this.gameClock.now(), serverTick: () => this.serverTick, sectorKey: () => this.sectorKey,
-    adjustStanding: (from, to, d) => this.adjustStanding(from, to, d), resolveOwnerName: (o) => this.rosterPersistence.resolveOwnerName(o),
+    adjustStanding, resolveOwnerName: (o) => this.rosterPersistence.resolveOwnerName(o),
     swarmGet: (id) => this.swarmRegistry.get(id), swarmByEntityId: (eid) => this.swarmRegistry.getByEntityId(eid),
     state: () => this.state as SectorState, getActiveShip: (pid) => this.getActiveShip(pid), playerToSlot: () => this.playerToSlot,
     shipPoseCache: () => this.shipPoseCache, lingeringSlots: this.lingeringSlots, lingeringPoseCache: this.lingeringPoseCache,
@@ -3008,7 +3007,7 @@ export class SectorRoom extends Room<SectorState> {
     const eff = this.damageRouter.effectiveDamage(targetId, damage, layerMul);
     // RTS slice 5: a wingman's hit is its OWNER's act for standing / economy.
     const hitActor = eff > 0 && this.fleet.size > 0 ? this.wingmen.hostileActorOf(shooterId) : shooterId;
-    if (eff > 0) { this.noteEconomicHit(targetId, hitActor); this.noteStandingHit(targetId, hitActor); }
+    if (eff > 0) { this.hitStanding.noteEconomicHit(targetId, hitActor); this.hitStanding.noteStandingHit(targetId, hitActor); }
     // An NPC's own hit on a pilot keeps it hostile (owner 2026-11-12).
     if (eff > 0 && this.playerToSlot.has(targetId)) this.refreshNpcAttackHostility(shooterId, targetId);
     // C2 — a hit ends the target's break-in (one Map lookup when none).
@@ -4135,90 +4134,6 @@ export class SectorRoom extends Room<SectorState> {
   /** Living World P1a-2 — a short player-facing notice (HUD popup line). */
   private sendNotice(client: Client, text: string): void {
     try { client.send('notice', { type: 'notice', text }); } catch { /* socket closing */ }
-  }
-
-  /** A destroyed NPC drops its loot table where it died (every kill — AI-vs-AI
-   *  included, user decision 6). Reads the live SAB pose (still allocated). */
-  /**
-   * Living World P2 — economy side of a hit: a player (or their turret) hitting
-   * a trade HAULER is piracy (the TradeDirector records the attacker for the
-   * run); hitting a ROBOT costs robot standing (ends a truce). Steady state is
-   * prefix checks + Map lookups, no allocation (#14).
-   */
-  /** F3 — move `from`'s view of `to`, through the economy store. */
-  private adjustStanding(from: string, to: string, delta: number): void {
-    if (from === to || from === '' || to === '') return;
-    getTradeSink()?.adjustStanding?.(from, to, delta);
-  }
-
-  /** The faction behind an attacker id: a player, a structure's owner, or an
-   *  NPC ship's allegiance. Null for anything else. Allocation-free. */
-  private attackerFaction(id: string): string | null {
-    if (this.playerToSlot.has(id)) return id;
-    const s = this.structureRegistry.get(id);
-    if (s !== undefined) return parseOwner(s.owner).faction;
-    const rec = this.swarmRegistry.get(id);
-    return rec != null && rec.kind === 1 ? allegianceOfKind(rec.shipKind) : null;
-  }
-
-  /**
-   * F3 — a hit lowers the victim faction's view of the attacker's faction
-   * (one `STANDING_HIT_DELTA` per pair per window). Victims are structures
-   * (their owner) and player ships; at least one side must be a player (NPC
-   * politics come later). Steady state is Map lookups only (#14).
-   */
-  private noteStandingHit(targetId: string, shooterId: string): void {
-    const sink = getTradeSink();
-    if (sink?.adjustStanding === undefined) return;
-    // v4 C — a convoy hauler flies for its owner AND its carrier: both mind.
-    if (isHaulerId(targetId)) {
-      const f = convoyHaulerFactions(targetId);
-      if (f !== undefined) {
-        this.standingHit(f.owner, shooterId);
-        if (f.carrier !== f.owner) this.standingHit(f.carrier, shooterId);
-      }
-      return;
-    }
-    const s = this.structureRegistry.get(targetId);
-    const victim = s !== undefined ? parseOwner(s.owner).faction : this.playerToSlot.has(targetId) ? targetId : null;
-    if (victim === null) return;
-    this.standingHit(victim, shooterId);
-  }
-
-  /** Lower `victim`'s view of the shooter's faction, at most once per pair per
-   *  window (never between two NPC factions). */
-  private standingHit(victim: string, shooterId: string): void {
-    const sink = getTradeSink();
-    if (sink?.adjustStanding === undefined) return;
-    const attacker = this.attackerFaction(shooterId);
-    if (attacker === null || attacker === victim) return;
-    if (isNpcFactionId(victim) && isNpcFactionId(attacker)) return;
-    const now = this.gameClock.now();
-    let row = this.standingHitAtMs.get(victim);
-    if (row === undefined) { row = new Map(); this.standingHitAtMs.set(victim, row); }
-    if (now - (row.get(attacker) ?? -Infinity) < STANDING_HIT_WINDOW_MS) return;
-    row.set(attacker, now);
-    sink.adjustStanding(victim, attacker, STANDING_HIT_DELTA);
-  }
-  /** victim faction → attacker faction → last standing hit (ms). */
-  private readonly standingHitAtMs = new Map<string, Map<string, number>>();
-
-  private noteEconomicHit(targetId: string, shooterId: string): void {
-    const sink = getTradeSink();
-    if (sink === null) return;
-    const hauler = isHaulerId(targetId);
-    if (!hauler) {
-      const rec = this.swarmRegistry.get(targetId);
-      if (rec == null || rec.kind !== 1 || allegianceOfKind(rec.shipKind) !== 'robots') return;
-    }
-    const kind = classifyAttacker(shooterId);
-    const attacker = kind === 'player'
-      ? shooterId
-      : kind === 'structure' ? (this.structureRegistry.get(shooterId)?.owner ?? null) : null;
-    // A hauler reports EVERY hit (an NPC raider drives the escort prompt too);
-    // a robot only cares about player attackers.
-    if (hauler) sink.onHaulerDamaged(targetId, attacker);
-    else if (attacker !== null) sink.onRobotDamaged(attacker);
   }
 
   // ── Living World P3b — harvester hooks (driven by RobotTerritory) ───────
