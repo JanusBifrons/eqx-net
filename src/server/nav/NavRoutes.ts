@@ -20,12 +20,13 @@
  * Main thread, per tick: allocation-free except one record the first time a
  * ship asks, and the request itself on a goal change (a discrete event).
  */
+import type { NavHull } from '../../shared-types/shipScale/navTuning.js';
 import type { IAiNavRoutes } from '../../core/contracts/IAiBehaviour.js';
 import { createNavRoute, setNavRoute, stepNavRoute, type NavRoute } from '../../core/ai/stepRoute.js';
 import type { NavRouteMsg } from '../../core/nav/navHost.js';
 
 /** Plans a route (the room's `NavField.route`). */
-export type NavRouteRequest = (sx: number, sy: number, tx: number, ty: number, clearance: number, heading: number, turnRadius: number, comfort: number) => Promise<NavRouteMsg>;
+export type NavRouteRequest = (sx: number, sy: number, tx: number, ty: number, hull: NavHull, heading: number, turnRadius: number) => Promise<NavRouteMsg>;
 
 /** A ship not asking for this long (game ms) is forgotten. */
 const NAV_FORGET_MS = 10_000;
@@ -83,14 +84,15 @@ export class NavRoutes implements IAiNavRoutes {
   /** This call's nose and turning radius (passed on to its plans, slice 11). */
   private heading = NaN;
   private turnRadius = 0;
-  private comfort = 0;
+  private hull: NavHull = { clearance: 0, comfort: 0, beam: 0 };
 
   /** Ships with a record (diagnostics, tests). */
   get size(): number { return this.ships.size; }
 
-  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number, keep = false,
-    heading = NaN, turnRadius = 0, comfort = clearance): boolean {
-    this.heading = heading; this.turnRadius = turnRadius; this.comfort = comfort;
+  waypoint(entityId: string, x: number, y: number, tx: number, ty: number, hull: NavHull, arrive: number, keep = false,
+    heading = NaN, turnRadius = 0): boolean {
+    this.heading = heading; this.turnRadius = turnRadius; this.hull = hull;
+    const clearance = hull.clearance;
     const now = this.now();
     if (now >= this.nextSweep) this.sweep(now);
     let s = this.ships.get(entityId);
@@ -104,14 +106,14 @@ export class NavRoutes implements IAiNavRoutes {
       // A new goal: the old route leads elsewhere (a moving goal kept: near enough until the new plan lands).
       if (!keep) { s.route.count = 0; s.short = false; }
       s.stuck = 0; s.chkAt = now; s.chkX = x; s.chkY = y;
-      if (!s.pending && now - s.askedAt >= NAV_REPLAN_MS) this.plan(s, x, y, tx, ty, clearance, now);
+      if (!s.pending && now - s.askedAt >= NAV_REPLAN_MS) this.plan(s, x, y, tx, ty, now);
     } else if (s.short) {
       if (!s.pending && now - s.askedAt >= NAV_WAIT_RETRY_MS) {
         s.stuck = 0; s.chkAt = now; s.chkX = x; s.chkY = y; // a fresh start if the way has opened
-        this.plan(s, x, y, tx, ty, clearance, now);
+        this.plan(s, x, y, tx, ty, now);
       }
     } else if (now - s.chkAt >= NAV_STUCK_MS) {
-      this.progress(s, x, y, tx, ty, clearance, arrive, now);
+      this.progress(s, x, y, tx, ty, arrive, now);
     }
     let leg = stepNavRoute(s.route, x, y, arrive);
     if (leg < 0) {
@@ -157,13 +159,13 @@ export class NavRoutes implements IAiNavRoutes {
   /** Drop a ship's route (it left or died). */
   forget(entityId: string): void { this.ships.delete(entityId); }
 
-  private plan(s: ShipNav, x: number, y: number, tx: number, ty: number, clearance: number, now: number): void {
+  private plan(s: ShipNav, x: number, y: number, tx: number, ty: number, now: number): void {
     s.goalX = tx; s.goalY = ty;
     s.pending = true;
     s.askedAt = now;
     const gen = ++s.gen;
     this.requests++;
-    this.request(x, y, tx, ty, clearance, this.heading, this.turnRadius, this.comfort).then((msg) => {
+    this.request(x, y, tx, ty, this.hull, this.heading, this.turnRadius).then((msg) => {
       if (s.gen !== gen) return;
       s.pending = false;
       if (msg.status === 'straight') { s.route.count = 0; s.short = false; } // the way is clear (again)
@@ -176,13 +178,13 @@ export class NavRoutes implements IAiNavRoutes {
   }
 
   /** The periodic stuck check: plan again from here, or wait here. */
-  private progress(s: ShipNav, x: number, y: number, tx: number, ty: number, clearance: number, arrive: number, now: number): void {
+  private progress(s: ShipNav, x: number, y: number, tx: number, ty: number, arrive: number, now: number): void {
     const mx = x - s.chkX, my = y - s.chkY, gx = tx - x, gy = ty - y;
     s.chkAt = now; s.chkX = x; s.chkY = y;
     if (mx * mx + my * my >= arrive * arrive || gx * gx + gy * gy <= 4 * arrive * arrive) { s.stuck = 0; return; }
     s.stuck++;
     if (s.stuck <= NAV_STUCK_REPLANS) {
-      if (!s.pending) { this.stuckReplans++; this.plan(s, x, y, tx, ty, clearance, now); }
+      if (!s.pending) { this.stuckReplans++; this.plan(s, x, y, tx, ty, now); }
       return;
     }
     // Plans did not help: wait where it is (retried every NAV_WAIT_RETRY_MS).

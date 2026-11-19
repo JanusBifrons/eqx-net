@@ -7,6 +7,7 @@
  * replies are routed by. One worker per process: the work is building maps
  * once per sector and answering route requests, not stepping a world.
  */
+import type { NavHull } from '../../shared-types/shipScale/navTuning.js';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import type { Logger } from 'pino';
@@ -38,12 +39,12 @@ export interface NavField {
   obstacle(id: number, shape: GridObstacle | null): void;
   /** A rock rests somewhere new (null: back at its cut pose). */
   rockMoved(key: number, pose: { x: number; y: number; angle: number } | null): void;
-  /** Plans a route from (sx, sy) to (tx, ty) for a hull of clearance
-   *  `clearance` (from `shipTuning`). Asynchronous: the ship keeps flying
+  /** Plans a route from (sx, sy) to (tx, ty) for a hull
+   *  (`navHull(kind)`: clearance, comfort, beam). Asynchronous: the ship keeps flying
    *  meanwhile. After detach it answers `none` at once; a worker failure
    *  rejects every request in flight. `heading`/`turnRadius`: a capital's
    *  nose and turning radius (no U-turn planned in a lane); omit for others. */
-  route(sx: number, sy: number, tx: number, ty: number, clearance: number, heading?: number, turnRadius?: number, comfort?: number): Promise<NavRouteMsg>;
+  route(sx: number, sy: number, tx: number, ty: number, hull: NavHull, heading?: number, turnRadius?: number): Promise<NavRouteMsg>;
   /** Free it (on room dispose); later calls do nothing. */
   detach(): void;
 }
@@ -87,7 +88,7 @@ export class NavWorker {
       rockGone: (key) => post({ type: 'ROCK', worldId, key, gone: true }),
       rockMoved: (key, pose) => post({ type: 'ROCK', worldId, key, pose }),
       obstacle: (id, shape) => post({ type: 'OBSTACLE', worldId, id, shape }),
-      route: (sx, sy, tx, ty, clearance, heading = NaN, turnRadius = 0, comfort = clearance) => {
+      route: (sx, sy, tx, ty, hull, heading = NaN, turnRadius = 0) => {
         if (!attached) {
           return Promise.resolve({ type: 'ROUTE', worldId, reqId: 0, status: 'none', points: new Float64Array(0), expanded: 0, ms: 0 });
         }
@@ -95,7 +96,7 @@ export class NavWorker {
         stats.routes++; stats.posts++; stats.inFlight++;
         return new Promise<NavRouteMsg>((resolve, reject) => {
           this.routes.set(reqId, { resolve, reject, stats });
-          started.then((w) => w.postMessage({ type: 'ROUTE', worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius, comfort } satisfies NavCommand),
+          started.then((w) => w.postMessage({ type: 'ROUTE', worldId, reqId, sx, sy, tx, ty, clearance: hull.clearance, heading, turnRadius, comfort: hull.comfort, beam: hull.beam } satisfies NavCommand),
             (err: unknown) => { this.routes.delete(reqId); stats.inFlight--; reject(err); });
         });
       },

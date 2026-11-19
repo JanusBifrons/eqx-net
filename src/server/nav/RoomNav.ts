@@ -4,6 +4,7 @@
  * handed to `view.nav`) and the players' autopilot route requests
  * (`AutopilotRoutes`). The room keeps one of these and nothing else of nav.
  */
+import type { NavHull } from '../../shared-types/shipScale/navTuning.js';
 import type { Logger } from 'pino';
 import { getNavWorker, type NavField, type NavFieldStats } from './NavWorker.js';
 import { NavRoutes } from './NavRoutes.js';
@@ -59,8 +60,8 @@ export class RoomNav {
   /** The AI brains' routes (set once a field is hosted). */
   routes: NavRoutes | undefined;
   /** Stable (asking allocates no closure). */
-  private readonly routeFn = (sx: number, sy: number, tx: number, ty: number, c: number, hd: number, tr: number, cf: number) =>
-    this.field!.route(sx, sy, tx, ty, c, hd, tr, cf);
+  private readonly routeFn = (sx: number, sy: number, tx: number, ty: number, h: NavHull, hd: number, tr: number) =>
+    this.field!.route(sx, sy, tx, ty, h, hd, tr);
   readonly autopilot: AutopilotRoutes;
 
   constructor(private readonly deps: RoomNavDeps) {
