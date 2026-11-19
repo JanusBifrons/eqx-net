@@ -23,7 +23,7 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../render/pixi/spriteBuilders.js';
 import { ArtCache, PIXEL_ROT_STEPS, type PixelSettings, type StructArt } from './assets.js';
-import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, structScale, type Cam, type Pose, type Scene, type SceneId } from './scenes.js';
+import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, type Cam, type Pose, type Scene, type SceneId } from './scenes.js';
 import { readRigsFlag } from '../render/pixi/structureRigs.js';
 import { DOCK_BAY_CX, DOCK_BAY_CY } from '../../core/articulation/rigCatalogue.js';
 import { hash01 } from '../render/art/fields.js';
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
   // Restyle 2c: the outpost gets a pop-up turret (rig sandbox) north of the
   // power station while rigs are on (`?rigs=0` = the scene without it).
   if (RIGS && SCENE === 'outpost') {
-    scene.structs.push({ id: 'turret', x: 1000, y: -800, rot: 0, seed: 13, size: 200 });
+    scene.structs.push({ id: 'turret', x: 1000, y: -800, rot: 0, seed: 13 });
     scene.edges?.push([6, scene.structs.length - 1]);
   }
   const cache = new ArtCache();
@@ -199,18 +199,18 @@ async function main(): Promise<void> {
   // ---- structures
   const structs: StructView[] = scene.structs.map((st) => {
     const v: StructView = { x: st.x, y: st.y, sprite: null, gfx: null, lit: null, rot: st.rot, lamps: [], lampXY: [], art: null, bandArt: [], id: st.id, seed: st.seed, radius: 100 };
-    // Art-lab size override (st.size): today's art, scaled.
-    const k = structScale(st);
+    // Catalogue size (one size source); st.rot turns it (a grown base's docks and gates).
+    const cr = Math.cos(st.rot), sr = Math.sin(st.rot);
     if (st.label) {
       const tx = new Text({ text: st.label, style: { fill: 0xd8e4ff, fontFamily: 'sans-serif', fontWeight: 'bold', fontSize: 96, letterSpacing: 8 } });
       tx.anchor.set(0.5, 0);
-      tx.position.set(st.x, st.y + (structFootprint(st.id).h / 2) * k + 24);
+      tx.position.set(st.x, st.y + structFootprint(st.id).h / 2 + 24);
       labelL.addChild(tx);
     }
     if (STYLE === 'current') {
       v.gfx = buildStructureGfx(st.id, undefined, st.seed);
       v.gfx.position.set(st.x, st.y);
-      v.gfx.scale.set(k);
+      v.gfx.rotation = st.rot;
       structL.addChild(v.gfx);
       v.radius = Math.max(v.gfx.width, v.gfx.height) / 2;
       return v;
@@ -219,7 +219,7 @@ async function main(): Promise<void> {
     if (MACHINED) {
       art = cache.machinedStruct(st.id, st.seed, STRUCT_LIVERY?.team, structExtra());
       v.lit = new Sprite(art.albedo!);
-      v.lit.anchor.set(0.5); v.lit.scale.set((2 * k) / art.density); // half-res albedo v.lit.position.set(st.x, st.y);
+      v.lit.anchor.set(0.5); v.lit.scale.set(2 / art.density); v.lit.rotation = st.rot; // half-res albedo v.lit.position.set(st.x, st.y);
       v.lit.alpha = 0; v.lit.tint = 0xffb070;
       litL.addChild(v.lit);
     } else {
@@ -229,15 +229,15 @@ async function main(): Promise<void> {
     v.art = art;
     v.sprite = new Sprite(art.tex);
     v.sprite.anchor.set(0.5);
-    v.sprite.scale.set(k / art.density);
+    v.sprite.scale.set(1 / art.density);
+    v.sprite.rotation = st.rot;
     v.sprite.position.set(st.x, st.y);
     structL.addChildAt(v.sprite, 0);
-    v.radius = (Math.max(art.w, art.h) / art.density / 2) * k;
+    v.radius = Math.max(art.w, art.h) / art.density / 2;
     if (STYLE === 'lit' && LIGHTING.litStructures) {
       const l = cache.litStruct(st.id, st.seed);
       v.litMesh = new LitShipMesh(litTileFromMaps(l.maps, l.tex), LIGHTING);
       v.litMesh.position.set(st.x, st.y);
-      v.litMesh.scale.set(k);
       v.litMesh.rotation = st.rot;
       v.sprite.visible = false;
       if (v.lit) v.lit.visible = false;
@@ -245,7 +245,7 @@ async function main(): Promise<void> {
     }
     for (const l of art.navLights) {
       v.lamps.push(glow(glowL, l.color));
-      v.lampXY.push({ x: st.x + l.x * k, y: st.y + l.y * k });
+      v.lampXY.push({ x: st.x + l.x * cr - l.y * sr, y: st.y + l.x * sr + l.y * cr });
     }
     return v;
   });
@@ -558,7 +558,7 @@ async function main(): Promise<void> {
     // Rigs: game pose of each host (y-up), clip time in ticks.
     for (const r of rigs) {
       const st = scene.structs[r.i]!;
-      r.view.update(r.input, t * 60, st.x, -st.y, -st.rot, structScale(st));
+      r.view.update(r.input, t * 60, st.x, -st.y, -st.rot, 1);
     }
 
     // GPU-lit hulls: now every light and occluder of this frame is known.
@@ -591,8 +591,8 @@ async function main(): Promise<void> {
       // frame, y-up), else the structure centre.
       let dx = st.x, dy = st.y;
       if (st.id === 'freight_dock') {
-        const k = structScale(st), c = Math.cos(st.rot), s = Math.sin(st.rot);
-        const lx = DOCK_BAY_CX * k, ly = -DOCK_BAY_CY * k;
+        const c = Math.cos(st.rot), s = Math.sin(st.rot);
+        const lx = DOCK_BAY_CX, ly = -DOCK_BAY_CY;
         dx = st.x + lx * c - ly * s;
         dy = st.y + lx * s + ly * c;
       }

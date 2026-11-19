@@ -1,9 +1,10 @@
 /**
  * Art lab `scene=outpost` (structure restyle slice 1a): the small refining
- * outpost at Ladder A sizes, scale ships, grid links and phone framing.
+ * outpost at catalogue sizes, scale ships, grid links and phone framing.
  */
 import { describe, expect, it } from 'vitest';
-import { buildScene, OUTPOST_SIZES, parseStructStyle, structFootprint, structScale, type Cam, type Pose } from './scenes.js';
+import { buildScene, parseStructStyle, structFootprint, type Cam, type Pose } from './scenes.js';
+import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { shipExtent } from '../render/art/fields.js';
 import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W } from '../../core/articulation/rigCatalogue.js';
 
@@ -28,12 +29,11 @@ describe('art lab outpost scene', () => {
     expect(s.ships.map((sh) => sh.id).sort()).toEqual(['destroyer', 'fighter', 'trader-hauler', 'trader-hauler']);
   });
 
-  it('sizes every structure on Ladder A (Small 150–300, Medium 600–1,200)', () => {
+  it('draws every structure at its catalogue footprint (one size source, rule 11)', () => {
     for (const st of s.structs) {
-      const fp = structFootprint(st.id), k = structScale(st);
-      const side = Math.max(fp.w, fp.h) * k;
-      expect(side).toBeCloseTo(OUTPOST_SIZES[st.id]!, 6);
-      expect((side >= 150 && side <= 300) || (side >= 600 && side <= 1200) || st.id === 'connector').toBe(true);
+      expect(isStructureKindId(st.id)).toBe(true);
+      expect(structFootprint(st.id)).toEqual(getStructureKind(st.id as never).footprint);
+      expect('size' in st).toBe(false);
     }
   });
 
@@ -50,8 +50,7 @@ describe('art lab outpost scene', () => {
 
   it('parks two haulers side by side, wholly on the intake dock\'s loading pad', () => {
     const intake = s.structs.find((st) => st.label === 'INTAKE')!;
-    const k = structScale(intake);
-    expect(k).toBeCloseTo(1, 6); // the outpost dock is the catalogue's medium dock
+    const k = 1; // catalogue size
     const e = shipExtent('trader-hauler');
     const p: Pose = { x: 0, y: 0, rot: 0, thrust: 0 };
     const xs: number[] = [];
@@ -68,7 +67,7 @@ describe('art lab outpost scene', () => {
 
   it('keeps the docks and their pads clear of each other and every other structure', () => {
     const box = (st: (typeof s.structs)[number]): [number, number, number, number] => {
-      const fp = structFootprint(st.id), k = structScale(st);
+      const fp = structFootprint(st.id), k = 1;
       const b: [number, number, number, number] = [st.x - (fp.w * k) / 2, st.y - (fp.h * k) / 2, st.x + (fp.w * k) / 2, st.y + (fp.h * k) / 2];
       if (st.id === 'freight_dock') { b[0] = Math.min(b[0], st.x - DOCK_BAY_HALF_W * k); b[1] = st.y - (DOCK_BAY_CY + DOCK_BAY_HALF_H) * k; }
       return b;
@@ -87,7 +86,7 @@ describe('art lab outpost scene', () => {
     const cam: Cam = { x: 0, y: 0, zoom: 1 };
     sc.camera(0, cam);
     for (const st of sc.structs) {
-      const fp = structFootprint(st.id), k = structScale(st);
+      const fp = structFootprint(st.id), k = 1;
       expect(Math.abs(st.x - cam.x) + (fp.w * k) / 2).toBeLessThanOrEqual(view.w / 2 / cam.zoom);
       expect(Math.abs(st.y - cam.y) + (fp.h * k) / 2).toBeLessThanOrEqual(view.h / 2 / cam.zoom);
     }

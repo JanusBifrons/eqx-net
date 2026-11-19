@@ -4,7 +4,7 @@
  * of `t`, so captures are frame-exact and every arm sees the same scene.
  * Pixi space (y down); a ship's nose is local -y.
  */
-import type { Cam, Pose, ShipE, StructE } from './scenes.js';
+import { baseStructs as labBase, type Cam, type Pose, type ShipE, type StructE } from './scenes.js';
 
 export type FxShotKind = 'beam' | 'bolt' | 'cannon' | 'missile';
 
@@ -74,18 +74,10 @@ function flyer(id: string, p: (t: number) => [number, number], paint?: number): 
   };
 }
 
+/** The art lab's hand-placed base, its first 9 structures: the fx scenes'
+ *  cameras and wisps are framed on that fixed layout. */
 function baseStructs(): StructE[] {
-  return [
-    { id: 'capital', x: 0, y: 0, rot: 0, seed: 1 },
-    { id: 'connector', x: 360, y: 0, rot: 0, seed: 2 },
-    { id: 'connector', x: -360, y: 0, rot: 0, seed: 3 },
-    { id: 'connector', x: 0, y: 360, rot: 0, seed: 4 },
-    { id: 'solar', x: 620, y: -110, rot: 0, seed: 5 },
-    { id: 'solar', x: 620, y: 110, rot: 0, seed: 6 },
-    { id: 'solar', x: -620, y: -110, rot: 0, seed: 7 },
-    { id: 'turret', x: 330, y: 380, rot: 0, seed: 8 },
-    { id: 'turret', x: -330, y: 380, rot: 0, seed: 9 },
-  ];
+  return labBase().slice(0, 9);
 }
 
 /** A loose asteroid field with some ice and crystal rocks. */
