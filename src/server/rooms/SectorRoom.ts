@@ -73,7 +73,6 @@ import { StructurePlacementSubsystem, packedGateForBuild, type PackedGateHost } 
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
-import { GATE_SPAN_THICKNESS } from '../../core/structures/gateGeometry.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
 import { CARGO_ACCESS_RANGE } from '../../shared-types/messages/cargoMessages.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
@@ -81,12 +80,8 @@ import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerRoomFeatures } from './features/index.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { TeleporterSubsystem, findAlienTwin, findLinkTwin, seedAlienGates, seedPocketPads, type GateTwinHost, type NpcGateSeedHost } from '../structures/TeleporterSubsystem.js';
+import { seedAlienGates, seedPocketPads, type NpcGateSeedHost, type TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
 import { getTeleportBroker, type TeleportRoom } from '../teleport/TeleportBroker.js';
-import {
-  PAD_SPECS,
-  isTeleporterKind,
-} from '../../shared-types/teleport.js';
 import { isNpcBasesDisabled, npcBaseTrade, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost } from '../bases/NpcBaseSubsystem.js';
 import { hashString } from '../../core/bases/baseProfile.js';
 import { nearestClearPoint } from '../../core/bases/baseSite.js';
@@ -190,7 +185,7 @@ import { FleetCommandSubsystem } from '../fleet/FleetCommandSubsystem.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { JoinHandler } from './join/JoinHandler.js';
 import { TeleportTolls } from './features/teleportTolls.js';
-import { TeleportPadRiders } from './features/teleportMessages.js';
+import { TeleportPadRiders, buildTeleporters } from './features/teleportMessages.js';
 import { WingmanPilots } from './features/wingmanPilots.js';
 import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { PilotSwap } from './features/pilotSwap.js';
@@ -2301,70 +2296,15 @@ export class SectorRoom extends Room<SectorState> {
         if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes');
       },
     });
-    const tpScale = this.testMode && roomOpts.teleportCycleScale !== undefined
-      ? Math.max(0.001, Math.min(1, roomOpts.teleportCycleScale))
-      : 1;
-    this.teleporters = new TeleporterSubsystem({
-      registry: this.structureRegistry,
-      storage: this.storage,
-      sectorKey: () => this.sectorKey,
-      isPowered: (rec) => rec.isConstructed && this.structureGrid.powerSummaryFor(rec.id).powered,
-      cycleScale: () => tpScale,
-      shipsOnPad: (rec) => this.padRiders.shipsOnPad(rec),
-      onChanged: () => this.rebuildStructuresSlice(),
-      // T2 — ships ride the swap; the iris and the closing push in the worker.
-      onSwapShips: (a, b) => this.padRiders.swapPadShips(a, b),
-      // T3 — partners in other sectors, reached through the broker.
-      onSwapRemote: (a, link) => this.padRiders.swapAcross(a, link),
-      remoteFind: (sk, uid) => {
-        const f = getTeleportBroker().find(sk, uid);
-        return f && f.room !== this.teleportRoom ? { rec: f.rec, sys: f.room.teleporters } : null;
-      },
-      hopsTo: (sk) => this.padRiders.hopsToSector(sk),
-      findAlienTwin: (rec) => findAlienTwin(this.gateTwinHost, rec),
-      findLinkTwin: (rec) => findLinkTwin(this.gateTwinHost, rec),
-      // T4 — tolls: offered at arming, settled at the swap.
-      onArmed: (rec) => this.tolls.offerToll(rec),
-      onTollSettle: (rec) => this.tolls.settleToll(rec),
-      spawnIris: (rec) => this.padRiders.forIrisSpan(rec, (id, s) => {
-        this.postToWorker({ type: 'SPAWN_WALL', id, ax: rec.x + s.ax, ay: rec.y + s.ay, bx: rec.x + s.bx, by: rec.y + s.by, thickness: GATE_SPAN_THICKNESS });
-        this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active: false });
-      }),
-      setIrisActive: (rec, active) => this.padRiders.forIrisSpan(rec, (id) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active })),
-      removeIris: (rec) => {
-        this.padRiders.forIrisSpan(rec, (id) => this.postToWorker({ type: 'REMOVE_WALL', id }));
-        this.forceFields.remove(`tpfield-${rec.id}`);
-      },
-      setPadField: (rec, active) => {
-        if (!isTeleporterKind(rec.kind)) return;
-        this.forceFields.set(`tpfield-${rec.id}`, { kind: 'pad', cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
-      },
-    });
-    // v4 T3 — the broker reaches this room's teleporters from other sectors.
-    this.teleportRoom = {
-      sectorKey: this.sectorKey,
-      teleporters: this.teleporters,
-      storage: this.storage,
-      teleporterByUid: (uid) => {
-        const r = this.teleporters.byUid(uid);
-        return r && r.isConstructed ? r : null;
-      },
-      structures: () => this.structureRegistry.all(),
-      ownTeleporters: (owner) => {
-        const out: StructureRecord[] = [];
-        for (const r of this.structureRegistry.all()) {
-          if (r.owner === owner && r.isConstructed && isTeleporterKind(r.kind)) out.push(r);
-        }
-        return out;
-      },
-      collectRiders: (from) => this.padRiders.collectRiders(from),
-      dispatchRiders: (batch, toRoom, to) => this.padRiders.dispatchRiders(batch, toRoom, to),
+    // v4 T1-T4 — the teleporters + the broker room (`features/teleportMessages.ts`).
+    ({ teleporters: this.teleporters, teleportRoom: this.teleportRoom } = buildTeleporters({
+      structureRegistry: this.structureRegistry, storage: () => this.storage, sectorKey: () => this.sectorKey,
+      testCycleScale: this.testMode ? roomOpts.teleportCycleScale : undefined, powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
+      padRiders: this.padRiders, tolls: this.tolls, forceFields: this.forceFields, rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
+      postToWorker: (cmd) => this.postToWorker(cmd), sendToPlayer: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
       canReceiveHull: (shipInstanceId) => this.freeSlots.length > 0 && !this.state.ships.has(shipInstanceId),
-      receiveLingeringHull: (row) => this.hullHandOff.receiveHandedOffHull(row),
-      receiveFleetSquads: (rows) => { this.fleet.restoreSquads(rows); },
-      sendToPlayer: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
-    };
-    if (this.sectorKey !== null) getTeleportBroker().register(this.teleportRoom);
+      receiveLingeringHull: (row) => this.hullHandOff.receiveHandedOffHull(row), receiveFleetSquads: (rows) => { this.fleet.restoreSquads(rows); },
+    }));
     this.gates = new GateController({
       registry: this.structureRegistry,
       collectShips: (out) => this.collectGateShips(out),
@@ -3439,8 +3379,6 @@ export class SectorRoom extends Room<SectorState> {
     this.swarmEvictor.evict(rec, opts);
   }
 
-  /** Gate-twin lookups for the teleporters (`findLinkTwin` / `findAlienTwin`, `TeleporterSubsystem.ts`). */
-  private readonly gateTwinHost: GateTwinHost = { sectorKey: () => this.sectorKey, structureRegistry: () => this.structureRegistry };
 
   /** The 1 Hz grid pulse (body: `StructuresSliceSync.gridTick`, `structuresSlice.ts`). */
   private structureGridTick(): void { this.structuresSliceSync.gridTick(); }
