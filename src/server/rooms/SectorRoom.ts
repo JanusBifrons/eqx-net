@@ -252,7 +252,7 @@ import {
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 import { WarpTravelTracker } from './warpTravel.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
-import { recordKill, saveSnapshot } from '../stats/StatsService.js';
+import { saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { SectorSnapshotRestore } from './SectorSnapshotRestore.js';
@@ -282,14 +282,13 @@ import {
 const EMPTY_FITTED: readonly string[] = Object.freeze([]);
 /** Economy v2 — a repacked structure with no recorded quality (pre-repack rows). */
 const REPACK_DEFAULT_QUALITY = 50;
-import { getBountyBoard } from '../economy/BountyBoard.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { SelectionStatsSubsystem } from './SelectionStatsSubsystem.js';
 import { ownerGateStats, resolveSelectionStats, type SelectionStatsResolveHost } from './selectionStatsResolve.js';
 import { sectorLiveCounts, sectorPlayerCount, type SectorLiveCountsHost } from './sectorLiveCounts.js';
-import { auditCombatDestruction, type CombatDestructionAuditHost } from './combatDestructionAudit.js';
+import { auditCombatDestruction, onShipDestroyed, type CombatDestructionAuditHost, type ShipDestroyedHost } from './combatDestructionAudit.js';
 import {
   rayHitsSphere,
   rayHitsConvexPolygon,
@@ -730,6 +729,7 @@ export class SectorRoom extends Room<SectorState> {
   });
   private readonly liveCountsHost: SectorLiveCountsHost = { playerToSlot: () => this.playerToSlot, getActiveShip: (pid) => this.getActiveShip(pid), swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry, patrols: this.patrols, npcHostileTo: (e, p) => this.npcHostileTo(e, p) };
   private readonly combatAuditHost: CombatDestructionAuditHost = { sectorKey: () => this.sectorKey, structureRegistry: this.structureRegistry, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), payEliteBounty: (k, n, c) => this.payEliteBounty(k, n, c), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h) };
+  private readonly shipDestroyedHost: ShipDestroyedHost = { sectorKey: () => this.sectorKey, roomId: () => this.roomId, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h), getActiveShip: (pid) => this.getActiveShip(pid), ships: () => this.state.ships, forgetSquadMember: (id) => this.fleet.forgetSquadMember(id), vaporisedActiveDeath: () => this.vaporisedActiveDeath, clearVaporisedActiveDeath: () => { this.vaporisedActiveDeath = null; }, playerToUser: () => this.playerToUser, bountyRoom: () => this, playerToSlot: () => this.playerToSlot, shipPoseCache: () => this.shipPoseCache, sabF32: () => this.sabF32, spillOrLoseShipHold: (...a) => this.spillOrLoseShipHold(...a), deleteRosterRow: (id) => this.deleteRosterRow(id), ownerlessShips: () => this.ownerlessShips, evictOwnerlessShip: (id) => this.evictOwnerlessShip(id), scrapSpawner: () => this.scrapSpawner };
   /** v4 A — the alien gates' guns: who is disabled, and for how long. */
   private readonly gateGuard = new AlienGateGuard({
     swarmSlotOf: (id) => this.swarmRegistry.get(id)?.slot,
@@ -3107,116 +3107,7 @@ export class SectorRoom extends Room<SectorState> {
       webrtcChannelManager: () => this.webrtcChannelManager,
     });
 
-    this.bus.on('SHIP_DESTROYED', (evt) => {
-      // Phase 6b — `evt.targetId` has mixed semantics:
-      //   - active-hull case (applyDamage line ~1553): a playerId (the
-      //     applyDamage path looked up the ship via getActiveShip(playerId)).
-      //   - lingering-hull case (applyDamage line ~1525): a shipInstanceId
-      //     (looked up directly via state.ships.get).
-      // Disambiguate by trying the active-hull lookup first; if it fails,
-      // treat the target as a shipInstanceId.
-      const activeHull = this.getActiveShip(evt.targetId);
-      const destroyedShip = activeHull ?? this.state.ships.get(evt.targetId);
-      const victimPlayerId = activeHull ? evt.targetId : destroyedShip?.playerId;
-      // RTS slice 4b: a squad member its owner was flying leaves its squad.
-      if (activeHull) this.fleet.forgetSquadMember(activeHull.shipInstanceId);
-      // Its death policy noted a vaporised hull just before this emit.
-      const vaporised = this.vaporisedActiveDeath === evt.targetId;
-      this.vaporisedActiveDeath = null;
-
-      const killerUser = this.playerToUser.get(evt.shooterId) ?? null;
-      const victimUser = victimPlayerId !== undefined
-        ? (this.playerToUser.get(victimPlayerId) ?? null)
-        : null;
-      recordKill(killerUser, victimUser, 'hitscan', this.sectorKey ?? this.roomId);
-      // Gameplay audit — a player hull died (covers offline lingering-hull
-      // deaths too). A non-prefixed shooter id is another player ⇒ PvP kill.
-      const auditAttacker = evt.shooterId || undefined;
-      // Equinox Phase 9 (item 5) — recent-combat tally for the galaxy map.
-      this.recentCombatLog.record('ship', this.gameClock.now());
-      auditEvent({
-        event: 'ship_destroyed',
-        sector: this.sectorKey ?? undefined,
-        playerId: victimPlayerId ?? evt.targetId,
-        attackerId: auditAttacker,
-        attackerKind: classifyAttacker(auditAttacker),
-      });
-      if (auditAttacker && victimPlayerId && classifyAttacker(auditAttacker) === 'player') {
-        auditEvent({
-          event: 'player_killed',
-          sector: this.sectorKey ?? undefined,
-          victim: victimPlayerId,
-          killer: auditAttacker,
-        });
-        // P4c-2 — the killer collects any open player bounties on the victim.
-        getBountyBoard()?.onPlayerKilled(this, victimPlayerId, auditAttacker);
-      }
-      // Phase 4 (Leveling & XP, WS-B1) — award XP to the KILLER SHIP INSTANCE,
-      // weighted by the victim's toughness. MUST run BEFORE the roster wipe
-      // below (D9): the wipe drops the VICTIM's row; the killer's row is a
-      // different instance, so ordering only matters in the self-kill edge
-      // (a ship can't kill itself, but a stale shooterId === victim would be
-      // a no-op award anyway). We still read the victim's maxHealth here while
-      // its kind is known.
-      if (destroyedShip !== undefined) {
-        const victimMaxHealth = getShipKind(destroyedShip.kind).maxHealth;
-        this.shipProgression.awardKillXp(evt.shooterId, victimMaxHealth);
-      }
-      // Phase 3 dual-write — drop the destroyed ship from the roster. D9 — the
-      // whole roster row (level / xp / statAlloc / mounts) is dropped together
-      // here, so a destroyed ship's progression is gone atomically.
-      if (destroyedShip !== undefined) {
-        // Living World P1a — hardcore: an ACTIVE hull's carried hold spills where
-        // it died. (A LINGERING hull is handled by onLingeringHullDeath — it never
-        // reaches here with `activeHull` set.) Read BEFORE the roster wipe.
-        if (activeHull !== undefined) {
-          const slot = this.playerToSlot.get(evt.targetId);
-          const b = slot !== undefined ? slotBase(slot) : -1;
-          const pose = this.shipPoseCache.get(evt.targetId)
-            ?? (b >= 0 ? { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]! } : undefined);
-          this.spillOrLoseShipHold(destroyedShip.shipInstanceId, evt.targetId, pose, 'death',
-            { kind: destroyedShip.kind, vaporised, shooterId: evt.shooterId });
-        }
-        this.deleteRosterRow(destroyedShip.shipInstanceId);
-      }
-      // Phase 8 sub-phase B (lingering ships) — if a hull was destroyed
-      // while ownerless (lingering or actively-disconnected-with-timer),
-      // evict immediately. Skipping the 15-min wait keeps the room cleaner
-      // and lets the player fresh-spawn from the galaxy map.
-      // Phase 6b cleanup — ownerlessShips is shipInstanceId-keyed. Look up
-      // by the destroyed ship's id, not by playerId.
-      if (destroyedShip !== undefined && this.ownerlessShips.has(destroyedShip.shipInstanceId)) {
-        this.evictOwnerlessShip(destroyedShip.shipInstanceId);
-      }
-
-      // S2a: an ACTIVE hull's wreck comes from its death policy (`spawnActiveHullWreck`).
-
-      // Scrap-on-death (Phase 2b-ii) — break a dying ACTIVE composite hull into
-      // floating scrap. Only the active-hull case (we have a playerId-keyed slot
-      // + pose); lingering hulls are skipped (their slot bookkeeping is already
-      // torn down by the lingering death policy). Spawn BEFORE the slot is freed
-      // — at SHIP_DESTROYED time the active slot is still allocated (the death
-      // policy only sets `ship.alive = false`). Read the death pose from
-      // shipPoseCache ?? SAB.
-      if (activeHull !== undefined && shipScrapGroups(activeHull.kind).length > 0) {
-        const slot = this.playerToSlot.get(evt.targetId);
-        if (slot !== undefined) {
-          const b = slotBase(slot);
-          const pose = this.shipPoseCache.get(evt.targetId) ?? {
-            x:     this.sabF32[b + SLOT_X_OFF]!,
-            y:     this.sabF32[b + SLOT_Y_OFF]!,
-            vx:    this.sabF32[b + SLOT_VX_OFF]!,
-            vy:    this.sabF32[b + SLOT_VY_OFF]!,
-            angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
-          };
-          this.scrapSpawner.spawnFromDeath(
-            activeHull.kind as ShipKindId,
-            { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle },
-            `scrap-${activeHull.shipInstanceId}`,
-          );
-        }
-      }
-    });
+    this.bus.on('SHIP_DESTROYED', (evt) => onShipDestroyed(this.shipDestroyedHost, evt));
 
     // Hi-res tick loop. Colyseus's `setSimulationInterval` uses `setInterval`,
     // which on Windows quantises to the ~15.6 ms multimedia-clock granularity
