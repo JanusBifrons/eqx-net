@@ -114,6 +114,32 @@ hostile duplicate review:
   `canConnect`, so they follow the rule without their own copies. The base-layout rethink (§9)
   is designed around connectors placed with the sockets in mind.
 
+**0d review (2026-11-19, hostile duplicate check), corrections to the brief above:**
+- Sockets sit on `structureOutline` edges (`shared-types/structureKinds/outline.ts`), not the footprint
+  box. Shield gates' sockets are their existing emitter posts (`gateGeometry.ts:169`), so there is one
+  attach-point rule.
+- Curve blocking extends `isConnectionLineBlocked` into a polyline version on the existing segment
+  tests (`Grid.ts:140,172`), with the curve's box as a broad phase. The comet reuses the crane's
+  polyline pulse (`structureRigs.ts:300`, `drawCablePulse`).
+- Not "connectors only" today: the hub rule needs only one hub end, and shipyard, deep core rig, ore
+  processing complex and assembly plant are hubs (4 slots), as are shield emitters. Slots grow +1 per
+  level, so a connector reaches 10: connectors take cables from any side with no fixed face count.
+- `GridNode` gains kind + rotation in all four builders (parity test). The preview passes no ghost
+  angle today (`ConnectorRenderer.ts:695`), which is an existing bug. The preview blocks only against
+  your own buildings while the server blocks against everyone's; fix that with the curve.
+- Connections are never saved (restore re-derives them), so there is no save impact. The wire needs a
+  parallel `connSock` (uint8) next to `connTo`. Both renderers share `ConnectorRenderer`, so one change
+  covers both.
+- growBuilder's own straight link-line test (`growBuilder.ts:44`) and `linkReachBox` move to the curve;
+  bump `BASE_GROWTH_VERSION`.
+- Phone cost: the preview runs `canConnect` every frame, so use facing filter, fixed nearest-first
+  order, first pass wins, ~12 segments, no allocation (scratch out-param), plus a count bench. Cache
+  flattened polylines per edge on the static layer; a `perf:scenes` A/B for the flow layer.
+- Slices: (1) `structureSockets`; (2) GridNode kind+rotation + ghost angle; (3) curve flatten +
+  polyline blocking + bench; (4) `canConnect` picks the pair; (5) store on `Connection`, growBuilder,
+  version bump; (6) wire `connSock`; (7) preview; (8) static curve + cable look by arc length;
+  (9) flow comet + socket flash + perf A/B; (10) socket nubs + per-family inner-channel hook.
+
 **0c (parked):** Capital-tier sizing is out of scope (§3). Remove the art lab's `OUTPOST_SIZES` so the lab draws catalogue sizes (rule 11).
 
 ## 5. The recipe for one family
