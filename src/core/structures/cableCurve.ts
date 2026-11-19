@@ -23,6 +23,7 @@ import {
   segmentHitsObstacle, segmentIntersectsAabb, type CanConnectReason, type GridNode, type GridObstacle,
 } from './Grid.js';
 import { structureSockets, structureSocketToWorld } from '../../shared-types/structureKinds.js';
+import { CABLE_NO_SOCKET } from './Connection.js';
 
 /** Segments in a flattened cable curve (points = segments + 1). */
 export const CABLE_CURVE_SEGMENTS = 12;
@@ -104,7 +105,7 @@ export function flattenCableCurve(
 export const CABLE_BLOCK_STATS = { narrow: 0 };
 
 /** Does any segment of the flattened polyline cross the box? */
-function polylineHitsAabb(poly: Float64Array, minX: number, minY: number, maxX: number, maxY: number): boolean {
+export function cablePolylineHitsAabb(poly: Float64Array, minX: number, minY: number, maxX: number, maxY: number): boolean {
   for (let i = 0; i < CABLE_CURVE_SEGMENTS; i++) {
     const j = i * 2;
     if (segmentIntersectsAabb(poly[j]!, poly[j + 1]!, poly[j + 2]!, poly[j + 3]!, minX, minY, maxX, maxY)) return true;
@@ -134,7 +135,7 @@ export function isCablePolylineBlocked(
     const minX = n.x - hw, maxX = n.x + hw, minY = n.y - hh, maxY = n.y + hh;
     if (maxX < box.x0 || minX > box.x1 || maxY < box.y0 || minY > box.y1) continue;
     CABLE_BLOCK_STATS.narrow++;
-    if (polylineHitsAabb(poly, minX, minY, maxX, maxY)) return true;
+    if (cablePolylineHitsAabb(poly, minX, minY, maxX, maxY)) return true;
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {
@@ -151,9 +152,8 @@ export function isCablePolylineBlocked(
   return false;
 }
 
-/** No socket: a fence link (emitter post to post) runs straight, centre to
- *  centre, as before the sockets. */
-export const CABLE_NO_SOCKET = -1;
+/** No socket (fence link); defined in `Connection.ts`, re-exported here. */
+export { CABLE_NO_SOCKET };
 
 /**
  * The socket pair `canConnect` picked, as indices into each end's
@@ -280,4 +280,36 @@ export function pickCableSocketPair(
     return null;
   }
   return 'blocked';
+}
+
+/**
+ * Flatten the cable a stored link runs along (`Connection.socketA` /
+ * `socketB`, as `canConnect` picked them) into `out` + `box`, the same
+ * curve `pickCableSocketPair` tested: any-side ends short-tailed. A fence
+ * link (either end `CABLE_NO_SOCKET`) is the straight centre-to-centre line,
+ * written as the same fixed-length polyline so callers treat both alike.
+ * Allocation-free.
+ */
+export function flattenLinkCable(
+  a: GridNode, socketA: number,
+  b: GridNode, socketB: number,
+  out: Float64Array,
+  box: CableBox,
+): void {
+  const la = structureSockets(a.kind), lb = structureSockets(b.kind);
+  const sa = socketA === CABLE_NO_SOCKET ? undefined : la[socketA];
+  const sb = socketB === CABLE_NO_SOCKET ? undefined : lb[socketB];
+  if (sa === undefined || sb === undefined) {
+    for (let i = 0; i <= CABLE_CURVE_SEGMENTS; i++) {
+      const t = i / CABLE_CURVE_SEGMENTS;
+      out[i * 2] = a.x + (b.x - a.x) * t;
+      out[i * 2 + 1] = a.y + (b.y - a.y) * t;
+    }
+    box.x0 = Math.min(a.x, b.x); box.x1 = Math.max(a.x, b.x);
+    box.y0 = Math.min(a.y, b.y); box.y1 = Math.max(a.y, b.y);
+    return;
+  }
+  structureSocketToWorld(sa, a.x, a.y, a.rot, endA);
+  structureSocketToWorld(sb, b.x, b.y, b.rot, endB);
+  flattenCableCurve(endA, takesAnySide(a), endB, takesAnySide(b), out, box);
 }
