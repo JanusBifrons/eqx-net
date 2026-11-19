@@ -26,7 +26,7 @@ import { MineFieldSubsystem, type MineTarget } from '../structures/MineFieldSubs
 import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { StructuresSliceSync } from './structuresSlice.js';
-import { seedScaleGrid, seedScenarioScrap, seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
+import { seedRoomStartup, seedScaleGrid, seedScenarioScrap, seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -37,7 +37,6 @@ import {
   type IdleTracker,
 } from '../net/snapshotScheduler.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
-import { ScriptedPathBehaviour } from '../../core/ai/ScriptedPathBehaviour.js';
 import { ScrapSpawner, spawnScrapFromDrone, type DroneScrapHost } from '../spawn/ScrapSpawner.js';
 import { wreckSwitchOn } from './wreckSwitch.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
@@ -50,7 +49,7 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
-import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { getShipKind, allegianceOfKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { isFriendly } from '../../shared-types/allegiances.js';
 import { effectiveShipMaxHealth, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
@@ -63,8 +62,7 @@ import { unregisterConnectedPlayer } from '../push/connectedPlayers.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
-import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
-import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
+import { getDroneMaxHealth } from './droneKindHelpers.js';
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
 import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
@@ -2773,143 +2771,12 @@ export class SectorRoom extends Room<SectorState> {
       testHaulerRaiders: () => this.testHaulerRaiders,
     });
 
-    if (useSingleAsteroid) {
-      // Stationary asteroid 600 u from spawn — far enough that the worker's
-      // sleep hysteresis (12 ticks at v ≈ 0) trips quickly without the
-      // player accidentally bumping it. No drone, no AI behaviour wired.
-      this.swarmSpawner.spawnAsteroid({ id: 'sleep-rock', x: 600, y: 0, vx: 0, vy: 0, radius: 24, mass: 1 });
-      logger.info('Phase 5e single-asteroid sleep test seed');
-    } else if (useDronePoses) {
-      // 2026-05-28 — deterministic-pose engineering seed. Each entry forces a
-      // drone to a specific world `(x, y, angle)` (bypassing the uniform-disc
-      // spawner), and optionally drops shields immediately so the
-      // hull-polygon collider is exposed at spawn. Used by the
-      // `hull-collision-test` room to verify that a concave T-ship's
-      // polygon collider correctly leaves the gap regions empty.
-      const poses = roomOpts.dronePoses!;
-      let placed = 0;
-      for (let i = 0; i < poses.length; i++) {
-        const pose = poses[i]!;
-        const droneId = `pose-drone-${i}`;
-        const ok = this.swarmSpawner.spawnDrone({ id: droneId, x: pose.x, y: pose.y, kind: pose.kind });
-        if (!ok) {
-          logger.error({ requested: poses.length, spawned: placed }, 'dronePoses spawn truncated (slot pool exhausted)');
-          break;
-        }
-        const rec = this.swarmRegistry.get(droneId);
-        if (!rec) continue;
-        if (pose.path) {
-          // Radar sandbox — scripted fly-in / fly-out / tangential pass.
-          const mass = shipBodyMass(getShipKind(pose.kind));
-          this.aiController.register(droneId, rec.slot, new ScriptedPathBehaviour({
-            from: { x: pose.x, y: pose.y },
-            to: { x: pose.path.toX, y: pose.path.toY },
-            speed: pose.path.speed,
-            loop: pose.path.loop ?? true,
-          }, mass));
-        }
-        if (pose.hostile) this.sandboxHostileDroneIds.push(droneId);
-        this.swarmHealth.set(droneId, getDroneMaxHealth(rec.shipKind) ?? 40);
-        this.swarmShield.set(droneId, getDroneShieldMax(rec.shipKind));
-        this.swarmShieldLastDmg.set(droneId, this.serverTick);
-        // Apply rotation via SET_POSITION (SPAWN_OBSTACLE sets pos+vel only,
-        // angle defaults to 0). The worker processes this command AFTER the
-        // SPAWN_OBSTACLE that spawnDrone just enqueued, so the body exists.
-        // Also seed the registry's lastBroadcast.angle so the very first
-        // delta-detector decision uses the correct reference.
-        const angle = pose.angle ?? 0;
-        const vx = pose.vx ?? 0;
-        const vy = pose.vy ?? 0;
-        if (angle !== 0 || vx !== 0 || vy !== 0) {
-          this.postToWorker({
-            type: 'SET_POSITION',
-            entityId: droneId, x: pose.x, y: pose.y, angle, vx, vy, angvel: 0,
-          });
-          rec.lastBroadcast.angle = angle;
-        }
-        if (pose.hullExposed) {
-          // Force shield-down at spawn: clear the shield slot, flip the
-          // registry's wire flag, post SET_HULL_EXPOSED so Rapier swaps to
-          // the polygon collider. Mirrors `ShieldHullRouter`'s 0-cross path
-          // minus the discrete `shield_broken` broadcast (no client cares
-          // at room-boot time; subsequent regen will fire the normal events).
-          this.swarmShield.set(droneId, 0);
-          rec.shieldDown = true;
-          this.postToWorker({
-            type: 'SET_HULL_EXPOSED',
-            id: droneId,
-            exposed: true,
-            kindId: rec.shipKind ?? DEFAULT_SHIP_KIND,
-            tick: this.serverTick,
-          });
-        }
-        if (pose.elite) this.markElite(droneId, pose.elite.name, pose.elite.healthMul, pose.elite.bounty);
-        placed++;
-      }
-      logger.info({ requested: poses.length, spawned: placed }, 'dronePoses seeded');
-    } else if (useStructurePoses) {
-      // Generic Entity Pipeline P4 — deterministic STRUCTURE placement (the
-      // "for free" proof). Each structure is a kind=2 swarm entity; seeding
-      // `swarmHealth` is the ONLY thing that makes it damageable — the existing
-      // DamageRouter 'swarm' strategy then handles it with ZERO new dispatch.
-      // `swarmShield = 0` (no shield layer) so a hit lands straight on the hull.
-      const poses = roomOpts.structurePoses!;
-      let placed = 0;
-      for (let i = 0; i < poses.length; i++) {
-        const p = poses[i]!;
-        const id = p.id ?? `structure-${i}`;
-        const ok = this.swarmSpawner.spawnStructure({ id, x: p.x, y: p.y, radius: p.radius ?? 50, mass: p.mass });
-        if (!ok) {
-          logger.error({ requested: poses.length, spawned: placed }, 'structurePoses spawn truncated (slot pool exhausted)');
-          break;
-        }
-        this.swarmHealth.set(id, STRUCTURE_DEFAULT_HEALTH);
-        this.swarmShield.set(id, 0);
-        placed++;
-      }
-      logger.info({ requested: poses.length, spawned: placed }, 'structurePoses seeded');
-    } else if (useBulkSeed) {
-      // Phase 5e bulk seed. Replaces both the legacy ASTEROIDS list and the
-      // small drone ring with a sunflower-spiral spread across a disc, sized
-      // by `swarmCount`. Used by the bandwidth E2E and the dev-machine soak.
-      const requested = roomOpts.swarmCount ?? 0;
-      const bulk = this.swarmSpawner.seed(requested, roomOpts.swarmRatio, roomOpts.swarmRadius, roomOpts.swarmAtRest ?? false);
-      if (bulk < requested) {
-        logger.error({ requested, spawned: bulk }, 'bulk seed truncated (slot pool exhausted)');
-      }
-      // Per-drone health is sourced from the chosen ship-kind's `maxHealth`
-      // — Heavy drones eat more hits than Scout drones, mirroring the player
-      // matrix. Falls back to 40 for back-compat when the registry record
-      // doesn't carry a kind (very old codepaths or test stubs).
-      for (const rec of this.swarmRegistry.all()) {
-        if (rec.kind === 1) {
-          this.swarmHealth.set(rec.id, getDroneMaxHealth(rec.shipKind) ?? 40);
-          this.swarmShield.set(rec.id, getDroneShieldMax(rec.shipKind));
-          this.swarmShieldLastDmg.set(rec.id, this.serverTick);
-        }
-      }
-      logger.info({ requested, spawned: bulk }, 'Phase 5e bulk seed');
-    } else {
-      // Seed a small drone wave for early manual testing. Drones ring the
-      // spawn area at a configurable distance (default 150u) so the player
-      // can engage them immediately for smoke testing without a long drive.
-      // Bump `droneRadius` per-room for less-frantic scenarios.
-      const droneCount = roomOpts.droneCount ?? (this.testMode ? 0 : 30);
-      const droneRadius = roomOpts.droneRadius ?? 150;
-      for (let i = 0; i < droneCount; i++) {
-        const angle = (i / droneCount) * Math.PI * 2;
-        const r = droneRadius;
-        const id = `drone-${i}`;
-        const ok = this.swarmSpawner.spawnDrone({ id, x: Math.cos(angle) * r, y: Math.sin(angle) * r });
-        if (!ok) { logger.warn({ requested: droneCount, spawned: i }, 'drone wave truncated (slot pool full)'); break; }
-        // Read the kind back from the registry record after spawn — the
-        // spawner picks it randomly and stamps it onto the record.
-        const rec = this.swarmRegistry.get(id);
-        this.swarmHealth.set(id, getDroneMaxHealth(rec?.shipKind) ?? 40);
-        this.swarmShield.set(id, getDroneShieldMax(rec?.shipKind));
-        this.swarmShieldLastDmg.set(id, this.serverTick);
-      }
-    }
+    seedRoomStartup({
+      logger, swarmRegistry: this.swarmRegistry, sandboxHostileDroneIds: this.sandboxHostileDroneIds,
+      swarmSpawner: () => this.swarmSpawner, aiController: () => this.aiController, swarmHealth: () => this.swarmHealth,
+      swarmShield: () => this.swarmShield, swarmShieldLastDmg: () => this.swarmShieldLastDmg, serverTick: () => this.serverTick,
+      postToWorker: (cmd) => this.postToWorker(cmd), markElite: (id, name, mul, bounty) => this.markElite(id, name, mul, bounty),
+    }, roomOpts, { testMode: this.testMode, useSingleAsteroid, useDronePoses, useStructurePoses, useBulkSeed });
 
     // Phase 8 — hydrate from the most recent on-disk snapshot for this sector.
     // No-op for engineering rooms (sectorKey === null). Restores swarm health
