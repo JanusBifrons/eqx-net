@@ -33,6 +33,8 @@ import {
 import { CRANE_CARGO_BOTH, CRANE_CARGO_IN } from '../../../src/core/articulation/craneCargo.js';
 import { writeRigClipRow } from '../../../src/server/structures/structureRigClip.js';
 import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
+import { writeConnToRow } from '../../../src/server/structures/structureStateRows.js';
+import { CABLE_NO_SOCKET, Connection } from '../../../src/core/structures/Connection.js';
 
 function row(fields: Partial<StructureState> & { connTo?: number[] }): StructureState {
   const st = new StructureState();
@@ -63,7 +65,7 @@ describe('structure room-state wire — server row → client mirror row', () =>
     const out = emptyStructureRow();
     decodeStructureState(c.structures.get('42')!, OWNERS, out);
     expect(out).toEqual({
-      powered: true, netPower: 37.5, connTo: [7, 9], hpPct: 0.87, built: true, buildPct: 1,
+      powered: true, netPower: 37.5, connTo: [7, 9], connSockSelf: [-1, -1], connSockOther: [-1, -1], hpPct: 0.87, built: true, buildPct: 1,
       etaMs: undefined, deconstructPct: 0, isDeconstructing: undefined, minerals: undefined,
       storedPower: 120, storedPowerMax: 300, shieldWallTo: undefined, wallActive: undefined,
       owner: 'p1', ownerName: 'Ada', level: 2,
@@ -118,6 +120,40 @@ describe('structure room-state wire — server row → client mirror row', () =>
     expect(out.storedPower).toBeUndefined();
     expect(out.shieldWallTo).toBeUndefined();
     expect(out.connTo).toEqual([]);
+    expect(out.connSockSelf).toEqual([]);
+    expect(out.connSockOther).toEqual([]);
+  });
+});
+
+describe('cable sockets on the wire (structure-restyle 0d slice 6)', () => {
+  it('writeConnToRow → schema bytes → client decode gives each end its own socket pair', () => {
+    // a—b cable (a's socket 4, b's socket 12); a—c fence link (no sockets).
+    const conns = [new Connection(1, 'a', 'b', 100, 4, 12), new Connection(2, 'a', 'c', 100, CABLE_NO_SOCKET, CABLE_NO_SOCKET)];
+    const reg = { connectionsOf: (id: string) => conns.filter((c) => c.hasNode(id)) };
+    const eids: Record<string, number> = { a: 1, b: 2, c: 3 };
+    const rows: Record<string, StructureState> = {};
+    for (const id of ['a', 'b', 'c']) {
+      const st = new StructureState();
+      writeConnToRow(id, st, reg, (o) => eids[o]);
+      rows[String(eids[id])] = st;
+    }
+    const c = roundTrip(rows);
+    const decoded = (key: string) => {
+      const out = emptyStructureRow();
+      decodeStructureState(c.structures.get(key)!, OWNERS, out);
+      return out;
+    };
+    const a = decoded('1');
+    expect(a.connTo).toEqual([2, 3]);
+    expect(a.connSockSelf).toEqual([4, CABLE_NO_SOCKET]);
+    expect(a.connSockOther).toEqual([12, CABLE_NO_SOCKET]);
+    const b = decoded('2');
+    expect(b.connTo).toEqual([1]);
+    expect(b.connSockSelf).toEqual([12]);
+    expect(b.connSockOther).toEqual([4]);
+    const fence = decoded('3');
+    expect(fence.connSockSelf).toEqual([CABLE_NO_SOCKET]);
+    expect(fence.connSockOther).toEqual([CABLE_NO_SOCKET]);
   });
 });
 

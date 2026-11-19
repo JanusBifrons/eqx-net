@@ -201,6 +201,11 @@ export class StructureState extends Schema {
   @type('uint16') rigHold?: number;
   /** Connected structures' entityIds. */
   @type(['uint16']) connTo = new ArraySchema<number>();
+  /** Structure-restyle 0d — parallel to `connTo`: each link's cable sockets,
+   *  this end and the other end packed by `encodeConnSock`
+   *  (shared-types/structureStateWire.ts). A collection, so it is initialised
+   *  like `connTo`; written in the same change check (`writeConnToRow`). */
+  @type(['uint16']) connSock = new ArraySchema<number>();
 }
 
 /** A proximity mine (Mine Layer). Static, so room state carries it: the join

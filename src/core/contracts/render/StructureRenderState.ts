@@ -26,6 +26,13 @@ export interface StructureRenderState {
   netPower: number;
   /** Connected neighbour entityIds — the web edges. */
   connTo: number[];
+  /** 0d cable sockets, parallel to `connTo`: the socket index (into
+   *  `structureSockets(kind)`) at THIS end of each link, -1 for none (a
+   *  fence link, or a row without sockets). Decoded from the room-state
+   *  `connSock`; absent until the first decode. */
+  connSockSelf?: number[];
+  /** As `connSockSelf`, the socket at the OTHER end of each link. */
+  connSockOther?: number[];
   /** True once fully constructed (blueprints render dimmed until then). */
   built: boolean;
   /** Construction fraction [0..1] (1 when built) — drives the fill-bar. */

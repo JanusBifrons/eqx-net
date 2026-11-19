@@ -134,6 +134,45 @@ export const STRUCTURE_DEFAULTS = {
 } as const;
 
 /**
+ * Structure-restyle 0d slice 6 — `StructureState.connSock`, parallel to
+ * `connTo`: per link, the cable socket at THIS end (low byte) and at the OTHER
+ * end (high byte), each an index into `structureSockets(kind)`, with
+ * `CONN_SOCK_NONE` (255) for "no socket" (a fence link, `CABLE_NO_SOCKET` = -1
+ * in core). A uint16, not a uint8 holding two nibbles: kinds reach 24 sockets
+ * (teleporter_large), past a nibble's 15. Both ends ride each row so the client
+ * draws a cable from one row alone (no cross-row lookup, no ordering hazard
+ * between the two rows' patches). Static per link, so the cost is the join
+ * payload plus one patch when links change: 2 B per link end.
+ */
+export const CONN_SOCK_NONE = 255;
+
+/** One byte of a `connSock` entry: a socket index 0..254, anything else none. */
+function connSockByte(socket: number): number {
+  return socket >= 0 && socket < CONN_SOCK_NONE && Number.isInteger(socket) ? socket : CONN_SOCK_NONE;
+}
+
+/** Pack this end's and the other end's socket indices (-1 = no socket). */
+export function encodeConnSock(self: number, other: number): number {
+  return connSockByte(self) | (connSockByte(other) << 8);
+}
+
+/** This end's socket index from a `connSock` entry, or -1 for none. */
+export function decodeConnSockSelf(v: number): number {
+  const b = v & 0xff;
+  return b === CONN_SOCK_NONE ? -1 : b;
+}
+
+/** The other end's socket index from a `connSock` entry, or -1 for none. */
+export function decodeConnSockOther(v: number): number {
+  const b = (v >> 8) & 0xff;
+  return b === CONN_SOCK_NONE ? -1 : b;
+}
+
+/** `connSock` value for an entry the row lacks (an older or partial row):
+ *  both ends unknown, drawn as a straight link. */
+export const CONN_SOCK_UNKNOWN = CONN_SOCK_NONE | (CONN_SOCK_NONE << 8);
+
+/**
  * Structure-restyle 2e — the rig clip playing on a structure rides its
  * room-state row (late-join safe, invariant #16). `rigClip` packs the clip as
  * its index in the rig's clip list + 1 (0 = no clip: the rig rests) in the low
@@ -230,4 +269,7 @@ export interface StructureStateView {
    *  (`encodeRigHold`); 0 = none. */
   rigHold?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
+  /** 0d slice 6 — per `connTo` entry, the packed socket pair
+   *  (`encodeConnSock`). Optional so a row without it reads as no sockets. */
+  connSock?: { readonly length: number; at(i: number): number | undefined };
 }
