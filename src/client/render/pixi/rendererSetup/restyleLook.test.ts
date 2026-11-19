@@ -83,3 +83,16 @@ describe('structure restyle on the main-thread renderer', () => {
     expect(s.conn.lineLook).toBeNull();
   });
 });
+
+describe('socket cables follow the new-effects flag (0d slice 8)', () => {
+  it('on with art.fx (both paths, via BOOT on the worker), off without it', () => {
+    const conn: { lineLook: LineLook | null; socketCables?: boolean } = { lineLook: null };
+    applyRestyleLook(conn, {}, new Container(), { mode: 'machined', fx: true }, '');
+    expect(conn.socketCables).toBe(true);
+    applyRestyleLook(conn, {}, new Container(), { mode: 'machined' }, '');
+    expect(conn.socketCables).toBe(false);
+    const [, workerArt] = rendererArgsFromBoot(structuredClone({ ...bootFrom({ mode: 'machined' }), fx: true }));
+    applyRestyleLook(conn, {}, new Container(), workerArt, null);
+    expect(conn.socketCables).toBe(true);
+  });
+});
