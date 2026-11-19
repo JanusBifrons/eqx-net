@@ -41,7 +41,8 @@ import { hullsInChunk, wreckFieldHullFracture, WRECK_FIELD, WRECK_FIELD_VERSION,
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import { loadRecords, type RockRecordStore } from '../db/terrainSql.js';
 import { collectLineage, parseLineageRecord, type WreckLineageDeps, type WreckLineageRecord } from './wreckLineageRecord.js';
-import { lineageRecordDeps, restoreLineage } from './wreckLineageSaves.js';
+import { lineageRecordDeps, resolveLineageGeometry, restoreLineage } from './wreckLineageSaves.js';
+import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { buildWreckPieces, type WreckPieceSpec } from '../../core/destruction/wreckPieces.js';
 import { CHUNK_SIZE } from '../../core/terrain/fieldLayout.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
@@ -197,6 +198,9 @@ export class WreckFieldSource implements ChunkSource {
   private readonly pending = new Set<LiveHull>();
   /** Touched hulls to check for a lineage with no piece left (consumed). */
   private readonly check = new Set<LiveHull>();
+  /** The largest hull footprint: how far past a box a hull's home chunk
+   *  can lie and still reach it (`dormantObstacles`). */
+  private readonly reach: number;
   /** Scratch for the made-once lineage visitors (#14). */
   private readonly scratchIds: string[] = [];
   private sweepNeeded: ReadonlySet<number> = new Set<number>();
@@ -217,6 +221,9 @@ export class WreckFieldSource implements ChunkSource {
     private readonly d: WreckFieldSourceDeps,
     private readonly lingerMs = 10_000,
   ) {
+    let reach = 0;
+    for (const h of field.hulls) if (h.footprint > reach) reach = h.footprint;
+    this.reach = reach;
     if (d.records !== undefined) {
       for (const r of loadRecords(d.records, WRECK_FIELD_ROW_VERSION)) {
         this.rows.set(r.rockKey, r.consumed ? CONSUMED_ROW : { consumed: false, json: r.lineage });
@@ -484,6 +491,52 @@ export class WreckFieldSource implements ChunkSource {
     }
   }
 
+  /** Placement (wreck fields 7, plan C5): push onto `out` the pieces of
+   *  the hulls reaching into `box` that have no body now (not loaded), as
+   *  a live piece's obstacle: centre, bounding radius, angle and convex
+   *  parts. Hulls are found by home chunk (`hullsInChunk`) and seed
+   *  footprint, the rocks' owning-chunk lookup (`fieldRocksInBox`). A hull
+   *  with a lineage row gives its saved pieces at their saved poses (the
+   *  restore resolver, `resolveLineageGeometry`); a consumed one nothing;
+   *  else its seed pieces (`fieldHullPieces`). Nothing when wrecks are off.
+   *  A discrete player action, never per tick; allocates. */
+  dormantObstacles(box: ObstacleBox, out: GridObstacle[]): void {
+    if (this.d.wrecks() === undefined || this.field.hulls.length === 0) return;
+    const r = this.reach;
+    const cx0 = Math.floor((box.x0 - r) / CHUNK_SIZE), cx1 = Math.floor((box.x1 + r) / CHUNK_SIZE);
+    const cy0 = Math.floor((box.y0 - r) / CHUNK_SIZE), cy1 = Math.floor((box.y1 + r) / CHUNK_SIZE);
+    if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > this.field.byChunk.size) {
+      for (const h of this.field.hulls) this.dormantHull(h, box, out);
+      return;
+    }
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) for (const h of hullsInChunk(this.field, cx, cy)) this.dormantHull(h, box, out);
+    }
+  }
+
+  private dormantHull(h: WreckFieldHull, box: ObstacleBox, out: GridObstacle[]): void {
+    if (this.live.has(h.key) || !circleMeetsBox(h.x, h.y, h.footprint, box)) return;
+    const row = this.rows.get(h.key);
+    if (row?.consumed === true) return;
+    if (row?.json != null && this.dormantRow(row.json, box, out)) return;
+    for (const p of fieldHullPieces(h).pieces) pushPiece(out, box, p.x, p.y, p.radius, p.angle, p.parts);
+  }
+
+  /** A saved hull's pieces at their saved poses; false when the row does
+   *  not resolve (the seed pieces stand in, as a reload would spawn them). */
+  private dormantRow(json: string, box: ObstacleBox, out: GridObstacle[]): boolean {
+    let raw: unknown;
+    try { raw = JSON.parse(json); } catch { return false; }
+    const rec = parseLineageRecord(raw);
+    const g = rec === null ? null : resolveLineageGeometry(rec);
+    if (rec === null || g === null) return false;
+    for (const pc of rec.pieces) {
+      const geom = g.geoms[pc.node]?.find((x) => x.index === pc.piece);
+      if (geom !== undefined) pushPiece(out, box, pc.x, pc.y, geom.radius, pc.angle, geom.parts);
+    }
+    return true;
+  }
+
   /** Forget chunk timing (room dispose: the pieces go with the world). */
   clear(): void {
     this.chunks.clear();
@@ -491,4 +544,15 @@ export class WreckFieldSource implements ChunkSource {
     this.pending.clear();
     this.check.clear();
   }
+}
+
+/** Does the circle (x, y, r) reach into `box`? */
+function circleMeetsBox(x: number, y: number, r: number, box: ObstacleBox): boolean {
+  const dx = Math.max(box.x0 - x, 0, x - box.x1), dy = Math.max(box.y0 - y, 0, y - box.y1);
+  return dx * dx + dy * dy < r * r;
+}
+
+/** A piece as a placement obstacle, when it reaches into `box`. */
+function pushPiece(out: GridObstacle[], box: ObstacleBox, x: number, y: number, radius: number, angle: number, parts: GridObstacle['parts']): void {
+  if (circleMeetsBox(x, y, radius, box)) out.push({ x, y, radius, angle, parts });
 }
