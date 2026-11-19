@@ -202,7 +202,8 @@ CREATE TABLE IF NOT EXISTS holds (
   y            REAL,
   payload_json TEXT NOT NULL,
   expires_at   INTEGER,
-  updated_at   INTEGER NOT NULL
+  updated_at   INTEGER NOT NULL,
+  look         INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_holds_sector ON holds(sector_key, holder_type);
 
@@ -261,4 +262,6 @@ export const PLAYER_SHIPS_MIGRATIONS: readonly string[] = [
   "ALTER TABLE terrain_records ADD COLUMN pose_angle REAL",
   // Wreck fields — a battle wreck's lineage record (JSON text; NULL on rocks).
   "ALTER TABLE terrain_records ADD COLUMN lineage TEXT",
+  // Cargo pods — a pod's look (size class + glow tier), restored on restart.
+  "ALTER TABLE holds ADD COLUMN look INTEGER",
 ];

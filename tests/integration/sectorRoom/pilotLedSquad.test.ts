@@ -88,11 +88,11 @@ describe('SectorRoom integration — pilot-led squads (RTS slice 4b)', () => {
 
     // Fly A north for a while; B and C (3500 u away) close on their slots round it.
     const r = room as unknown as {
-      entityPoseInto: (id: string, out: Pose) => boolean;
+      wingmen: { entityPoseInto: (id: string, out: Pose) => boolean };
     };
     const pose: Pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
     const at = (id: string): { x: number; y: number } => {
-      expect(r.entityPoseInto(id, pose)).toBe(true);
+      expect(r.wingmen.entityPoseInto(id, pose)).toBe(true);
       return { x: pose.x, y: pose.y };
     };
     const startA = at(A);
