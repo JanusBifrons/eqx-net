@@ -26,7 +26,7 @@ import { MineFieldSubsystem, type MineTarget } from '../structures/MineFieldSubs
 import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { StructuresSliceSync } from './structuresSlice.js';
-import { seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
+import { seedScaleGrid, seedScenarioScrap, seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -76,8 +76,6 @@ import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
 import { GATE_SPAN_THICKNESS } from '../../core/structures/gateGeometry.js';
 import type { GateAccess } from '../../shared-types/gateAccess.js';
-import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
-import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
 import { CARGO_ACCESS_RANGE } from '../../shared-types/messages/cargoMessages.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
@@ -259,7 +257,6 @@ import { WarpTravelTracker } from './warpTravel.js';
 import { getUser } from '../auth/AuthService.js';
 import { recordKill, saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
-import type { SectorSnapshotScrap } from './SectorSnapshot.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { SectorSnapshotRestore } from './SectorSnapshotRestore.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard, terrainRecordStoreFor } from '../db/PersistenceWorker.js';
@@ -2703,7 +2700,7 @@ export class SectorRoom extends Room<SectorState> {
     // overlap, no construction wait).
     if (this.testMode) seedStructureScenario(this.structureScenarioHost, roomOpts);
     this.testTeleportFullCharge = this.testMode && roomOpts.teleportFullCharge === true;
-    if (this.testMode && roomOpts.scaleGrid) this.seedScaleGrid(roomOpts.scaleGrid);
+    if (this.testMode && roomOpts.scaleGrid) seedScaleGrid(this.structureScenarioHost, roomOpts.scaleGrid);
     // D2 (plan soft-leaping-truffle v3) — NPC bases grown from the generator.
     if (roomOpts.npcBases && roomOpts.npcBases.length > 0) seedNpcBases(this.npcSeedHost, roomOpts.npcBases);
     if (this.testMode && roomOpts.tradeEnabled === true && this.sectorKey !== null) {
@@ -2729,7 +2726,7 @@ export class SectorRoom extends Room<SectorState> {
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
-      this.seedScenarioScrap(roomOpts.scenarioScrapCount!);
+      seedScenarioScrap({ logger, restoreScrap: (rows) => this.snapshotRestore.restoreScrap(rows) }, roomOpts.scenarioScrapCount!);
     }
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
     // These satisfy the LivingWorldRoom contract; bots are server-
@@ -4063,43 +4060,6 @@ export class SectorRoom extends Room<SectorState> {
     return null;
   }
 
-  /**
-   * A0 scale lattice: place every structure WITHOUT greedy auto-connect, then
-   * apply the lattice's intended edges through `connectExplicit` (the real
-   * `canConnect` re-checked), force-build, and run one grid tick. Owner
-   * `scenario`. Rejections are counted and logged — the lattice is rule-valid
-   * by construction (structureLattice.test.ts), so any rejection is a bug.
-   */
-  private seedScaleGrid(opts: { n: number; seed: number; fence?: boolean }): void {
-    const n = Math.max(1, Math.min(4000, Math.floor(opts.n)));
-    const lat = buildStructureLattice({ n, seed: opts.seed, fence: opts.fence === true });
-    const ids: Array<string | null> = [];
-    let rejectedPlace = 0;
-    for (const p of lat.placements) {
-      const id = this.structurePlacement.place('scenario', p.kind, p.x, p.y, { skipAutoConnect: true, rot: p.rot });
-      if (id === null) rejectedPlace++;
-      ids.push(id);
-      const rec = id ? this.structureRegistry.get(id) : undefined;
-      if (rec && !rec.isConstructed) {
-        rec.isConstructed = true;
-        rec.constructionProgress = rec.constructionCost;
-        this.swarmHealth.set(rec.id, getStructureKind(rec.kind).maxHealth);
-      }
-    }
-    const nodes = buildGridNodes(this.structureRegistry);
-    let rejectedEdge = 0;
-    for (const [a, b] of lat.edges) {
-      const ia = ids[a], ib = ids[b];
-      if (!ia || !ib || !connectExplicit(this.structureRegistry, ia, ib, nodes)) rejectedEdge++;
-    }
-    this.structureRegistry.topologyDirty = true;
-    this.structureGridTick();
-    logger.info(
-      { n, placed: lat.placements.length - rejectedPlace, edges: lat.edges.length, rejectedPlace, rejectedEdge, fencePylons: lat.fencePylons },
-      'scale lattice seeded',
-    );
-  }
-
   /** testMode structure scenario seeding (`scenarioLayouts.seedStructureScenario`). */
   private readonly structureScenarioHost: StructureScenarioHost = {
     structureRegistry: this.structureRegistry, logger, structurePlacement: () => this.structurePlacement,
@@ -4130,41 +4090,6 @@ export class SectorRoom extends Room<SectorState> {
     shipHullMax: (kindMax, alloc, id) => this.shipHullMax(kindMax, alloc, id), postToWorker: (cmd) => this.postToWorker(cmd),
     applyStatMulToWorker: (bodyKey, alloc) => this.shipProgression.applyStatMulToWorker(bodyKey, alloc),
   });
-
-  /**
-   * Phase-1 issue 5 — seed `count` free-floating scrap pieces in a dense
-   * corridor AHEAD of spawn (+y, the forward dir at angle 0), via the SAME
-   * `SectorSnapshotRestore.restoreScrap` path the persistence layer uses (so the bodies
-   * are byte-identical to real death-spawned scrap). The player flies straight
-   * through this for the reconciliation stress E2E. testMode-only.
-   */
-  private seedScenarioScrap(count: number): void {
-    const PARENT = 'havok' as ShipKindId; // a composite kind with scrap groups
-    const groups = shipScrapGroups(PARENT).length;
-    if (groups === 0) return;
-    const COLS = 7;
-    const COL_SPACING = 48; // dense wall — a straight flight can't avoid clipping many
-    const ROW_SPACING = 60;
-    const Y0 = 250; // first row ahead of spawn, clear of the hull
-    const rows: SectorSnapshotScrap[] = [];
-    for (let i = 0; i < count; i++) {
-      const col = i % COLS;
-      const row = Math.floor(i / COLS);
-      rows.push({
-        entityId: `scrap-stress-${i}`,
-        x: (col - (COLS - 1) / 2) * COL_SPACING,
-        y: Y0 + row * ROW_SPACING,
-        vx: 0,
-        vy: 0,
-        angle: 0,
-        health: 30,
-        parentShipKind: PARENT,
-        componentIndex: i % groups,
-      });
-    }
-    this.snapshotRestore.restoreScrap(rows);
-    logger.info({ requested: count, parent: PARENT, groups }, 'scenario scrap seeded');
-  }
 
   /** Phase 5 — the turret aim/fire tick (body: `StructuresSliceSync.turretTick`, `structuresSlice.ts`). */
   private structureTurretTick(): void { this.structuresSliceSync.turretTick(); }
