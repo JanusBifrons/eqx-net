@@ -254,9 +254,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // WS-9 (R2.12) — the Capital shows its mineral bank as a world-space
         // number below the body. Built ONCE here (invariant #14).
         if (entry.shipKind === 'capital') sprite.addChild(buildCapitalResourceText(entry.radius));
-        // Phase-1 issue 7 — a Battery shows its stored power as a world-space
-        // number (the doc's "actual numbers for the stored capacity").
-        if (entry.shipKind === 'battery') sprite.addChild(buildBatteryChargeText(entry.radius));
+        // Phase-1 issue 7 — a power store (Battery, Battery Bank) shows its
+        // stored power as a world-space number (the doc's "actual numbers for
+        // the stored capacity").
+        if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0) sprite.addChild(buildBatteryChargeText(entry.radius));
         // Phase-1 issue 2 — every structure carries an (initially empty)
         // build-ETA countdown child, shown only while it's an unbuilt blueprint.
         sprite.addChild(buildBuildEtaText(entry.radius));
@@ -512,8 +513,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         const nextEta = st && !st.built ? formatBuildEta(st.etaMs) : '';
         if (etaText.text !== nextEta) etaText.text = nextEta;
       }
-      // Phase-1 issue 7 — the Battery's stored-power number (CHANGE-only).
-      if (entry.shipKind === 'battery') {
+      // Phase-1 issue 7 — a power store's stored-power number (CHANGE-only).
+      if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0) {
         const batText = sprite.getChildByLabel('batteryCharge') as Text | null;
         if (batText) {
           const next =

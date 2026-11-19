@@ -148,6 +148,14 @@ export function structureLevelFactor(level: number | undefined): number {
   return 1 + (clampStructureLevel(level) - 1) * STRUCTURE_LEVEL_FRAC;
 }
 
+/** Leveled effective power OUTPUT for a generator (`basePowerOutput · level
+ *  factor`). Consumption is unscaled. The single helper the server grid
+ *  (`structureToGridNode`) and the client mirror + stats panel read, so a
+ *  leveled solar/capital reports the same output on both sides (#15). */
+export function effectiveStructurePowerOutput(basePowerOutput: number, level: number | undefined): number {
+  return basePowerOutput * structureLevelFactor(level);
+}
+
 /** Leveled effective max-health for a structure (`baseMaxHealth · level mul`).
  *  The single helper both the subsystem (HP seed on build) and the snapshot
  *  slice (`hpPct` denominator) read so a leveled structure's bar is consistent. */
