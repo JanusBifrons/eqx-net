@@ -70,7 +70,7 @@ import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
-import { StructurePlacementSubsystem, type PackedGateResult } from '../structures/StructurePlacementSubsystem.js';
+import { StructurePlacementSubsystem, packedGateForBuild, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
@@ -265,7 +265,7 @@ import { dropTestPodRow } from '../cargo/cargoWindow.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid } from '../cargo/StorageService.js';
-import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked } from '../../core/cargo/hold.js';
+import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount } from '../../core/cargo/hold.js';
 import { liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
@@ -2413,6 +2413,10 @@ export class SectorRoom extends Room<SectorState> {
     // clamp / id). A placed structure rides the existing kind=2 swarm path, so
     // it broadcasts + takes damage for free; the only structure-specific seam
     // is `swarmHealth` (presence = damageable) + the StructureRegistry record.
+    const packedGateHost: PackedGateHost = {
+      storage: () => this.storage, holdStore: () => getHoldStore(), sectorKey: () => this.sectorKey,
+      findPacked: (owner, product) => this.findPacked(owner, product),
+    };
     this.structurePlacement = new StructurePlacementSubsystem({
       spawnStructure: (s) => this.swarmSpawner.spawnStructure(s),
       seedHealth: (id, hp) => {
@@ -2447,7 +2451,7 @@ export class SectorRoom extends Room<SectorState> {
       // PACKED item (now buyable from traders, and lootable). Consumed only
       // after the structure registers; its build then costs only time.
       sectorKey: () => this.sectorKey,
-      packedGateForBuild: (owner, kindId) => this.packedGateForBuild(owner, kindId),
+      packedGateForBuild: (owner, kindId) => packedGateForBuild(packedGateHost, owner, kindId),
       placementRefusal: (owner, kindId) => territoryLockRefusal(owner, kindId, this.sectorKey ?? '', liveSectorHolder(this.sectorKey ?? ''), this.structureRegistry.all()),
     });
 
@@ -5183,32 +5187,6 @@ export class SectorRoom extends Room<SectorState> {
     const row = shipId ? getHoldStore().get(shipId) : undefined;
     if (shipId && row !== undefined && packedCount(row.hold, product) > 0) return { shipId };
     return null;
-  }
-
-  /** The `packedGateForBuild` hook: ok when `owner` has a packed `kindId`
-   *  here; `commit` takes one (best quality first) as ONE hold group. */
-  private packedGateForBuild(owner: string, kindId: StructureKindId): PackedGateResult {
-    const product = `structure:${kindId}`;
-    const src = this.findPacked(owner, product);
-    if (src === null) return { ok: false, commit: () => null };
-    return {
-      ok: true,
-      commit: () => {
-        if ('rec' in src) {
-          const item = takePacked(src.rec.hold!, product);
-          this.storage.commitChanged([src.rec], []);
-          return item?.quality ?? null;
-        }
-        const row = getHoldStore().get(src.shipId);
-        if (row === undefined) return null;
-        const h = cloneHold(row.hold);
-        const item = takePacked(h, product);
-        const persist = this.sectorKey !== null;
-        if (isHoldEmpty(h)) getHoldStore().commit([], [src.shipId], persist);
-        else getHoldStore().commit([{ ...row, hold: h }], [], persist);
-        return item?.quality ?? null;
-      },
-    };
   }
 
   /**
