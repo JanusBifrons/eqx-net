@@ -9,6 +9,7 @@ import {
   glow, grime, lamp, mixColor, ngon, poly, rivets, scaffold, scalePts, stencil, strip, strut, walkway, weld,
   wornStripe, type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
+import { structureSockets } from '../../../shared-types/structureKinds.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -45,15 +46,17 @@ function beacon(c: StyleCtx): void {
   for (const s of [-1, 1]) lamp(c, s * 112, -112, 3.5, LAMP_WHITE);
 }
 
-/** Hex node (connector): a hex core, six radial clamp struts, a dark socket
- *  with a small amber slit, a worn stripe across. */
+/** Hex node (connector): a hex core, one radial clamp strut out to each cable
+ *  socket (`structureSockets`: one per face of the flat-top hex, so six), a
+ *  dark socket with a small amber slit, a worn stripe across. */
 function hexNode(c: StyleCtx): void {
   const out = deck(c);
   const hex = core(c, scalePts(out, 0.62), SLAB, 10, 0);
   wornStripe(c, hex, Math.PI / 2, 12, 5, 3);
-  for (let k = 0; k < 6; k++) {
-    const a = (k + 0.5) * (Math.PI / 3);
-    poly(c, strip([Math.cos(a) * 17, Math.sin(a) * 17], [Math.cos(a) * 25, Math.sin(a) * 25], 5), STEEL, 'metal', 6, 1);
+  // Struts along each socket's outward normal, in this Pixi frame (y down).
+  for (const s of structureSockets(c.kindId)) {
+    const nx = s.nx, ny = -s.ny;
+    poly(c, strip([nx * 17, ny * 17], [nx * 25, ny * 25], 5), STEEL, 'metal', 6, 1);
   }
   poly(c, ngon(0, 0, 9, 8, Math.PI / 8), SLAB_DARK, 'metal', 3, 1.5);
   glow(c, chamferBox(-5, -1.5, 10, 3, 1), LAMP_AMBER, 0.7);
