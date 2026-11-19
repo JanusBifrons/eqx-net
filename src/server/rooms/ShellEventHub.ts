@@ -30,6 +30,9 @@ import {
   type NavalWeaponId, type ShellEnd, type ShellEndTuple, type ShellKeyRecord,
   type ShellSalvo, type ShellTuple,
 } from '../../shared-types/messages/shellEvents.js';
+import type { Client } from 'colyseus';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
 
 /** Most viewers a room tracks for shell events. A viewer past the cap gets
@@ -411,4 +414,52 @@ export class ShellEventHub {
     }
     return out.length > 0 ? out : undefined;
   }
+}
+
+/** What `createRoomShellHub` reads from the room (getters for fields the
+ *  room assigns in `onCreate` or may replace). */
+export interface RoomShellHubHost {
+  serverTick: () => number;
+  snapshotBroadcaster: () => {
+    wireOwnerId: (ownerId: string) => string;
+    ownerWideInInterest: (ownerId: string, sessionId: string) => boolean;
+  };
+  clients: () => Iterable<Client>;
+  sessionToPlayer: () => ReadonlyMap<string, string>;
+  shipPoseCache: ReadonlyMap<string, { readonly x: number; readonly y: number }>;
+  getActiveShip: (playerId: string) => { readonly kind: string | null | undefined } | undefined;
+  /** The room's one reused viewer object. */
+  shellViewer: ShellViewer;
+}
+
+/** Shells as events (shell-events.md): the hub that routes event shells to
+ *  viewers. Every room builds one (slice 4). */
+export function createRoomShellHub(host: RoomShellHubHost): ShellEventHub {
+  let current: Client | null = null;
+  const v = host.shellViewer;
+  return new ShellEventHub({
+    serverTick: () => host.serverTick(),
+    wireOwnerId: (ownerId) => host.snapshotBroadcaster().wireOwnerId(ownerId),
+    ownerWideInView: (ownerId, sessionId) => host.snapshotBroadcaster().ownerWideInInterest(ownerId, sessionId),
+    forEachViewer: (fn) => {
+      const sessionToPlayer = host.sessionToPlayer();
+      for (const client of host.clients()) {
+        const pid = sessionToPlayer.get(client.sessionId);
+        if (!pid) continue;
+        const pose = host.shipPoseCache.get(pid);
+        if (!pose) continue;
+        v.sessionId = client.sessionId;
+        v.playerId = pid;
+        v.x = pose.x;
+        v.y = pose.y;
+        v.half = shellViewHalfExtent(getShipKind(host.getActiveShip(pid)?.kind ?? null));
+        current = client;
+        fn(v);
+      }
+      current = null;
+    },
+    send: (sessionId, type, msg) => {
+      if (current !== null && current.sessionId === sessionId) current.send(type, msg);
+    },
+  });
 }

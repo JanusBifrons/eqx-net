@@ -305,7 +305,7 @@ import {
 import { getWeapon, weaponLayerMul, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 import { shipBodyMass, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
-import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
+import { createRoomShellHub, type ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { landingReach } from '../../shared-types/shipScale/landingReach.js';
@@ -1902,7 +1902,10 @@ export class SectorRoom extends Room<SectorState> {
       onShellEnd: (id, tick, x, y, r, continues) => this.shellHub?.onEnd(id, tick, x, y, r, continues),
       onShellExpire: (id) => this.shellHub?.onExpire(id),
     });
-    this.shellHub = this.createShellHub();
+    this.shellHub = createRoomShellHub({
+      serverTick: () => this.serverTick, snapshotBroadcaster: () => this.snapshotBroadcaster, clients: () => this.clients,
+      sessionToPlayer: () => this.sessionToPlayer, shipPoseCache: this.shipPoseCache, getActiveShip: (pid) => this.getActiveShip(pid), shellViewer: this.shellViewer,
+    });
 
     // Missile subsystem — guidance, splash damage, impulse queue. The
     // queue is drained each tick and posted to the physics worker as
@@ -4953,37 +4956,6 @@ export class SectorRoom extends Room<SectorState> {
    *  bounding-circle (kind.radius + SHIELD_RADIUS_PAD), same shield-up /
    *  shield-down split. Projectiles now impact at the visible shield
    *  boundary on every ship kind, not just fighter. */
-  /** Shells as events (shell-events.md): the hub that routes event shells to
-   *  viewers. Every room builds one (slice 4). */
-  private createShellHub(): ShellEventHub {
-    let current: Client | null = null;
-    const v = this.shellViewer;
-    return new ShellEventHub({
-      serverTick: () => this.serverTick,
-      wireOwnerId: (ownerId) => this.snapshotBroadcaster.wireOwnerId(ownerId),
-      ownerWideInView: (ownerId, sessionId) => this.snapshotBroadcaster.ownerWideInInterest(ownerId, sessionId),
-      forEachViewer: (fn) => {
-        for (const client of this.clients) {
-          const pid = this.sessionToPlayer.get(client.sessionId);
-          if (!pid) continue;
-          const pose = this.shipPoseCache.get(pid);
-          if (!pose) continue;
-          v.sessionId = client.sessionId;
-          v.playerId = pid;
-          v.x = pose.x;
-          v.y = pose.y;
-          v.half = shellViewHalfExtent(getShipKind(this.getActiveShip(pid)?.kind ?? null));
-          current = client;
-          fn(v);
-        }
-        current = null;
-      },
-      send: (sessionId, type, msg) => {
-        if (current !== null && current.sessionId === sessionId) current.send(type, msg);
-      },
-    });
-  }
-
   /** The welcome's shell-event fields for a joining client (§5, #16). */
   /** Capital destruction: tell the client this room breaks dying capitals
    *  into wrecks, so it explodes them at the kill point (money-shot review). */
