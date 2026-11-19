@@ -4,6 +4,44 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## A proper loading screen for joining a sector (parked 2026-11-19)
+
+Found in the wreck fields stream: joining a wreck sector held the loading
+screen 14-87 s in our films and stills. A time cap that lifts it early (and
+lets art pop in after) was proposed and **rejected by the owner**: a loading
+screen on first launch is normal; the fix, if one is needed, is a more
+formal loading screen.
+
+**What holds it (diagnosed).** The client sends `client_ready` only once
+nothing on screen still waits for its Machined art
+(`frameFeedbackUpdater.ts` `artReady`, read in `gameRafLoop.ts`); the server's
+arrival, and so the screen lifting, waits for that. A wreck field puts 100+
+hulls on screen, each baking its art. Timed 2026-11-19 (Pixel 7 sideways,
+arrival spot, seconds from page load to the screen lifting):
+
+| Renderer | Ashfront (137 wrecks) | Vega Reach (empty) |
+|---|---|---|
+| Real GPU (RTX 5070 Ti), machined art | 3.5 | 3.5 |
+| Real GPU, classic art | 3.3 | 3.4 |
+| Software (SwiftShader, as films use), machined art | **17.8** (art wait 13.4) | 6.0 |
+| Software, classic art | 4.3 | 4.0 |
+
+So the long wait is the art bake on a slow GPU; on a desktop card it is
+nil. **Not measured on a real phone**: a phone GPU sits between the two, so
+check it there first (owner's phone, `pnpm phone up`), before building anything.
+
+**Doing it properly (if the phone wait is real):** a formal loading screen,
+never a cap. Open questions for the owner:
+
+- **Where it goes.** Once, when the game first launches, before anything
+  shows (as in Nightfall, the owner's example); or before each sector join.
+  Either is acceptable.
+- **Hide it in the warp-in.** We know when a ship warps in, so the load
+  could play as the ship's warp arrival rather than a plain screen.
+- **Load up front?** Bake likely art ahead of time (at launch, or while
+  warping). Probably not worth it: what is on screen changes with the
+  sector, so there is no fixed set to preload.
+
 ## Time dilation can't absorb an overloaded host (parked 2026-11-19)
 
 Found chasing flaky integration tests (#947,
