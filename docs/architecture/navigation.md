@@ -220,6 +220,10 @@ one it flies straight as before.
   first, the plan's start, which `NavRoutes` stores with the route). The planner's turns sit at the
   hull's clearance from rock; leaving one from a fighter's 80 u arrive flew the chord across a street
   corner at 0 u from rock (clearance 30 u). The goal still arrives by distance alone.
+- Legs are flown, not just their corners (`NavRoutes.waypoint`): the brain aims at the point one `arrive`
+  ahead of the ship's place on its leg (`wpX`/`wpY`, never past the corner `turnX`/`turnY`), so a ship
+  swung wide by a turn comes back onto the line instead of cutting across to the next corner. Braking
+  (`ahead`) still counts from the corner.
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25.
 - `CutFieldSubsystem.rockContacts` counts ship-vs-field-rock contacts (the test gate).
 - Lock: `tests/integration/sectorRoom/navFollowRoute.test.ts`, a fighter told to Move across a rock arrives
@@ -279,3 +283,6 @@ one it flies straight as before.
   2026-11-18 fine rebuild slice C1: structures as static obstacles (`OBSTACLE`, `obstacleSet`).
   2026-11-18 fine rebuild slice C2: resting wrecks / scrap / plain asteroids (`RestingObstacles`).
   2026-11-18 slice 16: perf scene `galaxy-field-nav` and the scene work view's nav counters (`NavField.stats`).
+  2026-11-19: the follower aims along the leg, not at its corner (an overshoot after a street turn cut
+  toward rock). Open: the fighter's shield ball (34 u) is wider than its route clearance (30 u), so a
+  perfectly flown tight leg can still brush rock.
