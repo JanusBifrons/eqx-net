@@ -141,6 +141,14 @@ export function depositPctOf(v: number): number {
   return v < 0 ? 0 : v % DEPOSIT_FLOW_STEP;
 }
 
+/** The client's `depositPct` from the wire `depositing` (null = none): stepped
+ *  to 10 % so the store only changes per step. `DEPOSIT_WAITING` (3e: the dock
+ *  crane is busy) passes through as is; a crane's flow (`DEPOSIT_FLOW_STEP`)
+ *  survives the step. */
+export function depositReadout(raw: number | undefined): number | null {
+  return raw === undefined ? null : raw === DEPOSIT_WAITING ? DEPOSIT_WAITING : Math.floor(raw / 10) * 10;
+}
+
 export {
   WRECK_ID_END,
   MAX_WRECK_PIECE_INDEX,
@@ -342,6 +350,8 @@ export interface SnapshotMessage {
       /** Economy v2 W1 — the OWN player's wallet balance (credits are virtual,
        *  one balance per player; emitted on the own active ship's entry). */
       wallet?: number;
+      /** Join flow — the OWN player's free capital launches left. */
+      freeLaunches?: number;
       /** v4 T2 — bumped when a teleporter moved this (own, active) hull;
        *  emitted when > 0. A change makes the client re-seed its prediction
        *  at the snapshot pose instead of reconciling a long jump. */

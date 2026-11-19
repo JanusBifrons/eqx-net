@@ -16,11 +16,20 @@ import { shipShotMuzzle } from '@core/combat/muzzle';
 import { shipTuning } from '@shared-types/shipScale/tuning';
 import { getShipKind } from '../../../shared-types/shipKinds';
 import { interpolateSwarmPose, type InterpolatedPose } from '../../net/swarmInterpolation';
-import type { BeamSpritePool, BeamSpriteStyle } from '../BeamSpritePool';
+import type { BeamSpritePool, BeamSpriteStyle, BeamView } from '../BeamSpritePool';
+import { fillTractorBeams } from '../tractorBeams';
 import { liveBeamLook, liveBeamLine, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, BeamHitMemory, type RemoteBeamLine } from '../beamStyles';
 import type { FxBeams } from '../art/fx/FxWeapons.js';
 import type { FxFences, FxShields, ShieldPoseFn } from '../art/fx/FxShields.js';
 import { applyMountOffset } from './spriteBuilders.js';
+
+/** Tractor beams (salvage PR 11b, `tractorBeams.ts`): fill the pooled views
+ *  and hand them to the tractor pool. Returns how many views are live. */
+export function updateTractorBeams(mirror: RenderMirror, pool: BeamSpritePool | null, views: BeamView[], disabled: boolean, fxNow: () => number, cameraScale: number): number {
+  const count = disabled || !pool ? 0 : fillTractorBeams(mirror, fxNow(), cameraScale, views);
+  pool?.setBeams(views, count, cameraScale);
+  return count;
+}
 
 /** One remote (or mining) beam slot; the pools read the BeamView subset. */
 export interface RemoteBeamSlot {

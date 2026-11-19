@@ -21,6 +21,7 @@ import type { LightingSettings } from './lightingSettings.js';
 import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
+import { readArtDelayMs } from './artMode.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
 import { InlineBakeRunner, WorkerBakeRunner, type BakeRunner } from './bakeRunners.js';
 
@@ -661,7 +662,9 @@ function pageRunner(o: CreateArtServiceOpts): BakeRunner {
   return sharedRunner;
 }
 
-export const pageBakeRunner = (): BakeRunner => pageRunner({ touch: false }); // this page's pool, for cut-field chunk cuts
+// The cut field can create the pool before the renderer does, so the pool reads
+// the test delay from the URL itself; else `?artDelayMs` depends on that race.
+export const pageBakeRunner = (): BakeRunner => pageRunner({ touch: false, delayMs: readArtDelayMs(globalThis.location?.search ?? '') }); // this page's pool, for cut-field chunk cuts
 export function createArtService(o: CreateArtServiceOpts): ArtService {
   const opts = atlasOptsFor(o.touch, (globalThis.navigator as { deviceMemory?: number } | undefined)?.deviceMemory);
   const budget = new PageBudget(opts.maxPages ?? Infinity);

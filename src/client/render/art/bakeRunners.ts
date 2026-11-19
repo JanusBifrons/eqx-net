@@ -1,11 +1,11 @@
 /**
  * Bake runners for `ArtService` (re-exported there): a small pool of module
- * workers, and the inline fallback when workers can't be created. Both also
- * cut cut-field chunks and far-zoom tiles off the frame (`chunkCutJobs.ts`).
+ * workers, and the inline fallback when workers can't be created
+ * (`inlineBakeRunner.ts`). Both also cut cut-field chunks and far-zoom tiles off the frame (`chunkCutJobs.ts`).
  */
-import { bakeKey, runBake, type Baked, type BakeJob } from './bake.js';
+import { bakeKey, type Baked, type BakeJob } from './bake.js';
 import type { LightRig } from './shade.js';
-import { ChunkCutJobs, cutCoarseInline, cutInline, type ChunkOpts, type PackedChunk, type PackedCoarseTile } from './chunkCutJobs.js';
+import { ChunkCutJobs, type ChunkOpts, type PackedChunk, type PackedCoarseTile } from './chunkCutJobs.js';
 
 /** Runs bakes somewhere other than the caller's stack. */
 export interface BakeRunner {
@@ -60,8 +60,11 @@ export class WorkerBakeRunner implements BakeRunner {
       const seq = this.seq++;
       const done = (): void => { this.idle.push(w); this.pump(); };
       w.onmessage = (e: MessageEvent<{ seq: number; baked: Baked }>): void => {
-        const finish = (): void => { item.resolve(e.data.baked); done(); };
-        if (this.delayMs > 0) setTimeout(finish, this.delayMs); else finish();
+        // The test delay holds back the RESULT, not the worker: each bake still
+        // lands delayMs after it is done, but the queue drains at full speed
+        // (holding the worker made N bakes take N x delay / pool size).
+        if (this.delayMs > 0) { const baked = e.data.baked; done(); setTimeout(() => item.resolve(baked), this.delayMs); return; }
+        item.resolve(e.data.baked); done();
       };
       w.onerror = (err): void => { item.reject(new Error(err.message)); done(); };
       w.postMessage({ seq, job: item.job, rig: item.rig });
@@ -78,25 +81,4 @@ export class WorkerBakeRunner implements BakeRunner {
   }
 }
 
-/** Fallback when workers can't be created: one bake per macrotask on the
- *  current thread. Each bake still blocks for its own duration (up to a few
- *  hundred ms for the biggest structures), so this is a last resort. */
-export class InlineBakeRunner implements BakeRunner {
-  private chain: Promise<unknown> = Promise.resolve();
-  private stopped = false;
-  constructor(private readonly delayMs = 0) {}
-  get workers(): number { return 0; }
-  run(job: BakeJob, rig: LightRig, _urgent = true): Promise<Baked> {
-    const p = this.chain.then(() => new Promise<Baked>((resolve, reject) => {
-      setTimeout(() => {
-        if (this.stopped) { reject(new Error('art service destroyed')); return; }
-        try { resolve(runBake(job, rig)); } catch (e) { reject(e instanceof Error ? e : new Error(String(e))); }
-      }, this.delayMs);
-    }));
-    this.chain = p.catch(() => undefined);
-    return p;
-  }
-  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk> { return cutInline(field, cx, cy, () => this.stopped); }
-  cutCoarseField(field: ChunkOpts): Promise<PackedCoarseTile[]> { return cutCoarseInline(field, () => this.stopped); }
-  destroy(): void { this.stopped = true; }
-}
+export { InlineBakeRunner } from './inlineBakeRunner.js';

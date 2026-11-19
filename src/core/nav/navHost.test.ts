@@ -39,12 +39,17 @@ describe('NavHost (nav worker commands)', () => {
     host.handle({ type: 'ADD_FIELD', worldId: 1, opts: opts('look'), gone: [5] });
     const fine = host.fine(1)!;
     expect(host.handle({ type: 'CHUNK', worldId: 1, cx: 10, cy: 3, loaded: true })).toBeNull();
+    expect(fine.loadedCount).toBe(1);
+    expect(fine.liveCount).toBe(0); // built on first read, not on load
+    fine.clearanceAt(10.5 * 4096, 3.5 * 4096);
     expect(fine.liveCount).toBe(1);
+    expect(host.detailPool.bytes).toBeGreaterThan(0);
     const cells = fine.cellsRebuilt;
     host.handle({ type: 'ROCK', worldId: 1, key: 5, gone: true }); // already gone: no work
     expect(fine.cellsRebuilt).toBe(cells);
     host.handle({ type: 'CHUNK', worldId: 1, cx: 10, cy: 3, loaded: false });
     expect(fine.liveCount).toBe(0);
+    expect(host.detailPool.bytes).toBe(0);
     expect(host.handle({ type: 'CHUNK', worldId: 99, cx: 0, cy: 0, loaded: true })).toBeNull();
     expect(host.handle({ type: 'ROCK', worldId: 99, key: 1, pose: null })).toBeNull();
   });

@@ -59,6 +59,8 @@ export interface SceneFleetOpts {
   stance: 'aggressive' | 'defensive' | 'holdFire';
   /** Hit points (null = the kind's max). */
   health: number | null;
+  /** Then a MOVE order to here (null: none). */
+  moveTo: { x: number; y: number } | null;
 }
 
 export interface SceneStatus {
@@ -161,7 +163,7 @@ export class SceneScriptRunner {
       return;
     }
     if (step.action === 'fleet') {
-      const opts: SceneFleetOpts = { mode: step.mode ?? 'defend', stance: step.stance ?? 'defensive', health: step.health ?? null };
+      const opts: SceneFleetOpts = { mode: step.mode ?? 'defend', stance: step.stance ?? 'defensive', health: step.health ?? null, moveTo: step.moveTo ?? null };
       for (let i = 0; i < step.count; i++) {
         scenePoint(i, step.count, spread, this.pt);
         const ok = this.hooks.ownedHull?.(step.kind as ShipKindId, step.x + this.pt.x, step.y + this.pt.y, opts) ?? false;

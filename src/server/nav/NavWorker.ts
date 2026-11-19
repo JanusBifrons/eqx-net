@@ -13,6 +13,7 @@ import type { Logger } from 'pino';
 import type { ChunkOpts } from '../../core/terrain/fieldLayout.js';
 import type { NavCommand, NavFieldBuiltMsg, NavReply, NavRouteMsg } from '../../core/nav/navHost.js';
 import type { NavRockPose } from '../../core/nav/fineField.js';
+import type { GridObstacle } from '../../core/structures/Grid.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
 
 const NAV_WORKER_TS_PATH = fileURLToPath(new URL('./navWorkerEntry.ts', import.meta.url));
@@ -20,14 +21,21 @@ const NAV_WORKER_TS_PATH = fileURLToPath(new URL('./navWorkerEntry.ts', import.m
 /** One sector room's field hosted in the nav worker. Every call posts in
  *  order behind the worker's start, so a room streams chunk and rock events
  *  from the moment it adds its field. Discrete events only, never per tick. */
+/** One field's running totals (perf scenes' count gates, print-only). */
+export interface NavFieldStats { routes: number; expanded: number; posts: number; inFlight: number }
+
 export interface NavField {
   readonly worldId: number;
+  /** Routes asked, cells their searches expanded, commands posted, routes unanswered. */
+  readonly stats: NavFieldStats;
   /** What the build reported (size, print-only time). */
   readonly built: Promise<NavFieldBuiltMsg>;
   /** A field chunk was loaded or dropped by the room's streamer. */
   chunk(cx: number, cy: number, loaded: boolean): void;
   /** A rock was broken up. */
   rockGone(key: number): void;
+  /** A static obstacle other than a rock (a structure) is at `shape`; null: removed. */
+  obstacle(id: number, shape: GridObstacle | null): void;
   /** A rock rests somewhere new (null: back at its cut pose). */
   rockMoved(key: number, pose: { x: number; y: number; angle: number } | null): void;
   /** Plans a route from (sx, sy) to (tx, ty) for a hull of clearance
@@ -44,7 +52,7 @@ export class NavWorker {
   private worker: Promise<Worker> | null = null;
   private readonly waiting = new Map<number, (msg: NavFieldBuiltMsg) => void>();
   private nextWorldId = 1;
-  private readonly routes = new Map<number, { resolve: (msg: NavRouteMsg) => void; reject: (err: unknown) => void }>();
+  private readonly routes = new Map<number, { resolve: (msg: NavRouteMsg) => void; reject: (err: unknown) => void; stats: NavFieldStats }>();
   private nextReqId = 1;
 
   /** Route requests posted and not yet answered (the count gate's in-flight counter). */
@@ -59,8 +67,11 @@ export class NavWorker {
     const started = this.start();
     let attached = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const stats: NavFieldStats = { routes: 0, expanded: 0, posts: 0, inFlight: 0 };
     const post = (cmd: NavCommand): void => {
-      if (attached) void started.then((w) => w.postMessage(cmd), () => undefined);
+      if (!attached) return;
+      stats.posts++;
+      void started.then((w) => w.postMessage(cmd), () => undefined);
     };
     const built = new Promise<NavFieldBuiltMsg>((resolve, reject) => {
       // eslint-disable-next-line no-restricted-globals -- real time: a build watchdog, not game time
@@ -71,19 +82,21 @@ export class NavWorker {
     });
     post({ type: 'ADD_FIELD', worldId, opts, gone, moved });
     return {
-      worldId, built,
+      worldId, built, stats,
       chunk: (cx, cy, loaded) => post({ type: 'CHUNK', worldId, cx, cy, loaded }),
       rockGone: (key) => post({ type: 'ROCK', worldId, key, gone: true }),
       rockMoved: (key, pose) => post({ type: 'ROCK', worldId, key, pose }),
+      obstacle: (id, shape) => post({ type: 'OBSTACLE', worldId, id, shape }),
       route: (sx, sy, tx, ty, clearance, heading = NaN, turnRadius = 0) => {
         if (!attached) {
           return Promise.resolve({ type: 'ROUTE', worldId, reqId: 0, status: 'none', points: new Float64Array(0), expanded: 0, ms: 0 });
         }
         const reqId = this.nextReqId++;
+        stats.routes++; stats.posts++; stats.inFlight++;
         return new Promise<NavRouteMsg>((resolve, reject) => {
-          this.routes.set(reqId, { resolve, reject });
+          this.routes.set(reqId, { resolve, reject, stats });
           started.then((w) => w.postMessage({ type: 'ROUTE', worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius } satisfies NavCommand),
-            (err: unknown) => { this.routes.delete(reqId); reject(err); });
+            (err: unknown) => { this.routes.delete(reqId); stats.inFlight--; reject(err); });
         });
       },
       detach: () => {
@@ -97,7 +110,7 @@ export class NavWorker {
   }
 
   private failRoutes(err: unknown): void {
-    for (const r of this.routes.values()) r.reject(err);
+    for (const r of this.routes.values()) { r.stats.inFlight--; r.reject(err); }
     this.routes.clear();
   }
 
@@ -114,7 +127,7 @@ export class NavWorker {
           if (msg.type === 'ROUTE') {
             const r = this.routes.get(msg.reqId);
             this.routes.delete(msg.reqId);
-            r?.resolve(msg);
+            if (r) { r.stats.inFlight--; r.stats.expanded += msg.expanded; r.resolve(msg); }
             return;
           }
           this.waiting.get(msg.worldId)?.(msg);

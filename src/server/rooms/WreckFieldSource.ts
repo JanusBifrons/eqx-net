@@ -36,38 +36,28 @@
  * is generation-time work (the fracture allocates), bounded by the budget;
  * the pending-unload sweep reads poses through made-once callbacks.
  */
-import { chunkKey, chunkKeyX, chunkKeyY, type ChunkSource } from '../../core/terrain/chunkStreamer.js';
+import { chunkKeyX, chunkKeyY, type ChunkSource } from '../../core/terrain/chunkStreamer.js';
 import { hullsInChunk, wreckFieldHullFracture, WRECK_FIELD, WRECK_FIELD_VERSION, type WreckField, type WreckFieldHull, type WreckFieldOpts } from '../../core/terrain/wreckFieldLayout.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import { loadRecords, type RockRecordStore } from '../db/terrainSql.js';
-import { collectLineage, parseLineageRecord, type WreckLineageDeps, type WreckLineageRecord } from './wreckLineageRecord.js';
-import { lineageRecordDeps, restoreLineage } from './wreckLineageSaves.js';
+import { collectLineage, type WreckLineageDeps, type WreckLineageRecord } from './wreckLineageRecord.js';
+import { fieldHullUnits, LineageUnloader, parseLineageJson } from './wreckLineageStream.js';
+import { lineageRecordDeps, resolveLineageGeometry, restoreLineage } from './wreckLineageSaves.js';
+import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { buildWreckPieces, type WreckPieceSpec } from '../../core/destruction/wreckPieces.js';
 import { CHUNK_SIZE } from '../../core/terrain/fieldLayout.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
 import { Rng, fnvMixU32 } from '../../core/random/rng.js';
-import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { WreckFractureInputs } from '../../core/destruction/wreckPieceFrame.js';
 import type { CapitalWreckSubsystem, WreckPiecePose } from './CapitalWreckSubsystem.js';
 
-/** Work units (one unit = one rock chunk cut, `CutFieldStreamer`) a field
- *  hull's fracture + spawn costs, by size class: measured by
- *  `WreckFieldSource.test.ts` "budget units" (desktop p50 hull load ÷ p50
- *  rock chunk cut, rounded up to a tenth). Measured 2026-11-17: a chunk
- *  inside the ring 2.0-2.2 ms; capital 0.49-0.61, subcap 0.13, fighter
- *  0.07-0.09 units. */
-export const FIELD_HULL_UNITS = { capital: 0.7, subcap: 0.2, fighter: 0.1 } as const;
+/** Hull load units (measured) live with the shared unload helpers. */
+export { FIELD_HULL_UNITS, fieldHullUnits } from './wreckLineageStream.js';
 
 /** A field hull row's `layout_version`: the layout's and the fracture's
  *  versions, so a bump of either leaves old rows ignored with a warning. */
 export const WRECK_FIELD_ROW_VERSION = WRECK_FIELD_VERSION * 256 + FRACTURE_ALGO_VERSION;
-
-/** A field hull's budget cost (`FIELD_HULL_UNITS` by its kind's class). */
-export function fieldHullUnits(kindId: ShipKindId): number {
-  const k = getShipKind(kindId);
-  if (k.sizeClass === 'capital') return FIELD_HULL_UNITS.capital;
-  return k.radius >= WRECK_FIELD.subcapMinRadius ? FIELD_HULL_UNITS.subcap : FIELD_HULL_UNITS.fighter;
-}
 
 /** Seconds of break-up drift a field hull's pieces have had (seeded per
  *  hull): a few seconds of their parting kicks, so the cuts read open. */
@@ -105,8 +95,16 @@ export function fieldHullPieces(hull: WreckFieldHull): { pieces: WreckPieceSpec[
 }
 
 /** The room option `wreckField` (`SectorRoom`): where the battlefield lies,
- *  its seed and the two sides that fought there (faction ids). */
-export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides'>;
+ *  its seed, the two sides that fought there (faction ids) and, optionally,
+ *  its own open clearings (galaxy sectors: every pocket; else the cut
+ *  field's). */
+export type WreckFieldRoomOpts = Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides' | 'clearings'> & {
+  /** Dev look flag (wreck fields 9, owner Q4 stills): seed hulls spawn
+   *  freshly dead (a `deathTick` at load: hot cut edges that cool on the
+   *  normal schedule) instead of cool. Off by default; dev room
+   *  `wreck-field-test-fresh` only. */
+  fresh?: boolean;
+};
 
 /** A loaded field hull: its lineage root, its pieces as spawned (ids, rest
  *  poses), and whether anything touched it since. */
@@ -143,6 +141,9 @@ export interface WreckFieldSourceDeps {
   /** The field's row partition (`<sectorKey>|wrecks:<seed>`); absent (a
    *  room that saves no sector) ⇒ rows live in memory for the room only. */
   records?: RockRecordStore;
+  /** Dev look flag (`WreckFieldRoomOpts.fresh`): seed hulls spawn with a
+   *  `deathTick` (drawn just killed) instead of cool. Absent: cool. */
+  fresh?: boolean;
   /** Sampled warning sink (pino `warn`). */
   warn(obj: Record<string, unknown>, msg: string): void;
 }
@@ -197,26 +198,23 @@ export class WreckFieldSource implements ChunkSource {
   private readonly pending = new Set<LiveHull>();
   /** Touched hulls to check for a lineage with no piece left (consumed). */
   private readonly check = new Set<LiveHull>();
-  /** Scratch for the made-once lineage visitors (#14). */
-  private readonly scratchIds: string[] = [];
-  private sweepNeeded: ReadonlySet<number> = new Set<number>();
-  private sweepNear = false;
+  /** The largest hull footprint: how far past a box a hull's home chunk
+   *  can lie and still reach it (`dormantObstacles`). */
+  private readonly reach: number;
   private nowMs = 0;
   private recDeps: WreckLineageDeps | null = null;
-  /** Is lineage piece `id` near (in a needed chunk, or on a tractor)? */
-  private readonly visitNear = (id: string): void => {
-    if (this.sweepNear) return;
-    if (this.d.tractored?.(id) === true) { this.sweepNear = true; return; }
-    if (this.d.piecePoseInto(id, this.pose)
-      && this.sweepNeeded.has(chunkKey(Math.floor(this.pose.x / CHUNK_SIZE), Math.floor(this.pose.y / CHUNK_SIZE)))) this.sweepNear = true;
-  };
-  private readonly collectId = (id: string): void => { this.scratchIds.push(id); };
+  /** Where a lineage is and taking it out (shared with the battle saves). */
+  private readonly unloader: LineageUnloader;
 
   constructor(
     readonly field: WreckField,
     private readonly d: WreckFieldSourceDeps,
     private readonly lingerMs = 10_000,
   ) {
+    let reach = 0;
+    for (const h of field.hulls) if (h.footprint > reach) reach = h.footprint;
+    this.reach = reach;
+    this.unloader = new LineageUnloader(d);
     if (d.records !== undefined) {
       for (const r of loadRecords(d.records, WRECK_FIELD_ROW_VERSION)) {
         this.rows.set(r.rockKey, r.consumed ? CONSUMED_ROW : { consumed: false, json: r.lineage });
@@ -312,7 +310,7 @@ export class WreckFieldSource implements ChunkSource {
     let n: number;
     try {
       n = wrecks.spawnWreck(h.kindId, `field:${h.key}`, pieces, fracture, getShipKind(h.kindId).maxHealth, h.angle,
-        { held: false, origin: 'field', sleeping: true, cool: true, owner: h.owner });
+        { held: false, origin: 'field', sleeping: true, cool: this.d.fresh !== true, owner: h.owner });
     } finally { this.spawning = null; }
     if (n === 0 || lh.root === 0) return;
     // Its pieces as spawned, in spawn order (pieces carry their index).
@@ -333,11 +331,9 @@ export class WreckFieldSource implements ChunkSource {
   private savedLineage(h: WreckFieldHull): WreckLineageRecord | null {
     const row = this.rows.get(h.key);
     if (row === undefined || row.json === null) return null;
-    let raw: unknown;
-    try { raw = JSON.parse(row.json); } catch { raw = undefined; }
-    const rec = raw === undefined ? null : parseLineageRecord(raw);
+    const { rec, algo } = parseLineageJson(row.json);
     if (rec === null) {
-      this.d.warn({ hullKey: h.key, fractureAlgo: (raw as { fractureAlgo?: unknown } | undefined)?.fractureAlgo, want: FRACTURE_ALGO_VERSION }, 'wreck field hull row unreadable: seed hull instead');
+      this.d.warn({ hullKey: h.key, fractureAlgo: algo, want: FRACTURE_ALGO_VERSION }, 'wreck field hull row unreadable: seed hull instead');
       this.rows.delete(h.key);
     }
     return rec;
@@ -416,11 +412,9 @@ export class WreckFieldSource implements ChunkSource {
    *  through `dropPiece`. */
   private sweepPending(needed: ReadonlySet<number>, now: number, wrecks: CapitalWreckSubsystem): void {
     if (this.pending.size === 0) return;
-    this.sweepNeeded = needed;
+    const s = wrecks.lineageState();
     for (const lh of this.pending) {
-      this.sweepNear = false;
-      wrecks.forEachLineagePiece(lh.root, this.visitNear);
-      if (this.sweepNear) { lh.lastNearMs = now; continue; }
+      if (this.unloader.near(s, lh.root, needed)) { lh.lastNearMs = now; continue; }
       if (now - lh.lastNearMs < this.lingerMs) continue;
       this.writeRow(lh.hull.key, this.collect(wrecks, lh));
       this.retireLineage(wrecks, lh);
@@ -431,12 +425,8 @@ export class WreckFieldSource implements ChunkSource {
   /** Every live piece of `lh`'s lineage out through `dropPiece` (its
    *  ancestors retire with their last piece), then forget it. */
   private retireLineage(wrecks: CapitalWreckSubsystem, lh: LiveHull): void {
-    const ids = this.scratchIds;
-    ids.length = 0;
-    wrecks.forEachLineagePiece(lh.root, this.collectId);
     this.retiring = true;
-    try { for (let j = 0; j < ids.length; j++) wrecks.retireFieldPiece(ids[j]!); } finally { this.retiring = false; }
-    ids.length = 0;
+    try { this.unloader.retire(wrecks.lineageState(), lh.root); } finally { this.retiring = false; }
     this.forget(lh);
   }
 
@@ -484,6 +474,50 @@ export class WreckFieldSource implements ChunkSource {
     }
   }
 
+  /** Placement (wreck fields 7, plan C5): push onto `out` the pieces of
+   *  the hulls reaching into `box` that have no body now (not loaded), as
+   *  a live piece's obstacle: centre, bounding radius, angle and convex
+   *  parts. Hulls are found by home chunk (`hullsInChunk`) and seed
+   *  footprint, the rocks' owning-chunk lookup (`fieldRocksInBox`). A hull
+   *  with a lineage row gives its saved pieces at their saved poses (the
+   *  restore resolver, `resolveLineageGeometry`); a consumed one nothing;
+   *  else its seed pieces (`fieldHullPieces`). Nothing when wrecks are off.
+   *  A discrete player action, never per tick; allocates. */
+  dormantObstacles(box: ObstacleBox, out: GridObstacle[]): void {
+    if (this.d.wrecks() === undefined || this.field.hulls.length === 0) return;
+    const r = this.reach;
+    const cx0 = Math.floor((box.x0 - r) / CHUNK_SIZE), cx1 = Math.floor((box.x1 + r) / CHUNK_SIZE);
+    const cy0 = Math.floor((box.y0 - r) / CHUNK_SIZE), cy1 = Math.floor((box.y1 + r) / CHUNK_SIZE);
+    if ((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > this.field.byChunk.size) {
+      for (const h of this.field.hulls) this.dormantHull(h, box, out);
+      return;
+    }
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) for (const h of hullsInChunk(this.field, cx, cy)) this.dormantHull(h, box, out);
+    }
+  }
+
+  private dormantHull(h: WreckFieldHull, box: ObstacleBox, out: GridObstacle[]): void {
+    if (this.live.has(h.key) || !circleMeetsBox(h.x, h.y, h.footprint, box)) return;
+    const row = this.rows.get(h.key);
+    if (row?.consumed === true) return;
+    if (row?.json != null && this.dormantRow(row.json, box, out)) return;
+    for (const p of fieldHullPieces(h).pieces) pushPiece(out, box, p.x, p.y, p.radius, p.angle, p.parts);
+  }
+
+  /** A saved hull's pieces at their saved poses; false when the row does
+   *  not resolve (the seed pieces stand in, as a reload would spawn them). */
+  private dormantRow(json: string, box: ObstacleBox, out: GridObstacle[]): boolean {
+    const { rec } = parseLineageJson(json);
+    const g = rec === null ? null : resolveLineageGeometry(rec);
+    if (rec === null || g === null) return false;
+    for (const pc of rec.pieces) {
+      const geom = g.geoms[pc.node]?.find((x) => x.index === pc.piece);
+      if (geom !== undefined) pushPiece(out, box, pc.x, pc.y, geom.radius, pc.angle, geom.parts);
+    }
+    return true;
+  }
+
   /** Forget chunk timing (room dispose: the pieces go with the world). */
   clear(): void {
     this.chunks.clear();
@@ -491,4 +525,15 @@ export class WreckFieldSource implements ChunkSource {
     this.pending.clear();
     this.check.clear();
   }
+}
+
+/** Does the circle (x, y, r) reach into `box`? */
+function circleMeetsBox(x: number, y: number, r: number, box: ObstacleBox): boolean {
+  const dx = Math.max(box.x0 - x, 0, x - box.x1), dy = Math.max(box.y0 - y, 0, y - box.y1);
+  return dx * dx + dy * dy < r * r;
+}
+
+/** A piece as a placement obstacle, when it reaches into `box`. */
+function pushPiece(out: GridObstacle[], box: ObstacleBox, x: number, y: number, radius: number, angle: number, parts: GridObstacle['parts']): void {
+  if (circleMeetsBox(x, y, radius, box)) out.push({ x, y, radius, angle, parts });
 }

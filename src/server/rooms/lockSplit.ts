@@ -4,22 +4,30 @@
  * biggest first, so every mining-laser mount keeps working and the lasers
  * spread over the pieces. Same lineage, so a LOCKED target's pieces are
  * LOCKED at once (stage, progress, track and salvage bits copied; the lock
- * step refreshes the bits). A piece that wears out into an ore pod (and a
- * break's slivers that pod) passes its locks on to the pods too, but only
- * in a group with tractors (every tractor pulls a pod; the lasers leave
- * them). Not a hostile act: no ledger, no standing.
+ * step refreshes the bits). A pod is never a lineage member: a piece worn
+ * into a pod leaves, and its locks move on like any other leaving piece
+ * (cargo pods, owner 2026-11-17: no weapon works a pod; a tractor moves one
+ * only on its own lock). Not a hostile act: no ledger, no standing.
  * Runs only on a break, never per tick.
  *
  * A lock ends only with its lineage (`lineageRekey`): while any piece of the
- * locked rock or wreck (or, for a group with tractors, any of its ore pods)
- * is alive, a lock whose piece leaves (worn into pods this group leaves,
- * taken in, or gone) or that it can't track moves on to another live member
+ * locked rock or wreck is alive, a lock whose piece leaves (worn into a
+ * pod, taken in, or gone) or that it can't track moves on to another live member
  * the group does not hold yet, one a mount of the group can work first; a
- * group with nothing it may work idles on the lineage.
+ * group with nothing it may work idles on the lineage. After every break a
+ * salvage group's lineage lock it can't work moves to a free member it can
+ * (`rekeyUnworkable`): the pieces are handed out biggest first, so without
+ * it a tractor group held the uncut pieces too heavy to pull while the
+ * haulable ones went unheld (barge-mining take, 2026-11-17). A tractor
+ * group's lineage lock also prefers a piece its dishes have a clear line to
+ * (`rekeyBlockedTractor`, each lock step): its beam acts on the first body in
+ * the way (owner 2026-11-18).
  */
 import { LOCK_TRACK, newLock, type LockEntry } from '../../core/combat/lockState.js';
 import { groupWorksSalvage, lockTierOf, type TurretGroupMount } from '../../core/combat/turretLockPick.js';
-import { lockSalvageFlags, type LockSalvageDeps } from './lockSalvage.js';
+import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
+import { lockSalvageFlags, refreshLockSalvage, type LockSalvageDeps } from './lockSalvage.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** A weapon group as the lineage hand-over sees it. */
@@ -28,8 +36,6 @@ export interface LineageGroup {
   locks: LockEntry[];
   /** The group's mounts in slot order (what it can work: `groupWorksSalvage`). */
   mounts: ReadonlyArray<TurretGroupMount>;
-  /** The group has a tractor: ore pods are members of its lineage too. */
-  tractor: boolean;
 }
 
 /** Who holds the group, for the members' salvage bits (`lockSalvageFlags`). */
@@ -42,9 +48,24 @@ export interface LineageCtx {
 /** The one reused member list of `lineageRekey` (#14). */
 const MEMBERS: string[] = [];
 
-/** A member's rank for group `g`: one a mount of it can work first, then the bigger size tier. */
-function memberRank(g: LineageGroup, flags: number): number {
-  return (groupWorksSalvage(g.mounts, flags) ? 8 : 0) + lockTierOf(flags);
+/** A member's rank for group `g`: one a mount of it can work first, then (a
+ *  tractor group) one its dishes have a clear line to (`clear`), then the
+ *  bigger size tier. */
+function memberRank(g: LineageGroup, flags: number, clear: boolean): number {
+  return (groupWorksSalvage(g.mounts, flags) ? 16 : 0) + (clear ? 8 : 0) + lockTierOf(flags);
+}
+
+/** Does group `g` carry a tractor? */
+function tractorGroup(g: LineageGroup): boolean {
+  for (let i = 0; i < g.mounts.length; i++) if (getWeapon(g.mounts[i]!.weaponId).tractor !== undefined) return true;
+  return false;
+}
+
+/** A tractor beam acts on the first body in its line (owner 2026-11-18):
+ *  is `key`'s line clear for a tractor group? Always true for other groups,
+ *  or with no `tractorLineClear` dep. */
+function lineClear(d: LockSalvageDeps, playerId: string, tractor: boolean, key: string): boolean {
+  return !tractor || d.tractorLineClear === undefined || d.tractorLineClear(playerId, key);
 }
 
 function holds(g: { locks: LockEntry[] }, key: string): boolean {
@@ -71,12 +92,15 @@ export function lineageRekey(
   const root = e.root >= 0 ? e.root : src.rootOf(e.target);
   if (root < 0) return false;
   MEMBERS.length = 0;
-  src.keysOf(root, g.tractor, MEMBERS);
+  src.keysOf(root, MEMBERS);
   let best: string | null = null;
-  let bestRank = keep ? memberRank(g, e.flags) : -1;
+  const tractor = tractorGroup(g);
+  let bestRank = keep ? memberRank(g, e.flags, lineClear(d, playerId, tractor, e.target)) : -1;
   for (const key of MEMBERS) {
     if (key === e.target || holds(g, key)) continue;
-    const r = memberRank(g, lockSalvageFlags(d, ship, playerId, key));
+    const base = memberRank(g, lockSalvageFlags(d, ship, playerId, key), false);
+    if (base + 8 <= bestRank) continue; // can't win even clear: no line query
+    const r = base + (lineClear(d, playerId, tractor, key) ? 8 : 0);
     if (r > bestRank) { best = key; bestRank = r; }
   }
   if (best === null && !keep) return false;
@@ -86,10 +110,86 @@ export function lineageRekey(
   return true;
 }
 
+/** Does group `g` carry a mining laser or a tractor (a salvage group)? */
+function salvageGroup(g: LineageGroup): boolean {
+  for (let i = 0; i < g.mounts.length; i++) {
+    const w = getWeapon(g.mounts[i]!.weaponId);
+    if (isSalvageWeapon(w) || w.tractor !== undefined) return true;
+  }
+  return false;
+}
+
+/**
+ * After a break: each lineage lock of salvage group `g` that no mount of it
+ * can work (bits refreshed now) moves to the free member of its lineage it
+ * can (`lineageRekey` with `keep`: it stays when none is free). True when
+ * a lock moved (the caller re-syncs its wire). Runs only on a break.
+ */
+export function rekeyUnworkable(g: LineageGroup, c: LineageCtx): boolean {
+  if (c.d.lineage === undefined || !salvageGroup(g)) return false;
+  let moved = false;
+  for (const e of g.locks) {
+    refreshLockSalvage(c.d, c.ship, c.playerId, e);
+    if (e.root < 0 || e.flags === 0 || groupWorksSalvage(g.mounts, e.flags)) continue;
+    const was = e.target;
+    if (lineageRekey(c.d, c.ship, c.playerId, g, e, true) && e.target !== was) {
+      refreshLockSalvage(c.d, c.ship, c.playerId, e);
+      moved = true;
+    }
+  }
+  return moved;
+}
+
+/**
+ * Each lock step: a tractor group's lineage lock `e` whose line from the
+ * ship's dishes is blocked (`tractorLineClear` false: the beam would act on
+ * the body in the way) moves to a free member of its lineage with a clear
+ * line (`lineageRekey` with `keep`: it stays when none is free). Fixing the
+ * line is the pilot's job (owner 2026-11-18); this is the lock hand-over
+ * doing it for the lineage it already follows. Cost: one line query per
+ * tractor lineage lock per lock step, plus one per free member only while
+ * blocked. True when the lock moved.
+ */
+export function rekeyBlockedTractor(
+  d: LockSalvageDeps, ship: LineageCtx['ship'], playerId: string, g: LineageGroup, e: LockEntry,
+): boolean {
+  if (e.root < 0 || d.tractorLineClear === undefined || !tractorGroup(g) || d.tractorLineClear(playerId, e.target)) return false;
+  const was = e.target;
+  if (!lineageRekey(d, ship, playerId, g, e, true) || e.target === was) return false;
+  refreshLockSalvage(d, ship, playerId, e);
+  return true;
+}
+
+/** The one reused split order of `splitGroupLocks` and its ranks (#14). */
+const SPLIT: string[] = [];
+const SPLIT_RANK: number[] = [];
+
+/** Fill `SPLIT` with the first `count` of `pieceKeys`, ranked for group `g`
+ *  as the lineage hand-over ranks members (`memberRank`: one a mount of the
+ *  group can work first), stable (biggest first among equals). Without `c`,
+ *  the order as given. */
+function rankSplit(g: LineageGroup, pieceKeys: ReadonlyArray<string>, count: number, c: LineageCtx | undefined): void {
+  SPLIT.length = 0;
+  SPLIT_RANK.length = 0;
+  const tractor = c !== undefined && tractorGroup(g);
+  for (let i = 0; i < count; i++) {
+    const key = pieceKeys[i]!;
+    // A tractor group ranks pieces its dishes have a clear line to first (owner 2026-11-18).
+    const r = c === undefined ? 0 : memberRank(g, lockSalvageFlags(c.d, c.ship, c.playerId, key), lineClear(c.d, c.playerId, tractor, key));
+    let j = SPLIT.length;
+    SPLIT.push(key); SPLIT_RANK.push(r);
+    while (j > 0 && SPLIT_RANK[j - 1]! < r) { SPLIT[j] = SPLIT[j - 1]!; SPLIT_RANK[j] = SPLIT_RANK[j - 1]!; j--; }
+    SPLIT[j] = key; SPLIT_RANK[j] = r;
+  }
+}
+
 /** Re-key one group's lock on `fromKey` to the first of the first `count`
  *  piece keys it does not already lock, then add locks on the next ones up
- *  to its `capacity`. A group already locking every one (or given none)
- *  hands the old lock to another live member of its lineage
+ *  to its `capacity`; with `c`, the ones a mount of the group can work come
+ *  first (`memberRank`, as `lineageRekey`): a tractor group's locks go to the
+ *  pieces it can pull before ones too big for any of its tractors, which it could
+ *  only idle on while the haulable ones drift off. A group already locking every one
+ *  (or given none) hands the old lock to another live member of its lineage
  *  (`lineageRekey`, with `c`), else drops it. True when the group changed
  *  (the caller re-syncs its wire). */
 export function splitGroupLocks(
@@ -98,9 +198,10 @@ export function splitGroupLocks(
   let src: LockEntry | undefined;
   for (const e of g.locks) if (e.target === fromKey) { src = e; break; }
   if (src === undefined) return false;
+  rankSplit(g, pieceKeys, count, c);
   let moved = false;
-  for (let i = 0; i < count; i++) {
-    const key = pieceKeys[i]!;
+  for (let i = 0; i < SPLIT.length; i++) {
+    const key = SPLIT[i]!;
     let held = false;
     for (const e of g.locks) if (e.target === key) { held = true; break; }
     if (held) continue;
@@ -121,22 +222,19 @@ const ORDER: number[] = [];
 /**
  * SectorRoom's `CapitalWreckDeps.pieceSplit`: map the parent and its piece
  * ids (parallel `masses`) to swarm lock keys (`s:<entityId>`), biggest piece
- * first, then its last `pods` ids (ore pods, in order, after the pieces),
- * and hand them to every lock machine (`targetSplit`). Ids not in the
+ * first, and hand them to every lock machine (`targetSplit`). Ids not in the
  * registry are skipped.
  */
 export function relayPieceSplit(
   reg: { get(id: string): { entityId: number } | null | undefined },
   parentId: string, ids: ReadonlyArray<string>, masses: ReadonlyArray<number>,
-  a: { targetSplit(from: string, keys: ReadonlyArray<string>, pods: number): void },
-  b: { targetSplit(from: string, keys: ReadonlyArray<string>, pods: number): void } | undefined,
-  pods = 0,
+  a: { targetSplit(from: string, keys: ReadonlyArray<string>): void },
+  b: { targetSplit(from: string, keys: ReadonlyArray<string>): void } | undefined,
 ): void {
   const parent = reg.get(parentId);
   if (parent == null) return;
   ORDER.length = 0;
-  const pieces = ids.length - pods;
-  for (let i = 0; i < pieces; i++) {
+  for (let i = 0; i < ids.length; i++) {
     let j = ORDER.length;
     while (j > 0 && (masses[ORDER[j - 1]!] ?? 0) < (masses[i] ?? 0)) j--;
     ORDER.splice(j, 0, i);
@@ -146,13 +244,8 @@ export function relayPieceSplit(
     const rec = reg.get(ids[i]!);
     if (rec != null) KEYS.push(`s:${rec.entityId}`);
   }
-  const before = KEYS.length;
-  for (let i = pieces; i < ids.length; i++) {
-    const rec = reg.get(ids[i]!);
-    if (rec != null && KEYS.indexOf(`s:${rec.entityId}`) < 0) KEYS.push(`s:${rec.entityId}`); // two slivers may merge into one pod
-  }
   if (KEYS.length === 0) return;
   const from = `s:${parent.entityId}`;
-  a.targetSplit(from, KEYS, KEYS.length - before);
-  if (b !== undefined && b !== a) b.targetSplit(from, KEYS, KEYS.length - before);
+  a.targetSplit(from, KEYS);
+  if (b !== undefined && b !== a) b.targetSplit(from, KEYS);
 }

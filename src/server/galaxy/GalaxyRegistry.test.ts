@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveSectorConfig, listGalaxySectors } from './GalaxyRegistry.js';
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 import { HOME_POCKET_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
-import { sectorCutField, sectorSites } from '../../core/galaxy/sectorSites.js';
+import { sectorCutField, sectorSites, sectorWreckField } from '../../core/galaxy/sectorSites.js';
 import { SLICED } from '../../core/terrain/fieldLayout.js';
 
 describe('GalaxyRegistry', () => {
@@ -55,6 +55,16 @@ describe('GalaxyRegistry', () => {
     expect(cfg.asteroidConfig.length).toBeGreaterThan(0);
     const core = SLICED.radius * SLICED.holeShare;
     for (const a of cfg.asteroidConfig) expect(Math.hypot(a.x, a.y) + a.radius, a.id).toBeLessThan(core);
+  });
+
+  it('wreck fields F3: a wrecks-marked sector gets its one wreck field (beside its cut field, if any)', () => {
+    for (const sec of GALAXY_SECTORS) {
+      const cfg = resolveSectorConfig(sec.key);
+      expect(cfg.wreckField, sec.key).toEqual(sectorWreckField(sec.key, SOLAR_SECTORS) ?? undefined);
+      expect(cfg.cutField, sec.key).toEqual(sectorCutField(sec.key, SOLAR_SECTORS) ?? undefined);
+    }
+    expect(GALAXY_SECTORS.some((s) => resolveSectorConfig(s.key).wreckField)).toBe(SOLAR_SECTORS);
+    if (SOLAR_SECTORS) expect(resolveSectorConfig('thornfield').wreckField?.seed).toBe('thornfield');
   });
 
   it('listGalaxySectors returns the GALAXY_SECTORS array', () => {

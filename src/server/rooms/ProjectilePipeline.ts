@@ -50,7 +50,8 @@ import {
   SLOT_ANGLE_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
-import { getWeapon, isMiningTool, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { shotPassesThrough } from '../../core/combat/blockedLineHold.js';
 import { shellBlastDamage } from '../../shared-types/shellBlast.js';
 import type { ShipState } from './schema/SectorState.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
@@ -142,10 +143,6 @@ export interface ProjectilePipelineDeps {
   playerToSlot: Iterable<[string, number]>;
   /** Active-ship resolver for the player-sweep branch. */
   getActiveShip: (playerId: string) => ShipState | undefined;
-  /** Whether a bolt from `ownerId` can land on a loot pod (`isLootPod`). Only a
-   *  pilot's own shot can, except mining tools (`isMiningTool`): nobody else
-   *  fights loot. Absent ⇒ every non-mining bolt can (unit harnesses). */
-  shotHitsLootPods?: (ownerId: string) => boolean;
   /** Per-tick player pose cache (top-of-update SAB read). */
   shipPoseCache: Map<string, ShipPose>;
   /** Per-ship sweep that respects shield (cheap circle) vs hull (polygon). */
@@ -209,8 +206,7 @@ export const DT_SEC = 1 / 60;
 /** Does a shell of this weapon pass through what it kills? (Its `killCut` is
  *  a channel: the capital railgun, plan beam-slices §7.) */
 export function passesThrough(weaponId: WeaponId): boolean {
-  const cut = getWeapon(weaponId).killCut;
-  return cut !== undefined && cut.kind === 'channel';
+  return shotPassesThrough(weaponId); // one source with the blocked-line hold
 }
 
 const spawnQ: ShellSpawnMut = { x: 0, y: 0, vx: 0, vy: 0 };
@@ -509,10 +505,9 @@ export class ProjectilePipeline {
     // the lingering-hull owner skip below. Sibling structures in the line of
     // fire are still hit (realistic — place defence turrets at the perimeter).
     if (rec.id === proj.ownerId) return false;
-    // Nobody fights a loot pod (owner 2026-11-13): an AI or turret bolt passes it,
-    // and so does a mining tool's, a pilot's included (owner 2026-11-16).
-    if (isLootPod(rec) && (isMiningTool(proj.weaponId)
-      || (this.deps.shotHitsLootPods !== undefined && !this.deps.shotHitsLootPods(proj.ownerId)))) return false;
+    // No weapon ever touches a cargo pod (owner 2026-11-17): every shot from
+    // anyone passes over it, so a pod is never destroyed and never a shield.
+    if (isLootPod(rec)) return false;
     // A pass-through slug ignores debris (wreck pieces) and its own victims.
     if (proj.pass === true && (rec.kind === 4 || ProjectilePipeline.passed(proj, rec.id))) return false;
     // Friendly fire (owner decision 2026-11-10): no allegiance filter. A

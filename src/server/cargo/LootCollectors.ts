@@ -4,12 +4,22 @@
  * (`LootSubsystemDeps.fillCollector`): a pilot's ACTIVE live hull with a hold,
  * or a `collectsLoot` AI ship (a live swarm entity, kind 1). Fill logic over
  * injected room accessors; one reused scratch (no per-tick alloc, #14).
+ *
+ * Also the room's collector hooks, moved verbatim out of `SectorRoom`: the
+ * pickup notice (`onLootCollected`, `LootSubsystemDeps.onCollected`) and the
+ * hand-moved-cargo set (`manualCargo`, filled by the cargo messages). The
+ * auto-deposit pass itself is `rooms/features/craneBays.ts` (`CraneBays`).
  */
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { cargoCapacityForMaxHealth } from '../../shared-types/goods.js';
 import { SLOT_ANGLE_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import type { LootCollector } from './LootSubsystem.js';
+import type { Client } from 'colyseus';
+import type { Hold } from '../../shared-types/goods.js';
+import type { StructureRecord } from '../structures/StructureRegistry.js';
+import { holdWeight, isHoldEmpty } from '../../core/cargo/hold.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
 
 /** The pilot hull fields a collector reads (`ShipState`). */
 interface PilotHull { alive: boolean; isActive: boolean; shipInstanceId: string; shield: number; kind: string }
@@ -26,6 +36,15 @@ export interface LootCollectorsDeps {
   cargoCapacity: (kind: string, shipInstanceId: string) => number;
   swarm: { all: () => Iterable<SwarmEntityRecord>; get: (id: string) => SwarmEntityRecord | null };
   sab: () => Float32Array;
+  playerToSession: () => ReadonlyMap<string, string>;
+  clients: () => ReadonlyArray<Client>;
+}
+
+/** Economy v2 W4a — the packed products a pickup/deposit moved, for the popup
+ *  (spread into the message; absent when none). Discrete event, not per tick. */
+function packedProducts(moved: Hold): { packed?: string[] } {
+  if (moved.packed === undefined || moved.packed.length === 0) return {};
+  return { packed: moved.packed.slice(0, 20).map((p) => p.product) };
 }
 
 export class LootCollectors {
@@ -56,6 +75,12 @@ export class LootCollectors {
     const rec = this.d.swarm.get(shipId);
     if (rec === null || rec.kind !== 1) return null;
     return this.d.sectorKey() !== null && this.npc(rec, c);
+  }
+
+  /** Pilot `pid`'s collector (the reused scratch: read it before the next
+   *  call), or null with no live hold-carrying hull (the loot window's reach). */
+  pilotCollector(pid: string): LootCollector | null {
+    return this.d.sectorKey() !== null && this.pilot(pid, this.c) ? this.c : null;
   }
 
   /** Fill `c` with pilot `pid`'s collector; false = none (#17: a live ACTIVE hull with a hold). */
@@ -97,5 +122,47 @@ export class LootCollectors {
     c.kind = kindDef;
     c.npc = true;
     return true;
+  }
+
+  /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
+   *  until they fly out of deposit range of their storage, so a withdrawal
+   *  from your own storage isn't banked straight back 2 s later. */
+  readonly manualCargo = new Set<string>();
+
+  /** A pickup landed: tell the collector (UI accelerator — the authoritative
+   *  cargo rides the own-ship snapshot slice) + audit. */
+  onLootCollected(c: LootCollector, moved: Hold, podId: string): void {
+    if (c.npc === true) {
+      auditEvent({ event: 'loot_collected', sector: this.d.sectorKey() ?? undefined, podId, playerId: c.playerId, shipInstanceId: c.shipInstanceId, weight: holdWeight(moved) });
+      return;
+    }
+    const sessionId = this.d.playerToSession().get(c.playerId);
+    const client = sessionId !== undefined ? this.d.clients().find((cl) => cl.sessionId === sessionId) : undefined;
+    if (client) {
+      try {
+        client.send('loot_collected', { type: 'loot_collected', goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
+      } catch { /* socket closing */ }
+    }
+    auditEvent({
+      event: 'loot_collected', sector: this.d.sectorKey() ?? undefined, podId,
+      playerId: c.playerId, shipInstanceId: c.shipInstanceId, weight: holdWeight(moved),
+    });
+  }
+
+  /** An auto-deposit / crane trade moved goods (`CraneBays`): tell the pilot
+   *  and audit it (nothing moved ⇒ silent). `loaded` (3d outlet): goods came
+   *  ABOARD, so the pickup popup. */
+  onDeposited(c: LootCollector, target: StructureRecord, moved: Hold, loaded = false): void {
+    if (isHoldEmpty(moved)) return; // storage full — nothing moved
+    const sessionId = this.d.playerToSession().get(c.playerId);
+    const client = sessionId !== undefined ? this.d.clients().find((cl) => cl.sessionId === sessionId) : undefined;
+    const type = loaded ? 'loot_collected' : 'cargo_deposited';
+    try {
+      client?.send(type, { type, goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
+    } catch { /* socket closing */ }
+    auditEvent({
+      event: loaded ? 'cargo_loaded' : 'cargo_deposited', sector: this.d.sectorKey() ?? undefined, playerId: c.playerId,
+      shipInstanceId: c.shipInstanceId, structureKind: target.kind, weight: holdWeight(moved),
+    });
   }
 }

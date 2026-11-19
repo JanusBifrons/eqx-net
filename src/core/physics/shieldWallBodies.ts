@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier2d-compat';
-import { wallGeometry } from '../structures/ShieldWall.js';
+import { createWallBody } from './spawnBodies.js';
 
 /** One `PhysicsWorld`'s shield-wall spans (its `walls`): the world's
  *  `spawnWall` / `setWallActive` / `removeWall` delegate here, and its
@@ -24,32 +24,15 @@ export class ShieldWallBodies {
 
   constructor(private readonly world: RAPIER.World) {}
 
-  /**
-   * Spawn a shield-wall span — a STATIC (fixed) cuboid spanning between two pylon
-   * poses (shield-fence plan). It blocks ships physically (an immovable body the
-   * dynamic ship bodies bounce off); weapon absorption is resolved main-thread
-   * (the server has no live Rapier world). The geometry is derived from the two
-   * poses via the shared `wallGeometry` so the server collider, the client
-   * predWorld collider, and the rendered span all agree. Idempotent on `id`.
-   *
-   * NOT given CONTACT_FORCE_EVENTS — a wall never deals ram damage; it just
-   * blocks. Toggle it on stun / power loss via `setWallActive` (cheaper than a
-   * despawn/respawn churn of the body + handle maps).
-   */
+  /** Spawn a shield-wall span between two pylon poses; doc: `createWallBody`
+   *  (spawnBodies.ts). Idempotent on `id`. */
   spawnWall(id: string, ax: number, ay: number, bx: number, by: number, thickness: number): void {
     if (this.wallBodies.has(id)) return;
-    const g = wallGeometry(ax, ay, bx, by);
-    if (g.length < 1) return; // degenerate (coincident pylons) — nothing to span
-    const body = this.world.createRigidBody(
-      RAPIER.RigidBodyDesc.fixed().setTranslation(g.midX, g.midY).setRotation(g.angle),
-    );
-    const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(g.length / 2, thickness / 2).setRestitution(0.4).setFriction(0),
-      body,
-    );
-    this.wallBodies.set(id, body);
-    this.wallColliders.set(id, collider);
-    this.wallHandleToId.set(body.handle, 'wall-' + id);
+    const w = createWallBody(this.world, ax, ay, bx, by, thickness);
+    if (w === null) return; // degenerate (coincident pylons) — nothing to span
+    this.wallBodies.set(id, w.body);
+    this.wallColliders.set(id, w.collider);
+    this.wallHandleToId.set(w.body.handle, 'wall-' + id);
   }
 
   /** Enable/disable a wall's collider (stun / power loss → pass-through). A

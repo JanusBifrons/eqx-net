@@ -62,7 +62,7 @@ const ALLOWLIST = {
   'src/client/__art-lab__/main.ts': { cap: 674, target: 600, reason: RATCHET_ONLY },
   'src/client/components/EntityStatsPanel.tsx': { cap: 893, target: 600, reason: RATCHET_ONLY },
   'src/client/net/ColyseusClient.ts': {
-    cap: 6941,
+    cap: 3035,
     target: 350,
     reason:
       'v3 plan commits 16-19 split this into 15 collaborators (PredictionStateManager, ' +
@@ -70,14 +70,6 @@ const ALLOWLIST = {
   },
   'src/client/render/HaloRadar.ts': { cap: 662, target: 600, reason: RATCHET_ONLY },
   'src/client/render/MountVisualManager.ts': { cap: 932, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/PixiRenderer.ts': {
-    cap: 3463,
-    target: 340,
-    reason:
-      'v3 plan commits 10-14 split this into 15 collaborators (PixiAppLifecycle, ' +
-      'CameraController, SpriteFactory, SpriteRegistry, ShipSpriteUpdater, etc.); ' +
-      'orchestrator target ~340 LOC.',
-  },
   'src/client/render/art/ArtService.ts': { cap: 689, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fields.ts': { cap: 943, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fx/fxTextures.ts': { cap: 783, target: 600, reason: RATCHET_ONLY },
@@ -92,22 +84,19 @@ const ALLOWLIST = {
     reason: RATCHET_ONLY,
   },
   'src/client/state/storeTypes.ts': { cap: 686, target: 600, reason: RATCHET_ONLY },
-  'src/core/ai/HostileDroneBehaviour.ts': { cap: 2880, target: 600, reason: RATCHET_ONLY },
+  'src/core/ai/HostileDroneBehaviour.ts': { cap: 928, target: 600, reason: RATCHET_ONLY },
   'src/core/ai/tactics/manoeuvres.ts': { cap: 679, target: 600, reason: RATCHET_ONLY },
   'src/core/bases/growBase.ts': { cap: 655, target: 600, reason: RATCHET_ONLY },
-  'src/core/contracts/IRenderer.ts': { cap: 1298, target: 600, reason: RATCHET_ONLY },
-  'src/core/destruction/fractureHull.ts': { cap: 1610, target: 600, reason: RATCHET_ONLY },
-  'src/core/physics/World.ts': { cap: 1239, target: 600, reason: RATCHET_ONLY },
+  'src/core/destruction/fractureHull.ts': { cap: 1218, target: 600, reason: RATCHET_ONLY },
   'src/core/physics/worker.ts': { cap: 745, target: 600, reason: RATCHET_ONLY },
   'src/server/cargo/StorageService.ts': { cap: 874, target: 600, reason: RATCHET_ONLY },
   'src/server/economy/ConvoyDirector.ts': { cap: 579, target: 600, reason: RATCHET_ONLY },
   'src/server/economy/TradeDirector.ts': { cap: 891, target: 600, reason: RATCHET_ONLY },
-  'src/server/livingworld/LivingWorldDirector.ts': { cap: 1575, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/LockSubsystem.ts': { cap: 684, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/PlayerFireResolver.ts': { cap: 766, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/SectorRoom.ts': {
-    cap: 12471,
+    cap: 7854,
     target: 450,
     reason:
       'v3 plan commits 20-23 split this into 17 collaborators (PhysicsWorkerProxy, ' +

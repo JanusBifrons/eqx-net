@@ -19,6 +19,7 @@ field cluster owning any piece of state they need to touch.
 | `snapshot` | [`SnapshotBroadcaster.ts`](../../src/server/rooms/SnapshotBroadcaster.ts) | Broadcast cadence + idle tracker + TiDi clock + boost/thrust sets | `encoder`, `broadcastCounter`, `lastInputCaches`, `idleTracker`, `forceBroadcastUntilTick`, `ticksSinceSnapshot`, `boostingPlayers`, `thrustingPlayers`, `lastSentClockRate`, `clock` (SimulationClock) |
 | ownerless evict | [`OwnerlessShipEvictor.ts`](../../src/server/rooms/OwnerlessShipEvictor.ts) | Lingering-hull ownerless-evict timers (the former `WreckLifecycleCoordinator` was removed when wrecks were retired — P6.3/C3; abandon now → scrap) | `ownerlessShips` |
 | `obstacles` | [`SectorObstacles.ts`](../../src/server/rooms/SectorObstacles.ts) | The one obstacle gatherer: placement / line-of-sight rocks, landing, join and convoy spawn clearance ([navigation](navigation.md#the-one-obstacle-gatherer-serverroomssectorobstaclests)) | pooled `rockList`, `boxes`, `circles`, `walls` |
+| `nav` | [`RoomNav.ts`](../../src/server/nav/RoomNav.ts) | Cut field's nav maps in the nav worker, AI routes, player autopilot route requests ([navigation](navigation.md)) | `field`, `routes`, `autopilot` |
 | `aiGrids` | [`AiNeighbourFill.ts`](../../src/server/rooms/AiNeighbourFill.ts) | AI neighbour (+ debris) grids, one registry walk per tick | `neighbourGrid`, A/B switches |
 | `budget` | [`TickBudgetTelemetry.ts`](../../src/server/rooms/TickBudgetTelemetry.ts) | Per-tick timing + hitch detection + 60-sample emit | `sums`, `thisTickPhases`, `historyRing`, `sampleCount`, `maxTotalMs`, `overBudgetCount`, `lastHitchAtMs` |
 
@@ -40,7 +41,8 @@ mature.
 - `onJoin` / `onLeave` lifecycle methods. `onJoin` has 5 branches plus
   one fall-through per [Trap 8](#trap-8-onjoin-branch-list); the body
   spans every subsystem above.
-- `abandonShipToScrap` / `abandonLingeringHullToScrap` — the abandon
+- `abandonShipToScrap` / `abandonLingeringHullToScrap` (now on
+  `OwnerlessShipEvictor`, the room's `ownerlessShipEvictor`) — the abandon
   transactions (an abandoned hull shatters into scrap + frees its slot;
   wrecks were retired P6.3/C3, so these replaced the old
   `convertShipToWreck`/`destroyWreck` + `WreckLifecycleCoordinator`).
@@ -77,7 +79,7 @@ made the post-Step-1 extractions safe — five integration tests
 `TransitOrchestrator` reads `room.sabF32`, `room.playerToSlot`,
 `room.playerToUser`, `room.playerToTransitInFlight`, and
 `room.lastFireClientTick` as direct property accesses on the
-`TransitHostRoom` adapter (`SectorRoom.asTransitHost()`). After the
+`TransitHostRoom` adapter (`transitHostRoom`, `features/transitMessages.ts`). After the
 hazy-pillow extractions these fields live on subsystems
 (`this.slots.playerToSlot`, `this.players.playerToUser`, etc.), and
 the adapter forwards them as the original property names. The
@@ -116,7 +118,7 @@ plan next tick's aim. Any future migration of `tickPlayerMounts` into
 > `convertShipToWreck` (an 8-collaborator transaction) + why
 > `WreckLifecycleCoordinator` was its own subsystem. Wrecks are gone:
 > abandon now produces SCRAP via `abandonShipToScrap` /
-> `abandonLingeringHullToScrap` (inline on SectorRoom), which is the
+> `abandonLingeringHullToScrap` (on `OwnerlessShipEvictor`, moved out of SectorRoom), which is the
 > surviving multi-collaborator example. Note it spawns scrap + **DESPAWNs**
 > the body (no wreck rekey) instead of re-keying a slot to a wreck.
 
@@ -179,9 +181,8 @@ These items remain explicitly deferred from the hazy-pillow plan:
   method calls into the existing `PlayerShipStore` module — no
   roster-specific storage on SectorRoom to relocate under the
   storage-pattern this plan used.
-- **Step 15 (SectorTransitAdapter)**: existing `asTransitHost()`
-  method already implements the `TransitHostRoom` interface. Pulling
-  it out of SectorRoom is cosmetic.
+- **Step 15 (SectorTransitAdapter)**: done: the `TransitHostRoom`
+  adapter is `transitHostRoom(host)` in `features/transitMessages.ts`.
 - **Step 16 (LivingWorldBridge)**: the 6 forwarder methods
   (`playerCount`, `hasFreeSlot`, `eventBus`, `spawnLivingWorldBot`,
   `despawnLivingWorldBot`, `markBotHostile`) are already thin

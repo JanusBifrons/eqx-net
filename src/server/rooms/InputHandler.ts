@@ -27,10 +27,10 @@ import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { MalformedMessageTracker } from './MalformedMessageTracker.js';
 
 export interface InputHandlerCtx {
-  sessionToPlayer: Map<string, string>;
+  sessionToPlayer: ReadonlyMap<string, string>;
   inputCountThisTick: Map<string, number>;
   maxInputsPerTick: number;
-  playerToSlot: Map<string, number>;
+  playerToSlot: ReadonlyMap<string, number>;
   boostingPlayers: Set<string>;
   thrustingPlayers: Set<string>;
   postToWorker: (cmd: WorkerCmd) => void;

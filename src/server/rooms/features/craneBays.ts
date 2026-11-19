@@ -49,6 +49,8 @@ export interface CraneBayHost {
   serverTick(): number;
   storage(): Pick<StorageService, 'nearestOwnStorage' | 'nearestHoverDropOff' | 'deposit' | 'loadOutlet' | 'outletLoadWeight'>;
   shipHold(shipInstanceId: string): Hold | undefined;
+  /** Cargo pods 14c — the ship's auto-unload switch (default on). */
+  autoUnloadOn(shipInstanceId: string): boolean;
   /** `SectorRoom.startStructureRigClip`. */
   startStructureRigClip(
     id: string, clipId: string | null, target?: { readonly x: number; readonly y: number },
@@ -147,7 +149,9 @@ export class CraneBays {
     // holding near it (3f: crane-bay kinds never take the hover deposit).
     const bayDock = this.ownDockBayAt(c.playerId, c.x, c.y);
     if (bayDock !== null) { this.dockDwell(c, bayDock, hold); return; }
-    const target = hold !== undefined && !isHoldEmpty(hold)
+    // Cargo pods 14c: both ends must agree (the ship's switch here, the
+    // storage's accept in `nearestHoverDropOff`).
+    const target = hold !== undefined && !isHoldEmpty(hold) && this.h.autoUnloadOn(c.shipInstanceId)
       ? storage.nearestHoverDropOff(c.playerId, c.x, c.y)
       : null;
     if (target === null) {
@@ -236,8 +240,11 @@ export class CraneBays {
       unloadW = job.cargo === 'unload' ? job.weight : -1;
       loadW = job.cargo === 'load' ? job.weight : 0;
     } else {
-      const intake = hold !== undefined ? dockIntakeGoods(dock) : undefined;
-      unloadW = hold !== undefined && holdHasIntake(hold, intake) ? holdIntakeWeight(hold, intake) : -1;
+      // Cargo pods 14c: the crane unloads only when the ship's switch and the
+      // dock's accept both allow auto-unload; loading export goods is unaffected.
+      const unloadOk = hold !== undefined && dock.acceptAutoUnload !== false && this.h.autoUnloadOn(c.shipInstanceId);
+      const intake = unloadOk ? dockIntakeGoods(dock) : undefined;
+      unloadW = unloadOk && holdHasIntake(hold, intake) ? holdIntakeWeight(hold, intake) : -1;
       loadW = storage.outletLoadWeight(dock, c.capacity - (hold ? holdWeight(hold) : 0) + Math.max(0, unloadW));
     }
     if (unloadW < 0 && !(loadW > 0)) { this.dropDepositDwell(c.playerId); return; }

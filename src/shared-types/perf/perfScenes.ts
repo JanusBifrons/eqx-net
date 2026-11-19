@@ -70,6 +70,15 @@ export const ROCK_FIELD_SMALL = 1000;
 export const ROCK_FIELD_LARGE = 4500;
 export const ROCK_FIELD_FIGHT = 4000;
 
+/** Wreck fields slice 6: the opt-in room option `wreckField` alone (no rocks,
+ *  no ships but the pilot), layout seed `a`. `persistSector: false`, so a run
+ *  never inherits a touched hull from the one before. */
+const WRECK_FIELD_ROOM: PerfScene['room'] = {
+  droneCount: 0, asteroidConfig: [], persistSector: false,
+  wreckField: { seed: 'a', x: 0, y: 0, sides: ['ashen-league', 'vel-concord'] },
+  sceneScript: [{ atMs: 20_000, action: 'end' }],
+};
+
 export const PERF_SCENES: readonly PerfScene[] = [
   {
     // Showcase (local, unfiled): a small 3v3 fighter fight to film dogfighting.
@@ -439,6 +448,59 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 93_553, y: 77_939, zoom: 0.08 },
     durationMs: 20_000,
     minSwarm: 0,
+    soak: true,
+  },
+  {
+    // Navigation slice 16: the galaxy-field scene plus a squad of eight owned
+    // fighters ordered ~10 000 u inward across sol-prime's belt (a fleet MOVE,
+    // so every hull asks the nav worker for a route round the rock). The work
+    // view prints navRoutes / navExpanded / navMessages / navInFlightMax.
+    // Timing A/B vs the field off: `--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`.
+    id: 'galaxy-field-nav',
+    title: 'A galaxy asteroid sector: a squad of fighters routed across the belt',
+    room: {
+      droneCount: 0, asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'fleet', tag: 'squad', kind: 'fighter', count: 8, x: 94_400, y: 77_939, spread: 500, stance: 'holdFire', health: 1_000_000, moveTo: { x: 85_870, y: 71_538 } },
+        { atMs: 30_000, action: 'end' },
+      ],
+    },
+    galaxyField: 'sol-prime',
+    spawn: { x: 93_553, y: 77_939 },
+    camera: { x: 89_700, y: 74_700, zoom: 0.08 },
+    durationMs: 30_000,
+    minSwarm: 0,
+    soak: true,
+  },
+  {
+    // Wreck fields slice 6 (macro-terrain F3): the client draw cost of a
+    // loaded old battlefield. Layout seed `a` (centre 0,0) has the worst
+    // 5 x 5 chunk ring measured (56 live pieces, `FIELD_RING_WORST_PIECES`,
+    // ring centred on chunk (4, 0)). The idle pilot sits in that chunk, so
+    // the streamer loads the whole worst ring around it; the camera holds the
+    // normal play zoom on the densest view in it (7 pieces in a 960 px view,
+    // all in full art). No rock field: the wrecks alone.
+    id: 'wreck-field',
+    title: 'The worst-loaded wreck field ring, seen at the normal zoom',
+    room: WRECK_FIELD_ROOM,
+    spawn: { x: 19_640, y: 3752 },
+    camera: { x: 19_640, y: 3752, zoom: 0.6 },
+    durationMs: 20_000,
+    minSwarm: 1,
+    soak: true,
+  },
+  {
+    // The same loaded ring from the fighter's zoom-out floor, held on the
+    // ring's centre chunk (21 pieces in view): fighter and frigate pieces
+    // drop to far-LOD specks (`wreckPieceFarLod`, under 8 px), the light
+    // cruiser's pieces stay art.
+    id: 'wreck-field-far',
+    title: 'The worst-loaded wreck field ring from the zoom-out floor (specks)',
+    room: WRECK_FIELD_ROOM,
+    spawn: { x: 19_640, y: 3752 },
+    camera: { x: 18_432, y: 2048, zoom: 0.15 },
+    durationMs: 20_000,
+    minSwarm: 1,
     soak: true,
   },
 ];

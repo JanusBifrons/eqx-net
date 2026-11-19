@@ -6,6 +6,8 @@ import type { Container, Graphics, Sprite } from 'pixi.js';
 import type { StructArt, ShipArt } from './assets.js';
 import type { Pose, ShipE, Shot } from './scenes.js';
 import type { LitShipMesh } from '../render/art/litShipShader.js';
+import type { MachinedShipSprite } from '../render/art/MachinedShipSprite.js';
+import type { LabGuns } from './labTurrets.js';
 
 export interface ShipView {
   e: ShipE;
@@ -14,8 +16,10 @@ export interface ShipView {
   a: Sprite;
   b: Sprite;
   gfx: Graphics | null;
-  /** Machined capital: one sprite per baked row strip (art.tiles). */
-  tileSpr?: Sprite[];
+  /** Machined: the hull (the game's sprite; tiles a capital). */
+  hull?: MachinedShipSprite;
+  /** `?turrets=1`: the hull's guns, posed with it (sun frames per gun). */
+  guns?: LabGuns;
   /** `lit` style: the GPU-lit hull. */
   lit?: LitShipMesh;
   /** `lit` style: a big hull that shades others (box half size, height). */

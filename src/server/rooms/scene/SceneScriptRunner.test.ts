@@ -93,6 +93,17 @@ describe('SceneScriptRunner', () => {
     expect(SceneScriptSchema.safeParse([{ atMs: 0, action: 'fleet', tag: 'w', kind: 'fighter', count: 1, x: 0, y: 0, mode: 'escort' }]).success).toBe(false);
   });
 
+  it('fleet moveTo: each hull gets the MOVE point (navigation slice 16); absent ⇒ null', () => {
+    const moves: Array<{ x: number; y: number } | null> = [];
+    const run = (script: unknown): void => {
+      const r = new SceneScriptRunner(SceneScriptSchema.parse(script), { ...harness().hooks, ownedHull: (_k, _x, _y, o) => { moves.push(o.moveTo); return true; } });
+      r.start(0); r.tick(0);
+    };
+    run([{ atMs: 0, action: 'fleet', tag: 's', kind: 'fighter', count: 2, x: 0, y: 0, moveTo: { x: 500, y: -700 } }]);
+    run([{ atMs: 0, action: 'fleet', tag: 's', kind: 'fighter', count: 1, x: 0, y: 0 }]);
+    expect(moves).toEqual([{ x: 500, y: -700 }, { x: 500, y: -700 }, null]);
+  });
+
   it('scenePoint spreads a single ship to the centre', () => {
     const p = { x: 9, y: 9 };
     scenePoint(0, 1, 500, p);

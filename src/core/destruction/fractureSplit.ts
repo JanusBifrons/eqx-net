@@ -1,10 +1,10 @@
 /**
  * Polygon line splitting for fractureHull.ts: the ring type, the
  * `splitByLine` clipper (with its Sutherland-Hodgman fallback), the two-sided
- * split, the cut strip and the v12 extra cuts. Pure; the edge kinds stay in
- * fractureHull.ts and come in as arguments.
+ * split, the cut strip and the v12 extra cuts. Pure; the edge kinds live in
+ * fractureRings.ts and come in as arguments.
  */
-import type { FractureExtraCut } from './fractureHull.js';
+import type { FractureExtraCut } from './fractureTypes.js';
 
 /** Internal vertex: position + kind of the edge that starts here. */
 export interface P {

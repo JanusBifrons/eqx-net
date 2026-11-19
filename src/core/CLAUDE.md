@@ -42,6 +42,7 @@ Core never instantiates a renderer, audio, network or persistence concretion: it
 - **Spawned bodies:** drones take their kind's `linearDamping` (client predWorld drone body stays undamped); asteroids are ballistic; structures (kind 2) are LOCKED on spawn, as in the predWorld.
 - **Soft CCD on every dynamic body** (`SOFT_CCD_PREDICTION`), never full `setCcdEnabled(true)`. **Handling feel is per class** (`shared-types/shipScale/arcadeHandling.ts`), never per record.
 - **Capitals collide through `CapitalOverlapResolver`**, never a global `lengthUnit` change. **Stiff solver** (16 iterations + `switchToSmallStepsPgsSolver()`): never revert without measuring `tests/e2e/ramming-probe-armpit.spec.ts`.
+- **`World.ts` stays thin (≤ 600 lines):** new body builders go in `physics/spawnBodies.ts`, warp body code in `physics/warpActuator.ts`, shared types in `physics/worldTypes.ts`, other homes in the map. [god-file-extension-points](../../docs/architecture/god-file-extension-points.md).
 - Why and the locking tests: [ship-physics-handling](../../docs/architecture/ship-physics-handling.md#physics-rules-reference).
 
 ---
@@ -123,6 +124,7 @@ Pure simulation: physics, AI, combat math, reconciliation, the bus, DI contracts
 
 - **Deterministic both sides, no geometry on the wire (#15):** arithmetic + `Math.sqrt`/`round` only (no sin/cos/atan2/pow), mulberry32 `Rng`, fixed loop order, `FRACTURE_QUANTUM`, only `quickDecomp`/`makeCCW`. Any output change bumps `FRACTURE_ALGO_VERSION`; concave hulls go through `splitByLine`.
 - **One source each:** `wreckPieceGeometry` is a piece's shape (`wreckChildGeometry` a re-split piece's, same `fractureHull`); `wreckRayHit`/`wreckSweepHit` the only weapon-vs-wreck test (gated by `segmentNearCircle`, never `rayHitsSphere`).
+- Edge kinds, ring helpers and piece output go in `fractureRings.ts`, jag/weld in `fractureJag.ts`; `fractureHull.ts` re-exports. [god-file-extension-points](../../docs/architecture/god-file-extension-points.md).
 - Never give pieces a velocity that closes a cut; per-profile numbers in `DESTRUCTION_PROFILES`, never a branch; new options default to old behaviour. [capital-destruction](../../docs/architecture/capital-destruction.md#core-rules-reference).
 
 ## Alien gates and the disabled input gate

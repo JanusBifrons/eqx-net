@@ -11,7 +11,7 @@
  *     `JoinOptions`, writes it to `ShipState.kind`, threads it into the
  *     `SPAWN` worker command).
  *   - `src/server/spawn/SwarmSpawner.ts` (picks a random kind per drone).
- *   - `src/client/components/ShipPickerModal.tsx` and the in-game renderer
+ *   - `src/client/components/hangar/HangarWindow.tsx` and the in-game renderer
  *     (`shape` drives the polygon and colour so the picker silhouette
  *     and the in-world sprite are guaranteed identical).
  *
@@ -208,7 +208,10 @@ export const SHIP_KINDS: typeof CATALOGUE_KINDS = BARGE_LOOK_KIND
 // Not bumped for the player capitals (2026-11-17: the five classes and three
 // fits lose `npcOnly` and gain `randomSpawn: false`): no stat changes, and
 // no stored player ship was a capital before.
-export const SHIP_KIND_CATALOGUE_VERSION = 28;
+// 28 → 29 (2026-11-17): cargo-pod gains size classes (16 parts: size × tier).
+// 29 → 30 (2026-11-18): the barge's side mounts (lasers and tractor dishes)
+// swing ±45° (`SIDE_MOUNT_ARC`), not ±1.6 rad.
+export const SHIP_KIND_CATALOGUE_VERSION = 30;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed

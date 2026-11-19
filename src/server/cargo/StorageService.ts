@@ -136,24 +136,27 @@ export class StorageService {
 
   /** Nearest OPERATIONAL storage owned by `owner` that (x, y) is at
    *  (`nearStorage`: its `depositRangeOf` circle or its crane bay), or within
-   *  `range` of for all when given. */
-  nearestOwnStorage(owner: string, x: number, y: number, range?: number): StructureRecord | null {
-    return this.nearestOwn(owner, x, y, range, false);
+   *  `range` of for all when given. `autoUnload` skips storage that refuses
+   *  auto-unload (cargo pods 14c). */
+  nearestOwnStorage(owner: string, x: number, y: number, range?: number, autoUnload = false): StructureRecord | null {
+    return this.nearestOwn(owner, x, y, range, false, autoUnload);
   }
 
   /** Nearest OPERATIONAL hover drop-off (`takesHoverDeposit`) owned by
-   *  `owner` within its `depositRangeOf` of (x, y): the auto-deposit target.
-   *  A nearer Capital or freight dock never hides a Cargo Bay in range. */
+   *  `owner` within its `depositRangeOf` of (x, y) that accepts auto-unload:
+   *  the auto-deposit target. A nearer Capital or freight dock never hides a
+   *  Cargo Bay in range. */
   nearestHoverDropOff(owner: string, x: number, y: number): StructureRecord | null {
-    return this.nearestOwn(owner, x, y, undefined, true);
+    return this.nearestOwn(owner, x, y, undefined, true, true);
   }
 
-  private nearestOwn(owner: string, x: number, y: number, range: number | undefined, hoverOnly: boolean): StructureRecord | null {
+  private nearestOwn(owner: string, x: number, y: number, range: number | undefined, hoverOnly: boolean, autoUnload: boolean): StructureRecord | null {
     let best: StructureRecord | null = null;
     let bestD2 = Infinity;
     for (const rec of this.d.registry.all()) {
       if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
       if (hoverOnly && !takesHoverDeposit(rec.kind)) continue;
+      if (autoUnload && rec.acceptAutoUnload === false) continue; // cargo pods 14c: refuses auto-unload
       const d2 = (rec.x - x) ** 2 + (rec.y - y) ** 2;
       // Hover deposit: the plain circle only; storage reach: `nearStorage`.
       const r = range ?? depositRangeOf(rec.kind);

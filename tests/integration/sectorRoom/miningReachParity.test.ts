@@ -2,15 +2,15 @@
  * Mining-tool range gradient parity (#15, owner 2026-11-16, plan
  * partitioned-chasing-lark): a mining laser's fire gate reach scales with its
  * mount size (`mountWeaponReach`: XL keeps 12,000 u, S ≈ 5,455 u). The server's
- * player fire gate (`SectorRoom.mountBearsOnLock`, via `PlayerFireResolver`)
- * and the client's ghost gate (`ColyseusGameClient.fcMountBears`) must give the
+ * player fire gate (`FireControlLocks.mountBearsOnLock`, via `PlayerFireResolver`)
+ * and the client's ghost gate (`FireControlClient.fcMountBears`) must give the
  * same answer for the same mount and target, or the client predicts beams the
  * server refuses (or misses ones it fires). Fails when either side drops the
  * mount size.
  */
 import { describe, it, expect } from 'vitest';
-import { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
-import { ColyseusGameClient } from '../../../src/client/net/ColyseusClient.js';
+import { FireControlLocks, type FireControlLocksHost } from '../../../src/server/rooms/features/fireControlLocks.js';
+import { FireControlClient } from '../../../src/client/net/FireControlClient.js';
 import { fillFireTargetShape, newFireTargetShape, type FireTargetShape } from '../../../src/core/combat/fireControlBearing.js';
 import { mountWeaponReach } from '../../../src/core/combat/mountReach.js';
 import type { WeaponMount } from '../../../src/shared-types/shipKinds.js';
@@ -26,21 +26,19 @@ function fillRock(out: FireTargetShape, d: number): boolean {
   return true;
 }
 
-/** The server gate, on a room stub whose lock resolves to the rock. */
+/** The server gate, on a lock-helper stub (stub host) whose lock resolves to the rock. */
 function serverGate(d: number): Gate {
-  const self = {
-    _lockTarget: newFireTargetShape(),
+  const self = Object.assign(new FireControlLocks({ lineHeld: () => false } as unknown as FireControlLocksHost), {
     locksFor: () => ({ aimKeyFor: () => 'r:1' }),
     lockOwner: (pid: string) => pid,
     resolveLockTarget: (_owner: string, _key: string, out: FireTargetShape) => fillRock(out, d),
-  };
-  const fn = (SectorRoom.prototype as unknown as Record<string, (...a: unknown[]) => boolean>)['mountBearsOnLock']!;
-  return (mountId, weaponId, size, ox, oy, angle) => fn.call(self, 'p1', mountId, ox, oy, angle, weaponId, size);
+  });
+  return (mountId, weaponId, size, ox, oy, angle) => self.mountBearsOnLock('p1', mountId, 0, ox, oy, angle, weaponId, size);
 }
 
 /** The client gate, on a client stub whose group aim resolves to the rock. */
 function clientGate(d: number): Gate {
-  const self = Object.create(ColyseusGameClient.prototype) as Record<string, unknown>;
+  const self = Object.create(FireControlClient.prototype) as Record<string, unknown>;
   Object.assign(self, {
     _fcSalvo: new Set<string>(),
     _fcBearPose: newFireTargetShape(),

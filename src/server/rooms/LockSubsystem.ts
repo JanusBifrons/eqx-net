@@ -9,15 +9,16 @@
  * Steady state allocates nothing (#14): group/lock/wire objects are created on
  * join, on a new lock or on a ship change, then mutated in place.
  */
-import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_MODS, type MountSize } from '../../shared-types/combat/lockProfile.js';
+import { LOCK_TUNING, lockCapacityFor, sensorFor, NO_PILOT_MODS } from '../../shared-types/combat/lockProfile.js';
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
-import { lineageRekey, splitGroupLocks } from './lockSplit.js';
+import { lineageRekey, rekeyBlockedTractor, rekeyUnworkable, splitGroupLocks } from './lockSplit.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { LockPicker } from './lockPick.js';
 import { lockSalvageFlags, refreshLockSalvage, type LockSalvageDeps } from './lockSalvage.js';
 import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
-import { shipGroups } from './lockGroups.js';
+import { groupArcs, groupGeometry, shipGroups } from './lockGroups.js';
+export { groupArcs, groupGeometry };
 import { mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
 import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
@@ -108,7 +109,6 @@ interface GroupState {
   mountIds: Set<string>;
   /** The group's mining mounts (`isSalvageWeapon`) and tractors: only they need the pick on a single salvage lock. */
   salvageMountIds: Set<string>;
-  /** The group has a tractor: a worn-out piece's ore pods take its locks (`targetSplit`). */ tractor: boolean;
   /** The group's mounts in slot order (a mount's index is its ordinal for `pickTurretLock`). */
   mounts: WeaponMount[];
   locks: LockEntry[];
@@ -129,37 +129,6 @@ interface PlayerLocks {
   sensor: number;
   groups: GroupState[];
   wire: WireGroup[];
-}
-
-const SIZE_RANK: Record<MountSize | 'none', number> = { none: 0, AA: 1, S: 2, M: 3, L: 4, XL: 5 };
-
-/** Build a group's lock geometry from its mounts (largest size wins). */
-export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): {
-  refSize: number; tracking: number; reach: number; absRange: boolean; size: WeaponMount['size'];
-} {
-  let size: MountSize | 'none' = 'none';
-  let reach = 0;
-  for (const m of mounts) {
-    const s = (m.size ?? 'none') as MountSize | 'none';
-    if (SIZE_RANK[s] > SIZE_RANK[size]) size = s;
-    const r = mountWeaponReach(m);
-    if (r > reach) reach = r;
-  }
-  const p = WEAPON_LOCK_PROFILE[size];
-  return { refSize: p.refSize, tracking: p.tracking, reach, absRange: p.absRange, size: size === 'none' ? undefined : size };
-}
-
-/** Half-width (rad) a fixed gun counts as bearing on a target. */
-const FIXED_BEAR = 0.3;
-
-/** Relative arcs a group's barrels cover: [lo, hi] per mount. */
-export function groupArcs(mounts: ReadonlyArray<WeaponMount>): number[] {
-  const out: number[] = [];
-  for (const m of mounts) {
-    const fixed = m.arcMin === m.arcMax;
-    out.push(m.baseAngle + (fixed ? -FIXED_BEAR : m.arcMin), m.baseAngle + (fixed ? FIXED_BEAR : m.arcMax));
-  }
-  return out;
 }
 
 const LOCK_DT = 0.1; // seconds per lock step (every 6 server ticks)
@@ -298,9 +267,16 @@ export class LockSubsystem {
     }
   }
 
-  /** Target `fromKey` broke into `pieceKeys` (biggest first; the last `pods` its ore pods, which only a group with a `tractor` takes): its locks follow (`splitGroupLocks`), a lock given none to its lineage's next live piece. */
-  targetSplit(fromKey: string, pieceKeys: ReadonlyArray<string>, pods = 0): void {
-    for (const [playerId, p] of this.players) { const c = { d: this.deps, ship: this.deps.shipOf(playerId), playerId }; for (const g of p.groups) if (splitGroupLocks(g, fromKey, pieceKeys, pieceKeys.length - (g.tractor ? 0 : pods), c)) this.syncWireShape(g); }
+  /** Target `fromKey` broke into `pieceKeys` (biggest first): its locks follow (`splitGroupLocks`), a lock given none to its lineage's next live piece;
+   *  then a salvage group's lineage lock it can't work moves to a free piece it can (`rekeyUnworkable`). */
+  targetSplit(fromKey: string, pieceKeys: ReadonlyArray<string>): void {
+    for (const [playerId, p] of this.players) {
+      const c = { d: this.deps, ship: this.deps.shipOf(playerId), playerId };
+      for (const g of p.groups) {
+        const split = splitGroupLocks(g, fromKey, pieceKeys, pieceKeys.length, c);
+        if (rekeyUnworkable(g, c) || split) this.syncWireShape(g);
+      }
+    }
   }
 
   /** (Re)build the player's groups when their ship kind or activated mounts change. */
@@ -340,7 +316,6 @@ export class LockSubsystem {
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
         salvageMountIds: new Set(mounts.filter((m) => { const w = getWeapon(m.weaponId); return isSalvageWeapon(w) || w.tractor !== undefined; }).map((m) => m.id)),
-        tractor: mounts.some((m) => getWeapon(m.weaponId).tractor !== undefined),
         mounts,
         locks: [],
         wire,
@@ -624,6 +599,8 @@ export class LockSubsystem {
       if (this.deps.resolveTarget(playerId, e.target, this.target)) {
         secs = this.lockSecsNow(p, g);
         refreshLockSalvage(this.deps, ship, playerId, e); // bits + lineage: hold fills, pieces split: per step
+        // A tractor's line blocked by a body in the way: move to a lineage piece with a clear line.
+        if (rekeyBlockedTractor(this.deps, ship, playerId, g, e) && !this.deps.resolveTarget(playerId, e.target, this.target)) continue;
       } else {
         // Gone (destroyed / left): the lineage's next live piece takes the lock (lockSplit.ts), else drop now, no grace.
         if (!lineageRekey(this.deps, ship, playerId, g, e)) g.locks.splice(i, 1);

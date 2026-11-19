@@ -180,6 +180,16 @@ describe('StorageService (P1a-2)', () => {
     expect(t.svc.nearestOwnStorage('p1', 1600, -200)).toBeNull();
   });
 
+  it('cargo pods 14c: a storage refusing auto-unload is skipped only for auto-unload', () => {
+    const t = setup();
+    t.registry.add(rec('b', 'cargo_bay', 50, 0, { acceptAutoUnload: false }));
+    expect(t.svc.nearestOwnStorage('p1', 0, 0, DEPOSIT_RANGE, true)).toBeNull();
+    expect(t.svc.nearestOwnStorage('p1', 0, 0)?.id, 'still a storage for everything else').toBe('b');
+    t.registry.add(rec('c', 'cargo_bay', 120, 0));
+    expect(t.svc.nearestOwnStorage('p1', 0, 0, DEPOSIT_RANGE, true)?.id, 'the next one that accepts').toBe('c');
+    expect(t.svc.nearestHoverDropOff('p1', 0, 0)?.id, 'the hover drop-off skips it too').toBe('c');
+  });
+
   it('refine turns network salvage into Capital minerals', () => {
     const cap = rec('c', 'capital', 0, 0);
     const bay = rec('b', 'cargo_bay', 100, 0, { hold: { goods: { salvage: 5 }, blueprints: [] } });
