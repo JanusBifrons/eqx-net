@@ -70,7 +70,7 @@ const ALLOWLIST = {
   },
   'src/client/render/HaloRadar.ts': { cap: 662, target: 600, reason: RATCHET_ONLY },
   'src/client/render/MountVisualManager.ts': { cap: 932, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/art/ArtService.ts': { cap: 757, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/art/ArtService.ts': { cap: 752, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fields.ts': { cap: 1161, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fx/fxTextures.ts': { cap: 783, target: 600, reason: RATCHET_ONLY },
   'src/client/render/galaxy/GalaxyMapLayer.ts': { cap: 1044, target: 600, reason: RATCHET_ONLY },
