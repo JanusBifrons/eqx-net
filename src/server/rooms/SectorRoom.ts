@@ -1720,7 +1720,7 @@ export class SectorRoom extends Room<SectorState> {
        *  havok keeps its scrap) breaks into 2-3 quiet wreck pieces that settle
        *  and sleep. ON by default (owner 2026-11-14); `false` opts this room
        *  out. `EQX_SUBCAP_WRECKS=0|1` forces it for every room. */
-      subcapWrecks?: boolean;
+      subcapWrecks?: boolean; battleWreckStreaming?: boolean; // wreck fields 0b: a test room streams its saved battle wrecks (live rooms always do)
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
        *  player-owned faction the WaveDirector can target. testMode-only. */
@@ -2912,6 +2912,7 @@ export class SectorRoom extends Room<SectorState> {
     this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks);
     const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
     if (roomOpts.wreckField !== undefined && (this.capitalWrecksOn || this.subcapWrecksOn)) chunkSources.push(this.buildWreckFieldSource(roomOpts.wreckField, roomOpts.cutField));
+    if ((this.capitalWrecksOn || this.subcapWrecksOn) && this.persistSector && this.sectorKey !== null) chunkSources.push(this.wreckSaves = new BattleWreckSaves(() => this.capitalWrecks?.lineageState() ?? null, battleWreckStore(this.sectorKey), { piecePoseInto: (id, out) => this.wreckPose(id, out) !== null, tractored: (id) => this.forceFields.isTractored(id), streaming: !this.testMode || roomOpts.battleWreckStreaming === true })); // wreck fields 0b: battle lineages stream on the one streamer
     if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
     if (this.cutField?.navOpts) this.aiController.nav = this.nav.host(this.cutField, this.cutField.navOpts);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
@@ -3140,11 +3141,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     // (Wreck switches: read before the streaming host, above.)
     if (this.capitalWrecksOn || this.subcapWrecksOn) this.initCapitalWrecks();
-    if (this.capitalWrecks !== null && this.persistSector && this.sectorKey !== null) {
-      this.wreckSaves = new BattleWreckSaves(this.capitalWrecks.lineageState(), battleWreckStore(this.sectorKey));
-      this.wreckSaves.restoreAll();
-      this.gameClock.every(WRECK_LINEAGE_FLUSH_MS, guarded('wreck-lineage-flush', () => this.wreckSaves?.flush(false)));
-    }
+    if (this.wreckSaves !== null && this.wreckSaves.loadRows() >= 0) this.gameClock.every(WRECK_LINEAGE_FLUSH_MS, guarded('wreck-lineage-flush', () => this.wreckSaves?.flush(false)));
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
       seedGalaxyBase(this.npcSeedHost, this.sectorKey);
@@ -4158,7 +4155,7 @@ export class SectorRoom extends Room<SectorState> {
       dropSalvage: (qty, x, y, vx, vy) => this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }),
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       pieceSplit: (from, ids, masses) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks),
-      lineageTouched: (root) => { this.wreckSaves?.touch(root); this.wreckFieldSource?.touched(root); },
+      lineageTouched: (root) => { this.wreckSaves?.touch(root); this.wreckFieldSource?.touched(root); }, evictRetire: (id) => this.wreckSaves?.evictPiece(id) ?? false,
     });
   }
 
@@ -4169,7 +4166,7 @@ export class SectorRoom extends Room<SectorState> {
   private buildWreckFieldSource(o: WreckFieldRoomOpts, cut: { seed: string; clearings?: FieldClearing[] } | undefined): WreckFieldSource {
     const field = wreckField({
       ...o, capitalWrecksOn: this.capitalWrecksOn, subcapWrecksOn: this.subcapWrecksOn,
-      ...(cut?.clearings ? { clearings: cut.clearings } : {}),
+      ...(!o.clearings && cut?.clearings ? { clearings: cut.clearings } : {}),
       ...(cut ? { blocked: rockFieldBlocker(cutFieldOpts(cut.seed, cut.clearings)) } : {}),
     });
     logger.info({ seed: o.seed, hulls: field.hulls.length, dropped: field.dropped }, 'wreck field laid out');
@@ -4181,6 +4178,7 @@ export class SectorRoom extends Room<SectorState> {
         return rec != null && ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) === 0;
       },
       tractored: (id) => this.forceFields.isTractored(id),
+      ...(o.fresh === true ? { fresh: true } : {}), // dev look flag (wreck fields 9)
       warn: (obj, msg) => logger.warn(obj, msg), ...(this.persistSector && this.sectorKey !== null ? { records: terrainRecordStoreFor(`${this.sectorKey}|wrecks:${o.seed}`) } : {}), // slice 4: touched hulls' rows
     });
   }

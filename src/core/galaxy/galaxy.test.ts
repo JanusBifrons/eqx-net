@@ -267,3 +267,21 @@ describe('axialToPixel', () => {
     expect(p.y).toBeGreaterThan(0);
   });
 });
+
+describe('wreck fields (macro terrain F3, owner Q1/Q5)', () => {
+  const marked = GALAXY_SECTORS.filter((s) => s.features.includes('wrecks')).map((s) => s.key);
+
+  it('a seeded few (3-5) sectors carry `wrecks`, thornfield among them', () => {
+    console.log(`[wreck fields] sectors: ${marked.join(', ')}`);
+    expect(marked.length).toBeGreaterThanOrEqual(3);
+    expect(marked.length).toBeLessThanOrEqual(5);
+    expect(marked).toContain('thornfield');
+  });
+
+  it('`wrecks` is appended after the hand-authored features, once', () => {
+    for (const s of GALAXY_SECTORS) {
+      expect(s.features.filter((f) => f === 'wrecks').length, s.key).toBeLessThanOrEqual(1);
+      if (s.features.includes('wrecks')) expect(s.features[s.features.length - 1], s.key).toBe('wrecks');
+    }
+  });
+});

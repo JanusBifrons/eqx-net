@@ -46,7 +46,8 @@ function hexDistance(a: Hex, b: Hex): number {
 // Design input — the galaxy spec.
 // ---------------------------------------------------------------------------
 type AsteroidConfigKey = 'sparse' | 'dense' | 'none';
-type SectorFeature = 'asteroid' | 'nebula' | 'minerals' | 'blackhole' | 'station';
+// Append-only (other code keys off the values).
+type SectorFeature = 'asteroid' | 'nebula' | 'minerals' | 'blackhole' | 'station' | 'wrecks';
 
 interface SectorSpec {
   key: string;
@@ -308,6 +309,36 @@ const LEGACY_KEYS = [
 const CORE_REGION = 'core';
 
 // ---------------------------------------------------------------------------
+// Wreck fields (macro terrain F3). Owner 2026-11-17: a few, mid-size (Q1),
+// anywhere, may share a sector with an asteroid field (Q5). A SEEDED pick, so
+// the set is reproducible and changes only when this seed or the count does.
+// `thornfield` ("tangled debris fields") is always one of them.
+// ---------------------------------------------------------------------------
+const WRECK_PICK_SEED = 'wrecks:v1';
+const WRECK_SECTOR_COUNT = 4;
+const WRECK_ALWAYS = ['thornfield'];
+
+/** FNV-1a 32-bit hash of a string (as `sectorSites.ts`). */
+function hash32(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h >>> 0;
+}
+
+/** The sectors that get a wreck field: the always-set plus a seeded draw
+ *  (the rest ranked by the hash of seed + key). */
+function pickWreckSectors(): Set<string> {
+  const keys = SECTOR_SPECS.map((s) => s.key);
+  const picked = new Set(WRECK_ALWAYS.filter((k) => keys.includes(k)));
+  const ranked = keys.filter((k) => !picked.has(k)).sort((a, b) => hash32(`${WRECK_PICK_SEED}:${a}`) - hash32(`${WRECK_PICK_SEED}:${b}`));
+  for (const k of ranked) {
+    if (picked.size >= WRECK_SECTOR_COUNT) break;
+    picked.add(k);
+  }
+  return picked;
+}
+
+// ---------------------------------------------------------------------------
 // Build + validate.
 // ---------------------------------------------------------------------------
 function fail(msg: string): never {
@@ -467,6 +498,7 @@ function fmtFeatures(fs: SectorFeature[]): string {
 }
 
 function emit(neighbours: Map<string, string[]>): string {
+  const wrecks = pickWreckSectors();
   const sectorLines = SECTOR_SPECS.map((s) => {
     const ns = neighbours.get(s.key)!;
     return `  {
@@ -478,7 +510,7 @@ function emit(neighbours: Map<string, string[]>): string {
     neighbours: [${ns.map((n) => `'${n}'`).join(', ')}],
     asteroidConfigKey: '${s.asteroidConfigKey}',
     droneCount: AMBIENT_DRONE_FLOOR,
-    features: ${fmtFeatures(s.features)},
+    features: ${fmtFeatures(wrecks.has(s.key) ? [...s.features, 'wrecks'] : s.features)},
     defaultSpawn: { x: 0, y: 0 },
   },`;
   }).join('\n');
@@ -526,8 +558,12 @@ export type AsteroidConfigKey = 'sparse' | 'dense' | 'none';
  * Static, cosmetic environmental-feature glyphs shown per sector on the map
  * (eqx-peri icon vocabulary). Baked from region theme + asteroid config; NOT
  * live state (live counts ride the Phase-3 /galaxy/snapshot endpoint).
+ *
+ * wrecks (wreck fields F3): the sector holds one old battlefield (the server
+ * resolves it into the wreckField room option). Picked by a seeded draw in
+ * the generator, not hand-authored. Append-only.
  */
-export type SectorFeature = 'asteroid' | 'nebula' | 'minerals' | 'blackhole' | 'station';
+export type SectorFeature = 'asteroid' | 'nebula' | 'minerals' | 'blackhole' | 'station' | 'wrecks';
 
 export interface GalaxySector {
   /** Stable identity used as the persistence key. Slug-style, lowercase. */
@@ -665,3 +701,6 @@ export function axialToPixel(hex: AxialHex, size: number): { x: number; y: numbe
 const neighbours = buildNeighbours();
 validate(neighbours);
 process.stdout.write(emit(neighbours));
+// Which sectors got a wreck field (stderr: stdout is the baked file).
+process.stderr.write(`wreck fields: ${[...pickWreckSectors()].map((k) => `${k}${byKey().get(k)!.features.includes('asteroid') ? ' (+asteroid)' : ''}`).join(', ')}
+`);
