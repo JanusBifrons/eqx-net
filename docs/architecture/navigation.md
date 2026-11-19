@@ -200,7 +200,8 @@ chunk is loaded and rock is within its reach, else the coarse layer.
   `turnsFit` checks each corner of the pulled route against `navTurnRoom` for its angle; a corner past
   90° fits only with open (non-tight) room within 2 cells ahead. In a tight cell a 45° step needs the
   45° turn room (`HeadingCoarseGraph.turnRoom45`) and the full clearance still decides "tight"
-  (`turnClear`).
+  (`turnClear`) in every pass, the comfort pass included, so "room to turn round" is the same in each.
+  Worst case a capital request runs three coarse searches (beam, 45°, full), each up to the expansion cap.
 - Turn spacing: the heading graph is 16 nodes a cell (way in 0..7, plus a just-turned bit). A hull
   whose turning radius is wider than a coarse cell (2 048 u) must go straight one step after each 45°
   turn in tight space, so 45° steps can't stack into a U-turn inside a lane; a long gentle curve still

@@ -332,4 +332,31 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     expect(min).toBeGreaterThanOrEqual(navBeamClearance(BS) - FINE_NAV_CELL);
     expect(p.expanded).toBeLessThan(NAV_COARSE_EXPAND_CAP * 2);
   });
+  it('a battleship\'s turns are checked against its length: no 90° turn or hairpin inside a lane, a hairpin past its mouth is fine', () => {
+    const BS = getShipKind('battleship');
+    const turnR = pilotTurnRadius(makePilotHandling(BS, shipBodyMass(BS)));
+    const c = shipTuning(BS).navClearance, beam = navBeamClearance(BS);
+    const { coarse, fine } = world();
+    const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
+    const ln = slicedFieldLanes({ seed: opts.seed, battleshipLength: opts.battleshipLength })[0]!;
+    const dx = ln.n.y, dy = -ln.n.x, heading = Math.atan2(-dx, dy);
+    const at = (t: number) => ({ x: ln.o.x + dx * t, y: ln.o.y + dy * t });
+    let t0 = -6_000;
+    while (coarse.roomAt(at(t0).x, at(t0).y) < 2_000) t0 += 512;
+    const s = at(t0), g = at(t0 + 12_000);
+    const back = at(t0 - 12_000); // goal behind: a coarse heading search runs, seeding the layers and the heading graph
+    p.plan(coarse, fine, s.x, s.y, back.x, back.y, c, out, heading, turnR, navComfort(BS), beam);
+    const fits = (sx: number, sy: number, pts: { x: number; y: number }[]): boolean => {
+      pts.forEach((q, k) => { out[k * 2] = q.x; out[k * 2 + 1] = q.y; });
+      return (p as unknown as { turnsFit(sx: number, sy: number, o: Float64Array, n: number, h: number, r: number, b: number): boolean })
+        .turnsFit(sx, sy, out, pts.length, heading, turnR, beam);
+    };
+    const mid = at(t0 + 6_000), side = { x: mid.x + ln.n.x * 3_000, y: mid.y + ln.n.y * 3_000 };
+    expect(fits(s.x, s.y, [g])).toBe(true); // straight down the lane: its beam is enough
+    expect(fits(s.x, s.y, [mid, side])).toBe(false); // 90° mid-lane: no room for its length
+    expect(fits(s.x, s.y, [mid, s])).toBe(false); // hairpin mid-lane: no room to turn round ahead
+    // Out past the field's rim along the lane: the hairpin turns round in open space.
+    const R = SLICED.radius, a = at(R * 0.9), mouth = at(R * 1.12);
+    expect(fits(a.x, a.y, [mouth, a])).toBe(true);
+  });
 });
