@@ -355,8 +355,8 @@ is hit, and the beam stops on it.
   gate parts: the box's outline rounded by the half-width, round corners), and
   `rayHitsSphere(r + halfWidth)` for plain circles. 0 takes the old code path.
 - **Server.** `PlayerFireResolver.hitscan` and `AiFireResolver.hitscan` pass the
-  width into every candidate test: `SectorRoom.playerHitscanDist`,
-  `nonPlayerRayHit` → `swarmRayHit`, lingering hulls, and the player sink's
+  width into every candidate test: `playerHitscanDist`,
+  `nonPlayerRayHit` → `swarmRayHit` (`rooms/features/rayHits.ts`), lingering hulls, and the player sink's
   swarm pass. The hit distance is the first contact of the beam's edge; the hit
   point and `laser_fired`'s end are the centre line at that distance, so the
   drawn beam stops where its edge meets the target. A follow-through beam

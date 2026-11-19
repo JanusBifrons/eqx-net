@@ -54,7 +54,7 @@ export function beamShieldEdgeDist(
   }
   const ship = mirror.ships.get(hitId);
   if (ship && ship.shieldDown !== true) {
-    // The same shape as a drone of that kind (`SectorRoom.playerHitscanDist`, #15).
+    // The same shape as a drone of that kind (the server's `playerHitscanDist`, #15).
     const d = shipRayHit(ship.kind ?? null, true, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle, halfWidth);
     if (d !== null) return d;
   }

@@ -19,7 +19,7 @@
  * swarm registry (the projectile broadphase type, #428), built lazily on the
  * first check of a tick and rebuilt only if membership changes. Each check is
  * one grid query over the segment's box; the predicate runs per candidate and
- * the narrow phase (the same ray shapes as `SectorRoom.nonPlayerRayHit`) only for the
+ * the narrow phase (the same ray shapes as `RoomRayHits.nonPlayerRayHit`) only for the
  * friendly ones, stopping at the first hit. `checks`, `candidates` and
  * `narrow` are running COUNTS (host-independent); the budget lives in
  * `perfBudgets.ts` (`LINE_OF_FIRE_*`). Allocation-free in steady state (#14).

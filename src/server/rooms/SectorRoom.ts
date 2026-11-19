@@ -149,7 +149,7 @@ import { ShipProgression } from './features/shipProgression.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
-import { AiFireResolver, type AiFireTargetShape } from './AiFireResolver.js';
+import { AiFireResolver } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
 import { DamageRouter } from './DamageRouter.js';
 import { RespawnHandler } from './RespawnHandler.js';
@@ -187,6 +187,7 @@ import { TeleportPadRiders, buildTeleporters } from './features/teleportMessages
 import { WingmanPilots } from './features/wingmanPilots.js';
 import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { PilotSwap } from './features/pilotSwap.js';
+import { RoomRayHits, playerHitscanDist, swarmRayHit } from './features/rayHits.js';
 import { FireControlLocks } from './features/fireControlLocks.js';
 import { swarmLockId } from './lockSalvage.js';
 import { transitHostRoom } from './features/transitMessages.js';
@@ -280,9 +281,6 @@ import { ownerGateStats, resolveSelectionStats, type SelectionStatsResolveHost }
 import { sectorLiveCounts, sectorPlayerCount, type SectorLiveCountsHost } from './sectorLiveCounts.js';
 import { auditCombatDestruction, onShipDestroyed, type CombatDestructionAuditHost, type ShipDestroyedHost } from './combatDestructionAudit.js';
 import {
-  rayHitsSphere,
-  rayHitsConvexPolygon,
-  rayHitsBox,
   // WEAPON_COOLDOWN_TICKS now used inside PlayerFireResolver + AiFireResolver
   // Player-hull HIT-tests derive a per-kind bounding-circle from
   // `getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD` (2026-05-27) so they
@@ -297,14 +295,13 @@ import { tickShipEnergy, type ShipEnergyTickHost } from './shipEnergyTick.js';
 import { shipBodyMass, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import { createRoomShellHub, type ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
-import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
+import { tuningFor } from '../../shared-types/shipScale/lookup.js';
 import { landingReach } from '../../shared-types/shipScale/landingReach.js';
-import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
+import { shipSweepHit } from '../../core/combat/shipHitShape.js';
 import type { MountRangeTarget } from '../../core/combat/mountReach.js';
 import type { CapitalWreckSubsystem, WreckPiecePose } from './CapitalWreckSubsystem.js';
 import { buildCapitalWrecks } from './capitalWreckRoomWiring.js';
 import { rockViewOf } from './rockCut.js';
-import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import type { LofBody } from './lofShipBody.js';
 import { NpcLineOfFire } from './features/npcLineOfFire.js';
@@ -606,7 +603,7 @@ export class SectorRoom extends Room<SectorState> {
   });
   /** Force fields in this room's physics world (teleporter pad push today). */
   private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd), tractors: {
-    tick: () => this.serverTick, poseOf: (id, out) => this.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
+    tick: () => this.serverTick, poseOf: (id, out) => this.rayHits.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
     lineBodies: (fx, fy, tx, ty, w, a, b, ids, cap) => this.lineOfFire.gate().lineBodies(fx, fy, tx, ty, w, a, b, ids, cap),
     // Line of sight: what a shot would hit first (loot pods pass, as for every beam).
     lineBlocker: (fx, fy, tx, ty, e, t) => this.lineOfFire.gate().firstOnLine(fx, fy, tx, ty, e, t, notLootPod),
@@ -1168,7 +1165,7 @@ export class SectorRoom extends Room<SectorState> {
         if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
       },
       rayHit: (fx, fy, dx, dy, maxDist, skipId) => {
-        const h = this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId);
+        const h = this.rayHits.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId);
         return h ? { id: h.id, dist: h.dist } : null;
       },
     };
@@ -1405,8 +1402,7 @@ export class SectorRoom extends Room<SectorState> {
       resolveInstanceMounts: (ship) => this.resolveInstanceMounts(ship),
       resolveInstanceFireMounts: (ship, slotId) => this.resolveInstanceFireMounts(ship, slotId),
       mountWorldOrigin: (x, y, ang, m) => this.mountWorldOrigin(x, y, ang, m),
-      playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang, hw) =>
-        this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang, hw),
+      playerHitscanDist,
       spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
       spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
@@ -1440,7 +1436,7 @@ export class SectorRoom extends Room<SectorState> {
       slotLineHeld: (id, targetId, k, w, fx, fy, tx, ty) => this.lineOfFire.lineHeld(id, k, w, fx, fy, tx, ty, id, targetId),
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
-      targetShape: (id, out) => this.aiFireTargetShape(id, out),
+      targetShape: (id, out) => this.rayHits.aiFireTargetShape(id, out),
       fireTractor: (id, m, target) => this.forceFields.renewTractor(id, m, target),
       swarmRegistry: this.swarmRegistry,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
@@ -1450,13 +1446,12 @@ export class SectorRoom extends Room<SectorState> {
       playerToSlot: this.playerToSlot,
       getActiveShip: (pid) => this.getActiveShip(pid),
       shipPoseCache: this.shipPoseCache,
-      playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang, hw) =>
-        this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang, hw),
+      playerHitscanDist,
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       // Friendly fire (owner decision 2026-11-10): the beam meets whatever is
       // in its path, its own side and neutral structures included.
-      nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId, hw) => this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId, hw),
+      nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId, hw) => this.rayHits.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId, hw),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -2155,7 +2150,7 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       // Friendly fire: a turret beam lands on the first thing in its path.
-      beamFirstHit: (fx, fy, dx, dy, maxDist, skipId) => this.turretBeamFirstHit(fx, fy, dx, dy, maxDist, skipId),
+      beamFirstHit: (fx, fy, dx, dy, maxDist, skipId) => this.rayHits.turretBeamFirstHit(fx, fy, dx, dy, maxDist, skipId),
       // Friendly fire slice 2: a turret holds over its own base / its owner.
       lineOfFireBlocked: (rec, targetId, fx, fy, dx, dy, max, w, k) => this.lineOfFire.structureLineBlocked(rec, targetId, fx, fy, dx, dy, max, w, k),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
@@ -3889,90 +3884,12 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
-  /**
-   * Player hitscan distance with the PERF GUARANTEE: the cheap
-   * bounding-circle test runs FIRST. If it misses, return null (the
-   * hull polygon is strictly inside the circle, so a circle miss is a
-   * polygon miss). If the shield is up, return the circle distance —
-   * byte-identical to the legacy single rayHitsSphere call. Only when
-   * the circle WOULD hit AND the shield is down (=== 0) do we pay for
-   * the exact hull-polygon refinement.
-   */
-  private playerHitscanDist(
-    ship: ShipState,
-    fx: number, fy: number, dx: number, dy: number, maxDist: number,
-    cx: number, cy: number, angle: number, halfWidth = 0,
-  ): number | null {
-    // The ship's own hit shape, whoever flies it (`shipHitShape.ts`, owner's
-    // rule 2026-11-13): the shield bubble (radius + shieldPad, the drawn aura)
-    // while its shield is up, the hull once it is down, a capital's hull either
-    // way. NPC beams and bolts on drones go through the same helper. A wide
-    // beam (`halfWidth`, the heavy beam) hits by its width.
-    return shipRayHit(ship.kind, ship.shield > 0, fx, fy, dx, dy, maxDist, cx, cy, angle, halfWidth);
-  }
-
-  /** Reused result of `nonPlayerRayHit` (#14). */
-  private readonly _rayHit = { id: '', wireId: '', dist: 0 };
-
-  /**
-   * Friendly fire (owner decision 2026-11-10) — the first non-player thing a
-   * ray meets: lingering hulls and EVERY swarm entity (drones of any side,
-   * structures of any owner, asteroids, scrap), skipping only `skipId` (the
-   * shooter). Live SAB poses, the same shapes as the player beam
-   * (`PlayerFireResolver.hitscan`). Used by the NPC beam and the structure
-   * turret beam. Returns the reused `_rayHit` or null. Alloc-free.
-   * `halfWidth`: a wide beam hits by its width (`beamHalfWidth`); 0 ⇒ thin.
-   */
-  private nonPlayerRayHit(
-    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string, halfWidth = 0,
-  ): { id: string; wireId: string; dist: number } | null {
-    let best = maxDist;
-    let bestId: string | null = null;
-    let bestEid = -1; // swarm wire id built once at the end (lingering: -1)
-    for (const [shipInstanceId] of this.lingeringSlots) {
-      const p = this.lingeringPoseCache.get(shipInstanceId);
-      if (!p) continue;
-      // A parked hull is the same ship it was when flown (#18), not a fighter.
-      const ls = this.state.ships.get(shipInstanceId);
-      const d = ls !== undefined
-        ? this.playerHitscanDist(ls, fx, fy, dx, dy, best, p.x, p.y, p.angle, halfWidth)
-        : rayHitsSphere(fx, fy, dx, dy, best, p.x, p.y, GLOBAL_SHIP_TUNING.hitRadius + halfWidth);
-      if (d !== null && d < best) { best = d; bestId = shipInstanceId; bestEid = -1; }
-    }
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.id === skipId) continue;
-      // Nobody fights a loot pod (owner 2026-11-13): AI and turret beams pass it.
-      if (isLootPod(rec)) continue;
-      const b = slotBase(rec.slot);
-      const d = this.swarmRayHit(
-        rec, fx, fy, dx, dy, best,
-        this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, this.sabF32[b + SLOT_ANGLE_OFF]!, halfWidth,
-      );
-      if (d !== null && d < best) { best = d; bestId = rec.id; bestEid = rec.entityId; }
-    }
-    if (bestId === null) return null;
-    const out = this._rayHit;
-    out.id = bestId;
-    out.wireId = bestEid >= 0 ? `swarm-${bestEid}` : bestId;
-    out.dist = best;
-    return out;
-  }
-
-  /** Narrow phase for one swarm entity at (cx, cy, ca): the same shapes every
-   *  NPC/turret beam uses (rock polygon, structure box, ship circle + capital
-   *  hull refine). Shared by `nonPlayerRayHit` and the line-of-fire gate.
-   *  `hw`: a wide beam's half-width, the same capsule on every shape. */
-  private swarmRayHit(
-    rec: SwarmEntityRecord, fx: number, fy: number, dx: number, dy: number, maxDist: number,
-    cx: number, cy: number, ca: number, hw = 0,
-  ): number | null {
-    if (isWreckPiece(rec) || rec.wreckParts !== undefined) return wreckRayHit(rec.wreckParts, rec.radius, fx, fy, dx, dy, maxDist, cx, cy, ca, hw); // wreck piece or cut-field rock (C1b)
-    if (rec.kind === 0 && rec.vertices) return rayHitsConvexPolygon(fx, fy, dx, dy, maxDist, cx, cy, ca, rec.vertices, hw);
-    if (rec.halfW !== undefined && rec.halfH !== undefined) return rayHitsBox(fx, fy, dx, dy, maxDist, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw);
-    // A ship: the same shape as if a player flew it (`shipHitShape.ts`).
-    if (rec.kind === 1 && rec.shipKind) return shipRayHit(rec.shipKind, !rec.shieldDown, fx, fy, dx, dy, maxDist, cx, cy, ca, hw);
-    return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, rec.radius + hw);
-  }
+  /** NPC / turret ray hits and the drone target shape (`features/rayHits.ts`). */
+  private readonly rayHits = new RoomRayHits({
+    swarmRegistry: this.swarmRegistry, lingeringSlots: this.lingeringSlots, lingeringPoseCache: this.lingeringPoseCache, shipPoseCache: this.shipPoseCache,
+    sabF32: () => this.sabF32, playerToSlot: () => this.playerToSlot, ships: () => this.state.ships, getActiveShip: (pid) => this.getActiveShip(pid),
+    pilotSwap: () => this.pilotSwap, writeSwarmRangeShape: (out, rec) => this.writeSwarmRangeShape(out, rec),
+  });
 
   /** NPC line of fire, friendly fire slice 2 (`features/npcLineOfFire.ts`). */
   private readonly lineOfFire = new NpcLineOfFire({
@@ -3980,54 +3897,10 @@ export class SectorRoom extends Room<SectorState> {
     sabF32: () => this.sabF32, serverTick: () => this.serverTick, now: () => this.gameClock.now(),
     playerToSlot: () => this.playerToSlot, lingeringSlots: this.lingeringSlots, shipPoseCache: this.shipPoseCache, ships: () => this.state.ships,
     getActiveShip: (pid) => this.getActiveShip(pid),
-    playerHitscanDist: (ship, fx, fy, dx, dy, max, cx, cy, ca) => this.playerHitscanDist(ship, fx, fy, dx, dy, max, cx, cy, ca),
-    swarmRayHit: (rec, fx, fy, dx, dy, max, cx, cy, ca) => this.swarmRayHit(rec, fx, fy, dx, dy, max, cx, cy, ca),
+    playerHitscanDist, swarmRayHit,
     noteBlocked: (id, tick, x, y) => this.aiController.noteBlocked(id, tick, x, y),
     lineHold: () => this.mountTicker.lineHold, wingmen: () => this.wingmen,
   });
-
-  /** A drone shot's target: live centre and hit shape for the per-mount range
-   *  gate (`AiFireResolver.targetShape`). Reads the SAB directly, never the
-   *  `swarmEntitySnapshot` scratch. */
-  private aiFireTargetShape(targetId: string, out: AiFireTargetShape): boolean {
-    const rec = this.swarmRegistry.get(targetId);
-    if (rec != null) {
-      const b = slotBase(rec.slot);
-      out.x = this.sabF32[b + SLOT_X_OFF]!; out.y = this.sabF32[b + SLOT_Y_OFF]!;
-      this.writeSwarmRangeShape(out, rec);
-      return true;
-    }
-    const h = this.pilotSwap.engageablePilotHull(targetId);
-    if (!h) return false;
-    out.x = h.pose.x; out.y = h.pose.y;
-    fillRangeShape(out, h.pose.angle, true, h.ship.kind, h.ship.shield > 0, 0);
-    return true;
-  }
-
-  /** The first thing a structure turret's beam meets, players included
-   *  (friendly fire: its owner's own ship too). Null ⇒ nothing in reach. */
-  private turretBeamFirstHit(
-    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string,
-  ): { id: string; wireId: string; dist: number } | null {
-    let best = maxDist;
-    let bestId: string | null = null;
-    for (const [pid] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (!ship || !ship.alive || ship.travelling) continue;
-      const pose = this.shipPoseCache.get(pid);
-      if (!pose) continue;
-      const d = this.playerHitscanDist(ship, fx, fy, dx, dy, best, pose.x, pose.y, pose.angle);
-      if (d !== null && d < best) { best = d; bestId = pid; }
-    }
-    const other = this.nonPlayerRayHit(fx, fy, dx, dy, best, skipId);
-    if (other !== null && other.dist < best) return other;
-    if (bestId === null) return null;
-    const out = this._rayHit;
-    out.id = bestId;
-    out.wireId = bestId;
-    out.dist = best;
-    return out;
-  }
 
   /** Projectile sweep counterpart of playerHitscanDist — same per-kind
    *  bounding-circle (kind.radius + SHIELD_RADIUS_PAD), same shield-up /

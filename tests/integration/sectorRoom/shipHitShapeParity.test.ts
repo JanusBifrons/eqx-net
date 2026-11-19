@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest';
 import { ProjectilePipeline } from '../../../src/server/rooms/ProjectilePipeline.js';
 import { MissileSimulation } from '../../../src/server/rooms/MissileSimulation.js';
 import { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
+import { playerHitscanDist, swarmRayHit } from '../../../src/server/rooms/features/rayHits.js';
 import { Bus } from '../../../src/core/events/Bus.js';
 import { getWeapon, type MissileWeaponDef } from '../../../src/core/combat/WeaponCatalogue.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../../src/shared-types/sabLayout.js';
@@ -27,8 +28,9 @@ import { shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
 import type { ShipState } from '../../../src/server/rooms/schema/SectorState.js';
 
 type Sweep = { entry: number; hitX: number; hitY: number } | null;
-// The room's own narrow phases (they read nothing from `this`).
-const room = SectorRoom.prototype as unknown as {
+// The narrow phases (they read nothing from `this`): the room's projectile
+// sweep and the ray hits (`rooms/features/rayHits.ts`).
+const room = { playerProjectileSweep: SectorRoom.prototype['playerProjectileSweep' as keyof SectorRoom], playerHitscanDist, swarmRayHit } as unknown as {
   playerProjectileSweep(s: ShipState, fx: number, fy: number, sx: number, sy: number, pr: number, cx: number, cy: number, a: number): Sweep;
   playerHitscanDist(s: ShipState, fx: number, fy: number, dx: number, dy: number, md: number, cx: number, cy: number, a: number): number | null;
   swarmRayHit(rec: object, fx: number, fy: number, dx: number, dy: number, md: number, cx: number, cy: number, a: number): number | null;
