@@ -69,3 +69,73 @@ export const autopilotRoundRock: Shot = {
     await pad.dispose();
   },
 };
+
+/**
+ * A battleship on autopilot down a cut-field lane (navigation: width on
+ * straights; docs/architecture/navigation.md). Seed `look`, lane 0, 0.6 R in
+ * from the rim (deep enough for dense walls): the lane is ~3 400 u of room each side of its centre line,
+ * less than the battleship's length clearance (3 595) but far more than its
+ * beam (1 067). Planned as a disc of its length the ship found no way at all;
+ * planned by its width on the straight it gets the lane, and flies it.
+ * Start and goal are on the lane centre line, 8 km apart, nose down the lane.
+ */
+const BS_S = { x: -31_484, y: -86_415 };
+const BS_G = { x: -27_256, y: -79_624 };
+const BS_FACING = Math.round(Math.atan2(-(BS_G.x - BS_S.x), BS_G.y - BS_S.y) * 1000) / 1000;
+
+export const autopilotCapitalLane: Shot = {
+  id: 'autopilot-capital-lane',
+  section: 'mechanics',
+  title: 'Battleship down a lane',
+  caption: 'A battleship taps a point down a rock-field lane: the route runs straight down it.',
+  features: ['NAV'],
+  docs: ['autopilot'],
+  reel: false,
+  server: 'lean',
+  viewport: 'phone-landscape',
+  target: {
+    room: 'showcase-cut-field',
+    params: { shipKind: 'battleship', art: 'machined', fx: 'new', spawnX: BS_S.x, spawnY: BS_S.y, initialAngle: BS_FACING, initialHull: 1_000_000 },
+  },
+  hud: 'full',
+  durationMs: 66_000,
+  maxBitrateKbps: 3_000,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+  },
+  async run(ctx) {
+    const pad = await touch(ctx.page, ctx.log);
+    const { width: w, height: h } = ctx.viewport;
+    await ctx.sleep(800);
+    // A gentle pinch out (about 2×): the hull still reads, both lane walls and the goal in frame.
+    for (let i = 0; i < 1; i++) {
+      const a = pad.finger(), b = pad.finger();
+      await a.down(w / 2 - w * 0.3, h / 2); await b.down(w / 2 + w * 0.3, h / 2);
+      await Promise.all([a.dragTo(w / 2 - w * 0.15, h / 2, { ms: 700 }), b.dragTo(w / 2 + w * 0.15, h / 2, { ms: 700 })]);
+      await a.up(); await b.up();
+      await ctx.sleep(250);
+    }
+    await ctx.sleep(500);
+    // A real tap on the goal; if 8 km is past the screen edge, tap the farthest on-screen point on the centre line.
+    for (let i = 0; i < 5; i++) {
+      const p = await ctx.page.evaluate(([sx, sy, gx, gy, W, H]) => {
+        const f = (window as unknown as { __eqxWorldToScreen?: (x: number, y: number) => { x: number; y: number } }).__eqxWorldToScreen;
+        if (!f) return { x: NaN, y: NaN };
+        for (let k = 1; k >= 0.3; k -= 0.05) {
+          const q = f(sx! + (gx! - sx!) * k, sy! + (gy! - sy!) * k);
+          if (q.x > W! * 0.06 && q.y > H! * 0.06 && q.x < W! * 0.94 && q.y < H! * 0.94) return q;
+        }
+        return { x: NaN, y: NaN };
+      }, [BS_S.x, BS_S.y, BS_G.x, BS_G.y, w, h] as const);
+      if (!Number.isFinite(p.x)) throw new Error('lane goal not on screen');
+      ctx.log(`tap goal at ${Math.round(p.x)},${Math.round(p.y)}`);
+      await pad.finger().tap(p.x, p.y);
+      const on = await ctx.page.evaluate(() => (globalThis as { __eqxStore?: { getState(): { helmActive?: boolean } } }).__eqxStore?.getState().helmActive === true);
+      if (on) break;
+      await ctx.sleep(300);
+    }
+    // 8 km at battleship cruise (~160 u/s) plus spool-up and the stop: it settles on the goal ~58 s in.
+    await ctx.sleep(57_000);
+    await pad.dispose();
+  },
+};

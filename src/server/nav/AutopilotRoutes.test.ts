@@ -6,13 +6,14 @@ import { NAV_ROUTE_MIN_GAP_MS } from '../../shared-types/messages/navMessages.js
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { makePilotHandling, pilotTurnRadius } from '../../core/ai/virtualPilot.js';
+import { navBeamClearance } from '../../shared-types/shipScale/navTuning.js';
 
 /** A route stub: records each ask; `answer` resolves the oldest open one. */
 function stub() {
   const asks: number[][] = [];
   const open: ((m: NavRouteMsg) => void)[] = [];
-  const fn: NonNullable<AutopilotRouteFn> = (sx, sy, tx, ty, c, hd, tr) => {
-    asks.push([sx, sy, tx, ty, c, hd, tr]);
+  const fn: NonNullable<AutopilotRouteFn> = (sx, sy, tx, ty, h, hd, tr) => {
+    asks.push([sx, sy, tx, ty, h.clearance, hd, tr, h.beam]);
     return new Promise<NavRouteMsg>((r) => { open.push(r); });
   };
   const answer = async (points: number[]) => {
@@ -42,6 +43,8 @@ describe('AutopilotRoutes (navigation slice 12)', () => {
     const bs = getShipKind('battleship');
     expect(s.asks[0]![5]).toBe(1.1);
     expect(s.asks[0]![6]).toBeCloseTo(pilotTurnRadius(makePilotHandling(bs, shipBodyMass(bs))), 6);
+    expect(s.asks[0]![7]).toBe(navBeamClearance(bs)); // width on straights: its beam, not its length
+    expect(navBeamClearance(bs)).toBeLessThan(shipTuning(bs).navClearance);
   });
 
   it('one request in flight and one per gap per player; over that is dropped without a reply', async () => {

@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
 import type { AiEntityPoseOut, AiWorldView, IAiNavRoutes } from '../contracts/IAiBehaviour.js';
+import type { NavHull } from '../../shared-types/shipScale/navTuning.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { stepKinematic, type KinematicBody } from './pilotTestKit.js';
@@ -21,7 +22,7 @@ class FakeNav implements IAiNavRoutes {
   wp: { x: number; y: number } | null = null;
   readonly asks: { id: string; tx: number; ty: number; keep: boolean | undefined }[] = [];
   readonly turns: { heading: number | undefined; turnRadius: number | undefined }[] = [];
-  waypoint(id: string, x: number, y: number, tx: number, ty: number, _c: number, _a: number, keep?: boolean,
+  waypoint(id: string, x: number, y: number, tx: number, ty: number, _h: NavHull, _a: number, keep?: boolean,
     heading?: number, turnRadius?: number): boolean {
     this.asks.push({ id, tx, ty, keep });
     this.turns.push({ heading, turnRadius });

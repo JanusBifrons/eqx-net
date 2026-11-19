@@ -38,7 +38,7 @@ describe('NavWorker', () => {
   it('answers route requests by reqId, counts them in flight, and answers none after detach', async () => {
     const nav = new NavWorker(pino({ level: 'silent' }));
     const a = nav.addField(opts('look'));
-    const R = 150_000 * 1.2, c = getShipKind('battleship').radius;
+    const R = 150_000 * 1.2, r = getShipKind('battleship').radius, c = { clearance: r, comfort: r, beam: r };
     const across = a.route(-R, 0, R, 0, c), clear = a.route(R, 0, R, 20_000, c);
     expect(nav.inFlight).toBe(2);
     const [x, y] = await Promise.all([across, clear]);
