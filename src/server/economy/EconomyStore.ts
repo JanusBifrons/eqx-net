@@ -46,6 +46,7 @@ import {
 } from '../../shared-types/factions.js';
 import { isActiveDeal, type TradeDeal } from '../../core/economy/deals.js';
 import { gameNow } from '../time/gameTime.js';
+import { FREE_LAUNCHES_START } from '../../shared-types/launch.js';
 
 /** History entries kept per player (the Trade tab's History list). */
 export const HISTORY_CAP = 40;
@@ -68,6 +69,9 @@ export interface PlayerEconomy {
   look?: { colorSlot: number; sigil: number };
   /** T4 — remembered teleporter-toll answers, by owner faction. */
   tollPrefs?: Record<string, 'always' | 'never'>;
+  /** Join flow — one-shot free capital launches left; absent = never spent
+   *  one (`FREE_LAUNCHES_START`). */
+  freeLaunches?: number;
   history: TradeHistoryEntry[];
   /** Value gifted to each side inside the current window (diminishing returns). */
   gifts: Record<EconAllegiance, { value: number; sinceMs: number }>;
@@ -306,6 +310,21 @@ export class EconomyStore {
     this.touchPlayer(playerId);
   }
 
+  // ── Free capital launches (join flow) ──────────────────────────────────
+
+  freeLaunches(playerId: string): number {
+    return this.players.get(playerId)?.freeLaunches ?? FREE_LAUNCHES_START;
+  }
+
+  /** Spend one free launch; false (nothing changes) when none are left. */
+  spendFreeLaunch(playerId: string): boolean {
+    const left = this.freeLaunches(playerId);
+    if (left <= 0) return false;
+    this.player(playerId).freeLaunches = left - 1;
+    this.touchPlayer(playerId);
+    return true;
+  }
+
   /** An NPC faction's treasury (tolls it collected). */
   treasury(faction: string): number {
     return this.treasuries.get(faction) ?? 0;
@@ -502,6 +521,9 @@ function parsePlayer(json: string): PlayerEconomy | null {
       for (const [f, v] of Object.entries(raw.tollPrefs)) {
         if (v === 'always' || v === 'never') (pe.tollPrefs ??= {})[f] = v;
       }
+    }
+    if (typeof raw.freeLaunches === 'number' && Number.isFinite(raw.freeLaunches)) {
+      pe.freeLaunches = Math.max(0, Math.min(FREE_LAUNCHES_START, Math.floor(raw.freeLaunches)));
     }
     if (Array.isArray(raw.history)) pe.history = raw.history.slice(0, HISTORY_CAP);
     if (raw.gifts) for (const a of ECON_ALLEGIANCES) if (raw.gifts[a]) pe.gifts[a] = { ...raw.gifts[a] };

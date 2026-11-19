@@ -16,6 +16,8 @@
  *     except weapons fire").
  *   - PARKED HULLS (`mirror.ships` entries `isParkedHull`, kind 'lingering';
  *     WS-9/R2.23 — surface the owner).
+ *   - CARGO PODS (`kind === 3` records `isLootPod`, kind 'pod'; cargo pods
+ *     slice 15 — tap to select, then Open). Other scrap stays unselectable.
  *
  * Explicitly NOT selectable: weapons fire (projectiles / missiles / beams live
  * in their own mirror maps, never scanned here).
@@ -36,12 +38,13 @@ import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { getShipKind } from '@shared-types/shipKinds';
 import { isParkedHull, isShipIAmFlying } from './shipOwnership.js';
+import { isLootPod } from '@shared-types/swarmWireFormat';
 
 /** Selectable entity classes. `drone`/`asteroid`/`lingering` read from
  *  the mirror directly (no server stats channel); `ship`/`structure` use
  *  `entity_stats` for hp/shield (structures also read their slice from the
  *  mirror — WS-9/R2.8). */
-export type PickedEntityKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering';
+export type PickedEntityKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod';
 
 export interface PickedEntity {
   /** Mirror-resolvable id (see module docstring for the per-kind form). */
@@ -89,7 +92,8 @@ export function pickEntityAt(
   // WS-9/R2.23 — asteroids are now selectable (size/resources readout).
   if (mirror.swarm) {
     for (const [entityId, sw] of mirror.swarm) {
-      if (sw.kind !== 0 && sw.kind !== 1 && sw.kind !== 2) continue; // unknown kind
+      const pod = isLootPod(sw);
+      if (sw.kind !== 0 && sw.kind !== 1 && sw.kind !== 2 && !pod) continue; // unknown kind / plain scrap
       const dx = sw.x - worldX;
       const dy = sw.y - worldY;
       const distSq = dx * dx + dy * dy;
@@ -110,7 +114,7 @@ export function pickEntityAt(
       if (hit && distSq < bestDistSq) {
         bestDistSq = distSq;
         bestId = `swarm-${entityId}`;
-        bestKind = sw.kind === 0 ? 'asteroid' : sw.kind === 1 ? 'drone' : 'structure';
+        bestKind = pod ? 'pod' : sw.kind === 0 ? 'asteroid' : sw.kind === 1 ? 'drone' : 'structure';
       }
     }
   }

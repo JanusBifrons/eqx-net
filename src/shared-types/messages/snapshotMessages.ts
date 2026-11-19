@@ -320,6 +320,8 @@ export interface SnapshotMessage {
       /** Economy v2 W1 — the OWN player's wallet balance (credits are virtual,
        *  one balance per player; emitted on the own active ship's entry). */
       wallet?: number;
+      /** Join flow — the OWN player's free capital launches left. */
+      freeLaunches?: number;
       /** v4 T2 — bumped when a teleporter moved this (own, active) hull;
        *  emitted when > 0. A change makes the client re-seed its prediction
        *  at the snapshot pose instead of reconciling a long jump. */
