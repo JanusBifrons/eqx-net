@@ -74,7 +74,7 @@ const ALLOWLIST = {
   'src/client/render/art/fields.ts': { cap: 943, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fx/fxTextures.ts': { cap: 783, target: 600, reason: RATCHET_ONLY },
   'src/client/render/galaxy/GalaxyMapLayer.ts': { cap: 1044, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/pixi/ConnectorRenderer.ts': { cap: 958, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/pixi/ConnectorRenderer.ts': { cap: 949, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/structureVisuals.ts': { cap: 687, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/wreckArt.ts': { cap: 1925, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/Camera.ts': { cap: 871, target: 600, reason: RATCHET_ONLY },
