@@ -78,8 +78,18 @@ export class TravelMode implements IPilotMode {
 
   begin(_ctx: PilotModeContext): void {}
 
-  /** An owner's Move to (x, y) (`setTravel`): the course is set, the post
-   *  and a hunt end. */
+  /**
+   * RTS Part B slice 9 (`setTravel`): an owner's Move (or a Retreat) to (x, y). The ship
+   * flies there at its full cruise (a long leg at its top speed, boosting
+   * while the pool pays) and does not stop to fight: it still picks a target
+   * (its locks and trigger follow it) but fires only at one already in its
+   * sights, never turning toward it or chasing. Arrived (inside
+   * `shipTuning.wingmanArrive`, nearly stopped) it guards the point
+   * (`getTravelState` ⇒ arrived). Ends a hunt and the guard post (the
+   * leash would hold it to the old post); a guard post, a hunt or a stop
+   * ends the travel. Hold fire still wins (no target, no trigger).
+   * Server-only.
+   */
   go(x: number, y: number, o: PilotOrderModes): void {
     o.course.setCourse(x, y, false, o);
     o.guard.clear();
@@ -90,8 +100,16 @@ export class TravelMode implements IPilotMode {
     this.fights = false;
   }
 
-  /** One patrol leg from (fromX, fromY) to (x, y) (`setPatrolLeg`): a travel
-   *  that fights, leashed at `guardR` (the kind's `guardRadiusMin`). */
+  /**
+   * RTS Part B slice 11 (`setPatrolLeg`): one leg of an owner's Patrol, from (fromX, fromY) to
+   * (x, y) (the room steps the fleet route with `stepRoute`). A travel that
+   * fights: Aggressive engages what it sees within its guard radius
+   * (`shipTuning.guardRadiusMin`) of the leg, Defensive answers an attacker
+   * out to that radius plus its weapon reach, hold fire just flies; a fight
+   * is let go a guard radius off the route and the leg flies on. Activity
+   * `patrolling`. Arrival is the travel's. Server-only. Leashed at `guardR`
+   * (the kind's `guardRadiusMin`).
+   */
   patrolLeg(fromX: number, fromY: number, x: number, y: number, guardR: number, o: PilotOrderModes): void {
     this.go(x, y, o);
     this.fights = true;

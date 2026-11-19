@@ -100,7 +100,18 @@ export class PilotTargeting {
     this.prevTargetId = null;
   }
 
-  /** The attack order (`setOrderedTarget`; the brain's doc has the rules). */
+  /**
+   * RTS Part B slice 8 (`setOrderedTarget`): the owner's ATTACK ORDER target (null lifts it). The
+   * target goes on the retaliation ledger (so a Defensive ship fights even a
+   * neutral) and stays there while ordered; inside the usual pick it carries
+   * `ORDERED_TARGET_PRIORITY` (spread targets, dwell and stickiness intact)
+   * and is free of the sensor cap and the guard leash (a guarding capital
+   * leaves its post for it). When it dies or the order is replaced the ship
+   * goes back to its job: the post, move target and hunt are untouched.
+   * Under hold fire the ordered target is the ONLY one engaged (no other
+   * pick, no retaliation); when the order ends hold fire resumes. A re-keyed ship (its owner took
+   * or let go of the controls) keeps its sticky pick. Server-only.
+   */
   setOrderedTarget(id: string | null, atTick: number): void {
     const next = id === this.ownerId ? null : id;
     const prev = this.orderedTargetId;
