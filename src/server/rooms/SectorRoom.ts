@@ -56,7 +56,7 @@ import { effectiveShipMaxHealth, type StatAlloc as CoreStatAlloc } from '../../c
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
-import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { pushNotifier } from '../push/PushNotifier.js';
 import { unregisterConnectedPlayer } from '../push/connectedPlayers.js';
@@ -83,9 +83,8 @@ import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerRoomFeatures } from './features/index.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
-import { TeleporterSubsystem, seedAlienGates, seedPocketPads, type NpcGateSeedHost } from '../structures/TeleporterSubsystem.js';
+import { TeleporterSubsystem, findAlienTwin, findLinkTwin, seedAlienGates, seedPocketPads, type GateTwinHost, type NpcGateSeedHost } from '../structures/TeleporterSubsystem.js';
 import { getTeleportBroker, type TeleportRoom } from '../teleport/TeleportBroker.js';
-import { linkEnds } from '../../core/bases/transitNetwork.js';
 import {
   PAD_SPECS,
   isTeleporterKind,
@@ -141,7 +140,7 @@ import { getStructureKind, type StructureKindId } from '../../shared-types/struc
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
 import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
-import { ALIEN_GATE_OWNER, alienGateSites } from '../../core/galaxy/alienGates.js';
+import { alienGateSites } from '../../core/galaxy/alienGates.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
@@ -185,7 +184,7 @@ import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import type { SceneScriptRunner, SceneStatus } from './scene/SceneScriptRunner.js';
 import { initSceneScript } from './scene/sceneRoomHooks.js';
-import { unregisterScenePerfRoom, sceneSimTime, SCENE_RECENT_TICKS, type ScenePerfView } from './scene/scenePerfRegistry.js';
+import { unregisterScenePerfRoom, sceneSimTime, sceneBodyCensus, SCENE_RECENT_TICKS, type ScenePerfView, type SceneBodyCensusHost } from './scene/scenePerfRegistry.js';
 import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
@@ -260,6 +259,7 @@ import { SectorSnapshotRestore } from './SectorSnapshotRestore.js';
 import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard, terrainRecordStoreFor } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
 import { LootSubsystem } from '../cargo/LootSubsystem.js';
+import { NpcLootHolds } from '../cargo/NpcLootHolds.js';
 import { LootSearch } from '../cargo/LootSearch.js';
 import { dropTestPodRow } from '../cargo/cargoWindow.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
@@ -269,7 +269,7 @@ import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, pa
 import { liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
-import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
+import { DEATH_POD_PUSH, deathHullLoot } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
 import {
@@ -2607,8 +2607,8 @@ export class SectorRoom extends Room<SectorState> {
         return f && f.room !== this.teleportRoom ? { rec: f.rec, sys: f.room.teleporters } : null;
       },
       hopsTo: (sk) => this.padRiders.hopsToSector(sk),
-      findAlienTwin: (rec) => this.findAlienTwin(rec),
-      findLinkTwin: (rec) => this.findLinkTwin(rec),
+      findAlienTwin: (rec) => findAlienTwin(this.gateTwinHost, rec),
+      findLinkTwin: (rec) => findLinkTwin(this.gateTwinHost, rec),
       // T4 — tolls: offered at arming, settled at the swap.
       onArmed: (rec) => this.tolls.offerToll(rec),
       onTollSettle: (rec) => this.tolls.settleToll(rec),
@@ -3063,7 +3063,7 @@ export class SectorRoom extends Room<SectorState> {
       manualCargo: this.lootCollectors.manualCargo,
       getActiveShip: (pid) => this.getActiveShip(pid),
       shipCargoCapacity: (kind, id) => this.shipCargoCapacity(kind, id),
-      npcHold: (rec) => this.npcHold(rec),
+      npcHold: (rec) => this.npcLoot.hold(rec),
       shipTarget: (ref) => this.breakInHooks.shipTarget(ref),
       breakInMsFor: (rec) => this.breakInHooks.breakInMsFor(rec),
       breakInMsForShip: (t) => this.breakInHooks.breakInMsForShip(t),
@@ -3951,19 +3951,22 @@ export class SectorRoom extends Room<SectorState> {
     // pod has no health, so combat never evicts one: only the LootSubsystem
     // despawns pods (emptied / TTL).
     if (opts.emitDestroyed && rec.kind === SWARM_KIND_DRONE) {
-      this.dropKillLoot(rec, opts.shooterId, opts.vaporised === true);
+      this.npcLoot.dropKillLoot(rec, opts.shooterId, opts.vaporised === true);
     }
     // C3 — an NPC loot hold (memory only) goes with its ship. Trade and convoy
     // haulers keep theirs: their cargo travels with them between sectors.
     if (rec.kind === SWARM_KIND_DRONE && !isHaulerId(rec.id) && getHoldStore().get(rec.id)?.holderType === 'hauler') {
       getHoldStore().delete(rec.id, false);
     }
-    if (rec.kind === SWARM_KIND_DRONE) this.npcLootRolled.delete(`${rec.id}:${rec.entityId}`);
+    if (rec.kind === SWARM_KIND_DRONE) this.npcLoot.forget(rec);
     if (rec.kind === SWARM_KIND_SCRAP) {
       this.scrapSpawner.notifyRemoved(rec.id);
     }
     this.swarmEvictor.evict(rec, opts);
   }
+
+  /** Gate-twin lookups for the teleporters (`findLinkTwin` / `findAlienTwin`, `TeleporterSubsystem.ts`). */
+  private readonly gateTwinHost: GateTwinHost = { sectorKey: () => this.sectorKey, structureRegistry: () => this.structureRegistry };
 
   /** The 1 Hz grid pulse (body: `StructuresSliceSync.gridTick`, `structuresSlice.ts`). */
   private structureGridTick(): void { this.structuresSliceSync.gridTick(); }
@@ -3971,43 +3974,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Structures plan (Phase 3-5) — seed a testMode scenario: PRE-BUILT,
    *  auto-connected structures (owner `scenario`) + parked drones + asteroids.
    *  Gives E2E a fully-functional powered grid without the place-ahead UI
-   *  (which overlaps stacked placements) or the construction wait. */
-  /** v4 H — the teleporter at the other end of `rec.npcLink` (another sector's
-   *  room, found through the broker; it carries the same link id). */
-  private findLinkTwin(rec: StructureRecord): { sectorKey: string; uid: string } | null {
-    const id = rec.npcLink;
-    if (id === undefined || this.sectorKey === null) return null;
-    const ends = linkEnds(id);
-    if (ends === null) return null;
-    const there = ends[0].sector === this.sectorKey ? ends[1].sector : ends[0].sector;
-    // Both ends in this sector: look here (another instance of a test room may
-    // share the sector key in the broker).
-    let candidates: Iterable<StructureRecord>;
-    if (there === this.sectorKey) candidates = this.structureRegistry.all();
-    else {
-      const room = getTeleportBroker().room(there);
-      if (room === null) return null;
-      candidates = room.structures();
-    }
-    for (const r of candidates) {
-      if (r !== rec && r.npcLink === id && r.uid !== undefined && r.isConstructed) return { sectorKey: there, uid: r.uid };
-    }
-    return null;
-  }
-
-  /** v4 A — the alien gate in `rec.alienNeighbour`'s room that faces back here. */
-  private findAlienTwin(rec: StructureRecord): { sectorKey: string; uid: string } | null {
-    const there = rec.alienNeighbour;
-    if (there === undefined || this.sectorKey === null) return null;
-    const room = getTeleportBroker().room(there);
-    if (room === null) return null;
-    for (const g of room.ownTeleporters(ALIEN_GATE_OWNER)) {
-      if (g.alienNeighbour === this.sectorKey && g.uid !== undefined) return { sectorKey: there, uid: g.uid };
-    }
-    return null;
-  }
-
-  /** testMode structure scenario seeding (`scenarioLayouts.seedStructureScenario`). */
+   *  (which overlaps stacked placements) or the construction wait.
+   *  testMode structure scenario seeding (`scenarioLayouts.seedStructureScenario`). */
   private readonly structureScenarioHost: StructureScenarioHost = {
     structureRegistry: this.structureRegistry, logger, structurePlacement: () => this.structurePlacement,
     teleporters: () => this.teleporters, swarmSpawner: () => this.swarmSpawner, swarmHealth: () => this.swarmHealth,
@@ -5145,7 +5113,7 @@ export class SectorRoom extends Room<SectorState> {
     if (pose !== undefined) {
       if (death !== undefined) {
         const hull = deathHullLoot(shipInstanceId, death.kind, death.vaporised);
-        const spot = this.podSpot(hashString(shipInstanceId), pose.x, pose.y, getShipKind(death.kind).radius, death.shooterId);
+        const spot = this.npcLoot.podSpot(hashString(shipInstanceId), pose.x, pose.y, getShipKind(death.kind).radius, death.shooterId);
         this.loot.spillShipHold(shipInstanceId, spot.x, spot.y, pose.vx + spot.ux * DEATH_POD_PUSH, pose.vy + spot.uy * DEATH_POD_PUSH, cause, {
           player: true, extra: hull, deathLoss: `${shipInstanceId}:${this.gameClock.now()}`,
           size: podSizeClass(getShipKind(death.kind).radius),
@@ -5506,6 +5474,7 @@ export class SectorRoom extends Room<SectorState> {
     m.dropped = this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0;
   }
 
+  private readonly sceneCensusHost: SceneBodyCensusHost = { swarmRegistry: this.swarmRegistry, sabU32: () => this.sabU32, sabF32: () => this.sabF32, capitalWrecks: () => this.capitalWrecks };
   scenePerf(): ScenePerfView | null {
     if (!this.sceneRunner || !this.sceneTickRing || !this.sceneWorkerRing) return null;
     return {
@@ -5515,7 +5484,7 @@ export class SectorRoom extends Room<SectorState> {
       workerTick: this.sceneWorkerRing.summary(),
       tickRecent: this.sceneTickRing.summary(SCENE_RECENT_TICKS),
       workerTickRecent: this.sceneWorkerRing.summary(SCENE_RECENT_TICKS),
-      bodies: this.sceneBodyCensus(),
+      bodies: sceneBodyCensus(this.sceneCensusHost),
       swarm: this.swarmRegistry.size(),
       players: this.playerToSlot.size,
       structures: this.structureRegistry.size,
@@ -5523,30 +5492,6 @@ export class SectorRoom extends Room<SectorState> {
       simTime: sceneSimTime(this.sceneSimStart, this.sceneSimEnd, this.gameClock.scale),
       timeScale: { scale: this.gameClock.scale, loadFactor: this.timeScale.loadFactor, auto: this.timeScale.autoSlowdown },
       wakeCensus: this.physicsWorkerProxy?.lastWakeCensus ?? null,
-    };
-  }
-
-  /** Perf-scene census (read on a `/dev/perf` poll, never on the tick):
-   *  swarm bodies by kind and how many the worker flags SLEEPING, plus the
-   *  live wreck pieces (debris soak, sub-cap break-up slice 5). */
-  private sceneBodyCensus(): ScenePerfView['bodies'] {
-    let sleeping = 0, wreckPieces = 0, wreckSleeping = 0, wreckAwakeSlow = 0;
-    for (const rec of this.swarmRegistry.all()) {
-      const b = slotBase(rec.slot);
-      const asleep = ((this.sabU32[b + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
-      if (asleep) sleeping++;
-      if (rec.kind !== SWARM_KIND_WRECK) continue;
-      wreckPieces++;
-      if (asleep) { wreckSleeping++; continue; }
-      // Awake but all but still (< 1 u/s, < 0.1 rad/s): kept awake by
-      // something else (contacts, knocks), not by its own drift.
-      const vx = this.sabF32[b + SLOT_VX_OFF] ?? 0, vy = this.sabF32[b + SLOT_VY_OFF] ?? 0;
-      if (vx * vx + vy * vy < 1 && Math.abs(this.sabF32[b + SLOT_ANGVEL_OFF] ?? 0) < 0.1) wreckAwakeSlow++;
-    }
-    return {
-      swarm: this.swarmRegistry.size(), sleeping, wreckPieces, wreckSleeping, wreckAwakeSlow,
-      wreckSubcapLive: this.capitalWrecks?.liveSubcapCount() ?? 0,
-      wreckDescriptors: this.capitalWrecks?.descriptors().length ?? 0,
     };
   }
 
@@ -5563,69 +5508,8 @@ export class SectorRoom extends Room<SectorState> {
     return this.aiController.isEntityHostileToPlayer(entityId, playerId, this.playerTruce(playerId));
   }
 
-  private dropKillLoot(rec: SwarmEntityRecord, shooterId?: string, vaporised = false): void {
-    const b = slotBase(rec.slot);
-    // C3 — an NPC ship's loot IS its hold: rolled once from a seed (so a
-    // break-in that already took some leaves less to drop), and a trade
-    // hauler's hold is its cargo. Anything with a hold spills where it died.
-    const hold = this.npcHold(rec);
-    // An NPC drop is an ordinary pod (its contents' tier), never the bright
-    // dead-player spill tier (owner 2026-11-13).
-    if (!isHoldEmpty(hold)) {
-      const key = `${rec.id}:${rec.entityId}`;
-      // Vaporised (owner 2026-11-15): its hull salvage still aboard × 1.5.
-      const extra = vaporised ? vaporisedSalvageExtra(key, rec.shipKind, rec.elite !== undefined, hold.goods.salvage ?? 0) : undefined;
-      const spot = this.podSpot(hashString(key), this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, rec.radius, shooterId);
-      // The pod keeps the ship's velocity plus a gentle push clear of the wreck.
-      this.loot.spillShipHold(rec.id, spot.x, spot.y,
-        this.sabF32[b + SLOT_VX_OFF]! + spot.ux * DEATH_POD_PUSH, this.sabF32[b + SLOT_VY_OFF]! + spot.uy * DEATH_POD_PUSH,
-        isHaulerId(rec.id) ? 'hauler-raided' : 'kill', { player: false, deathLoss: key, size: podSizeClass(rec.radius), ...(extra !== undefined ? { extra } : {}) });
-    }
-    else getHoldStore().delete(rec.id, false);
-  }
-
-  /** `killPodSpot` for a dead ship at (cx, cy), the killer's live pose looked
-   *  up by id (pilot, parked hull or swarm ship). Returns the reused `_podSpot`. */
-  private podSpot(seed: number, cx: number, cy: number, hullRadius: number, shooterId?: string): { x: number; y: number; ux: number; uy: number } {
-    let sx = Number.NaN;
-    let sy = Number.NaN;
-    if (shooterId !== undefined && shooterId !== '') {
-      const p = this.shipPoseCache.get(shooterId) ?? this.lingeringPoseCache.get(shooterId);
-      const srec = p === undefined ? this.swarmRegistry.get(shooterId) : undefined;
-      if (p !== undefined) { sx = p.x; sy = p.y; }
-      else if (srec) { sx = this.sabF32[slotBase(srec.slot) + SLOT_X_OFF]!; sy = this.sabF32[slotBase(srec.slot) + SLOT_Y_OFF]!; }
-    }
-    return killPodSpot(this._podSpot, seed, cx, cy, hullRadius, sx, sy);
-  }
-  private readonly _podSpot = { x: 0, y: 0, ux: 0, uy: 0 };
-
-  /**
-   * C3 — an NPC ship's hold: a trade hauler's real cargo, or (any other NPC)
-   * its kind's loot — an elite's guaranteed rare haul — rolled ONCE from a
-   * seed (its id + this spawn's entityId) the first time it's needed (opened,
-   * broken into, or killed). NPC loot holds live in memory only.
-   */
-  private npcHold(rec: SwarmEntityRecord): Hold {
-    const store = getHoldStore();
-    const key = `${rec.id}:${rec.entityId}`;
-    const row = store.get(rec.id);
-    if (this.npcLootRolled.has(key)) return row?.hold ?? emptyHold();
-    // Roll this spawn's loot table ONCE, on top of anything it already
-    // carries (a nexus hoard, a harvester's scoop, a hauler's cargo).
-    this.npcLootRolled.add(key);
-    const loot = rollHullLoot(key, rec.shipKind, rec.elite !== undefined);
-    if (row !== undefined) {
-      if (isHoldEmpty(loot)) return row.hold;
-      const merged = cloneHold(row.hold);
-      mergeInto(merged, loot);
-      store.put({ ...row, hold: merged }, false);
-      return merged;
-    }
-    store.put({ holderUid: rec.id, holderType: 'hauler', ownerId: null, sectorKey: this.sectorKey, x: null, y: null, hold: loot, expiresAt: null }, false);
-    return loot;
-  }
-  /** C3 — NPC spawns (`id:entityId`) whose loot table is already in their hold. */
-  private readonly npcLootRolled = new Set<string>();
+  /** C3 — NPC loot holds and kill pods (`cargo/NpcLootHolds.ts`). */
+  private readonly npcLoot = new NpcLootHolds({ sectorKey: () => this.sectorKey, sabF32: () => this.sabF32, loot: () => this.loot, swarmRegistry: this.swarmRegistry, shipPoseCache: this.shipPoseCache, lingeringPoseCache: this.lingeringPoseCache });
 
   override onDispose(): void {
     this.roomFeatures?.dispose();

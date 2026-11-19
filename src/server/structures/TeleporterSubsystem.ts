@@ -52,6 +52,8 @@ import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { AlienGateGuard } from './AlienGateGuard.js';
 import type { StructurePlacementSubsystem } from './StructurePlacementSubsystem.js';
+import { getTeleportBroker } from '../teleport/TeleportBroker.js';
+import { linkEnds } from '../../core/bases/transitNetwork.js';
 
 /** A teleporter's partner, local or in another sector's room. */
 export interface PartnerLink {
@@ -508,4 +510,47 @@ export function seedPocketPads(h: NpcGateSeedHost, sectorKey: string): void {
   }
   h.teleporters().pair(a, b);
   h.rebuildStructuresSlice();
+}
+
+/** What the gate-twin lookups read from the room (read at call time). */
+export interface GateTwinHost {
+  sectorKey(): string | null;
+  structureRegistry(): StructureRegistry;
+}
+
+/** v4 H — the teleporter at the other end of `rec.npcLink` (another sector's
+ *  room, found through the broker; it carries the same link id). */
+export function findLinkTwin(h: GateTwinHost, rec: StructureRecord): { sectorKey: string; uid: string } | null {
+  const id = rec.npcLink;
+  const sectorKey = h.sectorKey();
+  if (id === undefined || sectorKey === null) return null;
+  const ends = linkEnds(id);
+  if (ends === null) return null;
+  const there = ends[0].sector === sectorKey ? ends[1].sector : ends[0].sector;
+  // Both ends in this sector: look here (another instance of a test room may
+  // share the sector key in the broker).
+  let candidates: Iterable<StructureRecord>;
+  if (there === sectorKey) candidates = h.structureRegistry().all();
+  else {
+    const room = getTeleportBroker().room(there);
+    if (room === null) return null;
+    candidates = room.structures();
+  }
+  for (const r of candidates) {
+    if (r !== rec && r.npcLink === id && r.uid !== undefined && r.isConstructed) return { sectorKey: there, uid: r.uid };
+  }
+  return null;
+}
+
+/** v4 A — the alien gate in `rec.alienNeighbour`'s room that faces back here. */
+export function findAlienTwin(h: GateTwinHost, rec: StructureRecord): { sectorKey: string; uid: string } | null {
+  const there = rec.alienNeighbour;
+  const sectorKey = h.sectorKey();
+  if (there === undefined || sectorKey === null) return null;
+  const room = getTeleportBroker().room(there);
+  if (room === null) return null;
+  for (const g of room.ownTeleporters(ALIEN_GATE_OWNER)) {
+    if (g.alienNeighbour === sectorKey && g.uid !== undefined) return { sectorKey: there, uid: g.uid };
+  }
+  return null;
 }

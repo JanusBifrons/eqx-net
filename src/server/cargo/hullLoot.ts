@@ -3,7 +3,7 @@
  * `rollEliteLoot`) rolled from a seed, so the same ship always rolls the same
  * thing. Every ship, whoever flies it (owner 2026-11-15, "why would the player
  * be special?"): an AI pilot's ship rolls it into its hold once per spawn
- * (`SectorRoom.npcHold`, seed `<id>:<entityId>`); a player's ship rolls it as
+ * (`NpcLootHolds.hold`, seed `<id>:<entityId>`); a player's ship rolls it as
  * it dies (seed: its shipInstanceId) and drops it in the pod with its hold.
  * The `npc-hold` stream name is kept so existing seeded rolls hold.
  */

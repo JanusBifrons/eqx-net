@@ -1221,7 +1221,7 @@ break-up:
   `tests/integration/sectorRoom/lootLoop.test.ts`. The NPC kill pod spawns
   BESIDE the wreck, 1.2 hull radii plus its own radius from the centre, to
   the side of the killer's line of fire (seeded side; seeded direction with
-  no known killer), at the ship's velocity (`SectorRoom.dropKillLoot`).
+  no known killer), at the ship's velocity (`NpcLootHolds.dropKillLoot`).
   At the centre it took the rest of the salvo at once, a second blast and a
   climbing damage number ~1 s after each death, and hid the break-up
   (owner's v5 film, 2026-11-13). A proper cargo-container
