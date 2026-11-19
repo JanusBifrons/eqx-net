@@ -133,7 +133,10 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
     // Its shield is up: the bubble is the surface they meet.
     let side = 0;
     while (shipWithinHullReach(kind.id, true, side + 2, 0, 0, 0, 0, 0)) side += 2;
-    await breakFighter('f2', side + 30, 0);
+    // 20 u off the bubble, not 30: since sized death pods (cargo pods) the break-up's
+    // pieces scatter sideways with almost no knock toward the hull (vx ≈ -2 u/s), and
+    // from 30 u they rarely reached it. The pickup on touch is what is under test.
+    await breakFighter('f2', side + 20, 0);
     // (Some may glance off the bubble and drift clear: those stay out; some go in before the test sees them.)
     await waitUntil(() => salvageLoads > loads0, 15_000, 'the pieces that touch the hull are taken in');
     expect(hold().salvage ?? 0, 'their salvage is in the hold').toBeGreaterThan(0);
