@@ -13,7 +13,6 @@ import {
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
-import type { GridFlowMaterial } from '../../shared-types/messages.js';
 import { SESSION_REPLACED_CLOSE_CODE, type SessionReplacedMessage } from '../../shared-types/messages.js';
 import {
   unregisterPlayerSession,
@@ -131,7 +130,6 @@ import {
   type FactionPolicy,
 } from '../../shared-types/factions.js';
 import type { FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
-import { encodeStructureMountAngles } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
  *  once so turret and missile queries never build strings. */
@@ -150,7 +148,6 @@ import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateSites } from '../../core/galaxy/alienGates.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
-import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
@@ -783,16 +780,18 @@ export class SectorRoom extends Room<SectorState> {
   /** A2 — the snapshot's slim cosmetic slice (turret / mining targets only);
    *  structure grid state itself lives in `state.structures`. */
   private structuresSlice: number[] | undefined = undefined;
-  /** Coastal defences — the defence turrets' angles, rebuilt each turret tick
-   *  into one reused array (#14); undefined while every turret rests. */
-  private readonly structureMountAnglesBuf: number[] = [];
-  private structureMountAnglesSlice: SnapshotMessage['structureMountAngles'] = undefined;
-  /** A2 — the `state.structures` sync + stale-row sweep (`structuresSlice.ts`), built once. */
+  /** A2 — the `state.structures` sync + stale-row sweep, plus the grid pulse and
+   *  turret tick cadences (`structuresSlice.ts`), built once. */
   private readonly structuresSliceSync = new StructuresSliceSync({
     state: () => this.state as SectorState, gameClock: this.gameClock, structureRegistry: this.structureRegistry,
     swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, breakIns: this.breakIns,
     structureGrid: () => this.structureGrid, shieldWalls: () => this.shieldWalls, gates: () => this.gates,
     teleporters: () => this.teleporters, internStructureOwner: (o) => this.internStructureOwner(o),
+    hostileActs: () => this.hostileActs, patrols: this.patrols, gateGuard: this.gateGuard, production: () => this.production,
+    researchLabs: () => this.researchLabs, storage: () => this.storage, mineField: () => this.mineField,
+    turretTargeting: () => this.turretTargeting, relationCtx: () => this.relationCtx,
+    testTeleportFullCharge: () => this.testTeleportFullCharge, rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
+    broadcastGridPulse: (msg) => { this.broadcast('grid_pulse', msg); },
   });
   /** B2 (plan soft-leaping-truffle v3) — hostile acts against owners in this
    *  room (attacking an NPC base's structure), read by `relationOf`. */
@@ -2204,7 +2203,7 @@ export class SectorRoom extends Room<SectorState> {
       // Structures plan, Phase 3 — the cached slice (rebuilt at the 1 Hz grid
       // pulse / on placement), attached by reference to every recipient.
       getStructuresSlice: () => this.forceFields.beamLinks(this.structuresSlice),
-      getStructureMountAngles: () => this.structureMountAnglesSlice,
+      getStructureMountAngles: () => this.structuresSliceSync.structureMountAnglesSlice,
       // Capital destruction S2b: the wreck descriptors (null when off).
       getWrecks: () => this.capitalWrecks?.descriptors() ?? null,
       wrecksVersion: () => this.capitalWrecks?.version ?? 0,
@@ -4283,45 +4282,8 @@ export class SectorRoom extends Room<SectorState> {
     this.swarmEvictor.evict(rec, opts);
   }
 
-  // ── Structure grid pulse (structures plan, Phase 3) ──────────────────────
-
-  /** One 1 Hz grid heartbeat: pulse the logistics web, refresh the snapshot
-   *  slice, and broadcast the discrete `grid_pulse` flash event. No-op (and no
-   *  broadcast) when the sector has no structures. */
-  private structureGridTick(): void {
-    this.hostileActs.sweep(this.gameClock.now());
-    if (this.patrols.count > 0) this.patrols.tick(this.gameClock.now());
-    this.gateGuard.sweep(this.gameClock.now());
-    if (this.structureRegistry.size === 0) return;
-    const result = this.structureGrid.pulse(this.gameClock.now());
-    // P2b — processors take inputs from and put outputs into network storage.
-    this.production.pulse();
-    // v4 T1 — teleporter pads unload arrivals and top up "keep loaded".
-    this.teleporters.pulse();
-    // Economy v2 W3 — powered Research Labs advance their jobs.
-    this.researchLabs.pulse();
-    // Living World P1a-2 — persist storage payloads the pulse just changed
-    // (mining / hauling / construction flows mutate the bank directly).
-    this.storage.flushDirty();
-    // Form/teardown pylon-pair walls + refresh their active state on the fresh
-    // topology BEFORE the slice rebuild so `shieldWallTo`/`wallActive` are current.
-    this.shieldWalls.update(this.gameClock.now());
-    this.rebuildStructuresSlice();
-    if (result.flashed.length > 0) {
-      // Map the registry's string-id pairs to dense entityIds for the wire,
-      // carrying each edge's flow MATERIAL (WS-D #12) so the client tints
-      // per-edge (repair/minerals/construction can co-occur in one pulse).
-      const flashed: Array<[number, number, GridFlowMaterial]> = [];
-      for (const [a, b, material] of result.flashed) {
-        const ea = this.swarmRegistry.get(a)?.entityId;
-        const eb = this.swarmRegistry.get(b)?.entityId;
-        if (ea !== undefined && eb !== undefined) flashed.push([ea, eb, material]);
-      }
-      if (flashed.length > 0) {
-        this.broadcast('grid_pulse', { type: 'grid_pulse', flashed, material: result.material });
-      }
-    }
-  }
+  /** The 1 Hz grid pulse (body: `StructuresSliceSync.gridTick`, `structuresSlice.ts`). */
+  private structureGridTick(): void { this.structuresSliceSync.gridTick(); }
 
   /** Structures plan (Phase 3-5) — seed a testMode scenario: PRE-BUILT,
    *  auto-connected structures (owner `scenario`) + parked drones + asteroids.
@@ -4465,63 +4427,8 @@ export class SectorRoom extends Room<SectorState> {
     logger.info({ requested: count, parent: PARENT, groups }, 'scenario scrap seeded');
   }
 
-  /** Coastal defences — pack every defence turret that is off its rest
-   *  bearing into the snapshot's `structureMountAngles` (the server's slewed
-   *  angles, the only writer, #12). One reused array (#14). */
-  private rebuildStructureMountAngles(): void {
-    const buf = this.structureMountAnglesBuf;
-    let n = 0;
-    for (const rec of this.structureRegistry.all()) {
-      const angles = this.structureGrid.mountAnglesOf(rec.id);
-      if (angles === undefined) continue;
-      const entityId = this.swarmRegistry.get(rec.id)?.entityId;
-      if (entityId === undefined) continue;
-      n = encodeStructureMountAngles(buf, n, entityId, angles);
-    }
-    buf.length = n;
-    this.structureMountAnglesSlice = n > 0 ? buf : undefined;
-  }
-
-  /** Phase 5 — turret aim/fire tick (faster cadence than the grid pulse).
-   *  No-op when the sector has no structures. */
-  private structureTurretTick(): void {
-    // C2/C3 — break-ins tick even in a sector with no structures (ship targets).
-    this.breakIns.tick();
-    if (this.structureRegistry.size === 0) {
-      // Mines whose layer is gone still have to leave.
-      if (this.mineField.mines.size > 0) this.mineField.tick(this.gameClock.now());
-      return;
-    }
-    const nowMs = this.gameClock.now();
-    // A1 — the turret target grid is rebuilt (lazily, on the first query) once
-    // per turret tick, instead of every turret scanning every swarm entity.
-    this.turretTargeting.turretTargetGridFresh = false;
-    this.turretTargeting.npcTargetGridFresh = false;
-    this.relationCtx.nowMs = nowMs;
-    this.structureGrid.tickTurrets(nowMs);
-    this.rebuildStructureMountAngles();
-    // Mine Layers lay and mines go off (same target grids as the turrets).
-    this.mineField.tick(nowMs);
-    // v4 T1 — teleporter rules and jump cycles.
-    if (this.testTeleportFullCharge) {
-      for (const r of this.structureRegistry.all()) {
-        if (isTeleporterKind(r.kind) && r.tpPartner !== undefined) r.tpCharge = Math.max(r.tpCharge ?? 0, this.teleporters.required(r));
-      }
-    }
-    this.teleporters.update(nowMs);
-    // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
-    // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
-    this.structureGrid.tickMiners(nowMs);
-    // Gates open/close on approach at this cadence; the wall refresh below
-    // then drops (or restores) each span's collider.
-    this.gates.update(nowMs);
-    // Refresh wall active states at the turret cadence so a stun lifts (and a
-    // power-loss drop registers) within ~100 ms, not a full grid pulse later.
-    this.shieldWalls.update(this.gameClock.now());
-    // Refresh the slice so the client's turret aim line tracks at the turret
-    // cadence (not just the 1 Hz pulse). Cheap — few structures, off the tick.
-    this.rebuildStructuresSlice();
-  }
+  /** Phase 5 — the turret aim/fire tick (body: `StructuresSliceSync.turretTick`, `structuresSlice.ts`). */
+  private structureTurretTick(): void { this.structuresSliceSync.turretTick(); }
 
   /** Gates: every ACTIVE player ship (#17 — lingering hulls are parked and
    *  never open gates), into the controller's reused buffer. */

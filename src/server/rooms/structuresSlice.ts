@@ -10,6 +10,12 @@
  * Moved out of `SectorRoom.ts` by god-file split slice 29; the room builds one
  * `StructuresSliceSync` as a class field with a narrow host (getters for the
  * fields it assigns in `onCreate`).
+ *
+ * God-file split slice 31 moved the two structure cadences here too: the 1 Hz
+ * grid pulse (`gridTick`) and the 10 Hz turret tick (`turretTick`, with the
+ * defence-turret mount-angles slice). Both end in the slice rebuild above; the
+ * room's timers and seeders call them through one-line delegates
+ * (`SectorRoom.structureGridTick` / `structureTurretTick`).
  */
 import { StructureState, type SectorState } from './schema/SectorState.js';
 import {
@@ -26,6 +32,7 @@ import {
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
   encodePlayerTurretTarget,
+  encodeStructureMountAngles,
 } from '../../shared-types/structureStateWire.js';
 import {
   TP_RULE_TOLL_HOSTILE,
@@ -50,28 +57,60 @@ import type { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import type { GateController } from '../structures/GateController.js';
 import type { TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
 import type { BreakInSubsystem } from './BreakInSubsystem.js';
+import type { GridFlowMaterial, GridPulseEvent, SnapshotMessage } from '../../shared-types/messages.js';
+import type { HostileActLedger } from '../../core/relations/HostileActLedger.js';
+import type { RelationContext } from '../../shared-types/relations.js';
+import type { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
+import type { AlienGateGuard } from '../structures/AlienGateGuard.js';
+import type { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
+import type { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
+import type { StorageService } from '../cargo/StorageService.js';
+import type { MineFieldSubsystem } from '../structures/MineFieldSubsystem.js';
+import type { TurretTargeting } from './features/turretTargeting.js';
 
 /** What the sync reads from the room. Getters for fields the room assigns
  *  in `onCreate` (or reads through a getter of its own). */
 export interface StructuresSliceHost {
   state: () => SectorState;
   gameClock: Pick<GameClock, 'now'>;
-  structureRegistry: Pick<StructureRegistry, 'all' | 'connectionsOf'>;
+  structureRegistry: Pick<StructureRegistry, 'all' | 'connectionsOf' | 'size'>;
   swarmRegistry: Pick<SwarmEntityRegistry, 'get'>;
   swarmHealth: () => Map<string, number>;
-  breakIns: Pick<BreakInSubsystem, 'breached'>;
-  structureGrid: () => Pick<StructureGridSubsystem, 'powerSummaryFor' | 'estimateBuildEtaMs'>;
-  shieldWalls: () => Pick<ShieldWallManager, 'wallsUpFor' | 'wallStateFor'>;
-  gates: () => Pick<GateController, 'maskFor'>;
-  teleporters: () => Pick<TeleporterSubsystem, 'required' | 'partnerOf'>;
+  breakIns: Pick<BreakInSubsystem, 'breached' | 'tick'>;
+  structureGrid: () => Pick<
+    StructureGridSubsystem,
+    'powerSummaryFor' | 'estimateBuildEtaMs' | 'pulse' | 'tickTurrets' | 'tickMiners' | 'mountAnglesOf'
+  >;
+  shieldWalls: () => Pick<ShieldWallManager, 'wallsUpFor' | 'wallStateFor' | 'update'>;
+  gates: () => Pick<GateController, 'maskFor' | 'update'>;
+  teleporters: () => Pick<TeleporterSubsystem, 'required' | 'partnerOf' | 'pulse' | 'update'>;
   /** The room's owner interning (also used by the mine sync). */
   internStructureOwner: (owner: string) => number;
+  // ── The grid pulse / turret tick cadences (slice 31) ──
+  hostileActs: () => Pick<HostileActLedger, 'sweep'>;
+  patrols: Pick<PatrolSubsystem, 'count' | 'tick'>;
+  gateGuard: Pick<AlienGateGuard, 'sweep'>;
+  production: () => Pick<ProductionSubsystem, 'pulse'>;
+  researchLabs: () => Pick<ResearchLabSubsystem, 'pulse'>;
+  storage: () => Pick<StorageService, 'flushDirty'>;
+  mineField: () => Pick<MineFieldSubsystem, 'mines' | 'tick'>;
+  turretTargeting: () => Pick<TurretTargeting, 'turretTargetGridFresh' | 'npcTargetGridFresh'>;
+  relationCtx: () => RelationContext;
+  testTeleportFullCharge: () => boolean;
+  /** The room's `rebuildStructuresSlice` (stores the targets slice it returns). */
+  rebuildStructuresSlice: () => void;
+  broadcastGridPulse: (msg: GridPulseEvent) => void;
 }
 
 export class StructuresSliceSync {
   /** A2 — entityId key → generation last synced (stale-row sweep, alloc-free). */
   private readonly structureStateGen = new Map<string, number>();
   private structureStateGeneration = 0;
+
+  /** Coastal defences — the defence turrets' angles, rebuilt each turret tick
+   *  into one reused array (#14); undefined while every turret rests. */
+  private readonly structureMountAnglesBuf: number[] = [];
+  structureMountAnglesSlice: SnapshotMessage['structureMountAngles'] = undefined;
 
   constructor(private readonly h: StructuresSliceHost) {}
 
@@ -257,5 +296,106 @@ export class StructuresSliceSync {
       const eid = h.swarmRegistry.get(other)?.entityId;
       if (eid !== undefined) st.connTo.push(eid);
     }
+  }
+
+  // ── Structure grid pulse (structures plan, Phase 3) ──────────────────────
+
+  /** One 1 Hz grid heartbeat: pulse the logistics web, refresh the snapshot
+   *  slice, and broadcast the discrete `grid_pulse` flash event. No-op (and no
+   *  broadcast) when the sector has no structures. */
+  gridTick(): void {
+    const h = this.h;
+    h.hostileActs().sweep(h.gameClock.now());
+    if (h.patrols.count > 0) h.patrols.tick(h.gameClock.now());
+    h.gateGuard.sweep(h.gameClock.now());
+    if (h.structureRegistry.size === 0) return;
+    const result = h.structureGrid().pulse(h.gameClock.now());
+    // P2b — processors take inputs from and put outputs into network storage.
+    h.production().pulse();
+    // v4 T1 — teleporter pads unload arrivals and top up "keep loaded".
+    h.teleporters().pulse();
+    // Economy v2 W3 — powered Research Labs advance their jobs.
+    h.researchLabs().pulse();
+    // Living World P1a-2 — persist storage payloads the pulse just changed
+    // (mining / hauling / construction flows mutate the bank directly).
+    h.storage().flushDirty();
+    // Form/teardown pylon-pair walls + refresh their active state on the fresh
+    // topology BEFORE the slice rebuild so `shieldWallTo`/`wallActive` are current.
+    h.shieldWalls().update(h.gameClock.now());
+    h.rebuildStructuresSlice();
+    if (result.flashed.length > 0) {
+      // Map the registry's string-id pairs to dense entityIds for the wire,
+      // carrying each edge's flow MATERIAL (WS-D #12) so the client tints
+      // per-edge (repair/minerals/construction can co-occur in one pulse).
+      const flashed: Array<[number, number, GridFlowMaterial]> = [];
+      for (const [a, b, material] of result.flashed) {
+        const ea = h.swarmRegistry.get(a)?.entityId;
+        const eb = h.swarmRegistry.get(b)?.entityId;
+        if (ea !== undefined && eb !== undefined) flashed.push([ea, eb, material]);
+      }
+      if (flashed.length > 0) {
+        h.broadcastGridPulse({ type: 'grid_pulse', flashed, material: result.material });
+      }
+    }
+  }
+
+  /** Coastal defences — pack every defence turret that is off its rest
+   *  bearing into the snapshot's `structureMountAngles` (the server's slewed
+   *  angles, the only writer, #12). One reused array (#14). */
+  private rebuildStructureMountAngles(): void {
+    const h = this.h;
+    const buf = this.structureMountAnglesBuf;
+    let n = 0;
+    for (const rec of h.structureRegistry.all()) {
+      const angles = h.structureGrid().mountAnglesOf(rec.id);
+      if (angles === undefined) continue;
+      const entityId = h.swarmRegistry.get(rec.id)?.entityId;
+      if (entityId === undefined) continue;
+      n = encodeStructureMountAngles(buf, n, entityId, angles);
+    }
+    buf.length = n;
+    this.structureMountAnglesSlice = n > 0 ? buf : undefined;
+  }
+
+  /** Phase 5 — turret aim/fire tick (faster cadence than the grid pulse).
+   *  No-op when the sector has no structures. */
+  turretTick(): void {
+    const h = this.h;
+    // C2/C3 — break-ins tick even in a sector with no structures (ship targets).
+    h.breakIns.tick();
+    if (h.structureRegistry.size === 0) {
+      // Mines whose layer is gone still have to leave.
+      if (h.mineField().mines.size > 0) h.mineField().tick(h.gameClock.now());
+      return;
+    }
+    const nowMs = h.gameClock.now();
+    // A1 — the turret target grid is rebuilt (lazily, on the first query) once
+    // per turret tick, instead of every turret scanning every swarm entity.
+    h.turretTargeting().turretTargetGridFresh = false;
+    h.turretTargeting().npcTargetGridFresh = false;
+    h.relationCtx().nowMs = nowMs;
+    h.structureGrid().tickTurrets(nowMs);
+    this.rebuildStructureMountAngles();
+    // Mine Layers lay and mines go off (same target grids as the turrets).
+    h.mineField().tick(nowMs);
+    // v4 T1 — teleporter rules and jump cycles.
+    if (h.testTeleportFullCharge()) {
+      for (const r of h.structureRegistry.all()) {
+        if (isTeleporterKind(r.kind) && r.tpPartner !== undefined) r.tpCharge = Math.max(r.tpCharge ?? 0, h.teleporters().required(r));
+      }
+    }
+    h.teleporters().update(nowMs);
+    // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
+    // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
+    h.structureGrid().tickMiners(nowMs);
+    // Gates open/close on approach at this cadence; the wall refresh below
+    // then drops (or restores) each span's collider.
+    h.gates().update(nowMs);
+    // Refresh wall active states at the turret cadence so a stun lifts (and a
+    // power-loss drop registers) within ~100 ms, not a full grid pulse later.
+    h.shieldWalls().update(h.gameClock.now());
+    // Refresh the slice so the client's turret aim line tracks at the turret
+    // cadence (not just the 1 Hz pulse). Cheap — few structures, off the tick.
+    h.rebuildStructuresSlice();
   }
 }
