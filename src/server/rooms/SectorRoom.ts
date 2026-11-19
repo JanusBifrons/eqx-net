@@ -82,7 +82,6 @@ import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
 import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
-import { tallyFaction, type FactionPresenceMap } from '../livingworld/factionPresence.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem, type PackedGateResult } from '../structures/StructurePlacementSubsystem.js';
@@ -301,7 +300,7 @@ import { OreDraw } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid } from '../cargo/StorageService.js';
 import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked } from '../../core/cargo/hold.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY, liveSectorHolder } from '../livingworld/RobotTerritory.js';
-import { isLiveTerritoryLock, territoryLockRefusal } from '../structures/territoryLockRules.js';
+import { territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty } from '../../shared-types/lootTables.js';
 import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
@@ -323,6 +322,7 @@ import type { WorldNotice } from '../../shared-types/worldNotice.js';
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { SelectionStatsSubsystem } from './SelectionStatsSubsystem.js';
 import { ownerGateStats, resolveSelectionStats, type SelectionStatsResolveHost } from './selectionStatsResolve.js';
+import { sectorLiveCounts, sectorPlayerCount, type SectorLiveCountsHost } from './sectorLiveCounts.js';
 import {
   rayHitsSphere,
   rayHitsConvexPolygon,
@@ -767,6 +767,7 @@ export class SectorRoom extends Room<SectorState> {
     },
     isHostileToOwner: (playerId, owner) => relationOf(playerId, owner, this.relationCtx) === 'hostile',
   });
+  private readonly liveCountsHost: SectorLiveCountsHost = { playerToSlot: () => this.playerToSlot, getActiveShip: (pid) => this.getActiveShip(pid), swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry, patrols: this.patrols, npcHostileTo: (e, p) => this.npcHostileTo(e, p) };
   /** v4 A — the alien gates' guns: who is disabled, and for how long. */
   private readonly gateGuard = new AlienGateGuard({
     swarmSlotOf: (id) => this.swarmRegistry.get(id)?.slot,
@@ -5100,60 +5101,9 @@ export class SectorRoom extends Room<SectorState> {
   // entities, NOT Colyseus clients — they never touch onJoin / Limbo /
   // reserveSeatFor; the director performs the cross-room hop directly.
 
-  /** Active, alive, non-lingering players in this sector — the same
-   *  filter the AI view-rebuild uses (one ownership site for "who counts
-   *  as present"). The director feeds this into the desired-distribution
-   *  computation. */
-  playerCount(): number {
-    let n = 0;
-    for (const [pid] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (ship?.alive && ship.isActive) n++;
-    }
-    return n;
-  }
-
-  /** Phase-3 — live per-sector counts for the `/galaxy/snapshot` aggregation.
-   *  Read by the LivingWorldDirector on its ~1.5 s control tick (NOT the 60 Hz
-   *  update loop), so the small per-call allocation + O(drones × players) scan is
-   *  fine. A drone is an "enemy" iff it is hostile to a present active player (an
-   *  active wave); a roaming neutral squad — hostile to nobody present — counts as
-   *  `neutrals`, which matches the wave design (roamers are neutral until they
-   *  attack a based, present owner). */
-  liveCounts(): SectorLiveCounts {
-    // Present active players — the same "who counts as present" filter playerCount uses.
-    const present: string[] = [];
-    for (const [pid] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (ship?.alive && ship.isActive) present.push(pid);
-    }
-    const byFaction: FactionPresenceMap = new Map();
-    for (const pid of present) tallyFaction(byFaction, pid, 'ships');
-    let enemies = 0;
-    let neutrals = 0;
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== SWARM_KIND_DRONE) continue;
-      tallyFaction(byFaction, (this.patrols.count > 0 ? this.patrols.factionOf(rec.id) : undefined) ?? allegianceOfKind(rec.shipKind), 'ships');
-      let hostile = false;
-      for (const pid of present) {
-        if (this.npcHostileTo(rec.id, pid)) {
-          hostile = true;
-          break;
-        }
-      }
-      if (hostile) enemies++;
-      else neutrals++;
-    }
-    let playerStructures = 0;
-    let lockSides: string[] | undefined;
-    for (const rec of this.structureRegistry.all()) {
-      const o = parseOwner(rec.owner);
-      if (o.kind === 'player') playerStructures++;
-      tallyFaction(byFaction, o.faction, 'structures');
-      if (isLiveTerritoryLock(rec)) (lockSides ??= []).push(o.faction);
-    }
-    return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size, playerStructures, byFaction, lockSides };
-  }
+  /** Live player count + per-sector counts for the director (bodies in `sectorLiveCounts.ts`). */
+  playerCount(): number { return sectorPlayerCount(this.liveCountsHost); }
+  liveCounts(): SectorLiveCounts { return sectorLiveCounts(this.liveCountsHost); }
 
   /** Equinox Phase 9 (item 5) — recent-combat tally for `/galaxy/snapshot` (the
    *  galaxy-map "fighting happened here" icon + drawer breakdown), or null when
