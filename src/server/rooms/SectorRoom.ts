@@ -202,7 +202,7 @@ import { WebRtcChannelManager, type WebRtcEntryCounters } from '../transport/web
 import { nodeDataChannelPeerConnectionFactory } from '../transport/webrtcChannelFactory.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { EntitySyncRouter } from './EntitySyncRouter.js';
-import { isPilotedActive } from '../../core/entity/shipLiveness.js';
+import { isLingeringHull, isPilotedActive } from '../../core/entity/shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { BattleWreckSaves, battleWreckStore, WRECK_LINEAGE_FLUSH_MS } from './wreckLineageSaves.js';
