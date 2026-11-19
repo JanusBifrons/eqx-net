@@ -4,6 +4,44 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## A carrier capital: design notes (parked 2026-11-19)
+
+From the ship-motion mock-ups (artifact `Cn6PdAvbnU6qP4cXDf9kXR`, round 3).
+There is no carrier kind in the game yet: it would be a new capital, about
+the Destroyer's length (~2,640). The owner wants it to mirror a modern
+supercarrier. Owner decisions so far:
+
+- **Angled deck.** Fighters land on a strip angled to port while others
+  launch off the bow, so a missed landing never meets the bow park.
+- **Hangar inside the hull, never shown.** Fighters go down the lifts and
+  come back up them. There is no see-through hangar view.
+- **Lifts are part of the hull**: cut into the starboard deck edge (two
+  ahead of the island, one behind), never hung outboard. A lowered lift
+  leaves a dark hole in the deck with rails up round it. As the lift rises,
+  the fighter on it grows and brightens until it is level with the deck.
+- **Fighters taxi themselves** (they can articulate): lift → electric bow
+  catapult (two, each with a blast shield that flips up) → launch. Landing:
+  touch down, catch one of four arrestor cables (magnetic), taxi to the aft
+  lift, go below. A fighter that misses every cable goes to full power and
+  flies off the end to go round again. A guide light shows on approach.
+  Full taxi and cables, every time (owner pick).
+- **The deck is a level above normal flying**, like a deck above sea level.
+  Fighters on deck **cannot be hit**; shots hit and ships collide with the
+  hull side. After launch a fighter drops down to the normal flying level,
+  and on approach it climbs back up. This shows only as a subtle size change
+  (~6 % bigger on deck).
+- In space: no deck crew, no steam; catapults are electric.
+- Everything that moves is a part on the articulation rig (lifts = lift
+  joints, blast shields and rails = hinges, catapult shuttles and cables =
+  slides). No new system.
+
+**Why it waits:** the owner wants more design passes first, and fighters
+are being restyled by the sub-capital stream. Open questions: carrier
+size/class, number of lifts, how a player orders launches and recoveries.
+Related ideas the owner loved and parked: structures unpacking the same way
+as ships (folded hull, nano seams), the shipyard slipway, and block-built
+capitals that tie in with ship break-up.
+
 ## A proper loading screen for joining a sector (parked 2026-11-19)
 
 Found in the wreck fields stream: joining a wreck sector held the loading
