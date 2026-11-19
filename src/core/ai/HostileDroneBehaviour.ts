@@ -35,7 +35,7 @@ import {
   type ManoeuvreId,
   type TacticalContext,
   JOB_COURSE, JOB_FLOCK, JOB_GUARD, JOB_LEAVING, JOB_ORBIT, JOB_SEARCH, JOB_TRAVEL,
-  JOB_ORDER_NO_FLOCK, JOB_ORDER_REPORT, JOB_ORDER_TICK, MODE_GOAL_MOVE_TO, makePilotModeContext, makePilotModeGoal,
+  JOB_ORDER_NO_FLOCK, JOB_ORDER_TICK, MODE_GOAL_MOVE_TO, makePilotModeContext, makePilotModeGoal,
   type IPilotMode, type PilotJobId, type PilotModeContext, type PilotModeGoal, type PilotOrderModes,
 } from './tactics/manoeuvre.js';
 import { FlockMode } from './modes/flockMode.js';
@@ -139,6 +139,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Squared distance to the target picked this tick, and this ship's
    *  position last tick (activity read-out). */
   private _targetDist2 = 0;
+  /** This tick flew the fight (`tickCombat`), not a peacetime job: the
+   *  panel reads chasing / attacking. */
+  private _fought = false;
   private _lastX = 0;
   private _lastY = 0;
 
@@ -339,6 +342,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   tick(self: AiEntity, view: AiWorldView): AiIntent {
     this._aim.reset();
+    this._fought = false;
     this._moveTo.sense(view);
     this._lastX = self.x;
     this._lastY = self.y;
@@ -490,6 +494,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (this._travel.state === TRAVEL_ON_THE_WAY && (!this._travel.fights || this.eng.broadside)) return this.tickTravel(self, view, target);
     // A hunter that found a fight searches again from wherever it ends.
     if (this._search.on) this._search.reset = true;
+    this._fought = true;
     return this.tickCombat(self, view, target);
   }
 
@@ -516,13 +521,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  `order` names (`JOB_ORDER_*`, ai-pilots.md "pilotJob() precedence"). */
   private pilotJob(order: number): PilotJobId {
     if (this._leaving.until >= 0) return JOB_LEAVING;
-    if (order === JOB_ORDER_REPORT) {
-      if (this._travel.state === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
-      if (this._search.on) return JOB_SEARCH;
-      if (this._flock.leaderId !== null) return JOB_FLOCK;
-      if (this._guardReturn.on) return JOB_GUARD;
-      return JOB_ORBIT;
-    }
     if (order === JOB_ORDER_TICK && this._flock.leaderId !== null) return JOB_FLOCK;
     if (this._travel.state === TRAVEL_ON_THE_WAY) return JOB_TRAVEL;
     if (this._patrol.moveTarget !== null) return JOB_COURSE;
@@ -807,33 +805,47 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   stopAt(x: number, y: number, vx: number, vy: number): void { this._guardReturn.stopAt(this.handling, x, y, vx, vy, this._orders); }
 
   /**
-   * What the ship is doing, for the owner's fleet panel (RTS Part B slice 9),
-   * from this brain's own state: travelling ⇒ `moving`; fighting ⇒
-   * `chasing` (target beyond its fire range) or `attacking`; hunting with
-   * nothing found ⇒ `searching`; a post ⇒ `guarding` (`moving` while
-   * flying back to it); a warp-out run ⇒ `retreating`; else `idle`.
-   * Hold fire picks no target, so it reports the job it flies.
+   * What the ship is doing, for the owner's fleet panel (RTS Part B slice 9):
+   * the job `tick()` flies, picked by the same `pilotJob()` order (one
+   * source of truth). A warp-out run ⇒ `retreating`; the fight ⇒ `chasing`
+   * (target beyond its fire range) or `attacking`; travel ⇒ `moving`
+   * (`patrolling` on a patrol leg; it stays so while a non-fighting leg or a
+   * broadside capital's route fires on the move); a flock ⇒ `guarding` once
+   * with its pack, else `moving`; a course ⇒ `moving` until it arrives
+   * (`idle` there), a course onto its post reads as the post; a post ⇒
+   * `guarding` (`moving` while flying back to it); a hunt ⇒ `searching`;
+   * the orbit ⇒ `idle`. Hold fire picks no target, so it reports the job.
    */
   getActivity(): AiShipActivity {
-    const job = this.pilotJob(JOB_ORDER_REPORT);
+    let job = this.pilotJob(JOB_ORDER_TICK);
     if (job === JOB_LEAVING) return 'retreating';
-    if (job === JOB_TRAVEL && (!this._travel.fights || this._tgt.prevTargetId === null)) {
-      return this._travel.fights ? 'patrolling' : 'moving';
-    }
-    if (this._tgt.prevTargetId !== null) {
+    if (this._fought) {
       return this._targetDist2 > this.eng.fireRange * this.eng.fireRange ? 'chasing' : 'attacking';
     }
-    if (job === JOB_SEARCH) return 'searching';
-    if (job === JOB_FLOCK) {
+    // Leader not found this tick: `tick()` flew the next job.
+    if (job === JOB_FLOCK && !this._flock.live) job = this.pilotJob(JOB_ORDER_NO_FLOCK);
+    switch (job) {
+      case JOB_TRAVEL: return this._travel.fights ? 'patrolling' : 'moving';
       // With its pack (RTS squads / escorts): guarding once it is close.
-      return this._flock.isWithPack(this.kind) ? 'guarding' : 'moving';
+      case JOB_FLOCK: return this._flock.isWithPack(this.kind) ? 'guarding' : 'moving';
+      case JOB_SEARCH: return 'searching';
+      case JOB_GUARD: return this.postActivity();
+      case JOB_COURSE: {
+        const mt = this._patrol.moveTarget!, g = this._guardReturn;
+        // A course onto the post is the post held (`PatrolMode`).
+        if (g.on && mt.x === g.x && mt.y === g.y) return this.postActivity();
+        const dx = this._lastX - mt.x, dy = this._lastY - mt.y, r = shipTuning(this.kind).wingmanArrive;
+        return dx * dx + dy * dy > r * r ? 'moving' : 'idle';
+      }
+      default: return 'idle';
     }
-    if (job === JOB_GUARD) {
-      const dx = this._lastX - this._guardReturn.x;
-      const dy = this._lastY - this._guardReturn.y;
-      return dx * dx + dy * dy > this._guardReturn.r * this._guardReturn.r ? 'moving' : 'guarding';
-    }
-    return 'idle';
+  }
+
+  /** At the guard post (inside its radius) ⇒ `guarding`, else `moving`. */
+  private postActivity(): AiShipActivity {
+    const dx = this._lastX - this._guardReturn.x;
+    const dy = this._lastY - this._guardReturn.y;
+    return dx * dx + dy * dy > this._guardReturn.r * this._guardReturn.r ? 'moving' : 'guarding';
   }
 
   /** The flock leader this ship follows (null = none: it leads or flies

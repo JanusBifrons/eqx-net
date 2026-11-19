@@ -41,6 +41,9 @@ export class FlockMode implements IPilotMode {
   /** The leader this ship follows; null = none (it leads or flies alone).
    *  The brain's `pilotJob()` reads it. */
   leaderId: string | null = null;
+  /** The last `sense()` found the leader: false ⇒ `tick()` flew the next
+   *  job instead, and the panel reports that one. */
+  live = false;
   /** Squad member ids for the separation rule. Owned (copied on assignment)
    *  so the director may reuse its source array. */
   private readonly memberIds: string[] = [];
@@ -83,7 +86,8 @@ export class FlockMode implements IPilotMode {
     const resolve = view.resolveEntityInto;
     this.resolve = resolve;
     this.nav = view.nav ?? null;
-    return resolve !== undefined && this.leaderId !== null && resolve(this.leaderId, this.leader);
+    this.live = resolve !== undefined && this.leaderId !== null && resolve(this.leaderId, this.leader);
+    return this.live;
   }
 
   /** Activity: close enough to its pack to count as guarding it. */
