@@ -18,8 +18,9 @@ interface CombatEntry {
  * item 5).
  *
  * SRP: it ONLY records discrete destruction events and reports a windowed
- * summary. It is fed from the discrete combat-death hooks (`auditCombatDestruction`
- * + the `SHIP_DESTROYED` handler) — NEVER the 60 Hz loop — and read on the
+ * summary. It is fed from the discrete combat-death hooks
+ * (`auditCombatDestruction` in `combatDestructionAudit.ts` + the
+ * `SHIP_DESTROYED` handler) — NEVER the 60 Hz loop — and read on the
  * LivingWorldDirector's ~1.5 s control tick, so the small per-event push + linear
  * prune are fine (no hot-loop allocation concern). Drones count as `ship`
  * (NPC hulls); structures + bases count as `structure`.

@@ -3240,3 +3240,11 @@ outside. A long hull needs its beam on a straight and its length only where it t
 U-turn inside a lane; the fix is a just-turned bit (go straight a cell after each turn when the turning
 radius is wider than a cell), and the string-pull must not skip a doubling-back point or it hides where
 the turn really happens.
+
+## 2026-11-19 — a seed that follows the server tick rerolls every integration run
+
+A wreck's fracture seed is `fnvMixU32(fnv1a32(id), serverTick)`, and in an integration room the death
+tick follows the wall clock of `harness.advance`, so "pieces >= 1.5 radii apart 1 s after the break"
+drew four new seeds each run; a rare 3-piece split (1.3-1.5 radii) failed it a few runs in ten. A
+test that asserts on a break-up's shape pins the seed (`setWreckSeed(fnvMixU32(fnv1a32(id), TICK))`)
+and sweeps seeds offline, never trusting the tick it happens to die on.

@@ -70,7 +70,7 @@ import { effectiveShipMaxHealth, effectiveShipEnergyMax, type StatAlloc as CoreS
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { wreckKindAllowed } from '../../core/destruction/wreckKindAllowed.js';
-import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { pushNotifier } from '../push/PushNotifier.js';
 import { unregisterConnectedPlayer } from '../push/connectedPlayers.js';
@@ -213,8 +213,9 @@ import { RoomNav } from '../nav/RoomNav.js';
 import type { IAiNavRoutes } from '../../core/contracts/IAiBehaviour.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
-import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
-import { registerScenePerfRoom, unregisterScenePerfRoom, sceneSimTime, SCENE_RECENT_TICKS, type ScenePerfView } from './scene/scenePerfRegistry.js';
+import type { SceneScriptRunner, SceneStatus } from './scene/SceneScriptRunner.js';
+import { initSceneScript } from './scene/sceneRoomHooks.js';
+import { unregisterScenePerfRoom, sceneSimTime, SCENE_RECENT_TICKS, type ScenePerfView } from './scene/scenePerfRegistry.js';
 import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
@@ -302,7 +303,6 @@ import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, pa
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY, liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
-import { rollKillBounty } from '../../shared-types/lootTables.js';
 import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS } from '../../shared-types/contracts.js';
@@ -323,6 +323,7 @@ import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { SelectionStatsSubsystem } from './SelectionStatsSubsystem.js';
 import { ownerGateStats, resolveSelectionStats, type SelectionStatsResolveHost } from './selectionStatsResolve.js';
 import { sectorLiveCounts, sectorPlayerCount, type SectorLiveCountsHost } from './sectorLiveCounts.js';
+import { auditCombatDestruction, type CombatDestructionAuditHost } from './combatDestructionAudit.js';
 import {
   rayHitsSphere,
   rayHitsConvexPolygon,
@@ -768,6 +769,7 @@ export class SectorRoom extends Room<SectorState> {
     isHostileToOwner: (playerId, owner) => relationOf(playerId, owner, this.relationCtx) === 'hostile',
   });
   private readonly liveCountsHost: SectorLiveCountsHost = { playerToSlot: () => this.playerToSlot, getActiveShip: (pid) => this.getActiveShip(pid), swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry, patrols: this.patrols, npcHostileTo: (e, p) => this.npcHostileTo(e, p) };
+  private readonly combatAuditHost: CombatDestructionAuditHost = { sectorKey: () => this.sectorKey, structureRegistry: this.structureRegistry, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), payEliteBounty: (k, n, c) => this.payEliteBounty(k, n, c), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h) };
   /** v4 A — the alien gates' guns: who is disabled, and for how long. */
   private readonly gateGuard = new AlienGateGuard({
     swarmSlotOf: (id) => this.swarmRegistry.get(id)?.slot,
@@ -2893,7 +2895,7 @@ export class SectorRoom extends Room<SectorState> {
         this.testWalletSeed = Math.max(0, Math.floor(g.credits ?? 0));
       }
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
-      if (roomOpts.sceneScript !== undefined) this.initSceneScript(roomOpts.sceneScript);
+      if (roomOpts.sceneScript !== undefined) ({ runner: this.sceneRunner, tickRing: this.sceneTickRing, workerRing: this.sceneWorkerRing } = initSceneScript({ perfSource: this, serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, playerToSlot: () => this.playerToSlot, swarmSpawner: () => this.swarmSpawner, swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, swarmShield: () => this.swarmShield, swarmShieldLastDmg: () => this.swarmShieldLastDmg, aiController: () => this.aiController, broadcast: (t, m) => this.broadcast(t, m), spawnLivingWorldBot: (spec) => this.spawnLivingWorldBot(spec), snapshotRestore: this.snapshotRestore, lingeringSlots: this.lingeringSlots, fleet: this.fleet, capitalWrecks: () => this.capitalWrecks }, roomOpts.sceneScript));
       this.perfFixedLoad = roomOpts.perfFixedLoad === true;
       const twa = roomOpts.testWaveArrival;
       if (twa && Number.isFinite(twa.x) && Number.isFinite(twa.y)) this.testWaveArrivalPose = { x: twa.x, y: twa.y };
@@ -4322,7 +4324,7 @@ export class SectorRoom extends Room<SectorState> {
     // owner/kind/pose are still resolvable. Discrete boundary, off the per-tick
     // path (invariant #14). See src/server/audit/GameplayAuditLog.ts.
     if (opts.emitDestroyed) {
-      this.auditCombatDestruction(rec, opts.shooterId);
+      auditCombatDestruction(this.combatAuditHost, rec, opts.shooterId);
     }
     // Structures plan, Phase 3 — a destroyed structure must sever its grid
     // connections (StructureRegistry.remove disconnects) so the web doesn't
@@ -4372,60 +4374,6 @@ export class SectorRoom extends Room<SectorState> {
       this.scrapSpawner.notifyRemoved(rec.id);
     }
     this.swarmEvictor.evict(rec, opts);
-  }
-
-  /**
-   * Audit a confirmed combat death (structure / base / drone) with the
-   * owner / kind / sector / attacker context that answers "what happened to
-   * my base?". Called from `evictSwarmEntity` on the `emitDestroyed` branch
-   * BEFORE the structure record is removed. Asteroids (kind 0) + scrap
-   * (kind 3) are not audited. Off the per-tick path (a discrete death).
-   */
-  private auditCombatDestruction(rec: SwarmEntityRecord, shooterId?: string): void {
-    const sector = this.sectorKey ?? undefined;
-    const attackerKind = classifyAttacker(shooterId);
-    if (rec.kind === SWARM_KIND_STRUCTURE) {
-      const s = this.structureRegistry.get(rec.id);
-      if (!s) return;
-      // Equinox Phase 9 (item 5) — recent-combat tally for the galaxy map.
-      this.recentCombatLog.record('structure', this.gameClock.now());
-      auditEvent({
-        event: 'structure_destroyed',
-        sector,
-        owner: s.owner,
-        kind: s.kind,
-        attackerId: shooterId,
-        attackerKind,
-        x: s.x,
-        y: s.y,
-      });
-      // A Capital IS the base — surface the headline event alongside.
-      if (s.kind === 'capital') {
-        auditEvent({ event: 'base_destroyed', sector, owner: s.owner, attackerId: shooterId });
-      }
-    } else if (rec.kind === SWARM_KIND_DRONE) {
-      // Equinox Phase 9 (item 5) — a drone is an NPC SHIP for the combat tally.
-      this.recentCombatLog.record('ship', this.gameClock.now());
-      auditEvent({ event: 'drone_destroyed', sector, attackerId: shooterId });
-      // Living World P4a — a named elite falls (the galaxy-wide notice is the
-      // EliteDirector's, off ENTITY_DESTROYED).
-      if (rec.elite !== undefined) {
-        auditEvent({ event: 'elite_killed', sector, name: rec.elite.name, kind: rec.shipKind ?? '', attackerId: shooterId });
-        // P4c — the elite's bounty goes into the KILLER's hold (signed-in pilots).
-        if (shooterId) this.payEliteBounty(shooterId, rec.elite.name, rec.elite.bounty);
-      }
-      // Phase 4 (Leveling & XP, WS-B1) — a drone is the primary XP source. Award
-      // XP to the KILLER SHIP INSTANCE, weighted by the drone's toughness
-      // (per-kind maxHealth — tougher drones = more XP, D10). PvP hull kills are
-      // awarded separately in the SHIP_DESTROYED handler.
-      const droneMaxHealth = droneMaxHealthOf(rec) ?? 40;
-      this.shipProgression.awardKillXp(shooterId ?? '', droneMaxHealth);
-      // Economy v2 W1 — every NPC kill pays a bounty straight into the killer's
-      // WALLET (credits are virtual; pods carry goods only).
-      if (shooterId && classifyAttacker(shooterId) === 'player') {
-        getWallet().credit(shooterId, rollKillBounty(rec.shipKind, Math.random), 'kill_bounty');
-      }
-    }
   }
 
   // ── Structure grid pulse (structures plan, Phase 3) ──────────────────────
@@ -6627,58 +6575,6 @@ export class SectorRoom extends Room<SectorState> {
       wreckSubcapLive: this.capitalWrecks?.liveSubcapCount() ?? 0,
       wreckDescriptors: this.capitalWrecks?.descriptors().length ?? 0,
     };
-  }
-
-  private initSceneScript(raw: unknown): void {
-    const parsed = SceneScriptSchema.safeParse(raw);
-    if (!parsed.success) throw new Error(`invalid sceneScript: ${parsed.error.message}`);
-    this.sceneTickRing = new FrameTimeRing(36_000);
-    this.sceneWorkerRing = new FrameTimeRing(36_000);
-    registerScenePerfRoom(this);
-    this.sceneRunner = new SceneScriptRunner(parsed.data, {
-      spawn: (id, kind, x, y, warpIn) => {
-        if (warpIn) return this.spawnLivingWorldBot({ botId: id, kind, x, y });
-        if (!this.swarmSpawner.spawnDrone({ id, x, y, kind })) return false;
-        this.swarmHealth.set(id, getDroneMaxHealth(kind) ?? 40);
-        this.swarmShield.set(id, getDroneShieldMax(kind));
-        this.swarmShieldLastDmg.set(id, this.serverTick);
-        return true;
-      },
-      markHostileToAll: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        if (!rec) return;
-        const tick = this.serverTick;
-        for (const playerId of this.playerToSlot.keys()) {
-          this.aiController.markHostile(rec.id, playerId, tick);
-          this.broadcast('bot_aggro', { type: 'bot_aggro', botEntityId: `swarm-${rec.entityId}`, targetPlayerId: playerId, tick });
-        }
-      },
-      // RTS fleet perf: a parked hull owned by the first pilot, built through
-      // the same reconstruction path a restart uses (roster row + lingering
-      // slot + AI pilot), then given its mode / stance through the
-      // owner-checked fleet API. Under EQX_DISABLE_WINGMEN it just sits parked.
-      ownedHull: (kind, x, y, opts) => {
-        let owner: string | null = null;
-        for (const pid of this.playerToSlot.keys()) { owner = pid; break; }
-        if (owner === null) return false;
-        const health = opts.health ?? getShipKind(kind).maxHealth;
-        let shipId: string;
-        try {
-          shipId = getPlayerShipStore().create({ playerId: owner, userId: null, kind, sectorKey: this.sectorKey ?? 'perf', x, y, health }).shipId;
-        } catch { return false; }
-        this.snapshotRestore.restoreLingeringHulls([{
-          shipInstanceId: shipId, playerId: owner, kind, x, y, vx: 0, vy: 0, angle: 0, angvel: 0, health, shieldDown: false,
-        }]);
-        if (!this.lingeringSlots.has(shipId)) return false;
-        this.fleet.setStance(owner, [shipId], opts.stance);
-        this.fleet.setMode(owner, [shipId], opts.mode);
-        if (opts.moveTo) this.fleet.applyOrder(owner, [shipId], { kind: 'move', x: opts.moveTo.x, y: opts.moveTo.y });
-        return true;
-      },
-      // Rock-cut scene: still rocks, then each mined to a break (RockCutter.sceneCut).
-      spawnRock: (id, x, y, radius) => this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
-      cutRock: (id) => this.capitalWrecks?.rockCut.sceneCut(id) ?? false,
-    });
   }
 
   /** Living World P2 — robot reputation truce (no on-sight engagement). One Map
