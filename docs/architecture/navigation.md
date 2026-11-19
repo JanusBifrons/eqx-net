@@ -66,7 +66,7 @@ random layouts, so a lane between two walls reads exactly its half-width at the 
   (clamped to the edge).
 - Allocation-free once warm; arrays grow only for a bigger grid.
 - Cost (print-only, desktop): one fine chunk (4 096 u at 64 u cells, 64×64) with 120 rocks builds in
-  ~0.14 ms. Phone timing comes with the perf scene (slice 16).
+  ~0.14 ms. At scale: see "Cost at scale" below.
 
 ## The coarse layer (`core/nav/coarseField.ts`)
 `CoarseFieldMap` covers a whole cut field (plus room to go round it) with 2 048 u cells, from the
@@ -244,6 +244,25 @@ one it flies straight as before.
   a rock on the helm alone; the local prediction is held to the baseline's health. Triggered by
   `core/nav`, `server/nav`, `core/helm`, `client/helm` and the route wire (`tests/netgate/scenarios.ts`).
 
+## Cost at scale (perf scene `galaxy-field-nav`)
+Eight owned fighters given a fleet MOVE ~10 000 u across the sol-prime belt, A/B against the same scene
+with the field off (`--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`), 2026-11-19 at c3d0b204
+(ledgers `perf/ledger/2026-11-19T15-26-10-741Z-*-phone-proxy.json` and `...T15-38-38-977Z-*-desktop.json`):
+
+| | phone-proxy (cpu-rate 2) | desktop |
+|---|---|---|
+| server tick p95 | 0.26 → 0.44 ms (GREEN) | 0.28 → 0.33 ms (GREEN) |
+| server tick p99 | 0.36 → 0.55 ms (GREEN) | 0.38 → 0.45 ms (GREEN) |
+| client frame p95 / hitches | 16.7 → 16.7 ms, 0 → 0 (GREEN) | 16.7 → 16.7 ms, 0 → 0 (GREEN) |
+| render p95 | 0.6 → 0.75 ms (GREEN) | 0.4 → 0.4 ms (GREEN) |
+| physics worker tick p95 | 0.16 → 0.75 ms | 0.17 → 0.72 ms |
+| nav: routes / expansions / messages / in flight max | 8 / 40 505 / 24 / 8 | 8 / 40 505 / 19 / 8 |
+
+The verdict's one RED is `displayObjects` (999 → 1166): the head draws the field and the base does
+not, so it is the scene's rock, not navigation. The worker tick rise is the field's rock bodies. Eight
+routes cost ~5 000 cell expansions each on the nav worker, off the main thread; the main-thread tick
+stays under 0.6 ms p99.
+
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
   squads single file). Slice 1a: `GraphSearch` lands; `HeldSectorRoutes` moves onto it.
@@ -283,6 +302,7 @@ one it flies straight as before.
   2026-11-18 fine rebuild slice C1: structures as static obstacles (`OBSTACLE`, `obstacleSet`).
   2026-11-18 fine rebuild slice C2: resting wrecks / scrap / plain asteroids (`RestingObstacles`).
   2026-11-18 slice 16: perf scene `galaxy-field-nav` and the scene work view's nav counters (`NavField.stats`).
+  2026-11-19: the slice 16 A/B readings ("Cost at scale"); `perf:scenes` prints the nav counters.
   2026-11-19: the follower aims along the leg, not at its corner (an overshoot after a street turn cut
   toward rock). Open: the fighter's shield ball (34 u) is wider than its route clearance (30 u), so a
   perfectly flown tight leg can still brush rock.
