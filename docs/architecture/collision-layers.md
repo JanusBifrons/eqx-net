@@ -87,8 +87,8 @@ restore) for active player ships and drones.
 
 ## The cheap-circle-first perf guarantee
 
-The weapon hit-test (`SectorRoom.playerHitscanDist` /
-`playerProjectileSweep`) ALWAYS runs the cheap bounding-circle test
+The weapon hit-test (`playerHitscanDist` in `rooms/features/rayHits.ts` /
+`SectorRoom.playerProjectileSweep`) ALWAYS runs the cheap bounding-circle test
 first. Circle miss ⇒ return null (the hull is strictly inside the
 circle). Shield up ⇒ return the circle result **byte-identically** (zero
 polygon work, no `shipCollisionTriangles` lookup). Only a circle-would-
@@ -119,8 +119,8 @@ whether its shield is up, never by who flies it:
 | up | bubble: `kind.radius + shipTuning(kind).shieldPad` (= `shieldBubbleRadius`) | hull outline |
 | down | hull polygon (gated by `shipHitBound`) | hull outline |
 
-Callers: `SectorRoom.playerHitscanDist` / `playerProjectileSweep` (players and
-parked hulls), `SectorRoom.swarmRayHit` (NPC beams, structure beams, the NPC
+Callers: `playerHitscanDist` / `SectorRoom.playerProjectileSweep` (players and
+parked hulls), `swarmRayHit` (`rooms/features/rayHits.ts`; NPC beams, structure beams, the NPC
 line-of-fire gate), `PlayerFireResolver` (player beams on drones),
 `ProjectilePipeline.sweepSwarm` (bolts and shells on drones),
 `MissileSimulation` (players, parked hulls, drones), and on the client

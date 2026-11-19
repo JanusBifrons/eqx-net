@@ -116,8 +116,9 @@ Allegiance decides **targeting** only. It never decides what a shot hits.
   `WeaponMountTicker.tickCapitalMounts` (each capital turret, last, along its
   barrel from its muzzle) and `StructureGridSubsystem.fireMount` (every
   structure turret; refusing returns false so the reload is kept). All three
-  call the room (`npcShipLineBlocked` / `droneLineBlocked` /
-  `structureLineBlocked`), which runs `LineOfFireGate`. An RTS **owned hull**
+  call the room's `NpcLineOfFire` (`features/npcLineOfFire.ts`:
+  `npcShipLineBlocked` / `droneLineBlocked` / `structureLineBlocked`), which
+  runs `LineOfFireGate`. An RTS **owned hull**
   flown by the AI pilot is gated too, per barrel in
   `PlayerFireResolver.fireHull` (`hullLineBlocked`; never on a pilot's own
   fire).

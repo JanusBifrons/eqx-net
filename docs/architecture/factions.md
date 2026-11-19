@@ -97,7 +97,7 @@ The owner string is `npc:<faction>:<baseId>`, and the inspector names it ("Merro
 
 ## Standing events and your own policy (F3)
 
-**Events** (`SectorRoom.noteStandingHit`, at the one damage choke point):
+**Events** (`RoomHitStanding.noteStandingHit` in `rooms/features/hitStanding.ts`, called from `SectorRoom.applyDamage`, the one damage choke point):
 - When something of faction A hits something owned by faction B (a structure's owner, or a player's ship), B's view of A drops by `STANDING_HIT_DELTA` (−1), at most once per pair per `STANDING_HIT_WINDOW_MS` (15 s).
 - At least one side must be a player; NPC-vs-NPC politics come later.
 - The attacker's faction is a player, a structure's owner, or an NPC ship's allegiance.

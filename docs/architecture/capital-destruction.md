@@ -1288,7 +1288,7 @@ default until 2026-11-14, ON by default since (see "Switched on" below). There i
 (`CapitalWreckSubsystem`, alias `WreckSubsystem`) now reads the dying kind's
 profile instead of assuming a capital.
 
-- **Who breaks.** `SectorRoom.wreckKindAllowed`: a `capital` with
+- **Who breaks.** `RoomWreckSpawns.wreckKindAllowed` (`rooms/features/wreckSpawns.ts`): a `capital` with
   `capitalWrecks`, a `subcap` with `subcapWrecks`, unless the kind is
   composite (the havok keeps its per-component scrap; the cargo pod is
   `none`). The same three death hooks as capitals: a drone
@@ -2565,7 +2565,7 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     hull through `spawnScrapFromLingeringHull` (moved ahead of its
     broadcast), an active hull through the new `spawnWreckFromActiveHull`
     leaf dep (the wreck spawn moved out of the `SHIP_DESTROYED` handler into
-    the death policy, `SectorRoom.spawnActiveHullWreck`).
+    the death policy, `RoomWreckSpawns.spawnActiveHullWreck`).
   - **Wire.** `DestroyEvent.vaporised?: true` (emit-when-true;
     `DestroyEventSchema`, strict). An effect hint only (#16): a vaporised
     ship has no wreck descriptor, so a late joiner sees the same nothing.

@@ -1,7 +1,7 @@
 /**
  * #15 two-sided contract: the heavy beam hits by its width (owner 2026-11-15).
- * The server resolves it analytically (`SectorRoom.playerHitscanDist`,
- * `swarmRayHit`, the shared `shipHitShape` / `Weapons` helpers); the pilot's
+ * The server resolves it analytically (`playerHitscanDist`,
+ * `swarmRayHit` in `rooms/features/rayHits.ts`, the shared `shipHitShape` / `Weapons` helpers); the pilot's
  * own client predicts the same shot (the live beam end and the predicted hit)
  * through `DisplayPoseHitscan`: a Rapier disc cast against its predWorld
  * bodies (remote ships, rocks) and the same core helpers for drones at their
@@ -16,14 +16,14 @@ import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from '../../../src/core/physics/World.js';
 import type { SwarmRenderState } from '../../../src/core/contracts/IRenderer.js';
 import { DisplayPoseHitscan } from '../../../src/client/combat/displayPoseHitscan.js';
-import { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
+import { playerHitscanDist, swarmRayHit } from '../../../src/server/rooms/features/rayHits.js';
 import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
 import { beamHalfWidth } from '../../../src/core/combat/Weapons.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { shipHitBound } from '../../../src/core/combat/shipHitShape.js';
 import type { ShipState } from '../../../src/server/rooms/schema/SectorState.js';
 
-const room = SectorRoom.prototype as unknown as {
+const room = { playerHitscanDist, swarmRayHit } as unknown as {
   playerHitscanDist(s: ShipState, fx: number, fy: number, dx: number, dy: number, md: number, cx: number, cy: number, a: number, hw?: number): number | null;
   swarmRayHit(rec: object, fx: number, fy: number, dx: number, dy: number, md: number, cx: number, cy: number, a: number, hw?: number): number | null;
 };

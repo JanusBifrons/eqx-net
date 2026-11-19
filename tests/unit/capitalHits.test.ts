@@ -126,9 +126,9 @@ describe('capital hits follow the hull', () => {
     // The beam shield-ring snap (local and remote beams).
     expect(src('src/client/combat/remoteBeamRay.ts')).toContain('shipRayHit(sw.shipKind');
     expect(src('src/client/combat/displayPoseHitscan.ts')).toContain('shipRayHit(e.shipKind');
-    expect(src('src/server/rooms/SectorRoom.ts')).toContain('shipRayHit(ship.kind');
+    expect(src('src/server/rooms/features/rayHits.ts')).toContain('shipRayHit(ship.kind');
     expect(src('src/server/rooms/SectorRoom.ts')).toContain('shipSweepHit(ship.kind');
-    expect(src('src/server/rooms/SectorRoom.ts')).toContain('shipRayHit(rec.shipKind');
+    expect(src('src/server/rooms/features/rayHits.ts')).toContain('shipRayHit(rec.shipKind');
     expect(src('src/server/rooms/MissileSimulation.ts')).toContain('shipSweepHit(rec.shipKind');
   });
 });
