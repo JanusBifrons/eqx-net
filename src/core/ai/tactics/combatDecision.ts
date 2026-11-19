@@ -17,6 +17,7 @@ import {
   MANOEUVRE_BREAK,
   MANOEUVRE_FALL_BACK,
   MANOEUVRE_FLEE,
+  MANOEUVRE_HOLD,
   MANOEUVRE_KITE,
   type IManoeuvre,
   type ManoeuvreId,
@@ -139,6 +140,17 @@ export class CombatDecision {
       }
     }
     if (this.pendingId >= 0 && tick >= this.pendingAt) this.switchTo(this.pendingId as ManoeuvreId, tick, c);
+  }
+
+  /** Flee has run its clear time (or cap): the ship warps out now. */
+  fleeWarpDue(tick: number): boolean {
+    return this.picker.current === MANOEUVRE_FLEE && this.flee.wantsWarpOut(tick);
+  }
+
+  /** The warp-out stand-down: the morale lock lifts and the ship holds. */
+  standDown(c: TacticalContext): void {
+    this.moraleP.lockUntil = -1;
+    this.switchTo(MANOEUVRE_HOLD, c.tick, c);
   }
 
   /** Begin manoeuvre `id` now (a fresh dodge side, no pending switch). */

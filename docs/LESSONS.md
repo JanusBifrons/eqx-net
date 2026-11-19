@@ -3186,6 +3186,11 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Finding:** the resting touch stick fades to 40 % opacity, and a dark wash added to its own background faded with it, so the ring stayed invisible over bright asteroid rock however dark the wash was.
 - **Rule:** a readability backing goes on its own element beside the faded one (`FloatingStick`'s `-backing` layer moves with the ring but keeps full opacity); HUD panels use `HUD.color.panel` (0.72) so they read over rock.
 
+## 2026-11-18 — a test delay that holds a shared worker multiplies by the queue
+
+- **Finding:** `?artDelayMs=8000` held each bake worker for 8 s, so the 36 warm-up bakes queued at load made the pilot's own ship wait two or more rounds on CI's 3-worker pool and join-art-ready ran past its 30 s wait. Whether the delay applied at all depended on a race (the cut field's lazy import could create the shared pool first, without the delay), so the spec failed only on some CI runs and never locally.
+- **Rule:** a test delay holds back the result, never the shared resource; a page-wide pool reads its test options from the URL, not from whichever caller creates it first.
+
 ## 2026-11-18 — a per-cell worst-case bound closes gaps narrower than its slack
 
 The nav fine layer stored, per 64 u cell, a room bound valid anywhere in the cell (rocks padded half a
