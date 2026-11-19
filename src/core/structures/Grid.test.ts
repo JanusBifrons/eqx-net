@@ -19,8 +19,10 @@ import {
 function node(id: string, opts: Partial<GridNode> = {}): GridNode {
   return {
     id,
+    kind: opts.kind ?? 'solar',
     x: opts.x ?? 0,
     y: opts.y ?? 0,
+    rot: opts.rot ?? 0,
     radius: opts.radius ?? 24,
     isHub: opts.isHub ?? false,
     isCapital: opts.isCapital ?? false,

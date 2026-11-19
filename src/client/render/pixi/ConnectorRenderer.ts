@@ -51,6 +51,7 @@ import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/der
 import {
   structureMirrorToGridNode,
   ghostToGridNode,
+  blankGridNode,
   asteroidObstaclesFromSwarm,
   linkReachBoxOf,
   RockObstacleShapes, type FieldRockBodySource,
@@ -75,25 +76,6 @@ function makePreviewConn(): PreviewConn {
     getOtherNode(id: string): string | null {
       return id === this.aId ? this.bId : id === this.bId ? this.aId : null;
     },
-  };
-}
-
-/** A blank `GridNode` — fields are overwritten in place by the projection
- *  helpers. */
-function blankGridNode(): GridNode {
-  return {
-    id: '',
-    x: 0,
-    y: 0,
-    radius: 0,
-    isHub: false,
-    isCapital: false,
-    isConnector: false,
-    isShieldPylon: false,
-    maxConnections: 0,
-    powerOutput: 0,
-    powerConsumption: 0,
-    isConstructed: false,
   };
 }
 
@@ -693,7 +675,7 @@ export class ConnectorRenderer {
 
     const ghostX = this.ghostWorldX ?? preview.x;
     const ghostY = this.ghostWorldY ?? preview.y;
-    const ghost = ghostToGridNode({ kind: preview.kind, x: ghostX, y: ghostY }, this._ghostNode);
+    const ghost = ghostToGridNode(preview, this._ghostNode, ghostX, ghostY); // keeps the ghost's angle
 
     // Build the node map + adjacency + obstacle list (asteroids) for the
     // SAME canConnect the server uses, all into reused scratch.

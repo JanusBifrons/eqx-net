@@ -18,7 +18,7 @@ function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode
   const k = getStructureKind(kind);
   const { hw, hh } = structureHalfExtents(kind, rot);
   return {
-    id, x, y, radius: k.radius, halfW: hw, halfH: hh, isHub: k.isHub,
+    id, kind, x, y, rot: (rot * Math.PI) / 180, radius: k.radius, halfW: hw, halfH: hh, isHub: k.isHub,
     isCapital: kind === 'capital', isConnector: kind === 'connector', isShieldPylon: isShieldEmitterKind(kind),
     maxConnections: k.maxConnections, connectionRange: k.connectionRange,
     powerOutput: k.powerOutput, powerConsumption: k.powerConsumption, isConstructed: true,

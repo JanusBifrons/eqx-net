@@ -33,7 +33,7 @@ function build(n: number): Built {
   lat.placements.forEach((p, i) => {
     const k = getStructureKind(p.kind);
     nodes.set('s' + i, {
-      id: 's' + i, x: p.x, y: p.y, radius: k.radius, isHub: k.isHub,
+      id: 's' + i, kind: p.kind, x: p.x, y: p.y, rot: ((p.rot ?? 0) * Math.PI) / 180, radius: k.radius, isHub: k.isHub,
       isCapital: p.kind === 'capital', isConnector: p.kind === 'connector', isShieldPylon: p.kind === 'shield_pylon',
       maxConnections: k.maxConnections, connectionRange: k.connectionRange,
       powerOutput: k.powerOutput, powerConsumption: k.powerConsumption, isConstructed: true,

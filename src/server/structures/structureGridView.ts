@@ -46,8 +46,12 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
   const operational = rec.isConstructed || (rec.kind === 'capital' && rec.upgradeTargetLevel !== undefined);
   return {
     id: rec.id,
+    kind: rec.kind,
     x: rec.x,
     y: rec.y,
+    // Socket rotation: degrees on the record, radians on the node (the
+    // client's swarm angle; `rotateStructureSocket` convention).
+    rot: ((rec.rot ?? 0) * Math.PI) / 180,
     radius: rec.radius,
     halfW: rec.halfW,
     halfH: rec.halfH,

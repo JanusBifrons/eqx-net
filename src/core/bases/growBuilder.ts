@@ -47,7 +47,7 @@ export class Builder {
     this.placements.push(p);
     this.placed.push({ x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh, kind: p.kind, rot });
     this.nodes.set(`s${i}`, {
-      id: `s${i}`, kind: p.kind, x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh,
+      id: `s${i}`, kind: p.kind, x: p.x, y: p.y, rot: (rot * Math.PI) / 180, radius: k.radius, halfW: hw, halfH: hh,
       isHub: k.isHub, isCapital: p.kind === 'capital', isConnector: p.kind === 'connector',
       isShieldPylon: isShieldEmitterKind(p.kind), maxConnections: k.maxConnections,
       connectionRange: k.connectionRange, powerOutput: k.powerOutput, powerConsumption: k.powerConsumption,

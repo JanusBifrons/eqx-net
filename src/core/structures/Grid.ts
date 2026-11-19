@@ -28,8 +28,14 @@ import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
 export interface GridNode {
   id: string;
+  /** Structure kind id (0d cable sockets: `structureSockets(kind)`). */
+  kind: string;
   x: number;
   y: number;
+  /** The structure's angle in radians (CCW, Y-up game space; the
+   *  `rotateStructureSocket` / `localToWorld` convention). Server: `rot°·π/180`;
+   *  client: the swarm angle. */
+  rot: number;
   radius: number;
   /** Catalogue flag (Connector, Capital, shield emitters, big buildings). NOT
    *  read by `canConnect`: every link needs a Connector end (`isConnector`). */
