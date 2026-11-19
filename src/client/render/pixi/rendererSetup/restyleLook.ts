@@ -38,7 +38,7 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
  *  one `StructureRigs` the swarm updater poses, on either renderer path. */
 export function applyRestyleLook(
   connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean },
-  swarmUpdaterCtx: { structureRigs?: StructureRigs },
+  swarmUpdaterCtx: { structureRigs?: StructureRigs; socketNubs?: boolean },
   shipContainer: Container,
   art: ArtOptions,
   search: string | null,
@@ -47,6 +47,8 @@ export function applyRestyleLook(
   connectorRenderer.lineLook = look.lineLook;
   // 0d slice 8: links drawn as socket cables on the server's curve.
   connectorRenderer.socketCables = art.fx === true;
+  // 0d slice 10: socket nubs on the structures, same flag.
+  swarmUpdaterCtx.socketNubs = art.fx === true;
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   return look;
 }

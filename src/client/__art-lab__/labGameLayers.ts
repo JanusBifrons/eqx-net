@@ -3,7 +3,7 @@
  * restyle 2c rig views and the grid lines (`ConnectorRenderer` over a
  * minimal render mirror). Built once at scene load.
  */
-import type { Container } from 'pixi.js';
+import { Graphics, type Container } from 'pixi.js';
 import { ConnectorRenderer } from '../render/pixi/ConnectorRenderer.js';
 import { readLineLook } from '../render/pixi/connectorLineLooks.js';
 import { StructureRigView, type StructureRigInput } from '../render/pixi/structureRigs.js';
@@ -16,6 +16,7 @@ import { CABLE_NO_SOCKET, makeCableSocketPick, pickCableSocketPair } from '../..
 import type { GridNode } from '../../core/structures/Grid.js';
 import { blankGridNode, structureMirrorToGridNode } from '../structures/mirrorToGridNode.js';
 import { resolveFxMode } from '../render/art/artMode.js';
+import { socketNubContext, socketUsedMask } from '../render/pixi/structureSocketNubs.js';
 
 export interface LabRig { i: number; view: StructureRigView; input: StructureRigInput | null }
 
@@ -38,8 +39,9 @@ export function buildLabRigs(scene: Scene, rigUnderL: Container, rigPlaneL: Cont
 
 /** Grid lines: the game's ConnectorRenderer over a minimal mirror (game
  *  space is y-up, so y flips; entity ids are struct index + 1). Null when the
- *  scene has no edges. */
-export function buildLabGridLines(scene: Scene, lineL: Container): { r: ConnectorRenderer; mirror: RenderMirror } | null {
+ *  scene has no edges. With the socket cables on (`?fx=new`), each structure's
+ *  socket nubs (0d slice 10) go on top of `nubL`, from the same used sockets. */
+export function buildLabGridLines(scene: Scene, lineL: Container, nubL?: Container): { r: ConnectorRenderer; mirror: RenderMirror } | null {
   if (!(scene.edges && scene.edges.length > 0)) return null;
   const swarm = new Map<number, SwarmRenderState>();
   const structures = new Map<number, StructureRenderState>();
@@ -72,5 +74,10 @@ export function buildLabGridLines(scene: Scene, lineL: Container): { r: Connecto
   r.lineLook = readLineLook(location.search); // 1g `?lineLook=`: odd edges carry flow so the look's pulse shows
   const gridFlashes = r.lineLook ? new Map(scene.edges.filter((_, i) => i % 2 === 1).map(([p, q]) => [(Math.min(p, q) + 1) * 65536 + Math.max(p, q) + 1, 1e12])) : undefined;
   lineL.addChild(r.staticGfx, r.gfx);
+  if (r.socketCables && nubL) scene.structs.forEach((st, i) => {
+    const g = new Graphics(socketNubContext(st.id, socketUsedMask(structures.get(i + 1)!.connSockSelf)));
+    g.position.set(st.x, st.y); g.rotation = st.rot;
+    nubL.addChild(g);
+  });
   return { r, mirror: { swarm, structures, gridFlashes } as unknown as RenderMirror };
 }

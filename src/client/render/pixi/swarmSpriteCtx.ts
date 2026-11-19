@@ -97,4 +97,7 @@ export interface SwarmSpriteCtx {
   /** Structure restyle 2c (`?rigs=1`): articulated rig parts on structures.
    *  Absent (flag off) ⇒ no rig is created or posed. */
   structureRigs?: StructureRigs;
+  /** Structure restyle 0d slice 10 (new effects, `?fx=new`): socket nubs on
+   *  each structure's outline (structureSocketNubs.ts). Absent / false ⇒ none. */
+  socketNubs?: boolean;
 }

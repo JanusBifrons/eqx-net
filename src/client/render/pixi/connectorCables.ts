@@ -220,6 +220,8 @@ const CORE_HI = mixColor(CONNECTOR_IDLE_COLOR, 0x7f8c93, 0.8);
 const PLATE = mixColor(CONNECTOR_IDLE_COLOR, 0x4b5459, 0.88);
 const PLATE_HI = 0x9aa5ab;
 const ACCENT = 0x5fd8ff;
+/** The collar's palette, shared with the socket nubs (`structureSocketNubs.ts`). */
+export { OUTLINE as SOCKET_OUTLINE, PLATE as SOCKET_PLATE, PLATE_HI as SOCKET_PLATE_HI, ACCENT as SOCKET_ACCENT };
 /** Light from the top-left of the screen (as the line looks). */
 const SHADOW_DX = 0.6;
 const SHADOW_DY = 0.8;

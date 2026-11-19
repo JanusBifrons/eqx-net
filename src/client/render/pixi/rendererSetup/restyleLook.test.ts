@@ -95,4 +95,12 @@ describe('socket cables follow the new-effects flag (0d slice 8)', () => {
     applyRestyleLook(conn, {}, new Container(), workerArt, null);
     expect(conn.socketCables).toBe(true);
   });
+
+  it('socket nubs (0d slice 10) ride the same flag', () => {
+    const ctx: { socketNubs?: boolean } = {};
+    applyRestyleLook({ lineLook: null }, ctx, new Container(), { mode: 'machined', fx: true }, '');
+    expect(ctx.socketNubs).toBe(true);
+    applyRestyleLook({ lineLook: null }, ctx, new Container(), { mode: 'machined' }, '');
+    expect(ctx.socketNubs).toBe(false);
+  });
 });
