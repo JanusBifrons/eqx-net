@@ -213,8 +213,9 @@ import { RoomNav } from '../nav/RoomNav.js';
 import type { IAiNavRoutes } from '../../core/contracts/IAiBehaviour.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
-import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
-import { registerScenePerfRoom, unregisterScenePerfRoom, sceneSimTime, SCENE_RECENT_TICKS, type ScenePerfView } from './scene/scenePerfRegistry.js';
+import type { SceneScriptRunner, SceneStatus } from './scene/SceneScriptRunner.js';
+import { initSceneScript } from './scene/sceneRoomHooks.js';
+import { unregisterScenePerfRoom, sceneSimTime, SCENE_RECENT_TICKS, type ScenePerfView } from './scene/scenePerfRegistry.js';
 import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
@@ -2893,7 +2894,7 @@ export class SectorRoom extends Room<SectorState> {
         this.testWalletSeed = Math.max(0, Math.floor(g.credits ?? 0));
       }
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
-      if (roomOpts.sceneScript !== undefined) this.initSceneScript(roomOpts.sceneScript);
+      if (roomOpts.sceneScript !== undefined) ({ runner: this.sceneRunner, tickRing: this.sceneTickRing, workerRing: this.sceneWorkerRing } = initSceneScript({ perfSource: this, serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, playerToSlot: () => this.playerToSlot, swarmSpawner: () => this.swarmSpawner, swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, swarmShield: () => this.swarmShield, swarmShieldLastDmg: () => this.swarmShieldLastDmg, aiController: () => this.aiController, broadcast: (t, m) => this.broadcast(t, m), spawnLivingWorldBot: (spec) => this.spawnLivingWorldBot(spec), snapshotRestore: this.snapshotRestore, lingeringSlots: this.lingeringSlots, fleet: this.fleet, capitalWrecks: () => this.capitalWrecks }, roomOpts.sceneScript));
       this.perfFixedLoad = roomOpts.perfFixedLoad === true;
       const twa = roomOpts.testWaveArrival;
       if (twa && Number.isFinite(twa.x) && Number.isFinite(twa.y)) this.testWaveArrivalPose = { x: twa.x, y: twa.y };
@@ -6627,58 +6628,6 @@ export class SectorRoom extends Room<SectorState> {
       wreckSubcapLive: this.capitalWrecks?.liveSubcapCount() ?? 0,
       wreckDescriptors: this.capitalWrecks?.descriptors().length ?? 0,
     };
-  }
-
-  private initSceneScript(raw: unknown): void {
-    const parsed = SceneScriptSchema.safeParse(raw);
-    if (!parsed.success) throw new Error(`invalid sceneScript: ${parsed.error.message}`);
-    this.sceneTickRing = new FrameTimeRing(36_000);
-    this.sceneWorkerRing = new FrameTimeRing(36_000);
-    registerScenePerfRoom(this);
-    this.sceneRunner = new SceneScriptRunner(parsed.data, {
-      spawn: (id, kind, x, y, warpIn) => {
-        if (warpIn) return this.spawnLivingWorldBot({ botId: id, kind, x, y });
-        if (!this.swarmSpawner.spawnDrone({ id, x, y, kind })) return false;
-        this.swarmHealth.set(id, getDroneMaxHealth(kind) ?? 40);
-        this.swarmShield.set(id, getDroneShieldMax(kind));
-        this.swarmShieldLastDmg.set(id, this.serverTick);
-        return true;
-      },
-      markHostileToAll: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        if (!rec) return;
-        const tick = this.serverTick;
-        for (const playerId of this.playerToSlot.keys()) {
-          this.aiController.markHostile(rec.id, playerId, tick);
-          this.broadcast('bot_aggro', { type: 'bot_aggro', botEntityId: `swarm-${rec.entityId}`, targetPlayerId: playerId, tick });
-        }
-      },
-      // RTS fleet perf: a parked hull owned by the first pilot, built through
-      // the same reconstruction path a restart uses (roster row + lingering
-      // slot + AI pilot), then given its mode / stance through the
-      // owner-checked fleet API. Under EQX_DISABLE_WINGMEN it just sits parked.
-      ownedHull: (kind, x, y, opts) => {
-        let owner: string | null = null;
-        for (const pid of this.playerToSlot.keys()) { owner = pid; break; }
-        if (owner === null) return false;
-        const health = opts.health ?? getShipKind(kind).maxHealth;
-        let shipId: string;
-        try {
-          shipId = getPlayerShipStore().create({ playerId: owner, userId: null, kind, sectorKey: this.sectorKey ?? 'perf', x, y, health }).shipId;
-        } catch { return false; }
-        this.snapshotRestore.restoreLingeringHulls([{
-          shipInstanceId: shipId, playerId: owner, kind, x, y, vx: 0, vy: 0, angle: 0, angvel: 0, health, shieldDown: false,
-        }]);
-        if (!this.lingeringSlots.has(shipId)) return false;
-        this.fleet.setStance(owner, [shipId], opts.stance);
-        this.fleet.setMode(owner, [shipId], opts.mode);
-        if (opts.moveTo) this.fleet.applyOrder(owner, [shipId], { kind: 'move', x: opts.moveTo.x, y: opts.moveTo.y });
-        return true;
-      },
-      // Rock-cut scene: still rocks, then each mined to a break (RockCutter.sceneCut).
-      spawnRock: (id, x, y, radius) => this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
-      cutRock: (id) => this.capitalWrecks?.rockCut.sceneCut(id) ?? false,
-    });
   }
 
   /** Living World P2 — robot reputation truce (no on-sight engagement). One Map
