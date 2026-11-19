@@ -120,10 +120,10 @@ describe('A0 — structure scale measurement', () => {
     const priv = room as unknown as {
       structureGrid: { tickTurrets(now: number): void; tickMiners(now: number): void };
       shieldWalls: { update(now: number): void };
-      turretTargetGridFresh: boolean;
+      turretTargeting: { turretTargetGridFresh: boolean };
     };
     const parts = {
-      tickTurrets: time(() => { priv.turretTargetGridFresh = false; priv.structureGrid.tickTurrets(Date.now()); }, 40),
+      tickTurrets: time(() => { priv.turretTargeting.turretTargetGridFresh = false; priv.structureGrid.tickTurrets(Date.now()); }, 40),
       tickMiners: time(() => priv.structureGrid.tickMiners(Date.now()), 40),
       shieldWallsUpdate: time(() => priv.shieldWalls.update(Date.now()), 40),
       sliceRebuild: rebuild,

@@ -4,7 +4,7 @@
  * (`mountWeaponReach`: XL keeps 12,000 u, S ≈ 5,455 u). A rock 8,000 u off
  * the bow: the XL laser fires on it, the S laser on the same ship and the same
  * lock is refused by the player fire gate (`PlayerFireResolver` →
- * `SectorRoom.mountBearsOnLock`), spending nothing.
+ * `FireControlLocks.mountBearsOnLock`), spending nothing.
  *
  * No ship kind carries mining lasers of two sizes yet: a gunship with its
  * `forward` gun swapped to an XL mining laser and its `rear` gun to an S one

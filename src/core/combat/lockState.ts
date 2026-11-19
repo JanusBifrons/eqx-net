@@ -18,7 +18,7 @@ import { SWARM_KIND_ASTEROID, SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_STR
 
 /**
  * Lock eligibility of a swarm entity kind — the ONE predicate the server
- * (`SectorRoom.resolveLockTarget`), the client lock line
+ * (`FireControlLocks.resolveLockTarget`), the client lock line
  * (`ColyseusClient.updateLockGuide`) and missile seekers share (#15).
  * Contacts (NPC ships, structures) are what fire control is about; terrain
  * (asteroids, scrap / loot pods, wreck pieces) is lockable too, as a NEUTRAL

@@ -97,7 +97,7 @@ export function fillRangeShape(
 
 /**
  * Fill `out` for a target at (x, y, angle): its centre, ship flag and range
- * shape (`fillRangeShape`). The server's `SectorRoom.resolveLockTarget` (swarm
+ * shape (`fillRangeShape`). The server's `FireControlLocks.resolveLockTarget` (swarm
  * record / pilot ship) and the client's `fcTargetPose` (swarm wire / ship
  * mirror) both use it (#15).
  */
@@ -114,7 +114,7 @@ export function fillFireTargetShape(
 /**
  * THE player fire gate for one mount: the target is within the mount's reach
  * (`mountInReach` from the mount to the hit shape) AND its barrel bears on it (`mountBearsOn`). The
- * server's `PlayerFireResolver` (via `SectorRoom.mountBearsOnLock`) and the
+ * server's `PlayerFireResolver` (via `FireControlLocks.mountBearsOnLock`) and the
  * client's fire passes (`fcGroupBears`, `fcFireMounts`, the ghost gate) all
  * call this (#15, #19).
  */

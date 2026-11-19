@@ -5,7 +5,7 @@
  * (`AutopilotRoutes`). The room keeps one of these and nothing else of nav.
  */
 import type { Logger } from 'pino';
-import { getNavWorker, type NavField } from './NavWorker.js';
+import { getNavWorker, type NavField, type NavFieldStats } from './NavWorker.js';
 import { NavRoutes } from './NavRoutes.js';
 import { AutopilotRoutes, type AutopilotHull } from './AutopilotRoutes.js';
 import type { CutFieldNavSink } from '../rooms/CutFieldSubsystem.js';
@@ -117,6 +117,9 @@ export class RoomNav {
 
   /** Does this AI ship wait short of its goal (slice 9's `blocked`)? */
   waiting(id: string): boolean { return this.routes?.waiting(id) === true; }
+
+  /** The hosted field's running totals (perf scenes), or null with no field. */
+  get stats(): NavFieldStats | null { return this.field?.stats ?? null; }
 
   /** A swarm body left the world (`SwarmEvictor`, the one removal site). */
   swarmGone(id: string): void { this.resting?.gone(id); }

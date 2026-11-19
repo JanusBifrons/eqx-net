@@ -43,6 +43,8 @@ describe('NavWorker', () => {
     expect(nav.inFlight).toBe(2);
     const [x, y] = await Promise.all([across, clear]);
     expect(nav.inFlight).toBe(0);
+    expect(a.stats).toMatchObject({ routes: 2, inFlight: 0, expanded: x.expanded + y.expanded });
+    expect(a.stats.posts).toBeGreaterThanOrEqual(3); // ADD_FIELD + two routes
     expect(x.status).toBe('route');
     expect(x.points.length).toBeGreaterThan(2);
     expect(Array.from(x.points.slice(-2))).toEqual([R, 0]);

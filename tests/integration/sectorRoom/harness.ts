@@ -189,7 +189,7 @@ export async function bootSectorTestServer(opts: {
   npcBases?: ReadonlyArray<Record<string, unknown>>;
   /** T1 — seed the sector's own NPC base (as galaxy rooms do). */
   galaxyBases?: boolean;
-  /** v4 A — seed the alien gates (`SectorRoom.seedAlienGates`). */
+  /** v4 A — seed the alien gates (`TeleporterSubsystem.seedAlienGates`). */
   alienGates?: boolean;
   /** Phase 4 — solar-system sector rules for this room (warp-to). */
   solarSectors?: boolean;

@@ -7,7 +7,7 @@
  * (`fcFireMounts`) measured mount → target CENTRE against reach × √1.1, so a
  * battleship's AA (reach ~1,428 u) never fired at a battleship lying alongside
  * (centres 1,700 u apart, hull ~1,200 u from the starboard AA): the client
- * never sent the shot. The server's gate (`SectorRoom.mountBearsOnLock`) and
+ * never sent the shot. The server's gate (`FireControlLocks.mountBearsOnLock`) and
  * these passes now call the one `mountFiresOn`, on a target shape both sides
  * fill with the one `fillFireTargetShape`.
  *
@@ -84,7 +84,7 @@ describe('client fire pass: per-mount range to the hull (fcFireMounts)', () => {
     const kind = getShipKind('battleship');
     const aa = new Set(kind.slots!.find((s) => s.id === 'aa')!.mountIds);
     const t = newFireTargetShape();
-    // SectorRoom.fillSwarmFireShape's inputs: rec.kind, rec.shipKind, !rec.shieldDown, rec.radius.
+    // FireControlLocks.fillSwarmFireShape's inputs: rec.kind, rec.shipKind, !rec.shieldDown, rec.radius.
     fillFireTargetShape(t, e.x, e.y, e.angle, e.kind === 1, e.shipKind ?? null, e.shieldDown !== true, e.radius);
     const angles = c.mirror.ships.get(ME)!.mountAngles!;
     const out: string[] = [];

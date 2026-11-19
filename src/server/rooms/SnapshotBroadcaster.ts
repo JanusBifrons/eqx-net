@@ -926,7 +926,7 @@ export class SnapshotBroadcaster {
         // A hull its owner just took back (isActive=false through the join
         // handshake, out of `lingeringSlots`) is keyed by its pilot already:
         // reading it by shipInstanceId snapped its turrets home for the
-        // handshake (seamless hand-over, `SectorRoom.shipKeyMoved`).
+        // handshake (seamless hand-over, `PilotSwap.shipKeyMoved`).
         const angles = d.playerMountAngles.get(
           d.lingeringSlots.has(ship.shipInstanceId) ? ship.shipInstanceId : ship.playerId,
         );

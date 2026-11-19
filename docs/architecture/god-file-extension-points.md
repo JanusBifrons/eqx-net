@@ -12,11 +12,22 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 | To add | Do this | Status |
 |---|---|---|
-| A client→server message | A `register<Feature>(host)` file in `src/server/rooms/features/` that registers each message through `parsedMessage` (zod parse at the boundary, malformed tracker on failure), plus one row in `features/index.ts`. Reference: `registerTeleportMessages` (`features/teleportMessages.ts`). | live |
+| A client→server message | A `register<Feature>(host)` file in `src/server/rooms/features/` that registers each message through `parsedMessage` (zod parse at the boundary, malformed tracker on failure), plus one row in `features/index.ts`. Reference: `registerTeleportMessages` (`features/teleportMessages.ts`). The room registers no message itself: even flight control, transit and pilot seats are features (`controlMessages.ts`, `transitMessages.ts`, `pilotMessages.ts`). | live |
 | A test-only `test_*` handler | `features/devTestMessages.ts`, gated on testMode or `EQX_ALLOW_DEV_OVERRIDES` (`TestMessageHandlers`). | live |
 | A new subsystem | Construct it in its feature's register function; return `{ dispose }`; periodic work via `gameClock.every` + `guarded`; never a new field + `new X()` in `onCreate`. | planned |
-| Join / leave / respawn logic | `JoinHandler` (`join/`) / `LeaveHandler` / `RespawnHandler` classes. | live |
+| Join / leave / respawn logic | `JoinHandler` (`join/`) / `LeaveHandler` / `RespawnHandler` classes. The warp-in handshake (`client_ready`, the per-tick pending-join drain) is `join/joinHandshake.ts`, reached as `joinHandler.clientReady` / `drainPending`. | live |
+| Sector-snapshot rows and restores (scrap / lingering-hull rows; structure / scrap / lingering-hull restore on hydrate) | `SectorSnapshotRestore` (`SectorSnapshotRestore.ts`), held as `snapshotRestore` on the room with a narrow `Pick`-typed host; `SectorPersistence` keeps the payload, DB rows and hydrate order and calls it through its deps. | live |
 | A tick-phase step | A function taking a narrow ctx, like `runAiTick(ctx)` (`aiTickRunner.ts`). | live |
+| Fire-control lock logic (lock-key resolution, the lock machines' deps, the mount-on-lock gates) | `FireControlLocks` (`features/fireControlLocks.ts`), held as `fireLocks` on the room with a narrow `Pick`-typed host. | live |
+| Room-side fleet hooks (the per-tick fleet command cap, the `fleet_status` stream and its send-soon flush, owned-hull retaliation and morale notes, spectate / command-view entry, fleet-warp hull poses) | `FleetRoomHooks` (`features/fleetRoomHooks.ts`), held as `fleetHooks` on the room with a narrow `Pick`-typed host; the fleet message handlers stay `registerFleetMessages` (`features/fleetMessages.ts`). | live |
+| Taking or letting go of a hull's controls in-room (displace the active hull to a parked one, reclaim a parked hull, the one ship re-key seam `shipKeyMoved`; the spectate-parked hull readers `engageablePilotHull` / `visitParkedPilotHulls`) | `PilotSwap` (`features/pilotSwap.ts`), held as `pilotSwap` on the room with a narrow `Pick`-typed host; the `pilot_ship` / `spectate` / `command` handlers stay `registerPilotMessages` (`features/pilotMessages.ts`). | live |
+| A ship's end-of-life teardown (ownerless eviction, abandon → scrap or wreck for active and lingering hulls, a lingering hull's combat death) | `OwnerlessShipEvictor` (`OwnerlessShipEvictor.ts`), held as `ownerlessShipEvictor` on the room, built in `onCreate` with a narrow deps object. | live |
+| Break-in start / end hooks and the C3 ship cargo targets (`shipTarget`, `shipTargetById`, the cargo-range check `pilotNearPoint`, ship break-in time) | `BreakInHooks` (`features/breakInHooks.ts`), held as `breakInHooks` on the room with a narrow `Pick`-typed host; the cargo / break-in handlers and the C3 ship cargo move (`shipCargo`, `moveBetweenHolds`) stay `registerCargoMessages` (`features/cargoMessages.ts`). | live |
+| Boot seeding of NPC structures (galaxy and test-room NPC bases with their garrison patrols; alien gates; pocket pads) | `seedGalaxyBase` / `seedNpcBases` (`src/server/bases/NpcBaseSubsystem.ts`) and `seedAlienGates` / `seedPocketPads` (`src/server/structures/TeleporterSubsystem.ts`), called from `onCreate` with the room's `npcSeedHost` (built once, narrow `NpcBaseSeedHost` / `NpcGateSeedHost`). | live |
+| The `TransitHostRoom` adapter the `TransitOrchestrator` reads (ship health / kind / live hull, fleet-warp hold, release, anchor and hull hand-off) | `transitHostRoom(host)` (`features/transitMessages.ts`), built once in `onCreate` with a narrow `TransitRoomHost`; the room keeps `handOffHullsTo`. | live |
+| Who rides a teleporter jump (same-sector pad swap, the cross-sector collect-then-dispatch, the boarding count, the iris spans) | `TeleportPadRiders` (`features/teleportMessages.ts`), held as `padRiders` on the room with a narrow `TeleportRiderHost`; the parked-hull hand-off stays the room's `handOffHullsTo`. | live |
+| The physics worker's contact batch (collision broadcast, ramming damage) | `handleContactBatch` (`contactFilter.ts`) with a `ContactBatchHost` built once in `spawnWorker`. | live |
+| Loot collector hooks (who collects, the pickup notice, the auto-deposit dwell pass and the hand-moved-cargo set) | `LootCollectors` (`src/server/cargo/LootCollectors.ts`), held as `lootCollectors` on the room with a narrow deps object; pods and pickup stay `LootSubsystem`. | live |
 
 ## Server: `src/server/index.ts` (`src/server/CLAUDE.md`)
 
@@ -75,8 +86,8 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | To add | Do this | Status |
 |---|---|---|
 | A combat move | An `IManoeuvre` in `src/core/ai/tactics/` (`manoeuvre.ts`). | live |
-| An order / stance / non-combat mode | An `IPilotMode` file in `src/core/ai/modes/` (lifecycle next to `IManoeuvre` in `tactics/manoeuvre.ts`) plus a case in `pilotJob()`. Live: leaving, patrol (course + orbit), travel / patrol leg, search, flock follow, guard return. An order's state (post, travel, hunt) is fields on its mode, not the brain. | live |
-| A pilot helper the brain owns (senses, target pick, morale state) | A class in `src/core/ai/pilot/` built once in the constructor (`PilotSenses`, `TargetPick`, `PilotMorale`). Combat-side helpers (`TacticalFill`, `BroadsideHelm`, `FireLaneSteer`, `CombatDecision`, `CombatSteer`) are classes in `src/core/ai/tactics/`, built the same way. | live |
+| An order / stance / non-combat mode | An `IPilotMode` file in `src/core/ai/modes/` (lifecycle next to `IManoeuvre` in `tactics/manoeuvre.ts`) plus a case in `pilotJob()`. Live: leaving, patrol (course + orbit), travel / patrol leg, search, flock follow, guard return. An order's state (post, travel, hunt, course) is fields on its mode (the guard post also owns its radius floor, leash test and the pick's leash reach), and its setter, with the order's rules in its doc, is a method on that mode (the brain keeps a one-line delegate; cross-mode effects through `PilotOrderModes`). | live |
+| A pilot helper the brain owns (senses, target pick, morale state) | A class in `src/core/ai/pilot/` built once in the constructor (`PilotSenses`, `TargetPick`, `PilotTargeting` the hostility ledger and targeting orders, `PilotMorale` the morale timers, die and hooks (`noteDamage`, `noteCapitalLost`), `MoveToHelm` the shared fly-to, `PilotHelm` the energy pool and virtual-pilot actuation (`fly`, `trySpendEnergy`); `PilotAim` the combat lead and turret aim point (`aimPoint`); the weapon engagement profile is `engagementProfile()` in `pilot/engagementProfile.ts`, filled once). Combat-side helpers (`TacticalFill` incl. the context's fixed fields (`init`), `BroadsideHelm`, `FireLaneSteer`, `CombatDecision` incl. Flee's warp-out test and stand-down, `CombatSteer`) are classes in `src/core/ai/tactics/`, built the same way. | live |
 | A tuning number | `hostileDroneTuning.ts`. | live |
 
 ## Core: `World.ts` (`src/core/CLAUDE.md`)
@@ -94,15 +105,18 @@ Status column: **live** = the extension point exists today; **planned** = being 
 
 ## Core: `fractureHull.ts` (`src/core/CLAUDE.md`)
 
-`fractureHull.ts` keeps the plan, the crack lines and the piece split; it re-exports the moved public names (`FRACTURE_QUANTUM`, `EDGE_HULL`, `EDGE_CUT`, `FractureEdgeKind`). Every sibling stays under the determinism rules in its header and bumps `FRACTURE_ALGO_VERSION` on any output change.
+`fractureHull.ts` keeps the plan, the sound primary and the piece split; it re-exports the moved public names (`FRACTURE_QUANTUM`, `EDGE_HULL`, `EDGE_CUT`, `FRACTURE_MAX_PIECES` and the `Fracture*` types). Every sibling stays under the determinism rules in its header and bumps `FRACTURE_ALGO_VERSION` on any output change.
 
 | To add | Do this | Status |
 |---|---|---|
 | A new edge kind (`EDGE_*`) | `destruction/fractureRings.ts`; if it is jagged, add it to `jagged()` in `fractureJag.ts`. | live |
-| A ring predicate, quantising rule or piece-output field (`FracturePiece`, convex decomposition) | `destruction/fractureRings.ts`. | live |
+| A ring predicate, quantising rule or the piece builder (convex decomposition) | `destruction/fractureRings.ts`. | live |
+| An input option, plan field or piece-output field (`FractureInput`, `FracturePlan`, `FracturePiece`) | `destruction/fractureTypes.ts` (types and piece limits only, so every sibling imports it without a cycle). | live |
+| A hull measure (keel, beam, centroid, outline projection, chunky guard) | `destruction/fractureMeasure.ts`. | live |
 | A jag shape, jag repair pass or T-junction weld rule | `destruction/fractureJag.ts`. | live |
 | A splitting primitive (line clip, strip, extra cut) | `destruction/fractureSplit.ts`. | live |
-| A new crack family or plan draw | `fractureHull.ts` (`crackLines` / `planFor`) until a crack-lines module is split out. | planned |
+| A new crack family (zone, fan, far, extra chunk, splinters) | `destruction/fractureCracks.ts` (its own seeded stream). | live |
+| A plan draw | `fractureHull.ts` (`planFor`). | live |
 
 ## Shared data: `structureKinds.ts` (`src/shared-types/CLAUDE.md`)
 
