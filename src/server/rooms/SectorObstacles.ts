@@ -68,7 +68,7 @@ interface HullFilter {
  *  rock's convex hull, or an asteroid's outline wrapped as one part). */
 const partsCache = new WeakMap<object, NonNullable<GridObstacle['parts']>>();
 
-function rockParts(rec: SwarmEntityRecord): GridObstacle['parts'] {
+export function rockParts(rec: SwarmEntityRecord): GridObstacle['parts'] {
   if (rec.wreckParts) return rec.wreckParts;
   if (!rec.vertices) return undefined;
   let p = partsCache.get(rec.vertices);

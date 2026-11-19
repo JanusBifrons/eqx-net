@@ -212,11 +212,11 @@ export function initHoldStore(): { hydrated: number } {
   const store = getHoldStore();
   let rows: Array<{
     holder_uid: string; holder_type: string; owner_id: string | null; sector_key: string | null;
-    x: number | null; y: number | null; payload_json: string; expires_at: number | null;
+    x: number | null; y: number | null; payload_json: string; expires_at: number | null; look: number | null;
   }> = [];
   try {
     rows = db.prepare(
-      'SELECT holder_uid, holder_type, owner_id, sector_key, x, y, payload_json, expires_at FROM holds',
+      'SELECT holder_uid, holder_type, owner_id, sector_key, x, y, payload_json, expires_at, look FROM holds',
     ).all() as typeof rows;
   } catch (err) {
     _hydrateHealth.selectFailures += 1;
@@ -239,6 +239,7 @@ export function initHoldStore(): { hydrated: number } {
       y: row.y,
       hold: parseHoldJson(row.payload_json),
       expiresAt: row.expires_at,
+      ...(row.look !== null && row.look !== undefined ? { look: row.look } : {}),
     });
     // Economy v2 W1 — remember any pre-wallet credits for the boot migration.
     const credits = legacyHoldCredits(row.payload_json);

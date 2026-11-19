@@ -70,4 +70,29 @@ describe('stepRoute open mode + NavRoute (navigation slice 6)', () => {
     setNavRoute(r, long);
     expect([r.count, r.leg]).toEqual([NAV_ROUTE_POINTS, 0]);
   });
+
+  it('a turn is passed only once the ship draws level with it, never cut from the arrive radius', () => {
+    // Route (0,0) → corner (100,0) → (100,300): rock hugs the inside of the corner,
+    // so flying at (100,300) from 80 u short of the corner runs into it (navFollowRoute).
+    const r = createNavRoute();
+    setNavRoute(r, new Float64Array([0, 0, 100, 0, 100, 300]));
+    expect(stepNavRoute(r, 0, 0, 80)).toBe(1);
+    expect(stepNavRoute(r, 40, 0, 80)).toBe(1); // inside arrive, short of the corner: keep it
+    expect(stepNavRoute(r, 95, 3, 80)).toBe(1);
+    expect(stepNavRoute(r, 101, 4, 80)).toBe(2); // level with the corner: on to the next leg
+    // The goal (last waypoint) still arrives by distance alone.
+    expect(stepNavRoute(r, 100, 215, 80)).toBe(2);
+    expect(stepNavRoute(r, 110, 225, 80)).toBe(-1);
+  });
+
+  it('the first waypoint is a turn too, its incoming leg from the route\'s start', () => {
+    // The planner writes the points after the start: (100,0) is the first turn.
+    const r = createNavRoute();
+    setNavRoute(r, new Float64Array([100, 0, 100, 300]), 0, 0);
+    expect(stepNavRoute(r, 40, 0, 80)).toBe(0); // inside arrive, short of the turn: keep it
+    expect(stepNavRoute(r, 101, 2, 80)).toBe(1);
+    // No start known: the first waypoint is passed by distance alone, as before.
+    setNavRoute(r, new Float64Array([100, 0, 100, 300]));
+    expect(stepNavRoute(r, 40, 0, 80)).toBe(1);
+  });
 });

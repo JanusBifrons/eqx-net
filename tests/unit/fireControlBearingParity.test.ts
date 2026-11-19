@@ -35,7 +35,8 @@ describe('barrelBearsOn (#15)', () => {
 
   it('the server fire gate and the client fire passes both call the shared gate (range + bearing)', () => {
     const server = readFileSync('src/server/rooms/SectorRoom.ts', 'utf8');
-    const client = readFileSync('src/client/net/FireControlClient.ts', 'utf8') + readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
+    const client = readFileSync('src/client/net/FireControlClient.ts', 'utf8') + readFileSync('src/client/net/ColyseusClient.ts', 'utf8')
+      + readFileSync('src/client/net/fireControl/LocalFireClient.ts', 'utf8');
     // `mountFiresOn` = per-mount range to the hull (`mountInReach`) AND
     // the per-weapon bearing rule (`mountBearsOn`), on a shape both fill with
     // `fillFireTargetShape`.

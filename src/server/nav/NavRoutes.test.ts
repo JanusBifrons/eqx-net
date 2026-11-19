@@ -34,9 +34,12 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     // Ahead: to the corner plus the next leg as far as it runs the same way.
     const d = Math.hypot(490, 400), leg = Math.hypot(500, 400), cos = (490 * 500 + 400 * -400) / (d * leg);
     expect(nav.ahead).toBeCloseTo(d + leg * Math.max(0, cos), 6);
+    // Inside arrive but short of the turn (the plan started at (0, 0)): it holds the turn.
     expect(nav.waypoint('a', 480, 390, 1000, 0, 30, 50)).toBe(true);
+    expect([nav.wpX, nav.wpY]).toEqual([500, 400]);
+    expect(nav.waypoint('a', 505, 398, 1000, 0, 30, 50)).toBe(true); // level with the turn (a turn is flown, not cut)
     expect([nav.wpX, nav.wpY]).toEqual([1000, 0]);
-    expect(nav.ahead).toBeCloseTo(Math.hypot(520, 390), 6); // last leg: brake for the goal
+    expect(nav.ahead).toBeCloseTo(Math.hypot(495, 398), 6); // last leg: brake for the goal
     expect(nav.waypoint('a', 990, 0, 1000, 0, 30, 50)).toBe(false); // finished: fly the last bit as before
     expect(nav.requests).toBe(1);
     expect(nav.routed).toBe(1);
@@ -86,7 +89,7 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     expect(nav.routed).toBe(0);
     expect(nav.waypoint('a', 10, 0, 1000, 0, 30, 50)).toBe(true);
     expect([nav.wpX, nav.wpY]).toEqual([300, 200]);
-    expect(nav.waypoint('a', 290, 190, 1000, 0, 30, 50)).toBe(true);
+    expect(nav.waypoint('a', 302, 199, 1000, 0, 30, 50)).toBe(true); // level with the turn
     expect([nav.wpX, nav.wpY]).toEqual([600, 0]);
     // Arrived at the end: it stays the waypoint (wait), never the goal past it.
     expect(nav.waypoint('a', 600, 0, 1000, 0, 30, 50)).toBe(true);
