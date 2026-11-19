@@ -439,6 +439,8 @@ async function main(): Promise<void> {
       }
     }
     fxEng?.endFrame();
+    const labFlashes = lines?.mirror.gridFlashes; // a 1 Hz grid pulse: a new count each second
+    if (labFlashes) for (const k of labFlashes.keys()) labFlashes.set(k, Math.floor(t));
     lines?.r.update(lines.mirror, zoom, t * 1000);
 
     // Structure lamps: a slow, offset pulse.

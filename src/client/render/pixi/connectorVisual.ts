@@ -10,7 +10,7 @@
  * Zone-pure (no Pixi import) so the maths is unit-testable; the Graphics drawing
  * lives in `ConnectorRenderer.ts`.
  */
-import { FLASH_DURATION_MS } from '../../../core/structures/structureGridConstants.js';
+import { FLASH_DURATION_MS, TRANSFER_PULSE_MS } from '../../../core/structures/structureGridConstants.js';
 
 /** Idle (non-flowing) line tint — muted blue. */
 export const CONNECTOR_IDLE_COLOR = 0x4488aa;
@@ -342,6 +342,37 @@ export function connectorVisualInto(
   out.pulseAlpha = 0.55 + 0.4 * beat; // 0.55 floor → 0.95 on the beat (never 0 while flowing)
   out.pulseWidth = Math.max(2 / safeScale, 3.5);
   return out;
+}
+
+/**
+ * Time scale (#20): turns the `mirror.gridFlashes` pulse stamps into flow
+ * windows on the renderer's own game-time clock (`fxNow`, the `nowMs` the
+ * connector pass is handed). The net handler cannot stamp in that clock (the
+ * renderer may run in a worker with its own `GameClock`), so, like hit flashes,
+ * the renderer stamps on sight: a changed stamp on an edge is a new pulse and
+ * lights it until `nowMs + TRANSFER_PULSE_MS` of GAME time. Allocation-free
+ * per frame once each edge has been seen (#14).
+ */
+export class GridFlashClock {
+  private readonly seen = new Map<number, number>();
+  private readonly until = new Map<number, number>();
+  private nowMs = 0;
+  private readonly visit = (stamp: number, key: number): void => {
+    if (this.seen.get(key) === stamp) return;
+    this.seen.set(key, stamp);
+    this.until.set(key, this.nowMs + TRANSFER_PULSE_MS);
+  };
+
+  /** Flow-until (`nowMs` clock) per packed edge key; undefined = no pulses. */
+  sync(stamps: ReadonlyMap<number, number> | undefined, nowMs: number): ReadonlyMap<number, number> | undefined {
+    if (!stamps) return undefined;
+    // Compared by value, never by map identity: the worker path hands a fresh
+    // structured clone every frame. A count restarted by a new mirror that lands on
+    // the old value costs one pulse (the next re-stamps it).
+    this.nowMs = nowMs;
+    stamps.forEach(this.visit);
+    return this.until;
+  }
 }
 
 /**
