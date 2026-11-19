@@ -21,6 +21,12 @@ import { wreckBodyParams, wreckPieceGeometry } from '../../core/destruction/wrec
 import { chunkKey, cutFieldOpts, fieldRockBody } from '../../core/terrain/chunkStreamer.js';
 import { rocksInChunk } from '../../core/terrain/fieldLayout.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import type { GameClock } from '../../core/clock/GameClock.js';
+import { placementRejection } from '../../core/structures/placementRules.js';
+import type { GridObstacle } from '../../core/structures/Grid.js';
+import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
+import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
+import { CutFieldSubsystem } from './CutFieldSubsystem.js';
 
 const SIDES = ['ashen-league', 'vel-concord'] as const;
 const FIELD: WreckField = wreckField({ seed: 'source', x: 0, y: 0, sides: SIDES });
@@ -319,5 +325,79 @@ describe('WreckFieldSource (wreck fields 3b)', () => {
     };
     console.log(`[wreck-field budget] rock chunk cut p50 ${r.toFixed(2)} ms = 1 unit (${rocks} rocks in 25 chunks); ${line('capital')}; ${line('subcap')}; ${line('fighter')}`);
     expect(rocks).toBeGreaterThan(0);
+  });
+});
+
+describe('WreckFieldSource.dormantObstacles (wreck fields 7: placement sees unloaded hulls)', () => {
+  const d = densest(FIELD);
+  const needed = new Set([chunkKey(d.cx, d.cy)]);
+  const none = new Set<number>();
+  const hull = d.hulls.reduce((a, b) => (b.footprint > a.footprint ? b : a));
+  const box = (x: number, y: number, r = 10) => ({ x0: x - r, y0: y - r, x1: x + r, y1: y + r });
+  /** The one-streamer host with the field as its only source. */
+  function host(src: WreckFieldSource) {
+    const clock = { now: () => 0, every: () => ({ cancel: () => {} }) } as unknown as GameClock;
+    const registry = { get: () => null, all: () => [] } as unknown as SwarmEntityRegistry;
+    return new CutFieldSubsystem(null, clock, registry, {} as SwarmSpawner, {
+      shipSlots: () => [], sab: () => new Float32Array(0), post: () => {}, evict: () => {}, broadcast: () => {},
+    }, undefined, [src]);
+  }
+
+  it('a far placement over an UNLOADED hull is refused through the host query (wrecks on only); clear beside it is accepted', () => {
+    const t = make();
+    const seed = fieldHullPieces(hull).pieces;
+    const big = seed.reduce((a, b) => (b.radius > a.radius ? b : a));
+    const out: GridObstacle[] = [];
+    host(t.src).dormantObstacles(box(big.x, big.y), out, true);
+    expect(out).toContainEqual(expect.objectContaining({ x: big.x, y: big.y, radius: big.radius, angle: big.angle }));
+    expect(out.find((o) => o.x === big.x)!.parts).toEqual(big.parts);
+    expect(placementRejection('connector', big.x, big.y, [], out)).toBe('overlap-obstacle');
+    // Wrecks off (link line of sight, landing): the host gives no hull.
+    const off: GridObstacle[] = [];
+    host(t.src).dormantObstacles(box(big.x, big.y), off);
+    expect(off).toEqual([]);
+    // Clear of every hull's footprint: nothing, and the placement stands.
+    const far = { x: FIELD.x + 400_000, y: FIELD.y + 400_000 };
+    const clear: GridObstacle[] = [];
+    host(t.src).dormantObstacles(box(far.x, far.y, 200), clear, true);
+    expect(clear).toEqual([]);
+    expect(placementRejection('connector', far.x, far.y, [], clear)).toBeNull();
+    console.log(`[wreck-fields 7] dormant hull ${hull.kindId}: ${seed.length} piece(s), ${out.length} reach the box`);
+    // Cost of one placement query over an unloaded capital hull (seed fracture per call).
+    const cap = FIELD.hulls.find((h) => getShipKind(h.kindId).sizeClass === 'capital')!;
+    const ms: number[] = [];
+    for (let i = 0; i < 9; i++) { const t0 = performance.now(); t.src.dormantObstacles(box(cap.x, cap.y, 200), []); ms.push(performance.now() - t0); }
+    ms.sort((p, q) => p - q);
+    console.log(`[wreck-fields 7] placement query over an unloaded ${cap.kindId}: p50 ${ms[4]!.toFixed(2)} ms`);
+  });
+
+  it('a loaded hull gives nothing (its live pieces are already obstacles); a consumed one nothing; a saved one its row poses', () => {
+    const t = make();
+    t.src.step(needed, 100, 0);
+    const near = box(hull.x, hull.y, hull.footprint);
+    const live: GridObstacle[] = [];
+    t.src.dormantObstacles(near, live);
+    expect(live).toEqual([]);
+    // Touch (move a piece) and unload: a lineage row at the moved pose.
+    const ids = hullPieces(t, hull.key);
+    const first = t.spawned.get(ids[0]!)!;
+    t.moved.set(first.id, { x: first.x + 37, y: first.y - 11 });
+    t.src.touched(t.sys.descriptors().find((w) => t.src.hullKeyOf(w.wreckId) === hull.key)!.wreckId);
+    t.src.step(none, 100, 5000);
+    expect(t.src.rowOf(hull.key)).toBe('lineage');
+    const saved: GridObstacle[] = [];
+    t.src.dormantObstacles(near, saved);
+    const mine = saved.filter((o) => Math.hypot(o.x - hull.x, o.y - hull.y) < hull.footprint);
+    expect(mine.length).toBe(ids.length);
+    expect(mine.some((o) => Math.abs(o.x - (first.x + 37)) < 1e-9 && Math.abs(o.y - (first.y - 11)) < 1e-9)).toBe(true);
+    // Every piece gone: consumed, nothing.
+    const t2 = make();
+    t2.src.step(needed, 100, 0);
+    for (const id of hullPieces(t2, hull.key)) { t2.live.delete(id); t2.sys.pieceGone(id); }
+    t2.src.step(none, 100, 5000);
+    expect(t2.src.rowOf(hull.key)).toBe('consumed');
+    const gone: GridObstacle[] = [];
+    t2.src.dormantObstacles(near, gone);
+    expect(gone.filter((o) => Math.hypot(o.x - hull.x, o.y - hull.y) < hull.footprint * 0.5)).toEqual([]);
   });
 });

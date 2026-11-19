@@ -29,7 +29,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const COLYSEUS_CLIENT = join(__dirname, '..', '..', 'src', 'client', 'net', 'ColyseusClient.ts');
+// The probe moved with updateMirror's local-ship pass (god-file split, slice 8).
+const COLYSEUS_CLIENT = join(__dirname, '..', '..', 'src', 'client', 'net', 'mirror', 'localShipPass.ts');
 
 describe('ColyseusClient — ramming-probe alloc gate (captures ilhqk6 + lazy-mochi)', () => {
   it('the ramming_probe block is gated on isRammingProbeEnabled() (NOT isFullDiagMode — webdriver auto-on confounded the heap gate)', () => {
@@ -39,7 +40,7 @@ describe('ColyseusClient — ramming-probe alloc gate (captures ilhqk6 + lazy-mo
 
     // Walk backwards to find the nearest enclosing `isRammingProbeEnabled()`
     // call — accepts both plain `if (isRammingProbeEnabled())` and compound
-    // gates like `if (isRammingProbeEnabled() && this.mirror.swarm)`. The
+    // gates like `if (isRammingProbeEnabled() && ctx.mirror.swarm)`. The
     // gate must cover THIS probe site, not a prior one.
     const beforeProbe = src.slice(0, probeIdx);
     const lastGateIdx = beforeProbe.lastIndexOf('isRammingProbeEnabled()');

@@ -15,7 +15,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | A client→server message | A `register<Feature>(host)` file in `src/server/rooms/features/` that registers each message through `parsedMessage` (zod parse at the boundary, malformed tracker on failure), plus one row in `features/index.ts`. Reference: `registerTeleportMessages` (`features/teleportMessages.ts`). | live |
 | A test-only `test_*` handler | `features/devTestMessages.ts`, gated on testMode or `EQX_ALLOW_DEV_OVERRIDES` (`TestMessageHandlers`). | live |
 | A new subsystem | Construct it in its feature's register function; return `{ dispose }`; periodic work via `gameClock.every` + `guarded`; never a new field + `new X()` in `onCreate`. | planned |
-| Join / leave / respawn logic | `JoinHandler` / `LeaveHandler` / `RespawnHandler` classes. | Leave/Respawn live; Join planned |
+| Join / leave / respawn logic | `JoinHandler` (`join/`) / `LeaveHandler` / `RespawnHandler` classes. | live |
 | A tick-phase step | A function taking a narrow ctx, like `runAiTick(ctx)` (`aiTickRunner.ts`). | live |
 
 ## Server: `src/server/index.ts` (`src/server/CLAUDE.md`)
@@ -40,7 +40,18 @@ Status column: **live** = the extension point exists today; **planned** = being 
 |---|---|---|
 | A server→client message | Its zod schema in `src/shared-types/messages/` and a row in `ServerMessageSchemas` (`src/shared-types/messages.ts`); a `register<Feature>Handlers(room, ctx)` file in `src/client/net/handlers/` plus one row in `handlers/index.ts`. | live |
 | A per-entity timer / state machine | Its own module, like `drawnShellTiming.ts`, `damageNumberTargets.ts`. | live |
+| A per-frame mirror pass | A function `(ctx, frameNowMs, ...)` in `src/client/net/mirror/` taking the once-built `MirrorPassCtx`, plus one call in `updateMirror`, in frame order. | live |
+| A prediction-step pass (input loop, energy, sentinel) | A function `(ctx, ...)` in `src/client/net/prediction/` taking the once-built `PredictionStepCtx` (getters/setters for reassigned fields), plus one call in `tickPhysics`, in the same order. | live |
+| Sector-trip (travel) flight | `src/client/net/mirror/travelPass.ts` (`stepTravel`, the `TRAVEL_*` knobs, `travelApproach`); `updateMirror` calls it last. | live |
 | Fire control / lock state | `FireControlClient` (`src/client/net/FireControlClient.ts`; the lock line in `fireControl/LockLineClient.ts`); `ColyseusClient` keeps one-line delegates and reaches it as `this.fc`. | live |
+| Local fire / live beam | `LocalFireClient` (`src/client/net/fireControl/LocalFireClient.ts`: `sendFire`, `updateLiveBeam`, `localShipMounts`) with the once-built `LocalFireHost`; `ColyseusClient` keeps one-line delegates. | live |
+| Damage / shield / death state | A function `(ctx, ...)` in `src/client/net/damagePath.ts` taking the once-built `DamagePathCtx`; the wire side stays in `handlers/combatHandlers.ts`. | live |
+| Connection / join / room lifecycle | `src/client/net/connection/roomConnection.ts` (URL transport flags, join with timeout, DEV bandwidth tally, the DataChannel snapshot transport, `onLeave` / `onError`); `connect()` keeps the order of calls. The `welcome` handshake is `handlers/welcomeHandlers.ts` (its `WelcomeTarget` built once). | live |
+| Sector-handoff prediction reset | `resetPredictionState(ctx)` in `src/client/net/prediction/resetPrediction.ts` with the once-built `PredictionResetCtx`; `ColyseusClient` keeps a one-line delegate. New per-sector state is reset there. | live |
+| PredWorld body sync (local-body bootstrap, swarm bodies) | `tryInitPredWorld` / `syncSwarmIntoPredWorld` in `src/client/net/prediction/predWorldSync.ts`, run with the once-built `PredictionStepCtx`; `ColyseusClient` keeps one-line delegates. | live |
+| An outbound room command (pilot swap, spectate / command view, fleet orders, ship upgrades, mount activation, respawn, `client_ready`) | A function `(ctx, ...)` in `src/client/net/connection/roomCommands.ts` taking the once-built `RoomCommandsCtx`; `ColyseusClient` keeps a one-line public delegate. | live |
+| Client teardown (`dispose()`) | `disposeClient(ctx)` in `src/client/net/connection/clientTeardown.ts` with the once-built `ClientTeardownCtx` (the sector-reset ctx plus teardown-only fields). A new subsystem is disposed / cleared there. | live |
+| Room-state mines into the mirror | `MineSync` (`src/client/net/mirror/mineSync.ts`), built once; `syncStructures` calls `sync()`. | live |
 
 ## Client: `PixiRenderer.ts` and `IRenderer.ts` (`src/client/render/CLAUDE.md`)
 
@@ -50,7 +61,9 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | A step of `update()` | A pass function `(mirror, ctx)` over the pooled frame ctx (`pixi/frameCtx.ts`: live renderer fields through getters, pass state and scratch owned by the ctx), placed in order in `pixi/worldSpriteUpdater.ts`, `pixi/frameViewUpdater.ts` or `pixi/frameFeedbackUpdater.ts`; `update()` stays an ordered list of pass calls. The Pixi ticker callback is `pixi/rendererSetup/initTicker.ts`. | live |
 | A test / perf probe | A function in `pixi/rendererProbes.ts` taking `RendererProbeState` (perf / draw-count rings: `RendererPerfProbe` there), plus a one-line delegate in `PixiRenderer`. | live |
 | Per-ship renderer state that must follow a ship re-key | `shipRekey.ts` `rekeyShipVisuals` (and the thing's own `rekey(from, to)`). | live |
-| An `init` setup step (scene layers, fx systems, updater ctx wiring, DOM listeners) | A function in `pixi/rendererSetup/` taking a narrow deps object and returning what it built; `init` stays a short call sequence that assigns the results. Its teardown goes next to it (like `removeDomListeners` in `initDomListeners.ts`), called from `pixi/rendererSetup/teardown.ts` (`disposeRenderer`, `resetEffectsForSectorHandoff`). What it builds for the frame passes (updater / beam ctxs, fx systems, beam pools) and the scratch that only feeds them go on the `RendererInitState` holder (`initWiring.ts`), never a new PixiRenderer field; deps the frame refs already carry are read from `this._frame.r`. | live |
+| An `init` setup step (scene layers, fx systems, updater ctx wiring, DOM listeners) | A function in `pixi/rendererSetup/` taking a narrow deps object and returning what it built; `init` stays a short call sequence that assigns the results. Its teardown goes next to it (like `removeDomListeners` in `initDomListeners.ts`), called from `pixi/rendererSetup/teardown.ts` (`disposeRenderer`, `resetEffectsForSectorHandoff`). What it builds (scene layers, overlays, backdrop, updater / beam ctxs, fx systems, beam pools) and the scratch that only feeds them go on the `RendererInitState` holder (`initWiring.ts`), never a new PixiRenderer field; deps the frame refs already carry are read from `this._frame.r`, the rest from the renderer's host view. | live |
+| A renderer member a collaborator reads (frame refs, probes, teardown, input / camera deps, rekey) | One getter on the host view (`RendererViewHost`, built once in `PixiRenderer.viewHost`), and the matching view in `pixi/rendererSetup/rendererViews.ts` reads it. | live |
+| A bound per-sprite callback handed to the frame passes or a ctx (sprite kind, sweep cleanup, re-key step, shield pose) | A member of `RendererSpriteFns` (`spriteFnsView` in `pixi/rendererSetup/rendererViews.ts`), built once over the host view and reading its live fields at call time; never a closure field on PixiRenderer. | live |
 | A `RendererFeedback` field | Its initial value in `createRendererFeedback` and its per-frame write in `writeFrameFeedback` (`pixi/frameFeedbackUpdater.ts`). | live |
 | Pointer / touch / wheel input, an RTS command gesture or selection rule | `pixi/rendererInputController.ts` (listeners, forwarded events, placement pointers) or its base `pixi/rendererCommandRouting.ts` (command routing, THE selection); the per-frame selection / hover brackets are its `updateSelectionBrackets`. PixiRenderer keeps one-line delegates. | live |
 | Camera framing (hull zoom range, caps) or the cinematic director | `pixi/cameraDirector.ts` (`RendererCameraDirector`, built once; `updateFrame` per frame). | live |
@@ -65,6 +78,19 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | An order / stance / non-combat mode | An `IPilotMode` file in `src/core/ai/modes/` (lifecycle next to `IManoeuvre` in `tactics/manoeuvre.ts`) plus a case in `pilotJob()`. Live: leaving, patrol (course + orbit), travel / patrol leg, search, flock follow, guard return. An order's state (post, travel, hunt) is fields on its mode, not the brain. | live |
 | A pilot helper the brain owns (senses, target pick, morale state) | A class in `src/core/ai/pilot/` built once in the constructor (`PilotSenses`, `TargetPick`, `PilotMorale`). Combat-side helpers (`TacticalFill`, `BroadsideHelm`, `FireLaneSteer`, `CombatDecision`, `CombatSteer`) are classes in `src/core/ai/tactics/`, built the same way. | live |
 | A tuning number | `hostileDroneTuning.ts`. | live |
+
+## Core: `World.ts` (`src/core/CLAUDE.md`)
+
+| To add | Do this | Status |
+|---|---|---|
+| A new body shape or collider set | A builder in `src/core/physics/spawnBodies.ts` (`createShipBody`, `createObstacleBody`, `createProjectileBody`, `createWallBody`, `mountShipColliders`) called from the `PhysicsWorld` spawn method; collider settings stay in `colliderConfig.ts`. | live |
+| Warp body behaviour (spool turn, run, drop) | `src/core/physics/warpActuator.ts` (`applyPilotInput`, `botWarpStep`, `restoreWarp`); the warp state machine stays in `warpDrive.ts`. `PhysicsWorld` keeps one-line delegates. | live |
+| A shared World record type | `src/core/physics/worldTypes.ts` (`ShipBody`, `ShipInput`, `ShipPhysicsState`), so extension modules never import `World.ts`. | live |
+| A per-step pass | Its own module with a class or function called from `tick`, like `CapitalOverlapResolver` (`capitalOverlap.ts`), `SleepSettler` (`sleepSettle.ts`) or `applyForceFields` (`forceFields.ts`); scratch built once (#14). | live |
+| A ray / hitscan query | `hitscanRay.ts`; `PhysicsWorld.hitscan` stays a thin wrapper (its skip filter is `RaySkipFilter`). | live |
+| A velocity kick or impulse beyond `applyImpulse` | `src/core/physics/bodyImpulses.ts` (`addBodyVelocity`, `applyBodyImpulseAtPoint`, `applyRigidGroupImpulse`); scratch is module state built once (#14). | live |
+| Reading or writing a body pose as `ShipPhysicsState` | `src/core/physics/bodyState.ts` (`writeBodyState`, `readBodyState`, `readAllBodyStates`). | live |
+| A dev / diagnostic contact probe | `src/core/physics/contactProbe.ts` (`fastestContact`, `queryContactState`); not on a hot path. | live |
 
 ## Core: `fractureHull.ts` (`src/core/CLAUDE.md`)
 
