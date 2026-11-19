@@ -5,7 +5,9 @@
  */
 import type { Room } from 'colyseus.js';
 import { registerCombatHandlers, type CombatHandlerCtx } from './combatHandlers.js';
+import { registerDiagnosticHandlers } from './diagnosticHandlers.js';
 import { registerFieldHandlers, type FieldHandlerCtx } from './fieldHandlers.js';
+import { registerGridPulseHandlers, type GridPulseHandlerCtx } from './gridPulseHandlers.js';
 import { registerHelmHandlers, type HelmHandlerCtx } from './helmHandlers.js';
 import { registerImpactFxHandlers, type ImpactFxHandlerCtx } from './impactFxHandlers.js';
 import { registerMissileHandlers, type MissileHandlerCtx } from './missileHandlers.js';
@@ -15,9 +17,11 @@ import { registerStructurePanelHandlers, type StructurePanelHandlerCtx } from '.
 import { registerToastHandlers, type ToastHandlerCtx } from './toastHandlers.js';
 import { registerTransitHandlers, type TransitHandlerCtx } from './transitHandlers.js';
 import { registerWaveHandlers, type WaveHandlerCtx } from './waveHandlers.js';
+import { registerWebrtcSignallingHandlers, type WebrtcSignallingHandlerCtx } from '../dataChannelTransport.js';
 
 export type ClientHandlerCtx = CombatHandlerCtx &
   FieldHandlerCtx &
+  GridPulseHandlerCtx &
   HelmHandlerCtx &
   ImpactFxHandlerCtx &
   MissileHandlerCtx &
@@ -26,7 +30,8 @@ export type ClientHandlerCtx = CombatHandlerCtx &
   StructurePanelHandlerCtx &
   ToastHandlerCtx &
   TransitHandlerCtx &
-  WaveHandlerCtx;
+  WaveHandlerCtx &
+  WebrtcSignallingHandlerCtx;
 
 export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void {
   registerShipStatusHandlers(room, ctx);
@@ -39,5 +44,8 @@ export function registerClientHandlers(room: Room, ctx: ClientHandlerCtx): void 
   registerShellHandlers(room, ctx);
   registerTransitHandlers(room, ctx);
   registerCombatHandlers(room, ctx);
+  registerGridPulseHandlers(room, ctx);
+  registerDiagnosticHandlers(room);
+  registerWebrtcSignallingHandlers(room, ctx);
   registerHelmHandlers(room, ctx);
 }
