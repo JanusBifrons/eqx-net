@@ -67,10 +67,10 @@ describe('SectorRoom integration — wingmen ordered together stop and settle (R
   }
 
   function poseReader(): (id: string) => Pose {
-    const r = harness.getServerRoom() as unknown as { entityPoseInto: (id: string, out: Pose) => boolean };
+    const r = harness.getServerRoom() as unknown as { wingmen: { entityPoseInto: (id: string, out: Pose) => boolean } };
     return (id) => {
       const p: Pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-      expect(r.entityPoseInto(id, p), `${id} has a pose`).toBe(true);
+      expect(r.wingmen.entityPoseInto(id, p), `${id} has a pose`).toBe(true);
       return p;
     };
   }
