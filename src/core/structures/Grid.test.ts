@@ -10,6 +10,8 @@ import {
   type GridObstacle,
 } from './Grid.js';
 import { Connection } from './Connection.js';
+import { getStructureKind, structureSockets } from '../../shared-types/structureKinds.js';
+import { STRUCTURE_LEVEL_CAP, effectiveStructureMaxConnections } from '../leveling/structureLevel.js';
 import {
   CONNECTION_MAX_RANGE,
   CONNECTION_THROUGHPUT,
@@ -149,6 +151,28 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
     const newLeaf = solar('leafX', 100, 0);
     const r = canConnect(hub, newLeaf, adj, new Map([['hub', hub], ['leafX', newLeaf]]));
     expect(r).toEqual({ ok: false, reason: 'a-full' }); // the connector (arg a) is full
+  });
+
+  it('a top-level battery refuses a 5th link: one cable per socket (owner: max 4 cables)', () => {
+    const k = getStructureKind('battery');
+    expect(structureSockets('battery')).toHaveLength(4);
+    const unclamped = effectiveStructureMaxConnections(k.maxConnections, STRUCTURE_LEVEL_CAP);
+    const clamped = effectiveStructureMaxConnections(k.maxConnections, STRUCTURE_LEVEL_CAP, 'battery');
+    expect(unclamped).toBe(5);
+    expect(clamped).toBe(4);
+    // Either projection of the cap: canConnect clamps to sockets regardless.
+    for (const maxConnections of [unclamped, clamped]) {
+      const bat = node('bat', { kind: 'battery', x: 0, y: 0, radius: 40, maxConnections });
+      const conns: Connection[] = [];
+      for (let i = 0; i < 4; i++) conns.push(new Connection(i, 'bat', `h${i}`, CONNECTION_THROUGHPUT));
+      const hub = connector('hX', 100, 0);
+      const nodes = new Map([['bat', bat], ['hX', hub]]);
+      expect(canConnect(bat, hub, adjacencyFrom(conns), nodes)).toEqual({ ok: false, reason: 'a-full' });
+      expect(canConnect(hub, bat, adjacencyFrom(conns), nodes)).toEqual({ ok: false, reason: 'b-full' });
+      // Three links: the 4th is not refused for the cap.
+      const r3 = canConnect(bat, hub, adjacencyFrom(conns.slice(0, 3)), nodes);
+      expect(r3.ok || r3.reason !== 'a-full').toBe(true);
+    }
   });
 
   it('enforces the edge-to-edge range gate', () => {

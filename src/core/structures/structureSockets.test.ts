@@ -9,7 +9,7 @@ import {
   structureSocketToWorld,
 } from '../../shared-types/structureKinds.js';
 import { GATE_POSTS, AIRLOCK_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
-import { STRUCTURE_LEVEL_CAP, effectiveStructureMaxConnections } from '../leveling/structureLevel.js';
+import { STRUCTURE_LEVEL_CAP, effectiveStructureMaxConnections, structureLinksBoundBySockets } from '../leveling/structureLevel.js';
 import { emitterAnchor, gateTypeOf } from './gateGeometry.js';
 
 type P = { x: number; y: number };
@@ -40,20 +40,26 @@ function inside(p: P, poly: readonly P[]): boolean {
 const isGate = (k: string): boolean => gateTypeOf(k) !== null;
 
 describe('structureSockets', () => {
-  it('every kind: link cap at max level fits its sockets (connectors, gates, chamfer kinds and 0-link kinds exempt)', () => {
+  it('every socket-bound kind: link cap at every level fits its sockets (one cable per socket)', () => {
+    const clamped: string[] = [];
     for (const kind of STRUCTURE_KINDS_LIST) {
       const sockets = structureSockets(kind.id);
       expect(sockets.length, kind.id).toBeGreaterThan(0);
-      const maxLinks = effectiveStructureMaxConnections(kind.maxConnections, STRUCTURE_LEVEL_CAP);
-      // Connectors take cables from any side (faces are not a limit); gate
-      // posts are fence anchors shared by many links; kinds with 0 links
-      // take none. A chamfer kind has no corner sockets (owner: "drop corner
-      // studs"), so a small one has 4 for 5 links: cables share a socket
-      // (sockets are not exclusive), see the corner case below.
-      if (kind.id === 'connector' || isGate(kind.id) || kind.maxConnections === 0) continue;
-      if (STRUCTURE_OUTLINE_FAMILY[kind.id] === 'chamfer' && kind.id !== 'shield_pylon') continue;
-      expect(sockets.length, `${kind.id}: ${sockets.length} sockets < ${maxLinks} links`).toBeGreaterThanOrEqual(maxLinks);
+      // Connectors and shield emitters (pylon, gate, airlock) take cables from
+      // any side: their sockets are not a link limit.
+      if (!structureLinksBoundBySockets(kind.id)) {
+        expect(kind.id === 'connector' || kind.id === 'shield_pylon' || isGate(kind.id), kind.id).toBe(true);
+        continue;
+      }
+      for (let level = 1; level <= STRUCTURE_LEVEL_CAP; level++) {
+        const maxLinks = effectiveStructureMaxConnections(kind.maxConnections, level, kind.id);
+        expect(maxLinks, `${kind.id} L${level}: ${sockets.length} sockets < ${maxLinks} links`).toBeLessThanOrEqual(sockets.length);
+      }
+      // The level-1 cap is never clamped (the base catalogue already fits).
+      expect(effectiveStructureMaxConnections(kind.maxConnections, 1, kind.id), kind.id).toBe(kind.maxConnections);
+      if (effectiveStructureMaxConnections(kind.maxConnections, STRUCTURE_LEVEL_CAP) > sockets.length) clamped.push(kind.id);
     }
+    console.log(`[structureSockets] top-level cap clamped to sockets: ${clamped.join(', ')}`);
   });
 
   it('every outline socket lies on the outline with a unit outward normal', () => {
@@ -126,7 +132,7 @@ describe('structureSockets', () => {
 
   it('prints socket counts for key kinds', () => {
     const counts = ['capital', 'connector', 'solar', 'battery', 'battery_bank', 'reactor'].map(
-      (k) => `${k}=${structureSockets(k).length} (links ${effectiveStructureMaxConnections(getStructureKind(k).maxConnections, STRUCTURE_LEVEL_CAP)})`,
+      (k) => `${k}=${structureSockets(k).length} (links ${effectiveStructureMaxConnections(getStructureKind(k).maxConnections, STRUCTURE_LEVEL_CAP, k)})`,
     );
     console.log(`[structureSockets] ${counts.join(', ')}`);
   });

@@ -20,6 +20,7 @@
  */
 import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
+import { clampLinksToSockets } from '../leveling/structureLevel.js';
 import { rayHitsConvexPolygon } from '../combat/Weapons.js';
 import { convexHullCCW } from '../swarm/asteroidShape.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js';
@@ -320,9 +321,11 @@ export function canConnect(
 
   // Generic per-kind cap — SKIPPED for a pylon endpoint (its dual-cap above is the
   // authority; the pylon's `maxConnections` of 3 is less than its true 1+3=4 max).
-  if (a.isShieldPylon !== true && aConns.length >= a.maxConnections) return { ok: false, reason: 'a-full' };
+  // A socket-bound kind never holds more links than it has sockets (one cable
+  // per socket), whatever its levelled cap.
+  if (a.isShieldPylon !== true && aConns.length >= clampLinksToSockets(a.maxConnections, a.kind)) return { ok: false, reason: 'a-full' };
   const bConns = adjacency.get(b.id) ?? [];
-  if (b.isShieldPylon !== true && bConns.length >= b.maxConnections) return { ok: false, reason: 'b-full' };
+  if (b.isShieldPylon !== true && bConns.length >= clampLinksToSockets(b.maxConnections, b.kind)) return { ok: false, reason: 'b-full' };
 
   // P3.2 — UNIFORM range: every kind uses the global CONNECTION_MAX_RANGE (the
   // R2.10 Capital short-reach was reverted, "everything has the same range").
