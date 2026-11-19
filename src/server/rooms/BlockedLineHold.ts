@@ -10,7 +10,8 @@
  *
  * Every shooter goes through here: a pilot's or AI-flown hull's mount
  * (`SectorRoom.mountBearsOnLock`), an AI pilot's slot and a capital turret
- * (`npcShipLineBlocked`), a structure turret (`structureLineBlocked`).
+ * (`npcShipLineBlocked`), a structure turret (`structureLineBlocked`), all
+ * on `NpcLineOfFire` (`features/npcLineOfFire.ts`).
  *
  * The per-mount blocked-since timers live beside the mount angles in
  * `WeaponMountTicker` (one instance) and are cleared on every path that
