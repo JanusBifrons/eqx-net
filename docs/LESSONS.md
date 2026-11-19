@@ -3223,9 +3223,6 @@ Every ship death (NPC too) keeps each good in its hold only on a coin flip, salt
 a kill and failed about 40% and 50% of runs, on main as much as on any branch. The integration harness now
 defaults `keepAllOnDeath` ON; a test of the loss itself passes `false` and pins the roll.
 
-a kill and failed about 40% and 50% of runs, on main as much as on any branch. A test that asserts
-what a death drops boots with `keepAllOnDeath: true`; a test of the loss itself pins the roll.
-
 ## 2026-11-19 — brake for a corner from the angle between legs, not the bearing to it
 
 The follower braked for a route corner by how far the next leg runs the same way as the ship's bearing
