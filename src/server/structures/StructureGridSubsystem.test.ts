@@ -311,6 +311,42 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
     for (let i = 0; i < 5; i++) h.pulse();
     expect(h.registry.get(bat)!.storedPower).toBe(0);
   });
+
+  // Bug fix — every battery function keyed on kind === 'battery', so a Battery
+  // Bank (powerStorageCapacity 3000) never charged, discharged or backed a fence.
+  it('a Battery Bank charges past a single battery cap, using its own capacity', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!; // +50 surplus
+    relayConnectorRaw(h, 0, 350);
+    const bank = h.placeRaw(OWNER, 'battery_bank', 300, 650)!;
+    expect(bank).toBeTruthy();
+    build(bank, 'battery_bank');
+    for (let i = 0; i < 8; i++) h.pulse(); // +50/pulse → 400 (> a battery's 300)
+    expect(h.registry.get(bank)!.storedPower).toBe(400);
+    const capacity = getStructureKind('battery_bank').powerStorageCapacity!; // 3000
+    for (let i = 0; i < 60; i++) h.pulse();
+    expect(h.registry.get(bank)!.storedPower).toBe(capacity);
+  });
+
+  it('a Battery Bank covers a deficit and backs the fence buffer', () => {
+    h = makeHarness({ entityId: 9, x: -500, y: 700 });
+    h.placement.place(OWNER, 'capital', 0, 0)!; // +50
+    relayConnectorRaw(h, 0, 350);
+    const bank = h.placeRaw(OWNER, 'battery_bank', 300, 650)!;
+    const miner = h.placeRaw(OWNER, 'miner', -180, 420)!; // -60 once drilling
+    build(bank, 'battery_bank');
+    h.pulse();
+    h.registry.get(bank)!.storedPower = 1000;
+    build(miner, 'miner');
+    h.pulse(); // idle draw, finds the rock, starts drilling
+    h.pulse();
+    expect(h.grid.powerSummaryFor(miner).netPower).toBe(-10);
+    expect(h.grid.powerSummaryFor(miner).powered).toBe(true);
+    expect(h.registry.get(bank)!.storedPower).toBe(1028); // 1000 + 38 (idle pulse) - 10
+    // Shield-fence buffer: the bank's charge counts and drains.
+    expect(h.grid.componentBatteryCharge(miner)).toBe(1028);
+    expect(h.grid.drainComponentBatteries(miner, 128)).toBe(128);
+    expect(h.registry.get(bank)!.storedPower).toBe(900);
+  });
 });
 
 describe('StructureGridSubsystem — auto-connect on place', () => {

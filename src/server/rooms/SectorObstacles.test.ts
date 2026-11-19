@@ -14,7 +14,7 @@ function world() {
   const hulls: Hull[] = [];
   const walls: Array<[number, number, number, number, number]> = [];
   const dormant: GridObstacle[] = [];
-  const dormantFlags: Array<boolean | undefined> = [];
+  const dormantFlags: Array<boolean | 'footprints' | undefined> = [];
   const addSwarm = (kind: number, x: number, y: number, radius: number, extra: Partial<SwarmEntityRecord> = {}) => {
     const slot = swarm.length;
     const b = slotBase(slot);
@@ -25,7 +25,7 @@ function world() {
     structures: { all: () => structures },
     swarm: { all: () => swarm },
     sab: () => sab,
-    dormantRocks: (box: ObstacleBox, out: GridObstacle[], wrecks?: boolean) => {
+    dormantRocks: (box: ObstacleBox, out: GridObstacle[], wrecks?: boolean | 'footprints') => {
       dormantFlags.push(wrecks);
       for (const d of dormant) if (d.x >= box.x0 && d.x <= box.x1 && d.y >= box.y0 && d.y <= box.y1) out.push(d);
     },
@@ -96,6 +96,9 @@ describe('SectorObstacles (navigation slice 2: the one obstacle gatherer)', () =
     expect(w.g.boxes.map((b) => [b.x, b.y, b.hw, b.hh])).toEqual([[10, 20, 40, 30]]);
     expect(w.g.circles.map((c) => [c.x, c.r])).toEqual([[100, 30], [200, 70], [300, 90], [400, 500]]);
     expect(w.g.walls.map((s) => s.r)).toEqual([15]);
+    // Wreck fields 14: landing asks for unloaded wreck-field hulls too, as
+    // footprint circles (a drop never lands inside an unloaded hull).
+    expect(w.dormantFlags).toEqual(['footprints']);
   });
 
   it('landing with onlySkipShipId: own hulls are obstacles, only that ship is skipped', () => {

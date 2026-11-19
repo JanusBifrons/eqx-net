@@ -364,3 +364,30 @@ describe('CutFieldSubsystem as a host with no rocks (wreck fields R7)', () => {
     expect(out).toEqual([]);
   });
 });
+
+describe('CutFieldSubsystem streaming round a parked (LINGERING) hull', () => {
+  /** The `look` field with one hull in slot 0 at a spot where rocks lie,
+   *  reported either as a pilot's (`shipSlots`) or as parked
+   *  (`forEachLingeringSlot`: Command view parks the player's hull). */
+  function stream(as: 'pilot' | 'parked') {
+    const sab = new Float32Array(slotBase(2));
+    sab[slotBase(0) + SLOT_X_OFF] = -30_120; sab[slotBase(0) + SLOT_Y_OFF] = 26_501;
+    const clock = { now: () => 0, every: () => ({ cancel: () => {} }) } as unknown as GameClock;
+    const registry = { get: () => null, all: () => [] } as unknown as SwarmEntityRegistry;
+    let spawned = 0;
+    const spawner = { spawnAsteroid: () => { spawned++; return true; } } as unknown as SwarmSpawner;
+    const sub = new CutFieldSubsystem('look', clock, registry, spawner, {
+      shipSlots: () => (as === 'pilot' ? [0] : []),
+      forEachLingeringSlot: (visit) => { if (as === 'parked') visit(0); },
+      sab: () => sab, post: () => {}, evict: () => {}, broadcast: () => {},
+    });
+    for (let i = 0; i < 40; i++) sub.streamer.step();
+    return spawned;
+  }
+
+  it('a parked hull keeps the chunks round it loaded, as a pilot does', () => {
+    const pilot = stream('pilot');
+    expect(pilot).toBeGreaterThan(0);
+    expect(stream('parked')).toBe(pilot);
+  });
+});

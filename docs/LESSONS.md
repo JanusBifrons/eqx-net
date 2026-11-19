@@ -3215,3 +3215,10 @@ cap table in `scripts/audit-god-files.mjs`, and flaky required tests (a wall-clo
 reset the clock. Merge only a stack's top (one round lands the whole chain), resolve cap conflicts by
 taking the lower cap, and fix a flake's cause the first time. Post-mortem:
 `docs/HANDOFF-2026-11-19-pr-backlog.md`.
+
+## 2026-11-19 — a death-loss coin flip makes "the kill drops a pod" a flake
+
+Every ship death (NPC too) keeps each good in its hold only on a coin flip, salted at random per room
+(`LootSubsystem.deathSalt`). `walletKillBounty` and `tradeDeal` asserted a pod with known contents after
+a kill and failed about 40% and 50% of runs, on main as much as on any branch. The integration harness now
+defaults `keepAllOnDeath` ON; a test of the loss itself passes `false` and pins the roll.
