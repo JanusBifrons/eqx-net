@@ -20,14 +20,16 @@
  *   4. Default: sockets on the kind's (unstyled) `structureOutline` edges,
  *      `ceil(len / STRUCTURE_SOCKET_SPACING)` per edge (at least one), evenly
  *      spaced at segment midpoints. On a concave outline an edge segment whose
- *      outward ray runs back into the building (a pocket) gets no socket.
+ *      outward ray runs back into the building (a pocket) gets no socket. On a
+ *      `chamfer` outline the short cut-corner edges get no socket (owner:
+ *      "drop corner studs"), except on a shield pylon, which takes any side.
  *
  * Sockets use the UNSTYLED outline (no `styleId`), because the server has no
  * style: a style that re-seeds the outline draws its nubs from this list.
  */
 import { GATE_POSTS, AIRLOCK_POSTS } from './gatePosts.js';
 import { DEFAULT_STRUCTURE_KIND, isStructureKindId } from './lookup.js';
-import { structureOutline } from './outline.js';
+import { STRUCTURE_OUTLINE_FAMILY, structureOutline } from './outline.js';
 import type { StructureKindId } from './types.js';
 
 /** One cable socket, local space: position (x, y) and unit outward normal (nx, ny). */
@@ -95,6 +97,9 @@ function outlineSockets(id: StructureKindId): readonly StructureSocket[] {
   const poly = structureOutline(id);
   const n = poly.length;
   const oneFace = id === 'connector';
+  // Chamfer outlines alternate cut corner, long side (`chamferOutline`): the
+  // cut edges are the diagonal ones. The pylon keeps them (it takes any side).
+  const skipCorners = STRUCTURE_OUTLINE_FAMILY[id] === 'chamfer' && id !== 'shield_pylon';
   // Ray reach for the pocket test: past the whole outline.
   let reach = 0;
   for (const p of poly) reach = Math.max(reach, Math.hypot(p.x, p.y));
@@ -107,6 +112,7 @@ function outlineSockets(id: StructureKindId): readonly StructureSocket[] {
     const ey = b.y - a.y;
     const len = Math.hypot(ex, ey);
     if (len < 1e-9) continue;
+    if (skipCorners && Math.abs(ex) > 1e-9 && Math.abs(ey) > 1e-9) continue;
     // CCW outline ⇒ outward normal is the edge direction turned clockwise.
     const nx = ey / len;
     const ny = -ex / len;
