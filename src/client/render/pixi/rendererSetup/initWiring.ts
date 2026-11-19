@@ -48,8 +48,7 @@ import type { RendererFrameRefs } from '../frameCtx.js';
 import { buildSpriteUpdaterCtxs } from './initUpdaterCtxs.js';
 import { buildFxWeapons, buildBeamPoolsAndEffects, buildBeamCtx } from './initFx.js';
 import { setupMachinedArt, applyStartZoom, logInitFrameDiag, buildSceneLayers, buildOverlays, type InitTarget } from './initScene.js';
-import { readLineLook } from '../connectorLineLooks.js';
-import { readRigsFlag, StructureRigs } from '../structureRigs.js';
+import { applyRestyleLook } from './restyleLook.js';
 
 /** What `init` builds for the sprite / beam / fx passes, plus the scratch
  *  that only feeds those ctxs. Built once with the renderer. */
@@ -299,12 +298,9 @@ export function initSceneAndOverlays(s: RendererInitState, h: InitSceneHost, r: 
     spriteBuildSigs: h.swarmSpriteSigs, fxShieldPose: h.fxShieldPose, lastMirror: () => h.lastMirror,
   });
   if (effects) h.effects = effects;
-  // Structure restyle (main-thread renderer only), on by default: 1g cable line look
+  // Structure restyle (both renderer paths), on by default: 1g cable line look
   // (`?lineLook=off|pipe|conduit`) and 2c rig parts (`?rigs=0` off).
-  if (target.isDom) {
-    s.connectorRenderer.lineLook = readLineLook(window.location.search);
-    if (readRigsFlag(window.location.search)) s.swarmUpdaterCtx.structureRigs = new StructureRigs(s.shipContainer);
-  }
+  applyRestyleLook(s.connectorRenderer, s.swarmUpdaterCtx, s.shipContainer, h.artOpts, target.isDom ? window.location.search : null);
   ({
     fleetOverlay: s.fleetOverlay, labels: s.labels, selectionBracket: s.selectionBracket,
     hoverBracket: s.hoverBracket, aimFeedback: s.aimFeedback,

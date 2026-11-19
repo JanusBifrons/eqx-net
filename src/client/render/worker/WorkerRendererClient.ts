@@ -232,6 +232,8 @@ export class WorkerRendererClient implements IRenderer {
       ...(this._art.quality ? { quality: this._art.quality } : {}),
       ...(this._art.structLivery ? { structLivery: true } : {}),
       ...(this._art.structStyle ? { structStyle: this._art.structStyle } : {}),
+      ...(this._art.lineLook !== undefined ? { lineLook: this._art.lineLook } : {}),
+      ...(this._art.rigs !== undefined ? { rigs: this._art.rigs } : {}),
       // The worker has no `window`: resolve `?cleanworld=1` & co. here.
       fxKillSwitches: readFxKillSwitches(),
     }, [offscreen]);

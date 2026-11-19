@@ -27,6 +27,8 @@ export function rendererArgsFromBoot(
       ...(msg.livery ? { livery: msg.livery } : {}),
       ...(msg.structLivery ? { structLivery: true } : {}),
       ...(msg.structStyle ? { structStyle: msg.structStyle } : {}),
+      ...(msg.lineLook !== undefined ? { lineLook: msg.lineLook } : {}),
+      ...(msg.rigs !== undefined ? { rigs: msg.rigs } : {}),
       ...(msg.ore ? { ore: msg.ore } : {}),
       ...(msg.quality ? { quality: msg.quality } : {}),
     },

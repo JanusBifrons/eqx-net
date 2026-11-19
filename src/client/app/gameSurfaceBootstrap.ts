@@ -17,6 +17,7 @@
 import { PixiRenderer } from '../render/PixiRenderer.js';
 import { loadGraphicsQualityPreference, resolveGraphicsQuality } from '../render/graphicsQuality.js';
 import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, readLivery, readOreLook, readStructLivery, readStructStyle, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
+import { readRestyleLook } from '../render/pixi/rendererSetup/restyleLook.js';
 import {
   WorkerRendererClient,
   supportsOffscreenRenderer,
@@ -78,6 +79,11 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   // Structure style (structure restyle): `c` by default, `?restyle=off` = the old bakes.
   const structStyle = art.mode === 'machined' ? readStructStyle(search) : undefined;
   if (structStyle) art.structStyle = structStyle;
+  // Restyle line look + rig parts (both art modes, both renderer paths): resolved
+  // here because the render worker has no `window` (rendererSetup/restyleLook.ts).
+  const restyle = readRestyleLook(search);
+  art.lineLook = restyle.lineLook;
+  art.rigs = restyle.rigs;
   const ore = readOreLook(search); // cut-field ore look trial (F1c)
   if (ore) art.ore = ore;
   // Graphics quality (anti-aliasing study): URL > saved choice > today's look.
