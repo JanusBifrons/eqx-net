@@ -15,7 +15,7 @@ import type { FxFences } from '../art/fx/FxShields.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 import { interpBuildPct } from './buildBarInterp.js';
 import {
-  connectorVisualInto,
+  connectorVisualInto, GridFlashClock,
   codeToFlowMaterial,
   previewLineVisualParams,
   rangeCircleVisualParams,
@@ -299,6 +299,7 @@ export class ConnectorRenderer {
   /** R2.2 — reused travelling-comet segment scratch (connector pulse + shield
    *  shimmer both write it). */
   private readonly _comet: CometSegment = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  private readonly _flashClock = new GridFlashClock(); // grid pulses stamped on the fxNow clock (#20)
   /** R2.19 — reused shield-wall visual scratch, written per wall per frame (#14). */
   private readonly _shieldVisual: ShieldWallVisual = {
     active: false, glowColor: 0, glowAlpha: 0, glowWidth: 0,
@@ -534,9 +535,8 @@ export class ConnectorRenderer {
     }
     this._fxWallsOn = this.fxFences !== null && this.fxFences.ready();
     this.refreshStatic(structures, swarm, scale);
-    const flashes = mirror.gridFlashes;
-    const flowSrc = mirror.gridFlowSrc;
-    const flowMat = mirror.gridFlowMaterial;
+    const flashes = this._flashClock.sync(mirror.gridFlashes, nowMs); // pulse stamps -> fxNow windows
+    const flowSrc = mirror.gridFlowSrc, flowMat = mirror.gridFlowMaterial;
 
     // Shield walls: fence walls between emitters + each gate's spans, from the
     // same derived-wall rules the prediction world collides with (#15).

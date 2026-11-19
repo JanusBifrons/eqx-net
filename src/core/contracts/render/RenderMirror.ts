@@ -82,8 +82,9 @@ export interface RenderMirror {
   /** Structures plan, Phase 3 — connection flash windows from the discrete
    *  `grid_pulse` event. Key is the sorted entityId pair packed as
    *  `min * 65536 + max` (numeric ⇒ no per-frame string-key allocation in the
-   *  renderer); value is the `performance.now()` ms until which the segment
-   *  renders "flowing". */
+   *  renderer); value is a per-edge pulse COUNT that changes on every pulse.
+   *  The renderer stamps each change on its own game clock (`fxNow`) and lights
+   *  the segment for one pulse window (`GridFlashClock`, time scale #20). */
   gridFlashes?: Map<number, number>;
   /** R2.2 — per-edge flow DIRECTION for the travelling-pulse comet. Same packed
    *  `min * 65536 + max` key as `gridFlashes`; value is the entityId that was
