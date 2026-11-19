@@ -20,7 +20,7 @@ import { holdHasIntake, holdIntakeWeight, isOperationalStorage } from '../../car
 import { DEPOSIT_DWELL_TICKS } from '../../cargo/storageReach.js';
 import type { CraneHaulJob } from '../../economy/convoyRoom.js';
 import { dockIntakeGoods, type StructureRecord, type StructureRegistry } from '../../structures/StructureRegistry.js';
-import { rigClipTip, worldToRigHost } from '../../structures/structureRigClip.js';
+import { craneGripTarget, rigClipTip } from '../../structures/structureRigClip.js';
 
 /** One auto-deposit dwell (`CraneBays.depositDwell`). `phase` is set only on
  *  a freight dock's bay (structure-restyle 3b); absent = the plain hover dwell. */
@@ -259,7 +259,7 @@ export class CraneBays {
     // the readout says so (3e), not a stuck 0 % bar.
     if (tick - d.sinceTick < DOCK_SETTLE_TICKS) return;
     if (this.dockCraneBusy(dock)) { this.depositProgress.set(c.shipInstanceId, DEPOSIT_WAITING); return; }
-    if (!this.h.startStructureRigClip(dock.id, 'arm-reach', worldToRigHost(dock, c.x, c.y))) return;
+    if (!this.h.startStructureRigClip(dock.id, 'arm-reach', craneGripTarget(dock, c.x, c.y, c.angle, c.kind.id))) return;
     d.phase = 'reach';
     d.clipTick = tick;
     d.seenTick = tick;

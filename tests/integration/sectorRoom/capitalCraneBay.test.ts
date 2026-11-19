@@ -18,6 +18,7 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { CRANE_CARGO_IN } from '../../../src/core/articulation/craneCargo.js';
+import { shipHitBound } from '../../../src/core/combat/shipHitShape.js';
 import { CAPITAL_BAY, DOCK_UNLOAD_HOLD_MIN_TICKS } from '../../../src/core/articulation/rigCatalogue.js';
 import { decodeRigHoldCargo, decodeRigHoldTicks } from '../../../src/shared-types/structureStateWire.js';
 
@@ -77,8 +78,8 @@ describe('SectorRoom integration — Capital crane bay (structure-restyle 3i)', 
 
     expect(await until(() => clipOf(cap) === 'arm-reach', 5_000), 'a still ship on the bay draws the crane').toBe(true);
     const t = cap.rigClip!.target!;
-    expect(Math.abs(t.x - 100)).toBeLessThan(30);
-    expect(Math.abs(t.y - 420)).toBeLessThan(30);
+    // The crane grips the hull edge facing it (`craneGripTarget`), not the centre.
+    expect(Math.hypot(t.x - 100, t.y - 420)).toBeLessThan(shipHitBound(null) + 15);
 
     expect(await until(() => clipOf(cap) === 'arm-hold', 3_000)).toBe(true);
     expect(cap.rigClip!.holdTicks).toBeGreaterThanOrEqual(DOCK_UNLOAD_HOLD_MIN_TICKS);
@@ -107,7 +108,7 @@ describe('SectorRoom integration — Capital crane bay (structure-restyle 3i)', 
     expect(aboard(shipId)).toEqual(CARGO.goods);
     room.startStructureRigClip(cap.id, 'arm-retract', { x: 150, y: 480 });
     expect(await until(() => clipOf(cap) === 'arm-reach', 4_000)).toBe(true);
-    expect(Math.abs(cap.rigClip!.target!.x + 120)).toBeLessThan(30);
+    expect(Math.abs(cap.rigClip!.target!.x + 120)).toBeLessThan(shipHitBound(null) + 15);
   });
 
   it('off the bay the Capital takes no hover deposit (3f: park in its bay instead)', { timeout: 30_000 }, async () => {

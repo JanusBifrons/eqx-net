@@ -15,7 +15,8 @@
 import { createRigPose, evaluateRig } from '../../core/articulation/evaluate.js';
 import { twoBoneIkSolve } from '../../core/articulation/ikAdapter.js';
 import { rigClipIndex } from '../../core/articulation/rig.js';
-import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
+import { craneGripPoint } from '../../core/articulation/craneGrip.js';
+import { craneBayFor, rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { encodeRigClip, encodeRigHold, STRUCTURE_DEFAULTS as SD } from '../../shared-types/structureStateWire.js';
 import type { StructureState } from '../rooms/schema/SectorState.js';
 import type { StructureRecord } from './StructureRegistry.js';
@@ -94,6 +95,20 @@ export function worldToRigHost(rec: StructureRecord, wx: number, wy: number): { 
   const c = Math.cos(a);
   const s = Math.sin(a);
   return { x: dx * c + dy * s, y: -dx * s + dy * c };
+}
+
+/** The crane's target for a ship of `kindId` parked at world (wx, wy) heading
+ *  `wAngle` on `rec`'s crane bay: its grip point on the hull edge facing the
+ *  crane (`craneGripPoint`), in `rec`'s host frame. Never the ship's centre:
+ *  the clamp head is lifted over every hull and would hide a small one for the
+ *  whole hold. A kind with no crane bay gets the centre (`worldToRigHost`). */
+export function craneGripTarget(
+  rec: StructureRecord, wx: number, wy: number, wAngle: number, kindId: string | null | undefined,
+): { x: number; y: number } {
+  const local = worldToRigHost(rec, wx, wy);
+  const bay = craneBayFor(rec.kind);
+  if (bay === null) return local;
+  return craneGripPoint(bay, local.x, local.y, wAngle - ((rec.rot ?? 0) * Math.PI) / 180, kindId, local);
 }
 
 /**

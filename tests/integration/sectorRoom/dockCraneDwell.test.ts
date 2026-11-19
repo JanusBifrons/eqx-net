@@ -12,6 +12,7 @@
  * hold (light load) + 1 s retract.
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import { shipHitBound } from '../../../src/core/combat/shipHitShape.js';
 import { randomUUID } from 'node:crypto';
 import type { Room } from 'colyseus.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
@@ -79,8 +80,8 @@ describe('SectorRoom integration — dock crane dwell (structure-restyle 3b)', (
 
     expect(await until(() => clipOf(dock) === 'arm-reach', 5_000), 'a still ship on the bay draws the crane').toBe(true);
     const t = dock.rigClip!.target!;
-    expect(Math.abs(t.x - 120)).toBeLessThan(30);
-    expect(Math.abs(t.y - 480)).toBeLessThan(30);
+    // The crane grips the hull edge facing it (`craneGripTarget`), not the centre.
+    expect(Math.hypot(t.x - 120, t.y - 480)).toBeLessThan(shipHitBound(null) + 15);
 
     expect(await until(() => clipOf(dock) === 'arm-hold', 3_000)).toBe(true);
     expect(aboard(shipId), 'nothing is banked before the hold ends').toEqual(CARGO.goods);
@@ -128,7 +129,7 @@ describe('SectorRoom integration — dock crane dwell (structure-restyle 3b)', (
     // The other ship's cycle ends; once the arm is home the waiting ship is next.
     room.startStructureRigClip(dock.id, 'arm-retract', { x: -300, y: 600 });
     expect(await until(() => clipOf(dock) === 'arm-reach', 4_000)).toBe(true);
-    expect(Math.abs(dock.rigClip!.target!.x - 150)).toBeLessThan(30);
+    expect(Math.abs(dock.rigClip!.target!.x - 150)).toBeLessThan(shipHitBound(null) + 15);
   });
 
   it('3e: the waiting ship reads "waiting" (not a stuck 0 %), then is served with a timed cargo hold', { timeout: 40_000 }, async () => {

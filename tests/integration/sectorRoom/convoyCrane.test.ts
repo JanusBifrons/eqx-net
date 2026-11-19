@@ -19,6 +19,7 @@ import type { StructureRecord } from '../../../src/server/structures/StructureRe
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { CONVOY_HAULER_ID_PREFIX } from '../../../src/server/livingworld/directorBotIds.js';
 import { CRANE_CARGO_IN, CRANE_CARGO_OUT } from '../../../src/core/articulation/craneCargo.js';
+import { shipHitBound } from '../../../src/core/combat/shipHitShape.js';
 import type { CraneHaulJob } from '../../../src/server/economy/convoyRoom.js';
 
 async function until(pred: () => boolean, ms: number): Promise<boolean> {
@@ -82,8 +83,8 @@ describe('SectorRoom integration — convoy haulers at the crane bay (structure-
     expect(room.craneServe(id, unloadJob(room, dock, id, log))).toBe('serving');
 
     expect(await until(() => clipOf(dock) === 'arm-reach', 6_000), 'a still hauler on the bay draws the crane').toBe(true);
-    expect(Math.abs(dock.rigClip!.target!.x - 100)).toBeLessThan(40);
-    expect(Math.abs(dock.rigClip!.target!.y - 470)).toBeLessThan(40);
+    // The crane grips the hull edge facing it (`craneGripTarget`), not the centre.
+    expect(Math.hypot(dock.rigClip!.target!.x - 100, dock.rigClip!.target!.y - 470)).toBeLessThan(shipHitBound('trader-hauler') + 15);
     expect(await until(() => clipOf(dock) === 'arm-hold', 3_000)).toBe(true);
     expect(dock.rigClip!.cargo, 'delivery: goods go in').toBe(CRANE_CARGO_IN);
     const holdEnd = dock.rigClip!.startTick + dock.rigClip!.holdTicks!;
