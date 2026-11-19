@@ -23,7 +23,7 @@ import {
   CONNECTION_THROUGHPUT,
   PLACEMENT_MAX_CONNECTIONS,
 } from '../../core/structures/structureGridConstants.js';
-import { CABLE_TAIL_MAX, makeCableSocketPick } from '../../core/structures/cableCurve.js';
+import { linkReachBoxAdd, linkReachBoxStart, makeCableSocketPick } from '../../core/structures/cableCurve.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** Scratch socket pick for every link made here: `canConnect` writes the
@@ -176,22 +176,12 @@ export function autoConnectStructure(
 export function linkReachBox(registry: StructureRegistry, id: string, out: ObstacleBox): boolean {
   const rec = registry.get(id);
   if (!rec) return false;
-  const rw = rec.halfW ?? rec.radius, rh = rec.halfH ?? rec.radius;
-  out.x0 = rec.x - rw - CABLE_TAIL_MAX; out.x1 = rec.x + rw + CABLE_TAIL_MAX;
-  out.y0 = rec.y - rh - CABLE_TAIL_MAX; out.y1 = rec.y + rh + CABLE_TAIL_MAX;
+  // The shared core maths (the build preview runs the same two calls, #15).
+  linkReachBoxStart(rec, out);
   let found = false;
   for (const o of registry.all()) {
     if (o.id === id || o.owner !== rec.owner) continue;
-    const ow = o.halfW ?? o.radius, oh = o.halfH ?? o.radius;
-    const dx = Math.max(0, Math.abs(o.x - rec.x) - (rw + ow));
-    const dy = Math.max(0, Math.abs(o.y - rec.y) - (rh + oh));
-    if (dx * dx + dy * dy > CONNECTION_MAX_RANGE * CONNECTION_MAX_RANGE) continue;
-    found = true;
-    const px = ow + CABLE_TAIL_MAX, py = oh + CABLE_TAIL_MAX;
-    if (o.x - px < out.x0) out.x0 = o.x - px;
-    if (o.x + px > out.x1) out.x1 = o.x + px;
-    if (o.y - py < out.y0) out.y0 = o.y - py;
-    if (o.y + py > out.y1) out.y1 = o.y + py;
+    if (linkReachBoxAdd(rec, o, CONNECTION_MAX_RANGE, out)) found = true;
   }
   return found;
 }

@@ -37,6 +37,7 @@ import { getStructureKind, isStructureKindId } from '../../../shared-types/struc
 import {
   canConnect,
   edgeDistance,
+  type CanConnectReason,
   type GridNode,
   type GridObstacle,
   type ObstacleBox,
@@ -46,6 +47,12 @@ import {
   CONNECTION_MAX_RANGE,
 } from '../../../core/structures/structureGridConstants.js';
 import type { Connection } from '../../../core/structures/Connection.js';
+import {
+  CABLE_NO_SOCKET,
+  linkReachBoxAdd,
+  linkReachBoxStart,
+  makeCableSocketPick,
+} from '../../../core/structures/cableCurve.js';
 import { MINE_TRIGGER_RANGE } from '../../../shared-types/mines.js';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
 import {
@@ -53,7 +60,6 @@ import {
   ghostToGridNode,
   blankGridNode,
   asteroidObstaclesFromSwarm,
-  linkReachBoxOf,
   RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
 
@@ -77,6 +83,19 @@ function makePreviewConn(): PreviewConn {
       return id === this.aId ? this.bId : id === this.bId ? this.aId : null;
     },
   };
+}
+
+/** 0d slice 7 — one candidate's `canConnect` verdict from the last preview
+ *  frame: the server's answer for linking the ghost to structure `id`, with
+ *  the socket pair it picked (`sockA` the ghost's, `sockB` the partner's;
+ *  `CABLE_NO_SOCKET` unless ok). Pooled, rewritten in place (#14). */
+export interface PreviewVerdict {
+  id: string;
+  ok: boolean;
+  /** The refusal, or null when ok. */
+  reason: CanConnectReason | null;
+  sockA: number;
+  sockB: number;
 }
 
 /** FNV-1a style integer mix. */
@@ -191,6 +210,14 @@ export class ConnectorRenderer {
    */
   lastRangeCircleRadius = 0;
 
+  /** 0d slice 7 — the last preview frame's per-candidate verdicts (own
+   *  structures only, in mirror order), the first `previewVerdictCount` of
+   *  `previewVerdicts` (pooled; entries past the count are stale). The
+   *  parity test reads these against core `canConnect`; slice 8 draws the
+   *  cable curves from the picked sockets. */
+  readonly previewVerdicts: PreviewVerdict[] = [];
+  previewVerdictCount = 0;
+
   /** Coastal defences — firing-arc wedges drawn on the placement ghost this
    *  frame (arc-limited mounts only) and their radius. Test hooks. */
   lastArcWedgeCount = 0;
@@ -228,6 +255,11 @@ export class ConnectorRenderer {
   /** Growable pool backing `_previewNodes` — never shrinks; objects are
    *  rewritten in place by `structureMirrorToGridNode`. */
   private readonly _nodePool: GridNode[] = [];
+  /** Parallel to `_nodePool`: is the node a link candidate (the local
+   *  player's own)? Every owner's node blocks; only own ones link. */
+  private readonly _nodeCandidate: boolean[] = [];
+  /** Scratch socket pick for the preview's `canConnect` (0d slice 7). */
+  private readonly _pick = makeCableSocketPick();
   /** Reused adjacency map for `canConnect`. The value arrays carry REAL
    *  connection-like entries (one per `st.connTo` link) — NOT length-only holes.
    *  The shield-pylon dual-cap (`shieldPylonRejection`) ITERATES these and calls
@@ -454,6 +486,7 @@ export class ConnectorRenderer {
     this.placementPreviewSelectedCount = 0;
     this.placementPreviewDeferredCount = 0;
     this.lastRangeCircleRadius = 0;
+    this.previewVerdictCount = 0;
     this.lastArcWedgeCount = 0;
     this.lastArcWedgeRadius = 0;
     this.builtTurretRangeCount = 0;
@@ -679,7 +712,11 @@ export class ConnectorRenderer {
 
     // Build the node map + adjacency + obstacle list (asteroids) for the
     // SAME canConnect the server uses, all into reused scratch.
-    let partnerExt = 0; // C5h: the widest partner, for the links' box
+    // The links' box (C5h; 0d slice 7: the server's `linkReachBox` maths,
+    // shared in core): the ghost plus every own partner in range, each padded
+    // by its extent + the cable tail.
+    const box = this._previewBox;
+    linkReachBoxStart(ghost, box);
     const nodes = this._previewNodes;
     nodes.clear();
     const adjacency = this._previewAdjacency;
@@ -694,9 +731,10 @@ export class ConnectorRenderer {
         if (!entry) continue;
         // Never preview a would-connect line to ANOTHER player's structure: the
         // grid is per-owner server-side (you can't connect to someone else's
-        // base), so a cross-owner structure is skipped entirely from the candidate
-        // web — no green, no red overflow, no line of any kind.
-        if (st.owner !== undefined && localOwner !== null && st.owner !== localOwner) continue;
+        // base), so a cross-owner structure is no candidate: no line of any
+        // kind. It still goes in `nodes`: the server's `canConnect` sees
+        // every owner's buildings, so another base blocks a cable here too.
+        const candidate = !(st.owner !== undefined && localOwner !== null && st.owner !== localOwner);
         let node = this._nodePool[poolIdx];
         if (node === undefined) {
           node = blankGridNode();
@@ -705,7 +743,8 @@ export class ConnectorRenderer {
         const sid = String(id);
         structureMirrorToGridNode(sid, st, entry, node);
         nodes.set(sid, node);
-        partnerExt = Math.max(partnerExt, node.halfW ?? node.radius, node.halfH ?? node.radius);
+        this._nodeCandidate[poolIdx] = candidate;
+        if (candidate) linkReachBoxAdd(ghost, node, CONNECTION_MAX_RANGE, box);
         // REAL adjacency: one pooled connection-like entry per `st.connTo` link,
         // carrying `aId`/`bId` so `shieldPylonRejection`'s `c.getOtherNode(...)`
         // resolves (a sparse length-only array threw on the `undefined` element —
@@ -734,7 +773,7 @@ export class ConnectorRenderer {
     }
 
     // C5h: + the field rocks sleeping in loaded chunks over the links' box (the server's dormant rocks).
-    const obstacles = asteroidObstaclesFromSwarm(swarm, this._previewObstacles, this.rockShapes, linkReachBoxOf(ghost, partnerExt, this._previewBox));
+    const obstacles = asteroidObstaclesFromSwarm(swarm, this._previewObstacles, this.rockShapes, box);
 
     const ax = ghostX;
     const ay = -ghostY; // Pixi screen space is Y-down; world is Y-up.
@@ -795,16 +834,34 @@ export class ConnectorRenderer {
     const okDists = this._okDistScratch;
     okHubs.length = 0;
     okDists.length = 0;
-    for (const node of nodes.values()) {
-      const res = canConnect(ghost, node, adjacency, nodes, obstacles);
+    const pick = this._pick;
+    const verdicts = this.previewVerdicts;
+    let vn = 0;
+    for (let k = 0; k < poolIdx; k++) {
+      if (this._nodeCandidate[k] !== true) continue;
+      const node = this._nodePool[k]!;
+      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick);
+      let v = verdicts[vn];
+      if (v === undefined) {
+        v = { id: '', ok: false, reason: null, sockA: CABLE_NO_SOCKET, sockB: CABLE_NO_SOCKET };
+        verdicts[vn] = v;
+      }
+      vn++;
+      v.id = node.id;
+      v.ok = res.ok;
+      v.reason = res.ok ? null : res.reason;
+      // `pick` is written only on success.
+      v.sockA = res.ok ? pick.a : CABLE_NO_SOCKET;
+      v.sockB = res.ok ? pick.b : CABLE_NO_SOCKET;
       if (res.ok) {
         okHubs.push(node);
         okDists.push(edgeDistance(ghost, node));
       } else if (res.reason === 'blocked') {
         this.drawPreviewSegment(ax, ay, node, 'blocked', scale);
       }
-      // else out-of-range / connector-required / full / self / duplicate → not drawn.
+      // else out-of-range / no-facing-socket / connector-required / full / self / duplicate → not drawn.
     }
+    this.previewVerdictCount = vn;
 
     // Sort ok-hubs nearest-first, ties broken by id (matches the server's
     // deterministic multi-connect order). In-place insertion sort over the
