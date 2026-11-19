@@ -3222,3 +3222,11 @@ Every ship death (NPC too) keeps each good in its hold only on a coin flip, salt
 (`LootSubsystem.deathSalt`). `walletKillBounty` and `tradeDeal` asserted a pod with known contents after
 a kill and failed about 40% and 50% of runs, on main as much as on any branch. The integration harness now
 defaults `keepAllOnDeath` ON; a test of the loss itself passes `false` and pins the roll.
+
+## 2026-11-19 — a seed that follows the server tick rerolls every integration run
+
+A wreck's fracture seed is `fnvMixU32(fnv1a32(id), serverTick)`, and in an integration room the death
+tick follows the wall clock of `harness.advance`, so "pieces >= 1.5 radii apart 1 s after the break"
+drew four new seeds each run; a rare 3-piece split (1.3-1.5 radii) failed it a few runs in ten. A
+test that asserts on a break-up's shape pins the seed (`setWreckSeed(fnvMixU32(fnv1a32(id), TICK))`)
+and sweeps seeds offline, never trusting the tick it happens to die on.

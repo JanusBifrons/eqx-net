@@ -181,7 +181,15 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
    * killed while flying (the pieces inherit its velocity) and every pair
    * must be >= 1.5 radii apart 1 game s later (take 10: 1.36-1.9 at x160, 1.67-2.9
    * at x240 over runs: the seed follows the death tick).
+   *
+   * Flake fix (2026-11-19): the fracture seed is `fnvMixU32(fnv1a32(id),
+   * serverTick)` and the death tick follows the wall clock of `advance`, so
+   * each run rolled four new seeds (a sweep of ~500 missile-frigate breaks:
+   * almost all 2.0-2.9 radii, a rare 3-piece split 1.3-1.5). Each hit now
+   * breaks on the seed it would get dying on `PIN_TICK`, and the 1 s mark is
+   * polled finely so the gap is read at ~1.00 s, not up to 1.12 s.
    */
+  const PIN_TICK = 60;
   for (const kind of ['fighter', 'robot-square', 'robot-circle', 'heavy', 'robot-hexagon', 'missile-frigate'] as const) {
     it(`a ${kind}'s pieces stand clearly apart 1 s after the break, wherever it was hit`, async () => {
       const int = await boot({ subcapWrecks: true });
@@ -201,13 +209,15 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
         const v = outline[Math.floor((h * outline.length) / HITS)]!;
         const c = Math.cos(at.angle), s = Math.sin(at.angle);
         const before = new Set(byKind(int(), WRECK_KIND).map((p) => p.id));
+        int().setWreckSeed(fnvMixU32(fnv1a32(`g${h}`), PIN_TICK));
         int().applyDamage(`g${h}`, 'shooter-x', 1e7, at.x + v.x * c - v.y * s, at.y + v.x * s + v.y * c);
+        int().setWreckSeed(null);
         const ids = byKind(int(), WRECK_KIND).map((p) => p.id).filter((id) => !before.has(id));
         expect(ids.length).toBeGreaterThanOrEqual(2);
         wrecks.push(ids);
       }
       const deathTick = int().serverTick;
-      while (int().serverTick - deathTick < 60) await harness.advance(20);
+      while (int().serverTick - deathTick < 60) await harness.advance(5);
       const elapsed = (int().serverTick - deathTick) / 60;
       const r = getShipKind(kind).radius;
       let least = Infinity;
