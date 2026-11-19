@@ -30,7 +30,7 @@ describe('SectorRoom integration — world events (P4b)', () => {
   }, 15_000);
 
   async function boot(): Promise<{ h: LivingWorldTestHarness; ev: EventDirector; clock: { now: number } }> {
-    const harness = await bootLivingWorldTestServer({ sectors: ['greenfall', 'emerald-span'], botCount: 0, seed: 5 });
+    const harness = await bootLivingWorldTestServer({ sectors: ['greenfall', 'emerald-span'], botCount: 0, seed: 5, keepAllOnDeath: true }); // pins each kill's haul (no death coin flip)
     const clock = { now: 1_000_000 };
     const rooms = new Map<string, LivingWorldRoom>([
       ['greenfall', harness.getRoom('greenfall') as unknown as LivingWorldRoom],
