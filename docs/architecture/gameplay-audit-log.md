@@ -109,7 +109,7 @@ broadcast path.
 | `wave_repelled` | `LivingWorldDirector` retreat step |
 | `ship_destroyed` / `player_killed` | `SectorRoom` `SHIP_DESTROYED` bus handler |
 | `ship_abandoned` | `abandonShipToScrap` / `abandonLingeringHullToScrap` |
-| `player_joined` | `SectorRoom.onJoin` |
+| `player_joined` | `JoinHandler` / `joinFreshSpawn` (`src/server/rooms/join/`, SectorRoom onJoin) |
 | `player_left` / `ship_lingered` | `LeaveHandler` |
 | `transit_started` | `TransitOrchestrator.commitTransit` |
 | `shield_broken` | `ShieldHullRouter` (player path only) |
