@@ -9,7 +9,7 @@
  * (they live in the pilot's `locks` vs the AI pilots' `wingmanLocks`), and AI
  * pilots' locks on its pilot through the take-controls handshake.
  *
- * Fix: the one "ship key moved" seam (`SectorRoom.shipKeyMoved` →
+ * Fix: the one "ship key moved" seam (`PilotSwap.shipKeyMoved` →
  * `LockSubsystem.shipKeyMoved`) at the server's re-key sites
  * (`displaceActiveHullToLingering`, `reclaimLingeringHull`).
  *
@@ -37,7 +37,7 @@ async function waitUntil(pred: () => boolean, ms: number, what: string): Promise
 
 /** Private room paths the test drives directly (synchronous, no tick in between). */
 interface RoomPeek {
-  enterSpectate(playerId: string): void;
+  fleetHooks: { enterSpectate(playerId: string): void };
   npcLocks: { isLocked(npcId: string, pilotId: string): boolean };
 }
 
@@ -129,7 +129,7 @@ describe('SectorRoom integration — locks follow a ship when its key moves (RTS
 
     // B lets go (Command): the very same server step hands the ship to its AI
     // pilot, and the ship's lock goes with it.
-    (room() as unknown as RoomPeek).enterSpectate(bPid);
+    (room() as unknown as RoomPeek).fleetHooks.enterSpectate(bPid);
     expect(room()._internals.fleet.isAttached(hull)).toBe(true);
     expect(lockStage(hull, `p:${aPid}`), 'the AI pilot kept the ship\'s lock').toBe(LOCKED);
     expect(lockStage(bPid, `p:${aPid}`)).toBe(-1);

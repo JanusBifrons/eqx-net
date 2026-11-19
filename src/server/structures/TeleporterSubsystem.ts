@@ -43,6 +43,15 @@ import { holdWeight } from '../../core/cargo/hold.js';
 import { armCycle, rulesSayFire, stepCycle, type CycleState } from '../../core/structures/teleportCycle.js';
 import type { StorageService } from '../cargo/StorageService.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+import type { Logger } from 'pino';
+import { ALIEN_GATE_OWNER, alienGateCandidates, type AlienGateSite } from '../../core/galaxy/alienGates.js';
+import { pocketPadPair, POCKET_PAD_OWNER } from '../../core/galaxy/sectorSites.js';
+import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
+import { getStructureKind } from '../../shared-types/structureKinds.js';
+import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
+import type { AlienGateGuard } from './AlienGateGuard.js';
+import type { StructurePlacementSubsystem } from './StructurePlacementSubsystem.js';
 
 /** A teleporter's partner, local or in another sector's room. */
 export interface PartnerLink {
@@ -389,3 +398,114 @@ export class TeleporterSubsystem {
 }
 
 type TeleportPhaseValue = 0 | 1 | 2 | 3 | 4;
+
+// ── Boot seeding of NPC teleporters (moved verbatim from SectorRoom) ───────
+
+/** What the alien-gate and pocket-pad seeders need from the room; getters
+ *  read fields the room assigns in `onCreate`. Built once on the room
+ *  (`npcSeedHost`). */
+export interface NpcGateSeedHost {
+  readonly structureRegistry: StructureRegistry;
+  readonly swarmRegistry: Pick<SwarmEntityRegistry, 'all'>;
+  readonly gateGuard: Pick<AlienGateGuard, 'addGate'>;
+  readonly logger: Pick<Logger, 'warn'>;
+  sabF32(): Float32Array;
+  structurePlacement(): Pick<StructurePlacementSubsystem, 'place' | 'remove'>;
+  teleporters(): Pick<TeleporterSubsystem, 'pair'>;
+  swarmHealth(): Pick<Map<string, number>, 'delete'>;
+  evictSwarmEntity(rec: SwarmEntityRecord, opts: { broadcast: boolean; emitDestroyed: boolean }): void;
+  rebuildStructuresSlice(): void;
+}
+
+/**
+ * v4 A — seed this sector's alien gates: one per neighbour, near the edge
+ * facing it, built and invulnerable (no hull pool; `applyDamage` turns a hit
+ * into a disable). Runs AFTER the NPC bases, so a gate takes the nearest
+ * free spot to its ideal site (`alienGateCandidates`); asteroids under it are
+ * cleared quietly. It remembers its neighbour, and the teleporter subsystem
+ * finds the twin across the border through the broker the first time it
+ * needs it (`findAlienTwin`). Not persisted (NPC-owned): every boot
+ * regenerates them.
+ */
+export function seedAlienGates(h: NpcGateSeedHost, sectorKey: string, sites: readonly AlienGateSite[]): void {
+  const half = getStructureKind('alien_gate').footprint.w / 2;
+  for (const site of sites) {
+    let placed: string | null = null;
+    for (const c of alienGateCandidates(site, half, SECTOR_PLAYABLE_HALF_EXTENT)) {
+      let blocked = false;
+      for (const r of h.structureRegistry.all()) {
+        if (Math.abs(r.x - c.x) < half + (r.halfW ?? r.radius) && Math.abs(r.y - c.y) < half + (r.halfH ?? r.radius)) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) continue;
+      for (const rec of [...h.swarmRegistry.all()]) { // TODO: alloc-debt (boot only)
+        if (rec.kind !== 0) continue;
+        const b = slotBase(rec.slot);
+        const dx = Math.abs(h.sabF32()[b + SLOT_X_OFF]! - c.x);
+        const dy = Math.abs(h.sabF32()[b + SLOT_Y_OFF]! - c.y);
+        if (dx < half + rec.radius && dy < half + rec.radius) h.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
+      }
+      placed = h.structurePlacement().place(ALIEN_GATE_OWNER, 'alien_gate', c.x, c.y, { skipAutoConnect: true });
+      if (placed !== null) break;
+    }
+    if (placed === null) {
+      h.logger.warn({ sectorKey, neighbour: site.neighbour }, 'alien gate: no free spot; gate skipped');
+      continue;
+    }
+    const rec = h.structureRegistry.get(placed)!;
+    rec.isConstructed = true;
+    rec.constructionProgress = rec.constructionCost;
+    rec.alienNeighbour = site.neighbour;
+    h.swarmHealth().delete(placed);
+    h.gateGuard.addGate(rec);
+  }
+  h.rebuildStructuresSlice();
+}
+
+/**
+ * Wrap-up W1b — the system's transit pads: home and one other pocket, if
+ * this system has a pair at all (`pocketPadPair`, rare by design). Neutral
+ * (Traders-owned), free (no charge, no grid), fire when a ship boards, no
+ * toll. Each takes the nearest free spot to its ideal centre. Not persisted
+ * (NPC-owned): every boot regenerates them.
+ */
+export function seedPocketPads(h: NpcGateSeedHost, sectorKey: string): void {
+  const pair = pocketPadPair(sectorKey);
+  if (pair === null) return;
+  const half = getStructureKind('pocket_pad').footprint.w / 2;
+  const placeNear = (x: number, y: number): StructureRecord | null => {
+    for (let ring = 0; ring < 8; ring++) {
+      const steps = ring === 0 ? 1 : ring * 8;
+      for (let k = 0; k < steps; k++) {
+        const t = (k / steps) * Math.PI * 2;
+        const cx = Math.round(x + Math.cos(t) * ring * half * 2.5), cy = Math.round(y + Math.sin(t) * ring * half * 2.5);
+        let blocked = false;
+        for (const r of h.structureRegistry.all()) {
+          if (Math.abs(r.x - cx) < half + (r.halfW ?? r.radius) && Math.abs(r.y - cy) < half + (r.halfH ?? r.radius)) { blocked = true; break; }
+        }
+        if (blocked) continue;
+        const id = h.structurePlacement().place(POCKET_PAD_OWNER, 'pocket_pad', cx, cy, { skipAutoConnect: true });
+        if (id !== null) return h.structureRegistry.get(id) ?? null;
+      }
+    }
+    return null;
+  };
+  const a = placeNear(pair.ax, pair.ay);
+  const b = a === null ? null : placeNear(pair.bx, pair.by);
+  if (a === null || b === null) {
+    h.logger.warn({ sectorKey, to: pair.b.id }, 'pocket pads: no free spot; pads skipped');
+    if (a !== null) h.structurePlacement().remove(POCKET_PAD_OWNER, a.id);
+    h.rebuildStructuresSlice();
+    return;
+  }
+  for (const rec of [a, b]) {
+    rec.isConstructed = true;
+    rec.constructionProgress = rec.constructionCost;
+    rec.tpRules = { ...DEFAULT_TELEPORT_RULES, shipBoards: true };
+    h.swarmHealth().delete(rec.id);
+  }
+  h.teleporters().pair(a, b);
+  h.rebuildStructuresSlice();
+}

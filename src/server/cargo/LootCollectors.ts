@@ -4,12 +4,23 @@
  * (`LootSubsystemDeps.fillCollector`): a pilot's ACTIVE live hull with a hold,
  * or a `collectsLoot` AI ship (a live swarm entity, kind 1). Fill logic over
  * injected room accessors; one reused scratch (no per-tick alloc, #14).
+ *
+ * Also the room's collector hooks, moved verbatim out of `SectorRoom`: the
+ * pickup notice (`onLootCollected`, `LootSubsystemDeps.onCollected`) and the
+ * auto-deposit pass (`autoDepositTick`) with its dwell state and the
+ * hand-moved-cargo set (`manualCargo`, filled by the cargo messages).
  */
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { cargoCapacityForMaxHealth } from '../../shared-types/goods.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import type { LootCollector } from './LootSubsystem.js';
+import type { Client } from 'colyseus';
+import type { Hold } from '../../shared-types/goods.js';
+import { holdWeight, isHoldEmpty } from '../../core/cargo/hold.js';
+import { DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, type StorageService } from './StorageService.js';
+import { getPlayerShipStore } from '../db/PersistenceWorker.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
 
 /** The pilot hull fields a collector reads (`ShipState`). */
 interface PilotHull { alive: boolean; isActive: boolean; shipInstanceId: string; shield: number; kind: string }
@@ -26,6 +37,20 @@ export interface LootCollectorsDeps {
   cargoCapacity: (kind: string, shipInstanceId: string) => number;
   swarm: { all: () => Iterable<SwarmEntityRecord>; get: (id: string) => SwarmEntityRecord | null };
   sab: () => Float32Array;
+  /** Auto-deposit early-out: placed structures in the sector. */
+  structureCount: () => number;
+  storage: () => Pick<StorageService, 'nearestOwnStorage' | 'deposit'>;
+  shipHold: (shipInstanceId: string) => Hold | undefined;
+  serverTick: () => number;
+  playerToSession: () => ReadonlyMap<string, string>;
+  clients: () => ReadonlyArray<Client>;
+}
+
+/** Economy v2 W4a — the packed products a pickup/deposit moved, for the popup
+ *  (spread into the message; absent when none). Discrete event, not per tick. */
+function packedProducts(moved: Hold): { packed?: string[] } {
+  if (moved.packed === undefined || moved.packed.length === 0) return {};
+  return { packed: moved.packed.slice(0, 20).map((p) => p.product) };
 }
 
 export class LootCollectors {
@@ -96,4 +121,92 @@ export class LootCollectors {
     c.npc = true;
     return true;
   }
+
+  /** Auto-deposit dwell: playerId → (target structure id, first in-range tick). */
+  readonly depositDwell = new Map<string, { targetId: string; sinceTick: number }>();
+  /** Auto-deposit progress 0..100 by shipInstanceId (own-ship snapshot ring). */
+  readonly depositProgress = new Map<string, number>();
+  /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
+   *  until they fly out of deposit range of their storage, so a withdrawal
+   *  from your own storage isn't banked straight back 2 s later. */
+  readonly manualCargo = new Set<string>();
+
+  /** A pickup landed: tell the collector (UI accelerator — the authoritative
+   *  cargo rides the own-ship snapshot slice) + audit. */
+  onLootCollected(c: LootCollector, moved: Hold, podId: string): void {
+    if (c.npc === true) {
+      auditEvent({ event: 'loot_collected', sector: this.d.sectorKey() ?? undefined, podId, playerId: c.playerId, shipInstanceId: c.shipInstanceId, weight: holdWeight(moved) });
+      return;
+    }
+    const sessionId = this.d.playerToSession().get(c.playerId);
+    const client = sessionId !== undefined ? this.d.clients().find((cl) => cl.sessionId === sessionId) : undefined;
+    if (client) {
+      try {
+        client.send('loot_collected', { type: 'loot_collected', goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
+      } catch { /* socket closing */ }
+    }
+    auditEvent({
+      event: 'loot_collected', sector: this.d.sectorKey() ?? undefined, podId,
+      playerId: c.playerId, shipInstanceId: c.shipInstanceId, weight: holdWeight(moved),
+    });
+  }
+
+  /**
+   * Living World P1a-2 — AUTO-DEPOSIT. A collector (#17: active + alive + roster
+   * row) carrying cargo that stays within `DEPOSIT_RANGE` of its OWN operational
+   * storage for `DEPOSIT_DWELL_TICKS` (2 s) deposits its whole hold into that
+   * storage network. Progress (0..100) rides the own-ship snapshot slice. Runs
+   * every 6 ticks; early-outs when the sector has no structures.
+   */
+  autoDepositTick(): void {
+    if (this.d.structureCount() === 0) {
+      if (this.depositDwell.size > 0) { this.depositDwell.clear(); this.depositProgress.clear(); }
+      this.manualCargo.clear();
+      return;
+    }
+    this.forEach(this.visitDepositor);
+  }
+
+  /** Bound once (no per-tick closure allocation, #14). */
+  private readonly visitDepositor = (c: LootCollector): void => {
+    if (this.manualCargo.has(c.playerId)) {
+      // Moved cargo by hand: no auto-deposit until they leave their storage.
+      if (this.d.storage().nearestOwnStorage(c.playerId, c.x, c.y) === null) this.manualCargo.delete(c.playerId);
+      if (this.depositDwell.delete(c.playerId)) this.depositProgress.delete(c.shipInstanceId);
+      return;
+    }
+    const hold = this.d.shipHold(c.shipInstanceId);
+    // Cargo pods 14c: both ends must agree (the ship's switch, the storage's accept).
+    const target = hold !== undefined && !isHoldEmpty(hold) && getPlayerShipStore().get(c.shipInstanceId)?.autoUnload !== false
+      ? this.d.storage().nearestOwnStorage(c.playerId, c.x, c.y, DEPOSIT_RANGE, true)
+      : null;
+    if (target === null) {
+      if (this.depositDwell.delete(c.playerId)) this.depositProgress.delete(c.shipInstanceId);
+      return;
+    }
+    const dwell = this.depositDwell.get(c.playerId);
+    if (dwell === undefined || dwell.targetId !== target.id) {
+      this.depositDwell.set(c.playerId, { targetId: target.id, sinceTick: this.d.serverTick() });
+      this.depositProgress.set(c.shipInstanceId, 0);
+      return;
+    }
+    const elapsed = this.d.serverTick() - dwell.sinceTick;
+    if (elapsed < DEPOSIT_DWELL_TICKS) {
+      this.depositProgress.set(c.shipInstanceId, Math.floor((elapsed / DEPOSIT_DWELL_TICKS) * 100));
+      return;
+    }
+    const moved = this.d.storage().deposit(c.shipInstanceId, c.playerId, target);
+    this.depositDwell.delete(c.playerId);
+    this.depositProgress.delete(c.shipInstanceId);
+    if (isHoldEmpty(moved)) return; // storage full — nothing moved
+    const sessionId = this.d.playerToSession().get(c.playerId);
+    const client = sessionId !== undefined ? this.d.clients().find((cl) => cl.sessionId === sessionId) : undefined;
+    try {
+      client?.send('cargo_deposited', { type: 'cargo_deposited', goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
+    } catch { /* socket closing */ }
+    auditEvent({
+      event: 'cargo_deposited', sector: this.d.sectorKey() ?? undefined, playerId: c.playerId,
+      shipInstanceId: c.shipInstanceId, structureKind: target.kind, weight: holdWeight(moved),
+    });
+  };
 }
