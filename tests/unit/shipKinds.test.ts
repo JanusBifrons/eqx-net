@@ -497,4 +497,28 @@ describe('mining skiff — small mining ship (playable base loop job 1D)', () =>
     expect(k.cargoCapacity).toBe(2000);
     expect(k.cargoCapacity! / 250).toBeGreaterThanOrEqual(4);
   });
+
+  it('mining skiff flies hull C (Manta scoop, owner pick) and every mount sits on the hull', () => {
+    const k = SHIP_KINDS['mining-skiff'];
+    expect(k.shape.kind).toBe('composite');
+    const sc = k.shape.scale;
+    const hull = (k.shape as { hull: Array<[number, number]> }).hull.map(([x, y]) => [x * sc, y * sc] as [number, number]);
+    // Convex hull, Pixi-up (nose at -y), drawn at shape.scale; mounts are game-space (+y forward).
+    const inside = (x: number, y: number): boolean => {
+      let sign = 0;
+      for (let i = 0; i < hull.length; i++) {
+        const [ax, ay] = hull[i]!;
+        const [bx, by] = hull[(i + 1) % hull.length]!;
+        const cross = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+        if (cross === 0) continue;
+        if (sign === 0) sign = Math.sign(cross);
+        else if (Math.sign(cross) !== sign) return false;
+      }
+      return true;
+    };
+    for (const m of k.mounts ?? []) expect(inside(m.localX, -m.localY), `${m.id} on the hull`).toBe(true);
+    // Hull C: tractor dishes out on the wingtips, wider than the laser.
+    const [laser, tractor] = k.mounts!;
+    expect(Math.abs(tractor!.localX)).toBeGreaterThan(Math.abs(laser!.localX) + 10);
+  });
 });

@@ -11,9 +11,9 @@
  * Hold: 2,000 weight = 8 of the lightest rock chunk (250), or 2 of the
  * heaviest an S tractor can pull (~1,000).
  *
- * LOOK: three hull options (`MINING_SKIFF_HULLS`), owner picks one. The kind
- * flies option A until then. Each option is a composite (parts over a convex
- * collision hull) with its mounts placed on its own emitter and dishes.
+ * LOOK: hull C, "Manta scoop" (owner pick from three options). A composite
+ * (parts over a convex collision hull) with its mounts placed on its own
+ * emitter and wingtip dishes.
  * Points are Pixi-up (nose at -y); mounts are game-space (+y forward).
  */
 
@@ -26,7 +26,7 @@ const DARK = 0x3b4049;
 const AMBER = 0xd9a227;
 const GLOW = 0x4fd1ff;
 
-/** One hull option, authored on a ~±20 grid then scaled by `SKIFF_SIZE`. */
+/** The hull, authored on a ~±20 grid then scaled by `SKIFF_SIZE`. */
 interface SkiffHullDraft {
   readonly label: string;
   /** [points, colour, role]; a `sym` part is drawn on both sides (x mirrored). */
@@ -39,40 +39,6 @@ interface SkiffHullDraft {
 /** Authored grid → world units at 1×: a stubby hull between the fighter
  *  (radius 12) and the missile frigate (24). */
 const SKIFF_SIZE = 0.85;
-
-/** A: "Cutter jaw" — a spine with two forward mandibles cradling the laser,
- *  side hold pods carrying the tractor dishes, a stern engine block. */
-const HULL_A: SkiffHullDraft = {
-  label: 'Cutter jaw',
-  parts: [
-    [[[-5, -12], [5, -12], [7, 14], [-7, 14]], DARK, 'spine'],
-    [[[4, -12], [9, -22], [12, -20], [11, -6], [7, -4]], GREY, 'mandible', 'sym'],
-    [[[8, -4], [16, -2], [16, 12], [9, 14]], GREY, 'cargo', 'sym'],
-    [[[9, 10], [16, 9], [16, 12], [9, 14]], AMBER, 'stripe', 'sym'],
-    [[[-9, 14], [9, 14], [7, 20], [-7, 20]], DARK, 'engine'],
-    [[[-3, -17], [3, -17], [2, -12], [-2, -12]], GLOW, 'emitter'],
-    [[[-2, -7], [2, -7], [2, -1], [-2, -1]], GLOW, 'cockpit'],
-  ],
-  laser: [0, -16],
-  tractor: [12.5, 3],
-};
-
-/** B: "Spindle rig" — a hexagonal hold core, a long forward boom with the
- *  laser at its tip, swept outrigger arms ending in tractor nacelles. */
-const HULL_B: SkiffHullDraft = {
-  label: 'Spindle rig',
-  parts: [
-    [[[-2, -9], [2, -9], [2, -21], [-2, -21]], DARK, 'boom'],
-    [[[-4, -25], [4, -25], [3, -21], [-3, -21]], GLOW, 'emitter'],
-    [[[7, -2], [15, -10], [17, -8], [9, 2]], DARK, 'arm', 'sym'],
-    [[[14, -14], [19, -12], [18, -6], [14, -7]], AMBER, 'nacelle', 'sym'],
-    [[[-8, -4], [0, -9], [8, -4], [8, 8], [0, 12], [-8, 8]], GREY, 'cargo'],
-    [[[-5, 0], [5, 0], [5, 3], [-5, 3]], AMBER, 'stripe'],
-    [[[3, 10], [8, 8], [8, 17], [4, 17]], DARK, 'engine', 'sym'],
-  ],
-  laser: [0, -23],
-  tractor: [16.5, -10],
-};
 
 /** C: "Manta scoop" — a flat delta with a scoop mouth at the bow, the laser
  *  deep in the mouth, tractor pods on the wingtips, dorsal hold modules. */
@@ -92,7 +58,7 @@ const HULL_C: SkiffHullDraft = {
 const mirror = (pts: readonly Pt[]): Pt[] => pts.map(([x, y]) => [-x, y] as Pt).reverse();
 const sized = (pts: readonly Pt[]): Pt[] => pts.map(([x, y]) => [x * SKIFF_SIZE, y * SKIFF_SIZE] as Pt);
 
-/** A built hull option: the shape and the mount positions that go with it. */
+/** The built hull: the shape and the mount positions that go with it. */
 export interface SkiffHull {
   readonly label: string;
   readonly shape: { kind: 'composite'; scale: 1; hull: Pt[]; parts: Array<{ points: Pt[]; color: number; offsetX: 0; offsetY: 0; role: string }> };
@@ -119,10 +85,7 @@ function buildHull(d: SkiffHullDraft): SkiffHull {
   };
 }
 
-export const MINING_SKIFF_HULL_A: SkiffHull = buildHull(HULL_A);
-export const MINING_SKIFF_HULL_B: SkiffHull = buildHull(HULL_B);
-export const MINING_SKIFF_HULL_C: SkiffHull = buildHull(HULL_C);
-export const MINING_SKIFF_HULLS = { A: MINING_SKIFF_HULL_A, B: MINING_SKIFF_HULL_B, C: MINING_SKIFF_HULL_C } as const;
+export const MINING_SKIFF_HULL: SkiffHull = buildHull(HULL_C);
 
 /** The 250-weight rock chunk × 8 (see header). */
 export const MINING_SKIFF_CARGO = 2000;
@@ -131,7 +94,7 @@ const LASER_ARC = Math.PI * 0.6;
 const TRACTOR_ARC = Math.PI * 0.85;
 const SLEW = 2.5;
 
-/** The kind record for hull option `h` (the catalogue flies option A). */
+/** The kind record for hull `h`. */
 export function miningSkiffRecord(h: SkiffHull): Record<string, unknown> {
   return {
     id: 'mining-skiff',
@@ -172,4 +135,4 @@ export function miningSkiffRecord(h: SkiffHull): Record<string, unknown> {
   };
 }
 
-export const MINING_SKIFF: ShipKind = defineShipKind(miningSkiffRecord(MINING_SKIFF_HULL_A));
+export const MINING_SKIFF: ShipKind = defineShipKind(miningSkiffRecord(MINING_SKIFF_HULL));
