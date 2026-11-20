@@ -188,7 +188,7 @@ import { RoomWreckSpawns } from './features/wreckSpawns.js';
 import { FireControlLocks } from './features/fireControlLocks.js';
 import { swarmLockId } from './lockSalvage.js';
 import { transitHostRoom } from './features/transitMessages.js';
-import { HullHandOff } from './features/hullHandOff.js';
+import { HullHandOff, newHullOrigin } from './features/hullHandOff.js';
 import { BreakInHooks } from './features/breakInHooks.js';
 import { TurretTargeting } from './features/turretTargeting.js';
 import { SectorTimeScale } from './features/sectorTimeScale.js';
@@ -2129,6 +2129,8 @@ export class SectorRoom extends Room<SectorState> {
     // power aggregation. Runs OFF the 60 Hz physics tick (unref'd timer).
     this.structureGrid = new StructureGridSubsystem({
       registry: this.structureRegistry,
+      // The pulse period the timer below runs at (the build ETA reads it too).
+      pulseMs: this.testMode && roomOpts.structureGridPulseMs ? Math.max(20, roomOpts.structureGridPulseMs) : TRANSFER_PULSE_MS,
       shipHulls: () => this.obstacles.hullCircles(''), solidify: (id) => this.swarmSpawner.solidifyStructure(id), // hologram pass-through
       getHealth: (id) => this.swarmHealth.get(id) ?? 0,
       setHealth: (id, hp) => { this.swarmHealth.set(id, hp); },
@@ -2236,8 +2238,8 @@ export class SectorRoom extends Room<SectorState> {
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
       // D3 — station taxes: a player's habitat modules and spires pay their wallet.
       payCredits: (rec, n) => { if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes'); },
-      // A finished hull parks outside the yard as a live ship (`HullHandOff.launchNewHull`).
-      launchHull: (rec, kind, q) => parseOwner(rec.owner).kind === 'player' && this.hullHandOff.launchNewHull(rec.owner, kind, q, rec.x, rec.y, true).ok,
+      // A finished hull goes live: out of a Shipyard's slipway on a Move order to its park spot (`HullHandOff.launchNewHull`).
+      launchHull: (rec, kind, q) => parseOwner(rec.owner).kind === 'player' && this.hullHandOff.launchNewHull(rec.owner, kind, q, newHullOrigin(rec.kind, rec.x, rec.y, rec.rot ?? 0, kind, rec.prodCycles), true).ok,
     });
     // v4 T1-T4 — the teleporters + the broker room (`features/teleportMessages.ts`).
     ({ teleporters: this.teleporters, teleportRoom: this.teleportRoom } = buildTeleporters({
@@ -2265,10 +2267,7 @@ export class SectorRoom extends Room<SectorState> {
       setWallActive: (id, active) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active }),
       removeWall: (id) => this.postToWorker({ type: 'REMOVE_WALL', id }),
     });
-    const pulseMs = this.testMode && roomOpts.structureGridPulseMs
-      ? Math.max(20, roomOpts.structureGridPulseMs)
-      : TRANSFER_PULSE_MS;
-    this.structureGridTimer = this.gameClock.every(pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
+    this.structureGridTimer = this.gameClock.every(this.structureGrid.pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
     this.structureTurretTimer = this.gameClock.every(TURRET_TICK_MS, guarded('structure-turret-tick', () => this.structureTurretTick()));
 

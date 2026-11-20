@@ -90,11 +90,13 @@ export class LabBoard {
     return [...this.records.values()];
   }
 
-  /** Count a powered pulse on a job; true when it has just finished. */
-  advance(labUid: string): boolean {
+  /** Count a powered pulse on a job, `step` of a pulse (the owner throttle,
+   *  `structureWorkRate`); true when it has just finished. */
+  advance(labUid: string, step = 1): boolean {
     const r = this.records.get(labUid);
     if (r === undefined || r.done >= r.pulses) return r !== undefined && r.done >= r.pulses;
-    r.done += 1;
+    r.done += step;
+    if (r.done >= r.pulses - 1e-6) r.done = r.pulses; // tenths always add up to a whole job
     this.progressDirty = true;
     return r.done >= r.pulses;
   }
