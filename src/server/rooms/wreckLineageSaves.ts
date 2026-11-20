@@ -362,6 +362,9 @@ export function resolveLineageGeometry(rec: WreckLineageRecord): { descs: WreckD
   for (const pc of rec.pieces) keep[pc.node] = true;
   for (let i = n - 1; i > 0; i--) if (keep[i]) keep[nodes[i]!.parent] = true;
   if (!keep[0]) return null;
+  // A cut-FIELD rock's wreck needs the room's field options to rebuild;
+  // not restored yet (field rock cut 1C-b): skipped, never thrown on.
+  if (nodes[0]!.desc.rock?.fk !== undefined) return null;
   const descs: WreckDescriptor[] = [];
   const geoms: Array<WreckPieceGeometry[] | null> = [];
   const byId = (id: number): WreckDescriptor | undefined => descs[id - 1];

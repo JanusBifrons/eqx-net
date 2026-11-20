@@ -66,6 +66,21 @@ function sameInputs(a: WreckDescriptor, b: WreckDescriptor): boolean {
     && a.rock?.fk === b.rock?.fk;
 }
 
+/** The same cut-field options in value (seed, sizes, radius, clearings). */
+function sameField(a: ChunkOpts | null, b: ChunkOpts | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  if (a.seed !== b.seed || a.battleshipLength !== b.battleshipLength || a.fighterLength !== b.fighterLength || a.radius !== b.radius) return false;
+  const ca = a.clearings, cb = b.clearings;
+  const n = ca?.length ?? 0;
+  if (n !== (cb?.length ?? 0)) return false;
+  for (let i = 0; i < n; i++) {
+    const p = ca![i]!, q = cb![i]!;
+    if (p.x !== q.x || p.y !== q.y || p.r !== q.r) return false;
+  }
+  return true;
+}
+
 /** Fracture v12: the same further cut lines, in the same order. */
 function sameExtraCuts(a: WreckDescriptor['extraCuts'], b: WreckDescriptor['extraCuts']): boolean {
   if (a === undefined || b === undefined) return a === b;
@@ -103,10 +118,12 @@ export class WreckGeometryStore {
     return this.fieldOpts;
   }
 
-  /** Set the room's cut-field options (from the welcome). A change drops the
-   *  pieces of every field rock's wreck, rebuilt on the next lookup. */
+  /** Set the room's cut-field options (from the welcome; the renderer's store
+   *  from `RenderMirror.wreckField` every frame, a fresh clone in the worker,
+   *  so options equal in value are no change). A change drops the pieces of
+   *  every field rock's wreck, rebuilt on the next lookup. No allocation. */
   setField(field: ChunkOpts | null): void {
-    if (field === this.fieldOpts) return;
+    if (sameField(field, this.fieldOpts)) return;
     this.fieldOpts = field;
     for (const [id, e] of this.byId) if (this.rockOf(id)?.fk !== undefined) e.pieces = null;
     this.epoch++;
