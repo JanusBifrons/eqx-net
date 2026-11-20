@@ -16,7 +16,7 @@ import type { SectorPersistence } from '../SectorPersistence.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parsedMessage.js';
 import { getStructureKind, isBuildableStructureKind } from '../../../shared-types/structureKinds.js';
-import { STARTER_STRUCTURE_KINDS, productName } from '../../../shared-types/blueprints.js';
+import { needsPackedCrate, productName } from '../../../shared-types/blueprints.js';
 import {
   PlaceStructureSchema,
   RemoveStructureSchema,
@@ -60,12 +60,12 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
     );
     if (id === null) {
       h.logger.warn({ sessionId: client.sessionId, kind: msg.kind }, 'place_structure rejected');
-      // Economy v2 W4b — say why when it was the packed item that was missing.
+      // Say why when it was the Capital's packed crate that was missing.
       const kindId = msg.kind;
       const refusal = h.structurePlacement().lastRefusal;
       if (refusal !== null) h.sendNotice(client, refusal);
-      else if (!STARTER_STRUCTURE_KINDS.includes(kindId) && h.findPacked(owner, `structure:${kindId}`) === null) {
-        h.sendNotice(client, `You need a Packed ${productName(`structure:${kindId}`)}: buy one on the Trade tab, or loot one.`);
+      else if (needsPackedCrate(kindId) && h.findPacked(owner, `structure:${kindId}`) === null) {
+        h.sendNotice(client, `You need a Packed ${productName(`structure:${kindId}`)} in your hold or storage here.`);
       }
     } else {
       // P2 bespoke trigger (testMode) — a placed storage structure starts
