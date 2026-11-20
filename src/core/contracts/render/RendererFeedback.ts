@@ -108,6 +108,13 @@ export interface RendererFeedback {
   selectionScreenX: number | null;
   selectionScreenY: number | null;
   /**
+   * Half-size in SCREEN px of the selected entity's bracket box. The box is
+   * centred `selectionScreenHalf` px below `selectionScreenX/Y` (that point is
+   * the box's top-centre). Lets the inspector sit clear of what is selected
+   * (inspectorPlacement.ts). Null with `selectionScreenX/Y`. UI-position only.
+   */
+  selectionScreenHalf: number | null;
+  /**
    * Tap/drag-to-position placement (2026-06-07). The renderer owns the
    * pointer-follow because it holds the camera (`screenToWorld`) and sees
    * pointer events on BOTH the main-thread and worker paths.
