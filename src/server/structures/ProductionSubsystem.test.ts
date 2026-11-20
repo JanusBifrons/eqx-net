@@ -72,6 +72,19 @@ describe('ProductionSubsystem', () => {
     expect((capital.hold?.goods.alloy ?? 0) + (bay.hold?.goods.alloy ?? 0)).toBe(1);
   });
 
+  it('interceptor builds from minerals only', () => {
+    // PLAYTEST (owner 2026-11-20): a Capital bank alone pays the Shipyard bill.
+    const bill = RECIPES.build_interceptor.inputs;
+    expect(Object.keys(bill)).toEqual(['minerals']);
+    const capital = rec('c', 'capital', { minerals: bill.minerals! });
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: {}, blueprints: [] } });
+    const yard = rec('y', 'shipyard', { recipe: 'build_interceptor', blueprint: bp('hull:interceptor', { kind: 'bpo', runs: null }) });
+    world([capital, bay, yard]).run(RECIPES.build_interceptor.cyclePulses);
+    expect(capital.minerals).toBe(0);
+    const packed = [...(capital.hold?.packed ?? []), ...(bay.hold!.packed ?? [])];
+    expect(packed.map((p) => p.product)).toEqual(['hull:interceptor']);
+  });
+
   it('blocks when storage is full, then finishes once there is room', () => {
     // A Cargo Bay holds 2000 weight. After the smelter takes its 10 minerals
     // (weight 1) the bay has 1 weight free: too little for alloy (weight 2).
