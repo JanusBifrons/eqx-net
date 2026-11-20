@@ -268,6 +268,8 @@ back-compat aliases).
 
 **Active power (2026-11-01).** A structure draws its full `powerConsumption` only while it is working (a processor running, a drill on a rock, a turret with a target, a lab with a job) and 20 % of it when idle. The server flips `rec.drawFull` through `StructureGridSubsystem.setActive`, which adjusts the component's net power in O(1) (`Grid.adjustDraw`). Full story: [production-chains.md](production-chains.md#active-power-full-draw-only-while-working).
 
+**On/Off switch.** The owner can switch any structure that draws power Off (`set_structure_power { entityId, on }`, owner-only, `structureSettingMessages.ts`). Off sets `rec.switchedOff`: `structureDraw` returns 0 for it, `setActive` can never make it active, and `StructureGridSubsystem.powerSummaryFor` reads it unpowered, so every subsystem that gates on power stops (turrets hold fire, a shield wall drops if either post is Off, production, labs, drills and mine layers pause). On restores the idle draw. Generators, power stores and connectors draw nothing and have no Off. The state persists and rides the wire as `STRUCTURE_FLAG_OFF` (bit 512 of the uint16 `flags`, no new schema field); the client grid preview reads it through the same `structureDraw`. Logic: `structurePowerSwitch.ts`.
+
 ## Batteries — stored-power buffer (batteries plan — shipped)
 
 The `battery` kind is a **leaf that stores power**. It produces and consumes
@@ -578,7 +580,16 @@ unit-tested like `TransitOrchestrator`) + [StructureRegistry](../../src/server/s
 non-operational; the **Capital** is the exception (`constructionCost===0` ⇒
 pre-built, full HP, the mineral bank). Placement does NOT pre-charge minerals —
 the cost is drained DURING construction by the Phase-3 grid pulse, so a blueprint
-can be placed with an empty bank and waits. The structure subtype rides the
+can be placed with an empty bank and waits. **Hologram pass-through (base
+loop 3F):** an unbuilt blueprint's body spawns in `BLUEPRINT_COLLISION_GROUPS`
+(collides with nothing; its rig's solid parts wait too), so ships fly through it;
+its space stays reserved because placement checks the registry. On completion
+([`blueprintBody.ts`](../../src/server/structures/blueprintBody.ts)) it turns
+solid (`SET_COLLISION_GROUPS` → default, `SwarmSpawner.solidifyStructure`) only
+when no hull (`SectorObstacles.hullCircles`) overlaps its footprint; otherwise it
+waits, fully paid, and finishes the pulse the space is clear. Records built
+outside the pulse (restore, seeded bases) settle on the next pulse. The client
+predWorld still builds holograms solid until job 3F2. The structure subtype rides the
 **shared `shipKind` byte** (kind=2 path; `SwarmSpawner.spawnStructure` sets
 `rec.shipKind`) — no stride/`SWARM_WIRE_VERSION` bump. `remove` is owner-gated.
 **Phase-4 C2 — placement is OBSTACLE-aware.** `place()` rejected overlap against
@@ -727,7 +738,7 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 #### Structures: placement, power grid, shield fence
 
-- **Placement checks structures AND asteroids** through the shared `canPlaceStructureAt` / `placementRejection`; `remove` is owner-gated. Locks: `placementRules.test.ts`, `StructurePlacementSubsystem.test.ts`, `structurePlacementValidation.test.ts`.
+- **Placement checks structures AND asteroids** through the shared `canPlaceStructureAt` / `placementRejection`; `remove` is owner-gated. The placement ghost runs the same predicate before the click (`PlacementGhostVerdict`, over the mirror structures and the build preview's rocks): red with the server's notice under it (`RendererFeedback.placementPreviewRejection` → `PlacementLinkHint`), green where it can go. Wreck pieces are not on the client list yet. Locks: `placementRules.test.ts`, `StructurePlacementSubsystem.test.ts`, `structurePlacementValidation.test.ts`, `placementGhostParity.test.ts`, `placementGhostUpdater.test.ts`.
 - **Grid changes touch the snapshot path** (`structures[]`, `grid_pulse`): `pnpm e2e:netgate` required. `StructureGridSubsystem.pulse()` is the directly-callable 1 Hz heartbeat, off the 60 Hz tick.
 - **Shield-wall bodies live in `PhysicsWorld.wallBodies`**, never `this.bodies`. A pylon with any active wall takes no damage (`applyDamage` → `absorbForPylon`). Swarm shield regen covers `rec.kind === 1` only.
 - Detail: [structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md#server-implementation-notes).
