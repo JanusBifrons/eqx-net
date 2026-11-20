@@ -41,13 +41,24 @@ export const WRECK_ROCK_PARENT_KIND = 'asteroid';
  *  (#15); `id` its stable id (ore, a later tint); `res` its resource when
  *  not plain rock (absent = plain), so its pieces draw the uncut rock's
  *  art and colour, late joiners included (#16). Also
- *  `WreckFractureInputs.rock`. */
+ *  `WreckFractureInputs.rock`.
+ *
+ *  A cut-FIELD rock has no shape seed: `fk` is its packed field rock key
+ *  (`rockKey(cx, cy, index)` in `core/terrain/fieldLayout.ts`, a u32), and
+ *  its outline is the room's field layout's (`fieldRockBody` of
+ *  `rocksInChunk(field, cx, cy)[index]`), cut from the welcome's field seed
+ *  and clearings on both sides. With `fk`, `shape` is 0 and `r` the
+ *  rock's bounding radius. */
 export interface WreckRockRef {
   id: string;
   shape: number;
   r: number;
   res?: AsteroidResourceId;
+  fk?: number;
 }
+
+/** Highest packed field rock key (a u32). */
+export const MAX_WRECK_FIELD_ROCK_KEY = 0xffffffff;
 
 export const WreckRockRefSchema = z
   .object({
@@ -55,8 +66,11 @@ export const WreckRockRefSchema = z
     shape: z.number().int().min(0).max(0xffff),
     r: z.number().finite().positive(),
     res: z.enum(ASTEROID_RESOURCE_IDS).optional(),
+    fk: z.number().int().min(0).max(MAX_WRECK_FIELD_ROCK_KEY).optional(),
   })
-  .strict();
+  .strict()
+  // A field rock's outline comes from the layout, never a shape seed.
+  .refine((r) => r.fk === undefined || r.shape === 0);
 
 export const WreckExtraCutSchema = z
   .object({
@@ -141,7 +155,9 @@ function isRockRef(v: unknown): boolean {
   return typeof id === 'string' && id.length > 0 && id.length <= MAX_WRECK_ROCK_ID_LEN
     && typeof shape === 'number' && Number.isInteger(shape) && shape >= 0 && shape <= 0xffff
     && finite(r['r']) && (r['r'] as number) > 0
-    && (r['res'] === undefined || (ASTEROID_RESOURCE_IDS as readonly unknown[]).includes(r['res']));
+    && (r['res'] === undefined || (ASTEROID_RESOURCE_IDS as readonly unknown[]).includes(r['res']))
+    && (r['fk'] === undefined || (typeof r['fk'] === 'number' && Number.isInteger(r['fk'])
+      && r['fk'] >= 0 && r['fk'] <= MAX_WRECK_FIELD_ROCK_KEY && shape === 0));
 }
 
 /** Alloc-free twin of `WreckRemovesSchema`'s element check. */
