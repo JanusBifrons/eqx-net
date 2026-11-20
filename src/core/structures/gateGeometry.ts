@@ -49,6 +49,17 @@ export const GATE_CLOSE_HOLD_MS = 1200;
 /** An airlock closes the entry end this long after the ship is fully inside. */
 export const AIRLOCK_CYCLE_HOLD_MS = 350;
 
+/** Solid gate doors (plan door-power): seconds a door takes to travel fully
+ *  open or shut at full power. */
+export const DOOR_TRAVEL_S = 3;
+/** The same travel in game ticks (fixed 60 Hz step, as the crane rig counts). */
+export const DOOR_TRAVEL_TICKS = DOOR_TRAVEL_S * 60;
+/** Power levels a moving door runs at: 0 (frozen) .. 15 (full speed). */
+export const DOOR_POWER_LEVELS = 15;
+/** Door position is an integer 0 (shut) .. DOOR_POS_MAX (open). At level L it
+ *  moves L units per tick, so full power crosses it in exactly DOOR_TRAVEL_TICKS. */
+export const DOOR_POS_MAX = DOOR_TRAVEL_TICKS * DOOR_POWER_LEVELS;
+
 /** The clear gap a ship flies through (between the posts): gate / airlock.
  *  The ship-scale fit table checks every playable hull against these. */
 export const GATE_GAP = GATE_OPENING;
