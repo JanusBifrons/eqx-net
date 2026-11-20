@@ -8,12 +8,18 @@
  *    `MIN_CABLE_LENGTH`; owner rule "keep buildings apart"). The renderer's
  *    preview pass counts those (`RendererFeedback.placementPreviewTooShortCount`)
  *    with the same `canConnect` the server runs, and draws each one red.
+ *    The same line instead says why the ghost can't go there at all (e.g.
+ *    "Can't build here: blocked by an asteroid or wreck"): the renderer runs
+ *    the server's `placementRejection` on the ghost and tints it red
+ *    (`RendererFeedback.placementPreviewRejection`); the text is the server's
+ *    own refusal notice. That reason wins over "too close".
  * Desktop and touch. Allocation-free.
  */
 import type { RenderMirror } from '../../core/contracts/IRenderer.js';
 import type { RendererFeedback } from '../../core/contracts/render/RendererFeedback.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { turretFireCrossesWall } from './fenceFireHint.js';
+import { placementRejectionNotice } from '../../core/structures/placementRules.js';
 
 /** The player-facing line for a placement whose only links are too short. */
 export const TOO_CLOSE_LINK_TEXT = "Can't connect: too close";
@@ -23,7 +29,7 @@ export function showTooCloseHint(connCount: number, tooShortCount: number): bool
   return tooShortCount > 0 && connCount === 0;
 }
 
-type HintFeedback = Pick<RendererFeedback, 'placementPreviewConnectionCount' | 'placementPreviewTooShortCount' | 'viewHalf'>;
+type HintFeedback = Pick<RendererFeedback, 'placementPreviewConnectionCount' | 'placementPreviewTooShortCount' | 'placementPreviewRejection' | 'viewHalf'>;
 
 /** Gap (screen px) between the ghost's edge and the too-close line. */
 const BELOW_GHOST_PX = 10;
@@ -57,6 +63,13 @@ export function updatePlacementHints(
   const fence = document.querySelector('[data-testid="placement-fence-hint"]') as HTMLElement | null;
   if (fence) toggleHint(fence, kind !== null && turretFireCrossesWall(kind, x, y, mirror.structures, mirror.swarm), psx, psy);
   const link = document.querySelector('[data-testid="placement-link-hint"]') as HTMLElement | null;
-  const showLink = showTooCloseHint(feedback.placementPreviewConnectionCount, feedback.placementPreviewTooShortCount);
+  const rejection = feedback.placementPreviewRejection ?? null;
+  const showLink = rejection !== null || showTooCloseHint(feedback.placementPreviewConnectionCount, feedback.placementPreviewTooShortCount);
+  if (link && showLink) {
+    // The text node (the hint's Typography, or the element itself): written on change only.
+    const textEl = link.firstElementChild ?? link;
+    const text = rejection !== null ? placementRejectionNotice(rejection) : TOO_CLOSE_LINK_TEXT;
+    if (textEl.textContent !== text) textEl.textContent = text;
+  }
   toggleHint(link, showLink, psx, psy, showLink ? belowGhostPx(kind, feedback.viewHalf, window.innerWidth, window.innerHeight) : 0);
 }
