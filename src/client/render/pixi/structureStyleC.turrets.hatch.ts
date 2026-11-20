@@ -11,13 +11,19 @@
 import { GraphicsContext } from 'pixi.js';
 import type { Rig } from '../../../core/articulation/rig.js';
 import { HAZARD, RIVET, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT } from './structureStyleKit.js';
-import { TRIM } from './structureStyleC.turrets.pad.js';
+import { TRIM, TRIM_DEAD } from './structureStyleC.turrets.pad.js';
 
 /** Hard outline (the rig parts' edge) and a worn, scuffed metal lip. */
 const EDGE = 0x0a0c0e;
 const WORN = 0x6a6f74;
 
 const hatchContexts = new Map<string, GraphicsContext | null>();
+const hatchLitContexts = new Map<string, GraphicsContext | null>();
+
+/** The riser's two blue trim lamps, fore and aft on the deck between the
+ *  collar and the rim (pixi frame, before the lift scale), and their radius. */
+const RISER_LAMPS: readonly (readonly [number, number])[] = [[0, -16.5], [0, 16.5]];
+const RISER_LAMP_R = 1.6;
 
 /** Pixi-frame (y-down) points of a game-frame outline, flat. */
 function pixiFlat(o: readonly number[], k = 1): number[] {
@@ -26,10 +32,16 @@ function pixiFlat(o: readonly number[], k = 1): number[] {
   return out;
 }
 
-/** A small blue trim lamp: soft halo, dark bezel, lit glass. */
-function trimLamp(g: GraphicsContext, x: number, y: number, r: number): void {
-  g.circle(x, y, r * 2.2).fill({ color: TRIM, alpha: 0.14 });
+/** A small blue trim lamp as baked: dark bezel, dead glass (the pad's
+ *  unpowered lamps). Its light is the riser's lit overlay (`litLamp`). */
+function deadLamp(g: GraphicsContext, x: number, y: number, r: number): void {
   g.circle(x, y, r * 1.25).fill({ color: EDGE });
+  g.circle(x, y, r).fill({ color: TRIM_DEAD });
+}
+
+/** A trim lamp's light over its dead glass: soft halo, lit glass. */
+function litLamp(g: GraphicsContext, x: number, y: number, r: number): void {
+  g.circle(x, y, r * 2.2).fill({ color: TRIM, alpha: 0.14 });
   g.circle(x, y, r).fill({ color: TRIM, alpha: 0.9 });
 }
 
@@ -81,7 +93,8 @@ function drawLeaf(g: GraphicsContext, o: readonly number[], meetRight: boolean):
 }
 
 /** The riser: a dark gunmetal octagonal turntable, a SLAB_DARK collar ring
- *  with a bolt circle and two blue trim lamps, and a dark soot centre the gun
+ *  with a bolt circle and two blue trim lamps (dead glass; lit by the
+ *  overlay while powered), and a dark soot centre the gun
  *  sits on (no paint under the gun). */
 function drawRiser(g: GraphicsContext, o: readonly number[]): void {
   const outer = pixiFlat(o);
@@ -96,9 +109,9 @@ function drawRiser(g: GraphicsContext, o: readonly number[]): void {
   }
   g.circle(0, 0, 9).fill({ color: SOOT }).stroke({ color: EDGE, width: 1.2 });
   g.circle(0, 0, 6).stroke({ color: SLAB, width: 1.5, alpha: 0.8 });
-  // Blue trim lamps fore and aft on the deck between collar and rim.
-  trimLamp(g, 0, -16.5, 1.6);
-  trimLamp(g, 0, 16.5, 1.6);
+  // Blue trim lamps fore and aft on the deck between collar and rim, baked
+  // dark; their light is the lit overlay (`turretHatchLitContext`).
+  for (const [x, y] of RISER_LAMPS) deadLamp(g, x, y, RISER_LAMP_R);
   g.poly(outer, true).stroke({ color: EDGE, width: 2.2 });
 }
 
@@ -123,5 +136,24 @@ export function turretHatchPartContext(rig: Rig, i: number): GraphicsContext | n
     }
   }
   hatchContexts.set(key, g);
+  return g;
+}
+
+/** The beam turret hatch rig's lit overlay for part `i` (its `partLit`
+ *  hook): the riser's trim lamps lit, shown only while the turret is
+ *  powered; null for any other part. One shared context per (rig, part). */
+export function turretHatchLitContext(rig: Rig, i: number): GraphicsContext | null {
+  const part = rig.parts[i];
+  if (part === undefined) return null;
+  const key = `${rig.id}/${part.id}`;
+  const hit = hatchLitContexts.get(key);
+  if (hit !== undefined) return hit;
+  let g: GraphicsContext | null = null;
+  const o = part.outline;
+  if (part.joint.type === 'lift' && o !== undefined && o.length >= 6) {
+    g = new GraphicsContext();
+    for (const [x, y] of RISER_LAMPS) litLamp(g, x, y, RISER_LAMP_R);
+  }
+  hatchLitContexts.set(key, g);
   return g;
 }

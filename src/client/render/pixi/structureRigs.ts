@@ -139,6 +139,9 @@ export class StructureRigView {
   readonly parts: Graphics[] = [];
   /** Drop shadow per part (null for under parts), in rig order. */
   readonly shadows: Array<Graphics | null> = [];
+  /** Lit overlay per part (`RigDrawHook.partLit`; null for none), in rig
+   *  order: posed with its part, shown only while `running`. */
+  readonly lit: Array<Graphics | null> = [];
   private readonly shadowOff: number[] = [];
   /** Rig part carrying the kind's weapon mount, or -1. */
   readonly mountPart: number;
@@ -172,8 +175,9 @@ export class StructureRigView {
   /** 3e: the camera scale (CSS px per world u), so the arm's pulse keeps a
    *  cable pulse's on-screen size (`cometSegment` / `lineLookScale`). */
   zoom = 1;
-  /** Spinning parts (`PartDef.spin`) run this frame (set by the caller
-   *  before `update`, e.g. from `setRunningFrom`); stopped, they hold. */
+  /** Spinning parts (`PartDef.spin`) run and lit overlays show this frame
+   *  (set by the caller before `update`, e.g. from `setRunningFrom`);
+   *  stopped, spinning parts hold and lit overlays hide. */
   running = true;
   /** The rig has a spinning part. */
   readonly hasSpin: boolean;
@@ -213,6 +217,16 @@ export class StructureRigView {
         group.addChildAt(sh, part.layer === 'over' ? shadowsOver++ : shadowsPlane++);
       }
       group.addChild(g);
+      // A sibling just over the part (a v8 Graphics takes no children),
+      // under every later part of its group.
+      const litCtx = hook?.partLit?.(rig, i) ?? null;
+      let lit: Graphics | null = null;
+      if (litCtx !== null) {
+        lit = new Graphics(litCtx);
+        lit.label = `rig-lit-${part.id}`;
+        group.addChild(lit);
+      }
+      this.lit.push(lit);
     }
     this.mountPart = hook?.mountPart?.(rig) ?? -1;
     this.runningOf = hook?.running;
@@ -318,6 +332,13 @@ export class StructureRigView {
         const d = this.shadowOff[i]!;
         sh.position.set(xf.x + d, xf.y + d);
         sh.rotation = xf.rotation;
+      }
+      const lit = this.lit[i]!;
+      if (lit !== null) {
+        lit.position.set(xf.x, xf.y);
+        lit.rotation = xf.rotation;
+        lit.scale.copyFrom(g.scale);
+        lit.visible = g.visible && this.running;
       }
     }
     this.poseCargo(input, nowTick);
