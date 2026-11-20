@@ -84,6 +84,7 @@ function wreckDeadArtFor(kindId: string): boolean {
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
 import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
+import { syncStructureHologram } from './structureHologram.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -518,11 +519,13 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       // so settled debris does no per-frame tint work (sub-cap slice 4).
       if (entry.kind !== 4 || sprite.tint !== tint) sprite.tint = tint;
     }
-    // Structures plan, Phase 3 — blueprints (not yet built) render dimmed
-    // ("scaffolding"); the fill-bar (ConnectorRenderer) shows build progress.
+    // Base loop 3O — a blueprint (not yet built) draws as a cyan hologram that
+    // a print line fills in with its build fraction (structureHologram.ts);
+    // the fill-bar (ConnectorRenderer) still shows the number.
     if (entry.kind === 2) {
       const st = mirror.structures?.get(entityId);
-      sprite.alpha = st && !st.built ? 0.45 : 1;
+      syncStructureHologram(sprite, entry.shipKind, entry.radius, ctx.art.structStyle, st, now);
+      sprite.alpha = 1;
       // WS-9 (R2.12) — update the Capital's mineral readout on CHANGE only (no
       // per-frame Text re-raster). Tagged child; capitals only, so the lookup is rare.
       if (entry.shipKind === 'capital') {
