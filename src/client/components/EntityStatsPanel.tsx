@@ -26,9 +26,9 @@ import { HullUnpack } from './HullUnpack';
 import { hullColor } from '../hud/tokens';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { structureGunLines } from './structureGunLines';
-import { canUpgradeStructure, effectiveStructurePowerOutput, structureUpgradeGoods } from '@core/leveling/structureLevel';
+import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
 import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
-import { structureDraw } from '@shared-types/structurePower';
+import { structureSelfPower } from './structureSettingsPower';
 import type { PickedEntityKind } from '../render/pickEntity';
 import { TargetAction } from './TargetAction';
 import { ACTION_BTN_SX, ICON_SX, StructureManageActions } from './StructureManageActions';
@@ -474,7 +474,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         const k = getStructureKind(subtype);
         // Active power — what it draws NOW (full while active, else idle).
         // Output is level-scaled like the server grid's (#15).
-        data.selfPower = effectiveStructurePowerOutput(k.powerOutput, st.level) - Math.round(structureDraw(k.powerConsumption, st.drawFull === true));
+        data.selfPower = structureSelfPower(subtype, st);
         // Coastal defences — reload + firing arc per gun size (catalogue read).
         const guns = structureGunLines(k);
         if (guns.length > 0) data.gunLine = guns.join('\n');

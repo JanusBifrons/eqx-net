@@ -19,6 +19,7 @@ import { sendStructureAction, sendUpgradeStructure, sendSetGateAccess, sendSetRe
 import { nextRecipe } from '@shared-types/production';
 import { RECIPES, type RecipeId } from '@shared-types/recipes';
 import { GATE_ACCESS_IDS, type GateAccess } from '@shared-types/gateAccess';
+import { StructureSettingsCog } from './StructureSettingsModal';
 
 export const ACTION_BTN_SX = {
   p: '2px',
@@ -34,6 +35,7 @@ export const ICON_SX = { fontSize: { xs: 16, sm: 28 } };
 
 /** The card fields the management buttons read (a subset of the panel's data). */
 export interface ManageActionData {
+  name?: string;
   isDeconstructing?: boolean;
   isConnector?: boolean;
   canUpgrade?: boolean;
@@ -55,6 +57,7 @@ export function nextGateAccess(a: GateAccess): GateAccess {
 export function StructureManageActions({ entityId, data }: { entityId: number; data: ManageActionData }): JSX.Element {
   return (
     <>
+      <StructureSettingsCog entityId={entityId} title={data.name ?? ''} />
       <Tooltip title={data.isDeconstructing ? 'Cancel deconstruction' : 'Deconstruct (reverse build, returns resources)'}>
         <IconButton
           data-testid="structure-action-deconstruct"

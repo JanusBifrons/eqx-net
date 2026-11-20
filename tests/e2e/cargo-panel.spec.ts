@@ -37,7 +37,7 @@ async function ownCapital(page: Page): Promise<{ x: number; y: number } | null> 
 
 test('open your own storage and move cargo by hand', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto(`${BASE_URL}?room=trade-test&testId=${randomUUID()}&newShip=1&worker=0`);
+  await page.goto(`${BASE_URL}?room=trade-test&testId=${randomUUID()}&newShip=1&worker=0&initialPacked=structure:capital`);
   await page.waitForFunction(
     () => (document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? '') !== '', undefined,
     { timeout: 90_000 },
