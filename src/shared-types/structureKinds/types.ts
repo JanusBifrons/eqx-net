@@ -82,6 +82,17 @@ export const StructureKindSchema = z
      *  placement overlap, connection edge distance and line-of-sight box
      *  (phase V, plan soft-leaping-truffle v2). Rotated in 90° steps. */
     footprint: z.object({ w: z.number().positive(), h: z.number().positive() }).strict(),
+    /** Optional KEEP-CLEAR box beside the footprint, in the kind's local frame
+     *  at rotation 0 (centre `cx, cy`, size `w × h`; turns with the
+     *  structure). No other solid structure may overlap it, and the kind may
+     *  not be placed with it over one (`placementRules`, so player placement
+     *  and `growBase` both obey it). It is solid to links and cables too (no
+     *  socket on the pad side, no cable across it: `structureSockets`,
+     *  core `isCablePolylineBlocked`). Today only
+     *  the Freight Dock and the Capital have one: their crane bay's landing pad. ABSENT ⇒ nothing reserved. */
+    keepClear: z.object({
+      cx: z.number(), cy: z.number(), w: z.number().positive(), h: z.number().positive(),
+    }).strict().optional(),
     /** Full hull pool (and `swarmHealth` seed once built). */
     maxHealth: z.number().positive(),
 

@@ -7,12 +7,13 @@ import { generateAsteroidVertices, asteroidResources, asteroidShapeSeed, convexH
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
-import { SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
+import { BLUEPRINT_COLLISION_GROUPS, DEFAULT_COLLISION_GROUPS, SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, kindHasShield, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
+import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -46,6 +47,9 @@ export interface AsteroidSpec {
    *  away from it (C2 deep sleep). Absent ⇒ the spawn point. */
   restX?: number;
   restY?: number;
+  /** Collider groups override (structures: a blueprint spawns in
+   *  `BLUEPRINT_COLLISION_GROUPS`). Absent ⇒ the kind's default. */
+  collisionGroups?: number;
 }
 
 export interface DroneSpec {
@@ -78,6 +82,14 @@ export interface SpawnerHooks {
    *  the drone kind's catalogue index (`shipKindToIndex`): the worker flies the
    *  body as that kind when the AI drives it with control keys (AI_INPUTS). */
   postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean | 'fixed', collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number, sleeping?: boolean) => void;
+  /** Structure-restyle 2d: give a just-spawned structure body its rig's
+   *  solid (plane-layer) parts in the worker (`RIG_ATTACH`). Posted right
+   *  after the structure's SPAWN_OBSTACLE, so the host body exists. Optional:
+   *  test fixtures without a worker omit it. */
+  postRigAttach?: (id: string, rigId: string) => void;
+  /** Hologram pass-through: swap a body's collider groups in the worker
+   *  (`SET_COLLISION_GROUPS`). Optional: test fixtures without a worker. */
+  postSetCollisionGroups?: (id: string, groups: number) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -231,7 +243,7 @@ export class SwarmSpawner {
    *  same point-set the renderer draws) → a convexHull collider matching the
    *  silhouette, replacing the old circular collider (unified-hull plan).
    *  Returns false if no free slot. */
-  spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number; shipKind?: string; angle?: number }): boolean {
+  spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number; shipKind?: string; angle?: number; blueprint?: boolean }): boolean {
     // The subtype rides the shared `shipKind` byte (set below). Compute the
     // hull polygon from it + the radius here so `spawnOne` can attach the
     // matching convexHull collider + hit-resolver vertices.
@@ -240,6 +252,9 @@ export class SwarmSpawner {
     const parts = gateColliderPolygons(s.shipKind) ?? undefined;
     const spec: AsteroidSpec = {
       id: s.id, x: s.x, y: s.y, vx: 0, vy: 0, radius: s.radius, mass: s.mass ?? STRUCTURE_DEFAULT_MASS,
+      // Hologram pass-through: an unbuilt blueprint collides with nothing
+      // until `solidifyStructure` (its space stays reserved in the registry).
+      ...(s.blueprint === true ? { collisionGroups: BLUEPRINT_COLLISION_GROUPS } : {}),
     };
     const ok = this.spawnOne(2, spec, undefined, undefined, structureVertices, s.angle ?? 0, parts);
     // The structure SUBTYPE rides the shared `shipKind` byte (kind=2 path) so
@@ -263,7 +278,25 @@ export class SwarmSpawner {
         rec.halfH = s.radius;
       }
     }
+    // A kind with a rig (rigCatalogue.ts) gets its solid parts as kinematic
+    // bodies tied to this body; DESPAWN removes them with it. A blueprint's
+    // solid rig parts wait for `solidifyStructure` (a hologram has none).
+    if (ok && s.shipKind && s.blueprint !== true) this.attachRig(s.id, s.shipKind);
     return ok;
+  }
+
+  /** Hologram pass-through: a finished blueprint turns solid (default
+   *  collider groups) and gets its rig's solid parts. The caller has checked
+   *  that no ship overlaps it (`blueprintBody.ts`). */
+  solidifyStructure(id: string): void {
+    this.hooks.postSetCollisionGroups?.(id, DEFAULT_COLLISION_GROUPS);
+    const kind = this.registry.get(id)?.shipKind;
+    if (kind) this.attachRig(id, kind);
+  }
+
+  private attachRig(id: string, shipKind: string): void {
+    const rig = this.hooks.postRigAttach ? rigForStructureKind(shipKind) : undefined;
+    if (rig) this.hooks.postRigAttach!(id, rig.id);
   }
 
   /** Spawn one dynamic, damageable SCRAP body (scrap-on-death Phase 2b-i) —
@@ -461,7 +494,7 @@ export class SwarmSpawner {
     // SCRAP (kind 3) carries a collision-group mask so scrap doesn't collide with
     // other scrap but does collide with everything else. Every other kind passes
     // undefined ⇒ Rapier's default groups (collide with all).
-    const collisionGroups = kind === SWARM_KIND_SCRAP ? SCRAP_COLLISION_GROUPS : undefined;
+    const collisionGroups = a.collisionGroups ?? (kind === SWARM_KIND_SCRAP ? SCRAP_COLLISION_GROUPS : undefined);
     // SCRAP (kind 3) carries its spawn angle so the worker rotates the body to
     // match the dying ship. Other kinds pass 0 (legacy axis-aligned spawn).
     // Structures (kind 2) carry their quarter-turn rotation too (phase V).

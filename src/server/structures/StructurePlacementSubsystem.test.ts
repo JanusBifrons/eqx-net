@@ -3,6 +3,7 @@ import { StructurePlacementSubsystem, type StructurePlacementHooks } from './Str
 import { StructureRegistry } from './StructureRegistry.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { SCAFFOLDING_HP_FRACTION } from '../../core/structures/structureGridConstants.js';
+import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
 import { SectorObstacles } from '../rooms/SectorObstacles.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -88,6 +89,8 @@ describe('StructurePlacementSubsystem', () => {
     // Second within (capital.radius + connector.radius) of the first → reject.
     const overlap = h.sub.place('player-1', 'connector', 10, 10);
     expect(overlap).toBeNull();
+    // The refusal carries the reason for the player's notice.
+    expect(h.sub.lastRefusal).toBe("Can't build here: too close to another structure");
     // Far away → accepted.
     const far = h.sub.place('player-1', 'connector', 5000, 5000);
     expect(far).not.toBeNull();
@@ -103,11 +106,13 @@ describe('StructurePlacementSubsystem', () => {
     const withRock = makeHarness({ obstacles: [{ x: 0, y: 0, radius: 120 }] });
     const onRock = withRock.sub.place('player-1', 'capital', 0, 0);
     expect(onRock).toBeNull();
+    expect(withRock.sub.lastRefusal).toBe("Can't build here: blocked by an asteroid or wreck");
     expect(withRock.spawned.length).toBe(0);
     expect(withRock.registry.size).toBe(0);
     // Well clear of the rock → accepted.
     const clear = withRock.sub.place('player-1', 'capital', 5000, 5000);
     expect(clear).not.toBeNull();
+    expect(withRock.sub.lastRefusal).toBeNull(); // a success clears the reason
     expect(withRock.registry.size).toBe(1);
   });
 
@@ -147,31 +152,89 @@ describe('StructurePlacementSubsystem', () => {
 });
 
 describe('StructurePlacementSubsystem — packed placement seam (P2b)', () => {
-  function gated(ok: boolean, spawnOk = true) {
+  function gated(ok: boolean, spawnOk = true, sectorKey: string | null = 'A1') {
     const h = makeHarness({ spawnOk });
     const calls: string[] = [];
     let commits = 0;
-    (h.sub as unknown as { hooks: StructurePlacementHooks }).hooks.packedGateForBuild = (_owner, kind) => {
+    const hooks = (h.sub as unknown as { hooks: StructurePlacementHooks }).hooks;
+    hooks.sectorKey = () => sectorKey;
+    hooks.packedGateForBuild = (_owner, kind) => {
       calls.push(kind);
-      return { ok, commit: () => { commits++; } };
+      return { ok, commit: () => { commits++; return { product: `structure:${kind}`, quality: 42 }; } };
     };
     return { ...h, calls, commits: () => commits };
   }
 
-  it('only a player placement (requirePacked) of a non-starter kind is checked', () => {
+  it('a room with no sector places a Capital without a crate', () => {
+    // Engineering / test sandboxes have no roster and no hold, so nobody
+    // there can hold a crate: the Capital builds as it did before crates.
+    const g = gated(false, true, null);
+    const id = g.sub.place('alice', 'capital', 0, 0, { requirePacked: true });
+    expect(id).not.toBeNull();
+    const rec = g.registry.get(id!)!;
+    expect(rec.prepaid).toBeUndefined();
+    expect(rec.isConstructed).toBe(true);
+    expect(g.calls).toEqual([]);
+    expect(g.commits()).toBe(0);
+  });
+
+  it('only a player placement (requirePacked) of a non-starter kind or the Capital is checked', () => {
     const g = gated(true);
     g.sub.place('alice', 'smelter', 0, 0); // scenario / generated path
     g.sub.place('alice', 'solar', 2000, 0, { requirePacked: true }); // starter kind
     expect(g.calls).toEqual([]);
     g.sub.place('alice', 'smelter', 4000, 0, { requirePacked: true });
-    expect(g.calls).toEqual(['smelter']);
+    g.sub.place('alice', 'capital', 8000, 0, { requirePacked: true });
+    expect(g.calls).toEqual(['smelter', 'capital']);
   });
 
-  it('no packed item ⇒ rejected, nothing spawned, nothing consumed', () => {
+  it('a refinery places with no crate: a bank build, nothing consumed', () => {
     const g = gated(false);
-    expect(g.sub.place('alice', 'smelter', 0, 0, { requirePacked: true })).toBeNull();
-    expect(g.spawned).toHaveLength(0);
+    const id = g.sub.place('alice', 'refinery', 0, 0, { requirePacked: true });
+    expect(id).not.toBeNull();
+    const rec = g.registry.get(id!)!;
+    expect(rec.prepaid).toBeUndefined();
+    expect(rec.packedQuality).toBeUndefined();
+    expect(rec.isConstructed).toBe(false);
     expect(g.commits()).toBe(0);
+  });
+
+  it('a held refinery crate is used first (a free, prepaid build)', () => {
+    const g = gated(true);
+    const id = g.sub.place('alice', 'refinery', 0, 0, { requirePacked: true });
+    const rec = g.registry.get(id!)!;
+    expect(rec.prepaid).toBe(true);
+    expect(rec.packedQuality).toBe(42);
+    expect(g.commits()).toBe(1);
+  });
+
+  it('a Capital needs its crate and repacks: refused without one; with one it is prepaid', () => {
+    const none = gated(false);
+    expect(none.sub.place('alice', 'capital', 0, 0, { requirePacked: true })).toBeNull();
+    expect(none.spawned).toHaveLength(0);
+    expect(none.commits()).toBe(0);
+    // Several Capitals are allowed, one crate each. Prepaid + quality is what
+    // the grid pulse's deconstruct reads to give the crate back (onRepack).
+    const g = gated(true);
+    for (const x of [0, 8000]) {
+      const rec = g.registry.get(g.sub.place('alice', 'capital', x, 0, { requirePacked: true })!)!;
+      expect(rec.prepaid).toBe(true);
+      expect(rec.packedQuality).toBe(42);
+    }
+    expect(g.commits()).toBe(2);
+  });
+
+  it('a Capital from a crate is born at its full QUALITY hull (no repair bill on the new bank)', () => {
+    // The crate's quality raises the max hull; seeding only the base hull left
+    // a gap the repair pulse paid for out of the Capital's starting minerals.
+    const g = gated(true);
+    const id = g.sub.place('alice', 'capital', 0, 0, { requirePacked: true })!;
+    const max = effectiveStructureMaxHealth(getStructureKind('capital').maxHealth, 1, 42);
+    expect(max).toBeGreaterThan(getStructureKind('capital').maxHealth);
+    expect(g.seeded.get(id)).toBe(max);
+    // A blueprint from a crate still starts as scaffolding (it builds up).
+    const bp = g.sub.place('alice', 'refinery', 8000, 0, { requirePacked: true })!;
+    expect(g.seeded.get(bp)).toBe(Math.max(1, Math.floor(getStructureKind('refinery').maxHealth * SCAFFOLDING_HP_FRACTION)));
   });
 
   it('a packed item is consumed once, after the structure is registered', () => {
@@ -195,13 +258,15 @@ describe('StructurePlacementSubsystem — packed placement seam (P2b)', () => {
 });
 
 describe('wreck pieces block placement, never links (wreck fields 7, plan R13)', () => {
-  /** A room's gatherer over one swarm body of `kind` at (300, 0). */
-  function rig(kind: number) {
+  /** A room's gatherer over one swarm body of `kind` at (300, 0): an 80 u
+   *  wide box, `halfH` tall each way. */
+  function rig(kind: number, halfH = 40) {
     const registry = new StructureRegistry();
     const sab = new Float32Array(SAB_TOTAL_BYTES / 4);
     sab[slotBase(0) + SLOT_X_OFF] = 300; sab[slotBase(0) + SLOT_Y_OFF] = 0;
-    const square = [{ x: -40, y: -40 }, { x: 40, y: -40 }, { x: 40, y: 40 }, { x: -40, y: 40 }];
-    const swarm = [{ id: 'w', kind, slot: 0, radius: 57, wreckParts: [square] } as unknown as SwarmEntityRecord];
+    const square = [{ x: -40, y: -halfH }, { x: 40, y: -halfH }, { x: 40, y: halfH }, { x: -40, y: halfH }];
+    const radius = halfH === 40 ? 57 : Math.ceil(Math.hypot(40, halfH));
+    const swarm = [{ id: 'w', kind, slot: 0, radius, wreckParts: [square] } as unknown as SwarmEntityRecord];
     const g = new SectorObstacles({
       structures: registry, swarm: { all: () => swarm }, sab: () => sab,
       forEachHull: () => {}, clearanceOf: () => 0, extentOf: () => undefined,
@@ -222,8 +287,8 @@ describe('wreck pieces block placement, never links (wreck fields 7, plan R13)',
   });
 
   it('the link line of sight is unchanged with a wreck piece in the way (a rock there still cuts it)', () => {
-    const linked = (kind: number): number => {
-      const { sub, registry } = rig(kind);
+    const linked = (kind: number, halfH?: number): number => {
+      const { sub, registry } = rig(kind, halfH);
       const a = sub.place('player-1', 'capital', -100, 0)!; // hw 280: clear of the piece at 300
       const b = sub.place('player-1', 'connector', 600, 0)!;
       expect(a).not.toBeNull(); expect(b).not.toBeNull();
@@ -231,6 +296,9 @@ describe('wreck pieces block placement, never links (wreck fields 7, plan R13)',
     };
     expect(linked(4)).toBe(linked(99)); // a wreck piece: the same links as nothing there
     expect(linked(4)).toBeGreaterThan(0);
-    expect(linked(0)).toBe(0); // control: an asteroid on the line blocks it
+    // Control: an asteroid on the path blocks it. A cable curves socket to
+    // socket and bends round a small rock, so the control rock is a tall bar
+    // (x 260..340, y ±500) that every curve from the Capital must cross.
+    expect(linked(0, 500)).toBe(0);
   });
 });

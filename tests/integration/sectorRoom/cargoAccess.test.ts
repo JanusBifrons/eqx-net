@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
 import type { Room } from 'colyseus.js';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { CargoState } from '../../../src/shared-types/messages/cargoMessages.js';
@@ -53,7 +53,7 @@ describe('SectorRoom integration — cargo access (C1)', () => {
 
   it('opens your own storage; take and put move items; a withdrawal is not auto-deposited back', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0 });
+    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0, initialCargo: withCapitalCrates() });
     const replies: CargoState[] = [];
     cr.onMessage('cargo_state', (m: CargoState) => replies.push(m));
     const r = serverRoom(cr.roomId);
@@ -61,9 +61,10 @@ describe('SectorRoom integration — cargo access (C1)', () => {
     let shipId = '';
     for (const [, s] of (r.state as SectorState).ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
 
-    // 350 u centre to centre: inside auto-deposit range (400), so a withdrawal
-    // would be banked straight back without the manual-cargo rule.
-    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: 350 });
+    // Parked on the Capital's crane bay (bay centre = Capital + (0, 410), 410 u
+    // centre to centre, past the 400 u hover range): the crane would bank a
+    // withdrawal straight back without the manual-cargo rule.
+    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: -410 });
     expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5_000)).toBe(true);
     const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
     cap.hold = { goods: { alloy: 10 }, blueprints: [] };
@@ -85,13 +86,14 @@ describe('SectorRoom integration — cargo access (C1)', () => {
 
     // The 2 s auto-deposit dwell would have banked it by now; it must not.
     await new Promise((res) => setTimeout(res, 3000));
+    expect(cap.rigClip?.clipId, 'the crane must not reach for a withdrawal').toBeUndefined();
     expect(getHoldStore().get(shipId)?.hold.goods.alloy, 'a withdrawal must stick').toBe(3);
   });
 
   it('is locked for another pilot and for an NPC base, and asks you to fly closer when far', { timeout: 40_000 }, async () => {
     const owner = randomUUID();
     const visitor = randomUUID();
-    const crOwner = await harness.connectActive(owner, { spawnX: 0, spawnY: 0 });
+    const crOwner = await harness.connectActive(owner, { spawnX: 0, spawnY: 0, initialCargo: withCapitalCrates() });
     const crVisitor = await harness.connectActive(visitor, { spawnX: 0, spawnY: 150 });
     const replies: CargoState[] = [];
     crVisitor.onMessage('cargo_state', (m: CargoState) => replies.push(m));

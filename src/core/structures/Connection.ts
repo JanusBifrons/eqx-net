@@ -24,6 +24,11 @@ import { FLASH_DURATION_MS } from './structureGridConstants.js';
  */
 export type FlowMaterial = 'power' | 'minerals' | 'repair' | 'construction';
 
+/** No socket: a fence link (emitter post to post) runs straight, centre to
+ *  centre, as before the sockets. Lives here (the leaf module) so `Connection`
+ *  can default to it without an import cycle; `cableCurve.ts` re-exports it. */
+export const CABLE_NO_SOCKET = -1;
+
 export interface Pose2 {
   x: number;
   y: number;
@@ -40,7 +45,22 @@ export class Connection {
     readonly aId: string,
     readonly bId: string,
     readonly throughput: number,
+    /** 0d cable sockets: index into `structureSockets(kind)` of the `aId`
+     *  end the cable leaves from (the pair `canConnect` picked), or
+     *  `CABLE_NO_SOCKET` for a fence link. Fixed for the link's life, so
+     *  a cable never jumps when other links come and go. */
+    readonly socketA: number = CABLE_NO_SOCKET,
+    /** The `bId` end's socket index (as `socketA`). */
+    readonly socketB: number = CABLE_NO_SOCKET,
   ) {}
+
+  /** The socket index at endpoint `id`, or `CABLE_NO_SOCKET` if `id` is
+   *  not an endpoint (or the link is a fence link). */
+  socketAt(id: string): number {
+    if (id === this.aId) return this.socketA;
+    if (id === this.bId) return this.socketB;
+    return CABLE_NO_SOCKET;
+  }
 
   /** The endpoint that is NOT `id`, or null if `id` is not an endpoint. */
   getOtherNode(id: string): string | null {

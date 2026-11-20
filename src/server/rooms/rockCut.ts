@@ -36,6 +36,7 @@ import { ASTEROID_RESOURCES_PER_AREA } from '../../core/swarm/asteroidShape.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { burnPieceHit } from './wreckBurnHits.js';
 import { placeWreckPieces, spawnWreckPieces, type WreckResplitHost } from './wreckResplit.js';
+import type { ChunkOpts } from '../../core/terrain/fieldLayout.js';
 import type { CapitalWreckDeps, PieceKnock, WreckOre, WreckRockView } from './capitalWreckTypes.js';
 
 const PT = { x: 0, y: 0 };
@@ -44,14 +45,25 @@ const PT = { x: 0, y: 0 };
 const ROCK_VIEW: WreckRockView = { shape: 0, radius: 0, resource: 'rock', resources: undefined };
 
 /** A live rock as the cut code reads it (the room's `rockOf`), filled into
- *  one reused view (read it before the next call), or null. No cut-field
- *  rock until terrain C3 (consumed keys on the wire), else the client draws
- *  a ghost whole rock. */
-export function rockViewOf(reg: { get(id: string): SwarmEntityRecord | null }, id: string): WreckRockView | null {
+ *  one reused view (read it before the next call), or null. A cut-FIELD rock
+ *  (field rock cut 1C-b) needs the room's field options `field` (its outline
+ *  is the layout's: shape 0, `fk` its rock key); without them it is not
+ *  cut. Its break is told to every client as consumed (`field_consumed`,
+ *  and the welcome's list for a late joiner), so no ghost whole rock. */
+export function rockViewOf(
+  reg: { get(id: string): SwarmEntityRecord | null }, id: string, field: ChunkOpts | null = null,
+): WreckRockView | null {
   const r = reg.get(id);
-  if (r?.kind !== 0 || r.shapeSeed === undefined || r.fieldRock === true) return null;
+  if (r?.kind !== 0) return null;
   const v = ROCK_VIEW;
-  v.shape = r.shapeSeed; v.radius = r.radius; v.resource = r.asteroidResource ?? 'rock'; v.resources = r.resources;
+  if (r.fieldRock === true) {
+    if (r.fieldKey === undefined || field === null) return null;
+    v.shape = 0; v.fk = r.fieldKey; v.field = field; v.restX = r.restX; v.restY = r.restY;
+  } else {
+    if (r.shapeSeed === undefined) return null;
+    v.shape = r.shapeSeed; v.fk = undefined; v.field = undefined; v.restX = undefined; v.restY = undefined;
+  }
+  v.radius = r.radius; v.resource = r.asteroidResource ?? 'rock'; v.resources = r.resources;
   return v;
 }
 
@@ -86,9 +98,14 @@ export class RockCutter {
     if (!(f > 0)) return false;
     const rock = this.d.rockOf(id);
     if (rock === null) return false;
+    // A field rock being mined wakes as a body (on the wire: every client
+    // sees the rock being cut). A no-op once awake; the wake cap may defer it.
+    if (rock.fk !== undefined) this.d.wakeFieldRock?.(id, shooterId);
     let k = this.rocks.get(id);
     if (k === undefined) {
-      const src = rockWreckSource({ id, shape: rock.shape, r: rock.radius });
+      const src = rock.fk !== undefined
+        ? rockWreckSource({ id, shape: 0, r: rock.radius, fk: rock.fk }, rock.field)
+        : rockWreckSource({ id, shape: rock.shape, r: rock.radius });
       k = {
         mass: src.bodyMass, impulsePerDamage: 0, maxDv: 0, spin: 1, wakeDv: 0,
         index: 0, integrity: wreckPieceIntegrity(src, src.bodyMass), cx: 0, cy: 0, radius: rock.radius, burn: null, src,
@@ -145,11 +162,14 @@ export class RockCutter {
     if (pose === null) return false;
     const tick = this.d.serverTick();
     const src = k.src;
+    // The view is reused: keep the field key and options now.
+    const fk = rock.fk, field = rock.field, restX = rock.restX, restY = rock.restY;
     // The breaking hit in the rock's 1× Pixi-up frame (its rest frame, y
     // flipped; scale 1). The fracture projects it onto the outline.
     hullPointInto(pose.x, pose.y, pose.angle, 1, hitX, hitY, PT);
     const inputs: WreckFractureInputs = {
-      rock: src.rock!, seed: this.sceneSeed ?? this.forcedSeed() ?? fnvMixU32(fnv1a32(id), tick >>> 0), killX: PT.x, killY: PT.y,
+      // A field rock's source carries the room's field options (never on the wire).
+      rock: fk !== undefined ? { ...src.rock!, field } : src.rock!, seed: this.sceneSeed ?? this.forcedSeed() ?? fnvMixU32(fnv1a32(id), tick >>> 0), killX: PT.x, killY: PT.y,
       killBlowDamage: 0, recentDamageRate: 0, snapChance: src.profile.fracture!.snapChance,
     };
     const killCut = weaponId !== undefined ? WEAPONS.get(weaponId)?.killCut : undefined;
@@ -167,19 +187,21 @@ export class RockCutter {
       src, geom, pose, pose.x, pose.y, inputs.killX, -inputs.killY, inputs.seed ^ 0x3ec7,
       src.profile.fracture?.sweepCuts === true ? 0 : (inputs.cutW ?? 0), // a swept cut burns no gap
     );
-    // Every piece carries its area's share of the ore the rock had left.
+    // Every piece carries its area's share of the ore the rock had left. A
+    // field rock's pieces also carry its ore rest frame (the field's ore is
+    // sampled there, `OreDraw.chunkYield`); a re-split hands `ore` down whole.
     const left = rock.resources ?? src.area * ASTEROID_RESOURCES_PER_AREA;
-    const ore: WreckOre = { rockId: id, resource: rock.resource, perArea: src.area > 0 ? Math.max(0, left) / src.area : 0 };
+    const ore: WreckOre = {
+      rockId: id, resource: rock.resource, perArea: src.area > 0 ? Math.max(0, left) / src.area : 0,
+      ...(fk !== undefined && restX !== undefined && restY !== undefined ? { restX, restY } : {}),
+    };
     const [wreckId, serial] = this.h.newWreck();
     const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, 0, serial, wreckId, null, fifo, id);
     if (r.ids.length === 0 && r.pods === 0) return false;
     this.rocks.delete(id);
-    // TODO(macro terrain C3): record a cut-field rock as mined here with
-    // `cutField?.markConsumed(rec.fieldKey)` (PR #707, not on main yet; the
-    // terrain stream owns that record, so no removed-rock list here), then
-    // drop the field-rock skip in SectorRoom's `rockOf`. Piece ore then reads
-    // the field through `oreAtRest(restX, restY, x, y, angle, out)`, the rock's
-    // rest frame copied into `ore` here and on every re-split (#706).
+    // A field rock is consumed: the field never cuts it whole again, and every
+    // client (a late joiner by the welcome) drops its own copy.
+    if (fk !== undefined) this.d.fieldRockBroken?.(fk);
     // The rock leaves through the room's normal evict path.
     this.d.removePiece(id);
     if (r.ids.length > 0) {
@@ -192,7 +214,8 @@ export class RockCutter {
           ...(inputs.cutW !== undefined ? { cutW: inputs.cutW } : {}),
           ...(inputs.extraCuts !== undefined ? { extraCuts: inputs.extraCuts.slice() } : {}),
           // Its resource rides too (emit-when-not-plain) so the pieces keep the rock's look (#16).
-          rock: { id, shape: rock.shape, r: rock.radius, ...(rock.resource !== 'rock' ? { res: rock.resource } : {}) },
+          // A field rock rides by its field key (shape 0): each side rebuilds it from its field.
+          rock: { id, shape: fk !== undefined ? 0 : rock.shape, r: rock.radius, ...(fk !== undefined ? { fk } : {}), ...(rock.resource !== 'rock' ? { res: rock.resource } : {}) },
         },
         pieces: r.ids.length, ids: r.ids, mass: r.mass, holdUntil: tick,
         chain: { root: inputs, steps: [] }, parent: 0, children: 0, src, ore,

@@ -13,6 +13,30 @@ function inside(site: { x: number; y: number }, ext: BaseExtent, half: number): 
 }
 
 describe('chooseBaseSite (T1)', () => {
+  it('packs flush: finds a slot between two blockers narrower than the grid can hit, and the high sector edges', () => {
+    // A 3530 band across the sector; the base fits only for a Capital y in
+    // -15..15, which no 250 grid row hits; the flush sites do.
+    const hard = [
+      { x: 0, y: 3000, hw: 6000, hh: 1235 }, // bottom edge 1765
+      { x: 0, y: -3000, hw: 6000, hh: 1235 }, // top edge -1765
+    ];
+    const band = { x0: -1000, x1: 1000, y0: -1550, y1: 1550 }; // 3100 + 400 margin into a 3530 band
+    const site = chooseBaseSite(band, hard, [], OPTS);
+    expect(site).not.toBeNull();
+    expect(site!.y + band.y0 - OPTS.margin).toBeGreaterThanOrEqual(-1765 - 1e-6);
+    expect(site!.y + band.y1 + OPTS.margin).toBeLessThanOrEqual(1765 + 1e-6);
+    // The high x edge is reachable exactly (the grid alone stops short).
+    const free = chooseBaseSite(SMALL, [{ x: -3000, y: 0, hw: 2000, hh: 6000 }], [], { ...OPTS, step: 333 });
+    expect(free!.x + SMALL.x1).toBeCloseTo(5000 - OPTS.margin, 6);
+  });
+
+  it('counts a dock\x27s landing pad in the grown extent', () => {
+    const e = grownExtent([{ kind: 'freight_dock', x: 0, y: 0 }]);
+    expect(e).toEqual({ x0: -500, x1: 500, y0: -200, y1: 710 });
+    const flipped = grownExtent([{ kind: 'freight_dock', x: 0, y: 0, rot: 180 }]);
+    expect(flipped).toEqual({ x0: -500, x1: 500, y0: -710, y1: 200 });
+  });
+
   it('fits the base inside the sector, as far from the origin (spawn) as it can', () => {
     const site = chooseBaseSite(SMALL, [], [], OPTS)!;
     expect(inside(site, SMALL, 5000 - 200)).toBe(true);
@@ -90,5 +114,30 @@ describe('chooseBaseSite centred on a solar-system pocket (Phase 4)', () => {
     expect(site).not.toBeNull();
     expect(Math.abs(site.x - 120_000)).toBeLessThanOrEqual(5000);
     expect(Math.abs(site.y + 60_000)).toBeLessThanOrEqual(5000);
+  });
+});
+
+describe('chooseBaseSite within a bounding circle (cut-field clearing)', () => {
+  it('keeps the whole base plus margin inside the circle, where the square alone reaches past it', () => {
+    const ext = { x0: -400, x1: 400, y0: -300, y1: 300 };
+    const o = { halfExtent: 5000, margin: 250, step: 250, seed: 3, centreX: 20_000, centreY: -10_000 };
+    const far = (s: { x: number; y: number }): number => Math.hypot(
+      Math.max(Math.abs(s.x + ext.x0 - o.margin - o.centreX), Math.abs(s.x + ext.x1 + o.margin - o.centreX)),
+      Math.max(Math.abs(s.y + ext.y0 - o.margin - o.centreY), Math.abs(s.y + ext.y1 + o.margin - o.centreY)),
+    );
+    // Unbounded, the far-from-centre preference picks a square corner.
+    const square = chooseBaseSite(ext, [], [], o)!;
+    expect(far(square)).toBeGreaterThan(5000);
+    const within = { x: o.centreX, y: o.centreY, r: 5000 };
+    const site = chooseBaseSite(ext, [], [], { ...o, within })!;
+    expect(site).not.toBeNull();
+    expect(far(site)).toBeLessThanOrEqual(within.r);
+    // Still prefers far sites: it lands near the rim, not the centre.
+    expect(far(site)).toBeGreaterThan(within.r - 400);
+  });
+
+  it('returns null when the base cannot fit inside the circle', () => {
+    const ext = { x0: -400, x1: 400, y0: -300, y1: 300 };
+    expect(chooseBaseSite(ext, [], [], { ...OPTS, within: { x: 0, y: 0, r: 600 } })).toBeNull();
   });
 });

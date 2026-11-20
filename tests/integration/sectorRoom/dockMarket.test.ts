@@ -17,6 +17,7 @@ import { TradeDirector, type TradeRoom } from '../../../src/server/economy/Trade
 import { setTradeSink } from '../../../src/server/economy/tradeSink.js';
 import type { CargoState } from '../../../src/shared-types/messages/cargoMessages.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
+import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_BAY_INSET } from '../../../src/core/articulation/rigCatalogue.js';
 
 async function until(pred: () => boolean, ms: number): Promise<boolean> {
   const end = Date.now() + ms;
@@ -58,8 +59,14 @@ describe('SectorRoom integration — NPC Freight Dock market (T4)', () => {
     const entityId = internal.swarmRegistry.get(dock.id)!.entityId;
 
     const pid = randomUUID();
-    // Spawn on the dock: the spawn nudge moves the ship just clear of it.
-    const cr = await harness.connectActive(pid, { spawnX: dock.x, spawnY: dock.y, initialWallet: 5000 });
+    // Spawn on the far corner of the dock's landing pad (where a parked ship
+    // can be, `DOCK_BAY_INSET` in from both pad edges), turned into the world
+    // with the dock: 470 past the dock's edge, so the dock's cargo access
+    // range covers its whole pad. The pad is kept clear, so nothing nudges it.
+    const lx = DOCK_BAY_CX + DOCK_BAY_HALF_W - DOCK_BAY_INSET, ly = DOCK_BAY_CY + DOCK_BAY_HALF_H - DOCK_BAY_INSET; // (410, 670)
+    const a = ((dock.rot ?? 0) * Math.PI) / 180;
+    const spawnX = dock.x + lx * Math.cos(a) - ly * Math.sin(a), spawnY = dock.y + lx * Math.sin(a) + ly * Math.cos(a);
+    const cr = await harness.connectActive(pid, { spawnX, spawnY, initialWallet: 5000 });
     const replies: CargoState[] = [];
     cr.onMessage('cargo_state', (m: CargoState) => replies.push(m));
     let shipId = '';

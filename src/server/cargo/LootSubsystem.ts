@@ -53,6 +53,10 @@ export interface LootCollector {
    *  piece physically meets, `shipWithinHullReach`). */
   angle: number;
   shieldUp: boolean;
+  /** Hull velocity (game units / s): the freight dock bay's "stopped" test
+   *  (`isStillForDock`, structure-restyle 3b). */
+  vx: number;
+  vy: number;
   /** Cargo capacity (weight units) of the collecting hull's kind. */
   capacity: number;
   /** The collecting hull's kind: its mounts decide whether it takes
@@ -118,9 +122,10 @@ export interface LootSubsystemDeps {
     /** Remove the stored piece (`CapitalWreckSubsystem.storePiece`). */
     remove: (pieceId: string) => void;
   };
-  /** A rock chunk's hidden ore (`OreDraw.chunkYield`, the one ore path).
+  /** A rock chunk's hidden ore (`OreDraw.chunkYield`, the one ore path):
+   *  its share by weight (`mass / rockMass`) of the whole rock's ore.
    *  Absent: a rock piece is never taken in. */
-  chunkOre?: (ore: WreckOre, x: number, y: number, weight: number) => Partial<Record<GoodId, number>>;
+  chunkOre?: (ore: WreckOre, x: number, y: number, mass: number, rockMass: number) => Partial<Record<GoodId, number>>;
   /** Discrete notifications (UI accelerator + audit). */
   onCollected?: (c: LootCollector, moved: Hold, podId: string) => void;
   onDropped?: (podId: string, hold: Hold, cause: string) => void;
@@ -312,7 +317,7 @@ export class LootSubsystem {
   };
 
   /** Reused collector for `hullContact` (no per-contact alloc, #14). */
-  private readonly contactCollector: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
+  private readonly contactCollector: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, vx: 0, vy: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
 
   /** A physics contact between `podId` and `otherId`. When `podId` is a loot
    *  pod and `otherId` a ship, the bump never destroys the pod (true: skip
@@ -383,7 +388,7 @@ export class LootSubsystem {
   }
 
   /** Reused piece view (`heldPieces.store`, #14). */
-  private readonly pieceView: PieceStoreView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0 };
+  private readonly pieceView: PieceStoreView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0, rockMass: 0 };
 
   /** A piece the collector's own tractor holds in its hold zone. Bound once. */
   private readonly storeHeldPiece = (pieceId: string): void => {
@@ -421,7 +426,7 @@ export class LootSubsystem {
       ? { goods: { salvage: v.qty }, blueprints: [] }
       : { goods: {}, blueprints: [], packed: [{
         product: ROCK_CHUNK_PRODUCT, quality: 0, uid: `rc-${randomUUID()}`, weight: v.holdWeight,
-        ore: this.d.chunkOre!(v.ore, x, y, v.holdWeight) as Record<string, number>,
+        ore: this.d.chunkOre!(v.ore, x, y, v.mass, v.rockMass) as Record<string, number>,
       }] };
     const shipHold = shipRec !== undefined ? cloneHold(shipRec.hold) : emptyHold();
     mergeInto(shipHold, cloneHold(moved));

@@ -19,12 +19,17 @@ import { gameNow } from '../time/gameTime.js';
 
 export const BLUEPRINT_OFFERS_ON_BOARD = 4;
 export const BOARD_ORIGINAL_CHANCE = 0.1;
+/** Junk copies (cheap starter tier, `makeBlueprint(..., { junk: true })`)
+ *  restocked on top of the normal offers at every refresh. */
+export const JUNK_OFFERS_ON_BOARD = 2;
 export const BLUEPRINT_OFFER_TTL_MS = 20 * 60 * 1000;
 
 interface BoardBlueprint {
   offerId: string;
   bp: BlueprintItem;
   expiresAtMs: number;
+  /** Server-side only: which restock slot it fills (never on the wire). */
+  junk: boolean;
 }
 
 /** What `playerId` pays for `bp` at trader standing `rep`. */
@@ -69,16 +74,27 @@ export class BlueprintMarket {
     const now = this.now();
     this.offers = this.offers.filter((o) => o.expiresAtMs > now);
     const products = blueprintProducts();
-    while (this.offers.length < BLUEPRINT_OFFERS_ON_BOARD && products.length > 0) {
+    if (products.length === 0) return;
+    this.restock(products, now, false, BLUEPRINT_OFFERS_ON_BOARD);
+    this.restock(products, now, true, JUNK_OFFERS_ON_BOARD);
+  }
+
+  /** Top the `junk` (or normal) offers up to `target`. */
+  private restock(products: readonly string[], now: number, junk: boolean, target: number): void {
+    let have = 0;
+    for (const o of this.offers) if (o.junk === junk) have++;
+    while (have < target) {
       const product = products[Math.floor(this.rng() * products.length)]!;
-      const kind = this.rng() < BOARD_ORIGINAL_CHANCE ? 'bpo' : 'bpc';
-      const bp = makeBlueprint(product, kind, () => this.rng());
+      const kind = !junk && this.rng() < BOARD_ORIGINAL_CHANCE ? 'bpo' : 'bpc';
+      const bp = makeBlueprint(product, kind, () => this.rng(), { junk });
       if (blueprintValue(bp) <= 0) continue;
       this.offers.push({
         offerId: `bpo-${randomUUID().slice(0, 10)}`,
         bp,
         expiresAtMs: now + BLUEPRINT_OFFER_TTL_MS * (0.7 + this.rng() * 0.6),
+        junk,
       });
+      have++;
     }
   }
 

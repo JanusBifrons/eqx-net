@@ -130,6 +130,13 @@ export const STARTER_STRUCTURE_KINDS: readonly string[] = [
   // Sector control: a lock builds from minerals (its 20k cost), never packed.
   'territory_lock',
 ];
+/** Playable base loop — the ONE kind a player can only place from its packed
+ *  crate (`structure:capital`, in the hold or storage). Every other kind
+ *  builds from the base's bank; a held crate for it is still used first (a
+ *  free build). Several Capitals are allowed, one crate each. */
+export function needsPackedCrate(kindId: string): boolean {
+  return kindId === 'capital';
+}
 /** Hulls anyone can fly without building one: the launch table's keys
  *  (`shared-types/launch.ts`, one list: sub-capitals free, capitals priced). */
 export const STARTER_HULL_KINDS: readonly string[] = LAUNCHABLE_HULL_KINDS;
@@ -280,8 +287,20 @@ export function uidFrom(rng: () => number): string {
   return `bp-${Math.floor(rng() * 0x7fffffff).toString(36)}${Math.floor(rng() * 0x7fffffff).toString(36)}`;
 }
 
-/** A fresh blueprint for `product` with modest rolled stats (`rng` ∈ [0, 1)). */
-export function makeBlueprint(product: string, kind: 'bpo' | 'bpc', rng: () => number): BlueprintItem {
+/** A JUNK copy (the cheap starter tier, owner 2026-11-20): this many runs,
+ *  no material saving, output below `JUNK_OUTPUT_MAX`. Not a wire tier: it is
+ *  an ordinary copy with poor stats, so `blueprintQuality` reads it as low. */
+export const JUNK_BPC_RUNS = 2;
+export const JUNK_OUTPUT_MAX = 10;
+/** Chance an ordinary loot roll also drops a junk copy (`rollLoot`). */
+export const LOOT_JUNK_COPY_CHANCE = 0.08;
+
+/** A fresh blueprint for `product` with modest rolled stats (`rng` ∈ [0, 1)).
+ *  `junk` makes a junk copy (`JUNK_BPC_RUNS` runs, poor stats; ignores `kind`). */
+export function makeBlueprint(product: string, kind: 'bpo' | 'bpc', rng: () => number, opts?: { junk?: boolean }): BlueprintItem {
+  if (opts?.junk === true) {
+    return { uid: uidFrom(rng), product, kind: 'bpc', runs: JUNK_BPC_RUNS, material: 0, output: Math.floor(rng() * JUNK_OUTPUT_MAX), research: 0 };
+  }
   return {
     uid: uidFrom(rng),
     product,
@@ -291,6 +310,13 @@ export function makeBlueprint(product: string, kind: 'bpo' | 'bpc', rng: () => n
     output: Math.floor(rng() * 40),
     research: 0,
   };
+}
+
+/** Roll a junk copy with probability `chance`: a random blueprint product. */
+export function rollJunkBlueprint(rng: () => number, chance: number): BlueprintItem | null {
+  if (chance <= 0 || rng() >= chance) return null;
+  const products = blueprintProducts();
+  return makeBlueprint(products[Math.floor(rng() * products.length)]!, 'bpc', rng, { junk: true });
 }
 
 /**
