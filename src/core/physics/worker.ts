@@ -386,7 +386,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         break;
       }
       case 'RIG_CLIP': {
-        physics.setRigClip(cmd.id, cmd.clipId, cmd.startTick, cmd.targetX, cmd.targetY);
+        physics.setRigClip(cmd.id, cmd.clipId, cmd.startTick, cmd.targetX, cmd.targetY, cmd.from, cmd.rate);
         break;
       }
     }
