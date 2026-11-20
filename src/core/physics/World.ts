@@ -14,9 +14,13 @@ import { applyForceFields, storeForceField, type ForceField } from './forceField
 import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
 import type { ShipBody, ShipInput, ShipPhysicsState } from './worldTypes.js';
 import { applyPilotInput, botWarpStep, restoreWarp } from './warpActuator.js';
-import { createObstacleBody, createProjectileBody, createShipBody, createWallBody, mountShipColliders } from './spawnBodies.js';
+import { createObstacleBody, createProjectileBody, createShipBody, mountShipColliders, setBodyCollisionGroups } from './spawnBodies.js';
 import { addBodyVelocity, applyBodyImpulseAtPoint, applyRigidGroupImpulse as applyGroupImpulse } from './bodyImpulses.js';
 import { SleepSettle } from './sleepSettle.js';
+import { withoutRigParts } from './collisionGroups.js';
+import type { Rig } from '../articulation/rig.js';
+import { RigBodySet } from './rigBodies.js';
+import { ShieldWallBodies } from './shieldWallBodies.js';
 import { readAllBodyStates, readBodyState, writeBodyState } from './bodyState.js';
 import { fastestContact as fastestContactOf, queryContactState as queryContactStateOf, type ContactState } from './contactProbe.js';
 
@@ -45,22 +49,10 @@ export class PhysicsWorld {
   private readonly forceFields = new Map<string, ForceField>();
   /** Reverse lookup: Rapier rigid-body handle → entity ID, for hitscan results. */
   private handleToId = new Map<number, string>();
-  /** Shield-wall span bodies + colliders, keyed by wall id. Kept SEPARATE from
-   *  `this.bodies` (and out of `handleToId`) so walls never enter the
-   *  ship/obstacle SAB-write + contact iteration (`getAllShipStates`): they are
-   *  static, slot-less, pose-broadcast-free obstacles whose only job is to block
-   *  ships. The collider ref is kept so the wall toggles (stun / power loss) via
-   *  `setEnabled` without re-spawning the body. */
-  private readonly wallBodies = new Map<string, RAPIER.RigidBody>();
-  private readonly wallColliders = new Map<string, RAPIER.Collider>();
-  /** Wall-body Rapier handle → `wall-${id}` sentinel. Walls are kept out of
-   *  `handleToId` (above), but a hitscan beam must still TERMINATE at an up
-   *  wall (R2.28 — the client predicted beam previously ran through it because
-   *  `castHitscan` resolved only via `handleToId`). Consulted ONLY in
-   *  `castHitscan`'s miss-fallback so a wall contact can never mis-resolve to a
-   *  ship id elsewhere. Cleared in `removeWall`; a disabled (down) wall is
-   *  excluded from `castRay` by Rapier so it stays passable without a map edit. */
-  private readonly wallHandleToId = new Map<number, string>();
+  /** Shield-wall span bodies (`shieldWallBodies.ts`), kept apart from `bodies`. */
+  private readonly walls: ShieldWallBodies;
+  /** Rigged hosts' solid parts (`rigBodies.ts`, structure-restyle 2d), by host id. */
+  private readonly rigs: RigBodySet;
   /** Capital-vs-capital hull overlap pass, run after every fixed step (owner
    *  2026-11-12: capitals collide solidly). Only capital bodies are ever
    *  registered, so every other body is untouched. See capitalOverlap.ts. */
@@ -68,6 +60,8 @@ export class PhysicsWorld {
 
   private constructor(world: RAPIER.World) {
     this.world = world;
+    this.walls = new ShieldWallBodies(world);
+    this.rigs = new RigBodySet(world);
   }
 
   static async create(): Promise<PhysicsWorld> {
@@ -196,26 +190,15 @@ export class PhysicsWorld {
     this.handleToId.delete(rec.body.handle);
     this.capitals.remove(rec.body);
     this.settle.remove(id);
+    if (this.rigs.size > 0) this.rigs.detachRig(id);
     this.world.removeRigidBody(rec.body);
     this.bodies.delete(id);
   }
 
-  /** Spawn a shield-wall span between two pylon poses; doc: `createWallBody`
-   *  (spawnBodies.ts). Idempotent on `id`. */
-  spawnWall(id: string, ax: number, ay: number, bx: number, by: number, thickness: number): void {
-    if (this.wallBodies.has(id)) return;
-    const w = createWallBody(this.world, ax, ay, bx, by, thickness);
-    if (w === null) return; // degenerate (coincident pylons) — nothing to span
-    this.wallBodies.set(id, w.body);
-    this.wallColliders.set(id, w.collider);
-    this.wallHandleToId.set(w.body.handle, 'wall-' + id);
-  }
+  /** Shield-wall spans: see `ShieldWallBodies` (shieldWallBodies.ts). */
+  spawnWall(id: string, ax: number, ay: number, bx: number, by: number, thickness: number): void { this.walls.spawnWall(id, ax, ay, bx, by, thickness); }
 
-  /** Enable/disable a wall's collider (stun / power loss → pass-through). A
-   *  no-op for an unknown id. */
-  setWallActive(id: string, active: boolean): void {
-    this.wallColliders.get(id)?.setEnabled(active);
-  }
+  setWallActive(id: string, active: boolean): void { this.walls.setWallActive(id, active); }
 
   /**
    * Force fields (`forceFields.ts`: kinds `pad` and `tractor`, their
@@ -232,15 +215,22 @@ export class PhysicsWorld {
     this.forceFields.delete(id);
   }
 
-  /** Remove a wall span entirely (pylon destroyed / pair severed). */
-  removeWall(id: string): void {
-    const body = this.wallBodies.get(id);
-    if (!body) return;
-    this.wallHandleToId.delete(body.handle);
-    this.world.removeRigidBody(body); // removes the body AND its collider
-    this.wallBodies.delete(id);
-    this.wallColliders.delete(id);
+  removeWall(id: string): void { this.walls.removeWall(id); }
+
+  /** Rig parts (structure-restyle 2d): see `RigBodySet` (rigBodies.ts). */
+  attachRig(hostId: string, rig: Rig): void {
+    const host = this.bodies.get(hostId);
+    if (host) this.rigs.attachRig(hostId, host.body, rig);
   }
+
+  setRigClip(hostId: string, clipId: string | null, startTick = 0, targetX?: number, targetY?: number): void { this.rigs.setRigClip(hostId, clipId, startTick, targetX, targetY); }
+
+  stepRigs(nowTick: number): void { this.rigs.stepRigs(nowTick); }
+
+  rigPartPose(hostId: string, partId: string): { x: number; y: number; angle: number } | null { return this.rigs.rigPartPose(hostId, partId); }
+
+  /** Every collider of `id` to `groups` (a blueprint turns solid; a rig host keeps `withoutRigParts`). */
+  setCollisionGroups(id: string, groups: number): void { const b = this.bodies.get(id)?.body; if (b) setBodyCollisionGroups(b, this.rigs.has(id) ? withoutRigParts(groups) : groups); }
 
   /** Swap a body between its shield (circle) and hull colliders; doc:
    *  `mountShipColliders` (spawnBodies.ts). Idempotent. */
@@ -251,6 +241,13 @@ export class PhysicsWorld {
     if (rec.exposed === exposed) return; // idempotent -- no redundant churn
     mountShipColliders(this.world, rec.body, kind, exposed);
     rec.exposed = exposed;
+    // A rigged host's new colliders must still ignore its own rig parts.
+    if (this.rigs.size > 0 && this.rigs.has(id)) {
+      for (let c = 0; c < rec.body.numColliders(); c++) {
+        const col = rec.body.collider(c);
+        col.setCollisionGroups(withoutRigParts(col.collisionGroups()));
+      }
+    }
   }
 
   /**
@@ -498,7 +495,9 @@ export class PhysicsWorld {
 
   setShipState(id: string, state: ShipPhysicsState): void {
     const rec = this.bodies.get(id);
-    if (rec) writeBodyState(rec.body, state, true);
+    if (!rec) return;
+    writeBodyState(rec.body, state, true);
+    if (this.rigs.size > 0) this.rigs.noteRigHostPose(id, state.x, state.y, state.angle);
   }
 
   /**
@@ -578,7 +577,7 @@ export class PhysicsWorld {
       dirY,
       maxDist,
       excludeRec?.body,
-      this.wallHandleToId,
+      this.walls.wallHandleToId,
       skipId ? this._raySkip.predicate : undefined,
       halfWidth,
     );

@@ -229,6 +229,37 @@ The client draw cost of a fully loaded old battlefield (macro-terrain F3, wreck 
 
 **Print-only.** Both are in `CLIENT_COUNT_PRINT_ONLY` (`perfBudgets.ts`): `pnpm perf:counts` plays them by default and prints `print-only wreck-field/<shiplight>: draw calls p95 … · display objects …` at the end of its log (CI job `perf-counts`, step "Client count gate", and the `perf-counts` artifact JSON), never failing the run. They get `CLIENT_COUNT_BUDGETS` rows (and leave the list) once local AND CI numbers exist. Both are `soak` scenes, so a default `pnpm perf:scenes` skips them; the phone-proxy timing is slice 10.
 
+## The base-flow scene (`base-flow`, structure restyle)
+
+A small player base that pulses about once a second, so cables actually flow: a Capital (rot 90), 4 Miners on rocks, 12 Solars and 6 connectors, 21 cables (`scenarioLayouts.BASE_FLOW_OPTS`). The `teleport-raid` citadel sends no `grid_pulse`, so cable flow never draws there. The scene exists only on the restyle stream, so `--base origin/main` is INVALID (the base arm has no such room). Compare on one commit instead:
+
+```
+pnpm perf:scenes --scenes base-flow --reps 4 --base HEAD --base-params fx=classic
+```
+
+The socket cables, nubs and charge cells follow `fx=new` (`restyleLook.ts`), not `restyle=`, so `fx=classic` is the arm without them. It also drops the rest of the new effects, which are already the player default on main.
+
+**Reading (2026-11-20, 4 reps).**
+- **Desktop** (ff8dca33d):
+  - frame p95 16.7 → 16.7 ms;
+  - render p95 0.5 → 0.5 ms;
+  - tick p95 0.21 → 0.18 ms;
+  - hitches 0.99 → 0;
+  - display objects 575 → 791 (RED, ×1.38).
+- **Phone-proxy** (`--device phone-proxy --cpu-rate 2`, 4d02eeb61):
+  - frame p95 16.75 → 16.75 ms;
+  - render p95 0.8 → 0.9 ms (×1.13, p = 0.11, GREEN);
+  - hitches 0.99 → 0;
+  - display objects 579 → 791 (RED).
+
+Every timing is flat or better. The RED is the object count of the new look plus the rest of `fx=new`. The cables draw into the two shared `ConnectorRenderer` Graphics; each structure adds one nub Graphics, and the Capital crane about 15 parts.
+
+Ledgers:
+- `perf/ledger/2026-11-20T07-27-33-803Z-ff8dca33d-desktop.json`
+- `perf/ledger/2026-11-20T07-40-14-377Z-4d02eeb61-phone-proxy.json`
+
+A real phone timing is still owed before the stream's PR.
+
 ## Adding a scene
 
 Add one entry to `PERF_SCENES` with:

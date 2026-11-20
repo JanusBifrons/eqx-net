@@ -15,7 +15,7 @@ import type { FxFences } from '../art/fx/FxShields.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 import { interpBuildPct } from './buildBarInterp.js';
 import {
-  connectorVisualInto,
+  connectorVisualInto, GridFlashClock,
   codeToFlowMaterial,
   previewLineVisualParams,
   rangeCircleVisualParams,
@@ -32,10 +32,15 @@ import {
   type ShieldWallVisual,
   type PreviewLineKind,
 } from './connectorVisual.js';
+import { drawLineLookBody, drawLineLookFlow, type LineLook } from './connectorLineLooks.js';
+import {
+  LinkCableCache, drawPreviewCable, drawSocketCableBody, drawSocketCableFlow, fillLinkCable, fillStraight, makeLinkCable,
+} from './connectorCables.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import {
   canConnect,
   edgeDistance,
+  type CanConnectReason,
   type GridNode,
   type GridObstacle,
   type ObstacleBox,
@@ -45,13 +50,20 @@ import {
   CONNECTION_MAX_RANGE,
 } from '../../../core/structures/structureGridConstants.js';
 import type { Connection } from '../../../core/structures/Connection.js';
-import { MINE_TRIGGER_RANGE } from '../../../shared-types/mines.js';
+import {
+  CABLE_NO_SOCKET,
+  linkReachBoxAdd,
+  linkReachBoxStart,
+  makeCableSocketPick,
+} from '../../../core/structures/cableCurve.js';
+import { drawMines, drawNoPowerBolt, drawStatusBar } from './structureStatusMarks.js';
+import { hasBodyStatus } from './structureSocketNubs.js';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
 import {
   structureMirrorToGridNode,
   ghostToGridNode,
+  blankGridNode,
   asteroidObstaclesFromSwarm,
-  linkReachBoxOf,
   RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
 
@@ -77,23 +89,17 @@ function makePreviewConn(): PreviewConn {
   };
 }
 
-/** A blank `GridNode` — fields are overwritten in place by the projection
- *  helpers. */
-function blankGridNode(): GridNode {
-  return {
-    id: '',
-    x: 0,
-    y: 0,
-    radius: 0,
-    isHub: false,
-    isCapital: false,
-    isConnector: false,
-    isShieldPylon: false,
-    maxConnections: 0,
-    powerOutput: 0,
-    powerConsumption: 0,
-    isConstructed: false,
-  };
+/** 0d slice 7 — one candidate's `canConnect` verdict from the last preview
+ *  frame: the server's answer for linking the ghost to structure `id`, with
+ *  the socket pair it picked (`sockA` the ghost's, `sockB` the partner's;
+ *  `CABLE_NO_SOCKET` unless ok). Pooled, rewritten in place (#14). */
+export interface PreviewVerdict {
+  id: string;
+  ok: boolean;
+  /** The refusal, or null when ok. */
+  reason: CanConnectReason | null;
+  sockA: number;
+  sockB: number;
 }
 
 /** FNV-1a style integer mix. */
@@ -128,6 +134,10 @@ export function staticSignature(
     const conn = st.connTo;
     h = mix(h, conn.length);
     for (let c = 0; c < conn.length; c++) h = mix(h, conn[c]!);
+    // 0d slice 8: a socket change re-lays that link's cable.
+    const ss = st.connSockSelf, so = st.connSockOther;
+    if (ss) for (let c = 0; c < ss.length; c++) h = mix(h, ss[c]!);
+    if (so) for (let c = 0; c < so.length; c++) h = mix(h, so[c]!);
   }
   return h;
 }
@@ -208,6 +218,14 @@ export class ConnectorRenderer {
    */
   lastRangeCircleRadius = 0;
 
+  /** 0d slice 7 — the last preview frame's per-candidate verdicts (own
+   *  structures only, in mirror order), the first `previewVerdictCount` of
+   *  `previewVerdicts` (pooled; entries past the count are stale). The
+   *  parity test reads these against core `canConnect`; slice 8 draws the
+   *  cable curves from the picked sockets. */
+  readonly previewVerdicts: PreviewVerdict[] = [];
+  previewVerdictCount = 0;
+
   /** Coastal defences — firing-arc wedges drawn on the placement ghost this
    *  frame (arc-limited mounts only) and their radius. Test hooks. */
   lastArcWedgeCount = 0;
@@ -245,6 +263,11 @@ export class ConnectorRenderer {
   /** Growable pool backing `_previewNodes` — never shrinks; objects are
    *  rewritten in place by `structureMirrorToGridNode`. */
   private readonly _nodePool: GridNode[] = [];
+  /** Parallel to `_nodePool`: is the node a link candidate (the local
+   *  player's own)? Every owner's node blocks; only own ones link. */
+  private readonly _nodeCandidate: boolean[] = [];
+  /** Scratch socket pick for the preview's `canConnect` (0d slice 7). */
+  private readonly _pick = makeCableSocketPick();
   /** Reused adjacency map for `canConnect`. The value arrays carry REAL
    *  connection-like entries (one per `st.connTo` link) — NOT length-only holes.
    *  The shield-pylon dual-cap (`shieldPylonRejection`) ITERATES these and calls
@@ -277,6 +300,7 @@ export class ConnectorRenderer {
   /** R2.2 — reused travelling-comet segment scratch (connector pulse + shield
    *  shimmer both write it). */
   private readonly _comet: CometSegment = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  private readonly _flashClock = new GridFlashClock(); // grid pulses stamped on the fxNow clock (#20)
   /** R2.19 — reused shield-wall visual scratch, written per wall per frame (#14). */
   private readonly _shieldVisual: ShieldWallVisual = {
     active: false, glowColor: 0, glowAlpha: 0, glowWidth: 0,
@@ -287,7 +311,18 @@ export class ConnectorRenderer {
    *  turret per frame (invariant #14: was a fresh object literal per turret). */
   private readonly _builtRangeVisual: RingVisual = { color: 0, alpha: 0, width: 0 };
 
-  /** Redraw the web for this frame. `scale` is the viewport zoom. */
+  /** Structure restyle 1g: `?lineLook=` line look (connectorLineLooks.ts); null = today's line. Set before the first update. */
+  lineLook: LineLook | null = null;
+  /** 0d slice 8: draw links as socket cables, the server's curve
+   *  (connectorCables.ts); behind the new-effects flag (`ArtOptions.fx`).
+   *  Off = `lineLook` / the thin line, straight centre to centre. */
+  socketCables = false;
+  /** Each live link's flattened cable (re-flattened only on change). */
+  readonly cables = new LinkCableCache();
+  /** Preview line scratch, and the ok hubs' socket picks (parallel to `_okHubScratch`). */
+  private readonly _previewCable = makeLinkCable();
+  private readonly _okSockA: number[] = [];
+  private readonly _okSockB: number[] = [];
   /** Per-frame inputs for the wall visitor (set before each walk). */
   private _wallNow = 0;
   private _wallScale = 1;
@@ -395,7 +430,7 @@ export class ConnectorRenderer {
   ): void {
     // The new fences take over the walls once ready: fold that into the
     // signature so the static rails are rebuilt without them.
-    const sig = staticSignature(structures, swarm, this.highlightedStructureId) + (this._fxWallsOn ? 0.5 : 0);
+    const sig = staticSignature(structures, swarm, this.highlightedStructureId) + (this._fxWallsOn ? 0.5 : 0) + (this.socketCables ? 0.25 : 0);
     const scaleMoved = this._staticScale === 0 || Math.abs(scale / this._staticScale - 1) > STATIC_SCALE_TOLERANCE;
     if (sig !== this._staticSig || scaleMoved) {
       this._staticSig = sig;
@@ -420,6 +455,8 @@ export class ConnectorRenderer {
     this._staticRingWidth = 0;
     // Idle look of every edge (an edge carrying flow is overdrawn per frame).
     const idle = connectorVisualInto(this._edgeVisual, 0, 0, scale);
+    const cables = this.socketCables;
+    if (cables) this.cables.beginSweep();
     for (const id of structures.keys()) {
       const st = structures.get(id)!;
       const a = swarm.get(id);
@@ -447,13 +484,22 @@ export class ConnectorRenderer {
         if (id > otherId) continue; // each undirected edge once
         const b = swarm.get(otherId);
         if (!b) continue;
-        g.moveTo(ax, ay);
-        g.lineTo(b.x, -b.y);
+        if (cables) { drawSocketCableBody(g, this.linkCable(id, st, c, a, b), scale, a.radius, b.radius); continue; }
+        if (this.lineLook) { drawLineLookBody(g, this.lineLook, ax, ay, b.x, -b.y, scale, a.radius, b.radius); continue; }
+        g.moveTo(ax, ay).lineTo(b.x, -b.y);
         g.stroke({ color: idle.color, alpha: idle.alpha, width: idle.width });
       }
     }
+    if (cables) this.cables.endSweep();
+    else if (this.cables.size > 0) this.cables.clear();
     this._wallScale = scale;
     if (!this._fxWallsOn) visitDerivedWalls(structures, swarm, this._staticWallVisitor);
+  }
+
+  /** Link `c` of structure `id` (the lower-id end, pose `a`) to pose `b`:
+   *  its cached cable between the stored sockets. */
+  private linkCable(id: number, st: StructureRenderState, c: number, a: SwarmRenderState, b: SwarmRenderState) {
+    return this.cables.get(id * 65536 + st.connTo[c]!, a, st.connSockSelf?.[c] ?? CABLE_NO_SOCKET, b, st.connSockOther?.[c] ?? CABLE_NO_SOCKET);
   }
 
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
@@ -470,27 +516,28 @@ export class ConnectorRenderer {
     this.placementPreviewSelectedCount = 0;
     this.placementPreviewDeferredCount = 0;
     this.lastRangeCircleRadius = 0;
+    this.previewVerdictCount = 0;
     this.lastArcWedgeCount = 0;
     this.lastArcWedgeRadius = 0;
     this.builtTurretRangeCount = 0;
     this.lastBuiltTurretRangeRadius = 0;
     this.lastBuiltTurretRangeWidth = 0;
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
-    if (mirror.mines && mirror.mines.size > 0) this.drawMines(mirror.mines, scale, nowMs);
+    if (mirror.mines && mirror.mines.size > 0) drawMines(g, mirror.mines, scale, nowMs);
     if (!structures || !swarm || structures.size === 0) {
       if (this._buildAnchors.size > 0) this._buildAnchors.clear();
       if (this._staticSig === this._staticSig) { // not NaN ⇒ something is drawn
         this.staticGfx.clear();
         this._staticSig = NaN;
         this._staticRingCount = 0;
+        this.cables.clear();
       }
       return;
     }
     this._fxWallsOn = this.fxFences !== null && this.fxFences.ready();
     this.refreshStatic(structures, swarm, scale);
-    const flashes = mirror.gridFlashes;
-    const flowSrc = mirror.gridFlowSrc;
-    const flowMat = mirror.gridFlowMaterial;
+    const flashes = this._flashClock.sync(mirror.gridFlashes, nowMs); // pulse stamps -> fxNow windows
+    const flowSrc = mirror.gridFlowSrc, flowMat = mirror.gridFlowMaterial;
 
     // Shield walls: fence walls between emitters + each gate's spans, from the
     // same derived-wall rules the prediction world collides with (#15).
@@ -508,7 +555,8 @@ export class ConnectorRenderer {
       const ay = -a.y;
 
       // (Turret range rings + idle edges live on the static layer.)
-      for (const otherId of st.connTo) {
+      for (let ci = 0; ci < st.connTo.length; ci++) {
+        const otherId = st.connTo[ci]!;
         // Draw each undirected edge once, from the lower-id endpoint.
         if (id > otherId) continue;
         const b = swarm.get(otherId);
@@ -527,14 +575,14 @@ export class ConnectorRenderer {
         if (!v.pulseActive) continue; // idle: drawn on the static layer
         const bx = b.x;
         const by = -b.y;
+        if (this.socketCables) { drawSocketCableFlow(g, this.linkCable(id, st, ci, a, b), v, src === undefined || src === id, scale, nowMs, material, a.radius, b.radius); continue; }
+        if (this.lineLook) { drawLineLookFlow(g, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale, a.radius, b.radius); continue; }
         // Glow underlay first (so the core line sits on top).
         if (v.glowAlpha > 0) {
-          g.moveTo(ax, ay);
-          g.lineTo(bx, by);
+          g.moveTo(ax, ay).lineTo(bx, by);
           g.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
         }
-        g.moveTo(ax, ay);
-        g.lineTo(bx, by);
+        g.moveTo(ax, ay).lineTo(bx, by);
         g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
         // R2.2 — the travelling-comet flow pulse (always runs source→dest).
         // sourceIsLo ⇒ the flow source is the lower-id endpoint (id = the (ax,ay)
@@ -581,40 +629,14 @@ export class ConnectorRenderer {
       // `buildPct` steps using the server `etaMs`, so it builds smoothly rather
       // than jumping each pulse.
       if (!st.built) {
-        const shownPct = this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs);
-        const r = a.radius;
-        const barW = r * 2;
-        const barH = Math.max(3, r * 0.18);
-        const bx0 = ax - r;
-        const by0 = ay - r - barH - 4;
-        g.rect(bx0, by0, barW, barH);
-        g.fill({ color: 0x000000, alpha: 0.5 });
-        g.rect(bx0, by0, barW * Math.min(1, Math.max(0, shownPct)), barH);
-        g.fill({ color: 0x66ccff, alpha: 0.9 });
+        drawStatusBar(g, ax, ay, a.radius, this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs), 0x66ccff);
       } else if (st.deconstructPct > 0) {
-        // Red emptying bar while reclaiming.
-        const r = a.radius;
-        const barW = r * 2;
-        const barH = Math.max(3, r * 0.18);
-        const bx0 = ax - r;
-        const by0 = ay - r - barH - 4;
-        g.rect(bx0, by0, barW, barH);
-        g.fill({ color: 0x000000, alpha: 0.5 });
-        g.rect(bx0, by0, barW * Math.min(1, Math.max(0, 1 - st.deconstructPct)), barH);
-        g.fill({ color: 0xff5555, alpha: 0.9 });
-      } else if (st.storedPowerMax !== undefined && st.storedPowerMax > 0) {
-        // WS-9 (R2.12) — a Battery's always-on CHARGE bar above the built body
-        // (amber, matching the panel CHRG colour). Immediate-mode like the fill-bar.
-        const r = a.radius;
-        const barW = r * 2;
-        const barH = Math.max(3, r * 0.18);
-        const bx0 = ax - r;
-        const by0 = ay - r - barH - 4;
-        const frac = Math.min(1, Math.max(0, (st.storedPower ?? 0) / st.storedPowerMax));
-        g.rect(bx0, by0, barW, barH);
-        g.fill({ color: 0x000000, alpha: 0.5 });
-        g.rect(bx0, by0, barW * frac, barH);
-        g.fill({ color: 0xcc8844, alpha: 0.9 });
+        drawStatusBar(g, ax, ay, a.radius, 1 - st.deconstructPct, 0xff5555); // red emptying bar while reclaiming
+      } else if (st.storedPowerMax !== undefined && st.storedPowerMax > 0 && !(this.socketCables && hasBodyStatus(a.shipKind))) {
+        // WS-9 (R2.12) — a Battery's always-on CHARGE bar (amber, the panel CHRG colour).
+        // With the new look on (`socketCables`, `?fx=new`) a store with a body
+        // state lights its cells instead (socket-nub overlay, Stage 4 F1 step C).
+        drawStatusBar(g, ax, ay, a.radius, (st.storedPower ?? 0) / st.storedPowerMax, 0xcc8844);
       }
 
       // WS-9 (R2.20) + Phase 5 — out-of-power indicator above a BUILT, UNPOWERED
@@ -628,24 +650,7 @@ export class ConnectorRenderer {
         a.shipKind !== undefined &&
         isStructureKindId(a.shipKind) &&
         getStructureKind(a.shipKind).powerConsumption > 0;
-      if (st.built && st.powered === false && consumesPower) {
-        const r = a.radius;
-        const cx = ax;
-        const cy = ay - r - 12;
-        const h = Math.max(5, r * 0.28); // bolt half-height
-        const w = Math.max(1.5 / scale, 2);
-        // Lightning bolt: a zigzag from top to bottom (energy/power glyph).
-        g.moveTo(cx + h * 0.25, cy - h);
-        g.lineTo(cx - h * 0.3, cy + h * 0.1);
-        g.lineTo(cx + h * 0.1, cy + h * 0.1);
-        g.lineTo(cx - h * 0.25, cy + h);
-        g.stroke({ color: 0xff4444, width: w, alpha: 0.95 });
-        // Slash through it = negation ("no power").
-        const d = h * 0.85;
-        g.moveTo(cx - d, cy - d);
-        g.lineTo(cx + d, cy + d);
-        g.stroke({ color: 0xff4444, width: w, alpha: 0.95 });
-      }
+      if (st.built && st.powered === false && consumesPower) drawNoPowerBolt(g, ax, ay, a.radius, scale);
     }
 
     // Prune build anchors for structures that have completed or disappeared
@@ -692,11 +697,15 @@ export class ConnectorRenderer {
 
     const ghostX = this.ghostWorldX ?? preview.x;
     const ghostY = this.ghostWorldY ?? preview.y;
-    const ghost = ghostToGridNode({ kind: preview.kind, x: ghostX, y: ghostY }, this._ghostNode);
+    const ghost = ghostToGridNode(preview, this._ghostNode, ghostX, ghostY); // keeps the ghost's angle
 
     // Build the node map + adjacency + obstacle list (asteroids) for the
     // SAME canConnect the server uses, all into reused scratch.
-    let partnerExt = 0; // C5h: the widest partner, for the links' box
+    // The links' box (C5h; 0d slice 7: the server's `linkReachBox` maths,
+    // shared in core): the ghost plus every own partner in range, each padded
+    // by its extent + the cable tail.
+    const box = this._previewBox;
+    linkReachBoxStart(ghost, box);
     const nodes = this._previewNodes;
     nodes.clear();
     const adjacency = this._previewAdjacency;
@@ -711,9 +720,10 @@ export class ConnectorRenderer {
         if (!entry) continue;
         // Never preview a would-connect line to ANOTHER player's structure: the
         // grid is per-owner server-side (you can't connect to someone else's
-        // base), so a cross-owner structure is skipped entirely from the candidate
-        // web — no green, no red overflow, no line of any kind.
-        if (st.owner !== undefined && localOwner !== null && st.owner !== localOwner) continue;
+        // base), so a cross-owner structure is no candidate: no line of any
+        // kind. It still goes in `nodes`: the server's `canConnect` sees
+        // every owner's buildings, so another base blocks a cable here too.
+        const candidate = !(st.owner !== undefined && localOwner !== null && st.owner !== localOwner);
         let node = this._nodePool[poolIdx];
         if (node === undefined) {
           node = blankGridNode();
@@ -722,7 +732,8 @@ export class ConnectorRenderer {
         const sid = String(id);
         structureMirrorToGridNode(sid, st, entry, node);
         nodes.set(sid, node);
-        partnerExt = Math.max(partnerExt, node.halfW ?? node.radius, node.halfH ?? node.radius);
+        this._nodeCandidate[poolIdx] = candidate;
+        if (candidate) linkReachBoxAdd(ghost, node, CONNECTION_MAX_RANGE, box);
         // REAL adjacency: one pooled connection-like entry per `st.connTo` link,
         // carrying `aId`/`bId` so `shieldPylonRejection`'s `c.getOtherNode(...)`
         // resolves (a sparse length-only array threw on the `undefined` element —
@@ -751,7 +762,7 @@ export class ConnectorRenderer {
     }
 
     // C5h: + the field rocks sleeping in loaded chunks over the links' box (the server's dormant rocks).
-    const obstacles = asteroidObstaclesFromSwarm(swarm, this._previewObstacles, this.rockShapes, linkReachBoxOf(ghost, partnerExt, this._previewBox));
+    const obstacles = asteroidObstaclesFromSwarm(swarm, this._previewObstacles, this.rockShapes, box);
 
     const ax = ghostX;
     const ay = -ghostY; // Pixi screen space is Y-down; world is Y-up.
@@ -810,18 +821,41 @@ export class ConnectorRenderer {
     // everything else is skipped.
     const okHubs = this._okHubScratch;
     const okDists = this._okDistScratch;
+    const okSockA = this._okSockA, okSockB = this._okSockB;
     okHubs.length = 0;
     okDists.length = 0;
-    for (const node of nodes.values()) {
-      const res = canConnect(ghost, node, adjacency, nodes, obstacles);
+    okSockA.length = 0;
+    okSockB.length = 0;
+    const pick = this._pick;
+    const verdicts = this.previewVerdicts;
+    let vn = 0;
+    for (let k = 0; k < poolIdx; k++) {
+      if (this._nodeCandidate[k] !== true) continue;
+      const node = this._nodePool[k]!;
+      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick);
+      let v = verdicts[vn];
+      if (v === undefined) {
+        v = { id: '', ok: false, reason: null, sockA: CABLE_NO_SOCKET, sockB: CABLE_NO_SOCKET };
+        verdicts[vn] = v;
+      }
+      vn++;
+      v.id = node.id;
+      v.ok = res.ok;
+      v.reason = res.ok ? null : res.reason;
+      // `pick` is written only on success.
+      v.sockA = res.ok ? pick.a : CABLE_NO_SOCKET;
+      v.sockB = res.ok ? pick.b : CABLE_NO_SOCKET;
       if (res.ok) {
         okHubs.push(node);
         okDists.push(edgeDistance(ghost, node));
-      } else if (res.reason === 'blocked') {
-        this.drawPreviewSegment(ax, ay, node, 'blocked', scale);
+        okSockA.push(pick.a);
+        okSockB.push(pick.b);
+      } else if (res.reason === 'blocked' || res.reason === 'too-short') { // red; too-short stud to stud (the pick)
+        this.drawPreviewSegment(ax, ay, ghost, pick.a, node, pick.b, res.reason, scale);
       }
-      // else out-of-range / hub-required / full / self / duplicate → not drawn.
+      // else out-of-range / no-facing-socket / connector-required / full / self / duplicate → not drawn.
     }
+    this.previewVerdictCount = vn;
 
     // Sort ok-hubs nearest-first, ties broken by id (matches the server's
     // deterministic multi-connect order). In-place insertion sort over the
@@ -830,14 +864,19 @@ export class ConnectorRenderer {
       // Indices are provably in-bounds (i < length); `!` quiets noUncheckedIndexedAccess.
       const hn = okHubs[i]!;
       const hd = okDists[i]!;
+      const hsa = okSockA[i]!, hsb = okSockB[i]!;
       let j = i - 1;
       while (j >= 0 && (okDists[j]! > hd || (okDists[j]! === hd && okHubs[j]!.id > hn.id))) {
         okHubs[j + 1] = okHubs[j]!;
         okDists[j + 1] = okDists[j]!;
+        okSockA[j + 1] = okSockA[j]!;
+        okSockB[j + 1] = okSockB[j]!;
         j--;
       }
       okHubs[j + 1] = hn;
       okDists[j + 1] = hd;
+      okSockA[j + 1] = hsa;
+      okSockB[j + 1] = hsb;
     }
 
     // P3.7 — GREEN marks ONLY the links that will ACTUALLY form on confirm.
@@ -852,7 +891,7 @@ export class ConnectorRenderer {
       // WS-D (#6) restyle: the chosen (within-cap) hubs draw SOLID green
       // ('selected' = the ones that WILL connect); the over-cap remainder draws
       // DOTTED green ('deferred' = could-but-won't), NOT the old red overflow.
-      this.drawPreviewSegment(ax, ay, okHubs[i]!, i < greenCount ? 'selected' : 'deferred', scale);
+      this.drawPreviewSegment(ax, ay, ghost, okSockA[i]!, okHubs[i]!, okSockB[i]!, i < greenCount ? 'selected' : 'deferred', scale);
     }
     const deferredCount = okHubs.length - greenCount;
     this.placementPreviewConnectionCount = greenCount;
@@ -861,50 +900,18 @@ export class ConnectorRenderer {
     this.placementPreviewDeferredCount = deferredCount;
   }
 
-  /** Draw ONE placement-preview segment (ghost → hub) for the given outcome
-   *  class (glow underlay first, then the core line — same layering as the web).
-   */
+  /** Draw ONE placement-preview line (ghost -> hub) for the given outcome
+   *  class (glow underlay first, then the core line). With socket cables on,
+   *  a link with a socket pick runs the verdict's cable curve (0d slice 8),
+   *  else the straight centre line (`ax`, `ay` = the ghost in Pixi space). */
   private drawPreviewSegment(
-    ax: number,
-    ay: number,
-    node: GridNode,
-    lineKind: PreviewLineKind,
-    scale: number,
+    ax: number, ay: number, ghost: GridNode, sockA: number, node: GridNode, sockB: number,
+    lineKind: PreviewLineKind, scale: number,
   ): void {
-    const v = previewLineVisualParams(lineKind, scale);
-    const g = this.gfx;
-    const bx = node.x;
-    const by = -node.y; // Pixi screen space is Y-down; world is Y-up.
-    if (v.glowAlpha > 0) {
-      g.moveTo(ax, ay);
-      g.lineTo(bx, by);
-      g.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
-    }
-    // WS-D (#6) — a 'deferred' line is DOTTED: Pixi v8 has no native dash, so
-    // walk the segment emitting short `on`-length dashes separated by `off`-length
-    // gaps. Alloc-free (scalar march; runs every frame during build mode, #14).
-    if (v.dash && v.dash.on > 0) {
-      const dx = bx - ax;
-      const dy = by - ay;
-      const len = Math.hypot(dx, dy);
-      if (len > 0.001) {
-        const ux = dx / len;
-        const uy = dy / len;
-        const period = v.dash.on + v.dash.off;
-        let t = 0;
-        while (t < len) {
-          const segEnd = Math.min(t + v.dash.on, len);
-          g.moveTo(ax + ux * t, ay + uy * t);
-          g.lineTo(ax + ux * segEnd, ay + uy * segEnd);
-          g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
-          t += period;
-        }
-      }
-      return;
-    }
-    g.moveTo(ax, ay);
-    g.lineTo(bx, by);
-    g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
+    const c = this._previewCable;
+    if (this.socketCables && sockA !== CABLE_NO_SOCKET && sockB !== CABLE_NO_SOCKET) fillLinkCable(c, ghost, sockA, node, sockB);
+    else fillStraight(c, ax, ay, node.x, -node.y); // Pixi screen space is Y-down; world is Y-up.
+    drawPreviewCable(this.gfx, c, previewLineVisualParams(lineKind, scale));
   }
 
   /** Item C — override the ghost world position (pointer-chosen point) so the
@@ -930,27 +937,6 @@ export class ConnectorRenderer {
 
   /** Resolve the smoothly-interpolated build fraction for blueprint `id`,
    *  re-anchoring when the authoritative `buildPct` changes. */
-  /** Mine Layer — each mine: a faint trigger ring (a warning to anyone) and a
-   *  small canister with a blinking light (cyan = yours, red = anyone else's).
-   *  Immediate-mode, zero-alloc. */
-  private drawMines(mines: NonNullable<RenderMirror['mines']>, scale: number, nowMs: number): void {
-    const g = this.gfx;
-    const w = Math.max(1 / scale, 1);
-    for (const m of mines.values()) {
-      const x = m.x;
-      const y = -m.y;
-      const color = m.own ? 0x66ddff : 0xff5544;
-      g.circle(x, y, MINE_TRIGGER_RANGE);
-      g.stroke({ color, alpha: 0.12, width: w });
-      g.circle(x, y, 16);
-      g.fill({ color: 0x1b1f27, alpha: 0.95 });
-      g.stroke({ color, alpha: 0.6, width: Math.max(1.5 / scale, 1.5) });
-      const on = Math.sin(nowMs * 0.006 + x * 0.01) > 0;
-      g.circle(x, y, 6);
-      g.fill({ color, alpha: on ? 0.95 : 0.3 });
-    }
-  }
-
   private displayedBuildPct(id: number, authoritativePct: number, etaMs: number | null, nowMs: number): number {
     let anchor = this._buildAnchors.get(id);
     if (!anchor || anchor.pct !== authoritativePct) {

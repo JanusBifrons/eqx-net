@@ -67,7 +67,7 @@ describe('SectorRoom integration — liveCounts (Living Galaxy Phase 3)', () => 
       testMode: true,
       asteroidConfig: [],
       prebuiltStructures: [
-        { kind: 'capital', x: 0, y: 0 },
+        { kind: 'capital', x: 0, y: 0, rot: 180 }, // crane bay pad south, clear of the +y relay
         { kind: 'connector', ...SCENARIO.connectorN },
         { kind: 'solar', ...SCENARIO.solarNE },
       ],
@@ -93,7 +93,7 @@ describe('SectorRoom integration — liveCounts (Living Galaxy Phase 3)', () => 
       sectorKey: 'sol-prime',
       testMode: true,
       asteroidConfig: [],
-      prebuiltStructures: [{ kind: 'capital', x: 0, y: 0 }, { kind: 'solar', ...SCENARIO.solarNE }],
+      prebuiltStructures: [{ kind: 'capital', x: 0, y: 0, rot: 180 }, { kind: 'solar', ...SCENARIO.solarNE }],
       prebuiltStructuresOwner: 'npc:core:lc-base',
     });
     const pid = randomUUID();

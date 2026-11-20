@@ -76,6 +76,8 @@ const OreSchema = z
     rockId: z.string().min(1).max(MAX_WRECK_ROCK_ID_LEN),
     resource: z.enum(ASTEROID_RESOURCE_IDS),
     perArea: z.number().finite().min(0),
+    restX: z.number().finite().optional(),
+    restY: z.number().finite().optional(),
   })
   .strict();
 

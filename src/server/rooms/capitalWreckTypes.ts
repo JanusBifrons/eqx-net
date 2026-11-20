@@ -13,6 +13,7 @@ import type { WreckPiecePose } from './wreckResplit.js';
 import type { WreckSource } from '../../core/destruction/wreckSource.js';
 import type { AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import type { ChunkOpts } from '../../core/terrain/fieldLayout.js';
 
 /** Rock cut: the ore a rock's wreck carries. Every piece holds its area's
  *  share of what the rock had left when it broke (`perArea`); taken into a
@@ -24,6 +25,12 @@ export interface WreckOre {
   resource: AsteroidResourceId;
   /** Ore units per world unit² of piece. */
   perArea: number;
+  /** A cut-FIELD rock: its ore rest frame, the rest centre the field cut it
+   *  at (`restX`, `restY` of its record). Every piece and re-split piece
+   *  keeps it, and `OreDraw.chunkYield` samples the field's ore there
+   *  (`oreAtRest`) instead of `resource`. Absent: an ordinary rock. */
+  restX?: number;
+  restY?: number;
 }
 
 /** Rock cut: a live rock as the cut code reads it (`CapitalWreckDeps.rockOf`). */
@@ -34,6 +41,14 @@ export interface WreckRockView {
   resource: AsteroidResourceId;
   /** Ore left in it (undefined: an un-seeded, endless rock). */
   resources: number | undefined;
+  /** A cut-FIELD rock: its field rock key (`rockKey`; shape is then 0) and
+   *  the room's field options its outline is rebuilt from. Absent: an
+   *  ordinary rock. */
+  fk?: number | undefined;
+  field?: ChunkOpts | null | undefined;
+  /** A cut-field rock's rest centre (its ore rest frame); else undefined. */
+  restX?: number | undefined;
+  restY?: number | undefined;
 }
 
 export interface WreckPieceSpawn {
@@ -156,6 +171,13 @@ export interface CapitalWreckDeps {
   /** Rock cut: a live rock (kind 0) by id, or null. Absent ⇒ rocks are never
    *  cut (the mining laser only draws their ore). */
   rockOf?: (id: string) => WreckRockView | null;
+  /** A cut-field rock `id` is being mined: wake it as a body (on the swarm
+   *  wire, so every client sees the one being cut). Per wearing hit; a no-op
+   *  once awake. Absent: it stays fixed until it breaks. */
+  wakeFieldRock?: (id: string, by: string) => void;
+  /** Cut-field rock `key` broke up: the field never draws or collides it
+   *  whole again (`CutFieldSubsystem.markConsumed`, told to every client). */
+  fieldRockBroken?: (key: number) => void;
   /** Piece or rock `parentId` broke into live pieces `ids` (`masses`
    *  parallel; never a pod): the locks held on it follow them. Once per break. */
   pieceSplit?: (parentId: string, ids: ReadonlyArray<string>, masses: ReadonlyArray<number>) => void;

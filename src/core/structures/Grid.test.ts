@@ -10,6 +10,8 @@ import {
   type GridObstacle,
 } from './Grid.js';
 import { Connection } from './Connection.js';
+import { getStructureKind, structureSockets } from '../../shared-types/structureKinds.js';
+import { STRUCTURE_CONNECTIONS_PER_LEVEL, STRUCTURE_LEVEL_CAP, effectiveStructureMaxConnections } from '../leveling/structureLevel.js';
 import {
   CONNECTION_MAX_RANGE,
   CONNECTION_THROUGHPUT,
@@ -19,8 +21,10 @@ import {
 function node(id: string, opts: Partial<GridNode> = {}): GridNode {
   return {
     id,
+    kind: opts.kind ?? 'solar',
     x: opts.x ?? 0,
     y: opts.y ?? 0,
+    rot: opts.rot ?? 0,
     radius: opts.radius ?? 24,
     isHub: opts.isHub ?? false,
     isCapital: opts.isCapital ?? false,
@@ -34,13 +38,13 @@ function node(id: string, opts: Partial<GridNode> = {}): GridNode {
   };
 }
 const capital = (id: string, x: number, y: number, built = true): GridNode =>
-  node(id, { x, y, radius: 80, isHub: true, isCapital: true, maxConnections: 4, powerOutput: 50, isConstructed: built });
+  node(id, { kind: 'capital', x, y, radius: 80, isHub: true, isCapital: true, maxConnections: 4, powerOutput: 50, isConstructed: built });
 const connector = (id: string, x: number, y: number, built = true): GridNode =>
-  node(id, { x, y, radius: 10, isHub: true, isConnector: true, maxConnections: 6, isConstructed: built });
+  node(id, { kind: 'connector', x, y, radius: 10, isHub: true, isConnector: true, maxConnections: 6, isConstructed: built });
 const solar = (id: string, x: number, y: number, built = true): GridNode =>
   node(id, { x, y, radius: 40, maxConnections: 1, powerOutput: 30, isConstructed: built });
 const pylon = (id: string, x: number, y: number, built = true): GridNode =>
-  node(id, { x, y, radius: 12, isHub: true, isShieldPylon: true, maxConnections: 3, isConstructed: built });
+  node(id, { kind: 'shield_pylon', x, y, radius: 12, isHub: true, isShieldPylon: true, maxConnections: 3, isConstructed: built });
 
 /** Build an adjacency map from a flat connection list. */
 function adjacencyFrom(conns: Connection[]): Map<string, Connection[]> {
@@ -80,14 +84,26 @@ describe('geometry helpers', () => {
 
 describe('canConnect — the hub model (eqx-peri rules)', () => {
   const cap = capital('cap', 0, 0);
-  const con = connector('con', 200, 0);
+  const con = connector('con', 400, 0); // clear of the real capital outline (its sockets)
   const sol = solar('sol', 200, 200);
 
-  it('REJECTS leaf ↔ leaf (hub required)', () => {
+  it('REJECTS leaf ↔ leaf (connector required)', () => {
     const s1 = solar('s1', 0, 0);
     const s2 = solar('s2', 150, 0);
     const r = canConnect(s1, s2, new Map(), new Map([['s1', s1], ['s2', s2]]));
-    expect(r).toEqual({ ok: false, reason: 'hub-required' });
+    expect(r).toEqual({ ok: false, reason: 'connector-required' });
+  });
+
+  it('REJECTS leaf ↔ big-building hub (shipyard): every link goes through a Connector', () => {
+    // A shipyard is `isHub` with 4 slots, but it is not a relay — a solar must
+    // reach it via a Connector, and the shipyard itself joins via a Connector.
+    const yard = node('yard', { x: 0, y: 0, radius: 100, isHub: true, maxConnections: 4 });
+    const s = solar('s', 200, 0);
+    const c = connector('c', 0, 200);
+    const nodes = new Map([['yard', yard], ['s', s], ['c', c]]);
+    expect(canConnect(s, yard, new Map(), nodes)).toEqual({ ok: false, reason: 'connector-required' });
+    expect(canConnect(yard, s, new Map(), nodes)).toEqual({ ok: false, reason: 'connector-required' });
+    expect(canConnect(yard, c, new Map(), nodes).ok).toBe(true);
   });
 
   it('ACCEPTS leaf ↔ connector (the relay path)', () => {
@@ -137,6 +153,28 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
     expect(r).toEqual({ ok: false, reason: 'a-full' }); // the connector (arg a) is full
   });
 
+  it('a top-level battery refuses a 5th link: one cable per socket (owner: max 4 cables)', () => {
+    const k = getStructureKind('battery');
+    expect(structureSockets('battery')).toHaveLength(4);
+    const unclamped = k.maxConnections + (STRUCTURE_LEVEL_CAP - 1) * STRUCTURE_CONNECTIONS_PER_LEVEL;
+    const clamped = effectiveStructureMaxConnections(k.maxConnections, STRUCTURE_LEVEL_CAP, 'battery');
+    expect(unclamped).toBe(5);
+    expect(clamped).toBe(4);
+    // Either projection of the cap: canConnect clamps to sockets regardless.
+    for (const maxConnections of [unclamped, clamped]) {
+      const bat = node('bat', { kind: 'battery', x: 0, y: 0, radius: 40, maxConnections });
+      const conns: Connection[] = [];
+      for (let i = 0; i < 4; i++) conns.push(new Connection(i, 'bat', `h${i}`, CONNECTION_THROUGHPUT));
+      const hub = connector('hX', 100, 0);
+      const nodes = new Map([['bat', bat], ['hX', hub]]);
+      expect(canConnect(bat, hub, adjacencyFrom(conns), nodes)).toEqual({ ok: false, reason: 'a-full' });
+      expect(canConnect(hub, bat, adjacencyFrom(conns), nodes)).toEqual({ ok: false, reason: 'b-full' });
+      // Three links: the 4th is not refused for the cap.
+      const r3 = canConnect(bat, hub, adjacencyFrom(conns.slice(0, 3)), nodes);
+      expect(r3.ok || r3.reason !== 'a-full').toBe(true);
+    }
+  });
+
   it('enforces the edge-to-edge range gate', () => {
     const far = connector('far', CONNECTION_MAX_RANGE + 500, 0);
     const r = canConnect(cap, far, new Map(), new Map([['cap', cap], ['far', far]]));
@@ -160,12 +198,14 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
 
   it('rejects a line-of-sight-blocked link', () => {
     // Within range so the LOS rule, not the range gate, is what rejects.
+    // 0d slice 4: the blocker spans every cable curve between the two
+    // connectors (short tails keep them within ~70 u of the centre line).
     // Two Connectors (not the Capital) so the global 600 u range applies — at
     // 580 u edge (600 centre − 2·r10) they're in range, so the LOS/obstacle
     // rule is what rejects, not the Capital's shorter 300 u reach (WS-5).
     const a = connector('a', -300, 0);
     const b = connector('b', 300, 0);
-    const blocker = connector('blk', 0, 0, true);
+    const blocker = node('blk', { x: 0, y: 0, radius: 120 });
     const nodes = new Map([['a', a], ['b', b], ['blk', blocker]]);
     expect(canConnect(a, b, new Map(), nodes)).toEqual({ ok: false, reason: 'blocked' });
   });
@@ -249,7 +289,8 @@ describe('canConnect / isConnectionLineBlocked — obstacle blocking (Item D)', 
     const a = connector('a', -300, 0);
     const b = connector('b', 300, 0);
     const nodes = new Map([['a', a], ['b', b]]);
-    const asteroid: GridObstacle = { x: 0, y: 0, radius: 60 };
+    // 0d slice 4: big enough to cross every cable curve between them.
+    const asteroid: GridObstacle = { x: 0, y: 0, radius: 150 };
     expect(canConnect(a, b, new Map(), nodes, [asteroid])).toEqual({
       ok: false,
       reason: 'blocked',

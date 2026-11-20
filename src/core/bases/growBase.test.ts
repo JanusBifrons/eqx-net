@@ -8,17 +8,18 @@ import { describe, expect, it } from 'vitest';
 import { getStructureKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import { canConnect, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
-import { placementRejection } from '../structures/placementRules.js';
+import { keepClearBox, placementRejection } from '../structures/placementRules.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 import { GALAXY_SECTORS } from '../galaxy/galaxy.js';
 import { BASE_ROLES, baseProfileFor, contextForSector, type BaseProfile, type BaseRole, type BaseTier } from './baseProfile.js';
 import { TIER_MAX_STRUCTURES, TURRET_KINDS, growBase, type GrownBase } from './growBase.js';
+import { galaxyBasePlan } from './galaxyBases.js';
 
 function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode {
   const k = getStructureKind(kind);
   const { hw, hh } = structureHalfExtents(kind, rot);
   return {
-    id, x, y, radius: k.radius, halfW: hw, halfH: hh, isHub: k.isHub,
+    id, kind, x, y, rot: (rot * Math.PI) / 180, radius: k.radius, halfW: hw, halfH: hh, isHub: k.isHub,
     isCapital: kind === 'capital', isConnector: kind === 'connector', isShieldPylon: isShieldEmitterKind(kind),
     maxConnections: k.maxConnections, connectionRange: k.connectionRange,
     powerOutput: k.powerOutput, powerConsumption: k.powerConsumption, isConstructed: true,
@@ -28,11 +29,11 @@ function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode
 /** Re-check a generated base against the real rules, independently. */
 function verify(b: GrownBase): { reached: number } {
   const nodes = new Map<string, GridNode>();
-  const placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number }> = [];
+  const placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number; kind: string; rot: number }> = [];
   b.placements.forEach((p, i) => {
     expect(placementRejection(p.kind, p.x, p.y, placed, null, p.rot ?? 0), `placement ${i} ${p.kind}`).toBeNull();
     const nd = node('s' + i, p.kind, p.x, p.y, p.rot ?? 0);
-    placed.push({ x: p.x, y: p.y, radius: nd.radius, halfW: nd.halfW!, halfH: nd.halfH! });
+    placed.push({ x: p.x, y: p.y, radius: nd.radius, halfW: nd.halfW!, halfH: nd.halfH!, kind: p.kind, rot: p.rot ?? 0 });
     nodes.set(nd.id, nd);
   });
   const adj = new Map<string, Connection[]>();
@@ -149,6 +150,32 @@ describe('growBase — valid under the real building rules', () => {
     }
   });
 
+  it("no structure stands on a landing pad (freight dock or Capital crane bay), across many seeds", () => {
+    let docks = 0;
+    let capitals = 0;
+    for (const tier of ['outpost', 'settlement', 'stronghold', 'citadel'] as const) {
+      for (const role of ['trade', 'mining', 'refinery', 'colony', 'transit'] as const) {
+        for (let seed = 1; seed <= 12; seed++) {
+          const b = growBase(profile(tier, role, seed % 2 === 0), seed * 977 + 13, ['asteroid', 'nebula', 'minerals']);
+          b.placements.forEach((d, di) => {
+            if (d.kind === 'capital') capitals++;
+            else if (d.kind === 'freight_dock') docks++;
+            else return;
+            const pad = { ...keepClearBox(d.kind, d.x, d.y, d.rot ?? 0)! };
+            b.placements.forEach((o, oi) => {
+              if (oi === di) return;
+              const { hw, hh } = structureHalfExtents(o.kind, o.rot ?? 0);
+              const hit = Math.abs(o.x - pad.x) < hw + pad.hw && Math.abs(o.y - pad.y) < hh + pad.hh;
+              expect(hit, `${tier} ${role} seed ${seed}: ${o.kind} #${oi} on ${d.kind} #${di} pad`).toBe(false);
+            });
+          });
+        }
+      }
+    }
+    expect(docks).toBeGreaterThan(50);
+    expect(capitals).toBe(4 * 5 * 12);
+  });
+
   it('every galaxy sector grows a valid base (sweep)', () => {
     for (const s of GALAXY_SECTORS) {
       const ctx = contextForSector(s.key);
@@ -198,5 +225,25 @@ describe('growBase — coastal defences (plan coastal-defences)', () => {
     const a = guns(growBase(profile('citadel', 'military'), 11, [])).map((g) => `${g.kind}@${g.x},${g.y},${g.rot ?? 0}`);
     const b = guns(growBase(profile('citadel', 'military'), 11, [])).map((g) => `${g.kind}@${g.x},${g.y},${g.rot ?? 0}`);
     expect(a).toEqual(b);
+  });
+});
+
+describe('growBase — minimum cable length (owner: keep buildings apart)', () => {
+  it('every galaxy base links every building, and a fenced one keeps its reserve batteries', () => {
+    // A leaf stands LINK_GAP (= MIN_CABLE_LENGTH) off its connector; a row
+    // whose spine relay lands on the row line moves out instead of failing
+    // (it once dropped two batteries from three military bases).
+    for (const s of GALAXY_SECTORS) {
+      for (const p of galaxyBasePlan(s.key)) {
+        const b = growBase(p.profile, p.seed, s.features);
+        expect(verify(b).reached, `${s.key}/${p.baseId}`).toBe(b.placements.length);
+        if (!p.profile.fenced) continue;
+        const bank = b.placements.some((q) => q.kind === 'battery_bank');
+        const bats = b.placements.filter((q) => q.kind === 'battery').length;
+        // (a garrison settlement banks four: the case that once lost two)
+        const want = p.profile.role === 'military' && p.profile.tier === 'settlement' ? 4 : 3;
+        expect(bank || bats >= want, `${s.key}/${p.baseId} batteries ${bats}`).toBe(true);
+      }
+    }
   });
 });

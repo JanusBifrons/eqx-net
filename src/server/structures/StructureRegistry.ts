@@ -13,7 +13,8 @@ import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import type { Hold } from '../../shared-types/goods.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { TeleportPartner, TeleportRules, TeleportToll, TpPhase } from '../../shared-types/teleport.js';
-import { Connection } from '../../core/structures/Connection.js';
+import { CABLE_NO_SOCKET, Connection } from '../../core/structures/Connection.js';
+import type { PlayingClip } from '../../core/articulation/evaluate.js';
 
 export interface StructureRecord {
   /** Swarm entity id (also the binary-wire id). */
@@ -37,6 +38,10 @@ export interface StructureRecord {
   /** False while a blueprint; flips true when the grid finishes building it.
    *  The Capital is born `true` (pre-built). */
   isConstructed: boolean;
+  /** Hologram pass-through: its body was spawned as a blueprint and still
+   *  collides with nothing (`BLUEPRINT_COLLISION_GROUPS`). Cleared when it
+   *  turns solid (`settleBlueprintBody`). Server-only, never saved. */
+  ghostBody?: boolean;
   /** Minerals delivered so far (0..constructionCost). */
   constructionProgress: number;
   /** Total minerals to fully build. 0 for the pre-built Capital. */
@@ -90,6 +95,14 @@ export interface StructureRecord {
    *  component `powered` through a deficit, and is drained first by shield-wall
    *  hits. 0 on every non-battery kind (they have no `powerStorageCapacity`). */
   storedPower: number;
+  /** Structure-restyle 2d: the rig clip playing on this structure (kinds with
+   *  a rig, `rigForStructureKind`), the whole deterministic record
+   *  `{clipId, startTick, target?}` (`PlayingClip`; game ticks, target in
+   *  the structure's frame). Set ONLY by `startStructureRigClip`
+   *  (structureRigClip.ts), which also tells the physics worker. Absent / null
+   *  ⇒ the rig rests. Not on the wire yet: slice 2e adds it to the
+   *  `structureStateWire.ts` row (late join, invariant #16). */
+  rigClip?: PlayingClip | null;
   /** Gates: who the gate opens for (GATE_ACCESS_IDS index; absent ⇒ default). */
   gateAccess?: number;
   /** Phase 4 (Leveling & XP, WS-B4) — structure level (≥ 1). A fresh structure
@@ -167,6 +180,9 @@ export interface StructureRecord {
   prodYield?: number;
   /** Cycles completed (seeds the deterministic yield roll). */
   prodCycles?: number;
+  /** Build count (job 2E): outputs left before it stops (0 ⇒ done, state
+   *  `done`). Absent ⇒ repeat forever. Persisted; rides room state. */
+  prodCount?: number;
   /** A chunk recipe's loaded item (a rock chunk) with the ore still to pay
    *  out; set while `prodLoaded`. Persisted (it holds value). */
   prodChunk?: PackedItem;
@@ -176,6 +192,9 @@ export interface StructureRecord {
   acceptAutoUnload?: boolean;
   /** Active power — drawing full consumption this pulse (else the idle trickle). */
   drawFull?: boolean;
+  /** The owner switched it OFF: draws nothing and does no work (reads
+   *  unpowered to every subsystem). Persisted; rides as STRUCTURE_FLAG_OFF. */
+  switchedOff?: boolean;
   /** D1 — a Reactor has fuel burning (its output counts). Rides room state as
    *  the inverse NO_FUEL flag. */
   fueled?: boolean;
@@ -187,6 +206,20 @@ export interface StructureRecord {
   noAmmo?: boolean;
   /** Phase 5 — wall-clock ms of this Turret's last shot (fire-rate cooldown). */
   lastTurretFireMs?: number;
+}
+
+/**
+ * structure-restyle 3c — the goods a freight dock takes in on a deposit: the
+ * goods its import orders name (`freightOrders`, the dock's import/export
+ * list). Export orders only ⇒ an EMPTY set: an outlet takes nothing in. NO
+ * orders at all ⇒ undefined (no filter): a freshly built dock takes a new
+ * player's whole hold (3b). Pass it to `StorageService.deposit` as `intake`.
+ */
+export function dockIntakeGoods(rec: Pick<StructureRecord, 'freightOrders'>): Set<GoodId> | undefined {
+  if ((rec.freightOrders?.length ?? 0) === 0) return undefined;
+  const out = new Set<GoodId>();
+  for (const o of rec.freightOrders ?? []) if (o.mode === 'import') out.add(o.good);
+  return out;
 }
 
 export class StructureRegistry {
@@ -292,12 +325,17 @@ export class StructureRegistry {
     return this.connById.get(id);
   }
 
-  /** Create + register a connection between two structures. */
-  addConnection(aId: string, bId: string, throughput: number): Connection {
+  /** Create + register a connection between two structures. `socketA` /
+   *  `socketB` are the cable sockets `canConnect` picked for `aId` / `bId`
+   *  (0d cable sockets; `CABLE_NO_SOCKET` for a fence link). */
+  addConnection(
+    aId: string, bId: string, throughput: number,
+    socketA: number = CABLE_NO_SOCKET, socketB: number = CABLE_NO_SOCKET,
+  ): Connection {
     // Phase 5 — both endpoints have now connected at least once (sweep-skip).
     this.everConnected.add(aId);
     this.everConnected.add(bId);
-    const c = new Connection(this.connCounter++, aId, bId, throughput);
+    const c = new Connection(this.connCounter++, aId, bId, throughput, socketA, socketB);
     let aList = this.adjacency.get(aId);
     if (!aList) { aList = []; this.adjacency.set(aId, aList); }
     aList.push(c);

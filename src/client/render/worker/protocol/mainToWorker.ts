@@ -51,6 +51,14 @@ export interface BootMsg {
   lighting?: import('../../art/lightingSettings.js').LightingSettings;
   /** Ship livery treatment (`?livery=a|b|c`); absent = today's paint. */
   livery?: import('../../art/artMode.js').LiveryTreatment;
+  /** Structure livery (`?structLivery=1`); absent = off. */
+  structLivery?: boolean;
+  /** Structure style (`?restyle=a`); absent = today's art. */
+  structStyle?: string;
+  /** Restyle grid line look (`?lineLook=`); null = off. Absent = the default. */
+  lineLook?: import('../../pixi/connectorLineLooks.js').LineLook | null;
+  /** Restyle rig parts (`?rigs=0` = false). Absent = on. */
+  rigs?: boolean;
   /** Cut-field ore look (`?ore=`, F1c trial); absent = off. */
   ore?: import('../../art/artMode.js').FieldOreLook;
   /** Graphics quality (`?aa=` / `?renderscale=` / `?texsoft=`), plain data; absent = today's look. */

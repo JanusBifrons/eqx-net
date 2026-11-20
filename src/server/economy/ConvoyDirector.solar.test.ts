@@ -6,7 +6,7 @@
  * sector they come from / go to.
  */
 import { describe, expect, it } from 'vitest';
-import { solarLanePoint } from './ConvoyDirector.js';
+import { solarLanePoint } from './convoyDocking.js';
 import { sectorSites } from '../../core/galaxy/sectorSites.js';
 import { getNeighbours, GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 

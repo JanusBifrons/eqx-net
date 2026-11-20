@@ -13,6 +13,8 @@
 import { useState } from 'react';
 import { Box } from '@mui/material';
 import { useUIStore, useShouldRenderHud } from '../state/store';
+import { DEPOSIT_WAITING, depositFlowOf, depositPctOf } from '../../shared-types/messages/snapshotMessages';
+import { CRANE_CARGO_IN as FLOW_UNLOAD } from '../../core/articulation/craneCargo';
 import { cargoFillState, cargoWeight } from '../net/lootView';
 import { LootWindow } from './LootWindow';
 
@@ -38,14 +40,34 @@ const CHIP_SX = {
   pointerEvents: 'auto' as const,
   width: 'fit-content',
 };
+const DEPOSIT_ROW_SX = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 0.75,
+  ml: 0.75,
+  pointerEvents: 'none' as const,
+};
+/** A crane bay's "Unloading" / "Loading" beside the bar (the waiting row's look). */
+const DEPOSIT_LABEL_SX = {
+  fontSize: { xs: 9, sm: 12 },
+  color: '#5fd6c4',
+  textShadow: '0 0 4px rgba(0,0,0,0.9)',
+};
 const DEPOSIT_TRACK_SX = {
   width: { xs: 64, sm: 140 },
   height: { xs: 3, sm: 5 },
-  ml: 0.75,
   borderRadius: '2px',
   backgroundColor: 'rgba(255,255,255,0.12)',
   overflow: 'hidden' as const,
   pointerEvents: 'none' as const,
+};
+/** 3e: the deposit row while a freight dock's crane serves another ship. */
+const DEPOSIT_WAIT_SX = {
+  ml: 0.75,
+  fontSize: { xs: 9, sm: 12 },
+  color: '#5fd6c4',
+  pointerEvents: 'none' as const,
+  textShadow: '0 0 4px rgba(0,0,0,0.9)',
 };
 const DEPOSIT_FILL_SX = {
   height: '100%',
@@ -69,8 +91,10 @@ export function CargoChip(): JSX.Element | null {
   const playerId = useUIStore((s) => s.playerId);
   const [open, setOpen] = useState(false);
   if (!shouldRender) return null;
-  if (cargo === null && feed.length === 0) return null;
+  if (cargo === null && feed.length === 0 && depositPct === null) return null;
 
+  const flow = depositPct === null ? 0 : depositFlowOf(depositPct);
+  const pct = depositPct === null ? 0 : depositPctOf(depositPct);
   const weight = Math.round(cargoWeight(cargo));
   const fill = cargoFillState(weight, capacity);
   return (
@@ -89,11 +113,24 @@ export function CargoChip(): JSX.Element | null {
           {(cargo.packed ?? 0) > 0 && <span style={{ color: '#9ad0ff' }} data-testid="cargo-packed">▢{cargo.packed}</span>}
         </Box>
       )}
-      {depositPct !== null && cargo !== null && (
+      {depositPct === DEPOSIT_WAITING && (
+        // Structure-restyle 3e — parked on a freight dock whose crane is
+        // serving another ship: first come, first served. Shown with an empty hold
+        // too (a ship parked to LOAD at an outlet dock).
+        <Box data-testid="cargo-depositing" data-deposit-pct={depositPct} data-deposit-waiting="1" sx={DEPOSIT_WAIT_SX}>
+          waiting for crane…
+        </Box>
+      )}
+      {depositPct !== null && depositPct !== DEPOSIT_WAITING && (
         // Living World P1a-2 — auto-deposit progress (hold position by your
-        // storage). The CSS transition smooths the 10 % steps.
-        <Box data-testid="cargo-depositing" data-deposit-pct={depositPct} sx={DEPOSIT_TRACK_SX}>
-          <Box sx={{ ...DEPOSIT_FILL_SX, width: `${depositPct}%` }} />
+        // storage). The CSS transition smooths the 10 % steps. A crane bay
+        // says which way the goods go: an unload DRAINS the bar, a load fills
+        // it (the count itself changes in one trade at hold end).
+        <Box data-testid="cargo-depositing" data-deposit-pct={pct} data-deposit-flow={flow || undefined} sx={DEPOSIT_ROW_SX}>
+          <Box sx={DEPOSIT_TRACK_SX}>
+            <Box data-testid="cargo-deposit-fill" sx={DEPOSIT_FILL_SX} style={{ width: `${flow === FLOW_UNLOAD ? 100 - pct : pct}%` }} />
+          </Box>
+          {flow !== 0 && <Box component="span" sx={DEPOSIT_LABEL_SX}>{flow === FLOW_UNLOAD ? 'Unloading' : 'Loading'}</Box>}
         </Box>
       )}
       {playerId !== null && (
