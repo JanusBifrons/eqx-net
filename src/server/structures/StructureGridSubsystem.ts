@@ -289,7 +289,7 @@ export class StructureGridSubsystem {
    *  is byte-identical to the raw grid summary. A rescue reads full supply. */
   powerSummaryFor(id: string): PowerSummary {
     const raw = this.grid.powerSummaryFor(id);
-    if (this.hooks.registry.get(id)?.switchedOff === true) return { netPower: raw.netPower, powered: false }; // owner Off
+    if (this.hooks.registry.get(id)?.switchedOff === true) return { netPower: raw.netPower, powered: false, supplyFrac: 0 }; // owner Off
     if (raw.powered || !this.batteryRescued.has(id)) return raw;
     return { netPower: raw.netPower, powered: true, supplyFrac: 1 };
   }
