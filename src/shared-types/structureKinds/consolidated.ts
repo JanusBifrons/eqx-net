@@ -75,8 +75,12 @@ export const SHIPYARD: StructureKind = {
   maxConnections: 4,
   isHub: true,
   powerOutput: 0,
-  powerConsumption: 220,
+  // Base loop: 220 power / 6500 minerals cut so a starter base (Capital +
+  // 2 Solar + Refinery + Cargo Bay + Miner + Shipyard) fits the 5,000-mineral
+  // Capital bank with a Mining Skiff (~400) left over. Guarded by
+  // tests/unit/starterBaseBudget.test.ts.
+  powerConsumption: 180,
   storageCapacity: 0,
-  constructionCost: 6500,
+  constructionCost: 2000,
   color: 0x7ec8ff,
 };
