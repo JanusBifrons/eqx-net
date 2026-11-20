@@ -11,7 +11,9 @@ import { EntityStatsPanel } from './EntityStatsPanel.js';
 import { applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
-import { settingsTabsFor } from './StructureSettingsModal.js';
+import { settingsTabsFor, StructureSettingsModal } from './StructureSettingsModal.js';
+import { encodeRecipe } from '../../shared-types/production.js';
+import { SetRecipeSchema } from '../../shared-types/messages.js';
 import { LootWindow } from './LootWindow.js';
 
 function seedTurret(owner: string, drawFull: boolean): void {
@@ -104,8 +106,100 @@ describe('StructureSettingsModal', () => {
     expect(getComputedStyle(frameOf(win)).width).toBe('calc(100% - 24px)');
   });
 
+  // #1046 phone still: the cog drew ~1.5x its siblings (it missed phoneTiny).
+  // jsdom skips @media and descendant rules in getComputedStyle, so read the
+  // icon's emitted CSS: each size (xs, sm, under a phone root) must match.
+  it('the cog icon is sized like its sibling action icons, phone and desktop', () => {
+    seedTurret('me-123', true);
+    render(<EntityStatsPanel />);
+    const sizes = (id: string): string[] => {
+      const cls = [...screen.getByTestId(id).querySelector('svg')!.classList].find((c) => c.startsWith('css-'))!;
+      const css = [...document.querySelectorAll('style')].map((el) => el.textContent).join('\n');
+      return css.split('}').filter((r) => r.includes(cls) && r.includes('font-size')).map((r) => r.replace(cls, 'X').trim());
+    };
+    const sibling = sizes('structure-action-deconstruct');
+    expect(sibling).toContain('[data-hud-phone] .X{font-size:16px;');
+    expect(sizes('structure-action-settings')).toEqual(sibling);
+  });
+
   it('every building kind has the Power tab first', () => {
     expect(settingsTabsFor('turret')[0]?.id).toBe('power');
     expect(settingsTabsFor('solar')[0]?.id).toBe('power');
+  });
+});
+
+/** A shipyard I own, building interceptors with `left` outputs to go
+ *  (undefined = forever); returns the room.send spy. */
+function seedShipyard(left: number | undefined): ReturnType<typeof vi.fn> {
+  const send = vi.fn();
+  setGameClient({
+    getRoom: () => ({ send }),
+    mirror: {
+      localPlayerId: 'me-123',
+      structures: new Map([[7, {
+        powered: true, netPower: 10, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123',
+        recipe: encodeRecipe('build_interceptor'), prodCount: left,
+      }]]),
+      swarm: new Map([[7, { kind: 2, shipKind: 'shipyard', radius: 60, x: 0, y: 0 }]]),
+    },
+  } as unknown as ColyseusGameClient);
+  return send;
+}
+
+function openProduction(): void {
+  render(<StructureSettingsModal open entityId={7} title="Shipyard" onClose={() => {}} />);
+  fireEvent.click(screen.getByTestId('structure-settings-tab-production'));
+}
+
+describe('StructureSettingsModal Production tab (build count)', () => {
+  afterEach(() => { setGameClient(null); });
+
+  it('only buildings that make things get the Production tab', () => {
+    expect(settingsTabsFor('shipyard').map((t) => t.id)).toEqual(['power', 'production']);
+    expect(settingsTabsFor('refinery').map((t) => t.id)).toEqual(['power', 'production']);
+    expect(settingsTabsFor('turret').map((t) => t.id)).toEqual(['power']);
+    expect(settingsTabsFor('habitat_module').map((t) => t.id)).toEqual(['power']);
+  });
+
+  it('the Production tab shows the recipe and how many are left', () => {
+    seedShipyard(2);
+    openProduction();
+    expect(screen.getByTestId('settings-production-recipe')).toHaveTextContent('Build Interceptor');
+    expect(screen.getByTestId('settings-build-count')).toHaveTextContent('2 left');
+  });
+
+  it('plus sends a count of 2', () => {
+    const send = seedShipyard(1);
+    openProduction();
+    fireEvent.click(screen.getByTestId('settings-build-plus'));
+    const msg = { type: 'set_recipe', entityId: 7, recipe: 'build_interceptor', count: 2 };
+    expect(send).toHaveBeenCalledWith('set_recipe', msg);
+    expect(SetRecipeSchema.safeParse(msg).success).toBe(true);
+  });
+
+  it('minus never goes below 1', () => {
+    const send = seedShipyard(1);
+    openProduction();
+    expect(screen.getByTestId('settings-build-minus')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('settings-build-minus'));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('forever shows "Forever"; plus starts a count of 1; the forever button clears it', () => {
+    const send = seedShipyard(undefined);
+    openProduction();
+    expect(screen.getByTestId('settings-build-count')).toHaveTextContent('Forever');
+    expect(screen.getByTestId('settings-build-forever')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('settings-build-plus'));
+    expect(send).toHaveBeenLastCalledWith('set_recipe', { type: 'set_recipe', entityId: 7, recipe: 'build_interceptor', count: 1 });
+    setGameClient(null);
+    const send2 = seedShipyard(0);
+    render(<StructureSettingsModal open entityId={7} title="Shipyard" onClose={() => {}} />);
+    fireEvent.click(screen.getAllByTestId('structure-settings-tab-production')[1]!);
+    expect(screen.getAllByTestId('settings-build-count')[1]).toHaveTextContent('Done');
+    fireEvent.click(screen.getAllByTestId('settings-build-forever')[1]!);
+    const msg = { type: 'set_recipe', entityId: 7, recipe: 'build_interceptor' };
+    expect(send2).toHaveBeenCalledWith('set_recipe', msg);
+    expect(SetRecipeSchema.safeParse(msg).success).toBe(true);
   });
 });

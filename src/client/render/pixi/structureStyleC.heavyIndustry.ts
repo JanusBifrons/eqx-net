@@ -8,8 +8,7 @@ import { GraphicsContext } from 'pixi.js';
 import type { Rig } from '../../../core/articulation/rig.js';
 import {
   SHIPYARD_CLAMP_HALF_W, SHIPYARD_CLAMP_LEN, SHIPYARD_CLAMP_XS, SHIPYARD_CLAMP_Y, SHIPYARD_GANTRY_BOGIE,
-  SHIPYARD_GANTRY_HALF_X, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HOIST_HALF, SHIPYARD_LIGHT_BAR_Y, SHIPYARD_LIGHT_HALF_L,
-  SHIPYARD_LIGHT_HALF_T, SHIPYARD_RAIL_Y, SHIPYARD_SLIP_HALF_W, SHIPYARD_SLIP_X0, SHIPYARD_SLIP_X1,
+  SHIPYARD_GANTRY_HALF_X, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HOIST_HALF, SHIPYARD_RAIL_Y, SHIPYARD_SLIP_HALF_W, SHIPYARD_SLIP_X0, SHIPYARD_SLIP_X1,
   SHIPYARD_WALL_HALF_L, SHIPYARD_WALL_HALF_T, SHIPYARD_WALL_TRAVEL, SHIPYARD_WALL_Y,
 } from '../../../core/articulation/rigs/heavyIndustry.js';
 import {
@@ -18,19 +17,24 @@ import {
   type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
+import {
+  SHIPYARD_BAY_MARK_XS, shipyardKeelContext, shipyardLightContext, shipyardPartShow, shipyardPrintContext, shipyardRowClip,
+} from './structureStyleC.shipyardBuild.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'h1';
+export const version = 'h4';
 
 /** Shipyard (`shipyard`, 960 × 600, mock-up C "build frame" for sub-caps).
  *  Baked here: the deck, a sunken slipway down the middle with keel blocks
- *  (its mouth open at the bow, +x, with hazard chevrons), the clamp ledges
+ *  (its mouth open at the bow, +x, with hazard chevrons) marked into
+ *  its build bays (loop 3R), the clamp ledges
  *  and pivot bosses, the wall tracks the side walls slide out along, the
  *  gantry rails on the long edges and the stern headhouse. The walls,
  *  gantry + hoist, clamps and light strips are the `shipyard-frame` rig's
- *  parts, drawn by `shipyardPartContext`. Symmetric in y, so the Pixi flip
+ *  parts, drawn by `shipyardPartContext`; the build sequence's
+ *  printed hull, fittings and lit lamps are `structureStyleC.shipyardBuild.ts`. Symmetric in y, so the Pixi flip
  *  changes nothing. */
 function shipyard(c: StyleCtx): void {
   const sw = SHIPYARD_SLIP_HALF_W, x0 = SHIPYARD_SLIP_X0, x1 = SHIPYARD_SLIP_X1;
@@ -39,6 +43,9 @@ function shipyard(c: StyleCtx): void {
   // Slipway: a sunken channel, keel blocks on its centre line.
   poly(c, chamferBox(x0, -sw, x1 - x0, 2 * sw, 10), SOOT, 'metal', -10, 4, { seams: 40, seamAngle: Math.PI / 2 });
   for (let x = x0 + 50; x < x1 - 40; x += 70) poly(c, chamferBox(x - 14, -10, 28, 20, 4), SLAB_DARK, 'metal', 2, 1.5);
+  // Bay marks (loop 3R): a hazard stripe across the slip between bays, so
+  // the slip reads as a row of build slots.
+  for (const bx of SHIPYARD_BAY_MARK_XS) poly(c, strip([bx, -sw + 4], [bx, sw - 4], 8), HAZARD, 'hazard', 1, 0.6);
   for (const s of [-1, 1]) {
     weld(c, [x0 + 10, s * (sw - 4)], [x1 - 10, s * (sw - 4)]);
     // Clamp ledge with a pivot boss at each station.
@@ -119,27 +126,16 @@ function clampContext(): GraphicsContext {
   return g;
 }
 
-/** A light strip: two lamp bars, one inside each slip edge, dark (unlit)
- *  glass in a steel housing. */
-function lightContext(): GraphicsContext {
-  const g = new GraphicsContext(), L = SHIPYARD_LIGHT_HALF_L, t = SHIPYARD_LIGHT_HALF_T;
-  for (const s of [-1, 1]) {
-    plate(g, -L, s * SHIPYARD_LIGHT_BAR_Y - t, 2 * L, 2 * t, STEEL);
-    g.rect(-L + 3, s * SHIPYARD_LIGHT_BAR_Y - t + 2.5, 2 * L - 6, 2 * t - 5);
-    _fill.color = 0x2a2016; _fill.alpha = 1; g.fill(_fill);
-  }
-  return g;
-}
-
-/** The gantry bridge: a crane-yellow box girder across the frame, X-braced,
- *  on a wheeled bogie over each rail. */
+/** The gantry bridge: an open crane-yellow truss across the frame (two
+ *  chord girders, X-braced, open between them, so the hull printing on the
+ *  slip below shows through), on a wheeled bogie over each rail. */
 function gantryContext(): GraphicsContext {
-  const g = new GraphicsContext(), X = SHIPYARD_GANTRY_HALF_X, Y = SHIPYARD_RAIL_Y;
-  plate(g, -X * 0.7, -Y, 1.4 * X, 2 * Y, CRANE);
+  const g = new GraphicsContext(), X = SHIPYARD_GANTRY_HALF_X, Y = SHIPYARD_RAIL_Y, c = X * 0.7, w = 7;
+  for (const s of [-1, 1]) plate(g, s > 0 ? c - w : -c, -Y, w, 2 * Y, CRANE);
   for (let y = -Y; y < Y - 1; y += 40) {
-    g.moveTo(-X * 0.7, y).lineTo(X * 0.7, y + 40).moveTo(X * 0.7, y).lineTo(-X * 0.7, y + 40);
+    g.moveTo(-c + w, y).lineTo(c - w, y + 40).moveTo(c - w, y).lineTo(-c + w, y + 40);
   }
-  g.stroke({ color: 0x4a3a16, width: 2.5 });
+  g.stroke({ color: CRANE, width: 2.5 });
   for (const s of [-1, 1]) {
     plate(g, -X, s * Y - SHIPYARD_GANTRY_BOGIE, 2 * X, 2 * SHIPYARD_GANTRY_BOGIE, SLAB_DARK);
     for (const x of [-X + 7, X - 7]) { g.circle(x, s * Y, 5); _fill.color = SLAB_LIGHT; _fill.alpha = 1; g.fill(_fill); }
@@ -148,12 +144,17 @@ function gantryContext(): GraphicsContext {
   return g;
 }
 
-/** The hoist trolley on the gantry: a winch block with a cable drum. */
+/** The hoist trolley on the gantry: an open frame on the two chords, the
+ *  winch drum at one end and the hook ring over the middle, open beneath
+ *  so the block it sets shows through. */
 function hoistContext(): GraphicsContext {
-  const g = new GraphicsContext(), h = SHIPYARD_HOIST_HALF;
-  plate(g, -h, -h, 2 * h, 2 * h, SLAB);
-  plate(g, -h + 6, -h * 0.45, 2 * h - 12, h * 0.9, SLAB_DARK);
-  g.circle(0, 0, h * 0.3); _fill.color = SOOT; _fill.alpha = 1; g.fill(_fill); g.stroke({ color: HAZARD, width: 2 });
+  const g = new GraphicsContext(), h = SHIPYARD_HOIST_HALF, t = 6;
+  plate(g, -h, -h, 2 * h, t, SLAB);
+  plate(g, -h, h - t, 2 * h, t, SLAB);
+  plate(g, -h, -h + t, t, 2 * h - 2 * t, SLAB);
+  plate(g, h - t, -h + t, t, 2 * h - 2 * t, SLAB);
+  plate(g, -h + t, -h + t, 2 * h - 2 * t, h * 0.35, SLAB_DARK);
+  g.circle(0, 0, h * 0.3); g.stroke({ color: HAZARD, width: 2 });
   return g;
 }
 
@@ -168,7 +169,9 @@ export function shipyardPartContext(rig: Rig, i: number): GraphicsContext | null
   if (hit !== undefined) return hit;
   // Pixi y is game -y: the port wall (game +y) has its inner face at Pixi +y.
   const ctx = key === 'clamp' ? clampContext()
-    : key === 'light' ? lightContext()
+    : key === 'light' ? shipyardLightContext(false)
+      : key === 'keel' ? shipyardKeelContext()
+      : key.startsWith('hull-') || key.startsWith('fit-') ? shipyardPrintContext(key)
       : key === 'wall-port' ? wallContext(1)
         : key === 'wall-stbd' ? wallContext(-1)
           : key === 'gantry' ? gantryContext()
@@ -186,5 +189,5 @@ export const kinds: StyleDrawerTable = {
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
  *  structureRigLook.ts); rigs not listed draw from their part roles only. */
 export const rigs: RigDrawHookTable = {
-  'shipyard-frame': { partArt: shipyardPartContext },
+  'shipyard-frame': { partArt: shipyardPartContext, partShow: shipyardPartShow, rowClip: shipyardRowClip },
 };

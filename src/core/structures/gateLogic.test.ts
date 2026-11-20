@@ -20,6 +20,7 @@ import {
   GATE_SPAN_THICKNESS,
   emitterAnchor,
   gateColliderBoxes,
+  shipyardSlipFits,
   gateSpanWorld,
   gateSpans,
   gateWorldAxisBoxes,
@@ -27,6 +28,10 @@ import {
   worldToLocal,
 } from './gateGeometry.js';
 import { STRUCTURE_KINDS } from '../../shared-types/structureKinds.js';
+import { RECIPES } from '../../shared-types/recipes.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { tuningFor } from '../../shared-types/shipScale/lookup.js';
+import { SHIPYARD_KEEL_X } from '../articulation/rigs/heavyIndustry.js';
 
 const TICK = 100;
 const R = 14; // a fighter-sized ship
@@ -194,5 +199,46 @@ describe('Shield Airlock logic', () => {
       }),
       { numRuns: 300 },
     );
+  });
+});
+
+describe('Shipyard collider (loop 3M): the slipway is open from the keel out of the bow', () => {
+  const { w, h } = STRUCTURE_KINDS.shipyard.footprint;
+  const boxes = gateColliderBoxes('shipyard')!;
+  const yardHulls = Object.values(RECIPES).flatMap((r) =>
+    r.processors.includes('shipyard') ? r.outputs.flatMap((o) => ('hull' in o ? [o.hull] : [])) : []);
+  /** Distance from (x, y) to the nearest solid part (0 inside one). */
+  const clearance = (x: number, y: number): number => {
+    let d = Infinity;
+    for (const b of boxes) {
+      const dx = Math.max(0, Math.abs(x - b.cx) - b.hw), dy = Math.max(0, Math.abs(y - b.cy) - b.hh);
+      d = Math.min(d, Math.hypot(dx, dy));
+    }
+    return d;
+  };
+
+  it('its parts sit inside the footprint; the stern and both sides stay solid', () => {
+    for (const b of boxes) {
+      expect(Math.abs(b.cx) + b.hw).toBeLessThanOrEqual(w / 2 + 1e-9);
+      expect(Math.abs(b.cy) + b.hh).toBeLessThanOrEqual(h / 2 + 1e-9);
+    }
+    expect(clearance(-w / 2 + 1, 0), 'stern headhouse').toBe(0);
+    expect(clearance(0, h / 2 - 1), 'port side').toBe(0);
+    expect(clearance(0, -h / 2 + 1), 'starboard side').toBe(0);
+  });
+
+  it('the yard-built sub-caps fit the slip; the Barge (a capital) does not', () => {
+    for (const k of ['interceptor', 'gunship', 'heavy']) expect(yardHulls).toContain(k);
+    for (const k of ['interceptor', 'gunship', 'heavy']) expect(shipyardSlipFits(k), k).toBe(true);
+    expect(shipyardSlipFits('barge')).toBe(false);
+  });
+
+  it('every hull that fits, shield bubble and all, clears the frame from the keel to past the bow', () => {
+    for (const kind of yardHulls.filter(shipyardSlipFits)) {
+      const r = getShipKind(kind).radius + tuningFor(kind).shieldPad; // #18: from the kind's tuning
+      for (let x = SHIPYARD_KEEL_X; x <= w / 2 + r; x += 5) {
+        expect(clearance(x, 0), `${kind} at x=${x}`).toBeGreaterThan(r);
+      }
+    }
   });
 });
