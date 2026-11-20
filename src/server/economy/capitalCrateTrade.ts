@@ -4,6 +4,7 @@
  * FRESH crate (5,000 minerals inside) in its own slot; traders never buy one
  * back. The rules live here so the 900-line director only calls them.
  */
+import { quotePacked } from '../../core/economy/market.js';
 import { CAPITAL_STARTING_MINERALS } from '../../core/structures/structureGridConstants.js';
 import { BASE_PRICES } from '../../shared-types/economy.js';
 import type { Hold } from '../../shared-types/goods.js';
@@ -21,6 +22,13 @@ export const CAPITAL_OFFER_MAX_QTY = 1;
  *  reputation discount, so the price always sits above the minerals' worth. */
 export function capitalCrateBillValue(): number {
   return CAPITAL_STARTING_MINERALS * BASE_PRICES.minerals;
+}
+
+/** One crate's price at `traderRep`: the board's packed quote of its bill
+ *  (`TradeDirector.offerPrice` reaches the same number via `packedBillOf`).
+ *  An NPC Freight Dock charges exactly this. */
+export function capitalCratePrice(traderRep: number): number {
+  return quotePacked(capitalCrateBillValue(), traderRep);
 }
 
 /** The packed item a trader hands over for `product`: a Capital is a fresh

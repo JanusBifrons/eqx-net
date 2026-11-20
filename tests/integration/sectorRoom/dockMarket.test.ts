@@ -17,6 +17,8 @@ import { TradeDirector, type TradeRoom } from '../../../src/server/economy/Trade
 import { setTradeSink } from '../../../src/server/economy/tradeSink.js';
 import type { CargoState } from '../../../src/shared-types/messages/cargoMessages.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
+import { CAPITAL_CRATE_PRODUCT, capitalCratePrice } from '../../../src/server/economy/capitalCrateTrade.js';
+import { CAPITAL_STARTING_MINERALS } from '../../../src/core/structures/structureGridConstants.js';
 
 async function until(pred: () => boolean, ms: number): Promise<boolean> {
   const end = Date.now() + ms;
@@ -87,5 +89,41 @@ describe('SectorRoom integration — NPC Freight Dock market (T4)', () => {
     expect(getWallet().balance(pid)).toBe(mid + Math.floor(sellPrice));
     expect((getHoldStore().get(shipId)?.hold.goods as Record<string, number>)[good]).toBe(1);
     expect(sellPrice, 'the dock pays less than it charges (the spread)').toBeLessThan(price);
+  });
+
+  it('a pilot with no base buys a fresh Capital crate at the dock, at the board price', { timeout: 40_000 }, async () => {
+    const dir = new TradeDirector(new Map<string, TradeRoom>(), new EconomyStore({ persistence: getPersistence }), getHoldStore(), {});
+    setTradeSink(dir);
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
+      npcBases: [{ baseId: 'b1', role: 'refinery', tier: 'settlement', seed: 12, x: 0, y: 0, features: ['minerals'] }],
+    });
+    await harness.connectActive(randomUUID());
+    const internal = harness.getServerRoom()!._internals;
+    const dock = [...internal.structureRegistry.all()].find((r) => r.kind === 'freight_dock')!;
+    const entityId = internal.swarmRegistry.get(dock.id)!.entityId;
+    const pid = randomUUID();
+    const crate = Math.ceil(capitalCratePrice(dir.traderRep(pid)));
+    const cr = await harness.connectActive(pid, { spawnX: dock.x, spawnY: dock.y, initialWallet: crate + 3 });
+    const replies: CargoState[] = [];
+    cr.onMessage('cargo_state', (m: CargoState) => replies.push(m));
+    let shipId = '';
+    for (const [, s] of (harness.getServerRoom()!.state as SectorState).ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
+
+    const view = await ask(cr, replies, 'cargo_query', { entityId });
+    expect(view.hold!.packed?.some((p) => p.product === CAPITAL_CRATE_PRODUCT), 'the crate is for sale').toBe(true);
+    expect(view.market!.packed?.[CAPITAL_CRATE_PRODUCT]).toBe(capitalCratePrice(dir.traderRep(pid)));
+
+    const bought = await ask(cr, replies, 'cargo_move', { entityId, dir: 'take', items: { packed: [CAPITAL_CRATE_PRODUCT] } });
+    expect(bought.ok, bought.message).toBe(true);
+    expect(getWallet().balance(pid)).toBe(3);
+    const crates = (getHoldStore().get(shipId)?.hold.packed ?? []).filter((p) => p.product === CAPITAL_CRATE_PRODUCT);
+    expect(crates).toHaveLength(1);
+    expect(crates[0]!.uid).toBeDefined();
+    expect(crates[0]!.minerals).toBe(CAPITAL_STARTING_MINERALS);
+
+    const broke = await ask(cr, replies, 'cargo_move', { entityId, dir: 'take', items: { packed: [CAPITAL_CRATE_PRODUCT] } });
+    expect(broke.ok).toBe(false);
+    expect(broke.message).toMatch(/credits/);
   });
 });

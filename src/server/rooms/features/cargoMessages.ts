@@ -26,7 +26,8 @@ import { cargoOpensFor, isNpcOwner, relationOf, type RelationContext } from '../
 import {
   BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type CargoState,
 } from '../../../shared-types/messages/cargoMessages.js';
-import { packedSellRefusal } from '../../economy/capitalCrateTrade.js';
+import { CAPITAL_CRATE_PRODUCT, capitalCratePrice, packedSellRefusal } from '../../economy/capitalCrateTrade.js';
+import { buyCapitalCrateAtDock, DOCK_CAPITAL_LISTING } from '../../economy/dockCapitalCrate.js';
 import type { LootSubsystem, LootCollector } from '../../cargo/LootSubsystem.js';
 import type { LootSearch } from '../../cargo/LootSearch.js';
 import {
@@ -250,6 +251,15 @@ function dockMarket(
   } else if (move !== null) {
     let total = 0;
     let any = false;
+    let crateRefusal: string | null = null;
+    // Playable base loop — the dock sells a fresh Capital crate (the board's price).
+    if (move.dir === 'take' && sink.traderRep !== undefined && (move.items.packed ?? []).includes(CAPITAL_CRATE_PRODUCT)) {
+      const r = buyCapitalCrateAtDock({
+        holds: getHoldStore(), wallet, persist: true, playerId, shipInstanceId: shipId, shipCapacity: access.capacity,
+        traderRep: sink.traderRep(playerId), volumeLeft: sink.volumeLeft(playerId),
+      });
+      if (r.ok) { total += r.cost; any = true; } else crateRefusal = r.message;
+    }
     for (const g of GOOD_IDS) {
       const asked = move.items.goods?.[g] ?? 0;
       if (!(asked > 0)) continue;
@@ -289,10 +299,12 @@ function dockMarket(
     }
     verdict = any
       ? { ok: true, message: move.dir === 'take' ? `Bought for ${total}¢.` : `Sold for ${total}¢.` }
+      : crateRefusal !== null ? { ok: false, message: crateRefusal }
       : { ok: false, message: move.dir === 'take' ? 'Nothing bought: out of stock, no room aboard, or not enough credits.' : 'Nothing sold: the dock is full or you hold none.' };
     if (any) auditEvent({ event: 'dock_trade', sector: sectorKey ?? undefined, playerId, owner: dock.owner, dir: move.dir === 'take' ? 'buy' : 'sell', credits: total });
   }
   const stock: Hold = { goods: {}, blueprints: [] };
+  if (sink.traderRep !== undefined) stock.packed = [{ ...DOCK_CAPITAL_LISTING }];
   for (const g of GOOD_IDS) {
     const n = storage.networkStock(dock, g);
     if (n > 0) stock.goods[g] = n;
@@ -306,6 +318,7 @@ function dockMarket(
     market.buy[g] = q.buy;
     market.sell[g] = q.sell;
   }
+  if (sink.traderRep !== undefined) market.packed = { [CAPITAL_CRATE_PRODUCT]: capitalCratePrice(sink.traderRep(playerId)) };
   return { type: 'cargo_state', entityId, open: true, hold: stock, used: 0, capacity: 0, ship, shipCapacity: access.capacity, market, ...(verdict ?? {}) };
 }
 
