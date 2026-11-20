@@ -246,7 +246,10 @@ export class PilotSwap {
    *   - whose schema entry is owned by `playerId` and `isActive=false` (a hull
    *     someone else is piloting is `isActive=true` and never in `lingeringSlots`,
    *     so a request for a foreign / active hull is dropped here),
-   *   - the room must be a galaxy room (engineering rooms have no roster).
+   *   - in a galaxy room, the roster row must be owned by `playerId` too. A room
+ *     with no sector key (engineering / test rooms) keeps no roster: the schema
+ *     and `lingeringSlots` checks above are the whole gate there, and the hull
+ *     keeps its live alloc / mounts (nothing to re-read).
    *
    * On success: the player's current active hull (if any) is displaced first,
    * then the target body is rekeyed `linger-<id>` → `playerId`, its slot moves
@@ -258,7 +261,6 @@ export class PilotSwap {
    * rebind does (no second activation path — Invariant #12).
    */
   reclaimLingeringHull(client: Client, playerId: string, shipId: string): void {
-    if (this.h.sectorKey() === null) return; // engineering rooms have no roster
     const target = this.h.state().ships.get(shipId);
     const slot = this.h.lingeringSlots.get(shipId);
     // Validate: a lingering hull (isActive=false), present in this room, owned
@@ -266,9 +268,11 @@ export class PilotSwap {
     if (target === undefined || slot === undefined) return;
     if (target.playerId !== playerId || target.isActive || !target.alive) return;
     if (target.shipInstanceId !== shipId || shipId === '') return;
-    // Defence-in-depth: the roster row must be owned by this player too.
-    const rec = getPlayerShipStore().get(shipId);
-    if (rec === null || rec.playerId !== playerId) return;
+    // Defence-in-depth: the roster row must be owned by this player too. Rooms
+    // with no sector key keep no roster (`rec` stays null; the checks above gate).
+    const rec = this.h.sectorKey() === null ? null : getPlayerShipStore().get(shipId);
+    if (this.h.sectorKey() !== null && (rec === null || rec.playerId !== playerId)) return;
+    const lastFireClientTick = rec?.lastFireClientTick ?? this.h.lastFireClientTick.get(playerId) ?? 0;
 
     // The ship AI pilots engage as this pilot right now (flown, or parked by Spectate).
     const engagedBefore = this.h.getActiveShip(playerId)?.shipInstanceId ?? this.h.spectateParkedHull.get(playerId);
@@ -316,7 +320,7 @@ export class PilotSwap {
     // Phase 4 WS-B2 — re-seed the reclaimed hull's stat allocation + push its
     // physics multipliers under the new (playerId) body key so the resumed
     // prediction scales movement by the upgraded factors from the first tick.
-    target.statAlloc = rec.statAlloc ?? {};
+    if (rec !== null) target.statAlloc = rec.statAlloc ?? {};
     this.h.applyStatMulToWorker(playerId, target.statAlloc);
     // Review must-fix #1 — recompute the NON-PHYSICS caps from the (re-read)
     // alloc so the reclaimed hull's maxHull/shield match its current upgrade,
@@ -330,17 +334,18 @@ export class PilotSwap {
     if (target.shield > reclaimShieldMax) target.shield = reclaimShieldMax;
     // WS-B3 — re-seed the reclaimed hull's activated dynamic mounts so it fires
     // + renders its extra turrets from the first tick under the new body key.
-    target.mounts = rec.mounts ?? [];
+    if (rec !== null) target.mounts = rec.mounts ?? [];
     // Seed the pose cache + roster so any synchronous reader + a later restore
     // see the live pose (NOT a stale abandon pose — WS-A2 "lands at its live pose").
     this.h.shipPoseCache.set(playerId, { ...livePose });
-    this.h.lastFireClientTick.set(playerId, rec.lastFireClientTick);
+    this.h.lastFireClientTick.set(playerId, lastFireClientTick);
     // `markActive` the roster row at the live pose (the design's "reuse the
-    // markActive machinery"). bind() with the preferred shipId hits markActive.
-    this.h.rosterPersistence().bind(playerId, this.h.playerToUser.get(playerId) ?? rec.userId, target.kind, {
+    // markActive machinery"). bind() with the preferred shipId hits markActive
+    // (a no-op in a room with no sector key).
+    this.h.rosterPersistence().bind(playerId, this.h.playerToUser.get(playerId) ?? rec?.userId ?? null, target.kind, {
       ...livePose,
       health: target.health,
-      lastFireClientTick: rec.lastFireClientTick,
+      lastFireClientTick,
     }, shipId);
     this.h.shipPoseCache.set(playerId, { ...livePose });
 

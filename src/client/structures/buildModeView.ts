@@ -2,8 +2,7 @@
  * Build mode's view (owner's sideways-phone design, 2026-11-20): picking a
  * building switches to the Command (overhead) view and pulls the camera back;
  * Confirm, Cancel or Escape puts you back in the view you were in, at the
- * zoom you had. Only in a galaxy sector: a room with no sector key cannot give
- * the ship back, so build mode stays in Fly there (camera pull-back only).
+ * zoom you had.
  *
  * Build mode IS `placementKind !== null` (no second mode flag). This is not a
  * new view system: it drives the existing Command ⇄ Fly switch through the
@@ -115,11 +114,6 @@ function enterBuildView(localShipInstanceId: string | null): void {
   st.flyShipId = null;
   const ui = useUIStore.getState();
   if (selectControlMode(ui) !== 'fly') return;
-  // Only let go where the room can hand the ship back: the server ignores
-  // `pilot_ship` in a room with no sector key (pilotSwap `reclaimLingeringHull`,
-  // engineering / test rooms like `?room=sector`), so Command there would strand
-  // the player. Build mode stays in Fly; the HUD still hides, the camera pulls back.
-  if (ui.currentSectorKey === null) return;
   st.flyShipId = localShipInstanceId;
   // The Command toggle's own path: flip the view, hand the ship to its AI.
   ui.setPilotMode('spectator');

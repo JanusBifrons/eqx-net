@@ -31,7 +31,6 @@ describe('buildModeView', () => {
     vi.mocked(sendPilotShip).mockClear();
     useUIStore.getState().setPilotMode('pilot');
     // A galaxy sector: the server can hand a parked hull back (it keeps a roster).
-    useUIStore.setState({ currentSectorKey: 'sol-prime' });
   });
 
   it('entering placement from Fly switches to Command and pulls the camera back', () => {
@@ -87,23 +86,17 @@ describe('buildModeView', () => {
     expect(sendPilotShip).not.toHaveBeenCalled();
   });
 
-  // Stills review 2026-11-20 (`?room=sector`): Cancel left the player in
-  // Command with no joystick. A room with no sector key keeps no roster, so
-  // the server ignores `pilot_ship` (`reclaimLingeringHull` returns early):
-  // the ship let go of could never be flown again. Build mode there keeps
-  // the ship (stays in Fly), so Cancel / Confirm always end flying.
-  it('in a room with no sector key, build mode keeps flying the ship (no strand in Command)', () => {
+  // Stills review 2026-11-20 (`?room=sector`): build mode is the Command view
+  // in every room, with or without a sector key (the server hands the ship back
+  // there too: pilotReclaimKeylessRoom.test.ts), and Cancel flies it again.
+  it('in a room with no sector key, build mode still enters Command and flies back', () => {
     useUIStore.setState({ currentSectorKey: null });
     const cam = camera();
     stepBuildModeView('solar', VIEW, 'ship-1', cam, W, H);
-    expect(sendCommand).not.toHaveBeenCalled();
-    expect(selectControlMode(useUIStore.getState())).toBe('fly');
-    // Still a build view: the camera pulls back, and comes back on exit.
-    expect(cam.glideCameraTo).toHaveBeenCalledTimes(1);
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+    expect(selectControlMode(useUIStore.getState())).toBe('command');
     stepBuildModeView(null, VIEW, 'ship-1', cam, W, H);
-    expect(sendPilotShip).not.toHaveBeenCalled();
-    expect(cam.glideCameraTo).toHaveBeenCalledTimes(2);
-    expect(selectControlMode(useUIStore.getState())).toBe('fly');
+    expect(sendPilotShip).toHaveBeenCalledWith('ship-1');
   });
 
   it('a dial toggle or wheel zoom mid-build does not lose the fly-back', () => {
