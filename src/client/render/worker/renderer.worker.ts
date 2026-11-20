@@ -149,6 +149,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             placementScreenY: fb.placementScreenY,
             selectionScreenX: fb.selectionScreenX,
             selectionScreenY: fb.selectionScreenY,
+            selectionScreenHalf: fb.selectionScreenHalf,
             placementChosenWorldX: fb.placementChosenWorldX,
             placementChosenWorldY: fb.placementChosenWorldY,
             placementStuck: fb.placementStuck,

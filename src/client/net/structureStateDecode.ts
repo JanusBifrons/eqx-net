@@ -31,8 +31,12 @@ import {
   decodeRigHoldTicks,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
+import { decodeProdBay, decodeProdFrac } from '../../shared-types/production.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { decodeProdCount } from '../../shared-types/production.js';
+
+/** Scratch for `decodeProdBay` (reused per row, #14). */
+const _bay = { bay: 0, queued: 0 };
 
 export function emptyStructureRow(): StructureRenderState {
   return { powered: false, netPower: 0, connTo: [], connSockSelf: [], connSockOther: [], built: false, buildPct: 0, deconstructPct: 0 };
@@ -96,6 +100,11 @@ export function decodeStructureState(
   out.prodState = prodState !== 0 ? prodState : undefined;
   const prodMissing = v.prodMissing ?? D.prodMissing;
   out.prodMissing = prodMissing !== 0 ? prodMissing : undefined;
+  const prodFrac = decodeProdFrac(v.prodFrac);
+  out.prodFrac = prodFrac > 0 ? prodFrac : undefined;
+  decodeProdBay(v.prodBay, _bay);
+  out.prodBay = _bay.bay !== 0 ? _bay.bay : undefined;
+  out.prodQueued = _bay.queued !== 0 ? _bay.queued : undefined;
   const bpRuns = v.bpRuns ?? D.bpRuns;
   out.bpRuns = bpRuns !== 0 ? bpRuns : undefined;
   out.bpQuality = bpRuns !== 0 ? (v.bpQuality ?? D.bpQuality) : undefined;

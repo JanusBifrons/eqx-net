@@ -13,6 +13,7 @@ import LinkOffIcon from '@mui/icons-material/LinkOff';
 import UpgradeIcon from '@mui/icons-material/Upgrade';
 import { sendStructureAction, sendUpgradeStructure } from '../structures/structureActionsClient';
 import { StructureSettingsCog } from './StructureSettingsModal';
+import { phoneTiny } from './inspectorSizes';
 
 export const ACTION_BTN_SX = {
   p: '2px',
@@ -24,7 +25,7 @@ const ACTION_BTN_WARN_SX = {
   color: '#ff9b6b',
   '&:hover': { color: '#ffb892', bgcolor: 'rgba(255,120,80,0.15)' },
 };
-export const ICON_SX = { fontSize: { xs: 16, sm: 28 } };
+export const ICON_SX = phoneTiny({ fontSize: [16, 28] });
 
 /** The card fields the management buttons read (a subset of the panel's data). */
 export interface ManageActionData {

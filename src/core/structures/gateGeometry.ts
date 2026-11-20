@@ -25,6 +25,10 @@ import {
   GATE_W,
 } from '../../shared-types/structureKinds/gatePosts.js';
 import { PAD_SPECS, TELEPORTER_KINDS, isTeleporterKind, padPostCenters } from '../../shared-types/teleport.js';
+import { STRUCTURE_KINDS } from '../../shared-types/structureKinds/lookup.js';
+import { SHIPYARD_SLIP_HALF_W, SHIPYARD_SLIP_X0 } from '../articulation/rigs/heavyIndustry.js';
+import { getShipKind, isShipKindId } from '../../shared-types/shipKinds.js';
+import { tuningFor } from '../../shared-types/shipScale/lookup.js';
 
 export type GateType = 'gate' | 'airlock';
 
@@ -102,12 +106,35 @@ const PAD_BOXES: Readonly<Record<string, readonly LocalBox[]>> = Object.freeze(
   ),
 );
 
-/** The solid collider parts of a gate (its posts and walls) or a teleporter
- *  pad (its posts), local frame. null ⇒ the structure is its footprint box. */
+/** Shipyard (loop 3M): the stern headhouse and the two sides are solid; the
+ *  slipway down the middle (|y| < SHIPYARD_SLIP_HALF_W, stern end of the slip
+ *  to the bow edge) is open, like a teleporter pad, so a finished hull printed
+ *  on the keel flies out of the bow mouth (+x) without touching the frame. */
+const SHIPYARD_BOXES: readonly LocalBox[] = (() => {
+  const { w, h } = STRUCTURE_KINDS.shipyard.footprint;
+  const hw = w / 2, hh = h / 2, sideH = (hh - SHIPYARD_SLIP_HALF_W) / 2, sideW = (hw - SHIPYARD_SLIP_X0) / 2;
+  return Object.freeze([
+    { cx: (-hw + SHIPYARD_SLIP_X0) / 2, cy: 0, hw: (SHIPYARD_SLIP_X0 + hw) / 2, hh },
+    { cx: SHIPYARD_SLIP_X0 + sideW, cy: SHIPYARD_SLIP_HALF_W + sideH, hw: sideW, hh: sideH },
+    { cx: SHIPYARD_SLIP_X0 + sideW, cy: -(SHIPYARD_SLIP_HALF_W + sideH), hw: sideW, hh: sideH },
+  ]);
+})();
+
+/** Does a `hullKind` hull, shield bubble and all (#18: its tuning's
+ *  `shieldPad`), fit down the Shipyard's open slipway? The sub-caps do; a
+ *  capital the yard builds (the Barge) is far wider than the whole frame. */
+export function shipyardSlipFits(hullKind: string): boolean {
+  return isShipKindId(hullKind) && getShipKind(hullKind).radius + tuningFor(hullKind).shieldPad < SHIPYARD_SLIP_HALF_W;
+}
+
+/** The solid collider parts of a gate (its posts and walls), a teleporter
+ *  pad (its posts) or the Shipyard (all but its slipway), local frame.
+ *  null ⇒ the structure is its footprint box. */
 export function gateColliderBoxes(kind: string | null | undefined): readonly LocalBox[] | null {
   const t = gateTypeOf(kind);
   if (t === 'gate') return GATE_BOXES;
   if (t === 'airlock') return AIRLOCK_BOXES;
+  if (kind === 'shipyard') return SHIPYARD_BOXES;
   return isTeleporterKind(kind) ? PAD_BOXES[kind]! : null;
 }
 
