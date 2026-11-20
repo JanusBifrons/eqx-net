@@ -3,8 +3,17 @@
  * Turrets: turret, laser bolt, missile, autocannon, mine layer.
  * This family's drawings live only here; `kinds` is spread into `STYLE_C`
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
+ *
+ * Only the BASE is drawn here. The turning gun (ring, barrel) is
+ * `turretLayout.ts` (ring = R × 0.34 × 1.3, R = half the short side) and its
+ * muzzle `muzzle.ts`; each base leaves a dark well under that ring so the gun
+ * reads on top of it. The guns are always out (no hatch) except the beam
+ * turret's existing pop-up rig, whose slot draws over the well.
  */
-import { type StyleDrawerTable } from './structureStyleKit.js';
+import {
+  HAZARD, LAMP_AMBER, LAMP_WHITE, RIVET, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, core, deck, glow,
+  grime, lamp, ngon, poly, rivets, stencil, strip, wornStripe, type Pts, type StyleCtx, type StyleDrawerTable,
+} from './structureStyleKit.js';
 import { rigPartIndex } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, SANDBOX_DOOR_TURRET_DEF } from '../../../core/articulation/rigCatalogue.js';
 import { rigSlotContext, type RigDrawHookTable } from './structureRigLook.js';
@@ -12,10 +21,113 @@ import { rigSlotContext, type RigDrawHookTable } from './structureRigLook.js';
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = '';
+export const version = 't1';
+
+/** Blue trim (the Capital / refinery / pylon trim) lit, and its dead glass. */
+const TRIM = 0x7fd4ff;
+const TRIM_DEAD = 0x142430;
+
+/** The dark well under the gun ring, × R. The ring itself is R × 0.442
+ *  (`turretLayout.ts`), so the well shows a dark lip round it. */
+export const TURRET_WELL = 0.5;
+
+/** The armoured octagon pad every small gun stands on (`r` × R): the pad
+ *  slab, a raised collar, a bolt ring, the dark well under the gun ring, blue
+ *  trim lamps on the pad rim. Returns the pad outline. */
+function gunPad(c: StyleCtx, R: number, r: number, salt: number): Pts {
+  const trim = c.live ? TRIM : TRIM_DEAD;
+  const pad = core(c, ngon(0, 0, r * R, 8, Math.PI / 8), SLAB, 18, Math.PI / 2);
+  grime(c, -0.7 * R, -0.7 * R, 1.4 * R, 1.4 * R, 6, salt);
+  wornStripe(c, pad, Math.PI / 2, 0.72 * R, 0.07 * R, salt + 1);
+  // Blue trim lamps on the rim, at the eight octagon corners.
+  for (let i = 0; i < 8; i++) {
+    const a = Math.PI / 8 + (i * Math.PI) / 4, rr = (r - 0.09) * R;
+    const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+    glow(c, ngon(x, y, 0.035 * R, 8), trim, 0.9);
+    if (i % 2 === 0) c.lit(x, y, 0.03 * R, trim);
+  }
+  // The raised armour collar and its bolt ring.
+  poly(c, ngon(0, 0, 0.66 * R, 8, Math.PI / 8), SLAB_DARK, 'metal', 24, 0.05 * R, { roof: [2, 0.05 * R] });
+  for (let i = 0; i < 12; i++) {
+    const a = (i * Math.PI) / 6, rr = 0.58 * R;
+    poly(c, ngon(Math.cos(a) * rr, Math.sin(a) * rr, 0.024 * R, 6), RIVET, 'metal', 26, 0.5);
+  }
+  // The dark well the gun ring sits in.
+  poly(c, ngon(0, 0, TURRET_WELL * R, 16), SOOT, 'metal', -3, 0.03 * R);
+  return pad;
+}
+
+/** Beam turret (`turret`, 140 × 140): the plain armoured pad, a dark well
+ *  under the gun ring (the pop-up hatch rig's slot draws over it), blue trim
+ *  lamps on the rim, amber work lamps on two corners. */
+function beamTurret(c: StyleCtx): void {
+  const R = Math.min(c.W, c.H) / 2;
+  deck(c);
+  gunPad(c, R, 0.9, 11);
+  rivets(c, [-0.5 * R, 0.86 * R], [0.5 * R, 0.86 * R], 0.12 * R, 0.022 * R);
+  lamp(c, -0.8 * R, -0.8 * R, 0.04 * R, LAMP_AMBER);
+  lamp(c, 0.8 * R, 0.8 * R, 0.04 * R, LAMP_WHITE);
+  stencil(c, '12', 0.56 * R, -0.86 * R, 0.13 * R);
+  if (c.livery) c.sigils.push({ x: -0.72 * R, y: 0.72 * R, r: 0.09 * R });
+}
+
+/** Bolt turret (`laser_bolt_turret`, 150 × 150): the same pad, plus twin
+ *  capacitor pods on the ±x sides, cabled in to the collar, their cells lit
+ *  blue when powered. */
+function boltTurret(c: StyleCtx): void {
+  const R = Math.min(c.W, c.H) / 2;
+  const trim = c.live ? TRIM : TRIM_DEAD;
+  deck(c);
+  gunPad(c, R, 0.86, 21);
+  for (const s of [-1, 1]) {
+    const cx = s * 0.78 * R;
+    // Cable run from the collar to the pod.
+    for (const dy of [-0.16, 0.16]) poly(c, strip([s * 0.6 * R, dy * R], [cx, dy * R], 0.04 * R), STEEL, 'metal', 20, 0.6);
+    core(c, chamferBox(cx - 0.12 * R, -0.36 * R, 0.24 * R, 0.72 * R, 0.07 * R), SLAB_LIGHT, 28, 0);
+    poly(c, chamferBox(cx - 0.07 * R, -0.3 * R, 0.14 * R, 0.6 * R, 0.04 * R), SOOT, 'metal', -2, 1);
+    for (const cy of [-0.2, 0, 0.2]) {
+      glow(c, chamferBox(cx - 0.05 * R, (cy - 0.07) * R, 0.1 * R, 0.14 * R, 0.02 * R), trim, 0.9);
+    }
+    c.lit(cx, 0, 0.04 * R, trim);
+    lamp(c, cx, s * 0.44 * R, 0.035 * R, LAMP_AMBER);
+  }
+  stencil(c, '14', -0.18 * R, 0.66 * R, 0.12 * R);
+  if (c.livery) c.sigils.push({ x: 0.66 * R, y: -0.66 * R, r: 0.08 * R });
+}
+
+/** Autocannon turret (`autocannon_turret`, 160 × 160): a squat, heavy
+ *  octagon with a thick armour skirt, an ammo feed box on −y (hazard stripe
+ *  on its face) and a belt chute running in to the gun ring's edge. */
+function autocannonTurret(c: StyleCtx): void {
+  const R = Math.min(c.W, c.H) / 2;
+  deck(c);
+  // The skirt: a wider, low octagon under the pad.
+  poly(c, ngon(0, 0, 0.94 * R, 8, Math.PI / 8), SLAB_DARK, 'metal', 10, 0.08 * R, { seams: 0.2 * R, seamAngle: 0 });
+  gunPad(c, R, 0.8, 31);
+  // The feed box on −y.
+  const fy = -0.9 * R, fh = 0.3 * R;
+  core(c, chamferBox(-0.34 * R, fy, 0.68 * R, fh, 0.06 * R), SLAB_LIGHT, 30, 0);
+  poly(c, chamferBox(-0.3 * R, fy + 0.04 * R, 0.6 * R, 0.07 * R, 0.02 * R), HAZARD, 'hazard', 32, 0.6);
+  rivets(c, [-0.26 * R, fy + 0.22 * R], [0.26 * R, fy + 0.22 * R], 0.1 * R, 0.02 * R);
+  // The belt chute: from the box down to the edge of the gun ring's well,
+  // with belt links across it.
+  const x0 = 0.12 * R, y0 = fy + fh, y1 = -TURRET_WELL * R;
+  poly(c, chamferBox(x0 - 0.07 * R, y0 - 0.02 * R, 0.14 * R, y1 - y0 + 0.02 * R, 0.02 * R), STEEL, 'metal', 27, 0.8);
+  for (let y = y0 + 0.03 * R; y < y1 - 0.02 * R; y += 0.035 * R) {
+    poly(c, strip([x0 - 0.05 * R, y], [x0 + 0.05 * R, y], 0.012 * R), SOOT, 'metal', 28, 0.3);
+  }
+  lamp(c, -0.42 * R, fy + 0.1 * R, 0.035 * R, LAMP_AMBER);
+  for (const s of [-1, 1]) lamp(c, s * 0.74 * R, 0.5 * R, 0.035 * R, LAMP_WHITE);
+  stencil(c, '16', -0.2 * R, 0.62 * R, 0.12 * R);
+  if (c.livery) c.sigils.push({ x: 0.6 * R, y: 0.6 * R, r: 0.08 * R });
+}
 
 /** This family's style C drawers (kinds not listed keep today's art). */
-export const kinds: StyleDrawerTable = {};
+export const kinds: StyleDrawerTable = {
+  turret: beamTurret,
+  laser_bolt_turret: boltTurret,
+  autocannon_turret: autocannonTurret,
+};
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
  *  structureRigLook.ts). The pop-up door turret: its gun rides the riser
