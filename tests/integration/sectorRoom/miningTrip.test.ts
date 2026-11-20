@@ -17,21 +17,15 @@
  * is no flight: the skiff mines at its own base. Only mine-rock-a is in the
  * room, so the base sits clear of every other rock.
  *
- * GAP (2026-11-20, skipped until fixed): step 1 stalls. The S laser cuts the
- * rock to a handful of pieces (~640-2,600 mass, tier L/XL; an S tractor pulls
- * <= 150), then stops for good: the laser group's lineage lock sits on a piece
- * whose line from the muzzle is blocked by a sibling piece, so the mount holds
- * fire (`BlockedLineHold.held`, src/server/rooms/BlockedLineHold.ts:45; the
- * mining laser is a hitscan non-tractor, `holdsOnBlockedLine`,
- * src/core/combat/blockedLineHold.ts:34), and nothing moves the lock: the
- * blocked-line re-key is tractor-only (`rekeyBlockedTractor` / `tractorGroup`,
- * src/server/rooms/lockSplit.ts:153 and :59), and `rekeyUnworkable`
- * (lockSplit.ts:128) runs only on a break. The tractor lock
- * waits on an uncut tier-none piece. No piece ever reaches S size, no chunk
- * enters the hold (same stall as miningSkiffTake on CI). Steps 2-4 (unload,
- * refine, bank) were checked with a chunk seeded straight into the hold: the
- * bay takes it, the refinery breaks a 7,000-mineral chunk in two cycles and
- * the bank goes 5,000 -> 12,000.
+ * Was skipped (2026-11-20) on a step-1 stall: the S laser cut the rock to a
+ * few L/XL pieces, then its lineage lock sat on a piece whose line was blocked
+ * by a sibling, so the mount held fire (`BlockedLineHold`) and nothing moved
+ * the lock. Fixed by the blocked-line re-key covering mining-laser groups
+ * (`rekeyBlockedLine`, src/server/rooms/lockSplit.ts).
+ *
+ * The refinery drains a loaded chunk `CHUNK_REFINE_BATCH` per cycle (a big
+ * chunk drains steadily), so step 4 asks for two batches (or the whole chunk
+ * when smaller), not the whole of a real chunk's ore.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -44,6 +38,7 @@ import { TRACTOR_DEF } from '../../../src/core/combat/tractorSpec.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { ROCK_CHUNK_PRODUCT, type PackedItem } from '../../../src/shared-types/items.js';
 import { DEPOSIT_RANGE } from '../../../src/server/cargo/StorageService.js';
+import { CHUNK_REFINE_BATCH } from '../../../src/shared-types/recipes.js';
 
 /** Game speed (the sector time scale's top, 4×). */
 const SPEED = 4;
@@ -68,8 +63,7 @@ describe('SectorRoom integration — the mining trip', () => {
   let harness: SectorTestHarness;
   afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
 
-  // SKIPPED: the trip stalls at step 1 (see GAP above). Un-skip once the laser lock leaves a blocked line.
-  it.skip('mining trip: rock to bank', { timeout: 300_000 }, async () => {
+  it('mining trip: rock to bank', { timeout: 300_000 }, async () => {
     const pid = randomUUID();
     harness = await bootSectorTestServer({
       ...SHOWCASE_BARGE_MINING_OPTS,
@@ -137,6 +131,8 @@ describe('SectorRoom integration — the mining trip', () => {
     expect((shipHold()?.goods as Record<string, number> | undefined)?.minerals ?? 0, 'no ore in the hold on the way in').toBe(shipMinerals0);
     const chunkMinerals = chunk!.ore?.minerals ?? 0;
     expect(chunkMinerals, 'the chunk hides minerals').toBeGreaterThan(0);
+    /** Two refinery batches, or the whole chunk when it hides less. */
+    const wantBank = Math.min(chunkMinerals, 2 * CHUNK_REFINE_BATCH);
 
     // 2. Unload at the Cargo Bay, then 3. the refinery breaks it into the bank.
     // Stop firing so no new chunk comes in; the dwell and the refinery run on the room's clock.
@@ -146,12 +142,12 @@ describe('SectorRoom integration — the mining trip', () => {
     while (int().serverTick - tick1 < BANK_GAME_S * 60) {
       unloaded ||= !shipChunks().some((p) => p.uid === chunk!.uid);
       seenAtBase ||= bayChunks().some((p) => p.uid === chunk!.uid) || refinery.prodChunk?.uid === chunk!.uid;
-      if (unloaded && bank() - bank0 >= chunkMinerals) break;
+      if (unloaded && bank() - bank0 >= wantBank) break;
       await harness.advance(50);
     }
     console.log(`[miningTrip] bank ${bank0} -> ${bank()} (+${bank() - bank0}; chunk minerals ${chunkMinerals}) in ${((int().serverTick - tick1) / 60).toFixed(1)} s game; refinery state ${refinery.prodState}`);
     expect(unloaded, 'the skiff unloads the chunk at the Cargo Bay').toBe(true);
     expect(seenAtBase, 'the chunk reaches the base (bay or refinery) whole').toBe(true);
-    expect(bank() - bank0, 'the refinery turns the chunk into minerals in the bank').toBeGreaterThanOrEqual(chunkMinerals);
+    expect(bank() - bank0, 'the refinery turns the chunk into minerals in the bank').toBeGreaterThanOrEqual(wantBank);
   });
 });

@@ -23,8 +23,10 @@ function harness(kindId = 'barge') {
   const root = new Map<string, number>();
   const pods = new Set<string>();
   const masses = new Map<string, number>();
-  /** Keys a tractor dish of the ship has no clear line to (`tractorLineClear`). */
+  /** Keys a tractor dish of the ship has no clear line to (`salvageLineClear`). */
   const blocked = new Set<string>();
+  /** Keys every mining-laser mount (and every other beam) of the ship has no clear line to. */
+  const laserBlocked = new Set<string>();
   const deps: LockSubsystemDeps = {
     resolveTarget: (_p, key, out) => {
       const t = targets.get(key);
@@ -49,7 +51,7 @@ function harness(kindId = 'barge') {
         for (const k of targets.keys()) if (root.get(k) === r && !pods.has(k)) out.push(k);
       },
     },
-    tractorLineClear: (_p, key) => !blocked.has(key),
+    salvageLineClear: (_p, key, laser) => !(laser ? laserBlocked : blocked).has(key),
     autoPick: () => null,
     commitHostileAct: () => {},
     refreshHostility: () => {},
@@ -61,7 +63,7 @@ function harness(kindId = 'barge') {
     if (pod) pods.add(key);
   };
   const keys = (gid: string): string[] => locks.wireFor('p1')!.find((g) => g.id === gid)!.l.map((l) => l.t);
-  return { locks, targets, add, keys, masses, blocked };
+  return { locks, targets, add, keys, masses, blocked, laserBlocked };
 }
 
 const rock = (): LockTargetView => ({ x: 600, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 60, hostile: false, terrain: true });
@@ -186,6 +188,46 @@ describe('a salvage lock ends with its lineage, not its piece', () => {
     for (const k of haul) h.blocked.add(k);
     h.locks.step();
     expect(h.keys('tractor'), 'nothing clear to move to: it stays').toEqual(tractors1);
+  });
+
+  it('a mining-laser lock whose line is blocked by another piece of the same rock moves to a free piece it has a clear line to (it holds fire on a blocked line, and nothing breaks while it holds)', () => {
+    // Seen in the mining-trip proof (2026-11-20): a Mining Skiff's laser cut a rock into a few
+    // L/XL pieces, then its lock sat on a piece behind a sibling; the mount held fire
+    // (`BlockedLineHold`) and, with nothing breaking, the lock never moved: cutting stopped for good.
+    const h = harness();
+    h.targets.set('s:1', rock());
+    for (const g of ['laser', 'tractor']) expect(h.locks.forceLock('p1', 's:1', g), g).toBeGreaterThan(0);
+    h.locks.step();
+    const pieces = ['s:13', 's:14', 's:15', 's:16', 's:17', 's:18', 's:19', 's:20'];
+    for (const k of pieces) { h.add(k); h.masses.set(k, 2_600); }
+    h.locks.targetSplit('s:1', pieces);
+    h.targets.delete('s:1');
+    h.locks.step();
+    const lasers0 = h.keys('laser');
+    const tractors0 = h.keys('tractor');
+    expect(lasers0.length, 'the lasers hold fewer than the pieces').toBeLessThan(pieces.length);
+    const behind = lasers0[0]!;
+    h.laserBlocked.add(behind); // a sibling piece lies on the line from the laser to it
+    h.locks.step();
+    const lasers1 = h.keys('laser');
+    expect(lasers1, 'the blocked laser lock moved on').not.toContain(behind);
+    expect(lasers1.filter((k) => h.laserBlocked.has(k)), 'no laser lock on a blocked line').toEqual([]);
+    expect(lasers1.length, 'same lock count').toBe(lasers0.length);
+    for (const l of h.locks.wireFor('p1')!.find((g) => g.id === 'laser')!.l) expect(l.s, `${l.t} stays LOCKED (same rock)`).toBe(2);
+    expect(h.keys('tractor'), 'the tractors never mind the laser line').toEqual(tractors0);
+    // Every free piece blocked too: the lock stays where it is.
+    for (const k of pieces) h.laserBlocked.add(k);
+    h.locks.step();
+    expect(h.keys('laser'), 'nothing clear to move to: it stays').toEqual(lasers1);
+  });
+
+  it('a combat laser on a blocked line just holds: its lock never moves (owner 2026-11-18: hold fire on a blocked line)', () => {
+    const h = harness('fighter');
+    h.add('s:11'); h.add('s:12');
+    expect(h.locks.forceLock('p1', 's:11', 'primary')).toBeGreaterThan(0);
+    h.blocked.add('s:11'); h.laserBlocked.add('s:11'); // every beam's line to it is blocked
+    for (let i = 0; i < 20; i++) h.locks.step();
+    expect(h.keys('primary'), 'the lock stays on its target').toEqual(['s:11']);
   });
 
   it('a lineage piece it can not track (crossing too fast): the lock idles on the lineage instead of dropping', () => {

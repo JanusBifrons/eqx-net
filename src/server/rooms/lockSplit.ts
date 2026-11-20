@@ -18,10 +18,10 @@
  * salvage group's lineage lock it can't work moves to a free member it can
  * (`rekeyUnworkable`): the pieces are handed out biggest first, so without
  * it a tractor group held the uncut pieces too heavy to pull while the
- * haulable ones went unheld (barge-mining take, 2026-11-17). A tractor
- * group's lineage lock also prefers a piece its dishes have a clear line to
- * (`rekeyBlockedTractor`, each lock step): its beam acts on the first body in
- * the way (owner 2026-11-18).
+ * haulable ones went unheld (barge-mining take, 2026-11-17). A tractor or
+ * mining-laser group's lineage lock also prefers a piece its beams have a
+ * clear line to (`rekeyBlockedLine`, each lock step): a tractor acts on the
+ * first body in the way (owner 2026-11-18), a mining laser holds fire on it.
  */
 import { LOCK_TRACK, newLock, type LockEntry } from '../../core/combat/lockState.js';
 import { groupWorksSalvage, lockTierOf, type TurretGroupMount } from '../../core/combat/turretLockPick.js';
@@ -49,23 +49,35 @@ export interface LineageCtx {
 const MEMBERS: string[] = [];
 
 /** A member's rank for group `g`: one a mount of it can work first, then (a
- *  tractor group) one its dishes have a clear line to (`clear`), then the
- *  bigger size tier. */
+ *  tractor or mining-laser group) one its beams have a clear line to
+ *  (`clear`), then the bigger size tier. */
 function memberRank(g: LineageGroup, flags: number, clear: boolean): number {
   return (groupWorksSalvage(g.mounts, flags) ? 16 : 0) + (clear ? 8 : 0) + lockTierOf(flags);
 }
 
-/** Does group `g` carry a tractor? */
-function tractorGroup(g: LineageGroup): boolean {
-  for (let i = 0; i < g.mounts.length; i++) if (getWeapon(g.mounts[i]!.weaponId).tractor !== undefined) return true;
-  return false;
+/** Which beam's line a group's lineage lock follows (`lineTool`). */
+const LINE_NONE = 0, LINE_TRACTOR = 1, LINE_LASER = 2;
+
+/** Group `g`'s line tool: `LINE_TRACTOR` when it carries a tractor (its
+ *  beam acts on the first body in the way), else `LINE_LASER` when it
+ *  carries a mining laser (it holds fire on a blocked line: `BlockedLineHold`),
+ *  else `LINE_NONE` (combat groups: they just hold, never re-key). */
+function lineTool(g: LineageGroup): number {
+  let tool = LINE_NONE;
+  for (let i = 0; i < g.mounts.length; i++) {
+    const w = getWeapon(g.mounts[i]!.weaponId);
+    if (w.tractor !== undefined) return LINE_TRACTOR;
+    if (isSalvageWeapon(w)) tool = LINE_LASER;
+  }
+  return tool;
 }
 
-/** A tractor beam acts on the first body in its line (owner 2026-11-18):
- *  is `key`'s line clear for a tractor group? Always true for other groups,
- *  or with no `tractorLineClear` dep. */
-function lineClear(d: LockSalvageDeps, playerId: string, tractor: boolean, key: string): boolean {
-  return !tractor || d.tractorLineClear === undefined || d.tractorLineClear(playerId, key);
+/** Is `key`'s line clear for a group with line tool `tool`? A tractor beam
+ *  acts on the first body in its line (owner 2026-11-18); a mining laser
+ *  holds fire on it. Always true for `LINE_NONE`, or with no
+ *  `salvageLineClear` dep. */
+function lineClear(d: LockSalvageDeps, playerId: string, tool: number, key: string): boolean {
+  return tool === LINE_NONE || d.salvageLineClear === undefined || d.salvageLineClear(playerId, key, tool === LINE_LASER);
 }
 
 function holds(g: { locks: LockEntry[] }, key: string): boolean {
@@ -94,13 +106,13 @@ export function lineageRekey(
   MEMBERS.length = 0;
   src.keysOf(root, MEMBERS);
   let best: string | null = null;
-  const tractor = tractorGroup(g);
-  let bestRank = keep ? memberRank(g, e.flags, lineClear(d, playerId, tractor, e.target)) : -1;
+  const tool = lineTool(g);
+  let bestRank = keep ? memberRank(g, e.flags, lineClear(d, playerId, tool, e.target)) : -1;
   for (const key of MEMBERS) {
     if (key === e.target || holds(g, key)) continue;
     const base = memberRank(g, lockSalvageFlags(d, ship, playerId, key), false);
     if (base + 8 <= bestRank) continue; // can't win even clear: no line query
-    const r = base + (lineClear(d, playerId, tractor, key) ? 8 : 0);
+    const r = base + (lineClear(d, playerId, tool, key) ? 8 : 0);
     if (r > bestRank) { best = key; bestRank = r; }
   }
   if (best === null && !keep) return false;
@@ -141,19 +153,24 @@ export function rekeyUnworkable(g: LineageGroup, c: LineageCtx): boolean {
 }
 
 /**
- * Each lock step: a tractor group's lineage lock `e` whose line from the
- * ship's dishes is blocked (`tractorLineClear` false: the beam would act on
- * the body in the way) moves to a free member of its lineage with a clear
- * line (`lineageRekey` with `keep`: it stays when none is free). Fixing the
+ * Each lock step: a tractor or mining-laser group's lineage lock `e` whose
+ * line from the ship's beams is blocked (`salvageLineClear` false: a tractor
+ * would act on the body in the way; a mining laser holds fire,
+ * `BlockedLineHold`, and with nothing breaking the rock would never be cut
+ * again) moves to a free member of its lineage with a clear line, workable
+ * first (`lineageRekey` with `keep`: it stays when none is free). Fixing the
  * line is the pilot's job (owner 2026-11-18); this is the lock hand-over
- * doing it for the lineage it already follows. Cost: one line query per
- * tractor lineage lock per lock step, plus one per free member only while
- * blocked. True when the lock moved.
+ * doing it for the rock or wreck it already follows. Combat groups never
+ * re-key: they just hold fire. Cost: one line query per tractor or
+ * mining-laser lineage lock per lock step, plus one per free member only
+ * while blocked. True when the lock moved.
  */
-export function rekeyBlockedTractor(
+export function rekeyBlockedLine(
   d: LockSalvageDeps, ship: LineageCtx['ship'], playerId: string, g: LineageGroup, e: LockEntry,
 ): boolean {
-  if (e.root < 0 || d.tractorLineClear === undefined || !tractorGroup(g) || d.tractorLineClear(playerId, e.target)) return false;
+  if (e.root < 0 || d.salvageLineClear === undefined) return false;
+  const tool = lineTool(g);
+  if (tool === LINE_NONE || d.salvageLineClear(playerId, e.target, tool === LINE_LASER)) return false;
   const was = e.target;
   if (!lineageRekey(d, ship, playerId, g, e, true) || e.target === was) return false;
   refreshLockSalvage(d, ship, playerId, e);
@@ -171,11 +188,11 @@ const SPLIT_RANK: number[] = [];
 function rankSplit(g: LineageGroup, pieceKeys: ReadonlyArray<string>, count: number, c: LineageCtx | undefined): void {
   SPLIT.length = 0;
   SPLIT_RANK.length = 0;
-  const tractor = c !== undefined && tractorGroup(g);
+  const tool = c === undefined ? LINE_NONE : lineTool(g);
   for (let i = 0; i < count; i++) {
     const key = pieceKeys[i]!;
-    // A tractor group ranks pieces its dishes have a clear line to first (owner 2026-11-18).
-    const r = c === undefined ? 0 : memberRank(g, lockSalvageFlags(c.d, c.ship, c.playerId, key), lineClear(c.d, c.playerId, tractor, key));
+    // A tractor or mining-laser group ranks pieces its beams have a clear line to first (owner 2026-11-18).
+    const r = c === undefined ? 0 : memberRank(g, lockSalvageFlags(c.d, c.ship, c.playerId, key), lineClear(c.d, c.playerId, tool, key));
     let j = SPLIT.length;
     SPLIT.push(key); SPLIT_RANK.push(r);
     while (j > 0 && SPLIT_RANK[j - 1]! < r) { SPLIT[j] = SPLIT[j - 1]!; SPLIT_RANK[j] = SPLIT_RANK[j - 1]!; j--; }

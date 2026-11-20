@@ -30,7 +30,7 @@ import type { StructureRegistry } from '../../structures/StructureRegistry.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from '../LockSubsystem.js';
 import { LockSalvageLookup, swarmLockId } from '../lockSalvage.js';
 import { NpcLockSubsystem } from '../NpcLockSubsystem.js';
-import { tractorLineClear, type TractorLineHost } from '../tractorLineOfSight.js';
+import { salvageLineClear, type TractorLineHost } from '../tractorLineOfSight.js';
 import type { ShipKindId } from '../../../shared-types/shipKinds.js';
 import type { ShipState } from '../schema/SectorState.js';
 
@@ -65,7 +65,7 @@ export interface FireControlLocksHost {
   hasHold(shipInstanceId: string): boolean;
   shipCargoCapacity(kind: string, shipInstanceId: string): number;
   holdWeight(uid: string): number;
-  /** Tractor line of sight for the lock hand-over (tractorLineOfSight.ts). */
+  /** Tractor and mining-laser line of sight for the lock hand-over (tractorLineOfSight.ts). */
   tractorLos: TractorLineHost;
   /** Fire control's blocked-line hold (`BlockedLineHold`) on the room's line-of-fire grid, in game time. */
   lineHeld(key: string, idx: number, weaponId: WeaponId, fx: number, fy: number, tx: number, ty: number, skipId: string, targetId: string): boolean;
@@ -170,7 +170,7 @@ export class FireControlLocks {
       shipOf: (sid) => this.lockShipOf(sid, this.wingmanHull(sid)),
       autoPick: () => null,
       salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out), lineage: this._lockSalvage,
-      tractorLineClear: (sid, key) => tractorLineClear(this.h.tractorLos, sid, this.wingmanHull(sid)?.kind as ShipKindId | undefined, this.h.lingeringPoseCache.get(sid), key),
+      salvageLineClear: (sid, key, laser) => salvageLineClear(this.h.tractorLos, sid, this.wingmanHull(sid)?.kind as ShipKindId | undefined, this.h.lingeringPoseCache.get(sid), key, laser),
       commitHostileAct: (sid, key) => {
         const owner = this.h.fleet.ownerOfAttached(sid);
         if (owner !== null) this.commitLockHostileAct(owner, key);
@@ -186,7 +186,7 @@ export class FireControlLocks {
     return new LockSubsystem({
       resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
       salvageOf: (pid, key, out) => this._lockSalvage.fill(this.h.getActiveShip(pid), key, out), lineage: this._lockSalvage,
-      tractorLineClear: (pid, key) => tractorLineClear(this.h.tractorLos, pid, this.h.getActiveShip(pid)?.kind as ShipKindId | undefined, this.h.shipPoseCache.get(pid), key),
+      salvageLineClear: (pid, key, laser) => salvageLineClear(this.h.tractorLos, pid, this.h.getActiveShip(pid)?.kind as ShipKindId | undefined, this.h.shipPoseCache.get(pid), key, laser),
       shooterPose: (pid, out) => {
         const p = this.h.shipPoseCache.get(pid);
         const ship = this.h.getActiveShip(pid);

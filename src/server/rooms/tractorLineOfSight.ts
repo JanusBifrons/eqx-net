@@ -1,12 +1,14 @@
 /**
- * The lock hand-over's tractor line of sight (lockSalvage.ts
- * `tractorLineClear`): does a tractor dish of a ship have a clear line to a
- * lock key? The beam's own query (`LineOfFireGate.firstOnLine` from each
- * dish's muzzle, as `setTractorMuzzle` places it), stopping at the first
- * clear dish. Loot pods never block (as for every beam). Allocation-free (#14).
+ * The lock hand-over's salvage-tool line of sight (lockSalvage.ts
+ * `salvageLineClear`): does a tractor dish (or, `laser`, a mining-laser
+ * mount) of a ship have a clear line to a lock key? The beam's own query
+ * (`LineOfFireGate.firstOnLine` from each mount's muzzle, as
+ * `setTractorMuzzle` places it), stopping at the first clear mount. Loot pods
+ * never block (as for every beam). Allocation-free (#14).
  */
 import { getShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
+import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
 
 /** No mounts (#14). */
 const NO_MOUNTS: ReadonlyArray<WeaponMount> = [];
@@ -22,12 +24,12 @@ export interface TractorLineHost {
 
 const T = { x: 0, y: 0, id: '' };
 
-/** True when a tractor dish of ship `kind` (gate body `emitterId`, pose `p`)
- *  has a clear line to `key`. No ship, no pose, not a swarm key or no
- *  tractor: clear. */
-export function tractorLineClear(
+/** True when a tractor dish (`laser`: a mining-laser mount) of ship `kind`
+ *  (gate body `emitterId`, pose `p`) has a clear line to `key`. No ship, no
+ *  pose, not a swarm key or no such mount: clear. */
+export function salvageLineClear(
   host: TractorLineHost, emitterId: string, kind: ShipKindId | undefined,
-  p: { x: number; y: number; angle: number } | undefined, key: string,
+  p: { x: number; y: number; angle: number } | undefined, key: string, laser = false,
 ): boolean {
   if (kind === undefined || p === undefined || !host.target(key, T)) return true;
   const c = Math.cos(p.angle), s = Math.sin(p.angle);
@@ -36,7 +38,8 @@ export function tractorLineClear(
     const mounts = pass === 0 ? getShipKind(kind).mounts ?? NO_MOUNTS : host.activatedMounts(emitterId) ?? NO_MOUNTS;
     for (let i = 0; i < mounts.length; i++) {
       const m = mounts[i]!;
-      if (getWeapon(m.weaponId).tractor === undefined) continue;
+      const w = getWeapon(m.weaponId);
+      if (laser ? !isSalvageWeapon(w) : w.tractor === undefined) continue;
       any = true;
       const mx = p.x + (m.localX * c - m.localY * s), my = p.y + (m.localX * s + m.localY * c);
       if (host.firstOnLine(mx, my, T.x, T.y, emitterId, T.id) === '') return true;
