@@ -6,7 +6,8 @@
  *
  * Tabs come from `settingsTabsFor(kindId)`, so later tabs (On/Off, Throttle,
  * and the inspector's recipe / gate / upgrade controls) are added per building
- * kind in one place. Today: Power (read-only) and, for a building that makes
+ * kind in one place. Today: Power (its numbers, plus the owner's On/Off and
+ * Throttle where the kind has them: structureSettingsPowerControls.tsx) and, for a building that makes
  * things, Production: its recipe and a build count (minus / plus / forever)
  * sent on the same `set_recipe` message as the recipe.
  *
@@ -23,6 +24,7 @@ import {
   GameWindow, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX,
 } from './GameWindow';
 import { powerSummary, signed, type PowerSummary } from './structureSettingsPower';
+import { PowerControls } from './structureSettingsPowerControls';
 import { buildCountText, makesThings, readProduction, type ProductionView } from './structureSettingsProduction';
 import { sendSetRecipe } from '../structures/structureActionsClient';
 import { MAX_BUILD_COUNT } from '@shared-types/production';
@@ -56,7 +58,8 @@ function readPower(entityId: number): PowerSummary | null {
 
 function samePower(a: PowerSummary | null, b: PowerSummary | null): boolean {
   if (a === null || b === null) return a === b;
-  return a.selfPower === b.selfPower && a.load === b.load && a.gridNet === b.gridNet && a.powered === b.powered;
+  return a.selfPower === b.selfPower && a.load === b.load && a.gridNet === b.gridNet && a.powered === b.powered
+    && a.on === b.on && a.throttle === b.throttle;
 }
 
 const LOAD_LABEL: Record<PowerSummary['load'], string> = { full: 'Full (working)', idle: 'Idle (trickle)', none: 'Never draws' };
@@ -82,6 +85,7 @@ function PowerTab({ entityId }: { entityId: number }): JSX.Element {
       <Box sx={LABEL_SX}>Draw now</Box><Box sx={VALUE_SX} data-testid="settings-power-draw">{drawNowText(p)}</Box>
       <Box sx={LABEL_SX}>Load</Box><Box sx={VALUE_SX} data-testid="settings-power-load">{LOAD_LABEL[p.load]}</Box>
       <Box sx={LABEL_SX}>Grid net</Box><Box sx={VALUE_SX} data-testid="settings-power-grid">{signed(p.gridNet)}</Box>
+      <PowerControls entityId={entityId} kindId={readKind(entityId) ?? ''} on={p.on} throttle={p.throttle} labelSx={LABEL_SX} />
     </Box>
   );
 }
