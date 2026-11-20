@@ -11,6 +11,7 @@ import {
 } from './structureStyleKit.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
 import type { BodyStatusHookTable } from './structureSocketNubs.js';
+import * as gaslab from './structureStyleC.lightProduction.gaslab.js';
 import { WORK_DARK, WORK_ON, WORK_STARVED, bakeSlits, workGlowStatus, type WorkMark, type WorkSlit } from './structureStyleC.lightProduction.work.js';
 import * as muni from './structureStyleC.lightProduction.muni.js';
 
@@ -72,12 +73,14 @@ export const REFINERY_STARVED = WORK_STARVED;
 export const status: BodyStatusHookTable = {
   refinery: workGlowStatus(REFINERY_SLITS, REFINERY_MARK),
   ...muni.status,
+  ...gaslab.status,
 };
 
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   refinery,
   ...muni.kinds,
+  ...gaslab.kinds,
 };
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
