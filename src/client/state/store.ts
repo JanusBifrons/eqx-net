@@ -41,12 +41,11 @@ export type { SelectionFocusKind } from './storeTypes.js';
 // log in for the first time on a device, the legacy `eqxSettings` global key
 // migrates into the per-user slot on that re-read (see `userPrefs.ts`).
 /**
- * RTS command layer (slice 10) — the player-facing control mode derived from
- * the stored `pilotMode` (see `ControlMode`). A pure selector, so there is ONE
- * stored field and the two names can never drift.
+ * The player-facing control mode derived from the stored `pilotMode` +
+ * `buildMode` (see `ControlMode`). A pure selector, so the names never drift.
  */
-export function selectControlMode(s: Pick<UIStore, 'pilotMode'>): ControlMode {
-  return s.pilotMode === 'spectator' ? 'command' : 'fly';
+export function selectControlMode(s: Pick<UIStore, 'pilotMode' | 'buildMode'>): ControlMode {
+  return s.buildMode ? 'build' : s.pilotMode === 'spectator' ? 'command' : 'fly';
 }
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
@@ -160,6 +159,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   correctionRate: 0,
   isDead: false,
   pilotMode: 'pilot',
+  buildMode: false,
   currentSectorKey: null,
   transitState: 'DOCKED',
   transitProgress: 0,
@@ -277,7 +277,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   }),
   setHealthStats: (s) => set({ healthStats: s }),
   setDead: (dead) => set({ isDead: dead }),
-  setPilotMode: (mode) => set({ pilotMode: mode }),
+  // Flying a ship again (welcome) ends Build; picking a structure starts it.
+  setPilotMode: (mode) => set(mode === 'pilot' ? { pilotMode: mode, buildMode: false } : { pilotMode: mode }),
+  setBuildMode: (on) => set({ buildMode: on }),
   setCurrentSectorKey: (key) => set({ currentSectorKey: key }),
   setTransitState: (s) => set({ transitState: s }),
   setTransitProgress: (p) => set({ transitProgress: p }),
@@ -287,7 +289,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   // Switching slot resets the wall-clock cooldown anchor so a fresh slot
   // fires immediately (no carry-over cooldown across slots).
   setActiveSlotId: (id) => set({ activeSlotId: id, lastFireMs: null }),
-  setPlacementKind: (k) => set({ placementKind: k }),
+  setPlacementKind: (k) => set(k === null ? { placementKind: null } : { placementKind: k, buildMode: true }),
   setWarpPickerOpen: (open) => set({ warpPickerOpen: open }),
   setContactsOpen: (open) => set({ contactsOpen: open }),
   setWarpHeldTo: (label) => set({ warpHeldTo: label }),

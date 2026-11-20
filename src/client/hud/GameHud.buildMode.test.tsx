@@ -1,6 +1,6 @@
 /**
- * Build mode (owner design 2026-11-20): while a structure is being placed
- * (`placementKind !== null`) the flight controls are gone (joystick, lock
+ * Build mode (owner design 2026-11-20): in Build, the third control mode
+ * (`buildMode`, with or without a ghost) the flight controls are gone (joystick, lock
  * stick, BOOST, weapon strip, lock band, helm bar), so the ghost owns the
  * screen. Panels unrelated to flying are stubbed: this locks the gate only.
  */
@@ -52,7 +52,7 @@ describe('GameHud in build mode', () => {
   beforeEach(() => {
     cleanup();
     document.body.innerHTML = '';
-    useUIStore.setState({ phase: 'galaxy-map', pilotMode: 'pilot', isDead: false, helmAvailable: true, placementKind: null });
+    useUIStore.setState({ phase: 'galaxy-map', pilotMode: 'pilot', isDead: false, helmAvailable: true, placementKind: null, buildMode: false });
   });
 
   it('shows the flight controls and helm bar while flying (control)', () => {
@@ -61,8 +61,8 @@ describe('GameHud in build mode', () => {
     expect(document.querySelector('[data-testid="helm-panel"]')).not.toBeNull();
   });
 
-  it('renders no flight control and no helm bar while placementKind is set', () => {
-    useUIStore.setState({ placementKind: 'battery' });
+  it('renders no flight control and no helm bar in Build mode', () => {
+    useUIStore.getState().setPlacementKind('battery'); // a pick enters Build
     renderHud();
     for (const id of FLIGHT_IDS) expect(document.querySelector(`[data-testid="${id}"]`), id).toBeNull();
     expect(document.querySelector('[data-testid="helm-panel"]')).toBeNull();

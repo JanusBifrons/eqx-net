@@ -1,21 +1,22 @@
 /**
- * Build mode's view (owner's sideways-phone design, 2026-11-20): picking a
- * building switches to the Command (overhead) view and pulls the camera back;
- * Confirm, Cancel or Escape puts you back in the view you were in, at the
- * zoom you had.
+ * Build mode's view (owner, 2026-11-20): Build is the third control mode
+ * (Fly / Command / Build, the store's `buildMode`). Entering it (the switch's
+ * Build button, or picking a structure) lets go of the ship like Command and
+ * pulls the camera back. Confirm and Cancel stay in Build; only the switch's
+ * Fly or Command leaves it (`leaveBuildMode`), back at the zoom you had, and
+ * Fly takes back the ship you were flying.
  *
- * Build mode IS `placementKind !== null` (no second mode flag). This is not a
- * new view system: it drives the existing Command ⇄ Fly switch through the
- * same senders the toggle uses (`setPilotMode('spectator')` + `sendCommand`
- * to let go, `sendPilotShip` to take the same ship back) and the existing
- * camera glide (`glideCameraTo` with a target zoom). Called once per frame by
- * `gameRafLoop`; edge-triggered, so the steady state is two compares and no
- * allocation.
+ * This is not a new view system: it drives the existing Command ⇄ Fly switch
+ * through the same senders the toggle uses (`setPilotMode('spectator')` +
+ * `sendCommand` to let go, `sendPilotShip` to take the same ship back) and the
+ * existing camera glide (`glideCameraTo` with a target zoom). Called once per
+ * frame by `gameRafLoop`; edge-triggered, so the steady state is two compares
+ * and no allocation.
  *
  * The camera scale is read from the renderer feedback's `viewHalf` (the larger
  * half of the visible world): scale = (larger window side / 2) / viewHalf.
  */
-import { selectControlMode, useUIStore } from '../state/store.js';
+import { useUIStore } from '../state/store.js';
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient.js';
 
 /** Entering build mode multiplies the camera scale by this (a step back). */
@@ -45,6 +46,8 @@ const st = {
   lastY: 0,
   /** Zoom the fly-back's pilot-swap glide must end at (0 = none pending). */
   restoreScale: 0,
+  /** `leaveBuildMode('fly')` sent the fly-back: the exit hands its zoom on. */
+  flyBackSent: false,
 };
 
 /** Camera scale (px per world unit) from a view sample; 0 before the first frame. */
@@ -76,22 +79,42 @@ export function resetBuildModeView(): void {
   st.savedScale = 0;
   st.lastX = 0;
   st.lastY = 0;
+  st.flyBackSent = false;
 }
 
 /**
- * Per frame. `kind` = the store's `placementKind`; `view` = this frame's
+ * Leave Build through the mode switch (the ONLY way out: Confirm and Cancel
+ * stay in Build). Drops any ghost; the next frame's step restores the camera.
+ * `fly` takes back the ship flown before Build and returns true; false means
+ * there was none, so the caller runs the switch's normal Fly (ship menu) from
+ * Command. No-op (false) outside Build.
+ */
+export function leaveBuildMode(next: 'fly' | 'command'): boolean {
+  const ui = useUIStore.getState();
+  if (!ui.buildMode) return false;
+  const shipId = st.flyShipId;
+  ui.setPlacementKind(null);
+  ui.setBuildMode(false);
+  if (next !== 'fly' || shipId === null) return false;
+  sendPilotShip(shipId);
+  st.flyBackSent = true;
+  return true;
+}
+
+/**
+ * Per frame. `building` = the store's `buildMode`; `view` = this frame's
  * renderer feedback (null when none was read); `localShipInstanceId` = the
  * hull being flown (mirror), so the exit can take that same ship back.
  */
 export function stepBuildModeView(
-  kind: string | null,
+  building: boolean,
   view: BuildViewSample | null,
   localShipInstanceId: string | null,
   camera: BuildViewCamera,
   winW: number,
   winH: number,
 ): void {
-  if (kind !== null) {
+  if (building) {
     if (!st.active) enterBuildView(localShipInstanceId);
     if (view !== null && view.viewHalf > 0) {
       st.lastX = view.viewX;
@@ -113,7 +136,7 @@ function enterBuildView(localShipInstanceId: string | null): void {
   st.restoreScale = 0;
   st.flyShipId = null;
   const ui = useUIStore.getState();
-  if (selectControlMode(ui) !== 'fly') return;
+  if (ui.pilotMode !== 'pilot') return; // from Command: nothing to let go of
   st.flyShipId = localShipInstanceId;
   // The Command toggle's own path: flip the view, hand the ship to its AI.
   ui.setPilotMode('spectator');
@@ -122,10 +145,9 @@ function enterBuildView(localShipInstanceId: string | null): void {
 
 function exitBuildView(camera: BuildViewCamera): void {
   if (st.savedScale > 0) camera.glideCameraTo(st.lastX, st.lastY, BUILD_VIEW_GLIDE_MS, st.savedScale);
-  // Back to flying the same ship, unless the player already took one.
-  const shipId = st.flyShipId;
-  const flyBack = shipId !== null && selectControlMode(useUIStore.getState()) === 'command';
-  if (flyBack) sendPilotShip(shipId);
+  // The fly-back (if any) went out from `leaveBuildMode`: its pilot-swap glide
+  // carries the restore zoom.
+  const flyBack = st.flyBackSent;
   const scale = st.savedScale;
   resetBuildModeView();
   if (flyBack) st.restoreScale = scale;

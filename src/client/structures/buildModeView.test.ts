@@ -1,7 +1,9 @@
 /**
- * Build mode's view (owner design 2026-11-20): picking a building switches to
- * the Command view and pulls the camera back; leaving restores the view and
- * zoom you had.
+ * Build mode, the third control mode (owner 2026-11-20: "There's three modes.
+ * Build. Command. Fly."). Entering Build (the switch, or picking a building)
+ * lets go of the ship like Command and pulls the camera back. Confirm and
+ * Cancel stay in Build; only the switch's Fly / Command leaves it, at the zoom
+ * you had, and Fly takes back the ship flown before Build.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -13,7 +15,8 @@ vi.mock('../ships/shipActionsClient.js', () => ({
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient.js';
 import { selectControlMode, useUIStore } from '../state/store.js';
 import {
-  BUILD_VIEW_GLIDE_MS, BUILD_ZOOM_OUT, buildViewActive, resetBuildModeView, scaleOfView, stepBuildModeView, takeBuildRestoreScale,
+  BUILD_VIEW_GLIDE_MS, BUILD_ZOOM_OUT, buildViewActive, leaveBuildMode, resetBuildModeView, scaleOfView, stepBuildModeView,
+  takeBuildRestoreScale, type BuildViewSample,
 } from './buildModeView.js';
 
 const W = 915;
@@ -24,34 +27,84 @@ function camera() {
   return { glideCameraTo: vi.fn() };
 }
 
-describe('buildModeView', () => {
+/** One RAF frame, as gameRafLoop drives it. */
+function frame(cam: ReturnType<typeof camera>, view: BuildViewSample | null = VIEW, ship: string | null = 'ship-1'): void {
+  stepBuildModeView(useUIStore.getState().buildMode, view, ship, cam, W, H);
+}
+
+const mode = () => selectControlMode(useUIStore.getState());
+
+describe('buildModeView: Build is the third control mode', () => {
   beforeEach(() => {
     resetBuildModeView();
     vi.mocked(sendCommand).mockClear();
     vi.mocked(sendPilotShip).mockClear();
+    useUIStore.setState({ placementKind: null, buildMode: false, currentSectorKey: 'sol-prime' });
     useUIStore.getState().setPilotMode('pilot');
-    // A galaxy sector: the server can hand a parked hull back (it keeps a roster).
   });
 
-  it('entering placement from Fly switches to Command and pulls the camera back', () => {
+  it('picking a building in Fly enters Build: lets go of the ship and pulls the camera back', () => {
     const cam = camera();
-    stepBuildModeView('turret', VIEW, 'ship-1', cam, W, H);
-    expect(selectControlMode(useUIStore.getState())).toBe('command');
+    useUIStore.getState().setPlacementKind('turret');
+    expect(mode()).toBe('build');
+    frame(cam);
     expect(sendCommand).toHaveBeenCalledTimes(1);
+    expect(useUIStore.getState().pilotMode).toBe('spectator');
+    expect(mode()).toBe('build');
     expect(buildViewActive()).toBe(true);
     expect(cam.glideCameraTo).toHaveBeenCalledWith(100, -50, BUILD_VIEW_GLIDE_MS, scaleOfView(VIEW.viewHalf, W, H) * BUILD_ZOOM_OUT);
     // Steady state: no further switch or glide.
-    stepBuildModeView('turret', VIEW, 'ship-1', cam, W, H);
+    frame(cam);
     expect(sendCommand).toHaveBeenCalledTimes(1);
     expect(cam.glideCameraTo).toHaveBeenCalledTimes(1);
   });
 
-  it('leaving placement restores Fly on the same ship and the saved zoom', () => {
+  it('the switch\'s Build button (no building yet) enters Build the same way', () => {
     const cam = camera();
-    stepBuildModeView('turret', VIEW, 'ship-1', cam, W, H);
-    stepBuildModeView('turret', { viewX: 300, viewY: 20, viewHalf: VIEW.viewHalf / BUILD_ZOOM_OUT }, 'ship-1', cam, W, H);
-    stepBuildModeView(null, VIEW, 'ship-1', cam, W, H);
+    useUIStore.getState().setBuildMode(true);
+    frame(cam);
+    expect(mode()).toBe('build');
+    expect(useUIStore.getState().placementKind).toBeNull();
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+    expect(cam.glideCameraTo).toHaveBeenCalledTimes(1);
+  });
+
+  it('Confirm stays in Build, ready for the next building (no second hand-over or pull-back)', () => {
+    const cam = camera();
+    useUIStore.getState().setPlacementKind('turret');
+    frame(cam);
+    useUIStore.getState().setPlacementKind(null); // Confirm placed it
+    frame(cam);
+    expect(mode()).toBe('build');
+    expect(buildViewActive()).toBe(true);
+    expect(sendPilotShip).not.toHaveBeenCalled();
+    useUIStore.getState().setPlacementKind('solar'); // the next one
+    frame(cam);
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+    expect(cam.glideCameraTo).toHaveBeenCalledTimes(1);
+  });
+
+  it('Cancel on a ghost drops the ghost and stays in Build', () => {
+    const cam = camera();
+    useUIStore.getState().setPlacementKind('turret');
+    frame(cam);
+    useUIStore.getState().setPlacementKind(null); // Cancel / Escape
+    frame(cam);
+    expect(useUIStore.getState().placementKind).toBeNull();
+    expect(mode()).toBe('build');
+    expect(sendPilotShip).not.toHaveBeenCalled();
+    expect(cam.glideCameraTo).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaving via Fly takes back the same ship at the saved zoom', () => {
+    const cam = camera();
+    useUIStore.getState().setPlacementKind('turret');
+    frame(cam);
+    frame(cam, { viewX: 300, viewY: 20, viewHalf: VIEW.viewHalf / BUILD_ZOOM_OUT });
+    expect(leaveBuildMode('fly')).toBe(true);
     expect(sendPilotShip).toHaveBeenCalledWith('ship-1');
+    expect(useUIStore.getState().placementKind).toBeNull();
+    frame(cam);
     expect(cam.glideCameraTo).toHaveBeenLastCalledWith(300, 20, BUILD_VIEW_GLIDE_MS, 1);
     expect(buildViewActive()).toBe(false);
     // The pilot-swap glide that follows the fly-back ends at the saved zoom too (one-shot).
@@ -59,54 +112,77 @@ describe('buildModeView', () => {
     expect(takeBuildRestoreScale()).toBe(0);
   });
 
+  it('leaving via Command keeps the ship AI-flown and restores the zoom', () => {
+    const cam = camera();
+    useUIStore.getState().setPlacementKind('turret');
+    frame(cam);
+    expect(leaveBuildMode('command')).toBe(false);
+    frame(cam);
+    expect(mode()).toBe('command');
+    expect(sendPilotShip).not.toHaveBeenCalled();
+    expect(cam.glideCameraTo).toHaveBeenCalledTimes(2);
+    expect(buildViewActive()).toBe(false);
+    expect(takeBuildRestoreScale()).toBe(0);
+  });
+
+  it('Build entered from Command: Fly has no ship to take back (falls to the ship menu)', () => {
+    useUIStore.getState().setPilotMode('spectator');
+    const cam = camera();
+    useUIStore.getState().setBuildMode(true);
+    frame(cam);
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(leaveBuildMode('fly')).toBe(false);
+    expect(sendPilotShip).not.toHaveBeenCalled();
+    expect(mode()).toBe('command');
+  });
+
+  it('flying a ship again (welcome) ends Build without a second fly-back', () => {
+    const cam = camera();
+    useUIStore.getState().setPlacementKind('turret');
+    frame(cam);
+    useUIStore.getState().setPilotMode('pilot');
+    expect(mode()).toBe('fly');
+    frame(cam);
+    expect(sendPilotShip).not.toHaveBeenCalled();
+    expect(buildViewActive()).toBe(false);
+  });
+
+  it('leaveBuildMode outside Build is a no-op', () => {
+    expect(leaveBuildMode('fly')).toBe(false);
+    expect(leaveBuildMode('command')).toBe(false);
+    expect(sendPilotShip).not.toHaveBeenCalled();
+    expect(mode()).toBe('fly');
+  });
+
   it('waits for a camera reading before pulling back', () => {
     const cam = camera();
-    stepBuildModeView('turret', null, 'ship-1', cam, W, H);
+    useUIStore.getState().setPlacementKind('turret');
+    frame(cam, null);
     expect(cam.glideCameraTo).not.toHaveBeenCalled();
-    stepBuildModeView('turret', VIEW, 'ship-1', cam, W, H);
+    frame(cam);
     expect(cam.glideCameraTo).toHaveBeenCalledTimes(1);
   });
 
-  it('starting in Command stays in Command (no fly-back)', () => {
-    useUIStore.getState().setPilotMode('spectator');
-    const cam = camera();
-    stepBuildModeView('turret', VIEW, 'ship-1', cam, W, H);
-    expect(sendCommand).not.toHaveBeenCalled();
-    stepBuildModeView(null, VIEW, 'ship-1', cam, W, H);
-    expect(sendPilotShip).not.toHaveBeenCalled();
-    expect(takeBuildRestoreScale()).toBe(0);
-    expect(selectControlMode(useUIStore.getState())).toBe('command');
-  });
-
-  it('does not take a ship back if the player already flies again', () => {
-    const cam = camera();
-    stepBuildModeView('turret', VIEW, 'ship-1', cam, W, H);
-    useUIStore.getState().setPilotMode('pilot');
-    stepBuildModeView(null, VIEW, 'ship-1', cam, W, H);
-    expect(sendPilotShip).not.toHaveBeenCalled();
-  });
-
-  // Stills review 2026-11-20 (`?room=sector`): build mode is the Command view
-  // in every room, with or without a sector key (the server hands the ship back
-  // there too: pilotReclaimKeylessRoom.test.ts), and Cancel flies it again.
-  it('in a room with no sector key, build mode still enters Command and flies back', () => {
+  // Stills review 2026-11-20 (`?room=sector`): Build is a Command view in every
+  // room, with or without a sector key (the server hands the ship back there
+  // too: pilotReclaimKeylessRoom.test.ts).
+  it('in a room with no sector key, Build still lets go and Fly takes the ship back', () => {
     useUIStore.setState({ currentSectorKey: null });
     const cam = camera();
-    stepBuildModeView('solar', VIEW, 'ship-1', cam, W, H);
+    useUIStore.getState().setPlacementKind('solar');
+    frame(cam);
     expect(sendCommand).toHaveBeenCalledTimes(1);
-    expect(selectControlMode(useUIStore.getState())).toBe('command');
-    stepBuildModeView(null, VIEW, 'ship-1', cam, W, H);
+    expect(leaveBuildMode('fly')).toBe(true);
     expect(sendPilotShip).toHaveBeenCalledWith('ship-1');
   });
 
-  it('a dial toggle or wheel zoom mid-build does not lose the fly-back', () => {
+  it('a wheel zoom or a dropped local ship id mid-build does not lose the fly-back', () => {
     const cam = camera();
-    stepBuildModeView('solar', VIEW, 'ship-1', cam, W, H);
-    // Wheel zoom-out: only the camera reading changes, frame after frame.
-    for (let i = 1; i <= 4; i++) stepBuildModeView('solar', { ...VIEW, viewHalf: VIEW.viewHalf * (1 + i) }, 'ship-1', cam, W, H);
-    // The local ship id drops while in Command (the hull is parked).
-    stepBuildModeView('solar', VIEW, null, cam, W, H);
-    stepBuildModeView(null, VIEW, null, cam, W, H);
+    useUIStore.getState().setPlacementKind('solar');
+    frame(cam);
+    for (let i = 1; i <= 4; i++) frame(cam, { ...VIEW, viewHalf: VIEW.viewHalf * (1 + i) });
+    frame(cam, VIEW, null); // the hull is parked: no local ship id
+    expect(leaveBuildMode('fly')).toBe(true);
     expect(sendPilotShip).toHaveBeenCalledWith('ship-1');
   });
 });

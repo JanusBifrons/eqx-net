@@ -46,8 +46,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const spectating = useUIStore((s) => s.pilotMode === 'spectator');
   const isDead = useUIStore((s) => s.isDead);
-  // Build mode (placing a structure) hides the flight controls: the ghost owns the screen.
-  const building = useUIStore((s) => s.placementKind !== null);
+  // Build mode hides the flight controls: the ghost and the build list own the screen.
+  const building = useUIStore((s) => s.buildMode);
   const size = useHudSize();
   const scale = hudScale(size);
   const landscape = useIsLandscape();

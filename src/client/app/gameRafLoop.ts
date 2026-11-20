@@ -357,7 +357,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       resetPlacementChosen();
     }
     // Build mode: Command view + camera pulled back while placing; restored after.
-    stepBuildModeView(useUIStore.getState().placementKind, feedback, gameClient.mirror.localShipInstanceId ?? null,
+    stepBuildModeView(useUIStore.getState().buildMode, feedback, gameClient.mirror.localShipInstanceId ?? null,
       renderer, window.innerWidth, window.innerHeight);
     if (localShip && writeE2E && feedback) {
       el.dataset['shipX'] = localShip.x.toFixed(3);

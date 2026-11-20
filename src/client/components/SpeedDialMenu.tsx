@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import SpeedDial from '@mui/material/SpeedDial';
 import SpeedDialAction from '@mui/material/SpeedDialAction';
 import SpeedDialIcon from '@mui/material/SpeedDialIcon';
@@ -100,7 +100,7 @@ import { FIT_OPEN_LIST_SX, useFitActionsToViewport } from './speedDialFit';
  * categories ▸ kinds — via the local `view` discriminated union (`buildCategories.tsx`).
  * The FAB stays the open/close toggle; a dedicated back ACTION pops one level; the
  * FAB icon reflects the drilled category at the `kinds` level. Picking a kind sets
- * `placementKind` and CLOSES the dial (build mode owns the screen) but keeps the
+ * `placementKind` (entering Build mode) and CLOSES the dial (build mode owns the screen) but keeps the
  * `kinds` view, so one FAB tap brings the same list back for the next structure
  * with no Build ▸ category re-drill (`blur` / `mouseLeave` are ignored in onClose). Categories live client-side
  * only (no wire catalogue field, no version bump, no netgate).
@@ -152,6 +152,23 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
     // terminal selection lose focus.
     (document.activeElement as HTMLElement | null)?.blur();
   }, []);
+
+  // Build mode keeps the build list ready: entering Build (the mode switch) and
+  // every Confirm / Cancel (the ghost goes, Build stays) open the dial on the
+  // build list: the last category's kinds, else the categories. Leaving Build
+  // closes it back to the main menu.
+  const building = useUIStore((s) => s.buildMode);
+  const buildListReady = useUIStore((s) => s.buildMode && s.placementKind === null);
+  const wasBuilding = useRef(false);
+  useEffect(() => {
+    if (buildListReady) {
+      setView((v) => (v.level === 'root' ? { level: 'categories' } : v));
+      setOpen(true);
+    } else if (!building && wasBuilding.current) {
+      close();
+    }
+    wasBuilding.current = building;
+  }, [building, buildListReady, close]);
 
   const toggleOpen = useCallback(() => setOpen((o) => !o), []);
 

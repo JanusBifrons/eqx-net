@@ -38,7 +38,7 @@ export function HelmPanel(): JSX.Element | null {
   const available = useUIStore((s) => s.helmAvailable);
   const active = useUIStore((s) => s.helmActive);
   const speed = useUIStore((s) => s.helmSpeed);
-  const building = useUIStore((s) => s.placementKind !== null);
+  const building = useUIStore((s) => s.buildMode);
   if (!show || !available || building) return null;
   return (
     <Box sx={ROOT_SX} data-testid="helm-panel" data-helm-active={active ? '1' : '0'} data-helm-speed={speed}>
