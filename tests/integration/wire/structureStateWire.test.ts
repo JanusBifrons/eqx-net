@@ -23,7 +23,20 @@ import {
   STRUCTURE_FLAG_DECONSTRUCTING,
   STRUCTURE_FLAG_POWERED,
   STRUCTURE_FLAG_WALL_ACTIVE,
+  STRUCTURE_FLAG_BREACH,
+  STRUCTURE_FLAG_LOCK_HOLDING,
+  STRUCTURE_RIG_CLIP_TARGET,
+  encodeRigClip,
+  decodeRigClipIndex,
+  decodeRigHoldCargo,
+  decodeRigHoldTicks,
+  encodeRigHold,
 } from '../../../src/shared-types/structureStateWire.js';
+import { CRANE_CARGO_BOTH, CRANE_CARGO_IN } from '../../../src/core/articulation/craneCargo.js';
+import { writeRigClipRow } from '../../../src/server/structures/structureRigClip.js';
+import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
+import { writeConnToRow } from '../../../src/server/structures/structureStateRows.js';
+import { CABLE_NO_SOCKET, Connection } from '../../../src/core/structures/Connection.js';
 
 function row(fields: Partial<StructureState> & { connTo?: number[] }): StructureState {
   const st = new StructureState();
@@ -54,7 +67,7 @@ describe('structure room-state wire — server row → client mirror row', () =>
     const out = emptyStructureRow();
     decodeStructureState(c.structures.get('42')!, OWNERS, out);
     expect(out).toEqual({
-      powered: true, netPower: 37.5, connTo: [7, 9], hpPct: 0.87, built: true, buildPct: 1,
+      powered: true, netPower: 37.5, connTo: [7, 9], connSockSelf: [-1, -1], connSockOther: [-1, -1], hpPct: 0.87, built: true, buildPct: 1,
       etaMs: undefined, deconstructPct: 0, isDeconstructing: undefined, minerals: undefined,
       storedPower: 120, storedPowerMax: 300, shieldWallTo: undefined, wallActive: undefined,
       owner: 'p1', ownerName: 'Ada', level: 2,
@@ -109,5 +122,131 @@ describe('structure room-state wire — server row → client mirror row', () =>
     expect(out.storedPower).toBeUndefined();
     expect(out.shieldWallTo).toBeUndefined();
     expect(out.connTo).toEqual([]);
+    expect(out.connSockSelf).toEqual([]);
+    expect(out.connSockOther).toEqual([]);
+  });
+});
+
+describe('cable sockets on the wire (structure-restyle 0d slice 6)', () => {
+  it('writeConnToRow → schema bytes → client decode gives each end its own socket pair', () => {
+    // a—b cable (a's socket 4, b's socket 12); a—c fence link (no sockets).
+    const conns = [new Connection(1, 'a', 'b', 100, 4, 12), new Connection(2, 'a', 'c', 100, CABLE_NO_SOCKET, CABLE_NO_SOCKET)];
+    const reg = { connectionsOf: (id: string) => conns.filter((c) => c.hasNode(id)) };
+    const eids: Record<string, number> = { a: 1, b: 2, c: 3 };
+    const rows: Record<string, StructureState> = {};
+    for (const id of ['a', 'b', 'c']) {
+      const st = new StructureState();
+      writeConnToRow(id, st, reg, (o) => eids[o]);
+      rows[String(eids[id])] = st;
+    }
+    const c = roundTrip(rows);
+    const decoded = (key: string) => {
+      const out = emptyStructureRow();
+      decodeStructureState(c.structures.get(key)!, OWNERS, out);
+      return out;
+    };
+    const a = decoded('1');
+    expect(a.connTo).toEqual([2, 3]);
+    expect(a.connSockSelf).toEqual([4, CABLE_NO_SOCKET]);
+    expect(a.connSockOther).toEqual([12, CABLE_NO_SOCKET]);
+    const b = decoded('2');
+    expect(b.connTo).toEqual([1]);
+    expect(b.connSockSelf).toEqual([12]);
+    expect(b.connSockOther).toEqual([4]);
+    const fence = decoded('3');
+    expect(fence.connSockSelf).toEqual([CABLE_NO_SOCKET]);
+    expect(fence.connSockOther).toEqual([CABLE_NO_SOCKET]);
+  });
+});
+
+describe('structure rig clip on the wire (restyle 2e, late-join safe)', () => {
+  function rigRec(clip: StructureRecord['rigClip']): StructureRecord {
+    return { id: 's-1', kind: 'freight_dock', rigClip: clip } as unknown as StructureRecord;
+  }
+
+  it('a playing clip with a target round-trips to the same clip, start tick and target', () => {
+    const st = new StructureState();
+    const tx = Math.fround(12.3), ty = Math.fround(-45.6);
+    writeRigClipRow(rigRec({ clipId: 'arm-reach', startTick: 123456, target: { x: tx, y: ty } }), st);
+    const c = roundTrip({ '5': st });
+    const out = emptyStructureRow();
+    decodeStructureState(c.structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip).toEqual({ clipId: 'arm-reach', startTick: 123456, targetX: tx, targetY: ty });
+  });
+
+  it('a clip without a target carries no target; clear and unknown kind decode to no clip', () => {
+    const st = new StructureState();
+    const rec = rigRec({ clipId: 'arm-retract', startTick: 9 });
+    writeRigClipRow(rec, st);
+    let out = emptyStructureRow();
+    decodeStructureState(roundTrip({ '5': st }).structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip).toEqual({ clipId: 'arm-retract', startTick: 9, targetX: undefined, targetY: undefined });
+
+    const st2 = new StructureState();
+    writeRigClipRow(rec, st2);
+    out = emptyStructureRow();
+    decodeStructureState(roundTrip({ '5': st2 }).structures.get('5')!, OWNERS, out);
+    expect(out.rigClip).toBeUndefined();
+
+    const st3 = new StructureState();
+    writeRigClipRow(rec, st3);
+    rec.rigClip = null;
+    writeRigClipRow(rec, st3);
+    expect(st3.rigClip).toBe(0);
+    out = emptyStructureRow();
+    decodeStructureState(roundTrip({ '5': st3 }).structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip).toBeUndefined();
+  });
+
+  it('3e: a holding clip carries its hold length and cargo direction; the next clip drops them', () => {
+    const st = new StructureState();
+    const rec = rigRec({ clipId: 'arm-hold', startTick: 500, target: { x: 10, y: 460 }, holdTicks: 420, cargo: CRANE_CARGO_BOTH });
+    writeRigClipRow(rec, st);
+    expect(st.rigHold).toBe(encodeRigHold(420, CRANE_CARGO_BOTH));
+    const out = emptyStructureRow();
+    decodeStructureState(roundTrip({ '5': st }).structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip).toEqual({ clipId: 'arm-hold', startTick: 500, targetX: 10, targetY: 460, holdTicks: 420, cargo: CRANE_CARGO_BOTH });
+
+    rec.rigClip = { clipId: 'arm-retract', startTick: 920, target: { x: 10, y: 460 } };
+    writeRigClipRow(rec, st);
+    expect(st.rigHold).toBe(0);
+    const st2 = new StructureState();
+    writeRigClipRow(rec, st2);
+    decodeStructureState(roundTrip({ '5': st2 }).structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip!.holdTicks).toBeUndefined();
+    expect(out.rigClip!.cargo).toBeUndefined();
+
+    expect(decodeRigHoldTicks(encodeRigHold(600, CRANE_CARGO_IN))).toBe(600);
+    expect(decodeRigHoldCargo(encodeRigHold(600, CRANE_CARGO_IN))).toBe(CRANE_CARGO_IN);
+    expect(encodeRigHold(0, CRANE_CARGO_IN)).toBe(0);
+  });
+
+  it('the clip code packs index + 1 with a target bit', () => {
+    expect(encodeRigClip(0, false)).toBe(1);
+    expect(encodeRigClip(2, true)).toBe(3 | STRUCTURE_RIG_CLIP_TARGET);
+    expect(decodeRigClipIndex(encodeRigClip(2, true))).toBe(2);
+    expect(decodeRigClipIndex(0)).toBe(-1);
+    expect(() => encodeRigClip(127, false)).toThrow();
+  });
+});
+
+describe('structure flags wire — lockHolding (F2, bit 8: past a uint8)', () => {
+  it('a holding territory lock decodes lockHolding with every lower flag intact', () => {
+    const flags = STRUCTURE_FLAG_BUILT | STRUCTURE_FLAG_POWERED | STRUCTURE_FLAG_BREACH | STRUCTURE_FLAG_LOCK_HOLDING;
+    const c = roundTrip({ '7': row({ flags }) });
+    expect(c.structures.get('7')!.flags).toBe(flags); // fails if the schema narrows back to uint8
+    const out = emptyStructureRow();
+    decodeStructureState(c.structures.get('7')!, OWNERS, out);
+    expect(out.lockHolding).toBe(true);
+    expect(out.built).toBe(true);
+    expect(out.powered).toBe(true);
+    expect(out.breach).toBe(true);
+  });
+
+  it('a lock that is not holding decodes no lockHolding', () => {
+    const c = roundTrip({ '7': row({ flags: STRUCTURE_FLAG_BUILT | STRUCTURE_FLAG_POWERED }) });
+    const out = emptyStructureRow();
+    decodeStructureState(c.structures.get('7')!, OWNERS, out);
+    expect(out.lockHolding).toBeUndefined();
   });
 });

@@ -13,7 +13,8 @@ import type { SwarmEntityRecord, SwarmEntityRegistry } from '../../net/SwarmEnti
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { ShipState } from '../schema/SectorState.js';
 import type { BreakInSubsystem } from '../BreakInSubsystem.js';
-import { isOperationalStorage, type StorageService } from '../../cargo/StorageService.js';
+import type { StorageService } from '../../cargo/StorageService.js';
+import { isOperationalStorage } from '../../cargo/storageHolds.js';
 import { getPlayerShipStore, getHoldStore, getWallet } from '../../db/PersistenceWorker.js';
 import { getTradeSink } from '../../economy/tradeSink.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
@@ -24,7 +25,7 @@ import { GOOD_DEFS, GOOD_IDS, type Hold } from '../../../shared-types/goods.js';
 import type { GoodId } from '../../../shared-types/goods.js';
 import { cargoOpensFor, isNpcOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import {
-  BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type CargoState,
+  BreakInCancelSchema, BreakInSchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type CargoState,
 } from '../../../shared-types/messages/cargoMessages.js';
 import type { LootSubsystem, LootCollector } from '../../cargo/LootSubsystem.js';
 import type { LootSearch } from '../../cargo/LootSearch.js';
@@ -209,11 +210,7 @@ function cargoAccess(h: CargoMessageHost, playerId: string, entityId: number):
   if (!ship?.alive || !ship.isActive || ship.shipInstanceId === '' || getPlayerShipStore().get(ship.shipInstanceId) === null || !pose) {
     return { ok: false, message: 'You need a ship to move cargo.' };
   }
-  const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
-  const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
-  if (dx * dx + dy * dy > CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) {
-    return { ok: false, message: 'Fly closer to open its cargo.' };
-  }
+  if (!h.pilotNear(playerId, rec)) return { ok: false, message: 'Fly closer to open its cargo.' };
   return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: h.shipCargoCapacity(ship.kind, ship.shipInstanceId), market };
 }
 

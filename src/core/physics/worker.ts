@@ -28,15 +28,15 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from './World.js';
-import type { ForceField } from './forceFields.js';
 import { getShipKind, shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { decodeAiInputBits } from '../contracts/IAiBehaviour.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from './catchUp.js';
 import { WakeCensus, WAKE_CENSUS_EVERY_TICKS } from './wakeCensus.js';
+import { rigById } from '../articulation/rigCatalogue.js';
 import { SLEEP_HYSTERESIS_TICKS, spawnAsleep } from './sleepHysteresis.js';
-import type { Vec2 } from '../swarm/asteroidShape.js';
+import type { AddWorldCmd, GcCmd, RemoveWorldCmd, WorkerCommand } from './workerCommands.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -75,85 +75,6 @@ const TICK_MS = 1000 / 60;
  *  contactForceEventThreshold (10 N) pre-filters at the engine level; this
  *  is the meaningful network-traffic gate. */
 const CONTACT_FORCE_FLOOR = 200;
-
-interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
-interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
-interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean | 'fixed'; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number; sleeping?: boolean }
-interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
-/** Pilot layer: every AI slot driven by control keys this tick, in ONE message
- *  (replaces a post per drone). `slots[i]` flies with keys `bits[i]` (packed
- *  `AiInputBits`, see contracts/IAiBehaviour.ts) for i < `count`; entries past
- *  `count` are stale capacity and ignored. */
-interface AiInputsCmd      { type: 'AI_INPUTS';      count: number; slots: Uint16Array; bits: Uint8Array }
-interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
-/** Authoritatively reposition a body in the physics world. Used by the
- *  Phase-1 drone position-clamp backstop in `SectorRoom`: when a drone
- *  drifts past `MAX_BOUNDS` (well outside the playable region), the room
- *  posts this command to teleport the body back in-bounds and zero its
- *  velocity. Single-writer rule: only the worker mutates SAB pose; this
- *  command is the only path the main thread has to override it. */
-interface SetPositionCmd   { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
-/** Warp travel: move a running warp's drop point (the server lands a ship at the
- *  nearest clear spot when its drop point is blocked). Server-only. */
-interface WarpRetargetCmd { type: 'WARP_RETARGET'; entityId: string; x: number; y: number }
-/** NPC warp-to (W2a): hold a bot's warp target (x/y absent = drop the
- *  request). While the warp owns the body its AI intents are skipped. */
-interface BotWarpCmd      { type: 'BOT_WARP'; slot: number; x?: number; y?: number }
-/** Rename a ship body's lookup key without destroying it. Used by the
- *  fresh-spawn-displace flow so a displaced hull's body outlives its
- *  original playerId (rekeyed to `linger-${shipInstanceId}`) on rejoin. */
-interface RekeyShipCmd     { type: 'REKEY_SHIP';     oldId: string; newId: string }
-/** Shield 0-cross collider swap (shield/hull refactor). `kindId` is carried
- *  in the command (server-authoritative) so the worker needs no per-id kind
- *  map; `getShipKind` is forgiving on unknown ids. See World.setHullExposed. */
-interface SetHullExposedCmd { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number }
-/** Phase 4 WS-B2 — set a ship instance's per-instance PHYSICS stat multipliers
- *  (`topSpeed`/`turnRate`) on its worker body. `applyShipInput` reads them next
- *  tick so movement scales by the upgraded factors. Both factors undefined ⇒
- *  reset to the un-upgraded path. The client predWorld runs the same setter so
- *  prediction stays in lockstep. */
-interface SetStatMulCmd     { type: 'SET_STAT_MUL'; id: string; topSpeed?: number; turnRate?: number }
-/** Missile splash impulse. MissileSimulation queues these on detonate; the
- *  SectorRoom drains the queue and posts them; this dispatcher resolves the
- *  entityId to a Rapier body and applies the linear impulse. Silent no-op
- *  on despawned entities (drones killed before the impulse lands). */
-interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
-/** Capital wreck: add a velocity (u/s) and spin (rad/s) to a piece's body (its
- *  separating kick once the crack delay is over). Silent no-op when gone. */
-interface WreckKickCmd { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
-/** A fixed body (cut-field rock) becomes dynamic: a ship rammed it. */
-interface UnfixBodyCmd { type: 'UNFIX_BODY'; entityId: string }
-/** Capital wreck: an overkill hit's impulse (jx, jy) at world point (px, py)
- *  on a piece, so an off-centre hit also turns it. Silent no-op when gone. */
-interface WreckImpulseCmd { type: 'WRECK_IMPULSE'; entityId: string; jx: number; jy: number; px: number; py: number }
-/** Capital wreck still inside its crack hold: an overkill hit's impulse
- *  (jx, jy) at world point (px, py) on the WHOLE wreck as one rigid body
- *  (every piece in `entityIds`), so the pieces keep their relative poses
- *  (`World.applyRigidGroupImpulse`). Gone ids are skipped. */
-interface WreckRigidImpulseCmd { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number }
-/** Shield-fence plan — spawn / toggle / remove a shield-wall span. A static
- *  cuboid between two pylon poses that blocks ships; toggled on stun / power
- *  loss without churning the body. See PhysicsWorld.spawnWall. */
-interface SpawnWallCmd      { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
-interface SetWallActiveCmd  { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
-interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
-/** Force fields (teleporter pad push today; PhysicsWorld.setForceField, forceFields.ts). */
-interface SetForceFieldCmd    { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
-interface RemoveForceFieldCmd { type: 'REMOVE_FORCE_FIELD'; id: string }
-interface BatchCmd { type: 'BATCH'; cmds: WorkerCommand[] } // in order, no step between (one wreck's pieces)
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | BotWarpCmd | SetTimeScaleCmd | BatchCmd;
-
-/** Pool commands (main → pooled worker): host / free one sector's world. */
-interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
-interface RemoveWorldCmd { type: 'REMOVE_WORLD'; worldId: number }
-/** Dev diagnostics (`/dev/memory?gc=1`): collect garbage now, so a heap
- *  reading shows what is live. Needs the process started with --expose-gc;
- *  otherwise a no-op. */
-interface GcCmd          { type: 'GC' }
-/** Game speed of ONE world (time scale stream; speed is per sector). The world
- *  runs 60 × scale fixed ticks per wall second; each is still one 1/60 s step. */
-interface SetTimeScaleCmd { type: 'SET_TIME_SCALE'; scale: number }
 
 /** One sector's simulation: its Rapier world, input queues and SAB writer. */
 interface WorldHandle {
@@ -399,6 +320,10 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         physics.setHullExposed(cmd.id, cmd.exposed, getShipKind(cmd.kindId));
         break;
       }
+      case 'SET_COLLISION_GROUPS': {
+        physics.setCollisionGroups(cmd.id, cmd.groups);
+        break;
+      }
       case 'SET_STAT_MUL': {
         // Phase 4 WS-B2 — per-instance physics stat multipliers. Both factors
         // undefined ⇒ reset to the un-upgraded path. Silent no-op on unknown
@@ -457,6 +382,15 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
       }
       case 'REMOVE_FORCE_FIELD': {
         physics.removeForceField(cmd.id);
+        break;
+      }
+      case 'RIG_ATTACH': {
+        const rig = rigById(cmd.rigId);
+        if (rig) physics.attachRig(cmd.id, rig);
+        break;
+      }
+      case 'RIG_CLIP': {
+        physics.setRigClip(cmd.id, cmd.clipId, cmd.startTick, cmd.targetX, cmd.targetY);
         break;
       }
     }
@@ -559,6 +493,9 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // without changing Rapier's per-step dt.
     const rawRate = u32[CLOCK_RATE_IDX] ?? 0;
     const clockRate = rawRate === 0 ? 1.0 : rawRate / CLOCK_RATE_SCALE;
+    // Rig parts (structure-restyle 2d): their pose at the tick this step
+    // produces (snapshot serverTick = tick + 1) is the next kinematic target.
+    physics.stepRigs(tick + 1);
     physics.tick((TICK_MS / 1000) * clockRate, eventQueue);
     tick++;
 

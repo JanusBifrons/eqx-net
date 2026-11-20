@@ -23,7 +23,7 @@ function rec(id: string, kind: StructureRecord['kind'], over: Partial<StructureR
   };
 }
 
-function world(recs: StructureRecord[], opts: { powered?: boolean; onBlueprintSpent?: ProductionDeps['onBlueprintSpent'] } = {}) {
+function world(recs: StructureRecord[], opts: { powered?: boolean; onBlueprintSpent?: ProductionDeps['onBlueprintSpent']; launchHull?: ProductionDeps['launchHull'] } = {}) {
   const byId = new Map(recs.map((r) => [r.id, r]));
   const ids = recs.map((r) => r.id);
   const registry = { all: () => byId.values(), get: (id: string) => byId.get(id) } as unknown as StructureRegistry;
@@ -32,6 +32,7 @@ function world(recs: StructureRecord[], opts: { powered?: boolean; onBlueprintSp
     powered: () => opts.powered ?? true,
     componentOf: () => ids,
     ...(opts.onBlueprintSpent ? { onBlueprintSpent: opts.onBlueprintSpent } : {}),
+    ...(opts.launchHull ? { launchHull: opts.launchHull } : {}),
   });
   const run = (n: number) => { for (let i = 0; i < n; i++) prod.pulse(); };
   return { prod, run };
@@ -265,6 +266,86 @@ describe('ProductionSubsystem', () => {
     prod.pulse();
     expect(comps).toBe(60); // one component lookup per processor (an array ref)
     expect(gets).toBe(ids.length); // but the network itself is collected ONCE
+  });
+});
+
+describe('ProductionSubsystem — Shipyard hull output', () => {
+  const BUILD = RECIPES.build_gunship;
+  const yardWith = () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { ...BUILD.inputs }, blueprints: [] } });
+    const yard = rec('y', 'shipyard', { x: 100, y: -200, recipe: 'build_gunship', blueprint: bp('hull:gunship', { output: 60 }) });
+    return { bay, yard };
+  };
+
+  it('shipyard hull output spawns a parked owned hull', () => {
+    const { bay, yard } = yardWith();
+    const calls: Array<{ id: string; owner: string; kind: string; quality: number }> = [];
+    const { prod, run } = world([bay, yard], { launchHull: (r, kind, quality) => { calls.push({ id: r.id, owner: r.owner, kind, quality }); return true; } });
+    run(BUILD.cyclePulses);
+    expect(calls).toEqual([{ id: 'y', owner: 'alice', kind: 'gunship', quality: 60 }]);
+    expect(bay.hold!.packed ?? []).toHaveLength(0);
+    expect(prod.cyclesCompleted).toBe(1);
+    expect(yard.prodState).toBe(PROD_STATE.running);
+  });
+
+  it('falls back to a crate when the spawn fails', () => {
+    const { bay, yard } = yardWith();
+    let calls = 0;
+    world([bay, yard], { launchHull: () => { calls++; return false; } }).run(BUILD.cyclePulses);
+    expect(calls).toBe(1);
+    expect(bay.hold!.packed).toEqual([{ product: 'hull:gunship', quality: 60 }]);
+  });
+
+  it('with no room for the fallback crate the yard blocks and launches nothing', () => {
+    const { yard } = yardWith();
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { ...BUILD.inputs }, blueprints: [] } });
+    let calls = 0;
+    const { run } = world([bay, yard], { launchHull: () => { calls++; return true; } });
+    run(1); // the cycle loads its inputs
+    bay.hold!.goods.salvage = 1_000_000; // then the store fills up
+    run(BUILD.cyclePulses);
+    expect(calls).toBe(0);
+    expect(yard.prodState).toBe(PROD_STATE.blocked);
+  });
+});
+
+describe('ProductionSubsystem — build count (job 2E)', () => {
+  const BUILD = RECIPES.build_gunship;
+  const yardWithInputs = (cycles: number) => {
+    const goods: Record<string, number> = {};
+    for (const [g, n] of Object.entries(BUILD.inputs)) goods[g] = (n ?? 0) * cycles;
+    const bay = rec('bay', 'cargo_bay', { hold: { goods, blueprints: [] } });
+    const yard = rec('y', 'shipyard', { blueprint: bp('hull:gunship', { kind: 'bpo', runs: null }) });
+    let launched = 0;
+    const w = world([bay, yard], { launchHull: () => { launched++; return true; } });
+    return { yard, ...w, launched: () => launched };
+  };
+
+  it('a yard set to 3 builds three and stops', () => {
+    const { yard, prod, run, launched } = yardWithInputs(6);
+    expect(prod.setRecipe(yard, 'build_gunship', 3)).toBe(true);
+    run(BUILD.cyclePulses * 2);
+    expect(launched()).toBe(2);
+    expect(yard.prodCount).toBe(1);
+    run(BUILD.cyclePulses * 4);
+    expect(launched()).toBe(3);
+    expect(yard.prodCount).toBe(0);
+    expect(yard.prodState).toBe(PROD_STATE.done);
+    expect(yard.prodLoaded).toBe(false); // nothing taken for a fourth
+    // Asking again resets the count and it carries on.
+    prod.setRecipe(yard, 'build_gunship', 1);
+    run(BUILD.cyclePulses + 1); // the pulse after the last output reads done
+    expect(launched()).toBe(4);
+    expect(yard.prodState).toBe(PROD_STATE.done);
+  });
+
+  it('no count keeps building', () => {
+    const { yard, prod, run, launched } = yardWithInputs(5);
+    expect(prod.setRecipe(yard, 'build_gunship')).toBe(true);
+    run(BUILD.cyclePulses * 5);
+    expect(launched()).toBe(5);
+    expect(yard.prodCount).toBeUndefined();
+    expect(yard.prodState).toBe(PROD_STATE.running);
   });
 });
 

@@ -1,6 +1,6 @@
 /**
  * Starter grant — the once-per-account gift a pilot gets on a fresh launch:
- * one packed Capital crate (`structure:capital`) in the hold of the ship they
+ * one packed Capital crate (`structure:capital`, holding 5,000 minerals) in the hold of the ship they
  * launch. A crate lost before it is placed drops as loot with the rest of the
  * hold and is never replaced.
  *
@@ -10,11 +10,13 @@
  * so a crash can never grant twice or mark it given without the crate. Later
  * starter items join `grantStarter` here, under the same flag.
  */
-import { addPacked, cloneHold, emptyHold, holdWeight, packedWeightOf } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, holdWeight, packedWeightOf } from '../../core/cargo/hold.js';
 import { cargoCapacityForMaxHealth } from '../../shared-types/goods.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { HoldRecord, HoldStore } from '../cargo/HoldStore.js';
 import type { EconomyStore } from './EconomyStore.js';
+import { capitalCrateItem } from '../structures/StructurePlacementSubsystem.js';
+import { CAPITAL_STARTING_MINERALS } from '../../core/structures/structureGridConstants.js';
 
 /** The starter crate's product and quality. */
 export const STARTER_CAPITAL_PRODUCT = 'structure:capital';
@@ -51,7 +53,7 @@ export function grantStarter(
   const hold = rec ? cloneHold(rec.hold) : emptyHold();
   const capacity = cargoCapacityForMaxHealth(getShipKind(kind as Parameters<typeof getShipKind>[0]));
   if (holdWeight(hold) + packedWeightOf(STARTER_CAPITAL_PRODUCT) > capacity) return false;
-  addPacked(hold, STARTER_CAPITAL_PRODUCT, STARTER_CAPITAL_QUALITY);
+  (hold.packed ??= []).push(capitalCrateItem(STARTER_CAPITAL_QUALITY, CAPITAL_STARTING_MINERALS));
   const next: HoldRecord = rec
     ? { ...rec, hold }
     : { holderUid: shipInstanceId, holderType: 'ship', ownerId: playerId, sectorKey: null, x: null, y: null, hold, expiresAt: null };

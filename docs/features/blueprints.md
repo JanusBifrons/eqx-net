@@ -27,6 +27,11 @@ agent's production chains (plan `soft-leaping-truffle` v3).
   - Starter structures are built from minerals, exactly as before: capital,
     connector, solar, battery, miner, cargo bay, turret, shield pylon and
     shield gate.
+  - The one exception is the Capital: placing one needs a packed crate
+    (`structure:capital`), which a deconstruct gives back. The rule applies
+    only where holds exist: a room with no sector (engineering and test
+    sandboxes, no roster or hold) places a Capital without one, and its build
+    menu never locks it. Lock: `StructurePlacementSubsystem.test.ts`.
   - Starter hulls (scout, fighter, and the capital classes and fits) are always free.
 
 ## Shipped so far
@@ -79,6 +84,18 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
   cargo. The popups name it: "+Packed Smelter".
 - Rolls: `rollPackedStructure` in `blueprints.ts`, wired through each loot
   table's `packedChance`.
+
+**Junk copies (playable base loop).** A new player meets cheap, poor copies
+early. Not a tier on the wire: `makeBlueprint(product, 'bpc', rng,
+{ junk: true })` makes an ordinary copy with `JUNK_BPC_RUNS` (2) runs, no
+material saving and output under `JUNK_OUTPUT_MAX` (10), so the glance score
+reads it as low.
+- Every ordinary loot roll (a table with entries; never a hauler) has a
+  `LOOT_JUNK_COPY_CHANCE` (8 %) chance of one, rolled last so older seeded
+  rolls hold (`rollJunkBlueprint`).
+- The traders' board restocks `JUNK_OFFERS_ON_BOARD` (2) junk copies at every
+  refresh, on top of its normal offers, priced by `blueprintValue` like any
+  copy (above zero, a fraction of a normal copy).
 
 ## Coming next
 
@@ -186,7 +203,7 @@ Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The 
 - **Blueprint market (economy v2 W6)**: `economy/BlueprintMarket.ts` (galaxy-wide board, not persisted: it restocks) + the `bp_market_query` / `bp_buy` / `bp_sell` handlers in `SectorRoom` (`buyBlueprint` / `sellBlueprint`). Buying and selling are INSTANT and each commits the storage change and the wallet op as ONE group (`StorageService.commitChanged`). Values come ONLY from `shared-types/blueprintMarket.ts` (`blueprintValue`); standing via `TradeSink.traderRep`. Bound (NPC) blueprints sell for 0. Lock: `tests/integration/sectorRoom/blueprintMarket.test.ts`.
 - **Ship-picker hull gate (economy v2 W5b)**: in `onJoin`, a FRESH spawn (`!resumedFromStore`) in a galaxy room asking for a hull outside the launch table (`LAUNCH_COST` in `src/shared-types/launch.ts`: scout, fighter and the player capitals, the five capital classes and three fits; `STARTER_HULL_KINDS` is its key list) is downgraded to `DEFAULT_SHIP_KIND` with a notice. A ship you OWN (roster row, e.g. unpacked) resumes by its `shipId` as its own kind. Off in test rooms unless the `enforceHullGate` room opt is set (the many tests/showcases that join as other kinds stay unaffected). The client picker locks non-starter cards to match. Packed hulls come from the Shipyard (`build_<ship>` recipes, run by the ProductionSubsystem), trader offers (`PACKED_HULL_OFFERS_ON_BOARD`, priced via `hullBillValue`) and loot. Lock: `tests/integration/sectorRoom/shipyard.test.ts`.
 - **Quality → max hull (economy v2)**: `qualityHullFactor(q)` (shared-types/blueprints, up to +10 %) is the ONE source. Structures: `effectiveStructureMaxHealth(base, level, rec.packedQuality)` at EVERY max-HP site (build seed, repair cap, snapshot hpPct, inspector). Ships: `SectorRoom.shipHullMax` multiplies by the roster row's `hullQuality` (new `player_ships.hull_quality` column + migration; threaded through both DB writers and hydrate). Locks: `dbWorker.integration.test.ts` (round trip + old-DB migration), `unpackHull` / `shipyard` / `packedBuy` integration tests.
-- **Unpacking hulls (economy v2 W5a)**: `SectorRoom.unpackHull` (the `unpack_hull` message) turns one packed `hull:<kind>` in the owner's storage network into a PARKED roster row (`PlayerShipStore.create`, inactive, beside the storage). Order is load-bearing: check the roster cap, take the crate (one hold group), THEN create the row, and put the crate back if creating fails, so a hull is never duplicated. Galaxy rooms only. Lock: `tests/integration/sectorRoom/unpackHull.test.ts`. Trade has NO sign-in gate (guests are full players; lock: `tradeMessages.test.ts`).
+- **Unpacking hulls (economy v2 W5a)**: `SectorRoom.unpackHull` (the `unpack_hull` message) turns one packed `hull:<kind>` in the owner's storage network into a PARKED roster row beside the storage, also put in the world at once when a physics slot is free (`HullHandOff.launchNewHull`, the Shipyard's path). Order is load-bearing: take the crate (one hold group), THEN create the row (roster cap checked there), and put the crate back if that fails, so a hull is never duplicated. Galaxy rooms only. Lock: `tests/integration/sectorRoom/unpackHull.test.ts`. Trade has NO sign-in gate (guests are full players; lock: `tradeMessages.test.ts`).
 - **Packed structures gate placement (economy v2 W4b)**: a PLAYER's `place_structure` of a non-starter kind needs a packed item. `packedGateForBuild` in `StructurePlacementSubsystem.ts` (the structures agent's seam, injected by the room over a narrow `PackedGateHost` with the room's `findPacked`) takes one from the owner's operational storage in this sector, else their active ship's hold, and commits ONLY after the structure registers. A structure placed that way is `prepaid` (persisted): it builds with NO minerals and no route, and deconstructing it reclaims NO minerals (never mint minerals from credits); instead it REPACKS: the grid's `onRepack` hook (before despawn) gives the packed item back at `packedQuality` (persisted) into the owner's linked storage, else a pod (`SectorRoom.repackStructure`). Starter kinds and generated builds (NPC/scenario/scale) skip the gate. Packed structures come from trader offers (`TradeDirector` board, pack-recipe value × `PACKED_MARKUP`, one-off only, carried in the hauler's hold) and loot (W4a). Lock: `tests/integration/sectorRoom/packedBuy.test.ts`. A test placing a non-starter kind by message must stock the packed item first (see `structureTurret.test.ts`).
 
 - **Module blueprints (plan peppy-jumping-pinwheel P5; products `module:<id>` since W2)**: rare weightless loot in `Hold.blueprints`. **Rules:** (1) INSTALLED blueprints are a `fitted` hold keyed `fitted:<shipInstanceId>` — install = ONE atomic hold group (`StorageService.installBlueprint`: storage loses it, fitted gains it); never a roster column; (2) effects go through one seam each: hull = `SectorRoom.shipHullMax` (every hull-seed site + on install), cargo = the loot-collector capacity, weapon gate = `activateMount` (`weaponUnlocked`, shared); (3) `spillOrLoseShipHold` (every death/abandon seam) drops the fitted hold; (4) the own ship's list rides `states[].fitted` (own-only, emit-when-non-empty, read from the `fittedCache` — alloc-free). Lock: `tests/integration/sectorRoom/blueprintInstall.test.ts`. 🔴 netgate (snapshot slice + hull caps). Story: [docs/features/blueprints.md](blueprints.md). Story: [docs/features/bounties-and-events.md](bounties-and-events.md).
