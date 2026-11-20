@@ -1,4 +1,5 @@
 import type { FleetPickResultWire } from './IFleetView.js';
+import type { PlacementRejection } from '../../structures/placementRules.js';
 
 /**
  * Renderer → main-thread feedback channel.
@@ -107,6 +108,13 @@ export interface RendererFeedback {
   selectionScreenX: number | null;
   selectionScreenY: number | null;
   /**
+   * Half-size in SCREEN px of the selected entity's bracket box. The box is
+   * centred `selectionScreenHalf` px below `selectionScreenX/Y` (that point is
+   * the box's top-centre). Lets the inspector sit clear of what is selected
+   * (inspectorPlacement.ts). Null with `selectionScreenX/Y`. UI-position only.
+   */
+  selectionScreenHalf: number | null;
+  /**
    * Tap/drag-to-position placement (2026-06-07). The renderer owns the
    * pointer-follow because it holds the camera (`screenToWorld`) and sees
    * pointer events on BOTH the main-thread and worker paths.
@@ -195,6 +203,14 @@ export interface RendererFeedback {
    * ghost (`placementLinkHint.ts`). `0` with no preview.
    */
   placementPreviewTooShortCount: number;
+  /**
+   * Why the placement ghost could NOT be placed where it is (a structure, a
+   * landing pad or an asteroid in the way), or `null` when it could (or with
+   * no live preview). The same `placementRejection` the server runs on
+   * `place_structure`, so the ghost turns red / green before the click and the
+   * main thread shows the server's refusal text under it.
+   */
+  placementPreviewRejection: PlacementRejection | null;
   /**
    * Click-to-inspect selection (structures follow-up Item B2). The renderer
    * owns the selected entity (set on a gameplay tap that resolves to an

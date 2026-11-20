@@ -5,7 +5,7 @@
  * (rig, part), drawn once on first use and only transformed per frame by
  * `StructureRigView` (invariant #14: nothing here runs per frame).
  */
-import { GraphicsContext } from 'pixi.js';
+import { GraphicsContext, type Graphics } from 'pixi.js';
 import type { PartDef, Rig } from '../../../core/articulation/rig.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import {
@@ -101,7 +101,23 @@ export interface RigDrawHook {
    *  row? Polled per frame (allocation-free); absent = always running. A
    *  stopped part holds where it is. */
   readonly running?: (st: StructureRenderState | undefined) => boolean;
+  /** Per frame, after part `i` (graphic `g`, its shadow or null) is posed:
+   *  show its joint `value` where a transform cannot (a part printed in, a
+   *  lamp lit, art scaled to the row). `st` = the structure row (undefined
+   *  without one); `clipTicks` = game ticks into the playing clip (NaN when
+   *  none plays). Allocation-free. */
+  readonly partShow?: (rig: Rig, i: number, value: number, st: StructureRenderState | undefined, g: Graphics, shadow: Graphics | null,
+    clipTicks: number) => void;
+  /** A clip the CLIENT plays from the row while the server sent none (e.g.
+   *  the Shipyard's build from its production state). Fill `out` and return
+   *  true, or return false (rest). `memo` is per-structure scratch the
+   *  registry keeps. Allocation-free. */
+  readonly rowClip?: (st: StructureRenderState | undefined, nowTick: number, memo: RigRowClipMemo, out: { clipId: string; startTick: number }) => boolean;
 }
+
+/** Per-structure scratch for `RigDrawHook.rowClip`: the tick the clip is
+ *  anchored to and the row value it was anchored from (NaN = not started). */
+export interface RigRowClipMemo { start: number; seen: number }
 
 /** Rig id -> its drawing hook. */
 export type RigDrawHookTable = Readonly<Record<string, RigDrawHook>>;

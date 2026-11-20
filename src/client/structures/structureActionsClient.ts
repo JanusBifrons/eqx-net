@@ -46,14 +46,29 @@ export function sendSetGateAccess(entityId: number, access: GateAccess): boolean
   return true;
 }
 
-/** P2b — send `set_recipe` (the owner picks what a processor makes). The
- *  server validates owner + that the kind runs the recipe. */
-export function sendSetRecipe(entityId: number, recipe: RecipeId): boolean {
+/** Send `set_structure_power`: the owner's On/Off switch and, optionally, the
+ *  power throttle in tenths (0..10 = 0..100%). Owner-gated server-side; a kind
+ *  with no Off is a silent no-op. */
+export function sendSetStructurePower(entityId: number, on: boolean, throttle?: number): boolean {
   const client = getGameClient();
   if (!client) return false;
   const room = client.getRoom();
   if (!room) return false;
-  room.send('set_recipe', { type: 'set_recipe', entityId, recipe });
+  room.send('set_structure_power', throttle === undefined
+    ? { type: 'set_structure_power', entityId, on }
+    : { type: 'set_structure_power', entityId, on, throttle });
+  return true;
+}
+
+/** P2b — send `set_recipe` (the owner picks what a processor makes). The
+ *  server validates owner + that the kind runs the recipe. `count` (job 2E):
+ *  build that many, then stop; absent = repeat forever. */
+export function sendSetRecipe(entityId: number, recipe: RecipeId, count?: number): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  const room = client.getRoom();
+  if (!room) return false;
+  room.send('set_recipe', count === undefined ? { type: 'set_recipe', entityId, recipe } : { type: 'set_recipe', entityId, recipe, count });
   return true;
 }
 

@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { STRUCTURE_FLAG_BUILT, STRUCTURE_FLAG_LOCK_HOLDING, encodeConnSock, type StructureStateView } from '../../shared-types/structureStateWire.js';
+import { encodeProdBay } from '../../shared-types/production.js';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 
 const OWNERS = { ids: ['p1'], names: ['Ada'] };
@@ -51,5 +52,20 @@ describe('decodeStructureState: lockHolding (F2)', () => {
     expect(out.built).toBe(true);
     decodeStructureState({ flags: STRUCTURE_FLAG_BUILT, connTo: list([]) }, OWNERS, out);
     expect(out.lockHolding).toBeUndefined();
+  });
+});
+
+describe('decodeStructureState: prodBay (loop 3R)', () => {
+  it('reads the bay and queued count onto the row, in place, absent as none', () => {
+    const out = emptyStructureRow();
+    decodeStructureState({ flags: STRUCTURE_FLAG_BUILT, connTo: list([]), prodBay: encodeProdBay(2, 3) }, OWNERS, out);
+    expect(out.prodBay).toBe(2);
+    expect(out.prodQueued).toBe(3);
+    decodeStructureState({ flags: STRUCTURE_FLAG_BUILT, connTo: list([]), prodBay: encodeProdBay(4, 0) }, OWNERS, out);
+    expect(out.prodBay).toBe(4);
+    expect(out.prodQueued).toBeUndefined();
+    decodeStructureState({ flags: STRUCTURE_FLAG_BUILT, connTo: list([]) }, OWNERS, out);
+    expect(out.prodBay).toBeUndefined();
+    expect(out.prodQueued).toBeUndefined();
   });
 });

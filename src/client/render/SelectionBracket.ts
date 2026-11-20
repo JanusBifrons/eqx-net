@@ -88,6 +88,9 @@ export class SelectionBracket {
    *  Pixi-world coords (x = gameX, y = -(gameY + half)). */
   lastWorldX: number | null = null;
   lastWorldY: number | null = null;
+  /** Bracket half-size in WORLD units for the focus (0 when there is none):
+   *  the box's centre is this far below `lastWorldY`. */
+  lastWorldHalf = 0;
   /** Brackets drawn in the last {@link draw} (test/diag hook). */
   lastMarkerCount = 0;
   /** First bracket drawn in the last {@link draw}: its id and screen centre (test/diag hook). */
@@ -109,9 +112,11 @@ export class SelectionBracket {
     if (focusId === null || !resolveSelectable(mirror, focusId, this._t)) {
       this.lastWorldX = null;
       this.lastWorldY = null;
+      this.lastWorldHalf = 0;
       return false;
     }
     const half = Math.max(MIN_HALF, this._t.r + RADIUS_PAD);
+    this.lastWorldHalf = half;
     this.lastWorldX = this._t.x;
     this.lastWorldY = -(this._t.y + half);
     return true;
