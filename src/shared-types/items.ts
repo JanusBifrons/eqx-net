@@ -53,6 +53,10 @@ export interface PackedItem {
   /** SERVER ONLY: a rock chunk's hidden ore, what a refinery turns it into
    *  (`OreDraw.chunkYield`). Never on the wire (`wireHold`). */
   ore?: Record<string, number>;
+  /** A Capital crate's mineral bank (a one-of-a-kind crate, own `uid`):
+   *  placing it starts the Capital with this bank; repacking writes the bank
+   *  back. Absent on a fresh crate = `CAPITAL_STARTING_MINERALS`. */
+  minerals?: number;
 }
 
 /** A cut rock chunk in a hold (owner 2026-11-17: rock never becomes a pod;
@@ -79,6 +83,7 @@ export const PackedItemSchema = z
     uid: z.string().min(1).max(64).optional(),
     weight: z.number().nonnegative().optional(),
     ore: z.record(z.string().max(40), z.number().int().nonnegative()).optional(),
+    minerals: z.number().int().nonnegative().optional(),
   })
   .strict();
 

@@ -300,7 +300,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         if (pieces == null || g === undefined) continue; // unusable descriptor / bad index: not drawn
         const pose = resolveEntityDisplayPose(entry, ctx.swarmPoseScratch);
         const info = ctx.wreckArt !== undefined
-          ? ctx.wreckArt.infoFor(desc, pieces, index, pose, entry.lastUpdateTick, fxNow)
+          ? ctx.wreckArt.infoFor(desc, pieces, index, pose, entry.firstTick ?? entry.lastUpdateTick, fxNow) // age at first receipt, not this (maybe stalled) frame
           : coolWreckInfo(desc);
         const shipArt = wreckArtHandle !== null && wreckArtHandle.state === 'ready' ? wreckArtHandle.ship : null;
         if (wreckRock && pieceRock === undefined) continue; // rock piece without its rock: not drawn

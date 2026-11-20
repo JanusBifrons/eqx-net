@@ -11,13 +11,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 import { ROSTER_SOFT_GUARD } from '../../../src/server/playerShips/PlayerShipStore.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { qualityHullFactor } from '../../../src/shared-types/blueprints.js';
 import type { BlueprintResult } from '../../../src/shared-types/blueprints.js';
+import { NEW_HULL_PARK_OFFSET } from '../../../src/server/rooms/features/hullHandOff.js';
 
 function room(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;
@@ -43,7 +44,7 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
 
   it('unpacks a crate into a parked roster ship; refuses the wrong cases', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 900, shipKind: 'fighter' });
+    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 900, shipKind: 'fighter', initialCargo: withCapitalCrates() });
     const internal = room(cr.roomId)._internals;
     const results: BlueprintResult[] = [];
     cr.onMessage('blueprint_result', (m: BlueprintResult) => results.push(m));
@@ -76,7 +77,10 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
     expect(ship.health).toBe(Math.round(getShipKind('gunship').maxHealth * qualityHullFactor(50)));
     expect(ship.isActive).toBe(false);
     expect(ship.lastSectorKey).toBe('sol-prime');
-    expect(Math.hypot(ship.lastX - cap.x, ship.lastY - cap.y)).toBeLessThan(600);
+    // Parked near the Capital: the park offset, then nudged clear of its hull (#995).
+    const parkedAt = Math.hypot(ship.lastX - cap.x, ship.lastY - cap.y);
+    expect(parkedAt).toBeGreaterThanOrEqual(NEW_HULL_PARK_OFFSET - 1);
+    expect(parkedAt).toBeLessThan(NEW_HULL_PARK_OFFSET + 800);
     expect(cap.hold.packed).toEqual([{ product: 'structure:smelter', quality: 30 }]);
 
     // A full roster refuses and leaves the crate where it is.
@@ -93,7 +97,7 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
   it('someone else’s storage is refused', { timeout: 30_000 }, async () => {
     const owner = randomUUID();
     const thief = randomUUID();
-    const a = await harness.connectActive(owner, { spawnX: 0, spawnY: 900, shipKind: 'fighter' });
+    const a = await harness.connectActive(owner, { spawnX: 0, spawnY: 900, shipKind: 'fighter', initialCargo: withCapitalCrates() });
     const internal = room(a.roomId)._internals;
     a.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: 0 });
     expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === owner), 5000)).toBe(true);

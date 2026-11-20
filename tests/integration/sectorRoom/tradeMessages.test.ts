@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import { getHoldStore, getPersistence } from '../../../src/server/db/PersistenceWorker.js';
 import { EconomyStore } from '../../../src/server/economy/EconomyStore.js';
 import { TradeDirector, type TradeRoom } from '../../../src/server/economy/TradeDirector.js';
@@ -39,7 +39,7 @@ describe('SectorRoom integration — trade messages (P2)', () => {
       tradeEnabled: true, seedStorageHold: { goods: { salvage: 120 }, credits: 3000 },
     } as never);
     const pid = randomUUID();
-    const cr = await h.connectActive(pid);
+    const cr = await h.connectActive(pid, { initialCargo: withCapitalCrates() });
     const room = h.getServerRoom() as unknown as SectorRoom & { playerToUser: Map<string, string | null> };
     // Economy v2 — no account needed: guests are full players (no sign-in gate).
 
@@ -98,7 +98,7 @@ describe('SectorRoom integration — trade messages (P2)', () => {
       tradeEnabled: true, seedStorageHold: { goods: { salvage: 120 }, credits: 3000 },
     } as never);
     const pid = randomUUID();
-    const cr = await h.connectActive(pid); // room exists now, with no director
+    const cr = await h.connectActive(pid, { initialCargo: withCapitalCrates() }); // room exists now, with no director
     const room = h.getServerRoom() as unknown as SectorRoom & { playerToUser: Map<string, string | null> };
     room.playerToUser.set(pid, 'user-1');
 
