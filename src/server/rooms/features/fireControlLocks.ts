@@ -170,7 +170,7 @@ export class FireControlLocks {
       shipOf: (sid) => this.lockShipOf(sid, this.wingmanHull(sid)),
       autoPick: () => null,
       salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out), lineage: this._lockSalvage,
-      tractorLineClear: (sid, key) => tractorLineClear(this.h.tractorLos, sid, this.wingmanHull(sid)?.kind as ShipKindId | undefined, this.h.lingeringPoseCache.get(sid), key),
+      tractorLineClear: (sid, key, beam) => tractorLineClear(this.h.tractorLos, sid, this.wingmanHull(sid)?.kind as ShipKindId | undefined, this.h.lingeringPoseCache.get(sid), key, beam),
       commitHostileAct: (sid, key) => {
         const owner = this.h.fleet.ownerOfAttached(sid);
         if (owner !== null) this.commitLockHostileAct(owner, key);
@@ -186,7 +186,7 @@ export class FireControlLocks {
     return new LockSubsystem({
       resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
       salvageOf: (pid, key, out) => this._lockSalvage.fill(this.h.getActiveShip(pid), key, out), lineage: this._lockSalvage,
-      tractorLineClear: (pid, key) => tractorLineClear(this.h.tractorLos, pid, this.h.getActiveShip(pid)?.kind as ShipKindId | undefined, this.h.shipPoseCache.get(pid), key),
+      tractorLineClear: (pid, key, beam) => tractorLineClear(this.h.tractorLos, pid, this.h.getActiveShip(pid)?.kind as ShipKindId | undefined, this.h.shipPoseCache.get(pid), key, beam),
       shooterPose: (pid, out) => {
         const p = this.h.shipPoseCache.get(pid);
         const ship = this.h.getActiveShip(pid);

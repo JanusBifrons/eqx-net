@@ -426,7 +426,7 @@ export function restoreLineage(s: WreckLineageState, rec: WreckLineageRecord, or
     // The saved wear, not a fresh piece's.
     const h = { addPiece: (id: string, wreckId: number, entry: PieceKnock, f: string[]) => { entry.integrity = integrity.get(entry.index) ?? entry.integrity; host.addPiece(id, wreckId, entry, f); } };
     const ore = nodes[i]!.ore;
-    const r = placed.length > 0 ? spawnWreckPieces(quiet, h, src, { ...(ore !== undefined ? { ore } : {}) }, placed, 0, serial[i]!, ids[i]!, like, fifo, '') : { ids: [], mass: 0 };
+    const r = placed.length > 0 ? spawnWreckPieces(quiet, h, src, { ...(ore !== undefined ? { ore } : {}) }, placed, 0, serial[i]!, ids[i]!, like, fifo) : { ids: [], mass: 0 };
     spawned[i] = r;
     if (r.ids.length > 0) live[i] = true;
     if (live[i] && i > 0) live[nodes[i]!.parent] = true;
