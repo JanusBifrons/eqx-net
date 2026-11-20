@@ -184,7 +184,7 @@ describe('SectorRoom integration — NPC line of fire', () => {
         { kind: 'capital', x: 0, y: 0, rot: 180 }, // crane bay pad south, clear of the +y relay
         { kind: 'connector', x: 400, y: 0 },
         { kind: 'turret', x: 400, y: 250 },
-        { kind: 'solar', x: -200, y: 500 },
+        { kind: 'solar', x: -200, y: 600 }, // 700×300: its near edge (y 450) clears the relay at y 330
         { kind: 'connector', x: -200, y: 330 },
       ],
       defaultSpawnX: 600,

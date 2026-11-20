@@ -218,7 +218,7 @@ describe('ConnectorRenderer — placement connection preview', () => {
     for (let i = 0; i < 3; i++) {
       const angle = (i / 3) * Math.PI * 2;
       const id = i + 1;
-      swarm.set(id, structureEntry('connector', Math.cos(angle) * 300, Math.sin(angle) * 300));
+      swarm.set(id, structureEntry('connector', Math.cos(angle) * 500, Math.sin(angle) * 500));
       structures.set(id, structureState({ connTo: [] }));
     }
     const mirror: RenderMirror = {

@@ -228,9 +228,10 @@ export const SHOWCASE_DEFENCE_OPTS = {
     { kind: 'connector', x: -400, y: 0 },
     { kind: 'connector', x: 0, y: 570 },
     { kind: 'connector', x: 0, y: -400 },
-    { kind: 'solar', x: 700, y: 0 },
-    { kind: 'solar', x: -700, y: 0 },
-    { kind: 'solar', x: -250, y: 640 },
+    // Side solars stand on end (300 u wide) beside their relays.
+    { kind: 'solar', x: 650, y: 0, rot: 90 },
+    { kind: 'solar', x: -650, y: 0, rot: 90 },
+    { kind: 'solar', x: -400, y: 750 },
     { kind: 'battery', x: 230, y: 640 },
     { kind: 'shield_pylon', x: -300, y: -560 },
     { kind: 'shield_pylon', x: 300, y: -560 },

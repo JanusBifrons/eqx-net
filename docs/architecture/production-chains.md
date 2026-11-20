@@ -244,7 +244,8 @@ Code: [src/core/bases/baseProfile.ts](../../src/core/bases/baseProfile.ts) and [
    - **Huge kinds:** at most one per base.
 2. **Lay out:** connector rows around the Capital, with leaves above and below each row connector.
    - **Spine:** it stays bare, with relay connectors where a row gap exceeds range.
-   - **Spacing:** the row pitch comes from the tallest structure.
+   - **Spacing:** each row gap fits the tallest leaves that can face into it: those already on the inner row's side, and the tallest still to place (leaves go biggest first, so the 600-tall Reactor and Battery Bank set only the gaps they sit in). Rows added after the leaves (bastion rows) fit the bastion guns that hang above and below a hub.
+   - **Wide leaves:** on a fenced base with more than two columns a side, a leaf wider than a column (a Solar) stays off the end columns, which would push the fence out.
    - **The huge kind:** it sits on its own outer row.
 3. **Power:** lay out, measure the real draw (the fence depends on the layout), and add Solars until net power ≥ 0.
 4. **Fence:** a rectangle of Shield Pylons around the extent, with a Shield Gate in the middle of each side, tapped from the row ends.

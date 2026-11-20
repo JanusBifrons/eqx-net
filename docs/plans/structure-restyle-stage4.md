@@ -256,8 +256,19 @@ Types: solar, battery, battery bank, reactor. Owner answers (2026-11-19):
     rules (`canConnect`, line blocking in `Grid.ts`, `ConnectorRenderer`); it is not a second system.
     It needs its own brief and hostile duplicate review before code.
   - Concept the owner agreed from: https://claude.ai/artifact/BzZmgbLtj93fZj1298qNHn
-- **New-player cost (open, from the review):** the first solar costs 4× today's. Check the starting
-  credits still buy a working first base.
+- **New-player cost (answered):** building is paid in minerals. A new Capital starts with 5,000;
+  the smallest working base (Capital + connector + one solar) costs 1,360 (1,120 before). Starting
+  minerals stay as they are.
+
+Progress log:
+- **Charge cells (step C), owner OK 2026-11-20:** battery and bank cells fill amber from the bottom
+  row; a dry reactor's core goes dark with a red no-fuel mark. Drawn by the family `status` hook on
+  the socket-nub overlay; the floating bar and number go under the new look.
+- **Solar (step D), owner OK 2026-11-20:** 700×300 array, eight panels on a lattice spine that turn
+  to face the sun (rig `solar-tracker`, look only), inverter cabinets at the ends.
+- **Sizes and numbers (step E), in progress:** solar 120 power / 480 cost, reactor and bank 600
+  across, reactor 960 power / about 4,000 cost; growth spacing sized per row.
+- **Reactor redraw at 600 with fans that stop when dry:** in progress.
 
 Found while briefing: the battery bank never charged or discharged (every battery rule checked the
 kind name), and the client ignored structure level for power. The fix is in PR #958 (not yet merged
