@@ -16,6 +16,7 @@ import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { GameClock } from '@core/clock/GameClock';
 import { glideToward } from '@shared-types/timeScale';
 import type { SnapshotMessage, DamageEvent, DestroyEvent, RespawnAckMessage, ShieldEventMessage } from '@shared-types/messages';
+import { depositReadout } from '@shared-types/messages/snapshotMessages';
 /** RTS slice 6a: the fleet command messages `sendFleetCommand` dispatches. */
 export type { FleetCommandMessage } from './connection/roomCommands.js';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
@@ -91,6 +92,7 @@ import {
   type RoomCommandsCtx, type FleetCommandMessage,
 } from './connection/roomCommands.js';
 import { MineSync } from './mirror/mineSync.js';
+import { rigClockTick, syncRigClips } from './mirror/rigSync.js';
 import type { WelcomeTarget } from './handlers/welcomeHandlers.js';
 import {
   readConnectionFlags, installConnectionDiagnostics, joinRoom, installBwStats, bwStats, createSnapshotDataChannel,
@@ -1854,7 +1856,7 @@ export class ColyseusGameClient {
       syncOwnEconomy(serverState, this._fakeCredits);
       // Living World P1a-2 — auto-deposit progress ring (quantised to 10 % so
       // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
-      const dep = serverState.depositing === undefined ? null : Math.floor(serverState.depositing / 10) * 10;
+      const dep = depositReadout(serverState.depositing);
       if (useUIStore.getState().depositPct !== dep) useUIStore.getState().setDepositPct(dep);
       // Fire control (#16): the pilot's groups + locks, always applied.
       this.fc.applyFcGroups(serverState.groups);
@@ -1892,7 +1894,9 @@ export class ColyseusGameClient {
         snap.serverTick,
         this.inputTick,
         ackedTick,
-        () => {
+        (t) => {
+          // Structure rig parts (restyle 2d) replay on the live loop's tick numbering.
+          this.predWorld?.stepRigs(t + 1);
           // Remote-ship Stage-3 forward-prediction only. Drones carry no
           // client brain post-pivot — they are interpolated from the wire,
           // never re-simmed in replay. One path: interpolation (the
@@ -2115,7 +2119,7 @@ export class ColyseusGameClient {
       row = emptyStructureRow();
       map.set(id, row);
     }
-    decodeStructureState(v, this._structureOwners, row);
+    decodeStructureState(v, this._structureOwners, row, this.mirror.swarm?.get(id)?.shipKind);
     row.turretTargetId = undefined;
     row.turretTargetPlayerId = undefined;
     row.miningTargetId = undefined;
@@ -2199,6 +2203,7 @@ export class ColyseusGameClient {
     this._tractors.sync(targets, this._beamLinkVisitor, this.predWorld);
     this.syncPredWalls();
     this.syncForceFields();
+    syncRigClips(this.predWorld, this.mirror.structures, this._swarmBodyKeyCache);
     this._mines.sync();
   }
 
@@ -2484,6 +2489,7 @@ export class ColyseusGameClient {
     // their bodies are in `predRemoteShipIds` under the bare shipInstanceId),
     // so the old parked-hull offset loop is gone.
     updateProjectilesMirror(pc, frameNowMs);
+    this.mirror.rigTick = rigClockTick(pc, frameNowMs, this.welcomePerfNow !== 0);
     expireFrameState(pc);
     updateDroneHostility(pc, localId);
 

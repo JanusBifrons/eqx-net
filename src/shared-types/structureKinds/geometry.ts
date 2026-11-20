@@ -3,20 +3,20 @@
  */
 import { DEFAULT_STRUCTURE_KIND, getStructureKind, isStructureKindId } from './lookup.js';
 
+// ── Unified entity hull (unified-hull plan) ────────────────────────────────
 /**
- * The structure's hull POINTS — a regular N-gon at `radius`, first vertex at
- * `(0, -radius)` going clockwise. SINGLE SOURCE for the polygon COLLIDER (server
- * `SwarmSpawner.spawnStructure` + client `structureClientLeaf`, consumed in GAME
- * space, Y-up) AND — via the renderer's `structureRenderVerts` (`pixiY = -gameY`,
- * the flip every entity obeys) — the rendered silhouette. **A regular polygon is
- * Y-flip-invariant ONLY for an EVEN side-count.** The ODD-sided structures
- * (turret 3, miner 5, shield_pylon 7) are NOT, so the renderer MUST apply the
- * flip or the silhouette renders MIRRORED vs the collider — the R2.13 "the
- * collision box is right but the turret appears upside down" bug, which is why
- * `buildStructureGfx` no longer draws these points directly. The convex-hull
- * collider is vertex-order-invariant, so ONLY the render flip matters. Called
- * once at sprite-create / entity-spawn, never in a hot loop. Unknown id ⇒ the
- * Capital's silhouette, the same forgiving stance as `getStructureKind`.
+ * The structure's hull POINTS, today the footprint BOX. SINGLE SOURCE for the
+ * polygon COLLIDER (server `SwarmSpawner.spawnStructure` + client
+ * `structureClientLeaf`, consumed in GAME space, Y-up) AND, via the renderer's
+ * `structureRenderVerts` (`pixiY = -gameY`, the flip every entity obeys), the
+ * rendered silhouette. **Stage 3 (structure-restyle plan §6) flips this to
+ * return `structureOutline`**, with concave outlines decomposed by
+ * `convexParts` (`core/geometry/shipHullDecomp.ts`); until then colliders stay
+ * the box. The convex-hull collider is vertex-order-invariant, so ONLY the
+ * render flip matters (an asymmetric outline renders MIRRORED without it: the
+ * R2.13 "turret appears upside down" bug). Called once at sprite-create /
+ * entity-spawn, never in a hot loop. Unknown id ⇒ the Capital's box, the same
+ * forgiving stance as `getStructureKind`.
  */
 export function structureHullPoints(
   kindId: string | null | undefined,

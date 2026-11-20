@@ -1,12 +1,12 @@
 /**
  * The bake runner used when workers can't be created (extension point of
- * `ArtService.ts`, which re-exports it). Kept apart so the art service stays
+ * `bakeRunners.ts`, re-exported by `ArtService.ts`). Kept apart so the art service stays
  * under its god-file cap.
  */
 import { runBake, type Baked, type BakeJob } from './bake.js';
 import type { LightRig } from './shade.js';
 import { cutCoarseInline, cutInline, type ChunkOpts, type PackedChunk, type PackedCoarseTile } from './chunkCutJobs.js';
-import type { BakeRunner } from './ArtService.js';
+import type { BakeRunner } from './bakeRunners.js';
 
 /** Fallback when workers can't be created: one bake per macrotask on the
  *  current thread. Each bake still blocks for its own duration (up to a few

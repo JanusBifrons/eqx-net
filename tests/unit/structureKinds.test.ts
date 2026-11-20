@@ -206,10 +206,10 @@ describe('structureKinds catalogue', () => {
   });
 
   it('structureHalfExtents swaps width and height on a quarter turn', () => {
-    expect(structureHalfExtents('solar', 0)).toEqual({ hw: 180, hh: 75 });
-    expect(structureHalfExtents('solar', 90)).toEqual({ hw: 75, hh: 180 });
-    expect(structureHalfExtents('solar', 180)).toEqual({ hw: 180, hh: 75 });
-    expect(structureHalfExtents('solar', 270)).toEqual({ hw: 75, hh: 180 });
+    expect(structureHalfExtents('solar', 0)).toEqual({ hw: 350, hh: 150 });
+    expect(structureHalfExtents('solar', 90)).toEqual({ hw: 150, hh: 350 });
+    expect(structureHalfExtents('solar', 180)).toEqual({ hw: 350, hh: 150 });
+    expect(structureHalfExtents('solar', 270)).toEqual({ hw: 150, hh: 350 });
     expect(normaliseStructureRotation(-90)).toBe(270);
     expect(normaliseStructureRotation(44)).toBe(0);
     expect(normaliseStructureRotation(46)).toBe(90);
