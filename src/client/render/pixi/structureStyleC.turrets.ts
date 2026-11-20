@@ -21,7 +21,8 @@ import * as heavy from './structureStyleC.turretsHeavy.js';
 import { rigPartIndex } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, SANDBOX_DOOR_TURRET_DEF } from '../../../core/articulation/rigCatalogue.js';
 import { rigSlotContext, type RigDrawHookTable } from './structureRigLook.js';
-import { turretHatchPartContext } from './structureStyleC.turrets.hatch.js';
+import { turretHatchLitContext, turretHatchPartContext } from './structureStyleC.turrets.hatch.js';
+import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -104,14 +105,23 @@ export const kinds: StyleDrawerTable = {
   ...heavy.kinds,
 };
 
+/** The pop-up turret's riser lamps light on a built, powered row (the rig's
+ *  `running` hook), like the pad's trim lamps (`c.live`). */
+export function beamTurretPowered(st: StructureRenderState | undefined): boolean {
+  return st !== undefined && st.built && st.powered === true;
+}
+
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
  *  structureRigLook.ts). The pop-up door turret: its gun rides the riser
  *  (`DOOR_TURRET_MOUNT`), a dark hatch slot shows under the leaves, and the
- *  riser and leaves are drawn in the gun-pad armour (turrets.hatch.ts). */
+ *  riser and leaves are drawn in the gun-pad armour (turrets.hatch.ts), the
+ *  riser's trim lamps lit only while powered (`partLit` + `running`). */
 export const rigs: RigDrawHookTable = {
   [SANDBOX_DOOR_TURRET_DEF.id]: {
     mountPart: (rig) => rigPartIndex(rig, DOOR_TURRET_MOUNT.partId),
     planeUnder: (rig) => rigSlotContext(rig),
     partArt: turretHatchPartContext,
+    partLit: turretHatchLitContext,
+    running: beamTurretPowered,
   },
 };
