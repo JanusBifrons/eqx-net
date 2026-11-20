@@ -48,3 +48,35 @@ describe('reclampHeldInspector', () => {
     expect(out.top).toBe(INSPECTOR_TOP_MIN + 300);
   });
 });
+
+// Live still, sideways Pixel 7 (863x360): a building selected near the top in
+// Fly mode put the inspector's title over the helm row's Stop button.
+describe('placeInspector with the top-centre HUD band', () => {
+  const PW = 863;
+  const PH = 360;
+  const helm = { left: 280, right: 583, bottom: 130 };
+
+  it('a panel that would overlap the band is pushed below it', () => {
+    placeInspector(430, 120, 120, 50, PW, PH, out, helm);
+    expect(out.top - 50).toBeGreaterThanOrEqual(helm.bottom + INSPECTOR_EDGE);
+    expect(out.left).toBe(430);
+  });
+
+  it('a panel clear of the band (below it) is unchanged', () => {
+    expect(placeInspector(430, 260, 120, 50, PW, PH, out, helm)).toEqual({ left: 430, top: 260 });
+  });
+
+  it('a panel beside the band (not under it) only keeps the header rule', () => {
+    expect(placeInspector(120, 120, 120, 50, PW, PH, out, helm)).toEqual({ left: 120, top: 120 });
+  });
+
+  it('an empty band (bottom 0) changes nothing', () => {
+    const empty = { left: 0, right: 0, bottom: 0 };
+    expect(placeInspector(430, 120, 120, 50, PW, PH, out, empty)).toEqual({ left: 430, top: 120 });
+  });
+
+  it('a held panel over the band is moved below it', () => {
+    expect(reclampHeldInspector(430, 120, 120, 50, PW, PH, out, helm)).toBe(true);
+    expect(out.top).toBe(helm.bottom + INSPECTOR_EDGE + 50);
+  });
+});

@@ -40,12 +40,12 @@ import { pushFleetOverlayModelIfChanged } from '../fleet/fleetOverlayModel.js';
 import { fleetCommands } from '../fleet/fleetCommands.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
-import { placeInspector, reclampHeldInspector, type InspectorAnchor } from './inspectorPlacement.js';
+import { measureTopHudBand, placeInspector, reclampHeldInspector, type HudBand, type InspectorAnchor } from './inspectorPlacement.js';
 import { isInspectorHeld } from './inspectorHold.js';
 import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
 
 /** Reused each frame (no per-frame allocation, #14). */
-const inspectorAt: InspectorAnchor = { left: 0, top: 0 };
+const inspectorAt: InspectorAnchor = { left: 0, top: 0 }, hudBand: HudBand = { left: 0, right: 0, bottom: 0 };
 
 /** Click-to-inspect (Item B5) — last selection id the bridge published, so the
  *  RendererFeedback → Zustand mirror + server select/deselect sends fire ONLY on
@@ -472,15 +472,15 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       if (panel) {
         // The panel is centred ABOVE its anchor, so the anchor is clamped by
         // the panel's size and the whole panel stays on screen, below the
-        // header (inspectorPlacement.ts). Read the size before writing.
+        // header and the top-centre HUD stack (inspectorPlacement.ts).
         // While a pointer is on it, it holds its spot so taps land
         // (inspectorHold.ts), but a panel that grows (a loot window opening)
         // is still clamped back on screen.
         const held = isInspectorHeld(panel);
-        const w = panel.offsetWidth, h = panel.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+        const w = panel.offsetWidth, h = panel.offsetHeight, vw = window.innerWidth, vh = window.innerHeight, b = measureTopHudBand(hudBand);
         const move = held
-          ? reclampHeldInspector(parseFloat(panel.style.left), parseFloat(panel.style.top), w, h, vw, vh, inspectorAt)
-          : (placeInspector(ssx, ssy, w, h, vw, vh, inspectorAt), true);
+          ? reclampHeldInspector(parseFloat(panel.style.left), parseFloat(panel.style.top), w, h, vw, vh, inspectorAt, b)
+          : (placeInspector(ssx, ssy, w, h, vw, vh, inspectorAt, b), true);
         if (move) {
           const at = inspectorAt;
           panel.style.left = `${at.left}px`;
