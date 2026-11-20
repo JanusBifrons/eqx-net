@@ -2254,7 +2254,6 @@ export class SectorRoom extends Room<SectorState> {
       supplyFrac: (id) => this.structureGrid.powerSummaryFor(id).supplyFrac, setActive: (rec, on) => this.structureGrid.setActive(rec, on), post: (cmd) => this.postToWorker(cmd),
     });
     this.shieldWalls = new ShieldWallManager({
-      gateOpenMask: (id) => this.gates.maskFor(id),
       registry: this.structureRegistry,
       powerSummaryFor: (id) => this.structureGrid.powerSummaryFor(id),
       componentBatteryCharge: (id) => this.structureGrid.componentBatteryCharge(id),

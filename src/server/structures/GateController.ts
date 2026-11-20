@@ -1,8 +1,8 @@
 /**
  * Gate open/close orchestration (plan soft-leaping-truffle v2, phase V gates).
  *
- * Runs on the 10 Hz structure tick, BEFORE `ShieldWallManager.update` (which
- * reads `maskFor` to drop an open span's collider). For each constructed Shield
+ * Runs on the 10 Hz structure tick. The gap is closed by solid door leaves
+ * (rig bodies scrubbed via RIG_CLIP), not a shield span. For each constructed Shield
  * Gate / Airlock it builds the occupancy from the ACTIVE player ships around it
  * and steps the pure state machines in `core/structures/gateLogic.ts`. The open
  * state reaches clients through room state (`StructureState.gateOpen`); the
@@ -157,7 +157,8 @@ export class GateController {
     startStructureRigClip(rec, clipId, seg.t0, this.hooks.post, undefined, undefined, this.scrub);
   }
 
-  /** Open bits for a gate (GATE_OPEN_A / GATE_OPEN_B); 0 for anything else. */
+  /** Open bits for a gate (GATE_OPEN_A / GATE_OPEN_B); 0 for anything else.
+   *  Kept for the `doorMotionRow` fallback and test introspection. */
   maskFor(id: string): number {
     return gateOpenMask(this.gates.get(id), this.airlocks.get(id));
   }

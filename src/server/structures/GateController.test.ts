@@ -2,8 +2,8 @@
  * Phase V gates — server orchestration over the pure gate logic:
  *   - GateController opens a gate for ships its access setting admits, and only
  *     for ACTIVE ships handed in by the room;
- *   - ShieldWallManager gives each built gate its own span walls (dropped while
- *     open) and anchors a fence wall on the gate post nearest the pylon;
+ *   - ShieldWallManager gives a gate NO span wall (its gap is a solid door,
+ *     slice 10) and anchors a fence wall on the gate post nearest the pylon;
  *   - solid doors (door-power slice 8): a changed door segment posts a scrubbed
  *     RIG_CLIP, the level comes from grid supply, moving doors draw full power.
  */
@@ -57,27 +57,26 @@ function setup(ships: Array<{ id: string; x: number; y: number }>) {
     spawnWall: (id, ax, ay, bx, by) => calls.spawn.push({ id, ax, ay, bx, by }),
     setWallActive: (id, active) => calls.active.set(id, active),
     removeWall: () => {},
-    gateOpenMask: (id) => gates.maskFor(id),
   });
   return { registry, gates, walls, calls, door };
 }
 
 describe('GateController', () => {
-  it('opens for its owner approaching, and the span wall stops blocking', () => {
+  it('opens for its owner approaching; the gap never has a shield span', () => {
     const ships = [{ id: 'p1', x: 0, y: -2000 }];
     const { registry, gates, walls, calls } = setup(ships);
     registry.add(rec('g', 'shield_gate', 0, 0));
     gates.update(0);
     walls.update(0);
     expect(gates.maskFor('g')).toBe(0);
-    expect(calls.spawn.map((c) => c.id)).toEqual(['wall-gate-g-0']);
+    // Shut: no span collider (the solid door leaves close the gap).
+    expect(calls.spawn).toEqual([]);
+    expect(walls.blockShot(0, -100, 0, 1, 500, 10, 0)).toBeNull();
     ships[0]!.y = -200; // into the approach zone
     gates.update(100);
     walls.update(100);
     expect(gates.maskFor('g')).toBe(GATE_OPEN_A);
-    expect(calls.active.get('wall-gate-g-0')).toBe(false);
-    // An open span absorbs nothing.
-    expect(walls.blockShot(0, -100, 0, 1, 500, 10, 100)).toBeNull();
+    expect(calls.spawn).toEqual([]);
   });
 
   it('owner+allies (default) and owner-only stay shut for a neutral pilot; "open" admits them', () => {
@@ -211,11 +210,41 @@ describe('ShieldWallManager with gates', () => {
     expect(walls.wallsUpFor('p', 0)).toBe(true);
   });
 
-  it('an airlock gets one span per end', () => {
+  it('a lone gate or airlock spawns no wall and reports no walls up', () => {
     const { registry, walls, calls } = setup([]);
     registry.add(rec('a', 'shield_airlock', 0, 0));
+    registry.add(rec('g', 'shield_gate', 2000, 0));
     walls.update(0);
-    expect(calls.spawn.map((c) => c.id).sort()).toEqual(['wall-gate-a-0', 'wall-gate-a-1']);
+    expect(calls.spawn).toEqual([]);
+    expect(walls.wallsUpFor('a', 0)).toBe(false);
+    expect(walls.wallsUpFor('g', 0)).toBe(false);
+  });
+
+  it('a fence wall next to a gate blocks and stuns; the gate gap stays shield-free', () => {
+    const registry = new StructureRegistry();
+    const active = new Map<string, boolean>();
+    const spawned: string[] = [];
+    const walls = new ShieldWallManager({
+      registry,
+      powerSummaryFor: () => ({ netPower: 0, powered: true }), // no surplus, no batteries
+      componentBatteryCharge: () => 0,
+      drainComponentBatteries: () => 0,
+      spawnWall: (id) => spawned.push(id),
+      setWallActive: (id, on) => active.set(id, on),
+      removeWall: () => {},
+    });
+    registry.add(rec('g', 'shield_gate', 0, 0));
+    registry.add(rec('p', 'shield_pylon', 500, 0));
+    registry.addConnection('g', 'p', CONNECTION_THROUGHPUT);
+    walls.update(0);
+    expect(spawned).toEqual(['wall-g|p']);
+    // A shot down through the gate gap (x = 0) meets no shield.
+    expect(walls.blockShot(0, -300, 0, 1, 600, 10, 0)).toBeNull();
+    // A shot through the fence (x = 400) is absorbed and, unbacked, stuns it.
+    expect(walls.blockShot(400, -300, 0, 1, 600, 10, 0)).toBeCloseTo(300);
+    expect(active.get('wall-g|p')).toBe(false);
+    expect(walls.wallsUpFor('g', 0)).toBe(false);
+    expect(walls.blockShot(400, -300, 0, 1, 600, 10, 0)).toBeNull();
   });
 
   it('a lone pylon reports no walls up', () => {

@@ -5,7 +5,7 @@
  *
  * Layout: Capital (0,0) → Connector (0,-350) → Shield Gate (0,-900). The
  * Capital's 50 power covers the gate's 30. A ship spawned at (0,-1150) sits in
- * the gate's approach zone (300 u either side of the span).
+ * the gate's approach zone (300 u either side of the gap).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -67,15 +67,15 @@ describe('SectorRoom integration — Shield Gate opens on approach (phase V gate
 
   it('opens for its owner, and the open state is in room state', async () => {
     const { internals, gate, observer } = await boot();
-    // Closed and blocking before anyone arrives: a shot up the gap stops at the span.
+    // Closed before anyone arrives. The gap has NO shield span (door-power
+    // slice 10): the solid door leaves close it, so no shield wall absorbs here.
     await harness.advance(300);
     expect(internals.gateMask(gate.id)).toBe(0);
-    expect(internals.blockShotAtWall(0, -1100, 0, 1, 400, 1)).not.toBeNull();
+    expect(internals.blockShotAtWall(0, -1100, 0, 1, 400, 1)).toBeNull();
 
     await harness.connectActive(OWNER);
     await harness.advance(500);
     expect(internals.gateMask(gate.id)).toBe(GATE_OPEN_A);
-    // Open ⇒ the span no longer absorbs shots through the gap.
     expect(internals.blockShotAtWall(0, -1100, 0, 1, 400, 1)).toBeNull();
     // The client sees it in room state (door slice 9: the door row heads open).
     const entityId = String(internals.swarmRegistry.get(gate.id)!.entityId);
@@ -88,7 +88,6 @@ describe('SectorRoom integration — Shield Gate opens on approach (phase V gate
     await harness.connectActive(randomUUID());
     await harness.advance(500);
     expect(internals.gateMask(gate.id)).toBe(0);
-    expect(internals.blockShotAtWall(0, -1100, 0, 1, 400, 1)).not.toBeNull();
   });
 
   it('opens for a stranger when set to "anyone not hostile"', async () => {
