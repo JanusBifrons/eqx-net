@@ -7,6 +7,7 @@
  */
 import { GraphicsContext } from 'pixi.js';
 import type { PartDef, Rig } from '../../../core/articulation/rig.js';
+import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import {
   centroid, chamferBox, chevron, ngon, polyBounds, rivetPolys, scalePts, trussPolys,
   type PolySink, type Pt, type Pts,
@@ -87,7 +88,7 @@ export type RigPartRole = 'pad' | 'base' | 'beam' | 'head' | 'leaf' | 'riser' | 
 /** A rig's special drawing beyond its part roles (stage-4 plan §4 0a): each
  *  family's hooks live in its `structureStyleC.<family>.ts` (`rigs`, keyed by
  *  rig id), assembled as `RIG_DRAW_HOOKS` (structureStyleC.ts). Called once per
- *  view at build time, never per frame. */
+ *  view at build time, never per frame (except the alloc-free `running`). */
 export interface RigDrawHook {
   /** The part carrying the host kind's weapon mount (`placeMount`), or -1. */
   readonly mountPart?: (rig: Rig) => number;
@@ -96,6 +97,10 @@ export interface RigDrawHook {
   /** Part `i`'s own art instead of its role's (`rigPartContext`), or null
    *  for the role's. One shared context per (rig, part): the hook caches it. */
   readonly partArt?: (rig: Rig, i: number) => GraphicsContext | null;
+  /** Do the rig's spinning parts (`PartDef.spin`) run for this structure
+   *  row? Polled per frame (allocation-free); absent = always running. A
+   *  stopped part holds where it is. */
+  readonly running?: (st: StructureRenderState | undefined) => boolean;
 }
 
 /** Rig id -> its drawing hook. */

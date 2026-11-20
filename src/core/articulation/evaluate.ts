@@ -322,10 +322,11 @@ export function aimHinge(d: number): number {
  * render interpolation). Writes `out`; returns `out`. `aim` (a host-frame
  * direction, rad; client look only) turns every aiming part (`PartDef.aim`)
  * to face it, clamped to its limits; undefined (the server) poses them like
- * any part.
+ * any part. `spin` (game ticks of running; client look only) turns every
+ * spinning part (`PartDef.spin`) by its rate from rest; undefined: at rest.
  */
 export function evaluateRig(
-  rig: Rig, playing: PlayingClip | null, nowTick: number, out: RigPose, ik?: IkSolve, aim?: number,
+  rig: Rig, playing: PlayingClip | null, nowTick: number, out: RigPose, ik?: IkSolve, aim?: number, spin?: number,
 ): RigPose {
   const n = rig.partCount;
   let clipIdx = -1;
@@ -389,6 +390,7 @@ export function evaluateRig(
       }
     }
     if (aim !== undefined && rig.aims[i] === 1) v = aimHinge(aim - pA - baseAngle[i]!);
+    else if (spin !== undefined && rig.spins[i] !== 0) v = aimHinge(rest[i]! + rig.spins[i]! * spin);
     v = clampTo(v, min[i]!, max[i]!);
     value[i] = v;
 

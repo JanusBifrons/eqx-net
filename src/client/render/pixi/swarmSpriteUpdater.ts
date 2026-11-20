@@ -400,8 +400,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       let rigView: StructureRigView | null = null;
       if (rigs !== undefined) {
         if (sprite.visible) {
-          const clip = mirror.structures?.get(entityId)?.rigClip;
-          rigView = rigs.update(spriteKey, entry.shipKind, sprite, lerped.x, lerped.y, lerped.angle, clip, rigTick);
+          const row = mirror.structures?.get(entityId);
+          rigView = rigs.update(spriteKey, entry.shipKind, sprite, lerped.x, lerped.y, lerped.angle, row?.rigClip, rigTick, row);
         } else rigs.hide(spriteKey);
       }
       // 0d slice 10: socket nubs, redrawn only when the used sockets change.

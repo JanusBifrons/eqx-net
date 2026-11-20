@@ -254,7 +254,7 @@ async function main(): Promise<void> {
     return v;
   });
 
-  const rigs = RIGS ? buildLabRigs(scene, rigUnderL, rigPlaneL, rigOverL) : [];
+  const rigs = RIGS ? buildLabRigs(scene, rigUnderL, rigPlaneL, rigOverL, qs.get('live')) : [];
   const lines = buildLabGridLines(scene, lineL, structL);
   if (!lines) buildLabSheetNubs(scene, structL, qs.get('nubs'), qs.get('live'));
 
@@ -566,6 +566,7 @@ async function main(): Promise<void> {
     // Rigs: game pose of each host (y-up), clip time in ticks.
     for (const r of rigs) {
       const st = scene.structs[r.i]!;
+      if (r.view.hasSpin) { r.view.running = false; r.view.spinClock = r.spins ? t * 60 : 0; } // pure in t
       r.view.update(r.input, t * 60, st.x, -st.y, -st.rot, 1, cache.rig.sunAz);
     }
 

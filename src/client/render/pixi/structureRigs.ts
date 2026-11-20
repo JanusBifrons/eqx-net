@@ -168,6 +168,15 @@ export class StructureRigView {
   /** 3e: the camera scale (CSS px per world u), so the arm's pulse keeps a
    *  cable pulse's on-screen size (`cometSegment` / `lineLookScale`). */
   zoom = 1;
+  /** Spinning parts (`PartDef.spin`) run this frame (set by the caller
+   *  before `update`, e.g. from `setRunningFrom`); stopped, they hold. */
+  running = true;
+  /** The rig has a spinning part. */
+  readonly hasSpin: boolean;
+  /** Game ticks the spinning parts have run (advanced only while running). */
+  spinClock = 0;
+  private spinLast = Number.NaN;
+  private readonly runningOf: ((st: StructureRenderState | undefined) => boolean) | undefined;
 
   constructor(readonly rig: Rig) {
     this.pose = createRigPose(rig);
@@ -202,6 +211,10 @@ export class StructureRigView {
       group.addChild(g);
     }
     this.mountPart = hook?.mountPart?.(rig) ?? -1;
+    this.runningOf = hook?.running;
+    let spin = false;
+    for (let i = 0; i < rig.partCount; i++) if (rig.spins[i] !== 0) spin = true;
+    this.hasSpin = spin;
     let riser = -1;
     for (let i = 0; i < rig.partCount; i++) if (rig.parent[i]! < 0 && rig.jointType[i] === JOINT_LIFT) riser = i;
     this.riserPart = riser;
@@ -226,6 +239,12 @@ export class StructureRigView {
   /** Part `i`'s local transform. Allocation-free. */
   private partXform(i: number, xf: PixiXform): PixiXform {
     return partLocalTransform(this.pose, i, xf);
+  }
+
+  /** Set `running` from the structure row through the rig's family hook
+   *  (`RigDrawHook.running`; none = always running). Allocation-free. */
+  setRunningFrom(st: StructureRenderState | undefined): void {
+    this.running = this.runningOf === undefined || this.runningOf(st);
   }
 
   groupOf(layer: DrawLayer): Container {
@@ -254,8 +273,16 @@ export class StructureRigView {
       }
       playing = p;
     }
+    // Spinning parts run on the tick clock (game time, #20) only while
+    // `running`; stopped, the clock holds, so they stop where they are.
+    if (this.hasSpin) {
+      const dt = nowTick - this.spinLast;
+      if (this.running && dt > 0) this.spinClock += dt;
+      this.spinLast = nowTick;
+    }
     // Pixi azimuth -> game angle (y flips), then into the host frame.
-    evaluateRig(this.rig, playing, nowTick, this.pose, twoBoneIkSolve, sunAz !== undefined ? -sunAz - ha : undefined);
+    evaluateRig(this.rig, playing, nowTick, this.pose, twoBoneIkSolve, sunAz !== undefined ? -sunAz - ha : undefined,
+      this.hasSpin ? this.spinClock : undefined);
     const xf = this.xf;
     const ri = this.riserPart, look = RIG_LOOK_C;
     let lift = 0;
@@ -412,11 +439,13 @@ export class StructureRigs {
    * `rigClip` (room state; target in the host frame) and `nowTick` the
    * client's tick clock (`RenderMirror.rigTick`, fractional), so the clip
    * plays from its server start tick: a late joiner sees it mid-way or at
-   * its end pose, never restarted.
+   * its end pose, never restarted. `row` (the structure's room row) says
+   * whether its spinning parts run (`RigDrawHook.running`, e.g. reactor fans).
    */
   update(
     spriteKey: string, kindId: string | undefined, sprite: Container,
     hx: number, hy: number, ha: number, clip: StructureRenderState['rigClip'], nowTick: number,
+    row?: StructureRenderState,
   ): StructureRigView | null {
     let e = this.entries.get(spriteKey);
     if (e === undefined) {
@@ -430,7 +459,7 @@ export class StructureRigs {
     } else if (e.view.rig !== (kindId !== undefined ? rigForStructureKind(kindId) : null)) {
       // A recycled id with another kind: rebuild from scratch next frame.
       this.drop(spriteKey, e);
-      return this.update(spriteKey, kindId, sprite, hx, hy, ha, clip, nowTick);
+      return this.update(spriteKey, kindId, sprite, hx, hy, ha, clip, nowTick, row);
     }
     e.stamp = this.stamp;
     const view = e.view;
@@ -439,7 +468,7 @@ export class StructureRigs {
       if (view.plane.destroyed) {
         // Rebuilt sprite destroyed our groups with it: rebuild the view.
         this.drop(spriteKey, e);
-        return this.update(spriteKey, kindId, sprite, hx, hy, ha, clip, nowTick);
+        return this.update(spriteKey, kindId, sprite, hx, hy, ha, clip, nowTick, row);
       }
       // Plane sits just above the body art and below the world texts and
       // the mount cluster (both added after the body): before the build-ETA
@@ -467,6 +496,7 @@ export class StructureRigs {
       }
     }
     view.zoom = this.zoom;
+    view.setRunningFrom(row);
     view.update(input, nowTick, hx, hy, ha, 1, this.sunAz);
     followHost(view.over, sprite);
     followHost(view.under, sprite);

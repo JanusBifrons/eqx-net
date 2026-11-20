@@ -2,7 +2,7 @@
  * Heap-delta lock (#14) for the structure rig per-frame pose (restyle 2c):
  * `StructureRigView.update` (evaluate + IK + world→host target + posing the
  * part Graphics, and 3e: redrawing the goods flow pulse along a holding
- * crane arm; Family 1: the solar panels aiming at the sun) and `placeMount` allocate nothing per frame.
+ * crane arm; Family 1: the solar panels aiming at the sun, the reactor fans spinning) and `placeMount` allocate nothing per frame.
  *
  * Run with `pnpm test:gc`.
  */
@@ -11,6 +11,7 @@ import { Container } from 'pixi.js';
 import { StructureRigView, type StructureRigInput } from './structureRigs.js';
 import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import { CRANE_CARGO_BOTH } from '../../../core/articulation/craneCargo.js';
+import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 
 function requireGc(): () => void {
   const gc = (globalThis as { gc?: () => void }).gc;
@@ -19,11 +20,14 @@ function requireGc(): () => void {
 }
 
 describe('StructureRigView.update — heap', () => {
-  it('does not grow the heap over 10k frames (crane IK + goods pulse + turret slide + solar aim)', () => {
+  it('does not grow the heap over 10k frames (crane IK + goods pulse + turret slide + solar aim + reactor fans)', () => {
     const gc = requireGc();
     const crane = new StructureRigView(rigForStructureKind('freight_dock')!);
     const turret = new StructureRigView(rigForStructureKind('turret')!);
     const solar = new StructureRigView(rigForStructureKind('solar')!);
+    const reactor = new StructureRigView(rigForStructureKind('reactor')!);
+    const fuelled = { built: true, noFuel: undefined } as unknown as StructureRenderState;
+    const dry = { built: true, noFuel: true } as unknown as StructureRenderState;
     const cluster = new Container();
     const reach: StructureRigInput = { clipId: 'arm-reach', startTick: 0, targetX: 40, targetY: -30 };
     const deploy: StructureRigInput = { clipId: 'turret-deploy', startTick: 0 };
@@ -38,6 +42,8 @@ describe('StructureRigView.update — heap', () => {
       holder.update(hold, f * 0.5, 10, 20, 0.3, 1);
       crane.update(null, f, 10, 20, 0.3, 1);
       solar.update(null, f, 10, 20, 0.3, 1, f * 0.001);
+      reactor.setRunningFrom(f % 300 < 150 ? fuelled : dry);
+      reactor.update(null, f, 10, 20, 0.3, 1);
     };
     for (let f = 0; f < 2000; f++) frame(f);
     gc();

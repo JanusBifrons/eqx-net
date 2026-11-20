@@ -18,11 +18,14 @@ import { blankGridNode, structureMirrorToGridNode } from '../structures/mirrorTo
 import { resolveFxMode } from '../render/art/artMode.js';
 import { bodyStatusCode, socketNubContext, socketUsedMask } from '../render/pixi/structureSocketNubs.js';
 
-export interface LabRig { i: number; view: StructureRigView; input: StructureRigInput | null }
+/** `spins`: the rig's spinning parts run (Family 1 reactor fans; off for a
+ *  `?live=dry` reactor). The lab poses them as a pure function of t. */
+export interface LabRig { i: number; view: StructureRigView; input: StructureRigInput | null; spins: boolean }
 
 /** Rigs (restyle 2c): one view per structure whose kind has a rig, its
  *  groups placed in the lab's under / plane / over layers. */
-export function buildLabRigs(scene: Scene, rigUnderL: Container, rigPlaneL: Container, rigOverL: Container): LabRig[] {
+export function buildLabRigs(scene: Scene, rigUnderL: Container, rigPlaneL: Container, rigOverL: Container, live: string | null = null): LabRig[] {
+  const vals = live !== null ? live.split(',') : [];
   const rigs: LabRig[] = [];
   scene.structs.forEach((st, i) => {
     const rig = rigForStructureKind(st.id);
@@ -32,7 +35,8 @@ export function buildLabRigs(scene: Scene, rigUnderL: Container, rigPlaneL: Cont
       g.position.set(st.x, st.y); g.rotation = st.rot;
       layer.addChild(g);
     }
-    rigs.push({ i, view, input: null });
+    view.setRunningFrom(labLiveRow(st.id, vals[i]));
+    rigs.push({ i, view, input: null, spins: view.running });
   });
   return rigs;
 }
