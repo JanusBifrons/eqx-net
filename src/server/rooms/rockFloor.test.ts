@@ -5,10 +5,13 @@
  * piece. Mines whole rocks down through the real child fracture
  * (`wreckChildGeometry`) and the real floor (`wreckCanResplit`).
  *
+ * Ore (job 1D-0b, owner 2026-11-20 "Ore shared by weight"): each rock holds
+ * a fixed total (`rockOreTotal`, fitted to what a full cut paid under the
+ * old 6 % floor and its 0.08 × weight² chunk curve) and a chunk carries its
+ * share by weight (`chunkOreUnits`), so the smaller floor loses no ore.
+ *
  * Prints, per rock: pieces, splits, piece mass and hold weight range, the
- * chunk ore all pieces carry (`OreDraw.chunkYield`: weight squared, so
- * smaller chunks carry LESS ore in total; rock MASS is what is conserved)
- * and the integrity the lasers must wear through (`wear`).
+ * chunk ore all pieces carry and the integrity the lasers must wear through.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { wreckPieceGeometry, type WreckFractureInputs, type WreckPieceGeometry } from '../../core/destruction/wreckPieces.js';
@@ -20,20 +23,29 @@ import { CUT_ANGLE_STEPS, cutDirFromAngle } from '../../core/destruction/fractur
 import { killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import { MINING_LASER_WIDTH } from '../../core/combat/capitalTurretDefs.js';
 import { rockChunkWeight, salvageTierMass } from '../../core/combat/salvageTargeting.js';
-import { ROCK_CHUNK_ORE_PER_WEIGHT_SQ } from './OreDraw.js';
+import { chunkOreUnits, rockOreTotal } from './OreDraw.js';
 
 // OreDraw's hold store opens sqlite; the ore curve needs none of it.
 vi.mock('../db/PersistenceWorker.js', () => ({ getHoldStore: () => null }));
 
-interface CutDown { pieces: number; splits: number; minMass: number; maxMass: number; mass: number; ore: number; rockMass: number; wear: number }
+/** What a full cut paid before job 1D-0b: 0.08 × chunk weight² per chunk. */
+const OLD_ORE_PER_WEIGHT_SQ = 0.08;
+
+interface CutDown {
+  leaves: WreckPieceGeometry[]; pieces: number; splits: number; minMass: number; maxMass: number;
+  mass: number; ore: number; oldCurve: number; rockMass: number; wear: number;
+}
 
 /** Cut rock `r` down: every piece the floor lets split is split (the laser
  *  line turns a little each generation, as a moving ship's would) until none
- *  can. A split the fracture can't make (< 2 children) leaves the piece. */
-function cutDown(r: number): CutDown {
+ *  can. A split the fracture can't make (< 2 children) leaves the piece.
+ *  `oldFloor`: the floor before job 1D-0 (6 % of the rock's area). */
+function cutDown(r: number, oldFloor = false): CutDown {
   const id = `floor-rock-${r}`;
   const rock = { id, shape: asteroidShapeSeed(id), r };
-  const src = rockWreckSource(rock);
+  const rockSrc = rockWreckSource(rock);
+  const rs = rockSrc.profile.resplit!;
+  const src = oldFloor ? { ...rockSrc, profile: { ...rockSrc.profile, resplit: { ...rs, splitAboveTractor: undefined } } } : rockSrc;
   const cutW = killCutStripWidth({ kind: 'slice', width: MINING_LASER_WIDTH });
   const angOf = (gen: number): number => Math.round(CUT_ANGLE_STEPS * ((0.13 + gen * 0.29) % 1));
   const root: WreckFractureInputs = {
@@ -62,22 +74,24 @@ function cutDown(r: number): CutDown {
     }
     level = next;
   }
-  let minMass = Infinity, maxMass = 0, mass = 0, ore = 0;
+  let minMass = Infinity, maxMass = 0, mass = 0, ore = 0, oldCurve = 0;
   for (const g of leaves) {
     minMass = Math.min(minMass, g.mass);
     maxMass = Math.max(maxMass, g.mass);
     mass += g.mass;
     const w = rockChunkWeight(g.mass);
-    ore += Math.floor(ROCK_CHUNK_ORE_PER_WEIGHT_SQ * w * w);
+    oldCurve += Math.floor(OLD_ORE_PER_WEIGHT_SQ * w * w);
+    ore += chunkOreUnits(g.mass, src.bodyMass);
   }
-  return { pieces: leaves.length, splits, minMass, maxMass, mass, ore, rockMass: src.bodyMass, wear };
+  return { leaves, pieces: leaves.length, splits, minMass, maxMass, mass, ore, oldCurve, rockMass: src.bodyMass, wear };
 }
 
 const RADII = [40, 80, 160, 260];
-const runs = new Map<number, CutDown>();
-const run = (r: number): CutDown => {
-  let c = runs.get(r);
-  if (c === undefined) { c = cutDown(r); runs.set(r, c); }
+const runs = new Map<string, CutDown>();
+const run = (r: number, oldFloor = false): CutDown => {
+  const key = `${r}:${oldFloor}`;
+  let c = runs.get(key);
+  if (c === undefined) { c = cutDown(r, oldFloor); runs.set(key, c); }
   return c;
 };
 
@@ -98,5 +112,39 @@ describe('rock floor', () => {
       expect(c.mass / c.rockMass, `r${r}`).toBeGreaterThan(0.9);
       expect(c.mass, `r${r}`).toBeLessThanOrEqual(c.rockMass * 1.0001);
     }
+  });
+
+  it('total ore in a rock is unchanged by the smaller floor', () => {
+    for (const r of RADII) {
+      const before = run(r, true);
+      const after = run(r);
+      const total = rockOreTotal(after.rockMass);
+      console.log(`r${r}: ore total ${Math.round(total)}; old 6 % floor ${before.ore} (${before.pieces} chunks); AA floor ${after.ore} (${after.pieces} chunks)`);
+      // Within rounding: each chunk rounds down, and the fracture keeps mass to 0.1 %.
+      expect(Math.abs(after.ore - before.ore), `r${r}`).toBeLessThanOrEqual(after.pieces + before.pieces + total * 1e-3);
+      expect(Math.abs(after.ore - total), `r${r}`).toBeLessThanOrEqual(after.pieces + total * 1e-3);
+    }
+  });
+
+  it('each rock holds about what a full cut gave before', () => {
+    // The old floor's 0.08 × weight² chunks: r40 140k, r80 484k, r160 9.3M, r260 48.6M.
+    for (const r of RADII) {
+      const old = run(r, true).oldCurve;
+      const total = rockOreTotal(run(r).rockMass);
+      console.log(`r${r}: before ${old}, now ${Math.round(total)} (${(((total - old) / old) * 100).toFixed(1)} %)`);
+      expect(Math.abs(total - old) / old, `r${r}`).toBeLessThan(0.15);
+    }
+  });
+
+  it('a chunk carries ore in proportion to its weight', () => {
+    const c = run(160);
+    const perMass = rockOreTotal(c.rockMass) / c.rockMass;
+    for (const g of c.leaves) {
+      const ore = chunkOreUnits(g.mass, c.rockMass);
+      expect(ore).toBeLessThanOrEqual(perMass * g.mass);
+      expect(ore).toBeGreaterThan(perMass * g.mass - 1);
+    }
+    // Twice the weight, twice the ore: the same rock pays a small ship or a Barge alike.
+    expect(chunkOreUnits(2 * c.minMass, c.rockMass) / chunkOreUnits(c.minMass, c.rockMass)).toBeCloseTo(2, 2);
   });
 });
