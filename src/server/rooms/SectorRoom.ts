@@ -68,7 +68,7 @@ import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
-import { StructurePlacementSubsystem, packedGateForBuild, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
+import { StructurePlacementSubsystem, packedGateForBuild, repackItem, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import type { GateController } from '../structures/GateController.js';
@@ -254,7 +254,7 @@ import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
 import { StorageService } from '../cargo/StorageService.js';
 import { fittedModuleIds, isOperationalStorage, structureUid } from '../cargo/storageHolds.js';
-import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount } from '../../core/cargo/hold.js';
 import { liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { sectorHeldBy, territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
@@ -4107,13 +4107,13 @@ export class SectorRoom extends Room<SectorState> {
    * Economy v2 — repack a PREPAID structure that finished deconstructing: the
    * packed item (same kind, same quality) goes into the owner's storage in its
    * grid component, else it drops as a pod where the structure stood. Called
-   * by the grid pulse BEFORE the structure is despawned.
+   * by the grid pulse BEFORE the structure is despawned (a Capital: `repackItem`).
    */
   private repackStructure(rec: StructureRecord): void {
-    const item = { product: `structure:${rec.kind}`, quality: rec.packedQuality ?? REPACK_DEFAULT_QUALITY };
+    const item = repackItem(rec, REPACK_DEFAULT_QUALITY);
     const target = this.storage.networkFor(rec).find((r) => r.id !== rec.id);
     if (target !== undefined) {
-      addPacked((target.hold ??= { goods: {}, blueprints: [] }), item.product, item.quality);
+      ((target.hold ??= { goods: {}, blueprints: [] }).packed ??= []).push(item);
       this.storage.commitChanged([target], []);
     } else {
       this.loot.drop({ goods: {}, blueprints: [], packed: [item] }, rec.x, rec.y, 0, 0, { cause: 'removed' });

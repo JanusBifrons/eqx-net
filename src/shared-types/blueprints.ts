@@ -130,6 +130,13 @@ export const STARTER_STRUCTURE_KINDS: readonly string[] = [
   // Sector control: a lock builds from minerals (its 20k cost), never packed.
   'territory_lock',
 ];
+/** Playable base loop — the ONE kind a player can only place from its packed
+ *  crate (`structure:capital`, in the hold or storage). Every other kind
+ *  builds from the base's bank; a held crate for it is still used first (a
+ *  free build). Several Capitals are allowed, one crate each. */
+export function needsPackedCrate(kindId: string): boolean {
+  return kindId === 'capital';
+}
 /** Hulls anyone can fly without building one: the launch table's keys
  *  (`shared-types/launch.ts`, one list: sub-capitals free, capitals priced). */
 export const STARTER_HULL_KINDS: readonly string[] = LAUNCHABLE_HULL_KINDS;

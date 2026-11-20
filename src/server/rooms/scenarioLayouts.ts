@@ -109,6 +109,38 @@ export const STRUCTURE_SCENARIO_PREBUILT = [
   { kind: 'turret', ...SCENARIO.turretSE },
 ] as const;
 
+/** `base-build-test` (Sunday base loop): the scenario's Capital, its north
+ *  Connector and both Solars — a small powered starter base and nothing else
+ *  (no Miner, Turret or rock beside it), so the pilot has open space to place
+ *  more. The same proven, auto-connecting positions as the full grid. */
+export const BASE_BUILD_PREBUILT = [
+  { kind: 'capital', ...SCENARIO.capital },
+  { kind: 'connector', ...SCENARIO.connectorN },
+  { kind: 'solar', ...SCENARIO.solarNE },
+  { kind: 'solar', ...SCENARIO.solarNW },
+] as const;
+
+/** Placeholder owner of a prebuilt base that the FIRST pilot to join adopts
+ *  (`base-build-test`): the base then belongs to whoever really joined —
+ *  whatever id the server resolved for them (account, fresh anonymous id) —
+ *  so their placed blueprints cable to it and draw its bank. */
+export const PREBUILT_ADOPT_OWNER = 'prebuilt-adopt';
+
+/** Hand every structure still owned by `PREBUILT_ADOPT_OWNER` to
+ *  `playerId` and re-cable (the next grid pulse rebuilds the topology and the
+ *  client slice re-interns the owner). Returns how many were adopted; 0 once
+ *  the base has an owner, so only the first joiner gets it. */
+export function adoptPrebuiltBase(reg: StructureRegistry, playerId: string): number {
+  let n = 0;
+  for (const rec of reg.all()) {
+    if (rec.owner !== PREBUILT_ADOPT_OWNER) continue;
+    rec.owner = playerId;
+    n++;
+  }
+  if (n > 0) reg.topologyDirty = true;
+  return n;
+}
+
 /** A "ready base" for the wave system (Capital + Miner + Solar + Turret,
  *  wired through the two connectors) — the same grid. */
 export const READY_BASE_PREBUILT = STRUCTURE_SCENARIO_PREBUILT;
@@ -217,6 +249,7 @@ export interface StructureScenarioOpts {
   prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
   prebuiltStructuresOwner?: string;
   prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
+  prebuiltCapitalMinerals?: number;
   pairTeleporters?: boolean;
   teleportShipBoards?: boolean;
   scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
@@ -271,6 +304,13 @@ export function seedStructureScenario(h: StructureScenarioHost, roomOpts: Struct
     // P2d — stock the prebuilt Capital (e.g. munitions for a showcase's
     // missile turrets), so ammo-using turrets can fire.
     const goods = roomOpts.prebuiltStorageGoods;
+    // Base loop — fill the prebuilt Capital's mineral BANK (`minerals`, what
+    // construction draws; not its goods hold), capped at its storage.
+    const bank = Math.max(0, Math.floor(roomOpts.prebuiltCapitalMinerals ?? 0));
+    if (bank > 0) {
+      const cap = [...h.structureRegistry.all()].find((r) => r.owner === owner && r.kind === 'capital');
+      if (cap) cap.minerals = Math.min(bank, getStructureKind('capital').storageCapacity);
+    }
     if (goods) {
       for (const rec of h.structureRegistry.all()) {
         if (rec.owner !== owner || rec.kind !== 'capital') continue;
