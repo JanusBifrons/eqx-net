@@ -20,6 +20,7 @@ import { SWARM_KIND_ASTEROID, SWARM_KIND_WRECK, isLootPod } from '../../shared-t
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
 import type { PieceStoreView } from './wreckLineage.js';
+import type { SalvageBeam } from './tractorLineOfSight.js';
 
 /** What `salvageOf` fills for a salvage lock: the piece's `pieceStoreOf`
  *  view (mass: its size tier, a tractor accelerates it by F / mass, and the consume
@@ -42,11 +43,12 @@ export interface LockSalvageDeps {
    *  rock's or wreck's piece moves on to the next live piece of it. Absent:
    *  a lock ends with its target. */
   lineage?: LockLineageSource;
-  /** True when a tractor dish of `playerId`'s ship has a clear line to lock
-   *  target `key` (`LineOfFireGate.firstOnLine`, the tractor's own line of
-   *  sight). A tractor group's lineage lock prefers a clear piece
-   *  (lockSplit.ts `memberRank`). Absent: every line counts as clear. */
-  tractorLineClear?(playerId: string, key: string): boolean;
+  /** True when a `beam` mount (a tractor dish, or a mining-laser emitter) of
+   *  `playerId`'s ship has a clear line to lock target `key`
+   *  (`LineOfFireGate.firstOnLine`, the beam's own line of sight). A tractor
+   *  or mining-laser group's lineage lock prefers a clear piece (lockSplit.ts
+   *  `memberRank`). Absent: every line counts as clear. */
+  tractorLineClear?(playerId: string, key: string, beam: SalvageBeam): boolean;
 }
 
 /** Which lineage a lock key belongs to, and its live members. */
