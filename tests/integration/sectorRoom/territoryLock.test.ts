@@ -8,7 +8,7 @@
  *     and the robots take it.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import { RobotTerritory } from '../../../src/server/livingworld/RobotTerritory.js';
 import type { LivingWorldRoom } from '../../../src/server/livingworld/LivingWorldRoom.js';
 import { TERRITORY_LOCK_COST } from '../../../src/shared-types/structureKinds.js';
@@ -29,7 +29,7 @@ describe('SectorRoom integration — Territory Lock (sector control)', () => {
 
   it('only the holder may build one, once; it costs its minerals; it holds the sector until destroyed', async () => {
     harness = await bootSectorTestServer({ sectorKey: KEY, asteroidConfig: [] });
-    const room = await harness.connectAs('player-1');
+    const room = await harness.connectAs('player-1', { initialCargo: withCapitalCrates() });
     const notices: string[] = [];
     room.onMessage('notice', (m: { text: string }) => notices.push(m.text));
     const internals = harness.getServerRoom()!._internals;

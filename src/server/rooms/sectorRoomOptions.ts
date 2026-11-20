@@ -254,6 +254,9 @@ export interface SectorRoomOptions {
   /** P2d (testMode) — goods put into the prebuilt Capital's hold (e.g.
    *  munitions so a showcase's missile turrets can fire). */
   prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
+  /** Base loop (testMode) — minerals banked in the prebuilt Capital (what
+   *  construction draws), capped at its storage. */
+  prebuiltCapitalMinerals?: number;
   /** Living World P2 — testMode: join the TradeDirector so deals can be
    *  made in this (non-galaxy) room (showcase / E2E). */
   tradeEnabled?: boolean;

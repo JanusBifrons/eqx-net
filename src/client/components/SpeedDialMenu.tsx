@@ -201,6 +201,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   const goBack = useCallback(() => setView((v) => goBackView(v)), []);
   // Economy v2 — packed stock while the build drill is open.
   const packedStock = usePackedStock(open && view.level !== 'root');
+  const inSector = useUIStore((s) => s.currentSectorKey !== null); // no sector = no crate rule
   // The open list fits the screen (sideways phone) and scrolls: speedDialFit.ts.
   const dialRef = useRef<HTMLDivElement>(null);
   useFitActionsToViewport(dialRef, direction, open, view.level === 'kinds' ? view.category : view.level);
@@ -264,7 +265,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
       ...categoryById(view.category).kinds.map((kindId) => {
         // Economy v2 — non-starter kinds need a packed one: show the count, or
         // lock (dimmed, no-op) with a hint, instead of refusing on placement.
-        const entry = buildEntry(kindId, packedStock);
+        const entry = buildEntry(kindId, packedStock, inSector);
         const pick = entry.locked ? () => {} : () => handlePickBuild(kindId);
         return (
           <SpeedDialAction
