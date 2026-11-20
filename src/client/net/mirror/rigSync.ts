@@ -24,7 +24,7 @@ export function syncRigClips(
     // Idempotent: an unchanged record (or a host with no rig) is a no-op,
     // and a rig attached after the row arrived (streamed in) picks it up.
     if (c === undefined) world.setRigClip(key, null);
-    else world.setRigClip(key, c.clipId, c.startTick, c.targetX, c.targetY);
+    else world.setRigClip(key, c.clipId, c.startTick, c.targetX, c.targetY, c.from, c.rate);
   }
 }
 

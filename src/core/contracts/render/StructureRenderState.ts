@@ -74,8 +74,15 @@ export interface StructureRenderState {
   /** A shield emitter's walls are up (all powered, none stunned). Walls are
    *  derived from `connTo` between emitters, plus each gate's own spans. */
   wallActive?: boolean;
-  /** Gates: open bits (GATE_OPEN_A = span 0, GATE_OPEN_B = span 1). */
+  /** Gates: open bits (GATE_OPEN_A = span 0, GATE_OPEN_B = span 1): the door
+   *  heading open, derived from the door row (door slice 9). */
   gateOpen?: number;
+  /** Solid doors (door slice 9): each door's motion segment (core
+   *  `DoorSegment`; position `doorPosAt(seg, tick)`, fully open at
+   *  DOOR_POS_MAX). Gate: `doorA` only; airlock: end A and end B. Allocated
+   *  once per row, decoded in place. Absent for other kinds. */
+  doorA?: { p0: number; t0: number; dir: 1 | -1; level: number };
+  doorB?: { p0: number; t0: number; dir: 1 | -1; level: number };
   /** Gates: access setting (GATE_ACCESS_IDS index; undefined ⇒ default). */
   gateAccess?: number;
   /** Production (P2b): the selected recipe byte (0/absent = default), the
@@ -102,7 +109,12 @@ export interface StructureRenderState {
    *  target is in the HOST frame (y-up, unscaled). Absent: the rig rests.
    *  3e: `holdTicks` / `cargo` time the cargo carried along a holding arm
    *  (`core/articulation/craneCargo.ts`); absent = none. */
-  rigClip?: { clipId: string; startTick: number; targetX?: number; targetY?: number; holdTicks?: number; cargo?: number };
+  rigClip?: {
+    clipId: string; startTick: number; targetX?: number; targetY?: number; holdTicks?: number; cargo?: number;
+    /** Scrub (`PlayingClip.from` / `.rate`): door kinds play their door clip
+     *  scrubbed from the door segment (`doorClipTime`); absent = a plain clip. */
+    from?: number; rate?: number;
+  };
   /** v4 T1 — a teleporter: present only for teleporter kinds. */
   teleport?: {
     phase: number;
