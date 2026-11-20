@@ -160,7 +160,9 @@ export class StructureState extends Schema {
   @type('uint16') storedPowerMax?: number;
   /** Pylon: the other post's entityId of its (first) wall; -1 ⇒ none. */
   @type('int32') shieldWallTo?: number;
-  /** Gates: open bits (GATE_OPEN_A / GATE_OPEN_B); never both. */
+  /** Gates / airlocks: door motion, bit 7 heading open + power level in bits
+   *  0-3 (`encodeDoorMotion`; the segment's clip / t0 / p0 ride rigClip /
+   *  rigStart / rigHold). */
   @type('uint8') gateOpen?: number;
   /** Gates: access setting (GATE_ACCESS_IDS index). */
   @type('uint8') gateAccess?: number;

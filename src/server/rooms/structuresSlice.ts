@@ -38,6 +38,7 @@ import {
 import { isTeleporterKind } from '../../shared-types/teleport.js';
 import { writeConnToRow, writeTeleporterRow } from '../structures/structureStateRows.js';
 import { writeRigClipRow } from '../structures/structureRigClip.js';
+import { writeDoorMotionRow, type GateDoorSource } from './doorMotionRow.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
@@ -77,7 +78,8 @@ export interface StructuresSliceHost {
     'powerSummaryFor' | 'estimateBuildEtaMs' | 'pulse' | 'tickTurrets' | 'tickMiners' | 'mountAnglesOf'
   >;
   shieldWalls: () => Pick<ShieldWallManager, 'wallsUpFor' | 'wallStateFor' | 'update'>;
-  gates: () => Pick<GateController, 'maskFor' | 'update'>;
+  /** `maskFor` and the door states (`GateDoorSource`) for the door rows. */
+  gates: () => Pick<GateController, 'maskFor' | 'update'> & GateDoorSource;
   teleporters: () => Pick<TeleporterSubsystem, 'required' | 'partnerOf' | 'pulse' | 'update'>;
   /** The room's owner interning (also used by the mine sync). */
   internStructureOwner: (owner: string) => number;
@@ -191,9 +193,10 @@ export class StructuresSliceSync {
       if ((st.storedPower ?? SD.storedPower) !== stored) st.storedPower = stored;
       if ((st.storedPowerMax ?? SD.storedPowerMax) !== storageMax) st.storedPowerMax = storageMax;
       if ((st.shieldWallTo ?? SD.shieldWallTo) !== wallTo) st.shieldWallTo = wallTo;
-      if (gateTypeOf(rec.kind) !== null) {
-        const open = h.gates().maskFor(rec.id);
-        if ((st.gateOpen ?? SD.gateOpen) !== open) st.gateOpen = open;
+      const gateType = gateTypeOf(rec.kind);
+      if (gateType !== null) {
+        // Door slice 9: the door segment rides gateOpen + the rig fields.
+        writeDoorMotionRow(rec.id, gateType, h.gates(), st);
         const access = rec.gateAccess ?? SD.gateAccess;
         if ((st.gateAccess ?? SD.gateAccess) !== access) st.gateAccess = access;
       }
@@ -211,7 +214,8 @@ export class StructuresSliceSync {
         if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
-      if (rec.rigClip !== undefined) writeRigClipRow(rec, st); // restyle 2e (late-join safe, #16)
+      // restyle 2e (late-join safe, #16); door kinds' rig fields are the door row's.
+      if (rec.rigClip !== undefined && gateType === null) writeRigClipRow(rec, st);
       this.syncConnTo(rec.id, st);
       // Fast cosmetics stay on the snapshot (only structures with a target).
       if (
@@ -344,8 +348,8 @@ export class StructuresSliceSync {
     // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
     // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
     h.structureGrid().tickMiners(nowMs);
-    // Gates open/close on approach at this cadence; the wall refresh below
-    // then drops (or restores) each span's collider.
+    // Gates open/close on approach at this cadence, re-posing each gate's
+    // door-leaf hit boxes (a shut leaf blocks shots).
     h.gates().update(nowMs);
     // Refresh wall active states at the turret cadence so a stun lifts (and a
     // power-loss drop registers) within ~100 ms, not a full grid pulse later.

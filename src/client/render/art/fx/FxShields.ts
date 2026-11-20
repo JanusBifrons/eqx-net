@@ -289,8 +289,8 @@ export class FxFences {
 
   /**
    * One derived wall this frame (the same visitor arguments
-   * `visitDerivedWalls` passes; game space). `blocking`: up. `open`: an open
-   * gate span (or unsealed iris).
+   * `visitDerivedWalls` passes; game space). `blocking`: up. `open`: an unsealed
+   * teleporter iris.
    */
   wall(key: number, ax: number, ay: number, bx: number, by: number, blocking: boolean, open: boolean, nowMs: number): void {
     let v = this.views.get(key);

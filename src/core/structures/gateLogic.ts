@@ -6,16 +6,26 @@
  * positions in the gate's LOCAL frame (`worldToLocal` in gateGeometry.ts).
  *
  *   Shield Gate: opens while a ship it ADMITS is in the approach zone; closes
- *   GATE_CLOSE_HOLD_MS after the zone empties, never on top of a ship.
+ *   GATE_CLOSE_HOLD_MS after the zone empties.
  *
  *   Shield Airlock: one `phase` field (closed / open A / open B), so both ends
- *   can never be open at once. A ship waiting outside an end opens that end;
- *   once every ship inside is clear of that span, it closes; then the far end
- *   opens to let them out.
+ *   are never TARGETED open at once. A ship waiting outside an end opens that
+ *   end; once every ship inside is clear of that span, it closes; then the far
+ *   end opens to let them out.
+ *
+ * Solid doors (plan door-power, slice 7): the open/shut decision above is each
+ * door's TARGET. Every door has a motion segment (`DoorTrack`, doorMotion.ts)
+ * that travels there at the grid power level L (3 s at full power; L 0 freezes
+ * it). Hold timers count from the door's ARRIVAL fully open, not from the
+ * decision. An airlock end starts opening only once the other end is fully
+ * shut (position 0), so both doors are never open at once. There is no
+ * "never close on a ship" hold: the leaves are kinematic and shove ships out
+ * (owner, round 3).
  */
 import {
   AIRLOCK_CYCLE_HOLD_MS,
   AIRLOCK_END_Y,
+  DOOR_POS_MAX,
   GATE_APPROACH_DEPTH,
   GATE_CLOSE_HOLD_MS,
   GATE_SPAN_THICKNESS,
@@ -23,9 +33,10 @@ import {
   type GateType,
 } from './gateGeometry.js';
 import { GATE_W } from '../../shared-types/structureKinds/gatePosts.js';
+import { doorFullyOpen, doorMoving, doorPosAt, driveDoor, newDoorTrack, type DoorTrack } from './doorMotion.js';
 
-/** Wire value of the open state: bit 0 = the gate span / airlock end A open,
- *  bit 1 = airlock end B open. Never 3 (both ends). */
+/** Open bits: bit 0 = the gate / airlock end A, bit 1 = airlock end B.
+ *  Never 3 (both ends). */
 export const GATE_OPEN_A = 1;
 export const GATE_OPEN_B = 2;
 
@@ -44,13 +55,10 @@ export interface GateOccupancy {
   /** Airlock: every ship in the chamber is clear of span A / span B. */
   insideClearA: boolean;
   insideClearB: boolean;
-  /** Any ship (admitted or not) overlaps span A (the gate span) / span B. */
-  bandA: boolean;
-  bandB: boolean;
 }
 
 export function newOccupancy(): GateOccupancy {
-  return { admittedNear: false, waitA: false, waitB: false, inside: false, insideClearA: true, insideClearB: true, bandA: false, bandB: false };
+  return { admittedNear: false, waitA: false, waitB: false, inside: false, insideClearA: true, insideClearB: true };
 }
 
 export function clearOccupancy(o: GateOccupancy): void {
@@ -60,8 +68,6 @@ export function clearOccupancy(o: GateOccupancy): void {
   o.inside = false;
   o.insideClearA = true;
   o.insideClearB = true;
-  o.bandA = false;
-  o.bandB = false;
 }
 
 /** Add one ship (local position lx, ly; radius r) to a gate's occupancy. */
@@ -69,14 +75,10 @@ export function addShipToOccupancy(type: GateType, lx: number, ly: number, r: nu
   const gapHalf = gateGapHalf(type);
   const bandHalf = GATE_SPAN_THICKNESS / 2 + r;
   if (type === 'gate') {
-    if (Math.abs(lx) <= gapHalf + r && Math.abs(ly) <= bandHalf) o.bandA = true;
     if (admitted && Math.abs(lx) <= GATE_HALF_W + r && Math.abs(ly) <= GATE_APPROACH_DEPTH) o.admittedNear = true;
     return;
   }
   const yA = AIRLOCK_END_Y;
-  const inLane = Math.abs(lx) <= gapHalf + r;
-  if (inLane && Math.abs(ly - yA) <= bandHalf) o.bandA = true;
-  if (inLane && Math.abs(ly + yA) <= bandHalf) o.bandB = true;
   const inChamber = Math.abs(lx) <= gapHalf && Math.abs(ly) <= yA;
   if (inChamber) {
     if (admitted) o.inside = true;
@@ -89,21 +91,39 @@ export function addShipToOccupancy(type: GateType, lx: number, ly: number, r: nu
   else if (ly < -yA && ly >= -yA - GATE_APPROACH_DEPTH) o.waitB = true;
 }
 
-/** Shield Gate state. */
+/** Shield Gate state. `open` is the door's target; `door` its motion. */
 export interface GateState {
   open: boolean;
   lastBusyMs: number;
+  readonly door: DoorTrack;
 }
 
-export function stepGate(s: GateState, o: GateOccupancy, nowMs: number): void {
+/** A door position saved with its structure (door-power slice 12): which
+ *  door clip it belongs to and its position P (1..DOOR_POS_MAX). No saved
+ *  door means every door shut. An airlock needs one: the interlock keeps the
+ *  other end at 0. */
+export type DoorClipName = 'door' | 'door-a' | 'door-b';
+export interface SavedDoor {
+  pos: number;
+  clip: DoorClipName;
+}
+
+/** A gate's state; a saved door starts frozen at its position, target shut. */
+export function newGateState(nowMs = 0, saved?: SavedDoor): GateState {
+  return { open: false, lastBusyMs: nowMs, door: newDoorTrack(saved?.clip === 'door' ? saved.pos : 0) };
+}
+
+/** Step a gate at wall time `nowMs`, game tick `tick` and power level
+ *  `level` (0..15). Returns true when the door's segment changed. */
+export function stepGate(s: GateState, o: GateOccupancy, nowMs: number, tick: number, level: number): boolean {
   if (o.admittedNear) {
     s.open = true;
     s.lastBusyMs = nowMs;
-    return;
+  } else if (s.open) {
+    if (!doorFullyOpen(s.door, tick)) s.lastBusyMs = nowMs; // the hold starts on arrival
+    else if (nowMs - s.lastBusyMs >= GATE_CLOSE_HOLD_MS) s.open = false;
   }
-  if (!s.open) return;
-  if (o.bandA) { s.lastBusyMs = nowMs; return; } // never close on a ship
-  if (nowMs - s.lastBusyMs >= GATE_CLOSE_HOLD_MS) s.open = false;
+  return driveDoor(s.door, s.open, level, tick, nowMs);
 }
 
 export const AIRLOCK_CLOSED = 0;
@@ -113,18 +133,63 @@ const END_NONE = 0;
 const END_A = 1;
 const END_B = 2;
 
-/** Shield Airlock state. `exitTo` is the end the ships inside will leave by. */
+/** Shield Airlock state. `exitTo` is the end the ships inside will leave by;
+ *  `phase` is the doors' target; `doorA` / `doorB` their motion. */
 export interface AirlockState {
   phase: number;
   exitTo: number;
   lastBusyMs: number;
+  readonly doorA: DoorTrack;
+  readonly doorB: DoorTrack;
 }
 
-export function newAirlockState(): AirlockState {
-  return { phase: AIRLOCK_CLOSED, exitTo: END_NONE, lastBusyMs: 0 };
+export function newAirlockState(saved?: SavedDoor): AirlockState {
+  const posA = saved?.clip === 'door-a' ? saved.pos : 0;
+  const posB = saved?.clip === 'door-b' ? saved.pos : 0;
+  return { phase: AIRLOCK_CLOSED, exitTo: END_NONE, lastBusyMs: 0, doorA: newDoorTrack(posA), doorB: newDoorTrack(posB) };
 }
 
-export function stepAirlock(s: AirlockState, o: GateOccupancy, nowMs: number): void {
+/** The door position to save for a gate or airlock at `tick`; undefined when
+ *  every door is shut (missing = shut). */
+export function savedDoorOf(gate: GateState | undefined, airlock: AirlockState | undefined, tick: number): SavedDoor | undefined {
+  if (gate) {
+    const pos = doorPosAt(gate.door.seg, tick);
+    return pos > 0 ? { pos, clip: 'door' } : undefined;
+  }
+  if (!airlock) return undefined;
+  const a = doorPosAt(airlock.doorA.seg, tick);
+  if (a > 0) return { pos: a, clip: 'door-a' };
+  const b = doorPosAt(airlock.doorB.seg, tick);
+  return b > 0 ? { pos: b, clip: 'door-b' } : undefined;
+}
+
+/** Validate a saved record's `doorPos` / `doorClip` (untrusted JSON). Anything
+ *  missing or malformed reads as shut (undefined). */
+export function parseSavedDoor(pos: unknown, clip: unknown): SavedDoor | undefined {
+  if (typeof pos !== 'number' || !Number.isFinite(pos)) return undefined;
+  if (clip !== 'door' && clip !== 'door-a' && clip !== 'door-b') return undefined;
+  const p = Math.min(DOOR_POS_MAX, Math.max(0, Math.round(pos)));
+  return p > 0 ? { pos: p, clip } : undefined;
+}
+
+/** Step an airlock (see `stepGate` for the arguments). Returns true when
+ *  either door's segment changed. */
+export function stepAirlock(s: AirlockState, o: GateOccupancy, nowMs: number, tick: number, level: number): boolean {
+  decideAirlock(s, o, nowMs, tick);
+  // Shut the untargeted end first, then open the targeted one only once the
+  // other end reads position 0 (interlock: both open is impossible).
+  const wantA = s.phase === AIRLOCK_OPEN_A;
+  const wantB = s.phase === AIRLOCK_OPEN_B;
+  let changed = false;
+  if (!wantA) changed = driveDoor(s.doorA, false, level, tick, nowMs);
+  if (!wantB) changed = driveDoor(s.doorB, false, level, tick, nowMs) || changed;
+  if (wantA) changed = driveDoor(s.doorA, doorPosAt(s.doorB.seg, tick) === 0, level, tick, nowMs) || changed;
+  if (wantB) changed = driveDoor(s.doorB, doorPosAt(s.doorA.seg, tick) === 0, level, tick, nowMs) || changed;
+  return changed;
+}
+
+/** The open/shut decision (the doors' target `phase`). */
+function decideAirlock(s: AirlockState, o: GateOccupancy, nowMs: number, tick: number): void {
   if (s.phase === AIRLOCK_CLOSED) {
     if (o.inside) {
       // Let the ships inside out. With no recorded direction, pick the end no
@@ -142,9 +207,8 @@ export function stepAirlock(s: AirlockState, o: GateOccupancy, nowMs: number): v
   }
   const end = s.phase === AIRLOCK_OPEN_A ? END_A : END_B;
   const wait = end === END_A ? o.waitA : o.waitB;
-  const band = end === END_A ? o.bandA : o.bandB;
   const clear = end === END_A ? o.insideClearA : o.insideClearB;
-  if (band) { s.lastBusyMs = nowMs; return; } // never close on a ship
+  if (!doorFullyOpen(end === END_A ? s.doorA : s.doorB, tick)) s.lastBusyMs = nowMs; // holds start on arrival
   if (s.exitTo !== end) {
     // Entering through this end.
     if (o.inside && clear && !wait) {
@@ -161,9 +225,26 @@ export function stepAirlock(s: AirlockState, o: GateOccupancy, nowMs: number): v
   if (nowMs - s.lastBusyMs >= GATE_CLOSE_HOLD_MS) { s.phase = AIRLOCK_CLOSED; s.exitTo = END_NONE; }
 }
 
-/** Wire open mask for a gate or airlock state. */
+/** Target open mask for a gate or airlock state (the decision, not the door
+ *  position: see `gateFullyOpenMask`). */
 export function gateOpenMask(gate: GateState | undefined, airlock: AirlockState | undefined): number {
   if (gate) return gate.open ? GATE_OPEN_A : 0;
   if (airlock) return airlock.phase === AIRLOCK_OPEN_A ? GATE_OPEN_A : airlock.phase === AIRLOCK_OPEN_B ? GATE_OPEN_B : 0;
   return 0;
+}
+
+/** Bits of the doors that are FULLY open at `tick` (deck light green only
+ *  then). Never 3: the airlock interlock keeps one end shut. */
+export function gateFullyOpenMask(gate: GateState | undefined, airlock: AirlockState | undefined, tick: number): number {
+  if (gate) return doorFullyOpen(gate.door, tick) ? GATE_OPEN_A : 0;
+  if (!airlock) return 0;
+  return (doorFullyOpen(airlock.doorA, tick) ? GATE_OPEN_A : 0) | (doorFullyOpen(airlock.doorB, tick) ? GATE_OPEN_B : 0);
+}
+
+/** Any of the gate's doors is still travelling (or frozen short of its
+ *  target): it draws full power while this holds (general grid rule). */
+export function gateDoorsMoving(gate: GateState | undefined, airlock: AirlockState | undefined, tick: number): boolean {
+  if (gate) return doorMoving(gate.door, tick);
+  if (!airlock) return false;
+  return doorMoving(airlock.doorA, tick) || doorMoving(airlock.doorB, tick);
 }

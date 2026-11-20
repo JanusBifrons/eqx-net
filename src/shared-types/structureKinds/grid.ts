@@ -303,7 +303,7 @@ export const SHIELD_GATE: StructureKind = {
   color: 0x4488ff,
 };
 
-/** Shield Airlock — a chamber with a Shield Gate span at each end. It opens one
+/** Shield Airlock — a chamber with a pair of solid doors at each end. It opens one
  *  end or the other, never both, cycling a ship through. */
 export const SHIELD_AIRLOCK: StructureKind = {
   id: 'shield_airlock',

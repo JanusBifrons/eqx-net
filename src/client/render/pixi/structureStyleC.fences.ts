@@ -1,7 +1,8 @@
 /**
  * Style C family "fences" (docs/plans/structure-restyle-stage4.md §4 0a, §6).
  * Fences + gates: shield pylon, shield gate, airlock, territory lock.
- * This family's drawings live only here; `kinds` is spread into `STYLE_C`
+ * The gate and airlock gatehouses (and their door-leaf art) live in the helper
+ * `structureStyleC.fences.gate.ts`. This family's drawings live only here; `kinds` is spread into `STYLE_C`
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
 import { GraphicsContext } from 'pixi.js';
@@ -13,15 +14,12 @@ import type { RigDrawHookTable } from './structureRigLook.js';
 import type { BodyStatusHook, BodyStatusHookTable } from './structureSocketNubs.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { getStructureKind, type StructureKindId } from '../../../shared-types/structureKinds.js';
+import { EMIT, EMIT_DEAD, doorLeafContext, doorStatus, shieldAirlock, shieldGate } from './structureStyleC.fences.gate.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'f2lb';
-
-/** Shield-wall emitter colour (lit, powered) and its dead glass (dark). */
-const EMIT = 0x6fe2f0;
-const EMIT_DEAD = 0x16262a;
+export const version = 'f2gh';
 
 /** Shield pylon lens radii (× k, drawn for 120): the glass and its lamp. */
 const PYLON_LENS = 13;
@@ -128,6 +126,8 @@ function territoryLock(c: StyleCtx): void {
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   shield_pylon: shieldPylon,
+  shield_gate: shieldGate,
+  shield_airlock: shieldAirlock,
   territory_lock: territoryLock,
 };
 
@@ -183,10 +183,14 @@ const unpoweredPylon: BodyStatusHook = { code: unpoweredCode, draw: drawPylonDar
 const unpoweredLock: BodyStatusHook = { code: unpoweredCode, draw: drawLockDark };
 
 /** This family's live body state (`BodyStatusHook`, drawn on the socket-nub
- *  overlay, structureSocketNubs.ts): pylon and lock lights dark unpowered. */
+ *  overlay, structureSocketNubs.ts): pylon and lock lights dark unpowered;
+ *  the gate / airlock deck lights follow the decoded doors
+ *  (docs/plans/door-power.md, slice 11). */
 export const status: BodyStatusHookTable = {
   shield_pylon: unpoweredPylon,
   territory_lock: unpoweredLock,
+  shield_gate: doorStatus,
+  shield_airlock: doorStatus,
 };
 
 // The territory lock's beacon (the `lock-beacon` rig part's own art, in the
@@ -231,4 +235,7 @@ export function lockHolding(st: StructureRenderState | undefined): boolean {
  *  structureRigLook.ts); rigs not listed draw from their part roles only. */
 export const rigs: RigDrawHookTable = {
   'lock-beacon': { partArt: () => lockBeaconContext(), running: lockHolding },
+  'gate-doors': { partArt: doorLeafContext },
+  'airlock-doors': { partArt: doorLeafContext },
 };
+

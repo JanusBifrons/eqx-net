@@ -405,7 +405,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         } else rigs.hide(spriteKey);
       }
       // 0d slice 10: socket nubs, redrawn only when the used sockets change.
-      if (ctx.socketNubs === true && sprite.visible) updateSocketNubs(sprite, entry.shipKind, mirror.structures?.get(entityId));
+      if (ctx.socketNubs === true && sprite.visible) updateSocketNubs(sprite, entry.shipKind, mirror.structures?.get(entityId), rigTick);
       // Structures (turret 'barrel' / miner 'drill') carry a mounts entry in
       // the catalogue but NO mountAngles on any wire — the snapshot
       // `structures[]` slice ships only turretTargetId / miningTargetId. So

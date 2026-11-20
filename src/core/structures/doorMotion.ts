@@ -9,7 +9,7 @@
  * moves L units per tick, so full power (15) crosses the whole travel in
  * DOOR_TRAVEL_TICKS and level 0 holds the door still wherever it is.
  */
-import { DOOR_POS_MAX, DOOR_POWER_LEVELS } from './gateGeometry.js';
+import { DOOR_POS_MAX, DOOR_POWER_LEVELS, DOOR_RESEGMENT_MIN_MS } from './gateGeometry.js';
 
 /** +1 opens, -1 shuts. */
 export type DoorDir = 1 | -1;
@@ -50,4 +50,52 @@ export function doorLevelFromSupply(frac: number): number {
  *  with from = doorClipTime(p0), rate = dir * level / DOOR_POWER_LEVELS. */
 export function doorClipTime(pos: number): number {
   return pos / DOOR_POWER_LEVELS;
+}
+
+/** A door's live motion: its current segment (mutated in place, never
+ *  reallocated, so the structure tick stays allocation-free) and when it last
+ *  re-segmented. The segment is the door's ONLY clock: position is always
+ *  `doorPosAt(track.seg, tick)`, never integrated separately. */
+export interface DoorTrack {
+  readonly seg: { p0: number; t0: number; dir: DoorDir; level: number };
+  /** Wall time (ms) of the last re-segment, for the level-change throttle. */
+  segMs: number;
+}
+
+/** A still door: shut, or (a restored save, door-power slice 12) frozen at
+ *  `pos` with its target shut. Level 0 holds it there until the gate logic
+ *  first drives it, which re-segments at once (a fresh track has no throttle). */
+export function newDoorTrack(pos = 0): DoorTrack {
+  return { seg: { p0: clampPos(Math.round(pos)), t0: 0, dir: -1, level: 0 }, segMs: Number.NEGATIVE_INFINITY };
+}
+
+/** Steer a door toward `open` at power `level` (0..15). A new target starts a
+ *  new segment at once from where the door is now; a level change does so only
+ *  while the door is still travelling and at most once per
+ *  DOOR_RESEGMENT_MIN_MS. Level 0 freezes the door where it is. Returns true
+ *  when the segment changed (later slices post it to the rig and the wire). */
+export function driveDoor(d: DoorTrack, open: boolean, level: number, tick: number, nowMs: number): boolean {
+  const seg = d.seg;
+  const dir: DoorDir = open ? 1 : -1;
+  if (dir === seg.dir) {
+    if (level === seg.level || doorArrived(seg, tick)) return false;
+    if (nowMs - d.segMs < DOOR_RESEGMENT_MIN_MS) return false;
+  }
+  seg.p0 = doorPosAt(seg, tick);
+  seg.t0 = tick;
+  seg.dir = dir;
+  seg.level = level;
+  d.segMs = nowMs;
+  return true;
+}
+
+/** The door is not yet at the end it is heading for. A door frozen at level 0
+ *  mid-travel still counts: it wants power (full draw while moving). */
+export function doorMoving(d: DoorTrack, tick: number): boolean {
+  return !doorArrived(d.seg, tick);
+}
+
+/** The door is all the way open (deck light green only then). */
+export function doorFullyOpen(d: DoorTrack, tick: number): boolean {
+  return doorPosAt(d.seg, tick) === DOOR_POS_MAX;
 }

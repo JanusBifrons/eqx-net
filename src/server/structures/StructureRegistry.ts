@@ -15,6 +15,7 @@ import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { TeleportPartner, TeleportRules, TeleportToll, TpPhase } from '../../shared-types/teleport.js';
 import { CABLE_NO_SOCKET, Connection } from '../../core/structures/Connection.js';
 import type { PlayingClip } from '../../core/articulation/evaluate.js';
+import type { SavedDoor } from '../../core/structures/gateLogic.js';
 
 export interface StructureRecord {
   /** Swarm entity id (also the binary-wire id). */
@@ -101,6 +102,9 @@ export interface StructureRecord {
   rigClip?: PlayingClip | null;
   /** Gates: who the gate opens for (GATE_ACCESS_IDS index; absent ⇒ default). */
   gateAccess?: number;
+  /** Gates: a hydrated save's door position, consumed by the GateController
+   *  when it first builds the gate's state (door-power slice 12). */
+  doorRestore?: SavedDoor;
   /** Phase 4 (Leveling & XP, WS-B4) — structure level (≥ 1). A fresh structure
    *  is level 1; a paid Upgrade build phase increments it and applies the
    *  per-level stat grant (HP / turret range+damage / power output / storage).
