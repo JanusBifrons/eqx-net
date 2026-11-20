@@ -80,6 +80,8 @@ export interface SectorSnapshotStructure {
   doorClip?: string;
   /** The owner switched it Off. Absent ⇒ On. */
   switchedOff?: boolean;
+  /** The owner's power throttle in tenths. Absent ⇒ 100%. */
+  throttle?: number;
   /** Production (P2b): the owner's recipe (a RecipeId) and a cycle in progress
    *  (its inputs are already taken). Absent ⇒ default recipe, idle. */
   recipe?: string;

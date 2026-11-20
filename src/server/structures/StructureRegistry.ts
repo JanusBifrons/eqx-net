@@ -199,6 +199,9 @@ export interface StructureRecord {
   /** The owner switched it OFF: draws nothing and does no work (reads
    *  unpowered to every subsystem). Persisted; rides as STRUCTURE_FLAG_OFF. */
   switchedOff?: boolean;
+  /** The owner's power throttle in tenths (0..9; absent ⇒ 100%): its draw
+   *  scales with it (`structureDraw`). Persisted; rides bits of `flags`. */
+  throttle?: number;
   /** D1 — a Reactor has fuel burning (its output counts). Rides room state as
    *  the inverse NO_FUEL flag. */
   fueled?: boolean;
@@ -246,8 +249,9 @@ export class StructureRegistry {
   /** Set whenever topology changes (add/sever/construct); the grid subsystem
    *  rebuilds components + drops the route cache only when this is true. */
   topologyDirty = true;
-  /** Told of every structure added or really removed (discrete; navigation's
-   *  static obstacles). Structures never move after placement. */
+  /** Told of every structure added or really removed, and again (`added`
+   *  true) when its body turns solid (discrete; navigation's static
+   *  obstacles). Structures never move after placement. */
   private readonly changeListeners: Array<(rec: StructureRecord, added: boolean) => void> = [];
 
   /** Subscribes to adds / removes; returns the unsubscribe. */
@@ -259,6 +263,13 @@ export class StructureRegistry {
   add(rec: StructureRecord): void {
     this.byId.set(rec.id, rec);
     this.topologyDirty = true;
+    for (const fn of this.changeListeners) fn(rec, true);
+  }
+
+  /** A structure's body changed (a blueprint turned solid, hologram
+   *  pass-through): listeners hear it as a re-add. */
+  bodyChanged(rec: StructureRecord): void {
+    if (this.byId.get(rec.id) !== rec) return;
     for (const fn of this.changeListeners) fn(rec, true);
   }
 

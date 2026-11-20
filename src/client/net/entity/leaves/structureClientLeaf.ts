@@ -7,23 +7,43 @@
  * points). No AI, no client shield layer. Damage is server-authoritative
  * through the existing swarm path (EntityResolver → StructureEntity), so there
  * is nothing damage-specific here — the "structure for free" payoff (B5).
+ *
+ * Hologram pass-through (base loop 3F2): a blueprint's body is a ghost
+ * (`BLUEPRINT_COLLISION_GROUPS`, no rig) exactly while the server's is, read
+ * from the room-state row (`ghostBody`) through the shared
+ * `isStructureBodySolid`. Ghost → solid runs the server's `solidifyStructure`
+ * steps (default groups, then the rig).
  */
 import { ClientEntityLeafBase } from '../ClientEntityLeafBase.js';
 import type { ClientSpawnCtx, ClientSyncCtx } from '../IClientEntityLeaf.js';
 import { structureHullPoints } from '../../../../shared-types/structureKinds.js';
 import { gateColliderPolygons } from '../../../../core/structures/gateGeometry.js';
 import { rigForStructureKind } from '../../../../core/articulation/rigCatalogue.js';
+import { isStructureBodySolid } from '../../../../core/structures/structureBody.js';
+import { BLUEPRINT_COLLISION_GROUPS, DEFAULT_COLLISION_GROUPS } from '../../../../core/physics/collisionGroups.js';
 
 /** Structure predWorld mass — matches the pre-refactor hardcoded `3` for any
  *  non-drone kind. */
 const STRUCTURE_MASS = 3;
 
+/** Is `ctx`'s structure body solid? The room-state row decides; no row yet
+ *  (or no structure state at all) ⇒ the wire default, solid. */
+function bodySolid(ctx: ClientSpawnCtx): boolean {
+  const row = ctx.structures?.get(ctx.entityId);
+  return row === undefined || isStructureBodySolid(row);
+}
+
 export class StructureClientLeaf extends ClientEntityLeafBase {
+  /** predWorld keys whose body is currently a ghost (set on spawn, so a
+   *  re-streamed body starts clean). */
+  private readonly ghostKeys = new Set<string>();
+
   constructor() {
     super('structure');
   }
 
   spawnBody(ctx: ClientSpawnCtx): void {
+    const solid = bodySolid(ctx);
     // Polygon hull from the single hull-points source — a convexHull collider
     // matching the silhouette (and the server collider built from the same
     // points), replacing the old circular collider.
@@ -39,18 +59,41 @@ export class StructureClientLeaf extends ClientEntityLeafBase {
       STRUCTURE_MASS,
       vertices,
       0,
-      undefined,
+      solid ? undefined : BLUEPRINT_COLLISION_GROUPS,
       parts,
     );
     ctx.predWorld.lockBody(ctx.key); // static server-side
-    // Rig solid parts (structure-restyle 2d): the same `attachRig` the server
-    // worker runs on RIG_ATTACH, so predWorld has the same kinematic bodies
-    // (#15). They rest until a clip is set (slice 2e wires the clip record).
-    const rig = ctx.entry.shipKind ? rigForStructureKind(ctx.entry.shipKind) : null;
-    if (rig) ctx.predWorld.attachRig(ctx.key, rig);
+    if (solid) {
+      this.ghostKeys.delete(ctx.key);
+      this.attachRig(ctx);
+    } else {
+      this.ghostKeys.add(ctx.key); // a hologram has no solid rig parts
+    }
   }
 
   onSync(ctx: ClientSyncCtx): void {
+    const solid = bodySolid(ctx);
+    if (solid === this.ghostKeys.has(ctx.key)) {
+      if (solid) {
+        // The server's `solidifyStructure`: default groups, then the rig.
+        this.ghostKeys.delete(ctx.key);
+        ctx.predWorld.setCollisionGroups(ctx.key, DEFAULT_COLLISION_GROUPS);
+        this.attachRig(ctx);
+      } else {
+        // Spawned solid before its row said ghost: rebuild it as a ghost
+        // (drops the rig parts with the body).
+        ctx.predWorld.despawnShip(ctx.key);
+        this.spawnBody(ctx);
+      }
+    }
     this.repose(ctx);
+  }
+
+  /** Rig solid parts (structure-restyle 2d): the same `attachRig` the server
+   *  worker runs on RIG_ATTACH, so predWorld has the same kinematic bodies
+   *  (#15). They rest until a clip is set (slice 2e wires the clip record). */
+  private attachRig(ctx: ClientSpawnCtx): void {
+    const rig = ctx.entry.shipKind ? rigForStructureKind(ctx.entry.shipKind) : null;
+    if (rig) ctx.predWorld.attachRig(ctx.key, rig);
   }
 }

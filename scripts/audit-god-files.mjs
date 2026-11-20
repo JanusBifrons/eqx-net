@@ -70,7 +70,7 @@ export const ALLOWLIST = {
   'src/client/App.tsx': { cap: 1215, target: 600, reason: RATCHET_ONLY },
   'src/client/__art-lab__/fx.ts': { cap: 979, target: 600, reason: RATCHET_ONLY },
   'src/client/__art-lab__/main.ts': { cap: 674, target: 600, reason: RATCHET_ONLY },
-  'src/client/components/EntityStatsPanel.tsx': { cap: 893, target: 600, reason: RATCHET_ONLY },
+  'src/client/components/EntityStatsPanel.tsx': { cap: 830, target: 600, reason: RATCHET_ONLY },
   'src/client/net/ColyseusClient.ts': {
     cap: 3035,
     target: 350,
@@ -101,7 +101,7 @@ export const ALLOWLIST = {
   'src/core/physics/worker.ts': { cap: 745, target: 600, reason: RATCHET_ONLY },
   'src/server/cargo/StorageService.ts': { cap: 874, target: 600, reason: RATCHET_ONLY },
   'src/server/economy/ConvoyDirector.ts': { cap: 579, target: 600, reason: RATCHET_ONLY },
-  'src/server/economy/TradeDirector.ts': { cap: 891, target: 600, reason: RATCHET_ONLY },
+  'src/server/economy/TradeDirector.ts': { cap: 827, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/LockSubsystem.ts': { cap: 684, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/PlayerFireResolver.ts': { cap: 766, target: 600, reason: RATCHET_ONLY },

@@ -76,7 +76,7 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     // D1 — a fuel-burning kind (Reactor) outputs only while fuelled.
     powerOutput: operational && (kind.fuelEveryPulses == null || rec.fueled === true) ? effectiveStructurePowerOutput(kind.powerOutput, rec.level) : 0,
     // Active power — full draw while active, an idle trickle otherwise.
-    powerConsumption: operational ? structureDraw(kind.powerConsumption, rec.drawFull === true, rec.switchedOff === true) : 0,
+    powerConsumption: operational ? structureDraw(kind.powerConsumption, rec.drawFull === true, rec.switchedOff === true, rec.throttle) : 0,
     isConstructed: operational,
   };
 }
