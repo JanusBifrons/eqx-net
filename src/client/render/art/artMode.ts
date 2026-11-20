@@ -17,6 +17,7 @@ export type ArtMode = 'classic' | 'machined';
 
 /** Ship livery look treatments under trial (`?livery=`); owned by fields.ts. */
 import type { LiveryTreatment } from './fields.js';
+import { parseStructureStyle } from '../pixi/structureStyles.js';
 export type { LiveryTreatment };
 
 export interface ArtOptions {
@@ -39,6 +40,19 @@ export interface ArtOptions {
   /** Ship livery treatment: `DEFAULT_LIVERY` unless `?livery=off` (none) or
    *  another treatment (look R&D). Absent = the pre-livery paint. Machined only. */
   livery?: LiveryTreatment;
+  /** Structure livery (`?structLivery=1`, structure restyle 1c): structures
+   *  wear their owner's colours and sigil. Off by default (look not yet
+   *  signed off); off = today's structure bakes, byte-identical. Machined only. */
+  structLivery?: boolean;
+  /** Structure style (`?restyle=a`, structure restyle 1d+): a look
+   *  direction from `structureStyles.ts`. Absent (or `current`) = today's
+   *  structure bakes, byte-identical. Machined only. */
+  structStyle?: string;
+  /** Structure restyle grid line look (`?lineLook=`); null = off (the thin
+   *  line). Absent = the URL / default (`rendererSetup/restyleLook.ts`). */
+  lineLook?: import('../pixi/connectorLineLooks.js').LineLook | null;
+  /** Structure restyle rig parts (`?rigs=0` = false). Absent = the URL / on. */
+  rigs?: boolean;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);
@@ -89,6 +103,25 @@ export function readLivery(search: string): LiveryTreatment | undefined {
   const p = readLiveryParam(search);
   if (p === 'off') return undefined;
   return p ?? DEFAULT_LIVERY;
+}
+
+/** `?structLivery=1`: structures wear their owner's livery (off by default). */
+export function readStructLivery(search: string): boolean {
+  return /[?&]structLivery=1\b/.test(search);
+}
+
+/** The structure style every Machined-art player sees (owner, structure
+ *  restyle: on by default; `?restyle=off` / `current` = today's bakes). */
+export const DEFAULT_STRUCT_STYLE = 'c';
+
+/** `?restyle=<id>`: a structure style from `structureStyles.ts`;
+ *  undefined for `off` / `current` (the pre-restyle bakes); absent or an
+ *  unknown id = `DEFAULT_STRUCT_STYLE`. */
+export function readStructStyle(search: string): string | undefined {
+  const raw = new URLSearchParams(search).get('restyle');
+  if (raw === 'off' || raw === 'current') return undefined;
+  const s = parseStructureStyle(raw);
+  return s === 'current' ? DEFAULT_STRUCT_STYLE : s;
 }
 
 /** `?shiplight=gpu|high|medium|low|baked` (gpu = high), or null. */

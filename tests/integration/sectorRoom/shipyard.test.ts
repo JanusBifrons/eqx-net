@@ -36,6 +36,10 @@ describe('SectorRoom integration — Shipyard + hull gate (economy v2 W5b)', () 
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
         { kind: 'connector', x: 0, y: -350 },
+        // Every link goes through a Connector: the reactor and cargo bay join
+        // via their own relays, never straight onto the shipyard.
+        { kind: 'connector', x: 450, y: -350 },
+        { kind: 'connector', x: -450, y: -350 },
         { kind: 'reactor', x: 650, y: 0 },
         { kind: 'cargo_bay', x: -550, y: 0 },
         { kind: 'shipyard', x: 0, y: -760 },

@@ -82,6 +82,8 @@ function wreckDeadArtFor(kindId: string): boolean {
 }
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
+import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
+import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -133,6 +135,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
   ctx.wrecks?.setField(mirror.wreckField ?? null); // value-compared: no-op unless the field changed
   ctx.wrecks?.retain(wreckDescs ?? NO_WRECKS);
   ctx.wreckArt?.retain(wreckDescs ?? NO_WRECKS);
+  const rigs = ctx.structureRigs; // restyle 2c (on unless `?rigs=0`); undefined = off
+  rigs?.begin();
+  if (rigs !== undefined && ctx.cameraScale !== undefined) rigs.zoom = ctx.cameraScale; // 3e: pulse sized like a cable's
+  // Aiming rig parts (solar panels) face the sector's sun: the art light rig's.
+  if (rigs !== undefined) rigs.sunAz = ctx.art.art !== null ? ctx.art.sunAz : undefined;
+  // Restyle 2e: rig clips run on the client tick clock against their server
+  // start tick (no clock in tests / before welcome: the fx clock, in ticks).
+  const rigTick = mirror.rigTick ?? fxNow / (1000 / RIG_TICKS_PER_SEC);
   for (const [entityId, entry] of mirror.swarm) {
     // S2b: a wreck piece is drawn only once its wreck's descriptor is known
     // (its geometry comes from it); until then it has no sprite at all.
@@ -186,7 +196,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       : entry.kind === 1 && entry.shipKind
         ? shipArtHandleForEntity(ctx.art, spriteKey, entry.shipKind, entry.faction)
         : entry.kind === 2 && entry.shipKind
-          ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle)
+          ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle, ctx.art.structLivery === true ? mirror.structures?.get(entityId)?.owner : undefined)
           : entry.kind === 3 && entry.shipKind
             ? scrapHandleFor(ctx.art, spriteKey, entry.shipKind, entry.componentIndex ?? 0)
             : null;
@@ -245,7 +255,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // Structures (pose-core kind 2): a per-subtype tinted polygon read from
         // the shared shipKind byte (structures plan, Phase 2).
         const stKind = entry.shipKind, stRadius = entry.radius;
-        sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius));
+        sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius, 1, ctx.art.structStyle));
         // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
         // at its `miningRange` radius. Built HERE (the once-per-sprite create
         // path, invariant #14 — never per-frame) and parented to the body so it
@@ -257,8 +267,11 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         if (entry.shipKind === 'capital') sprite.addChild(buildCapitalResourceText(entry.radius));
         // Phase-1 issue 7 — a power store (Battery, Battery Bank) shows its
         // stored power as a world-space number (the doc's "actual numbers for
-        // the stored capacity").
-        if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0) sprite.addChild(buildBatteryChargeText(entry.radius));
+        // the stored capacity"). Not with the new look on: its cells light
+        // up on the body instead (socket-nub overlay, Stage 4 F1 step C).
+        if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0 && !(ctx.socketNubs === true && hasBodyStatus(entry.shipKind))) {
+          sprite.addChild(buildBatteryChargeText(entry.radius));
+        }
         // Phase-1 issue 2 — every structure carries an (initially empty)
         // build-ETA countdown child, shown only while it's an unbuilt blueprint.
         sprite.addChild(buildBuildEtaText(entry.radius));
@@ -383,6 +396,17 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         ctx.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.displayMountAngles ?? entry.mountAngles);
       }
     } else if (entry.kind === 2) {
+      // Restyle 2c: pose the structure's rig (visible structures only); its
+      // parts hang off this sprite and `shipContainer` (structureRigs.ts).
+      let rigView: StructureRigView | null = null;
+      if (rigs !== undefined) {
+        if (sprite.visible) {
+          const row = mirror.structures?.get(entityId);
+          rigView = rigs.update(spriteKey, entry.shipKind, sprite, lerped.x, lerped.y, lerped.angle, row?.rigClip, rigTick, row);
+        } else rigs.hide(spriteKey);
+      }
+      // 0d slice 10: socket nubs, redrawn only when the used sockets change.
+      if (ctx.socketNubs === true && sprite.visible) updateSocketNubs(sprite, entry.shipKind, mirror.structures?.get(entityId));
       // Structures (turret 'barrel' / miner 'drill') carry a mounts entry in
       // the catalogue but NO mountAngles on any wire — the snapshot
       // `structures[]` slice ships only turretTargetId / miningTargetId. So
@@ -391,7 +415,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       // Y-flip the player/drone mounts use (Invariant #12 consistency).
       const sk = getStructureKind(entry.shipKind);
       const structMounts = sk.mounts ?? EMPTY_MOUNTS;
-      ctx.mountVisuals.ensureForMounts(spriteKey, sk.id, structMounts, sk.color, sprite);
+      const mountCluster = ctx.mountVisuals.ensureForMounts(spriteKey, sk.id, structMounts, sk.color, sprite);
+      // A pop-up turret's mount rides its rig's slide part (angle unchanged, #12).
+      if (rigView !== null) rigView.placeMount(mountCluster);
       if (structMounts.length > 0) {
         const st = mirror.structures?.get(entityId);
         const targetId = st?.turretTargetId ?? st?.miningTargetId;
@@ -529,4 +555,5 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // Sleeping entries stop interpolating; their pose is whatever the
     // server last shipped.
   }
+  rigs?.sweep(); // free the rigs of structures gone this frame
 }

@@ -108,7 +108,7 @@ describe('SectorRoom integration — placement rejects asteroid overlap (C2)', (
     const pose = rec.lastBroadcast, { hw, hh } = structureHalfExtents('connector', 0);
     const rock: GridObstacle = { x: pose.x, y: pose.y, radius: rec.radius, angle: pose.angle, parts: [rec.vertices!] };
     const circleOnly: GridObstacle = { x: pose.x, y: pose.y, radius: rec.radius };
-    const at = (id: string, x: number, y: number): GridNode => ({ id, x, y, radius: Math.max(hw, hh), halfW: hw, halfH: hh, isHub: true, isCapital: false, isConnector: true, maxConnections: 6, powerOutput: 0, powerConsumption: 0, isConstructed: false });
+    const at = (id: string, x: number, y: number): GridNode => ({ id, kind: 'connector', x, y, rot: 0, radius: Math.max(hw, hh), halfW: hw, halfH: hh, isHub: true, isCapital: false, isConnector: true, maxConnections: 6, powerOutput: 0, powerConsumption: 0, isConstructed: false });
     // Candidate spots around the rock that placement (outline narrow phase) accepts.
     const spots: { x: number; y: number }[] = [];
     for (let k = 0; k < 72; k++) {

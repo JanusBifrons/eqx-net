@@ -52,6 +52,7 @@ export function createRendererFeedback(): RendererFeedback {
     fleetPickSeq: 0,
     fleetPickResult: null,
     placementPreviewConnectionCount: 0,
+    placementPreviewTooShortCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
     hoveredPickId: null,

@@ -27,7 +27,8 @@ import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import type { SectorRoomOptions } from './sectorRoomOptions.js';
 import { StructuresSliceSync } from './structuresSlice.js';
-import { seedRoomStartup, seedScaleGrid, seedScenarioScrap, seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
+import { seedScaleGrid, seedScenarioScrap, seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
+import { seedRoomStartup } from './roomStartupSeed.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -72,7 +73,6 @@ import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js'
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
-import { CARGO_ACCESS_RANGE } from '../../shared-types/messages/cargoMessages.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerRoomFeatures } from './features/index.js';
@@ -80,12 +80,14 @@ import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { seedAlienGates, seedPocketPads, type NpcGateSeedHost, type TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
 import { getTeleportBroker, type TeleportRoom } from '../teleport/TeleportBroker.js';
-import { isNpcBasesDisabled, npcBaseTrade, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost } from '../bases/NpcBaseSubsystem.js';
+import { isNpcBasesDisabled, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost } from '../bases/NpcBaseSubsystem.js';
 import { hashString } from '../../core/bases/baseProfile.js';
 import { nearestClearPoint } from '../../core/bases/baseSite.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites.js';
-import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
+import type { CraneHaulJob, NpcBaseTrade } from '../economy/convoyRoom.js';
+import { npcBaseTrade } from '../economy/npcBaseTrade.js';
+import { buildStructureRigs, type StructureRigs } from './features/structureRigs.js';
 import { LAUNCH_COSTS_ON } from '../../shared-types/launch.js';
 import { chargeLaunchFor } from './launchGate.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
@@ -249,10 +251,11 @@ import { LootSearch } from '../cargo/LootSearch.js';
 import { dropTestPodRow } from '../cargo/cargoWindow.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
-import { StorageService, fittedModuleIds, isOperationalStorage, structureUid } from '../cargo/StorageService.js';
+import { StorageService } from '../cargo/StorageService.js';
+import { fittedModuleIds, isOperationalStorage, structureUid } from '../cargo/storageHolds.js';
 import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount } from '../../core/cargo/hold.js';
 import { liveSectorHolder } from '../livingworld/RobotTerritory.js';
-import { territoryLockRefusal } from '../structures/territoryLockRules.js';
+import { sectorHeldBy, territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
 import { DEATH_POD_PUSH, deathHullLoot } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
@@ -588,7 +591,7 @@ export class SectorRoom extends Room<SectorState> {
     now: () => this.gameClock.now(),
     canContinue: (actor, sid) => {
       const rec = this.structureRegistry.get(sid);
-      if (rec !== undefined) return this.pilotNear(actor, rec);
+      if (rec !== undefined) return this.breakInHooks.pilotNear(actor, rec);
       // C3 — a ship: its LIVE pose (a target flying away ends it).
       const t = this.breakInHooks.shipTargetById(sid);
       return t !== null && this.breakInHooks.pilotNearPoint(actor, t.x, t.y, t.radius);
@@ -639,10 +642,17 @@ export class SectorRoom extends Room<SectorState> {
   /** Reused `WRECK_RIGID_IMPULSE` command (a hit during the crack hold, #14). */
   private readonly _wreckRigidImpulseCmd: { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number } =
     { type: 'WRECK_RIGID_IMPULSE', entityIds: [], jx: 0, jy: 0, px: 0, py: 0 };
-  /** The hulls that collect loot: the pickup pass, a pod's hull contact, auto-deposit (and its dwell state, `manualCargo`). */
+  /** The hulls that collect loot: the pickup pass, a pod's hull contact, auto-deposit (and the hand-moved set, `manualCargo`). */
   private readonly lootCollectors = new LootCollectors({ sectorKey: () => this.sectorKey, pilots: this.playerToSlot, activeShip: (pid) => this.getActiveShip(pid), hasHold: (id) => this.hasHold(id), pilotPose: (pid) => this.shipPoseCache.get(pid), cargoCapacity: (k, id) => this.shipCargoCapacity(k, id), swarm: this.swarmRegistry, sab: () => this.sabF32,
-    structureCount: () => this.structureRegistry.size, storage: () => this.storage, shipHold: (id) => this.loot.shipHold(id), serverTick: () => this.serverTick,
     playerToSession: () => this.playerToSession, clients: () => this.clients });
+  /** Structure-restyle rigs (`features/structureRigs.ts`): rig clips + sandbox scene hooks (`RigScene`), auto-deposit + crane bays (`CraneBays`). */
+  private readonly rigs = buildStructureRigs({
+    structures: () => this.structureRegistry, swarm: () => this.swarmRegistry, lootCollectors: this.lootCollectors, sab: () => this.sabF32,
+    serverTick: () => this.serverTick, post: (cmd) => this.postToWorker(cmd), state: () => this.state as SectorState,
+    registerAi: (id, slot, b) => this.aiController.register(id, slot, b), storage: () => this.storage, shipHold: (id) => this.loot.shipHold(id),
+  });
+  /** `RigScene.start`: start / clear a structure's rig clip (integration tests). */
+  startStructureRigClip(...a: Parameters<StructureRigs['rigScene']['start']>): boolean { return this.rigs.rigScene.start(...a); }
   /** Placed-structure bookkeeping (structures plan, Phase 2). */
   private readonly structureRegistry = new StructureRegistry();
   /** Equinox Phase 9 (item 5) — sliding-window tally of recent destruction
@@ -759,6 +769,7 @@ export class SectorRoom extends Room<SectorState> {
     swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, breakIns: this.breakIns,
     structureGrid: () => this.structureGrid, shieldWalls: () => this.shieldWalls, gates: () => this.gates,
     teleporters: () => this.teleporters, internStructureOwner: (o) => this.internStructureOwner(o),
+    sectorHeldBy: () => sectorHeldBy(this.sectorKey ?? '', liveSectorHolder(this.sectorKey ?? '')),
     hostileActs: () => this.hostileActs, patrols: this.patrols, gateGuard: this.gateGuard, production: () => this.production,
     researchLabs: () => this.researchLabs, storage: () => this.storage, mineField: () => this.mineField,
     turretTargeting: () => this.turretTargeting, relationCtx: () => this.relationCtx,
@@ -1718,7 +1729,7 @@ export class SectorRoom extends Room<SectorState> {
       droneFactionOf: (id) => (this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined),
       droneWarpOf: (id) => (this.livingWorldBotHooks.npcWarps.size > 0 ? this.livingWorldBotHooks.botWarpPhase(id) : 0),
       warpingDrones: () => this.livingWorldBotHooks.npcWarps,
-      depositProgressOf: (shipInstanceId) => this.lootCollectors.depositProgress.get(shipInstanceId),
+      depositProgressOf: (shipInstanceId) => this.rigs.craneBays.progressOf(shipInstanceId),
       lockGroupsOf: (pid) => this.locks.wireFor(pid),
       lockedByOf: (pid) => this.npcLocks.wireFor(pid),
       lockedByTotalOf: (pid) => this.npcLocks.totalFor(pid),
@@ -2007,6 +2018,7 @@ export class SectorRoom extends Room<SectorState> {
       takeSlot: () => this.freeSlots.pop(),
       postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin, shipKindId, sleeping) =>
         this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(spin?.settleSpeed ? { settleSpeed: spin.settleSpeed, settleSpin: spin.settleSpin ?? 0 } : {}), ...(shipKindId !== undefined ? { shipKindId } : {}), ...(sleeping === true ? { sleeping } : {}) }),
+      postRigAttach: (id, rigId) => this.postToWorker({ type: 'RIG_ATTACH', id, rigId }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -2143,6 +2155,7 @@ export class SectorRoom extends Room<SectorState> {
       findNearestDrone: (x, y, range, owner) => this.turretTargeting.findNearestTurretTarget(x, y, range, owner),
       // Coastal defences — every hostile in reach, for per-mount fire control.
       turretTargets: (x, y, range, owner, out) => this.turretTargeting.collectTurretTargets(x, y, range, owner, out),
+      rigTick: () => this.serverTick, // restyle 2h: a stowed pop-up turret holds fire
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       // Friendly fire: a turret beam lands on the first thing in its path.
@@ -2316,7 +2329,7 @@ export class SectorRoom extends Room<SectorState> {
         this.testWalletSeed = Math.max(0, Math.floor(g.credits ?? 0));
       }
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
-      if (roomOpts.sceneScript !== undefined) ({ runner: this.sceneRunner, tickRing: this.sceneTickRing, workerRing: this.sceneWorkerRing } = initSceneScript({ perfSource: this, serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, playerToSlot: () => this.playerToSlot, swarmSpawner: () => this.swarmSpawner, swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, swarmShield: () => this.swarmShield, swarmShieldLastDmg: () => this.swarmShieldLastDmg, aiController: () => this.aiController, broadcast: (t, m) => this.broadcast(t, m), spawnLivingWorldBot: (spec) => this.spawnLivingWorldBot(spec), snapshotRestore: this.snapshotRestore, lingeringSlots: this.lingeringSlots, fleet: this.fleet, capitalWrecks: () => this.capitalWrecks }, roomOpts.sceneScript));
+      if (roomOpts.sceneScript !== undefined) ({ runner: this.sceneRunner, tickRing: this.sceneTickRing, workerRing: this.sceneWorkerRing } = initSceneScript({ perfSource: this, serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, playerToSlot: () => this.playerToSlot, swarmSpawner: () => this.swarmSpawner, swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, swarmShield: () => this.swarmShield, swarmShieldLastDmg: () => this.swarmShieldLastDmg, aiController: () => this.aiController, broadcast: (t, m) => this.broadcast(t, m), spawnLivingWorldBot: (spec) => this.spawnLivingWorldBot(spec), snapshotRestore: this.snapshotRestore, lingeringSlots: this.lingeringSlots, fleet: this.fleet, capitalWrecks: () => this.capitalWrecks, rigSceneHooks: () => this.rigs.rigScene.sceneHooks() }, roomOpts.sceneScript));
       this.perfFixedLoad = roomOpts.perfFixedLoad === true;
       const twa = roomOpts.testWaveArrival;
       if (twa && Number.isFinite(twa.x) && Number.isFinite(twa.y)) this.testWaveArrivalPose = { x: twa.x, y: twa.y };
@@ -2519,7 +2532,7 @@ export class SectorRoom extends Room<SectorState> {
       shipTarget: (ref) => this.breakInHooks.shipTarget(ref),
       breakInMsFor: (rec) => this.breakInHooks.breakInMsFor(rec),
       breakInMsForShip: (t) => this.breakInHooks.breakInMsForShip(t),
-      pilotNear: (pid, rec) => this.pilotNear(pid, rec),
+      pilotNear: (pid, rec) => this.breakInHooks.pilotNear(pid, rec),
       pilotNearPoint: (pid, x, y, r) => this.breakInHooks.pilotNearPoint(pid, x, y, r),
       loot: () => this.loot,
       lootSearch: this.lootSearch,
@@ -3402,16 +3415,6 @@ export class SectorRoom extends Room<SectorState> {
     return true;
   }
 
-  /** C2 — does `playerId` fly a live ship (#17) within cargo range of `rec`? */
-  private pilotNear(playerId: string, rec: StructureRecord): boolean {
-    const ship = this.getActiveShip(playerId);
-    const pose = this.shipPoseCache.get(playerId);
-    if (!ship?.alive || !ship.isActive || !pose) return false;
-    const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
-    const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
-    return dx * dx + dy * dy <= CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE;
-  }
-
   /**
    * testMode `lockTimeCapS`: from now on no NON-player lock in this room takes
    * longer than `capS` seconds (NPC drones and capitals on pilots, capital
@@ -4225,7 +4228,7 @@ export class SectorRoom extends Room<SectorState> {
     return this.storage.tradeSnapshot(ownerId, networkUid);
   }
 
-  /** T2 — this room's NPC bases (and ordered player Freight Docks) for convoy planning (`bases/NpcBaseSubsystem.ts`). */
+  /** T2 — this room's NPC bases for convoy planning (`npcBaseTrade.ts`). */
   npcBaseTrade(): NpcBaseTrade[] { return npcBaseTrade(this.structureRegistry, this.storage); }
 
   /**
@@ -4258,6 +4261,11 @@ export class SectorRoom extends Room<SectorState> {
     if (this.structureRegistry.size === 0) return { x, y };
     return nearestClearPoint(x, y, this.obstacles.structureBoxes(), 150);
   }
+
+  /** 3h — ConvoyRoom: a dock's crane serves a hauler (`CraneBays.craneServe`). */
+  craneServe(botId: string, job: CraneHaulJob): 'serving' | 'none' { return this.rigs.craneBays.craneServe(botId, job); }
+  /** 3h — ConvoyRoom: drop a hauler's crane job (`CraneBays.craneCancel`). */
+  craneCancel(botId: string): void { this.rigs.craneBays.craneCancel(botId); }
 
   tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null {
     const res = this.storage.tradeTransfer(ownerId, networkUid, spec);
@@ -4655,7 +4663,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.broadcastCounter % 6 === 0) {
       this.loot.collectTick();
       // Living World P1a-2 — auto-deposit: hold position near your own storage.
-      this.lootCollectors.autoDepositTick();
+      this.rigs.craneBays.tick();
       // Fire control: advance every pilot's target locks (~10 Hz).
       this.locks.step();
       // RTS slice 5: wingmen pick their stance target, then their locks advance.
