@@ -542,7 +542,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Smelter', hp: 1800, hpMax: 1800 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
+    useUIStore.setState({ buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-recipe')).toHaveTextContent('MAKES Smelt alloy · Waiting for Minerals');
     // A smelter has one recipe: no change-recipe button (in the cog window either).

@@ -21,10 +21,10 @@ const MANAGEMENT = [
   'structure-action-deconstruct',
   'structure-action-reconnect',
   'structure-action-upgrade',
-  'structure-action-recipe',
+  'structure-action-settings',
 ] as const;
 
-/** My own built Refinery (a processor: recipe button; level 1: upgrade). */
+/** My own built Refinery (settings cog; level 1: upgrade). */
 function ownRefinery(): void {
   setGameClient({
     mirror: {
