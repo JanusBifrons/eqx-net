@@ -65,10 +65,16 @@ export interface RigPartLook {
   slot: number;
   /** The internal cable laid along an arm's lattice (the connector cable
    *  look, `lineLook=cable`, without its own cradles: the truss carries it;
-   *  with its lit sheath, so it still reads under the bright lattice):
+   *  with its plain dark sheath, like the grid cables):
    *  its body width as a fraction of each beam's own truss depth (sized
    *  per segment), so the open lattice still shows each side of it. */
   cableFill: number;
+  /** A crane arm's own steel (boom / jib lattice, slew ring, pin hubs,
+   *  chord rivets), toned to the settled grid cable: muted gunmetal, so the
+   *  arm reads as the same kit as the cables, not a bright frame. */
+  armTruss: number;
+  armRim: number;
+  armRivet: number;
 }
 
 export const RIG_LOOK_C: RigPartLook = {
@@ -78,6 +84,7 @@ export const RIG_LOOK_C: RigPartLook = {
   shadowOver: 11, shadowPlane: 6, shadowAlpha: 0.5,
   liftScaleRest: 0.88, liftScaleUp: 1.14, liftShadow: 12, liftShadowAlphaUp: 0.6,
   slot: 0x020304, cableFill: 0.36,
+  armTruss: 0x464c50, armRim: 0x5a6166, armRivet: 0x6a7277,
 };
 
 /** What a part is drawn as, read from the rig's shape (layer, joint,
@@ -183,9 +190,9 @@ function hazardEdge(ctx: GraphicsContext, a: Pt, b: Pt, c: Pt, t: number, look: 
 /** A pin hub: dark collar, machined ring, plate, bright pin. */
 function hub(ctx: GraphicsContext, x: number, y: number, r: number, look: RigPartLook): void {
   ctx.circle(x, y, r).fill({ color: look.edge });
-  ctx.circle(x, y, r * 0.78).fill({ color: look.rim });
+  ctx.circle(x, y, r * 0.78).fill({ color: look.armRim });
   ctx.circle(x, y, r * 0.5).fill({ color: look.fill });
-  ctx.circle(x, y, r * 0.22).fill({ color: look.rivet });
+  ctx.circle(x, y, r * 0.22).fill({ color: look.armRivet });
 }
 
 /** A small hard amber work lamp with a soft halo. */
@@ -287,15 +294,15 @@ function drawBeam(ctx: GraphicsContext, rig: Rig, i: number, look: RigPartLook):
   // chain) runs inside it, under the laces, pivot -> the next joint / tip.
   const cable = rigArmCable(rig, look);
   if (cable.onArm[i] === 1) {
-    drawLineLookBody(ctx, 'cable', 0, 0, cable.endX[i]!, cable.endY[i]!, 1, cable.ra[i]!, cable.rb[i]!, { size: cable.size[i]!, cradles: false, lit: true });
+    drawLineLookBody(ctx, 'cable', 0, 0, cable.endX[i]!, cable.endY[i]!, 1, cable.ra[i]!, cable.rb[i]!, { size: cable.size[i]!, cradles: false, lit: false });
   }
-  trussPolys(sink, P(s0 + 1, 0), P(s1 - 1, 0), W, look.truss, 0);
+  trussPolys(sink, P(s0 + 1, 0), P(s1 - 1, 0), W, look.armTruss, 0);
   ctx.poly(flat(rect), true).stroke({ color: look.edge, width: 2 });
-  for (const d of [-1, 1]) rivetPolys(sink, P(s0 + 6, d * (W / 2 - 1.8)), P(s1 - 6, d * (W / 2 - 1.8)), 16, 1.1, look.rivet);
+  for (const d of [-1, 1]) rivetPolys(sink, P(s0 + 6, d * (W / 2 - 1.8)), P(s1 - 6, d * (W / 2 - 1.8)), 16, 1.1, look.armRivet);
   if (atBase) {
     // Slew-ring turntable over the pivot, a bolt circle, the king pin.
     ctx.circle(0, 0, R).fill({ color: look.edge });
-    ctx.circle(0, 0, R * 0.9).fill({ color: look.rim });
+    ctx.circle(0, 0, R * 0.9).fill({ color: look.armRim });
     ctx.circle(0, 0, R * 0.74).fill({ color: look.fill });
     for (let k = 0; k < 12; k++) {
       const a = (k / 12) * Math.PI * 2;

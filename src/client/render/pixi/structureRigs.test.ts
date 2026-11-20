@@ -600,18 +600,23 @@ describe('the crane arm is an open lattice with the connector cable inside (rest
     expect(cable.size.every((v, i) => (cable.onArm[i] === 1) === (v > 0))).toBe(true);
   });
 
-  it.each(['freight_dock', 'capital'])('%s: the arm cable wears the lit sheath (reads under the bright lattice when idle)', (kind) => {
+  it.each(['freight_dock', 'capital'])('%s: the arm is toned to the grid cable: dark sheath, gunmetal lattice, no bright rim', (kind) => {
     const rig = rigForStructureKind(kind)!;
     const cable = rigArmCable(rig);
     for (let i = 0; i < rig.partCount; i++) {
       if (cable.onArm[i] !== 1) continue;
-      const strokes = instrs(rigPartContext(rig, i)).filter((x) => x.action === 'stroke');
-      // Two outer strands in the lit sheath, lighter than the connector's rubber.
-      expect(strokes.filter((x) => x.data.style.color === CABLE_LIT_SHEATH).length).toBe(2);
+      const all = instrs(rigPartContext(rig, i));
+      const strokes = all.filter((x) => x.action === 'stroke');
+      const fills = all.filter((x) => x.action === 'fill').map((x) => x.data.style.color);
+      // The cable inside wears the connector's plain dark sheath, not the lit one.
+      expect(strokes.some((x) => x.data.style.color === CABLE_LIT_SHEATH)).toBe(false);
+      // Lattice chords in the arm steel; none of the old bright truss / rim / rivet.
+      expect(fills).toContain(RIG_LOOK_C.armTruss);
+      for (const c of [RIG_LOOK_C.truss, RIG_LOOK_C.rim, RIG_LOOK_C.rivet]) expect(fills).not.toContain(c);
     }
   });
 
-  it('a connector link keeps its dark rubber sheath (only the arm wears the lit sheath)', () => {
+  it('a connector link keeps its dark rubber sheath', () => {
     const ctx = new GraphicsContext();
     drawLineLookBody(ctx, 'cable', 0, 0, 400, 0, 1, 20, 20);
     const strokes = instrs(ctx).filter((x) => x.action === 'stroke');
