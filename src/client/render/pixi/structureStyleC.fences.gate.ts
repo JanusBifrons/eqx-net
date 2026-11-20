@@ -22,6 +22,11 @@ import {
   AIRLOCK_END_Y, AIRLOCK_H, AIRLOCK_OPENING, AIRLOCK_POST_D, AIRLOCK_W, GATE_DEPTH, GATE_OPENING, GATE_W,
 } from '../../../shared-types/structureKinds/gatePosts.js';
 import { DOOR_LEAF_THICKNESS } from '../../../core/articulation/rigs/fences.js';
+import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
+import { DOOR_POS_MAX } from '../../../core/structures/gateGeometry.js';
+import { doorArrived, doorPosAt, type DoorSegment } from '../../../core/structures/doorMotion.js';
+import type { StructureKindId } from '../../../shared-types/structureKinds.js';
+import type { BodyStatusHook } from './structureSocketNubs.js';
 
 /** Shield-wall emitter colour (lit, powered) and its dead glass (dark). */
 export const EMIT = 0x6fe2f0;
@@ -35,9 +40,8 @@ export const DECK_LIGHT_SHUT = 0xff3a2e;
 export const DECK_LIGHT_OPEN = 0x4dff7a;
 export const DECK_LIGHT_DEAD = 0x2a1414;
 
-/** The deck light's colour: green only when the door is fully open. Pure, so
- *  the slice that reads the door state off the wire (e.g. a `BodyStatusHook`
- *  drawing over the baked strip) picks the colour the same way. */
+/** The deck light's colour: green only when the door is fully open. Pure: the
+ *  bake (always shut) and the live hook (`doorStatus`) pick it the same way. */
 export function deckLightColor(open: boolean, live = true): number {
   if (!live) return DECK_LIGHT_DEAD;
   return open ? DECK_LIGHT_OPEN : DECK_LIGHT_SHUT;
@@ -69,13 +73,70 @@ export function deckLightStrips(kind: string): readonly DeckLightStrip[] {
   return kind === 'shield_gate' ? GATE_STRIPS : kind === 'shield_airlock' ? AIRLOCK_STRIPS : [];
 }
 
-/** Bake the deck lights in their state (`open`): today always shut (red). */
-function deckLights(c: StyleCtx, open = false): void {
-  const col = deckLightColor(open, c.live);
+/** Bake the deck lights shut (red; dark glass unpowered). The live state is
+ *  drawn over them by `doorStatus` (below). */
+function deckLights(c: StyleCtx): void {
+  const col = deckLightColor(false, c.live);
   for (const s of deckLightStrips(c.kindId)) {
     glow(c, [[s.x0, s.y0], [s.x1, s.y0], [s.x1, s.y1], [s.x0, s.y1]], col, 0.95);
   }
 }
+
+// ── Live deck light (BodyStatusHook) ──────────────────────────────────────────
+
+/** One door end's light: dark (no power), red (shut or moving), green (fully
+ *  open). */
+export const DECK_END_DARK = 0;
+export const DECK_END_SHUT = 1;
+export const DECK_END_OPEN = 2;
+
+/** A door end's light from its decoded segment (`doorA` / `doorB`) at
+ *  `tick` (the rig clock): green only when heading open AND at DOOR_POS_MAX;
+ *  dark when the grid gives no power, or the door is stalled mid-travel at
+ *  level 0. A missing segment is a shut, still door. Alloc-free. */
+export function deckEndState(seg: DoorSegment | undefined, powered: boolean, tick: number): number {
+  if (!powered) return DECK_END_DARK;
+  if (seg === undefined) return DECK_END_SHUT;
+  if (seg.level === 0 && !doorArrived(seg, tick)) return DECK_END_DARK;
+  return seg.dir > 0 && doorPosAt(seg, tick) === DOOR_POS_MAX ? DECK_END_OPEN : DECK_END_SHUT;
+}
+
+/** Body-state code of a gate / airlock: 0 = not built (the bake shows), else
+ *  1 + endA + 3 * endB (DECK_END_*; a gate's endB is always 0). */
+export function deckLightCode(kind: StructureKindId, st: StructureRenderState | undefined, tick = 0): number {
+  if (st === undefined || !st.built) return 0;
+  const powered = st.powered === true;
+  const a = deckEndState(st.doorA, powered, tick);
+  const b = kind === 'shield_airlock' ? deckEndState(st.doorB, powered, tick) : 0;
+  return 1 + a + 3 * b;
+}
+
+const _deckFill = { color: 0, alpha: 1 };
+
+/** Draw `code`'s deck lights over the baked strips (cold: once per code). The
+ *  gate's two strips follow end A; the airlock's first pair end A, the second
+ *  pair end B. */
+function drawDeckLights(g: GraphicsContext, code: number, kind: StructureKindId): void {
+  if (code <= 0) return;
+  const a = (code - 1) % 3, b = Math.floor((code - 1) / 3);
+  const strips = deckLightStrips(kind);
+  for (let i = 0; i < strips.length; i++) {
+    const end = i < 2 ? a : b;
+    const sp = strips[i]!;
+    const w = sp.x1 - sp.x0, h = sp.y1 - sp.y0;
+    _deckFill.color = DECK_LIGHT_DEAD; _deckFill.alpha = 1;
+    g.rect(sp.x0, sp.y0, w, h).fill(_deckFill);
+    if (end === DECK_END_DARK) continue;
+    _deckFill.color = deckLightColor(end === DECK_END_OPEN); _deckFill.alpha = 0.3;
+    g.rect(sp.x0 - 1.5, sp.y0 - 1.5, w + 3, h + 3).fill(_deckFill);
+    _deckFill.alpha = 0.95;
+    g.rect(sp.x0, sp.y0, w, h).fill(_deckFill);
+  }
+}
+
+/** The live deck light (`BodyStatusHook`, drawn on the socket-nub overlay,
+ *  structureSocketNubs.ts), from the decoded door segments. */
+export const doorStatus: BodyStatusHook = { code: deckLightCode, draw: drawDeckLights };
 
 // ── Towers ───────────────────────────────────────────────────────────────────
 

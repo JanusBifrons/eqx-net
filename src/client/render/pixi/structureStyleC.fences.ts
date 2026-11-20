@@ -13,7 +13,8 @@ import {
 import type { RigDrawHookTable } from './structureRigLook.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
-import { EMIT, EMIT_DEAD, doorLeafContext, shieldAirlock, shieldGate } from './structureStyleC.fences.gate.js';
+import { EMIT, EMIT_DEAD, doorLeafContext, doorStatus, shieldAirlock, shieldGate } from './structureStyleC.fences.gate.js';
+import type { BodyStatusHookTable } from './structureSocketNubs.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -165,4 +166,11 @@ export const rigs: RigDrawHookTable = {
   'lock-beacon': { partArt: () => lockBeaconContext(), running: lockHolding },
   'gate-doors': { partArt: doorLeafContext },
   'airlock-doors': { partArt: doorLeafContext },
+};
+
+/** This family's live body state (`BodyStatusHook`): the gate / airlock deck
+ *  lights follow the decoded doors (docs/plans/door-power.md, slice 11). */
+export const status: BodyStatusHookTable = {
+  shield_gate: doorStatus,
+  shield_airlock: doorStatus,
 };

@@ -79,10 +79,11 @@ export function decodeStructureState(
   out.drawFull = (flags & STRUCTURE_FLAG_DRAW_FULL) !== 0 ? true : undefined;
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
   out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
-  // Door kinds: gateOpen + the rig fields carry the door segment (slice 9).
+  // Door kinds: gateOpen + the rig fields carry the door segment (slice 9),
+  // decoded into doorA / doorB (+ the scrubbed rigClip).
   const door = isDoorKind(rigKind);
   if (door) decodeDoorRow(v, out, rigKind!);
-  else clearDoorRow(v, out, rigKind);
+  else clearDoorRow(out);
   const gateAccess = v.gateAccess ?? D.gateAccess;
   out.gateAccess = gateAccess !== 0 ? gateAccess : undefined;
   const recipe = v.recipe ?? D.recipe;

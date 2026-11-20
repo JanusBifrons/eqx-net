@@ -8,8 +8,10 @@
  *     airlock interlock);
  *   - `rigClip`: the door clip scrubbed from that segment (`from` =
  *     `doorClipTime(p0)`, `rate` = clip ticks per game tick), so predWorld's
- *     leaves (`syncRigClips`) and the drawn rig pose from the same segment;
- *   - `gateOpen`: the GATE_OPEN_A / GATE_OPEN_B bits of the door heading open.
+ *     leaves (`syncRigClips`) and the drawn rig pose from the same segment.
+ * `doorA` / `doorB` are the truth (the deck lights read them too). The old
+ * GATE_OPEN_* mask on `gateOpen` fed the gate shield spans, which are gone
+ * (slice 11): it is no longer decoded.
  * Allocation-free once a row's door objects exist (#14). A late joiner gets
  * the whole door from one row (#16).
  */
@@ -57,7 +59,6 @@ export function decodeDoorRow(v: StructureStateView, out: StructureRenderState, 
     out.doorB = undefined;
   }
   decodeDoorMotion(v.gateOpen ?? D.gateOpen, v.rigStart ?? D.rigStart, v.rigHold ?? D.rigHold, seg);
-  out.gateOpen = seg.dir > 0 ? (isB ? GATE_OPEN_B : GATE_OPEN_A) : undefined;
   if (clip === undefined) {
     out.rigClip = undefined;
     return;
@@ -73,17 +74,16 @@ export function decodeDoorRow(v: StructureStateView, out: StructureRenderState, 
   r.targetY = undefined;
 }
 
-/** A row that is not (or not yet known to be) a door kind: no door fields.
- *  With the kind still unknown (no pose yet) the open bits are read from the
- *  row anyway, so walls do not flicker shut until the pose arrives. */
-export function clearDoorRow(v: StructureStateView, out: StructureRenderState, kind: string | undefined): void {
+/** A row that is not (or not yet known to be) a door kind: no door fields. */
+export function clearDoorRow(out: StructureRenderState): void {
   out.doorA = undefined;
   out.doorB = undefined;
-  out.gateOpen = kind === undefined ? doorOpenMaskOf(v) : undefined;
 }
 
 /** GATE_OPEN_* bits from a door row without its kind: clip index 1 is only
- *  ever the airlock's end B. Undefined when nothing heads open. */
+ *  ever the airlock's end B. Undefined when nothing heads open. Nothing in the
+ *  client reads it any more; kept only for the gates integration test (the
+ *  server-span slice reworks that test, then this goes). */
 export function doorOpenMaskOf(v: StructureStateView): number | undefined {
   if (((v.gateOpen ?? D.gateOpen) & DOOR_MOTION_OPEN) === 0) return undefined;
   return decodeRigClipIndex(v.rigClip ?? D.rigClip) === 1 ? GATE_OPEN_B : GATE_OPEN_A;
