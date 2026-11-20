@@ -17,6 +17,9 @@ import { isNeighbour } from '../../../core/galaxy/galaxy.js';
 import { clampToSectorBounds } from '../../../shared-types/sectorBounds.js';
 import { isLingeringHull } from '../../../core/entity/shipLiveness.js';
 import { getPlayerShipStore } from '../../db/PersistenceWorker.js';
+import { ROSTER_SOFT_GUARD } from '../../playerShips/PlayerShipStore.js';
+import { getShipKind } from '../../../shared-types/shipKinds.js';
+import { qualityHullFactor } from '../../../shared-types/blueprints.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
 import type { ShipState } from '../schema/SectorState.js';
@@ -25,6 +28,16 @@ import type { WarpTravelTracker } from '../warpTravel.js';
 import type { WingmanPilots } from './wingmanPilots.js';
 import type { HullMove } from './transitMessages.js';
 
+/** A brand-new hull parks this far from the structure it came out of, then is
+ *  nudged clear (`landingPoint`). Shared by the Shipyard and `unpack_hull`. */
+export const NEW_HULL_PARK_OFFSET = 400;
+
+/** What {@link HullHandOff.launchNewHull} did: a roster ship (`live` = also
+ *  parked in this sector now), or why nothing was created. */
+export type NewHullResult =
+  | { ok: true; shipId: string; live: boolean }
+  | { ok: false; reason: 'no_galaxy' | 'roster_full' | 'no_slot' | 'failed' };
+
 /** What the hull hand-off needs from the room; getters read the live field. */
 export interface HullHandOffHost {
   sectorKey(): string | null;
@@ -32,7 +45,8 @@ export interface HullHandOffHost {
   ships(): Pick<MapSchema<ShipState>, 'get' | 'delete'>;
   lingeringSlots: Pick<Map<string, number>, 'get' | 'has' | 'delete'>;
   lingeringPoseCache: Pick<Map<string, ShipPhysicsState>, 'delete'>;
-  freeSlots(): Pick<number[], 'push'>;
+  freeSlots(): Pick<number[], 'push' | 'length'>;
+  playerToUser: Pick<ReadonlyMap<string, string | null>, 'get'>;
   ownerlessShips: Pick<Map<string, ReturnType<typeof setTimeout> | null>, 'get' | 'delete'>;
   fleet: Pick<FleetCommandSubsystem, 'exportSquads' | 'exportShip'>;
   wingmen(): Pick<WingmanPilots, 'detachWingman'>;
@@ -149,6 +163,48 @@ export class HullHandOff {
     return placed;
   }
 
+  /**
+   * A brand-new owned hull (a Shipyard build, or an unpacked crate): ONE
+   * roster row (quality scales its hull, `qualityHullFactor`) parked clear of
+   * structures and ships near (`nearX`, `nearY`), then put in the world
+   * through the hand-off arrival path ({@link receiveHandedOffHull}): a
+   * lingering hull its owner sees in Command view, guarding where it parked
+   * (defensive), online or not. `requireLive` (the Shipyard): no free slot or
+   * a failed placement creates nothing, so the caller keeps its crate; else
+   * the roster row stays even if it could not be placed now. Galaxy rooms only.
+   */
+  launchNewHull(playerId: string, kind: string, quality: number, nearX: number, nearY: number, requireLive: boolean): NewHullResult {
+    const h = this.h;
+    const sectorKey = h.sectorKey();
+    if (sectorKey === null) return { ok: false, reason: 'no_galaxy' };
+    const store = getPlayerShipStore();
+    const roster = store.listByPlayer(playerId);
+    if (roster.length >= ROSTER_SOFT_GUARD) return { ok: false, reason: 'roster_full' };
+    if (requireLive && h.freeSlots().length === 0) return { ok: false, reason: 'no_slot' };
+    const p = clampToSectorBounds(nearX + NEW_HULL_PARK_OFFSET, nearY);
+    const l = h.landingPoint(playerId, p.x, p.y, kind, NO_SHIP);
+    const at = clampToSectorBounds(l.x, l.y);
+    const health = Math.round(getShipKind(kind).maxHealth * qualityHullFactor(quality));
+    let shipId: string;
+    try {
+      shipId = store.create({
+        playerId, userId: h.playerToUser.get(playerId) ?? roster[0]?.userId ?? null,
+        kind, sectorKey, x: at.x, y: at.y, health, hullQuality: quality,
+      }).shipId;
+    } catch {
+      return { ok: false, reason: 'failed' };
+    }
+    const live = h.freeSlots().length > 0 && this.receiveHandedOffHull({
+      shipInstanceId: shipId, playerId, kind, x: at.x, y: at.y, vx: 0, vy: 0, angle: 0, angvel: 0,
+      health, shieldDown: false, arrival: 'teleport', stance: 'defensive',
+    });
+    if (!live && requireLive) {
+      store.delete(shipId);
+      return { ok: false, reason: 'no_slot' };
+    }
+    return { ok: true, shipId, live };
+  }
+
   /** A parked hull left this sector by teleporter: drop it here without scrap,
    *  spill or audit (its hold is keyed by its id and travels with it). */
   private removeLingeringHullQuietly(shipInstanceId: string): boolean {
@@ -171,3 +227,6 @@ export class HullHandOff {
     return true;
   }
 }
+
+/** `landingPoint` with an id no ship has: the owner's own ships are obstacles too. */
+const NO_SHIP = '~new-hull';

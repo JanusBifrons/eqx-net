@@ -59,6 +59,8 @@ export interface PersistableStructure {
   prodLoaded?: boolean;
   prodProgress?: number;
   prodChunk?: PackedItem;
+  /** Build count (job 2E): outputs left (absent ⇒ repeat forever). */
+  prodCount?: number;
   /** Economy v2 W4b — placed from a packed item (build costs only time). */
   prepaid?: boolean;
   /** T4b — a Freight Dock's standing orders. */
@@ -210,6 +212,7 @@ export class SectorPersistence {
         ...(s.throttle !== undefined ? { throttle: s.throttle } : {}),
         ...(s.recipe ? { recipe: s.recipe } : {}),
         ...(s.prodLoaded ? { prodLoaded: true, prodProgress: s.prodProgress ?? 0 } : {}),
+        ...(s.prodCount !== undefined ? { prodCount: s.prodCount } : {}),
         ...(s.prodLoaded && s.prodChunk ? { prodChunk: { ...s.prodChunk, ore: { ...s.prodChunk.ore } } } : {}),
         ...(s.prepaid ? { prepaid: true } : {}),
         ...(s.freightOrders && s.freightOrders.length > 0 ? { freightOrders: s.freightOrders.map((o) => ({ ...o })) } : {}),

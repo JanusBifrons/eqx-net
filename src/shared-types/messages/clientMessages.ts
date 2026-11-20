@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RECIPE_IDS } from '../recipes.js';
+import { MAX_BUILD_COUNT } from '../production.js';
 import { StructureKindIdSchema } from '../structureKinds.js';
 import { GATE_ACCESS_IDS } from '../gateAccess.js';
 import { MountWeaponIdSchema } from '../shipKinds/types.js';
@@ -298,12 +299,15 @@ export const SetStructurePowerSchema = z
 
 /** P2b (plan soft-leaping-truffle v3) — client → server: pick the recipe a
  *  processor runs. Owner-gated server-side; a foreign / non-processor /
- *  wrong-recipe request is a silent no-op. Strict. */
+ *  wrong-recipe request is a silent no-op. Strict. Sending it again (same
+ *  recipe) resets the build count. */
 export const SetRecipeSchema = z
   .object({
     type: z.literal('set_recipe'),
     entityId: z.number().int().nonnegative(),
     recipe: z.enum(RECIPE_IDS),
+    /** Build count (job 2E): stop after this many outputs. Absent ⇒ repeat forever. */
+    count: z.number().int().min(1).max(MAX_BUILD_COUNT).optional(),
   })
   .strict();
 
