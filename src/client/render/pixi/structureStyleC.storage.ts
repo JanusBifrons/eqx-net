@@ -15,6 +15,7 @@ import type { GraphicsContext } from 'pixi.js';
 import type { BodyStatusHook, BodyStatusHookTable } from './structureSocketNubs.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { getStructureKind, type StructureKindId } from '../../../shared-types/structureKinds.js';
+import { unpoweredCode } from './structureStyleC.fences.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -137,6 +138,35 @@ function windowGlass(c: StyleCtx, r: () => number): number {
   return r() < 0.78 ? WINDOW_WARM : WINDOW_DIM;
 }
 
+/** The habitat's window glass shapes at scale `k` (pod rows, then the hub
+ *  ring): the bake lights them, the unpowered overlay deadens them. */
+export function habitatWindows(k: number): Pt[][] {
+  const out: Pt[][] = [];
+  for (const sy of [-1, 1]) {
+    for (const sx of [-1, 1]) {
+      const cx = sx * 106 * k, cy = sy * 58 * k;
+      for (let x = -28; x <= 28; x += 11) out.push(chamferBox(cx + x * k - 4 * k, cy + sy * 16 * k - 2.5 * k, 8 * k, 5 * k, 1.2));
+    }
+  }
+  for (let i = 0; i < 12; i++) out.push(ringSlit((i + 0.5) * (Math.PI / 6), 38 * k, 10 * k, 4 * k));
+  return out;
+}
+
+/** The spire's tiers: outer radius, lift, colour, window count. */
+const SPIRE_TIERS = [[92, 18, SLAB_DARK, 24], [66, 34, SLAB, 16], [42, 50, SLAB_LIGHT, 12]] as const;
+/** The spire's beacon glass radius. */
+const SPIRE_BEACON_R = 4;
+
+/** The spire's window slits at scale `k`, per tier (outer first). */
+export function spireWindows(k: number): Pt[][][] {
+  return SPIRE_TIERS.map(([rad, , , nWin]) => {
+    const wr = rad * 0.84 * k;
+    const tier: Pt[][] = [];
+    for (let w = 0; w < nWin; w++) tier.push(ringSlit(((w + 0.5) * Math.PI * 2) / nWin, wr, wr * 0.16, 4 * k));
+    return tier;
+  });
+}
+
 /** Habitat (`habitat_module`, drawn for 360 x 240, scaled by the short
  *  side): a lived-in crew module. An octagonal central hub (a ring of warm
  *  window slits round a crane-yellow access hatch) carries four chamfered
@@ -170,9 +200,6 @@ function habitat(c: StyleCtx): void {
       const pod = core(c, chamferBox(cx - 42 * k, cy - 25 * k, 84 * k, 50 * k, 12 * k), mixColor(SLAB, STEEL, 0.2), 22, Math.PI / 2);
       wornStripe(c, pod, 0, cx - sx * 30 * k, 6 * k, 80 + n);
       rivets(c, [cx - 30 * k, cy - sy * 18 * k], [cx + 30 * k, cy - sy * 18 * k], 10 * k, 1.8 * k);
-      for (let x = -28; x <= 28; x += 11) {
-        glow(c, chamferBox(cx + x * k - 4 * k, cy + sy * 16 * k - 2.5 * k, 8 * k, 5 * k, 1.2), windowGlass(c, r), 0.85);
-      }
       poly(c, chamferBox(cx - 10 * k, cy - 7 * k, 20 * k, 14 * k, 4 * k), SLAB_DARK, 'metal', 24, 1);
       n++;
     }
@@ -180,7 +207,7 @@ function habitat(c: StyleCtx): void {
   // The hub: an octagonal slab, a ring of window slits, the access hatch.
   const hub = core(c, ngon(0, 0, 48 * k, 8, Math.PI / 8), SLAB_LIGHT, 30, 0);
   wornStripe(c, hub, Math.PI / 2, -30 * k, 6 * k, 90);
-  for (let i = 0; i < 12; i++) glow(c, ringSlit((i + 0.5) * (Math.PI / 6), 38 * k, 10 * k, 4 * k), windowGlass(c, r), 0.85);
+  for (const w of habitatWindows(k)) glow(c, w, windowGlass(c, r), 0.85);
   poly(c, ngon(0, 0, 24 * k, 8, Math.PI / 8), SOOT, 'metal', -3, 1.5);
   poly(c, ngon(0, 0, 19 * k, 16), SLAB, 'metal', 6, 2, { roof: [2, 6 * k] });
   poly(c, strip([-15 * k, 0], [15 * k, 0], 5 * k), STEEL, 'metal', 9, 1);
@@ -213,13 +240,10 @@ function spire(c: StyleCtx): void {
   }
   const base = core(c, ngon(0, 0, 92 * k, 8, Math.PI / 8), SLAB_DARK, 18, Math.PI / 2);
   for (const s of [-1, 1]) wornStripe(c, base, Math.PI / 2, s * 72 * k, 7 * k, 30 + s);
-  const tiers = [[92, 18, SLAB_DARK, 24], [66, 34, SLAB, 16], [42, 50, SLAB_LIGHT, 12]] as const;
-  for (const [i, [rad, lift, col, nWin]] of tiers.entries()) {
+  const wins = spireWindows(k);
+  for (const [i, [rad, lift, col]] of SPIRE_TIERS.entries()) {
     if (i > 0) core(c, ngon(0, 0, rad * k, 8, Math.PI / 8), col, lift, i % 2 ? 0 : Math.PI / 2);
-    const wr = rad * 0.84 * k;
-    for (let w = 0; w < nWin; w++) {
-      glow(c, ringSlit(((w + 0.5) * Math.PI * 2) / nWin, wr, wr * 0.16, 4 * k), windowGlass(c, r), 0.85);
-    }
+    for (const w of wins[i]!) glow(c, w, windowGlass(c, r), 0.85);
     if (i < 2) rivets(c, [-rad * 0.36 * k, -rad * 0.66 * k], [rad * 0.36 * k, -rad * 0.66 * k], 9 * k, 1.6 * k);
   }
   for (const s of [-1, 1]) poly(c, chamferBox(-6 * k, s * 54 * k - 3 * k, 12 * k, 6 * k, 1.5 * k), HAZARD, 'hazard', 36, 0.8);
@@ -228,7 +252,7 @@ function spire(c: StyleCtx): void {
   truss(c, [-30 * k, 30 * k], [30 * k, -30 * k], 7 * k, STEEL, 60);
   poly(c, ngon(0, 0, 13 * k, 8, Math.PI / 8), SOOT, 'metal', 62, 1.5);
   poly(c, ngon(0, 0, 9 * k, 8, Math.PI / 8), CRANE, 'paint', 64, 1.2);
-  glow(c, ngon(0, 0, 4 * k, 8), c.live ? BEACON_RED : WINDOW_DEAD, 0.95);
+  glow(c, ngon(0, 0, SPIRE_BEACON_R * k, 8), c.live ? BEACON_RED : WINDOW_DEAD, 0.95);
   lamp(c, 0, 0, 5 * k, BEACON_RED);
   stencil(c, '07', -12 * k, 72 * k, 12 * k);
   if (c.livery) c.sigils.push({ x: -52 * k, y: 30 * k, r: 7 * k });
@@ -299,10 +323,38 @@ function drawBayFill(g: GraphicsContext, code: number, kind: StructureKindId): v
   }
 }
 
+// ── Unpowered: the windows go dark (live body state) ───────────────────────
+
+const _dead = { color: WINDOW_DEAD, alpha: 1 };
+
+function deadGlass(g: GraphicsContext, pts: readonly Pt[]): void {
+  g.poly(pts.flatMap((p) => [p[0], p[1]]));
+  g.fill(_dead);
+}
+
+/** Unpowered habitat: every window (pods and hub ring) is dead glass; the
+ *  powered, lit art is the bake. */
+function drawHabitatDark(g: GraphicsContext, code: number, kind: StructureKindId): void {
+  if (code !== 1) return;
+  const fp = getStructureKind(kind).footprint;
+  for (const w of habitatWindows(Math.min(fp.w, fp.h) / 240)) deadGlass(g, w);
+}
+
+/** Unpowered spire: every tier's windows and the beacon glass go dead. */
+function drawSpireDark(g: GraphicsContext, code: number, kind: StructureKindId): void {
+  if (code !== 1) return;
+  const fp = getStructureKind(kind).footprint;
+  const k = Math.min(fp.w, fp.h) / 240;
+  for (const tier of spireWindows(k)) for (const w of tier) deadGlass(g, w);
+  deadGlass(g, ngon(0, 0, SPIRE_BEACON_R * k, 8));
+}
+
 /** This family's live body state (`BodyStatusHook`, drawn on the socket-nub
  *  overlay, structureSocketNubs.ts): the fill gauges from the row's
- *  `fillPct`. */
+ *  `fillPct`, and the crew modules' windows dark with no power. */
 export const status: BodyStatusHookTable = {
+  habitat_module: { code: unpoweredCode, draw: drawHabitatDark } satisfies BodyStatusHook,
+  tower_module: { code: unpoweredCode, draw: drawSpireDark } satisfies BodyStatusHook,
   storage_vault: { code: vaultCode, draw: drawVaultFill } satisfies BodyStatusHook,
   cargo_bay: { code: bayCode, draw: drawBayFill } satisfies BodyStatusHook,
 };

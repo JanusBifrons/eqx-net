@@ -135,8 +135,9 @@ export const kinds: StyleDrawerTable = {
 
 /** 1 = a built pylon / lock with no power, else 0 (the powered, lit art is
  *  the bake and never re-bakes). Reads the same `powered` row flag as the
- *  no-power bolt (ConnectorRenderer). */
-function unpoweredCode(_kind: StructureKindId, st: StructureRenderState | undefined): number {
+ *  no-power bolt (ConnectorRenderer). Shared by every family whose lights go
+ *  dark unpowered. */
+export function unpoweredCode(_kind: StructureKindId, st: StructureRenderState | undefined): number {
   return st !== undefined && st.built && st.powered === false ? 1 : 0;
 }
 
