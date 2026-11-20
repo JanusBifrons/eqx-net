@@ -337,7 +337,9 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
   }),
   build_interceptor: r({
     id: 'build_interceptor', displayName: buildName('interceptor'),
-    inputs: { alloy: 12, components: 4, electronics: 3 }, outputs: [{ hull: 'interceptor' }],
+    // PLAYTEST (owner 2026-11-20): minerals only, so a base with a refinery and a
+    // shipyard can build it. Was alloy 12, components 4, electronics 3.
+    inputs: { minerals: 400 }, outputs: [{ hull: 'interceptor' }],
     cyclePulses: 40, processors: ['shipyard'], blueprintRequired: true,
   }),
   build_gunship: r({

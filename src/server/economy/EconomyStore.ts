@@ -72,6 +72,8 @@ export interface PlayerEconomy {
   /** Join flow — one-shot free capital launches left; absent = never spent
    *  one (`FREE_LAUNCHES_START`). */
   freeLaunches?: number;
+  /** Starter grant (packed Capital crate) given; absent = not yet given. */
+  starterGranted?: boolean;
   history: TradeHistoryEntry[];
   /** Value gifted to each side inside the current window (diminishing returns). */
   gifts: Record<EconAllegiance, { value: number; sinceMs: number }>;
@@ -325,6 +327,20 @@ export class EconomyStore {
     return true;
   }
 
+  /** The once-only starter grant: given yet? (starterGrant.ts) */
+  starterGranted(playerId: string): boolean {
+    return this.players.get(playerId)?.starterGranted === true;
+  }
+
+  /** Mark the starter grant given in memory and return the player-row op
+   *  (NOT enqueued): it rides the SAME atomic group as the hold write. */
+  markStarterGranted(playerId: string): PersistOp {
+    const pe = this.player(playerId);
+    pe.starterGranted = true;
+    pe.econVersion++;
+    return this.playerOp(playerId);
+  }
+
   /** An NPC faction's treasury (tolls it collected). */
   treasury(faction: string): number {
     return this.treasuries.get(faction) ?? 0;
@@ -525,6 +541,7 @@ function parsePlayer(json: string): PlayerEconomy | null {
     if (typeof raw.freeLaunches === 'number' && Number.isFinite(raw.freeLaunches)) {
       pe.freeLaunches = Math.max(0, Math.min(FREE_LAUNCHES_START, Math.floor(raw.freeLaunches)));
     }
+    if (raw.starterGranted === true) pe.starterGranted = true;
     if (Array.isArray(raw.history)) pe.history = raw.history.slice(0, HISTORY_CAP);
     if (raw.gifts) for (const a of ECON_ALLEGIANCES) if (raw.gifts[a]) pe.gifts[a] = { ...raw.gifts[a] };
     if (raw.volume) pe.volume = { ...raw.volume };
