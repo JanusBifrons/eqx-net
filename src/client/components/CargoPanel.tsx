@@ -62,7 +62,15 @@ const BANNER_SX = {
   fontSize: 11, color: C.manual, border: '1px solid rgba(255,176,46,0.4)', backgroundColor: 'rgba(255,176,46,0.08)',
   px: 1, py: '5px', borderRadius: '5px', mt: 1, display: 'flex', flexDirection: 'column' as const, gap: '4px',
 };
-const LIST_SX = { display: 'flex', flexDirection: 'column' as const, gap: '2px', maxHeight: 110, overflowY: 'auto' as const };
+/** A market list fills its pane's height and scrolls only when its rows are
+ *  taller than the window gives it (a sideways phone has ~220 px to spare). */
+const LIST_SX = { display: 'flex', flexDirection: 'column' as const, gap: '2px', flex: '1 1 auto', minHeight: 0, overflowY: 'auto' as const };
+/** A market pane: a column whose list takes the room under its title. */
+const PANE_SX = { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' as const };
+/** The two market panes stand side by side at the body's full height. */
+const MARKET_BODY_SX = { ...BODY_SX, flexDirection: 'row' as const, alignItems: 'stretch' as const };
+/** Standing orders (at most six) sit under the market: a short list, capped. */
+const ORDERS_LIST_SX = { ...LIST_SX, flex: 'none', maxHeight: 110 };
 const ROW_SX = {
   display: 'flex', alignItems: 'center', gap: '3px', px: 0.5, py: '1px', borderRadius: '3px',
   border: EDGE, backgroundColor: 'rgba(20,30,48,0.9)',
@@ -218,9 +226,9 @@ function Pane({ title, rows, verb, testPrefix, onMove, prices }: {
   };
   const tradable = (r: CargoRow): boolean => r.key.startsWith('g:') && prices[r.key.slice(2)] !== undefined;
   return (
-    <Box sx={{ flex: 1, minWidth: 0 }}>
+    <Box sx={PANE_SX}>
       <Box sx={PANE_TITLE_SX}>{title}</Box>
-      <Box sx={LIST_SX}>
+      <Box sx={LIST_SX} data-testid={`cargo-${testPrefix}-list`}>
         {rows.length === 0 && <Box sx={EMPTY_SX}>Empty</Box>}
         {rows.map((r) => (
           <Box key={r.key} sx={ROW_SX} data-testid={`cargo-${testPrefix}-row`} data-key={r.key} data-count={r.count}>
@@ -256,7 +264,7 @@ function FreightOrders({ entityId, orders }: { entityId: number; orders: Freight
   return (
     <Box data-testid="freight-orders" sx={{ px: 1.5, pb: 1 }}>
       <Box sx={PANE_TITLE_SX}>Standing orders (convoys fill them)</Box>
-      <Box sx={LIST_SX}>
+      <Box sx={ORDERS_LIST_SX}>
         {orders.length === 0 && <Box sx={EMPTY_SX}>None</Box>}
         {orders.map((o) => (
           <Box key={o.good} sx={ROW_SX} data-testid="freight-order" data-good={o.good} data-mode={o.mode} data-level={o.level}>
@@ -499,7 +507,7 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship, title, subt
       )}
 
       {state?.open === true && !peek && !own && market !== undefined && (
-        <Box sx={{ ...BODY_SX, flexDirection: 'row' }}>
+        <Box sx={MARKET_BODY_SX}>
           <Pane title="For sale" rows={here} verb="Buy" testPrefix="here" onMove={(items) => sendCargoMove(target, 'take', items)} prices={market.buy} />
           <Pane
             title={`Aboard · ${Math.round(state.shipCapacity)} capacity`} rows={aboard} verb="Sell" testPrefix="aboard"

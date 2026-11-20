@@ -164,6 +164,18 @@ describe('CargoPanel (C1)', () => {
     expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'put', items: { goods: { salvage: 3 } } });
   });
 
+  it('a market list fills its pane and scrolls only past the window, never a fixed 110 px', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: { salvage: 2 } } })));
+    for (const id of ['cargo-here-list', 'cargo-aboard-list']) {
+      const css = getComputedStyle(screen.getByTestId(id));
+      expect(css.maxHeight).not.toBe('110px');
+      expect(css.flexGrow).toBe('1');
+      expect(css.minHeight).toBe('0px');
+      expect(css.overflowY).toBe('auto');
+    }
+  });
+
   it('T4b: your own Freight Dock shows standing orders; add and remove send set_freight_orders', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({ orders: [{ good: 'alloy', mode: 'import', level: 200 }] })));
