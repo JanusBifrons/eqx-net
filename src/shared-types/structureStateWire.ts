@@ -18,7 +18,8 @@
  */
 export const STRUCTURE_OUT_OF_INTEREST_FULL_EVERY = 5;
 
-/** `StructureState.flags` bits. */
+/** `StructureState.flags` bits. The field is a uint16: it was a uint8 until
+ *  the eight bits ran out at BREACH. */
 export const STRUCTURE_FLAG_BUILT = 1;
 export const STRUCTURE_FLAG_POWERED = 2;
 export const STRUCTURE_FLAG_DECONSTRUCTING = 4;
@@ -34,6 +35,10 @@ export const STRUCTURE_FLAG_NO_FUEL = 32;
 export const STRUCTURE_FLAG_DRAW_FULL = 64;
 /** C2 — someone is breaking into this structure's cargo right now. */
 export const STRUCTURE_FLAG_BREACH = 128;
+/** F2 — a built Territory Lock whose owner's side holds its sector right now
+ *  (its beacon dish turns only then). Derived on every sync, never an event,
+ *  so a late joiner reads it from the row (#16). */
+export const STRUCTURE_FLAG_LOCK_HOLDING = 256;
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;

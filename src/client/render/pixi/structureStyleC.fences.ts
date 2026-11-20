@@ -4,16 +4,19 @@
  * This family's drawings live only here; `kinds` is spread into `STYLE_C`
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
+import { GraphicsContext } from 'pixi.js';
 import {
   LAMP_AMBER, LAMP_WHITE, RIVET, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, chamferBox, core, deck, glow, lamp,
   ngon, poly, rivets, stencil, strip, wornStripe, type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
+import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
+import { getStructureKind } from '../../../shared-types/structureKinds.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'f2lk';
+export const version = 'f2lb';
 
 /** Shield-wall emitter colour (lit, powered) and its dead glass (dark). */
 const EMIT = 0x6fe2f0;
@@ -58,8 +61,9 @@ function shieldPylon(c: StyleCtx): void {
  *  three pairs of antenna fins either side, tapering toward the ends, each
  *  tipped with claim-teal emitter heads; a chamfered lantern tower in the
  *  middle with lit slots above and below a round beacon seat. The beacon (a
- *  dish on a sweep arm) is drawn static here: the client does not yet know
- *  whether the lock holds its sector, so it cannot turn only while holding. */
+ *  dish on a sweep arm) is the `lock-beacon` rig's part (`lockBeaconContext`):
+ *  it turns only while the lock holds its sector; the hub it turns round
+ *  stays here. */
 function territoryLock(c: StyleCtx): void {
   const { W, H } = c;
   const k = Math.min(W / 400, H / 300);
@@ -98,11 +102,8 @@ function territoryLock(c: StyleCtx): void {
     poly(c, ngon(Math.cos(a) * 45 * k, Math.sin(a) * 45 * k, 1.7 * k, 6), RIVET, 'metal', 28, 0.5);
   }
   poly(c, ngon(0, 0, 40 * k, 24), SOOT, 'metal', 22, 1.5);
-  // The beacon (static for now): a sweep arm with a dish, its counterweight,
-  // and the claim-teal emitter on the hub.
-  poly(c, strip([-22 * k, 0], [30 * k, 0], 8 * k), SLAB_LIGHT, 'metal', 30, 1);
-  poly(c, chamferBox(-30 * k, -9 * k, 12 * k, 18 * k, 3 * k), SLAB, 'metal', 31, 1);
-  poly(c, [[24 * k, -20 * k], [34 * k, -14 * k], [36 * k, 0], [34 * k, 14 * k], [24 * k, 20 * k], [28 * k, 0]], SLAB_LIGHT, 'metal', 32, 1.2);
+  // The beacon's hub and its claim-teal emitter (the arm and dish that turn
+  // round it are the rig part, `lockBeaconContext`).
   poly(c, ngon(0, 0, 11 * k, 12), SLAB, 'metal', 33, 1);
   glow(c, ngon(0, 0, 6 * k, 12), emit, 0.95);
   c.lit(0, 0, 6 * k, c.live ? 0xd8fbff : EMIT_DEAD);
@@ -120,6 +121,46 @@ export const kinds: StyleDrawerTable = {
   territory_lock: territoryLock,
 };
 
+// The territory lock's beacon (the `lock-beacon` rig part's own art, in the
+// part's Pixi frame, centred on the hub): a sweep arm reaching out from the
+// hub's rim to a dish, with a counterweight behind. The arm starts at the
+// hub's edge, so the body's hub and emitter stay uncovered as it turns.
+// Drawn once, shared by every lock; posing only turns it. Laid out for the
+// 400 × 300 footprint, scaled like the body (`territoryLock`).
+const BEACON_ARM = 0x59626b;
+const BEACON_DISH = 0x6b747d;
+const BEACON_LIP = 0xb7c0c8;
+const BEACON_WEIGHT = 0x3c4249;
+const BEACON_EDGE = 0x0a0c0e;
+let beaconCtx: GraphicsContext | null = null;
+
+/** The shared art of every territory lock's beacon dish (built on first use). */
+export function lockBeaconContext(): GraphicsContext {
+  if (beaconCtx !== null) return beaconCtx;
+  const fp = getStructureKind('territory_lock').footprint;
+  const k = Math.min(fp.w / 400, fp.h / 300);
+  const g = new GraphicsContext();
+  // Arm out to the dish, and the short tail to the counterweight.
+  g.rect(11 * k, -4 * k, 17 * k, 8 * k).fill({ color: BEACON_ARM }).stroke({ color: BEACON_EDGE, width: 1.2 });
+  g.rect(-20 * k, -4 * k, 9 * k, 8 * k).fill({ color: BEACON_ARM }).stroke({ color: BEACON_EDGE, width: 1.2 });
+  g.roundRect(-30 * k, -9 * k, 12 * k, 18 * k, 3 * k).fill({ color: BEACON_WEIGHT }).stroke({ color: BEACON_EDGE, width: 1.2 });
+  // The dish: a shallow bowl facing out, a bright rim on its back, a feed pin.
+  g.poly([24 * k, -20 * k, 34 * k, -14 * k, 36 * k, 0, 34 * k, 14 * k, 24 * k, 20 * k, 28 * k, 0])
+    .fill({ color: BEACON_DISH }).stroke({ color: BEACON_EDGE, width: 1.4 });
+  g.moveTo(24 * k, -20 * k).lineTo(34 * k, -14 * k).lineTo(36 * k, 0).lineTo(34 * k, 14 * k).lineTo(24 * k, 20 * k)
+    .stroke({ color: BEACON_LIP, width: 1.6, alpha: 0.85 });
+  g.circle(30 * k, 0, 1.8 * k).fill({ color: 0xe8ecef, alpha: 0.9 });
+  beaconCtx = g;
+  return g;
+}
+
+/** The beacon turns while the lock holds its sector (the rig's `running` hook). */
+export function lockHolding(st: StructureRenderState | undefined): boolean {
+  return st?.lockHolding === true;
+}
+
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
  *  structureRigLook.ts); rigs not listed draw from their part roles only. */
-export const rigs: RigDrawHookTable = {};
+export const rigs: RigDrawHookTable = {
+  'lock-beacon': { partArt: () => lockBeaconContext(), running: lockHolding },
+};

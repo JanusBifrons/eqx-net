@@ -143,8 +143,9 @@ export class StructureState extends Schema {
    *  (owners are interned once per sector: a citadel's ~400 rows share one
    *  owner, so per-row id + name strings dominated the join payload). */
   @type('uint16') ownerIdx?: number;
-  /** STRUCTURE_FLAG_* bits (built / powered / deconstructing / wallActive). */
-  @type('uint8') flags?: number;
+  /** STRUCTURE_FLAG_* bits (built / powered / deconstructing / wallActive /
+   *  … / lockHolding). uint16: LOCK_HOLDING (bit 8) outgrew the uint8. */
+  @type('uint16') flags?: number;
   @type('uint8') hpPct?: number;
   @type('uint8') level?: number;
   @type('float32') netPower?: number;

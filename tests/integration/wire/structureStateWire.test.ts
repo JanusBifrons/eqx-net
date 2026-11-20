@@ -23,6 +23,8 @@ import {
   STRUCTURE_FLAG_DECONSTRUCTING,
   STRUCTURE_FLAG_POWERED,
   STRUCTURE_FLAG_WALL_ACTIVE,
+  STRUCTURE_FLAG_BREACH,
+  STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_RIG_CLIP_TARGET,
   encodeRigClip,
   decodeRigClipIndex,
@@ -225,5 +227,26 @@ describe('structure rig clip on the wire (restyle 2e, late-join safe)', () => {
     expect(decodeRigClipIndex(encodeRigClip(2, true))).toBe(2);
     expect(decodeRigClipIndex(0)).toBe(-1);
     expect(() => encodeRigClip(127, false)).toThrow();
+  });
+});
+
+describe('structure flags wire — lockHolding (F2, bit 8: past a uint8)', () => {
+  it('a holding territory lock decodes lockHolding with every lower flag intact', () => {
+    const flags = STRUCTURE_FLAG_BUILT | STRUCTURE_FLAG_POWERED | STRUCTURE_FLAG_BREACH | STRUCTURE_FLAG_LOCK_HOLDING;
+    const c = roundTrip({ '7': row({ flags }) });
+    expect(c.structures.get('7')!.flags).toBe(flags); // fails if the schema narrows back to uint8
+    const out = emptyStructureRow();
+    decodeStructureState(c.structures.get('7')!, OWNERS, out);
+    expect(out.lockHolding).toBe(true);
+    expect(out.built).toBe(true);
+    expect(out.powered).toBe(true);
+    expect(out.breach).toBe(true);
+  });
+
+  it('a lock that is not holding decodes no lockHolding', () => {
+    const c = roundTrip({ '7': row({ flags: STRUCTURE_FLAG_BUILT | STRUCTURE_FLAG_POWERED }) });
+    const out = emptyStructureRow();
+    decodeStructureState(c.structures.get('7')!, OWNERS, out);
+    expect(out.lockHolding).toBeUndefined();
   });
 });

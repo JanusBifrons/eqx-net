@@ -29,6 +29,7 @@ import {
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_FLAG_BREACH,
+  STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
   encodePlayerTurretTarget,
@@ -37,6 +38,7 @@ import {
 import { isTeleporterKind } from '../../shared-types/teleport.js';
 import { writeConnToRow, writeTeleporterRow } from '../structures/structureStateRows.js';
 import { writeRigClipRow } from '../structures/structureRigClip.js';
+import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
@@ -79,6 +81,9 @@ export interface StructuresSliceHost {
   teleporters: () => Pick<TeleporterSubsystem, 'required' | 'partnerOf' | 'pulse' | 'update'>;
   /** The room's owner interning (also used by the mine sync). */
   internStructureOwner: (owner: string) => number;
+  /** Who holds this sector now (`sectorHeldBy`; null = neutral). Read only
+   *  when the room has a Territory Lock, once per sync. */
+  sectorHeldBy: () => string | null;
   // ── The grid pulse / turret tick cadences (slice 31) ──
   hostileActs: () => Pick<HostileActLedger, 'sweep'>;
   patrols: Pick<PatrolSubsystem, 'count' | 'tick'>;
@@ -115,6 +120,7 @@ export class StructuresSliceSync {
     const gen = ++this.structureStateGeneration;
     let targets: number[] | undefined;
     const nowMs = h.gameClock.now();
+    let held: string | null | undefined; // the sector's holder, read on the first lock
     for (const rec of h.structureRegistry.all()) {
       const entityId = h.swarmRegistry.get(rec.id)?.entityId;
       if (entityId === undefined) continue; // swarm entity gone — skip
@@ -141,6 +147,9 @@ export class StructuresSliceSync {
       if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
       if (h.breakIns.breached(rec.id)) flags |= STRUCTURE_FLAG_BREACH;
       if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
+      if (rec.kind === TERRITORY_LOCK_KIND && isHoldingTerritoryLock(rec, held === undefined ? (held = h.sectorHeldBy()) : held)) {
+        flags |= STRUCTURE_FLAG_LOCK_HOLDING;
+      }
       let wallTo = -1;
       if (isShieldEmitterKind(rec.kind)) {
         // Clients derive every wall from connections + this flag (all of this

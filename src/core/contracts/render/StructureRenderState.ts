@@ -91,6 +91,9 @@ export interface StructureRenderState {
   drawFull?: boolean;
   /** C2 — someone is breaking into its cargo right now. */
   breach?: boolean;
+  /** F2 — a built Territory Lock holding its sector for its owner's side
+   *  (its beacon dish turns only then). */
+  lockHolding?: boolean;
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;
