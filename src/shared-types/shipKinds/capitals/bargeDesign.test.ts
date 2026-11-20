@@ -109,7 +109,9 @@ describe('barge look switch', () => {
 
   it.runIf(BARGE_LOOK === null)('unset: the catalogue has no barge-look kind', () => {
     expect(isShipKindId(BARGE_LOOK_KIND_ID)).toBe(false);
-    expect(SHIP_KINDS_LIST.at(-1)!.id).toBe('barge');
+    // Nothing uses the barge look: later kinds (the mining skiff) append
+    // after the barge, so check the list, not its last entry.
+    expect(SHIP_KINDS_LIST.some((k) => k.id === BARGE_LOOK_KIND_ID)).toBe(false);
     expect(Object.keys(SHIP_KINDS)).toEqual(SHIP_KINDS_LIST.map((k) => k.id));
   });
 });

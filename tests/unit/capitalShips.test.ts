@@ -80,8 +80,10 @@ describe('the catalogue capitals', () => {
     // The five classes, then (W2b) each class's style B and C hulls, then
     // (plan section 9) the fitted variants.
     const variants = [...CAPITAL_CLASS_IDS.flatMap((id) => [`${id}-b`, `${id}-c`]), 'battleship-rail', 'heavy-cruiser-beam', 'battlecruiser-lance'];
-    // The mining barge (salvage PR 15) follows them; it is no warship.
-    const warships = ids.filter((id) => id !== 'barge' && id !== 'barge-look');
+    // The mining barge (salvage PR 15) and the mining skiff (base loop 1D,
+    // a sub-cap appended after it) follow them; neither is a warship.
+    const NOT_WARSHIPS = new Set(['barge', 'barge-look', 'mining-skiff']);
+    const warships = ids.filter((id) => !NOT_WARSHIPS.has(id));
     expect(warships.slice(-18)).toEqual([...CAPITAL_CLASS_IDS, ...variants]);
     // Player capitals (owner 2026-11-17): the five classes and three fits are
     // pilotable but owned only (never a random spawn); the -b/-c styles are not.
