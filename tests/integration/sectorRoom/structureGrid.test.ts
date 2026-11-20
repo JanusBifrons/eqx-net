@@ -8,6 +8,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
+import { getStructureKind } from '../../../src/shared-types/structureKinds.js';
 
 type StructuresSlice = NonNullable<SnapshotMessage['structures']>;
 
@@ -31,6 +32,21 @@ async function placeAndWait(
     await harness.advance(40);
   }
   throw new Error(`structure ${kind} never placed`);
+}
+
+/** Pulse the grid until every structure in the slice is built (construction
+ *  time scales with the catalogue's `constructionCost`, so no fixed count),
+ *  then a few more so power settles on the finished grid. */
+function buildAll(harness: SectorTestHarness): void {
+  const internals = harness.getServerRoom()!._internals;
+  for (let i = 0; i < 1000; i++) {
+    if (internals.getStructuresSlice()?.every((s) => s.built)) {
+      for (let j = 0; j < 3; j++) internals.pulseStructureGrid();
+      return;
+    }
+    internals.pulseStructureGrid();
+  }
+  throw new Error('structures never finished building');
 }
 
 function sliceEntry(slice: StructuresSlice | undefined, entityId: number): StructuresSlice[number] | undefined {
@@ -62,13 +78,13 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     expect(sliceEntry(slice, solE)?.connTo).toContain(conE);
 
     // Drive construction to completion (connector then solar).
-    for (let i = 0; i < 60; i++) internals.pulseStructureGrid();
+    buildAll(harness);
 
     slice = internals.getStructuresSlice();
     const solEntry = sliceEntry(slice, solE)!;
     expect(solEntry.built).toBe(true);
     expect(solEntry.powered).toBe(true);
-    expect(solEntry.netPower).toBe(80); // capital 50 + solar 30
+    expect(solEntry.netPower).toBe(getStructureKind('capital').powerOutput + getStructureKind('solar').powerOutput);
     // buildPct omitted once complete.
     expect(solEntry.buildPct).toBeUndefined();
   }, 20_000);
@@ -108,7 +124,7 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     // Capture entityIds BEFORE the connector is destroyed (its swarm record
     // is gone afterwards).
     const [capE, conE, solE] = [eid(harness, cap), eid(harness, con), eid(harness, sol)];
-    for (let i = 0; i < 60; i++) internals.pulseStructureGrid();
+    buildAll(harness);
     expect(sliceEntry(internals.getStructuresSlice(), solE)?.powered).toBe(true);
 
     // Destroy the connector via the same damage entry every weapon uses.
@@ -165,7 +181,7 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const con2 = await placeAndWait(harness, room, 'connector', 0, 400);
     const sol = await placeAndWait(harness, room, 'solar', 700, 420); // nearer con1 (edge gap 238) than con2 (318)
     const [con2E, solE] = [eid(harness, con2), eid(harness, sol)];
-    for (let i = 0; i < 60; i++) internals.pulseStructureGrid();
+    buildAll(harness);
     expect(sliceEntry(internals.getStructuresSlice(), solE)?.powered).toBe(true);
 
     // Destroy the solar's hub. Phase 5: "if the connector a structure is connected
