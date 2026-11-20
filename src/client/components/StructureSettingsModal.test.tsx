@@ -107,6 +107,22 @@ describe('StructureSettingsModal', () => {
     expect(getComputedStyle(frameOf(win)).width).toBe('calc(100% - 24px)');
   });
 
+  // #1046 phone still: the cog drew ~1.5x its siblings (it missed phoneTiny).
+  // jsdom skips @media and descendant rules in getComputedStyle, so read the
+  // icon's emitted CSS: each size (xs, sm, under a phone root) must match.
+  it('the cog icon is sized like its sibling action icons, phone and desktop', () => {
+    seedTurret('me-123', true);
+    render(<EntityStatsPanel />);
+    const sizes = (id: string): string[] => {
+      const cls = [...screen.getByTestId(id).querySelector('svg')!.classList].find((c) => c.startsWith('css-'))!;
+      const css = [...document.querySelectorAll('style')].map((el) => el.textContent).join('\n');
+      return css.split('}').filter((r) => r.includes(cls) && r.includes('font-size')).map((r) => r.replace(cls, 'X').trim());
+    };
+    const sibling = sizes('structure-action-deconstruct');
+    expect(sibling).toContain('[data-hud-phone] .X{font-size:16px;');
+    expect(sizes('structure-action-settings')).toEqual(sibling);
+  });
+
   it('every building kind has the Power tab first', () => {
     expect(settingsTabsFor('turret')[0]?.id).toBe('power');
     expect(settingsTabsFor('solar')[0]?.id).toBe('power');

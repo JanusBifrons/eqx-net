@@ -83,6 +83,12 @@ export interface StructureRenderState {
   recipe?: number;
   prodState?: number;
   prodMissing?: number;
+  /** Loop 3L — the loaded cycle's progress, 0..1 (undefined = none). */
+  prodFrac?: number;
+  /** Loop 3R — the slipway bay of a Shipyard's current build (undefined =
+   *  bay 0, the bow) and how many builds are queued behind it (undefined = 0). */
+  prodBay?: number;
+  prodQueued?: number;
   /** P2d — an ammo-using turret has no munitions. */
   noAmmo?: boolean;
   /** D1 — a Reactor has no fuel (no power). */
