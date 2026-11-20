@@ -34,7 +34,9 @@ import { placementRejection } from '../../core/structures/placementRules.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure, linkReachBox } from './structureGridView.js';
 import { STARTER_STRUCTURE_KINDS, needsPackedCrate } from '../../shared-types/blueprints.js';
-import { cloneHold, isHoldEmpty, takePacked } from '../../core/cargo/hold.js';
+import { randomUUID } from 'node:crypto';
+import { cloneHold, isHoldEmpty, takePackedOfProduct } from '../../core/cargo/hold.js';
+import type { PackedItem } from '../../shared-types/items.js';
 import type { HoldStore } from '../cargo/HoldStore.js';
 import type { StorageService } from '../cargo/StorageService.js';
 
@@ -43,8 +45,8 @@ import type { StorageService } from '../cargo/StorageService.js';
  *  the structure is registered (a failed spawn spends nothing). */
 export interface PackedGateResult {
   ok: boolean;
-  /** Consume the packed item; returns its quality (null if it vanished). */
-  commit(): number | null;
+  /** Consume the packed item; returns it (null if it vanished). */
+  commit(): PackedItem | null;
 }
 
 export interface StructurePlacementHooks {
@@ -202,9 +204,14 @@ export class StructurePlacementSubsystem {
       ...(this.hooks.structureUid ? { uid: this.hooks.structureUid(owner, kindId, pos.x, pos.y) } : {}),
     };
     this.hooks.registry.add(rec);
-    const packedQuality = packed?.commit() ?? null;
+    const crateItem = packed?.commit() ?? null;
     // Economy v2 — remember the crate's quality so taking it down REPACKS it.
-    if (packedQuality !== null) rec.packedQuality = packedQuality;
+    if (crateItem !== null) rec.packedQuality = crateItem.quality;
+    // A Capital crate carries its bank: a repacked one starts the Capital with
+    // what it held, never a fresh 5,000 (pack/unpack must not print minerals).
+    if (kindId === 'capital' && crateItem?.minerals !== undefined) {
+      rec.minerals = Math.min(crateItem.minerals, kind.storageCapacity);
+    }
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot
     // whose connecting segment isn't blocked by another structure OR an asteroid
     // (incl. one with no body, over the box the links may run in). Nothing in
@@ -228,6 +235,23 @@ export class StructurePlacementSubsystem {
   }
 }
 
+/** A Capital crate holding `minerals`: one of a kind (own uid), so crates
+ *  with different banks never merge. The starter grant makes one at 5,000. */
+export function capitalCrateItem(quality: number, minerals: number): PackedItem {
+  return { product: 'structure:capital', quality, uid: `cap-${randomUUID()}`, minerals: Math.max(0, Math.floor(minerals)) };
+}
+
+/** The packed item a PREPAID structure repacks into (`onRepack`). A Capital's
+ *  crate takes its mineral bank (the bank is zeroed, so the spill that follows
+ *  holds only the goods in its hold: those drop as a pod where it stood). */
+export function repackItem(rec: StructureRecord, defaultQuality: number): PackedItem {
+  const quality = rec.packedQuality ?? defaultQuality;
+  if (rec.kind !== 'capital') return { product: `structure:${rec.kind}`, quality };
+  const item = capitalCrateItem(quality, rec.minerals);
+  rec.minerals = 0;
+  return item;
+}
+
 /** What `packedGateForBuild` reads from the room: the storage service (for
  *  committing a storage structure's hold), the hold store, the sector key
  *  (null = not roster-backed, so the hold change is not persisted) and the
@@ -249,18 +273,18 @@ export function packedGateForBuild(h: PackedGateHost, owner: string, kindId: Str
     ok: true,
     commit: () => {
       if ('rec' in src) {
-        const item = takePacked(src.rec.hold!, product);
+        const item = takePackedOfProduct(src.rec.hold!, product);
         h.storage().commitChanged([src.rec], []);
-        return item?.quality ?? null;
+        return item;
       }
       const row = h.holdStore().get(src.shipId);
       if (row === undefined) return null;
       const hc = cloneHold(row.hold);
-      const item = takePacked(hc, product);
+      const item = takePackedOfProduct(hc, product);
       const persist = h.sectorKey() !== null;
       if (isHoldEmpty(hc)) h.holdStore().commit([], [src.shipId], persist);
       else h.holdStore().commit([{ ...row, hold: hc }], [], persist);
-      return item?.quality ?? null;
+      return item;
     },
   };
 }

@@ -155,7 +155,7 @@ describe('StructurePlacementSubsystem — packed placement seam (P2b)', () => {
     hooks.sectorKey = () => sectorKey;
     hooks.packedGateForBuild = (_owner, kind) => {
       calls.push(kind);
-      return { ok, commit: () => { commits++; return 42; } };
+      return { ok, commit: () => { commits++; return { product: `structure:${kind}`, quality: 42 }; } };
     };
     return { ...h, calls, commits: () => commits };
   }
