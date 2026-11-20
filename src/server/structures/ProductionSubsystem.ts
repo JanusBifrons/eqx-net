@@ -70,6 +70,9 @@ export interface ProductionDeps {
   /** D3 — a habitation module finished a cycle: pay its owner `n` credits (taxes).
    *  The room pays a player's wallet; an NPC owner has none. */
   payCredits?(rec: StructureRecord, n: number): void;
+  /** A Shipyard finished a 'hull:<kind>': park it as a live ship owned by the
+   *  yard's owner. False = it could not; the packed crate goes to storage. */
+  launchHull?(rec: StructureRecord, kind: string, quality: number): boolean;
 }
 
 interface AppliedCache {
@@ -325,7 +328,7 @@ export class ProductionSubsystem {
     if ((rec.prodProgress ?? 0) >= eff.cyclePulses) {
       const cycle = rec.prodCycles ?? 0;
       const extra = (rec.prodYield ?? 0) > 0 && this.roll(rec.id, cycle) < (rec.prodYield ?? 0) ? 1 : 0;
-      if (!this.put(eff.outputs, extra, rec.prodQuality ?? 0)) {
+      if (!this.put(eff.outputs, extra, rec.prodQuality ?? 0, rec)) {
         rec.prodState = PROD_STATE.blocked;
         return;
       }
@@ -521,13 +524,13 @@ export class ProductionSubsystem {
    * structures fill holds by weight. Placement is planned before anything is
    * written, so a partial fit changes nothing. Storages are weighed lazily.
    */
-  private put(outputs: readonly RecipeOutput[], extra: number, quality: number): boolean {
+  private put(outputs: readonly RecipeOutput[], extra: number, quality: number, maker?: StructureRecord): boolean {
     if (!this.placeAll(outputs, extra, false, quality)) return false;
-    this.placeAll(outputs, extra, true, quality);
+    this.placeAll(outputs, extra, true, quality, maker);
     return true;
   }
 
-  private placeAll(outputs: readonly RecipeOutput[], extra: number, apply: boolean, quality: number): boolean {
+  private placeAll(outputs: readonly RecipeOutput[], extra: number, apply: boolean, quality: number, maker?: StructureRecord): boolean {
     const net = this.net;
     const free = this.free;
     const bank = this.bank;
@@ -539,6 +542,8 @@ export class ProductionSubsystem {
     }
     for (const o of outputs) {
       if ('credits' in o) continue; // D3 taxes: paid to the wallet, take no space
+      // A finished hull launches as a ship; the crate's room was still checked in planning (the fallback).
+      if (apply && maker !== undefined && 'hull' in o && this.d.launchHull?.(maker, o.hull, quality) === true) continue;
       if ('packed' in o || 'hull' in o) {
         // A packed structure, or a packed hull (W5 Shipyard): one discrete item.
         const product = 'packed' in o ? packedProduct(o.packed) : hullProduct(o.hull);

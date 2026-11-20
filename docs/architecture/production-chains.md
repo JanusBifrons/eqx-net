@@ -170,7 +170,7 @@ Locks:
 ## The Shipyard (Living World W5b)
 
 The Shipyard (960 × 600 hub, 4 links, 220 power) is the hull end of the chain. Two kinds of recipe touch it:
-- **`build_<hull>`** (`build_interceptor`, `build_gunship`, `build_heavy`, `build_missile_frigate`) runs on the Shipyard and needs the hull's blueprint (`blueprintProductFor` → `hull:<kind>`). Its output is a PACKED hull (`{ hull }`), made into storage by the same `ProductionSubsystem`.
+- **`build_<hull>`** (`build_interceptor`, `build_gunship`, `build_heavy`, `build_missile_frigate`) runs on the Shipyard and needs the hull's blueprint (`blueprintProductFor` → `hull:<kind>`). Its output (`{ hull }`) launches as a real ship: the `launchHull` dep calls `HullHandOff.launchNewHull`, which makes one roster row (hull scaled by `qualityHullFactor`) and puts it in the world through the hand-off arrival path (`receiveHandedOffHull` → `restoreLingeringHulls`): a lingering hull owned by the yard's owner, parked clear of structures and ships (`landingPoint`), guarding where it parks (defensive), in their fleet whether or not they are online. If it cannot (NPC owner, full roster, no free slot, placement refused) the packed crate goes into storage as before, so planning still reserves the crate's room and a yard with full storage blocks. Locks: `ProductionSubsystem.test.ts`, `hullLaunch.test.ts`, `tests/integration/sectorRoom/shipyard.test.ts`.
   - PLAYTEST (owner 2026-11-20): `build_interceptor` costs 400 minerals only (no alloy, components or electronics), so a base with a refinery and a Shipyard can build it. Minerals come from network holds or a Capital bank. The other hull bills are unchanged.
 - **`pack_shipyard`** runs on the Assembly Plant and packs the Shipyard itself.
 

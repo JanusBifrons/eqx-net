@@ -23,7 +23,7 @@ function rec(id: string, kind: StructureRecord['kind'], over: Partial<StructureR
   };
 }
 
-function world(recs: StructureRecord[], opts: { powered?: boolean; onBlueprintSpent?: ProductionDeps['onBlueprintSpent'] } = {}) {
+function world(recs: StructureRecord[], opts: { powered?: boolean; onBlueprintSpent?: ProductionDeps['onBlueprintSpent']; launchHull?: ProductionDeps['launchHull'] } = {}) {
   const byId = new Map(recs.map((r) => [r.id, r]));
   const ids = recs.map((r) => r.id);
   const registry = { all: () => byId.values(), get: (id: string) => byId.get(id) } as unknown as StructureRegistry;
@@ -32,6 +32,7 @@ function world(recs: StructureRecord[], opts: { powered?: boolean; onBlueprintSp
     powered: () => opts.powered ?? true,
     componentOf: () => ids,
     ...(opts.onBlueprintSpent ? { onBlueprintSpent: opts.onBlueprintSpent } : {}),
+    ...(opts.launchHull ? { launchHull: opts.launchHull } : {}),
   });
   const run = (n: number) => { for (let i = 0; i < n; i++) prod.pulse(); };
   return { prod, run };
@@ -265,6 +266,46 @@ describe('ProductionSubsystem', () => {
     prod.pulse();
     expect(comps).toBe(60); // one component lookup per processor (an array ref)
     expect(gets).toBe(ids.length); // but the network itself is collected ONCE
+  });
+});
+
+describe('ProductionSubsystem — Shipyard hull output', () => {
+  const BUILD = RECIPES.build_gunship;
+  const yardWith = () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { ...BUILD.inputs }, blueprints: [] } });
+    const yard = rec('y', 'shipyard', { x: 100, y: -200, recipe: 'build_gunship', blueprint: bp('hull:gunship', { output: 60 }) });
+    return { bay, yard };
+  };
+
+  it('shipyard hull output spawns a parked owned hull', () => {
+    const { bay, yard } = yardWith();
+    const calls: Array<{ id: string; owner: string; kind: string; quality: number }> = [];
+    const { prod, run } = world([bay, yard], { launchHull: (r, kind, quality) => { calls.push({ id: r.id, owner: r.owner, kind, quality }); return true; } });
+    run(BUILD.cyclePulses);
+    expect(calls).toEqual([{ id: 'y', owner: 'alice', kind: 'gunship', quality: 60 }]);
+    expect(bay.hold!.packed ?? []).toHaveLength(0);
+    expect(prod.cyclesCompleted).toBe(1);
+    expect(yard.prodState).toBe(PROD_STATE.running);
+  });
+
+  it('falls back to a crate when the spawn fails', () => {
+    const { bay, yard } = yardWith();
+    let calls = 0;
+    world([bay, yard], { launchHull: () => { calls++; return false; } }).run(BUILD.cyclePulses);
+    expect(calls).toBe(1);
+    expect(bay.hold!.packed).toEqual([{ product: 'hull:gunship', quality: 60 }]);
+  });
+
+  it('with no room for the fallback crate the yard blocks and launches nothing', () => {
+    const { yard } = yardWith();
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { ...BUILD.inputs }, blueprints: [] } });
+    let calls = 0;
+    const { run } = world([bay, yard], { launchHull: () => { calls++; return true; } });
+    run(1); // the cycle loads its inputs
+    bay.hold!.goods.salvage = 1_000_000; // then the store fills up
+    run(BUILD.cyclePulses);
+    expect(calls).toBe(0);
+    expect(yard.prodState).toBe(PROD_STATE.blocked);
   });
 });
 
