@@ -146,34 +146,75 @@ describe('CargoPanel (C1)', () => {
     expect(screen.getByTestId('cargo-notice').textContent).toBe('No room aboard for that.');
   });
 
-  it('T4: an NPC Freight Dock shows a market — Buy/Sell with prices, goods only', () => {
+  it('T4: an NPC Freight Dock is one list of its own goods — stock, buy, sell in fixed columns; no hold pane', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({
-      hold: { goods: { alloy: 20 }, blueprints: [], packed: [{ product: 'structure:smelter', quality: 50 }] },
-      market: { buy: { alloy: 12, salvage: 3 }, sell: { alloy: 9, salvage: 2 } },
+      hold: { goods: { alloy: 20 }, blueprints: [], packed: [{ product: 'hull:capital', quality: 50 }] },
+      market: { buy: { alloy: 12 }, sell: { alloy: 9, salvage: 2 }, packed: { 'hull:capital': 900 } },
     })));
     expect(screen.getByTestId('cargo-panel').getAttribute('data-market')).toBe('1');
-    const alloy = screen.getAllByTestId('cargo-here-row').find((r) => r.getAttribute('data-key') === 'g:alloy')!;
-    expect(alloy.querySelector('[data-testid="cargo-buy-one"]')!.textContent).toBe('Buy 1 · 12¢');
-    expect(alloy.querySelector('[data-testid="cargo-buy-all"]')!.textContent).toBe('Buy all · 240¢');
-    // A packed item has no price here: no button.
-    const packed = screen.getAllByTestId('cargo-here-row').find((r) => r.getAttribute('data-key') === 'p:structure:smelter')!;
-    expect(packed.querySelector('[data-testid^="cargo-buy"]')).toBeNull();
-    const salvage = screen.getByTestId('cargo-aboard-row');
-    fireEvent.click(salvage.querySelector('[data-testid="cargo-sell-all"]')!);
-    expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'put', items: { goods: { salvage: 3 } } });
+    expect(screen.queryByTestId('cargo-aboard-list')).toBeNull();
+    expect(screen.queryByTestId('cargo-aboard-row')).toBeNull();
+    const alloy = screen.getByTestId('trade-row-alloy');
+    expect(alloy.querySelector('[data-testid="trade-stock"]')!.textContent).toBe('20');
+    expect(alloy.querySelector('[data-testid="trade-buy-price"]')!.textContent).toBe('12¢');
+    expect(alloy.querySelector('[data-testid="trade-sell-price"]')!.textContent).toBe('9¢');
+    // Salvage: the dock buys it but sells none: "—" in the buy column, you carry 3 so sell is live.
+    const salvage = screen.getByTestId('trade-row-salvage');
+    expect(salvage.querySelector('[data-testid="trade-buy-price"]')!.textContent).toBe('—');
+    expect((screen.getByTestId('trade-buy-salvage') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId('trade-sell-salvage') as HTMLButtonElement).disabled).toBe(false);
+    // You carry no alloy: nothing to sell.
+    expect((screen.getByTestId('trade-sell-alloy') as HTMLButtonElement).disabled).toBe(true);
+    // The packed Capital is for sale (buy only).
+    const cap = screen.getByTestId('trade-row-hull:capital');
+    expect(cap.querySelector('[data-testid="trade-buy-price"]')!.textContent).toBe('900¢');
+    expect(cap.getAttribute('data-stock')).toBe('1');
+    // Same column template on every row.
+    expect(getComputedStyle(alloy).gridTemplateColumns).toBe(getComputedStyle(cap).gridTemplateColumns);
+    expect(send).not.toHaveBeenCalledWith('cargo_move', expect.anything());
   });
 
-  it('a market list fills its pane and scrolls only past the window, never a fixed 110 px', () => {
+  it('T4: tapping buy/sell fills a basket; Confirm sends the sells, then the buys, on cargo_move; ok clears it', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: { salvage: 2 } } })));
-    for (const id of ['cargo-here-list', 'cargo-aboard-list']) {
-      const css = getComputedStyle(screen.getByTestId(id));
-      expect(css.maxHeight).not.toBe('110px');
-      expect(css.flexGrow).toBe('1');
-      expect(css.minHeight).toBe('0px');
-      expect(css.overflowY).toBe('auto');
-    }
+    expect((screen.getByTestId('trade-confirm') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId('trade-buy-alloy'));
+    fireEvent.click(screen.getByTestId('trade-buy-alloy'));
+    expect(screen.getByTestId('trade-confirm').textContent).toBe('Purchase');
+    fireEvent.click(screen.getByTestId('trade-sell-salvage'));
+    expect(screen.getByTestId('trade-basket').getAttribute('data-lines')).toBe('2');
+    expect(screen.getByTestId('trade-line-buy-alloy').getAttribute('data-qty')).toBe('2');
+    expect(screen.getByTestId('trade-confirm').textContent).toBe('Confirm');
+    expect(screen.getByTestId('trade-net').getAttribute('data-net')).toBe('-22');
+    send.mockReset();
+    fireEvent.click(screen.getByTestId('trade-confirm'));
+    expect(send.mock.calls.map((c) => c[1])).toEqual([
+      { type: 'cargo_move', entityId: 9, dir: 'put', items: { goods: { salvage: 1 } } },
+      { type: 'cargo_move', entityId: 9, dir: 'take', items: { goods: { alloy: 2 } } },
+    ]);
+    act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: { salvage: 2 } }, ok: true, message: 'Sold.' })));
+    expect(screen.getByTestId('trade-basket').getAttribute('data-lines')).toBe('1');
+    act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: { salvage: 2 } }, ok: true, message: 'Bought.' })));
+    expect(screen.getByTestId('trade-basket').getAttribute('data-lines')).toBe('0');
+  });
+
+  it("T4: a deal that won't fit the hold is refused before sending, with the reason", () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({ shipCapacity: 0, market: { buy: { alloy: 12 }, sell: {} } })));
+    fireEvent.click(screen.getByTestId('trade-buy-alloy'));
+    expect((screen.getByTestId('trade-confirm') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('trade-why').textContent).toMatch(/^Won't fit: needs [\d.]+ more space$/);
+  });
+
+  it('the dock list fills the window and scrolls inside its box, never a fixed 110 px', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: { salvage: 2 } } })));
+    const css = getComputedStyle(screen.getByTestId('cargo-here-list'));
+    expect(css.maxHeight).not.toBe('110px');
+    expect(css.flexGrow).toBe('1');
+    expect(css.minHeight).toBe('0px');
+    expect(css.overflowY).toBe('auto');
   });
 
   it('T4b: your own Freight Dock shows standing orders; add and remove send set_freight_orders', () => {
