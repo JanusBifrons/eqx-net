@@ -58,10 +58,10 @@ export function rockViewOf(
   const v = ROCK_VIEW;
   if (r.fieldRock === true) {
     if (r.fieldKey === undefined || field === null) return null;
-    v.shape = 0; v.fk = r.fieldKey; v.field = field;
+    v.shape = 0; v.fk = r.fieldKey; v.field = field; v.restX = r.restX; v.restY = r.restY;
   } else {
     if (r.shapeSeed === undefined) return null;
-    v.shape = r.shapeSeed; v.fk = undefined; v.field = undefined;
+    v.shape = r.shapeSeed; v.fk = undefined; v.field = undefined; v.restX = undefined; v.restY = undefined;
   }
   v.radius = r.radius; v.resource = r.asteroidResource ?? 'rock'; v.resources = r.resources;
   return v;
@@ -163,7 +163,7 @@ export class RockCutter {
     const tick = this.d.serverTick();
     const src = k.src;
     // The view is reused: keep the field key and options now.
-    const fk = rock.fk, field = rock.field;
+    const fk = rock.fk, field = rock.field, restX = rock.restX, restY = rock.restY;
     // The breaking hit in the rock's 1× Pixi-up frame (its rest frame, y
     // flipped; scale 1). The fracture projects it onto the outline.
     hullPointInto(pose.x, pose.y, pose.angle, 1, hitX, hitY, PT);
@@ -187,17 +187,20 @@ export class RockCutter {
       src, geom, pose, pose.x, pose.y, inputs.killX, -inputs.killY, inputs.seed ^ 0x3ec7,
       src.profile.fracture?.sweepCuts === true ? 0 : (inputs.cutW ?? 0), // a swept cut burns no gap
     );
-    // Every piece carries its area's share of the ore the rock had left.
+    // Every piece carries its area's share of the ore the rock had left. A
+    // field rock's pieces also carry its ore rest frame (the field's ore is
+    // sampled there, `OreDraw.chunkYield`); a re-split hands `ore` down whole.
     const left = rock.resources ?? src.area * ASTEROID_RESOURCES_PER_AREA;
-    const ore: WreckOre = { rockId: id, resource: rock.resource, perArea: src.area > 0 ? Math.max(0, left) / src.area : 0 };
+    const ore: WreckOre = {
+      rockId: id, resource: rock.resource, perArea: src.area > 0 ? Math.max(0, left) / src.area : 0,
+      ...(fk !== undefined && restX !== undefined && restY !== undefined ? { restX, restY } : {}),
+    };
     const [wreckId, serial] = this.h.newWreck();
     const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, 0, serial, wreckId, null, fifo, id);
     if (r.ids.length === 0 && r.pods === 0) return false;
     this.rocks.delete(id);
     // A field rock is consumed: the field never cuts it whole again, and every
-    // client (a late joiner by the welcome) drops its own copy. TODO(field
-    // rock cut 1C-c): piece ore reads the field through `oreAtRest`, the
-    // rock's rest frame copied into `ore` here and on every re-split (#706).
+    // client (a late joiner by the welcome) drops its own copy.
     if (fk !== undefined) this.d.fieldRockBroken?.(fk);
     // The rock leaves through the room's normal evict path.
     this.d.removePiece(id);
