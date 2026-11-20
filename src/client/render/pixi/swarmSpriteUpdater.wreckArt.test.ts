@@ -244,6 +244,21 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
     for (const s of ctx.sprites.values()) expect((s as WreckPieceSprite).glowAlpha()).toBe(0);
   });
 
+  it('a stalled frame does not eat the break-up: age is measured at first receipt (firstTick), not the drawing frame', () => {
+    // CI (GPU-lit look on a software GL): the first frame that can draw the
+    // pieces ran ~2-3 s after they arrived, so `lastUpdateTick` was already
+    // past the break-up window and no break, blast or ripple ever played.
+    const { svc } = stubArt(battleshipArt());
+    const breaks: number[][] = [];
+    const ripples: number[][] = [];
+    const ctx = makeCtx(svc, breaks, ripples);
+    const m = mirrorFor(desc(DEATH_TICK), DEATH_TICK + 3 * 60); // drawn 3 s after death
+    for (const e of m.swarm!.values()) e.firstTick = DEATH_TICK + 2; // received 2 ticks after
+    updateSwarmSprites(m, ctx);
+    expect(breaks.length, 'the break-up plays once').toBe(1);
+    expect(maxGlow(ctx)).toBeGreaterThan(0);
+  });
+
   it('no death tick in the descriptor: starts cool', () => {
     const { svc } = stubArt(battleshipArt());
     const breaks: number[][] = [];
