@@ -13,6 +13,8 @@ import { kinds, version, rigs, TURRET_WELL } from './structureStyleC.turrets.js'
 import { structureTurrets } from '../art/turretLayout.js';
 import { structureTurretRadius } from '../../../core/combat/muzzle.js';
 import { SANDBOX_DOOR_TURRET_DEF } from '../../../core/articulation/rigCatalogue.js';
+import { buildRig, rigPartIndex } from '../../../core/articulation/rig.js';
+import { rigPartContext } from './structureRigLook.js';
 
 const GUNS = ['turret', 'laser_bolt_turret', 'autocannon_turret'] as const;
 
@@ -73,5 +75,19 @@ describe('turrets S2: style C gun bases', () => {
     const hz = ac.filter((p) => p.mat === 'hazard');
     expect(hz.length).toBeGreaterThan(0);
     for (const p of hz) for (const [, y] of p.pts) expect(y).toBeLessThan(0);
+  });
+
+  it('the beam turret hatch draws its riser and leaves in the gun-pad armour, cached per part', () => {
+    const rig = buildRig(SANDBOX_DOOR_TURRET_DEF);
+    const art = rigs[SANDBOX_DOOR_TURRET_DEF.id]!.partArt!;
+    for (const id of ['turret-lift', 'door-left', 'door-right']) {
+      const i = rigPartIndex(rig, id);
+      const ctx = art(rig, i);
+      expect(ctx, id).not.toBeNull();
+      expect(ctx, id).not.toBe(rigPartContext(rig, i));
+      expect(art(rig, i), id).toBe(ctx);
+    }
+    expect(art(rig, rig.partCount)).toBeNull();
+    expect(art(rig, rigPartIndex(rig, 'door-left'))).not.toBe(art(rig, rigPartIndex(rig, 'door-right')));
   });
 });
