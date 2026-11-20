@@ -8,7 +8,7 @@
  * the building settings window (StructureSettingsModal.tsx). A new full-screen
  * game window builds on this, never on a copy of it.
  */
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { Dialog } from '@mui/material';
 import { Z } from '../layout/zIndex';
 import { HUD } from '../hud/tokens';
@@ -51,6 +51,17 @@ export const WINDOW_BTN_BASE_SX = {
 };
 export const WINDOW_BTN_SECONDARY_SX = { ...WINDOW_BTN_BASE_SX, borderColor: C.panelEdge, color: C.ink, backgroundColor: 'transparent' };
 
+const openListeners = new Set<() => void>();
+/**
+ * Run `fn` each time a game window opens; returns the unsubscribe. The speed
+ * dial (SpeedDialMenu.tsx) collapses itself on it, so its open build menu never
+ * pokes out from under a window.
+ */
+export function onGameWindowOpen(fn: () => void): () => void {
+  openListeners.add(fn);
+  return () => { openListeners.delete(fn); };
+}
+
 export interface GameWindowProps {
   open: boolean;
   onClose: () => void;
@@ -62,6 +73,9 @@ export interface GameWindowProps {
 export function GameWindow({ open, onClose, testId, children }: GameWindowProps): JSX.Element {
   // The HUD's phone check: coarse pointer and short side < 500 px (a sideways phone too).
   const phone = useHudSize() === 'phone';
+  useEffect(() => {
+    if (open) for (const fn of openListeners) fn();
+  }, [open]);
   return (
     <Dialog
       open={open} onClose={onClose} maxWidth={false} data-testid={testId} data-game-window="1" data-window-size={phone ? 'full' : 'fit'} sx={{ zIndex: Z.modal }}

@@ -202,6 +202,12 @@ export function createObstacleBody(
 }
 
 /** The body of a projectile (`PhysicsWorld.spawnProjectile`): a sensor. */
+/** Set every collider of `body` to `groups` (hologram pass-through: a finished
+ *  blueprint goes from `BLUEPRINT_COLLISION_GROUPS` to the default). */
+export function setBodyCollisionGroups(body: RAPIER.RigidBody, groups: number): void {
+  for (let c = 0; c < body.numColliders(); c++) body.collider(c).setCollisionGroups(groups);
+}
+
 export function createProjectileBody(world: RAPIER.World, x: number, y: number, vx: number, vy: number, radius: number): RAPIER.RigidBody {
   const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
     .setTranslation(x, y)
