@@ -76,7 +76,9 @@ describe('SectorRoom integration — Capital crane bay (structure-restyle 3i)', 
     // 100 right of the bay centre: 422 from the Capital's centre, out of hover range.
     const { cap, cr, shipId } = await boot(pid, 100, 420);
 
-    expect(await until(() => clipOf(cap) === 'arm-reach', 5_000), 'a still ship on the bay draws the crane').toBe(true);
+    // The crane waits for the Capital's 4 s crate unfold (unfoldRig.ts) first.
+    expect(clipOf(cap), 'a placed Capital unfolds from its crate').toBe('unfold');
+    expect(await until(() => clipOf(cap) === 'arm-reach', 10_000), 'a still ship on the bay draws the crane').toBe(true);
     const t = cap.rigClip!.target!;
     // The crane grips the hull edge facing it (`craneGripTarget`), not the centre.
     expect(Math.hypot(t.x - 100, t.y - 420)).toBeLessThan(shipHitBound(null) + 15);
@@ -117,7 +119,7 @@ describe('SectorRoom integration — Capital crane bay (structure-restyle 3i)', 
     const { cap, cr, shipId } = await boot(pid, -340, 0);
     await harness!.advance(3_000); // past the 2 s hover dwell
     expect(aboard(shipId), 'hovering by the Capital banks nothing').toEqual(CARGO.goods);
-    expect(clipOf(cap)).toBeUndefined();
+    expect(clipOf(cap), 'only its crate unfold, never the arm').toBe('unfold');
     expect(cap.hold?.goods ?? {}).toEqual({});
     const snap = await harness!.waitForSnapshot(cr, 2_000);
     expect(snap.states?.[shipId]?.depositing, 'no deposit bar either').toBeUndefined();

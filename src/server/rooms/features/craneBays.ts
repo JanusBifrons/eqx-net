@@ -8,7 +8,7 @@
  * Docs: docs/features/loot-and-cargo.md, docs/architecture/server-thresholds.md.
  */
 import { CRANE_CARGO_IN, CRANE_CARGO_OUT, craneCargoReadout } from '../../../core/articulation/craneCargo.js';
-import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, craneBayFor, dockUnloadHoldTicks, isStillForDock, onStructureCraneBay } from '../../../core/articulation/rigCatalogue.js';
+import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, PACK_CLIP, UNFOLD_CLIP, craneBayFor, dockUnloadHoldTicks, isStillForDock, onStructureCraneBay, unfoldBusy } from '../../../core/articulation/rigCatalogue.js';
 import { holdWeight, isHoldEmpty } from '../../../core/cargo/hold.js';
 import type { Hold } from '../../../shared-types/goods.js';
 import { DEPOSIT_FLOW_STEP, DEPOSIT_WAITING } from '../../../shared-types/messages/snapshotMessages.js';
@@ -280,13 +280,15 @@ export class CraneBays {
   private dockCraneBusy(dock: StructureRecord): boolean {
     const p = dock.rigClip;
     if (p === undefined || p === null) return false;
+    // Unfolding from its crate (or packing): busy until that has played.
+    if (p.clipId === UNFOLD_CLIP || p.clipId === PACK_CLIP) return unfoldBusy(p, this.h.serverTick());
     return p.clipId !== 'arm-retract' || this.h.serverTick() - p.startTick < DOCK_CRANE_REACH_TICKS;
   }
 
   /** Abort: retract from the arm's current tip (mid-reach) or its target (holding). */
   private retractDockCrane(dock: StructureRecord): void {
     const p = dock.rigClip;
-    if (p === undefined || p === null || p.clipId === 'arm-retract') return;
+    if (p === undefined || p === null || p.clipId === 'arm-retract' || p.clipId === UNFOLD_CLIP || p.clipId === PACK_CLIP) return;
     this.h.startStructureRigClip(dock.id, 'arm-retract', rigClipTip(dock, this.h.serverTick()) ?? p.target);
   }
 

@@ -86,7 +86,8 @@ describe('SectorRoom integration — cargo access (C1)', () => {
 
     // The 2 s auto-deposit dwell would have banked it by now; it must not.
     await new Promise((res) => setTimeout(res, 3000));
-    expect(cap.rigClip?.clipId, 'the crane must not reach for a withdrawal').toBeUndefined();
+    // (A placed Capital plays its crate unfold, never an arm clip.)
+    expect(cap.rigClip?.clipId ?? 'unfold', 'the crane must not reach for a withdrawal').toBe('unfold');
     expect(getHoldStore().get(shipId)?.hold.goods.alloy, 'a withdrawal must stick').toBe(3);
   });
 

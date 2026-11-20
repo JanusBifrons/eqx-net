@@ -2545,6 +2545,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorPersistence: () => this.sectorPersistence,
       testSeedStorageHold: () => this.testSeedStorageHold,
       findPacked: (owner, product) => this.findPacked(owner, product),
+      startStructureRigClip: (id, clipId) => this.rigs.rigScene.start(id, clipId),
       logger,
       fleetMsgAllowed: (sid) => this.fleetHooks.fleetMsgAllowed(sid),
       fleet: this.fleet,

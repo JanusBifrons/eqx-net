@@ -17,6 +17,7 @@ import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parsedMessage.js';
 import { getStructureKind, isBuildableStructureKind } from '../../../shared-types/structureKinds.js';
 import { STARTER_STRUCTURE_KINDS, productName } from '../../../shared-types/blueprints.js';
+import { UNFOLD_CLIP, rigForStructureKind, rigUnfolds } from '../../../core/articulation/rigCatalogue.js';
 import {
   PlaceStructureSchema,
   RemoveStructureSchema,
@@ -34,6 +35,8 @@ export interface StructureMessageHost extends ParsedMessageHost {
   sectorKey(): string | null;
   storage(): Pick<StorageService, 'flushDirty'>;
   rebuildStructuresSlice(): void;
+  /** `RigScene.start`: start a rig clip on a structure (room state, late-join safe). */
+  startStructureRigClip(id: string, clipId: string | null): boolean;
   structurePlacement(): Pick<StructurePlacementSubsystem, 'place' | 'remove' | 'lastRefusal'>;
   structureGrid(): Pick<StructureGridSubsystem, 'reconnect' | 'clearConnections' | 'upgradeStructure'>;
   sectorPersistence(): Pick<SectorPersistence, 'persistSoon'>;
@@ -81,6 +84,10 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       // Refresh the slice so the new blueprint + its auto-connection appear on
       // the next snapshot without waiting for the 1 Hz pulse.
       h.rebuildStructuresSlice();
+      // A structure placed from its crate unfolds (unfoldRig.ts): the clip
+      // record rides its room-state row, so a late joiner sees it standing.
+      const rig = rigForStructureKind(msg.kind);
+      if (rig !== null && rigUnfolds(rig)) h.startStructureRigClip(id, UNFOLD_CLIP);
       // Campaign 6.3 — event-driven persist so a crash can't erase the
       // placement (the 60 s cadence + onDispose never run on a crash).
       h.sectorPersistence().persistSoon();
