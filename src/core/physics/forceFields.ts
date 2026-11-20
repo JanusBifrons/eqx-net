@@ -69,7 +69,8 @@ export interface TractorForceField {
    *  (shared segmentNearCircle / broadphase, PR 11); the worker trusts the
    *  list and runs no shape query (hostile review). */
   lineHalfWidth: number;
-  /** A beam-line body feels `lineFrac × F(d)` toward the muzzle, no spring. */
+  /** A beam-line body beyond `hold` feels `lineFrac × F(d)` toward the
+   *  muzzle; inside it, nothing (no spring, no pull onto the hull). */
   lineFrac: number;
   /** How many of `lineIds` are live (≤ TRACTOR_LINE_CAP). */
   lineCount: number;
@@ -123,7 +124,11 @@ export function storeForceField(prev: ForceField | undefined, src: ForceField): 
  *
  * With d = |muzzle − body| and F_mount = `f.force`:
  * - d ≥ reach (or d = 0) → nothing (returns false).
- * - beam-line body (`line`): J = lineFrac × F(d) × dt toward the muzzle.
+ * - beam-line body (`line`), d > hold: J = lineFrac × F(d) × dt toward the
+ *   muzzle. At d ≤ hold nothing: it is already as close as a load is held,
+ *   and the muzzle sits inside the emitter's hull, so pulling it on would
+ *   press it on the hull, and with no reaction on the emitter that press
+ *   would tow the emitter itself (the skiff run-away, 2026-11-20).
  * - target, d > hold: J = F(d) × dt toward the muzzle, where
  *   F(d) = F_mount × min(1, (dRef / d)²) (inverse square, capped).
  * - target, d ≤ hold: a critically damped spring resting at `hold`,
@@ -145,6 +150,7 @@ export function tractorImpulse(
   if (d >= f.reach || d <= 0 || f.force <= 0) return false;
   const ux = dx / d;
   const uy = dy / d;
+  if (line && d <= f.hold) return false;
   if (line || d > f.hold) {
     const pull = tractorPull(f.force, f.dRef, f.reach, d) * (line ? f.lineFrac : 1);
     out.x = ux * pull * dt;

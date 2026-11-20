@@ -3284,3 +3284,12 @@ Solar built in ~8 s while its label read 1m 7s. The period now lives on `Structu
 the room's pulse timer and `estimateBuildEtaMs` both read it, and `StructureGridSubsystem.test.ts`
 builds to completion at 1000/250/100 ms and checks the ETA against the pulses it really took.
 Any rate derived from a timer's period reads that timer's period, never the default constant.
+
+## 2026-11-20 — a reactionless pull on a body pressed against the emitter is a thruster
+
+The tractor has no reaction on its emitter (owner: "magic"), and its muzzle sits inside the hull. A
+beam-line body was pulled toward the muzzle even inside `hold`, so a crumb from the same cut resting on
+the skiff's bow was pressed into the hull with lineFrac × F; ship and crumb moved off together at
+~40-57 u/s, helm on Stop, the towed piece trailing at `hold`. A one-sided force law must never push a
+body into the emitter: inside `hold` a line body now feels nothing (`tractorImpulse`). Reproduce such
+bugs with the real hull and the shared pose helpers (`World.tractor.test.ts`), not two balls.
