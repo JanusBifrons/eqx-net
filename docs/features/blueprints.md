@@ -27,6 +27,11 @@ agent's production chains (plan `soft-leaping-truffle` v3).
   - Starter structures are built from minerals, exactly as before: capital,
     connector, solar, battery, miner, cargo bay, turret, shield pylon and
     shield gate.
+  - The one exception is the Capital: placing one needs a packed crate
+    (`structure:capital`), which a deconstruct gives back. The rule applies
+    only where holds exist: a room with no sector (engineering and test
+    sandboxes, no roster or hold) places a Capital without one, and its build
+    menu never locks it. Lock: `StructurePlacementSubsystem.test.ts`.
   - Starter hulls (scout, fighter, and the capital classes and fits) are always free.
 
 ## Shipped so far

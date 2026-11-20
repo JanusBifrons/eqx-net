@@ -147,16 +147,31 @@ describe('StructurePlacementSubsystem', () => {
 });
 
 describe('StructurePlacementSubsystem — packed placement seam (P2b)', () => {
-  function gated(ok: boolean, spawnOk = true) {
+  function gated(ok: boolean, spawnOk = true, sectorKey: string | null = 'A1') {
     const h = makeHarness({ spawnOk });
     const calls: string[] = [];
     let commits = 0;
-    (h.sub as unknown as { hooks: StructurePlacementHooks }).hooks.packedGateForBuild = (_owner, kind) => {
+    const hooks = (h.sub as unknown as { hooks: StructurePlacementHooks }).hooks;
+    hooks.sectorKey = () => sectorKey;
+    hooks.packedGateForBuild = (_owner, kind) => {
       calls.push(kind);
       return { ok, commit: () => { commits++; return 42; } };
     };
     return { ...h, calls, commits: () => commits };
   }
+
+  it('a room with no sector places a Capital without a crate', () => {
+    // Engineering / test sandboxes have no roster and no hold, so nobody
+    // there can hold a crate: the Capital builds as it did before crates.
+    const g = gated(false, true, null);
+    const id = g.sub.place('alice', 'capital', 0, 0, { requirePacked: true });
+    expect(id).not.toBeNull();
+    const rec = g.registry.get(id!)!;
+    expect(rec.prepaid).toBeUndefined();
+    expect(rec.isConstructed).toBe(true);
+    expect(g.calls).toEqual([]);
+    expect(g.commits()).toBe(0);
+  });
 
   it('only a player placement (requirePacked) of a non-starter kind or the Capital is checked', () => {
     const g = gated(true);

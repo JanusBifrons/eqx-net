@@ -61,7 +61,8 @@ export interface StructurePlacementHooks {
    *  the refusal text, or null to allow. Today only the Territory Lock has one
    *  (`territoryLockRefusal`). Absent ⇒ no extra rule. */
   placementRefusal?(owner: string, kindId: StructureKindId): string | null;
-  /** Room's sector key (for the packed gate). */
+  /** Room's sector key (for the packed gate). Null or absent = no sector:
+   *  no holds there, so the Capital needs no crate. */
   sectorKey?(): string | null;
   /** Spawn the kind=2 swarm entity (returns false if the slot pool is full). */
   spawnStructure(s: { id: string; x: number; y: number; radius: number; shipKind: string; angle?: number }): boolean;
@@ -139,11 +140,14 @@ export class StructurePlacementSubsystem {
 
     // A player's placement uses a held packed crate first (a free build).
     // Only the Capital NEEDS one; any other kind without a crate builds from
-    // the bank (not prepaid).
+    // the bank (not prepaid). The crate rule applies only where holds exist:
+    // a room with no sector (engineering / test sandbox: no roster, no hold)
+    // places a Capital without one, as unpack_hull is galaxy-rooms-only.
     let packed: PackedGateResult | null = null;
-    const crate = needsPackedCrate(kindId);
+    const sectorKey = this.hooks.sectorKey?.() ?? null;
+    const crate = needsPackedCrate(kindId) && sectorKey !== null;
     if (opts?.requirePacked === true && this.hooks.packedGateForBuild && (crate || !STARTER_STRUCTURE_KINDS.includes(kindId))) {
-      const gate = this.hooks.packedGateForBuild(owner, kindId, this.hooks.sectorKey?.() ?? null);
+      const gate = this.hooks.packedGateForBuild(owner, kindId, sectorKey);
       if (gate.ok) packed = gate;
       else if (crate) return null;
     }

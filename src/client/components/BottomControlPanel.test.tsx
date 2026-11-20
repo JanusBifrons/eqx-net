@@ -46,7 +46,7 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
   });
 
   it('SPECTATING — packed counts label kinds; only a Capital with no crate is greyed + unpickable', () => {
-    useUIStore.setState({ pilotMode: 'spectator', packedStock: { 'structure:smelter': 2 } });
+    useUIStore.setState({ pilotMode: 'spectator', currentSectorKey: 'A1', packedStock: { 'structure:smelter': 2 } });
     render(<BottomControlPanel />);
     const smelter = screen.getByTestId('bcp-cell-build:smelter');
     expect(smelter.textContent).toContain('Smelter ×2');
@@ -65,7 +65,17 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
     fireEvent.click(capital);
     expect(useUIStore.getState().placementKind).toBeNull();
     expect(screen.getByTestId('bcp-cell-build:solar').textContent).not.toContain('needs packed');
-    useUIStore.setState({ packedStock: null });
+    useUIStore.setState({ packedStock: null, currentSectorKey: null });
+  });
+
+  it('SPECTATING in a room with no sector — the Capital is never locked (no holds there)', () => {
+    useUIStore.setState({ pilotMode: 'spectator', currentSectorKey: null, packedStock: {} });
+    render(<BottomControlPanel />);
+    const capital = screen.getByTestId('bcp-cell-build:capital');
+    expect(capital.textContent).not.toContain('needs packed');
+    fireEvent.click(capital);
+    expect(useUIStore.getState().placementKind).toBe('capital');
+    useUIStore.setState({ packedStock: null, placementKind: null });
   });
 
   it('SPECTATING — flips to the flattened building palette; click selects a building', () => {

@@ -17,6 +17,10 @@ describe('Build-menu packed stock (economy v2)', () => {
     expect(buildEntry('capital', { 'structure:capital': 1 })).toMatchObject({ locked: false, count: 1 });
   });
 
+  it('a room with no sector never locks the Capital (no holds there)', () => {
+    expect(buildEntry('capital', {}, false)).toMatchObject({ locked: false, count: null });
+  });
+
   it('before the first reply nothing is locked', () => {
     expect(buildEntry('smelter', null).locked).toBe(false);
     expect(buildEntry('capital', null).locked).toBe(false);
