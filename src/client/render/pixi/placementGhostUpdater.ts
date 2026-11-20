@@ -18,6 +18,13 @@ import type { Camera } from '../worker/Camera';
 import { shouldCentreGhostOnActivate } from '../placementPointerDecision.js';
 import { buildStructureGfx } from './spriteBuilders.js';
 import type { RendererInputController } from './rendererInputController.js';
+import type { GridObstacle } from '@core/structures/Grid';
+import type { PlacementRejection } from '@core/structures/placementRules';
+import { PlacementGhostVerdict, type GhostPose } from '../../structures/placementGhostVerdict.js';
+import { PREVIEW_BLOCKED_COLOR, PREVIEW_OK_COLOR } from './connectorVisual.js';
+
+/** No tint: the pending (sent) ghost keeps its own colours. */
+const NO_TINT = 0xffffff;
 
 export interface PlacementGhostCtx {
   /** Structure placement ghost (Issue 5) — lazily built translucent blueprint
@@ -33,6 +40,12 @@ export interface PlacementGhostCtx {
   structStyle?: string;
   /** Written by the caller each frame. */
   spectator: boolean;
+  /** The rocks around the ghost, written by the caller each frame (the build
+   *  preview's list, `ConnectorRenderer._previewObstacles`); null = none. */
+  obstacles: readonly GridObstacle[] | null;
+  /** The server's overlap rule for the ghost (red / green), and its pose scratch. */
+  readonly verdict: PlacementGhostVerdict;
+  readonly pose: GhostPose;
   readonly isTouch: boolean;
   readonly input: RendererInputController;
   readonly feedback: RendererFeedback;
@@ -48,6 +61,7 @@ export interface PlacementGhostCtxRefs {
 export function createPlacementGhostCtx(refs: PlacementGhostCtxRefs): PlacementGhostCtx {
   return {
     placementGhost: null, placementGhostKind: null, camera: null, shipContainer: null, spectator: false,
+    obstacles: null, verdict: new PlacementGhostVerdict(), pose: { kind: '', x: 0, y: 0, angle: 0 },
     isTouch: refs.isTouch, input: refs.input, feedback: refs.feedback,
   };
 }
@@ -108,6 +122,16 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     ctx.placementGhost.x = gx;
     ctx.placementGhost.y = -gy; // Y-flip
     ctx.placementGhost.rotation = -preview.angle;
+    // Red / green before the click: the server's own overlap rule at the drawn
+    // pose (structures, landing pads, rocks). The pending ghost is already sent.
+    let rejection: PlacementRejection | null = null;
+    if (!pendingGhost && mirror.swarm) {
+      const pose = ctx.pose;
+      pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = preview.angle;
+      rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles);
+    }
+    ctx.feedback.placementPreviewRejection = rejection;
+    ctx.placementGhost.tint = pendingGhost ? NO_TINT : rejection !== null ? PREVIEW_BLOCKED_COLOR : PREVIEW_OK_COLOR;
     const screen = camera.toScreen(gx, -gy);
     ctx.feedback.placementScreenX = screen.x;
     ctx.feedback.placementScreenY = screen.y;
@@ -121,6 +145,7 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     ctx.feedback.placementChosenWorldX = null;
     ctx.feedback.placementChosenWorldY = null;
     ctx.feedback.placementStuck = false;
+    ctx.feedback.placementPreviewRejection = null;
     // Reset for the next placement (start in follow mode, no chosen point).
     ctx.input._placementFollowing = true;
     ctx.input._placementChosenX = null;

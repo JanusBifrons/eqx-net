@@ -35,9 +35,27 @@ export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'ove
 /** Plain player-facing text for each rejection. */
 export const PLACEMENT_REJECTION_TEXT: Readonly<Record<PlacementRejection, string>> = Object.freeze({
   'overlap-structure': 'Too close to another structure',
-  'overlap-obstacle': 'Blocked by an asteroid',
+  // Wreck pieces block placement too (wreck fields 7), so say both.
+  'overlap-obstacle': 'Blocked by an asteroid or wreck',
   'overlap-pad': "Keep the landing pad clear",
 });
+
+/** The notice a player gets when the server refuses a placement, e.g.
+ *  "Can't build here: blocked by an asteroid or wreck". Built once per
+ *  reason (no per-call string work). */
+const PLACEMENT_REJECTION_NOTICE: Readonly<Record<PlacementRejection, string>> = Object.freeze(
+  Object.fromEntries(
+    (Object.keys(PLACEMENT_REJECTION_TEXT) as PlacementRejection[]).map((r) => {
+      const t = PLACEMENT_REJECTION_TEXT[r];
+      return [r, `Can't build here: ${t.charAt(0).toLowerCase()}${t.slice(1)}`];
+    }),
+  ) as Record<PlacementRejection, string>,
+);
+
+/** The player-facing refusal notice for a placement rejection. */
+export function placementRejectionNotice(r: PlacementRejection): string {
+  return PLACEMENT_REJECTION_NOTICE[r];
+}
 
 /** Scratch for {@link keepClearBox} (alloc-free: the ghost preview calls this per frame). */
 const padBox = { x: 0, y: 0, hw: 0, hh: 0 };
