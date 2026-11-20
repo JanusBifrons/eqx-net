@@ -31,10 +31,15 @@ export interface BuildViewSample {
   readonly viewHalf: number;
 }
 
-/** The one camera call build mode needs (`IRenderer.glideCameraTo`). */
+/** The renderer calls build mode needs (`IRenderer.glideCameraTo` +
+ *  `IFleetView.selectFleetShips`). */
 export interface BuildViewCamera {
   glideCameraTo(gameX: number, gameY: number, durationMs: number, toScale?: number): void;
+  selectFleetShips(ids: readonly string[]): void;
 }
+
+/** No ships: entering Build drops a ship selection carried over from Command. */
+const NO_SHIPS: readonly string[] = Object.freeze([]);
 
 const st = {
   active: false,
@@ -115,7 +120,7 @@ export function stepBuildModeView(
   winH: number,
 ): void {
   if (building) {
-    if (!st.active) enterBuildView(localShipInstanceId);
+    if (!st.active) enterBuildView(localShipInstanceId, camera);
     if (view !== null && view.viewHalf > 0) {
       st.lastX = view.viewX;
       st.lastY = view.viewY;
@@ -130,12 +135,16 @@ export function stepBuildModeView(
   if (st.active) exitBuildView(camera);
 }
 
-function enterBuildView(localShipInstanceId: string | null): void {
+function enterBuildView(localShipInstanceId: string | null, camera: BuildViewCamera): void {
   st.active = true;
   st.savedScale = 0;
   st.restoreScale = 0;
   st.flyShipId = null;
   const ui = useUIStore.getState();
+  // Ships still selected from Command would turn a tap on a building into a
+  // fleet order: Build starts with no ship selection, so a tap selects. Goes
+  // through the renderer, which owns the selection (the store mirrors it).
+  if (ui.selection.ids.length > 0) camera.selectFleetShips(NO_SHIPS);
   if (ui.pilotMode !== 'pilot') return; // from Command: nothing to let go of
   st.flyShipId = localShipInstanceId;
   // The Command toggle's own path: flip the view, hand the ship to its AI.
