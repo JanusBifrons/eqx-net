@@ -33,10 +33,12 @@ import {
   newAirlockState,
   newGateState,
   newOccupancy,
+  savedDoorOf,
   stepAirlock,
   stepGate,
   type AirlockState,
   type GateState,
+  type SavedDoor,
 } from '../../core/structures/gateLogic.js';
 import { gateAccessFromIndex, gateAdmits, type GateRelation } from '../../shared-types/gateAccess.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
@@ -75,6 +77,8 @@ export class GateController {
   private readonly local = { x: 0, y: 0 };
   /** Reused scrub argument for `startStructureRigClip`. */
   private readonly scrub = { from: 0, rate: 0 };
+  /** The tick of the last update, for `savedDoor` (persistence). */
+  private lastTick = 0;
 
   constructor(private readonly hooks: GateControllerHooks) {}
 
@@ -84,6 +88,7 @@ export class GateController {
     let changed = false;
     let collected = false;
     const tick = this.hooks.serverTick();
+    this.lastTick = tick;
     for (const rec of reg.all()) {
       const type = gateTypeOf(rec.kind);
       if (type === null) continue;
@@ -114,16 +119,19 @@ export class GateController {
       const level = doorLevelFromSupply(this.hooks.supplyFrac(rec.id));
       if (type === 'gate') {
         let g = this.gates.get(rec.id);
-        if (!g) { g = newGateState(nowMs); this.gates.set(rec.id, g); }
-        if (stepGate(g, o, nowMs, tick, level)) {
+        let fresh = false;
+        if (!g) { g = newGateState(nowMs, takeDoorRestore(rec)); this.gates.set(rec.id, g); fresh = true; }
+        // A new state (a restored half-open door too) posts its pose once.
+        if (stepGate(g, o, nowMs, tick, level) || fresh) {
           changed = true;
           this.postDoor(rec, 'door', g.door);
         }
         this.hooks.setActive(rec, gateDoorsMoving(g, undefined, tick));
       } else {
         let a = this.airlocks.get(rec.id);
-        if (!a) { a = newAirlockState(); this.airlocks.set(rec.id, a); }
-        if (stepAirlock(a, o, nowMs, tick, level)) {
+        let fresh = false;
+        if (!a) { a = newAirlockState(takeDoorRestore(rec)); this.airlocks.set(rec.id, a); fresh = true; }
+        if (stepAirlock(a, o, nowMs, tick, level) || fresh) {
           changed = true;
           // One rig, one clip: the end that is off its seat or heading open
           // (the interlock keeps the other end at 0, its rest pose).
@@ -153,4 +161,18 @@ export class GateController {
   maskFor(id: string): number {
     return gateOpenMask(this.gates.get(id), this.airlocks.get(id));
   }
+
+  /** Door-power slice 12: the door position to save with this structure at
+   *  the last tick (undefined = every door shut, or not a gate). */
+  savedDoor(id: string): SavedDoor | undefined {
+    return savedDoorOf(this.gates.get(id), this.airlocks.get(id), this.lastTick);
+  }
+}
+
+/** A restored save's door position, consumed once when the gate's state is
+ *  first built (the restore hook; missing = shut). */
+function takeDoorRestore(rec: { doorRestore?: SavedDoor }): SavedDoor | undefined {
+  const saved = rec.doorRestore;
+  if (saved !== undefined) delete rec.doorRestore;
+  return saved;
 }

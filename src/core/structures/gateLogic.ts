@@ -25,6 +25,7 @@
 import {
   AIRLOCK_CYCLE_HOLD_MS,
   AIRLOCK_END_Y,
+  DOOR_POS_MAX,
   GATE_APPROACH_DEPTH,
   GATE_CLOSE_HOLD_MS,
   GATE_SPAN_THICKNESS,
@@ -97,8 +98,19 @@ export interface GateState {
   readonly door: DoorTrack;
 }
 
-export function newGateState(nowMs = 0): GateState {
-  return { open: false, lastBusyMs: nowMs, door: newDoorTrack() };
+/** A door position saved with its structure (door-power slice 12): which
+ *  door clip it belongs to and its position P (1..DOOR_POS_MAX). No saved
+ *  door means every door shut. An airlock needs one: the interlock keeps the
+ *  other end at 0. */
+export type DoorClipName = 'door' | 'door-a' | 'door-b';
+export interface SavedDoor {
+  pos: number;
+  clip: DoorClipName;
+}
+
+/** A gate's state; a saved door starts frozen at its position, target shut. */
+export function newGateState(nowMs = 0, saved?: SavedDoor): GateState {
+  return { open: false, lastBusyMs: nowMs, door: newDoorTrack(saved?.clip === 'door' ? saved.pos : 0) };
 }
 
 /** Step a gate at wall time `nowMs`, game tick `tick` and power level
@@ -131,8 +143,33 @@ export interface AirlockState {
   readonly doorB: DoorTrack;
 }
 
-export function newAirlockState(): AirlockState {
-  return { phase: AIRLOCK_CLOSED, exitTo: END_NONE, lastBusyMs: 0, doorA: newDoorTrack(), doorB: newDoorTrack() };
+export function newAirlockState(saved?: SavedDoor): AirlockState {
+  const posA = saved?.clip === 'door-a' ? saved.pos : 0;
+  const posB = saved?.clip === 'door-b' ? saved.pos : 0;
+  return { phase: AIRLOCK_CLOSED, exitTo: END_NONE, lastBusyMs: 0, doorA: newDoorTrack(posA), doorB: newDoorTrack(posB) };
+}
+
+/** The door position to save for a gate or airlock at `tick`; undefined when
+ *  every door is shut (missing = shut). */
+export function savedDoorOf(gate: GateState | undefined, airlock: AirlockState | undefined, tick: number): SavedDoor | undefined {
+  if (gate) {
+    const pos = doorPosAt(gate.door.seg, tick);
+    return pos > 0 ? { pos, clip: 'door' } : undefined;
+  }
+  if (!airlock) return undefined;
+  const a = doorPosAt(airlock.doorA.seg, tick);
+  if (a > 0) return { pos: a, clip: 'door-a' };
+  const b = doorPosAt(airlock.doorB.seg, tick);
+  return b > 0 ? { pos: b, clip: 'door-b' } : undefined;
+}
+
+/** Validate a saved record's `doorPos` / `doorClip` (untrusted JSON). Anything
+ *  missing or malformed reads as shut (undefined). */
+export function parseSavedDoor(pos: unknown, clip: unknown): SavedDoor | undefined {
+  if (typeof pos !== 'number' || !Number.isFinite(pos)) return undefined;
+  if (clip !== 'door' && clip !== 'door-a' && clip !== 'door-b') return undefined;
+  const p = Math.min(DOOR_POS_MAX, Math.max(0, Math.round(pos)));
+  return p > 0 ? { pos: p, clip } : undefined;
 }
 
 /** Step an airlock (see `stepGate` for the arguments). Returns true when

@@ -1936,7 +1936,7 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       swarmRegistry: this.swarmRegistry,
       swarmHealth: this.shieldHullRouter.swarmHealth,
-      structures: () => this.structureRegistry.all(),
+      structures: () => this.structureRegistry.all(), gateDoorOf: (id) => this.gates.savedDoor(id),
       restoreStructures: (rows) => this.snapshotRestore.restoreStructures(rows),
       scrapEntities: () => this.snapshotRestore.scrapEntities(),
       restoreScrap: (rows) => this.snapshotRestore.restoreScrap(rows),

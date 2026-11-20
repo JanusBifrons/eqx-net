@@ -62,9 +62,11 @@ export interface DoorTrack {
   segMs: number;
 }
 
-/** A shut, still door. */
-export function newDoorTrack(): DoorTrack {
-  return { seg: { p0: 0, t0: 0, dir: -1, level: 0 }, segMs: Number.NEGATIVE_INFINITY };
+/** A still door: shut, or (a restored save, door-power slice 12) frozen at
+ *  `pos` with its target shut. Level 0 holds it there until the gate logic
+ *  first drives it, which re-segments at once (a fresh track has no throttle). */
+export function newDoorTrack(pos = 0): DoorTrack {
+  return { seg: { p0: clampPos(Math.round(pos)), t0: 0, dir: -1, level: 0 }, segMs: Number.NEGATIVE_INFINITY };
 }
 
 /** Steer a door toward `open` at power `level` (0..15). A new target starts a
