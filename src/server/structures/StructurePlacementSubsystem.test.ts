@@ -88,6 +88,8 @@ describe('StructurePlacementSubsystem', () => {
     // Second within (capital.radius + connector.radius) of the first → reject.
     const overlap = h.sub.place('player-1', 'connector', 10, 10);
     expect(overlap).toBeNull();
+    // The refusal carries the reason for the player's notice.
+    expect(h.sub.lastRefusal).toBe("Can't build here: too close to another structure");
     // Far away → accepted.
     const far = h.sub.place('player-1', 'connector', 5000, 5000);
     expect(far).not.toBeNull();
@@ -103,11 +105,13 @@ describe('StructurePlacementSubsystem', () => {
     const withRock = makeHarness({ obstacles: [{ x: 0, y: 0, radius: 120 }] });
     const onRock = withRock.sub.place('player-1', 'capital', 0, 0);
     expect(onRock).toBeNull();
+    expect(withRock.sub.lastRefusal).toBe("Can't build here: blocked by an asteroid or wreck");
     expect(withRock.spawned.length).toBe(0);
     expect(withRock.registry.size).toBe(0);
     // Well clear of the rock → accepted.
     const clear = withRock.sub.place('player-1', 'capital', 5000, 5000);
     expect(clear).not.toBeNull();
+    expect(withRock.sub.lastRefusal).toBeNull(); // a success clears the reason
     expect(withRock.registry.size).toBe(1);
   });
 

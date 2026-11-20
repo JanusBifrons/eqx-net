@@ -14,7 +14,7 @@ import { applyForceFields, storeForceField, type ForceField } from './forceField
 import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
 import type { ShipBody, ShipInput, ShipPhysicsState } from './worldTypes.js';
 import { applyPilotInput, botWarpStep, restoreWarp } from './warpActuator.js';
-import { createObstacleBody, createProjectileBody, createShipBody, mountShipColliders } from './spawnBodies.js';
+import { createObstacleBody, createProjectileBody, createShipBody, mountShipColliders, setBodyCollisionGroups } from './spawnBodies.js';
 import { addBodyVelocity, applyBodyImpulseAtPoint, applyRigidGroupImpulse as applyGroupImpulse } from './bodyImpulses.js';
 import { SleepSettle } from './sleepSettle.js';
 import { withoutRigParts } from './collisionGroups.js';
@@ -228,6 +228,9 @@ export class PhysicsWorld {
   stepRigs(nowTick: number): void { this.rigs.stepRigs(nowTick); }
 
   rigPartPose(hostId: string, partId: string): { x: number; y: number; angle: number } | null { return this.rigs.rigPartPose(hostId, partId); }
+
+  /** Every collider of `id` to `groups` (a blueprint turns solid; a rig host keeps `withoutRigParts`). */
+  setCollisionGroups(id: string, groups: number): void { const b = this.bodies.get(id)?.body; if (b) setBodyCollisionGroups(b, this.rigs.has(id) ? withoutRigParts(groups) : groups); }
 
   /** Swap a body between its shield (circle) and hull colliders; doc:
    *  `mountShipColliders` (spawnBodies.ts). Idempotent. */
