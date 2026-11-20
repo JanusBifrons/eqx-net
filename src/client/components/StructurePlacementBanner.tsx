@@ -1,7 +1,7 @@
 import { Box, Button } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { commitChosenPlacement } from '../structures/structurePlacementClient';
+import { commitChosenPlacement, cyclePlacementRotation } from '../structures/structurePlacementClient';
 import { isTouchDevice } from '../input/TouchInput';
 
 /**
@@ -12,7 +12,8 @@ import { isTouchDevice } from '../input/TouchInput';
  * speed-dial Build menu). The renderer draws a translucent blueprint GHOST at
  * the ahead-of-ship world pose (`RenderMirror.pendingPlacementPreview`); this
  * banner is the Confirm/Cancel affordance anchored OVER that ghost. Confirm
- * sends `place_structure`; Cancel exits placement mode.
+ * sends `place_structure`; Cancel exits placement mode. Rotate turns the ghost a
+ * quarter turn through the same `cyclePlacementRotation` the desktop R key uses.
  *
  * ── World-anchoring (Issue 5) ──
  * The banner is `position:fixed` at a HIGH z-index, rendered OUTSIDE the Slot
@@ -50,10 +51,24 @@ export function StructurePlacementBanner(): JSX.Element | null {
     setPlacementKind(null);
   };
   const onCancel = (): void => setPlacementKind(null);
+  // Same quarter-turn the desktop R key applies; the renderer reads it through
+  // the placement preview's angle, so no React state changes here.
+  const onRotate = (): void => {
+    cyclePlacementRotation();
+  };
 
   return (
     <Box data-testid="placement-banner" sx={BANNER_SX}>
       <Box sx={LABEL_SX}>Place {kind.displayName} here?</Box>
+      <Button
+        size="small"
+        data-testid="placement-rotate"
+        aria-label="Rotate 90 degrees"
+        onClick={onRotate}
+        sx={ROTATE_SX}
+      >
+        ⟳ Rotate
+      </Button>
       <Button
         size="small"
         data-testid="placement-confirm"
@@ -101,6 +116,17 @@ const BANNER_SX = {
 } as const;
 
 const LABEL_SX = { fontWeight: 700, letterSpacing: 0.3 } as const;
+
+// Thumb-sized (the banner's other buttons are text-sized): a quarter-turn is
+// tapped repeatedly while lining a building up, so it gets a real touch target.
+const ROTATE_SX = {
+  fontSize: 11,
+  minWidth: 64,
+  minHeight: 40,
+  px: 1,
+  color: '#9fd8ff',
+  border: '1px solid rgba(120,200,255,0.45)',
+} as const;
 
 const CONFIRM_SX = {
   fontSize: 11,
