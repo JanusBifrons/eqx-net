@@ -21,6 +21,7 @@ import type { AiController } from '@core/ai/AiController';
 import type { SwarmRenderState } from '@core/contracts/IRenderer';
 import type { WreckPieceGeometry } from '@core/destruction/wreckPieces';
 import type { FieldRockBody } from '@core/terrain/chunkStreamer';
+import type { ChunkOpts } from '@core/terrain/fieldLayout';
 import type { WreckRockRef } from '@shared-types/messages/wreckDescriptor';
 
 /** The exact predWorld surface a leaf touches — a structural subset of
@@ -39,6 +40,9 @@ export interface WreckGeometrySource {
   /** Rock cut: the rock a wreck (or its root) was cut from, else undefined
    *  (a ship's wreck). Optional: absent ⇒ every wreck is a ship's. */
   rockOf?(wreckId: number): WreckRockRef | undefined;
+  /** The room's cut-field options a field rock (`rock.fk`) is rebuilt
+   *  from; absent or null: no field. */
+  readonly field?: ChunkOpts | null;
 }
 
 /** Cut-field rocks (macro terrain C2): an awake field rock rides the swarm
