@@ -2,8 +2,10 @@
  * Structure placement ghost + its world→screen projection for the confirm UI
  * — lifted out of `PixiRenderer.update()` (god-file split, Phase 4).
  *
- * `updatePlacementGhost(mirror, ctx)` draws the translucent blueprint at the
- * previewed (or pointer-chosen) pose, writes the placement feedback fields
+ * `updatePlacementGhost(mirror, ctx)` draws the plan as a bright hologram
+ * (`StructureHologram`'s `ghost` look: cyan when clear, red where the
+ * server's `placementRejection` would refuse it) at the previewed (or
+ * pointer-chosen) pose, writes the placement feedback fields
  * and drives the input controller's placement state. The ctx is built once
  * by `createPlacementGhostCtx` (renderer construction); `init` sets `camera`
  * and `shipContainer`, and the caller writes `spectator` before each call.
@@ -11,26 +13,23 @@
  * change, `toScreen` while placing), moved unchanged.
  */
 
-import type { Container, Graphics } from 'pixi.js';
+import type { Container } from 'pixi.js';
 import type { RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { getStructureKind } from '@shared-types/structureKinds';
 import type { Camera } from '../worker/Camera';
 import { shouldCentreGhostOnActivate } from '../placementPointerDecision.js';
-import { buildStructureGfx } from './spriteBuilders.js';
 import type { RendererInputController } from './rendererInputController.js';
 import type { GridObstacle } from '@core/structures/Grid';
 import type { PlacementRejection } from '@core/structures/placementRules';
 import { PlacementGhostVerdict, type GhostPose } from '../../structures/placementGhostVerdict.js';
-import { PREVIEW_BLOCKED_COLOR, PREVIEW_OK_COLOR } from './connectorVisual.js';
-
-/** No tint: the pending (sent) ghost keeps its own colours. */
-const NO_TINT = 0xffffff;
+import { StructureHologram } from './structureHologram.js';
 
 export interface PlacementGhostCtx {
-  /** Structure placement ghost (Issue 5) — lazily built translucent blueprint
-   *  silhouette, rebuilt when the previewed kind changes. Lives in
-   *  `shipContainer` (world space) so it pans/zooms with the structures. */
-  placementGhost: Graphics | null;
+  /** Structure placement ghost (Issue 5) — the plan as a bright hologram
+   *  (the unbuilt-blueprint hologram art, `ghost` look), built lazily and
+   *  rebuilt only when the previewed kind changes. Lives in `shipContainer`
+   *  (world space) so it pans/zooms with the structures. */
+  placementGhost: StructureHologram | null;
   placementGhostKind: string | null;
   /** Set in `init`. */
   camera: Camera | null;
@@ -40,6 +39,9 @@ export interface PlacementGhostCtx {
   structStyle?: string;
   /** Written by the caller each frame. */
   spectator: boolean;
+  /** Game-clock now (`fxNow()`), written by the caller each frame: drives the
+   *  ghost's scanner sweep and pulse. */
+  nowMs: number;
   /** The rocks around the ghost, written by the caller each frame (the build
    *  preview's list, `ConnectorRenderer._previewObstacles`); null = none. */
   obstacles: readonly GridObstacle[] | null;
@@ -60,7 +62,7 @@ export interface PlacementGhostCtxRefs {
 /** Build the placement-ghost ctx once (renderer construction). */
 export function createPlacementGhostCtx(refs: PlacementGhostCtxRefs): PlacementGhostCtx {
   return {
-    placementGhost: null, placementGhostKind: null, camera: null, shipContainer: null, spectator: false,
+    placementGhost: null, placementGhostKind: null, camera: null, shipContainer: null, spectator: false, nowMs: 0,
     obstacles: null, verdict: new PlacementGhostVerdict(), pose: { kind: '', x: 0, y: 0, angle: 0 },
     isTouch: refs.isTouch, input: refs.input, feedback: refs.feedback,
   };
@@ -104,18 +106,16 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     if (!ctx.placementGhost || ctx.placementGhostKind !== preview.kind) {
       if (ctx.placementGhost) {
         shipContainer.removeChild(ctx.placementGhost);
-        ctx.placementGhost.destroy();
+        ctx.placementGhost.destroy({ children: true });
       }
       const radius = getStructureKind(preview.kind).radius;
-      const g = buildStructureGfx(preview.kind, radius, 1, ctx.structStyle);
+      const g = new StructureHologram(preview.kind, radius, ctx.structStyle, 'ghost');
       shipContainer.addChild(g);
       ctx.placementGhost = g;
       ctx.placementGhostKind = preview.kind;
     }
     // Live ghost: draw at the pointer-chosen world point once positioned,
     // else the ahead-of-ship preview pose. Pending ghost: the SENT point.
-    // Dim the pending ghost so it reads as "sent, awaiting" vs positioning.
-    ctx.placementGhost.alpha = pendingGhost ? 0.18 : 0.4;
     const gx = pendingGhost ? preview.x : (ctx.input._placementChosenX ?? preview.x);
     const gy = pendingGhost ? preview.y : (ctx.input._placementChosenY ?? preview.y);
     ctx.placementGhost.visible = true;
@@ -131,7 +131,9 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
       rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles);
     }
     ctx.feedback.placementPreviewRejection = rejection;
-    ctx.placementGhost.tint = pendingGhost ? NO_TINT : rejection !== null ? PREVIEW_BLOCKED_COLOR : PREVIEW_OK_COLOR;
+    // Cyan when clear, red when blocked; the pending ghost is dimmer and still
+    // so it reads as "sent, awaiting" vs positioning. Recolour only: no rebuild.
+    ctx.placementGhost.updateGhost(rejection !== null, pendingGhost, ctx.nowMs);
     const screen = camera.toScreen(gx, -gy);
     ctx.feedback.placementScreenX = screen.x;
     ctx.feedback.placementScreenY = screen.y;

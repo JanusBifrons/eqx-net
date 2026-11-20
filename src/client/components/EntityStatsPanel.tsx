@@ -13,16 +13,13 @@ import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { getGameClient } from '../net/clientSingleton';
-import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess, sendSetRecipe, sendBlueprintSlot } from '../structures/structureActionsClient';
-import { BP_RUNS_ORIGINAL, decodeGood, effectiveRecipe, isProcessorKind, nextRecipe, prodStatusLine, type ProdState } from '@shared-types/production';
-import SchoolIcon from '@mui/icons-material/School';
-import EjectIcon from '@mui/icons-material/Eject';
-import { RECIPES, recipesFor, type RecipeId } from '@shared-types/recipes';
+import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
+import { decodeGood, effectiveRecipe, isProcessorKind, prodStatusLine, type ProdState } from '@shared-types/production';
+import { RECIPES, type RecipeId } from '@shared-types/recipes';
 import { phoneTiny, useInspectorPhoneAttrs } from './inspectorSizes';
-import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import { gateTypeOf } from '@core/structures/gateGeometry';
-import { GATE_ACCESS_IDS, GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
-import LockOpenIcon from '@mui/icons-material/LockOpen';
+import { GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
+import { blueprintLineOf } from './structureSettingsProduction';
 import { sendPilotShip } from '../ships/shipActionsClient';
 import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
@@ -123,8 +120,6 @@ interface PanelData {
   recipe?: RecipeId;
   /** P2b — its status line ("Running", "Waiting for Minerals", …). */
   prodStatus?: string;
-  /** P2b — the processor can switch between more than one recipe. */
-  canChangeRecipe?: boolean;
   /** P2e — goods the next upgrade takes from base storage ("3 Alloy, 1 Components"). */
   upgradeGoods?: string;
   /** Coastal defences — per-gun-size reload + arc lines, newline-joined
@@ -346,8 +341,9 @@ export function EntityStatsPanel(): JSX.Element | null {
         </Box>
       )}
       {data.isOwn && data.entityId !== undefined && (
-        // Phase-1 issue 6 — owner-only action buttons. The panel root is
-        // pointerEvents:none (passive readout), so this row re-enables pointers.
+        // Phase-1 issue 6 — owner-only: the settings cog (recipe, blueprint
+        // slot, gate access, power live in its window) + one-shot actions. The
+        // panel root is pointerEvents:none, so this row re-enables pointers.
         <Box sx={ACTIONS_SX} data-testid="entity-stats-actions">
           <StructureSettingsCog entityId={data.entityId} title={data.name} />
           <Tooltip title={data.isDeconstructing ? 'Cancel deconstruction' : 'Deconstruct (reverse build, returns resources)'}>
@@ -371,54 +367,6 @@ export function EntityStatsPanel(): JSX.Element | null {
               <HubIcon sx={ICON_SX} />
             </IconButton>
           </Tooltip>
-          {data.recipe !== undefined && data.needsBlueprint && (
-            <Tooltip title={data.blueprintLine !== undefined ? 'Swap in the best blueprint from storage' : 'Load a blueprint from storage'}>
-              <IconButton
-                data-testid="structure-action-load-blueprint"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendBlueprintSlot(data.entityId!, 'load')}
-              >
-                <SchoolIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {data.blueprintLine !== undefined && (
-            <Tooltip title="Put the blueprint back in storage">
-              <IconButton
-                data-testid="structure-action-unload-blueprint"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendBlueprintSlot(data.entityId!, 'unload')}
-              >
-                <EjectIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {data.recipe !== undefined && data.canChangeRecipe && (
-            <Tooltip title="Change what this makes">
-              <IconButton
-                data-testid="structure-action-recipe"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendSetRecipe(data.entityId!, nextRecipe(RECIPES[data.recipe!].processors[0]!, data.recipe!))}
-              >
-                <SwapHorizIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {data.gateAccess !== undefined && (
-            <Tooltip title="Change who this gate opens for">
-              <IconButton
-                data-testid="structure-action-gate-access"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendSetGateAccess(data.entityId!, nextGateAccess(data.gateAccess!))}
-              >
-                <LockOpenIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
           {data.isConnector && (
             <Tooltip title="Clear all connections">
               <IconButton
@@ -517,16 +465,9 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
-  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
+  'recipe', 'prodStatus', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
   'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
 ];
-
-/** The next gate access setting in the cycle (owner + allies → owner only →
- *  anyone not hostile → …). */
-export function nextGateAccess(a: GateAccess): GateAccess {
-  const i = GATE_ACCESS_IDS.indexOf(a);
-  return GATE_ACCESS_IDS[(i + 1) % GATE_ACCESS_IDS.length]!;
-}
 
 /** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
  *  gates the poll's setState so unchanged data never commits a re-render). */
@@ -620,12 +561,9 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         // P2b — what it makes and how it's going.
         data.recipe = effectiveRecipe(subtype, st.recipe);
         data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing), data.recipe);
-        data.canChangeRecipe = recipesFor(subtype).length > 1;
         data.needsBlueprint = RECIPES[data.recipe].blueprintRequired;
-        if (st.bpRuns !== undefined) {
-          const runs = st.bpRuns === BP_RUNS_ORIGINAL ? 'original' : `${st.bpRuns} run${st.bpRuns === 1 ? '' : 's'}`;
-          data.blueprintLine = `BLUEPRINT ${runs} · quality ${st.bpQuality ?? 0}`;
-        }
+        const bp = blueprintLineOf(st);
+        if (bp !== undefined) data.blueprintLine = bp;
       }
       // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
       // line + the Upgrade affordance. Upgrade is OWN-only, BUILT-only,

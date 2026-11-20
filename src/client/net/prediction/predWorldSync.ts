@@ -94,6 +94,7 @@ export function syncSwarmIntoPredWorld(c: PredictionStepCtx): void {
   // collider / mass / AI-ledger / shield-swap details live in the leaves.
   const ctx = c.clientSpawnCtx;
   ctx.predWorld = c.predWorld;
+  ctx.structures = c.mirror.structures; // hologram pass-through (structure leaf)
   // A3 — structures stream in by distance from the local ship (every
   // correction replays the whole prediction world). No local ship ⇒ keep all.
   const localId = c.mirror.localPlayerId;

@@ -18,6 +18,7 @@ import { structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons } from '../../core/structures/gateGeometry.js';
 import { convexHullCCW } from '../../core/swarm/asteroidShape.js';
 import { RestingObstacles, type RestingSources } from './RestingObstacles.js';
+import { isStructureBodySolid } from '../../core/structures/structureBody.js';
 
 /** What the room tells it. */
 export interface RoomNavDeps {
@@ -95,11 +96,13 @@ export class RoomNav {
     return this.routes = new NavRoutes(this.routeFn, this.deps.now);
   }
 
-  /** A structure was placed or removed: the fine layer's static obstacles follow. */
+  /** A structure was placed, turned solid or removed: the fine layer's static
+   *  obstacles follow. A hologram (ghost body) is no obstacle: ships fly
+   *  through it (`isStructureBodySolid`, the physics rule). */
   private structureChanged(rec: StructureRecord, added: boolean): void {
     if (!this.field) return;
     let id = this.structureIds.get(rec.id);
-    if (added) {
+    if (added && isStructureBodySolid(rec)) {
       if (id === undefined) this.structureIds.set(rec.id, id = this.nextObstacleId++);
       this.field.obstacle(id, structureNavObstacle(rec));
     } else if (id !== undefined) {
