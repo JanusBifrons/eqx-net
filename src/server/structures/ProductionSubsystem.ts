@@ -45,6 +45,7 @@ import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } f
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
+import { hullProduct, packedProduct } from './productIds.js';
 
 /** What one cycle of a recipe actually uses and makes. */
 export interface EffectiveRecipe {
@@ -82,28 +83,6 @@ interface AppliedCache {
   material: number;
   output: number;
   eff: EffectiveRecipe;
-}
-
-/** `structure:<kind>` product ids, built once per kind (no per-cycle strings). */
-const PACKED_PRODUCT = new Map<StructureKindId, string>();
-function packedProduct(kind: StructureKindId): string {
-  let p = PACKED_PRODUCT.get(kind);
-  if (p === undefined) {
-    p = `structure:${kind}`;
-    PACKED_PRODUCT.set(kind, p);
-  }
-  return p;
-}
-
-/** `hull:<kind>` product ids, built once per kind. */
-const HULL_PRODUCT = new Map<string, string>();
-function hullProduct(kind: string): string {
-  let p = HULL_PRODUCT.get(kind);
-  if (p === undefined) {
-    p = `hull:${kind}`;
-    HULL_PRODUCT.set(kind, p);
-  }
-  return p;
 }
 
 /** A recipe's base effect (no blueprint), cached per recipe. */
