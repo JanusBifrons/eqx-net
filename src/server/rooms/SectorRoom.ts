@@ -1143,7 +1143,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
       wreckState: (id) => this.wreckSpawns.wreckPose(id),
-      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, wreckMass: (id) => { const v = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0 }; return this.capitalWrecks?.pieceStore(id, v) === true ? v.mass : undefined; },
+      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, wreckMass: (id) => { const v = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0, rockMass: 0 }; return this.capitalWrecks?.pieceStore(id, v) === true ? v.mass : undefined; },
       rockOf: (id) => rockViewOf(this.swarmRegistry, id, this.cutField?.navOpts ?? null),
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
