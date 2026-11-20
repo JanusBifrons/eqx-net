@@ -5,7 +5,9 @@
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
 import { GraphicsContext } from 'pixi.js';
-import { SOLAR_PANEL_HALF_DEEP, SOLAR_PANEL_HALF_LONG, SOLAR_PANEL_XS, SOLAR_PANEL_YS } from '../../../core/articulation/rigs/power.js';
+import {
+  SOLAR_PANEL_HALF_DEEP, SOLAR_PANEL_HALF_LONG, SOLAR_PANEL_XS, SOLAR_PANEL_YS, reactorFanLayout,
+} from '../../../core/articulation/rigs/power.js';
 import {
   LAMP_AMBER, LAMP_WHITE, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, chamferBox, core, deck, frame, glow, grime,
   lamp, ngon, poly, rivets, scaffold, scalePts, stencil, stripe, strut, walkway, wornStripe, type StyleCtx,
@@ -19,35 +21,46 @@ import { getStructureKind, type StructureKindId } from '../../../shared-types/st
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'f1cs';
+export const version = 'f1cr';
 
-/** Power station (`reactor`): an octagonal containment keep with a deep pit
- *  and a hard-lit core, inside a square truss frame, four ribbed cooling
- *  blocks on the frame's corners, struts in, walkways, one block scaffolded. */
+/** Power station (`reactor`, drawn for 600 × 600 and scaled by the short
+ *  side, §9 Family 1): an octagonal containment keep with a deep pit and a
+ *  hard-lit core, inside a square truss frame; a cooling fan in a round
+ *  shroud on each frame corner (the shroud is baked here, the blades are the
+ *  rig's spinning parts, `reactor-fans` / `reactorFanContext`), strutted to
+ *  the keep; walkways along two edges, one side scaffolded. Dry, the status
+ *  overlay darkens the core and the fans stop (`reactorStatus`, `rigs`). */
 function powerStation(c: StyleCtx): void {
+  const { W, H } = c;
+  const k = Math.min(W, H) / 600;
+  const F = reactorFanLayout(W, H);
   deck(c);
-  grime(c, -180, -180, 360, 360, 10, 3);
-  frame(c, -150, -150, 300, 300, 30, 10);
+  grime(c, -W / 2 + 30 * k, -H / 2 + 30 * k, W - 60 * k, H - 60 * k, 14, 3);
+  for (const s of [-1, 1]) walkway(c, [-110 * k, s * (H / 2 - 22 * k)], [110 * k, s * (H / 2 - 22 * k)], 14 * k);
+  frame(c, -F.at, -F.at, 2 * F.at, 2 * F.at, 40 * k, 10);
+  scaffold(c, F.at - 34 * k, -64 * k, 60 * k, 128 * k, 21 * k, 12);
   for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
-    const blk = core(c, chamferBox(sx * 140 - 36, sy * 140 - 36, 72, 72, 16), SLAB_LIGHT, 24, 0);
-    for (let k = -2; k <= 2; k++) poly(c, stripe(blk, Math.PI / 2, sy * 140 + k * 11, 4), SOOT, 'metal', 2, 0.8);
-    wornStripe(c, blk, 0, sx * 140 - sx * 24, 8, 30 + sx + 3 * sy);
-    strut(c, [sx * 76, sy * 76], [sx * 112, sy * 112], 10, 14);
-    lamp(c, sx * 140 + sx * 26, sy * 140 - sy * 26, 3.5, LAMP_AMBER);
+    const cx = sx * F.at, cy = sy * F.at, d = Math.SQRT1_2;
+    strut(c, [sx * 112 * k, sy * 112 * k], [cx - sx * (F.shroud + 8 * k) * d, cy - sy * (F.shroud + 8 * k) * d], 14 * k, 14);
+    const collar = core(c, ngon(cx, cy, F.shroud + 14 * k, 12, Math.PI / 12), SLAB_LIGHT, 24, 0);
+    wornStripe(c, collar, Math.PI / 2, cy + sy * (F.shroud + 6 * k), 8 * k, 30 + sx + 3 * sy);
+    poly(c, ngon(cx, cy, F.shroud, 24), SOOT, 'metal', -8, 3);
+    poly(c, ngon(cx, cy, F.shroud * 0.42, 12), SLAB_DARK, 'metal', -6, 1.5); // the motor boss under the hub
+    rivets(c, [cx - sx * 10 * k, cy + sy * (F.shroud + 8 * k)], [cx + sx * 34 * k, cy + sy * (F.shroud + 2 * k)], 11 * k);
+    lamp(c, cx + sx * (F.shroud + 6 * k) * d, cy - sy * (F.shroud + 6 * k) * d, 4 * k, LAMP_AMBER);
   }
-  core(c, ngon(0, 0, 108, 8, Math.PI / 8), SLAB, 30, 0);
-  for (let k = 0; k < 8; k++) {
-    const a = (k * Math.PI) / 4;
-    rivets(c, [Math.cos(a) * 92, Math.sin(a) * 92], [Math.cos(a + Math.PI / 4) * 92, Math.sin(a + Math.PI / 4) * 92], 13);
+  const keep = core(c, ngon(0, 0, 150 * k, 8, Math.PI / 8), SLAB, 30, 0);
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4, b = a + Math.PI / 4, r = 130 * k;
+    rivets(c, [Math.cos(a) * r, Math.sin(a) * r], [Math.cos(b) * r, Math.sin(b) * r], 16 * k);
   }
-  poly(c, ngon(0, 0, 66, 8, Math.PI / 8), SLAB_DARK, 'metal', -6, 5);
-  poly(c, ngon(0, 0, 40, 8, Math.PI / 8), SOOT, 'metal', -2, 2);
-  glow(c, ngon(0, 0, 22, 8, Math.PI / 8), c.live ? 0xffc070 : 0x3a2418, 0.9);
-  c.lit(0, 0, 8, c.live ? LAMP_WHITE : 0x3a2418);
-  for (const s of [-1, 1]) walkway(c, [-110, s * 186], [110, s * 186], 12);
-  scaffold(c, 96, 96, 84, 84, 17, 12);
-  stencil(c, '07', -18, 112, 22);
-  if (c.livery) c.sigils.push({ x: -140, y: -140, r: 18 });
+  wornStripe(c, keep, Math.PI / 2, 112 * k, 12 * k, 41);
+  poly(c, ngon(0, 0, 98 * k, 8, Math.PI / 8), SLAB_DARK, 'metal', -6, 5);
+  poly(c, ngon(0, 0, 60 * k, 8, Math.PI / 8), SOOT, 'metal', -2, 2);
+  glow(c, ngon(0, 0, 34 * k, 8, Math.PI / 8), c.live ? 0xffc070 : 0x3a2418, 0.9);
+  c.lit(0, 0, 11 * k, c.live ? LAMP_WHITE : 0x3a2418);
+  stencil(c, '07', -26 * k, 158 * k, 30 * k);
+  if (c.livery) c.sigils.push({ x: 0, y: -F.at, r: 20 * k });
 }
 
 // ── Battery + battery bank: cells that light with the charge (F1 step C) ────
@@ -142,36 +155,49 @@ const powerStoreStatus: BodyStatusHook = { code: storeCode, draw: drawStoreCells
 
 // ── Reactor: dims when dry (F1 step C) ──────────────────────────────────────
 
+/** A reactor is dry when built with no fuel: its core goes dark (`reactorCode`)
+ *  and its fans stop (`reactorFuelled`); one flag, `noFuel`, drives both. */
+function reactorDry(st: StructureRenderState | undefined): boolean {
+  return st !== undefined && st.built && st.noFuel === true;
+}
+
+/** Fans run on a built reactor with fuel (the rig's `running` hook). */
+export function reactorFuelled(st: StructureRenderState | undefined): boolean {
+  return st !== undefined && st.built && !reactorDry(st);
+}
+
 /** 1 = a built reactor with no fuel, else 0 (fuelled art is the bake). */
 function reactorCode(_kind: StructureKindId, st: StructureRenderState | undefined): number {
-  return st !== undefined && st.built && st.noFuel === true ? 1 : 0;
+  return reactorDry(st) ? 1 : 0;
 }
 
 const _stroke = { color: 0, alpha: 0, width: 0 };
 
 /** Dry reactor: the core pit goes dark (covers the baked hot core and its
  *  lamp) and a small red no-fuel mark (a fuel drop, slashed) sits on the
- *  containment keep above it. */
+ *  containment keep's top band, above the pit (layout of `powerStation`,
+ *  drawn for 600, scaled by the short side). */
 function drawReactorDry(g: GraphicsContext, code: number, kind: StructureKindId): void {
   if (code !== 1) return;
-  const k = getStructureKind(kind).footprint.w / 400; // drawn for the 400 reactor; follows a resize
-  // Dark core: an octagon over the pit.
+  const fp = getStructureKind(kind).footprint;
+  const k = Math.min(fp.w, fp.h) / 600;
+  // Dark core: an octagon over the pit (covers the soot ring and the glow).
   for (let i = 0; i < 8; i++) {
     const a = Math.PI / 8 + (i * Math.PI) / 4;
-    if (i === 0) g.moveTo(Math.cos(a) * 42 * k, Math.sin(a) * 42 * k);
-    else g.lineTo(Math.cos(a) * 42 * k, Math.sin(a) * 42 * k);
+    if (i === 0) g.moveTo(Math.cos(a) * 64 * k, Math.sin(a) * 64 * k);
+    else g.lineTo(Math.cos(a) * 64 * k, Math.sin(a) * 64 * k);
   }
   g.closePath();
   _fill.color = 0x0b0a09; _fill.alpha = 0.94; g.fill(_fill);
-  g.circle(0, 0, 9 * k); _fill.color = 0x2a1a12; _fill.alpha = 1; g.fill(_fill);
-  // No-fuel mark: a drop outline with a slash, above the core.
-  const cx = 0, cy = -82 * k, h = 13 * k;
+  g.circle(0, 0, 13 * k); _fill.color = 0x2a1a12; _fill.alpha = 1; g.fill(_fill);
+  // No-fuel mark: a drop outline with a slash, on the keep above the core.
+  const cx = 0, cy = -120 * k, h = 15 * k;
   g.moveTo(cx, cy - h);
   g.bezierCurveTo(cx + h * 0.9, cy - h * 0.05, cx + h * 0.75, cy + h, cx, cy + h);
   g.bezierCurveTo(cx - h * 0.75, cy + h, cx - h * 0.9, cy - h * 0.05, cx, cy - h);
   g.closePath();
   _fill.color = 0x140c0a; _fill.alpha = 0.9; g.fill(_fill);
-  _stroke.color = 0xff4444; _stroke.alpha = 0.95; _stroke.width = 2.4 * k; g.stroke(_stroke);
+  _stroke.color = 0xff4444; _stroke.alpha = 0.95; _stroke.width = 3 * k; g.stroke(_stroke);
   g.moveTo(cx - h, cy - h).lineTo(cx + h, cy + h);
   g.stroke(_stroke);
 }
@@ -259,6 +285,45 @@ export function solarPanelContext(): GraphicsContext {
   return g;
 }
 
+// A cooling fan (the `reactor-fans` rig part's own art, in the part's Pixi
+// frame, centred on its hub): five swept gunmetal blades with a bright
+// leading lip and a dark edge, over a hub cap with a white index mark, so
+// the spin reads at a glance. Drawn once, shared by every fan; posing only
+// turns it. Sized from the reactor's catalogue footprint, like the rig's
+// anchors (`reactorFanLayout`).
+const FAN_BLADE = 0x59626b;
+const FAN_LIP = 0xb7c0c8;
+const FAN_HUB = 0x2a2f35;
+let fanCtx: GraphicsContext | null = null;
+
+/** Point at radius `r`, angle `a` (scratch-free: bake time only). */
+function polar(r: number, a: number): [number, number] {
+  return [Math.cos(a) * r, Math.sin(a) * r];
+}
+
+/** The shared art of every reactor cooling fan (built on first use). */
+export function reactorFanContext(): GraphicsContext {
+  if (fanCtx !== null) return fanCtx;
+  const fp = getStructureKind('reactor').footprint;
+  const R = reactorFanLayout(fp.w, fp.h).blade;
+  const hub = R * 0.3, n = 5;
+  const g = new GraphicsContext();
+  for (let i = 0; i < n; i++) {
+    const a = (i * 2 * Math.PI) / n;
+    const [x0, y0] = polar(hub * 0.8, a - 0.32), [x1, y1] = polar(R, a - 0.2);
+    const [x2, y2] = polar(R, a + 0.3), [x3, y3] = polar(hub * 0.8, a + 0.42);
+    const [c1x, c1y] = polar(R * 0.62, a - 0.42), [c2x, c2y] = polar(R * 1.04, a + 0.05), [c3x, c3y] = polar(R * 0.6, a + 0.12);
+    g.moveTo(x0, y0).quadraticCurveTo(c1x, c1y, x1, y1).quadraticCurveTo(c2x, c2y, x2, y2).quadraticCurveTo(c3x, c3y, x3, y3).closePath()
+      .fill({ color: FAN_BLADE }).stroke({ color: 0x0a0c0e, width: 1.4 });
+    g.moveTo(x0, y0).quadraticCurveTo(c1x, c1y, x1, y1).stroke({ color: FAN_LIP, width: 1.8, alpha: 0.85 });
+  }
+  g.circle(0, 0, hub).fill({ color: FAN_HUB }).stroke({ color: FAN_LIP, width: 1.6 });
+  g.circle(0, 0, hub * 0.45).fill({ color: 0x15181b });
+  g.rect(hub * 0.15, -hub * 0.12, hub * 0.7, hub * 0.24).fill({ color: 0xe8ecef, alpha: 0.9 });
+  fanCtx = g;
+  return g;
+}
+
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   battery: powerStore,
@@ -271,4 +336,5 @@ export const kinds: StyleDrawerTable = {
  *  structureRigLook.ts); rigs not listed draw from their part roles only. */
 export const rigs: RigDrawHookTable = {
   'solar-tracker': { partArt: () => solarPanelContext() },
+  'reactor-fans': { partArt: () => reactorFanContext(), running: reactorFuelled },
 };

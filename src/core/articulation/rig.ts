@@ -75,6 +75,12 @@ export interface PartDef {
    *  poses like any part. Look only (stage-4 plan §2 rule 5), e.g. a solar
    *  panel facing the sector's sun. Hinge + `cosmetic` only. */
   readonly aim?: boolean;
+  /** A cosmetic hinge that SPINS (rad per game tick, signed): when the
+   *  caller passes a spin clock to `evaluateRig` (game ticks the part has
+   *  been running), the part turns at this rate from its rest and clips do
+   *  not drive it; with no clock it sits at rest (the server). Look only,
+   *  e.g. a reactor's cooling fan. A full-turn cosmetic hinge, never also `aim`. */
+  readonly spin?: number;
 }
 
 export interface KeyframeDef {
@@ -206,6 +212,8 @@ export interface Rig {
   readonly idleClip: number;
   /** 1 for an aiming part (`PartDef.aim`), in rig order. */
   readonly aims: Uint8Array;
+  /** A spinning part's rate (`PartDef.spin`, rad per tick), else 0, in rig order. */
+  readonly spins: Float64Array;
 }
 
 function fail(rig: string, msg: string): never {
@@ -254,6 +262,7 @@ export function buildRig(def: RigDef): Rig {
   const max = new Float64Array(n);
   const rest = new Float64Array(n);
   const aims = new Uint8Array(n);
+  const spins = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const p = ordered[i]!;
     const j = p.joint;
@@ -270,6 +279,13 @@ export function buildRig(def: RigDef): Rig {
     if (p.aim) {
       if (j.type !== 'hinge' || p.kind !== 'cosmetic') fail(rid, `part '${p.id}' aims but is not a cosmetic hinge`);
       aims[i] = 1;
+    }
+    if (p.spin !== undefined && p.spin !== 0) {
+      if (j.type !== 'hinge' || p.kind !== 'cosmetic') fail(rid, `part '${p.id}' spins but is not a cosmetic hinge`);
+      if (p.aim) fail(rid, `part '${p.id}' both aims and spins`);
+      if (!(j.min <= -Math.PI && j.max >= Math.PI)) fail(rid, `part '${p.id}' spins but its hinge is not a full turn`);
+      if (!Number.isFinite(p.spin)) fail(rid, `part '${p.id}' has a non-finite spin rate`);
+      spins[i] = p.spin;
     }
     if (j.type === 'hinge') {
       jointType[i] = JOINT_HINGE;
@@ -367,7 +383,7 @@ export function buildRig(def: RigDef): Rig {
   return {
     id: rid, partCount: n, partIds: ordered.map((p) => p.id), parts: ordered,
     parent, jointType, anchorX, anchorY, baseAngle, axisX, axisY, min, max, rest,
-    clips, maxChain, idleClip, aims,
+    clips, maxChain, idleClip, aims, spins,
   };
 }
 

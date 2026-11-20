@@ -14,13 +14,13 @@ const play = (clipId: string, startTick: number, target?: { x: number; y: number
   target ? { clipId, startTick, target } : { clipId, startTick };
 
 describe('rig catalogue (structure-restyle 2b+)', () => {
-  it('every catalogue rig builds, is cached, and every part but an art-drawn aiming panel has an outline', () => {
+  it('every catalogue rig builds, is cached, and every part but an art-drawn aiming or spinning part has an outline', () => {
     for (const def of RIG_DEFS) {
       expect(() => buildRig(def)).not.toThrow();
       const rig = rigById(def.id)!;
       expect(rig.id).toBe(def.id);
       expect(rigById(def.id)).toBe(rig);
-      for (const p of rig.parts) if (p.aim !== true) expect(p.outline?.length ?? 0).toBeGreaterThanOrEqual(6);
+      for (const p of rig.parts) if (p.aim !== true && p.spin === undefined) expect(p.outline?.length ?? 0).toBeGreaterThanOrEqual(6);
     }
     expect(rigById('nope')).toBeNull();
   });
