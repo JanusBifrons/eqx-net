@@ -177,4 +177,10 @@ export interface SwarmRenderState {
   sleeping: boolean;
   /** Server tick of the most recent packet that included this entity. */
   lastUpdateTick: number;
+  /** Server tick of the first packet the client decoded for this entity (as
+   *  this wreck piece: reset when its `wreckId` changes). A fresh wreck's
+   *  age at first sight is measured from it, not from `lastUpdateTick` at
+   *  the frame that builds the sprite: a stalled frame must not age the
+   *  wreck past its break-up window. Absent (local mode): `lastUpdateTick`. */
+  firstTick?: number;
 }
