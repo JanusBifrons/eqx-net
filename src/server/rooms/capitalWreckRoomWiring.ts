@@ -19,6 +19,7 @@ import type { LootSubsystem } from '../cargo/LootSubsystem.js';
 import type { LockSubsystem } from './LockSubsystem.js';
 import type { BattleWreckSaves } from './wreckLineageSaves.js';
 import type { WreckFieldSource } from './WreckFieldSource.js';
+import type { CutFieldSubsystem } from './CutFieldSubsystem.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
 import { FLAG_SLEEPING, SLOT_FLAGS_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase, slotPoseInto } from '../../shared-types/sabLayout.js';
@@ -55,6 +56,9 @@ export interface CapitalWreckRoomHost {
   wingmanLocks: () => LockSubsystem;
   wreckSaves: () => BattleWreckSaves | null;
   wreckFieldSource: () => WreckFieldSource | undefined;
+  /** The room's cut field (field rock cut 1C-b: its rocks are cut, woken and
+   *  marked consumed through it); undefined: none. */
+  cutField: () => Pick<CutFieldSubsystem, 'navOpts' | 'wakeRock' | 'markConsumed'> | undefined;
 }
 
 /** Capital destruction S2a: build the wreck subsystem (flag on only). */
@@ -123,7 +127,9 @@ export function buildCapitalWrecks(h: CapitalWreckRoomHost): CapitalWreckSubsyst
       return slot !== undefined;
     },
     dropSalvage: (qty, x, y, vx, vy) => h.loot().drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }),
-    rockOf: (id) => rockViewOf(h.swarmRegistry, id),
+    rockOf: (id) => rockViewOf(h.swarmRegistry, id, h.cutField()?.navOpts ?? null),
+    wakeFieldRock: (id, by) => { h.cutField()?.wakeRock(id, by, h.serverTick()); },
+    fieldRockBroken: (key) => h.cutField()?.markConsumed(key),
     pieceSplit: (from, ids, masses) => relayPieceSplit(h.swarmRegistry, from, ids, masses, h.locks(), h.wingmanLocks()),
     lineageTouched: (root) => { h.wreckSaves()?.touch(root); h.wreckFieldSource()?.touched(root); }, evictRetire: (id) => h.wreckSaves()?.evictPiece(id) ?? false,
   });
