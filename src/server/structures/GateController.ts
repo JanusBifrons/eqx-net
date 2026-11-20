@@ -15,12 +15,13 @@
  * Steady state is allocation-free: ships are collected into reused arrays and
  * per-gate state objects are created once per gate.
  */
-import { gateTypeOf, worldToLocal } from '../../core/structures/gateGeometry.js';
+import { DOOR_POWER_LEVELS, DOOR_TRAVEL_S, DOOR_TRAVEL_TICKS, gateTypeOf, worldToLocal } from '../../core/structures/gateGeometry.js';
 import {
   addShipToOccupancy,
   clearOccupancy,
   gateOpenMask,
   newAirlockState,
+  newGateState,
   newOccupancy,
   stepAirlock,
   stepGate,
@@ -61,6 +62,10 @@ export class GateController {
     const reg = this.hooks.registry;
     let changed = false;
     let collected = false;
+    // Interim (door-power slice 7): game tick from game time and full power;
+    // slice 8 passes the room's tick and the grid's supply level.
+    const tick = Math.floor((nowMs * DOOR_TRAVEL_TICKS) / (DOOR_TRAVEL_S * 1000));
+    const level = DOOR_POWER_LEVELS;
     for (const rec of reg.all()) {
       const type = gateTypeOf(rec.kind);
       if (type === null) continue;
@@ -86,15 +91,15 @@ export class GateController {
       }
       if (type === 'gate') {
         let g = this.gates.get(rec.id);
-        if (!g) { g = { open: false, lastBusyMs: nowMs }; this.gates.set(rec.id, g); }
+        if (!g) { g = newGateState(nowMs); this.gates.set(rec.id, g); }
         const before = g.open;
-        stepGate(g, o, nowMs);
+        stepGate(g, o, nowMs, tick, level);
         if (g.open !== before) changed = true;
       } else {
         let a = this.airlocks.get(rec.id);
         if (!a) { a = newAirlockState(); this.airlocks.set(rec.id, a); }
         const before = a.phase;
-        stepAirlock(a, o, nowMs);
+        stepAirlock(a, o, nowMs, tick, level);
         if (a.phase !== before) changed = true;
       }
     }

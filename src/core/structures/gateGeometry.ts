@@ -59,6 +59,10 @@ export const DOOR_POWER_LEVELS = 15;
 /** Door position is an integer 0 (shut) .. DOOR_POS_MAX (open). At level L it
  *  moves L units per tick, so full power crosses it in exactly DOOR_TRAVEL_TICKS. */
 export const DOOR_POS_MAX = DOOR_TRAVEL_TICKS * DOOR_POWER_LEVELS;
+/** A moving door re-segments for a power-level change at most this often, so a
+ *  grid hovering on a level boundary cannot make it stutter. A new target
+ *  (open / shut) re-segments at once. */
+export const DOOR_RESEGMENT_MIN_MS = 500;
 
 /** The clear gap a ship flies through (between the posts): gate / airlock.
  *  The ship-scale fit table checks every playable hull against these. */
