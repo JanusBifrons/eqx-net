@@ -11,7 +11,8 @@ import { SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physi
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, kindHasShield, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
-import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
+import { gateColliderPolygons } from '../../core/structures/gateGeometry.js';
+import { gateHitBoxes } from '../structures/doorLeafBoxes.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 
@@ -258,7 +259,8 @@ export class SwarmSpawner {
         const ext = structureHalfExtents(s.shipKind, ((s.angle ?? 0) * 180) / Math.PI);
         rec.halfW = ext.hw;
         rec.halfH = ext.hh;
-        const boxes = gateWorldAxisBoxes(s.shipKind, s.angle ?? 0);
+        // Posts + towers, then the door leaves (posed shut; GateController re-poses them).
+        const boxes = gateHitBoxes(s.shipKind, s.angle ?? 0);
         if (boxes) rec.boxes = boxes;
       }
     } else if (ok) {

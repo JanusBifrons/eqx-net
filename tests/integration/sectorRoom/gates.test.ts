@@ -68,15 +68,25 @@ describe('SectorRoom integration — Shield Gate opens on approach (phase V gate
   it('opens for its owner, and the open state is in room state', async () => {
     const { internals, gate, observer } = await boot();
     // Closed before anyone arrives. The gap has NO shield span (door-power
-    // slice 10): the solid door leaves close it, so no shield wall absorbs here.
+    // slice 10): the solid door leaves close it, so no shield wall absorbs here,
+    // but the shut leaves block the shot and the gate takes the hit (10b).
     await harness.advance(300);
     expect(internals.gateMask(gate.id)).toBe(0);
     expect(internals.blockShotAtWall(0, -1100, 0, 1, 400, 1)).toBeNull();
+    expect(internals.rayHit(0, -1100, 0, 1, 400, '')?.id).toBe(gate.id);
+    const shotY = GATE_Y - structureHalfExtents('shield_gate').hh - 20;
+    const hp0 = internals.swarmHealth.get(gate.id)!;
+    internals.spawnTestProjectile('door-tester', 0, shotY, 0, 2000, 'laser', 10);
+    await harness.advance(200);
+    expect(internals.swarmHealth.get(gate.id)!, 'a shut door takes the hit').toBeLessThan(hp0);
 
     await harness.connectActive(OWNER);
     await harness.advance(500);
     expect(internals.gateMask(gate.id)).toBe(GATE_OPEN_A);
     expect(internals.blockShotAtWall(0, -1100, 0, 1, 400, 1)).toBeNull();
+    // Fully open (3 s of travel): the leaves sit in the towers, the gap is clear.
+    await harness.advance(3500);
+    expect(internals.rayHit(0, -1100, 0, 1, 400, '')?.id).not.toBe(gate.id);
     // The client sees it in room state (door slice 9: the door row heads open).
     const entityId = String(internals.swarmRegistry.get(gate.id)!.entityId);
     const row = observer.state.structures.get(entityId) as unknown as StructureStateView | undefined;

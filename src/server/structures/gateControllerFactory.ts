@@ -20,6 +20,8 @@ export interface GateControllerDeps {
   supplyFrac(id: string): number;
   setActive(rec: StructureRecord, active: boolean): void;
   post(cmd: RigClipCmd): void;
+  /** The gate's swarm-record hit boxes (door leaves re-posed each update). */
+  hitBoxes?(id: string): Float32Array | undefined;
 }
 
 export function buildGateController(d: GateControllerDeps): GateController {
@@ -44,5 +46,6 @@ export function buildGateController(d: GateControllerDeps): GateController {
     supplyFrac: d.supplyFrac,
     setActive: d.setActive,
     post: d.post,
+    hitBoxes: d.hitBoxes,
   });
 }

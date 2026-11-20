@@ -348,8 +348,8 @@ export class StructuresSliceSync {
     // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
     // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
     h.structureGrid().tickMiners(nowMs);
-    // Gates open/close on approach at this cadence; the wall refresh below
-    // then drops (or restores) each span's collider.
+    // Gates open/close on approach at this cadence, re-posing each gate's
+    // door-leaf hit boxes (a shut leaf blocks shots).
     h.gates().update(nowMs);
     // Refresh wall active states at the turret cadence so a stun lifts (and a
     // power-loss drop registers) within ~100 ms, not a full grid pulse later.
