@@ -1,10 +1,8 @@
 /**
  * Style C family "turrets" (docs/plans/structure-restyle-stage4.md §4 0a, §6).
  * Turrets: turret, laser bolt, missile, autocannon, mine layer.
- * The small guns are drawn here, the missile turret and mine layer in
- * structureStyleC.turretsHeavy.ts, all on the shared pad
- * (structureStyleC.turrets.pad.ts); `kinds` (both files) is spread into
- * `STYLE_C` (structureStyleC.ts). Kind -> family: structureFamilies.ts.
+ * This family's drawings live only here; `kinds` is spread into `STYLE_C`
+ * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  *
  * Only the BASE is drawn here. The turning gun (ring, barrel) is
  * `turretLayout.ts` (ring = R × 0.34 × 1.3, R = half the short side) and its
@@ -13,22 +11,51 @@
  * turret's existing pop-up rig, whose slot draws over the well.
  */
 import {
-  HAZARD, LAMP_AMBER, LAMP_WHITE, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, core, deck, glow,
-  lamp, ngon, poly, rivets, stencil, strip, type StyleCtx, type StyleDrawerTable,
+  HAZARD, LAMP_AMBER, LAMP_WHITE, RIVET, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, core, deck, glow,
+  grime, lamp, ngon, poly, rivets, stencil, strip, wornStripe, type Pts, type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
-import { TRIM, TRIM_DEAD, TURRET_WELL, gunPad } from './structureStyleC.turrets.pad.js';
-import * as heavy from './structureStyleC.turretsHeavy.js';
 import { rigPartIndex } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, SANDBOX_DOOR_TURRET_DEF } from '../../../core/articulation/rigCatalogue.js';
 import { rigSlotContext, type RigDrawHookTable } from './structureRigLook.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
- *  art for this family re-bakes and nothing else does. It carries the heavy
- *  file's own version, so a change there re-bakes this family too. */
-export const version = `t1${heavy.version}`;
+ *  art for this family re-bakes and nothing else does. */
+export const version = 't1';
 
-export { TURRET_WELL };
+/** Blue trim (the Capital / refinery / pylon trim) lit, and its dead glass. */
+const TRIM = 0x7fd4ff;
+const TRIM_DEAD = 0x142430;
+
+/** The dark well under the gun ring, × R. The ring itself is R × 0.442
+ *  (`turretLayout.ts`), so the well shows a dark lip round it. */
+export const TURRET_WELL = 0.5;
+
+/** The armoured octagon pad every small gun stands on (`r` × R): the pad
+ *  slab, a raised collar, a bolt ring, the dark well under the gun ring, blue
+ *  trim lamps on the pad rim. Returns the pad outline. */
+function gunPad(c: StyleCtx, R: number, r: number, salt: number): Pts {
+  const trim = c.live ? TRIM : TRIM_DEAD;
+  const pad = core(c, ngon(0, 0, r * R, 8, Math.PI / 8), SLAB, 18, Math.PI / 2);
+  grime(c, -0.7 * R, -0.7 * R, 1.4 * R, 1.4 * R, 6, salt);
+  wornStripe(c, pad, Math.PI / 2, 0.72 * R, 0.07 * R, salt + 1);
+  // Blue trim lamps on the rim, at the eight octagon corners.
+  for (let i = 0; i < 8; i++) {
+    const a = Math.PI / 8 + (i * Math.PI) / 4, rr = (r - 0.09) * R;
+    const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+    glow(c, ngon(x, y, 0.035 * R, 8), trim, 0.9);
+    if (i % 2 === 0) c.lit(x, y, 0.03 * R, trim);
+  }
+  // The raised armour collar and its bolt ring.
+  poly(c, ngon(0, 0, 0.66 * R, 8, Math.PI / 8), SLAB_DARK, 'metal', 24, 0.05 * R, { roof: [2, 0.05 * R] });
+  for (let i = 0; i < 12; i++) {
+    const a = (i * Math.PI) / 6, rr = 0.58 * R;
+    poly(c, ngon(Math.cos(a) * rr, Math.sin(a) * rr, 0.024 * R, 6), RIVET, 'metal', 26, 0.5);
+  }
+  // The dark well the gun ring sits in.
+  poly(c, ngon(0, 0, TURRET_WELL * R, 16), SOOT, 'metal', -3, 0.03 * R);
+  return pad;
+}
 
 /** Beam turret (`turret`, 140 × 140): the plain armoured pad, a dark well
  *  under the gun ring (the pop-up hatch rig's slot draws over it), blue trim
@@ -100,7 +127,6 @@ export const kinds: StyleDrawerTable = {
   turret: beamTurret,
   laser_bolt_turret: boltTurret,
   autocannon_turret: autocannonTurret,
-  ...heavy.kinds,
 };
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
