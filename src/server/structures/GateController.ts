@@ -1,8 +1,8 @@
 /**
  * Gate open/close orchestration (plan soft-leaping-truffle v2, phase V gates).
  *
- * Runs on the 10 Hz structure tick, BEFORE `ShieldWallManager.update` (which
- * reads `maskFor` to drop an open span's collider). For each constructed Shield
+ * Runs on the 10 Hz structure tick. The gap is closed by solid door leaves
+ * (rig bodies scrubbed via RIG_CLIP), not a shield span. For each constructed Shield
  * Gate / Airlock it builds the occupancy from the ACTIVE player ships around it
  * and steps the pure state machines in `core/structures/gateLogic.ts`. The open
  * state reaches clients through room state (`StructureState.gateOpen`); the
@@ -43,6 +43,7 @@ import {
 import { gateAccessFromIndex, gateAdmits, type GateRelation } from '../../shared-types/gateAccess.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { startStructureRigClip, type RigClipCmd } from './structureRigClip.js';
+import { writeDoorLeafBoxes } from './doorLeafBoxes.js';
 
 /** Reused ship buffer the room fills each tick. */
 export interface GateShipBuffer {
@@ -67,6 +68,9 @@ export interface GateControllerHooks {
   setActive(rec: StructureRecord, active: boolean): void;
   /** Post a worker command (`RIG_CLIP`). */
   post(cmd: RigClipCmd): void;
+  /** The gate's hit boxes on its swarm record (`gateHitBoxes`), whose door-leaf
+   *  tail this controller re-poses each update (slice 10b). Absent: no hit boxes. */
+  hitBoxes?(id: string): Float32Array | undefined;
 }
 
 export class GateController {
@@ -127,6 +131,7 @@ export class GateController {
           this.postDoor(rec, 'door', g.door);
         }
         this.hooks.setActive(rec, gateDoorsMoving(g, undefined, tick));
+        this.poseLeaves(rec, angle, doorPosAt(g.door.seg, tick), 0);
       } else {
         let a = this.airlocks.get(rec.id);
         let fresh = false;
@@ -140,12 +145,19 @@ export class GateController {
           else this.postDoor(rec, 'door-a', a.doorA);
         }
         this.hooks.setActive(rec, gateDoorsMoving(undefined, a, tick));
+        this.poseLeaves(rec, angle, doorPosAt(a.doorA.seg, tick), doorPosAt(a.doorB.seg, tick));
       }
     }
     // Forget gates that left the world.
     for (const id of this.gates.keys()) if (!reg.get(id)) { this.gates.delete(id); changed = true; }
     for (const id of this.airlocks.keys()) if (!reg.get(id)) { this.airlocks.delete(id); changed = true; }
     return changed;
+  }
+
+  /** Shut leaves block shots: re-pose the door-leaf hit boxes in place. */
+  private poseLeaves(rec: StructureRecord, angle: number, posA: number, posB: number): void {
+    const boxes = this.hooks.hitBoxes?.(rec.id);
+    if (boxes !== undefined) writeDoorLeafBoxes(rec.kind, angle, posA, posB, boxes);
   }
 
   /** Scrub the rig along a door's segment: clip time doorClipTime(p0) at t0,
@@ -157,7 +169,8 @@ export class GateController {
     startStructureRigClip(rec, clipId, seg.t0, this.hooks.post, undefined, undefined, this.scrub);
   }
 
-  /** Open bits for a gate (GATE_OPEN_A / GATE_OPEN_B); 0 for anything else. */
+  /** Open bits for a gate (GATE_OPEN_A / GATE_OPEN_B); 0 for anything else.
+   *  Kept for the `doorMotionRow` fallback and test introspection. */
   maskFor(id: string): number {
     return gateOpenMask(this.gates.get(id), this.airlocks.get(id));
   }

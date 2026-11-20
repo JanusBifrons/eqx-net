@@ -2252,9 +2252,9 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry, pilots: this.playerToSlot, activeShip: (pid) => this.getActiveShip(pid), pose: (pid) => this.shipPoseCache.get(pid),
       relationOf: (playerId, owner) => relationOf(playerId, owner, this.relationCtx), serverTick: () => this.serverTick,
       supplyFrac: (id) => this.structureGrid.powerSummaryFor(id).supplyFrac, setActive: (rec, on) => this.structureGrid.setActive(rec, on), post: (cmd) => this.postToWorker(cmd),
+      hitBoxes: (id) => this.swarmRegistry.get(id)?.boxes,
     });
     this.shieldWalls = new ShieldWallManager({
-      gateOpenMask: (id) => this.gates.maskFor(id),
       registry: this.structureRegistry,
       powerSummaryFor: (id) => this.structureGrid.powerSummaryFor(id),
       componentBatteryCharge: (id) => this.structureGrid.componentBatteryCharge(id),
