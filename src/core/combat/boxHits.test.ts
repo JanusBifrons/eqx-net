@@ -5,6 +5,7 @@
  * MissileSimulation).
  */
 import { gateWorldAxisBoxes } from '../structures/gateGeometry.js';
+import { GATE_DEPTH, GATE_POSTS, GATE_W } from '../../shared-types/structureKinds/gatePosts.js';
 import { describe, expect, it } from 'vitest';
 import { projectileSweepBox, rayHitsBox, rayHitsSphere } from './Weapons.js';
 
@@ -43,19 +44,20 @@ describe('projectileSweepBox', () => {
 });
 
 describe('gate parts (phase V gates)', () => {
-  const boxes = gateWorldAxisBoxes('shield_gate', 0)!; // posts at x = ±124, 72×72
+  const boxes = gateWorldAxisBoxes('shield_gate', 0)!; // towers either side of the opening
+  const HW = GATE_W / 2, HH = GATE_DEPTH / 2, POST_X = GATE_POSTS[1]![0];
 
   it('a shot straight through the gap misses the gate', () => {
-    expect(rayHitsBox(0, -500, 0, 1, 1000, 0, 0, 160, 36, boxes)).toBeNull();
-    expect(projectileSweepBox(0, -100, 0, 200, 5, 0, 0, 160, 36, boxes)).toBeNull();
+    expect(rayHitsBox(0, -500, 0, 1, 1000, 0, 0, HW, HH, boxes)).toBeNull();
+    expect(projectileSweepBox(0, -100, 0, 200, 5, 0, 0, HW, HH, boxes)).toBeNull();
   });
 
   it('a shot at a post hits the post face', () => {
-    expect(rayHitsBox(124, -500, 0, 1, 1000, 0, 0, 160, 36, boxes)).toBeCloseTo(500 - 36);
-    expect(projectileSweepBox(124, -100, 0, 200, 5, 0, 0, 160, 36, boxes)!.entry).toBeCloseTo(100 - 36 - 5);
+    expect(rayHitsBox(POST_X, -500, 0, 1, 1000, 0, 0, HW, HH, boxes)).toBeCloseTo(500 - HH);
+    expect(projectileSweepBox(POST_X, -100, 0, 200, 5, 0, 0, HW, HH, boxes)!.entry).toBeCloseTo(100 - HH - 5);
   });
 
   it('without parts the whole footprint box still blocks', () => {
-    expect(rayHitsBox(0, -500, 0, 1, 1000, 0, 0, 160, 36)).toBeCloseTo(464);
+    expect(rayHitsBox(0, -500, 0, 1, 1000, 0, 0, HW, HH)).toBeCloseTo(500 - HH);
   });
 });

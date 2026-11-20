@@ -22,13 +22,15 @@ import {
   gateGapHalf,
   type GateType,
 } from './gateGeometry.js';
+import { GATE_W } from '../../shared-types/structureKinds/gatePosts.js';
 
 /** Wire value of the open state: bit 0 = the gate span / airlock end A open,
  *  bit 1 = airlock end B open. Never 3 (both ends). */
 export const GATE_OPEN_A = 1;
 export const GATE_OPEN_B = 2;
 
-const GATE_HALF_W = 160;
+/** Half the gate's full width (tower outer edge to centre). */
+const GATE_HALF_W = GATE_W / 2;
 
 /** Per-tick occupancy of a gate (reset with `clearOccupancy`). */
 export interface GateOccupancy {

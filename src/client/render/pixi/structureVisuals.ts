@@ -11,8 +11,7 @@
  * LOCAL pixi space centred on the structure, so one plan feeds the in-game
  * renderer (a retained Graphics per structure) and the offline design sheet.
  *
- * `PROPOSED_FOOTPRINTS` is the design proposal; phase V moves the agreed
- * numbers into the structure catalogue (collider + placement + LOS).
+ * Footprints come from the structure catalogue (collider + placement + LOS).
  */
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { PAD_SPECS, padPostCenters } from '../../../shared-types/teleport.js';
@@ -44,25 +43,6 @@ export interface StructureFootprint {
   w: number;
   h: number;
 }
-
-export const PROPOSED_FOOTPRINTS: Readonly<Record<string, StructureFootprint>> = {
-  capital: { w: 560, h: 560 },
-  connector: { w: 64, h: 64 },
-  solar: { w: 360, h: 150 },
-  miner: { w: 240, h: 240 },
-  turret: { w: 140, h: 140 },
-  battery: { w: 190, h: 190 },
-  shield_pylon: { w: 72, h: 72 },
-  laser_bolt_turret: { w: 150, h: 150 },
-  missile_turret: { w: 190, h: 190 },
-  cargo_bay: { w: 320, h: 200 },
-  // User request 2026-11-01 — gates. A Shield Gate is ONE structure: two gate
-  // posts placed together with a shield span between them that opens when an
-  // allowed ship approaches. A Shield Airlock is a chamber with a shield gate at
-  // each end; it opens one end or the other, never both.
-  shield_gate: { w: 320, h: 72 },
-  shield_airlock: { w: 320, h: 260 },
-};
 
 /** Gate / airlock shield state for the draw plan (from room state at runtime). */
 export type GateState = 'closed' | 'open' | 'openA' | 'openB';
@@ -103,10 +83,9 @@ export interface StructureVisualOpts {
 }
 
 export function buildStructureVisual(kindId: string, opts: StructureVisualOpts): StructureVisual {
-  // Catalogue kinds use the catalogue footprint (the collider's source);
-  // not-yet-catalogued designs (gates) use the proposal table.
+  // Catalogue kinds use the catalogue footprint (the collider's source).
   const fp = opts.size
-    ?? (isStructureKindId(kindId) ? getStructureKind(kindId).footprint : PROPOSED_FOOTPRINTS[kindId] ?? { w: 80, h: 80 });
+    ?? (isStructureKindId(kindId) ? getStructureKind(kindId).footprint : { w: 80, h: 80 });
   const rects: RectOp[] = [];
   const lights: LightOp[] = [];
   const W = fp.w, H = fp.h, x0 = -W / 2, y0 = -H / 2;

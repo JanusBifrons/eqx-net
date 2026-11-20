@@ -27,6 +27,7 @@ import {
   worldToLocal,
 } from './gateGeometry.js';
 import { STRUCTURE_KINDS } from '../../shared-types/structureKinds.js';
+import { GATE_DEPTH, GATE_POSTS, GATE_POST_W } from '../../shared-types/structureKinds/gatePosts.js';
 
 const TICK = 100;
 const R = 14; // a fighter-sized ship
@@ -61,9 +62,9 @@ describe('gate geometry', () => {
     expect(Math.abs(a.y)).toBeCloseTo(88);
     const boxes = gateWorldAxisBoxes('shield_gate', Math.PI / 2)!;
     expect(boxes[0]).toBeCloseTo(0);
-    expect(Math.abs(boxes[1]!)).toBeCloseTo(124);
-    expect(boxes[2]).toBe(36);
-    expect(boxes[3]).toBe(36);
+    expect(Math.abs(boxes[1]!)).toBeCloseTo(GATE_POSTS[1]![0]);
+    expect(boxes[2]).toBe(GATE_DEPTH / 2); // the depth, now along world x
+    expect(boxes[3]).toBe(GATE_POST_W / 2); // the tower width, now along world y
   });
 
   it('local/world transforms round-trip', () => {
@@ -77,9 +78,9 @@ describe('gate geometry', () => {
   it('a fence wall anchors on the gate post nearest its far end; a pylon on its centre', () => {
     const out = { x: 0, y: 0 };
     emitterAnchor('shield_gate', 0, 0, 0, 1000, 0, out);
-    expect(out).toEqual({ x: 124, y: 0 });
+    expect(out).toEqual({ x: GATE_POSTS[1]![0], y: 0 });
     emitterAnchor('shield_gate', 0, 0, 0, -1000, 0, out);
-    expect(out).toEqual({ x: -124, y: 0 });
+    expect(out).toEqual({ x: -GATE_POSTS[1]![0], y: 0 });
     emitterAnchor('shield_pylon', 5, 6, 0, 1000, 0, out);
     expect(out).toEqual({ x: 5, y: 6 });
   });
