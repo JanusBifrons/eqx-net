@@ -794,8 +794,8 @@ function Cap({ children }: { children: string }): JSX.Element {
 const ROOT_SX = {
   // WS-9 (R2.30) — world-anchored: position:fixed, moved to the selected entity's
   // projected screen point by gameRafLoop each frame. The translate anchors the
-  // box's bottom-centre at that point so it floats just above the entity. Starts
-  // off-screen until the first frame positions it (avoids a top-left flash).
+  // box's bottom-centre at that point, which inspectorPlacement.ts keeps clear of the
+  // selected entity. Starts off-screen until the first frame positions it (no flash).
   position: 'fixed' as const,
   left: 0,
   top: -9999,

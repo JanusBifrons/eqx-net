@@ -470,9 +470,9 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     if (typeof ssx === 'number' && typeof ssy === 'number') {
       const panel = document.querySelector('[data-testid="entity-stats-panel"]') as HTMLElement | null;
       if (panel) {
-        // The panel is centred ABOVE its anchor, so the anchor is clamped by
-        // the panel's size and the whole panel stays on screen, below the
-        // header (inspectorPlacement.ts). Read the size before writing.
+        // The panel sits clear of the selection box, whole on screen and
+        // below the header (inspectorPlacement.ts). Read the size before
+        // writing.
         // While a pointer is on it, it holds its spot so taps land
         // (inspectorHold.ts), but a panel that grows (a loot window opening)
         // is still clamped back on screen.
@@ -480,7 +480,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
         const w = panel.offsetWidth, h = panel.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
         const move = held
           ? reclampHeldInspector(parseFloat(panel.style.left), parseFloat(panel.style.top), w, h, vw, vh, inspectorAt)
-          : (placeInspector(ssx, ssy, w, h, vw, vh, inspectorAt), true);
+          : (placeInspector(ssx, ssy, selFb.selectionScreenHalf ?? 0, w, h, vw, vh, inspectorAt), true);
         if (move) {
           const at = inspectorAt;
           panel.style.left = `${at.left}px`;

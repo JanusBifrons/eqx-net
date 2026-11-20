@@ -32,6 +32,7 @@ export function createRendererFeedback(): RendererFeedback {
     placementScreenY: null,
     selectionScreenX: null,
     selectionScreenY: null,
+    selectionScreenHalf: null,
     placementChosenWorldX: null,
     placementChosenWorldY: null,
     placementStuck: false,

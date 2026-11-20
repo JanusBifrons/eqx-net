@@ -207,7 +207,7 @@ Concretely:
 
 
 - **The inspector is `<Portal>`'d to `document.body`.** Its `zIndex: 1400` was trapped by an ancestor stacking context under the body-level HUD anchors, so the `top-left` anchor ate clicks on its buttons (LESSONS 2026-11-02). Any panel outside the Slot system that must beat the HUD needs a Portal. `gameRafLoop` still finds it by testid.
-- **The world-anchored inspector is placed by `app/inspectorPlacement.ts` `placeInspector`:** the WHOLE panel stays on screen, below the header, with the bottom kept when it is too tall.
+- **The world-anchored inspector is placed by `app/inspectorPlacement.ts` `placeInspector`:** the WHOLE panel stays on screen, below the header, and never covers the selection: above the selection box when it fits, else beside it (right, then left), else below; only when none fits is it clamped over it, the bottom kept when it is too tall. The box size comes from `RendererFeedback.selectionScreenHalf` (the bracket half-size in screen px).
   - A target off-screen used to push half the panel out of view (its buttons unclickable). Found by `teleporter.spec.ts`; the header case by `break-in.spec.ts`.
   - Never clamp only the anchor.
 
