@@ -572,7 +572,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Loot window search time per (viewer, pod) (cargo-pods slice 12). */
   private readonly lootSearch = new LootSearch();
   /** Asteroid ore: the one draw path (Miner, harvesters, mining-laser hits paid on the pulse). */
-  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, sectorKey: () => this.sectorKey, oreAtCentre: (r, out) => this.cutField?.oreAtCentre(r, out) ?? false });
+  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, sectorKey: () => this.sectorKey, oreAtCentre: (r, out) => this.cutField?.oreAtCentre(r, out) ?? false, oreAtRest: (rx, ry, px, py, a, x, y, out) => this.cutField?.oreAtRest(rx, ry, px, py, a, x, y, out) !== undefined });
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
   private storage!: StorageService;
   /** Economy v2 W3 — Research Lab jobs (research / copy / combine). */

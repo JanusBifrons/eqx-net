@@ -12,7 +12,8 @@
  *   turns into goods: its share by weight of the whole rock's fixed ore
  *   (owner 2026-11-20), so cutting smaller never loses ore.
  * - A cut-field rock (macro terrain v2) yields the field's ore at its centre
- *   (`oreAtCentre` → `oreRow`); other rocks use their
+ *   (`oreAtCentre` → `oreRow`), and so do the chunks cut from it (their
+ *   `WreckOre` rest frame, `oreAtRest`); other rocks use their
  *   `asteroidResource`.
  *
  * Docs: docs/features/mining-and-salvage.md ("Mining asteroids").
@@ -53,6 +54,11 @@ export interface OreDrawDeps {
   /** The field ore at `rock`'s centre, into `out`; false when `rock` is
    *  not a cut-field rock. */
   oreAtCentre?(rock: SwarmEntityRecord, out: { ice: number; crystal: number }): boolean;
+  /** The field ore at world (x, y) on something cut from a field rock whose
+   *  rest centre (restX, restY) now sits at (poseX, poseY) turned by
+   *  `angle`, into `out` (`CutFieldSubsystem.oreAtRest`); false (out untouched)
+   *  when the room has no field. */
+  oreAtRest?(restX: number, restY: number, poseX: number, poseY: number, angle: number, x: number, y: number, out: { ice: number; crystal: number }): boolean;
 }
 
 export class OreDraw {
@@ -124,12 +130,24 @@ export class OreDraw {
    *  weight of the rock's fixed ore (`chunkOreUnits`; owner 2026-11-20 "Ore
    *  shared by weight": cutting smaller never loses ore), split by the
    *  rock's yield (`asteroidYield`, as every draw is). This draws nothing
-   *  from the registry. The point is the hook's key for a later per-point
-   *  vein (macro terrain: a cut-field rock's `oreAtRest`). Allocates (one
-   *  intake, never per tick). */
-  chunkYield(rockId: string, x: number, y: number, mass: number, rockMass: number, resource: AsteroidResourceId): Partial<Record<GoodId, number>> {
+   *  from the registry. A chunk of a cut-FIELD rock (`rest`: its
+   *  `WreckOre` rest frame) is split by the field's ore instead, sampled
+   *  through `oreAtRest` at the rock's rest centre, the same point a
+   *  harvester draws the whole rock at (`rowOf`), so every chunk of one
+   *  rock carries its mix. (x, y) stays the hook's key for a later
+   *  per-piece vein. Allocates (one intake, never per tick). */
+  chunkYield(
+    rockId: string, x: number, y: number, mass: number, rockMass: number, resource: AsteroidResourceId,
+    rest?: { readonly restX?: number | undefined; readonly restY?: number | undefined },
+  ): Partial<Record<GoodId, number>> {
     void rockId; void x; void y;
     const units = chunkOreUnits(mass, rockMass);
-    return units > 0 ? asteroidYield(resource, units) : {};
+    if (!(units > 0)) return {};
+    const rx = rest?.restX, ry = rest?.restY;
+    const c = this.conc;
+    if (rx !== undefined && ry !== undefined && this.d.oreAtRest?.(rx, ry, rx, ry, 0, rx, ry, c) === true) {
+      return asteroidYield(oreRow(c, this.rowScratch), units);
+    }
+    return asteroidYield(resource, units);
   }
 }
