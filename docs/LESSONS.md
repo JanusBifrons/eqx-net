@@ -3268,6 +3268,14 @@ and every other join (`waitForInPlay`) gets 60 s. It failed only at that reveal 
 slowest e2e-smoke (1) runners (5 of 26 jobs; one went 3 of 3). A spec that watches the join itself
 keeps the shared join budget plus its own deliberate hold, and logs which gate held on a timeout.
 
+**A "fresh event" window measured at the drawing frame is eaten by a slow frame.** The capital
+wreck's break-up (burst, kill blasts, crack ripples) plays only for a wreck younger than
+`WRECK_BREAK_FX_MAX_AGE_MS` at first sight. Its age was `lastUpdateTick - deathTick` at the frame
+that built the first piece sprite; on slow CI runners the GPU-lit look ran 2-3 s frames under
+SwiftShader, so that frame was already past the window and `capital-wreck-render.spec.ts` (S3,
+GPU-lit) saw no break-up on roughly half the runs. Measure an event's age at the tick the client
+first received it (`SwarmRenderState.firstTick`, stamped by the decoder), never at the frame that draws it.
+
 ## 2026-11-20 — a moving door has one clock: read doorPosAt, never integrate
 
 Solid gate doors (docs/plans/door-power.md) are posed in three places: the server's hit boxes, the
