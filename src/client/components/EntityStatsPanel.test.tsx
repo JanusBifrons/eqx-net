@@ -16,6 +16,13 @@ import { selectionStats, applySelectionStats, resetSelectionStats } from '../net
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 
+// #1046 — the inspector reads the HUD size class (phone = tiny text).
+const hud = vi.hoisted(() => ({ size: "desk" as "phone" | "tablet" | "desk" }));
+vi.mock("../hud/useHudScale", async (orig) => ({
+  ...(await orig<typeof import("../hud/useHudScale")>()),
+  useHudSize: () => hud.size,
+}));
+
 // Phase 4 WS-A2 — observe the Pilot action send without a live client.
 const sendPilotShip = vi.fn();
 vi.mock('../ships/shipActionsClient.js', () => ({
@@ -35,6 +42,18 @@ describe('EntityStatsPanel', () => {
   });
   afterEach(() => {
     setGameClient(null);
+  });
+
+  it('#1046: on a phone the panel is marked so its text stays tiny', () => {
+    applySelectionStats({ id: '9', name: 'Refinery', hp: 100, hpMax: 100 });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
+    hud.size = 'phone';
+    const { unmount } = render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-panel').hasAttribute('data-hud-phone')).toBe(true);
+    unmount();
+    hud.size = 'desk';
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-panel').hasAttribute('data-hud-phone')).toBe(false);
   });
 
   it('is hidden when nothing is selected', () => {
@@ -543,7 +562,9 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '9', name: 'Smelter', hp: 1800, hpMax: 1800 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-recipe')).toHaveTextContent('MAKES Smelt alloy · Waiting for Minerals');
+    expect(screen.getByTestId('entity-stats-recipe')).toHaveTextContent('Smelt alloy · Waiting for Minerals');
+    // #1046 — the recipe label already starts with its verb: no "MAKES" prefix.
+    expect(screen.getByTestId('entity-stats-recipe').textContent).not.toMatch(/^MAKES/);
     // A smelter has one recipe: no change-recipe button.
     expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
   });
