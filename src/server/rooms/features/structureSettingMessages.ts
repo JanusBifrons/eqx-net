@@ -36,7 +36,7 @@ export function registerStructureSettingMessages(h: StructureSettingMessageHost)
     if (!swarmRec) return;
     const rec = h.structureRegistry.get(swarmRec.id);
     if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
-    if (h.production().setRecipe(rec, msg.recipe)) {
+    if (h.production().setRecipe(rec, msg.recipe, msg.count)) {
       h.storage().flushDirty();
       h.rebuildStructuresSlice();
     }

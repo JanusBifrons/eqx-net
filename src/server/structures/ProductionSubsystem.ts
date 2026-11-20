@@ -44,6 +44,7 @@ import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/StorageService.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
 
 /** What one cycle of a recipe actually uses and makes. */
 export interface EffectiveRecipe {
@@ -70,6 +71,9 @@ export interface ProductionDeps {
   /** D3 — a habitation module finished a cycle: pay its owner `n` credits (taxes).
    *  The room pays a player's wallet; an NPC owner has none. */
   payCredits?(rec: StructureRecord, n: number): void;
+  /** A Shipyard finished a 'hull:<kind>': park it as a live ship owned by the
+   *  yard's owner. False = it could not; the packed crate goes to storage. */
+  launchHull?(rec: StructureRecord, kind: string, quality: number): boolean;
 }
 
 interface AppliedCache {
@@ -181,17 +185,20 @@ export class ProductionSubsystem {
   /**
    * The owner picks a recipe. A cycle already loaded under the old recipe
    * hands its inputs back to the network first; if they don't fit, the change
-   * is refused (returns false) so nothing is lost.
+   * is refused (returns false) so nothing is lost. `count` (job 2E) caps the
+   * outputs (absent ⇒ repeat forever); setting it again resets it.
    */
-  setRecipe(rec: StructureRecord, recipe: RecipeId): boolean {
+  setRecipe(rec: StructureRecord, recipe: RecipeId, count?: number): boolean {
     const kind = rec.kind as StructureKindId;
     if (!isProcessorKind(kind) || !RECIPES[recipe].processors.includes(kind)) return false;
     if (this.recipeOf(rec) === recipe) {
       rec.recipe = recipe;
+      rec.prodCount = count;
       return true;
     }
     if (rec.prodLoaded === true && !this.unload(rec)) return false;
     rec.recipe = recipe;
+    rec.prodCount = count;
     return true;
   }
 
@@ -272,6 +279,7 @@ export class ProductionSubsystem {
     }
     const id = this.recipeOf(rec);
     const loaded = rec.prodLoaded === true;
+    if (haltAtBuildCount(rec, loaded, id)) return;
     // A loaded cycle keeps running on what it captured at its start, even if
     // the copy that started it is now used up.
     const eff = loaded ? this.effective(rec, id) ?? baseEffect(id) : this.effective(rec, id);
@@ -316,13 +324,14 @@ export class ProductionSubsystem {
     if ((rec.prodProgress ?? 0) >= eff.cyclePulses) {
       const cycle = rec.prodCycles ?? 0;
       const extra = (rec.prodYield ?? 0) > 0 && this.roll(rec.id, cycle) < (rec.prodYield ?? 0) ? 1 : 0;
-      if (!this.put(eff.outputs, extra, rec.prodQuality ?? 0)) {
+      if (!this.put(eff.outputs, extra, rec.prodQuality ?? 0, rec)) {
         rec.prodState = PROD_STATE.blocked;
         return;
       }
       rec.prodLoaded = false;
       rec.prodProgress = 0;
       rec.prodCycles = cycle + 1;
+      spendBuildCount(rec);
       this.cyclesCompleted++;
       // D3 — taxes go to the owner's wallet, never into a hold.
       for (const o of eff.outputs) if ('credits' in o) this.d.payCredits?.(rec, o.credits);
@@ -366,6 +375,7 @@ export class ProductionSubsystem {
       }
       rec.prodProgress = 0;
       rec.prodCycles = (rec.prodCycles ?? 0) + 1;
+      spendBuildCount(rec);
       this.cyclesCompleted++;
       if (!this.hasOre(ore)) {
         rec.prodChunk = undefined;
@@ -512,13 +522,13 @@ export class ProductionSubsystem {
    * structures fill holds by weight. Placement is planned before anything is
    * written, so a partial fit changes nothing. Storages are weighed lazily.
    */
-  private put(outputs: readonly RecipeOutput[], extra: number, quality: number): boolean {
+  private put(outputs: readonly RecipeOutput[], extra: number, quality: number, maker?: StructureRecord): boolean {
     if (!this.placeAll(outputs, extra, false, quality)) return false;
-    this.placeAll(outputs, extra, true, quality);
+    this.placeAll(outputs, extra, true, quality, maker);
     return true;
   }
 
-  private placeAll(outputs: readonly RecipeOutput[], extra: number, apply: boolean, quality: number): boolean {
+  private placeAll(outputs: readonly RecipeOutput[], extra: number, apply: boolean, quality: number, maker?: StructureRecord): boolean {
     const net = this.net;
     const free = this.free;
     const bank = this.bank;
@@ -530,6 +540,8 @@ export class ProductionSubsystem {
     }
     for (const o of outputs) {
       if ('credits' in o) continue; // D3 taxes: paid to the wallet, take no space
+      // A finished hull launches as a ship; the crate's room was still checked in planning (the fallback).
+      if (apply && maker !== undefined && 'hull' in o && this.d.launchHull?.(maker, o.hull, quality) === true) continue;
       if ('packed' in o || 'hull' in o) {
         // A packed structure, or a packed hull (W5 Shipyard): one discrete item.
         const product = 'packed' in o ? packedProduct(o.packed) : hullProduct(o.hull);
