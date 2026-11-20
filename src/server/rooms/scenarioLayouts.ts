@@ -64,7 +64,7 @@ export interface LayoutPoint {
  * it, side by side. The WEST gate opens for anyone not hostile; the EAST gate
  * opens for its owner only — and the owner is `scenario`, so a visiting pilot
  * is locked out. Ships spawned south of a gate and flown north (+y) test both.
- * Power: Capital 50 + Solar 30 = 80 ≥ 2 gates × 30. The Capital is turned 90°
+ * Power: Capital 50 + Solar 120 ≥ 2 gates × 30. The Capital is turned 90°
  * so its crane bay pad (west) clears the north Connector and Solar.
  */
 export const GATE_TEST = {
@@ -75,7 +75,7 @@ export const GATE_TEST = {
 export const GATE_TEST_PREBUILT = [
   { kind: 'capital', x: 0, y: 0, rot: 90 },
   { kind: 'connector', x: 0, y: 350 },
-  { kind: 'solar', x: 250, y: 400 },
+  { kind: 'solar', x: 450, y: 500 },
   { kind: 'connector', x: 0, y: -350 },
   { kind: 'shield_gate', ...GATE_TEST.openGate, gateAccess: 'open' },
   { kind: 'shield_gate', ...GATE_TEST.lockedGate, gateAccess: 'owner' },
@@ -86,8 +86,9 @@ export const SCENARIO = {
   capital: { x: 0, y: 0, rot: 90 },
   connectorN: { x: 0, y: 350 },
   connectorS: { x: 0, y: -350 },
-  solarNE: { x: 250, y: 400 },
-  solarNW: { x: -250, y: 400 },
+  /** 700 u wide: each stands clear of the north Connector on its side. */
+  solarNE: { x: 450, y: 500 },
+  solarNW: { x: -450, y: 500 },
   minerSW: { x: -200, y: -420 },
   turretSE: { x: 150, y: -400 },
   /** In the Miner's 800 u range (≈ 573 u away). */
@@ -478,17 +479,18 @@ export function structureRowsForTests(state: StructureRowsState, slice: readonly
 /** Perf scene `base-flow`: a working player base whose cables carry flow every
  *  grid pulse. The Capital (pad west) feeds three arms through connectors:
  *  north and south each hold two Miners on rocks plus a three-Solar spur, east
- *  is six Solars. 410 power for 240 of Miners, so every Miner drills and its
- *  minerals ride the cables to the Capital each second. */
+ *  is five Solars, turned on end (300 u wide). 1490 power for 240 of Miners,
+ *  so every Miner drills and its minerals ride the cables to the Capital each
+ *  second. */
 function baseFlowArm(sy: 1 | -1): { kind: string; x: number; y: number }[] {
   return [
     { kind: 'connector', x: 0, y: 470 * sy },
     { kind: 'miner', x: -400, y: 800 * sy },
     { kind: 'miner', x: 400, y: 800 * sy },
     { kind: 'connector', x: 0, y: 1000 * sy },
-    { kind: 'solar', x: -300, y: 1200 * sy },
-    { kind: 'solar', x: 300, y: 1200 * sy },
-    { kind: 'solar', x: 0, y: 1450 * sy },
+    { kind: 'solar', x: -430, y: 1320 * sy },
+    { kind: 'solar', x: 430, y: 1320 * sy },
+    { kind: 'solar', x: 0, y: 1700 * sy },
   ];
 }
 export const BASE_FLOW_OPTS = {
@@ -497,12 +499,12 @@ export const BASE_FLOW_OPTS = {
     ...baseFlowArm(1),
     ...baseFlowArm(-1),
     { kind: 'connector', x: 470, y: 0 },
-    { kind: 'solar', x: 800, y: -300 },
-    { kind: 'solar', x: 800, y: 300 },
+    { kind: 'solar', x: 800, y: -450, rot: 90 },
+    { kind: 'solar', x: 800, y: 450, rot: 90 },
     { kind: 'connector', x: 1000, y: 0 },
-    { kind: 'solar', x: 1300, y: -300 },
-    { kind: 'solar', x: 1300, y: 300 },
-    { kind: 'solar', x: 1450, y: 0 },
+    { kind: 'solar', x: 1300, y: -450, rot: 90 },
+    { kind: 'solar', x: 1300, y: 450, rot: 90 },
+    { kind: 'solar', x: 1700, y: 0, rot: 90 },
   ],
   prebuiltStructuresOwner: 'perf-base',
   /** One rock beside each Miner (≈ 460 u, inside its 800 u range). */

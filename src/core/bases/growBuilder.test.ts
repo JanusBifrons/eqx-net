@@ -35,7 +35,7 @@ describe('Builder links (0d slice 5)', () => {
     const hub = B.tryPlace({ kind: 'connector', x: 0, y: 0 });
     // (Off to the side, so the solar's bottom-edge socket bends the cable well
     // clear of the straight line; it has no corner sockets to angle from.)
-    const sol = B.tryPlace({ kind: 'solar', x: 500, y: 400 });
+    const sol = B.tryPlace({ kind: 'solar', x: 600, y: 450 });
     expect(B.tryLink(sol, hub)).toBe(true);
     const [sa, sb] = B.edgeSockets[0]!;
     const poly = new Float64Array(CABLE_CURVE_FLOATS);
@@ -45,14 +45,14 @@ describe('Builder links (0d slice 5)', () => {
     let best = -1, bx = 0, by = 0;
     for (let i = 1; i < CABLE_CURVE_SEGMENTS; i++) {
       const x = poly[i * 2]!, y = poly[i * 2 + 1]!;
-      const d = Math.abs(400 * x - 500 * y) / Math.hypot(500, 400);
+      const d = Math.abs(450 * x - 600 * y) / Math.hypot(600, 450);
       if (d > best) { best = d; bx = x; by = y; }
     }
-    expect(segmentIntersectsAabb(0, 0, 500, 400, bx - hw, by - hh, bx + hw, by + hh), 'clear of the straight line').toBe(false);
+    expect(segmentIntersectsAabb(0, 0, 600, 450, bx - hw, by - hh, bx + hw, by + hh), 'clear of the straight line').toBe(false);
     // Without the link the same spot is free, so the cable is what refuses it.
     const free = new Builder();
     free.tryPlace({ kind: 'connector', x: 0, y: 0 });
-    free.tryPlace({ kind: 'solar', x: 500, y: 400 });
+    free.tryPlace({ kind: 'solar', x: 600, y: 450 });
     expect(free.tryPlace({ kind: 'connector', x: bx, y: by })).toBeGreaterThanOrEqual(0);
     expect(B.tryPlace({ kind: 'connector', x: bx, y: by })).toBe(-1);
   });

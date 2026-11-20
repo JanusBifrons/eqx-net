@@ -48,7 +48,7 @@ describe('canConnect picks the cable socket pair (0d slice 4)', () => {
       const solar = real('s', 'solar', 0, 0, rot);
       for (let k = 0; k < 16; k++) {
         const ang = (k / 16) * Math.PI * 2;
-        const con = real('c', 'connector', Math.cos(ang) * 420, Math.sin(ang) * 420);
+        const con = real('c', 'connector', Math.cos(ang) * 620, Math.sin(ang) * 620);
         pick.a = pick.b = -2;
         expect(canConnect(solar, con, NONE, map(solar, con), undefined, pick), `rot ${rot} dir ${k}`).toEqual({ ok: true });
         const sa = sock(solar, pick.a), sb = sock(con, pick.b);
@@ -203,7 +203,7 @@ describe('one cable per stud on a socket-bound building (owner rule)', () => {
 
   it('connector ends share sockets freely', () => {
     const hub = real('hub', 'connector', 0, 0);
-    const sol = real('sol', 'solar', 420, 0);
+    const sol = real('sol', 'solar', 620, 0);
     const nodes = map(hub, sol);
     expect(pickCableSocketPair(hub, sol, CONNECTION_MAX_RANGE, nodes, undefined, pick, 0, 0)).toBeNull();
     const free = pick.a;
@@ -211,7 +211,7 @@ describe('one cable per stud on a socket-bound building (owner rule)', () => {
     expect(pickCableSocketPair(hub, sol, CONNECTION_MAX_RANGE, nodes, undefined, pick, 0x3f, 0)).toBeNull();
     expect(pick.a).toBe(free);
     // Through canConnect: two solars east of a hub both land on its east face.
-    const s2 = real('s2', 'solar', 420, 0);
+    const s2 = real('s2', 'solar', 620, 0);
     const adj = new Map<string, Connection[]>([['hub', [new Connection(1, 'hub', 'sol', 1, free, 2)]]]);
     expect(canConnect(hub, s2, adj, map(hub, s2), undefined, pick).ok).toBe(true);
     expect(pick.a).toBe(free);

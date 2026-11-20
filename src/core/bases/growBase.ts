@@ -56,8 +56,9 @@ export type { GrownPlacement } from './growBuilder.js';
  *  16→17 (structure-restyle stud audit): sockets sit on the house-look
  *  outline (style c), so cable ends and socket-to-socket reach moved.
  *  17→18: each leaf stands `linkGap` off its connector (`MIN_CABLE_LENGTH`);
- *  a spine relay pushed onto its row line is dropped. */
-export const BASE_GROWTH_VERSION = 18;
+ *  a spine relay pushed onto its row line is dropped.
+ *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power priced per unit of draw. */
+export const BASE_GROWTH_VERSION = 19;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -229,8 +230,8 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
     const n = counts.get(w.kind) ?? 0;
     const storage = w.kind === 'cargo_bay' || w.kind === 'freight_dock';
     if (n >= (storage ? storageCap : unitCap)) return false;
-    // A purchase includes the Solars that power it (a builder pays for both).
-    const c = generatedCost(w.kind) + Math.ceil(expectedDraw(w.kind) / solarOut) * solarCost;
+    // A purchase includes its share of the Solars that power it (per unit of draw).
+    const c = generatedCost(w.kind) + Math.ceil((expectedDraw(w.kind) / solarOut) * solarCost);
     if (c > budget || wants.length >= cap) return false;
     counts.set(w.kind, n + 1);
     budget -= c;
