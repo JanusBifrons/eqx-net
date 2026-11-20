@@ -11,7 +11,7 @@ import type { Hold } from '../../shared-types/goods.js';
 import type { HoldStore } from '../cargo/HoldStore.js';
 import type { Wallet } from './Wallet.js';
 import { CAPITAL_CRATE_PRODUCT, capitalCratePrice, traderPackedItem } from './capitalCrateTrade.js';
-import { TRADER_PACKED_QUALITY } from './TradeDirector.js';
+import { TRADER_PACKED_QUALITY } from './tradeBoard.js';
 
 /** The dock's always-on crate listing (shown in its "For sale" stock). */
 export const DOCK_CAPITAL_LISTING = { product: CAPITAL_CRATE_PRODUCT, quality: TRADER_PACKED_QUALITY } as const;
