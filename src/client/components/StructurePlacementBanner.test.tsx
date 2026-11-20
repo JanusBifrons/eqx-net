@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/react';
 import { StructurePlacementBanner } from './StructurePlacementBanner.js';
 import { useUIStore } from '../state/store.js';
+import { getPlacementRotationDeg, setPlacementRotationDeg } from '../structures/structurePlacementClient.js';
 
 /**
  * The banner's Confirm delegates to the shared `commitChosenPlacement` (the
@@ -13,7 +14,10 @@ import { useUIStore } from '../state/store.js';
  * Confirm click commits the active kind + exits placement mode.
  */
 const commitChosenPlacement = vi.fn();
-vi.mock('../structures/structurePlacementClient', () => ({
+// The rotation functions stay REAL so the Rotate test checks the actual
+// module state the renderer reads (and the desktop R key cycles).
+vi.mock('../structures/structurePlacementClient', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../structures/structurePlacementClient.js')>()),
   commitChosenPlacement: (...a: unknown[]) => commitChosenPlacement(...a),
 }));
 
@@ -49,6 +53,18 @@ describe('StructurePlacementBanner', () => {
 
     expect(commitChosenPlacement).not.toHaveBeenCalled();
     expect(useUIStore.getState().placementKind).toBeNull();
+  });
+
+  it('Rotate turns the placement 90 degrees', () => {
+    setPlacementRotationDeg(0);
+    const { getByTestId } = render(<StructurePlacementBanner />);
+    fireEvent.click(getByTestId('placement-rotate'));
+    expect(getPlacementRotationDeg()).toBe(90);
+    fireEvent.click(getByTestId('placement-rotate'));
+    expect(getPlacementRotationDeg()).toBe(180);
+    // Rotating neither commits nor leaves placement mode.
+    expect(commitChosenPlacement).not.toHaveBeenCalled();
+    expect(useUIStore.getState().placementKind).toBe('capital');
   });
 
   it('renders nothing when not in placement mode', () => {
