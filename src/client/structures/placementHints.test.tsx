@@ -19,18 +19,29 @@ describe('updatePlacementHints: too-close link hint', () => {
   });
 
   it('shows under the ghost when a link is too short and none forms', () => {
-    updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 1, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
+    updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 1, placementPreviewRejection: null, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
     expect(el.hidden).toBe(false);
     expect(el.style.left).toBe('200px');
     expect(el.textContent).toBe("Can't connect: too close");
   });
 
   it('stays hidden when another link forms, and hides again when the ghost moves away', () => {
-    updatePlacementHints({ placementPreviewConnectionCount: 1, placementPreviewTooShortCount: 1, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
+    updatePlacementHints({ placementPreviewConnectionCount: 1, placementPreviewTooShortCount: 1, placementPreviewRejection: null, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
     expect(el.hidden).toBe(true);
-    updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 1, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
+    updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 1, placementPreviewRejection: null, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
     expect(el.hidden).toBe(false);
-    updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 0, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
+    updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 0, placementPreviewRejection: null, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
+    expect(el.hidden).toBe(true);
+  });
+
+  it('says why the ghost cannot go there (the server notice), over "too close"', () => {
+    updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 1, placementPreviewRejection: 'overlap-obstacle', viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
+    expect(el.hidden).toBe(false);
+    expect(el.textContent).toBe("Can't build here: blocked by an asteroid or wreck");
+    // Moved clear: back to the too-close line, then hidden.
+    updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 1, placementPreviewRejection: null, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
+    expect(el.textContent).toBe(TOO_CLOSE_LINK_TEXT);
+    updatePlacementHints({ placementPreviewConnectionCount: 1, placementPreviewTooShortCount: 0, placementPreviewRejection: null, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
     expect(el.hidden).toBe(true);
   });
 
