@@ -21,6 +21,7 @@ import type { Hold } from '../../shared-types/goods.js';
 import type { BlueprintItem } from '../../shared-types/items.js';
 import { completeLabJob, planLabJob, type LabJobSpec } from '../../shared-types/research.js';
 import type { LabBlueprintView, LabJobView, LabState } from '../../shared-types/messages/labMessages.js';
+import { structureWorkRate } from '../../shared-types/structurePower.js';
 import { gameNow } from '../time/gameTime.js';
 import { PROD_STATE, type ProdState } from '../../shared-types/production.js';
 
@@ -138,8 +139,11 @@ export class ResearchLabSubsystem {
       this.d.setActive?.(lab, working);
       if (job !== undefined) {
         if (working) {
-          board.advance(lab.uid);
-          advanced = true;
+          const rate = structureWorkRate(lab); // owner throttle: 50% takes twice as long
+          if (rate > 0) {
+            board.advance(lab.uid, rate);
+            advanced = true;
+          }
         }
         if (job.done >= job.pulses) this.finish(lab, job);
       }
@@ -246,5 +250,5 @@ function jobLabel(spec: LabJobSpec, inputs: readonly BlueprintItem[]): string {
 }
 
 function jobView(job: LabJobRecord): LabJobView {
-  return { kind: job.spec.kind, label: jobLabel(job.spec, job.inputs), done: job.done, pulses: job.pulses };
+  return { kind: job.spec.kind, label: jobLabel(job.spec, job.inputs), done: Math.floor(job.done), pulses: job.pulses };
 }
