@@ -4,8 +4,8 @@ import type { NavRouteMsg } from '../../core/nav/navHost.js';
 import type { NavHull } from '../../shared-types/shipScale/navTuning.js';
 
 /** A 30 u hull (clearance = comfort = beam). */
-const H: NavHull = { clearance: 30, comfort: 30, beam: 30 };
-const CAP: NavHull = { clearance: 3000, comfort: 3000, beam: 3000 };
+const H: NavHull = { clearance: 30, comfort: 30, beam: 30, turnRate: 4 };
+const CAP: NavHull = { clearance: 3000, comfort: 3000, beam: 3000, turnRate: 0.02 };
 
 /** A request stub: records each ask; `answer` resolves the latest. */
 function stub(): { request: NavRouteRequest; asks: number[][]; turns: number[][]; answer: (msg: Partial<NavRouteMsg>) => Promise<void> } {
@@ -183,12 +183,74 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     expect([nav.wpX, nav.wpY]).toEqual([500, 0]);
   });
 
+  it('with no nose given, holds a sharp corner\'s turn speed for as long as a nose takes to come round; a gentle corner barely slows', async () => {
+    let now = 0;
+    const s = stub(), nav = new NavRoutes(s.request, () => now);
+    nav.waypoint('a', 0, 0, 1000, 0, H, 50);
+    // A 76° left turn at (500, 0), then a 76° right turn at (620, 480).
+    await s.answer({ points: new Float64Array([500, 0, 620, 480, 1100, 600]) });
+    expect(nav.waypoint('a', 400, 0, 1000, 0, H, 50)).toBe(true);
+    expect(nav.turnSpeed).toBe(Infinity); // short of the corner: braking is `ahead`'s
+    expect(nav.waypoint('a', 501, 0, 1000, 0, H, 50)).toBe(true); // level: the corner is passed
+    const l1 = Math.hypot(120, 480), cos1 = 120 / l1, theta1 = Math.acos(cos1);
+    // The swing a nose turning θ at ω leaves, v·sin²θ / 2ω, within a fifth of the clearance.
+    const hold1 = (2 * H.turnRate * 30 * 0.2) / (1 - cos1 * cos1);
+    expect(nav.turnSpeed).toBeCloseTo(hold1, 6);
+    expect(hold1).toBeLessThan(60); // a fighter's 4 rad/s nose: crawl round, don't cruise off at the old heading
+    now = 1000 * 1.5 * theta1 / H.turnRate - 1; // held while the nose is still coming round (with margin)
+    nav.waypoint('a', 505, 10, 1000, 0, H, 50);
+    expect(nav.turnSpeed).toBeCloseTo(hold1, 6);
+    now += 2; // nose round: back to the leg's own speed
+    nav.waypoint('a', 510, 30, 1000, 0, H, 50);
+    expect(nav.turnSpeed).toBe(Infinity);
+    // The next corner: (120, 480) → (480, 120), 62°: a slower nose (1 rad/s) takes it slower.
+    const slow: NavHull = { ...H, turnRate: 1 };
+    nav.waypoint('a', 621, 481, 1000, 0, slow, 50);
+    const cos2 = (120 * 480 + 480 * 120) / (l1 * Math.hypot(480, 120));
+    expect(nav.turnSpeed).toBeCloseTo((2 * 1 * 30 * 0.2) / (1 - cos2 * cos2), 6);
+    // A gentle 15° corner allows far more speed than a sharp one (sin²θ).
+    const g = stub(), gn = new NavRoutes(g.request, () => 0);
+    gn.waypoint('b', 0, 0, 1000, 0, H, 50);
+    await g.answer({ points: new Float64Array([500, 0, 1000, Math.tan(Math.PI / 12) * 500]) });
+    gn.waypoint('b', 501, 0, 1000, 0, H, 50);
+    expect(gn.turnSpeed).toBeGreaterThan(10 * hold1);
+  });
+
+  it('with the nose given, caps the speed out of a corner by what is left of its swing, until it is round', async () => {
+    let now = 0;
+    const s = stub(), nav = new NavRoutes(s.request, () => now);
+    const east = -Math.PI / 2; // nose (-sin a, cos a) = (1, 0): still along the old leg
+    nav.waypoint('a', 0, 0, 1000, 0, H, 50, false, east);
+    await s.answer({ points: new Float64Array([500, 0, 620, 480, 1100, 600]) }); // a 76° left turn at (500, 0)
+    nav.waypoint('a', 400, 0, 1000, 0, H, 50, false, east);
+    expect(nav.turnSpeed).toBe(Infinity);
+    nav.waypoint('a', 501, 0, 1000, 0, H, 50, false, east); // the corner passed, the nose not yet turned
+    const ax = nav.wpX - 501, ay = nav.wpY, c = ax / Math.hypot(ax, ay); // nose · aim
+    const cap = (2 * H.turnRate * 30 * 0.2) / (1 - c * c);
+    expect(nav.turnSpeed).toBeCloseTo(cap, 6);
+    expect(cap).toBeLessThan(60);
+    now = 9_000; // no clock on it: a stalled ship stays held however long it sits (the timed hold ended at ~0.5 s)
+    nav.waypoint('a', 501, 0, 1000, 0, H, 50, false, east);
+    expect(nav.turnSpeed).toBeCloseTo(cap, 6);
+    // Half round: the cap rises with the swing that is left.
+    const half = east + Math.acos(c) / 2;
+    nav.waypoint('a', 501, 0, 1000, 0, H, 50, false, half);
+    expect(nav.turnSpeed).toBeGreaterThan(cap);
+    // Round (the nose on the aim point): no cap, and the hold is over for this leg.
+    nav.waypoint('a', 501, 0, 1000, 0, H, 50, false, Math.atan2(-ax, ay));
+    expect(nav.turnSpeed).toBe(Infinity);
+    nav.waypoint('a', 502, 1, 1000, 0, H, 50, false, east);
+    expect(nav.turnSpeed).toBe(Infinity);
+  });
+
   it('passes a capital nose and turning radius on to its plan; a plain ask sends none (slice 11)', () => {
     const s = stub(), nav = new NavRoutes(s.request, () => 0);
     nav.waypoint('cap', 0, 0, 9000, 0, CAP, 500, false, 1.25, 7758);
     nav.waypoint('f', 0, 0, 1000, 0, H, 50);
+    nav.waypoint('g', 0, 0, 1000, 0, H, 50, false, 0.5); // a nose with no turning radius: the plan is not shaped by it
     expect(s.turns[0]).toEqual([1.25, 7758]);
     expect(s.turns[1]![0]).toBeNaN();
     expect(s.turns[1]![1]).toBe(0);
+    expect(s.turns[2]![0]).toBeNaN();
   });
 });

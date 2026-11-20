@@ -251,6 +251,20 @@ one it flies straight as before.
   line), capped at `NAV_TURN_SWING` × clearance / sin²θ: the speed whose sideways part dies within that
   swing. `NAV_TURN_SWING` = 0.2 (6 u for a fighter): the street flight hit rock 0/4 runs, where 24 u
   still brushed it 2/4 (2026-11-19).
+- Corners are turned slowly (`NavRoutes.holdTurn` / `turnCap`, `IAiNavRoutes.turnSpeed`): once past a
+  corner, until its nose is within 10° of the aim point on the new leg, the ship's wanted speed is capped
+  at 2ω × swing / sin²φ (φ the angle left between nose and aim point, past 90° the 90° figure; ω the
+  hull's turn rate, `navHull(kind).turnRate` = the kind's `maxAngvel`). Why: the pilot thrusts along its
+  nose while it turns (the wanted course's share along it, v·cosφ), so a nose swinging φ drifts the ship
+  v·sin²φ / 2ω off the new leg. On the streets flight a fighter that slowed almost to a stop at the 76°
+  corner (81496, 43800), then left at the leg's full cruise (~280 u/s), ran 33 u off the new leg into
+  rock (model: 31 u) in ~3 runs of 10; whether it stalled there depended on tick jitter. A fighter
+  (ω 4.2 rad/s) now leaves a 76° corner at ≤ 54 u/s, rising as its nose comes round; a nose already
+  round is not held. The cap follows the nose, not a clock: a first timed hold (1.5 θ / ω) cost ~0.45 s
+  on the streets flight and still brushed rock 1 run in 31. Both brains that fly routes
+  (`pilot/moveTo.ts`, `modes/flockMode.ts`) pass the nose (`self.angle`) and take min(…, `turnSpeed`);
+  only a capital's plan is shaped by it (turning radius > 0). Asked with no nose, the hold is timed
+  (`NAV_TURN_HOLD` × θ / ω at the corner's figure).
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25, the least room a route may have (owner:
   stays 30 u for a fighter).
 - Comfort (owner 2026-11-19, "margin where room"): `navComfort(kind)` (`shipScale/navTuning.ts`, `navHull(kind).comfort`) = max(clearance,
