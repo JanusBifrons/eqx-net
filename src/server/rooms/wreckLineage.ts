@@ -19,6 +19,9 @@ export interface PieceStoreView {
   ore: WreckOre | undefined;
   /** Hold weight: the salvage's, or a rock chunk's (`rockChunkWeight`). */
   holdWeight: number;
+  /** A rock piece: the whole rock's mass (its chunk's ore share is
+   *  `mass / rockMass`, `OreDraw.chunkYield`). 0 for a ship's wreck. */
+  rockMass: number;
 }
 
 /** Visit every live piece id descended from root wreck `root` (the root's
@@ -81,10 +84,12 @@ export function pieceStoreOf(
     out.qty = pieceOreUnits(w.ore, area);
     out.ore = w.ore;
     out.holdWeight = rockChunkWeight(k.mass);
+    out.rockMass = w.src.bodyMass;
   } else {
     out.qty = wreckSalvageQty(w.src, k.mass);
     out.ore = undefined;
     out.holdWeight = out.qty * GOOD_DEFS.salvage.weight;
+    out.rockMass = 0;
   }
   return true;
 }
