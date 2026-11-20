@@ -195,6 +195,9 @@ export interface StructureRecord {
   /** The owner switched it OFF: draws nothing and does no work (reads
    *  unpowered to every subsystem). Persisted; rides as STRUCTURE_FLAG_OFF. */
   switchedOff?: boolean;
+  /** The owner's power throttle in tenths (0..9; absent ⇒ 100%): its draw
+   *  scales with it (`structureDraw`). Persisted; rides bits of `flags`. */
+  throttle?: number;
   /** D1 — a Reactor has fuel burning (its output counts). Rides room state as
    *  the inverse NO_FUEL flag. */
   fueled?: boolean;

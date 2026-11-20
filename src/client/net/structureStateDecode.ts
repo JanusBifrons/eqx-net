@@ -17,6 +17,7 @@ import {
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_FLAG_OFF,
+  decodeStructureThrottleFlags,
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_FLAG_GHOST_BODY,
@@ -80,6 +81,8 @@ export function decodeStructureState(
   out.noFuel = (flags & STRUCTURE_FLAG_NO_FUEL) !== 0 ? true : undefined;
   out.drawFull = (flags & STRUCTURE_FLAG_DRAW_FULL) !== 0 ? true : undefined;
   out.switchedOff = (flags & STRUCTURE_FLAG_OFF) !== 0 ? true : undefined;
+  const throttle = decodeStructureThrottleFlags(flags);
+  out.throttle = throttle < 10 ? throttle : undefined;
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
   out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
   out.ghostBody = (flags & STRUCTURE_FLAG_GHOST_BODY) !== 0 ? true : undefined;
