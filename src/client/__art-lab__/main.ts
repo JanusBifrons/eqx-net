@@ -34,7 +34,8 @@ import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipSha
 import { GLOW, imgTexture, nebulaTex, RING, starTile, STREAK } from './labTextures.js';
 import { BALLS, BAND_OFFSET, countSprites, SPARKS, type BoomView, type ShipView, type ShotView, type StructView } from './labViews.js';
 import { buildLabGridLines, buildLabRigs, buildLabSheetNubs } from './labGameLayers.js';
-import { buildLabHull, labGunJobs, labTurreted, lightLabGuns } from './labTurrets.js';
+import { hasTurrets } from '../render/art/turretLayout.js';
+import { buildLabGuns, buildLabHull, labGunJobs, labTurreted, lightLabGuns } from './labTurrets.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
 
 type Style = 'current' | 'machined' | 'pixel' | 'lit';
@@ -83,6 +84,7 @@ const PIX: PixelSettings = {
 };
 /** `?turrets=1` (machined): draw turrets as the game does; see labTurrets.ts. */
 const turreted = (id: string): boolean => labTurreted(qs.get('turrets') === '1' && STYLE === 'machined', id);
+const structGuns = (id: string): boolean => qs.get('turrets') === '1' && STYLE === 'machined' && hasTurrets(id, true);
 const TRAIL = 9;
 const TRAIL_DT = 0.045;
 
@@ -124,7 +126,10 @@ async function main(): Promise<void> {
   // (`?workers=0` bakes on the main thread instead, for comparison).
   if (MACHINED && qs.get('workers') !== '0') {
     const jobs: BakeJob[] = [];
-    for (const st of scene.structs) jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed), ...structExtra() });
+    for (const st of scene.structs) {
+      jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed), ...structExtra() });
+      if (structGuns(st.id)) jobs.push(...labGunJobs(st.id, STRUCT_LIVERY?.team, true));
+    }
     for (const sh of scene.ships) {
       jobs.push({ type: 'ship', id: sh.id, paint: sh.paint, ...(turreted(sh.id) ? { rings: true } : {}) });
       if (turreted(sh.id)) jobs.push(...labGunJobs(sh.id, sh.paint));
@@ -237,6 +242,7 @@ async function main(): Promise<void> {
     v.sprite.rotation = st.rot;
     v.sprite.position.set(st.x, st.y);
     structL.addChildAt(v.sprite, 0);
+    if (structGuns(st.id)) { v.guns = buildLabGuns(cache, st.id, STRUCT_LIVERY?.team, true); v.guns.root.position.set(st.x, st.y); v.guns.root.rotation = st.rot; structL.addChild(v.guns.root); }
     v.radius = Math.max(art.w, art.h) / art.density / 2;
     if (STYLE === 'lit' && LIGHTING.litStructures) {
       const l = cache.litStruct(st.id, st.seed);
@@ -573,6 +579,7 @@ async function main(): Promise<void> {
     // GPU-lit hulls: now every light and occluder of this frame is known.
     for (const v of ships) if (v.lit) v.lit.setLight(cache.rig, v.pose.x, v.pose.y, v.pose.rot, litScene);
     for (const v of structs) if (v.litMesh) v.litMesh.setLight(cache.rig, v.x, v.y, v.rot, litScene);
+    for (const v of structs) if (v.guns) lightLabGuns(v.guns, cache.rig.sunAz, v.rot);
     if (pixel) app.renderer.render({ container: sceneRoot, target: rt!, clear: true, clearColor: 0x04060d });
     app.render();
   }

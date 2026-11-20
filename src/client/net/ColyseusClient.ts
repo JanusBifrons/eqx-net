@@ -2234,11 +2234,10 @@ export class ColyseusGameClient {
    * rule), so the LOCAL player is predicted-blocked by an up wall instead of
    * predicting through it and rubber-banding to the server. Snapshot cadence
    * (NOT the per-frame loop): walls are static + low-count, so a reconcile here
-   * is cheap. Every wall (fence walls between emitters + teleporter irises) is
-   * derived by the shared `visitDerivedWalls` — the same rules the renderer
-   * draws with and the server collides with (#15). A wall that isn't blocking
-   * (down, or an unsealed iris) keeps its body with the collider disabled.
-   * Gate / airlock doors are solid rig leaves, not walls (door-power slice 11).
+   * is cheap. Every wall (fence walls, teleporter irises) is derived by the
+   * shared `visitDerivedWalls`, the rules the renderer draws with and the server
+   * collides with (#15). A wall that isn't blocking (down, or an unsealed iris)
+   * keeps its body with the collider disabled. Gate doors are rig leaves, not walls.
    */
   private syncPredWalls(): void {
     if (!this.predWorld) return;

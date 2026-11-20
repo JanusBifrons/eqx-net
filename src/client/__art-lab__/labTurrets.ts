@@ -6,11 +6,12 @@
  */
 import { Container, Sprite, type Texture } from 'pixi.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { shipPrimaryColor } from '../../core/geometry/shipHullOutline.js';
 import { isCapitalKind, type BakeJob } from '../render/art/bake.js';
 import { MachinedShipSprite } from '../render/art/MachinedShipSprite.js';
 import { applySunBlend } from '../render/art/machinedShipLight.js';
-import { hasTurrets, shipTurrets, turretBakeJobs } from '../render/art/turretLayout.js';
+import { hasTurrets, shipTurrets, structureTurrets, turretBakeJobs } from '../render/art/turretLayout.js';
 import type { ArtCache, ShipArt } from './assets.js';
 
 export interface LabGuns { root: Container; layers: Array<{ a: Sprite; b: Sprite; frames: Texture[]; rot: number }> }
@@ -20,23 +21,24 @@ export function labTurreted(on: boolean, id: string): boolean {
   return on && hasTurrets(id, false);
 }
 
-function gunsOf(id: string, paint: number | undefined): Array<{ px: number; py: number; rot: number; jobs: ReturnType<typeof turretBakeJobs> }> {
-  const color = paint ?? shipPrimaryColor(getShipKind(id));
-  return shipTurrets(id).map((p) => ({ px: p.px, py: p.py, rot: -p.mount.baseAngle, jobs: turretBakeJobs(p, color, false) }));
+/** A hull's guns, or with `structure` a building's (its accent paint, as the game's struct job). */
+function gunsOf(id: string, paint: number | undefined, structure = false): Array<{ px: number; py: number; rot: number; jobs: ReturnType<typeof turretBakeJobs> }> {
+  const color = paint ?? (structure ? getStructureKind(id).color : shipPrimaryColor(getShipKind(id)));
+  return (structure ? structureTurrets(id) : shipTurrets(id)).map((p) => ({ px: p.px, py: p.py, rot: -p.mount.baseAngle, jobs: turretBakeJobs(p, color, structure) }));
 }
 
 /** The gun bake jobs for a turreted hull (prebaked with the hull). */
-export function labGunJobs(id: string, paint: number | undefined): BakeJob[] {
+export function labGunJobs(id: string, paint: number | undefined, structure = false): BakeJob[] {
   const jobs: BakeJob[] = [];
-  for (const g of gunsOf(id, paint)) { jobs.push(g.jobs.gun); if (g.jobs.aa) jobs.push(g.jobs.aa.job); }
+  for (const g of gunsOf(id, paint, structure)) { jobs.push(g.jobs.gun); if (g.jobs.aa) jobs.push(g.jobs.aa.job); }
   return jobs;
 }
 
 /** Build a turreted hull's guns; add `root` to the hull so they ride it, as the game parents them. */
-export function buildLabGuns(cache: ArtCache, id: string, paint: number | undefined): LabGuns {
+export function buildLabGuns(cache: ArtCache, id: string, paint: number | undefined, structure = false): LabGuns {
   const root = new Container();
   const layers: LabGuns['layers'] = [];
-  for (const g of gunsOf(id, paint)) {
+  for (const g of gunsOf(id, paint, structure)) {
     const pivot = new Container();
     pivot.position.set(g.px, g.py);
     pivot.rotation = g.rot;
