@@ -22,6 +22,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../../src/core/swarm/structureConstants.js';
 import { getStructureKind } from '../../../src/shared-types/structureKinds.js';
+import { effectiveStructureMaxHealth } from '../../../src/core/leveling/structureLevel.js';
 import { SCAFFOLDING_HP_FRACTION } from '../../../src/core/structures/structureGridConstants.js';
 
 describe('SectorRoom integration — structure entity (GEP P4 "for free" proof)', () => {
@@ -108,8 +109,8 @@ describe('SectorRoom integration — structure entity (GEP P4 "for free" proof)'
     const wrec = internals.swarmRegistry.get(placedId!)!;
     expect(wrec.kind).toBe(2);
     expect(wrec.shipKind).toBe('capital');
-    // Pre-built ⇒ full hull seeded (damageable through the swarm path).
-    expect(internals.swarmHealth.get(placedId!)).toBe(getStructureKind('capital').maxHealth);
+    // Pre-built ⇒ FULL hull seeded, including the crate's quality bonus (#1000).
+    expect(internals.swarmHealth.get(placedId!)).toBe(effectiveStructureMaxHealth(getStructureKind('capital').maxHealth, srec.level, srec.packedQuality));
   }, 15_000);
 
   it('place_structure (Connector) spawns a BLUEPRINT at 10% HP that is destroyable', async () => {
