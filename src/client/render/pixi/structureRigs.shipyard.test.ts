@@ -17,7 +17,7 @@ import {
   shipyardLightContext, shipyardRowClip,
 } from './structureStyleC.shipyardBuild.js';
 import {
-  SHIPYARD_BAY_COUNT, SHIPYARD_BAY_LEN, SHIPYARD_BUILD_CLIP, SHIPYARD_BUILD_TICKS, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HULL_HALF_L,
+  SHIPYARD_BAY_COUNT, SHIPYARD_BAY_LEN, SHIPYARD_BUILD_CLIP, SHIPYARD_BUILD_TICKS, SHIPYARD_GANTRY_HALF_X, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HOIST_HALF, SHIPYARD_HULL_HALF_L,
   SHIPYARD_SLIP_X0, SHIPYARD_SLIP_X1, shipyardBayKeel,
 } from '../../../core/articulation/rigs/heavyIndustry.js';
 import { PROD_STATE, encodeRecipe } from '../../../shared-types/production.js';
@@ -191,5 +191,18 @@ describe('shipyard bays down the slip (loop 3R)', () => {
     v.setRunningFrom(row(PROD_STATE.running, 0.5, fr, 1, 0));
     v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 0 }, SHIPYARD_BUILD_TICKS, 0, 0, 0);
     expect(keel.context).toBe(shipyardKeelContext());
+  });
+
+  it('the gantry and hoist are open over the slip centre line, so the hull printing below shows (3R review)', () => {
+    const gantry = shipyardPartContext(rig, rig.partIds.indexOf('gantry'))!;
+    const hoist = shipyardPartContext(rig, rig.partIds.indexOf('gantry-hoist'))!;
+    // Mid-print the gantry and hoist stand right over the hull (one block
+    // is ~8 long at fighter scale, the hull ~60): open there.
+    // (Between the truss's thin X-braces.)
+    for (const [x, y] of [[0, 0], [0, 20], [0, -20]] as const) expect(gantry.containsPoint({ x, y }), `gantry ${x},${y}`).toBe(false);
+    for (const [x, y] of [[0, 0], [0, 10], [8, 4], [-8, 4]] as const) expect(hoist.containsPoint({ x, y }), `hoist ${x},${y}`).toBe(false);
+    // Still a real frame: the chords and the trolley's sides are solid.
+    expect(gantry.containsPoint({ x: SHIPYARD_GANTRY_HALF_X * 0.7 - 3, y: 0 })).toBe(true);
+    expect(hoist.containsPoint({ x: SHIPYARD_HOIST_HALF - 3, y: 0 })).toBe(true);
   });
 });
