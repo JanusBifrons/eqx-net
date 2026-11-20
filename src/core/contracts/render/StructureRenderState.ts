@@ -94,6 +94,9 @@ export interface StructureRenderState {
   /** F2 — a built Territory Lock holding its sector for its owner's side
    *  (its beacon dish turns only then). */
   lockHolding?: boolean;
+  /** Hologram pass-through: the body is still a blueprint ghost (the
+   *  prediction world lets ships through; `isStructureBodySolid`). */
+  ghostBody?: boolean;
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;

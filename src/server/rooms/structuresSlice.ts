@@ -30,6 +30,7 @@ import {
   STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
+  STRUCTURE_FLAG_GHOST_BODY,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
   encodePlayerTurretTarget,
@@ -42,6 +43,7 @@ import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/terri
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
+import { isStructureBodySolid } from '../../core/structures/structureBody.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import type { GameClock } from '../../core/clock/GameClock.js';
@@ -140,6 +142,7 @@ export class StructuresSliceSync {
       if (rec.isConstructed) flags |= STRUCTURE_FLAG_BUILT;
       if (summary.powered) flags |= STRUCTURE_FLAG_POWERED;
       if (rec.isDeconstructing) flags |= STRUCTURE_FLAG_DECONSTRUCTING;
+      if (!isStructureBodySolid(rec)) flags |= STRUCTURE_FLAG_GHOST_BODY; // hologram pass-through
       // Every kind's flags (NOT inside the shield-emitter branch below — they
       // were, so these bits reached clients only for pylons and gates; locked
       // by structureFlagsWire.test.ts).

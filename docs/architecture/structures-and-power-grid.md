@@ -586,8 +586,16 @@ its space stays reserved because placement checks the registry. On completion
 solid (`SET_COLLISION_GROUPS` → default, `SwarmSpawner.solidifyStructure`) only
 when no hull (`SectorObstacles.hullCircles`) overlaps its footprint; otherwise it
 waits, fully paid, and finishes the pulse the space is clear. Records built
-outside the pulse (restore, seeded bases) settle on the next pulse. The client
-predWorld still builds holograms solid until job 3F2. The structure subtype rides the
+outside the pulse (restore, seeded bases) settle on the next pulse. **One rule
+everywhere (3F2):** `isStructureBodySolid` (`core/structures/structureBody.ts`,
+reads `ghostBody`; `isConstructed` alone is not it: a finished blueprint waits
+as a ghost, and a structure mid-upgrade is unbuilt but solid). The room-state
+row carries it as `STRUCTURE_FLAG_GHOST_BODY` (16384) → `ghostBody`, and the
+client's `StructureClientLeaf` builds and swaps the predWorld body by it (ghost
+→ solid: default groups then the rig, like `solidifyStructure`; a body spawned
+solid before its row arrived is rebuilt as a ghost), re-checked on every swarm
+sync. Navigation (`RoomNav`) adds no obstacle for a ghost; `settleBlueprintBody`
+calls `StructureRegistry.bodyChanged`, which re-adds it once solid. The structure subtype rides the
 **shared `shipKind` byte** (kind=2 path; `SwarmSpawner.spawnStructure` sets
 `rec.shipKind`) — no stride/`SWARM_WIRE_VERSION` bump. `remove` is owner-gated.
 **Phase-4 C2 — placement is OBSTACLE-aware.** `place()` rejected overlap against
