@@ -80,6 +80,18 @@ are BOUGHT from NPC factions and traders, and some are LOOTED from ships.
 - Rolls: `rollPackedStructure` in `blueprints.ts`, wired through each loot
   table's `packedChance`.
 
+**Junk copies (playable base loop).** A new player meets cheap, poor copies
+early. Not a tier on the wire: `makeBlueprint(product, 'bpc', rng,
+{ junk: true })` makes an ordinary copy with `JUNK_BPC_RUNS` (2) runs, no
+material saving and output under `JUNK_OUTPUT_MAX` (10), so the glance score
+reads it as low.
+- Every ordinary loot roll (a table with entries; never a hauler) has a
+  `LOOT_JUNK_COPY_CHANCE` (8 %) chance of one, rolled last so older seeded
+  rolls hold (`rollJunkBlueprint`).
+- The traders' board restocks `JUNK_OFFERS_ON_BOARD` (2) junk copies at every
+  refresh, on top of its normal offers, priced by `blueprintValue` like any
+  copy (above zero, a fraction of a normal copy).
+
 ## Coming next
 
 - **W3 — Research Lab:** research, copy and combine (gacha). Shipped: see

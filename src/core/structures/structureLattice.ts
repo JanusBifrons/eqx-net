@@ -3,20 +3,26 @@
  * (plan soft-leaping-truffle v2, phase A0; re-laid for the phase-V footprints).
  *
  * Builds N structures the way a player could: a Capital at the origin, a grid
- * of Connector hubs (row chains + a vertical spine through the Capital), up to
- * two leaves per row connector (Solar / Battery / Cargo Bay / Turret mix) sat
- * directly above and below it, and an optional closed rectangular shield fence
+ * of Connector hubs (row chains + a vertical spine through the Capital), one
+ * leaf per row connector (Solar / Battery / Cargo Bay / Turret mix) sat
+ * directly above or below it, and an optional closed rectangular shield fence
  * around the base's extent, with a Shield Gate in the middle of each side,
  * tapped into the row ends. Every placement passes the real
  * `placementRejection`, and every edge passes the real `canConnect` when the
  * edges are applied in order — locked by `structureLattice.test.ts`.
  *
  * Layout (P = connector pitch, both axes):
- *   - connectors at (i·P, j·P) for |i| ≤ M, |j| ≤ K, the Capital at (0, 0);
+ *   - spine connectors at (0, j·P) for |j| ≤ K, the Capital at (0, 0); row
+ *     connectors at (i·P, j·P) for |i| ≤ M on EVEN j only (odd j are spine
+ *     relays, so tall leaves of neighbouring rows never meet);
  *   - row links (i,j)–(i±1,j); spine links (0,j)–(0,j±1); the Capital links
- *     its four neighbours (capital ↔ connectors only);
- *   - a row connector's leaves sit directly above / below it, clear of the
- *     row line; spine connectors carry no leaves (the spine line stays clear);
+ *     its neighbours (capital ↔ connectors only) except (0, 1), past its
+ *     crane-bay pad (solid to cables): that one is reached from (1, 0)
+ *     through a relay at (P, P);
+ *   - a row connector's one leaf sits directly above it (even i) or below it
+ *     (odd i), clear of the row line, so same-side leaves stand 2·P apart (a
+ *     700 u Solar fits); spine connectors carry no leaves (the spine line
+ *     stays clear);
  *   - the fence is a rectangle around the base (not a circle): pylons level
  *     with each row / column so each row end taps the emitter beside it, and
  *     the middle emitter of each side is a Shield Gate lying along that side
@@ -26,6 +32,7 @@
  * Pure + zone-blind (no I/O). Not on a hot path (built once per room create).
  */
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { MIN_CABLE_LENGTH } from './structureGridConstants.js';
 
 export interface LatticePlacement {
   kind: StructureKindId;
@@ -55,8 +62,9 @@ export interface LatticeOptions {
 
 /** Connector pitch. Connector edge distance 640 − 64 = 576 ≤ 600 range. */
 export const LATTICE_PITCH = 640;
-/** Gap between a connector's box and its leaf's box. */
-const LEAF_GAP = 20;
+/** Gap between a connector's box and its leaf's box: the shortest cable
+ *  (`MIN_CABLE_LENGTH`), so every leaf link is a real run. */
+const LEAF_GAP = MIN_CABLE_LENGTH;
 /** Fence clearance beyond the outermost leaves. */
 const FENCE_MARGIN = 150;
 
@@ -94,11 +102,29 @@ export function buildStructureLattice(opts: LatticeOptions): StructureLattice {
   //  2. the row ends (±r, j) for |j| < r — parent (±(r-1), j), from ring r-1;
   //  3. the new top/bottom rows (±i, ±r) by increasing |i| — parent (±(i-1), ±r).
   for (let r = 1; placements.length < n; r++) {
-    const ring: Array<[number, number]> = [[0, r], [0, -r]];
+    // The Capital's crane-bay pad (+y) is solid to cables: the first spine
+    // cell past it comes last in ring 1, by a detour up column 1 (its row-0
+    // leaf hangs below), through a relay at (P, P).
+    const ring: Array<[number, number]> = r === 1 ? [[0, -1]] : [[0, r], [0, -r]];
     for (let j = -(r - 1); j <= r - 1; j++) ring.push([r, j], [-r, j]);
     for (let i = 1; i <= r; i++) ring.push([i, r], [-i, r], [i, -r], [-i, -r]);
+    if (r === 1) ring.push([0, 1]);
     for (const [i, j] of ring) {
       if (placements.length >= n) break;
+      if (i === 0 && j === 1) {
+        const col = at.get(key(1, 0));
+        if (col === undefined) continue;
+        placements.push({ kind: 'connector', x: LATTICE_PITCH, y: LATTICE_PITCH });
+        edges.push([col, placements.length - 1]);
+        if (placements.length >= n) break;
+        placements.push({ kind: 'connector', x: 0, y: LATTICE_PITCH });
+        edges.push([placements.length - 2, placements.length - 1]);
+        at.set(key(0, 1), placements.length - 1);
+        continue;
+      }
+      // Rows sit on every OTHER grid line (odd lines are spine relays only),
+      // so a 300 u-tall Solar above one row clears the leaves below the next.
+      if (i !== 0 && j % 2 !== 0) continue;
       const parentKey = i === 0 ? key(0, j - Math.sign(j)) : key(i - Math.sign(i), j);
       const parent = at.get(parentKey);
       if (parent === undefined) continue;
@@ -108,10 +134,12 @@ export function buildStructureLattice(opts: LatticeOptions): StructureLattice {
       at.set(key(i, j), idx);
       edges.push([parent, idx]);
       if (i === 0) continue; // spine connectors stay bare (keeps the spine line clear)
-      // Up to two leaves: directly above, then below. A row connector keeps a
-      // free slot for a fence tap (2 row links + 2 leaves + 1 tap ≤ 6).
-      for (const side of [1, -1]) {
-        if (placements.length >= n) break;
+      // One leaf, alternating sides along the row (even columns above, odd
+      // below), so same-side leaves stand two pitches apart: a 700 u-wide
+      // Solar never meets its neighbour. A row connector keeps free slots for
+      // a fence tap (2 row links + 1 leaf + 1 tap ≤ 6).
+      if (placements.length < n) {
+        const side = i % 2 === 0 ? 1 : -1;
         const kind = LEAF_CYCLE[(phase + leafNo++) % LEAF_CYCLE.length]!;
         const fp = getStructureKind(kind).footprint;
         const dy = side * (connHalf + LEAF_GAP + fp.h / 2);

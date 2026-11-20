@@ -37,7 +37,7 @@ describe('SectorRoom integration: auto-unload on both ends (cargo pods 14c)', ()
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('ship switch off keeps the hold; storage refusing keeps it; both on banks it', { timeout: 40_000 }, async () => {
+  it('ship switch off keeps the hold; storage refusing keeps it; both on banks it', { timeout: 50_000 }, async () => {
     const pid = randomUUID();
     const cr: Room = await harness.connectActive(pid, { spawnX: 0, spawnY: 0, initialCargo: { goods: { salvage: 9 }, blueprints: [] } });
     const replies: CargoState[] = [];
@@ -52,7 +52,9 @@ describe('SectorRoom integration: auto-unload on both ends (cargo pods 14c)', ()
     cr.send('set_auto_unload', { type: 'set_auto_unload', side: 'ship', on: false });
     expect(await until(() => getPlayerShipStore().get(shipId)?.autoUnload === false, 3_000), 'the ship switch is saved on the roster').toBe(true);
 
-    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 150, y: 0 });
+    // The Capital banks only a ship on its crane bay (3f: no hover deposit;
+    // bay centre = Capital + (0, 410)), so the ship at (0, 0) sits on it.
+    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: -410 });
     expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5_000)).toBe(true);
     const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
     const entityId = internal.swarmRegistry.get(cap.id)!.entityId;
@@ -78,7 +80,7 @@ describe('SectorRoom integration: auto-unload on both ends (cargo pods 14c)', ()
 
     // Both on: the hold banks.
     cr.send('set_auto_unload', { type: 'set_auto_unload', side: 'storage', on: true, entityId });
-    expect(await until(() => getHoldStore().get(shipId) === undefined, 8_000), 'both on: the hold banks').toBe(true);
+    expect(await until(() => getHoldStore().get(shipId) === undefined, 15_000), 'both on: the crane banks the hold').toBe(true);
     expect(cap.hold?.goods.salvage).toBe(9);
   });
 

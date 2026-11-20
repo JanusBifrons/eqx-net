@@ -1,4 +1,5 @@
 import type { PackedChunk } from '../../terrain/packedChunk.js';
+import type { ChunkOpts } from '../../terrain/fieldLayout.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
 import type { ShipRenderState } from './ShipRenderState.js';
 import type { SwarmRenderState } from './SwarmRenderState.js';
@@ -6,6 +7,11 @@ import type { MineRenderState, StructureRenderState } from './StructureRenderSta
 import type { MissileRenderState, ProjectileRenderState, ShellSalvoRenderInfo } from './ProjectileRenderState.js';
 
 export interface RenderMirror {
+  /** Structure-restyle 2e: the client's tick clock for rig clips, in game
+   *  ticks plus the fraction since the last one. It is the predicted tick
+   *  predWorld's `stepRigs` last posed, advanced by game time since that tick
+   *  was due. Absent (tests, before welcome): the renderer's fx clock. */
+  rigTick?: number;
   /** The sector's game speed (time scale stream), from the snapshot keyframe.
    *  Absent = 1×. Renderers read it for the display-delay window and the
    *  presentation frame dt, so every effect follows the speed on its own. */
@@ -57,6 +63,10 @@ export interface RenderMirror {
    *  shared deterministic `wreckPieceGeometry` (no vertex crosses the worker
    *  boundary). */
   wrecks?: Map<number, WreckDescriptor>;
+  /** The room's cut-field options (welcome `cutField`), null or absent
+   *  without a field: a broken field rock's wreck (`rock.fk`) rebuilds from
+   *  them in the renderer's wreck store. */
+  wreckField?: ChunkOpts | null;
   /** The room breaks dying capitals into wrecks (welcome `capitalWrecks`):
    *  a dying capital then gets the break-up explosion at its kill point, not
    *  the hull-sized death blast. */
@@ -77,8 +87,9 @@ export interface RenderMirror {
   /** Structures plan, Phase 3 — connection flash windows from the discrete
    *  `grid_pulse` event. Key is the sorted entityId pair packed as
    *  `min * 65536 + max` (numeric ⇒ no per-frame string-key allocation in the
-   *  renderer); value is the `performance.now()` ms until which the segment
-   *  renders "flowing". */
+   *  renderer); value is a per-edge pulse COUNT that changes on every pulse.
+   *  The renderer stamps each change on its own game clock (`fxNow`) and lights
+   *  the segment for one pulse window (`GridFlashClock`, time scale #20). */
   gridFlashes?: Map<number, number>;
   /** R2.2 — per-edge flow DIRECTION for the travelling-pulse comet. Same packed
    *  `min * 65536 + max` key as `gridFlashes`; value is the entityId that was

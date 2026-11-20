@@ -17,13 +17,22 @@ import {
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_FLAG_BREACH,
+  STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_DEFAULTS as D,
+  STRUCTURE_RIG_CLIP_TARGET,
+  CONN_SOCK_UNKNOWN,
+  decodeConnSockOther,
+  decodeConnSockSelf,
+  decodeRigClipIndex,
+  decodeRigHoldCargo,
+  decodeRigHoldTicks,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
+import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { decodeProdCount } from '../../shared-types/production.js';
 
 export function emptyStructureRow(): StructureRenderState {
-  return { powered: false, netPower: 0, connTo: [], built: false, buildPct: 0, deconstructPct: 0 };
+  return { powered: false, netPower: 0, connTo: [], connSockSelf: [], connSockOther: [], built: false, buildPct: 0, deconstructPct: 0 };
 }
 
 /** Interned owner tables (index → id / display name), rebuilt by the caller
@@ -33,7 +42,12 @@ export interface StructureOwnerTables {
   names: readonly string[];
 }
 
-export function decodeStructureState(v: StructureStateView, owners: StructureOwnerTables, out: StructureRenderState): void {
+/** `rigKind` is the structure kind (its swarm entry `shipKind`), which maps
+ *  the wire clip index to its id; unknown (no pose yet) ⇒ no `rigClip` until
+ *  a later decode knows it. */
+export function decodeStructureState(
+  v: StructureStateView, owners: StructureOwnerTables, out: StructureRenderState, rigKind?: string,
+): void {
   const flags = v.flags ?? D.flags;
   const built = (flags & STRUCTURE_FLAG_BUILT) !== 0;
   out.powered = (flags & STRUCTURE_FLAG_POWERED) !== 0;
@@ -64,6 +78,7 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
   out.noFuel = (flags & STRUCTURE_FLAG_NO_FUEL) !== 0 ? true : undefined;
   out.drawFull = (flags & STRUCTURE_FLAG_DRAW_FULL) !== 0 ? true : undefined;
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
+  out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
   const gateOpen = v.gateOpen ?? D.gateOpen;
   out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
   const gateAccess = v.gateAccess ?? D.gateAccess;
@@ -93,6 +108,7 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
     t.padWeight = v.padWeight ?? D.padWeight;
     t.toll = v.tpToll ?? D.tpToll;
   }
+  decodeRigClip(v, out, rigKind);
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
   const name = owners.names[oi] ?? '';
@@ -102,4 +118,46 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
   const conn = out.connTo;
   conn.length = 0;
   for (let i = 0; i < v.connTo.length; i++) conn.push(v.connTo.at(i)!);
+  decodeConnSock(v, out);
+}
+
+/** 0d slice 6: each link's cable sockets (`connSock`, parallel to `connTo`)
+ *  onto `connSockSelf` / `connSockOther`, in place (the two arrays are
+ *  allocated once per row). A missing entry reads as no socket (-1). */
+function decodeConnSock(v: StructureStateView, out: StructureRenderState): void {
+  const self = (out.connSockSelf ??= []);
+  const other = (out.connSockOther ??= []);
+  self.length = 0;
+  other.length = 0;
+  const cs = v.connSock;
+  for (let i = 0; i < v.connTo.length; i++) {
+    const packed = cs !== undefined && i < cs.length ? cs.at(i)! : CONN_SOCK_UNKNOWN;
+    self.push(decodeConnSockSelf(packed));
+    other.push(decodeConnSockOther(packed));
+  }
+}
+
+/** Structure-restyle 2e: the row's rig clip onto `out.rigClip` (reused in
+ *  place while a clip plays; allocates only when a clip starts after none). */
+function decodeRigClip(v: StructureStateView, out: StructureRenderState, rigKind: string | undefined): void {
+  const code = v.rigClip ?? D.rigClip;
+  const rig = code !== 0 && rigKind !== undefined ? rigForStructureKind(rigKind) : null;
+  const clip = rig !== null ? rig.clips[decodeRigClipIndex(code)] : undefined;
+  if (clip === undefined) {
+    out.rigClip = undefined;
+    return;
+  }
+  const r = (out.rigClip ??= { clipId: '', startTick: 0 });
+  r.clipId = clip.id;
+  r.startTick = v.rigStart ?? D.rigStart;
+  const hold = v.rigHold ?? D.rigHold;
+  r.holdTicks = hold !== 0 ? decodeRigHoldTicks(hold) : undefined;
+  r.cargo = hold !== 0 ? decodeRigHoldCargo(hold) : undefined;
+  if ((code & STRUCTURE_RIG_CLIP_TARGET) !== 0) {
+    r.targetX = v.rigTx ?? D.rigTx;
+    r.targetY = v.rigTy ?? D.rigTy;
+  } else {
+    r.targetX = undefined;
+    r.targetY = undefined;
+  }
 }

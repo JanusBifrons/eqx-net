@@ -42,10 +42,23 @@ export function territoryLockRefusal(
   structures: Iterable<StructureRecord>,
 ): string | null {
   if (kindId !== TERRITORY_LOCK_KIND) return null;
-  const held = holder === undefined ? sectorController(sectorKey) : holder;
+  const held = sectorHeldBy(sectorKey, holder);
   if (held === null || held !== parseOwner(owner).faction) return LOCK_NOT_HELD_REASON;
   for (const s of structures) if (s.kind === TERRITORY_LOCK_KIND) return LOCK_TAKEN_REASON;
   return null;
+}
+
+/** Who holds `sectorKey`: the live meter's `holder` (`liveSectorHolder`;
+ *  null = neutral), or with no meter running (undefined) the sector's static
+ *  controller. Allocation-free. */
+export function sectorHeldBy(sectorKey: string, holder: string | null | undefined): string | null {
+  return holder === undefined ? sectorController(sectorKey) : holder;
+}
+
+/** True when `s` is a built Territory Lock whose owner's side is `held`
+ *  (`sectorHeldBy`): the lock is holding its sector (the beacon turns). */
+export function isHoldingTerritoryLock(s: StructureRecord, held: string | null): boolean {
+  return held !== null && isLiveTerritoryLock(s) && parseOwner(s.owner).faction === held;
 }
 
 /** True when `s` is a built Territory Lock (it locks its owner's side). */

@@ -20,18 +20,29 @@
  */
 import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
+import { clampLinksToSockets } from '../leveling/structureLevel.js';
 import { rayHitsConvexPolygon } from '../combat/Weapons.js';
 import { convexHullCCW } from '../swarm/asteroidShape.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js';
+// Function-only cycle (cableCurve uses Grid's segment tests): neither module
+// reads the other at load time.
+import { CABLE_NO_SOCKET, gridNodePadBox, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
 export interface GridNode {
   id: string;
+  /** Structure kind id (0d cable sockets: `structureSockets(kind)`). */
+  kind: string;
   x: number;
   y: number;
+  /** The structure's angle in radians (CCW, Y-up game space; the
+   *  `rotateStructureSocket` / `localToWorld` convention). Server: `rot°·π/180`;
+   *  client: the swarm angle. */
+  rot: number;
   radius: number;
-  /** Connector / Capital — at least one endpoint of every link must be a hub. */
+  /** Catalogue flag (Connector, Capital, shield emitters, big buildings). NOT
+   *  read by `canConnect`: every link needs a Connector end (`isConnector`). */
   isHub: boolean;
   /** The grid root + storage source (the Capital). Drives `powered`. */
   isCapital: boolean;
@@ -63,17 +74,30 @@ export interface GridNode {
   powerConsumption: number;
   /** Blueprints are dead-ends in traversal (see file docstring). */
   isConstructed: boolean;
+  /** Bit mask of the sockets this node's links already hold, for a caller
+   *  whose adjacency entries carry no sockets (the client build preview,
+   *  from `connSockSelf`). ABSENT ⇒ `canConnect` reads the adjacency. */
+  usedSockets?: number;
 }
 
 export type CanConnectReason =
   | 'self'
   | 'duplicate'
-  | 'hub-required'
+  /** Neither endpoint is a Connector (nor a shield emitter, whose own
+   *  `pylon-rule` governs it): every link goes through a Connector, big
+   *  buildings included. */
+  | 'connector-required'
   | 'capital-only'
   | 'a-full'
   | 'b-full'
   | 'out-of-range'
   | 'blocked'
+  /** 0d cable sockets: no socket pair faces (a building socket takes a cable
+   *  only within 90° of its outward side, never behind the building). */
+  | 'no-facing-socket'
+  /** Every free facing socket pair in reach is under `MIN_CABLE_LENGTH`
+   *  stud to stud (owner: "keep buildings apart"). Socket cables only. */
+  | 'too-short'
   /** Phase 5 — a shield-pylon dual-cap violation: a 2nd connector, a 4th pylon,
    *  or a pylon↔non-(connector|pylon) target. */
   | 'pylon-rule';
@@ -183,7 +207,8 @@ export function segmentHitsObstacle(x0: number, y0: number, x1: number, y1: numb
 }
 
 /** True if the segment between two nodes' centres passes through any OTHER
- *  node's body, or (Item D) through any non-structure `obstacle` (asteroid;
+ *  node's body or landing pad (`gridNodePadBox`: a pad is solid to cables),
+ *  or (Item D) through any non-structure `obstacle` (asteroid;
  *  `segmentHitsObstacle`). `obstacles` is OPTIONAL — omitting it is
  *  byte-identical to the structures-only behaviour. */
 export function isConnectionLineBlocked(
@@ -203,6 +228,8 @@ export function isConnectionLineBlocked(
     ) {
       return true;
     }
+    const pad = gridNodePadBox(n);
+    if (pad !== null && segmentIntersectsAabb(a.x, a.y, b.x, b.y, pad.x - pad.hw, pad.y - pad.hh, pad.x + pad.hw, pad.y + pad.hh)) return true;
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {
@@ -250,8 +277,14 @@ function shieldPylonRejection(
 
 /**
  * The hub model — who may connect to whom. Ports eqx-peri's rules exactly:
- * hub-required, per-kind connection cap, edge-to-edge range, no self / no
- * duplicate, line-of-sight.
+ * connector-required, per-kind connection cap, no self / no duplicate; then
+ * the 0d cable-socket rule (`pickCableSocketPair`): a facing socket pair in
+ * reach (socket to socket), at least `MIN_CABLE_LENGTH` long, whose curved
+ * cable crosses nothing. On success the chosen pair goes into the optional
+ * scratch `sockets`; on `'too-short'` the refused pair, on `'blocked'`
+ * `CABLE_NO_SOCKET` (the build preview draws both red). A fence link (shield
+ * emitter to emitter) keeps its straight post-to-post rule (edge range +
+ * centre line of sight) and writes `CABLE_NO_SOCKET` for both ends.
  */
 export function canConnect(
   a: GridNode,
@@ -259,12 +292,9 @@ export function canConnect(
   adjacency: ReadonlyMap<string, readonly Connection[]>,
   nodes: ReadonlyMap<string, GridNode>,
   obstacles?: readonly GridObstacle[],
+  sockets?: CableSocketPick,
 ): CanConnectResult {
   if (a.id === b.id) return { ok: false, reason: 'self' };
-  // Hub rule: at least one endpoint must be a Connector or the Capital. A leaf
-  // can NEVER attach to another leaf.
-  if (!a.isHub && !b.isHub) return { ok: false, reason: 'hub-required' };
-
   // WS-5 (R2.10) — capital-only-connectors: the Capital may ONLY link to a
   // Connector. Anything else attaching to it (a leaf, OR a non-connector hub
   // such as a Shield Pylon) is rejected — route through a Connector relay. This
@@ -272,6 +302,15 @@ export function canConnect(
   // leaf at a full Capital reads `capital-only`, not `a-full`).
   if ((a.isCapital && !b.isConnector) || (b.isCapital && !a.isConnector)) {
     return { ok: false, reason: 'capital-only' };
+  }
+
+  // Connector rule: every link has a Connector at one end. Big buildings
+  // (shipyard, deep-core rig, ...) are NOT relays — they join the network
+  // through a Connector like any leaf. A shield emitter (pylon / gate / airlock)
+  // endpoint is exempt here: its `pylon-rule` below already allows only
+  // connector + emitter links, so emitter↔emitter fence links are unchanged.
+  if (!a.isConnector && !b.isConnector && a.isShieldPylon !== true && b.isShieldPylon !== true) {
+    return { ok: false, reason: 'connector-required' };
   }
 
   const aConns = adjacency.get(a.id) ?? [];
@@ -294,9 +333,11 @@ export function canConnect(
 
   // Generic per-kind cap — SKIPPED for a pylon endpoint (its dual-cap above is the
   // authority; the pylon's `maxConnections` of 3 is less than its true 1+3=4 max).
-  if (a.isShieldPylon !== true && aConns.length >= a.maxConnections) return { ok: false, reason: 'a-full' };
+  // A socket-bound kind never holds more links than it has sockets (one cable
+  // per socket), whatever its levelled cap.
+  if (a.isShieldPylon !== true && aConns.length >= clampLinksToSockets(a.maxConnections, a.kind)) return { ok: false, reason: 'a-full' };
   const bConns = adjacency.get(b.id) ?? [];
-  if (b.isShieldPylon !== true && bConns.length >= b.maxConnections) return { ok: false, reason: 'b-full' };
+  if (b.isShieldPylon !== true && bConns.length >= clampLinksToSockets(b.maxConnections, b.kind)) return { ok: false, reason: 'b-full' };
 
   // P3.2 — UNIFORM range: every kind uses the global CONNECTION_MAX_RANGE (the
   // R2.10 Capital short-reach was reverted, "everything has the same range").
@@ -307,8 +348,18 @@ export function canConnect(
     a.connectionRange ?? CONNECTION_MAX_RANGE,
     b.connectionRange ?? CONNECTION_MAX_RANGE,
   );
+  // Edge distance never exceeds socket distance: the cheap far reject.
   if (edgeDistance(a, b) > maxRange) return { ok: false, reason: 'out-of-range' };
-  if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
+  if (a.isShieldPylon === true && b.isShieldPylon === true) {
+    // Fence link: straight post to post, along the wall.
+    if (sockets) { sockets.a = CABLE_NO_SOCKET; sockets.b = CABLE_NO_SOCKET; }
+    if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
+    return { ok: true };
+  }
+  // One cable per stud: the sockets each end's links already hold.
+  const usedA = a.usedSockets ?? linkSocketMask(a.id, aConns), usedB = b.usedSockets ?? linkSocketMask(b.id, bConns);
+  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB);
+  if (refusal !== null) return { ok: false, reason: refusal };
   return { ok: true };
 }
 

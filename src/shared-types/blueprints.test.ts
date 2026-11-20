@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BPC_RUNS_REF, MATERIAL_MAX, OUTPUT_YIELD_MAX, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS,
+  BPC_RUNS_REF, JUNK_BPC_RUNS, JUNK_OUTPUT_MAX, LOOT_JUNK_COPY_CHANCE, MATERIAL_MAX, OUTPUT_YIELD_MAX, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS,
   applyBlueprint, blueprintName, blueprintProducts, blueprintQuality, fittedCargoMul, fittedHullMul, fittedUid,
   isBlueprintUsedUp, makeBlueprint, packedHullProducts, packedStructureProducts, parseProduct, productName, rollBlueprint, rollPackedHull, rollPackedStructure,
   spendBlueprintRun, weaponGate, weaponUnlocked,
@@ -194,5 +194,32 @@ describe('blueprint items (economy v2 W2)', () => {
     const back = parseHoldJson(json);
     expect(back.blueprints[0]!.kind).toBe('bpo');
     expect(back.packed).toEqual([{ product: 'structure:smelter', quality: 40 }]);
+  });
+});
+
+describe('junk blueprint copies (playable base loop)', () => {
+  it('a junk copy is a poor, few-run copy from the one maker', () => {
+    const j = makeBlueprint('hull:gunship', 'bpo', seeded(3), { junk: true });
+    expect(j.kind).toBe('bpc');
+    expect(j.runs).toBe(JUNK_BPC_RUNS);
+    expect(j.material).toBe(0);
+    expect(j.output).toBeLessThan(JUNK_OUTPUT_MAX);
+    expect(blueprintQuality(j)).toBeLessThan(10);
+  });
+
+  it('loot can roll a junk copy', () => {
+    let junk = 0;
+    for (let s = 1; s <= 400; s++) {
+      const h = rollLoot('robot-square', seeded(s));
+      for (const b of h.blueprints) {
+        expect(b.runs).toBe(JUNK_BPC_RUNS);
+        expect(b.material).toBe(0);
+        junk++;
+      }
+      expect(rollLoot('robot-square', seeded(s))).toEqual(h); // deterministic
+      expect(rollLoot('trader-hauler', seeded(s)).blueprints).toHaveLength(0);
+    }
+    expect(junk).toBeGreaterThan(400 * LOOT_JUNK_COPY_CHANCE * 0.5);
+    expect(junk).toBeLessThan(400 * LOOT_JUNK_COPY_CHANCE * 1.5);
   });
 });

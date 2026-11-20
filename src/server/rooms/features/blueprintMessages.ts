@@ -12,7 +12,9 @@ import type { ProductionSubsystem } from '../../structures/ProductionSubsystem.j
 import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { ShipState } from '../schema/SectorState.js';
-import { isOperationalStorage, DEPOSIT_RANGE, type StorageService } from '../../cargo/StorageService.js';
+import type { StorageService } from '../../cargo/StorageService.js';
+import { isOperationalStorage } from '../../cargo/storageHolds.js';
+import { nearStorage } from '../../cargo/storageReach.js';
 import { getHoldStore, getWallet } from '../../db/PersistenceWorker.js';
 import { getTradeSink } from '../../economy/tradeSink.js';
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../../economy/BlueprintMarket.js';
@@ -92,7 +94,7 @@ export function registerBlueprintMessages(h: BlueprintMessageHost): RoomFeature 
     const s = rec ? h.structureRegistry.get(rec.id) : undefined;
     if (s === undefined || s.owner !== playerId || s.uid === undefined) { reply(false, 'Pick one of your storage structures.'); return; }
     const pose = h.shipPoseCache.get(playerId);
-    if (!pose || Math.hypot(pose.x - s.x, pose.y - s.y) > DEPOSIT_RANGE) { reply(false, 'Fly your ship next to that storage to install.'); return; }
+    if (!pose || !nearStorage(s, pose.x, pose.y)) { reply(false, 'Fly your ship next to that storage to install.'); return; }
     const id = p.data.blueprintId;
     if (h.fittedOf(shipId).includes(id)) { reply(false, 'This ship already has that blueprint.'); return; }
     const fitted = h.storage().installBlueprint(playerId, s.uid, id, shipId);

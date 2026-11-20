@@ -287,7 +287,7 @@ export function structureRenderVerts(
  * `-angle`. Unknown subtype ⇒ the Capital's look (forgiving, like
  * `getStructureKind`).
  */
-export function buildStructureGfx(structureKindId: string | undefined, _radius?: number, seed = 1): Graphics {
+export function buildStructureGfx(structureKindId: string | undefined, _radius?: number, seed = 1, style?: string): Graphics {
   // Phase V (plan soft-leaping-truffle v2) — the architectural draw plan at the
   // kind's catalogue footprint (the SAME plan the design sheet renders), in
   // local pixi space centred on the body; the sprite's rotation carries the
@@ -299,10 +299,16 @@ export function buildStructureGfx(structureKindId: string | undefined, _radius?:
   const kindless = !structureKindId || !isStructureKindId(structureKindId);
   const plan = kindless && _radius
     ? buildStructureVisual('__kindless__', { accent: kind.color, seed, size: { w: _radius * 2, h: _radius * 2 } })
-    : buildStructureVisual(kind.id, { accent: kind.color, seed, omitSpans: true });
+    : buildStructureVisual(kind.id, { accent: kind.color, seed, omitSpans: true, style });
   for (const r of plan.rects) {
     g.rect(r.x, r.y, r.w, r.h);
     g.fill({ color: r.color, alpha: r.alpha });
+  }
+  // A structure style (`?restyle=`) draws polygons: flat fills in the
+  // plan's colours, so the ghost / no-art fallback has the styled outline.
+  for (const p of plan.polys ?? []) {
+    g.poly(p.pts.flat());
+    g.fill({ color: p.color, alpha: p.mat === 'glow' ? 0.6 * (p.alpha ?? 1) : 1 });
   }
   for (const l of plan.lights) {
     g.circle(l.x, l.y, l.r * 2.2);
