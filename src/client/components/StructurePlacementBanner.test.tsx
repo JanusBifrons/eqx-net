@@ -80,6 +80,22 @@ describe('StructurePlacementBanner', () => {
     expect(useUIStore.getState().placementKind).toBe('capital');
   });
 
+  it('uses icon-only buttons (rotate, tick, cross) with labels and 40 px targets', () => {
+    const { getByTestId } = renderBanner();
+    for (const [id, label] of [['placement-rotate', 'Rotate'], ['placement-confirm', 'Confirm'], ['placement-cancel', 'Cancel']] as const) {
+      const b = getByTestId(id);
+      expect(b.getAttribute('aria-label')).toBe(label);
+      expect(b.getAttribute('title')).toBe(label);
+      expect(b.textContent).toBe(''); // icon only, no text
+      expect(b.querySelector('svg')).not.toBeNull();
+      const cs = getComputedStyle(b);
+      expect(parseFloat(cs.width)).toBeGreaterThanOrEqual(40);
+      expect(parseFloat(cs.height)).toBeGreaterThanOrEqual(40);
+    }
+    // The prompt line stays.
+    expect(getByTestId('placement-banner').textContent).toContain('here?');
+  });
+
   it('renders nothing when not in placement mode', () => {
     useUIStore.setState({ placementKind: null });
     const { container } = renderBanner();
