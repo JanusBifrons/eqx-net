@@ -52,7 +52,9 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
     const con = await placeAndWait(harness, room, 'connector', 400, 0);
-    const sol = await placeAndWait(harness, room, 'solar', 650, 0);
+    // Solar at 700, not 650: its cable to the connector must clear the 56 u
+    // minimum (stud to stud); at 650 the two sit only 38 u apart edge to edge.
+    const sol = await placeAndWait(harness, room, 'solar', 700, 0);
     const [capE, conE, solE] = [eid(harness, cap), eid(harness, con), eid(harness, sol)];
 
     // The web forms on placement (connTo present immediately), even as blueprints.
@@ -132,8 +134,9 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const internals = harness.getServerRoom()!._internals;
 
     await placeAndWait(harness, room, 'capital', 0, 0);
-    await placeAndWait(harness, room, 'connector', 0, 350); // WS-5: battery routes via a relay // phase V footprints
-    const bat = await placeAndWait(harness, room, 'battery', 150, 420);
+    // South (-y) of the Capital: its crane-bay pad (keepClear, +y 290..530) is north.
+    await placeAndWait(harness, room, 'connector', 0, -350); // WS-5: battery routes via a relay // phase V footprints
+    const bat = await placeAndWait(harness, room, 'battery', 150, -420);
     const batE = eid(harness, bat);
 
     // Blueprint first: the field is present (battery kind) but empty.
@@ -162,8 +165,9 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     // so it survives con1's death) is the in-range backup the player CAN reconnect
     // onto — but only deliberately, never via the auto-sweep (Phase 5).
     const con1 = await placeAndWait(harness, room, 'connector', 400, 0); // phase V footprints
-    const con2 = await placeAndWait(harness, room, 'connector', 0, 400);
-    const sol = await placeAndWait(harness, room, 'solar', 480, 330); // nearer con1 (edge 223) than con2 (268)
+    // South (-y): the Capital's crane-bay pad (keepClear, +y 290..530) is north.
+    const con2 = await placeAndWait(harness, room, 'connector', 0, -400);
+    const sol = await placeAndWait(harness, room, 'solar', 480, -330); // nearer con1 (edge 223) than con2 (268)
     const [con2E, solE] = [eid(harness, con2), eid(harness, sol)];
     for (let i = 0; i < 60; i++) internals.pulseStructureGrid();
     expect(sliceEntry(internals.getStructuresSlice(), solE)?.powered).toBe(true);
