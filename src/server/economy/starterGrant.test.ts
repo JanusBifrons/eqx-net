@@ -33,6 +33,11 @@ describe('starter grant', () => {
     const { ops, econ, holds } = setup();
     expect(grantStarter({ econ, holds }, P, 'ship-a', 'fighter')).toBe(true);
     expect(capitalCount(holds, 'ship-a')).toBe(1);
+    // A fresh crate holds 5,000: a one-of-a-kind item carrying its bank.
+    const crate = holds.get('ship-a')!.hold.packed![0]!;
+    expect(crate.minerals).toBe(5000);
+    expect(crate.uid).toMatch(/^cap-/);
+    expect(PackedItemSchema.safeParse(crate).success).toBe(true);
     // One atomic group: the hold upsert and the player-row flag together.
     expect(ops).toHaveLength(1);
     const group = ops[0] as Extract<PersistOp, { type: 'GROUP' }>;

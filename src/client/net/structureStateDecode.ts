@@ -16,6 +16,7 @@ import {
   STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
+  STRUCTURE_FLAG_OFF,
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_DEFAULTS as D,
@@ -30,6 +31,7 @@ import {
 } from '../../shared-types/structureStateWire.js';
 import { decodeProdFrac } from '../../shared-types/production.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
+import { decodeProdCount } from '../../shared-types/production.js';
 
 export function emptyStructureRow(): StructureRenderState {
   return { powered: false, netPower: 0, connTo: [], connSockSelf: [], connSockOther: [], built: false, buildPct: 0, deconstructPct: 0 };
@@ -77,6 +79,7 @@ export function decodeStructureState(
   out.noAmmo = (flags & STRUCTURE_FLAG_NO_AMMO) !== 0 ? true : undefined;
   out.noFuel = (flags & STRUCTURE_FLAG_NO_FUEL) !== 0 ? true : undefined;
   out.drawFull = (flags & STRUCTURE_FLAG_DRAW_FULL) !== 0 ? true : undefined;
+  out.switchedOff = (flags & STRUCTURE_FLAG_OFF) !== 0 ? true : undefined;
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
   out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
   const gateOpen = v.gateOpen ?? D.gateOpen;
@@ -94,6 +97,7 @@ export function decodeStructureState(
   const bpRuns = v.bpRuns ?? D.bpRuns;
   out.bpRuns = bpRuns !== 0 ? bpRuns : undefined;
   out.bpQuality = bpRuns !== 0 ? (v.bpQuality ?? D.bpQuality) : undefined;
+  out.prodCount = decodeProdCount(v.prodCount ?? D.prodCount);
   // v4 T1 — teleporters: decode in place (allocated once per teleporter row).
   if (v.tpPhase !== undefined || v.tpPartner !== undefined || v.tpChargePct !== undefined || out.teleport !== undefined) {
     const t = (out.teleport ??= { phase: 0, phaseMs: 0, chargePct: 0, partner: -1, rules: 0, loadGood: 0, loadQty: 0, keepGood: 0, keepQty: 0, padWeight: 0, toll: 0 });

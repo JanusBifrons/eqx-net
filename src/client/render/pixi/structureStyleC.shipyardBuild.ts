@@ -25,7 +25,7 @@ import type { StructureRenderState } from '../../../core/contracts/IRenderer.js'
 import { PROD_STATE, effectiveRecipe } from '../../../shared-types/production.js';
 import { RECIPES, RECIPE_IDS } from '../../../shared-types/recipes.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
-import { LAMP_AMBER, LAMP_WHITE, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL } from './structureStyleKit.js';
+import { LAMP_AMBER, LAMP_WHITE, SLAB_DARK, SOOT, STEEL } from './structureStyleKit.js';
 import type { RigRowClipMemo } from './structureRigLook.js';
 
 /** The print line: the cyan of the restyle's live glass (the yard's
@@ -41,51 +41,71 @@ const HULL_SCALE_MAX = 3;
 const _fill = { color: 0, alpha: 1 };
 const _line = { color: 0x0a0c0e, width: 1.5, alpha: 1 };
 const _seam = { color: SHIPYARD_PRINT_CYAN, width: 1, alpha: 0.55 };
+const _print = { color: SHIPYARD_PRINT_CYAN, width: 2, alpha: 1 };
+/** The finished hull's plating: a light steel, so the new hull reads on the
+ *  dark slipway (the yard's own slabs are darker). */
+const HULL_PLATE = 0x6a7178;
+const HULL_PLATE_LIGHT = 0x8a929a;
 
-function fillRect(g: GraphicsContext, x: number, y: number, w: number, h: number, color: number, alpha = 1): void {
+/** Building a part's printing look (true) or its finished look (false). */
+let printing = false;
+
+/** Fill the current path: finished, its colour with a dark outline;
+ *  printing, a translucent cyan with a bright cyan print line. */
+function paint(g: GraphicsContext, color: number, alpha = 1, outlined = true): void {
+  _fill.color = printing ? SHIPYARD_PRINT_CYAN : color;
+  _fill.alpha = printing ? 0.3 * alpha : alpha;
+  g.fill(_fill);
+  if (outlined) g.stroke(printing ? _print : _line);
+}
+
+function fillRect(g: GraphicsContext, x: number, y: number, w: number, h: number, color: number): void {
   g.rect(x, y, w, h);
-  _fill.color = color; _fill.alpha = alpha; g.fill(_fill);
-  g.stroke(_line);
+  paint(g, color);
 }
 
 // ── art (each in its part's own Pixi frame, y down; symmetric in y) ─────────
 
-/** Hull block `j`: a steel trapezoid on the beam profile, print seams cyan. */
+/** Hull block `j`: a plated trapezoid on the beam profile, cyan seams. */
 function blockContext(j: number): GraphicsContext {
   const g = new GraphicsContext();
   const h = SHIPYARD_HULL_HALF_L / SHIPYARD_HULL_BLOCKS, xc = SHIPYARD_HULL_BLOCK_XS[j]!;
   const w0 = shipyardHullHalfBeam(xc - h), w1 = shipyardHullHalfBeam(xc + h);
   g.poly([-h, -w0, h, -w1, h, w1, -h, w0], true);
-  _fill.color = SLAB; _fill.alpha = 1; g.fill(_fill); g.stroke(_line);
+  paint(g, HULL_PLATE);
+  if (!printing) {
+    g.poly([-h + 2, -w0 + 3, h - 2, -w1 + 3, h - 2, w1 - 3, -h + 2, w0 - 3], true);
+    paint(g, HULL_PLATE_LIGHT, 0.35, false);
+  }
   g.moveTo(-h, -w0).lineTo(-h, w0).moveTo(h, -w1).lineTo(h, w1).moveTo(-h + 2, 0).lineTo(h - 2, 0);
-  g.stroke(_seam);
+  g.stroke(printing ? _print : _seam);
   return g;
 }
 
 function fitContext(s: ShipyardFitStage): GraphicsContext {
   const g = new GraphicsContext();
   if (s === 'deck') {
-    fillRect(g, -34, -9, 68, 18, SLAB_LIGHT);
+    fillRect(g, -34, -9, 68, 18, HULL_PLATE_LIGHT);
     for (let x = -24; x <= 24; x += 12) g.moveTo(x, -8).lineTo(x, 8);
-    g.stroke(_seam);
+    g.stroke(printing ? _print : _seam);
   } else if (s === 'hardpoints') {
     for (const x of [-18, 18]) for (const y of [-9, 9]) {
       fillRect(g, x - 4, y - 4, 8, 8, SLAB_DARK);
-      g.circle(x, y, 2); _fill.color = SHIPYARD_PRINT_CYAN; _fill.alpha = 0.8; g.fill(_fill);
+      g.circle(x, y, 2); paint(g, SHIPYARD_PRINT_CYAN, 0.8, false);
     }
   } else if (s === 'superstructure') {
     g.poly([-10, -6, -6, -8, 8, -8, 10, -5, 10, 5, 8, 8, -6, 8, -10, 6], true);
-    _fill.color = SLAB_LIGHT; _fill.alpha = 1; g.fill(_fill); g.stroke(_line);
-    g.rect(2, -5, 4, 10); _fill.color = SHIPYARD_PRINT_CYAN; _fill.alpha = 0.7; g.fill(_fill);
+    paint(g, HULL_PLATE_LIGHT);
+    g.rect(2, -5, 4, 10); paint(g, SHIPYARD_PRINT_CYAN, 0.7, false);
   } else if (s === 'engines') {
     for (const y of [-7, 7]) {
       fillRect(g, -7, y - 5, 14, 10, SOOT);
-      g.circle(-6, y, 3); _fill.color = LAMP_AMBER; _fill.alpha = 0.55; g.fill(_fill);
+      g.circle(-6, y, 3); paint(g, LAMP_AMBER, 0.55, false);
     }
   } else {
     for (const y of [-7, 7]) {
       fillRect(g, 0, y - 1.5, 10, 3, STEEL);
-      g.circle(0, y, 5); _fill.color = SLAB_DARK; _fill.alpha = 1; g.fill(_fill); g.stroke(_line);
+      g.circle(0, y, 5); paint(g, SLAB_DARK);
     }
   }
   return g;
@@ -97,10 +117,10 @@ function lightContext(lit: boolean): GraphicsContext {
   const g = new GraphicsContext(), L = SHIPYARD_LIGHT_HALF_L, t = SHIPYARD_LIGHT_HALF_T;
   for (const s of [-1, 1]) {
     const y = s * SHIPYARD_LIGHT_BAR_Y;
-    if (lit) { g.rect(-L - 6, y - t - 6, 2 * L + 12, 2 * t + 12); _fill.color = LAMP_WHITE; _fill.alpha = 0.16; g.fill(_fill); }
+    if (lit) { g.rect(-L - 6, y - t - 6, 2 * L + 12, 2 * t + 12); paint(g, LAMP_WHITE, 0.16, false); }
     fillRect(g, -L, y - t, 2 * L, 2 * t, STEEL);
     g.rect(-L + 3, y - t + 2.5, 2 * L - 6, 2 * t - 5);
-    _fill.color = lit ? LAMP_WHITE : 0x2a2016; _fill.alpha = 1; g.fill(_fill);
+    paint(g, lit ? LAMP_WHITE : 0x2a2016, 1, false);
   }
   return g;
 }
@@ -117,15 +137,23 @@ export function shipyardLightContext(lit: boolean): GraphicsContext {
   return cached(lit ? 'light-lit' : 'light', () => lightContext(lit));
 }
 
-/** The shared art of a printed part (`hull-<j>` / `fit-<stage>`), else null. */
-export function shipyardPrintContext(id: string): GraphicsContext | null {
+function printedContext(id: string, print: boolean, make: () => GraphicsContext): GraphicsContext {
+  return cached(print ? `${id}:print` : id, () => {
+    printing = print;
+    try { return make(); } finally { printing = false; }
+  });
+}
+
+/** The shared art of a printed part (`hull-<j>` / `fit-<stage>`): finished,
+ *  or (`print`) its cyan printing look; null for any other id. */
+export function shipyardPrintContext(id: string, print = false): GraphicsContext | null {
   if (id.startsWith('hull-')) {
     const j = Number(id.slice(5));
-    return j >= 0 && j < SHIPYARD_HULL_BLOCKS ? cached(id, () => blockContext(j)) : null;
+    return j >= 0 && j < SHIPYARD_HULL_BLOCKS ? printedContext(id, print, () => blockContext(j)) : null;
   }
   if (id.startsWith('fit-')) {
     const s = id.slice(4) as ShipyardFitStage;
-    return (SHIPYARD_FIT_STAGES as readonly string[]).includes(s) ? cached(id, () => fitContext(s)) : null;
+    return (SHIPYARD_FIT_STAGES as readonly string[]).includes(s) ? printedContext(id, print, () => fitContext(s)) : null;
   }
   return null;
 }
@@ -135,13 +163,20 @@ export function shipyardPrintContext(id: string): GraphicsContext | null {
 const enum Show { None, Print, Light, Gantry, Hoist }
 let showRig: Rig | null = null;
 let showOf: Uint8Array = new Uint8Array(0);
+/** Per part of `showRig`: a printed part's finished and printing art. */
+let doneCtx: (GraphicsContext | null)[] = [];
+let printCtx: (GraphicsContext | null)[] = [];
 
 function showKinds(rig: Rig): Uint8Array {
   if (showRig !== rig) {
     // Once per rig (not per frame).
     showOf = new Uint8Array(rig.partCount);
+    doneCtx = new Array<GraphicsContext | null>(rig.partCount).fill(null);
+    printCtx = new Array<GraphicsContext | null>(rig.partCount).fill(null);
     for (let i = 0; i < rig.partCount; i++) {
       const id = rig.partIds[i]!;
+      doneCtx[i] = shipyardPrintContext(id);
+      printCtx[i] = shipyardPrintContext(id, true);
       showOf[i] = id.startsWith('hull-') || id.startsWith('fit-') ? Show.Print
         : id.startsWith('light-') ? Show.Light : id === 'gantry' ? Show.Gantry : id === 'gantry-hoist' ? Show.Hoist : Show.None;
     }
@@ -152,15 +187,30 @@ function showKinds(rig: Rig): Uint8Array {
 
 const hullScaleOf = new Float64Array(RECIPE_IDS.length + 1).fill(Number.NaN);
 
+/** Half the drawn length of ship kind `id` (world units): the largest
+ *  |coordinate| of its silhouette, as `art/fields.ts` `shipExtent` (art is
+ *  sized from the silhouette, never the collider radius; not imported, as
+ *  that module's graph leads back here). */
+function drawnHalfLength(id: string): number {
+  const shape = getShipKind(id).shape, s = shape.scale;
+  let m = 0;
+  if (shape.kind === 'polygon') {
+    for (const [x, y] of shape.points) m = Math.max(m, Math.abs(x * s), Math.abs(y * s));
+  } else {
+    for (const p of shape.parts) for (const [x, y] of p.points) m = Math.max(m, Math.abs((x + p.offsetX) * s), Math.abs((y + p.offsetY) * s));
+  }
+  return m;
+}
+
 /** The scale of the yard's printed hull for its row's recipe byte: the
- *  built kind's radius over the reference half length, clamped. */
+ *  built kind's drawn half length over the reference half length, clamped. */
 export function shipyardHullScale(recipe: number | undefined): number {
   const b = recipe ?? 0;
   const hit = hullScaleOf[b];
   if (hit !== undefined && !Number.isNaN(hit)) return hit;
   let k = 1;
   for (const o of RECIPES[effectiveRecipe('shipyard', b)].outputs) {
-    if ('hull' in o) k = getShipKind(o.hull).radius / SHIPYARD_HULL_HALF_L;
+    if ('hull' in o) k = drawnHalfLength(o.hull) / SHIPYARD_HULL_HALF_L;
   }
   k = k < HULL_SCALE_MIN ? HULL_SCALE_MIN : k > HULL_SCALE_MAX ? HULL_SCALE_MAX : k;
   if (b < hullScaleOf.length) hullScaleOf[b] = k;
@@ -191,12 +241,14 @@ export function shipyardPartShow(rig: Rig, i: number, value: number, st: Structu
   // The view placed the shadow at the part's position + its offset.
   const dx = sh !== null ? sh.x - g.x : 0, dy = sh !== null ? sh.y - g.y : 0;
   if (kind === Show.Print) {
-    const on = value > 0;
+    const on = value > 0, done = value >= 1;
     g.visible = on;
-    if (sh !== null) sh.visible = on;
+    // Printing is light, not metal: no shadow until the part is done.
+    if (sh !== null) sh.visible = done;
     if (!on) return;
-    g.alpha = value >= 1 ? 1 : 0.4 + 0.6 * value;
-    g.tint = value >= 1 ? 0xffffff : SHIPYARD_PRINT_CYAN;
+    const want = done ? doneCtx[i]! : printCtx[i]!;
+    if (want !== null && g.context !== want) g.context = want;
+    g.alpha = done ? 1 : 0.55 + 0.45 * value;
     g.position.set(g.x * k, g.y * k);
     g.scale.set(k);
     if (sh !== null) { sh.position.set(g.x + dx, g.y + dy); sh.scale.set(k); }

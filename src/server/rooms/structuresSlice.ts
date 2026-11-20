@@ -28,6 +28,7 @@ import {
   STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
+  STRUCTURE_FLAG_OFF,
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_TARGET_NONE,
@@ -40,7 +41,7 @@ import { writeConnToRow, writeTeleporterRow } from '../structures/structureState
 import { writeRigClipRow } from '../structures/structureRigClip.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdBay, encodeProdFrac, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdBay, encodeProdCount, encodeProdFrac, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { shipyardBayOf } from '../../core/articulation/rigs/heavyIndustry.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -146,6 +147,7 @@ export class StructuresSliceSync {
       // by structureFlagsWire.test.ts).
       if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
       if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
+      if (rec.switchedOff === true) flags |= STRUCTURE_FLAG_OFF;
       if (h.breakIns.breached(rec.id)) flags |= STRUCTURE_FLAG_BREACH;
       if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
       if (rec.kind === TERRITORY_LOCK_KIND && isHoldingTerritoryLock(rec, held === undefined ? (held = h.sectorHeldBy()) : held)) {
@@ -210,6 +212,8 @@ export class StructuresSliceSync {
         if ((st.bpRuns ?? SD.bpRuns) !== runs) st.bpRuns = runs;
         const bq = rec.blueprint !== undefined ? blueprintQuality(rec.blueprint) : 0;
         if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
+        const pc = encodeProdCount(rec.prodCount); // job 2E — outputs left
+        if ((st.prodCount ?? SD.prodCount) !== pc) st.prodCount = pc;
         const pf = encodeProdFrac(h.production().cycleFraction(rec)); // loop 3L (#16)
         if ((st.prodFrac ?? SD.prodFrac) !== pf) st.prodFrac = pf;
         // Loop 3R (#16): the bay this build is in; no build queue on this base yet.
