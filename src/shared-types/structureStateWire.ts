@@ -226,6 +226,69 @@ export function decodeRigHoldCargo(v: number): number {
   return (v >> RIG_HOLD_CARGO_SHIFT) & 3;
 }
 
+/**
+ * Solid doors (docs/plans/door-power.md, slice 9): a shield gate's or
+ * airlock's door motion rides EXISTING row fields, no new field. One door
+ * segment `{p0, t0, dir, level}` (core `DoorSegment`; position is
+ * `doorPosAt(seg, tick)`, the one door clock) as
+ *   - `rigClip` = the door clip (`encodeRigClip`, no target): the gate's
+ *     `door`, or the airlock end that moved last, `door-a` / `door-b`. The
+ *     airlock interlock keeps the other end shut (position 0, still), so one
+ *     segment per row says everything;
+ *   - `rigStart` = t0 (game tick);
+ *   - `rigHold` = p0 (12 bits; the crane hold meaning is unused on door kinds);
+ *   - `gateOpen` = `DOOR_MOTION_OPEN` when the door heads (or rests) open,
+ *     plus the power level L in bits 0-3.
+ * "Fully open" is not sent: it is `doorPosAt(seg, tick) === DOOR_POS_MAX` on
+ * any side. Both sides use these helpers (#15); a late joiner rebuilds the
+ * door from one row (#16). Cost per segment edge: rigStart 4 B + rigHold 2 B
+ * + gateOpen 1 B of values (plus the clip byte when the airlock switches
+ * end); a still door costs nothing.
+ */
+export const DOOR_MOTION_OPEN = 0x80;
+const DOOR_MOTION_LEVEL_MASK = 0x0f;
+const DOOR_MOTION_POS_MASK = 0x0fff;
+
+/** One door segment as the wire carries it (structurally core `DoorSegment`). */
+export interface DoorMotionSeg {
+  p0: number;
+  t0: number;
+  dir: 1 | -1;
+  level: number;
+}
+
+/** The four row fields a door segment rides (written into, never allocated). */
+export interface DoorMotionFields {
+  rigClip: number;
+  rigStart: number;
+  rigHold: number;
+  gateOpen: number;
+}
+
+/** Pack `seg`, playing as door clip `clipIndex`, into `out` (returned).
+ *  Throws when a value does not fit its bits (a door constant changed). */
+export function encodeDoorMotion(seg: Readonly<DoorMotionSeg>, clipIndex: number, out: DoorMotionFields): DoorMotionFields {
+  const p0 = seg.p0, t0 = seg.t0, level = seg.level;
+  if (!(Number.isInteger(p0) && p0 >= 0 && p0 <= DOOR_MOTION_POS_MASK)) throw new Error(`door position ${p0} does not fit rigHold`);
+  if (!(Number.isInteger(level) && level >= 0 && level <= DOOR_MOTION_LEVEL_MASK)) throw new Error(`door level ${level} does not fit gateOpen`);
+  if (!(Number.isInteger(t0) && t0 >= 0 && t0 <= 0xffffffff)) throw new Error(`door t0 ${t0} does not fit rigStart`);
+  out.rigClip = encodeRigClip(clipIndex, false);
+  out.rigStart = t0;
+  out.rigHold = p0;
+  out.gateOpen = (seg.dir > 0 ? DOOR_MOTION_OPEN : 0) | level;
+  return out;
+}
+
+/** Unpack a door row's fields into `out` (returned); its clip index is
+ *  `decodeRigClipIndex(rigClip)`. Defaults (0) read as a shut, still door. */
+export function decodeDoorMotion(gateOpen: number, rigStart: number, rigHold: number, out: DoorMotionSeg): DoorMotionSeg {
+  out.p0 = rigHold & DOOR_MOTION_POS_MASK;
+  out.t0 = rigStart;
+  out.dir = (gateOpen & DOOR_MOTION_OPEN) !== 0 ? 1 : -1;
+  out.level = gateOpen & DOOR_MOTION_LEVEL_MASK;
+  return out;
+}
+
 /** The fields the client reads from a room-state structure row (absent ⇒
  *  STRUCTURE_DEFAULTS). */
 export interface StructureStateView {
@@ -242,7 +305,7 @@ export interface StructureStateView {
   storedPower?: number;
   storedPowerMax?: number;
   shieldWallTo?: number;
-  /** Gates: GATE_OPEN_A / GATE_OPEN_B bits (core/structures/gateLogic.ts). */
+  /** Gates / airlocks: door motion open bit + power level (`encodeDoorMotion`). */
   gateOpen?: number;
   /** Gates: GATE_ACCESS_IDS index (shared-types/gateAccess.ts). */
   gateAccess?: number;

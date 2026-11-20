@@ -29,6 +29,7 @@ import {
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
+import { clearDoorRow, decodeDoorRow, isDoorKind } from './doorMotionDecode.js';
 
 export function emptyStructureRow(): StructureRenderState {
   return { powered: false, netPower: 0, connTo: [], connSockSelf: [], connSockOther: [], built: false, buildPct: 0, deconstructPct: 0 };
@@ -78,8 +79,10 @@ export function decodeStructureState(
   out.drawFull = (flags & STRUCTURE_FLAG_DRAW_FULL) !== 0 ? true : undefined;
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
   out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
-  const gateOpen = v.gateOpen ?? D.gateOpen;
-  out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
+  // Door kinds: gateOpen + the rig fields carry the door segment (slice 9).
+  const door = isDoorKind(rigKind);
+  if (door) decodeDoorRow(v, out, rigKind!);
+  else clearDoorRow(v, out, rigKind);
   const gateAccess = v.gateAccess ?? D.gateAccess;
   out.gateAccess = gateAccess !== 0 ? gateAccess : undefined;
   const recipe = v.recipe ?? D.recipe;
@@ -106,7 +109,7 @@ export function decodeStructureState(
     t.padWeight = v.padWeight ?? D.padWeight;
     t.toll = v.tpToll ?? D.tpToll;
   }
-  decodeRigClip(v, out, rigKind);
+  if (!door) decodeRigClip(v, out, rigKind);
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
   const name = owners.names[oi] ?? '';

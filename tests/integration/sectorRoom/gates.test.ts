@@ -11,6 +11,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { GATE_OPEN_A } from '../../../src/core/structures/gateLogic.js';
+import { doorOpenMaskOf } from '../../../src/client/net/doorMotionDecode.js';
+import type { StructureStateView } from '../../../src/shared-types/structureStateWire.js';
 import { GATE_APPROACH_DEPTH } from '../../../src/core/structures/gateGeometry.js';
 import { structureHalfExtents } from '../../../src/shared-types/structureKinds.js';
 import { DEFAULT_SHIP_KIND } from '../../../src/shared-types/shipKinds.js';
@@ -75,10 +77,10 @@ describe('SectorRoom integration — Shield Gate opens on approach (phase V gate
     expect(internals.gateMask(gate.id)).toBe(GATE_OPEN_A);
     // Open ⇒ the span no longer absorbs shots through the gap.
     expect(internals.blockShotAtWall(0, -1100, 0, 1, 400, 1)).toBeNull();
-    // The client sees it in room state.
+    // The client sees it in room state (door slice 9: the door row heads open).
     const entityId = String(internals.swarmRegistry.get(gate.id)!.entityId);
-    const row = observer.state.structures.get(entityId) as { gateOpen?: number } | undefined;
-    expect(row?.gateOpen).toBe(GATE_OPEN_A);
+    const row = observer.state.structures.get(entityId) as unknown as StructureStateView | undefined;
+    expect(row && doorOpenMaskOf(row)).toBe(GATE_OPEN_A);
   });
 
   it('stays shut for a stranger under the default access (owner + allies)', async () => {
