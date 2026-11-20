@@ -67,6 +67,24 @@ export function decodeGood(v: number | undefined): GoodId | undefined {
   return v ? GOOD_IDS[v - 1] : undefined;
 }
 
+/**
+ * Loop 3L — `prodFrac`: how far the loaded cycle is, as one byte (0 = none
+ * loaded / just started, PROD_FRAC_MAX = done). Rides the processor row so a
+ * late joiner sees the Shipyard mid-build at the right point (#16). Both
+ * sides use these two helpers (#15).
+ */
+export const PROD_FRAC_MAX = 255;
+
+/** The `prodFrac` byte for a 0..1 cycle fraction (clamped; NaN reads 0). */
+export function encodeProdFrac(fraction: number): number {
+  return fraction > 0 ? Math.min(PROD_FRAC_MAX, Math.round(fraction * PROD_FRAC_MAX)) : 0;
+}
+
+/** The 0..1 cycle fraction a `prodFrac` byte carries. */
+export function decodeProdFrac(v: number | undefined): number {
+  return v !== undefined && v > 0 ? Math.min(1, v / PROD_FRAC_MAX) : 0;
+}
+
 /** Slot blueprint runs on the wire: 0 = no blueprint, BP_RUNS_ORIGINAL = an
  *  original (never runs out), otherwise the copy's runs left. */
 export const BP_RUNS_ORIGINAL = 65535;

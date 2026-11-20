@@ -113,8 +113,9 @@ export interface RigDrawHook {
   readonly rowClip?: (st: StructureRenderState | undefined, nowTick: number, memo: RigRowClipMemo, out: { clipId: string; startTick: number }) => boolean;
 }
 
-/** Per-structure scratch for `RigDrawHook.rowClip` (NaN = not started). */
-export interface RigRowClipMemo { start: number }
+/** Per-structure scratch for `RigDrawHook.rowClip`: the tick the clip is
+ *  anchored to and the row value it was anchored from (NaN = not started). */
+export interface RigRowClipMemo { start: number; seen: number }
 
 /** Rig id -> its drawing hook. */
 export type RigDrawHookTable = Readonly<Record<string, RigDrawHook>>;

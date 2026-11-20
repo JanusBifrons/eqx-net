@@ -40,7 +40,7 @@ import { writeConnToRow, writeTeleporterRow } from '../structures/structureState
 import { writeRigClipRow } from '../structures/structureRigClip.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdFrac, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
@@ -88,7 +88,7 @@ export interface StructuresSliceHost {
   hostileActs: () => Pick<HostileActLedger, 'sweep'>;
   patrols: Pick<PatrolSubsystem, 'count' | 'tick'>;
   gateGuard: Pick<AlienGateGuard, 'sweep'>;
-  production: () => Pick<ProductionSubsystem, 'pulse'>;
+  production: () => Pick<ProductionSubsystem, 'pulse' | 'cycleFraction'>;
   researchLabs: () => Pick<ResearchLabSubsystem, 'pulse'>;
   storage: () => Pick<StorageService, 'flushDirty'>;
   mineField: () => Pick<MineFieldSubsystem, 'mines' | 'tick'>;
@@ -209,6 +209,8 @@ export class StructuresSliceSync {
         if ((st.bpRuns ?? SD.bpRuns) !== runs) st.bpRuns = runs;
         const bq = rec.blueprint !== undefined ? blueprintQuality(rec.blueprint) : 0;
         if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
+        const pf = encodeProdFrac(h.production().cycleFraction(rec)); // loop 3L (#16)
+        if ((st.prodFrac ?? SD.prodFrac) !== pf) st.prodFrac = pf;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
       if (rec.rigClip !== undefined) writeRigClipRow(rec, st); // restyle 2e (late-join safe, #16)

@@ -8,10 +8,10 @@
  *    lamp lights at lift >= 0.5; the hull and its fittings scale to the
  *    kind being built (its radius / the reference half length), and the
  *    gantry + hoist follow them; the hoist grows as it rises (top down);
- *  - `shipyardRowClip` (`RigDrawHook.rowClip`): until the server sends the
- *    build clip itself (job 3L), the client plays it from the row's
- *    production state: from when it saw the yard start running, over one
- *    recipe cycle; a blocked yard (hull done, no room) shows it finished.
+ *  - `shipyardRowClip` (`RigDrawHook.rowClip`): the client plays it from
+ *    the row: at the server's cycle progress (`prodFrac`, job 3L, so a late
+ *    joiner sees the right point), advancing with game time between updates;
+ *    a blocked yard (hull done, no room) shows it finished; idle rests.
  * Built once / allocation-free per frame (#14).
  */
 import { GraphicsContext, type Graphics } from 'pixi.js';
@@ -216,20 +216,28 @@ export function shipyardCycleTicks(recipe: number | undefined): number {
 }
 
 /** `RigDrawHook.rowClip` for `shipyard-frame`: the build clip at the
- *  client's estimate of the yard's progress, or false (rest) while it is
- *  not building. Allocation-free. */
+ *  yard's progress, or false (rest) while it is not building. The row's
+ *  `prodFrac` (server, one byte, per pulse) anchors the clip whenever it
+ *  changes; between updates it advances with game ticks at one recipe cycle
+ *  (blueprint efficiency 100 %), held at done until the next update.
+ *  Allocation-free. */
 export function shipyardRowClip(st: StructureRenderState | undefined, nowTick: number, memo: RigRowClipMemo, out: { clipId: string; startTick: number }): boolean {
   const s = st?.prodState;
   if (s === PROD_STATE.blocked) {
     // Built, waiting for room: the hull sits in the open frame.
     memo.start = Number.NaN;
+    memo.seen = Number.NaN;
     shipyardBuildPlaying(1, nowTick, out);
     return true;
   }
-  if (s !== PROD_STATE.running) { memo.start = Number.NaN; return false; }
-  if (Number.isNaN(memo.start)) memo.start = nowTick;
+  if (s !== PROD_STATE.running) { memo.start = Number.NaN; memo.seen = Number.NaN; return false; }
   const cycle = shipyardCycleTicks(st!.recipe);
+  const f = st!.prodFrac ?? 0;
+  if (f !== memo.seen || Number.isNaN(memo.start)) {
+    memo.seen = f;
+    memo.start = nowTick - f * cycle;
+  }
   const e = nowTick - memo.start;
-  shipyardBuildPlaying(e > 0 ? (e % cycle) / cycle : 0, nowTick, out);
+  shipyardBuildPlaying(e > 0 ? e / cycle : 0, nowTick, out);
   return true;
 }

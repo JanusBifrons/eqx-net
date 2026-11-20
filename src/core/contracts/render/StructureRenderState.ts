@@ -83,6 +83,8 @@ export interface StructureRenderState {
   recipe?: number;
   prodState?: number;
   prodMissing?: number;
+  /** Loop 3L — the loaded cycle's progress, 0..1 (undefined = none). */
+  prodFrac?: number;
   /** P2d — an ammo-using turret has no munitions. */
   noAmmo?: boolean;
   /** D1 — a Reactor has no fuel (no power). */

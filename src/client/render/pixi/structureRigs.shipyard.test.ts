@@ -4,7 +4,7 @@
  * kind), and none is a pop-up riser (the frame stands at rest, fully shown).
  * Build sequence (job 3K, structureStyleC.shipyardBuild.ts): printed parts
  * show from lift > 0, cyan until done, scaled to the hull being built; lamps
- * light at 0.5; the clip is played from the row's production state.
+ * light at 0.5; the clip is played from the row (state + 3L progress).
  */
 import { describe, it, expect } from 'vitest';
 import { StructureRigView } from './structureRigs.js';
@@ -18,7 +18,8 @@ import { PROD_STATE, encodeRecipe } from '../../../shared-types/production.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 
 const PRINTED = /^(hull|fit)-/;
-const row = (prodState: number, recipe = encodeRecipe('build_interceptor')) => ({ prodState, recipe }) as unknown as StructureRenderState;
+const row = (prodState: number, prodFrac?: number, recipe = encodeRecipe('build_interceptor')) =>
+  ({ prodState, recipe, prodFrac }) as unknown as StructureRenderState;
 
 describe('shipyard build frame (StructureRigView)', () => {
   it('draws every part from the shared shipyard part art', () => {
@@ -48,7 +49,7 @@ describe('shipyard build frame (StructureRigView)', () => {
   it('mid-print a block is cyan and faded; finished it is full; lamps light; all scaled to the hull', () => {
     const rig = rigForStructureKind('shipyard')!;
     const v = new StructureRigView(rig);
-    v.setRunningFrom(row(PROD_STATE.running, encodeRecipe('build_missile_frigate')));
+    v.setRunningFrom(row(PROD_STATE.running, undefined, encodeRecipe('build_missile_frigate')));
     const k = shipyardHullScale(encodeRecipe('build_missile_frigate'));
     // Tick 85: block hull-0 (the first, at x = +6) is mid-print.
     v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 1000 - 85 }, 1000, 0, 0, 0);
@@ -78,24 +79,40 @@ describe('shipyard build frame (StructureRigView)', () => {
     }
   });
 
-  it('plays the build from when the yard starts running, over one recipe cycle; blocked shows it done', () => {
-    const memo = { start: Number.NaN }, out = { clipId: '', startTick: 0 };
+  it('idle yard rests; blocked yard shows done', () => {
+    const memo = { start: Number.NaN, seen: Number.NaN }, out = { clipId: '', startTick: 0 };
     expect(shipyardRowClip(row(PROD_STATE.none), 100, memo, out)).toBe(false);
     expect(shipyardRowClip(undefined, 100, memo, out)).toBe(false);
-    const run = row(PROD_STATE.running);
-    expect(shipyardRowClip(run, 200, memo, out)).toBe(true);
+    expect(shipyardRowClip(row(PROD_STATE.starved), 150, memo, out)).toBe(false);
+    expect(shipyardRowClip(row(PROD_STATE.blocked, 1), 5000, memo, out)).toBe(true);
     expect(out.clipId).toBe(SHIPYARD_BUILD_CLIP);
-    expect(out.startTick).toBe(200); // progress 0
-    const cycle = shipyardCycleTicks(encodeRecipe('build_interceptor'));
-    expect(cycle).toBeGreaterThan(0);
-    shipyardRowClip(run, 200 + cycle / 2, memo, out);
-    expect(out.startTick).toBeCloseTo(200 + cycle / 2 - SHIPYARD_BUILD_TICKS / 2, 6);
-    // The next hull starts over.
-    shipyardRowClip(run, 200 + cycle, memo, out);
-    expect(out.startTick).toBe(200 + cycle);
-    expect(shipyardRowClip(row(PROD_STATE.blocked), 5000, memo, out)).toBe(true);
     expect(out.startTick).toBe(5000 - SHIPYARD_BUILD_TICKS);
     expect(Number.isNaN(memo.start)).toBe(true);
-    expect(shipyardRowClip(row(PROD_STATE.starved), 6000, memo, out)).toBe(false);
+    expect(shipyardRowClip(row(PROD_STATE.unpowered, 0.4), 6000, memo, out)).toBe(false);
+  });
+
+  it('clip time matches build progress on join (loop 3L)', () => {
+    // A client that first sees the yard mid-build poses the clip there.
+    const memo = { start: Number.NaN, seen: Number.NaN }, out = { clipId: '', startTick: 0 };
+    expect(shipyardRowClip(row(PROD_STATE.running, 0.5), 1000, memo, out)).toBe(true);
+    expect(out.clipId).toBe(SHIPYARD_BUILD_CLIP);
+    expect(out.startTick).toBeCloseTo(1000 - SHIPYARD_BUILD_TICKS / 2, 6);
+  });
+
+  it('advances with game ticks between updates, holds at done, re-anchors on each update', () => {
+    const memo = { start: Number.NaN, seen: Number.NaN }, out = { clipId: '', startTick: 0 };
+    const cycle = shipyardCycleTicks(encodeRecipe('build_interceptor'));
+    expect(cycle).toBeGreaterThan(0);
+    shipyardRowClip(row(PROD_STATE.running, 0.5), 1000, memo, out);
+    shipyardRowClip(row(PROD_STATE.running, 0.5), 1000 + cycle / 4, memo, out);
+    expect(out.startTick).toBeCloseTo(1000 + cycle / 4 - 0.75 * SHIPYARD_BUILD_TICKS, 6);
+    // No update for a long time: held at done, never wrapped.
+    shipyardRowClip(row(PROD_STATE.running, 0.5), 1000 + cycle * 3, memo, out);
+    expect(out.startTick).toBe(1000 + cycle * 3 - SHIPYARD_BUILD_TICKS);
+    // The server's next value (a new hull) wins over the estimate.
+    shipyardRowClip(row(PROD_STATE.running, 0.1), 9000, memo, out);
+    expect(out.startTick).toBeCloseTo(9000 - 0.1 * SHIPYARD_BUILD_TICKS, 6);
+    shipyardRowClip(row(PROD_STATE.running), 9500, memo, out);
+    expect(out.startTick).toBe(9500); // nothing loaded yet: progress 0
   });
 });

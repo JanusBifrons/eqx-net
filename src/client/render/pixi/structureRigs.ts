@@ -466,7 +466,7 @@ export class StructureRigs {
       const view = new StructureRigView(rig);
       this.shipContainer.sortableChildren = true;
       this.shipContainer.addChild(view.under, view.over);
-      e = { view, host: null, stamp: 0, memo: { start: Number.NaN } };
+      e = { view, host: null, stamp: 0, memo: { start: Number.NaN, seen: Number.NaN } };
       this.entries.set(spriteKey, e);
     } else if (e.view.rig !== (kindId !== undefined ? rigForStructureKind(kindId) : null)) {
       // A recycled id with another kind: rebuild from scratch next frame.

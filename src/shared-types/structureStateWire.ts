@@ -120,6 +120,7 @@ export const STRUCTURE_DEFAULTS = {
   prodMissing: 0,
   bpRuns: 0,
   bpQuality: 0,
+  prodFrac: 0,
   tpPhase: 0,
   tpPhaseMs: 0,
   tpChargePct: 0,
@@ -252,6 +253,8 @@ export interface StructureStateView {
   prodMissing?: number;
   bpRuns?: number;
   bpQuality?: number;
+  /** Loop 3L — the loaded cycle's progress byte (`encodeProdFrac`). */
+  prodFrac?: number;
   /** v4 T1 — teleporters (encodings in shared-types/teleport.ts). */
   tpPhase?: number;
   tpPhaseMs?: number;

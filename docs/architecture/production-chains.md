@@ -62,7 +62,7 @@ Other rules:
   - **Destruction:** a destroyed processor spills its (unbound) blueprint.
 - **Rock chunks** (owner 2026-11-17). A refinery set to **Break down rock chunks** (`refine_rock_chunk`, a recipe with `chunkInput`) takes ONE rock chunk (a packed `chunk:rock` item, moved like any other cargo) from the network storage by its `uid` instead of goods, and keeps it loaded (`rec.prodChunk`, persisted with the cycle). Each cycle (10 pulses) pays out up to `CHUNK_REFINE_BATCH` (5,000) units of the chunk's hidden ore (`OreDraw.chunkYield`), all or nothing, until it is empty; a huge chunk drains over many cycles instead of jamming a full store. With no chunk it is **starved** ("Waiting for a rock chunk"); changing recipe hands the chunk back whole with the ore it has left. The recipe has no goods inputs or outputs, so the value-ladder and stage rules skip it (`recipes.test.ts`). Locks: `ProductionSubsystem.test.ts`, `production.test.ts`, `SectorPersistence.structures.test.ts`.
 - **Cost:** 60 smelters with 20 storages take under 0.3 ms per pulse, locked by `ProductionSubsystem.test.ts`. Processors in one component share a single network lookup.
-- **Wire:** room-state bytes `recipe`, `prodState` and `prodMissing`, sent only when not 0 (#16). Late joiners read them from the join payload.
+- **Wire:** room-state bytes `recipe`, `prodState` and `prodMissing`, sent only when not 0 (#16). Late joiners read them from the join payload. `prodFrac` (one byte, `encodeProdFrac` / `decodeProdFrac`, 0..255) carries the loaded cycle's progress, so the Shipyard's build clip poses at the real point on join; the client advances it with game ticks between updates.
 
 ## Active power: full draw only while working
 

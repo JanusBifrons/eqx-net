@@ -140,6 +140,15 @@ export class ProductionSubsystem {
     return r !== undefined && RECIPES[r].processors.includes(kind) ? r : defaultRecipeFor(kind);
   }
 
+  /** Loop 3L — how far `rec`'s loaded cycle is, 0..1 (0 when nothing is
+   *  loaded); the row's `prodFrac` (the Shipyard build animation). */
+  cycleFraction(rec: StructureRecord): number {
+    if (rec.prodLoaded !== true || !isProcessorKind(rec.kind)) return 0;
+    const id = this.recipeOf(rec);
+    const pulses = (this.effective(rec, id) ?? baseEffect(id)).cyclePulses;
+    return pulses > 0 ? Math.min(1, (rec.prodProgress ?? 0) / pulses) : 0;
+  }
+
   pulse(): void {
     this.burnFuel();
     const procs = this.procs;

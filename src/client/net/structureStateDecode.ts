@@ -28,6 +28,7 @@ import {
   decodeRigHoldTicks,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
+import { decodeProdFrac } from '../../shared-types/production.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 
 export function emptyStructureRow(): StructureRenderState {
@@ -88,6 +89,8 @@ export function decodeStructureState(
   out.prodState = prodState !== 0 ? prodState : undefined;
   const prodMissing = v.prodMissing ?? D.prodMissing;
   out.prodMissing = prodMissing !== 0 ? prodMissing : undefined;
+  const prodFrac = decodeProdFrac(v.prodFrac);
+  out.prodFrac = prodFrac > 0 ? prodFrac : undefined;
   const bpRuns = v.bpRuns ?? D.bpRuns;
   out.bpRuns = bpRuns !== 0 ? bpRuns : undefined;
   out.bpQuality = bpRuns !== 0 ? (v.bpQuality ?? D.bpQuality) : undefined;
