@@ -7,6 +7,9 @@
  *     (no crate). It appears on the slipway inside the frame, nose out of the
  *     bow, with the owner's ordinary Move order to a parking spot clear of the
  *     yard, and flies out without touching the frame (loop 3M).
+ *  1b. (loop 3R) Builds fill the slipway's bays in turn (0, 1, 2, …), each
+ *     hull starting on its bay's keel; the yard's current bay rides its room
+ *     state row (`prodBay`) so a late joiner reads it.
  *  2. Unpacking a packed gunship crate (`unpack_hull`) adds one to the roster
  *     and parks it in the world too.
  *  3. The picker gate: a FRESH spawn asking for a gunship gets a starter
@@ -26,7 +29,8 @@ import { RECIPES } from '../../../src/shared-types/recipes.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { getStructureKind } from '../../../src/shared-types/structureKinds.js';
 import { worldToLocal } from '../../../src/core/structures/gateGeometry.js';
-import { SHIPYARD_SLIP_HALF_W } from '../../../src/core/articulation/rigs/heavyIndustry.js';
+import { SHIPYARD_BAY_COUNT, SHIPYARD_SLIP_HALF_W, shipyardBayKeel } from '../../../src/core/articulation/rigs/heavyIndustry.js';
+import { decodeProdBay } from '../../../src/shared-types/production.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
@@ -134,6 +138,70 @@ describe('SectorRoom integration — Shipyard + hull gate (economy v2 W5b)', () 
     const unpacked = gunships().find((id) => id !== hullId);
     expect(unpacked).toBeDefined();
     expect(internals.lingeringSlots.has(unpacked!), 'the unpacked hull is parked in the world too').toBe(true);
+  });
+
+  it('loop 3R: builds go to bays 0,1,2 in turn, each hull on its bay keel; the bay reaches a late joiner via state', { timeout: 90_000 }, async () => {
+    const owner = randomUUID();
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
+      prebuiltStructures: [
+        { kind: 'capital', x: 0, y: 0 },
+        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 450, y: -350 },
+        { kind: 'connector', x: -450, y: -350 },
+        { kind: 'reactor', x: 650, y: 0 },
+        { kind: 'cargo_bay', x: -550, y: 0 },
+        { kind: 'shipyard', x: 0, y: -760 },
+      ],
+      prebuiltStructuresOwner: owner,
+      defaultSpawnX: 0,
+      defaultSpawnY: 1500,
+    });
+    const cr = await harness.connectActive(owner, { spawnX: 0, spawnY: 1500, shipKind: 'fighter' });
+    const internals = harness.getServerRoom()!._internals;
+    const all = [...internals.structureRegistry.all()];
+    const yard = all.find((r) => r.kind === 'shipyard')!;
+    const bay = all.find((r) => r.kind === 'cargo_bay')!;
+    const capital = all.find((r) => r.kind === 'capital')!;
+    const yardEid = internals.swarmRegistry.get(yard.id)!.entityId;
+    capital.hold = { goods: {}, blueprints: [] };
+    bay.hold = {
+      goods: { fuel: 400, alloy: 80, components: 30, electronics: 15, machinery: 5 },
+      blueprints: [{ uid: 'bp-gunship', product: 'hull:gunship', kind: 'bpo', runs: null, material: 0, output: 0, research: 0 }],
+    };
+    cr.send('set_recipe', { type: 'set_recipe', entityId: yardEid, recipe: 'build_gunship' });
+    await harness.advance(200);
+    cr.send('load_blueprint', { type: 'load_blueprint', entityId: yardEid });
+    await harness.advance(200);
+    expect(yard.blueprint?.product).toBe('hull:gunship');
+
+    const yardAngle = ((yard.rot ?? 0) * Math.PI) / 180;
+    const gunships = (): string[] => getPlayerShipStore().listByPlayer(owner).filter((r) => r.kind === 'gunship').map((r) => r.shipId);
+    const startBays: number[] = [];
+    const seen = new Set<string>();
+    const out = { bay: -1, queued: -1 };
+    for (let n = 0; n < 3; n++) {
+      const before = gunships().length;
+      for (let i = 0; i < RECIPES.build_gunship.cyclePulses * 3 && gunships().length === before; i++) internals.pulseStructureGrid();
+      const ids = gunships();
+      expect(ids, `build ${n} finished`).toHaveLength(before + 1);
+      const newId = ids.find((id) => !seen.has(id))!;
+      seen.add(newId);
+      const row = getPlayerShipStore().get(newId)!;
+      const l = worldToLocal(yard.x, yard.y, yardAngle, row.lastX, row.lastY, { x: 0, y: 0 });
+      let found = -1;
+      for (let b = 0; b < SHIPYARD_BAY_COUNT; b++) if (Math.abs(shipyardBayKeel(b).x - l.x) < 1 && Math.abs(l.y) < 1) found = b;
+      startBays.push(found);
+    }
+    expect(startBays, 'each hull starts on the keel of the next bay').toEqual([0, 1, 2]);
+
+    // A client joining now reads the yard's current bay (the 4th build: bay 3) from room state.
+    await harness.advance(300);
+    const late = await harness.connectActive(randomUUID(), { spawnX: 0, spawnY: 2000, shipKind: 'fighter' });
+    await harness.advance(300);
+    const lateRow = (late.state as unknown as SectorState).structures.get(String(yardEid)) as { prodBay?: number } | undefined;
+    expect(lateRow).toBeDefined();
+    expect(decodeProdBay(lateRow!.prodBay, out)).toEqual({ bay: 3, queued: 0 });
   });
 
   it('the picker gate: a fresh gunship request gets a fighter; the OWNED gunship spawns as a gunship', { timeout: 40_000 }, async () => {

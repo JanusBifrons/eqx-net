@@ -46,6 +46,32 @@ export const SHIPYARD_SLIP_X1 = 450;
  *  a finished ship appears before it flies out of the bow (+x). */
 export const SHIPYARD_KEEL_X = 0;
 
+/** Loop 3R (owner 2026-11-20: "keep size, several at once") — the slipway is
+ *  cut into SHIPYARD_BAY_COUNT equal bays along its length, bay 0 at the bow
+ *  (+x) end, the last at the stern; builds fill them one after another
+ *  (`shipyardBayOf`). Each bay (158 long) takes the longest sub-cap (88). */
+export const SHIPYARD_BAY_COUNT = 5;
+export const SHIPYARD_BAY_LEN = (SHIPYARD_SLIP_X1 - SHIPYARD_SLIP_X0) / SHIPYARD_BAY_COUNT;
+
+/** A bay's keel point, local frame (slip centre line, y = 0). */
+export interface ShipyardBayKeel { readonly x: number; readonly y: number }
+const BAY_KEELS: readonly ShipyardBayKeel[] = Object.freeze(
+  Array.from({ length: SHIPYARD_BAY_COUNT }, (_, i) => Object.freeze({ x: SHIPYARD_SLIP_X1 - (i + 0.5) * SHIPYARD_BAY_LEN, y: 0 })),
+);
+
+/** THE bay keel helper (client and server, #15): where bay `bay` prints its
+ *  hull and where the finished ship appears. Out-of-range bays wrap. */
+export function shipyardBayKeel(bay: number): ShipyardBayKeel {
+  return BAY_KEELS[shipyardBayOf(bay)]!;
+}
+
+/** The bay a yard's `cycles`-th build (0-based count of finished builds)
+ *  goes in: 0, 1, … SHIPYARD_BAY_COUNT - 1, then round again. */
+export function shipyardBayOf(cycles: number | undefined): number {
+  const n = Math.floor(cycles ?? 0);
+  return n > 0 ? n % SHIPYARD_BAY_COUNT : 0;
+}
+
 /** Side walls: centre line |y|, half thickness, half length, and how far
  *  each slides out when the frame opens. */
 export const SHIPYARD_WALL_Y = 175;

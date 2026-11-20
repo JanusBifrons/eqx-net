@@ -21,7 +21,7 @@ import { ROSTER_SOFT_GUARD } from '../../playerShips/PlayerShipStore.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { qualityHullFactor } from '../../../shared-types/blueprints.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
-import { SHIPYARD_KEEL_X } from '../../../core/articulation/rigs/heavyIndustry.js';
+import { shipyardBayKeel, shipyardBayOf } from '../../../core/articulation/rigs/heavyIndustry.js';
 import { shipyardSlipFits } from '../../../core/structures/gateGeometry.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
@@ -49,20 +49,22 @@ export interface NewHullOrigin {
 
 /**
  * The origin for a `hullKind` hull made by a structure of `kind` at (x, y),
- * rotated `rotDeg`. A Shipyard prints it on its keel (`SHIPYARD_KEEL_X` on
- * the slip centre line) and it leaves through the open slipway
- * (`gateColliderBoxes`) out of the bow (local +x) to a spot
+ * rotated `rotDeg`. A Shipyard prints it on the keel of its bay (loop 3R:
+ * `shipyardBayKeel(shipyardBayOf(cycles))`, `cycles` = the yard's finished
+ * builds, on the slip centre line) and it leaves through the open slipway
+ * (`gateColliderBoxes`), over any empty bays ahead, out of the bow (local +x) to a spot
  * `NEW_HULL_PARK_OFFSET` beyond the bow edge; a hull too wide for the slip
  * (`shipyardSlipFits`: the Barge) appears at that spot. Any other maker (or
  * an unpacked crate): parked beside it, as before.
  * Ship heading: the nose points along (-sin a, cos a) (`applyShipInput`).
  */
-export function newHullOrigin(kind: string, x: number, y: number, rotDeg: number, hullKind: string): NewHullOrigin {
+export function newHullOrigin(kind: string, x: number, y: number, rotDeg: number, hullKind: string, cycles?: number): NewHullOrigin {
   if (kind !== 'shipyard') return { x: x + NEW_HULL_PARK_OFFSET, y, angle: 0, parkX: x + NEW_HULL_PARK_OFFSET, parkY: y, flyOut: false };
   const r = (rotDeg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
   const reach = getStructureKind('shipyard').footprint.w / 2 + NEW_HULL_PARK_OFFSET;
+  const k = shipyardBayKeel(shipyardBayOf(cycles));
   return {
-    x: x + SHIPYARD_KEEL_X * c, y: y + SHIPYARD_KEEL_X * s, angle: Math.atan2(-c, s),
+    x: x + k.x * c - k.y * s, y: y + k.x * s + k.y * c, angle: Math.atan2(-c, s),
     parkX: x + reach * c, parkY: y + reach * s, flyOut: shipyardSlipFits(hullKind),
   };
 }

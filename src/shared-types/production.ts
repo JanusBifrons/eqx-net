@@ -85,6 +85,28 @@ export function decodeProdFrac(v: number | undefined): number {
   return v !== undefined && v > 0 ? Math.min(1, v / PROD_FRAC_MAX) : 0;
 }
 
+/**
+ * Loop 3R — `prodBay`: which slipway bay a Shipyard's current build sits in
+ * (low 3 bits, 0 = the bow bay; `shipyardBayKeel` in
+ * core/articulation/rigs/heavyIndustry.ts) and how many more builds are
+ * queued behind it (bits 3..5, capped at PROD_QUEUE_MAX), so a client can draw
+ * queued outlines in the next bays. Rides the row (#16); 0 = bay 0, none queued.
+ */
+export const PROD_QUEUE_MAX = 4;
+
+export function encodeProdBay(bay: number, queued: number): number {
+  const q = queued > 0 ? Math.min(PROD_QUEUE_MAX, Math.floor(queued)) : 0;
+  return (Math.max(0, Math.floor(bay)) & 7) | (q << 3);
+}
+
+/** Decode a `prodBay` byte into `out` (reused by the caller, #14). */
+export function decodeProdBay(v: number | undefined, out: { bay: number; queued: number }): { bay: number; queued: number } {
+  const b = v ?? 0;
+  out.bay = b & 7;
+  out.queued = (b >> 3) & 7;
+  return out;
+}
+
 /** Slot blueprint runs on the wire: 0 = no blueprint, BP_RUNS_ORIGINAL = an
  *  original (never runs out), otherwise the copy's runs left. */
 export const BP_RUNS_ORIGINAL = 65535;
