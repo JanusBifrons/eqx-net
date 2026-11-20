@@ -35,6 +35,7 @@ import { StructureRegistry, type StructureRecord } from './StructureRegistry.js'
 import { autoConnectStructure, linkReachBox } from './structureGridView.js';
 import { STARTER_STRUCTURE_KINDS, needsPackedCrate } from '../../shared-types/blueprints.js';
 import { cloneHold, isHoldEmpty, takePacked } from '../../core/cargo/hold.js';
+import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import type { HoldStore } from '../cargo/HoldStore.js';
 import type { StorageService } from '../cargo/StorageService.js';
 
@@ -205,6 +206,12 @@ export class StructurePlacementSubsystem {
     const packedQuality = packed?.commit() ?? null;
     // Economy v2 — remember the crate's quality so taking it down REPACKS it.
     if (packedQuality !== null) rec.packedQuality = packedQuality;
+    // A pre-built kind (the Capital) placed from a crate is born at its FULL
+    // quality hull, not the base one: else the repair pulse buys the crate's
+    // bonus HP out of the new bank the moment it lands.
+    if (packedQuality !== null && preBuilt) {
+      this.hooks.seedHealth(id, effectiveStructureMaxHealth(kind.maxHealth, rec.level, packedQuality));
+    }
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot
     // whose connecting segment isn't blocked by another structure OR an asteroid
     // (incl. one with no body, over the box the links may run in). Nothing in
