@@ -17,16 +17,19 @@ import {
   type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
-import { shipyardLightContext, shipyardPartShow, shipyardPrintContext, shipyardRowClip } from './structureStyleC.shipyardBuild.js';
+import {
+  SHIPYARD_BAY_MARK_XS, shipyardKeelContext, shipyardLightContext, shipyardPartShow, shipyardPrintContext, shipyardRowClip,
+} from './structureStyleC.shipyardBuild.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'h2';
+export const version = 'h3';
 
 /** Shipyard (`shipyard`, 960 × 600, mock-up C "build frame" for sub-caps).
  *  Baked here: the deck, a sunken slipway down the middle with keel blocks
- *  (its mouth open at the bow, +x, with hazard chevrons), the clamp ledges
+ *  (its mouth open at the bow, +x, with hazard chevrons) marked into
+ *  its build bays (loop 3R), the clamp ledges
  *  and pivot bosses, the wall tracks the side walls slide out along, the
  *  gantry rails on the long edges and the stern headhouse. The walls,
  *  gantry + hoist, clamps and light strips are the `shipyard-frame` rig's
@@ -40,6 +43,12 @@ function shipyard(c: StyleCtx): void {
   // Slipway: a sunken channel, keel blocks on its centre line.
   poly(c, chamferBox(x0, -sw, x1 - x0, 2 * sw, 10), SOOT, 'metal', -10, 4, { seams: 40, seamAngle: Math.PI / 2 });
   for (let x = x0 + 50; x < x1 - 40; x += 70) poly(c, chamferBox(x - 14, -10, 28, 20, 4), SLAB_DARK, 'metal', 2, 1.5);
+  // Bay marks (loop 3R): a weld line across the slip between bays, with a
+  // hazard tick at each edge, so the slip reads as a row of build slots.
+  for (const bx of SHIPYARD_BAY_MARK_XS) {
+    weld(c, [bx, -sw + 6], [bx, sw - 6]);
+    for (const s of [-1, 1]) poly(c, chamferBox(bx - 3, s > 0 ? sw - 24 : -sw + 6, 6, 18, 1), HAZARD, 'hazard', 1, 0.5);
+  }
   for (const s of [-1, 1]) {
     weld(c, [x0 + 10, s * (sw - 4)], [x1 - 10, s * (sw - 4)]);
     // Clamp ledge with a pivot boss at each station.
@@ -158,7 +167,7 @@ export function shipyardPartContext(rig: Rig, i: number): GraphicsContext | null
   // Pixi y is game -y: the port wall (game +y) has its inner face at Pixi +y.
   const ctx = key === 'clamp' ? clampContext()
     : key === 'light' ? shipyardLightContext(false)
-      : key === 'keel' ? new GraphicsContext()
+      : key === 'keel' ? shipyardKeelContext()
       : key.startsWith('hull-') || key.startsWith('fit-') ? shipyardPrintContext(key)
       : key === 'wall-port' ? wallContext(1)
         : key === 'wall-stbd' ? wallContext(-1)

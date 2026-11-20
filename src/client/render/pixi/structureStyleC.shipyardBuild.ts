@@ -11,15 +11,19 @@
  *  - `shipyardRowClip` (`RigDrawHook.rowClip`): the client plays it from
  *    the row: at the server's cycle progress (`prodFrac`, job 3L, so a late
  *    joiner sees the right point), advancing with game time between updates;
- *    a blocked yard (hull done, no room) shows it finished; idle rests.
+ *    a blocked yard (hull done, no room) shows it finished; idle rests;
+ *  - bays (loop 3R): the hull prints at its bay's keel (`prodBay`,
+ *    `shipyardBayKeel`), the gantry working over it; the bay marks baked on
+ *    the slip (`SHIPYARD_BAY_MARK_XS`); builds queued behind it
+ *    (`prodQueued`) show as faint outlines in the next bays (the keel part's art).
  * Built once / allocation-free per frame (#14).
  */
 import { GraphicsContext, type Graphics } from 'pixi.js';
 import type { Rig } from '../../../core/articulation/rig.js';
 import {
-  SHIPYARD_FIT_STAGES, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HULL_BLOCK_XS, SHIPYARD_HULL_BLOCKS, SHIPYARD_HULL_HALF_L,
-  SHIPYARD_LIGHT_BAR_Y, SHIPYARD_LIGHT_HALF_L, SHIPYARD_LIGHT_HALF_T, shipyardBuildPlaying, shipyardHullHalfBeam,
-  type ShipyardFitStage,
+  SHIPYARD_BAY_COUNT, SHIPYARD_BAY_LEN, SHIPYARD_FIT_STAGES, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HULL_BLOCK_XS, SHIPYARD_HULL_BLOCKS, SHIPYARD_HULL_HALF_L,
+  SHIPYARD_LIGHT_BAR_Y, SHIPYARD_LIGHT_HALF_L, SHIPYARD_LIGHT_HALF_T, shipyardBayKeel, shipyardBuildPlaying, shipyardHullHalfBeam,
+  SHIPYARD_SLIP_X1, type ShipyardFitStage,
 } from '../../../core/articulation/rigs/heavyIndustry.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { PROD_STATE, effectiveRecipe } from '../../../shared-types/production.js';
@@ -46,6 +50,12 @@ const _print = { color: SHIPYARD_PRINT_CYAN, width: 2, alpha: 1 };
  *  dark slipway (the yard's own slabs are darker). */
 const HULL_PLATE = 0x6a7178;
 const HULL_PLATE_LIGHT = 0x8a929a;
+
+/** The bay marks along the slip (local x): one between each pair of bays,
+ *  bow to stern (the slip's own ends close the first and last bay). */
+export const SHIPYARD_BAY_MARK_XS: readonly number[] = Object.freeze(
+  Array.from({ length: SHIPYARD_BAY_COUNT - 1 }, (_, i) => SHIPYARD_SLIP_X1 - (i + 1) * SHIPYARD_BAY_LEN),
+);
 
 /** Building a part's printing look (true) or its finished look (false). */
 let printing = false;
@@ -158,9 +168,40 @@ export function shipyardPrintContext(id: string, print = false): GraphicsContext
   return null;
 }
 
+const keelEmpty = new GraphicsContext();
+/** The keel part's art with nothing queued: none (it is only the anchor). */
+export function shipyardKeelContext(): GraphicsContext {
+  return keelEmpty;
+}
+
+const _outline = { color: SHIPYARD_PRINT_CYAN, width: 1.5, alpha: 0.3 };
+const _ghost = { color: SHIPYARD_PRINT_CYAN, alpha: 0.05 };
+const queuedCtx = new Map<number, GraphicsContext>();
+
+/** The keel part's art with `queued` builds behind the one in `bay`: a
+ *  faint print-cyan hull outline (the beam profile at scale `k`) at each
+ *  next bay's keel, stern-ward, round to the bow after the last bay. Keel
+ *  frame (its anchor is local x 0). Built once per (recipe, bay, queued). */
+function queuedContext(recipe: number, bay: number, queued: number, k: number): GraphicsContext {
+  const key = (recipe * 8 + bay) * 8 + queued;
+  let c = queuedCtx.get(key);
+  if (c !== undefined) return c;
+  c = new GraphicsContext();
+  const n = SHIPYARD_HULL_BLOCKS, H = SHIPYARD_HULL_HALF_L;
+  const q = queued < SHIPYARD_BAY_COUNT - 1 ? queued : SHIPYARD_BAY_COUNT - 1;
+  for (let j = 1; j <= q; j++) {
+    const bx = shipyardBayKeel(bay + j).x, pts: number[] = [];
+    for (let s = 0; s <= n; s++) { const x = -H + (2 * H * s) / n; pts.push(bx + x * k, -shipyardHullHalfBeam(x) * k); }
+    for (let s = n; s >= 0; s--) { const x = -H + (2 * H * s) / n; pts.push(bx + x * k, shipyardHullHalfBeam(x) * k); }
+    c.poly(pts, true).fill(_ghost).stroke(_outline);
+  }
+  queuedCtx.set(key, c);
+  return c;
+}
+
 // ── per-frame presentation ───────────────────────────────────────────────────
 
-const enum Show { None, Print, Light, Gantry, Hoist }
+const enum Show { None, Print, Light, Gantry, Hoist, Keel }
 let showRig: Rig | null = null;
 let showOf: Uint8Array = new Uint8Array(0);
 /** Per part of `showRig`: a printed part's finished and printing art. */
@@ -178,7 +219,8 @@ function showKinds(rig: Rig): Uint8Array {
       doneCtx[i] = shipyardPrintContext(id);
       printCtx[i] = shipyardPrintContext(id, true);
       showOf[i] = id.startsWith('hull-') || id.startsWith('fit-') ? Show.Print
-        : id.startsWith('light-') ? Show.Light : id === 'gantry' ? Show.Gantry : id === 'gantry-hoist' ? Show.Hoist : Show.None;
+        : id.startsWith('light-') ? Show.Light : id === 'gantry' ? Show.Gantry : id === 'gantry-hoist' ? Show.Hoist
+            : id === 'keel' ? Show.Keel : Show.None;
     }
     showRig = rig;
   }
@@ -217,15 +259,16 @@ export function shipyardHullScale(recipe: number | undefined): number {
   return k;
 }
 
-/** The gantry's drawn x for its clip x at hull scale `k`: over the hull
- *  (|x| <= the reference half length) it scales with the hull, so the hoist
- *  stays over the block it sets; beyond, it stretches back to the same end
- *  stops (the parked stern position is unchanged). */
-export function shipyardGantryX(x: number, k: number): number {
-  const H = SHIPYARD_HULL_HALF_L, ax = x < 0 ? -x : x;
-  if (ax <= H) return x * k;
-  const d = H * k + ((ax - H) * (SHIPYARD_GANTRY_TRAVEL - H * k)) / (SHIPYARD_GANTRY_TRAVEL - H);
-  return x < 0 ? -d : d;
+/** The gantry's drawn x for its clip x at hull scale `k`, the hull printing
+ *  at bay keel `bx`: over the hull (|x| <= the reference half length) it
+ *  scales with the hull about the bay's keel, so the hoist stays over the
+ *  block it sets; beyond, it stretches to the same end stops (the parked
+ *  stern position is unchanged). */
+export function shipyardGantryX(x: number, k: number, bx = 0): number {
+  const H = SHIPYARD_HULL_HALF_L, T = SHIPYARD_GANTRY_TRAVEL, ax = x < 0 ? -x : x;
+  if (ax <= H) return bx + x * k;
+  const inner = x < 0 ? bx - H * k : bx + H * k, end = x < 0 ? -T : T;
+  return inner + ((ax - H) * (end - inner)) / (T - H);
 }
 
 /** `RigDrawHook.partShow` for `shipyard-frame`. Allocation-free. */
@@ -237,7 +280,14 @@ export function shipyardPartShow(rig: Rig, i: number, value: number, st: Structu
     if (g.context !== want) g.context = want;
     return;
   }
-  const k = shipyardHullScale(st?.recipe);
+  const k = shipyardHullScale(st?.recipe), bay = st?.prodBay ?? 0;
+  if (kind === Show.Keel) {
+    const q = st?.prodQueued ?? 0;
+    const want = q > 0 ? queuedContext(st?.recipe ?? 0, bay, q, k) : keelEmpty;
+    if (g.context !== want) g.context = want;
+    return;
+  }
+  const bx = shipyardBayKeel(bay).x;
   // The view placed the shadow at the part's position + its offset.
   const dx = sh !== null ? sh.x - g.x : 0, dy = sh !== null ? sh.y - g.y : 0;
   if (kind === Show.Print) {
@@ -249,12 +299,12 @@ export function shipyardPartShow(rig: Rig, i: number, value: number, st: Structu
     const want = done ? doneCtx[i]! : printCtx[i]!;
     if (want !== null && g.context !== want) g.context = want;
     g.alpha = done ? 1 : 0.55 + 0.45 * value;
-    g.position.set(g.x * k, g.y * k);
+    g.position.set(bx + g.x * k, g.y * k);
     g.scale.set(k);
     if (sh !== null) { sh.position.set(g.x + dx, g.y + dy); sh.scale.set(k); }
     return;
   }
-  g.x = shipyardGantryX(g.x, k);
+  g.x = shipyardGantryX(g.x, k, bx);
   if (kind === Show.Hoist) g.scale.set(1 + 0.2 * value);
   if (sh !== null) {
     sh.x = g.x + dx;
