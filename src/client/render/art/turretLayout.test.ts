@@ -11,6 +11,7 @@ import { SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
 /** The fighter's chin clearance at this scale (20 at 1×). */
 const MUZZLE_CLEARANCE = shipTuning(getShipKind('fighter')).muzzleClearance;
 import { forgeShip, forgeTurretGun, MAT } from './fields.js';
+import { structureTurretRadius } from '../../../core/combat/muzzle.js';
 import { muzzleReach, shipTurrets, structureTurrets } from './turretLayout.js';
 
 describe('turret layout', () => {
@@ -32,7 +33,12 @@ describe('turret layout', () => {
     const [big] = structureTurrets('missile_turret');
     expect(small!.len).toBeGreaterThan(BASE.muzzleClearance * 2); // structures don't scale with ships
     expect(big!.family).toBe('missile');
-    expect(big!.cap).toBeGreaterThan(small!.cap);
+    // Each gun scales with its own footprint: the body stays on the base,
+    // the barrel overhangs it.
+    const Rs = structureTurretRadius('turret'), Rb = structureTurretRadius('missile_turret');
+    expect(small!.cap / Rs).toBeLessThan(1);
+    expect(small!.len).toBeGreaterThan(Rs);
+    expect(big!.cap / Rb).toBeLessThan(1);
   });
 });
 

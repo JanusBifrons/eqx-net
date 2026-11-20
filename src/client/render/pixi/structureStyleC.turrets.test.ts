@@ -51,11 +51,12 @@ describe('turrets S2: style C gun bases', () => {
     }
   });
 
-  it('the gun ring sits in a dark well that no later art covers', () => {
+  it('the gun sits over a dark well that no later art covers', () => {
     for (const id of GUNS) {
       const R = structureTurretRadius(id);
-      const ring = structureTurrets(id)[0]!.ring;
-      expect(ring, id).toBeLessThan(TURRET_WELL * R);
+      const ring = TURRET_WELL * R;
+      // The gun body covers its well and collar (owner: the base dwarfed the gun).
+      expect(structureTurrets(id)[0]!.cap, id).toBeGreaterThan(ring);
       const polys = buildStructureVisual(id, { accent: 0x66ccaa, style: 'c' }).polys!;
       const well = polys.findIndex((p) => p.color === SOOT && insidePoly(p.pts, 0, 0));
       expect(well, id).toBeGreaterThan(0);
