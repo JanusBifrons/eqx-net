@@ -266,9 +266,18 @@ Progress log:
   the socket-nub overlay; the floating bar and number go under the new look.
 - **Solar (step D), owner OK 2026-11-20:** 700×300 array, eight panels on a lattice spine that turn
   to face the sun (rig `solar-tracker`, look only), inverter cabinets at the ends.
-- **Sizes and numbers (step E), in progress:** solar 120 power / 480 cost, reactor and bank 600
-  across, reactor 960 power / about 4,000 cost; growth spacing sized per row.
-- **Reactor redraw at 600 with fans that stop when dry:** in progress.
+- **Sizes and numbers (step E), merged 2026-11-20:** solar 700×300, 120 power / 480 cost; reactor
+  600×600, 960 power / about 4,000 cost; bank 600×600. Catalogue v14, growth v19; the convoy fixture
+  adds a reactor fuel burn per base without a reactor; test and showcase layouts moved to stay legal.
+- **Reactor (step B), owner OK 2026-11-20:** 600 keep with four corner cooling fans (rig
+  `reactor-fans`, `PartDef.spin` on game time) that stop when the reactor is dry.
+- **Battery bank, owner OK 2026-11-20:** four cell modules on a busbar cross with a central
+  charge-controller hub; lit cells share out across the modules so all four rise together.
+  Family version `f1cb`.
+
+**Family 1 checkpoint (2026-11-20): DONE.** All four power kinds redrawn and owner-approved. Still
+owed before the stream PR: a real-phone perf timing; the bank was judged from staged art-lab stills
+because no showcase room places one.
 
 Found while briefing: the battery bank never charged or discharged (every battery rule checked the
 kind name), and the client ignored structure level for power. The fix is in PR #958 (not yet merged
