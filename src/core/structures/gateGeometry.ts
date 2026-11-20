@@ -37,7 +37,7 @@ export type GateType = 'gate' | 'airlock';
 export { GATE_POST_W, GATE_DEPTH, AIRLOCK_POST_W, AIRLOCK_POST_D } from '../../shared-types/structureKinds/gatePosts.js';
 /** Airlock side-wall thickness. */
 export const AIRLOCK_WALL = 40;
-/** Collider thickness of a gate span (a thin static cuboid, like a fence wall). */
+/** Collider thickness of a thin static gate-wall cuboid (the teleporter iris uses it). */
 export const GATE_SPAN_THICKNESS = 22;
 /** How far in front of / behind a gate (local y) an admitted ship opens it.
  *  Deep enough that the open state reaches a client before its ship meets the
