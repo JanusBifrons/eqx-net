@@ -18,6 +18,7 @@
 import type { StructureStyleDef, StyleDrawerTable } from './structureStyleKit.js';
 import type { StructureFamilyId } from './structureFamilies.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
+import type { BodyStatusHookTable } from './structureSocketNubs.js';
 import * as core from './structureStyleC.core.js';
 import * as power from './structureStyleC.power.js';
 import * as fences from './structureStyleC.fences.js';
@@ -29,8 +30,9 @@ import * as coastal from './structureStyleC.coastal.js';
 import * as storage from './structureStyleC.storage.js';
 import * as transport from './structureStyleC.transport.js';
 
-/** One family file: its drawers, its drawing version and its rig drawing hooks. */
-export interface StyleCFamily { kinds: StyleDrawerTable; version: string; rigs: RigDrawHookTable }
+/** One family file: its drawers, its drawing version, its rig drawing hooks
+ *  and, optionally, its live body-state hooks (`BodyStatusHook`). */
+export interface StyleCFamily { kinds: StyleDrawerTable; version: string; rigs: RigDrawHookTable; status?: BodyStatusHookTable }
 
 /** Style C's family files, by family id. */
 export const STYLE_C_FAMILIES: Readonly<Record<StructureFamilyId, StyleCFamily>> = {
@@ -49,3 +51,7 @@ export const STYLE_C: StructureStyleDef = {
 
 /** Rig id -> its drawing hook: every family's `rigs`, spread (stage-4 0a). */
 export const RIG_DRAW_HOOKS: RigDrawHookTable = Object.assign({}, ...families.map((f) => f.rigs));
+
+/** Kind -> its live body-state hook (charge cells, a dry reactor): every
+ *  family's `status`, spread. Drawn on the socket-nub overlay. */
+export const BODY_STATUS_HOOKS: BodyStatusHookTable = Object.assign({}, ...families.map((f) => f.status ?? {}));

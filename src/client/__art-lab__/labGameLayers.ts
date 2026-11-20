@@ -16,7 +16,7 @@ import { CABLE_NO_SOCKET, makeCableSocketPick, pickCableSocketPair } from '../..
 import type { GridNode } from '../../core/structures/Grid.js';
 import { blankGridNode, structureMirrorToGridNode } from '../structures/mirrorToGridNode.js';
 import { resolveFxMode } from '../render/art/artMode.js';
-import { socketNubContext, socketUsedMask } from '../render/pixi/structureSocketNubs.js';
+import { bodyStatusCode, socketNubContext, socketUsedMask } from '../render/pixi/structureSocketNubs.js';
 
 export interface LabRig { i: number; view: StructureRigView; input: StructureRigInput | null }
 
@@ -82,14 +82,33 @@ export function buildLabGridLines(scene: Scene, lineL: Container, nubL?: Contain
   return { r, mirror: { swarm, structures, gridFlashes } as unknown as RenderMirror };
 }
 
+/** A lab structure row for `?live=` entry `v` (Stage 4 F1 step C): a
+ *  number is a power store's charge fraction, `dry` a reactor with no fuel,
+ *  anything else (`fuel`, empty) the plain built row. */
+export function labLiveRow(kind: string, v: string | undefined): StructureRenderState {
+  const row = { built: true, powered: true, buildPct: 1, deconstructPct: 0, connTo: [] } as unknown as StructureRenderState;
+  const cap = getStructureKind(kind).powerStorageCapacity ?? 0;
+  if (cap > 0 && v !== undefined && v !== '' && Number.isFinite(Number(v))) {
+    row.storedPowerMax = cap;
+    row.storedPower = cap * Number(v);
+  }
+  if (v === 'dry') row.noFuel = true;
+  return row;
+}
+
 /** Stud sheets (`?nubs=all|mix`, stud audit): with no grid lines in the
  *  scene, every structure's socket nubs straight from the socket list, all
- *  lit (`all`) or every other one lit (`mix`). Null when off. */
-export function buildLabSheetNubs(scene: Scene, nubL: Container, mode: string | null): number | null {
-  if (mode !== 'all' && mode !== 'mix') return null;
-  const mask = mode === 'all' ? 0xffffffff : 0x55555555;
-  scene.structs.forEach((st) => {
-    const g = new Graphics(socketNubContext(st.id, mask));
+ *  lit (`all`) or every other one lit (`mix`). `?live=a,b,...` (one entry
+ *  per structure, `labLiveRow`) adds each one's live body state (charge
+ *  cells, a dry reactor) on the same overlay, free sockets unless `nubs` is
+ *  set. Null when off. */
+export function buildLabSheetNubs(scene: Scene, nubL: Container, mode: string | null, live: string | null = null): number | null {
+  if (mode !== 'all' && mode !== 'mix' && live === null) return null;
+  const mask = mode === 'all' ? 0xffffffff : mode === 'mix' ? 0x55555555 : 0;
+  const vals = live !== null ? live.split(',') : [];
+  scene.structs.forEach((st, i) => {
+    const status = live !== null ? bodyStatusCode(st.id, labLiveRow(st.id, vals[i])) : 0;
+    const g = new Graphics(socketNubContext(st.id, mask, status));
     g.position.set(st.x, st.y); g.rotation = st.rot;
     nubL.addChild(g);
   });

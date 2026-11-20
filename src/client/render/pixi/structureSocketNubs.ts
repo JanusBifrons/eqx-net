@@ -20,6 +20,14 @@
  * look step. It is drawn into the same cached context for each USED socket,
  * under the nub. No family registers one yet: the default draws nothing.
  *
+ * Live body state (Stage 4 F1 step C): a kind with a `BodyStatusHook`
+ * (family file `status`, `BODY_STATUS_HOOKS`) draws its state into the same
+ * cached context, over the body art: battery cells lit by the charge, a dry
+ * reactor's dark core and no-fuel mark. The hook turns the structure row into
+ * a small whole-number code (a few charge steps), so the context is shared per
+ * (kind, used mask, code) and swaps only when the code changes; the baked body
+ * art never re-bakes. Per frame: one code computation, nothing allocated.
+ *
  * Shield gate / airlock sockets are their emitter posts (fence links stay
  * straight post to post): the post is the socket, so they get no nub.
  */
@@ -32,6 +40,7 @@ import {
 import { SOCKET_ACCENT, SOCKET_OUTLINE, SOCKET_PLATE, SOCKET_PLATE_HI } from './connectorCables.js';
 import type { LinePath } from './connectorLineLooks.js';
 import { STRUCTURE_FAMILY, type StructureFamilyId } from './structureFamilies.js';
+import { BODY_STATUS_HOOKS } from './structureStyleC.js';
 
 /** Sockets past this index have no bit in the used mask (the most any kind
  *  has today is 24). */
@@ -87,6 +96,34 @@ export const STRUCTURE_INNER_CHANNELS: Partial<Record<StructureFamilyId, InnerCh
 export function innerChannelFor(kind: string): InnerChannelHook {
   if (!isStructureKindId(kind)) return noInnerChannel;
   return STRUCTURE_INNER_CHANNELS[STRUCTURE_FAMILY[kind]] ?? noInnerChannel;
+}
+
+// ── Live body-state hook ─────────────────────────────────────────────────────
+
+/**
+ * A kind's live body state on the overlay. `code` reads the structure row
+ * into a small whole number (0 = nothing drawn), per frame, alloc-free;
+ * `draw` draws that code into a shared context (cold: once per code), in the
+ * structure's local Pixi frame, over the nubs.
+ */
+export interface BodyStatusHook {
+  code(kind: StructureKindId, st: StructureRenderState | undefined): number;
+  draw(g: GraphicsContext, code: number, kind: StructureKindId): void;
+}
+
+/** Body-state hooks by kind (a family file's `status`). */
+export type BodyStatusHookTable = Readonly<Partial<Record<StructureKindId, BodyStatusHook>>>;
+
+/** The body-state code of a structure (0 when its kind has no hook). */
+export function bodyStatusCode(kind: string, st: StructureRenderState | undefined): number {
+  if (!isStructureKindId(kind)) return 0;
+  const h = BODY_STATUS_HOOKS[kind];
+  return h === undefined ? 0 : h.code(kind, st);
+}
+
+/** True when `kind` shows its state on its body (its floating readouts go). */
+export function hasBodyStatus(kind: string | undefined): boolean {
+  return kind !== undefined && isStructureKindId(kind) && BODY_STATUS_HOOKS[kind] !== undefined;
 }
 
 // ── Drawing ─────────────────────────────────────────────────────────────────
@@ -151,19 +188,21 @@ export const nubStats = { contextBuilds: 0, swaps: 0 };
 
 /** The shared nub art for (kind, mask), drawn on first use. Cold path (a
  *  structure's used set changed): the key string is built only here. */
-export function socketNubContext(kind: string, mask: number): GraphicsContext {
-  const key = kind + ':' + mask;
+export function socketNubContext(kind: string, mask: number, status = 0): GraphicsContext {
+  const key = kind + ':' + mask + ':' + status;
   let ctx = CONTEXTS.get(key);
   if (ctx === undefined) {
     ctx = new GraphicsContext();
     drawSocketNubs(ctx, kind, mask);
+    const hook = status !== 0 && isStructureKindId(kind) ? BODY_STATUS_HOOKS[kind] : undefined;
+    if (hook !== undefined) hook.draw(ctx, status, kind as StructureKindId);
     CONTEXTS.set(key, ctx);
     nubStats.contextBuilds++;
   }
   return ctx;
 }
 
-interface NubState { g: Graphics; kind: string; mask: number }
+interface NubState { g: Graphics; kind: string; mask: number; status: number }
 
 /** Per structure sprite: its nub child and what it was drawn for. Dies with
  *  the sprite (a rebuilt sprite gets a fresh child). */
@@ -177,25 +216,28 @@ export function socketNubsOf(sprite: Container): Graphics | undefined {
 /**
  * Keep `sprite`'s socket nubs in step with its kind and used sockets (the
  * structure row `st`). Called per visible structure per frame under the flag;
- * swaps the shared context only when the kind or the used mask changed.
+ * swaps the shared context only when the kind, the used mask or the
+ * body-state code changed.
  */
 export function updateSocketNubs(sprite: Container, kind: string | undefined, st: StructureRenderState | undefined): void {
   if (kind === undefined) return;
   const mask = socketUsedMask(st?.connSockSelf);
+  const status = bodyStatusCode(kind, st);
   const s = STATES.get(sprite);
   if (s !== undefined && !s.g.destroyed && s.g.parent === sprite) {
-    if (s.kind === kind && s.mask === mask) return;
-    s.g.context = socketNubContext(kind, mask);
+    if (s.kind === kind && s.mask === mask && s.status === status) return;
+    s.g.context = socketNubContext(kind, mask, status);
     s.kind = kind;
     s.mask = mask;
+    s.status = status;
     nubStats.swaps++;
     return;
   }
-  const g = new Graphics(socketNubContext(kind, mask));
+  const g = new Graphics(socketNubContext(kind, mask, status));
   g.label = 'socketNubs';
   // Over the body art, under the build-ETA text and the mount cluster.
   const eta = sprite.getChildByLabel('buildEta');
   if (eta !== null && eta.parent === sprite) sprite.addChildAt(g, sprite.getChildIndex(eta));
   else sprite.addChild(g);
-  STATES.set(sprite, { g, kind, mask });
+  STATES.set(sprite, { g, kind, mask, status });
 }

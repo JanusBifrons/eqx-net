@@ -83,7 +83,7 @@ function wreckDeadArtFor(kindId: string): boolean {
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
 import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
-import { updateSocketNubs } from './structureSocketNubs.js';
+import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -264,8 +264,11 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         if (entry.shipKind === 'capital') sprite.addChild(buildCapitalResourceText(entry.radius));
         // Phase-1 issue 7 — a power store (Battery, Battery Bank) shows its
         // stored power as a world-space number (the doc's "actual numbers for
-        // the stored capacity").
-        if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0) sprite.addChild(buildBatteryChargeText(entry.radius));
+        // the stored capacity"). Not with the new look on: its cells light
+        // up on the body instead (socket-nub overlay, Stage 4 F1 step C).
+        if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0 && !(ctx.socketNubs === true && hasBodyStatus(entry.shipKind))) {
+          sprite.addChild(buildBatteryChargeText(entry.radius));
+        }
         // Phase-1 issue 2 — every structure carries an (initially empty)
         // build-ETA countdown child, shown only while it's an unbuilt blueprint.
         sprite.addChild(buildBuildEtaText(entry.radius));
