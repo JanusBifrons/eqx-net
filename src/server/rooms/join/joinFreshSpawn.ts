@@ -370,7 +370,7 @@ export function joinFreshSpawn(
       getHoldStore().put({
         holderUid: ship.shipInstanceId, holderType: 'ship', ownerId: playerId,
         sectorKey: null, x: null, y: null,
-        hold: { goods: { ...c.goods }, blueprints: [...c.blueprints] },
+        hold: { goods: { ...c.goods }, blueprints: [...c.blueprints], ...(c.packed?.length ? { packed: c.packed.map((p) => ({ ...p })) } : {}) },
         expiresAt: null,
       });
     }
