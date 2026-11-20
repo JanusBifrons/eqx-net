@@ -40,7 +40,7 @@ import { pushFleetOverlayModelIfChanged } from '../fleet/fleetOverlayModel.js';
 import { fleetCommands } from '../fleet/fleetCommands.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
-import { measureBottomHudBand, measureTopHudBand, placeInspector, reclampHeldInspector, type HudBand, type InspectorAnchor } from './inspectorPlacement.js';
+import { hudControlsFor, measureBottomHudBand, measureTopHudBand, placeInspector, reclampHeldInspector, type HudBand, type InspectorAnchor } from './inspectorPlacement.js';
 import { isInspectorHeld } from './inspectorHold.js';
 import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
 
@@ -477,10 +477,10 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
         // (inspectorHold.ts), but a panel that grows (a loot window opening)
         // is still clamped back on screen.
         const held = isInspectorHeld(panel);
-        const w = panel.offsetWidth, h = panel.offsetHeight, vw = window.innerWidth, vh = window.innerHeight, tb = measureTopHudBand(topHud), bb = measureBottomHudBand(botHud);
+        const w = panel.offsetWidth, h = panel.offsetHeight, vw = window.innerWidth, vh = window.innerHeight, tb = measureTopHudBand(topHud), bb = measureBottomHudBand(botHud), hc = hudControlsFor(selId, vw, vh);
         const move = held
           ? reclampHeldInspector(parseFloat(panel.style.left), parseFloat(panel.style.top), w, h, vw, vh, inspectorAt, tb, bb)
-          : (placeInspector(ssx, ssy, w, h, vw, vh, inspectorAt, tb, bb), true);
+          : (placeInspector(ssx, ssy, w, h, vw, vh, inspectorAt, tb, bb, hc), true);
         if (move) {
           const at = inspectorAt;
           panel.style.left = `${at.left}px`;

@@ -15,8 +15,10 @@
  * horizontally under the top band keeps its top below it (live still,
  * sideways Pixel 7: "Refinery" drawn over the helm Stop button); one over the
  * bottom band keeps its bottom above it where it fits between the two, and
- * where it can't, the top band wins (the helm stays readable) and the panel
- * overlaps the bottom band as little as possible.
+ * where it can't, it slides sideways beside the bottom stack if a side has
+ * room clear of the bottom controls (sticks, boost); failing that, the top
+ * band wins (the helm stays readable) and the panel overlaps the bottom band
+ * as little as possible.
  */
 
 /** Below this, the panel's top would be under the app header. */
@@ -75,6 +77,71 @@ function under(band: HudBand | undefined, left: number, half: number): band is H
   return !!band && band.bottom > 0 && left + half > band.left && left - half < band.right;
 }
 
+/** HUD control boxes (x0, y0, x1, y1 per box in `r`), `n` in use. */
+export interface HudRects {
+  n: number;
+  r: Float64Array;
+}
+
+const MAX_RECTS = 24;
+
+/** Build a HudRects from boxes (tests; not for the frame loop). */
+export function hudRects(...boxes: [number, number, number, number][]): HudRects {
+  const out: HudRects = { n: 0, r: new Float64Array(MAX_RECTS * 4) };
+  for (const b of boxes) { out.r.set(b, out.n * 4); out.n++; }
+  return out;
+}
+
+const controls: HudRects = { n: 0, r: new Float64Array(MAX_RECTS * 4) };
+let controlsKey: string | null | undefined;
+let controlsW = -1, controlsH = -1;
+
+/**
+ * The HUD controls (`[data-hud-exclusion]`: sticks, boost, capsule, chips)
+ * the inspector may slide beside. The sticks sit on CSS transforms, so this
+ * needs DOMRects: it re-measures only when `key` (the selected id) or the
+ * viewport size changes, never every frame (#14). Returns a module scratch.
+ */
+export function hudControlsFor(key: string | null, viewW: number, viewH: number): HudRects {
+  if (key === controlsKey && viewW === controlsW && viewH === controlsH) return controls;
+  controlsKey = key; controlsW = viewW; controlsH = viewH; controls.n = 0;
+  const els = document.querySelectorAll('[data-hud-exclusion]');
+  for (let i = 0; i < els.length && controls.n < MAX_RECTS; i++) {
+    const b = els[i]!.getBoundingClientRect();
+    if (b.width < 1 || b.height < 1) continue;
+    const o = controls.n++ * 4;
+    controls.r[o] = b.left; controls.r[o + 1] = b.top; controls.r[o + 2] = b.right; controls.r[o + 3] = b.bottom;
+  }
+  return controls;
+}
+
+/** True when the box [x0, y0, x1, y1] overlaps no control. */
+function clearOf(c: HudRects, x0: number, y0: number, x1: number, y1: number): boolean {
+  for (let i = 0; i < c.n; i++) {
+    const o = i * 4;
+    if (x0 < c.r[o + 2]! && x1 > c.r[o]! && y0 < c.r[o + 3]! && y1 > c.r[o + 1]!) return false;
+  }
+  return true;
+}
+
+/** Slide the panel (anchor out.top) beside the bottom band, nearer side first. */
+function slideBeside(
+  out: InspectorAnchor, ssx: number, half: number, panelH: number, viewW: number,
+  bottom: HudBand, c: HudRects, topBand: HudBand | undefined,
+): boolean {
+  const l = bottom.left - INSPECTOR_EDGE - half, r = bottom.right + INSPECTOR_EDGE + half;
+  const first = Math.abs(ssx - l) <= Math.abs(ssx - r) ? l : r;
+  for (let k = 0; k < 2; k++) {
+    const x = k === 0 ? first : first === l ? r : l;
+    if (x - half < INSPECTOR_EDGE || x + half > viewW - INSPECTOR_EDGE) continue;
+    if (under(topBand, x, half) && out.top - panelH < topBand.bottom + INSPECTOR_EDGE) continue;
+    if (!clearOf(c, x - half, out.top - panelH, x + half, out.top)) continue;
+    out.left = x;
+    return true;
+  }
+  return false;
+}
+
 export function placeInspector(
   ssx: number,
   ssy: number,
@@ -85,6 +152,7 @@ export function placeInspector(
   out: InspectorAnchor,
   topBand?: HudBand,
   bottomBand?: HudBand,
+  hudControls?: HudRects,
 ): InspectorAnchor {
   const half = panelW / 2;
   const minX = INSPECTOR_EDGE + half;
@@ -95,9 +163,12 @@ export function placeInspector(
   const minY = topMin + panelH;
   const maxY = viewH - INSPECTOR_EDGE;
   out.top = minY > maxY ? maxY : Math.max(minY, Math.min(maxY, ssy));
-  // Over the bottom band: bottom above it, but never at the top band's cost.
-  if (minY <= maxY && under(bottomBand, out.left, half)) {
-    out.top = Math.max(minY, Math.min(out.top, bottomBand.top - INSPECTOR_EDGE));
+  // Over the bottom band: bottom above it if it fits between the bands, else
+  // beside the stack if a side has room, else never at the top band's cost.
+  const fit = bottomBand ? bottomBand.top - INSPECTOR_EDGE : maxY;
+  if (minY <= maxY && under(bottomBand, out.left, half) && out.top > fit) {
+    if (minY <= fit) out.top = fit;
+    else if (!hudControls || !slideBeside(out, ssx, half, panelH, viewW, bottomBand, hudControls, topBand)) out.top = minY;
   }
   return out;
 }

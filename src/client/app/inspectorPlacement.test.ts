@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INSPECTOR_EDGE, INSPECTOR_TOP_MIN, placeInspector, reclampHeldInspector } from './inspectorPlacement';
+import { INSPECTOR_EDGE, INSPECTOR_TOP_MIN, hudRects, placeInspector, reclampHeldInspector } from './inspectorPlacement';
 
 const out = { left: 0, top: 0 };
 const W = 200;
@@ -111,5 +111,46 @@ describe('placeInspector between the top and bottom HUD bands', () => {
   it('a held panel over the capsule is lifted off it', () => {
     expect(reclampHeldInspector(430, 340, 120, 150, PW, PH, out, helm, capsule)).toBe(true);
     expect(out.top).toBe(capsule.top - INSPECTOR_EDGE);
+  });
+});
+
+// #1046 phone still (863x360, Refinery): the 209 px card spanned y 106-315
+// with the capsule top at 304, so its action-icon row sat on the capsule.
+// When it can't fit between the bands it slides beside the bottom stack.
+describe('placeInspector slides beside the bottom stack when it cannot fit between the bands', () => {
+  const PW = 863;
+  const PH = 360;
+  const helm = { left: 280, right: 583, top: 64, bottom: 98 };
+  const capsule = { left: 300, right: 563, top: 304, bottom: 344 };
+  const CW = 150;
+  const CH = 209;
+  // Rest spots of the move stick (left), lock stick and boost (right).
+  const sticks = hudRects([16, 244, 116, 344], [679, 252, 771, 344], [795, 298, 841, 344]);
+
+  it('slides to the side nearer its target, clear of the capsule and the controls', () => {
+    placeInspector(430, 340, CW, CH, PW, PH, out, helm, capsule, sticks);
+    expect(out.left + CW / 2).toBeLessThanOrEqual(capsule.left);
+    expect(out.left - CW / 2).toBeGreaterThanOrEqual(116);
+    expect(out.top - CH).toBeGreaterThanOrEqual(helm.bottom + INSPECTOR_EDGE);
+    expect(out.top).toBe(340);
+  });
+
+  it('a target right of centre slides right when that side has room', () => {
+    const roomy = hudRects([16, 244, 116, 344], [800, 252, 850, 344]);
+    placeInspector(470, 340, CW, CH, PW, PH, out, helm, capsule, roomy);
+    expect(out.left - CW / 2).toBeGreaterThanOrEqual(capsule.right);
+    expect(out.left + CW / 2).toBeLessThanOrEqual(800);
+  });
+
+  it('with no room on either side it keeps the helm clear and overlaps the capsule as little as possible', () => {
+    const wide = hudRects([16, 200, 250, 344], [610, 200, 850, 344]);
+    placeInspector(430, 340, CW, CH, PW, PH, out, helm, capsule, wide);
+    expect(out.left).toBe(430);
+    expect(out.top - CH).toBe(helm.bottom + INSPECTOR_EDGE);
+  });
+
+  it('a card that fits between the bands just lifts and does not slide', () => {
+    placeInspector(430, 340, CW, 150, PW, PH, out, helm, capsule, sticks);
+    expect(out).toEqual({ left: 430, top: capsule.top - INSPECTOR_EDGE });
   });
 });
