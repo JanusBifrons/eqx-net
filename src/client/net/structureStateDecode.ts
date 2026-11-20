@@ -19,6 +19,7 @@ import {
   STRUCTURE_FLAG_OFF,
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
+  STRUCTURE_FLAG_GHOST_BODY,
   STRUCTURE_DEFAULTS as D,
   STRUCTURE_RIG_CLIP_TARGET,
   CONN_SOCK_UNKNOWN,
@@ -81,6 +82,7 @@ export function decodeStructureState(
   out.switchedOff = (flags & STRUCTURE_FLAG_OFF) !== 0 ? true : undefined;
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
   out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
+  out.ghostBody = (flags & STRUCTURE_FLAG_GHOST_BODY) !== 0 ? true : undefined;
   const gateOpen = v.gateOpen ?? D.gateOpen;
   out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
   const gateAccess = v.gateAccess ?? D.gateAccess;
