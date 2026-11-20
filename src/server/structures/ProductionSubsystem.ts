@@ -47,6 +47,7 @@ import { advanceProgress } from './productionProgress.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
+import { hullProduct, packedProduct } from './productIds.js';
 
 /** What one cycle of a recipe actually uses and makes. */
 export interface EffectiveRecipe {
@@ -86,28 +87,6 @@ interface AppliedCache {
   eff: EffectiveRecipe;
 }
 
-/** `structure:<kind>` product ids, built once per kind (no per-cycle strings). */
-const PACKED_PRODUCT = new Map<StructureKindId, string>();
-function packedProduct(kind: StructureKindId): string {
-  let p = PACKED_PRODUCT.get(kind);
-  if (p === undefined) {
-    p = `structure:${kind}`;
-    PACKED_PRODUCT.set(kind, p);
-  }
-  return p;
-}
-
-/** `hull:<kind>` product ids, built once per kind. */
-const HULL_PRODUCT = new Map<string, string>();
-function hullProduct(kind: string): string {
-  let p = HULL_PRODUCT.get(kind);
-  if (p === undefined) {
-    p = `hull:${kind}`;
-    HULL_PRODUCT.set(kind, p);
-  }
-  return p;
-}
-
 /** A recipe's base effect (no blueprint), cached per recipe. */
 const BASE_EFFECT = new Map<RecipeId, EffectiveRecipe>();
 function baseEffect(id: RecipeId): EffectiveRecipe {
@@ -144,6 +123,15 @@ export class ProductionSubsystem {
     if (!isProcessorKind(kind)) throw new Error(`not a processor: ${kind}`);
     const r = rec.recipe;
     return r !== undefined && RECIPES[r].processors.includes(kind) ? r : defaultRecipeFor(kind);
+  }
+
+  /** Loop 3L — how far `rec`'s loaded cycle is, 0..1 (0 when nothing is
+   *  loaded); the row's `prodFrac` (the Shipyard build animation). */
+  cycleFraction(rec: StructureRecord): number {
+    if (rec.prodLoaded !== true || !isProcessorKind(rec.kind)) return 0;
+    const id = this.recipeOf(rec);
+    const pulses = (this.effective(rec, id) ?? baseEffect(id)).cyclePulses;
+    return pulses > 0 ? Math.min(1, (rec.prodProgress ?? 0) / pulses) : 0;
   }
 
   pulse(): void {

@@ -44,7 +44,8 @@ import { writeRigClipRow } from '../structures/structureRigClip.js';
 import { writeDoorMotionRow, type GateDoorSource } from './doorMotionRow.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdCount, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdBay, encodeProdCount, encodeProdFrac, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { shipyardBayOf } from '../../core/articulation/rigs/heavyIndustry.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { isStructureBodySolid } from '../../core/structures/structureBody.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -94,7 +95,7 @@ export interface StructuresSliceHost {
   hostileActs: () => Pick<HostileActLedger, 'sweep'>;
   patrols: Pick<PatrolSubsystem, 'count' | 'tick'>;
   gateGuard: Pick<AlienGateGuard, 'sweep'>;
-  production: () => Pick<ProductionSubsystem, 'pulse'>;
+  production: () => Pick<ProductionSubsystem, 'pulse' | 'cycleFraction'>;
   researchLabs: () => Pick<ResearchLabSubsystem, 'pulse'>;
   storage: () => Pick<StorageService, 'flushDirty'>;
   mineField: () => Pick<MineFieldSubsystem, 'mines' | 'tick'>;
@@ -221,6 +222,11 @@ export class StructuresSliceSync {
         if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
         const pc = encodeProdCount(rec.prodCount); // job 2E — outputs left
         if ((st.prodCount ?? SD.prodCount) !== pc) st.prodCount = pc;
+        const pf = encodeProdFrac(h.production().cycleFraction(rec)); // loop 3L (#16)
+        if ((st.prodFrac ?? SD.prodFrac) !== pf) st.prodFrac = pf;
+        // Loop 3R (#16): the bay this build is in; no build queue on this base yet.
+        const pb = rec.kind === 'shipyard' ? encodeProdBay(shipyardBayOf(rec.prodCycles), 0) : 0;
+        if ((st.prodBay ?? SD.prodBay) !== pb) st.prodBay = pb;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
       writeStorageFillRow(rec, st); // storage fill gauge, on step change only
