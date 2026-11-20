@@ -80,6 +80,7 @@ function emptyFeedback(): RendererFeedback {
     placementScreenY: null,
     selectionScreenX: null,
     selectionScreenY: null,
+    selectionScreenHalf: null,
     placementChosenWorldX: null,
     placementChosenWorldY: null,
     placementStuck: false,
@@ -101,6 +102,7 @@ function emptyFeedback(): RendererFeedback {
     fleetPickResult: null,
     placementPreviewConnectionCount: 0,
     placementPreviewTooShortCount: 0,
+    placementPreviewRejection: null,
     selectedPickId: null,
     selectedPickKind: null,
     hoveredPickId: null,
@@ -789,6 +791,7 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.placementScreenY = msg.feedback.placementScreenY;
         this.feedback.selectionScreenX = msg.feedback.selectionScreenX;
         this.feedback.selectionScreenY = msg.feedback.selectionScreenY;
+        this.feedback.selectionScreenHalf = msg.feedback.selectionScreenHalf;
         this.feedback.placementChosenWorldX = msg.feedback.placementChosenWorldX;
         this.feedback.placementChosenWorldY = msg.feedback.placementChosenWorldY;
         this.feedback.placementStuck = msg.feedback.placementStuck;
@@ -815,6 +818,7 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.placementPreviewConnectionCount =
           msg.feedback.placementPreviewConnectionCount;
         this.feedback.placementPreviewTooShortCount = msg.feedback.placementPreviewTooShortCount;
+        this.feedback.placementPreviewRejection = msg.feedback.placementPreviewRejection;
         this.feedback.selectedPickId = msg.feedback.selectedPickId;
         this.feedback.selectedPickKind = msg.feedback.selectedPickKind;
         this.feedback.hoveredPickId = msg.feedback.hoveredPickId;
