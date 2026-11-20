@@ -3,7 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import { STRUCTURE_KINDS_LIST } from '../../../shared-types/structureKinds.js';
 import { STRUCTURE_FAMILY, STRUCTURE_FAMILY_IDS, structureFamilyOf } from './structureFamilies.js';
-import { STYLE_C, STYLE_C_FAMILIES } from './structureStyleC.js';
+import { RIG_DRAW_HOOKS, STYLE_C, STYLE_C_FAMILIES } from './structureStyleC.js';
+import { RIG_FAMILIES } from '../../../core/articulation/rigCatalogue.js';
 import { structureStyleVersion } from './structureStyles.js';
 import { bakeKey } from '../art/bake.js';
 
@@ -44,5 +45,26 @@ describe('structure families', () => {
     expect(structureStyleVersion('current', 'reactor')).toBe('');
     expect(structureStyleVersion(undefined, 'reactor')).toBe('');
     expect(structureStyleVersion('a', 'reactor')).toBe('');
+  });
+
+  it("there is one rig file per family, and every kind's rig lives in its family's file", () => {
+    expect(Object.keys(RIG_FAMILIES).sort()).toEqual([...STRUCTURE_FAMILY_IDS].sort());
+    for (const [fam, f] of Object.entries(RIG_FAMILIES)) {
+      for (const id of Object.keys(f.rigOfKind)) expect(structureFamilyOf(id), `${id} rig in ${fam}`).toBe(fam);
+    }
+  });
+
+  it("every rig drawing hook names a rig of its own family's file, and RIG_DRAW_HOOKS spreads them all", () => {
+    let n = 0;
+    for (const [fam, f] of Object.entries(STYLE_C_FAMILIES)) {
+      const own = new Set(RIG_FAMILIES[fam]!.rigs.map((d) => d.id));
+      for (const [rigId, hook] of Object.entries(f.rigs)) {
+        expect(own.has(rigId), `${rigId} hook in ${fam}`).toBe(true);
+        expect(RIG_DRAW_HOOKS[rigId]).toBe(hook);
+        n++;
+      }
+    }
+    expect(Object.keys(RIG_DRAW_HOOKS)).toHaveLength(n);
+    expect(Object.keys(STYLE_C_FAMILIES.turrets.rigs)).toEqual(['sandbox-door-turret']);
   });
 });

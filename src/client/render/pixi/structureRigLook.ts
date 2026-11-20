@@ -84,6 +84,20 @@ export const RIG_LOOK_C: RigPartLook = {
  *  outlines) just redraws. */
 export type RigPartRole = 'pad' | 'base' | 'beam' | 'head' | 'leaf' | 'riser' | 'plate';
 
+/** A rig's special drawing beyond its part roles (stage-4 plan §4 0a): each
+ *  family's hooks live in its `structureStyleC.<family>.ts` (`rigs`, keyed by
+ *  rig id), assembled as `RIG_DRAW_HOOKS` (structureStyleC.ts). Called once per
+ *  view at build time, never per frame. */
+export interface RigDrawHook {
+  /** The part carrying the host kind's weapon mount (`placeMount`), or -1. */
+  readonly mountPart?: (rig: Rig) => number;
+  /** Art under every plane part and shadow (a hatch slot), or null. */
+  readonly planeUnder?: (rig: Rig) => GraphicsContext | null;
+}
+
+/** Rig id -> its drawing hook. */
+export type RigDrawHookTable = Readonly<Record<string, RigDrawHook>>;
+
 interface Bounds { x0: number; y0: number; x1: number; y1: number }
 
 /** Pixi-frame (y-down) bounds of a game-frame outline. */

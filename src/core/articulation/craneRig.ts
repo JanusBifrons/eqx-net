@@ -1,0 +1,340 @@
+/**
+ * Shared crane machinery (structure-restyle 2b+, 3a, 3i): the crane bay specs,
+ * the bay service rule, the dock dwell constants and `craneRigDef`, the one
+ * arm every crane-bay kind carries. The rig defs themselves live in their
+ * family's file (`rigs/transport.ts` freight dock, `rigs/core.ts` Capital);
+ * `rigCatalogue.ts` assembles the families and re-exports all of this.
+ *
+ * Frames: host frame = the structure's local frame (origin at its centre,
+ * +x along its footprint width, +y along its height), as `structureOutline`
+ * uses. Angles: `a` -> `(cos a, sin a)` (same as `ik.ts`).
+ */
+import { CAPITAL, FREIGHT_DOCK, type StructureKind } from '../../shared-types/structureKinds.js';
+import { box, type PartDef, type RigDef } from './rig.js';
+
+// ── dock-crane (freight_dock) ────────────────────────────────────────────────
+//
+// Medium dock (structure-restyle 2c++, Ladder A "M"): the footprint comes from
+// the kind catalogue (`FREIGHT_DOCK.footprint`, 1000 × 400, half extents
+// 500 × 200), so the server collider, outline, art and this rig all follow
+// one size source. The footprint is SOLID (plane layer, collides), so the
+// loading pad is OUTSIDE it, beyond the dock's open long edge. Host frame is
+// game space, y-up.
+//
+// Open side = +y. Evidence: style C `dock()` (structureStyleC.ts) draws in
+// pixi space (`outlinePx` maps game (x, y) -> (x, -y)); its open-edge hazard
+// strip and crane tower sit at pixi y < 0 (game +y), the dock house fills
+// the rest (game -y). The server has no berth side today.
+//
+// Pad (bay): 900 × 500 (x in ±450, 90 % of the dock width; y in 210..710):
+// a 10 u gap past the +y edge (y = 200), then 500 deep. Centre (0, 460).
+// A trader-hauler draws ≈ 136 long (extent 68) and ≈ 80 wide: three park
+// side by side nose-in with room between (3 × 80 ≪ 900), or one ship up to
+// ~850 long broadside.
+//
+// Deposit relation: `DOCK_DEPOSIT_RANGE` (below) is the freight dock's own
+// deposit circle around its CENTRE: the far apron corners (±462, 722) are
+// ≈ 857 out, so 900 covers the whole pad. `StorageService.depositRangeOf`
+// uses it for docks; other storage keeps `DEPOSIT_RANGE` (400).
+//
+// Crane: the pivot is the centre of the crane tower on the roof, 60 in from
+// the open edge, at its middle: (0, 140). Boom 390 + jib 390: max reach 780;
+// the jib may fold right over its boom (limits 0 .. 2π, see the path note at
+// CRANE_IK), so there is no minimum reach. The far corners (±450, 710) are
+// ≈ 726 from the pivot (54 spare), so the whole pad is in reach. Boom limits
+// -2.8 .. 2.4 about the plinth's +π/2 facing. The elbow folds to whichever
+// side keeps it out over the pad (swing side +y); for a target just off the
+// open edge in front of the tower the boom lies almost flat over the roof
+// strip, the jib folded back down to the target.
+// Stowed (rest): boom along the roof toward -x (shoulder +π/2, elbow at
+// (-390, 140), inside the ±500 width), jib folded back over it (elbow 3.0)
+// so the clamp tucks INTO the dock, ≈ 55 below the pivot: every part origin
+// sits inside the footprint.
+//
+// The `lip` under-layer part is the painted landing apron: the pad floor
+// (pad + 12 margin on x and at the far end), from the open edge out to
+// y = 722. Cosmetic, no collider; the arm parts are over-layer cosmetic.
+
+// ── Crane bays: one spec per kind (structure-restyle 3i) ─────────────────────
+//
+// "A structure with a crane bay" = a kind whose `keepClear` pad (beyond its
+// open +y edge) is served by the crane rig. Per kind only the host geometry
+// differs: the open edge (footprint half height), the crane tower's inset
+// from it and its x. The arm (boom, jib, clamp), its clips and the service
+// rule are the same everywhere. The server finds a bay with `craneBayFor`,
+// tests a ship with `inCraneBay`; the rig is built by `craneRigDef`.
+//
+// Capital (560 × 560, open edge y = 280): pad 500 × 240 (`CAPITAL.keepClear`,
+// y 290..530, the same 10 u gap). 240 deep, not the dock's 500: it serves
+// one ship (first load home), and a grown base's first row of connectors
+// past the pad (`growBase` `nextRowY`, far edge + 32) stays where the row
+// pitch already puts it (the galaxy's bases still fit their clearings). Tower inset 140
+// (pivot y 140): the boom pointing straight out at READY ends at 140 + 398,
+// inside the apron (542). Tower x +120: the stowed boom (390 along -x, 398
+// with its end) ends at -278, on the 560 roof (edge -280).
+
+/** One kind's crane bay, in its host frame (centre origin, y-up, rot 0). */
+export interface CraneBay {
+  readonly kindId: string;
+  readonly rigId: string;
+  /** Host footprint half extents; the open (bay) edge is y = +halfH. */
+  readonly halfW: number;
+  readonly halfH: number;
+  /** Crane pivot: the roof tower's centre, `towerInset` in from the open edge. */
+  readonly towerInset: number;
+  readonly pivotX: number;
+  readonly pivotY: number;
+  /** The pad (the kind's `keepClear` box): centre and half extents. */
+  readonly cx: number;
+  readonly cy: number;
+  readonly padHalfW: number;
+  readonly padHalfH: number;
+}
+
+/** A bay from the kind catalogue: its `keepClear` box IS the pad (ONE
+ *  definition, so the crane, the bay rule and placement agree). */
+function craneBayOf(kind: StructureKind, rigId: string, towerInset: number, pivotX: number): CraneBay {
+  const pad = kind.keepClear;
+  if (pad === undefined) throw new Error(`crane bay ${kind.id}: the kind has no keepClear pad`);
+  const halfH = kind.footprint.h / 2;
+  return {
+    kindId: kind.id, rigId, halfW: kind.footprint.w / 2, halfH, towerInset, pivotX, pivotY: halfH - towerInset,
+    cx: pad.cx, cy: pad.cy, padHalfW: pad.w / 2, padHalfH: pad.h / 2,
+  };
+}
+
+/** The freight dock's bay: tower centred, 60 in. */
+export const FREIGHT_DOCK_BAY: CraneBay = craneBayOf(FREIGHT_DOCK, 'dock-crane', 60, 0);
+/** The Capital's built-in bay (first load home): tower 140 in, 120 right of centre. */
+export const CAPITAL_BAY: CraneBay = craneBayOf(CAPITAL, 'capital-crane', 140, 120);
+/** Every kind with a crane bay. */
+export const CRANE_BAYS: readonly CraneBay[] = [FREIGHT_DOCK_BAY, CAPITAL_BAY];
+
+/** The crane bay a structure kind carries, or null. Alloc-free. */
+export function craneBayFor(kindId: string): CraneBay | null {
+  for (let i = 0; i < CRANE_BAYS.length; i++) if (CRANE_BAYS[i]!.kindId === kindId) return CRANE_BAYS[i]!;
+  return null;
+}
+
+export const FREIGHT_DOCK_HALF_W = FREIGHT_DOCK_BAY.halfW;
+export const FREIGHT_DOCK_HALF_H = FREIGHT_DOCK_BAY.halfH;
+/** Crane pivot inset from the open edge: the roof tower's centre. */
+export const DOCK_CRANE_TOWER_INSET = FREIGHT_DOCK_BAY.towerInset;
+export const DOCK_CRANE_PIVOT_X = FREIGHT_DOCK_BAY.pivotX;
+export const DOCK_CRANE_PIVOT_Y = FREIGHT_DOCK_BAY.pivotY;
+export const DOCK_CRANE_BOOM = 390;
+export const DOCK_CRANE_JIB = 390;
+/** Pad half-extents the crane is sized to reach (450 × 250). */
+export const DOCK_BAY_HALF_W = FREIGHT_DOCK_BAY.padHalfW;
+export const DOCK_BAY_HALF_H = FREIGHT_DOCK_BAY.padHalfH;
+/** Bay centre in the dock's host frame (game units, y-up): outside the open edge. */
+export const DOCK_BAY_CX = FREIGHT_DOCK_BAY.cx;
+export const DOCK_BAY_CY = FREIGHT_DOCK_BAY.cy;
+/** Gap between a bay's open (+y) edge and its pad's near edge (10). */
+const bayGap = (b: CraneBay): number => b.cy - b.padHalfH - b.halfH;
+const DOCK_BAY_GAP = bayGap(FREIGHT_DOCK_BAY);
+/** Clip reach / retract time: ~1 s of game time. */
+export const DOCK_CRANE_REACH_TICKS = 60;
+
+// ── Bay service rule: "stop = go" (structure-restyle 3a) ─────────────────────
+//
+// A ship is served when its centre is on the pad and it has come to rest.
+// These are pure host-frame helpers; the server (3b) transforms the ship into
+// the dock's frame and calls them.
+
+/** Inset from the pad edge a ship's centre must clear to count as parked.
+ *  40 = half a trader-hauler's beam (≈ 80 wide): a centre that far in puts
+ *  most of the hull on the pad, so a ship nosing the edge or drifting off it
+ *  is not served, while the pad still holds three haulers side by side. */
+export const DOCK_BAY_INSET = 40;
+
+/** True when host-frame point (lx, ly) is on the landing bay, at least
+ *  `DOCK_BAY_INSET` inside its edges. The dock body (y ≤ 200) and the 10 u
+ *  gap are never in the bay. A plain box test: the bay is axis-aligned in the
+ *  host frame. */
+export function inDockBay(lx: number, ly: number): boolean {
+  return inCraneBay(FREIGHT_DOCK_BAY, lx, ly);
+}
+
+/** The same rule on any kind's bay (`craneBayFor`): host-frame point
+ *  (lx, ly) on `bay`'s pad, at least `DOCK_BAY_INSET` inside its edges. */
+export function inCraneBay(bay: CraneBay, lx: number, ly: number): boolean {
+  return Math.abs(lx - bay.cx) <= bay.padHalfW - DOCK_BAY_INSET
+    && Math.abs(ly - bay.cy) <= bay.padHalfH - DOCK_BAY_INSET;
+}
+
+/** structure-restyle 3h — the world centre of `bay` on a host at (x, y)
+ *  turned `rotDeg` degrees CCW (the inverse of the host-frame transform
+ *  `worldToRigHost`): where a convoy hauler parks to be served. */
+export function craneBayWorldCentre(bay: CraneBay, x: number, y: number, rotDeg: number): { x: number; y: number } {
+  const a = (rotDeg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return { x: x + bay.cx * c - bay.cy * s, y: y + bay.cx * s + bay.cy * c };
+}
+
+/** World point (x, y) on the crane bay (`inCraneBay`) of a `kindId`
+ *  structure centred at (hostX, hostY), rotated `rotDeg`; false for a kind
+ *  with no bay. The world → host-frame transform is `worldToRigHost`, inline
+ *  (alloc-free). */
+export function onStructureCraneBay(
+  kindId: string, hostX: number, hostY: number, rotDeg: number, x: number, y: number,
+): boolean {
+  const bay = craneBayFor(kindId);
+  if (bay === null) return false;
+  const a = (rotDeg * Math.PI) / 180;
+  const dx = x - hostX;
+  const dy = y - hostY;
+  const cs = Math.cos(a);
+  const sn = Math.sin(a);
+  return inCraneBay(bay, dx * cs + dy * sn, -dx * sn + dy * cs);
+}
+
+/** Speed (game units / s) below which a ship on the bay counts as stopped.
+ *  Ship top speeds run 420 (trader-hauler) .. 950; the helm's own "arrived"
+ *  gate is 5 % of top speed (21 .. 48). 25 is met by a ship hovering on the
+ *  pad (linear damping 0.45 takes a hauler from full speed to 25 in ≈ 6 s
+ *  hands-off, faster on reverse thrust), but a ship crossing the 500-deep pad
+ *  at 25 would take 20 s: nothing flying through qualifies. Fixed, the same
+ *  for every ship. */
+export const DOCK_STILL_SPEED = 25;
+
+/** True when velocity (vx, vy) is below `DOCK_STILL_SPEED` (strict). */
+export function isStillForDock(vx: number, vy: number): boolean {
+  return vx * vx + vy * vy < DOCK_STILL_SPEED * DOCK_STILL_SPEED;
+}
+
+/** Settle before the crane reaches: a ship must sit still on the bay this
+ *  long (0.75 s of game time) first, so a ship braking through doesn't. */
+export const DOCK_SETTLE_TICKS = 45;
+
+/** Unload hold base: 3 s of game time (60 ticks / s). */
+export const DOCK_UNLOAD_HOLD_MIN_TICKS = 3 * 60;
+/** Extra hold for a full hold: +7 s (so 3 .. 10 s). */
+export const DOCK_UNLOAD_HOLD_LOAD_TICKS = 7 * 60;
+
+/** Ticks the crane holds at the ship before retracting (owner: "slow, scales
+ *  with load"): 3 s + 7 s × clamp(load / capacity, 0, 1), rounded to a whole
+ *  tick. A non-positive or non-finite capacity, or a non-finite load, counts
+ *  as empty (3 s). The full cycle is reach (~1 s) + this + retract (~1 s). */
+export function dockUnloadHoldTicks(load: number, capacity: number): number {
+  let f = capacity > 0 && Number.isFinite(capacity) ? load / capacity : 0;
+  if (!(f > 0)) f = 0; // NaN, negatives
+  else if (f > 1) f = 1;
+  return Math.round(DOCK_UNLOAD_HOLD_MIN_TICKS + DOCK_UNLOAD_HOLD_LOAD_TICKS * f);
+}
+const BOOM_REST = Math.PI / 2;
+const JIB_FOLD = 3.0;
+const APRON_MARGIN = 12;
+const APRON_X = DOCK_BAY_HALF_W + APRON_MARGIN;
+const APRON_DEPTH = DOCK_BAY_GAP + 2 * DOCK_BAY_HALF_H + APRON_MARGIN;
+/** A freight dock's deposit circle (around its centre): covers the whole
+ *  landing apron, rounded up to 50 (= 900 at 1000 × 400). */
+export const DOCK_DEPOSIT_RANGE = Math.ceil(Math.hypot(DOCK_BAY_CX + APRON_X, FREIGHT_DOCK_HALF_H + APRON_DEPTH) / 50) * 50;
+
+const lockedHinge = { type: 'hinge', min: 0, max: 0 } as const;
+
+/** The crane parts on `bay`: the apron under its pad, the arm on its tower. */
+function craneParts(bay: CraneBay): readonly PartDef[] {
+  const gap = bayGap(bay);
+  return [
+    // Under band: the painted landing apron over the bay floor, from the open
+    // (+y) edge outward (no collider, no motion).
+    {
+      id: 'lip', parent: null, anchorX: 0, anchorY: bay.halfH,
+      joint: lockedHinge, rest: 0, layer: 'under', kind: 'cosmetic',
+      outline: box(
+        bay.cx - bay.padHalfW - APRON_MARGIN, 0,
+        bay.cx + bay.padHalfW + APRON_MARGIN, gap + 2 * bay.padHalfH + APRON_MARGIN,
+      ),
+    },
+    // Plinth: the fixed slewing base on top of the roof crane tower (the
+    // style C dock art draws the tower under it), facing out over the pad (+y).
+    {
+      id: 'plinth', parent: null, anchorX: bay.pivotX, anchorY: bay.pivotY,
+      baseAngle: Math.PI / 2, joint: lockedHinge, rest: 0, layer: 'over', kind: 'cosmetic',
+      outline: [-24, -24, 24, -24, 30, 0, 24, 24, -24, 24, -30, 0],
+    },
+    {
+      id: 'boom', parent: 'plinth', anchorX: 0, anchorY: 0,
+      joint: { type: 'hinge', min: -2.8, max: 2.4 }, rest: BOOM_REST, layer: 'over', kind: 'cosmetic',
+      outline: box(-10, -17, DOCK_CRANE_BOOM + 8, 17),
+    },
+    {
+      id: 'jib', parent: 'boom', anchorX: DOCK_CRANE_BOOM, anchorY: 0,
+      joint: { type: 'hinge', min: 0, max: 2 * Math.PI }, rest: JIB_FOLD, layer: 'over', kind: 'cosmetic',
+      outline: box(-8, -13, DOCK_CRANE_JIB, 13),
+    },
+    // Clamp head at the jib tip (its origin IS the IK end effector).
+    {
+      id: 'clamp', parent: 'jib', anchorX: DOCK_CRANE_JIB, anchorY: 0,
+      joint: lockedHinge, rest: 0, layer: 'over', kind: 'cosmetic',
+      outline: [-6, -18, 15, -18, 21, -9, 12, -9, 12, 9, 21, 9, 15, 18, -6, 18],
+    },
+  ];
+}
+
+// Path (structure-restyle 2g). A crane never passes through its own dock:
+//  - swing side +y: per target the elbow takes the fold that puts it out over
+//    the pad (CCW for targets left of the pivot, CW right of it). A fixed fold
+//    sent the boom back across the roof for targets on the other side;
+//  - the jib may slew over its boom (limits [0, 2π]), so going from the
+//    stowed CCW fold to a CW reach passes the fold (tip over the tower), never
+//    straight out (780 long always pokes past the apron or the dock);
+//  - a READY waypoint halfway: the boom first swings up from the roof to +y
+//    with the jib still folded, then reaches. A straight blend from the stow
+//    unfolded the jib while the boom swung, so the jib swept down through the
+//    dock house (the far-corner bug). READY's jib is `foldMirror`: on a CW
+//    reach it is the mirrored fold, so the jib slews over the boom in this
+//    first half (ease 'out': it crosses the exact fold, tip on the pivot,
+//    between ticks, so an abort never catches the one pose with no unique IK);
+//  - READY -> target is a straight TIP path (`tipPath`, smoothstep): the
+//    clamp runs straight at the target on the target's fold and stops at rest
+//    on it, so the reach's end IS the hold pose with no pop. The smoothstep is
+//    timed in joint travel (`evaluate.ts retimeTipPath`): the line leaves
+//    READY by the pivot, where an evenly eased tip whipped the boom. The old joint
+//    blend (jib linear, boom cubic 'in') swung the clamp out sideways and away
+//    from the ship first, then whipped it across at full speed into the hold
+//    (the Capital bay take);
+//  - retract is the exact reverse (straight back to READY, then the boom
+//    down). An aborted reach retracts from its current tip, which lies on the
+//    reach's line, so it retraces the same path.
+//  holds the zone property for reach, retract and abort.
+const CRANE_IK = {
+  chain: ['boom', 'jib'], tipX: DOCK_CRANE_JIB, tipY: 0, bend: 1, swingSide: { x: 0, y: 1 },
+} as const;
+/** Reach / retract: the tip runs straight between READY and the target. */
+const CRANE_PATH_IK = { ...CRANE_IK, tipPath: true } as const;
+const READY = DOCK_CRANE_REACH_TICKS / 2;
+const BOOM_READY = 0;
+
+/** The crane rig on `bay` (same arm and clips on every kind). */
+export function craneRigDef(bay: CraneBay): RigDef {
+  return {
+    id: bay.rigId,
+    parts: craneParts(bay),
+    clips: [
+      {
+        id: 'arm-reach', ik: CRANE_PATH_IK,
+        tracks: [
+          { part: 'boom', keys: [{ tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true }] },
+          { part: 'jib', keys: [{ tick: READY, value: JIB_FOLD, foldMirror: true, ease: 'out' }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true }] },
+        ],
+      },
+      {
+        id: 'arm-hold', ik: CRANE_IK,
+        tracks: [
+          { part: 'boom', keys: [{ tick: 0, fromTarget: true }] },
+          { part: 'jib', keys: [{ tick: 0, fromTarget: true }] },
+        ],
+      },
+      {
+        id: 'arm-retract', ik: CRANE_PATH_IK,
+        tracks: [
+          { part: 'boom', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, value: BOOM_REST }] },
+          { part: 'jib', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: JIB_FOLD, foldMirror: true }, { tick: DOCK_CRANE_REACH_TICKS, value: JIB_FOLD, ease: 'in' }] },
+        ],
+      },
+    ],
+  };
+}

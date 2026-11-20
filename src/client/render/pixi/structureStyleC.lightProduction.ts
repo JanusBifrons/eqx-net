@@ -9,6 +9,7 @@ import {
   LAMP_AMBER, LAMP_WHITE, SLAB_DARK, SLAB_LIGHT, STEEL, chamferBox, core, deck, glow, grime, lamp, ngon,
   poly, rivets, scaffold, stencil, strut, truss, weld, wornStripe, type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
+import type { RigDrawHookTable } from './structureRigLook.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -47,3 +48,7 @@ function refinery(c: StyleCtx): void {
 export const kinds: StyleDrawerTable = {
   refinery,
 };
+
+/** This family's rig drawing hooks, by rig id (`RigDrawHook`,
+ *  structureRigLook.ts); rigs not listed draw from their part roles only. */
+export const rigs: RigDrawHookTable = {};

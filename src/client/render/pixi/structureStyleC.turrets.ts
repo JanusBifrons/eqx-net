@@ -5,6 +5,9 @@
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
 import { type StyleDrawerTable } from './structureStyleKit.js';
+import { rigPartIndex } from '../../../core/articulation/rig.js';
+import { DOOR_TURRET_MOUNT, SANDBOX_DOOR_TURRET_DEF } from '../../../core/articulation/rigCatalogue.js';
+import { rigSlotContext, type RigDrawHookTable } from './structureRigLook.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -13,3 +16,13 @@ export const version = '';
 
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {};
+
+/** This family's rig drawing hooks, by rig id (`RigDrawHook`,
+ *  structureRigLook.ts). The pop-up door turret: its gun rides the riser
+ *  (`DOOR_TURRET_MOUNT`), and a dark hatch slot shows under the leaves. */
+export const rigs: RigDrawHookTable = {
+  [SANDBOX_DOOR_TURRET_DEF.id]: {
+    mountPart: (rig) => rigPartIndex(rig, DOOR_TURRET_MOUNT.partId),
+    planeUnder: (rig) => rigSlotContext(rig),
+  },
+};
