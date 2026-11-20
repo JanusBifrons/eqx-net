@@ -78,6 +78,8 @@ export interface SectorSnapshotStructure {
    *  'door-a' / 'door-b'). Absent ⇒ every door shut. */
   doorPos?: number;
   doorClip?: string;
+  /** The owner switched it Off. Absent ⇒ On. */
+  switchedOff?: boolean;
   /** Production (P2b): the owner's recipe (a RecipeId) and a cycle in progress
    *  (its inputs are already taken). Absent ⇒ default recipe, idle. */
   recipe?: string;

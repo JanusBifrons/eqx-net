@@ -39,6 +39,8 @@ export const STRUCTURE_FLAG_BREACH = 128;
  *  (its beacon dish turns only then). Derived on every sync, never an event,
  *  so a late joiner reads it from the row (#16). */
 export const STRUCTURE_FLAG_LOCK_HOLDING = 256;
+/** The owner switched this structure Off (no draw, no work). */
+export const STRUCTURE_FLAG_OFF = 512;
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;
