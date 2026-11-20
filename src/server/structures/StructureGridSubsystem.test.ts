@@ -297,6 +297,8 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
     // Battery covers the shortfall → miner stays powered despite a negative net.
     expect(h.grid.powerSummaryFor(miner).netPower).toBe(-10);
     expect(h.grid.powerSummaryFor(miner).powered).toBe(true);
+    // Battery rescue reads full supply (raw grid: 50 / 60), so doors run at full speed.
+    expect(h.grid.powerSummaryFor(miner).supplyFrac).toBe(1);
     expect(h.registry.get(bat)!.storedPower).toBe(290); // 300 - 10
 
     // 29 more pulses drain the remaining 290 at 10/pulse → empty.
