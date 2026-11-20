@@ -91,7 +91,7 @@ describe('SectorRoom integration — construction flow economy (Phase 3)', () =>
 
     await placeAndWait(harness, room, 'capital', 0, 0);
     const con = await placeAndWait(harness, room, 'connector', 400, 0);
-    const sol = await placeAndWait(harness, room, 'solar', 650, 0);
+    const sol = await placeAndWait(harness, room, 'solar', 700, 0); // 700: clears the 56 u minimum cable
     const conRec = internals.structureRegistry.get(con)!;
     const solRec = internals.structureRegistry.get(sol)!;
 
