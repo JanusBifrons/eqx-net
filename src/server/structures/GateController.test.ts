@@ -183,6 +183,19 @@ describe('GateController solid doors', () => {
     gates.update(0);
     expect(door.posts[0]).toMatchObject({ clipId: 'door-b', startTick: 5, from: 0, rate: 1 });
   });
+
+  it('exposes the live door state the room-state writer sends (slice 9 link)', () => {
+    const { registry, gates, door } = setup([{ id: 'p1', x: 0, y: -100 }]);
+    registry.add(rec('g', 'shield_gate', 0, 0));
+    registry.add(rec('a', 'shield_airlock', 0, 600));
+    door.tick = 40;
+    gates.update(0);
+    // The writer reads these segments; they must be the ones the rig was posted.
+    expect(gates.gateStateFor('g')?.door.seg).toMatchObject({ t0: 40, p0: 0, dir: 1 });
+    expect(gates.airlockStateFor('a')).toBeDefined();
+    expect(gates.gateStateFor('a')).toBeUndefined();
+    expect(gates.airlockStateFor('g')).toBeUndefined();
+  });
 });
 
 describe('ShieldWallManager with gates', () => {

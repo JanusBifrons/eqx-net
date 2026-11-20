@@ -75,6 +75,10 @@ export interface StructureRigInput {
    *  (`CRANE_CARGO_*`); absent = no cargo shown. */
   holdTicks?: number;
   cargo?: number;
+  /** Scrubbed clip (doors): clip time at `startTick` and clip ticks per
+   *  game tick (`PlayingClip.from` / `rate`); absent = a plain clip. */
+  from?: number;
+  rate?: number;
 }
 
 /** zIndex of the over band: above every hull (0), below the beams. */
@@ -118,7 +122,7 @@ export function worldToHost(wx: number, wy: number, hx: number, hy: number, ha: 
 // ---------------------------------------------------------------- one structure
 
 /** A mutable `PlayingClip` (the evaluator reads it; nothing is allocated). */
-interface MutablePlaying { clipId: string; startTick: number; target: { x: number; y: number } | undefined }
+interface MutablePlaying { clipId: string; startTick: number; target: { x: number; y: number } | undefined; from?: number; rate?: number }
 
 /**
  * One structure's rig: its pose, its part graphics and its three layer
@@ -265,6 +269,8 @@ export class StructureRigView {
       const p = this.playing;
       p.clipId = input.clipId;
       p.startTick = input.startTick;
+      p.from = input.from;
+      p.rate = input.rate;
       if (input.targetX !== undefined && input.targetY !== undefined) {
         worldToHost(input.targetX, input.targetY, hx, hy, ha, scale, this.targetScratch);
         p.target = this.targetScratch;
@@ -485,6 +491,8 @@ export class StructureRigs {
       input.startTick = clip.startTick;
       input.holdTicks = clip.holdTicks;
       input.cargo = clip.cargo;
+      input.from = clip.from;
+      input.rate = clip.rate;
       if (clip.targetX !== undefined && clip.targetY !== undefined) {
         // Host frame → world game coords (the view takes a world target).
         const c = Math.cos(ha), s = Math.sin(ha);

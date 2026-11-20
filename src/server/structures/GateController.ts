@@ -162,6 +162,11 @@ export class GateController {
     return gateOpenMask(this.gates.get(id), this.airlocks.get(id));
   }
 
+  /** The live door state of a gate / airlock, for the room-state writer
+   *  (`doorMotionRow.ts`); undefined for anything else. */
+  gateStateFor(id: string): Readonly<GateState> | undefined { return this.gates.get(id); }
+  airlockStateFor(id: string): Readonly<AirlockState> | undefined { return this.airlocks.get(id); }
+
   /** Door-power slice 12: the door position to save with this structure at
    *  the last tick (undefined = every door shut, or not a gate). */
   savedDoor(id: string): SavedDoor | undefined {
