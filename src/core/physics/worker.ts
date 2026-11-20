@@ -320,6 +320,10 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         physics.setHullExposed(cmd.id, cmd.exposed, getShipKind(cmd.kindId));
         break;
       }
+      case 'SET_COLLISION_GROUPS': {
+        physics.setCollisionGroups(cmd.id, cmd.groups);
+        break;
+      }
       case 'SET_STAT_MUL': {
         // Phase 4 WS-B2 — per-instance physics stat multipliers. Both factors
         // undefined ⇒ reset to the un-upgraded path. Silent no-op on unknown

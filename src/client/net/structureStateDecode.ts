@@ -16,8 +16,11 @@ import {
   STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
+  STRUCTURE_FLAG_OFF,
+  decodeStructureThrottleFlags,
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
+  STRUCTURE_FLAG_GHOST_BODY,
   STRUCTURE_DEFAULTS as D,
   STRUCTURE_RIG_CLIP_TARGET,
   CONN_SOCK_UNKNOWN,
@@ -28,7 +31,12 @@ import {
   decodeRigHoldTicks,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
+import { decodeProdBay, decodeProdFrac } from '../../shared-types/production.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
+import { decodeProdCount } from '../../shared-types/production.js';
+
+/** Scratch for `decodeProdBay` (reused per row, #14). */
+const _bay = { bay: 0, queued: 0 };
 
 export function emptyStructureRow(): StructureRenderState {
   return { powered: false, netPower: 0, connTo: [], connSockSelf: [], connSockOther: [], built: false, buildPct: 0, deconstructPct: 0 };
@@ -76,8 +84,12 @@ export function decodeStructureState(
   out.noAmmo = (flags & STRUCTURE_FLAG_NO_AMMO) !== 0 ? true : undefined;
   out.noFuel = (flags & STRUCTURE_FLAG_NO_FUEL) !== 0 ? true : undefined;
   out.drawFull = (flags & STRUCTURE_FLAG_DRAW_FULL) !== 0 ? true : undefined;
+  out.switchedOff = (flags & STRUCTURE_FLAG_OFF) !== 0 ? true : undefined;
+  const throttle = decodeStructureThrottleFlags(flags);
+  out.throttle = throttle < 10 ? throttle : undefined;
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
   out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
+  out.ghostBody = (flags & STRUCTURE_FLAG_GHOST_BODY) !== 0 ? true : undefined;
   const gateOpen = v.gateOpen ?? D.gateOpen;
   out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
   const gateAccess = v.gateAccess ?? D.gateAccess;
@@ -88,9 +100,15 @@ export function decodeStructureState(
   out.prodState = prodState !== 0 ? prodState : undefined;
   const prodMissing = v.prodMissing ?? D.prodMissing;
   out.prodMissing = prodMissing !== 0 ? prodMissing : undefined;
+  const prodFrac = decodeProdFrac(v.prodFrac);
+  out.prodFrac = prodFrac > 0 ? prodFrac : undefined;
+  decodeProdBay(v.prodBay, _bay);
+  out.prodBay = _bay.bay !== 0 ? _bay.bay : undefined;
+  out.prodQueued = _bay.queued !== 0 ? _bay.queued : undefined;
   const bpRuns = v.bpRuns ?? D.bpRuns;
   out.bpRuns = bpRuns !== 0 ? bpRuns : undefined;
   out.bpQuality = bpRuns !== 0 ? (v.bpQuality ?? D.bpQuality) : undefined;
+  out.prodCount = decodeProdCount(v.prodCount ?? D.prodCount);
   // v4 T1 — teleporters: decode in place (allocated once per teleporter row).
   if (v.tpPhase !== undefined || v.tpPartner !== undefined || v.tpChargePct !== undefined || out.teleport !== undefined) {
     const t = (out.teleport ??= { phase: 0, phaseMs: 0, chargePct: 0, partner: -1, rules: 0, loadGood: 0, loadQty: 0, keepGood: 0, keepQty: 0, padWeight: 0, toll: 0 });

@@ -13,7 +13,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { Room } from 'colyseus.js';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
 import type { BlueprintResult } from '../../../src/shared-types/blueprints.js';
@@ -44,7 +44,8 @@ describe('SectorRoom integration — repair and install from the Capital\'s cran
     harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
     // Ship first, then the Capital placed around it (a join never spawns
     // within a hull's clearance of a structure; the bay is closer than that).
-    const cr = await harness.connectActive(pid, { spawnX: x, spawnY: y, shipKind: 'fighter', initialHull: 50, initialWallet: 1000 });
+    // The Capital is placed from its packed crate in the hold (#1000).
+    const cr = await harness.connectActive(pid, { spawnX: x, spawnY: y, shipKind: 'fighter', initialHull: 50, initialWallet: 1000, initialCargo: withCapitalCrates() });
     let shipId = '';
     expect(await until(() => {
       for (const [, s] of cr.state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;

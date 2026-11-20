@@ -68,7 +68,7 @@ import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
-import { StructurePlacementSubsystem, packedGateForBuild, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
+import { StructurePlacementSubsystem, packedGateForBuild, repackItem, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { GateController, type GateShipBuffer } from '../structures/GateController.js';
@@ -188,7 +188,7 @@ import { RoomWreckSpawns } from './features/wreckSpawns.js';
 import { FireControlLocks } from './features/fireControlLocks.js';
 import { swarmLockId } from './lockSalvage.js';
 import { transitHostRoom } from './features/transitMessages.js';
-import { HullHandOff } from './features/hullHandOff.js';
+import { HullHandOff, newHullOrigin } from './features/hullHandOff.js';
 import { BreakInHooks } from './features/breakInHooks.js';
 import { TurretTargeting } from './features/turretTargeting.js';
 import { SectorTimeScale } from './features/sectorTimeScale.js';
@@ -253,7 +253,7 @@ import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
 import { StorageService } from '../cargo/StorageService.js';
 import { fittedModuleIds, isOperationalStorage, structureUid } from '../cargo/storageHolds.js';
-import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount } from '../../core/cargo/hold.js';
 import { liveSectorHolder } from '../livingworld/RobotTerritory.js';
 import { sectorHeldBy, territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
@@ -575,7 +575,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Loot window search time per (viewer, pod) (cargo-pods slice 12). */
   private readonly lootSearch = new LootSearch();
   /** Asteroid ore: the one draw path (Miner, harvesters, mining-laser hits paid on the pulse). */
-  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, sectorKey: () => this.sectorKey, oreAtCentre: (r, out) => this.cutField?.oreAtCentre(r, out) ?? false });
+  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, sectorKey: () => this.sectorKey, oreAtCentre: (r, out) => this.cutField?.oreAtCentre(r, out) ?? false, oreAtRest: (rx, ry, px, py, a, x, y, out) => this.cutField?.oreAtRest(rx, ry, px, py, a, x, y, out) !== undefined });
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
   private storage!: StorageService;
   /** Economy v2 W3 — Research Lab jobs (research / copy / combine). */
@@ -1154,7 +1154,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
       wreckState: (id) => this.wreckSpawns.wreckPose(id),
-      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, wreckMass: (id) => { const v = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0 }; return this.capitalWrecks?.pieceStore(id, v) === true ? v.mass : undefined; },
+      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, wreckMass: (id) => { const v = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0, rockMass: 0 }; return this.capitalWrecks?.pieceStore(id, v) === true ? v.mass : undefined; },
       rockOf: (id) => rockViewOf(this.swarmRegistry, id, this.cutField?.navOpts ?? null),
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
@@ -2018,7 +2018,7 @@ export class SectorRoom extends Room<SectorState> {
       takeSlot: () => this.freeSlots.pop(),
       postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin, shipKindId, sleeping) =>
         this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(spin?.settleSpeed ? { settleSpeed: spin.settleSpeed, settleSpin: spin.settleSpin ?? 0 } : {}), ...(shipKindId !== undefined ? { shipKindId } : {}), ...(sleeping === true ? { sleeping } : {}) }),
-      postRigAttach: (id, rigId) => this.postToWorker({ type: 'RIG_ATTACH', id, rigId }),
+      postRigAttach: (id, rigId) => this.postToWorker({ type: 'RIG_ATTACH', id, rigId }), postSetCollisionGroups: (id, groups) => this.postToWorker({ type: 'SET_COLLISION_GROUPS', id, groups }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -2129,6 +2129,9 @@ export class SectorRoom extends Room<SectorState> {
     // power aggregation. Runs OFF the 60 Hz physics tick (unref'd timer).
     this.structureGrid = new StructureGridSubsystem({
       registry: this.structureRegistry,
+      // The pulse period the timer below runs at (the build ETA reads it too).
+      pulseMs: this.testMode && roomOpts.structureGridPulseMs ? Math.max(20, roomOpts.structureGridPulseMs) : TRANSFER_PULSE_MS,
+      shipHulls: () => this.obstacles.hullCircles(''), solidify: (id) => this.swarmSpawner.solidifyStructure(id), // hologram pass-through
       getHealth: (id) => this.swarmHealth.get(id) ?? 0,
       setHealth: (id, hp) => { this.swarmHealth.set(id, hp); },
       despawn: (id) => {
@@ -2234,9 +2237,9 @@ export class SectorRoom extends Room<SectorState> {
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
       // D3 — station taxes: a player's habitat modules and spires pay their wallet.
-      payCredits: (rec, n) => {
-        if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes');
-      },
+      payCredits: (rec, n) => { if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes'); },
+      // A finished hull goes live: out of a Shipyard's slipway on a Move order to its park spot (`HullHandOff.launchNewHull`).
+      launchHull: (rec, kind, q) => parseOwner(rec.owner).kind === 'player' && this.hullHandOff.launchNewHull(rec.owner, kind, q, newHullOrigin(rec.kind, rec.x, rec.y, rec.rot ?? 0, kind, rec.prodCycles), true).ok,
     });
     // v4 T1-T4 — the teleporters + the broker room (`features/teleportMessages.ts`).
     ({ teleporters: this.teleporters, teleportRoom: this.teleportRoom } = buildTeleporters({
@@ -2264,10 +2267,7 @@ export class SectorRoom extends Room<SectorState> {
       setWallActive: (id, active) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active }),
       removeWall: (id) => this.postToWorker({ type: 'REMOVE_WALL', id }),
     });
-    const pulseMs = this.testMode && roomOpts.structureGridPulseMs
-      ? Math.max(20, roomOpts.structureGridPulseMs)
-      : TRANSFER_PULSE_MS;
-    this.structureGridTimer = this.gameClock.every(pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
+    this.structureGridTimer = this.gameClock.every(this.structureGrid.pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
     this.structureTurretTimer = this.gameClock.every(TURRET_TICK_MS, guarded('structure-turret-tick', () => this.structureTurretTick()));
 
@@ -2517,7 +2517,7 @@ export class SectorRoom extends Room<SectorState> {
       ensureTradeRegistered: () => this.ensureTradeRegistered(),
       researchLabs: () => this.researchLabs,
       playerToUser: this.playerToUser,
-      production: () => this.production,
+      production: () => this.production, hullHandOff: () => this.hullHandOff,
       resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid),
       ship: (id) => this.state.ships.get(id),
       shipPoseCache: this.shipPoseCache,
@@ -4028,7 +4028,7 @@ export class SectorRoom extends Room<SectorState> {
     lingeringSlots: this.lingeringSlots, lingeringPoseCache: this.lingeringPoseCache, freeSlots: () => this.freeSlots,
     ownerlessShips: this.ownerlessShips, fleet: this.fleet, wingmen: () => this.wingmen, snapshotRestore: () => this.snapshotRestore,
     warpTravel: () => this.warpTravel, logger, postToWorker: (cmd) => this.postToWorker(cmd),
-    landingPoint: (pid, x, y, kind, skip) => this.landingPoint(pid, x, y, kind, skip),
+    landingPoint: (pid, x, y, kind, skip) => this.landingPoint(pid, x, y, kind, skip), playerToUser: this.playerToUser,
   });
 
   /**
@@ -4120,13 +4120,13 @@ export class SectorRoom extends Room<SectorState> {
    * Economy v2 — repack a PREPAID structure that finished deconstructing: the
    * packed item (same kind, same quality) goes into the owner's storage in its
    * grid component, else it drops as a pod where the structure stood. Called
-   * by the grid pulse BEFORE the structure is despawned.
+   * by the grid pulse BEFORE the structure is despawned (a Capital: `repackItem`).
    */
   private repackStructure(rec: StructureRecord): void {
-    const item = { product: `structure:${rec.kind}`, quality: rec.packedQuality ?? REPACK_DEFAULT_QUALITY };
+    const item = repackItem(rec, REPACK_DEFAULT_QUALITY);
     const target = this.storage.networkFor(rec).find((r) => r.id !== rec.id);
     if (target !== undefined) {
-      addPacked((target.hold ??= { goods: {}, blueprints: [] }), item.product, item.quality);
+      ((target.hold ??= { goods: {}, blueprints: [] }).packed ??= []).push(item);
       this.storage.commitChanged([target], []);
     } else {
       this.loot.drop({ goods: {}, blueprints: [], packed: [item] }, rec.x, rec.y, 0, 0, { cause: 'removed' });

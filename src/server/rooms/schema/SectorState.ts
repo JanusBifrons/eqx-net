@@ -174,6 +174,10 @@ export class StructureState extends Schema {
   @type('uint16') bpRuns?: number;
   /** Production: the slot blueprint's glance quality (0–100). */
   @type('uint8') bpQuality?: number;
+  /** Loop 3L: the loaded cycle's progress, 0..PROD_FRAC_MAX (shared-types/production.ts). */
+  @type('uint8') prodFrac?: number;
+  /** Loop 3R: a Shipyard's build bay + queued count (`encodeProdBay`, shared-types/production.ts). */
+  @type('uint8') prodBay?: number;
   /** v4 T1 — teleporters: the jump-cycle phase (TP_PHASE), how long it lasts
    *  (ms), the capacitor (% of the jump's charge), the partner (entityId; -2 in
    *  another sector), the rule bits (TP_RULE_*), the "loaded" and "keep
@@ -207,6 +211,9 @@ export class StructureState extends Schema {
    *  (shared-types/structureStateWire.ts). A collection, so it is initialised
    *  like `connTo`; written in the same change check (`writeConnToRow`). */
   @type(['uint16']) connSock = new ArraySchema<number>();
+  /** Build count (job 2E): outputs left + 1 (0 = no count, repeat forever;
+   *  1 = done). Appended after connSock (append-only field order). */
+  @type('uint8') prodCount?: number;
 }
 
 /** A proximity mine (Mine Layer). Static, so room state carries it: the join

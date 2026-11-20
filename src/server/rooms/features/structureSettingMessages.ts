@@ -1,6 +1,6 @@
 /**
  * Owner-only structure settings — a processor's recipe (P2b), who a gate
- * opens for, and refining salvage into a Capital's mineral bank (P1a-2).
+ * opens for, switching a structure On / Off (and its power throttle), and refining salvage into a Capital's mineral bank (P1a-2).
  * Moved verbatim out of `SectorRoom.onCreate`; the room hands in live
  * accessors so every handler reads the same state it did there.
  */
@@ -13,7 +13,8 @@ import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parse
 import { gateTypeOf } from '../../../core/structures/gateGeometry.js';
 import { gateAccessIndex } from '../../../shared-types/gateAccess.js';
 import { isProcessorKind } from '../../../shared-types/production.js';
-import { RefineSalvageSchema, SetGateAccessSchema, SetRecipeSchema } from '../../../shared-types/messages.js';
+import { RefineSalvageSchema, SetGateAccessSchema, SetRecipeSchema, SetStructurePowerSchema } from '../../../shared-types/messages.js';
+import type { StructureGridSubsystem } from '../../structures/StructureGridSubsystem.js';
 
 /** What the handlers need from the room; getters read the live field. */
 export interface StructureSettingMessageHost extends ParsedMessageHost {
@@ -24,6 +25,7 @@ export interface StructureSettingMessageHost extends ParsedMessageHost {
   production(): Pick<ProductionSubsystem, 'setRecipe'>;
   storage(): Pick<StorageService, 'flushDirty' | 'refine'>;
   rebuildStructuresSlice(): void;
+  structureGrid(): Pick<StructureGridSubsystem, 'setSwitchedOn' | 'setThrottle'>;
 }
 
 export function registerStructureSettingMessages(h: StructureSettingMessageHost): RoomFeature {
@@ -36,7 +38,7 @@ export function registerStructureSettingMessages(h: StructureSettingMessageHost)
     if (!swarmRec) return;
     const rec = h.structureRegistry.get(swarmRec.id);
     if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
-    if (h.production().setRecipe(rec, msg.recipe)) {
+    if (h.production().setRecipe(rec, msg.recipe, msg.count)) {
       h.storage().flushDirty();
       h.rebuildStructuresSlice();
     }
@@ -52,6 +54,21 @@ export function registerStructureSettingMessages(h: StructureSettingMessageHost)
     if (!rec || rec.owner !== owner || gateTypeOf(rec.kind) === null) return;
     rec.gateAccess = gateAccessIndex(msg.access);
     h.rebuildStructuresSlice();
+  });
+
+  // ── Base loop — the owner switches a structure On / Off (owner-gated) ──
+  // Feeds the grid's one active-power switch; a no-Off kind is a no-op.
+  // An optional `throttle` (tenths) scales the same kind's draw.
+  parsedMessage(h, 'set_structure_power', SetStructurePowerSchema, (msg, client) => {
+    const owner = h.sessionToPlayer().get(client.sessionId);
+    if (!owner) return;
+    const swarmRec = h.swarmRegistry.getByEntityId(msg.entityId);
+    if (!swarmRec) return;
+    const rec = h.structureRegistry.get(swarmRec.id);
+    if (!rec || rec.owner !== owner) return;
+    const switched = h.structureGrid().setSwitchedOn(rec, msg.on);
+    const throttled = msg.throttle !== undefined && h.structureGrid().setThrottle(rec, msg.throttle);
+    if (switched || throttled) h.rebuildStructuresSlice();
   });
 
   // ── Living World P1a-2 — refine salvage into a Capital's mineral bank ──

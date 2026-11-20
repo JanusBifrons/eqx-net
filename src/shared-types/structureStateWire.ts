@@ -39,6 +39,28 @@ export const STRUCTURE_FLAG_BREACH = 128;
  *  (its beacon dish turns only then). Derived on every sync, never an event,
  *  so a late joiner reads it from the row (#16). */
 export const STRUCTURE_FLAG_LOCK_HOLDING = 256;
+/** Hologram pass-through — the structure's physics body is still a blueprint
+ *  ghost (collides with nothing; `isStructureBodySolid` false). The client
+ *  prediction world mirrors it. Bit 14: bit 9 (512) is On/Off, bits 10-13 the throttle. */
+export const STRUCTURE_FLAG_GHOST_BODY = 16384;
+/** The owner switched this structure Off (no draw, no work). */
+export const STRUCTURE_FLAG_OFF = 512;
+/** The owner's power throttle rides bits 10-13 of `flags` as the tenths
+ *  BELOW full (0 = 100%, the default, so an unthrottled row sends no bits;
+ *  10 = 0%). No new schema field. Both sides use these helpers (#15). */
+const STRUCTURE_THROTTLE_SHIFT = 10;
+const STRUCTURE_THROTTLE_MASK = 0xf;
+
+/** The `flags` bits for a throttle of `tenths` (0..10; out of range clamps). */
+export function encodeStructureThrottleFlags(tenths: number): number {
+  const t = Math.max(0, Math.min(10, Math.round(tenths)));
+  return (10 - t) << STRUCTURE_THROTTLE_SHIFT;
+}
+
+/** The throttle (tenths, 0..10) a `flags` value carries. */
+export function decodeStructureThrottleFlags(flags: number): number {
+  return Math.max(0, 10 - ((flags >> STRUCTURE_THROTTLE_SHIFT) & STRUCTURE_THROTTLE_MASK));
+}
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;
@@ -120,6 +142,8 @@ export const STRUCTURE_DEFAULTS = {
   prodMissing: 0,
   bpRuns: 0,
   bpQuality: 0,
+  prodFrac: 0,
+  prodBay: 0,
   tpPhase: 0,
   tpPhaseMs: 0,
   tpChargePct: 0,
@@ -136,6 +160,7 @@ export const STRUCTURE_DEFAULTS = {
   rigTx: 0,
   rigTy: 0,
   rigHold: 0,
+  prodCount: 0,
 } as const;
 
 /**
@@ -252,6 +277,10 @@ export interface StructureStateView {
   prodMissing?: number;
   bpRuns?: number;
   bpQuality?: number;
+  /** Loop 3L — the loaded cycle's progress byte (`encodeProdFrac`). */
+  prodFrac?: number;
+  /** Loop 3R — a Shipyard's bay + queued byte (`encodeProdBay`). */
+  prodBay?: number;
   /** v4 T1 — teleporters (encodings in shared-types/teleport.ts). */
   tpPhase?: number;
   tpPhaseMs?: number;
@@ -273,6 +302,8 @@ export interface StructureStateView {
   /** Structure-restyle 3e — a holding clip's length and cargo direction
    *  (`encodeRigHold`); 0 = none. */
   rigHold?: number;
+  /** Build count (job 2E): `encodeProdCount` (shared-types/production.ts). */
+  prodCount?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
   /** 0d slice 6 — per `connTo` entry, the packed socket pair
    *  (`encodeConnSock`). Optional so a row without it reads as no sockets. */

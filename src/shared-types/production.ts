@@ -22,6 +22,8 @@ export const PROD_STATE = {
   unpowered: 4,
   /** The recipe needs a blueprint and none is loaded. */
   needsBlueprint: 5,
+  /** Built the number of outputs the owner asked for (`prodCount` hit 0). */
+  done: 6,
 } as const;
 export type ProdState = (typeof PROD_STATE)[keyof typeof PROD_STATE];
 
@@ -33,6 +35,7 @@ export const PROD_STATE_LABELS: Readonly<Record<ProdState, string>> = Object.fre
   3: 'Storage full',
   4: 'No power',
   5: 'Needs a blueprint',
+  6: 'Done',
 });
 
 export function isProcessorKind(kind: string): kind is ProcessorKindId {
@@ -67,6 +70,46 @@ export function decodeGood(v: number | undefined): GoodId | undefined {
   return v ? GOOD_IDS[v - 1] : undefined;
 }
 
+/**
+ * Loop 3L — `prodFrac`: how far the loaded cycle is, as one byte (0 = none
+ * loaded / just started, PROD_FRAC_MAX = done). Rides the processor row so a
+ * late joiner sees the Shipyard mid-build at the right point (#16). Both
+ * sides use these two helpers (#15).
+ */
+export const PROD_FRAC_MAX = 255;
+
+/** The `prodFrac` byte for a 0..1 cycle fraction (clamped; NaN reads 0). */
+export function encodeProdFrac(fraction: number): number {
+  return fraction > 0 ? Math.min(PROD_FRAC_MAX, Math.round(fraction * PROD_FRAC_MAX)) : 0;
+}
+
+/** The 0..1 cycle fraction a `prodFrac` byte carries. */
+export function decodeProdFrac(v: number | undefined): number {
+  return v !== undefined && v > 0 ? Math.min(1, v / PROD_FRAC_MAX) : 0;
+}
+
+/**
+ * Loop 3R — `prodBay`: which slipway bay a Shipyard's current build sits in
+ * (low 3 bits, 0 = the bow bay; `shipyardBayKeel` in
+ * core/articulation/rigs/heavyIndustry.ts) and how many more builds are
+ * queued behind it (bits 3..5, capped at PROD_QUEUE_MAX), so a client can draw
+ * queued outlines in the next bays. Rides the row (#16); 0 = bay 0, none queued.
+ */
+export const PROD_QUEUE_MAX = 4;
+
+export function encodeProdBay(bay: number, queued: number): number {
+  const q = queued > 0 ? Math.min(PROD_QUEUE_MAX, Math.floor(queued)) : 0;
+  return (Math.max(0, Math.floor(bay)) & 7) | (q << 3);
+}
+
+/** Decode a `prodBay` byte into `out` (reused by the caller, #14). */
+export function decodeProdBay(v: number | undefined, out: { bay: number; queued: number }): { bay: number; queued: number } {
+  const b = v ?? 0;
+  out.bay = b & 7;
+  out.queued = (b >> 3) & 7;
+  return out;
+}
+
 /** Slot blueprint runs on the wire: 0 = no blueprint, BP_RUNS_ORIGINAL = an
  *  original (never runs out), otherwise the copy's runs left. */
 export const BP_RUNS_ORIGINAL = 65535;
@@ -74,6 +117,19 @@ export const BP_RUNS_ORIGINAL = 65535;
 export function encodeBpRuns(bp: { kind: 'bpo' | 'bpc'; runs: number | null } | undefined): number {
   if (bp === undefined) return 0;
   return bp.kind === 'bpo' ? BP_RUNS_ORIGINAL : Math.max(1, Math.min(65534, bp.runs ?? 0));
+}
+
+/** Build count (job 2E): the most outputs one `set_recipe` count asks for. */
+export const MAX_BUILD_COUNT = 99;
+
+/** Build count on the wire: 0 = no count (repeat forever), else outputs left + 1
+ *  (so 1 = done, nothing left). */
+export function encodeProdCount(left: number | undefined): number {
+  return left === undefined ? 0 : Math.max(0, Math.min(MAX_BUILD_COUNT, left)) + 1;
+}
+
+export function decodeProdCount(v: number | undefined): number | undefined {
+  return v ? v - 1 : undefined;
 }
 
 /** "Waiting for Minerals" style status line for the inspector. */

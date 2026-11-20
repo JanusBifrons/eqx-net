@@ -121,3 +121,20 @@ export const RIG_PART_BIT = 0x0010;
 export function withoutRigParts(groups: number): number {
   return (groups & ~RIG_PART_BIT) >>> 0;
 }
+
+/**
+ * Collision groups for an UNBUILT structure (a blueprint / hologram,
+ * `isConstructed` false; hologram pass-through, base loop 3F). Membership bit
+ * 5, filter NOTHING:
+ *
+ *   blueprint vs any body: (other.membership & 0x0000) = 0 ⇒ NO collision.
+ *
+ * Ships, drones, rocks and scrap pass straight through it while it fills in
+ * from the bank. Its SPACE is still reserved: placement overlap-checks the
+ * structure registry, not the physics world. On completion the room swaps the
+ * body back to `DEFAULT_COLLISION_GROUPS` (`SET_COLLISION_GROUPS`), and only
+ * once no ship overlaps it (`blueprintBody.ts`).
+ *
+ *   packed u32 = (0x0020 << 16) | 0x0000 = 0x00200000
+ */
+export const BLUEPRINT_COLLISION_GROUPS = 0x00200000;

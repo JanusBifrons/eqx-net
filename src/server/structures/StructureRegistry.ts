@@ -38,6 +38,10 @@ export interface StructureRecord {
   /** False while a blueprint; flips true when the grid finishes building it.
    *  The Capital is born `true` (pre-built). */
   isConstructed: boolean;
+  /** Hologram pass-through: its body was spawned as a blueprint and still
+   *  collides with nothing (`BLUEPRINT_COLLISION_GROUPS`). Cleared when it
+   *  turns solid (`settleBlueprintBody`). Server-only, never saved. */
+  ghostBody?: boolean;
   /** Minerals delivered so far (0..constructionCost). */
   constructionProgress: number;
   /** Total minerals to fully build. 0 for the pre-built Capital. */
@@ -176,6 +180,9 @@ export interface StructureRecord {
   prodYield?: number;
   /** Cycles completed (seeds the deterministic yield roll). */
   prodCycles?: number;
+  /** Build count (job 2E): outputs left before it stops (0 ⇒ done, state
+   *  `done`). Absent ⇒ repeat forever. Persisted; rides room state. */
+  prodCount?: number;
   /** A chunk recipe's loaded item (a rock chunk) with the ore still to pay
    *  out; set while `prodLoaded`. Persisted (it holds value). */
   prodChunk?: PackedItem;
@@ -185,6 +192,12 @@ export interface StructureRecord {
   acceptAutoUnload?: boolean;
   /** Active power — drawing full consumption this pulse (else the idle trickle). */
   drawFull?: boolean;
+  /** The owner switched it OFF: draws nothing and does no work (reads
+   *  unpowered to every subsystem). Persisted; rides as STRUCTURE_FLAG_OFF. */
+  switchedOff?: boolean;
+  /** The owner's power throttle in tenths (0..9; absent ⇒ 100%): its draw
+   *  scales with it (`structureDraw`). Persisted; rides bits of `flags`. */
+  throttle?: number;
   /** D1 — a Reactor has fuel burning (its output counts). Rides room state as
    *  the inverse NO_FUEL flag. */
   fueled?: boolean;
@@ -232,8 +245,9 @@ export class StructureRegistry {
   /** Set whenever topology changes (add/sever/construct); the grid subsystem
    *  rebuilds components + drops the route cache only when this is true. */
   topologyDirty = true;
-  /** Told of every structure added or really removed (discrete; navigation's
-   *  static obstacles). Structures never move after placement. */
+  /** Told of every structure added or really removed, and again (`added`
+   *  true) when its body turns solid (discrete; navigation's static
+   *  obstacles). Structures never move after placement. */
   private readonly changeListeners: Array<(rec: StructureRecord, added: boolean) => void> = [];
 
   /** Subscribes to adds / removes; returns the unsubscribe. */
@@ -245,6 +259,13 @@ export class StructureRegistry {
   add(rec: StructureRecord): void {
     this.byId.set(rec.id, rec);
     this.topologyDirty = true;
+    for (const fn of this.changeListeners) fn(rec, true);
+  }
+
+  /** A structure's body changed (a blueprint turned solid, hologram
+   *  pass-through): listeners hear it as a re-add. */
+  bodyChanged(rec: StructureRecord): void {
+    if (this.byId.get(rec.id) !== rec) return;
     for (const fn of this.changeListeners) fn(rec, true);
   }
 

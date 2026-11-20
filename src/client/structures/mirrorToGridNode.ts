@@ -200,7 +200,7 @@ export function structureMirrorToGridNode(
     ? effectiveStructurePowerOutput(kind.powerOutput, structureState.level)
     : 0;
   // Active power — the server's same rule (full while active, else idle trickle).
-  out.powerConsumption = structureState.built ? structureDraw(kind.powerConsumption, structureState.drawFull === true) : 0;
+  out.powerConsumption = structureState.built ? structureDraw(kind.powerConsumption, structureState.drawFull === true, structureState.switchedOff === true, structureState.throttle) : 0;
   out.isConstructed = structureState.built;
   return out;
 }

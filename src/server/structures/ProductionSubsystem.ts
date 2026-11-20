@@ -6,7 +6,8 @@
  *  1. Start a cycle by taking the recipe's inputs from its NETWORK's storage
  *     (the same-owner storage in its grid component: Capital bank, Cargo Bays,
  *     Freight Docks). All or nothing: a missing input leaves it "starved".
- *  2. Advance one step per powered pulse.
+ *  2. Advance one step per powered pulse, times the owner throttle
+ *     (`structureWorkRate`: 50% takes twice as long, 0% makes no progress).
  *  3. When the cycle completes, put the outputs into network storage. If they
  *     don't fit, it stays "blocked" until there is room.
  * Scarce inputs are shared round-robin in a fixed order, so results are
@@ -42,8 +43,11 @@ import { getStructureKind, type StructureKindId } from '../../shared-types/struc
 import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecipe } from '../../shared-types/blueprints.js';
 import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
+import { advanceProgress } from './productionProgress.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
+import { hullProduct, packedProduct } from './productIds.js';
 
 /** What one cycle of a recipe actually uses and makes. */
 export interface EffectiveRecipe {
@@ -70,6 +74,9 @@ export interface ProductionDeps {
   /** D3 — a habitation module finished a cycle: pay its owner `n` credits (taxes).
    *  The room pays a player's wallet; an NPC owner has none. */
   payCredits?(rec: StructureRecord, n: number): void;
+  /** A Shipyard finished a 'hull:<kind>': park it as a live ship owned by the
+   *  yard's owner. False = it could not; the packed crate goes to storage. */
+  launchHull?(rec: StructureRecord, kind: string, quality: number): boolean;
 }
 
 interface AppliedCache {
@@ -78,28 +85,6 @@ interface AppliedCache {
   material: number;
   output: number;
   eff: EffectiveRecipe;
-}
-
-/** `structure:<kind>` product ids, built once per kind (no per-cycle strings). */
-const PACKED_PRODUCT = new Map<StructureKindId, string>();
-function packedProduct(kind: StructureKindId): string {
-  let p = PACKED_PRODUCT.get(kind);
-  if (p === undefined) {
-    p = `structure:${kind}`;
-    PACKED_PRODUCT.set(kind, p);
-  }
-  return p;
-}
-
-/** `hull:<kind>` product ids, built once per kind. */
-const HULL_PRODUCT = new Map<string, string>();
-function hullProduct(kind: string): string {
-  let p = HULL_PRODUCT.get(kind);
-  if (p === undefined) {
-    p = `hull:${kind}`;
-    HULL_PRODUCT.set(kind, p);
-  }
-  return p;
 }
 
 /** A recipe's base effect (no blueprint), cached per recipe. */
@@ -138,6 +123,15 @@ export class ProductionSubsystem {
     if (!isProcessorKind(kind)) throw new Error(`not a processor: ${kind}`);
     const r = rec.recipe;
     return r !== undefined && RECIPES[r].processors.includes(kind) ? r : defaultRecipeFor(kind);
+  }
+
+  /** Loop 3L — how far `rec`'s loaded cycle is, 0..1 (0 when nothing is
+   *  loaded); the row's `prodFrac` (the Shipyard build animation). */
+  cycleFraction(rec: StructureRecord): number {
+    if (rec.prodLoaded !== true || !isProcessorKind(rec.kind)) return 0;
+    const id = this.recipeOf(rec);
+    const pulses = (this.effective(rec, id) ?? baseEffect(id)).cyclePulses;
+    return pulses > 0 ? Math.min(1, (rec.prodProgress ?? 0) / pulses) : 0;
   }
 
   pulse(): void {
@@ -181,17 +175,20 @@ export class ProductionSubsystem {
   /**
    * The owner picks a recipe. A cycle already loaded under the old recipe
    * hands its inputs back to the network first; if they don't fit, the change
-   * is refused (returns false) so nothing is lost.
+   * is refused (returns false) so nothing is lost. `count` (job 2E) caps the
+   * outputs (absent ⇒ repeat forever); setting it again resets it.
    */
-  setRecipe(rec: StructureRecord, recipe: RecipeId): boolean {
+  setRecipe(rec: StructureRecord, recipe: RecipeId, count?: number): boolean {
     const kind = rec.kind as StructureKindId;
     if (!isProcessorKind(kind) || !RECIPES[recipe].processors.includes(kind)) return false;
     if (this.recipeOf(rec) === recipe) {
       rec.recipe = recipe;
+      rec.prodCount = count;
       return true;
     }
     if (rec.prodLoaded === true && !this.unload(rec)) return false;
     rec.recipe = recipe;
+    rec.prodCount = count;
     return true;
   }
 
@@ -272,6 +269,7 @@ export class ProductionSubsystem {
     }
     const id = this.recipeOf(rec);
     const loaded = rec.prodLoaded === true;
+    if (haltAtBuildCount(rec, loaded, id)) return;
     // A loaded cycle keeps running on what it captured at its start, even if
     // the copy that started it is now used up.
     const eff = loaded ? this.effective(rec, id) ?? baseEffect(id) : this.effective(rec, id);
@@ -311,18 +309,17 @@ export class ProductionSubsystem {
       }
     }
     rec.prodMissing = undefined;
-    const progress = rec.prodProgress ?? 0;
-    if (progress < eff.cyclePulses) rec.prodProgress = progress + 1;
-    if ((rec.prodProgress ?? 0) >= eff.cyclePulses) {
+    if (advanceProgress(rec, eff.cyclePulses)) {
       const cycle = rec.prodCycles ?? 0;
       const extra = (rec.prodYield ?? 0) > 0 && this.roll(rec.id, cycle) < (rec.prodYield ?? 0) ? 1 : 0;
-      if (!this.put(eff.outputs, extra, rec.prodQuality ?? 0)) {
+      if (!this.put(eff.outputs, extra, rec.prodQuality ?? 0, rec)) {
         rec.prodState = PROD_STATE.blocked;
         return;
       }
       rec.prodLoaded = false;
       rec.prodProgress = 0;
       rec.prodCycles = cycle + 1;
+      spendBuildCount(rec);
       this.cyclesCompleted++;
       // D3 — taxes go to the owner's wallet, never into a hold.
       for (const o of eff.outputs) if ('credits' in o) this.d.payCredits?.(rec, o.credits);
@@ -349,9 +346,7 @@ export class ProductionSubsystem {
       rec.prodProgress = 0;
     }
     rec.prodMissing = undefined;
-    const progress = rec.prodProgress ?? 0;
-    if (progress < cyclePulses) rec.prodProgress = progress + 1;
-    if ((rec.prodProgress ?? 0) >= cyclePulses) {
+    if (advanceProgress(rec, cyclePulses)) {
       const ore = (rec.prodChunk.ore ??= {});
       const batch = this.chunkBatch(ore);
       if (!this.put(batch, 0, 0)) {
@@ -366,6 +361,7 @@ export class ProductionSubsystem {
       }
       rec.prodProgress = 0;
       rec.prodCycles = (rec.prodCycles ?? 0) + 1;
+      spendBuildCount(rec);
       this.cyclesCompleted++;
       if (!this.hasOre(ore)) {
         rec.prodChunk = undefined;
@@ -512,13 +508,13 @@ export class ProductionSubsystem {
    * structures fill holds by weight. Placement is planned before anything is
    * written, so a partial fit changes nothing. Storages are weighed lazily.
    */
-  private put(outputs: readonly RecipeOutput[], extra: number, quality: number): boolean {
+  private put(outputs: readonly RecipeOutput[], extra: number, quality: number, maker?: StructureRecord): boolean {
     if (!this.placeAll(outputs, extra, false, quality)) return false;
-    this.placeAll(outputs, extra, true, quality);
+    this.placeAll(outputs, extra, true, quality, maker);
     return true;
   }
 
-  private placeAll(outputs: readonly RecipeOutput[], extra: number, apply: boolean, quality: number): boolean {
+  private placeAll(outputs: readonly RecipeOutput[], extra: number, apply: boolean, quality: number, maker?: StructureRecord): boolean {
     const net = this.net;
     const free = this.free;
     const bank = this.bank;
@@ -530,6 +526,8 @@ export class ProductionSubsystem {
     }
     for (const o of outputs) {
       if ('credits' in o) continue; // D3 taxes: paid to the wallet, take no space
+      // A finished hull launches as a ship; the crate's room was still checked in planning (the fallback).
+      if (apply && maker !== undefined && 'hull' in o && this.d.launchHull?.(maker, o.hull, quality) === true) continue;
       if ('packed' in o || 'hull' in o) {
         // A packed structure, or a packed hull (W5 Shipyard): one discrete item.
         const product = 'packed' in o ? packedProduct(o.packed) : hullProduct(o.hull);
