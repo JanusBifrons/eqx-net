@@ -89,7 +89,8 @@ export function buildLabGridLines(scene: Scene, lineL: Container, nubL?: Contain
 /** A lab structure row for `?live=` entry `v` (Stage 4 F1 step C): a
  *  number is a power store's charge fraction, `dry` a reactor with no fuel,
  *  `hold` a territory lock holding its sector, `m<N>` a mine layer with N
- *  mines out, `off` a built row with no power,
+ *  mines out, `f<N>` a storage hold N percent full (0-100), `off` a built
+ *  row with no power,
  *  anything else (`fuel`, empty) the plain built row. */
 export function labLiveRow(kind: string, v: string | undefined): StructureRenderState {
   const row = { built: true, powered: true, buildPct: 1, deconstructPct: 0, connTo: [] } as unknown as StructureRenderState;
@@ -102,6 +103,7 @@ export function labLiveRow(kind: string, v: string | undefined): StructureRender
   if (v === 'hold') row.lockHolding = true;
   if (v === 'off') row.powered = false;
   if (v !== undefined && /^m[0-9]$/.test(v)) row.minesOut = Number(v.slice(1));
+  if (v !== undefined && /^f[0-9]{1,3}$/.test(v)) row.fillPct = Math.min(100, Number(v.slice(1)));
   return row;
 }
 

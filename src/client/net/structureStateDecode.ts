@@ -112,6 +112,8 @@ export function decodeStructureState(
   }
   const minesOut = v.minesOut ?? D.minesOut;
   out.minesOut = minesOut !== 0 ? minesOut : undefined;
+  const fillPct = v.fillPct ?? D.fillPct;
+  out.fillPct = fillPct !== 0 ? fillPct : undefined;
   if (!door) decodeRigClip(v, out, rigKind);
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
