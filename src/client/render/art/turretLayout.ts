@@ -106,9 +106,9 @@ export function structureTurrets(kindId: string): TurretPlace[] {
       const cap = R * 0.4;
       return { mount: m, family, px: m.localX, py: -m.localY, len: 0, wid: cap, cap, ring: cap * 1.3, chin: false, muzzle };
     }
-    // The housing fills the base's well (TURRET_WELL 0.5 R); the barrel reaches the muzzle.
-    const cap = R * 0.48;
-    return { mount: m, family, px: m.localX, py: -m.localY, len: muzzle, wid: R * 0.16, cap, ring: cap * 1.3, chin: false, muzzle };
+    // The housing covers the base's well and inner collar; the barrel reaches the muzzle.
+    const cap = R * 0.66;
+    return { mount: m, family, px: m.localX, py: -m.localY, len: muzzle, wid: R * 0.19, cap, ring: cap * 1.3, chin: false, muzzle };
   });
 }
 
