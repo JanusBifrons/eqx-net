@@ -32,9 +32,9 @@ export const REFINERY_SLITS: ReadonlyArray<readonly [number, number, number, num
 /** Unlit work-glow glass: a dark, faintly amber pane. */
 export const SLIT_DEAD = 0x2a1c12;
 
-/** Where the starved refinery's red no-supply mark sits: low on the column,
- *  below the lower slit (x, y, half height, stroke width; px). */
-export const REFINERY_MARK = [0, 96, 13, 3] as const;
+/** Where the starved refinery's red no-supply mark sits: on the open column face,
+ *  between the scaffold and the upper slit, clear of the trusses (x, y, half height, stroke width; px). */
+export const REFINERY_MARK = [0, -38, 13, 3] as const;
 
 /** Refinery: a tall chamfered cracking column on the axis, two octagonal
  *  tank bunkers mirrored either side and strutted in, pipe-rack trusses
