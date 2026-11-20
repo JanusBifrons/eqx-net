@@ -1,6 +1,6 @@
 /**
  * Owner-only structure settings — a processor's recipe (P2b), who a gate
- * opens for, switching a structure On / Off, and refining salvage into a Capital's mineral bank (P1a-2).
+ * opens for, switching a structure On / Off (and its power throttle), and refining salvage into a Capital's mineral bank (P1a-2).
  * Moved verbatim out of `SectorRoom.onCreate`; the room hands in live
  * accessors so every handler reads the same state it did there.
  */
@@ -25,7 +25,7 @@ export interface StructureSettingMessageHost extends ParsedMessageHost {
   production(): Pick<ProductionSubsystem, 'setRecipe'>;
   storage(): Pick<StorageService, 'flushDirty' | 'refine'>;
   rebuildStructuresSlice(): void;
-  structureGrid(): Pick<StructureGridSubsystem, 'setSwitchedOn'>;
+  structureGrid(): Pick<StructureGridSubsystem, 'setSwitchedOn' | 'setThrottle'>;
 }
 
 export function registerStructureSettingMessages(h: StructureSettingMessageHost): RoomFeature {
@@ -58,6 +58,7 @@ export function registerStructureSettingMessages(h: StructureSettingMessageHost)
 
   // ── Base loop — the owner switches a structure On / Off (owner-gated) ──
   // Feeds the grid's one active-power switch; a no-Off kind is a no-op.
+  // An optional `throttle` (tenths) scales the same kind's draw.
   parsedMessage(h, 'set_structure_power', SetStructurePowerSchema, (msg, client) => {
     const owner = h.sessionToPlayer().get(client.sessionId);
     if (!owner) return;
@@ -65,7 +66,9 @@ export function registerStructureSettingMessages(h: StructureSettingMessageHost)
     if (!swarmRec) return;
     const rec = h.structureRegistry.get(swarmRec.id);
     if (!rec || rec.owner !== owner) return;
-    if (h.structureGrid().setSwitchedOn(rec, msg.on)) h.rebuildStructuresSlice();
+    const switched = h.structureGrid().setSwitchedOn(rec, msg.on);
+    const throttled = msg.throttle !== undefined && h.structureGrid().setThrottle(rec, msg.throttle);
+    if (switched || throttled) h.rebuildStructuresSlice();
   });
 
   // ── Living World P1a-2 — refine salvage into a Capital's mineral bank ──

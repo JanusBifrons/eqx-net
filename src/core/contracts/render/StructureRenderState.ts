@@ -91,6 +91,8 @@ export interface StructureRenderState {
   drawFull?: boolean;
   /** The owner switched it Off (no draw, no work). */
   switchedOff?: boolean;
+  /** The owner's power throttle in tenths (0..9); absent ⇒ 100%. */
+  throttle?: number;
   /** C2 — someone is breaking into its cargo right now. */
   breach?: boolean;
   /** F2 — a built Territory Lock holding its sector for its owner's side

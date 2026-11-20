@@ -41,6 +41,22 @@ export const STRUCTURE_FLAG_BREACH = 128;
 export const STRUCTURE_FLAG_LOCK_HOLDING = 256;
 /** The owner switched this structure Off (no draw, no work). */
 export const STRUCTURE_FLAG_OFF = 512;
+/** The owner's power throttle rides bits 10-13 of `flags` as the tenths
+ *  BELOW full (0 = 100%, the default, so an unthrottled row sends no bits;
+ *  10 = 0%). No new schema field. Both sides use these helpers (#15). */
+const STRUCTURE_THROTTLE_SHIFT = 10;
+const STRUCTURE_THROTTLE_MASK = 0xf;
+
+/** The `flags` bits for a throttle of `tenths` (0..10; out of range clamps). */
+export function encodeStructureThrottleFlags(tenths: number): number {
+  const t = Math.max(0, Math.min(10, Math.round(tenths)));
+  return (10 - t) << STRUCTURE_THROTTLE_SHIFT;
+}
+
+/** The throttle (tenths, 0..10) a `flags` value carries. */
+export function decodeStructureThrottleFlags(flags: number): number {
+  return Math.max(0, 10 - ((flags >> STRUCTURE_THROTTLE_SHIFT) & STRUCTURE_THROTTLE_MASK));
+}
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;

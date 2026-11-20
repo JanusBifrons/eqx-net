@@ -24,7 +24,7 @@
 import { ASTEROID_YIELD, yieldHasGoods, yieldInto, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
-import { redrawStructure, switchStructure } from './structurePowerSwitch.js';
+import { redrawStructure, switchStructure, throttleStructure } from './structurePowerSwitch.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   canUpgradeStructure,
@@ -705,6 +705,8 @@ export class StructureGridSubsystem {
 
   /** The owner On/Off switch (`structurePowerSwitch.ts`); false if nothing changed. */
   setSwitchedOn(rec: StructureRecord, on: boolean): boolean { return switchStructure(rec, on, this.adjustDraw); }
+  /** The owner's power throttle in tenths (`structurePowerSwitch.ts`); false if nothing changed. */
+  setThrottle(rec: StructureRecord, tenths: number): boolean { return throttleStructure(rec, tenths, this.adjustDraw); }
   private readonly adjustDraw = (id: string, delta: number): void => this.grid.adjustDraw(id, delta);
 
   /** Clear a Miner's target + cached pose (unpowered / no in-range rock) so the
