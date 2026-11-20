@@ -1,4 +1,5 @@
 import type { FleetPickResultWire } from './IFleetView.js';
+import type { PlacementRejection } from '../../structures/placementRules.js';
 
 /**
  * Renderer → main-thread feedback channel.
@@ -195,6 +196,14 @@ export interface RendererFeedback {
    * ghost (`placementLinkHint.ts`). `0` with no preview.
    */
   placementPreviewTooShortCount: number;
+  /**
+   * Why the placement ghost could NOT be placed where it is (a structure, a
+   * landing pad or an asteroid in the way), or `null` when it could (or with
+   * no live preview). The same `placementRejection` the server runs on
+   * `place_structure`, so the ghost turns red / green before the click and the
+   * main thread shows the server's refusal text under it.
+   */
+  placementPreviewRejection: PlacementRejection | null;
   /**
    * Click-to-inspect selection (structures follow-up Item B2). The renderer
    * owns the selected entity (set on a gameplay tap that resolves to an

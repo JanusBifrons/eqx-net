@@ -5,8 +5,8 @@
  *
  * The user's ruling: most players buy packed structures from NPC traders
  * rather than make them; placing one costs nothing but time.
- *  1. without a packed item, placing a non-starter kind is refused with a
- *     notice that says how to get one;
+ *  1. without its packed crate, placing a Capital (the only kind that needs
+ *     one) is refused with a notice that says how to get one;
  *  2. a packed-structure offer is on the trader board, priced from its pack
  *     recipe; buying it is a one-off deal (recurring is refused);
  *  3. the hauler delivers it into the Capital; the wallet pays at dock;
@@ -83,12 +83,13 @@ describe('SectorRoom integration — buying + placing packed structures (economy
     const kind = offer!.product!.slice('structure:'.length) as StructureKindId;
     expect(offer!.unitPrice).toBe(quotePacked(packBillValue(kind), 0));
 
-    // 1. Without one: refused, and told why.
+    // 1. Only the Capital needs its packed crate: without one it is refused,
+    // and told why (any other kind with no crate builds from the bank).
     const notices: string[] = [];
     cr.onMessage('notice', (m: { text: string }) => notices.push(m.text));
     const count = (): number => [...internal.structureRegistry.all()].length;
     const before = count();
-    cr.send('place_structure', { type: 'place_structure', kind, x: 0, y: -1600 });
+    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: -1600 });
     await until(() => notices.some((t) => t.includes('Packed')), 3000, 'refusal notice');
     expect(count()).toBe(before);
     expect(notices.join(' ')).not.toContain('structure:');
