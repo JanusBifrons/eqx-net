@@ -71,6 +71,16 @@ import type {
   PersistOp,
 } from '../../../src/core/contracts/IPersistenceSink.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
+import type { Hold } from '../../../src/shared-types/goods.js';
+
+/** A Capital is placed only from its packed crate (in the hold or storage).
+ *  Join `initialCargo` that carries `n` crates (one per Capital the pilot
+ *  places) on top of `cargo`, the testMode hold seed a real pilot's starter
+ *  grant stands in for. */
+export function withCapitalCrates(n = 1, cargo: Hold = { goods: {}, blueprints: [] }): Hold {
+  const crates = Array.from({ length: n }, () => ({ product: 'structure:capital', quality: 50 }));
+  return { ...cargo, packed: [...(cargo.packed ?? []), ...crates] };
+}
 
 /** No-op persistence sink. Captures every op into an array. */
 export class CaptureSink implements IPersistenceSink {
