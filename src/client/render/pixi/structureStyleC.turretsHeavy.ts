@@ -69,11 +69,12 @@ function missileTurret(c: StyleCtx): void {
       poly(c, strip([x0 + 0.015 * R, dy * R], [x0 + w - 0.015 * R, dy * R], 0.025 * R), STEEL, 'metal', 14, 0.4);
     }
   }
-  // Magazine hatch on +y: an outlined plate, two lift lugs, a hazard edge.
-  poly(c, chamferBox(-0.23 * R, 0.68 * R, 0.46 * R, 0.13 * R, 0.03 * R), SOOT, 'metal', 22, 0.6);
-  poly(c, chamferBox(-0.2 * R, 0.7 * R, 0.4 * R, 0.09 * R, 0.02 * R), SLAB_LIGHT, 'metal', 24, 0.8);
-  for (const s of [-1, 1]) poly(c, ngon(s * 0.12 * R, 0.745 * R, 0.02 * R, 6), RIVET, 'metal', 26, 0.5);
-  poly(c, chamferBox(-0.22 * R, 0.81 * R, 0.44 * R, 0.035 * R, 0.01 * R), HAZARD, 'hazard', 12, 0.5);
+  // Magazine hatch on +y: an outlined plate, two lift lugs, a hazard edge
+  // (kept inside 0.78 R, clear of the +y cable socket stud).
+  poly(c, chamferBox(-0.23 * R, 0.65 * R, 0.46 * R, 0.11 * R, 0.03 * R), SOOT, 'metal', 22, 0.6);
+  poly(c, chamferBox(-0.2 * R, 0.665 * R, 0.4 * R, 0.075 * R, 0.02 * R), SLAB_LIGHT, 'metal', 24, 0.8);
+  for (const s of [-1, 1]) poly(c, ngon(s * 0.12 * R, 0.7 * R, 0.02 * R, 6), RIVET, 'metal', 26, 0.5);
+  poly(c, chamferBox(-0.22 * R, 0.74 * R, 0.44 * R, 0.03 * R, 0.01 * R), HAZARD, 'hazard', 12, 0.5);
   // Rivet rows along the skirt's slanted faces on −y.
   for (const s of [-1, 1]) rivets(c, [s * 0.8 * R, -0.22 * R], [s * 0.6 * R, -0.58 * R], 0.1 * R, 0.02 * R);
   for (const s of [-1, 1]) lamp(c, s * 0.55 * R, -0.62 * R, 0.035 * R, LAMP_WHITE);

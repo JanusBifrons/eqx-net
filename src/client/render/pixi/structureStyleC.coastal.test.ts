@@ -104,7 +104,7 @@ describe('coastal: style C gun bases on the shared pad', () => {
       turret: ['deede322ba48c4c861bf64f0989307d47a9f1c51', 'eb388ab718c44d98ae66b419e8022282a2c881f1'],
       laser_bolt_turret: ['44a0d9a9546bd3067f4f0e18c118c75ff4e9fa17', '525dfce1cedb70a558eef34ed742fafefd7ba348'],
       autocannon_turret: ['027b7d06086609938081f98229fb31b99fe2fd7e', 'abce5ac9ac897e23faf35551995457ec9d1ff0aa'],
-      missile_turret: ['8d63370d1534188164b598e1cb8751b8cdd2233f', 'f168f3718c8725391d5f888510f030887edbd65c'],
+      missile_turret: ['c5618660e03d1bd3ef61beb6aa423f5bd72a86bf', '7c5b3d27a0b5517012def2afe9a5da994cde456b'],
       mine_layer: ['154897674140de74dbfcbec80cda275d2d38e905', '75730d41c093ec0e17d39c72814242a604c5a569'],
     };
     for (const [id, [on, off]] of Object.entries(before)) {
