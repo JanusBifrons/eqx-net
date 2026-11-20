@@ -4,7 +4,7 @@
  * place.
  */
 import { describe, expect, it } from 'vitest';
-import { encodeConnSock, type StructureStateView } from '../../shared-types/structureStateWire.js';
+import { STRUCTURE_FLAG_BUILT, STRUCTURE_FLAG_LOCK_HOLDING, encodeConnSock, type StructureStateView } from '../../shared-types/structureStateWire.js';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 
 const OWNERS = { ids: ['p1'], names: ['Ada'] };
@@ -40,5 +40,16 @@ describe('decodeStructureState: connSock (0d slice 6)', () => {
     expect(out.connSockOther).toBe(other);
     expect(out.connSockSelf).toEqual([3]);
     expect(out.connSockOther).toEqual([4]);
+  });
+});
+
+describe('decodeStructureState: lockHolding (F2)', () => {
+  it('reads STRUCTURE_FLAG_LOCK_HOLDING (bit 8) and clears it again in place', () => {
+    const out = emptyStructureRow();
+    decodeStructureState({ flags: STRUCTURE_FLAG_BUILT | STRUCTURE_FLAG_LOCK_HOLDING, connTo: list([]) }, OWNERS, out);
+    expect(out.lockHolding).toBe(true);
+    expect(out.built).toBe(true);
+    decodeStructureState({ flags: STRUCTURE_FLAG_BUILT, connTo: list([]) }, OWNERS, out);
+    expect(out.lockHolding).toBeUndefined();
   });
 });

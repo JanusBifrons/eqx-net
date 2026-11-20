@@ -17,6 +17,7 @@ import {
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_FLAG_BREACH,
+  STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_DEFAULTS as D,
   STRUCTURE_RIG_CLIP_TARGET,
   CONN_SOCK_UNKNOWN,
@@ -76,6 +77,7 @@ export function decodeStructureState(
   out.noFuel = (flags & STRUCTURE_FLAG_NO_FUEL) !== 0 ? true : undefined;
   out.drawFull = (flags & STRUCTURE_FLAG_DRAW_FULL) !== 0 ? true : undefined;
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
+  out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
   const gateOpen = v.gateOpen ?? D.gateOpen;
   out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
   const gateAccess = v.gateAccess ?? D.gateAccess;

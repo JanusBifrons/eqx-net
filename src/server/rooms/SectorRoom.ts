@@ -255,7 +255,7 @@ import { StorageService } from '../cargo/StorageService.js';
 import { fittedModuleIds, isOperationalStorage, structureUid } from '../cargo/storageHolds.js';
 import { addPacked, cloneHold, emptyHold, holdWeight, isHoldEmpty, mergeInto, packedCount } from '../../core/cargo/hold.js';
 import { liveSectorHolder } from '../livingworld/RobotTerritory.js';
-import { territoryLockRefusal } from '../structures/territoryLockRules.js';
+import { sectorHeldBy, territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_IDS, type Hold } from '../../shared-types/goods.js';
 import { DEATH_POD_PUSH, deathHullLoot } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
@@ -769,6 +769,7 @@ export class SectorRoom extends Room<SectorState> {
     swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, breakIns: this.breakIns,
     structureGrid: () => this.structureGrid, shieldWalls: () => this.shieldWalls, gates: () => this.gates,
     teleporters: () => this.teleporters, internStructureOwner: (o) => this.internStructureOwner(o),
+    sectorHeldBy: () => sectorHeldBy(this.sectorKey ?? '', liveSectorHolder(this.sectorKey ?? '')),
     hostileActs: () => this.hostileActs, patrols: this.patrols, gateGuard: this.gateGuard, production: () => this.production,
     researchLabs: () => this.researchLabs, storage: () => this.storage, mineField: () => this.mineField,
     turretTargeting: () => this.turretTargeting, relationCtx: () => this.relationCtx,
