@@ -73,6 +73,11 @@ export interface SectorSnapshotStructure {
   rot?: number;
   /** Gates: who the gate opens for (GATE_ACCESS_IDS index). Absent ⇒ default. */
   gateAccess?: number;
+  /** Gates (door-power slice 12): a door's position P (1..DOOR_POS_MAX) at
+   *  save time and the clip it belongs to ('door', or the airlock end
+   *  'door-a' / 'door-b'). Absent ⇒ every door shut. */
+  doorPos?: number;
+  doorClip?: string;
   /** Production (P2b): the owner's recipe (a RecipeId) and a cycle in progress
    *  (its inputs are already taken). Absent ⇒ default recipe, idle. */
   recipe?: string;

@@ -23,10 +23,12 @@ import {
   newAirlockState,
   newGateState,
   newOccupancy,
+  savedDoorOf,
   stepAirlock,
   stepGate,
   type AirlockState,
   type GateState,
+  type SavedDoor,
 } from '../../core/structures/gateLogic.js';
 import { gateAccessFromIndex, gateAdmits, type GateRelation } from '../../shared-types/gateAccess.js';
 import type { StructureRegistry } from './StructureRegistry.js';
@@ -54,6 +56,8 @@ export class GateController {
   private readonly ships: GateShipBuffer = { count: 0, playerIds: [], xs: [], ys: [], radii: [] };
   private readonly occ = newOccupancy();
   private readonly local = { x: 0, y: 0 };
+  /** The tick of the last update, for `savedDoor` (persistence). */
+  private lastTick = 0;
 
   constructor(private readonly hooks: GateControllerHooks) {}
 
@@ -66,6 +70,7 @@ export class GateController {
     // slice 8 passes the room's tick and the grid's supply level.
     const tick = Math.floor((nowMs * DOOR_TRAVEL_TICKS) / (DOOR_TRAVEL_S * 1000));
     const level = DOOR_POWER_LEVELS;
+    this.lastTick = tick;
     for (const rec of reg.all()) {
       const type = gateTypeOf(rec.kind);
       if (type === null) continue;
@@ -91,13 +96,13 @@ export class GateController {
       }
       if (type === 'gate') {
         let g = this.gates.get(rec.id);
-        if (!g) { g = newGateState(nowMs); this.gates.set(rec.id, g); }
+        if (!g) { g = newGateState(nowMs, takeDoorRestore(rec)); this.gates.set(rec.id, g); }
         const before = g.open;
         stepGate(g, o, nowMs, tick, level);
         if (g.open !== before) changed = true;
       } else {
         let a = this.airlocks.get(rec.id);
-        if (!a) { a = newAirlockState(); this.airlocks.set(rec.id, a); }
+        if (!a) { a = newAirlockState(takeDoorRestore(rec)); this.airlocks.set(rec.id, a); }
         const before = a.phase;
         stepAirlock(a, o, nowMs, tick, level);
         if (a.phase !== before) changed = true;
@@ -113,4 +118,18 @@ export class GateController {
   maskFor(id: string): number {
     return gateOpenMask(this.gates.get(id), this.airlocks.get(id));
   }
+
+  /** Door-power slice 12: the door position to save with this structure at
+   *  the last tick (undefined = every door shut, or not a gate). */
+  savedDoor(id: string): SavedDoor | undefined {
+    return savedDoorOf(this.gates.get(id), this.airlocks.get(id), this.lastTick);
+  }
+}
+
+/** A restored save's door position, consumed once when the gate's state is
+ *  first built (the restore hook; missing = shut). */
+function takeDoorRestore(rec: { doorRestore?: SavedDoor }): SavedDoor | undefined {
+  const saved = rec.doorRestore;
+  if (saved !== undefined) delete rec.doorRestore;
+  return saved;
 }
