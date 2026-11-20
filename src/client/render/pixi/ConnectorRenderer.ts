@@ -250,7 +250,7 @@ export class ConnectorRenderer {
   // All reused in place; the preview pass runs ONLY while a ghost is up, so
   // these stay empty/untouched during normal play.
   /** Reused obstacle array (asteroids), refilled in place each preview frame. */
-  private readonly _previewObstacles: GridObstacle[] = [];
+  readonly _previewObstacles: GridObstacle[] = [];
   /** Each rock's convex parts for the preview's line of sight (C5c, the
    *  server's shape); its `fieldRocks` is the cut-field layer (PixiRenderer). */
   readonly rockShapes = new RockObstacleShapes();
