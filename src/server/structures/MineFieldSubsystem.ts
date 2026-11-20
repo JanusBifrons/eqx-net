@@ -55,6 +55,10 @@ export interface MineFieldDeps {
   onRemoved(mine: MineRecord): void;
   /** Active power: full draw while laying, the idle trickle once full. */
   setActive?(rec: StructureRecord, active: boolean): void;
+  /** Every tick, per Mine Layer: how many of its mines are out in space now
+   *  (after this tick's detonations, removals and lay). The room writes it
+   *  to the layer's row on change only (`StructureState.minesOut`). */
+  setMinesOut?(rec: StructureRecord, n: number): void;
 }
 
 /** Golden angle: successive mines of one layer spread evenly round the ring. */
@@ -100,11 +104,15 @@ export class MineFieldSubsystem {
       const have = perLayer.get(rec.id) ?? 0;
       const working = rec.isConstructed && have < MINES_PER_LAYER && this.d.powered(rec.id);
       this.d.setActive?.(rec, working);
-      if (!working) continue;
-      const due = this.nextLayAt.get(rec.id) ?? 0;
-      if (nowMs < due) continue;
-      this.nextLayAt.set(rec.id, nowMs + MINE_LAY_INTERVAL_MS);
-      this.lay(rec, nowMs);
+      let out = have;
+      if (working) {
+        const due = this.nextLayAt.get(rec.id) ?? 0;
+        if (nowMs >= due) {
+          this.nextLayAt.set(rec.id, nowMs + MINE_LAY_INTERVAL_MS);
+          if (this.lay(rec, nowMs)) out++;
+        }
+      }
+      this.d.setMinesOut?.(rec, out);
     }
     // 3. Forget per-layer timers for layers that are gone.
     if (this.nextLayAt.size > 0) {
@@ -117,8 +125,9 @@ export class MineFieldSubsystem {
     }
   }
 
-  /** Lay one mine at the next clear ring spot, if the magazine allows. */
-  private lay(rec: StructureRecord, nowMs: number): void {
+  /** Lay one mine at the next clear ring spot, if the magazine allows; true
+   *  when one was laid. */
+  private lay(rec: StructureRecord, nowMs: number): boolean {
     let n = this.laidCount.get(rec.id) ?? 0;
     for (let k = 0; k < LAY_TRIES; k++, n++) {
       const a = n * GOLDEN;
@@ -127,14 +136,15 @@ export class MineFieldSubsystem {
       const x = rec.x + Math.cos(a) * r;
       const y = rec.y + Math.sin(a) * r;
       if (!this.d.isClear(x, y)) continue;
-      if (!this.spendMine(rec)) return;
+      if (!this.spendMine(rec)) return false;
       this.laidCount.set(rec.id, n + 1);
       const mine: MineRecord = { id: `mine-${this.counter++}`, layerId: rec.id, owner: rec.owner, x, y, armedAtMs: nowMs + MINE_ARM_MS };
       this.mines.set(mine.id, mine);
       this.d.onLaid(mine);
-      return;
+      return true;
     }
     this.laidCount.set(rec.id, n);
+    return false;
   }
 
   /** The turret magazine rule: one munition reloads several mines. */

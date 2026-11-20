@@ -7,9 +7,10 @@ import type { StructureRegistry } from '../../structures/StructureRegistry.js';
 import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import { MineFieldSubsystem, type MineFieldDeps, type MineRecord, type MineTarget } from '../../structures/MineFieldSubsystem.js';
 import type { MapSchema } from '@colyseus/schema';
-import { MineState } from '../schema/SectorState.js';
+import { MineState, type StructureState } from '../schema/SectorState.js';
 import type { TurretTargeting } from './turretTargeting.js';
 import { MINE_BLAST_RADIUS, MINE_CLEARANCE, MINE_DAMAGE, type MineDetonated } from '../../../shared-types/mines.js';
+import { STRUCTURE_DEFAULTS } from '../../../shared-types/structureStateWire.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../../shared-types/sectorBounds.js';
 import { slotBase, SLOT_X_OFF, SLOT_Y_OFF } from '../../../shared-types/sabLayout.js';
 
@@ -64,6 +65,8 @@ export interface MineFieldBuildHost extends Required<Pick<MineFieldDeps, 'powere
   turretTargeting: Pick<TurretTargeting, 'findNearestTurretTarget'>;
   /** The synced `SectorState.mines` map (laid mines the clients draw). */
   mines(): MapSchema<MineState>;
+  /** The synced `SectorState.structures` map (rows keyed by `rec.stateKey`). */
+  structures(): MapSchema<StructureState>;
   internStructureOwner(owner: string): number;
 }
 
@@ -99,5 +102,11 @@ export function buildMineField(h: MineFieldBuildHost): MineFieldSubsystem {
     },
     onRemoved: (mine) => { h.mines().delete(mine.id); },
     setActive: (rec, active) => h.setActive(rec, active),
+    // The layer's row lights one rack lamp per mine out. Every tick, so it
+    // patches only on change; a row not synced yet catches up next tick.
+    setMinesOut: (rec, n) => {
+      const st = rec.stateKey !== undefined ? h.structures().get(rec.stateKey) : undefined;
+      if (st !== undefined && (st.minesOut ?? STRUCTURE_DEFAULTS.minesOut) !== n) st.minesOut = n;
+    },
   });
 }

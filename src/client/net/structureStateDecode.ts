@@ -110,6 +110,8 @@ export function decodeStructureState(
     t.padWeight = v.padWeight ?? D.padWeight;
     t.toll = v.tpToll ?? D.tpToll;
   }
+  const minesOut = v.minesOut ?? D.minesOut;
+  out.minesOut = minesOut !== 0 ? minesOut : undefined;
   if (!door) decodeRigClip(v, out, rigKind);
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';

@@ -64,6 +64,9 @@ export interface StructureRenderState {
   storedPower?: number;
   /** Batteries plan — the Battery's stored-power capacity (readout denominator). */
   storedPowerMax?: number;
+  /** Mine Layers — how many of the layer's mines are out in space (one lit
+   *  rack lamp each); undefined ⇒ none. */
+  minesOut?: number;
   /** WS-9 (R2.12) — minerals stored at this structure (the Capital's bank). Drives
    *  the world-space capital resource readout. Undefined ⇒ not surfaced. */
   minerals?: number;

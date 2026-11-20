@@ -136,6 +136,7 @@ export const STRUCTURE_DEFAULTS = {
   rigTx: 0,
   rigTy: 0,
   rigHold: 0,
+  minesOut: 0,
 } as const;
 
 /**
@@ -336,6 +337,8 @@ export interface StructureStateView {
   /** Structure-restyle 3e — a holding clip's length and cargo direction
    *  (`encodeRigHold`); 0 = none. */
   rigHold?: number;
+  /** Mine Layers: mines this layer has out in space (0..MINES_PER_LAYER). */
+  minesOut?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
   /** 0d slice 6 — per `connTo` entry, the packed socket pair
    *  (`encodeConnSock`). Optional so a row without it reads as no sockets. */

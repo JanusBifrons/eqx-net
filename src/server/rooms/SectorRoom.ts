@@ -2222,7 +2222,7 @@ export class SectorRoom extends Room<SectorState> {
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
       takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
-      mines: () => (this.state as SectorState).mines, internStructureOwner: (o) => this.internStructureOwner(o),
+      mines: () => (this.state as SectorState).mines, structures: () => (this.state as SectorState).structures, internStructureOwner: (o) => this.internStructureOwner(o),
     });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
     // Forms the blocking span between paired pylons + drives its physics

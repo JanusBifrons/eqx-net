@@ -21,6 +21,7 @@ import * as heavy from './structureStyleC.turretsHeavy.js';
 import { rigPartIndex } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, SANDBOX_DOOR_TURRET_DEF } from '../../../core/articulation/rigCatalogue.js';
 import { rigSlotContext, type RigDrawHookTable } from './structureRigLook.js';
+import type { BodyStatusHookTable } from './structureSocketNubs.js';
 import { turretHatchPartContext } from './structureStyleC.turrets.hatch.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
@@ -103,6 +104,10 @@ export const kinds: StyleDrawerTable = {
   autocannon_turret: autocannonTurret,
   ...heavy.kinds,
 };
+
+/** This family's live body state (`BodyStatusHook`): the heavy file's
+ *  mine-layer lamps. */
+export const status: BodyStatusHookTable = { ...heavy.status };
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
  *  structureRigLook.ts). The pop-up door turret: its gun rides the riser

@@ -12,10 +12,14 @@
  * only the launch tube's dark mouth.
  */
 import {
-  HAZARD, LAMP_WHITE, RIVET, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, deck, glow, lamp, ngon, poly,
+  HAZARD, LAMP_AMBER, LAMP_WHITE, RIVET, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, deck, glow, lamp, ngon, poly,
   rivets, stencil, strip, type Pt, type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
 import { TRIM_DEAD, gunPad } from './structureStyleC.turrets.pad.js';
+import type { GraphicsContext } from 'pixi.js';
+import type { BodyStatusHook, BodyStatusHookTable } from './structureSocketNubs.js';
+import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
+import { getStructureKind, type StructureKindId } from '../../../shared-types/structureKinds.js';
 
 /** Bump with any change to these drawings; it rides the turrets family's
  *  version (structureStyleC.turrets.ts), so their bake keys move on. */
@@ -33,8 +37,9 @@ export const RACKS = 6;
 
 /** One lamp socket per mine rack, at its outer end: local coords × R (R =
  *  half the short side, 110 px for the 220 × 220 mine layer; +y is down, as
- *  in the drawers). Drawn as dead glass for now; a later slice lights one per
- *  deployed mine from the live mine count. Rack k's socket is entry k. */
+ *  in the drawers). Baked as dead glass; the live overlay (`status`) lights
+ *  one per mine out from the layer's row (`minesOut`). Rack k's socket is
+ *  entry k. */
 export const MINE_LAMP_R = 0.785;
 export const MINE_LAMP_SOCKETS: readonly Pt[] = Array.from({ length: RACKS }, (_, k) => {
   const a = (k * 2 * Math.PI) / RACKS;
@@ -85,8 +90,8 @@ function missileTurret(c: StyleCtx): void {
 /** Mine layer (`mine_layer`, 220 × 220): a squat armoured launcher, not a
  *  gun. The family pad round a wide launch tube (dark mouth, steel rim), and
  *  six mine racks on a ring round it, each a cradle holding a stowed mine,
- *  railed in from the collar, with a mine lamp socket (dead glass until a
- *  later slice lights it per deployed mine, `MINE_LAMP_SOCKETS`). */
+ *  railed in from the collar, with a mine lamp socket (baked dead glass, lit
+ *  per mine out by the live overlay, `MINE_LAMP_SOCKETS`). */
 function mineLayer(c: StyleCtx): void {
   const R = Math.min(c.W, c.H) / 2;
   deck(c);
@@ -113,6 +118,39 @@ function mineLayer(c: StyleCtx): void {
   stencil(c, '22', 0.5 * R, -0.9 * R, 0.12 * R);
   if (c.livery) c.sigils.push({ x: -0.72 * R, y: 0.72 * R, r: 0.09 * R });
 }
+
+// ── Live mine lamps (BodyStatusHook) ────────────────────────────────────────
+
+/** A lit lamp: the warm work-lamp amber (`LAMP_AMBER`) with a hot white core
+ *  (`LAMP_WHITE`) and a soft halo round the socket. */
+const _fill = { color: 0, alpha: 0 };
+
+/** How many rack lamps are lit: the layer's mines out, on a built layer. */
+function mineLampCode(_kind: StructureKindId, st: StructureRenderState | undefined): number {
+  if (st === undefined || !st.built) return 0;
+  return Math.min(RACKS, Math.max(0, st.minesOut ?? 0));
+}
+
+/** Light the first `code` lamp sockets (rack 0 first). */
+function drawMineLamps(g: GraphicsContext, code: number, kind: StructureKindId): void {
+  const fp = getStructureKind(kind).footprint;
+  const R = Math.min(fp.w, fp.h) / 2;
+  for (let k = 0; k < code && k < RACKS; k++) {
+    const [lx, ly] = MINE_LAMP_SOCKETS[k]!;
+    const x = lx * R, y = ly * R;
+    g.circle(x, y, 0.06 * R); _fill.color = LAMP_AMBER; _fill.alpha = 0.22; g.fill(_fill);
+    g.circle(x, y, 0.03 * R); _fill.color = LAMP_AMBER; _fill.alpha = 0.95; g.fill(_fill);
+    g.circle(x, y, 0.013 * R); _fill.color = LAMP_WHITE; _fill.alpha = 0.9; g.fill(_fill);
+  }
+}
+
+const mineLampStatus: BodyStatusHook = { code: mineLampCode, draw: drawMineLamps };
+
+/** The heavy defences' live body state (`BodyStatusHook`, drawn on the
+ *  socket-nub overlay, structureSocketNubs.ts): a lamp per mine out. */
+export const status: BodyStatusHookTable = {
+  mine_layer: mineLampStatus,
+};
 
 /** The heavy defences' style C drawers. */
 export const kinds: StyleDrawerTable = {

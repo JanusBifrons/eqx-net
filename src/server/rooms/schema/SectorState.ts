@@ -209,6 +209,9 @@ export class StructureState extends Schema {
    *  (shared-types/structureStateWire.ts). A collection, so it is initialised
    *  like `connTo`; written in the same change check (`writeConnToRow`). */
   @type(['uint16']) connSock = new ArraySchema<number>();
+  /** Mine Layers: how many of this layer's mines are out in space
+   *  (0..MINES_PER_LAYER); the client lights one rack lamp per mine. */
+  @type('uint8') minesOut?: number;
 }
 
 /** A proximity mine (Mine Layer). Static, so room state carries it: the join
