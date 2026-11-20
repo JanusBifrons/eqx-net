@@ -180,6 +180,9 @@ export interface StructureRecord {
   prodYield?: number;
   /** Cycles completed (seeds the deterministic yield roll). */
   prodCycles?: number;
+  /** Build count (job 2E): outputs left before it stops (0 ⇒ done, state
+   *  `done`). Absent ⇒ repeat forever. Persisted; rides room state. */
+  prodCount?: number;
   /** A chunk recipe's loaded item (a rock chunk) with the ore still to pay
    *  out; set while `prodLoaded`. Persisted (it holds value). */
   prodChunk?: PackedItem;

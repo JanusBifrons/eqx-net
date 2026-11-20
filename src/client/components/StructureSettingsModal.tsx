@@ -6,7 +6,9 @@
  *
  * Tabs come from `settingsTabsFor(kindId)`, so later tabs (On/Off, Throttle,
  * and the inspector's recipe / gate / upgrade controls) are added per building
- * kind in one place. Today: Power, read-only.
+ * kind in one place. Today: Power (read-only) and, for a building that makes
+ * things, Production: its recipe and a build count (minus / plus / forever)
+ * sent on the same `set_recipe` message as the recipe.
  *
  * Tapping outside, the ✕ or Close shuts it.
  * Numbers are read from the render mirror at 4 Hz while open (low cadence,
@@ -21,17 +23,24 @@ import {
   GameWindow, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX,
 } from './GameWindow';
 import { powerSummary, signed, type PowerSummary } from './structureSettingsPower';
+import { buildCountText, makesThings, readProduction, type ProductionView } from './structureSettingsProduction';
+import { sendSetRecipe } from '../structures/structureActionsClient';
+import { MAX_BUILD_COUNT } from '@shared-types/production';
+import { RECIPES } from '@shared-types/recipes';
 import { phoneTiny } from './inspectorSizes';
 
-export type SettingsTabId = 'power';
+export type SettingsTabId = 'power' | 'production';
 interface SettingsTab { id: SettingsTabId; label: string }
 
 const POWER_TAB: SettingsTab = { id: 'power', label: 'Power' };
+const PRODUCTION_TAB: SettingsTab = { id: 'production', label: 'Production' };
 
 /** The tabs a building kind shows, in order. Every building sits on a grid,
  *  so every kind has Power; later tabs are appended here per kind. */
-export function settingsTabsFor(_kindId: string): readonly SettingsTab[] {
-  return [POWER_TAB];
+const WITH_PRODUCTION: readonly SettingsTab[] = [POWER_TAB, PRODUCTION_TAB];
+const POWER_ONLY: readonly SettingsTab[] = [POWER_TAB];
+export function settingsTabsFor(kindId: string): readonly SettingsTab[] {
+  return makesThings(kindId) ? WITH_PRODUCTION : POWER_ONLY;
 }
 
 const POLL_MS = 250;
@@ -78,6 +87,41 @@ function PowerTab({ entityId }: { entityId: number }): JSX.Element {
   );
 }
 
+function sameProduction(a: ProductionView | null, b: ProductionView | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.recipe === b.recipe && a.left === b.left;
+}
+
+/** Recipe + build count. Minus stops at 1; Forever clears the count. */
+function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
+  const [p, setP] = useState<ProductionView | null>(() => readProduction(entityId));
+  useEffect(() => {
+    const h = window.setInterval(() => setP((prev) => {
+      const next = readProduction(entityId);
+      return sameProduction(prev, next) ? prev : next;
+    }), POLL_MS);
+    return () => window.clearInterval(h);
+  }, [entityId]);
+  if (p === null) return <Box sx={ROW_SX}>No production data</Box>;
+  const { recipe, left } = p;
+  const plus = left === undefined ? 1 : Math.min(MAX_BUILD_COUNT, left + 1);
+  return (
+    <Box data-testid="structure-settings-production" data-recipe={recipe} data-left={left ?? 'forever'} sx={GRID_SX}>
+      <Box sx={LABEL_SX}>Makes</Box><Box sx={VALUE_SX} data-testid="settings-production-recipe">{RECIPES[recipe].displayName}</Box>
+      <Box sx={LABEL_SX}>Build</Box>
+      <Box sx={STEPPER_SX}>
+        <Box component="button" sx={STEP_BTN_SX} aria-label="One fewer" data-testid="settings-build-minus"
+          disabled={left === undefined || left <= 1} onClick={() => sendSetRecipe(entityId, recipe, left! - 1)}>−</Box>
+        <Box sx={COUNT_SX} data-testid="settings-build-count">{buildCountText(left)}</Box>
+        <Box component="button" sx={STEP_BTN_SX} aria-label="One more" data-testid="settings-build-plus"
+          disabled={left !== undefined && left >= MAX_BUILD_COUNT} onClick={() => sendSetRecipe(entityId, recipe, plus)}>+</Box>
+        <Box component="button" sx={STEP_BTN_SX} aria-label="Repeat forever" data-testid="settings-build-forever"
+          disabled={left === undefined} onClick={() => sendSetRecipe(entityId, recipe)}>∞</Box>
+      </Box>
+    </Box>
+  );
+}
+
 export interface StructureSettingsModalProps {
   open: boolean;
   entityId: number;
@@ -100,6 +144,7 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
         </Tabs>
         <Box sx={BODY_SX}>
           {open && tab === 'power' && <PowerTab entityId={entityId} />}
+          {open && tab === 'production' && <ProductionTab entityId={entityId} />}
         </Box>
         <Box sx={WINDOW_FOOT_SX}>
           <Box sx={{ flex: 1 }} />
@@ -138,6 +183,9 @@ const BODY_SX = { flex: '1 1 auto', minHeight: 0, overflowY: 'auto' as const, px
 const GRID_SX = { display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 2, rowGap: 1, fontSize: 13, maxWidth: 420 } as const;
 const LABEL_SX = { color: C.inkDim, fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' as const, alignSelf: 'center' } as const;
 const VALUE_SX = { color: C.ink, textAlign: 'right' as const, fontFamily: HUD.font.num, fontVariantNumeric: 'tabular-nums' } as const;
+const STEPPER_SX = { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 } as const;
+const STEP_BTN_SX = { ...WINDOW_BTN_SECONDARY_SX, minWidth: 32, px: 1, '&:disabled': { opacity: 0.35, cursor: 'default' } } as const;
+const COUNT_SX = { ...VALUE_SX, minWidth: 64, textAlign: 'center' as const } as const;
 const ROW_SX = { fontSize: 12, color: C.inkDim } as const;
 const COG_SX = { p: '2px', color: 'rgba(180,220,255,0.85)', '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' } } as const;
 const COG_ICON_SX = phoneTiny({ fontSize: [16, 28] }); // the inspector's ICON_SX: tiny on a phone
