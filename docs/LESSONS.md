@@ -3293,3 +3293,12 @@ a door moves, the boxes are up to 100 ms (at full power ~90 of 2700 position uni
 leaves the worker collides ships with. Shots fired right at a moving leaf's edge can land a frame early
 or late; a still door (the case that matters, shut or open) is exact. Don't assert shot-vs-leaf hits
 on a door in mid-travel, and don't "fix" it by posing every 60 Hz tick without measuring the cost.
+
+## 2026-11-20 — an estimate built from a period constant lies in a room that changes the period
+
+The build bar's ETA divided the remaining cost by `CONSTRUCTION_PULSE_AMOUNT / TRANSFER_PULSE_MS`, but
+test rooms run the grid pulse faster (`structureGridPulseMs`, 100 ms in `base-build-test`), so a
+Solar built in ~8 s while its label read 1m 7s. The period now lives on `StructureGridSubsystem.pulseMs`:
+the room's pulse timer and `estimateBuildEtaMs` both read it, and `StructureGridSubsystem.test.ts`
+builds to completion at 1000/250/100 ms and checks the ETA against the pulses it really took.
+Any rate derived from a timer's period reads that timer's period, never the default constant.
