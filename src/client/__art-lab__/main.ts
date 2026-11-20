@@ -256,7 +256,7 @@ async function main(): Promise<void> {
 
   const rigs = RIGS ? buildLabRigs(scene, rigUnderL, rigPlaneL, rigOverL) : [];
   const lines = buildLabGridLines(scene, lineL, structL);
-  if (!lines) buildLabSheetNubs(scene, structL, qs.get('nubs'));
+  if (!lines) buildLabSheetNubs(scene, structL, qs.get('nubs'), qs.get('live'));
 
   // ---- ships
   const ships: ShipView[] = scene.ships.map((e, i) => {

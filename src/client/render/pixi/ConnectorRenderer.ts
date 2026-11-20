@@ -57,6 +57,7 @@ import {
   makeCableSocketPick,
 } from '../../../core/structures/cableCurve.js';
 import { drawMines, drawNoPowerBolt, drawStatusBar } from './structureStatusMarks.js';
+import { hasBodyStatus } from './structureSocketNubs.js';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
 import {
   structureMirrorToGridNode,
@@ -631,8 +632,10 @@ export class ConnectorRenderer {
         drawStatusBar(g, ax, ay, a.radius, this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs), 0x66ccff);
       } else if (st.deconstructPct > 0) {
         drawStatusBar(g, ax, ay, a.radius, 1 - st.deconstructPct, 0xff5555); // red emptying bar while reclaiming
-      } else if (st.storedPowerMax !== undefined && st.storedPowerMax > 0) {
+      } else if (st.storedPowerMax !== undefined && st.storedPowerMax > 0 && !(this.socketCables && hasBodyStatus(a.shipKind))) {
         // WS-9 (R2.12) — a Battery's always-on CHARGE bar (amber, the panel CHRG colour).
+        // With the new look on (`socketCables`, `?fx=new`) a store with a body
+        // state lights its cells instead (socket-nub overlay, Stage 4 F1 step C).
         drawStatusBar(g, ax, ay, a.radius, (st.storedPower ?? 0) / st.storedPowerMax, 0xcc8844);
       }
 

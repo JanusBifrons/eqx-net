@@ -7,10 +7,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Container, Matrix, Point } from 'pixi.js';
 import type { Graphics } from 'pixi.js';
 import {
-  innerChannelFor, MAX_NUB_SOCKETS, noInnerChannel, NUB_IN, NUB_OUT, nubStats, socketNubContext, socketNubLocal,
+  bodyStatusCode, hasBodyStatus, innerChannelFor, MAX_NUB_SOCKETS, noInnerChannel, NUB_IN, NUB_OUT, nubStats, socketNubContext, socketNubLocal,
   socketNubsOf, socketUsedMask, STRUCTURE_INNER_CHANNELS, updateSocketNubs, drawSocketNubs, type InnerChannelHook,
 } from './structureSocketNubs.js';
 import { SOCKET_ACCENT } from './connectorCables.js';
+import { cellGrid } from './structureStyleC.power.js';
+import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import type { LinePath } from './connectorLineLooks.js';
 import { structureSockets, structureSocketToWorld, type MutStructureSocket } from '../../../shared-types/structureKinds.js';
 import { CABLE_NO_SOCKET } from '../../../core/structures/cableCurve.js';
@@ -230,5 +232,94 @@ describe('updateSwarmSprites with socket nubs', () => {
     const solar = ctx.sprites.get('swarm-7')!, conn = ctx.sprites.get('swarm-8')!;
     expect(socketNubsOf(solar)!.context).toBe(socketNubContext('solar', 1));
     expect(socketNubsOf(conn)!.context).toBe(socketNubContext('connector', 1 << 3));
+  });
+});
+
+// ── Live body state (Stage 4 F1 step C) ────────────────────────────────────
+
+function charged(kind: string, frac: number): StructureRenderState {
+  const cap = getStructureKind(kind as 'battery').powerStorageCapacity!;
+  return { ...st([]), storedPower: cap * frac, storedPowerMax: cap };
+}
+function cellCount(kind: string): number {
+  const fp = getStructureKind(kind as 'battery').footprint;
+  const g = cellGrid(fp.w, fp.h, { cols: 0, rows: 0, x0: 0, y0: 0, cw: 0, ch: 0, gap: 0 });
+  return g.cols * g.rows;
+}
+
+describe('body state: battery cells and a dry reactor', () => {
+  it('only the power stores and the reactor have a body state', () => {
+    expect(hasBodyStatus('battery')).toBe(true);
+    expect(hasBodyStatus('battery_bank')).toBe(true);
+    expect(hasBodyStatus('reactor')).toBe(true);
+    expect(hasBodyStatus('solar')).toBe(false);
+    expect(hasBodyStatus('connector')).toBe(false);
+    expect(hasBodyStatus(undefined)).toBe(false);
+    expect(bodyStatusCode('solar', st([]))).toBe(0);
+  });
+
+  it('a store lights whole cells with its charge: none empty, half at half, all full', () => {
+    for (const kind of ['battery', 'battery_bank']) {
+      const n = cellCount(kind);
+      expect(n, kind).toBeGreaterThanOrEqual(4);
+      expect(bodyStatusCode(kind, charged(kind, 0))).toBe(0);
+      expect(bodyStatusCode(kind, charged(kind, 0.5))).toBe(Math.round(n / 2));
+      expect(bodyStatusCode(kind, charged(kind, 1))).toBe(n);
+      expect(bodyStatusCode(kind, charged(kind, 7))).toBe(n); // clamped
+      expect(bodyStatusCode(kind, { ...charged(kind, 1), built: false })).toBe(0); // a blueprint shows none
+      expect(bodyStatusCode(kind, undefined)).toBe(0);
+    }
+    // The bank is bigger, so it has more cells (drawn relative to the footprint).
+    expect(cellCount('battery_bank')).toBeGreaterThan(cellCount('battery'));
+  });
+
+  it('a reactor is 1 only when built and dry', () => {
+    expect(bodyStatusCode('reactor', st([]))).toBe(0);
+    expect(bodyStatusCode('reactor', { ...st([]), noFuel: true })).toBe(1);
+    expect(bodyStatusCode('reactor', { ...st([]), noFuel: true, built: false })).toBe(0);
+  });
+
+  it('a charge change swaps the shared context only when a whole cell lights or goes out; no re-bake', () => {
+    const a = new Container();
+    const n = cellCount('battery');
+    const step = 1 / n;
+    updateSocketNubs(a, 'battery', charged('battery', 0.5));
+    const g = socketNubsOf(a)!;
+    const half = g.context;
+    const swaps = nubStats.swaps;
+    // Inside the same cell step: no swap.
+    updateSocketNubs(a, 'battery', charged('battery', 0.5 + step * 0.2));
+    expect(nubStats.swaps).toBe(swaps);
+    // One more cell: one swap, to the shared context for that code.
+    updateSocketNubs(a, 'battery', charged('battery', 0.5 + step));
+    expect(nubStats.swaps).toBe(swaps + 1);
+    expect(g.context).toBe(socketNubContext('battery', 0, Math.round(n / 2) + 1));
+    updateSocketNubs(a, 'battery', charged('battery', 0.5));
+    expect(g.context).toBe(half);
+    // The reactor runs dry, then is refuelled.
+    const r = new Container();
+    updateSocketNubs(r, 'reactor', st([]));
+    const fuelled = socketNubsOf(r)!.context;
+    updateSocketNubs(r, 'reactor', { ...st([]), noFuel: true });
+    expect(socketNubsOf(r)!.context).toBe(socketNubContext('reactor', 0, 1));
+    expect(socketNubsOf(r)!.context).not.toBe(fuelled);
+    updateSocketNubs(r, 'reactor', st([]));
+    expect(socketNubsOf(r)!.context).toBe(fuelled);
+  });
+
+  it('the swarm updater drops the floating charge number when the overlay is on, keeps it when off', () => {
+    const m = {
+      swarm: new Map([[9, structureEntry('battery', 0, 0)]]),
+      structures: new Map([[9, charged('battery', 0.5)]]),
+    } as unknown as RenderMirror;
+    const off = makeCtx();
+    updateSwarmSprites(m, off);
+    expect(off.sprites.get('swarm-9')!.getChildByLabel('batteryCharge')).not.toBeNull();
+    const on = makeCtx();
+    on.socketNubs = true;
+    updateSwarmSprites(m, on);
+    const sprite = on.sprites.get('swarm-9')!;
+    expect(sprite.getChildByLabel('batteryCharge')).toBeNull();
+    expect(socketNubsOf(sprite)!.context).toBe(socketNubContext('battery', 0, Math.round(cellCount('battery') / 2)));
   });
 });
