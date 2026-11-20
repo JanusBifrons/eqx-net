@@ -104,6 +104,7 @@ export class SectorSnapshotRestore {
         // persisted (already-leveled) value, so no re-seed is needed.
         rec.level = r.level ?? 1;
         if (r.gateAccess !== undefined) rec.gateAccess = r.gateAccess;
+        if (r.switchedOff === true) rec.switchedOff = true;
         // v4 T1 — a teleporter's partner, rules, charge and pad hold survive a restart.
         if (isTeleporterKind(rec.kind)) {
           const t = r.teleport;
