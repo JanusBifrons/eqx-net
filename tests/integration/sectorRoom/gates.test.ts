@@ -91,7 +91,7 @@ describe('SectorRoom integration — Shield Gate opens on approach (phase V gate
     const entityId = String(internals.swarmRegistry.get(gate.id)!.entityId);
     const row = observer.state.structures.get(entityId) as unknown as StructureStateView | undefined;
     expect(row && doorOpenMaskOf(row)).toBe(GATE_OPEN_A);
-  });
+  }, 20_000); // 3.5 s of door travel plus the room boot outruns the 5 s default
 
   it('stays shut for a stranger under the default access (owner + allies)', async () => {
     const { internals, gate } = await boot();
