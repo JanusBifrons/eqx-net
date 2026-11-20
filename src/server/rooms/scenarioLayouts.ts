@@ -12,23 +12,26 @@
  * The standard powered grid ("structure scenario"):
  *
  *           Solar NW (-250, 400)   Connector N (0, 350)   Solar NE (250, 400)
- *                                   Capital (0, 0)
+ *                    Bay  Capital (0, 0) rot 90
  *           Miner SW (-200, -420)  Connector S (0, -350)  Turret SE (150, -400)
  *
  *   Capital 50 + 2 Solars 60 − Miner 60 − Turret 15 = +35 ⇒ powered.
  *   An asteroid sits in the Miner's range; a drone in the Turret's range.
+ *   The Capital is turned 90° so its crane bay (structure-restyle 3i, its
+ *   `keepClear` pad) opens WEST onto empty space: at rot 0 the pad covers
+ *   Connector N and both Solars and placement drops them (`overlap-pad`).
+ *   `prebuiltLayouts.test.ts` guards every layout here.
  *
  * Also here: applying a layout (`seedStructureScenario`, the testMode room
  * opts), the scale lattice (`seedScaleGrid`), the scrap corridor
- * (`seedScenarioScrap`), the pre-A2 structure row test view (`structureRowsForTests`) and
- * the room's boot-time swarm seed (`seedRoomStartup`: sleep rock, drone /
- * structure poses, bulk seed, default drone ring).
+ * (`seedScenarioScrap`) and the pre-A2 structure row test view
+ * (`structureRowsForTests`). The room's boot-time swarm seed
+ * (`seedRoomStartup`) lives in `roomStartupSeed.ts`.
  */
 
-import type { Logger } from 'pino';
 import type { GoodId } from '../../shared-types/goods.js';
 import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
-import { DEFAULT_SHIP_KIND, getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { type ShipKindId } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   STRUCTURE_ETA_NONE,
@@ -41,22 +44,15 @@ import {
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
 import { DEFAULT_TELEPORT_RULES, isTeleporterKind } from '../../shared-types/teleport.js';
-import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
-import type { AiController } from '../../core/ai/AiController.js';
-import { ScriptedPathBehaviour } from '../../core/ai/ScriptedPathBehaviour.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
-import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
-import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import type { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import type { StructureRegistry } from '../structures/StructureRegistry.js';
 import type { TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
-import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
-import type { WorkerCmd } from './PhysicsWorkerProxy.js';
+import { getDroneMaxHealth } from './droneKindHelpers.js';
 import type { SectorSnapshotScrap } from './SectorSnapshot.js';
-import type { SectorRoomOptions } from './sectorRoomOptions.js';
 
 export interface LayoutPoint {
   x: number;
@@ -68,7 +64,8 @@ export interface LayoutPoint {
  * it, side by side. The WEST gate opens for anyone not hostile; the EAST gate
  * opens for its owner only — and the owner is `scenario`, so a visiting pilot
  * is locked out. Ships spawned south of a gate and flown north (+y) test both.
- * Power: Capital 50 + Solar 30 = 80 ≥ 2 gates × 30.
+ * Power: Capital 50 + Solar 120 ≥ 2 gates × 30. The Capital is turned 90°
+ * so its crane bay pad (west) clears the north Connector and Solar.
  */
 export const GATE_TEST = {
   openGate: { x: -400, y: -900 },
@@ -76,20 +73,22 @@ export const GATE_TEST = {
 } as const;
 
 export const GATE_TEST_PREBUILT = [
-  { kind: 'capital', x: 0, y: 0 },
+  { kind: 'capital', x: 0, y: 0, rot: 90 },
   { kind: 'connector', x: 0, y: 350 },
-  { kind: 'solar', x: 250, y: 400 },
+  { kind: 'solar', x: 450, y: 500 },
   { kind: 'connector', x: 0, y: -350 },
   { kind: 'shield_gate', ...GATE_TEST.openGate, gateAccess: 'open' },
   { kind: 'shield_gate', ...GATE_TEST.lockedGate, gateAccess: 'owner' },
 ] as const;
 
 export const SCENARIO = {
-  capital: { x: 0, y: 0 },
+  /** Turned 90°: its crane bay pad faces west, centre world (-410, 0). */
+  capital: { x: 0, y: 0, rot: 90 },
   connectorN: { x: 0, y: 350 },
   connectorS: { x: 0, y: -350 },
-  solarNE: { x: 250, y: 400 },
-  solarNW: { x: -250, y: 400 },
+  /** 700 u wide: each stands clear of the north Connector on its side. */
+  solarNE: { x: 450, y: 500 },
+  solarNW: { x: -450, y: 500 },
   minerSW: { x: -200, y: -420 },
   turretSE: { x: 150, y: -400 },
   /** In the Miner's 800 u range (≈ 573 u away). */
@@ -114,6 +113,105 @@ export const STRUCTURE_SCENARIO_PREBUILT = [
  *  wired through the two connectors) — the same grid. */
 export const READY_BASE_PREBUILT = STRUCTURE_SCENARIO_PREBUILT;
 
+/**
+ * Articulation sandbox (structure-restyle 2f, plan §5): a small outpost, a
+ * freight dock (its crane rig and loading pad, open side +y) and a turret
+ * (its hatch + pop-up rig) beside it, both at rot 0 so host frame = world
+ * offset. Power: a Capital (50; a grid is powered only with a Capital in it)
+ * south-east of the turret, away from the pad and out of the wide shot, and a
+ * Connector between them (the Capital links only to Connectors) feed the dock
+ * (15) and the turret (15), so nothing shows the unpowered marker and the
+ * turret deploys powered. A scripted trader hauler flies onto the pad and the crane reaches
+ * for it (`rigClip` scene steps: the swarm hauler has no owner, so the bay
+ * dwell, `CraneBays.dockDwell`, does not serve it). Times are ms after the first pilot is ready; the scene
+ * starts after `lead` so a take can be rolling first.
+ */
+export const RIG_SANDBOX = {
+  dock: { x: 0, y: 0 },
+  /** Pad centre (dock host frame (0, 460)). */
+  pad: { x: 0, y: 460 },
+  /** The pad's far west corner, the hauler's off-centre berth. */
+  padCorner: { x: -380, y: 640 },
+  turret: { x: 720, y: 0 },
+  /** Grid hub just south of the turret (its top edge in the turret close-up). */
+  connector: { x: 720, y: -160 },
+  /** The power source, south-east of the connector, clear of the wide shot. */
+  capital: { x: 800, y: -560 },
+  haulerEntry: { x: 0, y: 1700 },
+} as const;
+
+/** Hubs first, so the leaves auto-connect to them. */
+export const RIG_SANDBOX_PREBUILT = [
+  // Turned 180°: its crane bay pad (3i) faces away from the connector.
+  { kind: 'capital', ...RIG_SANDBOX.capital, rot: 180 },
+  { kind: 'connector', ...RIG_SANDBOX.connector },
+  { kind: 'freight_dock', ...RIG_SANDBOX.dock },
+  { kind: 'turret', ...RIG_SANDBOX.turret },
+] as const;
+
+/** The filmed timeline (≈ 27 s after `lead`). */
+export function rigSandboxScene(lead: number): unknown[] {
+  const t = (s: number): number => Math.round(lead + s * 1000);
+  const H = 'hauler';
+  return [
+    // 0. Before the take rolls: the turret (idling deployed) packs away, so
+    //    step 4 starts from the shut hatch.
+    { atMs: 0, action: 'rigClip', structure: 'turret', clip: 'turret-retract' },
+    // 1. Fly in, stop on the pad; after ~1 s the crane reaches, holds, retracts; out.
+    { atMs: t(0), action: 'spawn', tag: H, kind: 'trader-hauler', count: 1, ...RIG_SANDBOX.haulerEntry },
+    { atMs: t(0), action: 'move', tag: H, ...RIG_SANDBOX.pad, speed: 320 },
+    { atMs: t(5.5), action: 'rigClip', structure: 'freight_dock', clip: 'arm-reach', targetShip: H },
+    { atMs: t(6.5), action: 'rigClip', structure: 'freight_dock', clip: 'arm-hold', keepTarget: true },
+    { atMs: t(8.5), action: 'rigClip', structure: 'freight_dock', clip: 'arm-retract', keepTarget: true },
+    { atMs: t(9.5), action: 'move', tag: H, x: -700, y: 1150, speed: 320 },
+    // 2. Edge case: parked at the pad's far corner; the crane still reaches.
+    { atMs: t(12.8), action: 'move', tag: H, ...RIG_SANDBOX.padCorner, speed: 280 },
+    { atMs: t(16.2), action: 'rigClip', structure: 'freight_dock', clip: 'arm-reach', targetShip: H },
+    { atMs: t(18.2), action: 'rigClip', structure: 'freight_dock', clip: 'arm-retract', keepTarget: true },
+    // 3. Abort: the hauler leaves mid-reach; the crane retracts from where it is.
+    { atMs: t(19.6), action: 'rigClip', structure: 'freight_dock', clip: 'arm-reach', targetShip: H },
+    { atMs: t(20.0), action: 'move', tag: H, x: -700, y: 1400, speed: 320 },
+    { atMs: t(20.1), action: 'rigClip', structure: 'freight_dock', clip: 'arm-retract', fromTip: true },
+    // 4. The turret: hatch open + shut, then the turret deploys and retracts.
+    // The retract above ends at ~21.1 s; a camera pan keyed to the scene
+    // clock (`GET /dev/perf` scene.elapsedMs) at ~21.6 s lands before 23.5 s.
+    { atMs: t(23.5), action: 'rigClip', structure: 'turret', clip: 'door-open' },
+    { atMs: t(24.8), action: 'rigClip', structure: 'turret', clip: 'door-close' },
+    { atMs: t(26.0), action: 'rigClip', structure: 'turret', clip: 'turret-deploy' },
+    { atMs: t(28.5), action: 'rigClip', structure: 'turret', clip: 'turret-retract' },
+    { atMs: t(31.0), action: 'end' },
+  ];
+}
+
+/**
+ * structure-restyle 3b film: the same outpost with NO script. The player owns
+ * the dock (`prebuiltStructuresOwner`); a film joins south of the pad, nose to
+ * the dock (`?spawnX=0&spawnY=1500&initialAngle=3.1416`), with a load aboard (`?initialCargo=`; the hold
+ * needs a roster-bound hull, hence the `sectorKey`). Flying onto the bay and
+ * stopping is all it takes: the real bay dwell (`CraneBays.dockDwell`) runs
+ * the crane and banks the load.
+ */
+export const RIG_UNLOAD = {
+  sectorKey: 'showcase-rig-unload',
+} as const;
+
+/**
+ * structure-restyle 3i stills: "first load home". The pilot's own Capital
+ * alone at (0, 0); its built-in crane bay is past its +y edge (pad centre
+ * (0, 410)). A film joins south with a load aboard
+ * (`?spawnX=0&spawnY=1600&initialAngle=3.1416&initialCargo=`), flies onto the
+ * bay and stops; the real bay dwell runs the Capital's crane.
+ */
+export const RIG_HOME = {
+  sectorKey: 'showcase-rig-home',
+  prebuiltStructures: [{ kind: 'capital', x: 0, y: 0 }],
+} as const;
+
+/** E2E: the hauler is already on the pad and the crane reaches at once. */
+export const RIG_SANDBOX_E2E_SCENE: unknown[] = [
+  { atMs: 0, action: 'spawn', tag: 'hauler', kind: 'trader-hauler', count: 1, ...RIG_SANDBOX.pad },
+  { atMs: 200, action: 'rigClip', structure: 'freight_dock', clip: 'arm-reach', targetShip: 'hauler' },
+];
 /** Room opts read by `seedStructureScenario` (testMode only). */
 export interface StructureScenarioOpts {
   prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
@@ -378,184 +476,40 @@ export function structureRowsForTests(state: StructureRowsState, slice: readonly
   return rows;
 }
 
-/** Room opts read by `seedRoomStartup` (a slice of the `SectorRoom.onCreate` options). */
-export type StartupSeedOpts = Pick<SectorRoomOptions,
-  'droneCount' | 'droneRadius' | 'swarmCount' | 'swarmRatio' | 'swarmRadius' | 'swarmAtRest' | 'dronePoses' | 'structurePoses'>;
-
-/** Which startup seed the room picked (computed early in `onCreate`, where it
- *  also gates the legacy asteroid roster). */
-export interface StartupSeedFlags {
-  testMode: boolean;
-  useSingleAsteroid: boolean;
-  useDronePoses: boolean;
-  useStructurePoses: boolean;
-  useBulkSeed: boolean;
+/** Perf scene `base-flow`: a working player base whose cables carry flow every
+ *  grid pulse. The Capital (pad west) feeds three arms through connectors:
+ *  north and south each hold two Miners on rocks plus a three-Solar spur, east
+ *  is five Solars, turned on end (300 u wide). 1490 power for 240 of Miners,
+ *  so every Miner drills and its minerals ride the cables to the Capital each
+ *  second. */
+function baseFlowArm(sy: 1 | -1): { kind: string; x: number; y: number }[] {
+  return [
+    { kind: 'connector', x: 0, y: 470 * sy },
+    { kind: 'miner', x: -400, y: 800 * sy },
+    { kind: 'miner', x: 400, y: 800 * sy },
+    { kind: 'connector', x: 0, y: 1000 * sy },
+    { kind: 'solar', x: -430, y: 1320 * sy },
+    { kind: 'solar', x: 430, y: 1320 * sy },
+    { kind: 'solar', x: 0, y: 1700 * sy },
+  ];
 }
-
-/** What `seedRoomStartup` reads from the room; getters for the fields the
- *  room assigns in `onCreate`. */
-export interface StartupSeedHost {
-  logger: Pick<Logger, 'info' | 'warn' | 'error'>;
-  swarmRegistry: SwarmEntityRegistry;
-  sandboxHostileDroneIds: string[];
-  swarmSpawner: () => Pick<SwarmSpawner, 'spawnAsteroid' | 'spawnDrone' | 'spawnStructure' | 'seed'>;
-  aiController: () => Pick<AiController, 'register'>;
-  swarmHealth: () => Map<string, number>;
-  swarmShield: () => Map<string, number>;
-  swarmShieldLastDmg: () => Map<string, number>;
-  serverTick: () => number;
-  postToWorker: (cmd: WorkerCmd) => void;
-  markElite: (botId: string, name: string, healthMul?: number, bounty?: number) => boolean;
-}
-
-/**
- * The room's boot-time swarm seed, exactly one of: the single sleep-test
- * asteroid, deterministic drone poses, deterministic structure poses, the
- * Phase 5e bulk seed, or (default) the small drone ring around spawn. Runs
- * once at `onCreate`, after the scenario / scale-grid seeds.
- */
-export function seedRoomStartup(h: StartupSeedHost, roomOpts: StartupSeedOpts, flags: StartupSeedFlags): void {
-  const { useSingleAsteroid, useDronePoses, useStructurePoses, useBulkSeed } = flags;
-  if (useSingleAsteroid) {
-    // Stationary asteroid 600 u from spawn — far enough that the worker's
-    // sleep hysteresis (12 ticks at v ≈ 0) trips quickly without the
-    // player accidentally bumping it. No drone, no AI behaviour wired.
-    h.swarmSpawner().spawnAsteroid({ id: 'sleep-rock', x: 600, y: 0, vx: 0, vy: 0, radius: 24, mass: 1 });
-    h.logger.info('Phase 5e single-asteroid sleep test seed');
-  } else if (useDronePoses) {
-    // 2026-05-28 — deterministic-pose engineering seed. Each entry forces a
-    // drone to a specific world `(x, y, angle)` (bypassing the uniform-disc
-    // spawner), and optionally drops shields immediately so the
-    // hull-polygon collider is exposed at spawn. Used by the
-    // `hull-collision-test` room to verify that a concave T-ship's
-    // polygon collider correctly leaves the gap regions empty.
-    seedDronePoses(h, roomOpts);
-  } else if (useStructurePoses) {
-    // Generic Entity Pipeline P4 — deterministic STRUCTURE placement (the
-    // "for free" proof). Each structure is a kind=2 swarm entity; seeding
-    // `swarmHealth` is the ONLY thing that makes it damageable — the existing
-    // DamageRouter 'swarm' strategy then handles it with ZERO new dispatch.
-    // `swarmShield = 0` (no shield layer) so a hit lands straight on the hull.
-    const poses = roomOpts.structurePoses!;
-    let placed = 0;
-    for (let i = 0; i < poses.length; i++) {
-      const p = poses[i]!;
-      const id = p.id ?? `structure-${i}`;
-      const ok = h.swarmSpawner().spawnStructure({ id, x: p.x, y: p.y, radius: p.radius ?? 50, mass: p.mass });
-      if (!ok) {
-        h.logger.error({ requested: poses.length, spawned: placed }, 'structurePoses spawn truncated (slot pool exhausted)');
-        break;
-      }
-      h.swarmHealth().set(id, STRUCTURE_DEFAULT_HEALTH);
-      h.swarmShield().set(id, 0);
-      placed++;
-    }
-    h.logger.info({ requested: poses.length, spawned: placed }, 'structurePoses seeded');
-  } else if (useBulkSeed) {
-    // Phase 5e bulk seed. Replaces both the legacy ASTEROIDS list and the
-    // small drone ring with a sunflower-spiral spread across a disc, sized
-    // by `swarmCount`. Used by the bandwidth E2E and the dev-machine soak.
-    const requested = roomOpts.swarmCount ?? 0;
-    const bulk = h.swarmSpawner().seed(requested, roomOpts.swarmRatio, roomOpts.swarmRadius, roomOpts.swarmAtRest ?? false);
-    if (bulk < requested) {
-      h.logger.error({ requested, spawned: bulk }, 'bulk seed truncated (slot pool exhausted)');
-    }
-    // Per-drone health is sourced from the chosen ship-kind's `maxHealth`
-    // — Heavy drones eat more hits than Scout drones, mirroring the player
-    // matrix. Falls back to 40 for back-compat when the registry record
-    // doesn't carry a kind (very old codepaths or test stubs).
-    for (const rec of h.swarmRegistry.all()) {
-      if (rec.kind === 1) {
-        h.swarmHealth().set(rec.id, getDroneMaxHealth(rec.shipKind) ?? 40);
-        h.swarmShield().set(rec.id, getDroneShieldMax(rec.shipKind));
-        h.swarmShieldLastDmg().set(rec.id, h.serverTick());
-      }
-    }
-    h.logger.info({ requested, spawned: bulk }, 'Phase 5e bulk seed');
-  } else {
-    // Seed a small drone wave for early manual testing. Drones ring the
-    // spawn area at a configurable distance (default 150u) so the player
-    // can engage them immediately for smoke testing without a long drive.
-    // Bump `droneRadius` per-room for less-frantic scenarios.
-    const droneCount = roomOpts.droneCount ?? (flags.testMode ? 0 : 30);
-    const droneRadius = roomOpts.droneRadius ?? 150;
-    for (let i = 0; i < droneCount; i++) {
-      const angle = (i / droneCount) * Math.PI * 2;
-      const r = droneRadius;
-      const id = `drone-${i}`;
-      const ok = h.swarmSpawner().spawnDrone({ id, x: Math.cos(angle) * r, y: Math.sin(angle) * r });
-      if (!ok) { h.logger.warn({ requested: droneCount, spawned: i }, 'drone wave truncated (slot pool full)'); break; }
-      // Read the kind back from the registry record after spawn — the
-      // spawner picks it randomly and stamps it onto the record.
-      const rec = h.swarmRegistry.get(id);
-      h.swarmHealth().set(id, getDroneMaxHealth(rec?.shipKind) ?? 40);
-      h.swarmShield().set(id, getDroneShieldMax(rec?.shipKind));
-      h.swarmShieldLastDmg().set(id, h.serverTick());
-    }
-  }
-}
-
-/** The `dronePoses` branch of `seedRoomStartup`. */
-function seedDronePoses(h: StartupSeedHost, roomOpts: StartupSeedOpts): void {
-  const poses = roomOpts.dronePoses!;
-  let placed = 0;
-  for (let i = 0; i < poses.length; i++) {
-    const pose = poses[i]!;
-    const droneId = `pose-drone-${i}`;
-    const ok = h.swarmSpawner().spawnDrone({ id: droneId, x: pose.x, y: pose.y, kind: pose.kind });
-    if (!ok) {
-      h.logger.error({ requested: poses.length, spawned: placed }, 'dronePoses spawn truncated (slot pool exhausted)');
-      break;
-    }
-    const rec = h.swarmRegistry.get(droneId);
-    if (!rec) continue;
-    if (pose.path) {
-      // Radar sandbox — scripted fly-in / fly-out / tangential pass.
-      const mass = shipBodyMass(getShipKind(pose.kind));
-      h.aiController().register(droneId, rec.slot, new ScriptedPathBehaviour({
-        from: { x: pose.x, y: pose.y },
-        to: { x: pose.path.toX, y: pose.path.toY },
-        speed: pose.path.speed,
-        loop: pose.path.loop ?? true,
-      }, mass));
-    }
-    if (pose.hostile) h.sandboxHostileDroneIds.push(droneId);
-    h.swarmHealth().set(droneId, getDroneMaxHealth(rec.shipKind) ?? 40);
-    h.swarmShield().set(droneId, getDroneShieldMax(rec.shipKind));
-    h.swarmShieldLastDmg().set(droneId, h.serverTick());
-    // Apply rotation via SET_POSITION (SPAWN_OBSTACLE sets pos+vel only,
-    // angle defaults to 0). The worker processes this command AFTER the
-    // SPAWN_OBSTACLE that spawnDrone just enqueued, so the body exists.
-    // Also seed the registry's lastBroadcast.angle so the very first
-    // delta-detector decision uses the correct reference.
-    const angle = pose.angle ?? 0;
-    const vx = pose.vx ?? 0;
-    const vy = pose.vy ?? 0;
-    if (angle !== 0 || vx !== 0 || vy !== 0) {
-      h.postToWorker({
-        type: 'SET_POSITION',
-        entityId: droneId, x: pose.x, y: pose.y, angle, vx, vy, angvel: 0,
-      });
-      rec.lastBroadcast.angle = angle;
-    }
-    if (pose.hullExposed) {
-      // Force shield-down at spawn: clear the shield slot, flip the
-      // registry's wire flag, post SET_HULL_EXPOSED so Rapier swaps to
-      // the polygon collider. Mirrors `ShieldHullRouter`'s 0-cross path
-      // minus the discrete `shield_broken` broadcast (no client cares
-      // at room-boot time; subsequent regen will fire the normal events).
-      h.swarmShield().set(droneId, 0);
-      rec.shieldDown = true;
-      h.postToWorker({
-        type: 'SET_HULL_EXPOSED',
-        id: droneId,
-        exposed: true,
-        kindId: rec.shipKind ?? DEFAULT_SHIP_KIND,
-        tick: h.serverTick(),
-      });
-    }
-    if (pose.elite) h.markElite(droneId, pose.elite.name, pose.elite.healthMul, pose.elite.bounty);
-    placed++;
-  }
-  h.logger.info({ requested: poses.length, spawned: placed }, 'dronePoses seeded');
-}
+export const BASE_FLOW_OPTS = {
+  prebuiltStructures: [
+    { kind: 'capital', x: 0, y: 0, rot: 90 },
+    ...baseFlowArm(1),
+    ...baseFlowArm(-1),
+    { kind: 'connector', x: 470, y: 0 },
+    { kind: 'solar', x: 800, y: -450, rot: 90 },
+    { kind: 'solar', x: 800, y: 450, rot: 90 },
+    { kind: 'connector', x: 1000, y: 0 },
+    { kind: 'solar', x: 1300, y: -450, rot: 90 },
+    { kind: 'solar', x: 1300, y: 450, rot: 90 },
+    { kind: 'solar', x: 1700, y: 0, rot: 90 },
+  ],
+  prebuiltStructuresOwner: 'perf-base',
+  /** One rock beside each Miner (≈ 460 u, inside its 800 u range). */
+  scenarioAsteroids: [
+    { x: -750, y: 1100, radius: 40 }, { x: 750, y: 1100, radius: 40 },
+    { x: -750, y: -1100, radius: 40 }, { x: 750, y: -1100, radius: 40 },
+  ],
+};

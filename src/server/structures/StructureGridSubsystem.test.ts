@@ -27,6 +27,8 @@ function makeHarness(
   const projectiles: Array<{ shooterId: string; x: number; y: number; vx: number; vy: number; damage: number; radius: number; maxTicks: number; weaponId: string }> = [];
   const missiles: Array<{ shooterId: string; x: number; y: number; dirX: number; dirY: number; weaponId: string }> = [];
   let counter = 0;
+  /** The room's game tick the rig gate reads (`rigTick`). */
+  const clock = { tick: 0 };
 
   const placement = new StructurePlacementSubsystem({
     spawnStructure: () => true,
@@ -40,8 +42,13 @@ function makeHarness(
   // while the 600 u connection range stayed fixed. Scaling every layout
   // coordinate by the same factor keeps each test's relationships (overlap,
   // in-range, line of sight) intact without re-deriving every pose by hand.
-  const origPlace = placement.place.bind(placement);
-  placement.place = (owner, kind, x, y, opts) => origPlace(owner, kind, x * LAYOUT_SCALE, y * LAYOUT_SCALE, opts);
+  // structure-restyle 3i: the Capital keeps its crane bay pad clear on its +y
+  // side, where these layouts put their relays and leaves. Every test here
+  // turns the Capital 180° (pad on -y, unused) unless it asks for a rotation.
+  const bound = placement.place.bind(placement);
+  const origPlace: typeof bound = (owner, kind, x, y, opts) =>
+    bound(owner, kind, x, y, kind === 'capital' && opts?.rot === undefined ? { ...opts, rot: 180 } : opts);
+  placement.place =(owner, kind, x, y, opts) => origPlace(owner, kind, x * LAYOUT_SCALE, y * LAYOUT_SCALE, opts);
   /** Unscaled placement — for tests laid out directly in phase-V footprint units
    *  (the Solar's 360×150 aspect breaks a uniform scale's range + sightlines). */
   const placeRaw = origPlace;
@@ -76,6 +83,7 @@ function makeHarness(
       projectiles.push({ shooterId, x, y, vx, vy, damage: dmg, radius, maxTicks, weaponId }),
     spawnMissile: (shooterId, x, y, dirX, dirY, def) =>
       missiles.push({ shooterId, x, y, dirX, dirY, weaponId: def.id }),
+    rigTick: () => clock.tick,
   });
   // These tests cover cadence, weapon modes and ammo, not lock timing
   // (StructureMountTicker.test.ts locks that): opt into the testMode instant
@@ -84,7 +92,7 @@ function makeHarness(
 
   let now = 0;
   const pulse = () => { now += 1000; return grid.pulse(now); };
-  return { registry, health, despawned, damage, beams, projectiles, missiles, placement, placeRaw, grid, pulse, asteroid };
+  return { registry, health, despawned, damage, beams, projectiles, missiles, placement, placeRaw, grid, pulse, asteroid, clock };
 }
 
 const OWNER = 'player-1';
@@ -305,7 +313,7 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
   it('a battery with no capital path stays inert (capital-less island)', () => {
     // Battery + solar far from any capital → unpowered island, no charge.
     const sol = h.placement.place(OWNER, 'solar', 4000, 0)!;
-    const bat = h.placement.place(OWNER, 'battery', 4120, 0)!;
+    const bat = h.placement.place(OWNER, 'battery', 4150, 0)!; // clear of the 700-wide Solar (scaled)
     build(sol, 'solar');
     build(bat, 'battery');
     for (let i = 0; i < 5; i++) h.pulse();
@@ -317,7 +325,7 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
   it('a Battery Bank charges past a single battery cap, using its own capacity', () => {
     h.placement.place(OWNER, 'capital', 0, 0)!; // +50 surplus
     relayConnectorRaw(h, 0, 350);
-    const bank = h.placeRaw(OWNER, 'battery_bank', 300, 650)!;
+    const bank = h.placeRaw(OWNER, 'battery_bank', 450, 750)!;
     expect(bank).toBeTruthy();
     build(bank, 'battery_bank');
     for (let i = 0; i < 8; i++) h.pulse(); // +50/pulse → 400 (> a battery's 300)
@@ -331,7 +339,7 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
     h = makeHarness({ entityId: 9, x: -500, y: 700 });
     h.placement.place(OWNER, 'capital', 0, 0)!; // +50
     relayConnectorRaw(h, 0, 350);
-    const bank = h.placeRaw(OWNER, 'battery_bank', 300, 650)!;
+    const bank = h.placeRaw(OWNER, 'battery_bank', 450, 750)!;
     const miner = h.placeRaw(OWNER, 'miner', -180, 420)!; // -60 once drilling
     build(bank, 'battery_bank');
     h.pulse();
@@ -365,7 +373,7 @@ describe('StructureGridSubsystem — auto-connect on place', () => {
     expect(cap).toBeTruthy();
     // Two solars far from the capital but near each other → hub rule blocks them.
     const s1 = h.placement.place(OWNER, 'solar', 3000, 0)!;
-    const s2 = h.placement.place(OWNER, 'solar', 3120, 0)!;
+    const s2 = h.placement.place(OWNER, 'solar', 3000, 120)!;
     expect(h.registry.connectionCount(s1)).toBe(0);
     expect(h.registry.connectionCount(s2)).toBe(0);
   });
@@ -383,9 +391,9 @@ describe('StructureGridSubsystem — reconnect sweep (playtest 2026-06-10 Issue 
 
   it('a Connector placed near pre-existing leaves multi-connects to ALL of them at placement (WS-5 R2.17)', () => {
     // Three solars placed first, no hub yet → all auto-connect-on-place to nothing.
-    const s1 = h.placeRaw(OWNER, 'solar', 250, 400)!;
-    const s2 = h.placeRaw(OWNER, 'solar', 0, 600)!;
-    const s3 = h.placeRaw(OWNER, 'solar', -250, 400)!;
+    const s1 = h.placeRaw(OWNER, 'solar', 450, 500)!;
+    const s2 = h.placeRaw(OWNER, 'solar', 0, 850)!;
+    const s3 = h.placeRaw(OWNER, 'solar', -450, 500)!;
     expect(h.registry.connectionCount(s1)).toBe(0);
     expect(h.registry.connectionCount(s2)).toBe(0);
     expect(h.registry.connectionCount(s3)).toBe(0);
@@ -422,20 +430,21 @@ describe('StructureGridSubsystem — reconnect sweep (playtest 2026-06-10 Issue 
     // slot frees. The solars sit in an arc ABOVE the Capital so each has clear
     // line-of-sight to the relay.
     h.placement.place(OWNER, 'capital', 0, 0)!;
-    const con = relayConnectorRaw(h, 0, 500); // links to the capital (1 slot used)
+    const con = relayConnectorRaw(h, 0, 600); // links to the capital (1 slot used)
     // Fan the leaves at DISTINCT angles around the relay (all in the upper arc,
     // clear of the Capital below it). Radial sightlines from one hub never cross,
     // so no leaf blocks another's line-of-sight to the relay — and the stranded
-    // one (at 0°, due +x) stays reachable when a slot frees.
+    // one (below-east) stays reachable when a slot frees. The 700×300 Solars
+    // on the diagonals stand on end (rot 90) so the fan fits in range.
     const fillers = [
-      h.placeRaw(OWNER, 'solar', 420, 500)!, // east
-      h.placeRaw(OWNER, 'solar', 420, 860)!, // north-east
-      h.placeRaw(OWNER, 'solar', 0, 860)!, // north
-      h.placeRaw(OWNER, 'solar', -420, 860)!, // north-west
-      h.placeRaw(OWNER, 'solar', -420, 500)!, // west
+      h.placeRaw(OWNER, 'solar', 470, 700)!, // east
+      h.placeRaw(OWNER, 'solar', 520, 1250, { rot: 90 })!, // north-east
+      h.placeRaw(OWNER, 'solar', 0, 1250, { rot: 90 })!, // north
+      h.placeRaw(OWNER, 'solar', -520, 1250, { rot: 90 })!, // north-west
+      h.placeRaw(OWNER, 'solar', -470, 700)!, // west
     ];
     expect(h.registry.connectionCount(con)).toBe(6); // capital + 5 solars = full
-    const stranded = h.placeRaw(OWNER, 'solar', 480, 140)!; // below-east, clear lane past the Capital's corner
+    const stranded = h.placeRaw(OWNER, 'solar', 620, 100, { rot: 90 })!; // below-east, clear lane past the Capital's corner
     h.pulse();
     expect(h.registry.connectionCount(stranded)).toBe(0); // hub at capacity
 
@@ -506,7 +515,7 @@ describe('StructureGridSubsystem — construction flow economy', () => {
   it('dead-end: a leaf behind an UNBUILT connector receives nothing until it completes', () => {
     h.placement.place(OWNER, 'capital', 0, 0);
     const con = h.placeRaw(OWNER, 'connector', 400, 0)!;
-    const sol = h.placeRaw(OWNER, 'solar', 650, 0)!;
+    const sol = h.placeRaw(OWNER, 'solar', 850, 0)!;
     const conRec = h.registry.get(con)!;
     const solRec = h.registry.get(sol)!;
     // Solar should hang off the connector (nearest hub), not the capital.
@@ -575,8 +584,8 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     const h = makeHarness({ entityId: 7, x: -500, y: 700 });
     h.placement.place(OWNER, 'capital', 0, 0);
     relayConnectorRaw(h, 0, 350); // WS-5: solar + miner route to the Capital via a Connector
-    // Solar to offset the miner's power draw (miner consumes 60; cap 50 + solar 30 = 80).
-    const sol = h.placeRaw(OWNER, 'solar', 250, 400)!;
+    // Solar to offset the miner's power draw (miner consumes 60; cap 50 + solar 120 = 170).
+    const sol = h.placeRaw(OWNER, 'solar', 450, 500)!;
     const miner = h.placeRaw(OWNER, 'miner', -180, 420)!;
     const capRec = [...h.registry.all()].find((r) => r.kind === 'capital')!;
 
@@ -614,11 +623,11 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     const RATE = getStructureKind('miner').miningRate ?? 0;
     expect(RATE).toBeGreaterThan(0);
     const POOL = 2 * RATE; // exactly two pulses' worth of ore
-    // Asteroid in range with a finite pool; capital(+50)+solar(+30)−miner(60) = +20 → powered.
+    // Asteroid in range with a finite pool; capital(+50)+solar(+120)−miner(60) = +110 → powered.
     const h = makeHarness({ entityId: 7, x: -500, y: 700, resources: POOL });
     h.placement.place(OWNER, 'capital', 0, 0);
     relayConnectorRaw(h, 0, 350); // WS-5: solar + miner route to the Capital via a Connector
-    const sol = h.placeRaw(OWNER, 'solar', 250, 400)!;
+    const sol = h.placeRaw(OWNER, 'solar', 450, 500)!;
     const miner = h.placeRaw(OWNER, 'miner', -180, 420)!;
     // Force solar + miner BUILT (skip the slow construction pulses) so mining
     // starts on a known pulse — otherwise the build-loop tail would mine the
@@ -651,9 +660,9 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     const h = makeHarness({ entityId: 7, x: -500, y: 700, resources: 1_000_000 }); // plenty of ore
     h.placement.place(OWNER, 'capital', 0, 0);
     relayConnectorRaw(h, 0, 350); // WS-5: solar + miner route to the Capital via a Connector
-    const sol = h.placeRaw(OWNER, 'solar', 250, 400)!;
+    const sol = h.placeRaw(OWNER, 'solar', 450, 500)!;
     const miner = h.placeRaw(OWNER, 'miner', -180, 420)!;
-    // Force solar + miner built (capital+50 + solar+30 − miner 60 = +20 → powered).
+    // Force solar + miner built (capital+50 + solar+120 − miner 60 = +110 → powered).
     for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
       const r = h.registry.get(id)!;
       r.isConstructed = true;
@@ -695,7 +704,7 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     const h = makeHarness({ entityId: 7, x: -500, y: 700, resources: 1_000_000 });
     h.placement.place(OWNER, 'capital', 0, 0);
     relayConnectorRaw(h, 0, 350); // WS-5: solar + miner route to the Capital via a Connector
-    const sol = h.placeRaw(OWNER, 'solar', 250, 400)!;
+    const sol = h.placeRaw(OWNER, 'solar', 450, 500)!;
     const miner = h.placeRaw(OWNER, 'miner', -180, 420)!;
     for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
       const r = h.registry.get(id)!;
@@ -754,7 +763,7 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     // Diagonal offset (120,120) so the relay clears the Capital's LOS to BOTH
     // the close +x solar (150,0) and the +y turret (0,200).
     relayConnectorRaw(h, 0, 350);
-    const sol = h.placeRaw(OWNER, 'solar', 250, 400)!; // offsets turret draw (15)
+    const sol = h.placeRaw(OWNER, 'solar', 450, 500)!; // offsets turret draw (15)
     const turret = h.placeRaw(OWNER, 'turret', -130, 400)!;
     for (let i = 0; i < 120; i++) h.pulse();
     expect(h.registry.get(sol)!.isConstructed).toBe(true);
@@ -784,6 +793,56 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     // worth, just spread across multiple small hits instead of one lump.
     const totalOver600 = h.damage.reduce((s, d) => s + d.amount, 0);
     expect(totalOver600).toBeCloseTo(2 * beam.perHitDamage, 3);
+  });
+
+  it('restyle 2h: a stowed pop-up turret holds fire; deployed or never clipped, it fires', () => {
+    const drone = { id: 'swarm-5', entityId: 5, x: -130, y: 900 };
+    const h = makeHarness(undefined, drone);
+    h.placement.place(OWNER, 'capital', 0, 0);
+    relayConnectorRaw(h, 0, 350);
+    h.placeRaw(OWNER, 'solar', 450, 500);
+    const turret = h.placeRaw(OWNER, 'turret', -130, 400)!;
+    for (let i = 0; i < 120; i++) h.pulse();
+    const rec = h.registry.get(turret)!;
+    expect(rec.isConstructed).toBe(true);
+    const kind = getStructureKind('turret');
+    const gap = kind.fireRateMs! + 1;
+    let now = 10_000;
+
+    // Never clipped: the idle pose is deployed, it fires as it always has.
+    expect(rec.rigClip).toBeUndefined();
+    h.grid.tickTurrets(now);
+    expect(h.damage.length).toBe(1);
+
+    // Packed under its hatch (retract finished): no target, no shot.
+    h.clock.tick = 1000;
+    rec.rigClip = { clipId: 'turret-retract', startTick: 0 };
+    for (let i = 0; i < 5; i++) h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(1);
+    expect(rec.turretTargetEntityId).toBeUndefined();
+
+    // Rising, not yet up: still holds fire.
+    rec.rigClip = { clipId: 'turret-deploy', startTick: 1000 };
+    h.clock.tick = 1040;
+    h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(1);
+
+    // Fully up: it acquires and fires again.
+    h.clock.tick = 1060;
+    h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(2);
+    expect(rec.turretTargetEntityId).toBe(5);
+
+    // A clip that leaves the turret sunk (the hatch opened over it) holds fire.
+    rec.rigClip = { clipId: 'door-open', startTick: 2000 };
+    h.clock.tick = 2100;
+    h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(2);
+
+    // Cleared clip (null): the idle pose again, deployed.
+    rec.rigClip = null;
+    h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(3);
   });
 
   it('an UNPOWERED turret does not fire', () => {
@@ -825,7 +884,7 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     const h = makeHarness(undefined, drone);
     h.placement.place(OWNER, 'capital', 0, 0);
     relayConnectorRaw(h, 0, 350);
-    h.placeRaw(OWNER, 'solar', 250, 400); // power the grid
+    h.placeRaw(OWNER, 'solar', 450, 500); // power the grid
     const bolt = h.placeRaw(OWNER, 'laser_bolt_turret', -140, 400)!;
     for (let i = 0; i < 120; i++) h.pulse();
     expect(h.registry.get(bolt)!.isConstructed).toBe(true);
@@ -925,16 +984,16 @@ describe('StructureGridSubsystem — power summary', () => {
     const h = makeHarness();
     h.placement.place(OWNER, 'capital', 0, 0);
     const con = h.placeRaw(OWNER, 'connector', 400, 0)!;
-    const sol = h.placeRaw(OWNER, 'solar', 650, 0)!;
+    const sol = h.placeRaw(OWNER, 'solar', 850, 0)!;
     // Build connector then solar (drive enough pulses for both).
-    for (let i = 0; i < 60; i++) h.pulse();
+    for (let i = 0; i < 130; i++) h.pulse(); // connector 80 + solar 480 at 5 a pulse
     expect(h.registry.get(con)!.isConstructed).toBe(true);
     expect(h.registry.get(sol)!.isConstructed).toBe(true);
     // pulse once more so the final topology rebuild ran.
     h.pulse();
     const summary = h.grid.powerSummaryFor(sol);
     expect(summary.powered).toBe(true);
-    expect(summary.netPower).toBe(80); // capital 50 + solar 30
+    expect(summary.netPower).toBe(170); // capital 50 + solar 120
   });
 });
 
@@ -942,8 +1001,8 @@ describe('StructureGridSubsystem — P2e upgrade goods bill', () => {
   function builtSolar() {
     const h = makeHarness();
     h.placement.place(OWNER, 'capital', 0, 0);
-    relayConnector(h, 120, 120);
-    const id = h.placement.place(OWNER, 'solar', 150, 0)!;
+    relayConnectorRaw(h, 400, 0);
+    const id = h.placeRaw(OWNER, 'solar', 850, 0)!;
     const rec = h.registry.get(id)!;
     rec.isConstructed = true;
     rec.constructionProgress = rec.constructionCost;

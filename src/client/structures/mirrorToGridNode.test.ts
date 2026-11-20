@@ -26,8 +26,10 @@ import type {
 function blankNode(): GridNode {
   return {
     id: '',
+    kind: '',
     x: 0,
     y: 0,
+    rot: 0,
     radius: 0,
     isHub: false,
     isCapital: false,
@@ -119,6 +121,17 @@ describe('structureMirrorToGridNode', () => {
     expect(out.isCapital).toBe(false);
     expect(out.maxConnections).toBe(solar.maxConnections);
     expect(out.maxConnections).toBe(1);
+  });
+
+  it('carries the studs its links hold (connSockSelf) and the socket-clamped cap', () => {
+    const out = blankNode();
+    // A top-level battery: 1 + 4 level slots, clamped to its 4 sockets (#15 with the server).
+    structureMirrorToGridNode('4', structureState({ connTo: [5, 6], connSockSelf: [0, 3], level: 5 }), structureEntry('battery', 0, 0), out);
+    expect(out.usedSockets).toBe(0b1001);
+    expect(out.maxConnections).toBe(4);
+    // A fence link's no-socket marks nothing.
+    structureMirrorToGridNode('4', structureState({ connTo: [5], connSockSelf: [-1] }), structureEntry('battery', 0, 0), out);
+    expect(out.usedSockets).toBe(0);
   });
 
   it('gates a BLUEPRINT (not built) to zero power and isConstructed=false', () => {

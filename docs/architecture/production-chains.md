@@ -90,7 +90,7 @@ User ruling (2026-11-01): "not everything should drain full power all of the tim
 Every galaxy sector grows its own NPC base when its room is created (`seedGalaxyBase` in `bases/NpcBaseSubsystem.ts`, enabled for every galaxy room by `resolveSectorConfig`):
 - **Profile and growth.** `contextForSector` → `baseProfileFor` (tier, role, wealth, level cap, fence) → `growBase`. The seed is `hashString(sectorKey)`, so a sector's base is stable across restarts.
 - **After the restore.** Seeding runs AFTER the sector snapshot restore, so saved player structures and parked hulls are already in place and always win the space.
-- **Site.** The pure `chooseBaseSite` (`src/core/bases/baseSite.ts`) scans the sector on a 250 u grid for a Capital position where the whole base, plus a 250 u margin, fits inside the sector and touches no player structure or parked hull. It prefers the fewest asteroids, then the site farthest from the origin (where players spawn). Asteroids under the chosen footprint are cleared quietly (no destroy event).
+- **Site.** The pure `chooseBaseSite` (`src/core/bases/baseSite.ts`) scans the sector on a 250 u grid for a Capital position where the whole base, plus a 250 u margin, fits inside the sector and touches no player structure or parked hull. It prefers the fewest asteroids, then the site farthest from the origin (where players spawn). Asteroids under the chosen footprint are cleared quietly (no destroy event). In a sector with a macro-terrain cut field the base must also lie inside its pocket's rock-free clearing (`within: pocketClearing(...)`): the square search alone reaches past the outer base pocket's 6500 u clearing at its corners (`baseClearingFit.test.ts`).
 - **Spawns.** A fresh spawn that would land inside any structure's box is moved to the nearest clear point (`nearestClearPoint`, 120 u clearance). A citadel (≈6,000 × 6,400 u) can't avoid the origin in a 10,000 u sector, so this matters.
 - **Several bases per sector.** `galaxyBasePlan` (`src/core/bases/galaxyBases.ts`) gives a sector one to three bases:
   - **base 0** is the original (same seed and id `b0`), so no existing base moved;
@@ -245,7 +245,8 @@ Code: [src/core/bases/baseProfile.ts](../../src/core/bases/baseProfile.ts) and [
    - **Huge kinds:** at most one per base.
 2. **Lay out:** connector rows around the Capital, with leaves above and below each row connector.
    - **Spine:** it stays bare, with relay connectors where a row gap exceeds range.
-   - **Spacing:** the row pitch comes from the tallest structure.
+   - **Spacing:** each row gap fits the tallest leaves that can face into it: those already on the inner row's side, and the tallest still to place (leaves go biggest first, so the 600-tall Reactor and Battery Bank set only the gaps they sit in). Rows added after the leaves (bastion rows) fit the bastion guns that hang above and below a hub.
+   - **Wide leaves:** on a fenced base with more than two columns a side, a leaf wider than a column (a Solar) stays off the end columns, which would push the fence out.
    - **The huge kind:** it sits on its own outer row.
 3. **Power:** lay out, measure the real draw (the fence depends on the layout), and add Solars until net power ≥ 0.
 4. **Fence:** a rectangle of Shield Pylons around the extent, with a Shield Gate in the middle of each side, tapped from the row ends.

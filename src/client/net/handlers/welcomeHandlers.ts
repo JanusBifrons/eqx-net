@@ -31,7 +31,7 @@ export interface WelcomeTarget {
   readonly mirror: RenderMirror;
   readonly clock: Clock;
   readonly gameClock: GameClock;
-  readonly cutField: Pick<CutFieldClient, 'setSeed'>;
+  readonly cutField: Pick<CutFieldClient, 'setSeed' | 'fieldOpts'>;
   readonly wrecks: WreckGeometryStore;
   readonly shellTiming: Pick<DrawnShellTiming, 'onWelcome'>;
   readonly room: Room | null;
@@ -87,6 +87,10 @@ export function registerWelcomeHandlers(room: Room, hctx: WelcomeHandlerCtx): vo
     ctx.mirror.subcapWrecks = msg.subcapWrecks === true;
     // Cut field on: cut the same rocks as the server from its seed (#16).
     ctx.cutField.setSeed(msg.cutField?.seed ?? null, msg.cutField?.consumed, msg.cutField?.moved, msg.cutField?.clearings);
+    // A broken field rock's wreck rebuilds from the same field options, in
+    // this store and the renderer's (through the mirror), before the wrecks.
+    ctx.wrecks.setField(ctx.cutField.fieldOpts);
+    ctx.mirror.wreckField = ctx.cutField.fieldOpts;
     // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
     // set (#16); snapshots then carry only adds, removes and a slow resync.
     if (msg.capitalWrecks === true || msg.subcapWrecks === true) {

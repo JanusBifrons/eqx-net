@@ -29,26 +29,21 @@ import {
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_FLAG_BREACH,
+  STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
   encodePlayerTurretTarget,
   encodeStructureMountAngles,
 } from '../../shared-types/structureStateWire.js';
-import {
-  TP_RULE_TOLL_HOSTILE,
-  TP_PARTNER_REMOTE,
-  TP_RULE_BOARDS,
-  TP_RULE_CHARGED,
-  TP_RULE_KEEP,
-  TP_RULE_LOADED,
-  isTeleporterKind,
-} from '../../shared-types/teleport.js';
+import { isTeleporterKind } from '../../shared-types/teleport.js';
+import { writeConnToRow, writeTeleporterRow } from '../structures/structureStateRows.js';
+import { writeRigClipRow } from '../structures/structureRigClip.js';
+import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdCount, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
-import { holdWeight } from '../../core/cargo/hold.js';
 import type { GameClock } from '../../core/clock/GameClock.js';
 import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
@@ -86,6 +81,9 @@ export interface StructuresSliceHost {
   teleporters: () => Pick<TeleporterSubsystem, 'required' | 'partnerOf' | 'pulse' | 'update'>;
   /** The room's owner interning (also used by the mine sync). */
   internStructureOwner: (owner: string) => number;
+  /** Who holds this sector now (`sectorHeldBy`; null = neutral). Read only
+   *  when the room has a Territory Lock, once per sync. */
+  sectorHeldBy: () => string | null;
   // ── The grid pulse / turret tick cadences (slice 31) ──
   hostileActs: () => Pick<HostileActLedger, 'sweep'>;
   patrols: Pick<PatrolSubsystem, 'count' | 'tick'>;
@@ -122,6 +120,7 @@ export class StructuresSliceSync {
     const gen = ++this.structureStateGeneration;
     let targets: number[] | undefined;
     const nowMs = h.gameClock.now();
+    let held: string | null | undefined; // the sector's holder, read on the first lock
     for (const rec of h.structureRegistry.all()) {
       const entityId = h.swarmRegistry.get(rec.id)?.entityId;
       if (entityId === undefined) continue; // swarm entity gone — skip
@@ -148,6 +147,9 @@ export class StructuresSliceSync {
       if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
       if (h.breakIns.breached(rec.id)) flags |= STRUCTURE_FLAG_BREACH;
       if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
+      if (rec.kind === TERRITORY_LOCK_KIND && isHoldingTerritoryLock(rec, held === undefined ? (held = h.sectorHeldBy()) : held)) {
+        flags |= STRUCTURE_FLAG_LOCK_HOLDING;
+      }
       let wallTo = -1;
       if (isShieldEmitterKind(rec.kind)) {
         // Clients derive every wall from connections + this flag (all of this
@@ -211,6 +213,7 @@ export class StructuresSliceSync {
         if ((st.prodCount ?? SD.prodCount) !== pc) st.prodCount = pc;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
+      if (rec.rigClip !== undefined) writeRigClipRow(rec, st); // restyle 2e (late-join safe, #16)
       this.syncConnTo(rec.id, st);
       // Fast cosmetics stay on the snapshot (only structures with a target).
       if (
@@ -239,65 +242,18 @@ export class StructuresSliceSync {
     return targets;
   }
 
-  /** v4 T1 — a teleporter's room-state fields (A2: assign only on change). */
+  /** Structure id → its swarm entity id (one bound closure: the row writers
+   *  run per structure per rebuild and allocate nothing). */
+  private readonly entityIdOf = (id: string): number | undefined => this.h.swarmRegistry.get(id)?.entityId;
+
+  /** v4 T1 — a teleporter's room-state fields (`writeTeleporterRow`). */
   private syncTeleporterState(rec: StructureRecord, st: StructureState): void {
-    const h = this.h;
-    const phase = rec.tpPhase ?? 0;
-    if ((st.tpPhase ?? SD.tpPhase) !== phase) {
-      st.tpPhase = phase;
-      // The phase's length rides along only when the phase changes (the client
-      // times the animation from when the change arrives).
-      const ms = phase === 0 ? 0 : Math.max(0, Math.min(65535, Math.round((rec.tpPhaseEndsAtMs ?? 0) - h.gameClock.now())));
-      if ((st.tpPhaseMs ?? SD.tpPhaseMs) !== ms) st.tpPhaseMs = ms;
-    }
-    const req = h.teleporters().required(rec);
-    const pct = req > 0 ? Math.min(100, Math.floor(((rec.tpCharge ?? 0) / req) * 100)) : 0;
-    if ((st.tpChargePct ?? SD.tpChargePct) !== pct) st.tpChargePct = pct;
-    const p = h.teleporters().partnerOf(rec);
-    const partner = p !== null ? (h.swarmRegistry.get(p.id)?.entityId ?? -1) : rec.tpPartner !== undefined ? TP_PARTNER_REMOTE : -1;
-    if ((st.tpPartner ?? SD.tpPartner) !== partner) st.tpPartner = partner;
-    const r = rec.tpRules;
-    const bits = r === undefined ? 0
-      : (r.whenCharged ? TP_RULE_CHARGED : 0) | (r.shipBoards ? TP_RULE_BOARDS : 0) | (r.loaded ? TP_RULE_LOADED : 0) | (r.keepLoaded ? TP_RULE_KEEP : 0);
-    const tollBits = rec.tpToll?.nonPayer === 'hostile' ? TP_RULE_TOLL_HOSTILE : 0;
-    const tollPer = rec.tpToll?.per1000 ?? 0;
-    if ((st.tpToll ?? SD.tpToll) !== tollPer) st.tpToll = tollPer;
-    if ((st.tpRules ?? SD.tpRules) !== (bits | tollBits)) st.tpRules = bits | tollBits;
-    const lg = r?.loaded ? (r.loaded.good === null ? 0 : encodeGood(r.loaded.good)) : 0;
-    if ((st.tpLoadGood ?? SD.tpLoadGood) !== lg) st.tpLoadGood = lg;
-    const lq = r?.loaded?.qty ?? 0;
-    if ((st.tpLoadQty ?? SD.tpLoadQty) !== lq) st.tpLoadQty = lq;
-    const kg = r?.keepLoaded ? encodeGood(r.keepLoaded.good) : 0;
-    if ((st.tpKeepGood ?? SD.tpKeepGood) !== kg) st.tpKeepGood = kg;
-    const kq = r?.keepLoaded?.qty ?? 0;
-    if ((st.tpKeepQty ?? SD.tpKeepQty) !== kq) st.tpKeepQty = kq;
-    const w = rec.padHold ? Math.min(65535, Math.round(holdWeight(rec.padHold))) : 0;
-    if ((st.padWeight ?? SD.padWeight) !== w) st.padWeight = w;
+    writeTeleporterRow(rec, st, this.h.gameClock.now(), this.h.teleporters(), this.entityIdOf);
   }
 
-  /** Mirror a structure's connections into its room-state `connTo` only when
-   *  the set changed (compared in place — no allocation when unchanged). */
+  /** `writeConnToRow`: the structure's connections into `connTo`, on change. */
   private syncConnTo(id: string, st: StructureState): void {
-    const h = this.h;
-    const conns = h.structureRegistry.connectionsOf(id);
-    let n = 0;
-    let same = true;
-    for (const c of conns) {
-      const other = c.getOtherNode(id);
-      if (other === null) continue;
-      const eid = h.swarmRegistry.get(other)?.entityId;
-      if (eid === undefined) continue;
-      if (n >= st.connTo.length || st.connTo.at(n) !== eid) same = false;
-      n++;
-    }
-    if (same && n === st.connTo.length) return;
-    st.connTo.clear();
-    for (const c of conns) {
-      const other = c.getOtherNode(id);
-      if (other === null) continue;
-      const eid = h.swarmRegistry.get(other)?.entityId;
-      if (eid !== undefined) st.connTo.push(eid);
-    }
+    writeConnToRow(id, st, this.h.structureRegistry, this.entityIdOf);
   }
 
   // ── Structure grid pulse (structures plan, Phase 3) ──────────────────────
