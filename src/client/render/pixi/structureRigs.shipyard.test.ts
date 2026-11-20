@@ -11,7 +11,7 @@ import { StructureRigView } from './structureRigs.js';
 import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import { shipyardPartContext } from './structureStyleC.heavyIndustry.js';
 import {
-  SHIPYARD_PRINT_CYAN, shipyardCycleTicks, shipyardGantryX, shipyardHullScale, shipyardLightContext, shipyardRowClip,
+  shipyardCycleTicks, shipyardPrintContext, shipyardGantryX, shipyardHullScale, shipyardLightContext, shipyardRowClip,
 } from './structureStyleC.shipyardBuild.js';
 import { SHIPYARD_BUILD_CLIP, SHIPYARD_BUILD_TICKS, SHIPYARD_GANTRY_TRAVEL } from '../../../core/articulation/rigs/heavyIndustry.js';
 import { PROD_STATE, encodeRecipe } from '../../../shared-types/production.js';
@@ -45,7 +45,7 @@ describe('shipyard build frame (StructureRigView)', () => {
     expect(v.parts[rig.partIds.indexOf('light-5')]!.context).toBe(shipyardLightContext(false));
   });
 
-  it('mid-print a block is cyan and faded; finished it is full; lamps light; all scaled to the hull', () => {
+  it('mid-print a block shows its cyan print art, faded; finished it is full; lamps light; all scaled to the hull', () => {
     const rig = rigForStructureKind('shipyard')!;
     const v = new StructureRigView(rig);
     v.setRunningFrom(row(PROD_STATE.running, encodeRecipe('build_missile_frigate')));
@@ -54,14 +54,15 @@ describe('shipyard build frame (StructureRigView)', () => {
     v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 1000 - 85 }, 1000, 0, 0, 0);
     const h0 = v.parts[rig.partIds.indexOf('hull-0')]!;
     expect(h0.visible).toBe(true);
-    expect(h0.tint).toBe(SHIPYARD_PRINT_CYAN);
+    expect(h0.context).toBe(shipyardPrintContext('hull-0', true));
+    expect(h0.context).not.toBe(shipyardPrintContext('hull-0'));
     expect(h0.alpha).toBeLessThan(1);
     expect(h0.scale.x).toBeCloseTo(k, 6);
     expect(h0.x).toBeCloseTo(6 * k, 6);
     expect(v.parts[rig.partIds.indexOf('hull-7')]!.visible).toBe(false);
     // Finished: every block solid, every lamp lit.
     v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 1000 - SHIPYARD_BUILD_TICKS }, 1000, 0, 0, 0);
-    expect(h0.tint).toBe(0xffffff);
+    expect(h0.context).toBe(shipyardPrintContext('hull-0'));
     expect(h0.alpha).toBe(1);
     for (let i = 0; i < 6; i++) expect(v.parts[rig.partIds.indexOf(`light-${i}`)]!.context).toBe(shipyardLightContext(true));
   });
