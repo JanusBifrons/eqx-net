@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { GOOD_DEFS } from '../../shared-types/goods';
 import { packedWeightOf } from '../../core/cargo/hold';
-import { bump, checkTrade, moneyLine, qtyIn, tradeMoves, tradeSideBySide, type TradeLine } from './tradeBasket';
+import { bump, checkTrade, moneyLine, qtyIn, qtyLeft, tradeMoves, tradeSideBySide, type TradeLine } from './tradeBasket';
 
 const W = GOOD_DEFS.alloy.weight;
 
@@ -74,5 +74,16 @@ describe('tradeBasket', () => {
     expect(moneyLine(-20013, false, 20000)).toBe('Pay 20013¢ of 20000¢');
     expect(moneyLine(10, false, 20000)).toBe('Get 10¢ · wallet 20000¢');
     expect(moneyLine(-5, false, null)).toBe('Pay 5¢');
+  });
+
+  it('qtyLeft: what is left once the basket line is counted, never below zero', () => {
+    let b: TradeLine[] = [];
+    expect(qtyLeft(b, 'buy', 'g:alloy', 5)).toBe(5);
+    b = bump(b, 'buy', 'g:alloy', 12, 2);
+    b = bump(b, 'sell', 'g:salvage', 2, 1);
+    expect(qtyLeft(b, 'buy', 'g:alloy', 5)).toBe(3);
+    expect(qtyLeft(b, 'sell', 'g:alloy', 5)).toBe(5); // the other side's line doesn't count
+    expect(qtyLeft(b, 'sell', 'g:salvage', 3)).toBe(2);
+    expect(qtyLeft(b, 'buy', 'g:alloy', 1)).toBe(0);
   });
 });

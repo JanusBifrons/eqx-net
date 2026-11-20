@@ -241,6 +241,38 @@ describe('CargoPanel (C1)', () => {
     act(() => useUIStore.getState().setWallet(null));
   });
 
+  it('T4: the stock and your own count go down as you fill the basket; buy greys at zero', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({
+      hold: { goods: { alloy: 2 }, blueprints: [] }, market: { buy: { alloy: 12 }, sell: { salvage: 2 } },
+    })));
+    const stock = (): string => screen.getByTestId('trade-row-alloy').querySelector('[data-testid="trade-stock"]')!.textContent!;
+    expect(stock()).toBe('2');
+    fireEvent.click(screen.getByTestId('trade-buy-alloy'));
+    expect(stock()).toBe('1');
+    fireEvent.click(screen.getByTestId('trade-buy-alloy'));
+    expect(stock()).toBe('0');
+    expect((screen.getByTestId('trade-buy-alloy') as HTMLButtonElement).disabled).toBe(true);
+    // Sell side: you carry 3 salvage; each one in the basket leaves one fewer.
+    expect(screen.getByTestId('trade-row-salvage').getAttribute('data-aboard')).toBe('3');
+    fireEvent.click(screen.getByTestId('trade-sell-salvage'));
+    expect(screen.getByTestId('trade-row-salvage').getAttribute('data-aboard')).toBe('2');
+  });
+
+  it('T4: a long name in the basket wraps and shows whole, never cut with an ellipsis', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({
+      hold: { goods: {}, blueprints: [], packed: [{ product: 'hull:capital', quality: 50 }] },
+      market: { buy: {}, sell: {}, packed: { 'hull:capital': 13000 } },
+    })));
+    fireEvent.click(screen.getByTestId('trade-buy-hull:capital'));
+    const name = screen.getByTestId('trade-line-name');
+    expect(name.textContent).toBe('Capital (packed)');
+    const css = getComputedStyle(name);
+    expect(css.whiteSpace).not.toBe('nowrap');
+    expect(css.textOverflow).not.toBe('ellipsis');
+  });
+
   it('the dock list fills the window and scrolls inside its box, never a fixed 110 px', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: { salvage: 2 } } })));

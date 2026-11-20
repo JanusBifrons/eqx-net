@@ -27,7 +27,7 @@ import { holdWeight } from '../../core/cargo/hold';
 import { CargoIcon } from './cargoIcons';
 import { HUD } from '../hud/tokens';
 import { WINDOW_BTN_BASE_SX, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX } from './GameWindow';
-import { bump, checkTrade, credits, moneyLine, qtyIn, tradeMoves, tradeSideBySide, type TradeDir, type TradeLine } from './tradeBasket';
+import { bump, checkTrade, credits, moneyLine, qtyLeft, tradeMoves, tradeSideBySide, type TradeDir, type TradeLine } from './tradeBasket';
 
 const C = HUD.color;
 const NUM = { fontFamily: HUD.font.num, fontVariantNumeric: 'tabular-nums' as const, textAlign: 'right' as const, whiteSpace: 'nowrap' as const };
@@ -57,6 +57,8 @@ const BASKET_SX = {
 };
 /** Side by side: the basket is its own column at the body's full height. */
 const BASKET_WIDE_SX = { ...BASKET_SX, flex: '2 1 0', maxHeight: 'none', minWidth: 0, borderTop: 'none', pt: 0, borderLeft: WINDOW_EDGE, pl: 1.5 };
+/** A basket line's name wraps (up to two lines) so a long one shows whole; the money stays in its column. */
+const LINE_NAME_SX = { minWidth: 0, whiteSpace: 'normal' as const, overflowWrap: 'anywhere' as const, fontSize: 11, lineHeight: 1.2, py: '2px' };
 const LINE_SX = {
   display: 'grid', gridTemplateColumns: '38px minmax(0,1fr) 26px 30px 26px 64px 26px', alignItems: 'center', columnGap: '4px',
   px: 0.75, minHeight: 28, borderRadius: '5px', backgroundColor: 'rgba(255,255,255,0.03)',
@@ -148,8 +150,10 @@ export function TradeMarket({ target, state, market, notice, onClose }: TradeMar
   const shipUsed = state.ship !== null ? holdWeight(state.ship) : 0;
   const cap = state.shipCapacity;
   const check = checkTrade(basket, shipUsed, cap, wallet);
-  const canBuy = (it: DockItem): boolean => it.buy !== undefined && qtyIn(basket, 'buy', it.key) < it.stock;
-  const canSell = (it: DockItem): boolean => it.sell !== undefined && qtyIn(basket, 'sell', it.key) < it.aboard;
+  const stockLeft = (it: DockItem): number => qtyLeft(basket, 'buy', it.key, it.stock);
+  const aboardLeft = (it: DockItem): number => qtyLeft(basket, 'sell', it.key, it.aboard);
+  const canBuy = (it: DockItem): boolean => it.buy !== undefined && stockLeft(it) > 0;
+  const canSell = (it: DockItem): boolean => it.sell !== undefined && aboardLeft(it) > 0;
   const can = (dir: TradeDir, it: DockItem): boolean => (dir === 'buy' ? canBuy(it) : canSell(it));
   const add = (dir: TradeDir, it: DockItem, delta: number): void => {
     const unit = dir === 'buy' ? it.buy : it.sell;
@@ -180,16 +184,16 @@ export function TradeMarket({ target, state, market, notice, onClose }: TradeMar
           <Box sx={LIST_SX} data-testid="cargo-here-list">
             {items.length === 0 && <Box sx={EMPTY_SX}>This dock trades nothing right now.</Box>}
             {items.map((it) => (
-              <Box key={it.key} sx={ROW_SX} data-testid={`trade-row-${it.id}`} data-key={it.key} data-stock={it.stock} data-aboard={it.aboard}>
+              <Box key={it.key} sx={ROW_SX} data-testid={`trade-row-${it.id}`} data-key={it.key} data-stock={stockLeft(it)} data-aboard={aboardLeft(it)}>
                 <Box sx={{ width: 22, height: 22 }}><CargoIcon rowKey={it.key} /></Box>
                 <Box sx={NAME_SX} title={it.label}>{it.label}</Box>
-                <Box sx={{ ...NUM, fontSize: 12 }} data-testid="trade-stock">{it.stock}</Box>
+                <Box sx={{ ...NUM, fontSize: 12 }} data-testid="trade-stock">{stockLeft(it)}</Box>
                 <Box sx={{ ...NUM, fontSize: 12, color: it.buy === undefined ? C.inkFaint : C.ink }} data-testid="trade-buy-price">{price(it.buy)}</Box>
                 <Box sx={{ ...NUM, fontSize: 12, color: it.sell === undefined ? C.inkFaint : C.ink }} data-testid="trade-sell-price">{price(it.sell)}</Box>
                 <IconButton size="small" sx={ICON_BTN_SX} aria-label={`Buy ${it.label}`} data-testid={`trade-buy-${it.id}`} disabled={!canBuy(it)} onClick={() => add('buy', it, 1)}>
                   <AddShoppingCartIcon sx={ICON_SX} />
                 </IconButton>
-                <IconButton size="small" sx={ICON_BTN_SX} aria-label={`Sell ${it.label}`} data-testid={`trade-sell-${it.id}`} disabled={!canSell(it)} onClick={() => add('sell', it, 1)}>
+                <IconButton size="small" sx={ICON_BTN_SX} aria-label={`Sell ${it.label}`} title={`You have ${aboardLeft(it)}`} data-testid={`trade-sell-${it.id}`} disabled={!canSell(it)} onClick={() => add('sell', it, 1)}>
                   <SellIcon sx={ICON_SX} />
                 </IconButton>
               </Box>
@@ -204,7 +208,7 @@ export function TradeMarket({ target, state, market, notice, onClose }: TradeMar
             return (
               <Box key={`${l.dir}:${l.key}`} sx={LINE_SX} data-testid={`trade-line-${l.dir}-${l.key.slice(2)}`} data-qty={l.qty}>
                 <Box sx={{ ...SIDE_SX, color: l.dir === 'buy' ? C.auto : C.hullOk }}>{l.dir === 'buy' ? 'Buy' : 'Sell'}</Box>
-                <Box sx={NAME_SX}>{label}</Box>
+                <Box sx={LINE_NAME_SX} data-testid="trade-line-name">{label}</Box>
                 <IconButton size="small" sx={SMALL_BTN_SX} aria-label="One less" data-testid="trade-qty-minus" onClick={() => it && add(l.dir, it, -1)}>
                   <RemoveIcon sx={{ fontSize: 16 }} />
                 </IconButton>
