@@ -21,6 +21,7 @@ import {
   GameWindow, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX,
 } from './GameWindow';
 import { powerSummary, signed, type PowerSummary } from './structureSettingsPower';
+import { phoneTiny } from './inspectorSizes';
 
 export type SettingsTabId = 'power';
 interface SettingsTab { id: SettingsTabId; label: string }
@@ -139,4 +140,4 @@ const LABEL_SX = { color: C.inkDim, fontSize: 11, fontWeight: 600, letterSpacing
 const VALUE_SX = { color: C.ink, textAlign: 'right' as const, fontFamily: HUD.font.num, fontVariantNumeric: 'tabular-nums' } as const;
 const ROW_SX = { fontSize: 12, color: C.inkDim } as const;
 const COG_SX = { p: '2px', color: 'rgba(180,220,255,0.85)', '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' } } as const;
-const COG_ICON_SX = { fontSize: { xs: 16, sm: 28 } } as const;
+const COG_ICON_SX = phoneTiny({ fontSize: [16, 28] }); // the inspector's ICON_SX: tiny on a phone
