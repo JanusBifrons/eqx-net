@@ -578,7 +578,16 @@ unit-tested like `TransitOrchestrator`) + [StructureRegistry](../../src/server/s
 non-operational; the **Capital** is the exception (`constructionCost===0` ⇒
 pre-built, full HP, the mineral bank). Placement does NOT pre-charge minerals —
 the cost is drained DURING construction by the Phase-3 grid pulse, so a blueprint
-can be placed with an empty bank and waits. The structure subtype rides the
+can be placed with an empty bank and waits. **Hologram pass-through (base
+loop 3F):** an unbuilt blueprint's body spawns in `BLUEPRINT_COLLISION_GROUPS`
+(collides with nothing; its rig's solid parts wait too), so ships fly through it;
+its space stays reserved because placement checks the registry. On completion
+([`blueprintBody.ts`](../../src/server/structures/blueprintBody.ts)) it turns
+solid (`SET_COLLISION_GROUPS` → default, `SwarmSpawner.solidifyStructure`) only
+when no hull (`SectorObstacles.hullCircles`) overlaps its footprint; otherwise it
+waits, fully paid, and finishes the pulse the space is clear. Records built
+outside the pulse (restore, seeded bases) settle on the next pulse. The client
+predWorld still builds holograms solid until job 3F2. The structure subtype rides the
 **shared `shipKind` byte** (kind=2 path; `SwarmSpawner.spawnStructure` sets
 `rec.shipKind`) — no stride/`SWARM_WIRE_VERSION` bump. `remove` is owner-gated.
 **Phase-4 C2 — placement is OBSTACLE-aware.** `place()` rejected overlap against

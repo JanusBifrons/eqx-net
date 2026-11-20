@@ -58,6 +58,7 @@ import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import type { Rig } from '../../core/articulation/rig.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+import { settleBlueprintBody, settleBuiltGhosts, type BlueprintBodyHooks } from './blueprintBody.js';
 
 /** Cap on reconnect attempts per pulse so a sector full of permanently-stranded
  *  structures (e.g. collinear-blocked leaves) can't make the 1 Hz pulse rescan
@@ -96,7 +97,9 @@ export function resolveTurretBeam(
   return { cooldownMs, perHitDamage: dps * (cooldownMs / 1000) };
 }
 
-export interface StructureGridHooks {
+/** `BlueprintBodyHooks`: hologram pass-through (a blueprint turns solid only
+ *  with no ship inside; absent ⇒ it turns solid at once). */
+export interface StructureGridHooks extends BlueprintBodyHooks {
   registry: StructureRegistry;
   /** Read a structure's current hull (from `swarmHealth`). */
   getHealth(id: string): number;
@@ -518,6 +521,7 @@ export class StructureGridSubsystem {
     this.processGas();
     this.processTransfer(nowMs, flashed);
     this.processConstruction(nowMs, flashed);
+    settleBuiltGhosts(registry.all(), this.hooks); // built outside the pulse (restore, seeded bases)
     this.processRepair(nowMs, flashed);
     this.processDeconstruction(nowMs, flashed);
     // Dominant pulse material (back-compat single field): prefer 'minerals' when
@@ -975,7 +979,9 @@ export class StructureGridSubsystem {
   private processConstruction(nowMs: number, flashed: Array<[string, string, FlowMaterial]>): void {
     for (const bp of this.hooks.registry.all()) {
       if (bp.isConstructed || bp.isDeconstructing) continue;
-      if (bp.prepaid === true && bp.upgradeTargetLevel === undefined) {
+      if (bp.constructionProgress >= bp.constructionCost) {
+        // Fully paid, waiting for a ship to leave its space (below).
+      } else if (bp.prepaid === true && bp.upgradeTargetLevel === undefined) {
         // Economy v2 W4b — unpacking a packed structure costs only time: it
         // builds at the normal rate with no minerals and needs no route.
         bp.constructionProgress += CONSTRUCTION_PULSE_AMOUNT;
@@ -990,6 +996,9 @@ export class StructureGridSubsystem {
       }
       if (bp.constructionProgress >= bp.constructionCost) {
         bp.constructionProgress = bp.constructionCost;
+        // Hologram pass-through: never turn solid around a ship; finish the
+        // pulse the space is clear.
+        if (!settleBlueprintBody(bp, this.hooks)) continue;
         bp.isConstructed = true;
         // Phase 4 WS-B4 — an UPGRADE build (upgradeTargetLevel set) increments
         // the level on completion + applies the per-level stat grant; a normal
