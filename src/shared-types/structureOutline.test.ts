@@ -153,7 +153,10 @@ describe('structureOutline', () => {
     // Kinds appended after the pin (the Territory Lock) are left out, so the
     // pin still guards every outline it covered.
     const pinned = KIND_IDS.filter((id) => id !== 'territory_lock');
-    const json = JSON.stringify(pinned.map((id) => [undefined, 'a', 'b'].map((st) => structureOutline(id, st))));
+    // Rounded to 1e-6 so last-bit float noise between Node versions (CI 22,
+    // local 24) cannot move the pin; any real outline change still does.
+    const r6 = (v: number): number => Math.round(v * 1e6) / 1e6;
+    const json = JSON.stringify(pinned.map((id) => [undefined, 'a', 'b'].map((st) => structureOutline(id, st).map((p) => [r6(p.x), r6(p.y)]))));
     let hh = 0x811c9dc5;
     for (let i = 0; i < json.length; i++) {
       hh ^= json.charCodeAt(i);
@@ -162,6 +165,7 @@ describe('structureOutline', () => {
     // Re-pinned in 2c++: FREIGHT_DOCK's footprint grew to 1000×400 (every
     // style's outline is footprint-derived; nothing else moved). Re-pinned in
     // stage 4 family 1: Solar 700×300, Reactor + Battery Bank 600×600.
-    expect(hh.toString(16)).toBe('abf7d34a');
+    // Re-pinned for the 1e-6 rounding (same outlines).
+    expect(hh.toString(16)).toBe('a0554cb6');
   });
 });

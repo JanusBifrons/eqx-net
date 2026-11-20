@@ -99,10 +99,11 @@ export const STRUCTURE_SOCKET_OVERRIDES: Partial<Record<StructureKindId, readonl
     freezeSocket(0, 450, 0, 1),
     freezeSocket(-135, 99, -1, 0), freezeSocket(-135, -99, -1, 0),
   ]),
-  // The spire: the broadcast spine's two ends and the lantern tower's two
-  // ends; the antenna fins between them are open.
+  // The spire: the broadcast spine's two ends and the plinth edge past the
+  // lantern tower's two ends (400 x 300 plinth); the antenna fins between
+  // them are open.
   territory_lock: Object.freeze([
-    freezeSocket(200, 0, 1, 0), freezeSocket(0, 140, 0, 1), freezeSocket(-200, 0, -1, 0), freezeSocket(0, -140, 0, -1),
+    freezeSocket(200, 0, 1, 0), freezeSocket(0, 150, 0, 1), freezeSocket(-200, 0, -1, 0), freezeSocket(0, -150, 0, -1),
   ]),
 };
 
