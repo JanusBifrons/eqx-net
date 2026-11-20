@@ -30,6 +30,8 @@ describe('buildModeView', () => {
     vi.mocked(sendCommand).mockClear();
     vi.mocked(sendPilotShip).mockClear();
     useUIStore.getState().setPilotMode('pilot');
+    // A galaxy sector: the server can hand a parked hull back (it keeps a roster).
+    useUIStore.setState({ currentSectorKey: 'sol-prime' });
   });
 
   it('entering placement from Fly switches to Command and pulls the camera back', () => {
@@ -83,5 +85,35 @@ describe('buildModeView', () => {
     useUIStore.getState().setPilotMode('pilot');
     stepBuildModeView(null, VIEW, 'ship-1', cam, W, H);
     expect(sendPilotShip).not.toHaveBeenCalled();
+  });
+
+  // Stills review 2026-11-20 (`?room=sector`): Cancel left the player in
+  // Command with no joystick. A room with no sector key keeps no roster, so
+  // the server ignores `pilot_ship` (`reclaimLingeringHull` returns early):
+  // the ship let go of could never be flown again. Build mode there keeps
+  // the ship (stays in Fly), so Cancel / Confirm always end flying.
+  it('in a room with no sector key, build mode keeps flying the ship (no strand in Command)', () => {
+    useUIStore.setState({ currentSectorKey: null });
+    const cam = camera();
+    stepBuildModeView('solar', VIEW, 'ship-1', cam, W, H);
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(selectControlMode(useUIStore.getState())).toBe('fly');
+    // Still a build view: the camera pulls back, and comes back on exit.
+    expect(cam.glideCameraTo).toHaveBeenCalledTimes(1);
+    stepBuildModeView(null, VIEW, 'ship-1', cam, W, H);
+    expect(sendPilotShip).not.toHaveBeenCalled();
+    expect(cam.glideCameraTo).toHaveBeenCalledTimes(2);
+    expect(selectControlMode(useUIStore.getState())).toBe('fly');
+  });
+
+  it('a dial toggle or wheel zoom mid-build does not lose the fly-back', () => {
+    const cam = camera();
+    stepBuildModeView('solar', VIEW, 'ship-1', cam, W, H);
+    // Wheel zoom-out: only the camera reading changes, frame after frame.
+    for (let i = 1; i <= 4; i++) stepBuildModeView('solar', { ...VIEW, viewHalf: VIEW.viewHalf * (1 + i) }, 'ship-1', cam, W, H);
+    // The local ship id drops while in Command (the hull is parked).
+    stepBuildModeView('solar', VIEW, null, cam, W, H);
+    stepBuildModeView(null, VIEW, null, cam, W, H);
+    expect(sendPilotShip).toHaveBeenCalledWith('ship-1');
   });
 });
