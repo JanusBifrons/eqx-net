@@ -24,7 +24,7 @@
 import { ASTEROID_YIELD, yieldHasGoods, yieldInto, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
-import { structureDraw } from '../../shared-types/structurePower.js';
+import { redrawStructure, switchStructure } from './structurePowerSwitch.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   canUpgradeStructure,
@@ -289,6 +289,7 @@ export class StructureGridSubsystem {
    *  is byte-identical to the raw grid summary. A rescue reads full supply. */
   powerSummaryFor(id: string): PowerSummary {
     const raw = this.grid.powerSummaryFor(id);
+    if (this.hooks.registry.get(id)?.switchedOff === true) return { netPower: raw.netPower, powered: false }; // owner Off
     if (raw.powered || !this.batteryRescued.has(id)) return raw;
     return { netPower: raw.netPower, powered: true, supplyFrac: 1 };
   }
@@ -702,12 +703,13 @@ export class StructureGridSubsystem {
    * change adjusts its grid component's net power in O(1) (no rebuild).
    */
   setActive(rec: StructureRecord, active: boolean): void {
-    if ((rec.drawFull === true) === active) return;
-    const cons = getStructureKind(rec.kind).powerConsumption;
-    const before = structureDraw(cons, rec.drawFull === true);
-    rec.drawFull = active;
-    if (rec.isConstructed) this.grid.adjustDraw(rec.id, structureDraw(cons, active) - before);
+    const on = active && rec.switchedOff !== true; // the owner's Off wins
+    if ((rec.drawFull === true) !== on) redrawStructure(rec, rec.switchedOff === true, on, this.adjustDraw);
   }
+
+  /** The owner On/Off switch (`structurePowerSwitch.ts`); false if nothing changed. */
+  setSwitchedOn(rec: StructureRecord, on: boolean): boolean { return switchStructure(rec, on, this.adjustDraw); }
+  private readonly adjustDraw = (id: string, delta: number): void => this.grid.adjustDraw(id, delta);
 
   /** Clear a Miner's target + cached pose (unpowered / no in-range rock) so the
    *  mining beam stops on the next tick. */

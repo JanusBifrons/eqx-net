@@ -102,6 +102,8 @@ export interface StructureRenderState {
   noFuel?: boolean;
   /** Active power — drawing full consumption (else the idle trickle). */
   drawFull?: boolean;
+  /** The owner switched it Off (no draw, no work). */
+  switchedOff?: boolean;
   /** C2 — someone is breaking into its cargo right now. */
   breach?: boolean;
   /** F2 — a built Territory Lock holding its sector for its owner's side

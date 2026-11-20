@@ -28,6 +28,7 @@ import {
   STRUCTURE_FLAG_NO_AMMO,
   STRUCTURE_FLAG_NO_FUEL,
   STRUCTURE_FLAG_DRAW_FULL,
+  STRUCTURE_FLAG_OFF,
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_TARGET_NONE,
@@ -147,6 +148,7 @@ export class StructuresSliceSync {
       // by structureFlagsWire.test.ts).
       if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
       if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
+      if (rec.switchedOff === true) flags |= STRUCTURE_FLAG_OFF;
       if (h.breakIns.breached(rec.id)) flags |= STRUCTURE_FLAG_BREACH;
       if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;
       if (rec.kind === TERRITORY_LOCK_KIND && isHoldingTerritoryLock(rec, held === undefined ? (held = h.sectorHeldBy()) : held)) {
