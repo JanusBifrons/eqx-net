@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { StorageService, structureUid, DEPOSIT_RANGE, SALVAGE_TO_MINERALS } from './StorageService.js';
+import { StorageService, SALVAGE_TO_MINERALS } from './StorageService.js';
+import { structureUid } from './storageHolds.js';
+import { depositRangeOf, nearStorage, takesHoverDeposit, DEPOSIT_RANGE } from './storageReach.js';
+import { CAPITAL_BAY, DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_BAY_INSET } from '../../core/articulation/rigCatalogue.js';
 import { HoldStore } from './HoldStore.js';
-import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
+import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';
 import { structureKindToIndex, type StructureKindId } from '../../shared-types/structureKinds.js';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 
@@ -64,6 +67,52 @@ describe('StorageService (P1a-2)', () => {
     expect(t.holdStore.get('ship-1')!.hold.goods.core).toBe(200);
   });
 
+  it('3c: a filtered deposit moves only the dock\'s import goods; the rest stays aboard', () => {
+    const t = setup();
+    const dock = rec('d', 'freight_dock', 0, 0, {
+      freightOrders: [{ good: 'alloy', mode: 'import', level: 10 }, { good: 'salvage', mode: 'export', level: 5 }],
+    });
+    t.registry.add(dock);
+    t.ship({ alloy: 4, salvage: 7, core: 2 });
+    t.ops.length = 0;
+    const moved = t.svc.deposit('ship-1', 'p1', dock, dockIntakeGoods(dock));
+    expect(moved.goods).toEqual({ alloy: 4 });
+    expect(dock.hold!.goods).toEqual({ alloy: 4 });
+    expect(t.holdStore.get('ship-1')!.hold.goods).toEqual({ salvage: 7, core: 2 });
+    expect(t.ops).toHaveLength(1);
+    expect(t.ops[0]!.type).toBe('GROUP');
+  });
+
+  it('3c: a dock with no import orders takes nothing; no filter takes everything, as before', () => {
+    const t = setup();
+    const dock = rec('d', 'freight_dock', 0, 0, { freightOrders: [{ good: 'alloy', mode: 'export', level: 3 }] });
+    t.registry.add(dock);
+    t.ship({ alloy: 4, salvage: 7 });
+    expect(dockIntakeGoods(dock)!.size).toBe(0);
+    expect(dockIntakeGoods(rec('e', 'freight_dock', 50, 0)), 'no orders at all = no filter').toBeUndefined();
+    t.ops.length = 0;
+    const none = t.svc.deposit('ship-1', 'p1', dock, dockIntakeGoods(dock));
+    expect(none.goods).toEqual({});
+    expect(t.ops).toHaveLength(0);
+    expect(t.holdStore.get('ship-1')!.hold.goods).toEqual({ alloy: 4, salvage: 7 });
+    const all = t.svc.deposit('ship-1', 'p1', dock);
+    expect(all.goods).toEqual({ alloy: 4, salvage: 7 });
+    expect(t.holdStore.get('ship-1')).toBeUndefined();
+  });
+
+  it('3c: a filtered deposit still respects capacity; overflow and non-imports stay aboard', () => {
+    const bay = rec('b', 'cargo_bay', 100, 0);
+    const bay2 = rec('b2', 'cargo_bay', 200, 0);
+    const t = setup(['b', 'b2']);
+    t.registry.add(bay);
+    t.registry.add(bay2);
+    t.ship({ core: 1000, salvage: 3 }); // core 5000 weight, bays hold 2000 each
+    t.svc.deposit('ship-1', 'p1', bay, new Set(['core'] as const));
+    expect(bay.hold!.goods).toEqual({ core: 400 });
+    expect(bay2.hold!.goods).toEqual({ core: 400 });
+    expect(t.holdStore.get('ship-1')!.hold.goods).toEqual({ core: 200, salvage: 3 });
+  });
+
   it('a blueprint (unbuilt) or foreign storage is not a deposit target', () => {
     const t = setup();
     t.registry.add(rec('x', 'cargo_bay', 10, 0, { isConstructed: false }));
@@ -73,6 +122,64 @@ describe('StorageService (P1a-2)', () => {
     expect(t.svc.nearestOwnStorage('p1', 0, 0)).toBeNull();
   });
 
+  it('a freight dock deposit range covers its whole loading pad; other storage keeps DEPOSIT_RANGE', () => {
+    expect(depositRangeOf('cargo_bay')).toBe(DEPOSIT_RANGE);
+    expect(depositRangeOf('capital')).toBe(DEPOSIT_RANGE);
+    const far = Math.hypot(Math.abs(DOCK_BAY_CX) + DOCK_BAY_HALF_W, DOCK_BAY_CY + DOCK_BAY_HALF_H);
+    expect(depositRangeOf('freight_dock')).toBeGreaterThanOrEqual(far);
+    const t = setup();
+    // A ship on the pad's far corner (dock at the origin, unrotated): the dock
+    // is found, a cargo bay at the same distance is not.
+    t.registry.add(rec('d', 'freight_dock', 0, 0));
+    expect(t.svc.nearestOwnStorage('p1', DOCK_BAY_HALF_W, DOCK_BAY_CY + DOCK_BAY_HALF_H)?.id).toBe('d');
+    const u = setup();
+    u.registry.add(rec('b', 'cargo_bay', 0, 0));
+    expect(u.svc.nearestOwnStorage('p1', DOCK_BAY_HALF_W, DOCK_BAY_CY + DOCK_BAY_HALF_H)).toBeNull();
+  });
+
+  it('structure-restyle 3f: a crane-bay kind (Capital, freight dock) takes no hover deposit; other storage does', () => {
+    expect(takesHoverDeposit('capital')).toBe(false);
+    expect(takesHoverDeposit('freight_dock')).toBe(false);
+    expect(takesHoverDeposit('cargo_bay')).toBe(true);
+    expect(takesHoverDeposit('storage_vault')).toBe(true);
+    const t = setup();
+    t.registry.add(rec('c', 'capital', 0, 0));
+    expect(t.svc.nearestHoverDropOff('p1', 100, 0), 'the Capital is no hover drop-off').toBeNull();
+    expect(t.svc.nearestOwnStorage('p1', 100, 0)?.id, 'but it is still your storage (install, repair)').toBe('c');
+    // A Cargo Bay in range is found even with the Capital nearer.
+    t.registry.add(rec('b', 'cargo_bay', 450, 0));
+    expect(t.svc.nearestHoverDropOff('p1', 100, 0)?.id).toBe('b');
+  });
+
+  it('nearStorage: the deposit circle OR the structure\'s own crane bay (install, repair, cargo reach)', () => {
+    const b = CAPITAL_BAY;
+    const farY = b.cy + b.padHalfH - DOCK_BAY_INSET; // the bay's far edge: 490 out
+    const cap = rec('c', 'capital', 1000, -200);
+    // Beyond 400 u, yet on the bay: centre (410) and far edge / corner.
+    expect(Math.hypot(0, b.cy)).toBeGreaterThan(DEPOSIT_RANGE);
+    expect(nearStorage(cap, 1000, -200 + b.cy)).toBe(true);
+    expect(nearStorage(cap, 1000, -200 + farY)).toBe(true);
+    expect(nearStorage(cap, 1000 + b.padHalfW - DOCK_BAY_INSET, -200 + farY)).toBe(true);
+    // Off the bay and out of the circle: 600 u off the side, or past the pad.
+    expect(nearStorage(cap, 1600, -200)).toBe(false);
+    expect(nearStorage(cap, 1000, -200 + farY + 20)).toBe(false);
+    // The bay turns with the hull: rot 90 puts it on the -x side.
+    const turned = rec('r', 'capital', 0, 0, { rot: 90 });
+    expect(nearStorage(turned, -b.cy, 0)).toBe(true);
+    expect(nearStorage(turned, 0, b.cy)).toBe(false);
+    // A kind with no bay keeps the plain circle.
+    const cb = rec('b', 'cargo_bay', 0, 0);
+    expect(nearStorage(cb, 0, DEPOSIT_RANGE)).toBe(true);
+    expect(nearStorage(cb, 0, b.cy)).toBe(false);
+    // nearestOwnStorage (install, repair) finds the Capital from its bay;
+    // the hover deposit does not (3f).
+    const t = setup();
+    t.registry.add(cap);
+    expect(t.svc.nearestOwnStorage('p1', 1000, -200 + farY)?.id).toBe('c');
+    expect(t.svc.nearestHoverDropOff('p1', 1000, -200 + farY)).toBeNull();
+    expect(t.svc.nearestOwnStorage('p1', 1600, -200)).toBeNull();
+  });
+
   it('cargo pods 14c: a storage refusing auto-unload is skipped only for auto-unload', () => {
     const t = setup();
     t.registry.add(rec('b', 'cargo_bay', 50, 0, { acceptAutoUnload: false }));
@@ -80,6 +187,7 @@ describe('StorageService (P1a-2)', () => {
     expect(t.svc.nearestOwnStorage('p1', 0, 0)?.id, 'still a storage for everything else').toBe('b');
     t.registry.add(rec('c', 'cargo_bay', 120, 0));
     expect(t.svc.nearestOwnStorage('p1', 0, 0, DEPOSIT_RANGE, true)?.id, 'the next one that accepts').toBe('c');
+    expect(t.svc.nearestHoverDropOff('p1', 0, 0)?.id, 'the hover drop-off skips it too').toBe('c');
   });
 
   it('refine turns network salvage into Capital minerals', () => {
@@ -194,6 +302,24 @@ describe('StorageService NPC dock market (T4)', () => {
     expect(t.ops).toHaveLength(1);
     expect(t.ops[0]!.type).toBe('GROUP');
     expect(JSON.stringify(t.ops[0])).toContain('WALLET_PUT');
+  });
+
+  it('loadOutlet (3d) takes export goods from the network down to each level, by weight, in order-list order', () => {
+    const dock = rec('d', 'freight_dock', 0, 0, {
+      freightOrders: [{ good: 'alloy', mode: 'export', level: 2 }, { good: 'salvage', mode: 'import', level: 9 }, { good: 'ice', mode: 'export', level: 1 }],
+      hold: { goods: { alloy: 5, salvage: 7, ice: 40 }, blueprints: [] },
+    });
+    const bay = rec('b', 'cargo_bay', 400, 0, { hold: { goods: { alloy: 4 }, blueprints: [] } });
+    const t = setup(['d', 'b']);
+    t.registry.add(dock);
+    t.registry.add(bay);
+    // 7 spare alloy (14 weight) then ice (0.25 each) into the last 6 weight.
+    expect(t.svc.outletLoadWeight(dock, 20)).toBe(20);
+    expect(t.svc.outletLoadWeight(dock, 1.5)).toBe(1.5); // no whole alloy fits: 6 ice
+    expect(t.svc.loadOutlet('ship-9', 'p1', dock, 20).goods).toEqual({ alloy: 7, ice: 24 });
+    expect(t.svc.networkStock(dock, 'alloy')).toBe(2);
+    expect(dock.hold!.goods.salvage, 'import goods are never loaded').toBe(7);
+    expect(t.svc.outletLoadWeight(dock, 100), 'alloy at its level; ice above it').toBe((40 - 24 - 1) * 0.25);
   });
 
   it('marketSell moves ship goods into the dock, with the wallet op in the SAME group', () => {

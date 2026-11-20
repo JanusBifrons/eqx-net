@@ -23,8 +23,17 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  5→6 (WS-8): appended LASER_BOLT_TURRET + MISSILE_TURRET defence kinds (R2.15).
  *  6→7 (P3.2): removed CAPITAL.connectionRange — uniform connection range.
  *  9→10 (P2e, plan soft-leaping-truffle v3): mining + bank retuned to the goods
- *  scale (Miner 1000→20 a pulse, Capital bank 2M→50k, Deep Core Rig 6000→120). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 10;
+ *  scale (Miner 1000→20 a pulse, Capital bank 2M→50k, Deep Core Rig 6000→120).
+ *  10→11 (structure-restyle 2c++): FREIGHT_DOCK grown to the medium size,
+ *  520×240 → 1000×400 (radius 287→539): an old dock could overlap on restore.
+ *  11→12 (structure-restyle): FREIGHT_DOCK gains its `keepClear` landing pad;
+ *  a saved structure could sit on a restored dock's pad.
+ *  12→13 (structure-restyle 3i): CAPITAL gains its crane bay `keepClear` pad;
+ *  a saved structure could sit on a restored Capital's pad.
+ *  13→14 (structure-restyle stage 4, family 1 size lane): SOLAR 360×150 →
+ *  700×300 (power 30→120, cost 120→480); REACTOR 400×400 → 600×600 (power
+ *  240→960, cost 1500→4000); BATTERY_BANK 360×360 → 600×600. */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 14;
 // Gates (SHIELD_GATE, SHIELD_AIRLOCK) were APPENDED without a bump: a bump
 // discards every saved structure on the next boot (SectorPersistence's version
 // gate), and appending a kind leaves every existing record — and so every saved

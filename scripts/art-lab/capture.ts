@@ -1,7 +1,7 @@
 /**
  * Art lab capture (plan soft-leaping-truffle v5, round 1).
  *
- *   pnpm tsx scripts/art-lab/capture.ts [--only stills|clips|bench] [--out diag/art-lab/round1]
+ *   pnpm tsx scripts/art-lab/capture.ts [--only stills|clips|bench] [--out diag/art-lab/round1] [--extra "&restyle=c"]
  *
  * Boots an isolated Vite (port 5374, never the dev 5173), opens the lab page in
  * headless Chromium on the real GPU, and for each style records:
@@ -22,6 +22,8 @@ const flag = (k: string): string | undefined => { const i = args.indexOf(k); ret
 const OUT = flag('--out') ?? 'diag/art-lab/round1';
 const ONLY = flag('--only');
 const CLIP = flag('--clip');
+/** Appended to every page's query, e.g. `--extra "&restyle=c&kinds=solar,battery"`. */
+const EXTRA = flag('--extra') ?? '';
 const PORT = 5374;
 const ALL_STYLES = ['current', 'machined', 'pixel'] as const;
 const STYLES = (flag('--styles')?.split(',') ?? [...ALL_STYLES]) as Array<(typeof ALL_STYLES)[number]>;
@@ -119,7 +121,7 @@ async function main(): Promise<void> {
       for (const s of STILLS.filter((x) => !STILL_ONLY || STILL_ONLY.split(',').includes(x.id))) {
         for (const style of STYLES) {
           const page = await browser.newPage({ viewport: { width: s.w, height: s.h } });
-          await open(page, `style=${style}&scene=${s.scene}&w=${s.w}&h=${s.h}${s.zoom ? `&zoom=${s.zoom}` : ''}${s.extra ?? ''}`);
+          await open(page, `style=${style}&scene=${s.scene}&w=${s.w}&h=${s.h}${s.zoom ? `&zoom=${s.zoom}` : ''}${s.extra ?? ''}${EXTRA}`);
           await seek(page, s.t * 1000);
           await assertNotBlank(page, `${s.id}/${style}`);
           const file = `${OUT}/stills/${s.id}-${style}.png`;
@@ -141,7 +143,7 @@ async function main(): Promise<void> {
           rmSync(dir, { recursive: true, force: true });
           mkdirSync(dir, { recursive: true });
           const page = await browser.newPage({ viewport: { width: c.w, height: c.h } });
-          await open(page, `style=${style}&scene=${c.scene}&w=${c.w}&h=${c.h}`);
+          await open(page, `style=${style}&scene=${c.scene}&w=${c.w}&h=${c.h}${EXTRA}`);
           const n = Math.round(c.seconds * FPS);
           for (let f = 0; f < n; f++) {
             await seek(page, (f / FPS) * 1000);

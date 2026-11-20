@@ -112,9 +112,9 @@ describe('EntityStatsPanel', () => {
     expect(panel).toHaveAttribute('data-powered', '1');
     expect(panel).toHaveAttribute('data-net-power', '12'); // grid aggregate (unchanged attr)
     expect(screen.getByText('BUILD')).toBeInTheDocument(); // mid-construction bar shown
-    // C5 — the PWR line is the SOLAR's own generation (+30), NOT the grid total (+12).
-    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +30');
-    expect(panel).toHaveAttribute('data-self-power', '30');
+    // C5 — the PWR line is the SOLAR's own generation (+120), NOT the grid total (+12).
+    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +120');
+    expect(panel).toHaveAttribute('data-self-power', '120');
   });
 
   it('a LEVELED solar shows its level-scaled generation (#15 — the server grid scales by level)', () => {
@@ -127,8 +127,8 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '7', name: 'Solar', hp: 300, hpMax: 300 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    // Base 30 × level factor 1.5 (level 3) = +45.
-    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +45');
+    // Base 120 × level factor 1.5 (level 3) = +180.
+    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +180');
   });
 
   // ── Phase-4 C5 — the panel shows the SELECTED building's own drain/surplus,
@@ -164,7 +164,7 @@ describe('EntityStatsPanel', () => {
 
   // Phase 5 — "you can't see how much power a SOLAR gives". A GENERATOR shows its
   // output ALWAYS, even when the grid is net-negative (unpowered) — pre-fix it
-  // read "UNPOWERED", hiding the +30 the solar still generates.
+  // read "UNPOWERED", hiding the +120 the solar still generates.
   it('a GENERATOR (solar) shows its output even when the grid is UNPOWERED — not "UNPOWERED"', () => {
     setGameClient(
       fakeClient({
@@ -175,7 +175,7 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '7', name: 'Solar', hp: 300, hpMax: 300 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +30');
+    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +120');
     expect(screen.getByTestId('entity-stats-power')).not.toHaveTextContent('UNPOWERED');
   });
 

@@ -143,8 +143,9 @@ export class StructureState extends Schema {
    *  (owners are interned once per sector: a citadel's ~400 rows share one
    *  owner, so per-row id + name strings dominated the join payload). */
   @type('uint16') ownerIdx?: number;
-  /** STRUCTURE_FLAG_* bits (built / powered / deconstructing / wallActive). */
-  @type('uint8') flags?: number;
+  /** STRUCTURE_FLAG_* bits (built / powered / deconstructing / wallActive /
+   *  … / lockHolding). uint16: LOCK_HOLDING (bit 8) outgrew the uint8. */
+  @type('uint16') flags?: number;
   @type('uint8') hpPct?: number;
   @type('uint8') level?: number;
   @type('float32') netPower?: number;
@@ -189,8 +190,23 @@ export class StructureState extends Schema {
   @type('uint16') padWeight?: number;
   /** T4 — the toll, credits per 1000 charge (0 = free). */
   @type('uint16') tpToll?: number;
+  /** Structure-restyle 2e — the rig clip playing (`encodeRigClip`: clip index
+   *  + 1, target bit), the server tick it started on, and its target in the
+   *  structure's frame (only with the target bit). */
+  @type('uint8') rigClip?: number;
+  @type('uint32') rigStart?: number;
+  @type('float32') rigTx?: number;
+  @type('float32') rigTy?: number;
+  /** Structure-restyle 3e — a holding clip's length + cargo direction
+   *  (`encodeRigHold`; 0 = none). */
+  @type('uint16') rigHold?: number;
   /** Connected structures' entityIds. */
   @type(['uint16']) connTo = new ArraySchema<number>();
+  /** Structure-restyle 0d — parallel to `connTo`: each link's cable sockets,
+   *  this end and the other end packed by `encodeConnSock`
+   *  (shared-types/structureStateWire.ts). A collection, so it is initialised
+   *  like `connTo`; written in the same change check (`writeConnToRow`). */
+  @type(['uint16']) connSock = new ArraySchema<number>();
 }
 
 /** A proximity mine (Mine Layer). Static, so room state carries it: the join

@@ -43,7 +43,7 @@ describe('SectorRoom integration — Freight Dock standing orders (T4b)', () => 
     const pid = randomUUID();
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
-      prebuiltStructures: [{ kind: 'capital', x: 0, y: 0 }, { kind: 'freight_dock', x: 0, y: 700 }],
+      prebuiltStructures: [{ kind: 'capital', x: 0, y: 0, rot: 180 }, { kind: 'freight_dock', x: 0, y: 700 }],
       prebuiltStructuresOwner: pid,
     });
     const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 960 });
