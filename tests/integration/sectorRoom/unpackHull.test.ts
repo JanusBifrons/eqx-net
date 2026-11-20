@@ -18,6 +18,7 @@ import { ROSTER_SOFT_GUARD } from '../../../src/server/playerShips/PlayerShipSto
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { qualityHullFactor } from '../../../src/shared-types/blueprints.js';
 import type { BlueprintResult } from '../../../src/shared-types/blueprints.js';
+import { NEW_HULL_PARK_OFFSET } from '../../../src/server/rooms/features/hullHandOff.js';
 
 function room(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;
@@ -76,7 +77,10 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
     expect(ship.health).toBe(Math.round(getShipKind('gunship').maxHealth * qualityHullFactor(50)));
     expect(ship.isActive).toBe(false);
     expect(ship.lastSectorKey).toBe('sol-prime');
-    expect(Math.hypot(ship.lastX - cap.x, ship.lastY - cap.y)).toBeLessThan(600);
+    // Parked near the Capital: the park offset, then nudged clear of its hull (#995).
+    const parkedAt = Math.hypot(ship.lastX - cap.x, ship.lastY - cap.y);
+    expect(parkedAt).toBeGreaterThanOrEqual(NEW_HULL_PARK_OFFSET - 1);
+    expect(parkedAt).toBeLessThan(NEW_HULL_PARK_OFFSET + 800);
     expect(cap.hold.packed).toEqual([{ product: 'structure:smelter', quality: 30 }]);
 
     // A full roster refuses and leaves the crate where it is.
