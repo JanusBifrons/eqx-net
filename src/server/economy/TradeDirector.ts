@@ -44,6 +44,7 @@ import { applyFill, driftMarket, quoteBuy, quotePacked, quoteSell } from '../../
 import { productName } from '../../shared-types/blueprints.js';
 import { traderPackedItem } from './capitalCrateTrade.js';
 import { packedBillOf, restockBoard, TRADER_PACKED_QUALITY, type BoardOffer } from './tradeBoard.js';
+export { PACKED_OFFERS_ON_BOARD, PACKED_OFFER_MAX_QTY, PACKED_HULL_OFFERS_ON_BOARD, TRADER_PACKED_QUALITY } from './tradeBoard.js';
 import { giftRepGain, robotTruce, tradersRefuse, waveIntervalFactor } from '../../core/economy/reputation.js';
 import {
   afterVisit,
