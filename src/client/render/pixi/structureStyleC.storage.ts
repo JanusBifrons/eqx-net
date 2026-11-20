@@ -5,15 +5,16 @@
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
 import {
-  CONTAINERS, CRANE, HAZARD, LAMP_AMBER, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, core, deck, glow,
-  grime, lamp, mixColor, ngon, poly, rivets, scalePts, stencil, stripe, strip, truss, wornStripe, type StyleCtx, type StyleDrawerTable,
+  CONTAINERS, CRANE, HAZARD, LAMP_AMBER, LAMP_WHITE, RIVET, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, core, deck, glow,
+  grime, lamp, mixColor, ngon, poly, rivets, rng, scalePts, stencil, stripe, strip, truss, weld, wornStripe, type Pt, type StyleCtx,
+  type StyleDrawerTable,
 } from './structureStyleKit.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'v1';
+export const version = 'h1';
 
 /** Cargo hold (`cargo_bay`): a slab hold floor, four muted shipping
  *  containers in a 2 x 2 grid, an X-braced gantry (two rail trusses and a
@@ -94,10 +95,134 @@ function storageVault(c: StyleCtx): void {
   for (const s of [-1, 1]) lamp(c, s * 190 * k, 0, 3.5 * k, LAMP_AMBER);
 }
 
+/** Lived-in window glass: warm lit, a dimmer "curtains drawn" warm, and the
+ *  dead glass every window shows when unpowered. */
+export const WINDOW_WARM = 0xffc46a;
+export const WINDOW_DIM = 0x8a5a2c;
+export const WINDOW_DEAD = 0x1e1a16;
+/** The spire's red aviation beacon. */
+const BEACON_RED = 0xff3a2e;
+
+/** One window slit on a ring: centred at angle `a`, radius `r`, `len` long
+ *  (tangential), `d` deep (radial). */
+function ringSlit(a: number, r: number, len: number, d: number): Pt[] {
+  const cx = Math.cos(a), sy = Math.sin(a), tx = -sy * (len / 2), ty = cx * (len / 2);
+  const p = (rr: number, s: number): Pt => [cx * rr + tx * s, sy * rr + ty * s];
+  return [p(r - d / 2, -1), p(r - d / 2, 1), p(r + d / 2, 1), p(r + d / 2, -1)];
+}
+
+/** A window's glass: dead unpowered, else mostly warm with a seeded few
+ *  dimmed (lived in, not a lit sign). */
+function windowGlass(c: StyleCtx, r: () => number): number {
+  if (!c.live) return WINDOW_DEAD;
+  return r() < 0.78 ? WINDOW_WARM : WINDOW_DIM;
+}
+
+/** Habitat (`habitat_module`, drawn for 360 x 240, scaled by the short
+ *  side): a lived-in crew module. An octagonal central hub (a ring of warm
+ *  window slits round a crane-yellow access hatch) carries four chamfered
+ *  crew pods on ribbed pressure tubes, one per quadrant, each with a row of
+ *  warm window slits on its outer wall and worn accent stripes; a pressure
+ *  tube runs out to a hazard-rimmed docking collar on each ±x end (the
+ *  sockets sit on those sides); service trusses run along the ±y edges.
+ *  Unpowered, every window goes to dead glass. */
+function habitat(c: StyleCtx): void {
+  const { W, H } = c;
+  const k = Math.min(W, H) / 240;
+  const r = rng(c.seed * 6151 + 3);
+  deck(c);
+  grime(c, -160 * k, -100 * k, 320 * k, 200 * k, 10, 11);
+  for (const s of [-1, 1]) truss(c, [-120 * k, s * 100 * k], [120 * k, s * 100 * k], 14 * k, STEEL, 10);
+  // Docking collars on ±x, fed by pressure tubes from the hub.
+  for (const s of [-1, 1]) {
+    poly(c, strip([s * 40 * k, 0], [s * 150 * k, 0], 20 * k), STEEL, 'metal', 12, 1.5);
+    for (let x = 60; x <= 136; x += 12) poly(c, strip([s * x * k, -11 * k], [s * x * k, 11 * k], 3 * k), SLAB_LIGHT, 'metal', 13, 0.6);
+    const cx = s * 160 * k;
+    poly(c, chamferBox(cx - 14 * k, -24 * k, 28 * k, 48 * k, 8 * k), HAZARD, 'hazard', 14, 1.5);
+    poly(c, chamferBox(cx - 9 * k, -17 * k, 18 * k, 34 * k, 5 * k), SLAB_DARK, 'metal', 15, 1.5);
+    poly(c, chamferBox(cx - 5 * k, -11 * k, 10 * k, 22 * k, 3 * k), SOOT, 'metal', -3, 1);
+  }
+  // Crew pods, one per quadrant, on ribbed tubes from the hub.
+  let n = 0;
+  for (const sy of [-1, 1]) {
+    for (const sx of [-1, 1]) {
+      const cx = sx * 106 * k, cy = sy * 58 * k;
+      poly(c, strip([sx * 30 * k, sy * 18 * k], [cx - sx * 30 * k, cy - sy * 10 * k], 16 * k), STEEL, 'metal', 11, 1.2);
+      const pod = core(c, chamferBox(cx - 42 * k, cy - 25 * k, 84 * k, 50 * k, 12 * k), mixColor(SLAB, STEEL, 0.2), 22, Math.PI / 2);
+      wornStripe(c, pod, 0, cx - sx * 30 * k, 6 * k, 80 + n);
+      rivets(c, [cx - 30 * k, cy - sy * 18 * k], [cx + 30 * k, cy - sy * 18 * k], 10 * k, 1.8 * k);
+      for (let x = -28; x <= 28; x += 11) {
+        glow(c, chamferBox(cx + x * k - 4 * k, cy + sy * 16 * k - 2.5 * k, 8 * k, 5 * k, 1.2), windowGlass(c, r), 0.85);
+      }
+      poly(c, chamferBox(cx - 10 * k, cy - 7 * k, 20 * k, 14 * k, 4 * k), SLAB_DARK, 'metal', 24, 1);
+      n++;
+    }
+  }
+  // The hub: an octagonal slab, a ring of window slits, the access hatch.
+  const hub = core(c, ngon(0, 0, 48 * k, 8, Math.PI / 8), SLAB_LIGHT, 30, 0);
+  wornStripe(c, hub, Math.PI / 2, -30 * k, 6 * k, 90);
+  for (let i = 0; i < 12; i++) glow(c, ringSlit((i + 0.5) * (Math.PI / 6), 38 * k, 10 * k, 4 * k), windowGlass(c, r), 0.85);
+  poly(c, ngon(0, 0, 24 * k, 8, Math.PI / 8), SOOT, 'metal', -3, 1.5);
+  poly(c, ngon(0, 0, 19 * k, 16), SLAB, 'metal', 6, 2, { roof: [2, 6 * k] });
+  poly(c, strip([-15 * k, 0], [15 * k, 0], 5 * k), STEEL, 'metal', 9, 1);
+  poly(c, ngon(0, 0, 6 * k, 8, Math.PI / 8), CRANE, 'paint', 10, 1);
+  weld(c, [-34 * k, 30 * k], [34 * k, 30 * k]);
+  stencil(c, '42', 74 * k, -24 * k, 14 * k);
+  if (c.livery) c.sigils.push({ x: -106 * k, y: 58 * k, r: 9 * k });
+  for (const s of [-1, 1]) {
+    lamp(c, s * 160 * k, s * 30 * k, 3.5 * k, LAMP_AMBER);
+    lamp(c, s * 146 * k, -s * 82 * k, 3 * k, LAMP_WHITE);
+  }
+}
+
+/** Residential spire (`tower_module`, drawn for 240 x 240, scaled by the
+ *  short side), seen from above: three stacked octagonal tiers stepping up
+ *  to a crown, each tier ringed by warm window slits on its outer wall
+ *  (dead glass unpowered); four diagonal buttress trusses brace the base to
+ *  bolted foot pads with work lamps; on the crown an X of antenna lattice
+ *  round a mast cap carrying the red aviation beacon. */
+function spire(c: StyleCtx): void {
+  const { W, H } = c;
+  const k = Math.min(W, H) / 240;
+  const r = rng(c.seed * 4421 + 5);
+  deck(c);
+  grime(c, -100 * k, -100 * k, 200 * k, 200 * k, 8, 13);
+  for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+    truss(c, [sx * 58 * k, sy * 58 * k], [sx * 84 * k, sy * 84 * k], 14 * k, STEEL, 10);
+    poly(c, chamferBox(sx * 86 * k - 11 * k, sy * 86 * k - 11 * k, 22 * k, 22 * k, 5 * k), SLAB_LIGHT, 'metal', 12, 1.5);
+    poly(c, ngon(sx * 86 * k, sy * 86 * k, 4.5 * k, 6), RIVET, 'metal', 14, 0.6);
+  }
+  const base = core(c, ngon(0, 0, 92 * k, 8, Math.PI / 8), SLAB_DARK, 18, Math.PI / 2);
+  for (const s of [-1, 1]) wornStripe(c, base, Math.PI / 2, s * 72 * k, 7 * k, 30 + s);
+  const tiers = [[92, 18, SLAB_DARK, 24], [66, 34, SLAB, 16], [42, 50, SLAB_LIGHT, 12]] as const;
+  for (const [i, [rad, lift, col, nWin]] of tiers.entries()) {
+    if (i > 0) core(c, ngon(0, 0, rad * k, 8, Math.PI / 8), col, lift, i % 2 ? 0 : Math.PI / 2);
+    const wr = rad * 0.84 * k;
+    for (let w = 0; w < nWin; w++) {
+      glow(c, ringSlit(((w + 0.5) * Math.PI * 2) / nWin, wr, wr * 0.16, 4 * k), windowGlass(c, r), 0.85);
+    }
+    if (i < 2) rivets(c, [-rad * 0.36 * k, -rad * 0.66 * k], [rad * 0.36 * k, -rad * 0.66 * k], 9 * k, 1.6 * k);
+  }
+  for (const s of [-1, 1]) poly(c, chamferBox(-6 * k, s * 54 * k - 3 * k, 12 * k, 6 * k, 1.5 * k), HAZARD, 'hazard', 36, 0.8);
+  // Crown: antenna lattice in an X, a mast cap, the beacon.
+  truss(c, [-30 * k, -30 * k], [30 * k, 30 * k], 7 * k, STEEL, 60);
+  truss(c, [-30 * k, 30 * k], [30 * k, -30 * k], 7 * k, STEEL, 60);
+  poly(c, ngon(0, 0, 13 * k, 8, Math.PI / 8), SOOT, 'metal', 62, 1.5);
+  poly(c, ngon(0, 0, 9 * k, 8, Math.PI / 8), CRANE, 'paint', 64, 1.2);
+  glow(c, ngon(0, 0, 4 * k, 8), c.live ? BEACON_RED : WINDOW_DEAD, 0.95);
+  lamp(c, 0, 0, 5 * k, BEACON_RED);
+  stencil(c, '07', -12 * k, 72 * k, 12 * k);
+  if (c.livery) c.sigils.push({ x: -52 * k, y: 30 * k, r: 7 * k });
+  lamp(c, -86 * k, -86 * k, 3 * k, LAMP_AMBER);
+  lamp(c, 86 * k, 86 * k, 3 * k, LAMP_WHITE);
+}
+
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   cargo_bay: cargoHold,
   storage_vault: storageVault,
+  habitat_module: habitat,
+  tower_module: spire,
 };
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
