@@ -24,11 +24,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Bus } from '../../core/events/Bus.js';
 import type { Hold, GoodId } from '../../shared-types/goods.js';
-import { GOOD_IDS } from '../../shared-types/goods.js';
 import {
   ECON_ALLEGIANCES,
   MAX_DEALS_PER_NETWORK,
-  MAX_OFFER_QTY,
   REP_ATTACK_ROBOT,
   REP_DEAL_COMPLETED,
   REP_PARTIAL_FILL,
@@ -43,11 +41,9 @@ import { getSector } from '../../core/galaxy/galaxy.js';
 import { regionalPriceFactor } from './regionalPrices.js';
 import { cloneHold, emptyHold, isHoldEmpty } from '../../core/cargo/hold.js';
 import { applyFill, driftMarket, quoteBuy, quotePacked, quoteSell } from '../../core/economy/market.js';
-import { packedHullProducts, packedStructureProducts, parseProduct, productName } from '../../shared-types/blueprints.js';
-import { hullBillValue, packBillValue } from '../../shared-types/recipes.js';
-import { CAPITAL_CRATE_PRODUCT, CAPITAL_OFFERS_ON_BOARD, CAPITAL_OFFER_MAX_QTY, capitalCrateBillValue, traderPackedItem } from './capitalCrateTrade.js';
-import { isPlayableShipKindId } from '../../shared-types/shipKinds.js';
-import { isStructureKindId } from '../../shared-types/structureKinds.js';
+import { productName } from '../../shared-types/blueprints.js';
+import { traderPackedItem } from './capitalCrateTrade.js';
+import { packedBillOf, restockBoard, TRADER_PACKED_QUALITY, type BoardOffer } from './tradeBoard.js';
 import { giftRepGain, robotTruce, tradersRefuse, waveIntervalFactor } from '../../core/economy/reputation.js';
 import {
   afterVisit,
@@ -127,35 +123,7 @@ export const DEFAULT_TRADE_OPTIONS: TradeDirectorOptions = {
   underFireThrottleMs: 8_000,
 };
 
-interface BoardOffer {
-  offerId: string;
-  kind: 'sell' | 'buy';
-  /** null on a packed-item offer. */
-  good: GoodId | null;
-  /** Economy v2 W4b — a packed structure on sale (`structure:<kind>`). */
-  product?: string;
-  maxQty: number;
-  expiresAtMs: number;
-}
-
 const escrowUid = (runId: string): string => `escrow-${runId}`;
-
-/** Economy v2 W4b — packed-structure offers kept on the board, and their size. */
-export const PACKED_OFFERS_ON_BOARD = 4;
-export const PACKED_OFFER_MAX_QTY = 3;
-/** Economy v2 W5b — packed-HULL offers kept on the board. */
-export const PACKED_HULL_OFFERS_ON_BOARD = 2;
-/** Trader-made packed items are solid mid quality. */
-export const TRADER_PACKED_QUALITY = 50;
-
-/** Goods value of a packed product's pack recipe (0 ⇒ not sellable). */
-function packedBillOf(product: string): number {
-  if (product === CAPITAL_CRATE_PRODUCT) return capitalCrateBillValue();
-  const { ns, id } = parseProduct(product);
-  if (ns === 'structure' && isStructureKindId(id)) return packBillValue(id);
-  if (ns === 'hull' && isPlayableShipKindId(id)) return hullBillValue(id);
-  return 0;
-}
 
 /** No wallet injected (tests that don't exercise credits): an empty balance
  *  that refuses every debit and ignores credits. */
@@ -276,49 +244,7 @@ export class TradeDirector implements TradeSink {
   // ── Offers board ─────────────────────────────────────────────────────────
 
   private rotateOffers(): void {
-    const now = this.now();
-    this.offers = this.offers.filter((o) => o.expiresAtMs > now && o.maxQty > 0);
-    // Keep one SELL and one BUY offer per good on the board.
-    for (const good of GOOD_IDS) {
-      for (const kind of ['sell', 'buy'] as const) {
-        if (this.offers.some((o) => o.product === undefined && o.good === good && o.kind === kind)) continue;
-        const cap = good === 'core' ? 20 : good === 'alloy' ? 120 : MAX_OFFER_QTY;
-        this.offers.push({
-          offerId: `of-${randomUUID().slice(0, 10)}`,
-          kind,
-          good,
-          maxQty: Math.max(5, Math.round(cap * (0.4 + this.rng() * 0.6))),
-          expiresAtMs: now + this.opts.offerTtlMs * (0.7 + this.rng() * 0.6),
-        });
-      }
-    }
-    // Economy v2 W4b — traders also SELL packed structures (the user's ruling:
-    // most players buy them rather than make them). A rotating handful.
-    this.stockPacked(packedStructureProducts(), PACKED_OFFERS_ON_BOARD, now);
-    // Economy v2 W5b — and packed HULLS (their own slots, so ~25 structure
-    // kinds never crowd the 4 ships off the board).
-    this.stockPacked(packedHullProducts(), PACKED_HULL_OFFERS_ON_BOARD, now);
-    // Playable base loop — a FRESH Capital crate, in its own slot.
-    this.stockPacked([CAPITAL_CRATE_PRODUCT], CAPITAL_OFFERS_ON_BOARD, now, CAPITAL_OFFER_MAX_QTY);
-  }
-
-  /** Keep `slots` packed offers whose product is one of `all`. */
-  private stockPacked(all: readonly string[], slots: number, now: number, maxQty = PACKED_OFFER_MAX_QTY): void {
-    const products = all.filter((p) => packedBillOf(p) > 0);
-    let onBoard = this.offers.filter((o) => o.product !== undefined && products.includes(o.product)).length;
-    for (let tries = 0; onBoard < slots && tries < 20 && products.length > 0; tries++) {
-      const product = products[Math.floor(this.rng() * products.length)]!;
-      if (this.offers.some((o) => o.product === product)) continue;
-      this.offers.push({
-        offerId: `of-${randomUUID().slice(0, 10)}`,
-        kind: 'buy',
-        good: null,
-        product,
-        maxQty: 1 + Math.floor(this.rng() * maxQty),
-        expiresAtMs: now + this.opts.offerTtlMs * (0.7 + this.rng() * 0.6),
-      });
-      onBoard++;
-    }
+    this.offers = restockBoard(this.offers, this.rng, this.now(), this.opts.offerTtlMs);
   }
 
   /** The price of one unit of `offer` at `traderRep`. */
