@@ -4,17 +4,27 @@ import {
   AIRLOCK_CLOSED,
   AIRLOCK_OPEN_A,
   AIRLOCK_OPEN_B,
+  GATE_OPEN_A,
+  GATE_OPEN_B,
   addShipToOccupancy,
   clearOccupancy,
+  gateDoorsMoving,
+  gateFullyOpenMask,
   gateOpenMask,
   newAirlockState,
+  newGateState,
   newOccupancy,
   stepAirlock,
   stepGate,
   type GateState,
 } from './gateLogic.js';
+import { doorFullyOpen, doorPosAt } from './doorMotion.js';
 import {
   AIRLOCK_END_Y,
+  DOOR_POS_MAX,
+  DOOR_POWER_LEVELS,
+  DOOR_RESEGMENT_MIN_MS,
+  DOOR_TRAVEL_TICKS,
   GATE_APPROACH_DEPTH,
   GATE_CLOSE_HOLD_MS,
   GATE_SPAN_THICKNESS,
@@ -86,80 +96,170 @@ describe('gate geometry', () => {
   });
 });
 
+/** Game ticks per 100 ms structure step (fixed 60 Hz). */
+const TICKS_PER_STEP = (TICK * 60) / 1000;
+const FULL = DOOR_POWER_LEVELS;
+
 describe('Shield Gate logic', () => {
-  function run(positions: number[], admitted: boolean, s: GateState, t0 = 0): boolean[] {
+  /** One structure step at `step` (tick = step * 6, nowMs = step * 100). */
+  function stepAt(s: GateState, ly: number | null, admitted: boolean, step: number, level = FULL): boolean {
     const o = newOccupancy();
-    const opens: boolean[] = [];
-    positions.forEach((ly, i) => {
-      clearOccupancy(o);
-      addShipToOccupancy('gate', 0, ly, R, admitted, o);
-      stepGate(s, o, t0 + i * TICK);
-      opens.push(s.open);
-    });
-    return opens;
+    if (ly !== null) addShipToOccupancy('gate', 0, ly, R, admitted, o);
+    return stepGate(s, o, step * TICK, step * TICKS_PER_STEP, level);
   }
+  const pos = (s: GateState, step: number) => doorPosAt(s.door.seg, step * TICKS_PER_STEP);
 
   it('opens for an admitted ship in the approach zone, then closes after the hold once it has gone', () => {
-    const s: GateState = { open: false, lastBusyMs: 0 };
-    expect(run([GATE_APPROACH_DEPTH + 50], true, s)).toEqual([false]);
-    expect(run([GATE_APPROACH_DEPTH - 10], true, s)).toEqual([true]);
-    const far = Array(Math.ceil(GATE_CLOSE_HOLD_MS / TICK) + 2).fill(5000);
-    const after = run(far, true, s, 1000);
-    expect(after[0]).toBe(true);
-    expect(after[after.length - 1]).toBe(false);
+    const s = newGateState();
+    stepAt(s, GATE_APPROACH_DEPTH + 50, true, 0);
+    expect(s.open).toBe(false);
+    stepAt(s, GATE_APPROACH_DEPTH - 10, true, 1);
+    expect(s.open).toBe(true);
+    let step = 2;
+    for (; step < 200 && s.open; step++) stepAt(s, 5000, true, step);
+    expect(s.open).toBe(false);
+    for (let i = 0; i < 40; i++, step++) stepAt(s, 5000, true, step);
+    expect(pos(s, step)).toBe(0); // and the door travelled shut
   });
 
   it('never opens for a ship it does not admit', () => {
-    const s: GateState = { open: false, lastBusyMs: 0 };
-    expect(run([200, 100, 0, -100], false, s).some(Boolean)).toBe(false);
+    const s = newGateState();
+    [200, 100, 0, -100].forEach((ly, i) => stepAt(s, ly, false, i));
+    expect(s.open).toBe(false);
+    expect(pos(s, 4)).toBe(0);
   });
 
-  it('never closes while any ship overlaps the span', () => {
-    const s: GateState = { open: true, lastBusyMs: 0 };
-    const stuck = run(Array(40).fill(0), false, s, 10_000); // a non-admitted ship parked in the span
-    expect(stuck.every(Boolean)).toBe(true);
+  it('closes on a ship parked in the gap (the leaves shove it out; no hold)', () => {
+    const s = newGateState();
+    for (let i = 0; i < 40; i++) stepAt(s, 0, true, i); // admitted ship opens it fully
+    expect(doorFullyOpen(s.door, 40 * TICKS_PER_STEP)).toBe(true);
+    let step = 40;
+    for (; step < 200 && s.open; step++) stepAt(s, 0, false, step); // now a stranger sits in the gap
+    expect(s.open).toBe(false);
+    expect(step - 40).toBeLessThanOrEqual(Math.ceil(GATE_CLOSE_HOLD_MS / TICK) + 1);
+  });
+
+  it('travels fully open in 3 s at full power; moving until then, fully open only on arrival', () => {
+    const s = newGateState();
+    stepAt(s, 0, true, 0);
+    expect(s.door.seg).toMatchObject({ p0: 0, t0: 0, dir: 1, level: FULL });
+    const t = DOOR_TRAVEL_TICKS;
+    expect(DOOR_TRAVEL_TICKS).toBe(180);
+    expect(gateDoorsMoving(s, undefined, t - 1)).toBe(true);
+    expect(gateFullyOpenMask(s, undefined, t - 1)).toBe(0);
+    expect(gateDoorsMoving(s, undefined, t)).toBe(false);
+    expect(gateFullyOpenMask(s, undefined, t)).toBe(GATE_OPEN_A);
+    // Keep stepping with the ship there: no re-segment, the clock is the segment.
+    for (let i = 1; i <= 30; i++) expect(stepAt(s, 0, true, i)).toBe(false);
+    expect(s.door.seg.t0).toBe(0);
+  });
+
+  it('runs at about half speed at power level 7-8', () => {
+    for (const level of [7, 8]) {
+      const s = newGateState();
+      stepAt(s, 0, true, 0, level);
+      const arrive = Math.ceil(DOOR_POS_MAX / level);
+      expect(arrive / DOOR_TRAVEL_TICKS).toBeGreaterThan(1.8);
+      expect(arrive / DOOR_TRAVEL_TICKS).toBeLessThan(2.2);
+      expect(doorPosAt(s.door.seg, DOOR_TRAVEL_TICKS)).toBe(level * DOOR_TRAVEL_TICKS);
+      expect(doorFullyOpen(s.door, arrive - 1)).toBe(false);
+      expect(doorFullyOpen(s.door, arrive)).toBe(true);
+    }
+  });
+
+  it('power level 0 freezes the door mid-travel where it is', () => {
+    const s = newGateState();
+    for (let i = 0; i <= 15; i++) stepAt(s, 0, true, i); // 1.5 s at full power
+    const mid = pos(s, 15);
+    expect(mid).toBe(15 * TICKS_PER_STEP * FULL);
+    expect(stepAt(s, 0, true, 16, 0)).toBe(true); // re-segment at L 0
+    const frozen = pos(s, 16);
+    for (let i = 17; i < 80; i++) {
+      stepAt(s, 0, true, i, 0);
+      expect(pos(s, i)).toBe(frozen);
+    }
+    expect(gateDoorsMoving(s, undefined, 80 * TICKS_PER_STEP)).toBe(true); // still wants power
+    expect(gateFullyOpenMask(s, undefined, 80 * TICKS_PER_STEP)).toBe(0);
+  });
+
+  it('starts the close hold on ARRIVAL fully open, not on the decision', () => {
+    const s = newGateState();
+    for (let i = 0; i <= 10; i++) stepAt(s, 0, true, i); // ship near for 1 s, then gone
+    const arriveStep = DOOR_TRAVEL_TICKS / TICKS_PER_STEP; // 30
+    const holdSteps = GATE_CLOSE_HOLD_MS / TICK; // 12
+    let closedAt = -1;
+    for (let i = 11; i < 100 && closedAt < 0; i++) {
+      stepAt(s, null, true, i);
+      if (!s.open) closedAt = i;
+    }
+    expect(closedAt).toBeGreaterThanOrEqual(arriveStep + holdSteps - 1); // decided at step 10 it would be 22
+    expect(closedAt).toBeLessThanOrEqual(arriveStep + holdSteps + 1);
+  });
+
+  it('re-segments on a level change at most once per 500 ms; a new target at once', () => {
+    const s = newGateState();
+    stepAt(s, 0, true, 0);
+    const changes: number[] = [];
+    for (let i = 1; i < 25; i++) {
+      if (stepAt(s, 0, true, i, i % 2 === 0 ? FULL : FULL - 1)) changes.push(i * TICK);
+    }
+    expect(changes.length).toBeGreaterThan(1);
+    for (let k = 1; k < changes.length; k++) expect(changes[k]! - changes[k - 1]!).toBeGreaterThanOrEqual(DOOR_RESEGMENT_MIN_MS);
+    expect(changes[0]! - 0).toBeGreaterThanOrEqual(DOOR_RESEGMENT_MIN_MS);
+    // A new target re-segments immediately, throttle or not.
+    const p = pos(s, 25);
+    s.open = false;
+    s.lastBusyMs = -1e9;
+    stepAt(s, null, true, 25);
+    expect(s.door.seg).toMatchObject({ p0: p, t0: 25 * TICKS_PER_STEP, dir: -1 });
+    // A level change on an arrived door does nothing.
+    const shut = newGateState();
+    expect(stepAt(shut, null, true, 0, 3)).toBe(false);
   });
 });
 
 describe('Shield Airlock logic', () => {
-  /** Fly one admitted ship along local y from `from` to `to`, `step` u per tick.
-   *  Returns the phase each tick and whether the ship ever touched a closed span. */
+  const band = GATE_SPAN_THICKNESS / 2 + R;
+  const inBandA = (y: number) => Math.abs(y - AIRLOCK_END_Y) <= band;
+  const inBandB = (y: number) => Math.abs(y + AIRLOCK_END_Y) <= band;
+
+  /** Fly one admitted ship along local y from `from` to `to`, `step` u per
+   *  structure step. It may only ENTER an end's band while that door is fully
+   *  open. Returns the target phase each step and the fully-open masks. */
   function traverse(from: number, to: number, step: number) {
     const s = newAirlockState();
     const o = newOccupancy();
     const phases: number[] = [];
-    let blocked = false;
+    const opens: number[] = [];
     let ly = from;
-    let t = 0;
     const dir = Math.sign(to - from);
-    for (let i = 0; i < 2000 && (dir > 0 ? ly < to : ly > to); i++) {
+    for (let i = 0; i < 4000 && (dir > 0 ? ly < to : ly > to); i++) {
       clearOccupancy(o);
       addShipToOccupancy('airlock', 0, ly, R, true, o);
-      stepAirlock(s, o, t);
+      const tick = i * TICKS_PER_STEP;
+      stepAirlock(s, o, i * TICK, tick, FULL);
       phases.push(s.phase);
-      // Would moving one more step put the ship into a CLOSED span band?
+      const mask = gateFullyOpenMask(undefined, s, tick);
+      opens.push(mask);
       const next = ly + dir * step;
-      const band = GATE_SPAN_THICKNESS / 2 + R;
-      const intoA = Math.abs(next - AIRLOCK_END_Y) <= band;
-      const intoB = Math.abs(next + AIRLOCK_END_Y) <= band;
-      if ((intoA && s.phase !== AIRLOCK_OPEN_A) || (intoB && s.phase !== AIRLOCK_OPEN_B)) {
-        blocked = true; // the ship waits this tick (it would hit the shield)
-      } else {
-        ly = next;
-      }
-      t += TICK;
+      const blocked = (inBandA(next) && !inBandA(ly) && !(mask & GATE_OPEN_A)) || (inBandB(next) && !inBandB(ly) && !(mask & GATE_OPEN_B));
+      if (!blocked) ly = next;
     }
-    return { phases, blocked, ly };
+    return { phases, opens, ly };
   }
 
-  it('cycles a ship A → B: A opens, A closes behind it, then B opens', () => {
-    const { phases, ly } = traverse(AIRLOCK_END_Y + 250, -AIRLOCK_END_Y - 250, 20);
+  it('cycles a ship A → B: A opens, A shuts behind it, then B opens', () => {
+    const { phases, opens, ly } = traverse(AIRLOCK_END_Y + 250, -AIRLOCK_END_Y - 250, 20);
     expect(ly).toBeLessThanOrEqual(-AIRLOCK_END_Y - 250); // it got through
     const firstA = phases.indexOf(AIRLOCK_OPEN_A);
     const firstB = phases.indexOf(AIRLOCK_OPEN_B);
     expect(firstA).toBeGreaterThanOrEqual(0);
     expect(firstB).toBeGreaterThan(firstA);
-    expect(phases.slice(firstA, firstB)).toContain(AIRLOCK_CLOSED); // A shut before B opened
+    expect(phases.slice(firstA, firstB)).toContain(AIRLOCK_CLOSED);
+    const openA = opens.indexOf(GATE_OPEN_A);
+    const openB = opens.indexOf(GATE_OPEN_B);
+    expect(openB).toBeGreaterThan(openA);
+    expect(opens).not.toContain(3);
   });
 
   it('cycles a ship B → A the same way', () => {
@@ -171,29 +271,56 @@ describe('Shield Airlock logic', () => {
     expect(firstA).toBeGreaterThan(firstB);
   });
 
-  it('never opens both ends and never closes an end on a ship (random fleets)', () => {
+  it('interlock: an end starts opening only once the other end reads position 0', () => {
+    const s = newAirlockState();
+    const o = newOccupancy();
+    // A wanted: A opens fully.
+    o.waitA = true;
+    for (let i = 0; i <= 30; i++) stepAirlock(s, o, i * TICK, i * TICKS_PER_STEP, FULL);
+    expect(doorFullyOpen(s.doorA, 30 * TICKS_PER_STEP)).toBe(true);
+    // Force the target over to B: A shuts first, B holds at 0 until A reads 0.
+    s.phase = AIRLOCK_OPEN_B;
+    clearOccupancy(o);
+    o.waitB = true;
+    let bStartTick = -1;
+    for (let i = 31; i < 120; i++) {
+      const tick = i * TICKS_PER_STEP;
+      s.phase = AIRLOCK_OPEN_B;
+      stepAirlock(s, o, i * TICK, tick, FULL);
+      if (bStartTick < 0 && s.doorB.seg.dir === 1) bStartTick = s.doorB.seg.t0;
+    }
+    expect(bStartTick).toBeGreaterThan(0);
+    expect(doorPosAt(s.doorA.seg, bStartTick)).toBe(0);
+    expect(doorPosAt(s.doorA.seg, bStartTick - 1)).toBeGreaterThan(0);
+  });
+
+  it('never has both doors off position 0 at any tick (random fleets and power)', () => {
     const ship = fc.record({
       lx: fc.integer({ min: -200, max: 200 }),
       ly: fc.integer({ min: -500, max: 500 }),
       admitted: fc.boolean(),
     });
+    const frame = fc.record({ fleet: fc.array(ship, { maxLength: 4 }), level: fc.integer({ min: 0, max: FULL }), hold: fc.integer({ min: 1, max: 8 }) });
     fc.assert(
-      fc.property(fc.array(fc.array(ship, { maxLength: 4 }), { minLength: 1, maxLength: 60 }), (ticks) => {
+      fc.property(fc.array(frame, { minLength: 1, maxLength: 60 }), (frames) => {
         const s = newAirlockState();
         const o = newOccupancy();
-        let t = 0;
-        for (const fleet of ticks) {
-          const before = s.phase;
+        let step = 0;
+        for (const f of frames) {
           clearOccupancy(o);
-          for (const sh of fleet) addShipToOccupancy('airlock', sh.lx, sh.ly, R, sh.admitted, o);
-          stepAirlock(s, o, t);
-          t += TICK;
-          expect(gateOpenMask(undefined, s)).not.toBe(3);
-          if (before === AIRLOCK_OPEN_A && o.bandA) expect(s.phase).toBe(AIRLOCK_OPEN_A);
-          if (before === AIRLOCK_OPEN_B && o.bandB) expect(s.phase).toBe(AIRLOCK_OPEN_B);
+          for (const sh of f.fleet) addShipToOccupancy('airlock', sh.lx, sh.ly, R, sh.admitted, o);
+          for (let h = 0; h < f.hold; h++, step++) {
+            stepAirlock(s, o, step * TICK, step * TICKS_PER_STEP, f.level);
+            expect(gateOpenMask(undefined, s)).not.toBe(3);
+            for (let k = 0; k < TICKS_PER_STEP; k++) {
+              const t = step * TICKS_PER_STEP + k;
+              const both = doorPosAt(s.doorA.seg, t) > 0 && doorPosAt(s.doorB.seg, t) > 0;
+              expect(both).toBe(false);
+            }
+          }
         }
       }),
-      { numRuns: 300 },
+      { numRuns: 200 },
     );
   });
 });
