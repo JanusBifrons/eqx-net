@@ -174,7 +174,7 @@ export interface StyleCtx {
   accent: number;
   seed: number;
   live: boolean;
-  /** Owner livery on (`?structLivery=1`): push sigil slots and bands. */
+  /** Owner livery on (the default; `?structLivery=0` = off): push sigil slots and bands. */
   livery: boolean;
   polys: PolyOp[];
   sigils: StyleSigilSlot[];

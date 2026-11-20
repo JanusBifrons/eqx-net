@@ -228,7 +228,7 @@ export class ArtCache {
   }
   private guns = new Map<string, { frames: Texture[]; density: number }>();
 
-  /** `extra`: owner livery (`?structLivery=1`) and structure style
+  /** `extra`: owner livery (on by default, `?structLivery=0` = off) and structure style
    *  (`?restyle=`), as the game's `ArtService.struct` passes them. */
   machinedStruct(id: string, rawSeed = 1, accent?: number, extra?: { livery?: StructLivery; style?: string }): StructArt {
     const job: BakeJob = { type: 'struct', id, seed: seedVariant(rawSeed), accent, ...(extra?.livery ? { livery: extra.livery } : {}), ...(extra?.style ? { style: extra.style } : {}) };

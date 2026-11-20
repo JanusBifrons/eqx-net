@@ -74,7 +74,7 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   // Ship livery: on by default (`?livery=off` = none); Machined art only.
   const livery = art.mode === 'machined' ? readLivery(search) : undefined;
   if (livery) art.livery = livery;
-  // Structure livery (look R&D, off by default): `?structLivery=1`.
+  // Structure livery (on by default; `?structLivery=0` = off).
   if (art.mode === 'machined' && readStructLivery(search)) art.structLivery = true;
   // Structure style (structure restyle): `c` by default, `?restyle=off` = the old bakes.
   const structStyle = art.mode === 'machined' ? readStructStyle(search) : undefined;
