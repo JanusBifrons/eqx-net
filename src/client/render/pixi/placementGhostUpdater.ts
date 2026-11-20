@@ -28,6 +28,9 @@ export interface PlacementGhostCtx {
   /** Set in `init`. */
   camera: Camera | null;
   shipContainer: Container | null;
+  /** Structure style (`?restyle=`, set in `init` with the Machined art);
+   *  absent = today's plan. The ghost draws the same style as the placed one. */
+  structStyle?: string;
   /** Written by the caller each frame. */
   spectator: boolean;
   readonly isTouch: boolean;
@@ -90,7 +93,7 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
         ctx.placementGhost.destroy();
       }
       const radius = getStructureKind(preview.kind).radius;
-      const g = buildStructureGfx(preview.kind, radius);
+      const g = buildStructureGfx(preview.kind, radius, 1, ctx.structStyle);
       shipContainer.addChild(g);
       ctx.placementGhost = g;
       ctx.placementGhostKind = preview.kind;

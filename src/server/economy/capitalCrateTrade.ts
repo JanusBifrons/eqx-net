@@ -1,8 +1,8 @@
 /**
  * Playable base loop — Capital crates on the trade board. The board's own
- * packed-offer path (`TradeDirector.stockPacked` / `quotePacked`) sells a
+ * packed-offer path (`tradeBoard.ts` `restockBoard` / `quotePacked`) sells a
  * FRESH crate (5,000 minerals inside) in its own slot; traders never buy one
- * back. The rules live here so the 900-line director only calls them.
+ * back. The rules live here so the trade director only calls them.
  */
 import { quotePacked } from '../../core/economy/market.js';
 import { CAPITAL_STARTING_MINERALS } from '../../core/structures/structureGridConstants.js';

@@ -55,22 +55,19 @@ describe('SectorRoom integration — base storage (P1a-2)', () => {
     for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
     expect(getHoldStore().get(shipId)?.hold.goods.salvage).toBe(9);
 
-    // A Capital 150 u away — pre-built, owned by the player.
-    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 150, y: 0 });
+    // A Capital placed so the ship sits on its crane bay (bay centre =
+    // Capital + (0, 410)) — pre-built, owned by the player.
+    cr.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: -410 });
     const placed = await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === pid), 5_000);
     expect(placed).toBe(true);
     const cap = [...internal.structureRegistry.all()].find((s) => s.owner === pid)!;
     expect(cap.uid, 'a placed structure gets a stable uid').toBeDefined();
     const bankBefore = cap.minerals;
 
-    // 1) Hold position → after the 2 s dwell the whole hold is banked.
-    harness.sendThrust(cr);
-    // ...then let go: sendThrust HOLDS thrust, and since the arcade handling
-    // tune (owner 2026-11-13: "make it more like micro machines") a held
-    // thrust carries the ship past DEPOSIT_RANGE inside the 2 s dwell.
-    cr.send('input', { type: 'input', tick: 1, thrust: false, turnLeft: false, turnRight: false });
-    const banked = await until(() => getHoldStore().get(shipId) === undefined, 10_000);
-    expect(banked, 'holding position by your own Capital must deposit the hold').toBe(true);
+    // 1) Park still on the bay → the Capital's crane banks the whole hold
+    // (3f: the Capital takes no hover deposit).
+    const banked = await until(() => getHoldStore().get(shipId) === undefined, 15_000);
+    expect(banked, "parking on your own Capital's bay must deposit the hold").toBe(true);
     expect(cap.minerals).toBe(bankBefore + 40);
     expect(cap.hold?.goods.salvage).toBe(9);
     // The Capital's payload is persisted under its stable uid.

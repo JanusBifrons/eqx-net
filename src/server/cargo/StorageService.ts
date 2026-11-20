@@ -17,28 +17,16 @@
  *    mining, it can never duplicate player value.
  */
 import { GOOD_DEFS, GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
-import { fittedUid, moduleProduct, parseProduct } from '../../shared-types/blueprints.js';
+import { fittedUid, moduleProduct } from '../../shared-types/blueprints.js';
 import type { BlueprintItem } from '../../shared-types/items.js';
-
-/** The module ids fitted to a ship, from its `fitted` hold (W2 items). */
-export function fittedModuleIds(h: Hold): string[] {
-  const out: string[] = [];
-  for (const b of h.blueprints) {
-    const p = parseProduct(b.product);
-    if (p.ns === 'module') out.push(p.id);
-  }
-  return out;
-}
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { depositRangeOf, nearStorage, takesHoverDeposit } from './storageReach.js';
+import { fittedModuleIds, holdCapacityOf, intakeRequest, isOperationalStorage, isStorage, releaseIntoNetwork, sig, stockOf, takeFromNetwork } from './storageHolds.js';
 import { cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord, HoldStore } from './HoldStore.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 
-/** Fly within this distance of your own storage to deposit. */
-export const DEPOSIT_RANGE = 400;
-/** Hold position this long (60 Hz ticks) to deposit — 2 s. */
-export const DEPOSIT_DWELL_TICKS = 120;
 /** Refine: 1 salvage → this many minerals (weight-neutral: 1 vs 10 × 0.1). */
 export const SALVAGE_TO_MINERALS = 10;
 /** Credit sinks — re-exported from shared-types/goods (#15: the UI labels read the
@@ -79,20 +67,6 @@ export interface TradeTransferResult {
   overflow: Hold;
   x: number;
   y: number;
-}
-
-export function holdCapacityOf(rec: StructureRecord): number {
-  return getStructureKind(rec.kind).holdCapacity ?? 0;
-}
-
-export function isStorage(rec: StructureRecord): boolean {
-  return holdCapacityOf(rec) > 0;
-}
-
-/** Built, or mid-UPGRADE (a re-build of an operational structure) — the same
- *  carve-out the construction funder uses. A fresh blueprint can't store. */
-export function isOperationalStorage(rec: StructureRecord): boolean {
-  return isStorage(rec) && (rec.isConstructed || rec.upgradeTargetLevel !== undefined);
 }
 
 export class StorageService {
@@ -160,15 +134,34 @@ export class StorageService {
     if (puts.length > 0) this.d.holdStore.commit(puts, [], this.persist());
   }
 
-  /** Nearest OPERATIONAL storage owned by `owner` within `range` of (x, y). */
-  nearestOwnStorage(owner: string, x: number, y: number, range = DEPOSIT_RANGE, autoUnload = false): StructureRecord | null {
+  /** Nearest OPERATIONAL storage owned by `owner` that (x, y) is at
+   *  (`nearStorage`: its `depositRangeOf` circle or its crane bay), or within
+   *  `range` of for all when given. `autoUnload` skips storage that refuses
+   *  auto-unload (cargo pods 14c). */
+  nearestOwnStorage(owner: string, x: number, y: number, range?: number, autoUnload = false): StructureRecord | null {
+    return this.nearestOwn(owner, x, y, range, false, autoUnload);
+  }
+
+  /** Nearest OPERATIONAL hover drop-off (`takesHoverDeposit`) owned by
+   *  `owner` within its `depositRangeOf` of (x, y) that accepts auto-unload:
+   *  the auto-deposit target. A nearer Capital or freight dock never hides a
+   *  Cargo Bay in range. */
+  nearestHoverDropOff(owner: string, x: number, y: number): StructureRecord | null {
+    return this.nearestOwn(owner, x, y, undefined, true, true);
+  }
+
+  private nearestOwn(owner: string, x: number, y: number, range: number | undefined, hoverOnly: boolean, autoUnload: boolean): StructureRecord | null {
     let best: StructureRecord | null = null;
-    let bestD2 = range * range;
+    let bestD2 = Infinity;
     for (const rec of this.d.registry.all()) {
       if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
+      if (hoverOnly && !takesHoverDeposit(rec.kind)) continue;
       if (autoUnload && rec.acceptAutoUnload === false) continue; // cargo pods 14c: refuses auto-unload
       const d2 = (rec.x - x) ** 2 + (rec.y - y) ** 2;
-      if (d2 <= bestD2) { bestD2 = d2; best = rec; }
+      // Hover deposit: the plain circle only; storage reach: `nearStorage`.
+      const r = range ?? depositRangeOf(rec.kind);
+      const near = range !== undefined || hoverOnly ? d2 <= r * r : nearStorage(rec, x, y);
+      if (near && d2 <= bestD2) { bestD2 = d2; best = rec; }
     }
     return best;
   }
@@ -215,12 +208,20 @@ export class StorageService {
    * else fills holds by capacity. Whatever doesn't fit STAYS on the ship.
    * Ship side + every touched structure commit as ONE atomic group.
    * Returns what was moved (empty hold ⇒ nothing deposited).
+   *
+   * `intake` (structure-restyle 3c): when given, only those goods are banked —
+   * a freight dock takes in just what its import orders name
+   * (`dockIntakeGoods`). Every other good, blueprint and packed item stays
+   * aboard. Omitted ⇒ the whole hold, as before.
    */
-  deposit(shipInstanceId: string, ownerId: string, target: StructureRecord): Hold {
+  deposit(shipInstanceId: string, ownerId: string, target: StructureRecord, intake?: ReadonlySet<GoodId>): Hold {
     const moved = emptyHold();
     const shipRow = this.d.holdStore.get(shipInstanceId);
     if (shipRow === undefined || isHoldEmpty(shipRow.hold)) return moved;
-    const ship = cloneHold(shipRow.hold);
+    const aboard = cloneHold(shipRow.hold);
+    // Filtered: split off just the intake goods; the rest stays aboard untouched.
+    const ship = intake === undefined ? aboard : extractRequested(aboard, { goods: intakeRequest(aboard, intake) });
+    if (isHoldEmpty(ship)) return moved;
     const touched: StructureRecord[] = [];
     for (const rec of this.network(target)) {
       let touchedThis = false;
@@ -250,6 +251,7 @@ export class StorageService {
       if (isHoldEmpty(ship)) break;
     }
     if (isHoldEmpty(moved)) return moved;
+    if (intake !== undefined) mergeInto(ship, aboard); // non-intake cargo stays aboard
     this.commitShipAndStructures(shipInstanceId, ownerId, ship, touched);
     return moved;
   }
@@ -328,16 +330,6 @@ export class StorageService {
     else if (this.d.holdStore.get(uid) !== undefined) this.d.holdStore.delete(uid, this.persist());
   }
 
-  /** Same-owner operational storage in a (non-storage) structure's component. */
-  private networkOf(rec: StructureRecord): StructureRecord[] {
-    const out: StructureRecord[] = [];
-    for (const id of this.d.componentOf(rec.id)) {
-      const r = this.d.registry.get(id);
-      if (r && r.owner === rec.owner && isOperationalStorage(r)) out.push(r);
-    }
-    return out;
-  }
-
   /**
    * Load the best blueprint for `product` from the processor's network storage
    * into its slot (an original first, then the highest quality). A blueprint
@@ -346,7 +338,7 @@ export class StorageService {
    */
   loadBlueprint(proc: StructureRecord, product: string, quality: (bp: BlueprintItem) => number): boolean {
     if (proc.blueprint?.bound === true) return false;
-    const net = this.networkOf(proc);
+    const net = this.networkFor(proc);
     let best: { s: StructureRecord; i: number; bp: BlueprintItem } | null = null;
     for (const s of net) {
       const list = s.hold?.blueprints ?? [];
@@ -374,7 +366,7 @@ export class StorageService {
   unloadBlueprint(proc: StructureRecord): boolean {
     const bp = proc.blueprint;
     if (bp === undefined || bp.bound === true) return false;
-    const target = this.networkOf(proc)[0];
+    const target = this.networkFor(proc)[0];
     if (target === undefined) return false;
     (target.hold ??= emptyHold()).blueprints.push(bp);
     proc.blueprint = undefined;
@@ -462,7 +454,7 @@ export class StorageService {
     if (want <= 0) return 0;
     const touched = new Set<StructureRecord>();
     let moved = 0;
-    for (const s of this.networkOf(pad)) {
+    for (const s of this.networkFor(pad)) {
       if (want <= 0) break;
       const have = s.hold?.goods[good] ?? 0;
       if (have <= 0) continue;
@@ -485,7 +477,7 @@ export class StorageService {
     const h = pad.padHold;
     if (h === undefined || isHoldEmpty(h)) return false;
     const touched: StructureRecord[] = [];
-    for (const s of this.networkOf(pad)) {
+    for (const s of this.networkFor(pad)) {
       if (isHoldEmpty(h)) break;
       const dst = (s.hold ??= emptyHold());
       const r = transferInto(dst, h, holdCapacityOf(s));
@@ -579,29 +571,7 @@ export class StorageService {
     const overflow = emptyHold();
 
     if (spec.take) {
-      const want = spec.take.want;
-      for (const rec of net) {
-        const h = rec.hold;
-        for (const g of GOOD_IDS) {
-          let need = (want.goods[g] ?? 0) - (taken.goods[g] ?? 0);
-          if (need <= 0) continue;
-          const have = h?.goods[g] ?? 0;
-          if (have > 0) {
-            const t = Math.min(have, need);
-            if (have - t > 0) h!.goods[g] = have - t;
-            else delete h!.goods[g];
-            taken.goods[g] = (taken.goods[g] ?? 0) + t;
-            need -= t;
-            touched.add(rec);
-          }
-          if (g === 'minerals' && need > 0 && rec.minerals > 0) {
-            const t = Math.min(rec.minerals, need);
-            rec.minerals -= t;
-            taken.goods.minerals = (taken.goods.minerals ?? 0) + t;
-            touched.add(rec);
-          }
-        }
-      }
+      takeFromNetwork(net, spec.take.want, taken, touched);
       const existing = this.d.holdStore.get(spec.take.intoUid);
       const into = existing ? cloneHold(existing.hold) : emptyHold();
       transferInto(into, cloneHold(taken), Infinity);
@@ -617,24 +587,7 @@ export class StorageService {
       deletes.push(uid);
       if (rec === undefined) continue;
       const src = cloneHold(rec.hold);
-      for (const s of net) {
-        const bankCap = getStructureKind(s.kind).storageCapacity;
-        const m = src.goods.minerals ?? 0;
-        if (bankCap > 0 && m > 0) {
-          const fit = Math.max(0, Math.min(m, bankCap - s.minerals));
-          if (fit > 0) {
-            s.minerals += fit;
-            if (m - fit > 0) src.goods.minerals = m - fit;
-            else delete src.goods.minerals;
-            touched.add(s);
-          }
-        }
-        if (isHoldEmpty(src)) break;
-        const hold = s.hold ?? emptyHold();
-        const r = transferInto(hold, src, holdCapacityOf(s));
-        if (!isHoldEmpty(r.moved)) { s.hold = hold; touched.add(s); }
-        if (isHoldEmpty(src)) break;
-      }
+      releaseIntoNetwork(net, src, touched);
       transferInto(overflow, src, Infinity);
     }
 
@@ -776,14 +729,50 @@ export class StorageService {
   // wallet op; each trade is ONE atomic group: ship row + touched storage +
   // the wallet op.
 
-  /** Units of `good` the dock's whole storage network holds (incl. banks). */
+  /** Units of `good` the dock's whole storage network holds (incl. banks).
+   *  Walks `network(dock)` without building it: the outlet check (3d) runs
+   *  on the deposit pass (#14). */
   networkStock(dock: StructureRecord, good: GoodId): number {
-    let n = 0;
-    for (const r of this.network(dock)) {
-      n += r.hold?.goods[good] ?? 0;
-      if (good === 'minerals') n += r.minerals;
+    let n = stockOf(dock, good);
+    for (const id of this.d.componentOf(dock.id)) {
+      if (id === dock.id) continue;
+      const r = this.d.registry.get(id);
+      if (r && r.owner === dock.owner && isOperationalStorage(r)) n += stockOf(r, good);
     }
     return n;
+  }
+
+  /**
+   * structure-restyle 3d — an OUTLET dock (export orders) loads a parked ship
+   * from its storage network: each export good, in order-list order, down to
+   * (never below) its order's `level` (an export offers only what is ABOVE
+   * the level, as for the convoys), up to `freeWeight` of hold room. Moves via
+   * `marketBuy` with no wallet op (the owner's own stock). Returns what moved.
+   */
+  loadOutlet(shipInstanceId: string, shipOwner: string, dock: StructureRecord, freeWeight: number): Hold {
+    const moved = emptyHold();
+    this.outletPass(dock, freeWeight, shipInstanceId, shipOwner, moved);
+    return moved;
+  }
+
+  /** Weight `loadOutlet` would move now (plan only; allocation-free, #14). */
+  outletLoadWeight(dock: StructureRecord, freeWeight: number): number {
+    return this.outletPass(dock, freeWeight, null, '', null);
+  }
+
+  private outletPass(dock: StructureRecord, freeWeight: number, shipId: string | null, owner: string, out: Hold | null): number {
+    let weight = 0;
+    for (const o of dock.freightOrders ?? []) {
+      if (o.mode !== 'export') continue;
+      const w = GOOD_DEFS[o.good].weight;
+      let n = Math.min(this.networkStock(dock, o.good) - o.level, Math.floor((freeWeight - weight + 1e-9) / Math.max(1e-9, w)));
+      if (!(n > 0)) continue;
+      if (shipId !== null) n = this.marketBuy(shipId, owner, dock, o.good, n, []);
+      if (n <= 0) continue;
+      if (out !== null) out.goods[o.good] = (out.goods[o.good] ?? 0) + n;
+      weight += n * w;
+    }
+    return weight;
   }
 
   /** Free goods-hold weight in the dock itself (sold goods land there). */
@@ -872,30 +861,4 @@ export class StorageService {
     }
     if (puts.length > 0) this.d.holdStore.commit(puts, [], this.persist());
   }
-}
-
-/** Stable payload signature (sorted keys) for dirty detection. 1 Hz, off-tick. */
-function sig(h: Hold): string {
-  const keys = Object.keys(h.goods).sort();
-  let s = `${h.blueprints.length}|${h.packed?.length ?? 0}`;
-  for (const b of h.blueprints) s += `|${b.uid}:${b.runs ?? 'o'}:${b.material}:${b.output}`;
-  for (const k of keys) s += `|${k}:${(h.goods as Record<string, number>)[k]}`;
-  return s;
-}
-
-/** Deterministic, stable structure uid: FNV-1a over (sector, owner, kind,
- *  rounded pose). All four inputs are persisted, so a restore recomputes it. */
-export function structureUid(sectorKey: string | null, owner: string, kind: string, x: number, y: number): string {
-  const s = `${sectorKey ?? 'eng'}|${owner}|${kind}|${Math.round(x)}|${Math.round(y)}`;
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  let h2 = 0x9e3779b1;
-  for (let i = s.length - 1; i >= 0; i--) {
-    h2 ^= s.charCodeAt(i);
-    h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
-  }
-  return `st-${h.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`;
 }

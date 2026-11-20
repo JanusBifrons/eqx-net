@@ -183,7 +183,7 @@ describe('SectorRoom integration — processor blueprint slots (P2b + Living Wor
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
         { kind: 'connector', x: 0, y: -350 },
-        { kind: 'solar', x: 500, y: -500 },
+        { kind: 'solar', x: 700, y: -420 }, // 700×300: clear of the 480-wide Fabricator
         { kind: 'fabricator', x: 0, y: -720 },
         { kind: 'cargo_bay', x: -450, y: -350 },
       ],

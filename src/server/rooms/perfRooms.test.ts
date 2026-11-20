@@ -51,4 +51,11 @@ describe('perfRoomOptions', () => {
       for (const h of field.hulls) expect(Math.hypot(h.x - scene.spawn.x, h.y - scene.spawn.y), `${id}: spawn clear of ${h.kindId}`).toBeGreaterThan(h.footprint);
     }
   });
+  it('base-flow: the room gets the working base and its rocks from scenarioLayouts', () => {
+    const o = perfRoomOptions(perfSceneById('base-flow')!, {});
+    const kinds = (o['prebuiltStructures'] as { kind: string }[]).map((p) => p.kind);
+    expect(kinds.filter((k) => k === 'miner')).toHaveLength(4);
+    expect(o['scenarioAsteroids']).toHaveLength(4);
+    expect(o['testMode']).toBe(true);
+  });
 });

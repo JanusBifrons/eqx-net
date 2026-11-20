@@ -17,7 +17,7 @@ import type { SwarmSpawner } from '../../spawn/SwarmSpawner.js';
 import type { CapitalWreckSubsystem } from '../CapitalWreckSubsystem.js';
 import type { SectorSnapshotRestore } from '../SectorSnapshotRestore.js';
 import { getDroneMaxHealth, getDroneShieldMax } from '../droneKindHelpers.js';
-import { SceneScriptRunner, SceneScriptSchema } from './SceneScriptRunner.js';
+import { SceneScriptRunner, SceneScriptSchema, type SceneHooks } from './SceneScriptRunner.js';
 import { registerScenePerfRoom, type ScenePerfSource } from './scenePerfRegistry.js';
 
 /** What the scene hooks read from the room; getters read the live field. */
@@ -39,6 +39,8 @@ export interface SceneRoomHost {
   lingeringSlots: ReadonlyMap<string, number>;
   fleet: Pick<FleetCommandSubsystem, 'setStance' | 'setMode' | 'applyOrder'>;
   capitalWrecks(): Pick<CapitalWreckSubsystem, 'rockCut'> | null;
+  /** Structure-restyle 2f sandbox: the rig clip / ship mover hooks (`RigScene.sceneHooks`). */
+  rigSceneHooks(): Pick<SceneHooks, 'moveShip' | 'rigClip'>;
 }
 
 export interface SceneRoomParts {
@@ -97,6 +99,7 @@ export function initSceneScript(host: SceneRoomHost, raw: unknown): SceneRoomPar
     // Rock-cut scene: still rocks, then each mined to a break (RockCutter.sceneCut).
     spawnRock: (id, x, y, radius) => host.swarmSpawner().spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
     cutRock: (id) => host.capitalWrecks()?.rockCut.sceneCut(id) ?? false,
+    ...host.rigSceneHooks(), // structure-restyle 2f sandbox
   });
   return { runner, tickRing, workerRing };
 }

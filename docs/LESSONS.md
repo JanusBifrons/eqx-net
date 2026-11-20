@@ -3186,6 +3186,11 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Finding:** the resting touch stick fades to 40 % opacity, and a dark wash added to its own background faded with it, so the ring stayed invisible over bright asteroid rock however dark the wash was.
 - **Rule:** a readability backing goes on its own element beside the faded one (`FloatingStick`'s `-backing` layer moves with the ring but keeps full opacity); HUD panels use `HUD.color.panel` (0.72) so they read over rock.
 
+## 2026-11-18 — a new placement rule silently drops hand-written layouts
+
+- **Finding:** the Capital gained a crane bay pad (`keepClear`), and every prebuilt layout with a relay or solar just north of a rot-0 Capital lost those structures at room seed (`overlap-pad`, a log line only): the scenario, gate, wave, defence and homestead bases ran short and some gates went unpowered.
+- **Rule:** after changing a footprint, a pad or `placementRejection`, run `src/server/rooms/prebuiltLayouts.test.ts`; it seeds every exported layout through the real placement seam. Prefer turning the Capital (`rot`) so its pad faces open space over moving the base.
+
 ## 2026-11-18 — a test delay that holds a shared worker multiplies by the queue
 
 - **Finding:** `?artDelayMs=8000` held each bake worker for 8 s, so the 36 warm-up bakes queued at load made the pilot's own ship wait two or more rounds on CI's 3-worker pool and join-art-ready ran past its 30 s wait. Whether the delay applied at all depended on a race (the cut field's lazy import could create the shared pool first, without the delay), so the spec failed only on some CI runs and never locally.
@@ -3215,6 +3220,12 @@ cap table in `scripts/audit-god-files.mjs`, and flaky required tests (a wall-clo
 reset the clock. Merge only a stack's top (one round lands the whole chain), resolve cap conflicts by
 taking the lower cap, and fix a flake's cause the first time. Post-mortem:
 `docs/HANDOFF-2026-11-19-pr-backlog.md`.
+
+## 2026-11-18 — a joint blend between two IK poses is not a path
+
+- **Finding:** the crane reach blended its joints from a waypoint to the IK pose with different eases (jib linear, boom cubic in). Both ends were right, so pose tests passed, but the clamp swung out sideways away from the ship, then the boom whipped it into the hold pose at full speed: a one-frame snap on film.
+- **Rule:** an arm that must travel AT a target uses `tipPath` (straight eased tip line, fold fixed); test a clip by sampling it every half tick (on the line, never backing off, one fold, ending at rest), not just its end poses (`cranePath.test.ts`).
+- **Follow-up (boom ease):** an evenly eased TIP is not an evenly eased ARM. Near the chain root (a folded arm) a little tip travel turns the joints a lot, so the boom whipped where the line left READY. `tipPath` now eases joint travel along the line (`retimeTipPath`); test joint speed per half tick against the travel's even pace, not only the tip.
 
 ## 2026-11-19 — a death-loss coin flip makes "the kill drops a pod" a flake
 
