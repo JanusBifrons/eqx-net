@@ -5,7 +5,7 @@
  * `onBreakInEnd`, and the room hands in live accessors. Discrete events.
  * Also the C3 ship cargo targets a break-in or a cargo request names
  * (`shipTarget`, `shipTargetById`) and the cargo-range check
- * (`pilotNearPoint`), moved verbatim out of `SectorRoom` too.
+ * (`pilotNear`, `pilotNearPoint`), moved out of `SectorRoom` too.
  */
 import type { Client } from 'colyseus';
 import type { StructureRecord, StructureRegistry } from '../../structures/StructureRegistry.js';
@@ -26,6 +26,7 @@ import { ON_SIGHT_ENGAGE_RANGE, type NpcAllegianceId } from '../../../shared-typ
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { slotBase, SLOT_X_OFF, SLOT_Y_OFF } from '../../../shared-types/sabLayout.js';
 import { STANDING_BREAK_IN_DELTA } from '../../../shared-types/factions.js';
+import { nearStorage } from '../../cargo/storageReach.js';
 
 /** C3 — how much you can unload into an NPC ship's hold. */
 const NPC_HOLD_CAPACITY = 1000;
@@ -114,6 +115,21 @@ export class BreakInHooks {
     if (rec && rec.kind === 1) return this.npcShipTarget(rec);
     for (const [pid] of this.h.playerToSlot()) if (this.h.getActiveShip(pid)?.shipInstanceId === id) return this.shipTarget({ ship: pid });
     return this.h.lingeringSlots.has(id) ? this.shipTarget({ ship: id }) : null;
+  }
+
+  /** C2 — does `playerId` fly a live ship (#17) within cargo range of `rec`?
+   *  In range = within CARGO_ACCESS_RANGE of its footprint edge, or at it by
+   *  `nearStorage` (its deposit circle or its crane bay): a freight dock's
+   *  circle covers its whole landing pad, which reaches past the edge range.
+   *  Moved out of `SectorRoom` (god-file cap). */
+  pilotNear(playerId: string, rec: StructureRecord): boolean {
+    const ship = this.h.getActiveShip(playerId);
+    const pose = this.h.shipPoseCache().get(playerId);
+    if (!ship?.alive || !ship.isActive || !pose) return false;
+    const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
+    const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
+    if (dx * dx + dy * dy <= CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) return true;
+    return nearStorage(rec, pose.x, pose.y);
   }
 
   /** C2/C3 — is `playerId`'s live ship within cargo range of a point body? */

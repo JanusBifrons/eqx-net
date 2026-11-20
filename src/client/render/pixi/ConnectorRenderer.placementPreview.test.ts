@@ -98,11 +98,12 @@ describe('ConnectorRenderer — placement connection preview', () => {
     const structures = new Map<number, StructureRenderState>([
       [capitalId, structureState({ connTo: [] })],
     ]);
-    // Ghost connector 300 u above the capital (edge distance well within 600).
+    // Ghost connector 300 u below the capital (its +y side is the landing
+    // pad: no sockets, solid); edge distance well within 600.
     const mirror: RenderMirror = {
       swarm,
       structures,
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0 },
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: -300, angle: 0 },
     } as unknown as RenderMirror;
 
     const r = new ConnectorRenderer();
@@ -112,25 +113,32 @@ describe('ConnectorRenderer — placement connection preview', () => {
   });
 
   it('counts 0 when an asteroid sits ON the only ghost→hub segment (blocked, server-faithful)', () => {
+    // 0d cable sockets: the cable runs socket to socket (capital's top face,
+    // y ≈ 220..247, to the connector's bottom post), not centre to centre.
+    // The capital's footprint is 560 square, so the old fixture (ghost at
+    // y=300, rock at y=150) had the rock INSIDE the capital and the ghost
+    // touching it: the cable ran above the rock. Here the ghost sits 538 u
+    // edge to edge below the capital (off its +y pad) and the rock fills the gap, so every
+    // facing socket pair in reach crosses it.
     const capitalId = 1;
+    const clear = new Map<number, SwarmRenderState>([[capitalId, structureEntry('capital', 0, 0)]]);
     const swarm = new Map<number, SwarmRenderState>([
       [capitalId, structureEntry('capital', 0, 0)],
-      // Asteroid squarely between the ghost (0,300) and the capital (0,0).
-      [2, asteroidEntry(0, 150, 60)],
+      // Asteroid squarely between the capital's -y face and the ghost.
+      [2, asteroidEntry(0, -540, 200)],
     ]);
     const structures = new Map<number, StructureRenderState>([
       [capitalId, structureState({ connTo: [] })],
     ]);
-    const mirror: RenderMirror = {
-      swarm,
-      structures,
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0 },
-    } as unknown as RenderMirror;
-
+    const preview = { kind: 'connector', x: 0, y: -850, angle: 0 };
     const r = new ConnectorRenderer();
-    r.update(mirror, 1, 0);
+    r.update({ swarm: clear, structures, pendingPlacementPreview: preview } as unknown as RenderMirror, 1, 0);
+    expect(r.placementPreviewConnectionCount, 'control: without the rock it links').toBe(1);
 
+    r.update({ swarm, structures, pendingPlacementPreview: preview } as unknown as RenderMirror, 1, 0);
     expect(r.placementPreviewConnectionCount).toBe(0);
+    expect(r.previewVerdictCount).toBe(1);
+    expect(r.previewVerdicts[0]!.reason).toBe('blocked');
   });
 
   it('counts 0 when there is no placement preview', () => {
@@ -211,7 +219,7 @@ describe('ConnectorRenderer — placement connection preview', () => {
     for (let i = 0; i < 3; i++) {
       const angle = (i / 3) * Math.PI * 2;
       const id = i + 1;
-      swarm.set(id, structureEntry('connector', Math.cos(angle) * 200, Math.sin(angle) * 200));
+      swarm.set(id, structureEntry('connector', Math.cos(angle) * 500, Math.sin(angle) * 500));
       structures.set(id, structureState({ connTo: [] }));
     }
     const mirror: RenderMirror = {
@@ -324,7 +332,7 @@ describe('ConnectorRenderer — placement connection preview', () => {
     const mirror: RenderMirror = {
       swarm,
       structures,
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0, pending: false },
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: -300, angle: 0, pending: false },
     } as unknown as RenderMirror;
 
     const r = new ConnectorRenderer();
@@ -373,7 +381,7 @@ describe('ConnectorRenderer — placement connection preview', () => {
       swarm,
       structures,
       localPlayerId: 'me',
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0 },
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: -300, angle: 0 },
     } as unknown as RenderMirror;
 
     const r = new ConnectorRenderer();
@@ -451,12 +459,39 @@ describe('ConnectorRenderer — placement connection preview', () => {
       swarm,
       structures,
       localPlayerId: 'me',
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0 },
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: -300, angle: 0 },
     } as unknown as RenderMirror;
 
     const r = new ConnectorRenderer();
     r.update(mirror, 1, 0);
 
     expect(r.placementPreviewConnectionCount).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('ConnectorRenderer placement preview: the ghost keeps its rotation (0d)', () => {
+  it('a rotated non-square ghost is checked with its rotated box, kind and rot', () => {
+    const kind = (['shipyard', 'shield_gate', 'solar'] as const).find((k) => {
+      const fp = getStructureKind(k).footprint;
+      return fp.w !== fp.h;
+    })!;
+    const fp = getStructureKind(kind).footprint;
+    const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([[1, structureState({ connTo: [] })]]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind, x: 0, y: 300, angle: Math.PI / 2 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    // Before the fix the preview dropped the angle: an unrotated box, rot 0.
+    const ghost = (r as unknown as { _ghostNode: { kind: string; rot: number; halfW: number; halfH: number } })._ghostNode;
+    expect(ghost.kind).toBe(kind);
+    expect(ghost.rot).toBeCloseTo(Math.PI / 2, 12);
+    expect(ghost.halfW).toBe(fp.h / 2);
+    expect(ghost.halfH).toBe(fp.w / 2);
   });
 });

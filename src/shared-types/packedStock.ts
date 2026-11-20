@@ -9,7 +9,7 @@
  * hold (the same places the placement gate looks).
  */
 import { z } from 'zod';
-import { STARTER_STRUCTURE_KINDS } from './blueprints.js';
+import { STARTER_STRUCTURE_KINDS, needsPackedCrate } from './blueprints.js';
 import { getStructureKind } from './structureKinds.js';
 
 export const PackedStockQuerySchema = z.object({ type: z.literal('packed_stock_query') }).strict();
@@ -32,13 +32,16 @@ export interface BuildEntry {
 }
 
 /** A Build-menu entry for `kindId` given the stock (null ⇒ not known yet:
- *  nothing is locked, so the menu never blocks on a slow reply). */
-export function buildEntry(kindId: string, counts: Readonly<Record<string, number>> | null): BuildEntry {
+ *  nothing is locked, so the menu never blocks on a slow reply).
+ *  `inSector` false = a room with no sector (engineering / test sandbox: no
+ *  hold), where the server places a Capital without a crate. */
+export function buildEntry(kindId: string, counts: Readonly<Record<string, number>> | null, inSector = true): BuildEntry {
   const name = getStructureKind(kindId).displayName;
-  if (STARTER_STRUCTURE_KINDS.includes(kindId)) return { label: name, locked: false, count: null };
+  const crate = needsPackedCrate(kindId) && inSector;
+  if (!crate && STARTER_STRUCTURE_KINDS.includes(kindId)) return { label: name, locked: false, count: null };
   if (counts === null) return { label: name, locked: false, count: null };
   const n = counts[`structure:${kindId}`] ?? 0;
-  return n > 0
-    ? { label: `${name} ×${n}`, locked: false, count: n }
-    : { label: `${name} · buy packed`, locked: true, count: 0 };
+  if (n > 0) return { label: `${name} ×${n}`, locked: false, count: n };
+  // Only the Capital locks; any other kind builds from the bank.
+  return crate ? { label: `${name} · needs packed`, locked: true, count: 0 } : { label: name, locked: false, count: 0 };
 }

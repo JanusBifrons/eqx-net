@@ -66,7 +66,7 @@ export function registerShipUpgradeMessages(h: ShipUpgradeMessageHost): RoomFeat
 
   // ── Living World P1a-2 — instant repair at your own storage (credit sink) ──
   // Repairs the sender's ACTIVE hull to full while it sits within
-  // DEPOSIT_RANGE of its own operational storage; costs REPAIR_CREDITS_PER_HP
+  // reach (`nearStorage`: deposit circle or crane bay) of its own operational storage; costs REPAIR_CREDITS_PER_HP
   // per missing hull point from the credits banked in this sector.
   parsedMessage(h, 'repair_ship', RepairShipSchema, (_msg, client) => {
     const playerId = h.sessionToPlayer().get(client.sessionId);

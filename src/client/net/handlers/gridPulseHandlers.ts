@@ -8,14 +8,11 @@
 import type { Room } from 'colyseus.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { GridPulseEvent } from '@shared-types/messages';
-import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { flowMaterialToCode } from '../../render/pixi/connectorVisual.js';
 
 /** What the grid-pulse handler touches on the client. */
 export interface GridPulseHandlerCtx {
   readonly mirror: RenderMirror;
-  /** The injected clock's `now()` (ms). */
-  now(): number;
 }
 
 export function registerGridPulseHandlers(room: Room, ctx: GridPulseHandlerCtx): void {
@@ -31,10 +28,10 @@ export function registerGridPulseHandlers(room: Room, ctx: GridPulseHandlerCtx):
     // tint. Sibling map keyed identically; value = flowMaterialToCode(material).
     let flowMat = ctx.mirror.gridFlowMaterial;
     if (!flowMat) { flowMat = new Map(); ctx.mirror.gridFlowMaterial = flowMat; }
-    // R2.2 — keep the edge lit for a FULL pulse period so consecutive 1 Hz
-    // pulses read as continuous flow (not a 300 ms blink + 700 ms gap); it
-    // fades ~1 s after the flow actually stops being re-stamped.
-    const until = ctx.now() + GRID_PULSE_WINDOW_MS;
+    // Time scale (#20): the stamp is a per-edge PULSE COUNT, not a time. The
+    // renderer turns each new count into a full pulse window on its own game
+    // clock (`GridFlashClock` in connectorVisual.ts), so the flow keeps time at
+    // every sector speed and across the worker boundary.
     const defaultMatCode = flowMaterialToCode(msg.material ?? 'minerals');
     for (const pair of msg.flashed) {
       const a = pair[0];
@@ -43,7 +40,7 @@ export function registerGridPulseHandlers(room: Room, ctx: GridPulseHandlerCtx):
       const lo = a < b ? a : b;
       const hi = a < b ? b : a;
       const key = lo * 65536 + hi;
-      flashes.set(key, until);
+      flashes.set(key, (flashes.get(key) ?? 0) + 1);
       // `a` is the route SOURCE (StructureGridSubsystem.flashRoute pushes
       // [route[i], route[i+1]] in source→dest order; SectorRoom preserves it).
       flowSrc.set(key, a);

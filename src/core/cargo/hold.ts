@@ -60,6 +60,16 @@ export function takePacked(h: Hold, key: string): PackedItem | null {
   return item!;
 }
 
+/** Take one packed `product` item for USE (placement): the best plain one,
+ *  else a one-of-a-kind one of that product (a repacked Capital crate).
+ *  `takePacked` by product never takes a one-of-a-kind item. Mutates. */
+export function takePackedOfProduct(h: Hold, product: string): PackedItem | null {
+  const plain = takePacked(h, product);
+  if (plain !== null) return plain;
+  const one = h.packed?.find((p) => p.product === product && p.uid !== undefined);
+  return one ? takePacked(h, one.uid!) : null;
+}
+
 /** How many packed `product` items `h` holds. */
 export function packedCount(h: Hold, product: string): number {
   let n = 0;

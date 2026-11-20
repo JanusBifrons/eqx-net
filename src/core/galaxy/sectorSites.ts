@@ -287,6 +287,15 @@ export function sectorCutField(sectorKey: string, enabled: boolean): SectorCutFi
   return { seed: `galaxy:${sectorKey}:v${SECTOR_FIELD_VERSION}`, clearings };
 }
 
+/** The cut-field clearing round the pocket centred at (x, y), or null when
+ *  the sector has no cut field or the pocket lies beyond its reach (no rocks
+ *  round it). A base grown in that pocket stays inside it (`chooseBaseSite`
+ *  `within`). */
+export function pocketClearing(sectorKey: string, enabled: boolean, x: number, y: number): FieldClearing | null {
+  const field = sectorCutField(sectorKey, enabled);
+  return field?.clearings.find((c) => c.x === x && c.y === y) ?? null;
+}
+
 /** The wreck-free centre of a wreck field's battle pocket, × its radius
  *  (wreck fields 13, owner "wrecks in view"): hulls reach into the pocket's
  *  outer ring, so a warp drop on the rim lands among wrecks, and the centre

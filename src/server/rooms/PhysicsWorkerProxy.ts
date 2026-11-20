@@ -56,6 +56,9 @@ export type WorkerCmd =
    *  identically (risk #1 / invariants #4, #12). Omitting `topSpeed`/`turnRate`
    *  (both undefined) resets to the un-upgraded factors. */
   | { type: 'SET_STAT_MUL'; id: string; topSpeed?: number; turnRate?: number }
+  /** Hologram pass-through: a blueprint body's collider groups swap
+   *  (`World.setCollisionGroups`). */
+  | { type: 'SET_COLLISION_GROUPS'; id: string; groups: number }
   /** Missile splash impulse. The server's MissileSimulation queues these on
    *  detonate; the SectorRoom drains the queue each tick and posts them as
    *  individual commands. The worker resolves `entityId` to a Rapier body
@@ -81,6 +84,11 @@ export type WorkerCmd =
    *  `ForceFieldSubsystem`; nothing else posts these. */
   | { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
   | { type: 'REMOVE_FORCE_FIELD'; id: string }
+  /** Structure-restyle 2d: attach a structure's rig solid parts
+   *  (`World.attachRig`), and start / clear the clip on it (`World.setRigClip`;
+   *  `startTick` in game ticks, target in the structure's frame). */
+  | { type: 'RIG_ATTACH'; id: string; rigId: string }
+  | { type: 'RIG_CLIP';   id: string; clipId: string | null; startTick: number; targetX?: number; targetY?: number }
   /** Several commands in ONE message, handled in order with no physics step
    *  between them (`beginBatch` / `endBatch`): one wreck's piece spawns and
    *  kicks, so every piece starts on the same step. */

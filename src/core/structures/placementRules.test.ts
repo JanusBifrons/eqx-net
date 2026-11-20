@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { placementRejection, canPlaceStructureAt } from './placementRules.js';
+import { PLACEMENT_REJECTION_TEXT, placementRejection, placementRejectionNotice, canPlaceStructureAt, type PlacementRejection } from './placementRules.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { GridObstacle } from './Grid.js';
 
 // Phase V (plan soft-leaping-truffle v2): structures are rotated BOXES
-// (footprints), not circles. Capital 560×560, Solar 360×150.
+// (footprints), not circles. Capital 560×560, Solar 700×300.
 const CAP = getStructureKind('capital').footprint; // 560×560
-const SOLAR = getStructureKind('solar').footprint; // 360×150
+const SOLAR = getStructureKind('solar').footprint; // 700×300
 const capitalAt = (x: number, y: number) => ({ x, y, radius: getStructureKind('capital').radius, halfW: CAP.w / 2, halfH: CAP.h / 2 });
 
 describe('placementRules — canPlaceStructureAt / placementRejection (rotated footprint boxes)', () => {
@@ -19,17 +19,17 @@ describe('placementRules — canPlaceStructureAt / placementRejection (rotated f
     const structures = [capitalAt(0, 0)];
     // A solar whose box intrudes into the Capital's box → overlap.
     expect(placementRejection('solar', 300, 0, structures)).toBe('overlap-structure');
-    // Exactly touching (280 + 180 = 460) is legal; one unit closer overlaps.
-    expect(placementRejection('solar', 460, 0, structures)).toBeNull();
-    expect(placementRejection('solar', 459, 0, structures)).toBe('overlap-structure');
+    // Exactly touching (280 + 350 = 630) is legal; one unit closer overlaps.
+    expect(placementRejection('solar', 630, 0, structures)).toBeNull();
+    expect(placementRejection('solar', 629, 0, structures)).toBe('overlap-structure');
   });
 
   it('a quarter turn swaps the footprint: a rotated Solar fits where an upright one overlaps', () => {
     const structures = [capitalAt(0, 0)];
-    // Upright Solar (360 wide) at x = 400 → half 180 → overlaps the Capital (280).
-    expect(placementRejection('solar', 400, 0, structures, null, 0)).toBe('overlap-structure');
-    // Rotated 90° it is 150 wide → half 75 → 400 − 75 = 325 > 280 → legal.
-    expect(placementRejection('solar', 400, 0, structures, null, 90)).toBeNull();
+    // Upright Solar (700 wide) at x = 500 → half 350 → overlaps the Capital (280).
+    expect(placementRejection('solar', 500, 0, structures, null, 0)).toBe('overlap-structure');
+    // Rotated 90° it is 300 wide → half 150 → 500 − 150 = 350 > 280 → legal.
+    expect(placementRejection('solar', 500, 0, structures, null, 90)).toBeNull();
     expect(SOLAR.w).toBeGreaterThan(SOLAR.h);
   });
 
@@ -112,5 +112,50 @@ describe('placementRules — obstacle convex parts (narrow phase, C5b)', () => {
     const rock: GridObstacle = { x: 10_000, y: -4000, radius: barRock().radius, parts: [bar] };
     expect(placementRejection('capital', 10_000, -3000, [], [rock])).toBeNull();
     expect(placementRejection('capital', 10_000, -3700, [], [rock])).toBe('overlap-obstacle');
+  });
+});
+
+describe("placementRules — a freight dock's landing pad stays clear", () => {
+  const DOCK = getStructureKind('freight_dock');
+  const PAD = DOCK.keepClear!; // 900 × 500 at (0, 460) in the dock frame
+  const dockAt = (x: number, y: number, rot = 0) => {
+    const q = rot % 180 !== 0;
+    return { x, y, radius: DOCK.radius, halfW: (q ? DOCK.footprint.h : DOCK.footprint.w) / 2, halfH: (q ? DOCK.footprint.w : DOCK.footprint.h) / 2, kind: 'freight_dock', rot };
+  };
+
+  it('rejects a structure placed onto an existing dock pad (the pad turns with the dock)', () => {
+    expect(placementRejection('solar', 0, PAD.cy, [dockAt(0, 0)])).toBe('overlap-pad');
+    expect(PLACEMENT_REJECTION_TEXT['overlap-pad']).toBe("Keep the landing pad clear");
+    // Just past the pad's far edge is legal.
+    expect(placementRejection('solar', 0, PAD.cy + PAD.h / 2 + SOLAR.h / 2, [dockAt(0, 0)])).toBeNull();
+    // Turned 180°, the pad is on the -y side.
+    expect(placementRejection('solar', 0, -PAD.cy, [dockAt(0, 0, 180)])).toBe('overlap-pad');
+    expect(placementRejection('solar', 0, PAD.cy, [dockAt(0, 0, 180)])).toBeNull();
+    // Turned 90° (CCW), the pad is on the -x side (the Solar turned too, so
+    // only the pad, not the dock's box, is under it).
+    expect(placementRejection('solar', -PAD.cy, 0, [dockAt(0, 0, 90)], null, 90)).toBe('overlap-pad');
+  });
+
+  it('rejects a dock whose pad would cover an existing structure', () => {
+    const solar = { x: 0, y: PAD.cy, radius: getStructureKind('solar').radius, halfW: SOLAR.w / 2, halfH: SOLAR.h / 2, kind: 'solar', rot: 0 };
+    expect(placementRejection('freight_dock', 0, 0, [solar])).toBe('overlap-pad');
+    expect(placementRejection('freight_dock', 0, 0, [solar], null, 180)).toBeNull();
+  });
+
+  it('a footprint without a kind reserves nothing beyond its box (legacy callers)', () => {
+    const bare = { ...dockAt(0, 0), kind: undefined };
+    expect(placementRejection('solar', 0, PAD.cy, [bare])).toBeNull();
+  });
+});
+
+describe('placementRejectionNotice — the refused-placement notice', () => {
+  it('maps every rejection reason to its build-here notice', () => {
+    const expected: Record<PlacementRejection, string> = {
+      'overlap-structure': "Can't build here: too close to another structure",
+      'overlap-obstacle': "Can't build here: blocked by an asteroid or wreck",
+      'overlap-pad': "Can't build here: keep the landing pad clear",
+    };
+    expect(Object.keys(PLACEMENT_REJECTION_TEXT).sort()).toEqual(Object.keys(expected).sort());
+    for (const r of Object.keys(expected) as PlacementRejection[]) expect(placementRejectionNotice(r)).toBe(expected[r]);
   });
 });

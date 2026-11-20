@@ -154,6 +154,8 @@ export function BottomControlPanel(): JSX.Element | null {
   const showing = inGame && spectating && !fleetSelected;
   // Economy v2 — packed-structure stock, asked for only while the row shows.
   const packedStock = usePackedStock(showing);
+  // No sector (engineering room) = no crate rule: the Capital never locks.
+  const inSector = useUIStore((s) => s.currentSectorKey !== null);
 
   // Number-key (1..9) building selection while spectating. Desktop-only +
   // in-game; ignores keystrokes while a text field has focus so it never
@@ -167,11 +169,11 @@ export function BottomControlPanel(): JSX.Element | null {
       const n = Number(e.key);
       if (!Number.isInteger(n) || n < 1 || n > 9) return;
       const b = BUILDINGS[n - 1];
-      if (b && !buildEntry(b, packedStock).locked) setPlacementKind(b);
+      if (b && !buildEntry(b, packedStock, inSector).locked) setPlacementKind(b);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showing, setPlacementKind, packedStock]);
+  }, [showing, setPlacementKind, packedStock, inSector]);
 
   if (!inGame || BUILDINGS.length === 0) return null;
 
@@ -183,7 +185,7 @@ export function BottomControlPanel(): JSX.Element | null {
       data-panel-mode={showing ? 'build' : 'hidden'}
     >
       {BUILDINGS.map((k, i) => {
-        const entry = buildEntry(k, packedStock);
+        const entry = buildEntry(k, packedStock, inSector);
         return (
           <BuildCell
             key={k}

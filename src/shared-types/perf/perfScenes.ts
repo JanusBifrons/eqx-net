@@ -42,6 +42,9 @@ export interface PerfScene {
    *  (`resolveSectorConfig`). `EQX_SCENE_GALAXY_FIELD=0` leaves it off (the
    *  A/B's no-field arm). */
   galaxyField?: string;
+  /** A prebuilt base from `scenarioLayouts.ts` (test layouts live only there):
+   *  its structures and rocks join the room options. */
+  prebuiltLayout?: 'base-flow';
   /** A moving director camera instead of the held `camera`: cinema holds,
    *  each eased in over `smoothMs` from its `atMs` (ms after the window
    *  starts). `scale` is the ABSOLUTE camera scale (screen px per world unit),
@@ -220,6 +223,20 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 0, y: -2000, zoom: 0.25 },
     durationMs: 30_000,
     minSwarm: 1,
+  },
+  {
+    // Structure restyle 0d: socket cables flow (comets) only on a grid pulse,
+    // so a quiet NPC base measures nothing. Four Miners drill rocks and haul
+    // minerals to the Capital every second along 21 cables, the base filling
+    // the view. A/B: `--base-params fx=classic` (no cable flow).
+    id: 'base-flow',
+    title: 'A working player base: Miners feed the Capital along 21 flowing cables',
+    room: { droneCount: 0, asteroidConfig: [], sectorFeatures: [], sceneScript: [{ atMs: 30_000, action: 'end' }] },
+    prebuiltLayout: 'base-flow',
+    spawn: { x: -1400, y: 0 },
+    camera: { x: 300, y: 0, zoom: 0.45 },
+    durationMs: 30_000,
+    minSwarm: 20,
   },
   {
     id: 'wide-view',

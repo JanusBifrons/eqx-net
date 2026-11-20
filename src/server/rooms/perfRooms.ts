@@ -6,6 +6,9 @@
 import type { Server } from 'colyseus';
 import { PERF_SCENES, type PerfScene } from '../../shared-types/perf/perfScenes.js';
 import { resolveSectorConfig } from '../galaxy/GalaxyRegistry.js';
+import { BASE_FLOW_OPTS } from './scenarioLayouts.js';
+
+const PREBUILT_LAYOUTS = { 'base-flow': BASE_FLOW_OPTS } as const;
 
 /** The room options for one perf scene. */
 export function perfRoomOptions(scene: PerfScene, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
@@ -19,6 +22,7 @@ export function perfRoomOptions(scene: PerfScene, env: NodeJS.ProcessEnv = proce
     // Fixed work: no TiDi, no load shedding (they hide an overload).
     perfFixedLoad: true,
     ...scene.room,
+    ...(scene.prebuiltLayout !== undefined ? PREBUILT_LAYOUTS[scene.prebuiltLayout] : {}),
     // A real galaxy sector's field (F4); `EQX_SCENE_GALAXY_FIELD=0` is the
     // A/B's no-field arm.
     ...(scene.galaxyField !== undefined && env['EQX_SCENE_GALAXY_FIELD'] !== '0'
