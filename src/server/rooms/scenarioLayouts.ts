@@ -120,6 +120,27 @@ export const BASE_BUILD_PREBUILT = [
   { kind: 'solar', ...SCENARIO.solarNW },
 ] as const;
 
+/** Placeholder owner of a prebuilt base that the FIRST pilot to join adopts
+ *  (`base-build-test`): the base then belongs to whoever really joined —
+ *  whatever id the server resolved for them (account, fresh anonymous id) —
+ *  so their placed blueprints cable to it and draw its bank. */
+export const PREBUILT_ADOPT_OWNER = 'prebuilt-adopt';
+
+/** Hand every structure still owned by `PREBUILT_ADOPT_OWNER` to
+ *  `playerId` and re-cable (the next grid pulse rebuilds the topology and the
+ *  client slice re-interns the owner). Returns how many were adopted; 0 once
+ *  the base has an owner, so only the first joiner gets it. */
+export function adoptPrebuiltBase(reg: StructureRegistry, playerId: string): number {
+  let n = 0;
+  for (const rec of reg.all()) {
+    if (rec.owner !== PREBUILT_ADOPT_OWNER) continue;
+    rec.owner = playerId;
+    n++;
+  }
+  if (n > 0) reg.topologyDirty = true;
+  return n;
+}
+
 /** A "ready base" for the wave system (Capital + Miner + Solar + Turret,
  *  wired through the two connectors) — the same grid. */
 export const READY_BASE_PREBUILT = STRUCTURE_SCENARIO_PREBUILT;

@@ -5,15 +5,15 @@
  */
 import type { Server } from 'colyseus';
 import { SectorRoom } from '../SectorRoom.js';
-import { BASE_BUILD_PREBUILT, GATE_TEST_PREBUILT, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
+import { BASE_BUILD_PREBUILT, GATE_TEST_PREBUILT, PREBUILT_ADOPT_OWNER, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
 import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
 
 /**
  * `?room=base-build-test` (Sunday base loop): stills and films of building.
- * The pilot owns a small powered base (Capital + Connector + 2 Solar) by
- * joining as the showcase pilot (seed `localStorage.eqxPlayerId` with
- * `SHOWCASE_PILOT_ID`, as the showcase specs do); its bank holds 50k
- * minerals and the joiner's wallet 20k credits. No rocks or NPCs nearby; ONE
+ * The FIRST pilot to join owns a small powered base (Capital + Connector + 2
+ * Solar) — any id, logged in or not (`PREBUILT_ADOPT_OWNER`); its bank holds
+ * 50k minerals and every joiner's wallet 20k credits. Blueprints cable to the
+ * Connector at (0, 350): place within its 600 u reach. No rocks or NPCs nearby; ONE
  * rock 1500 u south of the Capital for a red-ghost shot. The 100 ms grid pulse
  * fills a placed Solar (480 minerals, 5 per pulse) in about 10 s.
  */
@@ -23,7 +23,7 @@ export const BASE_BUILD_TEST_OPTS = {
   droneCount: 0,
   peacefulDrones: true,
   structureGridPulseMs: 100,
-  prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
+  prebuiltStructuresOwner: PREBUILT_ADOPT_OWNER,
   prebuiltStructures: BASE_BUILD_PREBUILT.map((p) => ({ ...p })),
   prebuiltCapitalMinerals: 50_000,
   seedStorageHold: { goods: {}, credits: 20_000 },
