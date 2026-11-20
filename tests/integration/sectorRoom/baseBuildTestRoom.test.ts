@@ -2,7 +2,7 @@
  * `?room=base-build-test` (Sunday base loop): boots the EXACT options the
  * server registers. A pilot joining as the showcase pilot owns a powered
  * starter base with minerals banked, and a Solar they place fills in from
- * that bank. Grid pulses are driven deterministically.
+ * that bank on the room's own pulse timer, cabled and climbing.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { matchMaker } from 'colyseus';
@@ -11,8 +11,6 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { BASE_BUILD_TEST_OPTS } from '../../../src/server/rooms/testRooms/engineeringRooms.js';
 import { SHOWCASE_PILOT_ID } from '../../../src/server/rooms/showcaseRooms.js';
 import { getWallet } from '../../../src/server/db/PersistenceWorker.js';
-import { getStructureKind } from '../../../src/shared-types/structureKinds.js';
-import { CONSTRUCTION_PULSE_AMOUNT } from '../../../src/core/structures/structureGridConstants.js';
 
 function roomOf(roomId: string): SectorRoom {
   return matchMaker.getLocalRoomById(roomId) as unknown as SectorRoom;
@@ -58,9 +56,19 @@ describe('base-build-test room', () => {
     expect(id, 'solar placed').toBeDefined();
     const solar = internals.structureRegistry.get(id!)!;
     expect(solar.owner).toBe(SHOWCASE_PILOT_ID);
-    expect(solar.isConstructed).toBe(false);
-    const pulses = Math.ceil(getStructureKind('solar').constructionCost / CONSTRUCTION_PULSE_AMOUNT);
-    for (let i = 0; i < pulses + 2 && !solar.isConstructed; i++) internals.pulseStructureGrid();
+    const eid = internals.swarmRegistry.get(id!)!.entityId;
+    const row = () => (internals.getStructuresSlice() ?? []).find((r) => r.id === eid);
+    // The room's own 100 ms pulse timer (no manual pulses): the client's view
+    // (state rows) shows the blueprint CABLED and its build % climbing.
+    let firstPct: number;
+    for (let i = 0; i < 100 && !(row()?.connTo?.length && (row()?.buildPct ?? 0) > 0); i++) await harness.advance(50);
+    expect(row()?.connTo?.length ?? 0, 'solar is cabled into the base').toBeGreaterThan(0);
+    firstPct = row()?.buildPct ?? 0;
+    expect(firstPct, 'build % started').toBeGreaterThan(0);
+    for (let i = 0; i < 40 && (row()?.buildPct ?? 0) <= firstPct; i++) await harness.advance(50);
+    expect(row()?.buildPct ?? 0, 'build % climbs').toBeGreaterThan(firstPct);
+    for (let i = 0; i < 300 && !solar.isConstructed; i++) await harness.advance(50);
     expect(solar.isConstructed, 'solar filled in from the Capital bank').toBe(true);
+    expect(row()?.built).toBe(true);
   });
 });
