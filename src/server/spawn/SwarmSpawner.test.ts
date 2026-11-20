@@ -3,7 +3,9 @@ import { SwarmSpawner, type AsteroidSpec, pickRandomShipKind } from './SwarmSpaw
 import { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { SCRAP_LINEAR_DAMPING, SCRAP_DEFAULT_MASS } from '../../core/swarm/scrapConstants.js';
-import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
+import { BLUEPRINT_COLLISION_GROUPS, DEFAULT_COLLISION_GROUPS, SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
+import { STRUCTURE_KINDS_LIST } from '../../shared-types/structureKinds.js';
+import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS, SHIP_KINDS_LIST, shipKindToIndex } from '../../shared-types/shipKinds.js';
 import { asteroidShapeSeed, convexHullCCW, generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
@@ -398,5 +400,45 @@ describe('SwarmSpawner: a shieldless kind spawns shield-down', () => {
     expect(spawner.spawnDrone({ id: 'fig', x: 0, y: 0, kind: 'fighter' })).toBe(true);
     expect(registry.get('cap')!.shieldDown).toBe(true);
     expect(registry.get('fig')!.shieldDown).toBe(false);
+  });
+});
+
+// Hologram pass-through (base loop 3F): a blueprint body collides with nothing
+// and gets no solid rig parts until `solidifyStructure` turns it solid.
+describe('SwarmSpawner blueprint structures', () => {
+  const rigged = STRUCTURE_KINDS_LIST.find((k) => rigForStructureKind(k.id) !== null)!.id;
+  function make() {
+    const registry = new SwarmEntityRegistry();
+    const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
+    const groups: Array<{ id: string; groups: number | undefined }> = [];
+    const swaps: Array<{ id: string; groups: number }> = [];
+    const rigs: string[] = [];
+    const slots = [1, 2, 3];
+    const spawner = new SwarmSpawner(registry, {
+      takeSlot: () => slots.pop(),
+      postSpawnObstacle: (_slot, id, _x, _y, _vx, _vy, _r, _m, _v, _ld, _sb, collisionGroups) => groups.push({ id, groups: collisionGroups }),
+      postRigAttach: (id) => rigs.push(id),
+      postSetCollisionGroups: (id, g) => swaps.push({ id, groups: g }),
+      sabF32: new Float32Array(sab),
+      sabU32: new Uint32Array(sab),
+    });
+    return { spawner, groups, swaps, rigs };
+  }
+
+  it('spawns a blueprint in BLUEPRINT_COLLISION_GROUPS with its rig deferred', () => {
+    const h = make();
+    h.spawner.spawnStructure({ id: 'bp', x: 0, y: 0, radius: 60, shipKind: rigged, blueprint: true });
+    expect(h.groups).toEqual([{ id: 'bp', groups: BLUEPRINT_COLLISION_GROUPS }]);
+    expect(h.rigs).toEqual([]);
+    h.spawner.solidifyStructure('bp');
+    expect(h.swaps).toEqual([{ id: 'bp', groups: DEFAULT_COLLISION_GROUPS }]);
+    expect(h.rigs).toEqual(['bp']);
+  });
+
+  it('a built structure spawns solid with its rig at once', () => {
+    const h = make();
+    h.spawner.spawnStructure({ id: 'b', x: 0, y: 0, radius: 60, shipKind: rigged });
+    expect(h.groups[0]!.groups).toBeUndefined();
+    expect(h.rigs).toEqual(['b']);
   });
 });
