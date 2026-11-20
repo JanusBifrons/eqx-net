@@ -42,7 +42,7 @@ import { writeRigClipRow } from '../structures/structureRigClip.js';
 import { writeDoorMotionRow, type GateDoorSource } from './doorMotionRow.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdCount, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
@@ -214,6 +214,8 @@ export class StructuresSliceSync {
         if ((st.bpRuns ?? SD.bpRuns) !== runs) st.bpRuns = runs;
         const bq = rec.blueprint !== undefined ? blueprintQuality(rec.blueprint) : 0;
         if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
+        const pc = encodeProdCount(rec.prodCount); // job 2E — outputs left
+        if ((st.prodCount ?? SD.prodCount) !== pc) st.prodCount = pc;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
       // restyle 2e (late-join safe, #16); door kinds' rig fields are the door row's.

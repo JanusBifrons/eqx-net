@@ -117,6 +117,9 @@ export interface StructureRenderState {
      *  scrubbed from the door segment (`doorClipTime`); absent = a plain clip. */
     from?: number; rate?: number;
   };
+  /** Build count (job 2E): outputs left before it stops (0 = done);
+   *  undefined ⇒ repeats forever. */
+  prodCount?: number;
   /** v4 T1 — a teleporter: present only for teleporter kinds. */
   teleport?: {
     phase: number;
