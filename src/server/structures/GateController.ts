@@ -12,13 +12,23 @@
  * fills ACTIVE hulls only). Lingering hulls are parked and don't fly; NPC ships
  * get gate access with the NPC-base phase (B2).
  *
+ * Solid doors (docs/plans/door-power.md, slice 8): the door's motion segment
+ * is its ONE clock. Each changed segment is posted to the gate's rig as a
+ * scrubbed clip (from = clip time at p0, rate = signed level-scaled) through
+ * `startStructureRigClip`; position is never integrated here. Power level L
+ * comes from the grid's supply fraction; a moving door draws full power
+ * (`setActive`, the general grid rule), a still one only its trickle.
+ *
  * Steady state is allocation-free: ships are collected into reused arrays and
- * per-gate state objects are created once per gate.
+ * per-gate state objects are created once per gate (a segment edge allocates
+ * its clip record, as any rig clip start does).
  */
-import { DOOR_POWER_LEVELS, DOOR_TRAVEL_S, DOOR_TRAVEL_TICKS, gateTypeOf, worldToLocal } from '../../core/structures/gateGeometry.js';
+import { DOOR_POWER_LEVELS, gateTypeOf, worldToLocal } from '../../core/structures/gateGeometry.js';
+import { doorClipTime, doorLevelFromSupply, doorPosAt, type DoorTrack } from '../../core/structures/doorMotion.js';
 import {
   addShipToOccupancy,
   clearOccupancy,
+  gateDoorsMoving,
   gateOpenMask,
   newAirlockState,
   newGateState,
@@ -29,7 +39,8 @@ import {
   type GateState,
 } from '../../core/structures/gateLogic.js';
 import { gateAccessFromIndex, gateAdmits, type GateRelation } from '../../shared-types/gateAccess.js';
-import type { StructureRegistry } from './StructureRegistry.js';
+import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+import { startStructureRigClip, type RigClipCmd } from './structureRigClip.js';
 
 /** Reused ship buffer the room fills each tick. */
 export interface GateShipBuffer {
@@ -46,6 +57,14 @@ export interface GateControllerHooks {
   collectShips(out: GateShipBuffer): void;
   /** A ship's relation to a gate owner (the B1 relation seam slots in here). */
   relationOf(playerId: string, owner: string): GateRelation;
+  /** The room's game tick (the rig clock). */
+  serverTick(): number;
+  /** The structure's grid supply fraction 0..1 (`PowerSummary.supplyFrac`). */
+  supplyFrac(id: string): number;
+  /** Full draw while a door moves, trickle while still (grid `setActive`). */
+  setActive(rec: StructureRecord, active: boolean): void;
+  /** Post a worker command (`RIG_CLIP`). */
+  post(cmd: RigClipCmd): void;
 }
 
 export class GateController {
@@ -54,6 +73,8 @@ export class GateController {
   private readonly ships: GateShipBuffer = { count: 0, playerIds: [], xs: [], ys: [], radii: [] };
   private readonly occ = newOccupancy();
   private readonly local = { x: 0, y: 0 };
+  /** Reused scrub argument for `startStructureRigClip`. */
+  private readonly scrub = { from: 0, rate: 0 };
 
   constructor(private readonly hooks: GateControllerHooks) {}
 
@@ -62,16 +83,17 @@ export class GateController {
     const reg = this.hooks.registry;
     let changed = false;
     let collected = false;
-    // Interim (door-power slice 7): game tick from game time and full power;
-    // slice 8 passes the room's tick and the grid's supply level.
-    const tick = Math.floor((nowMs * DOOR_TRAVEL_TICKS) / (DOOR_TRAVEL_S * 1000));
-    const level = DOOR_POWER_LEVELS;
+    const tick = this.hooks.serverTick();
     for (const rec of reg.all()) {
       const type = gateTypeOf(rec.kind);
       if (type === null) continue;
       if (!rec.isConstructed) {
         // A blueprint (or one being upgraded) has no working gate: closed.
-        if (this.gates.delete(rec.id) || this.airlocks.delete(rec.id)) changed = true;
+        if (this.gates.delete(rec.id) || this.airlocks.delete(rec.id)) {
+          changed = true;
+          this.hooks.setActive(rec, false);
+          startStructureRigClip(rec, null, tick, this.hooks.post);
+        }
         continue;
       }
       if (!collected) {
@@ -89,24 +111,42 @@ export class GateController {
         const admitted = gateAdmits(access, this.hooks.relationOf(s.playerIds[i]!, rec.owner));
         addShipToOccupancy(type, this.local.x, this.local.y, s.radii[i]!, admitted, o);
       }
+      const level = doorLevelFromSupply(this.hooks.supplyFrac(rec.id));
       if (type === 'gate') {
         let g = this.gates.get(rec.id);
         if (!g) { g = newGateState(nowMs); this.gates.set(rec.id, g); }
-        const before = g.open;
-        stepGate(g, o, nowMs, tick, level);
-        if (g.open !== before) changed = true;
+        if (stepGate(g, o, nowMs, tick, level)) {
+          changed = true;
+          this.postDoor(rec, 'door', g.door);
+        }
+        this.hooks.setActive(rec, gateDoorsMoving(g, undefined, tick));
       } else {
         let a = this.airlocks.get(rec.id);
         if (!a) { a = newAirlockState(); this.airlocks.set(rec.id, a); }
-        const before = a.phase;
-        stepAirlock(a, o, nowMs, tick, level);
-        if (a.phase !== before) changed = true;
+        if (stepAirlock(a, o, nowMs, tick, level)) {
+          changed = true;
+          // One rig, one clip: the end that is off its seat or heading open
+          // (the interlock keeps the other end at 0, its rest pose).
+          const b = a.doorB;
+          if (doorPosAt(b.seg, tick) > 0 || b.seg.dir > 0) this.postDoor(rec, 'door-b', b);
+          else this.postDoor(rec, 'door-a', a.doorA);
+        }
+        this.hooks.setActive(rec, gateDoorsMoving(undefined, a, tick));
       }
     }
     // Forget gates that left the world.
     for (const id of this.gates.keys()) if (!reg.get(id)) { this.gates.delete(id); changed = true; }
     for (const id of this.airlocks.keys()) if (!reg.get(id)) { this.airlocks.delete(id); changed = true; }
     return changed;
+  }
+
+  /** Scrub the rig along a door's segment: clip time doorClipTime(p0) at t0,
+   *  moving dir * L / 15 clip ticks per game tick (L = 0 holds it still). */
+  private postDoor(rec: StructureRecord, clipId: string, d: DoorTrack): void {
+    const seg = d.seg;
+    this.scrub.from = doorClipTime(seg.p0);
+    this.scrub.rate = (seg.dir * seg.level) / DOOR_POWER_LEVELS;
+    startStructureRigClip(rec, clipId, seg.t0, this.hooks.post, undefined, undefined, this.scrub);
   }
 
   /** Open bits for a gate (GATE_OPEN_A / GATE_OPEN_B); 0 for anything else. */

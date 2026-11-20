@@ -3,7 +3,9 @@
  *   - GateController opens a gate for ships its access setting admits, and only
  *     for ACTIVE ships handed in by the room;
  *   - ShieldWallManager gives each built gate its own span walls (dropped while
- *     open) and anchors a fence wall on the gate post nearest the pylon.
+ *     open) and anchors a fence wall on the gate post nearest the pylon;
+ *   - solid doors (door-power slice 8): a changed door segment posts a scrubbed
+ *     RIG_CLIP, the level comes from grid supply, moving doors draw full power.
  */
 import { describe, expect, it } from 'vitest';
 import { GateController, type GateShipBuffer } from './GateController.js';
@@ -14,6 +16,9 @@ import { GATE_OPEN_A } from '../../core/structures/gateLogic.js';
 import { gateAccessIndex } from '../../shared-types/gateAccess.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import { GATE_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
+import { DOOR_POS_MAX, DOOR_TRAVEL_TICKS } from '../../core/structures/gateGeometry.js';
+import { doorClipTime } from '../../core/structures/doorMotion.js';
+import type { RigClipCmd } from './structureRigClip.js';
 
 function rec(id: string, kind: StructureKindId, x: number, y: number, owner = 'p1', built = true): StructureRecord {
   return {
@@ -25,7 +30,12 @@ function rec(id: string, kind: StructureKindId, x: number, y: number, owner = 'p
 
 function setup(ships: Array<{ id: string; x: number; y: number }>) {
   const registry = new StructureRegistry();
+  const door = { tick: 0, supply: 1, posts: [] as RigClipCmd[], active: [] as Array<[string, boolean]> };
   const gates = new GateController({
+    serverTick: () => door.tick,
+    supplyFrac: () => door.supply,
+    setActive: (r, on) => { if ((r.drawFull === true) !== on) { r.drawFull = on; door.active.push([r.id, on]); } },
+    post: (cmd) => door.posts.push(cmd),
     registry,
     collectShips: (out: GateShipBuffer) => {
       for (const s of ships) {
@@ -49,7 +59,7 @@ function setup(ships: Array<{ id: string; x: number; y: number }>) {
     removeWall: () => {},
     gateOpenMask: (id) => gates.maskFor(id),
   });
-  return { registry, gates, walls, calls };
+  return { registry, gates, walls, calls, door };
 }
 
 describe('GateController', () => {
@@ -98,6 +108,80 @@ describe('GateController', () => {
     registry.add(g);
     gates.update(0);
     expect(gates.maskFor('g')).toBe(GATE_OPEN_A);
+  });
+});
+
+describe('GateController solid doors', () => {
+  it('a door segment change posts a scrubbed RIG_CLIP (clip, start, from, rate)', () => {
+    const { registry, gates, door } = setup([{ id: 'p1', x: 0, y: -100 }]);
+    const g = rec('g', 'shield_gate', 0, 0);
+    registry.add(g);
+    door.tick = 40;
+    gates.update(0);
+    expect(door.posts).toEqual([{ type: 'RIG_CLIP', id: 'g', clipId: 'door', startTick: 40, from: 0, rate: 1 }]);
+    expect(g.rigClip).toMatchObject({ clipId: 'door', startTick: 40, from: 0, rate: 1 });
+    // Steady motion posts nothing more: the segment is the clock.
+    door.tick = 100;
+    gates.update(100);
+    expect(door.posts).toHaveLength(1);
+  });
+
+  it('power level comes from grid supply: half supply scrubs at 8/15', () => {
+    const { registry, gates, door } = setup([{ id: 'p1', x: 0, y: -100 }]);
+    registry.add(rec('g', 'shield_gate', 0, 0));
+    door.supply = 0.5;
+    gates.update(0);
+    expect(door.posts[0]!.rate).toBeCloseTo(8 / 15);
+    // Supply rising mid-travel re-segments from the reached position (after the 500 ms throttle).
+    door.tick = 30;
+    door.supply = 1;
+    gates.update(600);
+    expect(door.posts[1]).toMatchObject({ startTick: 30, from: doorClipTime(30 * 8), rate: 1 });
+  });
+
+  it('a shutting door scrubs backwards from where it is', () => {
+    const ships = [{ id: 'p1', x: 0, y: -100 }];
+    const { registry, gates, door } = setup(ships);
+    registry.add(rec('g', 'shield_gate', 0, 0));
+    gates.update(0);
+    door.tick = DOOR_TRAVEL_TICKS; // arrived fully open
+    ships[0]!.y = -5000;
+    gates.update(1000);
+    gates.update(1000 + 60_000); // close hold long over
+    const last = door.posts[door.posts.length - 1]!;
+    expect(last).toMatchObject({ clipId: 'door', startTick: DOOR_TRAVEL_TICKS, from: doorClipTime(DOOR_POS_MAX), rate: -1 });
+  });
+
+  it('full draw on move start, trickle on arrival (setActive edges)', () => {
+    const { registry, gates, door } = setup([{ id: 'p1', x: 0, y: -100 }]);
+    registry.add(rec('g', 'shield_gate', 0, 0));
+    gates.update(0);
+    expect(door.active).toEqual([['g', true]]);
+    door.tick = DOOR_TRAVEL_TICKS - 1;
+    gates.update(100);
+    expect(door.active).toEqual([['g', true]]);
+    door.tick = DOOR_TRAVEL_TICKS;
+    gates.update(200);
+    expect(door.active).toEqual([['g', true], ['g', false]]);
+  });
+
+  it('at supply 0 the door is frozen: rate 0, the clip holds still', () => {
+    const { registry, gates, door } = setup([{ id: 'p1', x: 0, y: -100 }]);
+    registry.add(rec('g', 'shield_gate', 0, 0));
+    door.supply = 0;
+    gates.update(0);
+    expect(door.posts[0]).toMatchObject({ clipId: 'door', from: 0, rate: 0 });
+    door.tick = 1000;
+    gates.update(1000);
+    expect(door.posts).toHaveLength(1);
+  });
+
+  it('an airlock scrubs the end that moves (door-b by default)', () => {
+    const { registry, gates, door } = setup([{ id: 'p1', x: 0, y: 0 }]);
+    registry.add(rec('a', 'shield_airlock', 0, 0));
+    door.tick = 5;
+    gates.update(0);
+    expect(door.posts[0]).toMatchObject({ clipId: 'door-b', startTick: 5, from: 0, rate: 1 });
   });
 });
 
