@@ -97,6 +97,8 @@ export interface SectorSnapshotStructure {
   /** The packed item's quality (a deconstruct repacks it). */
   packedQuality?: number;
   prodProgress?: number;
+  /** Build count (job 2E): outputs left. Absent ⇒ repeat forever. */
+  prodCount?: number;
   /** Hull HP at save time. */
   health: number;
   /** Built vs blueprint. */
