@@ -17,11 +17,12 @@ async function placeAndWait(
   kind: string,
   x: number,
   y: number,
+  rot?: number,
 ): Promise<string> {
   const internals = harness.getServerRoom()!._internals;
   const before = new Set<string>();
   for (const r of internals.structureRegistry.all()) before.add(r.id);
-  room.send('place_structure', { type: 'place_structure', kind, x, y });
+  room.send('place_structure', { type: 'place_structure', kind, x, y, rot });
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
     for (const r of internals.structureRegistry.all()) {
@@ -50,9 +51,9 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
-    const cap = await placeAndWait(harness, room, 'capital', 0, 0);
+    const cap = await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
     const con = await placeAndWait(harness, room, 'connector', 400, 0);
-    const sol = await placeAndWait(harness, room, 'solar', 650, 0);
+    const sol = await placeAndWait(harness, room, 'solar', 900, 0); // 700×300: clear of the relay at 400
     const [capE, conE, solE] = [eid(harness, cap), eid(harness, con), eid(harness, sol)];
 
     // The web forms on placement (connTo present immediately), even as blueprints.
@@ -77,10 +78,10 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
-    await placeAndWait(harness, room, 'capital', 0, 0);
+    await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
     // Two solars far from the capital but near each other.
     const s1 = await placeAndWait(harness, room, 'solar', 3000, 0);
-    const s2 = await placeAndWait(harness, room, 'solar', 3400, 0);
+    const s2 = await placeAndWait(harness, room, 'solar', 3800, 0); // 700 wide: the next free spot
     const [s1E, s2E] = [eid(harness, s1), eid(harness, s2)];
     for (let i = 0; i < 5; i++) internals.pulseStructureGrid();
 
@@ -96,14 +97,13 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
-    const cap = await placeAndWait(harness, room, 'capital', 0, 0);
+    const cap = await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
     const con = await placeAndWait(harness, room, 'connector', 400, 0);
-    // Solar at 900: in range of the connector (edge 900−300−24−40 = 536 ≤ 600)
-    // but OUT of direct capital range (edge 900−80−40 = 780 > CONNECTION_MAX_RANGE
-    // 600). The connector is its SOLE path to a hub — so destroying the connector
-    // genuinely strands it, and the 1 Hz reconnect sweep (Issue 2) CANNOT heal it
-    // (no other in-range hub). If the solar were at 600 it would re-wire straight
-    // to the capital — that grid-healing case is the next test.
+    // Solar at 900 (700×300, edge 550): in range of the connector, and the
+    // Capital links only Connectors (WS-5), so the connector is its SOLE path to
+    // a hub — destroying it genuinely strands the solar, and the 1 Hz reconnect
+    // sweep (Issue 2) CANNOT heal it (no other hub). A second in-range relay is
+    // the grid-healing case (the Phase 5 test below).
     const sol = await placeAndWait(harness, room, 'solar', 900, 0);
     // Capture entityIds BEFORE the connector is destroyed (its swarm record
     // is gone afterwards).
@@ -131,7 +131,7 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
-    await placeAndWait(harness, room, 'capital', 0, 0);
+    await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
     await placeAndWait(harness, room, 'connector', 0, 350); // WS-5: battery routes via a relay // phase V footprints
     const bat = await placeAndWait(harness, room, 'battery', 150, 420);
     const batE = eid(harness, bat);
@@ -157,13 +157,13 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
-    await placeAndWait(harness, room, 'capital', 0, 0);
+    await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
     // con1 is the solar's nearest hub at placement; con2 (also Capital-connected,
     // so it survives con1's death) is the in-range backup the player CAN reconnect
     // onto — but only deliberately, never via the auto-sweep (Phase 5).
     const con1 = await placeAndWait(harness, room, 'connector', 400, 0); // phase V footprints
     const con2 = await placeAndWait(harness, room, 'connector', 0, 400);
-    const sol = await placeAndWait(harness, room, 'solar', 480, 330); // nearer con1 (edge 223) than con2 (268)
+    const sol = await placeAndWait(harness, room, 'solar', 700, 420); // nearer con1 (edge gap 238) than con2 (318)
     const [con2E, solE] = [eid(harness, con2), eid(harness, sol)];
     for (let i = 0; i < 60; i++) internals.pulseStructureGrid();
     expect(sliceEntry(internals.getStructuresSlice(), solE)?.powered).toBe(true);

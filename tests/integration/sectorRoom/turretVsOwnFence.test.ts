@@ -32,7 +32,7 @@ describe('SectorRoom integration — turret fire vs its own fence', () => {
         { kind: 'shield_pylon', x: 520, y: 0 },
         { kind: 'shield_pylon', x: 520, y: 500 },
         { kind, x: 400, y: 250 },
-        { kind: 'solar', x: -200, y: 500 },
+        { kind: 'solar', x: -200, y: 600 }, // 700×300: its near edge (y 450) clears the relay at y 330
         { kind: 'connector', x: -200, y: 330 },
         // A charged battery so a missile is absorbed, not an overload stun
         // (a stunned wall is open by design).
