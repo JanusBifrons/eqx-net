@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
 import { Dialog } from '@mui/material';
 import { Z } from '../layout/zIndex';
 import { HUD } from '../hud/tokens';
+import { useHudSize } from '../hud/useHudScale';
 
 const C = HUD.color;
 export const WINDOW_EDGE = `1px solid ${C.panelEdge}`;
@@ -22,8 +23,11 @@ const PAPER_SX = {
   bgcolor: '#070b15', backgroundImage: 'none', color: C.ink,
   border: WINDOW_EDGE, borderRadius: '10px', boxShadow: '0 10px 40px rgba(0,0,0,0.65)',
 } as const;
-/** A window whose content is short still fills a phone's screen. */
-const FILL_SX = { height: 'min(560px, calc(100% - 24px))' } as const;
+/**
+ * On a phone every window is the whole screen (less the small margin), whatever
+ * it holds: the body scrolls, the footer stays at the bottom. Never a thin strip.
+ */
+const PHONE_PAPER_SX = { ...PAPER_SX, width: 'calc(100% - 24px)', height: 'calc(100% - 24px)' } as const;
 
 /** The content's column: header, a body that scrolls, footer. */
 export const WINDOW_ROOT_SX = {
@@ -52,16 +56,16 @@ export interface GameWindowProps {
   onClose: () => void;
   /** The Dialog root's test id. */
   testId: string;
-  /** Fill a phone's screen even when the content is short. */
-  fill?: boolean;
   children: ReactNode;
 }
 
-export function GameWindow({ open, onClose, testId, fill, children }: GameWindowProps): JSX.Element {
+export function GameWindow({ open, onClose, testId, children }: GameWindowProps): JSX.Element {
+  // The HUD's phone check: coarse pointer and short side < 500 px (a sideways phone too).
+  const phone = useHudSize() === 'phone';
   return (
     <Dialog
-      open={open} onClose={onClose} maxWidth={false} data-testid={testId} data-game-window="1" sx={{ zIndex: Z.modal }}
-      PaperProps={{ sx: fill === true ? { ...PAPER_SX, ...FILL_SX } : PAPER_SX }}
+      open={open} onClose={onClose} maxWidth={false} data-testid={testId} data-game-window="1" data-window-size={phone ? 'full' : 'fit'} sx={{ zIndex: Z.modal }}
+      PaperProps={{ sx: phone ? PHONE_PAPER_SX : PAPER_SX }}
     >
       {children}
     </Dialog>

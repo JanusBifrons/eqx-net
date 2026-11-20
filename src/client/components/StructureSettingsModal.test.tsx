@@ -4,7 +4,7 @@
  * the structure slice), on the loot window's frame (GameWindow), and a
  * building you do not own has no cog.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { EntityStatsPanel } from './EntityStatsPanel.js';
@@ -26,12 +26,21 @@ function seedTurret(owner: string, drawFull: boolean): void {
   useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
 }
 
+/** A sideways phone: coarse pointer, 844x390 (the HUD's phone check, useHudSize). */
+function asSidewaysPhone(): void {
+  vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('coarse'), media: q, addEventListener() {}, removeEventListener() {} }));
+  vi.stubGlobal('innerWidth', 844);
+  vi.stubGlobal('innerHeight', 390);
+}
+/** The window's frame (MUI Paper) inside a GameWindow root. */
+const frameOf = (root: HTMLElement): HTMLElement => root.querySelector('.MuiPaper-root') as HTMLElement;
+
 describe('StructureSettingsModal', () => {
   beforeEach(() => {
     useUIStore.setState({ selection: { ids: [], focusId: null, focusKind: null } });
     resetSelectionStats();
   });
-  afterEach(() => setGameClient(null));
+  afterEach(() => { setGameClient(null); vi.unstubAllGlobals(); });
 
   it('cog opens the settings window on the Power tab', () => {
     seedTurret('me-123', true);
@@ -82,6 +91,17 @@ describe('StructureSettingsModal', () => {
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-panel')).toBeInTheDocument();
     expect(screen.queryByTestId('structure-action-settings')).toBeNull();
+  });
+
+  it('on a phone a window with one line of content is as tall as the screen', () => {
+    asSidewaysPhone();
+    seedTurret('me-123', true);
+    render(<EntityStatsPanel />);
+    fireEvent.click(screen.getByTestId('structure-action-settings'));
+    const win = screen.getByTestId('structure-settings');
+    expect(win).toHaveAttribute('data-window-size', 'full');
+    expect(getComputedStyle(frameOf(win)).height).toBe('calc(100% - 24px)');
+    expect(getComputedStyle(frameOf(win)).width).toBe('calc(100% - 24px)');
   });
 
   it('every building kind has the Power tab first', () => {

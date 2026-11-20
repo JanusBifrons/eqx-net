@@ -88,7 +88,7 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
   const tabs = settingsTabsFor(readKind(entityId) ?? '');
   const [tab, setTab] = useState<SettingsTabId>(tabs[0]!.id);
   return (
-    <GameWindow open={open} onClose={onClose} testId="structure-settings" fill>
+    <GameWindow open={open} onClose={onClose} testId="structure-settings">
       <Box sx={WINDOW_ROOT_SX}>
         <Box sx={WINDOW_HEAD_SX}>
           <Box sx={WINDOW_TITLE_SX}>{title} settings</Box>

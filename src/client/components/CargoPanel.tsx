@@ -42,6 +42,8 @@ const BODY_SX = {
   // A short screen (a sideways phone) scrolls the grids, never the header or footer.
   flex: '1 1 auto', minHeight: 0, overflowY: 'auto' as const,
 };
+/** A locked hold's one line still takes the body's room: the footer sits at the bottom. */
+const LOCKED_BODY_SX = { px: 1.5, py: 1.25, flex: '1 1 auto', minHeight: 0, overflowY: 'auto' as const };
 const SIDE_HEAD_SX = {
   display: 'flex', alignItems: 'center', gap: '6px', mb: '6px', fontSize: 11, fontWeight: 600, color: C.inkDim,
   letterSpacing: 1, textTransform: 'uppercase' as const, minHeight: 16,
@@ -410,7 +412,7 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship, title, subt
 
       {state === null && <Box sx={{ ...BODY_SX, color: C.inkDim }}>Opening…</Box>}
       {locked && (
-        <Box sx={{ px: 1.5, py: 1.25 }}>
+        <Box sx={LOCKED_BODY_SX}>
           <Box sx={BANNER_SX}>
             <Box data-testid="cargo-locked">{state.message ?? 'Locked.'}</Box>
             {state.breakIn !== undefined && <BreakIn target={target} breakIn={state.breakIn} />}
