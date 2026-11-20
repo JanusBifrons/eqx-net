@@ -23,6 +23,7 @@
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { WEAPONS, WRECK_DEFAULT_TARGET_FACTOR, weaponTargetFactor, type WeaponId } from '../combat/WeaponCatalogue.js';
 import { asWreckSource, type WreckSource } from './wreckSource.js';
+import { salvageTierMass } from '../combat/salvageTargeting.js';
 
 /** Least radius of a piece that may still split, per unit of the kind's
  *  radius (#18). Below it the worn-out piece becomes salvage. */
@@ -64,11 +65,16 @@ export function wreckHullArea(source: ShipKindId | WreckSource): number {
 
 /** Is a worn-out piece of this area and radius big enough to break again?
  *  (Too small ⇒ a ship's turns into salvage; a rock's stays a piece and
- *  stops wearing, to go into a hold whole as one rock chunk.) */
+ *  stops wearing, to go into a hold whole as one rock chunk.) A profile
+ *  with `splitAboveTractor` (the rock) splits while the piece outweighs
+ *  that tractor's pull, whatever its share of the whole. */
 export function wreckCanResplit(source: ShipKindId | WreckSource, area: number, radius: number): boolean {
   const src = asWreckSource(source);
   const rs = src.profile.resplit;
   if (rs === null) return false;
+  if (rs.splitAboveTractor !== undefined) {
+    return src.area > 0 && (area / src.area) * src.bodyMass > salvageTierMass(rs.splitAboveTractor);
+  }
   return area >= rs.minAreaFrac * src.area
     && radius >= WRECK_RESPLIT_MIN_RADIUS_PER_RADIUS * src.radius;
 }
