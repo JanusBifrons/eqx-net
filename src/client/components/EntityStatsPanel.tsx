@@ -16,6 +16,7 @@ import { getGameClient } from '../net/clientSingleton';
 import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
 import { decodeGood, effectiveRecipe, isProcessorKind, prodStatusLine, type ProdState } from '@shared-types/production';
 import { RECIPES, type RecipeId } from '@shared-types/recipes';
+import { phoneTiny, useInspectorPhoneAttrs } from './inspectorSizes';
 import { gateTypeOf } from '@core/structures/gateGeometry';
 import { GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
 import { blueprintLineOf } from './structureSettingsProduction';
@@ -176,6 +177,7 @@ export function EntityStatsPanel(): JSX.Element | null {
   const selectedId = useUIStore((s) => s.selection.focusId);
   const selectedKind = useUIStore((s) => s.selection.focusKind);
   const [data, setData] = useState<PanelData | null>(null);
+  const phoneAttrs = useInspectorPhoneAttrs();
 
   useEffect(() => {
     if (selectedId === null) {
@@ -207,6 +209,7 @@ export function EntityStatsPanel(): JSX.Element | null {
     <Portal>
     <Box
       data-testid="entity-stats-panel"
+      {...phoneAttrs}
       data-entity-name={data.name}
       data-hull-pct={Math.round(data.hpPct)}
       {...(data.buildPct !== undefined ? { 'data-build-pct': Math.round(data.buildPct * 100) } : {})}
@@ -296,9 +299,9 @@ export function EntityStatsPanel(): JSX.Element | null {
         </Box>
       )}
       {data.recipe !== undefined && (
-        // P2b — what a processor makes, and its status.
+        // P2b — what a processor makes (its label starts with the verb), and its status.
         <Box sx={POWER_SX} data-testid="entity-stats-recipe" data-recipe={data.recipe} data-prod-status={data.prodStatus}>
-          {`MAKES ${RECIPES[data.recipe].displayName}${data.prodStatus ? ` · ${data.prodStatus}` : ''}`}
+          {`${RECIPES[data.recipe].displayName}${data.prodStatus ? ` · ${data.prodStatus}` : ''}`}
         </Box>
       )}
       {data.breach === true && (
@@ -732,8 +735,8 @@ function Cap({ children }: { children: string }): JSX.Element {
 const ROOT_SX = {
   // WS-9 (R2.30) — world-anchored: position:fixed, moved to the selected entity's
   // projected screen point by gameRafLoop each frame. The translate anchors the
-  // box's bottom-centre at that point so it floats just above the entity. Starts
-  // off-screen until the first frame positions it (avoids a top-left flash).
+  // box's bottom-centre at that point, which inspectorPlacement.ts keeps clear of the
+  // selected entity. Starts off-screen until the first frame positions it (no flash).
   position: 'fixed' as const,
   left: 0,
   top: -9999,
@@ -752,33 +755,31 @@ const ROOT_SX = {
   userSelect: 'none' as const,
   fontFamily: 'system-ui, sans-serif',
 };
-// Equinox Phase-5 audit — the in-world entity inspector read "WAY too small" on
-// desktop. The sm breakpoint scales fonts + the bar + icons ~2x on desktop (the
-// user's "2x-3x"); mobile (xs) is untouched. Tune the sm numbers on-device.
+// Equinox Phase-5 audit — "WAY too small" on desktop: the sm breakpoint scales fonts,
+// bar and icons ~2x; mobile (xs, and any phone: inspectorSizes.ts) stays tiny.
 const NAME_SX = {
   gridColumn: '1 / -1',
-  fontSize: { xs: 10, sm: 20 },
+  ...phoneTiny({ fontSize: [10, 20] }),
   fontWeight: 700,
   color: '#cde',
   letterSpacing: 0.3,
   whiteSpace: 'nowrap' as const,
 };
 const BAR_TRACK_SX = {
-  width: { xs: TRACK_W, sm: TRACK_W * 2 },
-  height: { xs: BAR_H, sm: BAR_H * 2 },
+  ...phoneTiny({ width: [TRACK_W, TRACK_W * 2], height: [BAR_H, BAR_H * 2] }),
   borderRadius: '2px',
   backgroundColor: 'rgba(255,255,255,0.12)',
   overflow: 'hidden' as const,
 };
 const CAP_SX = {
-  fontSize: { xs: 8, sm: 16 },
+  ...phoneTiny({ fontSize: [8, 16] }),
   letterSpacing: 0.5,
   color: 'rgba(255,255,255,0.45)',
   textTransform: 'uppercase' as const,
 };
 const POWER_SX = {
   gridColumn: '1 / -1',
-  fontSize: { xs: 8, sm: 16 },
+  ...phoneTiny({ fontSize: [8, 16] }),
   fontWeight: 700,
   letterSpacing: 0.4,
   color: 'rgba(180,220,255,0.85)',
@@ -786,7 +787,7 @@ const POWER_SX = {
 };
 const GUN_SX = {
   gridColumn: '1 / -1',
-  fontSize: { xs: 9, sm: 16 },
+  ...phoneTiny({ fontSize: [9, 16] }),
   fontWeight: 600,
   letterSpacing: 0.3,
   color: 'rgba(180,220,255,0.85)',
@@ -794,7 +795,7 @@ const GUN_SX = {
 };
 const INFO_SX = {
   gridColumn: '1 / -1',
-  fontSize: { xs: 9, sm: 18 },
+  ...phoneTiny({ fontSize: [9, 18] }),
   fontWeight: 600,
   letterSpacing: 0.3,
   color: 'rgba(200,225,255,0.9)',
@@ -827,4 +828,4 @@ const ACTION_BTN_WARN_SX = {
   color: '#ff9b6b',
   '&:hover': { color: '#ffb892', bgcolor: 'rgba(255,120,80,0.15)' },
 };
-const ICON_SX = { fontSize: { xs: 16, sm: 28 } };
+const ICON_SX = phoneTiny({ fontSize: [16, 28] });
