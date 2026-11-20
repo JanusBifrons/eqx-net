@@ -212,6 +212,9 @@ export class StructureState extends Schema {
   /** Mine Layers: how many of this layer's mines are out in space
    *  (0..MINES_PER_LAYER); the client lights one rack lamp per mine. */
   @type('uint8') minesOut?: number;
+  /** Storage (`holdCapacity` > 0): how full the hold is, percent in steps of
+   *  `FILL_PCT_STEP` (`writeStorageFillRow`); the client lights a fill gauge. */
+  @type('uint8') fillPct?: number;
 }
 
 /** A proximity mine (Mine Layer). Static, so room state carries it: the join

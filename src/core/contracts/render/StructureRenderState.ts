@@ -67,6 +67,9 @@ export interface StructureRenderState {
   /** Mine Layers — how many of the layer's mines are out in space (one lit
    *  rack lamp each); undefined ⇒ none. */
   minesOut?: number;
+  /** Storage — how full the hold is, percent in steps of 10 (the vault's
+   *  silos / the cargo bay's containers light up); undefined ⇒ empty. */
+  fillPct?: number;
   /** WS-9 (R2.12) — minerals stored at this structure (the Capital's bank). Drives
    *  the world-space capital resource readout. Undefined ⇒ not surfaced. */
   minerals?: number;

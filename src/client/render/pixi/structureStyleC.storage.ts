@@ -2,7 +2,8 @@
  * Style C family "storage" (docs/plans/structure-restyle-stage4.md §4 0a, §6).
  * Storage + habitation: storage vault, habitat, tower, cargo bay.
  * This family's drawings live only here; `kinds` is spread into `STYLE_C`
- * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
+ * (structureStyleC.ts), `status` (the fill gauges) into `BODY_STATUS_HOOKS`.
+ * Kind -> family: structureFamilies.ts.
  */
 import {
   CONTAINERS, CRANE, HAZARD, LAMP_AMBER, LAMP_WHITE, RIVET, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, core, deck, glow,
@@ -10,11 +11,25 @@ import {
   type StyleDrawerTable,
 } from './structureStyleKit.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
+import type { GraphicsContext } from 'pixi.js';
+import type { BodyStatusHook, BodyStatusHookTable } from './structureSocketNubs.js';
+import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
+import { getStructureKind, type StructureKindId } from '../../../shared-types/structureKinds.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'h1';
+export const version = 'v3';
+
+/** Cargo hold containers, in fill order (bottom row first, left to right;
+ *  +y is down): centres in the 320 x 200 drawing. Each has a fill strip on
+ *  its outer long edge, baked dead glass, lit by the live overlay. */
+export const BAY_CONTAINERS: readonly (readonly [number, number])[] = [[-64, 36], [64, 36], [-64, -36], [64, -36]];
+/** A container's fill strip: half length, half height, inset of its centre
+ *  from the container centre towards the outer long edge. */
+const BAY_STRIP_HW = 40, BAY_STRIP_HH = 1.6, BAY_STRIP_OFF = 22;
+/** Dead fill glass (unlit amber). */
+const FILL_DEAD = 0x2a2116;
 
 /** Cargo hold (`cargo_bay`): a slab hold floor, four muted shipping
  *  containers in a 2 x 2 grid, an X-braced gantry (two rail trusses and a
@@ -32,6 +47,8 @@ function cargoHold(c: StyleCtx): void {
       for (const [ex, ey] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
         poly(c, chamferBox(cx + ex * 48 - 4, cy + ey * 22 - 4, 8, 8, 2), SOOT, 'metal', 1.5, 0.6);
       }
+      const sy = cy + Math.sign(cy) * BAY_STRIP_OFF;
+      glow(c, chamferBox(cx - BAY_STRIP_HW, sy - BAY_STRIP_HH, BAY_STRIP_HW * 2, BAY_STRIP_HH * 2, 1), FILL_DEAD, 0.9);
     }
   }
   grime(c, -120, -64, 240, 128, 8, 5);
@@ -56,7 +73,9 @@ const STATUS_DEAD = 0x1c2620;
  *  octagonal sealed silos, each capped by a round blast hatch with a locking
  *  bar, a yellow wheel hub and four clamp dogs; an armoured spine between
  *  the banks carries a segmented status strip (green when powered, dead
- *  glass when not), hazard blocks on the plinth ends. */
+ *  glass when not), hazard blocks on the plinth ends. Each hatch's dark
+ *  channel ring is the fill gauge: the live overlay lights it amber per
+ *  silo full (`VAULT_SILOS`, `status`). */
 function storageVault(c: StyleCtx): void {
   const { W, H } = c;
   const k = Math.min(W, H) / 320;
@@ -216,6 +235,77 @@ function spire(c: StyleCtx): void {
   lamp(c, -86 * k, -86 * k, 3 * k, LAMP_AMBER);
   lamp(c, 86 * k, 86 * k, 3 * k, LAMP_WHITE);
 }
+
+/** Storage vault silos (drawn at 480 x 320, × k for other sizes), in fill
+ *  order: the +y (bottom) bank first, left to right. */
+export const VAULT_SILOS: readonly (readonly [number, number])[] = [
+  [-136, 66], [0, 66], [136, 66], [-136, -66], [0, -66], [136, -66],
+];
+/** The silo hatch's dark channel ring (between the 31 and 36 rings). */
+const VAULT_RING_R = 33.5;
+
+// ── Live fill gauge (BodyStatusHook) ────────────────────────────────────────
+
+/** Lit fill: the charge amber of the battery cells, a hot core. */
+const FILL_LIT = 0xffb24a;
+const FILL_HOT = 0xffe2a8;
+const _fill = { color: 0, alpha: 0 };
+const _stroke = { color: 0, alpha: 0, width: 0 };
+
+/** Lit units (of `n`) for a row: its `fillPct` rounded to whole units, at
+ *  least one while anything is stored; 0 unbuilt. */
+export function fillUnits(st: StructureRenderState | undefined, n: number): number {
+  if (st === undefined || !st.built) return 0;
+  const pct = st.fillPct ?? 0;
+  if (!(pct > 0)) return 0;
+  return Math.min(n, Math.max(1, Math.round((Math.min(100, pct) / 100) * n)));
+}
+
+/** Vault: one lit silo ring per sixth full. */
+function vaultCode(_kind: StructureKindId, st: StructureRenderState | undefined): number {
+  return fillUnits(st, VAULT_SILOS.length);
+}
+
+/** Light the first `code` silo hatch rings (a halo, the lit ring, a hot
+ *  inner line). */
+function drawVaultFill(g: GraphicsContext, code: number, kind: StructureKindId): void {
+  const fp = getStructureKind(kind).footprint;
+  const k = Math.min(fp.w, fp.h) / 320;
+  for (let i = 0; i < code && i < VAULT_SILOS.length; i++) {
+    const [sx, sy] = VAULT_SILOS[i]!;
+    const x = sx * k, y = sy * k, r = VAULT_RING_R * k;
+    g.circle(x, y, r); _stroke.color = FILL_LIT; _stroke.alpha = 0.22; _stroke.width = 10 * k; g.stroke(_stroke);
+    g.circle(x, y, r); _stroke.color = FILL_LIT; _stroke.alpha = 0.9; _stroke.width = 3.6 * k; g.stroke(_stroke);
+    g.circle(x, y, r); _stroke.color = FILL_HOT; _stroke.alpha = 0.7; _stroke.width = 1.2 * k; g.stroke(_stroke);
+  }
+}
+
+/** Cargo bay: one lit container strip per quarter full. */
+function bayCode(_kind: StructureKindId, st: StructureRenderState | undefined): number {
+  return fillUnits(st, BAY_CONTAINERS.length);
+}
+
+/** Light the first `code` containers' fill strips (a halo, the lit strip,
+ *  a hot core line). */
+function drawBayFill(g: GraphicsContext, code: number, kind: StructureKindId): void {
+  const fp = getStructureKind(kind).footprint;
+  const k = Math.min(fp.w / 320, fp.h / 200);
+  for (let i = 0; i < code && i < BAY_CONTAINERS.length; i++) {
+    const [cx, cy] = BAY_CONTAINERS[i]!;
+    const x = cx * k, y = (cy + Math.sign(cy) * BAY_STRIP_OFF) * k, hw = BAY_STRIP_HW * k, hh = BAY_STRIP_HH * k;
+    g.rect(x - hw - 3 * k, y - hh - 3 * k, (hw + 3 * k) * 2, (hh + 3 * k) * 2); _fill.color = FILL_LIT; _fill.alpha = 0.2; g.fill(_fill);
+    g.rect(x - hw, y - hh, hw * 2, hh * 2); _fill.color = FILL_LIT; _fill.alpha = 0.9; g.fill(_fill);
+    g.rect(x - hw + 2 * k, y - hh * 0.35, (hw - 2 * k) * 2, hh * 0.7); _fill.color = FILL_HOT; _fill.alpha = 0.7; g.fill(_fill);
+  }
+}
+
+/** This family's live body state (`BodyStatusHook`, drawn on the socket-nub
+ *  overlay, structureSocketNubs.ts): the fill gauges from the row's
+ *  `fillPct`. */
+export const status: BodyStatusHookTable = {
+  storage_vault: { code: vaultCode, draw: drawVaultFill } satisfies BodyStatusHook,
+  cargo_bay: { code: bayCode, draw: drawBayFill } satisfies BodyStatusHook,
+};
 
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {

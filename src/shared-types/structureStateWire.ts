@@ -137,7 +137,20 @@ export const STRUCTURE_DEFAULTS = {
   rigTy: 0,
   rigHold: 0,
   minesOut: 0,
+  fillPct: 0,
 } as const;
+
+/** Storage fill gauge: `fillPct` moves in whole steps of this many percent,
+ *  so a hold filling or emptying patches the row a few times, not per unit. */
+export const FILL_PCT_STEP = 10;
+
+/** A hold's `fillPct`: `used` of `capacity` (weight), floored to
+ *  `FILL_PCT_STEP` (100 only when full); 0 with no capacity. */
+export function storageFillPct(used: number, capacity: number): number {
+  if (!(capacity > 0) || !(used > 0)) return 0;
+  const steps = Math.floor((Math.min(used, capacity) / capacity) * (100 / FILL_PCT_STEP) + 1e-9);
+  return steps * FILL_PCT_STEP;
+}
 
 /**
  * Structure-restyle 0d slice 6 — `StructureState.connSock`, parallel to
@@ -339,6 +352,9 @@ export interface StructureStateView {
   rigHold?: number;
   /** Mine Layers: mines this layer has out in space (0..MINES_PER_LAYER). */
   minesOut?: number;
+  /** Storage: how full the hold is, percent in steps of `FILL_PCT_STEP`
+   *  (`storageFillPct`, 0..100). */
+  fillPct?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
   /** 0d slice 6 — per `connTo` entry, the packed socket pair
    *  (`encodeConnSock`). Optional so a row without it reads as no sockets. */

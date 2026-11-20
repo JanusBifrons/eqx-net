@@ -36,7 +36,7 @@ import {
   encodeStructureMountAngles,
 } from '../../shared-types/structureStateWire.js';
 import { isTeleporterKind } from '../../shared-types/teleport.js';
-import { writeConnToRow, writeTeleporterRow } from '../structures/structureStateRows.js';
+import { writeConnToRow, writeStorageFillRow, writeTeleporterRow } from '../structures/structureStateRows.js';
 import { writeRigClipRow } from '../structures/structureRigClip.js';
 import { writeDoorMotionRow, type GateDoorSource } from './doorMotionRow.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
@@ -214,6 +214,7 @@ export class StructuresSliceSync {
         if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
+      writeStorageFillRow(rec, st); // storage fill gauge, on step change only
       // restyle 2e (late-join safe, #16); door kinds' rig fields are the door row's.
       if (rec.rigClip !== undefined && gateType === null) writeRigClipRow(rec, st);
       this.syncConnTo(rec.id, st);
