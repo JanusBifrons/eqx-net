@@ -62,12 +62,15 @@ function samePower(a: PowerSummary | null, b: PowerSummary | null): boolean {
     && a.on === b.on && a.throttle === b.throttle;
 }
 
-const LOAD_LABEL: Record<PowerSummary['load'], string> = { full: 'Full (working)', idle: 'Idle (trickle)', none: 'Never draws' };
+/** How hard a power user is working; a building that never draws has no row. */
+const LOAD_LABEL: Record<PowerSummary['load'], string> = { full: 'Working (full use)', idle: 'Idle (small use)', none: '' };
 
-function drawNowText(p: PowerSummary): string {
-  if (p.selfPower > 0) return `${signed(p.selfPower)} (making)`;
-  if (p.selfPower === 0) return '0';
-  return p.powered ? signed(p.selfPower) : `${signed(p.selfPower)} (unpowered)`;
+/** Plain words: a maker 'Makes 50', a user 'Uses 15' (+ 'no power' when the grid is short). */
+export function powerNowText(p: PowerSummary): string {
+  if (p.selfPower > 0) return `Makes ${p.selfPower}`;
+  if (p.selfPower === 0) return 'None';
+  const use = `Uses ${-p.selfPower}`;
+  return p.powered ? use : `${use}, no power`;
 }
 
 function PowerTab({ entityId }: { entityId: number }): JSX.Element {
@@ -82,9 +85,9 @@ function PowerTab({ entityId }: { entityId: number }): JSX.Element {
   if (p === null) return <Box sx={ROW_SX}>No power data</Box>;
   return (
     <Box data-testid="structure-settings-power" data-self-power={p.selfPower} data-load={p.load} data-grid-net={p.gridNet} sx={GRID_SX}>
-      <Box sx={LABEL_SX}>Draw now</Box><Box sx={VALUE_SX} data-testid="settings-power-draw">{drawNowText(p)}</Box>
-      <Box sx={LABEL_SX}>Load</Box><Box sx={VALUE_SX} data-testid="settings-power-load">{LOAD_LABEL[p.load]}</Box>
-      <Box sx={LABEL_SX}>Grid net</Box><Box sx={VALUE_SX} data-testid="settings-power-grid">{signed(p.gridNet)}</Box>
+      <Box sx={LABEL_SX}>Power</Box><Box sx={VALUE_SX} data-testid="settings-power-draw">{powerNowText(p)}</Box>
+      {p.load !== 'none' && p.selfPower <= 0 && (<><Box sx={LABEL_SX}>State</Box><Box sx={VALUE_SX} data-testid="settings-power-load">{LOAD_LABEL[p.load]}</Box></>)}
+      <Box sx={LABEL_SX}>Base spare</Box><Box sx={VALUE_SX} data-testid="settings-power-grid">{signed(p.gridNet)}</Box>
       <PowerControls entityId={entityId} kindId={readKind(entityId) ?? ''} on={p.on} throttle={p.throttle} labelSx={LABEL_SX} />
     </Box>
   );

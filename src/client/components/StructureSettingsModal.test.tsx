@@ -16,12 +16,12 @@ import { encodeRecipe } from '../../shared-types/production.js';
 import { SetRecipeSchema } from '../../shared-types/messages.js';
 import { LootWindow } from './LootWindow.js';
 
-function seedTurret(owner: string, drawFull: boolean): void {
+function seedTurret(owner: string, drawFull: boolean, shipKind = 'turret'): void {
   setGameClient({
     mirror: {
       localPlayerId: 'me-123',
       structures: new Map([[9, { powered: true, netPower: 35, connTo: [3], built: true, buildPct: 1, deconstructPct: 0, owner, ownerName: 'Nova', drawFull }]]),
-      swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
+      swarm: new Map([[9, { kind: 2, shipKind, radius: 36, x: 0, y: 0 }]]),
     },
   } as unknown as ColyseusGameClient);
   applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
@@ -85,7 +85,17 @@ describe('StructureSettingsModal', () => {
     render(<EntityStatsPanel />);
     fireEvent.click(screen.getByTestId('structure-action-settings'));
     expect(screen.getByTestId('structure-settings-power')).toHaveAttribute('data-load', 'idle');
-    expect(screen.getByTestId('settings-power-draw')).toHaveTextContent('-3');
+    expect(screen.getByTestId('settings-power-draw')).toHaveTextContent('Uses 3');
+    expect(screen.getByTestId('settings-power-load')).toHaveTextContent('Idle');
+  });
+
+  it('a power maker reads Makes N, with no draw row (no "Never draws")', () => {
+    seedTurret('me-123', false, 'solar');
+    render(<EntityStatsPanel />);
+    fireEvent.click(screen.getByTestId('structure-action-settings'));
+    expect(screen.getByTestId('settings-power-draw')).toHaveTextContent(/^Makes \d+$/);
+    expect(screen.queryByTestId('settings-power-load')).toBeNull();
+    expect(screen.getByTestId('structure-settings-power')).not.toHaveTextContent(/draws|making/i);
   });
 
   it('no cog on a building you do not own', () => {
