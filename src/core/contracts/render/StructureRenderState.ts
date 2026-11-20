@@ -105,6 +105,9 @@ export interface StructureRenderState {
    *  3e: `holdTicks` / `cargo` time the cargo carried along a holding arm
    *  (`core/articulation/craneCargo.ts`); absent = none. */
   rigClip?: { clipId: string; startTick: number; targetX?: number; targetY?: number; holdTicks?: number; cargo?: number };
+  /** Build count (job 2E): outputs left before it stops (0 = done);
+   *  undefined ⇒ repeats forever. */
+  prodCount?: number;
   /** v4 T1 — a teleporter: present only for teleporter kinds. */
   teleport?: {
     phase: number;
