@@ -126,6 +126,7 @@ export const STRUCTURE_DEFAULTS = {
   tpKeepQty: 0,
   padWeight: 0,
   tpToll: 0,
+  prodCount: 0,
 } as const;
 
 /** The fields the client reads from a room-state structure row (absent ⇒
@@ -166,5 +167,7 @@ export interface StructureStateView {
   tpKeepQty?: number;
   padWeight?: number;
   tpToll?: number;
+  /** Build count (job 2E): `encodeProdCount` (shared-types/production.ts). */
+  prodCount?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
 }

@@ -44,6 +44,7 @@ import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/StorageService.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
 
 /** What one cycle of a recipe actually uses and makes. */
 export interface EffectiveRecipe {
@@ -184,17 +185,20 @@ export class ProductionSubsystem {
   /**
    * The owner picks a recipe. A cycle already loaded under the old recipe
    * hands its inputs back to the network first; if they don't fit, the change
-   * is refused (returns false) so nothing is lost.
+   * is refused (returns false) so nothing is lost. `count` (job 2E) caps the
+   * outputs (absent ⇒ repeat forever); setting it again resets it.
    */
-  setRecipe(rec: StructureRecord, recipe: RecipeId): boolean {
+  setRecipe(rec: StructureRecord, recipe: RecipeId, count?: number): boolean {
     const kind = rec.kind as StructureKindId;
     if (!isProcessorKind(kind) || !RECIPES[recipe].processors.includes(kind)) return false;
     if (this.recipeOf(rec) === recipe) {
       rec.recipe = recipe;
+      rec.prodCount = count;
       return true;
     }
     if (rec.prodLoaded === true && !this.unload(rec)) return false;
     rec.recipe = recipe;
+    rec.prodCount = count;
     return true;
   }
 
@@ -275,6 +279,7 @@ export class ProductionSubsystem {
     }
     const id = this.recipeOf(rec);
     const loaded = rec.prodLoaded === true;
+    if (haltAtBuildCount(rec, loaded, id)) return;
     // A loaded cycle keeps running on what it captured at its start, even if
     // the copy that started it is now used up.
     const eff = loaded ? this.effective(rec, id) ?? baseEffect(id) : this.effective(rec, id);
@@ -326,6 +331,7 @@ export class ProductionSubsystem {
       rec.prodLoaded = false;
       rec.prodProgress = 0;
       rec.prodCycles = cycle + 1;
+      spendBuildCount(rec);
       this.cyclesCompleted++;
       // D3 — taxes go to the owner's wallet, never into a hold.
       for (const o of eff.outputs) if ('credits' in o) this.d.payCredits?.(rec, o.credits);
@@ -369,6 +375,7 @@ export class ProductionSubsystem {
       }
       rec.prodProgress = 0;
       rec.prodCycles = (rec.prodCycles ?? 0) + 1;
+      spendBuildCount(rec);
       this.cyclesCompleted++;
       if (!this.hasOre(ore)) {
         rec.prodChunk = undefined;

@@ -191,6 +191,9 @@ export class StructureState extends Schema {
   @type('uint16') tpToll?: number;
   /** Connected structures' entityIds. */
   @type(['uint16']) connTo = new ArraySchema<number>();
+  /** Build count (job 2E): outputs left + 1 (0 = no count, repeat forever;
+   *  1 = done). Appended after connTo (append-only field order). */
+  @type('uint8') prodCount?: number;
 }
 
 /** A proximity mine (Mine Layer). Static, so room state carries it: the join

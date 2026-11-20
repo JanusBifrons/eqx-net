@@ -296,6 +296,46 @@ describe('ProductionSubsystem — Shipyard hull output', () => {
   });
 });
 
+describe('ProductionSubsystem — build count (job 2E)', () => {
+  const BUILD = RECIPES.build_gunship;
+  const yardWithInputs = (cycles: number) => {
+    const goods: Record<string, number> = {};
+    for (const [g, n] of Object.entries(BUILD.inputs)) goods[g] = (n ?? 0) * cycles;
+    const bay = rec('bay', 'cargo_bay', { hold: { goods, blueprints: [] } });
+    const yard = rec('y', 'shipyard', { blueprint: bp('hull:gunship', { kind: 'bpo', runs: null }) });
+    let launched = 0;
+    const w = world([bay, yard], { launchHull: () => { launched++; return true; } });
+    return { yard, ...w, launched: () => launched };
+  };
+
+  it('a yard set to 3 builds three and stops', () => {
+    const { yard, prod, run, launched } = yardWithInputs(6);
+    expect(prod.setRecipe(yard, 'build_gunship', 3)).toBe(true);
+    run(BUILD.cyclePulses * 2);
+    expect(launched()).toBe(2);
+    expect(yard.prodCount).toBe(1);
+    run(BUILD.cyclePulses * 4);
+    expect(launched()).toBe(3);
+    expect(yard.prodCount).toBe(0);
+    expect(yard.prodState).toBe(PROD_STATE.done);
+    expect(yard.prodLoaded).toBe(false); // nothing taken for a fourth
+    // Asking again resets the count and it carries on.
+    prod.setRecipe(yard, 'build_gunship', 1);
+    run(BUILD.cyclePulses + 1); // the pulse after the last output reads done
+    expect(launched()).toBe(4);
+    expect(yard.prodState).toBe(PROD_STATE.done);
+  });
+
+  it('no count keeps building', () => {
+    const { yard, prod, run, launched } = yardWithInputs(5);
+    expect(prod.setRecipe(yard, 'build_gunship')).toBe(true);
+    run(BUILD.cyclePulses * 5);
+    expect(launched()).toBe(5);
+    expect(yard.prodCount).toBeUndefined();
+    expect(yard.prodState).toBe(PROD_STATE.running);
+  });
+});
+
 describe('ProductionSubsystem — habitation (D3)', () => {
   const HAB = RECIPES.habitat_upkeep;
 

@@ -87,6 +87,9 @@ export interface StructureRenderState {
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;
+  /** Build count (job 2E): outputs left before it stops (0 = done);
+   *  undefined ⇒ repeats forever. */
+  prodCount?: number;
   /** v4 T1 — a teleporter: present only for teleporter kinds. */
   teleport?: {
     phase: number;
