@@ -108,6 +108,7 @@ export class SectorSnapshotRestore {
         // Door-power slice 12: a gate door comes back frozen where it was.
         const door = parseSavedDoor(r.doorPos, r.doorClip);
         if (door) rec.doorRestore = door;
+        if (r.switchedOff === true) rec.switchedOff = true;
         // v4 T1 — a teleporter's partner, rules, charge and pad hold survive a restart.
         if (isTeleporterKind(rec.kind)) {
           const t = r.teleport;

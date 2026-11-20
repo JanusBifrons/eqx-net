@@ -51,6 +51,8 @@ export interface PersistableStructure {
   rot?: number;
   /** Gates: access setting index (absent ⇒ default). */
   gateAccess?: number;
+  /** The owner switched it Off (absent ⇒ On). */
+  switchedOff?: boolean;
   /** Production (P2b): the owner's recipe and a cycle in progress. */
   recipe?: string;
   prodLoaded?: boolean;
@@ -207,6 +209,7 @@ export class SectorPersistence {
         ...(s.rot ? { rot: s.rot } : {}),
         ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
         ...doorFields(d.gateDoorOf?.(s.id)),
+        ...(s.switchedOff === true ? { switchedOff: true } : {}),
         ...(s.recipe ? { recipe: s.recipe } : {}),
         ...(s.prodLoaded ? { prodLoaded: true, prodProgress: s.prodProgress ?? 0 } : {}),
         ...(s.prodLoaded && s.prodChunk ? { prodChunk: { ...s.prodChunk, ore: { ...s.prodChunk.ore } } } : {}),

@@ -193,6 +193,9 @@ export interface StructureRecord {
   acceptAutoUnload?: boolean;
   /** Active power — drawing full consumption this pulse (else the idle trickle). */
   drawFull?: boolean;
+  /** The owner switched it OFF: draws nothing and does no work (reads
+   *  unpowered to every subsystem). Persisted; rides as STRUCTURE_FLAG_OFF. */
+  switchedOff?: boolean;
   /** D1 — a Reactor has fuel burning (its output counts). Rides room state as
    *  the inverse NO_FUEL flag. */
   fueled?: boolean;
