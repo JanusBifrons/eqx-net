@@ -12,7 +12,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { Room } from 'colyseus.js';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
@@ -47,7 +47,8 @@ describe('SectorRoom integration — Capital crane bay (structure-restyle 3i)', 
     harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
     // Ship first, then the Capital placed around it: a join never spawns
     // within a hull's clearance of a structure, and the bay is closer than that.
-    const cr = await harness.connectActive(pid, { spawnX: x, spawnY: y, initialCargo: CARGO });
+    // The Capital is placed from its packed crate in the hold (#1000).
+    const cr = await harness.connectActive(pid, { spawnX: x, spawnY: y, initialCargo: withCapitalCrates(1, CARGO) });
     expect(await until(() => shipIdOf(cr, pid) !== '', 3_000)).toBe(true);
     const shipId = shipIdOf(cr, pid);
     expect(aboard(shipId)).toEqual(CARGO.goods);
