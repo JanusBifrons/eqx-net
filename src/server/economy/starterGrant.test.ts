@@ -10,10 +10,13 @@ import { PackedItemSchema } from '../../shared-types/items.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { LAUNCHABLE_HULL_KINDS } from '../../shared-types/launch.js';
-import { blueprintProducts, packedStructureProducts, productName, rollPackedStructure } from '../../shared-types/blueprints.js';
+import { JUNK_BPC_RUNS, JUNK_OUTPUT_MAX, blueprintProducts, packedStructureProducts, productName, rollPackedStructure } from '../../shared-types/blueprints.js';
 import { HoldStore } from '../cargo/HoldStore.js';
 import { EconomyStore } from './EconomyStore.js';
 import { grantStarter, STARTER_CAPITAL_PRODUCT } from './starterGrant.js';
+
+const SKIFF_BP = 'hull:mining-skiff';
+const INTERCEPTOR_BP = 'hull:interceptor';
 
 const P = '6a7e0000-0000-4000-8000-0000000000c3';
 
@@ -96,5 +99,41 @@ describe('starter grant', () => {
     const rng = (): number => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
     for (let i = 0; i < 2000; i++) expect(rollPackedStructure(rng, 1)?.product).not.toBe(STARTER_CAPITAL_PRODUCT);
   });
-});
+  it('first launch adds the junk copies once', () => {
+    const { ops, econ, holds } = setup();
+    expect(grantStarter({ econ, holds }, P, 'ship-a', 'fighter')).toBe(true);
+    const products = () => holds.get('ship-a')!.hold.blueprints.map((b) => b.product).sort();
+    expect(products()).toEqual([INTERCEPTOR_BP, SKIFF_BP]);
+    // Same single atomic group as the crate, same flag.
+    expect(ops).toHaveLength(1);
+    expect(grantStarter({ econ, holds }, P, 'ship-a', 'fighter')).toBe(false);
+    expect(grantStarter({ econ, holds }, P, 'ship-b', 'fighter')).toBe(false);
+    expect(products()).toEqual([INTERCEPTOR_BP, SKIFF_BP]);
+    expect(holds.get('ship-b')).toBeUndefined();
+    expect(ops).toHaveLength(1);
+  });
 
+  it('each copy has 2 runs', () => {
+    const { econ, holds } = setup();
+    grantStarter({ econ, holds }, P, 'ship-a', 'fighter');
+    const bps = holds.get('ship-a')!.hold.blueprints;
+    expect(bps).toHaveLength(2);
+    expect(JUNK_BPC_RUNS).toBe(2);
+    for (const b of bps) {
+      expect(b.kind).toBe('bpc');
+      expect(b.runs).toBe(2);
+      expect(b.material).toBe(0);
+      expect(b.output).toBeLessThan(JUNK_OUTPUT_MAX);
+    }
+    expect(new Set(bps.map((b) => b.uid)).size).toBe(2);
+  });
+
+  it('a full hold gets no copies either (whole grant retried next launch)', () => {
+    const { econ, holds } = setup();
+    const cap = cargoCapacityForMaxHealth(getShipKind('fighter'));
+    holds.put({ holderUid: 'ship-d', holderType: 'ship', ownerId: P, sectorKey: null, x: null, y: null, hold: { goods: { salvage: cap }, blueprints: [] }, expiresAt: null });
+    expect(grantStarter({ econ, holds }, P, 'ship-d', 'fighter')).toBe(false);
+    expect(holds.get('ship-d')!.hold.blueprints).toHaveLength(0);
+    expect(econ.starterGranted(P)).toBe(false);
+  });
+});
