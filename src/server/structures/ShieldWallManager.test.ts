@@ -11,7 +11,7 @@ function pylon(id: string, x: number, y: number, owner = 'p1', built = true): St
   };
 }
 
-function makeManager(opts: { powered?: boolean; netPower?: number; charge?: number } = {}) {
+function makeManager(opts: { powered?: boolean; netPower?: number; charge?: number; offPost?: string } = {}) {
   const registry = new StructureRegistry();
   const calls = {
     spawn: [] as Array<{ id: string; ax: number; ay: number; bx: number; by: number }>,
@@ -21,7 +21,7 @@ function makeManager(opts: { powered?: boolean; netPower?: number; charge?: numb
   let drained = 0;
   const mgr = new ShieldWallManager({
     registry,
-    powerSummaryFor: () => ({ netPower: opts.netPower ?? 50, powered: opts.powered ?? true }),
+    powerSummaryFor: (id) => ({ netPower: opts.netPower ?? 50, powered: (opts.powered ?? true) && id !== opts.offPost }),
     componentBatteryCharge: () => opts.charge ?? 0,
     drainComponentBatteries: (_id, amount) => { drained += amount; return amount; },
     spawnWall: (id, ax, ay, bx, by) => calls.spawn.push({ id, ax, ay, bx, by }),
@@ -67,6 +67,14 @@ describe('ShieldWallManager', () => {
     mgr.update(1000);
     expect(calls.setActive).toContainEqual({ id: 'wall-a|b', active: false });
     expect(mgr.wallStateFor('a', 1000)?.active).toBe(false);
+  });
+
+  it('drops the wall when EITHER post is switched Off (reads unpowered)', () => {
+    const { mgr, seedPair } = makeManager({ offPost: 'b' });
+    seedPair();
+    mgr.update(1000);
+    expect(mgr.wallStateFor('a', 1000)?.active).toBe(false);
+    expect(mgr.wallsUpFor('a', 1000)).toBe(false);
   });
 
   it('tears the wall down when a pylon is removed', () => {
