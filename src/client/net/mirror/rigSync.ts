@@ -39,9 +39,8 @@ export function syncRigClips(
  * It never runs behind the server clock (the snapshot anchor plus the game
  * time since): with no own ship (command view, Build mode) nothing acks our
  * inputs, so the over-prediction cap holds `inputTick` still, and a clip
- * started after that (a Capital placed in Build mode, its `unfold`) would
- * sit before its start tick for good: every part at rest, the crate panels
- * drawn over a hidden body. While piloting, `inputTick` leads the anchor,
+ * started after that (e.g. a crane clip in Build mode) would sit before its
+ * start tick for good, every part at rest. While piloting, `inputTick` leads the anchor,
  * so the drawn rig still follows predWorld.
  */
 export function rigClockTick(ctx: MirrorPassCtx, frameNowMs: number | undefined, welcomed: boolean): number | undefined {

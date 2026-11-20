@@ -11,8 +11,6 @@ import {
 } from './structureStyleKit.js';
 import { structureSockets } from '../../../shared-types/structureKinds.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
-import { isUnfoldPart } from '../../../core/articulation/unfoldRig.js';
-import { unfoldPanelContext } from './structureRigUnfold.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -74,7 +72,4 @@ export const kinds: StyleDrawerTable = {
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
  *  structureRigLook.ts); rigs not listed draw from their part roles only. */
-export const rigs: RigDrawHookTable = {
-  // The Capital unfolds from its crate: its panel parts are crate plates.
-  'capital-crane': { partArt: (rig, i) => (isUnfoldPart(rig, i) ? unfoldPanelContext(rig, i) : null) },
-};
+export const rigs: RigDrawHookTable = {};

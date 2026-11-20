@@ -53,8 +53,6 @@ import type { StructureRenderState } from '../../../core/contracts/IRenderer.js'
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
 import { RIG_LOOK_C, rigArmCable, rigPartContext, type RigArmCable } from './structureRigLook.js';
 import { RIG_DRAW_HOOKS } from './structureStyleC.js';
-import { rigUnfolds, unfoldPosition } from '../../../core/articulation/unfoldRig.js';
-import { RigUnfold } from './structureRigUnfold.js';
 
 /** Draw structure rig parts: on by default (owner, structure restyle);
  *  `?rigs=0` turns them off (the pre-restyle structures). */
@@ -179,10 +177,6 @@ export class StructureRigView {
   spinClock = 0;
   private spinLast = Number.NaN;
   private readonly runningOf: ((st: StructureRenderState | undefined) => boolean) | undefined;
-  /** Unfold from a crate (`structureRigUnfold.ts`), or null. */
-  readonly unfold: RigUnfold | null;
-  /** The host's own (body) art alpha this frame: below 1 while unfolding. */
-  bodyAlpha = 1;
 
   constructor(readonly rig: Rig) {
     this.pose = createRigPose(rig);
@@ -216,8 +210,6 @@ export class StructureRigView {
       }
       group.addChild(g);
     }
-    this.unfold = rigUnfolds(rig) ? new RigUnfold(rig) : null;
-    if (this.unfold !== null) this.over.addChild(this.unfold.seams);
     this.mountPart = hook?.mountPart?.(rig) ?? -1;
     this.runningOf = hook?.running;
     let spin = false;
@@ -322,7 +314,6 @@ export class StructureRigView {
         sh.rotation = xf.rotation;
       }
     }
-    if (this.unfold !== null) this.bodyAlpha = this.unfold.apply(unfoldPosition(playing, nowTick), this.parts, this.shadows, look.shadowAlpha);
     this.poseCargo(input, nowTick);
   }
 
@@ -509,8 +500,6 @@ export class StructureRigs {
     view.update(input, nowTick, hx, hy, ha, 1, this.sunAz);
     followHost(view.over, sprite);
     followHost(view.under, sprite);
-    // Unfolding: the panels show while the body art (the sprite) is faded.
-    if (view.bodyAlpha < 1) { view.over.alpha = 1; view.under.alpha = 1; }
     return view;
   }
 

@@ -27,8 +27,7 @@ import * as storage from './rigs/storage.js';
 import * as transport from './rigs/transport.js';
 
 export * from './craneRig.js';
-export { CAPITAL_CRANE_DEF, CAPITAL_UNFOLD } from './rigs/core.js';
-export * from './unfoldRig.js';
+export { CAPITAL_CRANE_DEF } from './rigs/core.js';
 export { DOCK_CRANE_DEF } from './rigs/transport.js';
 export {
   DOOR_TURRET_LEAF_HALF_H, DOOR_TURRET_LEAF_HALF_W, DOOR_TURRET_LEAF_TRAVEL, DOOR_TURRET_LIFT, DOOR_TURRET_MOUNT,

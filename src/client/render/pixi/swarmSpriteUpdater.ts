@@ -522,8 +522,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // ("scaffolding"); the fill-bar (ConnectorRenderer) shows build progress.
     if (entry.kind === 2) {
       const st = mirror.structures?.get(entityId);
-      // A structure unfolding from its crate fades its body in (structureRigUnfold.ts).
-      sprite.alpha = (st && !st.built ? 0.45 : 1) * (rigs?.viewFor(spriteKey)?.bodyAlpha ?? 1);
+      sprite.alpha = st && !st.built ? 0.45 : 1;
       // WS-9 (R2.12) — update the Capital's mineral readout on CHANGE only (no
       // per-frame Text re-raster). Tagged child; capitals only, so the lookup is rare.
       if (entry.shipKind === 'capital') {

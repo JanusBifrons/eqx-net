@@ -433,8 +433,7 @@ describe('crane bays per kind (structure-restyle 3i)', () => {
     for (const id of ['cargo_bay', 'turret', 'toString', '']) expect(craneBayFor(id)).toBeNull();
     for (const bay of CRANE_BAYS) {
       expect(rigForStructureKind(bay.kindId)!.id).toBe(bay.rigId);
-      // The Capital adds its crate unfold / pack clips after the crane's (unfoldRig.ts).
-      expect(rigById(bay.rigId)!.clips.map((c) => c.id).slice(0, 3)).toEqual(['arm-reach', 'arm-hold', 'arm-retract']);
+      expect(rigById(bay.rigId)!.clips.map((c) => c.id)).toEqual(['arm-reach', 'arm-hold', 'arm-retract']);
     }
   });
 
