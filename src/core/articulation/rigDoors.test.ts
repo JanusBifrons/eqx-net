@@ -9,8 +9,11 @@ import { rigPartIndex, type Rig } from './rig.js';
 import { createRigPose, evaluateRig, type PlayingClip, type RigPose } from './evaluate.js';
 import { rigById, rigForStructureKind } from './rigCatalogue.js';
 import {
-  AIRLOCK_END_Y, AIRLOCK_POST_D, AIRLOCK_POST_W, DOOR_TRAVEL_TICKS, GATE_DEPTH, GATE_POST_W, gateColliderBoxes, gateGapHalf,
+  AIRLOCK_END_Y, AIRLOCK_POST_D, AIRLOCK_POST_W, DOOR_TRAVEL_TICKS, GATE_DEPTH, GATE_GAP, GATE_POST_W, gateColliderBoxes, gateGapHalf,
 } from '../structures/gateGeometry.js';
+import { structureOutline } from '../../shared-types/structureKinds/outline.js';
+import { SOCKET_OUTLINE_STYLE } from '../../shared-types/structureKinds/structureSockets.js';
+import { AIRLOCK_DOOR_OPEN_TRAVEL } from './rigs/fences.js';
 
 interface Box { x0: number; x1: number; y0: number; y1: number }
 
@@ -127,14 +130,21 @@ describe('airlock-doors (shield airlock)', () => {
     for (const b of [l, r]) expect((b.y0 + b.y1) / 2).toBeCloseTo(sy * AIRLOCK_END_Y, 9);
   }
 
-  /** End `pair` is open: the opening is clear and each leaf is inside its corner post. */
+  /** End `pair` is open: each leaf is inside its corner post, leaving only a
+   *  short lip in the opening (the cut corners stop the leaf short), so the
+   *  clear width is still wider than the shield gate's gap. */
   function expectOpen(pair: readonly [string, string], sy: number): void {
     const posts = AIRLOCK_POSTS.filter(([, cy]) => Math.sign(cy) === sy).map(([cx, cy]) => towerBox(cx, cy, AIRLOCK_POST_W, AIRLOCK_POST_D));
     const l = boxOf(rig, pose, pair[0]), r = boxOf(rig, pose, pair[1]);
-    expect(l.x1).toBeCloseTo(-half, 9);
-    expect(r.x0).toBeCloseTo(half, 9);
-    expectInside(l, posts.find((p) => p.x0 < 0)!);
-    expectInside(r, posts.find((p) => p.x0 > 0)!);
+    const lip = half - AIRLOCK_DOOR_OPEN_TRAVEL;
+    expect(lip).toBeGreaterThanOrEqual(0);
+    expect(l.x1).toBeCloseTo(-half + lip, 9);
+    expect(r.x0).toBeCloseTo(half - lip, 9);
+    expect(r.x0 - l.x1).toBeGreaterThan(GATE_GAP);
+    // Inside its post but for the lip on the opening side.
+    const pl = posts.find((p) => p.x0 < 0)!, pr = posts.find((p) => p.x0 > 0)!;
+    expectInside(l, { ...pl, x1: pl.x1 + lip });
+    expectInside(r, { ...pr, x0: pr.x0 - lip });
   }
 
   it('no clip: both ends shut', () => {
@@ -158,4 +168,64 @@ describe('airlock-doors (shield airlock)', () => {
     at(rig, pose, 'door-b', DOOR_TRAVEL_TICKS);
     expectOpen(B, -1);
   });
+});
+
+// Bug (restyle, door leaves): a fully OPEN airlock leaf's outer tip poked
+// ~7.6 past the building's cut corner (door line 98, leaf faces 87..109, the
+// house-look outline's corner cut starts at 101.4), out of the tower pocket.
+describe('door leaves stay inside the building (every door rig)', () => {
+  /** `p` lies inside the CCW convex outline `poly` (tolerance 1e-9). */
+  function insideOutline(poly: readonly { x: number; y: number }[], px: number, py: number): boolean {
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i]!, b = poly[(i + 1) % poly.length]!;
+      if ((b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x) < -1e-9) return false;
+    }
+    return true;
+  }
+
+  for (const kind of ['shield_gate', 'shield_airlock'] as const) {
+    const rig = rigForStructureKind(kind)!;
+    const pose = createRigPose(rig);
+    const half = gateGapHalf(kind === 'shield_gate' ? 'gate' : 'airlock');
+    const outline = structureOutline(kind, SOCKET_OUTLINE_STYLE);
+    const towers = gateColliderBoxes(kind)!;
+
+    it(`${rig.id}: fully open (clip end), every leaf is inside the outline and inside a tower (its pocket)`, () => {
+      for (const clip of rig.clips) {
+        at(rig, pose, clip.id, clip.endTick);
+        for (const id of rig.partIds) {
+          const b = boxOf(rig, pose, id);
+          for (const [x, y] of [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1]] as const) {
+            expect(insideOutline(outline, x, y), `${id} corner (${x.toFixed(1)}, ${y.toFixed(1)}) in ${clip.id}`).toBe(true);
+          }
+          if (clip.trackOfPart[rigPartIndex(rig, id)] === -1) continue; // this clip leaves it shut
+          // In its tower's pocket: the outer end and both faces inside the
+          // tower block (the inner end may keep a short lip in the opening).
+          const outerX = b.x0 < 0 ? b.x0 : b.x1, midY = (b.y0 + b.y1) / 2;
+          const t = towers.find((p) => Math.abs(p.cx - outerX) <= p.hw && Math.abs(p.cy - midY) <= p.hh);
+          expect(t, `${id} outer end sits in a tower`).toBeDefined();
+          expect(b.y0).toBeGreaterThanOrEqual(t!.cy - t!.hh);
+          expect(b.y1).toBeLessThanOrEqual(t!.cy + t!.hh);
+          expect(Math.min(Math.abs(b.x0), Math.abs(b.x1)), `${id} lip`).toBeGreaterThanOrEqual(GATE_GAP / 2);
+        }
+      }
+    });
+
+    it(`${rig.id}: shut (clip start), each door line's leaves cover the whole doorway with no gap`, () => {
+      for (const clip of rig.clips) {
+        at(rig, pose, clip.id, 0);
+        const lines = new Map<number, Box[]>();
+        for (const id of rig.partIds) {
+          const b = boxOf(rig, pose, id), y = Math.round((b.y0 + b.y1) / 2);
+          lines.set(y, [...(lines.get(y) ?? []), b]);
+        }
+        for (const boxes of lines.values()) {
+          boxes.sort((p, q) => p.x0 - q.x0);
+          let reach = -half;
+          for (const b of boxes) { expect(b.x0).toBeLessThanOrEqual(reach + 1e-9); reach = Math.max(reach, b.x1); }
+          expect(reach).toBeGreaterThanOrEqual(half - 1e-9);
+        }
+      }
+    });
+  }
 });
