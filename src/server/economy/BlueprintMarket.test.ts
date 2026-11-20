@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { BlueprintItem } from '../../shared-types/items.js';
 import { BPO_RUNS_EQUIV, MODULE_BILL, blueprintValue, productBill } from '../../shared-types/blueprintMarket.js';
 import { hullBillValue, packBillValue } from '../../shared-types/recipes.js';
-import { BLUEPRINT_OFFERS_ON_BOARD, BlueprintMarket, bpBuyPrice, bpSellPrice } from './BlueprintMarket.js';
+import { BLUEPRINT_OFFERS_ON_BOARD, BlueprintMarket, JUNK_OFFERS_ON_BOARD, bpBuyPrice, bpSellPrice } from './BlueprintMarket.js';
+import { JUNK_BPC_RUNS, makeBlueprint } from '../../shared-types/blueprints.js';
 
 const bp = (over: Partial<BlueprintItem> = {}): BlueprintItem => ({
   uid: 'b1', product: 'hull:gunship', kind: 'bpc', runs: 4, material: 0, output: 0, research: 0, ...over,
@@ -46,7 +47,7 @@ describe('BlueprintMarket board', () => {
   it('keeps the board stocked with real, priced blueprints; a bought one leaves', () => {
     const m = new BlueprintMarket({ rng: seeded(5), now: () => 1000 });
     const offers = m.offersFor(0);
-    expect(offers).toHaveLength(BLUEPRINT_OFFERS_ON_BOARD);
+    expect(offers).toHaveLength(BLUEPRINT_OFFERS_ON_BOARD + JUNK_OFFERS_ON_BOARD);
     for (const o of offers) {
       expect(o.price).toBeGreaterThan(0);
       expect(o.name).not.toContain(':');
@@ -59,7 +60,7 @@ describe('BlueprintMarket board', () => {
     m.remove(first.id);
     expect(m.peek(first.id)).toBeNull();
     expect(m.offersFor(0).map((o) => o.id)).not.toContain(first.id);
-    expect(m.offersFor(0)).toHaveLength(BLUEPRINT_OFFERS_ON_BOARD); // restocked
+    expect(m.offersFor(0)).toHaveLength(BLUEPRINT_OFFERS_ON_BOARD + JUNK_OFFERS_ON_BOARD); // restocked
   });
 
   it('expired offers drop off', () => {
@@ -68,5 +69,33 @@ describe('BlueprintMarket board', () => {
     const ids = m.offersFor(0).map((o) => o.id);
     now = 10 * 60 * 60 * 1000;
     expect(m.offersFor(0).some((o) => ids.includes(o.id))).toBe(false);
+  });
+});
+
+describe('junk copies on the board (playable base loop)', () => {
+  const isJunk = (o: { kind: string; runs: number | null; material: number }): boolean =>
+    o.kind === 'bpc' && o.runs === JUNK_BPC_RUNS && o.material === 0;
+
+  it('each board refresh restocks junk copies', () => {
+    const m = new BlueprintMarket({ rng: seeded(7), now: () => 1000 });
+    const first = m.offersFor(0);
+    expect(first).toHaveLength(BLUEPRINT_OFFERS_ON_BOARD + JUNK_OFFERS_ON_BOARD);
+    const junk = first.filter(isJunk);
+    expect(junk.length).toBeGreaterThanOrEqual(JUNK_OFFERS_ON_BOARD);
+    for (const o of junk) m.remove(o.id);
+    const again = m.offersFor(0);
+    expect(again.filter(isJunk).length).toBeGreaterThanOrEqual(JUNK_OFFERS_ON_BOARD);
+    expect(again).toHaveLength(BLUEPRINT_OFFERS_ON_BOARD + JUNK_OFFERS_ON_BOARD);
+  });
+
+  it('a junk copy has a price above zero', () => {
+    for (let s = 1; s <= 20; s++) {
+      const m = new BlueprintMarket({ rng: seeded(s), now: () => 1000 });
+      for (const o of m.offersFor(0).filter(isJunk)) expect(o.price).toBeGreaterThan(0);
+    }
+    // ...and well below a normal copy of the same product.
+    const junk = makeBlueprint('hull:gunship', 'bpc', seeded(1), { junk: true });
+    expect(bpBuyPrice(junk, 0)).toBeGreaterThan(0);
+    expect(bpBuyPrice(junk, 0)).toBeLessThan(bpBuyPrice(bp({ runs: 10, material: 3, output: 39 }), 0) / 4);
   });
 });

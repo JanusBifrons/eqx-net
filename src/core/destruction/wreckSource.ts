@@ -15,6 +15,11 @@
  *    frame, cut after cut (a later per-vertex ore tint lines up). Mass is
  *    area × `ROCK_WRECK_DENSITY`, so a tractor (a fixed force) moves small
  *    pieces and barely a big one.
+ *  - A cut-FIELD rock (its ref carries `fk`, its field rock key) has no
+ *    shape seed: its outline is the field layout's own (`fieldRockBody` of
+ *    its chunk's `rocksInChunk` entry, the outline it collides and draws
+ *    with), so the room's field options (`cutFieldOpts` of the welcome's
+ *    seed and clearings) must ride with it (`WreckRockSource.field`).
  *
  * Not hot-loop code: read at a break or a spawn; a rock source allocates once
  * per rock (shape, radius, id) on first use.
@@ -28,6 +33,8 @@ import {
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { generateAsteroidVertices, polygonArea } from '../swarm/asteroidShape.js';
 import { WRECK_ROCK_PARENT_KIND, type WreckRockRef } from '../../shared-types/messages/wreckDescriptor.js';
+import { rocksInChunk, unpackRockKey, type ChunkOpts } from '../terrain/fieldLayout.js';
+import { fieldRockBody } from '../terrain/chunkStreamer.js';
 
 /** The descriptor's `parentKind` of a rock's wreck (not a ship kind). */
 export const ROCK_WRECK_PARENT_KIND = WRECK_ROCK_PARENT_KIND;
@@ -44,8 +51,10 @@ export const ROCK_INTEGRITY_PER_AREA = 0.2;
 
 /** The rock a wreck was cut from (the descriptor's `rock`, as it rides the
  *  wire): its STABLE id (ore and a later tint key on it), its u16 shape seed
- *  (`asteroidShapeSeed(id)`) and radius, which give its outline. */
-export type WreckRockSource = WreckRockRef;
+ *  (`asteroidShapeSeed(id)`) and radius, which give its outline. A field
+ *  rock (`fk`) also needs its room's field options (`field`), never on
+ *  the wire: each side attaches its own (the welcome's, on a client). */
+export type WreckRockSource = WreckRockRef & { readonly field?: ChunkOpts | null };
 
 export interface WreckSource {
   /** The ship kind, or null for a rock. */
@@ -105,20 +114,45 @@ const rockCache = new Map<string, WreckSource>();
 /** Rock sources kept (a cut field is a few hundred rocks at most). */
 const ROCK_CACHE_MAX = 512;
 
+/** A field rock's outline in its body frame (math-up, centred as its body
+ *  is), straight from the field layout (`fieldRockBody`), and its bounding
+ *  radius. Throws for a key the layout has no rock for. Generation-time:
+ *  cuts the rock's chunk. */
+export function fieldRockOutline(field: ChunkOpts, fk: number): { verts: Array<{ x: number; y: number }>; radius: number } {
+  const { cx, cy, index } = unpackRockKey(fk);
+  const rock = rocksInChunk(field, cx, cy)[index];
+  if (rock === undefined) throw new Error(`field rock ${fk} (chunk ${cx},${cy} #${index}) is not in the layout`);
+  const b = fieldRockBody(rock);
+  return { verts: b.verts, radius: b.radius };
+}
+
+/** The field's identity in a cache key (seed and clearings shape the cut). */
+function fieldCacheKey(f: ChunkOpts): string {
+  let k = `${f.seed}|${f.battleshipLength}|${f.fighterLength}|${f.radius ?? ''}`;
+  for (const c of f.clearings ?? []) k += `|${c.x},${c.y},${c.r}`;
+  return k;
+}
+
 /** A rock's source, memoised per rock (shape, radius and id: the id rides
- *  on the source, so two rocks of one shape and radius keep their own). */
-export function rockWreckSource(rock: WreckRockSource): WreckSource {
-  const key = `${rock.shape}:${rock.r}:${rock.id}`;
+ *  on the source, so two rocks of one shape and radius keep their own). A
+ *  field rock (`fk`) is memoised per field, key and id, and needs `field`
+ *  (default: the source's own). */
+export function rockWreckSource(rock: WreckRockSource, field: ChunkOpts | null | undefined = rock.field): WreckSource {
+  const fk = rock.fk;
+  if (fk !== undefined && (field === undefined || field === null)) throw new Error(`field rock ${rock.id}: no field options to cut it from`);
+  const key = fk !== undefined ? `f:${fieldCacheKey(field!)}:${fk}:${rock.id}` : `${rock.shape}:${rock.r}:${rock.id}`;
   let s = rockCache.get(key);
   if (s !== undefined) return s;
   // The rock's math-up outline, y flipped into the fracture's Pixi-up frame.
-  const verts = generateAsteroidVertices(rock.shape, rock.r);
+  const fo = fk !== undefined ? fieldRockOutline(field!, fk) : null;
+  const verts = fo !== null ? fo.verts : generateAsteroidVertices(rock.shape, rock.r);
   const outline: Array<readonly [number, number]> = [];
   for (const v of verts) outline.push([v.x, -v.y] as const);
   const area = polygonArea(verts);
-  const r = rock.r;
+  const r = fo !== null ? fo.radius : rock.r;
+  const ref: WreckRockRef = fk !== undefined ? { id: rock.id, shape: rock.shape, r: rock.r, fk } : { id: rock.id, shape: rock.shape, r: rock.r };
   s = {
-    ship: null, rock: { id: rock.id, shape: rock.shape, r: rock.r }, outline, scale: 1, area,
+    ship: null, rock: ref, outline, scale: 1, area,
     bodyMass: Math.max(1e-3, area * ROCK_WRECK_DENSITY), maxHull: area * ROCK_INTEGRITY_PER_AREA, radius: r,
     inset: WRECK_COLLIDER_INSET_PER_RADIUS * r, profile: DESTRUCTION_PROFILES.rock,
     pushMin: WRECK_PUSH_MIN_PER_RADIUS * r, pushMax: WRECK_PUSH_MAX_PER_RADIUS * r,
@@ -136,7 +170,7 @@ export function asWreckSource(k: ShipKindId | WreckSource): WreckSource {
 
 /** The source of a wreck's root fracture inputs: its rock, else its kind. */
 export function wreckSourceOf(root: { kindId?: ShipKindId; rock?: WreckRockSource }): WreckSource {
-  if (root.rock !== undefined) return rockWreckSource(root.rock);
+  if (root.rock !== undefined) return rockWreckSource(root.rock, root.rock.field);
   if (root.kindId === undefined) throw new Error('wreck inputs name neither a ship kind nor a rock');
   return shipWreckSource(root.kindId);
 }
