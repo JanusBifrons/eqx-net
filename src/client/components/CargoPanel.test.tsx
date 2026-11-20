@@ -207,6 +207,40 @@ describe('CargoPanel (C1)', () => {
     expect(screen.getByTestId('trade-why').textContent).toMatch(/^Won't fit: needs [\d.]+ more space$/);
   });
 
+  it('T4: on a short, wide screen the dock list and basket sit side by side; a tall one stacks them', () => {
+    const w0 = window.innerWidth;
+    const h0 = window.innerHeight;
+    try {
+      Object.assign(window, { innerWidth: 863, innerHeight: 390 });
+      const r = render(<CargoPanel entityId={9} />);
+      act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: {} } })));
+      const body = screen.getByTestId('trade-body');
+      expect(body.getAttribute('data-layout')).toBe('side');
+      expect(getComputedStyle(body).flexDirection).toBe('row');
+      const basket = getComputedStyle(screen.getByTestId('trade-basket'));
+      expect(basket.overflowY).toBe('auto');
+      expect(basket.maxHeight).not.toBe('40%');
+      r.unmount();
+      Object.assign(window, { innerWidth: 1024, innerHeight: 900 });
+      render(<CargoPanel entityId={9} />);
+      act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: {} } })));
+      expect(screen.getByTestId('trade-body').getAttribute('data-layout')).toBe('stack');
+    } finally {
+      Object.assign(window, { innerWidth: w0, innerHeight: h0 });
+    }
+  });
+
+  it('T4: the wallet stays in the footer once the basket has items', () => {
+    act(() => useUIStore.getState().setWallet(20000));
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: {} } })));
+    expect(screen.getByTestId('trade-net').textContent).toBe('Wallet 20000¢');
+    fireEvent.click(screen.getByTestId('trade-buy-alloy'));
+    expect(screen.getByTestId('trade-net').textContent).toBe('Pay 12¢ of 20000¢');
+    expect(screen.getByTestId('trade-hold-after').textContent).toMatch(/^Hold [\d.]+\/300$/);
+    act(() => useUIStore.getState().setWallet(null));
+  });
+
   it('the dock list fills the window and scrolls inside its box, never a fixed 110 px', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({ market: { buy: { alloy: 12 }, sell: { salvage: 2 } } })));

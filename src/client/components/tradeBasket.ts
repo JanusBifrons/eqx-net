@@ -106,3 +106,23 @@ export function checkTrade(basket: readonly TradeLine[], shipUsed: number, shipC
   else if (wallet !== null && -net > wallet + 1e-9) why = `Can't pay: needs ${credits(-net - wallet)} more`;
   return { net, holdAfter, why, verb };
 }
+
+/** Below this viewport height a landscape screen is "short": a sideways phone
+ *  (a Pixel 7 is 863x390 CSS). */
+export const TRADE_SHORT_PX = 480;
+
+/** Lay the dock list and the basket side by side? Yes on a short, wide
+ *  screen (landscape and under `TRADE_SHORT_PX` tall), where stacking leaves
+ *  each only a few rows; tall screens stack them. */
+export function tradeSideBySide(width: number, height: number): boolean {
+  return width > height && height < TRADE_SHORT_PX;
+}
+
+/** The footer's money part, always in the same place: what the deal costs or
+ *  pays against what you have ("Pay 20013¢ of 20000¢"), or just the wallet. */
+export function moneyLine(net: number, empty: boolean, wallet: number | null): string {
+  const have = wallet !== null ? credits(wallet) : null;
+  if (empty) return have !== null ? `Wallet ${have}` : 'Wallet —';
+  if (net < 0) return have !== null ? `Pay ${credits(-net)} of ${have}` : `Pay ${credits(-net)}`;
+  return have !== null ? `Get ${credits(net)} · wallet ${have}` : `Get ${credits(net)}`;
+}

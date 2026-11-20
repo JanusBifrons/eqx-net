@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { GOOD_DEFS } from '../../shared-types/goods';
 import { packedWeightOf } from '../../core/cargo/hold';
-import { bump, checkTrade, qtyIn, tradeMoves, type TradeLine } from './tradeBasket';
+import { bump, checkTrade, moneyLine, qtyIn, tradeMoves, tradeSideBySide, type TradeLine } from './tradeBasket';
 
 const W = GOOD_DEFS.alloy.weight;
 
@@ -59,5 +59,20 @@ describe('tradeBasket', () => {
       { dir: 'take', items: { goods: { alloy: 2 }, packed: ['hull:capital', 'hull:capital'] } },
     ]);
     expect(tradeMoves([])).toEqual([]);
+  });
+
+  it('side by side on a short, wide screen only (a sideways phone); tall screens stack', () => {
+    expect(tradeSideBySide(863, 390)).toBe(true); // Pixel 7 sideways
+    expect(tradeSideBySide(844, 360)).toBe(true);
+    expect(tradeSideBySide(1920, 1080)).toBe(false); // desktop: room to stack
+    expect(tradeSideBySide(1024, 768)).toBe(false);
+    expect(tradeSideBySide(390, 863)).toBe(false); // upright
+  });
+
+  it('the money line always carries the wallet', () => {
+    expect(moneyLine(0, true, 20000)).toBe('Wallet 20000¢');
+    expect(moneyLine(-20013, false, 20000)).toBe('Pay 20013¢ of 20000¢');
+    expect(moneyLine(10, false, 20000)).toBe('Get 10¢ · wallet 20000¢');
+    expect(moneyLine(-5, false, null)).toBe('Pay 5¢');
   });
 });

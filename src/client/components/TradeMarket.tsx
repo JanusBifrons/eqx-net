@@ -27,7 +27,7 @@ import { holdWeight } from '../../core/cargo/hold';
 import { CargoIcon } from './cargoIcons';
 import { HUD } from '../hud/tokens';
 import { WINDOW_BTN_BASE_SX, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX } from './GameWindow';
-import { bump, checkTrade, credits, qtyIn, tradeMoves, type TradeDir, type TradeLine } from './tradeBasket';
+import { bump, checkTrade, credits, moneyLine, qtyIn, tradeMoves, tradeSideBySide, type TradeDir, type TradeLine } from './tradeBasket';
 
 const C = HUD.color;
 const NUM = { fontFamily: HUD.font.num, fontVariantNumeric: 'tabular-nums' as const, textAlign: 'right' as const, whiteSpace: 'nowrap' as const };
@@ -35,6 +35,11 @@ const NUM = { fontFamily: HUD.font.num, fontVariantNumeric: 'tabular-nums' as co
 const COLS = '22px minmax(0,1fr) 46px 54px 54px 30px 30px';
 const GRID_ROW_SX = { display: 'grid', gridTemplateColumns: COLS, alignItems: 'center', columnGap: '6px' };
 const BODY_SX = { display: 'flex', flexDirection: 'column' as const, gap: 1, px: 1.5, py: 1, flex: '1 1 auto', minHeight: 0 };
+/** Short, wide screen: list ~60 % left, basket ~40 % right, each scrolling at full body height. */
+const BODY_WIDE_SX = { ...BODY_SX, flexDirection: 'row' as const, alignItems: 'stretch' as const, gap: 1.5 };
+/** The dock column: the header row over the list. */
+const DOCK_COL_SX = { display: 'flex', flexDirection: 'column' as const, gap: 1, minWidth: 0, minHeight: 0, flex: '1 1 auto' };
+const DOCK_COL_WIDE_SX = { ...DOCK_COL_SX, flex: '3 1 0' };
 const HEAD_ROW_SX = {
   ...GRID_ROW_SX, flex: 'none', px: 0.75, fontSize: 10, fontWeight: 600, color: C.inkDim, letterSpacing: 1,
   textTransform: 'uppercase' as const,
@@ -50,6 +55,8 @@ const BASKET_SX = {
   flex: '0 1 auto', minHeight: 0, maxHeight: '40%', overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const,
   gap: '2px', borderTop: WINDOW_EDGE, pt: 0.75,
 };
+/** Side by side: the basket is its own column at the body's full height. */
+const BASKET_WIDE_SX = { ...BASKET_SX, flex: '2 1 0', maxHeight: 'none', minWidth: 0, borderTop: 'none', pt: 0, borderLeft: WINDOW_EDGE, pl: 1.5 };
 const LINE_SX = {
   display: 'grid', gridTemplateColumns: '38px minmax(0,1fr) 26px 30px 26px 64px 26px', alignItems: 'center', columnGap: '4px',
   px: 0.75, minHeight: 28, borderRadius: '5px', backgroundColor: 'rgba(255,255,255,0.03)',
@@ -94,6 +101,22 @@ export function dockItems(market: NonNullable<CargoState['market']>, hold: Hold 
   return out;
 }
 
+/** `tradeSideBySide` for the viewport, re-checked on resize / rotate. */
+function useTradeSideBySide(): boolean {
+  const read = (): boolean => typeof window !== 'undefined' && tradeSideBySide(window.innerWidth, window.innerHeight);
+  const [wide, setWide] = useState<boolean>(read);
+  useEffect(() => {
+    const on = (): void => setWide(read());
+    window.addEventListener('resize', on);
+    window.addEventListener('orientationchange', on);
+    return () => {
+      window.removeEventListener('resize', on);
+      window.removeEventListener('orientationchange', on);
+    };
+  }, []);
+  return wide;
+}
+
 const price = (n: number | undefined): string => (n === undefined ? '—' : credits(n));
 
 export interface TradeMarketProps {
@@ -119,6 +142,7 @@ export function TradeMarket({ target, state, market, notice, onClose }: TradeMar
   }, [state]);
 
   const wallet = useUIStore((s) => s.wallet);
+  const wide = useTradeSideBySide();
   const items = dockItems(market, state.hold, state.ship);
   const byKey = new Map(items.map((it) => [it.key, it]));
   const shipUsed = state.ship !== null ? holdWeight(state.ship) : 0;
@@ -142,35 +166,37 @@ export function TradeMarket({ target, state, market, notice, onClose }: TradeMar
 
   return (
     <>
-      <Box sx={BODY_SX}>
-        <Box sx={HEAD_ROW_SX}>
-          <Box />
-          <Box>Item</Box>
-          <Box sx={NUM}>Stock</Box>
-          <Box sx={NUM}>Buy</Box>
-          <Box sx={NUM}>Sell</Box>
-          <Box />
-          <Box />
+      <Box sx={wide ? BODY_WIDE_SX : BODY_SX} data-testid="trade-body" data-layout={wide ? 'side' : 'stack'}>
+        <Box sx={wide ? DOCK_COL_WIDE_SX : DOCK_COL_SX}>
+          <Box sx={HEAD_ROW_SX}>
+            <Box />
+            <Box>Item</Box>
+            <Box sx={NUM}>Stock</Box>
+            <Box sx={NUM}>Buy</Box>
+            <Box sx={NUM}>Sell</Box>
+            <Box />
+            <Box />
+          </Box>
+          <Box sx={LIST_SX} data-testid="cargo-here-list">
+            {items.length === 0 && <Box sx={EMPTY_SX}>This dock trades nothing right now.</Box>}
+            {items.map((it) => (
+              <Box key={it.key} sx={ROW_SX} data-testid={`trade-row-${it.id}`} data-key={it.key} data-stock={it.stock} data-aboard={it.aboard}>
+                <Box sx={{ width: 22, height: 22 }}><CargoIcon rowKey={it.key} /></Box>
+                <Box sx={NAME_SX} title={it.label}>{it.label}</Box>
+                <Box sx={{ ...NUM, fontSize: 12 }} data-testid="trade-stock">{it.stock}</Box>
+                <Box sx={{ ...NUM, fontSize: 12, color: it.buy === undefined ? C.inkFaint : C.ink }} data-testid="trade-buy-price">{price(it.buy)}</Box>
+                <Box sx={{ ...NUM, fontSize: 12, color: it.sell === undefined ? C.inkFaint : C.ink }} data-testid="trade-sell-price">{price(it.sell)}</Box>
+                <IconButton size="small" sx={ICON_BTN_SX} aria-label={`Buy ${it.label}`} data-testid={`trade-buy-${it.id}`} disabled={!canBuy(it)} onClick={() => add('buy', it, 1)}>
+                  <AddShoppingCartIcon sx={ICON_SX} />
+                </IconButton>
+                <IconButton size="small" sx={ICON_BTN_SX} aria-label={`Sell ${it.label}`} data-testid={`trade-sell-${it.id}`} disabled={!canSell(it)} onClick={() => add('sell', it, 1)}>
+                  <SellIcon sx={ICON_SX} />
+                </IconButton>
+              </Box>
+            ))}
+          </Box>
         </Box>
-        <Box sx={LIST_SX} data-testid="cargo-here-list">
-          {items.length === 0 && <Box sx={EMPTY_SX}>This dock trades nothing right now.</Box>}
-          {items.map((it) => (
-            <Box key={it.key} sx={ROW_SX} data-testid={`trade-row-${it.id}`} data-key={it.key} data-stock={it.stock} data-aboard={it.aboard}>
-              <Box sx={{ width: 22, height: 22 }}><CargoIcon rowKey={it.key} /></Box>
-              <Box sx={NAME_SX} title={it.label}>{it.label}</Box>
-              <Box sx={{ ...NUM, fontSize: 12 }} data-testid="trade-stock">{it.stock}</Box>
-              <Box sx={{ ...NUM, fontSize: 12, color: it.buy === undefined ? C.inkFaint : C.ink }} data-testid="trade-buy-price">{price(it.buy)}</Box>
-              <Box sx={{ ...NUM, fontSize: 12, color: it.sell === undefined ? C.inkFaint : C.ink }} data-testid="trade-sell-price">{price(it.sell)}</Box>
-              <IconButton size="small" sx={ICON_BTN_SX} aria-label={`Buy ${it.label}`} data-testid={`trade-buy-${it.id}`} disabled={!canBuy(it)} onClick={() => add('buy', it, 1)}>
-                <AddShoppingCartIcon sx={ICON_SX} />
-              </IconButton>
-              <IconButton size="small" sx={ICON_BTN_SX} aria-label={`Sell ${it.label}`} data-testid={`trade-sell-${it.id}`} disabled={!canSell(it)} onClick={() => add('sell', it, 1)}>
-                <SellIcon sx={ICON_SX} />
-              </IconButton>
-            </Box>
-          ))}
-        </Box>
-        <Box sx={BASKET_SX} data-testid="trade-basket" data-lines={basket.length}>
+        <Box sx={wide ? BASKET_WIDE_SX : BASKET_SX} data-testid="trade-basket" data-lines={basket.length}>
           {empty && <Box sx={EMPTY_SX}>Basket empty: tap buy or sell on an item.</Box>}
           {basket.map((l) => {
             const it = byKey.get(l.key);
@@ -201,20 +227,17 @@ export function TradeMarket({ target, state, market, notice, onClose }: TradeMar
 
       <Box sx={WINDOW_FOOT_SX}>
         <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          {!empty && (
-            <Box sx={{ display: 'flex', gap: 1.5, color: C.ink, ...NUM, textAlign: 'left' as const }}>
-              <Box data-testid="trade-net" data-net={Math.round(check.net * 10) / 10}>
-                {check.net < 0 ? `Pay ${credits(-check.net)}` : `Get ${credits(check.net)}`}
-              </Box>
-              <Box data-testid="trade-hold-after" sx={{ color: check.holdAfter > cap ? C.danger : C.ink }}>
-                Hold {Math.round(check.holdAfter * 10) / 10}/{Math.round(cap)}
-              </Box>
+          <Box sx={{ display: 'flex', gap: 1.5, color: C.ink, ...NUM, textAlign: 'left' as const }}>
+            <Box data-testid="trade-net" data-net={Math.round(check.net * 10) / 10} sx={{ color: !empty && check.why?.startsWith("Can't pay") === true ? C.danger : C.ink }}>
+              {moneyLine(check.net, empty, wallet)}
             </Box>
-          )}
-          {!empty && check.why !== null && <Box sx={{ color: C.manual }} data-testid="trade-why">{check.why}</Box>}
+            <Box data-testid="trade-hold-after" sx={{ color: check.holdAfter > cap ? C.danger : C.ink }}>
+              Hold {Math.round(check.holdAfter * 10) / 10}/{Math.round(cap)}
+            </Box>
+          </Box>
           {notice !== null
             ? <Box sx={{ color: notice.ok ? C.ink : C.manual }} data-testid="cargo-notice" data-ok={notice.ok ? '1' : '0'}>{notice.message}</Box>
-            : empty && <Box>Hold {Math.round(shipUsed * 10) / 10}/{Math.round(cap)}{wallet !== null ? ` · ${credits(wallet)}` : ''}</Box>}
+            : !empty && check.why !== null && <Box sx={{ color: C.manual }} data-testid="trade-why">{check.why}</Box>}
         </Box>
         {onClose !== undefined && (
           <Box component="button" sx={WINDOW_BTN_SECONDARY_SX} onClick={onClose} data-testid="loot-window-close">Close</Box>
