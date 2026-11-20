@@ -1,5 +1,7 @@
 /**
- * While placing a structure: a small warning under the ghost when its only
+ * While placing a structure: a small warning under the ghost when it cannot
+ * go there at all (the server's refusal notice, e.g. "Can't build here:
+ * blocked by an asteroid or wreck"), or when its only
  * links are too short to form ("Can't connect: too close", owner rule "keep
  * buildings apart"); each refused link also draws red in the build preview.
  *

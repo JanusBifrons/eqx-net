@@ -18,6 +18,8 @@ import {
 function makeHarness(
   asteroid?: { entityId: number; x: number; y: number; range?: number; resources?: number },
   drone?: { id: string; entityId: number; x: number; y: number },
+  /** The room's grid pulse period (`structureGridPulseMs`); absent ⇒ 1 s. */
+  pulseMs?: number,
 ) {
   const registry = new StructureRegistry();
   const health = new Map<string, number>();
@@ -84,6 +86,7 @@ function makeHarness(
     spawnMissile: (shooterId, x, y, dirX, dirY, def) =>
       missiles.push({ shooterId, x, y, dirX, dirY, weaponId: def.id }),
     rigTick: () => clock.tick,
+    pulseMs,
   });
   // These tests cover cadence, weapon modes and ammo, not lock timing
   // (StructureMountTicker.test.ts locks that): opt into the testMode instant
@@ -91,7 +94,7 @@ function makeHarness(
   grid.setInstantTurretLocks(true);
 
   let now = 0;
-  const pulse = () => { now += 1000; return grid.pulse(now); };
+  const pulse = () => { now += pulseMs ?? 1000; return grid.pulse(now); };
   return { registry, health, despawned, damage, beams, projectiles, missiles, placement, placeRaw, grid, pulse, asteroid, clock };
 }
 
@@ -183,6 +186,40 @@ describe('StructureGridSubsystem — estimateBuildEtaMs (Phase-1 issue 1/2)', ()
     h.pulse(); // build topology
     h.registry.get(cap)!.minerals = 0; // bank dry → build stalled
     expect(h.grid.estimateBuildEtaMs(h.registry.get(conn)!)).toBeNull();
+  });
+
+  // Invariant 15 — the ETA the build bar shows must match how long the build
+  // REALLY takes. Seen live (base-build-test, 100 ms pulse): a Solar built in
+  // ~8 s while its label read 1m 7s — the estimate assumed a 1 s pulse.
+  // Measures the real build by pulsing to completion, at several pulse periods.
+  for (const pulseMs of [1000, 250, 100]) {
+    it(`agrees with the real build time at a ${pulseMs} ms pulse`, () => {
+      const hp = makeHarness(undefined, undefined, pulseMs);
+      hp.placement.place(OWNER, 'capital', 0, 0)!;
+      const conn = hp.placement.place(OWNER, 'connector', 0, 140)!;
+      const rec = hp.registry.get(conn)!;
+      hp.pulse(); // topology + first delivery
+      const eta = hp.grid.estimateBuildEtaMs(rec)!;
+      let pulses = 0;
+      while (!rec.isConstructed && pulses < 10_000) { hp.pulse(); pulses++; }
+      expect(rec.isConstructed).toBe(true);
+      // Within one pulse (the last pulse may only part-fill).
+      expect(Math.abs(eta - pulses * pulseMs)).toBeLessThanOrEqual(pulseMs);
+    });
+  }
+
+  it('times a prepaid (packed) build, which needs no route or minerals', () => {
+    const hp = makeHarness(undefined, undefined, 250);
+    const conn = hp.placement.place(OWNER, 'connector', 0, 140)!; // no Capital at all
+    const rec = hp.registry.get(conn)!;
+    rec.prepaid = true;
+    hp.pulse();
+    const eta = hp.grid.estimateBuildEtaMs(rec);
+    expect(eta).not.toBeNull();
+    let pulses = 0;
+    while (!rec.isConstructed && pulses < 10_000) { hp.pulse(); pulses++; }
+    expect(rec.isConstructed).toBe(true);
+    expect(Math.abs(eta! - pulses * 250)).toBeLessThanOrEqual(250);
   });
 });
 

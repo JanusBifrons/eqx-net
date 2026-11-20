@@ -51,7 +51,7 @@ import { JOINT_LIFT, liftProgress, rigClipIndex, type DrawLayer, type Rig } from
 import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
-import { RIG_LOOK_C, rigArmCable, rigPartContext, type RigArmCable } from './structureRigLook.js';
+import { RIG_LOOK_C, rigArmCable, rigPartContext, type RigArmCable, type RigDrawHook, type RigRowClipMemo } from './structureRigLook.js';
 import { RIG_DRAW_HOOKS } from './structureStyleC.js';
 
 /** Draw structure rig parts: on by default (owner, structure restyle);
@@ -181,6 +181,12 @@ export class StructureRigView {
   spinClock = 0;
   private spinLast = Number.NaN;
   private readonly runningOf: ((st: StructureRenderState | undefined) => boolean) | undefined;
+  /** The family's per-frame part presentation (`RigDrawHook.partShow`). */
+  private readonly partShowOf: RigDrawHook['partShow'];
+  /** The family's client-played clip (`RigDrawHook.rowClip`). */
+  readonly rowClipOf: RigDrawHook['rowClip'];
+  /** The structure row last given to `setRunningFrom` (undefined: none). */
+  row: StructureRenderState | undefined = undefined;
 
   constructor(readonly rig: Rig) {
     this.pose = createRigPose(rig);
@@ -216,6 +222,8 @@ export class StructureRigView {
     }
     this.mountPart = hook?.mountPart?.(rig) ?? -1;
     this.runningOf = hook?.running;
+    this.partShowOf = hook?.partShow;
+    this.rowClipOf = hook?.rowClip;
     let spin = false;
     for (let i = 0; i < rig.partCount; i++) if (rig.spins[i] !== 0) spin = true;
     this.hasSpin = spin;
@@ -248,6 +256,7 @@ export class StructureRigView {
   /** Set `running` from the structure row through the rig's family hook
    *  (`RigDrawHook.running`; none = always running). Allocation-free. */
   setRunningFrom(st: StructureRenderState | undefined): void {
+    this.row = st;
     this.running = this.runningOf === undefined || this.runningOf(st);
   }
 
@@ -319,6 +328,7 @@ export class StructureRigView {
         sh.position.set(xf.x + d, xf.y + d);
         sh.rotation = xf.rotation;
       }
+      if (this.partShowOf !== undefined) this.partShowOf(this.rig, i, this.pose.value[i]!, this.row, g, sh);
     }
     this.poseCargo(input, nowTick);
   }
@@ -404,6 +414,8 @@ interface GameRigEntry {
   /** The sprite the plane group hangs off (rebuilt sprite ⇒ re-hang). */
   host: Container | null;
   stamp: number;
+  /** Scratch for the rig's client-played clip (`RigDrawHook.rowClip`). */
+  memo: RigRowClipMemo;
 }
 
 /**
@@ -460,7 +472,7 @@ export class StructureRigs {
       const view = new StructureRigView(rig);
       this.shipContainer.sortableChildren = true;
       this.shipContainer.addChild(view.under, view.over);
-      e = { view, host: null, stamp: 0 };
+      e = { view, host: null, stamp: 0, memo: { start: Number.NaN } };
       this.entries.set(spriteKey, e);
     } else if (e.view.rig !== (kindId !== undefined ? rigForStructureKind(kindId) : null)) {
       // A recycled id with another kind: rebuild from scratch next frame.
@@ -502,6 +514,13 @@ export class StructureRigs {
         input.targetX = undefined;
         input.targetY = undefined;
       }
+    } else if (view.rowClipOf !== undefined && view.rowClipOf(row, nowTick, e.memo, this.worldInput)) {
+      // No server clip: the family plays one from the row (the Shipyard's build).
+      input = this.worldInput;
+      input.holdTicks = undefined;
+      input.cargo = undefined;
+      input.targetX = undefined;
+      input.targetY = undefined;
     }
     view.zoom = this.zoom;
     view.setRunningFrom(row);
