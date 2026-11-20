@@ -9,7 +9,7 @@ import type { Rig } from '../../../core/articulation/rig.js';
 import {
   SHIPYARD_CLAMP_HALF_W, SHIPYARD_CLAMP_LEN, SHIPYARD_CLAMP_XS, SHIPYARD_CLAMP_Y, SHIPYARD_GANTRY_BOGIE,
   SHIPYARD_GANTRY_HALF_X, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HOIST_HALF, SHIPYARD_RAIL_Y, SHIPYARD_SLIP_HALF_W, SHIPYARD_SLIP_X0, SHIPYARD_SLIP_X1,
-  SHIPYARD_WALL_HALF_L, SHIPYARD_WALL_HALF_T, SHIPYARD_WALL_TRAVEL, SHIPYARD_WALL_Y, SHIPYARD_BAY_COUNT, shipyardBayKeel,
+  SHIPYARD_WALL_HALF_L, SHIPYARD_WALL_HALF_T, SHIPYARD_WALL_TRAVEL, SHIPYARD_WALL_Y,
 } from '../../../core/articulation/rigs/heavyIndustry.js';
 import {
   CRANE, HAZARD, LAMP_AMBER, LAMP_WHITE, RIVET, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, chevron,
@@ -43,10 +43,9 @@ function shipyard(c: StyleCtx): void {
   // Slipway: a sunken channel, keel blocks on its centre line.
   poly(c, chamferBox(x0, -sw, x1 - x0, 2 * sw, 10), SOOT, 'metal', -10, 4, { seams: 40, seamAngle: Math.PI / 2 });
   for (let x = x0 + 50; x < x1 - 40; x += 70) poly(c, chamferBox(x - 14, -10, 28, 20, 4), SLAB_DARK, 'metal', 2, 1.5);
-  // Bay marks (loop 3R): a hazard stripe across the slip between bays and
-  // each bay's number by the edge, so the slip reads as a row of build slots.
+  // Bay marks (loop 3R): a hazard stripe across the slip between bays, so
+  // the slip reads as a row of build slots.
   for (const bx of SHIPYARD_BAY_MARK_XS) poly(c, strip([bx, -sw + 4], [bx, sw - 4], 8), HAZARD, 'hazard', 1, 0.6);
-  for (let b = 0; b < SHIPYARD_BAY_COUNT; b++) stencil(c, String(b + 1), shipyardBayKeel(b).x - 60, sw - 60, 22);
   for (const s of [-1, 1]) {
     weld(c, [x0 + 10, s * (sw - 4)], [x1 - 10, s * (sw - 4)]);
     // Clamp ledge with a pivot boss at each station.
