@@ -24,15 +24,18 @@ describe('socket studs vs the drawn style C edge', () => {
 
   // A nub reaches NUB_OUT (6 u) past its point and NUB_IN (4 u) under it, so a
   // point within 5 u of the drawn edge reads as on it. The shield pylon's four
-  // cut-corner studs (it takes any side) sit 4 u in from its square plate.
+  // cut-corner studs (it takes any side) sit half the corner cut (0.22 × the
+  // half-size, so 6.6 u at 120 u) in from its square plate, until its redraw.
   const TOL = 5;
+  const tolFor = (id: string): number =>
+    id === 'shield_pylon' ? Math.max(TOL, 0.11 * (STRUCTURE_KINDS_LIST.find((k) => k.id === id)!.footprint.w / 2) + 1) : TOL;
 
   it('every kind: each socket lies on the drawn outer edge, art behind it, nothing raised on it', () => {
     for (const kind of STRUCTURE_KINDS_LIST) {
       if (postKind(kind.id)) continue;
       for (const s of socketArtEdges(kind.id)) {
         const at = `${kind.id} #${s.index} (${s.x.toFixed(0)}, ${s.y.toFixed(0)})`;
-        expect(s.dist, `${at} off the drawn edge`).toBeLessThanOrEqual(TOL);
+        expect(s.dist, `${at} off the drawn edge`).toBeLessThanOrEqual(tolFor(kind.id));
         expect(s.inside, `${at} has no art behind it`).toBe(true);
         expect(s.under, `${at} under a raised part`).toBe(0);
       }

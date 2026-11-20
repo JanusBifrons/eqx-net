@@ -32,8 +32,11 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  a saved structure could sit on a restored Capital's pad.
  *  13→14 (structure-restyle stage 4, family 1 size lane): SOLAR 360×150 →
  *  700×300 (power 30→120, cost 120→480); REACTOR 400×400 → 600×600 (power
- *  240→960, cost 1500→4000); BATTERY_BANK 360×360 → 600×600. */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 14;
+ *  240→960, cost 1500→4000); BATTERY_BANK 360×360 → 600×600.
+ *  14→15 (structure-restyle F2, gate family size): SHIELD_GATE 320×72 →
+ *  416×72, SHIELD_AIRLOCK 320×260 → 392×260, SHIELD_PYLON 72×72 → 120×120
+ *  (the openings ships fly through are unchanged). */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 15;
 // Gates (SHIELD_GATE, SHIELD_AIRLOCK) were APPENDED without a bump: a bump
 // discards every saved structure on the next boot (SectorPersistence's version
 // gate), and appending a kind leaves every existing record — and so every saved

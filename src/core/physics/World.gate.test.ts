@@ -8,10 +8,12 @@
 import { describe, expect, it } from 'vitest';
 import { PhysicsWorld } from './World.js';
 import { gateColliderPolygons, gateSpanWorld, GATE_SPAN_THICKNESS } from '../structures/gateGeometry.js';
+import { GATE_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
+import { STRUCTURE_KINDS } from '../../shared-types/structureKinds.js';
 
 async function flyUpInto(gateX: number, shipX: number, withSpan: boolean): Promise<number> {
   const w = await PhysicsWorld.create();
-  w.spawnObstacle('gate', gateX, 0, 164, 3, undefined, 0, undefined, gateColliderPolygons('shield_gate')!);
+  w.spawnObstacle('gate', gateX, 0, STRUCTURE_KINDS.shield_gate.radius, 3, undefined, 0, undefined, gateColliderPolygons('shield_gate')!);
   w.lockBody('gate');
   if (withSpan) {
     const a = { x: 0, y: 0 }, b = { x: 0, y: 0 };
@@ -32,7 +34,7 @@ describe('PhysicsWorld — gate posts as separate collider parts', () => {
   });
 
   it('a ship flying at a post is stopped by it', async () => {
-    expect(await flyUpInto(0, 124, false)).toBeLessThan(0);
+    expect(await flyUpInto(0, GATE_POSTS[1]![0], false)).toBeLessThan(0);
   });
 
   it('a closed span (the wall) blocks the gap', async () => {

@@ -9,7 +9,7 @@
  * Local space is Pixi-up (ship nose at -y). Heights are in WORLD units.
  */
 import { getShipKind, type ShipKind } from '../../../shared-types/shipKinds.js';
-import { buildStructureVisual, PROPOSED_FOOTPRINTS, type PolyOp } from '../pixi/structureVisuals.js';
+import { buildStructureVisual, type PolyOp } from '../pixi/structureVisuals.js';
 import { polyEdgeDist } from '../pixi/structureStyleKit.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng, type Poly } from './raster.js';
@@ -769,7 +769,7 @@ export function cavity(f: Fields, radiusU: number): Float32Array {
   return out;
 }
 
-export { insidePoly, PROPOSED_FOOTPRINTS };
+export { insidePoly };
 
 // ------------------------------------------------------------------ turrets (R&D)
 

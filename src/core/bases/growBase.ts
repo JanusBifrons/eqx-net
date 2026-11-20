@@ -59,8 +59,9 @@ export type { GrownPlacement } from './growBuilder.js';
  *  17→18: each leaf stands `linkGap` off its connector (`MIN_CABLE_LENGTH`);
  *  a spine relay pushed onto its row line is dropped.
  *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power per unit of draw; row gaps fit the leaves facing in.
- *  19→20: landing pads solid to cables, no socket on their side: the spine detours round the Capital's pad up column 1; an unlinkable connector is taken back. */
-export const BASE_GROWTH_VERSION = 20;
+ *  19→20: landing pads solid to cables, no socket on their side: the spine detours round the Capital's pad up column 1; an unlinkable connector is taken back.
+ *  20→21 (restyle F2): wider gate (416), airlock (392) and pylons (120×120); fence pylons 720 apart, each half-side spaced to the gate end (no pylon on a gate). */
+export const BASE_GROWTH_VERSION = 21;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -94,8 +95,11 @@ const GAP = 20;
 /** Fence clearance past the outermost structure. Link reach is socket to
  *  socket, so this keeps a row-end connector's tap to the side emitter ≤ 600 u. */
 const FENCE_MARGIN = 100;
-/** Pylon spacing: centre to centre, under the 600 u edge-to-edge range. */
-const FENCE_STEP = 660;
+/** Pylon spacing: centre to centre, so the 120 u pylons sit at most the
+ *  600 u edge-to-edge range apart (full-length walls). */
+const FENCE_STEP = 720;
+/** A fence gate's centre to where a pylon flush with its end would sit. */
+const GATE_CLEAR = getStructureKind('shield_gate').footprint.w / 2 - getStructureKind('shield_pylon').footprint.w / 2;
 
 const CONN = getStructureKind('connector');
 const CONN_HALF = CONN.footprint.h / 2;
@@ -519,30 +523,18 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
       for (let k = 0; k < n; k++) out.push(a + ((b - a) * k) / n);
       return out;
     };
-    // Ring points (counter-clockwise from bottom-left), with the mid-side
-    // points snapped to 0 so each side has a gate exactly in its middle.
+    // Ring points (counter-clockwise from bottom-left), a gate in the middle
+    // (0 on the free axis) of each side. Each half-side is spaced up to where
+    // a pylon flush with the gate's end would sit, so no pylon overlaps the
+    // gate and no wall is longer than a pylon-to-pylon one.
     const ring: Array<[number, number, number]> = []; // x, y, rot (-1 = pylon)
     const side = (from: [number, number], to: [number, number], gateRot: number) => {
-      const horizontal = from[1] === to[1];
-      const pts = horizontal ? along(from[0], to[0]).map((x) => [x, from[1]] as const) : along(from[1], to[1]).map((y) => [from[0], y] as const);
-      // Insert the gate at the side's middle (0 on the free axis).
-      ring.push([pts[0]![0], pts[0]![1], -1]);
-      let gated = false;
-      for (let k = 1; k < pts.length; k++) {
-        const prev = pts[k - 1]!, cur = pts[k]!;
-        const a = horizontal ? prev[0] : prev[1], b = horizontal ? cur[0] : cur[1];
-        if (!gated && Math.sign(a) !== Math.sign(b) && a !== 0) {
-          ring.push(horizontal ? [0, from[1], gateRot] : [from[0], 0, gateRot]);
-          gated = true;
-        }
-        if (b === 0 && !gated) {
-          ring.push(horizontal ? [0, from[1], gateRot] : [from[0], 0, gateRot]);
-          gated = true;
-          continue;
-        }
-        ring.push([cur[0], cur[1], -1]);
-      }
-      if (!gated) ring.push(horizontal ? [0, from[1], gateRot] : [from[0], 0, gateRot]);
+      const h = from[1] === to[1], a = h ? from[0] : from[1], b = h ? to[0] : to[1];
+      const c = Math.sign(b - a) * GATE_CLEAR;
+      const at = (t: number, rot: number): [number, number, number] => (h ? [t, from[1], rot] : [from[0], t, rot]);
+      for (const t of along(a, -c)) ring.push(at(t, -1));
+      ring.push(at(0, gateRot));
+      for (const t of along(c, b).slice(1)) ring.push(at(t, -1));
     };
     side([-fx, -fy], [fx, -fy], 0);
     side([fx, -fy], [fx, fy], 90);

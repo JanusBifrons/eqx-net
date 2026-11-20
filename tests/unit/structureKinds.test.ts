@@ -162,7 +162,7 @@ describe('structureKinds catalogue', () => {
     // several times a ship's size. Version-pinned (8→9 rides these edits).
     expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(9);
     expect(STRUCTURE_KINDS.connector.footprint).toEqual({ w: 64, h: 64 });
-    expect(STRUCTURE_KINDS.shield_pylon.footprint).toEqual({ w: 72, h: 72 });
+    expect(STRUCTURE_KINDS.shield_pylon.footprint).toEqual({ w: 120, h: 120 });
     expect(STRUCTURE_KINDS.capital.footprint).toEqual({ w: 560, h: 560 });
     for (const k of STRUCTURE_KINDS_LIST) {
       expect(k.radius, k.id).toBe(Math.ceil(Math.hypot(k.footprint.w, k.footprint.h) / 2));

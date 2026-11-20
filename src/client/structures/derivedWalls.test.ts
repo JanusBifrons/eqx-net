@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { visitDerivedWalls, type DerivedWallVisitor } from './derivedWalls.js';
 import type { StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { GATE_OPEN_A } from '../../core/structures/gateLogic.js';
+import { GATE_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
 
 function st(connTo: number[], extra: Partial<StructureRenderState> = {}): StructureRenderState {
   return {
@@ -38,7 +39,7 @@ describe('visitDerivedWalls', () => {
     const span = walls.find((w) => w.key < 0)!;
     expect(span).toMatchObject({ ax: -88, ay: 0, bx: 88, by: 0, blocking: true, open: false });
     const fence = walls.find((w) => w.key === 1 * 65536 + 2)!;
-    expect(fence).toMatchObject({ ax: 124, ay: 0, bx: 500, by: 0, blocking: true });
+    expect(fence).toMatchObject({ ax: GATE_POSTS[1]![0], ay: 0, bx: 500, by: 0, blocking: true });
     expect(walls).toHaveLength(2); // no wall to the connector
   });
 

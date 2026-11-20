@@ -13,6 +13,7 @@ import { CONNECTION_THROUGHPUT } from '../../core/structures/structureGridConsta
 import { GATE_OPEN_A } from '../../core/structures/gateLogic.js';
 import { gateAccessIndex } from '../../shared-types/gateAccess.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
+import { GATE_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
 
 function rec(id: string, kind: StructureKindId, x: number, y: number, owner = 'p1', built = true): StructureRecord {
   return {
@@ -108,7 +109,7 @@ describe('ShieldWallManager with gates', () => {
     registry.addConnection('g', 'p', CONNECTION_THROUGHPUT);
     walls.update(0);
     const fence = calls.spawn.find((c) => c.id === 'wall-g|p')!;
-    expect(fence).toMatchObject({ ax: 124, ay: 0, bx: 500, by: 0 });
+    expect(fence).toMatchObject({ ax: GATE_POSTS[1]![0], ay: 0, bx: 500, by: 0 });
     expect(walls.wallsUpFor('g', 0)).toBe(true);
     expect(walls.wallsUpFor('p', 0)).toBe(true);
   });
