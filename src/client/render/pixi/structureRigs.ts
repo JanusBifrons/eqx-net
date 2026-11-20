@@ -176,10 +176,12 @@ export class StructureRigView {
     this.over.label = 'rig-over';
     this.over.zIndex = RIG_OVER_Z;
     this.under.zIndex = RIG_UNDER_Z;
+    // A family's special drawing (stage-4 0a): `rigs` in structureStyleC.<family>.ts.
+    const hook = Object.prototype.hasOwnProperty.call(RIG_DRAW_HOOKS, rig.id) ? RIG_DRAW_HOOKS[rig.id] : undefined;
     let shadowsOver = 0, shadowsPlane = 0;
     for (let i = 0; i < rig.partCount; i++) {
       const part = rig.parts[i]!;
-      const ctx = rigPartContext(rig, i);
+      const ctx = hook?.partArt?.(rig, i) ?? rigPartContext(rig, i);
       const g = new Graphics(ctx);
       g.label = `rig-part-${part.id}`;
       this.parts.push(g);
@@ -199,8 +201,6 @@ export class StructureRigView {
       }
       group.addChild(g);
     }
-    // A family's special drawing (stage-4 0a): `rigs` in structureStyleC.<family>.ts.
-    const hook = Object.prototype.hasOwnProperty.call(RIG_DRAW_HOOKS, rig.id) ? RIG_DRAW_HOOKS[rig.id] : undefined;
     this.mountPart = hook?.mountPart?.(rig) ?? -1;
     let riser = -1;
     for (let i = 0; i < rig.partCount; i++) if (rig.parent[i]! < 0 && rig.jointType[i] === JOINT_LIFT) riser = i;
@@ -235,9 +235,12 @@ export class StructureRigView {
   /**
    * Evaluate the rig at `nowTick` (game ticks, fractional OK) for `input` on
    * a host at game pose (hx, hy, ha) drawn at `scale`, and pose every part.
+   * `sunAz` (the sector's sun, Pixi space, direction TO the sun: the art
+   * light rig's `sunAz`) turns the rig's aiming parts (`PartDef.aim`, e.g.
+   * solar panels) to face it; undefined leaves them at rest. Look only.
    * Allocation-free.
    */
-  update(input: StructureRigInput | null, nowTick: number, hx: number, hy: number, ha: number, scale = 1): void {
+  update(input: StructureRigInput | null, nowTick: number, hx: number, hy: number, ha: number, scale = 1, sunAz?: number): void {
     let playing: PlayingClip | null = null;
     if (input !== null) {
       const p = this.playing;
@@ -251,7 +254,8 @@ export class StructureRigView {
       }
       playing = p;
     }
-    evaluateRig(this.rig, playing, nowTick, this.pose, twoBoneIkSolve);
+    // Pixi azimuth -> game angle (y flips), then into the host frame.
+    evaluateRig(this.rig, playing, nowTick, this.pose, twoBoneIkSolve, sunAz !== undefined ? -sunAz - ha : undefined);
     const xf = this.xf;
     const ri = this.riserPart, look = RIG_LOOK_C;
     let lift = 0;
@@ -382,6 +386,9 @@ export class StructureRigs {
   /** The camera scale this frame (set by the caller before `update`): the
    *  views' goods pulse sizes from it like a cable's (3e). */
   zoom = 1;
+  /** The sector's sun azimuth (Pixi space, the art light rig's `sunAz`; set
+   *  by the caller before `update`): aiming parts face it. Undefined: rest. */
+  sunAz: number | undefined = undefined;
   private readonly sweepFn = (e: GameRigEntry, key: string): void => {
     if (e.stamp !== this.stamp) this.drop(key, e);
   };
@@ -460,7 +467,7 @@ export class StructureRigs {
       }
     }
     view.zoom = this.zoom;
-    view.update(input, nowTick, hx, hy, ha, 1);
+    view.update(input, nowTick, hx, hy, ha, 1, this.sunAz);
     followHost(view.over, sprite);
     followHost(view.under, sprite);
     return view;

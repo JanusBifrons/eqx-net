@@ -310,12 +310,22 @@ function tipFraction(pathCum: Float64Array, e: number): number {
   return (i + (w < 0 ? 0 : w > 1 ? 1 : w)) / TIP_PATH_SAMPLES;
 }
 
+/** An aiming hinge's value (`PartDef.aim`): `d`, the aim direction measured
+ *  from the joint's zero, wrapped to [-π, π). Arithmetic only. */
+export function aimHinge(d: number): number {
+  const TAU = 2 * Math.PI;
+  return d - TAU * Math.floor((d + Math.PI) / TAU);
+}
+
 /**
  * Pose the rig at `nowTick` (game ticks; fractional ticks are allowed for
- * render interpolation). Writes `out`; returns `out`.
+ * render interpolation). Writes `out`; returns `out`. `aim` (a host-frame
+ * direction, rad; client look only) turns every aiming part (`PartDef.aim`)
+ * to face it, clamped to its limits; undefined (the server) poses them like
+ * any part.
  */
 export function evaluateRig(
-  rig: Rig, playing: PlayingClip | null, nowTick: number, out: RigPose, ik?: IkSolve,
+  rig: Rig, playing: PlayingClip | null, nowTick: number, out: RigPose, ik?: IkSolve, aim?: number,
 ): RigPose {
   const n = rig.partCount;
   let clipIdx = -1;
@@ -378,6 +388,7 @@ export function evaluateRig(
             useIk ? ikOut[tr.chainSlot]! : 0, useIk, useIk && flip, t, jointType[i] === JOINT_HINGE, min[i]!, max[i]!);
       }
     }
+    if (aim !== undefined && rig.aims[i] === 1) v = aimHinge(aim - pA - baseAngle[i]!);
     v = clampTo(v, min[i]!, max[i]!);
     value[i] = v;
 

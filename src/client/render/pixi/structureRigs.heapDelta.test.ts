@@ -2,7 +2,7 @@
  * Heap-delta lock (#14) for the structure rig per-frame pose (restyle 2c):
  * `StructureRigView.update` (evaluate + IK + world→host target + posing the
  * part Graphics, and 3e: redrawing the goods flow pulse along a holding
- * crane arm) and `placeMount` allocate nothing per frame.
+ * crane arm; Family 1: the solar panels aiming at the sun) and `placeMount` allocate nothing per frame.
  *
  * Run with `pnpm test:gc`.
  */
@@ -19,10 +19,11 @@ function requireGc(): () => void {
 }
 
 describe('StructureRigView.update — heap', () => {
-  it('does not grow the heap over 10k frames (crane IK + goods pulse + turret slide)', () => {
+  it('does not grow the heap over 10k frames (crane IK + goods pulse + turret slide + solar aim)', () => {
     const gc = requireGc();
     const crane = new StructureRigView(rigForStructureKind('freight_dock')!);
     const turret = new StructureRigView(rigForStructureKind('turret')!);
+    const solar = new StructureRigView(rigForStructureKind('solar')!);
     const cluster = new Container();
     const reach: StructureRigInput = { clipId: 'arm-reach', startTick: 0, targetX: 40, targetY: -30 };
     const deploy: StructureRigInput = { clipId: 'turret-deploy', startTick: 0 };
@@ -36,6 +37,7 @@ describe('StructureRigView.update — heap', () => {
       hold.startTick = f * 0.5 - (f % 600);
       holder.update(hold, f * 0.5, 10, 20, 0.3, 1);
       crane.update(null, f, 10, 20, 0.3, 1);
+      solar.update(null, f, 10, 20, 0.3, 1, f * 0.001);
     };
     for (let f = 0; f < 2000; f++) frame(f);
     gc();

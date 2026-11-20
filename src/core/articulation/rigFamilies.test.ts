@@ -4,11 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { STRUCTURE_KINDS_LIST } from '../../shared-types/structureKinds.js';
 import { RIG_DEFS, RIG_FAMILIES, rigById, rigForStructureKind } from './rigCatalogue.js';
 
-/** Kind -> rig id before the split (the one map in rigCatalogue.ts). */
+/** Kind -> rig id before the split (the one map in rigCatalogue.ts), plus the
+ *  rigs added since (Family 1: the solar tracker). */
 const BEFORE_SPLIT: Readonly<Record<string, string>> = {
   freight_dock: 'dock-crane',
   capital: 'capital-crane',
   turret: 'sandbox-door-turret',
+  solar: 'solar-tracker',
 };
 
 describe('rig family files', () => {
@@ -28,7 +30,7 @@ describe('rig family files', () => {
     }
     expect([...owner.keys()].sort()).toEqual(RIG_DEFS.map((d) => d.id).sort());
     expect(Object.fromEntries(owner)).toEqual({
-      'capital-crane': 'core', 'sandbox-door-turret': 'turrets', 'dock-crane': 'transport',
+      'capital-crane': 'core', 'sandbox-door-turret': 'turrets', 'dock-crane': 'transport', 'solar-tracker': 'power',
     });
   });
 

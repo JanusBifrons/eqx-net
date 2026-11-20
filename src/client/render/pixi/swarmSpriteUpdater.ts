@@ -137,6 +137,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
   const rigs = ctx.structureRigs; // restyle 2c (on unless `?rigs=0`); undefined = off
   rigs?.begin();
   if (rigs !== undefined && ctx.cameraScale !== undefined) rigs.zoom = ctx.cameraScale; // 3e: pulse sized like a cable's
+  // Aiming rig parts (solar panels) face the sector's sun: the art light rig's.
+  if (rigs !== undefined) rigs.sunAz = ctx.art.art !== null ? ctx.art.sunAz : undefined;
   // Restyle 2e: rig clips run on the client tick clock against their server
   // start tick (no clock in tests / before welcome: the fx clock, in ticks).
   const rigTick = mirror.rigTick ?? fxNow / (1000 / RIG_TICKS_PER_SEC);
