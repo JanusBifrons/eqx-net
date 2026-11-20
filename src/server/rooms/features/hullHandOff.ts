@@ -20,6 +20,9 @@ import { getPlayerShipStore } from '../../db/PersistenceWorker.js';
 import { ROSTER_SOFT_GUARD } from '../../playerShips/PlayerShipStore.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { qualityHullFactor } from '../../../shared-types/blueprints.js';
+import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import { SHIPYARD_KEEL_X } from '../../../core/articulation/rigs/heavyIndustry.js';
+import { shipyardSlipFits } from '../../../core/structures/gateGeometry.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
 import type { ShipState } from '../schema/SectorState.js';
@@ -31,6 +34,38 @@ import type { HullMove } from './transitMessages.js';
 /** A brand-new hull parks this far from the structure it came out of, then is
  *  nudged clear (`landingPoint`). Shared by the Shipyard and `unpack_hull`. */
 export const NEW_HULL_PARK_OFFSET = 400;
+
+/**
+ * Where a brand-new hull appears and where it parks. Beside its maker
+ * (`flyOut` false: it appears at the park point), or (loop 3M) on a
+ * Shipyard's keel, nose out of the bow (`flyOut`: it then flies to the park
+ * point on an ordinary Move order, the one a player gives).
+ */
+export interface NewHullOrigin {
+  x: number; y: number; angle: number;
+  parkX: number; parkY: number;
+  flyOut: boolean;
+}
+
+/**
+ * The origin for a `hullKind` hull made by a structure of `kind` at (x, y),
+ * rotated `rotDeg`. A Shipyard prints it on its keel (`SHIPYARD_KEEL_X` on
+ * the slip centre line) and it leaves through the open slipway
+ * (`gateColliderBoxes`) out of the bow (local +x) to a spot
+ * `NEW_HULL_PARK_OFFSET` beyond the bow edge; a hull too wide for the slip
+ * (`shipyardSlipFits`: the Barge) appears at that spot. Any other maker (or
+ * an unpacked crate): parked beside it, as before.
+ * Ship heading: the nose points along (-sin a, cos a) (`applyShipInput`).
+ */
+export function newHullOrigin(kind: string, x: number, y: number, rotDeg: number, hullKind: string): NewHullOrigin {
+  if (kind !== 'shipyard') return { x: x + NEW_HULL_PARK_OFFSET, y, angle: 0, parkX: x + NEW_HULL_PARK_OFFSET, parkY: y, flyOut: false };
+  const r = (rotDeg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
+  const reach = getStructureKind('shipyard').footprint.w / 2 + NEW_HULL_PARK_OFFSET;
+  return {
+    x: x + SHIPYARD_KEEL_X * c, y: y + SHIPYARD_KEEL_X * s, angle: Math.atan2(-c, s),
+    parkX: x + reach * c, parkY: y + reach * s, flyOut: shipyardSlipFits(hullKind),
+  };
+}
 
 /** What {@link HullHandOff.launchNewHull} did: a roster ship (`live` = also
  *  parked in this sector now), or why nothing was created. */
@@ -48,7 +83,7 @@ export interface HullHandOffHost {
   freeSlots(): Pick<number[], 'push' | 'length'>;
   playerToUser: Pick<ReadonlyMap<string, string | null>, 'get'>;
   ownerlessShips: Pick<Map<string, ReturnType<typeof setTimeout> | null>, 'get' | 'delete'>;
-  fleet: Pick<FleetCommandSubsystem, 'exportSquads' | 'exportShip'>;
+  fleet: Pick<FleetCommandSubsystem, 'exportSquads' | 'exportShip' | 'applyOrder'>;
   wingmen(): Pick<WingmanPilots, 'detachWingman'>;
   snapshotRestore(): Pick<SectorSnapshotRestore, 'restoreLingeringHulls'>;
   warpTravel(): Pick<WarpTravelTracker, 'markArrived'>;
@@ -165,15 +200,18 @@ export class HullHandOff {
 
   /**
    * A brand-new owned hull (a Shipyard build, or an unpacked crate): ONE
-   * roster row (quality scales its hull, `qualityHullFactor`) parked clear of
-   * structures and ships near (`nearX`, `nearY`), then put in the world
-   * through the hand-off arrival path ({@link receiveHandedOffHull}): a
-   * lingering hull its owner sees in Command view, guarding where it parked
-   * (defensive), online or not. `requireLive` (the Shipyard): no free slot or
+   * roster row (quality scales its hull, `qualityHullFactor`), put in the
+   * world through the hand-off arrival path ({@link receiveHandedOffHull}): a
+   * lingering hull its owner sees in Command view, defensive, online or not.
+   * Its park point (`o.parkX/Y`) is nudged clear of structures and ships
+   * (`landingPoint`). Beside its maker it appears there and guards it; out
+   * of a Shipyard (`o.flyOut`) it appears on the keel facing the bow and
+   * gets the owner's ordinary Move order to the park point (`applyOrder`),
+   * after which it guards where it stopped (`clearFleetOrder`). `requireLive` (the Shipyard): no free slot or
    * a failed placement creates nothing, so the caller keeps its crate; else
    * the roster row stays even if it could not be placed now. Galaxy rooms only.
    */
-  launchNewHull(playerId: string, kind: string, quality: number, nearX: number, nearY: number, requireLive: boolean): NewHullResult {
+  launchNewHull(playerId: string, kind: string, quality: number, o: NewHullOrigin, requireLive: boolean): NewHullResult {
     const h = this.h;
     const sectorKey = h.sectorKey();
     if (sectorKey === null) return { ok: false, reason: 'no_galaxy' };
@@ -181,9 +219,10 @@ export class HullHandOff {
     const roster = store.listByPlayer(playerId);
     if (roster.length >= ROSTER_SOFT_GUARD) return { ok: false, reason: 'roster_full' };
     if (requireLive && h.freeSlots().length === 0) return { ok: false, reason: 'no_slot' };
-    const p = clampToSectorBounds(nearX + NEW_HULL_PARK_OFFSET, nearY);
+    const p = clampToSectorBounds(o.parkX, o.parkY);
     const l = h.landingPoint(playerId, p.x, p.y, kind, NO_SHIP);
-    const at = clampToSectorBounds(l.x, l.y);
+    const park = clampToSectorBounds(l.x, l.y);
+    const at = o.flyOut ? clampToSectorBounds(o.x, o.y) : park;
     const health = Math.round(getShipKind(kind).maxHealth * qualityHullFactor(quality));
     let shipId: string;
     try {
@@ -195,13 +234,14 @@ export class HullHandOff {
       return { ok: false, reason: 'failed' };
     }
     const live = h.freeSlots().length > 0 && this.receiveHandedOffHull({
-      shipInstanceId: shipId, playerId, kind, x: at.x, y: at.y, vx: 0, vy: 0, angle: 0, angvel: 0,
+      shipInstanceId: shipId, playerId, kind, x: at.x, y: at.y, vx: 0, vy: 0, angle: o.flyOut ? o.angle : 0, angvel: 0,
       health, shieldDown: false, arrival: 'teleport', stance: 'defensive',
     });
     if (!live && requireLive) {
       store.delete(shipId);
       return { ok: false, reason: 'no_slot' };
     }
+    if (live && o.flyOut) h.fleet.applyOrder(playerId, [shipId], { kind: 'move', x: park.x, y: park.y });
     return { ok: true, shipId, live };
   }
 

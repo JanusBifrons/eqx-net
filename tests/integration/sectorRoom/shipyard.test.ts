@@ -3,8 +3,10 @@
  * ship-picker gate, through a real SectorRoom and the real messages.
  *
  *  1. A powered Shipyard with a gunship blueprint loaded (`set_recipe` +
- *     `load_blueprint`) builds a gunship that parks outside the yard as a
- *     live hull in its owner's fleet (no crate).
+ *     `load_blueprint`) builds a gunship: a live hull in its owner's fleet
+ *     (no crate). It appears on the slipway inside the frame, nose out of the
+ *     bow, with the owner's ordinary Move order to a parking spot clear of the
+ *     yard, and flies out without touching the frame (loop 3M).
  *  2. Unpacking a packed gunship crate (`unpack_hull`) adds one to the roster
  *     and parks it in the world too.
  *  3. The picker gate: a FRESH spawn asking for a gunship gets a starter
@@ -23,6 +25,8 @@ import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js'
 import { RECIPES } from '../../../src/shared-types/recipes.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { getStructureKind } from '../../../src/shared-types/structureKinds.js';
+import { worldToLocal } from '../../../src/core/structures/gateGeometry.js';
+import { SHIPYARD_SLIP_HALF_W } from '../../../src/core/articulation/rigs/heavyIndustry.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
@@ -32,7 +36,7 @@ describe('SectorRoom integration — Shipyard + hull gate (economy v2 W5b)', () 
     if (harness) await harness.cleanup();
   });
 
-  it('a powered Shipyard builds a gunship that parks outside, in the owner’s fleet; an unpacked crate parks too', { timeout: 60_000 }, async () => {
+  it('a powered Shipyard builds a gunship into the owner’s fleet: a new hull starts in the yard with a move order, it leaves the frame without colliding; an unpacked crate parks too', { timeout: 90_000 }, async () => {
     const owner = randomUUID();
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
@@ -83,12 +87,41 @@ describe('SectorRoom integration — Shipyard + hull gate (economy v2 W5b)', () 
     const room = harness.getServerRoom() as unknown as SectorRoom;
     const hull = (room.state as SectorState).ships.get(hullId);
     expect(hull?.playerId).toBe(owner);
-    expect(hull?.isActive, 'parked (lingering), waiting for orders').toBe(false);
+    expect(hull?.isActive, 'a lingering hull, flown by its AI pilot').toBe(false);
     expect(internals.lingeringSlots.has(hullId)).toBe(true);
     expect(internals.fleet.isAttached(hullId), 'in the owner’s fleet (Command view)').toBe(true);
-    const row = getPlayerShipStore().get(hullId)!;
+
+    // Loop 3M — a new hull starts in the yard with a move order.
     const fp = getStructureKind('shipyard').footprint!;
-    expect(Math.abs(row.lastX - yard.x) > fp.w / 2 || Math.abs(row.lastY - yard.y) > fp.h / 2, 'parked clear of the yard’s footprint').toBe(true);
+    const yardAngle = ((yard.rot ?? 0) * Math.PI) / 180;
+    const local = (x: number, y: number) => worldToLocal(yard.x, yard.y, yardAngle, x, y, { x: 0, y: 0 });
+    const inFrame = (l: { x: number; y: number }) => Math.abs(l.x) < fp.w / 2 && Math.abs(l.y) < fp.h / 2;
+    const r = getShipKind('gunship').radius;
+    const row = getPlayerShipStore().get(hullId)!;
+    const start = local(row.lastX, row.lastY);
+    expect(inFrame(start), 'printed inside the frame').toBe(true);
+    expect(Math.abs(start.y) + r, 'on the slipway').toBeLessThan(SHIPYARD_SLIP_HALF_W);
+    const pose0 = internals.lingeringPoseCache.get(hullId)!;
+    expect(-Math.sin(pose0.angle), 'nose out of the bow').toBeCloseTo(Math.cos(yardAngle), 2);
+    expect(Math.cos(pose0.angle), 'nose out of the bow').toBeCloseTo(Math.sin(yardAngle), 2);
+    const order = internals.fleet.ordersOf(hullId)?.order;
+    expect(order?.kind, 'the owner’s ordinary Move order').toBe('move');
+    const dest = order as unknown as { x: number; y: number };
+    expect(inFrame(local(dest.x, dest.y)), 'its parking spot is clear of the yard').toBe(false);
+
+    // Loop 3M — it leaves the frame without colliding: while inside the
+    // footprint it stays on the open slipway, and it takes no ram damage.
+    const health0 = hull!.health;
+    let out = false;
+    for (let t = 0; t < 30_000 && !out; t += 250) {
+      await harness.advance(250);
+      const p = internals.lingeringPoseCache.get(hullId)!;
+      const l = local(p.x, p.y);
+      if (inFrame(l)) expect(Math.abs(l.y), `in the frame at local (${l.x.toFixed(0)}, ${l.y.toFixed(0)}): still on the slip`).toBeLessThan(SHIPYARD_SLIP_HALF_W);
+      else out = true;
+    }
+    expect(out, 'the new hull flew out of the frame').toBe(true);
+    expect((room.state as SectorState).ships.get(hullId)!.health, 'no collision on the way out').toBe(health0);
 
     // A packed crate (e.g. bought or looted) unpacks the same way (the real client payload, with `type`).
     (bay.hold!.packed ??= []).push({ product: 'hull:gunship', quality: 40 });

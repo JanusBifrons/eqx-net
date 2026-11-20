@@ -188,7 +188,7 @@ import { RoomWreckSpawns } from './features/wreckSpawns.js';
 import { FireControlLocks } from './features/fireControlLocks.js';
 import { swarmLockId } from './lockSalvage.js';
 import { transitHostRoom } from './features/transitMessages.js';
-import { HullHandOff } from './features/hullHandOff.js';
+import { HullHandOff, newHullOrigin } from './features/hullHandOff.js';
 import { BreakInHooks } from './features/breakInHooks.js';
 import { TurretTargeting } from './features/turretTargeting.js';
 import { SectorTimeScale } from './features/sectorTimeScale.js';
@@ -2235,8 +2235,8 @@ export class SectorRoom extends Room<SectorState> {
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
       // D3 — station taxes: a player's habitat modules and spires pay their wallet.
       payCredits: (rec, n) => { if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes'); },
-      // A finished hull parks outside the yard as a live ship (`HullHandOff.launchNewHull`).
-      launchHull: (rec, kind, q) => parseOwner(rec.owner).kind === 'player' && this.hullHandOff.launchNewHull(rec.owner, kind, q, rec.x, rec.y, true).ok,
+      // A finished hull goes live: out of a Shipyard's slipway on a Move order to its park spot (`HullHandOff.launchNewHull`).
+      launchHull: (rec, kind, q) => parseOwner(rec.owner).kind === 'player' && this.hullHandOff.launchNewHull(rec.owner, kind, q, newHullOrigin(rec.kind, rec.x, rec.y, rec.rot ?? 0, kind), true).ok,
     });
     // v4 T1-T4 — the teleporters + the broker room (`features/teleportMessages.ts`).
     ({ teleporters: this.teleporters, teleportRoom: this.teleportRoom } = buildTeleporters({

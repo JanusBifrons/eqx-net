@@ -42,6 +42,10 @@ export const SHIPYARD_SLIP_HALF_W = 100;
 export const SHIPYARD_SLIP_X0 = -340;
 export const SHIPYARD_SLIP_X1 = 450;
 
+/** The keel (slip centre, local x; y is 0): where the hull is printed, so where
+ *  a finished ship appears before it flies out of the bow (+x). */
+export const SHIPYARD_KEEL_X = 0;
+
 /** Side walls: centre line |y|, half thickness, half length, and how far
  *  each slides out when the frame opens. */
 export const SHIPYARD_WALL_Y = 175;
@@ -222,7 +226,7 @@ export const SHIPYARD_FRAME_DEF: RigDef = {
   id: 'shipyard-frame',
   // Draw order (over layer): lights, the hull and its fittings, clamps, walls, the gantry.
   parts: [
-    { id: 'keel', parent: null, anchorX: 0, anchorY: 0, joint: lockedHinge, rest: 0, layer: 'over', kind: 'cosmetic', outline: box(-2, -2, 2, 2) },
+    { id: 'keel', parent: null, anchorX: SHIPYARD_KEEL_X, anchorY: 0, joint: lockedHinge, rest: 0, layer: 'over', kind: 'cosmetic', outline: box(-2, -2, 2, 2) },
     ...SHIPYARD_LIGHT_XS.map((_, i) => light(i)),
     ...SHIPYARD_HULL_BLOCK_XS.map((_, j) => hullBlock(j)),
     ...SHIPYARD_FIT_STAGES.map(fit),
