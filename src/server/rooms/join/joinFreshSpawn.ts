@@ -25,6 +25,7 @@ import { getShipKind } from '../../../shared-types/shipKinds.js';
 import type { WelcomeMessage } from '../../../shared-types/messages.js';
 import { factionLooksWelcomeField } from '../../../shared-types/factions.js';
 import { gateLaunch, seedTestWallet } from '../launchGate.js';
+import { getStarterGrantEconomy, grantStarter } from '../../economy/starterGrant.js';
 import { tuningFor } from '../../../shared-types/shipScale/lookup.js';
 import { nearestClearPoint } from '../../../core/bases/baseSite.js';
 import { effectiveShipShieldMax, effectiveShipEnergyMax } from '../../../core/leveling/shipStats.js';
@@ -386,6 +387,11 @@ export function joinFreshSpawn(
     if (typeof parsed.data.initialXp === 'number' && ship.shipInstanceId !== '') {
       getPlayerShipStore().setProgress(ship.shipInstanceId, { xp: parsed.data.initialXp });
     }
+  }
+  // Starter grant: a fresh launch carries the once-per-account packed Capital
+  // crate (economy/starterGrant.ts). A test-seeded hold (initialCargo) is exact.
+  if (!resumedFromStore && ship.shipInstanceId !== '' && d.sectorKey !== null && !(parsed.success && parsed.data.initialCargo !== undefined)) {
+    grantStarter({ econ: getStarterGrantEconomy(), holds: getHoldStore() }, playerId, ship.shipInstanceId, ship.kind);
   }
   ship.shieldLastDamageTick = d.serverTick;
 
