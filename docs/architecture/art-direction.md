@@ -340,6 +340,143 @@ host).
   the connector's plain dark sheath (was a pale blue lattice with bright rims
   and a lit cable). The clamp jaws and work lamps are unchanged.
 
+## Structure style guide
+
+This is how every structure in the restyle look (style C, "shipyard brutalist") is drawn. It is
+written down from the families the owner has approved so far. Follow it when you redraw a kind or
+add a new one; a look that breaks it is a taste change and goes to the owner first.
+
+### Character
+
+- **Working industry, not gloss.** Mass comes from dark slabs; detail comes from rivets, welds,
+  grime, worn hazard stripes and stencilled numbers. Everything looks used.
+- **Quiet next to ships and effects.** Low contrast, dark metal, no bright outlines. The owner
+  turned down a bright, contrasty crane arm ("too bright and contrasty compared to the cable
+  design") and a blue rim light that outlined every bevel. A structure never out-shouts the ships
+  flying past it.
+- **One hero per building.** Each kind has one thing that says what it is at phone zoom: the
+  beacon's sigil screen, the reactor's lit core, the miner's drill head, the gun on a gun pad, the
+  dock's crane. Everything else supports it.
+- **The outline is the footprint.** A drawing fills its catalogue footprint
+  (`structureHalfExtents`) and never draws past it. Size comes only from the catalogue.
+
+### Palette
+
+Every drawer takes its colours from the named constants in `structureStyleKit.ts`. A colour used
+by one family only is a named constant at the top of that family's file; never write a bare hex in
+a drawing.
+
+| Name | Colour | Used for |
+|---|---|---|
+| `DECK` | `0x0d0e0f` | the footprint's deck plate |
+| `SLAB` / `SLAB_DARK` / `SLAB_LIGHT` | `0x2b2e31` / `0x1a1c1e` / `0x3a3d40` | the body: keeps, bezels, corner pads |
+| `STEEL` | `0x3b352e` | oxidised girders, struts, clamp struts |
+| `RUST` / `SOOT` | `0x4a3324` / `0x121110` | weathering, pits and shaft walls |
+| `RIVET` / `WELD` | `0x55565a` / `0x4c4f53` | rivet rows and weld seams |
+| `STENCIL` | `0x8f8a7a` | worn off-white stencil numbers |
+| `HAZARD` / `CRANE` | `0x9c7c2c` / `0x7a6026` | dull, dirty hazard yellow; weathered crane yellow |
+| `LAMP_AMBER` / `LAMP_WHITE` | `0xffa030` / `0xfff1d6` | work lamps and lit glass |
+| `SIGN_GLASS` | `0x101418` | dark screens and sign glass |
+| `CONTAINERS` | four muted browns, greens, blues | stacked cargo containers |
+| `TRIM` / `TRIM_DEAD` | `0x7fd4ff` / `0x142430` | defence trim lamps, powered / unpowered (`structureStyleC.turrets.pad.ts`) |
+| `SLIT_DEAD` | `0x2a1c12` | unlit work-glow glass (`structureStyleC.lightProduction.work.ts`) |
+
+Rig parts (doors, clamps, pads, crane arms) take theirs from `RIG_LOOK_C` (`structureRigLook.ts`).
+Crane arms use `armTruss` / `armRim` / `armRivet` (`0x464c50` / `0x5a6166` / `0x6a7277`), a dark
+gunmetal toned to the grid cable, and carry the cable in its plain dark sheath.
+
+### Building blocks
+
+Build every drawing from the kit's helpers, in this order:
+
+1. `deck` the footprint.
+2. `core` the body slab or slabs (`chamferBox`, `ngon`: chamfered or many-sided).
+3. Structure round it: `frame`, `truss`, `strut`, `walkway`, `scaffold`.
+4. Wear it: `rivets`, `weld`, `grime`, `wornStripe`, `stencil`.
+5. Glass and lamps last: `glow`, `lamp`, `c.lit`.
+
+Two quarter-turns of the same kind must still look like the same building: the bake turns with the
+structure, but the sun does not.
+
+### Light is information
+
+A glow always tells the player something. Glass is baked dark (dead glass), because a bake is always
+drawn as if powered; the live overlay (`BodyStatusHook` on the socket-nub overlay) lights it from the
+structure's row. The colours mean the same thing on every building:
+
+| Light | Meaning | Where |
+|---|---|---|
+| **Amber** | working, charged or holding | light-production windows while producing; battery and bank cells filling from the bottom row; one lamp per mine a mine layer has out |
+| **Red no-supply mark** | powered but starved | a dry reactor (core goes dark too); a light-production kind with nothing to work |
+| **Dark** | idle, blocked, unpowered or unbuilt | every work-glow pane, habitat and tower windows, beam-turret riser lamps |
+| **Blue trim** | a powered defence | gun-pad and coastal trim lamps (`TRIM_DEAD` unpowered); gate door-leaf trim |
+| **Teal** | a powered drill | the miner's drill ring |
+| **Red / green deck strip** | gate shut / open | across a gate's or airlock's opening |
+| **Fill gauge** | how full a store is | storage vault silo rings, cargo bay container strips; everyone sees it (`fillPct`, 10 % steps) |
+
+The owner's colour appears only as livery: colour bands and the owner's sigil, as on ships (the
+beacon's sigil screen is the biggest). Never tint a whole building. The edge (rim) light is a faint
+neutral grey for structures, ships and rocks alike.
+
+Known gap: work lamps and the beacon halo are on the lit layer and stay on when a building is
+unpowered.
+
+### Moving parts
+
+- Moving parts are rigs (`core/articulation`), posed on game time. They are cosmetic unless they
+  decide play; when they do, the server owns them (the turret hatch, the gate doors).
+- A door is never baked: the baked gatehouse leaves its opening clear, so an open door is a clear
+  gap and the solid leaves are the rig's parts.
+- Rig art is one shared `GraphicsContext` per part, drawn once; nothing is redrawn per frame except
+  a cable pulse while goods move.
+- Moving arms match the cable and the buildings: dark gunmetal, no bright rims.
+
+### What each family shipped as
+
+- **Core:** the beacon (Capital) is an octagonal keep holding the owner's sigil screen, inside an
+  X-braced truss frame tied to four corner pads. The connector is a hex node with a clamp strut out
+  to each of its six cable sockets.
+- **Grid cables:** the `cable` line look. A cable leaves each building's socket straight, then bends
+  smoothly; it never aims at a building's centre.
+- **Power:** an eight-panel solar array on a lattice spine that turns to face the sun (look only).
+  The reactor is a keep with four corner cooling fans that stop when it runs dry. Battery and bank
+  cells fill with amber; the floating bar and number are gone.
+- **Fences and gates:** the shield pylon is an octagon plinth with a ringed emitter and diagonal fins.
+  The gate and airlock are squat armoured gatehouses with solid sliding doors. The territory lock's
+  beacon turns only while it is holding.
+- **Light production:** each kind is its own drawing, and its windows light only while it works.
+- **Mining:** the miner is a squat drill tower on four outrigger legs, with the drill head on top.
+- **Turrets:** one shared armoured gun pad in sizes, with the gun on top. The small guns have a body
+  of 0.66 R and a slim barrel whose muzzle is at 1.6 R, so the barrel overhangs the pad. The guns are
+  always out (no pop-up), except the beam turret's hatch.
+- **Coastal guns:** the same pad sized to a naval gunhouse turning on its barbette. Casemates wall
+  the gun in, the 16 in barbette has a glacis, and the 80 cm siege gun sits on a rail carriage.
+- **Storage and habitation:** the vault's silo rings and the cargo bay's container strips show the
+  fill. Habitat and tower windows go dark when unpowered.
+- **Transport:** the freight dock's loading pad lies outside the building. The building is a solid
+  dock house with a crane tower carrying the slewing crane.
+
+### Changing a look
+
+The process is the Stage 4 recipe (`docs/plans/structure-restyle-stage4.md` §2 and §5), in short:
+
+1. Ask the gameplay questions first, in plain words ("what should happen when...").
+2. Draw only in the family's own file (`structureStyleC.<family>.ts`), and bump that family's
+   `version`, so only its bakes re-forge.
+3. Draw it in both renderers: the phone draws on the main thread, the desktop in a worker.
+4. Check stills on a Pixel 7 held sideways and on desktop, by eye, before anyone else sees them.
+   Label staged art-lab shots as staged.
+5. Show old against new in an artifact, and let the owner pick. A taste change needs the owner's
+   OK; a bug fix does not.
+
+Turned down so far:
+- a bright, contrasty crane arm;
+- a blue rim outline;
+- a shorter gun barrel;
+- the old pale guns ("out of style"; capitals were redrawn too).
+
+The owner kept the pale beam-turret hatch frame.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
