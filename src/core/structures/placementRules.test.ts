@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PLACEMENT_REJECTION_TEXT, placementRejection, canPlaceStructureAt } from './placementRules.js';
+import { PLACEMENT_REJECTION_TEXT, placementRejection, placementRejectionNotice, canPlaceStructureAt, type PlacementRejection } from './placementRules.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { GridObstacle } from './Grid.js';
 
@@ -145,5 +145,17 @@ describe("placementRules — a freight dock's landing pad stays clear", () => {
   it('a footprint without a kind reserves nothing beyond its box (legacy callers)', () => {
     const bare = { ...dockAt(0, 0), kind: undefined };
     expect(placementRejection('solar', 0, PAD.cy, [bare])).toBeNull();
+  });
+});
+
+describe('placementRejectionNotice — the refused-placement notice', () => {
+  it('maps every rejection reason to its build-here notice', () => {
+    const expected: Record<PlacementRejection, string> = {
+      'overlap-structure': "Can't build here: too close to another structure",
+      'overlap-obstacle': "Can't build here: blocked by an asteroid or wreck",
+      'overlap-pad': "Can't build here: keep the landing pad clear",
+    };
+    expect(Object.keys(PLACEMENT_REJECTION_TEXT).sort()).toEqual(Object.keys(expected).sort());
+    for (const r of Object.keys(expected) as PlacementRejection[]) expect(placementRejectionNotice(r)).toBe(expected[r]);
   });
 });

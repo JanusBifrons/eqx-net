@@ -44,6 +44,10 @@ export interface SetHullExposedCmd { type: 'SET_HULL_EXPOSED'; id: string; expos
  *  reset to the un-upgraded path. The client predWorld runs the same setter so
  *  prediction stays in lockstep. */
 export interface SetStatMulCmd     { type: 'SET_STAT_MUL'; id: string; topSpeed?: number; turnRate?: number }
+/** Swap every collider of body `id` to `groups` (a rig host keeps ignoring
+ *  its own rig parts). A blueprint spawns in `BLUEPRINT_COLLISION_GROUPS` and
+ *  is set back to the default on completion (hologram pass-through). */
+export interface SetCollisionGroupsCmd { type: 'SET_COLLISION_GROUPS'; id: string; groups: number }
 /** Missile splash impulse. MissileSimulation queues these on detonate; the
  *  SectorRoom drains the queue and posts them; this dispatcher resolves the
  *  entityId to a Rapier body and applies the linear impulse. Silent no-op
@@ -78,7 +82,7 @@ export interface RemoveForceFieldCmd { type: 'REMOVE_FORCE_FIELD'; id: string }
 export interface RigAttachCmd { type: 'RIG_ATTACH'; id: string; rigId: string }
 export interface RigClipCmd   { type: 'RIG_CLIP';   id: string; clipId: string | null; startTick: number; targetX?: number; targetY?: number; from?: number; rate?: number }
 export interface BatchCmd { type: 'BATCH'; cmds: WorkerCommand[] } // in order, no step between (one wreck's pieces)
-export type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | RigAttachCmd | RigClipCmd | BotWarpCmd | SetTimeScaleCmd | BatchCmd;
+export type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | SetCollisionGroupsCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | RigAttachCmd | RigClipCmd | BotWarpCmd | SetTimeScaleCmd | BatchCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 export interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }

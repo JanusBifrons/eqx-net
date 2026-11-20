@@ -6,7 +6,8 @@ import { RIG_DEFS, RIG_FAMILIES, rigById, rigForStructureKind } from './rigCatal
 
 /** Kind -> rig id before the split (the one map in rigCatalogue.ts), plus the
  *  rigs added since (Family 1: the solar tracker, the reactor fans;
- *  F2: the territory lock beacon; solid doors: the gate and airlock doors). */
+ *  F2: the territory lock beacon; solid doors: the gate and airlock doors;
+ *  F3J: the shipyard build frame). */
 const BEFORE_SPLIT: Readonly<Record<string, string>> = {
   freight_dock: 'dock-crane',
   capital: 'capital-crane',
@@ -16,6 +17,7 @@ const BEFORE_SPLIT: Readonly<Record<string, string>> = {
   territory_lock: 'lock-beacon',
   shield_gate: 'gate-doors',
   shield_airlock: 'airlock-doors',
+  shipyard: 'shipyard-frame',
 };
 
 describe('rig family files', () => {
@@ -36,7 +38,7 @@ describe('rig family files', () => {
     expect([...owner.keys()].sort()).toEqual(RIG_DEFS.map((d) => d.id).sort());
     expect(Object.fromEntries(owner)).toEqual({
       'capital-crane': 'core', 'sandbox-door-turret': 'turrets', 'dock-crane': 'transport', 'solar-tracker': 'power', 'reactor-fans': 'power',
-      'lock-beacon': 'fences', 'gate-doors': 'fences', 'airlock-doors': 'fences',
+      'lock-beacon': 'fences', 'gate-doors': 'fences', 'airlock-doors': 'fences', 'shipyard-frame': 'heavyIndustry',
     });
   });
 

@@ -2019,7 +2019,7 @@ export class SectorRoom extends Room<SectorState> {
       takeSlot: () => this.freeSlots.pop(),
       postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin, shipKindId, sleeping) =>
         this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(spin?.settleSpeed ? { settleSpeed: spin.settleSpeed, settleSpin: spin.settleSpin ?? 0 } : {}), ...(shipKindId !== undefined ? { shipKindId } : {}), ...(sleeping === true ? { sleeping } : {}) }),
-      postRigAttach: (id, rigId) => this.postToWorker({ type: 'RIG_ATTACH', id, rigId }),
+      postRigAttach: (id, rigId) => this.postToWorker({ type: 'RIG_ATTACH', id, rigId }), postSetCollisionGroups: (id, groups) => this.postToWorker({ type: 'SET_COLLISION_GROUPS', id, groups }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -2130,6 +2130,7 @@ export class SectorRoom extends Room<SectorState> {
     // power aggregation. Runs OFF the 60 Hz physics tick (unref'd timer).
     this.structureGrid = new StructureGridSubsystem({
       registry: this.structureRegistry,
+      shipHulls: () => this.obstacles.hullCircles(''), solidify: (id) => this.swarmSpawner.solidifyStructure(id), // hologram pass-through
       getHealth: (id) => this.swarmHealth.get(id) ?? 0,
       setHealth: (id, hp) => { this.swarmHealth.set(id, hp); },
       despawn: (id) => {

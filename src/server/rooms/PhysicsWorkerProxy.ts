@@ -56,6 +56,9 @@ export type WorkerCmd =
    *  identically (risk #1 / invariants #4, #12). Omitting `topSpeed`/`turnRate`
    *  (both undefined) resets to the un-upgraded factors. */
   | { type: 'SET_STAT_MUL'; id: string; topSpeed?: number; turnRate?: number }
+  /** Hologram pass-through: a blueprint body's collider groups swap
+   *  (`World.setCollisionGroups`). */
+  | { type: 'SET_COLLISION_GROUPS'; id: string; groups: number }
   /** Missile splash impulse. The server's MissileSimulation queues these on
    *  detonate; the SectorRoom drains the queue each tick and posts them as
    *  individual commands. The worker resolves `entityId` to a Rapier body
