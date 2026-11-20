@@ -4,6 +4,7 @@ import { setEconomyRouteProvider } from '../routes/economyRouter.js';
 import { EconomyStore, hydrateEconomyStore } from '../economy/EconomyStore.js';
 import { TradeDirector } from '../economy/TradeDirector.js';
 import { getTradeSink, setTradeSink } from '../economy/tradeSink.js';
+import { setStarterGrantEconomy } from '../economy/starterGrant.js';
 import { ConvoyDirector, isConvoysDisabled } from '../economy/ConvoyDirector.js';
 import { isNpcBasesDisabled } from '../bases/NpcBaseSubsystem.js';
 import { pushNotifier } from '../push/PushNotifier.js';
@@ -31,6 +32,7 @@ export function startEconomy(deps: { logger: Logger; galaxyRooms: Map<string, Se
   });
   world.tradeDirector.start();
   setTradeSink(world.tradeDirector);
+  setStarterGrantEconomy(world.economyStore);
   // T2 (plan soft-leaping-truffle v3) — convoys between the galaxy's NPC bases.
   if (!isConvoysDisabled() && !isNpcBasesDisabled()) {
     const convoyRooms = new Map<string, SectorRoom>();
