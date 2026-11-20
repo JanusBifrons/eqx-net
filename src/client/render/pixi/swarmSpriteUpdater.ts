@@ -130,6 +130,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
   const fxNow = ctx.fxNowMs ?? now; // game-speed presentation clock (wreck glow / death clock)
   const slewDtSec = ctx.slewDtSec; // P3.8 — structure-mount slew rate input
   const wreckDescs = mirror.wrecks;
+  ctx.wrecks?.setField(mirror.wreckField ?? null); // value-compared: no-op unless the field changed
   ctx.wrecks?.retain(wreckDescs ?? NO_WRECKS);
   ctx.wreckArt?.retain(wreckDescs ?? NO_WRECKS);
   for (const [entityId, entry] of mirror.swarm) {
