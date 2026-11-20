@@ -2129,6 +2129,8 @@ export class SectorRoom extends Room<SectorState> {
     // power aggregation. Runs OFF the 60 Hz physics tick (unref'd timer).
     this.structureGrid = new StructureGridSubsystem({
       registry: this.structureRegistry,
+      // The pulse period the timer below runs at (the build ETA reads it too).
+      pulseMs: this.testMode && roomOpts.structureGridPulseMs ? Math.max(20, roomOpts.structureGridPulseMs) : TRANSFER_PULSE_MS,
       shipHulls: () => this.obstacles.hullCircles(''), solidify: (id) => this.swarmSpawner.solidifyStructure(id), // hologram pass-through
       getHealth: (id) => this.swarmHealth.get(id) ?? 0,
       setHealth: (id, hp) => { this.swarmHealth.set(id, hp); },
@@ -2265,10 +2267,7 @@ export class SectorRoom extends Room<SectorState> {
       setWallActive: (id, active) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active }),
       removeWall: (id) => this.postToWorker({ type: 'REMOVE_WALL', id }),
     });
-    const pulseMs = this.testMode && roomOpts.structureGridPulseMs
-      ? Math.max(20, roomOpts.structureGridPulseMs)
-      : TRANSFER_PULSE_MS;
-    this.structureGridTimer = this.gameClock.every(pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
+    this.structureGridTimer = this.gameClock.every(this.structureGrid.pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
     this.structureTurretTimer = this.gameClock.every(TURRET_TICK_MS, guarded('structure-turret-tick', () => this.structureTurretTick()));
 
