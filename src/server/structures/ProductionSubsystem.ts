@@ -43,7 +43,7 @@ import { getStructureKind, type StructureKindId } from '../../shared-types/struc
 import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecipe } from '../../shared-types/blueprints.js';
 import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
-import { structureWorkRate } from '../../shared-types/structurePower.js';
+import { advanceProgress } from './productionProgress.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
@@ -118,14 +118,6 @@ function baseEffect(id: RecipeId): EffectiveRecipe {
     BASE_EFFECT.set(id, e);
   }
   return e;
-}
-
-/** Advance a loaded cycle by one pulse at the owner throttle; true once it
- *  is complete (a hair of slack so tenths always add up to a whole cycle). */
-function advanceProgress(rec: StructureRecord, cyclePulses: number): boolean {
-  const progress = rec.prodProgress ?? 0;
-  if (progress < cyclePulses) rec.prodProgress = Math.min(cyclePulses, progress + structureWorkRate(rec));
-  return (rec.prodProgress ?? 0) >= cyclePulses - 1e-6;
 }
 
 export class ProductionSubsystem {
