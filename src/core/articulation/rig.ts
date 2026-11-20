@@ -1,0 +1,414 @@
+/**
+ * Articulation rig model (structure-restyle 2a, plan §5).
+ *
+ * A rig is a tree of PARTS attached to a host entity (a structure or a ship;
+ * nothing here knows which). Each part has one joint:
+ *  - hinge: an angle (rad) about the part's anchor, within [min, max];
+ *  - slide: an offset (world units) along a local axis, within [min, max];
+ *  - lift: a height out of the plane, within [min, max]. It has NO in-plane
+ *    transform: the part stays on its anchor (a physical part's collider
+ *    never moves) and renderers draw the rise from `liftProgress` (a pop-up
+ *    turret, a ship's pop-out weapon).
+ *
+ * CLIPS are keyframed joint targets over GAME ticks. A clip only drives
+ * clip-owned joints (deploy slides, door hinges, arm segments); a weapon
+ * mount's angle stays owned by `WeaponMountController.tickSlot` (invariant
+ * #12). A mount rides a moving part through `mountBridge.ts`, which exposes
+ * the part's pose as the mount's parent frame and never writes the angle.
+ *
+ * `buildRig` validates a definition once and compiles it to index arrays so
+ * `evaluateRig` (evaluate.ts) runs with no lookups by id and no allocation.
+ */
+import { easeCode, type EaseId } from './easing.js';
+
+export type DrawLayer = 'under' | 'plane' | 'over';
+/** cosmetic = drawn only; physical = a kinematic body in the physics worker (2d). */
+export type PartKind = 'cosmetic' | 'physical';
+
+export interface HingeJointDef {
+  readonly type: 'hinge';
+  /** Angle limits (rad), relative to the part's base angle. */
+  readonly min: number;
+  readonly max: number;
+}
+
+export interface SlideJointDef {
+  readonly type: 'slide';
+  /** Slide direction in the part's frame before the joint (parent angle +
+   *  `baseAngle`); normalised at build. Default (1, 0). */
+  readonly axisX?: number;
+  readonly axisY?: number;
+  /** Offset limits (world units) along the axis. */
+  readonly min: number;
+  readonly max: number;
+}
+
+export interface LiftJointDef {
+  readonly type: 'lift';
+  /** Height limits (any unit: renderers use only the progress min -> max). */
+  readonly min: number;
+  readonly max: number;
+}
+
+export type JointDef = HingeJointDef | SlideJointDef | LiftJointDef;
+
+export interface PartDef {
+  readonly id: string;
+  /** Parent part id, or null for a part fixed to the host. */
+  readonly parent: string | null;
+  /** Anchor offset in the parent's frame (host frame for a root part). */
+  readonly anchorX: number;
+  readonly anchorY: number;
+  /** Fixed orientation of the part in its parent's frame (rad). Default 0. */
+  readonly baseAngle?: number;
+  readonly joint: JointDef;
+  /** Joint value at rest (no clip, or before a clip starts). */
+  readonly rest: number;
+  readonly layer: DrawLayer;
+  readonly kind: PartKind;
+  /** Optional outline in the part's own frame, flat [x0, y0, x1, y1, ...]
+   *  (render 2c and physics 2d read it; evaluation ignores it). */
+  readonly outline?: readonly number[];
+  /** A cosmetic hinge that AIMS: when the caller passes an aim direction to
+   *  `evaluateRig` (host frame, rad), the part turns so its frame's +x points
+   *  that way (within its limits) and clips do not drive it; with no aim it
+   *  poses like any part. Look only (stage-4 plan §2 rule 5), e.g. a solar
+   *  panel facing the sector's sun. Hinge + `cosmetic` only. */
+  readonly aim?: boolean;
+  /** A cosmetic hinge that SPINS (rad per game tick, signed): when the
+   *  caller passes a spin clock to `evaluateRig` (game ticks the part has
+   *  been running), the part turns at this rate from its rest and clips do
+   *  not drive it; with no clock it sits at rest (the server). Look only,
+   *  e.g. a reactor's cooling fan. A full-turn cosmetic hinge, never also `aim`. */
+  readonly spin?: number;
+}
+
+export interface KeyframeDef {
+  /** Game ticks from the clip start. */
+  readonly tick: number;
+  /** Joint value at this key. Ignored when `fromTarget` is set. */
+  readonly value?: number;
+  /** Take the value from the IK solution for the clip's target (targeted
+   *  clips only; the track's part must be in the clip's `ik.chain`). */
+  readonly fromTarget?: boolean;
+  /** Curve INTO this key from the previous one. Default 'inOut'. */
+  readonly ease?: EaseId;
+  /** A waypoint value written for the clip's `bend` fold (targeted clips,
+   *  chain tracks only): when the solve for the target takes the OTHER fold,
+   *  the key uses `-value` (the same pose mirrored across the parent bone),
+   *  so a waypoint before or after a `tipPath` segment is on the fold the
+   *  arm holds and the segment starts in place. */
+  readonly foldMirror?: boolean;
+}
+
+export interface TrackDef {
+  readonly part: string;
+  /** Strictly increasing ticks. A first key after tick 0 eases from rest. */
+  readonly keys: readonly KeyframeDef[];
+}
+
+export interface IkChainDef {
+  /** Part ids root -> tip; each part's parent is the previous one. */
+  readonly chain: readonly string[];
+  /** End effector in the tip part's frame. */
+  readonly tipX: number;
+  readonly tipY: number;
+  /** Which way a 2-bone chain folds: +1 bends the second joint
+   *  counter-clockwise (positive), -1 clockwise. Fixed per clip so an arm
+   *  always folds the same way. Default +1. */
+  readonly bend?: 1 | -1;
+  /** Optional swing side (host-frame direction, need not be unit). Per
+   *  target, a 2-bone chain takes whichever fold puts its middle joint
+   *  further along this direction, so the elbow always rides on that side
+   *  (a crane's elbow out over its pad, never back over its own building).
+   *  `bend` breaks a tie. Omit for a fixed `bend`. */
+  readonly swingSide?: { readonly x: number; readonly y: number };
+  /** Move the tip in a straight line between a waypoint and the target:
+   *  in a segment between two keys where one key is `fromTarget`, the chain
+   *  is solved each evaluation for the eased point between the two keys'
+   *  tips (fold fixed to the target's), instead of blending joint values.
+   *  A joint blend there swings the tip out sideways (one joint leads the
+   *  other). Needs every chain part tracked, all on the same key ticks. */
+  readonly tipPath?: boolean;
+}
+
+export interface ClipDef {
+  readonly id: string;
+  readonly tracks: readonly TrackDef[];
+  /** Present on a targeted clip (e.g. arm-reach). */
+  readonly ik?: IkChainDef;
+}
+
+export interface RigDef {
+  readonly id: string;
+  readonly parts: readonly PartDef[];
+  readonly clips: readonly ClipDef[];
+  /** The pose with NO clip record (never played, or cleared): this clip's
+   *  held end pose. Absent: every part at rest. A pop-up turret idles
+   *  deployed (hatch open, gun up), so a structure no clip has touched looks
+   *  and fights as it always has. Must name an untargeted clip (no IK). */
+  readonly idleClip?: string;
+}
+
+export const JOINT_HINGE = 0;
+export const JOINT_SLIDE = 1;
+export const JOINT_LIFT = 2;
+
+/** A compiled track: flat key arrays, read-only after build. */
+export interface CompiledTrack {
+  readonly part: number;
+  readonly ticks: Float64Array;
+  readonly values: Float64Array;
+  readonly ease: Uint8Array;
+  /** 1 where the key's value comes from the IK solution. */
+  readonly fromTarget: Uint8Array;
+  /** Position of the track's part in the clip's IK chain, or -1. */
+  readonly chainSlot: number;
+  /** 1 where the key's value mirrors with the fold (`KeyframeDef.foldMirror`). */
+  readonly mirror: Uint8Array;
+}
+
+export interface CompiledClip {
+  readonly id: string;
+  readonly tracks: readonly CompiledTrack[];
+  /** Per part (rig order): index into `tracks`, or -1 (part stays at rest). */
+  readonly trackOfPart: Int16Array;
+  /** Last key tick over all tracks: after it the clip holds. */
+  readonly endTick: number;
+  /** IK chain part indices root -> tip (empty for a plain clip). */
+  readonly chain: Int16Array;
+  readonly tipX: number;
+  readonly tipY: number;
+  /** IK fold direction (see `IkChainDef.bend`). */
+  readonly bend: 1 | -1;
+  /** Swing side (see `IkChainDef.swingSide`); (0, 0) keeps the fixed `bend`. */
+  readonly sideX: number;
+  readonly sideY: number;
+  /** Straight tip path between a waypoint and the target (`IkChainDef.tipPath`). */
+  readonly tipPath: boolean;
+}
+
+/** A built rig. Parts are in topological order (every parent before its
+ *  children); `parent[i]` is -1 for a host-fixed part. */
+export interface Rig {
+  readonly id: string;
+  readonly partCount: number;
+  readonly partIds: readonly string[];
+  readonly parts: readonly PartDef[];
+  readonly parent: Int16Array;
+  readonly jointType: Uint8Array;
+  readonly anchorX: Float64Array;
+  readonly anchorY: Float64Array;
+  readonly baseAngle: Float64Array;
+  readonly axisX: Float64Array;
+  readonly axisY: Float64Array;
+  readonly min: Float64Array;
+  readonly max: Float64Array;
+  readonly rest: Float64Array;
+  readonly clips: readonly CompiledClip[];
+  /** Longest IK chain over all clips (sizes the pose's IK scratch). */
+  readonly maxChain: number;
+  /** Clip index of `RigDef.idleClip` (the no-clip pose), or -1 (rest). */
+  readonly idleClip: number;
+  /** 1 for an aiming part (`PartDef.aim`), in rig order. */
+  readonly aims: Uint8Array;
+  /** A spinning part's rate (`PartDef.spin`, rad per tick), else 0, in rig order. */
+  readonly spins: Float64Array;
+}
+
+function fail(rig: string, msg: string): never {
+  throw new Error(`articulation rig '${rig}': ${msg}`);
+}
+
+/** Validate and compile a rig definition. Throws on a malformed definition
+ *  (build time only, never in the evaluation path). */
+export function buildRig(def: RigDef): Rig {
+  const rid = def.id;
+  const byId = new Map<string, PartDef>();
+  for (const p of def.parts) {
+    if (byId.has(p.id)) fail(rid, `duplicate part '${p.id}'`);
+    byId.set(p.id, p);
+  }
+  // Topological order: stable (definition order) DFS from parents.
+  const ordered: PartDef[] = [];
+  const state = new Map<string, number>(); // 1 visiting, 2 done
+  const visit = (p: PartDef): void => {
+    const s = state.get(p.id);
+    if (s === 2) return;
+    if (s === 1) fail(rid, `parent cycle at '${p.id}'`);
+    state.set(p.id, 1);
+    if (p.parent !== null) {
+      const par = byId.get(p.parent);
+      if (!par) fail(rid, `part '${p.id}' has unknown parent '${p.parent}'`);
+      visit(par);
+    }
+    state.set(p.id, 2);
+    ordered.push(p);
+  };
+  for (const p of def.parts) visit(p);
+
+  const n = ordered.length;
+  if (n > 0x7fff) fail(rid, 'too many parts');
+  const index = new Map<string, number>();
+  ordered.forEach((p, i) => index.set(p.id, i));
+  const parent = new Int16Array(n);
+  const jointType = new Uint8Array(n);
+  const anchorX = new Float64Array(n);
+  const anchorY = new Float64Array(n);
+  const baseAngle = new Float64Array(n);
+  const axisX = new Float64Array(n);
+  const axisY = new Float64Array(n);
+  const min = new Float64Array(n);
+  const max = new Float64Array(n);
+  const rest = new Float64Array(n);
+  const aims = new Uint8Array(n);
+  const spins = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = ordered[i]!;
+    const j = p.joint;
+    if (!(j.min <= j.max)) fail(rid, `part '${p.id}' has min > max`);
+    if (!(p.rest >= j.min && p.rest <= j.max)) fail(rid, `part '${p.id}' rest is outside its limits`);
+    if (p.outline && p.outline.length % 2 !== 0) fail(rid, `part '${p.id}' outline has an odd length`);
+    parent[i] = p.parent === null ? -1 : index.get(p.parent)!;
+    anchorX[i] = p.anchorX;
+    anchorY[i] = p.anchorY;
+    baseAngle[i] = p.baseAngle ?? 0;
+    min[i] = j.min;
+    max[i] = j.max;
+    rest[i] = p.rest;
+    if (p.aim) {
+      if (j.type !== 'hinge' || p.kind !== 'cosmetic') fail(rid, `part '${p.id}' aims but is not a cosmetic hinge`);
+      aims[i] = 1;
+    }
+    if (p.spin !== undefined && p.spin !== 0) {
+      if (j.type !== 'hinge' || p.kind !== 'cosmetic') fail(rid, `part '${p.id}' spins but is not a cosmetic hinge`);
+      if (p.aim) fail(rid, `part '${p.id}' both aims and spins`);
+      if (!(j.min <= -Math.PI && j.max >= Math.PI)) fail(rid, `part '${p.id}' spins but its hinge is not a full turn`);
+      if (!Number.isFinite(p.spin)) fail(rid, `part '${p.id}' has a non-finite spin rate`);
+      spins[i] = p.spin;
+    }
+    if (j.type === 'hinge') {
+      jointType[i] = JOINT_HINGE;
+    } else if (j.type === 'lift') {
+      jointType[i] = JOINT_LIFT;
+    } else {
+      jointType[i] = JOINT_SLIDE;
+      const ax = j.axisX ?? 1;
+      const ay = j.axisY ?? 0;
+      const len = Math.sqrt(ax * ax + ay * ay);
+      if (!(len > 0)) fail(rid, `part '${p.id}' has a zero slide axis`);
+      axisX[i] = ax / len;
+      axisY[i] = ay / len;
+    }
+  }
+
+  let maxChain = 0;
+  const clipIds = new Set<string>();
+  const clips = def.clips.map((c): CompiledClip => {
+    if (clipIds.has(c.id)) fail(rid, `duplicate clip '${c.id}'`);
+    clipIds.add(c.id);
+    const chain = new Int16Array(c.ik ? c.ik.chain.length : 0);
+    if (c.ik) {
+      if (c.ik.chain.length === 0) fail(rid, `clip '${c.id}' has an empty IK chain`);
+      c.ik.chain.forEach((pid, k) => {
+        const pi = index.get(pid);
+        if (pi === undefined) fail(rid, `clip '${c.id}' IK chain names unknown part '${pid}'`);
+        if (k > 0 && parent[pi] !== chain[k - 1]) fail(rid, `clip '${c.id}' IK chain is not a parent chain at '${pid}'`);
+        chain[k] = pi;
+      });
+      if (chain.length > maxChain) maxChain = chain.length;
+    }
+    const trackOfPart = new Int16Array(n).fill(-1);
+    let endTick = 0;
+    const tracks = c.tracks.map((t, ti): CompiledTrack => {
+      const pi = index.get(t.part);
+      if (pi === undefined) fail(rid, `clip '${c.id}' tracks unknown part '${t.part}'`);
+      if (trackOfPart[pi] !== -1) fail(rid, `clip '${c.id}' has two tracks for '${t.part}'`);
+      trackOfPart[pi] = ti;
+      if (t.keys.length === 0) fail(rid, `clip '${c.id}' track '${t.part}' has no keys`);
+      const chainSlot = chain.indexOf(pi);
+      const m = t.keys.length;
+      const ticks = new Float64Array(m);
+      const values = new Float64Array(m);
+      const ease = new Uint8Array(m);
+      const fromTarget = new Uint8Array(m);
+      const mirror = new Uint8Array(m);
+      let prev = -Infinity;
+      t.keys.forEach((k, ki) => {
+        if (!(k.tick >= 0) || !(k.tick > prev)) fail(rid, `clip '${c.id}' track '${t.part}' key ticks must be >= 0 and increasing`);
+        prev = k.tick;
+        ticks[ki] = k.tick;
+        if (k.fromTarget) {
+          if (chainSlot < 0) fail(rid, `clip '${c.id}' track '${t.part}' uses the target but is not in the IK chain`);
+          fromTarget[ki] = 1;
+          values[ki] = rest[pi]!; // fallback when no target / solver
+        } else {
+          if (k.value === undefined || !Number.isFinite(k.value)) fail(rid, `clip '${c.id}' track '${t.part}' key needs a value`);
+          values[ki] = k.value;
+        }
+        ease[ki] = easeCode(k.ease ?? 'inOut');
+        if (k.foldMirror) {
+          if (chainSlot < 0 || k.fromTarget) fail(rid, `clip '${c.id}' track '${t.part}' foldMirror needs a value key in the IK chain`);
+          mirror[ki] = 1;
+        }
+      });
+      if (prev > endTick) endTick = prev;
+      return { part: pi, ticks, values, ease, fromTarget, chainSlot, mirror };
+    });
+    if (c.ik?.tipPath) {
+      const first = trackOfPart[chain[0]!]!;
+      for (let k = 0; k < chain.length; k++) {
+        const pi = chain[k]!;
+        if (jointType[pi] !== JOINT_HINGE) fail(rid, `clip '${c.id}' tipPath needs a hinge chain`);
+        const ti = trackOfPart[pi]!;
+        if (ti < 0) fail(rid, `clip '${c.id}' tipPath needs a track for every chain part`);
+        const a = tracks[first]!.ticks, b = tracks[ti]!.ticks;
+        if (a.length !== b.length || a.some((v, i) => v !== b[i])) fail(rid, `clip '${c.id}' tipPath chain tracks must share key ticks`);
+      }
+    }
+    return {
+      id: c.id, tracks, trackOfPart, endTick, chain, tipX: c.ik?.tipX ?? 0, tipY: c.ik?.tipY ?? 0,
+      bend: c.ik?.bend ?? 1, sideX: c.ik?.swingSide?.x ?? 0, sideY: c.ik?.swingSide?.y ?? 0,
+      tipPath: c.ik?.tipPath ?? false,
+    };
+  });
+
+  let idleClip = -1;
+  if (def.idleClip !== undefined) {
+    idleClip = clips.findIndex((c) => c.id === def.idleClip);
+    if (idleClip < 0) fail(rid, `unknown idle clip '${def.idleClip}'`);
+    if (clips[idleClip]!.chain.length > 0) fail(rid, `idle clip '${def.idleClip}' is targeted`);
+  }
+
+  return {
+    id: rid, partCount: n, partIds: ordered.map((p) => p.id), parts: ordered,
+    parent, jointType, anchorX, anchorY, baseAngle, axisX, axisY, min, max, rest,
+    clips, maxChain, idleClip, aims, spins,
+  };
+}
+
+/** A lift part's progress, 0 (min, sunk) .. 1 (max, fully risen), at joint
+ *  value `v`; 0 for a zero-span lift. Allocation-free. */
+export function liftProgress(rig: Rig, i: number, v: number): number {
+  const lo = rig.min[i]!, span = rig.max[i]! - lo;
+  if (!(span > 0)) return 0;
+  const f = (v - lo) / span;
+  return f < 0 ? 0 : f > 1 ? 1 : f;
+}
+
+/** Index of part `id` in rig order, or -1. Build/setup time only. */
+export function rigPartIndex(rig: Rig, id: string): number {
+  return rig.partIds.indexOf(id);
+}
+
+/** Index of clip `id`, or -1. Allocation-free linear scan (rigs hold few clips). */
+export function rigClipIndex(rig: Rig, id: string): number {
+  const cs = rig.clips;
+  for (let i = 0; i < cs.length; i++) if (cs[i]!.id === id) return i;
+  return -1;
+}
+
+/** Axis-aligned box outline [x0, x1] × [y0, y1] in a part's frame, CCW. */
+export function box(x0: number, y0: number, x1: number, y1: number): number[] {
+  return [x0, y0, x1, y0, x1, y1, x0, y1];
+}

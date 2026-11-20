@@ -35,7 +35,7 @@ import {
 import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
-import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
+import { batteryChargeOf, chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
 import type { Connection, FlowMaterial } from '../../core/structures/Connection.js';
 import {
   CONSTRUCTION_PULSE_AMOUNT,
@@ -53,6 +53,9 @@ import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '.
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
 import { StructureMountTicker, type TurretTargetView } from './StructureMountTicker.js';
+import { createRigPose, rigDeployed, type RigPose } from '../../core/articulation/evaluate.js';
+import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
+import type { Rig } from '../../core/articulation/rig.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
@@ -68,13 +71,6 @@ const FALLBACK_TARGET_SIGNATURE = 10;
 /** Shared empty obstacle list for the mining-beam surface clip (the building-block
  *  leg is deferred — see `resolveMiningClip`). Module const ⇒ no per-pulse alloc. */
 const EMPTY_MINING_OBSTACLES: readonly MiningBeamObstacle[] = [];
-
-/** Stored-power capacity of a structure kind — > 0 for every power store
- *  (Battery, Battery Bank), 0 otherwise. The battery functions key on this,
- *  never on a kind id, so each store charges up to its OWN capacity. */
-function powerStoreCap(kind: string): number {
-  return getStructureKind(kind).powerStorageCapacity ?? 0;
-}
 
 /**
  * Resolve a laser turret's CONTINUOUS-beam firing params (playtest 2026-06-10
@@ -208,6 +204,11 @@ export interface StructureGridHooks {
   /** Economy v2 — a PREPAID structure (placed from a packed item) finished
    *  deconstructing: the room repacks it. Called BEFORE it is despawned. */
   onRepack?: (rec: StructureRecord) => void;
+  /** Structure-restyle 2h: the room's game tick (`serverTick`), what a rig
+   *  clip record is timed in. A turret whose rig is stowed (a pop-up packed
+   *  under its hatch, or still rising) holds fire (`rigDeployed`). Absent ⇒
+   *  no rig gate (unit harnesses). */
+  rigTick?: () => number;
 }
 
 export interface GridPulseResult {
@@ -233,6 +234,8 @@ export class StructureGridSubsystem {
 
   /** Coastal defences — per-mount fire control for every defence structure. */
   private readonly mounts: StructureMountTicker;
+  /** Rig pose scratch per rig (`turretDeployed`), made once per rig. */
+  private readonly rigScratch = new Map<Rig, RigPose>();
   /** Quad AA: the next barrel to fire, per structure. */
   private readonly aaBarrel = new Map<string, number>();
   private turretTicks = 0;
@@ -319,6 +322,14 @@ export class StructureGridSubsystem {
         this.setActive(rec, false);
         continue;
       }
+      // A stowed pop-up turret neither acquires nor fires (its barrels stay put).
+      if (!this.turretDeployed(rec)) {
+        rec.turretTargetEntityId = undefined;
+        rec.turretTargetPlayer = undefined;
+        this.mounts.idle(rec);
+        this.setActive(rec, false);
+        continue;
+      }
       // Reach is the gun's, whatever the level (a level upgrades damage +
       // HP; `fireMount` reads the damage factor).
       const target = this.mounts.tick(rec, kind, mounts, nowMs, dt);
@@ -333,6 +344,20 @@ export class StructureGridSubsystem {
       this.mounts.prune((id) => reg.get(id) !== undefined);
       for (const id of this.aaBarrel.keys()) if (reg.get(id) === undefined) this.aaBarrel.delete(id);
     }
+  }
+
+  /** Structure-restyle 2h: is `rec`'s rig deployed (no rig, no lift joint,
+   *  or every lift fully raised at the room's tick)? No clip record ⇒ the
+   *  rig's idle pose (a pop-up turret idles deployed). Allocation-free after
+   *  the first call per rig. */
+  private turretDeployed(rec: StructureRecord): boolean {
+    const tickOf = this.hooks.rigTick;
+    if (tickOf === undefined) return true;
+    const rig = rigForStructureKind(rec.kind);
+    if (rig === null) return true;
+    let scratch = this.rigScratch.get(rig);
+    if (scratch === undefined) { scratch = createRigPose(rig); this.rigScratch.set(rig, scratch); }
+    return rigDeployed(rig, rec.rigClip ?? null, tickOf(), scratch);
   }
 
   /** Every hostile in range (the room's hook), else the nearest one from
@@ -556,61 +581,11 @@ export class StructureGridSubsystem {
       // A capital-less island is unpowered (raw rule) — batteries inert there.
       if (!hasCapital) return;
       if (netPower > 0) {
-        const left = this.chargeComponentBatteries(members, netPower);
+        const left = chargeComponentBatteries(this.hooks.registry, members, netPower);
         if (left > 0) this.hooks.chargeCapacitors?.(members, left);
       }
-      else if (netPower < 0) this.dischargeComponentBatteries(members, -netPower);
+      else if (netPower < 0) dischargeComponentBatteries(this.hooks.registry, members, -netPower, this.batteryRescued);
     });
-  }
-
-  /** Charge a component's not-yet-full power stores (every kind with a
-   *  `powerStorageCapacity`, each capped at its own) with `surplus`, split evenly.
-   *  Returns the surplus the batteries could not take (v4 T1: it charges
-   *  teleporter capacitors). */
-  private chargeComponentBatteries(
-    members: readonly string[],
-    surplus: number,
-  ): number {
-    let count = 0;
-    for (const id of members) {
-      const rec = this.hooks.registry.get(id);
-      if (rec && rec.storedPower < powerStoreCap(rec.kind)) count++;
-    }
-    if (count === 0) return surplus;
-    const share = surplus / count;
-    let used = 0;
-    for (const id of members) {
-      const rec = this.hooks.registry.get(id);
-      if (!rec) continue;
-      const capacity = powerStoreCap(rec.kind);
-      if (rec.storedPower >= capacity) continue;
-      const before = rec.storedPower;
-      rec.storedPower = chargeStep(rec.storedPower, capacity, share).stored;
-      used += rec.storedPower - before;
-    }
-    return Math.max(0, surplus - used);
-  }
-
-  /** Discharge a component's batteries to cover a per-pulse `deficit` — but only
-   *  when their combined charge can meet it in full. Marks the whole component
-   *  battery-backed (`batteryRescued`) for this pulse. */
-  private dischargeComponentBatteries(members: readonly string[], deficit: number): void {
-    let total = 0;
-    for (const id of members) {
-      const rec = this.hooks.registry.get(id);
-      if (rec && powerStoreCap(rec.kind) > 0) total += rec.storedPower;
-    }
-    if (total < deficit) return; // can't sustain the load → brownout, hold charge
-    for (const id of members) this.batteryRescued.add(id);
-    let remaining = deficit;
-    for (const id of members) {
-      if (remaining <= 0) break;
-      const rec = this.hooks.registry.get(id);
-      if (!rec || rec.storedPower <= 0 || powerStoreCap(rec.kind) <= 0) continue;
-      const r = dischargeStep(rec.storedPower, remaining);
-      rec.storedPower = r.stored;
-      remaining -= r.supplied;
-    }
   }
 
   /** Living World P1a-2 — every structure id in the connected grid component
@@ -622,27 +597,13 @@ export class StructureGridSubsystem {
   /** Total stored battery charge in the connected component containing `id`
    *  (shield-fence plan — the wall's depletable buffer). 0 if `id` is unbuilt. */
   componentBatteryCharge(id: string): number {
-    let total = 0;
-    for (const mid of this.grid.componentMembers(id)) {
-      const rec = this.hooks.registry.get(mid);
-      if (rec && powerStoreCap(rec.kind) > 0) total += rec.storedPower;
-    }
-    return total;
+    return batteryChargeOf(this.hooks.registry, this.grid.componentMembers(id));
   }
 
   /** Drain up to `amount` from the component's batteries (a shield-wall hit).
    *  Returns the amount actually drained. */
   drainComponentBatteries(id: string, amount: number): number {
-    let remaining = amount;
-    for (const mid of this.grid.componentMembers(id)) {
-      if (remaining <= 0) break;
-      const rec = this.hooks.registry.get(mid);
-      if (!rec || rec.storedPower <= 0 || powerStoreCap(rec.kind) <= 0) continue;
-      const r = drainPower(rec.storedPower, remaining);
-      rec.storedPower = r.stored;
-      remaining -= r.drained;
-    }
-    return amount - remaining;
+    return drainBatteries(this.hooks.registry, this.grid.componentMembers(id), amount);
   }
 
   /** Phase 4 — each built + powered Miner extracts `miningRate` from the

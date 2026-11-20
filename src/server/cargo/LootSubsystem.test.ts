@@ -58,7 +58,7 @@ function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; 
   return { loot, store, ops, poses, indexes, despawned, collected, collectors, advance: (ms: number) => { now += ms; } };
 }
 
-const SHIP: LootCollector = { playerId: 'p1', shipInstanceId: 'ship-1', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 300, kind: getShipKind('fighter') };
+const SHIP: LootCollector = { playerId: 'p1', shipInstanceId: 'ship-1', x: 0, y: 0, angle: 0, vx: 0, vy: 0, shieldUp: false, capacity: 300, kind: getShipKind('fighter') };
 
 describe('LootSubsystem (P1a-1)', () => {
   it('a pilot flying over or touching a pod no longer loads it: pods open in the loot window (plan cargo-pods slice 14)', () => {

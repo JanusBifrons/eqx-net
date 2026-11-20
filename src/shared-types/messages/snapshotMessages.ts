@@ -119,6 +119,36 @@ export interface SessionReplacedMessage {
  *  is the application range). */
 export const SESSION_REPLACED_CLOSE_CODE = 4002;
 
+/** Structure-restyle 3e — the own-ship `depositing` value for "parked on a
+ *  freight dock's bay, waiting: the crane is serving another ship" (first
+ *  come, first served). Progress is otherwise 0..100. */
+export const DEPOSIT_WAITING = -1;
+
+/** A crane bay's cycle adds which way the goods go to `depositing`:
+ *  `flow * DEPOSIT_FLOW_STEP + pct`, flow 1 unloading (ship -> dock), 2
+ *  loading (`CRANE_CARGO_IN` / `_OUT`), pct 0..99 through that move. The
+ *  HUD drains the bar for an unload and fills it for a load; the hover
+ *  deposit's dwell timer has no flow (plain 0..100). */
+export const DEPOSIT_FLOW_STEP = 1000;
+
+/** The cargo direction in a `depositing` value (0 none). */
+export function depositFlowOf(v: number): number {
+  return v >= DEPOSIT_FLOW_STEP ? Math.floor(v / DEPOSIT_FLOW_STEP) : 0;
+}
+
+/** The progress 0..100 in a `depositing` value (0 for `DEPOSIT_WAITING`). */
+export function depositPctOf(v: number): number {
+  return v < 0 ? 0 : v % DEPOSIT_FLOW_STEP;
+}
+
+/** The client's `depositPct` from the wire `depositing` (null = none): stepped
+ *  to 10 % so the store only changes per step. `DEPOSIT_WAITING` (3e: the dock
+ *  crane is busy) passes through as is; a crane's flow (`DEPOSIT_FLOW_STEP`)
+ *  survives the step. */
+export function depositReadout(raw: number | undefined): number | null {
+  return raw === undefined ? null : raw === DEPOSIT_WAITING ? DEPOSIT_WAITING : Math.floor(raw / 10) * 10;
+}
+
 export {
   WRECK_ID_END,
   MAX_WRECK_PIECE_INDEX,
@@ -338,7 +368,9 @@ export interface SnapshotMessage {
        *  non-empty). Drives the cargo capacity + the upgrade modal's weapon gate. */
       fitted?: string[];
       /** Living World P1a-2 — auto-deposit progress 0..100 (own active ship only;
-       *  absent ⇒ not depositing). Drives the HUD deposit ring. */
+       *  absent ⇒ not depositing), or `DEPOSIT_WAITING` (parked on a freight
+       *  dock whose crane is serving another ship); a crane cycle adds the
+       *  cargo direction (`DEPOSIT_FLOW_STEP`). Drives the HUD deposit bar. */
       depositing?: number;
       /** Fire control (exp/fire-control) — the OWN active pilot's weapon groups:
        *  id, mode (m: 0 auto / 1 manual) and lock queue (t: target key,

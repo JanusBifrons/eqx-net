@@ -68,7 +68,17 @@ export {
   structureKindToIndex,
   structureKindFromIndex,
 } from './structureKinds/lookup.js';
-export { STRUCTURE_SIDES } from './structureKinds/sides.js';
+export { STRUCTURE_OUTLINE_FAMILY, structureOutline } from './structureKinds/outline.js';
+export type { StructureOutlineFamily } from './structureKinds/outline.js';
+export {
+  STRUCTURE_SOCKET_SPACING,
+  STRUCTURE_SOCKET_OVERRIDES,
+  SOCKET_OUTLINE_STYLE,
+  structureSockets,
+  rotateStructureSocket,
+  structureSocketToWorld,
+} from './structureKinds/structureSockets.js';
+export type { StructureSocket, MutStructureSocket } from './structureKinds/structureSockets.js';
 export {
   structureHullPoints,
   STRUCTURE_ROTATIONS,

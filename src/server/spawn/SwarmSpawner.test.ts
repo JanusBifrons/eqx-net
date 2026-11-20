@@ -138,14 +138,14 @@ describe('SwarmSpawner', () => {
   // structure placed with a quarter turn collided (and drew, off the SAB angle)
   // at 0° while placement, connections and weapon hits used the rotated box.
   it('a rotated structure spawns with its angle on the body and the SAB pose', () => {
-    spawner.spawnStructure({ id: 'sol', x: 10, y: 20, radius: 195, shipKind: 'solar', angle: Math.PI / 2 });
+    spawner.spawnStructure({ id: 'sol', x: 10, y: 20, radius: 381, shipKind: 'solar', angle: Math.PI / 2 });
     const cmd = posted.find((p) => p.id === 'sol')!;
     expect(cmd.angle).toBeCloseTo(Math.PI / 2);
     expect(f32[slotBase(cmd.slot) + SLOT_ANGLE_OFF]).toBeCloseTo(Math.PI / 2);
     // The cached hit box matches the rotated body (w/h swapped).
     const rec = registry.get('sol')!;
-    expect(rec.halfW).toBe(75);
-    expect(rec.halfH).toBe(180);
+    expect(rec.halfW).toBe(150);
+    expect(rec.halfH).toBe(350);
   });
 
   // WS-11 (R2.25) — drones get their per-kind linearDamping so the AI brake has

@@ -34,7 +34,10 @@ describe('convoy budgets', () => {
     // A precondition for the timing budget below: the fixture must keep the
     // planner busy. Base growth v7 (NPC bases sized to run their processors
     // flat out, so they no longer brown out) has 2 fewer processors galaxy-wide
-    // (89 → 87), and the worst case plans 11 of the 12 allowed.
+    // (89 → 87), and the worst case plans 11 of the 12 allowed. Once the
+    // structure restyle made Reactors rare (11 → 1), the fixture adds a
+    // synthetic Reactor's fuel burn per base (see convoyGalaxyFixture.ts):
+    // it wants 42 convoys uncapped and plans the full 12.
     expect(matchConvoys(views, opts).length).toBeGreaterThanOrEqual(DEFAULT_CONVOY_OPTIONS.maxActive - 1);
   });
 

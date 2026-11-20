@@ -38,7 +38,8 @@ dedicated buttons; a tap-to-expand menu is the wrong place for an input you hold
 | **Turret** | Shoots hostile drones | A leaf — power-gated |
 
 **Connection rule:** leaves (solar / miner / turret) attach to exactly **one
-hub** (a Connector or the Capital) — never to each other. Hubs link to hubs to
+hub** — a Connector — never to each other or to a big building (a shipyard
+joins the web through a Connector too). Hubs link to hubs to
 extend the web. (The grid + connections land in Phase 3.)
 
 ## The grid (Phase 3 — shipped)

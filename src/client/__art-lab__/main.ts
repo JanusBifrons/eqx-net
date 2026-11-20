@@ -15,20 +15,26 @@
  *
  * Dev-only page: /__art-lab__/index.html?style=…&scene=…&zoom=…
  */
-import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { Application, Container, RenderTexture, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
 import { FxEngines } from '../render/art/fx/FxEngines.js';
-import { bakeFxImg, type FxId, type Img } from '../render/art/fx/fxTextures.js';
+import { bakeFxImg, type FxId } from '../render/art/fx/fxTextures.js';
 import type { ArtService } from '../render/art/ArtService.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../render/pixi/spriteBuilders.js';
-import { ArtCache, PIXEL_ROT_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
-import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
-import { hash01, valueNoise } from '../render/art/fields.js';
+import { ArtCache, PIXEL_ROT_STEPS, type PixelSettings, type StructArt } from './assets.js';
+import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, type Cam, type Pose, type Scene, type SceneId } from './scenes.js';
+import { readRigsFlag } from '../render/pixi/structureRigs.js';
+import { DOCK_BAY_CX, DOCK_BAY_CY } from '../../core/articulation/rigCatalogue.js';
+import { hash01 } from '../render/art/fields.js';
+import { readStructLivery, readStructStyle } from '../render/art/artMode.js';
+import { ownerLivery } from '../render/art/shipArtSprites.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
 import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipShader.js';
-import type { MachinedShipSprite } from '../render/art/MachinedShipSprite.js';
-import { buildLabHull, labGunJobs, labTurreted, lightLabGuns, type LabGuns } from './labTurrets.js';
+import { GLOW, imgTexture, nebulaTex, RING, starTile, STREAK } from './labTextures.js';
+import { BALLS, BAND_OFFSET, countSprites, SPARKS, type BoomView, type ShipView, type ShotView, type StructView } from './labViews.js';
+import { buildLabGridLines, buildLabRigs, buildLabSheetNubs } from './labGameLayers.js';
+import { buildLabHull, labGunJobs, labTurreted, lightLabGuns } from './labTurrets.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
 
 type Style = 'current' | 'machined' | 'pixel' | 'lit';
@@ -46,7 +52,28 @@ const litScene = new LitScene();
 /** A capital is this many times taller than its baked relief (towering hulls). */
 const CAPITAL_HEIGHT_FRAC = 0.12;
 const SCENE = ((SCENE_IDS as readonly string[]).includes(qs.get('scene') ?? '') ? qs.get('scene') : 'ships') as SceneId;
+/** Structure style direction (restyle §4), `?restyle=`: on a Machined arm the
+ *  game's own default (`readStructStyle`: absent = the player style), so a
+ *  lab still shows what a player sees; `?restyle=off` / `current` = today's art.
+ *  Not `?style=`: that already picks the lab's render arm (current/machined/…). */
+const RESTYLE = parseStructStyle(MACHINED ? readStructStyle(location.search) : qs.get('restyle'));
+/** `?structLivery=1`: structures wear an owner's livery (the game's
+ *  `ownerLivery`, for a stand-in owner), as in game. */
+const STRUCT_LIVERY = readStructLivery(location.search) ? ownerLivery('art-lab-owner') : undefined;
+/** The livery + style a Machined structure bake carries (the accent is the
+ *  team colour, as `structHandleFor` bakes it). */
+function structExtra(): { accent?: number; livery?: { team: number; sigil: number }; style?: string } {
+  return {
+    ...(STRUCT_LIVERY ? { accent: STRUCT_LIVERY.team, livery: { team: STRUCT_LIVERY.team, sigil: STRUCT_LIVERY.sigil } } : {}),
+    ...(RESTYLE !== 'current' ? { style: RESTYLE } : {}),
+  };
+}
+/** Rigs on unless `?rigs=0` (restyle 2c, the game's default): structures draw their articulation rig parts,
+ *  driven by `__artlab.playRig`. */
+const RIGS = readRigsFlag(location.search);
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
+/** `?cx=&cy=`: hold the camera on this scene point (stills of one corner of a scene). */
+const CAM_AT = qs.has('cx') ? { x: Number(qs.get('cx')), y: Number(qs.get('cy') ?? 0) } : null;
 const BENCH_N = qs.has('n') ? Number(qs.get('n')) : 40;
 const PX_OVERRIDE = qs.has('px') ? Number(qs.get('px')) : 0;
 const PIX: PixelSettings = {
@@ -59,143 +86,6 @@ const turreted = (id: string): boolean => labTurreted(qs.get('turrets') === '1' 
 const TRAIL = 9;
 const TRAIL_DT = 0.045;
 
-// ---------------------------------------------------------------- textures
-
-function canvasTex(size: number, paint: (ctx: CanvasRenderingContext2D, s: number) => void, nearest = false): Texture {
-  const c = document.createElement('canvas');
-  c.width = size; c.height = size;
-  paint(c.getContext('2d')!, size);
-  const t = Texture.from(c);
-  t.source.scaleMode = nearest ? 'nearest' : 'linear';
-  return t;
-}
-
-/** Soft additive glow: a gaussian-ish radial falloff, white (tinted per use). */
-const GLOW = canvasTex(64, (ctx, s) => {
-  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.18, 'rgba(255,255,255,0.75)');
-  g.addColorStop(0.45, 'rgba(255,255,255,0.22)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-});
-
-/** A horizontal streak: bright middle, soft ends and edges (bolts, beams). */
-const STREAK = canvasTex(64, (ctx, s) => {
-  const g = ctx.createLinearGradient(0, 0, s, 0);
-  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.25, 'rgba(255,255,255,0.9)');
-  g.addColorStop(0.75, 'rgba(255,255,255,0.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-  const v = ctx.createLinearGradient(0, 0, 0, s);
-  v.addColorStop(0, 'rgba(0,0,0,1)'); v.addColorStop(0.5, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,1)');
-  ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = v; ctx.fillRect(0, 0, s, s);
-});
-
-/** Shockwave ring. */
-const RING = canvasTex(128, (ctx, s) => {
-  const g = ctx.createRadialGradient(s / 2, s / 2, s * 0.3, s / 2, s / 2, s / 2);
-  g.addColorStop(0, 'rgba(255,255,255,0)');
-  g.addColorStop(0.75, 'rgba(255,255,255,0.9)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-});
-
-/** A tile of stars (baked once). Pixel style keeps them hard single texels. */
-function starTile(pixel: boolean): Texture {
-  return canvasTex(512, (ctx, s) => {
-    for (let i = 0; i < 260; i++) {
-      const x = Math.floor(hash01(i, 11) * s), y = Math.floor(hash01(i, 23) * s);
-      const b = hash01(i, 37);
-      const warm = hash01(i, 41) > 0.7;
-      const a = 0.25 + 0.75 * b * b;
-      ctx.fillStyle = warm ? `rgba(255,214,170,${a})` : `rgba(190,210,255,${a})`;
-      const r = b > 0.93 ? 2 : 1;
-      if (pixel) ctx.fillRect(x, y, r, r);
-      else { ctx.beginPath(); ctx.arc(x + 0.5, y + 0.5, r * 0.6, 0, Math.PI * 2); ctx.fill(); }
-    }
-  }, pixel);
-}
-
-/** A faint nebula (fbm value noise), baked once, stretched over the view. */
-function nebulaTex(pixel: boolean): Texture {
-  return canvasTex(256, (ctx, s) => {
-    const img = ctx.createImageData(s, s);
-    for (let y = 0; y < s; y++) {
-      for (let x = 0; x < s; x++) {
-        let n = 0, amp = 0.5, f = 3 / s;
-        for (let o = 0; o < 5; o++) { n += amp * valueNoise(x * f, y * f, 0x5eed + o); amp *= 0.5; f *= 2; }
-        const m = Math.max(0, n - 0.42) * 2.2;
-        const p = (y * s + x) * 4;
-        const w = valueNoise(x * 2 / s, y * 2 / s, 99);
-        img.data[p] = 40 + 60 * w; img.data[p + 1] = 30 + 25 * (1 - w); img.data[p + 2] = 90 + 60 * (1 - w);
-        img.data[p + 3] = Math.min(255, m * m * 120);
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-  }, pixel);
-}
-
-// ---------------------------------------------------------------- views
-
-interface ShipView {
-  e: ShipE;
-  pose: Pose;
-  /** Machined: two cross-faded lit frames. Pixel: `a` only. Current: unused. */
-  a: Sprite;
-  b: Sprite;
-  gfx: Graphics | null;
-  /** Machined: the hull (the game's sprite; tiles a capital). */
-  hull?: MachinedShipSprite;
-  /** `?turrets=1`: the hull's guns, posed with it (sun frames per gun). */
-  guns?: LabGuns;
-  /** `lit` style: the GPU-lit hull. */
-  lit?: LitShipMesh;
-  /** `lit` style: a big hull that shades others (box half size, height). */
-  occ?: { hx: number; hy: number; h: number; color: number };
-  trails: Sprite[];
-  nozzles: Sprite[];
-  navs: Sprite[];
-  art: ShipArt | null;
-  /** Pixel art per zoom band (index = band + BAND_OFFSET). */
-  bandArt: Array<ShipArt | undefined>;
-  phase: number;
-  /** FxEngines key (the game's exhaust: flames + ribbons). */
-  fxKey: string;
-}
-
-interface StructView {
-  x: number; y: number;
-  sprite: Sprite | null;
-  gfx: Graphics | null;
-  /** Machined: albedo copy, added on top when an explosion lights the area. */
-  lit: Sprite | null;
-  /** `lit` style with live-lit structures: the GPU-lit structure. */
-  litMesh?: LitShipMesh;
-  rot: number;
-  lamps: Sprite[];
-  lampXY: Array<{ x: number; y: number }>;
-  art: StructArt | null;
-  bandArt: Array<StructArt | undefined>;
-  id: string; seed: number;
-  radius: number;
-}
-
-interface BoomView {
-  flash: Sprite; ring: Sprite; pool: Sprite; balls: Sprite[];
-  x: number; y: number; t0: number; size: number;
-}
-
-/** One weapon stream's sprites, all created up front. */
-interface ShotView {
-  s: Shot;
-  core: Sprite; halo: Sprite; flare: Sprite; rim: Sprite; flash: Sprite;
-  bolts: Sprite[]; sparks: Sprite[];
-}
-const SPARKS = 6;
-
-const BAND_OFFSET = 40;
-const BALLS = 14;
-
 /** Pixel size (screen px per art px) for a zoom; quantised by band. */
 function pxFor(zoom: number): number {
   if (PX_OVERRIDE > 0) return PX_OVERRIDE;
@@ -206,14 +96,6 @@ function bandFor(zoom: number): { band: number; pd: number; px: number } {
   const px = pxFor(zoom);
   const band = Math.round(Math.log2(zoom / px) * 4);
   return { band, pd: Math.pow(2, band / 4), px };
-}
-
-/** An effects image as a texture (the lab bakes the game's fx images itself). */
-function imgTexture(i: Img): Texture {
-  const c = document.createElement('canvas');
-  c.width = i.w; c.height = i.h;
-  c.getContext('2d')!.putImageData(new ImageData(i.data as Uint8ClampedArray<ArrayBuffer>, i.w, i.h), 0, 0);
-  return new Texture({ source: new CanvasSource({ resource: c, scaleMode: 'linear' }) });
 }
 
 async function main(): Promise<void> {
@@ -229,14 +111,20 @@ async function main(): Promise<void> {
   });
   host.appendChild(app.canvas);
 
-  const scene: Scene = buildScene(SCENE, ZOOM, BENCH_N);
+  const scene: Scene = buildScene(SCENE, ZOOM, BENCH_N, { w: W, h: H });
+  // Restyle 2c: the outpost gets a pop-up turret (rig sandbox) north of the
+  // power station while rigs are on (`?rigs=0` = the scene without it).
+  if (RIGS && SCENE === 'outpost') {
+    scene.structs.push({ id: 'turret', x: 1000, y: -800, rot: 0, seed: 13 });
+    scene.edges?.push([6, scene.structs.length - 1]);
+  }
   const cache = new ArtCache();
   const t0Bake = performance.now();
   // Machined: bake everything the scene needs on worker threads first
   // (`?workers=0` bakes on the main thread instead, for comparison).
   if (MACHINED && qs.get('workers') !== '0') {
     const jobs: BakeJob[] = [];
-    for (const st of scene.structs) jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed) });
+    for (const st of scene.structs) jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed), ...structExtra() });
     for (const sh of scene.ships) {
       jobs.push({ type: 'ship', id: sh.id, paint: sh.paint, ...(turreted(sh.id) ? { rings: true } : {}) });
       if (turreted(sh.id)) jobs.push(...labGunJobs(sh.id, sh.paint));
@@ -252,7 +140,20 @@ async function main(): Promise<void> {
   const structL = new Container(), litL = new Container(), trailL = new Container();
   const shipL = new Container(), glowL = new Container(), fxL = new Container();
   for (const l of [litL, trailL, glowL, fxL]) l.blendMode = 'add';
-  world.addChild(structL, litL, trailL, shipL, glowL, fxL);
+  // Grid lines (scene.edges) under the structures, drawn by the game's own
+  // ConnectorRenderer from a minimal render mirror.
+  const lineL = new Container();
+  world.addChild(lineL, structL, litL, trailL, shipL, glowL, fxL);
+  const labelL = new Container();
+  world.addChild(labelL);
+  // Restyle 2c rig parts: under + plane with the structures, over above the
+  // ships (the game's zIndex bands, as lab layers).
+  const rigUnderL = new Container(), rigPlaneL = new Container(), rigOverL = new Container();
+  if (RIGS) {
+    world.addChildAt(rigPlaneL, world.getChildIndex(structL) + 1);
+    world.addChildAt(rigUnderL, world.getChildIndex(structL) + 1);
+    world.addChildAt(rigOverL, world.getChildIndex(shipL) + 1);
+  }
   // The game's exhaust (flame + ribbon per nozzle, PR #288), not the lab's
   // old dots, on the art styles. `?oldengines=1` restores the dots.
   const fxEng = (STYLE === 'machined' || STYLE === 'lit') && qs.get('oldengines') !== '1'
@@ -302,18 +203,27 @@ async function main(): Promise<void> {
   // ---- structures
   const structs: StructView[] = scene.structs.map((st) => {
     const v: StructView = { x: st.x, y: st.y, sprite: null, gfx: null, lit: null, rot: st.rot, lamps: [], lampXY: [], art: null, bandArt: [], id: st.id, seed: st.seed, radius: 100 };
+    // Catalogue size (one size source); st.rot turns it (a grown base's docks and gates).
+    const cr = Math.cos(st.rot), sr = Math.sin(st.rot);
+    if (st.label) {
+      const tx = new Text({ text: st.label, style: { fill: 0xd8e4ff, fontFamily: 'sans-serif', fontWeight: 'bold', fontSize: 96, letterSpacing: 8 } });
+      tx.anchor.set(0.5, 0);
+      tx.position.set(st.x, st.y + structFootprint(st.id).h / 2 + 24);
+      labelL.addChild(tx);
+    }
     if (STYLE === 'current') {
       v.gfx = buildStructureGfx(st.id, undefined, st.seed);
       v.gfx.position.set(st.x, st.y);
+      v.gfx.rotation = st.rot;
       structL.addChild(v.gfx);
       v.radius = Math.max(v.gfx.width, v.gfx.height) / 2;
       return v;
     }
     let art: StructArt;
     if (MACHINED) {
-      art = cache.machinedStruct(st.id, st.seed);
+      art = cache.machinedStruct(st.id, st.seed, STRUCT_LIVERY?.team, structExtra());
       v.lit = new Sprite(art.albedo!);
-      v.lit.anchor.set(0.5); v.lit.scale.set(2 / art.density); // half-res albedo v.lit.position.set(st.x, st.y);
+      v.lit.anchor.set(0.5); v.lit.scale.set(2 / art.density); v.lit.rotation = st.rot; // half-res albedo v.lit.position.set(st.x, st.y);
       v.lit.alpha = 0; v.lit.tint = 0xffb070;
       litL.addChild(v.lit);
     } else {
@@ -324,6 +234,7 @@ async function main(): Promise<void> {
     v.sprite = new Sprite(art.tex);
     v.sprite.anchor.set(0.5);
     v.sprite.scale.set(1 / art.density);
+    v.sprite.rotation = st.rot;
     v.sprite.position.set(st.x, st.y);
     structL.addChildAt(v.sprite, 0);
     v.radius = Math.max(art.w, art.h) / art.density / 2;
@@ -338,10 +249,14 @@ async function main(): Promise<void> {
     }
     for (const l of art.navLights) {
       v.lamps.push(glow(glowL, l.color));
-      v.lampXY.push({ x: st.x + l.x, y: st.y + l.y });
+      v.lampXY.push({ x: st.x + l.x * cr - l.y * sr, y: st.y + l.x * sr + l.y * cr });
     }
     return v;
   });
+
+  const rigs = RIGS ? buildLabRigs(scene, rigUnderL, rigPlaneL, rigOverL, qs.get('live')) : [];
+  const lines = buildLabGridLines(scene, lineL, structL);
+  if (!lines) buildLabSheetNubs(scene, structL, qs.get('nubs'), qs.get('live'));
 
   // ---- ships
   const ships: ShipView[] = scene.ships.map((e, i) => {
@@ -426,6 +341,7 @@ async function main(): Promise<void> {
     curT = t;
     litScene.begin();
     scene.camera(t, cam);
+    if (CAM_AT) { cam.x = CAM_AT.x; cam.y = CAM_AT.y; }
     let zoom = cam.zoom;
     let px = 1;
     if (pixel) {
@@ -526,6 +442,9 @@ async function main(): Promise<void> {
       }
     }
     fxEng?.endFrame();
+    const labFlashes = lines?.mirror.gridFlashes; // a 1 Hz grid pulse: a new count each second
+    if (labFlashes) for (const k of labFlashes.keys()) labFlashes.set(k, Math.floor(t));
+    lines?.r.update(lines.mirror, zoom, t * 1000);
 
     // Structure lamps: a slow, offset pulse.
     for (const v of structs) {
@@ -644,6 +563,13 @@ async function main(): Promise<void> {
       }
     }
 
+    // Rigs: game pose of each host (y-up), clip time in ticks.
+    for (const r of rigs) {
+      const st = scene.structs[r.i]!;
+      if (r.view.hasSpin) { r.view.running = false; r.view.spinClock = r.spins ? t * 60 : 0; } // pure in t
+      r.view.update(r.input, t * 60, st.x, -st.y, -st.rot, 1, cache.rig.sunAz);
+    }
+
     // GPU-lit hulls: now every light and occluder of this frame is known.
     for (const v of ships) if (v.lit) v.lit.setLight(cache.rig, v.pose.x, v.pose.y, v.pose.rot, litScene);
     for (const v of structs) if (v.litMesh) v.litMesh.setLight(cache.rig, v.x, v.y, v.rot, litScene);
@@ -656,12 +582,37 @@ async function main(): Promise<void> {
   const api = {
     ready,
     style: STYLE,
+    restyle: RESTYLE,
     scene: SCENE,
     duration: scene.duration,
     seek(ms: number): void { update(ms / 1000); },
+    /** Restyle 2c (`?rigs=1`): play `clipId` on a structure's rig from the
+     *  current time. `kindOrIndex` = a structure kind id (its first one) or
+     *  a scene structure index. A targeted clip with no target reaches a
+     *  dock's bay centre (`DOCK_BAY_CX/CY`), else the structure's centre.
+     *  Target = world point, y-down lab coords (as the scene). Returns the structure index, or -1. */
+    playRig(kindOrIndex: string | number, clipId: string, targetX?: number, targetY?: number): number {
+      const i = typeof kindOrIndex === 'number' ? kindOrIndex : scene.structs.findIndex((st) => st.id === kindOrIndex);
+      const r = rigs.find((x) => x.i === i);
+      if (r === undefined) return -1;
+      const st = scene.structs[i]!;
+      // Default target: a dock's parking-bay centre (`DOCK_BAY_CX/CY`, host
+      // frame, y-up), else the structure centre.
+      let dx = st.x, dy = st.y;
+      if (st.id === 'freight_dock') {
+        const c = Math.cos(st.rot), s = Math.sin(st.rot);
+        const lx = DOCK_BAY_CX, ly = -DOCK_BAY_CY;
+        dx = st.x + lx * c - ly * s;
+        dy = st.y + lx * s + ly * c;
+      }
+      r.input = { clipId, startTick: curT * 60, targetX: targetX ?? dx, targetY: -(targetY ?? dy) };
+      update(curT);
+      return i;
+    },
     stats() {
       return {
-        style: STYLE, scene: SCENE, bakeMs, t: curT,
+        style: STYLE, restyle: RESTYLE, scene: SCENE, bakeMs, t: curT,
+        lines: lines ? lines.r.staticRebuilds : 0,
         ships: ships.length, structures: structs.length,
         art: cache.stats(),
         sprites: countSprites(app.stage),
@@ -695,12 +646,6 @@ async function main(): Promise<void> {
   };
   (window as unknown as { __artlab: typeof api }).__artlab = api;
   update(0);
-}
-
-function countSprites(c: Container): number {
-  let n = 0;
-  for (const ch of c.children) n += 1 + countSprites(ch as Container);
-  return n;
 }
 
 void main().catch((err: unknown) => {
