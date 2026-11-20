@@ -21,7 +21,7 @@ import { getStructureKind, type StructureKindId } from '../../../shared-types/st
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'f1cr';
+export const version = 'f1cb';
 
 /** Power station (`reactor`, drawn for 600 × 600 and scaled by the short
  *  side, §9 Family 1): an octagonal containment keep with a deep pit and a
@@ -90,7 +90,7 @@ export function cellGrid(W: number, H: number, out: CellGrid): CellGrid {
 
 const _grid: CellGrid = { cols: 0, rows: 0, x0: 0, y0: 0, cw: 0, ch: 0, gap: 0 };
 
-/** Battery / battery bank: a cell block on a slab inside a truss frame. The
+/** Battery: a cell block on a slab inside a truss frame. The
  *  cells are baked dark; the live overlay (`status` below) lights them with
  *  the charge, so a charge change never re-bakes this art. */
 function powerStore(c: StyleCtx): void {
@@ -119,6 +119,86 @@ function powerStore(c: StyleCtx): void {
   if (c.livery) c.sigils.push({ x: bw / 2 - pad * 0.2, y: -bh / 2 - pad * 0.45, r: Math.min(m * 0.05, pad * 0.25) });
 }
 
+// ── Battery bank: four cell modules on a busbar cross (F1, drawn for 600) ──
+
+/** The bank's module layout for a W × H footprint: four square-ish modules
+ *  (2 × 2) around a central busbar cross. `mx`/`my` are the module centres
+ *  (order: bottom-left, bottom-right, top-left, top-right, Pixi frame: +y is
+ *  down), `mw`/`mh` their size, `bus` the cross's width. */
+export interface BankLayout { mx: number[]; my: number[]; mw: number; mh: number; bus: number; pad: number }
+
+export function bankLayout(W: number, H: number): BankLayout {
+  const m = Math.min(W, H);
+  const pad = m * 0.08, bus = m * 0.14;
+  const mw = (W - 2 * pad - bus) / 2, mh = (H - 2 * pad - bus) / 2;
+  const ox = (bus + mw) / 2, oy = (bus + mh) / 2;
+  return { mx: [-ox, ox, -ox, ox], my: [oy, oy, -oy, -oy], mw, mh, bus, pad };
+}
+
+const BANK_MODULES = 4;
+
+/** How many cells a power store has (battery: one grid; bank: four). */
+export function storeCellCount(kind: StructureKindId): number {
+  const fp = getStructureKind(kind).footprint;
+  if (kind !== 'battery_bank') {
+    const g = cellGrid(fp.w, fp.h, _grid);
+    return g.cols * g.rows;
+  }
+  const L = bankLayout(fp.w, fp.h);
+  const g = cellGrid(L.mw, L.mh, _grid);
+  return BANK_MODULES * g.cols * g.rows;
+}
+
+/** Battery bank (`battery_bank`, 600 × 600): four armoured cell modules
+ *  (each a smaller battery block: dark cell slots, terminals, a vent grille
+ *  on its outer side, a lamp), joined by a riveted busbar cross to a central
+ *  junction with a charge-controller glass. The cells are baked dark; the
+ *  live overlay lights them, all four modules rising together. */
+function batteryBank(c: StyleCtx): void {
+  const { W, H } = c;
+  const L = bankLayout(W, H);
+  const m = Math.min(W, H), k = m / 600;
+  deck(c);
+  grime(c, -W / 2 + L.pad, -H / 2 + L.pad, W - 2 * L.pad, H - 2 * L.pad, 14, 7);
+  // Busbar cross: two bars through the centre, riveted, welded at the hub.
+  const bw = L.bus * 0.42, reach = W / 2 - L.pad * 0.6, reachY = H / 2 - L.pad * 0.6;
+  poly(c, chamferBox(-reach, -bw / 2, 2 * reach, bw, 4 * k), SLAB_DARK, 'metal', 4, 2);
+  poly(c, chamferBox(-bw / 2, -reachY, bw, 2 * reachY, 4 * k), SLAB_DARK, 'metal', 4, 2);
+  for (const s of [-1, 1]) {
+    rivets(c, [s * (L.bus * 0.6), -bw * 0.3], [s * (reach - 10 * k), -bw * 0.3], 18 * k);
+    rivets(c, [-bw * 0.3, s * (L.bus * 0.6)], [-bw * 0.3, s * (reachY - 10 * k)], 18 * k);
+  }
+  for (let i = 0; i < BANK_MODULES; i++) {
+    const cx = L.mx[i]!, cy = L.my[i]!, sx = Math.sign(cx), sy = Math.sign(cy);
+    const g = cellGrid(L.mw, L.mh, _grid);
+    const iw = g.cols * g.cw + (g.cols - 1) * g.gap, ih = g.rows * g.ch + (g.rows - 1) * g.gap;
+    const hw = iw / 2 + g.gap * 3, hh = ih / 2 + g.gap * 3;
+    // Strap from the module to the busbar.
+    strut(c, [cx - sx * hw * 0.4, cy - sy * hh], [cx - sx * hw * 0.4, sy * bw * 0.5], 14 * k, 8);
+    strut(c, [cx - sx * hw, cy - sy * hh * 0.4], [sx * bw * 0.5, cy - sy * hh * 0.4], 14 * k, 8);
+    const house = core(c, chamferBox(cx - hw, cy - hh, 2 * hw, 2 * hh, g.gap * 2.5), SLAB, 20, 0);
+    wornStripe(c, house, 0, cy - sy * (hh - 7 * k), 7 * k, 50 + i);
+    for (let r = 0; r < g.rows; r++) {
+      for (let q = 0; q < g.cols; q++) {
+        const x = cx + g.x0 + q * (g.cw + g.gap), y = cy + g.y0 + r * (g.ch + g.gap);
+        poly(c, chamferBox(x, y, g.cw, g.ch, Math.min(g.cw, g.ch) * 0.15), SOOT, 'metal', -3, 1.5);
+        poly(c, chamferBox(x + g.cw * 0.3, y - g.gap * 0.6, g.cw * 0.4, g.gap * 0.8, 1), SLAB_LIGHT, 'metal', 2, 0.6);
+      }
+    }
+    // Vent grille on the module's outer side, a lamp on its outer corner.
+    const vx = cx + sx * (hw + 12 * k);
+    for (let v = -3; v <= 3; v++) poly(c, chamferBox(vx - 7 * k, cy + v * 11 * k - 2.5 * k, 14 * k, 5 * k, 1), SOOT, 'metal', 1, 0.6);
+    lamp(c, cx + sx * (hw - 8 * k), cy + sy * (hh - 8 * k), 3.5 * k, i % 2 === 0 ? LAMP_AMBER : LAMP_WHITE);
+  }
+  // Central junction: an octagonal hub with the charge-controller glass.
+  const hub = core(c, ngon(0, 0, L.bus * 0.62, 8, Math.PI / 8), SLAB_LIGHT, 24, 0);
+  wornStripe(c, hub, Math.PI / 4, 0, 6 * k, 61);
+  poly(c, ngon(0, 0, L.bus * 0.4, 8, Math.PI / 8), SLAB_DARK, 'metal', -3, 2);
+  glow(c, ngon(0, 0, L.bus * 0.22, 8, Math.PI / 8), c.live ? 0x7fe0a4 : 0x14301f, 0.85);
+  stencil(c, '10', -W / 2 + L.pad * 1.1, -H / 2 + L.pad * 0.35, 18 * k);
+  if (c.livery) c.sigils.push({ x: W / 2 - L.pad * 1.6, y: -H / 2 + L.pad * 0.5, r: 16 * k });
+}
+
 /** Lit cell colours: the charge amber (the panel CHRG colour), a hot core. */
 const CELL_LIT = 0xffb24a;
 const CELL_HOT = 0xffe2a8;
@@ -127,21 +207,36 @@ const _fill = { color: 0, alpha: 0 };
 /** How many of a store's cells are lit: its charge in whole cells. */
 function storeCode(kind: StructureKindId, st: StructureRenderState | undefined): number {
   if (st === undefined || !st.built || st.storedPowerMax === undefined || st.storedPowerMax <= 0) return 0;
-  const fp = getStructureKind(kind).footprint;
-  const g = cellGrid(fp.w, fp.h, _grid);
-  const n = g.cols * g.rows;
+  const n = storeCellCount(kind);
   const f = Math.min(1, Math.max(0, (st.storedPower ?? 0) / st.storedPowerMax));
   return Math.min(n, Math.round(f * n));
 }
 
-/** Light the first `code` cells, bottom row first, left to right. */
+/** Light the first `code` cells of a store (battery: one grid; bank: its
+ *  four modules). */
 function drawStoreCells(g: GraphicsContext, code: number, kind: StructureKindId): void {
   const fp = getStructureKind(kind).footprint;
-  const cg = cellGrid(fp.w, fp.h, _grid);
+  if (kind !== 'battery_bank') {
+    litCells(g, cellGrid(fp.w, fp.h, _grid), 0, 0, code);
+    return;
+  }
+  // Bank: the lit cells share out across the four modules, so they rise
+  // together (the bottom modules take the remainder first).
+  const L = bankLayout(fp.w, fp.h);
+  const cg = cellGrid(L.mw, L.mh, _grid);
+  for (let i = 0; i < BANK_MODULES; i++) {
+    const n = Math.floor(code / BANK_MODULES) + (i < code % BANK_MODULES ? 1 : 0);
+    litCells(g, cg, L.mx[i]!, L.my[i]!, n);
+  }
+}
+
+/** Light the first `code` cells of grid `cg` (offset by ox, oy), bottom
+ *  row first, left to right. */
+function litCells(g: GraphicsContext, cg: CellGrid, ox: number, oy: number, code: number): void {
   let lit = 0;
   for (let r = cg.rows - 1; r >= 0 && lit < code; r--) {
     for (let k = 0; k < cg.cols && lit < code; k++, lit++) {
-      const x = cg.x0 + k * (cg.cw + cg.gap), y = cg.y0 + r * (cg.ch + cg.gap);
+      const x = ox + cg.x0 + k * (cg.cw + cg.gap), y = oy + cg.y0 + r * (cg.ch + cg.gap);
       const i = Math.min(cg.cw, cg.ch) * 0.16;
       g.rect(x + i * 0.5, y + i * 0.5, cg.cw - i, cg.ch - i);
       _fill.color = CELL_LIT; _fill.alpha = 0.85; g.fill(_fill);
@@ -327,7 +422,7 @@ export function reactorFanContext(): GraphicsContext {
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   battery: powerStore,
-  battery_bank: powerStore,
+  battery_bank: batteryBank,
   reactor: powerStation,
   solar: solarArray,
 };

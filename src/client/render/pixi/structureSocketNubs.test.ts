@@ -11,7 +11,7 @@ import {
   socketNubsOf, socketUsedMask, STRUCTURE_INNER_CHANNELS, updateSocketNubs, drawSocketNubs, type InnerChannelHook,
 } from './structureSocketNubs.js';
 import { SOCKET_ACCENT } from './connectorCables.js';
-import { cellGrid } from './structureStyleC.power.js';
+import { storeCellCount } from './structureStyleC.power.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import type { LinePath } from './connectorLineLooks.js';
 import { structureSockets, structureSocketToWorld, type MutStructureSocket } from '../../../shared-types/structureKinds.js';
@@ -242,9 +242,7 @@ function charged(kind: string, frac: number): StructureRenderState {
   return { ...st([]), storedPower: cap * frac, storedPowerMax: cap };
 }
 function cellCount(kind: string): number {
-  const fp = getStructureKind(kind as 'battery').footprint;
-  const g = cellGrid(fp.w, fp.h, { cols: 0, rows: 0, x0: 0, y0: 0, cw: 0, ch: 0, gap: 0 });
-  return g.cols * g.rows;
+  return storeCellCount(kind as 'battery');
 }
 
 describe('body state: battery cells and a dry reactor', () => {
