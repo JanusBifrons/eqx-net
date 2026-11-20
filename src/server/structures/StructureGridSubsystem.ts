@@ -24,7 +24,7 @@
 import { ASTEROID_YIELD, yieldHasGoods, yieldInto, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
-import { structureDraw } from '../../shared-types/structurePower.js';
+import { redrawStructure, switchStructure } from './structurePowerSwitch.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   canUpgradeStructure,
@@ -58,6 +58,7 @@ import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import type { Rig } from '../../core/articulation/rig.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+import { settleBlueprintBody, settleBuiltGhosts, type BlueprintBodyHooks } from './blueprintBody.js';
 
 /** Cap on reconnect attempts per pulse so a sector full of permanently-stranded
  *  structures (e.g. collinear-blocked leaves) can't make the 1 Hz pulse rescan
@@ -96,7 +97,9 @@ export function resolveTurretBeam(
   return { cooldownMs, perHitDamage: dps * (cooldownMs / 1000) };
 }
 
-export interface StructureGridHooks {
+/** `BlueprintBodyHooks`: hologram pass-through (a blueprint turns solid only
+ *  with no ship inside; absent ⇒ it turns solid at once). */
+export interface StructureGridHooks extends BlueprintBodyHooks {
   registry: StructureRegistry;
   /** Read a structure's current hull (from `swarmHealth`). */
   getHealth(id: string): number;
@@ -286,6 +289,7 @@ export class StructureGridSubsystem {
    *  is byte-identical to the raw grid summary. */
   powerSummaryFor(id: string): { netPower: number; powered: boolean } {
     const raw = this.grid.powerSummaryFor(id);
+    if (this.hooks.registry.get(id)?.switchedOff === true) return { netPower: raw.netPower, powered: false }; // owner Off
     if (raw.powered || !this.batteryRescued.has(id)) return raw;
     return { netPower: raw.netPower, powered: true };
   }
@@ -518,6 +522,7 @@ export class StructureGridSubsystem {
     this.processGas();
     this.processTransfer(nowMs, flashed);
     this.processConstruction(nowMs, flashed);
+    settleBuiltGhosts(registry.all(), this.hooks); // built outside the pulse (restore, seeded bases)
     this.processRepair(nowMs, flashed);
     this.processDeconstruction(nowMs, flashed);
     // Dominant pulse material (back-compat single field): prefer 'minerals' when
@@ -698,12 +703,13 @@ export class StructureGridSubsystem {
    * change adjusts its grid component's net power in O(1) (no rebuild).
    */
   setActive(rec: StructureRecord, active: boolean): void {
-    if ((rec.drawFull === true) === active) return;
-    const cons = getStructureKind(rec.kind).powerConsumption;
-    const before = structureDraw(cons, rec.drawFull === true);
-    rec.drawFull = active;
-    if (rec.isConstructed) this.grid.adjustDraw(rec.id, structureDraw(cons, active) - before);
+    const on = active && rec.switchedOff !== true; // the owner's Off wins
+    if ((rec.drawFull === true) !== on) redrawStructure(rec, rec.switchedOff === true, on, this.adjustDraw);
   }
+
+  /** The owner On/Off switch (`structurePowerSwitch.ts`); false if nothing changed. */
+  setSwitchedOn(rec: StructureRecord, on: boolean): boolean { return switchStructure(rec, on, this.adjustDraw); }
+  private readonly adjustDraw = (id: string, delta: number): void => this.grid.adjustDraw(id, delta);
 
   /** Clear a Miner's target + cached pose (unpowered / no in-range rock) so the
    *  mining beam stops on the next tick. */
@@ -975,7 +981,9 @@ export class StructureGridSubsystem {
   private processConstruction(nowMs: number, flashed: Array<[string, string, FlowMaterial]>): void {
     for (const bp of this.hooks.registry.all()) {
       if (bp.isConstructed || bp.isDeconstructing) continue;
-      if (bp.prepaid === true && bp.upgradeTargetLevel === undefined) {
+      if (bp.constructionProgress >= bp.constructionCost) {
+        // Fully paid, waiting for a ship to leave its space (below).
+      } else if (bp.prepaid === true && bp.upgradeTargetLevel === undefined) {
         // Economy v2 W4b — unpacking a packed structure costs only time: it
         // builds at the normal rate with no minerals and needs no route.
         bp.constructionProgress += CONSTRUCTION_PULSE_AMOUNT;
@@ -990,6 +998,9 @@ export class StructureGridSubsystem {
       }
       if (bp.constructionProgress >= bp.constructionCost) {
         bp.constructionProgress = bp.constructionCost;
+        // Hologram pass-through: never turn solid around a ship; finish the
+        // pulse the space is clear.
+        if (!settleBlueprintBody(bp, this.hooks)) continue;
         bp.isConstructed = true;
         // Phase 4 WS-B4 — an UPGRADE build (upgradeTargetLevel set) increments
         // the level on completion + applies the per-level stat grant; a normal

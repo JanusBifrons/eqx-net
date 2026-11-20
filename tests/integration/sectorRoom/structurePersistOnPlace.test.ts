@@ -17,7 +17,7 @@
  * teardown, which a crash never runs).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 
 const SECTOR = 'sol-prime';
 
@@ -47,7 +47,7 @@ describe('SectorRoom integration — persist-on-place (campaign 6.3)', () => {
     // `connectAs` (not connectActive) — placement resolves `owner` from the
     // join-time session→player map, no active hull needed (the same dodge as
     // structurePlacementValidation.test.ts).
-    const room = await harness.connectAs('player-persist-on-place');
+    const room = await harness.connectAs('player-persist-on-place', { initialCargo: withCapitalCrates() });
     await harness.advance(150);
     harness.sink.reset();
 

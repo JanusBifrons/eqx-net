@@ -156,6 +156,12 @@ describe('structureKinds catalogue', () => {
     expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(1);
   });
 
+  it('base loop: the Shipyard is a starter-base price (14→15 bump)', () => {
+    expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(15);
+    expect(STRUCTURE_KINDS.shipyard.constructionCost).toBe(2000);
+    expect(STRUCTURE_KINDS.shipyard.powerConsumption).toBe(180);
+  });
+
   it('phase V: every kind has a large footprint and radius is its bounding circle', () => {
     // Plan soft-leaping-truffle v2 (user: "far larger and more like the other
     // ones"). Connectors + pylons stay the smallest nodes; everything else is

@@ -95,6 +95,8 @@ export interface StructureRenderState {
   noFuel?: boolean;
   /** Active power — drawing full consumption (else the idle trickle). */
   drawFull?: boolean;
+  /** The owner switched it Off (no draw, no work). */
+  switchedOff?: boolean;
   /** C2 — someone is breaking into its cargo right now. */
   breach?: boolean;
   /** F2 — a built Territory Lock holding its sector for its owner's side
@@ -109,6 +111,9 @@ export interface StructureRenderState {
    *  3e: `holdTicks` / `cargo` time the cargo carried along a holding arm
    *  (`core/articulation/craneCargo.ts`); absent = none. */
   rigClip?: { clipId: string; startTick: number; targetX?: number; targetY?: number; holdTicks?: number; cargo?: number };
+  /** Build count (job 2E): outputs left before it stops (0 = done);
+   *  undefined ⇒ repeats forever. */
+  prodCount?: number;
   /** v4 T1 — a teleporter: present only for teleporter kinds. */
   teleport?: {
     phase: number;

@@ -3,7 +3,7 @@
  * laser hit on a whole rock pays NO ore into the shooter's hold: it only
  * cuts. The pieces re-cut down to slivers that stay pieces; a hull-touch
  * takes one in whole as a rock chunk whose hidden ore (`OreDraw.chunkYield`)
- * grows with the chunk's weight squared. Ordinary guns neither mine nor cut.
+ * is its share by weight of the whole rock's ore. Ordinary guns neither mine nor cut.
  *
  * The pilot flies a fighter whose latent wing mount carries the mining laser
  * (seeded on the roster + live hull), locks the rock (`lockTarget`) and fires
@@ -90,14 +90,14 @@ describe('SectorRoom integration — mining-laser ore arrives only as rock chunk
     expect(int.loot.podCount(), 'a rock never drops a pod').toBe(0);
   });
 
-  it('chunkYield: a chunk holds its rock resource, very steep in its weight', () => {
+  it('chunkYield: a chunk holds its rock resource, shared by weight', () => {
     const draw = new OreDraw({} as OreDrawDeps);
     const total = (o: Partial<Record<string, number>>): number => Object.values(o).reduce<number>((a, n) => a + (n ?? 0), 0);
-    const small = draw.chunkYield('r', 0, 0, 250, 'rock');
-    const big = draw.chunkYield('r', 0, 0, 1_000, 'rock');
+    const small = draw.chunkYield('r', 0, 0, 100, 10_000, 'rock');
+    const big = draw.chunkYield('r', 0, 0, 400, 10_000, 'rock');
     expect(small.minerals ?? 0, 'plain rock: minerals').toBeGreaterThan(0);
-    expect(total(big) / total(small)).toBeGreaterThan(14); // 4x the weight: ~16x the ore
-    expect((draw.chunkYield('r', 0, 0, 500, 'ice').ice ?? 0), 'ice rock: ice').toBeGreaterThan(0);
-    expect(draw.chunkYield('r', 0, 0, 0, 'rock')).toEqual({});
+    expect(total(big) / total(small)).toBeCloseTo(4, 1); // 4x the weight: 4x the ore
+    expect((draw.chunkYield('r', 0, 0, 500, 10_000, 'ice').ice ?? 0), 'ice rock: ice').toBeGreaterThan(0);
+    expect(draw.chunkYield('r', 0, 0, 0, 10_000, 'rock')).toEqual({});
   });
 });
