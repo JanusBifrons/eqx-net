@@ -39,6 +39,10 @@ export const STRUCTURE_FLAG_BREACH = 128;
  *  (its beacon dish turns only then). Derived on every sync, never an event,
  *  so a late joiner reads it from the row (#16). */
 export const STRUCTURE_FLAG_LOCK_HOLDING = 256;
+/** Hologram pass-through — the structure's physics body is still a blueprint
+ *  ghost (collides with nothing; `isStructureBodySolid` false). The client
+ *  prediction world mirrors it. Bit 14: bit 9 (512) is On/Off, bits 10-13 the throttle. */
+export const STRUCTURE_FLAG_GHOST_BODY = 16384;
 /** The owner switched this structure Off (no draw, no work). */
 export const STRUCTURE_FLAG_OFF = 512;
 

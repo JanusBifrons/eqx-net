@@ -19,6 +19,7 @@ import {
   STRUCTURE_FLAG_OFF,
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
+  STRUCTURE_FLAG_GHOST_BODY,
   STRUCTURE_DEFAULTS as D,
   STRUCTURE_RIG_CLIP_TARGET,
   CONN_SOCK_UNKNOWN,
@@ -87,6 +88,7 @@ export function decodeStructureState(
   const door = isDoorKind(rigKind);
   if (door) decodeDoorRow(v, out, rigKind!);
   else clearDoorRow(out);
+  out.ghostBody = (flags & STRUCTURE_FLAG_GHOST_BODY) !== 0 ? true : undefined;
   const gateAccess = v.gateAccess ?? D.gateAccess;
   out.gateAccess = gateAccess !== 0 ? gateAccess : undefined;
   const recipe = v.recipe ?? D.recipe;
