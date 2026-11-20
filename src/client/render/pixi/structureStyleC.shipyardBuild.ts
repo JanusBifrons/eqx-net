@@ -172,10 +172,12 @@ export function shipyardPrintContext(id: string, print = false): GraphicsContext
   return null;
 }
 
-const keelEmpty = new GraphicsContext();
+// Lazy: built on first use, so importing this module needs no GraphicsContext
+// (pixi mocks in unrelated tests omit it).
+let keelEmpty: GraphicsContext | null = null;
 /** The keel part's art with nothing queued: none (it is only the anchor). */
 export function shipyardKeelContext(): GraphicsContext {
-  return keelEmpty;
+  return (keelEmpty ??= new GraphicsContext());
 }
 
 const _outline = { color: SHIPYARD_PRINT_CYAN, width: 1.5, alpha: 0.3 };
@@ -356,7 +358,7 @@ export function shipyardPartShow(rig: Rig, i: number, value: number, st: Structu
   const k = shipyardHullScale(st?.recipe), bay = st?.prodBay ?? 0;
   if (kind === Show.Keel) {
     const q = st?.prodQueued ?? 0;
-    const want = q > 0 ? queuedContext(st?.recipe ?? 0, bay, q, k) : keelEmpty;
+    const want = q > 0 ? queuedContext(st?.recipe ?? 0, bay, q, k) : shipyardKeelContext();
     if (g.context !== want) g.context = want;
     return;
   }
