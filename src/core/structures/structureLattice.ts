@@ -16,7 +16,9 @@
  *     connectors at (i·P, j·P) for |i| ≤ M on EVEN j only (odd j are spine
  *     relays, so tall leaves of neighbouring rows never meet);
  *   - row links (i,j)–(i±1,j); spine links (0,j)–(0,j±1); the Capital links
- *     its neighbours (capital ↔ connectors only);
+ *     its neighbours (capital ↔ connectors only) except (0, 1), past its
+ *     crane-bay pad (solid to cables): that one is reached from (1, 0)
+ *     through a relay at (P, P);
  *   - a row connector's one leaf sits directly above it (even i) or below it
  *     (odd i), clear of the row line, so same-side leaves stand 2·P apart (a
  *     700 u Solar fits); spine connectors carry no leaves (the spine line
@@ -100,11 +102,26 @@ export function buildStructureLattice(opts: LatticeOptions): StructureLattice {
   //  2. the row ends (±r, j) for |j| < r — parent (±(r-1), j), from ring r-1;
   //  3. the new top/bottom rows (±i, ±r) by increasing |i| — parent (±(i-1), ±r).
   for (let r = 1; placements.length < n; r++) {
-    const ring: Array<[number, number]> = [[0, r], [0, -r]];
+    // The Capital's crane-bay pad (+y) is solid to cables: the first spine
+    // cell past it comes last in ring 1, by a detour up column 1 (its row-0
+    // leaf hangs below), through a relay at (P, P).
+    const ring: Array<[number, number]> = r === 1 ? [[0, -1]] : [[0, r], [0, -r]];
     for (let j = -(r - 1); j <= r - 1; j++) ring.push([r, j], [-r, j]);
     for (let i = 1; i <= r; i++) ring.push([i, r], [-i, r], [i, -r], [-i, -r]);
+    if (r === 1) ring.push([0, 1]);
     for (const [i, j] of ring) {
       if (placements.length >= n) break;
+      if (i === 0 && j === 1) {
+        const col = at.get(key(1, 0));
+        if (col === undefined) continue;
+        placements.push({ kind: 'connector', x: LATTICE_PITCH, y: LATTICE_PITCH });
+        edges.push([col, placements.length - 1]);
+        if (placements.length >= n) break;
+        placements.push({ kind: 'connector', x: 0, y: LATTICE_PITCH });
+        edges.push([placements.length - 2, placements.length - 1]);
+        at.set(key(0, 1), placements.length - 1);
+        continue;
+      }
       // Rows sit on every OTHER grid line (odd lines are spine relays only),
       // so a 300 u-tall Solar above one row clears the leaves below the next.
       if (i !== 0 && j % 2 !== 0) continue;

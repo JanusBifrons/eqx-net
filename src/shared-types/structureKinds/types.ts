@@ -86,7 +86,9 @@ export const StructureKindSchema = z
      *  at rotation 0 (centre `cx, cy`, size `w × h`; turns with the
      *  structure). No other solid structure may overlap it, and the kind may
      *  not be placed with it over one (`placementRules`, so player placement
-     *  and `growBase` both obey it). Links and cables may cross it. Today only
+     *  and `growBase` both obey it). It is solid to links and cables too (no
+     *  socket on the pad side, no cable across it: `structureSockets`,
+     *  core `isCablePolylineBlocked`). Today only
      *  the Freight Dock and the Capital have one: their crane bay's landing pad. ABSENT ⇒ nothing reserved. */
     keepClear: z.object({
       cx: z.number(), cy: z.number(), w: z.number().positive(), h: z.number().positive(),

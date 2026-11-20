@@ -11,8 +11,9 @@
  * `flattenCableCurve` turns the curve into a fixed `CABLE_CURVE_SEGMENTS`
  * polyline in a caller-owned Float64Array plus its box, allocation-free (the
  * build preview runs this every frame on a phone). `isCablePolylineBlocked`
- * is the polyline form of `isConnectionLineBlocked` (Grid.ts): same nodes and
- * obstacles count, the two endpoints are ignored, and it reuses the same
+ * is the polyline form of `isConnectionLineBlocked` (Grid.ts): same nodes,
+ * landing pads (`gridNodePadBox`, solid to cables) and obstacles count, the
+ * two endpoints' bodies are ignored (their pads are not), and it reuses the same
  * segment tests, with the polyline's box as a broad phase. It lives here, not
  * in Grid.ts, to keep Grid.ts under the god-file ceiling.
  *
@@ -26,6 +27,7 @@ import { structureSockets, structureSocketToWorld } from '../../shared-types/str
 import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
 import { structureLinksBoundBySockets } from '../leveling/structureLevel.js';
 import { MIN_CABLE_LENGTH } from './structureGridConstants.js';
+import { keepClearBox } from './placementRules.js';
 
 /** Facing-test tolerance (world units of dot product): a socket at right
  *  angles to its partner counts as facing it, whatever the float noise. */
@@ -157,13 +159,33 @@ export function cablePolylineHitsAabb(poly: Float64Array, minX: number, minY: nu
   return false;
 }
 
+/** A node's landing pad (its kind's `keepClear` box, `keepClearBox`) in world
+ *  space, or null when the kind has none. Returns `keepClearBox`'s shared
+ *  scratch: read it before the next call. Allocation-free. */
+export function gridNodePadBox(n: GridNode): { readonly x: number; readonly y: number; readonly hw: number; readonly hh: number } | null {
+  return keepClearBox(n.kind, n.x, n.y, (n.rot * 180) / Math.PI);
+}
+
+/** Does the flattened cable cross node `n`'s landing pad (solid to cables,
+ *  owner rule)? False when the kind has no pad. Allocation-free. */
+function polylineHitsPad(n: GridNode, poly: Float64Array, box: CableBox): boolean {
+  const pad = gridNodePadBox(n);
+  if (pad === null) return false;
+  const minX = pad.x - pad.hw, maxX = pad.x + pad.hw, minY = pad.y - pad.hh, maxY = pad.y + pad.hh;
+  if (maxX < box.x0 || minX > box.x1 || maxY < box.y0 || minY > box.y1) return false;
+  CABLE_BLOCK_STATS.narrow++;
+  return cablePolylineHitsAabb(poly, minX, minY, maxX, maxY);
+}
+
 /**
  * The polyline form of `isConnectionLineBlocked`: true if the flattened cable
  * (`poly`, from `flattenCableCurve`, with its `box`) passes through any node's
- * footprint box other than `a` / `b`, or through any `obstacle`
- * (`segmentHitsObstacle`, parts narrow phase included). A node or obstacle
- * whose box misses the curve's box is skipped before the per-segment tests.
- * `obstacles` is optional, as in `isConnectionLineBlocked`. Allocation-free.
+ * footprint box other than `a` / `b`, through ANY node's landing pad (its
+ * `keepClear` box, `a`'s and `b`'s own included: a pad is solid to cables),
+ * or through any `obstacle` (`segmentHitsObstacle`, parts narrow phase
+ * included). A node, pad or obstacle whose box misses the curve's box is
+ * skipped before the per-segment tests. `obstacles` is optional, as in
+ * `isConnectionLineBlocked`. Allocation-free.
  */
 export function isCablePolylineBlocked(
   a: GridNode,
@@ -173,8 +195,11 @@ export function isCablePolylineBlocked(
   nodes: ReadonlyMap<string, GridNode>,
   obstacles?: readonly GridObstacle[],
 ): boolean {
+  // The ends' own pads (the build-preview ghost is not in `nodes`).
+  if (polylineHitsPad(a, poly, box) || polylineHitsPad(b, poly, box)) return true;
   for (const n of nodes.values()) {
     if (n.id === a.id || n.id === b.id) continue;
+    if (polylineHitsPad(n, poly, box)) return true;
     const hw = n.halfW ?? n.radius, hh = n.halfH ?? n.radius;
     const minX = n.x - hw, maxX = n.x + hw, minY = n.y - hh, maxY = n.y + hh;
     if (maxX < box.x0 || minX > box.x1 || maxY < box.y0 || minY > box.y1) continue;

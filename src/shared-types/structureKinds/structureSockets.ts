@@ -29,6 +29,12 @@
  *      chamfered outline (every non-hex family in the house look) the short
  *      cut-corner edges get no socket (owner: "drop corner studs"), except on
  *      a shield pylon, which takes any side.
+ *   5. Landing pads: a kind with a `keepClear` pad (the freight dock, the
+ *      Capital's crane bay) has NO socket on its pad side (owner: no
+ *      connector overlapping the pad ships land on). Every outline edge
+ *      facing the pad is dropped whole, and so is any socket sitting on the
+ *      pad or whose outward ray runs into it. The pad is solid to cables
+ *      too (`isCablePolylineBlocked`, core `cableCurve.ts`).
  *
  * Sockets sit on the HOUSE-LOOK outline (style `c`, the clean symmetric
  * chamfer players see), not the seeded unstyled one: the server has no style,
@@ -121,11 +127,30 @@ function rayHitsOutline(poly: readonly P[], skip: number, px: number, py: number
   return false;
 }
 
-/** Kinds whose landing-pad side takes no cable. */
-const PAD_SIDE_CLOSED: ReadonlySet<StructureKindId> = new Set<StructureKindId>(['freight_dock']);
+type PadBox = { cx: number; cy: number; w: number; h: number };
+
+/** Does outline edge a→b (outward normal nx, ny) face the pad: the pad lies
+ *  in front of the edge line (along the normal) and overlaps the edge's span
+ *  along the edge? Such an edge is the pad side: no socket on it at all. */
+function edgeFacesPad(pad: PadBox, a: P, b: P, nx: number, ny: number): boolean {
+  const hx = pad.w / 2, hy = pad.h / 2;
+  // The pad's far extent along the normal, measured from the edge line.
+  const along = (pad.cx - a.x) * nx + (pad.cy - a.y) * ny;
+  if (along + hx * Math.abs(nx) + hy * Math.abs(ny) <= 0) return false;
+  // Overlap along the edge tangent (-ny, nx) with the edge's span.
+  const tx = -ny, ty = nx;
+  const ea = a.x * tx + a.y * ty, eb = b.x * tx + b.y * ty;
+  const pc = pad.cx * tx + pad.cy * ty, rT = hx * Math.abs(tx) + hy * Math.abs(ty);
+  return pc + rT > Math.min(ea, eb) && pc - rT < Math.max(ea, eb);
+}
+
+/** Is (px, py) on or inside the pad box? */
+function onPad(pad: PadBox, px: number, py: number): boolean {
+  return Math.abs(px - pad.cx) <= pad.w / 2 && Math.abs(py - pad.cy) <= pad.h / 2;
+}
 
 /** Does the outward ray from (px, py) along (nx, ny) enter the keep-clear box? */
-function facesPad(pad: { cx: number; cy: number; w: number; h: number }, px: number, py: number, nx: number, ny: number): boolean {
+function facesPad(pad: PadBox,px: number, py: number, nx: number, ny: number): boolean {
   const hx = pad.w / 2, hy = pad.h / 2;
   let t0 = 0, t1 = Infinity;
   for (const [p, d, c, h] of [[px, nx, pad.cx, hx], [py, ny, pad.cy, hy]] as const) {
@@ -165,11 +190,10 @@ function isPadKind(id: string): id is TeleporterKind {
 
 function outlineSockets(id: StructureKindId): readonly StructureSocket[] {
   const poly = structureOutline(id, SOCKET_OUTLINE_STYLE);
-  // The freight dock's open edge faces its landing pad (`keepClear`), where
-  // ships set down: no cable plugs into that side (the stud would sit under
-  // the hazard strip and the cable would run across the pad). The Capital's
-  // crane bay keeps its studs for now (base layouts link through that side).
-  const pad = PAD_SIDE_CLOSED.has(id) ? getStructureKind(id).keepClear : undefined;
+  // Rule 5: a kind with a landing pad (`keepClear`: freight dock, Capital
+  // crane bay) takes no cable on its pad side (the stud would sit under the
+  // hazard strip and the cable would run across the pad ships land on).
+  const pad = getStructureKind(id).keepClear;
   const n = poly.length;
   const oneFace = id === 'connector';
   // House-look outlines of every non-hex family alternate cut corner, long
@@ -192,13 +216,14 @@ function outlineSockets(id: StructureKindId): readonly StructureSocket[] {
     // CCW outline ⇒ outward normal is the edge direction turned clockwise.
     const nx = ey / len;
     const ny = -ex / len;
+    if (pad !== undefined && edgeFacesPad(pad, a, b, nx, ny)) continue;
     const count = oneFace ? 1 : Math.max(1, Math.ceil(len / STRUCTURE_SOCKET_SPACING));
     for (let k = 0; k < count; k++) {
       const t = (k + 0.5) / count;
       const x = a.x + ex * t;
       const y = a.y + ey * t;
       if (rayHitsOutline(poly, i, x, y, nx, ny, reach)) continue;
-      if (pad !== undefined && facesPad(pad, x, y, nx, ny)) continue;
+      if (pad !== undefined && (onPad(pad, x, y) || facesPad(pad, x, y, nx, ny))) continue;
       out.push(freezeSocket(x, y, nx, ny));
     }
   }
