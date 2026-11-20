@@ -58,8 +58,9 @@ export type { GrownPlacement } from './growBuilder.js';
  *  outline (style c), so cable ends and socket-to-socket reach moved.
  *  17→18: each leaf stands `linkGap` off its connector (`MIN_CABLE_LENGTH`);
  *  a spine relay pushed onto its row line is dropped.
- *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power per unit of draw; row gaps fit the leaves facing in. */
-export const BASE_GROWTH_VERSION = 19;
+ *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power per unit of draw; row gaps fit the leaves facing in.
+ *  19→20: landing pads solid to cables, no socket on their side: the spine detours round the Capital's pad up column 1; an unlinkable connector is taken back. */
+export const BASE_GROWTH_VERSION = 20;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -341,6 +342,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
 
   const B = new Builder();
   const cap = B.tryPlace({ kind: 'capital', x: 0, y: 0 });
+  const padDir = Math.sign(keepClearBox('capital', 0, 0, 0)!.y); // its crane-bay pad's side of the spine (solid to cables)
   const rowConn = new Map<number, number[]>(); // row j → connector index per column (-cols..cols, spine at 0)
   const spineAt = new Map<number, number>(); // row j → spine connector (or the Capital for j = 0)
   spineAt.set(0, cap);
@@ -370,10 +372,14 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     if (!spineAt.has(from)) return false; // the row nearer 0 never formed
     const y = rowY.get(j) ?? nextRowY(from, Math.sign(j));
     rowY.set(j, y);
-    let spine = spineAt.get(j);
+    let spine = spineAt.get(j), col = -1; // col: this row's column 1 when the spine detoured up it
     if (spine === undefined) {
       // Spine connector at (0, y), reached through relays from the row nearer 0.
-      let prev = spineAt.get(from)!;
+      // Across the Capital's pad the spine detours up column 1 (its row-0
+      // leaf slot is kept free for it), then steps in to (0, y).
+      const sx = from === 0 && Math.sign(j) === padDir ? PITCH_X : 0;
+      let prev = sx === 0 ? spineAt.get(from)! : rowConn.get(0)!.find((c) => B.placements[c]!.x === sx) ?? -1;
+      if (prev < 0) return false;
       const prevY = rowY.get(from)!;
       const span = Math.abs(y - prevY);
       const relays = Math.max(0, Math.ceil((span - 2 * CONN_HALF) / 560) - 1);
@@ -383,30 +389,23 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
         // its +y side): the relay moves out past the pad's far side.
         for (const q of B.placed) {
           const pad = keepClearBox(q.kind, q.x, q.y, q.rot);
-          if (pad === null || Math.abs(pad.x) >= pad.hw + CONN_HALF || Math.abs(ry - pad.y) >= pad.hh + CONN_HALF) continue;
+          if (pad === null || Math.abs(pad.x - sx) >= pad.hw + CONN_HALF || Math.abs(ry - pad.y) >= pad.hh + CONN_HALF) continue;
           ry = pad.y + Math.sign(j) * (pad.hh + CONN_HALF + GAP);
         }
         // A relay pushed past a pad onto the row line is dropped: the spine
         // links the previous one directly (or the row fails, as before).
         if (Math.sign(j) * (y - ry) < 2 * CONN_HALF + linkGap('connector', 0, Math.sign(j))) continue;
-        const ri = B.tryPlace({ kind: 'connector', x: 0, y: ry });
-        if (ri < 0 || !B.tryLink(prev, ri)) return false;
+        const ri = B.placeLinked({ kind: 'connector', x: sx, y: ry }, prev);
+        if (ri < 0) return false;
         prev = ri;
       }
-      spine = B.tryPlace({ kind: 'connector', x: 0, y });
-      if (spine < 0 || !B.tryLink(prev, spine)) return false;
+      if (sx !== 0) col = prev = B.placeLinked({ kind: 'connector', x: sx, y }, prev);
+      spine = prev < 0 ? -1 : B.placeLinked({ kind: 'connector', x: 0, y }, prev);
+      if (spine < 0) return false;
       spineAt.set(j, spine);
     }
-    const row: number[] = [];
-    for (const side of [1, -1]) {
-      let prev = spine;
-      for (let i = 1; i <= cols; i++) {
-        const ci = B.tryPlace({ kind: 'connector', x: side * i * PITCH_X, y });
-        if (ci < 0 || !B.tryLink(prev, ci)) break;
-        row.push(ci);
-        prev = ci;
-      }
-    }
+    const row = col < 0 ? B.chainConnectors(spine, PITCH_X, PITCH_X, y, cols) : [col, ...B.chainConnectors(col, 2 * PITCH_X, PITCH_X, y, cols - 1)];
+    row.push(...B.chainConnectors(spine, -PITCH_X, -PITCH_X, y, cols));
     rowConn.set(j, row);
     return true;
   };
@@ -420,6 +419,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   let rowCursor = 0;
   const left = tallestFrom(queue.map((w) => w.kind));
   addRow(0);
+  used.add(`${rowConn.get(0)!.find((c) => B.placements[c]!.x === PITCH_X)}:${padDir}`); // row 0 column 1's pad-side slot: the spine detour's
   for (const [qi, w] of queue.entries()) {
     gaps.left = left[qi]!;
     let placedIt = false;

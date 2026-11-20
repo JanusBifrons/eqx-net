@@ -26,7 +26,7 @@ import { convexHullCCW } from '../swarm/asteroidShape.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js';
 // Function-only cycle (cableCurve uses Grid's segment tests): neither module
 // reads the other at load time.
-import { CABLE_NO_SOCKET, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
+import { CABLE_NO_SOCKET, gridNodePadBox, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -207,7 +207,8 @@ export function segmentHitsObstacle(x0: number, y0: number, x1: number, y1: numb
 }
 
 /** True if the segment between two nodes' centres passes through any OTHER
- *  node's body, or (Item D) through any non-structure `obstacle` (asteroid;
+ *  node's body or landing pad (`gridNodePadBox`: a pad is solid to cables),
+ *  or (Item D) through any non-structure `obstacle` (asteroid;
  *  `segmentHitsObstacle`). `obstacles` is OPTIONAL — omitting it is
  *  byte-identical to the structures-only behaviour. */
 export function isConnectionLineBlocked(
@@ -227,6 +228,8 @@ export function isConnectionLineBlocked(
     ) {
       return true;
     }
+    const pad = gridNodePadBox(n);
+    if (pad !== null && segmentIntersectsAabb(a.x, a.y, b.x, b.y, pad.x - pad.hw, pad.y - pad.hh, pad.x + pad.hw, pad.y + pad.hh)) return true;
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {

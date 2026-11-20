@@ -95,7 +95,8 @@ function expectParity(ghost: { kind: string; x: number; y: number }, placed: Pla
 }
 
 describe('build preview link verdict = core canConnect (structure-restyle 0d slice 7)', () => {
-  const ghost = { kind: 'connector', x: 0, y: 850 };
+  // North of the Capital: its +y side is the landing pad (no sockets, solid).
+  const ghost = { kind: 'connector', x: 0, y: -850 };
   const capital: Placed = { id: 1, kind: 'capital', x: 0, y: 0, owner: ME };
 
   it('facing sockets in reach: ok, same socket pair', () => {
@@ -114,12 +115,12 @@ describe('build preview link verdict = core canConnect (structure-restyle 0d sli
   });
 
   it('a rock on the cable curve: blocked', () => {
-    const v = expectParity(ghost, [capital], [{ id: 9, x: 0, y: 540, radius: 200 }]);
+    const v = expectParity(ghost, [capital], [{ id: 9, x: 0, y: -540, radius: 200 }]);
     expect(v[0]!.reason).toBe('blocked');
   });
 
   it("another owner's building on the curve blocks (the server sees every owner), and is no candidate", () => {
-    const theirs: Placed = { id: 2, kind: 'battery_bank', x: 0, y: 540, owner: THEM };
+    const theirs: Placed = { id: 2, kind: 'battery_bank', x: 0, y: -540, owner: THEM };
     const v = expectParity(ghost, [capital, theirs]);
     expect(v.map((x) => x.id), 'only my structures are candidates').toEqual(['1']);
     expect(v[0]!.reason).toBe('blocked');
@@ -130,17 +131,17 @@ describe('build preview link verdict = core canConnect (structure-restyle 0d sli
   it('several candidates, mixed verdicts, in mirror order', () => {
     const v = expectParity(ghost, [
       capital,
-      { id: 3, kind: 'connector', x: 400, y: 850, owner: ME },
+      { id: 3, kind: 'connector', x: 400, y: -850, owner: ME },
       { id: 4, kind: 'connector', x: 5000, y: 0, owner: ME },
-      { id: 5, kind: 'battery_bank', x: 200, y: 400, owner: THEM },
-    ], [{ id: 9, x: -200, y: 850, radius: 50 }]);
+      { id: 5, kind: 'battery_bank', x: 200, y: -400, owner: THEM },
+    ], [{ id: 9, x: -200, y: -850, radius: 50 }]);
     expect(v.map((x) => x.reason)).toEqual([v[0]!.reason, null, 'out-of-range']);
   });
 });
 
 describe('build preview line runs the verdict cable (structure-restyle 0d slice 8)', () => {
   it('with socket cables on, the ok line is core flattenLinkCable between the picked sockets', () => {
-    const ghost = { kind: 'connector', x: 0, y: 850 };
+    const ghost = { kind: 'connector', x: 0, y: -850 };
     const placed: Placed[] = [{ id: 1, kind: 'capital', x: 0, y: 0, owner: ME }];
     const [core] = coreVerdicts(ghost, placed, []);
     expect(core!.ok).toBe(true);
@@ -169,6 +170,6 @@ describe('build preview line runs the verdict cable (structure-restyle 0d slice 
     const expected = Array.from(world, (v, i) => (i % 2 === 1 ? -v : v));
     expect(lines(true)).toContainEqual(expected);
     // Off: today's straight centre-to-centre line.
-    expect(lines(false)).toContainEqual([0, -850, 0, 0]);
+    expect(lines(false)).toContainEqual([0, 850, 0, 0]);
   });
 });

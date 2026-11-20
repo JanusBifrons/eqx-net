@@ -93,9 +93,25 @@ describe('structureSockets', () => {
       expect(diagonal, `${kind.id} corner sockets`).toBe(0);
       for (const [nx, ny] of [[1, 0], [0, 1], [-1, 0], [0, -1]] as const) {
         const side = sockets.filter((s) => Math.abs(s.nx - nx) < 1e-9 && Math.abs(s.ny - ny) < 1e-9).length;
-        // The freight dock's open (+y) edge faces its landing pad: no studs.
-        if (kind.id === 'freight_dock' && ny === 1) { expect(side, 'freight dock pad side').toBe(0); continue; }
+        // A landing-pad kind's open (+y) edge faces its pad: no studs.
+        if (kind.keepClear !== undefined && ny === 1) { expect(side, `${kind.id} pad side`).toBe(0); continue; }
         expect(side, `${kind.id} side ${nx},${ny}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('every landing-pad kind (keepClear): no socket on, facing or pointing into its pad', () => {
+    const padKinds = STRUCTURE_KINDS_LIST.filter((k) => k.keepClear !== undefined).map((k) => k.id);
+    expect(padKinds).toEqual(expect.arrayContaining(['freight_dock', 'capital']));
+    for (const id of padKinds) {
+      const pad = getStructureKind(id).keepClear!;
+      const sockets = structureSockets(id);
+      expect(sockets.length, id).toBeGreaterThan(0);
+      for (const s of sockets) {
+        // The pad lies past the +y edge: no stud faces +y at all, and none
+        // sits within the pad's x span on the pad side.
+        expect(s.ny, `${id} stud faces the pad`).toBeLessThan(0.5);
+        expect(Math.abs(s.x - pad.cx) <= pad.w / 2 && Math.abs(s.y - pad.cy) <= pad.h / 2, `${id} stud on pad`).toBe(false);
       }
     }
   });

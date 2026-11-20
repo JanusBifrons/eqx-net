@@ -131,4 +131,20 @@ describe('isCablePolylineBlocked', () => {
     expect(isCablePolylineBlocked(A, B, poly, box, nodes(...far, node('in', 200, 20, 10)))).toBe(false);
     expect(CABLE_BLOCK_STATS.narrow).toBe(1);
   });
+
+  it('a landing pad (keepClear) is solid: another node\'s pad and an end\'s own pad block, straight line too', () => {
+    flattenCableCurve(sa, false, sb, false, poly, box);
+    // A freight dock far below whose pad (local +y, rotated 180°: -y) is clear...
+    const dockClear: GridNode = { ...node('d', 200, 2000, 500), kind: 'freight_dock', halfH: 200, rot: 0 };
+    expect(isCablePolylineBlocked(A, B, poly, box, nodes(A, B, dockClear))).toBe(false);
+    // ...and turned 180° so its pad (900 × 500, 210..710 past the open edge)
+    // reaches up over the cable's bend: the body is clear, the pad is not.
+    const dockUp: GridNode = { ...node('d', 200, 600, 500), kind: 'freight_dock', halfH: 200, rot: Math.PI };
+    expect(isCablePolylineBlocked(A, B, poly, box, nodes(A, B, dockUp))).toBe(true);
+    expect(isConnectionLineBlocked(node('p', -2000, 0), node('q', 2000, 0), nodes(dockUp))).toBe(true);
+    // An end's own pad blocks too (A as a Capital whose crane bay lies under
+    // the cable: pad y 290..530 past +y, here shifted so it covers the bend).
+    const capA: GridNode = { ...A, kind: 'capital', y: -360 };
+    expect(isCablePolylineBlocked(capA, B, poly, box, nodes(capA, B))).toBe(true);
+  });
 });

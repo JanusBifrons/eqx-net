@@ -221,18 +221,19 @@ export const SHOWCASE_DEFENCE_OPTS = {
     // solar on each side relay + a solar and battery north, the two turrets on
     // the south relay, and the shield wall across the southern approach (each
     // pylon taps a side relay; the pair links across the gap). Every side is
-    // in use, so the north relay, solar and battery sit just past the
-    // Capital's crane bay pad (its +y `keepClear`, y 290..530) instead.
+    // in use, and the Capital's crane bay pad (its +y `keepClear`, y 290..530)
+    // is solid to cables, so the north relay hangs off the east relay, past
+    // the pad, with the solar and battery beside it.
     { kind: 'capital', x: 0, y: 0 },
     { kind: 'connector', x: 400, y: 0 },
     { kind: 'connector', x: -400, y: 0 },
-    { kind: 'connector', x: 0, y: 570 },
+    { kind: 'connector', x: 400, y: 600 },
     { kind: 'connector', x: 0, y: -400 },
     // Side solars stand on end (300 u wide) beside their relays.
     { kind: 'solar', x: 650, y: 0, rot: 90 },
     { kind: 'solar', x: -650, y: 0, rot: 90 },
     { kind: 'solar', x: -400, y: 750 },
-    { kind: 'battery', x: 230, y: 640 },
+    { kind: 'battery', x: 700, y: 650 },
     { kind: 'shield_pylon', x: -300, y: -560 },
     { kind: 'shield_pylon', x: 300, y: -560 },
     { kind: 'laser_bolt_turret', x: -150, y: -400 },
@@ -365,8 +366,8 @@ export const SHOWCASE_TELEPORT_OPTS = {
 // ── Coastal defences (plan coastal-defences) ───────────────────────────────
 /** The power plant + magazine every coastal showcase battery runs on: the
  *  Capital with a Reactor on each flank (fuel and munitions stocked). */
-const COASTAL_PLANT: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }> = [
-  { kind: 'capital', x: 0, y: -1400 },
+const COASTAL_PLANT: ReadonlyArray<{ kind: StructureKindId; x: number; y: number; rot?: number }> = [
+  { kind: 'capital', x: 0, y: -1400, rot: 180 }, // crane bay pad (solid to cables) south, off the spine link
   { kind: 'connector', x: 700, y: -1400 },
   { kind: 'connector', x: -700, y: -1400 },
   { kind: 'reactor', x: 700, y: -2000 },

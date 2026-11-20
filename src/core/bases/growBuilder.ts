@@ -7,7 +7,7 @@ import { Connection } from '../structures/Connection.js';
 import {
   CABLE_CURVE_FLOATS, cablePolylineHitsAabb, flattenLinkCable, makeCableBox, makeCableSocketPick,
 } from '../structures/cableCurve.js';
-import { placementRejection } from '../structures/placementRules.js';
+import { keepClearBox, placementRejection } from '../structures/placementRules.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 import { MIN_CABLE_LENGTH } from '../structures/structureGridConstants.js';
 import type { RecipeId } from '../../shared-types/recipes.js';
@@ -53,13 +53,19 @@ export class Builder {
     const { hw, hh } = structureHalfExtents(p.kind, rot);
     // Never on top of an existing link's cable: the curve between the
     // sockets it was linked with (0d slice 5), as `canConnect` tested it.
+    // Its landing pad (`keepClear`) is solid to cables too: never over one.
     const x0 = p.x - hw, y0 = p.y - hh, x1 = p.x + hw, y1 = p.y + hh;
+    const pad = keepClearBox(p.kind, p.x, p.y, rot);
+    const px0 = pad === null ? 0 : pad.x - pad.hw, px1 = pad === null ? 0 : pad.x + pad.hw;
+    const py0 = pad === null ? 0 : pad.y - pad.hh, py1 = pad === null ? 0 : pad.y + pad.hh;
     for (let e = 0; e < this.edges.length; e++) {
       const [ea, eb] = this.edges[e]!;
       const s = this.edgeSockets[e]!;
       flattenLinkCable(this.nodes.get(`s${ea}`)!, s[0], this.nodes.get(`s${eb}`)!, s[1], linkPoly, linkBox);
-      if (linkBox.x1 < x0 || linkBox.x0 > x1 || linkBox.y1 < y0 || linkBox.y0 > y1) continue;
-      if (cablePolylineHitsAabb(linkPoly, x0, y0, x1, y1)) return -1;
+      if (!(linkBox.x1 < x0 || linkBox.x0 > x1 || linkBox.y1 < y0 || linkBox.y0 > y1)
+        && cablePolylineHitsAabb(linkPoly, x0, y0, x1, y1)) return -1;
+      if (pad !== null && !(linkBox.x1 < px0 || linkBox.x0 > px1 || linkBox.y1 < py0 || linkBox.y0 > py1)
+        && cablePolylineHitsAabb(linkPoly, px0, py0, px1, py1)) return -1;
     }
     const i = this.placements.length;
     this.placements.push(p);
@@ -85,6 +91,28 @@ export class Builder {
     this.edges.push([a, b]);
     this.edgeSockets.push([linkPick.a, linkPick.b]);
     return true;
+  }
+
+  /** Place `p` and link it from `from`; if the link fails the placement is
+   *  taken back (never left orphaned). Returns the index or -1. */
+  placeLinked(p: GrownPlacement, from: number): number {
+    const i = this.tryPlace(p);
+    if (i < 0) return -1;
+    if (!this.tryLink(from, i)) { this.undoLast(); return -1; }
+    return i;
+  }
+
+  /** Connectors at `(x0 + k·dx, y)`, k = 0…n-1, each linked to the one
+   *  before (the first to `from`); stops at the first that fails. */
+  chainConnectors(from: number, x0: number, dx: number, y: number, n: number): number[] {
+    const out: number[] = [];
+    for (let k = 0, prev = from; k < n; k++) {
+      const ci = this.placeLinked({ kind: 'connector', x: x0 + k * dx, y }, prev);
+      if (ci < 0) break;
+      out.push(ci);
+      prev = ci;
+    }
+    return out;
   }
 
   /** Remove the last placement (a leaf that couldn't be linked). */
