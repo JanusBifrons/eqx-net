@@ -2221,9 +2221,9 @@ export class SectorRoom extends Room<SectorState> {
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
       // D3 — station taxes: a player's habitat modules and spires pay their wallet.
-      payCredits: (rec, n) => {
-        if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes');
-      },
+      payCredits: (rec, n) => { if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes'); },
+      // A finished hull parks outside the yard as a live ship (`HullHandOff.launchNewHull`).
+      launchHull: (rec, kind, q) => parseOwner(rec.owner).kind === 'player' && this.hullHandOff.launchNewHull(rec.owner, kind, q, rec.x, rec.y, true).ok,
     });
     // v4 T1-T4 — the teleporters + the broker room (`features/teleportMessages.ts`).
     ({ teleporters: this.teleporters, teleportRoom: this.teleportRoom } = buildTeleporters({
@@ -2504,7 +2504,7 @@ export class SectorRoom extends Room<SectorState> {
       ensureTradeRegistered: () => this.ensureTradeRegistered(),
       researchLabs: () => this.researchLabs,
       playerToUser: this.playerToUser,
-      production: () => this.production,
+      production: () => this.production, hullHandOff: () => this.hullHandOff,
       resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid),
       ship: (id) => this.state.ships.get(id),
       shipPoseCache: this.shipPoseCache,
@@ -4025,7 +4025,7 @@ export class SectorRoom extends Room<SectorState> {
     lingeringSlots: this.lingeringSlots, lingeringPoseCache: this.lingeringPoseCache, freeSlots: () => this.freeSlots,
     ownerlessShips: this.ownerlessShips, fleet: this.fleet, wingmen: () => this.wingmen, snapshotRestore: () => this.snapshotRestore,
     warpTravel: () => this.warpTravel, logger, postToWorker: (cmd) => this.postToWorker(cmd),
-    landingPoint: (pid, x, y, kind, skip) => this.landingPoint(pid, x, y, kind, skip),
+    landingPoint: (pid, x, y, kind, skip) => this.landingPoint(pid, x, y, kind, skip), playerToUser: this.playerToUser,
   });
 
   /**
