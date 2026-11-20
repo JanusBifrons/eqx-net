@@ -5,25 +5,21 @@
  * `structureStateDecode.ts`). Fields are assigned only on change (A2), so a
  * still door costs nothing; a late joiner rebuilds the door from the row (#16).
  *
- * The gate state comes from the GateController through the slice host
- * (`GateDoorSource`, the same path as `maskFor`). Until the controller
- * exposes its door states (`gateStateFor` / `airlockStateFor`), the row
- * carries the open decision as a door already at rest at that end, so the
- * client reads the same open / shut it did before.
+ * The door states come from the GateController through the slice host
+ * (`GateDoorSource`: `gateStateFor` / `airlockStateFor`).
  */
 import { rigClipIndex } from '../../core/articulation/rig.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
-import { DOOR_POS_MAX, DOOR_POWER_LEVELS, type GateType } from '../../core/structures/gateGeometry.js';
-import { GATE_OPEN_A, GATE_OPEN_B, type AirlockState, type GateState } from '../../core/structures/gateLogic.js';
+import type { GateType } from '../../core/structures/gateGeometry.js';
+import type { AirlockState, GateState } from '../../core/structures/gateLogic.js';
 import type { DoorSegment } from '../../core/structures/doorMotion.js';
 import { STRUCTURE_DEFAULTS as SD, encodeDoorMotion, type DoorMotionFields, type DoorMotionSeg } from '../../shared-types/structureStateWire.js';
 import type { StructureState } from './schema/SectorState.js';
 
 /** Where the writer reads a gate's doors (the GateController). */
 export interface GateDoorSource {
-  maskFor(id: string): number;
-  gateStateFor?(id: string): Readonly<GateState> | undefined;
-  airlockStateFor?(id: string): Readonly<AirlockState> | undefined;
+  gateStateFor(id: string): Readonly<GateState> | undefined;
+  airlockStateFor(id: string): Readonly<AirlockState> | undefined;
 }
 
 function doorClipIndex(kind: string, clipId: string): number {
@@ -48,28 +44,22 @@ export function airlockRowDoorIsB(a: Readonly<AirlockState>): boolean {
 }
 
 const SHUT: DoorSegment = { p0: 0, t0: 0, dir: -1, level: 0 };
-const OPEN_AT_REST: DoorSegment = { p0: DOOR_POS_MAX, t0: 0, dir: 1, level: DOOR_POWER_LEVELS };
 const fields: DoorMotionFields = { rigClip: 0, rigStart: 0, rigHold: 0, gateOpen: 0 };
 
 /** The segment + clip a gate's row carries, into `fields`. */
 function encodeGateDoors(id: string, type: GateType, src: GateDoorSource): DoorMotionFields {
   let seg: Readonly<DoorMotionSeg> = SHUT;
   let clip = type === 'gate' ? GATE_DOOR_CLIP : AIRLOCK_DOOR_A_CLIP;
-  if (type === 'gate' && src.gateStateFor !== undefined) {
+  if (type === 'gate') {
     const g = src.gateStateFor(id);
     if (g !== undefined) seg = g.door.seg;
-  } else if (type === 'airlock' && src.airlockStateFor !== undefined) {
+  } else {
     const a = src.airlockStateFor(id);
     if (a !== undefined) {
       const b = airlockRowDoorIsB(a);
       seg = b ? a.doorB.seg : a.doorA.seg;
       if (b) clip = AIRLOCK_DOOR_B_CLIP;
     }
-  } else {
-    // No door states exposed: the open decision as a door at rest.
-    const mask = src.maskFor(id);
-    if (mask & (GATE_OPEN_A | GATE_OPEN_B)) seg = OPEN_AT_REST;
-    if (type === 'airlock' && (mask & GATE_OPEN_B) !== 0) clip = AIRLOCK_DOOR_B_CLIP;
   }
   return encodeDoorMotion(seg, clip, fields);
 }

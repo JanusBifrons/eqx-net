@@ -30,8 +30,8 @@ import {
   GATE_SPAN_THICKNESS,
   emitterAnchor,
   gateColliderBoxes,
-  gateSpanWorld,
-  gateSpans,
+  gateGapHalf,
+  gateTypeOf,
   gateWorldAxisBoxes,
   localToWorld,
   worldToLocal,
@@ -50,26 +50,12 @@ describe('gate geometry', () => {
         expect(Math.abs(b.cx) + b.hw).toBeLessThanOrEqual(w / 2 + 1e-9);
         expect(Math.abs(b.cy) + b.hh).toBeLessThanOrEqual(h / 2 + 1e-9);
       }
-      const span = gateSpans(kind)[0]!;
-      expect(span.x1 - span.x0).toBeGreaterThan(2 * 55 + 20); // the 55 u robot hexagon fits
+      expect(2 * gateGapHalf(gateTypeOf(kind)!)).toBeGreaterThan(2 * 55 + 20); // the 55 u robot hexagon fits
     }
     expect(gateColliderBoxes('shield_pylon')).toBeNull();
   });
 
-  it('spans run post to post; the airlock has one at each end', () => {
-    const a = { x: 0, y: 0 }, b = { x: 0, y: 0 };
-    expect(gateSpanWorld('shield_gate', 100, 50, 0, 0, a, b)).toBe(true);
-    expect(a).toEqual({ x: 100 - 88, y: 50 });
-    expect(b).toEqual({ x: 100 + 88, y: 50 });
-    expect(gateSpans('shield_airlock').map((s) => s.y)).toEqual([AIRLOCK_END_Y, -AIRLOCK_END_Y]);
-    expect(gateSpanWorld('shield_gate', 0, 0, 0, 1, a, b)).toBe(false);
-  });
-
-  it('a quarter turn rotates spans and swaps world-axis box extents', () => {
-    const a = { x: 0, y: 0 }, b = { x: 0, y: 0 };
-    gateSpanWorld('shield_gate', 0, 0, Math.PI / 2, 0, a, b);
-    expect(a.x).toBeCloseTo(0);
-    expect(Math.abs(a.y)).toBeCloseTo(88);
+  it('a quarter turn swaps world-axis box extents', () => {
     const boxes = gateWorldAxisBoxes('shield_gate', Math.PI / 2)!;
     expect(boxes[0]).toBeCloseTo(0);
     expect(Math.abs(boxes[1]!)).toBeCloseTo(GATE_POSTS[1]![0]);

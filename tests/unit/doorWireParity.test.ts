@@ -17,7 +17,7 @@ import {
 } from '../../src/shared-types/structureStateWire';
 import { DOOR_POS_MAX, DOOR_POWER_LEVELS, DOOR_TRAVEL_TICKS } from '../../src/core/structures/gateGeometry';
 import {
-  GATE_OPEN_B, gateOpenMask, newAirlockState, newGateState, newOccupancy, stepAirlock, stepGate,
+  newAirlockState, newGateState, newOccupancy, stepAirlock, stepGate,
   type AirlockState, type GateState,
 } from '../../src/core/structures/gateLogic';
 import { doorClipTime, doorPosAt } from '../../src/core/structures/doorMotion';
@@ -43,7 +43,6 @@ function rng(seed: number): () => number {
 
 function source(gate?: GateState, airlock?: AirlockState): GateDoorSource {
   return {
-    maskFor: () => gateOpenMask(gate, airlock),
     gateStateFor: () => gate,
     airlockStateFor: () => airlock,
   };
@@ -170,13 +169,13 @@ describe('door row: server writer vs client decoder (#15, #16)', () => {
     expect([st.rigClip, st.rigStart, st.rigHold, st.gateOpen]).toEqual(snap);
   });
 
-  it('without door states exposed, the open decision decodes as a door at rest there', () => {
+  it('an airlock with no door state yet decodes shut at both ends', () => {
     const st = newRow();
     const row = emptyStructureRow();
-    writeDoorMotionRow('a', 'airlock', { maskFor: () => GATE_OPEN_B }, st);
+    writeDoorMotionRow('a', 'airlock', { gateStateFor: () => undefined, airlockStateFor: () => undefined }, st);
     decodeStructureState(view(st), OWNERS, row, 'shield_airlock');
     expect(row.gateOpen).toBeUndefined(); // slice 11: doorA / doorB are the truth
-    expect(doorPosAt(row.doorB!, 123)).toBe(DOOR_POS_MAX);
+    expect(doorPosAt(row.doorB!, 123)).toBe(0);
     expect(doorPosAt(row.doorA!, 123)).toBe(0);
     // Kind not known yet (no pose): no door fields until the pose arrives.
     const early = emptyStructureRow();

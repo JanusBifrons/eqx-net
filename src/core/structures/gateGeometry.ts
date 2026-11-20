@@ -77,13 +77,6 @@ export interface LocalBox {
   readonly hh: number;
 }
 
-/** A span in the structure's local frame (from (x0, y) to (x1, y)). */
-export interface LocalSpan {
-  readonly x0: number;
-  readonly x1: number;
-  readonly y: number;
-}
-
 /** Which gate type a structure kind is (null ⇒ not a gate). */
 export function gateTypeOf(kind: string | null | undefined): GateType | null {
   if (kind === 'shield_gate') return 'gate';
@@ -138,21 +131,6 @@ export function gateGapHalf(type: GateType): number {
 /** Local y of an airlock end span (A at +, B at −). */
 export const AIRLOCK_END_Y = AL_END_Y;
 
-const GATE_SPANS: readonly LocalSpan[] = Object.freeze([
-  { x0: -(GATE_W / 2 - GATE_POST_W), x1: GATE_W / 2 - GATE_POST_W, y: 0 },
-]);
-const AIRLOCK_SPANS: readonly LocalSpan[] = Object.freeze([
-  { x0: -(AIRLOCK_W / 2 - AIRLOCK_POST_W), x1: AIRLOCK_W / 2 - AIRLOCK_POST_W, y: AL_END_Y }, // A
-  { x0: -(AIRLOCK_W / 2 - AIRLOCK_POST_W), x1: AIRLOCK_W / 2 - AIRLOCK_POST_W, y: -AL_END_Y }, // B
-]);
-
-/** The shield spans of a gate, local frame (gate: 1; airlock: A then B). */
-export function gateSpans(kind: string | null | undefined): readonly LocalSpan[] {
-  const t = gateTypeOf(kind);
-  return t === 'gate' ? GATE_SPANS : t === 'airlock' ? AIRLOCK_SPANS : [];
-}
-
-
 /** A world-space point (caller-owned output, alloc-free). */
 export interface MutPoint { x: number; y: number }
 
@@ -200,19 +178,6 @@ export function emitterAnchor(
   out.x = bestX;
   out.y = bestY;
   return out;
-}
-
-/** World endpoints of span `i` of a gate at (x, y, angle). False ⇒ no such span. */
-export function gateSpanWorld(
-  kind: string | null | undefined,
-  x: number, y: number, angle: number, i: number,
-  a: MutPoint, b: MutPoint,
-): boolean {
-  const span = gateSpans(kind)[i];
-  if (!span) return false;
-  localToWorld(x, y, angle, span.x0, span.y, a);
-  localToWorld(x, y, angle, span.x1, span.y, b);
-  return true;
 }
 
 /**
