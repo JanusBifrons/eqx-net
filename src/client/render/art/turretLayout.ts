@@ -108,7 +108,7 @@ export function structureTurrets(kindId: string): TurretPlace[] {
     }
     // The housing covers the base's well and inner collar; the barrel reaches the muzzle.
     const cap = R * 0.66;
-    return { mount: m, family, px: m.localX, py: -m.localY, len: muzzle, wid: R * 0.19, cap, ring: cap * 1.3, chin: false, muzzle };
+    return { mount: m, family, px: m.localX, py: -m.localY, len: muzzle, wid: R * 0.15, cap, ring: cap * 1.3, chin: false, muzzle };
   });
 }
 

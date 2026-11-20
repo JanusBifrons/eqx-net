@@ -14,7 +14,7 @@
  *    chin clearance (`shipTuning`: players 20 u, drones 16 u at 1×), via
  *    `shipShotMuzzle` (`shipMountMuzzle` returns null for it);
  *  - a structure turret is sized to its footprint (R = half the smaller
- *    side): barrel at R (the base edge; the gun covers its collar), rack tubes at R × 0.32.
+ *    side): barrel at R × 1.6 (overhangs the base, like a ship gun), rack tubes at R × 0.32.
  *
  *  - a CAPITAL ship mount with an explicit `size` (S/M/L/XL, capital-ship
  *    R&D) is sized to the hull BEAM by calibre class: a 16" (XL) barrel
@@ -140,7 +140,7 @@ export function structureTurretRadius(kindId: string): number {
 /** Distance from a structure's centre to where its turret's shot leaves. */
 export function structureTurretMuzzle(kindId: string, weaponId: string): number {
   const R = structureTurretRadius(kindId);
-  return isRackWeapon(weaponId) ? R * 0.32 : R;
+  return isRackWeapon(weaponId) ? R * 0.32 : R * 1.6;
 }
 
 /**
