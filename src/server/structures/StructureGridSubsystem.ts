@@ -25,8 +25,9 @@ import { ASTEROID_YIELD, yieldHasGoods, yieldInto, type YieldRow } from '../../s
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { PROD_STATE } from '../../shared-types/production.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
-import { redrawStructure, switchStructure } from './structurePowerSwitch.js';
+import { redrawStructure, switchStructure, throttleStructure } from './structurePowerSwitch.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { structureWorkRate } from '../../shared-types/structurePower.js';
 import {
   canUpgradeStructure,
   effectiveStructureMaxHealth,
@@ -613,7 +614,9 @@ export class StructureGridSubsystem {
       // The row's work state (client work glow): no nebula = nothing to collect.
       const state = !powered ? PROD_STATE.unpowered : working ? PROD_STATE.running : PROD_STATE.starved;
       if ((rec.prodState ?? PROD_STATE.none) !== state) rec.prodState = state;
-      if (working) this.hooks.depositGoods!(rec, 'gas', rate);
+      // The owner throttle scales the haul (structureWorkRate; 0% gathers nothing).
+      const n = Math.round(rate * structureWorkRate(rec));
+      if (working && n > 0) this.hooks.depositGoods!(rec, 'gas', n);
     }
   }
 
@@ -659,7 +662,8 @@ export class StructureGridSubsystem {
       // straight into the owner's network storage.
       const y = this.hooks.asteroidYieldOf?.(target.entityId) ?? ASTEROID_YIELD.rock;
       const deposit = yieldHasGoods(y) ? this.hooks.depositGoods : undefined;
-      let want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
+      // The owner throttle scales the per-pulse rate (structureWorkRate).
+      let want = Math.min(Math.round((kind.miningRate ?? 0) * structureWorkRate(rec)), kind.storageCapacity - rec.minerals);
       // A full network never burns finite ore: if this pulse's goods wouldn't
       // all fit, the drill idles and the rock keeps them.
       if (deposit && this.hooks.canDepositGoods && want > 0) {
@@ -699,6 +703,8 @@ export class StructureGridSubsystem {
 
   /** The owner On/Off switch (`structurePowerSwitch.ts`); false if nothing changed. */
   setSwitchedOn(rec: StructureRecord, on: boolean): boolean { return switchStructure(rec, on, this.adjustDraw); }
+  /** The owner's power throttle in tenths (`structurePowerSwitch.ts`); false if nothing changed. */
+  setThrottle(rec: StructureRecord, tenths: number): boolean { return throttleStructure(rec, tenths, this.adjustDraw); }
   private readonly adjustDraw = (id: string, delta: number): void => this.grid.adjustDraw(id, delta);
 
   /** Clear a Miner's target + cached pose (unpowered / no in-range rock) so the

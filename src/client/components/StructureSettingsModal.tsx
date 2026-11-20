@@ -4,11 +4,14 @@
  * the same dimmed, opaque, nearly full-screen-on-a-phone window, header, ✕,
  * footer and HUD palette.
  *
- * Tabs come from `settingsTabsFor(kindId)`, so later tabs (On/Off, Throttle,
- * and the inspector's recipe / gate / upgrade controls) are added per building
- * kind in one place. Today: Power (read-only) and, for a building that makes
- * things, Production: its recipe and a build count (minus / plus / forever)
- * sent on the same `set_recipe` message as the recipe.
+ * Tabs come from `settingsTabsFor(kindId)`, so tabs are added per building
+ * kind in one place. Power (its numbers, plus the owner's On/Off and
+ * Throttle where the kind has them: structureSettingsPowerControls.tsx); for
+ * a building that makes things, Production: its recipe (and the Change button
+ * that cycles it, once the inspector's), a build count (minus / plus /
+ * forever) sent on the same `set_recipe` message as the recipe, and the
+ * blueprint slot (Load / Unload); for a gate, Access (structureSettingsGate.tsx).
+ * The inspector keeps only the cog and one-shot actions.
  *
  * Tapping outside, the ✕ or Close shuts it.
  * Numbers are read from the render mirror at 4 Hz while open (low cadence,
@@ -23,23 +26,29 @@ import {
   GameWindow, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX,
 } from './GameWindow';
 import { powerSummary, signed, type PowerSummary } from './structureSettingsPower';
-import { buildCountText, makesThings, readProduction, type ProductionView } from './structureSettingsProduction';
-import { sendSetRecipe } from '../structures/structureActionsClient';
-import { MAX_BUILD_COUNT } from '@shared-types/production';
+import { PowerControls } from './structureSettingsPowerControls';
+import { buildCountText, canChangeRecipe, makesThings, readProduction, sameProduction, type ProductionView } from './structureSettingsProduction';
+import { GateTab, hasGateAccess } from './structureSettingsGate';
+import { sendBlueprintSlot, sendSetRecipe } from '../structures/structureActionsClient';
+import { MAX_BUILD_COUNT, nextRecipe } from '@shared-types/production';
 import { RECIPES } from '@shared-types/recipes';
+import { phoneTiny } from './inspectorSizes';
 
-export type SettingsTabId = 'power' | 'production';
+export type SettingsTabId = 'power' | 'production' | 'access';
 interface SettingsTab { id: SettingsTabId; label: string }
 
 const POWER_TAB: SettingsTab = { id: 'power', label: 'Power' };
 const PRODUCTION_TAB: SettingsTab = { id: 'production', label: 'Production' };
+const ACCESS_TAB: SettingsTab = { id: 'access', label: 'Access' };
 
 /** The tabs a building kind shows, in order. Every building sits on a grid,
  *  so every kind has Power; later tabs are appended here per kind. */
 const WITH_PRODUCTION: readonly SettingsTab[] = [POWER_TAB, PRODUCTION_TAB];
+const WITH_ACCESS: readonly SettingsTab[] = [POWER_TAB, ACCESS_TAB];
 const POWER_ONLY: readonly SettingsTab[] = [POWER_TAB];
 export function settingsTabsFor(kindId: string): readonly SettingsTab[] {
-  return makesThings(kindId) ? WITH_PRODUCTION : POWER_ONLY;
+  if (makesThings(kindId) || canChangeRecipe(kindId)) return WITH_PRODUCTION;
+  return hasGateAccess(kindId) ? WITH_ACCESS : POWER_ONLY;
 }
 
 const POLL_MS = 250;
@@ -56,7 +65,8 @@ function readPower(entityId: number): PowerSummary | null {
 
 function samePower(a: PowerSummary | null, b: PowerSummary | null): boolean {
   if (a === null || b === null) return a === b;
-  return a.selfPower === b.selfPower && a.load === b.load && a.gridNet === b.gridNet && a.powered === b.powered;
+  return a.selfPower === b.selfPower && a.load === b.load && a.gridNet === b.gridNet && a.powered === b.powered
+    && a.on === b.on && a.throttle === b.throttle;
 }
 
 const LOAD_LABEL: Record<PowerSummary['load'], string> = { full: 'Full (working)', idle: 'Idle (trickle)', none: 'Never draws' };
@@ -82,16 +92,13 @@ function PowerTab({ entityId }: { entityId: number }): JSX.Element {
       <Box sx={LABEL_SX}>Draw now</Box><Box sx={VALUE_SX} data-testid="settings-power-draw">{drawNowText(p)}</Box>
       <Box sx={LABEL_SX}>Load</Box><Box sx={VALUE_SX} data-testid="settings-power-load">{LOAD_LABEL[p.load]}</Box>
       <Box sx={LABEL_SX}>Grid net</Box><Box sx={VALUE_SX} data-testid="settings-power-grid">{signed(p.gridNet)}</Box>
+      <PowerControls entityId={entityId} kindId={readKind(entityId) ?? ''} on={p.on} throttle={p.throttle} labelSx={LABEL_SX} />
     </Box>
   );
 }
 
-function sameProduction(a: ProductionView | null, b: ProductionView | null): boolean {
-  if (a === null || b === null) return a === b;
-  return a.recipe === b.recipe && a.left === b.left;
-}
-
-/** Recipe + build count. Minus stops at 1; Forever clears the count. */
+/** Recipe (+ Change), build count and the blueprint slot. Minus stops at 1;
+ *  Forever clears the count. */
 function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
   const [p, setP] = useState<ProductionView | null>(() => readProduction(entityId));
   useEffect(() => {
@@ -102,11 +109,20 @@ function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
     return () => window.clearInterval(h);
   }, [entityId]);
   if (p === null) return <Box sx={ROW_SX}>No production data</Box>;
-  const { recipe, left } = p;
+  const { recipe, left, canChange, needsBlueprint, blueprintLine } = p;
   const plus = left === undefined ? 1 : Math.min(MAX_BUILD_COUNT, left + 1);
   return (
     <Box data-testid="structure-settings-production" data-recipe={recipe} data-left={left ?? 'forever'} sx={GRID_SX}>
-      <Box sx={LABEL_SX}>Makes</Box><Box sx={VALUE_SX} data-testid="settings-production-recipe">{RECIPES[recipe].displayName}</Box>
+      <Box sx={LABEL_SX}>Makes</Box>
+      <Box sx={STEPPER_SX}>
+        <Box sx={VALUE_SX} data-testid="settings-production-recipe">{RECIPES[recipe].displayName}</Box>
+        {canChange && (
+          <Tooltip title="Change what this makes">
+            <Box component="button" sx={STEP_BTN_SX} data-testid="structure-action-recipe"
+              onClick={() => sendSetRecipe(entityId, nextRecipe(RECIPES[recipe].processors[0]!, recipe))}>Change</Box>
+          </Tooltip>
+        )}
+      </Box>
       <Box sx={LABEL_SX}>Build</Box>
       <Box sx={STEPPER_SX}>
         <Box component="button" sx={STEP_BTN_SX} aria-label="One fewer" data-testid="settings-build-minus"
@@ -117,6 +133,26 @@ function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
         <Box component="button" sx={STEP_BTN_SX} aria-label="Repeat forever" data-testid="settings-build-forever"
           disabled={left === undefined} onClick={() => sendSetRecipe(entityId, recipe)}>∞</Box>
       </Box>
+      {(needsBlueprint || blueprintLine !== undefined) && (
+        <>
+          <Box sx={LABEL_SX}>Blueprint</Box>
+          <Box sx={STEPPER_SX}>
+            <Box sx={VALUE_SX} data-testid="settings-blueprint">{blueprintLine?.replace(/^BLUEPRINT /, '') ?? 'None loaded'}</Box>
+            {needsBlueprint && (
+              <Tooltip title={blueprintLine !== undefined ? 'Swap in the best blueprint from storage' : 'Load a blueprint from storage'}>
+                <Box component="button" sx={STEP_BTN_SX} data-testid="structure-action-load-blueprint"
+                  onClick={() => sendBlueprintSlot(entityId, 'load')}>{blueprintLine !== undefined ? 'Swap' : 'Load'}</Box>
+              </Tooltip>
+            )}
+            {blueprintLine !== undefined && (
+              <Tooltip title="Put the blueprint back in storage">
+                <Box component="button" sx={STEP_BTN_SX} data-testid="structure-action-unload-blueprint"
+                  onClick={() => sendBlueprintSlot(entityId, 'unload')}>Unload</Box>
+              </Tooltip>
+            )}
+          </Box>
+        </>
+      )}
     </Box>
   );
 }
@@ -144,6 +180,9 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
         <Box sx={BODY_SX}>
           {open && tab === 'power' && <PowerTab entityId={entityId} />}
           {open && tab === 'production' && <ProductionTab entityId={entityId} />}
+          {open && tab === 'access' && (
+            <GateTab entityId={entityId} pollMs={POLL_MS} gridSx={GRID_SX} labelSx={LABEL_SX} valueSx={VALUE_SX} btnSx={STEP_BTN_SX} />
+          )}
         </Box>
         <Box sx={WINDOW_FOOT_SX}>
           <Box sx={{ flex: 1 }} />
@@ -187,4 +226,4 @@ const STEP_BTN_SX = { ...WINDOW_BTN_SECONDARY_SX, minWidth: 32, px: 1, '&:disabl
 const COUNT_SX = { ...VALUE_SX, minWidth: 64, textAlign: 'center' as const } as const;
 const ROW_SX = { fontSize: 12, color: C.inkDim } as const;
 const COG_SX = { p: '2px', color: 'rgba(180,220,255,0.85)', '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' } } as const;
-const COG_ICON_SX = { fontSize: { xs: 16, sm: 28 } } as const;
+const COG_ICON_SX = phoneTiny({ fontSize: [16, 28] }); // the inspector's ICON_SX: tiny on a phone
