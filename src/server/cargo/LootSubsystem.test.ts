@@ -52,7 +52,7 @@ function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; 
     podPose: (id) => poses.get(id) ?? null,
     forEachCollector: (visit) => { for (const c of collectors) visit(c); },
     onCollected: (_c, moved, podId) => { collected.push({ moved, podId }); },
-    chunkOre: (_ore, _x, _y, weight) => ({ minerals: weight * 2 }), // a stand-in for OreDraw.chunkYield
+    chunkOre: (_ore, _x, _y, mass, rockMass) => ({ minerals: Math.round((100 * mass) / rockMass) }), // a stand-in for OreDraw.chunkYield (share by weight)
     ...(opts.heldPieces ? { heldPieces: opts.heldPieces } : {}),
   });
   return { loot, store, ops, poses, indexes, despawned, collected, collectors, advance: (ms: number) => { now += ms; } };
@@ -270,7 +270,7 @@ describe('LootSubsystem: tractored wreck pieces are stored whole (piece store)',
         store: (id, out) => {
           const q = pieces.get(id);
           if (q === undefined) return false;
-          out.qty = Math.abs(q); out.holdWeight = Math.abs(q); out.mass = 1e9; out.radius = 500; // salvage weighs 1
+          out.qty = Math.abs(q); out.holdWeight = Math.abs(q); out.mass = 1e9; out.radius = 500; out.rockMass = 1e10; // salvage weighs 1
           out.ore = q < 0 ? { rockId: 'rock-9', resource: 'rock', perArea: 1 } : undefined; // negative: a rock piece
           return true;
         },
@@ -315,7 +315,7 @@ describe('LootSubsystem: tractored wreck pieces are stored whole (piece store)',
     expect(chunk.product).toBe(ROCK_CHUNK_PRODUCT);
     expect(chunk.uid).toMatch(/^rc-/);
     expect(chunk.weight).toBe(7);
-    expect(chunk.ore).toEqual({ minerals: 14 });
+    expect(chunk.ore, 'its share by weight: 1e9 of a 1e10 rock').toEqual({ minerals: 10 });
     expect(t.ops, 'one persisted write').toHaveLength(1);
     expect(t.loot.podCount(), 'never a pod').toBe(0);
   });
@@ -364,7 +364,7 @@ describe('LootSubsystem: consumable pieces are taken in by proximity (the factor
         store: (id, out: PieceStoreView) => {
           const p = ps[id];
           if (p === undefined || removed.includes(id)) return false;
-          out.radius = p.radius; out.mass = p.mass ?? 10; out.qty = p.qty; out.holdWeight = p.qty;
+          out.radius = p.radius; out.mass = p.mass ?? 10; out.qty = p.qty; out.holdWeight = p.qty; out.rockMass = 100;
           out.ore = p.rock ? { rockId: 'rock-9', resource: 'rock', perArea: 1 } : undefined;
           return true;
         },

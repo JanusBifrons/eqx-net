@@ -118,9 +118,10 @@ export interface LootSubsystemDeps {
     /** Remove the stored piece (`CapitalWreckSubsystem.storePiece`). */
     remove: (pieceId: string) => void;
   };
-  /** A rock chunk's hidden ore (`OreDraw.chunkYield`, the one ore path).
+  /** A rock chunk's hidden ore (`OreDraw.chunkYield`, the one ore path):
+   *  its share by weight (`mass / rockMass`) of the whole rock's ore.
    *  Absent: a rock piece is never taken in. */
-  chunkOre?: (ore: WreckOre, x: number, y: number, weight: number) => Partial<Record<GoodId, number>>;
+  chunkOre?: (ore: WreckOre, x: number, y: number, mass: number, rockMass: number) => Partial<Record<GoodId, number>>;
   /** Discrete notifications (UI accelerator + audit). */
   onCollected?: (c: LootCollector, moved: Hold, podId: string) => void;
   onDropped?: (podId: string, hold: Hold, cause: string) => void;
@@ -383,7 +384,7 @@ export class LootSubsystem {
   }
 
   /** Reused piece view (`heldPieces.store`, #14). */
-  private readonly pieceView: PieceStoreView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0 };
+  private readonly pieceView: PieceStoreView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0, rockMass: 0 };
 
   /** A piece the collector's own tractor holds in its hold zone. Bound once. */
   private readonly storeHeldPiece = (pieceId: string): void => {
@@ -421,7 +422,7 @@ export class LootSubsystem {
       ? { goods: { salvage: v.qty }, blueprints: [] }
       : { goods: {}, blueprints: [], packed: [{
         product: ROCK_CHUNK_PRODUCT, quality: 0, uid: `rc-${randomUUID()}`, weight: v.holdWeight,
-        ore: this.d.chunkOre!(v.ore, x, y, v.holdWeight) as Record<string, number>,
+        ore: this.d.chunkOre!(v.ore, x, y, v.mass, v.rockMass) as Record<string, number>,
       }] };
     const shipHold = shipRec !== undefined ? cloneHold(shipRec.hold) : emptyHold();
     mergeInto(shipHold, cloneHold(moved));

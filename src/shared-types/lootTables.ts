@@ -6,7 +6,7 @@
  */
 import type { Hold, GoodId } from './goods.js';
 import { getShipKind } from './shipKinds.js';
-import { rollPackedStructure } from './blueprints.js';
+import { LOOT_JUNK_COPY_CHANCE, rollJunkBlueprint, rollPackedStructure } from './blueprints.js';
 
 export interface LootEntry {
   readonly good: GoodId;
@@ -115,6 +115,12 @@ export function rollLoot(kindId: string | null | undefined, rng: () => number): 
   if (t.packedChance !== undefined) {
     const p = rollPackedStructure(rng, t.packedChance);
     if (p !== null) out.packed = [p];
+  }
+  // A junk blueprint copy (cheap starter tier), rolled LAST so the rolls above
+  // keep their seeded results. A table with no entries (a hauler) never mints one.
+  if (t.entries.length > 0) {
+    const bp = rollJunkBlueprint(rng, LOOT_JUNK_COPY_CHANCE);
+    if (bp !== null) out.blueprints.push(bp);
   }
   return out;
 }
