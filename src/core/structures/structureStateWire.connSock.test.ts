@@ -4,16 +4,16 @@
  * `CABLE_NO_SOCKET`, and that every kind's socket indices fit a byte.
  */
 import { describe, expect, it } from 'vitest';
-import { CABLE_NO_SOCKET } from '../core/structures/Connection.js';
+import { CABLE_NO_SOCKET } from './Connection.js';
 import {
   CONN_SOCK_NONE,
   CONN_SOCK_UNKNOWN,
   decodeConnSockOther,
   decodeConnSockSelf,
   encodeConnSock,
-} from './structureStateWire.js';
-import { STRUCTURE_KINDS_LIST } from './structureKinds.js';
-import { structureSockets } from './structureKinds/structureSockets.js';
+} from '../../shared-types/structureStateWire.js';
+import { STRUCTURE_KINDS_LIST } from '../../shared-types/structureKinds.js';
+import { structureSockets } from '../../shared-types/structureKinds/structureSockets.js';
 
 describe('connSock encoding (0d slice 6)', () => {
   it('round-trips socket pairs 0..254 and none', () => {
