@@ -31,6 +31,8 @@
  */
 import type { GoodId } from '../../shared-types/goods.js';
 import { qualityHullFactor } from '../../shared-types/blueprints.js';
+import { structureSockets } from '../../shared-types/structureKinds.js';
+import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 
 /**
  * The maximum structure level. A structure at the cap can't be upgraded further
@@ -165,18 +167,47 @@ export function effectiveStructureMaxHealth(baseMaxHealth: number, level: number
 }
 
 /**
- * Leveled effective connection cap (`base + (level-1)·STRUCTURE_CONNECTIONS_PER_LEVEL`).
- * ADDITIVE (slots are whole). The single helper that BOTH the server GridNode
- * projection (`structureToGridNode`) and the client preview projection
+ * Does this kind's cable plug into its own socket, one cable per socket? True
+ * for every kind except the ones that take cables from ANY side: the connector
+ * (6 faces, up to 10 links) and the shield emitters (pylon, gate, airlock),
+ * whose fence links share posts. For a socket-bound kind the socket count is a
+ * hard link limit (owner: "max 4 cables" on a 4-socket chamfer kind), and
+ * each cable takes a socket no other cable holds. The ONE any-side source:
+ * the cable picker's `takesAnySide` (cableCurve.ts) is its negation.
+ */
+export function structureLinksBoundBySockets(kindId: string): boolean {
+  return kindId !== 'connector' && !isShieldEmitterKind(kindId);
+}
+
+/**
+ * A link cap clamped to the kind's sockets when its cables plug into sockets
+ * (`structureLinksBoundBySockets`): every cable gets its own socket, so a
+ * 4-socket battery holds at most 4 links at any level. Any-side kinds pass
+ * through unchanged. Alloc-free (the socket list is cached), so `canConnect`
+ * applies it on every check.
+ */
+export function clampLinksToSockets(cap: number, kindId: string): number {
+  if (!structureLinksBoundBySockets(kindId)) return cap;
+  const sockets = structureSockets(kindId).length;
+  return cap < sockets ? cap : sockets;
+}
+
+/**
+ * Leveled effective connection cap (`base + (level-1)·STRUCTURE_CONNECTIONS_PER_LEVEL`),
+ * clamped to the kind's sockets (`clampLinksToSockets`). ADDITIVE (slots are whole). The single helper that BOTH the server
+ * GridNode projection (`structureToGridNode`) and the client preview projection
  * (`mirrorToGridNode`) read, so the live grid + the placement preview agree on
  * how many links a leveled structure can hold (Equinox Phase-5 audit: upgrading a
- * connector now actually adds slots). Level ≤ 1 ⇒ the base cap, unchanged.
+ * connector now actually adds slots). Level ≤ 1 ⇒ the base cap. `canConnect`
+ * applies the same socket clamp to every node as well.
  */
 export function effectiveStructureMaxConnections(
   baseMaxConnections: number,
   level: number | undefined,
+  kindId: string,
 ): number {
-  return baseMaxConnections + (clampStructureLevel(level) - 1) * STRUCTURE_CONNECTIONS_PER_LEVEL;
+  const cap = baseMaxConnections + (clampStructureLevel(level) - 1) * STRUCTURE_CONNECTIONS_PER_LEVEL;
+  return clampLinksToSockets(cap, kindId);
 }
 
 /**

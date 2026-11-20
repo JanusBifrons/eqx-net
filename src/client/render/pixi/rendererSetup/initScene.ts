@@ -227,6 +227,8 @@ export function setupMachinedArt(deps: MachinedArtDeps): Backdrop | null {
     // Machined turrets ride the new effects (rings in the bakes, baked guns).
     deps.artCtx.turrets = deps.artOpts.fx === true;
     if (deps.artOpts.livery) deps.artCtx.livery = deps.artOpts.livery;
+    if (deps.artOpts.structLivery) deps.artCtx.structLivery = true;
+    if (deps.artOpts.structStyle) deps.artCtx.structStyle = deps.artOpts.structStyle;
     deps.mountVisuals.setArt(deps.artCtx);
     // Warm-up: bake the likely art now (this runs on the galaxy map /
     // warp screen), behind anything that appears on screen meanwhile.

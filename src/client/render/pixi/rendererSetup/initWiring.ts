@@ -48,6 +48,7 @@ import type { RendererFrameRefs } from '../frameCtx.js';
 import { buildSpriteUpdaterCtxs } from './initUpdaterCtxs.js';
 import { buildFxWeapons, buildBeamPoolsAndEffects, buildBeamCtx } from './initFx.js';
 import { setupMachinedArt, applyStartZoom, logInitFrameDiag, buildSceneLayers, buildOverlays, type InitTarget } from './initScene.js';
+import { applyRestyleLook } from './restyleLook.js';
 
 /** What `init` builds for the sprite / beam / fx passes, plus the scratch
  *  that only feeds those ctxs. Built once with the renderer. */
@@ -275,6 +276,7 @@ export function initSceneAndOverlays(s: RendererInitState, h: InitSceneHost, r: 
     mountVisuals: r.mountVisuals, app: r.app, worldHost: h.worldHost, sectorKey: h.sectorKey, effectsQuality,
   });
   if (backdrop) s.backdrop = backdrop;
+  r.placementGhostCtx.structStyle = r.artCtx.structStyle; // the ghost draws the placed structures' style
   applyFxKillSwitches(s, r.hudCtx, fxKillSwitches);
 
   applyStartZoom(r.camera, r.cameraDirector, target.zoom); // rendererSetup/initScene.ts
@@ -297,6 +299,9 @@ export function initSceneAndOverlays(s: RendererInitState, h: InitSceneHost, r: 
     spriteBuildSigs: h.swarmSpriteSigs, fxShieldPose: h.fxShieldPose, lastMirror: () => h.lastMirror,
   });
   if (effects) h.effects = effects;
+  // Structure restyle (both renderer paths), on by default: 1g cable line look
+  // (`?lineLook=off|pipe|conduit`) and 2c rig parts (`?rigs=0` off).
+  applyRestyleLook(s.connectorRenderer, s.swarmUpdaterCtx, s.shipContainer, h.artOpts, target.isDom ? window.location.search : null);
   ({
     fleetOverlay: s.fleetOverlay, labels: s.labels, selectionBracket: s.selectionBracket,
     hoverBracket: s.hoverBracket, aimFeedback: s.aimFeedback,

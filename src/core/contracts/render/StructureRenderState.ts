@@ -26,6 +26,13 @@ export interface StructureRenderState {
   netPower: number;
   /** Connected neighbour entityIds — the web edges. */
   connTo: number[];
+  /** 0d cable sockets, parallel to `connTo`: the socket index (into
+   *  `structureSockets(kind)`) at THIS end of each link, -1 for none (a
+   *  fence link, or a row without sockets). Decoded from the room-state
+   *  `connSock`; absent until the first decode. */
+  connSockSelf?: number[];
+  /** As `connSockSelf`, the socket at the OTHER end of each link. */
+  connSockOther?: number[];
   /** True once fully constructed (blueprints render dimmed until then). */
   built: boolean;
   /** Construction fraction [0..1] (1 when built) — drives the fill-bar. */
@@ -84,9 +91,18 @@ export interface StructureRenderState {
   drawFull?: boolean;
   /** C2 — someone is breaking into its cargo right now. */
   breach?: boolean;
+  /** F2 — a built Territory Lock holding its sector for its owner's side
+   *  (its beacon dish turns only then). */
+  lockHolding?: boolean;
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;
+  /** Structure-restyle 2e: the rig clip playing on this structure, from its
+   *  room-state row (late-join safe). `startTick` is a server tick; the
+   *  target is in the HOST frame (y-up, unscaled). Absent: the rig rests.
+   *  3e: `holdTicks` / `cargo` time the cargo carried along a holding arm
+   *  (`core/articulation/craneCargo.ts`); absent = none. */
+  rigClip?: { clipId: string; startTick: number; targetX?: number; targetY?: number; holdTicks?: number; cargo?: number };
   /** v4 T1 — a teleporter: present only for teleporter kinds. */
   teleport?: {
     phase: number;

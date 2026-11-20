@@ -80,3 +80,44 @@ export const WRECK_COLLISION_GROUPS = 0x0004ffff;
  *   packed u32 = (0x0008 << 16) | 0xFFF7 = 0x0008FFF7
  */
 export const SUBCAP_WRECK_COLLISION_GROUPS = 0x0008fff7;
+
+/**
+ * Rig parts (structure-restyle 2d, plan §5 / §8 "over-layer collision").
+ *
+ * Layer rule: only a `plane`-layer part with an outline gets a collider (a
+ * kinematic body, `PhysicsWorld.attachRig`). `under` and `over` parts are
+ * drawn only and get NO body, so they collide with nothing. That needs no
+ * mask: a part that is not in the world cannot collide (the over layer is
+ * drawn above ships and must never touch them).
+ *
+ * The one mask that IS needed: a plane part sits inside (or across) its own
+ * host's hull (the turret's door leaves are inside the 140 × 140 footprint).
+ * The host is a LOCKED dynamic body, so Rapier would report a
+ * dynamic-vs-kinematic contact between them every step (and the host's
+ * contact-force events would read as rams). So:
+ *
+ *   rig part: membership bit 4 only, filter every bit
+ *     packed u32 = (0x0010 << 16) | 0xFFFF = 0x0010FFFF
+ *   rig host: its existing groups with filter bit 4 cleared
+ *     (`withoutRigParts`; a default host becomes 0xFFFFFFEF)
+ *
+ *   part vs host:  (part.membership & host.filter) = 0x0010 & 0xFFEF = 0
+ *     ⇒ NO collision (with its own host, and with any other rig host).
+ *   part vs a default body (ships, drones, rocks): 0x0010 & 0xFFFF ≠ 0 and
+ *     0xFFFF & 0xFFFF ≠ 0 ⇒ COLLIDE (solid, like the structure body).
+ *   part vs scrap (0x0002FFFD): 0x0010 & 0xFFFD ≠ 0, 0x0002 & 0xFFFF ≠ 0
+ *     ⇒ collide. Same for wreck pieces (filter 0xFFFF / 0xFFF7).
+ *   host vs everything else: membership unchanged, filter only loses bit 4
+ *     (nothing else is a member of bit 4) ⇒ unchanged.
+ * Kinematic vs kinematic / fixed never collide in Rapier's default
+ * `ActiveCollisionTypes`, so two parts never touch each other.
+ */
+export const RIG_PART_COLLISION_GROUPS = 0x0010ffff;
+/** The rig-part membership bit, for `withoutRigParts`. */
+export const RIG_PART_BIT = 0x0010;
+
+/** A rig host collider's groups: `groups` with the rig-part bit cleared from
+ *  its filter half (see `RIG_PART_COLLISION_GROUPS`). */
+export function withoutRigParts(groups: number): number {
+  return (groups & ~RIG_PART_BIT) >>> 0;
+}

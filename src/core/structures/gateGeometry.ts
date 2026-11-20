@@ -14,14 +14,23 @@
  * span walls, the approach zones and the drawing all agree (invariant #15).
  */
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
+import {
+  AIRLOCK_END_Y as AL_END_Y,
+  AIRLOCK_POST,
+  AIRLOCK_POSTS,
+  AIRLOCK_POST_X as AL_POST_X,
+  AIRLOCK_W,
+  GATE_POST,
+  GATE_POSTS,
+  GATE_W,
+} from '../../shared-types/structureKinds/gatePosts.js';
 import { PAD_SPECS, TELEPORTER_KINDS, isTeleporterKind, padPostCenters } from '../../shared-types/teleport.js';
 
 export type GateType = 'gate' | 'airlock';
 
-/** Gate post size (the gate's footprint height). */
-export const GATE_POST = 72;
-/** Airlock corner-post size. */
-export const AIRLOCK_POST = 64;
+// Post sizes, widths and post centres live in shared-types (one copy for the
+// gate geometry here and the cable sockets).
+export { GATE_POST, AIRLOCK_POST } from '../../shared-types/structureKinds/gatePosts.js';
 /** Airlock side-wall thickness. */
 export const AIRLOCK_WALL = 40;
 /** Collider thickness of a gate span (a thin static cuboid, like a fence wall). */
@@ -36,13 +45,10 @@ export const GATE_CLOSE_HOLD_MS = 1200;
 /** An airlock closes the entry end this long after the ship is fully inside. */
 export const AIRLOCK_CYCLE_HOLD_MS = 350;
 
-const GATE_W = 320;
-const AIRLOCK_W = 320;
 /** The clear gap a ship flies through (between the posts): gate / airlock.
  *  The ship-scale fit table checks every playable hull against these. */
 export const GATE_GAP = GATE_W - 2 * GATE_POST;
 export const AIRLOCK_GAP = AIRLOCK_W - 2 * AIRLOCK_POST;
-const AIRLOCK_H = 260;
 
 /** A box in the structure's local frame. */
 export interface LocalBox {
@@ -76,8 +82,6 @@ const GATE_BOXES: readonly LocalBox[] = Object.freeze([
   { cx: GATE_W / 2 - GATE_POST / 2, cy: 0, hw: GATE_POST / 2, hh: GATE_POST / 2 },
 ]);
 
-const AL_POST_X = AIRLOCK_W / 2 - AIRLOCK_POST / 2;
-const AL_END_Y = AIRLOCK_H / 2 - AIRLOCK_POST / 2;
 const AIRLOCK_BOXES: readonly LocalBox[] = Object.freeze([
   { cx: -AL_POST_X, cy: AL_END_Y, hw: AIRLOCK_POST / 2, hh: AIRLOCK_POST / 2 },
   { cx: AL_POST_X, cy: AL_END_Y, hw: AIRLOCK_POST / 2, hh: AIRLOCK_POST / 2 },
@@ -129,13 +133,6 @@ export function gateSpans(kind: string | null | undefined): readonly LocalSpan[]
   return t === 'gate' ? GATE_SPANS : t === 'airlock' ? AIRLOCK_SPANS : [];
 }
 
-const GATE_POSTS: readonly (readonly [number, number])[] = [
-  [-(GATE_W / 2 - GATE_POST / 2), 0],
-  [GATE_W / 2 - GATE_POST / 2, 0],
-];
-const AIRLOCK_POSTS: readonly (readonly [number, number])[] = [
-  [-AL_POST_X, AL_END_Y], [AL_POST_X, AL_END_Y], [-AL_POST_X, -AL_END_Y], [AL_POST_X, -AL_END_Y],
-];
 
 /** A world-space point (caller-owned output, alloc-free). */
 export interface MutPoint { x: number; y: number }

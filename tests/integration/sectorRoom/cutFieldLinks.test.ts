@@ -5,6 +5,11 @@
  * sweep ask the room's `getObstacles(near)` with a box over the links they
  * may make, so the dormant rocks in it block like live ones
  * (`CutFieldSubsystem.dormantObstacles`). Control: a clear line still links.
+ *
+ * Cables run socket to socket on a curve, and `canConnect` takes the first
+ * plug pair whose curve misses every rock, so the pair is chosen where the
+ * core picker refuses EVERY plug pair against the rock (asserted here), and
+ * every stored link's real cable (`flattenLinkCable`) is checked clear.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -17,7 +22,10 @@ import { clampToSectorBounds } from '../../../src/shared-types/sectorBounds.js';
 import { placementRejection } from '../../../src/core/structures/placementRules.js';
 import { rockObstacleParts, segmentHitsObstacle, type GridObstacle } from '../../../src/core/structures/Grid.js';
 import { CONNECTION_MAX_RANGE } from '../../../src/core/structures/structureGridConstants.js';
-import { linkReachBox } from '../../../src/server/structures/structureGridView.js';
+import { linkReachBox, structureToGridNode } from '../../../src/server/structures/structureGridView.js';
+import { canConnect, type GridNode } from '../../../src/core/structures/Grid.js';
+import { CABLE_CURVE_FLOATS, CABLE_CURVE_SEGMENTS, flattenLinkCable, makeCableBox } from '../../../src/core/structures/cableCurve.js';
+import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
 
 let harness: SectorTestHarness | undefined;
 afterEach(async () => { await harness?.cleanup(); harness = undefined; });
@@ -29,22 +37,28 @@ describe('SectorRoom integration — links past an unloaded cut-field rock (C5g)
       fieldRocksInBox(o, x0, y0, x1, y1).map((n) => { const b = fieldRockBody(n); return { x: n.x, y: n.y, radius: n.radius, parts: rockObstacleParts(b.verts, b.parts, true) }; });
     const clearAt = (x: number, y: number): boolean =>
       !clampToSectorBounds(x, y).clamped && placementRejection('connector', x, y, [], shaped(x - hw, y - hh, x + hw, y + hh)) === null;
+    const connectorAt = (id: string, x: number, y: number): GridNode =>
+      structureToGridNode({ id, kind: 'connector', x, y, rot: 0, radius: Math.hypot(hw, hh), halfW: hw, halfH: hh, isConstructed: true, level: 1 } as unknown as StructureRecord);
     // A rock of the far chunk with two clear connector spots on opposite
-    // sides, in link range, whose centre line crosses the rock's real shape.
+    // sides, in link range, where the core picker finds a plug pair in open
+    // space but every plug pair's cable is blocked by the field rocks.
     let pair: { ax: number; ay: number; bx: number; by: number; key: number } | null = null;
-    for (const r of rocksInChunk(o, -8, 6)) {
+    for (const r of [-8, -9, -7].flatMap((ci) => [6, 5, 7].flatMap((cj) => rocksInChunk(o, ci, cj)))) {
       const b = fieldRockBody(r);
-      for (let k = 0; k < 12 && pair === null; k++) {
-        const ux = Math.cos((k / 12) * Math.PI), uy = Math.sin((k / 12) * Math.PI), d = b.radius + Math.hypot(hw, hh) + 10;
+      for (let k = 0; k < 24 && pair === null; k++) {
+        const ux = Math.cos((k / 24) * Math.PI), uy = Math.sin((k / 24) * Math.PI), d = b.radius + Math.hypot(hw, hh) + 10;
         const ax = b.x - ux * d, ay = b.y - uy * d, bx = b.x + ux * d, by = b.y + uy * d;
         if (Math.max(Math.abs(bx - ax) - 2 * hw, 0) ** 2 + Math.max(Math.abs(by - ay) - 2 * hh, 0) ** 2 > (CONNECTION_MAX_RANGE * 0.9) ** 2) continue;
         if (!clearAt(ax, ay) || !clearAt(bx, by)) continue;
-        const rock: GridObstacle = { x: b.x, y: b.y, radius: b.radius, parts: rockObstacleParts(b.verts, b.parts, true) };
-        if (segmentHitsObstacle(ax, ay, bx, by, rock)) pair = { ax, ay, bx, by, key: r.key };
+        const na = connectorAt('a', ax, ay), nb = connectorAt('b', bx, by), nodes = new Map([['a', na], ['b', nb]]);
+        if (!canConnect(na, nb, new Map(), nodes, []).ok) continue;
+        const near = shaped(Math.min(ax, bx) - CONNECTION_MAX_RANGE, Math.min(ay, by) - CONNECTION_MAX_RANGE, Math.max(ax, bx) + CONNECTION_MAX_RANGE, Math.max(ay, by) + CONNECTION_MAX_RANGE);
+        const v = canConnect(na, nb, new Map(), nodes, near);
+        if (!v.ok && v.reason === 'blocked') pair = { ax, ay, bx, by, key: r.key };
       }
       if (pair) break;
     }
-    expect(pair, 'two clear spots either side of a rock, in link range').not.toBeNull();
+    expect(pair, 'two clear spots either side of a rock, in link range, every plug pair blocked').not.toBeNull();
     // Control: open space at the field core, a clear line between the two.
     expect(shaped(-10, -10, 410, 10), 'the control line is clear of field rocks').toHaveLength(0);
 
@@ -74,6 +88,17 @@ describe('SectorRoom integration — links past an unloaded cut-field rock (C5g)
     expect(int.structureRegistry.connectionCount(b)).toBe(0);
     expect(int.structureRegistry.connectionCount(c), 'a clear line links').toBe(1);
     expect(int.structureRegistry.connectionCount(d)).toBe(1);
+    // Every stored link's real cable is clear of the field rocks.
+    const poly = new Float64Array(CABLE_CURVE_FLOATS), cbox = makeCableBox();
+    for (const conn of int.structureRegistry.allConnections()) {
+      const ra = int.structureRegistry.get(conn.aId)!, rb = int.structureRegistry.get(conn.bId)!;
+      flattenLinkCable(structureToGridNode(ra), conn.socketA, structureToGridNode(rb), conn.socketB, poly, cbox);
+      const rocks = shaped(cbox.x0, cbox.y0, cbox.x1, cbox.y1);
+      for (let sgi = 0; sgi < CABLE_CURVE_SEGMENTS; sgi++) {
+        const j = sgi * 2;
+        expect(rocks.some((rk) => segmentHitsObstacle(poly[j]!, poly[j + 1]!, poly[j + 2]!, poly[j + 3]!, rk)), `cable ${conn.aId}-${conn.bId} crosses a rock`).toBe(false);
+      }
+    }
 
     // Cost (printed, never asserted): one dormant query over a link-range box,
     // as auto-connect and each reconnect-sweep attempt make one.

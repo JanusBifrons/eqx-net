@@ -17,11 +17,13 @@ import { bootLivingWorldTestServer, type LivingWorldTestHarness } from './harnes
 import { getRecentAudit, clearAuditRing } from '../../../src/server/audit/GameplayAuditLog.js';
 import { ROBOT_DIRECTOR_OPTIONS, ROBOT_SQUAD_LAYOUT } from '../../../src/server/livingworld/robotDirector.js';
 
+// Placement-legal at today's footprints (the wave tests' ready base): the turret
+// sits past the Capital's crane bay pad on +y.
 const READY_BASE = [
   { kind: 'capital', x: 0, y: 0 },
-  { kind: 'solar', x: 250, y: 0 },
-  { kind: 'miner', x: -350, y: 0 },
-  { kind: 'turret', x: 0, y: 350 },
+  { kind: 'solar', x: 700, y: 0 },
+  { kind: 'miner', x: -700, y: 0 },
+  { kind: 'turret', x: 0, y: 700 },
 ];
 
 describe('SectorRoom integration — robot director (Living World P1b)', () => {
