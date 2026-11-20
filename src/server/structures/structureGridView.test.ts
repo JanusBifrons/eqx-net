@@ -180,7 +180,7 @@ describe('links store the cable sockets canConnect picked (0d slice 5)', () => {
 
   it('auto-connect stores the new structure socket as socketA, the hub socket as socketB', () => {
     const registry = new StructureRegistry();
-    registry.add(record('hub', 'connector', 300, 40));
+    registry.add(record('hub', 'connector', 500, 40));
     registry.add(record('sol', 'solar', 0, 0));
     const want = pickFor(registry, 'sol', 'hub');
     expect(want.a).toBeGreaterThanOrEqual(0);
@@ -196,7 +196,7 @@ describe('links store the cable sockets canConnect picked (0d slice 5)', () => {
   it('connectExplicit maps the pick to nodeA / nodeB in either argument order', () => {
     const make = (): StructureRegistry => {
       const r = new StructureRegistry();
-      r.add(record('hub', 'connector', 300, 40));
+      r.add(record('hub', 'connector', 500, 40));
       r.add(record('sol', 'solar', 0, 0));
       return r;
     };

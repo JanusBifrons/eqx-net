@@ -82,15 +82,15 @@ export const SOLAR: StructureKind = {
   id: 'solar',
   displayName: 'Solar Panel',
   description: 'Power generator. Attaches to a hub and feeds the grid once built.',
-  radius: 195, // bounding circle of the 360×150 footprint
-  footprint: { w: 360, h: 150 },
+  radius: 381, // bounding circle of the 700×300 footprint
+  footprint: { w: 700, h: 300 },
   maxHealth: 300,
   maxConnections: 1,
   isHub: false,
-  powerOutput: 30,
+  powerOutput: 120,
   powerConsumption: 0,
   storageCapacity: 0,
-  constructionCost: 120,
+  constructionCost: 480,
   color: 0xffee66,
 };
 

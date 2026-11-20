@@ -18,7 +18,8 @@ import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudge
 import { TIER_LEVEL_CAP, TIER_WEALTH, baseProfileFor, contextForSector, hashString, seededRandom, type BaseProfile } from './baseProfile.js';
 import { TRANSIT_HUB_BASE_ID, buildTransitNetwork, routeHops, type TransitNetwork } from './transitNetwork.js';
 import { TIER_MAX_STRUCTURES, expectedDraw, generatedCost } from './growBase.js';
-import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { powerShareCost } from './powerShareCost.js';
+import { type StructureKindId } from '../../shared-types/structureKinds.js';
 import { sectorController } from '../galaxy/control.js';
 import { GALAXY_SECTORS, getSector, isEntrySector } from '../galaxy/galaxy.js';
 import { regionHeart } from '../galaxy/control.js';
@@ -228,9 +229,8 @@ function addMilitaryBase(sectorKey: string, out: GalaxyBasePlan[]): void {
  */
 export const HEART_SUPER_GUNS: readonly StructureKindId[] = ['siege_gun_80cm', 'coastal_lindemann'];
 export function heartSuperGunFunds(): number {
-  const solar = getStructureKind('solar');
   let funds = 0;
-  for (const k of HEART_SUPER_GUNS) funds += generatedCost(k) + Math.ceil(expectedDraw(k) / solar.powerOutput) * solar.constructionCost;
+  for (const k of HEART_SUPER_GUNS) funds += generatedCost(k) + powerShareCost(expectedDraw(k));
   return funds;
 }
 function withSuperGuns(p: BaseProfile): BaseProfile {

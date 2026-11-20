@@ -12,11 +12,12 @@ async function placeAndWait(
   kind: string,
   x: number,
   y: number,
+  rot?: number,
 ): Promise<string> {
   const internals = harness.getServerRoom()!._internals;
   const before = new Set<string>();
   for (const r of internals.structureRegistry.all()) before.add(r.id);
-  room.send('place_structure', { type: 'place_structure', kind, x, y });
+  room.send('place_structure', { type: 'place_structure', kind, x, y, rot });
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
     for (const r of internals.structureRegistry.all()) {
@@ -39,11 +40,11 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
     // Seed an asteroid within the miner's mining range.
     expect(internals.spawnTestAsteroid('mine-rock', -500, 900, 30)).toBe(true);
 
-    const cap = await placeAndWait(harness, room, 'capital', 0, 0);
+    const cap = await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
     // WS-5 capital-only-connectors: leaves route through a Connector relay
     // offset above the Capital (its LOS clears for both the +x solar + +y miner).
     await placeAndWait(harness, room, 'connector', 0, 350);
-    const sol = await placeAndWait(harness, room, 'solar', 250, 400); // offsets miner power draw
+    const sol = await placeAndWait(harness, room, 'solar', 700, 420); // offsets miner power draw
     const miner = await placeAndWait(harness, room, 'miner', -180, 420);
     const capRec = internals.structureRegistry.get(cap)!;
     const minerRec = internals.structureRegistry.get(miner)!;
@@ -69,7 +70,7 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
     // Capital + miner, NO solar: capital 50 − miner 60 = −10 ⇒ unpowered grid.
     // WS-5: the miner routes via a Connector relay (still draws the grid
     // negative, so the component stays unpowered — the behaviour under test).
-    const cap = await placeAndWait(harness, room, 'capital', 0, 0);
+    const cap = await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
     await placeAndWait(harness, room, 'connector', 0, 350);
     const miner = await placeAndWait(harness, room, 'miner', -180, 420);
     const capRec = internals.structureRegistry.get(cap)!;

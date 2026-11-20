@@ -55,12 +55,15 @@ type Item = { kind: string; x: number; y: number; rot?: 0 | 90; gate?: GateState
 const core: Item[] = [
   { kind: 'capital', x: 0, y: 0 },
   { kind: 'connector', x: 420, y: 0 }, { kind: 'connector', x: -420, y: 0 },
-  { kind: 'connector', x: 0, y: 420 }, { kind: 'connector', x: 0, y: -420 },
+  // North relay past the Capital's crane bay pad (it keeps +y clear).
+  { kind: 'connector', x: 0, y: 640 }, { kind: 'connector', x: 0, y: -420 },
   { kind: 'cargo_bay', x: 700, y: 140 }, { kind: 'cargo_bay', x: 700, y: -140 }, { kind: 'cargo_bay', x: 1060, y: 140 }, { kind: 'cargo_bay', x: 1060, y: -140 },
   { kind: 'connector', x: 880, y: 0 },
-  { kind: 'solar', x: -700, y: 120 }, { kind: 'solar', x: -700, y: -120 }, { kind: 'solar', x: -1100, y: 120 }, { kind: 'solar', x: -1100, y: -120 },
-  { kind: 'connector', x: -900, y: 0 },
-  { kind: 'battery', x: -160, y: 640 }, { kind: 'battery', x: 160, y: 640 },
+  // 700×300 Solars: the near pair hangs off the west relay, the far pair off
+  // a relay in the gap between the near pair (every spot placement-legal).
+  { kind: 'solar', x: -850, y: 190 }, { kind: 'solar', x: -850, y: -190 }, { kind: 'solar', x: -1590, y: 190 }, { kind: 'solar', x: -1590, y: -190 },
+  { kind: 'connector', x: -850, y: 0 },
+  { kind: 'battery', x: -220, y: 640 }, { kind: 'battery', x: 220, y: 640 },
   { kind: 'turret', x: 0, y: -720 }, { kind: 'missile_turret', x: 300, y: -640 }, { kind: 'laser_bolt_turret', x: -300, y: -640 },
 ];
 // Fence rectangle = the base's footprint extent + a margin (contour-hugging),
@@ -68,7 +71,7 @@ const core: Item[] = [
 // east-middle span and an Airlock the west-middle span.
 let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 for (const it of core) {
-  const f = PROPOSED_FOOTPRINTS[it.kind]!;
+  const f = plan(it.kind, 0).fp; // the drawn (catalogue) footprint
   minX = Math.min(minX, it.x - f.w / 2); maxX = Math.max(maxX, it.x + f.w / 2);
   minY = Math.min(minY, it.y - f.h / 2); maxY = Math.max(maxY, it.y + f.h / 2);
 }
@@ -111,11 +114,12 @@ const conn = (a: number, b: number): void => { links.push([core[a]!.x, core[a]!.
 for (const k of [1, 2, 3, 4]) conn(0, k);
 for (const k of [5, 6, 7, 8]) conn(9, k);
 conn(1, 9);
-for (const k of [10, 11, 12, 13]) conn(14, k);
+for (const k of [10, 11]) conn(2, k);
+for (const k of [12, 13]) conn(14, k);
 conn(2, 14);
 conn(3, 15); conn(3, 16); conn(4, 17); conn(4, 18); conn(4, 19);
 links.push([880, 0, fx1 - 40, 0]); // tap the east gate
-links.push([-900, 0, fx0 + 40, 0]); // tap the west airlock
+links.push([-850, 0, fx0 + 40, 0]); // tap the west airlock
 
 const html = `<!doctype html><body style="margin:0;background:#04060c"><canvas id=a width=1600 height=560></canvas><canvas id=g width=1600 height=330></canvas><canvas id=b width=1600 height=1100></canvas><script>
 const S=${JSON.stringify(sheet)},F=${JSON.stringify(fighter)},G=${JSON.stringify(gates)},O=${JSON.stringify(itemPlans)},LK=${JSON.stringify(links)},SP=${JSON.stringify(spans)};
