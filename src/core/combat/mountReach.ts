@@ -12,7 +12,7 @@
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds.js';
 import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import { HITSCAN_RANGE } from './Weapons.js';
-import { getWeapon, isMiningTool, weaponAutoFireRange, type WeaponId } from './WeaponCatalogue.js';
+import { getWeapon, isCapitalTurretWeapon, isMiningTool, weaponAutoFireRange, type WeaponId } from './WeaponCatalogue.js';
 import { MOUNT_SIZE_TUNING, type MountSize } from '../../shared-types/shipScale/tuning.js';
 import { shipBubbleRadius, shipHitBound, shipWithinHullReach } from './shipHitShape.js';
 import { isCapitalKindId } from './capitalHits.js';
@@ -64,10 +64,22 @@ export function mountTargetReach(kind: Pick<ShipKind, 'id' | 'sizeClass'>, mount
   return r;
 }
 
+const turretFcCache = new Map<string, boolean>();
+
 /** True for a kind whose turrets fire one by one under their own fire
- *  control (capitals), instead of with the hull's aim. */
-export function hasTurretFireControl(kind: Pick<ShipKind, 'sizeClass'>): boolean {
-  return kind.sizeClass === 'capital';
+ *  control, instead of with the hull's aim: a capital, or any kind carrying
+ *  a capital turret weapon (`isCapitalTurretWeapon`, e.g. a small mining
+ *  ship's mining laser). Cached per kind id; allocation-free after the first
+ *  call (#14). */
+export function hasTurretFireControl(kind: Pick<ShipKind, 'id' | 'sizeClass' | 'mounts'>): boolean {
+  if (kind.sizeClass === 'capital') return true;
+  const hit = turretFcCache.get(kind.id);
+  if (hit !== undefined) return hit;
+  let turret = false;
+  const mounts = kind.mounts;
+  if (mounts) for (let i = 0; i < mounts.length && !turret; i++) turret = isCapitalTurretWeapon(mounts[i]!.weaponId);
+  turretFcCache.set(kind.id, turret);
+  return turret;
 }
 
 /**
