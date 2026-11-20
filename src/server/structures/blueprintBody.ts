@@ -11,10 +11,12 @@
  * build is complete but whose space is occupied simply waits: the grid pulse
  * retries each beat and it finishes the moment the space is clear.
  *
- * The client still predicts the hologram as solid until job 3F2, so the local
- * ship may stutter through one; the server is authoritative.
+ * The rule is the shared `isStructureBodySolid` (core): the room-state row
+ * carries it to the client prediction world (`STRUCTURE_FLAG_GHOST_BODY`) and
+ * navigation reads it too (`RoomNav`), so all three agree.
  */
-import type { StructureRecord } from './StructureRegistry.js';
+import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+import { isStructureBodySolid } from '../../core/structures/structureBody.js';
 
 /** A ship hull as a circle (`SectorObstacles.hullCircles`). */
 export interface HullCircle { x: number; y: number; r: number }
@@ -24,6 +26,8 @@ export interface BlueprintBodyHooks {
   shipHulls?(): readonly HullCircle[];
   /** Swap the body to solid collider groups (and attach its rig). */
   solidify?(id: string): void;
+  /** Told when a body turns solid (navigation adds it as an obstacle). */
+  registry?: Pick<StructureRegistry, 'bodyChanged'>;
 }
 
 /** True when a circle overlaps the structure's footprint box (conservative:
@@ -49,15 +53,16 @@ export function shipInsideFootprint(rec: StructureRecord, hooks: BlueprintBodyHo
  * the body is solid (already was, or just turned), false while it must wait.
  */
 export function settleBlueprintBody(rec: StructureRecord, hooks: BlueprintBodyHooks): boolean {
-  if (rec.ghostBody !== true) return true;
+  if (isStructureBodySolid(rec)) return true;
   if (shipInsideFootprint(rec, hooks)) return false;
   rec.ghostBody = false;
   hooks.solidify?.(rec.id);
+  hooks.registry?.bodyChanged(rec);
   return true;
 }
 
 /** Settle every record that is built but still has a blueprint body (built
  *  outside the grid pulse: a restored save, a seeded base or scenario). */
 export function settleBuiltGhosts(records: Iterable<StructureRecord>, hooks: BlueprintBodyHooks): void {
-  for (const rec of records) if (rec.isConstructed && rec.ghostBody === true) settleBlueprintBody(rec, hooks);
+  for (const rec of records) if (rec.isConstructed && !isStructureBodySolid(rec)) settleBlueprintBody(rec, hooks);
 }
