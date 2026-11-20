@@ -1,4 +1,5 @@
 import type { PackedChunk } from '../../terrain/packedChunk.js';
+import type { ChunkOpts } from '../../terrain/fieldLayout.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
 import type { ShipRenderState } from './ShipRenderState.js';
 import type { SwarmRenderState } from './SwarmRenderState.js';
@@ -57,6 +58,10 @@ export interface RenderMirror {
    *  shared deterministic `wreckPieceGeometry` (no vertex crosses the worker
    *  boundary). */
   wrecks?: Map<number, WreckDescriptor>;
+  /** The room's cut-field options (welcome `cutField`), null or absent
+   *  without a field: a broken field rock's wreck (`rock.fk`) rebuilds from
+   *  them in the renderer's wreck store. */
+  wreckField?: ChunkOpts | null;
   /** The room breaks dying capitals into wrecks (welcome `capitalWrecks`):
    *  a dying capital then gets the break-up explosion at its kill point, not
    *  the hull-sized death blast. */
