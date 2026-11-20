@@ -1,26 +1,26 @@
 /**
  * Settings window for your own building: a cog in the inspector's owner
- * action row opens a small tabbed window in the game dialog chrome
- * (gameDialogChrome.ts) and the drawer's tab look (TradeTab's TABS_SX).
+ * action row opens a tabbed window on the loot window's frame (GameWindow.tsx):
+ * the same dimmed, opaque, nearly full-screen-on-a-phone window, header, ✕,
+ * footer and HUD palette.
  *
  * Tabs come from `settingsTabsFor(kindId)`, so later tabs (On/Off, Throttle,
  * and the inspector's recipe / gate / upgrade controls) are added per building
  * kind in one place. Today: Power, read-only.
  *
- * The window sits at the top centre with an invisible backdrop, so the world
- * (and the selected building) stays visible; tapping outside closes it.
+ * Tapping outside, the ✕ or Close shuts it.
  * Numbers are read from the render mirror at 4 Hz while open (low cadence,
  * like the teleporter panel) — the same slice the PWR line reads.
  */
 import { memo, useEffect, useState } from 'react';
-import { Box, Dialog, DialogContent, DialogTitle, IconButton, Tab, Tabs, Tooltip } from '@mui/material';
+import { Box, IconButton, Tab, Tabs, Tooltip } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
-import CloseIcon from '@mui/icons-material/Close';
 import { getGameClient } from '../net/clientSingleton';
-import { Z } from '../layout/zIndex';
-import { GAME_DIALOG_CONTENT_SX, GAME_DIALOG_PAPER_SX, GAME_DIALOG_TITLE_SX } from './gameDialogChrome';
+import { HUD } from '../hud/tokens';
+import {
+  GameWindow, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX,
+} from './GameWindow';
 import { powerSummary, signed, type PowerSummary } from './structureSettingsPower';
-import { TABS_SX as TRADE_TABS_SX } from '../layout/Drawer/tabs/TradeTab';
 
 export type SettingsTabId = 'power';
 interface SettingsTab { id: SettingsTabId; label: string }
@@ -88,24 +88,24 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
   const tabs = settingsTabsFor(readKind(entityId) ?? '');
   const [tab, setTab] = useState<SettingsTabId>(tabs[0]!.id);
   return (
-    <Dialog
-      open={open} onClose={onClose} maxWidth={false} data-testid="structure-settings"
-      sx={DIALOG_SX} BackdropProps={{ invisible: true }} disableScrollLock
-      PaperProps={{ sx: PAPER_SX }}
-    >
-      <DialogTitle sx={TITLE_SX}>
-        <span>{title} settings</span>
-        <IconButton size="small" aria-label="Close" data-testid="structure-settings-close" onClick={onClose} sx={CLOSE_SX}>
-          <CloseIcon sx={{ fontSize: 16 }} />
-        </IconButton>
-      </DialogTitle>
-      <Tabs value={tab} onChange={(_e, v: SettingsTabId) => setTab(v)} sx={TABS_SX} variant="fullWidth">
-        {tabs.map((t) => <Tab key={t.id} value={t.id} label={t.label} data-testid={`structure-settings-tab-${t.id}`} />)}
-      </Tabs>
-      <DialogContent sx={CONTENT_SX}>
-        {open && tab === 'power' && <PowerTab entityId={entityId} />}
-      </DialogContent>
-    </Dialog>
+    <GameWindow open={open} onClose={onClose} testId="structure-settings" fill>
+      <Box sx={WINDOW_ROOT_SX}>
+        <Box sx={WINDOW_HEAD_SX}>
+          <Box sx={WINDOW_TITLE_SX}>{title} settings</Box>
+          <Box component="button" sx={WINDOW_X_SX} onClick={onClose} aria-label="Close" data-testid="structure-settings-close">✕</Box>
+        </Box>
+        <Tabs value={tab} onChange={(_e, v: SettingsTabId) => setTab(v)} sx={TABS_SX} variant="fullWidth">
+          {tabs.map((t) => <Tab key={t.id} value={t.id} label={t.label} data-testid={`structure-settings-tab-${t.id}`} />)}
+        </Tabs>
+        <Box sx={BODY_SX}>
+          {open && tab === 'power' && <PowerTab entityId={entityId} />}
+        </Box>
+        <Box sx={WINDOW_FOOT_SX}>
+          <Box sx={{ flex: 1 }} />
+          <Box component="button" sx={WINDOW_BTN_SECONDARY_SX} onClick={onClose} data-testid="structure-settings-close-btn">Close</Box>
+        </Box>
+      </Box>
+    </GameWindow>
   );
 }
 
@@ -124,18 +124,19 @@ export const StructureSettingsCog = memo(function StructureSettingsCog({ entityI
   );
 });
 
-// The drawer's tab look, on the dialog's navy.
-const TABS_SX = { ...TRADE_TABS_SX, px: 1, bgcolor: '#0c1020' } as const;
-// Top centre (the free zone on a phone), below the app bar: never over the
-// middle of the screen where the camera and the selected building are.
-const DIALOG_SX = { zIndex: Z.modal, '& .MuiDialog-container': { alignItems: 'flex-start' } } as const;
-const PAPER_SX = { ...GAME_DIALOG_PAPER_SX, m: 0, mt: 'calc(env(safe-area-inset-top, 0px) + 8px)', width: 'min(280px, calc(100% - 24px))', backgroundImage: 'none' } as const;
-const TITLE_SX = { ...GAME_DIALOG_TITLE_SX, fontSize: 12, py: 0.75, px: 1.5, justifyContent: 'space-between' } as const;
-const CLOSE_SX = { color: '#9aa0b4', p: '2px' } as const;
-const CONTENT_SX = { ...GAME_DIALOG_CONTENT_SX, px: 1.5, py: 1 } as const;
-const GRID_SX = { display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 1.5, rowGap: 0.5, fontSize: 11 } as const;
-const LABEL_SX = { color: '#9aa0b4' } as const;
-const VALUE_SX = { color: '#ccc', textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' } as const;
-const ROW_SX = { fontSize: 11, color: '#9aa0b4' } as const;
+const C = HUD.color;
+// The loot window's palette: dim ink, the HUD's cyan for the open tab.
+const TABS_SX = {
+  flex: 'none', minHeight: 40, borderBottom: WINDOW_EDGE, px: 1.5,
+  '& .MuiTab-root': { minHeight: 40, minWidth: 0, px: 1, fontFamily: HUD.font.label, fontSize: 12, fontWeight: 600, letterSpacing: 1, color: C.inkDim },
+  '& .Mui-selected': { color: `${C.auto} !important` },
+  '& .MuiTabs-indicator': { backgroundColor: C.auto },
+} as const;
+// The body scrolls on a short screen (a sideways phone), never the header or footer.
+const BODY_SX = { flex: '1 1 auto', minHeight: 0, overflowY: 'auto' as const, px: 1.5, py: 1.25 } as const;
+const GRID_SX = { display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 2, rowGap: 1, fontSize: 13, maxWidth: 420 } as const;
+const LABEL_SX = { color: C.inkDim, fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' as const, alignSelf: 'center' } as const;
+const VALUE_SX = { color: C.ink, textAlign: 'right' as const, fontFamily: HUD.font.num, fontVariantNumeric: 'tabular-nums' } as const;
+const ROW_SX = { fontSize: 12, color: C.inkDim } as const;
 const COG_SX = { p: '2px', color: 'rgba(180,220,255,0.85)', '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' } } as const;
 const COG_ICON_SX = { fontSize: { xs: 16, sm: 28 } } as const;

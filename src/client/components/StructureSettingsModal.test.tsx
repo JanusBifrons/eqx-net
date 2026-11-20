@@ -1,7 +1,8 @@
 /**
  * Lock for the building settings window: the cog in the inspector's owner
  * action row opens a tabbed window on the Power tab (read-only numbers from
- * the structure slice), and a building you do not own has no cog.
+ * the structure slice), on the loot window's frame (GameWindow), and a
+ * building you do not own has no cog.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -11,6 +12,7 @@ import { applySelectionStats, resetSelectionStats } from '../net/selectionStats.
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import { settingsTabsFor } from './StructureSettingsModal.js';
+import { LootWindow } from './LootWindow.js';
 
 function seedTurret(owner: string, drawFull: boolean): void {
   setGameClient({
@@ -46,6 +48,25 @@ describe('StructureSettingsModal', () => {
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR -15');
     fireEvent.click(screen.getByTestId('structure-settings-close'));
     expect(screen.queryByTestId('structure-settings')).toBeNull();
+  });
+
+  it('the settings modal uses the loot modal frame', () => {
+    seedTurret('me-123', true);
+    render(<EntityStatsPanel />);
+    fireEvent.click(screen.getByTestId('structure-action-settings'));
+    const settings = screen.getByTestId('structure-settings');
+    expect(settings).toHaveAttribute('data-game-window', '1');
+    // A real modal: a dimmed backdrop, not the old invisible one.
+    const backdrop = settings.querySelector('.MuiBackdrop-root');
+    expect(backdrop).not.toBeNull();
+    expect(backdrop).not.toHaveClass('MuiBackdrop-invisible');
+    expect(screen.getByTestId('structure-settings')).toHaveTextContent('Turret settings');
+    // Close in the footer, like the loot window.
+    fireEvent.click(screen.getByTestId('structure-settings-close-btn'));
+    expect(screen.queryByTestId('structure-settings')).toBeNull();
+    setGameClient(null); // the loot window asks the server; no room here
+    render(<LootWindow open title="Cargo pod" entityId={4} onClose={() => {}} />);
+    expect(screen.getByTestId('loot-window')).toHaveAttribute('data-game-window', '1');
   });
 
   it('an idle building reads Idle on the Power tab', () => {
