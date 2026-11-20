@@ -21,12 +21,13 @@ import * as heavy from './structureStyleC.turretsHeavy.js';
 import { rigPartIndex } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, SANDBOX_DOOR_TURRET_DEF } from '../../../core/articulation/rigCatalogue.js';
 import { rigSlotContext, type RigDrawHookTable } from './structureRigLook.js';
+import { turretHatchPartContext } from './structureStyleC.turrets.hatch.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. It carries the heavy
  *  file's own version, so a change there re-bakes this family too. */
-export const version = `t1${heavy.version}`;
+export const version = `t2${heavy.version}`;
 
 export { TURRET_WELL };
 
@@ -105,10 +106,12 @@ export const kinds: StyleDrawerTable = {
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
  *  structureRigLook.ts). The pop-up door turret: its gun rides the riser
- *  (`DOOR_TURRET_MOUNT`), and a dark hatch slot shows under the leaves. */
+ *  (`DOOR_TURRET_MOUNT`), a dark hatch slot shows under the leaves, and the
+ *  riser and leaves are drawn in the gun-pad armour (turrets.hatch.ts). */
 export const rigs: RigDrawHookTable = {
   [SANDBOX_DOOR_TURRET_DEF.id]: {
     mountPart: (rig) => rigPartIndex(rig, DOOR_TURRET_MOUNT.partId),
     planeUnder: (rig) => rigSlotContext(rig),
+    partArt: turretHatchPartContext,
   },
 };
