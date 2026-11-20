@@ -13,6 +13,8 @@ import {
   SWARM_WIRE_VERSION,
   SWARM_KIND_STRUCTURE,
   SWARM_KIND_SCRAP,
+  SWARM_KIND_WRECK,
+  SWARM_REC_WRECK_ID_OFF,
 } from '../../shared-types/swarmWireFormat.js';
 import { structureKindToIndex } from '../../shared-types/structureKinds.js';
 import { shipKindToIndex } from '../../shared-types/shipKinds.js';
@@ -269,6 +271,24 @@ describe('decodeSwarmPacket', () => {
     expect(e.prevAngle).toBeCloseTo(0.3, 5);
     expect(e.latestArrivalMs).toBe(1000);
     expect(e.prevArrivalMs).toBe(1000);
+  });
+
+  it('firstTick keeps the first packet\'s tick; a wreck piece re-used for a new wreck starts over', () => {
+    const mirror = makeMirror();
+    const wreckPacket = (tick: number, wreckId: number): Uint8Array => {
+      const p = buildPacket(tick, false, [
+        { entityId: 7, kind: SWARM_KIND_WRECK, recFlags: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, radius: 40 },
+      ]);
+      new DataView(p.buffer).setUint16(SWARM_HEADER_BYTES + SWARM_REC_WRECK_ID_OFF, wreckId, true);
+      return p;
+    };
+    decodeSwarmPacket(wreckPacket(100, 3), mirror, 1000);
+    decodeSwarmPacket(wreckPacket(400, 3), mirror, 6000);
+    const e = mirror.swarm!.get(7)!;
+    expect(e.lastUpdateTick).toBe(400);
+    expect(e.firstTick, 'first receipt, not the latest packet').toBe(100);
+    decodeSwarmPacket(wreckPacket(500, 9), mirror, 7000);
+    expect(e.firstTick, 'a new wreck: first receipt of it').toBe(500);
   });
 
   it('second packet snapshots prev pose + arrival before stamping the latest', () => {

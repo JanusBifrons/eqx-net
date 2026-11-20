@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import SpeedDial from '@mui/material/SpeedDial';
 import SpeedDialAction from '@mui/material/SpeedDialAction';
 import SpeedDialIcon from '@mui/material/SpeedDialIcon';
@@ -64,6 +64,7 @@ import {
   type DialView,
 } from './buildCategories';
 import { useTouchClickActivate } from './touchClickActivate';
+import { onGameWindowOpen } from './GameWindow';
 import { FIT_OPEN_LIST_SX, useFitActionsToViewport } from './speedDialFit';
 
 /**
@@ -143,16 +144,23 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   // stays live for desktop (one impl: `useTouchClickActivate`).
   const { touchActivate, clickActivate, isWithinSuppressWindow } = useTouchClickActivate();
 
-  const close = useCallback(() => {
+  // Fold the dial back to a closed root menu. A game window opening (the loot
+  // or building settings window) does just this: the window takes focus, so no blur.
+  const collapse = useCallback(() => {
     setOpen(false);
     setView(ROOT_VIEW);
+  }, []);
+  useEffect(() => onGameWindowOpen(collapse), [collapse]);
+
+  const close = useCallback(() => {
+    collapse();
     // Drop DOM focus from whatever speed-dial button the player just activated
     // (Map / Panels / Weapon). MUI Fab buttons activate on Space/Enter while
     // focused, so a still-focused Map FAB meant the next Space/Fire silently
     // re-toggled the galaxy overlay (WS-F #18). Blurring on close makes every
     // terminal selection lose focus.
     (document.activeElement as HTMLElement | null)?.blur();
-  }, []);
+  }, [collapse]);
 
   const toggleOpen = useCallback(() => setOpen((o) => !o), []);
 

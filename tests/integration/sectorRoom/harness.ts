@@ -220,6 +220,10 @@ export async function bootSectorTestServer(opts: {
   autoTimeScale?: boolean;
   /** P2d — stock the prebuilt Capital's hold. */
   prebuiltStorageGoods?: Record<string, number>;
+  /** Base loop — minerals banked in the prebuilt Capital. */
+  prebuiltCapitalMinerals?: number;
+  /** Grid pulse interval (ms), testMode. */
+  structureGridPulseMs?: number;
   /** v4 T1 — teleporter cycle speed, and pair the seeded teleporters. */
   teleportCycleScale?: number;
   pairTeleporters?: boolean;
@@ -323,6 +327,8 @@ export async function bootSectorTestServer(opts: {
     testTimeScale: opts.testTimeScale,
     autoTimeScale: opts.autoTimeScale,
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
+    prebuiltCapitalMinerals: opts.prebuiltCapitalMinerals,
+    structureGridPulseMs: opts.structureGridPulseMs,
     teleportCycleScale: opts.teleportCycleScale,
     pairTeleporters: opts.pairTeleporters,
     teleportShipBoards: opts.teleportShipBoards,

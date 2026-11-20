@@ -25,6 +25,7 @@ import { getShipKind } from '../../../shared-types/shipKinds.js';
 import type { WelcomeMessage } from '../../../shared-types/messages.js';
 import { factionLooksWelcomeField } from '../../../shared-types/factions.js';
 import { gateLaunch, seedTestWallet } from '../launchGate.js';
+import { adoptPrebuiltBase } from '../scenarioLayouts.js';
 import { getStarterGrantEconomy, grantStarter } from '../../economy/starterGrant.js';
 import { tuningFor } from '../../../shared-types/shipScale/lookup.js';
 import { nearestClearPoint } from '../../../core/bases/baseSite.js';
@@ -178,6 +179,7 @@ export function joinFreshSpawn(
   // Economy v2 W5b + join flow — the ship-picker gate, which pays for the
   // launch (rooms/launchGate.ts). Test wallet seed first, so it pays.
   if ((d.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) seedTestWallet(playerId, parsed.data.initialWallet ?? d.testWalletSeed);
+  if (d.testMode) adoptPrebuiltBase(d.structureRegistry, playerId); // base-build-test: the base is the joiner's
   if (!resumedFromStore && d.sectorKey !== null && d.enforceHullGate) chosenKind = gateLaunch(d.launchCostsOn, playerId, chosenKind, (m) => d.sendNotice(client, m));
 
   // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player

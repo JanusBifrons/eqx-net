@@ -5,8 +5,34 @@
  */
 import type { Server } from 'colyseus';
 import { SectorRoom } from '../SectorRoom.js';
-import { GATE_TEST_PREBUILT, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
+import { BASE_BUILD_PREBUILT, GATE_TEST_PREBUILT, PREBUILT_ADOPT_OWNER, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
 import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
+
+/**
+ * `?room=base-build-test` (Sunday base loop): stills and films of building.
+ * The FIRST pilot to join owns a small powered base (Capital + Connector + 2
+ * Solar) — any id, logged in or not (`PREBUILT_ADOPT_OWNER`); its bank holds
+ * 50k minerals and every joiner's wallet 20k credits. Blueprints cable to the
+ * Connector at (0, 350): place within its 600 u reach. No rocks or NPCs nearby; ONE
+ * rock 1500 u south of the Capital for a red-ghost shot. The 100 ms grid pulse
+ * fills a placed Solar (480 minerals, 5 per pulse) in about 10 s.
+ */
+export const BASE_BUILD_TEST_OPTS = {
+  testMode: true,
+  asteroidConfig: [],
+  droneCount: 0,
+  peacefulDrones: true,
+  structureGridPulseMs: 100,
+  prebuiltStructuresOwner: PREBUILT_ADOPT_OWNER,
+  prebuiltStructures: BASE_BUILD_PREBUILT.map((p) => ({ ...p })),
+  prebuiltCapitalMinerals: 50_000,
+  seedStorageHold: { goods: {}, credits: 20_000 },
+  scenarioAsteroids: [{ x: 0, y: -1500, radius: 80 }],
+  // West of the base, clear of the Capital's crane pad (centre (-410, 0)).
+  defaultSpawnX: -1000,
+  defaultSpawnY: 150,
+  maxClients: 4,
+};
 
 /** Registers this group's rooms. Called from `index.ts` inside the
  *  `shouldRegisterTestRooms()` gate; `define` order is the order here. */
@@ -416,4 +442,5 @@ export function defineEngineeringRooms(gameServer: Server): void {
       maxClients: 4,
     })
     .filterBy(['testId']);
+  gameServer.define('base-build-test', SectorRoom, { ...BASE_BUILD_TEST_OPTS }).filterBy(['testId']);
 }

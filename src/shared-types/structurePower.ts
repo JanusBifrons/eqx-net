@@ -12,11 +12,22 @@
  * the idle trickle; a hit is paid from the grid's surplus and then from
  * batteries (the fence damage model), so batteries are a real strategy.
  *
+ * An owner can switch a consumer OFF (`canSwitchStructure`): it then draws
+ * nothing at all and does no work (its grid reads unpowered to it) until
+ * switched back on. Rides the wire as STRUCTURE_FLAG_OFF.
+ *
  * The server decides activity and sends it as STRUCTURE_FLAG_DRAW_FULL; both
  * sides compute the draw with this one function (#15).
  */
 export const IDLE_DRAW_FRAC = 0.2;
 
-export function structureDraw(powerConsumption: number, drawFull: boolean): number {
+export function structureDraw(powerConsumption: number, drawFull: boolean, switchedOff = false): number {
+  if (switchedOff) return 0;
   return drawFull ? powerConsumption : powerConsumption * IDLE_DRAW_FRAC;
+}
+
+/** Only a structure that DRAWS power can be switched off (a turret, a shield
+ *  post, a processor); generators, stores and connectors have no Off. */
+export function canSwitchStructure(powerConsumption: number): boolean {
+  return powerConsumption > 0;
 }

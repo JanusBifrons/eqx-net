@@ -17,9 +17,19 @@ const pod = (over: Partial<CargoState> = {}): CargoState => ({
   ship: { goods: {}, blueprints: [] }, shipCapacity: 500, ...over,
 });
 
+/** A sideways phone: coarse pointer, 844x390 (the HUD's phone check, useHudSize). */
+function asSidewaysPhone(): void {
+  vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('coarse'), media: q, addEventListener() {}, removeEventListener() {} }));
+  vi.stubGlobal('innerWidth', 844);
+  vi.stubGlobal('innerHeight', 390);
+}
+/** The window's frame (MUI Paper) inside a GameWindow root. */
+const frameOf = (root: HTMLElement): HTMLElement => root.querySelector('.MuiPaper-root') as HTMLElement;
+
 describe('LootWindow (cargo pods)', () => {
   afterEach(() => {
     send.mockReset();
+    vi.unstubAllGlobals();
     act(() => useUIStore.getState().setCargoState(null));
   });
 
@@ -47,5 +57,21 @@ describe('LootWindow (cargo pods)', () => {
     expect(screen.getByTestId('loot-window')).toBeTruthy();
     fireEvent.click(screen.getByTestId('loot-window-close'));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()); // after MUI's exit fade
+  });
+
+  it('on a phone a window with one line of content is as tall as the screen', () => {
+    asSidewaysPhone();
+    render(<LootWindow open title="Capital hold" entityId={4} onClose={() => {}} />);
+    act(() => useUIStore.getState().setCargoState(pod({ open: false, message: 'Cargo only moves in the galaxy.' })));
+    expect(screen.getByTestId('cargo-locked')).toHaveTextContent('Cargo only moves in the galaxy.');
+    const win = screen.getByTestId('loot-window');
+    expect(win).toHaveAttribute('data-window-size', 'full');
+    expect(getComputedStyle(frameOf(win)).height).toBe('calc(100% - 24px)');
+    expect(getComputedStyle(frameOf(win)).width).toBe('calc(100% - 24px)');
+  });
+
+  it('on a desktop the window fits its content', () => {
+    render(<LootWindow open title="Cargo pod" entityId={4} onClose={() => {}} />);
+    expect(screen.getByTestId('loot-window')).toHaveAttribute('data-window-size', 'fit');
   });
 });

@@ -24,7 +24,7 @@
 import { ASTEROID_YIELD, yieldHasGoods, yieldInto, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
-import { structureDraw } from '../../shared-types/structurePower.js';
+import { redrawStructure, switchStructure } from './structurePowerSwitch.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   canUpgradeStructure,
@@ -58,6 +58,7 @@ import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import type { Rig } from '../../core/articulation/rig.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+import { settleBlueprintBody, settleBuiltGhosts, type BlueprintBodyHooks } from './blueprintBody.js';
 
 /** Cap on reconnect attempts per pulse so a sector full of permanently-stranded
  *  structures (e.g. collinear-blocked leaves) can't make the 1 Hz pulse rescan
@@ -72,31 +73,12 @@ const FALLBACK_TARGET_SIGNATURE = 10;
  *  leg is deferred — see `resolveMiningClip`). Module const ⇒ no per-pulse alloc. */
 const EMPTY_MINING_OBSTACLES: readonly MiningBeamObstacle[] = [];
 
-/**
- * Resolve a laser turret's CONTINUOUS-beam firing params (playtest 2026-06-10
- * Issue 5 — "defence structures fire in pulses instead of constantly, like the
- * player does"). All laser beam weapons now work the same everywhere: the
- * turret fires its bound catalogue beam weapon (`mount.weaponId`) on that
- * weapon's standard cooldown — a steady stream of small hits the client renders
- * as one continuous beam (its laser TTL > the beam cadence) — instead of one
- * big lump every `fireRateMs`. Per-hit damage is rebalanced to preserve the
- * kind's tuned DPS (`weaponDamage / fireRateMs`) across the faster cadence, so
- * total damage ≈ today's. `fireRateMs`/`weaponDamage` are retired as a PULSE
- * gate and repurposed as the DPS budget.
- *
- * Pure + scalar in/out — unit-locked independent of the room.
- */
-export function resolveTurretBeam(
-  weaponDamage: number,
-  fireRateMs: number,
-  beamCooldownTicks: number,
-): { cooldownMs: number; perHitDamage: number } {
-  const cooldownMs = (beamCooldownTicks / 60) * 1000;
-  const dps = fireRateMs > 0 ? weaponDamage / (fireRateMs / 1000) : 0;
-  return { cooldownMs, perHitDamage: dps * (cooldownMs / 1000) };
-}
+import { resolveTurretBeam } from './turretBeam.js';
+export { resolveTurretBeam };
 
-export interface StructureGridHooks {
+/** `BlueprintBodyHooks`: hologram pass-through (a blueprint turns solid only
+ *  with no ship inside; absent ⇒ it turns solid at once). */
+export interface StructureGridHooks extends BlueprintBodyHooks {
   registry: StructureRegistry;
   /** Read a structure's current hull (from `swarmHealth`). */
   getHealth(id: string): number;
@@ -209,6 +191,9 @@ export interface StructureGridHooks {
    *  under its hatch, or still rising) holds fire (`rigDeployed`). Absent ⇒
    *  no rig gate (unit harnesses). */
   rigTick?: () => number;
+  /** The room's grid pulse period, ms (the timer that calls `pulse`; a test
+   *  room's `structureGridPulseMs`). Absent ⇒ `TRANSFER_PULSE_MS`. */
+  pulseMs?: number;
 }
 
 export interface GridPulseResult {
@@ -243,6 +228,9 @@ export class StructureGridSubsystem {
   private readonly nearestView: TurretTargetView = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: FALLBACK_TARGET_SIGNATURE };
   /** Scratch for `linkReachBox` (the reconnect `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+
+  /** The grid pulse period, ms: the room's pulse timer AND the build ETA read it. */
+  get pulseMs(): number { return this.hooks.pulseMs ?? TRANSFER_PULSE_MS; }
 
   constructor(private readonly hooks: StructureGridHooks) {
     this.mounts = new StructureMountTicker({
@@ -286,6 +274,7 @@ export class StructureGridSubsystem {
    *  is byte-identical to the raw grid summary. */
   powerSummaryFor(id: string): { netPower: number; powered: boolean } {
     const raw = this.grid.powerSummaryFor(id);
+    if (this.hooks.registry.get(id)?.switchedOff === true) return { netPower: raw.netPower, powered: false }; // owner Off
     if (raw.powered || !this.batteryRescued.has(id)) return raw;
     return { netPower: raw.netPower, powered: true };
   }
@@ -518,6 +507,7 @@ export class StructureGridSubsystem {
     this.processGas();
     this.processTransfer(nowMs, flashed);
     this.processConstruction(nowMs, flashed);
+    settleBuiltGhosts(registry.all(), this.hooks); // built outside the pulse (restore, seeded bases)
     this.processRepair(nowMs, flashed);
     this.processDeconstruction(nowMs, flashed);
     // Dominant pulse material (back-compat single field): prefer 'minerals' when
@@ -698,12 +688,13 @@ export class StructureGridSubsystem {
    * change adjusts its grid component's net power in O(1) (no rebuild).
    */
   setActive(rec: StructureRecord, active: boolean): void {
-    if ((rec.drawFull === true) === active) return;
-    const cons = getStructureKind(rec.kind).powerConsumption;
-    const before = structureDraw(cons, rec.drawFull === true);
-    rec.drawFull = active;
-    if (rec.isConstructed) this.grid.adjustDraw(rec.id, structureDraw(cons, active) - before);
+    const on = active && rec.switchedOff !== true; // the owner's Off wins
+    if ((rec.drawFull === true) !== on) redrawStructure(rec, rec.switchedOff === true, on, this.adjustDraw);
   }
+
+  /** The owner On/Off switch (`structurePowerSwitch.ts`); false if nothing changed. */
+  setSwitchedOn(rec: StructureRecord, on: boolean): boolean { return switchStructure(rec, on, this.adjustDraw); }
+  private readonly adjustDraw = (id: string, delta: number): void => this.grid.adjustDraw(id, delta);
 
   /** Clear a Miner's target + cached pose (unpowered / no in-range rock) so the
    *  mining beam stops on the next tick. */
@@ -820,7 +811,7 @@ export class StructureGridSubsystem {
 
   /**
    * Estimate ms-to-completion for a blueprint at the steady delivery rate
-   * (`CONSTRUCTION_PULSE_AMOUNT` per `TRANSFER_PULSE_MS`), ASSUMING resources
+   * (`CONSTRUCTION_PULSE_AMOUNT` per `pulseMs`, the real pulse), ASSUMING resources
    * are available — the doc's "the building time is independent of [the supply
    * pulse], assuming no shortage of resources." Returns `null` when there's
    * nothing to time (already built / zero-cost Capital) OR the build is STALLED
@@ -831,9 +822,12 @@ export class StructureGridSubsystem {
    */
   estimateBuildEtaMs(rec: StructureRecord): number | null {
     if (rec.isConstructed || rec.constructionCost <= 0) return null;
-    if (!this.findStorageRoute(rec.id)) return null; // unreachable / dry → paused
+    // Mirrors processConstruction: a prepaid unpack needs no route.
+    const prepaid = rec.prepaid === true && rec.upgradeTargetLevel === undefined;
+    if (!prepaid && !this.findStorageRoute(rec.id)) return null; // unreachable / dry → paused
     const remaining = Math.max(0, rec.constructionCost - rec.constructionProgress);
-    const ratePerMs = CONSTRUCTION_PULSE_AMOUNT / TRANSFER_PULSE_MS;
+    // The REAL pulse period (a test room pulses faster than 1 s).
+    const ratePerMs = CONSTRUCTION_PULSE_AMOUNT / this.pulseMs;
     return ratePerMs > 0 ? remaining / ratePerMs : null;
   }
 
@@ -975,7 +969,9 @@ export class StructureGridSubsystem {
   private processConstruction(nowMs: number, flashed: Array<[string, string, FlowMaterial]>): void {
     for (const bp of this.hooks.registry.all()) {
       if (bp.isConstructed || bp.isDeconstructing) continue;
-      if (bp.prepaid === true && bp.upgradeTargetLevel === undefined) {
+      if (bp.constructionProgress >= bp.constructionCost) {
+        // Fully paid, waiting for a ship to leave its space (below).
+      } else if (bp.prepaid === true && bp.upgradeTargetLevel === undefined) {
         // Economy v2 W4b — unpacking a packed structure costs only time: it
         // builds at the normal rate with no minerals and needs no route.
         bp.constructionProgress += CONSTRUCTION_PULSE_AMOUNT;
@@ -990,6 +986,9 @@ export class StructureGridSubsystem {
       }
       if (bp.constructionProgress >= bp.constructionCost) {
         bp.constructionProgress = bp.constructionCost;
+        // Hologram pass-through: never turn solid around a ship; finish the
+        // pulse the space is clear.
+        if (!settleBlueprintBody(bp, this.hooks)) continue;
         bp.isConstructed = true;
         // Phase 4 WS-B4 — an UPGRADE build (upgradeTargetLevel set) increments
         // the level on completion + applies the per-level stat grant; a normal

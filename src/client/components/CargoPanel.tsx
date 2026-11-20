@@ -18,6 +18,7 @@ import { allOf, cargoRows, rowHold, type CargoRow } from './cargoRows';
 import { DROP_SIDE_ATTR, useTileDrag, type TileDrag } from './useTileDrag';
 import { CargoIcon } from './cargoIcons';
 import { HUD } from '../hud/tokens';
+import { WINDOW_BTN_BASE_SX, WINDOW_BTN_SECONDARY_SX, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from './GameWindow';
 import { MAX_FREIGHT_ORDERS, type CargoItems, type CargoState, type FreightOrder } from '../../shared-types/messages/cargoMessages';
 
 export const CARGO_POLL_MS = 1000;
@@ -26,41 +27,32 @@ export const CARGO_NOTICE_MS = 3000;
 
 const C = HUD.color;
 const EDGE = `1px solid ${C.panelEdge}`;
-const ROOT_SX = {
-  pointerEvents: 'auto' as const, display: 'flex', flexDirection: 'column' as const, color: C.ink,
-  fontFamily: HUD.font.label, fontSize: 12, flex: '1 1 auto', minHeight: 0,
-};
-const HEAD_SX = { flex: 'none', display: 'flex', alignItems: 'center', gap: 1.25, px: 1.5, py: 1, borderBottom: EDGE, minHeight: 52, flexWrap: 'wrap' as const };
-const HEAD_TITLE_SX = { fontWeight: 700, fontSize: 15, letterSpacing: 0.5 };
+// The window frame's header, footer and buttons (GameWindow.tsx).
+const ROOT_SX = WINDOW_ROOT_SX;
+const HEAD_SX = WINDOW_HEAD_SX;
+const HEAD_TITLE_SX = WINDOW_TITLE_SX;
 const CHIP_SX = {
   fontSize: 10, px: '7px', py: '2px', borderRadius: '9px', border: '1px solid', fontWeight: 600, letterSpacing: 0.5,
   textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const,
 };
-const X_SX = {
-  ml: 'auto', width: 32, height: 32, border: EDGE, borderRadius: '6px', display: 'grid', placeItems: 'center',
-  color: C.inkDim, fontSize: 16, cursor: 'pointer', background: 'transparent', p: 0,
-};
+const X_SX = WINDOW_X_SX;
 const BODY_SX = {
   display: 'flex', flexDirection: { xs: 'column', sm: 'row' } as const, gap: { xs: 1.5, sm: 2 }, px: 1.5, py: 1.25,
   justifyContent: 'center', alignItems: { xs: 'center', sm: 'flex-start' } as const,
   // A short screen (a sideways phone) scrolls the grids, never the header or footer.
   flex: '1 1 auto', minHeight: 0, overflowY: 'auto' as const,
 };
+/** A locked hold's one line still takes the body's room: the footer sits at the bottom. */
+const LOCKED_BODY_SX = { px: 1.5, py: 1.25, flex: '1 1 auto', minHeight: 0, overflowY: 'auto' as const };
 const SIDE_HEAD_SX = {
   display: 'flex', alignItems: 'center', gap: '6px', mb: '6px', fontSize: 11, fontWeight: 600, color: C.inkDim,
   letterSpacing: 1, textTransform: 'uppercase' as const, minHeight: 16,
 };
 const NUM_SX = { ml: 'auto', fontFamily: HUD.font.num, fontSize: 11, color: C.ink, textTransform: 'none' as const, letterSpacing: 0 };
-const FOOT_SX = {
-  flex: 'none', display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1, borderTop: EDGE, minHeight: 58, fontSize: 11, color: C.inkDim,
-};
-const BTN_BASE = {
-  height: 38, px: 2, borderRadius: '6px', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: 13,
-  letterSpacing: 0.5, border: '1px solid', cursor: 'pointer', userSelect: 'none' as const, fontFamily: HUD.font.label,
-  whiteSpace: 'nowrap' as const,
-};
+const FOOT_SX = WINDOW_FOOT_SX;
+const BTN_BASE = WINDOW_BTN_BASE_SX;
 const BTN_PRIMARY_SX = { ...BTN_BASE, borderColor: C.auto, color: '#04121a', backgroundColor: C.auto };
-const BTN_SECONDARY_SX = { ...BTN_BASE, borderColor: C.panelEdge, color: C.ink, backgroundColor: 'transparent' };
+const BTN_SECONDARY_SX = WINDOW_BTN_SECONDARY_SX;
 /** Small inline buttons (break in, switches, market rows). */
 const BTN_SX = {
   px: 1, py: '2px', borderRadius: '4px', cursor: 'pointer', userSelect: 'none' as const, fontSize: 11,
@@ -420,7 +412,7 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship, title, subt
 
       {state === null && <Box sx={{ ...BODY_SX, color: C.inkDim }}>Opening…</Box>}
       {locked && (
-        <Box sx={{ px: 1.5, py: 1.25 }}>
+        <Box sx={LOCKED_BODY_SX}>
           <Box sx={BANNER_SX}>
             <Box data-testid="cargo-locked">{state.message ?? 'Locked.'}</Box>
             {state.breakIn !== undefined && <BreakIn target={target} breakIn={state.breakIn} />}

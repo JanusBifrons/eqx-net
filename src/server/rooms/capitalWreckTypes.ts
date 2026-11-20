@@ -25,6 +25,12 @@ export interface WreckOre {
   resource: AsteroidResourceId;
   /** Ore units per world unit² of piece. */
   perArea: number;
+  /** A cut-FIELD rock: its ore rest frame, the rest centre the field cut it
+   *  at (`restX`, `restY` of its record). Every piece and re-split piece
+   *  keeps it, and `OreDraw.chunkYield` samples the field's ore there
+   *  (`oreAtRest`) instead of `resource`. Absent: an ordinary rock. */
+  restX?: number;
+  restY?: number;
 }
 
 /** Rock cut: a live rock as the cut code reads it (`CapitalWreckDeps.rockOf`). */
@@ -40,6 +46,9 @@ export interface WreckRockView {
    *  ordinary rock. */
   fk?: number | undefined;
   field?: ChunkOpts | null | undefined;
+  /** A cut-field rock's rest centre (its ore rest frame); else undefined. */
+  restX?: number | undefined;
+  restY?: number | undefined;
 }
 
 export interface WreckPieceSpawn {
