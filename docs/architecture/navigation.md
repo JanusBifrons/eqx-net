@@ -84,7 +84,9 @@ same functions the cut uses, #15). No rock geometry is read.
   distance between best points), searched by the one `GraphSearch`.
 - Built in the nav worker for every cut-field sector room (below); not yet used by any ship: the route
   planner (slice 6) searches it.
-- Measured (desktop, print-only): 156×156 cells, 285 KB, built in ~4 ms. Across the field a battleship
+- The margin round the field is the warp pad plus 8 cells (~16 km): more than a battleship's length
+  plus its turning radius, so a capital can turn round outside the field (map-edge cells count as tight).
+- Measured (desktop, print-only): 164×164 cells, 315 KB, built in ~4 ms (156×156 before the 8-cell margin). Across the field a battleship
   routes 448 km (round or along lanes), a fighter 325 km through streets (314 km straight).
 
 ## The fine layer (`core/nav/fineField.ts`)
@@ -186,7 +188,26 @@ chunk is loaded and rock is within its reach, else the coarse layer.
   does (battleship across the field, nose on: ~12 900 expansions). The straight answer and the
   string-pull obey the same 45° rule where there is no room to turn. A capital (clearance past the fine
   layer's reach) plans on the coarse layer alone. Fighters send neither and see the plain graph.
-- Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius, comfort}` → `ROUTE {reqId, status,
+- Width on straights (owner 2026-11-19): a long hull needs its width plus a margin along a straight run
+  and its full length of room only where it turns. `navHull(kind)` (`shipScale/navTuning.ts`) carries
+  `{clearance, comfort, beam}`; `beam` = `navBeamClearance` (half the hull's width × 1.25 plus the
+  margin; 1 067 u for a battleship against its 3 595 u clearance). When beam < clearance and the hull
+  plans on the coarse layer, `RoutePlanner.plan` runs passes in order, keeping the first whose turns fit:
+  1. at `beam`: lanes and every gap the beam fits through;
+  2. at the 45° turn room (`navTurnRoom(full, beam, sin45, cos45)`, 2 998 u for a battleship): lanes
+     stay in, gaps the ship fits only straight through drop out;
+  3. the comfort and clearance passes as before.
+  `turnsFit` checks each corner of the pulled route against `navTurnRoom` for its angle; a corner past
+  90° fits only with open (non-tight) room within 2 cells ahead. In a tight cell a 45° step needs the
+  45° turn room (`HeadingCoarseGraph.turnRoom45`) and the full clearance still decides "tight"
+  (`turnClear`) in every pass, the comfort pass included, so "room to turn round" is the same in each.
+  Worst case a capital request runs three coarse searches (beam, 45°, full), each up to the expansion cap.
+- Turn spacing: the heading graph is 16 nodes a cell (way in 0..7, plus a just-turned bit). A hull
+  whose turning radius is wider than a coarse cell (2 048 u) must go straight one step after each 45°
+  turn in tight space, so 45° steps can't stack into a U-turn inside a lane; a long gentle curve still
+  can. The string-pull never skips a point where the route doubles back (turn > 90°), so the turn-round
+  stays where the search put it, in open space. Search memory: 164² × 16 nodes ≈ 8.6 MB on the nav worker.
+- Wire to the worker: `ROUTE {worldId, reqId, sx, sy, tx, ty, clearance, heading, turnRadius, comfort, beam}` → `ROUTE {reqId, status,
   points, expanded, ms}` (points transferred, not copied). `NavField.route(...)` returns a Promise;
   `NavWorker.inFlight` counts open requests; a detached field answers `none`; a worker exit rejects
   every open request.
@@ -232,7 +253,7 @@ one it flies straight as before.
   still brushed it 2/4 (2026-11-19).
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25, the least room a route may have (owner:
   stays 30 u for a fighter).
-- Comfort (owner 2026-11-19, "margin where room"): `navComfort(kind)` (`shipScale/navTuning.ts`) = max(clearance,
+- Comfort (owner 2026-11-19, "margin where room"): `navComfort(kind)` (`shipScale/navTuning.ts`, `navHull(kind).comfort`) = max(clearance,
   radius + 1.5 × shield pad), 54 u for a fighter (its shield ball is 44 u; a battleship's comfort is its
   clearance). `RoutePlanner.plan` plans at comfort first and keeps that route when one fits; only when
   none does does it plan again at clearance, and its string-pull still keeps comfort on every shortcut
@@ -320,3 +341,7 @@ stays under 0.6 ms p99.
   toward rock). Then: corner braking from the angle between legs (`NAV_TURN_SWING`), and the comfort
   margin (two-pass plan; clearance stays 30 u). The streets flight: ~27 rock contacts on a branch with
   lingering hulls streaming chunks, 0 in 4/4 runs after.
+  2026-11-19: width on straights (owner). Battleships were planned with a disc of their full length
+  (3 595 u) everywhere, so lanes built ~560 u wider than that disc read as too narrow at their bends and
+  capitals went round the outside. Now: beam on straights, length at turns (`navHull`, the beam and 45°
+  passes, `turnsFit`), turn spacing in the heading graph, and an 8-cell outer margin.

@@ -21,8 +21,9 @@
  */
 import { CHUNK_SIZE } from '../terrain/fieldLayout.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from './search.js';
-import { HeadingCoarseGraph, type CoarseFieldMap } from './coarseField.js';
+import { HEADING_NODE_SHIFT, HeadingCoarseGraph, type CoarseFieldMap } from './coarseField.js';
 import { FINE_NAV_CELL, FINE_NAV_DIAG, FINE_NAV_REACH, type FineFieldLayer } from './fineField.js';
+import { navTurnRoom } from '../../shared-types/shipScale/navTuning.js';
 
 /** Most waypoints one route carries (the rest comes from asking again). */
 export const NAV_ROUTE_MAX_POINTS = 64;
@@ -168,6 +169,11 @@ export class RoutePlanner {
   private polyLen = 0;
   /** This request's comfort clearance (`plan`). */
   private comfort = 0;
+  /** The hull's full clearance (its length): what a turn needs. Above the
+   *  planning clearance only on the beam pass ("width on straights"). */
+  private full = 0;
+  /** The hull's beam clearance for this request (= `full` for a short hull). */
+  private beam = 0;
 
   /** Nodes expanded by the last request, both layers (the count gate's work counter). */
   expanded = 0;
@@ -239,11 +245,30 @@ export class RoutePlanner {
    *  `comfort` (≥ `c`; owner 2026-11-19, "margin where room"): the clearance a
    *  route keeps when any way fits it (the hull's shield clear of rock). Only
    *  when none does is it planned again at `c`, its shortcuts still keeping
-   *  `comfort` wherever the unpulled path does. */
+   *  `comfort` wherever the unpulled path does.
+   *  `beam` (< `c`, a long hull with a heading; owner 2026-11-19, "width on
+   *  straights"): straight runs need only the beam, each turn the room its
+   *  sweep takes (`navTurnRoom`) along its arc. Planned first; when its
+   *  turns don't fit, planned again on the full clearance. */
   plan(coarse: CoarseFieldMap, fine: FineFieldLayer, sx: number, sy: number, tx: number, ty: number, c: number, out: Float64Array,
-    heading = NaN, turnRadius = 0, comfort = c): number {
+    heading = NaN, turnRadius = 0, comfort = c, beam = c): number {
     this.coarse = coarse; this.fine = fine;
     this.expanded = 0;
+    this.full = c; this.beam = Math.min(beam, c);
+    if (beam < c && c > FINE_NAV_REACH && turnRadius > 0 && Number.isFinite(heading)) {
+      this.comfort = beam;
+      const n = this.planAt(sx, sy, tx, ty, beam, out, heading, turnRadius);
+      // No way even on the beam: none on the full clearance either.
+      if (this.failed() || this.turnsFit(sx, sy, out, n, heading, turnRadius, beam)) return n;
+      // Its turns didn't fit (a gap it fits only straight through): plan again
+      // where a 45° turn fits anywhere, so a lane stays open but such gaps don't.
+      const t45 = navTurnRoom(c, beam, Math.SQRT1_2, Math.SQRT1_2);
+      if (t45 < c) {
+        this.comfort = t45;
+        const m = this.planAt(sx, sy, tx, ty, t45, out, heading, turnRadius);
+        if (this.failed() || this.turnsFit(sx, sy, out, m, heading, turnRadius, beam)) return m;
+      }
+    }
     if (comfort > c) {
       this.comfort = comfort;
       const n = this.planAt(sx, sy, tx, ty, comfort, out, heading, turnRadius);
@@ -256,7 +281,7 @@ export class RoutePlanner {
   /** One plan at clearance `c` (adds to {@link expanded}). */
   private planAt(sx: number, sy: number, tx: number, ty: number, c: number, out: Float64Array, heading: number, turnRadius: number): number {
     const coarse = this.coarse!;
-    if (this.segmentClear(sx, sy, tx, ty, c) && !this.turnsInTight(sx, sy, tx, ty, c, heading, turnRadius)) {
+    if (this.segmentClear(sx, sy, tx, ty, c) && !this.turnsInTight(sx, sy, tx, ty, this.full, heading, turnRadius)) {
       out[0] = tx; out[1] = ty;
       this.status = 'straight';
       return 1;
@@ -276,7 +301,7 @@ export class RoutePlanner {
     //    and the coarse layer reads the field's inside as solid).
     const cs = clampedCell(coarse, sx, sy), cg = clampedCell(coarse, tx, ty);
     const headed = turnRadius > 0 && Number.isFinite(heading);
-    const coarseOnly = headed && c > FINE_NAV_REACH;
+    const coarseOnly = headed && this.full > FINE_NAV_REACH;
     let cLen = 1, partial = false, gx = tx, gy = ty;
     this.cPath[0] = cs;
     if (cs !== cg && (coarseOnly || !inside(tx, ty))) {
@@ -284,8 +309,9 @@ export class RoutePlanner {
       this.cGoal.map = coarse; this.cGoal.target = cg;
       let graph: SearchGraph = coarse, from = cs, shift = 0;
       if (headed) {
-        this.headed.map = coarse; this.headed.turnRadius = turnRadius;
-        graph = this.headed; from = this.headed.startNode(cs, heading); shift = 3;
+        this.headed.map = coarse; this.headed.turnRadius = turnRadius; this.headed.turnClear = this.full;
+        this.headed.turnRoom45 = c < this.full ? navTurnRoom(this.full, this.beam, Math.SQRT1_2, Math.SQRT1_2) : 0;
+        graph = this.headed; from = this.headed.startNode(cs, heading); shift = HEADING_NODE_SHIFT;
       }
       this.cGoal.shift = shift;
       let hit = this.search.search(graph, from, this.cGoal, NAV_COARSE_EXPAND_CAP);
@@ -401,10 +427,13 @@ export class RoutePlanner {
       // Does the unpulled path a..j keep `comfort`? While it does, a shortcut must too.
       let roomy = cf > c && this.segmentClear(ax, ay, Q[j * 2]!, Q[j * 2 + 1]!, cf);
       while (j + 1 < len) {
+        // Where the path doubles back (in open space, the only place the search
+        // turns round) the ship turns there: a shortcut past it would hide that.
+        if (headed && j > a && this.doublesBack(j)) break;
         const bx = Q[(j + 1) * 2]!, by = Q[(j + 1) * 2 + 1]!;
         if (roomy) roomy = this.segmentClear(Q[j * 2]!, Q[j * 2 + 1]!, bx, by, cf);
         if (!this.segmentClear(ax, ay, bx, by, roomy ? cf : c) ||
-          (headed && this.turnsInTightDir(ax, ay, bx, by, c, hx, hy, turnRadius))) break;
+          (headed && this.turnsInTightDir(ax, ay, bx, by, this.full, hx, hy, turnRadius))) break;
         j++;
       }
       const bx = Q[j * 2]!, by = Q[j * 2 + 1]!;
@@ -414,6 +443,55 @@ export class RoutePlanner {
       a = j;
     }
     return count;
+  }
+
+  /** Beam pass: does each turn of the route (the nose onto the first leg,
+   *  then each corner) have the room the hull's sweep takes for its angle,
+   *  along the arc's run-in and run-out (turnRadius · tan(θ/2) each side)? */
+  private turnsFit(sx: number, sy: number, out: Float64Array, n: number, heading: number, turnRadius: number, beam: number): boolean {
+    let px = sx, py = sy, hx = -Math.sin(heading), hy = Math.cos(heading), inLen = 0;
+    for (let k = 0; k < n; k++) {
+      const bx = out[k * 2]!, by = out[k * 2 + 1]!, l = Math.hypot(bx - px, by - py);
+      if (l < 1e-6) continue;
+      const ux = (bx - px) / l, uy = (by - py) / l;
+      const cos = Math.max(-1, Math.min(1, hx * ux + hy * uy)), sin = Math.sqrt(1 - cos * cos);
+      const need = navTurnRoom(this.full, beam, sin, cos);
+      if (need > beam && !(k > 0 && cos < 0 && this.openAhead(px, py, hx, hy))) {
+        const run = cos > -1 + 1e-9 ? (turnRadius * sin) / (1 + cos) : Infinity; // turnRadius · tan(θ/2)
+        const o = Math.min(l, run), i = Math.min(inLen, run);
+        if (!this.segmentClear(px, py, px + ux * o, py + uy * o, need)) return false;
+        if (i > 0 && !this.segmentClear(px - hx * i, py - hy * i, px, py, need)) return false;
+      }
+      hx = ux; hy = uy; inLen = l; px = bx; py = by;
+    }
+    return true;
+  }
+
+  /** The last pass found no way at all (a method, so the status isn't narrowed across passes). */
+  private failed(): boolean { return this.status === 'none'; }
+
+  /** Does `poly` turn more than 90° at point j (the way in from the last
+   *  distinct point before it, the way out to the next distinct one after)? */
+  private doublesBack(j: number): boolean {
+    const Q = this.poly, n = this.polyLen, jx = Q[j * 2]!, jy = Q[j * 2 + 1]!;
+    let i = j - 1, k = j + 1;
+    while (i >= 0 && Math.abs(Q[i * 2]! - jx) + Math.abs(Q[i * 2 + 1]! - jy) < 1e-6) i--;
+    while (k < n && Math.abs(Q[k * 2]! - jx) + Math.abs(Q[k * 2 + 1]! - jy) < 1e-6) k++;
+    if (i < 0 || k >= n) return false;
+    return (jx - Q[i * 2]!) * (Q[k * 2]! - jx) + (jy - Q[i * 2 + 1]!) * (Q[k * 2 + 1]! - jy) < 0;
+  }
+
+  /** A corner past 90° (a hairpin at a lane's mouth): the ship overshoots it
+   *  and turns round in the space beyond, so it fits when a coarse cell with
+   *  room to turn round (not `tight`, as the coarse search judged it) lies
+   *  within two cells ahead of the corner along the way in. */
+  private openAhead(px: number, py: number, hx: number, hy: number): boolean {
+    const m = this.coarse!, d = m.cell;
+    for (let s = 0; s <= 2; s++) {
+      const cell = m.cellAt(px + hx * d * s, py + hy * d * s);
+      if (cell >= 0 && !this.headed.tight(cell)) return true;
+    }
+    return false;
   }
 
   private push(x: number, y: number): void {

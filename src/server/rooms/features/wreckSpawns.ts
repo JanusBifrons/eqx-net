@@ -1,0 +1,137 @@
+/**
+ * The room's wreck spawns (capital destruction S2a, sub-capital break-up,
+ * wreck fields 3b): which kinds break into wreck pieces here, a dying hull's
+ * break-up (`spawnCapitalWreck`, `spawnActiveHullWreck` and its
+ * `vaporisedActiveDeath` note), a live piece's SAB pose, and the boot-time
+ * wreck-field chunk source. Moved verbatim out of `SectorRoom` (god-file
+ * split slice 54); the room hands in live accessors.
+ *
+ * The wreck subsystem itself (`CapitalWreckSubsystem`, built by
+ * `capitalWreckRoomWiring.ts`) and the room's wreck switches stay the room's;
+ * they are read here through getters, as the room's own methods read them.
+ */
+import type { Logger } from 'pino';
+import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
+import type { ShipPhysicsState } from '../../../core/physics/World.js';
+import type { ShipState } from '../schema/SectorState.js';
+import type { CapitalWreckSubsystem, WreckPiecePose } from '../CapitalWreckSubsystem.js';
+import type { ForceFieldSubsystem } from '../ForceFieldSubsystem.js';
+import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
+import type { FieldClearing } from '../../../core/terrain/fieldLayout.js';
+import { WreckFieldSource, type WreckFieldRoomOpts } from '../WreckFieldSource.js';
+import { cutFieldOpts } from '../../../core/terrain/chunkStreamer.js';
+import { rockFieldBlocker, wreckField } from '../../../core/terrain/wreckFieldLayout.js';
+import { wreckKindAllowed } from '../../../core/destruction/wreckKindAllowed.js';
+import { terrainRecordStoreFor } from '../../db/PersistenceWorker.js';
+import { getShipKind, type ShipKindId } from '../../../shared-types/shipKinds.js';
+import { FLAG_SLEEPING, SLOT_FLAGS_OFF, slotBase, slotPoseInto } from '../../../shared-types/sabLayout.js';
+
+/** What the wreck spawns read from the room. Getters for fields the room
+ *  assigns in `onCreate` (the subsystem, the switches, the SAB views, the
+ *  sector key) or reassigns. */
+export interface RoomWreckSpawnsHost {
+  logger: Pick<Logger, 'info' | 'warn'>;
+  swarmRegistry: Pick<SwarmEntityRegistry, 'get'>;
+  forceFields: Pick<ForceFieldSubsystem, 'isTractored'>;
+  shipPoseCache: ReadonlyMap<string, ShipPhysicsState>;
+  capitalWrecks: () => CapitalWreckSubsystem | null;
+  capitalWrecksOn: () => boolean;
+  subcapWrecksOn: () => boolean;
+  persistSector: () => boolean;
+  sectorKey: () => string | null;
+  sabF32: () => Float32Array;
+  sabU32: () => Uint32Array;
+  playerToSlot: () => ReadonlyMap<string, number>;
+  getActiveShip: (playerId: string) => ShipState | undefined;
+  postToWorker: (cmd: WorkerCmd) => void;
+}
+
+export class RoomWreckSpawns {
+  /** The playerId whose ACTIVE hull was just vaporised, for its pod's
+   *  vaporised salvage; read and cleared by the `SHIP_DESTROYED` handler. */
+  vaporisedActiveDeath: string | null = null;
+
+  constructor(private readonly h: RoomWreckSpawnsHost) {}
+
+  /** Wreck fields 3b: the room option `wreckField` as a chunk source of the
+   *  ONE streamer (`WreckFieldSource`; macro-terrain.md F3), laid out once
+   *  at boot around the cut field's rocks and clearings, under the room's
+   *  wreck switches. The room keeps the returned source as `wreckFieldSource`. */
+  buildWreckFieldSource(o: WreckFieldRoomOpts, cut: { seed: string; clearings?: FieldClearing[] } | undefined): WreckFieldSource {
+    const h = this.h;
+    const field = wreckField({
+      ...o, capitalWrecksOn: h.capitalWrecksOn(), subcapWrecksOn: h.subcapWrecksOn(),
+      ...(!o.clearings && cut?.clearings ? { clearings: cut.clearings } : {}),
+      ...(cut ? { blocked: rockFieldBlocker(cutFieldOpts(cut.seed, cut.clearings)) } : {}),
+    });
+    h.logger.info({ seed: o.seed, hulls: field.hulls.length, dropped: field.dropped }, 'wreck field laid out');
+    const sectorKey = h.sectorKey();
+    return new WreckFieldSource(field, {
+      wrecks: () => h.capitalWrecks() ?? undefined,
+      piecePoseInto: (id, out) => this.wreckPose(id, out) !== null,
+      pieceAwake: (id) => {
+        const rec = h.swarmRegistry.get(id);
+        return rec != null && ((h.sabU32()[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) === 0;
+      },
+      tractored: (id) => h.forceFields.isTractored(id),
+      ...(o.fresh === true ? { fresh: true } : {}), // dev look flag (wreck fields 9)
+      warn: (obj, msg) => h.logger.warn(obj, msg), ...(h.persistSector() && sectorKey !== null ? { records: terrainRecordStoreFor(`${sectorKey}|wrecks:${o.seed}`) } : {}), // slice 4: touched hulls' rows
+    });
+  }
+
+  /** A live wreck piece's SAB pose into `out` (#14 with a reused `out`), or null when gone. */
+  wreckPose(id: string, out: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }): WreckPiecePose | null {
+    const rec = this.h.swarmRegistry.get(id);
+    return rec ? slotPoseInto(this.h.sabF32(), rec.slot, out) : null;
+  }
+
+  /** Does a ship of `kindId` break into wreck pieces in this room? Read from
+   *  its destruction profile (#18): `capital` with `capitalWrecks`; `subcap`
+   *  with `subcapWrecks`, except composite kinds (havok), which keep their
+   *  per-component scrap; `none` never. */
+  wreckKindAllowed(kindId: string): boolean {
+    return wreckKindAllowed(kindId, this.h.capitalWrecksOn(), this.h.subcapWrecksOn());
+  }
+
+  /** S2a: a dying ACTIVE hull breaks into wreck bodies, its worker body
+   *  despawned (the slot stays for respawn / pilot swap). Called by its death
+   *  policy BEFORE the `destroy` broadcast; true = vaporised (fracture v11).
+   *  A vaporised death is noted for the `SHIP_DESTROYED` handler's pod
+   *  (`vaporisedActiveDeath`: emitted right after, same call stack). */
+  spawnActiveHullWreck(playerId: string): boolean {
+    this.vaporisedActiveDeath = null;
+    const activeHull = this.h.getActiveShip(playerId);
+    const slot = this.h.playerToSlot().get(playerId);
+    if (activeHull === undefined || slot === undefined || activeHull.alive !== false || this.h.capitalWrecks() === null || !this.wreckKindAllowed(activeHull.kind)) return false;
+    // The pose every hit test this tick used (`shipPoseCache`), so a kill
+    // cut lands where the killing shot hit (the burned gap stays on the
+    // beam's line even when the worker stepped on since); the SAB otherwise.
+    const pose = this.h.shipPoseCache.get(playerId) ?? slotPoseInto(this.h.sabF32(), slot, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 });
+    const vaporised = this.spawnCapitalWreck(playerId, activeHull.kind, pose,
+      activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth, slot, playerId);
+    if (vaporised) this.vaporisedActiveDeath = playerId;
+    return vaporised;
+  }
+
+  /** S2a: a dying capital (any liveness class) breaks into wreck bodies.
+   *  `targetId` is the id its hits were tracked under. True when a cut kill
+   *  vaporised it (fracture v11). Call while the dying body is live; `bodySlot` / `bodyId` name its worker body, which
+   *  is despawned BEFORE the pieces spawn (the worker may step between two
+   *  commands, so a later despawn left the pieces overlapping the hull for
+   *  a step; `CapitalWreckSubsystem.onDeath`). The caller's own despawn
+   *  after this is then a no-op for the body. */
+  spawnCapitalWreck(
+    targetId: string, kindId: string,
+    pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel?: number },
+    maxHull: number,
+    bodySlot?: number, bodyId?: string,
+  ): boolean {
+    const capitalWrecks = this.h.capitalWrecks();
+    if (capitalWrecks === null || !this.wreckKindAllowed(kindId)) return false;
+    const despawn = bodySlot !== undefined && bodyId !== undefined
+      ? () => this.h.postToWorker({ type: 'DESPAWN', slot: bodySlot, playerId: bodyId })
+      : undefined;
+    return capitalWrecks.onDeath(targetId, kindId as ShipKindId,
+      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull, despawn).vaporised;
+  }
+}

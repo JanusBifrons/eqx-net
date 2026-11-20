@@ -5,7 +5,7 @@
  * `capital` or `subcap`) or, for a composite kind (havok, cargo pod), sheds
  * one scrap body per component (`SWARM_KIND_SCRAP`). Never both: the server's
  * scrap paths spawn only for kinds with scrap groups, and
- * `SectorRoom.wreckKindAllowed` breaks a sub-cap only when it has none. A
+ * `RoomWreckSpawns.wreckKindAllowed` breaks a sub-cap only when it has none. A
  * capital is broken whatever its scrap groups, so this lock fails the day a
  * breaking kind gains components without picking one effect.
  */

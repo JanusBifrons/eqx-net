@@ -197,7 +197,7 @@ math-up via `x*scale,-y*scale`, rotate by ship angle, translate — matching
 drift, at the ship's angle. Death hooks (ALL spawn BEFORE the slot is freed so
 the dying pose is live): drone via `swarmDamageStrategy.createSwarmDeath`'s
 optional `spawnScrapFromDrone` `LeafDeps` seam; ACTIVE player hull via the
-`SHIP_DESTROYED` handler in `SectorRoom` (pose from `shipPoseCache`/SAB); and
+`SHIP_DESTROYED` handler (`onShipDestroyed` in `combatDestructionAudit.ts`, pose from `shipPoseCache`/SAB); and
 **LINGERING hull (Equinox P6.3) via the `spawnScrapFromLingeringHull` `LeafDeps`
 seam** called inside `createLingeringHullEntity`'s death policy (pose read from
 `lingeringPoseCache` before that policy tears it down — the `SHIP_DESTROYED`

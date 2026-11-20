@@ -3,11 +3,18 @@
  * look claim, and the Living World P2 trade deals (accept an offer, cancel a
  * deal, send a gift). Moved verbatim out of `SectorRoom.onCreate`; the room
  * hands in live accessors so every handler reads the same state it did there.
+ * Also the P3c harvester storage raid (`StorageRaid`, moved verbatim out of
+ * `SectorRoom.raidStorage`): the room side of a trade transfer + notice.
  */
 import type { Client } from 'colyseus';
 import type { StructureRegistry } from '../../structures/StructureRegistry.js';
 import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
+import type { StorageService, TradeTransferResult, TradeTransferSpec } from '../../cargo/StorageService.js';
 import { getTradeSink } from '../../economy/tradeSink.js';
+import { auditEvent } from '../../audit/GameplayAuditLog.js';
+import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../../livingworld/RobotTerritory.js';
+import { emptyHold, holdWeight, isHoldEmpty } from '../../../core/cargo/hold.js';
+import { GOOD_DEFS } from '../../../shared-types/goods.js';
 import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parsedMessage.js';
 import { AcceptOfferSchema, CancelDealSchema, SendGiftSchema, type TradeNotice } from '../../../shared-types/economy.js';
 import { ClaimFactionLookSchema, SetFactionPolicySchema, claimFactionLookResult } from '../../../shared-types/messages/factionMessages.js';
@@ -96,4 +103,52 @@ export function registerTradeMessages(h: TradeMessageHost): RoomFeature {
   h.onMessage('cancel_deal', (client: Client, raw: unknown) => tradeRequest(client, 'cancel_deal', raw));
   h.onMessage('send_gift', (client: Client, raw: unknown) => tradeRequest(client, 'send_gift', raw));
   return {};
+}
+
+/** What the storage raid needs from the room; getters read the live field. */
+export interface StorageRaidHost {
+  storage(): Pick<StorageService, 'tradeSnapshot'>;
+  sectorKey(): string | null;
+  now(): number;
+  tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null;
+  tradeNotify(playerId: string, notice: TradeNotice): void;
+}
+
+/** P3c — robot harvesters raid a player's storage network. */
+export class StorageRaid {
+  /** P3c — last raid warning per owner (throttle). */
+  private readonly raidNoticeAtMs = new Map<string, number>();
+
+  constructor(private readonly h: StorageRaidHost) {}
+
+  /** P3c — a harvester steals up to `stepWeight` (rarest goods first, plus up
+   *  credits — never: they're virtual) from the storage network at `uid`, as
+   *  ONE atomic `tradeTransfer` group into its own ownerless hold. */
+  raid(harvesterId: string, owner: string, uid: string, stepWeight: number): number {
+    const snap = this.h.storage().tradeSnapshot(owner, uid);
+    if (snap === null || stepWeight <= 0) return 0;
+    const want = emptyHold();
+    let room = stepWeight;
+    for (const g of RAID_PRIORITY) {
+      const w = GOOD_DEFS[g].weight;
+      const n = Math.min(snap.goods[g] ?? 0, Math.floor(room / w));
+      if (n <= 0) continue;
+      want.goods[g] = n;
+      room -= n * w;
+    }
+    if (isHoldEmpty(want)) return 0;
+    const res = this.h.tradeTransfer(owner, uid, { take: { want, intoUid: harvesterId, intoOwner: null } });
+    if (res === null || isHoldEmpty(res.taken)) return 0;
+    const weight = holdWeight(res.taken);
+    auditEvent({ event: 'storage_raided', sector: this.h.sectorKey() ?? undefined, playerId: owner, raider: harvesterId, weight });
+    const now = this.h.now();
+    if (now - (this.raidNoticeAtMs.get(owner) ?? 0) >= RAID_NOTICE_THROTTLE_MS) {
+      this.raidNoticeAtMs.set(owner, now);
+      this.h.tradeNotify(owner, {
+        type: 'trade_notice', dealId: '', event: 'raided',
+        message: 'Robot harvesters are raiding your storage! Defend your base.', econVersion: 0,
+      });
+    }
+    return weight;
+  }
 }

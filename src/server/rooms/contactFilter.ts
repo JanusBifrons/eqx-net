@@ -9,7 +9,7 @@ import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { CollisionBroadcastGate } from '../net/CollisionBroadcastGate.js';
 import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { LootSubsystem } from '../cargo/LootSubsystem.js';
-import type { ContactPayload } from './PhysicsWorkerProxy.js';
+import { PhysicsWorkerProxy, type ContactPayload, type PhysicsWorkerProxyDeps } from './PhysicsWorkerProxy.js';
 import type { CutFieldSubsystem } from './CutFieldSubsystem.js';
 import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { ShipState } from './schema/SectorState.js';
@@ -51,7 +51,7 @@ export function shouldBroadcastContact(c: Contact): boolean {
 }
 
 /** What the contact-batch handler needs from the room, built once in
- *  `spawnWorker`; getters read fields the room assigns later. */
+ *  `createPhysicsWorker`'s host; getters read fields the room assigns later. */
 export interface ContactBatchHost {
   sceneWork: Pick<SceneWorkCounters, 'active' | 'contacts'>;
   collisionGate: Pick<CollisionBroadcastGate, 'sweep' | 'shouldSend'>;
@@ -69,7 +69,8 @@ export interface ContactBatchHost {
 
 /**
  * The worker's per-tick CONTACT_BATCH: collision broadcast + ramming damage.
- * Moved verbatim out of `SectorRoom.spawnWorker`'s `onContactBatch`.
+ * Moved verbatim out of `SectorRoom.spawnWorker`'s `onContactBatch`
+ * (now `createPhysicsWorker` below).
  */
 export function handleContactBatch(h: ContactBatchHost, tick: number, contacts: ContactPayload[]): void {
     if (h.sceneWork.active) h.sceneWork.contacts += contacts.length;
@@ -186,4 +187,46 @@ function clientEntityCode(h: ContactBatchHost, id: string): number | undefined {
     return hull && isLingeringHull(hull) ? -1 : undefined;
   }
   return h.getActiveShip(id)?.isActive === true ? -1 : undefined;
+}
+
+/** What `createPhysicsWorker` needs from the room on top of the contact host. */
+export interface PhysicsWorkerSpawnHost extends ContactBatchHost {
+  swarmRegistry: Pick<SwarmEntityRegistry, 'get' | 'size'>;
+  workerEntryPath: string;
+  sab: SharedArrayBuffer;
+  logger: PhysicsWorkerProxyDeps['logger'];
+  playerToSlot(): { readonly size: number };
+}
+
+/**
+ * Build the physics worker's PhysicsWorkerProxy (the room then awaits
+ * `start()`). The proxy owns the Worker instance, the READY handshake, and
+ * the SLEEP_TRANSITION / CONTACT_BATCH routing — the room provides the
+ * handlers (bus emit, broadcast, ramming damage) via the host.
+ * Moved out of `SectorRoom.spawnWorker` (god-file split slice 40).
+ */
+export function createPhysicsWorker(h: PhysicsWorkerSpawnHost): PhysicsWorkerProxy {
+  // Contact batches: collision broadcast + ramming damage (above).
+  const contactHost: ContactBatchHost = h;
+  return new PhysicsWorkerProxy({
+    workerEntryPath: h.workerEntryPath,
+    sab: h.sab,
+    logger: h.logger,
+    stats: () => ({
+      playerCount: h.playerToSlot().size,
+      swarmCount: h.swarmRegistry.size(),
+    }),
+    onSleepTransition: (entityId, sleeping) => {
+      // Re-emit on the local bus as a discrete event. Phase 5
+      // subscribers (binary swarm broadcast in 5c, audio/UI in later
+      // phases) consume these to freeze interpolation / play wake
+      // SFX. Pino sampling rule for high-frequency events applies.
+      if (sleeping) {
+        h.bus().emit('ENTITY_SLEPT', { type: 'ENTITY_SLEPT', entityId });
+      } else {
+        h.bus().emit('ENTITY_WOKE', { type: 'ENTITY_WOKE', entityId });
+      }
+    },
+    onContactBatch: (tick, contacts) => { handleContactBatch(contactHost, tick, contacts); },
+  });
 }

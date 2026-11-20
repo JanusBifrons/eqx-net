@@ -34,6 +34,10 @@ import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { SCRAP_BURST_SPEED, SCRAP_HP, MAX_LIVE_SCRAP } from '../../core/swarm/scrapConstants.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
+import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, slotBase, slotPoseInto } from '../../shared-types/sabLayout.js';
+import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
+import { droneMaxHealthOf } from '../rooms/droneKindHelpers.js';
 
 /** Spec accepted by the injected `spawnScrap` hook — the exact subset of
  *  `SwarmSpawner.spawnScrap`'s parameter that the ScrapSpawner fills. */
@@ -180,4 +184,57 @@ export class ScrapSpawner {
       if (oldest !== undefined) this.evictScrap(oldest);
     }
   }
+}
+
+/** Narrow room host for `spawnScrapFromDrone` — getters over the room's SAB,
+ *  ScrapSpawner and capital-wreck seams (god-file split slice 38). */
+export interface DroneScrapHost {
+  sabF32(): Float32Array;
+  scrapSpawner(): Pick<ScrapSpawner, 'spawnFromDeath'>;
+  /** True when the room's CapitalWreckSubsystem exists (`capitalWrecks !== null`). */
+  hasCapitalWrecks(): boolean;
+  wreckKindAllowed(kindId: string): boolean;
+  spawnCapitalWreck(
+    targetId: string, kindId: string,
+    pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel?: number },
+    maxHull: number, bodySlot?: number, bodyId?: string,
+  ): boolean;
+}
+
+/**
+ * Scrap-on-death (Phase 2b-ii) — break a dying DRONE into floating scrap.
+ * Called from the swarm death policy (`createSwarmDeath`) the instant before
+ * `evictSwarmEntity` frees the slot, so the dying drone's pose is still live
+ * in the SAB. Composite-kind drones (e.g. havok) yield one scrap body per
+ * component; polygon kinds (fighter/scout/…) yield nothing. Reads the pose
+ * off the SAB via `rec.slot`.
+ */
+export function spawnScrapFromDrone(h: DroneScrapHost, rec: SwarmEntityRecord): boolean {
+  // Anti-recursion: a dying SCRAP piece (kind 3) routes through the same
+  // drone-leaf death policy, but its rec.shipKind is the PARENT composite
+  // kind (which has scrap groups) — without this guard a destroyed scrap
+  // piece would shatter into more scrap forever. Only a DRONE (kind 1) death
+  // spawns scrap here.
+  if (rec.kind === SWARM_KIND_SCRAP) return false;
+  // S2a — a capital drone breaks into wreck bodies (flag on). Pose from the
+  // SAB: the drone's body is still live here (evicted right after).
+  // Sub-capital break-up slice 2: any kind whose profile breaks (flags).
+  let vaporised = false; // fracture v11: the eviction's `destroy` says so
+  const sabF32 = h.sabF32();
+  if (h.hasCapitalWrecks() && rec.kind === SWARM_KIND_DRONE && rec.shipKind && h.wreckKindAllowed(rec.shipKind)) {
+    vaporised = h.spawnCapitalWreck(rec.id, rec.shipKind!, slotPoseInto(sabF32, rec.slot, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }),
+      droneMaxHealthOf(rec) ?? 1, rec.slot, rec.id);
+  }
+  const kind = getShipKind(rec.shipKind);
+  if (shipScrapGroups(kind.id).length === 0) return vaporised; // polygon kind ⇒ no scrap
+  const b = slotBase(rec.slot);
+  const pose = {
+    x:     sabF32[b + SLOT_X_OFF]!,
+    y:     sabF32[b + SLOT_Y_OFF]!,
+    vx:    sabF32[b + SLOT_VX_OFF]!,
+    vy:    sabF32[b + SLOT_VY_OFF]!,
+    angle: sabF32[b + SLOT_ANGLE_OFF]!,
+  };
+  h.scrapSpawner().spawnFromDeath(kind.id, pose, `scrap-${rec.id}`);
+  return vaporised;
 }

@@ -355,8 +355,8 @@ is hit, and the beam stops on it.
   gate parts: the box's outline rounded by the half-width, round corners), and
   `rayHitsSphere(r + halfWidth)` for plain circles. 0 takes the old code path.
 - **Server.** `PlayerFireResolver.hitscan` and `AiFireResolver.hitscan` pass the
-  width into every candidate test: `SectorRoom.playerHitscanDist`,
-  `nonPlayerRayHit` → `swarmRayHit`, lingering hulls, and the player sink's
+  width into every candidate test: `playerHitscanDist`,
+  `nonPlayerRayHit` → `swarmRayHit` (`rooms/features/rayHits.ts`), lingering hulls, and the player sink's
   swarm pass. The hit distance is the first contact of the beam's edge; the hit
   point and `laser_fired`'s end are the centre line at that distance, so the
   drawn beam stops where its edge meets the target. A follow-through beam
@@ -421,7 +421,7 @@ and turn, so really it's laser beams and railguns."
   `slotLineHeld`: each mount on its own weapon and timer, so a held beam drops
   out while the bolt gun beside it fires), capital turrets
   (`npcShipLineBlocked`, beside the friendly-line check), structure turrets
-  (`structureLineBlocked`).
+  (`structureLineBlocked`); all on `NpcLineOfFire` (`features/npcLineOfFire.ts`).
 - **State:** one blocked-since timer per shooter key and mount, the core
   `BlockedLineTimers` (both sides), held by the server's
   `BlockedLineHold` (`src/server/rooms/BlockedLineHold.ts`), owned by

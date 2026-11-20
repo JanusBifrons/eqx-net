@@ -107,7 +107,7 @@ broadcast path.
 | `wave_incoming` | `IncomingRegistry.register` |
 | `base_ready` | `FactionLedger.baseReadiness` (one-shot; polled via `SectorRoom.factionBaseReadiness`) |
 | `wave_repelled` | `LivingWorldDirector` retreat step |
-| `ship_destroyed` / `player_killed` | `SectorRoom` `SHIP_DESTROYED` bus handler |
+| `ship_destroyed` / `player_killed` | `SHIP_DESTROYED` bus handler (`onShipDestroyed` in `combatDestructionAudit.ts`) |
 | `ship_abandoned` | `abandonShipToScrap` / `abandonLingeringHullToScrap` |
 | `player_joined` | `JoinHandler` / `joinFreshSpawn` (`src/server/rooms/join/`, SectorRoom onJoin) |
 | `player_left` / `ship_lingered` | `LeaveHandler` |

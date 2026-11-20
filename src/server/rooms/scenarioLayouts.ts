@@ -23,12 +23,15 @@
  *   `prebuiltLayouts.test.ts` guards every layout here.
  *
  * Also here: applying a layout (`seedStructureScenario`, the testMode room
- * opts) and the pre-A2 structure row test view (`structureRowsForTests`).
+ * opts), the scale lattice (`seedScaleGrid`), the scrap corridor
+ * (`seedScenarioScrap`) and the pre-A2 structure row test view
+ * (`structureRowsForTests`). The room's boot-time swarm seed
+ * (`seedRoomStartup`) lives in `roomStartupSeed.ts`.
  */
 
 import type { GoodId } from '../../shared-types/goods.js';
 import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
-import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import { type ShipKindId } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   STRUCTURE_ETA_NONE,
@@ -41,11 +44,15 @@ import {
   STRUCTURE_DEFAULTS as SD,
 } from '../../shared-types/structureStateWire.js';
 import { DEFAULT_TELEPORT_RULES, isTeleporterKind } from '../../shared-types/teleport.js';
+import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
+import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import type { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import type { StructureRegistry } from '../structures/StructureRegistry.js';
 import type { TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
+import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
 import { getDroneMaxHealth } from './droneKindHelpers.js';
+import type { SectorSnapshotScrap } from './SectorSnapshot.js';
 
 export interface LayoutPoint {
   x: number;
@@ -219,7 +226,7 @@ export interface StructureScenarioOpts {
  *  the room assigns in `onCreate`. */
 export interface StructureScenarioHost {
   structureRegistry: StructureRegistry;
-  logger: { warn(obj: object, msg: string): void };
+  logger: { warn(obj: object, msg: string): void; info(obj: object, msg: string): void };
   structurePlacement: () => Pick<StructurePlacementSubsystem, 'place'>;
   teleporters: () => Pick<TeleporterSubsystem, 'pair'>;
   swarmSpawner: () => Pick<SwarmSpawner, 'spawnAsteroid' | 'spawnDrone'>;
@@ -295,6 +302,87 @@ export function seedStructureScenario(h: StructureScenarioHost, roomOpts: Struct
       h.swarmShield().set(droneId, 0); // hull exposed so turret damage lands
     }
   }
+}
+
+/** What `seedScaleGrid` reads from the room (a slice of the structure scenario host). */
+export type ScaleGridHost = Pick<StructureScenarioHost, 'structureRegistry' | 'structurePlacement' | 'swarmHealth' | 'structureGridTick' | 'logger'>;
+
+/**
+ * A0 scale lattice: place every structure WITHOUT greedy auto-connect, then
+ * apply the lattice's intended edges through `connectExplicit` (the real
+ * `canConnect` re-checked), force-build, and run one grid tick. Owner
+ * `scenario`. Rejections are counted and logged — the lattice is rule-valid
+ * by construction (structureLattice.test.ts), so any rejection is a bug.
+ */
+export function seedScaleGrid(h: ScaleGridHost, opts: { n: number; seed: number; fence?: boolean }): void {
+  const n = Math.max(1, Math.min(4000, Math.floor(opts.n)));
+  const lat = buildStructureLattice({ n, seed: opts.seed, fence: opts.fence === true });
+  const ids: Array<string | null> = [];
+  let rejectedPlace = 0;
+  for (const p of lat.placements) {
+    const id = h.structurePlacement().place('scenario', p.kind, p.x, p.y, { skipAutoConnect: true, rot: p.rot });
+    if (id === null) rejectedPlace++;
+    ids.push(id);
+    const rec = id ? h.structureRegistry.get(id) : undefined;
+    if (rec && !rec.isConstructed) {
+      rec.isConstructed = true;
+      rec.constructionProgress = rec.constructionCost;
+      h.swarmHealth().set(rec.id, getStructureKind(rec.kind).maxHealth);
+    }
+  }
+  const nodes = buildGridNodes(h.structureRegistry);
+  let rejectedEdge = 0;
+  for (const [a, b] of lat.edges) {
+    const ia = ids[a], ib = ids[b];
+    if (!ia || !ib || !connectExplicit(h.structureRegistry, ia, ib, nodes)) rejectedEdge++;
+  }
+  h.structureRegistry.topologyDirty = true;
+  h.structureGridTick();
+  h.logger.info(
+    { n, placed: lat.placements.length - rejectedPlace, edges: lat.edges.length, rejectedPlace, rejectedEdge, fencePylons: lat.fencePylons },
+    'scale lattice seeded',
+  );
+}
+
+/** What `seedScenarioScrap` reads from the room. */
+export interface ScenarioScrapHost {
+  logger: { info(obj: object, msg: string): void };
+  restoreScrap(rows: SectorSnapshotScrap[]): void;
+}
+
+/**
+ * Phase-1 issue 5 — seed `count` free-floating scrap pieces in a dense
+ * corridor AHEAD of spawn (+y, the forward dir at angle 0), via the SAME
+ * `SectorSnapshotRestore.restoreScrap` path the persistence layer uses (so the bodies
+ * are byte-identical to real death-spawned scrap). The player flies straight
+ * through this for the reconciliation stress E2E. testMode-only.
+ */
+export function seedScenarioScrap(h: ScenarioScrapHost, count: number): void {
+  const PARENT = 'havok' as ShipKindId; // a composite kind with scrap groups
+  const groups = shipScrapGroups(PARENT).length;
+  if (groups === 0) return;
+  const COLS = 7;
+  const COL_SPACING = 48; // dense wall — a straight flight can't avoid clipping many
+  const ROW_SPACING = 60;
+  const Y0 = 250; // first row ahead of spawn, clear of the hull
+  const rows: SectorSnapshotScrap[] = [];
+  for (let i = 0; i < count; i++) {
+    const col = i % COLS;
+    const row = Math.floor(i / COLS);
+    rows.push({
+      entityId: `scrap-stress-${i}`,
+      x: (col - (COLS - 1) / 2) * COL_SPACING,
+      y: Y0 + row * ROW_SPACING,
+      vx: 0,
+      vy: 0,
+      angle: 0,
+      health: 30,
+      parentShipKind: PARENT,
+      componentIndex: i % groups,
+    });
+  }
+  h.restoreScrap(rows);
+  h.logger.info({ requested: count, parent: PARENT, groups }, 'scenario scrap seeded');
 }
 
 /** The pre-A2 per-structure row (test view — see `structureRowsForTests`). */

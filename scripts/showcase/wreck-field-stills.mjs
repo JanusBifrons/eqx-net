@@ -136,7 +136,7 @@ function planShots(FIELD, label) {
 const RUNS = [];
 if (sectors.length === 0) {
   // The dev rooms' field (src/server/index.ts `wreck-field-test`), laid out as the
-  // room does (SectorRoom.buildWreckFieldSource): around the 'look' cut field's rocks.
+  // room does (RoomWreckSpawns.buildWreckFieldSource): around the 'look' cut field's rocks.
   const FIELD = wreckField({
     seed: 'look', x: 60_000, y: 0, sides: ['ashen-league', 'vel-concord'],
     blocked: rockFieldBlocker(cutFieldOpts('look', undefined)),
@@ -157,7 +157,7 @@ if (sectors.length === 0) {
 } else {
   for (const key of sectors) {
     // As the galaxy room is configured (resolveSectorConfig) and lays it out
-    // (SectorRoom.buildWreckFieldSource: round the rock field, if any).
+    // (RoomWreckSpawns.buildWreckFieldSource: round the rock field, if any).
     const wf = sectorWreckField(key, SOLAR_SECTORS);
     if (!wf) throw new Error(`sector '${key}' has no wreck field (solar sectors ${SOLAR_SECTORS})`);
     const cut = sectorCutField(key, SOLAR_SECTORS);
@@ -257,7 +257,7 @@ try {
 } finally {
   await browser?.close();
   servers.stop();
-  // The rooms' own layout (SectorRoom.buildWreckFieldSource logs it).
+  // The rooms' own layout (RoomWreckSpawns.buildWreckFieldSource logs it).
   const log = path.join(runDir, 'server.log');
   // eslint-disable-next-line no-control-regex -- strip the pretty log's colours
   const lines = existsSync(log) ? readFileSync(log, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').split('\n') : [];

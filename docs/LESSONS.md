@@ -3241,3 +3241,29 @@ to the corner. Far off, that bearing points almost straight down the route, so a
 shallow: the brake distance jumped to 450-700 u and a fighter entered a 75° turn at ~260 u/s, running
 ~32 u off its line into rock. Use the angle between the incoming and outgoing legs, and cap the carried
 speed by how far the ship may swing sideways (`NAV_TURN_SWING`).
+
+## 2026-11-19 — a long hull planned as a disc of its length never fits a lane
+
+The route planner kept a battleship's centre a full hull length (3 595 u) from rock everywhere. Lanes are
+laid out only ~560 u wider than that, so any bend in the wall shut them and capitals went round the
+outside. A long hull needs its beam on a straight and its length only where it turns (`navHull`,
+`navTurnRoom`). Once lanes opened, the heading graph let a wide-turning hull stack four 45° steps into a
+U-turn inside a lane; the fix is a just-turned bit (go straight a cell after each turn when the turning
+radius is wider than a cell), and the string-pull must not skip a doubling-back point or it hides where
+the turn really happens.
+
+## 2026-11-19 — a seed that follows the server tick rerolls every integration run
+
+A wreck's fracture seed is `fnvMixU32(fnv1a32(id), serverTick)`, and in an integration room the death
+tick follows the wall clock of `harness.advance`, so "pieces >= 1.5 radii apart 1 s after the break"
+drew four new seeds each run; a rare 3-piece split (1.3-1.5 radii) failed it a few runs in ten. A
+test that asserts on a break-up's shape pins the seed (`setWreckSeed(fnvMixU32(fnv1a32(id), TICK))`)
+and sweeps seeds offline, never trusting the tick it happens to die on.
+
+## 2026-11-19 — a per-wait cap shorter than the shared join budget flakes on slow CI runners
+
+`join-art-ready.spec.ts` waited 30 s for its curtain to lift, though the reveal there holds every bake
+8 s (`?artDelayMs`) on top of the bakes, the main-thread SwiftShader frame and the arrival handshake,
+and every other join (`waitForInPlay`) gets 60 s. It failed only at that reveal wait, only on the
+slowest e2e-smoke (1) runners (5 of 26 jobs; one went 3 of 3). A spec that watches the join itself
+keeps the shared join budget plus its own deliberate hold, and logs which gate held on a timeout.

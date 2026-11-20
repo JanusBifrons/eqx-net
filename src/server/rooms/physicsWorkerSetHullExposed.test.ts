@@ -2,7 +2,7 @@
  * Phase 2b lock — SET_HULL_EXPOSED across the REAL physics-worker
  * postMessage boundary (invariant #13: a boundary bug must be tested at
  * the boundary, not in a unit harness). Spawns the production physics
- * worker exactly the way `SectorRoom.spawnWorker` does (bundleWorker +
+ * worker exactly the way `createPhysicsWorker` (contactFilter.ts) does (bundleWorker +
  * Rapier external + a SharedArrayBuffer) and drives
  * SPAWN → SET_HULL_EXPOSED(true) → AI_INTENT → SET_HULL_EXPOSED(false)
  * over the wire, asserting the worker never crashes, keeps stepping, and

@@ -3,13 +3,13 @@ import { RoutePlanner, NAV_ROUTE_MAX_POINTS, NAV_COARSE_EXPAND_CAP, NAV_FINE_EXP
 import { CoarseFieldMap } from './coarseField.js';
 import { FineFieldLayer, FINE_NAV_CELL, FINE_NAV_REACH } from './fineField.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from './search.js';
-import { CHUNK_SIZE, SLICED, rocksInChunk, type ChunkOpts } from '../terrain/fieldLayout.js';
+import { CHUNK_SIZE, SLICED, rocksInChunk, slicedFieldLanes, type ChunkOpts } from '../terrain/fieldLayout.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { fieldRockBody } from '../terrain/chunkStreamer.js';
 import { HeadingCoarseGraph } from './coarseField.js';
 import { makePilotHandling, pilotTurnRadius } from '../ai/virtualPilot.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
-import { navComfort } from '../../shared-types/shipScale/navTuning.js';
+import { navComfort, navBeamClearance } from '../../shared-types/shipScale/navTuning.js';
 
 const fighter = getShipKind('fighter').radius;
 const battleship = getShipKind('battleship').radius;
@@ -286,5 +286,77 @@ describe('RoutePlanner (straight check, coarse A*, fine window A*, string-pull)'
     console.log(`[nav route] battleship across the field, nose on: ${across} waypoints, ${p.expanded} expansions`);
     expect(p.status).toBe('route');
     expect(p.expanded).toBeLessThan(NAV_COARSE_EXPAND_CAP);
+  });
+  it('a battleship down a lane gets a way (owner 2026-11-19: its width on straights, its length only where it turns)', () => {
+    const BS = getShipKind('battleship');
+    const turnR = pilotTurnRadius(makePilotHandling(BS, shipBodyMass(BS)));
+    const c = shipTuning(BS).navClearance;
+    const { coarse, fine } = world();
+    const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
+    const ln = slicedFieldLanes({ seed: opts.seed, battleshipLength: opts.battleshipLength })[0]!;
+    const dx = ln.n.y, dy = -ln.n.x; // along the lane
+    // On the lane's centre line inside the field, nose down the lane; the goal 12 km on.
+    const at = (t: number) => ({ x: ln.o.x + dx * t, y: ln.o.y + dy * t });
+    // Inside the field (the lane runs through its middle third), not out past its rim.
+    let t0 = -6_000;
+    p.plan(coarse, fine, 0, 0, 0, 0, c, out); // seed the planner's layers
+    while (coarse.roomAt(at(t0).x, at(t0).y) < 2_000) t0 += 512;
+    expect(Math.hypot(at(t0).x, at(t0).y)).toBeLessThan(SLICED.radius * 0.6);
+    expect(coarse.roomAt(at(t0).x, at(t0).y)).toBeLessThan(c); // the old disc rule: no room
+    const s = at(t0), g = at(t0 + 12_000);
+    // The rock along the way streamed in, as in a live sector.
+    for (let t = t0 - 4096; t <= t0 + 16_000; t += CHUNK_SIZE / 2) {
+      const q = at(t), cx = Math.floor(q.x / CHUNK_SIZE), cy = Math.floor(q.y / CHUNK_SIZE);
+      for (let ox = -2; ox <= 2; ox++) for (let oy = -2; oy <= 2; oy++) fine.chunkLoaded(cx + ox, cy + oy);
+    }
+    const heading = Math.atan2(-dx, dy);
+    const n = p.plan(coarse, fine, s.x, s.y, g.x, g.y, c, out, heading, turnR, navComfort(BS), navBeamClearance(BS));
+    console.log(`[nav route] battleship down a lane: start room ${coarse.roomAt(s.x, s.y).toFixed(0)} at (${s.x.toFixed(0)}, ${s.y.toFixed(0)}), status ${p.status}, ${n} waypoints, ${p.expanded} expansions`);
+    expect(['straight', 'route']).toContain(p.status);
+    const ex = out[(n - 1) * 2]!, ey = out[(n - 1) * 2 + 1]!;
+    expect(Math.hypot(ex - g.x, ey - g.y)).toBeLessThan(1);
+    // Its goal behind it: still no U-turn in the lane (no room to swing its length there).
+    const back = at(t0 - 12_000), nb = p.plan(coarse, fine, s.x, s.y, back.x, back.y, c, out, heading, turnR, navComfort(BS), navBeamClearance(BS));
+    console.log(`[nav route] battleship lane, goal behind (beam): status ${p.status}, ${nb} waypoints, ${p.expanded} expansions`);
+    // A way (on along the lane and round), not 'none': a gap it fits only
+    // straight through must not shut it out of the lane it can turn in.
+    expect(['route', 'nearest']).toContain(p.status);
+    expect(nb).toBeGreaterThan(0);
+    const fx = out[0]! - s.x, fy = out[1]! - s.y;
+    expect((fx * dx + fy * dy) / Math.hypot(fx, fy)).toBeGreaterThan(Math.SQRT1_2 - 1e-6);
+    // Across the whole field, nose on: a route on the beam, its runs keeping the beam's room, within the cap.
+    const R = SLICED.radius * 1.2, across = p.plan(coarse, fine, -R, 0, R, 0, c, out, -Math.PI / 2, turnR, navComfort(BS), navBeamClearance(BS));
+    const len = routeLength(-R, 0, out, across), min = minRoomAlong(p, -R, 0, out, across);
+    console.log(`[nav route] battleship across the field on its beam: ${across} waypoints, ${len.toFixed(0)} u, min room ${min.toFixed(0)}, ${p.expanded} expansions`);
+    expect(p.status).toBe('route');
+    expect(min).toBeGreaterThanOrEqual(navBeamClearance(BS) - FINE_NAV_CELL);
+    expect(p.expanded).toBeLessThan(NAV_COARSE_EXPAND_CAP * 2);
+  });
+  it('a battleship\'s turns are checked against its length: no 90° turn or hairpin inside a lane, a hairpin past its mouth is fine', () => {
+    const BS = getShipKind('battleship');
+    const turnR = pilotTurnRadius(makePilotHandling(BS, shipBodyMass(BS)));
+    const c = shipTuning(BS).navClearance, beam = navBeamClearance(BS);
+    const { coarse, fine } = world();
+    const p = new RoutePlanner(), out = new Float64Array(NAV_ROUTE_MAX_POINTS * 2);
+    const ln = slicedFieldLanes({ seed: opts.seed, battleshipLength: opts.battleshipLength })[0]!;
+    const dx = ln.n.y, dy = -ln.n.x, heading = Math.atan2(-dx, dy);
+    const at = (t: number) => ({ x: ln.o.x + dx * t, y: ln.o.y + dy * t });
+    let t0 = -6_000;
+    while (coarse.roomAt(at(t0).x, at(t0).y) < 2_000) t0 += 512;
+    const s = at(t0), g = at(t0 + 12_000);
+    const back = at(t0 - 12_000); // goal behind: a coarse heading search runs, seeding the layers and the heading graph
+    p.plan(coarse, fine, s.x, s.y, back.x, back.y, c, out, heading, turnR, navComfort(BS), beam);
+    const fits = (sx: number, sy: number, pts: { x: number; y: number }[]): boolean => {
+      pts.forEach((q, k) => { out[k * 2] = q.x; out[k * 2 + 1] = q.y; });
+      return (p as unknown as { turnsFit(sx: number, sy: number, o: Float64Array, n: number, h: number, r: number, b: number): boolean })
+        .turnsFit(sx, sy, out, pts.length, heading, turnR, beam);
+    };
+    const mid = at(t0 + 6_000), side = { x: mid.x + ln.n.x * 3_000, y: mid.y + ln.n.y * 3_000 };
+    expect(fits(s.x, s.y, [g])).toBe(true); // straight down the lane: its beam is enough
+    expect(fits(s.x, s.y, [mid, side])).toBe(false); // 90° mid-lane: no room for its length
+    expect(fits(s.x, s.y, [mid, s])).toBe(false); // hairpin mid-lane: no room to turn round ahead
+    // Out past the field's rim along the lane: the hairpin turns round in open space.
+    const R = SLICED.radius, a = at(R * 0.9), mouth = at(R * 1.12);
+    expect(fits(a.x, a.y, [mouth, a])).toBe(true);
   });
 });

@@ -65,7 +65,7 @@ export interface CargoMessageHost extends ParsedMessageHost {
   shipPoseCache: Pick<ReadonlyMap<string, ShipPhysicsState>, 'get'>;
   getActiveShip(playerId: string): ShipState | undefined;
   shipCargoCapacity(kind: string, shipInstanceId: string): number;
-  /** C3 — an NPC ship's hold, its loot rolled once (`SectorRoom.npcHold`). */
+  /** C3 — an NPC ship's hold, its loot rolled once (`NpcLootHolds.hold`). */
   npcHold(rec: SwarmEntityRecord): Hold;
   shipTarget(ref: { entityId?: number; ship?: string }): CargoShipTarget | null;
   breakInMsFor(rec: StructureRecord): number;

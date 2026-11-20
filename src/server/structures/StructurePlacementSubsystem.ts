@@ -34,6 +34,9 @@ import { placementRejection } from '../../core/structures/placementRules.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure, linkReachBox } from './structureGridView.js';
 import { STARTER_STRUCTURE_KINDS } from '../../shared-types/blueprints.js';
+import { cloneHold, isHoldEmpty, takePacked } from '../../core/cargo/hold.js';
+import type { HoldStore } from '../cargo/HoldStore.js';
+import type { StorageService } from '../cargo/StorageService.js';
 
 /** A packed-structure check for one placement (Living World W4). `ok` false
  *  rejects it; `commit` consumes the packed item, as ONE HoldStore group, once
@@ -215,4 +218,41 @@ export class StructurePlacementSubsystem {
     this.hooks.registry.remove(id);
     return true;
   }
+}
+
+/** What `packedGateForBuild` reads from the room: the storage service (for
+ *  committing a storage structure's hold), the hold store, the sector key
+ *  (null = not roster-backed, so the hold change is not persisted) and the
+ *  room's `findPacked` lookup (shared with the grid pulse's repack). */
+export interface PackedGateHost {
+  storage(): StorageService;
+  holdStore(): HoldStore;
+  sectorKey(): string | null;
+  findPacked(owner: string, product: string): { rec: StructureRecord } | { shipId: string } | null;
+}
+
+/** The `packedGateForBuild` hook: ok when `owner` has a packed `kindId`
+ *  here; `commit` takes one (best quality first) as ONE hold group. */
+export function packedGateForBuild(h: PackedGateHost, owner: string, kindId: StructureKindId): PackedGateResult {
+  const product = `structure:${kindId}`;
+  const src = h.findPacked(owner, product);
+  if (src === null) return { ok: false, commit: () => null };
+  return {
+    ok: true,
+    commit: () => {
+      if ('rec' in src) {
+        const item = takePacked(src.rec.hold!, product);
+        h.storage().commitChanged([src.rec], []);
+        return item?.quality ?? null;
+      }
+      const row = h.holdStore().get(src.shipId);
+      if (row === undefined) return null;
+      const hc = cloneHold(row.hold);
+      const item = takePacked(hc, product);
+      const persist = h.sectorKey() !== null;
+      if (isHoldEmpty(hc)) h.holdStore().commit([], [src.shipId], persist);
+      else h.holdStore().commit([{ ...row, hold: hc }], [], persist);
+      return item?.quality ?? null;
+    },
+  };
 }

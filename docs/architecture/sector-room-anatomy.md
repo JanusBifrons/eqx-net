@@ -51,7 +51,7 @@ mature.
   [Trap 4](#trap-4-no-multi-subscriber-fan-out)) to the right
   subsystems. Per the trap, the inline pattern is preserved
   deliberately — there is no multi-subscriber bus fan-out today.
-- `spawnWorker()` itself — its body builds the worker bundle, attaches
+- `createPhysicsWorker()` (`contactFilter.ts`, was `spawnWorker()`) — builds the worker bundle, attaches
   message handlers, and resolves the `READY` promise. Calls
   `this.physics.setWorker(...)` to wire the bridge.
 
@@ -94,7 +94,7 @@ the subsystems.
 The revised plan corrected a false claim from R1: today there is
 **one** inline worker `onmessage` switch, not a multi-subscriber bus
 fan-out. The only SectorRoom bus subscriber is `bus.on('SHIP_DESTROYED', ...)`
-(line ~830). `noteSectorEvent` is called inline at the projectile-
+(its body is `onShipDestroyed` in `combatDestructionAudit.ts`). `noteSectorEvent` is called inline at the projectile-
 in-flight / motion-above-epsilon check sites, NOT via a bus listener.
 `COLLISION_RESOLVED` is emitted (worker handler) but never subscribed
 to. The damage-on-collision path is inline in the worker handler.

@@ -15,6 +15,7 @@
  * production-client-controllable string fields (clientShotId, slotId,
  * targetSectorKey, …) are bounded directly in their zod schemas.
  */
+import type { SectorRoomOptions } from './sectorRoomOptions.js';
 
 /** Max entries any single seed array may carry. Real scenario rooms use ≤ a
  *  handful; 64 is generous headroom while still bounding the payload. */
@@ -29,7 +30,7 @@ const SEED_ARRAY_FIELDS = [
   'scenarioAsteroids',
   'droneKinds',
   'sceneScript',
-] as const;
+] as const satisfies ReadonlyArray<keyof SectorRoomOptions>;
 
 /**
  * Throw if any seed array exceeds `MAX_SEED_ENTRIES`. Runs once per room at

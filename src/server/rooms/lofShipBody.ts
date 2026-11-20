@@ -1,4 +1,4 @@
-/** The line-of-fire grid's player-ship bodies (`SectorRoom.fillLofShips`). */
+/** The line-of-fire grid's player-ship bodies (`NpcLineOfFire.fillLofShips`). */
 import type { ShipState } from './schema/SectorState.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 

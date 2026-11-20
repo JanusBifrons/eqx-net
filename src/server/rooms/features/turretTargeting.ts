@@ -1,11 +1,14 @@
 /**
  * A1/B2/C2 + coastal defences — who a structure turret may shoot: the
  * player-turret drone grid, the NPC-turret relation grid, every hostile in
- * reach for per-mount fire control, and the hostile-pilot scan. Moved verbatim
+ * reach for per-mount fire control, the hostile-pilot scan, and the missile
+ * lock-on hostility predicate (`isMissileTargetHostile`). Moved verbatim
  * out of `SectorRoom`; the room hands in live accessors. Per-tick path (#14):
  * grids, pools and result objects are allocated once, here.
  */
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
+import type { StructureRegistry } from '../../structures/StructureRegistry.js';
+import { isDirectorBotId } from '../../livingworld/directorBotIds.js';
 import type { HostileActLedger } from '../../../core/relations/HostileActLedger.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { ShipState } from '../schema/SectorState.js';
@@ -16,13 +19,14 @@ import { fillRangeShape } from '../../../core/combat/fireControlBearing.js';
 import { mayBeInReach, maxShipRangeBound, type MountRangeTarget } from '../../../core/combat/mountReach.js';
 import { isNpcOwner, parseOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import { allegianceOfKind, getShipKind } from '../../../shared-types/shipKinds.js';
-import type { NpcAllegianceId } from '../../../shared-types/allegiances.js';
+import { isOnSightHostile, type NpcAllegianceId } from '../../../shared-types/allegiances.js';
 import { policyActsOnStanding, type FactionPolicy } from '../../../shared-types/factions.js';
 import { slotBase, SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF } from '../../../shared-types/sabLayout.js';
 
 /** What turret targeting needs from the room; getters read the live field. */
 export interface TurretTargetingHost {
-  swarmRegistry: Pick<SwarmEntityRegistry, 'all'>;
+  swarmRegistry: Pick<SwarmEntityRegistry, 'all' | 'get'>;
+  structureRegistry: Pick<StructureRegistry, 'get'>;
   sabF32(): Float32Array;
   playerToSlot(): ReadonlyMap<string, number>;
   getActiveShip(playerId: string): ShipState | undefined;
@@ -33,6 +37,8 @@ export interface TurretTargetingHost {
   relationCtx: RelationContext;
   hostileActs: Pick<HostileActLedger, 'size'>;
   isTurretTargetable(rec: SwarmEntityRecord): boolean;
+  /** The AI controller's hostility ledger (`markHostile` / `bot_aggro`). */
+  npcHostileTo(entityId: string, playerId: string): boolean;
   writeSwarmRangeShape(v: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }, rec: SwarmEntityRecord): void;
   npcSideParty: Readonly<Record<NpcAllegianceId, string>>;
   policyOf(faction: string): FactionPolicy;
@@ -333,4 +339,63 @@ export class TurretTargeting {
     return found ? out : null;
   }
   private readonly _hostilePilotOut = { playerId: '', x: 0, y: 0, d2: 0 };
+
+  /** Hostility predicate the missile lock-on uses.
+   *
+   *  Player-fired missiles target any non-owner entity. Asteroid
+   *  exclusion is handled at the candidate-build site in
+   *  `MissileSimulation.lockOnTarget` (filtered by `rec.kind === 0`)
+   *  rather than here, because galaxy asteroids spawn with bare
+   *  `asteroid-N` ids — NO `swarm-` prefix — and string-prefix
+   *  filtering misses them. Kind is the source of truth.
+   *
+   *  AI-fired missiles defer to the `aiController`'s hostility ledger
+   *  (the existing `markHostile` / `bot_aggro` channel) — drones and
+   *  bots only fire at players they've already been antagonised by.
+   */
+  isMissileTargetHostile(ownerId: string): (targetId: string) => boolean {
+    // WS-8 (R2.15) — a STRUCTURE-fired (`pstruct-`) missile is a DEFENCE weapon:
+    // it locks onto HOSTILE DRONES ONLY (swarm kind 1), matching the beam/bolt
+    // turret's `findNearestDrone`. Without this branch a `pstruct-` owner falls
+    // through to the player-shooter case below and would target other players +
+    // friendly structures (the candidate set includes kind 1 AND kind 2). Kind
+    // is the source of truth (lwbot drones are kind 1 too, swarm-/lwbot-prefixed).
+    if (ownerId.startsWith('pstruct-')) {
+      // B2 — an NPC-owned turret's missile homes on what is hostile to its owner
+      // (the same rule as its targeting); a player turret's stays drones-only.
+      const structOwner = this.h.structureRegistry.get(ownerId)?.owner ?? '';
+      if (isNpcOwner(structOwner)) {
+        return (id) => {
+          const rec = this.h.swarmRegistry.get(id);
+          let party: string | null = null;
+          if (rec != null) {
+            if (rec.kind === 1) party = this.h.npcSideParty[allegianceOfKind(rec.shipKind)];
+          } else if (this.h.getActiveShip(id)?.isActive === true) {
+            party = id;
+          }
+          return party !== null && relationOf(party, structOwner, this.h.relationCtx) === 'hostile';
+        };
+      }
+      return (id) => {
+        const rec = this.h.swarmRegistry.get(id);
+        return rec != null && rec.kind === 1 && this.h.isTurretTargetable(rec);
+      };
+    }
+    // Allegiances P0 — classify the shooter by the REGISTRY (a live kind-1
+    // swarm entity is an AI shooter whatever its id prefix), not by prefix.
+    const ownerRec = this.h.swarmRegistry.get(ownerId);
+    const isAiShooter = (ownerRec != null && ownerRec.kind === 1)
+      || ownerId.startsWith('swarm-') || isDirectorBotId(ownerId);
+    if (!isAiShooter) {
+      return (id) => id !== ownerId;
+    }
+    const ownerAllegiance = allegianceOfKind(ownerRec?.shipKind);
+    return (id) => {
+      if (this.h.npcHostileTo(ownerId, id)) return true;
+      // Cross-allegiance swarm targets (drones ↔ robots ↔ traders) by stance.
+      const rec = this.h.swarmRegistry.get(id);
+      if (rec == null || rec.kind !== 1 || id === ownerId) return false;
+      return isOnSightHostile(ownerAllegiance, allegianceOfKind(rec.shipKind));
+    };
+  }
 }

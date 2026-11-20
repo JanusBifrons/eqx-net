@@ -8,6 +8,10 @@ import type { SceneStatus } from './SceneScriptRunner.js';
 import type { SceneWorkView } from './SceneWorkCounters.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
+import type { CapitalWreckSubsystem } from '../CapitalWreckSubsystem.js';
+import { SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGVEL_OFF, SLOT_FLAGS_OFF, FLAG_SLEEPING, slotBase } from '../../../shared-types/sabLayout.js';
+import { SWARM_KIND_WRECK } from '../../../shared-types/swarmWireFormat.js';
 
 export interface ScenePerfView {
   roomId: string;
@@ -91,5 +95,39 @@ export function sceneSimTime(
     simTicks,
     latenessTicks: wallTicks - simTicks,
     droppedTicks: (end.dropped - start.dropped) >>> 0,
+  };
+}
+
+/** What `sceneBodyCensus` reads off the room (getters: the SAB views and the
+ *  wreck subsystem are assigned late in `onCreate`). */
+export interface SceneBodyCensusHost {
+  swarmRegistry: SwarmEntityRegistry;
+  sabU32: () => Uint32Array;
+  sabF32: () => Float32Array;
+  capitalWrecks: () => CapitalWreckSubsystem | null;
+}
+
+/** Perf-scene census (read on a `/dev/perf` poll, never on the tick):
+ *  swarm bodies by kind and how many the worker flags SLEEPING, plus the
+ *  live wreck pieces (debris soak, sub-cap break-up slice 5). */
+export function sceneBodyCensus(host: SceneBodyCensusHost): ScenePerfView['bodies'] {
+  const sabU32 = host.sabU32(), sabF32 = host.sabF32(), capitalWrecks = host.capitalWrecks();
+  let sleeping = 0, wreckPieces = 0, wreckSleeping = 0, wreckAwakeSlow = 0;
+  for (const rec of host.swarmRegistry.all()) {
+    const b = slotBase(rec.slot);
+    const asleep = ((sabU32[b + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
+    if (asleep) sleeping++;
+    if (rec.kind !== SWARM_KIND_WRECK) continue;
+    wreckPieces++;
+    if (asleep) { wreckSleeping++; continue; }
+    // Awake but all but still (< 1 u/s, < 0.1 rad/s): kept awake by
+    // something else (contacts, knocks), not by its own drift.
+    const vx = sabF32[b + SLOT_VX_OFF] ?? 0, vy = sabF32[b + SLOT_VY_OFF] ?? 0;
+    if (vx * vx + vy * vy < 1 && Math.abs(sabF32[b + SLOT_ANGVEL_OFF] ?? 0) < 0.1) wreckAwakeSlow++;
+  }
+  return {
+    swarm: host.swarmRegistry.size(), sleeping, wreckPieces, wreckSleeping, wreckAwakeSlow,
+    wreckSubcapLive: capitalWrecks?.liveSubcapCount() ?? 0,
+    wreckDescriptors: capitalWrecks?.descriptors().length ?? 0,
   };
 }
