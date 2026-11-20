@@ -39,6 +39,10 @@ export interface StructureRecord {
   /** False while a blueprint; flips true when the grid finishes building it.
    *  The Capital is born `true` (pre-built). */
   isConstructed: boolean;
+  /** Hologram pass-through: its body was spawned as a blueprint and still
+   *  collides with nothing (`BLUEPRINT_COLLISION_GROUPS`). Cleared when it
+   *  turns solid (`settleBlueprintBody`). Server-only, never saved. */
+  ghostBody?: boolean;
   /** Minerals delivered so far (0..constructionCost). */
   constructionProgress: number;
   /** Total minerals to fully build. 0 for the pre-built Capital. */

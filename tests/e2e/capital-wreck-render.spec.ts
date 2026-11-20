@@ -174,14 +174,29 @@ test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit
  * Salvage stream PR 5 — a worn-out wreck piece re-splits and the client draws
  * its children. The pilot flies a lance battlecruiser (heavy-beam main
  * battery; `wreck-test` allows capital pilots) off the battleship's beam;
- * `test_kill_capitals` breaks the battleship; the pilot locks the nearest
- * piece with every group (a neutral terrain lock) and the AUTO groups' turrets
- * fire on it. Ordinary guns wear a wreck at 0.1 of their damage, so the beams
- * wear its hidden integrity down in seconds; the piece splits into a CHILD
- * wreck whose descriptor names it, and every piece on the wire is drawn.
+ * `test_kill_capitals` breaks the battleship; the pilot locks the BIGGEST
+ * piece with every group (a neutral terrain lock) and keeps that lock until the
+ * piece is gone, and the AUTO groups' turrets fire on it. Ordinary guns wear a
+ * wreck at 0.1 of their damage, so the beams wear its hidden integrity down;
+ * the piece splits into a CHILD wreck whose descriptor names it, and every
+ * piece on the wire is drawn.
+ *
+ * Why the biggest piece, held: the fracture seed is the kill tick's, so the
+ * break-up differs every run. Re-locking "the nearest piece" every 0.5 s made
+ * the worked piece a dice roll (a sliver may wear out to salvage, never a child
+ * wreck; a big one takes ~12 s) and let the main group (lock capacity 3) pile
+ * up locks on several pieces and split its fire. The biggest piece always
+ * re-splits and bounds the wear.
  */
+// The re-split budget, in game seconds (capital-destruction.md §S4 "Re-split"):
+// the main battery trains a quarter turn onto the beam at 0.087 rad/s (~18 s)
+// and then wears the biggest battleship piece (<= ~47 % of the hull, I_max
+// ~3,300) at ~280/s (~12 s): ~30 s. The old 40 x 0.5 s loop (~20 s) only
+// passed when the dice gave a small nearest piece. 1.5x for a loaded runner.
+const RESPLIT_BUDGET_MS = 45_000;
 test('beams wear a wreck piece until it re-splits; the children are drawn', async ({ page }) => {
-  test.setTimeout(120_000);
+  // Setup (<= 45 s join + <= 15 s break-up) + the re-split budget + the draw wait.
+  test.setTimeout(150_000);
   await page.goto(`${BASE_URL}?room=wreck-test&testId=${randomUUID()}&worker=0&shipKind=battlecruiser-lance&initialHull=1000000&instantLock=1&zoom=0.05&spawnX=5500&spawnY=2500`);
   type G = {
     __eqxClient?: {
@@ -190,7 +205,7 @@ test('beams wear a wreck piece until it re-splits; the children are drawn', asyn
       mirror: {
         localPlayerId: string | null;
         ships: Map<string, { x: number; y: number }>;
-        swarm?: Map<number, { kind: number; shipKind?: string; x: number; y: number }>;
+        swarm?: Map<number, { kind: number; shipKind?: string; x: number; y: number; radius: number }>;
         wrecks?: Map<number, { parentWreck?: number }>;
       };
     };
@@ -211,33 +226,35 @@ test('beams wear a wreck piece until it re-splits; the children are drawn', asyn
     return n >= 2;
   }, undefined, { timeout: 15_000 });
 
-  // Lock the nearest wreck piece with every group; re-lock when it is gone.
-  const lockNearest = () => page.evaluate(() => {
+  // Work one piece: while the worked piece is on the wire leave its lock alone;
+  // when it is gone (or none yet), lock the biggest piece with every group.
+  const workPiece = (cur: number | null) => page.evaluate((worked) => {
     const g = globalThis as unknown as G;
     const m = g.__eqxClient?.mirror;
-    const me = m?.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
     const st = g.__eqxStore?.getState();
-    if (!m || !me || !st) return;
-    let best: number | null = null, bestD = Infinity;
+    if (!m || !st) return worked;
+    if (worked !== null && m.swarm?.get(worked)?.kind === 4) return worked;
+    let best: number | null = null, bestR = -1;
     for (const [eid, e] of m.swarm ?? []) {
-      if (e.kind !== 4) continue;
-      const d = Math.hypot(e.x - me.x, e.y - me.y);
-      if (d < bestD) { bestD = d; best = eid; }
+      if (e.kind === 4 && e.radius > bestR) { bestR = e.radius; best = eid; }
     }
-    if (best === null) return;
+    if (best === null) return null;
     for (const grp of st.fcGroups) {
       st.setActiveGroupId(grp.id);
       st.setSelection([], `swarm-${best}`, 'wreck');
       g.__eqxClient?.lockSelected?.();
     }
-  });
+    return best;
+  }, cur);
   const childWrecks = () => page.evaluate(() => {
     let n = 0;
     for (const w of (globalThis as unknown as G).__eqxClient?.mirror.wrecks?.values() ?? []) if (w.parentWreck !== undefined) n++;
     return n;
   });
-  for (let i = 0; i < 40 && (await childWrecks()) === 0; i++) {
-    await lockNearest();
+  let worked: number | null = null;
+  const deadline = Date.now() + RESPLIT_BUDGET_MS;
+  while (Date.now() < deadline && (await childWrecks()) === 0) {
+    worked = await workPiece(worked);
     await page.waitForTimeout(500);
   }
   expect(await childWrecks(), 'a worn-out piece re-split into a child wreck').toBeGreaterThanOrEqual(1);
