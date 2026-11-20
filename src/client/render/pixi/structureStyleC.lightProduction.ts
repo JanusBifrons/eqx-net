@@ -22,7 +22,7 @@ export { SLIT_DEAD } from './structureStyleC.lightProduction.work.js';
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'r1';
+export const version = 'r2';
 
 /** The refinery's work-glow slits (x, y, w, h in px, the drawer's frame):
  *  one on each tank bunker, two on the column. Baked as dead glass
