@@ -43,6 +43,8 @@ export const STRUCTURE_FLAG_LOCK_HOLDING = 256;
  *  ghost (collides with nothing; `isStructureBodySolid` false). The client
  *  prediction world mirrors it. Bit 14: bit 9 (512) is On/Off, bits 10-13 the throttle. */
 export const STRUCTURE_FLAG_GHOST_BODY = 16384;
+/** The owner switched this structure Off (no draw, no work). */
+export const STRUCTURE_FLAG_OFF = 512;
 
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;

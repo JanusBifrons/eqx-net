@@ -61,7 +61,7 @@ export interface LockLineageSource {
 
 /** The kind's mounts when it has none (a stable key for the rung cache). */
 const NO_MOUNTS: ReadonlyArray<WeaponMount> = [];
-const view: LockSalvageView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0, freeHold: 0, pod: false };
+const view: LockSalvageView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0, rockMass: 0, freeHold: 0, pod: false };
 /** An ore pod's bits: salvage on the bottom rung (AA), never consumable (it
  *  is taken in on touching the hull, or in a tractor's hold zone). */
 const POD_FLAGS = LOCK_SALVAGE | lockTierBits(mountTier('AA'));

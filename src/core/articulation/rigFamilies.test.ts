@@ -6,7 +6,7 @@ import { RIG_DEFS, RIG_FAMILIES, rigById, rigForStructureKind } from './rigCatal
 
 /** Kind -> rig id before the split (the one map in rigCatalogue.ts), plus the
  *  rigs added since (Family 1: the solar tracker, the reactor fans;
- *  F2: the territory lock beacon). */
+ *  F2: the territory lock beacon; F3J: the shipyard build frame). */
 const BEFORE_SPLIT: Readonly<Record<string, string>> = {
   freight_dock: 'dock-crane',
   capital: 'capital-crane',
@@ -14,6 +14,7 @@ const BEFORE_SPLIT: Readonly<Record<string, string>> = {
   solar: 'solar-tracker',
   reactor: 'reactor-fans',
   territory_lock: 'lock-beacon',
+  shipyard: 'shipyard-frame',
 };
 
 describe('rig family files', () => {
@@ -34,7 +35,7 @@ describe('rig family files', () => {
     expect([...owner.keys()].sort()).toEqual(RIG_DEFS.map((d) => d.id).sort());
     expect(Object.fromEntries(owner)).toEqual({
       'capital-crane': 'core', 'sandbox-door-turret': 'turrets', 'dock-crane': 'transport', 'solar-tracker': 'power', 'reactor-fans': 'power',
-      'lock-beacon': 'fences',
+      'lock-beacon': 'fences', 'shipyard-frame': 'heavyIndustry',
     });
   });
 
