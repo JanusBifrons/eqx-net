@@ -6,7 +6,8 @@
  *  1. Start a cycle by taking the recipe's inputs from its NETWORK's storage
  *     (the same-owner storage in its grid component: Capital bank, Cargo Bays,
  *     Freight Docks). All or nothing: a missing input leaves it "starved".
- *  2. Advance one step per powered pulse.
+ *  2. Advance one step per powered pulse, times the owner throttle
+ *     (`structureWorkRate`: 50% takes twice as long, 0% makes no progress).
  *  3. When the cycle completes, put the outputs into network storage. If they
  *     don't fit, it stays "blocked" until there is room.
  * Scarce inputs are shared round-robin in a fixed order, so results are
@@ -42,9 +43,11 @@ import { getStructureKind, type StructureKindId } from '../../shared-types/struc
 import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecipe } from '../../shared-types/blueprints.js';
 import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
+import { advanceProgress } from './productionProgress.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
+import { hullProduct, packedProduct } from './productIds.js';
 
 /** What one cycle of a recipe actually uses and makes. */
 export interface EffectiveRecipe {
@@ -84,28 +87,6 @@ interface AppliedCache {
   eff: EffectiveRecipe;
 }
 
-/** `structure:<kind>` product ids, built once per kind (no per-cycle strings). */
-const PACKED_PRODUCT = new Map<StructureKindId, string>();
-function packedProduct(kind: StructureKindId): string {
-  let p = PACKED_PRODUCT.get(kind);
-  if (p === undefined) {
-    p = `structure:${kind}`;
-    PACKED_PRODUCT.set(kind, p);
-  }
-  return p;
-}
-
-/** `hull:<kind>` product ids, built once per kind. */
-const HULL_PRODUCT = new Map<string, string>();
-function hullProduct(kind: string): string {
-  let p = HULL_PRODUCT.get(kind);
-  if (p === undefined) {
-    p = `hull:${kind}`;
-    HULL_PRODUCT.set(kind, p);
-  }
-  return p;
-}
-
 /** A recipe's base effect (no blueprint), cached per recipe. */
 const BASE_EFFECT = new Map<RecipeId, EffectiveRecipe>();
 function baseEffect(id: RecipeId): EffectiveRecipe {
@@ -142,6 +123,15 @@ export class ProductionSubsystem {
     if (!isProcessorKind(kind)) throw new Error(`not a processor: ${kind}`);
     const r = rec.recipe;
     return r !== undefined && RECIPES[r].processors.includes(kind) ? r : defaultRecipeFor(kind);
+  }
+
+  /** Loop 3L — how far `rec`'s loaded cycle is, 0..1 (0 when nothing is
+   *  loaded); the row's `prodFrac` (the Shipyard build animation). */
+  cycleFraction(rec: StructureRecord): number {
+    if (rec.prodLoaded !== true || !isProcessorKind(rec.kind)) return 0;
+    const id = this.recipeOf(rec);
+    const pulses = (this.effective(rec, id) ?? baseEffect(id)).cyclePulses;
+    return pulses > 0 ? Math.min(1, (rec.prodProgress ?? 0) / pulses) : 0;
   }
 
   pulse(): void {
@@ -319,9 +309,7 @@ export class ProductionSubsystem {
       }
     }
     rec.prodMissing = undefined;
-    const progress = rec.prodProgress ?? 0;
-    if (progress < eff.cyclePulses) rec.prodProgress = progress + 1;
-    if ((rec.prodProgress ?? 0) >= eff.cyclePulses) {
+    if (advanceProgress(rec, eff.cyclePulses)) {
       const cycle = rec.prodCycles ?? 0;
       const extra = (rec.prodYield ?? 0) > 0 && this.roll(rec.id, cycle) < (rec.prodYield ?? 0) ? 1 : 0;
       if (!this.put(eff.outputs, extra, rec.prodQuality ?? 0, rec)) {
@@ -358,9 +346,7 @@ export class ProductionSubsystem {
       rec.prodProgress = 0;
     }
     rec.prodMissing = undefined;
-    const progress = rec.prodProgress ?? 0;
-    if (progress < cyclePulses) rec.prodProgress = progress + 1;
-    if ((rec.prodProgress ?? 0) >= cyclePulses) {
+    if (advanceProgress(rec, cyclePulses)) {
       const ore = (rec.prodChunk.ore ??= {});
       const batch = this.chunkBatch(ore);
       if (!this.put(batch, 0, 0)) {
