@@ -77,6 +77,11 @@ export interface DestructionResplit {
   /** Least piece area, as a fraction of the whole hull's, that still splits;
    *  below it the worn-out piece turns into salvage. */
   readonly minAreaFrac: number;
+  /** Set: a piece splits while it is heavier than a tractor of this mount
+   *  size pulls (`salvageTierMass`), in place of the area and radius floors
+   *  (a rock: cut until a small ship can carry it). A `MountSize` (tuning.ts
+   *  imports this file). */
+  readonly splitAboveTractor?: 'AA' | 'S' | 'M' | 'L' | 'XL';
   /** Integrity of a piece per unit of its mass share × the kind's max hull. */
   readonly integrityMul: number;
   /** Floor on a piece's integrity, as a fraction of the kind's max hull. */
@@ -476,7 +481,8 @@ const NONE: DestructionProfile = {
  *  mining-and-salvage.md "Mining asteroids"). Never a ship's profile: a
  *  rock's wreck source (`rockWreckSource`) names it. It breaks like a
  *  sub-capital re-split, 2-3 chunky pieces along its burn lines, again and
- *  again; a piece under 6 % of the rock no longer breaks or wears: it goes
+ *  again, until a piece is light enough for an AA tractor (`splitAboveTractor`;
+ *  owner 2026-11-20: a small ship carries it); then it no longer breaks or wears: it goes
  *  into a hold whole as one rock chunk (never a pod).
  *  Integrity per area is `ROCK_INTEGRITY_PER_AREA` (× `integrityMul` 1).
  *  Pieces part gently, collide with each other and settle like sub-cap
@@ -489,7 +495,7 @@ const ROCK_FRACTURE: DestructionFractureOptions = {
 const ROCK: DestructionProfile = {
   id: 'rock',
   fracture: ROCK_FRACTURE,
-  resplit: { minAreaFrac: 0.06, integrityMul: 1, integrityMinFrac: 0.03, salvagePerHull: 0, fracture: ROCK_FRACTURE },
+  resplit: { minAreaFrac: 0.06, splitAboveTractor: 'AA', integrityMul: 1, integrityMinFrac: 0.03, salvagePerHull: 0, fracture: ROCK_FRACTURE },
   holdMs: 0,
   pushScale: 2,
   separateScale: 20,
