@@ -313,6 +313,7 @@ export class StructureRigView {
     evaluateRig(this.rig, playing, nowTick, this.pose, twoBoneIkSolve, sunAz !== undefined ? -sunAz - ha : undefined,
       this.hasSpin ? this.spinClock : undefined);
     const xf = this.xf;
+    const clipT = playing !== null ? nowTick - playing.startTick : Number.NaN;
     const ri = this.riserPart, look = RIG_LOOK_C;
     let lift = 0;
     if (ri >= 0) {
@@ -342,7 +343,7 @@ export class StructureRigView {
         sh.position.set(xf.x + d, xf.y + d);
         sh.rotation = xf.rotation;
       }
-      if (this.partShowOf !== undefined) this.partShowOf(this.rig, i, this.pose.value[i]!, this.row, g, sh);
+      if (this.partShowOf !== undefined) this.partShowOf(this.rig, i, this.pose.value[i]!, this.row, g, sh, clipT);
       const lit = this.lit[i]!;
       if (lit !== null) {
         lit.position.set(xf.x, xf.y);
@@ -493,7 +494,7 @@ export class StructureRigs {
       const view = new StructureRigView(rig);
       this.shipContainer.sortableChildren = true;
       this.shipContainer.addChild(view.under, view.over);
-      e = { view, host: null, stamp: 0, memo: { start: Number.NaN } };
+      e = { view, host: null, stamp: 0, memo: { start: Number.NaN, seen: Number.NaN } };
       this.entries.set(spriteKey, e);
     } else if (e.view.rig !== (kindId !== undefined ? rigForStructureKind(kindId) : null)) {
       // A recycled id with another kind: rebuild from scratch next frame.

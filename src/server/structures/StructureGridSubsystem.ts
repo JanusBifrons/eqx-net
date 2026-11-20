@@ -24,8 +24,9 @@
 import { ASTEROID_YIELD, yieldHasGoods, yieldInto, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
-import { redrawStructure, switchStructure } from './structurePowerSwitch.js';
+import { redrawStructure, switchStructure, throttleStructure } from './structurePowerSwitch.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { structureWorkRate } from '../../shared-types/structurePower.js';
 import {
   canUpgradeStructure,
   effectiveStructureMaxHealth,
@@ -73,29 +74,8 @@ const FALLBACK_TARGET_SIGNATURE = 10;
  *  leg is deferred — see `resolveMiningClip`). Module const ⇒ no per-pulse alloc. */
 const EMPTY_MINING_OBSTACLES: readonly MiningBeamObstacle[] = [];
 
-/**
- * Resolve a laser turret's CONTINUOUS-beam firing params (playtest 2026-06-10
- * Issue 5 — "defence structures fire in pulses instead of constantly, like the
- * player does"). All laser beam weapons now work the same everywhere: the
- * turret fires its bound catalogue beam weapon (`mount.weaponId`) on that
- * weapon's standard cooldown — a steady stream of small hits the client renders
- * as one continuous beam (its laser TTL > the beam cadence) — instead of one
- * big lump every `fireRateMs`. Per-hit damage is rebalanced to preserve the
- * kind's tuned DPS (`weaponDamage / fireRateMs`) across the faster cadence, so
- * total damage ≈ today's. `fireRateMs`/`weaponDamage` are retired as a PULSE
- * gate and repurposed as the DPS budget.
- *
- * Pure + scalar in/out — unit-locked independent of the room.
- */
-export function resolveTurretBeam(
-  weaponDamage: number,
-  fireRateMs: number,
-  beamCooldownTicks: number,
-): { cooldownMs: number; perHitDamage: number } {
-  const cooldownMs = (beamCooldownTicks / 60) * 1000;
-  const dps = fireRateMs > 0 ? weaponDamage / (fireRateMs / 1000) : 0;
-  return { cooldownMs, perHitDamage: dps * (cooldownMs / 1000) };
-}
+import { resolveTurretBeam } from './turretBeam.js';
+export { resolveTurretBeam };
 
 /** `BlueprintBodyHooks`: hologram pass-through (a blueprint turns solid only
  *  with no ship inside; absent ⇒ it turns solid at once). */
@@ -629,7 +609,9 @@ export class StructureGridSubsystem {
       if (rate == null || rate <= 0) continue;
       const working = nebula && !!this.hooks.depositGoods && this.powerSummaryFor(rec.id).powered;
       this.setActive(rec, working);
-      if (working) this.hooks.depositGoods!(rec, 'gas', rate);
+      // The owner throttle scales the haul (structureWorkRate; 0% gathers nothing).
+      const n = Math.round(rate * structureWorkRate(rec));
+      if (working && n > 0) this.hooks.depositGoods!(rec, 'gas', n);
     }
   }
 
@@ -675,7 +657,8 @@ export class StructureGridSubsystem {
       // straight into the owner's network storage.
       const y = this.hooks.asteroidYieldOf?.(target.entityId) ?? ASTEROID_YIELD.rock;
       const deposit = yieldHasGoods(y) ? this.hooks.depositGoods : undefined;
-      let want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
+      // The owner throttle scales the per-pulse rate (structureWorkRate).
+      let want = Math.min(Math.round((kind.miningRate ?? 0) * structureWorkRate(rec)), kind.storageCapacity - rec.minerals);
       // A full network never burns finite ore: if this pulse's goods wouldn't
       // all fit, the drill idles and the rock keeps them.
       if (deposit && this.hooks.canDepositGoods && want > 0) {
@@ -715,6 +698,8 @@ export class StructureGridSubsystem {
 
   /** The owner On/Off switch (`structurePowerSwitch.ts`); false if nothing changed. */
   setSwitchedOn(rec: StructureRecord, on: boolean): boolean { return switchStructure(rec, on, this.adjustDraw); }
+  /** The owner's power throttle in tenths (`structurePowerSwitch.ts`); false if nothing changed. */
+  setThrottle(rec: StructureRecord, tenths: number): boolean { return throttleStructure(rec, tenths, this.adjustDraw); }
   private readonly adjustDraw = (id: string, delta: number): void => this.grid.adjustDraw(id, delta);
 
   /** Clear a Miner's target + cached pose (unpowered / no in-range rock) so the

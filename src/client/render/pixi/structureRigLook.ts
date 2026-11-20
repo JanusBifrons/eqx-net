@@ -110,8 +110,10 @@ export interface RigDrawHook {
   /** Per frame, after part `i` (graphic `g`, its shadow or null) is posed:
    *  show its joint `value` where a transform cannot (a part printed in, a
    *  lamp lit, art scaled to the row). `st` = the structure row (undefined
-   *  without one). Allocation-free. */
-  readonly partShow?: (rig: Rig, i: number, value: number, st: StructureRenderState | undefined, g: Graphics, shadow: Graphics | null) => void;
+   *  without one); `clipTicks` = game ticks into the playing clip (NaN when
+   *  none plays). Allocation-free. */
+  readonly partShow?: (rig: Rig, i: number, value: number, st: StructureRenderState | undefined, g: Graphics, shadow: Graphics | null,
+    clipTicks: number) => void;
   /** A clip the CLIENT plays from the row while the server sent none (e.g.
    *  the Shipyard's build from its production state). Fill `out` and return
    *  true, or return false (rest). `memo` is per-structure scratch the
@@ -119,8 +121,9 @@ export interface RigDrawHook {
   readonly rowClip?: (st: StructureRenderState | undefined, nowTick: number, memo: RigRowClipMemo, out: { clipId: string; startTick: number }) => boolean;
 }
 
-/** Per-structure scratch for `RigDrawHook.rowClip` (NaN = not started). */
-export interface RigRowClipMemo { start: number }
+/** Per-structure scratch for `RigDrawHook.rowClip`: the tick the clip is
+ *  anchored to and the row value it was anchored from (NaN = not started). */
+export interface RigRowClipMemo { start: number; seen: number }
 
 /** Rig id -> its drawing hook. */
 export type RigDrawHookTable = Readonly<Record<string, RigDrawHook>>;

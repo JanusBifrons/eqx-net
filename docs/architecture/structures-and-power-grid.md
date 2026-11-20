@@ -270,6 +270,8 @@ back-compat aliases).
 
 **On/Off switch.** The owner can switch any structure that draws power Off (`set_structure_power { entityId, on }`, owner-only, `structureSettingMessages.ts`). Off sets `rec.switchedOff`: `structureDraw` returns 0 for it, `setActive` can never make it active, and `StructureGridSubsystem.powerSummaryFor` reads it unpowered, so every subsystem that gates on power stops (turrets hold fire, a shield wall drops if either post is Off, production, labs, drills and mine layers pause). On restores the idle draw. Generators, power stores and connectors draw nothing and have no Off. The state persists and rides the wire as `STRUCTURE_FLAG_OFF` (bit 512 of the uint16 `flags`, no new schema field); the client grid preview reads it through the same `structureDraw`. Logic: `structurePowerSwitch.ts`.
 
+**Power throttle.** The same switchable kinds take a throttle of 0..100% in steps of 10% (`set_structure_power { entityId, on, throttle? }`, `throttle` in tenths 0..10, owner-only). It is stored as `rec.throttle` (tenths 0..9; absent = 100%, the default, so existing structures are unchanged) and scales `structureDraw`'s result, full or idle: 50% draws half. The change is the same O(1) grid adjustment as the switch. It persists and rides bits 10-13 of the uint16 `flags` as the tenths below full (`encodeStructureThrottleFlags`; an unthrottled row sends no bits), decoding to `StructureRenderState.throttle`. It also scales WORK SPEED through the one shared helper `structureWorkRate(rec)` (`shared-types/structurePower.ts`: 1 at the default, the tenths when throttled, 0 when Off): each producer multiplies its one per-pulse step by it. Processors incl. the Refinery and Shipyard (`ProductionSubsystem` `advanceProgress`, so `prodProgress` can be fractional), drills (`processMining` per-pulse rate), Gas Collectors (`processGas` haul) and Research Labs (`LabBoard.advance` step; the lab view floors `done`). 50% takes twice as long; 0% does no work while the structure still reads powered. Turrets ignore the throttle: they have On/Off only.
+
 ## Batteries — stored-power buffer (batteries plan — shipped)
 
 The `battery` kind is a **leaf that stores power**. It produces and consumes
@@ -636,8 +638,16 @@ its space stays reserved because placement checks the registry. On completion
 solid (`SET_COLLISION_GROUPS` → default, `SwarmSpawner.solidifyStructure`) only
 when no hull (`SectorObstacles.hullCircles`) overlaps its footprint; otherwise it
 waits, fully paid, and finishes the pulse the space is clear. Records built
-outside the pulse (restore, seeded bases) settle on the next pulse. The client
-predWorld still builds holograms solid until job 3F2. The structure subtype rides the
+outside the pulse (restore, seeded bases) settle on the next pulse. **One rule
+everywhere (3F2):** `isStructureBodySolid` (`core/structures/structureBody.ts`,
+reads `ghostBody`; `isConstructed` alone is not it: a finished blueprint waits
+as a ghost, and a structure mid-upgrade is unbuilt but solid). The room-state
+row carries it as `STRUCTURE_FLAG_GHOST_BODY` (16384) → `ghostBody`, and the
+client's `StructureClientLeaf` builds and swaps the predWorld body by it (ghost
+→ solid: default groups then the rig, like `solidifyStructure`; a body spawned
+solid before its row arrived is rebuilt as a ghost), re-checked on every swarm
+sync. Navigation (`RoomNav`) adds no obstacle for a ghost; `settleBlueprintBody`
+calls `StructureRegistry.bodyChanged`, which re-adds it once solid. The structure subtype rides the
 **shared `shipKind` byte** (kind=2 path; `SwarmSpawner.spawnStructure` sets
 `rec.shipKind`) — no stride/`SWARM_WIRE_VERSION` bump. `remove` is owner-gated.
 **Phase-4 C2 — placement is OBSTACLE-aware.** `place()` rejected overlap against
@@ -786,7 +796,7 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 #### Structures: placement, power grid, shield fence
 
-- **Placement checks structures AND asteroids** through the shared `canPlaceStructureAt` / `placementRejection`; `remove` is owner-gated. The placement ghost runs the same predicate before the click (`PlacementGhostVerdict`, over the mirror structures and the build preview's rocks): red with the server's notice under it (`RendererFeedback.placementPreviewRejection` → `PlacementLinkHint`), green where it can go. Wreck pieces are not on the client list yet. Locks: `placementRules.test.ts`, `StructurePlacementSubsystem.test.ts`, `structurePlacementValidation.test.ts`, `placementGhostParity.test.ts`, `placementGhostUpdater.test.ts`.
+- **Placement checks structures AND asteroids** through the shared `canPlaceStructureAt` / `placementRejection`; `remove` is owner-gated. The placement ghost runs the same predicate before the click (`PlacementGhostVerdict`, over the mirror structures and the build preview's rocks): red with the server's notice under it (`RendererFeedback.placementPreviewRejection` → `PlacementLinkHint`), cyan where it can go. The ghost is the blueprint hologram art (`StructureHologram`, `ghost` look: drawn once in white with bright panels and thick edges, tinted cyan `HOLOGRAM_COLOR` or red `PREVIEW_BLOCKED_COLOR` per frame, so a valid/blocked switch never rebuilds art); a scanner line sweeps it and it pulses gently on `fxNow()`; the sent (pending) ghost is a dim, still cyan. Wreck pieces are not on the client list yet. Locks: `placementRules.test.ts`, `StructurePlacementSubsystem.test.ts`, `structurePlacementValidation.test.ts`, `placementGhostParity.test.ts`, `placementGhostUpdater.test.ts`.
 - **Grid changes touch the snapshot path** (`structures[]`, `grid_pulse`): `pnpm e2e:netgate` required. `StructureGridSubsystem.pulse()` is the directly-callable 1 Hz heartbeat, off the 60 Hz tick.
 - **Shield-wall bodies live in `PhysicsWorld.wallBodies`**, never `this.bodies`. A pylon with any active wall takes no damage (`applyDamage` → `absorbForPylon`). Swarm shield regen covers `rec.kind === 1` only.
 - Detail: [structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md#server-implementation-notes).
