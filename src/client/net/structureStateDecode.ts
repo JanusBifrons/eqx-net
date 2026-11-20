@@ -31,6 +31,7 @@ import {
 } from '../../shared-types/structureStateWire.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { clearDoorRow, decodeDoorRow, isDoorKind } from './doorMotionDecode.js';
+import { decodeProdCount } from '../../shared-types/production.js';
 
 export function emptyStructureRow(): StructureRenderState {
   return { powered: false, netPower: 0, connTo: [], connSockSelf: [], connSockOther: [], built: false, buildPct: 0, deconstructPct: 0 };
@@ -97,6 +98,7 @@ export function decodeStructureState(
   const bpRuns = v.bpRuns ?? D.bpRuns;
   out.bpRuns = bpRuns !== 0 ? bpRuns : undefined;
   out.bpQuality = bpRuns !== 0 ? (v.bpQuality ?? D.bpQuality) : undefined;
+  out.prodCount = decodeProdCount(v.prodCount ?? D.prodCount);
   // v4 T1 — teleporters: decode in place (allocated once per teleporter row).
   if (v.tpPhase !== undefined || v.tpPartner !== undefined || v.tpChargePct !== undefined || out.teleport !== undefined) {
     const t = (out.teleport ??= { phase: 0, phaseMs: 0, chargePct: 0, partner: -1, rules: 0, loadGood: 0, loadQty: 0, keepGood: 0, keepQty: 0, padWeight: 0, toll: 0 });

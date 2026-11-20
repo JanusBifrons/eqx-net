@@ -138,6 +138,7 @@ export const STRUCTURE_DEFAULTS = {
   rigTx: 0,
   rigTy: 0,
   rigHold: 0,
+  prodCount: 0,
   minesOut: 0,
   fillPct: 0,
 } as const;
@@ -352,6 +353,8 @@ export interface StructureStateView {
   /** Structure-restyle 3e — a holding clip's length and cargo direction
    *  (`encodeRigHold`); 0 = none. */
   rigHold?: number;
+  /** Build count (job 2E): `encodeProdCount` (shared-types/production.ts). */
+  prodCount?: number;
   /** Mine Layers: mines this layer has out in space (0..MINES_PER_LAYER). */
   minesOut?: number;
   /** Storage: how full the hold is, percent in steps of `FILL_PCT_STEP`
