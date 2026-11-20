@@ -15,13 +15,20 @@
  * `GraphicsContext` per (kind, style), built once; each blueprint owns three
  * tiny Graphics made once when it is first seen unbuilt. Per frame only the
  * mask's x/scale and the line's x move. The overlay is dropped once built.
+ *
+ * The PLACEMENT GHOST (the plan the player is positioning) is this same
+ * hologram in its brighter `ghost` look: drawn once in white, then tinted
+ * cyan (clear) or red (blocked by `placementRejection`) per frame, so a
+ * valid/blocked switch recolours without rebuilding any art. No mask; the
+ * print line sweeps across as a scanner and the plan pulses gently, both on
+ * the game clock (`fxNow`).
  */
 import { Container, Graphics, GraphicsContext } from 'pixi.js';
 import type { StructureRenderState } from '../../../core/contracts/render/StructureRenderState.js';
 import { buildStructureVisual } from './structureVisuals.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { interpBuildPct } from './buildBarInterp.js';
-import { CONNECTOR_CONSTRUCTION_COLOR } from './connectorVisual.js';
+import { CONNECTOR_CONSTRUCTION_COLOR, PREVIEW_BLOCKED_COLOR } from './connectorVisual.js';
 
 /** The hologram's cyan: the construction-flow cyan (connectors, build bar). */
 export const HOLOGRAM_COLOR = CONNECTOR_CONSTRUCTION_COLOR;
@@ -33,14 +40,33 @@ const HOLOGRAM_BACKING = 0x04121a;
 const PAD = 4;
 /** Scan-line spacing (world units). */
 const SCAN_STEP = 6;
+/** The placement ghost's tint where the server would refuse the plan (the
+ *  build preview's red), and where it is clear (the hologram cyan). */
+export const GHOST_BLOCKED_COLOR = PREVIEW_BLOCKED_COLOR;
+export const GHOST_CLEAR_COLOR = HOLOGRAM_COLOR;
+/** Ghost scanner sweep period and pulse period (game ms). */
+const GHOST_SWEEP_MS = 1600;
+const GHOST_PULSE_MS = 1200;
+
+/** How a hologram is drawn. `blueprint` = an unbuilt structure's overlay
+ *  (cyan baked in, faint panels: the solid art fills in behind it).
+ *  `ghost` = the placement plan: white (tinted per frame), bright panels and
+ *  thick edges so it reads on a phone at zoom ~0.5 over a busy sector. */
+export type HoloLook = 'blueprint' | 'ghost';
+interface LookSpec { color: number; core: number; panel: number; edge: number; edgeW: number; scan: number; scanW: number }
+const LOOKS: Record<HoloLook, LookSpec> = {
+  blueprint: { color: HOLOGRAM_COLOR, core: 0xccffff, panel: 0.14, edge: 0.75, edgeW: 1, scan: 0.22, scanW: 1 },
+  ghost: { color: 0xffffff, core: 0xffffff, panel: 0.32, edge: 1, edgeW: 3, scan: 0.5, scanW: 1.5 },
+};
 
 interface HoloArt { art: GraphicsContext; line: GraphicsContext; mask: GraphicsContext; halfW: number }
 const artCache = new Map<string, HoloArt>();
 
 /** The overlay's shared art for one kind + style (built once, never freed:
  *  one entry per structure kind at most). */
-function holoArtFor(kindId: string | undefined, radius: number, style: string | undefined): HoloArt {
-  const key = `${kindId ?? ''}|${style ?? ''}|${radius}`;
+function holoArtFor(kindId: string | undefined, radius: number, style: string | undefined, look: HoloLook): HoloArt {
+  const key = `${kindId ?? ''}|${style ?? ''}|${radius}|${look}`;
+  const L = LOOKS[look];
   let a = artCache.get(key);
   if (a) return a;
   const kindless = !kindId || !isStructureKindId(kindId);
@@ -54,15 +80,15 @@ function holoArtFor(kindId: string | undefined, radius: number, style: string | 
   for (const r of plan.rects) art.rect(r.x, r.y, r.w, r.h).fill({ color: HOLOGRAM_BACKING, alpha: 0.92 }).stroke({ color: HOLOGRAM_BACKING, alpha: 0.92, width: PAD });
   for (const p of plan.polys ?? []) art.poly(p.pts.flat()).fill({ color: HOLOGRAM_BACKING, alpha: 0.92 }).stroke({ color: HOLOGRAM_BACKING, alpha: 0.92, width: PAD });
   // 2. Translucent cyan panels + wireframe edges.
-  for (const r of plan.rects) art.rect(r.x, r.y, r.w, r.h).fill({ color: HOLOGRAM_COLOR, alpha: 0.14 }).stroke({ color: HOLOGRAM_COLOR, alpha: 0.75, width: 1 });
-  for (const p of plan.polys ?? []) art.poly(p.pts.flat()).fill({ color: HOLOGRAM_COLOR, alpha: 0.14 }).stroke({ color: HOLOGRAM_COLOR, alpha: 0.75, width: 1 });
+  for (const r of plan.rects) art.rect(r.x, r.y, r.w, r.h).fill({ color: L.color, alpha: L.panel }).stroke({ color: L.color, alpha: L.edge, width: L.edgeW });
+  for (const p of plan.polys ?? []) art.poly(p.pts.flat()).fill({ color: L.color, alpha: L.panel }).stroke({ color: L.color, alpha: L.edge, width: L.edgeW });
   // 3. Scan lines across the footprint.
   for (let y = -halfH + SCAN_STEP / 2; y < halfH; y += SCAN_STEP) art.moveTo(-halfW, y).lineTo(halfW, y);
-  art.stroke({ color: HOLOGRAM_COLOR, alpha: 0.22, width: 1 });
+  art.stroke({ color: L.color, alpha: L.scan, width: L.scanW });
   // The print line (at local x 0; moved per frame): a soft glow + a bright core.
   const line = new GraphicsContext()
-    .rect(-3, -halfH - PAD, 6, 2 * (halfH + PAD)).fill({ color: HOLOGRAM_COLOR, alpha: 0.25 })
-    .rect(-0.75, -halfH - PAD, 1.5, 2 * (halfH + PAD)).fill({ color: 0xccffff, alpha: 0.95 });
+    .rect(-3, -halfH - PAD, 6, 2 * (halfH + PAD)).fill({ color: L.color, alpha: 0.25 })
+    .rect(-0.75, -halfH - PAD, 1.5, 2 * (halfH + PAD)).fill({ color: L.core, alpha: 0.95 });
   // A unit-wide mask strip from x 0 to 1 (scaled to "line .. right edge").
   const mask = new GraphicsContext().rect(0, -halfH - PAD, 1, 2 * (halfH + PAD)).fill({ color: 0xffffff });
   a = { art, line, mask, halfW };
@@ -91,16 +117,34 @@ export class StructureHologram extends Container {
   /** The fraction drawn last frame (tests read it). */
   shownPct = 0;
 
-  constructor(kindId: string | undefined, radius: number, style: string | undefined) {
+  constructor(kindId: string | undefined, radius: number, style: string | undefined, look: HoloLook = 'blueprint') {
     super();
     this.label = HOLOGRAM_LABEL;
-    const a = holoArtFor(kindId, radius, style);
+    const a = holoArtFor(kindId, radius, style, look);
     this.halfW = a.halfW;
     this.ahead = new Graphics(a.art);
     this.clip = new Graphics(a.mask);
     this.line = new Graphics(a.line);
-    this.ahead.mask = this.clip;
-    this.addChild(this.ahead, this.clip, this.line);
+    if (look === 'ghost') {
+      // The whole plan shows (nothing is paid yet); the line is a scanner.
+      this.clip.visible = false;
+      this.addChild(this.ahead, this.line);
+    } else {
+      this.ahead.mask = this.clip;
+      this.addChild(this.ahead, this.clip, this.line);
+    }
+  }
+
+  /** Per frame, the placement ghost only: tint cyan (clear) or red (blocked),
+   *  sweep the scanner and pulse on the game clock. `sent` = the post-Confirm
+   *  ghost awaiting the server: dimmer and still. No allocation. */
+  updateGhost(blocked: boolean, sent: boolean, nowMs: number): void {
+    this.tint = blocked ? GHOST_BLOCKED_COLOR : GHOST_CLEAR_COLOR;
+    if (sent) { this.alpha = 0.45; this.line.visible = false; return; }
+    const t = nowMs < 0 ? 0 : nowMs;
+    this.line.visible = true;
+    this.line.x = printLineX(this.halfW, (t % GHOST_SWEEP_MS) / GHOST_SWEEP_MS);
+    this.alpha = 0.88 + 0.12 * Math.sin((t / GHOST_PULSE_MS) * 2 * Math.PI);
   }
 
   /** Per frame: place the print line and the mask for `buildPct`. No allocation. */

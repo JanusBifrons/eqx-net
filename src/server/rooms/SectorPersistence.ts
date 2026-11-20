@@ -53,6 +53,8 @@ export interface PersistableStructure {
   gateAccess?: number;
   /** The owner switched it Off (absent ⇒ On). */
   switchedOff?: boolean;
+  /** The owner's power throttle in tenths (absent ⇒ 100%). */
+  throttle?: number;
   /** Production (P2b): the owner's recipe and a cycle in progress. */
   recipe?: string;
   prodLoaded?: boolean;
@@ -212,6 +214,7 @@ export class SectorPersistence {
         ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
         ...doorFields(d.gateDoorOf?.(s.id)),
         ...(s.switchedOff === true ? { switchedOff: true } : {}),
+        ...(s.throttle !== undefined ? { throttle: s.throttle } : {}),
         ...(s.recipe ? { recipe: s.recipe } : {}),
         ...(s.prodLoaded ? { prodLoaded: true, prodProgress: s.prodProgress ?? 0 } : {}),
         ...(s.prodCount !== undefined ? { prodCount: s.prodCount } : {}),

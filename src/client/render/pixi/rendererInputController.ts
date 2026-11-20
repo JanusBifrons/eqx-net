@@ -323,9 +323,15 @@ export class RendererInputController extends RendererCommandRouting {
       this.camera.toScreenInto(selWX, selWY, this._selScreenScratch);
       this.feedback.selectionScreenX = this._selScreenScratch.x;
       this.feedback.selectionScreenY = this._selScreenScratch.y;
+      // The box's screen half-size: project its bottom edge (2 halves below
+      // the top) so the inspector can sit clear of the selection.
+      const worldHalf = this.selectionBracket?.lastWorldHalf ?? 0;
+      this.camera.toScreenInto(selWX, selWY + 2 * worldHalf, this._selScreenScratch);
+      this.feedback.selectionScreenHalf = Math.abs(this._selScreenScratch.y - this.feedback.selectionScreenY) / 2;
     } else {
       this.feedback.selectionScreenX = null;
       this.feedback.selectionScreenY = null;
+      this.feedback.selectionScreenHalf = null;
     }
   }
 }

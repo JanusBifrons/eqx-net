@@ -23,6 +23,7 @@ import type { WreckPieceGeometry } from '@core/destruction/wreckPieces';
 import type { FieldRockBody } from '@core/terrain/chunkStreamer';
 import type { ChunkOpts } from '@core/terrain/fieldLayout';
 import type { WreckRockRef } from '@shared-types/messages/wreckDescriptor';
+import type { StructureBodyFacts } from '@core/structures/structureBody';
 
 /** The exact predWorld surface a leaf touches — a structural subset of
  *  `PhysicsWorld`, so the real world satisfies it and a unit-test fake can
@@ -30,6 +31,7 @@ import type { WreckRockRef } from '@shared-types/messages/wreckDescriptor';
 export type PredWorldHandle = Pick<
   PhysicsWorld,
   'hasShip' | 'spawnObstacle' | 'lockBody' | 'setHullExposed' | 'setShipState' | 'setAngularDamping' | 'setSleepSettle' | 'attachRig'
+  | 'setCollisionGroups' | 'despawnShip'
 >;
 
 /** Capital wreck geometry (S2b): the pieces rebuilt from the `wrecks[]`
@@ -73,6 +75,10 @@ export interface ClientSpawnCtx {
   wrecks?: WreckGeometrySource;
   /** Cut-field rocks (the asteroid leaf reads an awake rock's outline). */
   fieldRocks?: FieldRockSource;
+  /** Room-state structure rows by entityId (`mirror.structures`): the
+   *  structure leaf reads `ghostBody` (hologram pass-through). Absent ⇒ no
+   *  structure state: every structure body is solid. */
+  structures?: ReadonlyMap<number, StructureBodyFacts>;
   /** Numeric wire entityId. */
   entityId: number;
   /** Pre-cached `swarm-${entityId}` predWorld body key. */
