@@ -1,13 +1,13 @@
 /**
  * Phase V gates — the client derives every shield wall from the mirror with the
  * same rules as the server's ShieldWallManager (#15): fence walls between any
- * two connected built emitters (anchored on the nearest gate post), plus each
- * gate's own spans, blocking per the walls-up flag and the open bits.
+ * two connected built emitters (anchored on the nearest gate post), blocking
+ * per the walls-up flag. Gates / airlocks have no span across their gap: their
+ * doors are solid rig leaves (docs/plans/door-power.md, slice 11).
  */
 import { describe, expect, it } from 'vitest';
 import { visitDerivedWalls, type DerivedWallVisitor } from './derivedWalls.js';
 import type { StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
-import { GATE_OPEN_A } from '../../core/structures/gateLogic.js';
 import { GATE_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
 
 function st(connTo: number[], extra: Partial<StructureRenderState> = {}): StructureRenderState {
@@ -33,21 +33,21 @@ describe('visitDerivedWalls', () => {
     [3, sw(0, 400, 'connector')],
   ]);
 
-  it('a gate yields its span plus a fence wall to the pylon, anchored on the nearest post', () => {
+  it('a gate yields only a fence wall to the pylon, anchored on the nearest post (no gate span)', () => {
     const structures = new Map([[1, st([2, 3])], [2, st([1])], [3, st([1])]]);
     const walls = collect(structures, swarm);
-    const span = walls.find((w) => w.key < 0)!;
-    expect(span).toMatchObject({ ax: -88, ay: 0, bx: 88, by: 0, blocking: true, open: false });
+    expect(walls.filter((w) => w.key < 0)).toHaveLength(0);
     const fence = walls.find((w) => w.key === 1 * 65536 + 2)!;
     expect(fence).toMatchObject({ ax: GATE_POSTS[1]![0], ay: 0, bx: 500, by: 0, blocking: true });
-    expect(walls).toHaveLength(2); // no wall to the connector
+    expect(walls).toHaveLength(1); // no wall to the connector
   });
 
-  it('an open gate span is open, not blocking; the fence still blocks', () => {
-    const structures = new Map([[1, st([2], { gateOpen: GATE_OPEN_A })], [2, st([1])]]);
-    const walls = collect(structures, swarm);
-    expect(walls.find((w) => w.key < 0)).toMatchObject({ blocking: false, open: true });
-    expect(walls.find((w) => w.key > 0)).toMatchObject({ blocking: true });
+  it('an open door adds no wall; an airlock has no end spans; the fence still blocks', () => {
+    const door = { p0: 2700, t0: 0, dir: 1 as const, level: 15 };
+    const structures = new Map([[1, st([2], { doorA: door })], [2, st([1])], [4, st([], { doorA: door, doorB: door })]]);
+    const walls = collect(structures, new Map([...swarm, [4, sw(-900, 0, 'shield_airlock')]]));
+    expect(walls).toHaveLength(1);
+    expect(walls[0]).toMatchObject({ key: 1 * 65536 + 2, blocking: true, open: false });
   });
 
   it('walls go down when either end reports its walls down; blueprints have none', () => {

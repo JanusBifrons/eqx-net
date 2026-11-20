@@ -7,26 +7,20 @@
  *   - a FENCE wall between any two connected, built shield emitters (pylons and
  *     gates), anchored on the gate post nearest the far end (`emitterAnchor`).
  *     It blocks while both ends report their walls up (STRUCTURE_FLAG_WALL_ACTIVE).
- *   - each built gate's own SPANS (one per gate, one per airlock end). A span
- *     blocks while the gate's walls are up AND that end is closed (`gateOpen`).
+ *   - a teleporter's iris spans (solid only while SEALED).
+ *   Gates and airlocks have no shield span across their gap any more: their
+ *   SOLID sliding doors are rig leaves (docs/plans/door-power.md, slice 11).
  *
  * Allocation-free: a visitor object (created once by the caller) receives each
- * wall with a numeric key — pairs `lo * 65536 + hi`, spans `-(id * 4 + i + 1)`.
+ * wall with a numeric key — pairs `lo * 65536 + hi`, iris spans negative.
  */
 import type { StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
-import {
-  GATE_SPAN_THICKNESS,
-  emitterAnchor,
-  gateSpanWorld,
-  gateSpans,
-  gateTypeOf,
-  isShieldEmitterKind,
-} from '../../core/structures/gateGeometry.js';
+import { GATE_SPAN_THICKNESS, emitterAnchor, isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
 import { SHIELD_WALL_THICKNESS } from '../../core/structures/ShieldWall.js';
 import { PAD_SPECS, TP_PHASE, isTeleporterKind, padIrisSpanLocal } from '../../shared-types/teleport.js';
 
 export interface DerivedWallVisitor {
-  /** `open`: a gate span whose end is open (not blocking by design, as opposed
+  /** `open`: an unsealed teleporter iris (not blocking by design, as opposed
    *  to a wall that is down). */
   wall(key: number, ax: number, ay: number, bx: number, by: number, blocking: boolean, thickness: number, open: boolean): void;
 }
@@ -34,7 +28,7 @@ export interface DerivedWallVisitor {
 const A = { x: 0, y: 0 };
 const B = { x: 0, y: 0 };
 const IRIS = { ax: 0, ay: 0, bx: 0, by: 0 };
-/** Iris span keys live far below gate-span keys (-(id * 4 + i + 1)). */
+/** Iris span keys: -(IRIS_KEY_BASE + id * 16 + i + 1). */
 const IRIS_KEY_BASE = 2_000_000_000;
 
 export function visitDerivedWalls(
@@ -60,16 +54,6 @@ export function visitDerivedWalls(
     }
     if (!isShieldEmitterKind(e.shipKind)) continue;
     const up = st.wallActive === true;
-    // The gate's own spans.
-    if (gateTypeOf(e.shipKind) !== null) {
-      const n = gateSpans(e.shipKind).length;
-      const open = st.gateOpen ?? 0;
-      for (let i = 0; i < n; i++) {
-        if (!gateSpanWorld(e.shipKind, e.x, e.y, e.angle, i, A, B)) continue;
-        const isOpen = (open & (1 << i)) !== 0;
-        v.wall(-(id * 4 + i + 1), A.x, A.y, B.x, B.y, up && !isOpen, GATE_SPAN_THICKNESS, isOpen);
-      }
-    }
     // Fence walls to connected emitters (each pair once, from the lower id).
     const conn = st.connTo;
     for (let c = 0; c < conn.length; c++) {

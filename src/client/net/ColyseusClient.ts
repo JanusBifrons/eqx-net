@@ -666,7 +666,7 @@ export class ColyseusGameClient {
    *  syncSwarmIntoPredWorld's per-packet "seen" sweep. Pre-fix
    *  allocated `new Set<string>()` per binary swarm packet (~60 Hz). */
   private readonly _swarmSyncSeenScratch = new Set<string>();
-  /** Shield walls in predWorld (fence walls + gate spans), keyed by the
+  /** Shield walls in predWorld (fence walls + teleporter irises), keyed by the
    *  derived-wall key. Spawned once, toggled as they block / open, and swept by
    *  a generation stamp when they leave (syncPredWalls). */
   private readonly _predWalls = new Map<number, { id: string; blocking: boolean; gen: number }>();
@@ -2234,10 +2234,11 @@ export class ColyseusGameClient {
    * rule), so the LOCAL player is predicted-blocked by an up wall instead of
    * predicting through it and rubber-banding to the server. Snapshot cadence
    * (NOT the per-frame loop): walls are static + low-count, so a reconcile here
-   * is cheap. Every wall (fence walls between emitters + each gate's spans) is
+   * is cheap. Every wall (fence walls between emitters + teleporter irises) is
    * derived by the shared `visitDerivedWalls` — the same rules the renderer
    * draws with and the server collides with (#15). A wall that isn't blocking
-   * (down, or an open gate end) keeps its body with the collider disabled.
+   * (down, or an unsealed iris) keeps its body with the collider disabled.
+   * Gate / airlock doors are solid rig leaves, not walls (door-power slice 11).
    */
   private syncPredWalls(): void {
     if (!this.predWorld) return;

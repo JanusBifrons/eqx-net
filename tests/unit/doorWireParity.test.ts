@@ -17,7 +17,7 @@ import {
 } from '../../src/shared-types/structureStateWire';
 import { DOOR_POS_MAX, DOOR_POWER_LEVELS, DOOR_TRAVEL_TICKS } from '../../src/core/structures/gateGeometry';
 import {
-  GATE_OPEN_A, GATE_OPEN_B, gateOpenMask, newAirlockState, newGateState, newOccupancy, stepAirlock, stepGate,
+  GATE_OPEN_B, gateOpenMask, newAirlockState, newGateState, newOccupancy, stepAirlock, stepGate,
   type AirlockState, type GateState,
 } from '../../src/core/structures/gateLogic';
 import { doorClipTime, doorPosAt } from '../../src/core/structures/doorMotion';
@@ -111,7 +111,7 @@ describe('door row: server writer vs client decoder (#15, #16)', () => {
       writeDoorMotionRow('g', 'gate', source(g), st);
       decodeStructureState(view(st), OWNERS, live, 'shield_gate');
       expectSameDoors(live, g.door.seg, undefined, tick);
-      expect(live.gateOpen).toBe(g.door.seg.dir > 0 ? GATE_OPEN_A : undefined);
+      expect(live.gateOpen).toBeUndefined(); // slice 11: the old span mask is not decoded
       if (tick % 97 === 0) {
         const late = emptyStructureRow(); // a late joiner: one row, nothing else
         decodeStructureState(view(st), OWNERS, late, 'shield_gate');
@@ -175,12 +175,13 @@ describe('door row: server writer vs client decoder (#15, #16)', () => {
     const row = emptyStructureRow();
     writeDoorMotionRow('a', 'airlock', { maskFor: () => GATE_OPEN_B }, st);
     decodeStructureState(view(st), OWNERS, row, 'shield_airlock');
-    expect(row.gateOpen).toBe(GATE_OPEN_B);
+    expect(row.gateOpen).toBeUndefined(); // slice 11: doorA / doorB are the truth
     expect(doorPosAt(row.doorB!, 123)).toBe(DOOR_POS_MAX);
     expect(doorPosAt(row.doorA!, 123)).toBe(0);
-    // Kind not known yet (no pose): the open bits still read.
+    // Kind not known yet (no pose): no door fields until the pose arrives.
     const early = emptyStructureRow();
     decodeStructureState(view(st), OWNERS, early);
-    expect(early.gateOpen).toBe(GATE_OPEN_B);
+    expect(early.doorA).toBeUndefined();
+    expect(early.gateOpen).toBeUndefined();
   });
 });

@@ -71,8 +71,8 @@ export interface StructureVisualOpts {
   gate?: GateState;
   /** Override the footprint (kindless test structures sized by radius). */
   size?: StructureFootprint;
-  /** Gates in game: leave the shield spans out — the renderer draws them live
-   *  from the open state (ConnectorRenderer via derivedWalls). */
+  /** Gates in game: leave the legacy plan's shield spans out (the design
+   *  sheet still draws them). In game the doors are solid rig leaves. */
   omitSpans?: boolean;
   /** Owner livery (`?structLivery=1`, off by default): add the sigil slots
    *  and livery bands. Off = the plan is exactly today's. */

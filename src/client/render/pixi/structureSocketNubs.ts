@@ -27,6 +27,8 @@
  * a small whole-number code (a few charge steps), so the context is shared per
  * (kind, used mask, code) and swaps only when the code changes; the baked body
  * art never re-bakes. Per frame: one code computation, nothing allocated.
+ * The hook also gets the rig clock tick (a gate's deck light reads its door
+ * position from the decoded segment at that tick).
  *
  * Shield gate / airlock sockets are their emitter posts (fence links stay
  * straight post to post): the post is the socket, so they get no nub.
@@ -102,12 +104,13 @@ export function innerChannelFor(kind: string): InnerChannelHook {
 
 /**
  * A kind's live body state on the overlay. `code` reads the structure row
- * into a small whole number (0 = nothing drawn), per frame, alloc-free;
+ * (and, for time-driven state, the rig clock `tick`) into a small whole
+ * number (0 = nothing drawn), per frame, alloc-free;
  * `draw` draws that code into a shared context (cold: once per code), in the
  * structure's local Pixi frame, over the nubs.
  */
 export interface BodyStatusHook {
-  code(kind: StructureKindId, st: StructureRenderState | undefined): number;
+  code(kind: StructureKindId, st: StructureRenderState | undefined, tick: number): number;
   draw(g: GraphicsContext, code: number, kind: StructureKindId): void;
 }
 
@@ -115,10 +118,10 @@ export interface BodyStatusHook {
 export type BodyStatusHookTable = Readonly<Partial<Record<StructureKindId, BodyStatusHook>>>;
 
 /** The body-state code of a structure (0 when its kind has no hook). */
-export function bodyStatusCode(kind: string, st: StructureRenderState | undefined): number {
+export function bodyStatusCode(kind: string, st: StructureRenderState | undefined, tick = 0): number {
   if (!isStructureKindId(kind)) return 0;
   const h = BODY_STATUS_HOOKS[kind];
-  return h === undefined ? 0 : h.code(kind, st);
+  return h === undefined ? 0 : h.code(kind, st, tick);
 }
 
 /** True when `kind` shows its state on its body (its floating readouts go). */
@@ -217,12 +220,12 @@ export function socketNubsOf(sprite: Container): Graphics | undefined {
  * Keep `sprite`'s socket nubs in step with its kind and used sockets (the
  * structure row `st`). Called per visible structure per frame under the flag;
  * swaps the shared context only when the kind, the used mask or the
- * body-state code changed.
+ * body-state code changed. `tick`: the rig clock (body-state hooks only).
  */
-export function updateSocketNubs(sprite: Container, kind: string | undefined, st: StructureRenderState | undefined): void {
+export function updateSocketNubs(sprite: Container, kind: string | undefined, st: StructureRenderState | undefined, tick = 0): void {
   if (kind === undefined) return;
   const mask = socketUsedMask(st?.connSockSelf);
-  const status = bodyStatusCode(kind, st);
+  const status = bodyStatusCode(kind, st, tick);
   const s = STATES.get(sprite);
   if (s !== undefined && !s.g.destroyed && s.g.parent === sprite) {
     if (s.kind === kind && s.mask === mask && s.status === status) return;
