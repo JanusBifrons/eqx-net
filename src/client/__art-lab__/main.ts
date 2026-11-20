@@ -566,7 +566,7 @@ async function main(): Promise<void> {
     // Rigs: game pose of each host (y-up), clip time in ticks.
     for (const r of rigs) {
       const st = scene.structs[r.i]!;
-      r.view.update(r.input, t * 60, st.x, -st.y, -st.rot, 1);
+      r.view.update(r.input, t * 60, st.x, -st.y, -st.rot, 1, cache.rig.sunAz);
     }
 
     // GPU-lit hulls: now every light and occluder of this frame is known.

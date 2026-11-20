@@ -69,6 +69,12 @@ export interface PartDef {
   /** Optional outline in the part's own frame, flat [x0, y0, x1, y1, ...]
    *  (render 2c and physics 2d read it; evaluation ignores it). */
   readonly outline?: readonly number[];
+  /** A cosmetic hinge that AIMS: when the caller passes an aim direction to
+   *  `evaluateRig` (host frame, rad), the part turns so its frame's +x points
+   *  that way (within its limits) and clips do not drive it; with no aim it
+   *  poses like any part. Look only (stage-4 plan §2 rule 5), e.g. a solar
+   *  panel facing the sector's sun. Hinge + `cosmetic` only. */
+  readonly aim?: boolean;
 }
 
 export interface KeyframeDef {
@@ -198,6 +204,8 @@ export interface Rig {
   readonly maxChain: number;
   /** Clip index of `RigDef.idleClip` (the no-clip pose), or -1 (rest). */
   readonly idleClip: number;
+  /** 1 for an aiming part (`PartDef.aim`), in rig order. */
+  readonly aims: Uint8Array;
 }
 
 function fail(rig: string, msg: string): never {
@@ -245,6 +253,7 @@ export function buildRig(def: RigDef): Rig {
   const min = new Float64Array(n);
   const max = new Float64Array(n);
   const rest = new Float64Array(n);
+  const aims = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     const p = ordered[i]!;
     const j = p.joint;
@@ -258,6 +267,10 @@ export function buildRig(def: RigDef): Rig {
     min[i] = j.min;
     max[i] = j.max;
     rest[i] = p.rest;
+    if (p.aim) {
+      if (j.type !== 'hinge' || p.kind !== 'cosmetic') fail(rid, `part '${p.id}' aims but is not a cosmetic hinge`);
+      aims[i] = 1;
+    }
     if (j.type === 'hinge') {
       jointType[i] = JOINT_HINGE;
     } else if (j.type === 'lift') {
@@ -354,7 +367,7 @@ export function buildRig(def: RigDef): Rig {
   return {
     id: rid, partCount: n, partIds: ordered.map((p) => p.id), parts: ordered,
     parent, jointType, anchorX, anchorY, baseAngle, axisX, axisY, min, max, rest,
-    clips, maxChain, idleClip,
+    clips, maxChain, idleClip, aims,
   };
 }
 

@@ -93,6 +93,9 @@ export interface RigDrawHook {
   readonly mountPart?: (rig: Rig) => number;
   /** Art under every plane part and shadow (a hatch slot), or null. */
   readonly planeUnder?: (rig: Rig) => GraphicsContext | null;
+  /** Part `i`'s own art instead of its role's (`rigPartContext`), or null
+   *  for the role's. One shared context per (rig, part): the hook caches it. */
+  readonly partArt?: (rig: Rig, i: number) => GraphicsContext | null;
 }
 
 /** Rig id -> its drawing hook. */
