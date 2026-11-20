@@ -54,7 +54,7 @@ describe('reclampHeldInspector', () => {
 describe('placeInspector with the top-centre HUD band', () => {
   const PW = 863;
   const PH = 360;
-  const helm = { left: 280, right: 583, bottom: 130 };
+  const helm = { left: 280, right: 583, top: 64, bottom: 130 };
 
   it('a panel that would overlap the band is pushed below it', () => {
     placeInspector(430, 120, 120, 50, PW, PH, out, helm);
@@ -71,12 +71,45 @@ describe('placeInspector with the top-centre HUD band', () => {
   });
 
   it('an empty band (bottom 0) changes nothing', () => {
-    const empty = { left: 0, right: 0, bottom: 0 };
+    const empty = { left: 0, right: 0, top: 0, bottom: 0 };
     expect(placeInspector(430, 120, 120, 50, PW, PH, out, empty)).toEqual({ left: 430, top: 120 });
   });
 
   it('a held panel over the band is moved below it', () => {
     expect(reclampHeldInspector(430, 120, 120, 50, PW, PH, out, helm)).toBe(true);
     expect(out.top).toBe(helm.bottom + INSPECTOR_EDGE + 50);
+  });
+});
+
+// #1046 live check (sideways Pixel 7): clamped under the helm, a ~210 px card
+// ran down over the bottom-centre status capsule.
+describe('placeInspector between the top and bottom HUD bands', () => {
+  const PW = 863;
+  const PH = 360;
+  const helm = { left: 280, right: 583, top: 64, bottom: 100 };
+  const capsule = { left: 300, right: 563, top: 304, bottom: 344 };
+
+  it('a panel that fits between the bands keeps its bottom above the capsule', () => {
+    placeInspector(430, 340, 120, 150, PW, PH, out, helm, capsule);
+    expect(out.top).toBe(capsule.top - INSPECTOR_EDGE);
+    expect(out.top - 150).toBeGreaterThanOrEqual(helm.bottom + INSPECTOR_EDGE);
+  });
+
+  it('a panel too tall for the gap keeps the helm clear and overlaps the capsule as little as possible', () => {
+    placeInspector(430, 340, 120, 210, PW, PH, out, helm, capsule);
+    expect(out.top - 210).toBe(helm.bottom + INSPECTOR_EDGE);
+  });
+
+  it('a panel already clear of the capsule is unchanged', () => {
+    expect(placeInspector(430, 250, 120, 100, PW, PH, out, helm, capsule)).toEqual({ left: 430, top: 250 });
+  });
+
+  it('a panel beside the capsule (not over it) may go below its top', () => {
+    expect(placeInspector(120, 340, 120, 100, PW, PH, out, helm, capsule)).toEqual({ left: 120, top: 340 });
+  });
+
+  it('a held panel over the capsule is lifted off it', () => {
+    expect(reclampHeldInspector(430, 340, 120, 150, PW, PH, out, helm, capsule)).toBe(true);
+    expect(out.top).toBe(capsule.top - INSPECTOR_EDGE);
   });
 });
