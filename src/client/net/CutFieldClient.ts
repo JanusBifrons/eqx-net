@@ -159,6 +159,9 @@ export class CutFieldClient implements FieldRockSource {
   /** Tile coords drawn (tx, ty pairs), so stop can drop them. */
   private readonly coarseDrawn: number[] = [];
   private field: ChunkOpts | null = null;
+  /** The field's cut options (`cutFieldOpts` of the welcome's seed and
+   *  clearings), null without a field: a field rock's wreck rebuilds from them. */
+  get fieldOpts(): ChunkOpts | null { return this.field; }
 
   constructor(private readonly deps: CutFieldClientDeps) {}
 
