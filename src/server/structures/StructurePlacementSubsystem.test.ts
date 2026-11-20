@@ -153,25 +153,55 @@ describe('StructurePlacementSubsystem — packed placement seam (P2b)', () => {
     let commits = 0;
     (h.sub as unknown as { hooks: StructurePlacementHooks }).hooks.packedGateForBuild = (_owner, kind) => {
       calls.push(kind);
-      return { ok, commit: () => { commits++; } };
+      return { ok, commit: () => { commits++; return 42; } };
     };
     return { ...h, calls, commits: () => commits };
   }
 
-  it('only a player placement (requirePacked) of a non-starter kind is checked', () => {
+  it('only a player placement (requirePacked) of a non-starter kind or the Capital is checked', () => {
     const g = gated(true);
     g.sub.place('alice', 'smelter', 0, 0); // scenario / generated path
     g.sub.place('alice', 'solar', 2000, 0, { requirePacked: true }); // starter kind
     expect(g.calls).toEqual([]);
     g.sub.place('alice', 'smelter', 4000, 0, { requirePacked: true });
-    expect(g.calls).toEqual(['smelter']);
+    g.sub.place('alice', 'capital', 8000, 0, { requirePacked: true });
+    expect(g.calls).toEqual(['smelter', 'capital']);
   });
 
-  it('no packed item ⇒ rejected, nothing spawned, nothing consumed', () => {
+  it('a refinery places with no crate: a bank build, nothing consumed', () => {
     const g = gated(false);
-    expect(g.sub.place('alice', 'smelter', 0, 0, { requirePacked: true })).toBeNull();
-    expect(g.spawned).toHaveLength(0);
+    const id = g.sub.place('alice', 'refinery', 0, 0, { requirePacked: true });
+    expect(id).not.toBeNull();
+    const rec = g.registry.get(id!)!;
+    expect(rec.prepaid).toBeUndefined();
+    expect(rec.packedQuality).toBeUndefined();
+    expect(rec.isConstructed).toBe(false);
     expect(g.commits()).toBe(0);
+  });
+
+  it('a held refinery crate is used first (a free, prepaid build)', () => {
+    const g = gated(true);
+    const id = g.sub.place('alice', 'refinery', 0, 0, { requirePacked: true });
+    const rec = g.registry.get(id!)!;
+    expect(rec.prepaid).toBe(true);
+    expect(rec.packedQuality).toBe(42);
+    expect(g.commits()).toBe(1);
+  });
+
+  it('a Capital needs its crate and repacks: refused without one; with one it is prepaid', () => {
+    const none = gated(false);
+    expect(none.sub.place('alice', 'capital', 0, 0, { requirePacked: true })).toBeNull();
+    expect(none.spawned).toHaveLength(0);
+    expect(none.commits()).toBe(0);
+    // Several Capitals are allowed, one crate each. Prepaid + quality is what
+    // the grid pulse's deconstruct reads to give the crate back (onRepack).
+    const g = gated(true);
+    for (const x of [0, 8000]) {
+      const rec = g.registry.get(g.sub.place('alice', 'capital', x, 0, { requirePacked: true })!)!;
+      expect(rec.prepaid).toBe(true);
+      expect(rec.packedQuality).toBe(42);
+    }
+    expect(g.commits()).toBe(2);
   });
 
   it('a packed item is consumed once, after the structure is registered', () => {

@@ -33,7 +33,7 @@ import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { placementRejection } from '../../core/structures/placementRules.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure, linkReachBox } from './structureGridView.js';
-import { STARTER_STRUCTURE_KINDS } from '../../shared-types/blueprints.js';
+import { STARTER_STRUCTURE_KINDS, needsPackedCrate } from '../../shared-types/blueprints.js';
 import { cloneHold, isHoldEmpty, takePacked } from '../../core/cargo/hold.js';
 import type { HoldStore } from '../cargo/HoldStore.js';
 import type { StorageService } from '../cargo/StorageService.js';
@@ -137,11 +137,15 @@ export class StructurePlacementSubsystem {
       if (this.lastRefusal !== null) return null;
     }
 
-    // P2b — a player placing a non-starter kind needs a packed one.
+    // A player's placement uses a held packed crate first (a free build).
+    // Only the Capital NEEDS one; any other kind without a crate builds from
+    // the bank (not prepaid).
     let packed: PackedGateResult | null = null;
-    if (opts?.requirePacked === true && this.hooks.packedGateForBuild && !STARTER_STRUCTURE_KINDS.includes(kindId)) {
-      packed = this.hooks.packedGateForBuild(owner, kindId, this.hooks.sectorKey?.() ?? null);
-      if (!packed.ok) return null;
+    const crate = needsPackedCrate(kindId);
+    if (opts?.requirePacked === true && this.hooks.packedGateForBuild && (crate || !STARTER_STRUCTURE_KINDS.includes(kindId))) {
+      const gate = this.hooks.packedGateForBuild(owner, kindId, this.hooks.sectorKey?.() ?? null);
+      if (gate.ok) packed = gate;
+      else if (crate) return null;
     }
 
     const preBuilt = kind.constructionCost <= 0;
