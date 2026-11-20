@@ -3249,7 +3249,8 @@ did not carry speed in: tick jitter left the ship almost stopped at the corner, 
 asked for the new leg's full cruise. The pilot thrusts along its nose while the nose comes round, so it
 lurched ~33 u sideways off the new leg into rock. Cap the speed out of a sharp corner by the swing
 its nose has left (`NavRoutes.turnCap`, scaled by that angle and the hull's turn rate): a timed hold
-cost time and still brushed rock when the nose came round late. Log the ship's
+cost time and still brushed rock when the nose came round late. Don't add the cap to a capital: its
+planner already fits corners to its turning radius, and a second limit only slowed it. Log the ship's
 track against the corner before tuning the brake; the contact point says which side of the corner failed.
 
 ## 2026-11-19 — a long hull planned as a disc of its length never fits a lane

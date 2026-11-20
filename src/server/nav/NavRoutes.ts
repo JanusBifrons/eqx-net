@@ -184,9 +184,14 @@ export class NavRoutes implements IAiNavRoutes {
    * round, by the angle it has left; without, for `NAV_TURN_HOLD` × θ / ω. Measured on the streets
    * flight: a fighter stalled at a 76° corner and left it at the leg's full
    * cruise ran 33 u off the line into rock; the model says 31 u.
+   * Not for a hull asking with a turning radius (a capital): its planner
+   * already fits each corner to its turn room, and a cap on top only slowed
+   * it (a destroyer's planned arc: 480 s to the goal became 553 s, no closer
+   * to the line).
    */
   private holdTurn(s: ShipNav, leg: number, hull: NavHull, now: number): void {
     s.holdUntil = -Infinity;
+    if (this.turnRadius > 0) return; // its plan is shaped by its turning: not limited twice
     const p = s.route.points, w = hull.turnRate;
     const cx = p[leg * 2 - 2]!, cy = p[leg * 2 - 1]!;
     const qx = leg > 1 ? p[leg * 2 - 4]! : s.route.sx, qy = leg > 1 ? p[leg * 2 - 3]! : s.route.sy;

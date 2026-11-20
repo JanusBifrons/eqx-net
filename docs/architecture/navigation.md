@@ -264,7 +264,11 @@ one it flies straight as before.
   on the streets flight and still brushed rock 1 run in 31. Both brains that fly routes
   (`pilot/moveTo.ts`, `modes/flockMode.ts`) pass the nose (`self.angle`) and take min(…, `turnSpeed`);
   only a capital's plan is shaped by it (turning radius > 0). Asked with no nose, the hold is timed
-  (`NAV_TURN_HOLD` × θ / ω at the corner's figure).
+  (`NAV_TURN_HOLD` × θ / ω at the corner's figure). A hull asking with a turning radius (a capital) is
+  never capped: its plan already fits each corner to its turn room (slice 11). Measured on real physics
+  along a 5-point planned arc (76°, legs of 4 turning radii), the cap took a destroyer from 480 s to
+  553 s and a heavy cruiser from 486 s to 501 s (a battleship was unchanged at 496 s), with no gain in
+  how close it kept to the line.
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25, the least room a route may have (owner:
   stays 30 u for a fighter).
 - Comfort (owner 2026-11-19, "margin where room"): `navComfort(kind)` (`shipScale/navTuning.ts`, `navHull(kind).comfort`) = max(clearance,

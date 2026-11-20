@@ -243,6 +243,16 @@ describe('NavRoutes (each ship\'s route to its goal, navigation slice 7)', () =>
     expect(nav.turnSpeed).toBe(Infinity);
   });
 
+  it('a hull asking with a turning radius (a capital, its plan already fitted to its turns) is not capped out of a corner', async () => {
+    const s = stub(), nav = new NavRoutes(s.request, () => 0);
+    const east = -Math.PI / 2;
+    nav.waypoint('cap', 0, 0, 30_000, 0, CAP, 500, false, east, 7758);
+    await s.answer({ points: new Float64Array([10_000, 0, 12_400, 9_600, 30_000, 14_000]) }); // the same 76° corner, capital-sized
+    nav.waypoint('cap', 9_000, 0, 30_000, 0, CAP, 500, false, east, 7758);
+    nav.waypoint('cap', 10_001, 0, 30_000, 0, CAP, 500, false, east, 7758); // past it, the nose still on the old leg
+    expect(nav.turnSpeed).toBe(Infinity);
+  });
+
   it('passes a capital nose and turning radius on to its plan; a plain ask sends none (slice 11)', () => {
     const s = stub(), nav = new NavRoutes(s.request, () => 0);
     nav.waypoint('cap', 0, 0, 9000, 0, CAP, 500, false, 1.25, 7758);
