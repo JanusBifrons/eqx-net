@@ -30,7 +30,7 @@ import {
   CAPITAL_STARTING_MINERALS,
 } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
-import { placementRejection } from '../../core/structures/placementRules.js';
+import { placementRejection, placementRejectionNotice } from '../../core/structures/placementRules.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure, linkReachBox } from './structureGridView.js';
 import { STARTER_STRUCTURE_KINDS } from '../../shared-types/blueprints.js';
@@ -93,8 +93,9 @@ export interface StructurePlacementHooks {
 export class StructurePlacementSubsystem {
   /** Scratch for `linkReachBox` (auto-connect's `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
-  /** Why the last `place` was refused by a kind rule (`placementRefusal`), for
-   *  the room's notice; null when it wasn't (or it succeeded). */
+  /** Why the last `place` was refused (an overlap, or a kind rule via
+   *  `placementRefusal`), for the room's notice; null when it wasn't (or it
+   *  succeeded). */
   lastRefusal: string | null = null;
 
   constructor(private readonly hooks: StructurePlacementHooks) {}
@@ -127,7 +128,9 @@ export class StructurePlacementSubsystem {
     // the auto-connect LOS check already uses). Shared pure predicate so the
     // client ghost can validate identically.
     const near = { x0: pos.x - hw, y0: pos.y - hh, x1: pos.x + hw, y1: pos.y + hh };
-    if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near, true), rot) !== null) {
+    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near, true), rot);
+    if (rejection !== null) {
+      this.lastRefusal = placementRejectionNotice(rejection);
       return null;
     }
 
