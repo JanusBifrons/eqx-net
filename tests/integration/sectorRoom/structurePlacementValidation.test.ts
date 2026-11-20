@@ -17,7 +17,7 @@
  * Pre-fix assertion #1 FAILS — the capital lands on the rock (registry size 1).
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import { placementRejection } from '../../../src/core/structures/placementRules.js';
 import { isConnectionLineBlocked, type GridNode, type GridObstacle } from '../../../src/core/structures/Grid.js';
 import { CONNECTION_MAX_RANGE } from '../../../src/core/structures/structureGridConstants.js';
@@ -43,8 +43,9 @@ describe('SectorRoom integration — placement rejects asteroid overlap (C2)', (
     });
     // `connectAs` (not connectActive) — placement resolves `owner` from the
     // join-time session→player map (set in onJoin), so no active hull is needed;
-    // this also dodges the host-load-sensitive isActive wait.
-    const room = await harness.connectAs('player-1');
+    // this also dodges the host-load-sensitive isActive wait. One Capital crate:
+    // the refused placement keeps it for the one that lands.
+    const room = await harness.connectAs('player-1', { initialCargo: withCapitalCrates() });
     // Let the worker process the asteroid spawn so its pose lands in the SAB
     // (SectorObstacles.rocks reads SAB x/y).
     await harness.advance(300);
@@ -108,7 +109,7 @@ describe('SectorRoom integration — placement rejects asteroid overlap (C2)', (
     const pose = rec.lastBroadcast, { hw, hh } = structureHalfExtents('connector', 0);
     const rock: GridObstacle = { x: pose.x, y: pose.y, radius: rec.radius, angle: pose.angle, parts: [rec.vertices!] };
     const circleOnly: GridObstacle = { x: pose.x, y: pose.y, radius: rec.radius };
-    const at = (id: string, x: number, y: number): GridNode => ({ id, x, y, radius: Math.max(hw, hh), halfW: hw, halfH: hh, isHub: true, isCapital: false, isConnector: true, maxConnections: 6, powerOutput: 0, powerConsumption: 0, isConstructed: false });
+    const at = (id: string, x: number, y: number): GridNode => ({ id, kind: 'connector', x, y, rot: 0, radius: Math.max(hw, hh), halfW: hw, halfH: hh, isHub: true, isCapital: false, isConnector: true, maxConnections: 6, powerOutput: 0, powerConsumption: 0, isConstructed: false });
     // Candidate spots around the rock that placement (outline narrow phase) accepts.
     const spots: { x: number; y: number }[] = [];
     for (let k = 0; k < 72; k++) {

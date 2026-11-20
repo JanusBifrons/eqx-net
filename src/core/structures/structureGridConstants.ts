@@ -25,6 +25,18 @@ export const SCAFFOLDING_HP_FRACTION = 0.1;
  *  `min`-of-endpoints collapses to this for every pair. */
 export const CONNECTION_MAX_RANGE = 600;
 
+/** Shortest socket cable, stud to stud (straight-line distance between the
+ *  two sockets `pickCableSocketPair` picks), world units. Closer than this a
+ *  link is refused (`'too-short'`, owner rule "keep buildings apart"): every
+ *  cable shows a stretch of bundle between its end collars. From the cable
+ *  look at 1x (`connectorLineLooks.ts`): each end collar sits half a body
+ *  width (12 / 2 = 6) in from its stud, and a run whose span between the
+ *  collars is under 0.8 station pitches (0.8 × 55 = 44) draws the collars
+ *  only. 6 + 44 + 6 = 56 is the shortest run that lays out collar, lashing,
+ *  collar with bundle showing between them; the look reads its short-run span
+ *  from this. Fence links (post to post) are exempt. */
+export const MIN_CABLE_LENGTH = 56;
+
 /** WS-5 (R2.17) — the global cap on how many hubs a single freshly-placed
  *  structure auto-connects to on placement. A structure's OWN `maxConnections`
  *  (Connector 6, Capital 4, leaves 1) already bounds it; this is the additional

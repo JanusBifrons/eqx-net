@@ -16,7 +16,8 @@
 
 import { PixiRenderer } from '../render/PixiRenderer.js';
 import { loadGraphicsQualityPreference, resolveGraphicsQuality } from '../render/graphicsQuality.js';
-import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, readLivery, readOreLook, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
+import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, readLivery, readOreLook, readStructLivery, readStructStyle, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
+import { readRestyleLook } from '../render/pixi/rendererSetup/restyleLook.js';
 import {
   WorkerRendererClient,
   supportsOffscreenRenderer,
@@ -73,6 +74,16 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   // Ship livery: on by default (`?livery=off` = none); Machined art only.
   const livery = art.mode === 'machined' ? readLivery(search) : undefined;
   if (livery) art.livery = livery;
+  // Structure livery (look R&D, off by default): `?structLivery=1`.
+  if (art.mode === 'machined' && readStructLivery(search)) art.structLivery = true;
+  // Structure style (structure restyle): `c` by default, `?restyle=off` = the old bakes.
+  const structStyle = art.mode === 'machined' ? readStructStyle(search) : undefined;
+  if (structStyle) art.structStyle = structStyle;
+  // Restyle line look + rig parts (both art modes, both renderer paths): resolved
+  // here because the render worker has no `window` (rendererSetup/restyleLook.ts).
+  const restyle = readRestyleLook(search);
+  art.lineLook = restyle.lineLook;
+  art.rigs = restyle.rigs;
   const ore = readOreLook(search); // cut-field ore look trial (F1c)
   if (ore) art.ore = ore;
   // Graphics quality (anti-aliasing study): URL > saved choice > today's look.
@@ -185,6 +196,12 @@ export function buildJoinSpec(
       if (good && qty) goods[good] = parseInt(qty, 10);
     }
     extraJoinOptions['initialCargo'] = { goods, blueprints: [] };
+  }
+  // ...and packed items (`?initialPacked=structure:capital,structure:capital`).
+  if (urlParams.has('initialPacked')) {
+    const packed = urlParams.get('initialPacked')!.split(',').filter(Boolean).map((product) => ({ product, quality: 50 }));
+    const cargo = (extraJoinOptions['initialCargo'] as Record<string, unknown> | undefined) ?? { goods: {}, blueprints: [] };
+    extraJoinOptions['initialCargo'] = { ...cargo, packed };
   }
   if (urlParams.has('initialWallet'))
     extraJoinOptions['initialWallet'] = parseInt(urlParams.get('initialWallet')!, 10);

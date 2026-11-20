@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RECIPE_IDS } from '../recipes.js';
+import { MAX_BUILD_COUNT } from '../production.js';
 import { StructureKindIdSchema } from '../structureKinds.js';
 import { GATE_ACCESS_IDS } from '../gateAccess.js';
 import { MountWeaponIdSchema } from '../shipKinds/types.js';
@@ -283,14 +284,28 @@ export const SetGateAccessSchema = z
   })
   .strict();
 
+/** Base loop — client → server: the owner switches a structure On or Off
+ *  (Off: no draw, no work). Owner-gated server-side; a foreign / no-Off kind
+ *  request is a silent no-op. Strict. */
+export const SetStructurePowerSchema = z
+  .object({
+    type: z.literal('set_structure_power'),
+    entityId: z.number().int().nonnegative(),
+    on: z.boolean(),
+  })
+  .strict();
+
 /** P2b (plan soft-leaping-truffle v3) — client → server: pick the recipe a
  *  processor runs. Owner-gated server-side; a foreign / non-processor /
- *  wrong-recipe request is a silent no-op. Strict. */
+ *  wrong-recipe request is a silent no-op. Strict. Sending it again (same
+ *  recipe) resets the build count. */
 export const SetRecipeSchema = z
   .object({
     type: z.literal('set_recipe'),
     entityId: z.number().int().nonnegative(),
     recipe: z.enum(RECIPE_IDS),
+    /** Build count (job 2E): stop after this many outputs. Absent ⇒ repeat forever. */
+    count: z.number().int().min(1).max(MAX_BUILD_COUNT).optional(),
   })
   .strict();
 
@@ -530,6 +545,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   StructureActionSchema,
   UpgradeStructureSchema,
   SetGateAccessSchema,
+  SetStructurePowerSchema,
   SetRecipeSchema,
   LoadBlueprintSchema,
   UnloadBlueprintSchema,
@@ -562,6 +578,7 @@ export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
 export type UpgradeStructureMessage = z.infer<typeof UpgradeStructureSchema>;
 export type SetGateAccessMessage = z.infer<typeof SetGateAccessSchema>;
 export type SetRecipeMessage = z.infer<typeof SetRecipeSchema>;
+export type SetStructurePowerMessage = z.infer<typeof SetStructurePowerSchema>;
 export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
 export type SpectateMessage = z.infer<typeof SpectateSchema>;
 export type FleetOrderMessage = z.infer<typeof FleetOrderSchema>;

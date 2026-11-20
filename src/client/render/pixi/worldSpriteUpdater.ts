@@ -27,6 +27,7 @@ import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import { blastRadiusFor } from '../art/fx/FxExplosions.js';
 import { forEachShipRekey } from '../shipRekey.js';
 import type { RendererFrameCtx } from './frameCtx.js';
+import { countPreviewRefusals } from './previewLinkRefusals.js';
 
 /** Hit targets, ship sprites + death explosions, connector web, swarm, sweep. */
 export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx): void {
@@ -86,6 +87,8 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
   r.connectorRenderer.update(mirror, r.world.scale.x, r.fxNow());
   r.feedback.placementPreviewConnectionCount =
     r.connectorRenderer.placementPreviewConnectionCount;
+  r.feedback.placementPreviewTooShortCount = mirror.pendingPlacementPreview
+    ? countPreviewRefusals(r.connectorRenderer, 'too-short') : 0;
   // WS-D (#21) — built-turret defensive range-circle count. DEV hook only (not
   // a RendererFeedback field — that grows the per-frame worker payload and is
   // phase-gated; the unit lock is the primary regression guard). Main-thread

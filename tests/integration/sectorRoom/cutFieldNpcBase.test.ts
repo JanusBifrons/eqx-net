@@ -6,6 +6,10 @@
  * a field rock. The base sits where the field is dense: its Capital in a
  * clear spot of chunks (-9..-7, 5..7) of seed 'look' whose grown layout overlaps rocks
  * and has generated links whose line crosses one.
+ *
+ * Links are socket-to-socket curved cables (structure restyle 0d), so the
+ * placed base's links are checked along each stored link's real cable
+ * (`flattenLinkCable`), not the centre line.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -18,6 +22,8 @@ import { structureHalfExtents } from '../../../src/shared-types/structureKinds.j
 import { clampToSectorBounds } from '../../../src/shared-types/sectorBounds.js';
 import { placementRejection } from '../../../src/core/structures/placementRules.js';
 import { rockObstacleParts, segmentHitsObstacle, type GridObstacle } from '../../../src/core/structures/Grid.js';
+import { CABLE_CURVE_FLOATS, CABLE_CURVE_SEGMENTS, flattenLinkCable, makeCableBox } from '../../../src/core/structures/cableCurve.js';
+import { structureToGridNode } from '../../../src/server/structures/structureGridView.js';
 
 let harness: SectorTestHarness | undefined;
 afterEach(async () => { await harness?.cleanup(); harness = undefined; });
@@ -38,7 +44,10 @@ describe('SectorRoom integration — an NPC base seeded in the cut field (C5f/C5
     for (const p of grown.placements) { const { hw, hh } = structureHalfExtents(p.kind, p.rot ?? 0); ex = Math.max(ex, Math.abs(p.x) + hw, Math.abs(p.y) + hh); }
 
     // Pick a Capital spot around chunk (-8, 6): clear itself, in bounds, with
-    // the most generated links across field rocks, then slots on them.
+    // at least one generated link across a field rock, then the most slots on
+    // rocks (dense), then the most links across. (Ranking links first picked a
+    // sparse spot once the catalogue v14 layout grew: the site with the most
+    // crossings has no slot on a rock, while dense sites with crossings exist.)
     let site: { x: number; y: number; slotsOnRock: number; linksAcross: number } | null = null;
     const steps = 24, cx0 = -9 * CHUNK_SIZE, cy0 = 5 * CHUNK_SIZE;
     for (let i = 0; i <= steps; i++) {
@@ -59,7 +68,8 @@ describe('SectorRoom integration — an NPC base seeded in the cut field (C5f/C5
           if (rocks.some((r) => segmentHitsObstacle(x + pa.x, y + pa.y, x + pb.x, y + pb.y, r))) linksAcross++;
         }
         if (slotsOnRock === grown.placements.length) continue;
-        if (!site || linksAcross * 100 + slotsOnRock > site.linksAcross * 100 + site.slotsOnRock) site = { x, y, slotsOnRock, linksAcross };
+        const score = (c: { slotsOnRock: number; linksAcross: number }): number => (c.linksAcross > 0 ? 1e6 : 0) + c.slotsOnRock * 100 + c.linksAcross;
+        if (!site || score({ slotsOnRock, linksAcross }) > score(site)) site = { x, y, slotsOnRock, linksAcross };
       }
     }
     expect(site, 'a clear Capital spot in the field').not.toBeNull();
@@ -84,13 +94,20 @@ describe('SectorRoom integration — an NPC base seeded in the cut field (C5f/C5
       expect(placementRejection(s.kind, s.x, s.y, [], rocks, rot), `${s.kind} at (${s.x.toFixed(0)}, ${s.y.toFixed(0)}) sits on a field rock`).toBeNull();
     }
 
-    const rocks = shaped(site!.x - ex, site!.y - ex, site!.x + ex, site!.y + ex);
+    // Each stored link's real cable (the socket pair `canConnect` picked).
+    const poly = new Float64Array(CABLE_CURVE_FLOATS), cbox = makeCableBox();
     let links = 0;
     for (const c of int.structureRegistry.allConnections()) {
       const a = int.structureRegistry.get(c.aId)!, b = int.structureRegistry.get(c.bId)!;
       links++;
-      const hitRock = rocks.find((r) => segmentHitsObstacle(a.x, a.y, b.x, b.y, r));
-      expect(hitRock, `link ${a.kind}(${a.x.toFixed(0)}, ${a.y.toFixed(0)}) - ${b.kind}(${b.x.toFixed(0)}, ${b.y.toFixed(0)}) crosses a field rock`).toBeUndefined();
+      flattenLinkCable(structureToGridNode(a), c.socketA, structureToGridNode(b), c.socketB, poly, cbox);
+      const rocks = shaped(cbox.x0, cbox.y0, cbox.x1, cbox.y1);
+      let hitRock: GridObstacle | undefined;
+      for (let sg = 0; sg < CABLE_CURVE_SEGMENTS && !hitRock; sg++) {
+        const j = sg * 2;
+        hitRock = rocks.find((r) => segmentHitsObstacle(poly[j]!, poly[j + 1]!, poly[j + 2]!, poly[j + 3]!, r));
+      }
+      expect(hitRock, `link ${a.kind}(${a.x.toFixed(0)}, ${a.y.toFixed(0)}) - ${b.kind}(${b.x.toFixed(0)}, ${b.y.toFixed(0)}) cable crosses a field rock`).toBeUndefined();
     }
     expect(links, 'the base is linked').toBeGreaterThan(0);
   });

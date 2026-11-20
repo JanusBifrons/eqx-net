@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import SpeedDial from '@mui/material/SpeedDial';
 import SpeedDialAction from '@mui/material/SpeedDialAction';
 import SpeedDialIcon from '@mui/material/SpeedDialIcon';
@@ -64,6 +64,8 @@ import {
   type DialView,
 } from './buildCategories';
 import { useTouchClickActivate } from './touchClickActivate';
+import { onGameWindowOpen } from './GameWindow';
+import { FIT_OPEN_LIST_SX, useFitActionsToViewport } from './speedDialFit';
 
 /**
  * Consolidated bottom-right action menu (speed-dial UI refactor).
@@ -142,16 +144,23 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   // stays live for desktop (one impl: `useTouchClickActivate`).
   const { touchActivate, clickActivate, isWithinSuppressWindow } = useTouchClickActivate();
 
-  const close = useCallback(() => {
+  // Fold the dial back to a closed root menu. A game window opening (the loot
+  // or building settings window) does just this: the window takes focus, so no blur.
+  const collapse = useCallback(() => {
     setOpen(false);
     setView(ROOT_VIEW);
+  }, []);
+  useEffect(() => onGameWindowOpen(collapse), [collapse]);
+
+  const close = useCallback(() => {
+    collapse();
     // Drop DOM focus from whatever speed-dial button the player just activated
     // (Map / Panels / Weapon). MUI Fab buttons activate on Space/Enter while
     // focused, so a still-focused Map FAB meant the next Space/Fire silently
     // re-toggled the galaxy overlay (WS-F #18). Blurring on close makes every
     // terminal selection lose focus.
     (document.activeElement as HTMLElement | null)?.blur();
-  }, []);
+  }, [collapse]);
 
   const toggleOpen = useCallback(() => setOpen((o) => !o), []);
 
@@ -192,6 +201,10 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   const goBack = useCallback(() => setView((v) => goBackView(v)), []);
   // Economy v2 — packed stock while the build drill is open.
   const packedStock = usePackedStock(open && view.level !== 'root');
+  const inSector = useUIStore((s) => s.currentSectorKey !== null); // no sector = no crate rule
+  // The open list fits the screen (sideways phone) and scrolls: speedDialFit.ts.
+  const dialRef = useRef<HTMLDivElement>(null);
+  useFitActionsToViewport(dialRef, direction, open, view.level === 'kinds' ? view.category : view.level);
 
   // Pick a kind to place: raise the placement ghost. Does NOT close the dial —
   // it STAYS OPEN at the kinds level so the player can place several structures
@@ -252,7 +265,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
       ...categoryById(view.category).kinds.map((kindId) => {
         // Economy v2 — non-starter kinds need a packed one: show the count, or
         // lock (dimmed, no-op) with a hint, instead of refusing on placement.
-        const entry = buildEntry(kindId, packedStock);
+        const entry = buildEntry(kindId, packedStock, inSector);
         const pick = entry.locked ? () => {} : () => handlePickBuild(kindId);
         return (
           <SpeedDialAction
@@ -345,6 +358,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
 
   return (
     <SpeedDial
+      ref={dialRef}
       ariaLabel="Game actions"
       data-testid="speed-dial"
       icon={fabIcon}
@@ -489,6 +503,8 @@ const DIAL_SX = {
     height: 0,
     pointerEvents: 'none',
   },
+  // The OPEN list fits the screen and scrolls (speedDialFit.ts).
+  '& .MuiSpeedDial-actions:not(.MuiSpeedDial-actionsClosed)': FIT_OPEN_LIST_SX,
   // P3.1 — the always-on (tooltipOpen) action labels must NEVER wrap. The
   // static tooltip label defaults to a narrow max-width that wrapped longer
   // names ("Shield Pylon" etc.) onto two lines; force a single line with room

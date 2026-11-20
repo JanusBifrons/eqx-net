@@ -28,9 +28,10 @@ export const FEATURE_TRIGGERS = [
     area: 'structures',
     paths: ['src/server/structures/', 'src/core/structures/', 'src/client/structures/', 'src/shared-types/structureKinds',
       'src/client/components/StructurePlacementBanner', 'src/client/components/SpeedDialMenu', 'src/client/components/buildCategories',
-      'src/client/render/pixi/ConnectorRenderer'],
+      'src/client/render/pixi/ConnectorRenderer', 'src/core/articulation/', 'src/server/rooms/scene/'],
     specs: ['structure-build-placement', 'structure-grid-web', 'structure-placement-ghost', 'structure-scenario', 'structure-mining-beam',
-      'structure-ram-blocked', 'structure-turret-range', 'structure-visible-damageable', 'speed-dial', 'gate-fly-through'],
+      'structure-ram-blocked', 'structure-turret-range', 'structure-visible-damageable', 'speed-dial', 'gate-fly-through',
+      'structure-rig-sandbox'],
   },
   {
     area: 'spectator and ship switching',

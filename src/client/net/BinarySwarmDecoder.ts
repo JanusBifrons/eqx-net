@@ -172,7 +172,7 @@ export function decodeSwarmPacket(
       slot.arrivalMs = nowMs; slot.serverTick = tick;
       slot.sleeping = sleeping; slot.empty = false;
       entry = {
-        x, y, vx, vy, angle, angvel, radius, kind, sleeping, shieldDown, lastUpdateTick: tick,
+        x, y, vx, vy, angle, angvel, radius, kind, sleeping, shieldDown, lastUpdateTick: tick, firstTick: tick,
         ...(shipKindId ? { shipKind: shipKindId } : {}),
         ...(componentIndexForEntry !== undefined ? { componentIndex: componentIndexForEntry } : {}),
         ...(wreckId !== undefined ? { wreckId } : {}),
@@ -205,6 +205,8 @@ export function decodeSwarmPacket(
       entry.kind = kind;
       if (shipKindId) entry.shipKind = shipKindId;
       if (componentIndexForEntry !== undefined) entry.componentIndex = componentIndexForEntry;
+      // A piece seen as part of a new wreck: its first-sight tick starts over.
+      if (wreckId !== undefined && entry.wreckId !== wreckId) entry.firstTick = tick;
       if (wreckId !== undefined) entry.wreckId = wreckId;
       // An asteroid record is authoritative for both fields: a reused wire id
       // must not keep the previous rock's resource (absent = plain rock).

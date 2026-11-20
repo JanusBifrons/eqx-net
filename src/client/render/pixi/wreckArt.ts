@@ -906,8 +906,9 @@ export class WreckArtState {
 
   /**
    * The wreck's shared info. On first sight, its death time is placed on the
-   * render clock from the descriptor's `deathTick` and the piece's latest
-   * server tick, and a fresh wreck fires its break-up at the kill point
+   * render clock from the descriptor's `deathTick` and the server tick the
+   * client first received the piece (`firstTick`; a stalled frame never ages
+   * a fresh wreck past its break-up window), and a fresh wreck fires its break-up at the kill point
    * (located from this piece's pose: its centroid in the hull frame is known).
    */
   infoFor(

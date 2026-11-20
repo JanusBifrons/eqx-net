@@ -10,7 +10,7 @@
  * Zone-pure (no Pixi import) so the maths is unit-testable; the Graphics drawing
  * lives in `ConnectorRenderer.ts`.
  */
-import { FLASH_DURATION_MS } from '../../../core/structures/structureGridConstants.js';
+import { FLASH_DURATION_MS, TRANSFER_PULSE_MS } from '../../../core/structures/structureGridConstants.js';
 
 /** Idle (non-flowing) line tint — muted blue. */
 export const CONNECTOR_IDLE_COLOR = 0x4488aa;
@@ -151,6 +151,7 @@ export type PreviewLineKind =
   | 'selected'
   | 'deferred'
   | 'blocked'
+  | 'too-short'
   | 'overflow'
   | 'skip';
 
@@ -202,6 +203,19 @@ export function previewLineVisualParams(kind: PreviewLineKind, scale: number): C
       width,
       glowAlpha: 0.18,
       glowWidth: width * 2.5,
+    };
+  }
+  if (kind === 'too-short') {
+    // Refused: the studs are under `MIN_CABLE_LENGTH` apart. The run is short
+    // (a few screen px at most zooms), so it is the boldest red the preview
+    // draws, with a glow: the player must see why nothing links.
+    const width = Math.max(1.5 / safeScale, 3);
+    return {
+      color: PREVIEW_OVERFLOW_COLOR,
+      alpha: 0.95,
+      width,
+      glowAlpha: 0.4,
+      glowWidth: width * 3,
     };
   }
   if (kind === 'blocked') {
@@ -345,6 +359,37 @@ export function connectorVisualInto(
 }
 
 /**
+ * Time scale (#20): turns the `mirror.gridFlashes` pulse stamps into flow
+ * windows on the renderer's own game-time clock (`fxNow`, the `nowMs` the
+ * connector pass is handed). The net handler cannot stamp in that clock (the
+ * renderer may run in a worker with its own `GameClock`), so, like hit flashes,
+ * the renderer stamps on sight: a changed stamp on an edge is a new pulse and
+ * lights it until `nowMs + TRANSFER_PULSE_MS` of GAME time. Allocation-free
+ * per frame once each edge has been seen (#14).
+ */
+export class GridFlashClock {
+  private readonly seen = new Map<number, number>();
+  private readonly until = new Map<number, number>();
+  private nowMs = 0;
+  private readonly visit = (stamp: number, key: number): void => {
+    if (this.seen.get(key) === stamp) return;
+    this.seen.set(key, stamp);
+    this.until.set(key, this.nowMs + TRANSFER_PULSE_MS);
+  };
+
+  /** Flow-until (`nowMs` clock) per packed edge key; undefined = no pulses. */
+  sync(stamps: ReadonlyMap<number, number> | undefined, nowMs: number): ReadonlyMap<number, number> | undefined {
+    if (!stamps) return undefined;
+    // Compared by value, never by map identity: the worker path hands a fresh
+    // structured clone every frame. A count restarted by a new mirror that lands on
+    // the old value costs one pulse (the next re-stamps it).
+    this.nowMs = nowMs;
+    stamps.forEach(this.visit);
+    return this.until;
+  }
+}
+
+/**
  * Allocating wrapper for `connectorVisualInto` — returns a fresh struct. Used by
  * tests and any non-hot caller; the per-frame renderer path uses
  * `connectorVisualInto` with a reused scratch.
@@ -374,6 +419,9 @@ const COMET_HALF_PX = 12;
  * the visible direction cue). Coords are in whatever space the caller passes
  * (the renderer passes Pixi-space, already Y-negated) — pure linear interp, so
  * the space is irrelevant. The segment is clamped to the edge at the ends.
+ * A `t` outside [0, 1) (a comet running over a polyline, one edge at a
+ * time: `drawLineLookPulse`) gives the part on this edge, or an empty
+ * segment (x0 = x1, y0 = y1) when the comet is wholly off it.
  */
 export function cometSegment(
   out: CometSegment,
@@ -392,7 +440,7 @@ export function cometSegment(
   const safeScale = scale > 0 ? scale : 1;
   const dt = edgeLen > 0.001 ? Math.min(0.45, Math.max(COMET_HALF_PX / safeScale, COMET_HALF_PX) / edgeLen) : 0;
   const t0 = Math.max(0, tt - dt);
-  const t1 = Math.min(1, tt + dt);
+  const t1 = Math.max(t0, Math.min(1, tt + dt));
   out.x0 = ax + dx * t0;
   out.y0 = ay + dy * t0;
   out.x1 = ax + dx * t1;

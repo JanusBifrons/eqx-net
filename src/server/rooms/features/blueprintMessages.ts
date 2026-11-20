@@ -12,8 +12,10 @@ import type { ProductionSubsystem } from '../../structures/ProductionSubsystem.j
 import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { ShipState } from '../schema/SectorState.js';
-import { isOperationalStorage, DEPOSIT_RANGE, type StorageService } from '../../cargo/StorageService.js';
-import { getPlayerShipStore, getHoldStore, getWallet } from '../../db/PersistenceWorker.js';
+import type { StorageService } from '../../cargo/StorageService.js';
+import { isOperationalStorage } from '../../cargo/storageHolds.js';
+import { nearStorage } from '../../cargo/storageReach.js';
+import { getHoldStore, getWallet } from '../../db/PersistenceWorker.js';
 import { getTradeSink } from '../../economy/tradeSink.js';
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../../economy/BlueprintMarket.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
@@ -21,17 +23,15 @@ import type { ParsedMessageHost, RoomFeature } from './parsedMessage.js';
 import { packedCount, takePacked } from '../../../core/cargo/hold.js';
 import { getShipKind, isPlayableShipKindId, type ShipKindId } from '../../../shared-types/shipKinds.js';
 import { ROSTER_SOFT_GUARD } from '../../playerShips/PlayerShipStore.js';
+import type { HullHandOff } from './hullHandOff.js';
 import { isProcessorKind } from '../../../shared-types/production.js';
 import { blueprintProductFor } from '../../../shared-types/recipes.js';
 import { PackedStockQuerySchema, type PackedStock } from '../../../shared-types/packedStock.js';
 import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type BpMarketState } from '../../../shared-types/blueprintMarket.js';
 import { LoadBlueprintSchema, UnloadBlueprintSchema } from '../../../shared-types/messages.js';
 import {
-  InstallBlueprintSchema, UnpackHullSchema, blueprintName, blueprintQuality, productName, qualityHullFactor, type BlueprintResult,
+  InstallBlueprintSchema, UnpackHullSchema, blueprintName, blueprintQuality, productName, type BlueprintResult,
 } from '../../../shared-types/blueprints.js';
-
-/** Economy v2 W5a — an unpacked hull parks this far from its storage. */
-const UNPACK_PARK_OFFSET = 400;
 
 /** What the handlers need from the room; getters read the live field. */
 export interface BlueprintMessageHost extends ParsedMessageHost {
@@ -41,6 +41,7 @@ export interface BlueprintMessageHost extends ParsedMessageHost {
   structureRegistry: Pick<StructureRegistry, 'get' | 'all'>;
   sectorKey(): string | null;
   production(): Pick<ProductionSubsystem, 'unload' | 'recipeOf'>;
+  hullHandOff(): Pick<HullHandOff, 'launchNewHull'>;
   storage(): Pick<StorageService, 'loadBlueprint' | 'unloadBlueprint' | 'flushDirty' | 'installBlueprint' | 'network' | 'commitChanged'>;
   rebuildStructuresSlice(): void;
   resolveActiveShipKey(playerId: string): string | undefined;
@@ -93,7 +94,7 @@ export function registerBlueprintMessages(h: BlueprintMessageHost): RoomFeature 
     const s = rec ? h.structureRegistry.get(rec.id) : undefined;
     if (s === undefined || s.owner !== playerId || s.uid === undefined) { reply(false, 'Pick one of your storage structures.'); return; }
     const pose = h.shipPoseCache.get(playerId);
-    if (!pose || Math.hypot(pose.x - s.x, pose.y - s.y) > DEPOSIT_RANGE) { reply(false, 'Fly your ship next to that storage to install.'); return; }
+    if (!pose || !nearStorage(s, pose.x, pose.y)) { reply(false, 'Fly your ship next to that storage to install.'); return; }
     const id = p.data.blueprintId;
     if (h.fittedOf(shipId).includes(id)) { reply(false, 'This ship already has that blueprint.'); return; }
     const fitted = h.storage().installBlueprint(playerId, s.uid, id, shipId);
@@ -149,10 +150,11 @@ export function registerBlueprintMessages(h: BlueprintMessageHost): RoomFeature 
 /**
  * Economy v2 W5a — unpack one packed `kind` hull from `playerId`'s storage
  * network at `networkEntityId` into their roster: a fresh ship parked beside
- * that storage, picked from the roster like any other. The roster cap is
- * checked first; the packed item is taken (one hold group) BEFORE the roster
- * row is created, and put back if creating it fails, so a hull is never
- * duplicated. Galaxy rooms only (engineering rooms have no roster).
+ * that storage and, when a physics slot is free, in the world at once (the
+ * Shipyard's path, `HullHandOff.launchNewHull`). The packed item is taken
+ * (one hold group) BEFORE the ship is created, and put back if that fails
+ * (a full roster included), so a hull is never duplicated or lost. Galaxy
+ * rooms only (engineering rooms have no roster).
  */
 function unpackHull(h: BlueprintMessageHost, playerId: string, networkEntityId: number, kind: ShipKindId): [boolean, string] {
   const name = getShipKind(kind).displayName;
@@ -164,28 +166,17 @@ function unpackHull(h: BlueprintMessageHost, playerId: string, networkEntityId: 
   const product = `hull:${kind}`;
   const from = h.storage().network(s).find((r) => r.hold !== undefined && packedCount(r.hold, product) > 0);
   if (from === undefined) return [false, `There is no packed ${name} in this base.`];
-  const store = getPlayerShipStore();
-  if (store.listByPlayer(playerId).length >= ROSTER_SOFT_GUARD) return [false, `Your roster is full (${ROSTER_SOFT_GUARD} ships). Abandon one first.`];
   const item = takePacked(from.hold!, product)!;
   h.storage().commitChanged([from], []);
-  try {
-    const ship = store.create({
-      playerId,
-      userId: h.playerToUser.get(playerId) ?? null,
-      kind,
-      sectorKey,
-      x: s.x + UNPACK_PARK_OFFSET,
-      y: s.y,
-      health: Math.round(getShipKind(kind).maxHealth * qualityHullFactor(item.quality)),
-      hullQuality: item.quality,
-    });
-    auditEvent({ event: 'hull_unpacked', sector: sectorKey, playerId, shipInstanceId: ship.shipId, kind, quality: item.quality });
-    return [true, `${name} unpacked: it's in your roster.`];
-  } catch {
+  const res = h.hullHandOff().launchNewHull(playerId, kind, item.quality, s.x, s.y, false);
+  if (!res.ok) {
     (from.hold!.packed ??= []).push(item);
     h.storage().commitChanged([from], []);
+    if (res.reason === 'roster_full') return [false, `Your roster is full (${ROSTER_SOFT_GUARD} ships). Abandon one first.`];
     return [false, `Could not unpack the ${name}.`];
   }
+  auditEvent({ event: 'hull_unpacked', sector: sectorKey, playerId, shipInstanceId: res.shipId, kind, quality: item.quality });
+  return [true, res.live ? `${name} unpacked: it's parked outside.` : `${name} unpacked: it's in your roster.`];
 }
 
 /** Economy v2 — `playerId`'s packed STRUCTURES in this sector, by product:

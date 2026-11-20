@@ -5,7 +5,34 @@
  */
 import type { Server } from 'colyseus';
 import { SectorRoom } from '../SectorRoom.js';
-import { GATE_TEST_PREBUILT, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
+import { BASE_BUILD_PREBUILT, GATE_TEST_PREBUILT, PREBUILT_ADOPT_OWNER, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
+import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
+
+/**
+ * `?room=base-build-test` (Sunday base loop): stills and films of building.
+ * The FIRST pilot to join owns a small powered base (Capital + Connector + 2
+ * Solar) — any id, logged in or not (`PREBUILT_ADOPT_OWNER`); its bank holds
+ * 50k minerals and every joiner's wallet 20k credits. Blueprints cable to the
+ * Connector at (0, 350): place within its 600 u reach. No rocks or NPCs nearby; ONE
+ * rock 1500 u south of the Capital for a red-ghost shot. The 100 ms grid pulse
+ * fills a placed Solar (480 minerals, 5 per pulse) in about 10 s.
+ */
+export const BASE_BUILD_TEST_OPTS = {
+  testMode: true,
+  asteroidConfig: [],
+  droneCount: 0,
+  peacefulDrones: true,
+  structureGridPulseMs: 100,
+  prebuiltStructuresOwner: PREBUILT_ADOPT_OWNER,
+  prebuiltStructures: BASE_BUILD_PREBUILT.map((p) => ({ ...p })),
+  prebuiltCapitalMinerals: 50_000,
+  seedStorageHold: { goods: {}, credits: 20_000 },
+  scenarioAsteroids: [{ x: 0, y: -1500, radius: 80 }],
+  // West of the base, clear of the Capital's crane pad (centre (-410, 0)).
+  defaultSpawnX: -1000,
+  defaultSpawnY: 150,
+  maxClients: 4,
+};
 
 /** Registers this group's rooms. Called from `index.ts` inside the
  *  `shouldRegisterTestRooms()` gate; `define` order is the order here. */
@@ -368,6 +395,32 @@ export function defineEngineeringRooms(gameServer: Server): void {
       maxClients: 4,
     })
     .filterBy(['testId']);
+  // Articulation sandbox (structure-restyle 2f) — a freight dock and a turret
+  // owned by the showcase pilot; a scripted hauler parks on the pad and the
+  // crane reaches for it, then the turret opens and deploys (scenarioLayouts
+  // RIG_SANDBOX). Draw the rigs with ?rigs=1. The e2e room reaches at once.
+  // `rig-unload` has no script: the pilot flies onto their own dock's pad and
+  // the real bay dwell unloads them (RIG_UNLOAD). `rig-home` (3i): the same
+  // with the pilot's own Capital alone, unloaded by its built-in crane bay.
+  for (const [name, extra] of [
+    ['rig-sandbox', { sceneScript: rigSandboxScene(4000) }],
+    ['rig-sandbox-e2e', { sceneScript: RIG_SANDBOX_E2E_SCENE }],
+    ['rig-unload', RIG_UNLOAD],
+    ['rig-home', RIG_HOME],
+  ] as const) {
+    gameServer.define(name, SectorRoom, {
+      testMode: true,
+      asteroidConfig: [],
+      peacefulDrones: true,
+      structureGridPulseMs: 100,
+      prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
+      prebuiltStructures: RIG_SANDBOX_PREBUILT.map((p) => ({ ...p })),
+      defaultSpawnX: -1800,
+      defaultSpawnY: -900,
+      maxClients: 4,
+      ...extra,
+    }).filterBy(['testId']);
+  }
   // Structures plan (Phase 3-5) — a fully-built, POWERED grid scenario for the
   // client-half E2Es. Pre-built (no construction wait) + auto-connected: a Capital
   // + 2 Solar (power), a Miner next to an asteroid (mining → mineral bank), and a
@@ -389,4 +442,5 @@ export function defineEngineeringRooms(gameServer: Server): void {
       maxClients: 4,
     })
     .filterBy(['testId']);
+  gameServer.define('base-build-test', SectorRoom, { ...BASE_BUILD_TEST_OPTS }).filterBy(['testId']);
 }

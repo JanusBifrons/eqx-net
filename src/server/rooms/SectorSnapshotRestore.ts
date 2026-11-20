@@ -17,6 +17,7 @@ import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { MAX_FREIGHT_ORDERS } from '../../shared-types/messages/cargoMessages.js';
 import { PackedItemSchema } from '../../shared-types/items.js';
 import { isRecipeId } from '../../shared-types/recipes.js';
+import { MAX_BUILD_COUNT } from '../../shared-types/production.js';
 import {
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -104,6 +105,7 @@ export class SectorSnapshotRestore {
         // persisted (already-leveled) value, so no re-seed is needed.
         rec.level = r.level ?? 1;
         if (r.gateAccess !== undefined) rec.gateAccess = r.gateAccess;
+        if (r.switchedOff === true) rec.switchedOff = true;
         // v4 T1 — a teleporter's partner, rules, charge and pad hold survive a restart.
         if (isTeleporterKind(rec.kind)) {
           const t = r.teleport;
@@ -117,6 +119,7 @@ export class SectorSnapshotRestore {
         }
         // P2b — the owner's recipe choice and a cycle in progress survive a restart.
         if (r.recipe !== undefined && isRecipeId(r.recipe)) rec.recipe = r.recipe;
+        if (Number.isInteger(r.prodCount) && r.prodCount! >= 0) rec.prodCount = Math.min(r.prodCount!, MAX_BUILD_COUNT); // job 2E
         if (r.prepaid === true) rec.prepaid = true;
         // T4b — a Freight Dock's standing orders survive a restart.
         if (r.freightOrders) {
