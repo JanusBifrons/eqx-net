@@ -195,13 +195,15 @@ describe('StructurePlacementSubsystem — packed placement seam (P2b)', () => {
 });
 
 describe('wreck pieces block placement, never links (wreck fields 7, plan R13)', () => {
-  /** A room's gatherer over one swarm body of `kind` at (300, 0). */
-  function rig(kind: number) {
+  /** A room's gatherer over one swarm body of `kind` at (300, 0): an 80 u
+   *  wide box, `halfH` tall each way. */
+  function rig(kind: number, halfH = 40) {
     const registry = new StructureRegistry();
     const sab = new Float32Array(SAB_TOTAL_BYTES / 4);
     sab[slotBase(0) + SLOT_X_OFF] = 300; sab[slotBase(0) + SLOT_Y_OFF] = 0;
-    const square = [{ x: -40, y: -40 }, { x: 40, y: -40 }, { x: 40, y: 40 }, { x: -40, y: 40 }];
-    const swarm = [{ id: 'w', kind, slot: 0, radius: 57, wreckParts: [square] } as unknown as SwarmEntityRecord];
+    const square = [{ x: -40, y: -halfH }, { x: 40, y: -halfH }, { x: 40, y: halfH }, { x: -40, y: halfH }];
+    const radius = halfH === 40 ? 57 : Math.ceil(Math.hypot(40, halfH));
+    const swarm = [{ id: 'w', kind, slot: 0, radius, wreckParts: [square] } as unknown as SwarmEntityRecord];
     const g = new SectorObstacles({
       structures: registry, swarm: { all: () => swarm }, sab: () => sab,
       forEachHull: () => {}, clearanceOf: () => 0, extentOf: () => undefined,
@@ -222,8 +224,8 @@ describe('wreck pieces block placement, never links (wreck fields 7, plan R13)',
   });
 
   it('the link line of sight is unchanged with a wreck piece in the way (a rock there still cuts it)', () => {
-    const linked = (kind: number): number => {
-      const { sub, registry } = rig(kind);
+    const linked = (kind: number, halfH?: number): number => {
+      const { sub, registry } = rig(kind, halfH);
       const a = sub.place('player-1', 'capital', -100, 0)!; // hw 280: clear of the piece at 300
       const b = sub.place('player-1', 'connector', 600, 0)!;
       expect(a).not.toBeNull(); expect(b).not.toBeNull();
@@ -231,6 +233,9 @@ describe('wreck pieces block placement, never links (wreck fields 7, plan R13)',
     };
     expect(linked(4)).toBe(linked(99)); // a wreck piece: the same links as nothing there
     expect(linked(4)).toBeGreaterThan(0);
-    expect(linked(0)).toBe(0); // control: an asteroid on the line blocks it
+    // Control: an asteroid on the path blocks it. A cable curves socket to
+    // socket and bends round a small rock, so the control rock is a tall bar
+    // (x 260..340, y ±500) that every curve from the Capital must cross.
+    expect(linked(0, 500)).toBe(0);
   });
 });

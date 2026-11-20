@@ -31,7 +31,7 @@ import {
   computeIsLoadingActive,
 } from '../state/store.js';
 import { placementChosen, resetPlacementChosen } from '../structures/placementChosen.js';
-import { turretFireCrossesWall } from '../structures/fenceFireHint.js';
+import { updatePlacementHints } from '../structures/placementHints.js';
 import { commitChosenPlacement } from '../structures/structurePlacementClient.js';
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
 import { resetSelectionStats } from '../net/selectionStats.js';
@@ -352,21 +352,12 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
           banner.style.top = `${Math.max(48, Math.min(window.innerHeight - 8, psy))}px`;
         }
       }
-      // A turret ghost: warn when a shield wall in its range would stop its
-      // fire (a fence blocks its owner's own fire too). Toggled on change only.
-      const hint = document.querySelector('[data-testid="placement-fence-hint"]') as HTMLElement | null;
-      if (hint) {
-        const pv = gameClient.mirror.pendingPlacementPreview!;
-        const hx = placementChosen.worldX ?? pv.x;
-        const hy = placementChosen.worldY ?? pv.y;
-        const kind = useUIStore.getState().placementKind;
-        const blocked = kind !== null && turretFireCrossesWall(kind, hx, hy, gameClient.mirror.structures, gameClient.mirror.swarm);
-        if (hint.hidden === blocked) hint.hidden = !blocked;
-        if (blocked && typeof psx === 'number' && typeof psy === 'number') {
-          hint.style.left = `${Math.max(8, Math.min(window.innerWidth - 8, psx))}px`;
-          hint.style.top = `${Math.max(48, Math.min(window.innerHeight - 40, psy))}px`;
-        }
-      }
+      // Hints under the ghost: a shield wall in a turret's range (a fence
+      // blocks its owner's own fire too); "too close" when its only links are
+      // too short. Toggled on change only.
+      const pv = gameClient.mirror.pendingPlacementPreview!;
+      updatePlacementHints(feedback, psx, psy, useUIStore.getState().placementKind,
+        placementChosen.worldX ?? pv.x, placementChosen.worldY ?? pv.y, gameClient.mirror);
     } else if (placementChosen.worldX !== null || placementChosen.stuck) {
       resetPlacementChosen();
     }

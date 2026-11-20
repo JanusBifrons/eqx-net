@@ -5,7 +5,8 @@
  */
 import type { Server } from 'colyseus';
 import { SectorRoom } from '../SectorRoom.js';
-import { GATE_TEST_PREBUILT, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
+import { GATE_TEST_PREBUILT, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
+import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
 
 /** Registers this group's rooms. Called from `index.ts` inside the
  *  `shouldRegisterTestRooms()` gate; `define` order is the order here. */
@@ -368,6 +369,32 @@ export function defineEngineeringRooms(gameServer: Server): void {
       maxClients: 4,
     })
     .filterBy(['testId']);
+  // Articulation sandbox (structure-restyle 2f) — a freight dock and a turret
+  // owned by the showcase pilot; a scripted hauler parks on the pad and the
+  // crane reaches for it, then the turret opens and deploys (scenarioLayouts
+  // RIG_SANDBOX). Draw the rigs with ?rigs=1. The e2e room reaches at once.
+  // `rig-unload` has no script: the pilot flies onto their own dock's pad and
+  // the real bay dwell unloads them (RIG_UNLOAD). `rig-home` (3i): the same
+  // with the pilot's own Capital alone, unloaded by its built-in crane bay.
+  for (const [name, extra] of [
+    ['rig-sandbox', { sceneScript: rigSandboxScene(4000) }],
+    ['rig-sandbox-e2e', { sceneScript: RIG_SANDBOX_E2E_SCENE }],
+    ['rig-unload', RIG_UNLOAD],
+    ['rig-home', RIG_HOME],
+  ] as const) {
+    gameServer.define(name, SectorRoom, {
+      testMode: true,
+      asteroidConfig: [],
+      peacefulDrones: true,
+      structureGridPulseMs: 100,
+      prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
+      prebuiltStructures: RIG_SANDBOX_PREBUILT.map((p) => ({ ...p })),
+      defaultSpawnX: -1800,
+      defaultSpawnY: -900,
+      maxClients: 4,
+      ...extra,
+    }).filterBy(['testId']);
+  }
   // Structures plan (Phase 3-5) — a fully-built, POWERED grid scenario for the
   // client-half E2Es. Pre-built (no construction wait) + auto-connected: a Capital
   // + 2 Solar (power), a Miner next to an asteroid (mining → mineral bank), and a

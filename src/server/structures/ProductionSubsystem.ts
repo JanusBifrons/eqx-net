@@ -42,7 +42,7 @@ import { getStructureKind, type StructureKindId } from '../../shared-types/struc
 import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecipe } from '../../shared-types/blueprints.js';
 import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
-import { holdCapacityOf, isOperationalStorage } from '../cargo/StorageService.js';
+import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** What one cycle of a recipe actually uses and makes. */

@@ -122,7 +122,9 @@ so it unit-tests like `TransitOrchestrator`):
 view, never the server `StructureRegistry`):
 - `Connection.ts` — an undirected intra-sector link (`getOtherNode`, flash
   window, `connectionLength`).
-- `Grid.ts` — `canConnect` (the hub model: hub-required / per-kind
+- `Grid.ts` — `canConnect` (the hub model: connector-required: every link has a Connector
+  end, except shield emitter↔emitter fence links, which the `pylon-rule` governs;
+  big buildings such as the shipyard are NOT relays / per-kind
   `maxConnections` cap / edge-to-edge `CONNECTION_MAX_RANGE` / no-self/dup /
   line-of-sight: the centre-to-centre line must miss every other structure's
   footprint box and every obstacle; an asteroid's box is the broad phase and,
@@ -151,6 +153,24 @@ view, never the server `StructureRegistry`):
 - `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
   `CONSTRUCTION_PULSE_AMOUNT`, `REPAIR_*`, `DECONSTRUCTION_RATE_KG`,
   `CAPITAL_STARTING_MINERALS`, `FLASH_DURATION_MS`.
+- **Minimum cable length** (owner rule "keep buildings apart"):
+  `MIN_CABLE_LENGTH = 56` u, stud to stud. 56 = a 1× cable's two collars
+  (6 u each) plus the short-run span (44 u, `connectorLineLooks.ts` draws
+  collars only below it), so the shortest cable still shows a lashing and
+  some bundle; the cable look reads the same constant. `pickCableSocketPair`
+  skips a pair under it and takes the next longer free facing pair; with none,
+  `canConnect` refuses `'too-short'` and writes the refused pair to the pick
+  (a connector end still uses a face turned toward the partner, so the cable
+  never runs back across its own hub). Fence links (post to post,
+  `CABLE_NO_SOCKET`) are exempt. The build preview draws a too-short link red,
+  stud to stud, and when it is the only link the ghost would make shows
+  "Can't connect: too close" (`RendererFeedback.placementPreviewTooShortCount`
+  → `placementHints.ts`, `PlacementLinkHint`). The base generator stands each
+  leaf its `linkGap` off its connector (the smallest gap the real rule
+  links, `growBuilder.ts`); the stress lattice uses the full 56 u.
+  Locks: `minCableLength.test.ts`,
+  `ConnectorRenderer.tooShortPreview.test.ts`, `placementHints.test.tsx`,
+  `growBase.test.ts` (minimum cable length).
 
 **Server** (`src/server/structures/`):
 - `StructureRegistry` carries the connection adjacency (+ flat conn map),
@@ -522,6 +542,8 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 ### Structures at base scale — client cost rules (plan soft-leaping-truffle v2, A3)
 
 - **The connector web has two layers.** `ConnectorRenderer.staticGfx` (behind) holds everything steady: idle edges, turret range rings, up-wall rails, open-gate guides. It rebuilds only when `staticSignature` changes or the zoom moves > 3 %. `gfx` (front) is cleared every frame and holds only what animates. New steady visuals go on the static layer; anything driven by `nowMs` goes on `gfx`, and anything the static layer draws must feed `staticSignature`.
+- **Socket cables wear the cable line look ("bundle on the curve").** With `socketCables` on, each link draws the same bundled cable as the straight `cable` look (strands, cradles, lashings, end collars, flow glow) along its stud-to-stud curve: the look walks a polyline by arc length ([`connectorCablePath.ts`](../../src/client/render/pixi/connectorCablePath.ts)), a straight edge being a 2-point path drawn byte-identically to before. Cradles sit at even arc-length stations, square to the smoothed local tangent; the end collars sit just in from each stud (`cableStudInset`), square to the stud normal, and a run too short for cradles still gets both collars. A fence link (no sockets) keeps its collars outside the posts. Locks: `connectorLineLooks.path.test.ts`.
+- **Socket cable flow (structure-restyle 0d slice 9, `?fx=new`).** With `socketCables` on, a flowing link draws, on `gfx` only, along its cached cable ([`connectorCables.ts`](../../src/client/render/pixi/connectorCables.ts)): the cable look's bleed and lit core (between the frames), then a train of comets that leaves the source socket when the run of flow starts and travels by arc length at a per-material pace in game time (`fxNow`): world units per second minerals 220, repair 280, construction 320, power 440; spacing 170 / 200 / 210 / 170 u, widened so at most `MAX_CABLE_COMETS` (4) ride a cable. Throughput is not on the wire, so the material sets the pace (#16). Comets passing a cradle throw clamp sparks. Each comet reaching the receiving socket flashes its end collar for `COLLAR_FLASH_MS` (240 game ms). When the run started is noted on the cached `LinkCable` (`flowSince`); a link not drawn flowing for `FLOW_RESTART_GAP_MS` (1000 game ms) starts a new run. Per-frame work per link is bounded by count: at most 6 strokes (bleed, core, all comets in one, all sparks in one, two for the flash). Locks: `connectorCables.flow.test.ts`, the slice 9 cases in `ConnectorRenderer.lineLooks.test.ts`.
 - **The prediction world streams structures and walls by distance** (`structures/predStructureStreaming.ts`, `PREDWORLD_STRUCTURE_RADIUS`). Don't add every structure to predWorld: each server correction replays the whole world (a citadel made that ~6× dearer). No local ship ⇒ no streaming (everything kept).
 - **Structure sprites off screen are hidden** (`isSpriteInView` with the camera rect).
 
@@ -536,6 +558,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - **Where structures come from.** `mirror.structures` is filled from Colyseus room state (`room.state.structures`, join payload + delta patches) by `ColyseusClient.syncStructures`. It decodes each row IN PLACE via `net/structureStateDecode.ts` `decodeStructureState`, applying `STRUCTURE_DEFAULTS` for unset fields and resolving the owner through the interned owner tables.
 - **What the snapshot carries:** only `structureTargets` (turret / mining targets). There is no per-snapshot structures slice anymore.
 - **Shape unchanged.** The mirror row shape is the same, so the renderer, inspector and E2E hooks are untouched.
+- **Cable sockets (`connSock`, structure-restyle 0d).** Parallel to `connTo`, one uint16 per link packing this end's socket (low byte) and the other end's (high byte), 255 = no socket (fence link); written with `connTo` in `writeConnToRow`'s one change check, packed/unpacked only by `encodeConnSock` / `decodeConnSockSelf` / `decodeConnSockOther` (`shared-types/structureStateWire.ts`), decoded onto `StructureRenderState.connSockSelf` / `connSockOther` (-1 = none). uint16, not uint8: kinds reach 24 sockets.
 - **Lifetime.** The binary full refresh NO LONGER deletes structures (`BinarySwarmDecoder` skips kind 2). The room-state row owns their lifetime: when a row goes, `syncStructures` drops both the mirror row and the swarm pose entry.
 - **Locks:** `tests/integration/wire/structureStateWire.test.ts` (#15) and `BinarySwarmDecoder.test.ts`.
 
@@ -711,4 +734,5 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 ## History
 
+- **Every link goes through a Connector.** `canConnect` used to need only ONE end to be `isHub`, so a solar could plug straight into a shipyard, deep-core rig, ore processing complex or assembly plant. Now one end must be a Connector (`connector-required`); shield emitter↔emitter links are unchanged. Generated bases already linked every leaf to a Connector (output unchanged).
 - **Structure rotation reaches the physics body.** `SwarmSpawner` forwards the spawn angle for structures (kind 2) as well as scrap, and primes the SAB angle. (It used to forward it for scrap only, so rotated structures collided and drew at 0° — locked by `structureRotation.test.ts`.)

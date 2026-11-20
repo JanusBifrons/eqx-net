@@ -14,16 +14,16 @@ export const REACTOR: StructureKind = {
   id: 'reactor',
   displayName: 'Reactor',
   description: 'Burns fuel from base storage for about eight Solars of power. No fuel, no power. A leaf node.',
-  radius: 283, // bounding circle of the 400×400 footprint
-  footprint: { w: 400, h: 400 },
+  radius: 425, // bounding circle of the 600×600 footprint
+  footprint: { w: 600, h: 600 },
   maxHealth: 3000,
   maxConnections: 1,
   isHub: false,
-  powerOutput: 240,
+  powerOutput: 960,
   powerConsumption: 0,
   storageCapacity: 0,
   fuelEveryPulses: 10,
-  constructionCost: 1500,
+  constructionCost: 4000,
   color: 0xff6f3c,
 };
 
@@ -32,8 +32,8 @@ export const BATTERY_BANK: StructureKind = {
   id: 'battery_bank',
   displayName: 'Battery Bank',
   description: 'Stores as much power as ten Batteries. A leaf node.',
-  radius: 255, // bounding circle of the 360×360 footprint
-  footprint: { w: 360, h: 360 },
+  radius: 425, // bounding circle of the 600×600 footprint
+  footprint: { w: 600, h: 600 },
   maxHealth: 2500,
   maxConnections: 1,
   isHub: false,

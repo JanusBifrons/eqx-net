@@ -39,6 +39,13 @@ export function galaxyConvoyViews(): BaseTradeView[] {
         if (k.miningRate) add(makes, 'minerals', k.miningRate * 60);
         if (k.gasRate) add(makes, 'gas', k.gasRate * 60);
       }
+      // Synthetic load: every base burns one Reactor's fuel, whether or not
+      // it grew one. The power family (structure restyle) made Reactors rare
+      // (11 → 1 galaxy-wide), and fuel demand was what made the planner want
+      // more convoys than the cap. Without this the worst case plans only 8
+      // of 12, and the test no longer proves the cap binds under load.
+      const reactorFuel = 60 / getStructureKind('reactor').fuelEveryPulses!;
+      if (!grown.placements.some((p) => p.kind === 'reactor')) add(uses, 'fuel', reactorFuel);
       // Worst case: inputs empty, outputs piled high, room to receive.
       const stock: Partial<Record<GoodId, number>> = {};
       for (const [g, n] of Object.entries(makes)) stock[g as GoodId] = Math.ceil((n ?? 0) * 60);

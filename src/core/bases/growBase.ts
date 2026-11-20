@@ -26,20 +26,41 @@ import { COASTAL_DEFENCE_KINDS, getStructureKind, structureHalfExtents, type Str
 import { RECIPES, packRecipeFor, recipesFor, type RecipeId } from '../../shared-types/recipes.js';
 import { BASE_PRICES } from '../../shared-types/economy.js';
 import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
-import { canConnect, segmentIntersectsAabb, type GridNode } from '../structures/Grid.js';
-import { Connection } from '../structures/Connection.js';
-import { placementRejection } from '../structures/placementRules.js';
-import { isShieldEmitterKind } from '../structures/gateGeometry.js';
+import { keepClearBox } from '../structures/placementRules.js';
+import { Builder, leafReach, linkGap, tallestFrom, upDownGunReach, type GrownPlacement } from './growBuilder.js';
+import { powerShareCost } from './powerShareCost.js';
+import { roleUnits, type Want } from './roleUnits.js';
 import { seededRandom, type BaseProfile, type BaseTier } from './baseProfile.js';
 import type { SectorFeature } from '../galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
+
+export type { GrownPlacement } from './growBuilder.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base).
  *  9→10 (plan coastal-defences): bases buy a tiered mix of gun batteries
  *  (AA, 5" mounts, coastal guns, region-heart super-guns) from their own
- *  random stream; casemates face outward. */
-export const BASE_GROWTH_VERSION = 10;
+ *  random stream; casemates face outward.
+ *  10→11 (structure-restyle 2c++): the freight dock grew to 1000×400, so
+ *  every base with a dock lays out wider.
+ *  11→12 (structure-restyle): a dock's landing pad (`keepClear`) is kept
+ *  clear of other structures, and a dock faces its pad away from its row.
+ *  12→13 (structure-restyle main sync): merged main's territory lock into
+ *  the stream's generator, so bases saved under the stream's 12 regrow.
+ *  13→14 (structure-restyle 3i): the Capital has a crane bay pad on its +y
+ *  side; a spine relay that would land on a pad moves just past it.
+ *  14→15 (structure-restyle 0d slice 4): link reach is socket to socket, so
+ *  the fence sits 50 u closer (`FENCE_MARGIN`) to keep the row-end taps in
+ *  reach of the gate posts and pylons.
+ *  15→16 (structure-restyle 0d slice 5): a placement may not sit on an
+ *  existing link's curved socket-to-socket cable (was the straight centre line).
+ *  16→17 (structure-restyle stud audit): sockets sit on the house-look
+ *  outline (style c), so cable ends and socket-to-socket reach moved.
+ *  17→18: each leaf stands `linkGap` off its connector (`MIN_CABLE_LENGTH`);
+ *  a spine relay pushed onto its row line is dropped.
+ *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power per unit of draw; row gaps fit the leaves facing in.
+ *  19→20: landing pads solid to cables, no socket on their side: the spine detours round the Capital's pad up column 1; an unlinkable connector is taken back. */
+export const BASE_GROWTH_VERSION = 20;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -53,18 +74,6 @@ export const TIER_MAX_STRUCTURES: Readonly<Record<BaseTier, number>> = Object.fr
   stronghold: 160,
   citadel: 260,
 });
-
-export interface GrownPlacement {
-  kind: StructureKindId;
-  x: number;
-  y: number;
-  rot?: number;
-  /** Selected recipe (processors). */
-  recipe?: RecipeId;
-  level?: number;
-  /** v4 H — the transit link this teleporter ends (paired at run time). */
-  link?: string;
-}
 
 export interface GrownBase {
   placements: GrownPlacement[];
@@ -82,7 +91,9 @@ export interface GrownBase {
 
 const PITCH_X = 640;
 const GAP = 20;
-const FENCE_MARGIN = 150;
+/** Fence clearance past the outermost structure. Link reach is socket to
+ *  socket, so this keeps a row-end connector's tap to the side emitter ≤ 600 u. */
+const FENCE_MARGIN = 100;
 /** Pylon spacing: centre to centre, under the 600 u edge-to-edge range. */
 const FENCE_STEP = 660;
 
@@ -206,80 +217,6 @@ function stageOf(kind: StructureKindId, recipe: RecipeId | undefined): number | 
   return 3;
 }
 
-interface Want {
-  kind: StructureKindId;
-  recipe?: RecipeId;
-  /** v4 H — the transit link a teleporter ends. */
-  link?: string;
-}
-
-/** The role's production units, in the order a builder adds them. */
-function roleUnits(profile: BaseProfile, features: readonly SectorFeature[], rnd: () => number): Want[] {
-  const nebula = features.includes('nebula');
-  const big = profile.tier === 'stronghold' || profile.tier === 'citadel';
-  switch (profile.role) {
-    case 'mining': {
-      const out: Want[] = [{ kind: 'miner' }];
-      if (nebula) out.push({ kind: 'gas_collector' });
-      if (big) out.unshift({ kind: 'deep_core_rig' });
-      return out;
-    }
-    case 'refinery': {
-      const out: Want[] = [{ kind: 'smelter', recipe: 'smelt_alloy' }, { kind: 'refinery', recipe: nebula ? 'refine_gas' : 'refine_ice_fuel' }];
-      if (features.includes('minerals') || features.includes('blackhole')) out.push({ kind: 'silicon_works', recipe: 'make_silicon' });
-      out.push({ kind: 'reclaimer', recipe: 'reclaim_salvage' });
-      if (big) out.unshift({ kind: 'ore_processing_complex', recipe: 'opc_alloy' });
-      return out;
-    }
-    case 'workshop': {
-      // Two adjacent stages of one chain, ending in a product it sells.
-      const chains: Want[][] = [
-        [{ kind: 'refinery', recipe: 'refine_ice_fuel' }, { kind: 'hydroponics', recipe: 'grow_provisions' }],
-        [{ kind: 'smelter', recipe: 'smelt_alloy' }, { kind: 'fabricator', recipe: 'fab_components' }],
-        [{ kind: 'refinery', recipe: nebula ? 'refine_gas' : 'refine_ice_fuel' }, { kind: 'munitions_works', recipe: 'make_munitions' }],
-      ];
-      return chains[Math.floor(rnd() * chains.length)]!;
-    }
-    case 'manufactory':
-      return [
-        { kind: 'fabricator', recipe: 'fab_components' },
-        { kind: 'fabricator', recipe: 'fab_electronics' },
-        { kind: 'munitions_works', recipe: 'make_munitions' },
-      ];
-    case 'assembly':
-      return [
-        { kind: 'assembly_plant', recipe: rnd() < 0.5 ? 'assemble_machinery' : 'assemble_consumer_goods' },
-        { kind: 'fabricator', recipe: 'fab_components' },
-        { kind: 'fabricator', recipe: 'fab_electronics' },
-      ];
-    case 'trade':
-      return [{ kind: 'cargo_bay' }];
-    case 'transit':
-      // A hub's business is its teleporters (one per link, added below).
-      return [{ kind: 'cargo_bay' }];
-    case 'military':
-      // v4 M — turret-heavy: every kind of gun, repeated while wealth lasts
-      // (a fenced base puts them on bastions outside the fence). Coastal
-      // defences: the AA screen, 5" mounts and the medium coastal guns too.
-      return [
-        { kind: 'laser_bolt_turret' }, { kind: 'autocannon_turret' }, { kind: 'missile_turret' }, { kind: 'turret' },
-        { kind: 'aa_quad_40mm' }, { kind: 'dp_mount_5in' }, { kind: 'coastal_casemate_8in' }, { kind: 'coastal_turret_11in' },
-      ];
-    case 'colony': {
-      // A habitat station: housing first, spires once it's a settlement or bigger, and
-      // hydroponics to grow part of its own provisions.
-      const out: Want[] = [
-        { kind: 'habitat_module', recipe: 'habitat_upkeep' },
-        { kind: 'habitat_module', recipe: 'habitat_upkeep' },
-      ];
-      if (profile.tier !== 'outpost') {
-        out.push({ kind: 'tower_module', recipe: 'tower_upkeep' }, { kind: 'hydroponics', recipe: 'grow_provisions' });
-      }
-      return out;
-    }
-  }
-}
-
 /** The build list: what the base buys, within its wealth and tier budget. */
 function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd: () => number, drnd: () => number): { wants: Want[]; spent: number } {
   const wants: Want[] = [];
@@ -289,14 +226,12 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
   const unitCap = { outpost: 2, settlement: 5, stronghold: 10, citadel: 16 }[profile.tier];
   const storageCap = { outpost: 2, settlement: 4, stronghold: 8, citadel: 14 }[profile.tier] * (profile.role === 'trade' ? 2 : 1);
   const counts = new Map<StructureKindId, number>();
-  const solarCost = getStructureKind('solar').constructionCost;
-  const solarOut = getStructureKind('solar').powerOutput;
   const buy = (w: Want): boolean => {
     const n = counts.get(w.kind) ?? 0;
     const storage = w.kind === 'cargo_bay' || w.kind === 'freight_dock';
     if (n >= (storage ? storageCap : unitCap)) return false;
-    // A purchase includes the Solars that power it (a builder pays for both).
-    const c = generatedCost(w.kind) + Math.ceil(expectedDraw(w.kind) / solarOut) * solarCost;
+    // A purchase includes its share of the Solars that power it (per unit of draw).
+    const c = generatedCost(w.kind) + powerShareCost(expectedDraw(w.kind));
     if (c > budget || wants.length >= cap) return false;
     counts.set(w.kind, n + 1);
     budget -= c;
@@ -333,63 +268,6 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
     if (!any) break;
   }
   return { wants, spent };
-}
-
-interface Node extends GridNode {
-  kind: StructureKindId;
-}
-
-class Builder {
-  readonly placements: GrownPlacement[] = [];
-  readonly edges: Array<readonly [number, number]> = [];
-  readonly placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number }> = [];
-  readonly nodes = new Map<string, Node>();
-  readonly adj = new Map<string, Connection[]>();
-  private cid = 0;
-
-  /** Place if the real overlap rule allows; returns the index or -1. */
-  tryPlace(p: GrownPlacement): number {
-    const rot = p.rot ?? 0;
-    if (placementRejection(p.kind, p.x, p.y, this.placed, null, rot) !== null) return -1;
-    const k = getStructureKind(p.kind);
-    const { hw, hh } = structureHalfExtents(p.kind, rot);
-    // Never on top of an existing link (a link needs a clear line of sight).
-    for (const [ea, eb] of this.edges) {
-      const a = this.placements[ea]!, b = this.placements[eb]!;
-      if (segmentIntersectsAabb(a.x, a.y, b.x, b.y, p.x - hw, p.y - hh, p.x + hw, p.y + hh)) return -1;
-    }
-    const i = this.placements.length;
-    this.placements.push(p);
-    this.placed.push({ x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh });
-    this.nodes.set(`s${i}`, {
-      id: `s${i}`, kind: p.kind, x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh,
-      isHub: k.isHub, isCapital: p.kind === 'capital', isConnector: p.kind === 'connector',
-      isShieldPylon: isShieldEmitterKind(p.kind), maxConnections: k.maxConnections,
-      connectionRange: k.connectionRange, powerOutput: k.powerOutput, powerConsumption: k.powerConsumption,
-      isConstructed: true,
-    });
-    return i;
-  }
-
-  /** Link if the real connection rule allows. */
-  tryLink(a: number, b: number): boolean {
-    const na = this.nodes.get(`s${a}`)!, nb = this.nodes.get(`s${b}`)!;
-    const r = canConnect(na, nb, this.adj, this.nodes);
-    if (!r.ok) return false;
-    const c = new Connection(this.cid++, na.id, nb.id, 1);
-    (this.adj.get(na.id) ?? this.adj.set(na.id, []).get(na.id)!).push(c);
-    (this.adj.get(nb.id) ?? this.adj.set(nb.id, []).get(nb.id)!).push(c);
-    this.edges.push([a, b]);
-    return true;
-  }
-
-  /** Remove the last placement (a leaf that couldn't be linked). */
-  undoLast(): void {
-    const i = this.placements.length - 1;
-    this.placements.pop();
-    this.placed.pop();
-    this.nodes.delete(`s${i}`);
-  }
 }
 
 /**
@@ -453,11 +331,9 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   if (batteries >= 5) normal.push({ kind: 'battery_bank' });
   else for (let b = 0; b < batteries; b++) normal.push({ kind: 'battery' });
 
-  // Tallest normal leaf sets the row spacing.
-  let tallest = 0;
-  for (const w of normal) tallest = Math.max(tallest, getStructureKind(w.kind).footprint.h);
-  const reach = CONN_HALF + GAP + tallest; // a leaf's far edge from its row line
-  const pitchY = 2 * reach + GAP;
+  // A row gap fits the tallest leaves facing in: on the inner row's side (`${row}:${side}`), or still to place.
+  const reach = Math.max(0, ...normal.map((w) => leafReach(w.kind)));
+  const gaps = { left: reach, side: new Map([1, -1].map((s): [string, number] => [`0:${s}`, structureHalfExtents('capital', 0).hh])) };
   // Columns per side: enough slots for the base with a square-ish shape.
   // (A heart's Territory Lock is one extra leaf: it takes a free slot, never
   // widens the base — sector control.)
@@ -466,43 +342,70 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
 
   const B = new Builder();
   const cap = B.tryPlace({ kind: 'capital', x: 0, y: 0 });
+  const padDir = Math.sign(keepClearBox('capital', 0, 0, 0)!.y); // its crane-bay pad's side of the spine (solid to cables)
   const rowConn = new Map<number, number[]>(); // row j → connector index per column (-cols..cols, spine at 0)
   const spineAt = new Map<number, number>(); // row j → spine connector (or the Capital for j = 0)
   spineAt.set(0, cap);
 
   // Rows grow outward: 0, 1, -1, 2, -2, …
   const rowOrder: number[] = [0];
+  const rowY = new Map<number, number>([[0, 0]]);
+  /** Where row j (one step out from row `from`) goes: a pitch out, or
+   *  further when a keep-clear apron (a dock's landing pad, turned away from
+   *  its row) already reaches into that gap: the new row's connectors clear
+   *  it, or the row would break off at the pad. Only gaps with a pad grow. */
+  const nextRowY = (from: number, dir: number): number => {
+    const fy = rowY.get(from)!;
+    let need = Math.max(gaps.side.get(`${from}:${dir}`) ?? 0, gaps.left) + gaps.left + GAP;
+    for (const q of B.placed) {
+      const pad = keepClearBox(q.kind, q.x, q.y, q.rot);
+      if (pad === null) continue;
+      const far = dir > 0 ? pad.y + pad.hh - fy : fy - (pad.y - pad.hh);
+      const near = dir > 0 ? pad.y - pad.hh - fy : fy - (pad.y + pad.hh);
+      if (near >= 0) need = Math.max(need, far + CONN_HALF);
+    }
+    return fy + dir * need;
+  };
   const addRow = (j: number): boolean => {
     if (rowConn.has(j)) return true;
-    const y = j * pitchY;
-    let spine = spineAt.get(j);
+    const from = j - Math.sign(j);
+    if (!spineAt.has(from)) return false; // the row nearer 0 never formed
+    const y = rowY.get(j) ?? nextRowY(from, Math.sign(j));
+    rowY.set(j, y);
+    let spine = spineAt.get(j), col = -1; // col: this row's column 1 when the spine detoured up it
     if (spine === undefined) {
       // Spine connector at (0, y), reached through relays from the row nearer 0.
-      const from = j - Math.sign(j);
-      let prev = spineAt.get(from)!;
-      const prevY = from * pitchY;
+      // Across the Capital's pad the spine detours up column 1 (its row-0
+      // leaf slot is kept free for it), then steps in to (0, y).
+      const sx = from === 0 && Math.sign(j) === padDir ? PITCH_X : 0;
+      let prev = sx === 0 ? spineAt.get(from)! : rowConn.get(0)!.find((c) => B.placements[c]!.x === sx) ?? -1;
+      if (prev < 0) return false;
+      const prevY = rowY.get(from)!;
       const span = Math.abs(y - prevY);
       const relays = Math.max(0, Math.ceil((span - 2 * CONN_HALF) / 560) - 1);
       for (let r = 1; r <= relays; r++) {
-        const ry = prevY + Math.sign(j) * (span * r) / (relays + 1);
-        const ri = B.tryPlace({ kind: 'connector', x: 0, y: ry });
-        if (ri < 0 || !B.tryLink(prev, ri)) return false;
+        let ry = prevY + Math.sign(j) * (span * r) / (relays + 1);
+        // A keep-clear pad on the spine (the Capital's crane bay, out from
+        // its +y side): the relay moves out past the pad's far side.
+        for (const q of B.placed) {
+          const pad = keepClearBox(q.kind, q.x, q.y, q.rot);
+          if (pad === null || Math.abs(pad.x - sx) >= pad.hw + CONN_HALF || Math.abs(ry - pad.y) >= pad.hh + CONN_HALF) continue;
+          ry = pad.y + Math.sign(j) * (pad.hh + CONN_HALF + GAP);
+        }
+        // A relay pushed past a pad onto the row line is dropped: the spine
+        // links the previous one directly (or the row fails, as before).
+        if (Math.sign(j) * (y - ry) < 2 * CONN_HALF + linkGap('connector', 0, Math.sign(j))) continue;
+        const ri = B.placeLinked({ kind: 'connector', x: sx, y: ry }, prev);
+        if (ri < 0) return false;
         prev = ri;
       }
-      spine = B.tryPlace({ kind: 'connector', x: 0, y });
-      if (spine < 0 || !B.tryLink(prev, spine)) return false;
+      if (sx !== 0) col = prev = B.placeLinked({ kind: 'connector', x: sx, y }, prev);
+      spine = prev < 0 ? -1 : B.placeLinked({ kind: 'connector', x: 0, y }, prev);
+      if (spine < 0) return false;
       spineAt.set(j, spine);
     }
-    const row: number[] = [];
-    for (const side of [1, -1]) {
-      let prev = spine;
-      for (let i = 1; i <= cols; i++) {
-        const ci = B.tryPlace({ kind: 'connector', x: side * i * PITCH_X, y });
-        if (ci < 0 || !B.tryLink(prev, ci)) break;
-        row.push(ci);
-        prev = ci;
-      }
-    }
+    const row = col < 0 ? B.chainConnectors(spine, PITCH_X, PITCH_X, y, cols) : [col, ...B.chainConnectors(col, 2 * PITCH_X, PITCH_X, y, cols - 1)];
+    row.push(...B.chainConnectors(spine, -PITCH_X, -PITCH_X, y, cols));
     rowConn.set(j, row);
     return true;
   };
@@ -514,8 +417,11 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   });
   const used = new Set<string>();
   let rowCursor = 0;
+  const left = tallestFrom(queue.map((w) => w.kind));
   addRow(0);
-  for (const w of queue) {
+  used.add(`${rowConn.get(0)!.find((c) => B.placements[c]!.x === PITCH_X)}:${padDir}`); // row 0 column 1's pad-side slot: the spine detour's
+  for (const [qi, w] of queue.entries()) {
+    gaps.left = left[qi]!;
     let placedIt = false;
     for (let attempt = 0; attempt < 64 && !placedIt; attempt++) {
       for (const j of rowOrder) {
@@ -525,15 +431,21 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
             if (used.has(key)) continue;
             const conn = B.placements[c]!;
             const fp = getStructureKind(w.kind).footprint;
+            if (profile.fenced && fp.w > PITCH_X - GAP && Math.abs(conn.x) === cols * PITCH_X && cols > 2) continue; // a leaf wider than a column (a Solar) stays off a big fenced base's end columns: it would widen the fence
             const p: GrownPlacement = { kind: w.kind, x: conn.x, y: conn.y + side * (CONN_HALF + GAP + fp.h / 2) };
             // An arc-limited gun (unfenced base) faces away from the Capital.
             if (ARC_LIMITED.has(w.kind)) p.rot = p.y + side >= 0 ? 0 : 180;
+            // A kind with a keep-clear apron (a dock's landing pad, on its +y
+            // side) turns it away from its row, out over open space.
+            else if (getStructureKind(w.kind).keepClear !== undefined && side < 0) p.rot = 180;
+            p.y = conn.y + side * (CONN_HALF + linkGap(w.kind, 0, side, p.rot ?? 0) + fp.h / 2);
             if (w.recipe) p.recipe = w.recipe;
             if (w.link) p.link = w.link;
             const li = B.tryPlace(p);
             if (li < 0) continue;
             if (!B.tryLink(c, li)) { B.undoLast(); continue; }
             used.add(key);
+            gaps.side.set(`${j}:${side}`, Math.max(gaps.side.get(`${j}:${side}`) ?? 0, Math.abs(p.y - conn.y) + fp.h / 2));
             placedIt = true;
             break;
           }
@@ -549,6 +461,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
       }
     }
   }
+  gaps.left = upDownGunReach(posts.map((w) => w.kind), (k) => (ARC_LIMITED.has(k) ? facingRot(1, 0) : 0)); // rows from here hold bastions: guns above and below their hubs face in
 
   // The huge kind sits on its own outer row above the base (its far side free).
   for (const w of huge) {
@@ -560,7 +473,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     // Its own short spine extension, then the huge kind beyond it.
     const ext = B.tryPlace({ kind: 'connector', x: 0, y: B.placements[spine]!.y + reach });
     if (ext < 0 || !B.tryLink(spine, ext)) continue;
-    const p: GrownPlacement = { kind: w.kind, x: 0, y: B.placements[ext]!.y + CONN_HALF + GAP + fp.h / 2 };
+    const p: GrownPlacement = { kind: w.kind, x: 0, y: B.placements[ext]!.y + CONN_HALF + linkGap(w.kind, 0, 1) + fp.h / 2 };
     if (w.recipe) p.recipe = w.recipe;
     const li = B.tryPlace(p);
     if (li >= 0 && !B.tryLink(ext, li)) B.undoLast();
@@ -591,6 +504,12 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     for (const q of B.placed) {
       fx = Math.max(fx, Math.abs(q.x) + q.halfW);
       fy = Math.max(fy, Math.abs(q.y) + q.halfH);
+      // A dock's landing pad is inside the fence too (the fence may not cross it).
+      const pad = keepClearBox(q.kind, q.x, q.y, q.rot);
+      if (pad !== null) {
+        fx = Math.max(fx, Math.abs(pad.x) + pad.hw);
+        fy = Math.max(fy, Math.abs(pad.y) + pad.hh);
+      }
     }
     fx = Math.ceil((fx + FENCE_MARGIN) / 10) * 10;
     fy = Math.ceil((fy + FENCE_MARGIN) / 10) * 10;
@@ -684,8 +603,8 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
         // The outward gun stands off past the hub so guns above and below it
         // (up to OUTWARD_CLEAR half-width) still fit beside it.
         const p: GrownPlacement = slot === 0
-          ? { kind: w.kind, x: hx + h.sideX * (CONN_HALF + GAP + OUTWARD_CLEAR + hw), y: h.y }
-          : { kind: w.kind, x: hx, y: h.y + slot * (CONN_HALF + GAP + hh) };
+          ? { kind: w.kind, x: hx + h.sideX * (CONN_HALF + linkGap(w.kind, h.sideX, 0, rot) + OUTWARD_CLEAR + hw), y: h.y }
+          : { kind: w.kind, x: hx, y: h.y + slot * (CONN_HALF + linkGap(w.kind, 0, slot, rot) + hh) };
         if (rot !== 0) p.rot = rot;
         const li = B.tryPlace(p);
         if (li < 0) continue; // try a smaller gun in this slot

@@ -12,7 +12,9 @@ import type { GoodId, Hold } from '../../shared-types/goods.js';
 import { HoldStore } from '../cargo/HoldStore.js';
 import type { TradeTransferResult, TradeTransferSpec } from '../cargo/StorageService.js';
 import { regionalPriceFactor, resetRegionalPrices } from './regionalPrices.js';
-import { ConvoyDirector, DEFAULT_CONVOY_OPTIONS, dockPoint, edgeNear, type ConvoyRoom, type NpcBaseTrade } from './ConvoyDirector.js';
+import { ConvoyDirector, DEFAULT_CONVOY_OPTIONS } from './ConvoyDirector.js';
+import { bayBehindFence, convoyDockTarget, dockPoint, edgeNear } from './convoyDocking.js';
+import type { ConvoyBay, ConvoyRoom, CraneHaulJob, NpcBaseTrade } from './convoyRoom.js';
 import { clearConvoyHaulers, convoyHaulerFactions } from './convoyCarriers.js';
 import { chooseCarrier } from '../../core/economy/freight.js';
 import { BASE_PRICES } from '../../shared-types/economy.js';
@@ -26,7 +28,7 @@ const SINK: IPersistenceSink = {
   enqueueCriticalAwaitable: () => Promise.resolve({}), shutdown: () => Promise.resolve({ drained: 0 }),
 };
 
-interface FakeBase { owner: string; uid: string; stock: Partial<Record<GoodId, number>>; uses: Partial<Record<GoodId, number>>; box: NpcBaseTrade['box']; player?: NpcBaseTrade['player'] }
+interface FakeBase { owner: string; uid: string; stock: Partial<Record<GoodId, number>>; uses: Partial<Record<GoodId, number>>; box: NpcBaseTrade['box']; player?: NpcBaseTrade['player']; bay?: ConvoyBay }
 
 class FakeRoom implements ConvoyRoom {
   readonly bus = new Bus();
@@ -43,7 +45,7 @@ class FakeRoom implements ConvoyRoom {
   tradeDropAt(h: Hold): void { this.dropped.push(h); }
   clearPointNear(x: number, y: number) { return { x, y }; }
   npcBaseTrade(): NpcBaseTrade[] {
-    return this.bases.map((b) => ({ owner: b.owner, networkUid: b.uid, box: b.box, ...(b.player ? { player: b.player } : {}), view: { stock: { ...b.stock }, freeCapacity: 100_000, uses: b.uses, makes: {} } }));
+    return this.bases.map((b) => ({ owner: b.owner, networkUid: b.uid, box: b.box, ...(b.player ? { player: b.player } : {}), ...(b.bay ? { bay: b.bay } : {}), view: { stock: { ...b.stock }, freeCapacity: 100_000, uses: b.uses, makes: {} } }));
   }
   tradeTransfer(owner: string, uid: string, spec: TradeTransferSpec): TradeTransferResult | null {
     const b = this.bases.find((x) => x.owner === owner && x.uid === uid);
@@ -328,5 +330,126 @@ describe('ConvoyDirector — player Freight Dock orders (T4b)', () => {
     for (let i = 0; i < 12 && dir.active().length > 0; i++) { clock.t += 1000; dir.tick(); }
     expect(me.stock.alloy ?? 0).toBe(0);
     expect(wallet.bal).toBe(0);
+  });
+});
+
+describe('ConvoyDirector — the crane bay (structure-restyle 3h)', () => {
+  it('convoyDockTarget: the bay centre when the base has one, else the box edge', () => {
+    expect(convoyDockTarget({ box: BOX_A, bay: { dockId: 'd', x: 2500, y: 3460 } }, 250, 0, 0)).toEqual({ x: 2500, y: 3460 });
+    expect(convoyDockTarget({ box: BOX_A }, 250, 0, 0)).toEqual(dockPoint(BOX_A, 250, 0, 0));
+  });
+
+  it('bayBehindFence: inside the emitters\' box is fenced; outside it, or no fence, is reachable', () => {
+    const ring = [{ x: -1000, y: -1000 }, { x: 1000, y: -1000 }, { x: 1000, y: 1000 }, { x: -1000, y: 1000 }];
+    expect(bayBehindFence(0, 460, ring)).toBe(true);
+    expect(bayBehindFence(0, 1460, ring)).toBe(false);
+    expect(bayBehindFence(0, 460, [])).toBe(false);
+    expect(bayBehindFence(0, 460, [{ x: 0, y: 0 }]), 'one pylon is no fence').toBe(false);
+  });
+
+  /** A fake room whose crane runs a job when the test says the hold ends. */
+  class CraneRoom extends FakeRoom {
+    readonly jobs = new Map<string, CraneHaulJob>();
+    serveAnswer: 'serving' | 'none' = 'serving';
+    cancelled = 0;
+    craneServe(botId: string, job: CraneHaulJob): 'serving' | 'none' {
+      if (this.serveAnswer === 'none') return 'none';
+      if (!this.jobs.has(botId)) this.jobs.set(botId, job);
+      return 'serving';
+    }
+    craneCancel(botId: string): void { if (this.jobs.delete(botId)) this.cancelled++; }
+    holdEnds(): void { for (const [id, j] of [...this.jobs]) { this.jobs.delete(id); j.atHoldEnd(); } }
+  }
+
+  function craneSetup() {
+    const holds = new HoldStore({ persistence: () => SINK });
+    const exporter: FakeBase = { owner: 'npc:traders:ex', uid: 'u-ex', stock: { alloy: 1000 }, uses: {}, box: BOX_A, bay: { dockId: 'dock-ex', x: 2500, y: 3460 } };
+    const importer: FakeBase = { owner: 'npc:traders:im', uid: 'u-im', stock: {}, uses: { alloy: 20 }, box: BOX_B };
+    const room = new CraneRoom([exporter, importer], holds);
+    const clock = { t: 0 };
+    const dir = new ConvoyDirector(new Map([['sol-prime', room]]), holds, { ...DEFAULT_CONVOY_OPTIONS, planIntervalMs: 1000 }, () => clock.t);
+    return { holds, exporter, importer, room, clock, dir };
+  }
+
+  it('flies to the bay centre, asks the crane, and loads only when the hold ends (not on arrival)', () => {
+    const { exporter, room, clock, dir } = craneSetup();
+    dir.tick();
+    const c = dir.active()[0]!;
+    expect(c.phase).toBe('pickup');
+    for (let i = 0; i < 5; i++) { clock.t += 1000; dir.tick(); }
+    expect(room.poses.get(c.haulerId), 'parked on the bay centre').toEqual(expect.objectContaining({ x: 2500, y: 3460 }));
+    const job = room.jobs.get(c.haulerId)!;
+    expect(job).toMatchObject({ dockId: 'dock-ex', owner: 'npc:traders:ex', cargo: 'load' });
+    expect(job.weight).toBeGreaterThan(0);
+    expect(dir.active()[0]!.phase, 'waiting on the crane').toBe('pickup');
+    expect(exporter.stock.alloy, 'nothing taken on arrival').toBe(1000);
+    room.holdEnds();
+    expect(exporter.stock.alloy, 'taken at hold end').toBeLessThan(1000);
+    expect(dir.active()[0]!.phase).toBe('delivery');
+    // The importer has no bay: the old box-edge dock and atomic release.
+    for (let i = 0; i < 8 && dir.active().length > 0; i++) { clock.t += 1000; dir.tick(); }
+    expect(dir.active()).toHaveLength(0);
+    expect(room.jobs.size).toBe(0);
+  });
+
+  it('a dock that cannot serve (\'none\') falls back to the atomic take on arrival', () => {
+    const { exporter, room, clock, dir } = craneSetup();
+    room.serveAnswer = 'none';
+    dir.tick();
+    for (let i = 0; i < 5 && dir.active()[0]?.phase === 'pickup'; i++) { clock.t += 1000; dir.tick(); }
+    expect(exporter.stock.alloy).toBeLessThan(1000);
+    expect(dir.active()[0]?.phase).toBe('delivery');
+  });
+
+  it('a crane wait past the phase budget cancels the job and trades atomically', () => {
+    const { exporter, room, clock, dir } = craneSetup();
+    dir.tick();
+    clock.t += 1000; dir.tick(); // flies onto the bay
+    clock.t += 1000; dir.tick(); // asks the crane
+    expect(room.jobs.size).toBe(1);
+    clock.t += 10 * DEFAULT_CONVOY_OPTIONS.phaseTimeoutMs; dir.tick(); // past the leg budget too
+    expect(room.cancelled).toBe(1);
+    expect(exporter.stock.alloy).toBeLessThan(1000);
+    expect(dir.active()[0]?.phase).toBe('delivery');
+  });
+
+  it('a hauler that reaches the bay late in its leg still gets the crane (no timeout mid-hold)', () => {
+    const { exporter, room, clock, dir } = craneSetup();
+    // The hauler is stuck (e.g. frozen in a sector with no pilot) for most
+    // of its leg budget, then reaches the bay with one second to spare.
+    const move = room.setBotMoveTarget.bind(room);
+    room.setBotMoveTarget = () => {};
+    dir.tick();
+    const c = dir.active()[0]!;
+    const pose = room.poses.get(c.haulerId)!;
+    const leg = DEFAULT_CONVOY_OPTIONS.phaseTimeoutMs + (Math.hypot(pose.x - 2500, pose.y - 3460) / 200) * 1000;
+    clock.t += leg - 1000;
+    move(c.haulerId, 2500, 3460);
+    room.setBotMoveTarget = move;
+    dir.tick();
+    expect(room.jobs.size, 'served on arrival').toBe(1);
+    // The crane's settle + reach + hold run on past the old leg budget.
+    for (let i = 0; i < 10; i++) { clock.t += 1000; dir.tick(); }
+    expect(room.cancelled, 'not cut off mid-hold').toBe(0);
+    expect(exporter.stock.alloy).toBe(1000);
+    room.holdEnds();
+    expect(exporter.stock.alloy).toBeLessThan(1000);
+  });
+
+  it('a hold end after the convoy is gone (raided) trades nothing', () => {
+    const { exporter, room, dir, clock } = craneSetup();
+    dir.tick();
+    clock.t += 1000; dir.tick();
+    clock.t += 1000; dir.tick();
+    expect(room.jobs.size).toBe(1);
+    const id = dir.active()[0]!.haulerId;
+    dir.start();
+    try {
+      room.bus.emit('ENTITY_DESTROYED', { type: 'ENTITY_DESTROYED', entityId: id } as never);
+      room.holdEnds();
+      expect(exporter.stock.alloy).toBe(1000);
+    } finally {
+      dir.stop();
+    }
   });
 });

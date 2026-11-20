@@ -143,8 +143,12 @@ export const FREIGHT_DOCK: StructureKind = {
   id: 'freight_dock',
   displayName: 'Freight Dock',
   description: 'Where trade convoys dock; holds cargo and sets import and export orders. A leaf node.',
-  radius: 287, // bounding circle of the 520×240 footprint
-  footprint: { w: 520, h: 240 },
+  radius: 539, // bounding circle of the 1000×400 footprint (Ladder A medium)
+  footprint: { w: 1000, h: 400 },
+  // The landing pad: 900 × 500 past the open (+y) edge with a 10 u gap
+  // (y 210..710), centre (0, 460). The ONE definition: `DOCK_BAY_*`
+  // (rigCatalogue) derive from it.
+  keepClear: { cx: 0, cy: 460, w: 900, h: 500 },
   maxHealth: 2500,
   maxConnections: 1,
   isHub: false,

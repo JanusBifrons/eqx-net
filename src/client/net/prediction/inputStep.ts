@@ -263,6 +263,9 @@ export function stepInputTick(ctx: PredictionStepCtx, room: Room, kb: KeyboardBi
   // applyInput, to match the server's "post-step state → AI" ordering.)
   // Always advance physics — remote ships and obstacles must keep moving even while dead.
   if (ctx.predWorld) {
+    // Structure rig parts (structure-restyle 2d): pose for the tick this
+    // step produces, as the server worker does (`stepRigs(tick + 1)`).
+    ctx.predWorld.stepRigs(tick + 1);
     ctx.predWorld.tick(1 / 60);
     // Stamp the wall-clock time this state STANDS FOR (when its tick
     // boundary was due), so `updateMirror`'s dead-reckon is measured

@@ -17,6 +17,10 @@ export const CAPITAL: StructureKind = {
   description: 'The Core. Pre-built root hub: baseline power output and the main mineral bank.',
   radius: 396, // bounding circle of the 560×560 footprint
   footprint: { w: 560, h: 560 },
+  // structure-restyle 3i: the built-in crane bay (first load home), 500 × 300
+  // past the +y edge with a 10 u gap (y 290..590), centre (0, 440). The ONE
+  // definition: `CAPITAL_BAY` (rigCatalogue) derives from it.
+  keepClear: { cx: 0, cy: 410, w: 500, h: 240 },
   maxHealth: 5000,
   maxConnections: 4,
   isHub: true,
@@ -78,15 +82,15 @@ export const SOLAR: StructureKind = {
   id: 'solar',
   displayName: 'Solar Panel',
   description: 'Power generator. Attaches to a hub and feeds the grid once built.',
-  radius: 195, // bounding circle of the 360×150 footprint
-  footprint: { w: 360, h: 150 },
+  radius: 381, // bounding circle of the 700×300 footprint
+  footprint: { w: 700, h: 300 },
   maxHealth: 300,
   maxConnections: 1,
   isHub: false,
-  powerOutput: 30,
+  powerOutput: 120,
   powerConsumption: 0,
   storageCapacity: 0,
-  constructionCost: 120,
+  constructionCost: 480,
   color: 0xffee66,
 };
 

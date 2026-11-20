@@ -27,12 +27,12 @@ describe('SectorRoom integration — turret fire vs its own fence', () => {
       testMode: true,
       peacefulDrones: true,
       prebuiltStructures: [
-        { kind: 'capital', x: 0, y: 0 },
+        { kind: 'capital', x: 0, y: 0, rot: 180 }, // crane bay pad south, clear of the +y relay
         { kind: 'connector', x: 400, y: 0 },
         { kind: 'shield_pylon', x: 520, y: 0 },
         { kind: 'shield_pylon', x: 520, y: 500 },
         { kind, x: 400, y: 250 },
-        { kind: 'solar', x: -200, y: 500 },
+        { kind: 'solar', x: -200, y: 600 }, // 700×300: its near edge (y 450) clears the relay at y 330
         { kind: 'connector', x: -200, y: 330 },
         // A charged battery so a missile is absorbed, not an overload stun
         // (a stunned wall is open by design).

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Connection, connectionLength } from './Connection.js';
+import { CABLE_NO_SOCKET, Connection, connectionLength } from './Connection.js';
 import { FLASH_DURATION_MS } from './structureGridConstants.js';
 
 describe('Connection', () => {
@@ -36,5 +36,19 @@ describe('Connection', () => {
 
   it('connectionLength is Euclidean', () => {
     expect(connectionLength({ x: 0, y: 0 }, { x: 3, y: 4 })).toBeCloseTo(5, 6);
+  });
+});
+
+describe('Connection cable sockets (0d slice 5)', () => {
+  it('defaults to CABLE_NO_SOCKET at both ends', () => {
+    const c = new Connection(1, 'a', 'b', 100);
+    expect([c.socketA, c.socketB]).toEqual([CABLE_NO_SOCKET, CABLE_NO_SOCKET]);
+  });
+
+  it('socketAt returns the socket for each end, NO_SOCKET for a non-member', () => {
+    const c = new Connection(1, 'a', 'b', 100, 3, 7);
+    expect(c.socketAt('a')).toBe(3);
+    expect(c.socketAt('b')).toBe(7);
+    expect(c.socketAt('z')).toBe(CABLE_NO_SOCKET);
   });
 });
