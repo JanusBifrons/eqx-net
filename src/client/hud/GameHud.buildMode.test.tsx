@@ -66,7 +66,7 @@ describe('GameHud in build mode', () => {
     renderHud();
     for (const id of FLIGHT_IDS) expect(document.querySelector(`[data-testid="${id}"]`), id).toBeNull();
     expect(document.querySelector('[data-testid="helm-panel"]')).toBeNull();
-    // The status capsule (hull / shield) stays.
-    expect(document.querySelector('[data-testid="hud-status"]')).not.toBeNull();
+    // The status capsule stays, in its build variant (no ship health).
+    expect(document.querySelector('[data-testid="hud-status"]')?.getAttribute('data-mode')).toBe('build');
   });
 });
