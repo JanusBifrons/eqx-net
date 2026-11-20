@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * audit-god-files.mjs — file-size enforcement: god files + CLAUDE.md budgets.
  *
@@ -26,18 +25,29 @@
  * Usage:
  *   node scripts/audit-god-files.mjs           # fail on violation
  *   node scripts/audit-god-files.mjs --report  # ranking, no exit
+ *   node scripts/audit-god-files.mjs --hook    # one file, Claude Code hook JSON on stdin
+ *
+ * `--hook` is the PostToolUse hook in .claude/settings.json (Edit|Write|MultiEdit):
+ * the same rule (`checkSize`) applied to just the edited file, so an agent hears
+ * at edit time what CI would fail. Over the limit: exit 2 + stderr (fed back to
+ * the agent). Within NEAR_MARGIN of it: a non-blocking additionalContext note.
+ * Otherwise, and on any error: silent exit 0.
+ * No shebang on purpose: it runs as `node <file>`, and a shebang in a CRLF
+ * checkout breaks Vite's SSR transform, so vitest could not import it.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
 const SRC_DIR = join(REPO_ROOT, 'src');
 
-const CEILING_LOC = 600;
-const CAP_SLACK = 10; // tolerate a small in-flight delta during a session
+export const CEILING_LOC = 600;
+export const CAP_SLACK = 10; // tolerate a small in-flight delta during a session
+/** `--hook` warns (non-blocking) when a file is this close to its limit. */
+export const NEAR_MARGIN = 25;
 
 /** Files already over the ceiling when the ratchet went into CI (token-waste review 2026-11-14 section 7, C3). */
 const RATCHET_ONLY =
@@ -52,7 +62,7 @@ const RATCHET_ONLY =
  * As extractions land, REDUCE `cap` so a future commit cannot regress.
  * Path keys are repo-root-relative, POSIX-style (forward slashes).
  */
-const ALLOWLIST = {
+export const ALLOWLIST = {
   'src/client/app/gameRafLoop.ts': { cap: 710, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
   'src/client/state/store.ts': { cap: 617, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
   'src/server/fleet/FleetCommandSubsystem.ts': { cap: 909, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
@@ -190,28 +200,115 @@ function extendHint(rel) {
 
 /** Skip-list for files we deliberately leave > 600 LOC out of scope. Empty. */
 const SKIP = new Set([]);
+const SKIP_DIRS = new Set(['node_modules', 'dist', '__fixtures__', '__offscreen-spike__']);
+
+/** Whether a repo-root-relative POSIX path is in the audit's scope (non-test src/** .ts/.tsx). */
+export function inScope(rel) {
+  if (!rel.startsWith('src/') || !/\.(ts|tsx)$/.test(rel)) return false;
+  if (/\.test\.tsx?$/.test(rel) || rel.endsWith('.d.ts') || SKIP.has(rel)) return false;
+  return !rel.split('/').slice(0, -1).some((seg) => SKIP_DIRS.has(seg));
+}
+
+/** LOC as CI counts it. */
+export function countLoc(text) {
+  return text.split('\n').length;
+}
+
+/**
+ * The one size rule (CI and `--hook`). `limit` is the LOC that fails CI when
+ * exceeded: the ceiling, or an allowlisted file's cap + CAP_SLACK.
+ * kind: 'ceiling' | 'cap' (violations), 'near' (within NEAR_MARGIN), 'ok'.
+ */
+export function checkSize(rel, lines) {
+  const allow = ALLOWLIST[rel];
+  const limit = allow ? allow.cap + CAP_SLACK : CEILING_LOC;
+  const over = allow ? 'cap' : 'ceiling';
+  const kind = lines > limit ? over : lines > limit - NEAR_MARGIN ? 'near' : 'ok';
+  return allow
+    ? { rel, lines, limit, kind, cap: allow.cap, reason: allow.reason, target: allow.target }
+    : { rel, lines, limit, kind };
+}
 
 function* walk(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
-      if (entry.name === '__fixtures__' || entry.name === '__offscreen-spike__') continue;
+      if (SKIP_DIRS.has(entry.name)) continue;
       yield* walk(full);
     } else if (entry.isFile()) {
-      if (!/\.(ts|tsx)$/.test(entry.name)) continue;
-      if (entry.name.endsWith('.test.ts') || entry.name.endsWith('.test.tsx')) continue;
-      if (entry.name.endsWith('.d.ts')) continue;
       yield full;
     }
   }
 }
 
-function loc(file) {
-  return readFileSync(file, 'utf8').split('\n').length;
+/** Nearest ancestor holding this script and src/ (works from any worktree). */
+function findRoot(absFile) {
+  for (let d = dirname(absFile); ; ) {
+    if (existsSync(join(d, 'scripts', 'audit-god-files.mjs')) && existsSync(join(d, 'src'))) return d;
+    const up = dirname(d);
+    if (up === d) return null;
+    d = up;
+  }
+}
+
+/** `--hook`: checkSize for the file a Claude Code tool just wrote, or null if out of scope. */
+export function hookCheck(input) {
+  const fp = input?.tool_input?.file_path;
+  if (typeof fp !== 'string' || !fp) return null;
+  const abs = resolve(typeof input.cwd === 'string' ? input.cwd : process.cwd(), fp);
+  const root = findRoot(abs);
+  if (!root) return null;
+  const rel = relative(root, abs).split('\\').join('/');
+  if (!inScope(rel)) return null;
+  return checkSize(rel, countLoc(readFileSync(abs, 'utf8')));
+}
+
+/** Hook exit code + output for a hookCheck result. */
+export function hookOutput(r) {
+  if (!r || r.kind === 'ok') return { code: 0, stdout: '', stderr: '' };
+  const limitText =
+    r.cap === undefined
+      ? `the ${CEILING_LOC}-LOC ceiling`
+      : `its allowlist limit ${r.limit} (cap ${r.cap} + ${CAP_SLACK} slack)`;
+  if (r.kind === 'near') {
+    const text =
+      `audit-god-files: ${r.rel} is ${r.lines} LOC, ${r.limit - r.lines} under ${limitText}. ` +
+      'Put further growth in a new helper file; never raise the cap.';
+    return {
+      code: 0,
+      stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text } }),
+      stderr: '',
+    };
+  }
+  return {
+    code: 2,
+    stdout: '',
+    stderr:
+      `audit-god-files: ${r.rel} is ${r.lines} LOC, over ${limitText}; CI will fail. ` +
+      'Split the new code into a helper file; never raise the cap or trim comments.\n' +
+      extendHint(r.rel).trim() + '\n',
+  };
+}
+
+function runHook() {
+  const chunks = [];
+  process.stdin.on('data', (c) => chunks.push(c));
+  process.stdin.on('end', () => {
+    let out = { code: 0, stdout: '', stderr: '' };
+    try {
+      out = hookOutput(hookCheck(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+    } catch {
+      /* never block an edit on a checker error */
+    }
+    if (out.stdout) process.stdout.write(out.stdout);
+    if (out.stderr) process.stderr.write(out.stderr);
+    process.exitCode = out.code;
+  });
+  process.stdin.on('error', () => process.exit(0));
 }
 
 function main() {
+  if (process.argv.includes('--hook')) return runHook();
   if (process.argv.includes('--claude-md')) {
     const v = claudeMdViolations();
     if (v.length === 0) {
@@ -228,30 +325,17 @@ function main() {
   const violations = [];
   const allFiles = [];
   for (const file of walk(SRC_DIR)) {
+    const rel = relative(REPO_ROOT, file).split('\\').join('/');
+    if (!inScope(rel)) continue;
+    let text;
     try {
-      statSync(file);
+      text = readFileSync(file, 'utf8');
     } catch {
       continue;
     }
-    const lines = loc(file);
-    const rel = relative(REPO_ROOT, file).split('\\').join('/');
-    allFiles.push({ rel, lines });
-
-    const allow = ALLOWLIST[rel];
-    if (allow) {
-      if (lines > allow.cap + CAP_SLACK) {
-        violations.push({
-          rel,
-          lines,
-          limit: allow.cap,
-          kind: 'cap',
-          reason: allow.reason,
-          target: allow.target,
-        });
-      }
-    } else if (lines > CEILING_LOC && !SKIP.has(rel)) {
-      violations.push({ rel, lines, limit: CEILING_LOC, kind: 'ceiling' });
-    }
+    const r = checkSize(rel, countLoc(text));
+    allFiles.push({ rel, lines: r.lines });
+    if (r.kind === 'cap' || r.kind === 'ceiling') violations.push(r);
   }
 
   if (reportMode) {
@@ -289,7 +373,7 @@ function main() {
       );
     } else {
       console.error(
-        `  ${v.rel}: ${v.lines} LOC > allowlist cap ${v.limit} (+${CAP_SLACK} slack). ` +
+        `  ${v.rel}: ${v.lines} LOC > allowlist cap ${v.cap} (+${CAP_SLACK} slack). ` +
           `File grew; cap was set to prevent backsliding during the v3 refactor.\n` +
           `    target=${v.target}; reason: ${v.reason}
 ` +
@@ -300,4 +384,11 @@ function main() {
   process.exit(1);
 }
 
-main();
+const isMain = (() => {
+  try {
+    return resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+if (isMain) main();

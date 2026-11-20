@@ -4,6 +4,8 @@
 
 The file-size ratchet (`scripts/audit-god-files.mjs`, CI step "File-size ratchet") fails any `src/**` file over 600 LOC that is not allowlisted, and any allowlisted file that grows past its cap. The limits do not move. When a feature needs room, the code goes to the file's **extension point**: a new small file plus at most one line in the big file. Trimming comments or raising a cap is never the fix.
 
+The same rule runs at edit time: a Claude Code PostToolUse hook (`.claude/settings.json`, `audit-god-files.mjs --hook`) checks each `src/**` file an agent edits, blocks with the fix rule when it is over its limit, and adds a note when it is within 25 LOC of it.
+
 Each section below says: to add X, create file Y and add one row to Z. The nested `CLAUDE.md` next to each area carries the same rules in short form, and is loaded when an agent works in that folder.
 
 Status column: **live** = the extension point exists today; **planned** = being built by the god-file split (see "Roll-out" below). Until a planned point lands, use the existing pattern named in its row.

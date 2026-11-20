@@ -12,6 +12,17 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/scripts/audit-god-files.mjs", "--hook"],
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
