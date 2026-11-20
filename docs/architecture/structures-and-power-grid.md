@@ -375,8 +375,8 @@ shoots, which surfaced it; regen is now gated on `rec.kind === 1` (drones only).
 
 ## Gates
 
-Plan soft-leaping-truffle v2, phase V. Player guide:
-[shield-gates.md](../features/shield-gates.md).
+Plan soft-leaping-truffle v2, phase V; solid doors: `docs/plans/door-power.md`.
+Player guide: [shield-gates.md](../features/shield-gates.md).
 
 **Kinds.** `shield_gate` (320 × 72) and `shield_airlock` (320 × 260), appended
 to the structure catalogue (no version bump: appending leaves saved rows valid,
@@ -384,44 +384,92 @@ and a bump would reset saved structures).
 
 **Geometry** lives in one zone-pure module, `src/core/structures/gateGeometry.ts`,
 read by both sides (#15):
-- **Collider parts:** a gate's physics body is its posts (and an airlock's side
-  walls) as separate convex parts (`gateColliderPolygons`, passed to
-  `World.spawnObstacle(..., parts)`), on the server worker
-  and the client prediction world, so the gap between them is open. Weapon hits
-  test the same parts (`SwarmEntityRecord.boxes`, `rayHitsBox(..., boxes)`).
-- **Spans:** the shield across a gap (`gateSpans`; gate: one, airlock: A at
-  local +y, B at −y).
+- **Collider parts:** a gate's fixed body is its posts/towers (and an airlock's
+  side walls) as separate convex parts (`gateColliderPolygons`, passed to
+  `World.spawnObstacle(..., parts)`), on the server worker and the client
+  prediction world, so the gap between them is open until a door closes it.
 - **Anchors:** a fence wall ends on the gate post nearest its far end
   (`emitterAnchor`).
+- **Door constants:** `DOOR_TRAVEL_S` (3 s at full power), `DOOR_POWER_LEVELS`
+  (15), `DOOR_POS_MAX` (= 180 ticks × 15 = 2700), `DOOR_RESEGMENT_MIN_MS`.
 
-**Open/close** (`src/core/structures/gateLogic.ts`, server-only): occupancy is
-built from ship positions in the gate's local frame. A gate opens while an
-admitted ship is within `GATE_APPROACH_DEPTH` (300 u) of the span and closes
-`GATE_CLOSE_HOLD_MS` after the zone empties. An airlock is one `phase` field
-(closed / open A / open B), so both ends can never be open; it never closes an
-end while a ship overlaps it. Locked by a fast-check property test.
+There is NO shield span across a gate's gap any more (`gateSpans`,
+`gateSpanWorld`, `GATE_SPANS` are deleted). The gap is closed by SOLID door
+leaves.
+
+**Doors are rig leaves.** Each gate kind has a rig (`src/core/articulation/rigs/fences.ts`):
+`gate-doors` (2 physical leaves that slide apart into the towers) and
+`airlock-doors` (4 leaves, two per end; clip `door-a` / `door-b` names the
+moving end). The leaves are `physical` rig parts, so they are KINEMATIC
+colliders in the physics worker and in client prediction: a shut door blocks a
+ship, a half-open door leaves a real half gap, and a closing door shoves a ship
+out of the gap (there is no "never close on a ship" hold).
+
+**One door clock.** A door's motion is a segment `{p0, t0, dir, level}`
+(`src/core/structures/doorMotion.ts`). Position is always
+`doorPosAt(seg, tick)` = clamp(p0 + dir × level × (tick − t0), 0, DOOR_POS_MAX)
+— server, worker and prediction all read it; nobody integrates position.
+`driveDoor` starts a new segment on a new target at once, and on a power-level
+change only while travelling and at most once per `DOOR_RESEGMENT_MIN_MS`.
+The rig is driven by a SCRUBBED clip (`PlayingClip.from`/`rate`): from =
+`doorClipTime(p0)`, rate = dir × level / 15.
+
+**Power-scaled travel.** Level L = `doorLevelFromSupply(supplyFrac)` =
+round(supplyFrac × 15), from the grid's supply fraction
+(`PowerSummary.supplyFrac`: 1 when net ≥ 0 or a battery rescues the grid,
+supply/demand in deficit, 0 with no Capital). Full power crosses in 3 s, half
+power in 6 s, and at 0 power a door FREEZES wherever it is (open stays open,
+shut stays shut, partial stays partial). A moving door draws full power through
+the general grid rule (`setActive`); a still one only its trickle.
+
+**Open/close decisions** (`src/core/structures/gateLogic.ts`, server-only): the
+decision is each door's TARGET. Occupancy is built from ship positions in the
+gate's local frame. A gate targets open while an admitted ship is within
+`GATE_APPROACH_DEPTH` (300 u) of the gap, and targets shut
+`GATE_CLOSE_HOLD_MS` after the zone empties; hold timers count from the door's
+ARRIVAL fully open. An airlock is one `phase` field (closed / open A / open B)
+and an end starts opening only when the other end is at position 0, so both
+doors are never open at once. Locked by a fast-check property test.
 
 **Server.** `GateController` steps every built gate on the 10 Hz structure tick
 from the ACTIVE player ships (#17) and the gate's access setting
 (`shared-types/gateAccess.ts`: owner + allies / owner only / anyone not
-hostile; relations go through the B1 seam once it lands).
-`ShieldWallManager` forms walls between ANY two connected built emitters
-(pylons and gates) plus each gate's own spans; a span stops blocking while its
-end is open. `wallsUpFor(id)` feeds `STRUCTURE_FLAG_WALL_ACTIVE`.
+hostile), and posts each changed segment to the gate's rig as a clip
+(`startStructureRigClip`). **Gunfire:** the server tests weapons with
+main-thread boxes, not the worker's bodies, so `doorLeafBoxes.ts` appends one
+box per physical leaf to the gate record's `boxes` and re-poses them from the
+door positions each structure tick: a shut leaf takes the hit (damage to the
+gate through the normal structure path), an open leaf sits in its tower pocket
+and the gap lets shots through. **Shields:** gates are still fence EMITTERS —
+`ShieldWallManager` forms fence walls between any two connected built emitters
+(pylons and gates); stun hits those fence walls only. A gate itself is broken
+by destroying it (HP), not by stunning it.
 
-**Wire.** Room state `StructureState.gateOpen` (open bits) and `gateAccess`;
-`set_gate_access` message (owner-gated). Access persists in the sector snapshot.
+**Wire.** Existing room-state fields, no new field
+(`src/server/rooms/doorMotionRow.ts` → `encodeDoorMotion` in
+`shared-types/structureStateWire.ts`): `rigClip` = which door clip, `rigStart`
+= t0, `rigHold` = p0, `gateOpen` = bit 7 target open + bits 0–3 level. Assigned
+only on change, so a still door costs nothing and a late joiner rebuilds the
+door from the row (#16). `gateAccess` + the owner-gated `set_gate_access`
+message carry the access setting.
 
-**Client.** `src/client/structures/derivedWalls.ts` derives every wall (fence
-walls + spans) from the mirror with the server's rules; the renderer draws from
-it and the prediction world collides with it. This replaced the per-pylon
-`shieldWallTo` read, which only knew a pylon's FIRST wall — a pylon's second
-wall was neither drawn nor predicted.
+**Client.** `net/doorMotionDecode.ts` decodes the row into
+`StructureRenderState.doorA` / `doorB` (the truth) plus the scrubbed `rigClip`
+that poses the drawn leaves and the prediction colliders on `mirror.rigTick`.
+The deck light (`structureStyleC.fences.gate.ts` `deckLightCode`) is per end:
+GREEN only when fully open, RED when shut or moving, DARK with no power or
+stalled mid-travel at level 0. `structures/derivedWalls.ts` derives fence walls
+(and teleporter irises) only — no gate spans.
 
-**Tests.** `gateLogic.test` (geometry + state machines + property),
-`World.gate.test` (fly through the gap / stopped by a post / span blocks),
-`GateController.test`, `derivedWalls.test`, integration `gates.test`, E2E
-`gate-fly-through.spec` (`gate-test` room).
+**Persistence.** The sector snapshot saves an optional `doorPos` / `doorClip`
+per gate (`savedDoorOf`); a restored door starts still at that position with
+its target shut; missing = shut. Access persists too.
+
+**Tests.** `doorMotion.test`, `gateLogic.test` (state machines + property),
+`GateController.test`, `doorLeafBoxes.test`, `derivedWalls.test`,
+`structureStyleC.fences.gate.deckLight.test`, `World.gate.test`, integration `sectorRoom/gates.test`, E2E
+`gate-fly-through.spec` (`gate-test` room: the admitting gate opens fully, then
+the ship flies through; the locked gate's shut leaves stop it).
 
 ## Mining (Phase 4 — shipped)
 
@@ -541,7 +589,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 ### Structures at base scale — client cost rules (plan soft-leaping-truffle v2, A3)
 
-- **The connector web has two layers.** `ConnectorRenderer.staticGfx` (behind) holds everything steady: idle edges, turret range rings, up-wall rails, open-gate guides. It rebuilds only when `staticSignature` changes or the zoom moves > 3 %. `gfx` (front) is cleared every frame and holds only what animates. New steady visuals go on the static layer; anything driven by `nowMs` goes on `gfx`, and anything the static layer draws must feed `staticSignature`.
+- **The connector web has two layers.** `ConnectorRenderer.staticGfx` (behind) holds everything steady: idle edges, turret range rings, up-wall rails, open-iris guides. It rebuilds only when `staticSignature` changes or the zoom moves > 3 %. `gfx` (front) is cleared every frame and holds only what animates. New steady visuals go on the static layer; anything driven by `nowMs` goes on `gfx`, and anything the static layer draws must feed `staticSignature`.
 - **Socket cables wear the cable line look ("bundle on the curve").** With `socketCables` on, each link draws the same bundled cable as the straight `cable` look (strands, cradles, lashings, end collars, flow glow) along its stud-to-stud curve: the look walks a polyline by arc length ([`connectorCablePath.ts`](../../src/client/render/pixi/connectorCablePath.ts)), a straight edge being a 2-point path drawn byte-identically to before. Cradles sit at even arc-length stations, square to the smoothed local tangent; the end collars sit just in from each stud (`cableStudInset`), square to the stud normal, and a run too short for cradles still gets both collars. A fence link (no sockets) keeps its collars outside the posts. Locks: `connectorLineLooks.path.test.ts`.
 - **Socket cable flow (structure-restyle 0d slice 9, `?fx=new`).** With `socketCables` on, a flowing link draws, on `gfx` only, along its cached cable ([`connectorCables.ts`](../../src/client/render/pixi/connectorCables.ts)): the cable look's bleed and lit core (between the frames), then a train of comets that leaves the source socket when the run of flow starts and travels by arc length at a per-material pace in game time (`fxNow`): world units per second minerals 220, repair 280, construction 320, power 440; spacing 170 / 200 / 210 / 170 u, widened so at most `MAX_CABLE_COMETS` (4) ride a cable. Throughput is not on the wire, so the material sets the pace (#16). Comets passing a cradle throw clamp sparks. Each comet reaching the receiving socket flashes its end collar for `COLLAR_FLASH_MS` (240 game ms). When the run started is noted on the cached `LinkCable` (`flowSince`); a link not drawn flowing for `FLOW_RESTART_GAP_MS` (1000 game ms) starts a new run. Per-frame work per link is bounded by count: at most 6 strokes (bleed, core, all comets in one, all sparks in one, two for the flash). Locks: `connectorCables.flow.test.ts`, the slice 9 cases in `ConnectorRenderer.lineLooks.test.ts`.
 - **The prediction world streams structures and walls by distance** (`structures/predStructureStreaming.ts`, `PREDWORLD_STRUCTURE_RADIUS`). Don't add every structure to predWorld: each server correction replays the whole world (a citadel made that ~6× dearer). No local ship ⇒ no streaming (everything kept).
@@ -549,9 +597,9 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 ### Shield walls are DERIVED, not read per pylon (gates, plan soft-leaping-truffle v2)
 
-- `structures/derivedWalls.ts` `visitDerivedWalls` is the ONE place the client works out shield walls: fence walls between any two connected built emitters (pylons + gates, anchored on the nearest gate post) and each gate's spans, blocking per `wallActive` and the `gateOpen` bits.
+- `structures/derivedWalls.ts` `visitDerivedWalls` is the ONE place the client works out shield walls: fence walls between any two connected built emitters (pylons + gates, anchored on the nearest gate post), blocking per `wallActive`, plus teleporter irises. Gates have no shield span: their gap is closed by solid rig door leaves (see [Gates](#gates)).
 - Both `ConnectorRenderer` (draws) and `ColyseusClient.syncPredWalls` (prediction colliders: spawned once, toggled as they block, swept by generation stamp) use it. Don't read `shieldWallTo` for walls again: it only names a pylon's FIRST wall.
-- Gate sprites draw posts and walls only (`omitSpans`); spans are drawn live. The inspector shows **OPENS FOR** and owners cycle it (`sendSetGateAccess`).
+- Gate door leaves are drawn by the rig from the scrubbed door clip; the deck lights are live (`deckLightCode`: green fully open, red shut/moving, dark unpowered). The inspector shows **OPENS FOR** and owners cycle it (`sendSetGateAccess`).
 
 ### Structure state from ROOM STATE (plan soft-leaping-truffle v2, A2)
 
@@ -704,9 +752,9 @@ corruption); now gated on `rec.kind === 1`. See [docs/architecture/structures-an
   - **Weapon paths.** They use the swarm record's `halfW/halfH` box for kind 2.
   - **Test and scenario layouts** live in ONE place: `rooms/scenarioLayouts.ts` (`SCENARIO`, `STRUCTURE_SCENARIO_PREBUILT`), shared by `index.ts`, `showcaseRooms.ts` and the integration tests. Footprints are 3–6× the old radii, so a hand-placed layout must be re-derived against the real boxes, not guessed.
 - **Gates:**
-  - `GateController` (`structures/GateController.ts`) steps every built gate on the 10 Hz structure tick, BEFORE `ShieldWallManager.update`. Only ACTIVE player ships open gates (#17).
-  - `ShieldWallManager` forms walls between ANY two connected emitters (`isShieldEmitterKind`: pylons + gates) plus each gate's spans; `wallsUpFor(id)` is the per-emitter WALL_ACTIVE flag.
-  - Room state `gateOpen` / `gateAccess`; `set_gate_access` is owner-gated. Test room `gate-test` (open gate + owner-only gate).
+  - `GateController` (`structures/GateController.ts`) steps every built gate on the 10 Hz structure tick, BEFORE `ShieldWallManager.update`. Only ACTIVE player ships open gates (#17). Doors are solid rig leaves driven by a scrubbed clip; position is only ever `doorPosAt(seg, tick)` (one door clock); travel scales with the grid `supplyFrac` and freezes at 0 power; `doorLeafBoxes.ts` adds the leaves to the gate's hit boxes so shut doors block gunfire.
+  - `ShieldWallManager` forms walls between ANY two connected emitters (`isShieldEmitterKind`: pylons + gates); no gate spans. `wallsUpFor(id)` is the per-emitter WALL_ACTIVE flag.
+  - Room state door motion (`gateOpen` bit 7 target + level, `rigClip`/`rigStart`/`rigHold`; `doorMotionRow.ts`) / `gateAccess`; `set_gate_access` is owner-gated; saves carry optional `doorPos`/`doorClip`. Test room `gate-test` (open gate + owner-only gate).
 - **A2 (structure state → ROOM STATE):** structure grid state is `SectorState.structures` (MapSchema keyed by the decimal entityId; `StructureState` in `schema/SectorState.ts`), synced by `SectorRoom.rebuildStructuresSlice` (name kept; same 1 Hz pulse / 10 Hz turret tick / placement call sites). **Rules:**
   - **Assign only on change, and only away from the default.** Fields have NO initialisers: Colyseus schema v3 encodes every ASSIGNED field on join, and initialisers count as assignments. Unset means `STRUCTURE_DEFAULTS` (`shared-types/structureStateWire.ts`); compare `(st.f ?? DEFAULT) !== value` before writing.
   - **Owners are interned** (`structureOwners` / `structureOwnerNames` + `ownerIdx`).

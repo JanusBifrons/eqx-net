@@ -45,7 +45,7 @@ different subset.
 |---|---|---|
 | `rocks(near?, wrecks?)` | live rocks (swarm kind 0, SAB pose, collider parts); with `near`, field rocks with no body (`CutFieldSubsystem.dormantObstacles`). `wrecks` (placement only): also wreck pieces (kind 4, battle and field, `wreckParts`) and, with `near`, a wreck field's unloaded hull pieces (`WreckFieldSource.dormantObstacles`) | structure placement (`wrecks` on), connection line of sight and NPC base links (`wrecks` off, so links never change) (`getObstacles`) |
 | `structureBoxes()` | structure solid boxes (a teleporter pad is open, only its posts) | join spawn, convoy spawn (`clearPointNear`) |
-| `landing(...)` | structure boxes, every swarm body within reach (rocks, drones, scrap, wreck pieces, pods), field rocks with no body, other pilots' ships and parked hulls (own skipped, or only `onlySkipShipId`), blocking shield walls and closed gate spans | `landingPoint` (warp, sector trip, fleet and bot warps) |
+| `landing(...)` | structure boxes, every swarm body within reach (rocks, drones, scrap, wreck pieces, pods), field rocks with no body, other pilots' ships and parked hulls (own skipped, or only `onlySkipShipId`), blocking shield walls | `landingPoint` (warp, sector trip, fleet and bot warps) |
 | `hullCircles(playerId)` | AI ships and other pilots' hulls by extent (pilots still joining skipped) | join spawn spacing |
 
 Outputs are scratch: each call refills the same arrays with the same pooled records (and a rock's
@@ -126,8 +126,8 @@ left somewhere else" do.
   body from, gate posts as separate parts so the gap stays open, at its quarter-turn angle) as an
   `OBSTACLE` command to `FineFieldLayer.obstacleSet`. A chunk that such an obstacle reaches may be
   built though the streamer never loaded it, so bases in open space are avoided. Not yet covered
-  (parked): shield walls and closed gate spans (`PhysicsWorld.wallBodies`, a fenced base is
-  see-through to autopilot); sectors with no asteroid field (no nav field there at all); the coarse
+  (parked): shield walls (`PhysicsWorld.wallBodies`, a fenced base is see-through to autopilot)
+  and shut gate door leaves (kinematic rig bodies; the planner sees the gap as open); sectors with no asteroid field (no nav field there at all); the coarse
   layer, blind to structures, so a capital (coarse-only past the fine reach) leans on its steering
   near a base.
 - **Resting wrecks, scrap and plain asteroids too** (`nav/RestingObstacles.ts`). On the room bus's
