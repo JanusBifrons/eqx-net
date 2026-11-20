@@ -216,7 +216,7 @@ function Pane({ title, rows, verb, testPrefix, onMove, prices }: {
     const unit = prices[r.key.slice(2)];
     return unit === undefined ? '' : ` · ${credits(unit * qty)}`;
   };
-  const tradable = (r: CargoRow): boolean => r.key.startsWith('g:') && prices[r.key.slice(2)] !== undefined;
+  const tradable = (r: CargoRow): boolean => (r.key.startsWith('g:') || r.key.startsWith('p:')) && prices[r.key.slice(2)] !== undefined;
   return (
     <Box sx={{ flex: 1, minWidth: 0 }}>
       <Box sx={PANE_TITLE_SX}>{title}</Box>
@@ -500,7 +500,7 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship, title, subt
 
       {state?.open === true && !peek && !own && market !== undefined && (
         <Box sx={{ ...BODY_SX, flexDirection: 'row' }}>
-          <Pane title="For sale" rows={here} verb="Buy" testPrefix="here" onMove={(items) => sendCargoMove(target, 'take', items)} prices={market.buy} />
+          <Pane title="For sale" rows={here} verb="Buy" testPrefix="here" onMove={(items) => sendCargoMove(target, 'take', items)} prices={{ ...market.buy, ...market.packed }} />
           <Pane
             title={`Aboard · ${Math.round(state.shipCapacity)} capacity`} rows={aboard} verb="Sell" testPrefix="aboard"
             onMove={(items) => sendCargoMove(target, 'put', items)} prices={market.sell}
