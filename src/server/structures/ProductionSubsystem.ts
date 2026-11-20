@@ -6,7 +6,8 @@
  *  1. Start a cycle by taking the recipe's inputs from its NETWORK's storage
  *     (the same-owner storage in its grid component: Capital bank, Cargo Bays,
  *     Freight Docks). All or nothing: a missing input leaves it "starved".
- *  2. Advance one step per powered pulse.
+ *  2. Advance one step per powered pulse, times the owner throttle
+ *     (`structureWorkRate`: 50% takes twice as long, 0% makes no progress).
  *  3. When the cycle completes, put the outputs into network storage. If they
  *     don't fit, it stays "blocked" until there is room.
  * Scarce inputs are shared round-robin in a fixed order, so results are
@@ -42,6 +43,7 @@ import { getStructureKind, type StructureKindId } from '../../shared-types/struc
 import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecipe } from '../../shared-types/blueprints.js';
 import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
+import { structureWorkRate } from '../../shared-types/structurePower.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
@@ -112,6 +114,14 @@ function baseEffect(id: RecipeId): EffectiveRecipe {
     BASE_EFFECT.set(id, e);
   }
   return e;
+}
+
+/** Advance a loaded cycle by one pulse at the owner throttle; true once it
+ *  is complete (a hair of slack so tenths always add up to a whole cycle). */
+function advanceProgress(rec: StructureRecord, cyclePulses: number): boolean {
+  const progress = rec.prodProgress ?? 0;
+  if (progress < cyclePulses) rec.prodProgress = Math.min(cyclePulses, progress + structureWorkRate(rec));
+  return (rec.prodProgress ?? 0) >= cyclePulses - 1e-6;
 }
 
 export class ProductionSubsystem {
@@ -311,9 +321,7 @@ export class ProductionSubsystem {
       }
     }
     rec.prodMissing = undefined;
-    const progress = rec.prodProgress ?? 0;
-    if (progress < eff.cyclePulses) rec.prodProgress = progress + 1;
-    if ((rec.prodProgress ?? 0) >= eff.cyclePulses) {
+    if (advanceProgress(rec, eff.cyclePulses)) {
       const cycle = rec.prodCycles ?? 0;
       const extra = (rec.prodYield ?? 0) > 0 && this.roll(rec.id, cycle) < (rec.prodYield ?? 0) ? 1 : 0;
       if (!this.put(eff.outputs, extra, rec.prodQuality ?? 0)) {
@@ -349,9 +357,7 @@ export class ProductionSubsystem {
       rec.prodProgress = 0;
     }
     rec.prodMissing = undefined;
-    const progress = rec.prodProgress ?? 0;
-    if (progress < cyclePulses) rec.prodProgress = progress + 1;
-    if ((rec.prodProgress ?? 0) >= cyclePulses) {
+    if (advanceProgress(rec, cyclePulses)) {
       const ore = (rec.prodChunk.ore ??= {});
       const batch = this.chunkBatch(ore);
       if (!this.put(batch, 0, 0)) {

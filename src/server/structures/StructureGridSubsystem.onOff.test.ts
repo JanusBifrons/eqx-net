@@ -289,3 +289,19 @@ describe('structure power throttle', () => {
     expect(normalizeStructureThrottle(-1)).toBe(0);
   });
 });
+
+describe('structure throttle and work speed', () => {
+  it("a turret's fire rate ignores throttle", () => {
+    const full = poweredTurretBase();
+    const throttled = poweredTurretBase();
+    const rec = throttled.registry.get(throttled.turret)!;
+    expect(throttled.grid.setThrottle(rec, 0)).toBe(true);
+    expect(throttled.grid.powerSummaryFor(throttled.turret).powered).toBe(true);
+    for (let t = 10_000; t <= 20_000; t += 100) {
+      full.grid.tickTurrets(t);
+      throttled.grid.tickTurrets(t);
+    }
+    expect(full.damage.length).toBeGreaterThan(1);
+    expect(throttled.damage.length).toBe(full.damage.length);
+  });
+});

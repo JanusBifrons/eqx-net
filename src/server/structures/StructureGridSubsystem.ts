@@ -26,6 +26,7 @@ import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
 import { redrawStructure, switchStructure, throttleStructure } from './structurePowerSwitch.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { structureWorkRate } from '../../shared-types/structurePower.js';
 import {
   canUpgradeStructure,
   effectiveStructureMaxHealth,
@@ -619,7 +620,9 @@ export class StructureGridSubsystem {
       if (rate == null || rate <= 0) continue;
       const working = nebula && !!this.hooks.depositGoods && this.powerSummaryFor(rec.id).powered;
       this.setActive(rec, working);
-      if (working) this.hooks.depositGoods!(rec, 'gas', rate);
+      // The owner throttle scales the haul (structureWorkRate; 0% gathers nothing).
+      const n = Math.round(rate * structureWorkRate(rec));
+      if (working && n > 0) this.hooks.depositGoods!(rec, 'gas', n);
     }
   }
 
@@ -665,7 +668,8 @@ export class StructureGridSubsystem {
       // straight into the owner's network storage.
       const y = this.hooks.asteroidYieldOf?.(target.entityId) ?? ASTEROID_YIELD.rock;
       const deposit = yieldHasGoods(y) ? this.hooks.depositGoods : undefined;
-      let want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
+      // The owner throttle scales the per-pulse rate (structureWorkRate).
+      let want = Math.min(Math.round((kind.miningRate ?? 0) * structureWorkRate(rec)), kind.storageCapacity - rec.minerals);
       // A full network never burns finite ore: if this pulse's goods wouldn't
       // all fit, the drill idles and the rock keeps them.
       if (deposit && this.hooks.canDepositGoods && want > 0) {

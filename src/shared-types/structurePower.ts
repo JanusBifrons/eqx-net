@@ -37,6 +37,19 @@ export function structureDraw(
   return throttle >= STRUCTURE_THROTTLE_FULL ? full : (full * Math.max(0, throttle)) / STRUCTURE_THROTTLE_FULL;
 }
 
+/** How fast a producer works this pulse, 0..1: its throttle as a fraction
+ *  (1 at the default 100%), 0 when the owner switched it Off. Every producer
+ *  (processors incl. the Shipyard, drills, Gas Collectors, Research Labs)
+ *  multiplies its one per-pulse progress step by this, so 50% takes twice as
+ *  long and 0% does no work while the structure still reads powered. Turrets
+ *  ignore it: they have On/Off only. */
+export function structureWorkRate(rec: { readonly switchedOff?: boolean; readonly throttle?: number }): number {
+  if (rec.switchedOff === true) return 0;
+  const t = rec.throttle;
+  if (t === undefined || t >= STRUCTURE_THROTTLE_FULL) return 1;
+  return Math.max(0, t) / STRUCTURE_THROTTLE_FULL;
+}
+
 /** A throttle as stored on a record: an integer 0..9 tenths, or undefined
  *  for 100% (the default, so an unthrottled record carries nothing). */
 export function normalizeStructureThrottle(throttle: number | undefined): number | undefined {
