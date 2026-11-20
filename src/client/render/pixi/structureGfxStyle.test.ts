@@ -1,5 +1,6 @@
 /**
- * The placement ghost and the no-art fallback draw `buildStructureGfx`. With a
+ * The no-art fallback draws `buildStructureGfx` and the placement ghost the
+ * hologram of the same `buildStructureVisual` plan. With a
  * structure style on (`?restyle=`, on by default with Machined art) they must
  * draw that style's plan, polygons included — before this the ghost of a
  * connector showed the old square hub while the placed one was a hexagon.
@@ -39,6 +40,7 @@ describe('buildStructureGfx with a structure style', () => {
     const mirror = { pendingPlacementPreview: { kind: 'connector', x: 0, y: 0, angle: 0 } } as unknown as RenderMirror;
     updatePlacementGhost(mirror, ctx);
     expect(ctx.placementGhost).not.toBeNull();
-    expect(polyFills(ctx.placementGhost!)).toBeGreaterThan(0);
+    // The ghost is the hologram; its art is drawn from the styled plan.
+    expect(polyFills(ctx.placementGhost!.ahead)).toBeGreaterThan(0);
   });
 });
