@@ -119,3 +119,35 @@ export function linkGap(kind: StructureKindId, dx: number, dy: number, rot = 0, 
   linkGaps.set(key, g);
   return g;
 }
+
+/** How far a leaf of `kind` reaches out from its row line: half a
+ *  connector, its `linkGap`, then its full height (the larger of its two
+ *  sides; a keep-clear kind on the -y side turns its apron away), turned
+ *  `rot` (a bastion's arc-limited gun faces out). */
+export function leafReach(kind: StructureKindId, rot = 0): number {
+  const k = getStructureKind(kind);
+  const ch = getStructureKind('connector').footprint.h / 2;
+  let r = 0;
+  for (const s of [1, -1]) {
+    const turn = k.keepClear !== undefined && s < 0 ? 180 : rot;
+    r = Math.max(r, ch + linkGap(kind, 0, s, turn) + 2 * structureHalfExtents(kind, turn).hh);
+  }
+  return r;
+}
+
+/** Per index, the tallest `leafReach` from that leaf to the end of the list
+ *  (what can still face into a new row gap). */
+export function tallestFrom(kinds: readonly StructureKindId[]): number[] {
+  const out = kinds.map((k) => leafReach(k));
+  for (let i = out.length - 2; i >= 0; i--) out[i] = Math.max(out[i]!, out[i + 1]!);
+  return out;
+}
+
+/** The tallest reach of a fenced base's bastion guns that hang above or
+ *  below a hub: the biggest third take the hubs' outward slots (a hub seats
+ *  up to three), the rest go above and below. At least half a connector. */
+export function upDownGunReach(posts: readonly StructureKindId[], rotOf: (k: StructureKindId) => number): number {
+  const area = (k: StructureKindId): number => getStructureKind(k).footprint.w * getStructureKind(k).footprint.h;
+  const upDown = [...posts].sort((a, b) => area(b) - area(a)).slice(Math.ceil(posts.length / 3));
+  return Math.max(getStructureKind('connector').footprint.h / 2, ...upDown.map((k) => leafReach(k, rotOf(k))));
+}

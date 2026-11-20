@@ -27,7 +27,7 @@ import { RECIPES, packRecipeFor, recipesFor, type RecipeId } from '../../shared-
 import { BASE_PRICES } from '../../shared-types/economy.js';
 import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
 import { keepClearBox } from '../structures/placementRules.js';
-import { Builder, linkGap, type GrownPlacement } from './growBuilder.js';
+import { Builder, leafReach, linkGap, tallestFrom, upDownGunReach, type GrownPlacement } from './growBuilder.js';
 import { powerShareCost } from './powerShareCost.js';
 import { roleUnits, type Want } from './roleUnits.js';
 import { seededRandom, type BaseProfile, type BaseTier } from './baseProfile.js';
@@ -58,7 +58,7 @@ export type { GrownPlacement } from './growBuilder.js';
  *  outline (style c), so cable ends and socket-to-socket reach moved.
  *  17→18: each leaf stands `linkGap` off its connector (`MIN_CABLE_LENGTH`);
  *  a spine relay pushed onto its row line is dropped.
- *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power priced per unit of draw. */
+ *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power per unit of draw; row gaps fit the leaves facing in. */
 export const BASE_GROWTH_VERSION = 19;
 
 /**
@@ -330,14 +330,9 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   if (batteries >= 5) normal.push({ kind: 'battery_bank' });
   else for (let b = 0; b < batteries; b++) normal.push({ kind: 'battery' });
 
-  // Tallest normal leaf sets the row spacing.
-  // (Each leaf stands its `linkGap` off its connector: "keep buildings apart".)
-  let reach = 0; // a leaf's far edge from its row line
-  for (const w of normal) for (const s of [1, -1]) {
-    const k = getStructureKind(w.kind); // (a keep-clear kind turns its apron away: below)
-    reach = Math.max(reach, CONN_HALF + linkGap(w.kind, 0, s, k.keepClear !== undefined && s < 0 ? 180 : 0) + k.footprint.h);
-  }
-  const pitchY = 2 * reach + GAP;
+  // A row gap fits the tallest leaves facing in: on the inner row's side (`${row}:${side}`), or still to place.
+  const reach = Math.max(0, ...normal.map((w) => leafReach(w.kind)));
+  const gaps = { left: reach, side: new Map([1, -1].map((s): [string, number] => [`0:${s}`, structureHalfExtents('capital', 0).hh])) };
   // Columns per side: enough slots for the base with a square-ish shape.
   // (A heart's Territory Lock is one extra leaf: it takes a free slot, never
   // widens the base — sector control.)
@@ -359,7 +354,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
    *  it, or the row would break off at the pad. Only gaps with a pad grow. */
   const nextRowY = (from: number, dir: number): number => {
     const fy = rowY.get(from)!;
-    let need = pitchY;
+    let need = Math.max(gaps.side.get(`${from}:${dir}`) ?? 0, gaps.left) + gaps.left + GAP;
     for (const q of B.placed) {
       const pad = keepClearBox(q.kind, q.x, q.y, q.rot);
       if (pad === null) continue;
@@ -423,8 +418,10 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   });
   const used = new Set<string>();
   let rowCursor = 0;
+  const left = tallestFrom(queue.map((w) => w.kind));
   addRow(0);
-  for (const w of queue) {
+  for (const [qi, w] of queue.entries()) {
+    gaps.left = left[qi]!;
     let placedIt = false;
     for (let attempt = 0; attempt < 64 && !placedIt; attempt++) {
       for (const j of rowOrder) {
@@ -434,6 +431,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
             if (used.has(key)) continue;
             const conn = B.placements[c]!;
             const fp = getStructureKind(w.kind).footprint;
+            if (profile.fenced && fp.w > PITCH_X - GAP && Math.abs(conn.x) === cols * PITCH_X && cols > 2) continue; // a leaf wider than a column (a Solar) stays off a big fenced base's end columns: it would widen the fence
             const p: GrownPlacement = { kind: w.kind, x: conn.x, y: conn.y + side * (CONN_HALF + GAP + fp.h / 2) };
             // An arc-limited gun (unfenced base) faces away from the Capital.
             if (ARC_LIMITED.has(w.kind)) p.rot = p.y + side >= 0 ? 0 : 180;
@@ -447,6 +445,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
             if (li < 0) continue;
             if (!B.tryLink(c, li)) { B.undoLast(); continue; }
             used.add(key);
+            gaps.side.set(`${j}:${side}`, Math.max(gaps.side.get(`${j}:${side}`) ?? 0, Math.abs(p.y - conn.y) + fp.h / 2));
             placedIt = true;
             break;
           }
@@ -462,6 +461,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
       }
     }
   }
+  gaps.left = upDownGunReach(posts.map((w) => w.kind), (k) => (ARC_LIMITED.has(k) ? facingRot(1, 0) : 0)); // rows from here hold bastions: guns above and below their hubs face in
 
   // The huge kind sits on its own outer row above the base (its far side free).
   for (const w of huge) {
