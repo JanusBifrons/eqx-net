@@ -60,7 +60,7 @@ export type { GrownPlacement } from './growBuilder.js';
  *  a spine relay pushed onto its row line is dropped.
  *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power per unit of draw; row gaps fit the leaves facing in.
  *  19→20: landing pads solid to cables, no socket on their side: the spine detours round the Capital's pad up column 1; an unlinkable connector is taken back.
- *  20→21 (restyle F2): wider gate (416), airlock (392) and pylons (120×120); fence pylons 720 apart, each half-side spaced to the gate end (no pylon on a gate). */
+ *  20→21 (restyle F2): wider gate (416), airlock (392) and pylons (120×120); fence pylons 660 apart, each half-side spaced to the gate end (no pylon on a gate). */
 export const BASE_GROWTH_VERSION = 21;
 
 /**
@@ -95,9 +95,11 @@ const GAP = 20;
 /** Fence clearance past the outermost structure. Link reach is socket to
  *  socket, so this keeps a row-end connector's tap to the side emitter ≤ 600 u. */
 const FENCE_MARGIN = 100;
-/** Pylon spacing: centre to centre, so the 120 u pylons sit at most the
- *  600 u edge-to-edge range apart (full-length walls). */
-const FENCE_STEP = 720;
+/** Pylon spacing: centre to centre (120 u pylons, so walls up to 540 u, under
+ *  the 600 u edge-to-edge range). Kept at the pre-restyle 660: at 720 the
+ *  fewer pylons let a garrison stop shrinking one wealth step early and come
+ *  out too big to site (galaxyBases.test.ts, abyssal-gate). */
+const FENCE_STEP = 660;
 /** A fence gate's centre to where a pylon flush with its end would sit. */
 const GATE_CLEAR = getStructureKind('shield_gate').footprint.w / 2 - getStructureKind('shield_pylon').footprint.w / 2;
 
