@@ -9,6 +9,7 @@
 import { gridFor, hashStr, rasterPoly, type Poly } from './raster.js';
 import { NAVAL_BARREL_SPAN } from '../../../core/combat/muzzle.js';
 import { railGeom, RAIL_VENTS } from './fx/turretFx.js';
+import { forgeSmallGun } from './smallGunForge.js';
 import { lin, MAT, newFields, paintOf, PALETTE, setAlbedo, valueNoise, type Fields } from './fieldsCore.js';
 
 export type GunFamily = 'bolt' | 'beam' | 'missile' | 'charge' | 'rail' | 'tractor';
@@ -216,90 +217,15 @@ function forgeRailTurret(spec: TurretGunSpec): Fields {
 }
 
 /**
- * The turning part of a turret, through the same fields as a hull: a painted
- * domed cap with a groove and a hub, and a bare-metal barrel pointing forward
- * (-y) with ring seams; per family a muzzle brake and bore (bolt), a lens
- * (beam), coils (charge) or a two-tube rack (missile). Light it with
- * litFrame at every sun step, like a ship, and pick the frame by the gun's
- * own world rotation.
+ * The turning part of a turret, through the same fields as a hull. Naval
+ * gunhouses and the rail turret are drawn above; the small guns (bolt, beam,
+ * charge, missile) are a faceted gunmetal housing with a mantlet and a
+ * per-family barrel, or an armoured cell launcher (`smallGunForge.ts`).
+ * Light it with litFrame at every sun step, like a ship, and pick the frame
+ * by the gun's own world rotation.
  */
 export function forgeTurretGun(spec: TurretGunSpec): Fields {
   if (spec.naval && spec.family === 'rail') return forgeRailTurret(spec);
   if (spec.naval) return forgeNavalTurret(spec);
-  const { family, len, wid, cap, ppu } = spec;
-  const hw = wid / 2;
-  const rack = family === 'missile';
-  const capPts: Array<readonly [number, number]> = [];
-  for (let k = 0; k < 24; k++) { const a = (k / 24) * Math.PI * 2; capPts.push([Math.cos(a) * cap, Math.sin(a) * cap]); }
-  const capPoly: Poly = capPts;
-  const rackPoly: Poly = [[-cap, -cap * 0.75], [cap, -cap * 0.75], [cap, cap * 0.75], [-cap, cap * 0.75]];
-  const brake = family === 'bolt' ? hw * 1.45 : family === 'beam' ? hw * 1.25 : hw;
-  const tipFrac = family === 'bolt' ? 0.86 : family === 'beam' ? 0.8 : 1;
-  const bodyPoly: Poly = [[-hw, -len * tipFrac], [hw, -len * tipFrac], [hw, 0], [-hw, 0]];
-  const tipPoly: Poly = [[-brake, -len], [brake, -len], [brake, -len * tipFrac], [-brake, -len * tipFrac]];
-  const polys = rack ? [rackPoly] : tipFrac < 1 ? [capPoly, bodyPoly, tipPoly] : [capPoly, bodyPoly];
-  const g = gridFor(polys, ppu, 1.5);
-  const f = newFields(g, paintOf(spec.paint));
-  // Anti-aliased coverage from the same rasteriser as the hulls.
-  for (const poly of polys) { const c = rasterPoly(g, poly); for (let i = 0; i < c.length; i++) if (c[i]! > f.cov[i]!) f.cov[i] = c[i]!; }
-  const paint = lin(f.paint), metal = lin(PALETTE.metal), worn = lin(PALETTE.metalWorn), trim = lin(PALETTE.trim), glass = lin(PALETTE.glass);
-  const bore = lin(0x0b0c10);
-  const capH = cap * 0.55;
-  const seed = hashStr('turret:' + family);
-  const seam = len / Math.max(1, Math.round(len / Math.max(0.5, wid * 1.6)));
-  for (let ty = 0; ty < g.h; ty++) {
-    for (let tx = 0; tx < g.w; tx++) {
-      const i = ty * g.w + tx;
-      const wx = (tx + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
-      const nz = valueNoise(wx * 0.6, wy * 0.6, seed);
-      let h = -1, mat: number = MAT.NONE, col = metal, kk = 1, key = PALETTE.metal;
-      // Cap (a disc, or the rack's box).
-      const inCap = rack ? Math.abs(wx) <= cap && Math.abs(wy) <= cap * 0.75 : Math.hypot(wx, wy) <= cap;
-      if (inCap) {
-        const k = rack ? Math.max(Math.abs(wx) / cap, Math.abs(wy) / (cap * 0.75)) : Math.hypot(wx, wy) / cap;
-        h = capH * (rack ? 0.8 + 0.2 * Math.sqrt(Math.max(0, 1 - k * k)) : Math.sqrt(Math.max(0, 1 - k * k)) * 0.7 + 0.3);
-        mat = MAT.PAINT; col = paint; key = f.paint; kk = 0.92 + 0.1 * nz;
-        if (!rack && Math.abs(k - 0.74) < 0.06) { mat = MAT.TRIM; col = trim; key = PALETTE.trim; h -= capH * 0.08; }
-        if (!rack && k < 0.3) { mat = MAT.METAL; col = worn; key = PALETTE.metal; h += capH * 0.1; }
-        if (rack) {
-          // Two launch tubes: dark round mouths in metal sleeves.
-          for (const sx of [-cap * 0.48, cap * 0.48]) {
-            const d = Math.hypot(wx - sx, wy + cap * 0.1) / (cap * 0.36);
-            if (d < 1) {
-              const mouth = d < 0.62;
-              mat = mouth ? MAT.NOZZLE : MAT.METAL; col = mouth ? bore : worn; key = mouth ? PALETTE.nozzle : PALETTE.metal;
-              h = capH * (mouth ? 0.4 : 1.05);
-            }
-          }
-        }
-      }
-      // Barrel (over the cap where they overlap).
-      if (!rack && wy <= 0 && wy >= -len) {
-        const v = -wy / len; // 0 pivot .. 1 tip
-        const half = v > tipFrac ? brake : hw;
-        const u = wx / half;
-        if (Math.abs(u) <= 1) {
-          const cyl = Math.sqrt(Math.max(0, 1 - u * u));
-          // The barrel's top stays under the casing's crown, so the casing
-          // shades the barrel, not the reverse (user, 2026-11-08).
-          const bh = Math.max(0.05, capH * 0.62 - half * (1 - cyl));
-          if (bh > h) {
-            h = bh; mat = MAT.METAL; col = metal; key = PALETTE.metal; kk = 0.95 + 0.08 * nz;
-            if (v < 0.86 && Math.abs(((len * v) % seam) - seam * 0.5) < Math.max(0.18, 0.6 / ppu)) { mat = MAT.TRIM; col = trim; key = PALETTE.trim; h -= 0.08 * half; }
-            if (family === 'bolt' && v > 0.86) {
-              col = worn;
-              if (v > 0.965 && Math.abs(u) < 0.55) { mat = MAT.NOZZLE; col = bore; key = PALETTE.nozzle; h -= half * 0.6; }
-            }
-            if (family === 'beam' && v > 0.8) { mat = MAT.GLASS; col = glass; key = PALETTE.glass; }
-            if (family === 'charge' && v > 0.25 && Math.sin(v * len * 3.2) > 0.45) col = worn;
-            if (family === 'charge' && v > 0.9) { mat = MAT.GLASS; col = glass; key = PALETTE.glass; }
-          }
-        }
-      }
-      if (h < 0 || f.cov[i]! <= 0) continue;
-      f.height[i] = h; f.mat[i] = mat; f.key[i] = key;
-      setAlbedo(f, i, col, kk);
-    }
-  }
-  return f;
+  return forgeSmallGun(spec);
 }
