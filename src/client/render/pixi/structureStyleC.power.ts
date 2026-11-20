@@ -9,6 +9,7 @@ import {
   lamp, ngon, poly, rivets, scaffold, stencil, stripe, strut, walkway, wornStripe, type StyleCtx,
   type StyleDrawerTable,
 } from './structureStyleKit.js';
+import type { RigDrawHookTable } from './structureRigLook.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -48,3 +49,7 @@ function powerStation(c: StyleCtx): void {
 export const kinds: StyleDrawerTable = {
   reactor: powerStation,
 };
+
+/** This family's rig drawing hooks, by rig id (`RigDrawHook`,
+ *  structureRigLook.ts); rigs not listed draw from their part roles only. */
+export const rigs: RigDrawHookTable = {};

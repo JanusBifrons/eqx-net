@@ -378,3 +378,8 @@ export function rigClipIndex(rig: Rig, id: string): number {
   for (let i = 0; i < cs.length; i++) if (cs[i]!.id === id) return i;
   return -1;
 }
+
+/** Axis-aligned box outline [x0, x1] × [y0, y1] in a part's frame, CCW. */
+export function box(x0: number, y0: number, x1: number, y1: number): number[] {
+  return [x0, y0, x1, y0, x1, y1, x0, y1];
+}

@@ -17,6 +17,7 @@
  */
 import type { StructureStyleDef, StyleDrawerTable } from './structureStyleKit.js';
 import type { StructureFamilyId } from './structureFamilies.js';
+import type { RigDrawHookTable } from './structureRigLook.js';
 import * as core from './structureStyleC.core.js';
 import * as power from './structureStyleC.power.js';
 import * as fences from './structureStyleC.fences.js';
@@ -28,8 +29,8 @@ import * as coastal from './structureStyleC.coastal.js';
 import * as storage from './structureStyleC.storage.js';
 import * as transport from './structureStyleC.transport.js';
 
-/** One family file: its drawers and its drawing version. */
-export interface StyleCFamily { kinds: StyleDrawerTable; version: string }
+/** One family file: its drawers, its drawing version and its rig drawing hooks. */
+export interface StyleCFamily { kinds: StyleDrawerTable; version: string; rigs: RigDrawHookTable }
 
 /** Style C's family files, by family id. */
 export const STYLE_C_FAMILIES: Readonly<Record<StructureFamilyId, StyleCFamily>> = {
@@ -45,3 +46,6 @@ export const STYLE_C: StructureStyleDef = {
   kinds: Object.assign({}, ...families.map((f) => f.kinds)) as StructureStyleDef['kinds'],
   kindVersions: Object.fromEntries(families.flatMap((f) => Object.keys(f.kinds).map((k) => [k, f.version]))),
 };
+
+/** Rig id -> its drawing hook: every family's `rigs`, spread (stage-4 0a). */
+export const RIG_DRAW_HOOKS: RigDrawHookTable = Object.assign({}, ...families.map((f) => f.rigs));

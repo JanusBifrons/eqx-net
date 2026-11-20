@@ -10,6 +10,7 @@ import {
   wornStripe, type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
 import { structureSockets } from '../../../shared-types/structureKinds.js';
+import type { RigDrawHookTable } from './structureRigLook.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -68,3 +69,7 @@ export const kinds: StyleDrawerTable = {
   capital: beacon,
   connector: hexNode,
 };
+
+/** This family's rig drawing hooks, by rig id (`RigDrawHook`,
+ *  structureRigLook.ts); rigs not listed draw from their part roles only. */
+export const rigs: RigDrawHookTable = {};

@@ -47,11 +47,12 @@ import { TRANSFER_PULSE_MS } from '../../../core/structures/structureGridConstan
 import { createRigPose, evaluateRig, type PlayingClip, type RigPose } from '../../../core/articulation/evaluate.js';
 import { CRANE_CARGO_OUT, craneArmPath, craneCargoFlow } from '../../../core/articulation/craneCargo.js';
 import { twoBoneIkSolve } from '../../../core/articulation/ikAdapter.js';
-import { JOINT_LIFT, liftProgress, rigClipIndex, rigPartIndex, type DrawLayer, type Rig } from '../../../core/articulation/rig.js';
-import { DOOR_TURRET_MOUNT, rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
+import { JOINT_LIFT, liftProgress, rigClipIndex, type DrawLayer, type Rig } from '../../../core/articulation/rig.js';
+import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
-import { RIG_LOOK_C, rigArmCable, rigPartContext, rigSlotContext, type RigArmCable } from './structureRigLook.js';
+import { RIG_LOOK_C, rigArmCable, rigPartContext, type RigArmCable } from './structureRigLook.js';
+import { RIG_DRAW_HOOKS } from './structureStyleC.js';
 
 /** Draw structure rig parts: on by default (owner, structure restyle);
  *  `?rigs=0` turns them off (the pre-restyle structures). */
@@ -147,7 +148,8 @@ export class StructureRigView {
   liftScale = 1;
   /** Riser lift progress this frame, 0 (sunk) .. 1 (risen); 1 without a riser. */
   lift = 1;
-  /** Hatch slot under the door leaves, or null. */
+  /** Art under the plane parts (the hatch slot under door leaves; the rig's
+   *  `planeUnder` hook), or null. */
   readonly slot: Graphics | null;
   private readonly playing: MutablePlaying = { clipId: '', startTick: 0, target: undefined };
   private readonly targetScratch = { x: 0, y: 0 };
@@ -197,11 +199,13 @@ export class StructureRigView {
       }
       group.addChild(g);
     }
-    this.mountPart = rig.id === 'sandbox-door-turret' ? rigPartIndex(rig, DOOR_TURRET_MOUNT.partId) : -1;
+    // A family's special drawing (stage-4 0a): `rigs` in structureStyleC.<family>.ts.
+    const hook = Object.prototype.hasOwnProperty.call(RIG_DRAW_HOOKS, rig.id) ? RIG_DRAW_HOOKS[rig.id] : undefined;
+    this.mountPart = hook?.mountPart?.(rig) ?? -1;
     let riser = -1;
     for (let i = 0; i < rig.partCount; i++) if (rig.parent[i]! < 0 && rig.jointType[i] === JOINT_LIFT) riser = i;
     this.riserPart = riser;
-    const slotCtx = rigSlotContext(rig);
+    const slotCtx = hook?.planeUnder?.(rig) ?? null;
     this.slot = slotCtx !== null ? new Graphics(slotCtx) : null;
     if (this.slot !== null) {
       this.slot.label = 'rig-slot';

@@ -12,6 +12,7 @@ import {
   type StyleDrawerTable,
 } from './structureStyleKit.js';
 import { DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y } from '../../../core/articulation/rigCatalogue.js';
+import type { RigDrawHookTable } from './structureRigLook.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -105,3 +106,7 @@ function dock(c: StyleCtx): void {
 export const kinds: StyleDrawerTable = {
   freight_dock: dock,
 };
+
+/** This family's rig drawing hooks, by rig id (`RigDrawHook`,
+ *  structureRigLook.ts); rigs not listed draw from their part roles only. */
+export const rigs: RigDrawHookTable = {};
