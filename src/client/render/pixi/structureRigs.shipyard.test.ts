@@ -17,7 +17,7 @@ import {
   shipyardLightContext, shipyardRowClip,
 } from './structureStyleC.shipyardBuild.js';
 import {
-  SHIPYARD_BAY_COUNT, SHIPYARD_BAY_LEN, SHIPYARD_BUILD_CLIP, SHIPYARD_BUILD_TICKS, SHIPYARD_GANTRY_HALF_X, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HOIST_HALF, SHIPYARD_HULL_HALF_L,
+  SHIPYARD_BAY_COUNT, SHIPYARD_BAY_LEN, SHIPYARD_BUILD_CLIP, SHIPYARD_BUILD_TICKS, SHIPYARD_GANTRY_HALF_X, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HOIST_HALF, SHIPYARD_HULL_BLOCKS, SHIPYARD_HULL_HALF_L,
   SHIPYARD_SLIP_X0, SHIPYARD_SLIP_X1, shipyardBayKeel,
 } from '../../../core/articulation/rigs/heavyIndustry.js';
 import { PROD_STATE, encodeRecipe } from '../../../shared-types/production.js';
@@ -57,19 +57,19 @@ describe('shipyard build frame (StructureRigView)', () => {
     const v = new StructureRigView(rig);
     v.setRunningFrom(row(PROD_STATE.running, undefined, encodeRecipe('build_missile_frigate')));
     const k = shipyardHullScale(encodeRecipe('build_missile_frigate'));
-    // Tick 85: block hull-0 (the first, at x = +6) is mid-print.
+    // Tick 85: the print sweep has just started at the bow: hull-6 (the bow-most block, x = +42) is mid-print.
     v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 1000 - 85 }, 1000, 0, 0, 0);
-    const h0 = v.parts[rig.partIds.indexOf('hull-0')]!;
+    const h0 = v.parts[rig.partIds.indexOf('hull-6')]!;
     expect(h0.visible).toBe(true);
-    expect(h0.context).toBe(shipyardPrintContext('hull-0', true));
-    expect(h0.context).not.toBe(shipyardPrintContext('hull-0'));
+    expect(h0.context).toBe(shipyardPrintContext('hull-6', true));
+    expect(h0.context).not.toBe(shipyardPrintContext('hull-6'));
     expect(h0.alpha).toBeLessThan(1);
     expect(h0.scale.x).toBeCloseTo(k, 6);
-    expect(h0.x).toBeCloseTo(shipyardBayKeel(0).x + 6 * k, 6); // bay 0 (3R)
+    expect(h0.x).toBeCloseTo(shipyardBayKeel(0).x + 42 * k, 6); // bay 0 (3R)
     expect(v.parts[rig.partIds.indexOf('hull-7')]!.visible).toBe(false);
     // Finished: every block solid, every lamp lit.
     v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 1000 - SHIPYARD_BUILD_TICKS }, 1000, 0, 0, 0);
-    expect(h0.context).toBe(shipyardPrintContext('hull-0'));
+    expect(h0.context).toBe(shipyardPrintContext('hull-6'));
     expect(h0.alpha).toBe(1);
     for (let i = 0; i < 6; i++) expect(v.parts[rig.partIds.indexOf(`light-${i}`)]!.context).toBe(shipyardLightContext(true));
   });
@@ -134,8 +134,8 @@ describe('shipyard bays down the slip (loop 3R)', () => {
     const k = shipyardHullScale(fr), bx = shipyardBayKeel(2).x;
     v.setRunningFrom(row(PROD_STATE.running, undefined, fr, 2));
     v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 1000 - 85 }, 1000, 0, 0, 0);
-    // hull-0 sits at clip x = +6 (toward the bow) from the bay's keel.
-    expect(part(v, 'hull-0').x).toBeCloseTo(bx + 6 * k, 6);
+    // hull-6 (the bow-most block, printed first) sits at clip x = +42 from the bay's keel.
+    expect(part(v, 'hull-6').x).toBeCloseTo(bx + 42 * k, 6);
     // Over the hull the gantry tracks the bay; past it, the same end stops.
     expect(shipyardGantryX(30, k, bx)).toBeCloseTo(bx + 30 * k, 9);
     expect(shipyardGantryX(-SHIPYARD_GANTRY_TRAVEL, k, bx)).toBeCloseTo(-SHIPYARD_GANTRY_TRAVEL, 9);
@@ -146,7 +146,7 @@ describe('shipyard bays down the slip (loop 3R)', () => {
     const v0 = new StructureRigView(rig);
     v0.setRunningFrom(row(PROD_STATE.running, undefined, fr));
     v0.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 1000 - 85 }, 1000, 0, 0, 0);
-    expect(part(v0, 'hull-0').x).toBeCloseTo(shipyardBayKeel(0).x + 6 * k, 6);
+    expect(part(v0, 'hull-6').x).toBeCloseTo(shipyardBayKeel(0).x + 42 * k, 6);
     expect(shipyardBayKeel(0).x).toBeGreaterThan(shipyardBayKeel(1).x);
   });
 
@@ -204,5 +204,64 @@ describe('shipyard bays down the slip (loop 3R)', () => {
     // Still a real frame: the chords and the trolley's sides are solid.
     expect(gantry.containsPoint({ x: SHIPYARD_GANTRY_HALF_X * 0.7 - 3, y: 0 })).toBe(true);
     expect(hoist.containsPoint({ x: SHIPYARD_HOIST_HALF - 3, y: 0 })).toBe(true);
+  });
+});
+
+describe('the gantry never hides the hull it prints (art-lab yard-build stills)', () => {
+  const rig = rigForStructureKind('shipyard')!;
+  const part = (v: StructureRigView, id: string) => v.parts[rig.partIds.indexOf(id)]!;
+  const blockHalf = SHIPYARD_HULL_HALF_L / SHIPYARD_HULL_BLOCKS;
+
+  /** Length of the union of intervals `iv` ([a, b] pairs). */
+  function unionLen(iv: [number, number][]): number {
+    const s = [...iv].sort((p, q) => p[0] - q[0]);
+    let len = 0, a = Number.NEGATIVE_INFINITY, b = Number.NEGATIVE_INFINITY;
+    for (const [x0, x1] of s) {
+      if (x0 > b) { len += b - a > 0 ? b - a : 0; a = x0; b = x1; } else if (x1 > b) b = x1;
+    }
+    return len + (b - a > 0 ? b - a : 0);
+  }
+
+  for (const recipe of ['build_interceptor', 'build_missile_frigate']) {
+    for (const bay of [0, 2]) {
+      it(`${recipe} in bay ${bay}: from 15 % to 85 % the hoist/gantry covers at most half the printed hull`, () => {
+        const r = encodeRecipe(recipe), k = shipyardHullScale(r);
+        const v = new StructureRigView(rig);
+        v.setRunningFrom(row(PROD_STATE.running, undefined, r, bay));
+        for (let p = 0.15; p <= 0.851; p += 0.05) {
+          v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 1000 - p * SHIPYARD_BUILD_TICKS }, 1000, 0, 0, 0);
+          const printed: [number, number][] = [];
+          for (let j = 0; j < SHIPYARD_HULL_BLOCKS; j++) {
+            const b = part(v, `hull-${j}`);
+            if (b.visible) printed.push([b.x - blockHalf * k, b.x + blockHalf * k]);
+          }
+          const printedLen = unionLen(printed);
+          expect(printedLen, `p ${p.toFixed(2)}: something printed`).toBeGreaterThan(0);
+          const hoist = part(v, 'gantry-hoist'), gx = part(v, 'gantry').x;
+          const hh = SHIPYARD_HOIST_HALF * hoist.scale.x, gh = SHIPYARD_GANTRY_HALF_X * 0.7;
+          const f0 = Math.min(hoist.x - hh, gx - gh), f1 = Math.max(hoist.x + hh, gx + gh);
+          const covered: [number, number][] = [];
+          for (const [a, b] of printed) {
+            const c0 = Math.max(a, f0), c1 = Math.min(b, f1);
+            if (c1 > c0) covered.push([c0, c1]);
+          }
+          expect(unionLen(covered) / printedLen, `p ${p.toFixed(2)}: share of the printed hull under the hoist`).toBeLessThanOrEqual(0.5);
+        }
+      });
+    }
+  }
+
+  it('the gantry sweeps steadily stern-ward across the hull over the print (never parked over it)', () => {
+    const r = encodeRecipe('build_interceptor');
+    const v = new StructureRigView(rig);
+    v.setRunningFrom(row(PROD_STATE.running, undefined, r, 2));
+    let last = Number.POSITIVE_INFINITY;
+    for (let p = 0.15; p <= 0.751; p += 0.025) {
+      v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 1000 - p * SHIPYARD_BUILD_TICKS }, 1000, 0, 0, 0);
+      const gx = part(v, 'gantry').x;
+      expect(gx, `p ${p.toFixed(3)}`).toBeLessThan(last);
+      expect(part(v, 'gantry-hoist').x).toBeCloseTo(gx, 9);
+      last = gx;
+    }
   });
 });

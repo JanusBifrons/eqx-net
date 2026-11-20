@@ -293,6 +293,7 @@ export class StructureRigView {
     evaluateRig(this.rig, playing, nowTick, this.pose, twoBoneIkSolve, sunAz !== undefined ? -sunAz - ha : undefined,
       this.hasSpin ? this.spinClock : undefined);
     const xf = this.xf;
+    const clipT = playing !== null ? nowTick - playing.startTick : Number.NaN;
     const ri = this.riserPart, look = RIG_LOOK_C;
     let lift = 0;
     if (ri >= 0) {
@@ -322,7 +323,7 @@ export class StructureRigView {
         sh.position.set(xf.x + d, xf.y + d);
         sh.rotation = xf.rotation;
       }
-      if (this.partShowOf !== undefined) this.partShowOf(this.rig, i, this.pose.value[i]!, this.row, g, sh);
+      if (this.partShowOf !== undefined) this.partShowOf(this.rig, i, this.pose.value[i]!, this.row, g, sh, clipT);
     }
     this.poseCargo(input, nowTick);
   }

@@ -15,13 +15,17 @@
  *  - bays (loop 3R): the hull prints at its bay's keel (`prodBay`,
  *    `shipyardBayKeel`), the gantry working over it; the bay marks baked on
  *    the slip (`SHIPYARD_BAY_MARK_XS`); builds queued behind it
- *    (`prodQueued`) show as faint outlines in the next bays (the keel part's art).
+ *    (`prodQueued`) show as faint outlines in the next bays (the keel part's art);
+ *  - the print sweep: under a playing clip the gantry sweeps steadily
+ *    stern-ward across the hull, the parts printing in behind its print
+ *    line and the crane one block ahead, so the printed hull is never under
+ *    it (`shipyardSweepGantryX`, `shipyardSweepLift`).
  * Built once / allocation-free per frame (#14).
  */
 import { GraphicsContext, type Graphics } from 'pixi.js';
 import type { Rig } from '../../../core/articulation/rig.js';
 import {
-  SHIPYARD_BAY_COUNT, SHIPYARD_BAY_LEN, SHIPYARD_FIT_STAGES, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HULL_BLOCK_XS, SHIPYARD_HULL_BLOCKS, SHIPYARD_HULL_HALF_L,
+  SHIPYARD_BAY_COUNT, SHIPYARD_BAY_LEN, SHIPYARD_BUILD_BEATS, SHIPYARD_FIT_STAGES, SHIPYARD_FIT_X, SHIPYARD_HOIST_HALF, SHIPYARD_GANTRY_TRAVEL, SHIPYARD_HULL_BLOCK_XS, SHIPYARD_HULL_BLOCKS, SHIPYARD_HULL_HALF_L,
   SHIPYARD_LIGHT_BAR_Y, SHIPYARD_LIGHT_HALF_L, SHIPYARD_LIGHT_HALF_T, shipyardBayKeel, shipyardBuildPlaying, shipyardHullHalfBeam,
   SHIPYARD_SLIP_X1, type ShipyardFitStage,
 } from '../../../core/articulation/rigs/heavyIndustry.js';
@@ -207,6 +211,10 @@ let showOf: Uint8Array = new Uint8Array(0);
 /** Per part of `showRig`: a printed part's finished and printing art. */
 let doneCtx: (GraphicsContext | null)[] = [];
 let printCtx: (GraphicsContext | null)[] = [];
+/** Per printed part of `showRig`: its station x and half extent along the
+ *  hull (reference frame), for the print sweep's reveal. */
+let sweepX: Float64Array = new Float64Array(0);
+let sweepHalf: Float64Array = new Float64Array(0);
 
 function showKinds(rig: Rig): Uint8Array {
   if (showRig !== rig) {
@@ -214,6 +222,8 @@ function showKinds(rig: Rig): Uint8Array {
     showOf = new Uint8Array(rig.partCount);
     doneCtx = new Array<GraphicsContext | null>(rig.partCount).fill(null);
     printCtx = new Array<GraphicsContext | null>(rig.partCount).fill(null);
+    sweepX = new Float64Array(rig.partCount);
+    sweepHalf = new Float64Array(rig.partCount).fill(1);
     for (let i = 0; i < rig.partCount; i++) {
       const id = rig.partIds[i]!;
       doneCtx[i] = shipyardPrintContext(id);
@@ -221,6 +231,8 @@ function showKinds(rig: Rig): Uint8Array {
       showOf[i] = id.startsWith('hull-') || id.startsWith('fit-') ? Show.Print
         : id.startsWith('light-') ? Show.Light : id === 'gantry' ? Show.Gantry : id === 'gantry-hoist' ? Show.Hoist
             : id === 'keel' ? Show.Keel : Show.None;
+      if (id.startsWith('hull-')) { sweepX[i] = SHIPYARD_HULL_BLOCK_XS[Number(id.slice(5))] ?? 0; sweepHalf[i] = BLOCK_HALF; }
+      else if (id.startsWith('fit-')) { sweepX[i] = SHIPYARD_FIT_X[id.slice(4) as ShipyardFitStage] ?? 0; sweepHalf[i] = FIT_RAMP; }
     }
     showRig = rig;
   }
@@ -271,8 +283,69 @@ export function shipyardGantryX(x: number, k: number, bx = 0): number {
   return inner + ((ax - H) * (end - inner)) / (T - H);
 }
 
+// ── the print sweep (art-lab review: the hoist parked over the hull hid it) ──
+// The gantry sweeps steadily stern-ward over the hull for the whole print;
+// the hull and its fittings print in behind the print line (bow first), and
+// the crane rides one block AHEAD of the line, so what is already printed is
+// never under it. Pure in the clip time (the build progress).
+
+const BEATS = SHIPYARD_BUILD_BEATS;
+/** Clip ticks of the sweep: the first hull beat to the end of the last fit. */
+export const SHIPYARD_SWEEP_FROM = BEATS.blocksFrom;
+export const SHIPYARD_SWEEP_TO = BEATS.fitFrom + SHIPYARD_FIT_STAGES.length * BEATS.fitStep;
+const BLOCK_HALF = SHIPYARD_HULL_HALF_L / SHIPYARD_HULL_BLOCKS;
+/** A fitting's reveal ramp half width (reference units) about its station. */
+const FIT_RAMP = 8;
+/** The print line's ends (reference x): the hull's bow, and past its stern
+ *  far enough that the sternmost fitting (the engines) finishes. */
+const LINE_BOW = SHIPYARD_HULL_HALF_L;
+const LINE_STERN = -(SHIPYARD_HULL_HALF_L + FIT_RAMP);
+/** The crane's half footprint along the slip: the hoist at its widest (it
+ *  grows to 1.2x as it rises); the truss chords sit inside it. */
+export const SHIPYARD_HOIST_FOOT_HALF = SHIPYARD_HOIST_HALF * 1.2;
+
+function smooth(u: number): number {
+  const c = u < 0 ? 0 : u > 1 ? 1 : u;
+  return c * c * (3 - 2 * c);
+}
+
+/** The print line (reference x, bow +) at clip tick `t`: at the bow until
+ *  the sweep starts, then steadily stern-ward, past the stern at its end. */
+export function shipyardPrintLineX(t: number): number {
+  const u = (t - SHIPYARD_SWEEP_FROM) / (SHIPYARD_SWEEP_TO - SHIPYARD_SWEEP_FROM);
+  return u <= 0 ? LINE_BOW : u >= 1 ? LINE_STERN : LINE_BOW + (LINE_STERN - LINE_BOW) * u;
+}
+
+/** A printed part's lift (0..1) at print line `line`: the share of its span
+ *  (station `x` +- `half`, reference x) the line has passed. */
+export function shipyardSweepLift(x: number, half: number, line: number): number {
+  const v = (x + half - line) / (2 * half);
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/** The gantry's (and hoist's) drawn x at clip tick `t` for a hull at scale
+ *  `k` printing at bay keel `bx`: from the stern park it runs to the bow
+ *  before the sweep, rides ahead of the print line (its footprint's bow
+ *  edge one block stern of the line), then returns to the park. */
+export function shipyardSweepGantryX(t: number, k: number, bx: number): number {
+  const T = SHIPYARD_GANTRY_TRAVEL, ahead = SHIPYARD_HOIST_FOOT_HALF + 2 * BLOCK_HALF * k;
+  if (t >= BEATS.gantryParked) return -T;
+  let x: number;
+  if (t < SHIPYARD_SWEEP_FROM) {
+    const x0 = bx + LINE_BOW * k - ahead;
+    x = -T + (x0 + T) * smooth(t / SHIPYARD_SWEEP_FROM);
+  } else if (t <= SHIPYARD_SWEEP_TO) {
+    x = bx + shipyardPrintLineX(t) * k - ahead;
+  } else {
+    const x1 = bx + LINE_STERN * k - ahead;
+    x = x1 + (-T - x1) * smooth((t - SHIPYARD_SWEEP_TO) / (BEATS.gantryParked - SHIPYARD_SWEEP_TO));
+  }
+  return x < -T ? -T : x > T ? T : x;
+}
+
 /** `RigDrawHook.partShow` for `shipyard-frame`. Allocation-free. */
-export function shipyardPartShow(rig: Rig, i: number, value: number, st: StructureRenderState | undefined, g: Graphics, sh: Graphics | null): void {
+export function shipyardPartShow(rig: Rig, i: number, value: number, st: StructureRenderState | undefined, g: Graphics, sh: Graphics | null,
+  clipTicks = Number.NaN): void {
   const kind = showKinds(rig)[i];
   if (kind === Show.None) return;
   if (kind === Show.Light) {
@@ -290,7 +363,10 @@ export function shipyardPartShow(rig: Rig, i: number, value: number, st: Structu
   const bx = shipyardBayKeel(bay).x;
   // The view placed the shadow at the part's position + its offset.
   const dx = sh !== null ? sh.x - g.x : 0, dy = sh !== null ? sh.y - g.y : 0;
+  const swept = Number.isFinite(clipTicks);
   if (kind === Show.Print) {
+    // Under a playing clip the print sweep decides how far the part is in.
+    if (swept) value = shipyardSweepLift(sweepX[i]!, sweepHalf[i]!, shipyardPrintLineX(clipTicks));
     const on = value > 0, done = value >= 1;
     g.visible = on;
     // Printing is light, not metal: no shadow until the part is done.
@@ -304,7 +380,7 @@ export function shipyardPartShow(rig: Rig, i: number, value: number, st: Structu
     if (sh !== null) { sh.position.set(g.x + dx, g.y + dy); sh.scale.set(k); }
     return;
   }
-  g.x = shipyardGantryX(g.x, k, bx);
+  g.x = swept ? shipyardSweepGantryX(clipTicks, k, bx) : shipyardGantryX(g.x, k, bx);
   if (kind === Show.Hoist) g.scale.set(1 + 0.2 * value);
   if (sh !== null) {
     sh.x = g.x + dx;
