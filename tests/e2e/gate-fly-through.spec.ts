@@ -11,18 +11,28 @@
  *
  * `gate-test` room (scenarioLayouts.GATE_TEST): two powered gates on y = −900.
  * West (x −400) opens for anyone not hostile; east (x 400) is owner-only and
- * owned by `scenario`, so a visiting pilot is locked out. The ship spawns 250 u
- * south of a gate facing +y — inside GATE_APPROACH_DEPTH (300 u), so an
+ * owned by `scenario`, so a visiting pilot is locked out. The ship spawns just
+ * clear of a gate's box (SPAWN_GAP) facing +y — inside GATE_APPROACH_DEPTH, so an
  * admitted ship opens the doors without moving.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { waitForInPlay } from './helpers/gameScenario';
 import { DEFAULT_BASE_URL } from './helpers/ports';
+import { GATE_APPROACH_DEPTH } from '../../src/core/structures/gateGeometry';
+import { structureHalfExtents } from '../../src/shared-types/structureKinds';
+import { DEFAULT_SHIP_KIND } from '../../src/shared-types/shipKinds';
+import { tuningFor } from '../../src/shared-types/shipScale/lookup';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 const GATE_Y = -900;
-const SPAWN_Y = -1150;
+// Inside the approach zone but clear of the gate box: the join nudges a ship
+// out of any structure box by its kind's spawn clearance (240 u at today's
+// ship scale). A fixed 250 u spawn sat inside that clearance, so the join
+// moved the ship ~350 u away, out of the zone, and the door never opened.
+// Derived like tests/integration/sectorRoom/gates.test.ts.
+const SPAWN_GAP = structureHalfExtents('shield_gate').hh + tuningFor(DEFAULT_SHIP_KIND).spawnClearance + 10;
+const SPAWN_Y = GATE_Y - SPAWN_GAP;
 /** gateGeometry.DOOR_POS_MAX (3 s × 60 ticks × 15 levels): a fully open door. */
 const DOOR_OPEN = 2700;
 
@@ -108,6 +118,7 @@ async function flyNorth(page: Page): Promise<number> {
 }
 
 test('a gate that admits the ship opens its doors and the ship flies through', async ({ page }) => {
+  expect(SPAWN_GAP, 'the spawn sits in the approach zone at this ship scale').toBeLessThanOrEqual(GATE_APPROACH_DEPTH);
   await joinAt(page, -400);
   const start = await localY(page);
   expect(start, 'spawned south of the gate').not.toBeNull();
