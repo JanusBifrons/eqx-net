@@ -12,7 +12,7 @@
  *
  * Entry point: `SectorRoom.startStructureRigClip` (tests, a sceneScript).
  */
-import { createRigPose, evaluateRig } from '../../core/articulation/evaluate.js';
+import { createRigPose, evaluateRig, type PlayingClip } from '../../core/articulation/evaluate.js';
 import { twoBoneIkSolve } from '../../core/articulation/ikAdapter.js';
 import { rigClipIndex } from '../../core/articulation/rig.js';
 import { craneGripPoint } from '../../core/articulation/craneGrip.js';
@@ -29,13 +29,18 @@ export interface RigClipCmd {
   startTick: number;
   targetX?: number;
   targetY?: number;
+  /** Scrub (`PlayingClip.from` / `.rate`); absent = a plain clip. */
+  from?: number;
+  rate?: number;
 }
 
 /**
  * Start clip `clipId` on `rec` at game tick `startTick` (null clears it: the
  * rig rests), with an optional target in the structure's frame and (3e) an
  * optional hold (`holdTicks` + `cargo` direction: presentation only, the
- * worker never needs it). Returns false
+ * worker never needs it), and an optional scrub (`from` clip time at
+ * `startTick`, `rate` clip ticks per game tick: `PlayingClip`), recorded
+ * and posted only when given, so a plain start is unchanged. Returns false
  * (and changes nothing) when the kind has no rig or the rig has no such clip.
  */
 export function startStructureRigClip(
@@ -45,6 +50,7 @@ export function startStructureRigClip(
   post: (cmd: RigClipCmd) => void,
   target?: { readonly x: number; readonly y: number },
   hold?: { readonly holdTicks: number; readonly cargo: number },
+  scrub?: { readonly from?: number; readonly rate?: number },
 ): boolean {
   const rig = rigForStructureKind(rec.kind);
   if (!rig) return false;
@@ -57,12 +63,16 @@ export function startStructureRigClip(
   // float32 like the wire (`rigTx` / `rigTy`), so every side poses the same.
   const tx = target ? Math.fround(target.x) : 0;
   const ty = target ? Math.fround(target.y) : 0;
-  rec.rigClip = target
+  const clip: { -readonly [K in keyof PlayingClip]: PlayingClip[K] } = target
     ? { clipId, startTick, target: { x: tx, y: ty }, ...hold }
     : { clipId, startTick, ...hold };
-  post(target
+  const cmd: RigClipCmd = target
     ? { type: 'RIG_CLIP', id: rec.id, clipId, startTick, targetX: tx, targetY: ty }
-    : { type: 'RIG_CLIP', id: rec.id, clipId, startTick });
+    : { type: 'RIG_CLIP', id: rec.id, clipId, startTick };
+  if (scrub?.from !== undefined) clip.from = cmd.from = scrub.from;
+  if (scrub?.rate !== undefined) clip.rate = cmd.rate = scrub.rate;
+  rec.rigClip = clip;
+  post(cmd);
   return true;
 }
 

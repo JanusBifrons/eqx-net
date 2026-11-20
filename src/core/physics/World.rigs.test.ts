@@ -236,3 +236,78 @@ describe('rig clip tick numbering (2e): live, late join and reconcile replay agr
     expect(live.rigPartPose('host', 'slab')!.x).toBeCloseTo(want, 3);
   });
 });
+
+describe('scrubbed rig clips (solid doors slice 3: RIG_CLIP from / rate)', () => {
+  function run(w: PhysicsWorld, from: number, to: number): void {
+    for (let t = from; t < to; t++) {
+      w.stepRigs(t + 1);
+      w.tick(1 / 60);
+    }
+  }
+  async function world(): Promise<PhysicsWorld> {
+    const w = await PhysicsWorld.create();
+    spawnHost(w);
+    w.attachRig('host', slabDoorRig());
+    return w;
+  }
+
+  it('poses the bodies at the scrubbed clip time, not the plain one', async () => {
+    // Backwards from fully open (clip time 20) at rate -1, started at tick 100:
+    // at tick 106 the clip time is 14, the pose a plain clip started at tick
+    // 92 has then (a plain clip started at 100 would be at time 6).
+    const w = await world();
+    const ref = await world();
+    const early = await world();
+    w.setRigClip('host', 'open', 100, undefined, undefined, 20, -1);
+    ref.setRigClip('host', 'open', 92);
+    early.setRigClip('host', 'open', 100);
+    run(w, 100, 106);
+    run(ref, 100, 106);
+    run(early, 100, 106);
+    const want = ref.rigPartPose('host', 'slab')!.x;
+    expect(want).toBeGreaterThan(500); // past half open
+    expect(want).toBeLessThan(1000);
+    expect(w.rigPartPose('host', 'slab')!.x).toBeCloseTo(want, 6);
+    expect(early.rigPartPose('host', 'slab')!.x).toBeLessThan(500);
+    // Clamped at clip time 0 once it runs past the start (shut, holds).
+    run(w, 106, 140);
+    expect(w.rigPartPose('host', 'slab')!.x).toBeCloseTo(0, 3);
+  });
+
+  it('a frozen scrub (rate 0) holds its from time; a fractional rate crawls', async () => {
+    const w = await world();
+    w.setRigClip('host', 'open', 0, undefined, undefined, 10, 0);
+    run(w, 0, 30);
+    expect(w.rigPartPose('host', 'slab')!.x).toBeCloseTo(500, 3);
+    // Same clip id and start, new from / rate: a new record, re-posed. At
+    // tick 30 half speed from 0 is clip time 15: a plain clip started at 15.
+    w.setRigClip('host', 'open', 0, undefined, undefined, 0, 0.5);
+    run(w, 29, 30);
+    const ref = await world();
+    ref.setRigClip('host', 'open', 15);
+    run(ref, 29, 30);
+    expect(w.rigPartPose('host', 'slab')!.x).toBeCloseTo(ref.rigPartPose('host', 'slab')!.x, 6);
+    expect(w.rigPartPose('host', 'slab')!.x).toBeGreaterThan(500);
+  });
+
+  it('an un-scrubbed clip is unchanged: no from / rate poses exactly as before', async () => {
+    const plain = await world();
+    const unset = await world();
+    plain.setRigClip('host', 'open', 100);
+    unset.setRigClip('host', 'open', 100, undefined, undefined, undefined, undefined);
+    run(plain, 95, 110);
+    run(unset, 95, 110);
+    expect(plain.rigPartPose('host', 'slab')!.x).toBeCloseTo(500, 3);
+    expect(unset.rigPartPose('host', 'slab')!.x).toBe(plain.rigPartPose('host', 'slab')!.x);
+  });
+
+  it('clearing a scrubbed clip drops its scrub: the next plain start is a plain clip', async () => {
+    const w = await world();
+    w.setRigClip('host', 'open', 0, undefined, undefined, 20, 0);
+    run(w, 0, 5);
+    w.setRigClip('host', null, 5);
+    w.setRigClip('host', 'open', 10);
+    run(w, 5, 20); // plain clip time 10 -> 500 (a kept scrub would hold 1000)
+    expect(w.rigPartPose('host', 'slab')!.x).toBeCloseTo(500, 3);
+  });
+});

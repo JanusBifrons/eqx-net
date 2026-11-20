@@ -73,9 +73,10 @@ export interface SetForceFieldCmd    { type: 'SET_FORCE_FIELD';    id: string; f
 export interface RemoveForceFieldCmd { type: 'REMOVE_FORCE_FIELD'; id: string }
 /** Structure-restyle 2d: give a structure body its rig's solid parts
  *  (`PhysicsWorld.attachRig`, rig from `rigById`), and start / clear the clip
- *  playing on it (`setRigClip`; game ticks, target in the host frame). */
+ *  playing on it (`setRigClip`; game ticks, target in the host frame;
+ *  optional `from` / `rate` scrub the clip, `PlayingClip`). */
 export interface RigAttachCmd { type: 'RIG_ATTACH'; id: string; rigId: string }
-export interface RigClipCmd   { type: 'RIG_CLIP';   id: string; clipId: string | null; startTick: number; targetX?: number; targetY?: number }
+export interface RigClipCmd   { type: 'RIG_CLIP';   id: string; clipId: string | null; startTick: number; targetX?: number; targetY?: number; from?: number; rate?: number }
 export interface BatchCmd { type: 'BATCH'; cmds: WorkerCommand[] } // in order, no step between (one wreck's pieces)
 export type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | RigAttachCmd | RigClipCmd | BotWarpCmd | SetTimeScaleCmd | BatchCmd;
 
