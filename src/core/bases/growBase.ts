@@ -28,6 +28,7 @@ import { BASE_PRICES } from '../../shared-types/economy.js';
 import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
 import { keepClearBox } from '../structures/placementRules.js';
 import { Builder, linkGap, type GrownPlacement } from './growBuilder.js';
+import { powerShareCost } from './powerShareCost.js';
 import { roleUnits, type Want } from './roleUnits.js';
 import { seededRandom, type BaseProfile, type BaseTier } from './baseProfile.js';
 import type { SectorFeature } from '../galaxy/galaxy.js';
@@ -224,14 +225,12 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
   const unitCap = { outpost: 2, settlement: 5, stronghold: 10, citadel: 16 }[profile.tier];
   const storageCap = { outpost: 2, settlement: 4, stronghold: 8, citadel: 14 }[profile.tier] * (profile.role === 'trade' ? 2 : 1);
   const counts = new Map<StructureKindId, number>();
-  const solarCost = getStructureKind('solar').constructionCost;
-  const solarOut = getStructureKind('solar').powerOutput;
   const buy = (w: Want): boolean => {
     const n = counts.get(w.kind) ?? 0;
     const storage = w.kind === 'cargo_bay' || w.kind === 'freight_dock';
     if (n >= (storage ? storageCap : unitCap)) return false;
     // A purchase includes its share of the Solars that power it (per unit of draw).
-    const c = generatedCost(w.kind) + Math.ceil((expectedDraw(w.kind) / solarOut) * solarCost);
+    const c = generatedCost(w.kind) + powerShareCost(expectedDraw(w.kind));
     if (c > budget || wants.length >= cap) return false;
     counts.set(w.kind, n + 1);
     budget -= c;
