@@ -29,11 +29,16 @@
  * replaced (a recycled id). Contract: the server keeps every ancestor on
  * the wire while a descendant lives; an ancestor that leaves first leaves
  * its descendants unresolved (null) until it is back.
+ *
+ * A cut-FIELD rock's wreck (its root's `rock.fk`) is rebuilt from the
+ * room's field layout: its pieces read null until `setField` has the
+ * welcome's field options, and a field change rebuilds them.
  */
 import { MAX_WRECK_CHAIN_DEPTH, rebuildWreckPieces, resolveChildWreckPieces, wreckDescriptorUsable } from '@core/destruction/wreckDescriptorGeometry';
 import type { WreckPieceGeometry } from '@core/destruction/wreckPieces';
 import { isWreckDescriptor, isWreckId, type SnapshotMessage, type WreckDescriptor, type WreckSync } from '@shared-types/messages/snapshotMessages';
 import { WRECK_ROCK_PARENT_KIND, type WreckRockRef } from '@shared-types/messages/wreckDescriptor';
+import type { ChunkOpts } from '@core/terrain/fieldLayout';
 
 // The pure descriptor → geometry resolver lives in core (shared with the
 // server's wreck restore); re-exported for the client's existing callers.
@@ -57,7 +62,23 @@ function sameInputs(a: WreckDescriptor, b: WreckDescriptor): boolean {
     && a.cutKind === b.cutKind && a.cutAng === b.cutAng && a.cutW === b.cutW
     && sameExtraCuts(a.extraCuts, b.extraCuts)
     && a.parentWreck === b.parentWreck && a.parentPiece === b.parentPiece
-    && a.rock?.id === b.rock?.id && a.rock?.shape === b.rock?.shape && a.rock?.r === b.rock?.r;
+    && a.rock?.id === b.rock?.id && a.rock?.shape === b.rock?.shape && a.rock?.r === b.rock?.r
+    && a.rock?.fk === b.rock?.fk;
+}
+
+/** The same cut-field options in value (seed, sizes, radius, clearings). */
+function sameField(a: ChunkOpts | null, b: ChunkOpts | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  if (a.seed !== b.seed || a.battleshipLength !== b.battleshipLength || a.fighterLength !== b.fighterLength || a.radius !== b.radius) return false;
+  const ca = a.clearings, cb = b.clearings;
+  const n = ca?.length ?? 0;
+  if (n !== (cb?.length ?? 0)) return false;
+  for (let i = 0; i < n; i++) {
+    const p = ca![i]!, q = cb![i]!;
+    if (p.x !== q.x || p.y !== q.y || p.r !== q.r) return false;
+  }
+  return true;
 }
 
 /** Fracture v12: the same further cut lines, in the same order. */
@@ -88,6 +109,25 @@ export class WreckGeometryStore {
   };
   /** Descriptors dropped for an algorithm-version or kind mismatch. */
   rejected = 0;
+  /** The room's cut-field options (the welcome's seed and clearings,
+   *  `cutFieldOpts`); null: no field, so a field rock's wreck stays null. */
+  private fieldOpts: ChunkOpts | null = null;
+
+  /** The room's cut-field options a field rock's wreck is rebuilt from. */
+  get field(): ChunkOpts | null {
+    return this.fieldOpts;
+  }
+
+  /** Set the room's cut-field options (from the welcome; the renderer's store
+   *  from `RenderMirror.wreckField` every frame, a fresh clone in the worker,
+   *  so options equal in value are no change). A change drops the pieces of
+   *  every field rock's wreck, rebuilt on the next lookup. No allocation. */
+  setField(field: ChunkOpts | null): void {
+    if (sameField(field, this.fieldOpts)) return;
+    this.fieldOpts = field;
+    for (const [id, e] of this.byId) if (this.rockOf(id)?.fk !== undefined) e.pieces = null;
+    this.epoch++;
+  }
 
   /** Resync sweep context (set per `resync`, read by the bound visitor). */
   private syncLo = 0;
@@ -240,7 +280,8 @@ export class WreckGeometryStore {
    *  changed while an ancestor was missing). */
   private resolve(e: Entry): WreckPieceGeometry[] | null {
     if (e.desc.parentWreck === undefined) {
-      if (e.pieces === null) e.pieces = rebuildWreckPieces(e.desc);
+      if (e.desc.rock?.fk !== undefined && this.fieldOpts === null) return null;
+      if (e.pieces === null) e.pieces = rebuildWreckPieces(e.desc, this.fieldOpts);
       return e.pieces;
     }
     if (e.checked === this.epoch) return e.pieces;
@@ -248,7 +289,7 @@ export class WreckGeometryStore {
     if (e.pieces !== null && this.ancestorsSame(e)) return e.pieces;
     const anc = this.ancScratch;
     anc.length = 0;
-    e.pieces = resolveChildWreckPieces(e.desc, this.lookupDesc);
+    e.pieces = resolveChildWreckPieces(e.desc, this.lookupDesc, undefined, this.fieldOpts);
     e.anc.length = 0;
     if (e.pieces !== null) for (let i = 0; i < anc.length; i++) e.anc.push(anc[i]!);
     anc.length = 0;

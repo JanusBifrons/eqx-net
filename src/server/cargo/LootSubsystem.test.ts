@@ -104,11 +104,13 @@ describe('LootSubsystem (P1a-1)', () => {
 
   it('spilling a ship hold creates a pod and deletes the ship hold atomically', () => {
     const t = setup();
-    t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: h({ alloy: 2 }), expiresAt: null });
+    t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: { ...h({ alloy: 2 }), packed: [{ product: 'structure:capital', quality: 50 }] }, expiresAt: null });
     t.ops.length = 0;
     const pod = t.loot.spillShipHold('ship-9', 100, 100, 0, 0, 'death', { player: true })!;
     expect(t.store.get('ship-9')).toBeUndefined();
     expect(t.store.get(pod)!.hold.goods.alloy).toBe(2);
+    // The starter Capital crate spills with the rest of the hold (starterGrant.ts).
+    expect(t.store.get(pod)!.hold.packed).toEqual([{ product: 'structure:capital', quality: 50 }]);
     expect(t.ops).toHaveLength(1);
     expect(t.ops[0]!.type).toBe('GROUP');
   });

@@ -171,6 +171,7 @@ Locks:
 
 The Shipyard (960 × 600 hub, 4 links, 220 power) is the hull end of the chain. Two kinds of recipe touch it:
 - **`build_<hull>`** (`build_interceptor`, `build_gunship`, `build_heavy`, `build_missile_frigate`) runs on the Shipyard and needs the hull's blueprint (`blueprintProductFor` → `hull:<kind>`). Its output is a PACKED hull (`{ hull }`), made into storage by the same `ProductionSubsystem`.
+  - PLAYTEST (owner 2026-11-20): `build_interceptor` costs 400 minerals only (no alloy, components or electronics), so a base with a refinery and a Shipyard can build it. Minerals come from network holds or a Capital bank. The other hull bills are unchanged.
 - **`pack_shipyard`** runs on the Assembly Plant and packs the Shipyard itself.
 
 It's a processor like any other, so active power applies: full draw only while building. The balance test (`recipes.test.ts`) skips hull and pack recipes. Their value is the bill (`hullBillValue`, `packBillValue`), not the 1.2–1.6× ladder. Full story: [docs/features/blueprints.md](../features/blueprints.md).
