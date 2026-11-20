@@ -45,6 +45,7 @@ import type { WingmanPilots } from './features/wingmanPilots.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ShipState } from './schema/SectorState.js';
 import type { SectorSnapshotLingeringHull, SectorSnapshotScrap, SectorSnapshotStructure } from './SectorSnapshot.js';
+import { normalizeStructureThrottle } from '../../shared-types/structurePower.js';
 
 /** What the snapshot rows and restores need from the room; getters read the live field. */
 export interface SectorSnapshotRestoreHost {
@@ -106,6 +107,8 @@ export class SectorSnapshotRestore {
         rec.level = r.level ?? 1;
         if (r.gateAccess !== undefined) rec.gateAccess = r.gateAccess;
         if (r.switchedOff === true) rec.switchedOff = true;
+        const throttle = normalizeStructureThrottle(r.throttle);
+        if (throttle !== undefined) rec.throttle = throttle;
         // v4 T1 — a teleporter's partner, rules, charge and pad hold survive a restart.
         if (isTeleporterKind(rec.kind)) {
           const t = r.teleport;

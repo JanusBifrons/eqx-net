@@ -23,7 +23,7 @@ import type { ParsedMessageHost, RoomFeature } from './parsedMessage.js';
 import { packedCount, takePacked } from '../../../core/cargo/hold.js';
 import { getShipKind, isPlayableShipKindId, type ShipKindId } from '../../../shared-types/shipKinds.js';
 import { ROSTER_SOFT_GUARD } from '../../playerShips/PlayerShipStore.js';
-import type { HullHandOff } from './hullHandOff.js';
+import { newHullOrigin, type HullHandOff } from './hullHandOff.js';
 import { isProcessorKind } from '../../../shared-types/production.js';
 import { blueprintProductFor } from '../../../shared-types/recipes.js';
 import { PackedStockQuerySchema, type PackedStock } from '../../../shared-types/packedStock.js';
@@ -168,7 +168,7 @@ function unpackHull(h: BlueprintMessageHost, playerId: string, networkEntityId: 
   if (from === undefined) return [false, `There is no packed ${name} in this base.`];
   const item = takePacked(from.hold!, product)!;
   h.storage().commitChanged([from], []);
-  const res = h.hullHandOff().launchNewHull(playerId, kind, item.quality, s.x, s.y, false);
+  const res = h.hullHandOff().launchNewHull(playerId, kind, item.quality, newHullOrigin(s.kind, s.x, s.y, s.rot ?? 0, kind), false);
   if (!res.ok) {
     (from.hold!.packed ??= []).push(item);
     h.storage().commitChanged([from], []);

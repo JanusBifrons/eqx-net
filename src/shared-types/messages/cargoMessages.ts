@@ -114,6 +114,8 @@ export const CargoStateSchema = z
       .object({
         buy: z.partialRecord(z.enum(GOOD_IDS), z.number().nonnegative()),
         sell: z.partialRecord(z.enum(GOOD_IDS), z.number().nonnegative()),
+        /** Packed items for sale here, by product (a Capital crate). */
+        packed: z.record(z.string().min(1).max(64), z.number().nonnegative()).optional(),
       })
       .strict()
       .optional(),
