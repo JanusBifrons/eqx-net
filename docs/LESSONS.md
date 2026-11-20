@@ -3275,3 +3275,12 @@ that built the first piece sprite; on slow CI runners the GPU-lit look ran 2-3 s
 SwiftShader, so that frame was already past the window and `capital-wreck-render.spec.ts` (S3,
 GPU-lit) saw no break-up on roughly half the runs. Measure an event's age at the tick the client
 first received it (`SwarmRenderState.firstTick`, stamped by the decoder), never at the frame that draws it.
+
+## 2026-11-20 — an estimate built from a period constant lies in a room that changes the period
+
+The build bar's ETA divided the remaining cost by `CONSTRUCTION_PULSE_AMOUNT / TRANSFER_PULSE_MS`, but
+test rooms run the grid pulse faster (`structureGridPulseMs`, 100 ms in `base-build-test`), so a
+Solar built in ~8 s while its label read 1m 7s. The period now lives on `StructureGridSubsystem.pulseMs`:
+the room's pulse timer and `estimateBuildEtaMs` both read it, and `StructureGridSubsystem.test.ts`
+builds to completion at 1000/250/100 ms and checks the ETA against the pulses it really took.
+Any rate derived from a timer's period reads that timer's period, never the default constant.

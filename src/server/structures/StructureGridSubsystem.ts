@@ -209,6 +209,9 @@ export interface StructureGridHooks {
    *  under its hatch, or still rising) holds fire (`rigDeployed`). Absent ⇒
    *  no rig gate (unit harnesses). */
   rigTick?: () => number;
+  /** The room's grid pulse period, ms (the timer that calls `pulse`; a test
+   *  room's `structureGridPulseMs`). Absent ⇒ `TRANSFER_PULSE_MS`. */
+  pulseMs?: number;
 }
 
 export interface GridPulseResult {
@@ -243,6 +246,9 @@ export class StructureGridSubsystem {
   private readonly nearestView: TurretTargetView = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: FALLBACK_TARGET_SIGNATURE };
   /** Scratch for `linkReachBox` (the reconnect `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+
+  /** The grid pulse period, ms: the room's pulse timer AND the build ETA read it. */
+  get pulseMs(): number { return this.hooks.pulseMs ?? TRANSFER_PULSE_MS; }
 
   constructor(private readonly hooks: StructureGridHooks) {
     this.mounts = new StructureMountTicker({
@@ -820,7 +826,7 @@ export class StructureGridSubsystem {
 
   /**
    * Estimate ms-to-completion for a blueprint at the steady delivery rate
-   * (`CONSTRUCTION_PULSE_AMOUNT` per `TRANSFER_PULSE_MS`), ASSUMING resources
+   * (`CONSTRUCTION_PULSE_AMOUNT` per `pulseMs`, the real pulse), ASSUMING resources
    * are available — the doc's "the building time is independent of [the supply
    * pulse], assuming no shortage of resources." Returns `null` when there's
    * nothing to time (already built / zero-cost Capital) OR the build is STALLED
@@ -831,9 +837,12 @@ export class StructureGridSubsystem {
    */
   estimateBuildEtaMs(rec: StructureRecord): number | null {
     if (rec.isConstructed || rec.constructionCost <= 0) return null;
-    if (!this.findStorageRoute(rec.id)) return null; // unreachable / dry → paused
+    // Mirrors processConstruction: a prepaid unpack needs no route.
+    const prepaid = rec.prepaid === true && rec.upgradeTargetLevel === undefined;
+    if (!prepaid && !this.findStorageRoute(rec.id)) return null; // unreachable / dry → paused
     const remaining = Math.max(0, rec.constructionCost - rec.constructionProgress);
-    const ratePerMs = CONSTRUCTION_PULSE_AMOUNT / TRANSFER_PULSE_MS;
+    // The REAL pulse period (a test room pulses faster than 1 s).
+    const ratePerMs = CONSTRUCTION_PULSE_AMOUNT / this.pulseMs;
     return ratePerMs > 0 ? remaining / ratePerMs : null;
   }
 
