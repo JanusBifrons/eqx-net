@@ -186,5 +186,6 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 - Blueprint maths only through `applyBlueprint`; packed items move only via `addPacked` / `takePacked`; market prices only from `blueprintValue`; buy/sell commits storage + wallet as one group.
 - A fresh galaxy spawn of a non-starter hull downgrades to `DEFAULT_SHIP_KIND`. `qualityHullFactor` is the one quality source, at every max-hull site.
 - Unpacking a hull: check the roster cap, take the crate, then create the row (put the crate back on failure). Packed-gate builds commit only after the structure registers; starter kinds and generated builds skip it. A prepaid structure reclaims no minerals: it repacks.
+- The trade board keeps one FRESH Capital crate offer in its own slot (`capitalCrateTrade.ts`): priced with `quotePacked` on the 5,000 minerals inside at the base mineral price, so it always costs more than its minerals. Traders never buy a Capital crate back: a dock sell holding one is refused (`packedSellRefusal`).
 - A lab job holds its blueprints; start commits storage, job and fee as one group. Installed blueprints are a `fitted` hold, installed in one group (`installBlueprint`), dropped by `spillOrLoseShipHold`. Lab rules live only in `shared-types/research.ts`; its panel is rebuilt from `lab_state` only.
 

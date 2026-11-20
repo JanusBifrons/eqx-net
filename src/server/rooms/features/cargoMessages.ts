@@ -26,6 +26,7 @@ import { cargoOpensFor, isNpcOwner, relationOf, type RelationContext } from '../
 import {
   BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type CargoState,
 } from '../../../shared-types/messages/cargoMessages.js';
+import { packedSellRefusal } from '../../economy/capitalCrateTrade.js';
 import type { LootSubsystem, LootCollector } from '../../cargo/LootSubsystem.js';
 import type { LootSearch } from '../../cargo/LootSearch.js';
 import {
@@ -242,7 +243,11 @@ function dockMarket(
   if (sink.dockQuote(playerId, sectorKey, 'minerals') === null) return closed('The traders refuse to deal with you.');
   const wallet = getWallet();
   let verdict: { ok: boolean; message: string } | undefined;
-  if (move !== null) {
+  // Playable base loop — traders never buy a Capital crate back.
+  const refusal = move?.dir === 'put' ? packedSellRefusal(getHoldStore().get(shipId)?.hold ?? emptyHold(), move.items.packed ?? []) : null;
+  if (refusal !== null) {
+    verdict = { ok: false, message: refusal };
+  } else if (move !== null) {
     let total = 0;
     let any = false;
     for (const g of GOOD_IDS) {

@@ -45,6 +45,7 @@ import { cloneHold, emptyHold, isHoldEmpty } from '../../core/cargo/hold.js';
 import { applyFill, driftMarket, quoteBuy, quotePacked, quoteSell } from '../../core/economy/market.js';
 import { packedHullProducts, packedStructureProducts, parseProduct, productName } from '../../shared-types/blueprints.js';
 import { hullBillValue, packBillValue } from '../../shared-types/recipes.js';
+import { CAPITAL_CRATE_PRODUCT, CAPITAL_OFFERS_ON_BOARD, CAPITAL_OFFER_MAX_QTY, capitalCrateBillValue, traderPackedItem } from './capitalCrateTrade.js';
 import { isPlayableShipKindId } from '../../shared-types/shipKinds.js';
 import { isStructureKindId } from '../../shared-types/structureKinds.js';
 import { giftRepGain, robotTruce, tradersRefuse, waveIntervalFactor } from '../../core/economy/reputation.js';
@@ -149,6 +150,7 @@ export const TRADER_PACKED_QUALITY = 50;
 
 /** Goods value of a packed product's pack recipe (0 ⇒ not sellable). */
 function packedBillOf(product: string): number {
+  if (product === CAPITAL_CRATE_PRODUCT) return capitalCrateBillValue();
   const { ns, id } = parseProduct(product);
   if (ns === 'structure' && isStructureKindId(id)) return packBillValue(id);
   if (ns === 'hull' && isPlayableShipKindId(id)) return hullBillValue(id);
@@ -292,16 +294,18 @@ export class TradeDirector implements TradeSink {
     }
     // Economy v2 W4b — traders also SELL packed structures (the user's ruling:
     // most players buy them rather than make them). A rotating handful.
-    this.stockPacked('structure:', packedStructureProducts(), PACKED_OFFERS_ON_BOARD, now);
+    this.stockPacked(packedStructureProducts(), PACKED_OFFERS_ON_BOARD, now);
     // Economy v2 W5b — and packed HULLS (their own slots, so ~25 structure
     // kinds never crowd the 4 ships off the board).
-    this.stockPacked('hull:', packedHullProducts(), PACKED_HULL_OFFERS_ON_BOARD, now);
+    this.stockPacked(packedHullProducts(), PACKED_HULL_OFFERS_ON_BOARD, now);
+    // Playable base loop — a FRESH Capital crate, in its own slot.
+    this.stockPacked([CAPITAL_CRATE_PRODUCT], CAPITAL_OFFERS_ON_BOARD, now, CAPITAL_OFFER_MAX_QTY);
   }
 
-  /** Keep `slots` packed offers whose product starts with `prefix`. */
-  private stockPacked(prefix: string, all: readonly string[], slots: number, now: number): void {
+  /** Keep `slots` packed offers whose product is one of `all`. */
+  private stockPacked(all: readonly string[], slots: number, now: number, maxQty = PACKED_OFFER_MAX_QTY): void {
     const products = all.filter((p) => packedBillOf(p) > 0);
-    let onBoard = this.offers.filter((o) => o.product?.startsWith(prefix) === true).length;
+    let onBoard = this.offers.filter((o) => o.product !== undefined && products.includes(o.product)).length;
     for (let tries = 0; onBoard < slots && tries < 20 && products.length > 0; tries++) {
       const product = products[Math.floor(this.rng() * products.length)]!;
       if (this.offers.some((o) => o.product === product)) continue;
@@ -310,7 +314,7 @@ export class TradeDirector implements TradeSink {
         kind: 'buy',
         good: null,
         product,
-        maxQty: 1 + Math.floor(this.rng() * PACKED_OFFER_MAX_QTY),
+        maxQty: 1 + Math.floor(this.rng() * maxQty),
         expiresAtMs: now + this.opts.offerTtlMs * (0.7 + this.rng() * 0.6),
       });
       onBoard++;
@@ -640,7 +644,7 @@ export class TradeDirector implements TradeSink {
       // spawn, so raiding the hauler spills them.
       const hold = emptyHold();
       if (deal.good) hold.goods[deal.good] = plan.qty;
-      else for (let i = 0; i < plan.qty; i++) (hold.packed ??= []).push({ product: deal.product!, quality: TRADER_PACKED_QUALITY });
+      else for (let i = 0; i < plan.qty; i++) (hold.packed ??= []).push(traderPackedItem(deal.product!, TRADER_PACKED_QUALITY));
       this.holds.commit(
         [{ holderUid: haulerId, holderType: 'hauler', ownerId: null, sectorKey: deal.sectorKey, x: null, y: null, hold, expiresAt: null }],
         [],
