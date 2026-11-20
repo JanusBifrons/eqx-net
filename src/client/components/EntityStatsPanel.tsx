@@ -9,8 +9,9 @@ import { toSelectWire } from '../net/selectionClient';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { getGameClient } from '../net/clientSingleton';
 import { sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
-import { BP_RUNS_ORIGINAL, decodeGood, effectiveRecipe, isProcessorKind, prodStatusLine, type ProdState } from '@shared-types/production';
-import { RECIPES, recipesFor, type RecipeId } from '@shared-types/recipes';
+import { decodeGood, effectiveRecipe, isProcessorKind, prodStatusLine, type ProdState } from '@shared-types/production';
+import { RECIPES, type RecipeId } from '@shared-types/recipes';
+import { blueprintLineOf } from './structureSettingsProduction';
 import { gateTypeOf } from '@core/structures/gateGeometry';
 import { GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
 import { sendPilotShip } from '../ships/shipActionsClient';
@@ -34,7 +35,6 @@ import { TargetAction } from './TargetAction';
 import { ACTION_BTN_SX, ICON_SX, StructureManageActions } from './StructureManageActions';
 import { canManageBuildings } from '../structures/buildingManagement';
 // Moved with the management buttons; re-exported so existing importers keep working.
-export { nextGateAccess } from './StructureManageActions';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
 /**
@@ -116,8 +116,6 @@ interface PanelData {
   recipe?: RecipeId;
   /** P2b — its status line ("Running", "Waiting for Minerals", …). */
   prodStatus?: string;
-  /** P2b — the processor can switch between more than one recipe. */
-  canChangeRecipe?: boolean;
   /** P2e — goods the next upgrade takes from base storage ("3 Alloy, 1 Components"). */
   upgradeGoods?: string;
   /** Coastal defences — per-gun-size reload + arc lines, newline-joined
@@ -416,7 +414,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
-  'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
+  'recipe', 'prodStatus', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
   'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
 ];
 
@@ -512,12 +510,9 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         // P2b — what it makes and how it's going.
         data.recipe = effectiveRecipe(subtype, st.recipe);
         data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing), data.recipe);
-        data.canChangeRecipe = recipesFor(subtype).length > 1;
         data.needsBlueprint = RECIPES[data.recipe].blueprintRequired;
-        if (st.bpRuns !== undefined) {
-          const runs = st.bpRuns === BP_RUNS_ORIGINAL ? 'original' : `${st.bpRuns} run${st.bpRuns === 1 ? '' : 's'}`;
-          data.blueprintLine = `BLUEPRINT ${runs} · quality ${st.bpQuality ?? 0}`;
-        }
+        const bp = blueprintLineOf(st);
+        if (bp !== undefined) data.blueprintLine = bp;
       }
       // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
       // line + the Upgrade affordance. Upgrade is OWN-only, BUILT-only,

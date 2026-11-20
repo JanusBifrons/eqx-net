@@ -5,17 +5,17 @@
  * the same figures the inspector's PWR line reads. No new wire data.
  */
 import { getStructureKind } from '@shared-types/structureKinds';
-import { structureDraw } from '@shared-types/structurePower';
+import { canSwitchStructure, STRUCTURE_THROTTLE_FULL, structureDraw } from '@shared-types/structurePower';
 import { effectiveStructurePowerOutput } from '@core/leveling/structureLevel';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
-type PowerSlice = Pick<StructureRenderState, 'drawFull' | 'level'>;
+type PowerSlice = Pick<StructureRenderState, 'drawFull' | 'level' | 'switchedOff' | 'throttle'>;
 
 /** This building's own power figure: level-scaled output minus what it draws
- *  NOW (full while active, else the idle trickle). +gen, −drain, 0 passive. */
+ *  NOW (full while active, else the idle trickle; 0 when Off, scaled by the throttle). +gen, −drain, 0 passive. */
 export function structureSelfPower(kindId: string, st: PowerSlice): number {
   const k = getStructureKind(kindId);
-  return effectiveStructurePowerOutput(k.powerOutput, st.level) - Math.round(structureDraw(k.powerConsumption, st.drawFull === true));
+  return effectiveStructurePowerOutput(k.powerOutput, st.level) - Math.round(structureDraw(k.powerConsumption, st.drawFull === true, st.switchedOff === true, st.throttle));
 }
 
 export interface PowerSummary {
@@ -26,6 +26,10 @@ export interface PowerSummary {
   /** The whole grid's net power (shared by every member). */
   gridNet: number;
   powered: boolean;
+  /** The owner's switch: false when switched Off. */
+  on: boolean;
+  /** The owner's throttle in tenths (10 = 100%, the default). */
+  throttle: number;
 }
 
 export function powerSummary(kindId: string, st: PowerSlice & Pick<StructureRenderState, 'netPower' | 'powered'>): PowerSummary {
@@ -35,7 +39,21 @@ export function powerSummary(kindId: string, st: PowerSlice & Pick<StructureRend
     load: !draws ? 'none' : st.drawFull === true ? 'full' : 'idle',
     gridNet: Math.round(st.netPower),
     powered: st.powered,
+    on: st.switchedOff !== true,
+    throttle: st.throttle ?? STRUCTURE_THROTTLE_FULL,
   };
+}
+
+/** The Power tab shows On/Off for a building the server lets its owner
+ *  switch (`canSwitchStructure`: only kinds that draw power). */
+export function hasPowerSwitch(kindId: string): boolean {
+  return canSwitchStructure(getStructureKind(kindId).powerConsumption);
+}
+
+/** ...and a throttle only where it changes something: a turret has On/Off
+ *  only (the throttle scales work speed, never fire rate). */
+export function hasPowerThrottle(kindId: string): boolean {
+  return hasPowerSwitch(kindId) && getStructureKind(kindId).weaponRange === undefined;
 }
 
 /** "+35", "-15", "0". */

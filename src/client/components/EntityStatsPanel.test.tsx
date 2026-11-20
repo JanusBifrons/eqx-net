@@ -545,11 +545,14 @@ describe('EntityStatsPanel', () => {
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-recipe')).toHaveTextContent('MAKES Smelt alloy · Waiting for Minerals');
-    // A smelter has one recipe: no change-recipe button.
+    // A smelter has one recipe: no change-recipe button (in the cog window either).
+    expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
+    fireEvent.click(screen.getByTestId('structure-action-settings'));
+    fireEvent.click(screen.getByTestId('structure-settings-tab-production'));
     expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
   });
 
-  it('P2b: the owner cycles a refinery to its next recipe', () => {
+  it('P2b: the owner cycles a refinery to its next recipe from the cog window Production tab', () => {
     const sendSpy = vi.fn();
     setGameClient({
       mirror: {
@@ -565,6 +568,10 @@ describe('EntityStatsPanel', () => {
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-recipe')).toHaveAttribute('data-recipe', 'refine_ice_fuel');
+    // The recipe button lives in the cog window now, not on the inspector.
+    expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
+    fireEvent.click(screen.getByTestId('structure-action-settings'));
+    fireEvent.click(screen.getByTestId('structure-settings-tab-production'));
     fireEvent.click(screen.getByTestId('structure-action-recipe'));
     expect(sendSpy).toHaveBeenCalledWith('set_recipe', { type: 'set_recipe', entityId: 9, recipe: 'refine_gas' });
   });

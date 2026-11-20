@@ -97,6 +97,10 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
     expect(cs.flexWrap).toBe('wrap');
     expect(cs.maxWidth).toBe('calc(100vw - 32px)');
     expect(cs.overflowY).toBe('auto');
+    // Bounded: once the wrapped rows outgrow a short screen (390×844 upright,
+    // 863×360 sideways) the box stops growing and scrolls inside itself, so
+    // every cell stays reachable and the panel never runs off the top.
+    expect(cs.maxHeight).toBe('40vh');
   });
 
   // Perf lock (2026-11-10 death→spectator hitch, tests/perf/death-spectator-hitch.spec.ts):

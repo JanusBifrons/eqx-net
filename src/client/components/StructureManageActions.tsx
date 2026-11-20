@@ -1,7 +1,7 @@
 /**
  * The building-MANAGEMENT buttons of the inspector card (`EntityStatsPanel`):
- * deconstruct, reconnect, blueprint load / unload, recipe, gate access, clear
- * connections, upgrade. Build mode only (`canManageBuildings`); the panel
+ * the settings cog (recipe, blueprint slot, gate access live in its window),
+ * deconstruct, reconnect, clear connections, upgrade. Build mode only (`canManageBuildings`); the panel
  * renders this inside its own action row, next to the pilot-service buttons
  * (repair, refine) that show in every mode.
  */
@@ -11,14 +11,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import HubIcon from '@mui/icons-material/Hub';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
 import UpgradeIcon from '@mui/icons-material/Upgrade';
-import SchoolIcon from '@mui/icons-material/School';
-import EjectIcon from '@mui/icons-material/Eject';
-import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
-import LockOpenIcon from '@mui/icons-material/LockOpen';
-import { sendStructureAction, sendUpgradeStructure, sendSetGateAccess, sendSetRecipe, sendBlueprintSlot } from '../structures/structureActionsClient';
-import { nextRecipe } from '@shared-types/production';
-import { RECIPES, type RecipeId } from '@shared-types/recipes';
-import { GATE_ACCESS_IDS, type GateAccess } from '@shared-types/gateAccess';
+import { sendStructureAction, sendUpgradeStructure } from '../structures/structureActionsClient';
 import { StructureSettingsCog } from './StructureSettingsModal';
 
 export const ACTION_BTN_SX = {
@@ -40,18 +33,6 @@ export interface ManageActionData {
   isConnector?: boolean;
   canUpgrade?: boolean;
   upgradeGoods?: string;
-  gateAccess?: GateAccess;
-  recipe?: RecipeId;
-  canChangeRecipe?: boolean;
-  needsBlueprint?: boolean;
-  blueprintLine?: string;
-}
-
-/** The next gate access setting in the cycle (owner + allies → owner only →
- *  anyone not hostile → …). */
-export function nextGateAccess(a: GateAccess): GateAccess {
-  const i = GATE_ACCESS_IDS.indexOf(a);
-  return GATE_ACCESS_IDS[(i + 1) % GATE_ACCESS_IDS.length]!;
 }
 
 export function StructureManageActions({ entityId, data }: { entityId: number; data: ManageActionData }): JSX.Element {
@@ -79,54 +60,6 @@ export function StructureManageActions({ entityId, data }: { entityId: number; d
           <HubIcon sx={ICON_SX} />
         </IconButton>
       </Tooltip>
-      {data.recipe !== undefined && data.needsBlueprint && (
-        <Tooltip title={data.blueprintLine !== undefined ? 'Swap in the best blueprint from storage' : 'Load a blueprint from storage'}>
-          <IconButton
-            data-testid="structure-action-load-blueprint"
-            size="small"
-            sx={ACTION_BTN_SX}
-            onClick={() => sendBlueprintSlot(entityId, 'load')}
-          >
-            <SchoolIcon sx={ICON_SX} />
-          </IconButton>
-        </Tooltip>
-      )}
-      {data.blueprintLine !== undefined && (
-        <Tooltip title="Put the blueprint back in storage">
-          <IconButton
-            data-testid="structure-action-unload-blueprint"
-            size="small"
-            sx={ACTION_BTN_SX}
-            onClick={() => sendBlueprintSlot(entityId, 'unload')}
-          >
-            <EjectIcon sx={ICON_SX} />
-          </IconButton>
-        </Tooltip>
-      )}
-      {data.recipe !== undefined && data.canChangeRecipe && (
-        <Tooltip title="Change what this makes">
-          <IconButton
-            data-testid="structure-action-recipe"
-            size="small"
-            sx={ACTION_BTN_SX}
-            onClick={() => sendSetRecipe(entityId, nextRecipe(RECIPES[data.recipe!].processors[0]!, data.recipe!))}
-          >
-            <SwapHorizIcon sx={ICON_SX} />
-          </IconButton>
-        </Tooltip>
-      )}
-      {data.gateAccess !== undefined && (
-        <Tooltip title="Change who this gate opens for">
-          <IconButton
-            data-testid="structure-action-gate-access"
-            size="small"
-            sx={ACTION_BTN_SX}
-            onClick={() => sendSetGateAccess(entityId, nextGateAccess(data.gateAccess!))}
-          >
-            <LockOpenIcon sx={ICON_SX} />
-          </IconButton>
-        </Tooltip>
-      )}
       {data.isConnector && (
         <Tooltip title="Clear all connections">
           <IconButton

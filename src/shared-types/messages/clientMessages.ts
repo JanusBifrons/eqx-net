@@ -285,13 +285,15 @@ export const SetGateAccessSchema = z
   .strict();
 
 /** Base loop — client → server: the owner switches a structure On or Off
- *  (Off: no draw, no work). Owner-gated server-side; a foreign / no-Off kind
+ *  (Off: no draw, no work), optionally setting its power throttle. Owner-gated server-side; a foreign / no-Off kind
  *  request is a silent no-op. Strict. */
 export const SetStructurePowerSchema = z
   .object({
     type: z.literal('set_structure_power'),
     entityId: z.number().int().nonnegative(),
     on: z.boolean(),
+    /** Optional power throttle in tenths (0..10 = 0..100%; draw scales). */
+    throttle: z.number().int().min(0).max(10).optional(),
   })
   .strict();
 
