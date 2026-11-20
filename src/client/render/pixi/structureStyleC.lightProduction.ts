@@ -11,6 +11,7 @@ import {
 } from './structureStyleKit.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
 import type { BodyStatusHookTable } from './structureSocketNubs.js';
+import * as hydro from './structureStyleC.lightProduction.hydro.js';
 import { WORK_DARK, WORK_ON, WORK_STARVED, bakeSlits, workGlowStatus, type WorkMark, type WorkSlit } from './structureStyleC.lightProduction.work.js';
 
 export { SLIT_DEAD } from './structureStyleC.lightProduction.work.js';
@@ -70,11 +71,13 @@ export const REFINERY_STARVED = WORK_STARVED;
  *  overlay, structureSocketNubs.ts): every kind lit only while it works. */
 export const status: BodyStatusHookTable = {
   refinery: workGlowStatus(REFINERY_SLITS, REFINERY_MARK),
+  ...hydro.status,
 };
 
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   refinery,
+  ...hydro.kinds,
 };
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
