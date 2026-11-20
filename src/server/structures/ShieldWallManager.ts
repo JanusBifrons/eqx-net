@@ -138,9 +138,11 @@ export class ShieldWallManager {
     );
   }
 
-  /** The wall's shield is UP: powered and not stunned. */
+  /** The wall's shield is UP: both posts powered (either switched Off drops
+   *  it) and not stunned. */
   private up(w: WallRecord, nowMs: number): boolean {
-    return isWallActive(this.hooks.powerSummaryFor(w.postA).powered, w.stunnedUntilMs, nowMs);
+    const powered = this.hooks.powerSummaryFor(w.postA).powered && this.hooks.powerSummaryFor(w.postB).powered;
+    return isWallActive(powered, w.stunnedUntilMs, nowMs);
   }
 
   /** The wall blocks: it is up (fence walls have no open state). */

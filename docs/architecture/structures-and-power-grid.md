@@ -268,6 +268,8 @@ back-compat aliases).
 
 **Active power (2026-11-01).** A structure draws its full `powerConsumption` only while it is working (a processor running, a drill on a rock, a turret with a target, a lab with a job) and 20 % of it when idle. The server flips `rec.drawFull` through `StructureGridSubsystem.setActive`, which adjusts the component's net power in O(1) (`Grid.adjustDraw`). Full story: [production-chains.md](production-chains.md#active-power-full-draw-only-while-working).
 
+**On/Off switch.** The owner can switch any structure that draws power Off (`set_structure_power { entityId, on }`, owner-only, `structureSettingMessages.ts`). Off sets `rec.switchedOff`: `structureDraw` returns 0 for it, `setActive` can never make it active, and `StructureGridSubsystem.powerSummaryFor` reads it unpowered, so every subsystem that gates on power stops (turrets hold fire, a shield wall drops if either post is Off, production, labs, drills and mine layers pause). On restores the idle draw. Generators, power stores and connectors draw nothing and have no Off. The state persists and rides the wire as `STRUCTURE_FLAG_OFF` (bit 512 of the uint16 `flags`, no new schema field); the client grid preview reads it through the same `structureDraw`. Logic: `structurePowerSwitch.ts`.
+
 ## Batteries — stored-power buffer (batteries plan — shipped)
 
 The `battery` kind is a **leaf that stores power**. It produces and consumes
