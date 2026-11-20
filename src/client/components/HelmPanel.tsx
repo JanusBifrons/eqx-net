@@ -38,7 +38,8 @@ export function HelmPanel(): JSX.Element | null {
   const available = useUIStore((s) => s.helmAvailable);
   const active = useUIStore((s) => s.helmActive);
   const speed = useUIStore((s) => s.helmSpeed);
-  if (!show || !available) return null;
+  const building = useUIStore((s) => s.placementKind !== null);
+  if (!show || !available || building) return null;
   return (
     <Box sx={ROOT_SX} data-testid="helm-panel" data-helm-active={active ? '1' : '0'} data-helm-speed={speed}>
       <Box component="span" sx={LABEL_SX}>{active ? 'Helm: course set' : 'Helm: tap to set course'}</Box>

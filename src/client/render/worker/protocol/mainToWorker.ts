@@ -295,6 +295,8 @@ export interface GlideCameraMsg {
   gameX: number;
   gameY: number;
   durationMs: number;
+  /** > 0: also ease the zoom to this camera scale (build mode). */
+  toScale?: number;
 }
 
 /**

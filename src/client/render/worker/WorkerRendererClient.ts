@@ -610,8 +610,8 @@ export class WorkerRendererClient implements IRenderer {
    * `IRenderer.glideCameraTo`. Posts to the worker which forwards to its
    * `PixiRenderer.glideCameraTo` → `Camera.glideTo` (the smooth ship-switch).
    */
-  glideCameraTo(gameX: number, gameY: number, durationMs: number): void {
-    this.post({ type: 'GLIDE_CAMERA', gameX, gameY, durationMs });
+  glideCameraTo(gameX: number, gameY: number, durationMs: number, toScale = 0): void {
+    this.post({ type: 'GLIDE_CAMERA', gameX, gameY, durationMs, toScale });
   }
 
   /** RTS fleet warp (S8) — see `IRenderer.selectFleetShips`. */

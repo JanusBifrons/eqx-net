@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/react';
 import { StructurePlacementBanner } from './StructurePlacementBanner.js';
+import { LayoutContext } from '../layout/useLayout.js';
 import { useUIStore } from '../state/store.js';
 import { getPlacementRotationDeg, setPlacementRotationDeg } from '../structures/structurePlacementClient.js';
 
@@ -30,16 +31,28 @@ vi.mock('../input/TouchInput', () => ({
   isTouchDevice: () => isTouchDeviceMock(),
 }));
 
+// The banner docks in the `top-center` anchor (build mode, owner design
+// 2026-11-20), so tests supply a real host for its Slot.
+let topCenter: HTMLDivElement;
+const renderBanner = () => render(
+  <LayoutContext.Provider value={{ 'top-center': topCenter }}>
+    <StructurePlacementBanner />
+  </LayoutContext.Provider>,
+);
+
 describe('StructurePlacementBanner', () => {
   beforeEach(() => {
     cleanup();
+    document.body.innerHTML = '';
+    topCenter = document.createElement('div');
+    document.body.appendChild(topCenter);
     commitChosenPlacement.mockClear();
     isTouchDeviceMock.mockReturnValue(true);
     useUIStore.setState({ placementKind: 'capital' });
   });
 
   it('Confirm commits the active kind via the shared path and exits placement', () => {
-    const { getByTestId } = render(<StructurePlacementBanner />);
+    const { getByTestId } = renderBanner();
     fireEvent.click(getByTestId('placement-confirm'));
 
     expect(commitChosenPlacement).toHaveBeenCalledTimes(1);
@@ -48,7 +61,7 @@ describe('StructurePlacementBanner', () => {
   });
 
   it('Cancel exits placement without committing', () => {
-    const { getByTestId } = render(<StructurePlacementBanner />);
+    const { getByTestId } = renderBanner();
     fireEvent.click(getByTestId('placement-cancel'));
 
     expect(commitChosenPlacement).not.toHaveBeenCalled();
@@ -57,7 +70,7 @@ describe('StructurePlacementBanner', () => {
 
   it('Rotate turns the placement 90 degrees', () => {
     setPlacementRotationDeg(0);
-    const { getByTestId } = render(<StructurePlacementBanner />);
+    const { getByTestId } = renderBanner();
     fireEvent.click(getByTestId('placement-rotate'));
     expect(getPlacementRotationDeg()).toBe(90);
     fireEvent.click(getByTestId('placement-rotate'));
@@ -69,7 +82,7 @@ describe('StructurePlacementBanner', () => {
 
   it('renders nothing when not in placement mode', () => {
     useUIStore.setState({ placementKind: null });
-    const { container } = render(<StructurePlacementBanner />);
+    const { container } = renderBanner();
     expect(container.querySelector('[data-testid="placement-banner"]')).toBeNull();
   });
 
@@ -79,7 +92,23 @@ describe('StructurePlacementBanner', () => {
     // pointer (non-touch) device, the banner must stay unmounted.
     isTouchDeviceMock.mockReturnValue(false);
     useUIStore.setState({ placementKind: 'capital' });
-    const { container } = render(<StructurePlacementBanner />);
+    const { container } = renderBanner();
     expect(container.querySelector('[data-testid="placement-banner"]')).toBeNull();
+  });
+
+  it('docks at top centre with the reason line under it, not at the ghost', () => {
+    const { getByTestId } = renderBanner();
+    const dock = getByTestId('placement-dock');
+    const banner = getByTestId('placement-banner');
+    expect(topCenter.contains(dock)).toBe(true);
+    expect(dock.contains(banner)).toBe(true);
+    // No per-frame world anchoring: the banner carries no inline position.
+    expect(banner.style.left).toBe('');
+    expect(banner.style.top).toBe('');
+    const hint = getByTestId('placement-link-hint');
+    expect(dock.contains(hint)).toBe(true);
+    expect(hint.dataset.docked).toBe('1');
+    // The hint follows the banner in the dock column.
+    expect(banner.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

@@ -45,6 +45,14 @@ describe('updatePlacementHints: too-close link hint', () => {
     expect(el.hidden).toBe(true);
   });
 
+  it('leaves a docked hint (touch: under the top-centre banner) where it is', () => {
+    el.dataset.docked = '1';
+    updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 1, placementPreviewRejection: null, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
+    expect(el.hidden).toBe(false);
+    expect(el.style.left).toBe('');
+    expect(el.style.top).toBe('');
+  });
+
   it('sits just below the ghost edge at any zoom (a 1000 u dock at 2 px per unit)', () => {
     // 1280-wide window showing 640 u each side of centre: 1 px per unit; viewHalf 320: 2 px per unit.
     expect(belowGhostPx('freight_dock', 640, 1280, 800)).toBeCloseTo(500 + 10);
