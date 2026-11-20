@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Box, CircularProgress, IconButton, Portal, Tooltip } from '@mui/material';
-import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
-import CancelIcon from '@mui/icons-material/Cancel';
-import HubIcon from '@mui/icons-material/Hub';
-import LinkOffIcon from '@mui/icons-material/LinkOff';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
-import UpgradeIcon from '@mui/icons-material/Upgrade';
 import RecyclingIcon from '@mui/icons-material/Recycling';
 import BuildIcon from '@mui/icons-material/Build';
 import { useUIStore } from '../state/store';
@@ -13,15 +8,11 @@ import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { getGameClient } from '../net/clientSingleton';
-import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess, sendSetRecipe, sendBlueprintSlot } from '../structures/structureActionsClient';
-import { BP_RUNS_ORIGINAL, decodeGood, effectiveRecipe, isProcessorKind, nextRecipe, prodStatusLine, type ProdState } from '@shared-types/production';
-import SchoolIcon from '@mui/icons-material/School';
-import EjectIcon from '@mui/icons-material/Eject';
+import { sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
+import { BP_RUNS_ORIGINAL, decodeGood, effectiveRecipe, isProcessorKind, prodStatusLine, type ProdState } from '@shared-types/production';
 import { RECIPES, recipesFor, type RecipeId } from '@shared-types/recipes';
-import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import { gateTypeOf } from '@core/structures/gateGeometry';
-import { GATE_ACCESS_IDS, GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
-import LockOpenIcon from '@mui/icons-material/LockOpen';
+import { GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
 import { sendPilotShip } from '../ships/shipActionsClient';
 import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
@@ -40,6 +31,10 @@ import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
 import { structureDraw } from '@shared-types/structurePower';
 import type { PickedEntityKind } from '../render/pickEntity';
 import { TargetAction } from './TargetAction';
+import { ACTION_BTN_SX, ICON_SX, StructureManageActions } from './StructureManageActions';
+import { canManageBuildings } from '../structures/buildingManagement';
+// Moved with the management buttons; re-exported so existing importers keep working.
+export { nextGateAccess } from './StructureManageActions';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
 /**
@@ -180,6 +175,7 @@ export function EntityStatsPanel(): JSX.Element | null {
   const selectedId = useUIStore((s) => s.selection.focusId);
   const selectedKind = useUIStore((s) => s.selection.focusKind);
   const [data, setData] = useState<PanelData | null>(null);
+  const manage = useUIStore(canManageBuildings);
 
   useEffect(() => {
     if (selectedId === null) {
@@ -341,91 +337,13 @@ export function EntityStatsPanel(): JSX.Element | null {
           {`HOLD ${data.holdUse ?? ''} · ${data.holdLine}`}
         </Box>
       )}
-      {data.isOwn && data.entityId !== undefined && (
+      {data.isOwn && data.entityId !== undefined && (manage || data.holdLine !== undefined || data.canRefine === true) && (
         // Phase-1 issue 6 — owner-only action buttons. The panel root is
         // pointerEvents:none (passive readout), so this row re-enables pointers.
+        // Building management is Build mode only (`canManageBuildings`); repair
+        // and refine are pilot services and show in every mode.
         <Box sx={ACTIONS_SX} data-testid="entity-stats-actions">
-          <Tooltip title={data.isDeconstructing ? 'Cancel deconstruction' : 'Deconstruct (reverse build, returns resources)'}>
-            <IconButton
-              data-testid="structure-action-deconstruct"
-              data-active={data.isDeconstructing ? '1' : '0'}
-              size="small"
-              sx={data.isDeconstructing ? ACTION_BTN_WARN_SX : ACTION_BTN_SX}
-              onClick={() => sendStructureAction(data.entityId!, 'toggle_deconstruct')}
-            >
-              {data.isDeconstructing ? <CancelIcon sx={ICON_SX} /> : <DeleteForeverIcon sx={ICON_SX} />}
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Reconnect to the nearest structure">
-            <IconButton
-              data-testid="structure-action-reconnect"
-              size="small"
-              sx={ACTION_BTN_SX}
-              onClick={() => sendStructureAction(data.entityId!, 'reconnect')}
-            >
-              <HubIcon sx={ICON_SX} />
-            </IconButton>
-          </Tooltip>
-          {data.recipe !== undefined && data.needsBlueprint && (
-            <Tooltip title={data.blueprintLine !== undefined ? 'Swap in the best blueprint from storage' : 'Load a blueprint from storage'}>
-              <IconButton
-                data-testid="structure-action-load-blueprint"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendBlueprintSlot(data.entityId!, 'load')}
-              >
-                <SchoolIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {data.blueprintLine !== undefined && (
-            <Tooltip title="Put the blueprint back in storage">
-              <IconButton
-                data-testid="structure-action-unload-blueprint"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendBlueprintSlot(data.entityId!, 'unload')}
-              >
-                <EjectIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {data.recipe !== undefined && data.canChangeRecipe && (
-            <Tooltip title="Change what this makes">
-              <IconButton
-                data-testid="structure-action-recipe"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendSetRecipe(data.entityId!, nextRecipe(RECIPES[data.recipe!].processors[0]!, data.recipe!))}
-              >
-                <SwapHorizIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {data.gateAccess !== undefined && (
-            <Tooltip title="Change who this gate opens for">
-              <IconButton
-                data-testid="structure-action-gate-access"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendSetGateAccess(data.entityId!, nextGateAccess(data.gateAccess!))}
-              >
-                <LockOpenIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {data.isConnector && (
-            <Tooltip title="Clear all connections">
-              <IconButton
-                data-testid="structure-action-clear"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendStructureAction(data.entityId!, 'clear_connections')}
-              >
-                <LinkOffIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
+          {manage && <StructureManageActions entityId={data.entityId} data={data} />}
           {data.holdLine !== undefined && (
             // Living World P1a-2 — instant repair of MY ship here (credit sink).
             <Tooltip title="Repair your ship here (paid from your credits)">
@@ -450,20 +368,6 @@ export function EntityStatsPanel(): JSX.Element | null {
                 onClick={() => sendRefineSalvage(data.entityId!, 1_000)}
               >
                 <RecyclingIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {data.canUpgrade && (
-            // WS-B4 — the 4th action: a paid Upgrade (level-up build phase).
-            // Gated to OWNED + BUILT + below-cap (set in readData).
-            <Tooltip title={data.upgradeGoods !== undefined ? `Upgrade (minerals + ${data.upgradeGoods} from base storage)` : 'Upgrade (paid level-up: boosts this structure\x27s key stat)'}>
-              <IconButton
-                data-testid="structure-action-upgrade"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendUpgradeStructure(data.entityId!)}
-              >
-                <UpgradeIcon sx={ICON_SX} />
               </IconButton>
             </Tooltip>
           )}
@@ -515,13 +419,6 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
   'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
 ];
-
-/** The next gate access setting in the cycle (owner + allies → owner only →
- *  anyone not hostile → …). */
-export function nextGateAccess(a: GateAccess): GateAccess {
-  const i = GATE_ACCESS_IDS.indexOf(a);
-  return GATE_ACCESS_IDS[(i + 1) % GATE_ACCESS_IDS.length]!;
-}
 
 /** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
  *  gates the poll's setState so unchanged data never commits a re-render). */
@@ -877,14 +774,3 @@ const ACTIONS_SX = {
   pt: '2px',
   pointerEvents: 'auto' as const,
 };
-const ACTION_BTN_SX = {
-  p: '2px',
-  color: 'rgba(180,220,255,0.85)',
-  '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' },
-};
-const ACTION_BTN_WARN_SX = {
-  p: '2px',
-  color: '#ff9b6b',
-  '&:hover': { color: '#ffb892', bgcolor: 'rgba(255,120,80,0.15)' },
-};
-const ICON_SX = { fontSize: { xs: 16, sm: 28 } };

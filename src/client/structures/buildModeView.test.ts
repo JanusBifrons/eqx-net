@@ -24,7 +24,7 @@ const H = 412;
 const VIEW = { viewX: 100, viewY: -50, viewHalf: 915 / 2 }; // scale 1
 
 function camera() {
-  return { glideCameraTo: vi.fn() };
+  return { glideCameraTo: vi.fn(), selectFleetShips: vi.fn() };
 }
 
 /** One RAF frame, as gameRafLoop drives it. */
@@ -41,6 +41,7 @@ describe('buildModeView: Build is the third control mode', () => {
     vi.mocked(sendPilotShip).mockClear();
     useUIStore.setState({ placementKind: null, buildMode: false, currentSectorKey: 'sol-prime' });
     useUIStore.getState().setPilotMode('pilot');
+    useUIStore.getState().setSelection([], null, null);
   });
 
   it('picking a building in Fly enters Build: lets go of the ship and pulls the camera back', () => {
@@ -184,5 +185,25 @@ describe('buildModeView: Build is the third control mode', () => {
     frame(cam, VIEW, null); // the hull is parked: no local ship id
     expect(leaveBuildMode('fly')).toBe(true);
     expect(sendPilotShip).toHaveBeenCalledWith('ship-1');
+  });
+
+  it('entering Build from Command clears a carried-over ship selection', () => {
+    const cam = camera();
+    useUIStore.getState().setPilotMode('spectator'); // Command
+    useUIStore.getState().setSelection(['ship-2', 'ship-3'], null, null);
+    useUIStore.getState().setBuildMode(true);
+    frame(cam);
+    expect(cam.selectFleetShips).toHaveBeenCalledTimes(1);
+    expect(cam.selectFleetShips).toHaveBeenCalledWith([]);
+    frame(cam); // edge-triggered: not every frame
+    expect(cam.selectFleetShips).toHaveBeenCalledTimes(1);
+  });
+
+  it('entering Build with no ship selection leaves the selection alone (a focused building stays)', () => {
+    const cam = camera();
+    useUIStore.getState().setSelection([], 'swarm-9', 'structure');
+    useUIStore.getState().setBuildMode(true);
+    frame(cam);
+    expect(cam.selectFleetShips).not.toHaveBeenCalled();
   });
 });
