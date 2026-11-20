@@ -27,6 +27,7 @@ import { buildCountText, makesThings, readProduction, type ProductionView } from
 import { sendSetRecipe } from '../structures/structureActionsClient';
 import { MAX_BUILD_COUNT } from '@shared-types/production';
 import { RECIPES } from '@shared-types/recipes';
+import { phoneTiny } from './inspectorSizes';
 
 export type SettingsTabId = 'power' | 'production';
 interface SettingsTab { id: SettingsTabId; label: string }
@@ -187,4 +188,4 @@ const STEP_BTN_SX = { ...WINDOW_BTN_SECONDARY_SX, minWidth: 32, px: 1, '&:disabl
 const COUNT_SX = { ...VALUE_SX, minWidth: 64, textAlign: 'center' as const } as const;
 const ROW_SX = { fontSize: 12, color: C.inkDim } as const;
 const COG_SX = { p: '2px', color: 'rgba(180,220,255,0.85)', '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' } } as const;
-const COG_ICON_SX = { fontSize: { xs: 16, sm: 28 } } as const;
+const COG_ICON_SX = phoneTiny({ fontSize: [16, 28] }); // the inspector's ICON_SX: tiny on a phone
