@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../../src/core/swarm/structureConstants.js';
 import { getStructureKind } from '../../../src/shared-types/structureKinds.js';
 import { SCAFFOLDING_HP_FRACTION } from '../../../src/core/structures/structureGridConstants.js';
@@ -76,8 +76,10 @@ describe('SectorRoom integration — structure entity (GEP P4 "for free" proof)'
 
   // ── Structures plan, Phase 2 — player-driven placement over the wire ──────
   it('place_structure (Capital) spawns a PRE-BUILT kind=2 structure carrying its subtype', async () => {
-    harness = await bootSectorTestServer({});
-    const room = await harness.connectAs('player-1');
+    // A Capital is placed from its packed crate in the ship's hold: a
+    // roster-backed testMode room so the join can seed one.
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', testMode: true });
+    const room = await harness.connectAs('player-1', { initialCargo: withCapitalCrates() });
     const internals = harness.getServerRoom()!._internals;
 
     room.send('place_structure', { type: 'place_structure', kind: 'capital', x: 1200, y: -300 });
@@ -156,8 +158,10 @@ describe('SectorRoom integration — structure entity (GEP P4 "for free" proof)'
   //    by tests/e2e/structure-ram-blocked.spec.ts.)
   //    RED before the structure-aware resolution (150/150); GREEN after (0/5000).
   it('a placed Capital resolves its OWN hull/shield (0 / 5000), not the fighter fallback (150 / 150)', async () => {
-    harness = await bootSectorTestServer({});
-    const room = await harness.connectAs('player-1');
+    // A Capital is placed from its packed crate in the ship's hold: a
+    // roster-backed testMode room so the join can seed one.
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', testMode: true });
+    const room = await harness.connectAs('player-1', { initialCargo: withCapitalCrates() });
     const internals = harness.getServerRoom()!._internals;
 
     room.send('place_structure', { type: 'place_structure', kind: 'capital', x: 1500, y: 0 });

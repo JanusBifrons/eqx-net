@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 import { ROSTER_SOFT_GUARD } from '../../../src/server/playerShips/PlayerShipStore.js';
@@ -43,7 +43,7 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
 
   it('unpacks a crate into a parked roster ship; refuses the wrong cases', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 900, shipKind: 'fighter' });
+    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 900, shipKind: 'fighter', initialCargo: withCapitalCrates() });
     const internal = room(cr.roomId)._internals;
     const results: BlueprintResult[] = [];
     cr.onMessage('blueprint_result', (m: BlueprintResult) => results.push(m));
@@ -93,7 +93,7 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
   it('someone else’s storage is refused', { timeout: 30_000 }, async () => {
     const owner = randomUUID();
     const thief = randomUUID();
-    const a = await harness.connectActive(owner, { spawnX: 0, spawnY: 900, shipKind: 'fighter' });
+    const a = await harness.connectActive(owner, { spawnX: 0, spawnY: 900, shipKind: 'fighter', initialCargo: withCapitalCrates() });
     const internal = room(a.roomId)._internals;
     a.send('place_structure', { type: 'place_structure', kind: 'capital', x: 0, y: 0 });
     expect(await until(() => [...internal.structureRegistry.all()].some((s) => s.owner === owner), 5000)).toBe(true);

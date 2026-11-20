@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
 import type { Room } from 'colyseus.js';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { CargoState } from '../../../src/shared-types/messages/cargoMessages.js';
@@ -53,7 +53,7 @@ describe('SectorRoom integration — cargo access (C1)', () => {
 
   it('opens your own storage; take and put move items; a withdrawal is not auto-deposited back', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0 });
+    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0, initialCargo: withCapitalCrates() });
     const replies: CargoState[] = [];
     cr.onMessage('cargo_state', (m: CargoState) => replies.push(m));
     const r = serverRoom(cr.roomId);
@@ -91,7 +91,7 @@ describe('SectorRoom integration — cargo access (C1)', () => {
   it('is locked for another pilot and for an NPC base, and asks you to fly closer when far', { timeout: 40_000 }, async () => {
     const owner = randomUUID();
     const visitor = randomUUID();
-    const crOwner = await harness.connectActive(owner, { spawnX: 0, spawnY: 0 });
+    const crOwner = await harness.connectActive(owner, { spawnX: 0, spawnY: 0, initialCargo: withCapitalCrates() });
     const crVisitor = await harness.connectActive(visitor, { spawnX: 0, spawnY: 150 });
     const replies: CargoState[] = [];
     crVisitor.onMessage('cargo_state', (m: CargoState) => replies.push(m));

@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getHoldStore, getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
@@ -49,7 +49,7 @@ describe('SectorRoom integration — blueprints (P5)', () => {
 
   it('installs from storage onto the active ship, applies the effects, and is lost on death', { timeout: 60_000 }, async () => {
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0, shipKind: 'fighter' });
+    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0, shipKind: 'fighter', initialCargo: withCapitalCrates() });
     const r = room(cr.roomId);
     const internal = r._internals;
     const state = r.state as SectorState;

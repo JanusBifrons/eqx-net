@@ -186,6 +186,12 @@ export function buildJoinSpec(
     }
     extraJoinOptions['initialCargo'] = { goods, blueprints: [] };
   }
+  // ...and packed items (`?initialPacked=structure:capital,structure:capital`).
+  if (urlParams.has('initialPacked')) {
+    const packed = urlParams.get('initialPacked')!.split(',').filter(Boolean).map((product) => ({ product, quality: 50 }));
+    const cargo = (extraJoinOptions['initialCargo'] as Record<string, unknown> | undefined) ?? { goods: {}, blueprints: [] };
+    extraJoinOptions['initialCargo'] = { ...cargo, packed };
+  }
   if (urlParams.has('initialWallet'))
     extraJoinOptions['initialWallet'] = parseInt(urlParams.get('initialWallet')!, 10);
   if (urlParams.has('lingerMs'))

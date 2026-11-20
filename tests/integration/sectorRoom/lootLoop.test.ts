@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages/snapshotMessages.js';
@@ -230,7 +230,8 @@ describe('SectorRoom integration — packed loot (economy v2 W4a)', () => {
 
   it('economy v2 W4a: a looted PACKED structure rides the pod into the hold, the own-ship snapshot, then base storage', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0 });
+    // The hold also carries the Capital's crate (placed below).
+    const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0, initialCargo: withCapitalCrates() });
     const r = room(cr.roomId);
     const internal = r._internals;
     const state = r.state as SectorState;
@@ -239,13 +240,13 @@ describe('SectorRoom integration — packed loot (economy v2 W4a)', () => {
 
     const podId = internal.loot.drop({ goods: {}, blueprints: [], packed: [{ product: 'structure:smelter', quality: 42 }] }, 20, 0)!;
     await takeFromPod(r, cr, podId, { packed: ['structure:smelter'] });
-    const picked = await until(() => (getHoldStore().get(shipId)?.hold.packed?.length ?? 0) === 1, 5_000);
+    const picked = await until(() => (getHoldStore().get(shipId)?.hold.packed ?? []).some((p) => p.product === 'structure:smelter'), 5_000);
     expect(picked, 'the packed structure must move into the ship hold').toBe(true);
     let sawPacked = false;
     const deadline = Date.now() + 6_000;
     while (Date.now() < deadline && !sawPacked) {
       const snap: SnapshotMessage = await harness.waitForSnapshot(cr, 2_000);
-      if (snap.states?.[shipId]?.cargo?.packed?.[0]?.product === 'structure:smelter') sawPacked = true;
+      if (snap.states?.[shipId]?.cargo?.packed?.some((p) => p.product === 'structure:smelter') === true) sawPacked = true;
     }
     expect(sawPacked, 'the own-ship cargo slice must carry the packed item (#16)').toBe(true);
 
