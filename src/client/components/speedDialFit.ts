@@ -27,6 +27,14 @@ export const FIT_LABEL_ROOM_PX = 280;
 
 const ACTIONS_SELECTOR = '.MuiSpeedDial-actions';
 const LABEL_SELECTOR = '.MuiSpeedDialAction-staticTooltipLabel';
+/** The dial's action list (open or parked). */
+export const SPEED_DIAL_ACTIONS_SELECTOR = `[data-testid="speed-dial"] ${ACTIONS_SELECTOR}`;
+/** The parked (closed) action list: what is inside it is not on screen. */
+export const SPEED_DIAL_CLOSED_CLASS = 'MuiSpeedDial-actionsClosed';
+/** Every dial control the inspector must not cover: the main button, the
+ *  action buttons and their always-on label pills (inspectorPlacement.ts). */
+export const SPEED_DIAL_CONTROLS_SELECTOR =
+  `[data-testid="speed-dial"] .MuiSpeedDial-fab, [data-testid="speed-dial"] .MuiSpeedDialAction-fab, [data-testid="speed-dial"] ${LABEL_SELECTOR}`;
 /** The layout host of the bottom-centre slot stack (LayoutProvider). */
 const BOTTOM_STACK_SELECTOR = '[data-anchor="bottom-center"]';
 

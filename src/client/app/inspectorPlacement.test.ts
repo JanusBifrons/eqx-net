@@ -219,3 +219,32 @@ function onScreen(at: InspectorAnchor, w: number, h: number, vw: number, vh: num
   expect(at.top - h).toBeGreaterThanOrEqual(INSPECTOR_TOP_MIN);
   expect(at.top).toBeLessThanOrEqual(vh - INSPECTOR_EDGE);
 }
+
+// Live still (Build mode, refinery selected, sideways 1132x473): the card went
+// right of the selection but over the Build menu's label pills ("Back",
+// "Core", "Economy"), left of the round dial buttons.
+describe('placeInspector keeps clear of the speed-dial label pills', () => {
+  const VW3 = 1132;
+  const VH3 = 473;
+  const w = 220, h = 260;
+  const pills = hudRects([790, 150, 905, 180], [790, 200, 905, 230], [790, 250, 905, 280]);
+  const fabs = hudRects([910, 145, 960, 185], [910, 195, 960, 235], [910, 245, 960, 285]);
+  const both = hudRects([790, 150, 905, 180], [790, 200, 905, 230], [790, 250, 905, 280],
+    [910, 145, 960, 185], [910, 195, 960, 235], [910, 245, 960, 285]);
+
+  it('with only the round buttons measured the right-hand spot is taken (the bug)', () => {
+    placeInspector(560, 150, w, h, VW3, VH3, out, undefined, undefined, fabs, 50);
+    expect(out.left - w / 2).toBeGreaterThan(610);
+    expect(out.left + w / 2).toBeGreaterThan(790); // over the pills
+  });
+
+  it('a selection with room on its right but labels there goes left (or below), clear of the pills', () => {
+    for (const c of [pills, both]) {
+      placeInspector(560, 150, w, h, VW3, VH3, out, undefined, undefined, c, 50);
+      expect(covers(out, w, h, 560, 150, 50)).toBe(false);
+      onScreen(out, w, h, VW3, VH3);
+      expect(out.left + w / 2 <= 790 || out.top - h >= 280).toBe(true);
+      expect(out.left + w / 2).toBeLessThanOrEqual(510); // left of the box
+    }
+  });
+});

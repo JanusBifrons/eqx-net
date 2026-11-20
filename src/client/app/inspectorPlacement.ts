@@ -28,6 +28,8 @@
  * and control checks; when none does, the placement above stands.
  */
 
+import { SPEED_DIAL_ACTIONS_SELECTOR, SPEED_DIAL_CLOSED_CLASS, SPEED_DIAL_CONTROLS_SELECTOR } from '../components/speedDialFit.js';
+
 /** Below this, the panel's top would be under the app header. */
 export const INSPECTOR_TOP_MIN = 56;
 /** Gap kept from the viewport's other edges. */
@@ -92,7 +94,7 @@ export interface HudRects {
   r: Float64Array;
 }
 
-const MAX_RECTS = 24;
+const MAX_RECTS = 48; // HUD controls + an open dial's buttons and labels
 
 /** Build a HudRects from boxes (tests; not for the frame loop). */
 export function hudRects(...boxes: [number, number, number, number][]): HudRects {
@@ -103,19 +105,31 @@ export function hudRects(...boxes: [number, number, number, number][]): HudRects
 
 const controls: HudRects = { n: 0, r: new Float64Array(MAX_RECTS * 4) };
 let controlsKey: string | null | undefined;
-let controlsW = -1, controlsH = -1;
+let controlsW = -1, controlsH = -1, controlsDial = -2;
+const CONTROLS_SELECTOR = `[data-hud-exclusion], ${SPEED_DIAL_CONTROLS_SELECTOR}`;
+const CLOSED_DIAL_LIST = `.${SPEED_DIAL_CLOSED_CLASS}`;
+
+/** The speed dial's state: -1 closed or absent, else its open action count. */
+function dialState(): number {
+  const list = document.querySelector(SPEED_DIAL_ACTIONS_SELECTOR);
+  return !list || list.classList.contains(SPEED_DIAL_CLOSED_CLASS) ? -1 : list.childElementCount;
+}
 
 /**
- * The HUD controls (`[data-hud-exclusion]`: sticks, boost, capsule, chips)
- * the inspector may slide beside. The sticks sit on CSS transforms, so this
- * needs DOMRects: it re-measures only when `key` (the selected id) or the
- * viewport size changes, never every frame (#14). Returns a module scratch.
+ * The HUD controls the inspector may slide beside: `[data-hud-exclusion]`
+ * (sticks, boost, capsule, chips) and the speed dial's buttons AND label pills
+ * (Build menu "Back", "Core", ...), skipping the parked closed list. The
+ * sticks sit on CSS transforms, so this needs DOMRects: it re-measures only
+ * when `key` (the selected id), the viewport size or the dial (open / action
+ * count) changes, never every frame (#14). Returns a module scratch.
  */
 export function hudControlsFor(key: string | null, viewW: number, viewH: number): HudRects {
-  if (key === controlsKey && viewW === controlsW && viewH === controlsH) return controls;
-  controlsKey = key; controlsW = viewW; controlsH = viewH; controls.n = 0;
-  const els = document.querySelectorAll('[data-hud-exclusion]');
+  const dial = dialState();
+  if (key === controlsKey && viewW === controlsW && viewH === controlsH && dial === controlsDial) return controls;
+  controlsKey = key; controlsW = viewW; controlsH = viewH; controlsDial = dial; controls.n = 0;
+  const els = document.querySelectorAll(CONTROLS_SELECTOR);
   for (let i = 0; i < els.length && controls.n < MAX_RECTS; i++) {
+    if (els[i]!.closest(CLOSED_DIAL_LIST)) continue;
     const b = els[i]!.getBoundingClientRect();
     if (b.width < 1 || b.height < 1) continue;
     const o = controls.n++ * 4;
