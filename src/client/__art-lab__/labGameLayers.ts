@@ -93,6 +93,8 @@ export function buildLabGridLines(scene: Scene, lineL: Container, nubL?: Contain
  *  mines out, `f<N>` a storage hold N percent full (0-100), `off` a built
  *  row with no power, `work` a processor producing, `starve` one waiting
  *  for an input,
+ *  `bay<b>` / `bay<b>q<n>` a Shipyard building in slipway bay b with n
+ *  more queued (loop 3R),
  *  anything else (`fuel`, empty) the plain built row. */
 export function labLiveRow(kind: string, v: string | undefined): StructureRenderState {
   const row = { built: true, powered: true, buildPct: 1, deconstructPct: 0, connTo: [] } as unknown as StructureRenderState;
@@ -108,6 +110,8 @@ export function labLiveRow(kind: string, v: string | undefined): StructureRender
   if (v === 'work') row.prodState = PROD_STATE.running;
   if (v === 'starve') row.prodState = PROD_STATE.starved;
   if (v !== undefined && /^f[0-9]{1,3}$/.test(v)) row.fillPct = Math.min(100, Number(v.slice(1)));
+  const bay = v !== undefined ? /^bay(\d)(?:q(\d))?$/.exec(v) : null;
+  if (bay !== null) { row.prodBay = Number(bay[1]); row.prodQueued = Number(bay[2] ?? 0); }
   return row;
 }
 

@@ -96,6 +96,12 @@ export interface StructureRenderState {
   recipe?: number;
   prodState?: number;
   prodMissing?: number;
+  /** Loop 3L — the loaded cycle's progress, 0..1 (undefined = none). */
+  prodFrac?: number;
+  /** Loop 3R — the slipway bay of a Shipyard's current build (undefined =
+   *  bay 0, the bow) and how many builds are queued behind it (undefined = 0). */
+  prodBay?: number;
+  prodQueued?: number;
   /** P2d — an ammo-using turret has no munitions. */
   noAmmo?: boolean;
   /** D1 — a Reactor has no fuel (no power). */
@@ -104,11 +110,16 @@ export interface StructureRenderState {
   drawFull?: boolean;
   /** The owner switched it Off (no draw, no work). */
   switchedOff?: boolean;
+  /** The owner's power throttle in tenths (0..9); absent ⇒ 100%. */
+  throttle?: number;
   /** C2 — someone is breaking into its cargo right now. */
   breach?: boolean;
   /** F2 — a built Territory Lock holding its sector for its owner's side
    *  (its beacon dish turns only then). */
   lockHolding?: boolean;
+  /** Hologram pass-through: the body is still a blueprint ghost (the
+   *  prediction world lets ships through; `isStructureBodySolid`). */
+  ghostBody?: boolean;
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;
