@@ -37,6 +37,7 @@ import { STARTER_STRUCTURE_KINDS, needsPackedCrate } from '../../shared-types/bl
 import { randomUUID } from 'node:crypto';
 import { cloneHold, isHoldEmpty, takePackedOfProduct } from '../../core/cargo/hold.js';
 import type { PackedItem } from '../../shared-types/items.js';
+import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import type { HoldStore } from '../cargo/HoldStore.js';
 import type { StorageService } from '../cargo/StorageService.js';
 
@@ -211,6 +212,12 @@ export class StructurePlacementSubsystem {
     // what it held, never a fresh 5,000 (pack/unpack must not print minerals).
     if (kindId === 'capital' && crateItem?.minerals !== undefined) {
       rec.minerals = Math.min(crateItem.minerals, kind.storageCapacity);
+    }
+    // A pre-built kind (the Capital) placed from a crate is born at its FULL
+    // quality hull, not the base one: else the repair pulse buys the crate's
+    // bonus HP out of the new bank the moment it lands.
+    if (crateItem !== null && preBuilt) {
+      this.hooks.seedHealth(id, effectiveStructureMaxHealth(kind.maxHealth, rec.level, crateItem.quality));
     }
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot
     // whose connecting segment isn't blocked by another structure OR an asteroid

@@ -3,6 +3,7 @@ import { StructurePlacementSubsystem, type StructurePlacementHooks } from './Str
 import { StructureRegistry } from './StructureRegistry.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { SCAFFOLDING_HP_FRACTION } from '../../core/structures/structureGridConstants.js';
+import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
 import { SectorObstacles } from '../rooms/SectorObstacles.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -217,6 +218,19 @@ describe('StructurePlacementSubsystem — packed placement seam (P2b)', () => {
       expect(rec.packedQuality).toBe(42);
     }
     expect(g.commits()).toBe(2);
+  });
+
+  it('a Capital from a crate is born at its full QUALITY hull (no repair bill on the new bank)', () => {
+    // The crate's quality raises the max hull; seeding only the base hull left
+    // a gap the repair pulse paid for out of the Capital's starting minerals.
+    const g = gated(true);
+    const id = g.sub.place('alice', 'capital', 0, 0, { requirePacked: true })!;
+    const max = effectiveStructureMaxHealth(getStructureKind('capital').maxHealth, 1, 42);
+    expect(max).toBeGreaterThan(getStructureKind('capital').maxHealth);
+    expect(g.seeded.get(id)).toBe(max);
+    // A blueprint from a crate still starts as scaffolding (it builds up).
+    const bp = g.sub.place('alice', 'refinery', 8000, 0, { requirePacked: true })!;
+    expect(g.seeded.get(bp)).toBe(Math.max(1, Math.floor(getStructureKind('refinery').maxHealth * SCAFFOLDING_HP_FRACTION)));
   });
 
   it('a packed item is consumed once, after the structure is registered', () => {
