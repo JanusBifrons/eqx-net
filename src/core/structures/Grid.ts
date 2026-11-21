@@ -28,6 +28,7 @@ import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js
 // reads the other at load time.
 import { addDraw, addNodePower, supplyFraction, type PowerTally } from './gridSupply.js';
 import { CABLE_NO_SOCKET, gridNodePadBox, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
+import { pickWithReseat, type CableReseat } from './socketReseat.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -292,7 +293,8 @@ function shieldPylonRejection(
  * scratch `sockets`; on `'too-short'` the refused pair, on `'blocked'`
  * `CABLE_NO_SOCKET` (the build preview draws both red). A fence link (shield
  * emitter to emitter) keeps its straight post-to-post rule (edge range +
- * centre line of sight) and writes `CABLE_NO_SOCKET` for both ends.
+ * centre line of sight) and writes `CABLE_NO_SOCKET` for both ends. With `reseat`, a refused
+ * pick may move one connector link to another face (`pickWithReseat`; the caller applies it).
  */
 export function canConnect(
   a: GridNode,
@@ -301,7 +303,9 @@ export function canConnect(
   nodes: ReadonlyMap<string, GridNode>,
   obstacles?: readonly GridObstacle[],
   sockets?: CableSocketPick,
+  reseat?: CableReseat,
 ): CanConnectResult {
+  if (reseat) reseat.conn = null;
   if (a.id === b.id) return { ok: false, reason: 'self' };
   // WS-5 (R2.10) — capital-only-connectors: the Capital may ONLY link to a
   // Connector. Anything else attaching to it (a leaf, OR a non-connector hub
@@ -367,7 +371,9 @@ export function canConnect(
   // One cable per stud: the sockets each end's links already hold.
   const usedA = a.usedSockets ?? linkSocketMask(a.id, aConns), usedB = b.usedSockets ?? linkSocketMask(b.id, bConns);
   const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB);
-  if (refusal !== null) return { ok: false, reason: refusal };
+  if (refusal !== null && !(reseat && pickWithReseat(a, b, maxRange, adjacency, nodes, obstacles, sockets, usedA, usedB, reseat))) {
+    return { ok: false, reason: refusal };
+  }
   return { ok: true };
 }
 

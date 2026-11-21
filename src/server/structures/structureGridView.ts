@@ -26,12 +26,16 @@ import {
   PLACEMENT_MAX_CONNECTIONS,
 } from '../../core/structures/structureGridConstants.js';
 import { linkReachBoxAdd, linkReachBoxStart, makeCableSocketPick } from '../../core/structures/cableCurve.js';
+import { makeCableReseat } from '../../core/structures/socketReseat.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** Scratch socket pick for every link made here: `canConnect` writes the
  *  chosen pair, `addConnection` stores it on the `Connection` (0d slice 5).
  *  Module-level, reused (root invariant #14). */
 const linkPick = makeCableSocketPick();
+/** Scratch: the connector link a player's link moves to another face to make
+ *  room (`pickWithReseat`, one cable per socket); the build preview passes one too (#15). */
+const linkReseat = makeCableReseat();
 
 export function structureToGridNode(rec: StructureRecord): GridNode {
   const kind = getStructureKind(rec.kind);
@@ -200,7 +204,7 @@ export function autoConnectStructure(
     if (other.id === newId) continue;
     if (!gridLinkAllowed(other.owner, newRec.owner)) continue; // per-owner grid (+ ownerless capture)
     const otherNode = nodes.get(other.id)!;
-    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles);
+    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles, undefined, linkReseat);
     if (!verdict.ok) {
       if (why) noteRefusal(why, verdict.reason);
       continue;
@@ -219,11 +223,12 @@ export function autoConnectStructure(
     const otherNode = nodes.get(cand.id)!;
     // Re-check against the live adjacency: an earlier addition may have filled
     // this hub or the new node's own slots.
-    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles, linkPick);
+    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles, linkPick, linkReseat);
     if (!verdict.ok) {
       if (why) noteRefusal(why, verdict.reason);
       continue;
     }
+    if (linkReseat.conn) registry.reseatConnection(linkReseat.conn, linkReseat.a, linkReseat.b);
     // canConnect(newNode, other) ⇒ pick.a is newId's socket, pick.b cand's.
     registry.addConnection(newId, cand.id, CONNECTION_THROUGHPUT, linkPick.a, linkPick.b);
     made++;

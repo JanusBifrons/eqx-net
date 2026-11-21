@@ -56,6 +56,7 @@ import {
   linkReachBoxStart,
   makeCableSocketPick,
 } from '../../../core/structures/cableCurve.js';
+import { makeCableReseat } from '../../../core/structures/socketReseat.js';
 import { drawMines, drawNoPowerBolt, drawStatusBar } from './structureStatusMarks.js';
 import { hasBodyStatus } from './structureSocketNubs.js';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
@@ -63,31 +64,11 @@ import {
   structureMirrorToGridNode,
   ghostToGridNode,
   blankGridNode,
+  makePreviewConn, type PreviewConn,
   asteroidObstaclesFromSwarm,
   RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
 
-/** A pooled, mutable stand-in for a {@link Connection} used ONLY by the placement
- *  preview's `canConnect`/`shieldPylonRejection` calls (which read `getOtherNode`
- *  + the array `.length`). Reused across frames so the per-frame pass allocates
- *  nothing (#14); cast to `Connection` at the adjacency boundary. */
-interface PreviewConn {
-  aId: string;
-  bId: string;
-  getOtherNode(id: string): string | null;
-}
-
-/** Allocate one pooled preview-connection (the only `new` for the pool, paid once
- *  as the pool grows; rewritten in place thereafter). */
-function makePreviewConn(): PreviewConn {
-  return {
-    aId: '',
-    bId: '',
-    getOtherNode(id: string): string | null {
-      return id === this.aId ? this.bId : id === this.bId ? this.aId : null;
-    },
-  };
-}
 
 /** 0d slice 7 — one candidate's `canConnect` verdict from the last preview
  *  frame: the server's answer for linking the ghost to structure `id`, with
@@ -268,6 +249,8 @@ export class ConnectorRenderer {
   private readonly _nodeCandidate: boolean[] = [];
   /** Scratch socket pick for the preview's `canConnect` (0d slice 7). */
   private readonly _pick = makeCableSocketPick();
+  /** Scratch: a held link the server would move to make room (`pickWithReseat`, #15). */
+  private readonly _reseat = makeCableReseat();
   /** Reused adjacency map for `canConnect`. The value arrays carry REAL
    *  connection-like entries (one per `st.connTo` link) — NOT length-only holes.
    *  The shield-pylon dual-cap (`shieldPylonRejection`) ITERATES these and calls
@@ -745,14 +728,15 @@ export class ConnectorRenderer {
           this._adjPool[poolIdx] = adj;
         }
         adj.length = 0;
-        for (const otherId of st.connTo) {
+        for (let i = 0; i < st.connTo.length; i++) {
           let pc = this._connPool[connPoolIdx];
           if (pc === undefined) {
             pc = makePreviewConn();
             this._connPool[connPoolIdx] = pc;
           }
-          pc.aId = sid;
-          pc.bId = String(otherId);
+          // + both cable sockets, so a re-seat (`pickWithReseat`) sees what the server sees (#15).
+          pc.aId = sid; pc.bId = String(st.connTo[i]);
+          pc.socketA = st.connSockSelf?.[i] ?? CABLE_NO_SOCKET; pc.socketB = st.connSockOther?.[i] ?? CABLE_NO_SOCKET;
           adj.push(pc as unknown as Connection);
           connPoolIdx++;
         }
@@ -832,7 +816,7 @@ export class ConnectorRenderer {
     for (let k = 0; k < poolIdx; k++) {
       if (this._nodeCandidate[k] !== true) continue;
       const node = this._nodePool[k]!;
-      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick);
+      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick, this._reseat);
       let v = verdicts[vn];
       if (v === undefined) {
         v = { id: '', ok: false, reason: null, sockA: CABLE_NO_SOCKET, sockB: CABLE_NO_SOCKET };

@@ -226,6 +226,17 @@ view, never the server `StructureRegistry`):
   connector has 6 sockets (one per hex face), so it holds at most 6 cables at
   any level (`clampLinksToSockets`; a 7th link is refused `a-full` / `b-full`),
   and a socket already holding a cable is skipped by `pickCableSocketPair`.
+  Sockets are picked as cables arrive, so an early cable can sit on the only
+  face a later building can use while an equally good face stays free (a
+  capital and a solar on the two lower diagonals, a turret just below the
+  connector, too close for the straight face). When the plain pick refuses,
+  `canConnect` with a `CableReseat` scratch (`socketReseat.ts`) frees one held
+  connector face, gives it to the new cable and moves that link's connector
+  end to another free face under the same rules; `autoConnectStructure`
+  applies it (`StructureRegistry.reseatConnection`) and the build preview
+  runs the same call (its stand-in links carry `connSockSelf` /
+  `connSockOther`). Generated bases (`connectExplicit`, `Builder`) never
+  re-seat. Locks: `structureGridView.test.ts`, `mirrorToGridNode.test.ts`.
   Only shield emitters (pylon, gate, airlock) are not socket-bound
   (`structureLinksBoundBySockets`): their fence links share posts. A
   connector end still takes a cable on a face turned toward the partner, with

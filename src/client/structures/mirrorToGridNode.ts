@@ -26,7 +26,7 @@ import {
 } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxConnections, effectiveStructurePowerOutput } from '../../core/leveling/structureLevel.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
-import { socketListMask } from '../../core/structures/cableCurve.js';
+import { CABLE_NO_SOCKET, socketListMask } from '../../core/structures/cableCurve.js';
 import { rockObstacleParts, type GridNode, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
 import type {
   StructureRenderState,
@@ -36,6 +36,38 @@ import { generateAsteroidVertices } from '../../core/swarm/asteroidShape.js';
 import type { FieldRockBody } from '../../core/terrain/chunkStreamer.js';
 
 type ObstacleParts = NonNullable<GridObstacle['parts']>;
+
+/** A pooled, mutable stand-in for a `Connection` used ONLY by the placement
+ *  preview's `canConnect` (which reads `getOtherNode`, `socketAt` + the array
+ *  `.length`). Reused across frames so the per-frame pass allocates nothing
+ *  (#14); cast to `Connection` at the adjacency boundary. `socketA` /
+ *  `socketB` are the link's cable sockets at `aId` / `bId` (`connSockSelf` /
+ *  `connSockOther`), so the preview's re-seat (`pickWithReseat`) matches the server (#15). */
+export interface PreviewConn {
+  aId: string;
+  bId: string;
+  socketA: number;
+  socketB: number;
+  getOtherNode(id: string): string | null;
+  socketAt(id: string): number;
+}
+
+/** Allocate one pooled preview-connection (the only `new` for the pool, paid once
+ *  as the pool grows; rewritten in place thereafter). */
+export function makePreviewConn(): PreviewConn {
+  return {
+    aId: '',
+    bId: '',
+    socketA: CABLE_NO_SOCKET,
+    socketB: CABLE_NO_SOCKET,
+    getOtherNode(id: string): string | null {
+      return id === this.aId ? this.bId : id === this.bId ? this.aId : null;
+    },
+    socketAt(id: string): number {
+      return id === this.aId ? this.socketA : id === this.bId ? this.socketB : CABLE_NO_SOCKET;
+    },
+  };
+}
 
 /** A field rock of a loaded chunk, at rest or at its moved pose (C5h). */
 export interface RestingFieldRock { key: number; x: number; y: number; angle: number; radius: number }
