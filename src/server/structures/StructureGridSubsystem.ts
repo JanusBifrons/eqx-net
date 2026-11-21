@@ -38,7 +38,7 @@ import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle, type ObstacleBox, type PowerSummary } from '../../core/structures/Grid.js';
 import { buildStallReason } from './constructionStall.js';
-import { batteryChargeOf,chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
+import { batteryChargeOf, chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
 import type { Connection, FlowMaterial } from '../../core/structures/Connection.js';
 import {
   CONSTRUCTION_PULSE_AMOUNT,
@@ -56,7 +56,6 @@ import { captureOwnerlessGrids } from './ownerlessBase.js';
 import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
-import type { BuildStallReason } from '../../shared-types/structureStateWire.js';
 import { StructureMountTicker, type TurretTargetView } from './StructureMountTicker.js';
 import { createRigPose, rigDeployed, type RigPose } from '../../core/articulation/evaluate.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
@@ -850,7 +849,7 @@ export class StructureGridSubsystem {
   }
 
   /** Why a paused build is paused: minerals owed on a dry bank, or no Capital route (`constructionStall.ts`). */
-  buildStallReason(rec: StructureRecord): BuildStallReason | null { return buildStallReason(rec, this.hooks.registry.all(), (a, b) => this.grid.route(a, b)); }
+  buildStallReason(rec: StructureRecord): ReturnType<typeof buildStallReason> { return buildStallReason(rec, this.hooks.registry.all(), (a, b) => this.grid.route(a, b)); }
 
   /**
    * Phase-1 issue 6 — player-triggered "reconnect to the nearest structure(s)".
