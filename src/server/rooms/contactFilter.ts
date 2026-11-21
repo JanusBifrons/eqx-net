@@ -168,10 +168,20 @@ export function handleContactBatch(h: ContactBatchHost, tick: number, contacts: 
           damageB,
           tick,
         });
-        if (damageA > 0 && !h.loot().hullContact(p.aId, p.bId)) h.applyDamage(p.aId, p.bId, damageA);
-        if (damageB > 0 && !h.loot().hullContact(p.bId, p.aId)) h.applyDamage(p.bId, p.aId, damageB);
+        // A structure is locked in place and never rams: a ship that flies into
+        // one is hurt with NO attacker, so the bump never marks the ship hostile
+        // to the owner nor escalates the owner's faction (a flagship fleet
+        // guarding the home pocket razed a peaceful player's base, 2026-11-21).
+        if (damageA > 0 && !h.loot().hullContact(p.aId, p.bId)) h.applyDamage(p.aId, ramAttacker(h, p.bId), damageA);
+        if (damageB > 0 && !h.loot().hullContact(p.bId, p.aId)) h.applyDamage(p.bId, ramAttacker(h, p.aId), damageB);
       }
     }
+}
+
+/** The attacker a ram books against the body hit by `otherId`: the other body,
+ *  unless it is a structure (swarm kind 2), which never rams ('' = none). */
+function ramAttacker(h: ContactBatchHost, otherId: string): string {
+  return h.swarmRegistry.get(otherId)?.kind === 2 ? '' : otherId;
 }
 
 /** How the client knows a physics body: -1 = a ship, keyed as the client

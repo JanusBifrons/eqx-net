@@ -161,6 +161,11 @@ Allegiance decides **targeting** only. It never decides what a shot hits.
   not hostile to the victim's side) does its damage but does NOT mark the
   victim hostile and does not escalate a faction (`swarmDamageStrategy`). A
   hit from another side, a player or a player's structure marks as before.
+  **A structure never rams:** a ship that flies into a structure is hurt with
+  no attacker (`contactFilter.ts` `ramAttacker`), so bumping a base never marks
+  the ship hostile to its owner nor escalates the owner's faction (2026-11-21:
+  a flagship fleet guarding Sol Prime's home pocket razed a peaceful player's
+  base after its ships bumped it). Lock: `contactFilter.test.ts`.
 - **Missile** lock-on classifies the shooter by registry (any live kind-1
   entity is an AI shooter), and targets cross-allegiance swarms by stance.
 - **Structure turrets** engage drones and robots, never neutral traders.

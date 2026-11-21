@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { shouldBroadcastContact } from './contactFilter.js';
+import { handleContactBatch, shouldBroadcastContact, type ContactBatchHost } from './contactFilter.js';
+import type { ContactPayload } from './PhysicsWorkerProxy.js';
 import type { Contact } from '../../core/physics/contactDrain.js';
 
 /**
@@ -52,5 +53,61 @@ describe('shouldBroadcastContact', () => {
     // The filter is by string equality, not by a specific id format.
     expect(shouldBroadcastContact(makeContact('a', 'a'))).toBe(false);
     expect(shouldBroadcastContact(makeContact('a', 'b'))).toBe(true);
+  });
+});
+
+/**
+ * Live report 2026-11-21 (sol-prime): a Sol Dominion flagship fleet razed a
+ * new player's home base though the player never attacked anyone. The fleet
+ * guards the home pocket, where players build, and its ships bump the base.
+ * A ram hands each side the OTHER id as its attacker, so the bumped STRUCTURE
+ * was booked as the attacker of the ship that flew into it: that marked the
+ * ship hostile and escalated the owner's whole faction to war
+ * (`escalateFactionOnDroneHit`). A structure is locked in place and never
+ * rams: damage it deals by contact has no attacker.
+ */
+describe('handleContactBatch: a structure never rams', () => {
+  function hostFor(kinds: Record<string, number>) {
+    const calls: Array<[string, string, number]> = [];
+    const host = {
+      sceneWork: { active: false, contacts: 0 },
+      collisionGate: { sweep: () => {}, shouldSend: () => false },
+      cutField: () => undefined,
+      bus: () => ({ emit: () => true }),
+      broadcast: () => {},
+      disableCollisionDamage: () => false,
+      loot: () => ({ hullContact: () => false }),
+      applyDamage: (t: string, s: string, d: number) => { calls.push([t, s, d]); return false; },
+      swarmRegistry: { get: (id: string) => (kinds[id] === undefined ? undefined : { id, kind: kinds[id] }) },
+      lingeringSlots: new Map<string, number>(),
+      ships: () => ({ get: () => undefined }),
+      getActiveShip: () => undefined,
+    } as unknown as ContactBatchHost;
+    return { host, calls };
+  }
+  const ram = (aId: string, bId: string): ContactPayload => ({
+    aId, bId, vAxPost: 0, vAyPost: 0, vBxPost: 0, vByPost: 0,
+    forceMagnitude: 1e6, impactSpeed: 300, normalSpeed: 300, aMass: 5000, bMass: 5000,
+  }) as ContactPayload;
+
+  it('a ship flying into a player structure takes damage with NO attacker; the structure is hit by the ship', () => {
+    const { host, calls } = hostFor({ 'flagship-10-e0': 1, 'pstruct-capital': 2 });
+    handleContactBatch(host, 1, [ram('flagship-10-e0', 'pstruct-capital')]);
+    expect(calls.length).toBe(2);
+    expect(calls.find((c) => c[0] === 'flagship-10-e0')?.[1]).toBe('');
+    expect(calls.find((c) => c[0] === 'pstruct-capital')?.[1]).toBe('flagship-10-e0');
+  });
+
+  it('the same holds with the structure as body A', () => {
+    const { host, calls } = hostFor({ 'flagship-10-e0': 1, 'pstruct-capital': 2 });
+    handleContactBatch(host, 1, [ram('pstruct-capital', 'flagship-10-e0')]);
+    expect(calls.find((c) => c[0] === 'flagship-10-e0')?.[1]).toBe('');
+  });
+
+  it('ship-vs-ship rams keep their attacker (ramming is a weapon)', () => {
+    const { host, calls } = hostFor({ 'lwbot-1': 1, 'lwbot-2': 1 });
+    handleContactBatch(host, 1, [ram('lwbot-1', 'lwbot-2')]);
+    expect(calls.find((c) => c[0] === 'lwbot-1')?.[1]).toBe('lwbot-2');
+    expect(calls.find((c) => c[0] === 'lwbot-2')?.[1]).toBe('lwbot-1');
   });
 });
