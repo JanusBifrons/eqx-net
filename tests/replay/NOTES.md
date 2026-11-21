@@ -21,7 +21,9 @@ tests/replay/
 ├── NOTES.md                            this file
 ├── captureLoader.ts                    parse diag/captures/<id>/
 ├── captureHarness.ts                   the driver — drives real ColyseusGameClient
+│                                       ReplayOptions.remoteShip: scripts one other player's ship into every snapshot (deliverAtMs holds snapshots for gaps); its drawn pose per frame is ReplayResult.remoteDrawnPoses
 ├── captureHarness.test.ts              harness self-tests (smoke)
+├── gapSmoothing.remoteShips.test.ts    other-player ship fixtures on 2q0jxw (turn in a gap, two corrections in a row, a 2000 u teleport): today's motion counts + it.fails targets for netgap S2-1 / S2-3
 ├── mockKeyboard.ts                     real keyboard.read() interface, captured-intent-driven
 ├── mockRoom.ts                         colyseus.js Room substitute (send + onMessage no-op)
 ├── ReplayTrace.ts                      output shape
