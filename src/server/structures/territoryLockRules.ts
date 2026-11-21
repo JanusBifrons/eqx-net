@@ -17,7 +17,7 @@
  * ignores a non-holder's lock); if that side takes the sector back, the
  * standing lock locks it again.
  */
-import { parseOwner } from '../../shared-types/relations.js';
+import { isUnownedOwner, parseOwner } from '../../shared-types/relations.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import { sectorController } from '../../core/galaxy/control.js';
 import type { StructureRecord } from './StructureRegistry.js';
@@ -61,7 +61,8 @@ export function isHoldingTerritoryLock(s: StructureRecord, held: string | null):
   return held !== null && isLiveTerritoryLock(s) && parseOwner(s.owner).faction === held;
 }
 
-/** True when `s` is a built Territory Lock (it locks its owner's side). */
+/** True when `s` is a built Territory Lock (it locks its owner's side). An
+ *  ownerless base's lock (capture 4E, `none:`) has no side to lock: inert. */
 export function isLiveTerritoryLock(s: StructureRecord): boolean {
-  return s.kind === TERRITORY_LOCK_KIND && s.isConstructed;
+  return s.kind === TERRITORY_LOCK_KIND && s.isConstructed && !isUnownedOwner(s.owner);
 }

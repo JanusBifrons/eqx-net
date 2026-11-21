@@ -54,6 +54,13 @@ export function isUnownedOwner(owner: string): boolean {
   return owner.startsWith(UNOWNED_OWNER_PREFIX);
 }
 
+/** The wallet an owner's earnings (station taxes, launched hulls) go to: a
+ *  player's own id. An NPC party or an ownerless base has none (null), so
+ *  nothing is minted to anyone. */
+export function walletOwnerOf(owner: string): string | null {
+  return owner !== '' && parseOwner(owner).kind === 'player' ? owner : null;
+}
+
 export interface PartyRef {
   readonly kind: 'player' | 'npc' | 'none';
   /** Player: the id. NPC / ownerless: the full owner string. Ownerless also

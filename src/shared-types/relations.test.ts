@@ -10,6 +10,7 @@ import {
   parseOwner,
   relationOf,
   unownedOwner,
+  walletOwnerOf,
   type Relation,
 } from './relations.js';
 
@@ -233,6 +234,21 @@ describe('ownerless base (none:<lostCapitalId>, capture plan 4E)', () => {
       expect(relationOf(other, N1, ctx)).toBe('neutral');
       expect(relationOf(N1, other, ctx)).toBe('neutral');
     }
+  });
+
+  it('its storage is locked to everyone but opens by the usual break-in (not own, not an NPC market)', () => {
+    const ctx = createRelationContext({ alliances: { areAllied: () => true } });
+    const rel = relationOf(A, N1, ctx);
+    expect(rel).toBe('neutral'); // the cargo gate's "Locked. That cargo is not yours." -> break_in
+    expect(cargoOpensFor(rel, true)).toBe(false);
+    expect(isNpcOwner(N1)).toBe(false); // never the NPC Freight Dock market path
+  });
+
+  it('has no wallet: earnings go to nobody', () => {
+    expect(walletOwnerOf(N1)).toBeNull();
+    expect(walletOwnerOf('npc:traders:sol-3')).toBeNull();
+    expect(walletOwnerOf('')).toBeNull();
+    expect(walletOwnerOf(A)).toBe(A);
   });
 
   it('two different ownerless bases are not the same owner', () => {

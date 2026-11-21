@@ -72,3 +72,11 @@ describe('a lock holding its sector (the beacon turns)', () => {
     expect(isHoldingTerritoryLock(rec('capital', 'alice'), 'alice')).toBe(false);
   });
 });
+
+describe('an ownerless base\'s Territory Lock (capture plan 4E) is inert', () => {
+  it('locks no side and never holds', () => {
+    const lock = rec('territory_lock', 'none:pstruct-cap');
+    expect(isLiveTerritoryLock(lock)).toBe(false);
+    expect(isHoldingTerritoryLock(lock, 'none:pstruct-cap')).toBe(false);
+  });
+});

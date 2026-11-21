@@ -73,7 +73,7 @@ import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js'
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import type { GateController } from '../structures/GateController.js';
 import { buildGateController } from '../structures/gateControllerFactory.js';
-import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
+import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, walletOwnerOf, type StandingQuery } from '../../shared-types/relations.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerRoomFeatures } from './features/index.js';
@@ -2238,10 +2238,10 @@ export class SectorRoom extends Room<SectorState> {
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
-      // D3 — station taxes: a player's habitat modules and spires pay their wallet.
-      payCredits: (rec, n) => { if (parseOwner(rec.owner).kind === 'player') getWallet().credit(rec.owner, n, 'station_taxes'); },
+      // D3 — station taxes: a player's habitat modules and spires pay their wallet; an NPC or ownerless base has none (`walletOwnerOf`).
+      payCredits: (rec, n) => { const w = walletOwnerOf(rec.owner); if (w !== null) getWallet().credit(w, n, 'station_taxes'); },
       // A finished hull goes live: out of a Shipyard's slipway on a Move order to its park spot (`HullHandOff.launchNewHull`).
-      launchHull: (rec, kind, q) => parseOwner(rec.owner).kind === 'player' && this.hullHandOff.launchNewHull(rec.owner, kind, q, newHullOrigin(rec.kind, rec.x, rec.y, rec.rot ?? 0, kind, rec.prodCycles), true).ok,
+      launchHull: (rec, kind, q) => walletOwnerOf(rec.owner) !== null && this.hullHandOff.launchNewHull(rec.owner, kind, q, newHullOrigin(rec.kind, rec.x, rec.y, rec.rot ?? 0, kind, rec.prodCycles), true).ok,
     });
     // v4 T1-T4 — the teleporters + the broker room (`features/teleportMessages.ts`).
     ({ teleporters: this.teleporters, teleportRoom: this.teleportRoom } = buildTeleporters({

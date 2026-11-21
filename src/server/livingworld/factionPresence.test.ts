@@ -58,3 +58,12 @@ describe("the Ancients don't count for capture", () => {
     expect([...withAncients.s.shares]).toEqual([...alone.s.shares]);
   });
 });
+
+describe('an ownerless base (capture plan 4E) is no side on the control meter', () => {
+  it('a none: owner does not count for control', () => {
+    expect(countsForControl('none:pstruct-cap')).toBe(false);
+    const presence = new Map<string, SidePresence>();
+    fillSectorPresence(presence, [], new Map([['none:pstruct-cap', { ships: 0, structures: 9 }]]), 0, false);
+    expect(presence.size).toBe(0);
+  });
+});

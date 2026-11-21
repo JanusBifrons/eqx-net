@@ -18,7 +18,7 @@
  * `FactionState` map + the registry-derived membership/reverse-lookup.
  */
 
-import { isNpcOwner } from '../../shared-types/relations.js';
+import { isNpcOwner, isUnownedOwner } from '../../shared-types/relations.js';
 import { createFactionState, isBaseReady, type FactionState } from '../../core/faction/Faction.js';
 import type { StructureRecord } from '../structures/StructureRegistry.js';
 import type { FactionBaseReadiness } from '../livingworld/LivingWorldRoom.js';
@@ -90,11 +90,12 @@ export class FactionLedger {
   factionOf(entityId: string): string | null {
     let ownsStructure = false;
     for (const s of this.deps.structures()) {
-      // B2 — an NPC base is not a player faction (no waves, no escalation).
-      if (s.id === entityId) return isNpcOwner(s.owner) ? null : s.owner; // entityId IS a structure
+      // B2 — an NPC base is not a player faction (no waves, no escalation), nor
+      // is an ownerless one (capture 4E: it has no faction at all).
+      if (s.id === entityId) return isNpcOwner(s.owner) || isUnownedOwner(s.owner) ? null : s.owner; // entityId IS a structure
       if (s.owner === entityId) ownsStructure = true; // entityId is a base-owning player
     }
-    return ownsStructure ? entityId : null;
+    return ownsStructure && !isUnownedOwner(entityId) ? entityId : null;
   }
 
   /** Flip a faction hostile to drones (wave declared, or a member attacked a
@@ -167,8 +168,9 @@ export class FactionLedger {
     }
     const byOwner = new Map<string, Agg>();
     for (const rec of this.deps.structures()) {
-      // B2 — NPC bases are never a wave target (they aren't a player faction).
-      if (!rec.isConstructed || isNpcOwner(rec.owner)) continue;
+      // B2 — NPC bases are never a wave target (they aren't a player faction);
+      // capture 4E — nor is an ownerless base (it belongs to nobody).
+      if (!rec.isConstructed || isNpcOwner(rec.owner) || isUnownedOwner(rec.owner)) continue;
       let agg = byOwner.get(rec.owner);
       if (!agg) {
         agg = { hasCapital: false, minerCount: 0, solarCount: 0, turretCount: 0 };
