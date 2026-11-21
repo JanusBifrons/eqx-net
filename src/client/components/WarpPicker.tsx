@@ -191,7 +191,10 @@ function SystemMap({ dests, pose, target, onPick, onWarp, press }: {
   press: (fn: () => void) => FreshPressProps;
 }): JSX.Element {
   const H = SOLAR_HALF_EXTENT;
-  const sel = dests.find((d) => d.id === target) ?? null;
+  // A blocked pocket is never the selection (no ring, no Go), as the list greys its row.
+  const picked = dests.find((d) => d.id === target);
+  const sel = picked !== undefined && picked.reachable ? picked : null;
+  const on = (d: WarpDestination): boolean => d === sel;
   const font = H / 7, edge = H * 0.97, dotR = H / 22;
   // Each label sits just under its own dot (above it when there's no room
   // below, or when a label already sits there), anchored inward at the edges.
@@ -218,15 +221,16 @@ function SystemMap({ dests, pose, target, onPick, onWarp, press }: {
             strokeDasharray={`${H / 40} ${H / 60}`} opacity={0.7} data-testid="warp-map-pad" /> : null;
         })}
         {dests.map((d) => (
-          <g key={d.id} {...press(() => { if (!d.here) onPick(d.id); })} style={{ cursor: d.here ? 'default' : 'pointer' }} data-testid={`warp-map-${d.id}`}>
+          <g key={d.id} {...press(() => { if (!d.here && d.reachable) onPick(d.id); })} style={{ cursor: d.here || !d.reachable ? 'default' : 'pointer' }}
+            opacity={d.reachable ? 1 : 0.5} data-testid={`warp-map-${d.id}`} data-warp-state={d.state}>
             <circle cx={d.x} cy={-d.y} r={H / 9} fill="transparent" />
-            <circle cx={d.x} cy={-d.y} r={Math.max(d.r, dotR)} fill={KIND_COLOUR[d.kind]} fillOpacity={d.id === target ? 0.95 : 0.5}
-              stroke={d.id === target ? '#ffffff' : 'none'} strokeWidth={H / 90} />
+            <circle cx={d.x} cy={-d.y} r={Math.max(d.r, dotR)} fill={KIND_COLOUR[d.kind]} fillOpacity={on(d) ? 0.95 : 0.5}
+              stroke={on(d) ? '#ffffff' : 'none'} strokeWidth={H / 90} />
           </g>
         ))}
         {labels.map(({ d, lx, ly, anchor }) => (
-          <text key={`l-${d.id}`} x={lx} y={ly} fontSize={font} fill={d.id === target ? '#ffffff' : '#c8d4e6'} textAnchor={anchor}
-            fontWeight={d.id === target ? 700 : 400} style={{ pointerEvents: 'none' }}>{d.label}</text>
+          <text key={`l-${d.id}`} x={lx} y={ly} fontSize={font} fill={on(d) ? '#ffffff' : '#c8d4e6'} textAnchor={anchor}
+            fontWeight={on(d) ? 700 : 400} style={{ pointerEvents: 'none' }}>{d.label}</text>
         ))}
         {pose && sel && (
           <g data-testid="warp-map-line" style={{ pointerEvents: 'none' }}>
@@ -241,9 +245,9 @@ function SystemMap({ dests, pose, target, onPick, onWarp, press }: {
           </g>
         )}
       </svg>
-      <Button fullWidth size="small" variant="contained" disabled={!sel || !sel.reachable} sx={{ mt: 0.5, fontSize: 12, fontWeight: 700, color: '#04130a', textTransform: 'none' }}
+      <Button fullWidth size="small" variant="contained" disabled={!sel} sx={{ mt: 0.5, fontSize: 12, fontWeight: 700, color: '#04130a', textTransform: 'none' }}
         {...press(() => { if (sel) onWarp(sel); })} data-testid="warp-map-go" data-warp-state={sel?.state}>
-        {sel ? (sel.reachable ? `Warp: ${sel.label} (${formatKm(sel.distKm)})` : `${sel.label}: can't warp there · too close`) : 'Pick a destination'}
+        {sel ? `Warp: ${sel.label} (${formatKm(sel.distKm)})` : 'Pick a destination'}
       </Button>
     </Box>
   );
