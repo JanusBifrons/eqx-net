@@ -1,13 +1,12 @@
 /**
  * Opening a game window closes the speed dial (phone stills, 2026-11-20).
  *
- * Symptom: Build ▸ Industry ▸ place a Refinery ▸ tap it ▸ cog. The building
- * settings window (GameWindow, full screen on a phone) opened, but the dial's
- * build menu stayed open underneath and its "Silicon Works" entry poked out
- * under the window's bottom-right edge.
+ * Symptom: a building settings window opened while the dial's build menu
+ * stayed open underneath, poking out under the window's edge.
  *
- * Fix: GameWindow announces each open (onGameWindowOpen) and the dial folds
- * back to its closed root menu on it — the same state its own close() resets.
+ * Fix: GameWindow announces each open (onGameWindowOpen) and the dial and the
+ * Build sidebar close on it. The sidebar and the settings panel never show
+ * together (one right panel at a time).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useState } from 'react';
@@ -34,34 +33,29 @@ function Harness(): JSX.Element {
 
 const fabExpanded = (): string | null => screen.getByTestId('speed-dial-fab').getAttribute('aria-expanded');
 
+const sidebarOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
+
 describe('SpeedDialMenu closes when a game window opens', () => {
   beforeEach(() => {
-    useUIStore.setState({ phase: 'galaxy-map', isDead: false, isGalaxyMapOpen: false });
+    useUIStore.setState({ phase: 'galaxy-map', isDead: false, isGalaxyMapOpen: false, buildMode: false, placementKind: null });
   });
 
-  it('closes the open build drill when a GameWindow opens', () => {
+  it('closes the open dial when a GameWindow opens', () => {
     render(<Harness />);
     fireEvent.click(screen.getByTestId('speed-dial-fab'));
-    fireEvent.click(screen.getByTestId('speed-dial-build'));
     expect(fabExpanded()).toBe('true');
-    expect(screen.getByTestId('speed-dial-back')).toBeTruthy();
-
     act(() => openWindow());
-
     expect(screen.getByTestId('test-window')).toBeTruthy();
     expect(fabExpanded()).toBe('false');
   });
 
-  it('re-opens at the root menu after a window closed it', () => {
+  it('closes the Build sidebar when a GameWindow opens', () => {
     render(<Harness />);
     fireEvent.click(screen.getByTestId('speed-dial-fab'));
     fireEvent.click(screen.getByTestId('speed-dial-build'));
+    expect(sidebarOpen()).toBe(true);
     act(() => openWindow());
-
-    fireEvent.click(screen.getByTestId('speed-dial-fab'));
-    expect(fabExpanded()).toBe('true');
-    expect(screen.queryByTestId('speed-dial-back')).toBeNull();
-    expect(screen.getByTestId('speed-dial-build')).toBeTruthy();
+    expect(sidebarOpen()).toBe(false);
   });
 
   it('leaves a closed dial closed when a window opens', () => {
@@ -70,11 +64,13 @@ describe('SpeedDialMenu closes when a game window opens', () => {
     expect(fabExpanded()).toBe('false');
   });
 
-  it('closes the open build drill when the building settings side panel opens', () => {
+  it('one right panel at a time: settings closes Build, and Build closes settings', () => {
     let openPanel: () => void = () => {};
+    let panelOpen = false;
     function PanelHarness(): JSX.Element {
       const [open, setOpen] = useState(false);
       openPanel = () => setOpen(true);
+      panelOpen = open;
       return (
         <>
           <SpeedDialMenu />
@@ -85,9 +81,16 @@ describe('SpeedDialMenu closes when a game window opens', () => {
     render(<PanelHarness />);
     fireEvent.click(screen.getByTestId('speed-dial-fab'));
     fireEvent.click(screen.getByTestId('speed-dial-build'));
-    expect(fabExpanded()).toBe('true');
+    expect(sidebarOpen()).toBe(true);
     act(() => openPanel());
     expect(screen.getByTestId('structure-settings')).toBeTruthy();
-    expect(fabExpanded()).toBe('false');
+    expect(sidebarOpen()).toBe(false);
+    expect(panelOpen).toBe(true);
+
+    // Build opening (here: entering Build mode) closes the settings panel.
+    act(() => useUIStore.getState().setBuildMode(true));
+    expect(sidebarOpen()).toBe(true);
+    expect(panelOpen).toBe(false);
+    expect(useUIStore.getState().structureSettingsOpen).toBe(false);
   });
 });

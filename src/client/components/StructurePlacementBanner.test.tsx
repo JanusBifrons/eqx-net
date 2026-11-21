@@ -9,12 +9,13 @@ import { resetPlacementChosen, setPlacementRejection } from '../structures/place
 
 /**
  * The banner's Confirm delegates to the shared `commitChosenPlacement` (the
- * single commit path also used by the WS-10 desktop one-click place), then
- * clears `placementKind`. The "Confirm reads the PRODUCTION `placementChosen`
+ * single commit path also used by the WS-10 desktop one-click place) through
+ * `commitPlacement`, and KEEPS placing (build-menu M3) unless the kind places
+ * once. The "Confirm reads the PRODUCTION `placementChosen`
  * channel, not the webdriver-gated dataset" regression (smoke 2026-06-07
  * capture kuytvy) now lives where that logic lives — the `commitChosenPlacement`
  * unit test in `structurePlacementClient.test.ts`. Here we lock the wiring: a
- * Confirm click commits the active kind + exits placement mode.
+ * Confirm click commits the active kind and keeps or ends placement.
  */
 const commitChosenPlacement = vi.fn((..._a: unknown[]) => true);
 // The rotation functions stay REAL so the Rotate test checks the actual
@@ -54,12 +55,23 @@ describe('StructurePlacementBanner', () => {
     resetPlacementChosen();
   });
 
-  it('Confirm commits the active kind via the shared path and exits placement', () => {
+  it('Confirm commits the active kind via the shared path and keeps placing it', () => {
+    useUIStore.setState({ placementKind: 'solar' });
     const { getByTestId } = renderBanner();
     fireEvent.click(getByTestId('placement-confirm'));
+    fireEvent.click(getByTestId('placement-confirm'));
 
-    expect(commitChosenPlacement).toHaveBeenCalledTimes(1);
-    expect(commitChosenPlacement).toHaveBeenCalledWith('capital');
+    expect(commitChosenPlacement).toHaveBeenCalledTimes(2);
+    expect(commitChosenPlacement).toHaveBeenCalledWith('solar');
+    expect(useUIStore.getState().placementKind).toBe('solar'); // still placing
+    expect(getByTestId('placement-banner').textContent).toContain('Solar');
+  });
+
+  it.each(['capital', 'territory_lock'] as const)('Confirm places a %s once: placement ends', (kind) => {
+    useUIStore.setState({ placementKind: kind });
+    const { getByTestId } = renderBanner();
+    fireEvent.click(getByTestId('placement-confirm'));
+    expect(commitChosenPlacement).toHaveBeenCalledWith(kind);
     expect(useUIStore.getState().placementKind).toBeNull();
   });
 

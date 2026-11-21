@@ -109,9 +109,9 @@ export async function lockOn(page: Page, target: LockTarget, opts: { timeoutMs?:
   expect(await sel.jsonValue()).not.toBeNull();
   const btn = page.locator('[data-testid="fc-target"]');
   await expect(btn).toHaveAttribute('data-state', /^(lock|unlock|cancel)$/, { timeout: 5_000 });
-  // dispatchEvent, not click(): the info box is world-anchored (moved every frame
-  // to the target's screen pose; parked off-screen by the worker renderer), so
-  // Playwright's visible/stable actionability checks never settle.
+  // dispatchEvent, not click(): kept from when the selection card was
+  // world-anchored (moved every frame); it now docks top-centre, and a
+  // dispatched click works either way.
   if ((await btn.getAttribute('data-state')) === 'lock') await btn.dispatchEvent('click');
   await expect(page.locator(`[data-testid="fc-chip-${groupId}"]`)).toHaveAttribute('data-locked', '1', {
     // Real lock time when the target is not hostile and instantLock is off: the

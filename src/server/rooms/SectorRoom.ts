@@ -80,6 +80,7 @@ import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerRoomFeatures } from './features/index.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
+import { swapBlueprintFor } from '../structures/blueprintSwap.js';
 import { seedAlienGates, seedPocketPads, type NpcGateSeedHost, type TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
 import { getTeleportBroker, type TeleportRoom } from '../teleport/TeleportBroker.js';
 import { isNpcBasesDisabled, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost } from '../bases/NpcBaseSubsystem.js';
@@ -2239,7 +2240,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered, canDrawFull: (rec) => { const g = this.structureGrid, s = g.powerSummaryFor(rec.id); return canTakeFullDraw(rec, s.powered, s.netPower, g.componentBatteryCharge(rec.id)); },
       componentOf: (id) => this.structureGrid.componentMembersOf(id),
-      onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
+      onBlueprintSpent: (rec) => this.storage.persistSlot(rec), swapBlueprint: (rec, recipe) => swapBlueprintFor(this.storage, rec, recipe),
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
       // D3 — station taxes: a player's habitat modules and spires pay their wallet; an NPC or ownerless base has none (`walletOwnerOf`).

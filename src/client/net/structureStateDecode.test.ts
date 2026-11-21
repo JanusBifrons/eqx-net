@@ -5,7 +5,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { BUILD_STALL_NOT_CONNECTED, STRUCTURE_FLAG_BUILT, STRUCTURE_FLAG_LOCK_HOLDING, encodeBuildEta, encodeConnSock, type StructureStateView } from '../../shared-types/structureStateWire.js';
-import { encodeProdBay } from '../../shared-types/production.js';
+import { blueprintRecipeBits, encodeBpProduct, encodeProdBay, encodeProdQ0, encodeProdQ1 } from '../../shared-types/production.js';
+import { blueprintProductFor } from '../../shared-types/recipes.js';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 
 const OWNERS = { ids: ['p1'], names: ['Ada'] };
@@ -67,6 +68,63 @@ describe('decodeStructureState: prodBay (loop 3R)', () => {
     decodeStructureState({ flags: STRUCTURE_FLAG_BUILT, connTo: list([]) }, OWNERS, out);
     expect(out.prodBay).toBeUndefined();
     expect(out.prodQueued).toBeUndefined();
+  });
+});
+
+describe('decodeStructureState: recipe queue (building panels B4)', () => {
+  it('decodes the queue and repeat flag in place; an emptied queue keeps its array', () => {
+    const out = emptyStructureRow();
+    decodeStructureState({ connTo: list([]) }, OWNERS, out);
+    expect(out.prodQueue, 'no queue ever: nothing allocated').toBeUndefined();
+    expect(out.prodQueueRepeat).toBeUndefined();
+    const queue = ['build_gunship', 'build_interceptor', 'build_heavy', 'build_gunship', 'build_barge'] as const;
+    decodeStructureState({ connTo: list([]), prodQ0: encodeProdQ0(queue), prodQ1: encodeProdQ1(queue, true) }, OWNERS, out);
+    expect(out.prodQueue).toEqual(queue);
+    expect(out.prodQueueRepeat).toBe(true);
+    const arr = out.prodQueue;
+    decodeStructureState({ connTo: list([]), prodQ0: encodeProdQ0(['build_heavy']) }, OWNERS, out);
+    expect(out.prodQueue).toBe(arr);
+    expect(out.prodQueue).toEqual(['build_heavy']);
+    expect(out.prodQueueRepeat).toBeUndefined();
+    decodeStructureState({ connTo: list([]) }, OWNERS, out);
+    expect(out.prodQueue).toBe(arr);
+    expect(out.prodQueue).toEqual([]);
+  });
+});
+
+describe('decodeStructureState: blueprint stock (building panels B7)', () => {
+  const I = blueprintProductFor('build_interceptor');
+  const G = blueprintProductFor('build_gunship');
+
+  it('a yard reads its slot blueprint and the hulls its network stores, in place', () => {
+    const out = emptyStructureRow();
+    decodeStructureState({ connTo: list([]) }, OWNERS, out, 'shipyard');
+    expect(out.bpProduct).toBeNull();
+    expect(out.bpAvailable, 'no stock ever: nothing allocated').toBeUndefined();
+    const q1 = encodeProdQ1(undefined, false, encodeBpProduct('shipyard', I));
+    const bpAvail = (blueprintRecipeBits('shipyard', I) | blueprintRecipeBits('shipyard', G)) >>> 0;
+    decodeStructureState({ connTo: list([]), prodQ1: q1, bpAvail }, OWNERS, out, 'shipyard');
+    expect(out.bpProduct).toBe('build_interceptor');
+    expect(out.bpAvailable).toEqual(['build_interceptor', 'build_gunship']);
+    expect(out.prodQueue, 'the slot byte is not a queue').toBeUndefined();
+    const arr = out.bpAvailable;
+    decodeStructureState({ connTo: list([]), prodQ1: q1, bpAvail: blueprintRecipeBits('shipyard', I) }, OWNERS, out, 'shipyard');
+    expect(out.bpAvailable).toBe(arr);
+    expect(out.bpAvailable).toEqual(['build_interceptor']);
+    decodeStructureState({ connTo: list([]) }, OWNERS, out, 'shipyard');
+    expect(out.bpProduct).toBeNull();
+    expect(out.bpAvailable).toBe(arr);
+    expect(out.bpAvailable).toEqual([]);
+  });
+
+  it('an unknown kind (no pose yet) or a non-processor leaves both unset', () => {
+    const out = emptyStructureRow();
+    const v = { connTo: list([]), prodQ1: encodeProdQ1(undefined, false, 1), bpAvail: 3 };
+    decodeStructureState(v, OWNERS, out);
+    expect(out.bpProduct).toBeUndefined();
+    expect(out.bpAvailable).toBeUndefined();
+    decodeStructureState(v, OWNERS, out, 'cargo_bay');
+    expect(out.bpProduct).toBeUndefined();
   });
 });
 

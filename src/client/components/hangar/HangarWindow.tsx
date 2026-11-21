@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKindId } from '../../../shared-types/shipKinds';
 import { FREE_LAUNCHES_START, launchCost } from '../../../shared-types/launch';
 import { ShipSilhouette } from '../../render/shipShapeSvg';
-import { shipPortraitUrl } from '../../render/art/shipPortraits';
+import { HullTile, hullArt as art } from '../HullTile';
 import { HUD } from '../../hud/tokens';
 import { useUIStore } from '../../state/store';
 import { fetchEconomy } from '../../net/tradeApi';
@@ -30,8 +30,6 @@ const WIDE = '@media (min-width: 761px)';
 /** A sideways phone: little height, so the chrome rows tighten. */
 const SHORT = '@media (max-height: 500px)';
 const cr = (n: number): string => n.toLocaleString('en-GB');
-/** Picture for a kind as a CSS background, or null (silhouette fallback). */
-const art = (kind: string): string | null => { const u = shipPortraitUrl(kind); return u === null ? null : `url("${u}")`; };
 
 export interface HangarWindowProps {
   /** The sector being launched into; null = closed. */
@@ -318,40 +316,19 @@ function HangarTileCard({ tile, purse, selectedKind, onPick }: TileProps): JSX.E
   const owned = tile.fits.some((f) => purse.ownedHere.has(f.kind));
   const locked = v.kind === 'refuse' && v.reason === 'shipyard';
   const cap = tile.sizeClass === 'capital' && !locked;
-  const pic = art(shown.kind);
-  const price = locked ? { t: 'Shipyard', c: C.danger }
-    : owned ? { t: 'Owned', c: C.tier2 }
-    : v.kind === 'free' ? { t: 'Free', c: C.hullOk }
-    : { t: `${cr(launchCost(shown.kind))} cr`, c: C.credits };
+  const price = locked ? { text: 'Shipyard', color: C.danger }
+    : owned ? { text: 'Owned', color: C.tier2 }
+    : v.kind === 'free' ? { text: 'Free', color: C.hullOk }
+    : { text: `${cr(launchCost(shown.kind))} cr`, color: C.credits };
   const edge = picked ? C.auto : owned ? C.tier2 : cap ? C.tier1 : C.edge2;
   const glow = picked ? `0 0 0 1px ${C.auto}, 0 0 14px rgba(52,216,255,.35)` : owned ? 'inset 0 0 12px rgba(255,200,58,.22)' : cap ? 'inset 0 0 10px rgba(74,168,255,.18)' : 'none';
   return (
-    <Box data-testid={`ship-card-${tile.id}`} data-selected={picked ? '1' : '0'} data-owned={owned ? '1' : '0'} data-verdict={v.kind}>
-      <ButtonBase
-        onClick={() => onPick(shown.kind)} aria-pressed={!!picked}
-        sx={{
-          position: 'relative', display: 'block', width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', overflow: 'hidden',
-          border: `1px solid ${edge}`, boxShadow: glow, bgcolor: C.cell,
-          backgroundImage: pic ?? 'none', backgroundSize: '128%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat',
-          filter: locked ? 'grayscale(.85) brightness(.55)' : 'none', textAlign: 'left',
-          '&::after': { content: '""', position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, transparent 45%, rgba(4,6,13,.92))', pointerEvents: 'none' },
-        }}
-      >
-        {pic === null && (
-          <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pb: '18px' }}>
-            <ShipSilhouette shape={getShipKind(shown.kind).shape} size={44} />
-          </Box>
-        )}
-        {tile.fits.length > 1 && (
-          <Box component="span" sx={{ position: 'absolute', top: 5, right: 5, zIndex: 1, fontFamily: HUD.font.num, fontSize: 9, color: C.inkDim, border: `1px solid ${C.edge2}`, borderRadius: '3px', px: '4px', bgcolor: 'rgba(4,6,13,.6)' }}>
-            {tile.fits.length} fits
-          </Box>
-        )}
-        <Box component="span" sx={{ position: 'absolute', bottom: 18, left: 6, right: 6, zIndex: 1, fontFamily: HUD.font.label, fontWeight: 600, fontSize: 11.5, color: C.ink, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {tile.displayName}
-        </Box>
-        <Box component="span" sx={{ position: 'absolute', bottom: 5, left: 6, zIndex: 1, fontFamily: HUD.font.num, fontSize: 10, color: price.c }}>{price.t}</Box>
-      </ButtonBase>
-    </Box>
+    <HullTile
+      kind={shown.kind} name={tile.displayName} testId={`ship-card-${tile.id}`}
+      data={{ selected: picked ? '1' : '0', owned: owned ? '1' : '0', verdict: v.kind }}
+      edge={edge} glow={glow} pressed={!!picked} dim={locked} caption={price}
+      tag={tile.fits.length > 1 ? `${tile.fits.length} fits` : undefined}
+      onClick={() => onPick(shown.kind)}
+    />
   );
 }

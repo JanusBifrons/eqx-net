@@ -41,7 +41,7 @@
  * effects are cached per slot; steady-state pulses allocate nothing (#14).
  */
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
-import { CHUNK_REFINE_BATCH, RECIPES, blueprintProductFor, type RecipeId, type RecipeOutput } from '../../shared-types/recipes.js';
+import { CHUNK_REFINE_BATCH, RECIPES, blueprintProductFor, type ProcessorKindId, type RecipeId, type RecipeOutput } from '../../shared-types/recipes.js';
 import { PROD_STATE, defaultRecipeFor, isProcessorKind } from '../../shared-types/production.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecipe } from '../../shared-types/blueprints.js';
@@ -52,6 +52,8 @@ import { baseEffect, inputsAsOutputs } from './productionEffect.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
+import { advanceRecipeQueue } from './productionQueue.js';
+import { blueprintStockMask, tracksBlueprintStock } from './blueprintStock.js';
 import { hullProduct, packedProduct } from './productIds.js';
 
 /** What one cycle of a recipe actually uses and makes. */
@@ -86,6 +88,9 @@ export interface ProductionDeps {
   /** A Shipyard finished a 'hull:<kind>': park it as a live ship owned by the
    *  yard's owner. False = it could not; the packed crate goes to storage. */
   launchHull?(rec: StructureRecord, kind: string, quality: number): boolean;
+  /** A queue head needs a blueprint the slot doesn't hold: swap one in from
+   *  network storage (`swapBlueprintFor`, the one swap set_recipe uses too). */
+  swapBlueprint?(rec: StructureRecord, recipe: RecipeId): void;
 }
 
 interface AppliedCache {
@@ -143,6 +148,8 @@ export class ProductionSubsystem {
     for (let k = 0; k < n; k++) {
       const rec = procs[(start + k) % n]!;
       this.step(rec);
+      // B7: blueprints in this network (the row's bpAvail; blueprintStock.ts).
+      if (tracksBlueprintStock(rec.kind)) { this.collectNetwork(rec); rec.bpAvail = blueprintStockMask(rec.kind as ProcessorKindId, this.net); }
       this.d.setActive?.(rec, rec.prodState === PROD_STATE.running);
     }
   }
@@ -173,19 +180,16 @@ export class ProductionSubsystem {
    * The owner picks a recipe. A cycle already loaded under the old recipe
    * hands its inputs back to the network first; if they don't fit, the change
    * is refused (returns false) so nothing is lost. `count` (job 2E) caps the
-   * outputs (absent ⇒ repeat forever); setting it again resets it.
+   * outputs (absent ⇒ repeat forever); setting it again resets it. It also
+   * clears the recipe queue (`productionQueue.ts`).
    */
   setRecipe(rec: StructureRecord, recipe: RecipeId, count?: number): boolean {
     const kind = rec.kind as StructureKindId;
     if (!isProcessorKind(kind) || !RECIPES[recipe].processors.includes(kind)) return false;
-    if (this.recipeOf(rec) === recipe) {
-      rec.recipe = recipe;
-      rec.prodCount = count;
-      return true;
-    }
-    if (rec.prodLoaded === true && !this.unload(rec)) return false;
+    if (this.recipeOf(rec) !== recipe && rec.prodLoaded === true && !this.unload(rec)) return false;
     rec.recipe = recipe;
     rec.prodCount = count;
+    rec.prodQueue = undefined;
     return true;
   }
 
@@ -276,7 +280,14 @@ export class ProductionSubsystem {
     // A loaded cycle keeps running on what it captured at its start, even if
     // the copy that started it is now used up.
     if (!loaded) this.dropUsedUp(rec);
-    const eff = loaded ? this.effective(rec, id, true) ?? baseEffect(id) : this.effective(rec, id);
+    let eff = loaded ? this.effective(rec, id, true) ?? baseEffect(id) : this.effective(rec, id);
+    // A recipe queue's head moved to another hull: swap the blueprint (never
+    // mid-cycle: a loaded cycle has an eff). Retried each pulse while it holds,
+    // for queue heads only.
+    if (eff === null && rec.prodQueue !== undefined && this.d.swapBlueprint !== undefined) {
+      this.d.swapBlueprint(rec, id);
+      eff = this.effective(rec, id);
+    }
     if (eff === null) {
       rec.prodState = PROD_STATE.needsBlueprint;
       return;
@@ -322,6 +333,7 @@ export class ProductionSubsystem {
       rec.prodProgress = 0;
       rec.prodCycles = cycle + 1;
       spendBuildCount(rec);
+      advanceRecipeQueue(rec, id);
       this.cyclesCompleted++;
       this.dropUsedUp(rec);
       // D3 — taxes go to the owner's wallet, never into a hold.
