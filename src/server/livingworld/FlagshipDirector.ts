@@ -49,6 +49,7 @@ import { FLAGSHIP_BOT_ID_PREFIX } from './directorBotIds.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import type { Rng } from './population.js';
 import { gameNow } from '../time/gameTime.js';
+import { clearReach, clearSpot, fleetClearance, pocketStation } from './flagshipStation.js';
 
 /** A destroyed fleet's replacement arrives this long after, at its power's
  *  heart (or the nearest sector the power still holds). */
@@ -214,6 +215,9 @@ interface Fleet {
   /** Where the escorts warp to, once the flagship has nearly turned to face
    *  its jump (a capital turns slowly; escorts sent at once jumped first). */
   escortDrop: { x: number; y: number } | null;
+  /** Where the flagship holds its pocket, clear of structures by the whole
+   *  fleet's footprint (`flagshipStation.ts`): its guard post and wander centre. */
+  station: { x: number; y: number } | null;
 }
 
 export class FlagshipDirector {
@@ -247,7 +251,7 @@ export class FlagshipDirector {
       this.fleets.push({
         factionId, alive: false, sectorKey: null, pocketId: '', leadId: '', escorts: [], kind: 'light-cruiser', name: '',
         moves: 0, respawnAtMs: 0, nextMoveAtMs: 0, settleUntilMs: 0, nextWanderAtMs: 0, leavingFor: null,
-        resume: restored.find((r) => r.factionId === factionId) ?? null, escortDrop: null,
+        resume: restored.find((r) => r.factionId === factionId) ?? null, escortDrop: null, station: null,
       });
     }
   }
@@ -358,7 +362,10 @@ export class FlagshipDirector {
     const room = this.rooms.get(sectorKey);
     if (!room || !room.hasFreeSlot()) return false;
     const a = this.rng() * Math.PI * 2;
-    const x = site.x + Math.cos(a) * site.r, y = site.y + Math.sin(a) * site.r;
+    // On the rim, moved clear of structures by the fleet's footprint (#18).
+    const c = fleetClearance(kind, f.escorts, escortRing);
+    const { x, y } = clearSpot(room, site.x + Math.cos(a) * site.r, site.y + Math.sin(a) * site.r, c);
+    f.station = pocketStation(room, site, x, y, c);
     if (!room.spawnLivingWorldBot({ botId: f.leadId, kind, x, y, factionId: f.factionId })) return false;
     if (room.markElite?.(f.leadId, name, FLAGSHIP_HEALTH_MUL, FLAGSHIP_BOUNTY) !== true) {
       room.despawnLivingWorldBot(f.leadId);
@@ -435,10 +442,14 @@ export class FlagshipDirector {
     }
     if (nowMs >= f.nextWanderAtMs) {
       // Drift round the pocket at cruise; escorts follow.
+      // Round its station, on a leg clear of structures (flagshipStation.ts).
       const site = sectorSites(f.sectorKey!).find((s) => s.id === f.pocketId);
-      if (site) {
-        const a = this.rng() * Math.PI * 2, r = this.rng() * site.r * 0.6;
-        room.setBotFlockLeaderCourse(f.leadId, site.x + Math.cos(a) * r, site.y + Math.sin(a) * r);
+      const st = f.station ?? site;
+      if (site && st) {
+        const a = this.rng() * Math.PI * 2, r = this.rng() * site.r * 0.6, c = fleetClearance(f.kind, f.escorts, escortRing);
+        let to = clearReach(room, lead.x, lead.y, st.x + Math.cos(a) * r, st.y + Math.sin(a) * r, c);
+        if (to.x === lead.x && to.y === lead.y) to = st;
+        room.setBotFlockLeaderCourse(f.leadId, to.x, to.y);
       }
       f.nextWanderAtMs = nowMs + FLEET_WANDER_MS;
     }
@@ -463,7 +474,7 @@ export class FlagshipDirector {
     }
     const site = f.guardSite;
     if (!site) return;
-    room.setBotGuardPost(f.leadId, site.x, site.y, site.r);
+    room.setBotGuardPost(f.leadId, f.station?.x ?? site.x, f.station?.y ?? site.y, site.r);
     for (const e of f.escorts) room.setBotGuardPost(e.id, lead.x, lead.y, escortRing(f.kind, e.kind) + site.r, f.leadId);
   }
 
@@ -489,6 +500,7 @@ export class FlagshipDirector {
     f.escortDrop = { x: drop.x, y: drop.y };
     if (this.flagshipNearlyAligned(f, lead)) this.sendEscorts(f, room);
     f.pocketId = dest.id;
+    f.station = pocketStation(room, dest, drop.x, drop.y, fleetClearance(f.kind, f.escorts, escortRing));
     f.moves++;
     // A gate is a short stop before crossing; a pocket is a full dwell.
     f.nextMoveAtMs = nowMs + (f.leavingFor !== null ? MOVE_SETTLE_MS : this.dwellMs + MOVE_SETTLE_MS);
