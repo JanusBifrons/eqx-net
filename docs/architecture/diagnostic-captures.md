@@ -47,6 +47,36 @@ Empty siblings are not written, so the directory tells you at a glance which sig
 
 If the highlights answer the question, you're done. If not, the histogram tells you which sibling to read next.
 
+## Netcode gap counters (phone lane only)
+
+Each `perf_summary` line in `frames.ndjson` also carries the netcode
+gap-smoothing counters (plan S0), sampled by the existing 10 s timer
+(`readLaneNetGapCounters` in `src/client/debug/perf/laneFrameSummary.ts`;
+nothing is read per frame or per packet). **Only phone-lane streaming captures
+carry them. Manual captures (`/diag/capture`) and non-lane streaming captures
+do not;** that is a known limit. The values are running totals since the last
+reset, not per-window deltas. `null` means no source (no live DataChannel).
+The fields are optional: a `perf_summary` written before them still reads.
+There is no server schema change (entry `data` is untyped in
+`captureSchema.ts`).
+
+| Field | Source | Meaning |
+|---|---|---|
+| `dcLastArrivalMs` | `DataChannelTransport.lastArrivalMs()` | `performance.now()` at which the last dispatched DataChannel frame truly arrived (same base as the line's `ts`; `ts - dcLastArrivalMs` = time since the last DC frame). `0` = none yet. |
+| `dcLastDrainReplaced` | `lastDrainReplacedCount()` | DC frames overwritten unread in the slot before the most recent drain. |
+| `dcReplacedTotal` | `totalReplacedCount()` | Running total of DC frames overwritten unread (reset on close / handoff). |
+| `swarmLateLastMs` / `swarmLateMaxMs` | `getSwarmLatenessLastMs` / `MaxMs` | How late (wall ms) tick-stamped drone (swarm) packets arrived after their tick-clock stamp: the last one and the worst since the last reset. |
+| `swarmLateSumMs` / `swarmLateCount` | `getSwarmLatenessSumMs` / `Count` | Sum and sample count; mean lateness = sum / count. |
+| `swarmOverwriteUnread` | `getSwarmOverwriteUnreadCount` | Drone ring slots overwritten while still newer than the read point (proxy for "overwritten unread"). |
+| `swarmOldEndClamp` | `getSwarmOldEndClampCount` | Reads whose target fell before the oldest pose of a full ring: history the read needed was already gone. |
+| `swarmGlideLimit` | `getSwarmGlideLimitCount` | Reads past the newest pose by more than the extrapolation limit (frozen at the glide limit); counted per drone per frame. |
+| `anchorHardSnaps` | `getAnchorHardSnapCount` (`clockAnchor.ts`) | Clock anchor hard snaps (drift over 200 ms). Reset on welcome and respawn. |
+| `renderDueSnaps` | `getRenderDueSnapCount` (`renderTickPhase.ts`) | Render due-time snaps (gap over 200 ms). Reset in `resetPredictionState`. |
+
+The DataChannel fields read `getActiveSnapshotTransport()`
+(`src/client/net/connection/roomConnection.ts`), which returns null once that
+transport is closed.
+
 ## Adding a new tag
 
 1. Emit it from the client (`logEvent('new_tag', {...})`) or the server (`serverLogEvent('new_tag', {...})`).

@@ -10,7 +10,7 @@ import {
   flowTrainInto, leadCometArc, makeLinkCable, type FlowTrain, type LinkCable,
 } from './connectorCables.js';
 import { CABLE_CURVE_SEGMENTS } from '../../../core/structures/cableCurve.js';
-import { connectorVisualInto, type ConnectorVisual } from './connectorVisual.js';
+import { connectorVisualInto, flowPulseColor, type ConnectorVisual } from './connectorVisual.js';
 import { cableLookWidth, cableStudInset, type LinePath } from './connectorLineLooks.js';
 
 /** Records path verbs and strokes like a Pixi Graphics. */
@@ -44,7 +44,7 @@ function lCable(socketed: boolean): LinkCable {
   return c;
 }
 
-const PULSE = 0xffe08a;
+const PULSE = flowPulseColor('minerals');
 function flowing(): ConnectorVisual {
   // An edge lit long ago and still flowing: no beat (steady floor alphas).
   return connectorVisualInto({ color: 0, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0 }, 1e12, 1e12, 1, 0, 'minerals');
@@ -163,8 +163,8 @@ describe('socket collar flash (0d slice 9)', () => {
     expect((rbar![1]! + rbar![3]!) / 2).toBeCloseTo(0); expect(rbar![0]).toBeCloseTo(rbar![2]!);
     expect(rbar![0]).toBeCloseTo(cableStudInset(1, 200));
     // Before any arrival, after the flash, and on a fence link: no flash.
-    const strokes = (f: FakePath) => f.paths.length;
-    expect(strokes(draw(true, true, arrive - 50))).toBe(strokes(draw(true, true, arrive + COLLAR_FLASH_MS + 20)));
+    expect(flashOf(draw(true, true, arrive - 50))).toHaveLength(0);
+    expect(flashOf(draw(true, true, arrive + COLLAR_FLASH_MS + 20))).toHaveLength(0);
     expect(flashOf(draw(false, true, arrive + 10))).toHaveLength(0);
   });
 });

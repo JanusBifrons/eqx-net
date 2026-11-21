@@ -28,6 +28,8 @@
 
 import type { Client, ClientArray } from 'colyseus';
 import { setOwnEconomy, type OwnEconomyDeps } from './snapshotOwnEconomy.js';
+import { writeInputAck } from './inputAckWire.js';
+import { isOwnHull, setOwnHold, type OwnHoldDeps } from './snapshotOwnHold.js';
 import type { Logger } from 'pino';
 import type { MapSchema } from '@colyseus/schema';
 import {
@@ -60,7 +62,6 @@ import type { ProjectileRecord } from './ProjectilePipeline.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
 import type { ShellKeyRecord } from '../../shared-types/messages/shellEvents.js';
 import type { Hold } from '../../shared-types/goods.js';
-import { isHoldEmpty, wireHold } from '../../core/cargo/hold.js';
 import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { MountCharges } from './WeaponMountTicker.js';
 
@@ -155,7 +156,7 @@ export interface MissileBroadcasterView {
   }>;
 }
 
-export interface SnapshotBroadcasterDeps extends OwnEconomyDeps { // + walletOf / freeLaunchesOf (own active ship)
+export interface SnapshotBroadcasterDeps extends OwnEconomyDeps, OwnHoldDeps { // + walletOf / freeLaunchesOf (own active ship)
   serverTick: () => number;
   sabU32: Uint32Array;
   clients: ClientArray<Client>;
@@ -182,10 +183,6 @@ export interface SnapshotBroadcasterDeps extends OwnEconomyDeps { // + walletOf 
   droneCharges?: Pick<MountCharges, 'mask' | 'startTick' | 'offsetsInto'>;
   /** The AI pilot holds the boost key this tick (the boost flame, #16). */
   isDroneBoosting?: (droneId: string) => boolean;
-  /** Living World P1a — the carried hold of a ship instance (a SHARED reference
-   *  from the HoldStore, replaced only on a discrete transfer — #14 safe), or
-   *  undefined when it carries nothing. Absent dep ⇒ no cargo slice. */
-  shipHoldOf?: (shipInstanceId: string) => Hold | undefined;
   /** Living World P1a-2 — auto-deposit progress 0..100 for a ship instance
    *  (undefined ⇒ not depositing). Own active ship only on the wire. */
   depositProgressOf?: (shipInstanceId: string) => number | undefined;
@@ -210,9 +207,6 @@ export interface SnapshotBroadcasterDeps extends OwnEconomyDeps { // + walletOf 
    *  the same warp build-up, 1). Also asked with a shipInstanceId (RTS fleet
    *  warp: that ship spools in a fleet group). Absent ⇒ never. */
   transitSpooling?: (playerId: string) => boolean;
-  /** Living World P5 — the blueprints fitted to a ship instance (own active
-   *  ship only on the wire). A SHARED reference; undefined ⇒ none known. */
-  fittedOf?: (shipInstanceId: string) => readonly string[] | undefined;
   /** v4 M2 — the faction a patrol ship flies for (undefined for other NPCs). */
   droneFactionOf?: (droneId: string) => string | undefined;
   /** W2a — a drone's NPC warp phase: 1 spool, 2 run, 3 just arrived, 0 none. */
@@ -423,6 +417,7 @@ export class SnapshotBroadcaster {
   broadcastCounter = 0;
   /** Per-player worker-applied tick. Updated from the room's worker SAB read. */
   readonly sabAppliedTicks = new Map<string, number>();
+  readonly inputMargins = new Map<string, number>(); // inputAckWire.ts
   /** Per-session 9-cell drone interest sets (populated by the room's
    *  swarm-broadcast block earlier in update()). */
   readonly interestScratch = new Map<string, Set<number>>();
@@ -979,13 +974,9 @@ export class SnapshotBroadcaster {
         const ownActive = ship.playerId === recipientPlayerId && ship.isActive;
         setOrDrop(entry, 'statAlloc',
           ownActive && hasAnyStatAlloc(ship.statAlloc) ? ship.statAlloc : undefined);
-        // Living World P1a (#16) — the own ACTIVE hull's carried hold, only when
-        // non-empty (zero bytes otherwise). Shared reference (no per-tick
-        // alloc); a rock chunk's hidden ore stripped (`wireHold`, cached).
-        const hold = ownActive && this.deps.shipHoldOf !== undefined
-          ? this.deps.shipHoldOf(ship.shipInstanceId)
-          : undefined;
-        setOrDrop(entry, 'cargo', hold !== undefined && !isHoldEmpty(hold) ? wireHold(hold) : undefined);
+        // Living World P1a / P5 (#16) — the own ship's hold + fitted blueprints (flown,
+        // else the hull parked by Command / Build: the hold Build takes crates from).
+        setOwnHold(entry, this.deps, ship.shipInstanceId, isOwnHull(this.deps, ship, recipientPlayerId));
         setOrDrop(entry, 'depositing', ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined);
         // Fire control (#16): the own pilot's groups + locks (shared ref).
         setOrDrop(entry, 'groups', ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined);
@@ -1002,9 +993,6 @@ export class SnapshotBroadcaster {
         if (capped) for (let i = 0; i < lockedBy.length; i++) if (lockedBy[i]!.s === 2) lockedRows++;
         const lockedByL = capped ? (this.deps.lockedByLockedOf?.(ship.playerId) ?? 0) : 0;
         setOrDrop(entry, 'lockedByL', lockedByL > lockedRows ? lockedByL : undefined);
-        // P5 (#16) — own ACTIVE hull's fitted blueprints, when non-empty (shared ref, never mutated).
-        const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
-        setOrDrop(entry, 'fitted', fitted !== undefined && fitted.length > 0 ? (fitted as string[]) : undefined);
         // Economy v2 W1 / join flow (#16) — own wallet and free launches (numbers, no alloc).
         setOwnEconomy(entry, this.deps, ship.playerId, ownActive);
         // v4 T2 (#16) — teleport epoch: the owner re-seeds prediction on a change.
@@ -1195,7 +1183,7 @@ export class SnapshotBroadcaster {
       snap.type = 'snapshot';
       snap.serverTick = serverTick;
       snap.states = states;
-      snap.ackedTick = recipientAcked;
+      writeInputAck(snap, recipientAcked, this.inputMargins, recipientPlayerId);
       setOrDrop(snap, 'boostingIds', boostingIds.length > 0 ? boostingIds : undefined);
       setOrDrop(snap, 'thrustingIds', thrustingIds.length > 0 ? thrustingIds : undefined);
       setOrDrop(snap, 'projectiles', projectilesCount > 0 ? projectilesScratch : undefined);

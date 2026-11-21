@@ -30,14 +30,14 @@ import { getStructureKind } from '@shared-types/structureKinds';
 import { structureGunLines } from './structureGunLines';
 import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
 import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
-import { structureSelfPower } from './structureSettingsPower';
+import { inspectorPowerLine, structureSelfPower } from './structureSettingsPower';
 import type { PickedEntityKind } from '../render/pickEntity';
 import { TargetAction } from './TargetAction';
 import { ACTION_BTN_SX, ICON_SX, StructureManageActions } from './StructureManageActions';
 import { canManageBuildings } from '../structures/buildingManagement';
 // Moved with the management buttons; re-exported so existing importers keep working.
 import { droneName, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
-import { BUILD_AWAITING_CLEAR_LINE, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
+import { BUILD_AWAITING_CLEAR_LINE, buildStalledLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
 
 /**
  * Click-to-inspect live stats panel (structures follow-up Item B6).
@@ -78,7 +78,11 @@ interface PanelData {
   buildPct?: number; // [0..1]; < 1 ⇒ under construction
   /** Build done but still a blueprint: a ship inside its footprint (`buildAwaitingClear.ts`). */
   buildBlocked?: boolean;
+  /** Why a paused build is paused (`buildStalledLine`): dry bank or not connected. */
+  buildStalled?: string;
   powered?: boolean;
+  /** Built (not a blueprint): an unbuilt one is off the grid, so never UNPOWERED. */
+  built?: boolean;
   /** Component (whole-grid) net power — kept on the `data-net-power` attr.
    *  NOT the visible PWR line (that's `selfPower`, per Phase-4 C5). */
   netPower?: number;
@@ -259,6 +263,10 @@ export function EntityStatsPanel(): JSX.Element | null {
         // blueprintBody.ts) — without this the bar just vanished, unexplained.
         <Box sx={POWER_SX} data-testid="entity-stats-build-blocked">{BUILD_AWAITING_CLEAR_LINE}</Box>
       )}
+      {building && data.buildStalled !== undefined && (
+        // The bank ran dry or no Capital routes to it: say why the bar stopped.
+        <Box sx={POWER_SX} data-testid="entity-stats-build-stalled">{data.buildStalled}</Box>
+      )}
       {hasCharge && (
         <>
           <Cap>CHRG</Cap>
@@ -272,13 +280,9 @@ export function EntityStatsPanel(): JSX.Element | null {
         // see how much power a SOLAR gives"). A CONSUMER (turret/miner/pylon, −draw)
         // shows its draw when powered, else UNPOWERED. A passive relay (connector,
         // selfPower 0) shows NOTHING — it doesn't draw power, so "UNPOWERED" on it
-        // was wrong (it never appears now: the `!== 0` gate skips it).
+        // was wrong (it never appears now: the `!== 0` gate skips it). Unbuilt: BUILDING.
         <Box sx={POWER_SX} data-testid="entity-stats-power">
-          {data.selfPower > 0
-            ? `PWR +${Math.round(data.selfPower)}`
-            : data.powered
-              ? `PWR ${Math.round(data.selfPower)}`
-              : 'UNPOWERED'}
+          {inspectorPowerLine(data.selfPower, data.powered, data.built)}
         </Box>
       )}
       {data.gunLine !== undefined && (
@@ -423,7 +427,7 @@ export function EntityStatsPanel(): JSX.Element | null {
 // equality check. Listed explicitly (not Object.keys) so a future non-primitive
 // field forces a deliberate decision here instead of silently mis-comparing.
 const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
-  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'powered',
+  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'buildStalled', 'powered', 'built',
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
@@ -474,7 +478,10 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     if (st) {
       data.buildPct = st.buildPct;
       if (isBuildAwaitingClear(st)) data.buildBlocked = true;
+      const stalled = buildStalledLine(st);
+      if (stalled !== undefined) data.buildStalled = stalled;
       data.powered = st.powered;
+      data.built = st.built;
       data.netPower = st.netPower;
       data.storedPower = st.storedPower;
       data.storedPowerMax = st.storedPowerMax;

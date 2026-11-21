@@ -2,15 +2,15 @@
 
 exports[`straight cable look is unchanged by the polyline walk > body and flow verb streams match the pre-curve drawer exactly 1`] = `
 [
-  "243 1e3f6eeeee93cf83f2454d6f",
-  "254 3e7752ee90803b0d9a5f51cd",
-  "243 f830f7151f41c42b18416689",
-  "279 e41600a917f19bf9ec05e7d2",
-  "96 7a348cbf5b412fe19bcb12d4",
-  "96 a8311e87d3931615287ed09f",
-  "48 afc020ca178a47e2de43dd1b",
-  "48 8ef37f6dbcd56e145fd0f997",
-  "379 213d9257a3ae176c26f539d0",
-  "390 c8c4025df8f88a5edf0fcd30",
+  "243 ca751447c9f4515186f83bb8",
+  "254 a5ae045e436e1015a9f6e5b7",
+  "243 4605be341436984f9dec1850",
+  "279 b3f463ec392f860b62515f2e",
+  "96 262516cd5f422e9b6fa66ec5",
+  "96 27b150ef09a71fc67ab47de9",
+  "48 b0cd358c633f45873bcf2128",
+  "48 99e9f53ace73482b14d00787",
+  "379 b729f3feb53f5ccd186d201d",
+  "390 c198af13ea6ed303ce0cad70",
 ]
 `;

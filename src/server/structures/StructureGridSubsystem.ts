@@ -37,6 +37,8 @@ import {
 import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle, type ObstacleBox, type PowerSummary } from '../../core/structures/Grid.js';
+import { buildStallReason } from './constructionStall.js';
+import { flashRouteConnections } from './routeFlash.js';
 import { batteryChargeOf, chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
 import type { Connection, FlowMaterial } from '../../core/structures/Connection.js';
 import {
@@ -847,6 +849,9 @@ export class StructureGridSubsystem {
     return ratePerMs > 0 ? remaining / ratePerMs : null;
   }
 
+  /** Why a paused build is paused: minerals owed on a dry bank, or no Capital route (`constructionStall.ts`). */
+  buildStallReason(rec: StructureRecord): ReturnType<typeof buildStallReason> { return buildStallReason(rec, this.hooks.registry.all(), (a, b) => this.grid.route(a, b)); }
+
   /**
    * Phase-1 issue 6 — player-triggered "reconnect to the nearest structure(s)".
    * Re-runs the SAME obstacle-aware auto-connect the placement + 1 Hz reconnect
@@ -958,21 +963,8 @@ export class StructureGridSubsystem {
     return null;
   }
 
-  private flashRoute(
-    route: readonly string[],
-    nowMs: number,
-    flashed: Array<[string, string, FlowMaterial]>,
-    material: FlowMaterial,
-  ): void {
-    for (let i = 0; i < route.length - 1; i++) {
-      const a = route[i]!;
-      const b = route[i + 1]!;
-      const conn = this.findConnection(a, b);
-      if (conn) {
-        conn.flash(nowMs, material);
-        flashed.push([a, b, material]);
-      }
-    }
+  private flashRoute(route: readonly string[], nowMs: number, flashed: Array<[string, string, FlowMaterial]>, material: FlowMaterial, reversed = false): void {
+    flashRouteConnections(route, nowMs, flashed, material, (a, b) => this.findConnection(a, b), reversed);
   }
 
   private findConnection(aId: string, bId: string): Connection | null {
@@ -1074,7 +1066,7 @@ export class StructureGridSubsystem {
         if (source) {
           const cap = getStructureKind(source.capital.kind).storageCapacity;
           source.capital.minerals = Math.min(cap, source.capital.minerals + reclaim);
-          this.flashRoute(source.route, nowMs, flashed, 'minerals');
+          this.flashRoute(source.route, nowMs, flashed, 'minerals', true); // flow structure → Capital
         }
       }
       if (rec.constructionProgress <= 0) {

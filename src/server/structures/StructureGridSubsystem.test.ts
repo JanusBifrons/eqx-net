@@ -3,6 +3,7 @@ import { StructureRegistry } from './StructureRegistry.js';
 import { StructurePlacementSubsystem } from './StructurePlacementSubsystem.js';
 import { StructureGridSubsystem, resolveTurretBeam } from './StructureGridSubsystem.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
+import { BUILD_STALL_NOT_CONNECTED } from '../../shared-types/structureStateWire.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import {
@@ -220,6 +221,47 @@ describe('StructureGridSubsystem — estimateBuildEtaMs (Phase-1 issue 1/2)', ()
     while (!rec.isConstructed && pulses < 10_000) { hp.pulse(); pulses++; }
     expect(rec.isConstructed).toBe(true);
     expect(Math.abs(eta! - pulses * 250)).toBeLessThanOrEqual(250);
+  });
+});
+
+// Owner play-test: a fresh account's Shipyard stalled at 92% with no reason —
+// the starting bank ran dry. The stall must say "needs minerals" and how many.
+describe('StructureGridSubsystem — buildStallReason (stall reason)', () => {
+  let h: ReturnType<typeof makeHarness>;
+  beforeEach(() => { h = makeHarness(); });
+
+  it('reports the minerals still owed when the bank is dry', () => {
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.pulse(); // topology + a first delivery
+    h.registry.get(cap)!.minerals = 0; // bank dry
+    h.pulse(); // no progress this pulse
+    const rec = h.registry.get(conn)!;
+    expect(h.grid.estimateBuildEtaMs(rec)).toBeNull();
+    expect(h.grid.buildStallReason(rec)).toBe(rec.constructionCost - rec.constructionProgress);
+  });
+
+  it('is null while the bank can still pay', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.pulse();
+    expect(h.grid.buildStallReason(h.registry.get(conn)!)).toBeNull();
+  });
+
+  it('says not connected when no Capital routes to it', () => {
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.pulse();
+    const rec = h.registry.get(conn)!;
+    expect(h.grid.estimateBuildEtaMs(rec)).toBeNull();
+    expect(h.grid.buildStallReason(rec)).toBe(BUILD_STALL_NOT_CONNECTED);
+  });
+
+  it('a Capital route that is dry is a minerals stall, not a missing connection', () => {
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.pulse();
+    h.registry.get(cap)!.minerals = 0;
+    expect(h.grid.buildStallReason(h.registry.get(conn)!)).not.toBe(BUILD_STALL_NOT_CONNECTED);
   });
 });
 
@@ -614,6 +656,27 @@ describe('StructureGridSubsystem — repair + deconstruction', () => {
     expect(h.registry.has(con)).toBe(false);
     expect(h.despawned).toContain(con);
     expect(capRec.minerals).toBeGreaterThan(mineralsBefore); // reclaimed
+  });
+
+  it('deconstruction flow runs FROM the deconstructing structure TO the Capital', () => {
+    // Owner rule (2026-11-21): cable flow runs source → destination. Reclaimed
+    // minerals leave the structure being taken down and go back to the Capital,
+    // so each flashed edge's first id (the client's flow source) must be the
+    // structure's end, and a construction pulse the Capital's end.
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    const con = h.placement.place(OWNER, 'connector', 200, 0)!;
+    const pulses = Math.ceil(getStructureKind('connector').constructionCost / CONSTRUCTION_PULSE_AMOUNT);
+    let buildEdge: [string, string, string] | undefined;
+    for (let i = 0; i < pulses; i++) {
+      const r = h.pulse();
+      buildEdge ??= r.flashed.find((e) => e[2] === 'construction');
+    }
+    expect(buildEdge?.slice(0, 2)).toEqual([cap, con]); // build: Capital → blueprint
+
+    h.registry.get(con)!.isDeconstructing = true;
+    const result = h.pulse();
+    const reclaim = result.flashed.find((e) => e[2] === 'minerals');
+    expect(reclaim?.slice(0, 2)).toEqual([con, cap]); // reclaim: structure → Capital
   });
 });
 

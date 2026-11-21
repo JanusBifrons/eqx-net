@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ConnectorRenderer, staticSignature } from './ConnectorRenderer.js';
+import { staticScaleKey } from './connectorVisual.js';
 import { buildStructureLattice } from '../../../core/structures/structureLattice.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
@@ -62,8 +63,46 @@ describe('ConnectorRenderer static layer (A3)', () => {
     r.update(m, 0.2, 0);
     r.update(m, 0.201, 16); // 0.5 %
     expect(r.staticRebuilds).toBe(1);
-    r.update(m, 0.25, 32); // 25 %
+    r.update(m, 0.26, 32); // past the next half-octave key (0.25) and its dead band
     expect(r.staticRebuilds).toBe(2);
+  });
+
+  // Owner report (phone, Sol Prime): a pinch zoom re-tessellated every cable
+  // in the base every frame. The static layer is drawn at a half-octave zoom
+  // KEY, so a sweep rebuilds once per key crossed, not once per frame.
+  it('a zoom sweep 0.1 -> 2 -> 0.1 rebuilds once per half-octave key, not per frame', () => {
+    const m = citadel(100);
+    const r = new ConnectorRenderer();
+    for (let i = 0; i <= 60; i++) r.update(m, 0.1 * Math.pow(20, i <= 30 ? i / 30 : (60 - i) / 30), i * 16);
+    // 1 first build + 7 keys up (2^-3.5 .. 2^0, clamped at 1) + 7 back down.
+    expect(r.staticRebuilds).toBeLessThanOrEqual(15);
+  });
+
+  it('zoomed in past the clamp (scale >= 1, nothing static depends on zoom) never rebuilds', () => {
+    const m = citadel(100);
+    const r = new ConnectorRenderer();
+    for (let i = 0; i <= 60; i++) r.update(m, Math.pow(3, i <= 30 ? i / 30 : (60 - i) / 30), i * 16);
+    expect(r.staticRebuilds).toBe(1);
+  });
+
+  it('jitter across a key boundary does not thrash, and the floors hold', () => {
+    const m = citadel(100);
+    const r = new ConnectorRenderer();
+    for (let i = 0; i < 60; i++) r.update(m, i % 2 ? 0.505 : 0.495, i * 16);
+    expect(r.staticRebuilds).toBe(1);
+    // Drawn at the key scale at or below the live one: the 1 px ring floor
+    // holds, at most one step (sqrt 2, plus the 3 % dead band) wider.
+    r.update(m, 0.3, 2000);
+    const px = r.lastBuiltTurretRangeWidth * 0.3;
+    expect(px).toBeGreaterThanOrEqual(1);
+    expect(px).toBeLessThanOrEqual(Math.SQRT2 * 1.03);
+  });
+
+  it('a zoom exactly on a step (the default 2^-1.5) keys to that step, not one below', () => {
+    // Float log2 of 2^-1.5 lands a hair under -3; without care the spawn zoom drew 41 % wider lines.
+    expect(staticScaleKey(Math.SQRT1_2 / 2, Number.NaN)).toBe(-3);
+    expect(staticScaleKey(0.35355339059327373, Number.NaN)).toBe(-3);
+    expect(staticScaleKey(0.25, Number.NaN)).toBe(-4);
   });
 
   it('a gate door moving leaves the signature alone (no gate span is drawn)', () => {

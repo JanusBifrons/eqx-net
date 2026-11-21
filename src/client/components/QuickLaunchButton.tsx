@@ -1,6 +1,7 @@
 /**
  * Join flow stage 7 — Quick launch (landing map only): one tap flies a
- * Fighter into the busiest contested sector, as a guest when signed out.
+ * Fighter into the safest sector (no hostiles, else the fewest; busiest among
+ * equals), as a guest when signed out.
  * The map's focus view follows the target while it glides (the glide is the
  * loading screen), then the Fighter launches through the same path as the
  * Hangar's LAUNCH. Extension point of `GalaxyPickerChrome`.

@@ -16,8 +16,9 @@ import type { RespawnAckMessage } from '@shared-types/messages';
 import type { FleetOrderMessage, SetModeMessage, SetStanceMessage, FormSquadMessage, DisbandSquadMessage } from '@shared-types/messages';
 import { useUIStore } from '../../state/store';
 import { logEvent } from '../../debug/ClientLogger';
-import { stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from '../fleetWarpFollow';
+import { commandArrivalWatch, stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from '../fleetWarpFollow';
 import type { SentInputState } from '../prediction/predictionStepCtx.js';
+import { resetAnchorHardSnapCount } from '../clockAnchor.js';
 
 export type FleetCommandMessage = FleetOrderMessage | SetModeMessage | SetStanceMessage | FormSquadMessage | DisbandSquadMessage;
 
@@ -108,11 +109,16 @@ export function sendCommand(c: RoomCommandsCtx): boolean {
 
 /** RTS slice 10 — the server's `control_mode: command` (a command-view join
  *  parked our hull at the arrival flip): flip the mode, then drop the local
- *  ship exactly as a toggle-to-command does. Idempotent. Public for tests. */
+ *  ship exactly as a toggle-to-command does, and frame the hull once its
+ *  snapshot pose lands (`commandArrivalWatch`; a fleet warp's own watch
+ *  wins). Idempotent. Public for tests. */
 export function enterCommandFromServer(c: RoomCommandsCtx): void {
   const ui = useUIStore.getState();
-  if (ui.pilotMode !== 'spectator') ui.setPilotMode('spectator');
+  const arriving = ui.pilotMode !== 'spectator';
+  if (arriving) ui.setPilotMode('spectator');
   dropLocalShipForCommand(c);
+  const sid = c.mirror.localShipInstanceId ?? null;
+  if (arriving && sid !== null && c.fleetArrival === null) c.fleetArrival = commandArrivalWatch(sid, c.clock.now());
   logEvent('command_view_entered', { source: 'join' });
 }
 
@@ -255,6 +261,7 @@ export function handleRespawnAck(c: RoomCommandsCtx, msg: RespawnAckMessage): vo
   c.clockAnchorPerfNow = c.gameClock.at(c.welcomePerfNow);
   c.anchorInitialised = true;
   c.anchorFreshAtMs = c.welcomePerfNow;
+  resetAnchorHardSnapCount(); // the anchor is re-seeded: count snaps from this respawn
   // Reset the idle-input throttle so the first post-respawn input always sends.
   c.lastSentInputState = null;
   c.lastSentInputAtMs = 0;

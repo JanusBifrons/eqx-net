@@ -90,9 +90,13 @@ drop at the cap, merges into a pod instead of evicting one.
 hulls never collect. A ship with no roster row (engineering rooms, roster
 full) has nowhere to keep a hold, so it can't pick anything up.
 
-**Client truth.** The own active ship's hold rides `SnapshotMessage.states[].cargo`
-(invariant #16, zero bytes when empty). `loot_collected` is only the popup
-accelerator. A lost message loses a popup, never value.
+**Client truth.** The own ship's hold rides `SnapshotMessage.states[].cargo`
+(invariant #16, zero bytes when empty). "Own ship" is `PilotSwap.ownShipKey`:
+the flown hull, else the hull parked by Command / Build (the hold Build takes
+crates from; `snapshotOwnHold.ts`), and the client applies it in both modes.
+Lock: `parkedHullCargoSlice.test.ts`, `ColyseusClient.parkedCargo.test.ts`.
+`loot_collected` is only the popup accelerator. A lost message loses a popup,
+never value.
 
 ## Death seams (all spill the hold)
 
@@ -369,7 +373,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - **Hits cancel it.** `applyDamage` calls `onActorDamaged` for any hit.
   - **A grant opens `cargoAccess`** for 60 s.
   - **Player turrets** also engage pilots hostile to their owner (`nearestHostilePilot`). The scan only runs while `hostileActs.size() > 0`.
-- **Ship cargo (C3):** cargo messages target an `entityId` OR a `ship` (playerId of an ACTIVE ship / shipInstanceId of a LINGERING hull). `NpcLootHolds.hold` rolls an NPC's loot table ONCE per spawn (seeded, memory-only, merged onto any stash it carries) and `NpcLootHolds.dropKillLoot` spills that same hold, so stolen loot never drops twice. Break-ins tick BEFORE `structureTurretTick`'s no-structures early return (a sector with no structures can still have a ship break-in).
+- **Ship cargo (C3):** cargo messages target an `entityId` OR a `ship` (playerId of an ACTIVE ship / shipInstanceId of a LINGERING hull). `NpcLootHolds.hold` rolls an NPC's loot table ONCE per spawn (seeded, memory-only, merged onto any stash it carries) and `NpcLootHolds.dropKillLoot` spills that same hold, so stolen loot never drops twice. Your own `ship: playerId` while spectating resolves to the hull `PilotSwap.ownShipKey` names (parked by Command / Quick Launch), so the HUD chip opens your hold look-only (`shipCargo.test.ts`). Break-ins tick BEFORE `structureTurretTick`'s no-structures early return (a sector with no structures can still have a ship break-in).
 - **Standing orders (T4b):** `set_freight_orders` (owner, built `freight_dock`) → `rec.freightOrders` (persisted). The dock joins convoy planning as a `player` base.
   - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
   - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.

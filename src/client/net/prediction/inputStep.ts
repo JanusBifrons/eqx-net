@@ -258,7 +258,7 @@ export function stepInputTick(ctx: PredictionStepCtx, room: Room, kb: KeyboardBi
   }
   // Stage 3 — apply each remote ship's last-known input before advancing
   // physics, so remote bodies forward-predict in lockstep with the local
-  // input loop. Bounded by STAGE_3_MAX_LOOKAHEAD_TICKS per snapshot;
+  // input loop. Bounded by remoteForwardTickCap(lead) per snapshot;
   // remotes whose intent isn't tracking (3 consecutive corrections > 5 u)
   // skip this and integrate with damping only.
   ctx.applyRemoteInputs();
