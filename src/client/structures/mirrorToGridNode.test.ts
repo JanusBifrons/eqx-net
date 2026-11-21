@@ -15,9 +15,13 @@ import {
   ghostToGridNode,
   asteroidObstaclesFromSwarm,
   GHOST_NODE_ID,
+  makePreviewConn,
 } from './mirrorToGridNode.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import type { GridNode, GridObstacle } from '../../core/structures/Grid.js';
+import { canConnect, type GridNode, type GridObstacle } from '../../core/structures/Grid.js';
+import { Connection } from '../../core/structures/Connection.js';
+import { makeCableSocketPick } from '../../core/structures/cableCurve.js';
+import { makeCableReseat } from '../../core/structures/socketReseat.js';
 import type {
   StructureRenderState,
   SwarmRenderState,
@@ -217,5 +221,44 @@ describe('asteroidObstaclesFromSwarm', () => {
     const scratch: GridObstacle[] = [];
     asteroidObstaclesFromSwarm(new Map(), scratch);
     expect(scratch.length).toBe(0);
+  });
+});
+
+describe('the build preview re-seats a connector link as the server does (#15)', () => {
+  it('a turret just below a connector whose lower diagonal faces are held', () => {
+    // Capital (1) west of connector (2), solar (3) east, turret (4) 140 below.
+    // The links as the server first stores them: con face 2 to the capital,
+    // con face 0 to the solar (both lower diagonals).
+    const server = new Map<string, Connection[]>([
+      ['1', [new Connection(0, '2', '1', 1, 2, 1)]],
+      ['3', [new Connection(1, '3', '2', 1, 4, 0)]],
+    ]);
+    server.set('2', [server.get('1')![0]!, server.get('3')![0]!]);
+    const mirror: Array<[string, string, number, number, StructureRenderState]> = [
+      ['1', 'capital', 0, 0, structureState({ connTo: [2], connSockSelf: [1], connSockOther: [2] })],
+      ['2', 'connector', 400, 0, structureState({ connTo: [1, 3], connSockSelf: [2, 0], connSockOther: [1, 4] })],
+      ['3', 'solar', 900, 0, structureState({ connTo: [2], connSockSelf: [4], connSockOther: [0] })],
+      ['4', 'turret', 400, 140, structureState({})],
+    ];
+    const nodes = new Map<string, GridNode>();
+    const preview = new Map<string, Connection[]>();
+    for (const [id, kind, x, y, st] of mirror) {
+      const n = blankNode();
+      structureMirrorToGridNode(id, st, structureEntry(kind, x, y), n);
+      nodes.set(id, n);
+      preview.set(id, st.connTo.map((to, i) => {
+        const pc = makePreviewConn();
+        pc.aId = id; pc.bId = String(to); pc.socketA = st.connSockSelf![i]!; pc.socketB = st.connSockOther![i]!;
+        return pc as unknown as Connection;
+      }));
+    }
+    // The server's nodes carry no usedSockets (it reads its links).
+    const serverNodes = new Map([...nodes].map(([id, n]) => [id, { ...n, usedSockets: undefined }]));
+    const pick = makeCableSocketPick(), reseat = makeCableReseat();
+    expect(canConnect(serverNodes.get('4')!, serverNodes.get('2')!, server, serverNodes, undefined, pick, reseat).ok).toBe(true);
+    const want = [pick.a, pick.b, reseat.conn?.aId, reseat.conn?.bId, reseat.a, reseat.b];
+    expect(reseat.conn).not.toBeNull();
+    expect(canConnect(nodes.get('4')!, nodes.get('2')!, preview, nodes, undefined, pick, reseat).ok).toBe(true);
+    expect([pick.a, pick.b, reseat.conn?.aId, reseat.conn?.bId, reseat.a, reseat.b]).toEqual(want);
   });
 });

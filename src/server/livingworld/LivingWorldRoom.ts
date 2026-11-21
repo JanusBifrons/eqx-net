@@ -159,6 +159,11 @@ export interface LivingWorldRoom {
    *  capital fights from it and never steams off to its gun stand-off.
    *  `anchorId`: the post follows that ship's live pose ((x, y) until then). */
   setBotGuardPost?(botId: string, x: number, y: number, radius: number, anchorId?: string): void;
+  /** The nearest point to (x, y) where a body of `clearance` overlaps no
+   *  structure (`SectorObstacles.structureBoxes` + `nearestClearPoint`);
+   *  (x, y) itself when clear. Discrete callers only (allocates). OPTIONAL
+   *  for mock rooms (no structures). */
+  clearPointNear?(x: number, y: number, clearance?: number): { x: number; y: number };
   /** W2a NPC warp-to: send a bot on an in-sector warp to (x, y) (spool, run,
    *  drop; the same machine as a pilot's). False for an unknown id. */
   warpBot?(botId: string, x: number, y: number): boolean;

@@ -3,7 +3,7 @@
  * side of a field rock flies round it, not into it.
  *
  * The course is set through the client's own helm (`__eqxClient.setHelmCourse`,
- * the same call a tap on empty space makes; the tap itself is covered by
+ * the call a Command-mode tap makes; Fly taps set no course, owner 2026-11-21,
  * `capital-helm.spec.ts`). The client asks the server for a route
  * (`nav_route_request`), the reply loads into the helm order, and the helm
  * flies it with ordinary inputs. Checked:
@@ -60,13 +60,18 @@ test('a fighter on autopilot flies round a field rock to the far side', async ({
     try { return raw ? ((JSON.parse(raw) as { snapshotCount?: number }).snapshotCount ?? 0) >= 30 : false; } catch { return false; }
   }, undefined, { timeout: 10_000 });
 
-  // The helm takes orders once the panel shows (the physics loop runs past the loading curtain).
-  await page.getByTestId('helm-panel').waitFor({ timeout: 10_000 });
   // The dev event log is server-wide (AI haulers in other sectors touch their rock too): count this ship's contacts only.
   const me = await page.evaluate(() => (window as unknown as EqxWindow).__eqxClient?.mirror?.localPlayerId ?? '');
   expect(me, 'the local ship id is known').not.toBe('');
   await fetch(`${SERVER_URL}/dev/events/clear`, { method: 'POST' });
-  await page.evaluate(([x, y]) => { (window as unknown as EqxWindow).__eqxClient!.setHelmCourse(x!, y!); }, [G.x, G.y]);
+  // The helm takes the course once the local hull is known (re-sent until it
+  // does). Fly shows no helm panel (owner 2026-11-21), so this programmatic
+  // hook is the way in; it exercises the same helm + route steering.
+  await expect.poll(() => page.evaluate(([x, y]) => {
+    const c = (window as unknown as EqxWindow).__eqxClient!;
+    if (!c.getHelmOrder().active) c.setHelmCourse(x!, y!);
+    return c.getHelmOrder().active;
+  }, [G.x, G.y]), { timeout: 10_000 }).toBe(true);
 
   // 1. The server's route reaches the helm.
   await expect.poll(() => page.evaluate(() => (window as unknown as EqxWindow).__eqxClient!.getHelmOrder().route?.n ?? 0), { timeout: 5_000 })

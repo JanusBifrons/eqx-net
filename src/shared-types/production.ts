@@ -120,12 +120,16 @@ export function decodeProdBay(v: number | undefined, out: { bay: number; queued:
 }
 
 /** Slot blueprint runs on the wire: 0 = no blueprint, BP_RUNS_ORIGINAL = an
- *  original (never runs out), otherwise the copy's runs left. */
+ *  original (never runs out), otherwise the copy's runs left. A copy whose
+ *  last run is building stays in the server's slot (so handing the cycle back
+ *  can refund it) but is sent as 0: to the player the slot is free. */
 export const BP_RUNS_ORIGINAL = 65535;
 
 export function encodeBpRuns(bp: { kind: 'bpo' | 'bpc'; runs: number | null } | undefined): number {
   if (bp === undefined) return 0;
-  return bp.kind === 'bpo' ? BP_RUNS_ORIGINAL : Math.max(1, Math.min(65534, bp.runs ?? 0));
+  if (bp.kind === 'bpo') return BP_RUNS_ORIGINAL;
+  const runs = bp.runs ?? 0;
+  return runs <= 0 ? 0 : Math.min(65534, runs);
 }
 
 /** Build count (job 2E): the most outputs one `set_recipe` count asks for. */
@@ -296,7 +300,7 @@ export function decodeBpAvail(kind: ProcessorKindId, mask: number | undefined, o
 
 /** "Waiting for Minerals" style status line for the inspector. */
 export function prodStatusLine(state: ProdState, missing: GoodId | undefined, recipe?: RecipeId): string {
-  if (state === PROD_STATE.starved && recipe !== undefined && RECIPES[recipe].chunkInput !== undefined) return 'Waiting for a rock chunk';
+  if (state === PROD_STATE.starved && recipe !== undefined && RECIPES[recipe].chunkInput !== undefined) return "Waiting for a rock chunk: land it on your Capital's pad";
   if (state === PROD_STATE.starved && missing !== undefined) return `Waiting for ${GOOD_DEFS[missing].displayName}`;
   return PROD_STATE_LABELS[state];
 }

@@ -180,6 +180,48 @@ describe('EntityStatsPanel', () => {
     expect(chip).toHaveTextContent('FINISHED — WAITING FOR SHIPS TO CLEAR');
   });
 
+  // Owner play-test: a fresh account's Shipyard stalled at 92% forever, the card
+  // showing only HULL / BUILD / UNPOWERED. The bank had run dry.
+  it('a build paused on a dry bank says it needs minerals, and how many', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[7, { powered: false, netPower: 0, connTo: [], built: false, buildPct: 0.92, deconstructPct: 0, etaMs: null, buildMineralsShort: 420 }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'shipyard', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '7', name: 'Shipyard', hp: 300, hpMax: 300 });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-status')).toHaveAttribute('data-status', 'build-stalled');
+    expect(screen.getByTestId('entity-stats-status')).toHaveTextContent('PAUSED — NEEDS 420 MORE MINERALS');
+  });
+
+  // A blueprint with no grid route to any Capital paused with no reason shown.
+  it('a build with no route to a Capital says it is not connected', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[7, { powered: false, netPower: 0, connTo: [], built: false, buildPct: 0.3, deconstructPct: 0, etaMs: null, buildNotConnected: true }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'shipyard', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-status')).toHaveAttribute('data-status', 'build-stalled');
+    expect(screen.getByTestId('entity-stats-status')).toHaveTextContent('PAUSED — NOT CONNECTED TO A CAPITAL');
+  });
+
+  it('a build that is running shows no paused line', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[7, { powered: false, netPower: 0, connTo: [], built: false, buildPct: 0.5, deconstructPct: 0, etaMs: 5000 }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'shipyard', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-status')).toHaveAttribute('data-status', 'building');
+  });
+
   it('a blueprint still building or already built shows no waiting-for-ships line', () => {
     for (const row of [
       { built: false, buildPct: 0.5 },
@@ -444,7 +486,7 @@ describe('EntityStatsPanel', () => {
     useUIStore.setState({ selection: { ids: [], focusId: 'linger-9', focusKind: 'lingering' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Nova');
-    expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('heavy');
+    expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('Heavy');
     expect(screen.queryByText('HULL')).toBeNull();
   });
 
@@ -464,6 +506,38 @@ describe('EntityStatsPanel', () => {
     fireEvent.click(btn);
     // The selection id IS the shipInstanceId (its `mirror.ships` key).
     expect(sendPilotShip).toHaveBeenCalledWith('ship-mine');
+  });
+
+  // Smoke-test bug (Pixel 7 film): a Mining Skiff my own Shipyard built and
+  // parked read "Abandoned hull" with the raw kind id "mining-skiff". The
+  // server leaves displayName '' when the owner has no account label (a
+  // guest), and the panel never asked whether the hull was mine.
+  it('my own parked hull with no owner name reads as mine, by its kind display name', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me',
+        ships: new Map([['ship-yard', { isActive: false, ownerPlayerId: 'me', displayName: '', kind: 'mining-skiff', x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selection: { ids: [], focusId: 'ship-yard', focusKind: 'lingering' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Mining Skiff');
+    expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-structure-owner', 'you');
+    expect(screen.queryByText(/Abandoned hull/)).toBeNull();
+    expect(screen.queryByText(/mining-skiff/)).toBeNull();
+  });
+
+  it("another player's unnamed parked hull shows its kind display name, never the raw id", () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me',
+        ships: new Map([['ship-x', { isActive: false, ownerPlayerId: 'someone-else', displayName: '', kind: 'mining-skiff', x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selection: { ids: [], focusId: 'ship-x', focusKind: 'lingering' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('Mining Skiff');
+    expect(screen.queryByText(/mining-skiff/)).toBeNull();
   });
 
   it("does NOT show a Pilot action on ANOTHER player's lingering hull", () => {

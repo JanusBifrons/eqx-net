@@ -123,7 +123,7 @@ hostile duplicate review:
   polyline pulse (`structureRigs.ts:300`, `drawCablePulse`).
 - Not "connectors only" today: the hub rule needs only one hub end, and shipyard, deep core rig, ore
   processing complex and assembly plant are hubs (4 slots), as are shield emitters. Slots grow +1 per
-  level, so a connector reaches 10: connectors take cables from any side with no fixed face count.
+  level, so a connector reaches 10: connectors take cables from any side with no fixed face count. (Superseded: a connector now holds one cable per socket, at most 6; see structures-and-power-grid.md.)
 - `GridNode` gains kind + rotation in all four builders (parity test). The preview passes no ghost
   angle today (`ConnectorRenderer.ts:695`), which is an existing bug. The preview blocks only against
   your own buildings while the server blocks against everyone's; fix that with the curve.

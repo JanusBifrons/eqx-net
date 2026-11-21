@@ -25,6 +25,7 @@
 import { consumeOneFrameTriggers } from '../render/perFrameTriggers.js';
 import { shouldSkipFrame } from '../perf/frameRateCap.js';
 import { logEvent, isFullDiagMode } from '../debug/ClientLogger.js';
+import { lanePhaseStart, markLaneLoopPhases } from '../debug/perf/lanePhaseTiming.js';
 import {
   useUIStore,
   computeBootstrapReadyFromState,
@@ -41,7 +42,10 @@ import { pushFleetOverlayModelIfChanged } from '../fleet/fleetOverlayModel.js';
 import { fleetCommands } from '../fleet/fleetCommands.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
+import { HelmModeGate } from '../helm/helmModeGate.js';
+import { HELM_SPEED_FRACTION } from '@core/helm/helm';
 import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
+import { arrivalNeedsGlide } from '../net/fleetWarpFollow.js';
 
 /** Click-to-inspect (Item B5) — last selection id the bridge published, so the
  *  RendererFeedback → Zustand mirror + server select/deselect sends fire ONLY on
@@ -50,9 +54,9 @@ import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
  *  next session re-syncs naturally from null). */
 let _lastPublishedSelectedId: string | null = null;
 
-/** Helm orders (capital-ship R&D round 3 D) — last drained
- *  `feedback.helmCourseSeq`; a change is a new course tap. */
-let _lastHelmCourseSeq = 0;
+/** Helm orders: a course tap (`feedback.helmCourseSeq`) counts in Command
+ *  only; entering Fly drops any course (owner 2026-11-21: Fly is manual). */
+const _helmGate = new HelmModeGate();
 
 /** RTS command view (slice 13a) — last drained `feedback.fleetSelSeq` /
  *  `orderSeq`. A fleet-selection change is mirrored into Zustand (ids only);
@@ -212,6 +216,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // (incl. during loading). DC raw-bytes decode + Colyseus state-diff
     // hybrid drain + snapshot coalescer drain — these are the message-
     // arrival paths the bootstrap gates depend on (firstSnapshotApplied).
+    const inboundStart = lanePhaseStart(); // phone-lane phase timing (0, no clock read, off the lane)
     gameClient.tickInbound(deltaMs);
 
     // Probe 1 (mobile-perf-investigation): per-RAF work breakdown.
@@ -235,12 +240,15 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // RTS fleet warp (S8) — a commander who followed their fleet: once the
     // warped ships are in the new sector's mirror, select them again (the
     // ONE selection, in the renderer) and glide the camera to them. One-shot.
+    // A command-view join frames its own hull the same way (no re-select).
     const fleetArrival = gameClient.consumePendingFleetArrival();
     if (fleetArrival) {
-      renderer.selectFleetShips(fleetArrival.ids);
-      renderer.glideCameraTo(fleetArrival.x, fleetArrival.y, PILOT_SWAP_GLIDE_MS);
+      if (fleetArrival.select) renderer.selectFleetShips(fleetArrival.ids);
+      const vfb = renderer.getFeedback();
+      if (arrivalNeedsGlide(fleetArrival, vfb.viewX, vfb.viewY, vfb.viewHalf)) renderer.glideCameraTo(fleetArrival.x, fleetArrival.y, PILOT_SWAP_GLIDE_MS);
     }
     const renderStart = performance.now();
+    markLaneLoopPhases(inboundStart, physicsStart, mirrorStart, renderStart);
     const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
     if (shouldRender) renderer.update(gameClient.mirror);
     const renderEnd = performance.now();
@@ -366,10 +374,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // per-frame read is cheap; the actual work fires only on a transition.
     const selFb = feedback ?? renderer.getFeedback();
     gameClient.setFieldView(selFb.viewX, selFb.viewY, selFb.viewHalf); // the cut field follows the camera
-    if (selFb.helmCourseSeq !== _lastHelmCourseSeq) {
-      _lastHelmCourseSeq = selFb.helmCourseSeq;
-      gameClient.setHelmCourse(selFb.helmCourseX, selFb.helmCourseY);
-    }
+    _helmGate.frame(gameClient, useUIStore.getState(), selFb);
     // THE selection (RTS Part A): the selected ships (`fleetSelIds`) and the
     // focus (`selectedPickId/Kind`, the entity whose details panel shows) are
     // ONE renderer-owned selection, mirrored into the ONE store shape in one
@@ -407,7 +412,9 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       const ids = selFb.fleetSelIds;
       if (ids.length > 0) {
         if (selFb.orderKind === 'move') {
-          sendFleetOrder(ids.slice(), { kind: 'move', x: selFb.orderX, y: selFb.orderY });
+          // At the Command speed the helm panel shows (Stop / ⅓ / ⅔ / Full).
+          const speed = HELM_SPEED_FRACTION[useUIStore.getState().commandSpeed] ?? 1;
+          sendFleetOrder(ids.slice(), { kind: 'move', x: selFb.orderX, y: selFb.orderY, speed });
         } else if (selFb.orderKind === 'attack' && selFb.orderTargetId !== null) {
           sendFleetOrder(ids.slice(), { kind: 'attack', targetId: selFb.orderTargetId });
         }

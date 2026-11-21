@@ -69,13 +69,23 @@ export function registerBlueprintMessages(h: BlueprintMessageHost): RoomFeature 
     if (!swarmRec) return;
     const rec = h.structureRegistry.get(swarmRec.id);
     if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
+    // Handing a building cycle back refunds its inputs AND the blueprint run it spent.
+    const handedBack = rec.prodLoaded === true;
     if (!h.production().unload(rec)) return;
+    const product = blueprintProductFor(h.production().recipeOf(rec));
     const ok = type === 'load_blueprint'
       // Base storage first, else the owner's own ship hold (starter copies sit there).
-      ? h.storage().loadBlueprint(rec, blueprintProductFor(h.production().recipeOf(rec)), blueprintQuality, h.ownShipKey(owner))
+      ? h.storage().loadBlueprint(rec, product, blueprintQuality, h.ownShipKey(owner))
       : h.storage().unloadBlueprint(rec);
     h.storage().flushDirty();
-    if (ok) h.rebuildStructuresSlice();
+    if (ok || handedBack) h.rebuildStructuresSlice(); // a handed-back cycle changes the row too
+    if (!ok && type === 'load_blueprint') {
+      // Never a silent no-op: say why (the same toast the install path uses).
+      const message = rec.blueprint !== undefined
+        ? `No other ${productName(product)} blueprint in this base's storage or your ship's hold. The loaded one stays.`
+        : `No ${productName(product)} blueprint in this base's storage or your ship's hold.`;
+      try { client.send('blueprint_result', { type: 'blueprint_result', ok: false, message } satisfies BlueprintResult); } catch { /* closing */ }
+    }
   };
   h.onMessage('load_blueprint', blueprintMessage('load_blueprint'));
   h.onMessage('unload_blueprint', blueprintMessage('unload_blueprint'));

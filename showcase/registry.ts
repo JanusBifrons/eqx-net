@@ -15,7 +15,6 @@ import { capitalFleetWarp, capitalFleetArrive, capitalLineup, capitalBroadside, 
 import { machinedArt } from './shots/machinedArt.js';
 import { newEffects } from './shots/newEffects.js';
 import { crossingSector } from './shots/crossingSector.js';
-import { autopilotRoundRock, autopilotCapitalLane } from './shots/autopilot.js';
 import { cutFieldLaneFighter, cutFieldLaneBattleship, cutFieldOverview, cutFieldLaneRun, cutFieldRam, cutFieldOre } from './shots/cutField.js';
 import { machinedTurrets } from './shots/machinedTurrets.js';
 import { flight } from './shots/flight.js';
@@ -112,8 +111,6 @@ export const SHOTS: readonly Shot[] = [
   cutFieldOre,
   cutFieldLaneBattleship,
   cutFieldLaneRun,
-  autopilotRoundRock,
-  autopilotCapitalLane,
   cutFieldRam,
   machinedTurrets,
   robots,
@@ -224,6 +221,10 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'The Factions tab (v4 F3) shows standings; a meaningful shot needs a staged room with non-zero standings both ways and a turret firing on a disliked pilot.',
   blueprints:
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
+  'building-panels':
+    'Selection card + side panel (Power / Build / Manage, Shipyard hull queue) stills are under owner review; the shot follows sign-off.',
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
+  autopilot:
+    'The old shots tapped a course in Fly; since 2026-11-21 Fly is manual only and tap-to-move is a Command control. Re-film once the Command tap drives the route.',
 };

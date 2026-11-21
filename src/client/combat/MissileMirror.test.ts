@@ -78,6 +78,22 @@ describe('MissileMirror.applyMissileSnapshot', () => {
     expect(pose!.x).toBeCloseTo(100, 5);
   });
 
+  it('teleport bound: just over the shared bound snaps, just under interpolates', () => {
+    // span 100 ms → bound = max(TELEPORT_FLOOR_U, 2500 u/s × 0.1 s) = 250 u.
+    const over = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), over, 1, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 251, y: 0 }]), over, 2, 1100);
+    const snapped = resolveMissileDisplayPose(over, 1, 1050 + MISSILE_DISPLAY_DELAY_MS);
+    expect(snapped!.x).toBe(251);
+
+    const under = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), under, 1, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 249, y: 0 }]), under, 2, 1100);
+    const lerped = resolveMissileDisplayPose(under, 1, 1050 + MISSILE_DISPLAY_DELAY_MS);
+    expect(lerped!.x).toBeGreaterThan(0);
+    expect(lerped!.x).toBeLessThan(249);
+  });
+
   it('past the newest sample with velocity: dead-reckons forward, capped', () => {
     const mirror = makeMirror();
     applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0, vx: 0, vy: 400 }]), mirror, 1, 1000);
