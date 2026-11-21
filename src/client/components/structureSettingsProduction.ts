@@ -23,10 +23,21 @@ export function canChangeRecipe(kindId: string): boolean {
 }
 
 /** The loaded blueprint line ("BLUEPRINT original · quality 3"), or
- *  undefined when the slot is empty. Shared by the inspector and the tab. */
-export function blueprintLineOf(st: Pick<StructureRenderState, 'bpRuns' | 'bpQuality'>): string | undefined {
+ *  undefined when the slot is empty. Shared by the inspector and the tab.
+ *  The server spends a copy's run when a cycle STARTS, so while a cycle is
+ *  loaded (`prodFrac` set: the server sends it only for a loaded cycle) and
+ *  the recipe spends runs, the build in progress is counted too:
+ *  "2 runs left (1 building)", the number of items still to come. */
+export function blueprintLineOf(
+  st: Pick<StructureRenderState, 'bpRuns' | 'bpQuality' | 'prodFrac'>,
+  spendsRuns: boolean,
+): string | undefined {
   if (st.bpRuns === undefined) return undefined;
-  const runs = st.bpRuns === BP_RUNS_ORIGINAL ? 'original' : `${st.bpRuns} run${st.bpRuns === 1 ? '' : 's'}`;
+  const building = spendsRuns && st.prodFrac !== undefined;
+  let runs: string;
+  if (st.bpRuns === BP_RUNS_ORIGINAL) runs = 'original';
+  else if (building) runs = `${st.bpRuns + 1} runs left (1 building)`;
+  else runs = `${st.bpRuns} run${st.bpRuns === 1 ? '' : 's'}`;
   return `BLUEPRINT ${runs} · quality ${st.bpQuality ?? 0}`;
 }
 
@@ -48,9 +59,10 @@ export function readProduction(entityId: number): ProductionView | null {
   const st = client?.mirror.structures?.get(entityId);
   if (!st || !kindId || !isProcessorKind(kindId)) return null;
   const recipe = effectiveRecipe(kindId, st.recipe);
+  const needsBlueprint = RECIPES[recipe].blueprintRequired;
   return {
     recipe, left: st.prodCount, canChange: canChangeRecipe(kindId),
-    needsBlueprint: RECIPES[recipe].blueprintRequired, blueprintLine: blueprintLineOf(st),
+    needsBlueprint, blueprintLine: blueprintLineOf(st, needsBlueprint),
   };
 }
 

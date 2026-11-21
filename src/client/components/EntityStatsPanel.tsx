@@ -514,7 +514,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         data.recipe = effectiveRecipe(subtype, st.recipe);
         data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing), data.recipe);
         data.needsBlueprint = RECIPES[data.recipe].blueprintRequired;
-        const bp = blueprintLineOf(st);
+        const bp = blueprintLineOf(st, data.needsBlueprint);
         if (bp !== undefined) data.blueprintLine = bp;
       }
       // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
