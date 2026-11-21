@@ -9,6 +9,7 @@ import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { buildStructureVisual } from '../render/pixi/structureVisuals.js';
 import { parseStructureStyle, STRUCTURE_STYLE_IDS, type StructureStyleId } from '../render/pixi/structureStyles.js';
 import { shipExtent } from '../render/art/fields.js';
+import { structureTurrets } from '../render/art/turretLayout.js';
 import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W } from '../../core/articulation/rigCatalogue.js';
 import { grownBaseScene } from './grownBaseScene.js';
 import { labSearch, parseGrownBaseParams, parseKinds } from './labSceneParams.js';
@@ -426,8 +427,14 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40, view: Vie
       const q = new URLSearchParams(location.search);
       const sid = q.get('struct');
       if (sid) {
+        // The frame holds the footprint and every gun's reach (barrels jut past
+        // a battery's footprint), kept centred on the structure.
         const fp = structFootprint(sid);
-        const side = Math.max(fp.w, fp.h);
+        let half = Math.max(fp.w, fp.h) / 2;
+        for (const g of structureTurrets(sid)) {
+          half = Math.max(half, Math.hypot(g.px, g.py) + Math.max(g.len, g.cap, g.naval ? g.naval.houseL : 0));
+        }
+        const side = half * 2;
         const sz = fitZoom(side, side, 0.9) * (q.has('zm') ? Number(q.get('zm')) : 1);
         return {
           ships: [], structs: [{ id: sid, x: 0, y: 0, rot: 0, seed: 1 }], booms: [], duration: 8,

@@ -61,9 +61,9 @@ export const STRUCTURE_PORTRAIT_KINDS: readonly string[] = STRUCTURE_KINDS_LIST
 
 const HAS_STRUCT = new Set(STRUCTURE_PORTRAIT_KINDS);
 
-/** The art lab query for structure `kind`'s picture (framed by its own footprint). */
+/** The art lab query for structure `kind`'s picture (framed by its own footprint, guns drawn as the game does). */
 export function structurePortraitQuery(kind: string): string {
-  return `style=machined&scene=portrait&struct=${kind}`;
+  return `style=machined&scene=portrait&struct=${kind}&turrets=1`;
 }
 
 /** The baked structure picture's URL for `kind`, or null when there is none. */

@@ -61,7 +61,7 @@ describe('structure portraits (build menu P1)', () => {
     expect(structurePortraitUrl('no-such-structure')).toBeNull();
   });
 
-  it('asks the art lab for one machined structure', () => {
-    expect(structurePortraitQuery('refinery')).toBe('style=machined&scene=portrait&struct=refinery');
+  it('asks the art lab for one machined structure, guns drawn', () => {
+    expect(structurePortraitQuery('refinery')).toBe('style=machined&scene=portrait&struct=refinery&turrets=1');
   });
 });
