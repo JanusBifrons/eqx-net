@@ -5,7 +5,7 @@
  * backdrop), and a building you do not own has no cog.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { EntityStatsPanel } from './EntityStatsPanel.js';
 import { applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
@@ -133,8 +133,8 @@ describe('StructureSettingsModal', () => {
 });
 
 /** A shipyard I own, building interceptors with `left` outputs to go
- *  (undefined = forever); returns the room.send spy. */
-function seedShipyard(left: number | undefined): ReturnType<typeof vi.fn> {
+ *  (undefined = forever) and extra slice fields; returns the room.send spy. */
+function seedShipyard(left: number | undefined, extra: Record<string, unknown> = {}): ReturnType<typeof vi.fn> {
   const send = vi.fn();
   setGameClient({
     getRoom: () => ({ send }),
@@ -142,7 +142,7 @@ function seedShipyard(left: number | undefined): ReturnType<typeof vi.fn> {
       localPlayerId: 'me-123',
       structures: new Map([[7, {
         powered: true, netPower: 10, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123',
-        recipe: encodeRecipe('build_interceptor'), prodCount: left,
+        recipe: encodeRecipe('build_interceptor'), prodCount: left, ...extra,
       }]]),
       swarm: new Map([[7, { kind: 2, shipKind: 'shipyard', radius: 60, x: 0, y: 0 }]]),
     },
@@ -155,8 +155,13 @@ function openProduction(): void {
   fireEvent.click(screen.getByTestId('structure-settings-tab-production'));
 }
 
-describe('StructureSettingsModal Production tab (build count)', () => {
-  afterEach(() => { setGameClient(null); });
+const tileBtn = (recipe: string): HTMLElement => screen.getByTestId(`build-tile-${recipe}`).querySelector('button')!;
+const headBtn = (): HTMLElement => screen.getByTestId('build-queue-head').querySelector('button')!;
+const recipeMsg = (recipe: string, count?: number): Record<string, unknown> =>
+  (count === undefined ? { type: 'set_recipe', entityId: 7, recipe } : { type: 'set_recipe', entityId: 7, recipe, count });
+
+describe('StructureSettingsModal Build tab (hull picture tiles)', () => {
+  afterEach(() => { setGameClient(null); vi.useRealTimers(); });
 
   it('only buildings that make things get the Production tab', () => {
     expect(settingsTabsFor('shipyard').map((t) => t.id)).toEqual(['power', 'production']);
@@ -165,45 +170,100 @@ describe('StructureSettingsModal Production tab (build count)', () => {
     expect(settingsTabsFor('habitat_module').map((t) => t.id)).toEqual(['power']);
   });
 
-  it('the Production tab shows the recipe and how many are left', () => {
-    seedShipyard(2);
+  it('a shipyard shows the queue head, one tile per hull with its bill, and no Change / count row', () => {
+    seedShipyard(2, { prodFrac: 0.4 });
     openProduction();
-    expect(screen.getByTestId('settings-production-recipe')).toHaveTextContent('Build Interceptor');
-    expect(screen.getByTestId('settings-build-count')).toHaveTextContent('2 left');
+    const head = screen.getByTestId('build-queue-head');
+    expect(head).toHaveAttribute('data-left', '2');
+    expect(within(head).getByTestId('hull-tile-badge')).toHaveTextContent('×2');
+    expect(within(head).getByTestId('hull-tile-progress')).toHaveAttribute('data-frac', '0.40');
+    for (const r of ['build_interceptor', 'build_gunship', 'build_heavy', 'build_missile_frigate']) {
+      expect(screen.getByTestId(`build-tile-${r}`)).toBeInTheDocument();
+    }
+    expect(within(screen.getByTestId('build-tile-build_interceptor')).getByTestId('cost-chip-minerals')).toHaveTextContent('400');
+    expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
+    expect(screen.queryByTestId('settings-build-count')).toBeNull();
+    expect(screen.queryByTestId('settings-build-plus')).toBeNull();
   });
 
-  it('plus sends a count of 2', () => {
+  it('tapping the current hull adds one', () => {
     const send = seedShipyard(1);
     openProduction();
-    fireEvent.click(screen.getByTestId('settings-build-plus'));
-    const msg = { type: 'set_recipe', entityId: 7, recipe: 'build_interceptor', count: 2 };
-    expect(send).toHaveBeenCalledWith('set_recipe', msg);
-    expect(SetRecipeSchema.safeParse(msg).success).toBe(true);
+    fireEvent.click(tileBtn('build_interceptor'));
+    expect(send).toHaveBeenCalledWith('set_recipe', recipeMsg('build_interceptor', 2));
+    expect(SetRecipeSchema.safeParse(recipeMsg('build_interceptor', 2)).success).toBe(true);
   });
 
-  it('minus never goes below 1', () => {
+  it('holding a tile adds five, and the release adds no extra one', () => {
+    vi.useFakeTimers();
     const send = seedShipyard(1);
     openProduction();
-    expect(screen.getByTestId('settings-build-minus')).toBeDisabled();
-    fireEvent.click(screen.getByTestId('settings-build-minus'));
+    fireEvent.pointerDown(tileBtn('build_interceptor'));
+    act(() => { vi.advanceTimersByTime(500); });
+    fireEvent.pointerUp(tileBtn('build_interceptor'));
+    fireEvent.click(tileBtn('build_interceptor'));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith('set_recipe', recipeMsg('build_interceptor', 6));
+  });
+
+  it('a different hull asks first, then sends that recipe with a count of 1', () => {
+    const send = seedShipyard(3);
+    openProduction();
+    fireEvent.click(tileBtn('build_gunship'));
     expect(send).not.toHaveBeenCalled();
+    expect(screen.getByTestId('build-switch-ask')).toHaveTextContent('Switch to Gunship? Replaces the queue.');
+    fireEvent.click(screen.getByTestId('build-switch-cancel'));
+    expect(screen.queryByTestId('build-switch-ask')).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+    fireEvent.click(tileBtn('build_gunship'));
+    fireEvent.click(screen.getByTestId('build-switch-confirm'));
+    expect(send).toHaveBeenCalledWith('set_recipe', recipeMsg('build_gunship', 1));
+    expect(SetRecipeSchema.safeParse(recipeMsg('build_gunship', 1)).success).toBe(true);
   });
 
-  it('forever shows "Forever"; plus starts a count of 1; the forever button clears it', () => {
-    const send = seedShipyard(undefined);
+  it('tapping the queue head removes one, never below 1', () => {
+    const send = seedShipyard(3);
     openProduction();
-    expect(screen.getByTestId('settings-build-count')).toHaveTextContent('Forever');
-    expect(screen.getByTestId('settings-build-forever')).toBeDisabled();
-    fireEvent.click(screen.getByTestId('settings-build-plus'));
-    expect(send).toHaveBeenLastCalledWith('set_recipe', { type: 'set_recipe', entityId: 7, recipe: 'build_interceptor', count: 1 });
-    setGameClient(null);
-    const send2 = seedShipyard(0);
-    render(<StructureSettingsModal open entityId={7} title="Shipyard" onClose={() => {}} />);
-    fireEvent.click(screen.getAllByTestId('structure-settings-tab-production')[1]!);
-    expect(screen.getAllByTestId('settings-build-count')[1]).toHaveTextContent('Done');
-    fireEvent.click(screen.getAllByTestId('settings-build-forever')[1]!);
-    const msg = { type: 'set_recipe', entityId: 7, recipe: 'build_interceptor' };
-    expect(send2).toHaveBeenCalledWith('set_recipe', msg);
-    expect(SetRecipeSchema.safeParse(msg).success).toBe(true);
+    fireEvent.click(headBtn());
+    expect(send).toHaveBeenCalledWith('set_recipe', recipeMsg('build_interceptor', 2));
+    cleanup();
+    const send1 = seedShipyard(1);
+    openProduction();
+    fireEvent.click(headBtn());
+    expect(send1).not.toHaveBeenCalled();
+  });
+
+  it('the forever toggle clears the count, and turns off back to one build', () => {
+    const send = seedShipyard(2);
+    openProduction();
+    expect(screen.getByTestId('build-queue-forever')).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(screen.getByTestId('build-queue-forever'));
+    expect(send).toHaveBeenCalledWith('set_recipe', recipeMsg('build_interceptor'));
+    expect(SetRecipeSchema.safeParse(recipeMsg('build_interceptor')).success).toBe(true);
+    cleanup();
+    const send2 = seedShipyard(undefined);
+    openProduction();
+    expect(within(screen.getByTestId('build-queue-head')).getByTestId('hull-tile-badge')).toHaveTextContent('∞');
+    expect(screen.getByTestId('build-queue-forever')).toHaveAttribute('aria-pressed', 'true');
+    // A forever queue is already endless: a tap on its hull sends nothing.
+    fireEvent.click(tileBtn('build_interceptor'));
+    expect(send2).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('build-queue-forever'));
+    expect(send2).toHaveBeenCalledWith('set_recipe', recipeMsg('build_interceptor', 1));
+  });
+
+  it('the current hull shows a lock when no blueprint is loaded; Load stays under the grid', () => {
+    seedShipyard(1);
+    openProduction();
+    const tile = screen.getByTestId('build-tile-build_interceptor');
+    expect(tile).toHaveAttribute('data-locked', '1');
+    expect(within(tile).getByTestId('hull-tile-lock')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-blueprint')).toHaveTextContent('None loaded');
+    expect(screen.getByTestId('structure-action-load-blueprint')).toHaveTextContent('Load');
+    cleanup();
+    seedShipyard(1, { bpRuns: 3, bpQuality: 2 });
+    openProduction();
+    expect(screen.getByTestId('build-tile-build_interceptor')).toHaveAttribute('data-locked', '0');
+    expect(screen.queryByTestId('hull-tile-lock')).toBeNull();
   });
 });

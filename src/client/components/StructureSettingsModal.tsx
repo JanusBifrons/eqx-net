@@ -8,7 +8,8 @@
  * Tabs come from `settingsTabsFor(kindId)`, so tabs are added per building
  * kind in one place. Power (its numbers, plus the owner's On/Off and
  * Throttle where the kind has them: structureSettingsPowerControls.tsx); for
- * a building that makes things, Production: its recipe (and the Change button
+ * a building that makes things, Production: for a hull yard picture tiles
+ * (structureSettingsBuild.tsx), else its recipe (and the Change button
  * that cycles it, once the inspector's), a build count (minus / plus /
  * forever) sent on the same `set_recipe` message as the recipe, and the
  * blueprint slot (Load / Unload); for a gate, Access (structureSettingsGate.tsx). Labels read Build / Power /
@@ -34,7 +35,8 @@ import { powerSummary, signed, type PowerSummary } from './structureSettingsPowe
 import { PowerControls } from './structureSettingsPowerControls';
 import { buildCountText, canChangeRecipe, makesThings, readProduction, sameProduction, type ProductionView } from './structureSettingsProduction';
 import { GateTab, hasGateAccess } from './structureSettingsGate';
-import { sendBlueprintSlot, sendSetRecipe } from '../structures/structureActionsClient';
+import { BlueprintRow, HullBuildTab } from './structureSettingsBuild';
+import { sendSetRecipe } from '../structures/structureActionsClient';
 import { MAX_BUILD_COUNT, nextRecipe } from '@shared-types/production';
 import { RECIPES } from '@shared-types/recipes';
 import { phoneTiny } from './inspectorSizes';
@@ -105,7 +107,8 @@ function PowerTab({ entityId }: { entityId: number }): JSX.Element {
 }
 
 /** Recipe (+ Change), build count and the blueprint slot. Minus stops at 1;
- *  Forever clears the count. */
+ *  Forever clears the count. A hull yard gets picture tiles instead
+ *  (structureSettingsBuild.tsx). */
 function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
   const [p, setP] = useState<ProductionView | null>(() => readProduction(entityId));
   useEffect(() => {
@@ -116,7 +119,8 @@ function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
     return () => window.clearInterval(h);
   }, [entityId]);
   if (p === null) return <Box sx={ROW_SX}>No production data</Box>;
-  const { recipe, left, canChange, needsBlueprint, blueprintLine, lastRunLine } = p;
+  if (p.hullYard) return <HullBuildTab entityId={entityId} p={p} sx={BUILD_SX} />;
+  const { recipe, left, canChange } = p;
   const plus = left === undefined ? 1 : Math.min(MAX_BUILD_COUNT, left + 1);
   return (
     <Box data-testid="structure-settings-production" data-recipe={recipe} data-left={left ?? 'forever'} sx={GRID_SX}>
@@ -140,26 +144,7 @@ function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
         <Box component="button" sx={STEP_BTN_SX} aria-label="Repeat forever" data-testid="settings-build-forever"
           disabled={left === undefined} onClick={() => sendSetRecipe(entityId, recipe)}>∞</Box>
       </Box>
-      {(needsBlueprint || blueprintLine !== undefined) && (
-        <>
-          <Box sx={LABEL_SX}>Blueprint</Box>
-          <Box sx={STEPPER_SX}>
-            <Box sx={VALUE_SX} data-testid="settings-blueprint">{(blueprintLine ?? lastRunLine)?.replace(/^BLUEPRINT /, '') ?? 'None loaded'}</Box>
-            {needsBlueprint && (
-              <Tooltip title={blueprintLine !== undefined ? 'Swap in the best blueprint from storage' : 'Load a blueprint from storage'}>
-                <Box component="button" sx={STEP_BTN_SX} data-testid="structure-action-load-blueprint"
-                  onClick={() => sendBlueprintSlot(entityId, 'load')}>{blueprintLine !== undefined ? 'Swap' : 'Load'}</Box>
-              </Tooltip>
-            )}
-            {blueprintLine !== undefined && (
-              <Tooltip title="Put the blueprint back in storage">
-                <Box component="button" sx={STEP_BTN_SX} data-testid="structure-action-unload-blueprint"
-                  onClick={() => sendBlueprintSlot(entityId, 'unload')}>Unload</Box>
-              </Tooltip>
-            )}
-          </Box>
-        </>
-      )}
+      <BlueprintRow entityId={entityId} p={p} {...BUILD_SX} />
     </Box>
   );
 }
@@ -246,5 +231,6 @@ const STEPPER_SX = { display: 'flex', alignItems: 'center', justifyContent: 'fle
 const STEP_BTN_SX = { ...WINDOW_BTN_SECONDARY_SX, minWidth: 32, px: 1, '&:disabled': { opacity: 0.35, cursor: 'default' } } as const;
 const COUNT_SX = { ...VALUE_SX, minWidth: 64, textAlign: 'center' as const } as const;
 const ROW_SX = { fontSize: 12, color: C.inkDim } as const;
+const BUILD_SX = { labelSx: LABEL_SX, valueSx: VALUE_SX, btnSx: STEP_BTN_SX } as const;
 const COG_SX = { p: '2px', color: 'rgba(180,220,255,0.85)', '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' } } as const;
 const COG_ICON_SX = phoneTiny({ fontSize: [16, 28] }); // the inspector's ICON_SX: tiny on a phone
