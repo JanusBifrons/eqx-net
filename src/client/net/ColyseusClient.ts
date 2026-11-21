@@ -1528,6 +1528,7 @@ export class ColyseusGameClient {
       ? recvAtMs - this._lastSnapshotRecvAtMs
       : -1;
     this._lastSnapshotRecvAtMs = recvAtMs;
+    this.stats.lastSnapshotRecvAtMs = recvAtMs; // net-health HUD stall readout
     const serverSendPerfNow = (snap as { serverSendPerfNow?: number }).serverSendPerfNow;
     // Emit-when-non-zero on the server (2026-11-14 trim): absent means 0.
     const wsBufferedAmountBytes = (snap as { wsBufferedAmountBytes?: number }).wsBufferedAmountBytes ?? 0;

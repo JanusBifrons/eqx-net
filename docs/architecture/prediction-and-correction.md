@@ -106,6 +106,24 @@ Stage 6 (packet-loss resilience) of the network-feel roadmap addresses sustained
 
 Stage 4 added three public-readable fields to `PredictionStats`: `rttMeanMs` (Welford running mean), `rttStdDevMs` (Welford σ), and `droppedSnapshotsRecent` (sliding-window drop count). The next user diagnostic capture surfaces these for inspection alongside the existing RTT/jitter metrics.
 
+## Net-health HUD
+
+A small icon + number cluster beside the sector chip (`hud/NetHealthCluster.tsx`, logic in the pure `hud/netHealth.ts`) tells a player on a poor link (phone on 4G) that the network, not the game, is misbehaving. It is hidden while everything is healthy.
+
+It reads only counters that already exist (the same ones the phone-lane `perf_summary` logs): `ColyseusClient.stats` (`rttMs`, `significantCorrectionCount`, and `lastSnapshotRecvAtMs`, the wire-arrival stamp the stats now carry), the clock-anchor and render-due hard-snap counters, the swarm glide-limit and old-end-clamp counters, `mirror.swarm.size`, `connectionStatus` and the DataChannel transport's `fellBack` flag (`snapshotTransportFellBack()`). A 10 Hz wall-clock timer samples them (never per frame, allocation-free); React re-renders at most every 250 ms and only when a shown, bucketed value changes. It is inactive (reset, hidden) outside a sector room and during a transit.
+
+Every metric is averaged or counted over a rolling 1 s window. Hysteresis: an item shows when its metric reaches the threshold and hides only after the metric stays under 0.8 × the threshold for 2 s.
+
+| Item | Metric (1 s window) | Shows at |
+|---|---|---|
+| Ping | mean RTT | 150 ms (amber), red from 300 ms |
+| Snapshot stall | longest wait since the last snapshot arrived, or any clock-anchor / render-due hard snap | 200 ms |
+| Corrections | own-ship significant corrections (drift > 0.05 u) per second | 5 /s |
+| Drone misses | drone reads frozen at the glide limit or clamped to the ring's old end, per drone per second | 3 /s |
+| Link | `connectionStatus` not `connected` (red), or the DataChannel fell back to the WebSocket ("WS", amber) | immediately |
+
+Tapping the cluster shows a one-line explanation per visible item (`title` on desktop). There is no counter for remote-ship snaps per second (`remoteCorrSamples` counts snapshots, not snaps), so the HUD has no item for them.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
