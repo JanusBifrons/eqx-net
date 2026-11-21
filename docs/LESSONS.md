@@ -3346,6 +3346,17 @@ forever. A steerer that toggles snap-turn bits must stop within half the per-tic
 (`maxTurnPerTick`, from `applyShipInput`); retuning a turn rate must re-check every closed-loop
 controller that toggles the turn keys (`joystickToInput.test.ts` closed-loop cases).
 
+## 2026-11-21 — a detached cmd.exe on Windows drops its node child's output
+
+The phone lane's `run/server.log` was 0 bytes for a whole play test: the server ran detached
+(`spawn(cmd, { shell: true, detached: true, stdio: [ignore, fd, fd] })`) so it outlives `pnpm phone up`.
+A detached `cmd.exe` has no console, so the `node.exe` it starts gets a console of its own and writes
+there; even `node -v >> file` inside that shell writes nothing. A detached node spawned directly keeps
+the file handles. `loggedSpawnPlan` (`showcase/servers.ts`) runs an outliving Windows child under a
+detached node relay; `showcase/servers.test.ts` spawns a real grandchild and reads the file. Also: a
+play-test capture went to the SERVED checkout's `diag/captures/` (a worktree that gets deleted); the
+lane now sets `EQX_DIAG_DIR` to its `run/captures/`.
+
 ## 2026-11-21 — moveTo the arc's start, then arc(): a stray line to the Graphics' origin on phones
 
 Pixi v8's `arc()` pushes its own start point onto the current subpath, so `g.moveTo(arc start);

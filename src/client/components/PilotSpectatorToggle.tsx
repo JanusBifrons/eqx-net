@@ -3,7 +3,7 @@ import { Menu, MenuItem, ToggleButton, ToggleButtonGroup } from '@mui/material';
 import FlightIcon from '@mui/icons-material/Flight';
 import ExploreIcon from '@mui/icons-material/Explore';
 import ConstructionIcon from '@mui/icons-material/Construction';
-import { selectControlMode, useUIStore } from '../state/store';
+import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 import { getShipKind } from '@shared-types/shipKinds';
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient';
@@ -20,7 +20,7 @@ import { leaveBuildMode } from '../structures/buildModeView';
  *
  * The stored field is still the discrete `pilotMode` enum (Invariant #2 — the
  * free camera pose lives in the renderer, never the store); the toggle reads it
- * through `selectControlMode`. Gated to `phase==='game'`. The test ids keep
+ * through `selectControlMode`. Gated to `phase==='game'` and the HUD gate (hidden under the loading screen). The test ids keep
  * their old names (`pilot-toggle` = Fly, `spectator-toggle` = Command).
  *
  * **Fly** while in command view: with exactly ONE of your parked ships
@@ -79,6 +79,7 @@ function getPilotableShips(): PilotableShip[] {
 
 export function PilotSpectatorToggle(): JSX.Element | null {
   const phase = useUIStore((s) => s.phase);
+  const hudUp = useShouldRenderHud();
   const controlMode = useUIStore(selectControlMode);
   const setPilotMode = useUIStore((s) => s.setPilotMode);
   const setBuildMode = useUIStore((s) => s.setBuildMode);
@@ -87,7 +88,8 @@ export function PilotSpectatorToggle(): JSX.Element | null {
 
   // A free camera only makes sense in-game (hooks above run unconditionally
   // per React's rules).
-  if (phase !== 'game') return null;
+  // Hidden while the sector loads: only once you are in and controllable.
+  if (phase !== 'game' || !hudUp) return null;
 
   const onChange = (_e: React.MouseEvent<HTMLElement>, next: ControlMode | null): void => {
     // 'fly' is handled by the Fly button's onClick (takes the selected ship or

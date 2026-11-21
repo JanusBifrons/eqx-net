@@ -126,7 +126,7 @@ export abstract class RendererCommandRouting {
     }
     switch (a.kind) {
       case 'camera':
-        this.cameraPointer(a.ev.type, a.ev.pointerId, a.ev.x, a.ev.y, a.ev.timeMs);
+        this.cameraPointer(a.ev.type, a.ev.pointerId, a.ev.x, a.ev.y, a.ev.timeMs, a.ev.pointerType);
         return;
       case 'boxStart':
       case 'boxUpdate':
@@ -505,7 +505,7 @@ export abstract class RendererCommandRouting {
   }
 
   /** The camera half of a pointer gesture (the subclass). */
-  protected abstract cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number): boolean;
+  protected abstract cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number, pointerType?: string): boolean;
 
   /** See `IRenderer.setFleetOrderMode`. */
   setFleetOrderMode(mode: 'move' | 'attack'): void {

@@ -67,6 +67,18 @@ export function parseTunnelUrl(log) {
   return /https:\/\/[a-z0-9-]+\.trycloudflare\.com/.exec(String(log))?.[0];
 }
 
+/**
+ * Server env for a lane build. `EQX_DIAG_DIR` sends the diagnostic captures
+ * (every lane session streams one, with its frame-time `perf_summary` lines)
+ * to `<run>/captures/` instead of the served checkout's `diag/captures/`, so a
+ * play session's evidence sits next to `server.log` and survives the
+ * checkout's worktree being removed.
+ * @param {string} runDir
+ */
+export function laneServerEnv(runDir) {
+  return { EQX_ENABLE_TEST_ROOMS: '0', EQX_TEST_SIGNIN: '1', EQX_DIAG_DIR: path.join(runDir, 'captures') };
+}
+
 /** `<main checkout>/.claude/phone-lane`, shared by every worktree.
  *  `EQX_PHONE_DIR` overrides. */
 export function resolvePhoneDir(cwd = process.cwd(), env = process.env) {
