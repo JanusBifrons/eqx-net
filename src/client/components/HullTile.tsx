@@ -14,6 +14,7 @@ import { getShipKind } from '../../shared-types/shipKinds';
 import { ShipSilhouette } from '../render/shipShapeSvg';
 import { shipPortraitUrl } from '../render/art/shipPortraits';
 import { HUD } from '../hud/tokens';
+import { useHudSize } from '../hud/useHudScale';
 
 const C = HUD.color;
 
@@ -60,6 +61,8 @@ export function HullTile({
   kind, name, testId, data, edge = C.edge2, glow = 'none', pressed, caption, tag, badge, locked = false, dim = false,
   progress, tooltip, children, onClick, onPointerDown, onPointerUp, onPointerLeave,
 }: HullTileProps): JSX.Element {
+  // A tap on a touch screen also fires a mouse hover: tooltips are desk-only.
+  const noHover = useHudSize() !== 'desk';
   const pic = hullArt(kind);
   const grey = locked || dim;
   const dataAttrs: Record<string, string> = {};
@@ -110,7 +113,7 @@ export function HullTile({
   );
   return (
     <Box data-testid={testId} {...dataAttrs}>
-      {tooltip === undefined ? tile : <Tooltip title={tooltip} describeChild disableTouchListener>{tile}</Tooltip>}
+      {tooltip === undefined ? tile : <Tooltip title={tooltip} describeChild disableTouchListener disableHoverListener={noHover} disableFocusListener={noHover}>{tile}</Tooltip>}
       {children !== undefined && <Box sx={{ mt: '3px' }}>{children}</Box>}
     </Box>
   );
