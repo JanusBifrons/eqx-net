@@ -44,7 +44,7 @@ export interface PerfScene {
   galaxyField?: string;
   /** A prebuilt base from `scenarioLayouts.ts` (test layouts live only there):
    *  its structures and rocks join the room options. */
-  prebuiltLayout?: 'base-flow';
+  prebuiltLayout?: 'base-flow' | 'base-loop';
   /** A moving director camera instead of the held `camera`: cinema holds,
    *  each eased in over `smoothMs` from its `atMs` (ms after the window
    *  starts). `scale` is the ABSOLUTE camera scale (screen px per world unit),
@@ -237,6 +237,30 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 300, y: 0, zoom: 0.45 },
     durationMs: 30_000,
     minSwarm: 20,
+  },
+  {
+    // Plan step 4I: the Sunday base loop on a phone. The pilot's own base
+    // (adopted on join) in sol-prime's belt clearing: Capital, 3 Solars, a
+    // Shipyard building an Interceptor (40 s cycle, so the build animates the
+    // whole window), Refinery, Cargo Bay, Turret, two Shield Pylons and their
+    // wall; a Mining Skiff and two Interceptors of the pilot's parked beside it.
+    // The no-field arm: `--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`.
+    id: 'base-loop',
+    title: 'The Sunday-loop base in an asteroid sector: Shipyard building, shield wall up',
+    room: {
+      droneCount: 0, asteroidConfig: [], sectorFeatures: [],
+      sceneScript: [
+        { atMs: 0, action: 'fleet', tag: 'skiff', kind: 'mining-skiff', count: 1, x: 95_500, y: 80_100, stance: 'holdFire' },
+        { atMs: 0, action: 'fleet', tag: 'wing', kind: 'interceptor', count: 2, x: 95_500, y: 79_700, spread: 150, stance: 'holdFire' },
+        { atMs: 30_000, action: 'end' },
+      ],
+    },
+    prebuiltLayout: 'base-loop',
+    galaxyField: 'sol-prime',
+    spawn: { x: 95_600, y: 80_600 },
+    camera: { x: 96_926, y: 80_099, zoom: 0.32 },
+    durationMs: 30_000,
+    minSwarm: 14,
   },
   {
     id: 'wide-view',

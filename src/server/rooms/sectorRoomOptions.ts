@@ -14,6 +14,7 @@ import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { GateAccess } from '../../shared-types/gateAccess.js';
 import type { NpcBaseSpec } from '../bases/NpcBaseSubsystem.js';
 import type { GoodId } from '../../shared-types/goods.js';
+import type { RecipeId } from '../../shared-types/recipes.js';
 
 export interface SectorRoomOptions {
   testMode?: boolean;
@@ -191,7 +192,7 @@ export interface SectorRoomOptions {
    *  trigger: gives E2E a fully-functional powered grid without fighting the
    *  place-ahead UI (which stacks/overlaps multiple placements) or the
    *  construction wait. Each is born `isConstructed` at full HP. */
-  prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
+  prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number; rot?: number; gateAccess?: GateAccess; recipe?: RecipeId }>;
   /** Plan soft-leaping-truffle v2, A0 — seed a RULE-VALID structure lattice
    *  of `n` structures (+ an optional closed pylon fence) for scale
    *  measurement. Generated server-side from (n, seed), so it is not bound
