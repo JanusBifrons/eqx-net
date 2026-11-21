@@ -115,7 +115,7 @@ function styleTag(style: string, id: string): string {
   return v ? `:S${style}.${v}` : `:S${style}`;
 }
 
-/** A liveried structure's key suffix (`?structLivery=1`; absent adds nothing). */
+/** A liveried structure's key suffix (on by default, `?structLivery=0` = off; absent adds nothing). */
 function structLiveryTag(l: StructLivery): string { return `:SL${l.team.toString(16)}:${l.sigil.toString(16)}`; }
 
 /** A liveried ship's key suffix (absent livery adds nothing). */

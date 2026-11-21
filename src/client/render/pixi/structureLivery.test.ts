@@ -1,4 +1,4 @@
-/** Structure livery (structure restyle 1c, `?structLivery=1`): flag off is
+/** Structure livery (structure restyle 1c, on by default, `?structLivery=0` = off): flag off is
  *  today's plan, bake key and art call; on adds bands + sigil slots. */
 import { describe, it, expect } from 'vitest';
 import { buildStructureVisual } from './structureVisuals.js';
@@ -90,10 +90,11 @@ describe('structHandleFor livery', () => {
 });
 
 describe('readStructLivery', () => {
-  it('parses ?structLivery=1 only', () => {
+  it('is on by default; only ?structLivery=0 / off turns it off', () => {
+    expect(readStructLivery('')).toBe(true);
     expect(readStructLivery('?art=machined&structLivery=1')).toBe(true);
+    expect(readStructLivery('?structLivery=10')).toBe(true);
     expect(readStructLivery('?structLivery=0')).toBe(false);
-    expect(readStructLivery('?structLivery=10')).toBe(false);
-    expect(readStructLivery('')).toBe(false);
+    expect(readStructLivery('?art=machined&structLivery=off')).toBe(false);
   });
 });

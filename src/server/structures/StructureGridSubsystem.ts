@@ -23,6 +23,7 @@
  */
 import { ASTEROID_YIELD, yieldHasGoods, yieldInto, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
+import { PROD_STATE } from '../../shared-types/production.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
 import { redrawStructure, switchStructure, throttleStructure } from './structurePowerSwitch.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -35,7 +36,7 @@ import {
 } from '../../core/leveling/structureLevel.js';
 import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
-import { Grid, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
+import { Grid, type GridObstacle, type ObstacleBox, type PowerSummary } from '../../core/structures/Grid.js';
 import { batteryChargeOf, chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
 import type { Connection, FlowMaterial } from '../../core/structures/Connection.js';
 import {
@@ -272,12 +273,12 @@ export class StructureGridSubsystem {
    *  while batteries carry the load); `powered` is BATTERY-BACKED — a
    *  capital-connected deficit stays powered while its component's batteries
    *  hold enough charge to cover the per-pulse shortfall. With no batteries this
-   *  is byte-identical to the raw grid summary. */
-  powerSummaryFor(id: string): { netPower: number; powered: boolean } {
+   *  is byte-identical to the raw grid summary. A rescue reads full supply. */
+  powerSummaryFor(id: string): PowerSummary {
     const raw = this.grid.powerSummaryFor(id);
-    if (this.hooks.registry.get(id)?.switchedOff === true) return { netPower: raw.netPower, powered: false }; // owner Off
+    if (this.hooks.registry.get(id)?.switchedOff === true) return { netPower: raw.netPower, powered: false, supplyFrac: 0 }; // owner Off
     if (raw.powered || !this.batteryRescued.has(id)) return raw;
-    return { netPower: raw.netPower, powered: true };
+    return { netPower: raw.netPower, powered: true, supplyFrac: 1 };
   }
 
   /**
@@ -607,8 +608,12 @@ export class StructureGridSubsystem {
       if (!rec.isConstructed) continue;
       const rate = getStructureKind(rec.kind).gasRate;
       if (rate == null || rate <= 0) continue;
-      const working = nebula && !!this.hooks.depositGoods && this.powerSummaryFor(rec.id).powered;
+      const powered = this.powerSummaryFor(rec.id).powered;
+      const working = nebula && !!this.hooks.depositGoods && powered;
       this.setActive(rec, working);
+      // The row's work state (client work glow): no nebula = nothing to collect.
+      const state = !powered ? PROD_STATE.unpowered : working ? PROD_STATE.running : PROD_STATE.starved;
+      if ((rec.prodState ?? PROD_STATE.none) !== state) rec.prodState = state;
       // The owner throttle scales the haul (structureWorkRate; 0% gathers nothing).
       const n = Math.round(rate * structureWorkRate(rec));
       if (working && n > 0) this.hooks.depositGoods!(rec, 'gas', n);

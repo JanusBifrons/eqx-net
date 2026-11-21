@@ -23,6 +23,7 @@ import { completeLabJob, planLabJob, type LabJobSpec } from '../../shared-types/
 import type { LabBlueprintView, LabJobView, LabState } from '../../shared-types/messages/labMessages.js';
 import { structureWorkRate } from '../../shared-types/structurePower.js';
 import { gameNow } from '../time/gameTime.js';
+import { PROD_STATE, type ProdState } from '../../shared-types/production.js';
 
 export const RESEARCH_LAB_KIND = 'research_lab';
 /** Save job progress every this many powered pulses. */
@@ -136,20 +137,33 @@ export class ResearchLabSubsystem {
       const job = board.get(lab.uid);
       const working = job !== undefined && job.done < job.pulses && lab.isConstructed && this.d.powered(lab.id);
       this.d.setActive?.(lab, working);
-      if (job === undefined) continue;
-      if (job.done < job.pulses) {
-        if (!working) continue;
-        const rate = structureWorkRate(lab); // owner throttle: 50% takes twice as long
-        if (rate <= 0) continue;
-        board.advance(lab.uid, rate);
-        advanced = true;
+      if (job !== undefined) {
+        if (working && job.done < job.pulses) {
+          const rate = structureWorkRate(lab); // owner throttle: 50% takes twice as long
+          if (rate > 0) {
+            board.advance(lab.uid, rate);
+            advanced = true;
+          }
+        }
+        if (job.done >= job.pulses) this.finish(lab, job);
       }
-      if (job.done >= job.pulses) this.finish(lab, job);
+      setLabProdState(lab, this.labProdState(lab, working));
     }
     if (advanced && ++this.pulsesSinceSave >= LAB_PROGRESS_SAVE_PULSES) {
       this.pulsesSinceSave = 0;
       board.flushProgress();
     }
+  }
+
+  /** The lab's work state for the room row (the client's work glow). Its
+   *  blueprints are taken at start, so a running job never waits on an input:
+   *  no `starved`. A finished job with no storage to deliver into is
+   *  `blocked`. `working` is this pulse's verdict, before any finish. */
+  private labProdState(lab: StructureRecord, working: boolean): ProdState {
+    const job = this.d.board().get(lab.uid!);
+    if (job === undefined || !lab.isConstructed) return PROD_STATE.none;
+    if (job.done >= job.pulses) return PROD_STATE.blocked;
+    return working ? PROD_STATE.running : PROD_STATE.unpowered;
   }
 
   /** A finished job delivers into storage; with no storage it waits. */
@@ -208,6 +222,11 @@ export class ResearchLabSubsystem {
     if (job !== undefined) state.job = jobView(job);
     return state;
   }
+}
+
+/** Rows patch on change: write `prodState` only when it moves. */
+function setLabProdState(lab: StructureRecord, state: ProdState): void {
+  if ((lab.prodState ?? PROD_STATE.none) !== state) lab.prodState = state;
 }
 
 export function blueprintView(b: BlueprintItem): LabBlueprintView {

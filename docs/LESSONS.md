@@ -3242,6 +3242,17 @@ shallow: the brake distance jumped to 450-700 u and a fighter entered a 75° tur
 ~32 u off its line into rock. Use the angle between the incoming and outgoing legs, and cap the carried
 speed by how far the ship may swing sideways (`NAV_TURN_SWING`).
 
+## 2026-11-20 — a corner is lost on the way out, not only on the way in
+
+The streets flight still touched rock ~3 runs in 10 at its 76° corner. Logged per tick, the failing runs
+did not carry speed in: tick jitter left the ship almost stopped at the corner, and once past it the brain
+asked for the new leg's full cruise. The pilot thrusts along its nose while the nose comes round, so it
+lurched ~33 u sideways off the new leg into rock. Cap the speed out of a sharp corner by the swing
+its nose has left (`NavRoutes.turnCap`, scaled by that angle and the hull's turn rate): a timed hold
+cost time and still brushed rock when the nose came round late. Don't add the cap to a capital: its
+planner already fits corners to its turning radius, and a second limit only slowed it. Log the ship's
+track against the corner before tuning the brake; the contact point says which side of the corner failed.
+
 ## 2026-11-19 — a long hull planned as a disc of its length never fits a lane
 
 The route planner kept a battleship's centre a full hull length (3 595 u) from rock everywhere. Lanes are
@@ -3275,6 +3286,24 @@ that built the first piece sprite; on slow CI runners the GPU-lit look ran 2-3 s
 SwiftShader, so that frame was already past the window and `capital-wreck-render.spec.ts` (S3,
 GPU-lit) saw no break-up on roughly half the runs. Measure an event's age at the tick the client
 first received it (`SwarmRenderState.firstTick`, stamped by the decoder), never at the frame that draws it.
+
+## 2026-11-20 — a moving door has one clock: read doorPosAt, never integrate
+
+Solid gate doors (docs/plans/door-power.md) are posed in three places: the server's hit boxes, the
+physics worker's kinematic leaves and client prediction, plus the deck light. Each reads the door's
+segment `{p0, t0, dir, level}` through `doorPosAt(seg, tick)`. A second copy that steps a position by
+dt each tick drifts from the others the first time a tick is late or the power level changes, and a
+door that one side thinks is shut and the other half open snaps ships back. Store the segment, compute
+the position at the tick you need it; a new target or level starts a new segment from `doorPosAt` now.
+
+## 2026-11-20 — door leaf hit boxes lag up to one structure tick while the door moves
+
+The server tests gunfire against main-thread boxes, not the worker's Rapier bodies, so
+`doorLeafBoxes.ts` re-poses each gate's leaf boxes from `doorPosAt` on the 10 Hz structure tick. While
+a door moves, the boxes are up to 100 ms (at full power ~90 of 2700 position units, ~3 %) behind the
+leaves the worker collides ships with. Shots fired right at a moving leaf's edge can land a frame early
+or late; a still door (the case that matters, shut or open) is exact. Don't assert shot-vs-leaf hits
+on a door in mid-travel, and don't "fix" it by posing every 60 Hz tick without measuring the cost.
 
 ## 2026-11-20 — an estimate built from a period constant lies in a room that changes the period
 

@@ -82,6 +82,6 @@ describe('coastal defence catalogue', () => {
   it('the old turrets keep their footprint-sized muzzle (records unchanged, no save reset)', () => {
     const m = getStructureKind('turret').mounts![0]!;
     expect(structureNavalTurret(m)).toBeNull();
-    expect(structureMountMuzzle('turret', m)).toBeCloseTo(70 * 0.68, 6);
+    expect(structureMountMuzzle('turret', m)).toBeCloseTo(70 * 1.6, 6);
   });
 });

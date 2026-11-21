@@ -28,7 +28,9 @@ export const DEFAULT_RIG: LightRig = {
   sunElev: (38 / 180) * Math.PI,
   sunColor: [1.5, 1.36, 1.2],
   ambient: [0.05, 0.06, 0.095],
-  rim: [0.1, 0.18, 0.36],
+  // Faint neutral edge light (owner 2026-11-20: was a blue rim [0.1, 0.18,
+  // 0.36] that outlined every bevel; half-strength grey keeps dark sides shaped).
+  rim: [0.06, 0.06, 0.06],
   exposure: 1.0,
 };
 

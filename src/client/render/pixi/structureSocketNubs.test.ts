@@ -246,7 +246,7 @@ function cellCount(kind: string): number {
 }
 
 describe('body state: battery cells and a dry reactor', () => {
-  it('only the power stores and the reactor have a body state', () => {
+  it('the power stores and the reactor have a body state (fences: own test); others none', () => {
     expect(hasBodyStatus('battery')).toBe(true);
     expect(hasBodyStatus('battery_bank')).toBe(true);
     expect(hasBodyStatus('reactor')).toBe(true);

@@ -6,17 +6,17 @@
  *   - between two same-owner, CONSTRUCTED, CONNECTED emitters (Shield Pylons,
  *     Shield Gates, Shield Airlocks). A pylon end is its centre; a gate end is
  *     the gate post nearest the far end (`emitterAnchor`), so a fence runs
- *     right up to a gate's posts;
- *   - across each built gate's own gap (a "span": one for a Shield Gate, one per
- *     end for an Airlock). A span blocks only while its gate is CLOSED
- *     (`gateOpenMask`, from the GateController).
+ *     right up to a gate's posts.
+ * A gate's own gap has NO shield: it is closed by the solid sliding door leaves
+ * (rig bodies scrubbed by the GateController, docs/plans/door-power.md), and a
+ * gate is broken only by HP. Stun applies to fence walls only.
  * Geometry is derived from the structure poses with the shared core helpers, so
- * the server collider, the client prediction collider and the drawn span agree.
+ * the server collider, the client prediction collider and the drawn wall agree.
  *
  * Responsibilities:
  *   - `update(nowMs)` (called on the grid pulse + the faster turret tick):
  *     form/teardown walls as emitters appear/disappear, and refresh each wall's
- *     blocking state (powered + not stunned + not an open span) onto its
+ *     blocking state (powered + not stunned) onto its
  *     physics collider.
  *   - `onWallHit(wallId, damage, nowMs)`: resolve a weapon hit via the
  *     grid-power model (surplus absorbs → batteries cover the excess → overwhelm
@@ -37,14 +37,7 @@ import {
   resolveWallHit,
   wallPairKey,
 } from '../../core/structures/ShieldWall.js';
-import {
-  GATE_SPAN_THICKNESS,
-  emitterAnchor,
-  gateSpanWorld,
-  gateSpans,
-  gateTypeOf,
-  isShieldEmitterKind,
-} from '../../core/structures/gateGeometry.js';
+import { emitterAnchor, isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 export interface ShieldWallHooks {
@@ -59,8 +52,6 @@ export interface ShieldWallHooks {
   spawnWall(id: string, ax: number, ay: number, bx: number, by: number, thickness: number): void;
   setWallActive(id: string, active: boolean): void;
   removeWall(id: string): void;
-  /** Gates: open bits for a gate (bit i ⇒ span i open). Absent ⇒ none open. */
-  gateOpenMask?(id: string): number;
 }
 
 interface WallRecord {
@@ -73,9 +64,6 @@ interface WallRecord {
   ay: number;
   bx: number;
   by: number;
-  /** -1 for a wall between two emitters; ≥ 0 for a gate's own span (index),
-   *  where postA === postB === the gate. */
-  span: number;
   /** Wall-clock ms until which the wall is stunned (0 = not stunned). */
   stunnedUntilMs: number;
   /** Last value pushed to the collider, so we only post on a transition. */
@@ -88,10 +76,8 @@ function rotRad(rec: StructureRecord): number {
 }
 
 export class ShieldWallManager {
-  /** key → wall (emitter-pair walls by pair key, gate spans by body id). */
+  /** pair key → fence wall between two emitters. */
   private readonly walls = new Map<string, WallRecord>();
-  /** Gate ids whose spans are formed (so steady-state reconcile builds no keys). */
-  private readonly spanGates = new Set<string>();
   private readonly anchorA = { x: 0, y: 0 };
   private readonly anchorB = { x: 0, y: 0 };
 
@@ -106,11 +92,9 @@ export class ShieldWallManager {
 
   private reconcileTopology(): void {
     const reg = this.hooks.registry;
-    // FORM: each built gate's spans, plus every same-owner, constructed,
-    // connected emitter pair without a wall.
+    // FORM: every same-owner, constructed, connected emitter pair without a wall.
     for (const a of reg.all()) {
       if (!isShieldEmitterKind(a.kind) || !a.isConstructed) continue;
-      if (gateTypeOf(a.kind) !== null && !this.spanGates.has(a.id)) this.formSpans(a);
       for (const conn of reg.connectionsOf(a.id)) {
         const otherId = conn.getOtherNode(a.id);
         if (otherId === null) continue;
@@ -126,43 +110,24 @@ export class ShieldWallManager {
         const w: WallRecord = {
           id, postA: a.id, postB: b.id,
           ax: this.anchorA.x, ay: this.anchorA.y, bx: this.anchorB.x, by: this.anchorB.y,
-          span: -1, stunnedUntilMs: 0, lastActive: true,
+          stunnedUntilMs: 0, lastActive: true,
         };
         this.hooks.spawnWall(id, w.ax, w.ay, w.bx, w.by, SHIELD_WALL_THICKNESS);
         this.walls.set(key, w);
       }
     }
     // TEARDOWN: any wall whose pair is no longer eligible (emitter destroyed /
-    // disconnected / deconstructed / owner changed), or whose gate is gone.
+    // disconnected / deconstructed / owner changed).
     for (const [key, w] of this.walls) {
       if (this.wallEligible(w)) continue;
       this.hooks.removeWall(w.id);
       this.walls.delete(key);
-      if (w.span >= 0) this.spanGates.delete(w.postA);
     }
-  }
-
-  /** Spawn a built gate's own shield spans (one per end). */
-  private formSpans(gate: StructureRecord): void {
-    const n = gateSpans(gate.kind).length;
-    for (let i = 0; i < n; i++) {
-      if (!gateSpanWorld(gate.kind, gate.x, gate.y, rotRad(gate), i, this.anchorA, this.anchorB)) continue;
-      const id = `wall-gate-${gate.id}-${i}`;
-      const w: WallRecord = {
-        id, postA: gate.id, postB: gate.id,
-        ax: this.anchorA.x, ay: this.anchorA.y, bx: this.anchorB.x, by: this.anchorB.y,
-        span: i, stunnedUntilMs: 0, lastActive: true,
-      };
-      this.hooks.spawnWall(id, w.ax, w.ay, w.bx, w.by, GATE_SPAN_THICKNESS);
-      this.walls.set(id, w);
-    }
-    this.spanGates.add(gate.id);
   }
 
   private wallEligible(w: WallRecord): boolean {
     const reg = this.hooks.registry;
     const a = reg.get(w.postA);
-    if (w.span >= 0) return !!a && a.isConstructed && gateTypeOf(a.kind) !== null;
     const b = reg.get(w.postB);
     return (
       !!a && !!b &&
@@ -180,12 +145,9 @@ export class ShieldWallManager {
     return isWallActive(powered, w.stunnedUntilMs, nowMs);
   }
 
-  /** The wall blocks: up, and (for a gate span) its gate end is closed. */
+  /** The wall blocks: it is up (fence walls have no open state). */
   private blocks(w: WallRecord, nowMs: number): boolean {
-    if (!this.up(w, nowMs)) return false;
-    if (w.span < 0) return true;
-    const mask = this.hooks.gateOpenMask?.(w.postA) ?? 0;
-    return (mask & (1 << w.span)) === 0;
+    return this.up(w, nowMs);
   }
 
   private refreshActive(w: WallRecord, nowMs: number): void {
@@ -196,12 +158,12 @@ export class ShieldWallManager {
     }
   }
 
-  /** Visit every wall that blocks right now (up, and a gate span closed), as
+  /** Visit every wall that blocks right now (up), as
    *  its world ends and half thickness: the room's obstacle gatherer. */
   forEachBlockingWall(nowMs: number, sink: { wall(ax: number, ay: number, bx: number, by: number, halfThickness: number): void }): void {
     for (const w of this.walls.values()) {
       if (!this.blocks(w, nowMs)) continue;
-      sink.wall(w.ax, w.ay, w.bx, w.by, (w.span < 0 ? SHIELD_WALL_THICKNESS : GATE_SPAN_THICKNESS) / 2);
+      sink.wall(w.ax, w.ay, w.bx, w.by, SHIELD_WALL_THICKNESS / 2);
     }
   }
 
@@ -213,7 +175,7 @@ export class ShieldWallManager {
   onWallHit(wallId: string, damage: number, nowMs: number): boolean {
     const rec = this.byBodyId(wallId);
     if (!rec) return false;
-    if (!this.blocks(rec, nowMs)) return false; // down, or an open gate span
+    if (!this.blocks(rec, nowMs)) return false; // down (stunned / unpowered)
     const { netPower } = this.hooks.powerSummaryFor(rec.postA);
     const charge = this.hooks.componentBatteryCharge(rec.postA);
     const result = resolveWallHit(damage, netPower, charge);
@@ -228,14 +190,13 @@ export class ShieldWallManager {
   /**
    * R2.18 — a Shield Pylon is undamageable while ANY of its walls is up: route
    * damage aimed at the PYLON BODY into an active wall instead (the same
-   * grid-power model span-crossing shots use, via `onWallHit`). Returns true if
+   * grid-power model wall-crossing shots use, via `onWallHit`). Returns true if
    * ABSORBED (⇒ the pylon takes 0 damage). Iterates ALL walls anchored on the
    * pylon and absorbs at the FIRST active one, so a multi-wall pylon stays
    * protected when any single wall is up. False when no wall is up.
    */
   absorbForPylon(pylonId: string, damage: number, nowMs: number): boolean {
     for (const w of this.walls.values()) {
-      if (w.span >= 0) continue;
       if (w.postA !== pylonId && w.postB !== pylonId) continue;
       if (!this.blocks(w, nowMs)) continue;
       return this.onWallHit(w.id, damage, nowMs);
@@ -248,7 +209,6 @@ export class ShieldWallManager {
    *  `wallsUpFor`; this stays for diagnostics and existing tests. */
   wallStateFor(postId: string, nowMs: number): { otherPost: string; active: boolean } | undefined {
     for (const w of this.walls.values()) {
-      if (w.span >= 0) continue;
       if (w.postA !== postId && w.postB !== postId) continue;
       const other = w.postA === postId ? w.postB : w.postA;
       return { otherPost: other, active: this.up(w, nowMs) };
@@ -257,9 +217,9 @@ export class ShieldWallManager {
   }
 
   /**
-   * An emitter's walls are UP: it has at least one wall (fence walls and, for a
-   * gate, its spans) and every one is powered and not stunned. A gate span's
-   * OPEN state doesn't count — that is a separate wire field. The client draws
+   * An emitter's walls are UP: it has at least one fence wall and every one is
+   * powered and not stunned (a lone gate has none: its gap is a solid door,
+   * not a shield). The client draws
    * and predicts walls from connections + this flag (STRUCTURE_FLAG_WALL_ACTIVE).
    */
   wallsUpFor(id: string, nowMs: number): boolean {
@@ -328,7 +288,6 @@ export class ShieldWallManager {
   removeAll(): void {
     for (const w of this.walls.values()) this.hooks.removeWall(w.id);
     this.walls.clear();
-    this.spanGates.clear();
   }
 
   private byBodyId(wallId: string): WallRecord | undefined {
