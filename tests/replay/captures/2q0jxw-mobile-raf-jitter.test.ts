@@ -31,11 +31,12 @@
  * component of the per-RAF jerk; if that alone clears the lock, we ship;
  * if not, the measured improvement informs the next step.
  *
- * Faithfulness expectation: spiral fix is shipped on the capture's code
- * version, so harness ticksAhead closely matches the on-device 24.
+ * Faithfulness: the on-device lead (24) cannot be replayed since the lead is
+ * sized from the server's `inputMargin`, which this capture predates (see
+ * the PRE-MARGIN check below).
  */
 import { describe, it, expect } from 'vitest';
-import { replayCapture } from '../captureHarness';
+import { replayCapture, HARNESS_START_LEAD_TICKS, leadHeldWithoutMargin } from '../captureHarness';
 import {
   assertNoTeleport,
   assertInputFlowMaintained,
@@ -45,15 +46,22 @@ import {
 
 const CAPTURE_PATH = 'diag/captures/2026-05-21T16-04-16Z-2q0jxw';
 
-const EXPECTED_REPLAY_TICKS_AHEAD = 24;
-
 describe('replay lock — 2q0jxw mobile RAF jitter', () => {
-  it('FAITHFULNESS: replay reproduces on-device ticksAhead within ±5', async () => {
+  // The on-device ticksAhead (24) was sized by the lastRtt sample, which is
+  // blind under the held-input ack. The lead is now sized from the server's
+  // snapshot `inputMargin`, which this capture predates and which can't be
+  // rebuilt from it: its rttMs is that same blind lastRtt, and its server tick
+  // rate drifts 27 ms per snapshot against the phone clock. The old ±5 check
+  // against 24 needs a capture recorded with `inputMargin`.
+  it.todo('FAITHFULNESS: replay reproduces on-device ticksAhead (needs a post-inputMargin capture)');
+
+  it('PRE-MARGIN CAPTURE: nothing but the server margin moves the lead', async () => {
     const trace = await replayCapture(CAPTURE_PATH);
     expect(
-      Math.abs(trace.finalStats.ticksAhead - EXPECTED_REPLAY_TICKS_AHEAD),
-      `harness ticksAhead=${trace.finalStats.ticksAhead}, expected ${EXPECTED_REPLAY_TICKS_AHEAD}.`,
-    ).toBeLessThanOrEqual(5);
+      leadHeldWithoutMargin(trace.finalStats.ticksAhead),
+      `harness ticksAhead=${trace.finalStats.ticksAhead}, start lead ${HARNESS_START_LEAD_TICKS}: ` +
+        `the lead moved with no inputMargin in the capture.`,
+    ).toBe(true);
   });
 
   it('USER CONTRACT — ticksAhead stays bounded (spiral fix still works)', async () => {

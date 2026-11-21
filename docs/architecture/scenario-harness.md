@@ -46,6 +46,7 @@ The harness's `runScenario` mirrors `ColyseusClient.handleSnapshot` and `Colyseu
 - Named profiles live in `gapProfiles.ts`: `lan-clean`, `gap-200`, `gap-400`, `gap-600`, `burst-600-both-streams`, `gap-json-only`, `gap-swarm-only`, `frame-stall-250`, `jitter-4g` (JSON gaps p50 52, p95 91, p99 170 ms from the 4G capture; both streams share the link lag). Same seed, same delivery list.
 - Self-tests: `gapProfiles.test.ts`.
 - Missile fixtures: `gapSmoothing.missiles.test.ts` drives a homing missile through `applyMissileSnapshot` / `resolveMissileDisplayPose` and its target drone through `decodeSwarmPacket` / `interpolateSwarmPose` on each profile, and records today's counts.
+- Capture fixture `capture-2026-11-21` (`fixtures/capture-2026-11-21.json`): the server tick and arrival time of every JSON snapshot logged in the 2026-11-21 4G Android Chrome playtest (~150 s, one segment per join; numbers only), loaded by `loadCaptureFixture` + `captureToDeliveries` in `ondeviceReplay.ts` as one `Delivery` list per join. Self-test: `captureFixture.test.ts`.
 
 ## What the harness does *not* simulate
 

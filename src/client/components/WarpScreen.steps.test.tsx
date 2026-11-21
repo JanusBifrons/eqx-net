@@ -158,8 +158,10 @@ describe('WarpScreen step list', () => {
     expect(bar.getAttribute('data-gates-done')).toBe('7');
     act(() => useUIStore.setState({ arrivalTickFromServer: 1, arrivalAcked: true }));
     expect(screen.getByTestId('warp-screen-status').textContent).toBe('WARP COMPLETE');
-    expect(screen.getByTestId('warp-step-count').textContent).toBe('6 of 6');
+    // Loading lifted: the briefing (count, detail, step list) is unmounted.
+    expect(screen.queryByTestId('warp-step-count')).toBeNull();
     expect(screen.queryByTestId('warp-step-detail')).toBeNull();
+    expect(screen.queryByTestId('warp-steps')).toBeNull();
   });
 
   it('a shipless spectator sees the ship and placing steps done', () => {

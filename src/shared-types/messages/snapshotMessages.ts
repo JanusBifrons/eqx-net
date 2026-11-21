@@ -408,6 +408,8 @@ export interface SnapshotMessage {
    *  full `Record<playerId, number>` to every client, but each client only
    *  reads its own entry, so the rest was O(N²) waste. */
   ackedTick: number;
+  /** THIS recipient's latest input margin, game ticks (`core/physics/inputQueue.ts` `inputLeadMargin`). */
+  inputMargin?: number;
   /** Set of playerIds currently holding boost (shift). Renderer draws an
    *  exhaust trail for each. Absent / empty when nobody is boosting. */
   boostingIds?: string[];

@@ -21,6 +21,7 @@ import { gateDisabledInput, type ControlBits } from '../../core/combat/disable.j
 import type { Client } from 'colyseus';
 import { InputMessageSchema } from '../../shared-types/messages.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
+import { inputLeadMargin } from '../../core/physics/inputQueue.js';
 import { canAfford, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 import type pino from 'pino';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
@@ -35,6 +36,9 @@ export interface InputHandlerCtx {
   thrustingPlayers: Set<string>;
   postToWorker: (cmd: WorkerCmd) => void;
   serverTick: () => number;
+  /** Records each input's lead margin for the pilot's next snapshot
+   *  (`inputLeadMargin`; the client sizes its input lead from it). */
+  noteInputMargin?: (playerId: string, margin: number) => void;
   /** Energy-gate for boost (weapons/energy/AI overhaul §3.1). Returns the
    *  player's current energy pool, or `undefined` if the ship is gone. The
    *  handler strips the boost bit BEFORE forwarding to the worker when the
@@ -75,6 +79,8 @@ export function makeInputHandler(
       return;
     }
     const { tick } = result.data;
+    const serverTick = ctx.serverTick();
+    ctx.noteInputMargin?.(playerId, inputLeadMargin(tick, serverTick));
     const bits = INPUT_BITS;
     bits.thrust = result.data.thrust;
     bits.turnLeft = result.data.turnLeft;
@@ -117,7 +123,6 @@ export function makeInputHandler(
     else ctx.thrustingPlayers.delete(playerId);
     // Diagnostic: log every 30th input plus any input whose claimed tick is
     // far from the current server tick (indicates clock drift).
-    const serverTick = ctx.serverTick();
     const tickDelta = tick - serverTick;
     if ((tick % 30) === 0 || Math.abs(tickDelta) > 5) {
       serverLogEvent('input_received', {
