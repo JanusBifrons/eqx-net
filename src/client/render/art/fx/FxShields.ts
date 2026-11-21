@@ -20,6 +20,7 @@ import type { ArtHandle, ArtService } from '../ArtService.js';
 import { emberTint, envelope, flipFrame, ShieldContacts, ShieldHits, SHIELD_CONTACTS, SHIELD_HITS } from './fxMath.js';
 import { h01 } from './fxTextures.js';
 import { moveKey } from '../../shipRekey.js';
+import { isSegmentInView } from '../../spriteUpdateDecisions.js';
 
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
@@ -195,6 +196,9 @@ const FENCE_HIT_LIFE = 0.45;
 /** Contact "angle" units: 100 world units along the wall. */
 const FENCE_POS_UNIT = 100;
 const MAX_PENDING_BEAMS = 16;
+/** Margin around a fence for the view test: its widest sprite (a hit ripple,
+ *  2.6 bands long) and the post sparks (26 u out) stay inside it. */
+const FENCE_CULL_PAD = FENCE_BAND * 2;
 
 interface FenceView {
   key: number; gen: number; len: number;
@@ -202,6 +206,8 @@ interface FenceView {
   contacts: ShieldContacts; ripples: Sprite[]; held: Sprite[];
   ax: number; ay: number; bx: number; by: number;
   state: 0 | 1 | 2; // 0 down, 1 up, 2 open gate
+  /** Off screen: its sprites are hidden and not laid out. */
+  culled: boolean;
   changedAt: number; prevState: 0 | 1 | 2;
   segs: Sprite[]; posts: Sprite[]; sparks: Sprite[];
 }
@@ -219,6 +225,11 @@ export class FxFences {
   private lastMs = 0;
   /** Fence hits played so far (diagnostics / E2E). */
   hitCount = 0;
+  /** Pixi-space camera rect for this frame (`Camera.visibleBoundsInto`),
+   *  written by the frame pass before `end`; undefined = draw every fence. */
+  viewBounds: Float64Array | undefined = undefined;
+  /** Fences laid out by the last `end` (on screen; perf lock). */
+  laidOut = 0;
   /** Beams resting on fences, buffered until the next layout (the fence
    *  frame runs before the beams are drawn). */
   private readonly pendKey = new Int32Array(MAX_PENDING_BEAMS);
@@ -321,12 +332,22 @@ export class FxFences {
     const contactTex = tex(this.contact)!;
     const frames = this.strip.fx!.frames;
     const frame = frames[Math.floor(t * 10) % frames.length]!;
+    this.laidOut = 0;
     for (const [key, v] of this.views) {
       if (v.gen !== this.gen) { this.hideView(v); this.views.delete(key); this.free.push(v); continue; }
       const dx = v.bx - v.ax, dy = v.by - v.ay, len = Math.hypot(dx, dy) || 1;
       v.len = len;
       const ux = dx / len, uy = dy / len, ang = Math.atan2(dy, dx);
       v.contacts.end(dt);
+      // Off screen: hide its sprites once and skip the layout. Every sprite
+      // below is rewritten from (t, state, hits, contacts) each frame, so it
+      // comes back into view exactly as if it had been drawn all along.
+      if (!isSegmentInView(v.ax, v.ay, v.bx, v.by, FENCE_CULL_PAD, this.viewBounds)) {
+        if (!v.culled) { this.hideSprites(v); v.culled = true; }
+        continue;
+      }
+      v.culled = false;
+      this.laidOut++;
       // Hits: a ripple running along the wall from where the shot landed.
       for (let k = 0; k < FENCE_HITS; k++) {
         const s = v.ripples[k]!;
@@ -415,10 +436,14 @@ export class FxFences {
   destroy(): void { this.container.destroy({ children: true }); }
 
   private hideView(v: FenceView): void {
-    for (const s of v.ripples) s.visible = false;
-    for (const s of v.held) s.visible = false;
+    this.hideSprites(v);
     v.contacts.clear();
     v.hitT.fill(-1e9);
+  }
+
+  private hideSprites(v: FenceView): void {
+    for (const s of v.ripples) s.visible = false;
+    for (const s of v.held) s.visible = false;
     for (const s of v.segs) s.visible = false;
     for (const s of v.posts) s.visible = false;
     for (const s of v.sparks) s.visible = false;
@@ -438,7 +463,7 @@ export class FxFences {
     return {
       len: 1, hitPos: new Float32Array(FENCE_HITS), hitT: new Float32Array(FENCE_HITS).fill(-1e9), hitNext: 0,
       contacts: new ShieldContacts(), ripples, held,
-      key: 0, gen: -1, ax: 0, ay: 0, bx: 0, by: 0, state: 1, changedAt: -1e9, prevState: 1,
+      key: 0, gen: -1, ax: 0, ay: 0, bx: 0, by: 0, state: 1, culled: false, changedAt: -1e9, prevState: 1,
       segs, posts: [mk(glow, 0.5), mk(glow, 0.5)], sparks: [mk(spark, 1), mk(spark, 1), mk(spark, 1), mk(spark, 1)],
     };
   }

@@ -24,6 +24,7 @@
 import type { WelfordState } from '../../src/core/math/Welford';
 import type { LookaheadController } from '../../src/client/net/lookaheadController';
 import type { DropDetector } from '../../src/client/net/snapshotDropDetector';
+import type { PredictionStats } from '../../src/client/net/predictionStats';
 
 /** A single event in the simulated timeline. */
 export type Event =
@@ -50,6 +51,12 @@ export type Event =
        *  i.e. (atMs - the_send_time_of_the_input_being_acked). May be
        *  contaminated by snapshot-delay during a network gap. */
       lastRtt: number;
+      /** Wall time the client sent the latest input the server held when
+       *  it broadcast this snapshot. The runner turns it into the
+       *  snapshot's `inputMargin` with the shared `inputLeadMargin`
+       *  (claim then − `serverTick`), the signal the client sizes its lead
+       *  from. Absent = no input since the last snapshot: the lead holds. */
+      inputSentAtMs?: number;
     };
 
 /** Snapshot of the client clock state after each event step. */
@@ -89,6 +96,10 @@ export interface SimulatedClientState {
    *  and have contaminated `lastRtt`. Skip the Welford push for those.
    *  -1 = no prior snapshot. */
   lastSnapshotAtMs: number;
+  /** Written by the client's `updateRttAndLookahead` (rtt mean/σ). */
+  stats: PredictionStats;
+  /** `inputTick` after each event, for the claim of a past send. */
+  inputTickHistory: Array<{ atMs: number; inputTick: number }>;
 }
 
 // ── Network model: gaps, bursts and frame stalls ──────────────────────────

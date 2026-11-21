@@ -55,8 +55,11 @@ stack, zoom-blur, burst ripple and white arrival flash on `app.stage`) is
   the list marking each step done / current / waiting. `joinGatesDone`
   counts from `joinGateSteps`, so the bar and the list never disagree.
   Right: a CSS-only radar
-  sweep (paused while hidden, off under `prefers-reduced-motion`) whose
-  only blips are the player's own roster hulls in that sector. The
+  sweep (off under `prefers-reduced-motion`) whose only blips are the
+  player's own roster hulls in that sector. The briefing is mounted only
+  while the screen is visible: once loading lifts (or during a trip) only
+  the aria-hidden WARP COMPLETE status label stays, so no stale briefing
+  text, store subscription or sweep lingers in play. The
   sector shown is the stalled trip's target, else the join's room name
   (`sectorKeyFromRoomName`) before `welcome`, else `currentSectorKey`. A
   stall (20 s; 45 s on a trip) adds "Still loading…" and Cancel. No

@@ -36,6 +36,9 @@ import { useUIStore } from '../state/store';
 import type { CollisionGuardState } from './applyCollisionResolved';
 import type { PredictionStats } from './predictionStats';
 
+/** Min wall ms between rolling ring scans (5 s / 30 s windows). */
+export const ROLLING_STATS_INTERVAL_MS = 1000;
+
 export interface SnapshotPerfStatsCtx {
   stats: PredictionStats;
   /** Persistent buffer of recent snapshot intervals (max 10). */
@@ -79,15 +82,19 @@ export function applySnapshotPerfStats(
 
   // perf-floor Phase 1 — rolling RAF / longtask / heap stats. Reads
   // the existing `__eqxLogs` ring (no new producer, no new ring) at
-  // the existing per-snapshot cadence (~20 Hz). Cost is O(ring) per
-  // call ≈ tens of microseconds on desktop.
-  const ring = getRingEntries();
-  const rolling = computeRollingRafStats(ring, now, 5000);
-  ctx.stats.rafP50Ms = rolling.rafP50Ms;
-  ctx.stats.rafP99Ms = rolling.rafP99Ms;
-  ctx.stats.longtaskCount30s = countRecentTagOccurrences(ring, 'longtask', now, 30_000);
-  ctx.stats.rafGapCount30s = countRecentTagOccurrences(ring, 'raf_gap', now, 30_000);
-  ctx.stats.heapUsedMb = readHeapUsedMb();
+  // the snapshot cadence, throttled to ROLLING_STATS_INTERVAL_MS: the
+  // windows are 5 s / 30 s, so a 20 Hz O(ring) rescan bought nothing.
+  const lastScan = ctx.stats.rollingStatsAtMs;
+  if (lastScan === undefined || now - lastScan >= ROLLING_STATS_INTERVAL_MS) {
+    ctx.stats.rollingStatsAtMs = now;
+    const ring = getRingEntries();
+    const rolling = computeRollingRafStats(ring, now, 5000);
+    ctx.stats.rafP50Ms = rolling.rafP50Ms;
+    ctx.stats.rafP99Ms = rolling.rafP99Ms;
+    ctx.stats.longtaskCount30s = countRecentTagOccurrences(ring, 'longtask', now, 30_000);
+    ctx.stats.rafGapCount30s = countRecentTagOccurrences(ring, 'raf_gap', now, 30_000);
+    ctx.stats.heapUsedMb = readHeapUsedMb();
+  }
   // Stage 2 — feed the collision-event stale-guard with the authoritative
   // snapshot tick. Late collision events (worker → main → wire latency)
   // arriving with tick < this value are dropped, since the snapshot has
@@ -96,12 +103,15 @@ export function applySnapshotPerfStats(
 
   // Phase 6 — derive effective server wall-clock tick rate. Snapshot
   // broadcasts every 3 ticks, so tickHz = 3000 / intervalMs. EWMA-smoothed
-  // so single-snapshot jitter doesn't make the chip flicker.
+  // so single-snapshot jitter doesn't make the chip flicker. The EWMA
+  // lives on `stats`; the store gets the whole-Hz value the HUD shows,
+  // so a steady server never re-notifies its subscribers.
   if (intervalMs > 0) {
     const instantHz = 3000 / intervalMs;
-    const prev = useUIStore.getState().serverTickHz;
+    const prev = ctx.stats.serverTickHzEwma ?? useUIStore.getState().serverTickHz;
     const smoothed = prev * 0.8 + instantHz * 0.2;
-    useUIStore.getState().setServerTickHz(smoothed);
+    ctx.stats.serverTickHzEwma = smoothed;
+    useUIStore.getState().setServerTickHz(Math.round(smoothed));
 
     // Adapt the swarm display-delay buffer to the BINARY swarm cadence
     // (Step 4, drone-snapshot-interpolation pivot). `swarmBinaryEwma`

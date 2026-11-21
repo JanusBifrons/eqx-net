@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { StructureRegistry } from './StructureRegistry.js';
 import { StructurePlacementSubsystem } from './StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from './StructureGridSubsystem.js';
-import { hullOverlapsFootprint, type HullCircle } from './blueprintBody.js';
+import { hullOverlapsFootprint, moveParkedHullsClear, type HullCircle } from './blueprintBody.js';
 
 function makeHarness() {
   const registry = new StructureRegistry();
@@ -23,6 +23,7 @@ function makeHarness() {
     clamp: (x, y) => ({ x, y }),
     nextId: () => `s${n++}`,
     registry,
+    shipHulls: () => hulls,
   });
   const grid = new StructureGridSubsystem({
     registry,
@@ -110,6 +111,39 @@ describe('hologram pass-through (server)', () => {
     h.hulls.length = 0;
     h.grid.pulse(1);
     expect(h.solidified).toEqual([bp]);
+  });
+
+  it('a pre-built Capital placed round a ship starts as a hologram and turns solid once clear', () => {
+    const h = makeHarness();
+    h.hulls.push({ x: 0, y: 200, r: 44 }); // inside the 560 × 560 footprint
+    const cap = h.placement.place('p1', 'capital', 0, 0)!;
+    const rec = h.registry.get(cap)!;
+    expect(h.spawns.find((s) => s.id === cap)).toEqual({ id: cap, blueprint: true });
+    expect(rec.isConstructed).toBe(true);
+    expect(rec.ghostBody).toBe(true);
+    h.grid.pulse(0);
+    expect(h.solidified).toEqual([]);
+    h.hulls.length = 0; // the ship leaves
+    h.grid.pulse(1);
+    expect(rec.ghostBody).toBe(false);
+    expect(h.solidified).toEqual([cap]);
+  });
+
+  it('moveParkedHullsClear orders only the parked hulls inside the footprint, as their owner', () => {
+    const orders: Array<[string, string, number, number]> = [];
+    const poses = new Map([['in', { x: 0, y: 250 }], ['out', { x: 0, y: 900 }], ['ownerless', { x: 0, y: 0 }]]);
+    const ships: Record<string, { playerId: string; kind: string }> = {
+      in: { playerId: 'p1', kind: 'fighter' }, out: { playerId: 'p1', kind: 'fighter' }, ownerless: { playerId: '', kind: 'fighter' },
+    };
+    const moved = moveParkedHullsClear({ x: 0, y: 0, radius: 396, halfW: 280, halfH: 280 }, {
+      lingeringPoses: poses,
+      ship: (id) => ships[id],
+      extentOf: () => 44,
+      landingPoint: (_p, x, y) => ({ x, y: y + 100 }),
+      applyOrder: (owner, ids, o) => { orders.push([owner, ids[0]!, o.x, o.y]); return ids; },
+    });
+    expect(moved).toBe(1);
+    expect(orders).toEqual([['p1', 'in', 0, 350]]);
   });
 
   it('hullOverlapsFootprint tests the footprint box against the hull circle', () => {

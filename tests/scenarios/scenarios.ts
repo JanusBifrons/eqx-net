@@ -24,7 +24,10 @@
  * - **`lastRtt`** is `arrivalMs - sendMs` — the value
  *   `Reconciler.lastRtt` would compute. For steady-state snapshots that's
  *   the baseline RTT; for gap-delayed snapshots it's the gap duration
- *   plus residual.
+ *   plus residual. Telemetry only, as in the client.
+ * - **`inputSentAtMs`** drives the lead: the runner turns it into the
+ *   snapshot's `inputMargin` (see `types.ts`), the signal the client sizes
+ *   its input lead from.
  */
 import type { Event } from './types';
 
@@ -97,6 +100,10 @@ export function buildScenarioEvents(scenario: Scenario): Event[] {
       serverTick: b.serverTick,
       ackedTick,
       lastRtt,
+      // The whole `rttMs` sits on the downlink above, so the input the
+      // server held at broadcast left the client at the broadcast time.
+      // Its margin is measured on arrival: a downlink gap never moves it.
+      inputSentAtMs: b.sendMs,
     });
   }
 

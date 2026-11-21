@@ -12,7 +12,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { Room } from 'colyseus.js';
-import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { bootSectorTestServer, withCapitalCrates, type SectorTestHarness } from './harness.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import type { BreakInNotice, CargoState } from '../../../src/shared-types/messages/cargoMessages.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
@@ -97,6 +97,31 @@ describe('SectorRoom integration — ship cargo (C3)', () => {
     expect(moved.ok).toBe(false);
     const state = harness.getServerRoom()!.state as SectorState;
     expect(getHoldStore().get(shipIdOf(state, me))?.hold.goods.alloy).toBe(6);
+  });
+
+  it('your own hold opens from the HUD chip while spectating (hull parked by Command / Quick Launch)', { timeout: 40_000 }, async () => {
+    // Live bug (Sunday-loop film): a fresh Quick Launch lands as a spectator;
+    // the chip read "2 blueprints, 1 packed" but tapping it said "Nothing to open."
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
+    const me = randomUUID();
+    const cr = await harness.connectActive(me, { spawnX: 0, spawnY: 0, initialCargo: withCapitalCrates(1, { goods: { alloy: 3 }, blueprints: [] }) });
+    const replies: CargoState[] = [];
+    cr.onMessage('cargo_state', (m: CargoState) => replies.push(m));
+    const state = harness.getServerRoom()!.state as SectorState;
+    const shipId = shipIdOf(state, me);
+    cr.send('command', { type: 'command' });
+    expect(await until(() => state.ships.get(shipId)?.isActive === false, 5_000), 'the hull parks').toBe(true);
+
+    const own = await ask(cr, replies, 'cargo_query', { ship: me });
+    expect(own.open, own.message).toBe(true);
+    expect(own.own).toBe(true);
+    expect(own.targetShip).toBe(me);
+    expect(own.hold?.goods).toEqual({ alloy: 3 });
+    expect(own.hold?.packed?.length).toBe(1);
+    expect(own.capacity).toBeGreaterThan(0);
+    const moved = await ask(cr, replies, 'cargo_move', { ship: me, dir: 'take', items: { goods: { alloy: 1 } } });
+    expect(moved.ok).toBe(false);
+    expect(getHoldStore().get(shipId)?.hold.goods.alloy).toBe(3);
   });
 
   it('an NPC ship drops only what is left in its hold — what a break-in took never drops again', { timeout: 40_000 }, async () => {
