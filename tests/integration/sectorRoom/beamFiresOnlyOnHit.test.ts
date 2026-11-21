@@ -43,7 +43,9 @@ describe('SectorRoom integration — a turret fires the moment its barrel ray hi
     harness = await bootSectorTestServer({
       sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], capitalWrecks: true,
       lockTimeCapS: 0, traverseTicksCap: 0,
-      dronePoses: [{ kind: 'battlecruiser-lance', x: 5000, y: 0, angle: Math.PI }],
+      // Inside lock range (owner 2026-11-21: ~1 km hull to hull), before and
+      // after the jump below: 3,400 u less both radii (2,621 + 48) = 0.73 km.
+      dronePoses: [{ kind: 'battlecruiser-lance', x: 3400, y: 0, angle: Math.PI }],
     });
     const pid = randomUUID();
     await harness.connectActive(pid, {
@@ -95,7 +97,7 @@ describe('SectorRoom integration — a turret fires the moment its barrel ray hi
     // train back onto it at their REAL rate, firing as their rays touch it.
     r.testTraverseTicksCap = undefined;
     const p = room._internals.playerPose(pid)!;
-    room._internals.postToWorker({ type: 'SET_POSITION', entityId: pid, x: p.x, y: p.y + 2_000, angle: p.angle, vx: 0, vy: 0, angvel: 0 });
+    room._internals.postToWorker({ type: 'SET_POSITION', entityId: pid, x: p.x, y: p.y + 800, angle: p.angle, vx: 0, vy: 0, angvel: 0 });
     await harness.advance(2);
     watch = true;
     fired = 0;
