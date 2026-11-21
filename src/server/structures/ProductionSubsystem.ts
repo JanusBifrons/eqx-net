@@ -6,6 +6,8 @@
  *  1. Start a cycle by taking the recipe's inputs from its NETWORK's storage
  *     (the same-owner storage in its grid component: Capital bank, Cargo Bays,
  *     Freight Docks). All or nothing: a missing input leaves it "starved".
+ *     An idle processor starts only when the grid can take its full draw
+ *     (`canDrawFull`); else it holds a steady "unpowered".
  *  2. Advance one step per powered pulse, times the owner throttle
  *     (`structureWorkRate`: 50% takes twice as long, 0% makes no progress).
  *  3. When the cycle completes, put the outputs into network storage. If they
@@ -64,6 +66,10 @@ export interface ProductionDeps {
   registry: StructureRegistry;
   /** Battery-backed power for a structure's component. */
   powered(id: string): boolean;
+  /** Can the grid take `rec`'s step up to its FULL draw now (`canTakeFullDraw`)?
+   *  An idle processor starts only if so; else it holds "unpowered" rather
+   *  than start, black the grid out, stop and restart every pulse. */
+  canDrawFull?(rec: StructureRecord): boolean;
   /** Ids in the same grid component as `id` (including `id`). */
   componentOf(id: string): readonly string[];
   /** A processor's blueprint changed (a run was spent, or a used-up copy left
@@ -277,7 +283,8 @@ export class ProductionSubsystem {
       rec.prodState = PROD_STATE.needsBlueprint;
       return;
     }
-    if (!this.d.powered(rec.id)) {
+    // Already drawing full, its draw is in the grid's net (`powered` covers it).
+    if (!this.d.powered(rec.id) || (rec.drawFull !== true && this.d.canDrawFull?.(rec) === false)) {
       rec.prodState = PROD_STATE.unpowered;
       return;
     }

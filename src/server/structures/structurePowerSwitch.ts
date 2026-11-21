@@ -9,6 +9,7 @@
  */
 import { canSwitchStructure, normalizeStructureThrottle, structureDraw } from '../../shared-types/structurePower.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { PROD_STATE } from '../../shared-types/production.js';
 import type { StructureRecord } from './StructureRegistry.js';
 
 /** Adjust a grid component's draw by `delta` (`Grid.adjustDraw`, O(1)). */
@@ -45,4 +46,28 @@ export function switchStructure(rec: StructureRecord, on: boolean, adjust: Adjus
   redrawStructure(rec, !on, false, adjust);
   if (on) delete rec.switchedOff; else rec.switchedOff = true;
   return true;
+}
+
+/**
+ * Could `rec` step up from its present draw to its FULL draw now without
+ * browning out its grid? `powered` / `netPower` are its `powerSummaryFor`;
+ * `batteryCharge` is its component's stored charge. The same cover rule as the
+ * grid's battery pass: a deficit is carried while the batteries can meet the
+ * whole per-pulse shortfall. An idle consumer that fails this does not start
+ * (its draw would black out the grid, stop it, and restart it next pulse).
+ */
+export function canTakeFullDraw(rec: StructureRecord, powered: boolean, netPower: number, batteryCharge: number): boolean {
+  if (!powered) return false;
+  const cons = getStructureKind(rec.kind).powerConsumption;
+  const off = rec.switchedOff === true;
+  const stepUp = structureDraw(cons, true, off, rec.throttle) - structureDraw(cons, rec.drawFull === true, off, rec.throttle);
+  const net = netPower - stepUp;
+  return net >= 0 || batteryCharge >= -net;
+}
+
+/** The row's POWERED flag: grid power, unless the structure's own work is
+ *  held for lack of it (`prodState` unpowered while its grid reads powered:
+ *  it can't take on its full draw), so the PWR line and the work line agree. */
+export function structureReadsPowered(rec: StructureRecord, gridPowered: boolean): boolean {
+  return gridPowered && rec.prodState !== PROD_STATE.unpowered;
 }

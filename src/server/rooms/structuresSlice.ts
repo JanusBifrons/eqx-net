@@ -42,6 +42,7 @@ import {
 import { isTeleporterKind } from '../../shared-types/teleport.js';
 import { writeConnToRow, writeStorageFillRow, writeTeleporterRow } from '../structures/structureStateRows.js';
 import { writeRigClipRow } from '../structures/structureRigClip.js';
+import { structureReadsPowered } from '../structures/structurePowerSwitch.js';
 import { writeDoorMotionRow, type GateDoorSource } from './doorMotionRow.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
@@ -146,7 +147,7 @@ export class StructuresSliceSync {
       const hpPct = Math.round((Math.max(0, hp) / hpMax) * 100);
       let flags = 0;
       if (rec.isConstructed) flags |= STRUCTURE_FLAG_BUILT;
-      if (summary.powered) flags |= STRUCTURE_FLAG_POWERED;
+      if (structureReadsPowered(rec, summary.powered)) flags |= STRUCTURE_FLAG_POWERED; // its work held for lack of power reads unpowered
       if (rec.isDeconstructing) flags |= STRUCTURE_FLAG_DECONSTRUCTING;
       if (!isStructureBodySolid(rec)) flags |= STRUCTURE_FLAG_GHOST_BODY; // hologram pass-through
       // Every kind's flags (NOT inside the shield-emitter branch below — they
