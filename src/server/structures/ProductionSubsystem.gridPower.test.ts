@@ -79,7 +79,7 @@ function starterBase(extra: Array<[string, number, number]> = []) {
     prodState: yard.prodState,
     powered: structureReadsPowered(yard, grid.powerSummaryFor(yard.id).powered),
   });
-  return { grid, yard, pulse, readout };
+  return { grid, yard, pulse, readout, registry, capital, build: (kind: string, x: number, y: number) => build(placement.place(OWNER, kind, x, y)) };
 }
 
 describe('a processor on a grid that cannot carry its full draw', () => {
@@ -117,6 +117,27 @@ describe('a processor on a grid that cannot carry its full draw', () => {
     for (let i = 0; i < 10; i++) {
       b.pulse();
       expect(b.readout()).toEqual({ prodState: PROD_STATE.running, powered: true });
+    }
+  });
+});
+
+describe('a Refinery on a starter base (base-loop take F7: the card read UNPOWERED and RUNNING together)', () => {
+  it('holds a steady "No power" its PWR line agrees with, never swinging the grid', () => {
+    const b = starterBase();
+    b.yard.recipe = undefined; // just the Refinery working
+    b.build('connector', 450, -350);
+    const refinery = b.registry.get(b.build('refinery', 900, -350))!;
+    b.registry.topologyDirty = true;
+    refinery.recipe = 'refine_ice_fuel';
+    b.registry.get(b.capital)!.hold = { goods: { ice: 200 }, blueprints: [] };
+    for (let i = 0; i < 12; i++) {
+      b.pulse();
+      const powered = structureReadsPowered(refinery, b.grid.powerSummaryFor(refinery.id).powered);
+      // Never "UNPOWERED" beside "Running", nor a powered row beside "No power".
+      expect(refinery.prodState === PROD_STATE.unpowered).toBe(!powered);
+      // And it holds steady: no start, black-out, stop, restart swing (was +5 / -139).
+      expect(refinery.prodState).toBe(PROD_STATE.unpowered);
+      expect(b.grid.powerSummaryFor(refinery.id).netPower).toBeGreaterThan(0);
     }
   });
 });
