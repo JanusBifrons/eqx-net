@@ -268,10 +268,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setShowServerGhost: (v) => { set({ showServerGhost: v }); persistSettings(get()); },
   setSelectedShipKind: (id) => { set({ selectedShipKind: id }); saveShipKind(activeUserId, id); },
   toggleDevOverlay: () => { set((s) => ({ showDevOverlay: !s.showDevOverlay })); persistSettings(get()); },
-  setShipCount: (n) => set({ shipCount: n }),
-  setSwarmCount: (n) => set({ swarmCount: n }),
-  setClockRate: (n) => set({ clockRate: n }),
-  setServerTickHz: (n) => set({ serverTickHz: n }),
+  setShipCount: (n) => { if (get().shipCount !== n) set({ shipCount: n }); }, // per-snapshot: unchanged = no notify
+  setSwarmCount: (n) => { if (get().swarmCount !== n) set({ swarmCount: n }); },
+  setClockRate: (n) => { if (get().clockRate !== n) set({ clockRate: n }); },
+  setServerTickHz: (n) => { if (get().serverTickHz !== n) set({ serverTickHz: n }); },
   setDevData: (d) => set({
     devData: d,
     correctionRate: d.snapshotCount > 0 ? d.significantCorrectionCount / d.snapshotCount : 0,

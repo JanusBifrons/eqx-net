@@ -106,7 +106,10 @@ export type CanConnectReason =
   | 'too-short'
   /** Phase 5 — a shield-pylon dual-cap violation: a 2nd connector, a 4th pylon,
    *  or a pylon↔non-(connector|pylon) target. */
-  | 'pylon-rule';
+  | 'pylon-rule'
+  /** Owner rule: every free pair's cable would cross a stored cable (fan-outs
+   *  sharing an end and fence links never count; `cableCrossesExisting`). */
+  | 'crosses-cable';
 
 export type CanConnectResult = { ok: true } | { ok: false; reason: CanConnectReason };
 
@@ -288,8 +291,8 @@ function shieldPylonRejection(
  * connector-required, per-kind connection cap, no self / no duplicate; then
  * the 0d cable-socket rule (`pickCableSocketPair`): a facing socket pair in
  * reach (socket to socket), at least `MIN_CABLE_LENGTH` long, whose curved
- * cable crosses nothing. On success the chosen pair goes into the optional
- * scratch `sockets`; on `'too-short'` the refused pair, on `'blocked'`
+ * cable crosses nothing, other cables included. On success the chosen pair goes into the optional
+ * scratch `sockets`; on `'too-short'` / `'crosses-cable'` the refused pair, on `'blocked'`
  * `CABLE_NO_SOCKET` (the build preview draws both red). A fence link (shield
  * emitter to emitter) keeps its straight post-to-post rule (edge range +
  * centre line of sight) and writes `CABLE_NO_SOCKET` for both ends.
@@ -366,7 +369,7 @@ export function canConnect(
   }
   // One cable per stud: the sockets each end's links already hold.
   const usedA = a.usedSockets ?? linkSocketMask(a.id, aConns), usedB = b.usedSockets ?? linkSocketMask(b.id, bConns);
-  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB);
+  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB, adjacency);
   if (refusal !== null) return { ok: false, reason: refusal };
   return { ok: true };
 }

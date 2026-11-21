@@ -117,6 +117,7 @@ export class LeaveHandler {
     d.playerToSession.delete(playerId);
     d.snapshotBroadcaster.onClientLeave(client.sessionId);
     d.snapshotBroadcaster.sabAppliedTicks.delete(playerId);
+    d.snapshotBroadcaster.inputMargins.delete(playerId);
     d.boostingPlayers.delete(playerId);
     d.thrustingPlayers.delete(playerId);
     clearSession(client.sessionId);

@@ -25,6 +25,31 @@ export interface QueuedInput {
   warpY?: number;
 }
 
+/**
+ * Input lead margin — both sides of the wire (#15). The server measures, on
+ * each input's arrival, its claimed tick minus the server tick then
+ * (`inputLeadMargin`) and sends the latest one to that pilot as the snapshot's
+ * `inputMargin`. Negative means the input arrived after its tick, so the held
+ * input stood in for it (quantised heading corrections). The client sizes its
+ * input lead from the latency the margin implies (`inputPathTicks`), the only
+ * honest RTT signal: with the held-ack rule the ack for tick X always arrives
+ * `lead` ticks after X was sent, on time or not, so `lastRtt` cannot see a
+ * late input.
+ */
+export function inputLeadMargin(claimedTick: number, serverTickAtArrival: number): number {
+  return claimedTick - serverTickAtArrival;
+}
+
+/** The room's tick (where the margin is measured) lags the worker's by up to
+ *  a tick, so an input with margin 0 can still miss its step. */
+export const INPUT_MARGIN_SLOP_TICKS = 1;
+
+/** Ticks an input needs to reach the server in time, measured from the lead
+ *  it was sent with (game ticks): the lead the client must keep. */
+export function inputPathTicks(leadGameTicks: number, marginGameTicks: number): number {
+  return leadGameTicks - marginGameTicks + INPUT_MARGIN_SLOP_TICKS;
+}
+
 export interface InputTickResult {
   /** Input to apply to physics this tick. `null` only when both the queue is
    *  empty AND no input has ever been applied for this slot (fresh spawn). */

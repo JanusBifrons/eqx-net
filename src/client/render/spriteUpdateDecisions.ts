@@ -90,6 +90,19 @@ export function isSpriteInView(x: number, y: number, r: number, bounds: Float64A
 }
 
 /**
+ * Is the pixi-space segment (ax, ay)–(bx, by), padded by `pad` on every side,
+ * inside the camera's visible rect (`Camera.visibleBoundsInto`)? Its padded
+ * bounding box against the rect: a long diagonal can count as in view when
+ * only its box is (drawn as before, never a missing fence). Used to stop
+ * animating off-screen shield fences. No bounds ⇒ visible.
+ */
+export function isSegmentInView(ax: number, ay: number, bx: number, by: number, pad: number, bounds: Float64Array | undefined): boolean {
+  if (!bounds) return true;
+  return Math.max(ax, bx) + pad >= bounds[0]! && Math.min(ax, bx) - pad <= bounds[2]!
+    && Math.max(ay, by) + pad >= bounds[1]! && Math.min(ay, by) - pad <= bounds[3]!;
+}
+
+/**
  * Machined art (plan iridescent-seeking-rainbow, A3): should a ship's cached
  * sprite be rebuilt this frame?
  *  - art off, no handle, or the bake failed ⇒ today's vector look;

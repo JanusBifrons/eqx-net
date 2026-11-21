@@ -51,4 +51,33 @@ export abstract class ClientEntityLeafBase implements IClientEntityLeaf {
     s.angvel = ctx.entry.angvel;
     ctx.predWorld.setShipState(ctx.key, s);
   }
+
+  /** predWorld key → the packet pose last written by `reposeIfMoved`. */
+  private readonly _posed = new Map<string, ShipPhysicsState & { valid: boolean }>();
+
+  /** `repose` only when the packet pose differs from the last one written to
+   *  this key (a locked static body never moves on its own). Call
+   *  `forgetPose` whenever the body is (re)spawned. Alloc-free once the key
+   *  has been posed (#14). */
+  protected reposeIfMoved(ctx: ClientSyncCtx): void {
+    const e = ctx.entry;
+    let p = this._posed.get(ctx.key);
+    if (
+      p !== undefined && p.valid && p.x === e.x && p.y === e.y && p.angle === e.angle &&
+      p.vx === e.vx && p.vy === e.vy && p.angvel === e.angvel
+    ) return;
+    if (p === undefined) {
+      p = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, valid: false };
+      this._posed.set(ctx.key, p);
+    }
+    p.x = e.x; p.y = e.y; p.vx = e.vx; p.vy = e.vy; p.angle = e.angle; p.angvel = e.angvel;
+    p.valid = true;
+    this.repose(ctx);
+  }
+
+  /** The body behind `key` was (re)spawned: the next `reposeIfMoved` writes. */
+  protected forgetPose(key: string): void {
+    const p = this._posed.get(key);
+    if (p !== undefined) p.valid = false;
+  }
 }

@@ -23,7 +23,7 @@ import {
   arcWedgeVisualParams,
   isArcLimited,
   type ArcWedgeAngles,
-  builtRangeCircleVisualInto,
+  builtRangeCircleVisualInto, staticScaleKey,
   cometSegment,
   shieldWallVisualParams,
   type ConnectorVisual,
@@ -66,28 +66,7 @@ import {
   asteroidObstaclesFromSwarm,
   RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
-
-/** A pooled, mutable stand-in for a {@link Connection} used ONLY by the placement
- *  preview's `canConnect`/`shieldPylonRejection` calls (which read `getOtherNode`
- *  + the array `.length`). Reused across frames so the per-frame pass allocates
- *  nothing (#14); cast to `Connection` at the adjacency boundary. */
-interface PreviewConn {
-  aId: string;
-  bId: string;
-  getOtherNode(id: string): string | null;
-}
-
-/** Allocate one pooled preview-connection (the only `new` for the pool, paid once
- *  as the pool grows; rewritten in place thereafter). */
-function makePreviewConn(): PreviewConn {
-  return {
-    aId: '',
-    bId: '',
-    getOtherNode(id: string): string | null {
-      return id === this.aId ? this.bId : id === this.bId ? this.aId : null;
-    },
-  };
-}
+import { makePreviewConn, type PreviewConn } from './previewConn.js';
 
 /** 0d slice 7 — one candidate's `canConnect` verdict from the last preview
  *  frame: the server's answer for linking the ghost to structure `id`, with
@@ -142,10 +121,6 @@ export function staticSignature(
   return h;
 }
 
-/** Rebuild the static layer when the zoom has moved more than this fraction
- *  since its last build (its line widths are zoom-dependent). */
-const STATIC_SCALE_TOLERANCE = 0.03;
-
 export class ConnectorRenderer {
   /** Per-frame layer: everything that animates (flow pulses, wall glow and
    *  shimmer, beams, build bars, the placement preview). Cleared every frame. */
@@ -153,8 +128,9 @@ export class ConnectorRenderer {
   /**
    * A3 (plan soft-leaping-truffle v2) — the STATIC layer, drawn BEHIND `gfx`:
    * idle edges, built-turret range rings, up-wall rails and open-iris guides.
-   * Rebuilt only when the structure topology / state signature changes or the
-   * zoom moves past STATIC_SCALE_TOLERANCE, so Pixi stops re-tessellating
+   * Rebuilt only when the structure topology / state signature or the
+   * half-octave zoom key (`staticScaleKey`, flat from 1x in) changes, and
+   * drawn at the key's scale, so Pixi stops re-tessellating
    * every edge of a big base each frame. Measured before the split (citadel,
    * 456 structures, desktop): 0.70 ms median per frame building commands, plus
    * the re-tessellation of every line.
@@ -163,7 +139,7 @@ export class ConnectorRenderer {
   /** Test hook: how many times the static layer has been rebuilt. */
   staticRebuilds = 0;
   private _staticSig = NaN;
-  private _staticScale = 0;
+  private _staticKey = NaN;
   /** Range-ring readouts captured at the last static rebuild. */
   private _staticRingCount = 0;
   private _staticRingRadius = 0;
@@ -420,7 +396,7 @@ export class ConnectorRenderer {
   /**
    * Rebuild the static layer if anything it draws has changed: the structure
    * set and poses, connections, built / walls-up state, the
-   * highlighted turret, or the zoom (past STATIC_SCALE_TOLERANCE). The
+   * highlighted turret, or the zoom key (drawn at the key's scale). The
    * signature is an integer hash walk — far cheaper than drawing.
    */
   private refreshStatic(
@@ -431,12 +407,12 @@ export class ConnectorRenderer {
     // The new fences take over the walls once ready: fold that into the
     // signature so the static rails are rebuilt without them.
     const sig = staticSignature(structures, swarm, this.highlightedStructureId) + (this._fxWallsOn ? 0.5 : 0) + (this.socketCables ? 0.25 : 0);
-    const scaleMoved = this._staticScale === 0 || Math.abs(scale / this._staticScale - 1) > STATIC_SCALE_TOLERANCE;
-    if (sig !== this._staticSig || scaleMoved) {
+    const key = staticScaleKey(scale, this._staticKey);
+    if (sig !== this._staticSig || key !== this._staticKey) {
       this._staticSig = sig;
-      this._staticScale = scale;
+      this._staticKey = key;
       this.staticRebuilds++;
-      this.drawStatic(structures, swarm, scale);
+      this.drawStatic(structures, swarm, Math.pow(2, key / 2));
     }
     this.builtTurretRangeCount = this._staticRingCount;
     this.lastBuiltTurretRangeRadius = this._staticRingRadius;
@@ -746,14 +722,16 @@ export class ConnectorRenderer {
           this._adjPool[poolIdx] = adj;
         }
         adj.length = 0;
-        for (const otherId of st.connTo) {
+        for (let ci = 0; ci < st.connTo.length; ci++) {
           let pc = this._connPool[connPoolIdx];
           if (pc === undefined) {
             pc = makePreviewConn();
             this._connPool[connPoolIdx] = pc;
           }
           pc.aId = sid;
-          pc.bId = String(otherId);
+          pc.bId = String(st.connTo[ci]!);
+          pc.socketA = st.connSockSelf?.[ci] ?? CABLE_NO_SOCKET;
+          pc.socketB = st.connSockOther?.[ci] ?? CABLE_NO_SOCKET;
           adj.push(pc as unknown as Connection);
           connPoolIdx++;
         }
@@ -851,8 +829,8 @@ export class ConnectorRenderer {
         okDists.push(edgeDistance(ghost, node));
         okSockA.push(pick.a);
         okSockB.push(pick.b);
-      } else if (res.reason === 'blocked' || res.reason === 'too-short') { // red; too-short stud to stud (the pick)
-        this.drawPreviewSegment(ax, ay, ghost, pick.a, node, pick.b, res.reason, scale);
+      } else if (res.reason === 'blocked' || res.reason === 'too-short' || res.reason === 'crosses-cable') { // red; too-short / crosses-cable along the pick
+        this.drawPreviewSegment(ax, ay, ghost, pick.a, node, pick.b, res.reason === 'crosses-cable' ? 'blocked' : res.reason, scale);
       }
       // else out-of-range / no-facing-socket / connector-required / full / self / duplicate → not drawn.
     }
