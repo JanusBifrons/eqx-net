@@ -296,7 +296,9 @@ function runCaptureFixture(): DroneFixtureResult[] {
  *  target rises toward the 280 ms ceiling and slews back, so mean lateness
  *  rises and glide-limit holds fall; and for the 250 ms glide limit, S4-1:
  *  gap-400 and gap-600 freeze later and snap less far, with the same snap
- *  count). A change to any is a behaviour change. */
+ *  count); and for the 28-deep ring, S4-3: frame-stall-250's burst now fits
+ *  the ring, so it no longer overwrites unread slots (2 -> 0) and every
+ *  motion number is unchanged). A change to any is a behaviour change. */
 const RECORDED: Record<GapProfileName, DroneFixtureResult> = {
   'lan-clean': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 116.67, maxLatenessMs: 116.67 },
@@ -350,7 +352,7 @@ const RECORDED: Record<GapProfileName, DroneFixtureResult> = {
   'frame-stall-250': {
     straight: { snaps: 1, largestSnapU: 4.71, totalSnapU: 4.71, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 221.83, maxLatenessMs: 324.64 },
     turning: { snaps: 1, largestSnapU: 4.71, totalSnapU: 4.71, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 221.83, maxLatenessMs: 324.64 },
-    overwriteUnread: 2, oldEndClamps: 0, glideLimitHolds: 0,
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
     stampLatenessMeanMs: 7.59, stampLatenessMaxMs: 247.5, maxDelayMs: 274.64, minDelayMs: 100,
     delayStepsOverBound: 0, maxLatenessEstimateMs: 152.47,
   },

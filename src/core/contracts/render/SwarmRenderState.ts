@@ -51,19 +51,24 @@ export interface PoseRingEntry {
  *  2026-05-18T18-56-32-1fc0oe). Locked by the liveness + structural-
  *  invariant tests in `tests/unit/swarmInterpolation.smoothness.test.ts`.
  *
- *  Sizing rule: depth ≥ ceil(ADAPTIVE_DELAY_CEILING_MS / server tick ms)
- *  + 4 headroom (arrival jitter + a late packet not evicting the one
- *  still needed) = ceil(280 / 16.7) + 4 = 21. The ring is read on the
- *  server-tick timeline (tick-stamped samples), so the span is
- *  (depth − 1) × 16.7 ms whatever the packet cadence; the old depth 10
- *  spanned only 150 ms, and any delay above that (adaptive range up to
- *  ADAPTIVE_DELAY_CEILING_MS = 280 in client `swarmInterpolation.ts`)
- *  pinned every drone to its oldest sample (netcode gap-smoothing plan
- *  3.1). The ceiling lives in the client zone, which core may not
- *  import, so this stays a literal; `tests/unit/poseRingDepth.test.ts`
- *  ties the two together. Cheap: 21 small objects per entity,
- *  pre-allocated once, zero per-packet alloc. */
-export const POSE_RING_DEPTH = 21;
+ *  Sizing rule (strengthened, never relaxed): depth ≥ ceil(MAX total
+ *  display delay / server tick ms) + 4 headroom (arrival jitter + a late
+ *  packet not evicting the one still needed). The binding delay is the
+ *  LARGEST the drone read point can ever sit behind, not the steady
+ *  ceiling: 280 ms steady (ADAPTIVE_DELAY_CEILING_MS), up to 400 ms after
+ *  a dropout (owner decision D2, netcode gap-smoothing S4). So
+ *  ceil(400 / 16.7) + 4 = 28, a span of 27 × 16.7 = 450 ms ≥ 400 ms + one
+ *  tick. The ring is read on the server-tick timeline (tick-stamped
+ *  samples), so the span is (depth − 1) × 16.7 ms whatever the packet
+ *  cadence. History: depth 10 spanned only 150 ms and any delay above it
+ *  pinned every drone to its oldest sample (plan 3.1); 21 covered the
+ *  280 ms ceiling but not the 400 ms post-dropout maximum. Raise this
+ *  BEFORE (or with) any change that lets the delay exceed the span. The
+ *  delay constants live in the client zone, which core may not import, so
+ *  this stays a literal; `tests/unit/poseRingDepth.test.ts` ties them
+ *  together. Cheap: 28 small objects per entity, pre-allocated once, zero
+ *  per-packet alloc. */
+export const POSE_RING_DEPTH = 28;
 
 export interface SwarmRenderState {
   /** Latest pose received from the wire. Mirror of `poseRing[ringHead − 1]`'s pose. */
