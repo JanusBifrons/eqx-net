@@ -12,7 +12,7 @@
 import { LOCK_TUNING, lockCapacityFor, sensorFor, NO_PILOT_MODS } from '../../shared-types/combat/lockProfile.js';
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
-import { lineageRekey, rekeyBlockedLine, rekeyUnworkable, splitGroupLocks } from './lockSplit.js';
+import { adoptShipLineage, lineageRekey, rekeyBlockedLine, rekeyUnworkable, splitGroupLocks } from './lockSplit.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { LockPicker } from './lockPick.js';
 import { lockSalvageFlags, refreshLockSalvage, type LockSalvageDeps } from './lockSalvage.js';
@@ -590,7 +590,7 @@ export class LockSubsystem {
         auto.auto = true;
         g.locks.push(auto);
         g.wire.l.push({ t: key, s: LOCK_STAGE_CODE.acquiring, p: 0 });
-      }
+      } else adoptShipLineage(this.deps, ship, playerId, g, p.groups); // a salvage group joins its ship's own LOCKED rock (lockSplit.ts)
     }
     let removed = false;
     for (let i = g.locks.length - 1; i >= 0; i--) {
