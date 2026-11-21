@@ -3,6 +3,8 @@ import { Box, Button, Typography } from '@mui/material';
 import { useIsLoadingActive, useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
 import { logEvent } from '../debug/ClientLogger';
+import { WarpBriefing, WARP_STATUS_SX } from './WarpBriefing';
+import { joinGatesDone } from './sectorBriefing';
 
 /**
  * Thin in-game-language HUD over the Pixi canvas. NOT an overlay
@@ -10,8 +12,11 @@ import { logEvent } from '../debug/ClientLogger';
  * (`setLoadCurtain`), painted on the same canvas as gameplay.
  *
  * Visible when `useIsLoadingActive()` is true (curtain up — initial
- * join / respawn / transit arrival). Shows a single short status
- * label + a CSS-animated 3-dot pulse. Three labels:
+ * join / respawn). While visible it shows the "sector briefing"
+ * (`WarpBriefing`): where you are arriving, who holds it, four live
+ * facts the client already has (galaxy snapshot + roster polls), a
+ * slim bar filled one step per REAL join gate, and a CSS radar sweep.
+ * Under the bar, a short status label:
  *
  *   CONNECTING       — pre-welcome (WS + initial state-diff)
  *   LOADING SECTOR   — bootstrap gates pending (snapshot, first frame,
@@ -41,40 +46,6 @@ const BOX_SX_STATIC = {
   justifyContent: 'center',
   gap: 0.75,
 };
-const STATUS_SX = {
-  color: '#00ff88',
-  fontFamily: 'ui-monospace, "Roboto Mono", monospace',
-  fontSize: 14,
-  letterSpacing: 4,
-  textTransform: 'uppercase' as const,
-  textShadow:
-    '0 0 12px rgba(0, 255, 136, 0.65), 0 0 24px rgba(0, 255, 136, 0.35)',
-};
-// Plan: crispy-kazoo, Commit 9 — animated 3-dot ellipsis replaces
-// the jittery `WARP STABILISATION X%` RAF counter. Pure CSS keyframes
-// driven; zero JS allocation per frame.
-const DOT_SX_BASE = {
-  display: 'inline-block',
-  width: 6,
-  height: 6,
-  mx: 0.4,
-  borderRadius: '50%',
-  bgcolor: '#9aa0b4',
-  animation: 'eqx-warp-dot 1.2s ease-in-out infinite',
-  '@keyframes eqx-warp-dot': {
-    '0%, 80%, 100%': { opacity: 0.25, transform: 'scale(0.85)' },
-    '40%': { opacity: 1, transform: 'scale(1)' },
-  },
-};
-const DOT_SX_1 = { ...DOT_SX_BASE, animationDelay: '0s' };
-const DOT_SX_2 = { ...DOT_SX_BASE, animationDelay: '0.18s' };
-const DOT_SX_3 = { ...DOT_SX_BASE, animationDelay: '0.36s' };
-const DOT_ROW_SX = {
-  minHeight: 10,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-};
 // Pre-cache the two opacity-bearing variants so the most-common render
 // path (opacity 0 in steady state, opacity 1 during warp) reuses a
 // stable sx ref instead of allocating per-render.
@@ -96,31 +67,36 @@ const TRAVEL_STALL_TIMEOUT_MS = 45_000;
 // for in-game touches on mobile — we re-enable the button alone).
 const CANCEL_BUTTON_SX = {
   pointerEvents: 'auto' as const,
-  mt: 2,
-  px: 2,
-  py: 0.5,
+  px: 1.5,
+  py: 0.25,
+  minWidth: 0,
   fontSize: 10,
   letterSpacing: 1,
-  color: '#ff6677',
-  borderColor: 'rgba(255, 102, 119, 0.55)',
+  color: '#cfe3f7',
+  borderColor: 'rgba(207, 227, 247, 0.4)',
   '&:hover': {
-    borderColor: '#ff6677',
-    bgcolor: 'rgba(255, 102, 119, 0.08)',
+    borderColor: '#cfe3f7',
+    bgcolor: 'rgba(207, 227, 247, 0.08)',
   },
 };
+const STALL_ROW_SX = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 1.5,
+  mt: 1.5,
+};
 const STALL_TEXT_SX = {
-  color: '#ffaa55',
-  fontFamily: 'ui-monospace, "Roboto Mono", monospace',
+  color: '#7d93ab',
   fontSize: 11,
-  letterSpacing: 2,
-  textTransform: 'uppercase' as const,
-  mt: 1,
-  maxWidth: 280,
-  textAlign: 'center' as const,
-  pointerEvents: 'auto' as const,
 };
 
-export function WarpScreen(): JSX.Element | null {
+export interface WarpScreenProps {
+  /** The sector the pending join targets (from the join's room name), so
+   *  the briefing can name it before `welcome` sets `currentSectorKey`. */
+  targetSectorKey?: string | null;
+}
+
+export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JSX.Element | null {
   const phase = useUIStore((s) => s.phase);
   const connectionStatus = useUIStore((s) => s.connectionStatus);
   const localShipInstanceId = useUIStore((s) => s.localShipInstanceId);
@@ -143,6 +119,9 @@ export function WarpScreen(): JSX.Element | null {
   // this screen stays hidden during it — unless the trip stalls (below),
   // when it appears with the Cancel button so nobody is stuck flying forever.
   const travelling = useUIStore((s) => s.travelling);
+  const currentSectorKey = useUIStore((s) => s.currentSectorKey);
+  const transitTargetSectorKey = useUIStore((s) => s.transitTargetSectorKey);
+  const gatesDone = useUIStore(joinGatesDone);
 
   // Plan: crispy-kazoo, Commit 8 — stall detection. After
   // LOADING_STALL_TIMEOUT_MS of continuous loading-active, surface the
@@ -225,14 +204,18 @@ export function WarpScreen(): JSX.Element | null {
     statusText = 'WARP COMPLETE';
   }
 
-  // Plan: crispy-kazoo, Commit 9 — replaced the `WARP STABILISATION X%`
-  // 60Hz RAF counter with a CSS-animated 3-dot ellipsis. The X%
-  // counter was the source of the user-reported "jittery loading
-  // text" — it allocated a fresh string for every percentage change
-  // AND was misleading once the loading window dropped to ~3s (it'd
-  // only reach ~60% before curtain drop, leaving an "incomplete"
-  // visual). The ellipsis is purely cosmetic (animation lives in the
-  // sx below), zero JS work per frame.
+  // Which sector the briefing names: a stalled trip's destination; before
+  // `welcome` the join's own target (`currentSectorKey` may still be the
+  // last sector); after it the live `currentSectorKey`.
+  const preWelcome = statusText === 'CONNECTING';
+  const briefingKey =
+    travelling && transitTargetSectorKey !== null ? transitTargetSectorKey
+    : preWelcome ? (targetSectorKey ?? currentSectorKey)
+    : (currentSectorKey ?? targetSectorKey);
+
+  // The progress bar fills one step per REAL join gate done (never a timer).
+  // The old `WARP STABILISATION X%` RAF counter and the 3-dot ellipsis are
+  // gone; everything that moves is CSS (see WarpBriefing).
 
   if (phase !== 'game' && phase !== 'connecting') return null;
 
@@ -244,31 +227,32 @@ export function WarpScreen(): JSX.Element | null {
         data-warp-stalled={stalled ? '1' : '0'}
         sx={visible ? BOX_SX_VISIBLE : BOX_SX_HIDDEN}
       >
-        <Typography data-testid="warp-screen-status" sx={STATUS_SX}>
-          {statusText}
-        </Typography>
-        <Box data-testid="warp-screen-timer" sx={DOT_ROW_SX}>
-          <Box component="span" sx={DOT_SX_1} />
-          <Box component="span" sx={DOT_SX_2} />
-          <Box component="span" sx={DOT_SX_3} />
-        </Box>
-        {stalled && visible && (
-          <>
-            <Typography data-testid="warp-screen-stall-msg" sx={STALL_TEXT_SX}>
-              Taking longer than expected.<br />
-              Check your connection or pick a different sector.
+        <WarpBriefing
+          sectorKey={briefingKey}
+          gatesDone={gatesDone}
+          active={visible}
+          status={
+            <Typography data-testid="warp-screen-status" sx={WARP_STATUS_SX}>
+              {statusText}
             </Typography>
-            <Button
-              data-testid="warp-screen-cancel"
-              variant="outlined"
-              size="small"
-              onClick={handleCancel}
-              sx={CANCEL_BUTTON_SX}
-            >
-              Cancel
-            </Button>
-          </>
-        )}
+          }
+          footer={stalled && visible ? (
+            <Box sx={STALL_ROW_SX}>
+              <Typography data-testid="warp-screen-stall-msg" sx={STALL_TEXT_SX}>
+                Still loading…
+              </Typography>
+              <Button
+                data-testid="warp-screen-cancel"
+                variant="outlined"
+                size="small"
+                onClick={handleCancel}
+                sx={CANCEL_BUTTON_SX}
+              >
+                Cancel
+              </Button>
+            </Box>
+          ) : null}
+        />
       </Box>
     </Slot>
   );

@@ -7,3 +7,4 @@ export function keyCookie(key: string): string;
 export function gateDecision(req: { url?: string; cookie?: string | string[] }, key: string): 'pass' | 'pass+cookie' | 'deny';
 export function parseTunnelUrl(log: string): string | undefined;
 export function resolvePhoneDir(cwd?: string, env?: NodeJS.ProcessEnv): string;
+export function laneServerEnv(runDir: string): { EQX_ENABLE_TEST_ROOMS: string; EQX_TEST_SIGNIN: string; EQX_DIAG_DIR: string };

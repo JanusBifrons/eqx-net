@@ -50,7 +50,7 @@ export class RendererInputController extends RendererCommandRouting {
         e.button ?? 0, e.buttons ?? 0, e.shiftKey === true, e.pointerType ?? 'mouse');
       return;
     }
-    const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, e.stamp);
+    const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, e.stamp, e.pointerType);
     if (wasTap) {
       // Confirmed tap (single pointer, short duration, small distance):
       // route to the registered tap-handler. The worker uses this to
@@ -70,7 +70,7 @@ export class RendererInputController extends RendererCommandRouting {
    * camera's `wasTap` on pointerup; callers decide whether a tap means anything
    * (command view ignores it: the router owns taps there).
    */
-  protected cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number): boolean {
+  protected cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number, pointerType = 'mouse'): boolean {
     switch (type) {
       case 'pointerdown':
         this.camera.onPointerDown(pointerId, x, y, stamp);
@@ -79,7 +79,9 @@ export class RendererInputController extends RendererCommandRouting {
         this.camera.onPointerMove(pointerId, x, y);
         // WS-10 (R2.4) — desktop hover outline. Renderer-local; gated like
         // selection so it never fires over the galaxy layer / during placement.
-        if (!this.galaxyTapSuppressed() && !this._placementActive) {
+        // A finger has no hover: skip the whole-mirror pick on touch moves
+        // (it ran per pinch move on phones).
+        if (pointerType !== 'touch' && !this.galaxyTapSuppressed() && !this._placementActive) {
           this.handleGameplayHover(x, y);
         }
         return false;
@@ -162,7 +164,7 @@ export class RendererInputController extends RendererCommandRouting {
           e.button, e.buttons, e.shiftKey, e.pointerType);
         return;
       }
-      const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, stamp);
+      const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, stamp, e.pointerType);
       // Click-to-inspect (Item B2): a confirmed gameplay tap (not a drag)
       // selects an entity. Gated off the galaxy layer + placement so it
       // never cross-fires. The galaxy `isPanZoomActive` branch above

@@ -2,6 +2,8 @@
 
 Each capture is a **directory** under `diag/captures/<ISO-timestamp>-<id>/`, written by the dev-only `POST /diag/capture` endpoint (`src/server/routes/diagRouter.ts`). The client triggers a capture from Settings → Capture Diagnostic; the body is the contents of `window.__eqxLogs` plus the latest `gameClient.stats`, basic environment info, and the wall-clock client-boot epoch.
 
+`EQX_DIAG_DIR` moves the captures root (`src/server/routes/diagCaptureDir.ts`); the phone lane points it at its `run/captures/` ([phone-link](../ops/phone-link.md#play-evidence-read-this-after-a-play-test)).
+
 The directory layout is purpose-grouped so future analysis starts with a small file and dives into one sibling for the answer — instead of grep-cycling a single 400 KB blob.
 
 ## Layout
@@ -9,6 +11,7 @@ The directory layout is purpose-grouped so future analysis starts with a small f
 ```
 diag/captures/<ts>-<id>/
   summary.json        ← read first
+  frames.ndjson       ← client: perf_summary (phone lane, one line per 10 s)
   perf.ndjson         ← server: tick_hitch, tick_budget, gc_pause
   corrections.ndjson  ← client: correction
   combat.ndjson       ← client: fire, fireRejected, swarm_near_enter/exit

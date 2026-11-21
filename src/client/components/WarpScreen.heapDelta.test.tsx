@@ -69,16 +69,17 @@ describe('WarpScreen — zero JS animation overhead', () => {
     expect(rafCallCount, 'WarpScreen must not schedule any RAF — the ellipsis animation is pure CSS').toBe(0);
   });
 
-  it('renders the timer slot as a stable 3-dot ellipsis (no textContent churn)', () => {
+  it('renders the progress bar and radar with no text (motion is CSS only)', () => {
     render(
       <LayoutContext.Provider value={{ fullscreen: host }}>
         <WarpScreen />
       </LayoutContext.Provider>,
     );
-    const timer = host.querySelector('[data-testid="warp-screen-timer"]');
-    expect(timer).not.toBeNull();
-    // Three child dots, no text. The dots' alpha is CSS-keyframed.
-    expect(timer?.children.length).toBe(3);
-    expect(timer?.textContent).toBe('');
+    const bar = host.querySelector('[data-testid="warp-screen-progress"]');
+    expect(bar).not.toBeNull();
+    expect(bar?.textContent).toBe('');
+    const radar = host.querySelector('[data-testid="warp-briefing-radar"]');
+    expect(radar?.querySelector('.eqx-radar-sweep')).not.toBeNull();
+    expect(radar?.textContent).toBe('');
   });
 });
