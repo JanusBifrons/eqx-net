@@ -403,6 +403,33 @@ their oldest sample. Trails and explosion fades keep the renderer clock. Lock:
 `missileSpriteUpdater.test.ts` (a 5000 ms worker offset draws the
 main-thread-resolved pose).
 
+## Shells read the drone delay before the hold (netcode gap smoothing S5-6a)
+
+Naval shells (`shell-events.md`) are drawn in closed form at a display tick:
+clock anchor minus a delay (`updateProjectilesMirror`, `mirror/worldPasses.ts`).
+They used a fixed 100 game ms, so on jitter-4g a shell was drawn ~106 ms
+earlier than the drone it flies past. They now read the drone delay BEFORE
+the S4-5 stall hold: `getSwarmSteadyDisplayDelayMs()` in `swarmInterpolation.ts`,
+a second record (`_droneSteady`) slewed toward the drone target on the same
+frame step but never held, converted to game ms by `shellDisplayDelayGameMs`
+(`shellDisplayDelay.ts`, × `gameClock.scale`; NaN / 0 / non-finite falls
+back to 100 game ms). In steady play it equals the held drone delay, so
+shells line up with drones; through a drone stream stall the held delay grows
+but the steady one does not, so shells keep flying. Shells run on the main
+thread after `updateSwarmMirror`, so no mirror field is needed. Feeding the
+HELD delay (the parked S5-6 attempt) froze shells 3 / 15 / 15 / 3 frames on
+gap-400 / gap-600 / burst-600-both-streams / gap-swarm-only; a shell's path
+is known, so it never needs the hold. Effect (shell, fixed → steady): 0
+freezes and 0 snaps on every profile except jitter-4g (18 → 13 snaps);
+shell − drone mean lateness lan-clean +14.67 → +14.67 ms, gap-200 −42.31 →
++9.60, gap-400 / gap-swarm-only −59.59 → −18.48, gap-600 / burst-600 −95.33 →
+−63.99, jitter-4g −105.89 → +37.56. The ~+15 ms on a clean link is the clock
+anchor vs the drone tick clock (known, out of scope); the negative numbers in
+the stalls are the drones' hold, not the shell. Locks:
+`shellDisplayDelay.test.ts` (steady ignores the hold at 1×, 2×, 0.7×) and
+`tests/scenarios/gapSmoothing.shells.test.ts` (no added freezes or snaps,
+shell − drone on lan-clean and jitter-4g no worse than recorded).
+
 ## Curve-aware interpolation — `angvel` on the wire (WS-C #5, 2026-06-20)
 
 Missiles ride the 20 Hz JSON snapshot (see "Why JSON snapshot" above), and a

@@ -1,6 +1,7 @@
 import { useUIStore } from '../../state/store.js';
 import { resolvePlacementPreviewStatus } from '../../structures/structurePlacementClient.js';
-import { interpolateSwarmPose, stepSwarmDisplayDelay, DISPLAY_DELAY_MS as SHELL_DISPLAY_DELAY_MS } from '../swarmInterpolation.js';
+import { interpolateSwarmPose, stepSwarmDisplayDelay, getSwarmSteadyDisplayDelayMs } from '../swarmInterpolation.js';
+import { shellDisplayDelayGameMs } from '../shellDisplayDelay.js';
 import { isRemoteMovingSwarmKind } from '../snapshotRemoteSync.js';
 import { slewDisplayMountAngles } from '../displayMountAngles.js';
 import { getShipKind } from '@shared-types/shipKinds';
@@ -181,13 +182,14 @@ export function updateProjectilesMirror(ctx: MirrorPassCtx, frameNowMs: number |
   if (ctx.mirror.projectiles) {
     ctx.ghostManager.update(ctx.gameFrameMs(), ctx.mirror.projectiles);
     // Shells as events (slice 2b): draw salvo shells at the display tick
-    // (server tick estimate minus the remote-entity display delay), and
+    // (server tick estimate minus the drone delay BEFORE the stall hold,
+    // S5-6a: closed-form shells never need the hold), and
     // burst them when the display reaches their hit. At the FRAME's own
     // time (RAF stamp), not `gameClock.now()` (shellFrameTime.test.ts).
     if (ctx.shellEvents) {
       const displayTick = ctx.clockAnchorServerTick
         + (ctx.gameClock.at(frameNowMs ?? ctx.clock.now()) - ctx.clockAnchorPerfNow) / SHELL_TICK_MS
-        - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
+        - shellDisplayDelayGameMs(getSwarmSteadyDisplayDelayMs(), ctx.gameClock.scale) / SHELL_TICK_MS;
       ctx.placeShells(displayTick);
     }
 
