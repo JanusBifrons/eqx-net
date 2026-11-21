@@ -25,6 +25,8 @@ function harness(kindId = 'barge') {
   const masses = new Map<string, number>();
   /** Keys a tractor dish of the ship has no clear line to (`tractorLineClear`). */
   const blocked = new Set<string>();
+  /** Keys a mining-laser emitter of the ship has no clear line to. */
+  const laserBlocked = new Set<string>();
   const deps: LockSubsystemDeps = {
     resolveTarget: (_p, key, out) => {
       const t = targets.get(key);
@@ -49,7 +51,7 @@ function harness(kindId = 'barge') {
         for (const k of targets.keys()) if (root.get(k) === r && !pods.has(k)) out.push(k);
       },
     },
-    tractorLineClear: (_p, key) => !blocked.has(key),
+    tractorLineClear: (_p, key, beam) => !(beam === 'laser' ? laserBlocked : blocked).has(key),
     autoPick: () => null,
     commitHostileAct: () => {},
     refreshHostility: () => {},
@@ -61,7 +63,7 @@ function harness(kindId = 'barge') {
     if (pod) pods.add(key);
   };
   const keys = (gid: string): string[] => locks.wireFor('p1')!.find((g) => g.id === gid)!.l.map((l) => l.t);
-  return { locks, targets, add, keys, masses, blocked };
+  return { locks, targets, add, keys, masses, blocked, laserBlocked };
 }
 
 const rock = (): LockTargetView => ({ x: 600, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 60, hostile: false, terrain: true });
@@ -159,7 +161,7 @@ describe('a salvage lock ends with its lineage, not its piece', () => {
     expect(held.filter((k) => big.includes(k)), 'no tractor lock on a piece too heavy to pull').toEqual([]);
   });
 
-  it('a tractor lock whose line is blocked by another piece moves to a free piece it has a clear line to; the lasers stay (owner 2026-11-18: fixing the line is the pilot\'s job)', () => {
+  it('a tractor lock whose line is blocked by another piece moves to a free piece it has a clear line to; the lasers mind only their own line (owner 2026-11-18: fixing the line is the pilot\'s job)', () => {
     // Seen in the barge-mining take (2026-11-18): with line of sight, a tractor
     // lock on a piece behind a big one pulled the big one, which never comes in.
     const h = harness();
@@ -186,6 +188,31 @@ describe('a salvage lock ends with its lineage, not its piece', () => {
     for (const k of haul) h.blocked.add(k);
     h.locks.step();
     expect(h.keys('tractor'), 'nothing clear to move to: it stays').toEqual(tractors1);
+  });
+
+  it("a mining skiff's one laser lock whose line is blocked by another piece of the rock moves to a free piece it has a clear line to", () => {
+    // Seen in the mining-skiff take: the S laser's one lock sat on a piece
+    // behind another piece of the same rock; the laser held fire on the
+    // blocked line (`BlockedLineHold`) and the rock was never cut again.
+    const h = harness('mining-skiff');
+    h.targets.set('s:1', rock());
+    for (const g of ['laser', 'tractor']) expect(h.locks.forceLock('p1', 's:1', g), g).toBeGreaterThan(0);
+    h.locks.step();
+    const pieces = ['s:13', 's:14', 's:15'];
+    for (const k of pieces) { h.add(k); h.masses.set(k, 1_500); } // tier XL: the S laser cuts them
+    h.locks.targetSplit('s:1', pieces);
+    h.targets.delete('s:1');
+    h.locks.step();
+    const laser0 = h.keys('laser');
+    expect(laser0.length, "one lock (the skiff's capacity)").toBe(1);
+    h.laserBlocked.add(laser0[0]!); // another piece drifts between the emitter and it
+    h.locks.step();
+    const laser1 = h.keys('laser');
+    expect(laser1.length).toBe(1);
+    expect(h.laserBlocked.has(laser1[0]!), 'the laser lock moved to a piece with a clear line').toBe(false);
+    for (const k of pieces) h.laserBlocked.add(k);
+    h.locks.step();
+    expect(h.keys('laser'), 'nothing clear to move to: it stays').toEqual(laser1);
   });
 
   it('a lineage piece it can not track (crossing too fast): the lock idles on the lineage instead of dropping', () => {
