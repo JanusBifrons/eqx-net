@@ -43,6 +43,8 @@ Locks: `galaxy-landing-flow.spec.ts`, `hangarModel.test.ts`, `HangarWindow.test.
 
 ## History
 
+- Join credits (2026-11-21): every pilot is topped up once to 75,000 credits (`JOIN_CREDITS`, was 0), enough to buy a battleship (60,000) from the first Hangar visit. [economy-wallet](economy-wallet.md).
+
 - Quick launch safe start (2026-11-21): Quick launch picked the hot front (Ashfront, robots) every time; a new pilot's parked Fighter was shot within ~20 s and the starter Capital crate was lost for good, so no base could ever start. It now ranks safety (fewest hostiles) first.
 
 - Join flow stage 7 (2026-11-18): Quick launch on the landing map.
