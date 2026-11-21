@@ -11,7 +11,7 @@ import { getGameClient } from '../net/clientSingleton';
 import { sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
 import { decodeGood, effectiveRecipe, isProcessorKind, prodStatusLine, type ProdState } from '@shared-types/production';
 import { RECIPES, type RecipeId } from '@shared-types/recipes';
-import { blueprintLineOf } from './structureSettingsProduction';
+import { blueprintLineOf, lastRunLineOf } from './structureSettingsProduction';
 import { phoneTiny, useInspectorPhoneAttrs } from './inspectorSizes';
 import { gateTypeOf } from '@core/structures/gateGeometry';
 import { GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
@@ -132,6 +132,8 @@ interface PanelData {
   needsBlueprint?: boolean;
   /** P2b — the loaded blueprint ("original" or "N runs", with its quality). */
   blueprintLine?: string;
+  /** The slot is empty while a copy's last run builds (`lastRunLineOf`). */
+  lastRunLine?: string;
   /** Phase 4 WS-A2 — set for an OWNED in-sector lingering hull (the local
    *  player's own parked ship). Drives the in-world "Pilot" action; the value is
    *  the shipInstanceId to `pilot_ship`. Absent for another player's hull / a
@@ -323,7 +325,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       )}
       {data.recipe !== undefined && (data.needsBlueprint || data.blueprintLine !== undefined) && (
         <Box sx={POWER_SX} data-testid="entity-stats-blueprint">
-          {data.blueprintLine ?? 'NO BLUEPRINT LOADED'}
+          {data.blueprintLine ?? data.lastRunLine ?? 'NO BLUEPRINT LOADED'}
         </Box>
       )}
       {data.owner !== undefined && (
@@ -418,7 +420,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
-  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
+  'lastRunLine', 'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
 ];
 
 /** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
@@ -514,8 +516,10 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         data.recipe = effectiveRecipe(subtype, st.recipe);
         data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing), data.recipe);
         data.needsBlueprint = RECIPES[data.recipe].blueprintRequired;
-        const bp = blueprintLineOf(st);
+        const bp = blueprintLineOf(st, data.needsBlueprint);
         if (bp !== undefined) data.blueprintLine = bp;
+        const lastRun = lastRunLineOf(st, data.needsBlueprint);
+        if (lastRun !== undefined) data.lastRunLine = lastRun;
       }
       // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
       // line + the Upgrade affordance. Upgrade is OWN-only, BUILT-only,
