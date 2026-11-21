@@ -180,6 +180,14 @@ view, never the server `StructureRegistry`):
   without a Capital of its own leaves it ownerless; if two players' Capitals
   ever share a piece, the first in registry order takes it. The client build
   preview still draws same-owner links only (follow-up).
+- **An ownerless base's Territory Lock claims nothing** (owner 2026-11-21,
+  "Stops claiming"). A lock owned by `none:` (built or still a blueprint)
+  feeds no side to the control meter (`isLiveTerritoryLock`), never holds
+  (`isHoldingTerritoryLock`), and does not take the sector's one lock slot:
+  `territoryLockRefusal` (`territoryLockRules.ts`) skips it, so another side
+  that holds the sector may build its own lock under the normal rules. Once the
+  base is captured (above) the lock carries the captor's owner and claims and
+  blocks again. Lock: `territoryLockRules.test.ts`.
 - `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
   `CONSTRUCTION_PULSE_AMOUNT`, `REPAIR_*`, `DECONSTRUCTION_RATE_KG`,
   `CAPITAL_STARTING_MINERALS`, `FLASH_DURATION_MS`.
