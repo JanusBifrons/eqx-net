@@ -8,7 +8,7 @@
  * The blueprint slot row sits under the grid. Other processors keep the
  * modal's recipe / count controls.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Box, Tooltip } from '@mui/material';
 import { getShipKind } from '@shared-types/shipKinds';
 import { hullKindOf, type RecipeId } from '@shared-types/recipes';
@@ -18,6 +18,7 @@ import { CostChips } from './CostChips';
 import { hullRecipesFor, type ProductionView } from './structureSettingsProduction';
 import { addIntent, foreverIntent, removeOneIntent, sendQueueIntent, type QueueIntent } from './buildQueueIntent';
 import { sendBlueprintSlot } from '../structures/structureActionsClient';
+import { useHoldPress, type HoldPressHandlers } from './useHoldPress';
 
 const C = HUD.color;
 /** Press this long on a tile to add five. */
@@ -72,27 +73,8 @@ export function BlueprintRow({ entityId, p, labelSx, valueSx, btnSx }: { entityI
 }
 
 /** Tap / hold handlers for one tile: a hold fires once at HOLD_MS and eats the click. */
-function useTapHold(onAdd: (add: number) => void): {
-  onClick: () => void; onPointerDown: () => void; onPointerUp: () => void; onPointerLeave: () => void;
-} {
-  const timer = useRef<number | null>(null);
-  const held = useRef(false);
-  const clear = (): void => { if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null; } };
-  useEffect(() => clear, []);
-  return {
-    onPointerDown: () => {
-      clear();
-      held.current = false;
-      timer.current = window.setTimeout(() => { timer.current = null; held.current = true; onAdd(HOLD_ADD); }, HOLD_MS);
-    },
-    onPointerUp: clear,
-    onPointerLeave: clear,
-    onClick: () => {
-      clear();
-      if (held.current) { held.current = false; return; }
-      onAdd(1);
-    },
-  };
+function useTapHold(onAdd: (add: number) => void): HoldPressHandlers {
+  return useHoldPress(HOLD_MS, () => onAdd(HOLD_ADD), () => onAdd(1)).handlers;
 }
 
 function BuildTile({ recipe, p, onIntent }: { recipe: RecipeId; p: ProductionView; onIntent: (i: QueueIntent) => void }): JSX.Element {
