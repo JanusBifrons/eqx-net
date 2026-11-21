@@ -153,6 +153,11 @@ export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<
 
   const storedId = loadStoredPlayerId();
   const { roomName, extraJoinOptions, prettyName } = buildJoinSpec(roomNameOverride, joinOptionsOverride);
+  // A galaxy join that lands in Command view: the Helm reads Command from the
+  // start, not Fly until the server's arrival flip (`control_mode`) lands.
+  useUIStore.getState().setPendingCommandStart(
+    roomName.startsWith('galaxy-') && extraJoinOptions['startMode'] === 'command',
+  );
 
   await gameClient.connect(SERVER_URL, storedId, keyboard, {
     onConnectionStatus,

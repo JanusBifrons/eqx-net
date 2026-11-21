@@ -44,8 +44,8 @@ export type { SelectionFocusKind } from './storeTypes.js';
  * The player-facing control mode derived from the stored `pilotMode` +
  * `buildMode` (see `ControlMode`). A pure selector, so the names never drift.
  */
-export function selectControlMode(s: Pick<UIStore, 'pilotMode' | 'buildMode'>): ControlMode {
-  return s.buildMode ? 'build' : s.pilotMode === 'spectator' ? 'command' : 'fly';
+export function selectControlMode(s: Pick<UIStore, 'pilotMode' | 'buildMode'> & Partial<Pick<UIStore, 'pendingCommandStart'>>): ControlMode {
+  return s.buildMode ? 'build' : s.pilotMode === 'spectator' || s.pendingCommandStart === true ? 'command' : 'fly';
 }
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
@@ -160,6 +160,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   isDead: false,
   pilotMode: 'pilot',
   buildMode: false,
+  pendingCommandStart: false,
   currentSectorKey: null,
   transitState: 'DOCKED',
   transitProgress: 0,
@@ -277,8 +278,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   }),
   setHealthStats: (s) => set({ healthStats: s }),
   setDead: (dead) => set({ isDead: dead }),
-  // Flying a ship again (welcome) ends Build; picking a structure starts it.
-  setPilotMode: (mode) => set(mode === 'pilot' ? { pilotMode: mode, buildMode: false } : { pilotMode: mode }),
+  // Flying a ship again (welcome) ends Build; any write settles a pending command start.
+  setPilotMode: (mode) => set(mode === 'pilot' ? { pilotMode: mode, buildMode: false, pendingCommandStart: false } : { pilotMode: mode, pendingCommandStart: false }),
+  setPendingCommandStart: (on) => set({ pendingCommandStart: on }),
   setBuildMode: (on) => set({ buildMode: on }),
   setCurrentSectorKey: (key) => set({ currentSectorKey: key }),
   setTransitState: (s) => set({ transitState: s }),
@@ -523,10 +525,7 @@ export function useGameReady(): boolean {
  *   - `phase === 'connecting'` (initial connect, ship swap) → true.
  *   - In game phase but not yet ready → true.
  *   - All other phases (meta / auth / galaxy-map / local) → false.
- *
- * Plan: crispy-kazoo — Commit 4 wires this into the gameRafLoop
- * pause boundary + the App.tsx input/audio gates. Commit 5 wires
- * `useShouldRenderHud` into per-component renders.
+ * Gates the RAF pause boundary, the input/audio gates and `useShouldRenderHud`.
  */
 export function computeIsLoadingActive(s: UIStore): boolean {
   if (s.loadingCosmeticOnly) return false;

@@ -43,7 +43,9 @@ function ownFleet(): void {
 describe('PilotSpectatorToggle — Fly / Command / Build', () => {
   beforeEach(() => {
     resetBuildModeView();
-    useUIStore.setState({ phase: 'game', pilotMode: 'pilot', buildMode: false, placementKind: null, isDead: false, selection: { ids: [], focusId: null, focusKind: null } });
+    // In the sector and controllable (the curtain is down: `loadingCosmeticOnly`
+    // short-circuits the readiness gates; the loading test below clears it).
+    useUIStore.setState({ phase: 'game', loadingCosmeticOnly: true, pendingCommandStart: false, pilotMode: 'pilot', buildMode: false, placementKind: null, isDead: false, selection: { ids: [], focusId: null, focusKind: null } });
     vi.mocked(sendPilotShip).mockReset();
     vi.mocked(sendCommand).mockReset();
   });
@@ -102,6 +104,21 @@ describe('PilotSpectatorToggle — Fly / Command / Build', () => {
     useUIStore.setState({ phase: 'galaxy-map' });
     render(<PilotSpectatorToggle />);
     expect(screen.queryByTestId('pilot-spectator-toggle')).toBeNull();
+  });
+
+  it('renders nothing while the sector is still loading (owner smoke: the Helm showed over the loading screen)', () => {
+    useUIStore.setState({ loadingCosmeticOnly: false, connectionStatus: 'connecting', firstSnapshotApplied: false, arrivalAcked: false });
+    render(<PilotSpectatorToggle />);
+    expect(screen.queryByTestId('pilot-spectator-toggle')).toBeNull();
+  });
+
+  it('a join that lands in Command view shows Command before the server flip (owner smoke: showed Fly, arrived in Command)', () => {
+    useUIStore.getState().setPendingCommandStart(true);
+    render(<PilotSpectatorToggle />);
+    expect(useUIStore.getState().pilotMode).toBe('pilot'); // the server flip has not landed yet
+    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-control-mode', 'command');
+    expect(screen.getByTestId('spectator-toggle')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('pilot-toggle')).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('Command enters command view and hands the ship back to the AI (sends command)', () => {

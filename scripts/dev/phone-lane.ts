@@ -17,7 +17,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import path from 'node:path';
 import { CaptureServers } from '../../showcase/servers.js';
 import { imageOf, reapStale, sleep } from '../../showcase/tools.js';
-import { PHONE_COOKIE, PHONE_PORTS, TUNNEL_METRICS, newKey, parseTunnelUrl, resolvePhoneDir } from './phone-lane-core.mjs';
+import { PHONE_COOKIE, PHONE_PORTS, TUNNEL_METRICS, laneServerEnv, newKey, parseTunnelUrl, resolvePhoneDir } from './phone-lane-core.mjs';
 
 const CLOUDFLARED_URL = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe';
 
@@ -145,7 +145,7 @@ async function up(appDir: string): Promise<void> {
     appDir,
     RUN,
     { ...PHONE_PORTS },
-    { EQX_ENABLE_TEST_ROOMS: '0', EQX_TEST_SIGNIN: '1' },
+    laneServerEnv(RUN),
     {
       vite: { mode: 'preview', outDir: path.join(DIR, 'dist'), env: { EQX_PHONE_KEY: tunnel.key, VITE_PHONE_LANE: '1' } },
       outlive: true,

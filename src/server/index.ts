@@ -38,7 +38,8 @@ import { createWorldHandles } from './boot/worldHandles.js';
 const logger = pino({
   name: 'server',
   transport: process.env['NODE_ENV'] !== 'production'
-    ? { target: 'pino-pretty', options: { colorize: true } }
+    // No colour codes when stdout is a file (the phone lane's run/server.log).
+    ? { target: 'pino-pretty', options: { colorize: process.stdout.isTTY === true } }
     : undefined,
 });
 

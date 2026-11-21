@@ -11,11 +11,12 @@
 import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
 import { mkdir, writeFile, appendFile, readFile, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { resolveCaptureDir } from './diagCaptureDir.js';
 import { captureSchema, streamingBatchSchema } from './captureSchema.js';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
 
-const CAPTURE_DIR = resolve(process.cwd(), 'diag', 'captures');
+const CAPTURE_DIR = resolveCaptureDir();
 // 64 MB ceiling. Dev-only diagnostic capture: the client log ring is up
 // to 30000 entries when `?diag=1` (ClientLogger `DIAG_MAX_ENTRIES`,
 // raised so the sparse `transit_mark` rows survive a warp-out + Capture
@@ -188,6 +189,9 @@ const BUCKETS: Record<string, string> = {
   // Phase 1b — fix surfaces every drone warp event so we can correlate
   // its renderer cost with RAF stalls in the same capture window.
   warp_event: 'other',
+  // Phone-lane frame-time summary, one line per 10 s (laneFrameSummary.ts):
+  // its own small file so a stutter report starts with one short read.
+  perf_summary: 'frames',
   // high-volume per-frame noise
   rafTick: 'raf',
   inputSent: 'raf',
@@ -204,7 +208,7 @@ const BUCKETS: Record<string, string> = {
   local_pose_rendered: 'raf',
 };
 
-const ALL_BUCKETS = ['perf', 'corrections', 'combat', 'lifecycle', 'population', 'snapshots', 'raf', 'other'] as const;
+const ALL_BUCKETS = ['frames', 'perf', 'corrections', 'combat', 'lifecycle', 'population', 'snapshots', 'raf', 'other'] as const;
 type BucketName = typeof ALL_BUCKETS[number];
 
 // `captureSchema` + `DIAG_CAPTURE_MAX_LOG_ENTRIES` live in
@@ -481,7 +485,7 @@ diagRouter.post('/capture', async (req: Request, res: Response) => {
 
   // Bucket and write NDJSON siblings.
   const buckets: Record<BucketName, RoutedEntry[]> = {
-    perf: [], corrections: [], combat: [], lifecycle: [], population: [], snapshots: [], raf: [], other: [],
+    frames: [], perf: [], corrections: [], combat: [], lifecycle: [], population: [], snapshots: [], raf: [], other: [],
   };
   for (const e of entries) buckets[routeBucket(e.tag)].push(e);
 
