@@ -127,6 +127,22 @@ function synthesizeSnapshot(playerId: string, ev: SnapshotEventData): SnapshotMe
   } as unknown as SnapshotMessage;
 }
 
+/** The lead the replay starts at (the production default at construction).
+ *  The lead is sized only from the server's snapshot `inputMargin`; captures
+ *  recorded before that field existed carry none, so on them the lead holds
+ *  here for the whole replay (`leadHeldWithoutMargin`). */
+export const HARNESS_START_LEAD_TICKS = 5;
+
+/** Pre-margin capture check: with no `inputMargin` in the capture, nothing may
+ *  move the lead, so final ticksAhead stays within `slack` of the start lead.
+ *  A replay that drifts far above it means something other than the server
+ *  margin is sizing the lead again, such as the blind lastRtt sample #1099
+ *  removed (it took these replays to 16 and 24 ticks). */
+export function leadHeldWithoutMargin(finalTicksAhead: number, slack = 3): boolean {
+  return finalTicksAhead >= HARNESS_START_LEAD_TICKS - slack
+    && finalTicksAhead <= HARNESS_START_LEAD_TICKS + slack;
+}
+
 export interface ReplayOptions {
   /** Hard cap on synthesised rafTicks per inter-snapshot gap so a
    *  multi-second pause doesn't try to spin millions of frames. */
@@ -187,7 +203,7 @@ export async function replayCapture(
   internals._anchorInitialised = true;
   internals.inputTick = cap.welcome.serverTick;
   internals.localDead = false;
-  internals.leadTicks = 5; // production default at construction
+  internals.leadTicks = HARNESS_START_LEAD_TICKS;
   internals.lastFrameMs = 16.67;
 
   // 4. Bootstrap mirror.ships entry from the first snapshot's serverX/Y
