@@ -134,7 +134,8 @@ export type PilotMode = 'pilot' | 'spectator';
  * view through `selectControlMode` and never store it twice. Normal galaxy play
  * starts in `command`: the join's `startMode` decides it, and the server flips
  * the client at the arrival flip (`control_mode`). Before a join the store
- * holds `fly` (`pilotMode = 'pilot'`), which the ship-bound readiness gate needs.
+ * holds `fly` (`pilotMode = 'pilot'`), which the ship-bound readiness gate needs;
+ * a command-view join sets `pendingCommandStart` so the view reads `command` meanwhile.
  */
 export type ControlMode = 'fly' | 'command' | 'build';
 
@@ -253,6 +254,10 @@ export interface UIStore {
   pilotMode: PilotMode;
   /** Build mode, the third control mode (over a `spectator` pilotMode). */
   buildMode: boolean;
+  /** This join asked to land in Command view (`startMode: 'command'`) and the
+   *  server's arrival flip (`control_mode`) has not landed yet: the Helm reads
+   *  Command from the start. Any `setPilotMode` clears it. */
+  pendingCommandStart: boolean;
   /** Phase 8 — stable galaxy sector key the player is currently in (set
    *  from the welcome message), or null in engineering rooms. */
   currentSectorKey: string | null;
@@ -524,6 +529,7 @@ export interface UIStore {
    *  mode. WS-A1 wires the death transition + the speed-dial toggle. */
   setPilotMode: (mode: PilotMode) => void;
   setBuildMode: (on: boolean) => void;
+  setPendingCommandStart: (on: boolean) => void;
   setCurrentSectorKey: (key: string | null) => void;
   setTransitState: (s: TransitState) => void;
   setTransitProgress: (p: number) => void;
