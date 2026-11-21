@@ -246,12 +246,16 @@ view, never the server `StructureRegistry`):
   (`Builder.bastion`). Locks: `canConnectSockets.test.ts`,
   `structureLevel.test.ts`, `growBuilder.test.ts`, `growBase.test.ts`.
 - **Minimum cable length** (owner rule "keep buildings apart"):
-  `MIN_CABLE_LENGTH = 56` u, stud to stud. 56 = a 1× cable's two collars
-  (6 u each) plus the short-run span (44 u, `connectorLineLooks.ts` draws
-  collars only below it), so the shortest cable still shows a lashing and
-  some bundle; the cable look reads the same constant. `pickCableSocketPair`
-  skips a pair under it and takes the next longer free facing pair; with none,
-  `canConnect` refuses `'too-short'` and writes the refused pair to the pick
+  `MIN_CABLE_LENGTH = 67` u, measured footprint box EDGE to box edge
+  (`edgeDistance`), never stud to stud (a far stud pair used to let two boxes
+  nearly touch). It comes from the cable art (`structureGridConstants.ts`):
+  `CABLE_BODY_WIDTH` (12 u, the bundle's width, which is also the two end
+  collars' half-width insets) plus `CABLE_STATION_PITCH` (55 u, the spacing
+  of the cradles along a cable), so the shortest gap holds one clear cable
+  section. `connectorLineLooks.ts` draws with the same two constants
+  (`BASE_W.cable`, `CABLE_PITCH`). The rule is per link, not per socket pair:
+  boxes under 67 u apart refuse every pair with `'too-short'`, and
+  `canConnect` writes the nearest facing pair to the pick
   (a connector end still uses a face turned toward the partner, so the cable
   never runs back across its own hub). Fence links (post to post,
   `CABLE_NO_SOCKET`) are exempt. The build preview draws a too-short link red,
@@ -259,11 +263,13 @@ view, never the server `StructureRegistry`):
   "Can't connect: too close" (`RendererFeedback.placementPreviewTooShortCount`
   → `placementHints.ts`, `PlacementLinkHint`). The base generator stands each
   leaf its `linkGap` off its connector (the smallest gap the real rule
-  links, `growBuilder.ts`); the stress lattice uses the full 56 u.
+  links, `growBuilder.ts`), places spine and bastion relays at least a cable
+  length clear of the box they link from, and relays the huge kind's spine
+  run (`Builder.reachOut`); the stress lattice uses `MIN_CABLE_LENGTH`.
   Locks: `minCableLength.test.ts`,
   `ConnectorRenderer.tooShortPreview.test.ts`, `placementHints.test.tsx`,
   `growBase.test.ts` (minimum cable length).
-- **Cables never cross (owner rule).** `pickCableSocketPair`, given the adjacency (`canConnect` passes it), skips a socket pair whose curve crosses any stored cable (`cableCrossesExisting`, `cableCurve.ts`) and refuses `'crosses-cable'` when none is left ("Can't link: crosses another cable"; the build preview draws it red along the refused pair). Every owner's cables count, as every owner's buildings block a cable. Links sharing an end with the new one (a fan-out) and shield-fence links (emitter post to post: walls, not cables; a new fence link is not checked either) are skipped; touching through a vertex counts, collinear overlap does not. Each stored link is box-tested (both ends padded by `CABLE_TAIL_MAX`) before it is flattened; no cache (`CABLE_CROSS_STATS` counts links flattened and segment tests). Auto-connect simply moves on to the next candidate. Existing crossings on old saves stay. Generated bases had none (output unchanged). Locks: `cableCrossing.test.ts`, `structureGridView.test.ts`, `ConnectorRenderer.placementPreview.test.ts`.
+- **Cables never cross (owner rule).** `pickCableSocketPair`, given the adjacency (`canConnect` passes it), skips a socket pair whose curve crosses any stored cable (`cableCrossesExisting`, `cableCurve.ts`) and refuses `'crosses-cable'` when none is left ("Can't link: crosses another cable"; the build preview draws it red along the refused pair). Every owner's cables count, as every owner's buildings block a cable. "Cross" means coming within `CABLE_BODY_WIDTH` (one cable's drawn width) of a stored cable anywhere along both curves (`polylinesWithin`, `cableClearance.ts`), so a crossing, a collinear overlap and two cables drawn on top of each other all refuse. Fan-outs (links sharing an end with the new one) count too: they part at their own sockets, so a fan-out cable that runs along a sibling is refused. Only shield-fence links (emitter post to post: walls, not cables; a new fence link is not checked either) are skipped. Each stored link is box-tested (both ends padded by `CABLE_TAIL_MAX`, plus the clearance) before it is flattened; no cache (`CABLE_CROSS_STATS` counts links flattened and segment tests). Auto-connect simply moves on to the next candidate. Existing crossings on old saves stay. Generated bases pass the rule (`BASE_GROWTH_VERSION` 23). Locks: `cableCrossing.test.ts`, `cableOverlap.test.ts`, `structureGridView.test.ts`, `ConnectorRenderer.placementPreview.test.ts`.
 
 **Server** (`src/server/structures/`):
 - `StructureRegistry` carries the connection adjacency (+ flat conn map),
@@ -913,5 +919,6 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 ## History
 
+- **Cables no longer overlap; minimum length is edge to edge.** In a fresh Sol Prime base two cables were drawn on top of each other: the crossing check skipped every fan-out (links sharing an end), a connector let two cables share a socket, and a collinear overlap did not count as a crossing. Cables now keep a cable body width apart, fan-outs included (`polylinesWithin`), alongside one cable per connector socket. `MIN_CABLE_LENGTH` went from 56 u stud to stud to 67 u box edge to box edge, derived from the cable art (`CABLE_BODY_WIDTH` + `CABLE_STATION_PITCH`). Base generator 22→23.
 - **Every link goes through a Connector.** `canConnect` used to need only ONE end to be `isHub`, so a solar could plug straight into a shipyard, deep-core rig, ore processing complex or assembly plant. Now one end must be a Connector (`connector-required`); shield emitter↔emitter links are unchanged. Generated bases already linked every leaf to a Connector (output unchanged).
 - **Structure rotation reaches the physics body.** `SwarmSpawner` forwards the spawn angle for structures (kind 2) as well as scrap, and primes the SAB angle. (It used to forward it for scrap only, so rotated structures collided and drew at 0° — locked by `structureRotation.test.ts`.)

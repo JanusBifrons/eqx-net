@@ -556,13 +556,17 @@ export const BASE_FLOW_OPTS = {
     ...baseFlowArm(1),
     ...baseFlowArm(-1),
     { kind: 'connector', x: 470, y: 0 },
+    // The relay before its flanking Solars: their cables fan out from the
+    // first connector, and the spine must stay a cable width clear of them.
+    { kind: 'connector', x: 1000, y: 0 },
     { kind: 'solar', x: 800, y: -450, rot: 90 },
     { kind: 'solar', x: 800, y: 450, rot: 90 },
-    { kind: 'connector', x: 1000, y: 0 },
-    // The end Solar first: it needs an east face (one cable per connector socket).
-    { kind: 'solar', x: 1700, y: 0, rot: 90 },
-    { kind: 'solar', x: 1300, y: -450, rot: 90 },
+    // The end Solar first, a little below the axis so it takes the lower east
+    // face (one cable per connector socket); the upper flank's cable then has the
+    // upper east face, a cable width clear of it.
+    { kind: 'solar', x: 1700, y: -40, rot: 90 },
     { kind: 'solar', x: 1300, y: 450, rot: 90 },
+    { kind: 'solar', x: 1300, y: -450, rot: 90 },
   ],
   prebuiltStructuresOwner: 'perf-base',
   /** One rock beside each Miner (≈ 460 u, inside its 800 u range). */
@@ -581,7 +585,7 @@ const loop = (kind: string, x: number, y: number, more?: { rot?: number; recipe?
   ({ kind, x: BASE_LOOP_AT.x + x, y: BASE_LOOP_AT.y + y, ...more });
 export const BASE_LOOP_OPTS = {
   prebuiltStructures: [
-    loop('capital', 0, 0, { rot: 90 }), loop('connector', 0, 350), loop('connector', 0, -350), loop('connector', 420, 0),
+    loop('capital', 0, 0, { rot: 90 }), loop('connector', 0, 380), loop('connector', 0, -380), loop('connector', 420, 0),
     loop('solar', 450, 500), loop('solar', -450, 500), loop('solar', 450, -500),
     loop('shipyard', 1000, 0, { recipe: 'build_interceptor' }),
     loop('refinery', -450, -600), loop('connector', 0, -950), loop('cargo_bay', -400, -1100),

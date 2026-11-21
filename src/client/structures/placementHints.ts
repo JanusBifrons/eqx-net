@@ -4,7 +4,7 @@
  *  - `placement-fence-hint`: a shield wall lies in a turret ghost's range
  *    (`turretFireCrossesWall`).
  *  - `placement-link-hint`: "Can't connect: too close" — the ghost would make
- *    no link and at least one was refused `'too-short'` (stud to stud under
+ *    no link and at least one was refused `'too-short'` (box edge to box edge under
  *    `MIN_CABLE_LENGTH`; owner rule "keep buildings apart"). The renderer's
  *    preview pass counts those (`RendererFeedback.placementPreviewTooShortCount`)
  *    with the same `canConnect` the server runs, and draws each one red.

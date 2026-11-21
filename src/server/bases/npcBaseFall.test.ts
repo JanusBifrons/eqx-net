@@ -44,9 +44,9 @@ function npcBase() {
     broadcastBeam: () => {},
   });
   const capital = placement.place(NPC, 'capital', 0, 0, { rot: 180 })!;
-  const relay = placement.place(NPC, 'connector', 0, 350)!;
+  const relay = placement.place(NPC, 'connector', 0, 380)!;
   const solar = placement.place(NPC, 'solar', 450, 500)!;
-  const turret = placement.place(NPC, 'turret', -130, 400)!;
+  const turret = placement.place(NPC, 'turret', -170, 420)!;
   const bay = placement.place(NPC, 'cargo_bay', 0, 900)!;
   for (const id of [relay, solar, turret, bay]) {
     const r = registry.get(id)!;

@@ -37,7 +37,7 @@ function poweredTurretBase() {
     nextId: () => `s${counter++}`,
     registry,
   });
-  const drone = { id: 'swarm-3', entityId: 3, x: -130, y: 900 };
+  const drone = { id: 'swarm-3', entityId: 3, x: -170, y: 920 };
   const grid = new StructureGridSubsystem({
     registry,
     getHealth: (id) => health.get(id) ?? 0,
@@ -51,14 +51,14 @@ function poweredTurretBase() {
   });
   grid.setInstantTurretLocks(true);
   placement.place(OWNER, 'capital', 0, 0, { rot: 180 });
-  const relay = placement.place(OWNER, 'connector', 0, 350)!;
+  const relay = placement.place(OWNER, 'connector', 0, 380)!;
   const r = registry.get(relay)!;
   r.isConstructed = true;
   r.constructionProgress = r.constructionCost;
   health.set(relay, getStructureKind('connector').maxHealth);
   registry.topologyDirty = true;
   placement.place(OWNER, 'solar', 450, 500);
-  const turret = placement.place(OWNER, 'turret', -130, 400)!;
+  const turret = placement.place(OWNER, 'turret', -170, 420)!;
   let now = 0;
   for (let i = 0; i < 120; i++) grid.pulse(now += 1000);
   expect(registry.get(turret)!.isConstructed).toBe(true);

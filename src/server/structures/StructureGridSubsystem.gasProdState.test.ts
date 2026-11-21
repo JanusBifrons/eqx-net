@@ -39,14 +39,14 @@ function gasBase() {
     depositGoods: (_rec, _good, n) => { deposits.push(n); return n; },
   });
   placement.place(OWNER, 'capital', 0, 0, { rot: 180 });
-  const relay = placement.place(OWNER, 'connector', 0, 350)!;
+  const relay = placement.place(OWNER, 'connector', 0, 380)!;
   const r = registry.get(relay)!;
   r.isConstructed = true;
   r.constructionProgress = r.constructionCost;
   health.set(relay, getStructureKind('connector').maxHealth);
   registry.topologyDirty = true;
   placement.place(OWNER, 'solar', 450, 500);
-  const gas = placement.place(OWNER, 'gas_collector', -200, 450)!;
+  const gas = placement.place(OWNER, 'gas_collector', -250, 450)!;
   let now = 0;
   const pulse = () => grid.pulse(now += 1000);
   for (let i = 0; i < 120; i++) pulse();

@@ -379,6 +379,7 @@ export function pickCableSocketPair(
   usedA = 0,
   usedB = 0,
   adjacency?: ReadonlyMap<string, readonly Connection[]>,
+  skip?: Connection,
 ): CanConnectReason | null {
   const la = structureSockets(a.kind);
   const lb = structureSockets(b.kind);
@@ -436,7 +437,7 @@ export function pickCableSocketPair(
     endB.x = bx[j]!; endB.y = by[j]!; endB.nx = bNx[j]!; endB.ny = bNy[j]!;
     flattenCableCurve(endA, aAny, endB, bAny, pickPoly, pickBox);
     if (isCablePolylineBlocked(a, b, pickPoly, pickBox, nodes, obstacles)) continue;
-    if (adjacency !== undefined && cableCrossesExisting(a, b, pickPoly, pickBox, adjacency, nodes)) {
+    if (adjacency !== undefined && cableCrossesExisting(a, b, pickPoly, pickBox, adjacency, nodes, skip)) {
       if (crossI === CABLE_NO_SOCKET) { crossI = i; crossJ = j; }
       continue;
     }
@@ -525,8 +526,9 @@ function linkMayReach(n: GridNode, o: GridNode, box: CableBox, pad: number): boo
  * count, as every owner's buildings block a cable. A link sharing an end with
  * the new one (a fan-out) counts too: on a socket-bound end its stud differs,
  * and a connector's faces sit more than a body width apart, so only a cable
- * leaving along the same path (the same connector face) clashes. Fence links
- * and links with an end missing from `nodes` are skipped. Each link is
+ * leaving along the same path (the same connector face) clashes. Fence links,
+ * links with an end missing from `nodes`, a link joining `a` and `b` itself
+ * (its cable being re-picked) and `skip` (a link being moved) are skipped. Each link is
  * visited once (from its lower-id end; `adjacency` lists a link under both
  * ends), box-tested before it is flattened. Allocation-free.
  */
@@ -537,6 +539,7 @@ export function cableCrossesExisting(
   box: CableBox,
   adjacency: ReadonlyMap<string, readonly Connection[]>,
   nodes: ReadonlyMap<string, GridNode>,
+  skip?: Connection,
 ): boolean {
   const pad = CABLE_BODY_WIDTH;
   for (const id of adjacency.keys()) {
@@ -545,6 +548,9 @@ export function cableCrossesExisting(
       const link = conns[c]!;
       const other = link.getOtherNode(id);
       if (other === null || other < id) continue;
+      // By ends, not identity: the build preview lists one link as two objects.
+      if ((id === a.id && other === b.id) || (id === b.id && other === a.id)) continue;
+      if (skip !== undefined && ((id === skip.aId && other === skip.bId) || (id === skip.bId && other === skip.aId))) continue;
       const n = nodes.get(id), o = nodes.get(other);
       if (n === undefined || o === undefined || isFenceLink(n, o) || !linkMayReach(n, o, box, pad)) continue;
       CABLE_CROSS_STATS.links++;
