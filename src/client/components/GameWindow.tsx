@@ -4,8 +4,9 @@
  * in the HUD's palette (hud/tokens.ts), plus the parts its content draws: the
  * header (name, chips, ✕), the footer and its buttons.
  *
- * Used by the loot window (LootWindow.tsx, whose content is CargoPanel) and
- * the building settings window (StructureSettingsModal.tsx). A new full-screen
+ * Used by the loot window (LootWindow.tsx, whose content is CargoPanel); the
+ * building settings side panel (StructureSettingsModal.tsx, on SidePanel.tsx)
+ * reuses its header / footer parts and open notice. A new full-screen
  * game window builds on this, never on a copy of it.
  */
 import { useEffect, type ReactNode } from 'react';
@@ -61,6 +62,11 @@ export function onGameWindowOpen(fn: () => void): () => void {
   openListeners.add(fn);
   return () => { openListeners.delete(fn); };
 }
+/** Tell the {@link onGameWindowOpen} listeners a game window or panel opened
+ *  (GameWindow below, and the building settings side panel). */
+export function notifyGameWindowOpen(): void {
+  for (const fn of openListeners) fn();
+}
 
 export interface GameWindowProps {
   open: boolean;
@@ -74,7 +80,7 @@ export function GameWindow({ open, onClose, testId, children }: GameWindowProps)
   // The HUD's phone check: coarse pointer and short side < 500 px (a sideways phone too).
   const phone = useHudSize() === 'phone';
   useEffect(() => {
-    if (open) for (const fn of openListeners) fn();
+    if (open) notifyGameWindowOpen();
   }, [open]);
   return (
     <Dialog
