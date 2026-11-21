@@ -37,7 +37,7 @@ const FLOOR_TICKS = 3;
 /** Maximum lookahead — past 30 ticks (500 ms) the prediction is so far
  *  ahead of authoritative state that any meaningful drift would already
  *  be unrecoverable; further extension just speculates wider. */
-const CEILING_TICKS = 30;
+export const CEILING_TICKS = 30;
 /** Spring half-life for lookahead transitions — 100 ms gives ~200 ms
  *  total settle, which is fast enough to track real RTT shifts (e.g.
  *  cellular handover) and slow enough to not visibly jerk on noise. */
