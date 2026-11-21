@@ -15,9 +15,12 @@
  * together with the new link. Same code on the server and the build preview
  * (#15). Allocation-free.
  */
-import type { Connection } from './Connection.js';
+// CABLE_NO_SOCKET from Connection, never via cableCurve's re-export: this
+// module sits on the cableCurve -> Grid -> socketReseat cycle and reads it at
+// load time (structureGridLoadOrder.test.ts).
+import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
 import {
-  CABLE_CROSS_STATS, CABLE_CURVE_FLOATS, CABLE_CURVE_SEGMENTS, CABLE_NO_SOCKET, flattenLinkCable,
+  CABLE_CROSS_STATS, CABLE_CURVE_FLOATS, CABLE_CURVE_SEGMENTS, flattenLinkCable,
   pickCableSocketPair, type CableBox, type CableSocketPick,
 } from './cableCurve.js';
 import { polylinesWithin } from './cableClearance.js';
