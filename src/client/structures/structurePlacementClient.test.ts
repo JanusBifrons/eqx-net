@@ -11,9 +11,12 @@ import {
   type PlacementPreview,
   cyclePlacementRotation,
   setPlacementRotationDeg,
+  getPlacementMirror,
+  setPlacementMirror,
 } from './structurePlacementClient.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { placementChosen, resetPlacementChosen } from './placementChosen.js';
+import { ghostToGridNode, blankGridNode } from './mirrorToGridNode.js';
 
 // Mock the game-client singleton so commitChosenPlacement's send path is
 // observable (placeStructureAt → room.send; placeStructureAhead → mirror pose).
@@ -184,9 +187,10 @@ describe('commitChosenPlacement', () => {
       x: 1234.5,
       y: -678.25,
       rot: 0, // phase V — the ghost's rotation rides the message
+      mirror: false, // build mirror (4B): default off
     });
     // The dim pending ghost is recorded so it bridges the render gap (R2.1).
-    expect(notePendingPlacement).toHaveBeenCalledWith('capital', 1234.5, -678.25, 0);
+    expect(notePendingPlacement).toHaveBeenCalledWith('capital', 1234.5, -678.25, 0, false);
   });
 
   it('falls back to ahead-of-ship only when the ghost was never positioned', () => {
@@ -201,6 +205,7 @@ describe('commitChosenPlacement', () => {
       x: ahead.x,
       y: ahead.y,
       rot: 0,
+      mirror: false,
     });
   });
 
@@ -213,5 +218,47 @@ describe('commitChosenPlacement', () => {
     cyclePlacementRotation();
     expect(cyclePlacementRotation()).toBe(0); // wraps
     setPlacementRotationDeg(0);
+  });
+});
+
+// ── Build mirror (base loop 4B): the ghost carries the mirror choice ─────────
+describe('placement mirror (4B)', () => {
+  beforeEach(() => {
+    send.mockClear();
+    notePendingPlacement.mockClear();
+    resetPlacementChosen();
+    setPlacementMirror(false);
+  });
+
+  it('defaults to not mirrored', () => {
+    expect(getPlacementMirror()).toBe(false);
+    const out: PlacementPreview = { kind: 'capital', x: 0, y: 0, angle: 0 };
+    resolvePlacementPreviewStatus('solar', { x: 0, y: 0, angle: 0 }, null, 0, 0, true, out);
+    expect(out.mirror).toBe(false);
+  });
+
+  it('a mirrored ghost carries mirror into the preview and its cable-preview grid node', () => {
+    setPlacementMirror(true);
+    const out: PlacementPreview = { kind: 'capital', x: 0, y: 0, angle: 0 };
+    expect(resolvePlacementPreviewStatus('solar', { x: 0, y: 0, angle: 0 }, null, 0, 0, true, out)).toBe('active');
+    expect(out.mirror).toBe(true);
+    expect(ghostToGridNode(out, blankGridNode()).mirror).toBe(true);
+    setPlacementMirror(false);
+    resolvePlacementPreviewStatus('solar', { x: 0, y: 0, angle: 0 }, null, 0, 0, true, out);
+    expect(ghostToGridNode(out, blankGridNode()).mirror).toBe(false);
+  });
+
+  it('Confirm sends mirror:true in place_structure, and the dim pending ghost keeps it', () => {
+    setPlacementMirror(true);
+    placementChosen.worldX = 10;
+    placementChosen.worldY = 20;
+    commitChosenPlacement('solar');
+    expect(send).toHaveBeenCalledWith('place_structure', expect.objectContaining({ kind: 'solar', mirror: true }));
+    expect(notePendingPlacement).toHaveBeenCalledWith('solar', 10, 20, 0, true);
+    const pending: PendingPlacement = { kind: 'solar', x: 10, y: 20, rot: 0, mirror: true, sentAtMs: 0, baselineStructureCount: 0 };
+    const out: PlacementPreview = { kind: 'capital', x: 0, y: 0, angle: 0 };
+    expect(resolvePlacementPreviewStatus(null, null, pending, 0, 0, false, out)).toBe('pending');
+    expect(out.mirror).toBe(true);
+    setPlacementMirror(false);
   });
 });

@@ -31,6 +31,8 @@ export interface GhostPose {
   x: number;
   y: number;
   angle: number;
+  /** Build mirror (4B): placed left-right flipped. */
+  mirror?: boolean;
 }
 
 export class PlacementGhostVerdict {
@@ -69,10 +71,11 @@ export class PlacementGhostVerdict {
         fp.halfH = ext.hh;
         fp.kind = e.shipKind;
         fp.rot = rot;
+        fp.mirror = structures.get(id)!.mirror === true;
         n++;
       }
     }
     fps.length = n;
-    return placementRejection(ghost.kind, ghost.x, ghost.y, fps, obstacles, normaliseStructureRotation(ghost.angle * RAD_TO_DEG));
+    return placementRejection(ghost.kind, ghost.x, ghost.y, fps, obstacles, normaliseStructureRotation(ghost.angle * RAD_TO_DEG), ghost.mirror === true);
   }
 }

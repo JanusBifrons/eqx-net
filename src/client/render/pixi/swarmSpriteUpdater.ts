@@ -49,6 +49,7 @@ import {
   buildEliteRingGfx,
 } from './spriteBuilders.js';
 import { buildBuildEtaText, formatBuildEta, fitBuildEtaLabel } from './buildEtaLabel.js';
+import { applyStructureMirror, counterFlipStructureParts } from './structureMirrorFlip.js';
 import { buildChargeTelegraph, updateChargeTelegraph, type ChargeTelegraph } from './chargeTelegraph.js';
 import type { Text } from 'pixi.js';
 import { minerRangeForKind } from '../minerRangeRing.js';
@@ -336,6 +337,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // body, one-pose-per-frame). Asteroids (0) + structures (2): render-now
     // interpolation off the poseRing (they are static server-side — see the
     // file docstring).
+    let structMirrored = false; // build mirror (4C), set for structures below
+    let structCluster: Container | null = null;
     const lerped = entry.kind === 1 || entry.kind === 3 || entry.kind === 4
       ? resolveEntityDisplayPose(entry, ctx.swarmPoseScratch)
       : interpolateSwarmPose(entry, now, ctx.swarmPoseScratch);
@@ -396,6 +399,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         ctx.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.displayMountAngles ?? entry.mountAngles);
       }
     } else if (entry.kind === 2) {
+      // Build mirror (4C): flip in the local frame before the rig follows it.
+      structMirrored = applyStructureMirror(sprite, mirror.structures?.get(entityId)?.mirror === true);
       // Restyle 2c: pose the structure's rig (visible structures only); its
       // parts hang off this sprite and `shipContainer` (structureRigs.ts).
       let rigView: StructureRigView | null = null;
@@ -416,6 +421,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       const sk = getStructureKind(entry.shipKind);
       const structMounts = sk.mounts ?? EMPTY_MOUNTS;
       const mountCluster = ctx.mountVisuals.ensureForMounts(spriteKey, sk.id, structMounts, sk.color, sprite);
+      structCluster = mountCluster;
       // A pop-up turret's mount rides its rig's slide part (angle unchanged, #12).
       if (rigView !== null) rigView.placeMount(mountCluster);
       if (structMounts.length > 0) {
@@ -555,6 +561,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           if (batText.text !== next) batText.text = next;
         }
       }
+      // Build mirror (4C): readouts and guns stay unmirrored on screen.
+      if (structMirrored) counterFlipStructureParts(sprite, structCluster);
     }
     // Sleeping entries stop interpolating; their pose is whatever the
     // server last shipped.

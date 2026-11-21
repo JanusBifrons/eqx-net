@@ -296,6 +296,8 @@ export class StructureRigView {
       p.rate = input.rate;
       if (input.targetX !== undefined && input.targetY !== undefined) {
         worldToHost(input.targetX, input.targetY, hx, hy, ha, scale, this.targetScratch);
+        // Build mirror (4C): the rig draws flipped, so aim at the mirrored host point (lands on the real target).
+        if (this.row?.mirror === true) this.targetScratch.x = -this.targetScratch.x;
         p.target = this.targetScratch;
       } else {
         p.target = undefined;
@@ -584,6 +586,7 @@ export class StructureRigs {
 function followHost(g: Container, sprite: Container): void {
   g.position.copyFrom(sprite.position);
   g.rotation = sprite.rotation;
+  g.scale.x = sprite.scale.x < 0 ? -1 : 1; // build mirror (4C): flip with the host
   g.visible = sprite.visible;
   g.alpha = sprite.alpha;
 }

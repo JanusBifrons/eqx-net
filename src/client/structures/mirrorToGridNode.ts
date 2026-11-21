@@ -220,7 +220,7 @@ export function structureMirrorToGridNode(
 export const GHOST_NODE_ID = '__ghost__';
 
 export function ghostToGridNode(
-  preview: { kind: string; x: number; y: number; angle?: number },
+  preview: { kind: string; x: number; y: number; angle?: number; mirror?: boolean },
   out: GridNode,
   /** Pose override (the pointer-chosen point the ghost is drawn at); the
    *  preview's `angle` is always kept, so a rotated ghost gets its own box. */
@@ -233,7 +233,7 @@ export function ghostToGridNode(
   out.x = x;
   out.y = y;
   out.rot = preview.angle ?? 0;
-  out.mirror = false; // the ghost's mirror arrives with the cable preview (job 4B)
+  out.mirror = preview.mirror === true; // build mirror (4B): the ghost's choice
   out.radius = kind.radius;
   const ext = structureHalfExtents(preview.kind, ((preview.angle ?? 0) * 180) / Math.PI);
   out.halfW = ext.hw;
