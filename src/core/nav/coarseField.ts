@@ -83,9 +83,27 @@ export class CoarseFieldMap implements SearchGraph {
 
   /** Room (max hull clearance) at world (x, y): the analytic layout. */
   roomAt(x: number, y: number): number {
-    const R = this.R, pad = this.pad, r = Math.sqrt(x * x + y * y);
-    let best = r - R - pad; // outside the rim
-    if (r <= R + pad) best = Math.max(best, fieldStreet(Math.min(1, r / R), this.F) / 2);
+    const R = this.R, r = Math.sqrt(x * x + y * y), open = this.openRoomAt(x, y, r);
+    return r <= R + this.pad ? Math.max(open, fieldStreet(Math.min(1, r / R), this.F) / 2) : open;
+  }
+
+  /** Is world (x, y) in the field's rock body: inside the rim and outside
+   *  the core, every lane and every clearing, each less the warp pad as in
+   *  `roomAt` (clearings are exact)? The streets between rocks do not count
+   *  as open here: half a street is a hull clearance, not a way through the
+   *  body (a warp may not cross the field on its streets). */
+  solidAt(x: number, y: number): boolean {
+    return this.openRoomAt(x, y, Math.sqrt(x * x + y * y)) < 0;
+  }
+
+  /** Distance from the field centre past which `solidAt` is always false. */
+  get solidRadius(): number { return this.R + this.pad; }
+
+  /** `roomAt` without the street: the best of the rim, core, clearing and
+   *  lane terms at (x, y), `r` its distance from the centre. */
+  private openRoomAt(x: number, y: number, r: number): number {
+    const pad = this.pad;
+    let best = r - this.R - pad; // outside the rim
     best = Math.max(best, this.coreR - r - pad);
     for (let i = 0; i < this.clearings.length; i++) {
       const k = this.clearings[i]!, dx = x - k.x, dy = y - k.y;
