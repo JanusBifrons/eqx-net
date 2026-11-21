@@ -26,6 +26,10 @@ While placing, **Rotate** (the turning-arrow button, or **R** on a keyboard)
 turns the building a quarter turn, and **Mirror** (the flip button beside it, or
 **F**) flips it left-right. Both choices carry over to the next building you place.
 
+On a phone, drag the ghost to move it, or tap where it should go. A one-finger
+drag anywhere else pans the view (and two fingers zoom), just like Command view,
+so you can reach a spot off screen.
+
 > **First cut:** placement drops the structure *ahead of your ship*. A
 > tap-to-position blueprint ghost (a translucent silhouette that follows the
 > cursor with a connection-range ring and live valid/invalid tint) is a planned

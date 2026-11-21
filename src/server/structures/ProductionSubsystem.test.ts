@@ -497,7 +497,7 @@ describe('ProductionSubsystem — rock chunks (owner 2026-11-17)', () => {
 
 describe('prodStatusLine — chunk recipes', () => {
   it('a starved chunk refinery says it is waiting for a rock chunk', () => {
-    expect(prodStatusLine(PROD_STATE.starved, undefined, 'refine_rock_chunk')).toBe('Waiting for a rock chunk');
+    expect(prodStatusLine(PROD_STATE.starved, undefined, 'refine_rock_chunk')).toBe("Waiting for a rock chunk: land it on your Capital's pad");
     expect(prodStatusLine(PROD_STATE.starved, 'ice', 'refine_ice_fuel')).toBe('Waiting for Ice');
   });
 });

@@ -17,6 +17,7 @@
     "heavy": "node scripts/dev/heavy-queue.mjs",
     "phone": "tsx scripts/dev/phone-lane.ts",
     "phone:names": "node scripts/dev/lane-stall-names.mjs",
+    "phone:verdict": "node scripts/dev/lane-net-verdict.mjs",
     "perf:lab": "tsx perf/lab-server.ts",
     "perf:counts": "tsx perf/run-counts.ts",
     "perf:phone": "tsx perf/run-phone.ts",
