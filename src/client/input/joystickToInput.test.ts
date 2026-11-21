@@ -7,8 +7,12 @@ import {
   joystickToInput,
   IDLE_INPUT_STATE,
   DEADZONE_ON,
+  TURN_ON_RAD,
   type JoystickInputState,
 } from './joystickToInput.js';
+import { getShipKind } from '@shared-types/shipKinds';
+import { maxTurnPerTick } from '@core/physics/applyShipInput';
+import { STAT_POINT_FRAC } from '@core/leveling/shipStats';
 
 describe('joystickToInput — null/idle', () => {
   it('returns IDLE when vector is null', () => {
@@ -153,4 +157,43 @@ describe('joystickToInput — combined behaviour mirrors the legacy single-band 
     expect(out.thrust).toBe(true);
     expect(out.turnLeft).toBe(true);
   });
+});
+
+// Owner phone smoke test: flying forward on the stick, the ship "would quite
+// often jitter from left to right". The arcade handling pass (`turn` x 4.2)
+// made a light hull turn ~0.14-0.21 rad per 60 Hz tick, wider than the whole
+// TURN_OFF band (+-0.04): a ship 0.07 rad off the stick lands 0.07 rad off the
+// other side, still outside TURN_OFF, flips direction, and repeats every tick.
+// Closed loop over the real catalogue turn rate: a snap-turn hull (no
+// `turnTorque`) rotates exactly +-maxAngvel/60 per tick while a turn bit is
+// held and stops dead when released (`applyShipInput`).
+describe('joystickToInput — closed loop at the real per-tick turn step', () => {
+  // [kind, turnRate upgrade points]: scout/interceptor overshoot stock; the
+  // default fighter crosses over at 3 turn points (1.15x).
+  const cases: Array<[string, number]> = [['scout', 0], ['interceptor', 0], ['fighter', 0], ['fighter', 4]];
+  for (const [kindId, points] of cases) {
+    it(`${kindId} +${points} turn: a held stick settles, never flips left/right every tick`, () => {
+      const kind = getShipKind(kindId);
+      expect(kind.turnTorque).toBeUndefined();
+      const step = maxTurnPerTick(kind, { topSpeed: 1, turnRate: 1 + points * STAT_POINT_FRAC });
+      const stick = { x: 0, y: 1 }; // fly straight "up": target angle 0
+      for (let i = 0; i < 200; i++) {
+        const start = -1.2 + (2.4 * i) / 199;
+        let angle = start;
+        let prev: JoystickInputState = IDLE_INPUT_STATE;
+        let flips = 0;
+        let lastDir = 0;
+        for (let t = 0; t < 120; t++) {
+          const out = joystickToInput(stick, angle, prev, step);
+          const dir = (out.turnLeft ? 1 : 0) - (out.turnRight ? 1 : 0);
+          if (t >= 60 && dir !== 0 && lastDir !== 0 && dir !== lastDir) flips++;
+          lastDir = dir;
+          angle += dir * step;
+          prev = { ...out };
+        }
+        expect(flips, `start offset ${start.toFixed(3)}`).toBe(0);
+        expect(Math.abs(angle), `start offset ${start.toFixed(3)}`).toBeLessThanOrEqual(Math.max(TURN_ON_RAD, step / 2) + 1e-9);
+      }
+    });
+  }
 });
