@@ -1721,7 +1721,7 @@ export class SectorRoom extends Room<SectorState> {
       // Living World P1a (#16) — own-ship cargo slice source.
       shipHoldOf: (shipInstanceId) => this.loot.shipHold(shipInstanceId),
       // P5 — the own ship's fitted blueprints (cache read only — alloc-free).
-      fittedOf: (shipInstanceId) => this.fittedCache.get(shipInstanceId),
+      fittedOf: (shipInstanceId) => this.fittedCache.get(shipInstanceId), ownShipKeyOf: (pid) => this.pilotSwap.ownShipKey(pid),
       // Economy v2 W1 — the own player's wallet balance on the snapshot.
       walletOf: (playerId) => getWallet().balance(playerId),
       // Join flow — free capital launches left (alloc-free Map read).

@@ -160,6 +160,19 @@ describe('diagRouter', () => {
     expect(line).toMatchObject({ source: 'client', tag: 'perf_summary', data: summary });
   });
 
+  it('routes loaf next to the stalls in perf.ndjson (with the lane\'s zoom + mode)', async () => {
+    const loaf = { durationMs: 86, topScripts: [{ sourceURL: 'https://h/assets/index-X.js', sourceCharPosition: 62 }], viewHalf: 1800, mode: 'fly' };
+    const res = await fetch(`${baseUrl}/diag/capture`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logs: [{ ts: 10_000, tag: 'loaf', data: loaf }] }),
+    });
+    expect(res.status).toBe(200);
+    const dirs = await readdir(captureDir);
+    const nd = await readFile(join(captureDir, dirs[0]!, 'perf.ndjson'), 'utf8');
+    expect(JSON.parse(nd.trim())).toMatchObject({ source: 'client', tag: 'loaf', data: loaf });
+  });
+
   it('rejects malformed payloads with 400', async () => {
     const res = await fetch(`${baseUrl}/diag/capture`, {
       method: 'POST',
