@@ -264,7 +264,8 @@ export interface NpcBaseSeedHost {
  * always win the space), on the fewest asteroids (those under the footprint
  * are cleared: the builders cleared the rock), as far from the spawn at the
  * origin as it fits. Not persisted: a restart regrows it from the seed,
- * unless it fell (capture 4E S6: its saved pieces carry `originBase`).
+ * unless it fell (capture 4E S6: the sector's saved `fallenBases`, and its
+ * saved pieces carry `originBase`).
  */
 export function seedGalaxyBase(h: NpcBaseSeedHost, sectorKey: string): void {
   // A sector holds one to three NPC bases (galaxyBasePlan); base 0 is the
@@ -278,7 +279,7 @@ export function seedGalaxyBase(h: NpcBaseSeedHost, sectorKey: string): void {
   });
   const seededBases: SiteBox[] = [];
   // Capture 4E (S6) — a fallen (or captured) base never regrows.
-  const fallen = fallenBaseOrigins(h.structureRegistry.all());
+  const fallen = fallenBaseOrigins(h.structureRegistry);
   const plans = galaxyBasePlan(sectorKey);
   // Solar-system sectors (Phase 4): with two or more bases, the last grows
   // at the sector's outer base pocket, out in the system, not at home.
@@ -384,7 +385,7 @@ export function seedNpcBases(h: NpcBaseSeedHost, specs: readonly NpcBaseSpec[]):
     setHealth: (id, hp) => h.swarmHealth().set(id, hp),
     getObstacles: (near) => h.obstacles.rocks(near),
   });
-  const fallen = fallenBaseOrigins(h.structureRegistry.all()); // 4E S6
+  const fallen = fallenBaseOrigins(h.structureRegistry); // 4E S6
   for (const spec of specs.slice(0, 8)) {
     if (fallen.has(npcOwner(sub.profileOf(spec).ownerFaction, spec.baseId))) continue;
     const r = sub.seed(spec);

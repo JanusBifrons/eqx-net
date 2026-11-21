@@ -200,12 +200,15 @@ view, never the server `StructureRegistry`):
   `originBase` (its seed owner, `npc:<faction>:<baseId>`); the field stays when
   the base falls (`none:`) or is captured, and `SectorPersistence` saves it with
   the piece (optional `structures[].originBase`, no schema bump; restore keeps
-  only an `npc:` value). `seedGalaxyBase` and `seedNpcBases` skip every base in
-  `fallenBaseOrigins` (`ownerlessBase.ts`: origins of pieces no longer owned by
-  their origin). Seeding runs only at room boot, after restore; nothing regrows
-  a base in a running room. An old save (no `originBase`) loads and regrows as
-  before. If every saved piece of a fallen base is later destroyed, nothing
-  records the fall and the base regrows on the next restart. Lock:
+  only an `npc:` value). The sector also remembers the fall itself: when a
+  seeded base's last built Capital leaves the world (`StructureRegistry.remove`
+  → `noteBaseFall`), its origin joins `StructureRegistry.fallenBases`, saved as
+  the sector's `fallenBases` list, so the base stays fallen even once every
+  piece of it is destroyed. `seedGalaxyBase` and `seedNpcBases` skip every base
+  in `fallenBaseOrigins` (`ownerlessBase.ts`: the recorded falls plus origins
+  of pieces no longer owned by their origin). Seeding runs only at room boot,
+  after restore; nothing regrows a base in a running room. An old save (no
+  `originBase`, no `fallenBases`) loads and regrows as before. Lock:
   `bases/npcBaseNoRegrow.test.ts`.
 - **An ownerless base's Territory Lock claims nothing** (owner 2026-11-21,
   "Stops claiming"). A lock owned by `none:` (built or still a blueprint)
