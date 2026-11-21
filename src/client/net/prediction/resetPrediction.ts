@@ -17,6 +17,7 @@ import type { DataChannelTransport } from '../dataChannelTransport.js';
 import { resetSwarmDisplayDelay } from '../swarmInterpolation.js';
 import { resetMissileDisplayDelay } from '../../combat/MissileMirror.js';
 import { resetRenderDueSnapCount } from '../renderTickPhase.js';
+import { clearSwarmResumeOffsets } from '../swarmResumeOffset.js';
 
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 
@@ -143,6 +144,8 @@ export function resetPredictionState(ctx: PredictionResetCtx): void {
   // feed places it at its target) with the lateness estimate cleared (S3-2).
   resetSwarmDisplayDelay();
   resetMissileDisplayDelay(); // the missile (JSON) stream's own record (S5-5)
+  // ...and no drone carries a resume offset into the destination (S4b).
+  clearSwarmResumeOffsets(ctx.mirror.swarm);
   // Spatial seed (2026-05-16) — see the method doc comment. Despawn the
   // local predWorld ship body and drop the Reconciler so the
   // destination's first state-diff / snapshot reseeds the body AT THE

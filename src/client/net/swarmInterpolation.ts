@@ -211,6 +211,8 @@ export function nextSwarmBinaryEwmaMs(prevEwmaMs: number, dtMs: number, nowMs: n
 
 /** Frames on which a stream stall held the read point (S4-5 telemetry). */
 export function getSwarmHoldFrameCount(): number { return _drone.holdFrameCount; }
+/** True while a stream stall has the read point parked (S4b: swarmResumeOffset.ts). */
+export function isSwarmHoldActive(): boolean { return _drone.holdActive; }
 
 /** The sector's game speed the drone delay is sized for (1 until set). */
 export function getSwarmDisplaySpeed(): number { return _displaySpeed; }

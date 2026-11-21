@@ -366,6 +366,30 @@ the stall). `swarmTickToStampMs` shares the rule. Scalars only;
 `resetSwarmDisplayDelay` clears the last step clock. Locks:
 `src/client/net/swarmTickClockFrameStall.test.ts`, `gapSmoothing.drones.test.ts`.
 
+**Ease the resume step (S4b).** The drawn pose of a drone or scrap piece is
+`resolveSwarmDrawnPose` (`src/client/net/swarmResumeOffset.ts`): the
+interpolated pose plus an eased offset, applied at the one pose-resolve site
+(`updateSwarmMirror`). While the hold has the read point parked, each entry
+keeps the pose it drew. On the first frame after the hold that is not a
+re-sync (packets caught up), the offset is set to that held pose, moved on by
+one frame at the bracketing sample's velocity, minus the pose the samples now
+give; it then decays with `stepRemoteShipOffset` (the remote-ship springs,
+position half-life `SWARM_RESUME_OFFSET_HALF_LIFE_MS` = 100 ms, angle 40 ms) on
+WALL time, so it eases the same at 0.7× and 2×. A difference that
+`isImplausibleJump` calls a teleport (span = read point − stall's newest
+stamp, in game ms) is never eased. Only this resume case: the hold, slew,
+glide limit, delay target and ring are unchanged, and missiles are S5. Drawing
+only: physics and prediction read the pose ring (`authoritativeSwarmStateAt`),
+never the drawn pose; aim and fire keep reading the drawn pose (V4). Cost: one
+`SwarmResumeOffset` per moving entry, allocated with the entry by the decoder
+(ten numbers: three springs of two, the half-life, the held pose of three;
+the plan's estimate was seven), stepped only while live, the held pose written
+only while a stall holds; `resetPredictionState` clears every offset. Effect:
+gap-400, gap-swarm-only, gap-600 and burst-600-both-streams turning-drone
+snaps 1 → 0 (2.56 / 3.27 u), mean lateness +0.1 ms; every other fixture
+unchanged. A perf:scenes A/B is owed. Locks: `swarmResumeOffset.test.ts`,
+`gapSmoothing.drones.test.ts`, `ColyseusClient.resetPredictionState.test.ts`.
+
 **The packet's tick must be the tick of its poses.** The room and the physics
 worker run separate 60 Hz loops. The room reads the SAB tick at the top of its
 update, and the worker can publish the next step before the swarm encoder reads

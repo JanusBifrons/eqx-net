@@ -72,6 +72,32 @@ export interface PoseRingEntry {
  *  per-packet alloc. */
 export const POSE_RING_DEPTH = 28;
 
+/** One spring axis: value and its rate per ms (the `SpringState` shape of
+ *  `@core/math/CritDampedSpring`). */
+export interface SwarmOffsetSpring {
+  x: number;
+  v: number;
+}
+
+/** Eased resume offset of a drone or scrap piece (netcode gap smoothing
+ *  S4b): the remote-ship `RemoteShipOffset` shape (springs + half-life),
+ *  stepped by `stepRemoteShipOffset`, plus the pose drawn on the last held
+ *  frame. Ten numbers, created once with the entry (`BinarySwarmDecoder`),
+ *  never per frame. `halfLifeMs === 0` means idle (nothing to step).
+ *  Drawing only: physics never reads it. */
+export interface SwarmResumeOffset {
+  sx: SwarmOffsetSpring;
+  sy: SwarmOffsetSpring;
+  /** Angle offset (rad, wrapped to ±π at capture). */
+  sa: SwarmOffsetSpring;
+  halfLifeMs: number;
+  /** Drawn pose on the last frame a stream stall held the read point; NaN
+   *  when there is none. Written only on held frames. */
+  heldX: number;
+  heldY: number;
+  heldAngle: number;
+}
+
 export interface SwarmRenderState {
   /** Latest pose received from the wire. Mirror of `poseRing[ringHead − 1]`'s pose. */
   x: number;
@@ -96,6 +122,9 @@ export interface SwarmRenderState {
   poseRing: PoseRingEntry[];
   /** Index of the next slot to write in `poseRing`. Wraps mod POSE_RING_DEPTH. */
   ringHead: number;
+  /** S4b: the drawn pose's eased offset after a stream hold resumes. Present
+   *  on drones and scrap (the decoder allocates it on first sighting). */
+  resumeOffset?: SwarmResumeOffset;
   /** Collision radius. Renderer draws asteroids as circles of this size. */
   radius: number;
   /** 0 = asteroid, 1 = drone, 2 = structure, 3 = scrap, 4 = wreck piece. */
