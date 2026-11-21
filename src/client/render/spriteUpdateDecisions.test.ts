@@ -18,6 +18,7 @@ import {
   decideArtSwap,
   decideExplosionPosition,
   decideShipSpriteAction,
+  isSegmentInView,
   isSpriteInView,
   shipSpriteKind,
 } from './spriteUpdateDecisions.js';
@@ -108,6 +109,27 @@ describe('isSpriteInView (A3 structure culling)', () => {
   });
   it('no bounds ⇒ always drawn', () => {
     expect(isSpriteInView(1e6, 1e6, 1, undefined)).toBe(true);
+  });
+});
+
+describe('isSegmentInView (off-screen fence culling)', () => {
+  const view = new Float64Array([-100, -100, 100, 100]);
+  it('draws a fence whose padded box reaches into the view, culls one fully outside', () => {
+    expect(isSegmentInView(-500, 0, 500, 0, 0, view)).toBe(true); // spans the view, both ends outside
+    expect(isSegmentInView(120, 0, 300, 0, 30, view)).toBe(true); // padding pokes in
+    expect(isSegmentInView(140, 0, 300, 0, 30, view)).toBe(false);
+    expect(isSegmentInView(0, -400, 0, -200, 48, view)).toBe(false);
+    expect(isSegmentInView(300, 50, 200, -50, 0, view)).toBe(false); // reversed ends
+  });
+  it('no bounds ⇒ always drawn', () => {
+    expect(isSegmentInView(1e6, 1e6, 2e6, 2e6, 0, undefined)).toBe(true);
+  });
+  it('property: a segment with an endpoint inside the view is always drawn', () => {
+    fc.assert(fc.property(
+      fc.double({ min: -100, max: 100, noNaN: true }), fc.double({ min: -100, max: 100, noNaN: true }),
+      fc.double({ min: -1e4, max: 1e4, noNaN: true }), fc.double({ min: -1e4, max: 1e4, noNaN: true }),
+      (ax, ay, bx, by) => isSegmentInView(ax, ay, bx, by, 0, view) && isSegmentInView(bx, by, ax, ay, 0, view),
+    ));
   });
 });
 
