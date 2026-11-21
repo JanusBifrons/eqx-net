@@ -50,7 +50,7 @@ import {
 } from '../../src/shared-types/swarmWireFormat.js';
 import { buildDeliveries, buildFrameTimes } from './runner.js';
 import { GAP_PROFILES, GAP_AT_MS, type GapProfileName } from './gapProfiles.js';
-import { countMotionArtefacts, type MotionFrame, type MotionCounters } from './assertions.js';
+import { countMotionArtefacts, MOTION_SNAP_TOLERANCE_U, type MotionFrame, type MotionCounters } from './assertions.js';
 import type { Delivery, NetworkProfile } from './types.js';
 import { captureToDeliveries, loadCaptureFixture } from './ondeviceReplay.js';
 
@@ -79,6 +79,9 @@ const ROUND = 100;
 /** Float slack on the per-frame slew bound check (wall ms). */
 const SLEW_EPSILON_MS = 1e-9;
 const CAPTURE_FIXTURE = 'capture-2026-11-21';
+/** Wall ms after the frame stall starts over which frame-stall-250 steps are
+ *  checked (S5-1b): the stall frame plus 1 s of recovery. */
+const STALL_CHECK_WINDOW_MS = 1250;
 
 interface TruePose { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }
 
@@ -143,8 +146,9 @@ interface DroneFixtureOptions {
   fixedDelayMs?: number;
   /** Scenario length (wall ms). Default FIXTURE_DURATION_MS. */
   durationMs?: number;
-  /** Called once per frame after both reads, with the frame time (wall ms). */
-  onFrame?: (t: number) => void;
+  /** Called once per frame after both reads, with the frame time (wall ms)
+   *  and the two frames just drawn. */
+  onFrame?: (t: number, straight: MotionFrame, turning: MotionFrame) => void;
 }
 
 interface MotionSummary {
@@ -264,7 +268,7 @@ function runDroneDeliveries(
     interpolateSwarmPose(turning, t, pose);
     const tt = turningTruth(gameMs);
     turningFrames.push({ atMs: t, drawnX: pose.x, drawnY: pose.y, trueX: tt.x, trueY: tt.y });
-    opts.onFrame?.(t);
+    opts.onFrame?.(t, straightFrames[straightFrames.length - 1]!, turningFrames[turningFrames.length - 1]!);
   }
 
   const count = getSwarmLatenessCount();
@@ -339,8 +343,13 @@ function runCaptureFixture(): DroneFixtureResult[] {
  *  straight-line glide misses the curve: the S4b gate), glide-limit holds -> 0,
  *  freeze frames unchanged, max delay 256 -> 275 / 237 -> 350; capture segment
  *  1: glide-limit holds 8 -> 0, largest snap 13.15 -> 12; lan-clean, gap-200,
- *  gap-json-only, frame-stall-250 and jitter-4g unchanged). A change to any is a
- *  behaviour change. */
+ *  gap-json-only, frame-stall-250 and jitter-4g unchanged); and for the
+ *  frame-stall backlog rule, S5-1b: the packets drained at once after the
+ *  250 ms main-thread freeze no longer pull the tick clock later or feed the
+ *  lateness estimate, so frame-stall-250 keeps the 100 ms floor and an even
+ *  timeline: snaps 1 -> 0 (4.71 u) for both drones, mean lateness
+ *  221.83 -> 150 ms, max delay 274.64 -> 100 ms; every other profile and the
+ *  capture unchanged). A change to any is a behaviour change. */
 const RECORDED: Record<GapProfileName, DroneFixtureResult> = {
   'lan-clean': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 116.67, maxLatenessMs: 116.67 },
@@ -392,11 +401,11 @@ const RECORDED: Record<GapProfileName, DroneFixtureResult> = {
     delayStepsOverBound: 0, maxLatenessEstimateMs: 275.39, resyncs: 0, holdFrames: 3,
   },
   'frame-stall-250': {
-    straight: { snaps: 1, largestSnapU: 4.71, totalSnapU: 4.71, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 221.83, maxLatenessMs: 324.64 },
-    turning: { snaps: 1, largestSnapU: 4.71, totalSnapU: 4.71, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 221.83, maxLatenessMs: 324.64 },
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 150, maxLatenessMs: 150 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 150, maxLatenessMs: 150.02 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 7.59, stampLatenessMaxMs: 247.5, maxDelayMs: 274.64, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 152.47, resyncs: 0, holdFrames: 0,
+    stampLatenessMeanMs: 8.4, stampLatenessMaxMs: 250, maxDelayMs: 100, minDelayMs: 100,
+    delayStepsOverBound: 0, maxLatenessEstimateMs: 0, resyncs: 0, holdFrames: 0,
   },
   'jitter-4g': {
     straight: { snaps: 4, largestSnapU: 9.61, totalSnapU: 27.87, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 302.26, maxLatenessMs: 359.28 },
@@ -567,6 +576,32 @@ describe('drone gap-smoothing targets', () => {
       expect(result.straight.freezeFrames, `${gapMs}`).toBeLessThanOrEqual(allowed);
       expect(result.turning.freezeFrames, `${gapMs}`).toBeLessThanOrEqual(allowed);
     }
+  });
+
+  // S5-1b: a main-thread freeze delays arrival but says nothing about the
+  // network. Through the stall frame and the 1 s after it, every drawn step of
+  // both drones stays within the snap tolerance of the true step, either way
+  // (the old clock crept late on the backlog and stepped back on the first
+  // on-time packet: a 4.71 u snap; the old lateness feed then slowed playback
+  // 10 %: an 8 u short step on the stall frame).
+  it('frame-stall-250: every drawn step within the snap tolerance of the true step around the stall', () => {
+    const prev: { straight: MotionFrame | null; turning: MotionFrame | null } = { straight: null, turning: null };
+    let worstU = 0;
+    let checked = 0;
+    const stepError = (a: MotionFrame, b: MotionFrame): number =>
+      Math.abs(Math.hypot(b.drawnX - a.drawnX, b.drawnY - a.drawnY) - Math.hypot(b.trueX - a.trueX, b.trueY - a.trueY));
+    runDroneFixture(GAP_PROFILES['frame-stall-250'], {
+      onFrame: (t, straight, turning) => {
+        if (prev.straight && prev.turning && t >= GAP_AT_MS && t <= GAP_AT_MS + STALL_CHECK_WINDOW_MS) {
+          worstU = Math.max(worstU, stepError(prev.straight, straight), stepError(prev.turning, turning));
+          checked++;
+        }
+        prev.straight = { ...straight };
+        prev.turning = { ...turning };
+      },
+    });
+    expect(checked).toBeGreaterThan(0);
+    expect(worstU).toBeLessThanOrEqual(MOTION_SNAP_TOLERANCE_U);
   });
 
   it('lan-clean: no hold and no re-sync', () => {
