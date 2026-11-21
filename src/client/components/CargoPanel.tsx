@@ -17,6 +17,7 @@ import { holdWeight } from '../../core/cargo/hold';
 import { allOf, cargoRows, rowHold, type CargoRow } from './cargoRows';
 import { DROP_SIDE_ATTR, useTileDrag, type TileDrag } from './useTileDrag';
 import { CargoIcon } from './cargoIcons';
+import { TradeMarket } from './TradeMarket';
 import { HUD } from '../hud/tokens';
 import { WINDOW_BTN_BASE_SX, WINDOW_BTN_SECONDARY_SX, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from './GameWindow';
 import { MAX_FREIGHT_ORDERS, type CargoItems, type CargoState, type FreightOrder } from '../../shared-types/messages/cargoMessages';
@@ -62,7 +63,11 @@ const BANNER_SX = {
   fontSize: 11, color: C.manual, border: '1px solid rgba(255,176,46,0.4)', backgroundColor: 'rgba(255,176,46,0.08)',
   px: 1, py: '5px', borderRadius: '5px', mt: 1, display: 'flex', flexDirection: 'column' as const, gap: '4px',
 };
-const LIST_SX = { display: 'flex', flexDirection: 'column' as const, gap: '2px', maxHeight: 110, overflowY: 'auto' as const };
+/** A market list fills its pane's height and scrolls only when its rows are
+ *  taller than the window gives it (a sideways phone has ~220 px to spare). */
+const LIST_SX = { display: 'flex', flexDirection: 'column' as const, gap: '2px', flex: '1 1 auto', minHeight: 0, overflowY: 'auto' as const };
+/** Standing orders (at most six) sit under the market: a short list, capped. */
+const ORDERS_LIST_SX = { ...LIST_SX, flex: 'none', maxHeight: 110 };
 const ROW_SX = {
   display: 'flex', alignItems: 'center', gap: '3px', px: 0.5, py: '1px', borderRadius: '3px',
   border: EDGE, backgroundColor: 'rgba(20,30,48,0.9)',
@@ -197,47 +202,6 @@ function AutoUnload({ entityId, ship, storage }: { entityId: number; ship?: bool
   );
 }
 
-/** "12¢" (whole credits) or "1.5¢" (cheap goods). */
-function credits(n: number): string {
-  return n >= 10 ? `${Math.round(n)}¢` : `${Math.round(n * 10) / 10}¢`;
-}
-
-/** T4 — a market's list: rows with Buy / Sell buttons and their prices. */
-function Pane({ title, rows, verb, testPrefix, onMove, prices }: {
-  title: string;
-  rows: CargoRow[];
-  verb: 'Buy' | 'Sell';
-  testPrefix: 'here' | 'aboard';
-  onMove: (items: CargoItems) => void;
-  prices: Partial<Record<string, number>>;
-}): JSX.Element {
-  const v = verb.toLowerCase();
-  const priceOf = (r: CargoRow, qty: number): string => {
-    const unit = prices[r.key.slice(2)];
-    return unit === undefined ? '' : ` · ${credits(unit * qty)}`;
-  };
-  const tradable = (r: CargoRow): boolean => (r.key.startsWith('g:') || r.key.startsWith('p:')) && prices[r.key.slice(2)] !== undefined;
-  return (
-    <Box sx={{ flex: 1, minWidth: 0 }}>
-      <Box sx={PANE_TITLE_SX}>{title}</Box>
-      <Box sx={LIST_SX}>
-        {rows.length === 0 && <Box sx={EMPTY_SX}>Empty</Box>}
-        {rows.map((r) => (
-          <Box key={r.key} sx={ROW_SX} data-testid={`cargo-${testPrefix}-row`} data-key={r.key} data-count={r.count}>
-            <Box sx={LABEL_SX}>{r.label}{r.count > 1 ? ` ×${r.count}` : ''}</Box>
-            {tradable(r) && r.count > 1 && (
-              <Box sx={BTN_SX} data-testid={`cargo-${v}-one`} onClick={() => onMove(r.one)}>{verb} 1{priceOf(r, 1)}</Box>
-            )}
-            {tradable(r) && (
-              <Box sx={BTN_SX} data-testid={`cargo-${v}-all`} onClick={() => onMove(r.all)}>{r.count > 1 ? `${verb} all` : verb}{priceOf(r, r.count)}</Box>
-            )}
-          </Box>
-        ))}
-      </Box>
-    </Box>
-  );
-}
-
 const INPUT_SX = {
   fontSize: 10, background: 'rgba(20,30,48,0.95)', color: C.ink, border: EDGE,
   borderRadius: '3px', padding: '1px 2px',
@@ -256,7 +220,7 @@ function FreightOrders({ entityId, orders }: { entityId: number; orders: Freight
   return (
     <Box data-testid="freight-orders" sx={{ px: 1.5, pb: 1 }}>
       <Box sx={PANE_TITLE_SX}>Standing orders (convoys fill them)</Box>
-      <Box sx={LIST_SX}>
+      <Box sx={ORDERS_LIST_SX}>
         {orders.length === 0 && <Box sx={EMPTY_SX}>None</Box>}
         {orders.map((o) => (
           <Box key={o.good} sx={ROW_SX} data-testid="freight-order" data-good={o.good} data-mode={o.mode} data-level={o.level}>
@@ -396,7 +360,6 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship, title, subt
   const hint = peek ? 'Look only while you stay in range. Destroy it and its pod keeps a coin flip of each stack.'
     : own ? 'Everything visible — no search on your own or allied ships'
       : loot ? (hidden !== undefined ? 'Drag or tap an item to move it · items appear as you search' : 'Drag or tap an item to move it')
-      : market !== undefined ? 'Buy and sell at the listed prices'
         : '';
 
   return (
@@ -499,37 +462,33 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship, title, subt
       )}
 
       {state?.open === true && !peek && !own && market !== undefined && (
-        <Box sx={{ ...BODY_SX, flexDirection: 'row' }}>
-          <Pane title="For sale" rows={here} verb="Buy" testPrefix="here" onMove={(items) => sendCargoMove(target, 'take', items)} prices={{ ...market.buy, ...market.packed }} />
-          <Pane
-            title={`Aboard · ${Math.round(state.shipCapacity)} capacity`} rows={aboard} verb="Sell" testPrefix="aboard"
-            onMove={(items) => sendCargoMove(target, 'put', items)} prices={market.sell}
-          />
-        </Box>
+        <TradeMarket target={target} state={state} market={market} notice={notice} onClose={onClose} />
       )}
       {state?.open === true && state.orders !== undefined && entityId !== undefined && <FreightOrders entityId={entityId} orders={state.orders} />}
 
       {/* One footer of fixed height: a move's verdict, else the hint; then the actions. */}
-      <Box sx={FOOT_SX}>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          {notice !== null
-            ? <Box sx={{ color: notice.ok ? C.ink : C.manual }} data-testid="cargo-notice" data-ok={notice.ok ? '1' : '0'}>{notice.message}</Box>
-            : hint}
-        </Box>
-        {onClose !== undefined && (
-          <Box component="button" sx={BTN_SECONDARY_SX} onClick={onClose} data-testid="loot-window-close">Close</Box>
-        )}
-        {loot && (
-          <Box
-            component="button" data-testid="cargo-take-found" disabled={here.length === 0}
-            onClick={() => sendCargoMove(target, 'take', allOf(here))}
-            sx={{ ...BTN_PRIMARY_SX, opacity: here.length === 0 ? 0.35 : 1, cursor: here.length === 0 ? 'default' : 'pointer' }}
-          >
-            {hidden !== undefined ? 'Take all found' : 'Take all'}
+      {market === undefined && (
+        <Box sx={FOOT_SX}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            {notice !== null
+              ? <Box sx={{ color: notice.ok ? C.ink : C.manual }} data-testid="cargo-notice" data-ok={notice.ok ? '1' : '0'}>{notice.message}</Box>
+              : hint}
           </Box>
-        )}
-        {peek && <Box component="button" disabled sx={{ ...BTN_PRIMARY_SX, opacity: 0.35, cursor: 'default' }}>Take</Box>}
-      </Box>
+          {onClose !== undefined && (
+            <Box component="button" sx={BTN_SECONDARY_SX} onClick={onClose} data-testid="loot-window-close">Close</Box>
+          )}
+          {loot && (
+            <Box
+              component="button" data-testid="cargo-take-found" disabled={here.length === 0}
+              onClick={() => sendCargoMove(target, 'take', allOf(here))}
+              sx={{ ...BTN_PRIMARY_SX, opacity: here.length === 0 ? 0.35 : 1, cursor: here.length === 0 ? 'default' : 'pointer' }}
+            >
+              {hidden !== undefined ? 'Take all found' : 'Take all'}
+            </Box>
+          )}
+          {peek && <Box component="button" disabled sx={{ ...BTN_PRIMARY_SX, opacity: 0.35, cursor: 'default' }}>Take</Box>}
+        </Box>
+      )}
     </Box>
   );
 });
