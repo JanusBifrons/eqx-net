@@ -61,9 +61,34 @@ export const STRUCTURE_PORTRAIT_KINDS: readonly string[] = STRUCTURE_KINDS_LIST
 
 const HAS_STRUCT = new Set(STRUCTURE_PORTRAIT_KINDS);
 
-/** The art lab query for structure `kind`'s picture (framed by its own footprint, guns drawn as the game does). */
-export function structurePortraitQuery(kind: string): string {
-  return `style=machined&scene=portrait&struct=${kind}&turrets=1`;
+/** A structure picture's camera: `zm` scales the footprint fit; `cx`/`cy`
+ *  move the camera centre (`?ox=`/`?oy=`; the lab's own `?cx=` is world units), in screen px at `zm` 1 (lab y-down), so the
+ *  bake can reframe from pixels without knowing the world zoom. */
+export interface StructureFrame { zm: number; cx: number; cy: number }
+
+/** The art lab query for structure `kind`'s picture, guns drawn as the game
+ *  does. `bare` keeps the camera but drops the structure (the background,
+ *  for measuring what the structure drew). */
+export function structurePortraitQuery(kind: string, frame: StructureFrame = { zm: 1, cx: 0, cy: 0 }, bare = false): string {
+  return `style=machined&scene=portrait&struct=${kind}&turrets=1&zm=${+frame.zm.toFixed(4)}&ox=${+frame.cx.toFixed(2)}&oy=${+frame.cy.toFixed(2)}${bare ? '&bare=1' : ''}`;
+}
+
+/** Fraction of the picture left empty on each side of the drawn bounds. */
+export const STRUCTURE_PORTRAIT_PAD = 0.06;
+
+/**
+ * Reframe from a measured render: `box` is the drawn bounds (canvas px) of a
+ * render at `at`, on a `view`-sized canvas whose centre is the camera centre.
+ * Returns the frame that centres the box and fits its longer side into the
+ * `crop`-px square, with an even `pad` each side.
+ */
+export function reframeStructure(
+  at: StructureFrame, box: { x0: number; y0: number; x1: number; y1: number },
+  view: { w: number; h: number }, crop: number, pad = STRUCTURE_PORTRAIT_PAD,
+): StructureFrame {
+  const side = Math.max(box.x1 - box.x0, box.y1 - box.y0, 1);
+  const dx = (box.x0 + box.x1) / 2 - view.w / 2, dy = (box.y0 + box.y1) / 2 - view.h / 2;
+  return { zm: (at.zm * crop * (1 - 2 * pad)) / side, cx: at.cx + dx / at.zm, cy: at.cy + dy / at.zm };
 }
 
 /** The baked structure picture's URL for `kind`, or null when there is none. */

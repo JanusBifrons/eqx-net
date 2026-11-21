@@ -9,7 +9,6 @@ import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { buildStructureVisual } from '../render/pixi/structureVisuals.js';
 import { parseStructureStyle, STRUCTURE_STYLE_IDS, type StructureStyleId } from '../render/pixi/structureStyles.js';
 import { shipExtent } from '../render/art/fields.js';
-import { structureTurrets } from '../render/art/turretLayout.js';
 import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W } from '../../core/articulation/rigCatalogue.js';
 import { grownBaseScene } from './grownBaseScene.js';
 import { labSearch, parseGrownBaseParams, parseKinds } from './labSceneParams.js';
@@ -422,23 +421,21 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40, view: Vie
       // `?th=` is engine thrust (0 hides a capital's detached engine glows);
       // `?cz=` sets the camera zoom outright (capitals share one, to scale);
       // `?rot=` turns the hull (radians; a long capital lies corner to corner).
-      // `?struct=` instead draws one structure, centred and framed by its own
-      // footprint (the build menu's baked pictures; `zm` still scales it).
+      // `?struct=` instead draws one structure at the origin (the build menu's
+      // baked pictures): `zm` scales its footprint fit, `?ox=`/`?oy=` move the
+      // camera centre (screen px at zm 1), `?bare=1` keeps the camera but
+      // drops the structure (the bake diffs the two to measure drawn bounds).
       const q = new URLSearchParams(location.search);
       const sid = q.get('struct');
       if (sid) {
-        // The frame holds the footprint and every gun's reach (barrels jut past
-        // a battery's footprint), kept centred on the structure.
         const fp = structFootprint(sid);
-        let half = Math.max(fp.w, fp.h) / 2;
-        for (const g of structureTurrets(sid)) {
-          half = Math.max(half, Math.hypot(g.px, g.py) + Math.max(g.len, g.cap, g.naval ? g.naval.houseL : 0));
-        }
-        const side = half * 2;
-        const sz = fitZoom(side, side, 0.9) * (q.has('zm') ? Number(q.get('zm')) : 1);
+        const side = Math.max(fp.w, fp.h);
+        const fit = fitZoom(side, side, 0.9);
+        const sz = fit * (q.has('zm') ? Number(q.get('zm')) : 1);
+        const cx = Number(q.get('ox') ?? 0) / fit, cy = Number(q.get('oy') ?? 0) / fit;
         return {
-          ships: [], structs: [{ id: sid, x: 0, y: 0, rot: 0, seed: 1 }], booms: [], duration: 8,
-          camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = sz; },
+          ships: [], structs: q.get('bare') === '1' ? [] : [{ id: sid, x: 0, y: 0, rot: 0, seed: 1 }], booms: [], duration: 8,
+          camera: (_t, c) => { c.x = cx; c.y = cy; c.zoom = sz; },
         };
       }
       const kid = q.get('kind') ?? 'fighter';
