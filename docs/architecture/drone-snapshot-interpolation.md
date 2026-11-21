@@ -301,9 +301,14 @@ longer the collision bodies.)
 **Load-bearing invariant:** `POSE_RING_DEPTH ≥ ceil(maxDisplayDelay /
 minBinaryInterArrival) + headroom`, where the binding case is the
 **in-interest binary cadence (~1000/60 ms)**, *not* the 50 ms JSON rate the
-original sizing assumed. Now 10 (= ceil(100/16.7)=6 + 4). Locked by the
-structural-invariant + interleaved-liveness tests in
-[`tests/unit/swarmInterpolation.smoothness.test.ts`](../../tests/unit/swarmInterpolation.smoothness.test.ts).
+original sizing assumed. Now 28 (= ceil(400/16.7)=24 + 4): `maxDisplayDelay`
+is the largest total delay, 400 ms after a dropout (owner decision D2; 280 ms
+steady), not the steady ceiling; history 4 → 10 → 21 → 28 (gap-smoothing S3a,
+S4-3). Cost ≈ 28 slots × ~10 fields × entities, about 0.6 MB at 214 entities.
+Locked by the structural-invariant + interleaved-liveness tests in
+[`tests/unit/swarmInterpolation.smoothness.test.ts`](../../tests/unit/swarmInterpolation.smoothness.test.ts)
+and the 280 ms / 400 ms + one tick checks in
+[`tests/unit/poseRingDepth.test.ts`](../../tests/unit/poseRingDepth.test.ts).
 
 ## Test locks
 
