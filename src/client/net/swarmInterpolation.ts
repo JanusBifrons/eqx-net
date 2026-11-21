@@ -154,6 +154,43 @@ let _glideLimitCount = 0;
  *  until the first read, so no overwrite counts before anything was read. */
 let _lastReadTargetMs = Number.NaN;
 
+// Drone lateness estimate (netcode gap smoothing, S3-1). Smoothed per-packet
+// lateness (the S0-2 `lateMs` above) plus its mean absolute deviation (RFC
+// 6298 style). Read-only for now: it drives NO delay, ring, playback or pose.
+// Units: WALL ms, the same as `setSwarmDisplayDelayMs`'s input and the stored
+// `_displayDelayMs` (its game-ms floor/ceiling are divided by the speed to wall
+// ms). Gains are per packet; the time constants below are stated at the nominal
+// one-packet-per-server-tick cadence (16.7 wall ms at 1×), so a faster or
+// slower packet rate shortens or stretches them in wall time.
+/** Rise time constant: a sample above the estimate is tracked in ~50 ms
+ *  (gain ≈ 0.28: 90 % of a step up within 7 packets). */
+export const LATENESS_RISE_TAU_MS = 50;
+/** Fall time constant: a sample below the estimate decays over ~2000 ms
+ *  (gain ≈ 0.008: after 1 s at 60 Hz ~60 % of a step down remains). */
+export const LATENESS_FALL_TAU_MS = 2000;
+/** Deviation time constant: ~250 ms (gain ≈ 0.065), symmetric. */
+export const LATENESS_DEV_TAU_MS = 250;
+const LATENESS_RISE_GAIN = 1 - Math.exp(-SERVER_TICK_MS / LATENESS_RISE_TAU_MS);
+const LATENESS_FALL_GAIN = 1 - Math.exp(-SERVER_TICK_MS / LATENESS_FALL_TAU_MS);
+const LATENESS_DEV_GAIN = 1 - Math.exp(-SERVER_TICK_MS / LATENESS_DEV_TAU_MS);
+
+/** State of a lateness estimate (wall ms). Mutated in place, never reallocated. */
+export interface LatenessEstimate {
+  estimateMs: number;
+  deviationMs: number;
+}
+
+/** Fold one lateness sample (wall ms) into `est`: rise fast, fall slowly; the
+ *  deviation follows |sample − previous estimate| (RFC 6298 order). Pure on
+ *  `est`, no allocation. */
+export function updateLatenessEstimate(est: LatenessEstimate, sampleMs: number): void {
+  const err = sampleMs - est.estimateMs;
+  est.deviationMs += (Math.abs(err) - est.deviationMs) * LATENESS_DEV_GAIN;
+  est.estimateMs += err * (err > 0 ? LATENESS_RISE_GAIN : LATENESS_FALL_GAIN);
+}
+
+const _latenessEstimate: LatenessEstimate = { estimateMs: 0, deviationMs: 0 };
+
 /**
  * The time a binary swarm packet of server tick `tick` is stamped with in the
  * pose ring (fleet-melee follow jitter, owner take 10). Stamping the raw
@@ -182,6 +219,7 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
   if (lateMs > _latenessMaxMs) _latenessMaxMs = lateMs;
   _latenessSumMs += lateMs;
   _latenessCount++;
+  updateLatenessEstimate(_latenessEstimate, lateMs);
   _tickClockLastTick = tick;
   _tickClockLastStampMs = stamp;
   return stamp;
@@ -195,6 +233,8 @@ export function resetSwarmTickClock(): void {
   _latenessMaxMs = 0;
   _latenessSumMs = 0;
   _latenessCount = 0;
+  _latenessEstimate.estimateMs = 0;
+  _latenessEstimate.deviationMs = 0;
   _overwriteUnreadCount = 0;
   _oldEndClampCount = 0;
   _glideLimitCount = 0;
@@ -213,6 +253,10 @@ export function getSwarmLatenessCount(): number { return _latenessCount; }
 export function getSwarmOverwriteUnreadCount(): number { return _overwriteUnreadCount; }
 export function getSwarmOldEndClampCount(): number { return _oldEndClampCount; }
 export function getSwarmGlideLimitCount(): number { return _glideLimitCount; }
+/** Smoothed drone packet lateness (wall ms). Read-only; drives nothing yet. */
+export function getSwarmLatenessEstimateMs(): number { return _latenessEstimate.estimateMs; }
+/** Smoothed mean absolute deviation of drone packet lateness (wall ms). */
+export function getSwarmLatenessDeviationMs(): number { return _latenessEstimate.deviationMs; }
 
 export function getSwarmDisplayDelayMs(): number {
   return _displayDelayMs;
