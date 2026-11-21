@@ -230,6 +230,8 @@ export const PlaceStructureSchema = z
     y: z.number().finite(),
     /** Phase V — rotation in degrees; the server snaps it to 0/90/180/270. */
     rot: z.number().finite().optional(),
+    /** Build mirror — place it left-right flipped (x → −x in its local frame). */
+    mirror: z.boolean().optional(),
   })
   .strict();
 

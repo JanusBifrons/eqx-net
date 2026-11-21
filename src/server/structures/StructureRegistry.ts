@@ -34,6 +34,9 @@ export interface StructureRecord {
   /** Phase V — rotation in degrees (0/90/180/270) and the rotated footprint's
    *  half extents (cached at placement; the box every rule reads). */
   rot?: number;
+  /** Build mirror: placed left-right flipped (x → −x in its local frame,
+   *  before `rot`; `structureLocalToWorld`). Absent ⇒ not mirrored. */
+  mirror?: boolean;
   halfW?: number;
   halfH?: number;
   /** False while a blueprint; flips true when the grid finishes building it.

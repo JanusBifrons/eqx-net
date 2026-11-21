@@ -119,13 +119,14 @@ export class StructurePlacementSubsystem {
     kindId: string,
     x: number,
     y: number,
-    opts?: { skipAutoConnect?: boolean; rot?: number; requirePacked?: boolean },
+    opts?: { skipAutoConnect?: boolean; rot?: number; mirror?: boolean; requirePacked?: boolean },
   ): string | null {
     this.lastRefusal = null;
     if (!isStructureKindId(kindId)) return null;
     const kind = getStructureKind(kindId);
     const pos = this.hooks.clamp(x, y);
     const rot = normaliseStructureRotation(opts?.rot);
+    const mirror = opts?.mirror === true;
     const { hw, hh } = structureHalfExtents(kindId, rot);
 
     // No-overlap: reject if the new footprint would intersect an existing
@@ -134,7 +135,7 @@ export class StructurePlacementSubsystem {
     // the auto-connect LOS check already uses). Shared pure predicate so the
     // client ghost can validate identically.
     const near = { x0: pos.x - hw, y0: pos.y - hh, x1: pos.x + hw, y1: pos.y + hh };
-    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near, true), rot);
+    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near, true), rot, mirror);
     if (rejection !== null) {
       this.lastRefusal = placementRejectionNotice(rejection);
       return null;
@@ -194,6 +195,7 @@ export class StructurePlacementSubsystem {
       y: pos.y,
       radius: kind.radius,
       rot,
+      ...(mirror ? { mirror: true } : {}),
       halfW: hw,
       halfH: hh,
       isConstructed: preBuilt,

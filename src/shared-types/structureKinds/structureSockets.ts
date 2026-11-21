@@ -45,6 +45,7 @@ import { GATE_POSTS, AIRLOCK_POSTS } from './gatePosts.js';
 import { DEFAULT_STRUCTURE_KIND, getStructureKind, isStructureKindId } from './lookup.js';
 import { PAD_SPECS, TELEPORTER_KINDS, padPostCenters, type TeleporterKind } from '../teleport.js';
 import { STRUCTURE_OUTLINE_FAMILY, structureOutline } from './outline.js';
+import { structureLocalToWorld } from './geometry.js';
 import type { StructureKindId } from './types.js';
 
 /** One cable socket, local space: position (x, y) and unit outward normal (nx, ny). */
@@ -251,30 +252,34 @@ export function structureSockets(kindId: string | null | undefined): readonly St
   return list;
 }
 
+/** Scratch for the shared transform (alloc-free). */
+const tp = { x: 0, y: 0 };
+
 /** Rotate one socket by `angle` (radians, CCW in Y-up game space, the
- *  `localToWorld` convention) into `out`. Alloc-free. */
-export function rotateStructureSocket(s: StructureSocket, angle: number, out: MutStructureSocket): MutStructureSocket {
+ *  `localToWorld` convention) into `out`, mirrored first when `mirror` (build
+ *  mirror: `structureLocalToWorld`, the shared transform). Alloc-free. */
+export function rotateStructureSocket(s: StructureSocket, angle: number, out: MutStructureSocket, mirror?: boolean): MutStructureSocket {
   const c = Math.cos(angle);
   const sn = Math.sin(angle);
-  const x = s.x * c - s.y * sn;
-  const y = s.x * sn + s.y * c;
-  const nx = s.nx * c - s.ny * sn;
-  const ny = s.nx * sn + s.ny * c;
-  out.x = x;
-  out.y = y;
+  structureLocalToWorld(s.nx, s.ny, 0, 0, c, sn, mirror, tp);
+  const nx = tp.x, ny = tp.y;
+  structureLocalToWorld(s.x, s.y, 0, 0, c, sn, mirror, tp);
+  out.x = tp.x;
+  out.y = tp.y;
   out.nx = nx;
   out.ny = ny;
   return out;
 }
 
-/** One socket of a structure at (cx, cy) rotated by `angle`, in world space,
- *  into `out`. Alloc-free. */
+/** One socket of a structure at (cx, cy) rotated by `angle` (mirrored first
+ *  when `mirror`), in world space, into `out`. Alloc-free. */
 export function structureSocketToWorld(
   s: StructureSocket,
   cx: number, cy: number, angle: number,
   out: MutStructureSocket,
+  mirror?: boolean,
 ): MutStructureSocket {
-  rotateStructureSocket(s, angle, out);
+  rotateStructureSocket(s, angle, out, mirror);
   out.x += cx;
   out.y += cy;
   return out;

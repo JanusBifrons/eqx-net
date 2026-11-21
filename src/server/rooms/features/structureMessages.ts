@@ -56,7 +56,7 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       msg.x,
       msg.y,
       // P2b — only a PLAYER's placement can need a packed structure.
-      { rot: msg.rot, requirePacked: true },
+      { rot: msg.rot, mirror: msg.mirror, requirePacked: true },
     );
     if (id === null) {
       h.logger.warn({ sessionId: client.sessionId, kind: msg.kind }, 'place_structure rejected');

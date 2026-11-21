@@ -163,7 +163,7 @@ export function cablePolylineHitsAabb(poly: Float64Array, minX: number, minY: nu
  *  space, or null when the kind has none. Returns `keepClearBox`'s shared
  *  scratch: read it before the next call. Allocation-free. */
 export function gridNodePadBox(n: GridNode): { readonly x: number; readonly y: number; readonly hw: number; readonly hh: number } | null {
-  return keepClearBox(n.kind, n.x, n.y, (n.rot * 180) / Math.PI);
+  return keepClearBox(n.kind, n.x, n.y, (n.rot * 180) / Math.PI, n.mirror);
 }
 
 /** Does the flattened cable cross node `n`'s landing pad (solid to cables,
@@ -353,11 +353,11 @@ export function pickCableSocketPair(
   if (na > sockCap || nb > sockCap) growSockets(Math.max(na, nb));
   if (na * nb > pairCap) growPairs(na * nb);
   for (let i = 0; i < na; i++) {
-    structureSocketToWorld(la[i]!, a.x, a.y, a.rot, wSock);
+    structureSocketToWorld(la[i]!, a.x, a.y, a.rot, wSock, a.mirror);
     ax[i] = wSock.x; ay[i] = wSock.y; aNx[i] = wSock.nx; aNy[i] = wSock.ny;
   }
   for (let j = 0; j < nb; j++) {
-    structureSocketToWorld(lb[j]!, b.x, b.y, b.rot, wSock);
+    structureSocketToWorld(lb[j]!, b.x, b.y, b.rot, wSock, b.mirror);
     bx[j] = wSock.x; by[j] = wSock.y; bNx[j] = wSock.nx; bNy[j] = wSock.ny;
   }
   const aAny = takesAnySide(a), bAny = takesAnySide(b);
@@ -438,7 +438,7 @@ export function flattenLinkCable(
     box.y0 = Math.min(a.y, b.y); box.y1 = Math.max(a.y, b.y);
     return;
   }
-  structureSocketToWorld(sa, a.x, a.y, a.rot, endA);
-  structureSocketToWorld(sb, b.x, b.y, b.rot, endB);
+  structureSocketToWorld(sa, a.x, a.y, a.rot, endA, a.mirror);
+  structureSocketToWorld(sb, b.x, b.y, b.rot, endB, b.mirror);
   flattenCableCurve(endA, takesAnySide(a), endB, takesAnySide(b), out, box);
 }

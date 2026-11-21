@@ -91,7 +91,7 @@ export class SectorSnapshotRestore {
     for (const r of rows) {
       // PR 3a — a structure saved under one of the account's historical
       // per-browser ids belongs to the account's canonical playerId now.
-      const id = this.h.structurePlacement().place(canonicalPlayerId(r.owner), r.kind, r.x, r.y, { rot: r.rot });
+      const id = this.h.structurePlacement().place(canonicalPlayerId(r.owner), r.kind, r.x, r.y, { rot: r.rot, mirror: r.mirror === true });
       if (id === null) {
         this.h.logger.warn({ kind: r.kind, x: r.x, y: r.y }, 'persisted structure rejected on hydrate');
         continue;

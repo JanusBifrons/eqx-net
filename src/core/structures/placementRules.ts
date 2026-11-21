@@ -12,7 +12,7 @@
  * iterables are caller-owned, so it's safe to call from the per-frame ghost
  * preview (invariant #14). `null` means legal.
  */
-import { getStructureKind, isStructureKindId, normaliseStructureRotation, structureHalfExtents } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isStructureKindId, normaliseStructureRotation, structureHalfExtents, structureLocalToWorld } from '../../shared-types/structureKinds.js';
 import type { GridObstacle } from './Grid.js';
 
 /** A circular footprint to test against (a placed structure or the ghost). */
@@ -27,6 +27,8 @@ export interface PlacementFootprint {
    *  (a dock's landing pad) is reserved too. ABSENT ⇒ the footprint only. */
   kind?: string;
   rot?: number;
+  /** Placed mirrored (left-right flip, build mirror). ABSENT ⇒ not. */
+  mirror?: boolean;
 }
 
 /** Why a placement is illegal. `null` (from {@link placementRejection}) = legal. */
@@ -62,16 +64,16 @@ const padBox = { x: 0, y: 0, hw: 0, hh: 0 };
 
 /** The world box of a kind's `keepClear` area (a dock's landing pad) for a
  *  structure at (x, y) turned `rotDeg` (90° steps, game space y-up, CCW), or
- *  `null` when the kind reserves nothing. Returns shared scratch: read it
- *  before the next call. */
-export function keepClearBox(kindId: string | undefined, x: number, y: number, rotDeg: number | undefined): { readonly x: number; readonly y: number; readonly hw: number; readonly hh: number } | null {
+ *  `null` when the kind reserves nothing. `mirror` flips the pad's local
+ *  offset first (build mirror, `structureLocalToWorld`). Returns shared
+ *  scratch: read it before the next call. */
+export function keepClearBox(kindId: string | undefined, x: number, y: number, rotDeg: number | undefined, mirror?: boolean): { readonly x: number; readonly y: number; readonly hw: number; readonly hh: number } | null {
   if (kindId === undefined || !isStructureKindId(kindId)) return null;
   const kc = getStructureKind(kindId).keepClear;
   if (kc === undefined) return null;
   const r = normaliseStructureRotation(rotDeg);
   const cos = r === 0 ? 1 : r === 180 ? -1 : 0, sin = r === 90 ? 1 : r === 270 ? -1 : 0;
-  padBox.x = x + kc.cx * cos - kc.cy * sin;
-  padBox.y = y + kc.cx * sin + kc.cy * cos;
+  structureLocalToWorld(kc.cx, kc.cy, x, y, cos, sin, mirror, padBox);
   padBox.hw = (sin === 0 ? kc.w : kc.h) / 2;
   padBox.hh = (sin === 0 ? kc.h : kc.w) / 2;
   return padBox;
@@ -159,14 +161,15 @@ export function placementRejection(
   structures: Iterable<PlacementFootprint>,
   obstacles?: readonly GridObstacle[] | null,
   rotDeg: number = 0,
+  mirror?: boolean,
 ): PlacementRejection | null {
   const { hw, hh } = structureHalfExtents(kindId, rotDeg);
   for (const s of structures) {
     const shw = s.halfW ?? s.radius, shh = s.halfH ?? s.radius;
     if (boxesOverlap(s.x, s.y, shw, shh, x, y, hw, hh)) return 'overlap-structure';
-    const theirs = keepClearBox(s.kind, s.x, s.y, s.rot);
+    const theirs = keepClearBox(s.kind, s.x, s.y, s.rot, s.mirror);
     if (theirs !== null && boxesOverlap(theirs.x, theirs.y, theirs.hw, theirs.hh, x, y, hw, hh)) return 'overlap-pad';
-    const mine = keepClearBox(kindId, x, y, rotDeg);
+    const mine = keepClearBox(kindId, x, y, rotDeg, mirror);
     if (mine !== null && boxesOverlap(mine.x, mine.y, mine.hw, mine.hh, s.x, s.y, shw, shh)) return 'overlap-pad';
   }
   if (obstacles) {
@@ -186,6 +189,7 @@ export function canPlaceStructureAt(
   structures: Iterable<PlacementFootprint>,
   obstacles?: readonly GridObstacle[] | null,
   rotDeg: number = 0,
+  mirror?: boolean,
 ): boolean {
-  return placementRejection(kindId, x, y, structures, obstacles, rotDeg) === null;
+  return placementRejection(kindId, x, y, structures, obstacles, rotDeg, mirror) === null;
 }
