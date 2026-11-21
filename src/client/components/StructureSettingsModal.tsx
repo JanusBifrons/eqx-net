@@ -1,8 +1,9 @@
 /**
- * Settings window for your own building: a cog in the inspector's owner
- * action row opens a tabbed window on the loot window's frame (GameWindow.tsx):
- * the same dimmed, opaque, nearly full-screen-on-a-phone window, header, ✕,
- * footer and HUD palette.
+ * Settings panel for your own building: a cog in the inspector's owner
+ * action row opens a tabbed panel docked on the RIGHT (SidePanel.tsx, the
+ * galaxy map's sector panel shell): no dimming, the map stays live and
+ * interactive behind it; ~40% of a sideways phone's width, 360 px on desktop.
+ * Header, ✕, footer and palette are the loot window's (GameWindow.tsx).
  *
  * Tabs come from `settingsTabsFor(kindId)`, so tabs are added per building
  * kind in one place. Power (its numbers, plus the owner's On/Off and
@@ -10,20 +11,24 @@
  * a building that makes things, Production: its recipe (and the Change button
  * that cycles it, once the inspector's), a build count (minus / plus /
  * forever) sent on the same `set_recipe` message as the recipe, and the
- * blueprint slot (Load / Unload); for a gate, Access (structureSettingsGate.tsx).
+ * blueprint slot (Load / Unload); for a gate, Access (structureSettingsGate.tsx). Labels read Build / Power /
+ * Manage; the tab ids (and test ids) keep their old names.
  * The inspector keeps only the cog and one-shot actions.
  *
- * Tapping outside, the ✕ or Close shuts it.
+ * The ✕, Close or a swipe on the handle shuts it, and so does a change of
+ * selection (another entity picked, or none).
  * Numbers are read from the render mirror at 4 Hz while open (low cadence,
  * like the teleporter panel) — the same slice the PWR line reads.
  */
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Box, IconButton, Tab, Tabs, Tooltip } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { getGameClient } from '../net/clientSingleton';
 import { HUD } from '../hud/tokens';
+import { useUIStore } from '../state/store';
+import { SidePanel, type SidePanelSize } from './SidePanel';
 import {
-  GameWindow, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX,
+  notifyGameWindowOpen, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX,
 } from './GameWindow';
 import { powerSummary, signed, type PowerSummary } from './structureSettingsPower';
 import { PowerControls } from './structureSettingsPowerControls';
@@ -38,8 +43,8 @@ export type SettingsTabId = 'power' | 'production' | 'access';
 interface SettingsTab { id: SettingsTabId; label: string }
 
 const POWER_TAB: SettingsTab = { id: 'power', label: 'Power' };
-const PRODUCTION_TAB: SettingsTab = { id: 'production', label: 'Production' };
-const ACCESS_TAB: SettingsTab = { id: 'access', label: 'Access' };
+const PRODUCTION_TAB: SettingsTab = { id: 'production', label: 'Build' };
+const ACCESS_TAB: SettingsTab = { id: 'access', label: 'Manage' };
 
 /** The tabs a building kind shows, in order. Every building sits on a grid,
  *  so every kind has Power; later tabs are appended here per kind. */
@@ -52,6 +57,8 @@ export function settingsTabsFor(kindId: string): readonly SettingsTab[] {
 }
 
 const POLL_MS = 250;
+/** ~40% of a sideways phone (never under 280 px), 360 px on desktop; below the app bar. */
+export const SETTINGS_PANEL_SIZE: SidePanelSize = { width: 360, touchFrac: 0.4, touchMinW: 280, touchTop: null };
 
 function readKind(entityId: number): string | undefined {
   return getGameClient()?.mirror.swarm?.get(entityId)?.shipKind;
@@ -167,8 +174,22 @@ export interface StructureSettingsModalProps {
 export function StructureSettingsModal({ open, entityId, title, onClose }: StructureSettingsModalProps): JSX.Element {
   const tabs = settingsTabsFor(readKind(entityId) ?? '');
   const [tab, setTab] = useState<SettingsTabId>(tabs[0]!.id);
+  // Close when the selection moves on (another entity, or none).
+  const focusId = useUIStore((s) => s.selection.focusId);
+  const openedOn = useRef(focusId);
+  useEffect(() => {
+    if (open && focusId !== openedOn.current) onClose();
+  }, [open, focusId, onClose]);
+  // The speed dial collapses as for a game window; the HUD drops the
+  // right-edge weapon strip that would sit under the panel.
+  useEffect(() => {
+    if (!open) return undefined;
+    notifyGameWindowOpen();
+    useUIStore.setState({ structureSettingsOpen: true });
+    return () => useUIStore.setState({ structureSettingsOpen: false });
+  }, [open]);
   return (
-    <GameWindow open={open} onClose={onClose} testId="structure-settings">
+    <SidePanel open={open} onClose={onClose} testId="structure-settings" size={SETTINGS_PANEL_SIZE}>
       <Box sx={WINDOW_ROOT_SX}>
         <Box sx={WINDOW_HEAD_SX}>
           <Box sx={WINDOW_TITLE_SX}>{title} settings</Box>
@@ -189,7 +210,7 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
           <Box component="button" sx={WINDOW_BTN_SECONDARY_SX} onClick={onClose} data-testid="structure-settings-close-btn">Close</Box>
         </Box>
       </Box>
-    </GameWindow>
+    </SidePanel>
   );
 }
 

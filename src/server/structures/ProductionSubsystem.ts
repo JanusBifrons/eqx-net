@@ -18,7 +18,9 @@
  * **Blueprints** (Living World W2). A recipe with `blueprintRequired` runs only
  * with a matching blueprint in the processor's slot (`rec.blueprint`):
  * `applyBlueprint` trims the inputs (material efficiency), a copy spends one run
- * per cycle (a used-up copy leaves the slot), output quality gives a chance of
+ * when a cycle starts (a used-up copy leaves the slot when its last cycle
+ * completes; a cycle handed back by `unload` refunds its inputs AND its run,
+ * so a copy's runs only ever leave as outputs), output quality gives a chance of
  * one extra unit per output (rolled deterministically per processor and cycle),
  * and a packed structure carries the quality. `onBlueprintSpent` lets the room
  * persist the slot.
@@ -46,6 +48,7 @@ import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecip
 import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
 import { advanceProgress } from './productionProgress.js';
+import { baseEffect, inputsAsOutputs } from './productionEffect.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
@@ -93,18 +96,6 @@ interface AppliedCache {
   eff: EffectiveRecipe;
 }
 
-/** A recipe's base effect (no blueprint), cached per recipe. */
-const BASE_EFFECT = new Map<RecipeId, EffectiveRecipe>();
-function baseEffect(id: RecipeId): EffectiveRecipe {
-  let e = BASE_EFFECT.get(id);
-  if (e === undefined) {
-    const d = RECIPES[id];
-    e = { inputs: d.inputs, outputs: d.outputs, cyclePulses: d.cyclePulses, yieldBonus: 0, quality: 0 };
-    BASE_EFFECT.set(id, e);
-  }
-  return e;
-}
-
 export class ProductionSubsystem {
   private readonly procs: StructureRecord[] = [];
   private readonly net: StructureRecord[] = [];
@@ -136,7 +127,7 @@ export class ProductionSubsystem {
   cycleFraction(rec: StructureRecord): number {
     if (rec.prodLoaded !== true || !isProcessorKind(rec.kind)) return 0;
     const id = this.recipeOf(rec);
-    const pulses = (this.effective(rec, id) ?? baseEffect(id)).cyclePulses;
+    const pulses = (this.effective(rec, id, true) ?? baseEffect(id)).cyclePulses;
     return pulses > 0 ? Math.min(1, (rec.prodProgress ?? 0) / pulses) : 0;
   }
 
@@ -214,10 +205,16 @@ export class ProductionSubsystem {
       rec.prodProgress = 0;
       return true;
     }
-    const eff = this.effective(rec, id) ?? baseEffect(id);
+    const eff = this.effective(rec, id, true) ?? baseEffect(id);
     if (!this.put(inputsAsOutputs(eff), 0, 0)) return false;
     rec.prodLoaded = false;
     rec.prodProgress = 0;
+    // The run spent at cycle start goes back (a used-up copy stays until its cycle completes).
+    const bp = rec.blueprint;
+    if (RECIPES[id].blueprintRequired && bp !== undefined && bp.kind === 'bpc' && bp.product === blueprintProductFor(id)) {
+      bp.runs = (bp.runs ?? 0) + 1;
+      this.d.onBlueprintSpent?.(rec);
+    }
     return true;
   }
 
@@ -278,7 +275,8 @@ export class ProductionSubsystem {
     if (haltAtBuildCount(rec, loaded, id)) return;
     // A loaded cycle keeps running on what it captured at its start, even if
     // the copy that started it is now used up.
-    const eff = loaded ? this.effective(rec, id) ?? baseEffect(id) : this.effective(rec, id);
+    if (!loaded) this.dropUsedUp(rec);
+    const eff = loaded ? this.effective(rec, id, true) ?? baseEffect(id) : this.effective(rec, id);
     if (eff === null) {
       rec.prodState = PROD_STATE.needsBlueprint;
       return;
@@ -306,12 +304,9 @@ export class ProductionSubsystem {
       rec.prodProgress = 0;
       rec.prodQuality = eff.quality;
       rec.prodYield = eff.yieldBonus;
+      // A copy spends its run now (`unload` refunds it; used up, it leaves on completion).
       if (RECIPES[id].blueprintRequired && rec.blueprint !== undefined) {
         spendBlueprintRun(rec.blueprint);
-        if (isBlueprintUsedUp(rec.blueprint)) {
-          rec.blueprint = undefined;
-          this.applied.delete(rec.id);
-        }
         this.d.onBlueprintSpent?.(rec);
       }
     }
@@ -328,6 +323,7 @@ export class ProductionSubsystem {
       rec.prodCycles = cycle + 1;
       spendBuildCount(rec);
       this.cyclesCompleted++;
+      this.dropUsedUp(rec);
       // D3 — taxes go to the owner's wallet, never into a hold.
       for (const o of eff.outputs) if ('credits' in o) this.d.payCredits?.(rec, o.credits);
     }
@@ -425,13 +421,22 @@ export class ProductionSubsystem {
     return false;
   }
 
+  /** A used-up copy leaves the slot once no cycle it started is loaded. */
+  private dropUsedUp(rec: StructureRecord): void {
+    if (rec.blueprint === undefined || !isBlueprintUsedUp(rec.blueprint)) return;
+    rec.blueprint = undefined;
+    this.applied.delete(rec.id);
+    this.d.onBlueprintSpent?.(rec);
+  }
+
   /** Base effect, or the slot blueprint's (cached); null when a needed
-   *  blueprint is missing, used up, or for another product. */
-  private effective(rec: StructureRecord, id: RecipeId): EffectiveRecipe | null {
+   *  blueprint is missing, for another product, or used up (`loaded`: the
+   *  cycle its last run started still applies it). */
+  private effective(rec: StructureRecord, id: RecipeId, loaded = false): EffectiveRecipe | null {
     const def = RECIPES[id];
     if (!def.blueprintRequired) return baseEffect(id);
     const bp = rec.blueprint;
-    if (bp === undefined || isBlueprintUsedUp(bp) || bp.product !== blueprintProductFor(id)) return null;
+    if (bp === undefined || (!loaded && isBlueprintUsedUp(bp)) || bp.product !== blueprintProductFor(id)) return null;
     const c = this.applied.get(rec.id);
     if (c !== undefined && c.bp === bp && c.recipe === id && c.material === bp.material && c.output === bp.output) return c.eff;
     const a: AppliedRecipe<readonly RecipeOutput[]> = applyBlueprint(def, bp);
@@ -582,9 +587,3 @@ export class ProductionSubsystem {
 
 const EMPTY = { goods: {}, blueprints: [] };
 const ONE_FUEL: Readonly<Partial<Record<GoodId, number>>> = Object.freeze({ fuel: 1 });
-
-/** A cycle's inputs as outputs (handing a loaded cycle back). Rare (recipe or
- *  blueprint change), so it may allocate. */
-function inputsAsOutputs(eff: EffectiveRecipe): readonly RecipeOutput[] {
-  return Object.entries(eff.inputs).map(([good, n]) => ({ good: good as GoodId, n: n ?? 0 }));
-}

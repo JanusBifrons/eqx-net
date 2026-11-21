@@ -207,3 +207,52 @@ describe('buildModeView: Build is the third control mode', () => {
     expect(cam.selectFleetShips).not.toHaveBeenCalled();
   });
 });
+
+/** Seen on film (Pixel 7): a building's info card, opened by a tap, stayed
+ *  open over the play view after the switch went to Fly or Command. A switch
+ *  INTO Fly or Command closes it (through the renderer, which owns the
+ *  selection); entering Build keeps it (you switch to Build to manage it). */
+describe('buildModeView: a mode switch to Fly or Command closes the open card', () => {
+  beforeEach(() => {
+    resetBuildModeView();
+    useUIStore.setState({ placementKind: null, buildMode: false, currentSectorKey: 'sol-prime' });
+    useUIStore.getState().setPilotMode('pilot');
+    useUIStore.getState().setSelection([], null, null);
+  });
+
+  it('Build → Command closes a building card', () => {
+    const cam = camera();
+    useUIStore.getState().setBuildMode(true);
+    frame(cam);
+    useUIStore.getState().setSelection([], 'swarm-9', 'structure');
+    frame(cam);
+    expect(cam.selectFleetShips).not.toHaveBeenCalled();
+    leaveBuildMode('command');
+    frame(cam);
+    expect(cam.selectFleetShips).toHaveBeenCalledWith([]);
+  });
+
+  it('Command → Fly and Fly → Command close a building card', () => {
+    const cam = camera();
+    useUIStore.getState().setPilotMode('spectator');
+    frame(cam);
+    useUIStore.getState().setSelection([], 'swarm-9', 'structure');
+    useUIStore.getState().setPilotMode('pilot');
+    frame(cam);
+    expect(cam.selectFleetShips).toHaveBeenCalledTimes(1);
+    useUIStore.getState().setSelection([], 'swarm-9', 'structure');
+    useUIStore.getState().setPilotMode('spectator');
+    frame(cam);
+    expect(cam.selectFleetShips).toHaveBeenCalledTimes(2);
+    frame(cam); // edge-triggered: not every frame
+    expect(cam.selectFleetShips).toHaveBeenCalledTimes(2);
+  });
+
+  it('no card open: a switch sends nothing', () => {
+    const cam = camera();
+    frame(cam);
+    useUIStore.getState().setPilotMode('spectator');
+    frame(cam);
+    expect(cam.selectFleetShips).not.toHaveBeenCalled();
+  });
+});

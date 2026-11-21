@@ -16,7 +16,8 @@
  * The camera scale is read from the renderer feedback's `viewHalf` (the larger
  * half of the visible world): scale = (larger window side / 2) / viewHalf.
  */
-import { useUIStore } from '../state/store.js';
+import { selectControlMode, useUIStore } from '../state/store.js';
+import type { ControlMode } from '../state/storeTypes.js';
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient.js';
 
 /** Entering build mode multiplies the camera scale by this (a step back). */
@@ -53,6 +54,8 @@ const st = {
   restoreScale: 0,
   /** `leaveBuildMode('fly')` sent the fly-back: the exit hands its zoom on. */
   flyBackSent: false,
+  /** Control mode on the last step (null = none yet), for the card close. */
+  lastMode: null as ControlMode | null,
 };
 
 /** Camera scale (px per world unit) from a view sample; 0 before the first frame. */
@@ -85,6 +88,7 @@ export function resetBuildModeView(): void {
   st.lastX = 0;
   st.lastY = 0;
   st.flyBackSent = false;
+  st.lastMode = null;
 }
 
 /**
@@ -119,6 +123,7 @@ export function stepBuildModeView(
   winW: number,
   winH: number,
 ): void {
+  closeCardOnModeSwitch(camera);
   if (building) {
     if (!st.active) enterBuildView(localShipInstanceId, camera);
     if (view !== null && view.viewHalf > 0) {
@@ -133,6 +138,22 @@ export function stepBuildModeView(
     return;
   }
   if (st.active) exitBuildView(camera);
+}
+
+/**
+ * A switch INTO Fly or Command closes the open card (the focus) and drops a
+ * ship selection, through the renderer, which owns the selection: a building
+ * card opened in Build or Command otherwise stayed over the play view.
+ * Entering Build keeps the card (you switch to Build to manage that building).
+ * Edge-triggered on the control mode; the first frame only records it.
+ */
+function closeCardOnModeSwitch(camera: BuildViewCamera): void {
+  const ui = useUIStore.getState();
+  const mode = selectControlMode(ui);
+  const prev = st.lastMode;
+  st.lastMode = mode;
+  if (prev === null || prev === mode || mode === 'build') return;
+  if (ui.selection.focusId !== null || ui.selection.ids.length > 0) camera.selectFleetShips(NO_SHIPS);
 }
 
 function enterBuildView(localShipInstanceId: string | null, camera: BuildViewCamera): void {
