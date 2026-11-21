@@ -37,7 +37,7 @@ vi.mock('pixi.js', () => {
   return { Container: FakeContainer, Graphics: FakeGraphics, Text: FakeText };
 });
 
-type FakeGfx = { circle: ReturnType<typeof vi.fn>; stroke: ReturnType<typeof vi.fn>; arc: ReturnType<typeof vi.fn> };
+type FakeGfx = { circle: ReturnType<typeof vi.fn>; stroke: ReturnType<typeof vi.fn>; lineTo: ReturnType<typeof vi.fn> };
 
 const SX = 100, SY = 200;
 
@@ -85,9 +85,10 @@ describe('AimFeedbackRenderer faint threat ring', () => {
     expect(style.color).toBe(THREAT_COLOUR);
     expect(style.alpha).toBeLessThan(0.35);
     expect(style.width).toBeLessThan(3 * px);
-    // Drawn under the arcs: before any arc in the pass.
-    expect(g.arc).toHaveBeenCalled();
-    expect(idx).toBeLessThan(Math.min(...g.arc.mock.invocationCallOrder));
+    // Drawn under the arcs: before any arc segment (arcSubpath walks arcs
+    // with lineTo) in the pass.
+    expect(g.lineTo).toHaveBeenCalled();
+    expect(idx).toBeLessThan(Math.min(...g.lineTo.mock.invocationCallOrder));
   });
 });
 

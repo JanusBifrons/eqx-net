@@ -3345,3 +3345,15 @@ lands 0.045 off the other side, still outside the band, flips direction, and rep
 forever. A steerer that toggles snap-turn bits must stop within half the per-tick step
 (`maxTurnPerTick`, from `applyShipInput`); retuning a turn rate must re-check every closed-loop
 controller that toggles the turn keys (`joystickToInput.test.ts` closed-loop cases).
+
+## 2026-11-21 — moveTo the arc's start, then arc(): a stray line to the Graphics' origin on phones
+
+Pixi v8's `arc()` pushes its own start point onto the current subpath, so `g.moveTo(arc start);
+g.arc(...)` gives the stroke polygon two identical leading points. `buildLine` normalises the first
+segment by its length (zero), so the whole stroke tessellates to NaN vertices. Desktop GPUs drop
+those triangles; a phone GPU draws them at the Graphics' local origin, so every lock progress arc,
+threat arc, galaxy padlock shackle and flip-ring dash grew a long thin line from far off-screen. A bare
+`arc()` is no fix: after an earlier stroke or fill the path keeps its last point and the arc joins it.
+Draw arcs with `arcSubpath` (`src/client/render/arcSubpath.ts`: moveTo + lineTo, which skips
+duplicates). `g.context.bounds` does not catch this (NaN never widens bounds): test the tessellated
+vertices with `strokeVertices` (`src/client/render/strokeVertices.testutil.ts`) and assert finite.
