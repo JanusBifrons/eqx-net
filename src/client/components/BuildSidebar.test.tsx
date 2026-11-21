@@ -11,6 +11,9 @@ import { BUILD_CATEGORIES, categoryById } from './buildCategories.js';
 import { BUILD_PANEL_SIZE, rightPaperSx } from './SidePanel.js';
 import { PANEL_TOUCH_TOP } from '../render/galaxy/galaxyFocus.js';
 
+const sendPackedStockQuery = vi.fn();
+vi.mock('../net/tradeClient', () => ({ sendPackedStockQuery: () => sendPackedStockQuery() }));
+
 function renderSidebar(open = true): { onClose: ReturnType<typeof vi.fn>; onPick: ReturnType<typeof vi.fn> } {
   const onClose = vi.fn();
   const onPick = vi.fn();
@@ -56,6 +59,14 @@ describe('BuildSidebar', () => {
     renderSidebar();
     expect(screen.getByTestId('build-capital')).toHaveAttribute('data-locked', '0');
     expect(screen.getByTestId('build-capital').textContent).toContain('×2');
+  });
+
+  it('asks for packed stock while open or placing (the keep-placing rule reads it), not when idle', () => {
+    sendPackedStockQuery.mockClear();
+    renderSidebar(false);
+    expect(sendPackedStockQuery).not.toHaveBeenCalled();
+    act(() => { useUIStore.setState({ placementKind: 'solar' }); });
+    expect(sendPackedStockQuery).toHaveBeenCalledTimes(1);
   });
 
   it('the ✕ closes it', () => {

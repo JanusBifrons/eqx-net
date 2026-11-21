@@ -32,7 +32,7 @@ import {
 } from '../state/store.js';
 import { placementChosen, resetPlacementChosen, writePlacementChosen } from '../structures/placementChosen.js';
 import { updatePlacementHints } from '../structures/placementHints.js';
-import { commitChosenPlacement } from '../structures/structurePlacementClient.js';
+import { commitPlacement } from '../structures/placementCancel.js';
 import { stepBuildModeView, takeBuildRestoreScale } from '../structures/buildModeView.js';
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
 import { resetSelectionStats } from '../net/selectionStats.js';
@@ -325,13 +325,11 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
         _lastPlacementConfirmSeq = feedback.placementConfirmSeq;
         const kind = useUIStore.getState().placementKind;
         if (kind) {
-          // Phase 5 — KEEP `placementKind` after a desktop click-place so the
-          // player can place MULTIPLE in a row (the user: "don't unselect a
-          // building once you've placed one"). The renderer cycles pending →
-          // active once the server echoes, re-arming the hover-follow ghost for
-          // the next click. The deliberate EXIT is Escape / right-click (App.tsx
-          // → setPlacementKind(null)). (Was: cleared on every place — WS-10.)
-          commitChosenPlacement(kind);
+          // KEEP placing after a click-place (build-menu M3; one rule with the
+          // touch Confirm: `commitPlacement` ends it only for a place-once kind or
+          // the last crate). The renderer re-arms the hover-follow ghost; the
+          // deliberate EXIT is Escape / right-click (App.tsx → cancelPlacement).
+          commitPlacement(kind);
         }
       }
       // The touch Confirm banner docks top-centre (build mode); only the

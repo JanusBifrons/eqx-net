@@ -20,8 +20,9 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  *   6. Build opens the right-hand Build sidebar (category rail + kind tiles)
  *      and collapses the dial.
  *   7. A rail tap switches the category.
- *   8. Picking a kind hides the sidebar; Confirm brings it back on the same
- *      category, so the next structure is one tap away.
+ *   8. Picking a kind hides the sidebar. Confirm KEEPS placing the same
+ *      building (M3) with it hidden; Cancel, or a place-once kind (Capital)
+ *      placed, brings it back on the same category for the next structure.
  *   9. The sidebar's ✕ and Escape close it; the FAB opens the main menu.
  *
  * The held controls (joystick / FIRE / BOOST) deliberately stay OUT of the
@@ -183,17 +184,44 @@ test('a rail tap switches the sidebar to that category', async ({ browser }) => 
   }
 });
 
-test('a pick hides the sidebar and Confirm brings it back on the same category', async ({ browser }) => {
+test('Confirm keeps placing with the sidebar hidden; Cancel brings it back on the same category', async ({ browser }) => {
   // The Confirm banner is the TOUCH placement flow (desktop places on click),
   // so this test joins as a touch device.
+  const { ctx, page } = await joinClient(browser, true);
+  try {
+    await openBuildSidebar(page);
+    await page.locator('[data-testid="build-cat-economy"]').click();
+
+    // Picking a kind raises the ghost and hides the sidebar, so it never
+    // covers the ghost.
+    await page.locator('[data-testid="build-solar"]').click();
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
+    await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+
+    // THE LOCK (M3): Confirm keeps you placing the same building; the
+    // sidebar stays hidden.
+    await page.locator('[data-testid="placement-confirm"]').click();
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible();
+    await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
+    await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+
+    // Cancel ends it: the sidebar is back on Economy, the next pick one tap.
+    await page.locator('[data-testid="placement-cancel"]').click();
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
+    await expect(page.locator('[data-testid="build-kinds"]')).toHaveAttribute('data-category', 'economy', { timeout: 5_000 });
+    await expect(page.locator('[data-testid="build-solar"]')).toBeVisible();
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('a Capital places once: Confirm ends placement and brings the sidebar back', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser, true);
   try {
     const before = await swarmCount(page);
     await openBuildSidebar(page);
     await page.locator('[data-testid="build-cat-core"]').click();
-
-    // Picking a kind raises the ghost and hides the sidebar, so it never
-    // covers the ghost.
     await page.locator('[data-testid="build-capital"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="build-capital"]')).toBeHidden();
@@ -204,10 +232,8 @@ test('a pick hides the sidebar and Confirm brings it back on the same category',
       return parseInt(t.replace(/\D/g, '') || '0', 10) > b;
     }, before, { timeout: 8_000 });
 
-    // THE LOCK: the sidebar is back on Core, so the next structure is one tap.
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="build-capital"]').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
   } finally {
     await ctx.close();
   }

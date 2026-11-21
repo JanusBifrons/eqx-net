@@ -50,8 +50,9 @@ import { BuildSidebar } from './BuildSidebar';
  * Build menu: the Build action closes the dial and opens the Build sidebar
  * (BuildSidebar.tsx: a category rail and kind tiles). Picking a kind sets
  * `placementKind` (entering Build mode) and hides the sidebar, so it never
- * covers the ghost; Confirm and Cancel (the ghost goes, Build stays) bring it
- * back for the next structure; entering Build opens it, leaving Build closes it.
+ * covers the ghost; Confirm keeps placing the same building (placementCancel.ts)
+ * with it hidden, and Cancel (the ghost goes, Build stays) brings it back;
+ * entering Build opens it, leaving Build closes it.
  * Categories live client-side only (no wire field, no version bump, no netgate).
  *
  * Perf: all static `sx` is hoisted to module-level consts (no per-render alloc,
@@ -109,8 +110,9 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   }, []);
 
   // Build mode keeps the build menu ready: entering Build (the mode switch) and
-  // every Confirm / Cancel (the ghost goes, Build stays) open the Build sidebar
-  // for the next structure. Leaving Build closes it and the dial.
+  // every placement end (Cancel, or a place-once kind placed: the ghost goes,
+  // Build stays) open the Build sidebar for the next structure. A Confirm keeps
+  // placing, so it stays hidden. Leaving Build closes it and the dial.
   const building = useUIStore((s) => s.buildMode);
   const buildListReady = useUIStore((s) => s.buildMode && s.placementKind === null);
   const wasBuilding = useRef(false);
@@ -165,8 +167,8 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   useFitActionsToViewport(dialRef, direction, open);
 
   // Pick a kind to place: raise the placement ghost and hide the sidebar, so it
-  // never covers the ghost (build mode, stills review 2026-11-20). Confirm or
-  // Cancel brings it back on the same category (the R2.6 repeat-build need).
+  // never covers the ghost (build mode, stills review 2026-11-20). Cancel
+  // brings it back on the same category (the R2.6 repeat-build need).
   const handlePickBuild = useCallback(
     (kind: StructureKindId) => {
       setPlacementKind(kind);

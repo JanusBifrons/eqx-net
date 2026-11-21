@@ -1,25 +1,36 @@
 import { useUIStore } from '../state/store';
+import { placementEndsAfterPlace } from '@shared-types/packedStock';
+import type { StructureKindId } from '@shared-types/structureKinds';
+import { commitChosenPlacement } from './structurePlacementClient';
+
+/**
+ * How a placement ends (build-menu redesign M3). After a place you KEEP
+ * PLACING the same building until you cancel; the Build sidebar comes back
+ * when `placementKind` clears (SpeedDialMenu.tsx).
+ */
 
 /**
  * Cancel the structure being placed (the ghost goes, Build stays). Every
  * player Cancel (the touch banner's Cancel, Escape, a mouse right-click) goes
- * through here, so a listener can tell a Cancel from a Confirm (both clear
- * `placementKind`). The Build sidebar treats both alike today: it comes back
- * for the next structure (SpeedDialMenu.tsx).
- * No-op when nothing is being placed.
+ * through here. No-op when nothing is being placed.
  */
-const cancelListeners = new Set<() => void>();
-
 export function cancelPlacement(): void {
   const ui = useUIStore.getState();
   if (ui.placementKind === null) return;
-  for (const fn of cancelListeners) fn();
   ui.setPlacementKind(null);
 }
 
-/** Run `fn` on every placement Cancel (before `placementKind` clears).
- *  Returns the unsubscribe. */
-export function onPlacementCancel(fn: () => void): () => void {
-  cancelListeners.add(fn);
-  return () => { cancelListeners.delete(fn); };
+/**
+ * Place `kindId` at the chosen point: the ONE path for the touch Confirm and
+ * the desktop click (gameRafLoop). Placement stays open for the next one,
+ * except a place-once kind or the last crate (`placementEndsAfterPlace`).
+ * A refused commit (blocked ghost) keeps placement open. Returns whether a
+ * placement was sent.
+ */
+export function commitPlacement(kindId: StructureKindId): boolean {
+  const ui = useUIStore.getState();
+  const ends = placementEndsAfterPlace(kindId, ui.packedStock, ui.currentSectorKey !== null);
+  if (!commitChosenPlacement(kindId)) return false;
+  if (ends && useUIStore.getState().placementKind === kindId) ui.setPlacementKind(null);
+  return true;
 }

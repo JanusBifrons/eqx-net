@@ -1,13 +1,21 @@
 /**
  * Build menu (build-menu redesign M1): the dial's Build action opens the Build
  * sidebar; picking a building hides it, so it never covers the ghost while it
- * is placed (stills review 2026-11-20); Confirm brings it back on the same
- * category for the next structure (the R2.6 repeat-build need).
+ * is placed (stills review 2026-11-20). Confirm KEEPS placing the same building
+ * with it hidden (M3); Cancel, or a place-once kind placed, brings it back on
+ * the same category for the next structure (the R2.6 repeat-build need).
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { SpeedDialMenu } from './SpeedDialMenu.js';
+import { cancelPlacement, commitPlacement } from '../structures/placementCancel.js';
+
+// Confirm sends nothing here: the commit is stubbed as sent.
+vi.mock('../structures/structurePlacementClient', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../structures/structurePlacementClient.js')>()),
+  commitChosenPlacement: () => true,
+}));
 
 const expanded = (): string | null => screen.getByTestId('speed-dial-fab').getAttribute('aria-expanded');
 const sidebarOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
@@ -32,12 +40,32 @@ describe('SpeedDialMenu: the Build sidebar', () => {
     expect(useUIStore.getState().buildMode).toBe(true);
     expect(sidebarOpen()).toBe(false);
 
-    // Confirm: the sidebar comes straight back on the same category.
-    act(() => useUIStore.getState().setPlacementKind(null));
+    // Confirm keeps placing the solar panel; the sidebar stays hidden.
+    act(() => { commitPlacement('solar'); });
+    act(() => { commitPlacement('solar'); });
+    expect(useUIStore.getState().placementKind).toBe('solar');
+    expect(sidebarOpen()).toBe(false);
+
+    // Cancel: the sidebar comes straight back on the same category.
+    act(() => cancelPlacement());
     expect(useUIStore.getState().buildMode).toBe(true);
     expect(sidebarOpen()).toBe(true);
     expect(screen.getByTestId('build-kinds')).toHaveAttribute('data-category', 'economy');
     expect(screen.getByTestId('build-solar')).toBeTruthy();
+  });
+
+  it('a place-once kind (the Capital) ends placement on Confirm and brings the sidebar back', () => {
+    render(<SpeedDialMenu direction="down" />);
+    useUIStore.setState({ packedStock: null });
+    act(() => useUIStore.getState().setBuildMode(true));
+    fireEvent.click(screen.getByTestId('build-cat-core'));
+    fireEvent.click(screen.getByTestId('build-capital'));
+    expect(useUIStore.getState().placementKind).toBe('capital');
+    expect(sidebarOpen()).toBe(false);
+    act(() => { commitPlacement('capital'); });
+    expect(useUIStore.getState().placementKind).toBeNull();
+    expect(sidebarOpen()).toBe(true);
+    expect(screen.getByTestId('build-kinds')).toHaveAttribute('data-category', 'core');
   });
 
   it('the switch Build button opens the sidebar; leaving Build closes it', () => {

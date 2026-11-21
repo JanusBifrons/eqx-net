@@ -33,7 +33,9 @@ export interface BuildSidebarProps {
 
 export function BuildSidebar({ open, onClose, onPick }: BuildSidebarProps): JSX.Element {
   const [category, setCategory] = useState<BuildCategoryId>(BUILD_CATEGORIES[0]!.id);
-  const packedStock = usePackedStock(open);
+  // Stock keeps polling while placing: the keep-placing rule reads it (placementCancel.ts).
+  const placing = useUIStore((s) => s.placementKind !== null);
+  const packedStock = usePackedStock(open || placing);
   const inSector = useUIStore((s) => s.currentSectorKey !== null); // no sector = no crate rule
   useEffect(() => {
     if (open && useUIStore.getState().structureSettingsOpen) useUIStore.setState({ structureSettingsOpen: false });
