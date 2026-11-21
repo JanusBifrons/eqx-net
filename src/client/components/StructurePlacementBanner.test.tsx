@@ -3,7 +3,7 @@ import { render, cleanup, fireEvent } from '@testing-library/react';
 import { StructurePlacementBanner } from './StructurePlacementBanner.js';
 import { LayoutContext } from '../layout/useLayout.js';
 import { useUIStore } from '../state/store.js';
-import { getPlacementRotationDeg, setPlacementRotationDeg } from '../structures/structurePlacementClient.js';
+import { getPlacementMirror, getPlacementRotationDeg, setPlacementMirror, setPlacementRotationDeg } from '../structures/structurePlacementClient.js';
 
 /**
  * The banner's Confirm delegates to the shared `commitChosenPlacement` (the
@@ -80,9 +80,24 @@ describe('StructurePlacementBanner', () => {
     expect(useUIStore.getState().placementKind).toBe('capital');
   });
 
-  it('uses icon-only buttons (rotate, tick, cross) with labels and 40 px targets', () => {
+  it('Mirror flips the placement left-right and shows it pressed', () => {
+    setPlacementMirror(false);
     const { getByTestId } = renderBanner();
-    for (const [id, label] of [['placement-rotate', 'Rotate'], ['placement-confirm', 'Confirm'], ['placement-cancel', 'Cancel']] as const) {
+    const b = getByTestId('placement-mirror');
+    expect(b.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(b);
+    expect(getPlacementMirror()).toBe(true);
+    expect(b.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(b);
+    expect(getPlacementMirror()).toBe(false);
+    // Mirroring neither commits nor leaves placement mode.
+    expect(commitChosenPlacement).not.toHaveBeenCalled();
+    expect(useUIStore.getState().placementKind).toBe('capital');
+  });
+
+  it('uses icon-only buttons (rotate, mirror, tick, cross) with labels and 40 px targets', () => {
+    const { getByTestId } = renderBanner();
+    for (const [id, label] of [['placement-rotate', 'Rotate'], ['placement-mirror', 'Mirror'], ['placement-confirm', 'Confirm'], ['placement-cancel', 'Cancel']] as const) {
       const b = getByTestId(id);
       expect(b.getAttribute('aria-label')).toBe(label);
       expect(b.getAttribute('title')).toBe(label);

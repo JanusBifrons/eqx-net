@@ -22,6 +22,10 @@ dedicated buttons; a tap-to-expand menu is the wrong place for an input you hold
    structure a short distance ahead of your ship; *Cancel* exits.
 3. The structure appears in the world and is immediately **damageable**.
 
+While placing, **Rotate** (the turning-arrow button, or **R** on a keyboard)
+turns the building a quarter turn, and **Mirror** (the flip button beside it, or
+**F**) flips it left-right. Both choices carry over to the next building you place.
+
 > **First cut:** placement drops the structure *ahead of your ship*. A
 > tap-to-position blueprint ghost (a translucent silhouette that follows the
 > cursor with a connection-range ring and live valid/invalid tint) is a planned

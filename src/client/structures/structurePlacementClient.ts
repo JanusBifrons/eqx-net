@@ -40,6 +40,20 @@ export function getPlacementMirror(): boolean {
 export function setPlacementMirror(on: boolean): void {
   placementMirror = on;
 }
+/** Flip the ghost left-right (F / the banner's Mirror button). Returns the new choice. */
+export function togglePlacementMirror(): boolean {
+  placementMirror = !placementMirror;
+  return placementMirror;
+}
+/** Desktop placement keys (main-thread `App.tsx` keydown, only while placing):
+ *  R rotates a quarter turn, F mirrors. True when the key was handled. */
+export function handlePlacementKey(key: string): boolean {
+  const k = key.toLowerCase();
+  if (k === 'r') cyclePlacementRotation();
+  else if (k === 'f') togglePlacementMirror();
+  else return false;
+  return true;
+}
 const DEG = Math.PI / 180;
 import { getGameClient } from '../net/clientSingleton.js';
 import { placementChosen } from './placementChosen.js';

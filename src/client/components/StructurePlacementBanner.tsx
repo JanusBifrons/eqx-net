@@ -1,14 +1,16 @@
 import { Box, IconButton } from '@mui/material';
 import RotateRightIcon from '@mui/icons-material/RotateRight';
+import FlipIcon from '@mui/icons-material/Flip';
 import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
 import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { commitChosenPlacement, cyclePlacementRotation } from '../structures/structurePlacementClient';
+import { commitChosenPlacement, cyclePlacementRotation, getPlacementMirror, togglePlacementMirror } from '../structures/structurePlacementClient';
 import { isTouchDevice } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { PlacementFenceHint } from './PlacementFenceHint';
 import { PlacementLinkHint } from './PlacementLinkHint';
+import { useState } from 'react';
 
 /**
  * Placement confirm banner (speed-dial-resource-structures plan, Phase 2).
@@ -18,7 +20,8 @@ import { PlacementLinkHint } from './PlacementLinkHint';
  * (`RenderMirror.pendingPlacementPreview`); this banner is its Confirm/Cancel
  * affordance. Confirm sends `place_structure`; Cancel exits placement mode.
  * Rotate turns the ghost a quarter turn through the same
- * `cyclePlacementRotation` the desktop R key uses.
+ * `cyclePlacementRotation` the desktop R key uses; Mirror flips it left-right
+ * through `togglePlacementMirror`, the same as the desktop F key.
  *
  * ── Docked top-centre (build mode, owner design 2026-11-20) ──
  * Build mode switches to the Command view and hides the flight controls
@@ -36,6 +39,8 @@ import { PlacementLinkHint } from './PlacementLinkHint';
  */
 export function StructurePlacementBanner(): JSX.Element | null {
   const placementKind = useUIStore((s) => s.placementKind);
+  // The mirror choice is module state; this only re-renders the pressed look.
+  const [, bumpMirror] = useState(0);
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
 
   // TOUCH-ONLY affordance (P3.6 / WS-C4b). The banner is the two-step
@@ -62,6 +67,11 @@ export function StructurePlacementBanner(): JSX.Element | null {
   const onRotate = (): void => {
     cyclePlacementRotation();
   };
+  const mirrored = getPlacementMirror();
+  const onMirror = (): void => {
+    togglePlacementMirror();
+    bumpMirror((n) => n + 1);
+  };
 
   return (
     <Slot anchor="top-center" order={-1}>
@@ -70,6 +80,9 @@ export function StructurePlacementBanner(): JSX.Element | null {
           <Box sx={LABEL_SX}>Place {kind.displayName} here?</Box>
           <IconButton data-testid="placement-rotate" aria-label="Rotate" title="Rotate" onClick={onRotate} sx={ROTATE_SX}>
             <RotateRightIcon fontSize="small" />
+          </IconButton>
+          <IconButton data-testid="placement-mirror" aria-label="Mirror" title="Mirror" aria-pressed={mirrored} onClick={onMirror} sx={mirrored ? MIRROR_ON_SX : ROTATE_SX}>
+            <FlipIcon fontSize="small" />
           </IconButton>
           <IconButton data-testid="placement-confirm" aria-label="Confirm" title="Confirm" onClick={onConfirm} sx={CONFIRM_SX}>
             <CheckIcon fontSize="small" />
@@ -123,6 +136,8 @@ const ICON_BTN_SX = {
 } as const;
 
 const ROTATE_SX = { ...ICON_BTN_SX, color: '#9fd8ff', borderColor: 'rgba(120,200,255,0.45)' } as const;
+
+const MIRROR_ON_SX = { ...ROTATE_SX, bgcolor: 'rgba(120,200,255,0.18)', borderColor: 'rgba(120,200,255,0.8)' } as const;
 
 const CONFIRM_SX = { ...ICON_BTN_SX, color: '#00ff88', borderColor: 'rgba(0,255,136,0.5)' } as const;
 

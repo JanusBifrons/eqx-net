@@ -13,6 +13,9 @@ import {
   setPlacementRotationDeg,
   getPlacementMirror,
   setPlacementMirror,
+  togglePlacementMirror,
+  handlePlacementKey,
+  getPlacementRotationDeg,
 } from './structurePlacementClient.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { placementChosen, resetPlacementChosen } from './placementChosen.js';
@@ -260,5 +263,27 @@ describe('placement mirror (4B)', () => {
     expect(resolvePlacementPreviewStatus(null, null, pending, 0, 0, false, out)).toBe('pending');
     expect(out.mirror).toBe(true);
     setPlacementMirror(false);
+  });
+
+  it('the Mirror toggle (button / F key) flips the flag sent with place_structure', () => {
+    expect(togglePlacementMirror()).toBe(true);
+    commitChosenPlacement('solar');
+    expect(send).toHaveBeenLastCalledWith('place_structure', expect.objectContaining({ mirror: true }));
+    expect(handlePlacementKey('F')).toBe(true); // off again
+    commitChosenPlacement('solar');
+    expect(send).toHaveBeenLastCalledWith('place_structure', expect.objectContaining({ mirror: false }));
+    expect(handlePlacementKey('f')).toBe(true);
+    expect(getPlacementMirror()).toBe(true);
+  });
+
+  it('placement keys: R rotates, F mirrors, other keys are left alone', () => {
+    setPlacementRotationDeg(0);
+    expect(handlePlacementKey('r')).toBe(true);
+    expect(getPlacementRotationDeg()).toBe(90);
+    expect(getPlacementMirror()).toBe(false);
+    expect(handlePlacementKey('x')).toBe(false);
+    expect(getPlacementRotationDeg()).toBe(90);
+    expect(getPlacementMirror()).toBe(false);
+    setPlacementRotationDeg(0);
   });
 });
