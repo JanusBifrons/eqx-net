@@ -3,6 +3,7 @@ import { teamSigilOf } from '../../../shared-types/factions.js';
 import { sigilRgba } from '../art/sigil.js';
 import { labelFit } from './galaxyLayerDecisions';
 import { clipPolyAtX } from './galaxyMapMotion';
+import { arcSubpath } from '../arcSubpath';
 import { NEUTRAL_OWNER } from './sectorOwnership';
 import { GALAXY_SECTORS, axialToPixel, getSector, type SectorFeature } from '@core/galaxy/galaxy';
 import { galaxyNebula, NEBULA_SECTOR_SPACING } from '@core/galaxy/nebulaField';
@@ -162,9 +163,7 @@ export function drawSectorControl(g: Graphics, v: Verts, size: number, ox: numbe
   if (c.locked) {
     const lx = ox + size * 0.42;
     const ly = oy - size * 0.4;
-    g.moveTo(lx - 3, ly - 1);
-    g.arc(lx, ly - 1, 3, Math.PI, 0);
-    g.stroke({ color: 0xe8eef8, width: 1.6, alpha: 1 });
+    arcSubpath(g, lx, ly - 1, 3, Math.PI, 0).stroke({ color: 0xe8eef8, width: 1.6, alpha: 1 });
     g.roundRect(lx - 4.5, ly - 1, 9, 7, 1.5).fill({ color: 0xe8eef8, alpha: 1 });
   }
   const challenger = splitChallenger(c, ownerId);
@@ -185,8 +184,7 @@ export function drawFlipRing(g: Graphics, ox: number, oy: number, r: number, col
   const step = (Math.PI * 2) / dashes;
   for (let i = 0; i < dashes; i++) {
     const a0 = i * step;
-    g.moveTo(ox + r * Math.cos(a0), oy + r * Math.sin(a0));
-    g.arc(ox, oy, r, a0, a0 + step * 0.55);
+    arcSubpath(g, ox, oy, r, a0, a0 + step * 0.55);
   }
   g.stroke({ color, width: 2.5, alpha: 1 });
 }

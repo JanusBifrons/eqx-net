@@ -3345,3 +3345,15 @@ the file handles. `loggedSpawnPlan` (`showcase/servers.ts`) runs an outliving Wi
 detached node relay; `showcase/servers.test.ts` spawns a real grandchild and reads the file. Also: a
 play-test capture went to the SERVED checkout's `diag/captures/` (a worktree that gets deleted); the
 lane now sets `EQX_DIAG_DIR` to its `run/captures/`.
+
+## 2026-11-21 — moveTo the arc's start, then arc(): a stray line to the Graphics' origin on phones
+
+Pixi v8's `arc()` pushes its own start point onto the current subpath, so `g.moveTo(arc start);
+g.arc(...)` gives the stroke polygon two identical leading points. `buildLine` normalises the first
+segment by its length (zero), so the whole stroke tessellates to NaN vertices. Desktop GPUs drop
+those triangles; a phone GPU draws them at the Graphics' local origin, so every lock progress arc,
+threat arc, galaxy padlock shackle and flip-ring dash grew a long thin line from far off-screen. A bare
+`arc()` is no fix: after an earlier stroke or fill the path keeps its last point and the arc joins it.
+Draw arcs with `arcSubpath` (`src/client/render/arcSubpath.ts`: moveTo + lineTo, which skips
+duplicates). `g.context.bounds` does not catch this (NaN never widens bounds): test the tessellated
+vertices with `strokeVertices` (`src/client/render/strokeVertices.testutil.ts`) and assert finite.
