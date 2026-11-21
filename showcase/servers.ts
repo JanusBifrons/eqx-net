@@ -67,14 +67,34 @@ function killTree(child: ChildProcess | null): void {
   }
 }
 
+/** Runs argv[1] in a shell with this process's stdio, and exits with its code. */
+const RELAY = "const c=require('node:child_process').spawn(process.argv[1],{shell:true,stdio:'inherit',windowsHide:true});"
+  + "c.on('error',()=>process.exit(1));c.on('exit',(x)=>process.exit(x??1));";
+
+export interface LoggedSpawnPlan { file: string; args: string[]; shell: boolean; detached: boolean }
+
+/**
+ * How `startLogged` spawns `cmd`. An outliving child on Windows must be
+ * detached (it survives its console closing), but a detached `cmd.exe` has no
+ * console, so the node.exe it starts gets a console of its own and writes
+ * there, not to the log file (the phone lane's `run/server.log` stayed 0
+ * bytes). So it is a detached NODE relay (which keeps the inherited file
+ * handles) that runs the shell command with its own stdio.
+ */
+export function loggedSpawnPlan(cmd: string, outlive: boolean, platform: NodeJS.Platform, nodePath: string): LoggedSpawnPlan {
+  if (outlive && platform === 'win32') return { file: nodePath, args: ['-e', RELAY, cmd], shell: false, detached: true };
+  return { file: cmd, args: [], shell: true, detached: outlive || platform !== 'win32' };
+}
+
 /** `outlive`: the process keeps running after this CLI exits (the phone lane:
  *  `pnpm phone up` returns while the game stays up). */
 function startLogged(cmd: string, cwd: string, env: Record<string, string>, logFile: string, outlive = false): ChildProcess {
   const fd = openSync(logFile, 'a');
-  const child = spawn(cmd, {
+  const plan = loggedSpawnPlan(cmd, outlive, process.platform, process.execPath);
+  const child = spawn(plan.file, plan.args, {
     cwd,
-    shell: true,
-    detached: outlive || process.platform !== 'win32',
+    shell: plan.shell,
+    detached: plan.detached,
     windowsHide: true,
     stdio: ['ignore', fd, fd],
     env: { ...process.env, ...env },

@@ -3334,3 +3334,14 @@ a world after a panic (its objects can still be borrowed). The same log showed a
 unknown attacker id counted as a player, so a rock that rammed an elite "earned" its bounty and was
 looked up as a structure owner. `classifyAttacker` now takes the swarm registry and classes a registry
 rock or wreck piece as `environment`, by kind.
+
+## 2026-11-21 — a detached cmd.exe on Windows drops its node child's output
+
+The phone lane's `run/server.log` was 0 bytes for a whole play test: the server ran detached
+(`spawn(cmd, { shell: true, detached: true, stdio: [ignore, fd, fd] })`) so it outlives `pnpm phone up`.
+A detached `cmd.exe` has no console, so the `node.exe` it starts gets a console of its own and writes
+there; even `node -v >> file` inside that shell writes nothing. A detached node spawned directly keeps
+the file handles. `loggedSpawnPlan` (`showcase/servers.ts`) runs an outliving Windows child under a
+detached node relay; `showcase/servers.test.ts` spawns a real grandchild and reads the file. Also: a
+play-test capture went to the SERVED checkout's `diag/captures/` (a worktree that gets deleted); the
+lane now sets `EQX_DIAG_DIR` to its `run/captures/`.

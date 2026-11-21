@@ -26,6 +26,7 @@
 
 import { logEvent } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
+import { recordLaneFrame } from '../debug/perf/laneFrameSummary';
 
 export class RafStallDetector {
   private rafSampleCounter = 0;
@@ -113,6 +114,7 @@ export class RafStallDetector {
    * `sampleHeapIfDue` can compute effective RAF rate over the window.
    */
   detectGap(elapsedMs: number, inputTickBefore: number, nowMs: number): void {
+    recordLaneFrame(elapsedMs); // phone-lane frame-time summary (no-op off the lane)
     // r2 — accumulate window stats every RAF.
     this.rafCountSinceSample += 1;
     this.rafElapsedTotalMsSinceSample += elapsedMs;
