@@ -1,4 +1,18 @@
 /**
+ * Would the new – cable ( + , from )
+ * cross or overlap any stored cable in  (owner rules: cables never
+ * cross, never lie on top of each other)? Two cables clash when their
+ * centrelines come within  anywhere ():
+ * a crossing, a collinear overlap, or a run side by side. Every owner's links
+ * count, as every owner's buildings block a cable. A link sharing an end with
+ * the new one (a fan-out) counts too: its stud differs (one cable per socket;
+ * a connector's faces are a body width and more apart), so only a cable
+ * leaving along the same path clashes. Fence links and links with an end
+ * missing from  are skipped. Each link is visited once (from its
+ * lower-id end;  lists a link under both ends), box-tested before
+ * it is flattened. Allocation-free.
+ */
+/**
  * Cable curve (structure restyle stage 4, 0d "cable sockets", slice 3).
  *
  * A cable runs socket to socket as one cubic Bezier: from socket A out along
@@ -26,12 +40,13 @@
  * pair a cable runs between. It lives here for the same reason.
  */
 import {
-  segmentHitsObstacle, segmentIntersectsAabb, type CanConnectReason, type GridNode, type GridObstacle,
+  edgeDistance, segmentHitsObstacle, segmentIntersectsAabb, type CanConnectReason, type GridNode, type GridObstacle,
 } from './Grid.js';
 import { structureSockets, structureSocketToWorld } from '../../shared-types/structureKinds.js';
 import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
 import { structureLinksBoundBySockets } from '../leveling/structureLevel.js';
-import { MIN_CABLE_LENGTH } from './structureGridConstants.js';
+import { CABLE_BODY_WIDTH, MIN_CABLE_LENGTH } from './structureGridConstants.js';
+import { polylinesWithin } from './cableClearance.js';
 import { keepClearBox } from './placementRules.js';
 
 /** Facing-test tolerance (world units of dot product): a socket at right
@@ -334,9 +349,10 @@ export function socketListMask(sockets: readonly number[] | undefined): number {
  *     turned toward the partner (within 90°), so a cable never runs back
  *     across its own hub; an emitter-post end takes it from any side
  *     (`takesAnySide`).
- *  2. Reach: socket to socket within `maxRange`, and at least
- *     `MIN_CABLE_LENGTH` (owner: "keep buildings apart"). A shorter pair is
- *     skipped, so a longer free facing pair still links.
+ *  2. Reach: socket to socket within `maxRange`, with the two footprints at
+ *     least `MIN_CABLE_LENGTH` apart edge to edge (`edgeDistance`; owner:
+ *     "keep buildings apart", one clear section of cable shows); closer,
+ *     every pair is too short.
  *  3. The survivors are tried nearest first (ties: `a`'s socket order, then
  *     `b`'s, so the pick is deterministic), and the first whose curve
  *     (`flattenCableCurve`, any-side ends short-tailed) is not blocked
@@ -345,8 +361,8 @@ export function socketListMask(sockets: readonly number[] | undefined): number {
  *
  * Returns null on success, else the refusal: `'no-facing-socket'` (no free
  * pair faces at all), `'out-of-range'` (none facing is in reach), `'too-short'`
- * (a facing pair in reach is under `MIN_CABLE_LENGTH`, and no pair long enough
- * links), `'crosses-cable'` (an unblocked pair crosses a stored cable, and none
+ * (a facing pair is in reach, but the footprints are under `MIN_CABLE_LENGTH`
+ * apart edge to edge), `'crosses-cable'` (an unblocked pair crosses a stored cable, and none
  * links; `out` gets the first such pair, the preview draws it red) or `'blocked'` (every facing pair in reach crosses something). `out`
  * gets the pick on success, the nearest too-short pair on `'too-short'` (the
  * build preview draws it refused, stud to stud), `CABLE_NO_SOCKET` on
@@ -381,7 +397,9 @@ export function pickCableSocketPair(
   const aFace = !aAny || a.isConnector, bFace = !bAny || b.isConnector;
   const ua = aAny ? 0 : usedA, ub = bAny ? 0 : usedB;
   const max2 = maxRange * maxRange;
-  const min2 = MIN_CABLE_LENGTH * MIN_CABLE_LENGTH;
+  // Minimum cable length, footprint edge to edge (owner: one clear section of
+  // cable shows between the two buildings): too close, every pair is short.
+  const short = edgeDistance(a, b) < MIN_CABLE_LENGTH;
   let facing = false;
   let n = 0;
   let shortD2 = Infinity, shortI = CABLE_NO_SOCKET, shortJ = CABLE_NO_SOCKET;
@@ -397,7 +415,7 @@ export function pickCableSocketPair(
       facing = true;
       const d2 = dx * dx + dy * dy;
       if (d2 > max2) continue;
-      if (d2 < min2) {
+      if (short) {
         if (d2 < shortD2) { shortD2 = d2; shortI = i; shortJ = j; }
         continue;
       }
@@ -472,7 +490,7 @@ export function flattenLinkCable(
 
 /** Count gate for the crossing test (tests read it; never a wall clock):
  *  `links` existing cables that passed the box broad phase and were
- *  flattened, `segTests` segment-pair orientation tests run. Callers may
+ *  flattened, `segTests` segment-pair distance tests run. Callers may
  *  reset both to 0; nothing else reads them. */
 export const CABLE_CROSS_STATS = { links: 0, segTests: 0 };
 
@@ -486,54 +504,30 @@ function isFenceLink(a: GridNode, b: GridNode): boolean {
   return a.isShieldPylon === true && b.isShieldPylon === true;
 }
 
-/** Twice the signed area of (p, q, r): > 0 left turn, < 0 right turn. */
-function orient(px: number, py: number, qx: number, qy: number, rx: number, ry: number): number {
-  return (qx - px) * (ry - py) - (qy - py) * (rx - px);
-}
-
-/** Does any segment of `p` cross any segment of `q` (box `qb`)? Collinear
- *  overlap is not a crossing; passing through a vertex is. Each `p`
- *  segment's box is tested against `qb`, each pair's boxes against each
- *  other, before the orientation test. Allocation-free. */
-function polylinesCross(p: Float64Array, q: Float64Array, qb: CableBox): boolean {
-  for (let i = 0; i < CABLE_CURVE_SEGMENTS; i++) {
-    const k = i * 2;
-    const ax = p[k]!, ay = p[k + 1]!, bx = p[k + 2]!, by = p[k + 3]!;
-    const sx0 = Math.min(ax, bx), sx1 = Math.max(ax, bx), sy0 = Math.min(ay, by), sy1 = Math.max(ay, by);
-    if (sx1 < qb.x0 || sx0 > qb.x1 || sy1 < qb.y0 || sy0 > qb.y1) continue;
-    for (let j = 0; j < CABLE_CURVE_SEGMENTS; j++) {
-      const m = j * 2;
-      const cx = q[m]!, cy = q[m + 1]!, dx = q[m + 2]!, dy = q[m + 3]!;
-      if (Math.max(cx, dx) < sx0 || Math.min(cx, dx) > sx1 || Math.max(cy, dy) < sy0 || Math.min(cy, dy) > sy1) continue;
-      CABLE_CROSS_STATS.segTests++;
-      // Half-open sides (> 0 vs ≤ 0): a cable passing exactly through the
-      // other's vertex crosses one of the two segments there, not neither.
-      if (orient(ax, ay, bx, by, cx, cy) > 0 === orient(ax, ay, bx, by, dx, dy) > 0) continue;
-      if (orient(cx, cy, dx, dy, ax, ay) > 0 !== orient(cx, cy, dx, dy, bx, by) > 0) return true;
-    }
-  }
-  return false;
-}
-
 /** Could the cable of a link between `n` and `o` reach `box`? Each end's
  *  footprint padded by `CABLE_TAIL_MAX` bounds its cable (`linkReachBoxStart`'s
  *  rule), so a miss here means no crossing. Allocation-free. */
-function linkMayReach(n: GridNode, o: GridNode, box: CableBox): boolean {
+function linkMayReach(n: GridNode, o: GridNode, box: CableBox, pad: number): boolean {
   const nw = (n.halfW ?? n.radius) + CABLE_TAIL_MAX, nh = (n.halfH ?? n.radius) + CABLE_TAIL_MAX;
   const ow = (o.halfW ?? o.radius) + CABLE_TAIL_MAX, oh = (o.halfH ?? o.radius) + CABLE_TAIL_MAX;
   const x0 = Math.min(n.x - nw, o.x - ow), x1 = Math.max(n.x + nw, o.x + ow);
   const y0 = Math.min(n.y - nh, o.y - oh), y1 = Math.max(n.y + nh, o.y + oh);
-  return !(x1 < box.x0 || x0 > box.x1 || y1 < box.y0 || y0 > box.y1);
+  return !(x1 + pad < box.x0 || x0 - pad > box.x1 || y1 + pad < box.y0 || y0 - pad > box.y1);
 }
 
 /**
  * Would the new `a`–`b` cable (`poly` + `box`, from `flattenCableCurve`)
- * cross any stored cable in `adjacency` (owner rule: cables never cross)?
- * Every owner's links count, as every owner's buildings block a cable. A
- * link sharing an end with the new one (a fan-out from the same structure)
- * is skipped, as is a fence link and a link with an end missing from `nodes`.
- * Each link is visited once (from its lower-id end; `adjacency` lists a link
- * under both ends), box-tested before it is flattened. Allocation-free.
+ * cross or lie on any stored cable in `adjacency` (owner rules: cables never
+ * cross, never run on top of each other)? Two cables clash when their
+ * centrelines come within `CABLE_BODY_WIDTH` anywhere (`polylinesWithin`):
+ * a crossing, a collinear overlap or a run side by side. Every owner's links
+ * count, as every owner's buildings block a cable. A link sharing an end with
+ * the new one (a fan-out) counts too: on a socket-bound end its stud differs,
+ * and a connector's faces sit more than a body width apart, so only a cable
+ * leaving along the same path (the same connector face) clashes. Fence links
+ * and links with an end missing from `nodes` are skipped. Each link is
+ * visited once (from its lower-id end; `adjacency` lists a link under both
+ * ends), box-tested before it is flattened. Allocation-free.
  */
 export function cableCrossesExisting(
   a: GridNode,
@@ -543,19 +537,19 @@ export function cableCrossesExisting(
   adjacency: ReadonlyMap<string, readonly Connection[]>,
   nodes: ReadonlyMap<string, GridNode>,
 ): boolean {
+  const pad = CABLE_BODY_WIDTH;
   for (const id of adjacency.keys()) {
-    if (id === a.id || id === b.id) continue;
     const conns = adjacency.get(id)!;
     for (let c = 0; c < conns.length; c++) {
       const link = conns[c]!;
       const other = link.getOtherNode(id);
-      if (other === null || other < id || other === a.id || other === b.id) continue;
+      if (other === null || other < id) continue;
       const n = nodes.get(id), o = nodes.get(other);
-      if (n === undefined || o === undefined || isFenceLink(n, o) || !linkMayReach(n, o, box)) continue;
+      if (n === undefined || o === undefined || isFenceLink(n, o) || !linkMayReach(n, o, box, pad)) continue;
       CABLE_CROSS_STATS.links++;
       flattenLinkCable(n, link.socketAt(id), o, link.socketAt(other), crossPoly, crossBox);
-      if (crossBox.x1 < box.x0 || crossBox.x0 > box.x1 || crossBox.y1 < box.y0 || crossBox.y0 > box.y1) continue;
-      if (polylinesCross(poly, crossPoly, crossBox)) return true;
+      if (crossBox.x1 + pad < box.x0 || crossBox.x0 - pad > box.x1 || crossBox.y1 + pad < box.y0 || crossBox.y0 - pad > box.y1) continue;
+      if (polylinesWithin(poly, crossPoly, crossBox, CABLE_CURVE_SEGMENTS, pad, CABLE_CROSS_STATS)) return true;
     }
   }
   return false;

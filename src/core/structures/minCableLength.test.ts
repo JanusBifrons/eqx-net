@@ -1,13 +1,16 @@
 /**
- * Minimum cable length (owner rule "keep buildings apart"): a link whose
- * stud-to-stud distance is under `MIN_CABLE_LENGTH` is refused 'too-short'.
- * The picker prefers a longer valid pair over refusing; fence links (post to
- * post, `CABLE_NO_SOCKET`) are exempt.
+ * Minimum cable length (owner rule "keep buildings apart", 2026-11-21): a
+ * cable shows at least one clear section between the two footprints it
+ * joins. A link whose footprint boxes are under `MIN_CABLE_LENGTH` apart,
+ * EDGE to edge (the footprint box, as every gameplay rule), is refused
+ * 'too-short'. The minimum is the cable art's own numbers: one station pitch
+ * of bundle plus the two end collars' insets (half a body width each). Fence
+ * links (post to post, `CABLE_NO_SOCKET`) are exempt.
  */
 import { describe, it, expect } from 'vitest';
-import { canConnect, type GridNode } from './Grid.js';
+import { canConnect, edgeDistance, type GridNode } from './Grid.js';
 import { CABLE_NO_SOCKET, makeCableSocketPick } from './cableCurve.js';
-import { MIN_CABLE_LENGTH } from './structureGridConstants.js';
+import { CABLE_BODY_WIDTH, CABLE_STATION_PITCH, MIN_CABLE_LENGTH } from './structureGridConstants.js';
 import {
   getStructureKind,
   structureHalfExtents,
@@ -42,8 +45,9 @@ function eastOf(n: GridNode, gap: number): GridNode {
 }
 
 describe('minimum cable length', () => {
-  it('is a short visible run: two collars and one lashing (> 0)', () => {
-    expect(MIN_CABLE_LENGTH).toBe(56);
+  it('is one station pitch of bundle between the two end collars, from the cable art', () => {
+    expect(CABLE_STATION_PITCH).toBeGreaterThan(0);
+    expect(MIN_CABLE_LENGTH).toBe(CABLE_BODY_WIDTH + CABLE_STATION_PITCH);
   });
 
   it('a connector hugging a battery is refused too-short, with the refused pair written', () => {
@@ -53,59 +57,49 @@ describe('minimum cable length', () => {
     expect(canConnect(bat, near, NONE, map(bat, near), undefined, pick)).toEqual({ ok: false, reason: 'too-short' });
     expect(pick.a).not.toBe(CABLE_NO_SOCKET);
     expect(pick.b).not.toBe(CABLE_NO_SOCKET);
-    expect(studGap(bat, pick.a, near, pick.b)).toBeLessThan(MIN_CABLE_LENGTH);
     // Further out the link forms, at least the minimum long.
     const far = eastOf(bat, MIN_CABLE_LENGTH);
     expect(canConnect(bat, far, NONE, map(bat, far), undefined, pick)).toEqual({ ok: true });
     expect(studGap(bat, pick.a, far, pick.b)).toBeGreaterThanOrEqual(MIN_CABLE_LENGTH);
   });
 
-  it('two connectors side by side link on a longer pair (their side studs), never the short front one', () => {
-    const a = real('a', 'connector', 0, 0);
-    const b = eastOf(a, 10);
-    pick.a = pick.b = -2;
-    expect(canConnect(a, b, NONE, map(a, b), undefined, pick)).toEqual({ ok: true });
-    expect(studGap(a, pick.a, b, pick.b)).toBeGreaterThanOrEqual(MIN_CABLE_LENGTH);
-  });
-
-  it('the picker takes a longer valid pair when the nearest is too short', () => {
-    // A connector hugging the solar's east stud: that pair is too short, but
-    // another solar stud facing the connector is far enough.
+  it('measures footprint edge to edge, not stud to stud: a far stud pair does not rescue a close box', () => {
+    // A connector 10 u off a solar's east end: some solar stud is well over
+    // the minimum from it, but the boxes nearly touch, so no cable shows.
     const solar = real('s', 'solar', 0, 0);
     const con = eastOf(solar, 10);
-    pick.a = pick.b = -2;
-    const v = canConnect(solar, con, NONE, map(solar, con), undefined, pick);
-    if (v.ok) {
-      expect(studGap(solar, pick.a, con, pick.b)).toBeGreaterThanOrEqual(MIN_CABLE_LENGTH);
-    } else {
-      // No facing alternative: refused too-short, never a silent short link.
-      expect(v).toEqual({ ok: false, reason: 'too-short' });
-    }
-    // Every picked link, at any gap, is at least the minimum long.
+    expect(edgeDistance(solar, con)).toBeLessThan(MIN_CABLE_LENGTH);
+    expect(canConnect(solar, con, NONE, map(solar, con), undefined, pick)).toEqual({ ok: false, reason: 'too-short' });
+    // The same for two connectors side by side and a connector off a capital.
+    const a = real('a', 'connector', 0, 0);
+    const b = eastOf(a, 10);
+    expect(canConnect(a, b, NONE, map(a, b), undefined, pick)).toEqual({ ok: false, reason: 'too-short' });
+    const cap = real('k', 'capital', 0, 0);
+    const c = eastOf(cap, 30);
+    expect(canConnect(cap, c, NONE, map(cap, c), undefined, pick)).toEqual({ ok: false, reason: 'too-short' });
+  });
+
+  it('diagonal neighbours: the box gap counts, wherever the studs are', () => {
+    const bat = real('b', 'battery', 0, 0);
+    const k = getStructureKind('connector').footprint;
+    // Off the battery's north-east corner, 30 u out on each axis: edge gap
+    // about 42 u, under the minimum.
+    const c = real('c', 'connector', bat.halfW! + 30 + k.w / 2, bat.halfH! + 30 + k.h / 2);
+    expect(edgeDistance(bat, c)).toBeLessThan(MIN_CABLE_LENGTH);
+    expect(canConnect(bat, c, NONE, map(bat, c), undefined, pick)).toEqual({ ok: false, reason: 'too-short' });
+  });
+
+  it('at exactly the minimum gap the link forms, and every formed link is at least that long', () => {
+    const solar = real('s', 'solar', 0, 0);
     for (let gap = 2; gap < 200; gap += 6) {
       const c2 = eastOf(solar, gap);
       pick.a = pick.b = -2;
       const r = canConnect(solar, c2, NONE, map(solar, c2), undefined, pick);
-      if (r.ok) expect(studGap(solar, pick.a, c2, pick.b), `gap ${gap}`).toBeGreaterThanOrEqual(MIN_CABLE_LENGTH);
-      else expect(r.reason, `gap ${gap}`).toBe('too-short');
+      if (gap < MIN_CABLE_LENGTH) expect(r, `gap ${gap}`).toEqual({ ok: false, reason: 'too-short' });
+      else if (r.ok) expect(studGap(solar, pick.a, c2, pick.b), `gap ${gap}`).toBeGreaterThanOrEqual(MIN_CABLE_LENGTH);
     }
-  });
-
-  it('prefers a longer pair over refusing (connector beside a long building)', () => {
-    // A connector just off a capital's side: some capital stud is far enough
-    // and faces it, so the link forms instead of being refused.
-    const cap = real('k', 'capital', 0, 0);
-    let formedLonger = 0;
-    for (let gap = 2; gap < 60; gap += 4) {
-      const c = eastOf(cap, gap);
-      pick.a = pick.b = -2;
-      const r = canConnect(cap, c, NONE, map(cap, c), undefined, pick);
-      if (r.ok) {
-        expect(studGap(cap, pick.a, c, pick.b)).toBeGreaterThanOrEqual(MIN_CABLE_LENGTH);
-        formedLonger++;
-      }
-    }
-    expect(formedLonger).toBeGreaterThan(0);
+    const at = eastOf(solar, MIN_CABLE_LENGTH);
+    expect(canConnect(solar, at, NONE, map(solar, at), undefined, pick)).toEqual({ ok: true });
   });
 
   it('fence links (emitter to emitter) are exempt', () => {
