@@ -2,11 +2,11 @@
  * Local ship: does the drawn ship step on a second correction?
  * (netcode gap smoothing plan, section 3.3 and job S1-7; decides D9.)
  *
- * `Reconciler.reconcile` sets the new correction offset to
- * "physics before - physics after" and drops whatever is still left of the
- * previous offset. So when a second correction lands while the first one is
- * still easing out, the drawn ship (physics pose + `lerpOffset`) jumps by the
- * leftover part of the first offset.
+ * Before S2b-1, `Reconciler.reconcile` set the new correction offset to
+ * "physics before - physics after" and dropped whatever was still left of
+ * the previous offset, so a second correction landing while the first was
+ * still easing out made the drawn ship (physics pose + `lerpOffset`) jump by
+ * that leftover. The offset now carries the leftover over (continuous).
  *
  * Setup, through the REAL Reconciler and a real PhysicsWorld:
  * - The ship is at rest at the origin and no inputs are buffered, and each
@@ -118,9 +118,9 @@ function runTwoCorrections(firstErrorU: number, framesBetween: number): StepResu
 }
 
 /**
- * Today's numbers (recorded 2026-11-21 on this branch). `todayStepU` is the
- * drawn jump at the instant of correction 2; it equals the leftover of the
- * first offset, whatever the size of the second correction.
+ * Numbers recorded 2026-11-21. `leftoverU` is the first offset still in
+ * effect at the instant of correction 2. Before the continuity fix (S2b-1)
+ * the drawn ship jumped by exactly this much; after it, the jump is 0.
  * - small: 5 u error, 25 ms half-life, 50 ms later: 0.759 u left (15.2%).
  * - large: 220 u error, 220 ms glide, 50 ms later: 207.538 u left (94.3%).
  * - large: 220 u error, 220 ms glide, 16.7 ms later: 218.365 u left (99.3%).
@@ -131,21 +131,21 @@ const CASES = [
     firstErrorU: SMALL_ERROR_U,
     frames: SNAPSHOT_GAP_FRAMES,
     halfLifeMs: 25,
-    todayStepU: 0.759,
+    leftoverU: 0.759,
   },
   {
     name: 'large error (220 ms glide), second correction 50 ms later',
     firstErrorU: LARGE_ERROR_U,
     frames: SNAPSHOT_GAP_FRAMES,
     halfLifeMs: 220,
-    todayStepU: 207.538,
+    leftoverU: 207.538,
   },
   {
     name: 'large error (220 ms glide), second correction 16.7 ms later',
     firstErrorU: LARGE_ERROR_U,
     frames: 1,
     halfLifeMs: 220,
-    todayStepU: 218.365,
+    leftoverU: 218.365,
   },
 ] as const;
 
@@ -155,22 +155,20 @@ const RECORDED_DECIMALS = 3;
 describe('Reconciler offset continuity: second correction while the first is easing (plan 3.3, S1-7)', () => {
   for (const c of CASES) {
     describe(c.name, () => {
-      it(`recorded today: drawn ship steps ${c.todayStepU} u at the second correction`, () => {
+      it(`recorded: ${c.leftoverU} u of the first offset left at the second correction`, () => {
         const res = runTwoCorrections(c.firstErrorU, c.frames);
         expect(res.firstHalfLifeMs).toBe(c.halfLifeMs);
-        // The step is exactly the dropped leftover of the first offset.
-        expect(res.stepU).toBeCloseTo(Math.abs(res.leftoverOffsetU), 9);
-        // Drawn pose lands on the new physics pose minus the new offset only.
-        expect(res.drawnAfterX).toBeCloseTo(c.firstErrorU, 9);
-        expect(res.stepU).toBeCloseTo(c.todayStepU, RECORDED_DECIMALS);
+        // Before the fix the drawn ship stepped by exactly this leftover.
+        expect(Math.abs(res.leftoverOffsetU)).toBeCloseTo(c.leftoverU, RECORDED_DECIMALS);
       });
 
-      // Target (plan 3.3 / 6.2): new offset = drawn before - physics after,
-      // so the drawn pose does not move at the correction instant.
-      // Fails today: step is the `todayStepU` above.
-      it.fails(`no visible step on the second correction (today: ${c.todayStepU} u)`, () => {
+      // Plan 3.3 / 6.2: new offset = (physics before + offset still in
+      // effect) - physics after, so the drawn pose does not move at the
+      // correction instant. Before the fix: step = `leftoverU` above.
+      it(`no visible step on the second correction (before the fix: ${c.leftoverU} u)`, () => {
         const res = runTwoCorrections(c.firstErrorU, c.frames);
         expect(res.stepU).toBeLessThan(NO_STEP_TOLERANCE_U);
+        expect(res.drawnAfterX).toBeCloseTo(res.drawnBeforeX, 9);
       });
     });
   }

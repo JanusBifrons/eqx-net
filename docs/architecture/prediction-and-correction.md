@@ -13,6 +13,8 @@ This document covers **what the lerp looks like** and **why** it works the way i
 
 Both layers use the same primitive: the closed-form critically-damped spring step from [src/core/math/CritDampedSpring.ts](../../src/core/math/CritDampedSpring.ts). Both pick their `halfLifeMs` from the same drift-magnitude function (12 ms sub-pixel, 25 ms standard), so local and remote visual recovery move in lockstep.
 
+**The local offset is continuous.** A correction that lands while the previous one is still easing sets the new offset to `(physics before + offset still in effect) − physics after`, so the drawn ship does not step at that instant. The threshold and half-life still use the raw drift (`before − after`). Locked by [tests/unit/reconcilerOffsetContinuity.test.ts](../../tests/unit/reconcilerOffsetContinuity.test.ts).
+
 ## Why critical damping (and not a polynomial ease-out)
 
 Stage 0 of the network-feel roadmap (commits `4a31b7d` / `b8a6ee0`) used a frame-counted ratio² ease-out — a polynomial decay tied to render-frame indices. That works at a steady 60 Hz, but on devices where rAF cadence varies mid-session it gets visibly wrong:
