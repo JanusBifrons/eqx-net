@@ -5,6 +5,7 @@ import {
   CABLE_CURVE_FLOATS,
   CABLE_CURVE_SEGMENTS,
   CABLE_SHORT_TAIL,
+  CABLE_SOCKET_STUB,
   CABLE_TAIL_MAX,
   flattenCableCurve,
   isCablePolylineBlocked,
@@ -62,17 +63,37 @@ describe('flattenCableCurve', () => {
     expect(box.x0).toBe(0);
     expect(box.x1).toBe(400);
     expect(box.y0).toBe(0);
-    // k = min(260, 400 * 0.35) = 140; a cubic's peak with both controls at 140 is 0.75 k
-    expect(box.y1).toBeCloseTo(0.75 * 140, 0);
+    // k = min(260, 400 * 0.35) = 140; the curve runs stub end to stub end
+    // (stub 24 up), controls at 140: its peak is 0.75 k + 0.25 stub.
+    expect(box.y1).toBeCloseTo(0.75 * 140 + 0.25 * CABLE_SOCKET_STUB, 0);
   });
 
   it('caps the tail at CABLE_TAIL_MAX and a connector end at CABLE_SHORT_TAIL', () => {
     const a: CableEnd = { x: 0, y: 0, nx: 0, ny: 1 };
     const b: CableEnd = { x: 2000, y: 0, nx: 0, ny: 1 };
     flattenCableCurve(a, false, b, false, poly, box);
-    expect(box.y1).toBeCloseTo(0.75 * CABLE_TAIL_MAX, 0);
+    expect(box.y1).toBeCloseTo(0.75 * CABLE_TAIL_MAX + 0.25 * CABLE_SOCKET_STUB, 0);
     flattenCableCurve(a, true, b, true, poly, box);
-    expect(box.y1).toBeCloseTo(0.75 * CABLE_SHORT_TAIL, 0);
+    // A connector end's stub is half its short tail.
+    expect(box.y1).toBeCloseTo(0.75 * CABLE_SHORT_TAIL + 0.25 * (CABLE_SHORT_TAIL / 2), 0);
+  });
+
+  it('meets each socket flush: first and last segments lie exactly on the normals (owner 2026-11-21)', () => {
+    const s = Math.SQRT1_2;
+    for (const [aShort, bShort] of [[false, false], [true, false], [false, true], [true, true]] as const) {
+      const a: CableEnd = { x: 10, y: 20, nx: s, ny: s };
+      const b: CableEnd = { x: 480, y: -90, nx: 0, ny: 1 }; // up, while A is to its upper left: a bend
+      flattenCableCurve(a, aShort, b, bShort, poly, box);
+      const e = CABLE_CURVE_FLOATS - 2;
+      const fdx = poly[2]! - poly[0]!, fdy = poly[3]! - poly[1]!;
+      const ldx = poly[e - 2]! - poly[e]!, ldy = poly[e - 1]! - poly[e + 1]!;
+      expect(Math.abs(fdx * a.ny - fdy * a.nx)).toBeLessThan(1e-9);
+      expect(fdx * a.nx + fdy * a.ny).toBeGreaterThan(0);
+      expect(Math.abs(ldx * b.ny - ldy * b.nx)).toBeLessThan(1e-9);
+      expect(ldx * b.nx + ldy * b.ny).toBeGreaterThan(0);
+      // The stubs: at most CABLE_SOCKET_STUB, half a short tail.
+      expect(Math.hypot(fdx, fdy)).toBeLessThanOrEqual(aShort ? CABLE_SHORT_TAIL / 2 + 1e-9 : CABLE_SOCKET_STUB + 1e-9);
+    }
   });
 
   it('two straight-facing sockets give a straight line', () => {
