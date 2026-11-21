@@ -6,7 +6,7 @@
  *  - a player's own turret is unchanged (drones yes, other pilots no);
  *  - an NPC base is never a wave target.
  *
- * Layout: Capital (0,0) → Connector (0,-350) → Turret (0,-650). The Capital's
+ * Layout: Capital (0,0) → Connector (0,-380) → Turret (0,-650). The Capital's
  * 50 power covers the turret's 15. Pilots spawn at (0,-1000), 350 u from the
  * turret (range 600).
  */
@@ -17,7 +17,7 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 const PLAYER_OWNER = '6a7e0000-0000-4000-8000-0000000000a1';
 const LAYOUT = [
   { kind: 'capital', x: 0, y: 0 },
-  { kind: 'connector', x: 0, y: -350 },
+  { kind: 'connector', x: 0, y: -380 },
   { kind: 'turret', x: 0, y: -650 },
 ];
 

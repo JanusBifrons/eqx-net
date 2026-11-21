@@ -43,9 +43,9 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
     const cap = await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
     // WS-5 capital-only-connectors: leaves route through a Connector relay
     // offset above the Capital (its LOS clears for both the +x solar + +y miner).
-    await placeAndWait(harness, room, 'connector', 0, 350);
+    await placeAndWait(harness, room, 'connector', 0, 380);
     const sol = await placeAndWait(harness, room, 'solar', 700, 420); // offsets miner power draw
-    const miner = await placeAndWait(harness, room, 'miner', -180, 420);
+    const miner = await placeAndWait(harness, room, 'miner', -220, 420);
     const capRec = internals.structureRegistry.get(cap)!;
     const minerRec = internals.structureRegistry.get(miner)!;
 
@@ -71,8 +71,8 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
     // WS-5: the miner routes via a Connector relay (still draws the grid
     // negative, so the component stays unpowered — the behaviour under test).
     const cap = await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
-    await placeAndWait(harness, room, 'connector', 0, 350);
-    const miner = await placeAndWait(harness, room, 'miner', -180, 420);
+    await placeAndWait(harness, room, 'connector', 0, 380);
+    const miner = await placeAndWait(harness, room, 'miner', -220, 420);
     const capRec = internals.structureRegistry.get(cap)!;
     const minerRec = internals.structureRegistry.get(miner)!;
     for (let i = 0; i < 120; i++) internals.pulseStructureGrid();

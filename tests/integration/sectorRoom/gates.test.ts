@@ -3,7 +3,7 @@
  * access setting admits, and the open state reaches clients through room state
  * (#16: a late joiner reads it from the join payload, never from an event).
  *
- * Layout: Capital (0,0) → Connector (0,-350) → Shield Gate (0,-900). The
+ * Layout: Capital (0,0) → Connector (0,-380) → Shield Gate (0,-900). The
  * Capital's 50 power covers the gate's 30. A ship spawned at (0,-1150) sits in
  * the gate's approach zone (300 u either side of the gap).
  */
@@ -30,7 +30,7 @@ const OWNER = '6a7e0000-0000-4000-8000-0000000000a1';
 function base(gateAccess?: 'allies' | 'owner' | 'open') {
   return [
     { kind: 'capital', x: 0, y: 0 },
-    { kind: 'connector', x: 0, y: -350 },
+    { kind: 'connector', x: 0, y: -380 },
     { kind: 'shield_gate', x: 0, y: GATE_Y, ...(gateAccess ? { gateAccess } : {}) },
   ];
 }
