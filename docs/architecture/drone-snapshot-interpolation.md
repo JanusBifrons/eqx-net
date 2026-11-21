@@ -241,8 +241,9 @@ fixtures: `tests/scenarios/gapSmoothing.drones.test.ts` (gap profiles and the
 **The display delay is slewed.** The target (above; or
 `setSwarmDisplayDelayMs` in tests) is clamped to the game-ms floor and ceiling
 ÷ the speed, as before; the value
-the reads use glides toward it in `stepSwarmDisplayDelay(frameMs)`, called once
-per frame at the top of `updateSwarmMirror` on the frame's wall ms. Each frame
+the reads use glides toward it in `stepSwarmDisplayDelay(frameMs, nowMs)`, called
+once per frame at the top of `updateSwarmMirror` on the frame's wall ms (`nowMs`
+feeds the stream-stall hold, S4-5, below). Each frame
 closes `1 − exp(−frameMs / τ)` of the gap (`DISPLAY_DELAY_SLEW_TAU_MS` 300 game
 ms, ÷ the speed like the floor and ceiling), bounded to
 `DISPLAY_DELAY_SLEW_MAX_RATE` (0.1) × the frame's wall ms either way,
@@ -281,8 +282,8 @@ records one number for the stream as a whole: the `swarmArrivalStampMs` stamp
 of the newest server tick seen (`noteSwarmStreamStamp` from the decoder, read
 with `getSwarmStreamNewestStampMs`, NaN after a reset). The newer tick wins, so
 a reordered or late packet never moves it back. `resetSwarmDisplayDelay`
-clears it. Nothing reads it yet; the S4 hold uses it to tell a stalled stream
-from one drone missing from a packet. Lock:
+clears it. The S4-5 hold (below) reads it to tell a stalled stream from one
+drone missing from a packet. Lock:
 `src/client/net/swarmStreamNewestStamp.test.ts`.
 
 **The maximum total delay and the counted re-sync (S4-4).** During a stream
@@ -296,10 +297,39 @@ speed)` returns the request while it is at or under the bound and the target
 past it (a non-finite request re-syncs too). It is pure and allocation-free;
 the caller checks `isSwarmHoldDelayOverMax` with the same inputs and calls
 `noteSwarmResync()` once, read with `getSwarmResyncCount` and zeroed with the
-other stream counters in `resetSwarmTickClock`. Nothing calls it yet (S4-5
-wires the hold). The pose ring is sized for this bound
+other stream counters in `resetSwarmTickClock`. The S4-5 hold (below) calls
+it. The pose ring is sized for this bound
 (`tests/unit/poseRingDepth.test.ts` imports the constant). Lock:
 `src/client/net/swarmMaxDelayResync.test.ts`.
+
+**Hold without losing the place (S4-5).** When the whole drone stream stalls,
+`stepSwarmDisplayDelay` (after the slew) grows the delay so the read point
+(now − delay) stays at the stream's newest stamp + the glide limit
+(`EXTRAPOLATION_LIMIT_MS` ÷ speed). Drones glide to the limit and then stand
+still instead of freezing and snapping; when packets return, playback resumes
+from the held point and the ordinary slew alone brings the delay back to its
+target (no second catch-up). The hold never shrinks the delay and never runs
+the read point backwards. It is bounded by S4-4: a stall that would need more
+than `MAX_TOTAL_DISPLAY_DELAY_MS` ÷ speed re-syncs to the target in one step,
+counted once per stall (an idle sector resuming, a 1 s gap). A drone missing
+from packets while the stream is alive keeps the per-entity glide then hold.
+While a frame holds, the tick clock does not drift its offset up for late
+packets (`TICK_CLOCK_DRIFT_UP`): the stall's backlog all arrives late, and
+without this ~36 backlog packets of a 600 ms stall dragged the offset ~100 ms
+late and drones stepped back ~12 u on resume. Scalars only, no allocation;
+`resetSwarmDisplayDelay` (so `resetPredictionState`) clears the hold, and
+`getSwarmHoldFrameCount` counts held frames. At the bound the read point is 400
+game ms back, which the 28-slot ring covers (asserted in
+`swarmHoldResume.test.ts`). Effect on the 1× fixtures: gap-400 and gap-600
+straight-drone snaps 2 → 0 and glide-limit holds 6 → 0 / 30 → 0, freeze frames
+unchanged (3 and 15, within (gap − 350 ms) of frames), max delay 256 → 275 /
+237 → 350 ms; lan-clean, gap-200, gap-json-only, frame-stall-250 and jitter-4g
+unchanged. The turning drone still snaps once on resume (2.56 u at gap-400,
+3.27 u at gap-600) because the straight-line glide misses the curve: this is
+the gate for the S4b eased offset. Locks: `src/client/net/swarmHoldResume.test.ts`,
+`swarmInterpolation.timeScale.test.ts` (0.7× and 2×),
+`ColyseusClient.resetPredictionState.test.ts`, `gapSmoothing.drones.test.ts`
+(gap-1000 and idle-resume fixtures).
 
 **The packet's tick must be the tick of its poses.** The room and the physics
 worker run separate 60 Hz loops. The room reads the SAB tick at the top of its

@@ -190,9 +190,16 @@ export function setSwarmDisplayDelayMs(ms: number): void {
 
 /** Move the delay toward its target by one frame of `frameDtMs` wall ms:
  *  proportional to the remaining gap, bounded to
- *  `DISPLAY_DELAY_SLEW_MAX_RATE × frameDtMs` either way. Call once per frame
- *  (`updateSwarmMirror`). Scalars only. */
-export function stepSwarmDisplayDelay(frameDtMs: number): void {
+ *  `DISPLAY_DELAY_SLEW_MAX_RATE × frameDtMs` either way; then, given this
+ *  frame's read clock `nowMs`, apply the stream-stall hold
+ *  (`holdSwarmDisplayDelay`). Call once per frame, before any read
+ *  (`updateSwarmMirror`). Without `nowMs` only the slew runs. Scalars only. */
+export function stepSwarmDisplayDelay(frameDtMs: number, nowMs: number = Number.NaN): void {
+  slewSwarmDisplayDelay(frameDtMs);
+  holdSwarmDisplayDelay(nowMs);
+}
+
+function slewSwarmDisplayDelay(frameDtMs: number): void {
   const remaining = _displayDelayTargetMs - _displayDelayMs;
   if (remaining === 0 || !(frameDtMs > 0) || !Number.isFinite(frameDtMs)) return;
   const maxStep = DISPLAY_DELAY_SLEW_MAX_RATE * frameDtMs;
@@ -203,6 +210,54 @@ export function stepSwarmDisplayDelay(frameDtMs: number): void {
   const step = remaining * (1 - Math.exp(-frameDtMs * _displaySpeed / DISPLAY_DELAY_SLEW_TAU_MS));
   _displayDelayMs += Math.max(-maxStep, Math.min(maxStep, step));
 }
+
+// Hold without losing the place (netcode gap smoothing, S4-5). When the WHOLE
+// drone stream stalls, the read point (now − delay) would run past the
+// stream's newest stamp + the glide limit and every drone would freeze there;
+// when packets returned the read point was far ahead and drones snapped
+// forward. Instead the delay grows so the read point stays at "stream newest +
+// glide limit" (the same frozen pose), and playback resumes from that held
+// point; the slew above then brings the delay back to its target, playing at
+// most DISPLAY_DELAY_SLEW_MAX_RATE fast (no second catch-up mechanism). Bound:
+// MAX_TOTAL_DISPLAY_DELAY_MS / speed (S4-4); a stall that would pass it
+// re-syncs the delay to its target in one step, counted once per stall. A
+// drone missing from recent packets while the stream is alive keeps the
+// per-entity glide-then-freeze in `interpolateSwarmPose`. Scalars only.
+/** True once the current stall has re-synced: no further growth until the
+ *  stream catches up with the read point again. */
+let _holdResyncedThisStall = false;
+/** True while the hold has the read point parked (set by the last step). The
+ *  packets that end the stall are its backlog, all drained at once: while this
+ *  is set they do not pull the tick clock later (`swarmArrivalStampMs`), so
+ *  they keep their places on the timeline the held read point resumes along.
+ *  Without that, ~36 backlog packets of a 600 ms stall drifted the clock
+ *  ~100 ms late and drones stepped BACK on resume. */
+let _holdActive = false;
+/** Frames on which the hold set the delay (telemetry, like the counters below). */
+let _holdFrameCount = 0;
+
+function holdSwarmDisplayDelay(nowMs: number): void {
+  _holdActive = false;
+  const newestMs = _streamNewestStampMs;
+  if (!Number.isFinite(nowMs) || !Number.isFinite(newestMs)) return;
+  const requiredMs = nowMs - newestMs - glideLimitWallMs();
+  if (!(requiredMs > _displayDelayMs)) {
+    _holdResyncedThisStall = false;
+    return;
+  }
+  if (_holdResyncedThisStall) return;
+  if (isSwarmHoldDelayOverMax(requiredMs, _displaySpeed)) {
+    noteSwarmResync();
+    _holdResyncedThisStall = true;
+  } else {
+    _holdActive = true;
+    _holdFrameCount++;
+  }
+  _displayDelayMs = boundSwarmHoldDelayMs(requiredMs, _displayDelayTargetMs, _displaySpeed);
+}
+
+/** Frames on which a stream stall held the read point (S4-5 telemetry). */
+export function getSwarmHoldFrameCount(): number { return _holdFrameCount; }
 
 /** Put the delay back at the floor with no target, no lateness estimate and
  *  no stream newest stamp (sector change: `resetPredictionState`; tests:
@@ -218,6 +273,8 @@ export function resetSwarmDisplayDelay(): void {
   _latenessEstimate.deviationMs = 0;
   _streamNewestTick = -1;
   _streamNewestStampMs = Number.NaN;
+  _holdResyncedThisStall = false;
+  _holdActive = false;
 }
 
 /** The sector's game speed, from the snapshot keyframe (ColyseusClient).
@@ -381,7 +438,8 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
     _tickClockOffsetMs = cand;
   } else if (cand < _tickClockOffsetMs) {
     _tickClockOffsetMs = cand;
-  } else {
+  } else if (!_holdActive) {
+    // Not while the stall hold is parked: the backlog is late by design (S4-5).
     _tickClockOffsetMs += (cand - _tickClockOffsetMs) * TICK_CLOCK_DRIFT_UP;
   }
   const stamp = Math.min(nowMs, tick * tickWallMs + _tickClockOffsetMs);
@@ -414,6 +472,7 @@ export function resetSwarmTickClock(): void {
   _oldEndClampCount = 0;
   _glideLimitCount = 0;
   _resyncCount = 0;
+  _holdFrameCount = 0;
   _lastReadTargetMs = Number.NaN;
 }
 

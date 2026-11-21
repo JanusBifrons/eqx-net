@@ -12,6 +12,7 @@ import {
   setSwarmDisplayDelayMs, setSwarmDisplaySpeed, getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs,
   stepSwarmDisplayDelay, resetSwarmTickClock, interpolateSwarmPose, getSwarmGlideLimitCount,
   DISPLAY_DELAY_MS, ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_SLEW_MAX_RATE, EXTRAPOLATION_LIMIT_MS,
+  MAX_TOTAL_DISPLAY_DELAY_MS, swarmArrivalStampMs, noteSwarmStreamStamp, getSwarmResyncCount, getSwarmHoldFrameCount,
 } from './swarmInterpolation.js';
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 import { resolveMissileDisplayPose } from '../combat/MissileMirror.js';
@@ -197,4 +198,60 @@ describe('swarm glide travels in game time (S4-1b)', () => {
     const x = interpolateSwarmPose(e, newestMs + overshootWallMs + delayMs, out).x;
     expect(x).toBe(newestX + vx * (overshootWallMs / msPerS));
   });
+});
+
+// S4-5: the stream-stall hold is bounded in GAME ms like the floor, ceiling and
+// glide limit. At speed s the delay may grow to MAX_TOTAL_DISPLAY_DELAY_MS / s
+// wall ms; a stall ends in a re-sync only when holding would pass that, i.e.
+// when the stall outlasts (glide limit + bound) / s wall ms.
+describe('stream-stall hold bound follows the sector speed (S4-5)', () => {
+  afterEach(() => { setSwarmDisplaySpeed(1); resetSwarmTickClock(); });
+
+  const frameMs = 1000 / 60;
+  const tickGameMs = 1000 / 60;
+  const linkMs = 40;
+  const startMs = 10_000;
+  const stallAtMs = 2000;
+  const runMs = 5000;
+  /** Stall lengths (game ms) either side of glide limit + bound = 650. */
+  const shortStallGameMs = 600;
+  const longStallGameMs = 750;
+
+  /** Drive packets + frames through a both-streams stall of `stallWallMs`; returns the largest delay. */
+  function stallRun(speed: number, stallWallMs: number): number {
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(speed);
+    const tickWallMs = tickGameMs / speed;
+    let tick = 0;
+    let maxDelay = 0;
+    for (let f = 1; f * frameMs <= runMs; f++) {
+      const rel = f * frameMs;
+      for (;;) {
+        const sendRel = tick * tickWallMs;
+        let arriveRel = sendRel + linkMs;
+        if (sendRel >= stallAtMs && sendRel < stallAtMs + stallWallMs) arriveRel = Math.max(arriveRel, stallAtMs + stallWallMs + linkMs);
+        if (arriveRel > rel) break;
+        noteSwarmStreamStamp(tick, swarmArrivalStampMs(tick, startMs + rel));
+        tick++;
+      }
+      stepSwarmDisplayDelay(frameMs, startMs + rel);
+      maxDelay = Math.max(maxDelay, getSwarmDisplayDelayMs());
+    }
+    return maxDelay;
+  }
+
+  for (const speed of [0.7, 2]) {
+    it(`at ${speed}×: holds up to ${MAX_TOTAL_DISPLAY_DELAY_MS} / ${speed} wall ms, re-syncs once past it`, () => {
+      const bound = MAX_TOTAL_DISPLAY_DELAY_MS / speed;
+      const shortMax = stallRun(speed, shortStallGameMs / speed);
+      expect(getSwarmResyncCount()).toBe(0);
+      expect(getSwarmHoldFrameCount()).toBeGreaterThan(0);
+      expect(shortMax).toBeLessThanOrEqual(bound);
+      // It really held: the delay grew past the steady ceiling (280 / speed).
+      expect(shortMax).toBeGreaterThan(ADAPTIVE_DELAY_CEILING_MS / speed);
+      const longMax = stallRun(speed, longStallGameMs / speed);
+      expect(getSwarmResyncCount()).toBe(1);
+      expect(longMax).toBeLessThanOrEqual(bound);
+    });
+  }
 });

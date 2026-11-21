@@ -34,6 +34,7 @@ import {
   resetSwarmTickClock, setSwarmDisplaySpeed, setSwarmDisplayDelayMs, stepSwarmDisplayDelay, swarmArrivalStampMs,
   getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs, getSwarmLatenessEstimateMs, getSwarmLatenessDeviationMs,
   DISPLAY_DELAY_MS, ADAPTIVE_DELAY_CEILING_MS,
+  noteSwarmStreamStamp, getSwarmStreamNewestStampMs,
 } from './swarmInterpolation.js';
 
 // The reset method is private. Rather than weakening the public API,
@@ -165,6 +166,27 @@ describe('ColyseusGameClient.resetPredictionState', () => {
     // The destination's first feed places the value at its target (no glide).
     setSwarmDisplayDelayMs(200);
     expect(getSwarmDisplayDelayMs()).toBe(200);
+    resetSwarmTickClock();
+  });
+
+  it('clears the stream-stall hold so the destination tick clock drifts normally (S4-5)', () => {
+    const tickMs = 1000 / 60;
+    const lateMs = 40;
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+    // Hold: one packet, then frames long after it with nothing new.
+    noteSwarmStreamStamp(0, swarmArrivalStampMs(0, 10_000));
+    stepSwarmDisplayDelay(tickMs, 10_500);
+    expect(getSwarmDisplayDelayMs()).toBeGreaterThan(DISPLAY_DELAY_MS);
+
+    const client = new ColyseusGameClient();
+    asInternals(client).resetPredictionState();
+
+    expect(getSwarmStreamNewestStampMs()).toBeNaN();
+    expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
+    // Tick 0 seeded the clock at 10 000. A held clock would ignore this late
+    // packet; a cleared hold lets the offset drift up 1 % of the lateness.
+    expect(swarmArrivalStampMs(1, 10_000 + tickMs + lateMs)).toBeCloseTo(10_000 + tickMs + lateMs * 0.01, 6);
     resetSwarmTickClock();
   });
 });

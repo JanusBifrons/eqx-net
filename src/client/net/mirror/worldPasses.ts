@@ -107,10 +107,11 @@ export function updateSwarmMirror(ctx: MirrorPassCtx): void {
   // interpolates them off the same poseRing — nothing to do for them here.
   //
   // The display delay glides toward its target once per frame (S3-2) before
-  // any read, on this frame's WALL ms (the delay is wall ms).
-  stepSwarmDisplayDelay(ctx.lastFrameMs);
+  // any read, on this frame's WALL ms (the delay is wall ms). Given the read
+  // clock it also holds the read point through a whole-stream stall (S4-5).
+  const nowMs = ctx.clock.now();
+  stepSwarmDisplayDelay(ctx.lastFrameMs, nowMs);
   if (ctx.predWorld && ctx.mirror.swarm) {
-    const nowMs = ctx.clock.now();
     for (const entry of ctx.mirror.swarm.values()) {
       if (!isRemoteMovingSwarmKind(entry.kind)) continue;
       interpolateSwarmPose(entry, nowMs, ctx.swarmInterpScratch);
