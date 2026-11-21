@@ -27,6 +27,21 @@ export const CLOCK_ANCHOR_EWMA_ALPHA = 0.1;
  *  buffer) still smooths, but a multi-second pause snaps cleanly. */
 export const CLOCK_ANCHOR_HARD_SNAP_MS = 200;
 
+/** Times `updateAnchor` took the hard-snap branch (drift > CLOCK_ANCHOR_HARD_SNAP_MS).
+ *  Diagnostic only: tells whether the 200 ms snap ever fires on a real link. */
+let anchorHardSnapCount = 0;
+
+/** How many hard snaps `updateAnchor` has taken since the last reset. */
+export function getAnchorHardSnapCount(): number {
+  return anchorHardSnapCount;
+}
+
+/** Zero the hard-snap counter. Call where the anchor itself is re-seeded
+ *  (welcome handshake / respawn re-anchor). */
+export function resetAnchorHardSnapCount(): void {
+  anchorHardSnapCount = 0;
+}
+
 export interface AnchorState {
   anchorServerTick: number;
   anchorPerfNow: number;
@@ -51,6 +66,7 @@ export function updateAnchor(
     + (snapServerTick - prev.anchorServerTick) * FIXED_MS;
   const driftMs = snapPerfNow - equivalentAnchorPerfNow;
   if (Math.abs(driftMs) > CLOCK_ANCHOR_HARD_SNAP_MS) {
+    anchorHardSnapCount++;
     return { anchorServerTick: snapServerTick, anchorPerfNow: snapPerfNow };
   }
   const blended = equivalentAnchorPerfNow * (1 - CLOCK_ANCHOR_EWMA_ALPHA)
