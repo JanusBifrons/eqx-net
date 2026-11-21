@@ -41,12 +41,7 @@ import { pushFleetOverlayModelIfChanged } from '../fleet/fleetOverlayModel.js';
 import { fleetCommands } from '../fleet/fleetCommands.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
-import { hudControlsFor, measureBottomHudBand, measureTopHudBand, placeInspector, reclampHeldInspector, type HudBand, type InspectorAnchor } from './inspectorPlacement.js';
-import { isInspectorHeld } from './inspectorHold.js';
 import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
-
-/** Reused each frame (no per-frame allocation, #14). */
-const inspectorAt: InspectorAnchor = { left: 0, top: 0 }, topHud: HudBand = { left: 0, right: 0, top: 0, bottom: 0 }, botHud: HudBand = { left: 0, right: 0, top: 0, bottom: 0 };
 
 /** Click-to-inspect (Item B5) — last selection id the bridge published, so the
  *  RendererFeedback → Zustand mirror + server select/deselect sends fire ONLY on
@@ -454,40 +449,6 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       } else {
         sendDeselectEntity();
       }
-    }
-
-    // ── WS-9 (R2.30) — world-anchored stats panel ──────────────────────────
-    // Float the (position:fixed) EntityStatsPanel over the selected entity each
-    // frame from the renderer's screen-projection (mirrors the placement banner).
-    const ssx = selFb.selectionScreenX;
-    const ssy = selFb.selectionScreenY;
-    if (typeof ssx === 'number' && typeof ssy === 'number') {
-      const panel = document.querySelector('[data-testid="entity-stats-panel"]') as HTMLElement | null;
-      if (panel) {
-        // The whole panel stays on screen, below the header, clear of the
-        // centre HUD stacks and of the selection box (inspectorPlacement.ts).
-        // Read the size before writing.
-        // While a pointer is on it, it holds its spot so taps land
-        // (inspectorHold.ts), but a panel that grows (a loot window opening)
-        // is still clamped back on screen.
-        const held = isInspectorHeld(panel);
-        const w = panel.offsetWidth, h = panel.offsetHeight, vw = window.innerWidth, vh = window.innerHeight, tb = measureTopHudBand(topHud), bb = measureBottomHudBand(botHud), hc = hudControlsFor(selId, vw, vh);
-        const move = held
-          ? reclampHeldInspector(parseFloat(panel.style.left), parseFloat(panel.style.top), w, h, vw, vh, inspectorAt, tb, bb)
-          : (placeInspector(ssx, ssy, w, h, vw, vh, inspectorAt, tb, bb, hc, selFb.selectionScreenHalf ?? 0), true);
-        if (move) {
-          const at = inspectorAt;
-          panel.style.left = `${at.left}px`;
-          panel.style.top = `${at.top}px`;
-        }
-      }
-      if (writeE2E) {
-        el.dataset['selectionScreenX'] = ssx.toFixed(1);
-        el.dataset['selectionScreenY'] = ssy.toFixed(1);
-      }
-    } else if (writeE2E && el.dataset['selectionScreenX'] !== undefined) {
-      delete el.dataset['selectionScreenX'];
-      delete el.dataset['selectionScreenY'];
     }
 
     animFrameRef.current = requestAnimationFrame(loop);

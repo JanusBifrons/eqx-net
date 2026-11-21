@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Box, CircularProgress, IconButton, Portal, Tooltip } from '@mui/material';
+import { Box, CircularProgress, IconButton, Tooltip } from '@mui/material';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import RecyclingIcon from '@mui/icons-material/Recycling';
 import BuildIcon from '@mui/icons-material/Build';
@@ -193,10 +193,7 @@ export function EntityStatsPanel(): JSX.Element | null {
 
   const hasCharge = data.storedPowerMax !== undefined && data.storedPowerMax > 0;
   const chargePct = hasCharge ? ((data.storedPower ?? 0) / data.storedPowerMax!) * 100 : 0;
-  // Portalled to <body>: an ancestor stacking context otherwise traps the
-  // z-index under the body-level HUD slot anchors (LESSONS 2026-06-17).
   return (
-    <Portal>
     <Box
       data-testid="entity-stats-panel"
       {...phoneAttrs}
@@ -332,7 +329,6 @@ export function EntityStatsPanel(): JSX.Element | null {
         </Box>
       )}
     </Box>
-    </Portal>
   );
 }
 
@@ -530,16 +526,13 @@ function Cap({ children }: { children: string }): JSX.Element {
   return <Box component="span" sx={CAP_SX}>{children}</Box>;
 }
 
+// Docked top-centre (App.tsx Slot). Centred, so never wider than the viewport
+// less twice the open side panel (SETTINGS_PANEL_SIZE: clamp(280px, 40vw,
+// 360px)) and 8 px each side: 179 px on a sideways Pixel 7 (915 px).
+export const CARD_MAX_W = 'max(120px, 100vw - 2 * clamp(280px, 40vw, 360px) - 16px)';
+const ELLIPSIS_SX = { overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, minWidth: 0 };
 const ROOT_SX = {
-  // WS-9 (R2.30) — world-anchored: position:fixed, moved to the selected entity's
-  // projected screen point by gameRafLoop each frame. The translate anchors the
-  // box's bottom-centre at that point, which inspectorPlacement.ts keeps clear of the
-  // selected entity. Starts off-screen until the first frame positions it (no flash).
-  position: 'fixed' as const,
-  left: 0,
-  top: -9999,
-  transform: 'translate(-50%, -100%)',
-  zIndex: 1400,
+  maxWidth: CARD_MAX_W,
   display: 'grid',
   gridTemplateColumns: 'auto auto',
   alignItems: 'center',
@@ -557,6 +550,7 @@ const ROOT_SX = {
 // bar and icons ~2x; mobile (xs, and any phone: inspectorSizes.ts) stays tiny.
 const NAME_SX = {
   gridColumn: '1 / -1',
+  ...ELLIPSIS_SX,
   ...phoneTiny({ fontSize: [10, 20] }),
   fontWeight: 700,
   color: '#cde',
@@ -587,6 +581,7 @@ const GUN_SX = {
 };
 const INFO_SX = {
   gridColumn: '1 / -1',
+  ...ELLIPSIS_SX,
   ...phoneTiny({ fontSize: [9, 18] }),
   fontWeight: 600,
   letterSpacing: 0.3,

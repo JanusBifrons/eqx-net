@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Profiler } from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
-import { EntityStatsPanel } from './EntityStatsPanel.js';
+import { CARD_MAX_W, EntityStatsPanel } from './EntityStatsPanel.js';
 import { selectionStats, applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
@@ -77,6 +77,21 @@ describe('EntityStatsPanel', () => {
     expect(panel).toBeInTheDocument();
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Ada');
     expect(panel).toHaveAttribute('data-entity-name', 'Ada');
+  });
+
+  // Building-panels A2b: the card docks in the top-centre Slot (App.tsx). It
+  // renders in place (no Portal, no fixed position of its own to be moved
+  // per frame) and is capped to the room the open side panel leaves.
+  it('renders in place for its Slot: not portalled, not fixed, width-capped', () => {
+    applySelectionStats({ id: 'p1', name: 'Ada', hp: 75, hpMax: 100, shield: 30, shieldMax: 60 });
+    useUIStore.setState({ selection: { ids: [], focusId: 'p1', focusKind: 'ship' } });
+    const { container } = render(<EntityStatsPanel />);
+    const panel = screen.getByTestId('entity-stats-panel');
+    expect(container.contains(panel)).toBe(true);
+    expect(getComputedStyle(panel).position).not.toBe('fixed');
+    // Sideways Pixel 7 (915 px): the side panel is min(360, 0.4 * 915) = 360,
+    // so the centred card may span 915 - 2 * 360 - 16 = 179 px.
+    expect(CARD_MAX_W).toBe('max(120px, 100vw - 2 * clamp(280px, 40vw, 360px) - 16px)');
   });
 
   it('renders a shield bar for a ship and none for a structure', () => {
