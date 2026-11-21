@@ -32,6 +32,25 @@ stack, zoom-blur, burst ripple and white arrival flash on `app.stage`) is
   them (`warp_event`) and uses the local player's own `warp_in.arrivalTick`
   to schedule the curtain drop. Sector trips raise no curtain at all
   (see [travel-state](travel-state.md)).
+- **Join loading screen (`WarpScreen`, "sector briefing"):** the React
+  layer over the curtain. Left: "Arriving at", the sector name, the
+  holder line (sigil dot in `factionColor`; "Unclaimed" with no holder; a
+  player-held sector reads "a player faction", never the raw id) and four
+  facts — Pilots, Structures, Threat (hostile drones / flagship / elite /
+  "Quiet") from the last `/galaxy/snapshot` poll (`galaxyStats`, via the
+  shared `buildSectorTooltip`), and Rock field from the static galaxy
+  graph (`asteroidConfigKey` + the `asteroid` feature). Under them a slim
+  bar fills one step per REAL join gate (`joinGatesDone`, the nine
+  `computeGameReadyFromState` gates; never a timer) and the status label
+  (CONNECTING / LOADING SECTOR / WARPING IN). Right: a CSS-only radar
+  sweep (paused while hidden, off under `prefers-reduced-motion`) whose
+  only blips are the player's own roster hulls in that sector. The
+  sector shown is the stalled trip's target, else the join's room name
+  (`sectorKeyFromRoomName`) before `welcome`, else `currentSectorKey`. A
+  stall (20 s; 45 s on a trip) adds "Still loading…" and Cancel. No
+  per-frame JS: content is `components/sectorBriefing.ts` (pure) +
+  `components/WarpBriefing.tsx`. Not shown: a next-AI-wave timer (the
+  client has no such data before joining).
 
 The sections below are kept as the history of how the old effect was
 built and why.
@@ -242,6 +261,8 @@ the markers to confirm, not a license to lighten the chain blind.
 | WarpScreen re-show on consecutive transits (Phase G) | `src/client/components/WarpScreen.transit.test.tsx` |
 | Transit reset group: prediction + UI (Phase G) | `src/client/net/ColyseusClient.transitRearmReadiness.test.ts` |
 | Orchestration: a trip raises no curtain, first join does | `src/client/App.warpOrchestration.test.tsx` |
+| Sector briefing: facts, gate progress, no raw ids | `src/client/components/WarpScreen.briefing.test.tsx` |
+| Stall: Cancel + "Still loading…" only | `src/client/components/WarpScreen.stall.test.tsx` |
 | Warp-screen lifecycle (E2E) | `tests/e2e/join-warp-screen.spec.ts` |
 
 ## 10. See also
