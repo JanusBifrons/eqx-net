@@ -32,6 +32,11 @@ export function formatBuildEta(etaMs: number | null | undefined): string {
   return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 
+/** The label's local y at angle 0: above the body + fill-bar (Pixi y-down). */
+export function buildEtaBaseY(radius: number): number {
+  return -(radius + 16);
+}
+
 let _buildEtaStyle: TextStyle | undefined;
 /** Phase-1 issue 2 — a blueprint's build-ETA countdown (a short cyan number
  *  ABOVE the body, above the construction fill-bar). Built ONCE per structure
@@ -47,7 +52,7 @@ export function buildBuildEtaText(radius: number): Text {
   });
   const t = new Text({ text: '', style: _buildEtaStyle, roundPixels: true });
   t.anchor.set(0.5, 1);
-  t.y = -(radius + 16); // above the body + fill-bar (Pixi y-down)
+  t.y = buildEtaBaseY(radius);
   t.scale.set(1 / BUILD_ETA_RASTER_SCALE);
   t.label = 'buildEta';
   return t;

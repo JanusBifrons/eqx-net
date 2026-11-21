@@ -104,6 +104,10 @@ All of it is lane-only: a normal production build has `VITE_PHONE_LANE` unset,
 so it streams no capture, makes no summary and adds no zoom, mode or phases to
 stall events.
 
+To grade the connection (Good / Playable / Poor) and split each gap between
+server, network and device: `pnpm phone:verdict <capture dir>`
+([network-quality](network-quality.md)).
+
 ### Naming the code behind a stall
 
 The lane build is minified, so a `loaf` names its scripts as `B` or `""`.

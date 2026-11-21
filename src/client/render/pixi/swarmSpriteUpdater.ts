@@ -48,8 +48,8 @@ import {
   formatResources,
   buildEliteRingGfx,
 } from './spriteBuilders.js';
-import { buildBuildEtaText, formatBuildEta, fitBuildEtaLabel } from './buildEtaLabel.js';
-import { applyStructureMirror, counterFlipStructureParts } from './structureMirrorFlip.js';
+import { buildBuildEtaText, buildEtaBaseY, formatBuildEta, fitBuildEtaLabel } from './buildEtaLabel.js';
+import { applyStructureMirror, counterFlipStructureParts, uprightReadout } from './structureMirrorFlip.js';
 import { BUILD_AWAITING_CLEAR_LABEL, isBuildAwaitingClear } from '../../structures/buildAwaitingClear.js';
 import { buildChargeTelegraph, updateChargeTelegraph, type ChargeTelegraph } from './chargeTelegraph.js';
 import type { Text } from 'pixi.js';
@@ -547,6 +547,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         if (capText) {
           const next = st?.minerals !== undefined ? formatResources(st.minerals) : '';
           if (capText.text !== next) capText.text = next;
+          if (next !== '') uprightReadout(sprite, capText, entry.radius + 4);
         }
       }
       // Phase-1 issue 2 — the in-world build-ETA countdown (CHANGE-only update;
@@ -559,6 +560,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         if (etaText.text !== nextEta) etaText.text = nextEta;
         // Readable on a phone: a constant on-screen size at any zoom.
         if (nextEta !== '' && ctx.cameraScale !== undefined) fitBuildEtaLabel(etaText, ctx.cameraScale, sprite.scale.y);
+        // Upright and above the body on screen, whatever the structure's angle.
+        if (nextEta !== '') uprightReadout(sprite, etaText, buildEtaBaseY(entry.radius));
       }
       // Phase-1 issue 7 — a power store's stored-power number (CHANGE-only).
       if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0) {
@@ -573,6 +576,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
             batText.shownMax = max;
             batText.text = has ? `${stored}/${max}` : '';
           }
+          if (has) uprightReadout(sprite, batText, entry.radius + 4);
         }
       }
     }

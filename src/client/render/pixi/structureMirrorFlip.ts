@@ -64,3 +64,21 @@ export function counterFlipStructureParts(sprite: Container, mountCluster: Conta
 
 /** Gun clusters whose mount offsets are currently negated. */
 const offsetsFlipped = new WeakSet<Container>();
+
+/**
+ * Keep a text readout of a structure `sprite` upright and on its side of the
+ * body ON SCREEN, whatever the structure's angle or mirror: a Shipyard placed
+ * turned 90° otherwise drew its build countdown reading vertically along its
+ * side. `baseY` is the readout's local y at angle 0 (negative = above the
+ * body). Undoes the sprite's rotation (and its mirror) for the label alone.
+ * Allocation-free (#14).
+ */
+export function uprightReadout(sprite: Container, t: Container, baseY: number): void {
+  const sign = sprite.scale.x < 0 ? -1 : 1;
+  const th = sprite.rotation;
+  const rot = th === 0 ? 0 : -sign * th;
+  if (t.rotation !== rot) t.rotation = rot;
+  const x = sign * baseY * Math.sin(th);
+  const y = baseY * Math.cos(th);
+  if (t.x !== x || t.y !== y) t.position.set(x, y);
+}
