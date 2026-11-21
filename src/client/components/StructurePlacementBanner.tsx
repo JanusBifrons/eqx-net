@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react';
 import { Box, IconButton } from '@mui/material';
 import RotateRightIcon from '@mui/icons-material/RotateRight';
 import CheckIcon from '@mui/icons-material/Check';
@@ -6,6 +7,7 @@ import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { commitChosenPlacement, cyclePlacementRotation } from '../structures/structurePlacementClient';
 import { isTouchDevice } from '../input/TouchInput';
+import { getPlacementRejection, subscribePlacementRejection } from '../structures/placementChosen';
 import { Slot } from '../layout/Slot';
 import { PlacementFenceHint } from './PlacementFenceHint';
 import { PlacementLinkHint } from './PlacementLinkHint';
@@ -37,6 +39,9 @@ import { PlacementLinkHint } from './PlacementLinkHint';
 export function StructurePlacementBanner(): JSX.Element | null {
   const placementKind = useUIStore((s) => s.placementKind);
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
+  // The ghost's verdict (the server's own placement rule): blocked ⇒ Confirm
+  // is disabled, the reason line under the banner says why.
+  const blocked = useSyncExternalStore(subscribePlacementRejection, getPlacementRejection) !== null;
 
   // TOUCH-ONLY affordance (P3.6 / WS-C4b). The banner is the two-step
   // tap-to-position → Confirm/Cancel flow for touch devices. On DESKTOP the
@@ -53,8 +58,8 @@ export function StructurePlacementBanner(): JSX.Element | null {
     // Commit at the pointer-chosen world point via the shared path (production
     // `placementChosen` channel — NOT the webdriver-gated dataset; smoke
     // 2026-06-07 capture kuytvy). Identical to the WS-10 desktop one-click place.
-    commitChosenPlacement(placementKind);
-    setPlacementKind(null);
+    // A refused commit (the ghost went red) keeps placement open.
+    if (commitChosenPlacement(placementKind)) setPlacementKind(null);
   };
   const onCancel = (): void => setPlacementKind(null);
   // Same quarter-turn the desktop R key applies; the renderer reads it through
@@ -71,7 +76,7 @@ export function StructurePlacementBanner(): JSX.Element | null {
           <IconButton data-testid="placement-rotate" aria-label="Rotate" title="Rotate" onClick={onRotate} sx={ROTATE_SX}>
             <RotateRightIcon fontSize="small" />
           </IconButton>
-          <IconButton data-testid="placement-confirm" aria-label="Confirm" title="Confirm" onClick={onConfirm} sx={CONFIRM_SX}>
+          <IconButton data-testid="placement-confirm" aria-label="Confirm" title="Confirm" onClick={onConfirm} disabled={blocked} sx={CONFIRM_SX}>
             <CheckIcon fontSize="small" />
           </IconButton>
           <IconButton data-testid="placement-cancel" aria-label="Cancel" title="Cancel" onClick={onCancel} sx={CANCEL_SX}>
@@ -124,6 +129,10 @@ const ICON_BTN_SX = {
 
 const ROTATE_SX = { ...ICON_BTN_SX, color: '#9fd8ff', borderColor: 'rgba(120,200,255,0.45)' } as const;
 
-const CONFIRM_SX = { ...ICON_BTN_SX, color: '#00ff88', borderColor: 'rgba(0,255,136,0.5)' } as const;
+const CONFIRM_SX = {
+  ...ICON_BTN_SX, color: '#00ff88', borderColor: 'rgba(0,255,136,0.5)',
+  // Blocked ghost: a dimmed tick (MUI's default disabled grey is invisible on the dark dock).
+  '&.Mui-disabled': { color: 'rgba(0,255,136,0.25)', borderColor: 'rgba(0,255,136,0.15)' },
+} as const;
 
 const CANCEL_SX = { ...ICON_BTN_SX, color: 'rgba(255,120,120,0.95)', borderColor: 'rgba(255,120,120,0.45)' } as const;
