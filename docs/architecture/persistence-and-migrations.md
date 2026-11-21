@@ -73,6 +73,9 @@ the sink in Phase 7 but never called. Sub-phase A activates it:
     the per-structure level an Upgrade build phase (WS-B4) increments. The bump
     5 → 6 is a TEAR-DOWN (`migrateSnapshot` v5→v6 throws); every v5 snapshot is
     discarded and all sectors fresh-spawn.
+  - (additive, no bump; capture plan 4E S6) `structures[].originBase`: the NPC
+    base (`npc:<faction>:<baseId>`) a fallen or captured piece was grown in;
+    the seeder never regrows that base. Absent ⇒ not from a fallen base.
 - **What's persisted** (opt-out / BLACKLIST model — the world persists by default):
   asteroid swarm health; (schema v3) the FULL state of placed **structures**
   (owner / subtype / pose / construction / minerals / power — positions DO

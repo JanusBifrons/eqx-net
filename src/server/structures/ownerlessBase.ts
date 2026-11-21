@@ -60,6 +60,19 @@ export function orphanBaseOnCapitalLoss(registry: OwnerlessBaseRegistry, capital
   }
 }
 
+/**
+ * Capture plan 4E (S6) — the NPC bases that have fallen here: the seed owner
+ * (`originBase`) of every structure no longer owned by it (ownerless `none:`,
+ * or captured by a player). The seeders skip these, so a fallen base never
+ * regrows, after a restart (the pieces are saved with their origin) or not.
+ * Boot only (one pass over the registry).
+ */
+export function fallenBaseOrigins(records: Iterable<StructureRecord>): Set<string> {
+  const out = new Set<string>();
+  for (const r of records) if (r.originBase !== undefined && r.owner !== r.originBase) out.add(r.originBase);
+  return out;
+}
+
 /** What the capture pass reads: the flip's view plus every record. */
 export interface CaptureRegistry extends OwnerlessBaseRegistry {
   all(): Iterable<StructureRecord>;

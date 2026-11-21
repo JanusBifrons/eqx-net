@@ -193,8 +193,20 @@ view, never the server `StructureRegistry`):
   built Capital left in the room, drops that patrol (no respawn, no roaming);
   surviving ships carry on as attached ships until they are gone. A piece not
   linked to the lost Capital keeps its `npc:` owner (the same per-grid rule as
-  a player base). Regrow prevention after a restart is S6. Lock:
-  `bases/npcBaseFall.test.ts`.
+  a player base). Lock: `bases/npcBaseFall.test.ts`.
+- **A fallen NPC base never regrows** (capture plan 4E S6; owner: "never
+  regrows, even after a restart, until captured"; once captured the site is
+  taken, so not then either). The seeder stamps every piece it places with
+  `originBase` (its seed owner, `npc:<faction>:<baseId>`); the field stays when
+  the base falls (`none:`) or is captured, and `SectorPersistence` saves it with
+  the piece (optional `structures[].originBase`, no schema bump; restore keeps
+  only an `npc:` value). `seedGalaxyBase` and `seedNpcBases` skip every base in
+  `fallenBaseOrigins` (`ownerlessBase.ts`: origins of pieces no longer owned by
+  their origin). Seeding runs only at room boot, after restore; nothing regrows
+  a base in a running room. An old save (no `originBase`) loads and regrows as
+  before. If every saved piece of a fallen base is later destroyed, nothing
+  records the fall and the base regrows on the next restart. Lock:
+  `bases/npcBaseNoRegrow.test.ts`.
 - **An ownerless base's Territory Lock claims nothing** (owner 2026-11-21,
   "Stops claiming"). A lock owned by `none:` (built or still a blueprint)
   feeds no side to the control meter (`isLiveTerritoryLock`), never holds

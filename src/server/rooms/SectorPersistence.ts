@@ -77,6 +77,8 @@ export interface PersistableStructure {
   tpCharge?: number;
   tpToll?: unknown;
   packedQuality?: number;
+  /** Capture plan 4E (S6) — the NPC base it was grown in (fallen or captured). */
+  originBase?: string;
   isConstructed: boolean;
   constructionProgress: number;
   minerals: number;
@@ -237,6 +239,7 @@ export class SectorPersistence {
           } }
           : {}),
         ...(s.packedQuality !== undefined ? { packedQuality: s.packedQuality } : {}),
+        ...(s.originBase !== undefined ? { originBase: s.originBase } : {}),
         y: s.y,
         health: d.swarmHealth.get(s.id) ?? 0,
         isConstructed: s.isConstructed,
