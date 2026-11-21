@@ -29,7 +29,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Box, Tab, Tabs, Tooltip } from '@mui/material';
 import { getGameClient } from '../net/clientSingleton';
 import { HUD } from '../hud/tokens';
-import { useUIStore } from '../state/store';
+import { selectControlMode, useUIStore } from '../state/store';
 import { SidePanel, type SidePanelSize } from './SidePanel';
 import {
   notifyGameWindowOpen, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX,
@@ -45,6 +45,9 @@ import { sendSetRecipe } from '../structures/structureActionsClient';
 import { MAX_BUILD_COUNT, nextRecipe } from '@shared-types/production';
 import { RECIPES } from '@shared-types/recipes';
 import { phoneTiny } from './inspectorSizes';
+import { rightPanelWidthPx } from './panelCameraNudge';
+import { queuePanelNudge } from '../structures/buildModeView';
+import { isTouchDevice } from '../input/TouchInput';
 
 export type SettingsTabId = 'power' | 'production' | 'access';
 interface SettingsTab { id: SettingsTabId; label: string }
@@ -65,6 +68,15 @@ export function settingsTabsFor(kindId: string): readonly SettingsTab[] {
 const POLL_MS = 250;
 /** ~40% of a sideways phone (never under 280 px), 360 px on desktop; below the app bar. */
 export const SETTINGS_PANEL_SIZE: SidePanelSize = { width: 360, touchFrac: 0.4, touchMinW: 280, touchTop: null };
+
+/** On open, once: glide the camera so the building sits mid-way across the
+ *  screen left of the panel. Not in Fly (the follow camera owns the view) nor
+ *  upright (the panel is a bottom sheet). One mirror read, never per frame. */
+function nudgeCameraFor(entityId: number): void {
+  if (selectControlMode(useUIStore.getState()) === 'fly' || window.innerHeight > window.innerWidth) return;
+  const e = getGameClient()?.mirror.swarm?.get(entityId);
+  if (e) queuePanelNudge(e.x, e.y, rightPanelWidthPx(SETTINGS_PANEL_SIZE, window.innerWidth, isTouchDevice()));
+}
 
 function readKind(entityId: number): string | undefined {
   return getGameClient()?.mirror.swarm?.get(entityId)?.shipKind;
@@ -177,6 +189,8 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
     useUIStore.setState({ structureSettingsOpen: true });
     return () => useUIStore.setState({ structureSettingsOpen: false });
   }, [open]);
+  // The building stays in view beside the panel (Build / Command only).
+  useEffect(() => { if (open) nudgeCameraFor(entityId); }, [open, entityId]);
   return (
     <SidePanel open={open} onClose={onClose} testId="structure-settings" size={SETTINGS_PANEL_SIZE}>
       <Box sx={WINDOW_ROOT_SX}>
