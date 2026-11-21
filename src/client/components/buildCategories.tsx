@@ -11,43 +11,38 @@ import { COASTAL_DEFENCE_KINDS, type StructureKindId } from '@shared-types/struc
 /**
  * Build menu categories (WS-13 / R2.6): the Build sidebar's rail.
  *
- * The Build menu groups the 9 placeable structure kinds into three player-facing
- * categories (the sidebar's rail) instead of dumping a flat
- * 9-icon list. This taxonomy is **client-only presentation** — it is NOT a field
+ * The Build menu groups the placeable structure kinds into player-facing
+ * categories (the sidebar's rail; CATEGORY_ICON below is each one's icon) instead
+ * of one flat list. This taxonomy is **client-only presentation** — it is NOT a field
  * on the wire catalogue (`structureKinds.ts`), so it needs no
  * `STRUCTURE_KIND_CATALOGUE_VERSION` bump and never rides a snapshot (no netgate).
  *
- * Grouping by FUNCTION:
- *   - Core    — the grid backbone (capital hub + connector relay)
- *   - Economy — power + resources (solar generates, battery stores, miner extracts)
- *   - Defence — the combat structures (turrets + shield pylon)
+ * Grouping by FUNCTION: Core (the grid backbone), Economy (power + resources),
+ * Industry (processors), Defence, Gun Batteries, Habitation, Transport.
  *
  * The union of every category's `kinds` must equal `STRUCTURE_KINDS_LIST` exactly
  * (no orphan, no duplicate) — locked by `buildCategories.test.ts`, which fails
- * closed the moment a 10th kind is appended to the catalogue without a category.
+ * closed the moment a new kind is appended to the catalogue without a category.
  */
 export type BuildCategoryId = 'core' | 'economy' | 'industry' | 'defence' | 'batteries' | 'habitation' | 'transport';
 
 export interface BuildCategory {
   readonly id: BuildCategoryId;
   readonly label: string;
-  readonly icon: ReactNode;
   readonly kinds: readonly StructureKindId[];
 }
 
 export const BUILD_CATEGORIES: readonly BuildCategory[] = [
-  { id: 'core', label: 'Core', icon: <HubIcon />, kinds: ['capital', 'connector', 'territory_lock'] },
+  { id: 'core', label: 'Core', kinds: ['capital', 'connector', 'territory_lock'] },
   {
     id: 'economy',
     label: 'Economy',
-    icon: <BoltIcon />,
     kinds: ['solar', 'battery', 'miner', 'gas_collector', 'deep_core_rig', 'cargo_bay', 'freight_dock', 'reactor', 'battery_bank', 'storage_vault'],
   },
   // Production chains (plan soft-leaping-truffle v3, P2a): the processors.
   {
     id: 'industry',
     label: 'Industry',
-    icon: <FactoryIcon />,
     kinds: [
       'reclaimer',
       'smelter',
@@ -65,15 +60,14 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
   {
     id: 'defence',
     label: 'Defence',
-    icon: <SecurityIcon />,
     kinds: ['turret', 'laser_bolt_turret', 'missile_turret', 'autocannon_turret', 'mine_layer', 'shield_pylon', 'shield_gate', 'shield_airlock'],
   },
   // Coastal defences: the naval gun catalogue, light AA up to the siege gun.
-  { id: 'batteries', label: 'Gun Batteries', icon: <CrisisAlertIcon />, kinds: COASTAL_DEFENCE_KINDS },
+  { id: 'batteries', label: 'Gun Batteries', kinds: COASTAL_DEFENCE_KINDS },
   // D3 — habitation: station residents use provisions and consumer goods and pay taxes.
-  { id: 'habitation', label: 'Habitation', icon: <ApartmentIcon />, kinds: ['habitat_module', 'tower_module'] },
+  { id: 'habitation', label: 'Habitation', kinds: ['habitat_module', 'tower_module'] },
   // v4 T1 — teleporters: paired pads that swap ships and cargo.
-  { id: 'transport', label: 'Transport', icon: <TripOriginIcon />, kinds: ['teleporter', 'teleporter_large'] },
+  { id: 'transport', label: 'Transport', kinds: ['teleporter', 'teleporter_large'] },
 ];
 
 /** Each category's icon on the Build sidebar's rail (BuildSidebar.tsx). */
