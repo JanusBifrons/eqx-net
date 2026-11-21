@@ -138,15 +138,15 @@ describe('GalaxyPickerChrome', () => {
     expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
   });
 
-  it('Quick launch (stage 7): one tap glides to the hottest sector, then a guest Fighter launches there', () => {
+  it('Quick launch (stage 7): one tap glides to the safest sector (hot front among hostile-free ones), then a guest Fighter launches there', () => {
     vi.useFakeTimers();
     try {
       useAuthStore.setState({ user: null, token: null, guest: false });
       useUIStore.setState({ galaxyStatsLoaded: true, selectedShipKind: 'scout' });
       act(() => {
         useUIStore.getState().setGalaxyStats([
-          { key: 'sol-prime', players: 6, enemies: 0, neutrals: 0, structures: 0, owner: null },
-          { key: 'orion-belt', players: 1, enemies: 3, neutrals: 0, structures: 0, owner: null,
+          { key: 'sol-prime', players: 6, enemies: 2, neutrals: 0, structures: 0, owner: null },
+          { key: 'orion-belt', players: 1, enemies: 0, neutrals: 0, structures: 0, owner: null,
             control: { holder: 'a', holderShare: 0.55, challenger: 'b', challengerShare: 0.45, trend: -1, threat: 3, flippedAtMs: null, locked: false } } as never,
         ]);
       });
