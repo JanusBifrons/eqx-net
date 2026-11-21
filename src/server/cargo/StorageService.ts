@@ -17,7 +17,7 @@
  *    mining, it can never duplicate player value.
  */
 import { GOOD_DEFS, GOOD_IDS, type GoodId, type Hold } from '../../shared-types/goods.js';
-import { fittedUid, moduleProduct } from '../../shared-types/blueprints.js';
+import { fittedUid, isBlueprintUsedUp, moduleProduct } from '../../shared-types/blueprints.js';
 import type { BlueprintItem } from '../../shared-types/items.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -358,7 +358,8 @@ export class StorageService {
     if (best === null) return false;
     const b: { list: BlueprintItem[]; s: StructureRecord | null; i: number; bp: BlueprintItem } = best;
     b.list.splice(b.i, 1);
-    if (proc.blueprint !== undefined) b.list.push(proc.blueprint);
+    // A used-up copy (its last cycle handed back refunds it first) is worth nothing: never stocked.
+    if (proc.blueprint !== undefined && !isBlueprintUsedUp(proc.blueprint)) b.list.push(proc.blueprint);
     proc.blueprint = b.bp;
     const ship = b.s === null && row !== undefined ? { ...row, hold: shipHold! } : undefined;
     this.commitSlotAndStorage(proc, new Set(b.s === null ? [] : [b.s]), ship);
@@ -368,7 +369,7 @@ export class StorageService {
   /** Move the slot's blueprint back into network storage (never a bound one). */
   unloadBlueprint(proc: StructureRecord): boolean {
     const bp = proc.blueprint;
-    if (bp === undefined || bp.bound === true) return false;
+    if (bp === undefined || bp.bound === true || isBlueprintUsedUp(bp)) return false;
     const target = this.networkFor(proc)[0];
     if (target === undefined) return false;
     (target.hold ??= emptyHold()).blueprints.push(bp);
@@ -384,7 +385,7 @@ export class StorageService {
     const bp = proc.blueprint;
     proc.blueprint = undefined;
     if (uid !== null && this.d.holdStore.get(uid) !== undefined) this.d.holdStore.delete(uid, this.persist());
-    return bp === undefined || bp.bound === true ? null : { goods: {}, blueprints: [bp] };
+    return bp === undefined || bp.bound === true || isBlueprintUsedUp(bp) ? null : { goods: {}, blueprints: [bp] };
   }
 
   private commitSlotAndStorage(proc: StructureRecord, touched: Set<StructureRecord>, ship?: HoldRecord): void {

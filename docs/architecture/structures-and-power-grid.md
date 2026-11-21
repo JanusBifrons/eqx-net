@@ -716,7 +716,7 @@ waits, fully paid, and finishes the pulse the space is clear. While it waits
 the client says so, derived from the row alone (`buildPct >= 1 && !built`,
 [`buildAwaitingClear.ts`](../../src/client/structures/buildAwaitingClear.ts)):
 "WAITING FOR SHIPS TO CLEAR" above the blueprint and "FINISHED — WAITING FOR
-SHIPS TO CLEAR" on the inspector card. Records built
+SHIPS TO CLEAR" on the inspector card. A build paused because every Capital that routes to it is empty (`constructionStall.ts`) packs the minerals still owed into `etaMs` (`encodeBuildEta`, ≤ `STRUCTURE_ETA_NEEDS_MINERALS`); the inspector reads "PAUSED — NEEDS N MORE MINERALS". A build with no grid route to any Capital at all sends `STRUCTURE_ETA_NOT_CONNECTED` (−3) and reads "PAUSED — NOT CONNECTED TO A CAPITAL"; −2 stays the no-known-reason stall (e.g. a fully paid, unrouted blueprint waiting for ships to clear). Records built
 outside the pulse (restore, seeded bases) settle on the next pulse. **A
 pre-built kind placed round a ship** (a Capital unpacked over the Fighter
 parked in Command view) starts the same way: built, but a hologram until the
