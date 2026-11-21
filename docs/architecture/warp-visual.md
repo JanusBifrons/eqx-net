@@ -41,8 +41,20 @@ stack, zoom-blur, burst ripple and white arrival flash on `app.stage`) is
   shared `buildSectorTooltip`), and Rock field from the static galaxy
   graph (`asteroidConfigKey` + the `asteroid` feature). Under them a slim
   bar fills one step per REAL join gate (`joinGatesDone`, the nine
-  `computeGameReadyFromState` gates; never a timer) and the status label
-  (CONNECTING / LOADING SECTOR / WARPING IN). Right: a CSS-only radar
+  `computeGameReadyFromState` gates; never a timer). Under the bar, the
+  **step breakdown**: `joinGateSteps` groups the nine gates into six
+  ordered steps, each with a playful name and a plain-English explainer
+  (`JOIN_STEP_TEXT`, pure data) — connect (connected), ship (ship id),
+  sector (first snapshot), draw (first frame + the minimum-display floor,
+  folded in so the timer never reads as a step of its own), place (pose
+  resolved + `client_ready` sent), arrive (arrival tick received + acked).
+  A shipless spectator has the ship id and pose gates done. The status
+  label names the current step (the first not done; WARP COMPLETE once
+  all are), with a "Step N of 6" count (the current step, 1-based; "6 of
+  6" when done), the current step's explainer, and
+  the list marking each step done / current / waiting. `joinGatesDone`
+  counts from `joinGateSteps`, so the bar and the list never disagree.
+  Right: a CSS-only radar
   sweep (paused while hidden, off under `prefers-reduced-motion`) whose
   only blips are the player's own roster hulls in that sector. The
   sector shown is the stalled trip's target, else the join's room name
@@ -262,6 +274,7 @@ the markers to confirm, not a license to lighten the chain blind.
 | Transit reset group: prediction + UI (Phase G) | `src/client/net/ColyseusClient.transitRearmReadiness.test.ts` |
 | Orchestration: a trip raises no curtain, first join does | `src/client/App.warpOrchestration.test.tsx` |
 | Sector briefing: facts, gate progress, no raw ids | `src/client/components/WarpScreen.briefing.test.tsx` |
+| Loading steps: order, current step, bar agrees, spectator | `src/client/components/WarpScreen.steps.test.tsx` |
 | Stall: Cancel + "Still loading…" only | `src/client/components/WarpScreen.stall.test.tsx` |
 | Warp-screen lifecycle (E2E) | `tests/e2e/join-warp-screen.spec.ts` |
 
