@@ -37,7 +37,14 @@ function row(flowing: boolean): RenderMirror {
 }
 
 interface Instr { action: string; data: { style: { color: number; alpha: number; width: number } } }
-const instructions = (g: { context: unknown }): Instr[] => (g.context as { instructions: Instr[] }).instructions;
+/** A layer's draw instructions: a Graphics, or the static layer's on-screen chunks. */
+type Layer = { context: unknown } | { children: unknown[] };
+function instructions<T = Instr>(g: Layer): T[] {
+  if ('context' in g) return (g.context as { instructions: T[] }).instructions;
+  const out: T[] = [];
+  for (const c of g.children as { visible: boolean; context: { instructions: T[] } }[]) if (c.visible) out.push(...c.context.instructions);
+  return out;
+}
 
 describe('readLineLook (structure restyle 1g)', () => {
   it('parses the three looks; absent or unknown = the cable default', () => {
@@ -206,9 +213,9 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
 
   interface PathInstr { action: string; data: { path: { instructions: Array<{ action: string; data: number[] }> } } }
   /** The points of every stroked path on `g` that has `n` points. */
-  function strokedPaths(g: { context: unknown }, n: number): number[][] {
+  function strokedPaths(g: Layer, n: number): number[][] {
     const out: number[][] = [];
-    for (const i of (g.context as { instructions: PathInstr[] }).instructions) {
+    for (const i of instructions<PathInstr>(g)) {
       if (i.action !== 'stroke') continue;
       const pts: number[] = [];
       for (const p of i.data.path.instructions) if (p.action === 'moveTo' || p.action === 'lineTo') pts.push(p.data[0]!, p.data[1]!);

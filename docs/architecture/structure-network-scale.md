@@ -86,7 +86,7 @@ Measured at the citadel (456 structures incl. a fenced lattice) on the dev box.
 | Off-screen structure sprites | all drawn | not drawn (camera rect + bounding radius) | `spriteUpdateDecisions.test.ts` (`isSpriteInView`) |
 
 **What changed.**
-- **Static layer.** `ConnectorRenderer` draws idle edges, built-turret range rings, up-wall rails and open-gate guides on a retained `staticGfx`, rebuilt only when an integer signature of the structure set, poses, connections and built / walls-up / gate-open state changes, or the zoom moves more than 3 %. Flow pulses, wall glow and shimmer, beams, build bars and the placement preview stay per frame.
+- **Static layer.** `ConnectorRenderer` draws idle edges, built-turret range rings, up-wall rails and open-gate guides on a retained `staticGfx`, rebuilt only when an integer signature of the structure set, poses, connections and built / walls-up / gate-open state changes, or the zoom crosses a half-octave key. It is split into spatial chunks, so a zoom redraws only on-screen chunks, and only for keys they have not drawn before (structures-and-power-grid, "The connector web has two layers"). Flow pulses, wall glow and shimmer, beams, build bars and the placement preview stay per frame.
 - **Prediction streaming.** The client prediction world holds a structure or shield-wall body only while its edge is within `PREDWORLD_STRUCTURE_RADIUS` (1500 u) of the local ship, released past +300 u. Making structure bodies FIXED instead of locked-dynamic did NOT help (same cost), so the cost is per collider in Rapier's broad/narrow phase, not the solver: fewer colliders is the only lever.
 - **Sprite culling.** Structure sprites outside the camera rect are hidden (`visible = false`).
 
