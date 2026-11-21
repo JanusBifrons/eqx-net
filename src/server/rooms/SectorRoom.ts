@@ -209,6 +209,7 @@ import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
 import { recordLagCompPoses } from './lagCompRecorder.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
 import { TickHealthWindow } from './TickHealthWindow.js';
+import { processTickHealth } from './ProcessTickHealth.js';
 import {
   evaluateSectorIdle,
   findAbandonedShips,
@@ -1228,7 +1229,7 @@ export class SectorRoom extends Room<SectorState> {
   // see the breakdown without saturating the 500-entry server-event buffer.
   // Per-tick accumulation + tick_hitch + tick_budget aggregation lives in
   // TickBudgetTelemetry.
-  private readonly tickBudget = new TickBudgetTelemetry(new TickHealthWindow(logger, () => this.sectorKey ?? this.roomId));
+  private readonly tickBudget = new TickBudgetTelemetry(new TickHealthWindow(processTickHealth(logger), () => this.sectorKey ?? this.roomId));
 
   private roomFeatures: { dispose: () => void } | null = null; // features/index.ts; disposed in onDispose
   override async onCreate(options: unknown): Promise<void> {

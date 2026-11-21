@@ -3409,3 +3409,7 @@ landed a correction, and the hysteresis guard turned remote prediction off
 (`remote-ship-held-thrust.spec.ts`: 13 u per snapshot). A cap on a window must be relative to the
 window: `remoteForwardTickCap(lead)`. When you resize a lead, grep for every constant that assumed
 its old size.
+
+## 2026-11-21 — a shared read-and-reset histogram reads empty for every reader after the first
+
+The first tick-health log (`TickHealthWindow`) let every sector room read one process-wide `monitorEventLoopDelay` histogram and the first room to close its window reset it. Rooms close their windows in the same timer phase, so every room after the first read an empty histogram: a playtest logged `eventLoopP99Ms 0` on all 415 lines. A read-and-reset source needs exactly ONE reader (`ProcessTickHealth` reads it once per bucket). Also: the histogram is in nanoseconds and each sample is the whole interval between its timer callbacks, so an idle loop reads ≈ the resolution (≈ 15.6 ms on Windows); subtract the resolution to get delay.
