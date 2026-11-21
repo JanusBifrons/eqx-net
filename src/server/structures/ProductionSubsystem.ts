@@ -46,6 +46,7 @@ import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecip
 import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
 import { advanceProgress } from './productionProgress.js';
+import { baseEffect, inputsAsOutputs } from './productionEffect.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
@@ -92,18 +93,6 @@ interface AppliedCache {
   material: number;
   output: number;
   eff: EffectiveRecipe;
-}
-
-/** A recipe's base effect (no blueprint), cached per recipe. */
-const BASE_EFFECT = new Map<RecipeId, EffectiveRecipe>();
-function baseEffect(id: RecipeId): EffectiveRecipe {
-  let e = BASE_EFFECT.get(id);
-  if (e === undefined) {
-    const d = RECIPES[id];
-    e = { inputs: d.inputs, outputs: d.outputs, cyclePulses: d.cyclePulses, yieldBonus: 0, quality: 0 };
-    BASE_EFFECT.set(id, e);
-  }
-  return e;
 }
 
 export class ProductionSubsystem {
@@ -603,9 +592,3 @@ export class ProductionSubsystem {
 
 const EMPTY = { goods: {}, blueprints: [] };
 const ONE_FUEL: Readonly<Partial<Record<GoodId, number>>> = Object.freeze({ fuel: 1 });
-
-/** A cycle's inputs as outputs (handing a loaded cycle back). Rare (recipe or
- *  blueprint change), so it may allocate. */
-function inputsAsOutputs(eff: EffectiveRecipe): readonly RecipeOutput[] {
-  return Object.entries(eff.inputs).map(([good, n]) => ({ good: good as GoodId, n: n ?? 0 }));
-}
