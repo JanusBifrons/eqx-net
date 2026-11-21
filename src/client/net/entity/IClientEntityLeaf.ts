@@ -57,6 +57,13 @@ export interface FieldRockSource {
   wakeFieldRock(key: number): FieldRockBody | null;
 }
 
+/** Room-state structure row facts a structure leaf builds its body from:
+ *  hologram pass-through (`ghostBody`) and the build mirror (`mirror`, the
+ *  STRUCTURE_FLAG_MIRROR bit; the server collider flips with it). */
+export interface ClientStructureFacts extends StructureBodyFacts {
+  mirror?: boolean;
+}
+
 /** The hostility-ledger surface a drone leaf touches (register / unregister). */
 export type AiLedgerHandle = Pick<AiController, 'register' | 'unregister'>;
 
@@ -76,9 +83,10 @@ export interface ClientSpawnCtx {
   /** Cut-field rocks (the asteroid leaf reads an awake rock's outline). */
   fieldRocks?: FieldRockSource;
   /** Room-state structure rows by entityId (`mirror.structures`): the
-   *  structure leaf reads `ghostBody` (hologram pass-through). Absent ⇒ no
-   *  structure state: every structure body is solid. */
-  structures?: ReadonlyMap<number, StructureBodyFacts>;
+   *  structure leaf reads `ghostBody` (hologram pass-through) and `mirror`
+   *  (build mirror). Absent ⇒ no structure state: every structure body is
+   *  solid and unmirrored. */
+  structures?: ReadonlyMap<number, ClientStructureFacts>;
   /** Numeric wire entityId. */
   entityId: number;
   /** Pre-cached `swarm-${entityId}` predWorld body key. */
