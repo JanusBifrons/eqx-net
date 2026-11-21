@@ -291,6 +291,121 @@ const RECORDED: Record<GapProfileName, DroneFixtureResult> = {
   },
 };
 
+// S1-9: today's numbers at 0.7x and 2x game speed (display delays are game ms / speed, so a fix must hold at every speed).
+const RECORDED_0_7X: Record<GapProfileName, DroneFixtureResult> = {
+  'lan-clean': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 145.48, maxLatenessMs: 145.72 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 145.48, maxLatenessMs: 145.72 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 6.79, stampLatenessMaxMs: 13.86, maxDelayMs: 142.86,
+  },
+  'gap-200': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 183.67, maxLatenessMs: 193.09 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 183.68, maxLatenessMs: 193.09 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 12.11, stampLatenessMaxMs: 207.43, maxDelayMs: 142.86,
+  },
+  'gap-400': {
+    straight: { snaps: 5, largestSnapU: 21.19, totalSnapU: 43.59, freezeFrames: 11, backwardSteps: 1, meanLatenessMs: 189.61, maxLatenessMs: 314.29 },
+    turning: { snaps: 5, largestSnapU: 21.26, totalSnapU: 43.66, freezeFrames: 11, backwardSteps: 1, meanLatenessMs: 189.62, maxLatenessMs: 314.47 },
+    overwriteUnread: 6, oldEndClamps: 8, glideLimitHolds: 22,
+    stampLatenessMeanMs: 25.92, stampLatenessMaxMs: 405.43, maxDelayMs: 209.69,
+  },
+  'gap-600': {
+    straight: { snaps: 3, largestSnapU: 55.63, totalSnapU: 64.94, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 213.59, maxLatenessMs: 514.29 },
+    turning: { snaps: 3, largestSnapU: 55.69, totalSnapU: 65, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 213.61, maxLatenessMs: 514.47 },
+    overwriteUnread: 14, oldEndClamps: 22, glideLimitHolds: 46,
+    stampLatenessMeanMs: 46.91, stampLatenessMaxMs: 603.43, maxDelayMs: 257.24,
+  },
+  'burst-600-both-streams': {
+    straight: { snaps: 3, largestSnapU: 55.63, totalSnapU: 64.94, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 213.59, maxLatenessMs: 514.29 },
+    turning: { snaps: 3, largestSnapU: 55.69, totalSnapU: 65, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 213.61, maxLatenessMs: 514.47 },
+    overwriteUnread: 14, oldEndClamps: 22, glideLimitHolds: 46,
+    stampLatenessMeanMs: 46.91, stampLatenessMaxMs: 603.43, maxDelayMs: 257.24,
+  },
+  'gap-json-only': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 183.57, maxLatenessMs: 183.81 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 183.57, maxLatenessMs: 183.81 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 6.83, stampLatenessMaxMs: 13.86, maxDelayMs: 142.86,
+  },
+  'gap-swarm-only': {
+    straight: { snaps: 2, largestSnapU: 21.19, totalSnapU: 26.71, freezeFrames: 10, backwardSteps: 0, meanLatenessMs: 187.42, maxLatenessMs: 314.29 },
+    turning: { snaps: 2, largestSnapU: 21.26, totalSnapU: 26.78, freezeFrames: 10, backwardSteps: 0, meanLatenessMs: 187.43, maxLatenessMs: 314.47 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 22,
+    stampLatenessMeanMs: 25.92, stampLatenessMaxMs: 405.43, maxDelayMs: 142.86,
+  },
+  'frame-stall-250': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 184.51, maxLatenessMs: 197.9 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 184.51, maxLatenessMs: 197.88 },
+    overwriteUnread: 14, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 14.67, stampLatenessMaxMs: 254.15, maxDelayMs: 142.86,
+  },
+  'jitter-4g': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 185.11, maxLatenessMs: 196.2 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 185.11, maxLatenessMs: 196.2 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 19.06, stampLatenessMaxMs: 154.08, maxDelayMs: 142.86,
+  },
+};
+
+const RECORDED_2X: Record<GapProfileName, DroneFixtureResult> = {
+  'lan-clean': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 58.33, maxLatenessMs: 58.33 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 58.33, maxLatenessMs: 58.33 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 4.11, stampLatenessMaxMs: 8.25, maxDelayMs: 100,
+  },
+  'gap-200': {
+    straight: { snaps: 2, largestSnapU: 46.75, totalSnapU: 61.75, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 96.21, maxLatenessMs: 191.67 },
+    turning: { snaps: 2, largestSnapU: 46.81, totalSnapU: 61.81, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 96.21, maxLatenessMs: 191.73 },
+    overwriteUnread: 64, oldEndClamps: 30, glideLimitHolds: 6,
+    stampLatenessMeanMs: 8.73, stampLatenessMaxMs: 206.25, maxDelayMs: 140,
+  },
+  'gap-400': {
+    straight: { snaps: 2, largestSnapU: 165, totalSnapU: 180, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 110.04, maxLatenessMs: 391.67 },
+    turning: { snaps: 2, largestSnapU: 164.3, totalSnapU: 179.3, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 110.04, maxLatenessMs: 391.73 },
+    overwriteUnread: 80, oldEndClamps: 32, glideLimitHolds: 30,
+    stampLatenessMeanMs: 19.83, stampLatenessMaxMs: 404.25, maxDelayMs: 140,
+  },
+  'gap-600': {
+    straight: { snaps: 2, largestSnapU: 315, totalSnapU: 330, freezeFrames: 30, backwardSteps: 0, meanLatenessMs: 136.56, maxLatenessMs: 591.67 },
+    turning: { snaps: 2, largestSnapU: 309.63, totalSnapU: 324.63, freezeFrames: 30, backwardSteps: 0, meanLatenessMs: 136.57, maxLatenessMs: 591.73 },
+    overwriteUnread: 98, oldEndClamps: 32, glideLimitHolds: 54,
+    stampLatenessMeanMs: 35.47, stampLatenessMaxMs: 602.25, maxDelayMs: 140,
+  },
+  'burst-600-both-streams': {
+    straight: { snaps: 2, largestSnapU: 315, totalSnapU: 330, freezeFrames: 30, backwardSteps: 0, meanLatenessMs: 136.56, maxLatenessMs: 591.67 },
+    turning: { snaps: 2, largestSnapU: 309.63, totalSnapU: 324.63, freezeFrames: 30, backwardSteps: 0, meanLatenessMs: 136.57, maxLatenessMs: 591.73 },
+    overwriteUnread: 98, oldEndClamps: 32, glideLimitHolds: 54,
+    stampLatenessMeanMs: 35.47, stampLatenessMaxMs: 602.25, maxDelayMs: 140,
+  },
+  'gap-json-only': {
+    straight: { snaps: 1, largestSnapU: 15, totalSnapU: 15, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 93.74, maxLatenessMs: 116.67 },
+    turning: { snaps: 1, largestSnapU: 15, totalSnapU: 15, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 93.74, maxLatenessMs: 116.67 },
+    overwriteUnread: 60, oldEndClamps: 30, glideLimitHolds: 0,
+    stampLatenessMeanMs: 4.11, stampLatenessMaxMs: 8.25, maxDelayMs: 140,
+  },
+  'gap-swarm-only': {
+    straight: { snaps: 4, largestSnapU: 165, totalSnapU: 178.22, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 108.76, maxLatenessMs: 391.67 },
+    turning: { snaps: 4, largestSnapU: 164.3, totalSnapU: 177.52, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 108.77, maxLatenessMs: 391.73 },
+    overwriteUnread: 38, oldEndClamps: 10, glideLimitHolds: 30,
+    stampLatenessMeanMs: 19.83, stampLatenessMaxMs: 404.25, maxDelayMs: 115,
+  },
+  'frame-stall-250': {
+    straight: { snaps: 2, largestSnapU: 12.36, totalSnapU: 15, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 92.32, maxLatenessMs: 116.67 },
+    turning: { snaps: 2, largestSnapU: 12.35, totalSnapU: 15, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 92.32, maxLatenessMs: 116.6 },
+    overwriteUnread: 72, oldEndClamps: 8, glideLimitHolds: 0,
+    stampLatenessMeanMs: 10.99, stampLatenessMaxMs: 255.75, maxDelayMs: 100,
+  },
+  'jitter-4g': {
+    straight: { snaps: 18, largestSnapU: 19.39, totalSnapU: 159.68, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 365.69, maxLatenessMs: 403.7 },
+    turning: { snaps: 18, largestSnapU: 19.39, totalSnapU: 159.97, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 365.7, maxLatenessMs: 403.7 },
+    overwriteUnread: 12, oldEndClamps: 6, glideLimitHolds: 106,
+    stampLatenessMeanMs: 88.08, stampLatenessMaxMs: 301.2, maxDelayMs: 100,
+  },
+};
+
 const PROFILE_NAMES = Object.keys(GAP_PROFILES) as GapProfileName[];
 
 describe('drone gap-smoothing fixtures: today\'s numbers per profile', () => {
@@ -309,6 +424,20 @@ describe('drone gap-smoothing fixtures: today\'s numbers per profile', () => {
     expect(GAP_AT_MS).toBeGreaterThan(IGNORE_FIRST_MS);
   });
 });
+
+for (const [label, timeScale, recorded] of [
+  ['0.7x', 0.7, RECORDED_0_7X],
+  ['2x', 2, RECORDED_2X],
+] as const) {
+  describe(`drone gap-smoothing fixtures at ${label} game speed: today's numbers per profile`, () => {
+    for (const name of PROFILE_NAMES) {
+      it(`${name}: recorded numbers`, () => {
+        const result = runDroneFixture(GAP_PROFILES[name], { timeScale });
+        expect(result).toEqual(recorded[name]);
+      });
+    }
+  });
+}
 
 describe('drone gap-smoothing targets (fail today)', () => {
   // Plan 3.1: the 10-deep ring spans ~150 ms of tick-stamped history, so a
