@@ -84,6 +84,8 @@ export const RECIPE_IDS = [
   'build_barge',
   // Cargo pods stream (owner 2026-11-17) — a refinery breaks a rock chunk into its ore.
   'refine_rock_chunk',
+  // Playable base loop (2026-11-20) — the mining skiff (an owned ship: the Shipyard builds it).
+  'build_mining_skiff',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -443,6 +445,14 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     id: 'refine_rock_chunk', displayName: 'Break down rock chunks',
     inputs: {}, outputs: [], chunkInput: ROCK_CHUNK_PRODUCT,
     cyclePulses: 10, processors: ['refinery'], blueprintRequired: false,
+  }),
+  // The mining skiff: a small owned miner the Shipyard builds from its blueprint.
+  // PLAYTEST (owner 2026-11-20): minerals only, the same bill and time as the
+  // playtest interceptor, so a base with a refinery and a Shipyard can build it.
+  build_mining_skiff: r({
+    id: 'build_mining_skiff', displayName: buildName('mining-skiff'),
+    inputs: { minerals: 400 }, outputs: [{ hull: 'mining-skiff' }],
+    cyclePulses: 40, processors: ['shipyard'], blueprintRequired: true,
   }),
 });
 

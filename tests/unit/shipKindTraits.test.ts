@@ -33,9 +33,9 @@ describe('cargoCapacity kind override (cargoCapacityForMaxHealth)', () => {
     }
   });
 
-  it('only the robot harvester and the mining barge set an override; the harvester keeps its capacity (byte-identical)', () => {
+  it('only the robot harvester, the mining barge and the mining skiff set an override; the harvester keeps its capacity (byte-identical)', () => {
     const overridden = SHIP_KINDS_LIST.filter((k) => k.cargoCapacity !== undefined && k.id !== 'barge-look').map((k) => k.id);
-    expect(overridden).toEqual(['robot-harvester', 'barge']);
+    expect(overridden).toEqual(['robot-harvester', 'barge', 'mining-skiff']);
     expect(cargoCapacityForMaxHealth(getShipKind('robot-harvester'))).toBe(400);
     expect(HARVESTER_CAPACITY).toBe(400);
   });
@@ -81,11 +81,11 @@ describe('randomSpawn: false opt-out', () => {
     expect(ShipKindSchema.safeParse({ ...raw, randomSpawn: true }).success).toBe(false);
   });
 
-  it('only the player capitals and the mining barge opt out — the rest of the gameplay pool is unchanged', () => {
+  it('only the player capitals, the mining barge and the mining skiff opt out — the rest of the gameplay pool is unchanged', () => {
     const optOut = SHIP_KINDS_LIST.filter((k) => k.randomSpawn === false && k.id !== 'barge-look').map((k) => k.id);
     expect(optOut).toEqual([
       'destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser', 'battleship',
-      'battleship-rail', 'heavy-cruiser-beam', 'battlecruiser-lance', 'barge',
+      'battleship-rail', 'heavy-cruiser-beam', 'battlecruiser-lance', 'barge', 'mining-skiff',
     ]);
     expect(GAMEPLAY_SHIP_KINDS_LIST.map((k) => k.id)).toEqual(
       SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly && !k.npcOnly && !optOut.includes(k.id)).map((k) => k.id),
