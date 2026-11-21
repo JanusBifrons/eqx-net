@@ -1,11 +1,9 @@
-import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
-import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
+import { StructureRowSync } from './mirror/structureRowSync.js';
 import {
   STRUCTURE_TARGET_NONE,
   decodePlayerTurretTarget,
   MOUNT_ANGLE_QUANTUM,
   forEachStructureMountAngles,
-  type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
 import type { BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
 import { TractorLinkClient } from './tractorLinks.js';
@@ -2099,34 +2097,13 @@ export class ColyseusGameClient {
    *  removed; per-structure stats live in-world (capital minerals + battery
    *  charge Pixi Text) + the selection inspector, so nothing is dispatched to
    *  the HUD store here. */
-  /** A2 — entityId → generation last seen in room state (stale sweep). */
-  private readonly _structureGen = new Map<number, number>();
-  private _structureGenN = 0;
   private _structureMap: Map<number, StructureRenderState> | null = null;
   /** Interned owner tables (index → id / name), refreshed from room state. */
   private readonly _structureOwners: { ids: string[]; names: string[] } = { ids: [], names: [] };
   /** Mine Layer — room-state `mines` into `mirror.mines` (`mirror/mineSync.ts`). */
   private readonly _mines = new MineSync(this.mirror, this._structureOwners, () => this.room);
-  private readonly _readStructureOwner = (v: string, k: string): void => { this._structureOwners.ids[Number(k)] = v; };
-  private readonly _readStructureOwnerName = (v: string, k: string): void => { this._structureOwners.names[Number(k)] = v; };
-  /** Bound once (no per-snapshot closure): decode one room-state row into
-   *  its mirror row in place. */
-  private readonly _decodeStructureRow = (v: StructureStateView, key: string): void => {
-    const id = Number(key);
-    const map = this._structureMap!;
-    let row = map.get(id);
-    if (!row) {
-      row = emptyStructureRow();
-      map.set(id, row);
-    }
-    decodeStructureState(v, this._structureOwners, row, this.mirror.swarm?.get(id)?.shipKind);
-    row.turretTargetId = undefined;
-    row.turretTargetPlayerId = undefined;
-    row.miningTargetId = undefined;
-    // Coastal defences — refilled from this snapshot's angles (empty = at rest).
-    if (row.mountAngles) row.mountAngles.length = 0;
-    this._structureGen.set(id, this._structureGenN);
-  };
+  /** A2 — room-state `structures` into `mirror.structures` (`mirror/structureRowSync.ts`). */
+  private readonly _structureRows = new StructureRowSync(this.mirror, this._structureOwners);
 
   /** Beam links (shared-types/beamLinksWire.ts): structure turret / mining
    *  targets onto their rows; ship tractor links go to the tractor client
@@ -2166,39 +2143,10 @@ export class ColyseusGameClient {
     targets: SnapshotMessage['structureTargets'],
     mountAngles?: SnapshotMessage['structureMountAngles'],
   ): void {
-    type StrMap = { forEach(cb: (v: string, k: string) => void): void };
-    const state = this.room?.state as
-      | {
-          structures?: { size: number; forEach(cb: (v: StructureStateView, k: string) => void): void };
-          structureOwners?: StrMap;
-          structureOwnerNames?: StrMap;
-        }
-      | undefined;
-    const rows = state?.structures;
-    // Owners are few (one per base): re-read the tables each sync (no alloc —
-    // writes into persistent arrays).
-    state?.structureOwners?.forEach(this._readStructureOwner);
-    state?.structureOwnerNames?.forEach(this._readStructureOwnerName);
-    if (!rows || rows.size === 0) {
-      if (this.mirror.structures && this.mirror.structures.size > 0) this.mirror.structures.clear();
-      this._structureGen.clear();
-    } else {
-      let map = this.mirror.structures;
-      if (!map) { map = new Map(); this.mirror.structures = map; }
-      this._structureMap = map;
-      this._structureGenN++;
-      rows.forEach(this._decodeStructureRow);
-      for (const [id, g] of this._structureGen) {
-        if (g === this._structureGenN) continue;
-        this._structureGen.delete(id);
-        map.delete(id);
-        // Room state owns a structure's lifetime: drop its pose entry too
-        // (the binary full refresh no longer sweeps structures).
-        const sw = this.mirror.swarm?.get(id);
-        if (sw && sw.kind === SWARM_KIND_STRUCTURE) this.mirror.swarm!.delete(id);
-      }
-      if (mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
-    }
+    this._structureRows.sync(this.room);
+    const map = this.mirror.structures;
+    this._structureMap = map ?? null;
+    if (map && map.size > 0 && mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
     // Beam links walk with or without structures: a tractor needs none.
     this._tractors.sync(targets, this._beamLinkVisitor, this.predWorld);
     this.syncPredWalls();
