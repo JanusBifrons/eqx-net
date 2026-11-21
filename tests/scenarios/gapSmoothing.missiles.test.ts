@@ -8,14 +8,16 @@
  * decides when packets arrive and when client frames fire (mock clock,
  * 60 frames/s). The REAL client code draws both:
  *
- * - missile: `applyMissileSnapshot` (stamped at apply time, after the
- *   snapshot coalescer keeps only the newest pending snapshot per frame)
+ * - missile: `applyMissileSnapshot` (applied after the snapshot coalescer
+ *   keeps only the newest pending snapshot per frame; stamped from its
+ *   server tick on the drone tick clock, S5-2)
  *   then `resolveMissileDisplayPose` (fixed 100 game-ms delay, 250 ms glide
  *   cap then freeze);
  * - drone: `decodeSwarmPacket` with tick stamping, then
- *   `interpolateSwarmPose`, with the adaptive delay fed the way
- *   `ColyseusClient` + `snapshotPerfStats.ts` feed it (binary inter-arrival
- *   EWMA × ADAPTIVE_DELAY_FACTOR + JSON drop bias).
+ *   `interpolateSwarmPose`. Once per frame, after the drain and before any
+ *   read, `stepSwarmDisplayDelay(frameDtMs, now)` glides the delay toward
+ *   its lateness target and runs the stall hold, as production
+ *   (`updateSwarmMirror`) and `gapSmoothing.drones.test.ts` do.
  *
  * `countMotionArtefacts` scores the drawn tracks against the truth.
  */
@@ -23,19 +25,12 @@ import { describe, it, expect } from 'vitest';
 import { applyMissileSnapshot, resolveMissileDisplayPose } from '../../src/client/combat/MissileMirror.js';
 import { decodeSwarmPacket } from '../../src/client/net/BinarySwarmDecoder.js';
 import {
-  ADAPTIVE_DELAY_FACTOR,
-  DISPLAY_DELAY_MS,
   interpolateSwarmPose,
   resetSwarmTickClock,
-  setSwarmDisplayDelayMs,
   setSwarmDisplaySpeed,
+  stepSwarmDisplayDelay,
   type InterpolatedPose,
 } from '../../src/client/net/swarmInterpolation.js';
-import {
-  computeInterpBiasMs,
-  createDropDetector,
-  observeSnapshotTick,
-} from '../../src/client/net/snapshotDropDetector.js';
 import {
   SWARM_HEADER_BYTES,
   SWARM_KIND_DRONE,
@@ -77,9 +72,6 @@ const MISSILE_MAX_TURN_RAD_PER_S = 1.5;
 const MISSILE_LIFE_MS = 8000;
 /** Closest the missile may get to the drone in RUN_MS (it must not hit). */
 const MIN_MISS_DISTANCE_U = 100;
-/** Binary inter-arrival sample cap, mirrors ColyseusClient's swarm handler. */
-const SWARM_EWMA_SAMPLE_CAP_MS = 500;
-const SWARM_EWMA_KEEP = 0.85;
 
 /** "Same lateness" for the target test: mean lateness within this (ms). */
 const SAME_LATENESS_TOLERANCE_MS = 2;
@@ -196,18 +188,14 @@ interface RunResult {
 function runProfile(profile: NetworkProfile): RunResult {
   resetSwarmTickClock();
   setSwarmDisplaySpeed(1);
-  setSwarmDisplayDelayMs(DISPLAY_DELAY_MS);
 
   const track = buildMissileTrack(tickIndexAt(RUN_MS) + 1);
   const deliveries = buildDeliveries(profile, RUN_MS)
     .map((d) => ({ d, atMs: handledAtMs(profile, d.arriveMs) }))
     .sort((p, q) => p.atMs - q.atMs);
   const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
-  const dropDetector = createDropDetector();
-  let swarmEwma = 0;
-  let swarmLastMs = -1;
-  let pendingJson: { tickIndex: number; recvMs: number } | null = null;
-  let lastAppliedRecvMs = 0;
+  let pendingTickIndex = -1;
+  let prevFrameMs = Number.NaN;
   let next = 0;
   const out: InterpolatedPose = { x: 0, y: 0, angle: 0 };
   const missileFrames: MotionFrame[] = [];
@@ -221,26 +209,19 @@ function runProfile(profile: NetworkProfile): RunResult {
       const { d, atMs } = deliveries[next++]!;
       const tickIndex = d.serverTick - START_SERVER_TICK;
       if (d.stream === 'json') {
-        pendingJson = { tickIndex, recvMs: atMs };
+        pendingTickIndex = tickIndex;
         continue;
       }
-      if (swarmLastMs >= 0) {
-        const dtMs = Math.min(SWARM_EWMA_SAMPLE_CAP_MS, atMs - swarmLastMs);
-        if (dtMs > 0) swarmEwma = swarmEwma === 0 ? dtMs : swarmEwma * SWARM_EWMA_KEEP + dtMs * (1 - SWARM_EWMA_KEEP);
-      }
-      swarmLastMs = atMs;
       decodeSwarmPacket(dronePacket(tickIndex), mirror, atMs, true);
     }
-    if (pendingJson) {
-      const { tickIndex, recvMs } = pendingJson;
-      pendingJson = null;
+    if (pendingTickIndex >= 0) {
+      const tickIndex = pendingTickIndex;
+      pendingTickIndex = -1;
       applyMissileSnapshot(missileSlice(track, tickIndex), mirror, START_SERVER_TICK + tickIndex, now);
-      if (lastAppliedRecvMs > 0 && recvMs - lastAppliedRecvMs > 0) {
-        observeSnapshotTick(dropDetector, START_SERVER_TICK + tickIndex);
-        setSwarmDisplayDelayMs(swarmEwma * ADAPTIVE_DELAY_FACTOR + computeInterpBiasMs(dropDetector.dropCount));
-      }
-      lastAppliedRecvMs = recvMs;
     }
+    // Once per frame, after the drain and before any read, as production.
+    stepSwarmDisplayDelay(Number.isNaN(prevFrameMs) ? 0 : now - prevFrameMs, now);
+    prevFrameMs = now;
 
     const mTrue = missileTrueAt(track, now);
     const dTrue = droneTrueAt(now);
@@ -297,17 +278,21 @@ function recorded(r: RunResult): Recorded {
 
 type MissileProfile = Exclude<GapProfileName, 'gap-swarm-only'>;
 
-/** Today's numbers (before any S5 change). Sizes in world units, lateness in
- *  ms of simulated time; values rounded to 0.01. */
+/** Recorded numbers: missile samples on the drone tick timeline (S5-2), the
+ *  drone delay stepped each frame as production. Sizes in world units,
+ *  lateness in ms of simulated time; values rounded to 0.01. Before S5-2
+ *  (arrival stamps): lan-clean lateness 116.67; gap-400 / gap-json-only snap
+ *  37.5; gap-600 / burst snap 127.5; frame-stall-250 lateness 150; jitter-4g
+ *  21 snaps (375 u), 12 freeze frames, 9 backward steps. */
 const TODAY: Readonly<Record<MissileProfile, Recorded>> = {
-  'lan-clean': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 116.67, maxLatenessMs: 116.67, droneMeanLatenessMs: 102 },
-  'gap-200': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 150, maxLatenessMs: 150, droneMeanLatenessMs: 141.5 },
-  'gap-400': { snaps: 1, largestSnapU: 37.5, totalSnapU: 37.5, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 151.38, maxLatenessMs: 233.33, droneMeanLatenessMs: 157.84 },
-  'gap-600': { snaps: 1, largestSnapU: 127.5, totalSnapU: 127.5, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 164.09, maxLatenessMs: 433.33, droneMeanLatenessMs: 178.96 },
-  'burst-600-both-streams': { snaps: 1, largestSnapU: 127.5, totalSnapU: 127.5, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 164.09, maxLatenessMs: 433.33, droneMeanLatenessMs: 178.96 },
-  'gap-json-only': { snaps: 1, largestSnapU: 37.5, totalSnapU: 37.5, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 151.38, maxLatenessMs: 233.33, droneMeanLatenessMs: 149.67 },
-  'frame-stall-250': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 150, maxLatenessMs: 150, droneMeanLatenessMs: 144.43 },
-  'jitter-4g': { snaps: 21, largestSnapU: 67.5, totalSnapU: 375, freezeFrames: 12, backwardSteps: 9, meanLatenessMs: 187.75, maxLatenessMs: 300, droneMeanLatenessMs: 155.15 },
+  'lan-clean': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 102.15, maxLatenessMs: 102.15, droneMeanLatenessMs: 102 },
+  'gap-200': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 140.1, maxLatenessMs: 140.1, droneMeanLatenessMs: 192.31 },
+  'gap-400': { snaps: 1, largestSnapU: 41.95, totalSnapU: 41.95, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 141.81, maxLatenessMs: 233.33, droneMeanLatenessMs: 209.59 },
+  'gap-600': { snaps: 1, largestSnapU: 131.95, totalSnapU: 131.95, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 155.17, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
+  'burst-600-both-streams': { snaps: 1, largestSnapU: 131.95, totalSnapU: 131.95, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 155.17, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
+  'gap-json-only': { snaps: 1, largestSnapU: 41.95, totalSnapU: 41.95, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 141.81, maxLatenessMs: 233.33, droneMeanLatenessMs: 140 },
+  'frame-stall-250': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 140.1, maxLatenessMs: 140.1, droneMeanLatenessMs: 140 },
+  'jitter-4g': { snaps: 7, largestSnapU: 6.94, totalSnapU: 34.64, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 148.19, maxLatenessMs: 165.41, droneMeanLatenessMs: 294.08 },
 };
 
 const PROFILES = Object.keys(TODAY) as MissileProfile[];
@@ -325,12 +310,12 @@ describe('gap smoothing: missile fixtures (today, plan 5.4)', () => {
     expect(recorded(result(name))).toEqual(TODAY[name]);
   });
 
-  // Today the missile is drawn at a fixed 100 ms delay from apply-time stamps
-  // while the drone delay adapts on tick stamps. Worst |missile − drone| mean
-  // lateness today: 32.60 ms (jitter-4g: missile 187.75, drone 155.15).
-  // Per profile (missile − drone, ms): lan-clean +14.67, gap-200 +8.50,
-  // gap-400 −6.46, gap-600 −14.87, burst-600-both-streams −14.87,
-  // gap-json-only +1.71, frame-stall-250 +5.57, jitter-4g +32.60.
+  // Missiles share the drone tick timeline (S5-2) but still read their own
+  // fixed 100 game-ms delay, while the drone delay follows its lateness
+  // estimate (S5-4 switches missiles to the shared delay). Per profile
+  // (missile − drone mean lateness, ms): lan-clean +0.15, gap-200 −52.21,
+  // gap-400 −67.78, gap-600 −90.16, burst-600-both-streams −90.16,
+  // gap-json-only +1.81, frame-stall-250 +0.10, jitter-4g −145.89.
   it.fails('missile and target drone drawn at the same lateness', () => {
     for (const name of PROFILES) {
       const r = result(name);

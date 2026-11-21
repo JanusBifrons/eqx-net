@@ -13,7 +13,7 @@
  *   - Stale-eviction + removeMissile + null-for-unknown
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   applyMissileSnapshot,
   removeMissile,
@@ -23,6 +23,12 @@ import {
 } from './MissileMirror';
 import { MISSILE_POSE_RING_DEPTH, type RenderMirror } from '../../core/contracts/IRenderer';
 import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessages';
+import {
+  resetSwarmTickClock,
+  setSwarmDisplaySpeed,
+  stepSwarmDisplayDelay,
+  swarmArrivalStampMs,
+} from '../net/swarmInterpolation.js';
 
 function makeMirror(): RenderMirror {
   return { ships: new Map(), localPlayerId: null };
@@ -334,5 +340,94 @@ describe('MissileMirror — single-sample reconstruction (campaign 5.1b)', () =>
   it('resolveMissileDisplayPose returns null for unknown ids', () => {
     const mirror = makeMirror();
     expect(resolveMissileDisplayPose(mirror, 999, 1000)).toBeNull();
+  });
+});
+
+/** Ring samples of one missile, oldest tick first. */
+function ringByTick(mirror: RenderMirror, id: number): Array<{ serverTick: number; arrivalMs: number }> {
+  return mirror.missiles!.get(id)!.poseRing
+    .filter((e) => !e.empty)
+    .map((e) => ({ serverTick: e.serverTick, arrivalMs: e.arrivalMs }))
+    .sort((a, b) => a.serverTick - b.serverTick);
+}
+
+describe('MissileMirror — samples stamped on the drone tick timeline (S5-2)', () => {
+  beforeEach(() => {
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+  });
+  afterEach(() => {
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+  });
+
+  it('a backlog drained in one frame keeps its server spacing (failed pre-fix: equal arrival stamps)', () => {
+    // Drone packet for tick 100 at 1000 ms seeds the clock; one frame step.
+    swarmArrivalStampMs(100, 1000);
+    stepSwarmDisplayDelay(0, 1000);
+    // A frame stall: missile ticks 103 and 106 are both handled at 1200 ms.
+    const mirror = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), mirror, 103, 1200);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 30, y: 0 }]), mirror, 106, 1200);
+    const ring = ringByTick(mirror, 1);
+    expect(ring[0]!.arrivalMs).toBeCloseTo(1050, 6);
+    expect(ring[1]!.arrivalMs).toBeCloseTo(1100, 6);
+    // Despawn still runs on the real arrival time.
+    expect(mirror.missiles!.get(1)!.latestArrivalMs).toBe(1200);
+    // Midway in server time → midway in position.
+    const pose = resolveMissileDisplayPose(mirror, 1, 1075 + MISSILE_DISPLAY_DELAY_MS);
+    expect(pose!.x).toBeCloseTo(15, 6);
+  });
+
+  it('NaN fallback: no drone packet yet → arrival stamps, playback continuous', () => {
+    const mirror = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0, vx: 600 }]), mirror, 100, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 30, y: 0, vx: 600 }]), mirror, 103, 1050);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 60, y: 0, vx: 600 }]), mirror, 106, 1100);
+    expect(ringByTick(mirror, 1).map((e) => e.arrivalMs)).toEqual([1000, 1050, 1100]);
+    // Every frame moves forward by speed × frame time: no snap, no freeze.
+    let prevX = resolveMissileDisplayPose(mirror, 1, 1100)!.x;
+    for (let now = 1110; now <= 1200; now += 10) {
+      const x = resolveMissileDisplayPose(mirror, 1, now)!.x;
+      expect(x - prevX).toBeCloseTo(6, 6);
+      prevX = x;
+    }
+  });
+
+  it('when the drone clock seeds mid-flight, the ring is re-stamped onto one basis (never runs backwards)', () => {
+    const mirror = makeMirror();
+    // Arrival-stamped while unseeded.
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), mirror, 100, 1000);
+    // A drone packet puts tick 110 at 1010 ms: tick 103 maps to ~893 ms,
+    // before the tick-100 arrival stamp.
+    swarmArrivalStampMs(110, 1010);
+    stepSwarmDisplayDelay(0, 1010);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 30, y: 0 }]), mirror, 103, 1020);
+    const ring = ringByTick(mirror, 1);
+    // Tick spacing, give or take the read-only drift-up term (1 % of lateness).
+    expect(Math.abs(ring[1]!.arrivalMs - ring[0]!.arrivalMs - 50)).toBeLessThan(1);
+    expect(ring[1]!.arrivalMs).toBeLessThanOrEqual(1020);
+  });
+});
+
+describe('MissileMirror — teleport span is game ms', () => {
+  // Two samples 100 wall ms apart. At game speed s that is 100·s game ms, so
+  // the bound is max(64, 2500 u/s × 0.1 s × s): 500 u at 2×, 175 u at 0.7×.
+  function resolveAtSpeed(timeScale: number, gapU: number): number {
+    const mirror = makeMirror();
+    mirror.timeScale = timeScale;
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), mirror, 1, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: gapU, y: 0 }]), mirror, 2, 1100);
+    return resolveMissileDisplayPose(mirror, 1, 1050 + MISSILE_DISPLAY_DELAY_MS / timeScale)!.x;
+  }
+
+  it('2×: a 400 u step in 100 wall ms is real motion (interpolates; failed pre-fix: snapped)', () => {
+    expect(resolveAtSpeed(2, 400)).toBeCloseTo(200, 6);
+    expect(resolveAtSpeed(2, 501)).toBe(501);
+  });
+
+  it('0.7×: a 200 u step in 100 wall ms is a teleport (snaps; failed pre-fix: interpolated)', () => {
+    expect(resolveAtSpeed(0.7, 200)).toBe(200);
+    expect(resolveAtSpeed(0.7, 170)).toBeCloseTo(85, 6);
   });
 });
