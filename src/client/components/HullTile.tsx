@@ -6,13 +6,18 @@
  * price); optional slots: a top-right tag ("2 fits"), a top-left ×N badge,
  * a lock overlay, a progress fill, a row under the picture (children,
  * e.g. CostChips), and a desktop hover tooltip (never opened by touch).
+ *
+ * `art="structure"` draws a building instead (the Build menu's kind tiles):
+ * its baked portrait (`structurePortraitUrl`), or, when there is none or the
+ * image fails to load, its footprint drawn from `structureHullPoints`.
  */
 import { Box, ButtonBase, Tooltip } from '@mui/material';
 import LockIcon from '@mui/icons-material/Lock';
-import type { PointerEventHandler, ReactNode } from 'react';
+import { useState, type PointerEventHandler, type ReactNode } from 'react';
 import { getShipKind } from '../../shared-types/shipKinds';
+import { getStructureKind, structureHullPoints } from '../../shared-types/structureKinds';
 import { ShipSilhouette } from '../render/shipShapeSvg';
-import { shipPortraitUrl } from '../render/art/shipPortraits';
+import { shipPortraitUrl, structurePortraitUrl } from '../render/art/shipPortraits';
 import { HUD } from '../hud/tokens';
 import { useHudSize } from '../hud/useHudScale';
 
@@ -24,9 +29,23 @@ export function hullArt(kind: string): string | null {
   return u === null ? null : `url("${u}")`;
 }
 
+/** A building's footprint silhouette (game space Y-up → SVG Y-down), in its catalogue colour. */
+export function StructureSilhouette({ kind, size = 44 }: { kind: string; size?: number }): JSX.Element {
+  const pts = structureHullPoints(kind);
+  const half = Math.max(1, ...pts.map((p) => Math.max(Math.abs(p.x), Math.abs(p.y)))) * 1.1;
+  const color = `#${getStructureKind(kind).color.toString(16).padStart(6, '0')}`;
+  return (
+    <svg width={size} height={size} viewBox={`${-half} ${-half} ${half * 2} ${half * 2}`} aria-hidden="true" data-testid="hull-tile-silhouette">
+      <polygon points={pts.map((p) => `${p.x},${-p.y}`).join(' ')} fill={color} />
+    </svg>
+  );
+}
+
 export interface HullTileProps {
-  /** Ship kind: the portrait (or silhouette) drawn. */
+  /** Ship (or, with `art="structure"`, structure) kind: the portrait (or silhouette) drawn. */
   kind: string;
+  /** What `kind` names: a ship hull (default) or a building. */
+  art?: 'ship' | 'structure';
   name: string;
   /** Test id and data attributes on the tile's outer box. */
   testId: string;
@@ -55,22 +74,26 @@ export interface HullTileProps {
   onPointerDown?: PointerEventHandler;
   onPointerUp?: PointerEventHandler;
   onPointerLeave?: PointerEventHandler;
+  onPointerEnter?: PointerEventHandler;
 }
 
 export function HullTile({
   kind, name, testId, data, edge = C.edge2, glow = 'none', pressed, caption, tag, badge, locked = false, dim = false,
-  progress, tooltip, children, onClick, onPointerDown, onPointerUp, onPointerLeave,
+  progress, tooltip, children, onClick, onPointerDown, onPointerUp, onPointerLeave, onPointerEnter, art = 'ship',
 }: HullTileProps): JSX.Element {
   // A tap on a touch screen also fires a mouse hover: tooltips are desk-only.
   const noHover = useHudSize() !== 'desk';
-  const pic = hullArt(kind);
+  const [imgFailed, setImgFailed] = useState(false);
+  const structUrl = art === 'structure' && !imgFailed ? structurePortraitUrl(kind) : null;
+  const pic = art === 'ship' ? hullArt(kind) : null;
+  const noPicture = pic === null && structUrl === null;
   const grey = locked || dim;
   const dataAttrs: Record<string, string> = {};
   for (const [k, v] of Object.entries(data ?? {})) dataAttrs[`data-${k}`] = v;
   const tile = (
       <ButtonBase
         onClick={onClick} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerLeave={onPointerLeave}
-        aria-pressed={pressed} aria-label={name}
+        onPointerEnter={onPointerEnter} aria-pressed={pressed} aria-label={name}
         sx={{
           position: 'relative', display: 'block', width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', overflow: 'hidden',
           border: `1px solid ${edge}`, boxShadow: glow, bgcolor: C.cell,
@@ -79,9 +102,13 @@ export function HullTile({
           '&::after': { content: '""', position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, transparent 45%, rgba(4,6,13,.92))', pointerEvents: 'none' },
         }}
       >
-        {pic === null && (
+        {structUrl !== null && (
+          <Box component="img" src={structUrl} alt="" draggable={false} data-testid="hull-tile-portrait" onError={() => setImgFailed(true)}
+            sx={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }} />
+        )}
+        {noPicture && (
           <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pb: '18px' }}>
-            <ShipSilhouette shape={getShipKind(kind).shape} size={44} />
+            {art === 'structure' ? <StructureSilhouette kind={kind} /> : <ShipSilhouette shape={getShipKind(kind).shape} size={44} />}
           </Box>
         )}
         {progress !== undefined && (

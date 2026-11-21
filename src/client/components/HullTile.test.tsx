@@ -20,6 +20,22 @@ describe('HullTile', () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it('art="structure" shows the baked portrait, and the footprint silhouette when it fails to load', () => {
+    render(<HullTile art="structure" kind="solar" name="Solar" testId="t" />);
+    const tile = screen.getByTestId('t');
+    const img = within(tile).getByTestId('hull-tile-portrait');
+    expect(img).toHaveAttribute('src', '/structures/solar.webp');
+    expect(within(tile).queryByTestId('hull-tile-silhouette')).toBeNull();
+    fireEvent.error(img);
+    expect(within(tile).queryByTestId('hull-tile-portrait')).toBeNull();
+    expect(within(tile).getByTestId('hull-tile-silhouette').querySelector('polygon')).not.toBeNull();
+  });
+
+  it('a ship tile has no structure portrait', () => {
+    render(<HullTile kind="interceptor" name="Interceptor" testId="t" />);
+    expect(screen.queryByTestId('hull-tile-portrait')).toBeNull();
+  });
+
   it('has no optional slots unless asked', () => {
     render(<HullTile kind="interceptor" name="Interceptor" testId="t" />);
     for (const id of ['hull-tile-badge', 'hull-tile-lock', 'hull-tile-progress']) expect(screen.queryByTestId(id)).toBeNull();
