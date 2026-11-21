@@ -60,16 +60,36 @@ export function orphanBaseOnCapitalLoss(registry: OwnerlessBaseRegistry, capital
   }
 }
 
+/** What the fall record reads and writes (narrow; the registry). */
+export interface FallenBaseRegistry {
+  all(): Iterable<StructureRecord>;
+  readonly fallenBases: Set<string>;
+}
+
 /**
- * Capture plan 4E (S6) — the NPC bases that have fallen here: the seed owner
- * (`originBase`) of every structure no longer owned by it (ownerless `none:`,
- * or captured by a player). The seeders skip these, so a fallen base never
- * regrows, after a restart (the pieces are saved with their origin) or not.
- * Boot only (one pass over the registry).
+ * Capture plan 4E (S6) — record a fall at the sector level: when a seeded NPC
+ * base's built Capital leaves the world and no other built Capital of that
+ * base remains, the base's origin joins `fallenBases` (saved with the
+ * sector). Called from the one removal seam. Discrete (removals); returns
+ * before any scan unless `capital` is a seeded NPC base's built Capital.
  */
-export function fallenBaseOrigins(records: Iterable<StructureRecord>): Set<string> {
-  const out = new Set<string>();
-  for (const r of records) if (r.originBase !== undefined && r.owner !== r.originBase) out.add(r.originBase);
+export function noteBaseFall(registry: FallenBaseRegistry, capital: StructureRecord): void {
+  const origin = capital.originBase;
+  if (origin === undefined || capital.owner !== origin || !isBuiltCapital(capital)) return;
+  for (const r of registry.all()) if (r !== capital && r.owner === origin && isBuiltCapital(r)) return;
+  registry.fallenBases.add(origin);
+}
+
+/**
+ * Capture plan 4E (S6) — the NPC bases that have fallen here: the sector's
+ * recorded falls (`fallenBases`, kept even when every piece is gone) plus the
+ * seed owner (`originBase`) of every structure no longer owned by it
+ * (ownerless `none:`, or captured by a player). The seeders skip these, so a
+ * fallen base never regrows, after a restart or not. Boot only (one pass).
+ */
+export function fallenBaseOrigins(registry: FallenBaseRegistry): Set<string> {
+  const out = new Set<string>(registry.fallenBases);
+  for (const r of registry.all()) if (r.originBase !== undefined && r.owner !== r.originBase) out.add(r.originBase);
   return out;
 }
 

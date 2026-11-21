@@ -206,6 +206,11 @@ export interface SectorSnapshotPayload {
    *  Optional, additive (no version bump); re-validated on hydrate (schema,
    *  owner, membership, escort target). Absent when none. */
   squads?: FleetSavedSquad[];
+  /** Capture 4E (S6) — the NPC bases (`npc:<faction>:<baseId>`) that fell in
+   *  this sector (`StructureRegistry.fallenBases`); the seeders never regrow
+   *  them. Optional, additive (no version bump); re-validated on hydrate.
+   *  Absent when none (and on an old save). */
+  fallenBases?: string[];
 }
 
 /**

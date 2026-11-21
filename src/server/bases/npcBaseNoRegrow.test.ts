@@ -6,10 +6,12 @@
  * Drives the real seams end to end: `seedGalaxyBase` grows the sector's bases,
  * the base's Capital dies (`StructureRegistry.remove` → `none:` pieces),
  * `SectorPersistence.persist` saves the sector, a FRESH registry restores it
- * (`SectorSnapshotRestore.restoreStructures`) and `seedGalaxyBase` runs again
+ * (`SectorPersistence.hydrate` → `restoreStructures`) and `seedGalaxyBase` runs again
  * as on boot. Each structure the seeder places carries its `originBase` (the
  * NPC owner it was grown under); the saved pieces keep it, so the seeder skips
- * that base. An old save (no `originBase`) loads and regrows as before.
+ * that base. The sector also saves `fallenBases` (every base that fell here), so a fallen
+ * base whose pieces were all destroyed stays fallen. An old save (no
+ * `originBase`, no `fallenBases`) loads and regrows as before.
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { Logger } from 'pino';
@@ -73,29 +75,33 @@ function room() {
   return { registry, health, host, restore };
 }
 
-/** Save `r`'s sector, then restore it into a fresh room (the server restart). */
-function restart(r: ReturnType<typeof room>, edit?: (rows: SectorSnapshotStructure[]) => void) {
-  let saved: SectorSnapshotPayload | undefined;
-  new SectorPersistence({
+/** Save `r`'s sector, then hydrate it into a fresh room through the real
+ *  boot path (`SectorPersistence.persist` → `hydrate`): the server restart. */
+function restart(r: ReturnType<typeof room>, edit?: (rows: SectorSnapshotStructure[], payload: SectorSnapshotPayload) => void) {
+  const deps = (reg: StructureRegistry, health: Map<string, number>, restore: SectorSnapshotRestore, save: (p: SectorSnapshotPayload) => void, load: () => string | undefined) => new SectorPersistence({
     sectorKey: () => SECTOR,
     sabF32: new Float32Array(0),
     swarmRegistry: { all: () => [], has: () => false },
-    swarmHealth: r.health,
-    structures: () => r.registry.all(),
-    restoreStructures: () => undefined,
+    swarmHealth: health,
+    structures: () => reg.all(),
+    restoreStructures: (rows) => restore.restoreStructures(rows),
+    fallenBases: () => reg.fallenBases,
+    restoreFallenBases: (origins) => reg.restoreFallenBases(origins),
     scrapEntities: () => [],
     restoreScrap: () => undefined,
     lingeringHulls: () => [],
     restoreLingeringHulls: () => undefined,
-    saveRow: (_k, p) => { saved = JSON.parse(JSON.stringify(p)) as SectorSnapshotPayload; },
-    loadRow: () => undefined,
+    saveRow: (_k, p) => save(p),
+    loadRow: () => { const snapshot = load(); return snapshot === undefined ? undefined : { snapshot, created_at: Date.now() }; },
     logger: quiet,
-  }).persist();
+  });
+  let saved: SectorSnapshotPayload | undefined;
+  deps(r.registry, r.health, r.restore, (p) => { saved = JSON.parse(JSON.stringify(p)) as SectorSnapshotPayload; }, () => undefined).persist();
   const rows = saved!.structures ?? [];
-  edit?.(rows);
+  edit?.(rows, saved!);
   const next = room();
-  next.restore.restoreStructures(rows);
-  return { next, rows };
+  deps(next.registry, next.health, next.restore, () => undefined, () => JSON.stringify(saved)).hydrate();
+  return { next, rows, saved: saved! };
 }
 
 const npcOwners = (reg: StructureRegistry): Set<string> => {
@@ -153,9 +159,19 @@ describe('a fallen NPC base never regrows (capture plan 4E S6)', () => {
     expect(npcOwners(r.registry).has(fallenOwner)).toBe(false);
   });
 
-  it('an old save (pieces without originBase) still loads, and the base is not taken as fallen', () => {
+  it('a fallen base whose pieces were all destroyed still does not regrow after a restart', () => {
     const { r, fallenOwner } = fallenSector();
-    const { next } = restart(r, (rows) => { for (const row of rows) delete row.originBase; });
+    for (const s of [...r.registry.all()]) if (s.originBase === fallenOwner) r.registry.remove(s.id);
+    expect([...r.registry.all()].some((s) => s.originBase === fallenOwner), 'no piece of it is left').toBe(false);
+    const { next, saved } = restart(r);
+    expect(saved.fallenBases, 'the sector remembers the fall').toContain(fallenOwner);
+    seedGalaxyBase(next.host, SECTOR);
+    expect(npcOwners(next.registry).has(fallenOwner)).toBe(false);
+  });
+
+  it('an old save (no originBase, no fallenBases) still loads, and the base is not taken as fallen', () => {
+    const { r, fallenOwner } = fallenSector();
+    const { next } = restart(r, (rows, payload) => { for (const row of rows) delete row.originBase; delete payload.fallenBases; });
     expect(next.registry.size).toBeGreaterThan(0);
     for (const s of next.registry.all()) expect(s.originBase).toBeUndefined();
     seedGalaxyBase(next.host, SECTOR);
