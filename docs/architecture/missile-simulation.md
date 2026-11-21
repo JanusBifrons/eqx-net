@@ -394,6 +394,15 @@ gap-json-only the missile is drawn +17.32 ms later than the drone by design).
 Locks: `MissileMirror.test.ts` (independence both ways, re-sync counted once,
 dead-reckon and cap at 2× and 0.7×) and `gapSmoothing.missiles.test.ts`.
 
+The read time is main-thread time too (S5-W): `updateMissileSprites` resolves
+poses at `mirror.frameTimeMs` (`missilePoseNowMs`), not the renderer's
+`performance.now()`. A worker's clock counts from its own `timeOrigin`, later
+than the page's, so the worker's `now − delay` sat that far behind every
+main-thread stamp and desktop missiles were drawn up to a display delay behind
+their oldest sample. Trails and explosion fades keep the renderer clock. Lock:
+`missileSpriteUpdater.test.ts` (a 5000 ms worker offset draws the
+main-thread-resolved pose).
+
 ## Curve-aware interpolation — `angvel` on the wire (WS-C #5, 2026-06-20)
 
 Missiles ride the 20 Hz JSON snapshot (see "Why JSON snapshot" above), and a

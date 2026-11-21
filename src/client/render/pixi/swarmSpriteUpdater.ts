@@ -63,6 +63,7 @@ import {
   interpolateSwarmPose,
 } from '../../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
+import { mainThreadNowMs } from '../mainThreadNow.js';
 import { WreckPieceSprite, coolWreckInfo, wreckPieceSpeckColor } from './wreckArt.js';
 import { buildRockPieceArt, classicRockTint, isRockWreck } from './rockPieceArt.js';
 import { isFieldRockMesh } from '../field/CutFieldLayer.js';
@@ -131,6 +132,8 @@ export function scrapHeatTint(ageMs: number): number | undefined {
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   if (!mirror.swarm) return;
   const now = performance.now();
+  // Pose-ring arrivals are main-thread stamps: interpolate on that clock.
+  const poseNow = mainThreadNowMs(mirror, now);
   const fxNow = ctx.fxNowMs ?? now; // game-speed presentation clock (wreck glow / death clock)
   const slewDtSec = ctx.slewDtSec; // P3.8 — structure-mount slew rate input
   const wreckDescs = mirror.wrecks;
@@ -342,7 +345,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     let structCluster: Container | null = null;
     const lerped = entry.kind === 1 || entry.kind === 3 || entry.kind === 4
       ? resolveEntityDisplayPose(entry, ctx.swarmPoseScratch)
-      : interpolateSwarmPose(entry, now, ctx.swarmPoseScratch);
+      : interpolateSwarmPose(entry, poseNow, ctx.swarmPoseScratch);
     sprite.x = lerped.x;
     sprite.y = -lerped.y;
     // A3 — don't draw structures that are off screen (static, so the bounding
@@ -491,7 +494,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           slew[i] = nextArc;
           _structureMountAngles.push(nextArc);
         }
-        ctx.mountVisuals.applyMountAngles(spriteKey, structMounts, _structureMountAngles);
+        // Off screen: the slew above keeps running (it comes back in view at
+        // the same angle) but the hidden guns are not re-posed or animated.
+        if (sprite.visible) ctx.mountVisuals.applyMountAngles(spriteKey, structMounts, _structureMountAngles);
       }
     }
     // Damage flash + beam-hit tint (both render as the damage colour so
@@ -528,10 +533,11 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // Base loop 3O — a blueprint (not yet built) draws as a cyan hologram that
     // a print line fills in with its build fraction (structureHologram.ts);
     // the fill-bar (ConnectorRenderer) still shows the number.
-    if (entry.kind === 2) {
+    // Off screen (hidden by the A3 view test) none of this shows: skip the
+    // hologram and readout child scans until it scrolls back into view.
+    if (entry.kind === 2 && sprite.visible) {
       const st = mirror.structures?.get(entityId);
       syncStructureHologram(sprite, entry.shipKind, entry.radius, ctx.art.structStyle, st, now);
-      sprite.alpha = 1;
       // WS-9 (R2.12) — update the Capital's mineral readout on CHANGE only (no
       // per-frame Text re-raster). Tagged child; capitals only, so the lookup is rare.
       if (entry.shipKind === 'capital') {
@@ -563,6 +569,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           if (batText.text !== next) batText.text = next;
         }
       }
+    }
+    if (entry.kind === 2) {
+      sprite.alpha = 1;
       // Build mirror (4C): readouts and guns stay unmirrored on screen.
       if (structMirrored) counterFlipStructureParts(sprite, structCluster);
     }

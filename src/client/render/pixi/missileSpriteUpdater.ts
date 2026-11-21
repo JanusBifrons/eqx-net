@@ -16,6 +16,7 @@ import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { resolveMissileDisplayPose } from '../../combat/MissileMirror.js';
 import { buildMissileGfx, buildMissileExplosionGfx } from './spriteBuilders.js';
+import { mainThreadNowMs } from '../mainThreadNow.js';
 import type { FxExplosions, FxMissileTrails } from '../art/fx/FxExplosions.js';
 
 export interface MissileSpriteCtx {
@@ -33,6 +34,20 @@ export interface MissileSpriteCtx {
 
 const EXPLOSION_LIFE_MS = 400;
 
+/**
+ * The time missile poses are resolved at: the main thread's frame time
+ * (`mirror.frameTimeMs`), falling back to the renderer's clock when absent.
+ * Missile samples are stamped on the main thread, but on desktop the renderer
+ * is a worker whose `performance.now()` counts from the worker's own
+ * `timeOrigin` (set when the worker started, later than the page's), so its
+ * `now − delay` would sit that far behind every stamp.
+ */
+export function missilePoseNowMs(mirror: RenderMirror, rendererNowMs: number): number {
+  return mainThreadNowMs(mirror, rendererNowMs);
+}
+
+/** `nowMs` is the renderer's clock (trails, explosion fades); poses resolve
+ *  on the main-thread clock, `missilePoseNowMs`. */
 export function updateMissileSprites(
   mirror: RenderMirror,
   ctx: MissileSpriteCtx,
@@ -44,11 +59,12 @@ export function updateMissileSprites(
   if (mirror.missiles) {
     const seen = ctx.missileSeenScratch;
     seen.clear();
+    const poseNowMs = missilePoseNowMs(mirror, nowMs);
     for (const [id] of mirror.missiles) {
       seen.add(id);
       // Single-pose-per-frame resolution — every consumer reads through
-      // resolveMissileDisplayPose at this frame's `nowMs`.
-      const pose = resolveMissileDisplayPose(mirror, id, nowMs);
+      // resolveMissileDisplayPose at this frame's main-thread time.
+      const pose = resolveMissileDisplayPose(mirror, id, poseNowMs);
       if (!pose) continue;
       let g = ctx.missileSprites.get(id);
       if (!g) {
