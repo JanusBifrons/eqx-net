@@ -47,9 +47,10 @@ export interface InputHandlerCtx {
   shipEnergyOf: (playerId: string) => number | undefined;
   /** v4 A — the pilot is disabled (an alien gate's guns): engines off. */
   isDisabled?: (playerId: string) => boolean;
-  /** Phase 4 warp-to: true when (x, y) is a drop point this room allows (a
-   *  pocket's rim in a solar-system sector). Absent ⇒ warp requests dropped. */
-  validWarpPoint?: (x: number, y: number) => boolean;
+  /** Phase 4 warp-to: true when this pilot may warp to (x, y): a drop point
+   *  or the near side of an obstacle on the line to one, the line clear
+   *  (`WarpRouteCheck.valid`). Absent ⇒ warp requests dropped. */
+  validWarpPoint?: (playerId: string, x: number, y: number) => boolean;
   /** Phase 4 warp travel: a validated warp request (the tracker's target). */
   onWarpRequest?: (playerId: string, x: number, y: number) => void;
   logger: pino.Logger;
@@ -103,7 +104,7 @@ export function makeInputHandler(
     // Warp-to: kept only for an allowed drop point; a disabled ship can't warp.
     const { warpX, warpY } = result.data;
     const warp = warpX !== undefined && warpY !== undefined && !(ctx.isDisabled?.(playerId) ?? false)
-      && (ctx.validWarpPoint?.(warpX, warpY) ?? false);
+      && (ctx.validWarpPoint?.(playerId, warpX, warpY) ?? false);
     if (warp) ctx.onWarpRequest?.(playerId, warpX!, warpY!);
     const slot = ctx.playerToSlot.get(playerId);
     if (slot !== undefined) {

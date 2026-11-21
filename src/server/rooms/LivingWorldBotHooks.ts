@@ -38,6 +38,7 @@ import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { getDroneMaxHealth } from './droneKindHelpers.js';
 import { ARRIVED_TICKS } from './warpTravel.js';
+import { newWarpTarget, type WarpTarget } from '../../core/galaxy/warpTarget.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
@@ -101,6 +102,10 @@ export interface LivingWorldBotHooksDeps {
   solar: () => boolean;
   /** Nearest clear landing spot for a ship of `kind` (the room's obstacles). */
   landingPoint: (id: string, x: number, y: number, kind: string | undefined) => { x: number; y: number };
+  /** The warp target toward (toX, toY) from (fromX, fromY) for a ship of
+   *  `kind`: the point, or the near side of the first field rock body or
+   *  structure on the line (`WarpRouteCheck.targetFor`). Writes `out`. */
+  warpTargetFor: (kind: string | undefined, fromX: number, fromY: number, toX: number, toY: number, out: WarpTarget) => WarpTarget;
   postToWorker: (cmd: WorkerCmd) => void;
   /** Iterable of `[playerId, slot]` for the markHostile loop. */
   playerToSlot: Iterable<[string, number]>;
@@ -130,6 +135,9 @@ export interface LivingWorldBotHooksDeps {
   testHaulerRaiders: () => number;
 }
 
+/** Reused by `warpBot` (#14). */
+const warpTarget = newWarpTarget();
+
 export class LivingWorldBotHooks {
   /** W2a NPC warp-to: bots sent on a warp (`warpBot`), until they have
    *  landed and their arrival window has passed. Empty in normal play. */
@@ -142,16 +150,23 @@ export class LivingWorldBotHooks {
    * (x, y) through the same spool → run → drop machine as a pilot's
    * (World.botWarp). The bot's AI is overridden while it spools and runs;
    * point its move target at the destination too, so it carries on from
-   * there. Returns false for an unknown or non-ship id.
+   * there. A warp may not pass through the field's rock body or a structure:
+   * the bot warps to the near side of the first one on the line, or not at
+   * all when that is too close to be worth a warp (`warpTargetFor`).
+   * Returns false for an unknown or non-ship id, or an unreachable target.
    */
   warpBot(botId: string, x: number, y: number): boolean {
     const d = this.deps;
     const rec = d.swarmRegistry.get(botId);
     if (!rec || rec.kind !== 1) return false;
     const lim = d.solar() ? SOLAR_HALF_EXTENT : SECTOR_PLAYABLE_HALF_EXTENT;
+    const b = slotBase(rec.slot);
+    const t = d.warpTargetFor(rec.shipKind, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!,
+      Math.max(-lim, Math.min(lim, x)), Math.max(-lim, Math.min(lim, y)), warpTarget);
+    if (!t.reachable) return false;
     // Land clear of rocks, structures and ships, like a pilot's warp (a drop
     // inside an asteroid belt rock killed an escort in the first test run).
-    const p = d.landingPoint(botId, Math.max(-lim, Math.min(lim, x)), Math.max(-lim, Math.min(lim, y)), rec.shipKind);
+    const p = d.landingPoint(botId, t.x, t.y, rec.shipKind);
     d.postToWorker({ type: 'BOT_WARP', slot: rec.slot, x: p.x, y: p.y });
     if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { entityId: rec.entityId, lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0, leave: false, leaveAt: -1, leaveX: 0, leaveY: 0 });
     return true;

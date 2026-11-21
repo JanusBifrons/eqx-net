@@ -66,6 +66,15 @@ export class WarpTravelTracker {
     if (r.phase !== 2) { r.tx = x; r.ty = y; }
   }
 
+  /** True when (x, y) is exactly the point this pilot's spool or run already
+   *  validated: the client resends it every input while spooling, and the
+   *  route check (`WarpRouteCheck.valid`) accepts it again without a
+   *  recompute, so nothing placed mid-spool cancels an accepted warp. */
+  accepted(playerId: string, x: number, y: number): boolean {
+    const r = this.recs.get(playerId);
+    return r !== undefined && r.phase !== 0 && r.tx === x && r.ty === y;
+  }
+
   /** Once per server tick, after the SAB pose mirror. */
   tick(serverTick: number): void {
     if (this.recs.size === 0) return;

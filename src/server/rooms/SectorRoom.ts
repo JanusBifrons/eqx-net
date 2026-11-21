@@ -239,6 +239,7 @@ import {
 } from '../../shared-types/sabLayout.js';
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 import { WarpTravelTracker } from './warpTravel.js';
+import { WarpRouteCheck } from './warpRouteCheck.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
 import { saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
@@ -977,6 +978,8 @@ export class SectorRoom extends Room<SectorState> {
   private pendingJoin = new Map<string, PendingJoinRecord>();
   /** Phase 4 warp travel: a ship on its warp run is out of the world
    *  (rooms/warpTravel.ts). Ticked after the pending-join drain. */
+  /** Warp route check (rooms/warpRouteCheck.ts): no warp through the field or a structure. */
+  private readonly warpRoute = new WarpRouteCheck({ sectorKey: () => this.sectorKey, solar: () => this.solar, fieldOpts: () => this.cutField?.navOpts ?? null, structures: this.structureRegistry, gateBoxes: (id) => this.swarmRegistry.get(id)?.boxes, pose: (pid) => this.shipPoseCache.get(pid), kindOf: (pid) => this.getActiveShip(pid)?.kind, accepted: (pid, x, y) => this.warpTravel.accepted(pid, x, y) });
   private readonly warpTravel = new WarpTravelTracker({
     phaseOf: (pid) => {
       const slot = this.playerToSlot.get(pid);
@@ -2353,7 +2356,7 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       solar: () => this.solar,
-      landingPoint: (id, x, y, kind) => this.landingPoint(id, x, y, kind),
+      landingPoint: (id, x, y, kind) => this.landingPoint(id, x, y, kind), warpTargetFor: (k, fx, fy, tx, ty, out) => this.warpRoute.targetFor(k, fx, fy, tx, ty, out),
       postToWorker: (cmd) => this.postToWorker(cmd),
       playerToSlot: this.playerToSlot,
       getActiveShip: (pid) => this.getActiveShip(pid),
@@ -2562,7 +2565,7 @@ export class SectorRoom extends Room<SectorState> {
       postToWorker: (cmd) => this.postToWorker(cmd),
       isPilotDisabled: (playerId) => this.gateGuard.isDisabled(playerId, this.gameClock.now()),
       noteWarpRequest: (playerId, x, y) => this.warpTravel.noteRequest(playerId, x, y),
-      solar: () => this.solar,
+      validWarpPoint: (playerId, x, y) => this.warpRoute.valid(playerId, x, y),
       handleFire: (client, raw) => this.handleFire(client, raw),
       handleRespawn: (client) => this.handleRespawn(client),
       handleClientReady: (client) => this.joinHandler.clientReady(client),
