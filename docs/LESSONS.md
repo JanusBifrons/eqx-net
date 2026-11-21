@@ -3335,6 +3335,17 @@ unknown attacker id counted as a player, so a rock that rammed an elite "earned"
 looked up as a structure owner. `classifyAttacker` now takes the swarm registry and classes a registry
 rock or wreck piece as `environment`, by kind.
 
+## 2026-11-21 — the touch stick wobbled fast hulls left/right every tick
+
+Phone report: flying forward on the stick, the ship "would quite often jitter from left to right".
+`joystickToInput` is a bang-bang steerer with a ±0.04 rad stop band, tuned when hulls turned ≤ 0.05
+rad per tick. The arcade handling pass (`turn` × 4.2) made a scout turn 0.105 rad/tick and an
+interceptor 0.087 (a fighter with ≥ 3 turn-rate points crosses too): a ship 0.06 rad off the stick
+lands 0.045 off the other side, still outside the band, flips direction, and repeats every tick
+forever. A steerer that toggles snap-turn bits must stop within half the per-tick step
+(`maxTurnPerTick`, from `applyShipInput`); retuning a turn rate must re-check every closed-loop
+controller that toggles the turn keys (`joystickToInput.test.ts` closed-loop cases).
+
 ## 2026-11-21 — moveTo the arc's start, then arc(): a stray line to the Graphics' origin on phones
 
 Pixi v8's `arc()` pushes its own start point onto the current subpath, so `g.moveTo(arc start);

@@ -100,11 +100,19 @@ const _ENGAGED_SCRATCH: JoystickInputState = {
  * @param shipAngle ship's current heading in radians (Y-up world).
  * @param prev previous boolean state for hysteresis. Pass
  *             `IDLE_INPUT_STATE` on first invocation / after stick release.
+ * @param turnStepRad the most the ship yaws in one tick with a turn bit held
+ *             (`PhysicsWorld.maxTurnPerTick`). The turn stops once |delta|
+ *             is within half of it: one more tick could only overshoot by
+ *             more than it closes. Without this, a hull whose step is wider
+ *             than 2 × TURN_OFF_RAD (scout, interceptor, an upgraded turn
+ *             rate) lands outside the band on the far side, flips direction,
+ *             and wobbles left/right every tick while flying straight.
  */
 export function joystickToInput(
   vector: { x: number; y: number } | null,
   shipAngle: number,
   prev: JoystickInputState,
+  turnStepRad = 0,
 ): JoystickInputState {
   if (vector === null) return IDLE_INPUT_STATE;
 
@@ -133,12 +141,16 @@ export function joystickToInput(
   // Turn — hysteresis on |delta|. Previous turn direction is preserved
   // until |delta| drops below TURN_OFF_RAD; new turn engages only when
   // |delta| crosses TURN_ON_RAD.
+  // Both thresholds widen to half the per-tick turn step when that is wider
+  // (only for hulls that would otherwise overshoot the band every tick).
+  const turnOff = Math.max(TURN_OFF_RAD, turnStepRad / 2);
+  const turnOn = Math.max(TURN_ON_RAD, turnOff);
   let turnLeft = false;
   let turnRight = false;
   const wasTurning = prev.turnLeft || prev.turnRight;
   if (wasTurning) {
-    // Stay turning until absDelta drops below TURN_OFF_RAD.
-    if (absDelta > TURN_OFF_RAD) {
+    // Stay turning until absDelta drops below the OFF threshold.
+    if (absDelta > turnOff) {
       // Decide direction by current sign — the user may have swept the
       // stick across centre while ship was still rotating. Sign of delta
       // is authoritative; previous direction is just the engagement gate.
@@ -147,7 +159,7 @@ export function joystickToInput(
     }
   } else {
     // Need to cross the higher TURN_ON threshold to engage.
-    if (absDelta > TURN_ON_RAD) {
+    if (absDelta > turnOn) {
       if (delta > 0) turnLeft = true;
       else turnRight = true;
     }
