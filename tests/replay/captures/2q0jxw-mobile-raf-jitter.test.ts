@@ -70,31 +70,23 @@ describe('replay lock — 2q0jxw mobile RAF jitter', () => {
     expect(r.pass, r.violations.map((v) => v.detail).join('\n')).toBe(true);
   });
 
-  // HARNESS-DRIFT ARTIFACT, NOT user experience. Inspecting the on-device
-  // `local_pose_rendered` stream around the harness's worst violation
-  // (inputTick=5673, claimed 137 u jump) shows the on-device pose moves
-  // only 2 u in 9 ms — smooth. The harness's replayed predWorld has
-  // drifted ~232 u from the actual on-device pose by then, accumulating
-  // float-precision divergence over 60 s of simulation against the
-  // captured snapshot stream (the harness has no drone/projectile state
-  // to drive collisions, so its predWorld evolves slightly differently
-  // from on-device). Same harness-drift class as 1kwv1z's documented
-  // `it.fails` markers.
+  // FIXED by S2b-1 (#1138, carried correction offset continuity). This was
+  // an `it.fails` marker: on the `2790b0d` baseline assertNoTeleport fired
+  // 54x (worst 137 u over 8.9 ms, near inputTick=5673). Each new correction
+  // reset the render offset to the raw drift and dropped the offset still
+  // easing from the previous correction, so the drawn pose (physics +
+  // offset) stepped whenever corrections landed close together. The
+  // Reconciler now carries the remaining offset into the new one and takes
+  // the half-life from max(|carried offset|, raw drift), and the replayed
+  // rendered pose stays under the 30 u per-RAF ceiling. Reverting that
+  // Reconciler change makes this test fail again.
   //
-  // The ACTUAL user "stop-start" perception is 0-step RAFs: ~58 % of
-  // RAFs fire without advancing physics, so 3-5 consecutive RAFs render
-  // the same pose, then 1 RAF jumps forward. Pattern visible in the
-  // on-device `local_pose_rendered` stream as identical x/y across
-  // adjacent ts values. `assertNoTeleport` over a 30 u threshold does
-  // not catch this — the per-RAF deltas during 0-step holds are ZERO.
-  // A different test shape would be needed (e.g., variance of per-RAF
-  // motion, or "no >2-consecutive-frame holds") to lock the user's
-  // actual experience.
-  //
-  // Kept as `it.fails` so a future fix that BOTH addresses the harness
-  // drift AND improves the rendered stream would surface as an
-  // unexpected pass, prompting promotion.
-  it.fails('USER CONTRACT — no teleport (HARNESS DRIFT — expected-fail, NOT a real on-device defect)', async () => {
+  // This contract does not cover the user's "stop-start" perception: ~58 %
+  // of mobile RAFs fire without advancing physics, so 3-5 consecutive RAFs
+  // render the same pose, then 1 RAF jumps forward. Per-RAF deltas during
+  // those holds are zero, so a 30 u threshold does not see them. The
+  // frame-pacing contract below locks that separately.
+  it('USER CONTRACT — no teleport (fixed by S2b-1 offset continuity, #1138)', async () => {
     const trace = await replayCapture(CAPTURE_PATH);
     const r = assertNoTeleport(trace, { maxDeltaUnits: 30 });
     expect(r.pass, r.violations.map((v) => v.detail).join('\n')).toBe(true);
