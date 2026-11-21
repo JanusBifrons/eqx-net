@@ -15,6 +15,7 @@ import { EntityStatsPanel } from './EntityStatsPanel.js';
 import { selectionStats, applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
+import { SettingsStatus } from './structureSettingsStatus.js';
 
 // #1046 — the inspector reads the HUD size class (phone = tiny text).
 const hud = vi.hoisted(() => ({ size: "desk" as "phone" | "tablet" | "desk" }));
@@ -33,6 +34,13 @@ vi.mock('../ships/shipActionsClient.js', () => ({
  *  ships / structures). */
 function fakeClient(mirror: Record<string, unknown>): ColyseusGameClient {
   return { mirror } as unknown as ColyseusGameClient;
+}
+
+/** Building management lives in the side panel's Manage tab: open it from the
+ *  card's Open button (owner, Build mode). */
+function openManage(): void {
+  fireEvent.click(screen.getByTestId('structure-action-settings'));
+  fireEvent.click(screen.getByTestId('structure-settings-tab-access'));
 }
 
 describe('EntityStatsPanel', () => {
@@ -130,8 +138,10 @@ describe('EntityStatsPanel', () => {
     expect(panel).toHaveAttribute('data-build-pct', '50');
     expect(panel).toHaveAttribute('data-powered', '1');
     expect(panel).toHaveAttribute('data-net-power', '12'); // grid aggregate (unchanged attr)
-    expect(screen.getByText('BUILD')).toBeInTheDocument(); // mid-construction bar shown
-    // C5 — the PWR line is the SOLAR's own generation (+120), NOT the grid total (+12).
+    // The card's status chip says how far the build is.
+    expect(screen.getByTestId('entity-stats-status')).toHaveAttribute('data-status', 'building');
+    expect(screen.getByTestId('entity-stats-status')).toHaveTextContent('Building 50%');
+    // C5 — the power label is the SOLAR's own generation (+120), NOT the grid total (+12).
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +120');
     expect(panel).toHaveAttribute('data-self-power', '120');
   });
@@ -150,7 +160,9 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '7', name: 'Refinery', hp: 300, hpMax: 300 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-build-blocked')).toHaveTextContent('FINISHED — WAITING FOR SHIPS TO CLEAR');
+    const chip = screen.getByTestId('entity-stats-status');
+    expect(chip).toHaveAttribute('data-status', 'build-blocked');
+    expect(chip).toHaveTextContent('FINISHED — WAITING FOR SHIPS TO CLEAR');
   });
 
   it('a blueprint still building or already built shows no waiting-for-ships line', () => {
@@ -166,7 +178,7 @@ describe('EntityStatsPanel', () => {
       );
       useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
       const { unmount } = render(<EntityStatsPanel />);
-      expect(screen.queryByTestId('entity-stats-build-blocked')).toBeNull();
+      expect(screen.queryByTestId('entity-stats-status')?.getAttribute('data-status')).not.toBe('build-blocked');
       unmount();
     }
   });
@@ -306,10 +318,11 @@ describe('EntityStatsPanel', () => {
     expect(panel).toHaveAttribute('data-hull-pct', '80'); // instant from the slice
     expect(panel).not.toHaveAttribute('data-stats-pending'); // no spinner pop-in
     expect(screen.queryByTestId('entity-stats-spinner')).toBeNull();
-    expect(screen.getByText('HULL')).toBeInTheDocument(); // the hull bar, not a spinner
+    expect(screen.getByTestId('entity-stats-card')).toBeInTheDocument(); // the card's hull bar, not a spinner
   });
 
   // ── Phase-4 C4 — connector connection count "N / 6" (QOL, connectors ONLY) ──
+  // It shows in the side panel's status block (above the tabs), not the card.
   // The user asked for a connection count on CONNECTORS specifically ("It
   // shouldn't really apply to other structures"). It reads the client-resident
   // slice (connTo.length) + the catalogue maxConnections (6) — instant, no server
@@ -325,10 +338,8 @@ describe('EntityStatsPanel', () => {
     );
     applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
-    render(<EntityStatsPanel />);
-    const conn = screen.getByTestId('entity-stats-conn');
-    expect(conn).toHaveTextContent('CONN 2 / 6');
-    expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-conn-count', '2');
+    render(<SettingsStatus entityId={7} pollMs={250} />);
+    expect(screen.getByTestId('settings-status-conn')).toHaveTextContent('2 / 6');
   });
 
   it('does NOT show the CONN count for a non-connector structure (solar) (C4)', () => {
@@ -342,9 +353,8 @@ describe('EntityStatsPanel', () => {
     );
     applySelectionStats({ id: '8', name: 'Solar Panel', hp: 300, hpMax: 300 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
-    render(<EntityStatsPanel />);
-    expect(screen.queryByTestId('entity-stats-conn')).toBeNull();
-    expect(screen.getByTestId('entity-stats-panel')).not.toHaveAttribute('data-conn-count');
+    render(<SettingsStatus entityId={8} pollMs={250} />);
+    expect(screen.queryByTestId('settings-status-conn')).toBeNull();
   });
 
   it('a coastal battery shows its reload + firing arc; a solar shows none', () => {
@@ -457,7 +467,7 @@ describe('EntityStatsPanel', () => {
   // structures are a core part of the game, not a bug). "you" for the local
   // player's own base, else a truncated owner id. Reads the slice `owner` field
   // + `mirror.localPlayerId`, client-resident → instant. ──
-  it("shows OWNER <display name> for another player's structure (never a raw id)", () => {
+  it("shows the owner's display name for another player's structure (never a raw id)", () => {
     setGameClient(
       fakeClient({
         localPlayerId: '7bc27d53-mine',
@@ -471,13 +481,13 @@ describe('EntityStatsPanel', () => {
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const owner = screen.getByTestId('entity-stats-owner');
-    expect(owner).toHaveTextContent('OWNER Nova'); // the player's display name
+    expect(owner).toHaveTextContent('Nova'); // the player's display name
     expect(owner).not.toHaveTextContent('you');
     expect(owner).not.toHaveTextContent('7fc842fe'); // NEVER a raw playerId
     expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-structure-owner', 'Nova');
   });
 
-  it("shows OWNER Unknown for an orphaned structure (owner doesn't resolve to a user)", () => {
+  it("shows Unknown as the owner of an orphaned structure (owner doesn't resolve to a user)", () => {
     setGameClient(
       fakeClient({
         localPlayerId: 'me-123',
@@ -492,10 +502,10 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '7', name: 'Capital', hp: 5000, hpMax: 5000 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-owner')).toHaveTextContent('OWNER Unknown');
+    expect(screen.getByTestId('entity-stats-owner')).toHaveTextContent('Unknown');
   });
 
-  it("shows OWNER you for the local player's own structure", () => {
+  it("shows you as the owner of the local player's own structure", () => {
     setGameClient(
       fakeClient({
         localPlayerId: 'me-123',
@@ -508,12 +518,13 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '8', name: 'Capital', hp: 5000, hpMax: 5000 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-owner')).toHaveTextContent('OWNER you');
+    expect(screen.getByTestId('entity-stats-owner')).toHaveTextContent('you');
   });
 
   // ── Phase-1 issue 6 — owner-only action buttons (deconstruct / reconnect /
   // clear connections). Gated on owner === local AND Build mode (management is
-  // Build-only, EntityStatsPanel.buildMode.test.tsx); clear is connector-only. ──
+  // Build-only, EntityStatsPanel.buildMode.test.tsx); they sit in the side
+  // panel's Manage tab behind the card's Open button; clear is connector-only. ──
   it('shows Deconstruct + Reconnect on an OWNED structure (no Clear for non-connector)', () => {
     setGameClient(
       fakeClient({
@@ -527,6 +538,7 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '8', name: 'Solar', hp: 300, hpMax: 300 });
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
+    openManage();
     expect(screen.getByTestId('structure-action-deconstruct')).toBeInTheDocument();
     expect(screen.getByTestId('structure-action-reconnect')).toBeInTheDocument();
     expect(screen.queryByTestId('structure-action-clear')).toBeNull(); // non-connector
@@ -545,6 +557,7 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
+    openManage();
     expect(screen.getByTestId('structure-action-clear')).toBeInTheDocument();
   });
 
@@ -582,7 +595,9 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '9', name: 'Missile Turret', hp: 900, hpMax: 900 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-no-ammo')).toHaveTextContent('NO MUNITIONS');
+    const chip = screen.getByTestId('entity-stats-status');
+    expect(chip).toHaveAttribute('data-status', 'no-ammo');
+    expect(chip).toHaveTextContent('No munitions');
   });
 
   it('P2b: a processor shows what it makes and why it is waiting', () => {
@@ -598,9 +613,9 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '9', name: 'Smelter', hp: 1800, hpMax: 1800 });
     useUIStore.setState({ buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-recipe')).toHaveTextContent('Smelt alloy · Waiting for Minerals');
-    // #1046 — the recipe label already starts with its verb: no "MAKES" prefix.
-    expect(screen.getByTestId('entity-stats-recipe').textContent).not.toMatch(/^MAKES/);
+    // Row 2 names what it makes; the chip says why it is waiting.
+    expect(screen.getByTestId('entity-stats-making')).toHaveTextContent('Smelt alloy');
+    expect(screen.getByTestId('entity-stats-status')).toHaveTextContent('Waiting for Minerals');
     // A smelter has one recipe: no change-recipe button (in the cog window either).
     expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
     fireEvent.click(screen.getByTestId('structure-action-settings'));
@@ -623,7 +638,7 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '9', name: 'Refinery', hp: 1800, hpMax: 1800 });
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-recipe')).toHaveAttribute('data-recipe', 'refine_rock_chunk');
+    expect(screen.getByTestId('entity-stats-making')).toHaveAttribute('data-recipe', 'refine_rock_chunk');
     // The recipe button lives in the cog window now, not on the inspector.
     expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
     fireEvent.click(screen.getByTestId('structure-action-settings'));
@@ -632,7 +647,7 @@ describe('EntityStatsPanel', () => {
     expect(sendSpy).toHaveBeenCalledWith('set_recipe', { type: 'set_recipe', entityId: 9, recipe: 'refine_ice_fuel' });
   });
 
-  it('shows a LVL n line for a leveled structure', () => {
+  it('shows Lv n for a leveled structure', () => {
     setGameClient(
       fakeClient({
         localPlayerId: 'me-123',
@@ -645,11 +660,11 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('LVL 3');
+    expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('Lv 3');
     expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-structure-level', '3');
   });
 
-  it('does NOT show a LVL line for a level-1 (un-levelled) structure', () => {
+  it('shows Lv 1 for an un-levelled structure (no level attr)', () => {
     setGameClient(
       fakeClient({
         localPlayerId: 'me-123',
@@ -662,7 +677,8 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.queryByTestId('entity-stats-level')).toBeNull();
+    expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('Lv 1');
+    expect(screen.getByTestId('entity-stats-panel')).not.toHaveAttribute('data-structure-level');
   });
 
   it('shows an Upgrade action on an OWNED, BUILT structure + sends upgrade_structure on click', () => {
@@ -680,6 +696,7 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
+    openManage();
     const btn = screen.getByTestId('structure-action-upgrade');
     fireEvent.click(btn);
     expect(sendSpy).toHaveBeenCalledWith('upgrade_structure', {
@@ -718,7 +735,9 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('LVL 5');
+    expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('Lv 5');
+    openManage();
+    expect(screen.getByTestId('structure-settings-manage')).toBeInTheDocument();
     expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
   });
 
@@ -753,6 +772,7 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '8', name: 'Solar', hp: 300, hpMax: 300 });
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
+    openManage();
     const btn = screen.getByTestId('structure-action-deconstruct');
     expect(btn).toHaveAttribute('data-active', '1'); // already deconstructing → Cancel state
     fireEvent.click(btn);
