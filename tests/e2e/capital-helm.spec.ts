@@ -1,14 +1,13 @@
 /**
- * Capital-ship R&D round 3 D â€” helm orders, end to end.
+ * Helm modes, end to end (owner, 2026-11-21): Fly is manual piloting only.
  *
  * A pilot joins the showcase fleet room flying a battleship (a playable
- * capital), taps empty space on the canvas, and the helm
- * takes over: the panel reads "course set" and the ship moves under its own
- * inputs (server-authoritative pose via `data-ship-x/y`), with the green
- * move marker drawn at the course point. Pressing W cancels
- * the course (WASD overrides the helm). A fighter in the same room shows the
- * helm panel too: every hull takes helm orders (owner, 2026-11-18; the
- * autopilot, `autopilot-round-rock.spec.ts`).
+ * capital). In Fly there is no ship-speed telegraph (the helm panel) and a
+ * tap on empty space sets no course (no helm order, no move marker); W flies
+ * the capital by hand (server-authoritative pose via `data-ship-x/y`). A
+ * fighter shows no helm panel in Fly either. Tap-to-move and ship speed are
+ * Command controls; the helm's own steering is still exercised through the
+ * programmatic course hook in `autopilot-round-rock.spec.ts`.
  */
 import { test, expect } from '@playwright/test';
 import { launchTestClient } from './helpers/gameScenario';
@@ -23,65 +22,62 @@ async function shipPos(page: import('@playwright/test').Page): Promise<{ x: numb
   });
 }
 
+async function localShipReady(page: import('@playwright/test').Page): Promise<void> {
+  await page.waitForFunction(
+    () => !Number.isNaN(Number((document.querySelector('[data-ship-x]') as HTMLElement | null)?.dataset['shipX'])),
+    undefined,
+    { timeout: 15_000 },
+  );
+}
+
 /** The helm move marker as the renderer drew it (`__eqxArtStats`, `?worker=0`). */
 async function helmMarkerShown(page: import('@playwright/test').Page): Promise<boolean> {
   return page.evaluate(() => (globalThis as { __eqxArtStats?: () => { helmMarker?: boolean } }).__eqxArtStats?.().helmMarker === true);
 }
 
-test('a battleship pilot taps a course, the helm flies it, W cancels', async ({ browser }) => {
+type EqxHelmWindow = { __eqxClient?: { getHelmOrder(): { active: boolean } } };
+
+test('Fly is manual: a battleship pilot gets no speed telegraph, a tap sets no course, W flies it', async ({ browser }) => {
   test.setTimeout(120_000);
   const { ctx, page } = await launchTestClient(browser, {
     room: ROOM, ...SPAWN, shipKind: 'battleship', extraParams: { worker: '0' }, joinTimeoutMs: 60_000,
   });
   try {
-    const panel = page.getByTestId('helm-panel');
-    await expect(panel).toBeVisible({ timeout: 15_000 });
-    await expect(panel).toHaveAttribute('data-helm-active', '0');
+    await localShipReady(page);
+    await expect(page.getByTestId('helm-panel')).toHaveCount(0);
 
-    // Tap empty space up-right of the ship (the camera centres on it).
+    // Tap empty space up-right of the ship (the camera centres on it): no course.
     const box = (await page.locator('canvas').first().boundingBox())!;
-    await page.waitForFunction(() => !Number.isNaN(Number((document.querySelector('[data-ship-x]') as HTMLElement | null)?.dataset['shipX'])));
     const start = await shipPos(page);
-    // Re-tap until it takes: on a cold page a busy frame between mouse-down and
-    // mouse-up stretches the press past the 250 ms tap window (a drag).
-    await expect.poll(async () => {
-      await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.2);
-      return panel.getAttribute('data-helm-active');
-    }, { timeout: 10_000, intervals: [300] }).toBe('1');
+    for (let i = 0; i < 3; i++) await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.2);
+    await page.waitForTimeout(1_000);
+    const active = await page.evaluate(() => (window as unknown as EqxHelmWindow).__eqxClient?.getHelmOrder().active ?? false);
+    expect(active, 'a Fly tap sets no helm course').toBe(false);
+    expect(await helmMarkerShown(page), 'no move marker in Fly').toBe(false);
 
-    // Owner 2026-11-12: "no visible indicator of where and what was tapped".
-    // The green move marker is drawn at the course point while it's active.
-    await expect.poll(() => helmMarkerShown(page), { timeout: 5_000 }).toBe(true);
-
-    // The ship gets under way by itself (a 5.8 km hull is slow: allow a few s).
-    await expect.poll(async () => {
-      const p = await shipPos(page);
-      return Math.hypot(p.x - start.x, p.y - start.y);
-    }, { timeout: 20_000 }).toBeGreaterThan(30);
-
-    // WASD overrides and cancels the course.
+    // WASD / the thumbstick fly the capital directly (a 5.8 km hull is slow: allow a few s).
     await page.keyboard.down('w');
-    await expect(panel).toHaveAttribute('data-helm-active', '0', { timeout: 5_000 });
-    await page.keyboard.up('w');
-    // ...and the move marker goes with the cancelled course.
-    await expect.poll(() => helmMarkerShown(page), { timeout: 5_000 }).toBe(false);
-
-    // Speed buttons set the speed setting.
-    await page.getByTestId('helm-speed-1').click();
-    await expect(panel).toHaveAttribute('data-helm-speed', '1');
+    try {
+      await expect.poll(async () => {
+        const p = await shipPos(page);
+        return Math.hypot(p.x - start.x, p.y - start.y);
+      }, { timeout: 20_000 }).toBeGreaterThan(30);
+    } finally {
+      await page.keyboard.up('w');
+    }
   } finally {
     await ctx.close();
   }
 });
 
-test('a fighter shows the helm panel too', async ({ browser }) => {
+test('a fighter shows no helm panel in Fly either', async ({ browser }) => {
   const { ctx, page } = await launchTestClient(browser, {
     room: ROOM, ...SPAWN, shipKind: 'fighter', extraParams: { worker: '0' },
   });
   try {
     // Once the local ship is in the mirror, helm availability has been decided.
-    await page.waitForFunction(() => !Number.isNaN(Number((document.querySelector('[data-ship-x]') as HTMLElement | null)?.dataset['shipX'])));
-    await expect(page.getByTestId('helm-panel')).toBeVisible({ timeout: 15_000 });
+    await localShipReady(page);
+    await expect(page.getByTestId('helm-panel')).toHaveCount(0);
   } finally {
     await ctx.close();
   }
@@ -95,7 +91,7 @@ test('zoomed out from a battleship, fighters draw as icons', async ({ browser })
     room: ROOM, spawnX: 0, spawnY: -6000, shipKind: 'battleship', extraParams: { worker: '0' },
   });
   try {
-    await expect(page.getByTestId('helm-panel')).toBeVisible({ timeout: 15_000 });
+    await localShipReady(page);
     const box = (await page.locator('canvas').first().boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await expect.poll(async () => {
