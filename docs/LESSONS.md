@@ -3418,4 +3418,6 @@ now under it, and the ship warped: one press opened the menu and picked. `preven
 React `onTouchStart` cannot stop that click (React's touchstart listener is passive), and the dial's
 own click-suppress window only guards the dial. Options of a menu opened on touchstart bind
 `useFreshPress` (`touchClickActivate.ts`): they act only on a pointerdown on the same option, at
-least `MENU_ARM_MS` after opening, then its click (keyboard clicks, `detail === 0`, always act).
+least `MENU_ARM_MS` after opening (touch; a mouse opens on release), then its click (keyboard clicks,
+`detail === 0`, always act). A whole surface (the drawer, the in-game galaxy map) spreads
+`useFreshPressSurface`, the same guard in the capture phase.
