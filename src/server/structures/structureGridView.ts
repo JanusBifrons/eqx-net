@@ -14,6 +14,7 @@ import { effectiveStructurePowerOutput, effectiveStructureMaxConnections } from 
 import {
   canConnect,
   edgeDistance,
+  type CanConnectReason,
   type GridNode,
   type GridObstacle,
   type ObstacleBox,
@@ -96,6 +97,57 @@ interface ConnectCandidate {
   dist: number;
 }
 
+/** Why `autoConnectStructure` linked nothing: the most telling refusal seen
+ *  across every same-owner structure (see `REFUSAL_RANK`), or `null` when
+ *  there was no same-owner structure at all. Caller-owned scratch. */
+export interface AutoConnectRefusal {
+  reason: CanConnectReason | null;
+}
+
+/** Which refusal explains a failed link best, highest first: the structure's
+ *  OWN full slots, then a line blocked (by a rock or building) to a partner
+ *  it may link to, then no usable socket, a full partner, the wrong partner
+ *  type, an existing link, and last nothing in reach. */
+const REFUSAL_RANK: Readonly<Record<CanConnectReason, number>> = Object.freeze({
+  'a-full': 9,
+  blocked: 8,
+  'too-short': 7,
+  'no-facing-socket': 6,
+  'b-full': 5,
+  'pylon-rule': 4,
+  'capital-only': 3,
+  'connector-required': 3,
+  duplicate: 2,
+  'out-of-range': 1,
+  self: 0,
+});
+
+/** Plain player-facing notice for a manual reconnect that linked nothing,
+ *  by refusal (`null`: no building of the owner's in reach). */
+const RECONNECT_REFUSAL_NOTICE: Readonly<Record<CanConnectReason, string>> = Object.freeze({
+  'a-full': "Can't link: it has no free connection slots",
+  blocked: "Can't link: the way is blocked by an asteroid or structure",
+  'too-short': "Can't link: too close to the building in reach",
+  'no-facing-socket': "Can't link: no free socket faces a building in reach",
+  'b-full': "Can't link: the buildings in reach have no free slots",
+  'pylon-rule': "Can't link: shield posts link only to a Connector or another shield post",
+  'capital-only': "Can't link: needs a Connector in reach",
+  'connector-required': "Can't link: needs a Connector in reach",
+  duplicate: 'Already linked to everything in reach',
+  'out-of-range': "Can't link: no building in reach to link to",
+  self: "Can't link: no building in reach to link to",
+});
+
+/** The notice for a reconnect that linked nothing (see `AutoConnectRefusal`). */
+export function reconnectRefusalNotice(reason: CanConnectReason | null): string {
+  return RECONNECT_REFUSAL_NOTICE[reason ?? 'out-of-range'];
+}
+
+/** Keep the better-ranked of `why`'s refusal and `reason`. */
+function noteRefusal(why: AutoConnectRefusal, reason: CanConnectReason): void {
+  if (why.reason === null || REFUSAL_RANK[reason] > REFUSAL_RANK[why.reason]) why.reason = reason;
+}
+
 /**
  * Auto-connect a freshly-placed structure into its owner's grid (WS-5 / R2.17 —
  * MULTI-connect). Link it to EVERY in-range hub (Connector / Capital) with a free
@@ -120,12 +172,17 @@ interface ConnectCandidate {
  * hot-loop allocation concern (invariant #14). The per-iteration re-check is
  * load-bearing: each `addConnection` mutates the LIVE `adjacency` view, so a hub
  * that was free may fill AND the new node's own slot count rises as it connects.
+ *
+ * `why` (optional) gets the best refusal (`REFUSAL_RANK`) when NOTHING links,
+ * so a manual reconnect can tell the player why; null once anything links.
  */
 export function autoConnectStructure(
   registry: StructureRegistry,
   newId: string,
   obstacles?: readonly GridObstacle[],
+  why?: AutoConnectRefusal,
 ): string | null {
+  if (why) why.reason = null;
   const newRec = registry.get(newId);
   if (!newRec) return null;
   const nodes = buildGridNodes(registry);
@@ -138,7 +195,11 @@ export function autoConnectStructure(
     if (other.id === newId) continue;
     if (other.owner !== newRec.owner) continue; // per-owner grid
     const otherNode = nodes.get(other.id)!;
-    if (!canConnect(newNode, otherNode, adjacency, nodes, obstacles).ok) continue;
+    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles);
+    if (!verdict.ok) {
+      if (why) noteRefusal(why, verdict.reason);
+      continue;
+    }
     candidates.push({ id: other.id, dist: edgeDistance(newNode, otherNode) });
   }
   if (candidates.length === 0) return null;
@@ -153,12 +214,17 @@ export function autoConnectStructure(
     const otherNode = nodes.get(cand.id)!;
     // Re-check against the live adjacency: an earlier addition may have filled
     // this hub or the new node's own slots.
-    if (!canConnect(newNode, otherNode, adjacency, nodes, obstacles, linkPick).ok) continue;
+    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles, linkPick);
+    if (!verdict.ok) {
+      if (why) noteRefusal(why, verdict.reason);
+      continue;
+    }
     // canConnect(newNode, other) ⇒ pick.a is newId's socket, pick.b cand's.
     registry.addConnection(newId, cand.id, CONNECTION_THROUGHPUT, linkPick.a, linkPick.b);
     made++;
     if (firstConnected === null) firstConnected = cand.id;
   }
+  if (why && firstConnected !== null) why.reason = null;
   return firstConnected;
 }
 
@@ -212,4 +278,21 @@ export function connectExplicit(
   if (!canConnect(na, nb, registry.adjacencyMap(), nodes, obstacles, linkPick).ok) return false;
   registry.addConnection(aId, bId, CONNECTION_THROUGHPUT, linkPick.a, linkPick.b);
   return true;
+}
+
+/** Scratch: why the last manual reconnect linked nothing. */
+const reconnectWhy: AutoConnectRefusal = { reason: null };
+
+/** A manual reconnect (`StructureGridSubsystem.reconnect`): wire `id` to
+ *  the nearest legal in-range hub(s), additively. Returns null when it linked,
+ *  else the player-facing reason it linked nothing. `box` is caller scratch. */
+export function reconnectWithNotice(
+  registry: StructureRegistry,
+  id: string,
+  box: ObstacleBox,
+  getObstacles?: (near?: ObstacleBox) => readonly GridObstacle[],
+): string | null {
+  const inReach = linkReachBox(registry, id, box);
+  const linked = inReach && autoConnectStructure(registry, id, getObstacles?.(box), reconnectWhy) !== null;
+  return linked ? null : reconnectRefusalNotice(inReach ? reconnectWhy.reason : null);
 }

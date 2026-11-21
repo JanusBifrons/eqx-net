@@ -50,7 +50,7 @@ import {
   TRANSFER_PULSE_MS,
   TURRET_TICK_MS,
 } from '../../core/structures/structureGridConstants.js';
-import { autoConnectStructure, buildGridNodes, linkReachBox } from './structureGridView.js';
+import { autoConnectStructure, buildGridNodes, linkReachBox, reconnectWithNotice } from './structureGridView.js';
 import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
@@ -230,6 +230,11 @@ export class StructureGridSubsystem {
   private readonly nearestView: TurretTargetView = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: FALLBACK_TARGET_SIGNATURE };
   /** Scratch for `linkReachBox` (the reconnect `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** The player-facing reason the last `reconnect` made no new link (e.g.
+   *  "Can't link: the way is blocked by an asteroid or structure"), or null
+   *  when it linked (or the id was unknown). The room sends it as a notice,
+   *  like `StructurePlacementSubsystem.lastRefusal`. */
+  lastReconnectRefusal: string | null = null;
 
   /** The grid pulse period, ms: the room's pulse timer AND the build ETA read it. */
   get pulseMs(): number { return this.hooks.pulseMs ?? TRANSFER_PULSE_MS; }
@@ -848,13 +853,13 @@ export class StructureGridSubsystem {
    * sweep use, so a stranded structure (its hub was removed, or it was placed
    * before its hub) re-wires to the nearest legal in-range hub(s). Additive
    * (never severs); `autoConnectStructure` dirties topology on success. Returns
-   * false for an unknown id.
+   * false for an unknown id. When nothing new links, `lastReconnectRefusal`
+   * says why (nothing in reach, the line blocked, the wrong partner, ...).
    */
   reconnect(id: string): boolean {
+    this.lastReconnectRefusal = null;
     if (!this.hooks.registry.get(id)) return false;
-    if (linkReachBox(this.hooks.registry, id, this.linkBox)) {
-      autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.(this.linkBox));
-    }
+    this.lastReconnectRefusal = reconnectWithNotice(this.hooks.registry, id, this.linkBox, this.hooks.getObstacles);
     return true;
   }
 
