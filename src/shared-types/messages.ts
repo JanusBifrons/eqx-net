@@ -127,6 +127,7 @@ export {
   ShipUpgradeAppliedEventSchema,
   WireActivatedMountSchema,
   MountActivatedEventSchema,
+  SetShieldsSchema,
 } from './messages/combatMessages.js';
 export type {
   HitAckMessage,
@@ -140,6 +141,7 @@ export type {
   RespawnAckMessage,
   LaserFiredEvent,
   CollisionResolvedMessage,
+  SetShieldsMessage,
 } from './messages/combatMessages.js';
 
 // Transit lifecycle (server → client; client → server schemas are in clientMessages)

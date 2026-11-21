@@ -70,6 +70,7 @@ import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem, packedGateForBuild, repackItem, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
+import { canTakeFullDraw } from '../structures/structurePowerSwitch.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import type { GateController } from '../structures/GateController.js';
 import { buildGateController } from '../structures/gateControllerFactory.js';
@@ -2237,7 +2238,7 @@ export class SectorRoom extends Room<SectorState> {
     // collider; updated on the grid pulse + the faster turret tick.
     this.production = new ProductionSubsystem({
       registry: this.structureRegistry,
-      powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
+      powered: (id) => this.structureGrid.powerSummaryFor(id).powered, canDrawFull: (rec) => { const g = this.structureGrid, s = g.powerSummaryFor(rec.id); return canTakeFullDraw(rec, s.powered, s.netPower, g.componentBatteryCharge(rec.id)); },
       componentOf: (id) => this.structureGrid.componentMembersOf(id),
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec), swapBlueprint: (rec, recipe) => swapBlueprintFor(this.storage, rec, recipe),
       // Active power: processors draw full only while running.
@@ -2574,7 +2575,7 @@ export class SectorRoom extends Room<SectorState> {
       playerToActiveShipInstance: this.playerToActiveShipInstance,
       lockMsgAllowed: (sid) => this.lockMsgAllowed(sid),
       fireControlLocks: () => this.locks,
-      selectionStats: () => this.selectionStats,
+      selectionStats: () => this.selectionStats, shieldHull: () => this.shieldHullRouter,
       webrtcChannelManager: () => this.webrtcChannelManager,
     });
 

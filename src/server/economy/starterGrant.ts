@@ -11,6 +11,11 @@
  * once too). The flag and the hold write land in ONE atomic persistence group,
  * so a crash can never grant twice or mark it given without the items. Later
  * starter items join `grantStarter` here, under the same flag.
+ *
+ * Join credits (`grantJoinCredits`) ride the same pattern with their own flag
+ * (`joinCreditsGranted`): once per account, the wallet is topped up to
+ * `JOIN_CREDITS`, enough to buy a battleship. The flag and the wallet row land
+ * in ONE atomic group.
  */
 import { cloneHold, emptyHold, holdWeight, packedWeightOf } from '../../core/cargo/hold.js';
 import { makeBlueprint } from '../../shared-types/blueprints.js';
@@ -18,7 +23,10 @@ import type { BlueprintItem } from '../../shared-types/items.js';
 import { cargoCapacityForMaxHealth } from '../../shared-types/goods.js';
 import { blueprintProductFor, type RecipeId } from '../../shared-types/recipes.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
+import { JOIN_CREDITS } from '../../shared-types/launch.js';
 import type { HoldRecord, HoldStore } from '../cargo/HoldStore.js';
+import type { Wallet } from './Wallet.js';
 import type { EconomyStore } from './EconomyStore.js';
 import { capitalCrateItem } from '../structures/StructurePlacementSubsystem.js';
 import { CAPITAL_STARTING_MINERALS } from '../../core/structures/structureGridConstants.js';
@@ -36,7 +44,7 @@ export function starterJunkCopies(rng: () => number = Math.random): BlueprintIte
   return STARTER_JUNK_RECIPES.map((r) => makeBlueprint(blueprintProductFor(r), 'bpc', rng, { junk: true }));
 }
 
-export type StarterGrantEconomy = Pick<EconomyStore, 'starterGranted' | 'markStarterGranted'>;
+export type StarterGrantEconomy = Pick<EconomyStore, 'starterGranted' | 'markStarterGranted' | 'joinCreditsGranted' | 'markJoinCreditsGranted'>;
 
 /** Boot wiring (economyBoot): null when the economy is not running ⇒ no grant. */
 let _econ: StarterGrantEconomy | null = null;
@@ -75,5 +83,26 @@ export function grantStarter(
     ? { ...rec, hold }
     : { holderUid: shipInstanceId, holderType: 'ship', ownerId: playerId, sectorKey: null, x: null, y: null, hold, expiresAt: null };
   holds.commit([next], [], true, [econ.markStarterGranted(playerId)]);
+  return true;
+}
+
+/**
+ * Top `playerId`'s wallet up to `JOIN_CREDITS`, once per account: a new
+ * pilot (balance 0) gets the lot; an existing pilot below it (even in debt) is
+ * raised to it; one already above keeps their balance. False (nothing changes)
+ * when already given, with no economy, or with no player id. Called before
+ * every launch charge and Hangar economy read, so both see the same balance.
+ */
+export function grantJoinCredits(
+  deps: { econ: StarterGrantEconomy | null; wallet: Pick<Wallet, 'balance' | 'creditDeferred'>; persistence: () => IPersistenceSink | null },
+  playerId: string,
+): boolean {
+  const { econ, wallet } = deps;
+  if (econ === null || playerId === '' || econ.joinCreditsGranted(playerId)) return false;
+  const ops: PersistOp[] = [];
+  const credit = wallet.creditDeferred(playerId, JOIN_CREDITS - wallet.balance(playerId), 'join_credits');
+  if (credit !== null) ops.push(credit);
+  ops.push(econ.markJoinCreditsGranted(playerId));
+  deps.persistence()?.enqueueCritical(ops.length === 1 ? ops[0]! : { type: 'GROUP', ops });
   return true;
 }

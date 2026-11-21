@@ -21,6 +21,7 @@ import type { CargoState } from '../../shared-types/messages/cargoMessages.js';
 import type { BpMarketState } from '../../shared-types/blueprintMarket.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
+import type { ShieldToggleUi } from './shieldToggleUi.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -206,7 +207,7 @@ export interface UIHealthStats {
   longtask: { count30s: number; maxMs30s: number };
 }
 
-export interface UIStore {
+export interface UIStore extends ShieldToggleUi {
   connectionStatus: ConnectionStatus;
   sectorName: string;
   hullPct: number;

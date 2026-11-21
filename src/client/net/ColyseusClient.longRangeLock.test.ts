@@ -1,11 +1,12 @@
 /**
  * Real-scale naval ranges (`navalRange=real`): the client's lock-line pick
- * (`updateLockGuide`) has no distance or interest cut-off of its own, and
- * (owner 2026-11-14: locks work at any distance) no reach cap either: the
- * shared rule the server verifies `lock_track` with is `lockLineScore` (#15).
+ * (`updateLockGuide`) has no distance or interest cut-off of its own: it
+ * reaches as far as the ship's lock range (owner 2026-11-21: the locker's
+ * longest weapon max range, hull to hull), the same `lockLineScore` rule the
+ * server verifies `lock_track` with (#15).
  * A battleship pilot pointing the main battery's line at a target 30 km out
  * picks it, whatever its kind: an NPC capital, an NPC fighter, a structure or
- * another pilot. Past reach the line still holds it.
+ * another pilot. Past the battleship's lock range nothing is picked.
  *
  * The catalogue is built at module load, so the modules are re-imported with
  * the switch on (the same pattern as tests/unit/navalRangeSwitch.test.ts).
@@ -37,6 +38,7 @@ async function realModeClient() {
   const { decodeAim } = await import('@core/combat/manualAim');
   const { getShipKind } = await import('@shared-types/shipKinds');
   const { NAVAL_RANGE } = await import('@shared-types/combat/navalRange');
+  const { shipLockRange } = await import('@core/combat/mountReach');
   const client = new ColyseusGameClient();
   const internals = client as unknown as Internals;
   const send = vi.fn();
@@ -47,7 +49,9 @@ async function realModeClient() {
   m.swarm = new Map();
   m.structures = new Map();
   useUIStore.setState({ activeGroupId: 'main' });
-  return { client, internals, m, send, lockLineHolds, decodeAim, getShipKind, NAVAL_RANGE };
+  const bs = getShipKind('battleship');
+  const lockReach = bs.radius + shipLockRange(bs);
+  return { client, internals, m, send, lockLineHolds, decodeAim, getShipKind, NAVAL_RANGE, lockReach };
 }
 
 const swarm = (kind: number, x: number, y: number, radius: number): SwarmRenderState =>
@@ -57,7 +61,7 @@ describe('real naval ranges — the lock-line pick reaches 30 km', () => {
   afterAll(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 
   it('a battleship main battery picks an NPC capital, fighter, structure or pilot 30 km out', async () => {
-    const { client, internals, m, send, lockLineHolds, decodeAim, getShipKind, NAVAL_RANGE } = await realModeClient();
+    const { client, internals, m, send, lockLineHolds, decodeAim, getShipKind, NAVAL_RANGE, lockReach } = await realModeClient();
     expect(NAVAL_RANGE).toBe('real');
     // The pick reads the group's reach from the catalogue: the 16" reaches 38.7 km.
     client.updateLockGuide(0);
@@ -83,16 +87,19 @@ describe('real naval ranges — the lock-line pick reaches 30 km', () => {
       expect(type).toBe('lock_track');
       expect(msg.target, `${key} 30 km out is picked`).toBe(key);
       // And the server's check holds it on the quantised line.
-      expect(lockLineHolds(x, y, decodeAim(msg.b!), 50, reach), `${key}: the server accepts the claim`).toBe(true);
+      expect(lockLineHolds(x, y, decodeAim(msg.b!), 50, reach, lockReach), `${key}: the server accepts the claim`).toBe(true);
     }
 
-    // Past reach (45 km > 38.7 km) the line still holds it: locks work at
-    // any distance (owner 2026-11-14); only firing is range-limited.
+    // Past the lock range (the 16"'s 38.7 km, hull to hull) nothing is picked,
+    // and the server refuses the claim too (owner 2026-11-21).
     m.swarm.clear();
     m.ships.delete('other');
     client.releaseLockGuide();
-    m.swarm.set(5, swarm(1, 0, 45_000, getShipKind('battleship').radius));
-    expect(client.updateLockGuide(0), 'a capital 45 km out: past reach, still picked').toBe('s:5');
-    expect(lockLineHolds(0, 45_000, 0, 50, reach), 'the server accepts it too').toBe(true);
+    const bsR = getShipKind('battleship').radius;
+    const past = lockReach + bsR + 500;
+    m.swarm.set(5, swarm(1, 0, past, bsR));
+    expect(client.updateLockGuide(0), 'a capital past lock range is not picked').toBe(null);
+    expect(lockLineHolds(0, past, 0, bsR, reach, lockReach), 'the server refuses it too').toBe(false);
+    expect(lockLineHolds(0, past - 1_000, 0, bsR, reach, lockReach), 'just inside, it holds').toBe(true);
   });
 });

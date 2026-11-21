@@ -24,7 +24,7 @@ import { FleetStrip } from '../components/FleetStrip';
 import { getGameClient } from '../net/clientSingleton';
 import { FloatingStick } from './FloatingStick';
 import type { StickVec } from './floatingStickMath';
-import { HUD, hullColor } from './tokens';
+import { HUD } from './tokens';
 import { hudScale, useHudSize, useIsLandscape } from './useHudScale';
 import { WeaponStrip } from './WeaponStrip';
 import { LockStatusBand } from './LockStatusBand';
@@ -32,6 +32,7 @@ import { ContactsOverview } from '../components/ContactsOverview';
 import { stickToWorldBearing } from '@core/combat/manualAim';
 import { HoldButton, SectorChip, useEnergyFill, useFakeCredits } from './widgets';
 import { BuildStatusBody, WalletRow } from './BuildStatus';
+import { ShieldRing } from './ShieldRing';
 
 interface Props {
   /** Present on touch devices only. */
@@ -80,8 +81,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
           it never shifts them. Portrait touch keeps it top-centre: there the thumb sticks
           fill the bottom edge. */}
       {touch && !landscape
-        ? <Slot anchor="top-center" order={0}><StatusCapsule scale={scale} /></Slot>
-        : <Slot anchor="bottom-center" order={3}><StatusCapsule scale={scale} /></Slot>}
+        ? <Slot anchor="top-center" order={0} pointerEvents="none"><StatusCapsule scale={scale} /></Slot>
+        : <Slot anchor="bottom-center" order={3} pointerEvents="none"><StatusCapsule scale={scale} /></Slot>}
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
       {/* RTS command view: the fleet panel (desktop) / strip (compact) while own ships
@@ -117,16 +118,9 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
 export function StatusCapsule({ scale }: { scale: number }): JSX.Element {
   const mode = useUIStore(selectControlMode);
   const building = mode === 'build';
-  const shield = useUIStore((s) => s.shieldPct);
-  const hull = useUIStore((s) => s.hullPct);
   const wallet = useUIStore((s) => s.wallet);
   const timeScale = useUIStore((s) => s.timeScale);
   const energyRef = useEnergyFill();
-  const d = Math.round(26 * scale);
-  const r1 = d / 2 - 2;
-  const r2 = d / 2 - 6;
-  const c1 = 2 * Math.PI * r1;
-  const c2 = 2 * Math.PI * r2;
   return (
     <div
       data-testid="hud-status"
@@ -147,21 +141,7 @@ export function StatusCapsule({ scale }: { scale: number }): JSX.Element {
       }}
     >
       {building ? <BuildStatusBody scale={scale} wallet={wallet} /> : <>
-      <svg width={d} height={d} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={d / 2} cy={d / 2} r={r1} fill="none" stroke="rgba(255,255,255,.1)" strokeWidth={2.5} />
-        <circle
-          data-testid="hud-shield"
-          cx={d / 2} cy={d / 2} r={r1} fill="none" stroke={HUD.color.shield} strokeWidth={2.5}
-          strokeDasharray={segDash(c1, shield)}
-        />
-        <circle cx={d / 2} cy={d / 2} r={r2} fill="none" stroke="rgba(255,255,255,.1)" strokeWidth={2.5} />
-        <circle
-          data-testid="hud-hull"
-          cx={d / 2} cy={d / 2} r={r2} fill="none" stroke={hullColor(hull)} strokeWidth={2.5}
-          strokeDasharray={segDash(c2, hull)}
-          style={{ transition: 'stroke 300ms' }}
-        />
-      </svg>
+      <ShieldRing scale={scale} />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         <div style={{ width: Math.round(70 * scale), height: 3, background: 'rgba(255,255,255,.1)', borderRadius: 3, overflow: 'hidden' }}>
           <div ref={energyRef} data-testid="hud-energy" style={{ width: '100%', height: '100%', background: HUD.color.energy, transformOrigin: 'left center' }} />
@@ -215,16 +195,6 @@ function TimeScaleChip({ timeScale, scale }: { timeScale: number; scale: number 
 /** "0.8×", "2×", "0.25×": up to two decimals, no trailing zeros. */
 export function formatTimeScale(s: number): string {
   return `${Number(s.toFixed(2))}×`;
-}
-
-/** Dash pattern that shows `pct`% of a ring as 12 segments with gaps. */
-function segDash(circ: number, pct: number): string {
-  const seg = circ / 12;
-  const gap = 1.4;
-  const shown = Math.round((Math.max(0, Math.min(100, pct)) / 100) * 12);
-  let s = '';
-  for (let i = 0; i < 12; i++) s += i < shown ? `${seg - gap} ${gap} ` : `0 ${seg} `;
-  return s.trim();
 }
 
 /** Left thumb: floating move stick. */
