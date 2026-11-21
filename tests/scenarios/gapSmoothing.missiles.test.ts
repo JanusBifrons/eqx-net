@@ -11,8 +11,9 @@
  * - missile: `applyMissileSnapshot` (applied after the snapshot coalescer
  *   keeps only the newest pending snapshot per frame; stamped from its
  *   server tick on the drone tick clock, S5-2)
- *   then `resolveMissileDisplayPose` (fixed 100 game-ms delay, 250 ms glide
- *   cap then freeze);
+ *   then `resolveMissileDisplayPose` (the shared drone display delay that
+ *   `publishSwarmDisplayDelay` puts on the mirror each frame, S5-4; 250 ms
+ *   glide cap then freeze);
  * - drone: `decodeSwarmPacket` with tick stamping, then
  *   `interpolateSwarmPose`. Once per frame, after the drain and before any
  *   read, `stepSwarmDisplayDelay(frameDtMs, now)` glides the delay toward
@@ -22,7 +23,7 @@
  * `countMotionArtefacts` scores the drawn tracks against the truth.
  */
 import { describe, it, expect } from 'vitest';
-import { applyMissileSnapshot, resolveMissileDisplayPose } from '../../src/client/combat/MissileMirror.js';
+import { applyMissileSnapshot, publishSwarmDisplayDelay, resolveMissileDisplayPose } from '../../src/client/combat/MissileMirror.js';
 import { decodeSwarmPacket } from '../../src/client/net/BinarySwarmDecoder.js';
 import {
   interpolateSwarmPose,
@@ -221,6 +222,7 @@ function runProfile(profile: NetworkProfile): RunResult {
     }
     // Once per frame, after the drain and before any read, as production.
     stepSwarmDisplayDelay(Number.isNaN(prevFrameMs) ? 0 : now - prevFrameMs, now);
+    publishSwarmDisplayDelay(mirror);
     prevFrameMs = now;
 
     const mTrue = missileTrueAt(track, now);
@@ -278,24 +280,45 @@ function recorded(r: RunResult): Recorded {
 
 type MissileProfile = Exclude<GapProfileName, 'gap-swarm-only'>;
 
-/** Recorded numbers: missile samples on the drone tick timeline (S5-2), the
- *  drone delay stepped each frame as production. Sizes in world units,
- *  lateness in ms of simulated time; values rounded to 0.01. Before S5-2
- *  (arrival stamps): lan-clean lateness 116.67; gap-400 / gap-json-only snap
- *  37.5; gap-600 / burst snap 127.5; frame-stall-250 lateness 150; jitter-4g
- *  21 snaps (375 u), 12 freeze frames, 9 backward steps. */
+/** Recorded numbers: missile samples on the drone tick timeline (S5-2), read
+ *  at the shared drone display delay (S5-4), the drone delay stepped each
+ *  frame as production. Sizes in world units, lateness in ms of simulated
+ *  time; values rounded to 0.01. Before S5-2 (arrival stamps): lan-clean
+ *  lateness 116.67; gap-400 / gap-json-only snap 37.5; gap-600 / burst snap
+ *  127.5; frame-stall-250 lateness 150; jitter-4g 21 snaps (375 u), 12 freeze
+ *  frames, 9 backward steps. Before S5-4 (fixed 100 ms missile delay):
+ *  gap-200 lateness 140.1; gap-400 snap 41.95 (lateness 141.81); gap-600 /
+ *  burst snap 131.95 (lateness 155.17); jitter-4g 7 snaps, largest 6.94,
+ *  total 34.64, 0 backward steps, lateness 148.19 (max 165.41). jitter-4g's
+ *  one backward step (0.69 u, at 1016 ms) is the curve interpolation running
+ *  a's arc for the stamp span (66.5 ms) when the two ticks are 50 ms apart,
+ *  then the extrapolation from b starting behind it; the larger delay moved
+ *  the read point onto that pair. */
 const TODAY: Readonly<Record<MissileProfile, Recorded>> = {
   'lan-clean': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 102.15, maxLatenessMs: 102.15, droneMeanLatenessMs: 102 },
-  'gap-200': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 140.1, maxLatenessMs: 140.1, droneMeanLatenessMs: 192.31 },
-  'gap-400': { snaps: 1, largestSnapU: 41.95, totalSnapU: 41.95, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 141.81, maxLatenessMs: 233.33, droneMeanLatenessMs: 209.59 },
-  'gap-600': { snaps: 1, largestSnapU: 131.95, totalSnapU: 131.95, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 155.17, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
-  'burst-600-both-streams': { snaps: 1, largestSnapU: 131.95, totalSnapU: 131.95, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 155.17, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
+  'gap-200': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 192.01, maxLatenessMs: 307.77, droneMeanLatenessMs: 192.31 },
+  'gap-400': { snaps: 1, largestSnapU: 14.2, totalSnapU: 14.2, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 210.57, maxLatenessMs: 316.85, droneMeanLatenessMs: 209.59 },
+  'gap-600': { snaps: 1, largestSnapU: 15.7, totalSnapU: 15.7, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 248.44, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
+  'burst-600-both-streams': { snaps: 1, largestSnapU: 15.7, totalSnapU: 15.7, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 248.44, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
   'gap-json-only': { snaps: 1, largestSnapU: 41.95, totalSnapU: 41.95, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 141.81, maxLatenessMs: 233.33, droneMeanLatenessMs: 140 },
   'frame-stall-250': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 140.1, maxLatenessMs: 140.1, droneMeanLatenessMs: 140 },
-  'jitter-4g': { snaps: 7, largestSnapU: 6.94, totalSnapU: 34.64, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 148.19, maxLatenessMs: 165.41, droneMeanLatenessMs: 294.08 },
+  'jitter-4g': { snaps: 7, largestSnapU: 6.85, totalSnapU: 32.23, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 292.26, maxLatenessMs: 342.02, droneMeanLatenessMs: 294.08 },
 };
 
 const PROFILES = Object.keys(TODAY) as MissileProfile[];
+
+/** Profiles where the missile still drifts from the drone during a 600 ms
+ *  stall of both streams: the missile's newest sample is up to two ticks older
+ *  than the drone's (the JSON stream carries every third tick), so it hits its
+ *  250 ms extrapolation cap and freezes first, while the drone's read point is
+ *  held (S4-5). Outside the stall the two agree within 0.1 ms; the missile
+ *  hold (S5-5) closes this. Missile − drone mean lateness: +3.10 ms each. */
+const STALL_HOLD_PROFILES: ReadonlySet<MissileProfile> = new Set<MissileProfile>(['gap-600', 'burst-600-both-streams']);
+
+function latenessGapMs(name: MissileProfile): number {
+  const r = result(name);
+  return Math.abs(r.missile.meanLatenessMs - r.drone.meanLatenessMs);
+}
 
 describe('gap smoothing: missile fixtures (today, plan 5.4)', () => {
   it('the scripted missile chases the drone without reaching it', () => {
@@ -310,16 +333,21 @@ describe('gap smoothing: missile fixtures (today, plan 5.4)', () => {
     expect(recorded(result(name))).toEqual(TODAY[name]);
   });
 
-  // Missiles share the drone tick timeline (S5-2) but still read their own
-  // fixed 100 game-ms delay, while the drone delay follows its lateness
-  // estimate (S5-4 switches missiles to the shared delay). Per profile
-  // (missile − drone mean lateness, ms): lan-clean +0.15, gap-200 −52.21,
-  // gap-400 −67.78, gap-600 −90.16, burst-600-both-streams −90.16,
-  // gap-json-only +1.81, frame-stall-250 +0.10, jitter-4g −145.89.
-  it.fails('missile and target drone drawn at the same lateness', () => {
+  // Missiles read the shared drone display delay (S5-4). Before it, missile −
+  // drone mean lateness (ms): lan-clean +0.15, gap-200 −52.21, gap-400
+  // −67.78, gap-600 −90.16, burst-600-both-streams −90.16, gap-json-only
+  // +1.81, frame-stall-250 +0.10, jitter-4g −145.89. Now: +0.15, −0.30,
+  // +0.98, +3.10, +3.10, +1.81, +0.10, −1.82.
+  it('missile and target drone drawn at the same lateness', () => {
     for (const name of PROFILES) {
-      const r = result(name);
-      expect(Math.abs(r.missile.meanLatenessMs - r.drone.meanLatenessMs)).toBeLessThanOrEqual(SAME_LATENESS_TOLERANCE_MS);
+      if (STALL_HOLD_PROFILES.has(name)) continue;
+      expect(latenessGapMs(name)).toBeLessThanOrEqual(SAME_LATENESS_TOLERANCE_MS);
+    }
+  });
+
+  it.fails('missile and target drone drawn at the same lateness through a 600 ms stall of both streams (S5-5)', () => {
+    for (const name of STALL_HOLD_PROFILES) {
+      expect(latenessGapMs(name)).toBeLessThanOrEqual(SAME_LATENESS_TOLERANCE_MS);
     }
   });
 });

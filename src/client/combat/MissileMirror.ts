@@ -17,7 +17,7 @@
  * homing curve between snapshots and snapped on each arrival — the
  * "missiles lag, like they only update 20 Hz" report. We now buffer recent
  * authoritative poses in a per-missile ring and INTERPOLATE between the two
- * that bracket `now − MISSILE_DISPLAY_DELAY_MS`, exactly like drones
+ * that bracket `now − display delay` (the shared drone delay, S5-4), exactly like drones
  * (`swarmInterpolation.ts`). The visible motion is a continuous lerp of
  * buffered truth, immune to wire-arrival jitter ≤ the display delay. Past
  * the newest sample (arrivals stalled) we dead-reckon forward, capped, then
@@ -35,16 +35,42 @@ import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessag
 // Shared teleport bound (one definition for every client interpolator).
 import { isImplausibleJump } from '../net/plausibleSpeed.js';
 // Read-only tick → stamp conversion on the drone display timeline (S5-2).
-import { swarmTickToStampMs } from '../net/swarmInterpolation.js';
+import {
+  getSwarmDisplayDelayMs,
+  getSwarmStreamNewestStampMs,
+  swarmTickToStampMs,
+} from '../net/swarmInterpolation.js';
 
 /**
- * Display-delay lag in milliseconds. The renderer reads missile poses
- * `MISSILE_DISPLAY_DELAY_MS` behind the latest arrival so it interpolates
- * between two arrived snapshots rather than extrapolating past the latest.
- * 100 ms = 2× the 50 ms (20 Hz) snapshot cadence — covers jitter without
- * making missiles feel sluggish (the drone display-delay floor value).
+ * FALLBACK display delay (GAME ms; wall = 100 / time scale), used only before
+ * the drone tick clock seeds (no drone packet yet). Once it seeds, missiles
+ * read at the shared drone delay (`mirror.swarmDisplayDelayMs`, S5-4) so a
+ * missile and the drone it chases are drawn at the same lateness.
+ * 100 ms = 2× the 50 ms (20 Hz) snapshot cadence (the drone delay floor).
  */
 export const MISSILE_DISPLAY_DELAY_MS = 100;
+
+/**
+ * Publish the drone display delay onto the mirror (netcode gap smoothing
+ * S5-4). Call once per frame right after `stepSwarmDisplayDelay`, before the
+ * renderer resolves missiles: the renderer may run in a worker, where the
+ * drone delay's module state does not exist, so the value rides the mirror.
+ * WALL ms (the drone convention: floor and ceiling already ÷ speed). NaN until
+ * the first tick-stamped drone packet after a reset (no drone timeline yet),
+ * which makes `resolveMissileDisplayPose` fall back to
+ * `MISSILE_DISPLAY_DELAY_MS`. Scalars only.
+ */
+export function publishSwarmDisplayDelay(mirror: RenderMirror): void {
+  mirror.swarmDisplayDelayMs = Number.isNaN(getSwarmStreamNewestStampMs()) ? Number.NaN : getSwarmDisplayDelayMs();
+}
+
+/** The delay (wall ms) missiles read at this frame: the published drone
+ *  delay, or the fixed fallback ÷ time scale while it is NaN / absent. */
+function missileDisplayDelayWallMs(mirror: RenderMirror): number {
+  const shared = mirror.swarmDisplayDelayMs;
+  if (shared !== undefined && shared > 0 && Number.isFinite(shared)) return shared;
+  return MISSILE_DISPLAY_DELAY_MS / (mirror.timeScale ?? 1);
+}
 
 /**
  * Maximum dead-reckoning window past the newest ring sample before freezing.
@@ -244,7 +270,7 @@ function curveDeadReckon(
 
 /**
  * Resolve a missile's display pose at `nowMs` by interpolating buffered
- * authoritative poses at `nowMs − MISSILE_DISPLAY_DELAY_MS`. Returns null when
+ * authoritative poses at `nowMs − display delay` (the shared drone delay, S5-4). Returns null when
  * the missile doesn't exist (caller skips drawing).
  */
 export function resolveMissileDisplayPose(
@@ -274,9 +300,10 @@ export function resolveMissileDisplayPose(
     return { x: m.x, y: m.y, angle: m.angle, lifePct: m.lifePct };
   }
 
-  // Game time scale: the delay is GAME ms (the ring depth is sized in
-  // snapshots, which arrive 1/speed as far apart in wall time).
-  const delayMs = MISSILE_DISPLAY_DELAY_MS / (mirror.timeScale ?? 1);
+  // The shared drone delay (S5-4), already WALL ms; before the drone clock
+  // seeds, the fixed GAME-ms fallback ÷ time scale (snapshots arrive 1/speed
+  // as far apart in wall time).
+  const delayMs = missileDisplayDelayWallMs(mirror);
   const targetMs = nowMs - delayMs;
   const newest = _populated[count - 1]!;
   const oldest = _populated[0]!;

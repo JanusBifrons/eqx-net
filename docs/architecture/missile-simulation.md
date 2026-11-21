@@ -319,10 +319,36 @@ ring is re-stamped from each sample's own `serverTick`, in place, so ring
 order never runs backwards. `latestArrivalMs` stays the real arrival time
 (slice-driven despawn). The teleport guard scales the wall-ms stamp span by
 `mirror.timeScale` before `isImplausibleJump`, whose bound is a game-time
-speed. The display delay is still missile-owned
-(`MISSILE_DISPLAY_DELAY_MS`); sharing the drone delay is S5-4. Locks:
-`MissileMirror.test.ts` (backlog spacing, NaN fallback, re-stamp, teleport
-span at 2× and 0.7×) and `tests/scenarios/gapSmoothing.missiles.test.ts`.
+speed. Locks: `MissileMirror.test.ts` (backlog spacing, NaN fallback,
+re-stamp, teleport span at 2× and 0.7×) and
+`tests/scenarios/gapSmoothing.missiles.test.ts`.
+
+## Display delay — the shared drone delay (netcode gap smoothing S5-4)
+
+Missiles read at the drone display delay, so a missile and the drone it
+chases are drawn at the same lateness. With a fixed 100 game-ms missile delay
+against the adaptive drone delay, missile minus drone mean lateness was
+−52 ms at gap-200, −90 ms at gap-600 and −146 ms on jitter-4g; now it is
+within 2 ms on every missile fixture except the two 600 ms stalls of both
+streams (+3.1 ms, see below). Missiles are resolved in the renderer, which
+on desktop is a worker without the drone delay's module state, so the value
+rides the mirror: `updateSwarmMirror` (`mirror/worldPasses.ts`) calls
+`publishSwarmDisplayDelay(mirror)` once per frame right after
+`stepSwarmDisplayDelay`, writing `getSwarmDisplayDelayMs()` into
+`mirror.swarmDisplayDelayMs`. The value is already WALL ms (the drone floor
+and ceiling are divided by the speed), so `resolveMissileDisplayPose` uses it
+as is, never ÷ `timeScale` again. It includes the S4-5 stall hold and the
+slew, so missiles follow both. Before the first tick-stamped drone packet
+after a reset (`getSwarmStreamNewestStampMs()` is NaN: a sector with no
+drones) it publishes NaN and missiles fall back to
+`MISSILE_DISPLAY_DELAY_MS / timeScale`, the same moment their samples fall
+back to arrival stamps. Through a 600 ms stall of both streams the missile
+still freezes a little before the drone: its newest sample is up to two
+ticks older (the JSON stream carries every third tick), so it reaches its
+250 ms extrapolation cap first while the drone's read point is held; the
+missile hold (S5-5) closes that. Locks: `MissileMirror.test.ts` (follows a
+changed delay, unseeded fallback, wall ms at 2× and 0.7×) and the "same
+lateness" test in `gapSmoothing.missiles.test.ts`.
 
 ## Curve-aware interpolation — `angvel` on the wire (WS-C #5, 2026-06-20)
 

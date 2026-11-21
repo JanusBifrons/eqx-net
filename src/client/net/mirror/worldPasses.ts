@@ -7,6 +7,7 @@ import { getShipKind } from '@shared-types/shipKinds';
 import { stepRemoteShipOffset } from '../remoteLerpOffsets.js';
 import { liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../../combat/LocalBeam.js';
 import { updateRemoteBeamDists } from '../../combat/remoteBeamRay.js';
+import { publishSwarmDisplayDelay } from '../../combat/MissileMirror.js';
 import type { MirrorPassCtx } from './mirrorPassCtx.js';
 
 /** One server tick in ms (shells as events: the display-tick estimate). */
@@ -111,6 +112,9 @@ export function updateSwarmMirror(ctx: MirrorPassCtx): void {
   // clock it also holds the read point through a whole-stream stall (S4-5).
   const nowMs = ctx.clock.now();
   stepSwarmDisplayDelay(ctx.lastFrameMs, nowMs);
+  // Missiles read this same delay (S5-4); the renderer may be a worker, so
+  // it rides the mirror.
+  publishSwarmDisplayDelay(ctx.mirror);
   if (ctx.predWorld && ctx.mirror.swarm) {
     for (const entry of ctx.mirror.swarm.values()) {
       if (!isRemoteMovingSwarmKind(entry.kind)) continue;
