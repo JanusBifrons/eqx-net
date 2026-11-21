@@ -7,15 +7,17 @@
  * only for a stalled build.
  */
 import type { StructureRecord } from './StructureRegistry.js';
+import { BUILD_STALL_NOT_CONNECTED, type BuildStallReason } from '../../shared-types/structureStateWire.js';
 
-/** Minerals still owed when the build is paused ONLY because every Capital
- *  that routes to it is empty; null when it is not a minerals stall (built,
- *  prepaid, fully paid, still funded, or no Capital routes to it at all). */
-export function buildMineralsShortfall(
+/** Why a paying build is paused: the minerals still owed when every Capital
+ *  that routes to it is empty, or `BUILD_STALL_NOT_CONNECTED` when no Capital
+ *  routes to it at all; null when it is not paused for either (built, prepaid,
+ *  fully paid, or still funded). */
+export function buildStallReason(
   rec: StructureRecord,
   all: Iterable<StructureRecord>,
   route: (fromId: string, toId: string) => readonly string[] | null,
-): number | null {
+): BuildStallReason | null {
   if (rec.isConstructed || rec.isDeconstructing || rec.constructionCost <= 0) return null;
   if (rec.prepaid === true && rec.upgradeTargetLevel === undefined) return null;
   const remaining = rec.constructionCost - rec.constructionProgress;
@@ -28,5 +30,5 @@ export function buildMineralsShortfall(
     if (cap.minerals > 0) return null; // still funded
     dryRoute = true;
   }
-  return dryRoute ? Math.ceil(remaining) : null;
+  return dryRoute ? Math.ceil(remaining) : BUILD_STALL_NOT_CONNECTED;
 }

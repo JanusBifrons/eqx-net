@@ -4,7 +4,7 @@
  * place.
  */
 import { describe, expect, it } from 'vitest';
-import { STRUCTURE_FLAG_BUILT, STRUCTURE_FLAG_LOCK_HOLDING, encodeBuildEta, encodeConnSock, type StructureStateView } from '../../shared-types/structureStateWire.js';
+import { BUILD_STALL_NOT_CONNECTED, STRUCTURE_FLAG_BUILT, STRUCTURE_FLAG_LOCK_HOLDING, encodeBuildEta, encodeConnSock, type StructureStateView } from '../../shared-types/structureStateWire.js';
 import { encodeProdBay } from '../../shared-types/production.js';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 
@@ -79,9 +79,27 @@ describe('decodeStructureState: build stall reason', () => {
     decodeStructureState({ connTo: list([]), buildPct: 0.92, etaMs: encodeBuildEta(null, 420) }, OWNERS, out);
     expect(out.etaMs).toBeNull();
     expect(out.buildMineralsShort).toBe(420);
+    expect(out.buildNotConnected).toBeUndefined();
   });
 
-  it('a stall with no route, a running build and a built row carry no minerals reason', () => {
+  it('a stall with no Capital route says not connected, and is not a minerals stall', () => {
+    const out = emptyStructureRow();
+    decodeStructureState({ connTo: list([]), buildPct: 0.4, etaMs: encodeBuildEta(null, BUILD_STALL_NOT_CONNECTED) }, OWNERS, out);
+    expect(out.etaMs).toBeNull();
+    expect(out.buildNotConnected).toBe(true);
+    expect(out.buildMineralsShort).toBeUndefined();
+  });
+
+  it('every minerals amount, from 1 up, round-trips and never reads as not connected', () => {
+    const out = emptyStructureRow();
+    for (const n of [1, 2, 3, 420, 1_000_000]) {
+      decodeStructureState({ connTo: list([]), etaMs: encodeBuildEta(null, n) }, OWNERS, out);
+      expect(out.buildMineralsShort).toBe(n);
+      expect(out.buildNotConnected).toBeUndefined();
+    }
+  });
+
+  it('a generic stall, a running build and a built row carry no reason', () => {
     const out = emptyStructureRow();
     decodeStructureState({ connTo: list([]), etaMs: encodeBuildEta(null, 420) }, OWNERS, out);
     const cases: Array<[number | undefined, number | null | undefined]> = [
@@ -91,6 +109,7 @@ describe('decodeStructureState: build stall reason', () => {
       decodeStructureState({ connTo: list([]), ...(etaMs !== undefined ? { etaMs } : {}) }, OWNERS, out);
       expect(out.etaMs).toBe(want);
       expect(out.buildMineralsShort).toBeUndefined();
+      expect(out.buildNotConnected).toBeUndefined();
     }
   });
 });

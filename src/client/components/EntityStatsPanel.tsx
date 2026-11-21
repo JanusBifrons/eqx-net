@@ -37,7 +37,7 @@ import { ACTION_BTN_SX, ICON_SX, StructureManageActions } from './StructureManag
 import { canManageBuildings } from '../structures/buildingManagement';
 // Moved with the management buttons; re-exported so existing importers keep working.
 import { droneName, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
-import { BUILD_AWAITING_CLEAR_LINE, buildNeedsMineralsLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
+import { BUILD_AWAITING_CLEAR_LINE, buildStalledLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
 
 /**
  * Click-to-inspect live stats panel (structures follow-up Item B6).
@@ -78,8 +78,8 @@ interface PanelData {
   buildPct?: number; // [0..1]; < 1 ⇒ under construction
   /** Build done but still a blueprint: a ship inside its footprint (`buildAwaitingClear.ts`). */
   buildBlocked?: boolean;
-  /** Build paused on a dry bank: the minerals it still owes. */
-  buildMineralsShort?: number;
+  /** Why a paused build is paused (`buildStalledLine`): dry bank or not connected. */
+  buildStalled?: string;
   powered?: boolean;
   /** Component (whole-grid) net power — kept on the `data-net-power` attr.
    *  NOT the visible PWR line (that's `selfPower`, per Phase-4 C5). */
@@ -261,9 +261,9 @@ export function EntityStatsPanel(): JSX.Element | null {
         // blueprintBody.ts) — without this the bar just vanished, unexplained.
         <Box sx={POWER_SX} data-testid="entity-stats-build-blocked">{BUILD_AWAITING_CLEAR_LINE}</Box>
       )}
-      {building && data.buildMineralsShort !== undefined && (
-        // The owner's bank ran dry mid-build: say why the bar stopped.
-        <Box sx={POWER_SX} data-testid="entity-stats-build-stalled">{buildNeedsMineralsLine(data.buildMineralsShort)}</Box>
+      {building && data.buildStalled !== undefined && (
+        // The bank ran dry or no Capital routes to it: say why the bar stopped.
+        <Box sx={POWER_SX} data-testid="entity-stats-build-stalled">{data.buildStalled}</Box>
       )}
       {hasCharge && (
         <>
@@ -429,7 +429,7 @@ export function EntityStatsPanel(): JSX.Element | null {
 // equality check. Listed explicitly (not Object.keys) so a future non-primitive
 // field forces a deliberate decision here instead of silently mis-comparing.
 const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
-  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'buildMineralsShort', 'powered',
+  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'buildStalled', 'powered',
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
@@ -480,7 +480,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     if (st) {
       data.buildPct = st.buildPct;
       if (isBuildAwaitingClear(st)) data.buildBlocked = true;
-      if (st.buildMineralsShort !== undefined) data.buildMineralsShort = st.buildMineralsShort;
+      const stalled = buildStalledLine(st);
+      if (stalled !== undefined) data.buildStalled = stalled;
       data.powered = st.powered;
       data.netPower = st.netPower;
       data.storedPower = st.storedPower;
