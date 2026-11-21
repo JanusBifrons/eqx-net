@@ -92,8 +92,8 @@ Constant + shape changes:
 | `lerpFramesForDrift` cascade (ColyseusClient remote-ship) | `src/client/net/ColyseusClient.ts` | 6 / 10 / 14 frames | 6 frames (uniform) |
 | `Reconciler.advanceLerp` ratio | `src/core/prediction/Reconciler.ts` | linear `framesLeft / total` | ease-out quadratic `(framesLeft / total)²` |
 | `ColyseusClient` remote-ship offset ratio | `src/client/net/ColyseusClient.ts` | linear | ease-out quadratic |
-| `DISPLAY_DELAY_MS` | `src/client/net/swarmInterpolation.ts` | 100 ms | 50 ms |
-| `ADAPTIVE_DELAY_CEILING_MS` | `src/client/net/swarmInterpolation.ts` | 350 ms | 200 ms |
+| `DISPLAY_DELAY_MS` | `src/client/net/swarmDelaySizing.ts` | 100 ms | 50 ms |
+| `ADAPTIVE_DELAY_CEILING_MS` | `src/client/net/swarmDelaySizing.ts` | 350 ms | 200 ms |
 
 Tier-2 acceptance: `tests/e2e/feel-tuning.spec.ts` — 73 corrections observed during a 3 s thrust into the legacy `sector` drone ring, max queued lerp = **6 frames** (cap 6), max drift in window = 80 u.
 

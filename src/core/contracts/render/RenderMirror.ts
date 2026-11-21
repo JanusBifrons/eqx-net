@@ -16,6 +16,12 @@ export interface RenderMirror {
    *  Absent = 1×. Renderers read it for the display-delay window and the
    *  presentation frame dt, so every effect follows the speed on its own. */
   timeScale?: number;
+  /** The drone display delay (WALL ms) for this frame, published once per
+   *  frame right after it steps (`publishSwarmDisplayDelay`), so missiles
+   *  resolved in the renderer (worker or main thread) read at the same
+   *  lateness as drones. NaN / absent before the drone tick clock seeds:
+   *  missiles then use their own fixed delay. */
+  swarmDisplayDelayMs?: number;
   /** Phase 4 travel state: a sector-to-sector trip is under way (the backdrop
    *  fades to deep space; the local ship flies on). Absent = no trip. */
   travelling?: boolean;

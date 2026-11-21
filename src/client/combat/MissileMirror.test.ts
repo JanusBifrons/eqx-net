@@ -11,11 +11,14 @@
  *   - Jittered arrival times → smooth, monotonic resolved motion (the fix)
  *   - Ring-depth structural invariant
  *   - Stale-eviction + removeMissile + null-for-unknown
+ *   - The shared drone display delay (S5-4): followed when it changes,
+ *     fixed fallback before the drone clock seeds, wall ms at 2× and 0.7×
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   applyMissileSnapshot,
+  publishSwarmDisplayDelay,
   removeMissile,
   resolveMissileDisplayPose,
   MISSILE_DISPLAY_DELAY_MS,
@@ -23,6 +26,15 @@ import {
 } from './MissileMirror';
 import { MISSILE_POSE_RING_DEPTH, type RenderMirror } from '../../core/contracts/IRenderer';
 import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessages';
+import {
+  getSwarmDisplayDelayMs,
+  noteSwarmStreamStamp,
+  resetSwarmTickClock,
+  setSwarmDisplayDelayMs,
+  setSwarmDisplaySpeed,
+  stepSwarmDisplayDelay,
+  swarmArrivalStampMs,
+} from '../net/swarmInterpolation.js';
 
 function makeMirror(): RenderMirror {
   return { ships: new Map(), localPlayerId: null };
@@ -76,6 +88,22 @@ describe('MissileMirror.applyMissileSnapshot', () => {
     const pose = resolveMissileDisplayPose(mirror, 1, 1050 + MISSILE_DISPLAY_DELAY_MS);
     expect(pose).not.toBeNull();
     expect(pose!.x).toBeCloseTo(100, 5);
+  });
+
+  it('teleport bound: just over the shared bound snaps, just under interpolates', () => {
+    // span 100 ms → bound = max(TELEPORT_FLOOR_U, 2500 u/s × 0.1 s) = 250 u.
+    const over = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), over, 1, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 251, y: 0 }]), over, 2, 1100);
+    const snapped = resolveMissileDisplayPose(over, 1, 1050 + MISSILE_DISPLAY_DELAY_MS);
+    expect(snapped!.x).toBe(251);
+
+    const under = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), under, 1, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 249, y: 0 }]), under, 2, 1100);
+    const lerped = resolveMissileDisplayPose(under, 1, 1050 + MISSILE_DISPLAY_DELAY_MS);
+    expect(lerped!.x).toBeGreaterThan(0);
+    expect(lerped!.x).toBeLessThan(249);
   });
 
   it('past the newest sample with velocity: dead-reckons forward, capped', () => {
@@ -318,5 +346,182 @@ describe('MissileMirror — single-sample reconstruction (campaign 5.1b)', () =>
   it('resolveMissileDisplayPose returns null for unknown ids', () => {
     const mirror = makeMirror();
     expect(resolveMissileDisplayPose(mirror, 999, 1000)).toBeNull();
+  });
+});
+
+/** Ring samples of one missile, oldest tick first. */
+function ringByTick(mirror: RenderMirror, id: number): Array<{ serverTick: number; arrivalMs: number }> {
+  return mirror.missiles!.get(id)!.poseRing
+    .filter((e) => !e.empty)
+    .map((e) => ({ serverTick: e.serverTick, arrivalMs: e.arrivalMs }))
+    .sort((a, b) => a.serverTick - b.serverTick);
+}
+
+describe('MissileMirror — samples stamped on the drone tick timeline (S5-2)', () => {
+  beforeEach(() => {
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+  });
+  afterEach(() => {
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+  });
+
+  it('a backlog drained in one frame keeps its server spacing (failed pre-fix: equal arrival stamps)', () => {
+    // Drone packet for tick 100 at 1000 ms seeds the clock; one frame step.
+    swarmArrivalStampMs(100, 1000);
+    stepSwarmDisplayDelay(0, 1000);
+    // A frame stall: missile ticks 103 and 106 are both handled at 1200 ms.
+    const mirror = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), mirror, 103, 1200);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 30, y: 0 }]), mirror, 106, 1200);
+    const ring = ringByTick(mirror, 1);
+    expect(ring[0]!.arrivalMs).toBeCloseTo(1050, 6);
+    expect(ring[1]!.arrivalMs).toBeCloseTo(1100, 6);
+    // Despawn still runs on the real arrival time.
+    expect(mirror.missiles!.get(1)!.latestArrivalMs).toBe(1200);
+    // Midway in server time → midway in position.
+    const pose = resolveMissileDisplayPose(mirror, 1, 1075 + MISSILE_DISPLAY_DELAY_MS);
+    expect(pose!.x).toBeCloseTo(15, 6);
+  });
+
+  it('NaN fallback: no drone packet yet → arrival stamps, playback continuous', () => {
+    const mirror = makeMirror();
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0, vx: 600 }]), mirror, 100, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 30, y: 0, vx: 600 }]), mirror, 103, 1050);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 60, y: 0, vx: 600 }]), mirror, 106, 1100);
+    expect(ringByTick(mirror, 1).map((e) => e.arrivalMs)).toEqual([1000, 1050, 1100]);
+    // Every frame moves forward by speed × frame time: no snap, no freeze.
+    let prevX = resolveMissileDisplayPose(mirror, 1, 1100)!.x;
+    for (let now = 1110; now <= 1200; now += 10) {
+      const x = resolveMissileDisplayPose(mirror, 1, now)!.x;
+      expect(x - prevX).toBeCloseTo(6, 6);
+      prevX = x;
+    }
+  });
+
+  it('when the drone clock seeds mid-flight, the ring is re-stamped onto one basis (never runs backwards)', () => {
+    const mirror = makeMirror();
+    // Arrival-stamped while unseeded.
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), mirror, 100, 1000);
+    // A drone packet puts tick 110 at 1010 ms: tick 103 maps to ~893 ms,
+    // before the tick-100 arrival stamp.
+    swarmArrivalStampMs(110, 1010);
+    stepSwarmDisplayDelay(0, 1010);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 30, y: 0 }]), mirror, 103, 1020);
+    const ring = ringByTick(mirror, 1);
+    // Tick spacing, give or take the read-only drift-up term (1 % of lateness).
+    expect(Math.abs(ring[1]!.arrivalMs - ring[0]!.arrivalMs - 50)).toBeLessThan(1);
+    expect(ring[1]!.arrivalMs).toBeLessThanOrEqual(1020);
+  });
+});
+
+describe('MissileMirror — teleport span is game ms', () => {
+  // Two samples 100 wall ms apart. At game speed s that is 100·s game ms, so
+  // the bound is max(64, 2500 u/s × 0.1 s × s): 500 u at 2×, 175 u at 0.7×.
+  function resolveAtSpeed(timeScale: number, gapU: number): number {
+    const mirror = makeMirror();
+    mirror.timeScale = timeScale;
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), mirror, 1, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: gapU, y: 0 }]), mirror, 2, 1100);
+    return resolveMissileDisplayPose(mirror, 1, 1050 + MISSILE_DISPLAY_DELAY_MS / timeScale)!.x;
+  }
+
+  it('2×: a 400 u step in 100 wall ms is real motion (interpolates; failed pre-fix: snapped)', () => {
+    expect(resolveAtSpeed(2, 400)).toBeCloseTo(200, 6);
+    expect(resolveAtSpeed(2, 501)).toBe(501);
+  });
+
+  it('0.7×: a 200 u step in 100 wall ms is a teleport (snaps; failed pre-fix: interpolated)', () => {
+    expect(resolveAtSpeed(0.7, 200)).toBe(200);
+    expect(resolveAtSpeed(0.7, 170)).toBeCloseTo(85, 6);
+  });
+});
+
+describe('MissileMirror — reads the shared drone display delay (S5-4)', () => {
+  const SEED_TICK = 100;
+  const SEED_MS = 1000;
+  /** Game-time speed of the scripted missile: 10 u per server tick at any speed. */
+  const U_PER_TICK = 10;
+  const TICK_GAME_MS = 1000 / 60;
+
+  beforeEach(() => {
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+  });
+  afterEach(() => {
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+  });
+
+  /** Seed the drone tick clock (tick 100 at 1000 ms) with the delay pinned to
+   *  `delayWallMs`, then feed a straight-flying missile every third tick up to
+   *  `nowMs`, each handled on time (never a sample from the future). Returns the mirror. */
+  function flyMissile(speed: number, delayWallMs: number, nowMs: number): RenderMirror {
+    setSwarmDisplaySpeed(speed);
+    setSwarmDisplayDelayMs(delayWallMs);
+    // As the decoder does for a tick-stamped drone packet.
+    noteSwarmStreamStamp(SEED_TICK, swarmArrivalStampMs(SEED_TICK, SEED_MS));
+    stepSwarmDisplayDelay(0, SEED_MS);
+    const mirror = makeMirror();
+    mirror.timeScale = speed === 1 ? undefined : speed;
+    const tickWallMs = TICK_GAME_MS / speed;
+    const vx = (U_PER_TICK / TICK_GAME_MS) * 1000;
+    for (let tick = SEED_TICK; SEED_MS + (tick - SEED_TICK) * tickWallMs <= nowMs; tick += 3) {
+      const atMs = SEED_MS + (tick - SEED_TICK) * tickWallMs;
+      applyMissileSnapshot(makeSlice([{ id: 1, x: (tick - SEED_TICK) * U_PER_TICK, y: 0, vx }]), mirror, tick, atMs);
+    }
+    publishSwarmDisplayDelay(mirror);
+    return mirror;
+  }
+
+  /** Where the missile truly was at wall time `tMs` (stamp timeline). */
+  function trueX(speed: number, tMs: number): number {
+    return ((tMs - SEED_MS) * speed / TICK_GAME_MS) * U_PER_TICK;
+  }
+
+  it('reads at now − the shared delay, and follows it when it changes (failed pre-fix: fixed 100 ms)', () => {
+    const mirror = flyMissile(1, 200, SEED_MS + 450);
+    expect(mirror.swarmDisplayDelayMs).toBe(200);
+    const now = SEED_MS + 450;
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(1, now - 200), 6);
+
+    // The drone delay glides to 150; the next publish carries it.
+    setSwarmDisplayDelayMs(150);
+    for (let i = 0; i < 60 && getSwarmDisplayDelayMs() !== 150; i++) stepSwarmDisplayDelay(1000);
+    expect(getSwarmDisplayDelayMs()).toBe(150);
+    publishSwarmDisplayDelay(mirror);
+    expect(mirror.swarmDisplayDelayMs).toBe(150);
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(1, now - 150), 6);
+  });
+
+  it('before the drone clock seeds: publishes NaN and the missile keeps its fixed delay', () => {
+    const mirror = makeMirror();
+    publishSwarmDisplayDelay(mirror);
+    expect(Number.isNaN(mirror.swarmDisplayDelayMs)).toBe(true);
+    // No drone packet: samples keep arrival stamps (S5-2 fallback).
+    for (let i = 0; i <= 10; i++) {
+      applyMissileSnapshot(makeSlice([{ id: 1, x: i * 30, y: 0, vx: 600 }]), mirror, 100 + i * 3, 1000 + i * 50);
+    }
+    const now = 1400;
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo((now - MISSILE_DISPLAY_DELAY_MS - 1000) * 0.6, 6);
+    // Same with the field absent (a mirror nothing published to), at 2×.
+    mirror.swarmDisplayDelayMs = undefined;
+    mirror.timeScale = 2;
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo((now - MISSILE_DISPLAY_DELAY_MS / 2 - 1000) * 0.6, 6);
+  });
+
+  it('2×: the shared delay is already wall ms (not divided again by the speed)', () => {
+    const mirror = flyMissile(2, 80, SEED_MS + 200); // floor 50, ceiling 140 wall ms at 2×
+    expect(mirror.swarmDisplayDelayMs).toBe(80);
+    const now = SEED_MS + 200;
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(2, now - 80), 6);
+  });
+
+  it('0.7×: the shared delay is already wall ms (not divided again by the speed)', () => {
+    const mirror = flyMissile(0.7, 250, SEED_MS + 650); // floor ~142.9, ceiling 400 wall ms at 0.7×
+    expect(mirror.swarmDisplayDelayMs).toBe(250);
+    const now = SEED_MS + 650;
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(0.7, now - 250), 6);
   });
 });
