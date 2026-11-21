@@ -1,5 +1,6 @@
 /**
  * Capture plan 4E (S2) — a base that loses its last Capital becomes ownerless.
+ * Player and NPC bases alike (S5).
  *
  * When a built Capital leaves the world (destroyed, packed, taken down: every
  * path ends in `StructureRegistry.remove`), each grid piece it held together
@@ -20,7 +21,7 @@
  * from the grid's topology rebuild (`captureOwnerlessGrids`), the one place
  * every link, build and removal passes through.
  */
-import { isNpcOwner, isUnownedOwner, parseOwner, unownedOwner } from '../../shared-types/relations.js';
+import { isUnownedOwner, parseOwner, unownedOwner } from '../../shared-types/relations.js';
 import type { StructureRecord } from './StructureRegistry.js';
 
 /** What the flip reads from the registry (narrow, avoids an import cycle). */
@@ -34,15 +35,20 @@ function operational(rec: StructureRecord): boolean {
   return rec.isConstructed || (rec.kind === 'capital' && rec.upgradeTargetLevel !== undefined);
 }
 
+/** A Capital that holds its base together (built, or mid-upgrade). */
+export function isBuiltCapital(rec: StructureRecord): boolean {
+  return rec.kind === 'capital' && operational(rec);
+}
+
 /**
  * Call BEFORE `capital` is disconnected and removed. No-op unless it is a
- * built Capital of a player base.
+ * built Capital. Player and NPC bases alike (S5): a fallen NPC base's pieces
+ * stop being `npc:`-owned, so its faction lets go of it for free (no trade
+ * anchor, no faction count, no standing); its garrison patrol stands down
+ * (`PatrolSubsystem.watchBaseFalls`).
  */
 export function orphanBaseOnCapitalLoss(registry: OwnerlessBaseRegistry, capital: StructureRecord): void {
-  if (capital.kind !== 'capital' || !operational(capital)) return;
-  // TODO(capture 4E S5): NPC bases go through this same flip once their
-  // FactionLedger / trade anchor / patrol hooks drop the fallen base.
-  if (isNpcOwner(capital.owner)) return;
+  if (!isBuiltCapital(capital)) return;
   const owner = unownedOwner(capital.id);
   const seen = new Set<string>([capital.id]);
   for (const c of registry.connectionsOf(capital.id)) {

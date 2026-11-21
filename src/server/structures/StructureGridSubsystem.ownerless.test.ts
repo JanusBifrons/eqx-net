@@ -86,11 +86,12 @@ describe('a base that loses its last Capital (capture plan 4E)', () => {
     expect(b.grid.powerSummaryFor(b.turret).powered).toBe(true);
   });
 
-  it('an NPC base is left alone (S5 handles NPC bases)', () => {
-    const npc = 'npc:traders:sol-3';
-    const b = poweredBase({ owner: npc });
+  it('an NPC base goes the same way (S5; more in bases/npcBaseFall.test.ts)', () => {
+    const b = poweredBase({ owner: 'npc:traders:sol-3' });
     b.registry.remove(b.capital);
-    for (const id of [b.relay, b.solar, b.turret]) expect(b.registry.get(id)!.owner).toBe(npc);
+    b.pulse();
+    for (const id of [b.relay, b.solar, b.turret]) expect(b.registry.get(id)!.owner).toBe(unownedOwner(b.capital));
+    expect(b.grid.powerSummaryFor(b.turret).powered).toBe(true);
   });
 });
 
