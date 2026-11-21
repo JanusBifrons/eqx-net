@@ -149,7 +149,20 @@ view, never the server `StructureRegistry`):
   destination, and this is load-bearing for the construction flow's outward
   expansion**), power aggregation (`powered`
   requires a Capital in the component AND net ≥ 0), and A* routing + a route
-  cache dropped on every rebuild.
+  cache dropped on every rebuild. A node with `rootsPower` stands in for the
+  Capital (see "A base that loses its last Capital" below).
+- **A base that loses its last Capital** (capture plan 4E). When a built
+  Capital leaves the world (destroyed, packed or taken down; every path ends in
+  `StructureRegistry.remove`, which calls `orphanBaseOnCapitalLoss` in
+  `ownerlessBase.ts` before it cuts the links), each grid piece it held that
+  has no other built Capital gets the owner `none:<lostCapitalId>`. Owner rule:
+  the base keeps working exactly as before (power, batteries, shields,
+  production); it simply has no faction (`relationOf` makes it neutral to
+  everyone). The grid view sets `GridNode.rootsPower` on every ownerless node,
+  so its component stays powered on its own generation. A grid with another
+  built Capital stays owned. NPC bases are not flipped yet (slice S5). The
+  owner reaches clients through the normal structures slice (`ownerIdx` is
+  re-interned on change). Lock: `StructureGridSubsystem.ownerless.test.ts`.
 - `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
   `CONSTRUCTION_PULSE_AMOUNT`, `REPAIR_*`, `DECONSTRUCTION_RATE_KG`,
   `CAPITAL_STARTING_MINERALS`, `FLASH_DURATION_MS`.

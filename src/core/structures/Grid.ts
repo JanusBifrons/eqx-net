@@ -47,6 +47,9 @@ export interface GridNode {
   isHub: boolean;
   /** The grid root + storage source (the Capital). Drives `powered`. */
   isCapital: boolean;
+  /** Roots power without being a Capital: a member of an ownerless base keeps
+   *  its grid powered (capture plan 4E). Absent ⇒ false. */
+  rootsPower?: boolean;
   /** WS-5 (R2.10) — true for the Connector kind specifically. The Capital may
    *  ONLY link to a Connector (`capital-only` rule); `isHub && !isCapital` is
    *  NOT a sufficient test because Shield Pylons are also non-capital hubs, and
@@ -457,7 +460,7 @@ export class Grid {
         info.members++;
         memberIds.push(cur);
         addNodePower(info, cn.powerOutput, cn.powerConsumption);
-        if (cn.isCapital) info.hasCapital = true;
+        if (cn.isCapital || cn.rootsPower === true) info.hasCapital = true;
         for (const c of adjacency.get(cur) ?? []) {
           const other = c.getOtherNode(cur);
           if (other === null) continue;

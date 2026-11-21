@@ -25,6 +25,7 @@ Both the actor and the owner are owner strings:
 | a player id (a UUID), or `scenario` in tests | a player or account |
 | `npc:<allegiance>` | an NPC side, e.g. a roaming robot: `npc:robots` |
 | `npc:<allegiance>:<baseId>` | an NPC base: `npc:traders:sol-3` |
+| `none:<lostCapitalId>` | an ownerless base: one whose last Capital was destroyed or packed (`unownedOwner`, `isUnownedOwner`) |
 
 - `npcOwner(allegiance, baseId?)` builds these strings.
 - `parseOwner` reads them, with a cache so hot loops allocate nothing.
@@ -41,6 +42,9 @@ Both the actor and the owner are owner strings:
 | Two NPC parties | `friendly` on the same side, else the allegiance stance table |
 | A player and an NPC party | the stance table, taking the worse direction, unless `npcStanceToPlayer` overrides it |
 | An empty owner | `neutral` |
+| An ownerless base (`none:`), either side | `neutral`: no hostile act, standing or alliance changes it |
+
+- **An ownerless base has no faction** (owner rule, capture plan 4E): no enemies, no allies. It is not an NPC (`isNpcOwner` is false). The lost Capital's id keeps two ownerless bases apart; an empty owner would merge their grids. Its turrets find nothing hostile, and its storage needs the usual break-in.
 
 - **Hostility is treated as mutual.** Robots attack players on sight, so a robot is `hostile` to a player's gate as well as the reverse.
 - **Hostile acts are directional.** If A breaks into B's cargo, A is hostile to B; B is not hostile to A.

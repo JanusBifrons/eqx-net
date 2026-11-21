@@ -4,9 +4,11 @@ import {
   cargoOpensFor,
   createRelationContext,
   isNpcOwner,
+  isUnownedOwner,
   npcOwner,
   parseOwner,
   relationOf,
+  unownedOwner,
   type Relation,
 } from './relations.js';
 
@@ -199,5 +201,43 @@ describe('relationOf — factions (v4 F1)', () => {
     expect(relationOf(A, 'npc:robots:r1', ctx)).toBe('hostile');
     const zero = createRelationContext({ standing: { of: () => 0 } }); // robots' truce policy, no store
     expect(relationOf('npc:robots', 'npc:robots:r1', zero)).toBe('friendly');
+  });
+});
+
+describe('ownerless base (none:<lostCapitalId>, capture plan 4E)', () => {
+  const N1 = unownedOwner('pstruct-7');
+  const N2 = unownedOwner('pstruct-9');
+
+  it('parses as its own kind, keyed by the lost Capital', () => {
+    expect(N1).toBe('none:pstruct-7');
+    const p = parseOwner(N1);
+    expect(p.kind).toBe('none');
+    expect(p.baseId).toBe('pstruct-7');
+    expect(p.faction).toBe(N1);
+    expect(isUnownedOwner(N1)).toBe(true);
+    expect(isUnownedOwner(A)).toBe(false);
+    expect(isNpcOwner(N1)).toBe(false);
+  });
+
+  it('is neutral to players and NPCs both ways, never hostile', () => {
+    const ledger = new HostileActLedger();
+    ledger.record(A, N1, 0);
+    ledger.record(N1, A, 0);
+    const ctx = createRelationContext({
+      hostileActs: ledger,
+      standing: { of: () => -100 },
+      alliances: { areAllied: () => true },
+    });
+    for (const other of [A, 'npc:robots', 'npc:traders:sol-3', 'npc:robots:r1']) {
+      expect(relationOf(other, N1, ctx)).toBe('neutral');
+      expect(relationOf(N1, other, ctx)).toBe('neutral');
+    }
+  });
+
+  it('two different ownerless bases are not the same owner', () => {
+    const ctx = createRelationContext({ alliances: { areAllied: () => true } });
+    expect(N1).not.toBe(N2);
+    expect(relationOf(N1, N2, ctx)).toBe('neutral');
+    expect(relationOf(N2, N1, ctx)).toBe('neutral');
   });
 });

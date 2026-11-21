@@ -16,6 +16,7 @@ import type { TeleportPartner, TeleportRules, TeleportToll, TpPhase } from '../.
 import { CABLE_NO_SOCKET, Connection } from '../../core/structures/Connection.js';
 import type { PlayingClip } from '../../core/articulation/evaluate.js';
 import type { SavedDoor } from '../../core/structures/gateLogic.js';
+import { orphanBaseOnCapitalLoss } from './ownerlessBase.js';
 
 export interface StructureRecord {
   /** Swarm entity id (also the binary-wire id). */
@@ -284,8 +285,11 @@ export class StructureRegistry {
   /** Remove a structure AND sever every connection touching it (no leaks).
    *  Returns the removed record (or undefined). */
   remove(id: string): StructureRecord | undefined {
-    this.disconnect(id);
     const rec = this.byId.get(id);
+    // Capture plan 4E — the base a lost last Capital held turns ownerless (the
+    // ONE seam: combat, pack and take-down all end here). Before disconnect.
+    if (rec) orphanBaseOnCapitalLoss(this, rec);
+    this.disconnect(id);
     if (rec) {
       this.byId.delete(id);
       this.everConnected.delete(id); // structure gone — no leak
