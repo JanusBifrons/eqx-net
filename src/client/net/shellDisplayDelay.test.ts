@@ -13,8 +13,8 @@ import {
 } from './swarmInterpolation.js';
 import { DISPLAY_DELAY_MS } from './swarmDelaySizing.js';
 
-/** A drone delay between the floor and ceiling, in GAME ms (wall = this / speed). */
-const RAISED_GAME_MS = 190;
+/** A drone delay between the floor (100) and ceiling (150), in GAME ms (wall = this / speed). */
+const RAISED_GAME_MS = 140;
 /** A shared delay value for the pure checks (wall ms). */
 const RAISED_WALL_MS = 180;
 const FRAME_MS = 1000 / 60;

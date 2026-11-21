@@ -44,7 +44,7 @@ describe('swarm display delay follows the sector speed (time scale 4b)', () => {
   // to it (S3-2), so these read the target.
   afterEach(() => { setSwarmDisplaySpeed(1); resetSwarmTickClock(); });
 
-  it('1× is unchanged: floor 100, ceiling 280', () => {
+  it('1× is unchanged: floor 100, ceiling 150', () => {
     setSwarmDisplayDelayMs(50);
     expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS);
     expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
@@ -62,13 +62,13 @@ describe('swarm display delay follows the sector speed (time scale 4b)', () => {
     }
   });
 
-  it('at 0.25× the window stretches: floor 400, ceiling 1,120 wall ms', () => {
+  it('at 0.25× the window stretches: floor 400, ceiling 600 wall ms', () => {
     setSwarmDisplaySpeed(0.25);
     setSwarmDisplayDelayMs(0);
     expect(getSwarmDisplayDelayTargetMs()).toBe(400);
     expect(getSwarmDisplayDelayMs()).toBe(400); // first set: placed at the target
     setSwarmDisplayDelayMs(5000);
-    expect(getSwarmDisplayDelayTargetMs()).toBe(1120);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(600);
   });
 
   // S3-2: the slew in wall ms at a non-1× speed. 0.7× and 2× (nearest to the
@@ -102,13 +102,13 @@ describe('swarm display delay follows the sector speed (time scale 4b)', () => {
       setSwarmDisplayDelayMs(DISPLAY_DELAY_MS); // value 100 at 1×
       setSwarmDisplayDelayMs(ADAPTIVE_DELAY_CEILING_MS);
       for (let i = 0; i < 60 * 20; i++) stepSwarmDisplayDelay(1000 / 60);
-      expect(getSwarmDisplayDelayMs()).toBe(ADAPTIVE_DELAY_CEILING_MS); // 280 wall ms
+      expect(getSwarmDisplayDelayMs()).toBe(ADAPTIVE_DELAY_CEILING_MS); // 150 wall ms
       setSwarmDisplaySpeed(speed);
       const floor = DISPLAY_DELAY_MS / speed;
       const ceiling = ADAPTIVE_DELAY_CEILING_MS / speed;
-      // 280 at 2× is above the new 140 ceiling: clamped at once. At 0.7× it is
-      // inside [142.9, 400] and stays put. The target is the same 280 wall ms
-      // input re-clamped to the new range (140 at 2×, 280 at 0.7×).
+      // 150 at 2× is above the new 75 ceiling: clamped at once. At 0.7× it is
+      // inside [142.9, 214.3] and stays put. The target is the same 150 wall ms
+      // input re-clamped to the new range (75 at 2×, 150 at 0.7×).
       const expected = Math.max(floor, Math.min(ceiling, ADAPTIVE_DELAY_CEILING_MS));
       expect(getSwarmDisplayDelayMs()).toBe(expected);
       expect(getSwarmDisplayDelayTargetMs()).toBe(expected);

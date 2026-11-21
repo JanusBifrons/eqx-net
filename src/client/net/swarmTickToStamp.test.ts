@@ -28,8 +28,6 @@ import {
   getSwarmLatenessMaxMs,
   getSwarmLatenessSumMs,
   getSwarmLatenessCount,
-  getSwarmLatenessEstimateMs,
-  getSwarmLatenessDeviationMs,
   getSwarmOverwriteUnreadCount,
   getSwarmOldEndClampCount,
   getSwarmGlideLimitCount,
@@ -95,7 +93,6 @@ function schedule(speed: number): Packet[] {
 function observables(): number[] {
   return [
     getSwarmLatenessLastMs(), getSwarmLatenessMaxMs(), getSwarmLatenessSumMs(), getSwarmLatenessCount(),
-    getSwarmLatenessEstimateMs(), getSwarmLatenessDeviationMs(),
     getSwarmDisplayDelayMs(), getSwarmDisplayDelayTargetMs(), getSwarmStreamNewestStampMs(),
     getSwarmResyncCount(), getSwarmHoldFrameCount(),
     getSwarmOverwriteUnreadCount(), getSwarmOldEndClampCount(), getSwarmGlideLimitCount(),

@@ -6,9 +6,12 @@
  *   - every packet of `buildDeliveries(profile)` (runner.ts) on the swarm
  *     stream becomes a binary swarm packet decoded by `decodeSwarmPacket`
  *     with tick stamping, drained once per frame (as the live client);
- *   - the display-delay target comes from the drone packet lateness
- *     estimate inside `swarmArrivalStampMs` (S3-3), as in production; the
- *     JSON stream no longer feeds it;
+ *   - the display-delay target comes from the production feed
+ *     (displayDelayFeed.ts, S5-7): the swarm inter-arrival EWMA x 1.5 plus
+ *     the JSON drop bias, clamped to [100, 150] ms, set by the real
+ *     `applySnapshotPerfStats` on each applied JSON snapshot (newest wins
+ *     per frame, as the coalescer), which also notes the snapshot's tick as
+ *     the drone stream newest stamp;
  *   - every frame reads both drones through `interpolateSwarmPose`.
  * Ground truth: a straight drone and a turning drone, both at 300 u/s.
  * The drawn tracks are scored by `countMotionArtefacts` (assertions.ts);
@@ -20,6 +23,7 @@
  * S4-5 adds the stream-stall hold (`stepSwarmDisplayDelay(frameMs, nowMs)`)
  * and two fixtures past its 400 ms bound: gap-1000 (a 1 s stall on both
  * streams) and idle-resume (no swarm packets for 4 s, then current ticks).
+ * S5-7: the hold fires only when the JSON stream is quiet too.
  */
 import { describe, it, expect } from 'vitest';
 import { decodeSwarmPacket } from '../../src/client/net/BinarySwarmDecoder.js';
@@ -36,8 +40,6 @@ import {
   getSwarmOverwriteUnreadCount,
   getSwarmOldEndClampCount,
   getSwarmGlideLimitCount,
-  getSwarmLatenessEstimateMs,
-  getSwarmDisplayDelayTargetMs,
   getSwarmResyncCount,
   getSwarmHoldFrameCount,
   DISPLAY_DELAY_MS,
@@ -53,6 +55,7 @@ import { GAP_PROFILES, GAP_AT_MS, type GapProfileName } from './gapProfiles.js';
 import { countMotionArtefacts, MOTION_SNAP_TOLERANCE_U, type MotionFrame, type MotionCounters } from './assertions.js';
 import type { Delivery, NetworkProfile } from './types.js';
 import { captureToDeliveries, loadCaptureFixture } from './ondeviceReplay.js';
+import { createDisplayDelayFeed } from './displayDelayFeed.js';
 
 /** Scenario length (wall ms): stalls start at GAP_AT_MS and the longest ends 600 ms later. */
 const FIXTURE_DURATION_MS = 4000;
@@ -79,6 +82,11 @@ const ROUND = 100;
 /** Float slack on the per-frame slew bound check (wall ms). */
 const SLEW_EPSILON_MS = 1e-9;
 const CAPTURE_FIXTURE = 'capture-2026-11-21';
+/** Most the delay may rise above the 100 ms floor once idle-resume's packets
+ *  return (S5-7, wall ms): the first packet's 4 s gap (capped at 500 ms) lifts
+ *  the swarm inter-arrival EWMA for a few ticks; the delay rises ~4.5 ms and
+ *  slews back. There is no hold to unwind, so no catch-up. */
+const IDLE_RESUME_MAX_DELAY_RISE_MS = 5;
 /** Wall ms after the frame stall starts over which frame-stall-250 steps are
  *  checked (S5-1b): the stall frame plus 1 s of recovery. */
 const STALL_CHECK_WINDOW_MS = 1250;
@@ -142,7 +150,7 @@ function profileInGameTime(p: NetworkProfile, timeScale: number): NetworkProfile
 interface DroneFixtureOptions {
   /** Sector game speed (S1-9 adds 0.7x and 2x). Default 1. */
   timeScale?: number;
-  /** Pin the display delay here instead of running the lateness feed. */
+  /** Pin the display delay here instead of running the production feed. */
   fixedDelayMs?: number;
   /** Scenario length (wall ms). Default FIXTURE_DURATION_MS. */
   durationMs?: number;
@@ -180,8 +188,6 @@ interface DroneFixtureResult {
    *  may grow the delay up to the frame's wall time (the read point stands
    *  still, never goes back); a counted re-sync is exempt. */
   delayStepsOverBound: number;
-  /** Largest smoothed lateness estimate seen after a frame's drain (wall ms). */
-  maxLatenessEstimateMs: number;
   /** Counted re-syncs (S4-4/S4-5). */
   resyncs: number;
   /** Frames on which a stream stall held the read point (S4-5). */
@@ -229,7 +235,8 @@ function runDroneDeliveries(
   let next = 0;
   let maxDelayMs = getSwarmDisplayDelayMs();
   let minDelayMs = Infinity;
-  let maxEstimateMs = 0;
+  const feed = createDisplayDelayFeed();
+  let pendingJsonTick = -1;
   let delayStepsOverBound = 0;
   let prevFrameMs = Number.NaN;
 
@@ -237,11 +244,19 @@ function runDroneDeliveries(
     // Drain everything that arrived by this frame, in arrival order.
     while (next < deliveries.length && deliveries[next]!.arriveMs / timeScale <= t) {
       const d = deliveries[next++]!;
-      if (d.stream === 'swarm') decodeSwarmPacket(swarmPacket(d.serverTick), mirror, t, true);
+      if (d.stream === 'swarm') {
+        feed.swarmArrived(t);
+        decodeSwarmPacket(swarmPacket(d.serverTick), mirror, t, true);
+      } else {
+        pendingJsonTick = d.serverTick;
+      }
+    }
+    if (pendingJsonTick >= 0) {
+      feed.jsonApplied(pendingJsonTick, t, t);
+      pendingJsonTick = -1;
     }
     // Once per frame, after the drain and before any read, as production
     // (`updateSwarmMirror`): the delay glides toward the feed's target.
-    maxEstimateMs = Math.max(maxEstimateMs, getSwarmLatenessEstimateMs());
     const frameDtMs = Number.isNaN(prevFrameMs) ? 0 : t - prevFrameMs;
     const delayBeforeMs = getSwarmDisplayDelayMs();
     const resyncsBefore = getSwarmResyncCount();
@@ -283,7 +298,6 @@ function runDroneDeliveries(
     maxDelayMs: round(maxDelayMs),
     minDelayMs: round(minDelayMs),
     delayStepsOverBound,
-    maxLatenessEstimateMs: round(maxEstimateMs),
     resyncs: getSwarmResyncCount(),
     holdFrames: getSwarmHoldFrameCount(),
   };
@@ -349,95 +363,111 @@ function runCaptureFixture(): DroneFixtureResult[] {
  *  lateness estimate, so frame-stall-250 keeps the 100 ms floor and an even
  *  timeline: snaps 1 -> 0 (4.71 u) for both drones, mean lateness
  *  221.83 -> 150 ms, max delay 274.64 -> 100 ms; every other profile and the
- *  capture unchanged). A change to any is a behaviour change. */
+ *  capture unchanged); and for the capped delay and the two-stream hold, S5-7:
+ *  the target is the swarm inter-arrival EWMA x 1.5 plus the JSON drop bias,
+ *  clamped to [100, 150] ms, so the delay stops at 150 instead of sliding to
+ *  280 (jitter-4g mean lateness 302.26 -> 165.61, max delay 279.94 -> 133.76;
+ *  gap-200 202.34 -> 151.46; gap-400 215.33 -> 164.18; capture segments
+ *  223.29 / 247.55 / 215.62 -> 158.95 / 172.08 / 167.84, max delay
+ *  280 / 225 / 279.88 -> 149.78 / 128.66 / 150; gap-600 / burst keep their
+ *  hold and freeze count, lateness 251.9 -> 242.97); a smaller buffer gives a
+ *  few more small snaps under jitter (jitter-4g total 27.87 -> 26.53 u, same
+ *  count; capture segment 3: 27 -> 31 snaps, largest 17.9 -> 17.52 u). Each
+ *  JSON snapshot now marks the stream alive, so gap-swarm-only (the JSON
+ *  stream keeps flowing) no longer holds: hold frames 3 -> 0, glide-limit
+ *  holds 0 -> 6, straight snaps 0 -> 3 (largest 10.85 u), the cost of not
+ *  parking when only one stream stalls. gap-json-only and frame-stall-250 now
+ *  feed the target from their real cadence (max delay 100 -> 138.96 /
+ *  107.65; the frame stall's backlog is skipped by the EWMA). A change to any
+ *  is a behaviour change. */
 const RECORDED: Record<GapProfileName, DroneFixtureResult> = {
   'lan-clean': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 116.67, maxLatenessMs: 116.67 },
     turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 116.67, maxLatenessMs: 116.67 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
     stampLatenessMeanMs: 0, stampLatenessMaxMs: 0, maxDelayMs: 100, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 0, resyncs: 0, holdFrames: 0,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
   },
   'gap-200': {
-    straight: { snaps: 1, largestSnapU: 3.12, totalSnapU: 3.12, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 202.34, maxLatenessMs: 317.67 },
-    turning: { snaps: 1, largestSnapU: 3.12, totalSnapU: 3.12, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 202.34, maxLatenessMs: 317.67 },
+    straight: { snaps: 1, largestSnapU: 3.6, totalSnapU: 3.6, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 151.46, maxLatenessMs: 169.35 },
+    turning: { snaps: 1, largestSnapU: 3.6, totalSnapU: 3.6, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 151.47, maxLatenessMs: 169.35 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 5.03, stampLatenessMaxMs: 198, maxDelayMs: 267.67, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 116.79, resyncs: 0, holdFrames: 0,
+    stampLatenessMeanMs: 5.03, stampLatenessMaxMs: 198, maxDelayMs: 107.42, minDelayMs: 100,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
   },
   'gap-400': {
-    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.33, maxLatenessMs: 325.46 },
-    turning: { snaps: 1, largestSnapU: 2.56, totalSnapU: 2.56, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.4, maxLatenessMs: 325.46 },
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 164.18, maxLatenessMs: 200 },
+    turning: { snaps: 1, largestSnapU: 2.91, totalSnapU: 2.91, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 164.25, maxLatenessMs: 201.78 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 21.01, stampLatenessMaxMs: 400, maxDelayMs: 275.46, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 275.39, resyncs: 0, holdFrames: 3,
+    stampLatenessMeanMs: 21.01, stampLatenessMaxMs: 400, maxDelayMs: 150, minDelayMs: 100,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 3,
   },
   'gap-600': {
-    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 251.9, maxLatenessMs: 400 },
-    turning: { snaps: 1, largestSnapU: 3.27, totalSnapU: 3.27, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 252.09, maxLatenessMs: 401.78 },
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 242.97, maxLatenessMs: 400 },
+    turning: { snaps: 1, largestSnapU: 3.27, totalSnapU: 3.27, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 243.16, maxLatenessMs: 401.78 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
     stampLatenessMeanMs: 46.64, stampLatenessMaxMs: 600, maxDelayMs: 350, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 424.71, resyncs: 0, holdFrames: 15,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 15,
   },
   'burst-600-both-streams': {
-    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 251.9, maxLatenessMs: 400 },
-    turning: { snaps: 1, largestSnapU: 3.27, totalSnapU: 3.27, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 252.09, maxLatenessMs: 401.78 },
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 242.97, maxLatenessMs: 400 },
+    turning: { snaps: 1, largestSnapU: 3.27, totalSnapU: 3.27, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 243.16, maxLatenessMs: 401.78 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
     stampLatenessMeanMs: 46.64, stampLatenessMaxMs: 600, maxDelayMs: 350, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 424.71, resyncs: 0, holdFrames: 15,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 15,
   },
   'gap-json-only': {
-    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 150, maxLatenessMs: 150 },
-    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 150, maxLatenessMs: 150 },
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 157.65, maxLatenessMs: 188.96 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 157.65, maxLatenessMs: 188.96 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 0, stampLatenessMaxMs: 0, maxDelayMs: 100, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 0, resyncs: 0, holdFrames: 0,
+    stampLatenessMeanMs: 0, stampLatenessMaxMs: 0, maxDelayMs: 138.96, minDelayMs: 100,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
   },
   'gap-swarm-only': {
-    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.33, maxLatenessMs: 325.46 },
-    turning: { snaps: 1, largestSnapU: 2.56, totalSnapU: 2.56, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.4, maxLatenessMs: 325.46 },
-    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 21.01, stampLatenessMaxMs: 400, maxDelayMs: 275.46, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 275.39, resyncs: 0, holdFrames: 3,
+    straight: { snaps: 3, largestSnapU: 10.85, totalSnapU: 15.56, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 152.4, maxLatenessMs: 200 },
+    turning: { snaps: 3, largestSnapU: 10.85, totalSnapU: 17.9, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 152.47, maxLatenessMs: 201.78 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 6,
+    stampLatenessMeanMs: 18.01, stampLatenessMaxMs: 396, maxDelayMs: 102.3, minDelayMs: 100,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
   },
   'frame-stall-250': {
-    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 150, maxLatenessMs: 150 },
-    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 150, maxLatenessMs: 150.02 },
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 151.99, maxLatenessMs: 157.65 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 151.99, maxLatenessMs: 157.65 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 8.4, stampLatenessMaxMs: 250, maxDelayMs: 100, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 0, resyncs: 0, holdFrames: 0,
+    stampLatenessMeanMs: 8.4, stampLatenessMaxMs: 250, maxDelayMs: 107.65, minDelayMs: 100,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
   },
   'jitter-4g': {
-    straight: { snaps: 4, largestSnapU: 9.61, totalSnapU: 27.87, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 302.26, maxLatenessMs: 359.28 },
-    turning: { snaps: 4, largestSnapU: 9.61, totalSnapU: 27.87, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 302.26, maxLatenessMs: 359.28 },
+    straight: { snaps: 4, largestSnapU: 9.56, totalSnapU: 26.53, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 165.61, maxLatenessMs: 205.33 },
+    turning: { snaps: 4, largestSnapU: 9.56, totalSnapU: 26.53, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 165.61, maxLatenessMs: 205.33 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 42.95, stampLatenessMaxMs: 208.71, maxDelayMs: 279.94, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 164.14, resyncs: 0, holdFrames: 0,
+    stampLatenessMeanMs: 42.95, stampLatenessMaxMs: 208.71, maxDelayMs: 133.76, minDelayMs: 100,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
   },
 };
 
 /** The capture fixture, one result per join segment (S3-3). */
 const CAPTURE_RECORDED: DroneFixtureResult[] = [
   {
-    straight: { snaps: 5, largestSnapU: 12, totalSnapU: 36.17, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 223.29, maxLatenessMs: 380.22 },
-    turning: { snaps: 5, largestSnapU: 12, totalSnapU: 36.17, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 223.29, maxLatenessMs: 380.22 },
+    straight: { snaps: 5, largestSnapU: 13.64, totalSnapU: 39.15, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 158.95, maxLatenessMs: 295.01 },
+    turning: { snaps: 5, largestSnapU: 13.64, totalSnapU: 39.14, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 158.95, maxLatenessMs: 295.01 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 22.01, stampLatenessMaxMs: 393.07, maxDelayMs: 280, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 311.21, resyncs: 0, holdFrames: 2,
+    stampLatenessMeanMs: 22.86, stampLatenessMaxMs: 393.07, maxDelayMs: 149.78, minDelayMs: 100,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 5,
   },
   {
-    straight: { snaps: 2, largestSnapU: 4.5, totalSnapU: 7.69, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 247.55, maxLatenessMs: 275.25 },
-    turning: { snaps: 2, largestSnapU: 4.5, totalSnapU: 7.69, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 247.55, maxLatenessMs: 275.25 },
+    straight: { snaps: 2, largestSnapU: 5.42, totalSnapU: 8.78, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 172.08, maxLatenessMs: 205.5 },
+    turning: { snaps: 2, largestSnapU: 5.42, totalSnapU: 8.78, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 172.08, maxLatenessMs: 205.5 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 32.57, stampLatenessMaxMs: 197.51, maxDelayMs: 225, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 144.71, resyncs: 0, holdFrames: 0,
+    stampLatenessMeanMs: 32.57, stampLatenessMaxMs: 197.51, maxDelayMs: 128.66, minDelayMs: 100,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
   },
   {
-    straight: { snaps: 27, largestSnapU: 17.9, totalSnapU: 137.2, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 215.62, maxLatenessMs: 411.32 },
-    turning: { snaps: 27, largestSnapU: 17.89, totalSnapU: 137.19, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 215.62, maxLatenessMs: 411.32 },
+    straight: { snaps: 31, largestSnapU: 17.52, totalSnapU: 150.47, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 167.84, maxLatenessMs: 281.53 },
+    turning: { snaps: 31, largestSnapU: 17.52, totalSnapU: 150.46, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 167.84, maxLatenessMs: 281.53 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
-    stampLatenessMeanMs: 13.85, stampLatenessMaxMs: 247.5, maxDelayMs: 279.88, minDelayMs: 100,
-    delayStepsOverBound: 0, maxLatenessEstimateMs: 221.6, resyncs: 0, holdFrames: 0,
+    stampLatenessMeanMs: 13.85, stampLatenessMaxMs: 247.5, maxDelayMs: 150, minDelayMs: 100,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
   },
 ];
 
@@ -471,21 +501,24 @@ function runIdleResumeFixture(opts: DroneFixtureOptions = {}): DroneFixtureResul
 }
 
 /** The S4-5 fixtures' numbers (gap-1000 re-syncs once at the 400 ms bound;
- *  idle-resume re-syncs once and jumps to the drones' current place, since the
- *  server sent nothing for 4 s). */
+ *  idle-resume jumps to the drones' current place once, since the server sent
+ *  no swarm packet for 4 s). S5-7: in idle-resume the JSON stream keeps
+ *  flowing, so the stream is alive and the drones sit at the glide limit
+ *  without a hold: holds 18 -> 0, re-syncs 1 -> 0, glide-limit holds
+ *  402 -> 438, same freeze count and one jump. */
 const GAP_1000_RECORDED: DroneFixtureResult = {
-  straight: { snaps: 2, largestSnapU: 129.08, totalSnapU: 198.24, freezeFrames: 39, backwardSteps: 0, meanLatenessMs: 245.99, maxLatenessMs: 800 },
-  turning: { snaps: 2, largestSnapU: 130.1, totalSnapU: 199.19, freezeFrames: 39, backwardSteps: 0, meanLatenessMs: 246.41, maxLatenessMs: 801.78 },
+  straight: { snaps: 2, largestSnapU: 129.08, totalSnapU: 198.24, freezeFrames: 39, backwardSteps: 0, meanLatenessMs: 237.17, maxLatenessMs: 800 },
+  turning: { snaps: 2, largestSnapU: 130.1, totalSnapU: 199.19, freezeFrames: 39, backwardSteps: 0, meanLatenessMs: 237.59, maxLatenessMs: 801.78 },
   overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 42,
   stampLatenessMeanMs: 91.76, stampLatenessMaxMs: 990, maxDelayMs: 400, minDelayMs: 100,
-  delayStepsOverBound: 0, maxLatenessEstimateMs: 601.57, resyncs: 1, holdFrames: 18,
+  delayStepsOverBound: 0, resyncs: 1, holdFrames: 18,
 };
 const IDLE_RESUME_RECORDED: DroneFixtureResult = {
-  straight: { snaps: 1, largestSnapU: 1095, totalSnapU: 1095, freezeFrames: 219, backwardSteps: 0, meanLatenessMs: 873.52, maxLatenessMs: 2016.67 },
-  turning: { snaps: 1, largestSnapU: 881.53, totalSnapU: 881.53, freezeFrames: 219, backwardSteps: 0, meanLatenessMs: 873.4, maxLatenessMs: 2016.67 },
-  overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 402,
-  stampLatenessMeanMs: 0, stampLatenessMaxMs: 0, maxDelayMs: 400, minDelayMs: 100,
-  delayStepsOverBound: 0, maxLatenessEstimateMs: 0, resyncs: 1, holdFrames: 18,
+  straight: { snaps: 1, largestSnapU: 1094.5, totalSnapU: 1094.5, freezeFrames: 219, backwardSteps: 0, meanLatenessMs: 873.75, maxLatenessMs: 2016.67 },
+  turning: { snaps: 1, largestSnapU: 881.15, totalSnapU: 881.15, freezeFrames: 219, backwardSteps: 0, meanLatenessMs: 873.59, maxLatenessMs: 2016.67 },
+  overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 438,
+  stampLatenessMeanMs: 0, stampLatenessMaxMs: 0, maxDelayMs: 104.98, minDelayMs: 100,
+  delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
 };
 
 const PROFILE_NAMES = Object.keys(GAP_PROFILES) as GapProfileName[];
@@ -507,7 +540,7 @@ describe('drone gap-smoothing fixtures: today\'s numbers per profile', () => {
     for (const seg of CAPTURE_RECORDED) expect(seg.delayStepsOverBound).toBe(0);
   });
 
-  it('lan-clean: the lateness feed holds the 100 ms floor every frame; poses as a pinned 100 ms delay', () => {
+  it('lan-clean: the production feed holds the 100 ms floor every frame; poses as a pinned 100 ms delay', () => {
     const fed = runDroneFixture(GAP_PROFILES['lan-clean']);
     expect(fed.minDelayMs).toBe(DISPLAY_DELAY_MS);
     expect(fed.maxDelayMs).toBe(DISPLAY_DELAY_MS);
@@ -616,15 +649,23 @@ describe('drone gap-smoothing targets', () => {
     expect(result.maxDelayMs).toBeLessThanOrEqual(MAX_TOTAL_DISPLAY_DELAY_MS);
   });
 
-  it('idle-resume: one re-sync and no long catch-up (the delay is at its target once packets return)', () => {
-    let offTargetFrames = 0;
+  // Before S5-7 the swarm-only silence held the read point and the re-sync
+  // then placed the delay at its target (0 frames off target). Now the JSON
+  // stream marks the link alive: nothing holds, nothing re-syncs, and the
+  // delay never rises more than IDLE_RESUME_MAX_DELAY_RISE_MS above the floor
+  // after the packets return.
+  it('idle-resume: no hold or re-sync while JSON flows, and no long catch-up (the delay stays near the floor once packets return)', () => {
+    let maxRiseMs = 0;
     const result = runIdleResumeFixture({
       onFrame: (t) => {
-        if (t >= GAP_AT_MS + IDLE_GAP_MS && getSwarmDisplayDelayMs() !== getSwarmDisplayDelayTargetMs()) offTargetFrames++;
+        if (t >= GAP_AT_MS + IDLE_GAP_MS) {
+          maxRiseMs = Math.max(maxRiseMs, getSwarmDisplayDelayMs() - DISPLAY_DELAY_MS);
+        }
       },
     });
     expect(result).toEqual(IDLE_RESUME_RECORDED);
-    expect(result.resyncs).toBe(1);
-    expect(offTargetFrames).toBe(0);
+    expect(result.holdFrames).toBe(0);
+    expect(result.resyncs).toBe(0);
+    expect(maxRiseMs).toBeLessThanOrEqual(IDLE_RESUME_MAX_DELAY_RISE_MS);
   });
 });

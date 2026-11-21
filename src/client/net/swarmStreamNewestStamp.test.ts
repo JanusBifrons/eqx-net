@@ -1,9 +1,11 @@
 /**
  * S4-2 (netcode gap smoothing, wave 5): the decoder records, per tick-stamped
  * swarm packet, the newest sample stamp for the drone stream as a whole
- * (`getSwarmStreamNewestStampMs`, in `swarmArrivalStampMs` units). Nothing
- * reads it yet; S4-4/S4-5 use it to tell "the stream stalled" from "this one
- * drone was not in the packet".
+ * (`getSwarmStreamNewestStampMs`, in `swarmArrivalStampMs` units). The S4-5
+ * hold uses it to tell "the stream stalled" from "this one drone was not in
+ * the packet". S5-7: each JSON snapshot's tick, placed on the same tick clock
+ * (`noteSwarmJsonSnapshotTick`), counts too, so a sparse swarm stream on a
+ * live link is not a stall.
  *
  * Rule: the packet with the newer server tick wins. A reordered or late packet
  * (equal or older tick) leaves the value alone, so it never goes backwards on
@@ -14,10 +16,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { decodeSwarmPacket } from './BinarySwarmDecoder.js';
 import {
   getSwarmStreamNewestStampMs,
+  noteSwarmJsonSnapshotTick,
   noteSwarmStreamStamp,
   resetSwarmDisplayDelay,
   resetSwarmTickClock,
   swarmArrivalStampMs,
+  swarmTickToStampMs,
 } from './swarmInterpolation.js';
 import type { RenderMirror } from '../../core/contracts/IRenderer.js';
 import {
@@ -133,6 +137,26 @@ describe('swarm stream newest stamp (S4-2)', () => {
     const expected = swarmArrivalStampMs(7, 100);
     resetSwarmTickClock();
     decodeSwarmPacket(packet(7, [1]), makeMirror(), 100, true);
+    expect(getSwarmStreamNewestStampMs()).toBe(expected);
+  });
+
+  it('JSON snapshot tick (S5-7): nothing before the tick clock is seeded', () => {
+    noteSwarmJsonSnapshotTick(100, 5000);
+    expect(getSwarmStreamNewestStampMs()).toBeNaN();
+  });
+
+  it('JSON snapshot tick (S5-7): advances the newest stamp to the tick clock stamp, read-only', () => {
+    const mirror = makeMirror();
+    decodeSwarmPacket(packet(100, [1]), mirror, 5000, true);
+    // The swarm stream goes quiet (idle drones) while snapshots keep coming.
+    const nowMs = 5000 + 30 * TICK_MS;
+    const expected = swarmTickToStampMs(130, nowMs);
+    noteSwarmJsonSnapshotTick(130, nowMs);
+    expect(getSwarmStreamNewestStampMs()).toBe(expected);
+    expect(getSwarmStreamNewestStampMs()).toBeCloseTo(5000 + 30 * TICK_MS, 6);
+    // An older snapshot tick, or a swarm packet behind it, leaves it alone.
+    noteSwarmJsonSnapshotTick(120, nowMs + TICK_MS);
+    decodeSwarmPacket(packet(125, [1]), mirror, nowMs + TICK_MS, true);
     expect(getSwarmStreamNewestStampMs()).toBe(expected);
   });
 });

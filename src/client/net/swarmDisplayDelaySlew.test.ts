@@ -15,8 +15,7 @@ import {
   stepSwarmDisplayDelay,
   getSwarmDisplayDelayMs,
   getSwarmDisplayDelayTargetMs,
-  swarmArrivalStampMs,
-  getSwarmLatenessEstimateMs,
+  feedSwarmDisplayDelayTarget,
   DISPLAY_DELAY_MS,
   ADAPTIVE_DELAY_CEILING_MS,
   DISPLAY_DELAY_SLEW_MAX_RATE,
@@ -55,13 +54,13 @@ describe('slewed drone display delay', () => {
 
   it('the first set after a reset starts AT the target (no glide from the floor)', () => {
     expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
-    setSwarmDisplayDelayMs(200);
-    expect(getSwarmDisplayDelayMs()).toBe(200);
-    expect(getSwarmDisplayDelayTargetMs()).toBe(200);
+    setSwarmDisplayDelayMs(130);
+    expect(getSwarmDisplayDelayMs()).toBe(130);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(130);
     // The second set only moves the target.
-    setSwarmDisplayDelayMs(250);
-    expect(getSwarmDisplayDelayMs()).toBe(200);
-    expect(getSwarmDisplayDelayTargetMs()).toBe(250);
+    setSwarmDisplayDelayMs(145);
+    expect(getSwarmDisplayDelayMs()).toBe(130);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(145);
   });
 
   it('a good link: target at the floor, value equal to it on every frame', () => {
@@ -84,7 +83,7 @@ describe('slewed drone display delay', () => {
     expect(sawBound).toBeCloseTo(DISPLAY_DELAY_SLEW_MAX_RATE, 6);
   });
 
-  it('a 100 → 280 ms step takes at least 1.8 s at the bound', () => {
+  it('a 100 → 150 ms step takes at least 0.5 s at the bound', () => {
     setSwarmDisplayDelayMs(DISPLAY_DELAY_MS);
     setSwarmDisplayDelayMs(ADAPTIVE_DELAY_CEILING_MS);
     const minFrames = Math.floor((ADAPTIVE_DELAY_CEILING_MS - DISPLAY_DELAY_MS) / (DISPLAY_DELAY_SLEW_MAX_RATE * FRAME_60HZ_MS));
@@ -120,22 +119,22 @@ describe('slewed drone display delay', () => {
     resetSwarmTickClock();
     expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
     expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS);
-    setSwarmDisplayDelayMs(220);
-    expect(getSwarmDisplayDelayMs()).toBe(220);
+    setSwarmDisplayDelayMs(130);
+    expect(getSwarmDisplayDelayMs()).toBe(130);
   });
 
-  it('resetSwarmDisplayDelay resets the delay and clears the lateness estimate', () => {
+  it('resetSwarmDisplayDelay resets the delay and clears the test pin', () => {
     setSwarmDisplayDelayMs(DISPLAY_DELAY_MS);
     setSwarmDisplayDelayMs(ADAPTIVE_DELAY_CEILING_MS);
     stepSwarmDisplayDelay(FRAME_60HZ_MS * 30);
-    swarmArrivalStampMs(0, 10_000);
-    for (let tick = 1; tick <= 10; tick++) swarmArrivalStampMs(tick, 10_000 + tick * FRAME_60HZ_MS + 40);
-    expect(getSwarmLatenessEstimateMs()).toBeGreaterThan(0);
+    feedSwarmDisplayDelayTarget(DISPLAY_DELAY_MS); // pinned: ignored
+    expect(getSwarmDisplayDelayTargetMs()).toBe(ADAPTIVE_DELAY_CEILING_MS);
     resetSwarmDisplayDelay();
     expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
     expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS);
-    expect(getSwarmLatenessEstimateMs()).toBe(0);
-    setSwarmDisplayDelayMs(150);
-    expect(getSwarmDisplayDelayMs()).toBe(150);
+    // The pin is gone: the production feed is taken again, and the first one
+    // after the reset places the value at its target.
+    feedSwarmDisplayDelayTarget(130);
+    expect(getSwarmDisplayDelayMs()).toBe(130);
   });
 });

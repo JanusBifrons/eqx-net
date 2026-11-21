@@ -141,6 +141,7 @@ import { FireControlClient } from './FireControlClient';
 import { LocalFireClient, type LocalFireHost } from './fireControl/LocalFireClient.js';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
+  nextSwarmBinaryEwmaMs,
   setSwarmDisplaySpeed,
   type InterpolatedPose,
 } from './swarmInterpolation';
@@ -1380,17 +1381,13 @@ export class ColyseusGameClient {
       // inter-arrival. This is the ACTUAL drone-pose channel the
       // interpolation buffer must cover — in-interest ≈ per server tick
       // (~16 ms), out-of-interest decimated (~100–170 ms) — unlike the
-      // steady 20 Hz JSON snapshot. Sample clamped to ≤ 500 ms so one
+      // steady 20 Hz JSON snapshot. The helper caps the sample so one
       // tab-background / radio gap can't pin the EWMA at the ceiling (the
-      // JSON drop-detector `dropBias` already biases up on loss bursts).
+      // JSON drop-detector `dropBias` already biases up on loss bursts),
+      // and skips frame-stall backlog (a main-thread freeze, not the link).
       const swNowMs = this.clock.now();
       if (this._swarmBinaryLastMs >= 0) {
-        const dtMs = Math.min(500, swNowMs - this._swarmBinaryLastMs);
-        if (dtMs > 0) {
-          this._swarmBinaryEwma = this._swarmBinaryEwma === 0
-            ? dtMs
-            : this._swarmBinaryEwma * 0.85 + dtMs * 0.15;
-        }
+        this._swarmBinaryEwma = nextSwarmBinaryEwmaMs(this._swarmBinaryEwma, swNowMs - this._swarmBinaryLastMs, swNowMs);
       }
       this._swarmBinaryLastMs = swNowMs;
       // Probe 0 (mobile-perf-investigation-review §"Confound the diagnosis

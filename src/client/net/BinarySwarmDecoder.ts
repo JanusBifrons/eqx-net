@@ -97,7 +97,8 @@ export function decodeSwarmPacket(
   // drain time (`swarmArrivalStampMs`: per-RAF draining bunched the stamps).
   if (stampByTick) {
     nowMs = swarmArrivalStampMs(tick, nowMs);
-    // Newest stamp for the stream as a whole (S4-2; nothing reads it yet).
+    // Newest stamp for the stream as a whole (S4-2); the S4-5 stall hold
+    // reads it (JSON snapshots feed it too, S5-7).
     noteSwarmStreamStamp(tick, nowMs);
   }
 

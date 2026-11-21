@@ -31,8 +31,8 @@ import { describe, it, expect } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
 import { welfordPush, welfordMean } from '../../core/math/Welford.js';
 import {
-  resetSwarmTickClock, setSwarmDisplaySpeed, setSwarmDisplayDelayMs, stepSwarmDisplayDelay, swarmArrivalStampMs,
-  getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs, getSwarmLatenessEstimateMs, getSwarmLatenessDeviationMs,
+  resetSwarmTickClock, setSwarmDisplaySpeed, stepSwarmDisplayDelay, swarmArrivalStampMs,
+  getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs, feedSwarmDisplayDelayTarget,
   DISPLAY_DELAY_MS, ADAPTIVE_DELAY_CEILING_MS,
   noteSwarmStreamStamp, getSwarmStreamNewestStampMs,
 } from './swarmInterpolation.js';
@@ -145,27 +145,23 @@ describe('ColyseusGameClient.resetPredictionState', () => {
     expect(internals.reconciler).toBeNull();
   });
 
-  it('resets the slewed drone display delay and the lateness estimate (S3-2)', () => {
+  it('resets the slewed drone display delay and its target (S3-2, S5-7)', () => {
     resetSwarmTickClock();
     setSwarmDisplaySpeed(1);
-    setSwarmDisplayDelayMs(DISPLAY_DELAY_MS);
-    setSwarmDisplayDelayMs(ADAPTIVE_DELAY_CEILING_MS);
+    feedSwarmDisplayDelayTarget(DISPLAY_DELAY_MS);
+    feedSwarmDisplayDelayTarget(ADAPTIVE_DELAY_CEILING_MS);
     for (let i = 0; i < 30; i++) stepSwarmDisplayDelay(1000 / 60);
-    swarmArrivalStampMs(0, 10_000);
-    for (let tick = 1; tick <= 10; tick++) swarmArrivalStampMs(tick, 10_000 + tick * (1000 / 60) + 40);
     expect(getSwarmDisplayDelayMs()).toBeGreaterThan(DISPLAY_DELAY_MS);
-    expect(getSwarmLatenessEstimateMs()).toBeGreaterThan(0);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(ADAPTIVE_DELAY_CEILING_MS);
 
     const client = new ColyseusGameClient();
     asInternals(client).resetPredictionState();
 
     expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
     expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS);
-    expect(getSwarmLatenessEstimateMs()).toBe(0);
-    expect(getSwarmLatenessDeviationMs()).toBe(0);
     // The destination's first feed places the value at its target (no glide).
-    setSwarmDisplayDelayMs(200);
-    expect(getSwarmDisplayDelayMs()).toBe(200);
+    feedSwarmDisplayDelayTarget(130);
+    expect(getSwarmDisplayDelayMs()).toBe(130);
     resetSwarmTickClock();
   });
 

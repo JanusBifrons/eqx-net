@@ -55,7 +55,7 @@ export interface PoseRingEntry {
  *  display delay / server tick ms) + 4 headroom (arrival jitter + a late
  *  packet not evicting the one still needed). The binding delay is the
  *  LARGEST the drone read point can ever sit behind, not the steady
- *  ceiling: 280 ms steady (ADAPTIVE_DELAY_CEILING_MS), up to 400 ms after
+ *  ceiling: 150 ms steady (ADAPTIVE_DELAY_CEILING_MS, 280 before S5-7), up to 400 ms after
  *  a dropout (owner decision D2, netcode gap-smoothing S4). So
  *  ceil(400 / 16.7) + 4 = 28, a span of 27 × 16.7 = 450 ms ≥ 400 ms + one
  *  tick. The ring is read on the server-tick timeline (tick-stamped

@@ -18,20 +18,17 @@ import type { SwarmRenderState, PoseRingEntry } from '../../core/contracts/IRend
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 import { isImplausibleJump } from './plausibleSpeed.js';
 import {
-  ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_MS, EXTRAPOLATION_LIMIT_MS, SERVER_TICK_MS, latenessTargetRawMs,
-  updateLatenessEstimate, type LatenessEstimate,
+  ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_MS, EXTRAPOLATION_LIMIT_MS, SERVER_TICK_MS, nextSwarmInterArrivalEwmaMs,
 } from './swarmDelaySizing.js';
 import { createDisplayDelayHoldState, holdDisplayDelay, resetDisplayDelayHold, slewDisplayDelay } from './displayDelayHold.js';
-/** The delay sizing rules (constants, lateness estimator, target, hold bound)
+/** The delay sizing rules (constants, inter-arrival estimator, hold bound)
  *  live in `swarmDelaySizing.ts`; re-exported so importers keep one entry point. */
 export {
   DISPLAY_DELAY_MS, EXTRAPOLATION_LIMIT_MS, ADAPTIVE_DELAY_CEILING_MS, MAX_TOTAL_DISPLAY_DELAY_MS,
   DISPLAY_DELAY_SLEW_TAU_MS, DISPLAY_DELAY_SLEW_MAX_RATE, DISPLAY_DELAY_SLEW_SNAP_MS,
-  LATENESS_TARGET_DEVIATIONS, LATENESS_TARGET_FRAME_MS, swarmDisplayDelayTargetFromLatenessMs,
-  LATENESS_RISE_TAU_MS, LATENESS_FALL_TAU_MS, LATENESS_DEV_TAU_MS, updateLatenessEstimate,
+  ADAPTIVE_DELAY_FACTOR, SWARM_INTER_ARRIVAL_SAMPLE_CAP_MS, SWARM_INTER_ARRIVAL_KEEP, nextSwarmInterArrivalEwmaMs,
   isSwarmHoldDelayOverMax, boundSwarmHoldDelayMs,
 } from './swarmDelaySizing.js';
-export type { LatenessEstimate } from './swarmDelaySizing.js';
 
 /** Teleport guard (drone snapshot-interpolation pivot, 2026-05-18): routing
  * drones through `interpolateSwarmPose` exposed server discontinuities that
@@ -43,21 +40,21 @@ export { TELEPORT_MAX_PLAUSIBLE_SPEED, TELEPORT_FLOOR_U } from './plausibleSpeed
 /** The drone stream's display-delay record (netcode gap smoothing S3-2, S4-5;
  *  the slew and hold are `displayDelayHold.ts`, shared with the missile
  *  stream's own record, S5-5). `delayMs` is the SLEWED value every read uses.
- *  Every tick-stamped drone packet (`swarmArrivalStampMs`) sets `targetMs`
- *  from the lateness estimate (S3-3, `swarmDisplayDelayTargetFromLatenessMs`);
+ *  Every JSON snapshot sets `targetMs` from the swarm inter-arrival EWMA
+ *  (S5-7, `feedSwarmDisplayDelayTarget` from `applySnapshotPerfStats`);
  *  `stepSwarmDisplayDelay()` (once per frame, `updateSwarmMirror`) moves the
  *  value toward it, so a changed target glides instead of jumping the read
- *  point. On a good link the target is the 100 ms floor; when packets run
- *  late the target rises so the buffer still holds a bracketing pair. */
+ *  point. On a dense stream the target is the 100 ms floor; a sparser one
+ *  raises it, up to ADAPTIVE_DELAY_CEILING_MS. */
 const _drone = createDisplayDelayHoldState(DISPLAY_DELAY_MS);
 /** False until the first target after a reset: that first target places the
  *  value AT it (no glide up from the floor). */
 let _displayDelaySeeded = false;
 /** True after `setSwarmDisplayDelayMs` (tests, fixed-delay harness runs): the
- *  lateness feed leaves the target alone until the next reset. */
+ *  inter-arrival feed leaves the target alone until the next reset. */
 let _displayDelayPinned = false;
 /** The sector's game speed (time scale stream). The floor and ceiling are GAME
- *  ms, so in wall ms they are 100 / speed and 280 / speed: at 4× poses arrive
+ *  ms, so in wall ms they are 100 / speed and 150 / speed: at 4× poses arrive
  *  4× as often and 25 wall ms still spans the same few of them (a fixed 100 ms
  *  would reach past `POSE_RING_DEPTH` and pin drones to a stale pose); at
  *  0.25× the buffer stretches to cover the slower arrivals. */
@@ -84,13 +81,21 @@ function setDisplayDelayTarget(ms: number): void {
 }
 
 /** Pin the display-delay TARGET (wall ms, clamped to the floor/ceiling) for
- *  tests and fixed-delay harness runs: the lateness feed stops moving it until
- *  the next reset. The value glides there in `stepSwarmDisplayDelay` (the
- *  first target after a reset places the value at it). Production does not
- *  call this: the target comes from the lateness estimate. */
+ *  tests and fixed-delay harness runs: the inter-arrival feed stops moving it
+ *  until the next reset. The value glides there in `stepSwarmDisplayDelay`
+ *  (the first target after a reset places the value at it). Production does
+ *  not call this: it calls `feedSwarmDisplayDelayTarget`. */
 export function setSwarmDisplayDelayMs(ms: number): void {
   _displayDelayPinned = true;
   setDisplayDelayTarget(ms);
+}
+
+/** The production feed of the display-delay TARGET (wall ms, before the
+ *  floor/ceiling clamp): swarm inter-arrival EWMA x ADAPTIVE_DELAY_FACTOR +
+ *  the snapshot drop bias, once per JSON snapshot (`applySnapshotPerfStats`).
+ *  Ignored while a test has pinned the target. */
+export function feedSwarmDisplayDelayTarget(ms: number): void {
+  if (!_displayDelayPinned) setDisplayDelayTarget(ms);
 }
 
 /** Move the delay toward its target by one frame of `frameDtMs` wall ms:
@@ -114,10 +119,9 @@ export function stepSwarmDisplayDelay(frameDtMs: number, nowMs: number = Number.
 // packet after the stall took the clock back, so drawn steps around the stall
 // came out uneven. A packet handled more than TICK_CLOCK_FRAME_STALL_MS after
 // the last frame step is backlog: it is stamped by tick on the existing
-// offset (an earlier arrival and a re-seed still apply), and its lateness
-// does not feed the estimate (it used to raise the delay target toward the
-// ceiling for seconds after one stall). Real network lateness arrives between
-// regular frames and keeps both. Scalars only.
+// offset (an earlier arrival and a re-seed still apply). Real network
+// lateness arrives between
+// regular frames and keeps its clock pull. Scalars only.
 /** A gap (wall ms) since the last frame step past which a packet is frame-stall
  *  backlog: three 60 Hz frames, longer than ordinary frame jitter. */
 export const TICK_CLOCK_FRAME_STALL_MS = 50;
@@ -129,6 +133,14 @@ let _lastFrameStepMs = Number.NaN;
  *  False before the first frame step after a reset. */
 function isFrameStallBacklog(nowMs: number): boolean {
   return nowMs - _lastFrameStepMs > TICK_CLOCK_FRAME_STALL_MS;
+}
+
+/** The binary swarm inter-arrival EWMA after a packet handled at `nowMs`,
+ *  `dtMs` after the previous one (`nextSwarmInterArrivalEwmaMs`). A
+ *  frame-stall backlog packet (above) leaves it alone: a main-thread freeze is
+ *  not a network gap and must not raise the delay target (S5-7). Scalars only. */
+export function nextSwarmBinaryEwmaMs(prevEwmaMs: number, dtMs: number, nowMs: number): number {
+  return isFrameStallBacklog(nowMs) ? prevEwmaMs : nextSwarmInterArrivalEwmaMs(prevEwmaMs, dtMs);
 }
 
 // Hold without losing the place (netcode gap smoothing, S4-5). When the WHOLE
@@ -156,8 +168,8 @@ export function getSwarmHoldFrameCount(): number { return _drone.holdFrameCount;
 /** The sector's game speed the drone delay is sized for (1 until set). */
 export function getSwarmDisplaySpeed(): number { return _displaySpeed; }
 
-/** Put the delay back at the floor with no target, no lateness estimate and
- *  no stream newest stamp (sector change: `resetPredictionState`; tests:
+/** Put the delay back at the floor with no target and no stream newest
+ *  stamp (sector change: `resetPredictionState`; tests:
  *  `resetSwarmTickClock`).
  *  The next `setSwarmDisplayDelayMs` places the value at its target. */
 export function resetSwarmDisplayDelay(): void {
@@ -165,8 +177,6 @@ export function resetSwarmDisplayDelay(): void {
   resetDisplayDelayHold(_drone, clampDisplayDelayWallMs(DISPLAY_DELAY_MS));
   _displayDelaySeeded = false;
   _displayDelayPinned = false;
-  _latenessEstimate.estimateMs = 0;
-  _latenessEstimate.deviationMs = 0;
   _streamNewestTick = -1;
   _streamNewestStampMs = Number.NaN;
   _lastFrameStepMs = Number.NaN;
@@ -224,12 +234,12 @@ let _glideLimitCount = 0;
  *  until the first read, so no overwrite counts before anything was read. */
 let _lastReadTargetMs = Number.NaN;
 
-const _latenessEstimate: LatenessEstimate = { estimateMs: 0, deviationMs: 0 };
-
 // Drone stream newest stamp (netcode gap smoothing, S4-2). The display-time
 // stamp (`swarmArrivalStampMs` units, wall ms) of the newest server tick seen
-// in any tick-stamped swarm packet, so a hold can tell "the stream stalled"
-// from "this drone was not in the packet". Nothing reads it yet (S4-4/S4-5).
+// in any tick-stamped swarm packet OR JSON snapshot (S5-7: the snapshot is
+// placed on the same tick clock, `noteSwarmJsonSnapshotTick`), so the S4-5
+// hold tells "the link stalled" (both streams quiet) from "the swarm stream
+// is sparse" (idle drones send no delta) or "this drone was not in the packet".
 // Rule: the packet with the NEWER server tick wins; an equal or older tick (a
 // reordered or late packet) leaves it alone, so it never goes backwards on
 // one. It may step back only when a newer tick lands on a re-seeded tick clock
@@ -244,6 +254,15 @@ export function noteSwarmStreamStamp(tick: number, stampMs: number): void {
   if (tick <= _streamNewestTick) return;
   _streamNewestTick = tick;
   _streamNewestStampMs = stampMs;
+}
+
+/** A JSON snapshot of server tick `tick` arrived at `nowMs` (wall ms): note
+ *  its stamp on the drone tick clock (`swarmTickToStampMs`, read-only) as the
+ *  stream newest, so the stall hold fires only when BOTH streams are quiet.
+ *  Nothing before the clock is seeded (no drone packet yet). Scalars only. */
+export function noteSwarmJsonSnapshotTick(tick: number, nowMs: number): void {
+  const stampMs = swarmTickToStampMs(tick, nowMs);
+  if (!Number.isNaN(stampMs)) noteSwarmStreamStamp(tick, stampMs);
 }
 
 /** Display-time stamp (wall ms) of the newest drone packet; NaN before the
@@ -274,16 +293,6 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
   if (lateMs > _latenessMaxMs) _latenessMaxMs = lateMs;
   _latenessSumMs += lateMs;
   _latenessCount++;
-  // Frame-stall backlog (S5-1b) is late because of the page, not the link:
-  // it is counted above as telemetry but does not size the delay target.
-  if (!isFrameStallBacklog(nowMs)) {
-    updateLatenessEstimate(_latenessEstimate, lateMs);
-  }
-  if (!_displayDelayPinned) {
-    // Raw input (the setter clamps, as swarmDisplayDelayTargetFromLatenessMs),
-    // so a later speed change re-clamps the same input.
-    setDisplayDelayTarget(latenessTargetRawMs(_latenessEstimate.estimateMs, _latenessEstimate.deviationMs));
-  }
   _tickClockLastTick = tick;
   _tickClockLastStampMs = stamp;
   return stamp;
@@ -308,7 +317,7 @@ function nextTickClockOffsetMs(cand: number, nowMs: number): number {
  * the stamp that call would return for server tick `tick` arriving at
  * `nowMs`, against the CURRENT tick clock (re-seed, earlier-arrival, drift-up
  * and the S4-5 hold freeze all applied as that call would), but it changes
- * nothing: no clock, lateness counter, estimate, delay target or hold state.
+ * nothing: no clock, lateness counter, delay target or hold state.
  * For samples of another stream on the same server tick basis (missiles,
  * shells) that must share the drone display timeline without steering it.
  *
@@ -325,7 +334,7 @@ export function swarmTickToStampMs(tick: number, nowMs: number): number {
 }
 
 /** Forget the tick clock, zero the drone stream counters and reset the
- *  display delay + lateness estimate (tests; a new room re-seeds on its own). */
+ *  display delay (tests; a new room re-seeds on its own). */
 export function resetSwarmTickClock(): void {
   _tickClockSeeded = false;
   _latenessLastMs = 0;
@@ -355,10 +364,6 @@ export function getSwarmOldEndClampCount(): number { return _oldEndClampCount; }
 export function getSwarmGlideLimitCount(): number { return _glideLimitCount; }
 /** Deliberate re-syncs since the last reset (S4-4). */
 export function getSwarmResyncCount(): number { return _drone.resyncCount; }
-/** Smoothed drone packet lateness (wall ms); sizes the display-delay target. */
-export function getSwarmLatenessEstimateMs(): number { return _latenessEstimate.estimateMs; }
-/** Smoothed mean absolute deviation of drone packet lateness (wall ms). */
-export function getSwarmLatenessDeviationMs(): number { return _latenessEstimate.deviationMs; }
 
 /** The slewed display delay every read uses (wall ms). */
 export function getSwarmDisplayDelayMs(): number {

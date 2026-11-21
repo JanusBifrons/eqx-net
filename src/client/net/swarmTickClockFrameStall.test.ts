@@ -5,7 +5,7 @@
  * handled at once when it wakes, before the next frame step. Those packets
  * are late because of the page, not the network: they must not pull the tick
  * clock later, must not be clamped into each other at the drain time, and
- * must not feed the lateness estimate. The same burst after a NETWORK stall
+ * must not move the delay target. The same burst after a NETWORK stall
  * (frames kept running) keeps the existing drift-up.
  *
  * Driven through the calls the decoder makes per packet
@@ -19,7 +19,6 @@ import {
   stepSwarmDisplayDelay,
   setSwarmDisplaySpeed,
   resetSwarmTickClock,
-  getSwarmLatenessEstimateMs,
   getSwarmDisplayDelayTargetMs,
   TICK_CLOCK_FRAME_STALL_MS,
 } from './swarmInterpolation.js';
@@ -45,8 +44,6 @@ interface BurstResult {
   burstStamps: number[];
   /** The drain time of the burst (wall ms). */
   drainMs: number;
-  estimateBeforeMs: number;
-  estimateAfterMs: number;
   targetBeforeMs: number;
   targetAfterMs: number;
 }
@@ -74,7 +71,6 @@ function runBurst(frameStall: boolean): BurstResult {
     stepSwarmDisplayDelay(FRAME_MS, now);
   }
   const offsetBeforeMs = lastStamp - (tick - 1) * TICK_MS;
-  const estimateBeforeMs = getSwarmLatenessEstimateMs();
   const targetBeforeMs = getSwarmDisplayDelayTargetMs();
   const drainMs = now + STALL_MS;
   if (!frameStall) {
@@ -90,8 +86,7 @@ function runBurst(frameStall: boolean): BurstResult {
     burstOffsetsMs.push(stamp - tick * TICK_MS);
   }
   return {
-    offsetBeforeMs, burstOffsetsMs, burstStamps, drainMs, estimateBeforeMs, targetBeforeMs,
-    estimateAfterMs: getSwarmLatenessEstimateMs(),
+    offsetBeforeMs, burstOffsetsMs, burstStamps, drainMs, targetBeforeMs,
     targetAfterMs: getSwarmDisplayDelayTargetMs(),
   };
 }
@@ -125,9 +120,8 @@ describe('swarm tick clock through a frame stall (S5-1b)', () => {
     for (const s of r.burstStamps) expect(s).toBeLessThan(r.drainMs - EPS);
   });
 
-  it('the burst does not feed the lateness estimate or the delay target', () => {
+  it('the burst does not move the delay target', () => {
     const r = runBurst(true);
-    expect(r.estimateAfterMs).toBe(r.estimateBeforeMs);
     expect(r.targetAfterMs).toBe(r.targetBeforeMs);
   });
 
@@ -145,6 +139,5 @@ describe('swarm tick clock through a frame stall (S5-1b)', () => {
   it('control: the same burst after a network stall (frames kept running) still drifts the offset later', () => {
     const r = runBurst(false);
     expect(r.burstOffsetsMs[r.burstOffsetsMs.length - 1]!).toBeGreaterThan(r.offsetBeforeMs + 1);
-    expect(r.estimateAfterMs).toBeGreaterThan(r.estimateBeforeMs);
   });
 });

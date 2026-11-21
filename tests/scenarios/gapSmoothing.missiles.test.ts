@@ -18,8 +18,11 @@
  * - drone: `decodeSwarmPacket` with tick stamping, then
  *   `interpolateSwarmPose`. Once per frame, after the drain and before any
  *   read, `stepSwarmDisplayDelay(frameDtMs, now)` glides the delay toward
- *   its lateness target and runs the stall hold, as production
- *   (`updateSwarmMirror`) and `gapSmoothing.drones.test.ts` do.
+ *   its target and runs the stall hold, as production
+ *   (`updateSwarmMirror`) and `gapSmoothing.drones.test.ts` do. The target
+ *   comes from the production feed (`displayDelayFeed.ts`, S5-7): the swarm
+ *   inter-arrival EWMA on each swarm packet, the real
+ *   `applySnapshotPerfStats` on each applied JSON snapshot.
  *
  * `countMotionArtefacts` scores the drawn tracks against the truth.
  */
@@ -47,6 +50,7 @@ import type { NetworkProfile } from './types.js';
 import { buildDeliveries, buildFrameTimes } from './runner.js';
 import { GAP_PROFILES, type GapProfileName } from './gapProfiles.js';
 import { countMotionArtefacts, type MotionCounters, type MotionFrame } from './assertions.js';
+import { createDisplayDelayFeed } from './displayDelayFeed.js';
 
 const TICK_MS = 1000 / 60;
 const MS_PER_SECOND = 1000;
@@ -198,6 +202,8 @@ function runProfile(profile: NetworkProfile): RunResult {
     .sort((p, q) => p.atMs - q.atMs);
   const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
   let pendingTickIndex = -1;
+  let pendingAtMs = 0;
+  const feed = createDisplayDelayFeed();
   let prevFrameMs = Number.NaN;
   let next = 0;
   const out: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -213,13 +219,16 @@ function runProfile(profile: NetworkProfile): RunResult {
       const tickIndex = d.serverTick - START_SERVER_TICK;
       if (d.stream === 'json') {
         pendingTickIndex = tickIndex;
+        pendingAtMs = atMs;
         continue;
       }
+      feed.swarmArrived(atMs);
       decodeSwarmPacket(dronePacket(tickIndex), mirror, atMs, true);
     }
     if (pendingTickIndex >= 0) {
       const tickIndex = pendingTickIndex;
       pendingTickIndex = -1;
+      feed.jsonApplied(START_SERVER_TICK + tickIndex, now, pendingAtMs);
       applyMissileSnapshot(missileSlice(track, tickIndex), mirror, START_SERVER_TICK + tickIndex, now);
     }
     // Once per frame, after the drain and before any read, as production.
@@ -300,16 +309,25 @@ type MissileProfile = Exclude<GapProfileName, 'gap-swarm-only'>;
  *  one backward step (0.69 u, at 1016 ms) is the curve interpolation running
  *  a's arc for the stamp span (66.5 ms) when the two ticks are 50 ms apart,
  *  then the extrapolation from b starting behind it; the larger delay moved
- *  the read point onto that pair. */
+ *  the read point onto that pair. S5-7 (delay target = swarm inter-arrival
+ *  EWMA x 1.5 + drop bias, ceiling 150 ms instead of the lateness estimate up
+ *  to 280 ms; missiles read that target): gap-200 lateness 192.01 -> 141.13
+ *  (max 307.77 -> 147.52); gap-400 221.66 -> 160.56 (max 319.03 -> 233.33);
+ *  gap-600 / burst 258.66 -> 256.68; gap-json-only 157.32 -> 160.56 and
+ *  frame-stall-250 140.1 -> 142.01 (the target now follows the real cadence
+ *  instead of sitting at the 100 ms floor); jitter-4g lateness 292.26 ->
+ *  154.46 (max 342.02 -> 185.93), 7 snaps as before, largest 6.85 -> 6.95,
+ *  total 32.23 -> 35.05, backward steps 1 -> 0 (the smaller delay leaves the
+ *  50 ms tick pair above). Snaps and freezes are otherwise unchanged. */
 const TODAY: Readonly<Record<MissileProfile, Recorded>> = {
   'lan-clean': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 102.15, maxLatenessMs: 102.15, droneMeanLatenessMs: 102 },
-  'gap-200': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 192.01, maxLatenessMs: 307.77, droneMeanLatenessMs: 192.31 },
-  'gap-400': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 221.66, maxLatenessMs: 319.03, droneMeanLatenessMs: 209.59 },
-  'gap-600': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 258.66, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
-  'burst-600-both-streams': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 258.66, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
-  'gap-json-only': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 157.32, maxLatenessMs: 233.33, droneMeanLatenessMs: 140 },
-  'frame-stall-250': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 140.1, maxLatenessMs: 140.1, droneMeanLatenessMs: 140 },
-  'jitter-4g': { snaps: 7, largestSnapU: 6.85, totalSnapU: 32.23, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 292.26, maxLatenessMs: 342.02, droneMeanLatenessMs: 294.08 },
+  'gap-200': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 141.13, maxLatenessMs: 147.52, droneMeanLatenessMs: 141.41 },
+  'gap-400': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 160.56, maxLatenessMs: 233.33, droneMeanLatenessMs: 155.54 },
+  'gap-600': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 256.68, maxLatenessMs: 433.33, droneMeanLatenessMs: 238.53 },
+  'burst-600-both-streams': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 256.68, maxLatenessMs: 433.33, droneMeanLatenessMs: 238.53 },
+  'gap-json-only': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 160.56, maxLatenessMs: 233.33, droneMeanLatenessMs: 147.65 },
+  'frame-stall-250': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 142.01, maxLatenessMs: 147.52, droneMeanLatenessMs: 141.92 },
+  'jitter-4g': { snaps: 7, largestSnapU: 6.95, totalSnapU: 35.05, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 154.46, maxLatenessMs: 185.93, droneMeanLatenessMs: 155.44 },
 };
 
 const PROFILES = Object.keys(TODAY) as MissileProfile[];
@@ -320,16 +338,18 @@ const PROFILES = Object.keys(TODAY) as MissileProfile[];
  *  (the JSON stream carries every third tick), so the missile record holds
  *  that much earlier and resumes that much later; both then slew back at the
  *  same bounded rate, so the offset lasts the whole catch-up. Missile − drone
- *  mean lateness, before S5-5 → now: gap-400 +0.98 → +12.07; gap-600 and
- *  burst-600-both-streams +3.10 → +13.33 (before S5-5 the missile was NOT
+ *  mean lateness, before S5-5 → S5-5 → now (S5-7, capped delay): gap-400
+ *  +0.98 → +12.07 → +5.02; gap-600 and burst-600-both-streams +3.10 →
+ *  +13.33 → +18.16 (before S5-5 the missile was NOT
  *  held: it froze at its cap and then snapped 15.7 u onto the drone's read
  *  point). Equal lateness here needs the missile read point to follow the
  *  drone's hold, which a JSON-only stall would then not hold. */
 const STALL_HOLD_PROFILES: ReadonlySet<MissileProfile> = new Set<MissileProfile>(['gap-400', 'gap-600', 'burst-600-both-streams']);
 
 /** A JSON-only stall holds missiles and not drones (S5-5): the missile is
- *  drawn later than the drone by design here (+17.32 ms mean; before S5-5
- *  +1.81 ms, with a 41.95 u snap on resume). */
+ *  drawn later than the drone by design here (+12.92 ms mean; S5-5 +17.32,
+ *  the drone delay then sat at the floor; before S5-5 +1.81 ms, with a
+ *  41.95 u snap on resume). */
 const JSON_ONLY_STALL: MissileProfile = 'gap-json-only';
 
 function latenessGapMs(name: MissileProfile): number {
@@ -356,6 +376,8 @@ describe('gap smoothing: missile fixtures (today, plan 5.4)', () => {
   // +1.81, frame-stall-250 +0.10, jitter-4g −145.89. After S5-4: +0.15, −0.30,
   // +0.98, +3.10, +3.10, +1.81, +0.10, −1.82. After S5-5 the stall profiles
   // move (see STALL_HOLD_PROFILES, JSON_ONLY_STALL); the rest are unchanged.
+  // After S5-7 (capped delay): +0.15, −0.27, (+5.02, +18.16, +18.16, +12.92),
+  // +0.10, −0.98.
   it('missile and target drone drawn at the same lateness', () => {
     for (const name of PROFILES) {
       if (STALL_HOLD_PROFILES.has(name) || name === JSON_ONLY_STALL) continue;

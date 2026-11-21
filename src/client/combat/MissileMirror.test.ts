@@ -493,20 +493,20 @@ describe('MissileMirror — reads the shared drone display delay (S5-4)', () => 
   }
 
   it('reads at now − the shared delay, and follows it when it changes (failed pre-fix: fixed 100 ms)', () => {
-    const mirror = flyMissile(1, 200, SEED_MS + 450);
-    expect(mirror.swarmDisplayDelayMs).toBe(200);
+    const mirror = flyMissile(1, 140, SEED_MS + 450);
+    expect(mirror.swarmDisplayDelayMs).toBe(140);
     const now = SEED_MS + 450;
-    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(1, now - 200), 6);
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(1, now - 140), 6);
 
-    // The drone target moves to 150; the missile record glides there too.
-    setSwarmDisplayDelayMs(150);
-    for (let i = 0; i < 60 && mirror.swarmDisplayDelayMs !== 150; i++) {
+    // The drone target moves to 120; the missile record glides there too.
+    setSwarmDisplayDelayMs(120);
+    for (let i = 0; i < 60 && mirror.swarmDisplayDelayMs !== 120; i++) {
       stepSwarmDisplayDelay(1000); // no read clock: slew only (the drone stream is not fed here)
       stepMissileDisplayDelay(mirror, 1000, now);
     }
-    expect(getSwarmDisplayDelayMs()).toBe(150);
-    expect(mirror.swarmDisplayDelayMs).toBe(150);
-    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(1, now - 150), 6);
+    expect(getSwarmDisplayDelayMs()).toBe(120);
+    expect(mirror.swarmDisplayDelayMs).toBe(120);
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(1, now - 120), 6);
   });
 
   it('before the drone clock seeds: publishes NaN and the missile keeps its fixed delay', () => {
@@ -526,17 +526,17 @@ describe('MissileMirror — reads the shared drone display delay (S5-4)', () => 
   });
 
   it('2×: the shared delay is already wall ms (not divided again by the speed)', () => {
-    const mirror = flyMissile(2, 80, SEED_MS + 200); // floor 50, ceiling 140 wall ms at 2×
-    expect(mirror.swarmDisplayDelayMs).toBe(80);
+    const mirror = flyMissile(2, 70, SEED_MS + 200); // floor 50, ceiling 75 wall ms at 2×
+    expect(mirror.swarmDisplayDelayMs).toBe(70);
     const now = SEED_MS + 200;
-    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(2, now - 80), 6);
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(2, now - 70), 6);
   });
 
   it('0.7×: the shared delay is already wall ms (not divided again by the speed)', () => {
-    const mirror = flyMissile(0.7, 250, SEED_MS + 650); // floor ~142.9, ceiling 400 wall ms at 0.7×
-    expect(mirror.swarmDisplayDelayMs).toBe(250);
+    const mirror = flyMissile(0.7, 200, SEED_MS + 650); // floor ~142.9, ceiling ~214.3 wall ms at 0.7×
+    expect(mirror.swarmDisplayDelayMs).toBe(200);
     const now = SEED_MS + 650;
-    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(0.7, now - 250), 6);
+    expect(resolveMissileDisplayPose(mirror, 1, now)!.x).toBeCloseTo(trueX(0.7, now - 200), 6);
   });
 });
 

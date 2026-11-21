@@ -1,7 +1,7 @@
 /**
  * Sizing rules for the drone display delay (netcode gap smoothing): the
  * floor, adaptive ceiling and hold maximum, the glide limit, the slew rates,
- * the lateness estimator and the target it gives, and the hold bound. Pure
+ * the inter-arrival estimator that sizes the target, and the hold bound. Pure
  * constants and functions, no module state: the delay itself, the tick clock
  * and the counters live in `swarmInterpolation.ts`, which re-exports all of
  * this so importers keep one entry point.
@@ -53,23 +53,43 @@ export const DISPLAY_DELAY_MS = 100;
  *  forward from the newest pose only, so it needs no older ring history. */
 export const EXTRAPOLATION_LIMIT_MS = 250;
 
-/** Hard ceiling on adaptive delay — past this the perceived latency starts
- *  to feel unresponsive even if motion is smooth. Raised 200 → 280 for the
- *  drone snapshot-interpolation pivot (Step 4, 2026-05-18): an
- *  out-of-interest / decimated drone arrives every `DECIMATION_TICKS≈6`
- *  ticks ≈ 100–170 ms, so a 170 ms decimated cadence wants ~255 ms of
- *  buffer to still have two bracketing samples (the delay is now sized from
- *  measured packet lateness, S3-3; owner decision D2 keeps this ceiling).
- *  280 leaves headroom above that without feeling unresponsive
- *  for the combat pack (which is in-interest at ~per-tick cadence and sits
- *  near the 100 ms floor, nowhere near this ceiling). Distant decimated
- *  drones accept the added latency by design — they are not the threat;
- *  the teleport guard covers the in↔out re-acquire. */
-export const ADAPTIVE_DELAY_CEILING_MS = 280;
+/** Hard ceiling on the adaptive delay target (GAME ms; wall = 150 / speed).
+ *  Past this the perceived latency starts to feel unresponsive even if motion
+ *  is smooth. Lowered 280 → 150 (netcode gap smoothing, S5-7, owner decision
+ *  "cap delay + fix hold"): sizing the target from measured packet lateness
+ *  (est + 4 × dev + one frame) pinned a jittery 4G link at 280 most of the
+ *  time and drew drones ~300 ms late (main ~125). The target follows the
+ *  swarm inter-arrival time again (`nextSwarmInterArrivalEwmaMs` ×
+ *  ADAPTIVE_DELAY_FACTOR + drop bias) and stops here: late packets and short
+ *  gaps are covered by the 250 ms glide and the stall hold, not a bigger
+ *  steady buffer. A decimated drone (one packet per ~100–170 ms) may glide
+ *  briefly between packets; it is not the threat. */
+export const ADAPTIVE_DELAY_CEILING_MS = 150;
+
+/** Delay target = swarm inter-arrival EWMA × this (+ the snapshot drop bias,
+ *  `computeInterpBiasMs`): 1.5 packet gaps of buffer keep a bracketing pair
+ *  through ordinary jitter. Clamped to the floor and ceiling. */
+export const ADAPTIVE_DELAY_FACTOR = 1.5;
+/** Largest inter-arrival sample (wall ms) the EWMA takes: one long gap (a
+ *  stall, an idle sector) must not drag the estimate for seconds after. */
+export const SWARM_INTER_ARRIVAL_SAMPLE_CAP_MS = 500;
+/** Weight the EWMA keeps on its previous value per binary swarm packet. */
+export const SWARM_INTER_ARRIVAL_KEEP = 0.85;
+
+/** The swarm inter-arrival EWMA (wall ms) after one more binary swarm packet
+ *  arrived `dtMs` wall ms after the previous one: the first sample seeds it
+ *  (`prevEwmaMs` 0), later ones blend in at 1 − SWARM_INTER_ARRIVAL_KEEP; the
+ *  sample is capped at SWARM_INTER_ARRIVAL_SAMPLE_CAP_MS. A non-positive or
+ *  non-finite `dtMs` (two packets drained in one frame) leaves it alone. Pure. */
+export function nextSwarmInterArrivalEwmaMs(prevEwmaMs: number, dtMs: number): number {
+  if (!(dtMs > 0)) return prevEwmaMs;
+  const sample = Math.min(SWARM_INTER_ARRIVAL_SAMPLE_CAP_MS, dtMs);
+  return prevEwmaMs === 0 ? sample : prevEwmaMs * SWARM_INTER_ARRIVAL_KEEP + sample * (1 - SWARM_INTER_ARRIVAL_KEEP);
+}
 
 /** Largest total drone display delay (GAME ms; wall = 400 / speed, the same
  *  convention as the floor and ceiling). Netcode gap smoothing S4, owner
- *  decision D2: 280 steady, allowed to grow to 400 while playback holds its
+ *  decision D2: the steady delay (≤ the ceiling) may grow to 400 while playback holds its
  *  place through a stream stall. A stall that would push it further (a gap
  *  over ~0.75 s, an idle sector resuming, a backgrounded tab) re-syncs the
  *  delay to its target in one step (`boundSwarmHoldDelayMs`). The pose ring
@@ -85,80 +105,18 @@ export const DISPLAY_DELAY_SLEW_TAU_MS = 300;
  *  wall time per frame, either way. Below 1 the read point (now − delay)
  *  always advances (≥ 0.9× real time), so drones never stop or reverse from
  *  a delay change; 0.1 keeps the slow-down / speed-up under 10 %, below what
- *  the eye reads as a hitch. A 100 → 280 ms step takes ≥ 1.8 s at 1×.
+ *  the eye reads as a hitch. A 100 → 150 ms step takes ≥ 0.5 s at 1×.
  *  A ratio, so it needs no speed scaling (the range itself is ÷ speed). */
 export const DISPLAY_DELAY_SLEW_MAX_RATE = 0.1;
 /** Within this (wall ms) of the target the value lands on it exactly. */
 export const DISPLAY_DELAY_SLEW_SNAP_MS = 0.01;
 
-/** How many lateness deviations of headroom the target keeps above the
- *  smoothed lateness (RFC 6298's RTO = SRTT + 4 × RTTVAR). */
-export const LATENESS_TARGET_DEVIATIONS = 4;
-/** "One frame" in the target (WALL ms, not ÷ speed: a display frame is wall
- *  time): a named 60 Hz frame, not the measured one, so a frame stall does
- *  not move the target. The read lands up to one frame after the newest
- *  packet's drain, so the buffer must reach one frame further back. */
-export const LATENESS_TARGET_FRAME_MS = 1000 / 60;
-
-/**
- * The display-delay target (WALL ms) for a lateness estimate and deviation
- * (wall ms) at game speed `speed`:
- * `max(floor, estimate + 4 × deviation + one frame)`, clamped to the ceiling,
- * where floor = DISPLAY_DELAY_MS / speed and ceiling =
- * ADAPTIVE_DELAY_CEILING_MS / speed (game ms ÷ speed = wall ms). Pure.
- */
-export function swarmDisplayDelayTargetFromLatenessMs(estimateMs: number, deviationMs: number, speed: number): number {
-  const s = Number.isFinite(speed) && speed > 0 ? speed : 1;
-  return Math.max(DISPLAY_DELAY_MS / s, Math.min(ADAPTIVE_DELAY_CEILING_MS / s, latenessTargetRawMs(estimateMs, deviationMs)));
-}
-
-/** The target before the floor/ceiling clamp (wall ms). */
-export function latenessTargetRawMs(estimateMs: number, deviationMs: number): number {
-  return estimateMs + LATENESS_TARGET_DEVIATIONS * deviationMs + LATENESS_TARGET_FRAME_MS;
-}
-
 /** One server tick in game ms (the room steps at 60 Hz game time). */
 export const SERVER_TICK_MS = 1000 / 60;
 
-// Drone lateness estimate (netcode gap smoothing, S3-1). Smoothed per-packet
-// lateness (the S0-2 `lateMs` in `swarmArrivalStampMs`) plus its mean absolute deviation (RFC
-// 6298 style). It sizes the display-delay TARGET (S3-3, see
-// `swarmDisplayDelayTargetFromLatenessMs`); it drives no ring, playback or pose.
-// Units: WALL ms, the same as `setSwarmDisplayDelayMs`'s input and the stored
-// `_displayDelayMs` (its game-ms floor/ceiling are divided by the speed to wall
-// ms). Gains are per packet; the time constants below are stated at the nominal
-// one-packet-per-server-tick cadence (16.7 wall ms at 1×), so a faster or
-// slower packet rate shortens or stretches them in wall time.
-/** Rise time constant: a sample above the estimate is tracked in ~50 ms
- *  (gain ≈ 0.28: 90 % of a step up within 7 packets). */
-export const LATENESS_RISE_TAU_MS = 50;
-/** Fall time constant: a sample below the estimate decays over ~2000 ms
- *  (gain ≈ 0.008: after 1 s at 60 Hz ~60 % of a step down remains). */
-export const LATENESS_FALL_TAU_MS = 2000;
-/** Deviation time constant: ~250 ms (gain ≈ 0.065), symmetric. */
-export const LATENESS_DEV_TAU_MS = 250;
-const LATENESS_RISE_GAIN = 1 - Math.exp(-SERVER_TICK_MS / LATENESS_RISE_TAU_MS);
-const LATENESS_FALL_GAIN = 1 - Math.exp(-SERVER_TICK_MS / LATENESS_FALL_TAU_MS);
-const LATENESS_DEV_GAIN = 1 - Math.exp(-SERVER_TICK_MS / LATENESS_DEV_TAU_MS);
-
-/** State of a lateness estimate (wall ms). Mutated in place, never reallocated. */
-export interface LatenessEstimate {
-  estimateMs: number;
-  deviationMs: number;
-}
-
-/** Fold one lateness sample (wall ms) into `est`: rise fast, fall slowly; the
- *  deviation follows |sample − previous estimate| (RFC 6298 order). Pure on
- *  `est`, no allocation. */
-export function updateLatenessEstimate(est: LatenessEstimate, sampleMs: number): void {
-  const err = sampleMs - est.estimateMs;
-  est.deviationMs += (Math.abs(err) - est.deviationMs) * LATENESS_DEV_GAIN;
-  est.estimateMs += err * (err > 0 ? LATENESS_RISE_GAIN : LATENESS_FALL_GAIN);
-}
-
 // Maximum total display delay + counted re-sync (netcode gap smoothing, S4-4).
-// Nothing calls these yet; S4-5 lets the delay grow during a stream stall
-// (read point held at the stream newest stamp + glide cap) and bounds it here.
+// The S4-5 hold lets the delay grow during a stream stall (read point held at
+// the stream newest stamp + glide cap) and bounds it here.
 
 /** True when a requested hold delay (wall ms) passes
  *  MAX_TOTAL_DISPLAY_DELAY_MS / speed. A non-finite request counts as over

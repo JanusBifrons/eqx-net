@@ -13,6 +13,9 @@
  *   BEFORE the stall hold (`getSwarmSteadyDisplayDelayMs`, S5-6a);
  * - drone: `decodeSwarmPacket` with tick stamping, then
  *   `interpolateSwarmPose`, after `stepSwarmDisplayDelay` once per frame.
+ *   The delay target comes from the production feed (`displayDelayFeed.ts`,
+ *   S5-7): the swarm inter-arrival EWMA on each swarm packet, the real
+ *   `applySnapshotPerfStats` on each coalesced JSON snapshot.
  *
  * Each profile also runs with the old fixed delay (`'fixed'`: the helper
  * given NaN) and with the HELD drone delay (`'held'`, the parked S5-6
@@ -46,6 +49,7 @@ import type { NetworkProfile } from './types.js';
 import { buildDeliveries, buildFrameTimes } from './runner.js';
 import { GAP_PROFILES, type GapProfileName } from './gapProfiles.js';
 import { countMotionArtefacts, type MotionCounters, type MotionFrame } from './assertions.js';
+import { createDisplayDelayFeed } from './displayDelayFeed.js';
 
 const TICK_MS = 1000 / 60;
 const MS_PER_SECOND = 1000;
@@ -74,10 +78,15 @@ const SHELL_FLIGHT_TICKS = Math.ceil(RUN_MS / TICK_MS) + 60;
 
 /** |shell − drone| mean lateness (ms) recorded with the steady delay; the
  *  ~15 ms on lan-clean is the clock anchor vs the drone tick clock (a known
- *  offset, out of scope). The fixed delay gave 14.67 and 105.89. */
+ *  offset, out of scope). The fixed delay gave 14.67 and 105.89. S5-7 (delay
+ *  target capped at 150 ms, fed by the swarm inter-arrival EWMA): jitter-4g
+ *  37.56 -> 38.71 while both are drawn far sooner (drone mean lateness
+ *  294.08 -> 155.44, shell ~332 -> 194.15; the fixed delay now gives 32.75):
+ *  the gap is mostly the clock anchor's lag on the jittered JSON stream, and
+ *  the shell delay now moves with a target that changes every snapshot. */
 const RECORDED_SHELL_DRONE_GAP_MS: Partial<Record<GapProfileName, number>> = {
   'lan-clean': 14.67,
-  'jitter-4g': 37.56,
+  'jitter-4g': 38.71,
 };
 /** Rounding slack on the recorded gaps (ms). */
 const GAP_TOLERANCE_MS = 0.01;
@@ -153,6 +162,8 @@ function runProfile(profile: NetworkProfile, mode: DelayMode): RunResult {
   const bursts: number[] = [];
   let anchor: AnchorState | null = null;
   let pendingTickIndex = -1;
+  let pendingAtMs = 0;
+  const feed = createDisplayDelayFeed();
   let prevFrameMs = Number.NaN;
   let next = 0;
   const out: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -166,13 +177,16 @@ function runProfile(profile: NetworkProfile, mode: DelayMode): RunResult {
       const tickIndex = d.serverTick - START_SERVER_TICK;
       if (d.stream === 'json') {
         pendingTickIndex = tickIndex;
+        pendingAtMs = atMs;
         continue;
       }
+      feed.swarmArrived(atMs);
       decodeSwarmPacket(dronePacket(tickIndex), mirror, atMs, true);
     }
     if (pendingTickIndex >= 0) {
       // The snapshot re-anchors the clock at the frame drain (1×: game = wall).
       const serverTick = START_SERVER_TICK + pendingTickIndex;
+      feed.jsonApplied(serverTick, now, pendingAtMs);
       anchor = anchor === null ? { anchorServerTick: serverTick, anchorPerfNow: now } : updateAnchor(anchor, serverTick, now);
       pendingTickIndex = -1;
     }

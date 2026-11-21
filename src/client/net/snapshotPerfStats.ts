@@ -9,10 +9,12 @@
  *   - Snapshot interval + jitter computation (max-min of last 10).
  *   - Server tick rate EWMA → Zustand for the HUD chip.
  *   - The JSON snapshot drop detector (`droppedSnapshotsRecent`, read
- *     by netgate). It no longer sizes the drone display delay: that
- *     comes from the drone packet lateness estimate in
- *     `swarmInterpolation.ts` (netcode gap smoothing S3-3; see
+ *     by netgate) and the drone display-delay target it biases: swarm
+ *     inter-arrival EWMA x ADAPTIVE_DELAY_FACTOR + drop bias (netcode gap
+ *     smoothing S5-7; see
  *     `docs/architecture/drone-snapshot-interpolation.md`).
+ *   - The snapshot's tick as the drone stream newest stamp, so the drone
+ *     stall hold fires only when the JSON stream is quiet too.
  *   - Collision-event stale-guard tick — late collision events from
  *     the worker arriving with `tick < snapshot.serverTick` are
  *     dropped (the snapshot has already corrected predWorld).
@@ -26,9 +28,15 @@ import {
   readHeapUsedMb,
 } from './perfStats';
 import {
+  computeInterpBiasMs,
   observeSnapshotTick,
   type DropDetector,
 } from './snapshotDropDetector';
+import {
+  ADAPTIVE_DELAY_FACTOR,
+  feedSwarmDisplayDelayTarget,
+  noteSwarmJsonSnapshotTick,
+} from './swarmInterpolation';
 import { useUIStore } from '../state/store';
 import type { CollisionGuardState } from './applyCollisionResolved';
 import type { PredictionStats } from './predictionStats';
@@ -43,9 +51,8 @@ export interface SnapshotPerfStatsCtx {
   collisionGuard: CollisionGuardState;
   dropDetector: DropDetector;
   /** EWMA of inter-arrival ms on the BINARY swarm channel — owned by
-   *  the binary-swarm handler. No longer read here (S3-3: the drone
-   *  display delay is sized from packet lateness in
-   *  `swarmInterpolation.ts`); kept until the caller stops passing it. */
+   *  the binary-swarm handler (`nextSwarmBinaryEwmaMs`). Sizes the
+   *  drone display-delay target. */
   swarmBinaryEwma: number;
 }
 
@@ -111,12 +118,18 @@ export function applySnapshotPerfStats(
     ctx.stats.serverTickHzEwma = smoothed;
     useUIStore.getState().setServerTickHz(Math.round(smoothed));
 
-    // JSON drop detector: feeds `droppedSnapshotsRecent` (netgate). The
-    // drone display delay no longer reads it, nor the binary inter-arrival
-    // EWMA: its target comes from the drone packet lateness estimate
-    // (`swarmArrivalStampMs`, netcode gap smoothing S3-3).
+    // JSON drop detector: feeds `droppedSnapshotsRecent` (netgate) and
+    // biases the drone display-delay target, which otherwise follows the
+    // binary swarm inter-arrival EWMA (S5-7; clamped to the floor and
+    // ADAPTIVE_DELAY_CEILING_MS in `swarmInterpolation.ts`).
     observeSnapshotTick(ctx.dropDetector, snap.serverTick);
+    const dropBias = computeInterpBiasMs(ctx.dropDetector.dropCount);
+    feedSwarmDisplayDelayTarget(ctx.swarmBinaryEwma * ADAPTIVE_DELAY_FACTOR + dropBias);
   }
+  // The link is alive while snapshots arrive: their tick (on the drone
+  // tick clock) keeps the drone stream newest stamp fresh, so a sparse
+  // swarm stream (idle drones send no delta) does not trip the stall hold.
+  noteSwarmJsonSnapshotTick(snap.serverTick, wireArrivalAtMs);
 
   // Rolling jitter: max − min of the last 10 snapshot intervals.
   if (intervalMs > 0) {
