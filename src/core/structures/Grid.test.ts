@@ -533,3 +533,45 @@ describe('Grid.route on the shared graph searcher', () => {
     }
   });
 });
+
+// ── Supply fraction (solid-doors plan, slices 5+6) ──────────────────────────
+describe('Grid — supply / demand and supplyFrac', () => {
+  const linked = (): Map<string, Connection[]> => adjacencyFrom([
+    new Connection(1, 'cap', 'con', CONNECTION_THROUGHPUT),
+    new Connection(2, 'con', 'load', CONNECTION_THROUGHPUT),
+  ]);
+  const withLoad = (draw: number): Map<string, GridNode> => new Map([
+    ['cap', capital('cap', 0, 0)], ['con', connector('con', 300, 0)],
+    ['load', node('load', { kind: 'miner', x: 600, y: 0, powerConsumption: draw })],
+  ]);
+
+  it('rebuild sums supply and demand; a surplus reads full supply', () => {
+    const grid = new Grid();
+    grid.rebuild(withLoad(40), linked());
+    expect(grid.powerSummaryFor('load')).toEqual({ netPower: 10, powered: true, supplyFrac: 1 });
+  });
+
+  it('a deficit reads supply / demand, netPower and powered unchanged', () => {
+    const grid = new Grid();
+    grid.rebuild(withLoad(100), linked());
+    expect(grid.powerSummaryFor('load')).toEqual({ netPower: -50, powered: false, supplyFrac: 0.5 });
+  });
+
+  it('adjustDraw moves demand with the net, both ways', () => {
+    const grid = new Grid();
+    grid.rebuild(withLoad(40), linked());
+    grid.adjustDraw('load', 60); // demand 100 vs supply 50
+    expect(grid.powerSummaryFor('cap')).toEqual({ netPower: -50, powered: false, supplyFrac: 0.5 });
+    grid.adjustDraw('load', -20); // demand 80
+    expect(grid.powerSummaryFor('cap').supplyFrac).toBeCloseTo(50 / 80);
+    grid.adjustDraw('load', -40); // demand 40: back in surplus
+    expect(grid.powerSummaryFor('cap')).toEqual({ netPower: 10, powered: true, supplyFrac: 1 });
+  });
+
+  it('no Capital (or unknown id) reads 0', () => {
+    const grid = new Grid();
+    grid.rebuild(new Map([['lone', solar('lone', 0, 0)]]), new Map());
+    expect(grid.powerSummaryFor('lone').supplyFrac).toBe(0);
+    expect(grid.powerSummaryFor('missing').supplyFrac).toBe(0);
+  });
+});

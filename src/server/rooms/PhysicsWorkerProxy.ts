@@ -86,9 +86,10 @@ export type WorkerCmd =
   | { type: 'REMOVE_FORCE_FIELD'; id: string }
   /** Structure-restyle 2d: attach a structure's rig solid parts
    *  (`World.attachRig`), and start / clear the clip on it (`World.setRigClip`;
-   *  `startTick` in game ticks, target in the structure's frame). */
+   *  `startTick` in game ticks, target in the structure's frame; optional
+   *  `from` / `rate` scrub the clip, `PlayingClip`). */
   | { type: 'RIG_ATTACH'; id: string; rigId: string }
-  | { type: 'RIG_CLIP';   id: string; clipId: string | null; startTick: number; targetX?: number; targetY?: number }
+  | { type: 'RIG_CLIP';   id: string; clipId: string | null; startTick: number; targetX?: number; targetY?: number; from?: number; rate?: number }
   /** Several commands in ONE message, handled in order with no physics step
    *  between them (`beginBatch` / `endBatch`): one wreck's piece spawns and
    *  kicks, so every piece starts on the same step. */

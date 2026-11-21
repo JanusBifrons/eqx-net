@@ -1,23 +1,26 @@
 # Shield Gates and Airlocks (player-facing)
 
 A shield fence keeps everything out — including you. **Gates** are the doors in
-a fence: a shield that opens for the ships it lets in and closes behind them.
+a fence: solid sliding doors that open for the ships they let in and close
+behind them.
 
 ## The two gate kinds
 
-**Shield Gate** (320 × 72). Two posts placed together as one structure, with a
-shield across the gap between them. When a ship the gate admits comes within
-about 300 u of either side, the shield drops; once nobody is near, it closes
-again after about a second. It never closes on a ship that is still in the gap.
+**Shield Gate** (320 × 72). Two towers placed together as one structure, with a
+pair of solid doors across the gap between them. When a ship the gate admits
+comes within about 300 u of either side, the two halves slide apart into the
+towers; once nobody is near, they slide shut again after about a second. A
+closing door does not wait for you: it pushes a ship still in the gap back out.
 
-**Shield Airlock** (320 × 260). A chamber with solid side walls and a shield at
-each end. It opens **one end or the other, never both**:
+**Shield Airlock** (320 × 260). A chamber with solid side walls and a pair of
+sliding doors at each end. It opens **one end or the other, never both**:
 
 1. You arrive at end A — end A opens.
 2. You fly into the chamber — end A closes behind you.
 3. End B opens — you fly out, and it closes behind you.
 
-Ships coming from the other side get the same in reverse. Use an airlock where a
+An end only starts to open once the other end is fully shut. Ships coming from
+the other side get the same in reverse. Use an airlock where a
 plain gate would let an attacker slip in behind a friendly ship.
 
 ## Who a gate opens for
@@ -42,15 +45,26 @@ either side and to one connector. The fence walls run right up to the gate's
 posts, so the barrier stays continuous up to the door. Rotate a gate (**R**
 while placing) so it lies along the fence line.
 
-Gates draw power like pylons (gate 30, airlock 50). Their shield follows the
-same rules as the fence: an unpowered gate has no shield at all (so it lets
-everyone through, like an unpowered fence), and heavy fire on a closed gate
-drains your batteries and can stun it.
+## Doors and power
+
+- **Speed.** At full power a door takes **3 seconds** to open or close. On a
+  grid short of power the doors move more slowly (half power, half speed).
+- **No power.** The doors stop where they are: an open gate stays open, a shut
+  gate stays shut, and a half-open gate stays half open (the gap is real, so a
+  small ship may still fit through).
+- **Power use.** A gate only draws its full power (gate 30, airlock 50) while
+  its doors are moving; standing still it uses a small trickle.
+- **Lights.** The deck lights on each end show the door: **green** only when it
+  is fully open, **red** when it is shut or moving, **dark** when it has no power.
+- **Gunfire.** Shut doors are solid: shots hit them and damage the gate. Shots
+  pass through an open gap. Stunning the fence does not open a gate; to break
+  in, destroy the gate.
 
 ## How it works
 
-The gate's posts are solid; its shield is a separate wall that the server
-switches off while that end is open. Both the server and your client build the
-same posts, spans and fence walls from the same shared geometry, so your ship
-never snaps back at an open gate or slips through a closed one. Architecture:
+The gate's towers and its door leaves are solid bodies. The server decides when
+a door should open or shut and sends only where the door started, which way it
+is moving and how fast; the server and your client both work out where the
+door is from that one record, so your ship never snaps back at an open gate or
+slips through a closed one. Architecture:
 [structures-and-power-grid.md](../architecture/structures-and-power-grid.md#gates).

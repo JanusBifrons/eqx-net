@@ -354,7 +354,7 @@ export class ArtService {
     return this.acquire({ type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}), ...(livery ? { livery } : {}) }, urgent);
   }
 
-  /** `livery`: the owner's colours and sigil (`?structLivery=1`); `style`:
+  /** `livery`: the owner's colours and sigil (on by default, `?structLivery=0` = off); `style`:
    *  a `?restyle=` structure style. Each joins the bake key; absent (or
    *  style `current`) = today's job, exactly. */
   struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false, livery?: StructLivery, style?: string): ArtHandle {

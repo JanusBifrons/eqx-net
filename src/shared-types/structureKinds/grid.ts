@@ -4,6 +4,7 @@
  * file AND is APPENDED to `catalogueOrder.ts` (invariant #11).
  */
 import type { StructureKind } from './types.js';
+import { AIRLOCK_H, AIRLOCK_W, GATE_DEPTH, GATE_W } from './gatePosts.js';
 
 // ---------------------------------------------------------------------------
 // Kind records. Values mirror eqx-peri's STRUCTURE_DEFINITIONS + The Space
@@ -194,8 +195,8 @@ export const SHIELD_PYLON: StructureKind = {
   // WS-6 (R2.18) — shrunk 30→12: the WALL SPAN is the visual, not the post; a
   // tiny pylon de-emphasises the node. The wall geometry is pose-to-pose
   // (ShieldWall.ts centre-to-centre), so a smaller post does NOT shrink the wall.
-  radius: 51, // bounding circle of the 72×72 footprint
-  footprint: { w: 72, h: 72 },
+  radius: 85, // bounding circle of the 120×120 footprint (restyle F2, was 72×72)
+  footprint: { w: 120, h: 120 },
   maxHealth: 800,
   maxConnections: 3,
   isHub: true,
@@ -289,8 +290,9 @@ export const SHIELD_GATE: StructureKind = {
   displayName: 'Shield Gate',
   description:
     'Two posts with a shield span between them. Opens for ships it admits, closes behind them. Joins a fence like a pylon.',
-  radius: 164, // bounding circle of the 320×72 footprint
-  footprint: { w: 320, h: 72 },
+  // Restyle F2: 120-wide towers round the unchanged 176 opening (gatePosts.ts).
+  radius: 212, // bounding circle of the 416×72 footprint
+  footprint: { w: GATE_W, h: GATE_DEPTH },
   maxHealth: 1200,
   maxConnections: 3,
   isHub: true,
@@ -301,15 +303,16 @@ export const SHIELD_GATE: StructureKind = {
   color: 0x4488ff,
 };
 
-/** Shield Airlock — a chamber with a Shield Gate span at each end. It opens one
+/** Shield Airlock — a chamber with a pair of solid doors at each end. It opens one
  *  end or the other, never both, cycling a ship through. */
 export const SHIELD_AIRLOCK: StructureKind = {
   id: 'shield_airlock',
   displayName: 'Shield Airlock',
   description:
     'A chamber with a shield span at each end. Opens one end or the other, never both, to cycle a ship through.',
-  radius: 207, // bounding circle of the 320×260 footprint
-  footprint: { w: 320, h: 260 },
+  // Restyle F2: 100-wide side blocks round the unchanged 192 opening.
+  radius: 236, // bounding circle of the 392×260 footprint
+  footprint: { w: AIRLOCK_W, h: AIRLOCK_H },
   maxHealth: 1800,
   maxConnections: 3,
   isHub: true,

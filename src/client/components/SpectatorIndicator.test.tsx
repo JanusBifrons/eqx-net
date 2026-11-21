@@ -8,7 +8,14 @@ import { useUIStore } from '../state/store.js';
 import { SpectatorIndicator } from './SpectatorIndicator.js';
 
 describe('SpectatorIndicator — Command view (RTS slice 10)', () => {
-  beforeEach(() => useUIStore.setState({ phase: 'game', pilotMode: 'pilot' }));
+  beforeEach(() => useUIStore.setState({ phase: 'game', pilotMode: 'pilot', buildMode: false }));
+
+  it('reads "Build mode" (not Command view) in Build mode', () => {
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true });
+    render(<SpectatorIndicator />);
+    expect(screen.getByTestId('build-mode-indicator')).toHaveTextContent('Build mode');
+    expect(screen.queryByTestId('spectator-indicator')).toBeNull();
+  });
 
   it('shows "Command view" in command view', () => {
     useUIStore.setState({ pilotMode: 'spectator' });

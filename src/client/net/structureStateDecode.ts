@@ -33,6 +33,7 @@ import {
 } from '../../shared-types/structureStateWire.js';
 import { decodeProdBay, decodeProdFrac } from '../../shared-types/production.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
+import { clearDoorRow, decodeDoorRow, isDoorKind } from './doorMotionDecode.js';
 import { decodeProdCount } from '../../shared-types/production.js';
 
 /** Scratch for `decodeProdBay` (reused per row, #14). */
@@ -90,8 +91,11 @@ export function decodeStructureState(
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
   out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
   out.ghostBody = (flags & STRUCTURE_FLAG_GHOST_BODY) !== 0 ? true : undefined;
-  const gateOpen = v.gateOpen ?? D.gateOpen;
-  out.gateOpen = gateOpen !== 0 ? gateOpen : undefined;
+  // Door kinds: gateOpen + the rig fields carry the door segment (slice 9),
+  // decoded into doorA / doorB (+ the scrubbed rigClip).
+  const door = isDoorKind(rigKind);
+  if (door) decodeDoorRow(v, out, rigKind!);
+  else clearDoorRow(out);
   const gateAccess = v.gateAccess ?? D.gateAccess;
   out.gateAccess = gateAccess !== 0 ? gateAccess : undefined;
   const recipe = v.recipe ?? D.recipe;
@@ -124,7 +128,11 @@ export function decodeStructureState(
     t.padWeight = v.padWeight ?? D.padWeight;
     t.toll = v.tpToll ?? D.tpToll;
   }
-  decodeRigClip(v, out, rigKind);
+  const minesOut = v.minesOut ?? D.minesOut;
+  out.minesOut = minesOut !== 0 ? minesOut : undefined;
+  const fillPct = v.fillPct ?? D.fillPct;
+  out.fillPct = fillPct !== 0 ? fillPct : undefined;
+  if (!door) decodeRigClip(v, out, rigKind);
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
   const name = owners.names[oi] ?? '';

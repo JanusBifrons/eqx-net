@@ -286,13 +286,22 @@ function drawReactorDry(g: GraphicsContext, code: number, kind: StructureKindId)
   _fill.color = 0x0b0a09; _fill.alpha = 0.94; g.fill(_fill);
   g.circle(0, 0, 13 * k); _fill.color = 0x2a1a12; _fill.alpha = 1; g.fill(_fill);
   // No-fuel mark: a drop outline with a slash, on the keep above the core.
-  const cx = 0, cy = -120 * k, h = 15 * k;
+  drawNoSupplyMark(g, 0, -120 * k, 15 * k, 3 * k);
+}
+
+/** The no-supply warning red (the reactor's no-fuel mark, a starved refinery). */
+export const NO_SUPPLY_RED = 0xff4444;
+
+/** A small red "nothing to run on" mark on a status overlay: a dark drop
+ *  outlined in `NO_SUPPLY_RED` with a slash through it, centred on
+ *  (`cx`, `cy`), `h` its half height, `w` the stroke width (all px). */
+export function drawNoSupplyMark(g: GraphicsContext, cx: number, cy: number, h: number, w: number): void {
   g.moveTo(cx, cy - h);
   g.bezierCurveTo(cx + h * 0.9, cy - h * 0.05, cx + h * 0.75, cy + h, cx, cy + h);
   g.bezierCurveTo(cx - h * 0.75, cy + h, cx - h * 0.9, cy - h * 0.05, cx, cy - h);
   g.closePath();
   _fill.color = 0x140c0a; _fill.alpha = 0.9; g.fill(_fill);
-  _stroke.color = 0xff4444; _stroke.alpha = 0.95; _stroke.width = 3 * k; g.stroke(_stroke);
+  _stroke.color = NO_SUPPLY_RED; _stroke.alpha = 0.95; _stroke.width = w; g.stroke(_stroke);
   g.moveTo(cx - h, cy - h).lineTo(cx + h, cy + h);
   g.stroke(_stroke);
 }

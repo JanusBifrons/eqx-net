@@ -179,6 +179,14 @@ counts the hull roll).
   ¢77`. Only the owner sees the contents; the server strips them for everyone
   else. A Capital with salvage gets a **Refine** action (1 salvage → 10
   minerals). Any owned storage has **Repair** (fix your ship to full here).
+- **Fill gauge.** Everyone can see roughly how full a storage structure is
+  (not what is in it): its `StructureState` row carries `fillPct` (uint8, hold
+  weight over `holdCapacity`, floored to 10 % steps, `storageFillPct`), written
+  only when the step changes (`writeStorageFillRow`, from the structure row
+  sync). In style C the Storage Vault lights one silo hatch ring amber per
+  sixth full and the Cargo Bay one container strip per quarter full (at least
+  one while anything is stored; dark unbuilt), through the body-status overlay
+  (`status` in `structureStyleC.storage.ts`). Art lab: `?live=f<N>`.
 - **Credits have uses.**
   - Instant repair costs 0.5 cr per missing hull point.
   - A stat respec costs 100 cr.

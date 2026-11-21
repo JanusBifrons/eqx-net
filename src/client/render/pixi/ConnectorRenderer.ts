@@ -109,7 +109,7 @@ function mix(h: number, n: number): number {
 
 /**
  * Integer signature of everything the static layer draws: the structure set and
- * poses, connections, built / walls-up / gate-open state, and the highlighted
+ * poses, connections, built / walls-up state, and the highlighted
  * turret. Alloc-free (key iteration + scalar maths).
  */
 export function staticSignature(
@@ -130,7 +130,7 @@ export function staticSignature(
     } else {
       h = mix(h, -7);
     }
-    h = mix(h, (st.built ? 1 : 0) | (st.wallActive ? 2 : 0) | ((st.gateOpen ?? 0) << 2));
+    h = mix(h, (st.built ? 1 : 0) | (st.wallActive ? 2 : 0));
     const conn = st.connTo;
     h = mix(h, conn.length);
     for (let c = 0; c < conn.length; c++) h = mix(h, conn[c]!);
@@ -152,7 +152,7 @@ export class ConnectorRenderer {
   readonly gfx = new Graphics();
   /**
    * A3 (plan soft-leaping-truffle v2) — the STATIC layer, drawn BEHIND `gfx`:
-   * idle edges, built-turret range rings, up-wall rails and open-gate guides.
+   * idle edges, built-turret range rings, up-wall rails and open-iris guides.
    * Rebuilt only when the structure topology / state signature changes or the
    * zoom moves past STATIC_SCALE_TOLERANCE, so Pixi stops re-tessellating
    * every edge of a big base each frame. Measured before the split (citadel,
@@ -355,10 +355,10 @@ export class ConnectorRenderer {
   /**
    * One shield wall in pixi space. R2.19: a distinct cyan-white energy BARRIER
    * — a glow field + two parallel rails (the band slab) + a sweeping shimmer —
-   * so it never reads as a connector link. Down = the dim red flicker. An open
-   * gate end = a faint dashed guide across the gap.
+   * so it never reads as a connector link. Down = the dim red flicker. An
+   * unsealed teleporter iris = a faint dashed guide across the gap.
    *
-   * `steady` (static layer): the rails of an up wall and an open gate's guide.
+   * `steady` (static layer): the rails of an up wall and an open iris's guide.
    * Otherwise (per frame): an up wall's breathing glow + shimmer, or a down
    * wall's flicker.
    */
@@ -419,7 +419,7 @@ export class ConnectorRenderer {
 
   /**
    * Rebuild the static layer if anything it draws has changed: the structure
-   * set and poses, connections, built / walls-up / gate-open state, the
+   * set and poses, connections, built / walls-up state, the
    * highlighted turret, or the zoom (past STATIC_SCALE_TOLERANCE). The
    * signature is an integer hash walk — far cheaper than drawing.
    */
@@ -539,7 +539,7 @@ export class ConnectorRenderer {
     const flashes = this._flashClock.sync(mirror.gridFlashes, nowMs); // pulse stamps -> fxNow windows
     const flowSrc = mirror.gridFlowSrc, flowMat = mirror.gridFlowMaterial;
 
-    // Shield walls: fence walls between emitters + each gate's spans, from the
+    // Shield walls: fence walls between emitters + teleporter irises, from the
     // same derived-wall rules the prediction world collides with (#15).
     this._wallNow = nowMs;
     this._wallScale = scale;

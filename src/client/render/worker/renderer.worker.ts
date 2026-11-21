@@ -291,7 +291,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
 
       case 'GLIDE_CAMERA': {
         if (!renderer) return;
-        renderer.glideCameraTo(msg.gameX, msg.gameY, msg.durationMs);
+        renderer.glideCameraTo(msg.gameX, msg.gameY, msg.durationMs, msg.toScale ?? 0);
         break;
       }
 

@@ -14,9 +14,10 @@
 import { chromium } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { STRUCTURE_KINDS_LIST, getStructureKind } from '../../src/shared-types/structureKinds.js';
-import { buildStructureVisual, PROPOSED_FOOTPRINTS, type GateState } from '../../src/client/render/pixi/structureVisuals.js';
+import { buildStructureVisual, type GateState } from '../../src/client/render/pixi/structureVisuals.js';
 import { shipHullOutline, shipPrimaryColor } from '../../src/core/geometry/shipHullOutline.js';
 import { GAMEPLAY_SHIP_KINDS_LIST } from '../../src/shared-types/shipKinds.js';
+import { AIRLOCK_END_Y, GATE_POSTS } from '../../src/shared-types/structureKinds/gatePosts.js';
 
 const out = process.argv[2] ?? 'diag/showcase/structure-redesign';
 mkdirSync(out, { recursive: true });
@@ -36,7 +37,8 @@ function plan(kind: string, seed: number, gate?: GateState) {
 }
 
 // Sheet 1: every existing kind, old vs new.
-const kinds = STRUCTURE_KINDS_LIST.map((k) => k.id).filter((id) => PROPOSED_FOOTPRINTS[id]);
+const SHEET_KINDS = new Set(['capital', 'connector', 'solar', 'miner', 'turret', 'battery', 'shield_pylon', 'laser_bolt_turret', 'missile_turret', 'cargo_bay', 'shield_gate', 'shield_airlock']);
+const kinds = STRUCTURE_KINDS_LIST.map((k) => k.id).filter((id) => SHEET_KINDS.has(id));
 const sheet = kinds.map((id, i) => ({ id, name: getStructureKind(id).displayName ?? id, oldR: getStructureKind(id).radius, ...plan(id, i + 1) }));
 const fk = GAMEPLAY_SHIP_KINDS_LIST.find((k) => k.id === 'fighter')!;
 const fighter = { pts: shipHullOutline(fk).flat(), color: shipPrimaryColor(fk) };
@@ -79,8 +81,8 @@ const M = 220;
 const fx0 = Math.floor(minX - M), fx1 = Math.ceil(maxX + M), fy0 = Math.floor(minY - M), fy1 = Math.ceil(maxY + M);
 // Each fence side is built as SEGMENTS ending exactly at the gate posts, so
 // the shield is continuous right up to the Shield Gate / Airlock.
-const gateHalf = PROPOSED_FOOTPRINTS.shield_gate!.w / 2 - PROPOSED_FOOTPRINTS.shield_gate!.h / 2; // post centre
-const lockHalf = PROPOSED_FOOTPRINTS.shield_airlock!.h / 2 - 32; // airlock outer post centre (rotated 90)
+const gateHalf = GATE_POSTS[1]![0]; // post centre
+const lockHalf = AIRLOCK_END_Y; // airlock outer post centre (rotated 90)
 const segs: Array<[number, number, number, number]> = [
   [fx0, fy0, fx1, fy0],
   [fx1, fy0, fx1, -gateHalf], [fx1, gateHalf, fx1, fy1],

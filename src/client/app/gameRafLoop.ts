@@ -33,6 +33,7 @@ import {
 import { placementChosen, resetPlacementChosen } from '../structures/placementChosen.js';
 import { updatePlacementHints } from '../structures/placementHints.js';
 import { commitChosenPlacement } from '../structures/structurePlacementClient.js';
+import { stepBuildModeView, takeBuildRestoreScale } from '../structures/buildModeView.js';
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
 import { resetSelectionStats } from '../net/selectionStats.js';
 import { sendFleetOrder } from '../ships/shipActionsClient.js';
@@ -235,7 +236,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // guard. Runs every frame (NOT gated by `shouldRender`) so the worker path
     // posts the GLIDE_CAMERA message promptly.
     const glide = gameClient.consumePendingCameraGlide();
-    if (glide) renderer.glideCameraTo(glide.x, glide.y, PILOT_SWAP_GLIDE_MS);
+    if (glide) renderer.glideCameraTo(glide.x, glide.y, PILOT_SWAP_GLIDE_MS, takeBuildRestoreScale());
     // RTS fleet warp (S8) — a commander who followed their fleet: once the
     // warped ships are in the new sector's mirror, select them again (the
     // ONE selection, in the renderer) and glide the camera to them. One-shot.
@@ -342,16 +343,10 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
           commitChosenPlacement(kind);
         }
       }
-      // Anchor the Confirm banner over the ghost's projected screen position.
+      // The touch Confirm banner docks top-centre (build mode); only the
+      // desktop hints still follow the ghost's projected screen point.
       const psx = feedback.placementScreenX;
       const psy = feedback.placementScreenY;
-      if (typeof psx === 'number' && typeof psy === 'number') {
-        const banner = document.querySelector('[data-testid="placement-banner"]') as HTMLElement | null;
-        if (banner) {
-          banner.style.left = `${Math.max(8, Math.min(window.innerWidth - 8, psx))}px`;
-          banner.style.top = `${Math.max(48, Math.min(window.innerHeight - 8, psy))}px`;
-        }
-      }
       // Hints under the ghost: a shield wall in a turret's range (a fence
       // blocks its owner's own fire too); "too close" when its only links are
       // too short. Toggled on change only.
@@ -361,6 +356,9 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     } else if (placementChosen.worldX !== null || placementChosen.stuck) {
       resetPlacementChosen();
     }
+    // Build mode: Command view + camera pulled back while placing; restored after.
+    if (typeof window !== 'undefined') stepBuildModeView(useUIStore.getState().buildMode, feedback, gameClient.mirror.localShipInstanceId ?? null,
+      renderer, window.innerWidth, window.innerHeight);
     if (localShip && writeE2E && feedback) {
       el.dataset['shipX'] = localShip.x.toFixed(3);
       el.dataset['shipY'] = localShip.y.toFixed(3);

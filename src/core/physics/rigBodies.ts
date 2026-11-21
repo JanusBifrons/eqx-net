@@ -11,7 +11,11 @@ interface RigBodies {
   /** Kinematic body per part (rig order), or null (no collider). */
   readonly parts: (RAPIER.RigidBody | null)[];
   /** The clip record, owned and reused (`setRigClip` copies into it). */
-  readonly playing: { clipId: string; startTick: number; target: { x: number; y: number } | undefined };
+  readonly playing: {
+    clipId: string; startTick: number; target: { x: number; y: number } | undefined;
+    /** Scrub (`PlayingClip.from` / `.rate`); undefined = a plain clip. */
+    from: number | undefined; rate: number | undefined;
+  };
   readonly targetScratch: { x: number; y: number };
   hasClip: boolean;
   /** Host world pose, cached (structures are static; `setShipState` updates it). */
@@ -97,7 +101,7 @@ export class RigBodySet {
     const t = hb.translation();
     const rec: RigBodies = {
       rig, pose: createRigPose(rig), parts,
-      playing: { clipId: '', startTick: 0, target: undefined },
+      playing: { clipId: '', startTick: 0, target: undefined, from: undefined, rate: undefined },
       targetScratch: { x: 0, y: 0 }, hasClip: false,
       hostX: t.x, hostY: t.y, hostAngle: hb.rotation(),
       dirty: true, idle: false,
@@ -110,20 +114,27 @@ export class RigBodySet {
   }
 
   /** Start (or, with `clipId` null, clear) the clip playing on `hostId`'s rig:
-   *  the `PlayingClip` record `{clipId, startTick, target?}` (game ticks;
-   *  target in the host frame). Copied: no reference is kept. No-op for a
-   *  host without a rig, and for the record already playing (the client
-   *  re-applies its room-state record every snapshot). */
-  setRigClip(hostId: string, clipId: string | null, startTick = 0, targetX?: number, targetY?: number): void {
+   *  the `PlayingClip` record `{clipId, startTick, target?, from?, rate?}`
+   *  (game ticks; target in the host frame; `from` / `rate` scrub the clip,
+   *  `clipTime`; both absent = a plain clip). Copied: no reference is kept.
+   *  No-op for a host without a rig, and for the record already playing (the
+   *  client re-applies its room-state record every snapshot). */
+  setRigClip(
+    hostId: string, clipId: string | null, startTick = 0, targetX?: number, targetY?: number,
+    from?: number, rate?: number,
+  ): void {
     const r = this.rigs.get(hostId);
     if (!r) return;
     if (clipId === null ? !r.hasClip : r.hasClip && r.playing.clipId === clipId && r.playing.startTick === startTick
+      && r.playing.from === from && r.playing.rate === rate
       && (targetX !== undefined && targetY !== undefined
         ? r.playing.target !== undefined && r.playing.target.x === targetX && r.playing.target.y === targetY
         : r.playing.target === undefined)) return;
     r.hasClip = clipId !== null;
     r.playing.clipId = clipId ?? '';
     r.playing.startTick = startTick;
+    r.playing.from = clipId !== null ? from : undefined;
+    r.playing.rate = clipId !== null ? rate : undefined;
     if (targetX !== undefined && targetY !== undefined) {
       r.targetScratch.x = targetX;
       r.targetScratch.y = targetY;

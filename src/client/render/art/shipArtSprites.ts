@@ -29,7 +29,7 @@ export interface ShipArtCtx {
   turrets?: boolean;
   /** Ship livery treatment (`?livery=`, look R&D); absent = today's paint. */
   livery?: import('./fields.js').LiveryTreatment;
-  /** Structure livery (`?structLivery=1`, owner's colours + sigil on
+  /** Structure livery (on by default, `?structLivery=0` = off, owner's colours + sigil on
    *  structures; off by default until the owner signs the look off). */
   structLivery?: boolean;
   /** Structure style (`?restyle=a`, `structureStyles.ts`); absent = today's art. */

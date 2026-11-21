@@ -1,11 +1,13 @@
 /**
  * Structure room-state row writers moved out of SectorRoom verbatim: a
- * teleporter's fields and a structure's `connTo` / `connSock` lists. Each field is
+ * teleporter's fields and a structure's `connTo` / `connSock` lists (plus a
+ * storage structure's `fillPct`). Each field is
  * assigned only on change (A2), and nothing allocates when nothing changed.
  */
 import { holdWeight } from '../../core/cargo/hold.js';
 import { encodeGood } from '../../shared-types/production.js';
-import { STRUCTURE_DEFAULTS as SD, encodeConnSock } from '../../shared-types/structureStateWire.js';
+import { STRUCTURE_DEFAULTS as SD, encodeConnSock, storageFillPct } from '../../shared-types/structureStateWire.js';
+import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   TP_PARTNER_REMOTE,
   TP_RULE_BOARDS,
@@ -56,6 +58,17 @@ export function writeTeleporterRow(
   if ((st.tpKeepQty ?? SD.tpKeepQty) !== kq) st.tpKeepQty = kq;
   const w = rec.padHold ? Math.min(65535, Math.round(holdWeight(rec.padHold))) : 0;
   if ((st.padWeight ?? SD.padWeight) !== w) st.padWeight = w;
+}
+
+/** Storage fill gauge: a storage structure's (`holdCapacity` > 0) hold
+ *  weight as `fillPct` (`storageFillPct`, steps of `FILL_PCT_STEP`),
+ *  assigned only when the step changes (A2); other kinds are left unset.
+ *  Alloc-free. */
+export function writeStorageFillRow(rec: Pick<StructureRecord, 'kind' | 'hold'>, st: Pick<StructureState, 'fillPct'>): void {
+  const cap = getStructureKind(rec.kind).holdCapacity ?? 0;
+  if (cap <= 0) return;
+  const pct = rec.hold !== undefined ? storageFillPct(holdWeight(rec.hold), cap) : 0;
+  if ((st.fillPct ?? SD.fillPct) !== pct) st.fillPct = pct;
 }
 
 /** Mirror a structure's connections into its room-state `connTo` and, in

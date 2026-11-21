@@ -1,12 +1,14 @@
 import { Box } from '@mui/material';
 import ExploreIcon from '@mui/icons-material/Explore';
+import ConstructionIcon from '@mui/icons-material/Construction';
 import { selectControlMode, useUIStore } from '../state/store';
+import { Slot } from '../layout/Slot';
+import { useIsCompact } from '../layout/useIsCompact';
 
 /**
- * An on-screen sign that the player is in COMMAND view (RTS slice 10; was
- * "Spectating"): free camera over the fleet, every ship AI-flown. That's where
- * normal play starts, where letting go of the controls lands, and where a
- * destroyed ship drops you. Shown only in command view in-game; the free camera
+ * An on-screen sign of the mode the player is in when not flying (RTS slice
+ * 10; was "Spectating"): COMMAND VIEW (free camera over the fleet, every ship
+ * AI-flown) or BUILD MODE (the third mode: placing structures). The free camera
  * otherwise looks like flying, so without this there's no sign you've let go.
  * Discrete store read (Invariant #2). Tiny + unobtrusive.
  */
@@ -37,11 +39,34 @@ const SX = {
 export function SpectatorIndicator(): JSX.Element | null {
   const phase = useUIStore((s) => s.phase);
   const controlMode = useUIStore(selectControlMode);
-  if (phase !== 'game' || controlMode !== 'command') return null;
+  if (phase !== 'game' || controlMode === 'fly') return null;
+  if (controlMode === 'build') {
+    return (
+      <Box sx={SX} data-testid="build-mode-indicator">
+        <ConstructionIcon />
+        Build mode
+      </Box>
+    );
+  }
   return (
     <Box sx={SX} data-testid="spectator-indicator">
       <ExploreIcon />
       Command view
     </Box>
   );
+}
+
+/**
+ * Where the badge sits. Command: the top-centre status column. Build: never
+ * near the ghost, which sits mid-screen under the top-centre placement dock
+ * (stills review 2026-11-20: the badge sat just above it). On a wide screen it
+ * goes under the mode switch (top-left); on a narrow one, above the dock at
+ * the very top.
+ */
+export function ControlModeBadge(): JSX.Element {
+  const building = useUIStore((s) => s.buildMode);
+  const compact = useIsCompact();
+  if (!building) return <Slot anchor="top-center" order={4}><SpectatorIndicator /></Slot>;
+  if (compact) return <Slot anchor="top-center" order={-2}><SpectatorIndicator /></Slot>;
+  return <Slot anchor="top-left" order={3}><SpectatorIndicator /></Slot>;
 }

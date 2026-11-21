@@ -1,7 +1,8 @@
 /**
  * Style C family "fences" (docs/plans/structure-restyle-stage4.md §4 0a, §6).
  * Fences + gates: shield pylon, shield gate, airlock, territory lock.
- * This family's drawings live only here; `kinds` is spread into `STYLE_C`
+ * The gate and airlock gatehouses (and their door-leaf art) live in the helper
+ * `structureStyleC.fences.gate.ts`. This family's drawings live only here; `kinds` is spread into `STYLE_C`
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
 import { GraphicsContext } from 'pixi.js';
@@ -10,17 +11,25 @@ import {
   ngon, poly, rivets, stencil, strip, wornStripe, type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
+import type { BodyStatusHook, BodyStatusHookTable } from './structureSocketNubs.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
-import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, type StructureKindId } from '../../../shared-types/structureKinds.js';
+import { EMIT, EMIT_DEAD, doorLeafContext, doorStatus, shieldAirlock, shieldGate } from './structureStyleC.fences.gate.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 'f2lb';
+export const version = 'f2gh';
 
-/** Shield-wall emitter colour (lit, powered) and its dead glass (dark). */
-const EMIT = 0x6fe2f0;
-const EMIT_DEAD = 0x16262a;
+/** Shield pylon lens radii (× k, drawn for 120): the glass and its lamp. */
+const PYLON_LENS = 13;
+const PYLON_LAMP = 7;
+/** Territory lock lights (× k, drawn for 400 × 300): antenna fins
+ *  [x, half length], the emitter heads' radius, the tower slots, the hub. */
+const LOCK_FINS = [[98, 118], [136, 96], [172, 72]] as const;
+const LOCK_HEAD = 4;
+const LOCK_SLOT_W = 16, LOCK_SLOT_H = 30, LOCK_SLOT_Y_DOWN = 72, LOCK_SLOT_Y_UP = -102;
+const LOCK_HUB_LENS = 6;
 
 /** Shield pylon (drawn for 120 × 120, scaled by the short side): a squat
  *  octagonal plinth with an emitter in stacked rings on top; heat-sink fins
@@ -51,8 +60,8 @@ function shieldPylon(c: StyleCtx): void {
     const a = (i * Math.PI) / 3;
     poly(c, ngon(Math.cos(a) * 23.5 * k, Math.sin(a) * 23.5 * k, 1.6 * k, 6), RIVET, 'metal', 32, 0.5);
   }
-  glow(c, ngon(0, 0, 13 * k, 16), c.live ? EMIT : EMIT_DEAD, 0.95);
-  c.lit(0, 0, 7 * k, c.live ? 0xd8fbff : EMIT_DEAD);
+  glow(c, ngon(0, 0, PYLON_LENS * k, 16), c.live ? EMIT : EMIT_DEAD, 0.95);
+  c.lit(0, 0, PYLON_LAMP * k, c.live ? 0xd8fbff : EMIT_DEAD);
   lamp(c, W / 2 - 8 * k, -H / 2 + 8 * k, 2.5 * k, LAMP_AMBER);
 }
 
@@ -75,15 +84,14 @@ function territoryLock(c: StyleCtx): void {
   poly(c, chamferBox(-half + 10 * k, -8 * k, 2 * half - 20 * k, 16 * k, 4 * k), SLAB_LIGHT, 'metal', 3, 1);
   for (const s of [-1, 1]) rivets(c, [-half + 14 * k, s * 15 * k], [half - 14 * k, s * 15 * k], 14 * k, 1.8 * k);
   // Antenna fins: three pairs either side of the tower.
-  const fins = [[98, 118], [136, 96], [172, 72]] as const;
-  for (const [fx, fl] of fins) {
+  for (const [fx, fl] of LOCK_FINS) {
     for (const sx of [-1, 1]) {
       const cx = sx * fx * k, len = fl * k;
       poly(c, chamferBox(cx - 8 * k, -len, 16 * k, 2 * len, 5 * k), SLAB, 'metal', 14, 2, { seams: 18 * k, seamAngle: 0 });
       poly(c, strip([cx, -len + 14 * k], [cx, len - 14 * k], 3 * k), SOOT, 'metal', -1, 0.6);
       for (const sy of [-1, 1]) {
         poly(c, chamferBox(cx - 11 * k, sy * len - (sy > 0 ? 12 * k : 0), 22 * k, 12 * k, 3 * k), SLAB_LIGHT, 'metal', 18, 1.2);
-        glow(c, ngon(cx, sy * (len - 6 * k), 4 * k, 8), emit, 0.95);
+        glow(c, ngon(cx, sy * (len - 6 * k), LOCK_HEAD * k, 8), emit, 0.95);
       }
     }
   }
@@ -93,7 +101,7 @@ function territoryLock(c: StyleCtx): void {
   wornStripe(c, tower, Math.PI / 2, -th + 14 * k, 7 * k, 11);
   for (const sy of [-1, 1]) {
     poly(c, chamferBox(-14 * k, sy > 0 ? 66 * k : -108 * k, 28 * k, 42 * k, 5 * k), SOOT, 'metal', -2, 1.5);
-    glow(c, chamferBox(-8 * k, sy > 0 ? 72 * k : -102 * k, 16 * k, 30 * k, 3 * k), emit, 0.9);
+    glow(c, chamferBox((-LOCK_SLOT_W / 2) * k, (sy > 0 ? LOCK_SLOT_Y_DOWN : LOCK_SLOT_Y_UP) * k, LOCK_SLOT_W * k, LOCK_SLOT_H * k, 3 * k), emit, 0.9);
   }
   // The beacon seat: collar, bolt ring, dark well.
   poly(c, ngon(0, 0, 50 * k, 24), SLAB_DARK, 'metal', 26, 2);
@@ -105,8 +113,8 @@ function territoryLock(c: StyleCtx): void {
   // The beacon's hub and its claim-teal emitter (the arm and dish that turn
   // round it are the rig part, `lockBeaconContext`).
   poly(c, ngon(0, 0, 11 * k, 12), SLAB, 'metal', 33, 1);
-  glow(c, ngon(0, 0, 6 * k, 12), emit, 0.95);
-  c.lit(0, 0, 6 * k, c.live ? 0xd8fbff : EMIT_DEAD);
+  glow(c, ngon(0, 0, LOCK_HUB_LENS * k, 12), emit, 0.95);
+  c.lit(0, 0, LOCK_HUB_LENS * k, c.live ? 0xd8fbff : EMIT_DEAD);
   // Spine-end hazard lamps, tower work lamps, a hull number.
   for (const sx of [-1, 1]) lamp(c, sx * (half - 8 * k), 0, 4 * k, LAMP_AMBER);
   lamp(c, -tw + 10 * k, th - 12 * k, 3 * k, LAMP_WHITE);
@@ -118,7 +126,72 @@ function territoryLock(c: StyleCtx): void {
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   shield_pylon: shieldPylon,
+  shield_gate: shieldGate,
+  shield_airlock: shieldAirlock,
   territory_lock: territoryLock,
+};
+
+// ── Unpowered: the lights go dark (live body state) ────────────────────────
+
+/** 1 = a built pylon / lock with no power, else 0 (the powered, lit art is
+ *  the bake and never re-bakes). Reads the same `powered` row flag as the
+ *  no-power bolt (ConnectorRenderer). Shared by every family whose lights go
+ *  dark unpowered. */
+export function unpoweredCode(_kind: StructureKindId, st: StructureRenderState | undefined): number {
+  return st !== undefined && st.built && st.powered === false ? 1 : 0;
+}
+
+const _fill = { color: 0, alpha: 0 };
+
+/** A dead-glass disc over a baked lens. */
+function deadDisc(g: GraphicsContext, x: number, y: number, r: number): void {
+  g.circle(x, y, r);
+  _fill.color = EMIT_DEAD; _fill.alpha = 1; g.fill(_fill);
+}
+
+/** Unpowered pylon: the emitter goes dark. The lamp's halo (2.2 × the lamp)
+ *  stays inside the soot ring, so soot out to the halo, then dead glass; the
+ *  collar, ring and plinth are the bake, unchanged. */
+function drawPylonDark(g: GraphicsContext, code: number, kind: StructureKindId): void {
+  if (code !== 1) return;
+  const fp = getStructureKind(kind).footprint;
+  const k = Math.min(fp.w, fp.h) / 120;
+  g.circle(0, 0, PYLON_LAMP * 2.2 * k);
+  _fill.color = SOOT; _fill.alpha = 1; g.fill(_fill);
+  deadDisc(g, 0, 0, PYLON_LENS * k);
+}
+
+/** Unpowered lock: every claim-teal light goes dark (fin heads, tower slots,
+ *  the hub emitter); spine, fins, tower and work lamps are the bake. */
+function drawLockDark(g: GraphicsContext, code: number, kind: StructureKindId): void {
+  if (code !== 1) return;
+  const fp = getStructureKind(kind).footprint;
+  const k = Math.min(fp.w / 400, fp.h / 300);
+  for (const [fx, fl] of LOCK_FINS) {
+    for (let sx = -1; sx <= 1; sx += 2) {
+      for (let sy = -1; sy <= 1; sy += 2) deadDisc(g, sx * fx * k, sy * (fl - 6) * k, (LOCK_HEAD + 0.5) * k);
+    }
+  }
+  for (let sy = -1; sy <= 1; sy += 2) {
+    const y = sy > 0 ? LOCK_SLOT_Y_DOWN : LOCK_SLOT_Y_UP;
+    g.rect((-LOCK_SLOT_W / 2 - 1) * k, (y - 1) * k, (LOCK_SLOT_W + 2) * k, (LOCK_SLOT_H + 2) * k);
+    _fill.color = EMIT_DEAD; _fill.alpha = 1; g.fill(_fill);
+  }
+  deadDisc(g, 0, 0, (LOCK_HUB_LENS + 2) * k);
+}
+
+const unpoweredPylon: BodyStatusHook = { code: unpoweredCode, draw: drawPylonDark };
+const unpoweredLock: BodyStatusHook = { code: unpoweredCode, draw: drawLockDark };
+
+/** This family's live body state (`BodyStatusHook`, drawn on the socket-nub
+ *  overlay, structureSocketNubs.ts): pylon and lock lights dark unpowered;
+ *  the gate / airlock deck lights follow the decoded doors
+ *  (docs/plans/door-power.md, slice 11). */
+export const status: BodyStatusHookTable = {
+  shield_pylon: unpoweredPylon,
+  territory_lock: unpoweredLock,
+  shield_gate: doorStatus,
+  shield_airlock: doorStatus,
 };
 
 // The territory lock's beacon (the `lock-beacon` rig part's own art, in the
@@ -163,4 +236,7 @@ export function lockHolding(st: StructureRenderState | undefined): boolean {
  *  structureRigLook.ts); rigs not listed draw from their part roles only. */
 export const rigs: RigDrawHookTable = {
   'lock-beacon': { partArt: () => lockBeaconContext(), running: lockHolding },
+  'gate-doors': { partArt: doorLeafContext },
+  'airlock-doors': { partArt: doorLeafContext },
 };
+
