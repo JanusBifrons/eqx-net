@@ -97,9 +97,15 @@ export interface RigDrawHook {
   /** Part `i`'s own art instead of its role's (`rigPartContext`), or null
    *  for the role's. One shared context per (rig, part): the hook caches it. */
   readonly partArt?: (rig: Rig, i: number) => GraphicsContext | null;
-  /** Do the rig's spinning parts (`PartDef.spin`) run for this structure
-   *  row? Polled per frame (allocation-free); absent = always running. A
-   *  stopped part holds where it is. */
+  /** Part `i`'s lit overlay (e.g. lamp glass over art baked dark), drawn
+   *  just over the part with its transform and shown only while the rig is
+   *  `running`, or null for none. One shared context per (rig, part): the
+   *  hook caches it. */
+  readonly partLit?: (rig: Rig, i: number) => GraphicsContext | null;
+  /** Is the rig running for this structure row: do its spinning parts
+   *  (`PartDef.spin`) turn and its `partLit` overlays show? Polled per frame
+   *  (allocation-free); absent = always running. A stopped part holds where
+   *  it is. */
   readonly running?: (st: StructureRenderState | undefined) => boolean;
   /** Per frame, after part `i` (graphic `g`, its shadow or null) is posed:
    *  show its joint `value` where a transform cannot (a part printed in, a

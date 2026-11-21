@@ -66,12 +66,12 @@ describe('ConnectorRenderer static layer (A3)', () => {
     expect(r.staticRebuilds).toBe(2);
   });
 
-  it('a gate opening changes the signature (its guide replaces the rails)', () => {
+  it('a gate door moving leaves the signature alone (no gate span is drawn)', () => {
     const m = citadel(100);
     const gateId = [...m.swarm!.entries()].find(([, e]) => e.shipKind === 'shield_gate')![0];
     const before = staticSignature(m.structures!, m.swarm!, null);
-    m.structures!.get(gateId)!.gateOpen = 1;
-    expect(staticSignature(m.structures!, m.swarm!, null)).not.toBe(before);
+    m.structures!.get(gateId)!.doorA = { p0: 0, t0: 0, dir: 1, level: 15 };
+    expect(staticSignature(m.structures!, m.swarm!, null)).toBe(before);
   });
 
   it('per-frame cost at citadel scale (printed, not asserted)', () => {

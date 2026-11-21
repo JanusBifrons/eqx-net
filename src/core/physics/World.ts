@@ -223,7 +223,9 @@ export class PhysicsWorld {
     if (host) this.rigs.attachRig(hostId, host.body, rig);
   }
 
-  setRigClip(hostId: string, clipId: string | null, startTick = 0, targetX?: number, targetY?: number): void { this.rigs.setRigClip(hostId, clipId, startTick, targetX, targetY); }
+  setRigClip(
+    hostId: string, clipId: string | null, startTick = 0, targetX?: number, targetY?: number, from?: number, rate?: number,
+  ): void { this.rigs.setRigClip(hostId, clipId, startTick, targetX, targetY, from, rate); }
 
   stepRigs(nowTick: number): void { this.rigs.stepRigs(nowTick); }
 

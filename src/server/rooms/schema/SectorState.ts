@@ -160,7 +160,9 @@ export class StructureState extends Schema {
   @type('uint16') storedPowerMax?: number;
   /** Pylon: the other post's entityId of its (first) wall; -1 ⇒ none. */
   @type('int32') shieldWallTo?: number;
-  /** Gates: open bits (GATE_OPEN_A / GATE_OPEN_B); never both. */
+  /** Gates / airlocks: door motion, bit 7 heading open + power level in bits
+   *  0-3 (`encodeDoorMotion`; the segment's clip / t0 / p0 ride rigClip /
+   *  rigStart / rigHold). */
   @type('uint8') gateOpen?: number;
   /** Gates: access setting (GATE_ACCESS_IDS index). */
   @type('uint8') gateAccess?: number;
@@ -214,6 +216,9 @@ export class StructureState extends Schema {
   /** Build count (job 2E): outputs left + 1 (0 = no count, repeat forever;
    *  1 = done). Appended after connSock (append-only field order). */
   @type('uint8') prodCount?: number;
+  /** Mine Layers: how many of this layer's mines are out in space
+   *  (0..MINES_PER_LAYER); the client lights one rack lamp per mine. */
+  @type('uint8') minesOut?: number;
 }
 
 /** A proximity mine (Mine Layer). Static, so room state carries it: the join

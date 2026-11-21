@@ -5,15 +5,15 @@
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
 import {
-  CONTAINERS, CRANE, LAMP_AMBER, SLAB_DARK, SOOT, STEEL, chamferBox, core, deck, glow, grime, lamp, mixColor,
-  poly, scalePts, stencil, stripe, truss, wornStripe, type StyleCtx, type StyleDrawerTable,
+  CONTAINERS, CRANE, HAZARD, LAMP_AMBER, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT, STEEL, chamferBox, core, deck, glow,
+  grime, lamp, mixColor, ngon, poly, rivets, scalePts, stencil, stripe, strip, truss, wornStripe, type StyleCtx, type StyleDrawerTable,
 } from './structureStyleKit.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = '';
+export const version = 'v1';
 
 /** Cargo hold (`cargo_bay`): a slab hold floor, four muted shipping
  *  containers in a 2 x 2 grid, an X-braced gantry (two rail trusses and a
@@ -46,9 +46,58 @@ function cargoHold(c: StyleCtx): void {
   for (const s of [-1, 1]) lamp(c, 12, s * 86, 3.5, LAMP_AMBER);
 }
 
+/** Status strip colours: lit green when powered, dead glass when not. */
+const STATUS_LIVE = 0x7fe0a4;
+const STATUS_DEAD = 0x1c2620;
+
+/** Storage vault (`storage_vault`, drawn for 480 x 320 and scaled by the
+ *  short side): a heavy armoured plinth carrying two banks of three
+ *  octagonal sealed silos, each capped by a round blast hatch with a locking
+ *  bar, a yellow wheel hub and four clamp dogs; an armoured spine between
+ *  the banks carries a segmented status strip (green when powered, dead
+ *  glass when not), hazard blocks on the plinth ends. */
+function storageVault(c: StyleCtx): void {
+  const { W, H } = c;
+  const k = Math.min(W, H) / 320;
+  deck(c);
+  const plinth = core(c, chamferBox(-212 * k, -132 * k, 424 * k, 264 * k, 28 * k), SLAB_DARK, 12, Math.PI / 2);
+  grime(c, -206 * k, -126 * k, 412 * k, 252 * k, 10, 7);
+  for (const s of [-1, 1]) {
+    poly(c, chamferBox(s * 201 * k - 7 * k, -44 * k, 14 * k, 88 * k, 3 * k), HAZARD, 'hazard', 14, 1.5);
+    wornStripe(c, plinth, Math.PI / 2, s * 124 * k, 8 * k, 70 + s);
+  }
+  const status = c.live ? STATUS_LIVE : STATUS_DEAD;
+  let n = 0;
+  for (const cy of [-66 * k, 66 * k]) {
+    for (const cx of [-136 * k, 0, 136 * k]) {
+      core(c, ngon(cx, cy, 54 * k, 8, Math.PI / 8), mixColor(SLAB, STEEL, 0.25), 26, Math.PI / 2);
+      const side = Math.sign(cy);
+      rivets(c, [cx - 20 * k, cy + side * 44 * k], [cx + 20 * k, cy + side * 44 * k], 10 * k);
+      poly(c, ngon(cx, cy, 36 * k, 16), SOOT, 'metal', -4, 2);
+      poly(c, ngon(cx, cy, 31 * k, 16), SLAB_LIGHT, 'metal', 6, 2.5, { roof: [2, 8 * k] });
+      const a = ((c.seed + n++) % 3) * (Math.PI / 6) - Math.PI / 6;
+      const ux = Math.cos(a) * 28 * k, uy = Math.sin(a) * 28 * k;
+      poly(c, strip([cx - ux, cy - uy], [cx + ux, cy + uy], 7 * k), STEEL, 'metal', 9, 1.5);
+      poly(c, ngon(cx, cy, 9 * k, 8, Math.PI / 8), CRANE, 'paint', 11, 1.5);
+      for (let i = 0; i < 4; i++) {
+        const d = Math.PI / 4 + (i * Math.PI) / 2, r = 42 * k;
+        const dx = cx + Math.cos(d) * r, dy = cy + Math.sin(d) * r;
+        poly(c, chamferBox(dx - 5 * k, dy - 5 * k, 10 * k, 10 * k, 2.5 * k), SOOT, 'metal', 4, 1);
+      }
+      glow(c, chamferBox(cx - 9 * k, cy - side * 46 * k - 2 * k, 18 * k, 4 * k, 1.5), status, 0.85);
+    }
+  }
+  core(c, chamferBox(-198 * k, -10 * k, 396 * k, 20 * k, 6 * k), SLAB_LIGHT, 30, 0);
+  for (let i = -5; i <= 5; i++) glow(c, chamferBox(i * 34 * k - 12 * k, -3 * k, 24 * k, 6 * k, 1.5), status, 0.9);
+  stencil(c, '08', -196 * k, 138 * k, 16 * k);
+  if (c.livery) c.sigils.push({ x: 186 * k, y: -112 * k, r: 10 * k });
+  for (const s of [-1, 1]) lamp(c, s * 190 * k, 0, 3.5 * k, LAMP_AMBER);
+}
+
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   cargo_bay: cargoHold,
+  storage_vault: storageVault,
 };
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,

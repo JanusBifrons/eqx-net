@@ -13,7 +13,7 @@ import type { LightRig } from './shade.js';
 /** Bump whenever forge output changes, or old art would be served. A style C
  *  family's drawing change bumps only its own file's `version` instead (it
  *  rides the bake key, `structureStyleVersion`). */
-export const FORGE_VERSION = 'r2.9-lv16'; // r2.9: Territory Lock spire (was the Research Lab's look); r2.8: barge bells, tractor dishes, own-paint part roles; r2.7: grey default rock (owner); r2.6: rock outlines seeded by the rock's stable id, arithmetic only (macro terrain 1a); r2.5: capital bow fittings (bowDetail.ts); -lv1..lv16: ship livery branch (sigils, stern fade, b2/b3 shades, b4 layout)
+export const FORGE_VERSION = 'r3.0-guns-lv16'; // r3.0-guns: naval gunhouse restyle (dark gunmetal, paint band, stepped barrels; turretForgeNaval.ts) and small turret guns restyled (faceted gunmetal housing, mantlet, per-family barrels, 3x2 missile cells); r2.9: Territory Lock spire (was the Research Lab's look); r2.8: barge bells, tractor dishes, own-paint part roles; r2.7: grey default rock (owner); r2.6: rock outlines seeded by the rock's stable id, arithmetic only (macro terrain 1a); r2.5: capital bow fittings (bowDetail.ts); -lv1..lv16: ship livery branch (sigils, stern fade, b2/b3 shades, b4 layout)
 
 const DB = 'eqx-art-lab';
 const STORE = 'bakes';

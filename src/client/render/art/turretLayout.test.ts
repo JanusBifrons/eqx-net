@@ -11,6 +11,7 @@ import { SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
 /** The fighter's chin clearance at this scale (20 at 1×). */
 const MUZZLE_CLEARANCE = shipTuning(getShipKind('fighter')).muzzleClearance;
 import { forgeShip, forgeTurretGun, MAT } from './fields.js';
+import { structureTurretRadius } from '../../../core/combat/muzzle.js';
 import { muzzleReach, shipTurrets, structureTurrets } from './turretLayout.js';
 
 describe('turret layout', () => {
@@ -32,7 +33,12 @@ describe('turret layout', () => {
     const [big] = structureTurrets('missile_turret');
     expect(small!.len).toBeGreaterThan(BASE.muzzleClearance * 2); // structures don't scale with ships
     expect(big!.family).toBe('missile');
-    expect(big!.cap).toBeGreaterThan(small!.cap);
+    // Each gun scales with its own footprint: the body stays on the base,
+    // the barrel overhangs it.
+    const Rs = structureTurretRadius('turret'), Rb = structureTurretRadius('missile_turret');
+    expect(small!.cap / Rs).toBeLessThan(1);
+    expect(small!.len).toBeGreaterThan(Rs);
+    expect(big!.cap / Rb).toBeLessThan(1);
   });
 });
 
@@ -47,10 +53,10 @@ describe('turret forge', () => {
     expect(ringed.height[i]!).toBeLessThan(plain.height[i]!);
   });
 
-  it('a gun has a painted cap and a metal barrel reaching forward to its length', () => {
+  it('a gun has a paint-accented housing and a metal barrel reaching forward to its length', () => {
     const f = forgeTurretGun({ family: 'bolt', paint: 0xff8800, len: 10, wid: 2.4, cap: 3.6, ppu: 6 });
     const at = (x: number, y: number): number => Math.round(y * f.g.ppu + f.g.oy) * f.g.w + Math.round(x * f.g.ppu + f.g.ox);
-    expect(f.mat[at(3.0, 1.0)]).toBe(MAT.PAINT); // on the cap, off the barrel and its groove
+    expect(f.mat[at(2.0, 0.5)]).toBe(MAT.PAINT); // the housing's flank accent panel, off the barrel
     expect(f.mat[at(0, -6)]).toBe(MAT.METAL); // along the barrel
     expect(f.cov[at(0, -9.7)]!).toBeGreaterThan(0.5); // reaches the tip
     expect(f.cov[at(0, -11.5)]!).toBe(0); // and no further

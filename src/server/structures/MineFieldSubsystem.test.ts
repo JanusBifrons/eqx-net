@@ -28,9 +28,11 @@ function field(opts: { munitions?: number; powered?: boolean; ships?: Ship[]; cl
   const laid: MineRecord[] = [];
   const removed: MineRecord[] = [];
   const active: boolean[] = [];
+  const outs: number[] = [];
+  const power = { on: opts.powered ?? true };
   const deps: MineFieldDeps = {
     registry,
-    powered: () => opts.powered ?? true,
+    powered: () => power.on,
     takeMunition: () => (munitions > 0 ? (munitions--, true) : false),
     isClear: opts.clear ?? (() => true),
     findHostile: (x, y, range, owner) => {
@@ -44,9 +46,10 @@ function field(opts: { munitions?: number; powered?: boolean; ships?: Ship[]; cl
     onLaid: (m) => laid.push(m),
     onRemoved: (m) => removed.push(m),
     setActive: (_r, a) => active.push(a),
+    setMinesOut: (_r, n) => outs.push(n),
   };
   const mf = new MineFieldSubsystem(deps);
-  return { mf, layer, byId, blasts, laid, removed, active, ships, munitionsLeft: () => munitions };
+  return { mf, layer, byId, blasts, laid, removed, active, outs, power, ships, munitionsLeft: () => munitions };
 }
 
 /** Run the field long enough to lay `n` mines. */
@@ -115,6 +118,21 @@ describe('MineFieldSubsystem', () => {
     ships.push({ id: 'friend', x: m.x, y: m.y, hostileTo: new Set() });
     for (let t = MINE_ARM_MS; t < MINE_ARM_MS * 10; t += 100) mf.tick(t);
     expect(blasts.length).toBe(0);
+  });
+
+  it('reports the layer mines out: rising as it lays, falling to 0 as they go off', () => {
+    const { mf, laid, outs, power, ships } = field();
+    const t = layUntil(mf, MINES_PER_LAYER + 2);
+    expect(outs).toEqual([1, 2, 3, 4, 5, 6, 6, 6].slice(0, MINES_PER_LAYER + 2));
+    // Unpowered, so nothing new is laid while they detonate.
+    power.on = false;
+    ships.push({ id: 'raider', x: laid[0]!.x, y: laid[0]!.y, hostileTo: new Set(['alice']) });
+    mf.tick(t);
+    expect(outs.at(-1)).toBe(MINES_PER_LAYER - 1);
+    for (const m of laid.slice(1)) ships.push({ id: 'raider', x: m.x, y: m.y, hostileTo: new Set(['alice']) });
+    mf.tick(t + 100);
+    expect(mf.mines.size).toBe(0);
+    expect(outs.at(-1)).toBe(0);
   });
 
   it('mines leave the world with their layer', () => {

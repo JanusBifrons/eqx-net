@@ -2,9 +2,9 @@
  * Gate geometry — zone-pure (plan soft-leaping-truffle v2, phase V gates).
  *
  * Two gate kinds, both ONE structure:
- *   - Shield Gate (`shield_gate`, 320×72): two posts with a shield span between
+ *   - Shield Gate (`shield_gate`, 416×72): two 120-wide towers with a shield span between
  *     them. Ships pass through the gap when the span is open.
- *   - Shield Airlock (`shield_airlock`, 320×260): a chamber. Solid side walls,
+ *   - Shield Airlock (`shield_airlock`, 392×260): a chamber. Solid side walls,
  *     a post at each corner, and a shield span across each end (A = local +y,
  *     B = local −y). Ships travel along local y; it opens one end or the other,
  *     never both.
@@ -16,11 +16,15 @@
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import {
   AIRLOCK_END_Y as AL_END_Y,
-  AIRLOCK_POST,
+  AIRLOCK_OPENING,
+  AIRLOCK_POST_D,
+  AIRLOCK_POST_W,
   AIRLOCK_POSTS,
   AIRLOCK_POST_X as AL_POST_X,
   AIRLOCK_W,
-  GATE_POST,
+  GATE_DEPTH,
+  GATE_OPENING,
+  GATE_POST_W,
   GATE_POSTS,
   GATE_W,
 } from '../../shared-types/structureKinds/gatePosts.js';
@@ -34,10 +38,10 @@ export type GateType = 'gate' | 'airlock';
 
 // Post sizes, widths and post centres live in shared-types (one copy for the
 // gate geometry here and the cable sockets).
-export { GATE_POST, AIRLOCK_POST } from '../../shared-types/structureKinds/gatePosts.js';
+export { GATE_POST_W, GATE_DEPTH, AIRLOCK_POST_W, AIRLOCK_POST_D } from '../../shared-types/structureKinds/gatePosts.js';
 /** Airlock side-wall thickness. */
 export const AIRLOCK_WALL = 40;
-/** Collider thickness of a gate span (a thin static cuboid, like a fence wall). */
+/** Collider thickness of a thin static gate-wall cuboid (the teleporter iris uses it). */
 export const GATE_SPAN_THICKNESS = 22;
 /** How far in front of / behind a gate (local y) an admitted ship opens it.
  *  Deep enough that the open state reaches a client before its ship meets the
@@ -49,10 +53,25 @@ export const GATE_CLOSE_HOLD_MS = 1200;
 /** An airlock closes the entry end this long after the ship is fully inside. */
 export const AIRLOCK_CYCLE_HOLD_MS = 350;
 
+/** Solid gate doors (plan door-power): seconds a door takes to travel fully
+ *  open or shut at full power. */
+export const DOOR_TRAVEL_S = 3;
+/** The same travel in game ticks (fixed 60 Hz step, as the crane rig counts). */
+export const DOOR_TRAVEL_TICKS = DOOR_TRAVEL_S * 60;
+/** Power levels a moving door runs at: 0 (frozen) .. 15 (full speed). */
+export const DOOR_POWER_LEVELS = 15;
+/** Door position is an integer 0 (shut) .. DOOR_POS_MAX (open). At level L it
+ *  moves L units per tick, so full power crosses it in exactly DOOR_TRAVEL_TICKS. */
+export const DOOR_POS_MAX = DOOR_TRAVEL_TICKS * DOOR_POWER_LEVELS;
+/** A moving door re-segments for a power-level change at most this often, so a
+ *  grid hovering on a level boundary cannot make it stutter. A new target
+ *  (open / shut) re-segments at once. */
+export const DOOR_RESEGMENT_MIN_MS = 500;
+
 /** The clear gap a ship flies through (between the posts): gate / airlock.
  *  The ship-scale fit table checks every playable hull against these. */
-export const GATE_GAP = GATE_W - 2 * GATE_POST;
-export const AIRLOCK_GAP = AIRLOCK_W - 2 * AIRLOCK_POST;
+export const GATE_GAP = GATE_OPENING;
+export const AIRLOCK_GAP = AIRLOCK_OPENING;
 
 /** A box in the structure's local frame. */
 export interface LocalBox {
@@ -60,13 +79,6 @@ export interface LocalBox {
   readonly cy: number;
   readonly hw: number;
   readonly hh: number;
-}
-
-/** A span in the structure's local frame (from (x0, y) to (x1, y)). */
-export interface LocalSpan {
-  readonly x0: number;
-  readonly x1: number;
-  readonly y: number;
 }
 
 /** Which gate type a structure kind is (null ⇒ not a gate). */
@@ -82,15 +94,15 @@ export function isShieldEmitterKind(kind: string | null | undefined): boolean {
 }
 
 const GATE_BOXES: readonly LocalBox[] = Object.freeze([
-  { cx: -(GATE_W / 2 - GATE_POST / 2), cy: 0, hw: GATE_POST / 2, hh: GATE_POST / 2 },
-  { cx: GATE_W / 2 - GATE_POST / 2, cy: 0, hw: GATE_POST / 2, hh: GATE_POST / 2 },
+  { cx: -(GATE_W / 2 - GATE_POST_W / 2), cy: 0, hw: GATE_POST_W / 2, hh: GATE_DEPTH / 2 },
+  { cx: GATE_W / 2 - GATE_POST_W / 2, cy: 0, hw: GATE_POST_W / 2, hh: GATE_DEPTH / 2 },
 ]);
 
 const AIRLOCK_BOXES: readonly LocalBox[] = Object.freeze([
-  { cx: -AL_POST_X, cy: AL_END_Y, hw: AIRLOCK_POST / 2, hh: AIRLOCK_POST / 2 },
-  { cx: AL_POST_X, cy: AL_END_Y, hw: AIRLOCK_POST / 2, hh: AIRLOCK_POST / 2 },
-  { cx: -AL_POST_X, cy: -AL_END_Y, hw: AIRLOCK_POST / 2, hh: AIRLOCK_POST / 2 },
-  { cx: AL_POST_X, cy: -AL_END_Y, hw: AIRLOCK_POST / 2, hh: AIRLOCK_POST / 2 },
+  { cx: -AL_POST_X, cy: AL_END_Y, hw: AIRLOCK_POST_W / 2, hh: AIRLOCK_POST_D / 2 },
+  { cx: AL_POST_X, cy: AL_END_Y, hw: AIRLOCK_POST_W / 2, hh: AIRLOCK_POST_D / 2 },
+  { cx: -AL_POST_X, cy: -AL_END_Y, hw: AIRLOCK_POST_W / 2, hh: AIRLOCK_POST_D / 2 },
+  { cx: AL_POST_X, cy: -AL_END_Y, hw: AIRLOCK_POST_W / 2, hh: AIRLOCK_POST_D / 2 },
   // Side walls, flush with the outer edge, between the end posts.
   { cx: -(AIRLOCK_W / 2 - AIRLOCK_WALL / 2), cy: 0, hw: AIRLOCK_WALL / 2, hh: AL_END_Y },
   { cx: AIRLOCK_W / 2 - AIRLOCK_WALL / 2, cy: 0, hw: AIRLOCK_WALL / 2, hh: AL_END_Y },
@@ -140,26 +152,11 @@ export function gateColliderBoxes(kind: string | null | undefined): readonly Loc
 
 /** Half-width of the passable gap between the posts. */
 export function gateGapHalf(type: GateType): number {
-  return type === 'gate' ? GATE_W / 2 - GATE_POST : AIRLOCK_W / 2 - AIRLOCK_POST;
+  return type === 'gate' ? GATE_W / 2 - GATE_POST_W : AIRLOCK_W / 2 - AIRLOCK_POST_W;
 }
 
 /** Local y of an airlock end span (A at +, B at −). */
 export const AIRLOCK_END_Y = AL_END_Y;
-
-const GATE_SPANS: readonly LocalSpan[] = Object.freeze([
-  { x0: -(GATE_W / 2 - GATE_POST), x1: GATE_W / 2 - GATE_POST, y: 0 },
-]);
-const AIRLOCK_SPANS: readonly LocalSpan[] = Object.freeze([
-  { x0: -(AIRLOCK_W / 2 - AIRLOCK_POST), x1: AIRLOCK_W / 2 - AIRLOCK_POST, y: AL_END_Y }, // A
-  { x0: -(AIRLOCK_W / 2 - AIRLOCK_POST), x1: AIRLOCK_W / 2 - AIRLOCK_POST, y: -AL_END_Y }, // B
-]);
-
-/** The shield spans of a gate, local frame (gate: 1; airlock: A then B). */
-export function gateSpans(kind: string | null | undefined): readonly LocalSpan[] {
-  const t = gateTypeOf(kind);
-  return t === 'gate' ? GATE_SPANS : t === 'airlock' ? AIRLOCK_SPANS : [];
-}
-
 
 /** A world-space point (caller-owned output, alloc-free). */
 export interface MutPoint { x: number; y: number }
@@ -208,19 +205,6 @@ export function emitterAnchor(
   out.x = bestX;
   out.y = bestY;
   return out;
-}
-
-/** World endpoints of span `i` of a gate at (x, y, angle). False ⇒ no such span. */
-export function gateSpanWorld(
-  kind: string | null | undefined,
-  x: number, y: number, angle: number, i: number,
-  a: MutPoint, b: MutPoint,
-): boolean {
-  const span = gateSpans(kind)[i];
-  if (!span) return false;
-  localToWorld(x, y, angle, span.x0, span.y, a);
-  localToWorld(x, y, angle, span.x1, span.y, b);
-  return true;
 }
 
 /**

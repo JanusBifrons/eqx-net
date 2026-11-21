@@ -88,7 +88,8 @@ export function buildLabGridLines(scene: Scene, lineL: Container, nubL?: Contain
 
 /** A lab structure row for `?live=` entry `v` (Stage 4 F1 step C): a
  *  number is a power store's charge fraction, `dry` a reactor with no fuel,
- *  `hold` a territory lock holding its sector, `bay<b>` / `bay<b>q<n>` a
+ *  `hold` a territory lock holding its sector, `m<N>` a mine layer with N
+ *  mines out, `off` a built row with no power, `bay<b>` / `bay<b>q<n>` a
  *  Shipyard building in slipway bay b with n more queued (loop 3R),
  *  anything else (`fuel`, empty) the plain built row. */
 export function labLiveRow(kind: string, v: string | undefined): StructureRenderState {
@@ -100,6 +101,8 @@ export function labLiveRow(kind: string, v: string | undefined): StructureRender
   }
   if (v === 'dry') row.noFuel = true;
   if (v === 'hold') row.lockHolding = true;
+  if (v === 'off') row.powered = false;
+  if (v !== undefined && /^m[0-9]$/.test(v)) row.minesOut = Number(v.slice(1));
   const bay = v !== undefined ? /^bay(\d)(?:q(\d))?$/.exec(v) : null;
   if (bay !== null) { row.prodBay = Number(bay[1]); row.prodQueued = Number(bay[2] ?? 0); }
   return row;

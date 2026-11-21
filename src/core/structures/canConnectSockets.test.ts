@@ -93,7 +93,7 @@ describe('canConnect picks the cable socket pair (0d slice 4)', () => {
 
   it('reach is socket to socket: in edge range but too far post to post is refused', () => {
     // Edge to edge 650 - 32 - 36 = 582 (in range), but the gate's posts sit
-    // 124 u along its length, so the nearest socket pair is ~635 u apart.
+    // 148 u along its length, so the nearest socket pair is ~635 u apart.
     const con = real('c', 'connector', 0, 0);
     const gate = real('g', 'shield_gate', 650, 0, Math.PI / 2);
     expect(canConnect(con, gate, NONE, map(con, gate))).toEqual({ ok: false, reason: 'out-of-range' });

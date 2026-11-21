@@ -165,7 +165,8 @@ describe('structureOutline', () => {
     // Re-pinned in 2c++: FREIGHT_DOCK's footprint grew to 1000×400 (every
     // style's outline is footprint-derived; nothing else moved). Re-pinned in
     // stage 4 family 1: Solar 700×300, Reactor + Battery Bank 600×600.
-    // Re-pinned for the 1e-6 rounding (same outlines).
-    expect(hh.toString(16)).toBe('a0554cb6');
+    // Re-pinned for the 1e-6 rounding (same outlines). Re-pinned in family 2 (v15):
+    // gate 416×72, airlock 392×260, pylon 120×120.
+    expect(hh.toString(16)).toBe('33998653');
   });
 });
