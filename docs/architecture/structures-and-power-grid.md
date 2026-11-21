@@ -160,7 +160,7 @@ view, never the server `StructureRegistry`):
   production); it simply has no faction (`relationOf` makes it neutral to
   everyone). The grid view sets `GridNode.rootsPower` on every ownerless node,
   so its component stays powered on its own generation. A grid with another
-  built Capital stays owned. NPC bases are not flipped yet (slice S5). The
+  built Capital stays owned. NPC bases flip the same way (S5, below). The
   owner reaches clients through the normal structures slice (`ownerIdx` is
   re-interned on change). Lock: `StructureGridSubsystem.ownerless.test.ts`.
 - **Capturing an ownerless base** (capture plan 4E S4, finders keepers). A
@@ -180,6 +180,21 @@ view, never the server `StructureRegistry`):
   without a Capital of its own leaves it ownerless; if two players' Capitals
   ever share a piece, the first in registry order takes it. The client build
   preview still draws same-owner links only (follow-up).
+- **An NPC base whose Capital dies falls the same way** (capture plan 4E S5;
+  owner: "Finders keepers"). No second mechanism: the same
+  `orphanBaseOnCapitalLoss` flip turns its grid pieces `none:<lostCapitalId>`,
+  still powered. Because its pieces are no longer `npc:`-owned, its faction
+  lets go for free: `npcBaseTrade` lists no trade entry for it (no convoy
+  anchor), it no longer counts for the faction on the control meter
+  (`sectorLiveCounts`) or in `FactionLedger`, and hits on it move no standing
+  (`hitStanding.ts`). Nobody's standing changes when it falls. Its garrison
+  stands down: `PatrolSubsystem.watchBaseFalls` (subscribed by
+  `addGarrisonPatrol`) hears the Capital's removal and, once the owner has no
+  built Capital left in the room, drops that patrol (no respawn, no roaming);
+  surviving ships carry on as attached ships until they are gone. A piece not
+  linked to the lost Capital keeps its `npc:` owner (the same per-grid rule as
+  a player base). Regrow prevention after a restart is S6. Lock:
+  `bases/npcBaseFall.test.ts`.
 - **An ownerless base's Territory Lock claims nothing** (owner 2026-11-21,
   "Stops claiming"). A lock owned by `none:` (built or still a blueprint)
   feeds no side to the control meter (`isLiveTerritoryLock`), never holds

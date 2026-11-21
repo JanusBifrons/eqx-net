@@ -243,7 +243,7 @@ export interface NpcBaseSeedHost {
   readonly structureRegistry: StructureRegistry;
   readonly swarmRegistry: Pick<SwarmEntityRegistry, 'all'>;
   readonly lingeringPoseCache: ReadonlyMap<string, { x: number; y: number }>;
-  readonly patrols: Pick<PatrolSubsystem, 'addBase'>;
+  readonly patrols: Pick<PatrolSubsystem, 'addBase' | 'watchBaseFalls'>;
   readonly obstacles: { rocks(near?: ObstacleBox): GridObstacle[] };
   readonly logger: Pick<Logger, 'info' | 'warn'>;
   sabF32(): Float32Array;
@@ -359,6 +359,8 @@ function addGarrisonPatrol(h: NpcBaseSeedHost, tag: string, owner: string, facti
   }
   if (!Number.isFinite(x0)) return;
   const count = tier === 'stronghold' || tier === 'citadel' ? 4 : 3;
+  // Capture 4E (S5) — the garrison stands down if its base falls.
+  h.patrols.watchBaseFalls(h.structureRegistry);
   h.patrols.addBase(tag, owner, faction, { x0, x1, y0, y1 }, cx, cy, count);
 }
 
