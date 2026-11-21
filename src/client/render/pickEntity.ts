@@ -39,6 +39,7 @@ import { getStructureKind, isStructureKindId } from '../../shared-types/structur
 import { getShipKind } from '@shared-types/shipKinds';
 import { isParkedHull, isShipIAmFlying } from './shipOwnership.js';
 import { isLootPod } from '@shared-types/swarmWireFormat';
+import { craneBayFor } from '../../core/articulation/craneRig.js';
 
 /** Selectable entity classes. `drone`/`asteroid`/`lingering` read from
  *  the mirror directly (no server stats channel); `ship`/`structure` use
@@ -121,6 +122,29 @@ export function pickEntityAt(
 
   if (bestId === null) return null;
   return { id: bestId, kind: bestKind };
+}
+
+/**
+ * Is GAME-space (x, y) on a structure's crane bay pad (`craneBayFor`: the
+ * Capital's built-in bay, a freight dock's)? The whole pad, edge to edge
+ * (`inCraneBay`'s parking inset is the serve rule, not the tap rule). A pad
+ * is open space a ship parks on, so the Fly tap there is a helm course,
+ * whatever else the pick's slop reaches (a hull parked on it, the host's
+ * own tap slop over the pad's inner strip). Alloc-free.
+ */
+export function onCraneBayPad(x: number, y: number, mirror: RenderMirror): boolean {
+  if (!mirror.swarm) return false;
+  for (const sw of mirror.swarm.values()) {
+    if (sw.kind !== 2 || !sw.shipKind) continue;
+    const bay = craneBayFor(sw.shipKind);
+    if (bay === null) continue;
+    // World → host frame (the structure's body angle, radians).
+    const dx = x - sw.x, dy = y - sw.y;
+    const cs = Math.cos(sw.angle), sn = Math.sin(sw.angle);
+    const lx = dx * cs + dy * sn, ly = -dx * sn + dy * cs;
+    if (Math.abs(lx - bay.cx) <= bay.padHalfW && Math.abs(ly - bay.cy) <= bay.padHalfH) return true;
+  }
+  return false;
 }
 
 /** Collision/sprite radius for a ship kind, with a safe fallback. */
