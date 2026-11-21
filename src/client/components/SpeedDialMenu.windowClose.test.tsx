@@ -15,6 +15,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { SpeedDialMenu } from './SpeedDialMenu.js';
 import { GameWindow } from './GameWindow.js';
+import { StructureSettingsModal } from './StructureSettingsModal.js';
 
 let openWindow: () => void = () => {};
 
@@ -66,6 +67,27 @@ describe('SpeedDialMenu closes when a game window opens', () => {
   it('leaves a closed dial closed when a window opens', () => {
     render(<Harness />);
     act(() => openWindow());
+    expect(fabExpanded()).toBe('false');
+  });
+
+  it('closes the open build drill when the building settings side panel opens', () => {
+    let openPanel: () => void = () => {};
+    function PanelHarness(): JSX.Element {
+      const [open, setOpen] = useState(false);
+      openPanel = () => setOpen(true);
+      return (
+        <>
+          <SpeedDialMenu />
+          {open && <StructureSettingsModal open entityId={1} title="Refinery" onClose={() => setOpen(false)} />}
+        </>
+      );
+    }
+    render(<PanelHarness />);
+    fireEvent.click(screen.getByTestId('speed-dial-fab'));
+    fireEvent.click(screen.getByTestId('speed-dial-build'));
+    expect(fabExpanded()).toBe('true');
+    act(() => openPanel());
+    expect(screen.getByTestId('structure-settings')).toBeTruthy();
     expect(fabExpanded()).toBe('false');
   });
 });

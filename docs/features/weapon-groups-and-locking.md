@@ -40,8 +40,10 @@ There are two ways to lock:
    lock builds. Slide off it, or let go before it finishes, and the lock
    **drains back to 0** ("LOSING LOCK") and drops. Bring the line back before it
    empties and it carries on. Once it reads LOCKED you can let go.
-2. **Hands-off.** Tap a ship to open its info box and press **LOCK · FORE** (the
-   active group). It locks on its own; the button becomes **CANCEL LOCK** while
+2. **Hands-off.** Tap a ship or a rock to open its info box and press
+   **LOCK · FORE** (the active group). It locks on its own (a rock with no
+   failsafe ring, as below); scrap and wreck pieces can't be tapped, so they
+   lock only with the lock line; the button becomes **CANCEL LOCK** while
    it runs and **UNLOCK** once locked.
 
 **AUTO groups** pick their own hostile target, only from targets inside the
@@ -55,7 +57,11 @@ committed a hostile act; the normal red lock then runs.
 **Rocks, scrap and wrecks** can be locked as well (for mining lasers and
 tractors). Locking them is never hostile: no failsafe ring, nobody is alerted.
 The lock line only takes them when no ship or structure is under it, and AUTO
-groups and missiles never pick them.
+groups and missiles never pick them for themselves. The one exception follows
+your own lock: an idle AUTO tractor group joins a rock or wreck another of your
+groups has LOCKED, taking a cut piece it can pull, so locking the mining laser
+alone still brings the rock in
+([mining](mining-and-salvage.md#the-factory-line-small-pieces-go-straight-into-the-hold)).
 
 ## Firing
 
@@ -78,7 +84,7 @@ nose on the target.
 |---|---|---|
 | Move | Left thumb floating stick | WASD |
 | Lock (manual) | Right thumb: hold the lock line on a ship | Hold LMB on a ship |
-| Lock (hands-off) | Tap ship → LOCK | Click ship → LOCK, or **T** |
+| Lock (hands-off) | Tap ship or rock → LOCK | Click ship or rock → LOCK, or **T** |
 | Pick group | Tap its chip | **1–9** |
 | AUTO / MAN | The chip's pill | **Shift + 1–9** |
 | Fire a MAN group | Hold its chip | Hold its chip |

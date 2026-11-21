@@ -321,14 +321,20 @@ const _comets = new Float64Array((MAX_CABLE_COMETS + 1) * 2);
  *  material's pace in game time (`nowMs` = `fxNow`, #20), all comets in one
  *  stroke, clamp sparks at frames a comet passes through, and the receiving
  *  end collar's flash as each comet arrives. The static body is not touched. */
+/** Advance link `c`'s flow-run clock for this frame without drawing (an
+ *  off-screen link keeps its train, as if drawn). */
+export function noteCableFlow(c: LinkCable, nowMs: number): void {
+  // A new run of flow (first frame, or after a gap): the train restarts.
+  if (!(nowMs - c.flowSeen <= FLOW_RESTART_GAP_MS) || nowMs < c.flowSeen) c.flowSince = nowMs;
+  c.flowSeen = nowMs;
+}
+
 export function drawSocketCableFlow(
   g: LinePath, c: LinkCable, v: ConnectorVisual, sourceIsLo: boolean, scale: number,
   nowMs: number, material: ConnectorFlowMaterial, ra = 0, rb = 0,
 ): void {
   if (c.n < 2 || c.len < 1) return;
-  // A new run of flow (first frame, or after a gap): the train restarts.
-  if (!(nowMs - c.flowSeen <= FLOW_RESTART_GAP_MS) || nowMs < c.flowSeen) c.flowSince = nowMs;
-  c.flowSeen = nowMs;
+  noteCableFlow(c, nowMs);
   insets(c, scale, ra, rb);
   drawCablePathGlow(g, c, v, scale, _e0, _e1, c.socketed);
   const pa = v.pulseAlpha ?? 0;

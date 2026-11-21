@@ -63,7 +63,13 @@ agent's production chains (plan `soft-leaping-truffle` v3).
 - **`blueprintQuality(bp)`** is the 0–100 glance score; nothing reads it as
   an input.
 - **Runs:** `spendBlueprintRun` spends one run (an original never runs out),
-  and `isBlueprintUsedUp` reports a spent copy.
+  and `isBlueprintUsedUp` reports a spent copy. A processor spends the run
+  when a cycle STARTS; a copy whose last run is building stays in the slot
+  (sent as an empty slot, "last run building · slot free") and leaves only
+  when that cycle completes. Handing a building cycle back (Load / Swap,
+  Unload, or a recipe change) refunds its inputs AND its run, so a copy's
+  runs only ever leave as outputs. A Load that finds no matching blueprint
+  answers with a `blueprint_result` toast saying so, never silently.
 - **Drops.** Elites (~40 %) and incursion caches (~50 %) drop a blueprint for
   a random non-starter product. It is usually a copy (1–10 runs, modest
   stats) and rarely an original (5 %).
@@ -130,6 +136,9 @@ reads it as low.
       a packed hull into your storage: `build_interceptor`, `build_gunship`,
       `build_heavy` and `build_missile_frigate`. Set the recipe, then load the
       blueprint, like any processor. It also comes packed (`pack_shipyard`).
+      Changing the recipe swaps a loaded blueprint that no longer fits for
+      storage's best match, else your own ship hold's, as a manual Load (else it goes back to storage; a bound copy, or one
+      with no linked storage to take it, stays); `set_recipe` in `structureSettingMessages.ts`.
     - **Traders sell packed hulls:** two hull offers on the board at all times,
       priced from the Shipyard recipe's goods value × 1.3 (`hullBillValue`).
     - **The picker gate:** a NEW ship is always a starter hull (scout, fighter or a capital). Any other
@@ -209,5 +218,6 @@ Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The 
 - **Unpacking hulls (economy v2 W5a)**: `SectorRoom.unpackHull` (the `unpack_hull` message) turns one packed `hull:<kind>` in the owner's storage network into a PARKED roster row beside the storage, also put in the world at once when a physics slot is free (`HullHandOff.launchNewHull`, the Shipyard's path). Order is load-bearing: take the crate (one hold group), THEN create the row (roster cap checked there), and put the crate back if that fails, so a hull is never duplicated. Galaxy rooms only. Lock: `tests/integration/sectorRoom/unpackHull.test.ts`. Trade has NO sign-in gate (guests are full players; lock: `tradeMessages.test.ts`).
 - **Packed structures gate placement (economy v2 W4b)**: a PLAYER's `place_structure` of a non-starter kind needs a packed item. `packedGateForBuild` in `StructurePlacementSubsystem.ts` (the structures agent's seam, injected by the room over a narrow `PackedGateHost` with the room's `findPacked`) takes one from the owner's operational storage in this sector, else their active ship's hold, and commits ONLY after the structure registers. A structure placed that way is `prepaid` (persisted): it builds with NO minerals and no route, and deconstructing it reclaims NO minerals (never mint minerals from credits); instead it REPACKS: the grid's `onRepack` hook (before despawn) gives the packed item back at `packedQuality` (persisted) into the owner's linked storage, else a pod (`SectorRoom.repackStructure`). Starter kinds and generated builds (NPC/scenario/scale) skip the gate. Packed structures come from trader offers (`TradeDirector` board, pack-recipe value × `PACKED_MARKUP`, one-off only, carried in the hauler's hold) and loot (W4a). Lock: `tests/integration/sectorRoom/packedBuy.test.ts`. A test placing a non-starter kind by message must stock the packed item first (see `structureTurret.test.ts`).
 - **Loading a processor slot falls back to your ship hold**: `load_blueprint` (`StorageService.loadBlueprint`) takes the best matching copy from the processor's storage network first, else from the owner's own ship hold (flown or parked, `ownShipKey`), where the starter junk copies sit; the slot and the ship row commit as ONE group, and a copy already in the slot goes back to the hold it came from. No range rule (base loading has none). Lock: `rooms/features/blueprintMessages.test.ts`.
+- **A copy's runs leave only as outputs**: `ProductionSubsystem.unload` (every Load / Swap / Unload / recipe change while a cycle is loaded) refunds the cycle's inputs AND the run it spent; a used-up copy stays in `rec.blueprint` (wire `bpRuns` 0) until its last cycle completes (`dropUsedUp`), and `StorageService` never stocks or spills a used-up copy. Before this, a second Load tap while a Shipyard built handed the cycle back without its run, so two taps destroyed a 2-run starter copy with no hull built. Locks: `tests/integration/sectorRoom/shipyardStarterSkiff.test.ts`, `ProductionSubsystem.test.ts`.
 
 - **Module blueprints (plan peppy-jumping-pinwheel P5; products `module:<id>` since W2)**: rare weightless loot in `Hold.blueprints`. **Rules:** (1) INSTALLED blueprints are a `fitted` hold keyed `fitted:<shipInstanceId>` — install = ONE atomic hold group (`StorageService.installBlueprint`: storage loses it, fitted gains it); never a roster column; (2) effects go through one seam each: hull = `SectorRoom.shipHullMax` (every hull-seed site + on install), cargo = the loot-collector capacity, weapon gate = `activateMount` (`weaponUnlocked`, shared); (3) `spillOrLoseShipHold` (every death/abandon seam) drops the fitted hold; (4) the own ship's list rides `states[].fitted` (own-only, emit-when-non-empty, read from the `fittedCache` — alloc-free). Lock: `tests/integration/sectorRoom/blueprintInstall.test.ts`. 🔴 netgate (snapshot slice + hull caps). Story: [docs/features/blueprints.md](blueprints.md). Story: [docs/features/bounties-and-events.md](bounties-and-events.md).

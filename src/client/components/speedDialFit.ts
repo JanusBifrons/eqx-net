@@ -27,6 +27,7 @@ export const FIT_LABEL_ROOM_PX = 280;
 
 const ACTIONS_SELECTOR = '.MuiSpeedDial-actions';
 const LABEL_SELECTOR = '.MuiSpeedDialAction-staticTooltipLabel';
+const ACTION_FAB_SELECTOR = '.MuiSpeedDialAction-fab';
 /** The dial's action list (open or parked). */
 export const SPEED_DIAL_ACTIONS_SELECTOR = `[data-testid="speed-dial"] ${ACTIONS_SELECTOR}`;
 /** The parked (closed) action list: what is inside it is not on screen. */
@@ -76,6 +77,26 @@ function listColumn(list: HTMLElement, rect: Box): { left: number; right: number
   return { left, right: rect.right };
 }
 
+/** MUI's margin above and below each action button (px). */
+export const ACTION_GAP_PX = 8;
+/** The squeezed gap never goes below this (buttons never touch). */
+export const ACTION_GAP_MIN_PX = 2;
+/** The open list's CSS variable for that margin (FIT_OPEN_LIST_SX). */
+export const ACTION_GAP_VAR = '--speed-dial-action-gap';
+
+/**
+ * The gap that fits `count` buttons of `buttonPx` (plus the list's own
+ * `paddingPx`) into `maxPx`: the full MUI gap when there is room, squeezed when
+ * the list is a little too tall (the main menu with Warp ▸ on a 360 px tall
+ * sideways phone). A list too long to fit even at the floor gap keeps the full
+ * gap and scrolls, as before (the long build categories).
+ */
+export function actionGapToFit(maxPx: number, count: number, buttonPx: number, paddingPx: number): number {
+  if (count <= 0 || buttonPx <= 0) return ACTION_GAP_PX;
+  const gap = Math.floor((maxPx - paddingPx - count * buttonPx) / (2 * count));
+  return gap < ACTION_GAP_MIN_PX ? ACTION_GAP_PX : Math.min(ACTION_GAP_PX, gap);
+}
+
 function viewportHeight(): number {
   return window.visualViewport?.height ?? window.innerHeight;
 }
@@ -90,6 +111,10 @@ export function fitActionsToViewport(root: HTMLElement | null, direction: 'up' |
   const floor = stack ? listFloor(listColumn(list, rect), stack.getBoundingClientRect(), vh) : vh;
   const max = availableListHeight(rect, vh, direction, floor);
   list.style.maxHeight = `${max}px`;
+  const button = list.querySelector<HTMLElement>(ACTION_FAB_SELECTOR)?.getBoundingClientRect().height ?? 0;
+  const cs = getComputedStyle(list);
+  const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+  list.style.setProperty(ACTION_GAP_VAR, `${actionGapToFit(max, list.children.length, button, pad)}px`);
   // 0 is the start for both directions (column-reverse starts at its bottom).
   list.scrollTop = 0;
 }
@@ -137,4 +162,10 @@ export const FIT_OPEN_LIST_SX = {
   marginLeft: `-${FIT_LABEL_ROOM_PX}px`,
   pointerEvents: 'none',
   '& > *': { pointerEvents: 'auto' },
+  // The gap above and below each button: MUI's 8 px, squeezed by
+  // fitActionsToViewport when the list is a little too tall (actionGapToFit).
+  [`& ${ACTION_FAB_SELECTOR}`]: {
+    marginTop: `var(${ACTION_GAP_VAR}, ${ACTION_GAP_PX}px)`,
+    marginBottom: `var(${ACTION_GAP_VAR}, ${ACTION_GAP_PX}px)`,
+  },
 } as const;
