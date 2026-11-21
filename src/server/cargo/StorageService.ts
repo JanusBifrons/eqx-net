@@ -334,31 +334,34 @@ export class StorageService {
    * Load the best blueprint for `product` from the processor's network storage
    * into its slot (an original first, then the highest quality). A blueprint
    * already in the slot goes back to storage in the same group, unless it is
-   * bound. Returns false when the network has none.
+   * bound. When the network has none, the owner's own ship hold (`shipUid`,
+   * where starter copies sit) is searched the same way; its row commits in the
+   * same group. Returns false when neither has one.
    */
-  loadBlueprint(proc: StructureRecord, product: string, quality: (bp: BlueprintItem) => number): boolean {
+  loadBlueprint(proc: StructureRecord, product: string, quality: (bp: BlueprintItem) => number, shipUid?: string): boolean {
     if (proc.blueprint?.bound === true) return false;
-    const net = this.networkFor(proc);
-    let best: { s: StructureRecord; i: number; bp: BlueprintItem } | null = null;
-    for (const s of net) {
-      const list = s.hold?.blueprints ?? [];
+    let best: { list: BlueprintItem[]; s: StructureRecord | null; i: number; bp: BlueprintItem } | null = null;
+    const scan = (list: BlueprintItem[], s: StructureRecord | null): void => {
       for (let i = 0; i < list.length; i++) {
         const bp = list[i]!;
         if (bp.product !== product) continue;
         const better = best === null
           || (bp.kind === 'bpo' && best.bp.kind !== 'bpo')
           || (bp.kind === best.bp.kind && quality(bp) > quality(best.bp));
-        if (better) best = { s, i, bp };
+        if (better) best = { list, s, i, bp };
       }
-    }
+    };
+    for (const s of this.networkFor(proc)) if (s.hold !== undefined) scan(s.hold.blueprints, s);
+    const row = best === null && shipUid !== undefined ? this.d.holdStore.get(shipUid) : undefined;
+    const shipHold = row !== undefined && row.ownerId === proc.owner ? cloneHold(row.hold) : null;
+    if (shipHold !== null) scan(shipHold.blueprints, null);
     if (best === null) return false;
-    const touched = new Set<StructureRecord>([best.s]);
-    best.s.hold!.blueprints.splice(best.i, 1);
-    if (proc.blueprint !== undefined) {
-      best.s.hold!.blueprints.push(proc.blueprint);
-    }
-    proc.blueprint = best.bp;
-    this.commitSlotAndStorage(proc, touched);
+    const b: { list: BlueprintItem[]; s: StructureRecord | null; i: number; bp: BlueprintItem } = best;
+    b.list.splice(b.i, 1);
+    if (proc.blueprint !== undefined) b.list.push(proc.blueprint);
+    proc.blueprint = b.bp;
+    const ship = b.s === null && row !== undefined ? { ...row, hold: shipHold! } : undefined;
+    this.commitSlotAndStorage(proc, new Set(b.s === null ? [] : [b.s]), ship);
     return true;
   }
 
@@ -384,9 +387,11 @@ export class StorageService {
     return bp === undefined || bp.bound === true ? null : { goods: {}, blueprints: [bp] };
   }
 
-  private commitSlotAndStorage(proc: StructureRecord, touched: Set<StructureRecord>): void {
+  private commitSlotAndStorage(proc: StructureRecord, touched: Set<StructureRecord>, ship?: HoldRecord): void {
     const puts: HoldRecord[] = [];
     const deletes: string[] = [];
+    if (ship !== undefined && isHoldEmpty(ship.hold)) deletes.push(ship.holderUid);
+    else if (ship !== undefined) puts.push(ship);
     const slot = this.slotRecord(proc);
     const uid = this.slotUid(proc);
     if (slot !== null) puts.push(slot);

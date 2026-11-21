@@ -141,6 +141,26 @@ describe('ConnectorRenderer — placement connection preview', () => {
     expect(r.previewVerdicts[0]!.reason).toBe('blocked');
   });
 
+  it('refuses a ghost link whose cable would cross a stored cable (crosses-cable), as the server', () => {
+    // A stored w–e cable across the middle (no sockets on the wire: drawn and
+    // tested straight); hub n sits across it from the ghost.
+    const swarm = new Map<number, SwarmRenderState>([
+      [1, structureEntry('connector', -300, 0)],
+      [2, structureEntry('connector', 300, 0)],
+      [3, structureEntry('connector', 0, 250)],
+    ]);
+    const structures = new Map<number, StructureRenderState>([
+      [1, structureState({ connTo: [2], connSockSelf: [-1], connSockOther: [-1] })],
+      [2, structureState({ connTo: [1], connSockSelf: [-1], connSockOther: [-1] })],
+      [3, structureState({ connTo: [] })],
+    ]);
+    const r = new ConnectorRenderer();
+    r.update({ swarm, structures, pendingPlacementPreview: { kind: 'connector', x: 0, y: -250, angle: 0 } } as unknown as RenderMirror, 1, 0);
+    const reasons = Object.fromEntries(r.previewVerdicts.slice(0, r.previewVerdictCount).map((v) => [v.id, v.reason]));
+    // w and e share an end with the stored cable: a fan-out, not a crossing.
+    expect(reasons).toEqual({ 1: null, 2: null, 3: 'crosses-cable' });
+  });
+
   it('counts 0 when there is no placement preview', () => {
     const capitalId = 1;
     const swarm = new Map<number, SwarmRenderState>([[capitalId, structureEntry('capital', 0, 0)]]);

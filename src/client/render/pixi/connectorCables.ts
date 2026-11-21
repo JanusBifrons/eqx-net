@@ -52,8 +52,8 @@ export interface LinkCable {
   /** Socket to socket (end collars); false for a straight fence link. */
   socketed: boolean;
   // What the curve was flattened from (the cache's change check).
-  ax: number; ay: number; aa: number; ak: string; sa: number;
-  bx: number; by: number; ba: number; bk: string; sb: number;
+  ax: number; ay: number; aa: number; ak: string; sa: number; ma: boolean;
+  bx: number; by: number; ba: number; bk: string; sb: number; mb: boolean;
   gen: number;
   /** Slice 9: game ms this link's current run of flow started, and the
    *  last frame it was drawn flowing (a gap means the flow stopped). */
@@ -64,7 +64,8 @@ export interface LinkCable {
 export function makeLinkCable(): LinkCable {
   return {
     poly: new Float64Array(CABLE_CURVE_FLOATS), cum: new Float64Array(CABLE_POINTS), n: 0, len: 0, socketed: false,
-    ax: NaN, ay: 0, aa: 0, ak: '', sa: CABLE_NO_SOCKET, bx: 0, by: 0, ba: 0, bk: '', sb: CABLE_NO_SOCKET, gen: 0,
+    ax: NaN, ay: 0, aa: 0, ak: '', sa: CABLE_NO_SOCKET, ma: false,
+    bx: 0, by: 0, ba: 0, bk: '', sb: CABLE_NO_SOCKET, mb: false, gen: 0,
     flowSince: 0, flowSeen: -Infinity,
   };
 }
@@ -106,13 +107,17 @@ export function fillStraight(out: LinkCable, ax: number, ay: number, bx: number,
 }
 
 /** Write a structure's link-curve inputs into a reused node (only what
- *  `flattenLinkCable` reads: pose, kind, any-side flags). */
-function endNode(e: SwarmRenderState, out: GridNode): GridNode {
+ *  `flattenLinkCable` reads: pose, kind, build mirror, any-side flags). The
+ *  mirror is the structure row's (`StructureRenderState.mirror`): without it
+ *  a mirrored building's cable ran to the unmirrored socket, the wrong place
+ *  on the hull, entering at an angle. */
+function endNode(e: SwarmRenderState, mirror: boolean, out: GridNode): GridNode {
   const kind = e.shipKind ?? '';
   out.kind = kind;
   out.x = e.x;
   out.y = e.y;
   out.rot = e.angle;
+  out.mirror = mirror;
   out.isConnector = kind === 'connector';
   out.isShieldPylon = isShieldEmitterKind(kind);
   return out;
@@ -120,7 +125,7 @@ function endNode(e: SwarmRenderState, out: GridNode): GridNode {
 
 /**
  * Per-link flattened cables, keyed by the renderer's packed edge key.
- * `get` re-flattens only when an end's pose / kind or a socket changed;
+ * `get` re-flattens only when an end's pose / kind / mirror or a socket changed;
  * `beginSweep` / `endSweep` around a full walk return links that are gone
  * to the pool.
  */
@@ -135,7 +140,8 @@ export class LinkCableCache {
 
   get size(): number { return this.map.size; }
 
-  get(key: number, a: SwarmRenderState, sa: number, b: SwarmRenderState, sb: number): LinkCable {
+  /** `ma` / `mb`: each end's build mirror (its structure row's `mirror`). */
+  get(key: number, a: SwarmRenderState, sa: number, b: SwarmRenderState, sb: number, ma = false, mb = false): LinkCable {
     let c = this.map.get(key);
     if (c === undefined) {
       c = this.free.pop() ?? makeLinkCable();
@@ -145,11 +151,11 @@ export class LinkCableCache {
     }
     c.gen = this.gen;
     const ak = a.shipKind ?? '', bk = b.shipKind ?? '';
-    if (c.ax !== a.x || c.ay !== a.y || c.aa !== a.angle || c.ak !== ak || c.sa !== sa
-      || c.bx !== b.x || c.by !== b.y || c.ba !== b.angle || c.bk !== bk || c.sb !== sb) {
-      fillLinkCable(c, endNode(a, this.nodeA), sa, endNode(b, this.nodeB), sb);
-      c.ax = a.x; c.ay = a.y; c.aa = a.angle; c.ak = ak; c.sa = sa;
-      c.bx = b.x; c.by = b.y; c.ba = b.angle; c.bk = bk; c.sb = sb;
+    if (c.ax !== a.x || c.ay !== a.y || c.aa !== a.angle || c.ak !== ak || c.sa !== sa || c.ma !== ma
+      || c.bx !== b.x || c.by !== b.y || c.ba !== b.angle || c.bk !== bk || c.sb !== sb || c.mb !== mb) {
+      fillLinkCable(c, endNode(a, ma, this.nodeA), sa, endNode(b, mb, this.nodeB), sb);
+      c.ax = a.x; c.ay = a.y; c.aa = a.angle; c.ak = ak; c.sa = sa; c.ma = ma;
+      c.bx = b.x; c.by = b.y; c.ba = b.angle; c.bk = bk; c.sb = sb; c.mb = mb;
       this.flattens++;
     }
     return c;
@@ -287,10 +293,14 @@ export function flowTrainInto(out: FlowTrain, len: number, elapsedMs: number, ma
 }
 
 /** Arc length (from the source) of the comet nearest the receiving end that
- *  is still on the cable; the rest follow `spacing` behind it. */
+ *  is still on the cable; the rest follow `spacing` behind it. Comet `k` is
+ *  at `d - k * spacing`, so the lead moves forward with `d` and drops back
+ *  one spacing as a comet leaves at the receiver (never `len - r`, which
+ *  slides the whole train backward once the first comet has arrived). */
 export function leadCometArc(t: FlowTrain, len: number): number {
   if (t.d <= len) return t.d;
-  return len - ((t.d - len) % t.spacing);
+  const r = (t.d - len) % t.spacing;
+  return r === 0 ? len : len - t.spacing + r;
 }
 
 /** The receiving collar's flash: 1 the instant a comet arrives, easing to 0
