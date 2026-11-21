@@ -3,9 +3,11 @@
  * plain-language activity lines, the shared-or-mixed value of a selection,
  * and names for ships and targets read from the render mirror (no ids shown).
  */
-import type { RenderMirror } from '@core/contracts/IRenderer';
+import type { RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { FleetMode, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 import { getShipKind } from '@shared-types/shipKinds';
+import { WRECK_ROCK_PARENT_KIND } from '@shared-types/messages/wreckDescriptor';
+import { SWARM_KIND_ASTEROID, SWARM_KIND_SCRAP, SWARM_KIND_STRUCTURE, SWARM_KIND_WRECK, isLootPod } from '@shared-types/swarmWireFormat';
 import type { FleetStatusRow } from './fleetStatus.js';
 
 export const MODE_LABELS: Record<FleetMode, string> = {
@@ -102,7 +104,7 @@ export function fleetShipName(mirror: RenderMirror | null | undefined, id: strin
 
 /**
  * A player-facing name for a target id: a ship's kind, a drone's kind (or
- * "Drone"), "Structure", "Asteroid". Undefined when it can't be resolved.
+ * "Drone"), or a non-ship piece by `swarmEntityName`. Undefined when it can't be resolved.
  * Accepts a playerId / shipInstanceId, a numeric entity id or `swarm-<id>`.
  */
 export function fleetTargetName(mirror: RenderMirror | null | undefined, id: string | null): string | undefined {
@@ -112,13 +114,25 @@ export function fleetTargetName(mirror: RenderMirror | null | undefined, id: str
   const n = Number(id.startsWith('swarm-') ? id.slice(6) : id);
   if (!Number.isInteger(n)) return undefined;
   const e = mirror.swarm?.get(n);
-  if (!e) return undefined;
+  return e ? swarmEntityName(mirror, e) : undefined;
+}
+
+/**
+ * A player-facing name for a swarm entity, by its swarm kind first: only a
+ * drone is named after its ship kind. A scrap or wreck piece's `shipKind` is
+ * its PARENT (junk for a rock cut), never what the piece is.
+ */
+export function swarmEntityName(mirror: RenderMirror, e: SwarmRenderState, droneFallback = 'Drone'): string {
   switch (e.kind) {
-    case 0:
+    case SWARM_KIND_ASTEROID:
       return 'Asteroid';
-    case 2:
+    case SWARM_KIND_STRUCTURE:
       return 'Structure';
+    case SWARM_KIND_SCRAP:
+      return isLootPod(e) ? 'Cargo pod' : 'Scrap';
+    case SWARM_KIND_WRECK:
+      return e.wreckId !== undefined && mirror.wrecks?.get(e.wreckId)?.parentKind === WRECK_ROCK_PARENT_KIND ? 'Rock' : 'Wreck';
     default:
-      return kindName(e.shipKind) ?? 'Drone';
+      return kindName(e.shipKind) ?? droneFallback;
   }
 }
