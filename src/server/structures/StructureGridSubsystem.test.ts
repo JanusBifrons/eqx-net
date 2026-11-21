@@ -615,6 +615,27 @@ describe('StructureGridSubsystem — repair + deconstruction', () => {
     expect(h.despawned).toContain(con);
     expect(capRec.minerals).toBeGreaterThan(mineralsBefore); // reclaimed
   });
+
+  it('deconstruction flow runs FROM the deconstructing structure TO the Capital', () => {
+    // Owner rule (2026-11-21): cable flow runs source → destination. Reclaimed
+    // minerals leave the structure being taken down and go back to the Capital,
+    // so each flashed edge's first id (the client's flow source) must be the
+    // structure's end, and a construction pulse the Capital's end.
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    const con = h.placement.place(OWNER, 'connector', 200, 0)!;
+    const pulses = Math.ceil(getStructureKind('connector').constructionCost / CONSTRUCTION_PULSE_AMOUNT);
+    let buildEdge: [string, string, string] | undefined;
+    for (let i = 0; i < pulses; i++) {
+      const r = h.pulse();
+      buildEdge ??= r.flashed.find((e) => e[2] === 'construction');
+    }
+    expect(buildEdge?.slice(0, 2)).toEqual([cap, con]); // build: Capital → blueprint
+
+    h.registry.get(con)!.isDeconstructing = true;
+    const result = h.pulse();
+    const reclaim = result.flashed.find((e) => e[2] === 'minerals');
+    expect(reclaim?.slice(0, 2)).toEqual([con, cap]); // reclaim: structure → Capital
+  });
 });
 
 describe('StructureGridSubsystem — mining (Phase 4)', () => {
