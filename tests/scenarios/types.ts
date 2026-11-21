@@ -90,3 +90,63 @@ export interface SimulatedClientState {
    *  -1 = no prior snapshot. */
   lastSnapshotAtMs: number;
 }
+
+// ── Network model: gaps, bursts and frame stalls ──────────────────────────
+//
+// `GapSpec` extends the `{ atMs, durationMs }` shape used by
+// `Scenario.gapsMs` (scenarios.ts); every existing gap value is a valid
+// `GapSpec` and means "both streams". The model itself is
+// `buildDeliveries` / `buildFrameTimes` in runner.ts; named seeded
+// profiles live in gapProfiles.ts.
+
+/** The two server→client streams: JSON snapshots (every third tick) and
+ *  binary drone (swarm) packets (every tick). */
+export type NetStream = 'json' | 'swarm';
+
+/** A stall on one or both streams (sender side). Everything sent in
+ *  `[atMs, atMs + durationMs)` arrives together, in send order, when it
+ *  ends: at `atMs + durationMs + baseDelayMs` (reliable, ordered link). */
+export interface GapSpec {
+  atMs: number;
+  durationMs: number;
+  /** Which stream stalls. Default `'both'`. */
+  streams?: NetStream | 'both';
+}
+
+/** The client's frames stall (a long task): no frame fires in
+ *  `[atMs, atMs + durationMs)`; the next frame fires at the end. */
+export interface FrameStallSpec {
+  atMs: number;
+  durationMs: number;
+}
+
+/** Seeded jitter on the link, described by the JSON snapshot
+ *  inter-arrival gaps it produces (ms). Both streams share the link lag. */
+export interface JitterSpec {
+  gapP50Ms: number;
+  gapP95Ms: number;
+  gapP99Ms: number;
+}
+
+/** A named, seeded network + client-frame profile. */
+export interface NetworkProfile {
+  name: string;
+  /** Seed for the jitter RNG; same seed → same delivery list. */
+  seed: number;
+  /** One-way base delay of the link (ms). */
+  baseDelayMs: number;
+  jitter?: JitterSpec;
+  gaps: ReadonlyArray<GapSpec>;
+  frameStalls: ReadonlyArray<FrameStallSpec>;
+}
+
+/** One packet as the client receives it. */
+export interface Delivery {
+  stream: NetStream;
+  /** Index of the packet within its stream, in send order. */
+  seq: number;
+  /** Server tick the packet was sent on. */
+  serverTick: number;
+  sendMs: number;
+  arriveMs: number;
+}
