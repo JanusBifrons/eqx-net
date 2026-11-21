@@ -84,6 +84,9 @@ describe('WarpScreen — stall detection + Cancel escape hatch (Commit 8)', () =
     // Timeout fired — escape surface is up.
     expect(screen.getByTestId('warp-screen-cancel')).toBeVisible();
     expect(screen.getByTestId('warp-screen-stall-msg')).toBeVisible();
+    expect(screen.getByTestId('warp-screen-stall-msg').textContent).toBe('Still loading…');
+    // The old blame-the-player line is gone.
+    expect(host.textContent).not.toMatch(/check your connection|different sector|taking longer/i);
     expect(screen.getByTestId('warp-screen').getAttribute('data-warp-stalled')).toBe('1');
   });
 

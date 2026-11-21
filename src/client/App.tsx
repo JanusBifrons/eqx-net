@@ -45,6 +45,7 @@ import { decideContextMenuPlacement } from './structures/contextMenuPlacement';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
+import { sectorKeyFromRoomName } from './components/sectorBriefing';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
 import { RotatePhoneOverlay, useNeedsRotate } from './layout/RotatePhoneOverlay';
 import { cancelTransit } from './net/transitClient';
@@ -1154,7 +1155,7 @@ export function App(): JSX.Element {
             'game' && !== 'connecting'; auto-fades on `gameReady`. Mounted
             at the layout root so phase transitions (e.g. connecting →
             game) don't unmount/remount it and lose the fade animation. */}
-        <WarpScreen />
+        <WarpScreen targetSectorKey={sectorKeyFromRoomName(roomNameOverride)} />
       </LayoutProvider>
     </ErrorBoundary>
   );
