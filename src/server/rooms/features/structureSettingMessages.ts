@@ -13,6 +13,8 @@ import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parse
 import { gateTypeOf } from '../../../core/structures/gateGeometry.js';
 import { gateAccessIndex } from '../../../shared-types/gateAccess.js';
 import { isProcessorKind } from '../../../shared-types/production.js';
+import { blueprintProductFor } from '../../../shared-types/recipes.js';
+import { blueprintQuality } from '../../../shared-types/blueprints.js';
 import { RefineSalvageSchema, SetGateAccessSchema, SetRecipeSchema, SetStructurePowerSchema } from '../../../shared-types/messages.js';
 import type { StructureGridSubsystem } from '../../structures/StructureGridSubsystem.js';
 
@@ -23,7 +25,7 @@ export interface StructureSettingMessageHost extends ParsedMessageHost {
   structureRegistry: Pick<StructureRegistry, 'get'>;
   sectorKey(): string | null;
   production(): Pick<ProductionSubsystem, 'setRecipe'>;
-  storage(): Pick<StorageService, 'flushDirty' | 'refine'>;
+  storage(): Pick<StorageService, 'flushDirty' | 'refine' | 'loadBlueprint' | 'unloadBlueprint'>;
   rebuildStructuresSlice(): void;
   structureGrid(): Pick<StructureGridSubsystem, 'setSwitchedOn' | 'setThrottle'>;
 }
@@ -39,6 +41,11 @@ export function registerStructureSettingMessages(h: StructureSettingMessageHost)
     const rec = h.structureRegistry.get(swarmRec.id);
     if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
     if (h.production().setRecipe(rec, msg.recipe, msg.count)) {
+      // A loaded blueprint for another product would stall the new recipe:
+      // swap in storage's best match, else put it back (stays if no room).
+      const product = blueprintProductFor(msg.recipe);
+      if (rec.blueprint !== undefined && rec.blueprint.product !== product
+        && !h.storage().loadBlueprint(rec, product, blueprintQuality)) h.storage().unloadBlueprint(rec);
       h.storage().flushDirty();
       h.rebuildStructuresSlice();
     }
