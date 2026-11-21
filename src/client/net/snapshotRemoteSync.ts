@@ -31,7 +31,7 @@ import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '@core/contra
 import type { PhysicsWorld, ShipPhysicsState } from '@core/physics/World';
 import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import { shouldForwardPredict, type RemotePredictionGuard } from './remotePredictionGuard';
-import { STAGE_3_MAX_LOOKAHEAD_TICKS } from './predictionTuning';
+import { remoteForwardTickCap } from './predictionTuning';
 import { isParkedHull } from '../render/shipOwnership';
 
 /**
@@ -182,8 +182,10 @@ function sweepGoneRemote(_v: RemoteInput, id: string): void {
  * forward prediction. Called once per replay tick (the reconciler's
  * per-replay hook) and once per `tickPhysics` input-loop tick, before
  * `predWorld.tick`. Skips idle remotes (absent bits), remotes the hysteresis
- * guard has disabled, and remotes past `STAGE_3_MAX_LOOKAHEAD_TICKS` since
- * their last snapshot (a long stall must not run away). Alloc-free.
+ * guard has disabled, and remotes past `remoteForwardTickCap(leadGameTicks)`
+ * ticks since their last snapshot (a long stall must not run away; the cap
+ * rides the lead so a normal snapshot window always reaches the present).
+ * Alloc-free.
  */
 export function applyRemoteShipInputs(
   predWorld: PhysicsWorld,
@@ -191,13 +193,16 @@ export function applyRemoteShipInputs(
   remoteLastInputs: ReadonlyMap<string, RemoteInput>,
   remoteForwardTicks: Map<string, number>,
   guard: RemotePredictionGuard,
+  /** The client's input lead in game ticks (`gameLeadTicks()`). */
+  leadGameTicks: number,
 ): void {
+  const cap = remoteForwardTickCap(leadGameTicks);
   for (const remoteId of remoteIds) {
     const input = remoteLastInputs.get(remoteId);
     if (!input || !input.held) continue;
     if (!shouldForwardPredict(guard, remoteId)) continue;
     const ticks = remoteForwardTicks.get(remoteId) ?? 0;
-    if (ticks >= STAGE_3_MAX_LOOKAHEAD_TICKS) continue;
+    if (ticks >= cap) continue;
     predWorld.applyInput(remoteId, input);
     remoteForwardTicks.set(remoteId, ticks + 1);
   }
