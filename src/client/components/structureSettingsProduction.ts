@@ -2,7 +2,8 @@
  * Production tab data for the building settings window: which kinds get the
  * tab, and what it reads from the structure slice (the recipe and the build
  * count, `prodCount` = outputs left; undefined = repeat forever; whether the
- * recipe can change; the blueprint slot).
+ * recipe can change; the blueprint slot; the recipe queue after the head and
+ * its repeat flag; which hull blueprints the slot and the network hold).
  */
 import { getGameClient } from '../net/clientSingleton';
 import { BP_RUNS_ORIGINAL, effectiveRecipe, isProcessorKind } from '@shared-types/production';
@@ -82,6 +83,23 @@ export interface ProductionView {
   blueprintLine: string | undefined;
   /** The empty slot's last-run-building line (see `lastRunLineOf`). */
   lastRunLine: string | undefined;
+  /** The recipes queued after the head, in order (empty = none). A copy:
+   *  the row's array is decoded in place. */
+  queue: readonly RecipeId[];
+  /** The queue loops (a finished head goes to the back). */
+  repeat: boolean;
+  /** The recipe the slot blueprint is for (null = none). */
+  bpProduct: RecipeId | null;
+  /** Recipes with a blueprint in the network's storage (a copy). */
+  bpAvailable: readonly RecipeId[];
+}
+
+const NONE: readonly RecipeId[] = [];
+const copyList = (l: readonly RecipeId[] | undefined): readonly RecipeId[] => (l === undefined || l.length === 0 ? NONE : l.slice());
+function sameList(a: readonly RecipeId[], b: readonly RecipeId[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 export function readProduction(entityId: number): ProductionView | null {
@@ -95,6 +113,8 @@ export function readProduction(entityId: number): ProductionView | null {
     kindId, recipe, frac: st.prodFrac, hullYard: isHullYard(kindId), left: st.prodCount, canChange: canChangeRecipe(kindId),
     needsBlueprint, blueprintLine: blueprintLineOf(st, needsBlueprint),
     lastRunLine: lastRunLineOf(st, needsBlueprint),
+    queue: copyList(st.prodQueue), repeat: st.prodQueueRepeat === true,
+    bpProduct: st.bpProduct ?? null, bpAvailable: copyList(st.bpAvailable),
   };
 }
 
@@ -102,7 +122,8 @@ export function sameProduction(a: ProductionView | null, b: ProductionView | nul
   if (a === null || b === null) return a === b;
   return a.kindId === b.kindId && a.recipe === b.recipe && a.frac === b.frac && a.left === b.left && a.canChange === b.canChange
     && a.needsBlueprint === b.needsBlueprint && a.blueprintLine === b.blueprintLine
-    && a.lastRunLine === b.lastRunLine;
+    && a.lastRunLine === b.lastRunLine && a.repeat === b.repeat && a.bpProduct === b.bpProduct
+    && sameList(a.queue, b.queue) && sameList(a.bpAvailable, b.bpAvailable);
 }
 
 /** The count label: "Forever", "Done", or "3 left". */

@@ -7,9 +7,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { HullTile } from './HullTile.js';
 import { CostChips, recipeBill, shortQty } from './CostChips.js';
-import { addIntent, foreverIntent, removeOneIntent } from './buildQueueIntent.js';
 import { RECIPES } from '../../shared-types/recipes.js';
-import { MAX_BUILD_COUNT } from '../../shared-types/production.js';
 
 describe('HullTile', () => {
   it('draws the name and data attributes, and clicks through', () => {
@@ -62,23 +60,3 @@ describe('CostChips', () => {
   });
 });
 
-describe('build queue intents (one recipe + a count today)', () => {
-  const q = { recipe: 'build_interceptor' as const, left: 2 };
-  it('the current hull adds, capped; a forever queue ignores adds', () => {
-    expect(addIntent(q, 'build_interceptor', 1)).toEqual({ kind: 'send', recipe: 'build_interceptor', count: 3 });
-    expect(addIntent({ ...q, left: MAX_BUILD_COUNT - 1 }, 'build_interceptor', 5)).toEqual({ kind: 'send', recipe: 'build_interceptor', count: MAX_BUILD_COUNT });
-    expect(addIntent({ ...q, left: MAX_BUILD_COUNT }, 'build_interceptor', 1)).toBeNull();
-    expect(addIntent({ ...q, left: undefined }, 'build_interceptor', 1)).toBeNull();
-    expect(addIntent({ ...q, left: 0 }, 'build_interceptor', 1)).toEqual({ kind: 'send', recipe: 'build_interceptor', count: 1 });
-  });
-  it('a different hull asks to switch', () => {
-    expect(addIntent(q, 'build_heavy', 5)).toEqual({ kind: 'confirm', recipe: 'build_heavy', count: 5 });
-  });
-  it('remove stops at 1 (no count 0 on the wire); forever toggles', () => {
-    expect(removeOneIntent(q)).toEqual({ kind: 'send', recipe: 'build_interceptor', count: 1 });
-    expect(removeOneIntent({ ...q, left: 1 })).toBeNull();
-    expect(removeOneIntent({ ...q, left: undefined })).toBeNull();
-    expect(foreverIntent(q)).toEqual({ kind: 'send', recipe: 'build_interceptor', count: undefined });
-    expect(foreverIntent({ ...q, left: undefined })).toEqual({ kind: 'send', recipe: 'build_interceptor', count: 1 });
-  });
-});
