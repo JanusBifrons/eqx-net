@@ -71,7 +71,8 @@ export function registerBlueprintMessages(h: BlueprintMessageHost): RoomFeature 
     if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
     if (!h.production().unload(rec)) return;
     const ok = type === 'load_blueprint'
-      ? h.storage().loadBlueprint(rec, blueprintProductFor(h.production().recipeOf(rec)), blueprintQuality)
+      // Base storage first, else the owner's own ship hold (starter copies sit there).
+      ? h.storage().loadBlueprint(rec, blueprintProductFor(h.production().recipeOf(rec)), blueprintQuality, h.ownShipKey(owner))
       : h.storage().unloadBlueprint(rec);
     h.storage().flushDirty();
     if (ok) h.rebuildStructuresSlice();

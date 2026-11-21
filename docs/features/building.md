@@ -46,6 +46,11 @@ hub** — a Connector — never to each other or to a big building (a shipyard
 joins the web through a Connector too). Hubs link to hubs to
 extend the web. (The grid + connections land in Phase 3.)
 
+**Cables never cross.** A link whose cable would cross another cable is refused
+("Can't link: crosses another cable"), like one blocked by a rock or a building;
+auto-link tries the next hub instead. Cables fanning out from the same structure
+don't count, and shield-fence walls are not cables.
+
 ## The grid (Phase 3 — shipped)
 
 Place a **Capital** first (it's pre-built — your base's root + mineral bank).

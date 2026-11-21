@@ -66,12 +66,12 @@ function tryEnd(
     if (p === undefined || q === CABLE_NO_SOCKET) continue;
     const freed = (usedE & ~bit(s)) >>> 0;
     if (pickCableSocketPair(a, b, maxRange, nodes, obstacles, newPick,
-      eIsA ? freed : usedA, eIsA ? usedB : freed) !== null) continue;
+      eIsA ? freed : usedA, eIsA ? usedB : freed, adjacency) !== null) continue;
     if ((eIsA ? newPick.a : newPick.b) !== s) continue;
     // The held link moves off `s` (now the new cable's) to another free face;
     // its far end keeps socket `q`.
     const range = Math.min(e.connectionRange ?? CONNECTION_MAX_RANGE, p.connectionRange ?? CONNECTION_MAX_RANGE);
-    if (pickCableSocketPair(e, p, range, nodes, obstacles, movePick, usedE, (ALL & ~bit(q)) >>> 0) !== null) continue;
+    if (pickCableSocketPair(e, p, range, nodes, obstacles, movePick, usedE, (ALL & ~bit(q)) >>> 0, adjacency) !== null) continue;
     if (movePick.b !== q) continue;
     if (out) { out.a = newPick.a; out.b = newPick.b; }
     reseat.conn = l;
