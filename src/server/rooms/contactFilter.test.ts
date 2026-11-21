@@ -111,3 +111,70 @@ describe('handleContactBatch: a structure never rams', () => {
     expect(calls.find((c) => c[0] === 'lwbot-2')?.[1]).toBe('lwbot-1');
   });
 });
+
+/**
+ * Live report 2026-11-21: a flagship escort flew into a player's PARKED Mining
+ * Skiff. The ram booked the parked Skiff as the escort's attacker, so the
+ * escort was marked hostile and the player's whole faction went to war with
+ * the drones (the fleet then raided the base). Only a ship that was driving
+ * into the other (its own pre-step speed toward the other along the contact
+ * normal, `aApproach` / `bApproach`) rams; a still or retreating ship never
+ * becomes an attacker. Both ships still take their damage.
+ */
+describe('handleContactBatch: only the ship driving in rams', () => {
+  function hostFor(kinds: Record<string, number>) {
+    const calls: Array<[string, string, number]> = [];
+    const host = {
+      sceneWork: { active: false, contacts: 0 },
+      collisionGate: { sweep: () => {}, shouldSend: () => false },
+      cutField: () => undefined,
+      bus: () => ({ emit: () => true }),
+      broadcast: () => {},
+      disableCollisionDamage: () => false,
+      loot: () => ({ hullContact: () => false }),
+      applyDamage: (t: string, s: string, d: number) => { calls.push([t, s, d]); return false; },
+      swarmRegistry: { get: (id: string) => (kinds[id] === undefined ? undefined : { id, kind: kinds[id] }) },
+      lingeringSlots: new Map<string, number>(),
+      ships: () => ({ get: () => undefined }),
+      getActiveShip: () => undefined,
+    } as unknown as ContactBatchHost;
+    return { host, calls };
+  }
+  const ram = (aId: string, bId: string, aApproach: number, bApproach: number): ContactPayload => ({
+    aId, bId, vAxPost: 0, vAyPost: 0, vBxPost: 0, vByPost: 0,
+    forceMagnitude: 1e6, impactSpeed: 300, normalSpeed: 300, aMass: 5000, bMass: 5000,
+    aApproach, bApproach,
+  });
+
+  it('a moving escort into a parked Skiff: the parked Skiff is never the attacker, both take damage', () => {
+    const { host, calls } = hostFor({ 'flagship-10-e0': 1 });
+    handleContactBatch(host, 1, [ram('flagship-10-e0', 'linger-skiff', 300, 0)]);
+    expect(calls.length).toBe(2);
+    expect(calls.find((c) => c[0] === 'flagship-10-e0')?.[1]).toBe('');
+    expect(calls.find((c) => c[0] === 'linger-skiff')?.[1]).toBe('flagship-10-e0');
+  });
+
+  it('the same with the parked ship as body A', () => {
+    const { host, calls } = hostFor({ 'flagship-10-e0': 1 });
+    handleContactBatch(host, 1, [ram('linger-skiff', 'flagship-10-e0', 0, 300)]);
+    expect(calls.find((c) => c[0] === 'flagship-10-e0')?.[1]).toBe('');
+    expect(calls.find((c) => c[0] === 'linger-skiff')?.[1]).toBe('flagship-10-e0');
+  });
+
+  it('a ship backing away while the other drives in is never the attacker', () => {
+    const { host, calls } = hostFor({ 'lwbot-1': 1, 'lwbot-2': 1 });
+    handleContactBatch(host, 1, [ram('lwbot-1', 'lwbot-2', 400, -100)]);
+    expect(calls.find((c) => c[0] === 'lwbot-1')?.[1]).toBe('');
+    expect(calls.find((c) => c[0] === 'lwbot-2')?.[1]).toBe('lwbot-1');
+  });
+
+  it('a deliberate ram still books the mover, and a head-on books both', () => {
+    const { host, calls } = hostFor({ 'lwbot-1': 1 });
+    handleContactBatch(host, 1, [ram('player-1', 'lwbot-1', 300, 0)]);
+    expect(calls.find((c) => c[0] === 'lwbot-1')?.[1]).toBe('player-1');
+    const both = hostFor({ 'lwbot-1': 1, 'lwbot-2': 1 });
+    handleContactBatch(both.host, 1, [ram('lwbot-1', 'lwbot-2', 150, 150)]);
+    expect(both.calls.find((c) => c[0] === 'lwbot-1')?.[1]).toBe('lwbot-2');
+    expect(both.calls.find((c) => c[0] === 'lwbot-2')?.[1]).toBe('lwbot-1');
+  });
+});

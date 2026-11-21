@@ -60,6 +60,12 @@ export interface Contact {
    *  then deals nothing for the pair). */
   aMass?: number;
   bMass?: number;
+  /** Each body's OWN pre-step speed toward the other along the contact normal
+   *  (game u/s, signed: > 0 driving in, <= 0 still or moving away). Who rams:
+   *  a ship that was not driving in is never booked as the attacker
+   *  (`server/rooms/contactFilter.ts`). Undefined when no `preVel` was passed. */
+  aApproach?: number;
+  bApproach?: number;
 }
 
 /** A read-only pre-step velocity lookup, keyed by entity id. */
@@ -123,8 +129,10 @@ export function drainContacts(
     if (preVel !== null) {
       const preA = preVel.get(aId);
       const preB = preVel.get(bId);
-      const rvx = (preA?.vx ?? 0) - (preB?.vx ?? 0);
-      const rvy = (preA?.vy ?? 0) - (preB?.vy ?? 0);
+      const avx = preA?.vx ?? 0, avy = preA?.vy ?? 0;
+      const bvx = preB?.vx ?? 0, bvy = preB?.vy ?? 0;
+      const rvx = avx - bvx;
+      const rvy = avy - bvy;
       contact.impactSpeed = Math.hypot(rvx, rvy);
       // Normal component of the closing velocity (impact-based ramming). One
       // small {x,y} per contact EVENT, not per body per tick: the same order as
@@ -133,6 +141,9 @@ export function drainContacts(
       const n = event.maxForceDirection();
       const vn = rvx * n.x + rvy * n.y;
       contact.normalSpeed = vn > 0 ? vn : 0;
+      // Per-body split of that closing speed (n points a → b): who was driving in.
+      contact.aApproach = avx * n.x + avy * n.y;
+      contact.bApproach = -(bvx * n.x + bvy * n.y);
     }
     contacts.push(contact);
   });

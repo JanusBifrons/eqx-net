@@ -166,6 +166,11 @@ Allegiance decides **targeting** only. It never decides what a shot hits.
   the ship hostile to its owner nor escalates the owner's faction (2026-11-21:
   a flagship fleet guarding Sol Prime's home pocket razed a peaceful player's
   base after its ships bumped it). Lock: `contactFilter.test.ts`.
+  **Only the ship driving in rams:** ship against ship, a ship whose own speed
+  toward the other (`Contact.aApproach`/`bApproach`) is at most
+  `RAM_DRIVE_IN_MIN_SPEED` (parked, drifting, backing away) is never booked as
+  the attacker; both still take damage (an escort bumping a parked Skiff put the
+  player's faction at war, 2026-11-21).
 - **Missile** lock-on classifies the shooter by registry (any live kind-1
   entity is an AI shooter), and targets cross-allegiance swarms by stance.
 - **Structure turrets** engage drones and robots, never neutral traders.
