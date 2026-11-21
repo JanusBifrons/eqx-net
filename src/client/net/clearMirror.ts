@@ -14,6 +14,13 @@ export function clearMirror(mirror: object): void {
     const v = m[k];
     if (v instanceof Map) v.clear();
     else if (v instanceof Set) v.clear();
-    else if (Array.isArray(v)) v.length = 0;
+    else if (Array.isArray(v)) {
+      // A frozen shared constant (e.g. `EMPTY_AIM_IDS` on `localAimMountIds`)
+      // can't be truncated: `length = 0` throws in strict mode and aborts the
+      // rest of dispose. Swap a non-empty one for a fresh array; leave an
+      // empty one (already clear). Dispose-only path, not per frame.
+      if (!Object.isFrozen(v)) v.length = 0;
+      else if (v.length > 0) m[k] = [];
+    }
   }
 }
