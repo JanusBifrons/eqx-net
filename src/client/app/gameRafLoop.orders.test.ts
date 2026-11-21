@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const storeState = vi.hoisted(() => ({
   clientReadySent: true,
   phase: 'game',
+  commandSpeed: 2, // ⅔: a move rides the Command speed
   setSelection: vi.fn(),
   setFleetPick: vi.fn(),
   setFleetPickPoints: vi.fn(),
@@ -18,6 +19,7 @@ const storeState = vi.hoisted(() => ({
 vi.mock('../state/store.js', () => ({
   useUIStore: { getState: () => storeState },
   computeBootstrapReadyFromState: () => true,
+  selectControlMode: () => 'fly',
   computeIsLoadingActive: () => false,
 }));
 vi.mock('../debug/ClientLogger.js', () => ({ logEvent: vi.fn(), isFullDiagMode: () => false }));
@@ -45,6 +47,7 @@ function buildLoop(): (now: number) => void {
     tickPhysics: vi.fn(), tickInbound: vi.fn(), updateMirror: vi.fn(), sendClientReady: vi.fn(),
     consumePendingCameraGlide: () => null,
     setFieldView: () => {},
+    clearHelm: () => {}, // entering Fly drops any helm course (helmModeGate)
     consumePendingFleetArrival: () => null,
     mirror: { localPlayerId: 'ship-1', ships: new Map(), swarm: new Map(), projectiles: new Map() },
     transitInstr: { wantsFrame: () => false },
@@ -70,7 +73,7 @@ describe('gameRafLoop — fleet orders are sent (slice 6c)', () => {
     loop(40);
     loop(60);
     expect(sendFleetOrder).toHaveBeenCalledTimes(1);
-    expect(sendFleetOrder).toHaveBeenCalledWith(['a', 'b'], { kind: 'move', x: 10, y: -5 });
+    expect(sendFleetOrder).toHaveBeenCalledWith(['a', 'b'], { kind: 'move', x: 10, y: -5, speed: 2 / 3 });
     fb.orderSeq = 2;
     loop(80);
     expect(sendFleetOrder).toHaveBeenCalledTimes(2);

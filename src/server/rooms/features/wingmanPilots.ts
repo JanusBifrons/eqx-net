@@ -76,7 +76,7 @@ export class WingmanPilots {
   /** Fleet hook: an owner's order reached the AI pilot brain flying hull `id`.
    *  Move (slice 9): travel there, shooting only what is in its sights on
    *  the way, then guard the point (`completeHullTravel` completes the
-   *  order). Stop: brake to a halt and guard the spot (the guard leash,
+   *  order), at the order's Command speed (a re-paced Move comes here too). Stop: brake to a halt and guard the spot (the guard leash,
    *  slice 5). Attack (slice 8): the target gets priority in the brain's
    *  pick (`syncHullOrder`); the post stays, so the ship goes back to it
    *  (an attack that replaces a Move holds where the hull is). */
@@ -85,7 +85,7 @@ export class WingmanPilots {
     if (brain === null) return;
     this.syncHullOrder(brain, order);
     if (order.kind === 'move') {
-      if (brain.setTravel !== undefined) brain.setTravel(order.x, order.y);
+      if (brain.setTravel !== undefined) brain.setTravel(order.x, order.y, order.speed);
       else this.holdHullAt(brain, order.x, order.y);
       return;
     }
@@ -249,7 +249,7 @@ export class WingmanPilots {
     const w = fleet.ordersOf(id);
     if (brain === null || w === null) return;
     const o = w.order;
-    if (o !== null && o.kind === 'move' && brain.setTravel !== undefined) { brain.setTravel(o.x, o.y); return; }
+    if (o !== null && o.kind === 'move' && brain.setTravel !== undefined) { brain.setTravel(o.x, o.y, o.speed); return; }
     const sq = fleet.squadOf(id);
     const pack = this.hullPackIds;
     const esc = fleet.escortTargetOf(id);

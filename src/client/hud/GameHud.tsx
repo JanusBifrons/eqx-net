@@ -50,6 +50,7 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
   const isDead = useUIStore((s) => s.isDead);
   // Build mode hides the flight controls: the ghost and the build list own the screen.
   const building = useUIStore((s) => s.buildMode);
+  const settingsOpen = useUIStore((s) => s.structureSettingsOpen);
   const size = useHudSize();
   const scale = hudScale(size);
   const landscape = useIsLandscape();
@@ -74,7 +75,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
           <NetHealthCluster size={Math.round(9 * scale)} />
         </div>
       </Slot>
-      {flying && <FcStripDock scale={scale} />}
+      {/* The building settings side panel docks over the right edge: no strip under it. */}
+      {flying && !settingsOpen && <FcStripDock scale={scale} />}
       {/* Contacts overview (lock list): left edge, the strip's mirror. */}
       {flying && <ContactsOverview />}
       {/* pointer-events none: the open list's column lets taps through to the base

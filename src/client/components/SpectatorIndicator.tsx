@@ -63,12 +63,14 @@ export function SpectatorIndicator(): JSX.Element | null {
  * near the ghost, which sits mid-screen under the top-centre placement dock
  * (stills review 2026-11-20: the badge sat just above it). On a wide screen it
  * goes under the mode switch (top-left); on a narrow one, above the dock at
- * the very top.
+ * the very top. The chip is display-only, so every slot is click-through:
+ * a pointer-events:auto wrapper over the map swallowed Command-view clicks and
+ * right-click move orders (PR #1098 fleet-command e2e).
  */
 export function ControlModeBadge(): JSX.Element {
   const building = useUIStore((s) => s.buildMode);
   const compact = useIsCompact();
-  if (!building) return <Slot anchor="top-center" order={4}><SpectatorIndicator /></Slot>;
-  if (compact) return <Slot anchor="top-center" order={-2}><SpectatorIndicator /></Slot>;
-  return <Slot anchor="top-left" order={3}><SpectatorIndicator /></Slot>;
+  if (!building) return <Slot anchor="top-center" order={4} pointerEvents="none"><SpectatorIndicator /></Slot>;
+  if (compact) return <Slot anchor="top-center" order={-2} pointerEvents="none"><SpectatorIndicator /></Slot>;
+  return <Slot anchor="top-left" order={3} pointerEvents="none"><SpectatorIndicator /></Slot>;
 }

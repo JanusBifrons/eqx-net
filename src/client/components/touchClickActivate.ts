@@ -1,4 +1,4 @@
-import { useCallback, useRef, type TouchEvent } from 'react';
+import { useCallback, useRef, type MouseEvent, type PointerEvent, type TouchEvent } from 'react';
 
 /**
  * Shared touch/click activation for discrete (tap, not held) HUD buttons.
@@ -17,7 +17,8 @@ import { useCallback, useRef, type TouchEvent } from 'react';
  * AutoFireToggleButton double-toggle trap).
  *
  * This hook is the ONE implementation of that pattern (used by
- * `SpeedDialMenu`).
+ * `SpeedDialMenu`). Its other half, `useFreshPress` below, guards the options
+ * of a menu such a button opens.
  */
 
 /**
@@ -73,4 +74,52 @@ export function useTouchClickActivate(): TouchClickActivate {
     [],
   );
   return { touchActivate, clickActivate, isWithinSuppressWindow };
+}
+
+/**
+ * After a menu opens, how long before a press on one of its options counts:
+ * a backstop for the press that opened it (owner playtest 2026-11-21).
+ */
+export const MENU_ARM_MS = 250;
+
+/** Spread onto a menu option: `onPointerDown` + `onClick`. */
+export interface FreshPressProps {
+  onPointerDown: (e: PointerEvent<Element>) => void;
+  onClick: (e: MouseEvent<Element>) => void;
+}
+
+/**
+ * The other half of the pattern above: the options of a menu that a
+ * touch-activated button opens. That button acts on touchstart, so the menu is
+ * up before the finger lifts, and the browser's click for that same touch then
+ * lands on whatever option is now under the finger (`preventDefault` in a
+ * React touchstart handler is a no-op: the listener is passive). So an option
+ * acts only on a FRESH, full press: a pointerdown on that same option at least
+ * `MENU_ARM_MS` after the menu opened, then its click. A click with no such
+ * down (the opening press's leftover release, or a drag in from another
+ * option) is ignored. A keyboard click (`detail === 0`: Enter/Space on a
+ * focused button) has no pointer and always acts.
+ */
+export function useFreshPress(open: boolean): (fn: () => void) => FreshPressProps {
+  const openedAt = useRef(0);
+  const wasOpen = useRef(false);
+  const pressed = useRef<EventTarget | null>(null);
+  if (open && !wasOpen.current) {
+    openedAt.current = Date.now();
+    pressed.current = null;
+  }
+  wasOpen.current = open;
+  return useCallback(
+    (fn: () => void): FreshPressProps => ({
+      onPointerDown: (e) => {
+        pressed.current = Date.now() - openedAt.current >= MENU_ARM_MS ? e.currentTarget : null;
+      },
+      onClick: (e) => {
+        const fresh = e.detail === 0 || pressed.current === e.currentTarget;
+        pressed.current = null;
+        if (fresh) fn();
+      },
+    }),
+    [],
+  );
 }
