@@ -15,6 +15,8 @@
  * authoritative pose instead of interpolating. `TELEPORT_MAX_PLAUSIBLE_SPEED`
  * sits comfortably above any ship/drone top speed (post-slow-down ~950 u/s);
  * the floor catches short-span jumps where `speed × span` underflows.
+ * Spans are GAME ms: a caller stamping poses in wall ms multiplies by the
+ * sector's display speed first (game ms = wall ms × speed).
  */
 export const TELEPORT_MAX_PLAUSIBLE_SPEED = 2500; // u/s — well above any entity
 export const TELEPORT_FLOOR_U = 64; // absolute floor for tiny spans
