@@ -11,8 +11,16 @@
  * Pieces follow the grid's component rule: steps go THROUGH built nodes only;
  * an unbuilt blueprint on the edge joins its piece but is never crossed.
  * Discrete event (a removal), not a hot path.
+ *
+ * Capture (S4) — the way back: when a player's built Capital ends up on one
+ * grid piece with ownerless pieces (a cable or Connector linked them, or a
+ * Capital was placed in link range), every `none:` piece in it takes that
+ * player's owner. Finders keepers: no standing change, no hostile act. Which
+ * links may form is `gridLinkAllowed` (relations.ts); the flip itself runs
+ * from the grid's topology rebuild (`captureOwnerlessGrids`), the one place
+ * every link, build and removal passes through.
  */
-import { isNpcOwner, unownedOwner } from '../../shared-types/relations.js';
+import { isNpcOwner, isUnownedOwner, parseOwner, unownedOwner } from '../../shared-types/relations.js';
 import type { StructureRecord } from './StructureRegistry.js';
 
 /** What the flip reads from the registry (narrow, avoids an import cycle). */
@@ -44,6 +52,39 @@ export function orphanBaseOnCapitalLoss(registry: OwnerlessBaseRegistry, capital
     if (piece.some((r) => r.kind === 'capital' && operational(r))) continue;
     for (const r of piece) r.owner = owner;
   }
+}
+
+/** What the capture pass reads: the flip's view plus every record. */
+export interface CaptureRegistry extends OwnerlessBaseRegistry {
+  all(): Iterable<StructureRecord>;
+}
+
+/**
+ * Capture (S4): each grid piece holding a player's built Capital takes every
+ * ownerless (`none:`) record in it. NPC Capitals capture nothing (S5). If two
+ * players' Capitals ever share a piece, the first in registry order wins.
+ * Run before the topology rebuild so the rebuilt grid sees the new owners.
+ * Returns true when any owner changed. Discrete (topology changes only);
+ * returns before allocating when no ownerless structure exists.
+ */
+export function captureOwnerlessGrids(registry: CaptureRegistry): boolean {
+  let anyUnowned = false;
+  for (const r of registry.all()) {
+    if (isUnownedOwner(r.owner)) { anyUnowned = true; break; }
+  }
+  if (!anyUnowned) return false;
+  let changed = false;
+  const seen = new Set<string>();
+  for (const cap of registry.all()) {
+    if (cap.kind !== 'capital' || !operational(cap) || seen.has(cap.id)) continue;
+    if (parseOwner(cap.owner).kind !== 'player') continue;
+    for (const r of collectPiece(registry, cap.id, seen)) {
+      if (!isUnownedOwner(r.owner)) continue;
+      r.owner = cap.owner;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 /** Every record of the grid piece reachable from `start` without crossing the

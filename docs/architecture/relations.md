@@ -44,7 +44,7 @@ Both the actor and the owner are owner strings:
 | An empty owner | `neutral` |
 | An ownerless base (`none:`), either side | `neutral`: no hostile act, standing or alliance changes it |
 
-- **An ownerless base has no faction** (owner rule, capture plan 4E): no enemies, no allies. It is not an NPC (`isNpcOwner` is false). The lost Capital's id keeps two ownerless bases apart; an empty owner would merge their grids. Its turrets find nothing hostile, and its storage needs the usual break-in.
+- **An ownerless base has no faction** (owner rule, capture plan 4E): no enemies, no allies. It is not an NPC (`isNpcOwner` is false). The lost Capital's id keeps two ownerless bases apart; an empty owner would merge their grids. Its turrets find nothing hostile, and its storage needs the usual break-in. A player captures it by linking it to a grid with their built Capital (`gridLinkAllowed`, capture plan 4E S4): finders keepers, no standing change and no hostile act. Two ownerless bases never link, and an NPC never links to one.
 
 - **Hostility is treated as mutual.** Robots attack players on sight, so a robot is `hostile` to a player's gate as well as the reverse.
 - **Hostile acts are directional.** If A breaks into B's cargo, A is hostile to B; B is not hostile to A.
