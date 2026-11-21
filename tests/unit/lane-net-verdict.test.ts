@@ -4,7 +4,10 @@
  * numbers are the phone captures the tiers were drawn from.
  */
 import { describe, it, expect } from 'vitest';
-import { attributeGap, classifyTier, latenessSeries, summarizeCapture, type CaptureEvent } from '../../scripts/dev/lane-net-verdict.mjs';
+import {
+  attributeGap, classifyTier, latenessSeries, serverRateWindows, summarizeCapture,
+  SERVER_RATE_WINDOW_MS, SERVER_SLOW_TICKS_PER_S, type CaptureEvent,
+} from '../../scripts/dev/lane-net-verdict.mjs';
 
 describe('classifyTier', () => {
   it('home Wi-Fi with only server gaps is Good', () => {
@@ -88,5 +91,50 @@ describe('summarizeCapture', () => {
     expect(v.gaps.networkPct).toBe(50);
     expect(v.metrics.networkGapsPerMin).toBeCloseTo(1, 0);
     expect(v.tier).toBe('Good'); // one network gap a minute is under the Good rate; the server gap does not count
+  });
+});
+
+describe('server-slow windows', () => {
+  const OFFSET = 5000 - 500000; // unsynchronised clocks
+  const SLOW_FROM_MS = 20000;
+  const SLOW_TO_MS = 40000;
+  const HEALTHY_RTT_MS = 60;
+  const SLOW_RTT_MS = 900;
+
+  /** One minute of 20 Hz receives; the server runs at 25 ticks/s (sends every 80 ms, 2 ticks) from 20 s to 40 s. */
+  function slowServerRun(): CaptureEvent[] {
+    const out: CaptureEvent[] = [];
+    let send = 500000, tick = 1000, prevRecv = -1;
+    for (let tMs = 0; tMs < 60000;) {
+      const slow = tMs >= SLOW_FROM_MS && tMs < SLOW_TO_MS;
+      const sendGap = slow ? 80 : 50;
+      send += sendGap; tick += slow ? 2 : 3; tMs += sendGap;
+      const ts = send + OFFSET;
+      out.push({ ts, tag: 'snapshot_received', data: { serverTick: tick, recvGapMs: prevRecv < 0 ? -1 : ts - prevRecv, serverSendPerfNow: send, clientRecvPerfNow: ts } });
+      prevRecv = ts;
+      // RTT goes through the game loop, so it spikes while the server is slow.
+      if (out.length % 10 === 0) out.push({ ts, tag: 'snapshot', data: { rttMs: slow ? SLOW_RTT_MS : HEALTHY_RTT_MS } });
+    }
+    return out;
+  }
+
+  it('measures ticks/s per window from serverTick over serverSendPerfNow', () => {
+    const rec = slowServerRun().filter((e) => e.tag === 'snapshot_received') as Parameters<typeof serverRateWindows>[0];
+    const { windows } = serverRateWindows(rec);
+    expect(windows.length).toBe(60000 / SERVER_RATE_WINDOW_MS);
+    expect(windows[0]!.ticksPerS).toBeCloseTo(60, 0);
+    expect(Math.min(...windows.map((w) => w.ticksPerS))).toBeCloseTo(25, 0);
+    expect(windows.filter((w) => w.ticksPerS < SERVER_SLOW_TICKS_PER_S)).toHaveLength(2);
+  });
+
+  it('puts RTT spikes in slow-server windows down to the server, not the network', () => {
+    const v = summarizeCapture({ snapshots: slowServerRun(), perf: [], frames: [], lifecycle: [{ ts: 0, tag: 'welcome' }] });
+    expect(v.server.rttAllP99Ms).toBe(SLOW_RTT_MS);
+    expect(v.server.rttSlowSamples).toBeGreaterThan(0);
+    expect(v.metrics.rttP99Ms).toBe(HEALTHY_RTT_MS);
+    expect(v.tier).toBe('Good');
+    expect(v.server.slowS).toBeCloseTo(20, -1);
+    expect(v.server.minTicksPerS).toBeCloseTo(25, 0);
+    expect(v.server.slowPct).toBeGreaterThan(25);
   });
 });

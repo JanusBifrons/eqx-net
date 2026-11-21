@@ -45,7 +45,17 @@ the server or the phone caused is not a bad connection.
 | Playable | < 250 ms | < 150 ms | < 10/min, none over 1 s | some gliding, the odd snap | smooth |
 | Poor | beyond Playable | | | bad | smooth but delayed, if the buffer is sized to the outages |
 
-- **RTT** is the client's ping (`snapshot` events, `rttMs`).
+- **RTT** is the client's ping (`snapshot` events, `rttMs`). It is measured
+  through the game loop, so a slow server inflates it. Only RTT samples from
+  healthy-server windows count (next bullet); the rest are put down to the server.
+- **Server rate** is ticks per second in 10 s windows of play, from
+  `snapshot_received` pairs (`serverTick` delta over `serverSendPerfNow` delta).
+  A window under 45 ticks/s (the target is 60; a loaded dev host sits at 46–56)
+  or with one server send gap over 250 ms ran slow; RTT samples in it and the
+  window after are excluded. The verdict prints the slow time separately
+  (`server: slow N s (P% under 45 ticks/s, min X ticks/s)`); it is not a
+  network tier input. The server also logs its own side of this
+  (`server sim behind target tick rate` in `run/server.log`).
 - **Lateness** is how late each update arrived compared with when the server
   sent it: client receive time minus the server's send stamp
   (`snapshot_received`: `clientRecvPerfNow` − `serverSendPerfNow`), above a
@@ -69,6 +79,7 @@ no gaps at all the verdict is "No data".
 | ja5x2s | not recorded | 68 | 12 | 0 | none | Good |
 | 4zd6fw | not recorded; the phone hitched 43 times a minute | 117 | 29 | 1.2/min | 100 % server | Playable (RTT) |
 | 1volvr | 4G | 454 | 640 | 29/min, a 5.1 s stall, a disconnect | 77 % network | Poor |
+| o0xdo0 | 4G; the local server ran slow for 50 s (min 25 ticks/s) | 234 (999 with the slow-server samples) | 37 | 19/min | 96 % server | Playable |
 
 The home Wi-Fi runs have about seven gaps a minute, yet they are Good: almost
 all of those gaps are the server not sending (its own send stamps are already

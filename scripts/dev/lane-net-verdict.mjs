@@ -12,7 +12,11 @@
  *   - network: the server sent on time and the phone was free, yet the update
  *              arrived late.
  * Only network gaps count toward the tier: a server or device problem is not a
- * bad connection. Offline, no deps. Pure functions are exported for
+ * bad connection. RTT is measured through the game loop, so RTT samples taken
+ * while the server ran slow (10 s windows under SERVER_SLOW_TICKS_PER_S, or with
+ * a send gap over SERVER_STALL_MS) are put down to the server too: only RTT from
+ * healthy-server windows judges the network, and the slow time is reported
+ * separately. Offline, no deps. Pure functions are exported for
  * tests/unit/lane-net-verdict.test.ts.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -37,6 +41,19 @@ const DEVICE_SHARE = 0.5;
 /** Pairs whose server ticks jump further than this straddle a reconnect: no server send gap. */
 const MAX_TICK_STEP = 600;
 const MS_PER_MIN = 60000;
+const MS_PER_S = 1000;
+/** Server tick rate is measured over windows this long (client receive time, ms). */
+export const SERVER_RATE_WINDOW_MS = 10000;
+/**
+ * A window whose server ticks/s (serverTick delta over serverSendPerfNow delta)
+ * is under this ran slow. The target is 60; a loaded dev host sits at 46-56,
+ * so the bound is set below that baseline to catch real slowdowns only.
+ */
+export const SERVER_SLOW_TICKS_PER_S = 45;
+/** One server send gap longer than this marks its window slow (a stalled tick loop). */
+export const SERVER_STALL_MS = 250;
+/** RTT samples this many windows after a slow window still carry its backlog (a ping in flight across the edge). */
+const SLOW_RTT_SPILL_WINDOWS = 1;
 
 /** Tier thresholds (docs/ops/network-quality.md "Tiers"). Network-attributed gaps only. */
 export const TIERS = {
@@ -117,6 +134,41 @@ export function percentile(values, p) {
 }
 
 /**
+ * Server tick rate per SERVER_RATE_WINDOW_MS window of client receive time, from
+ * consecutive `snapshot_received` pairs: serverTick delta over serverSendPerfNow
+ * delta. Pairs that straddle a reconnect (tick step < 0 or > MAX_TICK_STEP) or
+ * a gap out of play are skipped. A window is slow when its rate is under
+ * SERVER_SLOW_TICKS_PER_S or one send gap in it is over SERVER_STALL_MS.
+ * @param {ReadonlyArray<{ ts: number, data: { serverTick: number, serverSendPerfNow: number } }>} rec
+ * @returns {{ t0: number, windows: Array<{ index: number, ticksPerS: number, maxSendGapMs: number, spanMs: number, slow: boolean, lowRate: boolean }> }}
+ */
+export function serverRateWindows(rec) {
+  const t0 = rec.length ? rec[0].ts : 0;
+  const byIndex = new Map();
+  for (let i = 1; i < rec.length; i++) {
+    const a = rec[i - 1];
+    const b = rec[i];
+    const step = b.data.serverTick - a.data.serverTick;
+    const sendMs = b.data.serverSendPerfNow - a.data.serverSendPerfNow;
+    const spanMs = b.ts - a.ts;
+    if (step < 0 || step > MAX_TICK_STEP || !(sendMs > 0) || !(spanMs < IN_PLAY_MAX_DELTA_MS)) continue;
+    const index = Math.floor((b.ts - t0) / SERVER_RATE_WINDOW_MS);
+    let w = byIndex.get(index);
+    if (!w) { w = { index, ticks: 0, sendMs: 0, maxSendGapMs: 0, spanMs: 0 }; byIndex.set(index, w); }
+    w.ticks += step;
+    w.sendMs += sendMs;
+    w.spanMs += spanMs;
+    if (sendMs > w.maxSendGapMs) w.maxSendGapMs = sendMs;
+  }
+  const windows = [...byIndex.values()].sort((x, y) => x.index - y.index).map((w) => {
+    const ticksPerS = (w.ticks * MS_PER_S) / w.sendMs;
+    const lowRate = ticksPerS < SERVER_SLOW_TICKS_PER_S;
+    return { index: w.index, ticksPerS, maxSendGapMs: w.maxSendGapMs, spanMs: w.spanMs, lowRate, slow: lowRate || w.maxSendGapMs > SERVER_STALL_MS };
+  });
+  return { t0, windows };
+}
+
+/**
  * Summarise one capture's events into a verdict.
  * @param {{ snapshots: object[], perf: object[], frames: object[], lifecycle: object[] }} ev
  */
@@ -161,7 +213,25 @@ export function summarizeCapture(ev) {
   const allGaps = gaps.server.length + gaps.device.length + gaps.network.length;
   const share = (k) => (allGaps === 0 ? 0 : Math.round((100 * gaps[k].length) / allGaps));
 
-  const rtt = ev.snapshots.filter((e) => e.tag === 'snapshot' && settled(e.ts) && e.data?.rttMs > 0).map((e) => e.data.rttMs);
+  const rate = serverRateWindows(rec);
+  const slowIndex = new Set(rate.windows.filter((w) => w.slow).map((w) => w.index));
+  const serverSlowAt = (ts) => {
+    const k = Math.floor((ts - rate.t0) / SERVER_RATE_WINDOW_MS);
+    for (let s = 0; s <= SLOW_RTT_SPILL_WINDOWS; s++) if (slowIndex.has(k - s)) return true;
+    return false;
+  };
+  const rttEvents = ev.snapshots.filter((e) => e.tag === 'snapshot' && settled(e.ts) && e.data?.rttMs > 0);
+  const rtt = rttEvents.filter((e) => !serverSlowAt(e.ts)).map((e) => e.data.rttMs);
+  const rateSpanMs = rate.windows.reduce((s, w) => s + w.spanMs, 0);
+  const slowSpanMs = rate.windows.reduce((s, w) => s + (w.lowRate ? w.spanMs : 0), 0);
+  const server = {
+    minTicksPerS: rate.windows.length ? Math.min(...rate.windows.map((w) => w.ticksPerS)) : NaN,
+    slowS: slowSpanMs / MS_PER_S,
+    slowPct: rateSpanMs > 0 ? Math.round((100 * slowSpanMs) / rateSpanMs) : 0,
+    stallWindows: rate.windows.filter((w) => w.maxSendGapMs > SERVER_STALL_MS).length,
+    rttAllP99Ms: percentile(rttEvents.map((e) => e.data.rttMs), 99),
+    rttSlowSamples: rttEvents.length - rtt.length,
+  };
   const late = latenessSeries(rec.map((e) => e.data));
   const metrics = {
     rttP99Ms: percentile(rtt, 99),
@@ -182,6 +252,7 @@ export function summarizeCapture(ev) {
     disconnects,
     metrics,
     ...classifyTier(metrics),
+    server,
     gaps: {
       total: allGaps,
       perMin: minutes > 0 ? allGaps / minutes : NaN,
@@ -220,6 +291,8 @@ function main(argv) {
     console.log(`${path.basename(dir)}: ${r.tier}${r.reasons.length ? ` (${r.reasons.join('; ')})` : ''}`);
     console.log(`  ${fmt(r.minutes, 1)} min in play, ${r.welcomes} welcome(s), ${r.disconnects} disconnect(s)`);
     console.log(`  network: RTT p99 ${fmt(m.rttP99Ms)} ms, lateness p95 ${fmt(m.latenessP95Ms)} ms, network gaps ${fmt(m.networkGapsPerMin, 1)}/min (max ${fmt(m.maxNetworkGapMs)} ms)`);
+    const s = r.server;
+    console.log(`  server: slow ${fmt(s.slowS)} s (${s.slowPct}% under ${SERVER_SLOW_TICKS_PER_S} ticks/s, min ${fmt(s.minTicksPerS, 1)} ticks/s), ${s.stallWindows} window(s) with a send gap > ${SERVER_STALL_MS} ms; ${s.rttSlowSamples} RTT sample(s) put down to the server (all-sample p99 ${fmt(s.rttAllP99Ms)} ms)`);
     console.log(`  gaps > ${GAP_MS} ms: ${r.gaps.total} (${fmt(r.gaps.perMin, 1)}/min, max ${fmt(r.gaps.maxMs)} ms): server ${r.gaps.serverPct}%, network ${r.gaps.networkPct}%, device ${r.gaps.devicePct}%`);
     const devVerdict = Number.isFinite(r.device.hitchesPerMin) ? (r.device.smooth ? 'smooth' : 'hitchy') : 'no frame summaries';
     console.log(`  device: ${fmt(r.device.hitchesPerMin, 1)} hitches/min (frames > 50 ms), ${fmt(r.device.rafGapsPerMin, 1)} raf_gaps/min -> ${devVerdict}`);
