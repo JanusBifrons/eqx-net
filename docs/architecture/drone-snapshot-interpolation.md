@@ -203,6 +203,35 @@ speed change keeps the newest stamp in place. Lock:
 `src/client/net/swarmInterpolation.tickStamp.test.ts` (drain-time stamps step
 error 3.1 u, tick stamps 0.16 u).
 
+**Lateness estimate (measured, drives nothing yet).** Each tick-stamped packet's
+lateness (wall ms after its tick-clock stamp) feeds an asymmetric EWMA,
+`getSwarmLatenessEstimateMs()`, that rises fast (`LATENESS_RISE_TAU_MS` 50 ms)
+and falls slowly (`LATENESS_FALL_TAU_MS` 2000 ms), plus a mean absolute
+deviation, `getSwarmLatenessDeviationMs()` (`LATENESS_DEV_TAU_MS` 250 ms).
+Time constants are per packet at the nominal 60 Hz cadence; units are wall ms,
+matching `setSwarmDisplayDelayMs`. `resetSwarmTickClock` clears both. The
+display delay still comes from the inter-arrival EWMA; a later job sizes it from
+this estimate. Lock: `src/client/net/swarmLatenessEstimate.test.ts`.
+
+**The display delay is slewed.** `setSwarmDisplayDelayMs` sets a TARGET
+(clamped to the game-ms floor and ceiling ÷ the speed, as before); the value
+the reads use glides toward it in `stepSwarmDisplayDelay(frameMs)`, called once
+per frame at the top of `updateSwarmMirror` on the frame's wall ms. Each frame
+closes `1 − exp(−frameMs / τ)` of the gap (`DISPLAY_DELAY_SLEW_TAU_MS` 300 game
+ms, ÷ the speed like the floor and ceiling), bounded to
+`DISPLAY_DELAY_SLEW_MAX_RATE` (0.1) × the frame's wall ms either way,
+so the read point keeps moving forward at 0.9–1.1× real time and a delay change
+never jumps, stops or reverses drones (100 → 280 ms takes ≥ 1.8 s). The first
+set after a reset places the value at its target; on a good link the target is
+the 100 ms floor and the value equals it, so nothing changes there. A speed
+change re-clamps the target and clamps the value into the new range at once.
+`resetSwarmTickClock` and `resetPredictionState` (sector change) put it back at
+the floor via `resetSwarmDisplayDelay`, which also clears the lateness
+estimate. The TARGET still comes from the old feeds (binary inter-arrival EWMA ×
+1.5 + drop bias, `snapshotPerfStats.ts`), not the lateness estimate. Lock:
+`src/client/net/swarmDisplayDelaySlew.test.ts`; fixtures:
+`tests/scenarios/gapSmoothing.drones.test.ts`.
+
 **The packet's tick must be the tick of its poses.** The room and the physics
 worker run separate 60 Hz loops. The room reads the SAB tick at the top of its
 update, and the worker can publish the next step before the swarm encoder reads
