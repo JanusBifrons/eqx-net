@@ -6,7 +6,12 @@
  * (the owner-approved concept page). Control points sit `k` along each normal,
  * `k = min(CABLE_TAIL_MAX, d * CABLE_TAIL_FRACTION)` for socket distance `d`;
  * a connector end (small, round, takes a cable from any side) uses a short
- * tail `min(CABLE_SHORT_TAIL, k)`.
+ * tail `min(CABLE_SHORT_TAIL, k)`. Each end first runs straight out along
+ * its normal for a stub (`min(CABLE_SOCKET_STUB, tail / 2)`): the polyline's
+ * first and last segments lie exactly on the socket normals, so the cable
+ * meets the socket flush (owner 2026-11-21). The curve proper runs stub end
+ * to stub end, its controls still `tail` out from the sockets (G1 at the
+ * stubs).
  *
  * `flattenCableCurve` turns the curve into a fixed `CABLE_CURVE_SEGMENTS`
  * polyline in a caller-owned Float64Array plus its box, allocation-free (the
@@ -43,6 +48,9 @@ export const CABLE_TAIL_MAX = 260;
 export const CABLE_TAIL_FRACTION = 0.35;
 /** A connector end's short tail cap (world units). */
 export const CABLE_SHORT_TAIL = 40;
+/** Longest straight stub a cable runs out of a socket along its normal
+ *  before it bends (world units; at most half the tail). */
+export const CABLE_SOCKET_STUB = 24;
 
 /** A world-space socket: point plus unit outward normal. Structurally matches
  *  `MutStructureSocket` / `StructureSocket` (shared-types). */
@@ -65,8 +73,8 @@ export function makeCableBox(): CableBox {
  * Flatten the socket-to-socket curve into `out` (length ≥ `CABLE_CURVE_FLOATS`;
  * x0,y0,x1,y1,…) and its axis-aligned box into `box`. `aShort` / `bShort` mark
  * a connector end (short tail). The first point is exactly socket A, the last
- * exactly socket B, and the curve leaves A along A's normal and enters B
- * against B's normal. Allocation-free.
+ * exactly socket B; the first segment runs exactly along A's normal (the
+ * stub) and the last exactly against B's. Allocation-free.
  */
 export function flattenCableCurve(
   a: CableEnd, aShort: boolean,
@@ -78,15 +86,20 @@ export function flattenCableCurve(
   const k = Math.min(CABLE_TAIL_MAX, d * CABLE_TAIL_FRACTION);
   const ka = aShort ? Math.min(CABLE_SHORT_TAIL, k) : k;
   const kb = bShort ? Math.min(CABLE_SHORT_TAIL, k) : k;
-  const p0x = a.x, p0y = a.y;
+  const sa = Math.min(CABLE_SOCKET_STUB, ka * 0.5), sb = Math.min(CABLE_SOCKET_STUB, kb * 0.5);
+  // The curve runs stub end (p0) to stub end (p3); its controls stay `k` out
+  // from the sockets, so it leaves each stub along the socket normal.
+  const p0x = a.x + a.nx * sa, p0y = a.y + a.ny * sa;
   const p1x = a.x + a.nx * ka, p1y = a.y + a.ny * ka;
   const p2x = b.x + b.nx * kb, p2y = b.y + b.ny * kb;
-  const p3x = b.x, p3y = b.y;
-  let x0 = p0x, y0 = p0y, x1 = p0x, y1 = p0y;
-  out[0] = p0x;
-  out[1] = p0y;
+  const p3x = b.x + b.nx * sb, p3y = b.y + b.ny * sb;
+  let x0 = a.x, y0 = a.y, x1 = a.x, y1 = a.y;
+  out[0] = a.x;
+  out[1] = a.y;
+  // Points 1 .. SEGMENTS-1: the curve at t = 0 .. 1 (its ends are the stubs').
+  const inner = CABLE_CURVE_SEGMENTS - 2;
   for (let i = 1; i < CABLE_CURVE_SEGMENTS; i++) {
-    const t = i / CABLE_CURVE_SEGMENTS;
+    const t = (i - 1) / inner;
     const u = 1 - t;
     const w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t;
     const x = w0 * p0x + w1 * p1x + w2 * p2x + w3 * p3x;
@@ -97,10 +110,10 @@ export function flattenCableCurve(
     if (y < y0) y0 = y; else if (y > y1) y1 = y;
   }
   const last = CABLE_CURVE_SEGMENTS * 2;
-  out[last] = p3x;
-  out[last + 1] = p3y;
-  if (p3x < x0) x0 = p3x; else if (p3x > x1) x1 = p3x;
-  if (p3y < y0) y0 = p3y; else if (p3y > y1) y1 = p3y;
+  out[last] = b.x;
+  out[last + 1] = b.y;
+  if (b.x < x0) x0 = b.x; else if (b.x > x1) x1 = b.x;
+  if (b.y < y0) y0 = b.y; else if (b.y > y1) y1 = b.y;
   box.x0 = x0;
   box.y0 = y0;
   box.x1 = x1;

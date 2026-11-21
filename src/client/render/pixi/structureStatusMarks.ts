@@ -9,12 +9,22 @@ import type { Graphics } from 'pixi.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 import { MINE_TRIGGER_RANGE } from '../../../shared-types/mines.js';
 
+/** The bar's largest on-screen size (CSS px). Below it the bar is 2r wide and
+ *  max(3, 0.18r) thick in world units; a huge structure (a Shipyard, r 567)
+ *  used to draw a ~570 x 50 px slab across the HUD and the inspector on a
+ *  sideways phone, so its bar is capped to a small on-screen bar. */
+export const STATUS_BAR_MAX_W_PX = 120;
+export const STATUS_BAR_MAX_H_PX = 8;
+
 /** A bar above a structure of radius `r` at (`ax`, `ay`) (Pixi space),
- *  filled to `frac` (clamped to [0, 1]) in `color` over a dark track. */
-export function drawStatusBar(g: Graphics, ax: number, ay: number, r: number, frac: number, color: number): void {
-  const barW = r * 2;
-  const barH = Math.max(3, r * 0.18);
-  const bx0 = ax - r;
+ *  filled to `frac` (clamped to [0, 1]) in `color` over a dark track,
+ *  centred over it and never larger on screen than the caps above at camera
+ *  `scale` (world -> screen px). */
+export function drawStatusBar(g: Graphics, ax: number, ay: number, r: number, frac: number, color: number, scale: number): void {
+  const k = scale > 0 ? scale : 1;
+  const barW = Math.min(r * 2, STATUS_BAR_MAX_W_PX / k);
+  const barH = Math.min(Math.max(3, r * 0.18), STATUS_BAR_MAX_H_PX / k);
+  const bx0 = ax - barW / 2;
   const by0 = ay - r - barH - 4;
   g.rect(bx0, by0, barW, barH);
   g.fill({ color: 0x000000, alpha: 0.5 });

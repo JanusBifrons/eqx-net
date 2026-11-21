@@ -110,6 +110,7 @@ Plan `peppy-jumping-pinwheel`, economy v2, phase W1. This follows Eve Online:
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
 
 - **Economy v2 W1 — the wallet.** Credits are virtual: never cargo. the GameHud status capsule (testid `wallet-chip` / `data-wallet`) shows the one balance from the Zustand `wallet`, written ONLY from the own-ship snapshot `states[].wallet` field when it changes (#16). Bounty and repair UIs check and pay from the wallet; no storage picker for payment.
+- **Mineral bank beside the credits.** The status capsule shows `◆ <minerals>` (testid `hud-minerals` / `data-minerals`, amber `data-empty="1"` at 0) next to the credits, flying and in Build: the minerals in your own built Capital(s) in this sector, the pool construction draws from (a build stalls when it is empty). Read from `mirror.structures` (room state, #16) at 2 Hz into local React state by `useBaseBank` (`hud/BuildStatus.tsx`), never Zustand; hidden when you own no Capital here.
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
