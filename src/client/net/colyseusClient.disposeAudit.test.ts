@@ -45,6 +45,7 @@ vi.mock('../debug/ClientLogger', () => ({
 }));
 
 import { ColyseusGameClient } from './ColyseusClient.js';
+import { logEvent } from '../debug/ClientLogger';
 
 describe('ColyseusGameClient.dispose() — reflection-based mirror clear', () => {
   beforeEach(() => {
@@ -89,6 +90,16 @@ describe('ColyseusGameClient.dispose() — reflection-based mirror clear', () =>
         expect(v.length, `mirror.${k} should be empty post-dispose`).toBe(0);
       }
     }
+  });
+
+  it('completes when the mirror holds a frozen shared array (phone play-test 2026-11-21)', () => {
+    // tickPhysics parks the frozen EMPTY_AIM_IDS on mirror.localAimMountIds.
+    const client = new ColyseusGameClient();
+    (client.mirror as unknown as Record<string, unknown>)['localAimMountIds'] = Object.freeze([]);
+    vi.mocked(logEvent).mockClear();
+    expect(() => client.dispose()).not.toThrow();
+    // The tail of dispose ran (it logs dispose_complete last).
+    expect(vi.mocked(logEvent).mock.calls.some((c) => c[0] === 'dispose_complete')).toBe(true);
   });
 
   it('sets disposed=true', () => {
