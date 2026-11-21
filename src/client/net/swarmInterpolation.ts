@@ -56,8 +56,13 @@ import { isImplausibleJump } from './plausibleSpeed.js';
  */
 export const DISPLAY_DELAY_MS = 100;
 
-/** Maximum dead-reckoning window past the newest arrival before freezing. */
-export const EXTRAPOLATION_LIMIT_MS = 100;
+/** Maximum dead-reckoning (glide) window past the newest arrival before
+ *  freezing, in GAME ms: in wall ms it is 250 / speed, like the delay floor
+ *  and ceiling (`glideLimitWallMs`). Raised 100 → 250 (netcode gap smoothing,
+ *  S4-1): a 200 ms packet gap outran the 100 ms glide and froze drones; 250
+ *  matches the missile cap (`MISSILE_EXTRAPOLATION_CAP_MS`). The glide reads
+ *  forward from the newest pose only, so it needs no older ring history. */
+export const EXTRAPOLATION_LIMIT_MS = 250;
 
 /** Teleport guard (drone snapshot-interpolation pivot, 2026-05-18): routing
  * drones through `interpolateSwarmPose` exposed server discontinuities that
@@ -119,6 +124,11 @@ export const DISPLAY_DELAY_SLEW_TAU_MS = 300;
 export const DISPLAY_DELAY_SLEW_MAX_RATE = 0.1;
 /** Within this (wall ms) of the target the value lands on it exactly. */
 export const DISPLAY_DELAY_SLEW_SNAP_MS = 0.01;
+
+/** The glide limit in wall ms at the current speed (game ms ÷ speed). */
+function glideLimitWallMs(): number {
+  return EXTRAPOLATION_LIMIT_MS / _displaySpeed;
+}
 
 function clampDisplayDelayWallMs(ms: number): number {
   return Math.max(DISPLAY_DELAY_MS / _displaySpeed, Math.min(ADAPTIVE_DELAY_CEILING_MS / _displaySpeed, ms));
@@ -244,7 +254,7 @@ let _overwriteUnreadCount = 0;
  *  clamp: history the read needed was already overwritten). A newly seen
  *  drone whose ring is still filling is not counted. */
 let _oldEndClampCount = 0;
-/** Reads past the newest pose by more than EXTRAPOLATION_LIMIT_MS (frozen at
+/** Reads past the newest pose by more than EXTRAPOLATION_LIMIT_MS ÷ speed (frozen at
  *  the glide limit). Counted per entity per frame. */
 let _glideLimitCount = 0;
 /** The read point: the target time of the latest interpolation read. NaN
@@ -466,7 +476,7 @@ export function interpolateSwarmPose(
   _lastReadTargetMs = targetMs;
   if (count > 1) {
     if (targetMs < oldest.arrivalMs) { if (count === POSE_RING_DEPTH) _oldEndClampCount++; }
-    else if (targetMs - newest.arrivalMs > EXTRAPOLATION_LIMIT_MS) _glideLimitCount++;
+    else if (targetMs - newest.arrivalMs > glideLimitWallMs()) _glideLimitCount++;
   }
 
   // Single arrival or render time before our oldest sample: pin to oldest
@@ -479,7 +489,7 @@ export function interpolateSwarmPose(
   }
 
   // Render time past the newest arrival: dead-reckon with vx/vy AND angvel
-  // up to EXTRAPOLATION_LIMIT_MS, then freeze. Gliding the angle by
+  // up to EXTRAPOLATION_LIMIT_MS (game ms; ÷ speed in wall ms), then freeze. Gliding the angle by
   // `angvel·dt` (not freezing it) matters post-pivot: out-of-interest
   // decimated drones (≈100–170 ms cadence) frequently render in this
   // extrapolation window, and a maneuvering drone is usually turning —
@@ -489,7 +499,7 @@ export function interpolateSwarmPose(
   // the position dead-reckon the sprite snaps backward through the buffer
   // when arrivals stall briefly.
   if (targetMs >= newest.arrivalMs) {
-    const overshootMs = Math.min(EXTRAPOLATION_LIMIT_MS, targetMs - newest.arrivalMs);
+    const overshootMs = Math.min(glideLimitWallMs(), targetMs - newest.arrivalMs);
     const dt = overshootMs / 1000;
     out.x = newest.x + newest.vx * dt;
     out.y = newest.y + newest.vy * dt;

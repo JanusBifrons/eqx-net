@@ -10,12 +10,33 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   setSwarmDisplayDelayMs, setSwarmDisplaySpeed, getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs,
-  stepSwarmDisplayDelay, resetSwarmTickClock,
-  DISPLAY_DELAY_MS, ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_SLEW_MAX_RATE,
+  stepSwarmDisplayDelay, resetSwarmTickClock, interpolateSwarmPose, getSwarmGlideLimitCount,
+  DISPLAY_DELAY_MS, ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_SLEW_MAX_RATE, EXTRAPOLATION_LIMIT_MS,
 } from './swarmInterpolation.js';
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 import { resolveMissileDisplayPose } from '../combat/MissileMirror.js';
-import type { RenderMirror } from '../../core/contracts/IRenderer.js';
+import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../core/contracts/IRenderer.js';
+
+/** The glide limit before S4-1 (wall ms at 1×). */
+const OLD_GLIDE_LIMIT_MS = 100;
+/** Wall ms between the two seeded poses. */
+const GLIDE_SAMPLE_SPACING_MS = 100;
+
+/** A drone with two poses, the newest at `newestMs` moving at `vx`. */
+function glideEntry(newestMs: number, newestX: number, vx: number): SwarmRenderState {
+  const ring: PoseRingEntry[] = Array.from({ length: POSE_RING_DEPTH }, () => (
+    { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true }
+  ));
+  Object.assign(ring[0]!, { x: 0, vx, arrivalMs: newestMs - GLIDE_SAMPLE_SPACING_MS, serverTick: 0, empty: false });
+  Object.assign(ring[1]!, { x: newestX, vx, arrivalMs: newestMs, serverTick: 1, empty: false });
+  return {
+    x: newestX, y: 0, vx, vy: 0, angle: 0,
+    prevX: 0, prevY: 0, prevAngle: 0,
+    prevArrivalMs: 0, latestArrivalMs: newestMs,
+    poseRing: ring, ringHead: 2,
+    radius: 16, kind: 1, sleeping: false, lastUpdateTick: 0,
+  };
+}
 
 describe('swarm display delay follows the sector speed (time scale 4b)', () => {
   // The floor / ceiling clamp applies to the TARGET; the slewed value glides
@@ -90,6 +111,37 @@ describe('swarm display delay follows the sector speed (time scale 4b)', () => {
       const expected = Math.max(floor, Math.min(ceiling, ADAPTIVE_DELAY_CEILING_MS));
       expect(getSwarmDisplayDelayMs()).toBe(expected);
       expect(getSwarmDisplayDelayTargetMs()).toBe(expected);
+    });
+  }
+
+  // S4-1: the glide (extrapolation) limit is GAME ms like the delay: 250 game
+  // ms = 250 / speed wall ms. Inside it the drone glides on its velocity;
+  // past it the pose freezes and the read counts as a glide-limit hold.
+  for (const speed of [0.7, 2]) {
+    it(`glide limit at ${speed}×: ${EXTRAPOLATION_LIMIT_MS} game ms = ${EXTRAPOLATION_LIMIT_MS} / ${speed} wall ms`, () => {
+      const newestMs = 1100;
+      const newestX = 100;
+      const vx = 200;
+      const msPerS = 1000;
+      const slackMs = 1;
+      const pastLimitMs = 500;
+      setSwarmDisplaySpeed(speed);
+      setSwarmDisplayDelayMs(0); // the floor, DISPLAY_DELAY_MS / speed wall ms
+      const delayMs = getSwarmDisplayDelayMs();
+      const limitWallMs = EXTRAPOLATION_LIMIT_MS / speed;
+      const e = glideEntry(newestMs, newestX, vx);
+      const out = { x: 0, y: 0, angle: 0 };
+      const read = (pastNewestMs: number): number => interpolateSwarmPose(e, newestMs + pastNewestMs + delayMs, out).x;
+
+      const before = getSwarmGlideLimitCount();
+      // Just inside the limit: still gliding, no hold counted.
+      expect(read(limitWallMs - slackMs)).toBeCloseTo(newestX + vx * (limitWallMs - slackMs) / msPerS, 4);
+      expect(getSwarmGlideLimitCount()).toBe(before);
+      // Past it: frozen at the limit, one hold counted.
+      expect(read(limitWallMs + pastLimitMs)).toBeCloseTo(newestX + vx * limitWallMs / msPerS, 4);
+      expect(getSwarmGlideLimitCount()).toBe(before + 1);
+      // The old 100 ms limit no longer freezes it (100 < 250 / 2 = 125 wall ms).
+      expect(read(limitWallMs - slackMs)).toBeGreaterThan(newestX + vx * OLD_GLIDE_LIMIT_MS / msPerS);
     });
   }
 

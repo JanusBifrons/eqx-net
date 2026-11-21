@@ -257,6 +257,22 @@ estimate and the test pin. Lock:
 `src/client/net/swarmDisplayDelaySlew.test.ts`; fixtures:
 `tests/scenarios/gapSmoothing.drones.test.ts`.
 
+**The glide past the newest pose is 250 game ms (S4-1).** When the read point
+runs past the newest pose (a packet gap), `interpolateSwarmPose` dead-reckons
+from that pose with its `vx/vy` and `angvel` for at most
+`EXTRAPOLATION_LIMIT_MS` (250 game ms, so 250 / speed wall ms, the same
+convention as the delay floor and ceiling), then freezes there and counts a
+glide-limit hold. It was 100 ms, so a 200 ms gap outran it and froze drones;
+250 matches the missile cap (`MISSILE_EXTRAPOLATION_CAP_MS`). The glide reads
+forward from the newest pose only, so a longer limit asks nothing older of the
+pose ring (`POSE_RING_DEPTH` is unaffected). The velocity term uses the wall
+overshoot (`overshoot / 1000 × v`), unchanged. Effect on the fixtures: gap-400
+freeze frames 12 → 3 and largest snap 47 → 12 u; gap-600 freezes 24 → 15 and
+largest snap 93 → 48 u; lan-clean and gap-200 are unchanged (gap-200 was
+already free of freezes under the lateness-sized delay, and stays free with
+the delay pinned at the floor). Locks: `swarmInterpolation.timeScale.test.ts`
+(the limit at 0.7× and 2×), `gapSmoothing.drones.test.ts`.
+
 **The packet's tick must be the tick of its poses.** The room and the physics
 worker run separate 60 Hz loops. The room reads the SAB tick at the top of its
 update, and the worker can publish the next step before the swarm encoder reads
