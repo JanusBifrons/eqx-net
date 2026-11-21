@@ -18,6 +18,18 @@ export function buildNeedsMineralsLine(short: number): string {
   return `PAUSED — NEEDS ${short.toLocaleString('en-US')} MORE MINERALS`;
 }
 
+/** Inspector card line for a build paused with no grid route to any Capital. */
+export const BUILD_NOT_CONNECTED_LINE = 'PAUSED — NOT CONNECTED TO A CAPITAL';
+
+/** The inspector's "why is this build paused" line, or undefined when the
+ *  server sent no reason (running, built, or a generic stall). */
+export function buildStalledLine(
+  st: Pick<StructureRenderState, 'buildMineralsShort' | 'buildNotConnected'>,
+): string | undefined {
+  if (st.buildNotConnected === true) return BUILD_NOT_CONNECTED_LINE;
+  return st.buildMineralsShort !== undefined ? buildNeedsMineralsLine(st.buildMineralsShort) : undefined;
+}
+
 /** True when the build is done but the structure is still a blueprint. */
 export function isBuildAwaitingClear(
   st: Pick<StructureRenderState, 'built' | 'buildPct' | 'isDeconstructing'>,

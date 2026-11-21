@@ -65,18 +65,27 @@ export function decodeStructureThrottleFlags(flags: number): number {
   return Math.max(0, 10 - ((flags >> STRUCTURE_THROTTLE_SHIFT) & STRUCTURE_THROTTLE_MASK));
 }
 
-/** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
+/** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. Negative values are
+ *  reserved, same field, no new schema bytes:
+ *    −1 not building · −2 stalled, no known reason · −3 stalled, no grid route
+ *    to any Capital · ≤ −4 stalled on a dry bank, owing (−3 − etaMs) minerals. */
 export const STRUCTURE_ETA_NONE = -1;
 export const STRUCTURE_ETA_STALLED = -2;
-/** Stalled because the owner's bank is dry: `etaMs` = this − the minerals the
- *  build still owes (≤ −3). Same field, no new schema bytes. */
-export const STRUCTURE_ETA_NEEDS_MINERALS = -3;
+export const STRUCTURE_ETA_NOT_CONNECTED = -3;
+/** A dry-bank stall owing 1 mineral; owing N encodes as −3 − N (≤ this). */
+export const STRUCTURE_ETA_NEEDS_MINERALS = -4;
 
-/** Server: the row's `etaMs` for an ETA (`null` = stalled) and, when stalled
- *  for minerals, the minerals still owed (`buildMineralsShortfall`). */
-export function encodeBuildEta(etaMs: number | null, mineralsShort: number | null): number {
+/** Why a build is paused (server `buildStallReason`): the minerals it still
+ *  owes on a dry bank, or that no Capital routes to it at all. */
+export const BUILD_STALL_NOT_CONNECTED = 'not-connected';
+export type BuildStallReason = number | typeof BUILD_STALL_NOT_CONNECTED;
+
+/** Server: the row's `etaMs` for an ETA (`null` = stalled) and, when
+ *  stalled, the reason (`buildStallReason`; `null` = none known). */
+export function encodeBuildEta(etaMs: number | null, stall: BuildStallReason | null): number {
   if (etaMs !== null) return Math.max(0, Math.round(etaMs));
-  if (mineralsShort !== null && mineralsShort > 0) return STRUCTURE_ETA_NEEDS_MINERALS - Math.round(mineralsShort);
+  if (stall === BUILD_STALL_NOT_CONNECTED) return STRUCTURE_ETA_NOT_CONNECTED;
+  if (stall !== null && Math.round(stall) >= 1) return STRUCTURE_ETA_NOT_CONNECTED - Math.round(stall);
   return STRUCTURE_ETA_STALLED;
 }
 
@@ -87,7 +96,12 @@ export function decodeBuildEta(v: number): number | null | undefined {
 
 /** Client: minerals a dry-bank stall still owes, or 0 when it is not one. */
 export function decodeBuildMineralsShort(v: number): number {
-  return v <= STRUCTURE_ETA_NEEDS_MINERALS ? STRUCTURE_ETA_NEEDS_MINERALS - v : 0;
+  return v <= STRUCTURE_ETA_NEEDS_MINERALS ? STRUCTURE_ETA_NOT_CONNECTED - v : 0;
+}
+
+/** Client: true when the stall is 'no grid route to any Capital'. */
+export function decodeBuildNotConnected(v: number): boolean {
+  return v === STRUCTURE_ETA_NOT_CONNECTED;
 }
 
 /** Coastal defences — `SnapshotMessage.structureMountAngles` carries each

@@ -3,6 +3,7 @@ import { StructureRegistry } from './StructureRegistry.js';
 import { StructurePlacementSubsystem } from './StructurePlacementSubsystem.js';
 import { StructureGridSubsystem, resolveTurretBeam } from './StructureGridSubsystem.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
+import { BUILD_STALL_NOT_CONNECTED } from '../../shared-types/structureStateWire.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import {
@@ -225,7 +226,7 @@ describe('StructureGridSubsystem — estimateBuildEtaMs (Phase-1 issue 1/2)', ()
 
 // Owner play-test: a fresh account's Shipyard stalled at 92% with no reason —
 // the starting bank ran dry. The stall must say "needs minerals" and how many.
-describe('StructureGridSubsystem — buildMineralsShortfall (stall reason)', () => {
+describe('StructureGridSubsystem — buildStallReason (stall reason)', () => {
   let h: ReturnType<typeof makeHarness>;
   beforeEach(() => { h = makeHarness(); });
 
@@ -237,20 +238,30 @@ describe('StructureGridSubsystem — buildMineralsShortfall (stall reason)', () 
     h.pulse(); // no progress this pulse
     const rec = h.registry.get(conn)!;
     expect(h.grid.estimateBuildEtaMs(rec)).toBeNull();
-    expect(h.grid.buildMineralsShortfall(rec)).toBe(rec.constructionCost - rec.constructionProgress);
+    expect(h.grid.buildStallReason(rec)).toBe(rec.constructionCost - rec.constructionProgress);
   });
 
   it('is null while the bank can still pay', () => {
     h.placement.place(OWNER, 'capital', 0, 0)!;
     const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
     h.pulse();
-    expect(h.grid.buildMineralsShortfall(h.registry.get(conn)!)).toBeNull();
+    expect(h.grid.buildStallReason(h.registry.get(conn)!)).toBeNull();
   });
 
-  it('is null when no Capital routes to it (not a minerals stall)', () => {
+  it('says not connected when no Capital routes to it', () => {
     const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
     h.pulse();
-    expect(h.grid.buildMineralsShortfall(h.registry.get(conn)!)).toBeNull();
+    const rec = h.registry.get(conn)!;
+    expect(h.grid.estimateBuildEtaMs(rec)).toBeNull();
+    expect(h.grid.buildStallReason(rec)).toBe(BUILD_STALL_NOT_CONNECTED);
+  });
+
+  it('a Capital route that is dry is a minerals stall, not a missing connection', () => {
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.pulse();
+    h.registry.get(cap)!.minerals = 0;
+    expect(h.grid.buildStallReason(h.registry.get(conn)!)).not.toBe(BUILD_STALL_NOT_CONNECTED);
   });
 });
 

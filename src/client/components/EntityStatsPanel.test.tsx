@@ -168,6 +168,19 @@ describe('EntityStatsPanel', () => {
     expect(screen.getByTestId('entity-stats-build-stalled')).toHaveTextContent('PAUSED — NEEDS 420 MORE MINERALS');
   });
 
+  // A blueprint with no grid route to any Capital paused with no reason shown.
+  it('a build with no route to a Capital says it is not connected', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[7, { powered: false, netPower: 0, connTo: [], built: false, buildPct: 0.3, deconstructPct: 0, etaMs: null, buildNotConnected: true }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'shipyard', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-build-stalled')).toHaveTextContent('PAUSED — NOT CONNECTED TO A CAPITAL');
+  });
+
   it('a build that is running shows no paused line', () => {
     setGameClient(
       fakeClient({

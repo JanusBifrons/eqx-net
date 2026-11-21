@@ -81,7 +81,7 @@ export interface StructuresSliceHost {
   breakIns: Pick<BreakInSubsystem, 'breached' | 'tick'>;
   structureGrid: () => Pick<
     StructureGridSubsystem,
-    'powerSummaryFor' | 'estimateBuildEtaMs' | 'buildMineralsShortfall' | 'pulse' | 'tickTurrets' | 'tickMiners' | 'mountAnglesOf'
+    'powerSummaryFor' | 'estimateBuildEtaMs' | 'buildStallReason' | 'pulse' | 'tickTurrets' | 'tickMiners' | 'mountAnglesOf'
   >;
   shieldWalls: () => Pick<ShieldWallManager, 'wallsUpFor' | 'wallStateFor' | 'update'>;
   /** `maskFor` and the door states (`GateDoorSource`) for the door rows. */
@@ -178,7 +178,7 @@ export class StructuresSliceSync {
       let etaMs = STRUCTURE_ETA_NONE;
       if (building) {
         const eta = h.structureGrid().estimateBuildEtaMs(rec);
-        etaMs = encodeBuildEta(eta, eta === null ? h.structureGrid().buildMineralsShortfall(rec) : null);
+        etaMs = encodeBuildEta(eta, eta === null ? h.structureGrid().buildStallReason(rec) : null);
       }
       const deconstructPct = rec.isDeconstructing && rec.constructionCost > 0
         ? 1 - rec.constructionProgress / rec.constructionCost

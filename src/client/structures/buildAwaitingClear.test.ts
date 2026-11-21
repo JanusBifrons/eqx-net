@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isBuildAwaitingClear } from './buildAwaitingClear.js';
+import { buildStalledLine, isBuildAwaitingClear } from './buildAwaitingClear.js';
 
 describe('isBuildAwaitingClear', () => {
   it('is true only for a finished build that is still a blueprint', () => {
@@ -10,5 +10,17 @@ describe('isBuildAwaitingClear', () => {
 
   it('is false while the structure is being taken down', () => {
     expect(isBuildAwaitingClear({ built: false, buildPct: 1, isDeconstructing: true })).toBe(false);
+  });
+});
+
+
+describe('buildStalledLine', () => {
+  it('names why a paused build is paused', () => {
+    expect(buildStalledLine({ buildNotConnected: true })).toBe('PAUSED — NOT CONNECTED TO A CAPITAL');
+    expect(buildStalledLine({ buildMineralsShort: 1200 })).toBe('PAUSED — NEEDS 1,200 MORE MINERALS');
+  });
+
+  it('is undefined when there is no known reason', () => {
+    expect(buildStalledLine({})).toBeUndefined();
   });
 });
