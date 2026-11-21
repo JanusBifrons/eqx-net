@@ -180,8 +180,9 @@ drawing (the collision body runs on the predicted timeline, above). 100 ms backw
 the in-interest combat cadence (binary ships ~per server tick, ≈16.7 ms) so
 two bracketing samples essentially always exist → a true lerp of buffered
 authoritative truth, immune to wire jitter ≤ 100 ms. The adaptive delay is
-now sized from the **binary packet inter-arrival EWMA** (the real
-drone-pose channel), NOT the 20 Hz JSON snapshot interval;
+sized from the measured lateness of the **binary** drone packets (see
+"Lateness estimate" below; it was the binary inter-arrival EWMA × 1.5 until
+S3-3), NOT the 20 Hz JSON snapshot interval;
 `ADAPTIVE_DELAY_CEILING_MS` 200 → 280 so a decimated out-of-interest drone
 (~100–170 ms) still brackets two samples; extrapolation now glides angle by
 `angvel·dt` instead of freezing it. `DISPLAY_DELAY_MS` is the on-device
@@ -203,18 +204,43 @@ speed change keeps the newest stamp in place. Lock:
 `src/client/net/swarmInterpolation.tickStamp.test.ts` (drain-time stamps step
 error 3.1 u, tick stamps 0.16 u).
 
-**Lateness estimate (measured, drives nothing yet).** Each tick-stamped packet's
+**Lateness estimate (sizes the delay target).** Each tick-stamped packet's
 lateness (wall ms after its tick-clock stamp) feeds an asymmetric EWMA,
 `getSwarmLatenessEstimateMs()`, that rises fast (`LATENESS_RISE_TAU_MS` 50 ms)
 and falls slowly (`LATENESS_FALL_TAU_MS` 2000 ms), plus a mean absolute
 deviation, `getSwarmLatenessDeviationMs()` (`LATENESS_DEV_TAU_MS` 250 ms).
 Time constants are per packet at the nominal 60 Hz cadence; units are wall ms,
-matching `setSwarmDisplayDelayMs`. `resetSwarmTickClock` clears both. The
-display delay still comes from the inter-arrival EWMA; a later job sizes it from
-this estimate. Lock: `src/client/net/swarmLatenessEstimate.test.ts`.
+matching the display delay. `resetSwarmTickClock` clears both. Lock:
+`src/client/net/swarmLatenessEstimate.test.ts`.
 
-**The display delay is slewed.** `setSwarmDisplayDelayMs` sets a TARGET
-(clamped to the game-ms floor and ceiling ÷ the speed, as before); the value
+**The delay target comes from the lateness estimate (S3-3; owner decisions D8
+adaptive buffer, D2 280 ms ceiling).** Every tick-stamped packet, right after
+the estimate update in `swarmArrivalStampMs`, sets the target to
+`swarmDisplayDelayTargetFromLatenessMs`: `max(floor, estimate + 4 × deviation +
+one frame)`, clamped to the ceiling. All terms are wall ms: the estimate and
+deviation are measured in wall ms, the floor and ceiling are game ms ÷ the
+speed (100 / speed, 280 / speed), and "one frame" is the named constant
+`LATENESS_TARGET_FRAME_MS` (1000/60 wall ms, not ÷ speed, not the measured
+frame, so a frame stall does not move the target). The 4 is
+`LATENESS_TARGET_DEVIATIONS` (RFC 6298's RTO = SRTT + 4 × RTTVAR). No
+allocation: scalars on the existing per-packet path. On a good link the
+estimate is a few ms, the target is the 100 ms floor on every frame, and poses
+are identical to a pinned 100 ms delay (`lan-clean` fixture). The old feeds
+(binary inter-arrival EWMA × 1.5 and the JSON drop bias in
+`snapshotPerfStats.ts`) are gone; the JSON drop detector still runs there for
+`droppedSnapshotsRecent` (netgate). `setSwarmDisplayDelayMs` is now a test
+hook: it PINS the target (the lateness feed leaves it alone) until the next
+reset. Aim and fire control keep reading the drawn drone pose (owner V4).
+Cost: after a stall or under jitter the target rises toward the ceiling and
+falls back slowly (the estimate's 2 s fall), so drawn drones run later
+(`jitter-4g` mean drawn lateness 158 → 302 ms) in exchange for fewer glide-limit
+holds and snaps. Lock: `src/client/net/swarmLatenessEstimate.test.ts`;
+fixtures: `tests/scenarios/gapSmoothing.drones.test.ts` (gap profiles and the
+`capture-2026-11-21` replay).
+
+**The display delay is slewed.** The target (above; or
+`setSwarmDisplayDelayMs` in tests) is clamped to the game-ms floor and ceiling
+÷ the speed, as before; the value
 the reads use glides toward it in `stepSwarmDisplayDelay(frameMs)`, called once
 per frame at the top of `updateSwarmMirror` on the frame's wall ms. Each frame
 closes `1 − exp(−frameMs / τ)` of the gap (`DISPLAY_DELAY_SLEW_TAU_MS` 300 game
@@ -222,13 +248,12 @@ ms, ÷ the speed like the floor and ceiling), bounded to
 `DISPLAY_DELAY_SLEW_MAX_RATE` (0.1) × the frame's wall ms either way,
 so the read point keeps moving forward at 0.9–1.1× real time and a delay change
 never jumps, stops or reverses drones (100 → 280 ms takes ≥ 1.8 s). The first
-set after a reset places the value at its target; on a good link the target is
+target after a reset places the value at it; on a good link the target is
 the 100 ms floor and the value equals it, so nothing changes there. A speed
 change re-clamps the target and clamps the value into the new range at once.
 `resetSwarmTickClock` and `resetPredictionState` (sector change) put it back at
 the floor via `resetSwarmDisplayDelay`, which also clears the lateness
-estimate. The TARGET still comes from the old feeds (binary inter-arrival EWMA ×
-1.5 + drop bias, `snapshotPerfStats.ts`), not the lateness estimate. Lock:
+estimate and the test pin. Lock:
 `src/client/net/swarmDisplayDelaySlew.test.ts`; fixtures:
 `tests/scenarios/gapSmoothing.drones.test.ts`.
 

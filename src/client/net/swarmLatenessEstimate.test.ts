@@ -4,7 +4,8 @@
  * The estimator on synthetic lateness series (wall ms, one sample per packet):
  * a step up is tracked fast, a step down decays slowly, a noisy series gives a
  * deviation near its spread. Then the wiring: `swarmArrivalStampMs` feeds it
- * and `resetSwarmTickClock` clears it.
+ * and `resetSwarmTickClock` clears it. Last (S3-3): the display-delay target
+ * formula and its per-packet feed.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
@@ -15,6 +16,14 @@ import {
   getSwarmLatenessEstimateMs,
   getSwarmLatenessDeviationMs,
   getSwarmLatenessLastMs,
+  getSwarmDisplayDelayMs,
+  getSwarmDisplayDelayTargetMs,
+  setSwarmDisplayDelayMs,
+  swarmDisplayDelayTargetFromLatenessMs,
+  DISPLAY_DELAY_MS,
+  ADAPTIVE_DELAY_CEILING_MS,
+  LATENESS_TARGET_DEVIATIONS,
+  LATENESS_TARGET_FRAME_MS,
   type LatenessEstimate,
 } from './swarmInterpolation.js';
 
@@ -24,6 +33,14 @@ const STEP_MS = 40;
 const RISE_PACKETS_90 = 7;
 /** One second of packets at 60 Hz. */
 const ONE_SECOND_PACKETS = 60;
+/** Game speeds the target must scale at (sector time scale). */
+const SLOW_SPEED = 0.7;
+const FAST_SPEED = 2;
+/** Packets fed to the wiring tests. */
+const FEED_PACKETS = 30;
+/** Lateness added to every other packet in the wiring test (wall ms). */
+const LATE_MS = 60;
+const FLOAT_DIGITS = 9;
 
 function fresh(): LatenessEstimate {
   return { estimateMs: 0, deviationMs: 0 };
@@ -89,5 +106,71 @@ describe('drone lateness estimate', () => {
     resetSwarmTickClock();
     expect(getSwarmLatenessEstimateMs()).toBe(0);
     expect(getSwarmLatenessDeviationMs()).toBe(0);
+  });
+});
+
+describe('display-delay target from lateness (S3-3)', () => {
+  beforeEach(() => {
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+  });
+
+  it('a good link (a few ms late) gives the 100 ms floor', () => {
+    expect(swarmDisplayDelayTargetFromLatenessMs(0, 0, 1)).toBe(DISPLAY_DELAY_MS);
+    expect(swarmDisplayDelayTargetFromLatenessMs(5, 2, 1)).toBe(DISPLAY_DELAY_MS);
+  });
+
+  it('above the floor: estimate + 4 x deviation + one frame (wall ms)', () => {
+    expect(LATENESS_TARGET_DEVIATIONS).toBe(4);
+    expect(LATENESS_TARGET_FRAME_MS).toBeCloseTo(TICK_MS, FLOAT_DIGITS);
+    expect(swarmDisplayDelayTargetFromLatenessMs(100, 20, 1)).toBeCloseTo(100 + 4 * 20 + TICK_MS, FLOAT_DIGITS);
+    // Deviation counts four times: +10 ms deviation moves the target 40 ms.
+    expect(swarmDisplayDelayTargetFromLatenessMs(100, 30, 1) - swarmDisplayDelayTargetFromLatenessMs(100, 20, 1))
+      .toBeCloseTo(40, FLOAT_DIGITS);
+  });
+
+  it('clamps to the 280 ms ceiling', () => {
+    expect(swarmDisplayDelayTargetFromLatenessMs(250, 20, 1)).toBe(ADAPTIVE_DELAY_CEILING_MS);
+    expect(swarmDisplayDelayTargetFromLatenessMs(1e6, 1e6, 1)).toBe(ADAPTIVE_DELAY_CEILING_MS);
+  });
+
+  it('floor and ceiling are game ms: divided by the speed at 0.7x and 2x; the sum is not', () => {
+    for (const speed of [SLOW_SPEED, FAST_SPEED]) {
+      expect(swarmDisplayDelayTargetFromLatenessMs(0, 0, speed)).toBeCloseTo(DISPLAY_DELAY_MS / speed, FLOAT_DIGITS);
+      expect(swarmDisplayDelayTargetFromLatenessMs(1e6, 0, speed)).toBeCloseTo(ADAPTIVE_DELAY_CEILING_MS / speed, FLOAT_DIGITS);
+    }
+    // Inside the range the wall-ms sum passes through unscaled.
+    expect(swarmDisplayDelayTargetFromLatenessMs(150, 10, SLOW_SPEED)).toBeCloseTo(150 + 40 + TICK_MS, FLOAT_DIGITS);
+    expect(swarmDisplayDelayTargetFromLatenessMs(80, 5, FAST_SPEED)).toBeCloseTo(80 + 20 + TICK_MS, FLOAT_DIGITS);
+    // 0.7x: floor ~142.9, ceiling 400 wall ms; 2x: floor 50, ceiling 140.
+    expect(swarmDisplayDelayTargetFromLatenessMs(10, 0, FAST_SPEED)).toBe(DISPLAY_DELAY_MS / FAST_SPEED);
+    expect(swarmDisplayDelayTargetFromLatenessMs(200, 0, FAST_SPEED)).toBe(ADAPTIVE_DELAY_CEILING_MS / FAST_SPEED);
+  });
+
+  it('every packet sets the target from the estimate; the first places the value there', () => {
+    for (let tick = 0; tick < FEED_PACKETS; tick++) {
+      swarmArrivalStampMs(tick, 10_000 + tick * TICK_MS + (tick % 2 === 1 ? LATE_MS : 0));
+      const expected = swarmDisplayDelayTargetFromLatenessMs(getSwarmLatenessEstimateMs(), getSwarmLatenessDeviationMs(), 1);
+      expect(getSwarmDisplayDelayTargetMs()).toBeCloseTo(expected, FLOAT_DIGITS);
+    }
+    expect(getSwarmDisplayDelayTargetMs()).toBeGreaterThan(DISPLAY_DELAY_MS);
+    // The value only slews (stepSwarmDisplayDelay); the first packet placed it at the floor.
+    expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
+  });
+
+  it('a speed change re-clamps the fed target into the new range', () => {
+    for (let tick = 0; tick < FEED_PACKETS; tick++) swarmArrivalStampMs(tick, 10_000 + tick * TICK_MS);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS);
+    setSwarmDisplaySpeed(FAST_SPEED);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS / FAST_SPEED);
+  });
+
+  it('setSwarmDisplayDelayMs pins the target until the next reset', () => {
+    setSwarmDisplayDelayMs(ADAPTIVE_DELAY_CEILING_MS);
+    for (let tick = 0; tick < FEED_PACKETS; tick++) swarmArrivalStampMs(tick, 10_000 + tick * TICK_MS);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(ADAPTIVE_DELAY_CEILING_MS);
+    resetSwarmTickClock();
+    swarmArrivalStampMs(0, 20_000);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS);
   });
 });
