@@ -16,4 +16,4 @@ Rules for the client network layer. `ColyseusClient.ts` is at its size cap (`scr
 - **Fire control and lock state** live in `FireControlClient.ts` (lock line in `fireControl/`); `ColyseusClient` keeps one-line delegates and reaches prediction/fire dispatch for it through `FireControlHost`.
 - **The teleport plausible-speed bound** (`TELEPORT_MAX_PLAUSIBLE_SPEED`, `TELEPORT_FLOOR_U`, `isImplausibleJump`) has one home: `plausibleSpeed.ts`. Any interpolator snapping on a discontinuity imports it from there; never redefine it.
 - **The local ship's own fire** (`sendFire`, the live beam) lives in `fireControl/LocalFireClient.ts`; **damage and death** (`handleDamage`, `killEntity`, ...) in `damagePath.ts`. Each takes a host/ctx built once in `ColyseusClient`.
-- **Net-health HUD** (`hud/netHealth.ts`) reads only existing net counters; extend them, never a second stats pipeline.
+- **Net-health HUD** (`hud/netHealth.ts`) reads only existing net counters; extend them, never a second stats pipeline. Per-arrival lateness / gap / server-send-gap counters live in `snapshotArrivalStats.ts`, fed only by `logSnapshotRecvTelemetry`.

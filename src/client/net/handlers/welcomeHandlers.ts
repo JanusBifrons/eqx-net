@@ -18,6 +18,7 @@ import { useUIStore } from '../../state/store';
 import { logEvent } from '../../debug/ClientLogger';
 import { parseWelcome } from '../parseWelcome';
 import { resetAnchorHardSnapCount } from '../clockAnchor.js';
+import { resetSnapshotArrivalStats } from '../snapshotArrivalStats.js';
 import type { CutFieldClient } from '../CutFieldClient.js';
 import type { WreckGeometryStore } from '../wreckGeometryStore.js';
 import type { DrawnShellTiming } from '../drawnShellTiming';
@@ -116,6 +117,7 @@ export function registerWelcomeHandlers(room: Room, hctx: WelcomeHandlerCtx): vo
     ctx.anchorInitialised = true;
     ctx.anchorFreshAtMs = ctx.welcomePerfNow;
     resetAnchorHardSnapCount(); // the anchor is re-seeded: count snaps from this join
+    resetSnapshotArrivalStats(); // a new room: no gap or delay floor carries over
     ctx.inputTick = msg.serverTick; // Sync to server tick space so fire messages pass temporal plausibility check.
     // Reset idle-input throttle: the first input after a (re)connect must
     // always reach the server so it has a baseline before tick advance.
