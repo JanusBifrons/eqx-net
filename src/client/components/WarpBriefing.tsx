@@ -120,11 +120,6 @@ const RADAR_SX = {
     '& .eqx-radar-sweep': { animation: 'none' },
   },
 };
-/** Hidden (in play): the sweep is paused, so it costs no style/compositor work. */
-const RADAR_SX_PAUSED = {
-  ...RADAR_SX,
-  '& .eqx-radar-sweep': { ...RADAR_SX['& .eqx-radar-sweep'], animationPlayState: 'paused' },
-};
 
 export interface WarpBriefingProps {
   /** The sector being joined, or null when unknown (non-galaxy rooms). */
@@ -135,15 +130,13 @@ export interface WarpBriefingProps {
   steps: readonly JoinGateStep[];
   /** Index of the step in progress, or -1 when all are done. */
   currentStep: number;
-  /** The screen is showing: false pauses the radar sweep. */
-  active: boolean;
   /** The status label element (WarpScreen owns its text + testid). */
   status: JSX.Element;
   /** Under the status: the stall line + Cancel, or null. */
   footer: JSX.Element | null;
 }
 
-export function WarpBriefing({ sectorKey, gatesDone, steps, currentStep, active, status, footer }: WarpBriefingProps): JSX.Element {
+export function WarpBriefing({ sectorKey, gatesDone, steps, currentStep, status, footer }: WarpBriefingProps): JSX.Element {
   const galaxyStats = useUIStore((s) => s.galaxyStats);
   const shipRoster = useUIStore((s) => s.shipRoster);
   const brief = buildSectorBriefing(sectorKey, galaxyStats, shipRoster);
@@ -215,7 +208,7 @@ export function WarpBriefing({ sectorKey, gatesDone, steps, currentStep, active,
         </Box>
         {footer}
       </Box>
-      <Box sx={active ? RADAR_SX : RADAR_SX_PAUSED} data-testid="warp-briefing-radar" data-blips={brief?.blips.length ?? 0}>
+      <Box sx={RADAR_SX} data-testid="warp-briefing-radar" data-blips={brief?.blips.length ?? 0}>
         <svg viewBox="0 0 100 100" aria-hidden="true">
           <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(79,210,255,0.2)" />
           <circle cx="50" cy="50" r="30" fill="none" stroke="rgba(79,210,255,0.13)" />

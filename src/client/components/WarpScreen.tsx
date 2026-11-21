@@ -205,6 +205,15 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
 
   if (phase !== 'game' && phase !== 'connecting') return null;
 
+  const status = (
+    <Typography data-testid="warp-screen-status" sx={WARP_STATUS_SX}>
+      {statusText}
+    </Typography>
+  );
+
+  // The briefing is MOUNTED only while visible: once loading lifts (or
+  // during a trip) only the terminal status label stays, aria-hidden, so
+  // no stale "Arriving at" text, store subscriptions or sweep linger in play.
   return (
     <Slot anchor="fullscreen" pointerEvents="none">
       <Box
@@ -212,19 +221,16 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
         data-warp-visible={visible ? '1' : '0'}
         data-warp-stalled={stalled ? '1' : '0'}
         sx={visible ? BOX_SX_VISIBLE : BOX_SX_HIDDEN}
+        aria-hidden={visible ? undefined : true}
       >
+        {visible ? (
         <WarpBriefing
           sectorKey={briefingKey}
           gatesDone={gatesDone}
           steps={steps}
           currentStep={currentStep}
-          active={visible}
-          status={
-            <Typography data-testid="warp-screen-status" sx={WARP_STATUS_SX}>
-              {statusText}
-            </Typography>
-          }
-          footer={stalled && visible ? (
+          status={status}
+          footer={stalled ? (
             <Box sx={STALL_ROW_SX}>
               <Typography data-testid="warp-screen-stall-msg" sx={STALL_TEXT_SX}>
                 Still loading…
@@ -241,6 +247,7 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
             </Box>
           ) : null}
         />
+        ) : status}
       </Box>
     </Slot>
   );

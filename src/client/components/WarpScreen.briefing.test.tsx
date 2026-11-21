@@ -146,4 +146,25 @@ describe('sectorBriefing helpers', () => {
     expect(b.blips[0]!.cx).toBeCloseTo(50);
     expect(b.blips[0]!.cy).toBeCloseTo(6);
   });
+
+  it('unmounts the briefing once loading lifts (no stale "Arriving at" text or roster re-renders in play)', () => {
+    useUIStore.setState({ currentSectorKey: 'sol-prime', galaxyStats: [live({ players: 2 })] });
+    renderWarp();
+    expect(screen.getByTestId('warp-screen').getAttribute('data-warp-visible')).toBe('1');
+    expect(screen.getByTestId('warp-briefing-name').textContent).toBe('Sol Prime');
+    act(() => useUIStore.setState({
+      firstSnapshotApplied: true, rendererFirstFrameRendered: true, joinMinimumElapsed: true,
+      localPoseResolved: true, clientReadySent: true, arrivalTickFromServer: 1, arrivalAcked: true,
+    }));
+    expect(screen.getByTestId('warp-screen').getAttribute('data-warp-visible')).toBe('0');
+    expect(screen.queryByTestId('warp-briefing')).toBeNull();
+    expect(host.textContent).not.toContain('Arriving at');
+    expect(host.textContent).not.toContain('Sol Prime');
+    // The terminal status stays (e2e join-warp-screen locks it), off the a11y tree.
+    expect(screen.getByTestId('warp-screen-status').textContent).toBe('WARP COMPLETE');
+    expect(screen.getByTestId('warp-screen').getAttribute('aria-hidden')).toBe('true');
+    // A re-arm (respawn) mounts it again.
+    act(() => useUIStore.setState({ firstSnapshotApplied: false }));
+    expect(screen.getByTestId('warp-briefing-name').textContent).toBe('Sol Prime');
+  });
 });
