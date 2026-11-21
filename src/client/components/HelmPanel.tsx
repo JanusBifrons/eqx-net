@@ -12,6 +12,8 @@ import { fleetCommands } from '../fleet/fleetCommands.js';
  * (`fleet_order` `speed`), and changing it re-paces the selected ships'
  * running moves (Stop halts them where they are; they keep the point, and a
  * new speed sends them on). Never in Fly or Build, for any hull.
+ * It renders inside the fleet panel / strip (bottom edge), never in a slot
+ * over the map: in Command a click on the map is an order.
  * Reads only discrete Zustand state (#2).
  */
 const LABELS = ['Stop', '⅓', '⅔', 'Full'] as const;

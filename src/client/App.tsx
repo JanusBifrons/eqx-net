@@ -54,7 +54,6 @@ import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
-import { HelmPanel } from './components/HelmPanel';
 import { WarpPicker, WarpStatusChip } from './components/WarpPicker';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
@@ -937,8 +936,8 @@ function GameSurface({
       <Slot anchor="top-center" order={3}><TeleportWarning /></Slot>
       <Slot anchor="top-center" order={3}><DisabledIndicator /></Slot>
       <Slot anchor="top-center" order={3}><WarpStatusChip /></Slot>
-      {/* Capital-ship R&D round 3 D: helm orders (only while flying a capital). */}
-      <Slot anchor="top-center" order={4}><HelmPanel /></Slot>
+      {/* The Command speed telegraph (HelmPanel) rides the fleet panel / strip,
+       *  never a slot over the map (a bar there swallowed move orders). */}
       {/* Living World P2 — trade toasts (escort prompt when red). */}
       <Slot anchor="top-center" order={5}><TradeToasts /></Slot>
       <WhileAwayDialog />
