@@ -31,13 +31,14 @@ export const LOCK_LINE = {
  * Score of a target on the lock line (lower = better), or Infinity when the
  * line doesn't hold it. `dx`/`dy`: target minus ship; `dirX`/`dirY`: unit line
  * direction; `held`: the line already holds this target (sticky cone, score -1);
- * `selfRadius`: the pilot's own hull radius (lock range runs hull to hull).
+ * `lockReach`: the pilot's lock range (`shipLockRange`) plus its own hull
+ * radius (lock range runs hull to hull).
  */
 export function lockLineScore(
-  dx: number, dy: number, dirX: number, dirY: number, radius: number, reach: number, held: boolean, selfRadius: number,
+  dx: number, dy: number, dirX: number, dirY: number, radius: number, reach: number, held: boolean, lockReach: number,
 ): number {
   const along = dx * dirX + dy * dirY;
-  if (along < 0 || pastLockRange(dx, dy, selfRadius + radius)) return Infinity;
+  if (along < 0 || pastLockRange(dx, dy, radius, lockReach)) return Infinity;
   const perp = Math.abs(dx * dirY - dy * dirX);
   const tol = (Math.max(LOCK_LINE.minTol, radius * LOCK_LINE.radiusMul) + along * LOCK_LINE.perAlong) * (held ? LOCK_LINE.stickyMul : 1);
   if (perp > tol) return Infinity;
@@ -49,6 +50,6 @@ export function lockLineScore(
  * says it holds? Uses the sticky cone, which absorbs the client's display
  * delay and the bearing's quantisation.
  */
-export function lockLineHolds(dx: number, dy: number, bearing: number, radius: number, reach: number, selfRadius: number): boolean {
-  return Number.isFinite(lockLineScore(dx, dy, -Math.sin(bearing), Math.cos(bearing), radius, reach, true, selfRadius));
+export function lockLineHolds(dx: number, dy: number, bearing: number, radius: number, reach: number, lockReach: number): boolean {
+  return Number.isFinite(lockLineScore(dx, dy, -Math.sin(bearing), Math.cos(bearing), radius, reach, true, lockReach));
 }

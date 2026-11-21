@@ -15,8 +15,8 @@ export class LockLinePick {
   private dirX = 0;
   private dirY = 1;
   private reach = 0;
-  /** The pilot's own hull radius (lock range runs hull to hull). */
-  private selfRadius = 0;
+  /** The pilot's lock range plus its own hull radius (hull to hull). */
+  private lockReach = 0;
   /** Sticky: the target the line already holds keeps it inside a wider cone. */
   private held: string | null = null;
   private best: string | null = null;
@@ -25,13 +25,13 @@ export class LockLinePick {
   private terrainScore = Infinity;
 
   /** Start a pick from (x, y) along `bearing` (ship-angle convention). */
-  begin(x: number, y: number, bearing: number, reach: number, held: string | null, selfRadius: number): void {
+  begin(x: number, y: number, bearing: number, reach: number, held: string | null, lockReach: number): void {
     this.x = x;
     this.y = y;
     this.dirX = -Math.sin(bearing);
     this.dirY = Math.cos(bearing);
     this.reach = reach;
-    this.selfRadius = selfRadius;
+    this.lockReach = lockReach;
     this.held = held;
     this.best = null;
     this.bestScore = Infinity;
@@ -41,7 +41,7 @@ export class LockLinePick {
 
   /** Score one candidate into its tier (contact, or terrain when `terrain`). */
   consider(key: string, x: number, y: number, radius: number, terrain: boolean): void {
-    const score = lockLineScore(x - this.x, y - this.y, this.dirX, this.dirY, radius, this.reach, key === this.held, this.selfRadius);
+    const score = lockLineScore(x - this.x, y - this.y, this.dirX, this.dirY, radius, this.reach, key === this.held, this.lockReach);
     if (terrain) {
       if (score < this.terrainScore) {
         this.terrainScore = score;

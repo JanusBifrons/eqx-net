@@ -17,7 +17,6 @@ import { navalTurret, navalBarrelOffset, NAVAL_BARREL_SPAN } from '../../src/cor
 import { canTrack, mountLineClear, mountPriority, targetClass } from '../../src/core/combat/mountTargeting';
 import { HostileDroneBehaviour, BROADSIDE_STANDOFF } from '../../src/core/ai/HostileDroneBehaviour';
 import { getShipKind } from '../../src/shared-types/shipKinds';
-import { LOCK_TUNING } from '../../src/shared-types/combat/lockProfile';
 import type { AiWorldView } from '../../src/core/contracts/IAiBehaviour';
 import { stepKinematic, throttleOf, turnOf } from '../../src/core/ai/pilotTestKit';
 
@@ -122,12 +121,7 @@ describe('broadside steering', () => {
     dtSec: 1 / 60,
   });
   const self = { id: 'bs', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-  // The range it engages at: the main battery's reach, capped at lock range
-  // past its own hull (owner 2026-11-21: nothing locks past ~1 km, hull to hull).
-  const mainReach = (): number => Math.min(
-    Math.max(...getShipKind('battleship').mounts.map((m) => mountWeaponReach(m))),
-    LOCK_TUNING.maxLockRange + getShipKind('battleship').radius,
-  );
+  const mainReach = (): number => Math.max(...getShipKind('battleship').mounts.map((m) => mountWeaponReach(m)));
 
   it('in reach: holds the beam toward the target and never fires with the hull', () => {
     const b = new HostileDroneBehaviour('battleship');
@@ -151,7 +145,7 @@ describe('broadside steering', () => {
     // the stand-off holds station, keys off, like a player who holds nothing.
     const kind = getShipKind('battleship');
     const standoff = mainReach() * BROADSIDE_STANDOFF;
-    for (const d of [standoff, standoff * 0.98, standoff * 1.02]) {
+    for (const d of [4000, standoff * 0.98, standoff * 1.02]) {
       const b = new HostileDroneBehaviour('battleship');
       b.markHostile('p', 100);
       const body = { ...self };

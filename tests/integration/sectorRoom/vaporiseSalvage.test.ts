@@ -149,9 +149,7 @@ describe('SectorRoom integration — vaporised salvage, every ship (owner 2026-1
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
       capitalWrecks: true, subcapWrecks: true, traverseTicksCap: 0, lockTimeCapS: 0, keepAllOnDeath: true,
       // Heading π: starboard faces −x, at the pilot (the beamFits setup).
-      // Inside lock range (owner 2026-11-21: ~1 km hull to hull): 3,100 u
-      // less both radii (2,184 + 24) = 0.89 km.
-      dronePoses: [{ kind: 'heavy-cruiser-beam', x: 3100, y: 0, angle: Math.PI }],
+      dronePoses: [{ kind: 'heavy-cruiser-beam', x: 5000, y: 0, angle: Math.PI }],
     });
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {

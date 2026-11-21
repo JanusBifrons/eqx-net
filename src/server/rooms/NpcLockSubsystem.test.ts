@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { NpcLockSubsystem, type NpcLockDeps, type NpcPose } from './NpcLockSubsystem.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipLockRange } from '../../core/combat/mountReach.js';
 import { LOCKED_BY_WIRE_ROWS } from '../../shared-types/combat/lockProfile.js';
 
 interface Body { x: number; y: number; kind: string; vy?: number }
@@ -68,7 +69,7 @@ describe('NpcLockSubsystem — drones fire only with a completed lock on their t
 describe('NpcLockSubsystem — its own lock keeps the NPC hostile (owner 2026-11-12)', () => {
   it('refreshes hostility every step while locking or locked in FIRE range; outside it the lock holds but the refresh stops', () => {
     const pilots: Record<string, Body> = { p1: { x: 0, y: 0, kind: 'interceptor' } };
-    const npcs: Record<string, Body> = { n1: { x: 0, y: 160, kind: 'interceptor' } }; // short guns (375 u): fire range inside lock range
+    const npcs: Record<string, Body> = { n1: { x: 0, y: 160, kind: 'fighter' } };
     const calls: string[] = [];
     const write = (b: Body, out: NpcPose) => { out.x = b.x; out.y = b.y; out.vx = 0; out.vy = b.vy ?? 0; out.angle = 0; return getShipKind(b.kind); };
     const s = new NpcLockSubsystem({
@@ -85,64 +86,58 @@ describe('NpcLockSubsystem — its own lock keeps the NPC hostile (owner 2026-11
     const n = calls.length;
     s.step();
     expect(calls.length).toBe(n + 1); // locked counts
-    // Out of the NPC's FIRE range but inside lock range (1 km): the lock
-    // holds, but (lead call) only a lock inside FIRE range keeps it hostile,
-    // so its 30 s forget runs from here.
-    pilots.p1!.y = -800; // 960 u apart
+    // Owner 2026-11-21: a lock reaches only the NPC's longest gun (hull to
+    // hull). Past it the refresh stops at once and the lock breaks after the
+    // grace, so the NPC's 30 s forget runs from here.
+    pilots.p1!.y = 50_000;
     calls.length = 0;
     for (let i = 0; i < 30; i++) s.step();
     expect(calls).toEqual([]);
-    expect(s.isLocked('n1', 'p1')).toBe(true);
-    expect(s.wireFor('p1')).toHaveLength(1);
+    expect(s.isLocked('n1', 'p1')).toBe(false);
+    expect(s.wireFor('p1') ?? []).toHaveLength(0);
   });
 });
 
-describe('NpcLockSubsystem — lock range 1 km (owner 2026-11-21), the same rule as a player', () => {
-  function steps(s: NpcLockSubsystem, n: number) { for (let i = 0; i < n; i++) s.step(); }
-  it('an AI pilot locks a pilot at 0.9 km, is refused at 1.2 km', () => {
-    const near = rig({ p1: { x: 0, y: 0, kind: 'interceptor' } }, { n1: { x: 0, y: 900, kind: 'fighter' } });
-    steps(near, 100);
+describe('NpcLockSubsystem — lock range is the NPC ship\'s longest gun (owner 2026-11-21)', () => {
+  const edge = (npc: string, pilot: string): number =>
+    getShipKind(npc).radius + shipLockRange(getShipKind(npc)) + getShipKind(pilot).radius;
+
+  it('a fighter NPC locks a pilot inside its longest gun, never past it', () => {
+    const near = rig({ p1: { x: 0, y: 0, kind: 'interceptor' } }, { n1: { x: 0, y: edge('fighter', 'interceptor') - 20, kind: 'fighter' } });
+    for (let i = 0; i < 600 && !near.isLocked('n1', 'p1'); i++) near.step();
     expect(near.isLocked('n1', 'p1')).toBe(true);
-    const far = rig({ p1: { x: 0, y: 0, kind: 'interceptor' } }, { n1: { x: 0, y: 1200, kind: 'fighter' } });
-    steps(far, 100);
+    const far = rig({ p1: { x: 0, y: 0, kind: 'interceptor' } }, { n1: { x: 0, y: edge('fighter', 'interceptor') + 20, kind: 'fighter' } });
+    for (let i = 0; i < 600; i++) far.step();
     expect(far.isLocked('n1', 'p1')).toBe(false);
-    expect(far.wireFor('p1') ?? []).toHaveLength(0);
   });
 
-  it("an AI pilot's lock breaks when the pilot goes past lock range", () => {
-    const pilots: Record<string, Body> = { p1: { x: 0, y: 0, kind: 'interceptor' } };
-    const npcs: Record<string, Body> = { n1: { x: 0, y: 300, kind: 'fighter' } };
-    const write = (b: Body, out: NpcPose) => { out.x = b.x; out.y = b.y; out.vx = 0; out.vy = 0; out.angle = 0; return getShipKind(b.kind); };
-    const s = new NpcLockSubsystem({
-      pilots: () => ['p1'],
-      pilotPose: (id, out) => (pilots[id] ? write(pilots[id]!, out) : null),
-      forEachHostileNpc: (_pid, visit) => visit('n1', 1),
-      npcPose: (id, out) => (npcs[id] ? write(npcs[id]!, out) : null),
-    });
-    stepUntilLocked(s, 'n1', 'p1');
-    pilots.p1!.y = -1000; // 1.3 km apart
-    steps(s, 30); // 3 s, past the grace
-    expect(s.isLocked('n1', 'p1')).toBe(false);
+  it('a battleship NPC locks a pilot 20 km off its hull (its 16" reach), far past a fighter', () => {
+    const y = getShipKind('battleship').radius + 20_000;
+    const s = rig({ p1: { x: 0, y: 0, kind: 'fighter' } }, { n1: { x: 0, y, kind: 'battleship' } });
+    for (let i = 0; i < 6000 && !s.isLocked('n1', 'p1'); i++) s.step();
+    expect(s.isLocked('n1', 'p1')).toBe(true);
   });
 
-  it('testMode instantLock completes an NPC lock inside lock range only', () => {
-    const mk = (y: number) => new NpcLockSubsystem({
+  it('testMode instantLock does not lift lock range', () => {
+    const at = (y: number) => new NpcLockSubsystem({
       pilots: () => ['p1'],
       pilotPose: (_id, out) => { out.x = 0; out.y = 0; out.vx = 0; out.vy = 0; return getShipKind('interceptor'); },
       forEachHostileNpc: (_pid, visit) => visit('n1', 1),
       npcPose: (_id, out) => { out.x = 0; out.y = y; out.vx = 0; out.vy = 0; return getShipKind('fighter'); },
       instantLock: () => true,
     });
-    const near = mk(900); near.step();
-    expect(near.isLocked('n1', 'p1')).toBe(true);
-    const far = mk(1200); far.step();
-    expect(far.isLocked('n1', 'p1')).toBe(false);
+    const inside = at(edge('fighter', 'interceptor') - 20);
+    inside.step();
+    expect(inside.isLocked('n1', 'p1')).toBe(true);
+    const past = at(50_000);
+    past.step();
+    expect(past.isLocked('n1', 'p1')).toBe(false);
   });
 });
 
 describe('NpcLockSubsystem — lockedBy rows capped to the nearest threats (owner 2026-11-14)', () => {
-  // 20 hostile fighters at shuffled distances 120..880 u (inside lock range).
-  const DIST = [600, 120, 840, 280, 440, 760, 160, 520, 360, 880, 200, 680, 400, 240, 800, 320, 480, 720, 560, 640];
+  // 20 hostile fighters at shuffled distances 180..1320 u (inside a fighter's lock range).
+  const DIST = [1500, 300, 2100, 700, 1100, 1900, 400, 1300, 900, 2200, 500, 1700, 1000, 600, 2000, 800, 1200, 1800, 1400, 1600].map((d) => d * 0.6);
   function crowd(instant: { on: boolean }) {
     const npcs: Record<string, Body> = {};
     DIST.forEach((d, i) => { npcs[`n${i}`] = { x: 0, y: d, kind: 'fighter' }; });
@@ -191,7 +186,7 @@ describe('NpcLockSubsystem — lockedBy rows capped to the nearest threats (owne
     const instant = { on: true };
     const { s, npcs } = crowd(instant);
     // Only the 3 FARTHEST exist on the first step and lock instantly.
-    const far = ['n9', 'n2', 'n14']; // 880, 840, 800
+    const far = ['n9', 'n2', 'n14']; // 1320, 1260, 1200
     const saved = { ...npcs };
     for (const k of Object.keys(npcs)) if (!far.includes(k)) delete npcs[k];
     s.step();

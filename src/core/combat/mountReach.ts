@@ -48,6 +48,25 @@ export function miningReachFactor(size: MountSize | undefined): number {
   return MOUNT_SIZE_TUNING[size ?? 'S'].reach / MOUNT_SIZE_TUNING.XL.reach;
 }
 
+const lockRangeCache = new Map<string, number>();
+
+/**
+ * A ship's LOCK RANGE (owner 2026-11-21): its longest mount's reach
+ * (`mountWeaponReach`; a mining tool counts, so a miner locks rocks out to
+ * its laser or tractor), measured hull to hull (`pastLockRange`). A kind
+ * with no mounts has 0: it has nothing to lock with. One number for the
+ * server's player and NPC locks and the client's lock line (#15). Cached per
+ * kind id; allocation-free after the first call (#14).
+ */
+export function shipLockRange(kind: Pick<ShipKind, 'id' | 'mounts'>): number {
+  const hit = lockRangeCache.get(kind.id);
+  if (hit !== undefined) return hit;
+  let r = 0;
+  for (const m of kind.mounts ?? []) r = Math.max(r, mountWeaponReach(m));
+  lockRangeCache.set(kind.id, r);
+  return r;
+}
+
 const cache = new Map<string, number>();
 
 /** Target-pick radius from the ship's centre for this kind and mount list. */
@@ -121,8 +140,8 @@ export function mountInReach(dx: number, dy: number, reach: number, t: MountRang
  * Is target `t` at (tx, ty) inside FIRE range of ANY of `mounts` on a hull at
  * (sx, sy, sAngle)? Each mount is tested from its own world position with its
  * own gun's reach × `slack`, by `mountInReach` (the one per-turret range
- * gate). Locks reach lock range (`LOCK_TUNING.maxLockRange`), not a gun's
- * reach, so this says whether a group could fire: AUTO groups release their pick on
+ * gate). A lock reaches the ship's longest gun (`shipLockRange`), past this
+ * group's own reach, so this says whether a group could fire: AUTO groups release their pick on
  * it, and the "locks keep it hostile" refreshes gate on it. Cheap first: past
  * every mount's reach + offset + the target's bound it is out with no
  * per-mount test. Alloc-free (#14).

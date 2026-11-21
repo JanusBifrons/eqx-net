@@ -31,7 +31,7 @@ import { LOCK_TUNING, LOCKED_BY_WIRE_ROWS, sensorFor, signatureFor } from '../..
 import { capLockSeconds, lockSeconds, pastLockRange, type LockInputs } from '../../core/combat/lockTime.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { groupGeometry } from './LockSubsystem.js';
-import { hasTurretFireControl, mountsReachTarget, prepareRangeTarget, type MountRangeTarget, type RangeTargetPrep } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, shipLockRange, mountsReachTarget, prepareRangeTarget, type MountRangeTarget, type RangeTargetPrep } from '../../core/combat/mountReach.js';
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** Wire row: who is locking the pilot. `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
@@ -246,10 +246,11 @@ export class NpcLockSubsystem {
     inp.dvx = this.pilot.vx - this.npc.vx;
     inp.dvy = this.pilot.vy - this.npc.vy;
     // Lock range (owner 2026-11-21, the same rule as a player, hull to hull):
-    // past it no lock this step, not even instantLock; a held lock breaks
-    // after the grace.
+    // the NPC's longest gun (`shipLockRange`). Past it no lock this step, not
+    // even instantLock; a held lock breaks after the grace.
     inp.hullRadii = signatureFor(kind) + this.curSignature;
-    if (pastLockRange(inp.dx, inp.dy, inp.hullRadii)) return;
+    inp.lockRange = shipLockRange(kind);
+    if (pastLockRange(inp.dx, inp.dy, inp.hullRadii, inp.lockRange)) return;
     const d2 = inp.dx * inp.dx + inp.dy * inp.dy;
     // Inside lock range there is no reach gate. WHICH
     // profile builds the lock still follows reach, because a capital holds

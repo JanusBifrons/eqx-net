@@ -76,10 +76,9 @@ const MAX_DT_SEC = 0.25;
 const DEG = Math.PI / 180;
 /** The pilots' lock tuning, but a lock past `maxSeconds` takes `maxSeconds`
  *  instead of being impossible (`clampAtMax`; heavy mounts then still stretch it
- *  for absolute distance, see `lockSeconds`). Fixed batteries keep locking
- *  out to their guns' reach: the ship lock range (`maxLockRange`, owner
- *  2026-11-21) is not applied to them yet (open question for the owner). */
-const STRUCTURE_LOCK_TUNING = { ...LOCK_TUNING, clampAtMax: true, maxLockRange: Infinity };
+ *  for absolute distance, see `lockSeconds`). Lock range is the battery's own
+ *  gun's reach, mount to hull (`structureLockSecs`, owner 2026-11-21). */
+const STRUCTURE_LOCK_TUNING = { ...LOCK_TUNING, clampAtMax: true };
 
 /** What the ticker asks its owner to do. */
 export interface StructureMountSink {
@@ -275,6 +274,10 @@ export class StructureMountTicker {
     inp.absRange = p.absRange;
     inp.reach = reach;
     inp.signature = t.signature;
+    // Lock range (owner 2026-11-21): this battery's own gun's reach, mount to
+    // the target's hull (its signature is its radius).
+    inp.hullRadii = t.signature;
+    inp.lockRange = reach;
     inp.dx = t.x - mx;
     inp.dy = t.y - my;
     inp.dvx = t.vx; // the structure is fixed
@@ -283,9 +286,10 @@ export class StructureMountTicker {
     // (a 16" gun on a destroyer) takes `maxSeconds` instead of being
     // impossible, so a heavy gun never sits blind on the only target it has.
     // Heavy guns then stretch it for absolute distance (uncapped, see
-    // `lockSeconds`). Out of reach stays unlockable (Infinity). testMode
+    // `lockSeconds`). Past its lock range (its own gun's reach) stays
+    // unlockable (Infinity). testMode
     // `lockTimeCapS` still caps the result.
-    const secs = capLockSeconds(lockSeconds(inp, STRUCTURE_LOCK_TUNING), inp, this.lockTimeCapS, STRUCTURE_LOCK_TUNING);
+    const secs = capLockSeconds(lockSeconds(inp, STRUCTURE_LOCK_TUNING), inp, this.lockTimeCapS);
     const ev = stepLock(e, dtSec, secs, secs * LOCK_TUNING.failsafeMul, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
     // Unlockable past the grace: start over on the same target (it stays the
     // mount's target; targeting is the arc/tracking rules', not the lock's).

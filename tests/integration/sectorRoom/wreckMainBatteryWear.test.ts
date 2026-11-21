@@ -19,7 +19,6 @@ import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
-import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 
 const WRECK_KIND = 4;
 const TICK_HZ = 60;
@@ -54,14 +53,12 @@ describe('SectorRoom integration: a main battery wears a capital wreck piece slo
     const pieces = () => [...internal.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND);
     const size = (id: string) => internal.wreckIntegrity(id) ?? 0;
     const big = pieces().reduce((a, b) => (size(b.id) > size(a.id) ? b : a));
-    // The lance 0.8 km off the piece, hull to hull (inside lock range, owner
-    // 2026-11-21: ~1 km), on the far side from the rest of the wreck and
-    // facing it, so no other piece is in the line of fire.
+    // The lance 5 km out from the piece, on the far side from the rest of the
+    // wreck and facing it, so no other piece is in the line of fire.
     const at = internal.wreckState(big.id)!;
     const ox = at.x - p.x, oy = at.y - p.y;
     const ol = Math.hypot(ox, oy) || 1;
-    const off = getShipKind('battlecruiser-lance').radius + 800 + ((big as { radius?: number }).radius ?? 0);
-    const lx = at.x + (ox / ol) * off, ly = at.y + (oy / ol) * off;
+    const lx = at.x + (ox / ol) * 5000, ly = at.y + (oy / ol) * 5000;
     internal.postToWorker({ type: 'SET_POSITION', entityId: pid, x: lx, y: ly, angle: Math.atan2(ox / ol, -oy / ol), vx: 0, vy: 0, angvel: 0 });
     await harness.advance(200);
 

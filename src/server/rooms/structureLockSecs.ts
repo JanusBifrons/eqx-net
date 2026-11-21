@@ -21,7 +21,10 @@ export function structureLockSecs(
   inp.reach = reach;
   inp.sensor = sensor;
   inp.signature = sig;
-  inp.hullRadii = sig; // lock range: from the mount to the target's hull
+  // Lock range (owner 2026-11-21): this turret's own gun's reach, from the
+  // mount to the structure's edge (inside the ship's longest-gun range).
+  inp.hullRadii = sig;
+  inp.lockRange = reach;
   inp.dx = t.x - mx;
   inp.dy = t.y - my;
   inp.dvx = t.vx - selfVx;

@@ -8,7 +8,6 @@ import type { ShipKind } from '../../../shared-types/shipKinds.js';
 import { getWeapon, type WeaponMode } from '../../combat/WeaponCatalogue.js';
 import { hasTurretFireControl, mountWeaponReach } from '../../combat/mountReach.js';
 import { BROADSIDE_STANDOFF } from '../hostileDroneTuning.js';
-import { LOCK_TUNING } from '../../../shared-types/combat/lockProfile.js';
 import type { TravelFireTune } from '../modes/travelMode.js';
 
 export interface EngagementProfile extends TravelFireTune {
@@ -103,11 +102,6 @@ export function engagementProfile(kind: ShipKind): EngagementProfile {
     stopDistFactor = BROADSIDE_STANDOFF;
     backoffInsideFactor = 0;
   }
-  // Nothing fires without a lock (#19), and nothing locks past lock range
-  // (owner 2026-11-21: ~1 km, hull to hull), so an AI pilot never engages
-  // from farther out: its own radius + lock range (the target's hull only
-  // adds margin).
-  fireRange = Math.min(fireRange, LOCK_TUNING.maxLockRange + kind.radius);
   return {
     weaponMode, chargeHoldsLine, fireRange, stopDistFactor, backoffInsideFactor,
     leadMuzzleSpeed, shotRadius, maxTurretHalfArc, broadside,

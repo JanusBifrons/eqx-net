@@ -126,9 +126,7 @@ describe('SectorRoom integration — railgun', () => {
     harness = await bootSectorTestServer({
       sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [],
       chargeTicksCap: 30, lockTimeCapS: 0, traverseTicksCap: 0,
-      // Inside lock range of the heavy cruiser (owner 2026-11-21: ~1 km hull
-      // to hull): 5,800 u less both radii (2,876 + 2,184) = 0.74 km.
-      dronePoses: [{ kind: 'battleship-rail', x: 5800, y: 0, angle: Math.PI }],
+      dronePoses: [{ kind: 'battleship-rail', x: 9000, y: 0, angle: Math.PI }],
     });
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {

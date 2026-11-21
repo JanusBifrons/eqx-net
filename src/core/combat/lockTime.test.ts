@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { angularRate, capLockSeconds, lockSeconds, type LockInputs } from './lockTime.js';
+import { angularRate, capLockSeconds, lockSeconds, pastLockRange, type LockInputs } from './lockTime.js';
 import { newLock, stepLock } from './lockState.js';
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, signatureFor } from '../../shared-types/combat/lockProfile.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -12,11 +12,6 @@ function inputs(over: Partial<LockInputs>): LockInputs {
   };
 }
 
-/** The lock-time curve with the lock-range cap (`maxLockRange`, 1 km for now)
- *  lifted: these tests lock the curve's shape at real gun ranges, which still
- *  applies inside lock range and again whenever the cap is raised. */
-const CURVE = { ...LOCK_TUNING, maxLockRange: Infinity };
-
 describe('lockSeconds', () => {
   it('a matched weapon vs a still target locks in about baseSeconds', () => {
     const s = lockSeconds(inputs({ dx: 1 }), LOCK_TUNING);
@@ -24,33 +19,37 @@ describe('lockSeconds', () => {
     expect(s).toBeLessThan(LOCK_TUNING.baseSeconds * 1.1);
   });
 
-  // Owner 2026-11-21 (reverses "any distance", 2026-11-14): a ship can only
-  // be locked from about 1 km for now (`LOCK_TUNING.maxLockRange`, 1 km on
-  // the HUD = 1,000 u, centre to centre). Inside it, distance only slows a lock.
-  it('lock range: 0.9 km locks, 1.2 km is refused (Infinity), whatever the gun reach', () => {
-    expect(LOCK_TUNING.maxLockRange).toBe(1000);
-    expect(Number.isFinite(lockSeconds(inputs({ dx: 900 }), LOCK_TUNING))).toBe(true);
-    expect(lockSeconds(inputs({ dx: 1200 }), LOCK_TUNING)).toBe(Infinity);
-    // A long gun (16"-class reach, heavy profile) does not stretch it.
-    const xl = WEAPON_LOCK_PROFILE.XL;
-    const heavy = { refSize: xl.refSize, tracking: xl.tracking, absRange: true, reach: 38_700, signature: 400 };
-    expect(Number.isFinite(lockSeconds(inputs({ ...heavy, dx: 600, dy: 600 }), LOCK_TUNING))).toBe(true);
-    expect(lockSeconds(inputs({ ...heavy, dx: 900, dy: 900 }), LOCK_TUNING)).toBe(Infinity);
-    // Hull to hull: a battleship (radius ~2,876) locks a fighter 0.9 km off
-    // its hull, not 1.2 km off it; its 2.9 km of hull does not count.
-    expect(Number.isFinite(lockSeconds(inputs({ ...heavy, dx: 2876 + 24 + 900, hullRadii: 2876 + 24 }), LOCK_TUNING))).toBe(true);
-    expect(lockSeconds(inputs({ ...heavy, dx: 2876 + 24 + 1200, hullRadii: 2876 + 24 }), LOCK_TUNING)).toBe(Infinity);
+  // Owner 2026-11-21 (reverses "any distance", 2026-11-14): a locker's lock
+  // range is its LONGEST weapon's reach (`lockRange`, hull to hull); past it
+  // nothing locks. Inside it, distance only slows a lock.
+  it('lock range: inside the longest weapon locks (even past this group reach), past it never', () => {
+    // A short gun (reach 400) on a ship whose longest gun reaches 2,000.
+    const short = { reach: 400, lockRange: 2000 };
+    const past = lockSeconds(inputs({ ...short, dx: 1500 }), LOCK_TUNING);
+    expect(Number.isFinite(past)).toBe(true);
+    expect(past).toBeGreaterThanOrEqual(lockSeconds(inputs({ ...short, dx: 400 }), LOCK_TUNING));
+    expect(lockSeconds(inputs({ ...short, dx: 2100 }), LOCK_TUNING)).toBe(Infinity);
+    // Absent lockRange = this weapon's own reach.
+    expect(Number.isFinite(lockSeconds(inputs({ reach: 1000, dx: 990 }), LOCK_TUNING))).toBe(true);
+    expect(lockSeconds(inputs({ reach: 1000, dx: 1010 }), LOCK_TUNING)).toBe(Infinity);
+    // Hull to hull: both hull radii are added.
+    expect(Number.isFinite(lockSeconds(inputs({ ...short, dx: 2000 + 2876 + 24, hullRadii: 2876 + 24 }), LOCK_TUNING))).toBe(true);
+    expect(lockSeconds(inputs({ ...short, dx: 2100 + 2876 + 24, hullRadii: 2876 + 24 }), LOCK_TUNING)).toBe(Infinity);
+    expect(pastLockRange(0, 2001, 0, 2000)).toBe(true);
+    expect(pastLockRange(0, 1999, 0, 2000)).toBe(false);
     // No weapon at all: nothing to lock with.
-    expect(lockSeconds(inputs({ reach: 0, dx: 10 }), LOCK_TUNING)).toBe(Infinity);
+    expect(lockSeconds(inputs({ reach: 0 }), LOCK_TUNING)).toBe(Infinity);
   });
 
-  it('a lock that goes past lock range breaks after the grace window', () => {
+  it('a lock whose target leaves lock range breaks after the grace window', () => {
     const e = newLock('s:1', true);
     const near = lockSeconds(inputs({ dx: 900 }), LOCK_TUNING);
     for (let t = 0; t < 10 && e.stage !== 'locked'; t += 0.1) stepLock(e, 0.1, near, near, LOCK_TUNING.lostGraceSeconds);
     expect(e.stage).toBe('locked');
     const far = lockSeconds(inputs({ dx: 1200 }), LOCK_TUNING);
+    expect(far).toBe(Infinity);
     let ev = stepLock(e, 0.1, far, far, LOCK_TUNING.lostGraceSeconds);
+    expect(ev).not.toBe('dropped'); // the grace first
     for (let t = 0.1; t < LOCK_TUNING.lostGraceSeconds + 0.2 && ev !== 'dropped'; t += 0.1) ev = stepLock(e, 0.1, far, far, LOCK_TUNING.lostGraceSeconds);
     expect(ev).toBe('dropped');
   });
@@ -77,8 +76,8 @@ describe('lockSeconds', () => {
     const xl = WEAPON_LOCK_PROFILE.XL;
     const aa = WEAPON_LOCK_PROFILE.AA;
     const common = { reach: 6000, sensor: sensorFor(battleship), pilotSpeed: 1, signature: signatureFor(fighter), ...crossing };
-    expect(lockSeconds({ ...common, refSize: xl.refSize, tracking: xl.tracking }, CURVE)).toBe(Infinity);
-    expect(lockSeconds({ ...common, refSize: aa.refSize, tracking: aa.tracking }, CURVE)).toBeLessThan(CURVE.maxSeconds);
+    expect(lockSeconds({ ...common, refSize: xl.refSize, tracking: xl.tracking }, LOCK_TUNING)).toBe(Infinity);
+    expect(lockSeconds({ ...common, refSize: aa.refSize, tracking: aa.tracking }, LOCK_TUNING)).toBeLessThan(LOCK_TUNING.maxSeconds);
   });
 
   it('angular rate is the crossing speed over range', () => {
@@ -118,23 +117,23 @@ describe('lockSeconds: absolute distance for heavy (M/L/XL) mounts', () => {
 
   it('is monotonic in absolute distance, whatever the reach', () => {
     let prev = 0;
-    for (let d = 500; d <= 40_000; d += 500) {
-      const s = lockSeconds(heavy(d, battleship.radius, REAL_REACH), CURVE);
+    for (let d = 500; d <= REAL_REACH; d += 500) {
+      const s = lockSeconds(heavy(d, battleship.radius, REAL_REACH), LOCK_TUNING);
       expect(s).toBeGreaterThan(prev);
       prev = s;
     }
     // Same distance, longer reach: same time (no reach share any more).
-    const a = lockSeconds(heavy(3000, destroyer.radius, TODAY_REACH), CURVE);
-    const b = lockSeconds(heavy(3000, destroyer.radius, REAL_REACH), CURVE);
+    const a = lockSeconds(heavy(3000, destroyer.radius, TODAY_REACH), LOCK_TUNING);
+    const b = lockSeconds(heavy(3000, destroyer.radius, REAL_REACH), LOCK_TUNING);
     expect(b).toBeCloseTo(a, 6);
   });
 
   it('a 30 km shot takes clearly longer than a 3 km one, and "ages" (tens of seconds, not minutes)', () => {
     for (const target of [battleship, destroyer]) {
-      const near = lockSeconds(heavy(3000, target.radius, REAL_REACH), CURVE);
-      const far = lockSeconds(heavy(30_000, target.radius, REAL_REACH), CURVE);
+      const near = lockSeconds(heavy(3000, target.radius, REAL_REACH), LOCK_TUNING);
+      const far = lockSeconds(heavy(30_000, target.radius, REAL_REACH), LOCK_TUNING);
       expect(far).toBeGreaterThan(near * 5);
-      expect(far).toBeGreaterThan(CURVE.maxSeconds); // past the old cap: no longer impossible
+      expect(far).toBeGreaterThan(LOCK_TUNING.maxSeconds); // past the old cap: no longer impossible
       expect(far).toBeGreaterThan(10);
       expect(far).toBeLessThan(60);
     }
@@ -143,8 +142,8 @@ describe('lockSeconds: absolute distance for heavy (M/L/XL) mounts', () => {
   it("today's 3–5k u capital engagements lock within ±20 % of the reach-share term", () => {
     for (const target of [battleship, destroyer]) {
       for (const d of [3000, 4000, 5000]) {
-        const before = lockSeconds(heavy(d, target.radius, TODAY_REACH, false), CURVE);
-        const after = lockSeconds(heavy(d, target.radius, TODAY_REACH), CURVE);
+        const before = lockSeconds(heavy(d, target.radius, TODAY_REACH, false), LOCK_TUNING);
+        const after = lockSeconds(heavy(d, target.radius, TODAY_REACH), LOCK_TUNING);
         expect(Number.isFinite(before)).toBe(true);
         expect(after / before).toBeGreaterThan(0.8);
         expect(after / before).toBeLessThan(1.2);
@@ -156,21 +155,19 @@ describe('lockSeconds: absolute distance for heavy (M/L/XL) mounts', () => {
     const s = WEAPON_LOCK_PROFILE.S;
     const sub = { refSize: s.refSize, tracking: s.tracking, reach: 2295, sensor: 1, pilotSpeed: 1, signature: 120, dx: 2000, dy: 0, dvx: 0, dvy: 0 };
     // Reference: the pre-change formula written out.
-    const want = (CURVE.baseSeconds * 1 * 1 * (1 + CURVE.rangeFactor * (2000 / 2295))) / 1;
-    expect(lockSeconds({ ...sub, absRange: s.absRange }, CURVE)).toBeCloseTo(want, 9);
+    const want = (LOCK_TUNING.baseSeconds * 1 * 1 * (1 + LOCK_TUNING.rangeFactor * (2000 / 2295))) / 1;
+    expect(lockSeconds({ ...sub, absRange: s.absRange }, LOCK_TUNING)).toBeCloseTo(want, 9);
     const fighterGun = inputs({ dx: 900 });
-    expect(lockSeconds({ ...fighterGun, absRange: WEAPON_LOCK_PROFILE.none.absRange }, CURVE))
-      .toBeCloseTo(lockSeconds(fighterGun, CURVE), 12);
+    expect(lockSeconds({ ...fighterGun, absRange: WEAPON_LOCK_PROFILE.none.absRange }, LOCK_TUNING))
+      .toBeCloseTo(lockSeconds(fighterGun, LOCK_TUNING), 12);
   });
 
-  it('distance never makes a heavy lock impossible, not even past reach', () => {
+  it('distance never makes a heavy lock impossible inside lock range; past it, it is', () => {
     // A 16" at 35 km on a battleship: ~22 s, not Infinity.
-    const at35 = lockSeconds(heavy(35_000, battleship.radius, REAL_REACH), CURVE);
+    const at35 = lockSeconds(heavy(35_000, battleship.radius, REAL_REACH), LOCK_TUNING);
     expect(Number.isFinite(at35)).toBe(true);
-    // Past reach (owner 2026-11-14): still locks, only slower.
-    const at50 = lockSeconds(heavy(50_000, battleship.radius, REAL_REACH), CURVE);
-    expect(Number.isFinite(at50)).toBe(true);
-    expect(at50).toBeGreaterThan(at35);
+    // Past the longest gun's reach (owner 2026-11-21): no lock.
+    expect(lockSeconds(heavy(50_000, battleship.radius, REAL_REACH), LOCK_TUNING)).toBe(Infinity);
   });
 
   // Owner, 2026-11-10: a 16" on a fighter "takes 10 minutes or an hour ...
@@ -182,51 +179,49 @@ describe('lockSeconds: absolute distance for heavy (M/L/XL) mounts', () => {
   it('ship heavy gun: a small fast target locks slowly, never impossibly, whoever flies it', () => {
     const fighter = getShipKind('fighter');
     const near = { ...heavy(1500, fighter.radius, REAL_REACH), dvy: 400 };
-    const secs = lockSeconds(near, CURVE);
+    const secs = lockSeconds(near, LOCK_TUNING);
     expect(Number.isFinite(secs)).toBe(true);
-    expect(secs).toBeGreaterThan(CURVE.maxSeconds * 10);
+    expect(secs).toBeGreaterThan(LOCK_TUNING.maxSeconds * 10);
     // A still fighter 30 km out: finite, and past the old cap.
-    const far = lockSeconds(heavy(30_000, fighter.radius, REAL_REACH), CURVE);
+    const far = lockSeconds(heavy(30_000, fighter.radius, REAL_REACH), LOCK_TUNING);
     expect(Number.isFinite(far)).toBe(true);
-    expect(far).toBeGreaterThan(CURVE.maxSeconds);
-    // Past reach: still finite, only slower (owner 2026-11-14).
-    expect(lockSeconds(heavy(50_000, fighter.radius, REAL_REACH), CURVE)).toBeGreaterThan(far);
+    expect(far).toBeGreaterThan(LOCK_TUNING.maxSeconds);
+    // Past lock range (the 16"'s reach, owner 2026-11-21): no lock.
+    expect(lockSeconds(heavy(50_000, fighter.radius, REAL_REACH), LOCK_TUNING)).toBe(Infinity);
     // A sub-capital (non-absRange) gun keeps the maxSeconds rule.
     const s = WEAPON_LOCK_PROFILE.S;
     const sMount = { ...near, refSize: s.refSize, tracking: 0.01, reach: 2295, absRange: s.absRange };
-    expect(lockSeconds(sMount, CURVE)).toBe(Infinity);
+    expect(lockSeconds(sMount, LOCK_TUNING)).toBe(Infinity);
     // testMode cap still caps it.
-    expect(capLockSeconds(secs, near, 2, CURVE)).toBe(2);
+    expect(capLockSeconds(secs, near, 2)).toBe(2);
   });
 
   it('testMode lockTimeCapS still caps a long heavy lock', () => {
     const i = heavy(30_000, battleship.radius, REAL_REACH);
-    expect(lockSeconds(i, CURVE)).toBeGreaterThan(10);
-    expect(capLockSeconds(lockSeconds(i, CURVE), i, 2, CURVE)).toBe(2);
-    expect(capLockSeconds(lockSeconds(i, { ...CURVE, clampAtMax: true }), i, 0, CURVE)).toBe(0);
+    expect(lockSeconds(i, LOCK_TUNING)).toBeGreaterThan(10);
+    expect(capLockSeconds(lockSeconds(i, LOCK_TUNING), i, 2)).toBe(2);
+    expect(capLockSeconds(lockSeconds(i, { ...LOCK_TUNING, clampAtMax: true }), i, 0)).toBe(0);
   });
 
   it('structures (clampAtMax): the size/speed part caps at maxSeconds, then distance stretches heavy guns', () => {
     const fighter = getShipKind('fighter');
-    const st = { ...CURVE, clampAtMax: true };
+    const st = { ...LOCK_TUNING, clampAtMax: true };
     const crossing = { ...heavy(1500, fighter.radius, REAL_REACH), dvy: 400 };
     // Near: capped at maxSeconds × (abs ÷ reach-share) — about the old 8 s.
     const near = lockSeconds(crossing, st);
-    expect(near).toBeGreaterThan(CURVE.maxSeconds * 0.8);
-    expect(near).toBeLessThan(CURVE.maxSeconds * 1.2);
+    expect(near).toBeGreaterThan(LOCK_TUNING.maxSeconds * 0.8);
+    expect(near).toBeLessThan(LOCK_TUNING.maxSeconds * 1.2);
     // Far: longer than the old 8 s clamp.
     const far = lockSeconds({ ...heavy(30_000, fighter.radius, REAL_REACH), dvy: 400 }, st);
-    expect(far).toBeGreaterThan(CURVE.maxSeconds * 3);
+    expect(far).toBeGreaterThan(LOCK_TUNING.maxSeconds * 3);
     // A sub-capital structure gun keeps the plain 8 s clamp.
     const s = WEAPON_LOCK_PROFILE.S;
     const sMount = { ...crossing, refSize: s.refSize, tracking: 0.01, reach: 2295, absRange: s.absRange };
-    expect(lockSeconds(sMount, st)).toBe(CURVE.maxSeconds);
-    // A structure (coastal gun, defence turret) locks far past its reach too
-    // (owner 2026-11-14), only slower; firing stays range-limited.
-    const past = lockSeconds({ ...heavy(REAL_REACH * 3, fighter.radius, REAL_REACH), dvy: 400 }, st);
-    expect(Number.isFinite(past)).toBe(true);
-    expect(past).toBeGreaterThan(far);
-    expect(lockSeconds({ ...sMount, dx: 2295 * 5 }, st)).toBe(CURVE.maxSeconds);
+    expect(lockSeconds(sMount, st)).toBe(LOCK_TUNING.maxSeconds);
+    // A structure battery (coastal gun, defence turret) locks only out to its
+    // own gun's reach (owner 2026-11-21): past it, no lock.
+    expect(lockSeconds({ ...heavy(REAL_REACH * 1.05, fighter.radius, REAL_REACH), dvy: 400 }, st)).toBe(Infinity);
+    expect(lockSeconds({ ...sMount, dx: 2295 * 1.05 }, st)).toBe(Infinity);
   });
 });
 

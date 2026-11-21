@@ -1,8 +1,6 @@
 /**
  * Real-scale naval ranges: can a PLAYER battleship see, lock and hit targets
- * 30 km away? It sees them, but (owner 2026-11-21, "for now") nothing locks
- * past lock range (`LOCK_TUNING.maxLockRange`, ~1 km hull to hull), so it
- * neither locks nor fires on them. (The real-scale-ranges doc listed "entity interest" as a gap:
+ * 30 km away? (The real-scale-ranges doc listed "entity interest" as a gap:
  * ships ride ±3,072 u cells, so "a pilot can't see or lock most targets 30 km
  * out". This test is the evidence that interest does not stop it.)
  *
@@ -10,10 +8,14 @@
  *    binary swarm channel to the pilot out of interest (every 6 ticks while
  *    awake, the 1 Hz full refresh while parked); another player's ship rides
  *    every snapshot (~20 Hz).
- * 2. Locking: past lock range the server refuses every one of them: the
- *    shared lock-time rule says Infinity whatever the 16"'s reach, and no lock
- *    completes, even under `instantLock`.
- * 3. Firing: with no lock the main battery refuses to fire (#19).
+ * 2. Locking: the server accepts a held lock line (`lock_track` + bearing,
+ *    `lockLineHolds`) on every one of them; nothing cuts on interest or
+ *    distance short of the group's reach × 1.1. Everything locks: the
+ *    battleships quickly, the fighter and the solar panel slowly (past
+ *    `maxSeconds`; a player heavy gun is never blocked by size, owner
+ *    2026-11-10).
+ * 3. Firing: once locked, the main battery fires and a 16" shell hits the NPC
+ *    battleship ~23 s later.
  *
  * Runs only with the switch on: `pnpm test:naval-real`. `instantLock` skips
  * the ~17 s heavy-gun lock time (it still refuses a lock `lockSeconds` can't make).
@@ -22,6 +24,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from '../sectorRoom/harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
+import type { DamageEvent } from '../../../src/shared-types/messages.js';
 import { getWeapon, weaponAutoFireRange } from '../../../src/core/combat/WeaponCatalogue.js';
 import { NAVAL_RANGE } from '../../../src/shared-types/combat/navalRange.js';
 import { encodeAim } from '../../../src/core/combat/manualAim.js';
@@ -34,14 +37,23 @@ const RANGE = 30_000;
 
 interface SnapGroups { id: string; m: number; l: Array<{ t: string; s: number; p: number; c?: 1 }> }
 
+async function waitUntil(predicate: () => boolean, timeoutMs: number, label: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  if (!predicate()) throw new Error(`waitUntil timed out: ${label}`);
+}
+
 /** World bearing (ship-angle convention, forward = (-sin b, cos b)) of the offset (x, y). */
 const bearingTo = (x: number, y: number): number => Math.atan2(-x, y);
 
-describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleship sees targets 30 km out but cannot lock them', () => {
+describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleship sees, locks and hits targets 30 km out', () => {
   let harness: SectorTestHarness;
   afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
 
-  it('NPC capital, NPC fighter, structure and player at 30 km: seen, but none locks (past lock range) and the main battery holds fire', { timeout: 60_000 }, async () => {
+  it('NPC capital, NPC fighter, structure and player at 30 km: seen, line accepted; all lock (small ones slowly); the NPC capital is hit', { timeout: 90_000 }, async () => {
     const xl = getWeapon('naval_xl');
     expect(weaponAutoFireRange(xl), 'the switch is on: the 16" reaches 38.7 km').toBeGreaterThan(38_000);
 
@@ -112,18 +124,20 @@ describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleshi
     expect(otherSeen / (WINDOW_MS / 1000), 'another player 30 km out rides every snapshot (~20 Hz)').toBeGreaterThan(10);
 
     // ── 2. Locking: hold the main battery's line (16", reach 38.7 km) on each
-    //    target in turn, as the client's `guideLock` does. Past lock range
-    //    nothing locks, whatever the reach (owner 2026-11-21).
+    //    target in turn, as the client's `guideLock` does.
     const main = 'main';
     const poseCache = (room as unknown as { shipPoseCache: Map<string, { x: number; y: number; vx: number; vy: number }> }).shipPoseCache;
     const poseOf = (id: string): { x: number; y: number; vx: number; vy: number } => poseCache.get(id)!;
     const locks = (room as unknown as{ locks: { players: Map<string, { sensor: number; groups: Array<{ id: string; refSize: number; tracking: number; absRange: boolean; reach: number }> }> } }).locks;
     const mainGeo = locks.players.get(pid)!.groups.find((g) => g.id === main)!;
     const sensor = locks.players.get(pid)!.sensor;
-    const selfR = getShipKind('battleship').radius;
     const holdLine = (key: string, x: number, y: number): void => {
       const p = poseOf(pid);
       cr.send('lock_track', { type: 'lock_track', groupId: main, target: key, b: encodeAim(bearingTo(x - p.x, y - p.y)) });
+    };
+    const letGo = (key: string): void => {
+      cr.send('lock_track', { type: 'lock_track', groupId: main, target: null });
+      cr.send('lock_cancel', { type: 'lock_cancel', groupId: main, target: key });
     };
     const lockOf = (key: string) => groups?.find((g) => g.id === main)?.l.find((l) => l.t === key);
     /** The shared lock-time rule for this group on a target of `signature` at (x, y). */
@@ -131,31 +145,80 @@ describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleshi
       const p = poseOf(pid);
       return lockSeconds({
         refSize: mainGeo.refSize, tracking: mainGeo.tracking, absRange: mainGeo.absRange, reach: mainGeo.reach,
-        sensor, pilotSpeed: 1, signature, dx: x - p.x, dy: y - p.y, dvx: -p.vx, dvy: -p.vy, hullRadii: selfR + signature,
+        sensor, pilotSpeed: 1, signature, dx: x - p.x, dy: y - p.y, dvx: -p.vx, dvy: -p.vy,
       }, LOCK_TUNING);
     };
-    expect(mainGeo.reach, 'the 16" reaches past 30 km').toBeGreaterThan(RANGE);
-    for (const [label, key, x, sig] of [
-      ['capital', `s:${bs.entityId}`, 0, getShipKind('battleship').radius],
-      ['structure', `s:${st.entityId}`, -4_000, st.radius],
-      ['fighter', `s:${ftr.entityId}`, 4_000, getShipKind('fighter').radius],
-      ['player', `p:${otherPid}`, 8_000, getShipKind('battleship').radius],
+
+    // 2a. The NPC battleship: the line holds it (server `lockLineHolds`), the
+    //     lock builds and completes (instantLock: it completes on the next lock
+    //     step, which still refuses a lock the shared lock-time rule can't make).
+    const bkey = `s:${bs.entityId}`;
+    expect(Number.isFinite(lockSecsAt(getShipKind('battleship').radius, 0, RANGE)), 'a 16" can lock a battleship at 30 km').toBe(true);
+    holdLine(bkey, 0, RANGE);
+    await waitUntil(() => lockOf(bkey)?.s === 2, 5_000, 'capital locked');
+    expect(lockOf(bkey)?.c, 'capital: not flagged can\'t-lock').toBeUndefined();
+
+    // 2b. The small targets (a fighter, a solar panel) 30 km out: the server
+    //     ACCEPTS the line claim (the lock entry appears: lockLineHolds +
+    //     resolveTarget passed, no interest cut-off) and the 16" locks them
+    //     SLOWLY, never impossibly (owner 2026-11-10: "10 minutes or an hour
+    //     … working as intended"; one ship rule for every pilot, owner 2026-11-13).
+    //     `instantLock` completes it; the rule's time is past `maxSeconds`.
+    for (const [label, rec, x, sig] of [
+      ['structure', st, -4_000, st.radius],
+      ['fighter', ftr, 4_000, getShipKind('fighter').radius],
     ] as const) {
-      expect(lockSecsAt(sig, x, RANGE), `${label} 30 km out: past lock range`).toBe(Infinity);
+      const key = `s:${rec.entityId}`;
       holdLine(key, x, RANGE);
-      await harness.advance(600);
-      expect(lockOf(key)?.s, `${label} 30 km out: never locked (instantLock too)`).not.toBe(2);
+      await waitUntil(() => lockOf(key) !== undefined, 3_000, `${label}: the line claim is accepted`);
+      await waitUntil(() => lockOf(key)?.s === 2, 5_000, `${label}: locked`);
+      expect(lockOf(key)?.c, `${label}: not flagged can't-lock`).toBeUndefined();
+      const secs = lockSecsAt(sig, x, RANGE);
+      expect(Number.isFinite(secs), `${label}: a 16" can lock it at 30 km`).toBe(true);
+      expect(secs, `${label}: slowly`).toBeGreaterThan(LOCK_TUNING.maxSeconds);
+      letGo(key);
+      await waitUntil(() => lockOf(key) === undefined, 5_000, `${label} released`);
     }
 
-    // ── 3. Firing: no lock, so the main battery holds fire (#19).
+    // 2c. Another player's battleship 30 km out: the lock starts (failsafe
+    //     first: PvP) and is in reach.
+    const pkey = `p:${otherPid}`;
+    holdLine(pkey, 8_000, RANGE);
+    await waitUntil(() => lockOf(pkey) !== undefined, 3_000, 'player lock starts');
+    await harness.advance(500);
+    expect(lockOf(pkey)?.c, 'player battleship 30 km out: lockable').toBeUndefined();
+    letGo(pkey);
+    await waitUntil(() => lockOf(pkey) === undefined, 5_000, 'player released');
+
+    // ── 3. Firing at the NPC battleship.
+    holdLine(bkey, 0, RANGE);
+    await waitUntil(() => lockOf(bkey)?.s === 2, 5_000, 'capital re-locked');
+    const bsIds = new Set([bs.id, `swarm-${bs.entityId}`, String(bs.entityId)]);
+    let hit: DamageEvent | null = null;
+    cr.onMessage('damage', (e: DamageEvent) => {
+      if (hit === null && bsIds.has(e.targetId) && e.damage === xl.damage) hit = e;
+    });
     let accepted = 0;
     let rejected = 0;
     cr.onMessage('hit_ack', (m: { rejected?: boolean }) => { if (m.rejected) rejected++; else accepted++; });
-    for (let shot = 0; shot < 4; shot++) {
-      cr.send('fire', { type: 'fire', tick: room._internals.serverTick, clientShotId: `s${shot}`, weapon: 'naval_xl', dirAngle: 0, slotId: main });
+    let shot = 0;
+    let firedAt = 0;
+    let hitAt = 0;
+    // Hold the trigger (the client resends while held). `_internals` is a
+    // snapshot: read the tick fresh every time.
+    const deadline = Date.now() + 45_000;
+    while (Date.now() < deadline && hit === null) {
+      cr.send('fire', { type: 'fire', tick: room._internals.serverTick, clientShotId: `s${shot++}`, weapon: 'naval_xl', dirAngle: 0, slotId: main });
       await harness.advance(250);
+      if (firedAt === 0 && accepted > 0) firedAt = Date.now();
     }
-    expect(accepted, 'no shot without a lock').toBe(0);
-    expect(rejected, 'the fire claims were refused').toBeGreaterThan(0);
+    if (hit !== null) hitAt = Date.now();
+    console.log('[longRange] fire acks — accepted', accepted, 'rejected', rejected,
+      '| hit after', hitAt - firedAt, 'ms at', JSON.stringify(hit && { x: (hit as DamageEvent).hitX, y: (hit as DamageEvent).hitY }));
+    expect(accepted, 'the locked main battery fired').toBeGreaterThan(0);
+    expect(hit, 'a 16" shell hit the battleship 30 km out').not.toBeNull();
+    const h = hit as unknown as DamageEvent;
+    expect(Math.hypot(h.hitX ?? 0, (h.hitY ?? 0) - poseOf(pid).y), 'it landed ~30 km out').toBeGreaterThan(25_000);
+    expect(hitAt - firedAt, 'after a ~20 s flight (real ÷ 3)').toBeGreaterThan(15_000);
   });
 });

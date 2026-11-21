@@ -1,8 +1,8 @@
 /**
  * testMode `lockTimeCapS` — the cap math (`capLockSeconds`): no non-player
- * lock takes longer than the cap inside lock range (1 km, owner 2026-11-21);
- * a shooter with no weapon, or a target past lock range, stays unable to
- * lock; no cap leaves the rules untouched.
+ * lock takes longer than the cap inside lock range (the locker's longest
+ * weapon, owner 2026-11-21); a shooter with no weapon, or a target past lock
+ * range, stays unable to lock; no cap leaves the rules untouched.
  */
 import { describe, it, expect } from 'vitest';
 import { capLockSeconds, lockSeconds, type LockInputs } from './lockTime.js';
@@ -50,12 +50,12 @@ describe('capLockSeconds (testMode lockTimeCapS)', () => {
     expect(capLockSeconds(Infinity, i, 2)).toBe(2);
   });
 
-  it('past reach but inside lock range locks in the cap too; past lock range or with no weapon never', () => {
-    const i = inputs({ reach: 400, dx: 900 });
+  it('past this gun reach but inside lock range locks in the cap too; past lock range or with no weapon never', () => {
+    const i = inputs({ dx: 5000, lockRange: 6000 });
     expect(capLockSeconds(lockSeconds(i, LOCK_TUNING), i, 0)).toBe(0);
     expect(capLockSeconds(lockSeconds(i, LOCK_TUNING), i, 2)).toBeLessThanOrEqual(2);
-    // Past lock range (1 km, owner 2026-11-21): the cap does not lift it.
-    const far = inputs({ dx: 1200 });
+    // Past lock range (the longest weapon's reach, owner 2026-11-21): the cap does not lift it.
+    const far = inputs({ dx: 6100, lockRange: 6000 });
     expect(capLockSeconds(lockSeconds(far, LOCK_TUNING), far, 0)).toBe(Infinity);
     // No weapon reach: never.
     expect(capLockSeconds(Infinity, inputs({ reach: 0 }), 0)).toBe(Infinity);

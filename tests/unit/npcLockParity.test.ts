@@ -25,9 +25,7 @@ import { SAB_TOTAL_BYTES, SLOT_X_OFF, SLOT_Y_OFF, SLOT_ANGLE_OFF, slotBase } fro
 import type { ShipState } from '../../src/server/rooms/schema/SectorState';
 
 const LOCK_DT = 0.1; // one NPC / player lock step (s)
-// 0.9 km off the fighter's hull, inside lock range (owner 2026-11-21, 1 km
-// hull to hull): 24 + 900 + 2,876 u; past the battleship's AA guns' reach.
-const RANGE = 3800;
+const RANGE = 5000; // only the battleship's 16" reaches a target this far out
 const MAX_STEPS = 1000; // 100 s of lock steps: every loop here is bounded
 
 /** A battleship's 16" group on a still fighter `RANGE` u out, exactly as the
@@ -40,7 +38,6 @@ function playerBattleship16InchOnFighter(): LockInputs {
     refSize: g.refSize, tracking: g.tracking, reach: g.reach, absRange: g.absRange,
     sensor: sensorFor(bs), pilotSpeed: 1, signature: signatureFor(getShipKind('fighter')),
     dx: RANGE, dy: 0, dvx: 0, dvy: 0,
-    hullRadii: signatureFor(bs) + signatureFor(getShipKind('fighter')),
   };
 }
 

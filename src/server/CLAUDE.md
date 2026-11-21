@@ -129,7 +129,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 - **Every player is tracked** by `LockSubsystem` from join to leave. A group fires only with a LOCKED target and only mounts passing `mountFiresOn` (reach + bearing); none ⇒ `hit_ack { rejected }`, nothing spent.
 - **Player mounts aim only at their group's lock**, else home. Every self-chosen target ranks by `mountPriority`. Player and NPC share ONE `lockSeconds` path (no per-pilot flag). `lock_track` is verified with `lockLineHolds`.
-- **Ships lock only within `LOCK_TUNING.maxLockRange`, hull to hull (`pastLockRange`).** Locks and attacks keep hostility alive, never create it. Tests use the lock triggers, never a fire bypass.
+- **Lock range = the locker's longest weapon max range (`shipLockRange`), batteries too.** Locks and attacks keep hostility alive, never create it. Tests use the lock triggers, never a fire bypass.
 - **NPC drones, NPC capital turrets and structure turrets fire only with a completed lock**; their range is per mount to the target's hull via `mountInReach`. An AI shot leaves its drawn barrel. Spectating doesn't dodge a fight.
 - Full text and locks: [fire-control.md](../../docs/architecture/fire-control.md#server-implementation-notes).
 
