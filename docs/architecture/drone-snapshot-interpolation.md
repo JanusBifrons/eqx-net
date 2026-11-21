@@ -285,6 +285,22 @@ clears it. Nothing reads it yet; the S4 hold uses it to tell a stalled stream
 from one drone missing from a packet. Lock:
 `src/client/net/swarmStreamNewestStamp.test.ts`.
 
+**The maximum total delay and the counted re-sync (S4-4).** During a stream
+stall the S4 hold will let the display delay grow so playback keeps its place
+and resumes from there. That growth is bounded by `MAX_TOTAL_DISPLAY_DELAY_MS`
+(400 game ms, so 400 / speed wall ms, the same convention as the floor and
+ceiling; owner decision D2: 280 steady, 400 after a dropout). A stall that would
+push the delay further (a gap over ~0.75 s, an idle sector resuming, a
+backgrounded tab) re-syncs instead: `boundSwarmHoldDelayMs(requested, target,
+speed)` returns the request while it is at or under the bound and the target
+past it (a non-finite request re-syncs too). It is pure and allocation-free;
+the caller checks `isSwarmHoldDelayOverMax` with the same inputs and calls
+`noteSwarmResync()` once, read with `getSwarmResyncCount` and zeroed with the
+other stream counters in `resetSwarmTickClock`. Nothing calls it yet (S4-5
+wires the hold). The pose ring is sized for this bound
+(`tests/unit/poseRingDepth.test.ts` imports the constant). Lock:
+`src/client/net/swarmMaxDelayResync.test.ts`.
+
 **The packet's tick must be the tick of its poses.** The room and the physics
 worker run separate 60 Hz loops. The room reads the SAB tick at the top of its
 update, and the worker can publish the next step before the swarm encoder reads

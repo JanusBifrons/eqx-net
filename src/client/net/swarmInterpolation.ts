@@ -85,6 +85,15 @@ export { TELEPORT_MAX_PLAUSIBLE_SPEED, TELEPORT_FLOOR_U } from './plausibleSpeed
  *  the teleport guard covers the in↔out re-acquire. */
 export const ADAPTIVE_DELAY_CEILING_MS = 280;
 
+/** Largest total drone display delay (GAME ms; wall = 400 / speed, the same
+ *  convention as the floor and ceiling). Netcode gap smoothing S4, owner
+ *  decision D2: 280 steady, allowed to grow to 400 while playback holds its
+ *  place through a stream stall. A stall that would push it further (a gap
+ *  over ~0.75 s, an idle sector resuming, a backgrounded tab) re-syncs the
+ *  delay to its target in one step (`boundSwarmHoldDelayMs`). The pose ring
+ *  is sized to hold it (`tests/unit/poseRingDepth.test.ts`). */
+export const MAX_TOTAL_DISPLAY_DELAY_MS = 400;
+
 /** Module-level adaptive delay: the SLEWED value every read uses (netcode gap
  *  smoothing S3-2). Every tick-stamped drone packet (`swarmArrivalStampMs`)
  *  sets `_displayDelayTargetMs` from the lateness estimate (S3-3,
@@ -260,6 +269,9 @@ let _oldEndClampCount = 0;
 /** Reads past the newest pose by more than EXTRAPOLATION_LIMIT_MS ÷ speed (frozen at
  *  the glide limit). Counted per entity per frame. */
 let _glideLimitCount = 0;
+/** Deliberate re-syncs: a held delay that would pass
+ *  MAX_TOTAL_DISPLAY_DELAY_MS reset to its target in one step (S4-4). */
+let _resyncCount = 0;
 /** The read point: the target time of the latest interpolation read. NaN
  *  until the first read, so no overwrite counts before anything was read. */
 let _lastReadTargetMs = Number.NaN;
@@ -326,6 +338,30 @@ export function noteSwarmStreamStamp(tick: number, stampMs: number): void {
  *  first tick-stamped packet after a reset. */
 export function getSwarmStreamNewestStampMs(): number { return _streamNewestStampMs; }
 
+// Maximum total display delay + counted re-sync (netcode gap smoothing, S4-4).
+// Nothing calls these yet; S4-5 lets the delay grow during a stream stall
+// (read point held at the stream newest stamp + glide cap) and bounds it here.
+
+/** True when a requested hold delay (wall ms) passes
+ *  MAX_TOTAL_DISPLAY_DELAY_MS / speed. A non-finite request counts as over
+ *  (re-sync rather than read at a garbage delay). Pure. */
+export function isSwarmHoldDelayOverMax(requestedDelayWallMs: number, speed: number): boolean {
+  const s = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  return !(requestedDelayWallMs <= MAX_TOTAL_DISPLAY_DELAY_MS / s);
+}
+
+/** The delay (wall ms) a hold may use: the request while it is at or under
+ *  MAX_TOTAL_DISPLAY_DELAY_MS / speed, otherwise `targetWallMs` (the
+ *  re-sync: the delay resets to its target in one step). Pure; the caller
+ *  checks `isSwarmHoldDelayOverMax` with the same inputs and calls
+ *  `noteSwarmResync()` once for a re-sync. */
+export function boundSwarmHoldDelayMs(requestedDelayWallMs: number, targetWallMs: number, speed: number): number {
+  return isSwarmHoldDelayOverMax(requestedDelayWallMs, speed) ? targetWallMs : requestedDelayWallMs;
+}
+
+/** Count one deliberate re-sync (see `boundSwarmHoldDelayMs`). */
+export function noteSwarmResync(): void { _resyncCount++; }
+
 /**
  * The time a binary swarm packet of server tick `tick` is stamped with in the
  * pose ring (fleet-melee follow jitter, owner take 10). Stamping the raw
@@ -377,6 +413,7 @@ export function resetSwarmTickClock(): void {
   _overwriteUnreadCount = 0;
   _oldEndClampCount = 0;
   _glideLimitCount = 0;
+  _resyncCount = 0;
   _lastReadTargetMs = Number.NaN;
 }
 
@@ -392,6 +429,8 @@ export function getSwarmLatenessCount(): number { return _latenessCount; }
 export function getSwarmOverwriteUnreadCount(): number { return _overwriteUnreadCount; }
 export function getSwarmOldEndClampCount(): number { return _oldEndClampCount; }
 export function getSwarmGlideLimitCount(): number { return _glideLimitCount; }
+/** Deliberate re-syncs since the last reset (S4-4). */
+export function getSwarmResyncCount(): number { return _resyncCount; }
 /** Smoothed drone packet lateness (wall ms); sizes the display-delay target. */
 export function getSwarmLatenessEstimateMs(): number { return _latenessEstimate.estimateMs; }
 /** Smoothed mean absolute deviation of drone packet lateness (wall ms). */

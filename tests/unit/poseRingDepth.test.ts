@@ -5,21 +5,18 @@
  * ceiling, every drone pins to its oldest sample and only moves when a packet
  * arrives. Lives in tests/unit because core may not import the client-zone
  * ceiling constant. S4-3 extends it to the 400 ms maximum total delay after a
- * dropout (ring 21 -> 28).
+ * dropout (ring 21 -> 28); S4-4 moved that 400 ms into the client constant
+ * `MAX_TOTAL_DISPLAY_DELAY_MS`.
  */
 import { describe, it, expect } from 'vitest';
 import { POSE_RING_DEPTH } from '../../src/core/contracts/IRenderer.js';
-import { ADAPTIVE_DELAY_CEILING_MS } from '../../src/client/net/swarmInterpolation.js';
+import { ADAPTIVE_DELAY_CEILING_MS, MAX_TOTAL_DISPLAY_DELAY_MS } from '../../src/client/net/swarmInterpolation.js';
 
 /** Server simulation rate: drones are tick-stamped at 60 Hz. */
 const SERVER_TICK_HZ = 60;
 const SERVER_TICK_MS = 1000 / SERVER_TICK_HZ;
 /** Headroom slots: arrival jitter + a late packet not evicting the one still needed. */
 const RING_HEADROOM_SLOTS = 4;
-/** Largest total drone display delay (game ms): 280 ms steady, allowed to grow
- *  to 400 ms after a dropout (owner decision D2, gap-smoothing S4). S4-5 adds
- *  the client constant; until then the ring is sized against this value. */
-const MAX_TOTAL_DISPLAY_DELAY_MS = 400;
 /** Arbitrary newest-sample stamp for the synthetic ring. */
 const NEWEST_STAMP_MS = 100_000;
 
