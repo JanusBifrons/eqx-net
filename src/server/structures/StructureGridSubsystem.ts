@@ -50,13 +50,7 @@ import {
   TRANSFER_PULSE_MS,
   TURRET_TICK_MS,
 } from '../../core/structures/structureGridConstants.js';
-import {
-  autoConnectStructure,
-  buildGridNodes,
-  linkReachBox,
-  reconnectRefusalNotice,
-  type AutoConnectRefusal,
-} from './structureGridView.js';
+import { autoConnectStructure, buildGridNodes, linkReachBox, reconnectWithNotice } from './structureGridView.js';
 import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
@@ -236,8 +230,6 @@ export class StructureGridSubsystem {
   private readonly nearestView: TurretTargetView = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: FALLBACK_TARGET_SIGNATURE };
   /** Scratch for `linkReachBox` (the reconnect `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
-  /** Scratch: why the last manual reconnect linked nothing. */
-  private readonly reconnectWhy: AutoConnectRefusal = { reason: null };
   /** The player-facing reason the last `reconnect` made no new link (e.g.
    *  "Can't link: the way is blocked by an asteroid or structure"), or null
    *  when it linked (or the id was unknown). The room sends it as a notice,
@@ -867,11 +859,7 @@ export class StructureGridSubsystem {
   reconnect(id: string): boolean {
     this.lastReconnectRefusal = null;
     if (!this.hooks.registry.get(id)) return false;
-    const why = this.reconnectWhy;
-    const inReach = linkReachBox(this.hooks.registry, id, this.linkBox);
-    const linked = inReach
-      && autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.(this.linkBox), why) !== null;
-    if (!linked) this.lastReconnectRefusal = reconnectRefusalNotice(inReach ? why.reason : null);
+    this.lastReconnectRefusal = reconnectWithNotice(this.hooks.registry, id, this.linkBox, this.hooks.getObstacles);
     return true;
   }
 

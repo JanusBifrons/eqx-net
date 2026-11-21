@@ -278,3 +278,20 @@ export function connectExplicit(
   registry.addConnection(aId, bId, CONNECTION_THROUGHPUT, linkPick.a, linkPick.b);
   return true;
 }
+
+/** Scratch: why the last manual reconnect linked nothing. */
+const reconnectWhy: AutoConnectRefusal = { reason: null };
+
+/** A manual reconnect (`StructureGridSubsystem.reconnect`): wire `id` to
+ *  the nearest legal in-range hub(s), additively. Returns null when it linked,
+ *  else the player-facing reason it linked nothing. `box` is caller scratch. */
+export function reconnectWithNotice(
+  registry: StructureRegistry,
+  id: string,
+  box: ObstacleBox,
+  getObstacles?: (near?: ObstacleBox) => readonly GridObstacle[],
+): string | null {
+  const inReach = linkReachBox(registry, id, box);
+  const linked = inReach && autoConnectStructure(registry, id, getObstacles?.(box), reconnectWhy) !== null;
+  return linked ? null : reconnectRefusalNotice(inReach ? reconnectWhy.reason : null);
+}
