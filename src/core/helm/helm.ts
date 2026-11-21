@@ -22,6 +22,7 @@
  */
 import type { ShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { maxTurnPerTick, turnStopAngle } from '../physics/applyShipInput.js';
 
 /** Speed settings: stop, one third, two thirds, full. */
 export type HelmSpeed = 0 | 1 | 2 | 3;
@@ -120,8 +121,13 @@ export function insideTurnCircle(
 /**
  * One tick of the helm. `out` carries the previous tick's thrust bit (the
  * speed hysteresis) and is overwritten with this tick's inputs.
+ * `turnStepRad` is the ship's per-tick turn with its stat upgrades
+ * (`PhysicsWorld.maxTurnPerTick`); it defaults to the stock kind's.
  */
-export function helmStep(order: HelmOrder, pose: HelmPose, kind: HelmKind, out: HelmOutput): HelmOutput {
+export function helmStep(
+  order: HelmOrder, pose: HelmPose, kind: HelmKind, out: HelmOutput,
+  turnStepRad = maxTurnPerTick(kind),
+): HelmOutput {
   const wasThrusting = out.thrust;
   out.thrust = false; out.turnLeft = false; out.turnRight = false; out.arrived = false;
   if (!order.active) return out;
@@ -152,7 +158,10 @@ export function helmStep(order: HelmOrder, pose: HelmPose, kind: HelmKind, out: 
   const w = pose.angvel;
   const coastAngle = kind.angularDamping > 0 ? Math.abs(w) / kind.angularDamping : 0;
   const turningTowards = (w > 0 && err > 0) || (w < 0 && err < 0);
-  if (Math.abs(err) > HELM_HEADING_DEADBAND && !(turningTowards && Math.abs(err) <= coastAngle)) {
+  // A snap-turn hull yaws a whole step per tick and has no coast to lean on:
+  // the deadband widens to half that step, or it overshoots and turns back
+  // every tick (sideways wobble on a course).
+  if (Math.abs(err) > turnStopAngle(HELM_HEADING_DEADBAND, turnStepRad) && !(turningTowards && Math.abs(err) <= coastAngle)) {
     if (err > 0) out.turnLeft = true; else out.turnRight = true;
   }
 
