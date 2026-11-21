@@ -80,13 +80,14 @@ export function useShipSwapDispatcher(
   const phase = useUIStore((s) => s.phase);
   useEffect(() => {
     if (!pendingShipSwap) return;
-    const { shipId, sectorKey } = pendingShipSwap;
+    const { shipId, sectorKey, startMode = 'fly' } = pendingShipSwap;
     logEvent('ship_swap_dispatch', { shipId, sectorKey, fromPhase: phase });
     // Update room overrides before the phase flip so when GameSurface
     // remounts it sees the new values immediately.
     setRoomNameOverride(`galaxy-${sectorKey}`);
-    // RTS slice 10: "pilot this ship" from the galaxy map lands at the controls.
-    setJoinOptionsOverride({ shipId, startMode: 'fly' });
+    // RTS slice 10: "pilot this ship" from the galaxy map lands at the controls;
+    // an auto-rejoin (useAutoRejoin) keeps the control mode the player had.
+    setJoinOptionsOverride({ shipId, startMode });
     // Clear the current-sector chrome so the brief galaxy-map glimpse
     // (if any) and post-arrival HUD start from the new sector identity.
     setCurrentSectorKey(null);
