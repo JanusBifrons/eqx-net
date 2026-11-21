@@ -347,6 +347,10 @@ export class JoinHandler {
           spawnX: liveX,
           spawnY: liveY,
           sessionId: client.sessionId,
+          // The hull never left the world (it lingered at its live pose):
+          // others keep receiving it through the handshake instead of it
+          // vanishing and warping in again on the pilot's return.
+          inWorld: true,
         });
         serverLogEvent('pending_join_registered', {
           playerId,

@@ -89,6 +89,9 @@ export class CommandPointerRouter {
 
   get enabled(): boolean { return this._enabled; }
 
+  /** No gesture in flight (every pointer lifted). */
+  get idle(): boolean { return this.mode === 'idle'; }
+
   /** Toggle Command (true) vs Fly (false). Resets any in-flight gesture. */
   setEnabled(enabled: boolean): RouterAction[] {
     if (enabled === this._enabled) return [];

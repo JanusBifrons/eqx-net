@@ -262,3 +262,46 @@ export function relayPieceSplit(
   a.targetSplit(from, KEYS);
   if (b !== undefined && b !== a) b.targetSplit(from, KEYS);
 }
+
+/**
+ * An idle AUTO salvage group `g` (the tractors beside a mining laser) joins
+ * the rock or wreck its own ship already holds LOCKED in another group:
+ * it takes the best live piece of that lineage a mount of it can work
+ * (`memberRank`, a clear line first), LOCKED at once (same lineage, as a
+ * split). AUTO never picks a rock for itself; this only follows the pilot's
+ * own lock, so a hands-off LOCK on the laser group also brings the pieces in
+ * (mining-skiff hands-off bug: the laser cut once, left the haulable pieces
+ * for the tractors, and the tractor group never locked). Cost while idle:
+ * one rank per lineage member of each LOCKED lineage lock of the ship; no
+ * allocation unless it adds the lock. True when a lock was added.
+ */
+export function adoptShipLineage(
+  d: LockSalvageDeps, ship: LineageCtx['ship'], playerId: string, g: LineageGroup, groups: ReadonlyArray<LineageGroup>,
+): boolean {
+  const src = d.lineage;
+  if (src === undefined || g.locks.length !== 0 || !salvageGroup(g)) return false;
+  const beam = groupBeam(g);
+  for (const h of groups) {
+    if (h === g) continue;
+    for (const e of h.locks) {
+      if (e.stage !== 'locked' || e.root < 0) continue;
+      MEMBERS.length = 0;
+      src.keysOf(e.root, MEMBERS);
+      let best: string | null = null;
+      let bestRank = 15; // workable by a mount of `g` (16) or nothing
+      for (const key of MEMBERS) {
+        const base = memberRank(g, lockSalvageFlags(d, ship, playerId, key), false);
+        if (base + 8 <= bestRank) continue;
+        const r = base + (lineClear(d, playerId, beam, key) ? 8 : 0);
+        if (r > bestRank) { best = key; bestRank = r; }
+      }
+      if (best === null) continue;
+      const a = newLock(best, true, e.track);
+      a.stage = e.stage; a.progress = e.progress; a.root = e.root;
+      refreshLockSalvage(d, ship, playerId, a);
+      g.locks.push(a);
+      return true;
+    }
+  }
+  return false;
+}

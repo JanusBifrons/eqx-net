@@ -172,6 +172,12 @@ export class LeaveHandler {
       // playerToSlot for rebind. lingeringSlots fills only on
       // fresh-spawn-displaces in onJoin.
       ship.isActive = false;
+      // Nobody flies it now: release every held key so it coasts to a stop
+      // under normal physics (the worker re-applies the last input while its
+      // queue is empty, so a pilot who dropped holding thrust thrusted on
+      // forever). Tick 0 sits at or below the slot's acked tick, so it only
+      // replaces the held input (`tickInputQueue`).
+      d.postToWorker({ type: 'INPUT', slot: slot!, inputTick: 0, thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false });
       // Override consumed for this disconnect; drop it so a later rejoin
       // without lingerMs reverts to the production TTL.
       d.clearLingerMs(playerId);

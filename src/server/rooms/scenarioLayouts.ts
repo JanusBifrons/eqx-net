@@ -559,9 +559,10 @@ export const BASE_FLOW_OPTS = {
     { kind: 'solar', x: 800, y: -450, rot: 90 },
     { kind: 'solar', x: 800, y: 450, rot: 90 },
     { kind: 'connector', x: 1000, y: 0 },
+    // The end Solar first: it needs an east face (one cable per connector socket).
+    { kind: 'solar', x: 1700, y: 0, rot: 90 },
     { kind: 'solar', x: 1300, y: -450, rot: 90 },
     { kind: 'solar', x: 1300, y: 450, rot: 90 },
-    { kind: 'solar', x: 1700, y: 0, rot: 90 },
   ],
   prebuiltStructuresOwner: 'perf-base',
   /** One rock beside each Miner (≈ 460 u, inside its 800 u range). */

@@ -150,13 +150,25 @@ export function readEvents(text) {
 
 /**
  * Name every LoAF script and summarise the stalls in a capture's events.
- * @returns {{ functions: Array<{ where: string, name: string | null, code: string | null, totalMs: number, count: number, maxMs: number }>, unresolved: Record<string, number>, stalls: Array<{ tag: string, mode: string, count: number, totalMs: number }>, zoom: Array<{ viewHalf: string, count: number }> }}
+ *
+ * phases: stall time by frame phase (client lanePhaseTiming.ts), summed over
+ * raf_stutter and raf_gap only, one per stall frame (a loaf repeats it).
+ * "(untimed)" is the gap no mark covers: GC, layout, compositing, GPU waits.
+ * @returns {{ functions: Array<{ where: string, name: string | null, code: string | null, totalMs: number, count: number, maxMs: number }>, unresolved: Record<string, number>, stalls: Array<{ tag: string, mode: string, count: number, totalMs: number }>, zoom: Array<{ viewHalf: string, count: number }>, phases: Array<{ phase: string, totalMs: number, count: number, maxMs: number, share: number }>, phaseFrames: number }}
  */
 export function nameStalls(events, resolve) {
   const fns = new Map();
   const unresolved = {};
   const stalls = new Map();
   const zoom = new Map();
+  const phases = new Map();
+  let phaseFrames = 0;
+  let phaseGapMs = 0;
+  const addPhase = (phase, ms) => {
+    const p = phases.get(phase) ?? { phase, totalMs: 0, count: 0, maxMs: 0 };
+    p.totalMs += ms; p.count++; p.maxMs = Math.max(p.maxMs, ms);
+    phases.set(phase, p);
+  };
   for (const ev of events) {
     const d = ev?.data ?? {};
     if (ev.tag === 'loaf') {
@@ -178,6 +190,16 @@ export function nameStalls(events, resolve) {
       const vh = typeof d.viewHalf === 'number' ? zoomBucket(d.viewHalf) : '?';
       zoom.set(vh, (zoom.get(vh) ?? 0) + 1);
     }
+    if ((ev.tag === 'raf_stutter' || ev.tag === 'raf_gap') && d.phases && typeof d.phases === 'object') {
+      const gap = typeof d.elapsedMs === 'number' ? d.elapsedMs : 0;
+      let timed = 0;
+      for (const [phase, ms] of Object.entries(d.phases)) {
+        if (typeof ms !== 'number') continue;
+        addPhase(phase, ms); timed += ms;
+      }
+      if (gap > timed) addPhase('(untimed)', gap - timed);
+      phaseFrames++; phaseGapMs += gap;
+    }
   }
   const round = (x) => Math.round(x * 10) / 10;
   return {
@@ -185,6 +207,10 @@ export function nameStalls(events, resolve) {
     unresolved,
     stalls: [...stalls.values()].map((s) => ({ ...s, totalMs: round(s.totalMs) })),
     zoom: [...zoom.entries()].map(([viewHalf, count]) => ({ viewHalf, count })).sort((a, b) => b.count - a.count),
+    phases: [...phases.values()]
+      .map((p) => ({ ...p, totalMs: round(p.totalMs), maxMs: round(p.maxMs), share: phaseGapMs > 0 ? Math.round((p.totalMs / phaseGapMs) * 1000) / 10 : 0 }))
+      .sort((a, b) => b.totalMs - a.totalMs),
+    phaseFrames,
   };
 }
 
@@ -216,6 +242,14 @@ function main(argv) {
   for (const s of res.stalls) console.log(`  ${s.tag.padEnd(12)} ${s.mode.padEnd(8)} x${s.count}  ${s.totalMs} ms`);
   console.log('Stalls by zoom (viewHalf, game units):');
   for (const z of res.zoom) console.log(`  ${z.viewHalf.padEnd(12)} x${z.count}`);
+  if (res.phaseFrames === 0) {
+    console.log('\nStall time by frame phase: none recorded (a build before lane phase timing, or no raf_stutter / raf_gap)');
+    return;
+  }
+  console.log(`\nStall time by frame phase (${res.phaseFrames} stall frames, raf_stutter + raf_gap):`);
+  for (const p of res.phases) {
+    console.log(`${String(p.totalMs).padStart(9)} ms ${String(p.share).padStart(5)} %  in x${String(p.count).padEnd(4)} max ${String(p.maxMs).padStart(6)}  ${p.phase}`);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) main(process.argv);

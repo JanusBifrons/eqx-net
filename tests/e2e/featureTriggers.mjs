@@ -46,10 +46,10 @@ export const FEATURE_TRIGGERS = [
     specs: ['time-scale-chip'],
   },
   {
-    // Capital helm orders + the green move marker at the course point.
+    // Capital helm orders + the green move marker; Fly is manual only (no panel, no tap course).
     area: 'capital helm',
     paths: ['src/core/helm/', 'src/client/helm/', 'src/client/render/helm/', 'src/client/components/HelmPanel'],
-    specs: ['capital-helm'],
+    specs: ['capital-helm', 'player-capital-galaxy'],
   },
   {
     // Warp route check: in-sector warps stop at the near side of a field or structure.
