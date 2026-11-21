@@ -25,8 +25,21 @@
  *     hold → bigger Welford mean → bigger leadTicks → saturation.
  *     Mobile cap 2026-05-09T09-31-30-823Z-n3n9jx caught `rttMs`
  *     saturating at 200-870 ms with actual Wi-Fi RTT ~30 ms.
+ *
+ *   #6 (2026-11-21) — the sample is the server-measured input path, not
+ *     `lastRtt`. With the held-ack rule the ack for tick X arrives `lead`
+ *     ticks after X was sent whether X reached the server in time or not,
+ *     so `lastRtt − lead` was ~0 on every link and the lead sat on its
+ *     3-tick floor (phone over a tunnel, capture fxc3y2: ticksAhead p50 3
+ *     on a ~100 ms link; late inputs → heading corrections of exactly
+ *     N × turn-per-tick, the "jitters left to right" report). The server
+ *     reports each pilot's input margin (`inputLeadMargin`) and the sample
+ *     is `inputPathTicks(lead, margin)`: independent of the lead, so no
+ *     feedback loop (#5's concern), and it sees real lateness. `lastRtt`
+ *     stays as telemetry only. Lock: `lateInputLead.test.ts`.
  */
 
+import { inputPathTicks } from '@core/physics/inputQueue';
 import { welfordPush, welfordMean, welfordStdDev, type WelfordState } from '@core/math/Welford';
 import {
   computeDesiredLead,
@@ -50,6 +63,12 @@ export interface RttLookaheadCtx {
   lookaheadCtrl: LookaheadController;
   leadTicks: number;
   lastFrameMs: number;
+  /** The snapshot's `inputMargin` (game ticks): claimed tick minus server
+   *  tick when the server got this pilot's latest input. Absent = no input
+   *  since the last snapshot; the lead keeps its value. */
+  inputMargin: number | undefined;
+  /** Sector game speed: the margin is game ticks, `leadTicks` wall ticks. */
+  timeScale: number;
 }
 
 /**
@@ -63,11 +82,14 @@ export function updateRttAndLookahead(
   const isGapRelatedRtt =
     intervalMs > 0 &&
     (intervalMs < STEADY_STATE_INTERVAL_MIN_MS || intervalMs > STEADY_STATE_INTERVAL_MAX_MS);
-  if (!ctx.reconciler || ctx.reconciler.lastRtt <= 0 || isGapRelatedRtt) {
+  if (!ctx.reconciler || ctx.inputMargin === undefined || isGapRelatedRtt) {
     return ctx.leadTicks;
   }
-  const networkRtt = Math.max(0, ctx.reconciler.lastRtt - ctx.leadTicks * FIXED_MS);
-  const rttSample = Math.min(networkRtt, RTT_SAMPLE_CLAMP_MS);
+  // The input path in wall ms: how far ahead an input must be sent to reach
+  // the server before its tick, from the server-measured margin (#6 above).
+  const scale = ctx.timeScale > 0 ? ctx.timeScale : 1;
+  const pathTicks = inputPathTicks(ctx.leadTicks * scale, ctx.inputMargin) / scale;
+  const rttSample = Math.min(Math.max(0, pathTicks * FIXED_MS), RTT_SAMPLE_CLAMP_MS);
   welfordPush(ctx.rttWelford, rttSample);
   const mean = welfordMean(ctx.rttWelford);
   const stdDev = welfordStdDev(ctx.rttWelford);

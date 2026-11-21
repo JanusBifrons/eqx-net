@@ -76,6 +76,14 @@ This works for stable links but **under-buffers** unstable ones — when jitter 
 
 Multi-tick target jumps ramp via Stage 1's `CritDampedSpring` (100 ms half-life ≈ 200 ms total settle); ≤1-tick changes snap directly to avoid perpetual half-tick spring oscillation on per-snapshot integer noise. Frame-rate independent: the closed-form spring step gives identical results at 8 ms vs 33 ms cadence.
 
+**What the Welford sample is (input path, not RTT).** The sample is the time an input takes to reach the server, measured by the server, not the reconciler's `lastRtt`. The server records each input's margin, `inputLeadMargin(claimedTick, serverTickAtArrival)` (`core/physics/inputQueue.ts`), and sends the pilot's latest one on its next snapshot as `inputMargin` (`server/rooms/inputAckWire.ts`). The client turns it into a path length with the shared `inputPathTicks(lead, margin) = lead − margin + 1` (one slop tick because the room tick trails the worker tick) and feeds `pathTicks × 16.67 ms` to the controller (`rttLookaheadUpdater.ts`). The sample doesn't depend on the current lead, so the lead settles at the input path's mean + 2σ.
+
+`lastRtt` can't be the sample. Under the held-input rule the server synthesises the ack for tick X at server tick X whether or not input X has arrived. So `lastRtt ≈ lead × 16.67 ms` by construction, and `lastRtt − lead × 16.67` is about 0 on every link. In playtest capture `fxc3y2` (phone over the tunnel) it was clamped to 0 on 54 % of snapshots and the lead sat at 2–3 ticks on a ~100 ms link. Inputs then arrived late and were replaced by held repeats, and the server's heading came back shifted by whole turn steps ("ship jitters left to right"). Lock: `src/client/net/lateInputLead.test.ts`, a closed-loop jittered-link replay that counts heading corrections.
+
+### History
+
+- Hotfix #5 fed `max(0, lastRtt − lead × 16.67)`. Under the held-ack contract that sample was blind, so the lead was pinned at its 3-tick floor. Hotfix #6 replaced it with the server-measured input margin.
+
 ## Snapshot drop detection + adaptive interp delay (Stage 4)
 
 The swarm-interp buffer's pre-Stage-4 floor was driven only by the EWMA of inter-arrival times. When the wire drops snapshots, that EWMA goes UP (intervals look longer) but only after a few snapshots, and the buffer can briefly run out of bracketing arrivals — visible as a sprite freeze + recovery glitch.
