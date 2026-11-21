@@ -16,7 +16,7 @@ The autopilot flies your ship to a point you pick and takes it round rock on the
 ## Limits
 
 - One route request at a time per player, and at most two a second; extra requests are ignored, and the client simply asks again.
-- **Setting a course:** tap empty space (every hull). WASD or the stick cancels it. Every hull shows the helm panel (owner, 2026-11-18).
+- **Setting a course:** a Command control only (owner, 2026-11-21: Fly is hand flying, see [rts-command](rts-command.md)). In Fly a tap on empty space sets no course and the helm panel is hidden for every hull; entering Fly drops any course (`client/helm/helmModeGate.ts`). WASD or the stick cancels a course. The helm's steering itself is unchanged and stays locked through the programmatic `__eqxClient.setHelmCourse` hook (e2e, netgate). (Was: tap empty space in Fly, every hull, owner 2026-11-18.)
 - **Flying the route:** the helm steers at each turn in order and moves on to the next one as soon as it is within its turn lead (`helmPassRadius`: about how far the ship travels while it comes round), so it sweeps through bends rather than stopping at each. Only the last leg brakes and arrives; arrival is within the hull's own size (`helmArriveRadius`).
 - **Reply lost or late:** a reply older than the current course is ignored; one that never comes is asked for again after 5 s, and the ship flies straight at the point meanwhile.
 

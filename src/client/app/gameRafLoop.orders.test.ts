@@ -45,6 +45,7 @@ function buildLoop(): (now: number) => void {
     tickPhysics: vi.fn(), tickInbound: vi.fn(), updateMirror: vi.fn(), sendClientReady: vi.fn(),
     consumePendingCameraGlide: () => null,
     setFieldView: () => {},
+    clearHelm: () => {}, // entering Fly drops any helm course (helmModeGate)
     consumePendingFleetArrival: () => null,
     mirror: { localPlayerId: 'ship-1', ships: new Map(), swarm: new Map(), projectiles: new Map() },
     transitInstr: { wantsFrame: () => false },
