@@ -83,4 +83,9 @@ export interface PredictionStats {
   /** perf-floor Phase 1 — `performance.memory.usedJSHeapSize` in MiB.
    *  Undefined on non-Chromium browsers (Firefox / Safari). */
   heapUsedMb: number | undefined;
+  /** Unrounded server tick-rate EWMA (the store holds only the rounded HUD
+   *  value, so an unchanged reading never notifies). Unset until seeded. */
+  serverTickHzEwma?: number;
+  /** Wall time (ms) of the last rolling RAF / longtask ring scan. */
+  rollingStatsAtMs?: number;
 }
