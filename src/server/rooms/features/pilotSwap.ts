@@ -121,6 +121,20 @@ export class PilotSwap {
     return out;
   }
 
+  /**
+   * The player's own ship here, for its hold (packed stock, the build gate):
+   * the hull they fly, else the hull they parked by Command / Build while it
+   * still lingers here and is theirs. A Quick Launch lands in Command view and
+   * Build always lets go of the ship, so the starter crate sits in a PARKED hull.
+   */
+  ownShipKey(playerId: string): string | undefined {
+    const active = this.h.playerToActiveShipInstance.get(playerId);
+    if (active !== undefined) return active;
+    const sid = this.h.spectateParkedHull.get(playerId);
+    if (sid === undefined || !this.h.lingeringSlots.has(sid)) return undefined;
+    return this.h.state().ships.get(sid)?.playerId === playerId ? sid : undefined;
+  }
+
   /** WeaponMountTicker dep: visit every connected pilot's spectate-parked
    *  hull under the PILOT's id (so the capital's per-pilot NPC lock and the
    *  drone's `hostileTo` both key it). Bound once (#14). */
