@@ -77,17 +77,21 @@ export function computeRemoteLerpOffsets(ctx: RemoteLerpOffsetCtx): void {
     // spring's first step is governed purely by the new offset. This
     // matches Reconciler.reconcile behaviour. An axis that did not move
     // keeps decaying what it had, so the sprite stays where it was drawn.
+    // Netgap S2-1 (plan 3.3): the new offset carries the part of the old
+    // one still decaying (drawn before - physics after), so a correction
+    // landing mid-ease does not step the drawn ship. The guard above keeps
+    // the RAW correction distance.
     const existing = ctx.remoteShipOffsets.get(remoteId);
     if (existing) {
       if (posMoved) {
-        existing.sx.x = ox;
+        existing.sx.x = ox + existing.sx.x;
         existing.sx.v = 0;
-        existing.sy.x = oy;
+        existing.sy.x = oy + existing.sy.x;
         existing.sy.v = 0;
         existing.halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
       }
       if (angMoved) {
-        existing.sa.x = oa;
+        existing.sa.x = wrapPi(oa + existing.sa.x);
         existing.sa.v = 0;
       }
     } else {

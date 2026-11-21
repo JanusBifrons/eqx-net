@@ -235,17 +235,20 @@ describe('other players\' ships through gaps and corrections — today\'s number
 
     it('records today\'s counts', () => {
       expect(heldCount).toBe(9);
-      expect(counters.snaps).toBe(41);
-      expect(counters.largestSnapU).toBeCloseTo(99.388, 2);
-      expect(counters.totalSnapU).toBeCloseTo(216.609, 2);
+      // S2-1 (continuous offset): largest snap 99.388 -> 26.49 u, total
+      // 216.609 -> 212.087 u, but the gap's correction is now spread over
+      // more frames, so more of them cross the snap tolerance (41 -> 50).
+      expect(counters.snaps).toBe(50);
+      expect(counters.largestSnapU).toBeCloseTo(26.49, 2);
+      expect(counters.totalSnapU).toBeCloseTo(212.087, 2);
       expect(counters.freezeFrames).toBe(10);
       expect(counters.backwardSteps).toBe(0);
       // Negative: drawn ahead of the truth, which is read at the snapshots'
       // ARRIVAL times (one-way delay late) while remotes are forward-predicted.
-      expect(counters.meanLatenessMs).toBeCloseTo(-100.858, 2);
+      expect(counters.meanLatenessMs).toBeCloseTo(-88.428, 2);
       // Not investigated: on a turning track the lateness search (2 s either
       // side) may match a point the truth passed much earlier.
-      expect(counters.maxLatenessMs).toBeCloseTo(1446.767, 2);
+      expect(counters.maxLatenessMs).toBeCloseTo(1451.1, 2);
     });
   });
 
@@ -296,22 +299,23 @@ describe('other players\' ships through gaps and corrections — today\'s number
       expect(firstOffsetU).toBeCloseTo(8.283, 2);
       expect(firstStepU).toBeCloseTo(1.717, 2);
       // Second correction, one frame later: the 8.283 u still easing is
-      // dropped (plan 3.3), so the drawn ship steps the whole nudge at once.
+      // carried into the new offset (S2-1), so the drawn ship only eases
+      // (3.138 u; was 10.000 u when the easing part was dropped).
       expect(offsetBeforeSecondU).toBeCloseTo(8.283, 2);
-      expect(secondStepU).toBeCloseTo(10, 2);
+      expect(secondStepU).toBeCloseTo(3.138, 2);
       expect(counters.snaps).toBe(3);
-      expect(counters.largestSnapU).toBeCloseTo(7.424, 2);
-      expect(counters.totalSnapU).toBeCloseTo(12.248, 2);
+      expect(counters.largestSnapU).toBeCloseTo(4.887, 2);
+      expect(counters.totalSnapU).toBeCloseTo(11.451, 2);
       expect(counters.freezeFrames).toBe(3);
       expect(counters.backwardSteps).toBe(0);
-      expect(counters.meanLatenessMs).toBeCloseTo(2.802, 2);
-      expect(counters.maxLatenessMs).toBeCloseTo(93.709, 2);
+      expect(counters.meanLatenessMs).toBeCloseTo(3.516, 2);
+      expect(counters.maxLatenessMs).toBeCloseTo(104.791, 2);
     });
 
-    // Target (plan 3.3, S2-1): new offset = drawn before - physics after, so
-    // the second correction moves the drawn ship no more than the first one
-    // did (plus the snap tolerance). Today: 10.000 u against 1.717 u.
-    it.fails('no step on the second correction', () => {
+    // Plan 3.3, S2-1: new offset = drawn before - physics after, so the
+    // second correction moves the drawn ship no more than the first one did
+    // (plus the snap tolerance). 3.138 u against 1.717 u (was 10.000 u).
+    it('no step on the second correction', () => {
       expect(secondStepU).toBeLessThanOrEqual(firstStepU + MOTION_SNAP_TOLERANCE_U);
     });
   });
@@ -342,22 +346,24 @@ describe('other players\' ships through gaps and corrections — today\'s number
       counters = rounded(countMotionArtefacts(motionFrames(tl, track, frames)));
     });
 
-    it('records today\'s counts: the 2000 u jump is glided over four frames', () => {
-      // Offsets drawn: ~1651, ~1118, ~687, ~401 u; the next snapshot's
-      // correction then drops the ~401 u still easing (plan 3.3) in one step.
-      expect(glideFrames).toBe(4);
-      expect(arrivalStepU).toBeCloseTo(340.8, 0);
-      expect(counters.snaps).toBe(32);
-      expect(counters.largestSnapU).toBeCloseTo(528.169, 2);
-      expect(counters.totalSnapU).toBeCloseTo(1711.307, 2);
+    it('records today\'s counts: the 2000 u jump is glided over eight frames', () => {
+      // Before S2-1 the next snapshot's correction dropped the ~401 u still
+      // easing after four frames. With the offset continuous (S2-1) that part
+      // is carried, so the glide runs eight frames (was 4; snaps 32 -> 46,
+      // backward steps 6 -> 14) until S2-3 snaps real teleports.
+      expect(glideFrames).toBe(8);
+      expect(arrivalStepU).toBeCloseTo(341.4, 0);
+      expect(counters.snaps).toBe(46);
+      expect(counters.largestSnapU).toBeCloseTo(527.919, 2);
+      expect(counters.totalSnapU).toBeCloseTo(1665.288, 2);
       expect(counters.freezeFrames).toBe(0);
-      expect(counters.backwardSteps).toBe(6);
-      expect(counters.meanLatenessMs).toBeCloseTo(-154.63, 2);
-      expect(counters.maxLatenessMs).toBeCloseTo(39.263, 2);
+      expect(counters.backwardSteps).toBe(14);
+      expect(counters.meanLatenessMs).toBeCloseTo(-150.534, 2);
+      expect(counters.maxLatenessMs).toBeCloseTo(76.784, 2);
     });
 
     // Target (plan 3.2, S2-3): a real teleport is snapped on the frame it
-    // arrives, not glided. Today: 4 frames drawn more than 100 u off.
+    // arrives, not glided. Today: 8 frames drawn more than 100 u off.
     it.fails('a real teleport snaps in one frame', () => {
       expect(glideFrames).toBe(0);
     });
