@@ -71,8 +71,8 @@ describe('building settings live in the cog window', () => {
     render(<EntityStatsPanel />);
     openTab('production');
     fireEvent.click(screen.getByTestId('structure-action-recipe'));
-    // The old inspector button's message: next recipe, no count.
-    const msg = { type: 'set_recipe', entityId: 9, recipe: 'refine_gas' };
+    // The old inspector button's message: next recipe (rock chunks -> ice), no count.
+    const msg = { type: 'set_recipe', entityId: 9, recipe: 'refine_ice_fuel' };
     expect(send).toHaveBeenCalledWith('set_recipe', msg);
     expect(SetRecipeSchema.safeParse(msg).success).toBe(true);
   });
