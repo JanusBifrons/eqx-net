@@ -47,6 +47,7 @@ import { advanceProgress } from './productionProgress.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
+import { advanceRecipeQueue } from './productionQueue.js';
 import { hullProduct, packedProduct } from './productIds.js';
 
 /** What one cycle of a recipe actually uses and makes. */
@@ -176,19 +177,16 @@ export class ProductionSubsystem {
    * The owner picks a recipe. A cycle already loaded under the old recipe
    * hands its inputs back to the network first; if they don't fit, the change
    * is refused (returns false) so nothing is lost. `count` (job 2E) caps the
-   * outputs (absent ⇒ repeat forever); setting it again resets it.
+   * outputs (absent ⇒ repeat forever); setting it again resets it. It also
+   * clears the recipe queue (`productionQueue.ts`).
    */
   setRecipe(rec: StructureRecord, recipe: RecipeId, count?: number): boolean {
     const kind = rec.kind as StructureKindId;
     if (!isProcessorKind(kind) || !RECIPES[recipe].processors.includes(kind)) return false;
-    if (this.recipeOf(rec) === recipe) {
-      rec.recipe = recipe;
-      rec.prodCount = count;
-      return true;
-    }
-    if (rec.prodLoaded === true && !this.unload(rec)) return false;
+    if (this.recipeOf(rec) !== recipe && rec.prodLoaded === true && !this.unload(rec)) return false;
     rec.recipe = recipe;
     rec.prodCount = count;
+    rec.prodQueue = undefined;
     return true;
   }
 
@@ -320,6 +318,7 @@ export class ProductionSubsystem {
       rec.prodProgress = 0;
       rec.prodCycles = cycle + 1;
       spendBuildCount(rec);
+      advanceRecipeQueue(rec, id);
       this.cyclesCompleted++;
       // D3 — taxes go to the owner's wallet, never into a hold.
       for (const o of eff.outputs) if ('credits' in o) this.d.payCredits?.(rec, o.credits);

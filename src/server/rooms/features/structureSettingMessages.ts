@@ -1,5 +1,5 @@
 /**
- * Owner-only structure settings — a processor's recipe (P2b), who a gate
+ * Owner-only structure settings — a processor's recipe (P2b) and recipe queue (B2), who a gate
  * opens for, switching a structure On / Off (and its power throttle), and refining salvage into a Capital's mineral bank (P1a-2).
  * Moved verbatim out of `SectorRoom.onCreate`; the room hands in live
  * accessors so every handler reads the same state it did there.
@@ -13,7 +13,8 @@ import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parse
 import { gateTypeOf } from '../../../core/structures/gateGeometry.js';
 import { gateAccessIndex } from '../../../shared-types/gateAccess.js';
 import { isProcessorKind } from '../../../shared-types/production.js';
-import { RefineSalvageSchema, SetGateAccessSchema, SetRecipeSchema, SetStructurePowerSchema } from '../../../shared-types/messages.js';
+import { EditRecipeQueueSchema, RefineSalvageSchema, SetGateAccessSchema, SetRecipeSchema, SetStructurePowerSchema } from '../../../shared-types/messages.js';
+import { editRecipeQueue } from '../../structures/productionQueue.js';
 import type { StructureGridSubsystem } from '../../structures/StructureGridSubsystem.js';
 
 /** What the handlers need from the room; getters read the live field. */
@@ -22,7 +23,7 @@ export interface StructureSettingMessageHost extends ParsedMessageHost {
   swarmRegistry: Pick<SwarmEntityRegistry, 'getByEntityId'>;
   structureRegistry: Pick<StructureRegistry, 'get'>;
   sectorKey(): string | null;
-  production(): Pick<ProductionSubsystem, 'setRecipe'>;
+  production(): Pick<ProductionSubsystem, 'setRecipe' | 'recipeOf'>;
   storage(): Pick<StorageService, 'flushDirty' | 'refine'>;
   rebuildStructuresSlice(): void;
   structureGrid(): Pick<StructureGridSubsystem, 'setSwitchedOn' | 'setThrottle'>;
@@ -39,6 +40,21 @@ export function registerStructureSettingMessages(h: StructureSettingMessageHost)
     const rec = h.structureRegistry.get(swarmRec.id);
     if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
     if (h.production().setRecipe(rec, msg.recipe, msg.count)) {
+      h.storage().flushDirty();
+      h.rebuildStructuresSlice();
+    }
+  });
+
+  // ── Building panels B2 — the owner edits a processor's recipe queue ──
+  // Same gate as set_recipe; a refused edit is a silent no-op.
+  parsedMessage(h, 'edit_recipe_queue', EditRecipeQueueSchema, (msg, client) => {
+    const owner = h.sessionToPlayer().get(client.sessionId);
+    if (!owner) return;
+    const swarmRec = h.swarmRegistry.getByEntityId(msg.entityId);
+    if (!swarmRec) return;
+    const rec = h.structureRegistry.get(swarmRec.id);
+    if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
+    if (editRecipeQueue(h.production(), rec, msg)) {
       h.storage().flushDirty();
       h.rebuildStructuresSlice();
     }

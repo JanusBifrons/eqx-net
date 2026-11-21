@@ -131,6 +131,10 @@ export function encodeBpRuns(bp: { kind: 'bpo' | 'bpc'; runs: number | null } | 
 /** Build count (job 2E): the most outputs one `set_recipe` count asks for. */
 export const MAX_BUILD_COUNT = 99;
 
+/** Recipe queue (building panels B2): the most entries one processor queues,
+ *  counting the head it is running now. */
+export const MAX_RECIPE_QUEUE = 8;
+
 /** Build count on the wire: 0 = no count (repeat forever), else outputs left + 1
  *  (so 1 = done, nothing left). */
 export function encodeProdCount(left: number | undefined): number {
