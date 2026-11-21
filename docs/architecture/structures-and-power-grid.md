@@ -284,6 +284,7 @@ view, never the server `StructureRegistry`):
     `hpGain <= 0` guard was added here as a belt-and-braces lock but proved
     UNREACHABLE given those upstream guards — removed as dead code; the material
     tagging is the real deliverable.)_
+  - **Flow runs source → destination.** Each `flashed` pair is `[source, dest]` and the client draws the flow from the first id: haul and reclaim run structure → Capital (reclaim flashes its Capital→structure route reversed), construction and repair Capital → structure. Lock: `StructureGridSubsystem.test.ts` "deconstruction flow runs FROM ...".
 
 **Wire** — `SnapshotMessage.structures[]` (slim, low-cadence, same array ref per
 recipient, entityId-keyed → joins the swarm mirror for pose) +
