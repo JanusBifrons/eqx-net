@@ -90,3 +90,37 @@ describe('updateSwarmSprites — build-ETA label is readable on a phone', () => 
     expect(got.px).toBeCloseTo(13, 3);
   });
 });
+
+/** Seen on film (Pixel 7): a Shipyard placed turned 90° drew its countdown
+ *  rotated with the body, reading vertically along its side (and under the
+ *  top-left HUD chip). The label must read horizontally on screen and sit
+ *  above the body whatever the structure's angle or mirror. */
+function etaOnScreen(angle: number, mirrored: boolean): { dirX: number; dirY: number; aboveBy: number } {
+  const ctx = makeCtx(0.5);
+  const swarm = new Map<number, SwarmRenderState>([[7, { ...blueprintEntry(), angle, prevAngle: angle }]]);
+  const structures = new Map<number, StructureRenderState>([[7, {
+    powered: false, netPower: 0, connTo: [], built: false, buildPct: 0.1, deconstructPct: 0, etaMs: 92_000, mirror: mirrored,
+  }]]);
+  updateSwarmSprites({ swarm, structures } as unknown as RenderMirror, ctx);
+  for (const sprite of ctx.sprites.values()) {
+    const t = sprite.getChildByLabel('buildEta') as Text | null;
+    if (!t) continue;
+    const o = t.toGlobal({ x: 0, y: 0 });
+    const r = t.toGlobal({ x: 100, y: 0 });
+    const c = sprite.toGlobal({ x: 0, y: 0 });
+    const len = Math.hypot(r.x - o.x, r.y - o.y);
+    return { dirX: (r.x - o.x) / len, dirY: (r.y - o.y) / len, aboveBy: c.y - o.y };
+  }
+  throw new Error('no buildEta label drawn');
+}
+
+describe('updateSwarmSprites — build-ETA label reads horizontally on a turned structure', () => {
+  for (const [angle, mirrored] of [[Math.PI / 2, false], [-Math.PI / 2, false], [Math.PI / 2, true], [2.3, true], [0, false]] as const) {
+    it(`angle ${angle.toFixed(2)}${mirrored ? ' mirrored' : ''}: text runs left-to-right, above the body`, () => {
+      const got = etaOnScreen(angle, mirrored);
+      expect(got.dirX).toBeCloseTo(1, 5);
+      expect(got.dirY).toBeCloseTo(0, 5);
+      expect(got.aboveBy).toBeGreaterThan(60); // clears the body's radius
+    });
+  }
+});

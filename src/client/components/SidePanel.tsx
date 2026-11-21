@@ -6,20 +6,27 @@
  * stays interactive and re-selectable, and there are no global touch listeners
  * (avoids the SwipeableDrawer RTT regression). A scoped swipe on the grab
  * handle closes it; the content (children) lays out its own header, scroll body
- * and action bar inside the Paper's column.
+ * and action bar inside the Paper's column — or, given a `title`, the panel
+ * draws the header itself (the title is the grab handle, plus a ✕). A size
+ * with `touchToolbarRow` then runs the full height on a phone, its header in
+ * the top-right toolbar's row beside a see-through notch the toolbar shows
+ * (and is tapped) through.
  *
  * Used by the galaxy map's sector drawer (SectorInfoDrawer.tsx) and the
- * building settings panel (StructureSettingsModal.tsx). A new docked panel
+ * building settings panel (StructureSettingsModal.tsx) and the Build sidebar
+ * (BuildSidebar.tsx); only one of the last two is open at a time. A new docked panel
  * builds on this, never on a copy of it; a full-screen window uses GameWindow.
  */
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Box, Drawer, Portal, useMediaQuery } from '@mui/material';
 import { Z } from '../layout/zIndex';
+import { WINDOW_HEAD_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from './GameWindow';
 import { isTouchDevice } from '../input/TouchInput';
 import {
   focusPanelDock, PANEL_RIGHT_W, PANEL_TOUCH_FRAC, PANEL_TOUCH_MIN_W, PANEL_TOUCH_TOP, SHEET_FRAC_PORTRAIT, SHEET_MAX_H,
   type FocusPanelDock,
 } from '../render/galaxy/galaxyFocus';
+import { useUIStore } from '../state/store';
 
 const SWIPE_CLOSE_PX = 56; // swipe distance (in the dock-out direction) that closes
 
@@ -31,12 +38,42 @@ export interface SidePanelSize {
   touchFrac: number;
   touchMinW: number;
   touchTop: number | null;
+  /** Touch, right dock, with a `title`: ignore `touchTop`, run the full height
+   *  and put the header in the top-right toolbar's row beside a see-through
+   *  notch (TOOLBAR_NOTCH_W × TOOLBAR_ROW_H), so no empty band sits above it. */
+  touchToolbarRow?: boolean;
 }
+
+/** The see-through notch left for the top-right toolbar (TopRightToolbar.tsx:
+ *  two 26 px chips 4 px apart, 16 px in from the right edge and 16 px down)
+ *  plus a 12 px margin; the header row beside it reaches past the toolbar's
+ *  bottom edge (42 px). */
+export const TOOLBAR_NOTCH_W = 'calc(env(safe-area-inset-right, 0px) + 84px)';
+export const TOOLBAR_ROW_H = 48;
 
 /** The galaxy map's sector panel (galaxyFocus.ts frames the sector beside it). */
 export const SECTOR_PANEL_SIZE: SidePanelSize = {
   width: PANEL_RIGHT_W, touchFrac: PANEL_TOUCH_FRAC, touchMinW: PANEL_TOUCH_MIN_W, touchTop: PANEL_TOUCH_TOP,
 };
+
+/** The Build sidebar (BuildSidebar.tsx): 0.4 of a sideways phone's width
+ *  (915 px: 366 px), full height with its header in the toolbar's row; 380 px
+ *  on desktop. */
+export const BUILD_PANEL_SIZE: SidePanelSize = {
+  width: 380, touchFrac: 0.4, touchMinW: 280, touchTop: PANEL_TOUCH_TOP, touchToolbarRow: true,
+};
+
+/** Esc closes a panel, unless typing in a field or another Esc owner took the
+ *  key: placement and a fleet map pick cancel first (App.tsx keydown marks the
+ *  key handled), and a game window on top stops the key itself (MUI Modal).
+ *  One Esc press does one thing. */
+export function escapeClosesPanel(e: KeyboardEvent): boolean {
+  if (e.key !== 'Escape' || e.defaultPrevented) return false;
+  const t = e.target as HTMLElement | null;
+  if (t !== null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return false;
+  const st = useUIStore.getState();
+  return st.placementKind === null && st.fleetPick === null;
+}
 
 const PAPER_COMMON = {
   bgcolor: 'rgba(8,12,24,0.98)',
@@ -72,9 +109,15 @@ export function rightPaperSx(size: SidePanelSize, touch: boolean): Record<string
   if (!touch) return right;
   // Phone held sideways: a narrower panel; the sector panel starts below the
   // top-right toolbar (full-screen chip), so the hex keeps the height.
+  const width = `clamp(${size.touchMinW}px, ${size.touchFrac * 100}vw, ${size.width}px)`;
+  // Toolbar-row panel: the Paper is see-through and full height; its header
+  // and body boxes paint the panel around the toolbar's notch.
+  if (size.touchToolbarRow === true) {
+    return { ...right, width, top: 0, height: '100dvh', bgcolor: 'transparent', border: 'none', borderRadius: 0 };
+  }
   return {
     ...right,
-    width: `clamp(${size.touchMinW}px, ${size.touchFrac * 100}vw, ${size.width}px)`,
+    width,
     ...(size.touchTop !== null && { top: `${size.touchTop}px`, height: `calc(100dvh - ${size.touchTop}px)` }),
   };
 }
@@ -103,6 +146,28 @@ const HANDLE_WRAP_SX = {
   flex: '0 0 auto',
 } as const;
 
+const PANEL_BG = PAPER_COMMON.bgcolor;
+const PANEL_EDGE = PAPER_COMMON.border;
+const HEAD_SX = { ...WINDOW_HEAD_SX, flexWrap: 'nowrap' } as const;
+const GRAB_TITLE_SX = {
+  ...WINDOW_TITLE_SX, flex: '1 1 auto', minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center',
+  touchAction: 'none', '@media (pointer: coarse)': { cursor: 'grab' },
+} as const;
+const GRAB_TITLE_NOTCH_SX = { ...GRAB_TITLE_SX, fontSize: 13 } as const;
+const X_NOTCH_SX = { ...WINDOW_X_SX, width: 28, height: 28, fontSize: 14 } as const;
+const TOP_ROW_SX = { flex: 'none', display: 'flex', height: TOOLBAR_ROW_H } as const;
+/** The compact header beside the notch; the body's top edge draws the line under it. */
+const HEAD_NOTCH_SX = {
+  ...HEAD_SX, flex: '1 1 auto', minWidth: 0, minHeight: 0, height: TOOLBAR_ROW_H, py: 0, px: 1, gap: 1,
+  bgcolor: PANEL_BG, border: PANEL_EDGE, borderBottom: 'none', borderRight: 'none', borderTopLeftRadius: '8px',
+} as const;
+/** See-through: the toolbar paints, and is tapped, through it. */
+const NOTCH_SX = { flex: `0 0 ${TOOLBAR_NOTCH_W}`, pointerEvents: 'none' } as const;
+const NOTCH_BODY_SX = {
+  flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: PANEL_BG,
+  border: PANEL_EDGE, borderRight: 'none', borderRadius: '0 8px 0 8px',
+} as const;
+
 /** Where the panel docks now: right sideways, bottom upright. */
 export function useSidePanelDock(): FocusPanelDock {
   return focusPanelDock(useMediaQuery('(orientation: portrait)'));
@@ -117,15 +182,34 @@ export interface SidePanelProps {
   /** The grab handle's test id. */
   handleTestId?: string;
   size?: SidePanelSize;
+  /** Esc closes it while open (escapeClosesPanel). */
+  closeOnEscape?: boolean;
   /** Extra attributes on the Paper (E2E hooks). */
   paperAttrs?: Record<string, string>;
+  /** The panel draws the header: this title (the grab handle) and a ✕. */
+  title?: ReactNode;
+  /** The header's test id (with `title`). */
+  headerTestId?: string;
+  /** The ✕'s test id (with `title`). */
+  closeTestId?: string;
   children: ReactNode;
 }
 
 export function SidePanel({
-  open, onClose, testId, handleTestId, size = SECTOR_PANEL_SIZE, paperAttrs, children,
+  open, onClose, testId, handleTestId, size = SECTOR_PANEL_SIZE, closeOnEscape = false, paperAttrs, children,
+  title, headerTestId, closeTestId,
 }: SidePanelProps): JSX.Element {
   const anchor = useSidePanelDock();
+  const touch = isTouchDevice();
+  // The toolbar row needs the panel-drawn header; without one, the plain dock.
+  const notch = title !== undefined && anchor === 'right' && touch && size.touchToolbarRow === true;
+  const paperSize = notch || size.touchToolbarRow !== true ? size : { ...size, touchToolbarRow: false };
+  useEffect(() => {
+    if (!open || !closeOnEscape) return undefined;
+    const onKey = (e: KeyboardEvent): void => { if (escapeClosesPanel(e)) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, closeOnEscape, onClose]);
 
   // Scoped swipe-to-close on the grab handle (no global listeners — avoids the
   // SwipeableDrawer RTT regression). The Paper FOLLOWS the finger in the
@@ -170,6 +254,19 @@ export function SidePanel({
     if (p) { p.style.transition = ''; p.style.transform = ''; }
   };
 
+  // The panel-drawn header: the title is the grab handle (its swipe closes);
+  // the ✕ sits outside it so the handle's pointer capture never takes its click.
+  const header = (compact: boolean): JSX.Element => (
+    <Box sx={compact ? HEAD_NOTCH_SX : HEAD_SX} data-testid={headerTestId} data-compact={compact ? '1' : '0'}>
+      <Box sx={compact ? GRAB_TITLE_NOTCH_SX : GRAB_TITLE_SX} onPointerDown={onHandleDown} onPointerMove={onHandleMove}
+        onPointerUp={onHandleUp} onPointerCancel={onHandleCancel} data-testid={handleTestId} aria-label="Drag to close">
+        {title}
+      </Box>
+      <Box component="button" type="button" sx={compact ? X_NOTCH_SX : WINDOW_X_SX} onClick={onClose}
+        aria-label="Close" data-testid={closeTestId}>✕</Box>
+    </Box>
+  );
+
   return (
     // Portal to <body> so the panel escapes the host chrome / GameSurface
     // stacking traps: its Paper z (Z.drawer) then lives at the body level, ABOVE
@@ -184,12 +281,26 @@ export function SidePanel({
       data-testid={testId}
       PaperProps={{
         ref: paperRef,
-        sx: anchor === 'bottom' ? PAPER_BOTTOM : rightPaperSx(size, isTouchDevice()),
+        sx: anchor === 'bottom' ? PAPER_BOTTOM : rightPaperSx(paperSize, touch),
         ...paperAttrs,
       }}
     >
-      {/* Grab handle (swipe-to-close). */}
-      <Box
+      {title !== undefined && (notch ? (
+        <>
+          <Box sx={TOP_ROW_SX}>
+            {header(true)}
+            <Box sx={NOTCH_SX} aria-hidden data-testid="side-panel-notch" />
+          </Box>
+          <Box sx={NOTCH_BODY_SX}>{children}</Box>
+        </>
+      ) : (
+        <>
+          {header(false)}
+          {children}
+        </>
+      ))}
+      {/* Grab handle (swipe-to-close), when the content draws its own header. */}
+      {title === undefined && <Box
         sx={HANDLE_WRAP_SX}
         onPointerDown={onHandleDown}
         onPointerMove={onHandleMove}
@@ -212,8 +323,8 @@ export function SidePanel({
             '@media (pointer: fine)': { display: 'none' },
           }}
         />
-      </Box>
-      {children}
+      </Box>}
+      {title === undefined && children}
     </Drawer>
     </Portal>
   );

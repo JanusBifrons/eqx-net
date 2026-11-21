@@ -19,6 +19,11 @@ export const LAUNCH_COSTS_ON = true;
 /** Free capital launches every pilot starts with. */
 export const FREE_LAUNCHES_START = 5;
 
+/** Credits every pilot is topped up to once, on joining: 1.2× the dearest
+ *  battleship launch, rounded up, so every joiner can buy a battleship straight
+ *  away (owner 2026-11-21). Granted by `grantJoinCredits` (server starterGrant.ts). */
+export const JOIN_CREDITS = 75_000;
+
 /** The lowest a wallet may go by launching into debt. */
 export const DEBT_FLOOR = -100_000;
 

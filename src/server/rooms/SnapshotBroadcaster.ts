@@ -277,6 +277,8 @@ interface AllShipEntry {
   /** WS-12 / R2.32 — shield down (hull exposed). Drives the client shield
    *  aura for both active AND lingering hulls. */
   shieldDown: boolean;
+  /** The pilot dropped the shields (own active ship only on the wire). */
+  shieldsLowered: boolean;
   /** Phase 4 (Leveling & XP, WS-B1) — this hull's PUBLIC level (≥ 1). Emitted
    *  on the wire only when > 1 (un-levelled sectors pay zero bytes). */
   level: number;
@@ -329,6 +331,7 @@ type MutableStateEntry = {
   mountAngles?: number[];
   energy?: number;
   shieldDown?: boolean;
+  shieldsLowered?: true;
   level?: number;
   statAlloc?: Record<string, number>;
   cargo?: Hold;
@@ -736,6 +739,7 @@ export class SnapshotBroadcaster {
         lastInput: { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false },
         energy: 0,
         shieldDown: false,
+        shieldsLowered: false,
         level: 1,
         statAlloc: EMPTY_STAT_ALLOC,
         mounts: EMPTY_MOUNTS,
@@ -799,6 +803,7 @@ export class SnapshotBroadcaster {
       entry.joining = !ship.isActive && this.deps.isJoining?.(playerId) === true;
       entry.energy = ship.energy;
       entry.shieldDown = ship.shield <= 0; // R2.32 — hull exposed → render aura off
+      entry.shieldsLowered = ship.shieldsLowered;
       entry.level = ship.level; // Phase 4 WS-B1 — public level
       entry.statAlloc = ship.statAlloc ?? EMPTY_STAT_ALLOC; // WS-B2 — shared ref
       entry.mounts = ship.mounts ?? EMPTY_MOUNTS; // WS-B3 — public activated mounts
@@ -841,6 +846,7 @@ export class SnapshotBroadcaster {
       // R2.32 — a lingering hull keeps its at-disconnect shield state so a
       // parked hull whose shield was broken still renders hull-exposed.
       entry.shieldDown = ship.shield <= 0;
+      entry.shieldsLowered = false;
       entry.level = ship.level; // Phase 4 WS-B1 — public level (lingering hulls too)
       // Lingering hulls never carry statAlloc on the wire (it's own-active-only
       // below), but keep the scratch coherent.
@@ -977,6 +983,7 @@ export class SnapshotBroadcaster {
         // Living World P1a / P5 (#16) — the own ship's hold + fitted blueprints (flown,
         // else the hull parked by Command / Build: the hold Build takes crates from).
         setOwnHold(entry, this.deps, ship.shipInstanceId, isOwnHull(this.deps, ship, recipientPlayerId));
+        setOrDrop(entry, 'shieldsLowered', ownActive && ship.shieldsLowered ? true : undefined);
         setOrDrop(entry, 'depositing', ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined);
         // Fire control (#16): the own pilot's groups + locks (shared ref).
         setOrDrop(entry, 'groups', ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined);

@@ -11,12 +11,15 @@
 import type { LaunchVerdict } from '../../shared-types/launch.js';
 import { DEFAULT_SHIP_KIND, getShipKind } from '../../shared-types/shipKinds.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
-import { getWallet } from '../db/PersistenceWorker.js';
+import { getPersistence, getWallet } from '../db/PersistenceWorker.js';
 import { chargeLaunch } from '../economy/launchCharge.js';
 import { getTradeSink } from '../economy/tradeSink.js';
+import { getStarterGrantEconomy, grantJoinCredits } from '../economy/starterGrant.js';
 
-/** The room's one charging seam (join gate and respawn). */
+/** The room's one charging seam (join gate and respawn). The once-per-account
+ *  join credits land first, so a new pilot pays for a battleship outright. */
 export function chargeLaunchFor(costsOn: boolean, playerId: string, kind: string): LaunchVerdict {
+  grantJoinCredits({ econ: getStarterGrantEconomy(), wallet: getWallet(), persistence: getPersistence }, playerId);
   const sink = getTradeSink();
   return chargeLaunch({
     wallet: getWallet(),

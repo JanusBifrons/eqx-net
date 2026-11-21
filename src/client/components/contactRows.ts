@@ -24,7 +24,7 @@ import { isOwnedByMe } from '../render/shipOwnership';
 /** A weapon group's fire reach (the server's `groupGeometry().reach`). */
 export interface GroupReach {
   id: string;
-  /** Weapon (fire) reach in u. Locks work at any distance; this marks only what the group can shoot. */
+  /** Weapon (fire) reach in u. Locks reach the ship's longest gun (`shipLockRange`); this marks only what the group can shoot. */
   reach: number;
 }
 

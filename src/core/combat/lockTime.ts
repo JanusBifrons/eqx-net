@@ -28,6 +28,22 @@ export interface LockInputs {
   /** Heavy mount (M/L/XL, `WEAPON_LOCK_PROFILE[size].absRange`): the range
    *  term reads absolute distance, not the share of reach. Absent = false. */
   absRange?: boolean;
+  /** Shooter + target radius (u): lock range is measured hull to hull
+   *  (bounding circles), so a 2.9 km battleship locks and is locked like a
+   *  fighter. Absent = 0 (a per-mount lock measures from its mount). */
+  hullRadii?: number;
+  /** The locker's lock range (u, hull to hull): its LONGEST weapon's reach
+   *  (`shipLockRange`; a structure mount: its own gun's reach). Absent =
+   *  `reach`. */
+  lockRange?: number;
+}
+
+/** The target is past lock range: centre offset (dx, dy) farther than
+ *  `lockRange` + `hullRadii` (hull to hull). The one lock-range test:
+ *  `lockSeconds`, `capLockSeconds`, the lock line and NPC locks all ask it (#15). */
+export function pastLockRange(dx: number, dy: number, hullRadii: number, lockRange: number): boolean {
+  const r = lockRange + hullRadii;
+  return dx * dx + dy * dy > r * r;
 }
 
 /** The heavy-mount range term: 1 + (range ÷ absRangeScale)^absRangeExp. */
@@ -47,11 +63,14 @@ export function angularRate(dx: number, dy: number, dvx: number, dvy: number): n
  * too small / fast for the weapon: the reach-share time is past `maxSeconds`,
  * unless `t.clampAtMax`, which takes `maxSeconds` instead).
  *
- * Any distance (owner 2026-11-14): there is no reach gate. Distance only makes
- * a lock slower (the range term), never impossible; only FIRING is
- * range-limited. A small gun's reach-share term saturates at its reach
- * (`min(1, range / reach)`), so past reach it locks as at the edge of reach
- * and the `maxSeconds` "can't track" test reads size and crossing speed only.
+ * Lock range (owner 2026-11-21): a locker reaches as far as its LONGEST
+ * weapon (`i.lockRange`, hull to hull, `pastLockRange`); past it nothing
+ * locks (Infinity, so a held lock breaks after the grace window). Inside it
+ * this group's own reach is no gate:
+ * distance only makes a lock slower (the range term). A small gun's
+ * reach-share term saturates at its reach (`min(1, range / reach)`), so past
+ * reach it locks as at the edge of reach and the `maxSeconds` "can't track"
+ * test reads size and crossing speed only.
  *
  * Heavy mounts (`i.absRange`) then swap the reach-share range term for the
  * ABSOLUTE one (`absRangeTerm`): distance makes their lock slower, never
@@ -68,7 +87,7 @@ export function angularRate(dx: number, dy: number, dvx: number, dvy: number): n
  */
 export function lockSeconds(i: LockInputs, t: LockTuning): number {
   const range = Math.sqrt(i.dx * i.dx + i.dy * i.dy);
-  if (!(i.reach > 0)) return Infinity;
+  if (!(i.reach > 0) || pastLockRange(i.dx, i.dy, i.hullRadii ?? 0, i.lockRange ?? i.reach)) return Infinity;
   const sizeRatio = i.signature > 0 ? i.refSize / i.signature : Infinity;
   const sizeTerm = sizeRatio > 1 ? Math.pow(sizeRatio, t.sizeExp) : 1;
   const ang = angularRate(i.dx, i.dy, i.dvx, i.dvy);
@@ -87,16 +106,16 @@ export function lockSeconds(i: LockInputs, t: LockTuning): number {
 
 /**
  * testMode `lockTimeCapS` (a room option, bespoke test/recording trigger): no
- * NON-player lock takes longer than `capS` seconds, at any distance; 0
+ * NON-player lock takes longer than `capS` seconds inside lock range; 0
  * completes it on the first lock step. Lock-to-fire stays universal: a lock is
  * still acquired, only faster. A lock the rules call too slow to lock at all
  * (past `maxSeconds` on a sub-capital gun) or very slow (a 16" gun on a
  * fighter) locks in `capS` too, so a shot can start with every gun locked; a
- * shooter with no weapon (`reach` 0) never locks. `capS` undefined = the rules
- * unchanged.
+ * shooter with no weapon (`reach` 0) or a target past its lock range never
+ * locks. `capS` undefined = the rules unchanged.
  */
 export function capLockSeconds(secs: number, i: LockInputs, capS: number | undefined): number {
   if (capS === undefined) return secs;
-  if (!(i.reach > 0)) return Infinity;
+  if (!(i.reach > 0) || pastLockRange(i.dx, i.dy, i.hullRadii ?? 0, i.lockRange ?? i.reach)) return Infinity;
   return Number.isNaN(secs) ? capS : Math.min(secs, capS);
 }

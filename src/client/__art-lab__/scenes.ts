@@ -421,7 +421,23 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40, view: Vie
       // `?th=` is engine thrust (0 hides a capital's detached engine glows);
       // `?cz=` sets the camera zoom outright (capitals share one, to scale);
       // `?rot=` turns the hull (radians; a long capital lies corner to corner).
+      // `?struct=` instead draws one structure at the origin (the build menu's
+      // baked pictures): `zm` scales its footprint fit, `?ox=`/`?oy=` move the
+      // camera centre (screen px at zm 1), `?bare=1` keeps the camera but
+      // drops the structure (the bake diffs the two to measure drawn bounds).
       const q = new URLSearchParams(location.search);
+      const sid = q.get('struct');
+      if (sid) {
+        const fp = structFootprint(sid);
+        const side = Math.max(fp.w, fp.h);
+        const fit = fitZoom(side, side, 0.9);
+        const sz = fit * (q.has('zm') ? Number(q.get('zm')) : 1);
+        const cx = Number(q.get('ox') ?? 0) / fit, cy = Number(q.get('oy') ?? 0) / fit;
+        return {
+          ships: [], structs: q.get('bare') === '1' ? [] : [{ id: sid, x: 0, y: 0, rot: 0, seed: 1 }], booms: [], duration: 8,
+          camera: (_t, c) => { c.x = cx; c.y = cy; c.zoom = sz; },
+        };
+      }
       const kid = q.get('kind') ?? 'fighter';
       const zm = q.has('zm') ? Number(q.get('zm')) : 1;
       const th = q.has('th') ? Number(q.get('th')) : 0.6;

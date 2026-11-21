@@ -8,24 +8,29 @@
  * Tabs come from `settingsTabsFor(kindId)`, so tabs are added per building
  * kind in one place. Power (its numbers, plus the owner's On/Off and
  * Throttle where the kind has them: structureSettingsPowerControls.tsx); for
- * a building that makes things, Production: its recipe (and the Change button
+ * a building that makes things, Production: for a hull yard picture tiles
+ * (structureSettingsBuild.tsx), else its recipe (and the Change button
  * that cycles it, once the inspector's), a build count (minus / plus /
  * forever) sent on the same `set_recipe` message as the recipe, and the
- * blueprint slot (Load / Unload); for a gate, Access (structureSettingsGate.tsx). Labels read Build / Power /
- * Manage; the tab ids (and test ids) keep their old names.
- * The inspector keeps only the cog and one-shot actions.
+ * blueprint slot (Load / Unload); Manage for every building: deconstruct,
+ * reconnect, clear connections, upgrade (StructureManageActions.tsx), with a
+ * gate's Access control above them (structureSettingsGate.tsx). Labels read Build / Power /
+ * Manage; the tab ids (and test ids) keep their old names. A status block
+ * above the tabs shows owner, level, connections and hold
+ * (structureSettingsStatus.tsx).
+ * The inspector card keeps only its Open button and one-shot actions.
  *
- * The ✕, Close or a swipe on the handle shuts it, and so does a change of
- * selection (another entity picked, or none).
+ * The ✕, Close, Esc (desktop, owned by SidePanel) or a swipe on the handle
+ * shuts it, and so does a change of selection (another entity picked, or none)
+ * or the Build sidebar opening (one right panel at a time).
  * Numbers are read from the render mirror at 4 Hz while open (low cadence,
  * like the teleporter panel) — the same slice the PWR line reads.
  */
 import { memo, useEffect, useRef, useState } from 'react';
-import { Box, IconButton, Tab, Tabs, Tooltip } from '@mui/material';
-import SettingsIcon from '@mui/icons-material/Settings';
+import { Box, Tab, Tabs, Tooltip } from '@mui/material';
 import { getGameClient } from '../net/clientSingleton';
 import { HUD } from '../hud/tokens';
-import { useUIStore } from '../state/store';
+import { selectControlMode, useUIStore } from '../state/store';
 import { SidePanel, type SidePanelSize } from './SidePanel';
 import {
   notifyGameWindowOpen, WINDOW_BTN_SECONDARY_SX, WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX,
@@ -34,10 +39,16 @@ import { powerSummary, signed, type PowerSummary } from './structureSettingsPowe
 import { PowerControls } from './structureSettingsPowerControls';
 import { buildCountText, canChangeRecipe, makesThings, readProduction, sameProduction, type ProductionView } from './structureSettingsProduction';
 import { GateTab, hasGateAccess } from './structureSettingsGate';
-import { sendBlueprintSlot, sendSetRecipe } from '../structures/structureActionsClient';
+import { BlueprintRow, HullBuildTab } from './structureSettingsBuild';
+import { StructureManageTab } from './StructureManageActions';
+import { SettingsStatus } from './structureSettingsStatus';
+import { sendSetRecipe } from '../structures/structureActionsClient';
 import { MAX_BUILD_COUNT, nextRecipe } from '@shared-types/production';
 import { RECIPES } from '@shared-types/recipes';
 import { phoneTiny } from './inspectorSizes';
+import { rightPanelWidthPx } from './panelCameraNudge';
+import { queuePanelNudge } from '../structures/buildModeView';
+import { isTouchDevice } from '../input/TouchInput';
 
 export type SettingsTabId = 'power' | 'production' | 'access';
 interface SettingsTab { id: SettingsTabId; label: string }
@@ -47,18 +58,26 @@ const PRODUCTION_TAB: SettingsTab = { id: 'production', label: 'Build' };
 const ACCESS_TAB: SettingsTab = { id: 'access', label: 'Manage' };
 
 /** The tabs a building kind shows, in order. Every building sits on a grid,
- *  so every kind has Power; later tabs are appended here per kind. */
-const WITH_PRODUCTION: readonly SettingsTab[] = [POWER_TAB, PRODUCTION_TAB];
-const WITH_ACCESS: readonly SettingsTab[] = [POWER_TAB, ACCESS_TAB];
-const POWER_ONLY: readonly SettingsTab[] = [POWER_TAB];
+ *  so every kind has Power, and every kind has Manage (last); Build is added
+ *  per kind here. */
+const WITH_PRODUCTION: readonly SettingsTab[] = [POWER_TAB, PRODUCTION_TAB, ACCESS_TAB];
+const WITH_MANAGE: readonly SettingsTab[] = [POWER_TAB, ACCESS_TAB];
 export function settingsTabsFor(kindId: string): readonly SettingsTab[] {
-  if (makesThings(kindId) || canChangeRecipe(kindId)) return WITH_PRODUCTION;
-  return hasGateAccess(kindId) ? WITH_ACCESS : POWER_ONLY;
+  return makesThings(kindId) || canChangeRecipe(kindId) ? WITH_PRODUCTION : WITH_MANAGE;
 }
 
 const POLL_MS = 250;
 /** ~40% of a sideways phone (never under 280 px), 360 px on desktop; below the app bar. */
 export const SETTINGS_PANEL_SIZE: SidePanelSize = { width: 360, touchFrac: 0.4, touchMinW: 280, touchTop: null };
+
+/** On open, once: glide the camera so the building sits mid-way across the
+ *  screen left of the panel. Not in Fly (the follow camera owns the view) nor
+ *  upright (the panel is a bottom sheet). One mirror read, never per frame. */
+function nudgeCameraFor(entityId: number): void {
+  if (selectControlMode(useUIStore.getState()) === 'fly' || window.innerHeight > window.innerWidth) return;
+  const e = getGameClient()?.mirror.swarm?.get(entityId);
+  if (e) queuePanelNudge(e.x, e.y, rightPanelWidthPx(SETTINGS_PANEL_SIZE, window.innerWidth, isTouchDevice()));
+}
 
 function readKind(entityId: number): string | undefined {
   return getGameClient()?.mirror.swarm?.get(entityId)?.shipKind;
@@ -73,7 +92,7 @@ function readPower(entityId: number): PowerSummary | null {
 function samePower(a: PowerSummary | null, b: PowerSummary | null): boolean {
   if (a === null || b === null) return a === b;
   return a.selfPower === b.selfPower && a.load === b.load && a.gridNet === b.gridNet && a.powered === b.powered
-    && a.on === b.on && a.throttle === b.throttle;
+    && a.on === b.on && a.throttle === b.throttle && a.prodState === b.prodState && a.storedPower === b.storedPower;
 }
 
 const LOAD_LABEL: Record<PowerSummary['load'], string> = { full: 'Full (working)', idle: 'Idle (trickle)', none: 'Never draws' };
@@ -99,13 +118,14 @@ function PowerTab({ entityId }: { entityId: number }): JSX.Element {
       <Box sx={LABEL_SX}>Draw now</Box><Box sx={VALUE_SX} data-testid="settings-power-draw">{drawNowText(p)}</Box>
       <Box sx={LABEL_SX}>Load</Box><Box sx={VALUE_SX} data-testid="settings-power-load">{LOAD_LABEL[p.load]}</Box>
       <Box sx={LABEL_SX}>Grid net</Box><Box sx={VALUE_SX} data-testid="settings-power-grid">{signed(p.gridNet)}</Box>
-      <PowerControls entityId={entityId} kindId={readKind(entityId) ?? ''} on={p.on} throttle={p.throttle} labelSx={LABEL_SX} />
+      <PowerControls entityId={entityId} kindId={readKind(entityId) ?? ''} p={p} labelSx={LABEL_SX} />
     </Box>
   );
 }
 
 /** Recipe (+ Change), build count and the blueprint slot. Minus stops at 1;
- *  Forever clears the count. */
+ *  Forever clears the count. A hull yard gets picture tiles instead
+ *  (structureSettingsBuild.tsx). */
 function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
   const [p, setP] = useState<ProductionView | null>(() => readProduction(entityId));
   useEffect(() => {
@@ -116,7 +136,8 @@ function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
     return () => window.clearInterval(h);
   }, [entityId]);
   if (p === null) return <Box sx={ROW_SX}>No production data</Box>;
-  const { recipe, left, canChange, needsBlueprint, blueprintLine, lastRunLine } = p;
+  if (p.hullYard) return <HullBuildTab entityId={entityId} p={p} sx={BUILD_SX} />;
+  const { recipe, left, canChange } = p;
   const plus = left === undefined ? 1 : Math.min(MAX_BUILD_COUNT, left + 1);
   return (
     <Box data-testid="structure-settings-production" data-recipe={recipe} data-left={left ?? 'forever'} sx={GRID_SX}>
@@ -140,26 +161,7 @@ function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
         <Box component="button" sx={STEP_BTN_SX} aria-label="Repeat forever" data-testid="settings-build-forever"
           disabled={left === undefined} onClick={() => sendSetRecipe(entityId, recipe)}>∞</Box>
       </Box>
-      {(needsBlueprint || blueprintLine !== undefined) && (
-        <>
-          <Box sx={LABEL_SX}>Blueprint</Box>
-          <Box sx={STEPPER_SX}>
-            <Box sx={VALUE_SX} data-testid="settings-blueprint">{(blueprintLine ?? lastRunLine)?.replace(/^BLUEPRINT /, '') ?? 'None loaded'}</Box>
-            {needsBlueprint && (
-              <Tooltip title={blueprintLine !== undefined ? 'Swap in the best blueprint from storage' : 'Load a blueprint from storage'}>
-                <Box component="button" sx={STEP_BTN_SX} data-testid="structure-action-load-blueprint"
-                  onClick={() => sendBlueprintSlot(entityId, 'load')}>{blueprintLine !== undefined ? 'Swap' : 'Load'}</Box>
-              </Tooltip>
-            )}
-            {blueprintLine !== undefined && (
-              <Tooltip title="Put the blueprint back in storage">
-                <Box component="button" sx={STEP_BTN_SX} data-testid="structure-action-unload-blueprint"
-                  onClick={() => sendBlueprintSlot(entityId, 'unload')}>Unload</Box>
-              </Tooltip>
-            )}
-          </Box>
-        </>
-      )}
+      <BlueprintRow entityId={entityId} p={p} {...BUILD_SX} />
     </Box>
   );
 }
@@ -188,22 +190,35 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
     useUIStore.setState({ structureSettingsOpen: true });
     return () => useUIStore.setState({ structureSettingsOpen: false });
   }, [open]);
+  // One right panel at a time: the Build sidebar opening clears the flag
+  // (BuildSidebar.tsx), and this panel closes.
+  const flagOpen = useUIStore((s) => s.structureSettingsOpen);
+  const flagSeen = useRef(false);
+  useEffect(() => {
+    if (!open) return;
+    if (flagOpen) flagSeen.current = true;
+    else if (flagSeen.current) onClose();
+  }, [open, flagOpen, onClose]);
+  // The building stays in view beside the panel (Build / Command only).
+  useEffect(() => { if (open) nudgeCameraFor(entityId); }, [open, entityId]);
   return (
-    <SidePanel open={open} onClose={onClose} testId="structure-settings" size={SETTINGS_PANEL_SIZE}>
+    <SidePanel open={open} onClose={onClose} testId="structure-settings" size={SETTINGS_PANEL_SIZE} closeOnEscape>
       <Box sx={WINDOW_ROOT_SX}>
         <Box sx={WINDOW_HEAD_SX}>
           <Box sx={WINDOW_TITLE_SX}>{title} settings</Box>
           <Box component="button" sx={WINDOW_X_SX} onClick={onClose} aria-label="Close" data-testid="structure-settings-close">✕</Box>
         </Box>
+        {open && <SettingsStatus entityId={entityId} pollMs={POLL_MS} />}
         <Tabs value={tab} onChange={(_e, v: SettingsTabId) => setTab(v)} sx={TABS_SX} variant="fullWidth">
           {tabs.map((t) => <Tab key={t.id} value={t.id} label={t.label} data-testid={`structure-settings-tab-${t.id}`} />)}
         </Tabs>
         <Box sx={BODY_SX}>
           {open && tab === 'power' && <PowerTab entityId={entityId} />}
           {open && tab === 'production' && <ProductionTab entityId={entityId} />}
-          {open && tab === 'access' && (
+          {open && tab === 'access' && hasGateAccess(readKind(entityId) ?? '') && (
             <GateTab entityId={entityId} pollMs={POLL_MS} gridSx={GRID_SX} labelSx={LABEL_SX} valueSx={VALUE_SX} btnSx={STEP_BTN_SX} />
           )}
+          {open && tab === 'access' && <StructureManageTab entityId={entityId} pollMs={POLL_MS} />}
         </Box>
         <Box sx={WINDOW_FOOT_SX}>
           <Box sx={{ flex: 1 }} />
@@ -214,16 +229,13 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
   );
 }
 
-/** The cog for the inspector's owner action row; owns the window's open flag. */
-export const StructureSettingsCog = memo(function StructureSettingsCog({ entityId, title }: { entityId: number; title: string }): JSX.Element {
+/** The inspector card's Open button (owner, Build mode); owns the panel's open flag. */
+export const StructureSettingsOpen = memo(function StructureSettingsOpen({ entityId, title }: { entityId: number; title: string }): JSX.Element {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Tooltip title="Settings">
-        <IconButton data-testid="structure-action-settings" size="small" sx={COG_SX} onClick={() => setOpen(true)}>
-          <SettingsIcon sx={COG_ICON_SX} />
-        </IconButton>
-      </Tooltip>
+      <Box component="button" data-testid="structure-action-settings" sx={OPEN_BTN_SX} onClick={() => setOpen(true)}
+        title="Open this building's panel">Open</Box>
       {open && <StructureSettingsModal open entityId={entityId} title={title} onClose={() => setOpen(false)} />}
     </>
   );
@@ -246,5 +258,10 @@ const STEPPER_SX = { display: 'flex', alignItems: 'center', justifyContent: 'fle
 const STEP_BTN_SX = { ...WINDOW_BTN_SECONDARY_SX, minWidth: 32, px: 1, '&:disabled': { opacity: 0.35, cursor: 'default' } } as const;
 const COUNT_SX = { ...VALUE_SX, minWidth: 64, textAlign: 'center' as const } as const;
 const ROW_SX = { fontSize: 12, color: C.inkDim } as const;
-const COG_SX = { p: '2px', color: 'rgba(180,220,255,0.85)', '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' } } as const;
-const COG_ICON_SX = phoneTiny({ fontSize: [16, 28] }); // the inspector's ICON_SX: tiny on a phone
+const BUILD_SX = { labelSx: LABEL_SX, valueSx: VALUE_SX, btnSx: STEP_BTN_SX } as const;
+// A small text button sized like the card's text: tiny on a phone.
+const OPEN_BTN_SX = {
+  ...phoneTiny({ fontSize: [9, 16] }), fontFamily: HUD.font.label, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase' as const,
+  color: C.auto, bgcolor: 'rgba(52,216,255,0.08)', border: `1px solid ${C.autoGlow}`, borderRadius: '3px', px: '6px', py: '1px', cursor: 'pointer',
+  '&:hover': { bgcolor: 'rgba(52,216,255,0.2)' },
+} as const;

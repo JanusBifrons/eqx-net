@@ -28,10 +28,10 @@
  * hostiles lock on. The pick is an insertion into a reused top-N scratch.
  */
 import { LOCK_TUNING, LOCKED_BY_WIRE_ROWS, sensorFor, signatureFor } from '../../shared-types/combat/lockProfile.js';
-import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
+import { capLockSeconds, lockSeconds, pastLockRange, type LockInputs } from '../../core/combat/lockTime.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { groupGeometry } from './LockSubsystem.js';
-import { hasTurretFireControl, mountsReachTarget, prepareRangeTarget, type MountRangeTarget, type RangeTargetPrep } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, shipLockRange, mountsReachTarget, prepareRangeTarget, type MountRangeTarget, type RangeTargetPrep } from '../../core/combat/mountReach.js';
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** Wire row: who is locking the pilot. `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
@@ -55,14 +55,14 @@ export interface NpcLockDeps {
    *  the step it starts, whatever the size/tracking terms and distance. */
   instantLock?(pilotId: string): boolean;
   /** testMode `lockTimeCapS` (room option): no NPC lock takes longer than
-   *  this many seconds, at any distance (0 = the first step). Undefined = off. */
+   *  this many seconds inside lock range (0 = the first step). Undefined = off. */
   lockTimeCapS?(): number | undefined;
   /** "An NPC that is attacking stays hostile" (owner 2026-11-12): called every
    *  lock step while `npcId` is locking or holds a lock on `pilotId` AND the
    *  pilot is inside the NPC's FIRE range (any of its mounts reaches the
    *  pilot's hull). The room re-stamps that NPC's hostility to the pilot, so
-   *  the 30 s decay runs from when the pilot leaves its fire range (locks
-   *  work at any distance since 2026-11-14, so the lock itself can't end it). */
+   *  the 30 s decay runs from when the pilot leaves its fire range (a lock
+   *  holds out to lock range, so the lock itself needn't end it). */
   refreshHostility?(npcId: string, pilotId: string): void;
 }
 
@@ -245,7 +245,14 @@ export class NpcLockSubsystem {
     inp.dy = this.pilot.y - this.npc.y;
     inp.dvx = this.pilot.vx - this.npc.vx;
     inp.dvy = this.pilot.vy - this.npc.vy;
-    // No reach gate: locks work at any distance (owner 2026-11-14). WHICH
+    // Lock range (owner 2026-11-21, the same rule as a player, hull to hull):
+    // the NPC's longest gun (`shipLockRange`). Past it no lock this step, not
+    // even instantLock; a held lock breaks after the grace.
+    inp.hullRadii = signatureFor(kind) + this.curSignature;
+    inp.lockRange = shipLockRange(kind);
+    if (pastLockRange(inp.dx, inp.dy, inp.hullRadii, inp.lockRange)) return;
+    const d2 = inp.dx * inp.dx + inp.dy * inp.dy;
+    // Inside lock range there is no reach gate. WHICH
     // profile builds the lock still follows reach, because a capital holds
     // ONE lock per pilot that every turret fires on: the fastest profile
     // whose guns may reach the pilot (a drone has one); with none in reach,
@@ -256,7 +263,6 @@ export class NpcLockSubsystem {
     let farSecs = Infinity;
     let farReach = 0;
     let anyInReach = false;
-    const d2 = inp.dx * inp.dx + inp.dy * inp.dy;
     for (let i = 0; i < gs.length; i++) {
       const g = gs[i]!;
       if (g.reach <= 0) continue;

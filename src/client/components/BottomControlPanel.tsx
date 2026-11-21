@@ -3,7 +3,7 @@ import { Box, Tooltip } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { type StructureKindId } from '@shared-types/structureKinds';
 import { BUILD_CATEGORIES } from './buildCategories';
-import { BUILD_ICONS } from './SpeedDialMenu';
+import { BUILD_ICONS } from './buildIcons';
 import { buildEntry } from '@shared-types/packedStock';
 import { usePackedStock } from '../structures/usePackedStock';
 import { isTouchDevice } from '../input/TouchInput';

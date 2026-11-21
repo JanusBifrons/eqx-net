@@ -23,6 +23,7 @@ import { SectorInfoDrawer } from './SectorInfoDrawer';
 import { isSectorWarpable } from '../render/galaxy/galaxyLayerDecisions';
 import { isTouchDevice } from '../input/TouchInput';
 import { Z } from '../layout/zIndex';
+import { useFreshPressSurface } from './touchClickActivate';
 import type { MutableRefObject } from 'react';
 
 /** Phase 2 #2 — one-shot loading overlay (static sx, hoisted per the drawer-perf
@@ -131,6 +132,10 @@ export function GalaxyPickerChrome({
 }: GalaxyPickerChromeProps): JSX.Element {
   useMountLog('GalaxyPickerChrome', { context });
   const isWarp = context === 'warp';
+  // The in-game map opens from the dial's Map action on touchstart: the same
+  // finger's release must not act on what is now under it (e.g. Close, which
+  // shares the dial's corner). The Pixi hex tap needs its own canvas down.
+  const freshPress = useFreshPressSurface(isWarp);
   const selectedShipKindId = useUIStore((s) => s.selectedShipKind);
   const setSelectedShipKind = useUIStore((s) => s.setSelectedShipKind);
   // Server health + live player count, surfaced over the landing map.
@@ -299,6 +304,7 @@ export function GalaxyPickerChrome({
   return (
     <Box
       data-testid="galaxy-map-screen"
+      {...freshPress}
       sx={{
         position: 'fixed',
         inset: 0,

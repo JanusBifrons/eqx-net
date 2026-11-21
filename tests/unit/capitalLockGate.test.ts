@@ -14,6 +14,7 @@ afterAll(() => vi.unstubAllEnvs());
 import { WeaponMountTicker, type SwarmRecord } from '../../src/server/rooms/WeaponMountTicker';
 import { NpcLockSubsystem, type NpcPose } from '../../src/server/rooms/NpcLockSubsystem';
 import { getShipKind } from '../../src/shared-types/shipKinds';
+import { shipLockRange } from '../../src/core/combat/mountReach';
 import { SAB_TOTAL_BYTES, SLOT_X_OFF, SLOT_Y_OFF, SLOT_ANGLE_OFF, slotBase } from '../../src/shared-types/sabLayout';
 import type { ShipState } from '../../src/server/rooms/schema/SectorState';
 
@@ -142,17 +143,23 @@ describe('testMode lockTimeCapS caps NPC locks (drones and capitals on pilots)',
     for (let i = 0; i < 4; i++) s.step();
     expect(s.isLocked('bs', 'f')).toBe(true);
   });
-  // Owner 2026-11-14: locks work at any distance, so the cap applies there too.
-  it("far past every gun's reach the cap still applies (locks work at any distance)", () => {
-    const s = rig(0, 100_000);
-    s.step();
-    expect(s.isLocked('bs', 'f')).toBe(true);
+  // Owner 2026-11-21: lock range = the locker's longest weapon max range, hull
+  // to hull. The cap shortens a lock inside that range; past it, none at all.
+  const bs = getShipKind('battleship');
+  const edge = shipLockRange(bs) + bs.radius + getShipKind('fighter').radius;
+  it('the cap applies inside the lock range; past it the capital never locks', () => {
+    const inside = rig(0, edge - 500);
+    inside.step();
+    expect(inside.isLocked('bs', 'f')).toBe(true);
+    const past = rig(0, edge + 500);
+    for (let i = 0; i < 50; i++) past.step();
+    expect(past.isLocked('bs', 'f')).toBe(false);
   });
-  it("far past every gun's reach, a capital locks with its longest gun (slowly), not its fast AA", () => {
+  it('near its lock range a capital locks with its longest gun (slowly), not its fast AA', () => {
     const near = rig(undefined); // 5 km: only the 16" reaches
     let nearSteps = 0;
     while (!near.isLocked('bs', 'f') && nearSteps < 5000) { near.step(); nearSteps++; }
-    const far = rig(undefined, 60_000);
+    const far = rig(undefined, 5000 + (edge - 5000) * 0.9);
     for (let i = 0; i < nearSteps; i++) far.step();
     expect(far.isLocked('bs', 'f')).toBe(false); // slower than at 5 km, never the AA's few seconds
     let farSteps = nearSteps;
