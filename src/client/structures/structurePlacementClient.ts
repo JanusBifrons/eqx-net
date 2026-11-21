@@ -30,6 +30,30 @@ export function cyclePlacementRotation(): number {
   placementRotationDeg = normaliseStructureRotation(placementRotationDeg + 90);
   return placementRotationDeg;
 }
+/** Build mirror (base loop 4B): place the next building left-right flipped.
+ *  Module state beside the rotation (a discrete choice the renderer reads
+ *  through the preview's `mirror`); rides `place_structure.mirror`. */
+let placementMirror = false;
+export function getPlacementMirror(): boolean {
+  return placementMirror;
+}
+export function setPlacementMirror(on: boolean): void {
+  placementMirror = on;
+}
+/** Flip the ghost left-right (F / the banner's Mirror button). Returns the new choice. */
+export function togglePlacementMirror(): boolean {
+  placementMirror = !placementMirror;
+  return placementMirror;
+}
+/** Desktop placement keys (main-thread `App.tsx` keydown, only while placing):
+ *  R rotates a quarter turn, F mirrors. True when the key was handled. */
+export function handlePlacementKey(key: string): boolean {
+  const k = key.toLowerCase();
+  if (k === 'r') cyclePlacementRotation();
+  else if (k === 'f') togglePlacementMirror();
+  else return false;
+  return true;
+}
 const DEG = Math.PI / 180;
 import { getGameClient } from '../net/clientSingleton.js';
 import { placementChosen } from './placementChosen.js';
@@ -68,6 +92,8 @@ export interface PlacementPreview {
   x: number;
   y: number;
   angle: number;
+  /** Build mirror: draw (and link) the ghost left-right flipped. */
+  mirror?: boolean;
   /** True ⇒ this is the dim "sent, awaiting the server entity" ghost shown
    *  AFTER Confirm (playtest 2026-06-10 Issue 7), not the live positioning
    *  ghost. The renderer dims it and stops capturing pointers for it. */
@@ -89,6 +115,8 @@ export interface PendingPlacement {
   y: number;
   /** Rotation (degrees) the structure was sent with. */
   rot?: number;
+  /** Build mirror the structure was sent with. */
+  mirror?: boolean;
   /** `Date.now()` when `place_structure` was sent. */
   sentAtMs: number;
   /** `mirror.structures.size` at send time — the dim ghost clears once it grows
@@ -155,6 +183,7 @@ export function resolvePlacementPreviewStatus(
     out.x = pos.x;
     out.y = pos.y;
     out.angle = placementRotationDeg * DEG;
+    out.mirror = placementMirror;
     out.pending = false;
     return 'active';
   }
@@ -166,6 +195,7 @@ export function resolvePlacementPreviewStatus(
     out.x = pending.x;
     out.y = pending.y;
     out.angle = (pending.rot ?? 0) * DEG;
+    out.mirror = pending.mirror === true;
     out.pending = true;
     return 'pending';
   }
@@ -186,7 +216,7 @@ export function computePlacementPreview(
 ): PlacementPreview | null {
   if (!kindId) return null;
   const pos = computePlacementPose(ship, kindId);
-  return { kind: kindId, x: pos.x, y: pos.y, angle: placementRotationDeg * DEG };
+  return { kind: kindId, x: pos.x, y: pos.y, angle: placementRotationDeg * DEG, mirror: placementMirror };
 }
 
 /**
@@ -214,10 +244,10 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number):
   if (!client) return false;
   const room = client.getRoom();
   if (!room) return false;
-  room.send('place_structure', { type: 'place_structure', kind: kindId, x, y, rot: placementRotationDeg });
+  room.send('place_structure', { type: 'place_structure', kind: kindId, x, y, rot: placementRotationDeg, mirror: placementMirror });
   // Keep a dim ghost at the sent point until the structure lands, so the
   // blueprint doesn't vanish for ~1 s (playtest 2026-06-10 Issue 7).
-  client.notePendingPlacement(kindId, x, y, placementRotationDeg);
+  client.notePendingPlacement(kindId, x, y, placementRotationDeg, placementMirror);
   return true;
 }
 

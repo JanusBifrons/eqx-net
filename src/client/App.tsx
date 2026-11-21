@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installPerfProbe, perfProbeEnabled, runPerfLabScene, runPerfLabTrip } from './debug/perf/perfProbe';
-import { cyclePlacementRotation } from './structures/structurePlacementClient';
+import { handlePlacementKey } from './structures/structurePlacementClient';
 import { installWindowLogger, refreshAutoCaptureLatch } from './debug/ClientLogger';
 import { installStreamingDiag } from './debug/streamingDiag';
 import { installTestLeakHook } from './debug/testLeakHook';
@@ -677,9 +677,10 @@ function GameSurface({
         else if (e.key === 'Enter' && canFinishFleetPick(pick)) useUIStore.getState().requestFleetPickDone();
       }
       // Phase V — R rotates the placement ghost a quarter turn (structures are
-      // rectangles; storage runs in rows). Main-thread, both render paths.
-      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'r' || e.key === 'R') && useUIStore.getState().placementKind) {
-        cyclePlacementRotation();
+      // rectangles; storage runs in rows); F mirrors it (base loop 4D).
+      // Main-thread, both render paths.
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && !inField && useUIStore.getState().placementKind) {
+        handlePlacementKey(e.key);
       }
     };
     window.addEventListener('keydown', onKey);

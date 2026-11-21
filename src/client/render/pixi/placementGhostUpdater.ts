@@ -122,12 +122,14 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     ctx.placementGhost.x = gx;
     ctx.placementGhost.y = -gy; // Y-flip
     ctx.placementGhost.rotation = -preview.angle;
+    // Build mirror (4B): flip in the local frame, then rotate (structureLocalToWorld).
+    ctx.placementGhost.scale.x = preview.mirror === true ? -1 : 1;
     // Red / green before the click: the server's own overlap rule at the drawn
     // pose (structures, landing pads, rocks). The pending ghost is already sent.
     let rejection: PlacementRejection | null = null;
     if (!pendingGhost && mirror.swarm) {
       const pose = ctx.pose;
-      pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = preview.angle;
+      pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = preview.angle; pose.mirror = preview.mirror === true;
       rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles);
     }
     ctx.feedback.placementPreviewRejection = rejection;
