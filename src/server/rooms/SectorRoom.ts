@@ -71,7 +71,8 @@ import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem, packedGateForBuild, repackItem, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
-import { GateController, type GateShipBuffer } from '../structures/GateController.js';
+import type { GateController } from '../structures/GateController.js';
+import { buildGateController } from '../structures/gateControllerFactory.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
@@ -1935,7 +1936,7 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       swarmRegistry: this.swarmRegistry,
       swarmHealth: this.shieldHullRouter.swarmHealth,
-      structures: () => this.structureRegistry.all(),
+      structures: () => this.structureRegistry.all(), gateDoorOf: (id) => this.gates.savedDoor(id),
       restoreStructures: (rows) => this.snapshotRestore.restoreStructures(rows),
       scrapEntities: () => this.snapshotRestore.scrapEntities(),
       restoreScrap: (rows) => this.snapshotRestore.restoreScrap(rows),
@@ -2224,7 +2225,7 @@ export class SectorRoom extends Room<SectorState> {
       powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
       takeMunition: (rec) => this.production.takeGoods(rec, ONE_MUNITION),
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
-      mines: () => (this.state as SectorState).mines, internStructureOwner: (o) => this.internStructureOwner(o),
+      mines: () => (this.state as SectorState).mines, structures: () => (this.state as SectorState).structures, internStructureOwner: (o) => this.internStructureOwner(o),
     });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
     // Forms the blocking span between paired pylons + drives its physics
@@ -2250,14 +2251,13 @@ export class SectorRoom extends Room<SectorState> {
       canReceiveHull: (shipInstanceId) => this.freeSlots.length > 0 && !this.state.ships.has(shipInstanceId),
       receiveLingeringHull: (row) => this.hullHandOff.receiveHandedOffHull(row), receiveFleetSquads: (rows) => { this.fleet.restoreSquads(rows); },
     }));
-    this.gates = new GateController({
-      registry: this.structureRegistry,
-      collectShips: (out) => this.collectGateShips(out),
-      // B1 relation seam slots in here; until then: same player ⇒ self.
-      relationOf: (playerId, owner) => relationOf(playerId, owner, this.relationCtx),
+    this.gates = buildGateController({
+      registry: this.structureRegistry, pilots: this.playerToSlot, activeShip: (pid) => this.getActiveShip(pid), pose: (pid) => this.shipPoseCache.get(pid),
+      relationOf: (playerId, owner) => relationOf(playerId, owner, this.relationCtx), serverTick: () => this.serverTick,
+      supplyFrac: (id) => this.structureGrid.powerSummaryFor(id).supplyFrac, setActive: (rec, on) => this.structureGrid.setActive(rec, on), post: (cmd) => this.postToWorker(cmd),
+      hitBoxes: (id) => this.swarmRegistry.get(id)?.boxes,
     });
     this.shieldWalls = new ShieldWallManager({
-      gateOpenMask: (id) => this.gates.maskFor(id),
       registry: this.structureRegistry,
       powerSummaryFor: (id) => this.structureGrid.powerSummaryFor(id),
       componentBatteryCharge: (id) => this.structureGrid.componentBatteryCharge(id),
@@ -3292,20 +3292,6 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Gates: every ACTIVE player ship (#17 — lingering hulls are parked and
    *  never open gates), into the controller's reused buffer. */
-  private collectGateShips(out: GateShipBuffer): void {
-    for (const [playerId] of this.playerToSlot) {
-      const ship = this.getActiveShip(playerId);
-      if (!ship || !ship.alive || !ship.isActive) continue;
-      const pose = this.shipPoseCache.get(playerId);
-      if (!pose) continue;
-      const i = out.count++;
-      out.playerIds[i] = playerId;
-      out.xs[i] = pose.x;
-      out.ys[i] = pose.y;
-      out.radii[i] = getShipKind(ship.kind).radius;
-    }
-  }
-
   /** Shield-fence plan — beam-vs-wall absorption seam shared by the player + AI
    *  hitscan resolvers. If an ACTIVE shield wall lies along the shot ray within
    *  `maxDist`, the wall takes the hit (grid-power model) and the shot stops

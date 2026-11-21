@@ -101,10 +101,9 @@ import { FIT_OPEN_LIST_SX, useFitActionsToViewport } from './speedDialFit';
  * categories ▸ kinds — via the local `view` discriminated union (`buildCategories.tsx`).
  * The FAB stays the open/close toggle; a dedicated back ACTION pops one level; the
  * FAB icon reflects the drilled category at the `kinds` level. Picking a kind sets
- * `placementKind` and KEEPS the dial open (only a deliberate FAB toggle / Escape
- * closes it — `blur` / `mouseLeave` from clicking the canvas to position the ghost
- * are ignored in onClose), so several structures place in a row with no Build ▸
- * category re-drill (the old close-on-pick was the bug). Categories live client-side
+ * `placementKind` (entering Build mode) and CLOSES the dial (build mode owns the screen) but keeps the
+ * `kinds` view, so one FAB tap brings the same list back for the next structure
+ * with no Build ▸ category re-drill (`blur` / `mouseLeave` are ignored in onClose). Categories live client-side
  * only (no wire catalogue field, no version bump, no netgate).
  *
  * Perf: all static `sx` is hoisted to module-level consts (no per-render alloc,
@@ -162,6 +161,23 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
     (document.activeElement as HTMLElement | null)?.blur();
   }, [collapse]);
 
+  // Build mode keeps the build list ready: entering Build (the mode switch) and
+  // every Confirm / Cancel (the ghost goes, Build stays) open the dial on the
+  // build list: the last category's kinds, else the categories. Leaving Build
+  // closes it back to the main menu.
+  const building = useUIStore((s) => s.buildMode);
+  const buildListReady = useUIStore((s) => s.buildMode && s.placementKind === null);
+  const wasBuilding = useRef(false);
+  useEffect(() => {
+    if (buildListReady) {
+      setView((v) => (v.level === 'root' ? { level: 'categories' } : v));
+      setOpen(true);
+    } else if (!building && wasBuilding.current) {
+      close();
+    }
+    wasBuilding.current = building;
+  }, [building, buildListReady, close]);
+
   const toggleOpen = useCallback(() => setOpen((o) => !o), []);
 
   const handleMenu = useCallback(() => {
@@ -206,15 +222,15 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   const dialRef = useRef<HTMLDivElement>(null);
   useFitActionsToViewport(dialRef, direction, open, view.level === 'kinds' ? view.category : view.level);
 
-  // Pick a kind to place: raise the placement ghost. Does NOT close the dial —
-  // it STAYS OPEN at the kinds level so the player can place several structures
-  // in a row (the old close() here reset to root, forcing a full Build ▸ category
-  // ▸ kind re-drill for every structure — the R2.6 complaint). The onClose handler
-  // ignores 'blur'/'mouseLeave', so clicking the canvas to position the ghost (or
-  // the Confirm banner) doesn't dismiss the menu.
+  // Pick a kind to place: raise the placement ghost and close the list, so it
+  // never covers the ghost (build mode, stills review 2026-11-20). The `kinds`
+  // view is KEPT (unlike close()): one FAB tap reopens the same list for the next
+  // structure, with no Build ▸ category ▸ kind re-drill (the R2.6 complaint).
   const handlePickBuild = useCallback(
     (kind: StructureKindId) => {
       setPlacementKind(kind);
+      setOpen(false);
+      (document.activeElement as HTMLElement | null)?.blur();
     },
     [setPlacementKind],
   );
@@ -352,7 +368,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   }
 
   // The FAB reflects the drilled-into category at the `kinds` level (the dial
-  // stays open there while placing, so a plain category icon shows the context);
+  // a pick closes the dial but keeps that level, so it names the last category);
   // otherwise the standard +/× SpeedDialIcon morph signals open/close.
   const fabIcon = view.level === 'kinds' ? CATEGORY_ICON[view.category] : <SpeedDialIcon />;
 
@@ -376,9 +392,8 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
         if (isWithinSuppressWindow()) return;
         setOpen(true);
       }}
-      // The dial STAYS OPEN across a placement (R2.6): picking a kind raises the
-      // ghost but leaves the dial expanded so the next structure is one tap away.
-      // MUI fires onClose on 'blur' / 'mouseLeave' too — e.g. when the player
+      // Picking a kind closes the dial but keeps the kinds level (handlePickBuild),
+      // so the next structure is one FAB tap away (R2.6). MUI fires onClose on 'blur' / 'mouseLeave' too — e.g. when the player
       // clicks the canvas to position the ghost or taps the Confirm banner — and
       // we IGNORE those so an incidental focus change doesn't dismiss the build
       // menu. Only a deliberate FAB toggle or Escape closes it (resetting to the
@@ -390,7 +405,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
         } else if (reason === 'escapeKeyDown') {
           close();
         }
-        // 'blur' / 'mouseLeave' → ignored: the dial stays open.
+        // 'blur' / 'mouseLeave' → ignored: a stray focus change never closes it.
       }}
       FabProps={{ ...FAB_PROPS, onTouchStart: touchActivate(toggleOpen) }}
       sx={direction === 'down' ? DIAL_SX_DOWN : DIAL_SX}

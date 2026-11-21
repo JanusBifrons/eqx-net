@@ -75,6 +75,10 @@ export interface StructureRigInput {
    *  (`CRANE_CARGO_*`); absent = no cargo shown. */
   holdTicks?: number;
   cargo?: number;
+  /** Scrubbed clip (doors): clip time at `startTick` and clip ticks per
+   *  game tick (`PlayingClip.from` / `rate`); absent = a plain clip. */
+  from?: number;
+  rate?: number;
 }
 
 /** zIndex of the over band: above every hull (0), below the beams. */
@@ -118,7 +122,7 @@ export function worldToHost(wx: number, wy: number, hx: number, hy: number, ha: 
 // ---------------------------------------------------------------- one structure
 
 /** A mutable `PlayingClip` (the evaluator reads it; nothing is allocated). */
-interface MutablePlaying { clipId: string; startTick: number; target: { x: number; y: number } | undefined }
+interface MutablePlaying { clipId: string; startTick: number; target: { x: number; y: number } | undefined; from?: number; rate?: number }
 
 /**
  * One structure's rig: its pose, its part graphics and its three layer
@@ -135,6 +139,9 @@ export class StructureRigView {
   readonly parts: Graphics[] = [];
   /** Drop shadow per part (null for under parts), in rig order. */
   readonly shadows: Array<Graphics | null> = [];
+  /** Lit overlay per part (`RigDrawHook.partLit`; null for none), in rig
+   *  order: posed with its part, shown only while `running`. */
+  readonly lit: Array<Graphics | null> = [];
   private readonly shadowOff: number[] = [];
   /** Rig part carrying the kind's weapon mount, or -1. */
   readonly mountPart: number;
@@ -168,8 +175,9 @@ export class StructureRigView {
   /** 3e: the camera scale (CSS px per world u), so the arm's pulse keeps a
    *  cable pulse's on-screen size (`cometSegment` / `lineLookScale`). */
   zoom = 1;
-  /** Spinning parts (`PartDef.spin`) run this frame (set by the caller
-   *  before `update`, e.g. from `setRunningFrom`); stopped, they hold. */
+  /** Spinning parts (`PartDef.spin`) run and lit overlays show this frame
+   *  (set by the caller before `update`, e.g. from `setRunningFrom`);
+   *  stopped, spinning parts hold and lit overlays hide. */
   running = true;
   /** The rig has a spinning part. */
   readonly hasSpin: boolean;
@@ -215,6 +223,16 @@ export class StructureRigView {
         group.addChildAt(sh, part.layer === 'over' ? shadowsOver++ : shadowsPlane++);
       }
       group.addChild(g);
+      // A sibling just over the part (a v8 Graphics takes no children),
+      // under every later part of its group.
+      const litCtx = hook?.partLit?.(rig, i) ?? null;
+      let lit: Graphics | null = null;
+      if (litCtx !== null) {
+        lit = new Graphics(litCtx);
+        lit.label = `rig-lit-${part.id}`;
+        group.addChild(lit);
+      }
+      this.lit.push(lit);
     }
     this.mountPart = hook?.mountPart?.(rig) ?? -1;
     this.runningOf = hook?.running;
@@ -274,6 +292,8 @@ export class StructureRigView {
       const p = this.playing;
       p.clipId = input.clipId;
       p.startTick = input.startTick;
+      p.from = input.from;
+      p.rate = input.rate;
       if (input.targetX !== undefined && input.targetY !== undefined) {
         worldToHost(input.targetX, input.targetY, hx, hy, ha, scale, this.targetScratch);
         p.target = this.targetScratch;
@@ -324,6 +344,13 @@ export class StructureRigView {
         sh.rotation = xf.rotation;
       }
       if (this.partShowOf !== undefined) this.partShowOf(this.rig, i, this.pose.value[i]!, this.row, g, sh, clipT);
+      const lit = this.lit[i]!;
+      if (lit !== null) {
+        lit.position.set(xf.x, xf.y);
+        lit.rotation = xf.rotation;
+        lit.scale.copyFrom(g.scale);
+        lit.visible = g.visible && this.running;
+      }
     }
     this.poseCargo(input, nowTick);
   }
@@ -498,6 +525,8 @@ export class StructureRigs {
       input.startTick = clip.startTick;
       input.holdTicks = clip.holdTicks;
       input.cargo = clip.cargo;
+      input.from = clip.from;
+      input.rate = clip.rate;
       if (clip.targetX !== undefined && clip.targetY !== undefined) {
         // Host frame → world game coords (the view takes a world target).
         const c = Math.cos(ha), s = Math.sin(ha);

@@ -40,9 +40,9 @@ export interface ArtOptions {
   /** Ship livery treatment: `DEFAULT_LIVERY` unless `?livery=off` (none) or
    *  another treatment (look R&D). Absent = the pre-livery paint. Machined only. */
   livery?: LiveryTreatment;
-  /** Structure livery (`?structLivery=1`, structure restyle 1c): structures
-   *  wear their owner's colours and sigil. Off by default (look not yet
-   *  signed off); off = today's structure bakes, byte-identical. Machined only. */
+  /** Structure livery (structure restyle 1c): structures wear their owner's
+   *  colours and sigil. On by default (owner 2026-11-20); `?structLivery=0`
+   *  = the unliveried bakes. Machined only. */
   structLivery?: boolean;
   /** Structure style (`?restyle=a`, structure restyle 1d+): a look
    *  direction from `structureStyles.ts`. Absent (or `current`) = today's
@@ -105,9 +105,10 @@ export function readLivery(search: string): LiveryTreatment | undefined {
   return p ?? DEFAULT_LIVERY;
 }
 
-/** `?structLivery=1`: structures wear their owner's livery (off by default). */
+/** Structures wear their owner's livery (owner colour bands + sigil) by
+ *  default, like ships; `?structLivery=0` / `off` = the unliveried bake. */
 export function readStructLivery(search: string): boolean {
-  return /[?&]structLivery=1\b/.test(search);
+  return !/[?&]structLivery=(0|off)\b/.test(search);
 }
 
 /** The structure style every Machined-art player sees (owner, structure

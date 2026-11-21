@@ -9,7 +9,7 @@
  * Local space is Pixi-up (ship nose at -y). Heights are in WORLD units.
  */
 import { getShipKind, type ShipKind } from '../../../shared-types/shipKinds.js';
-import { buildStructureVisual, PROPOSED_FOOTPRINTS, type PolyOp } from '../pixi/structureVisuals.js';
+import { buildStructureVisual, type PolyOp } from '../pixi/structureVisuals.js';
 import { polyEdgeDist } from '../pixi/structureStyleKit.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng, type Poly } from './raster.js';
@@ -552,7 +552,7 @@ export interface StructureForgeOpts {
   accent?: number;
   /** Turret rings to cut into the deck (local world units, Pixi-up), R&D. */
   rings?: ReadonlyArray<{ x: number; y: number; r: number }>;
-  /** The owner's livery (`?structLivery=1`): paints the plan's livery bands
+  /** The owner's livery (on by default, `?structLivery=0` = off): paints the plan's livery bands
    *  and stamps the owner's sigil into its slots. Absent = today's bake. */
   livery?: StructLivery;
   /** Structure style (`?restyle=`, `structureStyles.ts`); absent or
@@ -711,7 +711,7 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
       }
     }
   });
-  // Owner livery (`?structLivery=1`): bands in the owner's enamel, then the
+  // Owner livery (on by default, `?structLivery=0` = off): bands in the owner's enamel, then the
   // owner's sigil in each slot, before the grime so they weather with the
   // plating (the beacon's screen is glass: grime skips it).
   if (opts.livery) {
@@ -769,7 +769,7 @@ export function cavity(f: Fields, radiusU: number): Float32Array {
   return out;
 }
 
-export { insidePoly, PROPOSED_FOOTPRINTS };
+export { insidePoly };
 
 // ------------------------------------------------------------------ turrets (R&D)
 

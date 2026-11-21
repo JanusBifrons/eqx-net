@@ -1,8 +1,9 @@
 /**
- * The ALWAYS-VISIBLE Command ⇄ Fly toggle (RTS slice 10; was Pilot ⇄ Spectate).
- * Locks:
- *   - renders both joined buttons in-game, null otherwise; aria-pressed reflects
- *     the mode; the labels are the plain "Command" / "Fly";
+ * The ALWAYS-VISIBLE mode switch: Fly / Command / Build (RTS slice 10; Build
+ * is the third mode, owner 2026-11-20). Locks:
+ *   - renders three joined buttons in-game (Fly, Command, Build), null
+ *     otherwise; aria-pressed reflects the mode;
+ *   - Build enters Build mode; in Build, Command / Fly are the only way out;
  *   - Command flips `pilotMode` to spectator and sends `command` (hands the
  *     ship back to its AI);
  *   - Fly in command view with exactly ONE own parked ship selected takes it at
@@ -18,6 +19,7 @@ import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient.js';
 import { PilotSpectatorToggle } from './PilotSpectatorToggle.js';
+import { resetBuildModeView, stepBuildModeView } from '../structures/buildModeView.js';
 
 vi.mock('../ships/shipActionsClient.js', () => ({ sendPilotShip: vi.fn(), sendCommand: vi.fn() }));
 
@@ -38,19 +40,62 @@ function ownFleet(): void {
   );
 }
 
-describe('PilotSpectatorToggle — Command / Fly (RTS slice 10)', () => {
+describe('PilotSpectatorToggle — Fly / Command / Build', () => {
   beforeEach(() => {
-    useUIStore.setState({ phase: 'game', pilotMode: 'pilot', isDead: false, selection: { ids: [], focusId: null, focusKind: null } });
+    resetBuildModeView();
+    useUIStore.setState({ phase: 'game', pilotMode: 'pilot', buildMode: false, placementKind: null, isDead: false, selection: { ids: [], focusId: null, focusKind: null } });
     vi.mocked(sendPilotShip).mockReset();
     vi.mocked(sendCommand).mockReset();
   });
   afterEach(() => setGameClient(null));
 
-  it('renders both joined buttons, labelled Command and Fly, while phase === "game"', () => {
+  it('renders three joined buttons, Fly, Command and Build in that order, while phase === "game"', () => {
     render(<PilotSpectatorToggle />);
-    expect(screen.getByTestId('pilot-spectator-toggle')).toBeInTheDocument();
-    expect(screen.getByTestId('spectator-toggle')).toHaveTextContent('Command');
+    const group = screen.getByTestId('pilot-spectator-toggle');
+    const ids = Array.from(group.querySelectorAll('button')).map((b) => b.getAttribute('data-testid'));
+    expect(ids).toEqual(['pilot-toggle', 'spectator-toggle', 'build-toggle']);
     expect(screen.getByTestId('pilot-toggle')).toHaveTextContent('Fly');
+    expect(screen.getByTestId('spectator-toggle')).toHaveTextContent('Command');
+    expect(screen.getByTestId('build-toggle')).toHaveTextContent('Build');
+  });
+
+  it('Build enters Build mode from Fly (the switch shows it pressed)', () => {
+    render(<PilotSpectatorToggle />);
+    fireEvent.click(screen.getByTestId('build-toggle'));
+    expect(useUIStore.getState().buildMode).toBe(true);
+    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-control-mode', 'build');
+    expect(screen.getByTestId('build-toggle')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('pilot-toggle')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('in Build, Command leaves to Command view (ship stays AI-flown, ghost dropped)', () => {
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, placementKind: 'turret' });
+    render(<PilotSpectatorToggle />);
+    fireEvent.click(screen.getByTestId('spectator-toggle'));
+    expect(useUIStore.getState().buildMode).toBe(false);
+    expect(useUIStore.getState().placementKind).toBeNull();
+    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-control-mode', 'command');
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(sendPilotShip).not.toHaveBeenCalled();
+  });
+
+  it('in Build entered from Fly, Fly takes back the ship you were flying', () => {
+    const cam = { glideCameraTo: vi.fn() };
+    useUIStore.getState().setBuildMode(true);
+    stepBuildModeView(true, { viewX: 0, viewY: 0, viewHalf: 400 }, 'ship-1', cam, 800, 400);
+    render(<PilotSpectatorToggle />);
+    fireEvent.click(screen.getByTestId('pilot-toggle'));
+    expect(sendPilotShip).toHaveBeenCalledWith('ship-1');
+    expect(useUIStore.getState().buildMode).toBe(false);
+  });
+
+  it('in Build entered from Command, Fly opens the ship menu', () => {
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true });
+    ownFleet();
+    render(<PilotSpectatorToggle />);
+    fireEvent.click(screen.getByTestId('pilot-toggle'));
+    expect(useUIStore.getState().buildMode).toBe(false);
+    expect(screen.getByTestId('pilot-menu-ship-ship-1')).toBeInTheDocument();
   });
 
   it('renders nothing when phase !== "game"', () => {

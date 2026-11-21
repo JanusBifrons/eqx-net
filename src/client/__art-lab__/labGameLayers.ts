@@ -9,6 +9,7 @@ import { readLineLook } from '../render/pixi/connectorLineLooks.js';
 import { StructureRigView, type StructureRigInput } from '../render/pixi/structureRigs.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { PROD_STATE } from '../../shared-types/production.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import type { Scene } from './scenes.js';
 import { CONNECTION_MAX_RANGE } from '../../core/structures/structureGridConstants.js';
@@ -88,8 +89,12 @@ export function buildLabGridLines(scene: Scene, lineL: Container, nubL?: Contain
 
 /** A lab structure row for `?live=` entry `v` (Stage 4 F1 step C): a
  *  number is a power store's charge fraction, `dry` a reactor with no fuel,
- *  `hold` a territory lock holding its sector, `bay<b>` / `bay<b>q<n>` a
- *  Shipyard building in slipway bay b with n more queued (loop 3R),
+ *  `hold` a territory lock holding its sector, `m<N>` a mine layer with N
+ *  mines out, `f<N>` a storage hold N percent full (0-100), `off` a built
+ *  row with no power, `work` a processor producing, `starve` one waiting
+ *  for an input,
+ *  `bay<b>` / `bay<b>q<n>` a Shipyard building in slipway bay b with n
+ *  more queued (loop 3R),
  *  anything else (`fuel`, empty) the plain built row. */
 export function labLiveRow(kind: string, v: string | undefined): StructureRenderState {
   const row = { built: true, powered: true, buildPct: 1, deconstructPct: 0, connTo: [] } as unknown as StructureRenderState;
@@ -100,6 +105,11 @@ export function labLiveRow(kind: string, v: string | undefined): StructureRender
   }
   if (v === 'dry') row.noFuel = true;
   if (v === 'hold') row.lockHolding = true;
+  if (v === 'off') row.powered = false;
+  if (v !== undefined && /^m[0-9]$/.test(v)) row.minesOut = Number(v.slice(1));
+  if (v === 'work') row.prodState = PROD_STATE.running;
+  if (v === 'starve') row.prodState = PROD_STATE.starved;
+  if (v !== undefined && /^f[0-9]{1,3}$/.test(v)) row.fillPct = Math.min(100, Number(v.slice(1)));
   const bay = v !== undefined ? /^bay(\d)(?:q(\d))?$/.exec(v) : null;
   if (bay !== null) { row.prodBay = Number(bay[1]); row.prodQueued = Number(bay[2] ?? 0); }
   return row;

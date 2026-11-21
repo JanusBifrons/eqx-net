@@ -39,7 +39,7 @@ export interface Livery {
   /** The faction's section-edge shape (treatment 'b8'; 'tongue' if absent). */
   edge?: LiveryEdge;
 }
-/** A structure's owner livery (structure restyle 1c, `?structLivery=1`):
+/** A structure's owner livery (structure restyle 1c, on by default, `?structLivery=0` = off):
  *  the ship livery's team colour and sigil seed, painted into the draw
  *  plan's livery bands and sigil slots. */
 export type StructLivery = Pick<Livery, 'team' | 'sigil'>;

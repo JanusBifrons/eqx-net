@@ -89,7 +89,9 @@ export function socketArtEdges(kind: string, style = 'c'): SocketArtEdge[] {
     const x = s.x, y = -s.y; // pixi frame
     let best = Infinity;
     for (let e = 0; e < edge.length; e += 2) best = Math.min(best, Math.hypot(edge[e]! - x, edge[e + 1]! - y));
-    const ci = Math.floor(x - x0 - s.nx * 0.5), cj = Math.floor(y - y0 + s.ny * 0.5); // half a unit in
+    // One unit in: a point on a diagonal edge can land in an uncovered cell
+    // half a unit in (1-unit raster), though the deck plate covers it.
+    const ci = Math.floor(x - x0 - s.nx), cj = Math.floor(y - y0 + s.ny);
     const inside = ci >= 0 && ci < GW && cj >= 0 && cj < GH && cov[cj * GW + ci] === 1;
     let under = 0;
     for (const p of polys) if (p.lift > RAISED_LIFT && p.lift > under && inPoly(p.pts, x - s.nx * 2, y + s.ny * 2)) under = p.lift;

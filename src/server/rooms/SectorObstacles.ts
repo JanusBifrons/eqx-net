@@ -30,7 +30,7 @@ export interface HullSink {
   hull(x: number, y: number, kind: string | undefined, playerId: string | undefined, shipId: string | undefined, pending: boolean): void;
 }
 
-/** Receives each blocking shield wall / closed gate span. */
+/** Receives each blocking shield wall. */
 export interface WallSink {
   wall(ax: number, ay: number, bx: number, by: number, halfThickness: number): void;
 }

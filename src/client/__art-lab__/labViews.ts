@@ -50,6 +50,8 @@ export interface StructView {
   bandArt: Array<StructArt | undefined>;
   id: string; seed: number;
   radius: number;
+  /** `?turrets=1`: the building's guns at their resting angles. */
+  guns?: LabGuns;
 }
 
 export interface BoomView {

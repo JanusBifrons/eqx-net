@@ -47,7 +47,7 @@ export function cargoRows(hold: Hold | null): CargoRow[] {
   for (const p of hold.packed ?? []) {
     if (p.uid === undefined) continue;
     rows.push({
-      key: `u:${p.uid}`, label: p.product === ROCK_CHUNK_PRODUCT ? 'Rock chunk' : productName(p.product), count: 1, tier: 1,
+      key: `u:${p.uid}`, label: p.product === ROCK_CHUNK_PRODUCT ? 'Rock chunk' : `${productName(p.product)} (packed)`, count: 1, tier: 1,
       one: { packed: [p.uid] }, all: { packed: [p.uid] },
     });
   }

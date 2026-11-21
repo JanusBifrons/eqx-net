@@ -42,6 +42,13 @@ const NAV_WAIT_RETRY_MS = 10_000;
  *  clearance (sets how hard it brakes for a corner; 6 u for a fighter cleared
  *  the streets flight 4/4 where 24 u still brushed rock, 2026-11-19). */
 const NAV_TURN_SWING = 0.2;
+/** Asked with no nose (heading NaN), a ship out of a corner holds its turn
+ *  speed this many times as long as its nose needs to swing the corner's
+ *  angle (θ / turn rate): margin for a nose already off the old leg. */
+const NAV_TURN_HOLD = 1.5;
+/** With the nose known, the hold out of a corner ends once the nose is within
+ *  10° of the aim point (the cap there is many times any cruise). */
+const NAV_TURN_ROUND_COS = Math.cos((10 * Math.PI) / 180);
 
 interface ShipNav {
   readonly route: NavRoute;
@@ -59,6 +66,11 @@ interface ShipNav {
   chkY: number;
   stuck: number;
   usedAt: number;
+  /** The leg flown last call (a new leg = a corner just passed), and the
+   *  turn speed held out of that corner until `holdUntil` (game ms). */
+  turnLeg: number;
+  holdUntil: number;
+  holdSpeed: number;
 }
 
 export class NavRoutes implements IAiNavRoutes {
@@ -68,6 +80,8 @@ export class NavRoutes implements IAiNavRoutes {
   turnX = 0;
   turnY = 0;
   ahead = 0;
+  /** Speed cap (u/s) while the nose comes round a corner just passed; Infinity otherwise. */
+  turnSpeed = Infinity;
   /** Plans asked for (count gate), and answered with a route. */
   requests = 0;
   routed = 0;
@@ -84,7 +98,7 @@ export class NavRoutes implements IAiNavRoutes {
   /** This call's nose and turning radius (passed on to its plans, slice 11). */
   private heading = NaN;
   private turnRadius = 0;
-  private hull: NavHull = { clearance: 0, comfort: 0, beam: 0 };
+  private hull: NavHull = { clearance: 0, comfort: 0, beam: 0, turnRate: 0 };
 
   /** Ships with a record (diagnostics, tests). */
   get size(): number { return this.ships.size; }
@@ -97,7 +111,8 @@ export class NavRoutes implements IAiNavRoutes {
     if (now >= this.nextSweep) this.sweep(now);
     let s = this.ships.get(entityId);
     if (s === undefined) {
-      s = { route: createNavRoute(), goalX: NaN, goalY: NaN, gen: 0, pending: false, short: false, askedAt: -Infinity, usedAt: now, chkAt: now, chkX: x, chkY: y, stuck: 0 };
+      s = { route: createNavRoute(), goalX: NaN, goalY: NaN, gen: 0, pending: false, short: false, askedAt: -Infinity, usedAt: now, chkAt: now, chkX: x, chkY: y, stuck: 0,
+        turnLeg: 0, holdUntil: -Infinity, holdSpeed: Infinity };
       this.ships.set(entityId, s);
     }
     s.usedAt = now;
@@ -117,10 +132,15 @@ export class NavRoutes implements IAiNavRoutes {
     }
     let leg = stepNavRoute(s.route, x, y, arrive);
     if (leg < 0) {
-      if (!s.short || s.route.count === 0) return false;
+      if (!s.short || s.route.count === 0) { this.turnSpeed = Infinity; return false; }
       leg = s.route.count - 1; // as close as it gets: wait there
     }
     const p = s.route.points;
+    if (leg !== s.turnLeg) {
+      if (leg === s.turnLeg + 1) this.holdTurn(s, leg, hull, now); // a corner just passed
+      else s.holdUntil = -Infinity; // a new route
+      s.turnLeg = leg;
+    }
     const wx = p[leg * 2]!, wy = p[leg * 2 + 1]!;
     const dx = wx - x, dy = wy - y, d = Math.sqrt(dx * dx + dy * dy);
     let ahead = d;
@@ -149,8 +169,58 @@ export class NavRoutes implements IAiNavRoutes {
         if (along < len) { ax = px + (lx * along) / len; ay = py + (ly * along) / len; }
       }
     }
+    this.turnSpeed = this.turnCap(s, x, y, ax, ay, hull, now);
     this.wpX = ax; this.wpY = ay; this.turnX = wx; this.turnY = wy; this.ahead = ahead;
     return true;
+  }
+
+  /**
+   * Out of the corner at the start of `leg`: hold the speed whose swing off
+   * the new leg stays within `NAV_TURN_SWING` × clearance while the nose comes
+   * round. The pilot thrusts along its nose as it turns (the wanted course's
+   * share along it, v·cosφ), so a nose swinging θ at turn rate ω drifts the
+   * ship v·sin²θ / 2ω off the new leg ⇒ v ≤ 2ω·swing / sin²θ (past 90°, the
+   * 90° figure). With the nose known, `turnCap` holds it until the nose is
+   * round, by the angle it has left; without, for `NAV_TURN_HOLD` × θ / ω. Measured on the streets
+   * flight: a fighter stalled at a 76° corner and left it at the leg's full
+   * cruise ran 33 u off the line into rock; the model says 31 u.
+   * Not for a hull asking with a turning radius (a capital): its planner
+   * already fits each corner to its turn room, and a cap on top only slowed
+   * it (a destroyer's planned arc: 480 s to the goal became 553 s, no closer
+   * to the line).
+   */
+  private holdTurn(s: ShipNav, leg: number, hull: NavHull, now: number): void {
+    s.holdUntil = -Infinity;
+    if (this.turnRadius > 0) return; // its plan is shaped by its turning: not limited twice
+    const p = s.route.points, w = hull.turnRate;
+    const cx = p[leg * 2 - 2]!, cy = p[leg * 2 - 1]!;
+    const qx = leg > 1 ? p[leg * 2 - 4]! : s.route.sx, qy = leg > 1 ? p[leg * 2 - 3]! : s.route.sy;
+    const ix = cx - qx, iy = cy - qy, il = Math.sqrt(ix * ix + iy * iy);
+    const ox = p[leg * 2]! - cx, oy = p[leg * 2 + 1]! - cy, ol = Math.sqrt(ox * ox + oy * oy);
+    if (!(w > 0) || !(il > 1e-6) || !(ol > 1e-6)) return; // NaN start or a zero leg: no corner known
+    const cs = Math.max(-1, Math.min(1, (ix * ox + iy * oy) / (il * ol)));
+    const sin2 = cs < 0 ? 1 : 1 - cs * cs;
+    s.holdSpeed = (2 * w * hull.clearance * NAV_TURN_SWING) / Math.max(1e-6, sin2);
+    // The nose known: held until it is round (turnCap); else for a time.
+    s.holdUntil = this.heading === this.heading ? Infinity : now + (1000 * NAV_TURN_HOLD * Math.acos(cs)) / w;
+  }
+
+  /**
+   * This call's speed cap out of a corner (`holdTurn`). With the nose known
+   * the cap follows what is left of its swing: φ between the nose and the aim
+   * point gives v ≤ 2ω·swing / sin²φ (90° and past: the 90° figure), so a ship
+   * stalled at the corner creeps out, and one whose nose is already round is
+   * not held at all. Without a nose: the timed hold's corner figure.
+   */
+  private turnCap(s: ShipNav, x: number, y: number, ax: number, ay: number, hull: NavHull, now: number): number {
+    if (!(now < s.holdUntil)) return Infinity;
+    const a = this.heading;
+    const dx = ax - x, dy = ay - y, dl = Math.sqrt(dx * dx + dy * dy);
+    if (a !== a || !(dl > 1e-6)) return s.holdSpeed;
+    const c = (-Math.sin(a) * dx + Math.cos(a) * dy) / dl; // nose (-sin a, cos a) · aim
+    if (c >= NAV_TURN_ROUND_COS) { s.holdUntil = -Infinity; return Infinity; } // round: the hold is over
+    const sin2 = c < 0 ? 1 : 1 - c * c;
+    return (2 * hull.turnRate * hull.clearance * NAV_TURN_SWING) / sin2;
   }
 
   /** Does the ship wait short of its goal (no way fits, or stuck)? */
@@ -165,7 +235,7 @@ export class NavRoutes implements IAiNavRoutes {
     s.askedAt = now;
     const gen = ++s.gen;
     this.requests++;
-    this.request(x, y, tx, ty, this.hull, this.heading, this.turnRadius).then((msg) => {
+    this.request(x, y, tx, ty, this.hull, this.turnRadius > 0 ? this.heading : NaN, this.turnRadius).then((msg) => {
       if (s.gen !== gen) return;
       s.pending = false;
       if (msg.status === 'straight') { s.route.count = 0; s.short = false; } // the way is clear (again)

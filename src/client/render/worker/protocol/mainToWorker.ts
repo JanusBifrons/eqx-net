@@ -51,7 +51,7 @@ export interface BootMsg {
   lighting?: import('../../art/lightingSettings.js').LightingSettings;
   /** Ship livery treatment (`?livery=a|b|c`); absent = today's paint. */
   livery?: import('../../art/artMode.js').LiveryTreatment;
-  /** Structure livery (`?structLivery=1`); absent = off. */
+  /** Structure livery (on by default, `?structLivery=0` = off); absent = off. */
   structLivery?: boolean;
   /** Structure style (`?restyle=a`); absent = today's art. */
   structStyle?: string;
@@ -295,6 +295,8 @@ export interface GlideCameraMsg {
   gameX: number;
   gameY: number;
   durationMs: number;
+  /** > 0: also ease the zoom to this camera scale (build mode). */
+  toScale?: number;
 }
 
 /**

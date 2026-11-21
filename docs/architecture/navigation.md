@@ -45,7 +45,7 @@ different subset.
 |---|---|---|
 | `rocks(near?, wrecks?)` | live rocks (swarm kind 0, SAB pose, collider parts); with `near`, field rocks with no body (`CutFieldSubsystem.dormantObstacles`). `wrecks` (placement only): also wreck pieces (kind 4, battle and field, `wreckParts`) and, with `near`, a wreck field's unloaded hull pieces (`WreckFieldSource.dormantObstacles`) | structure placement (`wrecks` on), connection line of sight and NPC base links (`wrecks` off, so links never change) (`getObstacles`) |
 | `structureBoxes()` | structure solid boxes (a teleporter pad is open, only its posts) | join spawn, convoy spawn (`clearPointNear`) |
-| `landing(...)` | structure boxes, every swarm body within reach (rocks, drones, scrap, wreck pieces, pods), field rocks with no body, other pilots' ships and parked hulls (own skipped, or only `onlySkipShipId`), blocking shield walls and closed gate spans | `landingPoint` (warp, sector trip, fleet and bot warps) |
+| `landing(...)` | structure boxes, every swarm body within reach (rocks, drones, scrap, wreck pieces, pods), field rocks with no body, other pilots' ships and parked hulls (own skipped, or only `onlySkipShipId`), blocking shield walls | `landingPoint` (warp, sector trip, fleet and bot warps) |
 | `hullCircles(playerId)` | AI ships and other pilots' hulls by extent (pilots still joining skipped) | join spawn spacing |
 
 Outputs are scratch: each call refills the same arrays with the same pooled records (and a rock's
@@ -126,8 +126,8 @@ left somewhere else" do.
   body from, gate posts as separate parts so the gap stays open, at its quarter-turn angle) as an
   `OBSTACLE` command to `FineFieldLayer.obstacleSet`. A chunk that such an obstacle reaches may be
   built though the streamer never loaded it, so bases in open space are avoided. Not yet covered
-  (parked): shield walls and closed gate spans (`PhysicsWorld.wallBodies`, a fenced base is
-  see-through to autopilot); sectors with no asteroid field (no nav field there at all); the coarse
+  (parked): shield walls (`PhysicsWorld.wallBodies`, a fenced base is see-through to autopilot)
+  and shut gate door leaves (kinematic rig bodies; the planner sees the gap as open); sectors with no asteroid field (no nav field there at all); the coarse
   layer, blind to structures, so a capital (coarse-only past the fine reach) leans on its steering
   near a base.
 - **Resting wrecks, scrap and plain asteroids too** (`nav/RestingObstacles.ts`). On the room bus's
@@ -251,6 +251,24 @@ one it flies straight as before.
   line), capped at `NAV_TURN_SWING` × clearance / sin²θ: the speed whose sideways part dies within that
   swing. `NAV_TURN_SWING` = 0.2 (6 u for a fighter): the street flight hit rock 0/4 runs, where 24 u
   still brushed it 2/4 (2026-11-19).
+- Corners are turned slowly (`NavRoutes.holdTurn` / `turnCap`, `IAiNavRoutes.turnSpeed`): once past a
+  corner, until its nose is within 10° of the aim point on the new leg, the ship's wanted speed is capped
+  at 2ω × swing / sin²φ (φ the angle left between nose and aim point, past 90° the 90° figure; ω the
+  hull's turn rate, `navHull(kind).turnRate` = the kind's `maxAngvel`). Why: the pilot thrusts along its
+  nose while it turns (the wanted course's share along it, v·cosφ), so a nose swinging φ drifts the ship
+  v·sin²φ / 2ω off the new leg. On the streets flight a fighter that slowed almost to a stop at the 76°
+  corner (81496, 43800), then left at the leg's full cruise (~280 u/s), ran 33 u off the new leg into
+  rock (model: 31 u) in ~3 runs of 10; whether it stalled there depended on tick jitter. A fighter
+  (ω 4.2 rad/s) now leaves a 76° corner at ≤ 54 u/s, rising as its nose comes round; a nose already
+  round is not held. The cap follows the nose, not a clock: a first timed hold (1.5 θ / ω) cost ~0.45 s
+  on the streets flight and still brushed rock 1 run in 31. Both brains that fly routes
+  (`pilot/moveTo.ts`, `modes/flockMode.ts`) pass the nose (`self.angle`) and take min(…, `turnSpeed`);
+  only a capital's plan is shaped by it (turning radius > 0). Asked with no nose, the hold is timed
+  (`NAV_TURN_HOLD` × θ / ω at the corner's figure). A hull asking with a turning radius (a capital) is
+  never capped: its plan already fits each corner to its turn room (slice 11). Measured on real physics
+  along a 5-point planned arc (76°, legs of 4 turning radii), the cap took a destroyer from 480 s to
+  553 s and a heavy cruiser from 486 s to 501 s (a battleship was unchanged at 496 s), with no gain in
+  how close it kept to the line.
 - Clearance: `shipTuning(kind).navClearance` = radius × 1.25, the least room a route may have (owner:
   stays 30 u for a fighter).
 - Comfort (owner 2026-11-19, "margin where room"): `navComfort(kind)` (`shipScale/navTuning.ts`, `navHull(kind).comfort`) = max(clearance,
