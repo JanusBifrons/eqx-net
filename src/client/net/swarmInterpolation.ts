@@ -581,9 +581,11 @@ export function interpolateSwarmPose(
   // Teleport guard: if the bracketing poses are further apart than any entity
   // could plausibly have moved in `span`, this is a server discontinuity
   // (keyframe / SET_POSITION / id-reuse / sleep→wake), not motion. Snap to the
-  // newer authoritative pose — never animate across the gap.
+  // newer authoritative pose — never animate across the gap. `span` is wall
+  // ms (arrival stamps); the bound is a game speed, so pass game ms
+  // (wall × speed): at 2× a drone covers twice the game distance per wall ms.
   const gap = Math.hypot(b.x - a.x, b.y - a.y);
-  if (isImplausibleJump(gap, span)) {
+  if (isImplausibleJump(gap, span * _displaySpeed)) {
     out.x = b.x;
     out.y = b.y;
     out.angle = b.angle;
