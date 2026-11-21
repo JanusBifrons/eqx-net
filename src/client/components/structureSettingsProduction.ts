@@ -41,6 +41,19 @@ export function blueprintLineOf(
   return `BLUEPRINT ${runs} · quality ${st.bpQuality ?? 0}`;
 }
 
+/** The slot is empty but a cycle is loaded on a recipe that spends runs: the
+ *  server spent a copy's LAST run at cycle start and freed the slot, so that
+ *  last hull is still building. Undefined otherwise. No quality: the wire
+ *  drops it with the empty slot. Kept apart from `blueprintLineOf` so Swap and
+ *  Unload (which key on a loaded blueprint) stay hidden. */
+export function lastRunLineOf(
+  st: Pick<StructureRenderState, 'bpRuns' | 'prodFrac'>,
+  spendsRuns: boolean,
+): string | undefined {
+  if (!spendsRuns || st.bpRuns !== undefined || st.prodFrac === undefined) return undefined;
+  return 'BLUEPRINT last run building · slot free';
+}
+
 export interface ProductionView {
   recipe: RecipeId;
   /** Outputs left before it stops (0 = done); undefined = forever. */
@@ -51,6 +64,8 @@ export interface ProductionView {
   needsBlueprint: boolean;
   /** The loaded blueprint, or undefined when the slot is empty. */
   blueprintLine: string | undefined;
+  /** The empty slot's last-run-building line (see `lastRunLineOf`). */
+  lastRunLine: string | undefined;
 }
 
 export function readProduction(entityId: number): ProductionView | null {
@@ -63,13 +78,15 @@ export function readProduction(entityId: number): ProductionView | null {
   return {
     recipe, left: st.prodCount, canChange: canChangeRecipe(kindId),
     needsBlueprint, blueprintLine: blueprintLineOf(st, needsBlueprint),
+    lastRunLine: lastRunLineOf(st, needsBlueprint),
   };
 }
 
 export function sameProduction(a: ProductionView | null, b: ProductionView | null): boolean {
   if (a === null || b === null) return a === b;
   return a.recipe === b.recipe && a.left === b.left && a.canChange === b.canChange
-    && a.needsBlueprint === b.needsBlueprint && a.blueprintLine === b.blueprintLine;
+    && a.needsBlueprint === b.needsBlueprint && a.blueprintLine === b.blueprintLine
+    && a.lastRunLine === b.lastRunLine;
 }
 
 /** The count label: "Forever", "Done", or "3 left". */
