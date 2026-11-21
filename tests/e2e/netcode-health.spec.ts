@@ -31,7 +31,12 @@
  * regression — "did not validly run" must never read as "healthy".
  */
 import { test, expect, type Page } from '@playwright/test';
-import { evaluateNetHealth, type NetHealthArm } from '../netgate/netHealthBudget';
+import {
+  evaluateNetHealth,
+  formatPrintOnlyInfo,
+  type NetHealthArm,
+  type NetHealthPrintOnly,
+} from '../netgate/netHealthBudget';
 import { AUTOPILOT_COURSE, resolveScenarios, type InteractionId, type NetgateScenario } from '../netgate/scenarios';
 
 interface ArmSpec {
@@ -74,7 +79,40 @@ interface RepSample {
   rttMeanMs: number;
   diagEnabled: boolean;
   mirrorClones: number;
+  // PRINT-ONLY (never gated): drone display delay sampler + remote correction.
+  droneDelayMinMs: number;
+  droneDelayMaxMs: number;
+  droneDelaySumMs: number;
+  droneDelayTargetSumMs: number;
+  droneDelayCount: number;
+  dronePlaybackRateMin: number;
+  dronePlaybackRateMax: number;
+  remoteCorrTotalUnits: number;
+  remoteCorrSamples: number;
 }
+
+/** In-page drone-delay sampler state (scalars only — test code, but it runs
+ *  inside the measured page, so it allocates nothing per frame). */
+interface DroneDelaySampler {
+  n: number;
+  sum: number;
+  targetSum: number;
+  min: number;
+  max: number;
+  rateMin: number;
+  rateMax: number;
+  lastT: number;
+  lastD: number;
+  stop: boolean;
+}
+type SwarmDelayWindow = {
+  __eqxSwarmDelay?: { delayMs: () => number; targetMs: () => number };
+  __netgateDroneDelay?: DroneDelaySampler;
+};
+
+/** Playback rate is measured over windows of at least this many ms so the
+ *  sampler's rAF slot vs the game's frame step cannot alias into the ratio. */
+const DRONE_RATE_WINDOW_MS = 100;
 
 /** Fixed, deterministic input sequence — identical for every arm/rep.
  *  `strafe-fire` mirrors `feel-test-lockstep.spec.ts:138-151` (strafe the
@@ -182,6 +220,41 @@ async function visitArm(
       `[${arm.name}] __eqxGhostProbeEnabled must be false (probe changes the program under measurement)`,
     ).toBe(false);
 
+    // PRINT-ONLY drone-delay sampler: every frame reads the slewed delay and its
+    // target through the DEV hook (absent on a baseline that predates it ⇒ n=0,
+    // printed as n/a). Playback rate = 1 − Δdelay/Δt over ≥100 ms windows.
+    await page.evaluate((rateWindowMs) => {
+      const w = window as unknown as SwarmDelayWindow;
+      const s: DroneDelaySampler = {
+        n: 0, sum: 0, targetSum: 0, min: Infinity, max: -Infinity,
+        rateMin: Infinity, rateMax: -Infinity, lastT: -1, lastD: 0, stop: false,
+      };
+      w.__netgateDroneDelay = s;
+      const hook = w.__eqxSwarmDelay;
+      if (!hook) return;
+      const step = (t: number): void => {
+        if (s.stop) return;
+        const d = hook.delayMs();
+        s.n++;
+        s.sum += d;
+        s.targetSum += hook.targetMs();
+        if (d < s.min) s.min = d;
+        if (d > s.max) s.max = d;
+        if (s.lastT < 0) {
+          s.lastT = t;
+          s.lastD = d;
+        } else if (t - s.lastT >= rateWindowMs) {
+          const rate = 1 - (d - s.lastD) / (t - s.lastT);
+          if (rate < s.rateMin) s.rateMin = rate;
+          if (rate > s.rateMax) s.rateMax = rate;
+          s.lastT = t;
+          s.lastD = d;
+        }
+        requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }, DRONE_RATE_WINDOW_MS);
+
     await runInteraction(page, scenario.interaction);
 
     const s = await page.evaluate(() => {
@@ -190,7 +263,11 @@ async function visitArm(
         string,
         number
       >;
-      const w = window as unknown as { __eqxDiagEnabled?: boolean; __eqxLogs?: { tag: string }[] };
+      const w = window as unknown as { __eqxDiagEnabled?: boolean; __eqxLogs?: { tag: string }[] } &
+        SwarmDelayWindow;
+      const dd = w.__netgateDroneDelay;
+      if (dd) dd.stop = true;
+      const ddn = dd?.n ?? 0;
       return {
         rollingCorrRate: Number(stats['rollingCorrRate'] ?? 0),
         ticksAhead: Number(stats['ticksAhead'] ?? 0),
@@ -202,6 +279,15 @@ async function visitArm(
         rttMeanMs: Number(stats['rttMeanMs'] ?? 0),
         diagEnabled: w.__eqxDiagEnabled === true,
         mirrorClones: (w.__eqxLogs ?? []).filter((e) => e.tag === 'mirror_clone').length,
+        droneDelayMinMs: ddn > 0 ? dd!.min : Number.NaN,
+        droneDelayMaxMs: ddn > 0 ? dd!.max : Number.NaN,
+        droneDelaySumMs: dd?.sum ?? 0,
+        droneDelayTargetSumMs: dd?.targetSum ?? 0,
+        droneDelayCount: ddn,
+        dronePlaybackRateMin: dd && Number.isFinite(dd.rateMin) ? dd.rateMin : Number.NaN,
+        dronePlaybackRateMax: dd && Number.isFinite(dd.rateMax) ? dd.rateMax : Number.NaN,
+        remoteCorrTotalUnits: Number(stats['remoteCorrTotalUnits'] ?? 0),
+        remoteCorrSamples: Number(stats['remoteCorrSamples'] ?? 0),
       };
     });
     return s;
@@ -229,6 +315,28 @@ function toArm(samples: RepSample[]): NetHealthArm {
     snapshotCount: Math.min(...samples.map((r) => r.snapshotCount)),
     // Any rep with diag on ⇒ the wrong program was measured.
     diagEnabled: samples.some((r) => r.diagEnabled),
+  };
+}
+
+/** PRINT-ONLY aggregate over reps (never fed to the budget): the widest
+ *  delay / rate range any rep saw, the median of per-rep means. Non-finite
+ *  values (not measured) are dropped; none left ⇒ NaN (printed n/a). */
+function toPrintOnly(samples: RepSample[]): NetHealthPrintOnly {
+  const finite = (xs: number[]): number[] => xs.filter((x) => Number.isFinite(x));
+  const minOf = (xs: number[]): number => (finite(xs).length ? Math.min(...finite(xs)) : Number.NaN);
+  const maxOf = (xs: number[]): number => (finite(xs).length ? Math.max(...finite(xs)) : Number.NaN);
+  const medOf = (xs: number[]): number => (finite(xs).length ? median(finite(xs)) : Number.NaN);
+  const measured = samples.filter((r) => r.droneDelayCount > 0);
+  return {
+    droneDelayMinMs: minOf(samples.map((r) => r.droneDelayMinMs)),
+    droneDelayMeanMs: medOf(measured.map((r) => r.droneDelaySumMs / r.droneDelayCount)),
+    droneDelayMaxMs: maxOf(samples.map((r) => r.droneDelayMaxMs)),
+    droneDelayTargetMeanMs: medOf(measured.map((r) => r.droneDelayTargetSumMs / r.droneDelayCount)),
+    dronePlaybackRateMin: minOf(samples.map((r) => r.dronePlaybackRateMin)),
+    dronePlaybackRateMax: maxOf(samples.map((r) => r.dronePlaybackRateMax)),
+    remoteCorrMeanUnits: medOf(
+      samples.filter((r) => r.remoteCorrSamples > 0).map((r) => r.remoteCorrTotalUnits / r.remoteCorrSamples),
+    ),
   };
 }
 
@@ -294,6 +402,9 @@ test.describe('netcode-health gate', () => {
       );
       console.log(`  baseline: ${JSON.stringify(baseArm)}`);
       console.log(`  HEAD    : ${JSON.stringify(headArm)}`);
+      // PRINT-ONLY INFO lines — computed after the verdict, never fed to it.
+      console.log(formatPrintOnlyInfo('baseline', toPrintOnly(samples[baseline.name]!)));
+      console.log(formatPrintOnlyInfo('HEAD    ', toPrintOnly(samples[head.name]!)));
       if (verdict.preconditionFailures.length) {
         console.log(`  PRECONDITION FAILURES:`);
         for (const p of verdict.preconditionFailures) console.log(`    - ${p}`);

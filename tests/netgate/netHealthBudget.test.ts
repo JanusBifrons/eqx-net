@@ -37,7 +37,9 @@ import { describe, expect, it } from 'vitest';
 import {
   NET_HEALTH_BUDGET,
   evaluateNetHealth,
+  formatPrintOnlyInfo,
   type NetHealthArm,
+  type NetHealthPrintOnly,
 } from './netHealthBudget';
 
 /** A fully-healthy arm: every metric well under every ceiling, liveness ok. */
@@ -256,5 +258,81 @@ describe('NET_HEALTH_BUDGET — the gated set is exactly the four grounded metri
 
   it('ticksAhead ceiling is the system saturation cap 30 (lookaheadController CEILING_TICKS)', () => {
     expect(NET_HEALTH_BUDGET.ticksAhead.ceil).toBe(30);
+  });
+});
+
+describe('print-only drone delay / playback rate / remote correction (never gated)', () => {
+  function info(): NetHealthPrintOnly {
+    return {
+      droneDelayMinMs: 100,
+      droneDelayMeanMs: 142.5,
+      droneDelayMaxMs: 210.25,
+      droneDelayTargetMeanMs: 150,
+      dronePlaybackRateMin: 0.93,
+      dronePlaybackRateMax: 1.05,
+      remoteCorrMeanUnits: 0.4321,
+    };
+  }
+
+  it('prints all three fields on one INFO line, tagged print-only', () => {
+    const line = formatPrintOnlyInfo('HEAD', info());
+    expect(line).toContain('INFO (print-only, not gated) HEAD');
+    expect(line).toContain('droneDelayMs min/mean/max=100.0/142.5/210.3');
+    expect(line).toContain('target mean=150.0');
+    expect(line).toContain('dronePlaybackRate min/max=0.930/1.050');
+    expect(line).toContain('remoteCorrMean=0.432u');
+  });
+
+  it('a field that was not measured (NaN, e.g. a baseline without the hook) prints n/a', () => {
+    const line = formatPrintOnlyInfo('baseline', { ...info(), droneDelayMinMs: Number.NaN, dronePlaybackRateMax: Number.NaN });
+    expect(line).toContain('droneDelayMs min/mean/max=n/a/142.5/210.3');
+    expect(line).toContain('dronePlaybackRate min/max=0.930/n/a');
+  });
+
+  it('none of the print-only fields is in the gated budget', () => {
+    for (const k of Object.keys(info())) {
+      expect(Object.keys(NET_HEALTH_BUDGET)).not.toContain(k);
+    }
+  });
+
+  it('extreme print-only values on either arm never change the verdict', () => {
+    const extremes: NetHealthPrintOnly[] = [
+      {
+        droneDelayMinMs: 0,
+        droneDelayMeanMs: 1e9,
+        droneDelayMaxMs: 1e9,
+        droneDelayTargetMeanMs: 1e9,
+        dronePlaybackRateMin: -50,
+        dronePlaybackRateMax: 50,
+        remoteCorrMeanUnits: 1e6,
+      },
+      {
+        droneDelayMinMs: Number.NaN,
+        droneDelayMeanMs: Number.POSITIVE_INFINITY,
+        droneDelayMaxMs: Number.NaN,
+        droneDelayTargetMeanMs: Number.NaN,
+        dronePlaybackRateMin: Number.NEGATIVE_INFINITY,
+        dronePlaybackRateMax: Number.NaN,
+        remoteCorrMeanUnits: Number.POSITIVE_INFINITY,
+      },
+    ];
+    const plain = evaluateNetHealth(ok(), ok());
+    expect(plain.pass).toBe(true);
+    for (const x of extremes) {
+      const head: NetHealthArm & NetHealthPrintOnly = { ...ok(), ...x };
+      const base: NetHealthArm & NetHealthPrintOnly = { ...ok(), ...info() };
+      expect(evaluateNetHealth(head, base)).toEqual(plain);
+      expect(evaluateNetHealth(base, head)).toEqual(plain);
+      // and they still print, without throwing
+      expect(formatPrintOnlyInfo('HEAD', x)).toContain('INFO (print-only, not gated)');
+    }
+  });
+
+  it('a failing verdict stays failing with benign print-only values (they cannot rescue a regression)', () => {
+    const bad = { ...ok(), maxDriftUnits: 40 };
+    const plain = evaluateNetHealth(bad, ok());
+    expect(plain.pass).toBe(false);
+    const head: NetHealthArm & NetHealthPrintOnly = { ...bad, ...info() };
+    expect(evaluateNetHealth(head, { ...ok(), ...info() })).toEqual(plain);
   });
 });
