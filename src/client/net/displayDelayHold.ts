@@ -17,6 +17,7 @@
  * Pure functions over the record: no module state, no allocation.
  */
 import {
+  DISPLAY_DELAY_CATCHUP_MAX_RATE, DISPLAY_DELAY_CATCHUP_TAU_MS,
   DISPLAY_DELAY_SLEW_MAX_RATE, DISPLAY_DELAY_SLEW_SNAP_MS, DISPLAY_DELAY_SLEW_TAU_MS,
   boundSwarmHoldDelayMs, isSwarmHoldDelayOverMax,
 } from './swarmDelaySizing.js';
@@ -61,34 +62,43 @@ export function resetDisplayDelayHold(s: DisplayDelayHoldState, delayMs: number)
   s.holdActive = false;
 }
 
-/** `valueMs` after one slew step of `frameDtMs` wall ms toward `targetMs`. */
-function slewToward(valueMs: number, targetMs: number, frameDtMs: number, speed: number): number {
+/** `valueMs` after one slew step of `frameDtMs` wall ms toward `targetMs`.
+ *  With `catchUp`, a SHRINK uses the pilot catch-up τ and rate (S5-9). */
+function slewToward(valueMs: number, targetMs: number, frameDtMs: number, speed: number, catchUp: boolean): number {
   const remaining = targetMs - valueMs;
   if (remaining === 0) return valueMs;
-  const maxStep = DISPLAY_DELAY_SLEW_MAX_RATE * frameDtMs;
+  const fast = catchUp && remaining < 0;
+  const maxStep = (fast ? DISPLAY_DELAY_CATCHUP_MAX_RATE : DISPLAY_DELAY_SLEW_MAX_RATE) * frameDtMs;
   if (Math.abs(remaining) <= Math.min(DISPLAY_DELAY_SLEW_SNAP_MS, maxStep)) return targetMs;
-  const step = remaining * (1 - Math.exp(-frameDtMs * speed / DISPLAY_DELAY_SLEW_TAU_MS));
+  const tauMs = fast ? DISPLAY_DELAY_CATCHUP_TAU_MS : DISPLAY_DELAY_SLEW_TAU_MS;
+  const step = remaining * (1 - Math.exp(-frameDtMs * speed / tauMs));
   return valueMs + Math.max(-maxStep, Math.min(maxStep, step));
 }
 
 /** Move the delay, and separately the steady delay, toward the target by one
  *  frame of `frameDtMs` wall ms: proportional to the remaining gap (time
  *  constant DISPLAY_DELAY_SLEW_TAU_MS of game time at `speed`), bounded to
- *  DISPLAY_DELAY_SLEW_MAX_RATE × frameDtMs either way. */
-export function slewDisplayDelay(s: DisplayDelayHoldState, frameDtMs: number, speed: number): void {
+ *  DISPLAY_DELAY_SLEW_MAX_RATE × frameDtMs either way. With `catchUp` (S5-9:
+ *  just back at the controls after an off-pilot delay) a shrink uses
+ *  DISPLAY_DELAY_CATCHUP_TAU_MS and DISPLAY_DELAY_CATCHUP_MAX_RATE: the read
+ *  point fast-forwards; it never jumps or steps back. */
+export function slewDisplayDelay(s: DisplayDelayHoldState, frameDtMs: number, speed: number, catchUp = false): void {
   if (!(frameDtMs > 0) || !Number.isFinite(frameDtMs)) return;
-  s.delayMs = slewToward(s.delayMs, s.targetMs, frameDtMs, speed);
-  s.steadyMs = slewToward(s.steadyMs, s.targetMs, frameDtMs, speed);
+  s.delayMs = slewToward(s.delayMs, s.targetMs, frameDtMs, speed, catchUp);
+  s.steadyMs = slewToward(s.steadyMs, s.targetMs, frameDtMs, speed, catchUp);
 }
 
 /** The stall hold for the frame read at `nowMs`: when the read point would
  *  pass `newestStampMs + glideLimitWallMs` (the stream's newest stamp plus
  *  the glide limit, all wall ms), grow the delay so it stays there; past
  *  MAX_TOTAL_DISPLAY_DELAY_MS / `speed`, re-sync to the target (counted once
- *  per stall). A non-finite `nowMs` or `newestStampMs` (no stream yet) does
- *  nothing but clear `holdActive`. */
+ *  per stall). `maxWallMs` (S5-9, off pilot) replaces that maximum with a
+ *  wall-ms bound; undefined keeps the S5-5 maximum exactly. A non-finite
+ *  `nowMs` or `newestStampMs` (no stream yet) does nothing but clear
+ *  `holdActive`. */
 export function holdDisplayDelay(
   s: DisplayDelayHoldState, nowMs: number, newestStampMs: number, glideLimitWallMs: number, speed: number,
+  maxWallMs?: number,
 ): void {
   s.holdActive = false;
   if (!Number.isFinite(nowMs) || !Number.isFinite(newestStampMs)) return;
@@ -98,12 +108,14 @@ export function holdDisplayDelay(
     return;
   }
   if (s.resyncedThisStall) return;
-  if (isSwarmHoldDelayOverMax(requiredMs, speed)) {
+  const over = maxWallMs === undefined ? isSwarmHoldDelayOverMax(requiredMs, speed) : !(requiredMs <= maxWallMs);
+  if (over) {
     s.resyncCount++;
     s.resyncedThisStall = true;
   } else {
     s.holdActive = true;
     s.holdFrameCount++;
   }
-  s.delayMs = boundSwarmHoldDelayMs(requiredMs, s.targetMs, speed);
+  if (maxWallMs === undefined) s.delayMs = boundSwarmHoldDelayMs(requiredMs, s.targetMs, speed);
+  else s.delayMs = over ? s.targetMs : requiredMs;
 }

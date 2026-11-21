@@ -5,7 +5,7 @@ function readings(over: Partial<LaneDelayReadings> = {}): LaneDelayReadings {
   return {
     delayMs: 120.04, targetMs: 110.06, steadyMs: 112.34,
     holdFrames: 0, resyncs: 0, glideLimits: 0, oldEndClamps: 0, swarmPackets: 0,
-    missileDelayMs: 118.25, missileHoldFrames: 0, missileResyncs: 0, ...over,
+    missileDelayMs: 118.25, missileHoldFrames: 0, missileResyncs: 0, delayMode: 'pilot', gapPeakMs: 0, ...over,
   };
 }
 
@@ -41,9 +41,15 @@ describe('phone-lane display-delay window', () => {
     expect(s).toMatchObject({ swarmPackets: 120, droneHoldFrames: 3 });
   });
 
-  it('missile delay is null before its stream seeds; every field is a number or null', () => {
+  it('missile delay is null before its stream seeds; every other field is a number or null', () => {
     const s = takeLaneDelayWindow(createLaneDelayWindow(), readings({ missileDelayMs: Number.NaN }));
     expect(s.missileDelayMs).toBeNull();
-    for (const v of Object.values(s)) expect(v === null || typeof v === 'number').toBe(true);
+    const { delayMode: _mode, ...rest } = s;
+    for (const v of Object.values(rest)) expect(v === null || typeof v === 'number').toBe(true);
+  });
+
+  it('reports the delay mode and the drone gap peak (S5-9)', () => {
+    const s = takeLaneDelayWindow(createLaneDelayWindow(), readings({ delayMode: 'offPilot', gapPeakMs: 1816.66 }));
+    expect(s).toMatchObject({ delayMode: 'offPilot', droneGapPeakMs: 1816.7 });
   });
 });

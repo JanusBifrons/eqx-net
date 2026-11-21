@@ -376,6 +376,55 @@ SAB tick read under the seqlock right before each encode, as the header tick;
 the room's `serverTick` still drives the full-snapshot and decimation cadence.
 Lock: `src/server/rooms/SwarmBroadcaster.poseTick.test.ts`.
 
+**Off-pilot buffer: size the delay to the outages when not flying (S5-9).**
+While the player flies, the delay stays the S5-7 one (capped at
+`ADAPTIVE_DELAY_CEILING_MS`, hold maximum `MAX_TOTAL_DISPLAY_DELAY_MS`): input
+feel wins. Off the controls (Command, Build, spectate) nothing is steered, so a
+1–2 s outage is better shown as delay than as a pause then a glide or re-sync.
+`mirror/worldPasses.ts` sets the mode once per frame before
+`stepSwarmDisplayDelay`: `selectControlMode(...) === 'fly'` is `pilot`,
+everything else `offPilot`. The pieces, all in the existing homes:
+
+- **Gap peak** (`stepGapPeak`, `noteSwarmStaleness` in `swarmDelayMode.ts`): a
+  decaying max of the stream staleness (now − newest stamp), tracked in both
+  modes. A larger staleness becomes the peak; one of at least
+  `OFF_PILOT_GAP_REFRESH_FRACTION` (0.9) of it re-arms it; it holds
+  `OFF_PILOT_GAP_HOLD_MS` (25 s) then decays (τ `OFF_PILOT_GAP_DECAY_TAU_MS`,
+  5 s). Frames over `GAP_SAMPLE_MAX_FRAME_MS` (250 ms, a page stall) are skipped.
+- **Target** (`swarmDelayTargetWallMs(input, speed, mode, gapPeak)`): pilot is
+  the S5-7 clamp exactly; off pilot it is `max(pilot, min(3000 / speed, gap peak
+  + OFF_PILOT_GAP_MARGIN_MS))` (`OFF_PILOT_DELAY_CEILING_MS` = 3000, margin 100).
+- **Hold maximum** off pilot is `OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS` (4000)
+  ÷ speed (`holdDisplayDelay(..., maxWallMs)`); undefined keeps the S5-5 bound.
+- **Outage backlog keeps the tick clock** (`isOffPilotClockBacklog`): off pilot
+  a packet more than `OFF_PILOT_BACKLOG_LATE_MS` (100 ms) and at most the hold
+  maximum later than the tick clock is stamped on the existing offset (no
+  re-seed, no drift-up). Without it a ≥ 1 s outage re-seeded the clock, the
+  backlog was stamped at its arrival, and the ring had a hole the size of the
+  outage: a freeze then a snap even with the delay covering it.
+- **Ring thinning** (`ringThinningSpacingMs`, `getSwarmRingMinSpacingMs`): the
+  decoder skips a ring write stamped less than `delay × 1.25 / (depth − 4)`
+  after the newest slot, so the 28-slot ring covers a 3 s delay (~156 ms
+  between samples). Pilot spacing is 0 (every packet written, unchanged).
+  `swarmMirrorDelta.packPose` posts 0 slots for a skipped write. Missiles
+  thin the same way (`MISSILE_POSE_RING_DEPTH` is now 16).
+- **Catch-up on entering pilot** (`switchSwarmDelayMode`, `settleCatchUp`):
+  the off-pilot bounds stay in force while the delay shrinks at
+  `DISPLAY_DELAY_CATCHUP_TAU_MS` (60) and at most
+  `DISPLAY_DELAY_CATCHUP_MAX_RATE` (6) × the frame: the read point
+  fast-forwards at ≤ 7× real time (2.1 s → within 5 ms of the pilot target in
+  ~0.5 s), never jumps or steps back. Growing always uses the normal slew.
+
+Shells follow `getSwarmSteadyDisplayDelayMs` and need nothing new. Telemetry:
+the lane `perf_summary` carries `delayMode` (`pilot` / `offPilot` / `catchUp`)
+and `droneGapPeakMs`. Trade-offs: events still happen at present time
+(missile detonation, drone deaths, explosion VFX), so off pilot they can lead
+the drawn pose by up to the delay; a newly sighted drone pins to its first
+sample until the read point reaches it. Locks:
+`tests/scenarios/gapSmoothing.offPilotBuffer.test.ts` (1–2 s outages off
+pilot: 0 freezes, 0 jumps; pilot unchanged; both switches),
+`src/client/net/swarmDelayMode.test.ts`, `swarmMirrorDelta.test.ts`.
+
 ## The Step-4 regression (read this before touching ring/delay constants)
 
 Raising `DISPLAY_DELAY_MS` to 100 with `POSE_RING_DEPTH` left at **4** was a

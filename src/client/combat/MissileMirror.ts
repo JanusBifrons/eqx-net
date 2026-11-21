@@ -36,10 +36,16 @@ import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessag
 import { isImplausibleJump } from '../net/plausibleSpeed.js';
 // Read-only tick → stamp conversion on the drone display timeline (S5-2).
 import {
+  ADAPTIVE_DELAY_CEILING_MS,
+  MAX_TOTAL_DISPLAY_DELAY_MS,
   getSwarmDisplayDelayMs,
   getSwarmDisplayDelayTargetMs,
   getSwarmDisplaySpeed,
+  getSwarmHoldMaxWallMs,
+  getSwarmRingMinSpacingMs,
   getSwarmStreamNewestStampMs,
+  isSwarmDelayCatchingUp,
+  isSwarmDelayOffPilotActive,
   swarmTickToStampMs,
 } from '../net/swarmInterpolation.js';
 // The display-delay slew + stall hold, shared with drones (S5-5, D10 = A).
@@ -110,9 +116,12 @@ export function stepMissileDisplayDelay(mirror: RenderMirror, frameDtMs: number,
     _missileHoldSeeded = true;
     _missileHoldSpeed = speed;
   } else {
-    slewDisplayDelay(_missileHold, frameDtMs, speed);
+    // The drone record's mode (S5-9): its catch-up slew and hold maximum.
+    slewDisplayDelay(_missileHold, frameDtMs, speed, isSwarmDelayCatchingUp());
   }
-  holdDisplayDelay(_missileHold, nowMs, _missileStreamNewestStampMs, MISSILE_EXTRAPOLATION_CAP_MS / speed, speed);
+  holdDisplayDelay(
+    _missileHold, nowMs, _missileStreamNewestStampMs, MISSILE_EXTRAPOLATION_CAP_MS / speed, speed, getSwarmHoldMaxWallMs(),
+  );
   mirror.swarmDisplayDelayMs = _missileHold.delayMs;
 }
 
@@ -172,6 +181,25 @@ export const MISSILE_EXTRAPOLATION_CAP_MS = 250;
  *  same-frame fast path for the explosion VFX. */
 const MISSILE_ABSENT_DESPAWN_MS = 250;
 
+/** The absent-from-slice despawn window (wall ms) this frame. Off pilot
+ *  (S5-9) the read point sits up to seconds back, so a missile that left the
+ *  slice is kept for the delay past the pilot ceiling as well: it flies its
+ *  last buffered poses out instead of vanishing mid-flight. Pilot: 250. */
+function missileAbsentDespawnMs(): number {
+  if (!isSwarmDelayOffPilotActive()) return MISSILE_ABSENT_DESPAWN_MS;
+  const extraMs = _missileHold.delayMs - ADAPTIVE_DELAY_CEILING_MS / getSwarmDisplaySpeed();
+  return MISSILE_ABSENT_DESPAWN_MS + Math.max(0, extraMs);
+}
+
+/** True when a pose stamped `stampMs` should skip the ring (S5-9 off-pilot
+ *  thinning): the newest slot is under `spacingMs` older. 0 = never skip. */
+function isRingWriteThinned(m: MissileRenderState, stampMs: number, spacingMs: number): boolean {
+  if (!(spacingMs > 0)) return false;
+  const newest = m.poseRing[(m.ringHead + MISSILE_POSE_RING_DEPTH - 1) % MISSILE_POSE_RING_DEPTH]!;
+  const sinceMs = stampMs - newest.arrivalMs;
+  return !newest.empty && sinceMs >= 0 && sinceMs < spacingMs;
+}
+
 /** Allocate a fresh, empty pose ring for a newly-sighted missile. */
 function newRing(): PoseRingEntry[] {
   const ring = new Array<PoseRingEntry>(MISSILE_POSE_RING_DEPTH);
@@ -218,6 +246,7 @@ export function applyMissileSnapshot(
   noteMissileStreamStamp(serverTick, stampMs);
 
   if (slice && slice.length > 0) {
+    const spacingMs = getSwarmRingMinSpacingMs(MISSILE_POSE_RING_DEPTH);
     for (const entry of slice) {
       // Signed angular velocity (WS-C #5) — back-fills to 0 for pre-WS-C
       // servers (linear path, byte-identical to before).
@@ -233,7 +262,9 @@ export function applyMissileSnapshot(
         existing.lifePct = entry.lifePct;
         existing.lastUpdateTick = serverTick;
         existing.latestArrivalMs = nowMs;
-        writeRing(existing, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, stampMs, serverTick);
+        if (stampWentBack || !isRingWriteThinned(existing, stampMs, spacingMs)) {
+          writeRing(existing, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, stampMs, serverTick);
+        }
         if (stampWentBack) restampRing(existing, nowMs);
       } else {
         const fresh: MissileRenderState = {
@@ -258,8 +289,9 @@ export function applyMissileSnapshot(
   // Slice-driven despawn (campaign 5.1c): a missile the slice stopped
   // carrying — detonated with its event AOI-filtered away, or out of the
   // recipient's view — is reaped within the extrapolation cap.
+  const despawnMs = missileAbsentDespawnMs();
   for (const [id, m] of map) {
-    if (nowMs - m.latestArrivalMs > MISSILE_ABSENT_DESPAWN_MS) {
+    if (nowMs - m.latestArrivalMs > despawnMs) {
       map.delete(id);
     }
   }
@@ -402,6 +434,10 @@ export function resolveMissileDisplayPose(
   // sample still resolves to the sample point — the legacy behaviour).
   if (count === 1 || targetMs <= oldest.arrivalMs) {
     const rawDtMs = targetMs - oldest.arrivalMs;
+    // Off pilot (S5-9) the read point can sit seconds before a new missile's
+    // first sample: it has not launched yet on screen. Never in pilot (the
+    // delay is at most MAX_TOTAL_DISPLAY_DELAY_MS / speed there).
+    if (rawDtMs < -MAX_TOTAL_DISPLAY_DELAY_MS / speed) return null;
     const dtMs = Math.max(-delayMs, Math.min(capWallMs, rawDtMs));
     const c = curveDeadReckon(oldest.x, oldest.y, oldest.vx, oldest.vy, oldest.angle, oldest.angvel, dtMs * speed / 1000);
     return { x: c.x, y: c.y, angle: c.angle, lifePct: m.lifePct };

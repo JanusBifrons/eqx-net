@@ -164,6 +164,32 @@ describe('render-mirror post delta', () => {
     expect(replica.apply(posts[posts.length - 1]!.swarmDelta!)).toBeUndefined();
   });
 
+  it('PARITY with off-pilot ring thinning: a packet that skips the ring write posts no slots', () => {
+    const swarm = new Map<number, SwarmRenderState>([[1, make(1, 0, 0, 1, false)]]);
+    const { client, posts } = harness();
+    const replica = new SwarmMirrorReplica();
+    const mirror = mirrorWith(swarm);
+    client.update(mirror);
+    replica.apply(posts[0]!.swarmDelta!);
+    for (let f = 0; f < 12; f++) {
+      const tick = 2 + f;
+      const e = swarm.get(1)!;
+      const thinned = f % 3 !== 0;
+      if (!thinned) packet(e, f * 2, 0, tick);
+      else {
+        // The decoder's thinned path (S5-9): pose scalars and tick move on,
+        // the ring and its head do not.
+        e.x = f * 2; e.vx = 1.5; e.lastUpdateTick = tick;
+      }
+      client.update(mirror);
+      const d = posts[posts.length - 1]!.swarmDelta!;
+      if (thinned && d.pose && d.poseLen > 0) {
+        expect(new Float64Array(d.pose, 0, d.poseLen)[POSE_HEADER - 1]).toBe(0);
+      }
+      expect(replica.apply(d)).toEqual(swarm);
+    }
+  });
+
   it('reuses the pose buffer the worker hands back (no per-frame allocation)', () => {
     const swarm = new Map<number, SwarmRenderState>([[1, make(1, 0, 0, 1, false)]]);
     const enc = new SwarmDeltaEncoder();

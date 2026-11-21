@@ -41,7 +41,15 @@ export interface LaneDelayReadings {
   missileDelayMs: number;
   missileHoldFrames: number;
   missileResyncs: number;
+  /** The delay sizing mode (S5-9): `pilot` / `offPilot`, `catchUp` while
+   *  shrinking back after a switch to pilot. */
+  delayMode: LaneDelayMode;
+  /** The decaying peak of drone stream staleness (wall ms, S5-9). */
+  gapPeakMs: number;
 }
+
+/** The `delayMode` a `perf_summary` line reports. */
+export type LaneDelayMode = 'pilot' | 'offPilot' | 'catchUp';
 
 /** The delay fields one `perf_summary` line carries. */
 export interface LaneDelaySummary {
@@ -71,6 +79,11 @@ export interface LaneDelaySummary {
   missileHoldFrames: number;
   /** Missile stream re-syncs in the window. */
   missileResyncs: number;
+  /** The delay sizing mode at the window edge (S5-9; off pilot the target
+   *  and the hold maximum are the off-pilot ones). */
+  delayMode: LaneDelayMode;
+  /** The gap peak the off-pilot target is sized from (wall ms). */
+  droneGapPeakMs: number;
 }
 
 export function createLaneDelayWindow(): LaneDelayWindow {
@@ -112,6 +125,8 @@ export function takeLaneDelayWindow(w: LaneDelayWindow, r: LaneDelayReadings): L
     missileDelayMs: Number.isFinite(r.missileDelayMs) ? r1(r.missileDelayMs) : null,
     missileHoldFrames: since(r.missileHoldFrames, w.missileHoldBefore),
     missileResyncs: since(r.missileResyncs, w.missileResyncBefore),
+    delayMode: r.delayMode,
+    droneGapPeakMs: r1(r.gapPeakMs),
   };
   w.samples = 0;
   w.sumMs = 0;

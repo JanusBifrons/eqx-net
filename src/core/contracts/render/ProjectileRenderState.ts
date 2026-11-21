@@ -5,8 +5,10 @@ import type { PoseRingEntry } from './SwarmRenderState.js';
  *  cadence (~50 ms): 100 ms back ≈ 2 intervals, +headroom for the 100–200 ms
  *  jitter band the smoke captures showed → 6 keeps two bracketing samples
  *  available so the hot path is a genuine lerp of buffered truth (mirrors the
- *  drone POSE_RING_DEPTH sizing rule). */
-export const MISSILE_POSE_RING_DEPTH = 6;
+ *  drone POSE_RING_DEPTH sizing rule). Netcode gap smoothing S5-9 raised it
+ *  6 → 16: off pilot the delay may reach seconds, and the client thins ring
+ *  writes so 16 − 4 headroom slots span it (`ringThinningSpacingMs`). */
+export const MISSILE_POSE_RING_DEPTH = 16;
 
 /**
  * Heat-seeking missile render state. Latest authoritative pose plus a per-missile

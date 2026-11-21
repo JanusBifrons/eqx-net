@@ -134,3 +134,106 @@ export function isSwarmHoldDelayOverMax(requestedDelayWallMs: number, speed: num
 export function boundSwarmHoldDelayMs(requestedDelayWallMs: number, targetWallMs: number, speed: number): number {
   return isSwarmHoldDelayOverMax(requestedDelayWallMs, speed) ? targetWallMs : requestedDelayWallMs;
 }
+
+// Off-pilot buffer (netcode gap smoothing S5-9). While the local player is
+// not at the controls (Command, Build, spectate) nothing on screen is
+// predicted at present time and orders take seconds anyway, so lag should
+// read as DELAY, never as a pause-then-glide. Off pilot the target may grow
+// past ADAPTIVE_DELAY_CEILING_MS to cover the recent link outages: the
+// decaying peak of how stale the stream newest stamp got (`stepGapPeak`)
+// plus a margin, up to OFF_PILOT_DELAY_CEILING_MS. Piloting keeps the S5-7
+// target exactly. The gap peak and the mode live in `swarmDelayMode.ts`.
+
+/** The display-delay sizing mode: `pilot` (the S5-7 target, capped at
+ *  ADAPTIVE_DELAY_CEILING_MS) or `offPilot` (sized to recent outages). */
+export type SwarmDelayMode = 'pilot' | 'offPilot';
+
+/** Hard ceiling on the OFF-PILOT delay target (GAME ms; wall = 3000 / speed,
+ *  like the pilot ceiling). Covers the 0.5–3 s outages of a bad 4G link; a
+ *  longer one is held and then re-synced. */
+export const OFF_PILOT_DELAY_CEILING_MS = 3000;
+/** Largest total off-pilot delay (GAME ms; wall = 4000 / speed): the off-pilot
+ *  stall hold may grow the delay to here before it re-syncs. Above the
+ *  off-pilot ceiling so a slightly longer outage than the last one still
+ *  holds its place instead of snapping. */
+export const OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS = 4000;
+/** Margin (wall ms) over the gap peak: one late packet past the worst recent
+ *  gap still finds a bracketing pair. */
+export const OFF_PILOT_GAP_MARGIN_MS = 100;
+/** How long (wall ms) a gap peak is kept at full size before it decays: the
+ *  "last ~20–30 s" of outages the off-pilot target covers. */
+export const OFF_PILOT_GAP_HOLD_MS = 25_000;
+/** Decay time constant (wall ms) of a gap peak once it is older than
+ *  OFF_PILOT_GAP_HOLD_MS: the off-pilot target comes back down over ~15 s. */
+export const OFF_PILOT_GAP_DECAY_TAU_MS = 5000;
+/** A staleness of at least this fraction of the peak re-arms the hold: a
+ *  repeat outage about as long as the peak (a few ms shorter, by jitter)
+ *  keeps it remembered instead of letting it decay. */
+export const OFF_PILOT_GAP_REFRESH_FRACTION = 0.9;
+
+/** Pilot catch-up slew (S5-9): on entering pilot with a large off-pilot
+ *  delay, the delay shrinks at this time constant (GAME ms, ÷ speed) ... */
+export const DISPLAY_DELAY_CATCHUP_TAU_MS = 60;
+/** ... and at most this fraction of the frame's wall time per frame: the read
+ *  point plays up to 7× real time, so a 3 s delay is gone in ~0.5 s (a fast
+ *  forward, never a teleport; the read point never moves backwards). Only
+ *  shrinking uses it; growing keeps DISPLAY_DELAY_SLEW_MAX_RATE. */
+export const DISPLAY_DELAY_CATCHUP_MAX_RATE = 6;
+
+/** Ring headroom slots kept out of the off-pilot thinning (arrival jitter, the
+ *  head slot), the same headroom `POSE_RING_DEPTH` is sized with. */
+export const RING_THINNING_HEADROOM_SLOTS = 4;
+/** The thinned ring covers this many times the delay it must hold. */
+export const RING_THINNING_COVER_FACTOR = 1.25;
+
+/** The delay target (wall ms) for a raw input `inputMs` (EWMA x factor + drop
+ *  bias), game `speed`, `mode` and gap peak `gapPeakMs` (wall ms). `pilot`:
+ *  the S5-7 clamp to [floor, ceiling] ÷ speed, unchanged. `offPilot`: that,
+ *  or the gap peak + OFF_PILOT_GAP_MARGIN_MS when larger, capped at
+ *  OFF_PILOT_DELAY_CEILING_MS ÷ speed. Pure. */
+export function swarmDelayTargetWallMs(inputMs: number, speed: number, mode: SwarmDelayMode, gapPeakMs: number): number {
+  const pilot = Math.max(DISPLAY_DELAY_MS / speed, Math.min(ADAPTIVE_DELAY_CEILING_MS / speed, inputMs));
+  if (mode === 'pilot' || !(gapPeakMs > 0)) return pilot;
+  return Math.max(pilot, Math.min(OFF_PILOT_DELAY_CEILING_MS / speed, gapPeakMs + OFF_PILOT_GAP_MARGIN_MS));
+}
+
+/** A decaying peak of stream staleness (wall ms). Mutated in place. */
+export interface GapPeakState {
+  /** The peak: the largest recent staleness, decaying once old. */
+  peakMs: number;
+  /** Wall ms since the peak was last raised or re-armed. */
+  ageMs: number;
+}
+
+/** A fresh gap peak at zero. */
+export function createGapPeakState(): GapPeakState {
+  return { peakMs: 0, ageMs: 0 };
+}
+
+/** Fold one frame's stream staleness `stalenessMs` (now − stream newest
+ *  stamp, wall ms) in after `frameDtMs` wall ms: a larger staleness becomes
+ *  the peak at age 0, and one of at least OFF_PILOT_GAP_REFRESH_FRACTION of
+ *  it re-arms the age; otherwise the peak ages, and past OFF_PILOT_GAP_HOLD_MS
+ *  decays at OFF_PILOT_GAP_DECAY_TAU_MS, never below the current staleness.
+ *  Non-finite or negative inputs do nothing. Pure over the record. */
+export function stepGapPeak(s: GapPeakState, stalenessMs: number, frameDtMs: number): void {
+  if (!(stalenessMs >= 0) || !(frameDtMs >= 0) || !Number.isFinite(stalenessMs) || !Number.isFinite(frameDtMs)) return;
+  if (stalenessMs >= s.peakMs * OFF_PILOT_GAP_REFRESH_FRACTION) {
+    s.peakMs = Math.max(s.peakMs, stalenessMs);
+    s.ageMs = 0;
+    return;
+  }
+  s.ageMs += frameDtMs;
+  if (s.ageMs > OFF_PILOT_GAP_HOLD_MS) {
+    s.peakMs = Math.max(stalenessMs, s.peakMs * Math.exp(-frameDtMs / OFF_PILOT_GAP_DECAY_TAU_MS));
+  }
+}
+
+/** Least spacing (wall ms) between ring samples so a ring of `depth` slots
+ *  covers `delayMs` (× RING_THINNING_COVER_FACTOR) with
+ *  RING_THINNING_HEADROOM_SLOTS to spare. 0 for a non-positive delay. Pure. */
+export function ringThinningSpacingMs(delayMs: number, depth: number): number {
+  const slots = depth - RING_THINNING_HEADROOM_SLOTS;
+  if (!(delayMs > 0) || slots <= 0) return 0;
+  return (delayMs * RING_THINNING_COVER_FACTOR) / slots;
+}

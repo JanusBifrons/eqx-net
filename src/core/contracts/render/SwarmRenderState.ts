@@ -63,7 +63,9 @@ export interface PoseRingEntry {
  *  cadence. History: depth 10 spanned only 150 ms and any delay above it
  *  pinned every drone to its oldest sample (plan 3.1); 21 covered the
  *  280 ms ceiling but not the 400 ms post-dropout maximum. Raise this
- *  BEFORE (or with) any change that lets the delay exceed the span. The
+ *  BEFORE (or with) any change that lets the PILOT delay exceed the span.
+ *  The off-pilot delay (S5-9, up to 4 s) is covered by THINNING instead:
+ *  the decoder skips ring writes closer than `ringThinningSpacingMs`. The
  *  delay constants live in the client zone, which core may not import, so
  *  this stays a literal; `tests/unit/poseRingDepth.test.ts` ties them
  *  together. Cheap: 28 small objects per entity, pre-allocated once, zero

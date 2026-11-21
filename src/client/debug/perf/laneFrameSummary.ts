@@ -23,6 +23,7 @@ import {
   getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs, getSwarmSteadyDisplayDelayMs,
   getSwarmHoldFrameCount, getSwarmResyncCount, getSwarmGlideLimitCount,
   getSwarmOldEndClampCount, getSwarmLatenessCount,
+  getSwarmDisplayDelayMode, getSwarmGapPeakMs, isSwarmDelayCatchingUp,
 } from '../../net/swarmInterpolation.js';
 import { getMissileHoldFrameCount, getMissileResyncCount } from '../../combat/MissileMirror.js';
 import {
@@ -142,6 +143,8 @@ function readLaneDelay(missileDelayMs: number): LaneDelayReadings {
     missileDelayMs,
     missileHoldFrames: getMissileHoldFrameCount(),
     missileResyncs: getMissileResyncCount(),
+    delayMode: isSwarmDelayCatchingUp() ? 'catchUp' : getSwarmDisplayDelayMode(),
+    gapPeakMs: getSwarmGapPeakMs(),
   };
 }
 

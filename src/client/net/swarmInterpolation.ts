@@ -18,16 +18,21 @@ import type { SwarmRenderState, PoseRingEntry } from '../../core/contracts/IRend
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 import { isImplausibleJump } from './plausibleSpeed.js';
 import {
-  ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_MS, EXTRAPOLATION_LIMIT_MS, SERVER_TICK_MS, nextSwarmInterArrivalEwmaMs,
+  ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_MS, EXTRAPOLATION_LIMIT_MS, OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS, SERVER_TICK_MS,
+  nextSwarmInterArrivalEwmaMs, ringThinningSpacingMs, swarmDelayTargetWallMs, type SwarmDelayMode,
 } from './swarmDelaySizing.js';
 import { createDisplayDelayHoldState, holdDisplayDelay, resetDisplayDelayHold, slewDisplayDelay } from './displayDelayHold.js';
+import {
+  createSwarmDelayModeState, isOffPilotBoundsActive, isOffPilotClockBacklog, noteSwarmStaleness, resetSwarmDelayModeState, settleCatchUp,
+  swarmHoldMaxWallMs, switchSwarmDelayMode,
+} from './swarmDelayMode.js';
 /** The delay sizing rules (constants, inter-arrival estimator, hold bound)
  *  live in `swarmDelaySizing.ts`; re-exported so importers keep one entry point. */
 export {
   DISPLAY_DELAY_MS, EXTRAPOLATION_LIMIT_MS, ADAPTIVE_DELAY_CEILING_MS, MAX_TOTAL_DISPLAY_DELAY_MS,
   DISPLAY_DELAY_SLEW_TAU_MS, DISPLAY_DELAY_SLEW_MAX_RATE, DISPLAY_DELAY_SLEW_SNAP_MS,
   ADAPTIVE_DELAY_FACTOR, SWARM_INTER_ARRIVAL_SAMPLE_CAP_MS, SWARM_INTER_ARRIVAL_KEEP, nextSwarmInterArrivalEwmaMs,
-  isSwarmHoldDelayOverMax, boundSwarmHoldDelayMs,
+  isSwarmHoldDelayOverMax, boundSwarmHoldDelayMs, OFF_PILOT_DELAY_CEILING_MS, type SwarmDelayMode,
 } from './swarmDelaySizing.js';
 
 /** Teleport guard (drone snapshot-interpolation pivot, 2026-05-18): routing
@@ -60,6 +65,10 @@ let _displayDelayPinned = false;
  *  0.25× the buffer stretches to cover the slower arrivals. */
 let _displaySpeed = 1;
 let _lastDelayInputMs = DISPLAY_DELAY_MS;
+/** Pilot / off-pilot sizing, catch-up and gap peak (S5-9, `swarmDelayMode.ts`). */
+const _mode = createSwarmDelayModeState();
+/** Least ring-sample spacing (wall ms) this frame: 0 in pure pilot (S5-9). */
+let _ringCoverMs = 0;
 
 /** The glide limit in wall ms at the current speed (game ms ÷ speed). */
 function glideLimitWallMs(): number {
@@ -70,9 +79,21 @@ function clampDisplayDelayWallMs(ms: number): number {
   return Math.max(DISPLAY_DELAY_MS / _displaySpeed, Math.min(ADAPTIVE_DELAY_CEILING_MS / _displaySpeed, ms));
 }
 
+/** Clamp a delay VALUE (not a target): the pilot range, or up to the off-pilot
+ *  hold maximum while the off-pilot bounds apply (S5-9). */
+function clampDelayValueWallMs(ms: number): number {
+  if (!isOffPilotBoundsActive(_mode)) return clampDisplayDelayWallMs(ms);
+  return Math.max(DISPLAY_DELAY_MS / _displaySpeed, Math.min(OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS / _displaySpeed, ms));
+}
+
+/** The target for the last input in the current mode (S5-9). */
+function modeTargetWallMs(): number {
+  return swarmDelayTargetWallMs(_lastDelayInputMs, _displaySpeed, _mode.mode, _mode.gap.peakMs);
+}
+
 function setDisplayDelayTarget(ms: number): void {
   _lastDelayInputMs = ms;
-  _drone.targetMs = clampDisplayDelayWallMs(ms);
+  _drone.targetMs = modeTargetWallMs();
   if (!_displayDelaySeeded) {
     _displayDelaySeeded = true;
     _drone.delayMs = _drone.targetMs;
@@ -105,10 +126,36 @@ export function feedSwarmDisplayDelayTarget(ms: number): void {
  *  (`holdSwarmDisplayDelay`). Call once per frame, before any read
  *  (`updateSwarmMirror`). Without `nowMs` only the slew runs. Scalars only. */
 export function stepSwarmDisplayDelay(frameDtMs: number, nowMs: number = Number.NaN): void {
-  slewDisplayDelay(_drone, frameDtMs, _displaySpeed);
-  holdDisplayDelay(_drone, nowMs, _streamNewestStampMs, glideLimitWallMs(), _displaySpeed);
+  noteSwarmStaleness(_mode, nowMs, _streamNewestStampMs, frameDtMs);
+  if (_mode.mode === 'offPilot' && _displayDelaySeeded) _drone.targetMs = modeTargetWallMs();
+  slewDisplayDelay(_drone, frameDtMs, _displaySpeed, _mode.catchUp);
+  settleCatchUp(_mode, _drone);
+  holdDisplayDelay(_drone, nowMs, _streamNewestStampMs, glideLimitWallMs(), _displaySpeed, swarmHoldMaxWallMs(_mode, _displaySpeed));
+  _ringCoverMs = isOffPilotBoundsActive(_mode) ? Math.max(_drone.delayMs, _drone.targetMs) : 0;
   if (Number.isFinite(nowMs)) _lastFrameStepMs = nowMs;
 }
+
+/** Size the display delay for the local player's mode (S5-9): `pilot` while
+ *  flying (the S5-7 target, unchanged), `offPilot` in Command / Build /
+ *  spectate (sized to recent outages). Call each frame before
+ *  `stepSwarmDisplayDelay`. Off-pilot → pilot shrinks the delay at the fast
+ *  catch-up slew; pilot → off-pilot grows it at the normal slew. */
+export function setSwarmDisplayDelayMode(mode: SwarmDelayMode): void {
+  if (!switchSwarmDelayMode(_mode, mode)) return;
+  _drone.targetMs = modeTargetWallMs();
+  settleCatchUp(_mode, _drone);
+}
+
+// S5-9 read-outs: the mode; off-pilot bounds active (off pilot or catching up);
+// catching up; the gap peak (wall ms); the hold maximum missiles share (wall
+// ms, undefined in pure pilot); and the least ring-sample spacing (wall ms) for
+// a ring of `depth` slots to cover the off-pilot delay (0 = no thinning).
+export function getSwarmDisplayDelayMode(): SwarmDelayMode { return _mode.mode; }
+export function isSwarmDelayOffPilotActive(): boolean { return isOffPilotBoundsActive(_mode); }
+export function isSwarmDelayCatchingUp(): boolean { return _mode.catchUp; }
+export function getSwarmGapPeakMs(): number { return _mode.gap.peakMs; }
+export function getSwarmHoldMaxWallMs(): number | undefined { return swarmHoldMaxWallMs(_mode, _displaySpeed); }
+export function getSwarmRingMinSpacingMs(depth: number): number { return ringThinningSpacingMs(_ringCoverMs, depth); }
 
 // Frame-stall backlog (netcode gap smoothing, S5-1b). When the main thread
 // freezes, the drone packets that arrived meanwhile are all handled at once
@@ -177,6 +224,8 @@ export function resetSwarmDisplayDelay(): void {
   resetDisplayDelayHold(_drone, clampDisplayDelayWallMs(DISPLAY_DELAY_MS));
   _displayDelaySeeded = false;
   _displayDelayPinned = false;
+  resetSwarmDelayModeState(_mode);
+  _ringCoverMs = 0;
   _streamNewestTick = -1;
   _streamNewestStampMs = Number.NaN;
   _lastFrameStepMs = Number.NaN;
@@ -193,9 +242,9 @@ export function setSwarmDisplaySpeed(speed: number): void {
     _tickClockOffsetMs = _tickClockLastStampMs - _tickClockLastTick * (SERVER_TICK_MS / next);
   }
   _displaySpeed = next;
-  _drone.targetMs = clampDisplayDelayWallMs(_lastDelayInputMs);
-  _drone.delayMs = _displayDelaySeeded ? clampDisplayDelayWallMs(_drone.delayMs) : _drone.targetMs;
-  _drone.steadyMs = _displayDelaySeeded ? clampDisplayDelayWallMs(_drone.steadyMs) : _drone.targetMs;
+  _drone.targetMs = modeTargetWallMs();
+  _drone.delayMs = _displayDelaySeeded ? clampDelayValueWallMs(_drone.delayMs) : _drone.targetMs;
+  _drone.steadyMs = _displayDelaySeeded ? clampDelayValueWallMs(_drone.steadyMs) : _drone.targetMs;
 }
 
 /** An arrival this far (ms) off the tick clock is a new timeline (sector
@@ -304,8 +353,9 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
  *  pulls the offset up by TICK_CLOCK_DRIFT_UP, except while the stall hold is
  *  parked (the backlog is late by design, S4-5) or the packet is frame-stall
  *  backlog (handled at `nowMs` more than TICK_CLOCK_FRAME_STALL_MS after the
- *  last frame step, S5-1b). Pure: reads state only. */
+ *  last frame step, S5-1b); off pilot, outage backlog keeps it (S5-9). Pure. */
 function nextTickClockOffsetMs(cand: number, nowMs: number): number {
+  if (_tickClockSeeded && isOffPilotClockBacklog(_mode, cand - _tickClockOffsetMs, _displaySpeed)) return _tickClockOffsetMs;
   if (!_tickClockSeeded || Math.abs(cand - _tickClockOffsetMs) > TICK_CLOCK_RESYNC_MS) return cand;
   if (cand < _tickClockOffsetMs) return cand;
   if (_drone.holdActive || isFrameStallBacklog(nowMs)) return _tickClockOffsetMs;

@@ -1,6 +1,8 @@
-import { useUIStore } from '../../state/store.js';
+import { selectControlMode, useUIStore } from '../../state/store.js';
 import { resolvePlacementPreviewStatus } from '../../structures/structurePlacementClient.js';
-import { interpolateSwarmPose, stepSwarmDisplayDelay, getSwarmSteadyDisplayDelayMs } from '../swarmInterpolation.js';
+import {
+  interpolateSwarmPose, setSwarmDisplayDelayMode, stepSwarmDisplayDelay, getSwarmSteadyDisplayDelayMs,
+} from '../swarmInterpolation.js';
 import { shellDisplayDelayGameMs } from '../shellDisplayDelay.js';
 import { isRemoteMovingSwarmKind } from '../snapshotRemoteSync.js';
 import { slewDisplayMountAngles } from '../displayMountAngles.js';
@@ -111,7 +113,10 @@ export function updateSwarmMirror(ctx: MirrorPassCtx): void {
   // The display delay glides toward its target once per frame (S3-2) before
   // any read, on this frame's WALL ms (the delay is wall ms). Given the read
   // clock it also holds the read point through a whole-stream stall (S4-5).
+  // Off the controls (Command, Build, spectate) the delay may grow to cover
+  // recent link outages; flying keeps the pilot target (S5-9).
   const nowMs = ctx.clock.now();
+  setSwarmDisplayDelayMode(selectControlMode(useUIStore.getState()) === 'fly' ? 'pilot' : 'offPilot');
   stepSwarmDisplayDelay(ctx.lastFrameMs, nowMs);
   // Missiles run the same slew + hold on their own stream (S5-4, S5-5); the
   // renderer may be a worker, so the result rides the mirror.
