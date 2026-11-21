@@ -223,6 +223,37 @@ describe('StructureGridSubsystem — estimateBuildEtaMs (Phase-1 issue 1/2)', ()
   });
 });
 
+// Owner play-test: a fresh account's Shipyard stalled at 92% with no reason —
+// the starting bank ran dry. The stall must say "needs minerals" and how many.
+describe('StructureGridSubsystem — buildMineralsShortfall (stall reason)', () => {
+  let h: ReturnType<typeof makeHarness>;
+  beforeEach(() => { h = makeHarness(); });
+
+  it('reports the minerals still owed when the bank is dry', () => {
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.pulse(); // topology + a first delivery
+    h.registry.get(cap)!.minerals = 0; // bank dry
+    h.pulse(); // no progress this pulse
+    const rec = h.registry.get(conn)!;
+    expect(h.grid.estimateBuildEtaMs(rec)).toBeNull();
+    expect(h.grid.buildMineralsShortfall(rec)).toBe(rec.constructionCost - rec.constructionProgress);
+  });
+
+  it('is null while the bank can still pay', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.pulse();
+    expect(h.grid.buildMineralsShortfall(h.registry.get(conn)!)).toBeNull();
+  });
+
+  it('is null when no Capital routes to it (not a minerals stall)', () => {
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.pulse();
+    expect(h.grid.buildMineralsShortfall(h.registry.get(conn)!)).toBeNull();
+  });
+});
+
 describe('StructureGridSubsystem — action helpers (Phase-1 issue 6)', () => {
   let h: ReturnType<typeof makeHarness>;
   beforeEach(() => { h = makeHarness(); });

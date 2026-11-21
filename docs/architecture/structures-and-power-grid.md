@@ -711,7 +711,7 @@ waits, fully paid, and finishes the pulse the space is clear. While it waits
 the client says so, derived from the row alone (`buildPct >= 1 && !built`,
 [`buildAwaitingClear.ts`](../../src/client/structures/buildAwaitingClear.ts)):
 "WAITING FOR SHIPS TO CLEAR" above the blueprint and "FINISHED — WAITING FOR
-SHIPS TO CLEAR" on the inspector card. Records built
+SHIPS TO CLEAR" on the inspector card. A build paused because every Capital that routes to it is empty (`constructionStall.ts`) packs the minerals still owed into `etaMs` (`encodeBuildEta`, ≤ `STRUCTURE_ETA_NEEDS_MINERALS`); the inspector reads "PAUSED — NEEDS N MORE MINERALS". Records built
 outside the pulse (restore, seeded bases) settle on the next pulse. **One rule
 everywhere (3F2):** `isStructureBodySolid` (`core/structures/structureBody.ts`,
 reads `ghostBody`; `isConstructed` alone is not it: a finished blueprint waits

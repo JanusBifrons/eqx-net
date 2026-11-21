@@ -68,6 +68,27 @@ export function decodeStructureThrottleFlags(flags: number): number {
 /** `StructureState.etaMs` sentinels: ≥ 0 is a real ETA. */
 export const STRUCTURE_ETA_NONE = -1;
 export const STRUCTURE_ETA_STALLED = -2;
+/** Stalled because the owner's bank is dry: `etaMs` = this − the minerals the
+ *  build still owes (≤ −3). Same field, no new schema bytes. */
+export const STRUCTURE_ETA_NEEDS_MINERALS = -3;
+
+/** Server: the row's `etaMs` for an ETA (`null` = stalled) and, when stalled
+ *  for minerals, the minerals still owed (`buildMineralsShortfall`). */
+export function encodeBuildEta(etaMs: number | null, mineralsShort: number | null): number {
+  if (etaMs !== null) return Math.max(0, Math.round(etaMs));
+  if (mineralsShort !== null && mineralsShort > 0) return STRUCTURE_ETA_NEEDS_MINERALS - Math.round(mineralsShort);
+  return STRUCTURE_ETA_STALLED;
+}
+
+/** Client: the ETA an `etaMs` value carries (`undefined` = none, `null` = stalled). */
+export function decodeBuildEta(v: number): number | null | undefined {
+  return v === STRUCTURE_ETA_NONE ? undefined : v < 0 ? null : v;
+}
+
+/** Client: minerals a dry-bank stall still owes, or 0 when it is not one. */
+export function decodeBuildMineralsShort(v: number): number {
+  return v <= STRUCTURE_ETA_NEEDS_MINERALS ? STRUCTURE_ETA_NEEDS_MINERALS - v : 0;
+}
 
 /** Coastal defences — `SnapshotMessage.structureMountAngles` carries each
  *  angle in milliradians (±π fits easily; 1 mrad is 5 u at 5,000 u). */

@@ -37,7 +37,8 @@ import {
 import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle, type ObstacleBox, type PowerSummary } from '../../core/structures/Grid.js';
-import { batteryChargeOf, chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
+import { buildMineralsShortfall } from './constructionStall.js';
+import { batteryChargeOf,chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
 import type { Connection, FlowMaterial } from '../../core/structures/Connection.js';
 import {
   CONSTRUCTION_PULSE_AMOUNT,
@@ -846,6 +847,9 @@ export class StructureGridSubsystem {
     const ratePerMs = CONSTRUCTION_PULSE_AMOUNT / this.pulseMs;
     return ratePerMs > 0 ? remaining / ratePerMs : null;
   }
+
+  /** Minerals a build still owes when it is paused only because its bank is dry (`constructionStall.ts`). */
+  buildMineralsShortfall(rec: StructureRecord): number | null { return buildMineralsShortfall(rec, this.hooks.registry.all(), (a, b) => this.grid.route(a, b)); }
 
   /**
    * Phase-1 issue 6 — player-triggered "reconnect to the nearest structure(s)".

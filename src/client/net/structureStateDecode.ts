@@ -7,8 +7,8 @@
  */
 import type { StructureRenderState } from '../../core/contracts/IRenderer.js';
 import {
-  STRUCTURE_ETA_NONE,
-  STRUCTURE_ETA_STALLED,
+  decodeBuildEta,
+  decodeBuildMineralsShort,
   STRUCTURE_FLAG_BUILT,
   STRUCTURE_FLAG_DECONSTRUCTING,
   STRUCTURE_FLAG_POWERED,
@@ -69,7 +69,9 @@ export function decodeStructureState(
   out.built = built;
   out.buildPct = built ? 1 : v.buildPct ?? D.buildPct;
   const eta = v.etaMs ?? D.etaMs;
-  out.etaMs = eta === STRUCTURE_ETA_NONE ? undefined : eta === STRUCTURE_ETA_STALLED ? null : eta;
+  out.etaMs = decodeBuildEta(eta);
+  const short = decodeBuildMineralsShort(eta);
+  out.buildMineralsShort = short > 0 ? short : undefined;
   out.isDeconstructing = (flags & STRUCTURE_FLAG_DECONSTRUCTING) !== 0 ? true : undefined;
   out.deconstructPct = out.isDeconstructing ? v.deconstructPct ?? D.deconstructPct : 0;
   const minerals = v.minerals ?? D.minerals;

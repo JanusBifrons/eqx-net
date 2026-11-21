@@ -4,7 +4,7 @@
  * place.
  */
 import { describe, expect, it } from 'vitest';
-import { STRUCTURE_FLAG_BUILT, STRUCTURE_FLAG_LOCK_HOLDING, encodeConnSock, type StructureStateView } from '../../shared-types/structureStateWire.js';
+import { STRUCTURE_FLAG_BUILT, STRUCTURE_FLAG_LOCK_HOLDING, encodeBuildEta, encodeConnSock, type StructureStateView } from '../../shared-types/structureStateWire.js';
 import { encodeProdBay } from '../../shared-types/production.js';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 
@@ -67,5 +67,30 @@ describe('decodeStructureState: prodBay (loop 3R)', () => {
     decodeStructureState({ flags: STRUCTURE_FLAG_BUILT, connTo: list([]) }, OWNERS, out);
     expect(out.prodBay).toBeUndefined();
     expect(out.prodQueued).toBeUndefined();
+  });
+});
+
+// Owner play-test: a Shipyard sat at 92% with no reason when the bank ran dry.
+// Two-sided (#15): the server packs the stall with `encodeBuildEta`, the client
+// decodes the minerals still owed.
+describe('decodeStructureState: build stall reason', () => {
+  it('a dry-bank stall carries the minerals still owed', () => {
+    const out = emptyStructureRow();
+    decodeStructureState({ connTo: list([]), buildPct: 0.92, etaMs: encodeBuildEta(null, 420) }, OWNERS, out);
+    expect(out.etaMs).toBeNull();
+    expect(out.buildMineralsShort).toBe(420);
+  });
+
+  it('a stall with no route, a running build and a built row carry no minerals reason', () => {
+    const out = emptyStructureRow();
+    decodeStructureState({ connTo: list([]), etaMs: encodeBuildEta(null, 420) }, OWNERS, out);
+    const cases: Array<[number | undefined, number | null | undefined]> = [
+      [encodeBuildEta(null, null), null], [encodeBuildEta(1234, 420), 1234], [undefined, undefined],
+    ];
+    for (const [etaMs, want] of cases) {
+      decodeStructureState({ connTo: list([]), ...(etaMs !== undefined ? { etaMs } : {}) }, OWNERS, out);
+      expect(out.etaMs).toBe(want);
+      expect(out.buildMineralsShort).toBeUndefined();
+    }
   });
 });
