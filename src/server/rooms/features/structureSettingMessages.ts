@@ -15,6 +15,8 @@ import { gateAccessIndex } from '../../../shared-types/gateAccess.js';
 import { isProcessorKind } from '../../../shared-types/production.js';
 import { EditRecipeQueueSchema, RefineSalvageSchema, SetGateAccessSchema, SetRecipeSchema, SetStructurePowerSchema } from '../../../shared-types/messages.js';
 import { editRecipeQueue } from '../../structures/productionQueue.js';
+import { blueprintProductFor } from '../../../shared-types/recipes.js';
+import { blueprintQuality } from '../../../shared-types/blueprints.js';
 import type { StructureGridSubsystem } from '../../structures/StructureGridSubsystem.js';
 
 /** What the handlers need from the room; getters read the live field. */
@@ -24,8 +26,10 @@ export interface StructureSettingMessageHost extends ParsedMessageHost {
   structureRegistry: Pick<StructureRegistry, 'get'>;
   sectorKey(): string | null;
   production(): Pick<ProductionSubsystem, 'setRecipe' | 'recipeOf'>;
-  storage(): Pick<StorageService, 'flushDirty' | 'refine'>;
+  storage(): Pick<StorageService, 'flushDirty' | 'refine' | 'loadBlueprint' | 'unloadBlueprint'>;
   rebuildStructuresSlice(): void;
+  /** The flown hull, else the hull parked by Command / Build (`PilotSwap.ownShipKey`). */
+  ownShipKey(playerId: string): string | undefined;
   structureGrid(): Pick<StructureGridSubsystem, 'setSwitchedOn' | 'setThrottle'>;
 }
 
@@ -40,6 +44,12 @@ export function registerStructureSettingMessages(h: StructureSettingMessageHost)
     const rec = h.structureRegistry.get(swarmRec.id);
     if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
     if (h.production().setRecipe(rec, msg.recipe, msg.count)) {
+      // A loaded blueprint for another product would stall the new recipe:
+      // swap in the best match (base storage, else the owner's own ship hold,
+      // exactly as a manual Load), else put it back (stays if no room).
+      const product = blueprintProductFor(msg.recipe);
+      if (rec.blueprint !== undefined && rec.blueprint.product !== product
+        && !h.storage().loadBlueprint(rec, product, blueprintQuality, h.ownShipKey(owner))) h.storage().unloadBlueprint(rec);
       h.storage().flushDirty();
       h.rebuildStructuresSlice();
     }
