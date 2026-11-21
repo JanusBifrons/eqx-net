@@ -2869,7 +2869,7 @@ Commit: perf/count-budgets (PR #356)
 - **Fix:** the palette is mounted for the whole desktop game and hidden (`display: none`, `data-panel-mode="hidden"`) while piloting; cells are a memoised `BuildCell` with hoisted per-state `sx`. Same session, 4 reps each: React task on the death frame 67–79 ms → 8–12 ms; death-frame LoAF 164–188 ms → 103–119 ms (this host's steady frames are ~95 ms under the CPU profiler); components mounted on death 864 → 21.
 - **Rules:**
   - Anything that appears on a gameplay event (death, lock, level-up) and holds more than a handful of MUI components is pre-mounted and toggled, like the drawer's `keepMounted`. A store flip inside a message handler renders inside that handler's task.
-  - Measure with `tests/perf/death-spectator-hitch.spec.ts`: it stubs `__REACT_DEVTOOLS_GLOBAL_HOOK__` to count components rendered and mounted per commit (skip subtrees whose `child` equals `alternate.child`, or untouched fibers read as mounts). The count lock is `BottomControlPanel.test.tsx` "the spectator flip inserts no DOM".
+  - Measure with `tests/perf/death-spectator-hitch.spec.ts`: it stubs `__REACT_DEVTOOLS_GLOBAL_HOOK__` to count components rendered and mounted per commit (skip subtrees whose `child` equals `alternate.child`, or untouched fibers read as mounts). The count lock was `BottomControlPanel.test.tsx` "the spectator flip inserts no DOM"; the hotbar and that test were later deleted when building moved into the Build sidebar, which the flip never opens.
 
 ## 2026-11-11 — A shell moved once per room update but aged by the worker tick
 
