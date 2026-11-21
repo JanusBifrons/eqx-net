@@ -40,8 +40,9 @@ export class FrameTimeRing {
 
   get count(): number { return this.n; }
 
-  /** Percentiles over every frame held, or only the newest `last` of them. */
-  summary(last?: number): FrameTimeSummary {
+  /** Percentiles over every frame held, or only the newest `last` of them;
+   *  `hitches` counts frames over `hitchMs` (default `HITCH_MS`). */
+  summary(last?: number, hitchMs: number = HITCH_MS): FrameTimeSummary {
     const n = last === undefined ? this.n : Math.max(0, Math.min(this.n, Math.floor(last)));
     if (n === 0) return { frames: 0, p50: 0, p95: 0, p99: 0, max: 0, hitches: 0 };
     const start = (this.head - n + this.buf.length) % this.buf.length;
@@ -50,7 +51,7 @@ export class FrameTimeRing {
     for (let i = 0; i < n; i++) {
       const x = this.buf[(start + i) % this.buf.length]!;
       v[i] = x;
-      if (x > HITCH_MS) hitches++;
+      if (x > hitchMs) hitches++;
     }
     v.sort();
     const pick = (q: number): number => round2(v[Math.min(n - 1, Math.floor(q * n))]!);

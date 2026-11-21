@@ -47,3 +47,38 @@ describe('store — controlMode view (RTS slice 10)', () => {
     expect(selectControlMode(useUIStore.getState())).toBe('command');
   });
 });
+
+/**
+ * Owner smoke (Helm during loading): a galaxy join asks the server to land in
+ * Command view (`startMode: 'command'`), but the store holds `pilot` until the
+ * server's `control_mode` flip at arrival, so the Helm read Fly the whole load.
+ * The join records the requested start (`pendingCommandStart`); the view reads
+ * Command from then on, and the stored `pilotMode` stays `pilot` for the
+ * ship-bound readiness gate.
+ */
+describe('store — a command-view join reads Command before the server flip', () => {
+  beforeEach(() => {
+    useUIStore.setState({ pilotMode: 'pilot', buildMode: false, pendingCommandStart: false });
+  });
+
+  it('reads command while the join waits for the arrival flip', () => {
+    useUIStore.getState().setPendingCommandStart(true);
+    expect(useUIStore.getState().pilotMode).toBe('pilot');
+    expect(selectControlMode(useUIStore.getState())).toBe('command');
+  });
+
+  it('any pilotMode write settles it (the server flip, a pilot swap, teardown)', () => {
+    useUIStore.getState().setPendingCommandStart(true);
+    useUIStore.getState().setPilotMode('spectator');
+    expect(useUIStore.getState().pendingCommandStart).toBe(false);
+    useUIStore.getState().setPendingCommandStart(true);
+    useUIStore.getState().setPilotMode('pilot');
+    expect(useUIStore.getState().pendingCommandStart).toBe(false);
+    expect(selectControlMode(useUIStore.getState())).toBe('fly');
+  });
+
+  it('Build still wins over a pending command start', () => {
+    useUIStore.setState({ pendingCommandStart: true, buildMode: true });
+    expect(selectControlMode(useUIStore.getState())).toBe('build');
+  });
+});

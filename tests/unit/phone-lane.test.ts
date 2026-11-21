@@ -6,7 +6,8 @@
  * key in the URL sets the cookie, only the home-screen icons are public.
  */
 import { describe, it, expect } from 'vitest';
-import { gateDecision, keyCookie, newKey, parseTunnelUrl, readCookie, PHONE_COOKIE } from '../../scripts/dev/phone-lane-core.mjs';
+import path from 'node:path';
+import { gateDecision, keyCookie, laneServerEnv, newKey, parseTunnelUrl, readCookie, PHONE_COOKIE } from '../../scripts/dev/phone-lane-core.mjs';
 
 const KEY = 'k3y_abc-DEF123';
 
@@ -65,5 +66,15 @@ describe('tunnel address', () => {
     ].join('\n');
     expect(parseTunnelUrl(out)).toBe('https://brave-otter-sample-words.trycloudflare.com');
     expect(parseTunnelUrl('INF Requesting new quick Tunnel on trycloudflare.com...')).toBeUndefined();
+  });
+});
+
+describe('lane server env (play evidence lands in run/)', () => {
+  it('points the diagnostic captures at run/captures and keeps test rooms off', () => {
+    const run = path.join('C:', 'lane', 'run');
+    const env = laneServerEnv(run);
+    expect(env.EQX_DIAG_DIR).toBe(path.join(run, 'captures'));
+    expect(env.EQX_ENABLE_TEST_ROOMS).toBe('0');
+    expect(env.EQX_TEST_SIGNIN).toBe('1');
   });
 });
