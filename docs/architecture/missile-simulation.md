@@ -410,8 +410,9 @@ clock anchor minus a delay (`updateProjectilesMirror`, `mirror/worldPasses.ts`).
 They used a fixed 100 game ms, so on jitter-4g a shell was drawn ~106 ms
 earlier than the drone it flies past. They now read the drone delay BEFORE
 the S4-5 stall hold: `getSwarmSteadyDisplayDelayMs()` in `swarmInterpolation.ts`,
-a second record (`_droneSteady`) slewed toward the drone target on the same
-frame step but never held, converted to game ms by `shellDisplayDelayGameMs`
+the `steadyMs` field of the shared drone record (`displayDelayHold.ts`),
+which `slewDisplayDelay` moves toward the same target on the same frame step
+and `holdDisplayDelay` never touches (the missile record carries it unused), converted to game ms by `shellDisplayDelayGameMs`
 (`shellDisplayDelay.ts`, × `gameClock.scale`; NaN / 0 / non-finite falls
 back to 100 game ms). In steady play it equals the held drone delay, so
 shells line up with drones; through a drone stream stall the held delay grows

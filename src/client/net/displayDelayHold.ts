@@ -27,6 +27,11 @@ export interface DisplayDelayHoldState {
   delayMs: number;
   /** Where the slew heads. */
   targetMs: number;
+  /** The same slew with no hold (S5-6a): moved toward `targetMs` on every
+   *  `slewDisplayDelay` step, never touched by `holdDisplayDelay`. Equals
+   *  `delayMs` in steady play; through a stall it stays put while `delayMs`
+   *  grows. Shells read the drone record's. */
+  steadyMs: number;
   /** True once the current stall has re-synced: no further growth until the
    *  stream catches up with the read point again. */
   resyncedThisStall: boolean;
@@ -38,33 +43,42 @@ export interface DisplayDelayHoldState {
   resyncCount: number;
 }
 
-/** A fresh record at `delayMs` (value and target), counters zero. */
+/** A fresh record at `delayMs` (value, steady value and target), counters zero. */
 export function createDisplayDelayHoldState(delayMs: number): DisplayDelayHoldState {
-  return { delayMs, targetMs: delayMs, resyncedThisStall: false, holdActive: false, holdFrameCount: 0, resyncCount: 0 };
+  return {
+    delayMs, targetMs: delayMs, steadyMs: delayMs,
+    resyncedThisStall: false, holdActive: false, holdFrameCount: 0, resyncCount: 0,
+  };
 }
 
-/** Put value and target at `delayMs` and clear the stall state (counters kept). */
+/** Put value, steady value and target at `delayMs` and clear the stall state
+ *  (counters kept). */
 export function resetDisplayDelayHold(s: DisplayDelayHoldState, delayMs: number): void {
   s.delayMs = delayMs;
   s.targetMs = delayMs;
+  s.steadyMs = delayMs;
   s.resyncedThisStall = false;
   s.holdActive = false;
 }
 
-/** Move the delay toward its target by one frame of `frameDtMs` wall ms:
- *  proportional to the remaining gap (time constant
- *  DISPLAY_DELAY_SLEW_TAU_MS of game time at `speed`), bounded to
+/** `valueMs` after one slew step of `frameDtMs` wall ms toward `targetMs`. */
+function slewToward(valueMs: number, targetMs: number, frameDtMs: number, speed: number): number {
+  const remaining = targetMs - valueMs;
+  if (remaining === 0) return valueMs;
+  const maxStep = DISPLAY_DELAY_SLEW_MAX_RATE * frameDtMs;
+  if (Math.abs(remaining) <= Math.min(DISPLAY_DELAY_SLEW_SNAP_MS, maxStep)) return targetMs;
+  const step = remaining * (1 - Math.exp(-frameDtMs * speed / DISPLAY_DELAY_SLEW_TAU_MS));
+  return valueMs + Math.max(-maxStep, Math.min(maxStep, step));
+}
+
+/** Move the delay, and separately the steady delay, toward the target by one
+ *  frame of `frameDtMs` wall ms: proportional to the remaining gap (time
+ *  constant DISPLAY_DELAY_SLEW_TAU_MS of game time at `speed`), bounded to
  *  DISPLAY_DELAY_SLEW_MAX_RATE × frameDtMs either way. */
 export function slewDisplayDelay(s: DisplayDelayHoldState, frameDtMs: number, speed: number): void {
-  const remaining = s.targetMs - s.delayMs;
-  if (remaining === 0 || !(frameDtMs > 0) || !Number.isFinite(frameDtMs)) return;
-  const maxStep = DISPLAY_DELAY_SLEW_MAX_RATE * frameDtMs;
-  if (Math.abs(remaining) <= Math.min(DISPLAY_DELAY_SLEW_SNAP_MS, maxStep)) {
-    s.delayMs = s.targetMs;
-    return;
-  }
-  const step = remaining * (1 - Math.exp(-frameDtMs * speed / DISPLAY_DELAY_SLEW_TAU_MS));
-  s.delayMs += Math.max(-maxStep, Math.min(maxStep, step));
+  if (!(frameDtMs > 0) || !Number.isFinite(frameDtMs)) return;
+  s.delayMs = slewToward(s.delayMs, s.targetMs, frameDtMs, speed);
+  s.steadyMs = slewToward(s.steadyMs, s.targetMs, frameDtMs, speed);
 }
 
 /** The stall hold for the frame read at `nowMs`: when the read point would

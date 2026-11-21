@@ -50,11 +50,6 @@ export { TELEPORT_MAX_PLAUSIBLE_SPEED, TELEPORT_FLOOR_U } from './plausibleSpeed
  *  point. On a good link the target is the 100 ms floor; when packets run
  *  late the target rises so the buffer still holds a bracketing pair. */
 const _drone = createDisplayDelayHoldState(DISPLAY_DELAY_MS);
-/** The drone delay WITHOUT the stall hold (S5-6a): slewed toward the same
- *  target on the same steps, never held. Equal to `_drone.delayMs` in steady
- *  play; during a drone stream stall it stays put while the held one grows.
- *  Shells read it (closed-form, they never need the hold). */
-const _droneSteady = createDisplayDelayHoldState(DISPLAY_DELAY_MS);
 /** False until the first target after a reset: that first target places the
  *  value AT it (no glide up from the floor). */
 let _displayDelaySeeded = false;
@@ -84,7 +79,7 @@ function setDisplayDelayTarget(ms: number): void {
   if (!_displayDelaySeeded) {
     _displayDelaySeeded = true;
     _drone.delayMs = _drone.targetMs;
-    _droneSteady.delayMs = _drone.targetMs;
+    _drone.steadyMs = _drone.targetMs;
   }
 }
 
@@ -106,8 +101,6 @@ export function setSwarmDisplayDelayMs(ms: number): void {
  *  (`updateSwarmMirror`). Without `nowMs` only the slew runs. Scalars only. */
 export function stepSwarmDisplayDelay(frameDtMs: number, nowMs: number = Number.NaN): void {
   slewDisplayDelay(_drone, frameDtMs, _displaySpeed);
-  _droneSteady.targetMs = _drone.targetMs;
-  slewDisplayDelay(_droneSteady, frameDtMs, _displaySpeed);
   holdDisplayDelay(_drone, nowMs, _streamNewestStampMs, glideLimitWallMs(), _displaySpeed);
   if (Number.isFinite(nowMs)) _lastFrameStepMs = nowMs;
 }
@@ -170,7 +163,6 @@ export function getSwarmDisplaySpeed(): number { return _displaySpeed; }
 export function resetSwarmDisplayDelay(): void {
   _lastDelayInputMs = DISPLAY_DELAY_MS;
   resetDisplayDelayHold(_drone, clampDisplayDelayWallMs(DISPLAY_DELAY_MS));
-  resetDisplayDelayHold(_droneSteady, _drone.delayMs);
   _displayDelaySeeded = false;
   _displayDelayPinned = false;
   _latenessEstimate.estimateMs = 0;
@@ -193,8 +185,7 @@ export function setSwarmDisplaySpeed(speed: number): void {
   _displaySpeed = next;
   _drone.targetMs = clampDisplayDelayWallMs(_lastDelayInputMs);
   _drone.delayMs = _displayDelaySeeded ? clampDisplayDelayWallMs(_drone.delayMs) : _drone.targetMs;
-  _droneSteady.targetMs = _drone.targetMs;
-  _droneSteady.delayMs = _displayDelaySeeded ? clampDisplayDelayWallMs(_droneSteady.delayMs) : _drone.targetMs;
+  _drone.steadyMs = _displayDelaySeeded ? clampDisplayDelayWallMs(_drone.steadyMs) : _drone.targetMs;
 }
 
 /** An arrival this far (ms) off the tick clock is a new timeline (sector
@@ -377,7 +368,7 @@ export function getSwarmDisplayDelayMs(): number {
 /** The drone delay before the stall hold (wall ms, S5-6a): the slew alone.
  *  Shells read this; drones and missiles read the held values. */
 export function getSwarmSteadyDisplayDelayMs(): number {
-  return _droneSteady.delayMs;
+  return _drone.steadyMs;
 }
 
 /** Where the slewed delay is heading (wall ms, clamped to the floor/ceiling). */
