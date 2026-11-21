@@ -209,6 +209,22 @@ describe('commitChosenPlacement', () => {
     });
   });
 
+  it('does not send while the ghost is blocked: the server would refuse it (#15)', () => {
+    // The ghost's verdict (the server's own placementRejection, written each
+    // frame from RendererFeedback) says the footprint overlaps a structure: the
+    // Confirm / desktop click must not send a place_structure the server refuses.
+    placementChosen.worldX = 330;
+    placementChosen.worldY = -60;
+    placementChosen.rejection = 'overlap-structure';
+    expect(commitChosenPlacement('cargo_bay')).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    expect(notePendingPlacement).not.toHaveBeenCalled();
+    // Clear ghost: it sends.
+    placementChosen.rejection = null;
+    expect(commitChosenPlacement('cargo_bay')).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it('phase V: R rotates the ghost a quarter turn and the rotation is sent', () => {
     setPlacementRotationDeg(0);
     expect(cyclePlacementRotation()).toBe(90);

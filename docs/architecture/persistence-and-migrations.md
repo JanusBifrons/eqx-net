@@ -191,6 +191,44 @@ covers:
 When you register a real migration, add tests covering both the migration
 path and the no-op path (current-version payload still passes through).
 
+## Structure-catalogue bumps: the per-kind wipe flag
+
+Separate from `schemaVersion`: each snapshot stamps the
+`STRUCTURE_KIND_CATALOGUE_VERSION` it was saved under
+(`structureCatalogueVersion`). On hydrate, `SectorPersistence.hydrate` runs the
+saved `structures[]` through `migrateStructureRows`
+([src/server/rooms/structureKindWipes.ts](../../src/server/rooms/structureKindWipes.ts)).
+Only the structures are affected; asteroid health, scrap and lingering hulls
+restore as normal.
+
+- **Same version:** every saved structure restores.
+- **Older version, every bump in between flagged:** rows of the flagged kinds
+  are removed; every other building (player bases included) restores.
+- **Older version with any unflagged bump, a missing stamp, or a newer
+  stamp:** every saved structure is removed (the old behaviour, so forgetting
+  the flag fails safe).
+
+**How to flag a kind.** In the PR that bumps `STRUCTURE_KIND_CATALOGUE_VERSION`
+to N, add one entry to `STRUCTURE_KIND_WIPES`:
+
+```ts
+export const STRUCTURE_KIND_WIPES: StructureKindWipes = Object.freeze({
+  17: ['solar', 'reactor'], // the kinds whose record changed at v17
+});
+```
+
+List every kind whose record changed (size, footprint, `keepClear` pad, cost,
+health, anything a saved row depends on). An empty list (`17: []`) means the
+bump changed nothing a saved row depends on, so nothing is wiped. Entries are
+permanent history: never edit or remove one, or a sector still saved at an
+older version migrates wrongly. A sector that sat through several bumps wipes
+the union of their kinds.
+
+Wiped buildings are **removed, not refunded**, matching the whole-set discard.
+The next snapshot (60 s cadence, any placement, or dispose) stamps the live
+version, so the wipe happens once; until then a restart simply repeats the same
+wipe. Lock: `structureKindWipes.test.ts`.
+
 ## Limbo lane — RETIRED (Phase 5 / WS-B, 2026-06-14)
 
 `LimboStore` is **deleted**. It previously held a player's ship state in two

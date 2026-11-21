@@ -32,6 +32,8 @@ Without the gate, reconcile vs replay diverges by exactly one input application 
 - **Single-world mode** (`workerData.sab`, untagged messages) is what tests that spawn a bare worker use.
 - **Pooled mode** (`workerData.pooled`) takes `ADD_WORLD { worldId, sab }` / `REMOVE_WORLD { worldId }`, routes every other command by its `worldId`, tags every reply with it, posts `POOL_READY` at start and `READY { worldId }` per world, and steps every hosted world once per tick.
 - Several sectors share one worker, so per-sector state never goes at module scope. Server side: `src/server/rooms/PhysicsWorkerPool.ts`.
+- **A world that throws is dropped, not the worker.** `main()` wraps each world's step and each command in try/catch (`handleIn` / `pumpOne`). On a throw (a Rapier WASM panic, "RuntimeError: unreachable") it deletes that world and posts `WORLD_FAILED { worldId, phase: 'step' | 'command', errMessage, errStack, tick, recent }` (`core/physics/worldFailure.ts`); `recent` is the world's last 48 non-input commands as `TYPE id` (`RecentCommands`). The world is not freed: its Rapier objects may still be borrowed after a panic. `PhysicsWorkerProxy` logs it with the sector key, player and swarm counts. That sector has no physics until a restart; the other sectors on the worker keep running.
+- **A worker that dies anyway** (exit) sends every world it hosted a `WORLD_FAILED` with phase `worker-exit`; the pool starts a fresh worker in its slot for later attaches. A failed sector's world is not rebuilt: no single path re-seeds a world's bodies yet.
 
 ## Worker-to-main messages
 
@@ -45,6 +47,7 @@ The worker posts three discrete message types to the main thread:
   - `normalSpeed` is that relative velocity projected on the contact normal (`event.maxForceDirection()`, a→b, clamped ≥ 0): head-on ≈ impactSpeed, a glancing scrape small.
   - `aMass` / `bMass` are the folded Rapier body masses (`World.getBodyMass`).
   - Post-step velocity is NOT a usable impact measure: a ship that head-on-stops against a static structure has `vPost ≈ 0` yet a hard impact.
+- **`WORLD_FAILED`**: a world threw and was dropped (see [One worker, many worlds](#one-worker-many-worlds)); `PhysicsWorkerProxy` logs it as an error.
 
 **Ramming.** These fields drive the impact-based ramming model in `core/combat/Ramming.ts`: `aggregateRamming` takes the max `normalSpeed` per pair, `E = ½·μ·(vN − RAM_MIN_IMPACT_SPEED)²` (μ = reduced mass), and `damageTo(self) = min(RAM_DAMAGE_MAX, RAM_DAMAGE_PER_ENERGY · E · mOther/(mSelf+mOther))`: equal ships both hurt equally, the lighter takes more, a slow bump is free (`RamPair.damageA` / `damageB` per side). A full-speed fighter head-on deals ~291 to each (~55 % of its 525 pool) at the 2× default scale; both ram constants were scaled ×1.75 with the arcade toughness layer. Full curve: [collision-layers.md](collision-layers.md#damage-curve--impact-based-ramming-as-a-weapon-2026-11-13).
 

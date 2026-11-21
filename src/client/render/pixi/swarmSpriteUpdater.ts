@@ -50,6 +50,7 @@ import {
 } from './spriteBuilders.js';
 import { buildBuildEtaText, formatBuildEta, fitBuildEtaLabel } from './buildEtaLabel.js';
 import { applyStructureMirror, counterFlipStructureParts } from './structureMirrorFlip.js';
+import { BUILD_AWAITING_CLEAR_LABEL, isBuildAwaitingClear } from '../../structures/buildAwaitingClear.js';
 import { buildChargeTelegraph, updateChargeTelegraph, type ChargeTelegraph } from './chargeTelegraph.js';
 import type { Text } from 'pixi.js';
 import { minerRangeForKind } from '../minerRangeRing.js';
@@ -545,7 +546,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       // re-raster). Empty once built.
       const etaText = sprite.getChildByLabel('buildEta') as Text | null;
       if (etaText) {
-        const nextEta = st && !st.built ? formatBuildEta(st.etaMs) : '';
+        // A finished blueprint with a ship inside waits to turn solid: say so.
+        const nextEta = !st || st.built ? '' : isBuildAwaitingClear(st) ? BUILD_AWAITING_CLEAR_LABEL : formatBuildEta(st.etaMs);
         if (etaText.text !== nextEta) etaText.text = nextEta;
         // Readable on a phone: a constant on-screen size at any zoom.
         if (nextEta !== '' && ctx.cameraScale !== undefined) fitBuildEtaLabel(etaText, ctx.cameraScale, sprite.scale.y);

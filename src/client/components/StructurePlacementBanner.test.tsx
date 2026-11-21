@@ -4,6 +4,8 @@ import { StructurePlacementBanner } from './StructurePlacementBanner.js';
 import { LayoutContext } from '../layout/useLayout.js';
 import { useUIStore } from '../state/store.js';
 import { getPlacementRotationDeg, setPlacementRotationDeg } from '../structures/structurePlacementClient.js';
+import { act } from 'react';
+import { resetPlacementChosen, setPlacementRejection } from '../structures/placementChosen.js';
 
 /**
  * The banner's Confirm delegates to the shared `commitChosenPlacement` (the
@@ -14,7 +16,7 @@ import { getPlacementRotationDeg, setPlacementRotationDeg } from '../structures/
  * unit test in `structurePlacementClient.test.ts`. Here we lock the wiring: a
  * Confirm click commits the active kind + exits placement mode.
  */
-const commitChosenPlacement = vi.fn();
+const commitChosenPlacement = vi.fn((..._a: unknown[]) => true);
 // The rotation functions stay REAL so the Rotate test checks the actual
 // module state the renderer reads (and the desktop R key cycles).
 vi.mock('../structures/structurePlacementClient', async (importOriginal) => ({
@@ -49,6 +51,7 @@ describe('StructurePlacementBanner', () => {
     commitChosenPlacement.mockClear();
     isTouchDeviceMock.mockReturnValue(true);
     useUIStore.setState({ placementKind: 'capital' });
+    resetPlacementChosen();
   });
 
   it('Confirm commits the active kind via the shared path and exits placement', () => {
@@ -58,6 +61,26 @@ describe('StructurePlacementBanner', () => {
     expect(commitChosenPlacement).toHaveBeenCalledTimes(1);
     expect(commitChosenPlacement).toHaveBeenCalledWith('capital');
     expect(useUIStore.getState().placementKind).toBeNull();
+  });
+
+  it('Confirm is disabled while the ghost is blocked, and enabled again once clear', () => {
+    const { getByTestId } = renderBanner();
+    const confirm = getByTestId('placement-confirm') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(false);
+    act(() => setPlacementRejection('overlap-structure'));
+    expect(confirm.disabled).toBe(true);
+    fireEvent.click(confirm);
+    expect(commitChosenPlacement).not.toHaveBeenCalled();
+    expect(useUIStore.getState().placementKind).toBe('capital'); // still placing
+    act(() => setPlacementRejection(null));
+    expect(confirm.disabled).toBe(false);
+  });
+
+  it('a refused commit keeps placement mode open', () => {
+    commitChosenPlacement.mockReturnValueOnce(false);
+    const { getByTestId } = renderBanner();
+    fireEvent.click(getByTestId('placement-confirm'));
+    expect(useUIStore.getState().placementKind).toBe('capital');
   });
 
   it('Cancel exits placement without committing', () => {
