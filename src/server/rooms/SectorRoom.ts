@@ -2124,6 +2124,8 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: () => this.sectorKey,
       packedGateForBuild: (owner, kindId) => packedGateForBuild(packedGateHost, owner, kindId),
       placementRefusal: (owner, kindId) => territoryLockRefusal(owner, kindId, this.sectorKey ?? '', liveSectorHolder(this.sectorKey ?? ''), this.structureRegistry.all()),
+      shipHulls: () => this.obstacles.hullCircles(''), // round a ship: a hologram, parked hulls ordered clear (blueprintBody.ts)
+      parkedHulls: { lingeringPoses: this.lingeringPoseCache, ship: (id) => this.state.ships.get(id), extentOf: (k) => (isShipKindId(k) ? hullExtent(k) : undefined), landingPoint: (p, x, y, k, s) => this.landingPoint(p, x, y, k, s), applyOrder: (o, ids, ord) => this.fleet.applyOrder(o, ids, ord) },
     });
 
     // ── Structure grid pulse (structures plan, Phase 3) ─────────────────
