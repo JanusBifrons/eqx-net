@@ -26,7 +26,7 @@ import {
 } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxConnections, effectiveStructurePowerOutput } from '../../core/leveling/structureLevel.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
-import { CABLE_NO_SOCKET, socketListMask } from '../../core/structures/cableCurve.js';
+import { socketListMask } from '../../core/structures/cableCurve.js';
 import { rockObstacleParts, type GridNode, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
 import type {
   StructureRenderState,
