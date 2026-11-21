@@ -70,4 +70,31 @@ describe('TargetAction', () => {
     render(<TargetAction isOwn={false} />);
     expect(screen.getByTestId('fc-target').getAttribute('data-state')).toBe('cancel');
   });
+
+  // Phone report 2026-11-21: a tapped rock showed "Asteroid / SIZE 36" but no
+  // LOCK, so a miner could only lock it by holding the lock line ~8 s. Rocks
+  // lock with the hands-off LOCK like a ship, keyed s:<swarmId> (same key the
+  // lock line uses for terrain).
+  it('a selected rock shows LOCK · <GROUP>; a tap asks for the lock; a built lock shows UNLOCK keyed s:<id>', () => {
+    useUIStore.setState({
+      selection: { ids: [], focusId: 'swarm-42', focusKind: 'asteroid' },
+      activeGroupId: 'mining',
+      fcGroups: [{ id: 'mining', name: 'Mining', mode: 'manual', colour: 0, capacity: 1, locks: [] }],
+    });
+    const { unmount } = render(<TargetAction isOwn={false} />);
+    const btn = screen.getByTestId('fc-target');
+    expect(btn.getAttribute('data-state')).toBe('lock');
+    expect(btn.textContent).toBe('LOCK · MINING');
+    fireEvent.click(btn);
+    expect(lockSelected).toHaveBeenCalledOnce();
+    unmount();
+    useUIStore.setState({
+      fcGroups: [{ id: 'mining', name: 'Mining', mode: 'manual', colour: 0, capacity: 1, locks: [{ target: 's:42', stage: 2 }] }],
+    });
+    render(<TargetAction isOwn={false} />);
+    const un = screen.getByTestId('fc-target');
+    expect(un.getAttribute('data-state')).toBe('unlock');
+    fireEvent.click(un);
+    expect(cancelLock).toHaveBeenCalledWith('mining', 's:42');
+  });
 });

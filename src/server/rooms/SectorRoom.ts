@@ -2124,6 +2124,8 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: () => this.sectorKey,
       packedGateForBuild: (owner, kindId) => packedGateForBuild(packedGateHost, owner, kindId),
       placementRefusal: (owner, kindId) => territoryLockRefusal(owner, kindId, this.sectorKey ?? '', liveSectorHolder(this.sectorKey ?? ''), this.structureRegistry.all()),
+      shipHulls: () => this.obstacles.hullCircles(''), // round a ship: a hologram, parked hulls ordered clear (blueprintBody.ts)
+      parkedHulls: { lingeringPoses: this.lingeringPoseCache, ship: (id) => this.state.ships.get(id), extentOf: (k) => (isShipKindId(k) ? hullExtent(k) : undefined), landingPoint: (p, x, y, k, s) => this.landingPoint(p, x, y, k, s), applyOrder: (o, ids, ord) => this.fleet.applyOrder(o, ids, ord) },
     });
 
     // ── Structure grid pulse (structures plan, Phase 3) ─────────────────
@@ -2567,7 +2569,7 @@ export class SectorRoom extends Room<SectorState> {
       reclaimLingeringHull: (client, pid, shipId) => this.pilotSwap.reclaimLingeringHull(client, pid, shipId),
       enterSpectate: (pid) => this.fleetHooks.enterSpectate(pid),
       fleetStatusSoon: this.fleetHooks.fleetStatusSoon,
-      serverTick: () => this.serverTick,
+      serverTick: () => this.serverTick, noteInputMargin: (pid, m) => this.snapshotBroadcaster.inputMargins.set(pid, m),
       playerToActiveShipInstance: this.playerToActiveShipInstance,
       lockMsgAllowed: (sid) => this.lockMsgAllowed(sid),
       fireControlLocks: () => this.locks,
@@ -4245,10 +4247,13 @@ export class SectorRoom extends Room<SectorState> {
     return nearestClearPoint(x, y, o.boxes, ownClear, maxDistance, o.circles, ownClear, o.walls);
   }
 
-  /** T2 — the nearest point clear of every structure (convoy hauler spawns). */
-  clearPointNear(x: number, y: number): { x: number; y: number } {
+  /** T2 — the nearest point clear of every structure (convoy hauler spawns:
+   *  150 u). With `clearance` (a flagship fleet's station), searched as far
+   *  as a landing of that clearance (`landingReach`). */
+  clearPointNear(x: number, y: number, clearance?: number): { x: number; y: number } {
     if (this.structureRegistry.size === 0) return { x, y };
-    return nearestClearPoint(x, y, this.obstacles.structureBoxes(), 150);
+    if (clearance === undefined) return nearestClearPoint(x, y, this.obstacles.structureBoxes(), 150);
+    return nearestClearPoint(x, y, this.obstacles.structureBoxes(), clearance, landingReach(clearance).maxDistance);
   }
 
   /** 3h — ConvoyRoom: a dock's crane serves a hauler (`CraneBays.craneServe`). */

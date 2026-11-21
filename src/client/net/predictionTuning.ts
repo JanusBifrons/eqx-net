@@ -39,6 +39,25 @@ export const REMOTE_ANGLE_SPRING_VEL_END = 0.05;
  *  bounded. Reset on every snapshot. */
 export const STAGE_3_MAX_LOOKAHEAD_TICKS = 8;
 
+/** Ticks past the input lead a remote's held bits keep being applied: one
+ *  20 Hz snapshot interval (3) plus 2 spare. At the 3-tick floor lead this is
+ *  `STAGE_3_MAX_LOOKAHEAD_TICKS`. */
+export const STAGE_3_LOOKAHEAD_SLACK_TICKS = 5;
+
+/**
+ * The per-snapshot forward-prediction cap for remote ships, in game ticks.
+ * Each snapshot resets a remote to `serverTick` and the client then predicts
+ * it `lead` ticks (the replay) plus a snapshot interval of live ticks, so a
+ * fixed cap below `lead + 3` cut the last held ticks of EVERY snapshot once
+ * the lead grew past 5 (margin-sized lead on any real link, an idle client's
+ * initial 6): a correction every snapshot and the hysteresis guard switched
+ * prediction off. The cap rides the lead; only a stall runs past it.
+ * Lock: `remoteForwardLead.test.ts`.
+ */
+export function remoteForwardTickCap(leadGameTicks: number): number {
+  return Math.max(STAGE_3_MAX_LOOKAHEAD_TICKS, Math.ceil(leadGameTicks) + STAGE_3_LOOKAHEAD_SLACK_TICKS);
+}
+
 /** Stage 4 hotfix — clamp on RTT samples fed into the Welford state
  *  driving leadTicks. `Reconciler.lastRtt` is contaminated by snapshot-
  *  delay (it's `now - ackedRec.sentAt`, not the true TCP RTT), so a
@@ -47,7 +66,9 @@ export const STAGE_3_MAX_LOOKAHEAD_TICKS = 8;
  *  bounds σ even under Pattern A spikes; real-world high-RTT clients
  *  (international, cellular) routinely measure 100–250 ms, so the
  *  clamp doesn't penalise them. See `docs/LESSONS.md` for the
- *  diagnostic. */
+ *  diagnostic. No longer applied live: the lead is sized from the server's
+ *  input margin, clamped at the lookahead ceiling (`rttLookaheadUpdater`);
+ *  kept for the `tests/scenarios` lastRtt models. */
 export const RTT_SAMPLE_CLAMP_MS = 250;
 
 /** Stage 4 hotfix #3 (2026-05-08 third diagnostic) — gate the Welford

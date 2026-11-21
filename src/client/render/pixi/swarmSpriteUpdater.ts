@@ -53,6 +53,8 @@ import { applyStructureMirror, counterFlipStructureParts } from './structureMirr
 import { BUILD_AWAITING_CLEAR_LABEL, isBuildAwaitingClear } from '../../structures/buildAwaitingClear.js';
 import { buildChargeTelegraph, updateChargeTelegraph, type ChargeTelegraph } from './chargeTelegraph.js';
 import type { Text } from 'pixi.js';
+/** A store's charge readout, with the numbers it last showed (change check). */
+type BatteryText = Text & { shownStored?: number; shownMax?: number };
 import { minerRangeForKind } from '../minerRangeRing.js';
 import {
   buildArtShipSprite, isMachinedSprite, scrapHandleFor, shipArtSwap, structHandleFor,
@@ -491,7 +493,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           slew[i] = nextArc;
           _structureMountAngles.push(nextArc);
         }
-        ctx.mountVisuals.applyMountAngles(spriteKey, structMounts, _structureMountAngles);
+        // Off screen: the slew above keeps running (it comes back in view at
+        // the same angle) but the hidden guns are not re-posed or animated.
+        if (sprite.visible) ctx.mountVisuals.applyMountAngles(spriteKey, structMounts, _structureMountAngles);
       }
     }
     // Damage flash + beam-hit tint (both render as the damage colour so
@@ -528,10 +532,11 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // Base loop 3O — a blueprint (not yet built) draws as a cyan hologram that
     // a print line fills in with its build fraction (structureHologram.ts);
     // the fill-bar (ConnectorRenderer) still shows the number.
-    if (entry.kind === 2) {
+    // Off screen (hidden by the A3 view test) none of this shows: skip the
+    // hologram and readout child scans until it scrolls back into view.
+    if (entry.kind === 2 && sprite.visible) {
       const st = mirror.structures?.get(entityId);
       syncStructureHologram(sprite, entry.shipKind, entry.radius, ctx.art.structStyle, st, now);
-      sprite.alpha = 1;
       // WS-9 (R2.12) — update the Capital's mineral readout on CHANGE only (no
       // per-frame Text re-raster). Tagged child; capitals only, so the lookup is rare.
       if (entry.shipKind === 'capital') {
@@ -554,15 +559,22 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       }
       // Phase-1 issue 7 — a power store's stored-power number (CHANGE-only).
       if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0) {
-        const batText = sprite.getChildByLabel('batteryCharge') as Text | null;
+        const batText = sprite.getChildByLabel('batteryCharge') as BatteryText | null;
         if (batText) {
-          const next =
-            st?.storedPowerMax !== undefined && st.storedPowerMax > 0
-              ? `${Math.round(st.storedPower ?? 0)}/${Math.round(st.storedPowerMax)}`
-              : '';
-          if (batText.text !== next) batText.text = next;
+          // Compare the rounded numbers first; build the string only on a change (#14).
+          const has = st?.storedPowerMax !== undefined && st.storedPowerMax > 0;
+          const stored = has ? Math.round(st.storedPower ?? 0) : -1;
+          const max = has ? Math.round(st.storedPowerMax!) : -1;
+          if (batText.shownStored !== stored || batText.shownMax !== max) {
+            batText.shownStored = stored;
+            batText.shownMax = max;
+            batText.text = has ? `${stored}/${max}` : '';
+          }
         }
       }
+    }
+    if (entry.kind === 2) {
+      sprite.alpha = 1;
       // Build mirror (4C): readouts and guns stay unmirrored on screen.
       if (structMirrored) counterFlipStructureParts(sprite, structCluster);
     }

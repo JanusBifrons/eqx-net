@@ -102,7 +102,7 @@ async function fly(opts: FlyOpts): Promise<Run> {
     server.tick(1 / 60);
     tick++;
     run.server.push(server.getShipState(ID)!.angle);
-    applyRemoteShipInputs(client, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard);
+    applyRemoteShipInputs(client, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard, 0);
     client.tick(1 / 60);
     if (t % 3 === 0) deliver();
     let oa = 0;
@@ -182,15 +182,15 @@ describe('remote ships — forward prediction from the snapshot bits', () => {
     const server = await PhysicsWorld.create();
     server.spawnShip(ID, 0, 0, 'fighter');
     preResetRemoteShips(snapshotOf(server, 1, { sendBits: true, input: THRUST }), 'me', ctx);
-    applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard);
+    applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard, 0);
     expect(calls).toBe(1);
     // A second snapshot with the bits still held: still predicting.
     preResetRemoteShips(snapshotOf(server, 4, { sendBits: true, input: THRUST }), 'me', ctx);
-    applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard);
+    applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard, 0);
     expect(calls).toBe(2);
     // Absent bits = idle: no forward input (and nothing stuck on).
     preResetRemoteShips(snapshotOf(server, 7, { sendBits: false, input: THRUST }), 'me', ctx);
-    applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard);
+    applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard, 0);
     expect(calls).toBe(2);
     // The entry object is reused across snapshots (#14).
     const before = ctx.remoteLastInputs.get(ID);
@@ -214,10 +214,10 @@ describe('remote ships — forward prediction from the snapshot bits', () => {
       },
     });
     preResetRemoteShips(snapshotOf(world, 1, { sendBits: true, input: THRUST }), 'me', ctx);
-    for (let i = 0; i < 40; i++) { applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard); world.tick(1 / 60); }
+    for (let i = 0; i < 40; i++) { applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard, 0); world.tick(1 / 60); }
     expect(calls).toBe(STAGE_3_MAX_LOOKAHEAD_TICKS);
     preResetRemoteShips(snapshotOf(world, 41, { sendBits: true, input: THRUST }), 'me', ctx); // next snapshot re-arms it
-    applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard);
+    applyRemoteShipInputs(counting, IDS, ctx.remoteLastInputs, ctx.remoteForwardTicks, guard, 0);
     expect(calls).toBe(STAGE_3_MAX_LOOKAHEAD_TICKS + 1);
     world.dispose();
   });

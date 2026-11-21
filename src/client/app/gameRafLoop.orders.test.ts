@@ -18,6 +18,7 @@ const storeState = vi.hoisted(() => ({
 vi.mock('../state/store.js', () => ({
   useUIStore: { getState: () => storeState },
   computeBootstrapReadyFromState: () => true,
+  selectControlMode: () => 'fly',
   computeIsLoadingActive: () => false,
 }));
 vi.mock('../debug/ClientLogger.js', () => ({ logEvent: vi.fn(), isFullDiagMode: () => false }));

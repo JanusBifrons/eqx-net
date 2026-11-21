@@ -51,6 +51,7 @@ export class StructureClientLeaf extends ClientEntityLeafBase {
   }
 
   spawnBody(ctx: ClientSpawnCtx): void {
+    this.forgetPose(ctx.key);
     const solid = bodySolid(ctx);
     const mirror = bodyMirrored(ctx);
     if (mirror) this.mirroredKeys.add(ctx.key);
@@ -105,7 +106,9 @@ export class StructureClientLeaf extends ClientEntityLeafBase {
         this.spawnBody(ctx);
       }
     }
-    this.repose(ctx);
+    // An unchanged packet pose writes nothing: a big base is re-synced on
+    // every swarm packet, and its locked bodies never move on their own.
+    this.reposeIfMoved(ctx);
   }
 
   /** Rig solid parts (structure-restyle 2d): the same `attachRig` the server

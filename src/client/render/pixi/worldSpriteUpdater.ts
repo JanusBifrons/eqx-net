@@ -84,6 +84,12 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
     highlightedSel !== null && highlightedSel.startsWith('swarm-')
       ? parseInt(highlightedSel.slice('swarm-'.length), 10)
       : null;
+  // The camera rect (Pixi space), shared by the fence fx (off-screen fences
+  // are not animated) and the swarm pass below.
+  const viewBounds = r.camera.visibleBoundsInto(ctx.swarmViewScratch);
+  const fences = r.connectorRenderer.fxFences;
+  if (fences) fences.viewBounds = viewBounds;
+  r.connectorRenderer.viewBounds = viewBounds; // off-screen connector work is skipped
   r.connectorRenderer.update(mirror, r.world.scale.x, r.fxNow());
   r.feedback.placementPreviewConnectionCount =
     r.connectorRenderer.placementPreviewConnectionCount;
@@ -107,7 +113,7 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
       ? Math.min(0.05, Math.max(0, (swarmNow - ctx.lastSwarmUpdateNow) / 1000))
       : 1 / 60;
   ctx.lastSwarmUpdateNow = swarmNow;
-  r.swarmUpdaterCtx.viewBounds = r.camera.visibleBoundsInto(ctx.swarmViewScratch);
+  r.swarmUpdaterCtx.viewBounds = viewBounds;
   r.swarmUpdaterCtx.fxNowMs = r.fxNow(); // wreck glow follows the game speed
   r.swarmUpdaterCtx.cameraScale = r.world.scale.x; // wreck-piece far-zoom LOD
   r.swarmUpdaterCtx.wreckFarLayer = r.wreckFarLayer;

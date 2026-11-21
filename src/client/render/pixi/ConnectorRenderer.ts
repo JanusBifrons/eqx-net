@@ -12,7 +12,7 @@
  */
 import { Graphics } from 'pixi.js';
 import type { FxFences } from '../art/fx/FxShields.js';
-import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
+import type { RenderMirror, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 import { interpBuildPct } from './buildBarInterp.js';
 import {
   connectorVisualInto, GridFlashClock,
@@ -23,18 +23,16 @@ import {
   arcWedgeVisualParams,
   isArcLimited,
   type ArcWedgeAngles,
-  builtRangeCircleVisualInto,
   cometSegment,
   shieldWallVisualParams,
   type ConnectorVisual,
   type CometSegment,
-  type RingVisual,
   type ShieldWallVisual,
   type PreviewLineKind,
 } from './connectorVisual.js';
-import { drawLineLookBody, drawLineLookFlow, type LineLook } from './connectorLineLooks.js';
+import { drawLineLookFlow, type LineLook } from './connectorLineLooks.js';
 import {
-  LinkCableCache, drawPreviewCable, drawSocketCableBody, drawSocketCableFlow, fillLinkCable, fillStraight, makeLinkCable,
+  LinkCableCache, drawPreviewCable, drawSocketCableFlow, fillLinkCable, fillStraight, makeLinkCable, noteCableFlow,
 } from './connectorCables.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import {
@@ -67,6 +65,12 @@ import {
   RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
 import { makePreviewConn, type PreviewConn } from './previewConn.js';
+import { ConnectorStaticLayer, cableInView, linkCableOf, staticSignature } from './connectorStaticLayer.js';
+import { isSegmentInView, isSpriteInView } from '../spriteUpdateDecisions.js';
+
+export { staticSignature };
+/** Per-frame cull slack (world units) past a structure's radius, plus 48 screen px for its marks. */
+const CULL_PAD = 24;
 
 /** 0d slice 7 — one candidate's `canConnect` verdict from the last preview
  *  frame: the server's answer for linking the ghost to structure `id`, with
@@ -81,72 +85,21 @@ export interface PreviewVerdict {
   sockB: number;
 }
 
-/** FNV-1a style integer mix. */
-function mix(h: number, n: number): number {
-  return Math.imul(h ^ (n | 0), 16777619);
-}
-
-/**
- * Integer signature of everything the static layer draws: the structure set and
- * poses, connections, built / walls-up state, and the highlighted
- * turret. Alloc-free (key iteration + scalar maths).
- */
-export function staticSignature(
-  structures: ReadonlyMap<number, StructureRenderState>,
-  swarm: ReadonlyMap<number, SwarmRenderState>,
-  highlighted: number | null | undefined,
-): number {
-  let h = mix(2166136261, structures.size);
-  h = mix(h, highlighted ?? -1);
-  for (const id of structures.keys()) {
-    const st = structures.get(id)!;
-    const a = swarm.get(id);
-    h = mix(h, id);
-    if (a) {
-      h = mix(h, Math.round(a.x));
-      h = mix(h, Math.round(a.y));
-      h = mix(h, Math.round(a.angle * 1000));
-    } else {
-      h = mix(h, -7);
-    }
-    h = mix(h, (st.built ? 1 : 0) | (st.wallActive ? 2 : 0) | (st.mirror === true ? 4 : 0));
-    const conn = st.connTo;
-    h = mix(h, conn.length);
-    for (let c = 0; c < conn.length; c++) h = mix(h, conn[c]!);
-    // 0d slice 8: a socket change re-lays that link's cable.
-    const ss = st.connSockSelf, so = st.connSockOther;
-    if (ss) for (let c = 0; c < ss.length; c++) h = mix(h, ss[c]!);
-    if (so) for (let c = 0; c < so.length; c++) h = mix(h, so[c]!);
-  }
-  return h;
-}
-
-/** Rebuild the static layer when the zoom has moved more than this fraction
- *  since its last build (its line widths are zoom-dependent). */
-const STATIC_SCALE_TOLERANCE = 0.03;
-
 export class ConnectorRenderer {
   /** Per-frame layer: everything that animates (flow pulses, wall glow and
    *  shimmer, beams, build bars, the placement preview). Cleared every frame. */
   readonly gfx = new Graphics();
-  /**
-   * A3 (plan soft-leaping-truffle v2) — the STATIC layer, drawn BEHIND `gfx`:
-   * idle edges, built-turret range rings, up-wall rails and open-iris guides.
-   * Rebuilt only when the structure topology / state signature changes or the
-   * zoom moves past STATIC_SCALE_TOLERANCE, so Pixi stops re-tessellating
-   * every edge of a big base each frame. Measured before the split (citadel,
-   * 456 structures, desktop): 0.70 ms median per frame building commands, plus
-   * the re-tessellation of every line.
-   */
-  readonly staticGfx = new Graphics();
-  /** Test hook: how many times the static layer has been rebuilt. */
-  staticRebuilds = 0;
-  private _staticSig = NaN;
-  private _staticScale = 0;
-  /** Range-ring readouts captured at the last static rebuild. */
-  private _staticRingCount = 0;
-  private _staticRingRadius = 0;
-  private _staticRingWidth = 0;
+  /** The STATIC layer (idle edges, turret range rings, wall rails, open-iris
+   *  guides), drawn BEHIND `gfx` in spatial chunks: see connectorStaticLayer.ts. */
+  readonly staticLayer: ConnectorStaticLayer = new ConnectorStaticLayer(this);
+  /** The static layer's scene node (one Graphics child per chunk). */
+  readonly staticGfx = this.staticLayer.container;
+  /** Test hooks: frames that redrew any static chunk, and structures redrawn on it. */
+  get staticRebuilds(): number { return this.staticLayer.rebuilds; }
+  get staticStructuresDrawn(): number { return this.staticLayer.structuresDrawn; }
+  /** The camera's visible rect (pixi space, `Camera.visibleBoundsInto`), set
+   *  each frame before `update`; off-screen work is skipped. Unset ⇒ all on screen. */
+  viewBounds: Float64Array | undefined = undefined;
 
   /**
    * Item C — number of 'ok' (would-connect, GREEN, counted) preview lines the
@@ -286,9 +239,6 @@ export class ConnectorRenderer {
     railColor: 0, railAlpha: 0, railWidth: 0, halfThickness: 0,
     shimmerT: 0, shimmerColor: 0, shimmerAlpha: 0, shimmerWidth: 0,
   };
-  /** WS-D (#21) — reused built-turret range-ring scratch, written per built
-   *  turret per frame (invariant #14: was a fresh object literal per turret). */
-  private readonly _builtRangeVisual: RingVisual = { color: 0, alpha: 0, width: 0 };
 
   /** Structure restyle 1g: `?lineLook=` line look (connectorLineLooks.ts); null = today's line. Set before the first update. */
   lineLook: LineLook | null = null;
@@ -309,7 +259,7 @@ export class ConnectorRenderer {
   private readonly _wallVisitor: DerivedWallVisitor = {
     wall: (key, ax, ay, bx, by, blocking, _thickness, open) => {
       if (this._fxWallsOn) this.fxFences!.wall(key, ax, ay, bx, by, blocking, open, this._wallNow);
-      else this.drawShieldWall(ax, -ay, bx, -by, blocking, open, false);
+      else if (isSegmentInView(ax, -ay, bx, -by, 64, this.viewBounds)) this.drawShieldWall(this.gfx, ax, -ay, bx, -by, blocking, open, false);
     },
   };
   /** New fences (`?fx=new`, plan iridescent-seeking-rainbow v3 B5). When ready
@@ -319,17 +269,18 @@ export class ConnectorRenderer {
   /** Built-turret range rings + turret aim lines. Off below the full HUD
    *  (showcase `?hud=`, `IRenderer.setHudOverlays`). */
   private _turretOverlays = true;
+  get turretOverlays(): boolean { return this._turretOverlays; }
   setTurretOverlaysVisible(visible: boolean): void {
     if (visible === this._turretOverlays) return;
     this._turretOverlays = visible;
-    this._staticSig = NaN; // the range rings live on the static layer: rebuild it
+    this.staticLayer.invalidate(); // the range rings live on the static layer: rebuild it
   }
-  /** Draws the STEADY part of each derived shield wall (static layer). */
-  private readonly _staticWallVisitor: DerivedWallVisitor = {
-    // (Skipped while the new fences draw: see drawStatic.)
-    wall: (_key, ax, ay, bx, by, blocking, _thickness, open) =>
-      this.drawShieldWall(ax, -ay, bx, -by, blocking, open, true),
-  };
+  /** Static-layer host: its walls are skipped while the new fences draw. */
+  get staticWalls(): boolean { return !this._fxWallsOn; }
+  drawSteadyWall(g: Graphics, ax: number, ay: number, bx: number, by: number, blocking: boolean, open: boolean, scale: number): void {
+    this._wallScale = scale;
+    this.drawShieldWall(g, ax, ay, bx, by, blocking, open, true);
+  }
 
   /**
    * One shield wall in pixi space. R2.19: a distinct cyan-white energy BARRIER
@@ -341,8 +292,7 @@ export class ConnectorRenderer {
    * Otherwise (per frame): an up wall's breathing glow + shimmer, or a down
    * wall's flicker.
    */
-  private drawShieldWall(ax: number, ay: number, wx: number, wy: number, blocking: boolean, open: boolean, steady: boolean): void {
-    const g = steady ? this.staticGfx : this.gfx;
+  private drawShieldWall(g: Graphics, ax: number, ay: number, wx: number, wy: number, blocking: boolean, open: boolean, steady: boolean): void {
     const scale = this._wallScale;
     if (open) {
       if (!steady) return;
@@ -396,92 +346,6 @@ export class ConnectorRenderer {
     }
   }
 
-  /**
-   * Rebuild the static layer if anything it draws has changed: the structure
-   * set and poses, connections, built / walls-up state, the
-   * highlighted turret, or the zoom (past STATIC_SCALE_TOLERANCE). The
-   * signature is an integer hash walk — far cheaper than drawing.
-   */
-  private refreshStatic(
-    structures: ReadonlyMap<number, StructureRenderState>,
-    swarm: ReadonlyMap<number, SwarmRenderState>,
-    scale: number,
-  ): void {
-    // The new fences take over the walls once ready: fold that into the
-    // signature so the static rails are rebuilt without them.
-    const sig = staticSignature(structures, swarm, this.highlightedStructureId) + (this._fxWallsOn ? 0.5 : 0) + (this.socketCables ? 0.25 : 0);
-    const scaleMoved = this._staticScale === 0 || Math.abs(scale / this._staticScale - 1) > STATIC_SCALE_TOLERANCE;
-    if (sig !== this._staticSig || scaleMoved) {
-      this._staticSig = sig;
-      this._staticScale = scale;
-      this.staticRebuilds++;
-      this.drawStatic(structures, swarm, scale);
-    }
-    this.builtTurretRangeCount = this._staticRingCount;
-    this.lastBuiltTurretRangeRadius = this._staticRingRadius;
-    this.lastBuiltTurretRangeWidth = this._staticRingWidth;
-  }
-
-  private drawStatic(
-    structures: ReadonlyMap<number, StructureRenderState>,
-    swarm: ReadonlyMap<number, SwarmRenderState>,
-    scale: number,
-  ): void {
-    const g = this.staticGfx;
-    g.clear();
-    this._staticRingCount = 0;
-    this._staticRingRadius = 0;
-    this._staticRingWidth = 0;
-    // Idle look of every edge (an edge carrying flow is overdrawn per frame).
-    const idle = connectorVisualInto(this._edgeVisual, 0, 0, scale);
-    const cables = this.socketCables;
-    if (cables) this.cables.beginSweep();
-    for (const id of structures.keys()) {
-      const st = structures.get(id)!;
-      const a = swarm.get(id);
-      if (!a) continue;
-      const ax = a.x;
-      const ay = -a.y;
-      // WS-D (#21) — always-on defensive RANGE circle for a BUILT weapon turret.
-      if (this._turretOverlays && st.built && a.shipKind !== undefined && isStructureKindId(a.shipKind)) {
-        const wr = getStructureKind(a.shipKind).weaponRange;
-        if (wr !== undefined && wr > 0) {
-          const rc = builtRangeCircleVisualInto(this._builtRangeVisual, scale);
-          // Phase 5 — bolder ring when this turret is hovered/selected.
-          const highlighted = id === this.highlightedStructureId;
-          const ringWidth = highlighted ? rc.width * 3 : rc.width;
-          g.circle(ax, ay, wr);
-          g.stroke({ color: rc.color, alpha: highlighted ? Math.min(1, rc.alpha * 2.6) : rc.alpha, width: ringWidth });
-          this._staticRingCount++;
-          this._staticRingRadius = wr;
-          this._staticRingWidth = ringWidth;
-        }
-      }
-      const conn = st.connTo;
-      for (let c = 0; c < conn.length; c++) {
-        const otherId = conn[c]!;
-        if (id > otherId) continue; // each undirected edge once
-        const b = swarm.get(otherId);
-        if (!b) continue;
-        if (cables) { drawSocketCableBody(g, this.linkCable(id, st, c, a, b, structures), scale, a.radius, b.radius); continue; }
-        if (this.lineLook) { drawLineLookBody(g, this.lineLook, ax, ay, b.x, -b.y, scale, a.radius, b.radius); continue; }
-        g.moveTo(ax, ay).lineTo(b.x, -b.y);
-        g.stroke({ color: idle.color, alpha: idle.alpha, width: idle.width });
-      }
-    }
-    if (cables) this.cables.endSweep();
-    else if (this.cables.size > 0) this.cables.clear();
-    this._wallScale = scale;
-    if (!this._fxWallsOn) visitDerivedWalls(structures, swarm, this._staticWallVisitor);
-  }
-
-  /** Link `c` of structure `id` (the lower-id end, pose `a`) to pose `b`:
-   *  its cached cable between the stored sockets (each end's build mirror from its row). */
-  private linkCable(id: number, st: StructureRenderState, c: number, a: SwarmRenderState, b: SwarmRenderState, rows: ReadonlyMap<number, StructureRenderState>) {
-    const o = st.connTo[c]!;
-    return this.cables.get(id * 65536 + o, a, st.connSockSelf?.[c] ?? CABLE_NO_SOCKET, b, st.connSockOther?.[c] ?? CABLE_NO_SOCKET, st.mirror === true, rows.get(o)?.mirror === true);
-  }
-
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
     const g = this.gfx;
     g.clear();
@@ -506,16 +370,19 @@ export class ConnectorRenderer {
     if (mirror.mines && mirror.mines.size > 0) drawMines(g, mirror.mines, scale, nowMs);
     if (!structures || !swarm || structures.size === 0) {
       if (this._buildAnchors.size > 0) this._buildAnchors.clear();
-      if (this._staticSig === this._staticSig) { // not NaN ⇒ something is drawn
-        this.staticGfx.clear();
-        this._staticSig = NaN;
-        this._staticRingCount = 0;
-        this.cables.clear();
-      }
+      this.staticLayer.clear();
       return;
     }
     this._fxWallsOn = this.fxFences !== null && this.fxFences.ready();
-    this.refreshStatic(structures, swarm, scale);
+    // The new fences take over the walls once ready (and cables replace the
+    // thin lines): fold both into the signature so the static layer redraws.
+    const vb = this.viewBounds;
+    this.staticLayer.refresh(structures, swarm, scale, vb, (this._fxWallsOn ? 0.5 : 0) + (this.socketCables ? 0.25 : 0));
+    this.builtTurretRangeCount = this.staticLayer.ringCount;
+    this.lastBuiltTurretRangeRadius = this.staticLayer.ringRadius;
+    this.lastBuiltTurretRangeWidth = this.staticLayer.ringWidth;
+    // Per-frame marks above a structure reach ~48 screen px past its radius.
+    const markPad = CULL_PAD + 48 / (scale > 0 ? scale : 1);
     const flashes = this._flashClock.sync(mirror.gridFlashes, nowMs); // pulse stamps -> fxNow windows
     const flowSrc = mirror.gridFlowSrc, flowMat = mirror.gridFlowMaterial;
 
@@ -533,6 +400,7 @@ export class ConnectorRenderer {
       // Pixi screen space is Y-down; world is Y-up — negate y (same as sprites).
       const ax = a.x;
       const ay = -a.y;
+      const onScreen = isSpriteInView(ax, ay, a.radius + markPad, vb);
 
       // (Turret range rings + idle edges live on the static layer.)
       for (let ci = 0; ci < st.connTo.length; ci++) {
@@ -555,7 +423,14 @@ export class ConnectorRenderer {
         if (!v.pulseActive) continue; // idle: drawn on the static layer
         const bx = b.x;
         const by = -b.y;
-        if (this.socketCables) { drawSocketCableFlow(g, this.linkCable(id, st, ci, a, b, structures), v, src === undefined || src === id, scale, nowMs, material, a.radius, b.radius); continue; }
+        if (this.socketCables) {
+          const cab = linkCableOf(this.cables, id, st, ci, a, b, structures);
+          // Off screen: only keep the flow train's clock running.
+          if (cableInView(cab, CULL_PAD, vb)) drawSocketCableFlow(g, cab, v, src === undefined || src === id, scale, nowMs, material, a.radius, b.radius);
+          else noteCableFlow(cab, nowMs);
+          continue;
+        }
+        if (!isSegmentInView(ax, ay, bx, by, CULL_PAD + Math.max(a.radius, b.radius), vb)) continue;
         if (this.lineLook) { drawLineLookFlow(g, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale, a.radius, b.radius); continue; }
         // Glow underlay first (so the core line sits on top).
         if (v.glowAlpha > 0) {
@@ -580,7 +455,7 @@ export class ConnectorRenderer {
       // joined from the swarm mirror by entityId).
       if (st.miningTargetId !== undefined) {
         const target = swarm.get(st.miningTargetId);
-        if (target) {
+        if (target && isSegmentInView(ax, ay, target.x, -target.y, CULL_PAD, vb)) {
           const tx = target.x;
           const ty = -target.y;
           g.moveTo(ax, ay);
@@ -597,7 +472,7 @@ export class ConnectorRenderer {
         const target = st.turretTargetId !== undefined
           ? swarm.get(st.turretTargetId)
           : mirror.ships.get(st.turretTargetPlayerId!);
-        if (target) {
+        if (target && isSegmentInView(ax, ay, target.x, -target.y, CULL_PAD, vb)) {
           g.moveTo(ax, ay);
           g.lineTo(target.x, -target.y);
           g.stroke({ color: 0xff5555, alpha: 0.35, width: Math.max(1 / scale, 1) });
@@ -608,6 +483,12 @@ export class ConnectorRenderer {
       // Issue 1: the fill is interpolated LINEARLY between the 1 Hz authoritative
       // `buildPct` steps using the server `etaMs`, so it builds smoothly rather
       // than jumping each pulse.
+      if (!onScreen) {
+        // Off screen: no bars or bolt. A blueprint still re-anchors its
+        // build-bar ramp so it is right when it scrolls into view.
+        if (!st.built) this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs);
+        continue;
+      }
       if (!st.built) {
         drawStatusBar(g, ax, ay, a.radius, this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs), 0x66ccff, scale);
       } else if (st.deconstructPct > 0) {
@@ -930,5 +811,6 @@ export class ConnectorRenderer {
 
   destroy(): void {
     this.gfx.destroy();
+    this.staticLayer.destroy();
   }
 }

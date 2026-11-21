@@ -174,6 +174,18 @@ export interface SnapshotSink {
   applySnapshotNow(snap: SnapshotMessage): void;
 }
 
+/** The most recently created DataChannel transport, read by the phone-lane
+ *  10 s `perf_summary` (diagnostic-captures.md). Diagnostics only. */
+let activeSnapshotTransport: DataChannelTransport | null = null;
+
+/** The live DataChannel transport, or null when none was made or it closed.
+ *  Close paths outside this file (sector handoff, client dispose) only flip
+ *  the transport's phase, so a closed one reads as null here too. */
+export function getActiveSnapshotTransport(): DataChannelTransport | null {
+  const t = activeSnapshotTransport;
+  return t !== null && t.phase !== 'closed' ? t : null;
+}
+
 /** The DataChannel snapshot transport for `room` (started by the welcome handler). */
 export function createSnapshotDataChannel(room: Room, sink: SnapshotSink): DataChannelTransport {
   // Phase 2/4 swift-otter — instantiate the DataChannel transport
@@ -186,7 +198,7 @@ export function createSnapshotDataChannel(room: Room, sink: SnapshotSink): DataC
   // browser global; @colyseus/msgpackr is already in the Colyseus
   // import graph) so the only cost paid by non-opted-in sessions is
   // a few KB of dead JS — acceptable for measurement parity.
-  return new DataChannelTransport({
+  return (activeSnapshotTransport = new DataChannelTransport({
     send: (type, payload) => room.send(type, payload),
     onSnapshot: (snap) => {
       // Phase 4 swift-otter — log transport-tagged recv telemetry
@@ -203,7 +215,7 @@ export function createSnapshotDataChannel(room: Room, sink: SnapshotSink): DataC
       }
     },
     onDiag: (tag, data) => logEvent(tag, data),
-  });
+  }));
 }
 
 /** What the room's leave handler writes on the client. Built once (#14). */
@@ -226,6 +238,7 @@ export function registerRoomLifecycle(room: Room, ctx: RoomLifecycleCtx, callbac
     if (cur.transitState !== 'IN_TRANSIT' && cur.transitState !== 'SPOOLING') {
       if (ctx.dataChannelTransport) {
         ctx.dataChannelTransport.close('room-leave');
+        if (activeSnapshotTransport === ctx.dataChannelTransport) activeSnapshotTransport = null;
         ctx.dataChannelTransport = null;
       }
     }
