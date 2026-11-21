@@ -2,7 +2,7 @@ import type { Camera } from '../worker/Camera';
 import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import type { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
 import type { SelectionBracket } from '../SelectionBracket';
-import { pickEntityAt, type PickedEntityKind } from '../pickEntity';
+import { onCraneBayPad, pickEntityAt, type PickedEntityKind } from '../pickEntity';
 import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from '../input/commandPointerRouter.js';
 import { decideTapAction, type FleetOrderMode } from '../input/tapAction.js';
 import { DoubleTapTracker } from '../input/doubleTap.js';
@@ -426,7 +426,10 @@ export abstract class RendererCommandRouting {
     const w = this.camera.screenToWorld(screenX, screenY);
     const gameX = w.x;
     const gameY = -w.y;
-    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
+    // A crane bay pad is open space to park on: a tap there is a course even
+    // when a parked hull or the host's tap slop overlaps it (phone film, base
+    // loop: pad taps went nowhere). The host's body still opens its card.
+    const hit = onCraneBayPad(gameX, gameY, this._lastMirror) ? null : pickEntityAt(gameX, gameY, this._lastMirror);
     if (hit === null) {
       this.setFocus(null, null);
       // Helm orders: the pilot's tap on empty space sets the course (every
