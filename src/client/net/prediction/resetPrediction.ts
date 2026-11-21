@@ -44,8 +44,6 @@ export interface PredictionResetCtx {
   anchorFreshAtMs: number;
   stallHoldSinceMs: number;
   lastSnapshotAt: number;
-  swarmBinaryLastMs: number;
-  swarmBinaryEwma: number;
   reconciler: Reconciler | null;
   lastStatAllocKey: string;
   localPoseResolvedLogged: boolean;
@@ -132,13 +130,9 @@ export function resetPredictionState(ctx: PredictionResetCtx): void {
   ctx.lastSnapshotAt = 0;
   ctx.recentIntervals.length = 0;
   ctx.recentCorrFlags.length = 0;
-  // Drone display-delay cadence tracking — reset so the destination
-  // sector's binary cadence is learned fresh (a stale cross-warp gap
-  // must not seed the adaptive delay at the ceiling).
-  ctx.swarmBinaryLastMs = -1;
-  ctx.swarmBinaryEwma = 0;
-  // ...and the slewed delay goes back to the floor (the destination's first
-  // feed places it at its target) with the lateness estimate cleared (S3-2).
+  // Drone display delay: the slewed delay goes back to the floor (the
+  // destination's first feed places it at its target) with the lateness
+  // estimate cleared, so a stale cross-warp gap can't seed it (S3-2).
   resetSwarmDisplayDelay();
   // Spatial seed (2026-05-16) — see the method doc comment. Despawn the
   // local predWorld ship body and drop the Reconciler so the

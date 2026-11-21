@@ -39,11 +39,6 @@ export interface SnapshotPerfStatsCtx {
   recentIntervals: number[];
   collisionGuard: CollisionGuardState;
   dropDetector: DropDetector;
-  /** EWMA of inter-arrival ms on the BINARY swarm channel — owned by
-   *  the binary-swarm handler. No longer read here (S3-3: the drone
-   *  display delay is sized from packet lateness in
-   *  `swarmInterpolation.ts`); kept until the caller stops passing it. */
-  swarmBinaryEwma: number;
 }
 
 /**
@@ -102,9 +97,8 @@ export function applySnapshotPerfStats(
     useUIStore.getState().setServerTickHz(smoothed);
 
     // JSON drop detector: feeds `droppedSnapshotsRecent` (netgate). The
-    // drone display delay no longer reads it, nor the binary inter-arrival
-    // EWMA: its target comes from the drone packet lateness estimate
-    // (`swarmArrivalStampMs`, netcode gap smoothing S3-3).
+    // drone display delay does not read it: its target comes from the
+    // drone packet lateness estimate (`swarmArrivalStampMs`, S3-3).
     observeSnapshotTick(ctx.dropDetector, snap.serverTick);
   }
 

@@ -52,7 +52,6 @@ function makeCtx(): Parameters<typeof applySnapshotPerfStats>[4] {
     recentIntervals: [],
     collisionGuard: { lastSnapshotServerTick: 0 } as unknown as Parameters<typeof applySnapshotPerfStats>[4]['collisionGuard'],
     dropDetector: createDropDetector(),
-    swarmBinaryEwma: 50,
   };
 }
 
@@ -95,8 +94,6 @@ const JSON_EVERY_TICKS = 3;
 /** Snapshots skipped in the drop test (one 12-tick hole = 3 drops). */
 const SKIPPED_SNAPSHOTS = 3;
 const WIRE_STEP_MS = 50;
-/** A binary EWMA that the old feed (x 1.5) would have sized to 225 ms. */
-const SLOW_SWARM_EWMA_MS = 150;
 
 describe('applySnapshotPerfStats — drop detector, no display-delay feed (S3-3)', () => {
   it('still counts dropped JSON snapshots (droppedSnapshotsRecent source)', () => {
@@ -117,7 +114,7 @@ describe('applySnapshotPerfStats — drop detector, no display-delay feed (S3-3)
 
   it('no longer moves the drone display delay (sized from packet lateness instead)', () => {
     resetSwarmTickClock();
-    const ctx = { ...makeCtx(), swarmBinaryEwma: SLOW_SWARM_EWMA_MS };
+    const ctx = makeCtx();
     applySnapshotPerfStats(makeSnap(3), WIRE_STEP_MS, 0, WIRE_STEP_MS, ctx);
     applySnapshotPerfStats(makeSnap(30), 2 * WIRE_STEP_MS, WIRE_STEP_MS, 2 * WIRE_STEP_MS, ctx);
     expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS);

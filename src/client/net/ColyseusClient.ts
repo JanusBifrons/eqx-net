@@ -618,9 +618,10 @@ export class ColyseusGameClient {
    *  same reason as `_rttWelford`. */
   private _lookaheadCtrl: LookaheadController = createLookaheadController(6);
   /** Stage 4 — sliding-window count of dropped snapshots over the last
-   *  10 arrivals. Drives `computeInterpBiasMs` which biases the swarm
-   *  display-delay floor when the wire is dropping packets. Mutable for
-   *  the same reason as `_rttWelford`. */
+   *  10 arrivals. Feeds the `droppedSnapshotsRecent` stat; the drone
+   *  display delay is sized from packet lateness instead
+   *  (`swarmInterpolation.ts`). Mutable for the same reason as
+   *  `_rttWelford`. */
   private _dropDetector: DropDetector = createDropDetector();
   /** Diagnostic — set of swarm entityIds currently within the overlap log
    *  threshold of the local ship. Used to emit `swarm_near_enter` /
@@ -980,17 +981,6 @@ export class ColyseusGameClient {
   private lastSnapshotAt = 0;
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
   private readonly _recentIntervals: number[] = [];
-  /** Drone snapshot-interpolation pivot (Step 4, 2026-05-18) — adaptive
-   *  swarm display-delay is sized from the BINARY swarm packet
-   *  inter-arrival cadence, NOT the 20 Hz JSON snapshot interval. The
-   *  binary channel is what actually carries drone pose: in-interest ≈
-   *  per server tick (~16 ms), out-of-interest decimated (~100–170 ms).
-   *  Sizing the buffer to the JSON snapshot rate (always ~50 ms) would
-   *  over-buffer the fast combat case and under-buffer decimated drones.
-   *  `_swarmBinaryLastMs` = perf.now() of the previous binary packet (-1 =
-   *  none yet); `_swarmBinaryEwma` = EWMA of inter-arrival ms (0 = unseeded). */
-  private _swarmBinaryLastMs = -1;
-  private _swarmBinaryEwma = 0;
   private readonly _recentCorrFlags: number[] = [];
 
   // Remote ship interpolation: per-player timestamped history
@@ -1281,8 +1271,6 @@ export class ColyseusGameClient {
     get anchorFreshAtMs() { return c._anchorFreshAtMs; }, set anchorFreshAtMs(v) { c._anchorFreshAtMs = v; },
     get stallHoldSinceMs() { return c._stallHoldSinceMs; }, set stallHoldSinceMs(v) { c._stallHoldSinceMs = v; },
     get lastSnapshotAt() { return c.lastSnapshotAt; }, set lastSnapshotAt(v) { c.lastSnapshotAt = v; },
-    get swarmBinaryLastMs() { return c._swarmBinaryLastMs; }, set swarmBinaryLastMs(v) { c._swarmBinaryLastMs = v; },
-    get swarmBinaryEwma() { return c._swarmBinaryEwma; }, set swarmBinaryEwma(v) { c._swarmBinaryEwma = v; },
     get reconciler() { return c.reconciler; }, set reconciler(v) { c.reconciler = v; },
     get lastStatAllocKey() { return c._lastStatAllocKey; }, set lastStatAllocKey(v) { c._lastStatAllocKey = v; },
     get localPoseResolvedLogged() { return c._localPoseResolvedLogged; }, set localPoseResolvedLogged(v) { c._localPoseResolvedLogged = v; },
@@ -1378,23 +1366,6 @@ export class ColyseusGameClient {
     // server's `laser_fired` events use the same key for swarm hits.
     room.onMessage('swarm', (raw: unknown) => {
       const bw = bwStats();
-      // Drone display-delay cadence (Step 4): EWMA of binary-packet
-      // inter-arrival. This is the ACTUAL drone-pose channel the
-      // interpolation buffer must cover — in-interest ≈ per server tick
-      // (~16 ms), out-of-interest decimated (~100–170 ms) — unlike the
-      // steady 20 Hz JSON snapshot. Sample clamped to ≤ 500 ms so one
-      // tab-background / radio gap can't pin the EWMA at the ceiling (the
-      // JSON drop-detector `dropBias` already biases up on loss bursts).
-      const swNowMs = this.clock.now();
-      if (this._swarmBinaryLastMs >= 0) {
-        const dtMs = Math.min(500, swNowMs - this._swarmBinaryLastMs);
-        if (dtMs > 0) {
-          this._swarmBinaryEwma = this._swarmBinaryEwma === 0
-            ? dtMs
-            : this._swarmBinaryEwma * 0.85 + dtMs * 0.15;
-        }
-      }
-      this._swarmBinaryLastMs = swNowMs;
       // Probe 0 (mobile-perf-investigation-review §"Confound the diagnosis
       // did not address"): the binary swarm decode + predWorld sync is the
       // uninstrumented post-pivot dominant per-frame surface. `applyMs`
@@ -1701,7 +1672,6 @@ export class ColyseusGameClient {
       recentIntervals: this._recentIntervals,
       collisionGuard: this._collisionGuard,
       dropDetector: this._dropDetector,
-      swarmBinaryEwma: this._swarmBinaryEwma,
     });
     this.lastSnapshotAt = wireArrivalAtMs;
 

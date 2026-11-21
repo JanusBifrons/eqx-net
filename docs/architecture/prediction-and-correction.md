@@ -80,7 +80,7 @@ Multi-tick target jumps ramp via Stage 1's `CritDampedSpring` (100 ms half-life 
 
 The swarm-interp buffer's pre-Stage-4 floor was driven only by the EWMA of inter-arrival times. When the wire drops snapshots, that EWMA goes UP (intervals look longer) but only after a few snapshots, and the buffer can briefly run out of bracketing arrivals — visible as a sprite freeze + recovery glitch.
 
-[`snapshotDropDetector`](../../src/client/net/snapshotDropDetector.ts) tracks per-snapshot serverTick deltas in a sliding 10-snapshot window. A delta > 3 indicates dropped snapshots; the recent count is converted via `computeInterpBiasMs(droppedCount) = min(droppedCount × 16.67 ms, 200 ms)` and added to `setSwarmDisplayDelayMs`. Bias decays naturally as drops age out of the window.
+[`snapshotDropDetector`](../../src/client/net/snapshotDropDetector.ts) tracks per-snapshot serverTick deltas in a sliding 10-snapshot window. A delta > 3 indicates dropped snapshots; the recent count feeds the `droppedSnapshotsRecent` stat (read by netgate). It no longer biases the drone display delay: since netcode gap smoothing S3-3 that target is sized from drone packet lateness (see [drone-snapshot-interpolation](drone-snapshot-interpolation.md)).
 
 Out-of-order / duplicate / backwards ticks are silently ignored — they're not "drops" in any meaningful sense.
 
