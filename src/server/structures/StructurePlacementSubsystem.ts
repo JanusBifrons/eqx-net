@@ -40,6 +40,7 @@ import type { PackedItem } from '../../shared-types/items.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import type { HoldStore } from '../cargo/HoldStore.js';
 import type { StorageService } from '../cargo/StorageService.js';
+import { moveParkedHullsClear, shipInsideFootprint, type HullCircle, type ParkedHullClearHost } from './blueprintBody.js';
 
 /** A packed-structure check for one placement (Living World W4). `ok` false
  *  rejects it; `commit` consumes the packed item, as ONE HoldStore group, once
@@ -94,6 +95,13 @@ export interface StructurePlacementHooks {
    *  wreck pieces, loaded and not (wreck fields 7); auto-connect's line of
    *  sight never passes it, so links are unchanged. */
   getObstacles?: (near?: ObstacleBox, wrecks?: boolean) => readonly GridObstacle[];
+  /** Every ship hull in the sector (`SectorObstacles.hullCircles`): a
+   *  pre-built kind placed round one starts as a hologram (`blueprintBody.ts`).
+   *  Absent ⇒ pre-built kinds always spawn solid. */
+  shipHulls?(): readonly HullCircle[];
+  /** Parked hulls inside a hologram's footprint are ordered clear
+   *  (`moveParkedHullsClear`). Absent ⇒ they are left where they are. */
+  parkedHulls?: ParkedHullClearHost;
 }
 
 export class StructurePlacementSubsystem {
@@ -162,6 +170,10 @@ export class StructurePlacementSubsystem {
     }
 
     const preBuilt = kind.constructionCost <= 0;
+    // Hologram pass-through: a body turns solid only round no ship. A
+    // blueprint always starts as one; a pre-built kind (the Capital) only when
+    // a ship is inside its footprint (the grid pulse settles it once clear).
+    const ghost = !preBuilt || shipInsideFootprint({ x: pos.x, y: pos.y, radius: kind.radius, halfW: hw, halfH: hh }, this.hooks);
     const hp = preBuilt
       ? kind.maxHealth
       : Math.max(1, Math.floor(kind.maxHealth * SCAFFOLDING_HP_FRACTION));
@@ -176,7 +188,7 @@ export class StructurePlacementSubsystem {
       // Game-space angle (Y-up, CCW) for a quarter-turn rotation.
       angle: (rot * Math.PI) / 180,
       ...(mirror ? { mirror: true } : {}),
-      ...(preBuilt ? {} : { blueprint: true }),
+      ...(ghost ? { blueprint: true } : {}),
     });
     if (!ok) return null;
 
@@ -200,7 +212,7 @@ export class StructurePlacementSubsystem {
       halfW: hw,
       halfH: hh,
       isConstructed: preBuilt,
-      ...(preBuilt ? {} : { ghostBody: true }),
+      ...(ghost ? { ghostBody: true } : {}),
       constructionProgress: preBuilt ? kind.constructionCost : 0,
       constructionCost: kind.constructionCost,
       isDeconstructing: false,
@@ -215,6 +227,8 @@ export class StructurePlacementSubsystem {
       ...(this.hooks.structureUid ? { uid: this.hooks.structureUid(owner, kindId, pos.x, pos.y) } : {}),
     };
     this.hooks.registry.add(rec);
+    // Parked hulls inside are ordered out (they never move on their own).
+    if (ghost && this.hooks.parkedHulls) moveParkedHullsClear(rec, this.hooks.parkedHulls);
     const crateItem = packed?.commit() ?? null;
     // Economy v2 — remember the crate's quality so taking it down REPACKS it.
     if (crateItem !== null) rec.packedQuality = crateItem.quality;

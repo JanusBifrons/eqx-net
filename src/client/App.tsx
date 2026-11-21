@@ -44,6 +44,7 @@ import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive, selectControlMode } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { decideContextMenuPlacement } from './structures/contextMenuPlacement';
+import { cancelPlacement } from './structures/placementCancel';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
@@ -668,9 +669,7 @@ function GameSurface({
       // WS-10 (R2.5) — Escape cancels structure placement. Main-thread + window
       // level so it works on BOTH render paths (the renderer can't touch
       // Zustand). No-op when not placing.
-      if (e.key === 'Escape' && useUIStore.getState().placementKind) {
-        useUIStore.getState().setPlacementKind(null);
-      }
+      if (e.key === 'Escape' && useUIStore.getState().placementKind) cancelPlacement();
       // RTS slice 14b — Escape cancels a fleet map pick; Enter is Done for a
       // patrol route with enough points. Not from a text field.
       const pick = useUIStore.getState().fleetPick;
@@ -718,7 +717,7 @@ function GameSurface({
         s.pilotMode === 'spectator', // RTS command view: right-click orders
       );
       if (outcome.preventDefault) e.preventDefault();
-      if (outcome.cancel) useUIStore.getState().setPlacementKind(null);
+      if (outcome.cancel) cancelPlacement();
     };
     window.addEventListener('contextmenu', onContextMenu);
 

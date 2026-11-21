@@ -109,12 +109,13 @@ export interface AutoConnectRefusal {
 }
 
 /** Which refusal explains a failed link best, highest first: the structure's
- *  OWN full slots, then a line blocked (by a rock or building) to a partner
+ *  OWN full slots, then a line blocked (by a rock, building or another cable) to a partner
  *  it may link to, then no usable socket, a full partner, the wrong partner
  *  type, an existing link, and last nothing in reach. */
 const REFUSAL_RANK: Readonly<Record<CanConnectReason, number>> = Object.freeze({
   'a-full': 9,
   blocked: 8,
+  'crosses-cable': 8,
   'too-short': 7,
   'no-facing-socket': 6,
   'b-full': 5,
@@ -131,6 +132,7 @@ const REFUSAL_RANK: Readonly<Record<CanConnectReason, number>> = Object.freeze({
 const RECONNECT_REFUSAL_NOTICE: Readonly<Record<CanConnectReason, string>> = Object.freeze({
   'a-full': "Can't link: it has no free connection slots",
   blocked: "Can't link: the way is blocked by an asteroid or structure",
+  'crosses-cable': "Can't link: crosses another cable",
   'too-short': "Can't link: too close to the building in reach",
   'no-facing-socket': "Can't link: no free socket faces a building in reach",
   'b-full': "Can't link: the buildings in reach have no free slots",

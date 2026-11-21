@@ -11,64 +11,16 @@
  * lives in `ConnectorRenderer.ts`.
  */
 import { FLASH_DURATION_MS, TRANSFER_PULSE_MS } from '../../../core/structures/structureGridConstants.js';
+import {
+  CONNECTOR_IDLE_ALPHA, CONNECTOR_IDLE_COLOR, activeColorFor, flowPulseColor, type ConnectorFlowMaterial,
+} from './connectorPalette.js';
 
-/** Idle (non-flowing) line tint — muted blue. */
-export const CONNECTOR_IDLE_COLOR = 0x4488aa;
-/** Idle line ALPHA (Equinox Phase-5 audit — "connection lines lit up for no
- *  reason"). Power flow is aggregated, never flashed, so a working grid sits at
- *  IDLE — and 0.3 read as fully "lit". Dropped to a faint 0.14 so an idle edge is
- *  a subtle "this is connected" hint, and only an edge carrying minerals / repair
- *  / construction flow (the ACTIVE branch, alpha ≥ 0.6 + glow) reads as LIT. */
-export const CONNECTOR_IDLE_ALPHA = 0.14;
-/** Mineral-flow tint (hauling ore / reclaiming) — orange. */
-export const CONNECTOR_MINERAL_COLOR = 0xee8844;
-/** WS-D (#12) — repair / healing flow tint — green. */
-export const CONNECTOR_REPAIR_COLOR = 0x55dd66;
-/** WS-D (#12) — construction / build flow tint — cyan. */
-export const CONNECTOR_CONSTRUCTION_COLOR = 0x44ccdd;
-/** Power-flow tint (reserved — power is aggregated, not flashed, in Phase 3). */
-export const CONNECTOR_POWER_COLOR = 0x44ddff;
+export {
+  CONNECTOR_CONSTRUCTION_COLOR, CONNECTOR_IDLE_ALPHA, CONNECTOR_IDLE_COLOR, CONNECTOR_MINERAL_COLOR, CONNECTOR_POWER_COLOR,
+  CONNECTOR_REPAIR_COLOR, codeToFlowMaterial, flowMaterialColor, flowMaterialToCode, flowPulseColor, mixColor,
+  type ConnectorFlowMaterial,
+} from './connectorPalette.js';
 
-/** WS-D (#12) — the per-edge flow material a `grid_pulse` carries. Mirrors the
- *  wire `GridFlowMaterial` (kept local so `connectorVisual` stays import-light;
- *  the renderer maps the wire string into this). */
-export type ConnectorFlowMaterial = 'power' | 'minerals' | 'repair' | 'construction';
-
-/** WS-D (#12) — pack a flow material into the numeric code stored on
- *  `RenderMirror.gridFlowMaterial` (no per-frame string handling / cheap
- *  structured-clone across the worker boundary). */
-export function flowMaterialToCode(material: ConnectorFlowMaterial): number {
-  switch (material) {
-    case 'repair': return 1;
-    case 'construction': return 2;
-    case 'power': return 3;
-    case 'minerals':
-    default: return 0;
-  }
-}
-
-/** WS-D (#12) — unpack the numeric mirror code back to a flow material (renderer
- *  read path). Unknown / absent ⇒ minerals (back-compat default). */
-export function codeToFlowMaterial(code: number | undefined): ConnectorFlowMaterial {
-  switch (code) {
-    case 1: return 'repair';
-    case 2: return 'construction';
-    case 3: return 'power';
-    default: return 'minerals';
-  }
-}
-
-/** WS-D (#12) — the ACTIVE (flowing) base tint for a flow material. Idle is the
- *  muted blue (the absence of a flash), handled by the idle branch — never here. */
-function activeColorFor(material: ConnectorFlowMaterial): number {
-  switch (material) {
-    case 'repair': return CONNECTOR_REPAIR_COLOR;
-    case 'construction': return CONNECTOR_CONSTRUCTION_COLOR;
-    case 'power': return CONNECTOR_POWER_COLOR;
-    case 'minerals':
-    default: return CONNECTOR_MINERAL_COLOR;
-  }
-}
 /** R2.2 — the travelling flow-pulse "packet" tint: a bright warm gold, distinct
  *  from both the idle wire and the mineral brighten so it reads as a moving
  *  energy packet, not just a brighter line. */
@@ -320,7 +272,7 @@ export function connectorVisualInto(
   nowMs: number,
   scale: number,
   phaseOffset = 0,
-  material: ConnectorFlowMaterial = 'minerals',
+  material?: ConnectorFlowMaterial,
 ): ConnectorVisual {
   const safeScale = scale > 0 ? scale : 1;
   if (flashUntilMs <= 0 || nowMs >= flashUntilMs + FLOW_ACTIVE_GRACE_MS) {
@@ -345,14 +297,16 @@ export function connectorVisualInto(
   const flashProgress = Math.min(1, Math.max(0, 1 - (flashUntilMs - nowMs) / FLASH_DURATION_MS));
   const beat = 1 - flashProgress;
   const width = Math.max(1 / safeScale, 2.5);
-  out.color = activeColorFor(material);
+  out.color = activeColorFor(material ?? 'minerals');
   out.alpha = 0.6 + 0.3 * beat; // 0.6 floor → 0.9 on the beat
   out.width = width;
   out.glowAlpha = 0.15 + 0.15 * beat; // 0.15 floor → 0.30 on the beat
   out.glowWidth = width * 3;
   out.pulseActive = true;
   out.pulseT = fract(nowMs / CONNECTOR_PULSE_PERIOD_MS + phaseOffset);
-  out.pulseColor = CONNECTOR_FLOW_PULSE_COLOR;
+  // The pulse wears the carried resource (lightened); a caller with no grid
+  // material (the crane arm's goods cable) keeps the shared gold.
+  out.pulseColor = material === undefined ? CONNECTOR_FLOW_PULSE_COLOR : flowPulseColor(material);
   out.pulseAlpha = 0.55 + 0.4 * beat; // 0.55 floor → 0.95 on the beat (never 0 while flowing)
   out.pulseWidth = Math.max(2 / safeScale, 3.5);
   return out;
@@ -577,4 +531,21 @@ export function arcWedgeVisualParams(scale: number): {
 } {
   const safeScale = scale > 0 ? scale : 1;
   return { color: ARC_WEDGE_COLOR, fillAlpha: 0.06, lineAlpha: 0.22, width: Math.max(1 / safeScale, 1) };
+}
+
+/** log2(1.03) in half-octave units: a key steps up only 3 % past its boundary. */
+const STATIC_KEY_DEAD_BAND = Math.log2(1.03) * 2;
+/** The connector STATIC layer's zoom key (an integer; scale = 2^(key/2)): it
+ *  is drawn at a half-octave step at or below the live zoom, so its pixel
+ *  floors hold and widths run at most one step (sqrt 2, +3 % dead band) wide.
+ *  Clamped at 0 (scale 1): every floor it draws is flat from there up.
+ *  `current` = the built key (NaN: none); kept while still valid. */
+export function staticScaleKey(scale: number, current: number): number {
+  // +1e-9: a zoom sitting exactly on a step (the default 2^-1.5) must not
+  // round down a whole step (41 % wider lines at the spawn zoom).
+  const l = Math.log2(scale > 0 ? scale : 1) * 2 + 1e-9;
+  const down = Math.min(0, Math.floor(l));
+  if (!(current <= down)) return down; // too thin (or no build yet)
+  const up = Math.min(0, Math.floor(l - STATIC_KEY_DEAD_BAND));
+  return current < up ? up : current;
 }

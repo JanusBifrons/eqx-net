@@ -8,13 +8,13 @@
  *
  * Lines stay pass-through and draw under ships (same layer as today). Colours
  * stay the connector palette: the idle blue tints the body, the per-material
- * active colour and the gold flow pulse drive the flow.
+ * active colour and its lightened pulse drive the flow.
  *
  * Allocation-free per call (invariant #14): one reused stroke-style scratch
  * (Pixi copies it on `stroke`) and the caller's comet scratch.
  */
 import type { Graphics, GraphicsContext } from 'pixi.js';
-import { CONNECTOR_IDLE_COLOR, cometSegment, type CometSegment, type ConnectorVisual } from './connectorVisual.js';
+import { CONNECTOR_IDLE_COLOR, cometSegment, mixColor, type CometSegment, type ConnectorVisual } from './connectorVisual.js';
 import {
   W, along, bowSpan, cablePath, edgePath, frameAt, oneSegment, pt, rawPath, setCablePath, smoothAt, type CablePath,
 } from './connectorCablePath.js';
@@ -53,13 +53,8 @@ export function readLineLook(search: string): LineLook | null {
   return m[1] === 'off' ? null : (m[1] as LineLook);
 }
 
-/** Blend two 0xRRGGBB colours (`t` = 0 ⇒ `a`). */
-export function mixColor(a: number, b: number, t: number): number {
-  const r = Math.round(((a >> 16) & 255) * (1 - t) + ((b >> 16) & 255) * t);
-  const g = Math.round(((a >> 8) & 255) * (1 - t) + ((b >> 8) & 255) * t);
-  const bl = Math.round((a & 255) * (1 - t) + (b & 255) * t);
-  return (r << 16) | (g << 8) | bl;
-}
+/** Blend two 0xRRGGBB colours (now lives in `connectorVisual.ts`). */
+export { mixColor };
 
 const SHADOW = 0x081014;
 const BODY = mixColor(CONNECTOR_IDLE_COLOR, 0x222c33, 0.62);

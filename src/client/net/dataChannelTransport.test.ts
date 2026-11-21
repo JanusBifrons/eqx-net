@@ -18,7 +18,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { Packr } from '@colyseus/msgpackr';
-import { DataChannelSnapshotReceiver } from './dataChannelTransport.js';
+import { DataChannelSnapshotReceiver, DataChannelTransport } from './dataChannelTransport.js';
+import { MockClock } from '@core/clock/Clock';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 
 const packr = new Packr({ encodeUndefinedAsNil: true });
@@ -251,6 +252,68 @@ describe('DataChannelSnapshotReceiver', () => {
       receiver.enqueueBinary(packSnap(11));
       receiver.drain();
       expect(onSnapshot).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('DC arrival telemetry: true arrival time + replaced-frame count (netcode gap smoothing S0)', () => {
+    it('two frames before one drain: replaced = 1 and the kept frame reports its own arrival time', () => {
+      const clock = new MockClock(1000);
+      let arrivalSeenInCallback = -1;
+      const receiver: DataChannelSnapshotReceiver = new DataChannelSnapshotReceiver({
+        onSnapshot: () => { arrivalSeenInCallback = receiver.lastArrivalMs(); },
+        clock,
+      });
+      receiver.enqueueBinary(packSnap(10));
+      clock.advance(40);
+      receiver.enqueueBinary(packSnap(11));
+      clock.advance(25);
+      receiver.drain();
+      expect(receiver.lastDrainReplacedCount()).toBe(1);
+      expect(receiver.totalReplacedCount()).toBe(1);
+      expect(receiver.lastArrivalMs()).toBe(1040);
+      expect(arrivalSeenInCallback, 'onSnapshot sees the kept frame arrival, not decode time').toBe(1040);
+    });
+
+    it('one frame per drain: replaced = 0 each drain, total stays 0', () => {
+      const clock = new MockClock(0);
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot: vi.fn(), clock });
+      for (let tick = 10; tick < 13; tick++) {
+        clock.advance(16);
+        receiver.enqueueBinary(packSnap(tick));
+        receiver.drain();
+        expect(receiver.lastDrainReplacedCount()).toBe(0);
+        expect(receiver.lastArrivalMs()).toBe(clock.t);
+      }
+      expect(receiver.totalReplacedCount()).toBe(0);
+    });
+
+    it('the running total accumulates across drains while last-drain reflects only the latest', () => {
+      const clock = new MockClock(0);
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot: vi.fn(), clock });
+      for (let tick = 10; tick < 14; tick++) receiver.enqueueBinary(packSnap(tick));
+      receiver.drain();
+      expect(receiver.lastDrainReplacedCount()).toBe(3);
+      receiver.enqueueBinary(packSnap(14));
+      receiver.enqueueBinary(packSnap(15));
+      receiver.drain();
+      expect(receiver.lastDrainReplacedCount()).toBe(1);
+      expect(receiver.totalReplacedCount()).toBe(4);
+    });
+
+    it('the numbers reset on transport close', () => {
+      const clock = new MockClock(500);
+      const transport = new DataChannelTransport({ send: vi.fn(), onSnapshot: vi.fn(), clock });
+      const receiver = (transport as unknown as { _receiver: DataChannelSnapshotReceiver })._receiver;
+      receiver.enqueueBinary(packSnap(10));
+      receiver.enqueueBinary(packSnap(11));
+      transport.drainPending();
+      expect(transport.lastDrainReplacedCount()).toBe(1);
+      expect(transport.totalReplacedCount()).toBe(1);
+      expect(transport.lastArrivalMs()).toBe(500);
+      transport.close('test');
+      expect(transport.lastDrainReplacedCount()).toBe(0);
+      expect(transport.totalReplacedCount()).toBe(0);
+      expect(transport.lastArrivalMs()).toBe(0);
     });
   });
 });

@@ -3,7 +3,7 @@
  * in-game overlay (prompts, toasts, helm, inspector, drawer, warp map, cargo)
  * is mounted by App directly.
  *
- *  - Status capsule (shield/hull rings, energy, credits; in Build: base stored
+ *  - Status capsule (shield/hull rings, energy, credits + mineral bank; in Build: base stored
  *    power + credits, no ship health): bottom-centre on
  *    desktop and landscape touch (above the build palette / fleet panel when
  *    those show); top-centre on portrait touch, where the thumbs fill the bottom.
@@ -26,7 +26,6 @@ import { FleetStrip } from '../components/FleetStrip';
 import { getGameClient } from '../net/clientSingleton';
 import { FloatingStick } from './FloatingStick';
 import type { StickVec } from './floatingStickMath';
-import { RollingCounter } from './RollingCounter';
 import { HUD, hullColor } from './tokens';
 import { hudScale, useHudSize, useIsLandscape } from './useHudScale';
 import { WeaponStrip } from './WeaponStrip';
@@ -34,7 +33,7 @@ import { LockStatusBand } from './LockStatusBand';
 import { ContactsOverview } from '../components/ContactsOverview';
 import { stickToWorldBearing } from '@core/combat/manualAim';
 import { HoldButton, SectorChip, useEnergyFill, useFakeCredits } from './widgets';
-import { BuildStatusBody } from './BuildStatus';
+import { BuildStatusBody, WalletRow } from './BuildStatus';
 
 interface Props {
   /** Present on touch devices only. */
@@ -71,7 +70,9 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       {flying && <FcStripDock scale={scale} />}
       {/* Contacts overview (lock list): left edge, the strip's mirror. */}
       {flying && <ContactsOverview />}
-      <Slot anchor="top-right" order={2}><SpeedDialMenu direction="down" /></Slot>
+      {/* pointer-events none: the open list's column lets taps through to the base
+          under it; the dial's own buttons re-enable taps (MUI + speedDialFit). */}
+      <Slot anchor="top-right" order={2} pointerEvents="none"><SpeedDialMenu direction="down" /></Slot>
 
       {/* ── Bottom ──────────────────────────────────────────────────────────── */}
       {/* Status capsule: bottom-centre on desktop and landscape touch; order 3 stacks it
@@ -112,7 +113,7 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
 // ── Status ───────────────────────────────────────────────────────────────────
 
 /**
- * Compact status capsule: segmented shield/hull ring + energy + credits. In
+ * Compact status capsule: segmented shield/hull ring + energy + credits + bank. In
  * Build mode (no ship flown) it swaps to the build body (`BuildStatus.tsx`):
  * base stored power + credits, `data-mode="build"`.
  */
@@ -168,9 +169,7 @@ export function StatusCapsule({ scale }: { scale: number }): JSX.Element {
         <div style={{ width: Math.round(70 * scale), height: 3, background: 'rgba(255,255,255,.1)', borderRadius: 3, overflow: 'hidden' }}>
           <div ref={energyRef} data-testid="hud-energy" style={{ width: '100%', height: '100%', background: HUD.color.energy, transformOrigin: 'left center' }} />
         </div>
-        <div data-testid="wallet-chip" data-wallet={wallet ?? undefined}>
-          <RollingCounter value={wallet} size={Math.round(10.5 * scale)} />
-        </div>
+        <WalletRow wallet={wallet} fs={Math.round(10.5 * scale)} />
       </div>
       </>}
       {timeScale !== 1 && <TimeScaleChip timeScale={timeScale} scale={scale} />}
