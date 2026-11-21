@@ -197,6 +197,33 @@ export function setSwarmDisplayDelayMs(ms: number): void {
 export function stepSwarmDisplayDelay(frameDtMs: number, nowMs: number = Number.NaN): void {
   slewSwarmDisplayDelay(frameDtMs);
   holdSwarmDisplayDelay(nowMs);
+  if (Number.isFinite(nowMs)) _lastFrameStepMs = nowMs;
+}
+
+// Frame-stall backlog (netcode gap smoothing, S5-1b). When the main thread
+// freezes, the drone packets that arrived meanwhile are all handled at once
+// when it wakes, before the next frame steps. Their lateness is the page's,
+// not the network's, so they must not pull the tick clock later: each one
+// used to pull it 1 % of its (up to stall-long) lateness, the backlog's
+// stamps crept toward and clamped at the drain time, and the first on-time
+// packet after the stall took the clock back, so drawn steps around the stall
+// came out uneven. A packet handled more than TICK_CLOCK_FRAME_STALL_MS after
+// the last frame step is backlog: it is stamped by tick on the existing
+// offset (an earlier arrival and a re-seed still apply), and its lateness
+// does not feed the estimate (it used to raise the delay target toward the
+// ceiling for seconds after one stall). Real network lateness arrives between
+// regular frames and keeps both. Scalars only.
+/** A gap (wall ms) since the last frame step past which a packet is frame-stall
+ *  backlog: three 60 Hz frames, longer than ordinary frame jitter. */
+export const TICK_CLOCK_FRAME_STALL_MS = 50;
+/** Read clock (wall ms) of the last `stepSwarmDisplayDelay` given one; NaN
+ *  until the first one after a reset. */
+let _lastFrameStepMs = Number.NaN;
+
+/** True when a packet handled at `nowMs` is frame-stall backlog (see above).
+ *  False before the first frame step after a reset. */
+function isFrameStallBacklog(nowMs: number): boolean {
+  return nowMs - _lastFrameStepMs > TICK_CLOCK_FRAME_STALL_MS;
 }
 
 function slewSwarmDisplayDelay(frameDtMs: number): void {
@@ -275,6 +302,7 @@ export function resetSwarmDisplayDelay(): void {
   _streamNewestStampMs = Number.NaN;
   _holdResyncedThisStall = false;
   _holdActive = false;
+  _lastFrameStepMs = Number.NaN;
 }
 
 /** The sector's game speed, from the snapshot keyframe (ColyseusClient).
@@ -432,7 +460,7 @@ export function noteSwarmResync(): void { _resyncCount++; }
  */
 export function swarmArrivalStampMs(tick: number, nowMs: number): number {
   const tickWallMs = SERVER_TICK_MS / _displaySpeed;
-  _tickClockOffsetMs = nextTickClockOffsetMs(nowMs - tick * tickWallMs);
+  _tickClockOffsetMs = nextTickClockOffsetMs(nowMs - tick * tickWallMs, nowMs);
   _tickClockSeeded = true;
   const stamp = Math.min(nowMs, tick * tickWallMs + _tickClockOffsetMs);
   const lateMs = nowMs - stamp;
@@ -440,7 +468,11 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
   if (lateMs > _latenessMaxMs) _latenessMaxMs = lateMs;
   _latenessSumMs += lateMs;
   _latenessCount++;
-  updateLatenessEstimate(_latenessEstimate, lateMs);
+  // Frame-stall backlog (S5-1b) is late because of the page, not the link:
+  // it is counted above as telemetry but does not size the delay target.
+  if (!isFrameStallBacklog(nowMs)) {
+    updateLatenessEstimate(_latenessEstimate, lateMs);
+  }
   if (!_displayDelayPinned) {
     // Raw input (the setter clamps, as swarmDisplayDelayTargetFromLatenessMs),
     // so a later speed change re-clamps the same input.
@@ -455,11 +487,13 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
  *  tick × tick wall ms) leaves behind: a re-seed (unseeded, or more than
  *  TICK_CLOCK_RESYNC_MS off) or an earlier arrival takes `cand`; a later one
  *  pulls the offset up by TICK_CLOCK_DRIFT_UP, except while the stall hold is
- *  parked (the backlog is late by design, S4-5). Pure: reads state only. */
-function nextTickClockOffsetMs(cand: number): number {
+ *  parked (the backlog is late by design, S4-5) or the packet is frame-stall
+ *  backlog (handled at `nowMs` more than TICK_CLOCK_FRAME_STALL_MS after the
+ *  last frame step, S5-1b). Pure: reads state only. */
+function nextTickClockOffsetMs(cand: number, nowMs: number): number {
   if (!_tickClockSeeded || Math.abs(cand - _tickClockOffsetMs) > TICK_CLOCK_RESYNC_MS) return cand;
   if (cand < _tickClockOffsetMs) return cand;
-  if (_holdActive) return _tickClockOffsetMs;
+  if (_holdActive || isFrameStallBacklog(nowMs)) return _tickClockOffsetMs;
   return _tickClockOffsetMs + (cand - _tickClockOffsetMs) * TICK_CLOCK_DRIFT_UP;
 }
 
@@ -481,7 +515,7 @@ function nextTickClockOffsetMs(cand: number): number {
 export function swarmTickToStampMs(tick: number, nowMs: number): number {
   if (!_tickClockSeeded) return Number.NaN;
   const tickWallMs = SERVER_TICK_MS / _displaySpeed;
-  return Math.min(nowMs, tick * tickWallMs + nextTickClockOffsetMs(nowMs - tick * tickWallMs));
+  return Math.min(nowMs, tick * tickWallMs + nextTickClockOffsetMs(nowMs - tick * tickWallMs, nowMs));
 }
 
 /** Forget the tick clock, zero the drone stream counters and reset the

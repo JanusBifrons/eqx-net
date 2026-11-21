@@ -340,6 +340,27 @@ the gate for the S4b eased offset. Locks: `src/client/net/swarmHoldResume.test.t
 `ColyseusClient.resetPredictionState.test.ts`, `gapSmoothing.drones.test.ts`
 (gap-1000 and idle-resume fixtures).
 
+**Frame-stall backlog does not teach the clock (S5-1b).** A main-thread
+freeze delays arrival but says nothing about the network. The drone packets
+that came in during it are all handled at once when the page wakes, before the
+next frame step, so each looked up to a stall late: each pulled the tick-clock
+offset 1 % later, the backlog's stamps crept toward the drain time and clamped
+there, the first on-time packet then took the offset back at once, and the
+backlog's lateness raised the delay target toward the ceiling (frame-stall-250:
+one 4.71 u snap per drone, an 8 u short step on the stall frame, mean lateness
+222 ms for seconds afterwards). Now a packet handled more than
+`TICK_CLOCK_FRAME_STALL_MS` (50 ms, three 60 Hz frames) after the last
+`stepSwarmDisplayDelay` read clock is backlog: it is stamped by tick on the
+existing offset (no drift-up; an earlier arrival and a re-seed still apply, as
+in the S4-5 hold) and its lateness is counted as telemetry but does not feed
+the estimate. Network lateness arrives between regular frame steps and keeps
+both rules, so every other fixture and the capture replay are unchanged;
+frame-stall-250 now plays as a clean link (0 snaps, delay held at the 100 ms
+floor, every drawn step within the 2 u snap tolerance of the true step through
+the stall). `swarmTickToStampMs` shares the rule. Scalars only;
+`resetSwarmDisplayDelay` clears the last step clock. Locks:
+`src/client/net/swarmTickClockFrameStall.test.ts`, `gapSmoothing.drones.test.ts`.
+
 **The packet's tick must be the tick of its poses.** The room and the physics
 worker run separate 60 Hz loops. The room reads the SAB tick at the top of its
 update, and the worker can publish the next step before the swarm encoder reads
