@@ -230,8 +230,16 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number):
  * pending-ghost behaviour is identical regardless of how the player committed.
  * Does NOT clear `placementKind` (Zustand) — the caller owns that, since the
  * banner reads it via a hook and gameRafLoop via `getState()`.
+ *
+ * Sends nothing while the ghost is blocked (`placementChosen.rejection`, the
+ * server's own `placementRejection` at the drawn pose): the server would
+ * refuse it (#15). Returns whether a placement was sent.
  */
-export function commitChosenPlacement(kindId: StructureKindId): void {
+export function commitChosenPlacement(kindId: StructureKindId): boolean {
+  if (placementChosen.rejection !== null) {
+    logEvent('structure_place_blocked', { kind: kindId, reason: placementChosen.rejection });
+    return false;
+  }
   const cx = placementChosen.worldX;
   const cy = placementChosen.worldY;
   const hasChosen = cx !== null && cy !== null;
@@ -242,9 +250,5 @@ export function commitChosenPlacement(kindId: StructureKindId): void {
     y: cy,
     stuck: placementChosen.stuck,
   });
-  if (hasChosen) {
-    placeStructureAt(kindId, cx, cy);
-  } else {
-    placeStructureAhead(kindId);
-  }
+  return hasChosen ? placeStructureAt(kindId, cx, cy) : placeStructureAhead(kindId);
 }

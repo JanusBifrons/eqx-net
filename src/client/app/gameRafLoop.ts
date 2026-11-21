@@ -30,7 +30,7 @@ import {
   computeBootstrapReadyFromState,
   computeIsLoadingActive,
 } from '../state/store.js';
-import { placementChosen, resetPlacementChosen } from '../structures/placementChosen.js';
+import { placementChosen, resetPlacementChosen, writePlacementChosen } from '../structures/placementChosen.js';
 import { updatePlacementHints } from '../structures/placementHints.js';
 import { commitChosenPlacement } from '../structures/structurePlacementClient.js';
 import { stepBuildModeView, takeBuildRestoreScale } from '../structures/buildModeView.js';
@@ -319,11 +319,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // dataset OR a placement is active. Skips getFeedback() entirely otherwise.
     const feedback = (writeE2E || placing) ? renderer.getFeedback() : null;
     if (placing && feedback) {
-      placementChosen.worldX =
-        typeof feedback.placementChosenWorldX === 'number' ? feedback.placementChosenWorldX : null;
-      placementChosen.worldY =
-        typeof feedback.placementChosenWorldY === 'number' ? feedback.placementChosenWorldY : null;
-      placementChosen.stuck = feedback.placementStuck;
+      writePlacementChosen(feedback); // point, park state and the ghost's verdict
       // WS-10 (R2.5) — DESKTOP one-click place: the renderer bumped the confirm
       // seq on a mouse left-click. Commit at the chosen point (just written
       // above, so it's this click's point) via the SAME path the touch Confirm
@@ -353,7 +349,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       const pv = gameClient.mirror.pendingPlacementPreview!;
       updatePlacementHints(feedback, psx, psy, useUIStore.getState().placementKind,
         placementChosen.worldX ?? pv.x, placementChosen.worldY ?? pv.y, gameClient.mirror);
-    } else if (placementChosen.worldX !== null || placementChosen.stuck) {
+    } else if (placementChosen.worldX !== null || placementChosen.stuck || placementChosen.rejection !== null) {
       resetPlacementChosen();
     }
     // Build mode: Command view + camera pulled back while placing; restored after.
