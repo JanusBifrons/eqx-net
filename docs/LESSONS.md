@@ -3345,3 +3345,14 @@ lands 0.045 off the other side, still outside the band, flips direction, and rep
 forever. A steerer that toggles snap-turn bits must stop within half the per-tick step
 (`maxTurnPerTick`, from `applyShipInput`); retuning a turn rate must re-check every closed-loop
 controller that toggles the turn keys (`joystickToInput.test.ts` closed-loop cases).
+
+## 2026-11-21 — the course autopilot (helm) wobbled the same way
+
+`helmStep` stopped turning inside a fixed 0.02 rad deadband and leaned on the coast angle
+(`|ω| / angularDamping`) to stop early, but a snap-turn hull has no angular damping, so its coast is
+zero: a fighter 0.03 rad off a course turned 0.07, landed 0.04 off the other side and turned back
+every tick (sideways wobble on course orders). The helm and the stick now share one stop rule,
+`turnStopAngle(floor, turnStepRad)` in `applyShipInput.ts` (half the per-tick step, never below the
+steerer's own floor). The AI `virtualPilot` already stopped at half a step behind a 2.5-step
+deadband and a no-reverse window, so it was not affected. Locked by `helm.test.ts` "holds a heading
+without turn wobble".

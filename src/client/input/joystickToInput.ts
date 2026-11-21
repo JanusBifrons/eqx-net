@@ -31,6 +31,7 @@
  * the kind of mid-loop ColyseusGameClient refactors that have
  * historically broken implicit state machines.
  */
+import { turnStopAngle } from '@core/physics/applyShipInput';
 
 /** Stick magnitude threshold to engage ANY input. Wider band than the
  *  previous single TOUCH_DEADZONE=0.2 so a finger micro-release doesn't
@@ -143,7 +144,7 @@ export function joystickToInput(
   // |delta| crosses TURN_ON_RAD.
   // Both thresholds widen to half the per-tick turn step when that is wider
   // (only for hulls that would otherwise overshoot the band every tick).
-  const turnOff = Math.max(TURN_OFF_RAD, turnStepRad / 2);
+  const turnOff = turnStopAngle(TURN_OFF_RAD, turnStepRad);
   const turnOn = Math.max(TURN_ON_RAD, turnOff);
   let turnLeft = false;
   let turnRight = false;

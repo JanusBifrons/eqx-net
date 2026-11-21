@@ -529,7 +529,9 @@ export function stepHelm(ctx: PredictionStepCtx): void {
   p.x = s.x; p.y = s.y; p.angle = s.angle; p.vx = s.vx; p.vy = s.vy; p.angvel = s.angvel ?? 0;
   ctx.helmRoute.tick(ctx.gameClock.now());
   const idx = ctx.helmOrder.route?.idx ?? -1;
-  helmStep(ctx.helmOrder, p, getShipKind(ctx.helmKindId), ctx.helmOut);
+  // The hull's per-tick turn (stat upgrades included) widens the helm's stop band.
+  const turnStep = id ? ctx.predWorld?.maxTurnPerTick(id) : undefined;
+  helmStep(ctx.helmOrder, p, getShipKind(ctx.helmKindId), ctx.helmOut, turnStep);
   if (ctx.helmOut.arrived) clearHelm(ctx);
   else if ((ctx.helmOrder.route?.idx ?? -1) !== idx) syncHelmMark(ctx); // a turn passed: the route line drops it
 }

@@ -75,6 +75,15 @@ export function maxTurnPerTick(kind: ShipKind, mul?: ShipInputMultipliers): numb
   return (kind.maxAngvel * turnMul) / 60;
 }
 
+/** Heading error (rad) inside which a closed-loop steerer that toggles the
+ *  turn bits stops turning: its own `floorRad`, widened to half the ship's
+ *  per-tick turn step (`maxTurnPerTick`). Inside half a step one more tick
+ *  could only overshoot by more than it closes, so stopping there never
+ *  flips the turn every tick. The one rule for the touch stick and the helm. */
+export function turnStopAngle(floorRad: number, turnStepRad: number): number {
+  return Math.max(floorRad, turnStepRad / 2);
+}
+
 export function applyShipInput(
   body: RAPIER.RigidBody,
   kind: ShipKind,
