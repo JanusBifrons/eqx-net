@@ -44,7 +44,7 @@ Both the actor and the owner are owner strings:
 | An empty owner | `neutral` |
 | An ownerless base (`none:`), either side | `neutral`: no hostile act, standing or alliance changes it |
 
-- **An ownerless base has no faction** (owner rule, capture plan 4E): no enemies, no allies. It is not an NPC (`isNpcOwner` is false). The lost Capital's id keeps two ownerless bases apart; an empty owner would merge their grids. Its turrets find nothing hostile, and its storage needs the usual break-in.
+- **An ownerless base has no faction** (owner rule, capture plan 4E): no enemies, no allies. It is not an NPC (`isNpcOwner` is false). The lost Capital's id keeps two ownerless bases apart; an empty owner would merge their grids. Its turrets find nothing hostile, and its storage needs the usual break-in. Effects (each locked by a test): its turrets, mines and missiles take no target at all, not even drones (`TurretTargeting`); it is no faction to the `FactionLedger` (no escalation, no wave readiness), no side on the control meter (`countsForControl`), and its Territory Lock is inert (`isLiveTerritoryLock`); it holds no standing (`adjustStanding`, `noteStandingHit`); production runs as normal, but credits and launched hulls go to no wallet (`walletOwnerOf`: taxes are not minted, a finished hull stays packed in storage). Per-player lists match the owner string, so its pieces count for nobody.
 
 - **Hostility is treated as mutual.** Robots attack players on sight, so a robot is `hostile` to a player's gate as well as the reverse.
 - **Hostile acts are directional.** If A breaks into B's cargo, A is hostile to B; B is not hostile to A.
