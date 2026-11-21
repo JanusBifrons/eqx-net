@@ -3242,6 +3242,17 @@ shallow: the brake distance jumped to 450-700 u and a fighter entered a 75° tur
 ~32 u off its line into rock. Use the angle between the incoming and outgoing legs, and cap the carried
 speed by how far the ship may swing sideways (`NAV_TURN_SWING`).
 
+## 2026-11-20 — a corner is lost on the way out, not only on the way in
+
+The streets flight still touched rock ~3 runs in 10 at its 76° corner. Logged per tick, the failing runs
+did not carry speed in: tick jitter left the ship almost stopped at the corner, and once past it the brain
+asked for the new leg's full cruise. The pilot thrusts along its nose while the nose comes round, so it
+lurched ~33 u sideways off the new leg into rock. Cap the speed out of a sharp corner by the swing
+its nose has left (`NavRoutes.turnCap`, scaled by that angle and the hull's turn rate): a timed hold
+cost time and still brushed rock when the nose came round late. Don't add the cap to a capital: its
+planner already fits corners to its turning radius, and a second limit only slowed it. Log the ship's
+track against the corner before tuning the brake; the contact point says which side of the corner failed.
+
 ## 2026-11-19 — a long hull planned as a disc of its length never fits a lane
 
 The route planner kept a battleship's centre a full hull length (3 595 u) from rock everywhere. Lanes are
