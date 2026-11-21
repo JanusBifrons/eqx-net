@@ -12,9 +12,13 @@
  * (structureSettingsBuild.tsx), else its recipe (and the Change button
  * that cycles it, once the inspector's), a build count (minus / plus /
  * forever) sent on the same `set_recipe` message as the recipe, and the
- * blueprint slot (Load / Unload); for a gate, Access (structureSettingsGate.tsx). Labels read Build / Power /
- * Manage; the tab ids (and test ids) keep their old names.
- * The inspector keeps only the cog and one-shot actions.
+ * blueprint slot (Load / Unload); Manage for every building: deconstruct,
+ * reconnect, clear connections, upgrade (StructureManageActions.tsx), with a
+ * gate's Access control above them (structureSettingsGate.tsx). Labels read Build / Power /
+ * Manage; the tab ids (and test ids) keep their old names. A status block
+ * above the tabs shows owner, level, connections and hold
+ * (structureSettingsStatus.tsx).
+ * The inspector card keeps only its Open button and one-shot actions.
  *
  * The ✕, Close or a swipe on the handle shuts it, and so does a change of
  * selection (another entity picked, or none).
@@ -22,8 +26,7 @@
  * like the teleporter panel) — the same slice the PWR line reads.
  */
 import { memo, useEffect, useRef, useState } from 'react';
-import { Box, IconButton, Tab, Tabs, Tooltip } from '@mui/material';
-import SettingsIcon from '@mui/icons-material/Settings';
+import { Box, Tab, Tabs, Tooltip } from '@mui/material';
 import { getGameClient } from '../net/clientSingleton';
 import { HUD } from '../hud/tokens';
 import { useUIStore } from '../state/store';
@@ -36,6 +39,8 @@ import { PowerControls } from './structureSettingsPowerControls';
 import { buildCountText, canChangeRecipe, makesThings, readProduction, sameProduction, type ProductionView } from './structureSettingsProduction';
 import { GateTab, hasGateAccess } from './structureSettingsGate';
 import { BlueprintRow, HullBuildTab } from './structureSettingsBuild';
+import { StructureManageTab } from './StructureManageActions';
+import { SettingsStatus } from './structureSettingsStatus';
 import { sendSetRecipe } from '../structures/structureActionsClient';
 import { MAX_BUILD_COUNT, nextRecipe } from '@shared-types/production';
 import { RECIPES } from '@shared-types/recipes';
@@ -49,13 +54,12 @@ const PRODUCTION_TAB: SettingsTab = { id: 'production', label: 'Build' };
 const ACCESS_TAB: SettingsTab = { id: 'access', label: 'Manage' };
 
 /** The tabs a building kind shows, in order. Every building sits on a grid,
- *  so every kind has Power; later tabs are appended here per kind. */
-const WITH_PRODUCTION: readonly SettingsTab[] = [POWER_TAB, PRODUCTION_TAB];
-const WITH_ACCESS: readonly SettingsTab[] = [POWER_TAB, ACCESS_TAB];
-const POWER_ONLY: readonly SettingsTab[] = [POWER_TAB];
+ *  so every kind has Power, and every kind has Manage (last); Build is added
+ *  per kind here. */
+const WITH_PRODUCTION: readonly SettingsTab[] = [POWER_TAB, PRODUCTION_TAB, ACCESS_TAB];
+const WITH_MANAGE: readonly SettingsTab[] = [POWER_TAB, ACCESS_TAB];
 export function settingsTabsFor(kindId: string): readonly SettingsTab[] {
-  if (makesThings(kindId) || canChangeRecipe(kindId)) return WITH_PRODUCTION;
-  return hasGateAccess(kindId) ? WITH_ACCESS : POWER_ONLY;
+  return makesThings(kindId) || canChangeRecipe(kindId) ? WITH_PRODUCTION : WITH_MANAGE;
 }
 
 const POLL_MS = 250;
@@ -180,15 +184,17 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
           <Box sx={WINDOW_TITLE_SX}>{title} settings</Box>
           <Box component="button" sx={WINDOW_X_SX} onClick={onClose} aria-label="Close" data-testid="structure-settings-close">✕</Box>
         </Box>
+        {open && <SettingsStatus entityId={entityId} pollMs={POLL_MS} />}
         <Tabs value={tab} onChange={(_e, v: SettingsTabId) => setTab(v)} sx={TABS_SX} variant="fullWidth">
           {tabs.map((t) => <Tab key={t.id} value={t.id} label={t.label} data-testid={`structure-settings-tab-${t.id}`} />)}
         </Tabs>
         <Box sx={BODY_SX}>
           {open && tab === 'power' && <PowerTab entityId={entityId} />}
           {open && tab === 'production' && <ProductionTab entityId={entityId} />}
-          {open && tab === 'access' && (
+          {open && tab === 'access' && hasGateAccess(readKind(entityId) ?? '') && (
             <GateTab entityId={entityId} pollMs={POLL_MS} gridSx={GRID_SX} labelSx={LABEL_SX} valueSx={VALUE_SX} btnSx={STEP_BTN_SX} />
           )}
+          {open && tab === 'access' && <StructureManageTab entityId={entityId} pollMs={POLL_MS} />}
         </Box>
         <Box sx={WINDOW_FOOT_SX}>
           <Box sx={{ flex: 1 }} />
@@ -199,16 +205,13 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
   );
 }
 
-/** The cog for the inspector's owner action row; owns the window's open flag. */
-export const StructureSettingsCog = memo(function StructureSettingsCog({ entityId, title }: { entityId: number; title: string }): JSX.Element {
+/** The inspector card's Open button (owner, Build mode); owns the panel's open flag. */
+export const StructureSettingsOpen = memo(function StructureSettingsOpen({ entityId, title }: { entityId: number; title: string }): JSX.Element {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Tooltip title="Settings">
-        <IconButton data-testid="structure-action-settings" size="small" sx={COG_SX} onClick={() => setOpen(true)}>
-          <SettingsIcon sx={COG_ICON_SX} />
-        </IconButton>
-      </Tooltip>
+      <Box component="button" data-testid="structure-action-settings" sx={OPEN_BTN_SX} onClick={() => setOpen(true)}
+        title="Open this building's panel">Open</Box>
       {open && <StructureSettingsModal open entityId={entityId} title={title} onClose={() => setOpen(false)} />}
     </>
   );
@@ -232,5 +235,9 @@ const STEP_BTN_SX = { ...WINDOW_BTN_SECONDARY_SX, minWidth: 32, px: 1, '&:disabl
 const COUNT_SX = { ...VALUE_SX, minWidth: 64, textAlign: 'center' as const } as const;
 const ROW_SX = { fontSize: 12, color: C.inkDim } as const;
 const BUILD_SX = { labelSx: LABEL_SX, valueSx: VALUE_SX, btnSx: STEP_BTN_SX } as const;
-const COG_SX = { p: '2px', color: 'rgba(180,220,255,0.85)', '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' } } as const;
-const COG_ICON_SX = phoneTiny({ fontSize: [16, 28] }); // the inspector's ICON_SX: tiny on a phone
+// A small text button sized like the card's text: tiny on a phone.
+const OPEN_BTN_SX = {
+  ...phoneTiny({ fontSize: [9, 16] }), fontFamily: HUD.font.label, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase' as const,
+  color: C.auto, bgcolor: 'rgba(52,216,255,0.08)', border: `1px solid ${C.autoGlow}`, borderRadius: '3px', px: '6px', py: '1px', cursor: 'pointer',
+  '&:hover': { bgcolor: 'rgba(52,216,255,0.2)' },
+} as const;

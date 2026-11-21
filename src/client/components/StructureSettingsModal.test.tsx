@@ -1,8 +1,9 @@
 /**
- * Lock for the building settings window: the cog in the inspector's owner
- * action row opens a tabbed side panel on the Power tab (read-only numbers
- * from the structure slice), docked beside the live map (SidePanel, no
- * backdrop), and a building you do not own has no cog.
+ * Lock for the building settings window: the Open button in the inspector
+ * card's owner action row opens a tabbed side panel on the Power tab
+ * (read-only numbers from the structure slice), docked beside the live map
+ * (SidePanel, no backdrop), with a status block (owner, level, connections,
+ * hold) above the tabs; a building you do not own has no Open button.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react';
@@ -31,13 +32,13 @@ function seedTurret(owner: string, drawFull: boolean): void {
 
 describe('StructureSettingsModal', () => {
   beforeEach(() => {
-    // The cog sits with the building-management actions: Build mode only.
+    // Open is building management: Build mode only.
     useUIStore.setState({ buildMode: true, selection: { ids: [], focusId: null, focusKind: null } });
     resetSelectionStats();
   });
   afterEach(() => { setGameClient(null); vi.unstubAllGlobals(); });
 
-  it('cog opens the settings window on the Power tab', () => {
+  it('Open opens the settings window on the Power tab', () => {
     seedTurret('me-123', true);
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('structure-settings')).toBeNull();
@@ -50,6 +51,10 @@ describe('StructureSettingsModal', () => {
     expect(power).toHaveAttribute('data-load', 'full');
     expect(screen.getByTestId('settings-power-grid')).toHaveTextContent('+35');
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR -15');
+    // The status block above the tabs: what left the card.
+    expect(screen.getByTestId('settings-status-owner')).toHaveTextContent('you');
+    expect(screen.getByTestId('settings-status-level')).toHaveTextContent('1');
+    expect(screen.queryByTestId('settings-status-conn')).toBeNull(); // not a connector
     fireEvent.click(screen.getByTestId('structure-settings-close'));
     expect(screen.queryByTestId('structure-settings')).toBeNull();
   });
@@ -93,7 +98,7 @@ describe('StructureSettingsModal', () => {
     expect(screen.getByTestId('settings-power-draw')).toHaveTextContent('-3');
   });
 
-  it('no cog on a building you do not own', () => {
+  it('no Open button on a building you do not own', () => {
     seedTurret('other-1', true);
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-panel')).toBeInTheDocument();
@@ -108,27 +113,24 @@ describe('StructureSettingsModal', () => {
     expect(rightPaperSx(SETTINGS_PANEL_SIZE, false)).toMatchObject({ width: 360 });
   });
 
-  // #1046 phone still: the cog drew ~1.5x its siblings (it missed phoneTiny).
-  // jsdom skips @media and descendant rules in getComputedStyle, so read the
-  // icon's emitted CSS: each size (xs, sm, under a phone root) must match.
-  it('the cog icon is sized like its sibling action icons, phone and desktop', () => {
+  it('the card has one Open button; management moved to the Manage tab', () => {
     seedTurret('me-123', true);
     render(<EntityStatsPanel />);
-    const sizes = (id: string): string[] => {
-      const cls = [...screen.getByTestId(id).querySelector('svg')!.classList].find((c) => c.startsWith('css-'))!;
-      const css = [...document.querySelectorAll('style')].map((el) => el.textContent).join('\n');
-      return css.split('}').filter((r) => r.includes(cls) && r.includes('font-size')).map((r) => r.replace(cls, 'X').trim());
-    };
-    const sibling = sizes('structure-action-deconstruct');
-    expect(sibling).toContain('[data-hud-phone] .X{font-size:16px;');
-    expect(sizes('structure-action-settings')).toEqual(sibling);
+    const open = screen.getByTestId('structure-action-settings');
+    expect(open.tagName).toBe('BUTTON');
+    expect(open).toHaveTextContent('Open');
+    expect(screen.queryByTestId('structure-action-deconstruct')).toBeNull();
+    fireEvent.click(open);
+    fireEvent.click(screen.getByTestId('structure-settings-tab-access'));
+    expect(screen.getByTestId('structure-settings-manage')).toBeInTheDocument();
+    expect(screen.getByTestId('structure-action-deconstruct')).toBeInTheDocument();
   });
 
   it('every building kind has the Power tab first', () => {
     expect(settingsTabsFor('turret')[0]?.id).toBe('power');
     expect(settingsTabsFor('solar')[0]?.id).toBe('power');
     // Labels read Build / Power / Manage; the ids keep their old names.
-    expect(settingsTabsFor('shipyard').map((t) => t.label)).toEqual(['Power', 'Build']);
+    expect(settingsTabsFor('shipyard').map((t) => t.label)).toEqual(['Power', 'Build', 'Manage']);
   });
 });
 
@@ -164,10 +166,10 @@ describe('StructureSettingsModal Build tab (hull picture tiles)', () => {
   afterEach(() => { setGameClient(null); vi.useRealTimers(); });
 
   it('only buildings that make things get the Production tab', () => {
-    expect(settingsTabsFor('shipyard').map((t) => t.id)).toEqual(['power', 'production']);
-    expect(settingsTabsFor('refinery').map((t) => t.id)).toEqual(['power', 'production']);
-    expect(settingsTabsFor('turret').map((t) => t.id)).toEqual(['power']);
-    expect(settingsTabsFor('habitat_module').map((t) => t.id)).toEqual(['power']);
+    expect(settingsTabsFor('shipyard').map((t) => t.id)).toEqual(['power', 'production', 'access']);
+    expect(settingsTabsFor('refinery').map((t) => t.id)).toEqual(['power', 'production', 'access']);
+    expect(settingsTabsFor('turret').map((t) => t.id)).toEqual(['power', 'access']);
+    expect(settingsTabsFor('habitat_module').map((t) => t.id)).toEqual(['power', 'access']);
   });
 
   it('a shipyard shows the queue head, one tile per hull with its bill, and no Change / count row', () => {
