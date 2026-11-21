@@ -54,6 +54,7 @@ import {
   linkReachBoxStart,
   makeCableSocketPick,
 } from '../../../core/structures/cableCurve.js';
+import { makeCableReseat } from '../../../core/structures/socketReseat.js';
 import { drawMines, drawNoPowerBolt, drawStatusBar } from './structureStatusMarks.js';
 import { hasBodyStatus } from './structureSocketNubs.js';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
@@ -200,6 +201,8 @@ export class ConnectorRenderer {
   private readonly _nodeCandidate: boolean[] = [];
   /** Scratch socket pick for the preview's `canConnect` (0d slice 7). */
   private readonly _pick = makeCableSocketPick();
+  /** Scratch: a held link the server would move to make room (`pickWithReseat`, #15). */
+  private readonly _reseat = makeCableReseat();
   /** Reused adjacency map for `canConnect`. The value arrays carry REAL
    *  connection-like entries (one per `st.connTo` link) — NOT length-only holes.
    *  The shield-pylon dual-cap (`shieldPylonRejection`) ITERATES these and calls
@@ -695,7 +698,7 @@ export class ConnectorRenderer {
     for (let k = 0; k < poolIdx; k++) {
       if (this._nodeCandidate[k] !== true) continue;
       const node = this._nodePool[k]!;
-      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick);
+      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick, this._reseat);
       let v = verdicts[vn];
       if (v === undefined) {
         v = { id: '', ok: false, reason: null, sockA: CABLE_NO_SOCKET, sockB: CABLE_NO_SOCKET };

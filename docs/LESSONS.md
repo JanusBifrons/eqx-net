@@ -3409,3 +3409,13 @@ landed a correction, and the hysteresis guard turned remote prediction off
 (`remote-ship-held-thrust.spec.ts`: 13 u per snapshot). A cap on a window must be relative to the
 window: `remoteForwardTickCap(lead)`. When you resize a lead, grep for every constant that assumed
 its old size.
+
+## 2026-11-21 — a button that acts on touchstart hands its release to whatever it opened
+
+The dial's Warp action runs on `touchstart` (so a second finger works), which opens the warp picker
+under the still-down finger. On release the browser's click for that touch landed on the picker row
+now under it, and the ship warped: one press opened the menu and picked. `preventDefault()` in a
+React `onTouchStart` cannot stop that click (React's touchstart listener is passive), and the dial's
+own click-suppress window only guards the dial. Options of a menu opened on touchstart bind
+`useFreshPress` (`touchClickActivate.ts`): they act only on a pointerdown on the same option, at
+least `MENU_ARM_MS` after opening, then its click (keyboard clicks, `detail === 0`, always act).

@@ -6,6 +6,8 @@
  *    listed one by one and far ones grouped under "Far";
  *  - **map**: a small map of the system (±200 km) with its pockets and the
  *    ship; tap a pocket, then Warp.
+ * An option acts only on a fresh, full press after the picker is up
+ * (`useFreshPress`): the release of the press that opened it never picks.
  * Picking asks the server to warp to the pocket's rim (`requestWarp`).
  * `WarpStatusChip` (top-centre slot, under the energy bar) shows where a held
  * warp goes, with a Cancel.
@@ -21,6 +23,7 @@ import { getGameClient } from '../net/clientSingleton';
 import { formatKm, warpDestinations, type WarpDestination } from './warpDestinations';
 import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites';
 import { isTouchDevice } from '../input/TouchInput';
+import { useFreshPress, type FreshPressProps } from './touchClickActivate';
 
 type WarpUi = 'list' | 'map';
 /** `?warpui=` wins; else the list on touch (big rows, readable on a phone)
@@ -78,6 +81,7 @@ export const WarpPicker = memo(function WarpPicker(): JSX.Element | null {
   const ui = useMemo(() => readWarpUi(typeof location !== 'undefined' ? location.search : '', isTouchDevice()), []);
   const [target, setTarget] = useState<string | null>(null);
   const { pose } = usePolledShip(open);
+  const press = useFreshPress(open);
 
   const dests = useMemo(() => (sectorKey && pose ? warpDestinations(sectorKey, pose.x, pose.y) : []), [sectorKey, pose]);
 
@@ -92,7 +96,7 @@ export const WarpPicker = memo(function WarpPicker(): JSX.Element | null {
 
   const near = dests.filter((d) => !d.far), far = dests.filter((d) => d.far);
   const row = (d: WarpDestination): JSX.Element => (
-    <Button key={d.id} sx={ROW_SX} disabled={d.here} disableRipple onClick={() => warpTo(d)} data-testid={`warp-dest-${d.id}`} data-km={Math.round(d.distKm)}>
+    <Button key={d.id} sx={ROW_SX} disabled={d.here} disableRipple {...press(() => warpTo(d))} data-testid={`warp-dest-${d.id}`} data-km={Math.round(d.distKm)}>
       <span>{d.label}{d.padTo && <span style={{ color: '#5ad7ff', fontSize: 11 }} data-testid={`warp-pad-${d.id}`}>{` · pad to ${d.padTo} (instant)`}</span>}</span>
       <span style={{ color: '#8fa0b8' }}>{d.here ? 'here' : formatKm(d.distKm)}</span>
     </Button>
@@ -113,7 +117,7 @@ export const WarpPicker = memo(function WarpPicker(): JSX.Element | null {
             {far.map(row)}
           </>
         ) : (
-          <SystemMap dests={dests} pose={pose} target={target} onPick={setTarget} onWarp={warpTo} />
+          <SystemMap dests={dests} pose={pose} target={target} onPick={setTarget} onWarp={warpTo} press={press} />
         )}
       </Paper>
     </Portal>
@@ -150,9 +154,10 @@ const KIND_COLOUR: Record<WarpDestination['kind'], string> = { home: '#5ae08a', 
  * The system as a small map: pockets as dots (sized up so they show), labels
  * kept inside the map and nudged apart, the ship as an arrow on its heading.
  */
-function SystemMap({ dests, pose, target, onPick, onWarp }: {
+function SystemMap({ dests, pose, target, onPick, onWarp, press }: {
   dests: WarpDestination[]; pose: ShipPose | null; target: string | null;
   onPick: (id: string) => void; onWarp: (d: WarpDestination) => void;
+  press: (fn: () => void) => FreshPressProps;
 }): JSX.Element {
   const H = SOLAR_HALF_EXTENT;
   const sel = dests.find((d) => d.id === target) ?? null;
@@ -182,7 +187,7 @@ function SystemMap({ dests, pose, target, onPick, onWarp }: {
             strokeDasharray={`${H / 40} ${H / 60}`} opacity={0.7} data-testid="warp-map-pad" /> : null;
         })}
         {dests.map((d) => (
-          <g key={d.id} onClick={() => !d.here && onPick(d.id)} style={{ cursor: d.here ? 'default' : 'pointer' }} data-testid={`warp-map-${d.id}`}>
+          <g key={d.id} {...press(() => { if (!d.here) onPick(d.id); })} style={{ cursor: d.here ? 'default' : 'pointer' }} data-testid={`warp-map-${d.id}`}>
             <circle cx={d.x} cy={-d.y} r={H / 9} fill="transparent" />
             <circle cx={d.x} cy={-d.y} r={Math.max(d.r, dotR)} fill={KIND_COLOUR[d.kind]} fillOpacity={d.id === target ? 0.95 : 0.5}
               stroke={d.id === target ? '#ffffff' : 'none'} strokeWidth={H / 90} />
@@ -199,7 +204,7 @@ function SystemMap({ dests, pose, target, onPick, onWarp }: {
         )}
       </svg>
       <Button fullWidth size="small" variant="contained" disabled={!sel} sx={{ mt: 0.5, fontSize: 12, fontWeight: 700, color: '#04130a', textTransform: 'none' }}
-        onClick={() => sel && onWarp(sel)} data-testid="warp-map-go">
+        {...press(() => { if (sel) onWarp(sel); })} data-testid="warp-map-go">
         {sel ? `Warp: ${sel.label} (${formatKm(sel.distKm)})` : 'Pick a destination'}
       </Button>
     </Box>

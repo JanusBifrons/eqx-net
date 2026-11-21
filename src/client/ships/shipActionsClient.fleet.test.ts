@@ -6,11 +6,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   sendDisbandSquad,
   sendFleetOrder,
+  sendFleetSpeed,
   sendFormSquad,
   sendSetMode,
   sendSetStance,
 } from './shipActionsClient.js';
 import { ClientMessageSchema } from '../../shared-types/messages.js';
+import { HELM_SPEED_FRACTION } from '../../core/helm/helm.js';
 
 const send = vi.fn();
 let hasRoom = true;
@@ -45,6 +47,30 @@ describe('fleet command senders (RTS slice 6a)', () => {
     expect(lastSent().payload).toEqual({ type: 'fleet_order', shipIds: ['a'], kind: 'attack', targetId: 't' });
     sendFleetOrder(['a'], { kind: 'stop' });
     expect(lastSent().payload).toEqual({ type: 'fleet_order', shipIds: ['a'], kind: 'stop' });
+  });
+
+  it('Command speed parity (#15): every telegraph step crosses the wire as its shared fraction', () => {
+    for (const step of [0, 1, 2, 3] as const) {
+      const fraction = HELM_SPEED_FRACTION[step]!;
+      sendFleetOrder(['a'], { kind: 'move', x: 1, y: 2, speed: fraction });
+      const move = ClientMessageSchema.parse(lastSent().payload) as { kind: string; speed?: number };
+      expect(move).toMatchObject({ kind: 'move', speed: fraction });
+      expect(sendFleetSpeed(['a', 'b'], fraction)).toBe(true);
+      const pace = ClientMessageSchema.parse(lastSent().payload) as { kind: string; speed?: number };
+      expect(pace).toEqual({ type: 'fleet_order', shipIds: ['a', 'b'], kind: 'speed', speed: fraction });
+    }
+    expect(HELM_SPEED_FRACTION[0]).toBe(0);
+    expect(HELM_SPEED_FRACTION[3]).toBe(1);
+  });
+
+  it('the server schema rejects a bad speed', () => {
+    const base = { type: 'fleet_order', shipIds: ['a'] };
+    for (const speed of [-0.1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(ClientMessageSchema.safeParse({ ...base, kind: 'speed', speed }).success, String(speed)).toBe(false);
+      expect(ClientMessageSchema.safeParse({ ...base, kind: 'move', x: 0, y: 0, speed }).success, String(speed)).toBe(false);
+    }
+    expect(ClientMessageSchema.safeParse({ ...base, kind: 'speed' }).success, 'speed without speed').toBe(false);
+    expect(ClientMessageSchema.safeParse({ ...base, kind: 'move', x: 0, y: 0 }).success, 'old client').toBe(true);
   });
 
   it('sendSetMode includes only given params', () => {

@@ -190,8 +190,8 @@ export const capitalFlyby: Shot = {
 };
 
 /**
- * Round 3 D/E: fly the battleship. The pilot taps a course (helm orders), the
- * hull swings onto it under its own slow torque, then the camera pulls right
+ * Round 3 D/E: fly the battleship. The pilot holds W (Fly is manual only,
+ * owner 2026-11-21) and the hull gets under way, then the camera pulls right
  * back to the capital pilot's zoom floor: the fleet in view, the parked
  * fighter wing as dots. Then back in.
  */
@@ -199,7 +199,7 @@ export const capitalPilot: Shot = {
   id: 'capital-pilot',
   section: 'mechanics',
   title: 'Flying a capital',
-  caption: 'Tap a course and the battleship steers itself onto it; pull back and the fighters around it are specks.',
+  caption: 'Fly the battleship by hand; pull back and the fighters around it are specks.',
   features: ['CAP'],
   docs: ['ship-kinds'],
   reel: false,
@@ -213,15 +213,10 @@ export const capitalPilot: Shot = {
   },
   async run(ctx) {
     await ctx.sleep(1500);
-    // A real tap on empty space up and to the right: the helm takes the course.
-    const pt = ctx.px(1500, 260);
-    for (let i = 0; i < 5; i++) {
-      await ctx.page.mouse.click(pt.x, pt.y);
-      const on = await ctx.page.evaluate(() => (globalThis as { __eqxStore?: { getState(): { helmActive?: boolean } } }).__eqxStore?.getState().helmActive === true);
-      if (on) break;
-      await ctx.sleep(300);
-    }
+    // Fly is manual (owner 2026-11-21): hold W and the hull gets under way.
+    await ctx.page.keyboard.down('w');
     await ctx.sleep(6000);
+    await ctx.page.keyboard.up('w');
     // Pull right back to the capital pilot's zoom floor, then back in.
     const c = ctx.px(960, 540);
     await ctx.page.mouse.move(c.x, c.y);
@@ -626,8 +621,8 @@ export const capitalBreakup: Shot = {
 /**
  * Player capitals: a player flies a battleship in a real galaxy sector (the
  * living world on, Sol Prime), on a phone held sideways. The join lands in
- * Command view, so the pilot taps Fly and picks the battleship, taps a course and the helm steers onto
- * it, then pinches out to the capital's zoom floor to see the sector round
+ * Command view, so the pilot taps Fly and picks the battleship, flies it by
+ * the thumbstick (Fly is manual only, owner 2026-11-21), then pinches out to the capital's zoom floor to see the sector round
  * it, and back in. Film with EQX_SHOWCASE_TAKES=1: a retake's player lands at
  * the same home-pocket spot beside the earlier takes' lingering battleships.
  */
@@ -660,14 +655,13 @@ export const playerCapitalSector: Shot = {
     const item = await ctx.page.locator('[data-testid^="pilot-menu-ship-"]').first().boundingBox();
     if (item) await pad.finger().tap(item.x + item.width / 2, item.y + item.height / 2);
     await ctx.sleep(1500);
-    // A real tap on empty space up and to the right: the helm takes the course.
-    for (let i = 0; i < 5; i++) {
-      await pad.finger().tap(w * 0.78, h * 0.3);
-      const on = await ctx.page.evaluate(() => (globalThis as { __eqxStore?: { getState(): { helmActive?: boolean } } }).__eqxStore?.getState().helmActive === true);
-      if (on) break;
-      await ctx.sleep(300);
-    }
+    // Fly is manual (owner 2026-11-21): the left thumb pushes the move stick
+    // up and to the right and holds it; the battleship comes round and goes.
+    const thumb = pad.finger();
+    await thumb.down(w * 0.18, h * 0.7);
+    await thumb.dragTo(w * 0.18 + w * 0.05, h * 0.7 - h * 0.12, { ms: 400 });
     await ctx.sleep(6000);
+    await thumb.up();
     // Pinch out (fingers together) toward the capital zoom floor, then back in.
     const pinch = async (from: number, to: number): Promise<void> => {
       const a = pad.finger(), b = pad.finger();
