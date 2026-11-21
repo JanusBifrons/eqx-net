@@ -168,15 +168,15 @@ export function effectiveStructureMaxHealth(baseMaxHealth: number, level: number
 
 /**
  * Does this kind's cable plug into its own socket, one cable per socket? True
- * for every kind except the ones that take cables from ANY side: the connector
- * (6 faces, up to 10 links) and the shield emitters (pylon, gate, airlock),
- * whose fence links share posts. For a socket-bound kind the socket count is a
+ * for every kind except the shield emitters (pylon, gate, airlock), whose
+ * fence links share posts. The connector is socket-bound too (owner: "you
+ * can't have two connectors in one slot"): 6 sockets, at most 6 cables. For a socket-bound kind the socket count is a
  * hard link limit (owner: "max 4 cables" on a 4-socket chamfer kind), and
  * each cable takes a socket no other cable holds. The ONE any-side source:
  * the cable picker's `takesAnySide` (cableCurve.ts) is its negation.
  */
 export function structureLinksBoundBySockets(kindId: string): boolean {
-  return kindId !== 'connector' && !isShieldEmitterKind(kindId);
+  return !isShieldEmitterKind(kindId);
 }
 
 /**
