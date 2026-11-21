@@ -15,6 +15,9 @@ export interface FleetCommands {
   setMode(ids: readonly string[], mode: FleetMode, data?: SetModeParams): void;
   setStance(ids: readonly string[], stance: FleetStance): void;
   stop(ids: readonly string[]): void;
+  /** Command speed (the speed telegraph): re-pace the running Moves of
+   *  `ids` to `fraction` of each ship's top speed (0 = halt in place). */
+  setSpeed(ids: readonly string[], fraction: number): void;
   formSquad(ids: readonly string[]): void;
   disbandSquad(squadId: string): void;
   takeControls(id: string): void;
@@ -27,6 +30,7 @@ const DEFAULTS: FleetCommands = {
   setMode: noop,
   setStance: noop,
   stop: noop,
+  setSpeed: noop,
   formSquad: noop,
   disbandSquad: noop,
   takeControls: (id) => {
