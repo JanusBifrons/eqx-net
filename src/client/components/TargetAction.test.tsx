@@ -16,8 +16,8 @@ import { TargetAction } from './TargetAction';
 
 /**
  * User report (1v3 clip, 2026-11-08): LOCK in the info box "did nothing". The
- * lock could not progress (then: out of reach; since 2026-11-14 locks work at
- * any distance, so only an untrackable target), so it sat at 0 % and dropped after the grace
+ * lock could not progress (out of lock range, or an untrackable target), so it
+ * sat at 0 % and dropped after the grace
  * with no feedback. The server now marks such a lock `blocked`; the button must
  * say so.
  */
@@ -41,7 +41,7 @@ describe('TargetAction', () => {
     expect(lockSelected).toHaveBeenCalledOnce();
   });
 
-  it("shows CAN'T TRACK for a lock the server cannot progress (untrackable; locks work at any distance); a tap cancels it", () => {
+  it("shows CAN'T TRACK for a lock the server cannot progress (untrackable or past lock range); a tap cancels it", () => {
     setLock({ target: 's:7', stage: 1, blocked: true });
     render(<TargetAction isOwn={false} />);
     const btn = screen.getByTestId('fc-target');
