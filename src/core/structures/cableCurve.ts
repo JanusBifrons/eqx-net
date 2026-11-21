@@ -295,15 +295,16 @@ function growPairs(n: number): void {
   pairJ = new Int32Array(pairCap);
 }
 
-/** Ends that take a cable from any side (no facing filter, short tail, may
- *  share a socket): the kinds whose links are NOT socket-bound
- *  (`structureLinksBoundBySockets`, the one source): a connector, and a shield
- *  emitter (pylon / gate / airlock), whose sockets are its round posts rather
- *  than wall faces. Without the emitter case a gate could never be tapped from
- *  beside its middle (the base generator's row-end taps and the scale lattice
- *  both do that): a gate's posts point along the wall, not at its taps. */
+/** Ends that take a cable from any side (short tail): a connector (its faces
+ *  still face the partner, one cable per socket), and the kinds whose links
+ *  are NOT socket-bound (`structureLinksBoundBySockets`, the one source, may
+ *  share a socket): a shield emitter (pylon / gate / airlock), whose sockets
+ *  are its round posts rather than wall faces. Without the emitter case a gate
+ *  could never be tapped from beside its middle (the base generator's row-end
+ *  taps and the scale lattice both do that): a gate's posts point along the
+ *  wall, not at its taps. */
 function takesAnySide(n: GridNode): boolean {
-  return !structureLinksBoundBySockets(n.kind);
+  return n.isConnector || !structureLinksBoundBySockets(n.kind);
 }
 
 /** Bits in a used-socket mask (one per socket index). Every kind has fewer
@@ -342,7 +343,7 @@ export function socketListMask(sockets: readonly number[] | undefined): number {
  *
  *  0. One cable per stud (owner rule): on a socket-bound end a socket already
  *     holding a cable (`usedA` / `usedB`, bit masks: `linkSocketMask`) is
- *     skipped. An any-side end (`takesAnySide`) ignores its mask and shares.
+ *     skipped (a connector too). An emitter end ignores its mask and shares.
  *  1. Facing filter: a building socket takes a cable only to a partner socket
  *     in front of it (within 90° of its outward normal, never behind the
  *     building). A connector takes a cable from any side, but on a face
@@ -395,7 +396,7 @@ export function pickCableSocketPair(
   const aAny = takesAnySide(a), bAny = takesAnySide(b);
   // A connector's faces still face the partner (no cable back across the hub).
   const aFace = !aAny || a.isConnector, bFace = !bAny || b.isConnector;
-  const ua = aAny ? 0 : usedA, ub = bAny ? 0 : usedB;
+  const ua = structureLinksBoundBySockets(a.kind) ? usedA : 0, ub = structureLinksBoundBySockets(b.kind) ? usedB : 0;
   const max2 = maxRange * maxRange;
   // Minimum cable length, footprint edge to edge (owner: one clear section of
   // cable shows between the two buildings): too close, every pair is short.

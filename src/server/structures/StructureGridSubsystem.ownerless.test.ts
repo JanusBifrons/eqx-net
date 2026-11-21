@@ -45,7 +45,7 @@ function poweredBase(opts?: { second?: boolean; owner?: string }) {
   registry.topologyDirty = true;
   const second = opts?.second === true ? placement.place(owner, 'capital', 0, 1000, { rot: 0 }) : null;
   const solar = placement.place(owner, 'solar', 450, 500)!;
-  const turret = placement.place(owner, 'turret', -130, 400)!;
+  const turret = placement.place(owner, 'turret', -220, 450)!;
   let now = 0;
   for (let i = 0; i < 120; i++) grid.pulse(now += 1000);
   expect(registry.get(turret)!.isConstructed).toBe(true);

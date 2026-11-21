@@ -201,20 +201,27 @@ describe('one cable per stud on a socket-bound building (owner rule)', () => {
     expect(canConnect(se, bat, two, nodes)).toEqual({ ok: false, reason: 'no-facing-socket' });
   });
 
-  it('connector ends share sockets freely', () => {
+  it('a connector holds one cable per socket, six at most (owner: no two connectors in one slot)', () => {
     const hub = real('hub', 'connector', 0, 0);
     const sol = real('sol', 'solar', 620, 0);
     const nodes = map(hub, sol);
     expect(pickCableSocketPair(hub, sol, CONNECTION_MAX_RANGE, nodes, undefined, pick, 0, 0)).toBeNull();
-    const free = pick.a;
-    // Every hub face marked used: a connector end ignores its mask.
-    expect(pickCableSocketPair(hub, sol, CONNECTION_MAX_RANGE, nodes, undefined, pick, 0x3f, 0)).toBeNull();
-    expect(pick.a).toBe(free);
-    // Through canConnect: two solars east of a hub both land on its east face.
+    const east = pick.a;
+    // That face holding a cable: the next cable takes another face.
+    expect(pickCableSocketPair(hub, sol, CONNECTION_MAX_RANGE, nodes, undefined, pick, 1 << east, 0)).toBeNull();
+    expect(pick.a).not.toBe(east);
+    // Every face holding a cable: no socket left.
+    expect(pickCableSocketPair(hub, sol, CONNECTION_MAX_RANGE, nodes, undefined, pick, 0x3f, 0)).toBe('no-facing-socket');
+    // Through canConnect: a second solar east of the hub never lands on the held face.
     const s2 = real('s2', 'solar', 620, 0);
-    const adj = new Map<string, Connection[]>([['hub', [new Connection(1, 'hub', 'sol', 1, free, 2)]]]);
-    expect(canConnect(hub, s2, adj, map(hub, s2), undefined, pick).ok).toBe(true);
-    expect(pick.a).toBe(free);
+    const adj = new Map<string, Connection[]>([['hub', [new Connection(1, 'hub', 'sol', 1, east, 2)]]]);
+    const r = canConnect(hub, s2, adj, map(hub, s2), undefined, pick);
+    if (r.ok) expect(pick.a).not.toBe(east);
+    // Six links (one per face) fill it, whatever its levelled cap says.
+    const six = new Map<string, Connection[]>([['hub', [0, 1, 2, 3, 4, 5].map((s) => new Connection(10 + s, 'hub', `n${s}`, 1, s, 0))]]);
+    const c7 = real('c7', 'connector', 400, 0);
+    expect(canConnect(hub, c7, six, map(hub, c7))).toEqual({ ok: false, reason: 'a-full' });
+    expect(canConnect(c7, hub, six, map(hub, c7))).toEqual({ ok: false, reason: 'b-full' });
   });
 
   it('the build preview (sockets from connSockSelf) and the server (from links) pick the same pair', () => {

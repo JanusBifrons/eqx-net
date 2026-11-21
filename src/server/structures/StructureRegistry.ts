@@ -384,6 +384,21 @@ export class StructureRegistry {
     return c;
   }
 
+  /** Move link `c` to the socket pair `socketA` / `socketB` (a `canConnect`
+   *  re-seat, `CableReseat`): the same link (id, ends, flow) on new sockets. */
+  reseatConnection(c: Connection, socketA: number, socketB: number): void {
+    const moved = new Connection(c.id, c.aId, c.bId, c.throughput, socketA, socketB);
+    moved.flowMaterial = c.flowMaterial;
+    moved.flashUntilMs = c.flashUntilMs;
+    for (const end of [c.aId, c.bId]) {
+      const list = this.adjacency.get(end);
+      const i = list ? list.indexOf(c) : -1;
+      if (i >= 0) list![i] = moved;
+    }
+    this.connById.set(c.id, moved);
+    this.topologyDirty = true;
+  }
+
   /** Sever every connection touching `id`. Returns the severed connection ids. */
   disconnect(id: string): number[] {
     const conns = this.adjacency.get(id);
