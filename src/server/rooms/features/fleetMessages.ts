@@ -31,7 +31,7 @@ export interface FleetMessageHost extends ParsedMessageHost {
   sessionToPlayer(): ReadonlyMap<string, string>;
   /** Count one fleet command for `sessionId`; false = over this tick's cap (drop it). */
   fleetMsgAllowed(sessionId: string): boolean;
-  fleet: Pick<FleetCommandSubsystem, 'applyOrder' | 'setMode' | 'setStance' | 'formSquad' | 'disbandSquad'>;
+  fleet: Pick<FleetCommandSubsystem, 'applyOrder' | 'setMoveSpeed' | 'setMode' | 'setStance' | 'formSquad' | 'disbandSquad'>;
   fleetTransit(): Pick<TransitOrchestrator, 'fleetCommandIssued'> | null;
   fleetStatusSoon: Pick<FleetStatusSoon, 'request'>;
   serverTick(): number;
@@ -50,7 +50,9 @@ export function registerFleetMessages(h: FleetMessageHost): RoomFeature {
     const d = p.data;
     // One order object per accepted command: the brain keeps it as its order.
     let accepted: readonly string[];
-    if (d.kind === 'move') accepted = h.fleet.applyOrder(pid, d.shipIds, { kind: 'move', x: d.x!, y: d.y! });
+    if (d.kind === 'move') accepted = h.fleet.applyOrder(pid, d.shipIds, d.speed === undefined ? { kind: 'move', x: d.x!, y: d.y! } : { kind: 'move', x: d.x!, y: d.y!, speed: d.speed });
+    // Command speed: re-pace the running Moves (0 = halt in place, keep the point).
+    else if (d.kind === 'speed') accepted = h.fleet.setMoveSpeed(pid, d.shipIds, d.speed!);
     else if (d.kind === 'attack') accepted = h.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
     else accepted = h.fleet.applyOrder(pid, d.shipIds, FLEET_STOP_ORDER);
     // RTS fleet warp: a new order to a spooling ship takes it out of the warp.

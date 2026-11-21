@@ -26,6 +26,10 @@ While placing, **Rotate** (the turning-arrow button, or **R** on a keyboard)
 turns the building a quarter turn, and **Mirror** (the flip button beside it, or
 **F**) flips it left-right. Both choices carry over to the next building you place.
 
+On a phone, drag the ghost to move it, or tap where it should go. A one-finger
+drag anywhere else pans the view (and two fingers zoom), just like Command view,
+so you can reach a spot off screen.
+
 > **First cut:** placement drops the structure *ahead of your ship*. A
 > tap-to-position blueprint ghost (a translucent silhouette that follows the
 > cursor with a connection-range ring and live valid/invalid tint) is a planned
@@ -36,7 +40,7 @@ turns the building a quarter turn, and **Mirror** (the flip button beside it, or
 | Kind | Role | Notes |
 |---|---|---|
 | **Capital** (Core) | Pre-built root hub + the main mineral bank | Born fully built; links up to 4 others |
-| **Connector** (Relay) | Cheap pure hub — the linking mechanism | Links up to 6; everything else attaches to a hub |
+| **Connector** (Relay) | Cheap pure hub — the linking mechanism | 6 sockets, one cable each, so at most 6 links (upgrading adds none); everything else attaches to a hub |
 | **Solar Panel** | Power generator | A leaf — attaches to one hub |
 | **Mining Tower** | Drills asteroids for minerals | A leaf — power-gated |
 | **Turret** | Shoots hostile drones | A leaf — power-gated |
@@ -98,3 +102,4 @@ defend with turrets — all over one 1-second logistics pulse.
 - **Phase 4** — mining towers extract minerals (power-gated) and haul them to the
   Capital; mineral-bank HUD + mining beam.
 - **Phase 5** — defensive turrets track + destroy drones in range (power-gated).
+- **Building panels** — selection card + side panel (Power / Build / Manage): [building-panels](building-panels.md).

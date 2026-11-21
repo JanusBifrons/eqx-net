@@ -3,6 +3,10 @@ import { decidePlacementPointer } from '../placementPointerDecision.js';
 import { setCanvasPointerCapture } from '../pointerCapture.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { HoverBracket } from '../HoverBracket';
+import { getStructureKind } from '@shared-types/structureKinds';
+
+/** Screen px around the placement ghost that still grabs it with a finger. */
+const GHOST_FINGER_SLOP_PX = 24;
 
 export type { RendererInputDeps } from './rendererCommandRouting.js';
 
@@ -38,8 +42,11 @@ export class RendererInputController extends RendererCommandRouting {
       }
       return;
     }
-    // Structure placement positions the ghost instead of panning (worker path).
+    // Structure placement positions the ghost (worker path); a build-mode touch
+    // off the ghost pans / taps through the Command-view router instead.
     if (this._placementActive) {
+      if (this.routeBuildTouch(e.type, e.pointerId, e.offsetX, e.offsetY, e.stamp,
+        e.button ?? 0, e.buttons ?? 0, e.shiftKey === true, e.pointerType ?? 'mouse')) return;
       this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button ?? -1, e.pointerType ?? 'mouse');
       return;
     }
@@ -153,6 +160,9 @@ export class RendererInputController extends RendererCommandRouting {
         // delivering pointermove, stalling the ghost. Capture keeps every
         // move/up routed here until release.
         setCanvasPointerCapture(canvas, e.type, e.pointerId);
+        // A build-mode touch off the ghost pans / taps like Command view.
+        if (this.routeBuildTouch(e.type, e.pointerId, e.offsetX, e.offsetY, stamp,
+          e.button, e.buttons, e.shiftKey, e.pointerType)) return;
         this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button, e.pointerType);
         return;
       }
@@ -265,6 +275,57 @@ export class RendererInputController extends RendererCommandRouting {
       this._placementChosenY = gameY;
     }
     if (outcome.commit) this.feedback.placementConfirmSeq++;
+  }
+
+  /** A build-mode tap off the ghost (router `tapSelect`): the same down + lift
+   *  a tap made before, so the ghost moves there and parks for Confirm. */
+  protected placementTap(x: number, y: number, pointerType: string): void {
+    this.routePlacementPointer('pointerdown', x, y, 0, pointerType);
+    this.routePlacementPointer('pointerup', x, y, 0, pointerType);
+  }
+
+  /** The build-mode touch gesture that started on the ghost (drags it); -1 none. */
+  private _ghostDragPointer = -1;
+
+  /**
+   * Build mode on touch / pen (placement in the Command view): a gesture that
+   * starts on the ghost drags it (returns false: `routePlacementPointer`); any
+   * other goes through the Command-view router, so a one-finger drag pans, a
+   * pinch zooms and a tap moves the ghost (`placementTap`). Returns true when
+   * the router took the event. The mouse keeps hover-follow + click-to-place.
+   */
+  private routeBuildTouch(
+    type: string, pointerId: number, x: number, y: number, stamp: number,
+    button: number, buttons: number, shiftKey: boolean, pointerType: string,
+  ): boolean {
+    if (pointerType === 'mouse' || !this.buildRouterReady()) return false;
+    if (pointerId === this._ghostDragPointer) {
+      if (type === 'pointerup' || type === 'pointercancel') this._ghostDragPointer = -1;
+      return false;
+    }
+    if (type === 'pointerdown') {
+      if (!this.buildRouterBusy() && this.onPlacementGhost(x, y)) {
+        this._ghostDragPointer = pointerId;
+        return false;
+      }
+    } else if (!this.buildRouterBusy()) {
+      return false;
+    }
+    this.routeCommandPointer(type, pointerId, x, y, stamp, button, buttons, shiftKey, pointerType);
+    return true;
+  }
+
+  /** Is screen (x, y) on the placement ghost (its radius + a finger's slop)? */
+  private onPlacementGhost(screenX: number, screenY: number): boolean {
+    const pv = this._lastMirror?.pendingPlacementPreview ?? null;
+    const gx = this._placementChosenX ?? pv?.x ?? null;
+    const gy = this._placementChosenY ?? pv?.y ?? null;
+    if (gx === null || gy === null) return false;
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const dx = w.x - gx;
+    const dy = -w.y - gy;
+    const r = (pv !== null ? getStructureKind(pv.kind).radius : 0) + GHOST_FINGER_SLOP_PX / this.camera.scale.x;
+    return dx * dx + dy * dy <= r * r;
   }
 
   /** Remove every listener `installCanvasEventListeners` added (dispose). */

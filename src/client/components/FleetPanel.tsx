@@ -7,6 +7,7 @@ import { useIsCompact } from '../layout/useIsCompact.js';
 import { useUIStore } from '../state/store.js';
 import { modeNeedsPick } from '../fleet/fleetPickView.js';
 import { FleetPickBar } from './FleetPickBar.js';
+import { HelmPanel } from './HelmPanel.js';
 import { resolveFleetCommands, useFleetSelectionView, type FleetShipView } from '../fleet/useFleetSelectionView.js';
 
 /**
@@ -107,6 +108,8 @@ export function FleetPanel({ commands }: Props): JSX.Element | null {
         ))}
         {view.stance === 'mixed' && <Box component="span" sx={MIXED_SX} data-testid="fleet-stance-mixed">mixed</Box>}
       </Box>
+
+      <HelmPanel />
 
       <Box sx={ROW_SX}>
         <Button size="small" variant="outlined" color="warning" sx={BTN_SX} data-testid="fleet-stop" onClick={onStop}>Stop</Button>

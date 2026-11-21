@@ -2,7 +2,7 @@
 
 `src/client` is everything the player sees and hears. It is **not** the source of truth — the server is. The client hides latency with prediction and ghost projectiles, and defers to the server whenever the two disagree.
 
-Read the root [CLAUDE.md](../../CLAUDE.md) for project-wide invariants before editing. Each rule's regression tests (locks) are listed in its Detail guide; run them when you change that rule. Every Detail link means that guide's "Client rules in detail" section.
+Each rule's regression tests (locks) are listed in its Detail guide; run them when you change that rule. Every Detail link means that guide's "Client rules in detail" section.
 
 ## Forbidden Imports (CI-enforced)
 
@@ -150,7 +150,7 @@ Detail: [structures](../../docs/architecture/structures-and-power-grid.md).
 
 - **Damage numbers / health bars:** `pendingDamageNumbers` / `pendingHealthBarHits` are drain queues consumed once per frame; one number bucket per target (nearby hits coalesce); a dead target's number takes no late hit (`markDead`). Detail: [visual-effects](../../docs/architecture/visual-effects.md).
 - **Incoming naval fire** is mirror-derived (#16), renderer-only (#2), alloc-free (#14), radius from `shipTuning` (#18). Shells burst only on `shell_end`; a naval hit's FX wait for it (`navalHitHold.ts`). Detail: [off-screen-indicators](../../docs/architecture/off-screen-indicators.md), [shell-events](../../docs/architecture/shell-events.md).
-- **Helm course marker** rides `RenderMirror.helmCourse`, never Zustand. Detail: [capital-ships](../../docs/features/capital-ships.md).
+- **Helm orders (course tap, speed) are Command-only** (`helm/helmModeGate.ts`): Fly is manual, every hull. The marker rides `RenderMirror.helmCourse`, never Zustand. Detail: [capital-ships](../../docs/features/capital-ships.md).
 - **Shield/hull:** `shieldPct` tweens by CSS, no JS loop; percentages use the event's per-kind max; the predWorld shield swap follows only the authoritative shield-down, one site for drones (`syncSwarmIntoPredWorld`); shield visuals draw at the collider radius (`shieldBubbleRadiusForEntity`). Detail: [shield-hull](../../docs/features/shield-hull.md).
 - **Patrol faction tint** is set only at the one tint site in `swarmSpriteUpdater`. Detail: [factions](../../docs/architecture/factions.md).
 

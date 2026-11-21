@@ -28,10 +28,12 @@ import { blastRadiusFor } from '../art/fx/FxExplosions.js';
 import { forEachShipRekey } from '../shipRekey.js';
 import type { RendererFrameCtx } from './frameCtx.js';
 import { countPreviewRefusals } from './previewLinkRefusals.js';
+import { LanePhase, lanePhaseMark, lanePhaseStart } from '../../debug/perf/lanePhaseTiming.js';
 
 /** Hit targets, ship sprites + death explosions, connector web, swarm, sweep. */
 export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx): void {
   const r = ctx.r;
+  let t = lanePhaseStart(); // phone-lane phase timing: one null check per mark off the lane
   // 2026-05-25 heap-growth gate step 6: reuse persistent scratch
   // containers instead of `new Set<string>()` per frame.
   const seen = r.seenScratch;
@@ -68,6 +70,7 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
   // fallback path uses this; the EffectsService manages its own
   // particles + shock filters in its tick).
   ctx.explosionSprites.tick(r.shipContainer);
+  t = lanePhaseMark(LanePhase.ships, t);
 
   // Structures plan, Phase 3 — grid connector web (behind sprites). Joins
   // mirror.structures → mirror.swarm positions; no-op when no structures.
@@ -89,6 +92,7 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
   const viewBounds = r.camera.visibleBoundsInto(ctx.swarmViewScratch);
   const fences = r.connectorRenderer.fxFences;
   if (fences) fences.viewBounds = viewBounds;
+  r.connectorRenderer.viewBounds = viewBounds; // off-screen connector work is skipped
   r.connectorRenderer.update(mirror, r.world.scale.x, r.fxNow());
   r.feedback.placementPreviewConnectionCount =
     r.connectorRenderer.placementPreviewConnectionCount;
@@ -100,6 +104,7 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
   // render path only, like __eqxGalaxyBadgeCount, so the E2E runs ?worker=0.
   (globalThis as { __eqxBuiltTurretRangeCount?: number }).__eqxBuiltTurretRangeCount =
     r.connectorRenderer.builtTurretRangeCount;
+  t = lanePhaseMark(LanePhase.connectors, t);
 
   // Phase 5c swarm sprites (asteroids + drones) — see
   // pixi/swarmSpriteUpdater.ts. Ctx pooled to `r.swarmUpdaterCtx`.
@@ -117,16 +122,20 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
   r.swarmUpdaterCtx.cameraScale = r.world.scale.x; // wreck-piece far-zoom LOD
   r.swarmUpdaterCtx.wreckFarLayer = r.wreckFarLayer;
   updateSwarmSprites(mirror, r.swarmUpdaterCtx);
+  t = lanePhaseMark(LanePhase.swarm, t);
   r.farIcons.update(mirror, r.sprites, r.world.scale.x);
+  t = lanePhaseMark(LanePhase.farIcons, t);
   noteTurretShots(mirror, r.turretShotCtx); // pixi/turretShotUpdater.ts
   r.litSceneCtx.tractorViewCount = ctx.tractorViewCount;
   feedLitScene(mirror, r.litSceneCtx); // pixi/litSceneUpdater.ts
+  t = lanePhaseMark(LanePhase.turretsLit, t);
 
   // Sprites whose entity left the mirror this frame. Boost flame and
   // mount-visual cluster are children — destroy({ children: true }) frees
   // them too, but the map entries go so a respawn rebuilds cleanly. A
   // capital that died leaving a wreck is held (drawn) until its pieces are.
   sweepUnseenSprites(r.sprites, seen, r.forgetSprite, r.dyingHulls, r.fxNow());
+  lanePhaseMark(LanePhase.sweep, t);
 }
 
 /** Explosion sprites spawned this frame for destroyed ships. */

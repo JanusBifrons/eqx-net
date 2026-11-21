@@ -1,7 +1,7 @@
 /**
  * Build mode (owner design 2026-11-20): in Build, the third control mode
  * (`buildMode`, with or without a ghost) the flight controls are gone (joystick, lock
- * stick, BOOST, weapon strip, lock band, helm bar), so the ghost owns the
+ * stick, BOOST, weapon strip, lock band; the speed bar is Command-only), so the ghost owns the
  * screen. Panels unrelated to flying are stubbed: this locks the gate only.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -54,10 +54,11 @@ describe('GameHud in build mode', () => {
     useUIStore.setState({ phase: 'galaxy-map', pilotMode: 'pilot', isDead: false, helmAvailable: true, placementKind: null, buildMode: false });
   });
 
-  it('shows the flight controls and helm bar while flying (control)', () => {
+  it('shows the flight controls while flying, and no speed bar (Fly is manual)', () => {
+    useUIStore.setState({ selection: { ids: ['me'], focusId: null, focusKind: null } });
     renderHud();
     for (const id of FLIGHT_IDS) expect(document.querySelector(`[data-testid="${id}"]`), id).not.toBeNull();
-    expect(document.querySelector('[data-testid="helm-panel"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="helm-panel"]')).toBeNull();
   });
 
   it('renders no flight control and no helm bar in Build mode', () => {

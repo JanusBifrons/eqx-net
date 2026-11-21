@@ -320,3 +320,28 @@ describe('fleet map picks (slice 14b)', () => {
     expect(useUIStore.getState().fleetPick).toBeNull();
   });
 });
+
+describe('Command speed lives in the selection panel, off the play area', () => {
+  // The speed telegraph used to float in the top-centre slot, over the map,
+  // where a right-click move order on that spot hit the bar instead of the
+  // canvas. It now rides the fleet panel / strip, which already own the
+  // bottom edge while ships are selected.
+  const select = (): void => act(() => useUIStore.setState({
+    travelling: true, commandSpeed: 3, selection: { ids: ['a', 'b'], focusId: null, focusKind: null },
+  }));
+
+  it('the desktop fleet panel carries the speed telegraph', () => {
+    render(<FleetPanel />);
+    select();
+    const panel = screen.getByTestId('fleet-panel');
+    expect(panel.querySelector('[data-testid="helm-panel"]')).not.toBeNull();
+  });
+
+  it('the compact fleet strip carries the speed telegraph', () => {
+    setCompact(true);
+    render(<FleetStrip />);
+    select();
+    const strip = screen.getByTestId('fleet-strip');
+    expect(strip.querySelector('[data-testid="helm-panel"]')).not.toBeNull();
+  });
+});

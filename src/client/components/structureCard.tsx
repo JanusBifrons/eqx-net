@@ -37,6 +37,8 @@ export interface StructureCardData {
   switchedOff?: boolean;
   buildPct?: number;
   buildBlocked?: boolean;
+  /** Why a paused build is paused (`buildStalledLine`): dry bank or not connected. */
+  buildStalled?: string;
   breach?: boolean;
   noFuel?: boolean;
   noAmmo?: boolean;
@@ -74,6 +76,9 @@ const PROD_TONE: Readonly<Record<number, ChipTone>> = {
 /** The card's one status chip, most urgent first; null when there is nothing to say. */
 export function structureStatusChip(d: StructureCardData): StatusChip | null {
   if (d.breach === true) return { key: 'breach', label: 'Breach', tone: 'danger', title: 'Someone is breaking in' };
+  if (d.buildPct !== undefined && d.buildPct < 1 && d.buildStalled !== undefined) {
+    return { key: 'build-stalled', label: d.buildStalled, tone: 'warn', title: `Building ${Math.round(d.buildPct * 100)}%: ${d.buildStalled}` };
+  }
   if (d.buildPct !== undefined && d.buildPct < 1) return { key: 'building', label: `Building ${Math.round(d.buildPct * 100)}%`, tone: 'build' };
   if (d.buildBlocked === true) return { key: 'build-blocked', label: BUILD_AWAITING_CLEAR_LINE, tone: 'warn' };
   if (d.noFuel === true) return { key: 'no-fuel', label: 'No fuel', tone: 'danger' };

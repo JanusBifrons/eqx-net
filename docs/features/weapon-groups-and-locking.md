@@ -57,7 +57,11 @@ committed a hostile act; the normal red lock then runs.
 **Rocks, scrap and wrecks** can be locked as well (for mining lasers and
 tractors). Locking them is never hostile: no failsafe ring, nobody is alerted.
 The lock line only takes them when no ship or structure is under it, and AUTO
-groups and missiles never pick them.
+groups and missiles never pick them for themselves. The one exception follows
+your own lock: an idle AUTO tractor group joins a rock or wreck another of your
+groups has LOCKED, taking a cut piece it can pull, so locking the mining laser
+alone still brings the rock in
+([mining](mining-and-salvage.md#the-factory-line-small-pieces-go-straight-into-the-hold)).
 
 ## Firing
 

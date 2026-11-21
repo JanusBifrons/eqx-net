@@ -35,7 +35,7 @@ describe('SpeedDialMenu: the Build sidebar', () => {
     expect(sidebarOpen()).toBe(true);
 
     fireEvent.click(screen.getByTestId('build-cat-economy'));
-    fireEvent.click(screen.getByTestId('build-solar'));
+    fireEvent.click(screen.getByTestId('build-solar').querySelector('button')!); // the tile's button, as a tap hits it
     expect(useUIStore.getState().placementKind).toBe('solar');
     expect(useUIStore.getState().buildMode).toBe(true);
     expect(sidebarOpen()).toBe(false);
@@ -59,7 +59,7 @@ describe('SpeedDialMenu: the Build sidebar', () => {
     useUIStore.setState({ packedStock: null });
     act(() => useUIStore.getState().setBuildMode(true));
     fireEvent.click(screen.getByTestId('build-cat-core'));
-    fireEvent.click(screen.getByTestId('build-capital'));
+    fireEvent.click(screen.getByTestId('build-capital').querySelector('button')!); // the tile's button, as a tap hits it
     expect(useUIStore.getState().placementKind).toBe('capital');
     expect(sidebarOpen()).toBe(false);
     act(() => { commitPlacement('capital'); });

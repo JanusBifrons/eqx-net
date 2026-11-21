@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { getStructureKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import { canConnect, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
+import { makeCableSocketPick } from '../structures/cableCurve.js';
 import { keepClearBox, placementRejection } from '../structures/placementRules.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 import { GALAXY_SECTORS } from '../galaxy/galaxy.js';
@@ -26,6 +27,8 @@ function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode
   };
 }
 
+const verifyPick = makeCableSocketPick();
+
 /** Re-check a generated base against the real rules, independently. */
 function verify(b: GrownBase): { reached: number } {
   const nodes = new Map<string, GridNode>();
@@ -40,8 +43,10 @@ function verify(b: GrownBase): { reached: number } {
   let cid = 0;
   for (const [a, c] of b.edges) {
     const na = nodes.get('s' + a)!, nc = nodes.get('s' + c)!;
-    expect(canConnect(na, nc, adj, nodes), `edge ${a}-${c}`).toEqual({ ok: true });
-    const con = new Connection(cid++, na.id, nc.id, 1);
+    // The picked sockets are stored, so a connector's held sockets count
+    // (one cable per socket, at most six).
+    expect(canConnect(na, nc, adj, nodes, undefined, verifyPick), `edge ${a}-${c}`).toEqual({ ok: true });
+    const con = new Connection(cid++, na.id, nc.id, 1, verifyPick.a, verifyPick.b);
     (adj.get(na.id) ?? adj.set(na.id, []).get(na.id)!).push(con);
     (adj.get(nc.id) ?? adj.set(nc.id, []).get(nc.id)!).push(con);
   }

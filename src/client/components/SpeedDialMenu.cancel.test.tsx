@@ -16,7 +16,7 @@ function pickSolar(): void {
   fireEvent.click(screen.getByTestId('speed-dial-fab'));
   fireEvent.click(screen.getByTestId('speed-dial-build'));
   fireEvent.click(screen.getByTestId('build-cat-economy'));
-  fireEvent.click(screen.getByTestId('build-solar'));
+  fireEvent.click(screen.getByTestId('build-solar').querySelector('button')!); // the tile's button, as a tap hits it
 }
 
 describe('SpeedDialMenu: cancelling a placement', () => {
