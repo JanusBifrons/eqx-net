@@ -14,9 +14,11 @@
  * interpolation miss counters and the DataChannel transport. Sampled on a
  * 10 Hz wall-clock timer, never per frame; re-renders at most every
  * `NET_HEALTH_PUBLISH_MS`, and only when a shown value changes. Logic and
- * thresholds: `netHealth.ts`.
+ * thresholds: `netHealth.ts`; readouts, slot widths and the tap-open detail
+ * paragraphs: `netHealthItems.ts`.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { SvgIconComponent } from '@mui/icons-material';
 import SignalCellularAltIcon from '@mui/icons-material/SignalCellularAlt';
 import DnsIcon from '@mui/icons-material/Dns';
 import SmartphoneIcon from '@mui/icons-material/Smartphone';
@@ -41,9 +43,12 @@ import {
   NET_HEALTH_PUBLISH_MS, NET_HEALTH_SAMPLE_MS, NetHealthMonitor, NET_RTT_WARN_MS, NET_RTT_BAD_MS,
   NET_GAPS_WARN_PER_MIN, NET_GAPS_BAD_PER_MIN, SERVER_SEND_GAP_BAD_MS, SERVER_CLOCK_RATE_WARN,
   SERVER_CLOCK_RATE_BAD, DEVICE_STALLS_WARN_PER_S, DEVICE_STALLS_BAD_PER_S, OWN_CORRECTIONS_PER_S,
-  DRONE_MISSES_PER_DRONE_S, netHealthDisplayKey, networkReadout, serverReadout,
-  type NetHealthSample, type NetLevel,
+  DRONE_MISSES_PER_DRONE_S, netHealthDisplayKey, type NetHealthSample, type NetLevel,
 } from './netHealth';
+import { NET_SLOT_CH, netHealthItems, type NetHealthItem, type NetItemKind } from './netHealthItems';
+
+/** The cluster (and its open details) never grows wider than this (px). */
+const DETAILS_MAX_WIDTH_PX = 260;
 
 /** Fill `out` from the live counters. Allocates nothing. */
 function readNetHealthSample(out: NetHealthSample): void {
@@ -87,19 +92,50 @@ const WS_TIP = 'WebRTC failed: game updates are on the slower WebSocket fallback
 
 const levelColor = (level: NetLevel): string => (level === 'bad' ? HUD.color.hullCrit : HUD.color.hullWarn);
 
-interface ChipProps { testId: string; tip: string; color: string; size: number; icon: ReactNode; text?: string }
+/** Icon, test id and desktop hover tip per item: shared by the chip and its details row. */
+const ITEM_UI: Readonly<Record<NetItemKind, { Icon: SvgIconComponent; testId: string; tip: string }>> = {
+  linkDown: { Icon: CloudOffIcon, testId: 'net-link-down', tip: DOWN_TIP },
+  linkWs: { Icon: LanIcon, testId: 'net-link-ws', tip: WS_TIP },
+  network: { Icon: SignalCellularAltIcon, testId: 'net-network', tip: NET_TIP },
+  server: { Icon: DnsIcon, testId: 'net-server', tip: SERVER_TIP },
+  device: { Icon: SmartphoneIcon, testId: 'net-device', tip: DEVICE_TIP },
+  corrections: { Icon: MyLocationIcon, testId: 'net-corrections', tip: CORR_TIP },
+  drones: { Icon: ScatterPlotIcon, testId: 'net-drones', tip: DRONE_TIP },
+};
 
-function Chip({ testId, tip, color, size, icon, text }: ChipProps): JSX.Element {
+/** Tabular digits in a fixed-width slot, so a value gaining a digit moves nothing. */
+const SLOT_STYLE = { display: 'inline-block', fontVariantNumeric: 'tabular-nums', textAlign: 'left', whiteSpace: 'nowrap' } as const;
+
+function Chip({ item, size }: { item: NetHealthItem; size: number }): JSX.Element {
+  const { Icon, testId, tip } = ITEM_UI[item.kind];
+  const slotCh = NET_SLOT_CH[item.kind];
   return (
     <span
       data-testid={testId}
       title={tip}
       aria-label={tip}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color }}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: levelColor(item.level) }}
     >
-      {icon}
-      {text !== undefined && <span style={{ fontFamily: HUD.font.num, fontSize: size }}>{text}</span>}
+      <Icon sx={{ fontSize: size + 3 }} />
+      {slotCh > 0 && (
+        <span data-testid={`${testId}-value`} style={{ ...SLOT_STYLE, fontFamily: HUD.font.num, fontSize: size, minWidth: `${slotCh}ch` }}>
+          {item.readout}
+        </span>
+      )}
     </span>
+  );
+}
+
+/** One details paragraph beside the same icon as its chip. */
+function DetailRow({ item, size }: { item: NetHealthItem; size: number }): JSX.Element {
+  const { Icon, testId } = ITEM_UI[item.kind];
+  return (
+    <div data-testid={`${testId}-detail`} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+      <Icon sx={{ fontSize: size + 5, color: levelColor(item.level), flexShrink: 0, mt: '1px' }} />
+      <p style={{ margin: 0, fontFamily: HUD.font.label, fontSize: size, lineHeight: 1.35, color: HUD.color.ink, whiteSpace: 'normal' }}>
+        {item.text}
+      </p>
+    </div>
   );
 }
 
@@ -137,56 +173,30 @@ export function NetHealthCluster({ size = 9 }: { size?: number }): JSX.Element |
     return () => window.clearInterval(h);
   }, []);
 
-  const v = monitorRef.current.view;
   if (!monitorRef.current.anyShown) return null;
-  const icon = { fontSize: size + 3 } as const;
-  const tips: string[] = [];
-  if (v.link.shown) tips.push(v.link.state === 'down' ? DOWN_TIP : WS_TIP);
-  if (v.network.shown) tips.push(NET_TIP);
-  if (v.server.shown) tips.push(SERVER_TIP);
-  if (v.device.shown) tips.push(DEVICE_TIP);
-  if (v.corrections.shown) tips.push(CORR_TIP);
-  if (v.drones.shown) tips.push(DRONE_TIP);
+  const items = netHealthItems(monitorRef.current.view);
 
   return (
     <div
       data-testid="hud-net-health"
       data-hud-exclusion=""
+      role="button"
+      aria-expanded={tipOpen}
       onPointerDown={(e) => { e.stopPropagation(); setTipOpen((o) => !o); }}
       style={{
-        pointerEvents: 'auto', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2,
-        padding: '3px 6px', borderRadius: 6, background: HUD.color.panel, border: `1px solid ${HUD.color.panelEdge}`,
-        lineHeight: 1.2, maxWidth: 220,
+        pointerEvents: 'auto', cursor: 'pointer', touchAction: 'manipulation', display: 'flex', flexDirection: 'column',
+        gap: 4, padding: '3px 6px', borderRadius: 6, background: HUD.color.panel, border: `1px solid ${HUD.color.panelEdge}`,
+        lineHeight: 1.2, maxWidth: DETAILS_MAX_WIDTH_PX,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        {v.link.shown && (v.link.state === 'down'
-          ? <Chip testId="net-link-down" tip={DOWN_TIP} color={HUD.color.hullCrit} size={size} icon={<CloudOffIcon sx={icon} />} />
-          : <Chip testId="net-link-ws" tip={WS_TIP} color={HUD.color.hullWarn} size={size} icon={<LanIcon sx={icon} />} text="WS" />)}
-        {v.network.shown && (
-          <Chip testId="net-network" tip={NET_TIP} color={levelColor(v.network.level)} size={size}
-            icon={<SignalCellularAltIcon sx={icon} />} text={networkReadout(v.network)} />
-        )}
-        {v.server.shown && (
-          <Chip testId="net-server" tip={SERVER_TIP} color={levelColor(v.server.level)} size={size}
-            icon={<DnsIcon sx={icon} />} text={serverReadout(v.server)} />
-        )}
-        {v.device.shown && (
-          <Chip testId="net-device" tip={DEVICE_TIP} color={levelColor(v.device.level)} size={size}
-            icon={<SmartphoneIcon sx={icon} />} text={`${Math.round(v.device.stallsPerS)}/s`} />
-        )}
-        {v.corrections.shown && (
-          <Chip testId="net-corrections" tip={CORR_TIP} color={HUD.color.hullWarn} size={size}
-            icon={<MyLocationIcon sx={icon} />} text={`${Math.round(v.corrections.perS)}/s`} />
-        )}
-        {v.drones.shown && (
-          <Chip testId="net-drones" tip={DRONE_TIP} color={HUD.color.hullWarn} size={size}
-            icon={<ScatterPlotIcon sx={icon} />} text={`${Math.round(v.drones.perDroneS)}/s`} />
-        )}
+        {items.map((it) => <Chip key={it.kind} item={it} size={size} />)}
       </div>
-      {tipOpen && tips.map((t) => (
-        <div key={t} style={{ fontFamily: HUD.font.label, fontSize: size - 1, color: HUD.color.inkDim, whiteSpace: 'normal' }}>{t}</div>
-      ))}
+      {tipOpen && (
+        <div data-testid="hud-net-health-details" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '3px 0 2px' }}>
+          {items.map((it) => <DetailRow key={it.kind} item={it} size={size} />)}
+        </div>
+      )}
     </div>
   );
 }
