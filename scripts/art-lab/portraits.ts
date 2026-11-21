@@ -3,6 +3,10 @@
  *
  *   pnpm ships:portraits [--only fighter,battleship]
  *
+ * Also bakes every buildable structure (the build menu) into
+ * `public/structures/<kind>.webp` from the same scene (`?struct=`); `--only`
+ * takes ship and structure kinds alike.
+ *
  * Boots an isolated Vite (port 5378, never the dev 5173), opens the art lab's
  * `portrait` scene in headless Chromium for each flyable hull (machined art),
  * screenshots a centred square, and writes `public/ships/<kind>.webp` (320 px,
@@ -13,13 +17,14 @@ import { mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium, type Page } from '@playwright/test';
-import { PORTRAIT_KINDS, portraitQuery } from '../../src/client/render/art/shipPortraits.js';
+import { PORTRAIT_KINDS, STRUCTURE_PORTRAIT_KINDS, portraitQuery, structurePortraitQuery } from '../../src/client/render/art/shipPortraits.js';
 
 const args = process.argv.slice(2);
 const flag = (k: string): string | undefined => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; };
 const ONLY = flag('--only')?.split(',');
 const PORT = 5378;
 const OUT = path.resolve('public/ships');
+const OUT_STRUCT = path.resolve('public/structures');
 const SIZE = 320;
 /** The sheet is 1600×900; the ship sits in the centred 900 square. */
 const CLIP = { x: 350, y: 0, width: 900, height: 900 };
@@ -68,8 +73,13 @@ async function litPixels(page: Page): Promise<number> {
 }
 
 async function main(): Promise<void> {
-  const kinds = PORTRAIT_KINDS.filter((k) => !ONLY || ONLY.includes(k));
+  const want = (k: string): boolean => !ONLY || ONLY.includes(k);
+  const jobs = [
+    ...PORTRAIT_KINDS.filter(want).map((kind) => ({ kind, q: portraitQuery(kind), dir: OUT })),
+    ...STRUCTURE_PORTRAIT_KINDS.filter(want).map((kind) => ({ kind, q: structurePortraitQuery(kind), dir: OUT_STRUCT })),
+  ];
   mkdirSync(OUT, { recursive: true });
+  mkdirSync(OUT_STRUCT, { recursive: true });
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'eqx-portraits-'));
   const vite = bootVite();
   try {
@@ -78,21 +88,21 @@ async function main(): Promise<void> {
     const browser = await chromium.launch();
     const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
     let bytes = 0;
-    for (const kind of kinds) {
-      await open(page, portraitQuery(kind));
+    for (const { kind, q, dir } of jobs) {
+      await open(page, q);
       await page.evaluate((m) => (window as unknown as { __artlab: { seek(ms: number): void } }).__artlab.seek(m), 2000);
       await page.waitForTimeout(300);
       if ((await litPixels(page)) < 3) throw new Error(`blank portrait: ${kind}`);
       const png = path.join(tmp, `${kind}.png`);
       await page.screenshot({ path: png, clip: CLIP });
-      const webp = path.join(OUT, `${kind}.webp`);
+      const webp = path.join(dir, `${kind}.webp`);
       execFileSync(FFMPEG, ['-y', '-loglevel', 'error', '-i', png, '-vf', `scale=${SIZE}:${SIZE}:flags=lanczos`, '-c:v', 'libwebp', '-quality', '82', webp]);
       const b = statSync(webp).size;
       bytes += b;
       console.log(`${kind.padEnd(22)} ${(b / 1024).toFixed(1)} KB`);
     }
     await browser.close();
-    console.log(`${kinds.length} pictures, ${(bytes / 1024).toFixed(0)} KB total -> ${OUT}`);
+    console.log(`${jobs.length} pictures, ${(bytes / 1024).toFixed(0)} KB total -> ${OUT}, ${OUT_STRUCT}`);
   } finally {
     // Windows: kill the whole tree FIRST. Killing the shell first orphans
     // vite (taskkill /T then finds no tree), which keeps the port and, via its

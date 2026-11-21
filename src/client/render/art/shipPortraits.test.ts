@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CAPITAL_PORTRAIT_ROT, CAPITAL_PORTRAIT_ZOOM, PORTRAIT_KINDS, portraitFraming, portraitQuery, shipPortraitUrl } from './shipPortraits.js';
+import { CAPITAL_PORTRAIT_ROT, CAPITAL_PORTRAIT_ZOOM, PORTRAIT_KINDS, portraitFraming, portraitQuery, shipPortraitUrl, STRUCTURE_PORTRAIT_KINDS, structurePortraitQuery, structurePortraitUrl } from './shipPortraits.js';
+import { BUILD_CATEGORIES } from '../../components/buildCategories.js';
 import { shipParts } from './fields.js';
 import { shipTurrets } from './turretLayout.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -44,5 +45,23 @@ describe('ship portraits (join flow stage 3)', () => {
     const widest = Math.max(...caps.map(span)) * CAPITAL_PORTRAIT_ZOOM;
     expect(widest).toBeLessThanOrEqual(900 * 0.95);
     expect(widest).toBeGreaterThanOrEqual(900 * 0.7);
+  });
+});
+
+describe('structure portraits (build menu P1)', () => {
+  it('covers exactly the kinds in the build categories', () => {
+    const categorised = BUILD_CATEGORIES.flatMap((c) => c.kinds);
+    expect(new Set(STRUCTURE_PORTRAIT_KINDS)).toEqual(new Set(categorised));
+  });
+
+  it('resolves a buildable structure and nothing else', () => {
+    expect(structurePortraitUrl('solar')).toBe('/structures/solar.webp');
+    expect(structurePortraitUrl('shipyard')).toBe('/structures/shipyard.webp');
+    expect(structurePortraitUrl('fighter')).toBeNull();
+    expect(structurePortraitUrl('no-such-structure')).toBeNull();
+  });
+
+  it('asks the art lab for one machined structure', () => {
+    expect(structurePortraitQuery('refinery')).toBe('style=machined&scene=portrait&struct=refinery');
   });
 });

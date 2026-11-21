@@ -10,6 +10,7 @@ import { PLAYABLE_SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
 import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
 import { buildRecipeFor } from '../../../shared-types/recipes.js';
 import type { ShipKindId } from '../../../shared-types/shipKinds.js';
+import { STRUCTURE_KINDS_LIST, isBuildableStructureKind } from '../../../shared-types/structureKinds.js';
 
 /** Every hull a pilot can fly (engineering-only test hulls excluded). */
 export const PORTRAIT_KINDS: readonly string[] = PLAYABLE_SHIP_KINDS_LIST
@@ -49,4 +50,23 @@ export function portraitQuery(kind: string): string {
 /** The baked picture's URL for `kind`, or null when there is none. */
 export function shipPortraitUrl(kind: string): string | null {
   return HAS.has(kind) ? `/ships/${kind}.webp` : null;
+}
+
+/** Build menu P1 — every structure a player can build (the build categories,
+ *  `buildCategories.tsx`, cover exactly these: locked by its test), each baked
+ *  by the same `pnpm ships:portraits` run into `public/structures/<kind>.webp`. */
+export const STRUCTURE_PORTRAIT_KINDS: readonly string[] = STRUCTURE_KINDS_LIST
+  .map((k) => k.id)
+  .filter((id) => isBuildableStructureKind(id));
+
+const HAS_STRUCT = new Set(STRUCTURE_PORTRAIT_KINDS);
+
+/** The art lab query for structure `kind`'s picture (framed by its own footprint). */
+export function structurePortraitQuery(kind: string): string {
+  return `style=machined&scene=portrait&struct=${kind}`;
+}
+
+/** The baked structure picture's URL for `kind`, or null when there is none. */
+export function structurePortraitUrl(kind: string): string | null {
+  return HAS_STRUCT.has(kind) ? `/structures/${kind}.webp` : null;
 }

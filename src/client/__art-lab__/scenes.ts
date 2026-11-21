@@ -421,7 +421,19 @@ export function buildScene(id: SceneId, zoomOverride?: number, n = 40, view: Vie
       // `?th=` is engine thrust (0 hides a capital's detached engine glows);
       // `?cz=` sets the camera zoom outright (capitals share one, to scale);
       // `?rot=` turns the hull (radians; a long capital lies corner to corner).
+      // `?struct=` instead draws one structure, centred and framed by its own
+      // footprint (the build menu's baked pictures; `zm` still scales it).
       const q = new URLSearchParams(location.search);
+      const sid = q.get('struct');
+      if (sid) {
+        const fp = structFootprint(sid);
+        const side = Math.max(fp.w, fp.h);
+        const sz = fitZoom(side, side, 0.9) * (q.has('zm') ? Number(q.get('zm')) : 1);
+        return {
+          ships: [], structs: [{ id: sid, x: 0, y: 0, rot: 0, seed: 1 }], booms: [], duration: 8,
+          camera: (_t, c) => { c.x = 0; c.y = 0; c.zoom = sz; },
+        };
+      }
       const kid = q.get('kind') ?? 'fighter';
       const zm = q.has('zm') ? Number(q.get('zm')) : 1;
       const th = q.has('th') ? Number(q.get('th')) : 0.6;
