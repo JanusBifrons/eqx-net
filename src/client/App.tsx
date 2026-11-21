@@ -8,6 +8,7 @@ import { installTestLeakHook } from './debug/testLeakHook';
 import { Box } from '@mui/material';
 import { ColyseusGameClient } from './net/ColyseusClient';
 import { setGameClient } from './net/clientSingleton';
+import { getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs } from './net/swarmInterpolation';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { selectRenderer, installProfileWindow } from './app/gameSurfaceBootstrap';
 import { runGameSurfaceConnectFlow } from './app/gameSurfaceConnectFlow';
@@ -552,6 +553,10 @@ function GameSurface({
     // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
     if (import.meta.env.DEV) {
       (window as unknown as { __eqxClient?: ColyseusGameClient }).__eqxClient = gameClient;
+      // Netgate print-only read of the drone display delay (wall ms): the slewed
+      // value and its target. Plain getters, read by the spec's sampler only.
+      (window as unknown as { __eqxSwarmDelay?: { delayMs: () => number; targetMs: () => number } })
+        .__eqxSwarmDelay = { delayMs: getSwarmDisplayDelayMs, targetMs: getSwarmDisplayDelayTargetMs };
       // Test-only hook for E2E specs: set the active weapon SLOT directly
       // (weapons/energy/AI overhaul §5.2 — the per-weapon picker is gone;
       // each ship fires its catalogue-bound loadout). Production tree-shakes.
