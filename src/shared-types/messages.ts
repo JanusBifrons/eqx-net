@@ -165,6 +165,8 @@ export type {
 // Living World (server → client)
 export type { BotAggroEvent } from './messages/livingWorldMessages.js';
 export type { GridPulseEvent, GridFlowMaterial } from './messages/gridMessages.js';
+// Recipe queue (building panels B2; client → server, beside SetRecipeSchema)
+export { EditRecipeQueueSchema, type EditRecipeQueueMessage } from './messages/productionMessages.js';
 
 // Click-to-inspect selection-scoped stats channel (structures follow-up Item B5)
 export {

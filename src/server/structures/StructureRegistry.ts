@@ -196,6 +196,15 @@ export interface StructureRecord {
   /** Build count (job 2E): outputs left before it stops (0 ⇒ done, state
    *  `done`). Absent ⇒ repeat forever. Persisted; rides room state. */
   prodCount?: number;
+  /** Recipe queue (building panels B2): the entries AFTER the head (`recipe`),
+   *  each ONE build. Present ⇒ queue mode (`productionQueue.ts`); cleared by
+   *  `set_recipe`. Not persisted or on the wire yet. */
+  prodQueue?: RecipeId[];
+  /** Queue repeat: a finished head goes to the back instead of dropping off. */
+  prodQueueRepeat?: boolean;
+  /** Building panels B7: bit i = network storage holds a blueprint for the
+   *  kind's recipe i (`blueprintStock.ts`, 1 Hz). Derived; not persisted. */
+  bpAvail?: number;
   /** A chunk recipe's loaded item (a rock chunk) with the ore still to pay
    *  out; set while `prodLoaded`. Persisted (it holds value). */
   prodChunk?: PackedItem;

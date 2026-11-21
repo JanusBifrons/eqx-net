@@ -7,7 +7,7 @@
  * Both sides read these constants (#15). Append-only.
  */
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from './goods.js';
-import { PROCESSOR_KIND_IDS, RECIPES, RECIPE_IDS, recipesFor, type ProcessorKindId, type RecipeId } from './recipes.js';
+import { PROCESSOR_KIND_IDS, RECIPES, RECIPE_IDS, blueprintProductFor, recipesFor, type ProcessorKindId, type RecipeId } from './recipes.js';
 
 export const PROD_STATE = {
   /** Not a processor, or not built yet. */
@@ -131,6 +131,10 @@ export function encodeBpRuns(bp: { kind: 'bpo' | 'bpc'; runs: number | null } | 
 /** Build count (job 2E): the most outputs one `set_recipe` count asks for. */
 export const MAX_BUILD_COUNT = 99;
 
+/** Recipe queue (building panels B2): the most entries one processor queues,
+ *  counting the head it is running now. */
+export const MAX_RECIPE_QUEUE = 8;
+
 /** Build count on the wire: 0 = no count (repeat forever), else outputs left + 1
  *  (so 1 = done, nothing left). */
 export function encodeProdCount(left: number | undefined): number {
@@ -139,6 +143,155 @@ export function encodeProdCount(left: number | undefined): number {
 
 export function decodeProdCount(v: number | undefined): number | undefined {
   return v ? v - 1 : undefined;
+}
+
+/**
+ * Recipe queue on the wire (building panels B4): two uint32 row fields,
+ * `prodQ0` and `prodQ1`, carry the entries after the head as `encodeRecipe`
+ * bytes, low byte first (0 = empty, so a short queue ends at the first 0).
+ * `prodQ0` holds entries 0..3, `prodQ1` entries 4..6 in its low three bytes;
+ * its top byte is free (the queue never exceeds MAX_RECIPE_QUEUE - 1 = 7), so
+ * bit 31 carries the repeat flag. Both 0 = no queue, repeat off.
+ */
+export const PROD_QUEUE_WIRE_SLOTS = 7;
+const PROD_Q_REPEAT = 0x80000000;
+
+/** Pack entries `from..from+n-1` of `queue` into one uint32 (byte per entry). */
+function packQueueWord(queue: readonly RecipeId[] | undefined, from: number, n: number): number {
+  let w = 0;
+  let mul = 1;
+  const len = queue === undefined ? 0 : Math.min(queue.length, PROD_QUEUE_WIRE_SLOTS);
+  for (let i = from; i < from + n && i < len; i++) {
+    w += encodeRecipe(queue![i]) * mul;
+    mul *= 256;
+  }
+  return w;
+}
+
+/** `prodQ0`: the first four queued entries. */
+export function encodeProdQ0(queue: readonly RecipeId[] | undefined): number {
+  return packQueueWord(queue, 0, 4);
+}
+
+/** `prodQ1`: queued entries 4..6, the slot blueprint (`encodeBpProduct`,
+ *  building panels B7) in bits 24..30, and the repeat flag in bit 31. */
+export function encodeProdQ1(queue: readonly RecipeId[] | undefined, repeat: boolean | undefined, bpProduct = 0): number {
+  const bp = bpProduct > 0 && bpProduct <= BP_PRODUCT_MAX ? bpProduct * BP_PRODUCT_MUL : 0;
+  return packQueueWord(queue, 4, 3) + bp + (repeat === true ? PROD_Q_REPEAT : 0);
+}
+
+/** True when `prodQ1` carries queue entries (not just the B7 slot byte or the
+ *  repeat flag). */
+export function prodQ1HasQueue(q1: number | undefined): boolean {
+  return (q1 ?? 0) % BP_PRODUCT_MUL !== 0;
+}
+
+export function decodeProdQueueRepeat(q1: number | undefined): boolean {
+  return (q1 ?? 0) >= PROD_Q_REPEAT;
+}
+
+/** Decode `prodQ0` / `prodQ1` into `out` IN PLACE (cleared first; the caller
+ *  reuses one array per row, #14). Stops at the first empty byte; an unknown
+ *  recipe byte (newer server) ends the list too. */
+export function decodeProdQueue(q0: number | undefined, q1: number | undefined, out: RecipeId[]): RecipeId[] {
+  out.length = 0;
+  let w = q0 ?? 0;
+  for (let i = 0; i < 4; i++) {
+    const r = decodeRecipe(w % 256);
+    if (r === undefined) return out;
+    out.push(r);
+    w = Math.floor(w / 256);
+  }
+  w = (q1 ?? 0) % PROD_Q_REPEAT;
+  for (let i = 0; i < 3; i++) {
+    const r = decodeRecipe(w % 256);
+    if (r === undefined) return out;
+    out.push(r);
+    w = Math.floor(w / 256);
+  }
+  return out;
+}
+
+/**
+ * Building panels B7 — which blueprints a processor can reach, on its row.
+ * Both values index the kind's OWN recipe list (`kindRecipes`: `recipesFor`
+ * in catalogue order; the catalogue is append-only, so a position never moves):
+ *  - `bpProduct`: the slot blueprint's product as position + 1, in bits
+ *    24..30 of `prodQ1` (0 = no blueprint, or one for nothing this kind makes);
+ *  - `bpAvail` (uint32): bit i set = network storage holds a usable blueprint
+ *    for the kind's recipe i. Every kind runs at most BP_AVAIL_MAX_RECIPES
+ *    recipes (locked by production.bpAvailWire.test.ts).
+ * A recipe is buildable when its blueprint is in the slot OR in storage (the
+ * queue swaps it in, `swapBlueprintFor`). Both sides use these helpers (#15).
+ */
+export const BP_AVAIL_MAX_RECIPES = 32;
+const BP_PRODUCT_MUL = 0x1000000; // bit 24
+const BP_PRODUCT_MAX = 127; // seven bits (24..30)
+
+const KIND_RECIPES = new Map<ProcessorKindId, readonly RecipeId[]>();
+/** product -> bits of the kind's recipes a blueprint for it serves. */
+const KIND_PRODUCT_BITS = new Map<ProcessorKindId, ReadonlyMap<string, number>>();
+
+/** A processor kind's recipe list, cached (no allocation after the first call). */
+export function kindRecipes(kind: ProcessorKindId): readonly RecipeId[] {
+  let l = KIND_RECIPES.get(kind);
+  if (l === undefined) {
+    l = Object.freeze(recipesFor(kind));
+    KIND_RECIPES.set(kind, l);
+  }
+  return l;
+}
+
+function productBits(kind: ProcessorKindId): ReadonlyMap<string, number> {
+  let m = KIND_PRODUCT_BITS.get(kind);
+  if (m === undefined) {
+    const map = new Map<string, number>();
+    const list = kindRecipes(kind);
+    for (let i = 0; i < list.length && i < BP_AVAIL_MAX_RECIPES; i++) {
+      const p = blueprintProductFor(list[i]!);
+      map.set(p, ((map.get(p) ?? 0) | (1 << i)) >>> 0);
+    }
+    KIND_PRODUCT_BITS.set(kind, map);
+    m = map;
+  }
+  return m;
+}
+
+/** Bits (kind recipe positions) a blueprint for `product` serves; 0 = none. */
+export function blueprintRecipeBits(kind: ProcessorKindId, product: string): number {
+  return productBits(kind).get(product) ?? 0;
+}
+
+/** Does any recipe this kind runs need a blueprint? (Only those kinds carry `bpAvail`.) */
+export function kindNeedsBlueprints(kind: ProcessorKindId): boolean {
+  const list = kindRecipes(kind);
+  for (let i = 0; i < list.length; i++) if (RECIPES[list[i]!].blueprintRequired) return true;
+  return false;
+}
+
+/** The `bpProduct` value (0..127) for a slot blueprint's product. */
+export function encodeBpProduct(kind: ProcessorKindId, product: string | undefined): number {
+  if (product === undefined) return 0;
+  const bits = blueprintRecipeBits(kind, product);
+  if (bits === 0) return 0;
+  const pos = 31 - Math.clz32(bits & -bits); // lowest set bit
+  return pos + 1 <= BP_PRODUCT_MAX ? pos + 1 : 0;
+}
+
+/** The recipe the slot blueprint is for, from `prodQ1`; null = none. */
+export function decodeBpProduct(kind: ProcessorKindId, q1: number | undefined): RecipeId | null {
+  const v = Math.floor(((q1 ?? 0) % PROD_Q_REPEAT) / BP_PRODUCT_MUL);
+  return v > 0 ? kindRecipes(kind)[v - 1] ?? null : null;
+}
+
+/** Decode `bpAvail` into `out` IN PLACE (cleared first; one array per row, #14). */
+export function decodeBpAvail(kind: ProcessorKindId, mask: number | undefined, out: RecipeId[]): RecipeId[] {
+  out.length = 0;
+  const m = mask ?? 0;
+  if (m === 0) return out;
+  const list = kindRecipes(kind);
+  for (let i = 0; i < list.length && i < BP_AVAIL_MAX_RECIPES; i++) if (((m >>> i) & 1) !== 0) out.push(list[i]!);
+  return out;
 }
 
 /** "Waiting for Minerals" style status line for the inspector. */

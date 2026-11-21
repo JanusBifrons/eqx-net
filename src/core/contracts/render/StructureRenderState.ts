@@ -4,6 +4,8 @@
  * holds the pose). Drives the connector web, the scaffolding fill + dim, and the
  * HUD power readout. Pure UI state — no spatial fields (those live in `swarm`).
  */
+import type { RecipeId } from '../../../shared-types/recipes.js';
+
 /** Mine Layer — one proximity mine (from room state `mines`). Static. */
 export interface MineRenderState {
   x: number;
@@ -140,6 +142,17 @@ export interface StructureRenderState {
   /** Build count (job 2E): outputs left before it stops (0 = done);
    *  undefined ⇒ repeats forever. */
   prodCount?: number;
+  /** Building panels B4 — the recipes queued after the head (`recipe`), in
+   *  order; empty = none. Decoded in place (one array per row). */
+  prodQueue?: readonly RecipeId[];
+  /** Building panels B4 — the queue repeats (a finished head goes to the back). */
+  prodQueueRepeat?: boolean;
+  /** Building panels B7 — the recipe the slot blueprint is for (null = no
+   *  blueprint, or one for nothing this kind runs). Undefined off processors. */
+  bpProduct?: RecipeId | null;
+  /** Building panels B7 — recipes with a blueprint in the network's storage
+   *  (a queue swaps it in). Decoded in place (one array per row). */
+  bpAvailable?: readonly RecipeId[];
   /** v4 T1 — a teleporter: present only for teleporter kinds. */
   teleport?: {
     phase: number;
