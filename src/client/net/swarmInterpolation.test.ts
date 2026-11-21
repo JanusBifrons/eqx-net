@@ -144,7 +144,7 @@ describe('interpolateSwarmPose (display-delay buffer)', () => {
       { x: 0,   arrivalMs: 1000 },
       { x: 100, vx: 200, arrivalMs: 1100 },
     ]);
-    // targetMs = 1600, 500 ms past newest. Capped to 100 ms → +20u → 120.
+    // targetMs = 1600, 500 ms past newest. Capped to 250 ms → +50u → 150.
     interpolateSwarmPose(e, 1600 + DISPLAY_DELAY_MS, out);
     expect(out.x).toBeCloseTo(100 + 200 * (EXTRAPOLATION_LIMIT_MS / 1000), 4);
   });

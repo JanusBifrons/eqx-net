@@ -19,6 +19,12 @@
 import { describe, expect, it } from 'vitest';
 import { applySnapshotPerfStats } from '../../src/client/net/snapshotPerfStats.js';
 import { createDropDetector } from '../../src/client/net/snapshotDropDetector.js';
+import {
+  getSwarmDisplayDelayMs,
+  getSwarmDisplayDelayTargetMs,
+  resetSwarmTickClock,
+  DISPLAY_DELAY_MS,
+} from '../../src/client/net/swarmInterpolation.js';
 import type { SnapshotMessage } from '../../src/shared-types/messages.js';
 
 function makeSnap(serverTick: number): SnapshotMessage {
@@ -81,5 +87,40 @@ describe('applySnapshotPerfStats — intervalMs from wire-arrival time', () => {
     // Snap B: wire=150, RAF=180 (30 ms delay — RAF jittered later).
     const i = applySnapshotPerfStats(makeSnap(2), 180, 100, 150, ctx);
     expect(i, 'wire gap is the source of truth despite RAF jitter').toBe(50);
+  });
+});
+
+/** JSON snapshots go out every 3 server ticks. */
+const JSON_EVERY_TICKS = 3;
+/** Snapshots skipped in the drop test (one 12-tick hole = 3 drops). */
+const SKIPPED_SNAPSHOTS = 3;
+const WIRE_STEP_MS = 50;
+/** A binary EWMA that the old feed (x 1.5) would have sized to 225 ms. */
+const SLOW_SWARM_EWMA_MS = 150;
+
+describe('applySnapshotPerfStats — drop detector, no display-delay feed (S3-3)', () => {
+  it('still counts dropped JSON snapshots (droppedSnapshotsRecent source)', () => {
+    const ctx = makeCtx();
+    let wire = WIRE_STEP_MS;
+    let tick = JSON_EVERY_TICKS;
+    applySnapshotPerfStats(makeSnap(tick), wire, 0, wire, ctx);
+    for (let i = 0; i < 2; i++) {
+      tick += JSON_EVERY_TICKS;
+      applySnapshotPerfStats(makeSnap(tick), wire + WIRE_STEP_MS, wire, wire + WIRE_STEP_MS, ctx);
+      wire += WIRE_STEP_MS;
+    }
+    expect(ctx.dropDetector.dropCount).toBe(0);
+    tick += JSON_EVERY_TICKS * (SKIPPED_SNAPSHOTS + 1);
+    applySnapshotPerfStats(makeSnap(tick), wire + WIRE_STEP_MS, wire, wire + WIRE_STEP_MS, ctx);
+    expect(ctx.dropDetector.dropCount).toBe(SKIPPED_SNAPSHOTS);
+  });
+
+  it('no longer moves the drone display delay (sized from packet lateness instead)', () => {
+    resetSwarmTickClock();
+    const ctx = { ...makeCtx(), swarmBinaryEwma: SLOW_SWARM_EWMA_MS };
+    applySnapshotPerfStats(makeSnap(3), WIRE_STEP_MS, 0, WIRE_STEP_MS, ctx);
+    applySnapshotPerfStats(makeSnap(30), 2 * WIRE_STEP_MS, WIRE_STEP_MS, 2 * WIRE_STEP_MS, ctx);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS);
+    expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
   });
 });

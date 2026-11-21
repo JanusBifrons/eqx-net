@@ -30,6 +30,12 @@
 import { describe, it, expect } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
 import { welfordPush, welfordMean } from '../../core/math/Welford.js';
+import {
+  resetSwarmTickClock, setSwarmDisplaySpeed, setSwarmDisplayDelayMs, stepSwarmDisplayDelay, swarmArrivalStampMs,
+  getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs, getSwarmLatenessEstimateMs, getSwarmLatenessDeviationMs,
+  DISPLAY_DELAY_MS, ADAPTIVE_DELAY_CEILING_MS,
+  noteSwarmStreamStamp, getSwarmStreamNewestStampMs,
+} from './swarmInterpolation.js';
 
 // The reset method is private. Rather than weakening the public API,
 // we reach in via a narrow structural cast so the test exercises the
@@ -137,5 +143,50 @@ describe('ColyseusGameClient.resetPredictionState', () => {
     expect(internals.reconciler).toBeNull();
     expect(() => internals.resetPredictionState()).not.toThrow();
     expect(internals.reconciler).toBeNull();
+  });
+
+  it('resets the slewed drone display delay and the lateness estimate (S3-2)', () => {
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+    setSwarmDisplayDelayMs(DISPLAY_DELAY_MS);
+    setSwarmDisplayDelayMs(ADAPTIVE_DELAY_CEILING_MS);
+    for (let i = 0; i < 30; i++) stepSwarmDisplayDelay(1000 / 60);
+    swarmArrivalStampMs(0, 10_000);
+    for (let tick = 1; tick <= 10; tick++) swarmArrivalStampMs(tick, 10_000 + tick * (1000 / 60) + 40);
+    expect(getSwarmDisplayDelayMs()).toBeGreaterThan(DISPLAY_DELAY_MS);
+    expect(getSwarmLatenessEstimateMs()).toBeGreaterThan(0);
+
+    const client = new ColyseusGameClient();
+    asInternals(client).resetPredictionState();
+
+    expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(DISPLAY_DELAY_MS);
+    expect(getSwarmLatenessEstimateMs()).toBe(0);
+    expect(getSwarmLatenessDeviationMs()).toBe(0);
+    // The destination's first feed places the value at its target (no glide).
+    setSwarmDisplayDelayMs(200);
+    expect(getSwarmDisplayDelayMs()).toBe(200);
+    resetSwarmTickClock();
+  });
+
+  it('clears the stream-stall hold so the destination tick clock drifts normally (S4-5)', () => {
+    const tickMs = 1000 / 60;
+    const lateMs = 40;
+    resetSwarmTickClock();
+    setSwarmDisplaySpeed(1);
+    // Hold: one packet, then frames long after it with nothing new.
+    noteSwarmStreamStamp(0, swarmArrivalStampMs(0, 10_000));
+    stepSwarmDisplayDelay(tickMs, 10_500);
+    expect(getSwarmDisplayDelayMs()).toBeGreaterThan(DISPLAY_DELAY_MS);
+
+    const client = new ColyseusGameClient();
+    asInternals(client).resetPredictionState();
+
+    expect(getSwarmStreamNewestStampMs()).toBeNaN();
+    expect(getSwarmDisplayDelayMs()).toBe(DISPLAY_DELAY_MS);
+    // Tick 0 seeded the clock at 10 000. A held clock would ignore this late
+    // packet; a cleared hold lets the offset drift up 1 % of the lateness.
+    expect(swarmArrivalStampMs(1, 10_000 + tickMs + lateMs)).toBeCloseTo(10_000 + tickMs + lateMs * 0.01, 6);
+    resetSwarmTickClock();
   });
 });
