@@ -474,7 +474,10 @@ back as a new ship. The take-controls camera glide ends on the live follow
 target, so follow takes over without a jump.
 
 Still rebuilt: the radar icon (its category changes anyway). A reconnect onto a
-lingering hull (`onJoin` rebind) still hides the hull from others while it joins.
+hull already in the room (the `onJoin` rebind of a lingering pilot hull, and the
+shipId restore that evicts a parked hull) is `inWorld` too, so a phone that
+dropped and auto-rejoins keeps its ship in everyone's view (lock
+`tests/integration/sectorRoom/shipStaysOnDrop.test.ts`).
 
 ## 4b. Fleet warp
 
