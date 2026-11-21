@@ -48,6 +48,33 @@ describe('lane stall names', () => {
     expect(r.zoom).toEqual(expect.arrayContaining([{ viewHalf: '1024-2048', count: 2 }, { viewHalf: '4096-8192', count: 2 }]));
   });
 
+  it('totals stall time by frame phase over raf events only, with the untimed rest', () => {
+    const resolve = makeResolver(DIST);
+    const events = [
+      { tag: 'raf_stutter', data: { elapsedMs: 40, mode: 'command', phases: { swarm: 20, pixiRender: 15 } } },
+      { tag: 'raf_gap', data: { elapsedMs: 120, mode: 'build', phases: { swarm: 30, connectors: 10, pixiRender: 50 } } },
+      // A loaf repeats the same stall frame's breakdown: not counted again.
+      { tag: 'loaf', data: { durationMs: 120, phases: { swarm: 30, connectors: 10, pixiRender: 50 }, phasesAgeMs: 4 } },
+      // A capture from before phase timing: no phases, no rows.
+      { tag: 'raf_stutter', data: { elapsedMs: 35, mode: 'fly' } },
+    ];
+    const r = nameStalls(events, resolve);
+    expect(r.phaseFrames).toBe(2);
+    expect(r.phases.map((p) => p.phase)).toEqual(['pixiRender', 'swarm', '(untimed)', 'connectors']);
+    expect(r.phases[0]).toEqual({ phase: 'pixiRender', totalMs: 65, count: 2, maxMs: 50, share: 40.6 });
+    expect(r.phases[1]).toMatchObject({ phase: 'swarm', totalMs: 50, count: 2, maxMs: 30 });
+    // 40 - 35 and 120 - 90.
+    expect(r.phases[2]).toMatchObject({ phase: '(untimed)', totalMs: 35, count: 2, maxMs: 30 });
+    expect(r.phases.reduce((s, p) => s + p.totalMs, 0)).toBe(160);
+  });
+
+  it('a capture with no phase data has an empty phase table', () => {
+    const events = readEvents(readFileSync(path.join(FIX, 'perf.ndjson'), 'utf8'));
+    const r = nameStalls(events, makeResolver(DIST));
+    expect(r.phaseFrames).toBe(0);
+    expect(r.phases).toEqual([]);
+  });
+
   it('zoom buckets are powers of two', () => {
     expect(zoomBucket(1800)).toBe('1024-2048');
     expect(zoomBucket(0)).toBe('?');
