@@ -40,7 +40,7 @@ import { getWeapon, type WeaponDef } from '../../core/combat/WeaponCatalogue.js'
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
 import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { LOCK_TUNING, STRUCTURE_SENSOR, WEAPON_LOCK_PROFILE, type MountSize } from '../../shared-types/combat/lockProfile.js';
-import type { StructureKind } from '../../shared-types/structureKinds.js';
+import { structureLocalToWorld, type StructureKind } from '../../shared-types/structureKinds.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureRecord } from './StructureRegistry.js';
 
@@ -104,6 +104,8 @@ interface MountState {
 export class StructureMountTicker {
   private readonly states = new Map<string, MountState>();
   private readonly candidates: TurretTargetView[] = [];
+  /** Reused mount world position (`structureLocalToWorld`, build mirror included). */
+  private readonly mountAt = { x: 0, y: 0 };
   private lastTickMs = -1;
   private instantLocks = false;
   /** testMode `lockTimeCapS`: the longest a structure lock may take (s). */
@@ -195,8 +197,9 @@ export class StructureMountTicker {
     let first: TurretTargetView | null = null;
     for (let i = 0; i < n; i++) {
       const mount = mounts[i]!;
-      const mx = rec.x + (mount.localX * cosA - mount.localY * sinA);
-      const my = rec.y + (mount.localX * sinA + mount.localY * cosA);
+      const at = structureLocalToWorld(mount.localX, mount.localY, rec.x, rec.y, cosA, sinA, rec.mirror, this.mountAt);
+      const mx = at.x;
+      const my = at.y;
       let best = -1;
       let engageable = false;
       const prev = st.targetIds[i];

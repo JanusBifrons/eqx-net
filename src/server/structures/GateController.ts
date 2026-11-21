@@ -23,7 +23,8 @@
  * per-gate state objects are created once per gate (a segment edge allocates
  * its clip record, as any rig clip start does).
  */
-import { DOOR_POWER_LEVELS, gateTypeOf, worldToLocal } from '../../core/structures/gateGeometry.js';
+import { DOOR_POWER_LEVELS, gateTypeOf } from '../../core/structures/gateGeometry.js';
+import { structureWorldToLocal } from '../../shared-types/structureKinds/geometry.js';
 import { doorClipTime, doorLevelFromSupply, doorPosAt, type DoorTrack } from '../../core/structures/doorMotion.js';
 import {
   addShipToOccupancy,
@@ -111,12 +112,14 @@ export class GateController {
         collected = true;
       }
       const angle = ((rec.rot ?? 0) * Math.PI) / 180;
+      const cosA = Math.cos(angle), sinA = Math.sin(angle);
       const access = gateAccessFromIndex(rec.gateAccess);
       const o = this.occ;
       clearOccupancy(o);
       const s = this.ships;
       for (let i = 0; i < s.count; i++) {
-        worldToLocal(rec.x, rec.y, angle, s.xs[i]!, s.ys[i]!, this.local);
+        // Ship into the gate frame: the shared transform, build mirror included.
+        structureWorldToLocal(s.xs[i]!, s.ys[i]!, rec.x, rec.y, cosA, sinA, rec.mirror, this.local);
         const admitted = gateAdmits(access, this.hooks.relationOf(s.playerIds[i]!, rec.owner));
         addShipToOccupancy(type, this.local.x, this.local.y, s.radii[i]!, admitted, o);
       }

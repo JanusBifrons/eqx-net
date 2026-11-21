@@ -70,7 +70,7 @@ export interface StructurePlacementHooks {
   /** Spawn the kind=2 swarm entity (returns false if the slot pool is full). */
   /** `blueprint`: an unbuilt structure, spawned non-colliding (hologram
    *  pass-through) until the grid finishes it with no ship inside. */
-  spawnStructure(s: { id: string; x: number; y: number; radius: number; shipKind: string; angle?: number; blueprint?: boolean }): boolean;
+  spawnStructure(s: { id: string; x: number; y: number; radius: number; shipKind: string; angle?: number; mirror?: boolean; blueprint?: boolean }): boolean;
   /** Seed the hull (and zero the shield) so the structure is damageable. */
   seedHealth(id: string, hp: number): void;
   /** Despawn a placed structure's swarm entity (broadcast the destroy). */
@@ -175,6 +175,7 @@ export class StructurePlacementSubsystem {
       shipKind: kindId,
       // Game-space angle (Y-up, CCW) for a quarter-turn rotation.
       angle: (rot * Math.PI) / 180,
+      ...(mirror ? { mirror: true } : {}),
       ...(preBuilt ? {} : { blueprint: true }),
     });
     if (!ok) return null;

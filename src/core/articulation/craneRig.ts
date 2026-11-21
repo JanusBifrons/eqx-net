@@ -9,7 +9,7 @@
  * +x along its footprint width, +y along its height), as `structureOutline`
  * uses. Angles: `a` -> `(cos a, sin a)` (same as `ik.ts`).
  */
-import { CAPITAL, FREIGHT_DOCK, type StructureKind } from '../../shared-types/structureKinds.js';
+import { CAPITAL, FREIGHT_DOCK, structureLocalToWorld, structureWorldToLocal, type StructureKind } from '../../shared-types/structureKinds.js';
 import { box, type PartDef, type RigDef } from './rig.js';
 
 // ── dock-crane (freight_dock) ────────────────────────────────────────────────
@@ -165,29 +165,27 @@ export function inCraneBay(bay: CraneBay, lx: number, ly: number): boolean {
 
 /** structure-restyle 3h — the world centre of `bay` on a host at (x, y)
  *  turned `rotDeg` degrees CCW (the inverse of the host-frame transform
- *  `worldToRigHost`): where a convoy hauler parks to be served. */
-export function craneBayWorldCentre(bay: CraneBay, x: number, y: number, rotDeg: number): { x: number; y: number } {
+ *  `worldToRigHost`): where a convoy hauler parks to be served. `mirror`
+ *  (build mirror): the shared `structureLocalToWorld`. */
+export function craneBayWorldCentre(bay: CraneBay, x: number, y: number, rotDeg: number, mirror?: boolean): { x: number; y: number } {
   const a = (rotDeg * Math.PI) / 180;
-  const c = Math.cos(a);
-  const s = Math.sin(a);
-  return { x: x + bay.cx * c - bay.cy * s, y: y + bay.cx * s + bay.cy * c };
+  return structureLocalToWorld(bay.cx, bay.cy, x, y, Math.cos(a), Math.sin(a), mirror, { x: 0, y: 0 });
 }
 
+const bayLocal = { x: 0, y: 0 };
+
 /** World point (x, y) on the crane bay (`inCraneBay`) of a `kindId`
- *  structure centred at (hostX, hostY), rotated `rotDeg`; false for a kind
- *  with no bay. The world → host-frame transform is `worldToRigHost`, inline
- *  (alloc-free). */
+ *  structure centred at (hostX, hostY), rotated `rotDeg`, `mirror`ed; false
+ *  for a kind with no bay. The world → host-frame transform is the shared
+ *  `structureWorldToLocal` (as `worldToRigHost`), alloc-free. */
 export function onStructureCraneBay(
-  kindId: string, hostX: number, hostY: number, rotDeg: number, x: number, y: number,
+  kindId: string, hostX: number, hostY: number, rotDeg: number, x: number, y: number, mirror?: boolean,
 ): boolean {
   const bay = craneBayFor(kindId);
   if (bay === null) return false;
   const a = (rotDeg * Math.PI) / 180;
-  const dx = x - hostX;
-  const dy = y - hostY;
-  const cs = Math.cos(a);
-  const sn = Math.sin(a);
-  return inCraneBay(bay, dx * cs + dy * sn, -dx * sn + dy * cs);
+  structureWorldToLocal(x, y, hostX, hostY, Math.cos(a), Math.sin(a), mirror, bayLocal);
+  return inCraneBay(bay, bayLocal.x, bayLocal.y);
 }
 
 /** Speed (game units / s) below which a ship on the bay counts as stopped.

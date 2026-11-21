@@ -244,13 +244,13 @@ export class SwarmSpawner {
    *  same point-set the renderer draws) → a convexHull collider matching the
    *  silhouette, replacing the old circular collider (unified-hull plan).
    *  Returns false if no free slot. */
-  spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number; shipKind?: string; angle?: number; blueprint?: boolean }): boolean {
+  spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number; shipKind?: string; angle?: number; mirror?: boolean; blueprint?: boolean }): boolean {
     // The subtype rides the shared `shipKind` byte (set below). Compute the
     // hull polygon from it + the radius here so `spawnOne` can attach the
     // matching convexHull collider + hit-resolver vertices.
     const structureVertices = structureHullPoints(s.shipKind, s.radius);
     // Gates: posts (and airlock walls) as separate parts, so the gap is open.
-    const parts = gateColliderPolygons(s.shipKind) ?? undefined;
+    const parts = gateColliderPolygons(s.shipKind, s.mirror) ?? undefined;
     const spec: AsteroidSpec = {
       id: s.id, x: s.x, y: s.y, vx: 0, vy: 0, radius: s.radius, mass: s.mass ?? STRUCTURE_DEFAULT_MASS,
       // Hologram pass-through: an unbuilt blueprint collides with nothing
@@ -269,7 +269,7 @@ export class SwarmSpawner {
         rec.halfW = ext.hw;
         rec.halfH = ext.hh;
         // Posts + towers, then the door leaves (posed shut; GateController re-poses them).
-        const boxes = gateHitBoxes(s.shipKind, s.angle ?? 0);
+        const boxes = gateHitBoxes(s.shipKind, s.angle ?? 0, s.mirror);
         if (boxes) rec.boxes = boxes;
       }
     } else if (ok) {

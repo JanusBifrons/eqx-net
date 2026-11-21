@@ -40,7 +40,7 @@ export interface RoomNavDeps {
  *  else the footprint hull), at its quarter-turn angle; the circle encloses
  *  every part. */
 export function structureNavObstacle(rec: StructureRecord): GridObstacle {
-  const parts = gateColliderPolygons(rec.kind) ?? [convexHullCCW(structureHullPoints(rec.kind, rec.radius))];
+  const parts = gateColliderPolygons(rec.kind, rec.mirror) ?? [convexHullCCW(structureHullPoints(rec.kind, rec.radius))];
   let r = 0;
   for (const part of parts) for (const p of part) r = Math.max(r, Math.hypot(p.x, p.y));
   return { x: rec.x, y: rec.y, radius: r, angle: ((rec.rot ?? 0) * Math.PI) / 180, parts };
