@@ -2,9 +2,9 @@
  * Render-mirror post delta (2026-11-13): the swarm map crosses to the
  * renderer worker as a CHANGE SET, not a full structured clone.
  *
- * Before, every MIRROR_UPDATE cloned every swarm entry with its 10-slot pose
+ * Before, every MIRROR_UPDATE cloned every swarm entry with its POSE_RING_DEPTH-slot pose
  * ring, so a field of ~1,000 resting wreck pieces cost the main thread a clone
- * of ~1,000 objects + 10,000 ring slots per frame, for pieces that had not
+ * of ~1,000 objects + ~1,000 × POSE_RING_DEPTH ring slots per frame, for pieces that had not
  * moved (~10 % of the main thread at ~480 pieces; capital-destruction.md
  * "Client cost per wreck piece"). Now the worker keeps its own copy
  * (`SwarmMirrorReplica`) and each post carries only:
