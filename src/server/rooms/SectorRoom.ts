@@ -2575,7 +2575,7 @@ export class SectorRoom extends Room<SectorState> {
       playerToActiveShipInstance: this.playerToActiveShipInstance,
       lockMsgAllowed: (sid) => this.lockMsgAllowed(sid),
       fireControlLocks: () => this.locks,
-      selectionStats: () => this.selectionStats,
+      selectionStats: () => this.selectionStats, shieldHull: () => this.shieldHullRouter,
       webrtcChannelManager: () => this.webrtcChannelManager,
     });
 

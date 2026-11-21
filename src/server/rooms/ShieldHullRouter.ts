@@ -69,7 +69,7 @@ function swarmShieldMax(rec: SwarmDamageTarget): number {
   if (rec.kind === SWARM_KIND_STRUCTURE) return getStructureKind(rec.shipKind ?? undefined).shieldMax ?? 0;
   return getDroneShieldMax(rec.shipKind);
 }
-import type { ShieldEventMessage } from '../../shared-types/messages.js';
+import type { DamageEvent, ShieldEventMessage } from '../../shared-types/messages.js';
 import type { Bus } from '../../core/events/Bus.js';
 import type { MapSchema } from '@colyseus/schema';
 import type { ShipState } from './schema/SectorState.js';
@@ -129,8 +129,9 @@ export interface ShieldHullRouterDeps {
   serverLogEvent: (tag: string, data: Record<string, unknown>) => void;
   /** Typed postMessage facade — used for SET_HULL_EXPOSED collider swap. */
   postToWorker: (cmd: WorkerCmd) => void;
-  /** Broadcast a shield event to every client (regen anchor messages). */
-  broadcast: (type: 'shield', msg: ShieldEventMessage) => void;
+  /** Broadcast a shield event to every client (regen anchor messages), or the
+   *  0-damage `damage` state carrier for a pilot-lowered shield's 0-cross. */
+  broadcast: (type: 'shield' | 'damage', msg: ShieldEventMessage | DamageEvent) => void;
 }
 
 export class ShieldHullRouter {
@@ -140,6 +141,12 @@ export class ShieldHullRouter {
   readonly swarmShield = new Map<string, number>();
   /** Per-drone last-damage tick (drives regen delay). */
   readonly swarmShieldLastDmg = new Map<string, number>();
+
+  /** Scratch for the lowered-shield 0-damage state carrier. */
+  private readonly _loweredEvt: DamageEvent = {
+    type: 'damage', targetId: '', damage: 0, newHealth: 0, shooterId: '',
+    newShield: 0, shieldMax: 0, hullMax: 0, hitLayer: 'shield',
+  };
 
   constructor(private readonly deps: ShieldHullRouterDeps) {}
 
@@ -185,6 +192,36 @@ export class ShieldHullRouter {
     // DamageEvent.shieldMax the client divides by reflects the upgrade too.
     const shieldMax = effectiveShipShieldMax(kind.shieldMax, ship.statAlloc);
     return { newShield: state.shield, shieldMax, hullMax: ship.maxHealth, hitLayer: r.hitLayer };
+  }
+
+  /**
+   * The pilot drops (`lowered`) or raises their ship's shields (`set_shields`;
+   * any pilot, player or AI: ships, not NPCs). No second shield state: lowering
+   * takes the shield to 0 through the same break path a hit takes
+   * (SHIELD_BROKEN, hull-exposed collider, a 0-damage `damage` state carrier
+   * so every client flips its shieldDown bit) and starts the regen delay;
+   * `shieldsLowered` only holds regen. Raising releases the hold: regen then
+   * follows the normal rule (`shieldRegenDelayTicks` after the last damage or
+   * the lowering), so a broken shield can't skip its recovery. ACTIVE hulls
+   * only (#17): a parked hull keeps its shield state. Idempotent.
+   */
+  setShipShieldsLowered(ship: ShipState, lowered: boolean): void {
+    if (!isPilotedActive(ship) || ship.shieldsLowered === lowered) return;
+    ship.shieldsLowered = lowered;
+    if (!lowered || ship.shield <= 0) return;
+    const d = this.deps;
+    const t = d.serverTick();
+    ship.shield = 0;
+    ship.shieldLastDamageTick = t;
+    d.bus.emit('SHIELD_BROKEN', { type: 'SHIELD_BROKEN', entityId: ship.shipInstanceId });
+    d.serverLogEvent('shield_lowered', { entityId: ship.shipInstanceId, tick: t });
+    d.postToWorker({ type: 'SET_HULL_EXPOSED', id: ship.playerId, exposed: true, kindId: ship.kind, tick: t });
+    const evt = this._loweredEvt; // reused (#14): the broadcast serialises it at once
+    evt.targetId = ship.playerId;
+    evt.newHealth = ship.health;
+    evt.shieldMax = effectiveShipShieldMax(getShipKind(ship.kind).shieldMax, ship.statAlloc);
+    evt.hullMax = ship.maxHealth;
+    d.broadcast('damage', evt);
   }
 
   /** True when a hit on `rec` would land on a raised shield (the layer
@@ -267,6 +304,7 @@ export class ShieldHullRouter {
       // have (the "lingering ships still have shields, but it's not
       // visible" playtest family). Regen resumes when the hull is reclaimed.
       if (!isPilotedActive(ship)) continue;
+      if (ship.shieldsLowered) continue; // the pilot dropped them: no regen until raised
       const kind = getShipKind(ship.kind);
       // Effective shield cap = kind base × per-instance shield upgrade (review
       // must-fix #1). The regen cap, the 0-cross-up restore broadcast, and the
