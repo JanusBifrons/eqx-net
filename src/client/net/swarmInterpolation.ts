@@ -209,11 +209,9 @@ export function nextSwarmBinaryEwmaMs(prevEwmaMs: number, dtMs: number, nowMs: n
 // the held read point resumes along: without that, ~36 backlog packets of a
 // 600 ms stall drifted the clock ~100 ms late and drones stepped BACK.
 
-/** Frames on which a stream stall held the read point (S4-5 telemetry). */
+/** Frames a stall held the read point (S4-5 telemetry); `isSwarmHoldActive`: held now (S4b). */
 export function getSwarmHoldFrameCount(): number { return _drone.holdFrameCount; }
-/** True while a stream stall has the read point parked (S4b: swarmResumeOffset.ts). */
 export function isSwarmHoldActive(): boolean { return _drone.holdActive; }
-
 /** The sector's game speed the drone delay is sized for (1 until set). */
 export function getSwarmDisplaySpeed(): number { return _displaySpeed; }
 
@@ -583,9 +581,7 @@ export function interpolateSwarmPose(
   // Teleport guard: if the bracketing poses are further apart than any entity
   // could plausibly have moved in `span`, this is a server discontinuity
   // (keyframe / SET_POSITION / id-reuse / sleep→wake), not motion. Snap to the
-  // newer authoritative pose — never animate across the gap. `span` is wall
-  // ms (arrival stamps); the bound is a game speed, so pass game ms
-  // (wall × speed): at 2× a drone covers twice the game distance per wall ms.
+  // newer authoritative pose — never animate across the gap. Game ms (wall × speed).
   const gap = Math.hypot(b.x - a.x, b.y - a.y);
   if (isImplausibleJump(gap, span * _displaySpeed)) {
     out.x = b.x;
