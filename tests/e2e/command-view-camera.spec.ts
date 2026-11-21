@@ -88,13 +88,16 @@ test.describe('Command view camera @feature', () => {
       return { x: p.x + box.x, y: p.y + box.y };
     };
     await expect.poll(hullAt, { timeout: 15_000, message: 'own parked hull drawn' }).not.toBeNull();
-    await expect.poll(async () => {
+    const dbg: string[] = [];
+    try { await expect.poll(async () => {
       const sel = await page.locator(SURFACE).getAttribute('data-fleet-sel-count');
       if (sel === '1') return sel;
       const h = await hullAt();
+      // DEBUG-TMP: CI-only failure probe
+      dbg.push(JSON.stringify({ sel, h, t: Date.now(), dom: await page.evaluate(([x, y]) => { const s = document.querySelector('[data-testid="game-surface"]') as HTMLElement | null; const g = globalThis as { __eqxCameraCenter?: () => unknown; __eqxWorldToScreen?: (x: number, y: number) => { x: number } }; const a = g.__eqxWorldToScreen?.(0, 0); const b = g.__eqxWorldToScreen?.(1000, 0); const e = x === null ? null : document.elementFromPoint(x, y!); return { mode: s?.dataset['pilotMode'], fleetSel: s?.dataset['fleetSel'], seq: s?.dataset['fleetOrderSeq'], ships: s?.dataset['shipPositions'], linger: s?.dataset['lingeringPositions'], warp: document.querySelector('[data-testid="warp-screen"]')?.getAttribute('data-warp-visible'), cam: g.__eqxCameraCenter?.(), scale: a && b ? (b.x - a.x) / 1000 : null, top: e ? e.tagName + '.' + String(e.className).slice(0, 60) + ' tid=' + e.getAttribute('data-testid') : null }; }, [h?.x ?? null, h?.y ?? null] as const) }));
       if (h) await page.mouse.click(h.x, h.y);
       return sel;
-    }, { timeout: 6_000, intervals: [500], message: 'click selects the hull' }).toBe('1');
+    }, { timeout: 6_000, intervals: [500], message: 'click selects the hull' }).toBe('1'); } catch (err) { throw new Error((err as Error).message + '\nDBG ' + dbg.join('\nDBG ')); }
     const box = (await page.locator(SURFACE).boundingBox())!;
     const seq0 = Number(await page.locator(SURFACE).getAttribute('data-fleet-order-seq'));
     await page.mouse.click(box.x + box.width * 0.85, box.y + box.height * 0.2, { button: 'right' });
