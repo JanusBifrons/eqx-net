@@ -56,6 +56,44 @@ async function startRecording(page: Page): Promise<void> {
 const takeRecording = (page: Page): Promise<Frame[]> =>
   page.evaluate(() => (globalThis as unknown as { __camRec: Frame[] }).__camRec.slice());
 
+/**
+ * Infrastructure wait: CI renders in software GL, and right after a cold
+ * join with Machined art the main thread is busy for a while (multi-second
+ * frames). Every Playwright call then waits on the page, so the 6 s
+ * click-to-select poll got through at most one click although the camera
+ * was centred on the hull and the click landed on the canvas. Wait until
+ * frames run at a normal pace before any timed input step; the per-frame
+ * recordings below need it too.
+ */
+async function waitForSmoothFrames(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = globalThis as unknown as { __smoothRun?: number; __frameGaps?: number[]; __smoothOn?: boolean };
+    w.__smoothRun = 0;
+    w.__frameGaps = [];
+    if (w.__smoothOn) return;
+    w.__smoothOn = true;
+    let last = performance.now();
+    const step = (now: number): void => {
+      const gap = now - last;
+      last = now;
+      w.__smoothRun = gap < 100 ? (w.__smoothRun ?? 0) + 1 : 0;
+      w.__frameGaps!.push(Math.round(gap));
+      if (w.__frameGaps!.length > 20) w.__frameGaps!.shift();
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+  try {
+    await page.waitForFunction(
+      () => ((globalThis as unknown as { __smoothRun?: number }).__smoothRun ?? 0) >= 15,
+      undefined, { timeout: 45_000 }, // infrastructure: CI's software-GL warm-up after a cold join
+    );
+  } catch (err) {
+    const gaps = await page.evaluate(() => (globalThis as unknown as { __frameGaps?: number[] }).__frameGaps ?? []);
+    throw new Error(`frames never settled (last gaps ms: ${gaps.join(', ')}): ${(err as Error).message}`);
+  }
+}
+
 test.describe('Command view camera @feature', () => {
   test('pan and zoom move only by the player: no follow, no speed zoom, no back-jumps', async ({ browser }) => {
     // Infrastructure: cold galaxy join + the first-visit backdrop bake.
@@ -72,6 +110,7 @@ test.describe('Command view camera @feature', () => {
       () => (globalThis as { __eqxArtStats?: () => { backdrop?: { on: boolean } } }).__eqxArtStats?.().backdrop?.on === true,
       undefined, { timeout: 45_000 },
     );
+    await waitForSmoothFrames(page);
 
     // ── Own hull under the AI pilot, flying a move order. ────────────────
     const hullAt = async (): Promise<{ x: number; y: number } | null> => {
@@ -88,16 +127,13 @@ test.describe('Command view camera @feature', () => {
       return { x: p.x + box.x, y: p.y + box.y };
     };
     await expect.poll(hullAt, { timeout: 15_000, message: 'own parked hull drawn' }).not.toBeNull();
-    const dbg: string[] = [];
-    try { await expect.poll(async () => {
+    await expect.poll(async () => {
       const sel = await page.locator(SURFACE).getAttribute('data-fleet-sel-count');
       if (sel === '1') return sel;
       const h = await hullAt();
-      // DEBUG-TMP: CI-only failure probe
-      dbg.push(JSON.stringify({ sel, h, t: Date.now(), dom: await page.evaluate(([x, y]) => { const s = document.querySelector('[data-testid="game-surface"]') as HTMLElement | null; const g = globalThis as { __eqxCameraCenter?: () => unknown; __eqxWorldToScreen?: (x: number, y: number) => { x: number } }; const a = g.__eqxWorldToScreen?.(0, 0); const b = g.__eqxWorldToScreen?.(1000, 0); const e = x === null ? null : document.elementFromPoint(x, y!); return { mode: s?.dataset['pilotMode'], fleetSel: s?.dataset['fleetSel'], seq: s?.dataset['fleetOrderSeq'], ships: s?.dataset['shipPositions'], linger: s?.dataset['lingeringPositions'], warp: document.querySelector('[data-testid="warp-screen"]')?.getAttribute('data-warp-visible'), cam: g.__eqxCameraCenter?.(), scale: a && b ? (b.x - a.x) / 1000 : null, top: e ? e.tagName + '.' + String(e.className).slice(0, 60) + ' tid=' + e.getAttribute('data-testid') : null }; }, [h?.x ?? null, h?.y ?? null] as const) }));
       if (h) await page.mouse.click(h.x, h.y);
       return sel;
-    }, { timeout: 6_000, intervals: [500], message: 'click selects the hull' }).toBe('1'); } catch (err) { throw new Error((err as Error).message + '\nDBG ' + dbg.join('\nDBG ')); }
+    }, { timeout: 6_000, intervals: [500], message: 'click selects the hull' }).toBe('1');
     const box = (await page.locator(SURFACE).boundingBox())!;
     const seq0 = Number(await page.locator(SURFACE).getAttribute('data-fleet-order-seq'));
     await page.mouse.click(box.x + box.width * 0.85, box.y + box.height * 0.2, { button: 'right' });
