@@ -23,6 +23,7 @@
  */
 import { ASTEROID_YIELD, yieldHasGoods, yieldInto, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
+import { PROD_STATE } from '../../shared-types/production.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
 import { redrawStructure, switchStructure, throttleStructure } from './structurePowerSwitch.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -607,8 +608,12 @@ export class StructureGridSubsystem {
       if (!rec.isConstructed) continue;
       const rate = getStructureKind(rec.kind).gasRate;
       if (rate == null || rate <= 0) continue;
-      const working = nebula && !!this.hooks.depositGoods && this.powerSummaryFor(rec.id).powered;
+      const powered = this.powerSummaryFor(rec.id).powered;
+      const working = nebula && !!this.hooks.depositGoods && powered;
       this.setActive(rec, working);
+      // The row's work state (client work glow): no nebula = nothing to collect.
+      const state = !powered ? PROD_STATE.unpowered : working ? PROD_STATE.running : PROD_STATE.starved;
+      if ((rec.prodState ?? PROD_STATE.none) !== state) rec.prodState = state;
       // The owner throttle scales the haul (structureWorkRate; 0% gathers nothing).
       const n = Math.round(rate * structureWorkRate(rec));
       if (working && n > 0) this.hooks.depositGoods!(rec, 'gas', n);

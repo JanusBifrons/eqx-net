@@ -302,6 +302,17 @@ main-thread renderer (touch devices, `?worker=0`); the desktop render worker
 keeps the old thin line and draws no rig parts yet. The structure style
 reaches both (it is part of the art options).
 
+**Lit only while working (light production).** Every light-production kind
+(smelter, silicon works, hydroponics, fabricator, munitions works, reclaimer,
+gas collector, research lab, refinery) bakes its work-glow windows dark
+(`bakeSlits`, `structureStyleC.lightProduction.work.ts`) and lights them on
+the live socket-nub overlay from the row's `prodState`: amber while running, a
+red no-supply mark while powered but starved, dark otherwise (idle, blocked,
+unpowered, unbuilt). One helper, `workGlowStatus(slits, mark)`, draws all of
+them; each kind's drawer and pane positions live in its own file. The gas
+collector is starved when powered outside a nebula; a research lab never
+starves (a job takes its blueprints when it starts).
+
 **Phone cost.** With rigs on, every visible rigged structure (Capital, freight
 dock, turret) gets a `StructureRigView` posed each frame: one `evaluateRig`
 (with the two-bone IK for the crane), a transform write per part and shadow,
@@ -321,6 +332,8 @@ host).
   is a faint neutral grey (`DEFAULT_RIG.rim` [0.06, 0.06, 0.06], was a blue
   [0.1, 0.18, 0.36] that outlined every bevel), for ships, structures and
   rocks alike. Bakes re-forge (`FORGE_VERSION` r3.1-rim).
+- 2026-11-20: owner: ship the light-production redraw (eight kinds, lit only
+  while working; family version r2).
 
 ## Client rules in detail
 
