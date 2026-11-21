@@ -38,6 +38,7 @@ import {
 } from './SectorSnapshot.js';
 import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
 import type { PackedItem } from '../../shared-types/items.js';
+import type { SavedDoor } from '../../core/structures/gateLogic.js';
 
 /** The minimal structure shape `persist()` reads (a subset of `StructureRecord`). */
 export interface PersistableStructure {
@@ -93,6 +94,9 @@ export interface SectorPersistenceDeps {
   swarmHealth: Map<string, number>;
   /** Placed structures to persist (the server `StructureRegistry`). */
   structures: () => Iterable<PersistableStructure>;
+  /** Gates: a door's current position to save (the GateController; door-power
+   *  slice 12). Optional: absent or undefined ⇒ shut, nothing written. */
+  gateDoorOf?: (id: string) => SavedDoor | undefined;
   /** Reconstruct the placed structures on hydrate (re-place + restore state +
    *  rebuild the grid). Owned by `SectorRoom` (it holds the spawn machinery). */
   restoreStructures: (rows: readonly SectorSnapshotStructure[]) => void;
@@ -208,6 +212,7 @@ export class SectorPersistence {
         x: s.x,
         ...(s.rot ? { rot: s.rot } : {}),
         ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
+        ...doorFields(d.gateDoorOf?.(s.id)),
         ...(s.switchedOff === true ? { switchedOff: true } : {}),
         ...(s.throttle !== undefined ? { throttle: s.throttle } : {}),
         ...(s.recipe ? { recipe: s.recipe } : {}),
@@ -371,4 +376,9 @@ export class SectorPersistence {
       'sector hydrated from snapshot',
     );
   }
+}
+
+/** A saved door as record fields (absent ⇒ shut). */
+function doorFields(door: SavedDoor | undefined): { doorPos?: number; doorClip?: string } {
+  return door ? { doorPos: door.pos, doorClip: door.clip } : {};
 }

@@ -26,6 +26,7 @@ import { convexHullCCW } from '../swarm/asteroidShape.js';
 import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js';
 // Function-only cycle (cableCurve uses Grid's segment tests): neither module
 // reads the other at load time.
+import { addDraw, addNodePower, supplyFraction, type PowerTally } from './gridSupply.js';
 import { CABLE_NO_SOCKET, gridNodePadBox, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
 
 /** The grid's abstract view of a structure. The server projects each
@@ -107,6 +108,8 @@ export type CanConnectResult = { ok: true } | { ok: false; reason: CanConnectRea
 export interface PowerSummary {
   netPower: number;
   powered: boolean;
+  /** Share of demand covered, 0..1 (`gridSupply.supplyFraction`). */
+  supplyFrac: number;
 }
 
 /** A non-structure body that blocks a connection's line of sight (Item D —
@@ -363,9 +366,7 @@ export function canConnect(
   return { ok: true };
 }
 
-interface ComponentInfo {
-  netPower: number;
-  hasCapital: boolean;
+interface ComponentInfo extends PowerTally {
   members: number;
 }
 
@@ -446,7 +447,7 @@ export class Grid {
       if (!node.isConstructed) continue;
       if (this.componentOf.has(node.id)) continue;
       const comp = nextComp++;
-      const info: ComponentInfo = { netPower: 0, hasCapital: false, members: 0 };
+      const info: ComponentInfo = { netPower: 0, supply: 0, demand: 0, hasCapital: false, members: 0 };
       const memberIds: string[] = [];
       const queue: string[] = [node.id];
       this.componentOf.set(node.id, comp);
@@ -455,7 +456,7 @@ export class Grid {
         const cn = nodes.get(cur)!;
         info.members++;
         memberIds.push(cur);
-        info.netPower += cn.powerOutput - cn.powerConsumption;
+        addNodePower(info, cn.powerOutput, cn.powerConsumption);
         if (cn.isCapital) info.hasCapital = true;
         for (const c of adjacency.get(cur) ?? []) {
           const other = c.getOtherNode(cur);
@@ -479,7 +480,7 @@ export class Grid {
     const comp = this.componentOf.get(id);
     if (comp === undefined) return;
     const info = this.componentInfo.get(comp);
-    if (info) info.netPower -= delta;
+    if (info) addDraw(info, delta);
   }
 
   /** Power summary for a structure. Unbuilt / unknown → unpowered, 0 net.
@@ -488,9 +489,9 @@ export class Grid {
    *  unpowered. */
   powerSummaryFor(id: string): PowerSummary {
     const comp = this.componentOf.get(id);
-    if (comp === undefined) return { netPower: 0, powered: false };
+    if (comp === undefined) return { netPower: 0, powered: false, supplyFrac: 0 };
     const info = this.componentInfo.get(comp)!;
-    return { netPower: info.netPower, powered: info.hasCapital && info.netPower >= 0 };
+    return { netPower: info.netPower, powered: info.hasCapital && info.netPower >= 0, supplyFrac: supplyFraction(info) };
   }
 
   /** Member structure ids of the component containing `id` (the shared frozen

@@ -172,14 +172,14 @@ export class FlockMode implements IPilotMode {
       if (resolve(id, this.neighbour)) { ax = this.neighbour.x; ay = this.neighbour.y; break; }
     }
     const t = shipTuning(ctx.kind);
-    if (!nav.waypoint(self.id, self.x, self.y, ax, ay, navHull(ctx.kind), t.wingmanArrive, true)) return false;
+    if (!nav.waypoint(self.id, self.x, self.y, ax, ay, navHull(ctx.kind), t.wingmanArrive, true, self.angle)) return false;
     const dx = ax - self.x, dy = ay - self.y;
     if (dx * dx + dy * dy <= t.flockFollow * t.flockFollow) {
       out.facing = self.angle; out.vx = 0; out.vy = 0;
       return true;
     }
     const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this.steer);
-    const v = Math.min(pace, brakingSpeed(ctx.handling, nav.ahead));
+    const v = Math.min(pace, brakingSpeed(ctx.handling, nav.ahead), nav.turnSpeed);
     out.facing = facingOf(w.dirX, w.dirY); out.vx = w.dirX * v; out.vy = w.dirY * v;
     return true;
   }

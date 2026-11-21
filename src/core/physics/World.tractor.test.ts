@@ -10,6 +10,8 @@ import {
   FORCE_FIELD_MASS_SCALED, TRACTOR_LINE_CAP, storeForceField, tractorImpulse, type TractorForceField,
 } from './forceFields.js';
 import { MOUNT_SIZE_TUNING } from '../../shared-types/shipScale/tuning.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { setTractorHold, setTractorMountConstants, setTractorMuzzle } from '../combat/tractorField.js';
 
 const DT = 1 / 60;
 
@@ -60,11 +62,13 @@ describe('tractorImpulse (pure formula)', () => {
     expect(Math.hypot(out.x, out.y)).toBeCloseTo(200 * DT, 10);
   });
 
-  it('a line body gets lineFrac × F(d), no spring even inside hold', () => {
+  it('a line body gets lineFrac × F(d) beyond hold, nothing inside it (no spring, no pull onto the hull)', () => {
     tractorImpulse(tractor(), 160, 0, 0, 0, 1, DT, true, out);
     expect(out.x).toBeCloseTo(-0.25 * 200 * 0.25 * DT, 10);
-    tractorImpulse(tractor({ hold: 100 }), 50, 0, 0, 0, 1, DT, true, out); // inside hold: still a pull
+    tractorImpulse(tractor({ hold: 50 }), 60, 0, 0, 0, 1, DT, true, out); // inside dRef, beyond hold: full lineFrac
     expect(out.x).toBeCloseTo(-0.25 * 200 * DT, 10);
+    expect(tractorImpulse(tractor({ hold: 100 }), 50, 0, 0, 0, 1, DT, true, out)).toBe(false); // inside hold
+    expect(out).toEqual({ x: 0, y: 0 });
   });
 
   it('storeForceField copies into a fixed-capacity record and reuses it', () => {
@@ -183,5 +187,47 @@ describe('PhysicsWorld — tractor force field', () => {
     w.removeForceField('t');
     run(w, 30);
     expect(pos(w, 'target').x).toBeCloseTo(600, 6);
+  });
+});
+
+/**
+ * Bug (base-build-test, 2026-11-20): a mining skiff holding its tractor on a
+ * rock piece ~250 u off ran away from the piece at a steady ~40–57 u/s with
+ * the helm on Stop. Cause: crumbs from the same cut rested against the hull
+ * on the beam line; a beam-line body was pulled toward the muzzle even inside
+ * `hold`, and the muzzle sits inside the hull, so the crumb pressed on the
+ * hull with lineFrac × F. The emitter feels no reaction, so that press was a
+ * free thruster pushing the ship along the pull. Same poses as the server
+ * (`setTractorMountConstants` / `setTractorMuzzle` / `setTractorHold`).
+ */
+describe('PhysicsWorld — tractor on a real skiff with a crumb on the beam line', () => {
+  it('the ship stays put and the piece closes to the hold while a crumb rests on the hull', async () => {
+    const kind = getShipKind('mining-skiff');
+    const mount = kind.mounts!.find((m) => m.weaponId === 'tractor')!;
+    const w = await PhysicsWorld.create();
+    w.spawnShip('ship', 0, 0, 'mining-skiff');
+    // The locked piece straight ahead of the dish, ~250 u past the muzzle.
+    w.spawnObstacle('piece', mount.localX, mount.localY + 266, 16, 60);
+    // A crumb on the beam line, just off the bow at the dish.
+    w.spawnObstacle('crumb', mount.localX, mount.localY + 55, 12, 30);
+    w.tick(DT);
+    const f: TractorForceField = tractor({ target: 'piece', emitter: 'ship', lineCount: 1, lineIds: ['crumb'] });
+    expect(setTractorMountConstants(f, mount)).toBe(true);
+    let maxPieceD = 0;
+    run(w, 600, () => {
+      const s = w.getShipState('ship')!;
+      setTractorMuzzle(f, s.x, s.y, s.angle, mount);
+      const p = pos(w, 'piece');
+      setTractorHold(f, mount, 'mining-skiff', s.angle, p.x, p.y, 16);
+      f.mvx = s.vx; f.mvy = s.vy;
+      w.setForceField('t', f);
+      maxPieceD = Math.max(maxPieceD, Math.hypot(p.x - f.mx, p.y - f.my));
+    });
+    const s = w.getShipState('ship')!;
+    expect(Math.hypot(s.x, s.y), 'the ship is not towed by its own beam').toBeLessThan(5);
+    expect(Math.hypot(s.vx, s.vy)).toBeLessThan(1);
+    const p = pos(w, 'piece');
+    expect(Math.hypot(p.x - f.mx, p.y - f.my), 'the piece settles at the hold').toBeLessThan(f.hold + 5);
+    expect(maxPieceD).toBeLessThan(270);
   });
 });

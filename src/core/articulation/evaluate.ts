@@ -12,6 +12,10 @@
  *  - no clip record (`playing` null): the rig's idle pose, its `idleClip`'s
  *    held end pose (every part at rest when it has none);
  *  - an unknown clip id, or `nowTick < startTick`: every part at rest;
+ *  - a SCRUBBED clip (`from` or `rate` set) runs at clip time
+ *    `clamp(from + rate * (nowTick - startTick), 0, endTick)` (`clipTime`):
+ *    rate 0 freezes it, a negative rate plays it backwards; before its start
+ *    it holds `from`. A clip with neither field is the plain start-tick clip;
  *  - a part without a track in the clip stays at rest;
  *  - a track's first key after tick 0 eases from rest at tick 0;
  *  - after a track's last key it holds that key;
@@ -48,6 +52,25 @@ export interface PlayingClip {
   readonly holdTicks?: number;
   /** 3e: which way that cargo moves (`CRANE_CARGO_*`); absent = none. */
   readonly cargo?: number;
+  /** Scrub: clip time at `startTick` (default 0). Setting `from` or `rate`
+   *  makes the clip scrubbed: its time is clamped to [0, endTick]. */
+  readonly from?: number;
+  /** Scrub: clip ticks per game tick, signed (default 1; 0 = frozen,
+   *  negative = backwards). */
+  readonly rate?: number;
+}
+
+/**
+ * Clip time of `playing` at `nowTick` for a clip `endTick` long. A plain clip
+ * (no `from`/`rate`) returns `nowTick - startTick` unclamped, exactly as
+ * before (negative = not started). A scrubbed clip returns
+ * `clamp(from + rate * max(0, nowTick - startTick), 0, endTick)`.
+ */
+export function clipTime(playing: PlayingClip, nowTick: number, endTick: number): number {
+  const dt = nowTick - playing.startTick;
+  if (playing.from === undefined && playing.rate === undefined) return dt;
+  const t = (playing.from ?? 0) + (playing.rate ?? 1) * (dt > 0 ? dt : 0);
+  return t <= 0 ? 0 : t >= endTick ? endTick : t;
 }
 
 /** What an IK solver is asked (one reused object per pose, no allocation). */
@@ -332,11 +355,11 @@ export function evaluateRig(
   let clipIdx = -1;
   let t = 0;
   if (playing !== null) {
-    t = nowTick - playing.startTick;
-    if (t >= 0) {
-      const cs = rig.clips;
-      for (let i = 0; i < cs.length; i++) if (cs[i]!.id === playing.clipId) { clipIdx = i; break; }
-    }
+    const cs = rig.clips;
+    let found = -1;
+    for (let i = 0; i < cs.length; i++) if (cs[i]!.id === playing.clipId) { found = i; break; }
+    t = found >= 0 ? clipTime(playing, nowTick, cs[found]!.endTick) : nowTick - playing.startTick;
+    if (t >= 0) clipIdx = found;
   } else if (rig.idleClip >= 0) {
     clipIdx = rig.idleClip;
     t = rig.clips[clipIdx]!.endTick;
@@ -416,11 +439,18 @@ export function evaluateRig(
   return out;
 }
 
-/** True once `nowTick` is at or past the clip's last key (it now holds). */
+/** True once the clip holds still: a plain clip at or past its last key; a
+ *  scrubbed clip frozen (rate 0) or clamped at the end it moves toward (the
+ *  last key going forwards, tick 0 going backwards). An unknown clip is done. */
 export function clipFinished(rig: Rig, playing: PlayingClip, nowTick: number): boolean {
   const cs = rig.clips;
   for (let i = 0; i < cs.length; i++) {
-    if (cs[i]!.id === playing.clipId) return nowTick - playing.startTick >= cs[i]!.endTick;
+    if (cs[i]!.id !== playing.clipId) continue;
+    const end = cs[i]!.endTick;
+    const t = clipTime(playing, nowTick, end);
+    if (playing.from === undefined && playing.rate === undefined) return t >= end;
+    const rate = playing.rate ?? 1;
+    return rate === 0 || (rate > 0 ? t >= end : t <= 0);
   }
   return true;
 }

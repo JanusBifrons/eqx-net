@@ -18,7 +18,7 @@ const KIND = getShipKind('fighter');
 
 /** A routes stub: records each ask; `wp` (when set) is the answer for everyone. */
 class FakeNav implements IAiNavRoutes {
-  wpX = 0; wpY = 0; ahead = 0;
+  wpX = 0; wpY = 0; ahead = 0; turnSpeed = Infinity;
   wp: { x: number; y: number } | null = null;
   readonly asks: { id: string; tx: number; ty: number; keep: boolean | undefined }[] = [];
   readonly turns: { heading: number | undefined; turnRadius: number | undefined }[] = [];
@@ -91,7 +91,7 @@ describe('HostileDroneBehaviour — single file round rock (navigation slice 10)
 });
 
 describe('HostileDroneBehaviour — a capital plans with its nose (navigation slice 11)', () => {
-  it('a battleship on a Move sends its heading and turning radius; a fighter sends none', () => {
+  it('a battleship on a Move sends its heading and turning radius; a fighter its heading only (the corner cap, not its plan)', () => {
     const BS = getShipKind('battleship');
     for (const [kind, angle] of [[BS, 0.7], [KIND, 0.7]] as const) {
       const nav = new FakeNav(), b = new HostileDroneBehaviour(kind);
@@ -103,7 +103,7 @@ describe('HostileDroneBehaviour — a capital plans with its nose (navigation sl
         expect(turn.turnRadius).toBeCloseTo(pilotTurnRadius(makePilotHandling(BS, shipBodyMass(BS))), 6);
         expect(turn.turnRadius!).toBeGreaterThan(shipTuning(BS).navClearance);
       } else {
-        expect(turn.heading).toBeNaN();
+        expect(turn.heading).toBe(0.7); // NavRoutes caps its speed out of a corner by its nose; turning radius 0: the plan ignores it
         expect(turn.turnRadius).toBe(0);
       }
     }

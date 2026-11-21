@@ -31,7 +31,7 @@ describe('SectorRoom integration — shield fence (shield-fence plan)', () => {
         // relay carries power out to pylon A, which links pylon B (the pair
         // forms the wall). Relay on +x so its LOS to A clears the Capital.
         // Phase V footprints: Capital ±280, relay at x 400 (edge 88), pylons
-        // 72×72 — A beside the relay, B 500 u above A (edge 428 ≤ 600).
+        // 120×120 — A beside the relay, B 500 u above A (edge 380 ≤ 600).
         { kind: 'connector', x: 400, y: 0 },
         { kind: 'shield_pylon', x: 520, y: 0 },
         { kind: 'shield_pylon', x: 520, y: 500 },

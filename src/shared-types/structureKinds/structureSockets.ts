@@ -87,10 +87,6 @@ function freezeSocket(x: number, y: number, nx: number, ny: number): StructureSo
  * (which draws the outline deck), drop its entry so it returns to rule 4.
  */
 export const STRUCTURE_SOCKET_OVERRIDES: Partial<Record<StructureKindId, readonly StructureSocket[]>> = {
-  // Armoured emplacement: a square plate (the hex outline is never drawn).
-  missile_turret: Object.freeze([
-    freezeSocket(95, 0, 1, 0), freezeSocket(0, 95, 0, 1), freezeSocket(-95, 0, -1, 0), freezeSocket(0, -95, 0, -1),
-  ]),
   // Rail gun: the 270 u carriage block (396 u long: two a side) and the two
   // rail ends; the railed runs between are rungs over a 210 u spine.
   siege_gun_80cm: Object.freeze([

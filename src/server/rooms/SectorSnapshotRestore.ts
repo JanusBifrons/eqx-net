@@ -41,6 +41,7 @@ import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import type { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import type { StructureRegistry } from '../structures/StructureRegistry.js';
+import { parseSavedDoor } from '../../core/structures/gateLogic.js';
 import type { WingmanPilots } from './features/wingmanPilots.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ShipState } from './schema/SectorState.js';
@@ -106,6 +107,9 @@ export class SectorSnapshotRestore {
         // persisted (already-leveled) value, so no re-seed is needed.
         rec.level = r.level ?? 1;
         if (r.gateAccess !== undefined) rec.gateAccess = r.gateAccess;
+        // Door-power slice 12: a gate door comes back frozen where it was.
+        const door = parseSavedDoor(r.doorPos, r.doorClip);
+        if (door) rec.doorRestore = door;
         if (r.switchedOff === true) rec.switchedOff = true;
         const throttle = normalizeStructureThrottle(r.throttle);
         if (throttle !== undefined) rec.throttle = throttle;
