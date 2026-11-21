@@ -31,6 +31,10 @@ import { render, screen } from '@testing-library/react';
 import { LayoutContext } from '../layout/useLayout.js';
 import { WarpScreen } from './WarpScreen.js';
 import { useUIStore } from '../state/store.js';
+import { JOIN_STEP_TEXT, type JoinStepId } from './sectorBriefing.js';
+
+/** The status label names the loading step in progress. */
+const stepName = (id: JoinStepId): string => JOIN_STEP_TEXT.find((s) => s.id === id)!.name;
 
 type RearmApi = { rearmJoinReadiness?: () => void };
 const api = (): ReturnType<typeof useUIStore.getState> & RearmApi =>
@@ -100,17 +104,15 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     api().rearmJoinReadiness?.();
     rerender();
     expect(visible()).toBe('1'); // RED pre-fix: stays '0' (action absent)
-    // Plan: crispy-kazoo, Commit 9 — collapsed status cascade to 3
-    // user-visible states. Pre-rearm intermediate states all read as
-    // 'LOADING SECTOR' (was the 5-state cascade SYNCING SECTOR
-    // TELEMETRY / STABILISING TRAJECTORY etc.). Less jitter.
-    expect(statusText()).toBe('LOADING SECTOR');
+    // The status label names the step in progress (`joinGateSteps`): the
+    // re-arm cleared the snapshot, so it is back on receiving the sector.
+    expect(statusText()).toBe(stepName('sector'));
 
     // readiness gates flip true in arrival order → hides again
     useUIStore.getState().setFirstSnapshotApplied(true);
     rerender();
     expect(visible()).toBe('1'); // still gated by the minDisplay floor
-    expect(statusText()).toBe('LOADING SECTOR');
+    expect(statusText()).toBe(stepName('draw')); // the floor folds into drawing
     useUIStore.getState().setJoinMinimumElapsed(true);
     // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake
     // gates must also flip for the curtain to drop. In production these
@@ -131,7 +133,7 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     api().rearmJoinReadiness?.();
     rerender();
     expect(visible()).toBe('1'); // RED pre-fix: 2nd+ transit never re-shows
-    expect(statusText()).toBe('LOADING SECTOR');
+    expect(statusText()).toBe(stepName('sector'));
   });
 
   it('gate-drift lock: still shown when only firstSnapshotApplied is unmet (4-vs-5)', () => {
@@ -185,8 +187,7 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     });
     renderWarp();
     expect(visible()).toBe('1');
-    // Status cascade collapsed: any pending bootstrap gate (including
-    // joinMinimumElapsed) reads as 'LOADING SECTOR' per Commit 9.
-    expect(statusText()).toBe('LOADING SECTOR');
+    // The display floor folds into the drawing step (never its own step).
+    expect(statusText()).toBe(stepName('draw'));
   });
 });
