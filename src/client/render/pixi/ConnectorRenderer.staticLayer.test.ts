@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ConnectorRenderer, staticSignature } from './ConnectorRenderer.js';
+import { staticScaleKey } from './connectorVisual.js';
 import { buildStructureLattice } from '../../../core/structures/structureLattice.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
@@ -95,6 +96,13 @@ describe('ConnectorRenderer static layer (A3)', () => {
     const px = r.lastBuiltTurretRangeWidth * 0.3;
     expect(px).toBeGreaterThanOrEqual(1);
     expect(px).toBeLessThanOrEqual(Math.SQRT2 * 1.03);
+  });
+
+  it('a zoom exactly on a step (the default 2^-1.5) keys to that step, not one below', () => {
+    // Float log2 of 2^-1.5 lands a hair under -3; without care the spawn zoom drew 41 % wider lines.
+    expect(staticScaleKey(Math.SQRT1_2 / 2, Number.NaN)).toBe(-3);
+    expect(staticScaleKey(0.35355339059327373, Number.NaN)).toBe(-3);
+    expect(staticScaleKey(0.25, Number.NaN)).toBe(-4);
   });
 
   it('a gate door moving leaves the signature alone (no gate span is drawn)', () => {

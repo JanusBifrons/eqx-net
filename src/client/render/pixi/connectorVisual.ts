@@ -587,7 +587,9 @@ const STATIC_KEY_DEAD_BAND = Math.log2(1.03) * 2;
  *  Clamped at 0 (scale 1): every floor it draws is flat from there up.
  *  `current` = the built key (NaN: none); kept while still valid. */
 export function staticScaleKey(scale: number, current: number): number {
-  const l = Math.log2(scale > 0 ? scale : 1) * 2;
+  // +1e-9: a zoom sitting exactly on a step (the default 2^-1.5) must not
+  // round down a whole step (41 % wider lines at the spawn zoom).
+  const l = Math.log2(scale > 0 ? scale : 1) * 2 + 1e-9;
   const down = Math.min(0, Math.floor(l));
   if (!(current <= down)) return down; // too thin (or no build yet)
   const up = Math.min(0, Math.floor(l - STATIC_KEY_DEAD_BAND));
