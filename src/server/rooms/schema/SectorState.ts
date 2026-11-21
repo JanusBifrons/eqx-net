@@ -51,6 +51,10 @@ export class ShipState extends Schema {
   // (polygon collision). Seeded to kind.shieldMax on spawn/respawn.
   shield = 0;
   shieldLastDamageTick = 0;
+  /** The pilot dropped the shields (`set_shields`): the shield sits at 0 and
+   *  does not regenerate until raised (ShieldHullRouter.setShipShieldsLowered).
+   *  Own-ship snapshot slice `shieldsLowered` carries it (#16). */
+  shieldsLowered = false;
 
   // -- Level (Phase 4 Leveling & XP, WS-B1) ------------------------------
   // PLAIN instance field, intentionally NOT @type-decorated: like shield /
