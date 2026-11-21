@@ -3398,3 +3398,14 @@ frozen `EMPTY_AIM_IDS` on `mirror.localAimMountIds`, so in strict-mode ESM the t
 `dispose_complete`, mirror half-cleared) on every leave from the Lost Connection overlay. A generic
 walk that mutates must check `Object.isFrozen` and swap in a fresh value instead; a test that stores
 a frozen constant on the mirror (`colyseusClient.disposeAudit.test.ts`) locks it.
+
+## 2026-11-21 — a fixed speculation cap breaks when the horizon it bounds grows
+
+Remote ships forward-predict their held bits from `serverTick` across the lead (the replay) plus a
+snapshot interval of live ticks. The stall cap was a fixed 8 ticks, sized when the lead sat on its
+3-tick floor. Sizing the lead from the server's input margin let it grow (an idle observer also keeps
+its initial 6: it sends no input, so it gets no margin): every snapshot then cut the last held ticks,
+landed a correction, and the hysteresis guard turned remote prediction off
+(`remote-ship-held-thrust.spec.ts`: 13 u per snapshot). A cap on a window must be relative to the
+window: `remoteForwardTickCap(lead)`. When you resize a lead, grep for every constant that assumed
+its old size.
