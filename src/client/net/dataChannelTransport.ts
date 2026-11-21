@@ -27,6 +27,7 @@
 import { Packr, Unpackr } from '@colyseus/msgpackr';
 import type { Room } from 'colyseus.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
+import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 
 export interface DataChannelSnapshotReceiverOpts {
   onSnapshot: (snap: SnapshotMessage) => void;
@@ -35,6 +36,9 @@ export interface DataChannelSnapshotReceiverOpts {
    * out-of-order / undecodable payloads.
    */
   onDiag?: (tag: string, data: Record<string, unknown>) => void;
+  /** Wall-clock source for frame arrival stamps (networking time, not game
+   *  time). Defaults to `REAL_CLOCK`; tests inject a `MockClock`. */
+  clock?: Clock;
 }
 
 const unpackr = new Unpackr({});
@@ -98,9 +102,39 @@ export class DataChannelSnapshotReceiver {
    * tests and integration tests that pump frames synchronously.
    */
   private _pendingBytes: Uint8Array | ArrayBuffer | null = null;
+  /**
+   * Arrival telemetry (netcode gap smoothing S0). Scalars on this object,
+   * written per packet with no allocation. `_pendingArrivalMs` is the wall
+   * time the frame in `_pendingBytes` arrived; `_lastArrivalMs` is the
+   * arrival time of the frame most recently dispatched, set BEFORE
+   * `onSnapshot` runs so the callback can read it. `_pendingReplaced`
+   * counts frames overwritten in the slot since the last drain.
+   */
+  private readonly _clock: Clock;
+  private _pendingArrivalMs = 0;
+  private _lastArrivalMs = 0;
+  private _pendingReplaced = 0;
+  private _lastDrainReplaced = 0;
+  private _totalReplaced = 0;
 
   constructor(opts: DataChannelSnapshotReceiverOpts) {
     this._opts = opts;
+    this._clock = opts.clock ?? REAL_CLOCK;
+  }
+
+  /** Wall time (clock ms) the most recently dispatched frame truly arrived. */
+  lastArrivalMs(): number {
+    return this._lastArrivalMs;
+  }
+
+  /** Frames replaced in the slot before the most recent non-empty drain. */
+  lastDrainReplacedCount(): number {
+    return this._lastDrainReplaced;
+  }
+
+  /** Running total of replaced frames since construction or the last reset. */
+  totalReplacedCount(): number {
+    return this._totalReplaced;
   }
 
   /**
@@ -115,9 +149,18 @@ export class DataChannelSnapshotReceiver {
     // that carries one must not vanish undecoded. Decode + dispatch it first,
     // in order; the snapshot coalescer then carries its deltas forward. A
     // byte scan for the two keys keeps every other superseded frame free.
+    const arrivalMs = this._clock.now();
     const prev = this._pendingBytes;
-    if (prev !== null && carriesWreckDeltas(prev)) this._decodeAndDispatch(prev);
+    if (prev !== null) {
+      this._pendingReplaced++;
+      this._totalReplaced++;
+      if (carriesWreckDeltas(prev)) {
+        this._lastArrivalMs = this._pendingArrivalMs;
+        this._decodeAndDispatch(prev);
+      }
+    }
     this._pendingBytes = buf;
+    this._pendingArrivalMs = arrivalMs;
   }
 
   /**
@@ -129,6 +172,9 @@ export class DataChannelSnapshotReceiver {
     const buf = this._pendingBytes;
     if (buf === null) return;
     this._pendingBytes = null;
+    this._lastArrivalMs = this._pendingArrivalMs;
+    this._lastDrainReplaced = this._pendingReplaced;
+    this._pendingReplaced = 0;
     this._decodeAndDispatch(buf);
   }
 
@@ -138,6 +184,7 @@ export class DataChannelSnapshotReceiver {
    * order. Production code paths go through `enqueueBinary` + `drain`.
    */
   handleBinary(buf: Uint8Array | ArrayBuffer): void {
+    this._lastArrivalMs = this._clock.now();
     this._decodeAndDispatch(buf);
   }
 
@@ -188,6 +235,11 @@ export class DataChannelSnapshotReceiver {
   reset(): void {
     this._lastSeenServerTick = -1;
     this._pendingBytes = null;
+    this._pendingArrivalMs = 0;
+    this._lastArrivalMs = 0;
+    this._pendingReplaced = 0;
+    this._lastDrainReplaced = 0;
+    this._totalReplaced = 0;
   }
 }
 
@@ -229,6 +281,8 @@ export interface DataChannelTransportOpts {
    * over the signaling channel.
    */
   connectTimeoutMs?: number;
+  /** Wall-clock source for DC frame arrival stamps. Defaults to `REAL_CLOCK`. */
+  clock?: Clock;
 }
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
@@ -255,6 +309,7 @@ export class DataChannelTransport {
     this._receiver = new DataChannelSnapshotReceiver({
       onSnapshot: opts.onSnapshot,
       onDiag: opts.onDiag,
+      clock: opts.clock,
     });
   }
 
@@ -449,6 +504,21 @@ export class DataChannelTransport {
    */
   drainPending(): void {
     this._receiver.drain();
+  }
+
+  /** Wall time the most recently dispatched DC frame truly arrived. */
+  lastArrivalMs(): number {
+    return this._receiver.lastArrivalMs();
+  }
+
+  /** DC frames replaced in the slot before the most recent drain. */
+  lastDrainReplacedCount(): number {
+    return this._receiver.lastDrainReplacedCount();
+  }
+
+  /** Running total of replaced DC frames; reset on close and handoff. */
+  totalReplacedCount(): number {
+    return this._receiver.totalReplacedCount();
   }
 
   private _fallback(reason: string): void {

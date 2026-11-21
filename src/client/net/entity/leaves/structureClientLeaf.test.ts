@@ -90,6 +90,33 @@ describe('StructureClientLeaf — build mirror on the prediction body', () => {
     expect(f.spawns).toBe(3);
   });
 
+  it('N structures synced K times with no change are posed N times, not N*K; a moved one is re-posed', () => {
+    const f = fakeWorld();
+    let poses = 0;
+    (f.world as unknown as { setShipState: () => void }).setShipState = () => { poses++; };
+    const N = 12;
+    const K = 8;
+    const rows = new Map<number, ClientStructureFacts>();
+    const leaf = new StructureClientLeaf();
+    const ctxs = Array.from({ length: N }, (_, i) => {
+      rows.set(i, {});
+      return { ...ctxFor(f.world, rows), entityId: i, key: `swarm-${i}`, entry: { ...ctxFor(f.world, rows).entry, x: i * 1000 } };
+    });
+    for (const c of ctxs) leaf.spawnBody(c);
+    for (let k = 0; k < K; k++) for (const c of ctxs) leaf.onSync(c);
+    expect(poses).toBe(N);
+
+    ctxs[3]!.entry.x += 5;
+    for (const c of ctxs) leaf.onSync(c);
+    expect(poses).toBe(N + 1);
+
+    // A respawned body (streamed out and back in) is posed again.
+    f.world.despawnShip('swarm-4');
+    leaf.spawnBody(ctxs[4]!);
+    leaf.onSync(ctxs[4]!);
+    expect(poses).toBe(N + 2);
+  });
+
   it('an unmirrored Shipyard is never rebuilt', () => {
     const f = fakeWorld();
     const ctx = ctxFor(f.world, new Map([[7, {}]]));
