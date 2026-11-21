@@ -432,16 +432,8 @@ export function noteSwarmResync(): void { _resyncCount++; }
  */
 export function swarmArrivalStampMs(tick: number, nowMs: number): number {
   const tickWallMs = SERVER_TICK_MS / _displaySpeed;
-  const cand = nowMs - tick * tickWallMs;
-  if (!_tickClockSeeded || Math.abs(cand - _tickClockOffsetMs) > TICK_CLOCK_RESYNC_MS) {
-    _tickClockSeeded = true;
-    _tickClockOffsetMs = cand;
-  } else if (cand < _tickClockOffsetMs) {
-    _tickClockOffsetMs = cand;
-  } else if (!_holdActive) {
-    // Not while the stall hold is parked: the backlog is late by design (S4-5).
-    _tickClockOffsetMs += (cand - _tickClockOffsetMs) * TICK_CLOCK_DRIFT_UP;
-  }
+  _tickClockOffsetMs = nextTickClockOffsetMs(nowMs - tick * tickWallMs);
+  _tickClockSeeded = true;
   const stamp = Math.min(nowMs, tick * tickWallMs + _tickClockOffsetMs);
   const lateMs = nowMs - stamp;
   _latenessLastMs = lateMs;
@@ -457,6 +449,39 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
   _tickClockLastTick = tick;
   _tickClockLastStampMs = stamp;
   return stamp;
+}
+
+/** The tick-clock offset a packet with candidate offset `cand` (arrival −
+ *  tick × tick wall ms) leaves behind: a re-seed (unseeded, or more than
+ *  TICK_CLOCK_RESYNC_MS off) or an earlier arrival takes `cand`; a later one
+ *  pulls the offset up by TICK_CLOCK_DRIFT_UP, except while the stall hold is
+ *  parked (the backlog is late by design, S4-5). Pure: reads state only. */
+function nextTickClockOffsetMs(cand: number): number {
+  if (!_tickClockSeeded || Math.abs(cand - _tickClockOffsetMs) > TICK_CLOCK_RESYNC_MS) return cand;
+  if (cand < _tickClockOffsetMs) return cand;
+  if (_holdActive) return _tickClockOffsetMs;
+  return _tickClockOffsetMs + (cand - _tickClockOffsetMs) * TICK_CLOCK_DRIFT_UP;
+}
+
+/**
+ * Read-only sibling of `swarmArrivalStampMs` (netcode gap smoothing, S5-1):
+ * the stamp that call would return for server tick `tick` arriving at
+ * `nowMs`, against the CURRENT tick clock (re-seed, earlier-arrival, drift-up
+ * and the S4-5 hold freeze all applied as that call would), but it changes
+ * nothing: no clock, lateness counter, estimate, delay target or hold state.
+ * For samples of another stream on the same server tick basis (missiles,
+ * shells) that must share the drone display timeline without steering it.
+ *
+ * Before the tick clock is seeded (no tick-stamped drone packet since the
+ * last reset) it returns NaN, where `swarmArrivalStampMs` would seed the
+ * clock and return `nowMs`: there is no drone timeline to place the tick on
+ * yet. Callers test `Number.isNaN(stamp)` and fall back (e.g. to `nowMs`).
+ * A NaN `tick` or `nowMs` also gives NaN. Scalars only.
+ */
+export function swarmTickToStampMs(tick: number, nowMs: number): number {
+  if (!_tickClockSeeded) return Number.NaN;
+  const tickWallMs = SERVER_TICK_MS / _displaySpeed;
+  return Math.min(nowMs, tick * tickWallMs + nextTickClockOffsetMs(nowMs - tick * tickWallMs));
 }
 
 /** Forget the tick clock, zero the drone stream counters and reset the

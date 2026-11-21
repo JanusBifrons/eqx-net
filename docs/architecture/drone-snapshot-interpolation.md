@@ -204,6 +204,15 @@ speed change keeps the newest stamp in place. Lock:
 `src/client/net/swarmInterpolation.tickStamp.test.ts` (drain-time stamps step
 error 3.1 u, tick stamps 0.16 u).
 
+**Read-only tick to stamp (S5-1).** `swarmTickToStampMs(tick, now)` returns
+the stamp `swarmArrivalStampMs(tick, now)` would return at that moment (same
+re-seed, earlier-arrival, drift-up and S4-5 hold-freeze rules, shared through
+one helper) but changes nothing: no tick clock, lateness, estimate, delay
+target or hold state. It returns NaN until the tick clock is seeded by a
+drone packet (callers check `Number.isNaN` and fall back). It is for streams
+on the same server tick basis (missiles, shells: S5-2) to share the drone
+timeline without steering it. Lock: `src/client/net/swarmTickToStamp.test.ts`.
+
 **Lateness estimate (sizes the delay target).** Each tick-stamped packet's
 lateness (wall ms after its tick-clock stamp) feeds an asymmetric EWMA,
 `getSwarmLatenessEstimateMs()`, that rises fast (`LATENESS_RISE_TAU_MS` 50 ms)
