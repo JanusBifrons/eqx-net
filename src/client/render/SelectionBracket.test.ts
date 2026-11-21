@@ -36,6 +36,7 @@ vi.mock('pixi.js', () => {
 type FakeGfx = {
   clear: ReturnType<typeof vi.fn>;
   moveTo: ReturnType<typeof vi.fn>;
+  lineTo: ReturnType<typeof vi.fn>;
   stroke: ReturnType<typeof vi.fn>;
   visible: boolean;
 };
@@ -111,5 +112,44 @@ describe('SelectionBracket', () => {
     expect(bracket.lastWorldX).toBeNull();
     expect(bracket.resolveFocus(m, null)).toBe(false);
     expect(bracket.lastWorldY).toBeNull();
+  });
+
+  // Phone bug: a selected Shipyard (960x600 footprint, 567 u bounding radius)
+  // got a radius SQUARE: as wide as the yard but nearly twice as tall. The
+  // bracket must hug the structure's (quarter-turn) footprint box, as the pick does.
+  describe('structures: the bracket hugs the footprint box, not the bounding radius', () => {
+    const yard = (angle: number) => ({ x: -1488, y: -405, radius: 567, kind: 2, shipKind: 'shipyard', angle });
+    function drawnBox(b: SelectionBracket): { x0: number; x1: number; y0: number; y1: number } {
+      const g = gfxOf(b);
+      const pts = [...g.moveTo.mock.calls, ...g.lineTo.mock.calls] as [number, number][];
+      const xs = pts.map((p) => p[0]);
+      const ys = pts.map((p) => p[1]);
+      return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+    }
+
+    it('a Shipyard at default rotation: wide box, 960 x 600 plus the pad', () => {
+      const m = mirror({ swarm: new Map([[7, yard(0)]]) as never });
+      bracket.draw(m, new Set(), 'swarm-7', project, 1);
+      const box = drawnBox(bracket);
+      expect(box.x1 - box.x0).toBeCloseTo(960 + 16);
+      expect(box.y1 - box.y0).toBeCloseTo(600 + 16);
+      expect((box.x0 + box.x1) / 2).toBeCloseTo(-1488);
+      expect((box.y0 + box.y1) / 2).toBeCloseTo(405); // pixiY = -gameY
+    });
+
+    it('a quarter-turned Shipyard: the box swaps axes', () => {
+      const m = mirror({ swarm: new Map([[7, yard(Math.PI / 2)]]) as never });
+      bracket.draw(m, new Set(), 'swarm-7', project, 1);
+      const box = drawnBox(bracket);
+      expect(box.x1 - box.x0).toBeCloseTo(600 + 16);
+      expect(box.y1 - box.y0).toBeCloseTo(960 + 16);
+    });
+
+    it('resolveFocus: the panel anchor sits on the footprint top, not the radius', () => {
+      const m = mirror({ swarm: new Map([[7, yard(0)]]) as never });
+      expect(bracket.resolveFocus(m, 'swarm-7')).toBe(true);
+      expect(bracket.lastWorldHalf).toBeCloseTo(300 + 8);
+      expect(bracket.lastWorldY).toBeCloseTo(405 - 308);
+    });
   });
 });
