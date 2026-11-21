@@ -138,7 +138,7 @@ export class ResearchLabSubsystem {
       const working = job !== undefined && job.done < job.pulses && lab.isConstructed && this.d.powered(lab.id);
       this.d.setActive?.(lab, working);
       if (job !== undefined) {
-        if (working) {
+        if (working && job.done < job.pulses) {
           const rate = structureWorkRate(lab); // owner throttle: 50% takes twice as long
           if (rate > 0) {
             board.advance(lab.uid, rate);
