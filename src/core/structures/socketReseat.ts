@@ -15,8 +15,11 @@
  * together with the new link. Same code on the server and the build preview
  * (#15). Allocation-free.
  */
-import type { Connection } from './Connection.js';
-import { CABLE_NO_SOCKET, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
+// CABLE_NO_SOCKET from Connection, never via cableCurve's re-export: this
+// module sits on the cableCurve -> Grid -> socketReseat cycle and reads it at
+// load time (structureGridLoadOrder.test.ts).
+import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
+import { pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
 import type { GridNode, GridObstacle } from './Grid.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
 
