@@ -25,6 +25,7 @@ import { useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 import { formatKm, warpDestinations, warpStateLabel, type WarpDestination, type WarpRouteInputs } from './warpDestinations';
 import { WarpRouteClient, type WarpRouteMirror } from './warpRoute';
+import { BLOCKED_COLOUR, NEAR_COLOUR, WarpMapRoute } from './WarpMapRoute';
 import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites';
 import { warpStopMargin } from '../../core/galaxy/warpTarget';
 import { getShipKind } from '../../shared-types/shipKinds';
@@ -81,7 +82,6 @@ function destinationsFrom(sectorKey: string, pose: ShipPose): WarpDestination[] 
 }
 
 const SUB_SX = { display: 'block', fontSize: 11 };
-const NEAR_COLOUR = '#f0b44c', BLOCKED_COLOUR = '#ff7b7b';
 
 /** Poll the ship pose and warp state at 4 Hz while `on`. */
 function usePolledShip(on: boolean): { pose: ShipPose | null; warping: boolean } {
@@ -232,13 +232,7 @@ function SystemMap({ dests, pose, target, onPick, onWarp, press }: {
           <text key={`l-${d.id}`} x={lx} y={ly} fontSize={font} fill={on(d) ? '#ffffff' : '#c8d4e6'} textAnchor={anchor}
             fontWeight={on(d) ? 700 : 400} style={{ pointerEvents: 'none' }}>{d.label}</text>
         ))}
-        {pose && sel && (
-          <g data-testid="warp-map-line" style={{ pointerEvents: 'none' }}>
-            <line x1={pose.x} y1={-pose.y} x2={sel.targetX} y2={-sel.targetY} stroke={sel.state === 'clear' ? '#5ad7ff' : sel.state === 'near' ? NEAR_COLOUR : BLOCKED_COLOUR}
-              strokeWidth={H / 150} strokeDasharray={`${H / 40} ${H / 60}`} />
-            <circle cx={sel.targetX} cy={-sel.targetY} r={H / 40} fill="none" stroke="#ffffff" strokeWidth={H / 150} />
-          </g>
-        )}
+        {pose && sel && <WarpMapRoute sel={sel} shipX={pose.x} shipY={pose.y} h={H} />}
         {pose && (
           <g transform={`translate(${pose.x} ${-pose.y}) rotate(${(-pose.angle * 180) / Math.PI})`} data-testid="warp-map-ship">
             <polygon points={`0,${-H / 20} ${H / 32},${H / 26} ${-H / 32},${H / 26}`} fill="#ffffff" stroke="#070b14" strokeWidth={H / 200} />
