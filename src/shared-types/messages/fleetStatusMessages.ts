@@ -42,7 +42,8 @@ type FleetStatusOrder = (typeof FLEET_STATUS_ORDERS)[number];
 /** A one-off order layered on top of the mode: done once, then the mode
  *  resumes from where the ship is. */
 export type FleetOrder =
-  | { readonly kind: 'move'; readonly x: number; readonly y: number }
+  /** `speed`: Command speed, a fraction of the ship's top speed (absent = full). */
+  | { readonly kind: 'move'; readonly x: number; readonly y: number; readonly speed?: number }
   | { readonly kind: 'attack'; readonly targetId: string }
   | { readonly kind: 'stop' };
 

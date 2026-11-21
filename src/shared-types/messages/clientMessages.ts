@@ -5,7 +5,10 @@ import { StructureKindIdSchema } from '../structureKinds.js';
 import { GATE_ACCESS_IDS } from '../gateAccess.js';
 import { MountWeaponIdSchema } from '../shipKinds/types.js';
 import { SelectEntitySchema, DeselectEntitySchema } from './selectionMessages.js';
-import { FLEET_ROUTE_MAX, FLEET_STATUS_MODES, FLEET_STATUS_STANCES } from './fleetStatusMessages.js';
+import {
+  FleetModeSchema, FleetStanceSchema, FleetSpeedSchema, FleetOrderSchema, SetModeSchema, SetStanceSchema, FormSquadSchema, DisbandSquadSchema,
+} from './fleetCommandMessages.js';
+export { FleetModeSchema, FleetStanceSchema, FleetSpeedSchema, FleetOrderSchema, SetModeSchema, SetStanceSchema, FormSquadSchema, DisbandSquadSchema };
 import { TestFleetWarpSchema, TestTractorSchema, TestDropPodsSchema } from './testModeMessages.js';
 export { TestFleetWarpSchema, TestTractorSchema, TestDropPodsSchema };
 
@@ -369,81 +372,6 @@ export const PilotShipSchema = z
 export const SpectateSchema = z
   .object({
     type: z.literal('spectate'),
-  })
-  .strict();
-
-/* ── RTS command layer (slice 6a) ─────────────────────────────────────────
- * Fleet command wire schemas, built on the fleet vocabulary tables
- * (`fleetStatusMessages.ts`: `FLEET_STATUS_MODES` / `FLEET_STATUS_STANCES` /
- * `FleetOrder`). Owner-gating of `shipIds` is server-side. */
-
-/** A `FleetMode`. Append-only. */
-export const FleetModeSchema = z.enum(FLEET_STATUS_MODES);
-/** A `FleetStance`. Append-only. */
-export const FleetStanceSchema = z.enum(FLEET_STATUS_STANCES);
-
-const FleetShipIdSchema = z.string().min(1).max(64);
-const FleetShipIdsSchema = z.array(FleetShipIdSchema).min(1).max(64);
-const FiniteSchema = z.number().finite();
-
-/** Client → server: a one-off order (`FleetOrder`) for the given owned ships.
- *  `move` needs finite `x`,`y`; `attack` needs `targetId`. Strict. */
-export const FleetOrderSchema = z
-  .object({
-    type: z.literal('fleet_order'),
-    shipIds: FleetShipIdsSchema,
-    kind: z.enum(['move', 'attack', 'stop']),
-    x: FiniteSchema.optional(),
-    y: FiniteSchema.optional(),
-    targetId: z.string().min(1).max(64).optional(),
-  })
-  .strict()
-  .refine((m) => m.kind !== 'move' || (m.x !== undefined && m.y !== undefined), {
-    message: 'move requires x and y',
-  })
-  .refine((m) => m.kind !== 'attack' || m.targetId !== undefined, {
-    message: 'attack requires targetId',
-  });
-
-/** Client → server: set the standing mode for the given ships.
- *  `route` (patrol waypoints, max 16), `guardRadius` (defend) and `escortId`
- *  (escort) are optional mode parameters. Strict. */
-export const SetModeSchema = z
-  .object({
-    type: z.literal('set_mode'),
-    shipIds: FleetShipIdsSchema,
-    mode: FleetModeSchema,
-    route: z.array(z.tuple([FiniteSchema, FiniteSchema])).max(FLEET_ROUTE_MAX).optional(),
-    guardRadius: FiniteSchema.positive().optional(),
-    escortId: z.string().min(1).max(64).optional(),
-    /** Retreat point, game space (send both or neither; none = back to the post). */
-    x: FiniteSchema.optional(),
-    y: FiniteSchema.optional(),
-  })
-  .strict();
-
-/** Client → server: set the fire stance for the given ships. Strict. */
-export const SetStanceSchema = z
-  .object({
-    type: z.literal('set_stance'),
-    shipIds: FleetShipIdsSchema,
-    stance: FleetStanceSchema,
-  })
-  .strict();
-
-/** Client → server: group 2..24 owned ships into a squad. Strict. */
-export const FormSquadSchema = z
-  .object({
-    type: z.literal('form_squad'),
-    shipIds: z.array(FleetShipIdSchema).min(2).max(24),
-  })
-  .strict();
-
-/** Client → server: break up a squad. Strict. */
-export const DisbandSquadSchema = z
-  .object({
-    type: z.literal('disband_squad'),
-    squadId: z.string().min(1).max(64),
   })
   .strict();
 

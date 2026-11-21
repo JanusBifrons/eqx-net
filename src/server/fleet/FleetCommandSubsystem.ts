@@ -44,6 +44,7 @@ import {
   type FleetModeData,
   type FleetShipOrders,
 } from './fleetShipOrders.js';
+import { makeFleetSpreadScratch, spreadMoveSlots } from './fleetSpreadMove.js';
 
 export type { FleetModeData, FleetShipOrders } from './fleetShipOrders.js';
 
@@ -173,7 +174,7 @@ interface FleetEntry {
   readonly spacing: number;
   /** This ship's own move order (a group move gives each ship its own
    *  point round the target); reused, so a command allocates nothing. */
-  readonly moveOrder: { kind: 'move'; x: number; y: number };
+  readonly moveOrder: { kind: 'move'; x: number; y: number; speed: number };
 }
 
 /**
@@ -221,11 +222,7 @@ export class FleetCommandSubsystem {
   private readonly accepted: string[] = [];
   /** `applyOrder` scratch: the ships that take the order (null once placed). */
   private readonly movers: (FleetEntry | null)[] = [];
-  private readonly spreadOffX = new Float64Array(FLEET_MAX_IDS_PER_COMMAND);
-  private readonly spreadOffY = new Float64Array(FLEET_MAX_IDS_PER_COMMAND);
-  private readonly spreadSlotX = new Float64Array(FLEET_MAX_IDS_PER_COMMAND);
-  private readonly spreadSlotY = new Float64Array(FLEET_MAX_IDS_PER_COMMAND);
-  private readonly spreadUsed = new Uint8Array(FLEET_MAX_IDS_PER_COMMAND);
+  private readonly spread = makeFleetSpreadScratch(FLEET_MAX_IDS_PER_COMMAND);
   private readonly statusOut: FleetShipStatus[] = [];
   private readonly statusPool: FleetShipStatus[] = [];
 
@@ -272,7 +269,7 @@ export class FleetCommandSubsystem {
       index: this.entries.length,
       stamp: 0,
       spacing: shipTuning(ship.kind).flockSeparation,
-      moveOrder: { kind: 'move', x: 0, y: 0 },
+      moveOrder: { kind: 'move', x: 0, y: 0, speed: 1 },
     };
     this.entries.push(entry);
     this.byId.set(shipId, entry);
@@ -339,7 +336,7 @@ export class FleetCommandSubsystem {
       if (sq !== null && sq.cmdWhole && e.id !== this.squadLeader(sq)) { clearFleetOrder(e.orders); continue; }
       movers.push(e);
     }
-    if (order.kind === 'move' && movers.length > 1) this.spreadMove(order.x, order.y);
+    if (order.kind === 'move') this.spreadMove(order.x, order.y, order.speed ?? 1);
     else for (let i = 0; i < movers.length; i++) {
       movers[i]!.orders.order = order;
       this.hooks.orderIssued?.(movers[i]!.id, order);
@@ -348,62 +345,48 @@ export class FleetCommandSubsystem {
     return this.accepted;
   }
 
-  /** Give each of `this.movers` its own move point round (tx, ty). */
-  private spreadMove(tx: number, ty: number): void {
+  /**
+   * Command speed (the speed telegraph): re-pace the RUNNING Move of every
+   * owned ship in `shipIds` to `speed` (a fraction of its top speed; 0 halts
+   * it in place, keeping the destination). Ships with no Move (a whole
+   * squad's members follow their leader) are left alone. Returns the ids.
+   */
+  setMoveSpeed(callerId: string, shipIds: readonly string[], speed: number): readonly string[] {
+    const n = this.collect(callerId, shipIds);
+    for (let i = 0; i < n; i++) {
+      const e = this.byId.get(this.accepted[i]!)!;
+      const o = e.orders.order;
+      if (o === null || o.kind !== 'move') continue;
+      this.issueMove(e, o.x, o.y, speed);
+    }
+    return this.accepted;
+  }
+
+  /** Give `e` its own Move (its reused `moveOrder`, #14) and tell the room. */
+  private issueMove(e: FleetEntry, x: number, y: number, speed: number): void {
+    const mo = e.moveOrder;
+    mo.x = x; mo.y = y; mo.speed = speed;
+    e.orders.order = mo;
+    this.hooks.orderIssued?.(e.id, mo);
+  }
+
+  /** Give each of `this.movers` its own move point round (tx, ty): one ship
+   *  goes to the point, several spread (`fleetSpreadMove.ts`). */
+  private spreadMove(tx: number, ty: number, speed: number): void {
     const movers = this.movers;
     const n = movers.length;
-    const p = this.pose;
-    const ox = this.spreadOffX, oy = this.spreadOffY;
-    let spacing = 0, cx = 0, cy = 0;
+    if (n === 1) { this.issueMove(movers[0]!, tx, ty, speed); return; }
+    const p = this.pose, s = this.spread;
+    let spacing = 0;
     for (let i = 0; i < n; i++) {
       const e = movers[i]!;
       if (e.spacing > spacing) spacing = e.spacing;
-      if (this.hooks.readPose(e.id, p)) { ox[i] = p.x; oy[i] = p.y; } else { ox[i] = tx; oy[i] = ty; }
-      cx += ox[i]!; cy += oy[i]!;
+      if (this.hooks.readPose(e.id, p)) { s.offX[i] = p.x; s.offY[i] = p.y; } else { s.offX[i] = tx; s.offY[i] = ty; }
     }
-    cx /= n; cy /= n;
-    for (let i = 0; i < n; i++) { ox[i] = ox[i]! - cx; oy[i] = oy[i]! - cy; }
-    // The first n spots of a hex cluster: the point, then rings of 6r.
-    const sx = this.spreadSlotX, sy = this.spreadSlotY, used = this.spreadUsed;
-    let m = 0;
-    for (let r = 0; m < n; r++) {
-      if (r === 0) { sx[0] = tx; sy[0] = ty; used[0] = 0; m = 1; continue; }
-      for (let side = 0; side < 6 && m < n; side++) {
-        const a0 = (side * Math.PI) / 3, a1 = ((side + 1) * Math.PI) / 3;
-        const x0 = Math.cos(a0) * r * spacing, y0 = Math.sin(a0) * r * spacing;
-        const x1 = Math.cos(a1) * r * spacing, y1 = Math.sin(a1) * r * spacing;
-        for (let j = 0; j < r && m < n; j++) {
-          sx[m] = tx + x0 + ((x1 - x0) * j) / r;
-          sy[m] = ty + y0 + ((y1 - y0) * j) / r;
-          used[m] = 0;
-          m++;
-        }
-      }
-    }
-    // Outermost ships pick first, each the free spot nearest its place in
-    // the group (target + its offset from the group's centre).
+    spreadMoveSlots(n, tx, ty, spacing, s);
     for (let k = 0; k < n; k++) {
-      let pick = -1, far = -1;
-      for (let i = 0; i < n; i++) {
-        if (movers[i] === null) continue;
-        const d = ox[i]! * ox[i]! + oy[i]! * oy[i]!;
-        if (d > far) { far = d; pick = i; }
-      }
-      const e = movers[pick]!;
-      const wx = tx + ox[pick]!, wy = ty + oy[pick]!;
-      let best = -1, bestD = Infinity;
-      for (let s = 0; s < n; s++) {
-        if (used[s] === 1) continue;
-        const dx = sx[s]! - wx, dy = sy[s]! - wy;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; best = s; }
-      }
-      used[best] = 1;
-      e.moveOrder.x = sx[best]!;
-      e.moveOrder.y = sy[best]!;
-      e.orders.order = e.moveOrder;
-      this.hooks.orderIssued?.(e.id, e.moveOrder);
-      movers[pick] = null;
+      const i = s.order[k]!;
+      this.issueMove(movers[i]!, s.outX[i]!, s.outY[i]!, speed);
     }
   }
 
