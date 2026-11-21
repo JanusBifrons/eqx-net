@@ -1743,7 +1743,7 @@ export class ColyseusGameClient {
       this._anchorInitialised = true;
       this._anchorFreshAtMs = now;
     }
-    // Stage 4 — jitter-aware lookahead with the three RTT hotfixes.
+    // Stage 4 — lead = input path mean + 2σ, from the server's input margin.
     // See rttLookaheadUpdater.ts for the full rationale.
     this.leadTicks = updateRttAndLookahead(intervalMs, {
       reconciler: this.reconciler,
@@ -1751,7 +1751,7 @@ export class ColyseusGameClient {
       rttWelford: this._rttWelford,
       lookaheadCtrl: this._lookaheadCtrl,
       leadTicks: this.leadTicks,
-      lastFrameMs: this.lastFrameMs,
+      lastFrameMs: this.lastFrameMs, inputMargin: snap.inputMargin, timeScale: this.gameClock.scale,
     });
     this.stats.droppedSnapshotsRecent = this._dropDetector.dropCount;
 

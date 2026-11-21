@@ -3335,6 +3335,16 @@ unknown attacker id counted as a player, so a rock that rammed an elite "earned"
 looked up as a structure owner. `classifyAttacker` now takes the swarm registry and classes a registry
 rock or wreck piece as `environment`, by kind.
 
+## 2026-11-21 — an RTT measured against a synthesised ack only measures your own lead
+
+The input lead sized itself from `lastRtt − lead × 16.67 ms`. The server acks tick X at server tick X
+even when input X has not arrived (the held-input rule), so `lastRtt` equals the lead by construction and
+the sample was ~0 on every link. On a phone over the tunnel the lead sat at 2–3 ticks on a ~100 ms
+link. Inputs landed late, held repeats replaced them, and the heading snapped by whole turn steps.
+Measure lateness where it happens: the server records `inputLeadMargin` for each input and sends it as
+the snapshot `inputMargin`, and the client sizes the lead from `inputPathTicks` (prediction-and-correction
+"Adaptive lookahead"). Treat any timing derived from an ack the server can synthesise as suspect.
+
 ## 2026-11-21 — moveTo the arc's start, then arc(): a stray line to the Graphics' origin on phones
 
 Pixi v8's `arc()` pushes its own start point onto the current subpath, so `g.moveTo(arc start);

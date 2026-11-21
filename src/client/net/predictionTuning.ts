@@ -47,7 +47,9 @@ export const STAGE_3_MAX_LOOKAHEAD_TICKS = 8;
  *  bounds σ even under Pattern A spikes; real-world high-RTT clients
  *  (international, cellular) routinely measure 100–250 ms, so the
  *  clamp doesn't penalise them. See `docs/LESSONS.md` for the
- *  diagnostic. */
+ *  diagnostic. No longer applied live: the lead is sized from the server's
+ *  input margin, clamped at the lookahead ceiling (`rttLookaheadUpdater`);
+ *  kept for the `tests/scenarios` lastRtt models. */
 export const RTT_SAMPLE_CLAMP_MS = 250;
 
 /** Stage 4 hotfix #3 (2026-05-08 third diagnostic) — gate the Welford
