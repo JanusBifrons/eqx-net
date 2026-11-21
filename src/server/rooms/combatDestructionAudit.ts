@@ -19,7 +19,7 @@
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { getWallet } from '../db/PersistenceWorker.js';
 import { getBountyBoard, type BountyRoom } from '../economy/BountyBoard.js';
-import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
+import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 import { recordKill } from '../stats/StatsService.js';
 import type { StructureRegistry } from '../structures/StructureRegistry.js';
@@ -44,6 +44,8 @@ export interface CombatDestructionAuditHost {
   now: () => number;
   payEliteBounty: (killerId: string, targetName: string, credits: number) => void;
   awardKillXp: (killerId: string, victimMaxHealth: number) => void;
+  /** Tells a rock / wreck-piece ram killer from a player (`classifyAttacker`). */
+  swarmRegistry: Pick<SwarmEntityRegistry, 'get'>;
 }
 
 /**
@@ -55,7 +57,7 @@ export interface CombatDestructionAuditHost {
  */
 export function auditCombatDestruction(host: CombatDestructionAuditHost, rec: SwarmEntityRecord, shooterId?: string): void {
   const sector = host.sectorKey() ?? undefined;
-  const attackerKind = classifyAttacker(shooterId);
+  const attackerKind = classifyAttacker(shooterId, host.swarmRegistry);
   if (rec.kind === SWARM_KIND_STRUCTURE) {
     const s = host.structureRegistry.get(rec.id);
     if (!s) return;
@@ -84,17 +86,17 @@ export function auditCombatDestruction(host: CombatDestructionAuditHost, rec: Sw
     if (rec.elite !== undefined) {
       auditEvent({ event: 'elite_killed', sector, name: rec.elite.name, kind: rec.shipKind ?? '', attackerId: shooterId });
       // P4c — the elite's bounty goes into the KILLER's hold (signed-in pilots).
-      if (shooterId) host.payEliteBounty(shooterId, rec.elite.name, rec.elite.bounty);
+      if (shooterId && attackerKind === 'player') host.payEliteBounty(shooterId, rec.elite.name, rec.elite.bounty);
     }
     // Phase 4 (Leveling & XP, WS-B1) — a drone is the primary XP source. Award
     // XP to the KILLER SHIP INSTANCE, weighted by the drone's toughness
     // (per-kind maxHealth — tougher drones = more XP, D10). PvP hull kills are
     // awarded separately in the SHIP_DESTROYED handler.
     const droneMaxHealth = droneMaxHealthOf(rec) ?? 40;
-    host.awardKillXp(shooterId ?? '', droneMaxHealth);
+    if (attackerKind === 'player') host.awardKillXp(shooterId ?? '', droneMaxHealth);
     // Economy v2 W1 — every NPC kill pays a bounty straight into the killer's
     // WALLET (credits are virtual; pods carry goods only).
-    if (shooterId && classifyAttacker(shooterId) === 'player') {
+    if (shooterId && attackerKind === 'player') {
       getWallet().credit(shooterId, rollKillBounty(rec.shipKind, Math.random), 'kill_bounty');
     }
   }
@@ -104,7 +106,7 @@ export function auditCombatDestruction(host: CombatDestructionAuditHost, rec: Sw
  *  it touches is a getter / closure: several are assigned later in
  *  `onCreate` (`sabF32`, `scrapSpawner`) or declared after the host field,
  *  so they are read at call time. */
-export interface ShipDestroyedHost extends Pick<CombatDestructionAuditHost, 'sectorKey' | 'recentCombatLog' | 'now' | 'awardKillXp'> {
+export interface ShipDestroyedHost extends Pick<CombatDestructionAuditHost, 'sectorKey' | 'recentCombatLog' | 'now' | 'awardKillXp' | 'swarmRegistry'> {
   roomId: () => string;
   getActiveShip: (playerId: string) => ShipState | undefined;
   ships: () => { get(shipInstanceId: string): ShipState | undefined };
@@ -170,9 +172,9 @@ export function onShipDestroyed(host: ShipDestroyedHost, evt: BusEventPayloads['
     sector: host.sectorKey() ?? undefined,
     playerId: victimPlayerId ?? evt.targetId,
     attackerId: auditAttacker,
-    attackerKind: classifyAttacker(auditAttacker),
+    attackerKind: classifyAttacker(auditAttacker, host.swarmRegistry),
   });
-  if (auditAttacker && victimPlayerId && classifyAttacker(auditAttacker) === 'player') {
+  if (auditAttacker && victimPlayerId && classifyAttacker(auditAttacker, host.swarmRegistry) === 'player') {
     auditEvent({
       event: 'player_killed',
       sector: host.sectorKey() ?? undefined,

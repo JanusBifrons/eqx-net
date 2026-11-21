@@ -3322,3 +3322,15 @@ the skiff's bow was pressed into the hull with lineFrac × F; ship and crumb mov
 ~40-57 u/s, helm on Stop, the towed piece trailing at `hold`. A one-sided force law must never push a
 body into the emitter: inside `hold` a line body now feels nothing (`tractorImpulse`). Reproduce such
 bugs with the real hull and the shared pose helpers (`World.tractor.test.ts`), not two balls.
+
+## 2026-11-21 — one sector's physics panic took down every sector on its worker
+
+A Rapier WASM panic ("RuntimeError: unreachable" in `stepWithEvents`) in one sector's world was
+uncaught, so the pooled physics worker exited and every sector it hosted lost physics for good; the
+pool also kept placing new sectors on the dead worker. A worker hosting several worlds must catch per
+world: the worker now drops only the failing world and reports `WORLD_FAILED` with its last commands
+(`worldFailure.ts`), and the pool tells a dead worker's worlds and replaces the worker. Do not `free()`
+a world after a panic (its objects can still be borrowed). The same log showed a second bug: any
+unknown attacker id counted as a player, so a rock that rammed an elite "earned" its bounty and was
+looked up as a structure owner. `classifyAttacker` now takes the swarm registry and classes a registry
+rock or wreck piece as `environment`, by kind.

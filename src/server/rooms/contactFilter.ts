@@ -196,6 +196,7 @@ export interface PhysicsWorkerSpawnHost extends ContactBatchHost {
   sab: SharedArrayBuffer;
   logger: PhysicsWorkerProxyDeps['logger'];
   playerToSlot(): { readonly size: number };
+  sectorKey(): string | null;
 }
 
 /**
@@ -215,6 +216,7 @@ export function createPhysicsWorker(h: PhysicsWorkerSpawnHost): PhysicsWorkerPro
     stats: () => ({
       playerCount: h.playerToSlot().size,
       swarmCount: h.swarmRegistry.size(),
+      sectorKey: h.sectorKey(),
     }),
     onSleepTransition: (entityId, sleeping) => {
       // Re-emit on the local bus as a discrete event. Phase 5
