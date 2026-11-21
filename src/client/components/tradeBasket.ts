@@ -126,3 +126,9 @@ export function moneyLine(net: number, empty: boolean, wallet: number | null): s
   if (net < 0) return have !== null ? `Pay ${credits(-net)} of ${have}` : `Pay ${credits(-net)}`;
   return have !== null ? `Get ${credits(net)} · wallet ${have}` : `Get ${credits(net)}`;
 }
+
+/** What is left of `have` once the basket's `dir` line for `key` is counted:
+ *  the dock's stock on the buy side, your own count on the sell side. */
+export function qtyLeft(basket: readonly TradeLine[], dir: TradeDir, key: string, have: number): number {
+  return Math.max(0, have - qtyIn(basket, dir, key));
+}
