@@ -18,8 +18,9 @@
  * `data.intervalMs`, `data.ackedTick`, `data.serverTick`, `data.rttMs`,
  * `data.ticksAhead` come directly from the captured ndjson record.
  */
-import { runScenario, createInitialClientState } from './runner';
-import type { Event } from './types';
+import { readFileSync } from 'node:fs';
+import { runScenario, createInitialClientState } from './runner.js';
+import type { Delivery, Event } from './types.js';
 
 interface NdjsonSnapshotRecord {
   source?: string;
@@ -229,4 +230,88 @@ export function replayOndeviceSnapshots(
     rollingCorrRateProxy: totalSnaps > 0 ? overThresholdSnaps / totalSnaps : 0,
     starvationSnaps,
   };
+}
+
+// ── Capture fixtures: real JSON snapshot timing as a delivery list ────────
+//
+// A capture fixture keeps only numbers from a real on-device capture: the
+// server tick of each JSON snapshot the client logged and its arrival time
+// (ms, relative to the first kept snapshot). One segment per join: the
+// client restarts its gap clock at each join, so the time between segments
+// is a reconnect, not a snapshot gap. Files live in `fixtures/`.
+
+/** Named capture fixtures (file `fixtures/<name>.json`). */
+export type CaptureFixtureName = 'capture-2026-11-21';
+
+/** The JSON snapshots logged between two joins, in arrival order. */
+export interface CaptureSegment {
+  serverTick: number[];
+  /** Arrival time, ms relative to the first kept snapshot of the fixture. */
+  arriveMs: number[];
+}
+
+export interface CaptureFixture {
+  fixture: CaptureFixtureName;
+  segments: CaptureSegment[];
+}
+
+export interface CaptureDeliveryOptions {
+  /** One-way delay given to the fastest snapshot of each segment (ms). The
+   *  capture has no shared clock, so only arrival differences are real. */
+  baseDelayMs?: number;
+}
+
+/** Same one-way delay as the WAN profiles in gapProfiles.ts. */
+const CAPTURE_BASE_DELAY_MS = 40;
+/** Mirrors runner.ts: the server tick each delivery list starts at. */
+const CAPTURE_START_SERVER_TICK = 100;
+const CAPTURE_TICK_HZ = 60;
+const MS_PER_SECOND = 1000;
+
+/** Load a capture fixture and check its shape (equal-length columns,
+ *  rising server ticks, non-decreasing arrivals). */
+export function loadCaptureFixture(name: CaptureFixtureName): CaptureFixture {
+  const raw = readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8');
+  const parsed = JSON.parse(raw) as CaptureFixture;
+  if (parsed.fixture !== name) throw new Error(`capture fixture ${name}: file names ${parsed.fixture}`);
+  parsed.segments.forEach((s, k) => {
+    if (s.serverTick.length === 0 || s.serverTick.length !== s.arriveMs.length) {
+      throw new Error(`capture fixture ${name}: segment ${k} columns differ or are empty`);
+    }
+    for (let i = 1; i < s.serverTick.length; i++) {
+      if (s.serverTick[i]! <= s.serverTick[i - 1]! || s.arriveMs[i]! < s.arriveMs[i - 1]!) {
+        throw new Error(`capture fixture ${name}: segment ${k} out of order at ${i}`);
+      }
+    }
+  });
+  return parsed;
+}
+
+/**
+ * One harness `Delivery` list per segment (all on the `json` stream).
+ * Server ticks are renumbered from 100 and `sendMs` is tick × 1000/60, as
+ * in `buildDeliveries`. Arrival gaps are the capture's own; each segment
+ * is shifted so its fastest snapshot arrives `baseDelayMs` after it was sent.
+ */
+export function captureToDeliveries(
+  fixture: CaptureFixture,
+  opts: CaptureDeliveryOptions = {},
+): Delivery[][] {
+  const baseDelayMs = opts.baseDelayMs ?? CAPTURE_BASE_DELAY_MS;
+  return fixture.segments.map((s) => {
+    const tick0 = s.serverTick[0]!;
+    const arrive0 = s.arriveMs[0]!;
+    const sendMs = s.serverTick.map((t) => ((t - tick0) * MS_PER_SECOND) / CAPTURE_TICK_HZ);
+    const rel = s.arriveMs.map((a) => a - arrive0);
+    let minLag = Infinity;
+    for (let i = 0; i < rel.length; i++) minLag = Math.min(minLag, rel[i]! - sendMs[i]!);
+    const shift = baseDelayMs - minLag;
+    return s.serverTick.map((t, i) => ({
+      stream: 'json' as const,
+      seq: i,
+      serverTick: CAPTURE_START_SERVER_TICK + (t - tick0),
+      sendMs: sendMs[i]!,
+      arriveMs: rel[i]! + shift,
+    }));
+  });
 }
