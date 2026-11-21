@@ -48,11 +48,14 @@ function makeCtx(cameraScale: number): SwarmSpriteCtx {
 }
 
 /** On-screen (CSS px) font height of the ETA label after one update at `cameraScale`. */
-function etaScreenPx(cameraScale: number): { px: number; text: string } {
+function etaScreenPx(
+  cameraScale: number,
+  row: Partial<StructureRenderState> = { buildPct: 0.1, etaMs: 7000 },
+): { px: number; text: string } {
   const ctx = makeCtx(cameraScale);
   const swarm = new Map<number, SwarmRenderState>([[7, blueprintEntry()]]);
   const structures = new Map<number, StructureRenderState>([[7, {
-    powered: false, netPower: 0, connTo: [], built: false, buildPct: 0.1, deconstructPct: 0, etaMs: 7000,
+    powered: false, netPower: 0, connTo: [], built: false, buildPct: 0.1, deconstructPct: 0, ...row,
   }]]);
   updateSwarmSprites({ swarm, structures } as unknown as RenderMirror, ctx);
   for (const sprite of ctx.sprites.values()) {
@@ -76,5 +79,14 @@ describe('updateSwarmSprites — build-ETA label is readable on a phone', () => 
   it('keeps that size at any zoom (screen-constant, like damage numbers)', () => {
     expect(etaScreenPx(0.25).px).toBeCloseTo(13, 3);
     expect(etaScreenPx(1.2).px).toBeCloseTo(13, 3);
+  });
+
+  // Seen while filming: a Refinery placed over the player's parked fighter hit
+  // 100% and the label went blank — it waits for the ship to move (server
+  // blueprintBody.ts) with nothing on screen saying so.
+  it('a finished blueprint still waiting to turn solid says it is waiting for ships to clear', () => {
+    const got = etaScreenPx(0.5, { buildPct: 1, etaMs: 0, ghostBody: true });
+    expect(got.text).toBe('WAITING FOR SHIPS TO CLEAR');
+    expect(got.px).toBeCloseTo(13, 3);
   });
 });
