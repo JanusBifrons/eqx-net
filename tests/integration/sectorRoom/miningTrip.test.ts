@@ -37,7 +37,7 @@ import { SHOWCASE_BARGE_MINING_OPTS, SHOWCASE_BARGE_MINING_ROCKS } from '../../.
 import { TRACTOR_DEF } from '../../../src/core/combat/tractorSpec.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { ROCK_CHUNK_PRODUCT, type PackedItem } from '../../../src/shared-types/items.js';
-import { DEPOSIT_RANGE } from '../../../src/server/cargo/StorageService.js';
+import { DEPOSIT_RANGE } from '../../../src/server/cargo/storageReach.js';
 import { CHUNK_REFINE_BATCH } from '../../../src/shared-types/recipes.js';
 
 /** Game speed (the sector time scale's top, 4×). */
@@ -50,12 +50,13 @@ const BANK_GAME_S = 120;
 const SHIP = { x: 1150, y: -300 };
 /** The base behind the skiff, the production test's layout (Capital → Connector → Refinery,
  *  Cargo Bay off the Connector) mirrored so the Cargo Bay sits 350 u behind the parked skiff
- *  and the Capital clear of its spawn (a Capital on the right nudged the spawn out of reach). */
+ *  and the Capital clear of its spawn (a Capital on the right nudged the spawn out of reach).
+ *  The Capital faces away (rot 180) so its crane-bay landing pad (`keepClear`) misses the Connector. */
 const BAY = { x: SHIP.x, y: SHIP.y - 350 };
 const BASE = [
   { kind: 'cargo_bay', ...BAY },
   { kind: 'connector', x: BAY.x - 450, y: BAY.y },
-  { kind: 'capital', x: BAY.x - 450, y: BAY.y - 350 },
+  { kind: 'capital', x: BAY.x - 450, y: BAY.y - 350, rot: 180 }, // crane-bay pad (keepClear) faces away from the base
   { kind: 'refinery', x: BAY.x - 450, y: BAY.y + 330 },
 ];
 
