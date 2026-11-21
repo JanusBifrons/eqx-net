@@ -11,7 +11,8 @@
  * closes the building settings panel; that panel opening announces a game
  * window, which closes this (SpeedDialMenu's onGameWindowOpen).
  *
- * Its own ✕ (it covers the top-right dial), Esc (SidePanel) and a swipe on the
+ * Its ✕ (SidePanel draws the header; it covers the top-right dial; on a phone the
+ * header shares the top-right toolbar's row), Esc (SidePanel) and a swipe on the
  * handle close it. The active category is local state (presentation only), kept
  * across closes so the next structure is one tap away.
  */
@@ -25,7 +26,7 @@ import { usePackedStock } from '../structures/usePackedStock';
 import { BUILD_CATEGORIES, CATEGORY_ICON, categoryById, type BuildCategoryId } from './buildCategories';
 import { BuildKindDetails, BuildKindTile } from './BuildKindTile';
 import { BUILD_PANEL_SIZE, SidePanel } from './SidePanel';
-import { WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from './GameWindow';
+import { WINDOW_ROOT_SX } from './GameWindow';
 
 export interface BuildSidebarProps {
   open: boolean;
@@ -47,13 +48,9 @@ export function BuildSidebar({ open, onClose, onPick }: BuildSidebarProps): JSX.
   const shownKind = shown !== null && cat.kinds.includes(shown) ? shown : null;
   return (
     <SidePanel open={open} onClose={onClose} testId="build-sidebar" size={BUILD_PANEL_SIZE} closeOnEscape
-      paperAttrs={{ 'data-open': open ? '1' : '0' }}>
+      paperAttrs={{ 'data-open': open ? '1' : '0' }} title="Build" headerTestId="build-sidebar-head" closeTestId="build-sidebar-close">
       {open && (
         <Box sx={WINDOW_ROOT_SX}>
-          <Box sx={WINDOW_HEAD_SX}>
-            <Box sx={WINDOW_TITLE_SX}>Build</Box>
-            <Box component="button" sx={WINDOW_X_SX} onClick={onClose} aria-label="Close" data-testid="build-sidebar-close">✕</Box>
-          </Box>
           <Box sx={BODY_SX}>
             <Box sx={RAIL_SX} role="tablist" aria-orientation="vertical" data-testid="build-rail">
               {BUILD_CATEGORIES.map((c) => (
