@@ -73,6 +73,46 @@ describe('PhysicsWorkerPool', () => {
     wb.detach();
   });
 
+  it('a world that throws is dropped and reported; the other worlds on its worker keep ticking', { timeout: 30_000 }, async () => {
+    // Before: an uncaught throw in one world (the 2026-11-21 Rapier panic in
+    // stepWithEvents) killed the whole worker and every sector on it.
+    const a = sabView(), b = sabView();
+    const msgsA: PooledWorkerMsg[] = [], msgsB: PooledWorkerMsg[] = [];
+    const wa = await pool.attach(a.sab, (m) => msgsA.push(m));
+    const wb = await pool.attach(b.sab, (m) => msgsB.push(m));
+    wa.post({ type: 'SPAWN', slot: 0, playerId: 'ship-a', x: 0, y: 0, kindId: 'fighter' } as { type: string });
+    await until(() => readX(a, 0) !== null);
+    wa.post({ type: 'AI_INPUTS', count: 1, slots: null, bits: null } as { type: string }); // throws in the handler
+    await until(() => msgsA.some((m) => m.type === 'WORLD_FAILED'));
+    const failed = msgsA.find((m) => m.type === 'WORLD_FAILED')!;
+    expect(failed['phase']).toBe('command');
+    expect(failed['recent']).toContain('SPAWN ship-a');
+    expect(msgsB.some((m) => m.type === 'WORLD_FAILED')).toBe(false);
+    const ta = Atomics.load(a.u32, TICK_IDX), tb = Atomics.load(b.u32, TICK_IDX);
+    await sleep(300);
+    expect(Atomics.load(a.u32, TICK_IDX)).toBe(ta); // A dropped
+    expect(Atomics.load(b.u32, TICK_IDX)).toBeGreaterThan(tb + 10); // B alive
+    wa.detach();
+    wb.detach();
+  });
+
+  it('a dead worker tells its worlds and is replaced for later attaches', { timeout: 30_000 }, async () => {
+    const a = sabView();
+    const msgsA: PooledWorkerMsg[] = [];
+    await pool.attach(a.sab, (m) => msgsA.push(m));
+    const workers = (pool as unknown as { workers: Array<{ worker: Promise<{ terminate(): Promise<number> }> }> }).workers;
+    await (await workers[0]!.worker).terminate();
+    await until(() => msgsA.some((m) => m.type === 'WORLD_FAILED'));
+    expect(msgsA.find((m) => m.type === 'WORLD_FAILED')!['phase']).toBe('worker-exit');
+    expect(pool.stats()).toEqual([{ index: 0, worlds: 0 }]);
+    const c = sabView();
+    const wc = await pool.attach(c.sab, () => {});
+    const tc = Atomics.load(c.u32, TICK_IDX);
+    await sleep(300);
+    expect(Atomics.load(c.u32, TICK_IDX)).toBeGreaterThan(tc + 10);
+    wc.detach();
+  });
+
   it('sizes from EQX_PHYSICS_WORKERS, per-room restores one worker per sector', () => {
     expect(physicsPoolSize({ EQX_PHYSICS_WORKERS: '2' })).toBe(2);
     expect(physicsPoolSize({ EQX_PHYSICS_WORKERS: 'per-room' })).toBe(Number.POSITIVE_INFINITY);

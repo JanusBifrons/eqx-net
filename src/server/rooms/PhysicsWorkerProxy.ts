@@ -131,7 +131,7 @@ export interface PhysicsWorkerProxyDeps {
   /** Pino logger for error/exit output. */
   logger: Logger;
   /** Diagnostic shape included in error logs — read at error time. */
-  stats: () => { playerCount: number; swarmCount: number };
+  stats: () => { playerCount: number; swarmCount: number; sectorKey?: string | null };
   /** Sleep-transition handler — the room emits ENTITY_SLEPT/ENTITY_WOKE. */
   onSleepTransition: (entityId: string, sleeping: boolean) => void;
   /** Contact-batch handler — the room broadcasts collision_resolved + ramming. */
@@ -180,6 +180,13 @@ export class PhysicsWorkerProxy {
       this.deps.onContactBatch(msg.tick, msg.contacts);
     }
     if (msg.type === 'WAKE_CENSUS') this.lastWakeCensus = msg.census ?? null;
+    if (msg.type === 'WORLD_FAILED') {
+      // The worker dropped this world (core/physics/worldFailure.ts): this
+      // sector has no physics from here on; the worker's other sectors run on.
+      // `recent` names the entities its last commands touched.
+      const { phase, errMessage, errStack, tick, recent } = msg as WorkerToMainMsg & { phase?: string; errMessage?: string; errStack?: string; recent?: string[] };
+      this.deps.logger.error({ phase, errMessage, errStack, physicsTick: tick, recent, ...this.deps.stats() }, 'physics world failed: this sector has no physics until restart');
+    }
   }
 
   /** Dev-only: the latest wreck wake census (worker run with

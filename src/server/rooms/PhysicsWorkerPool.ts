@@ -12,6 +12,12 @@
  * it saw with a dedicated worker. Commands carry `worldId`; replies come back
  * tagged with it and are routed here.
  *
+ * Failure: a world that throws (a Rapier panic) is dropped by its worker and
+ * reported as `WORLD_FAILED` (core/physics/worldFailure.ts); the worker and
+ * its other worlds keep running. If a worker dies anyway, every world on it
+ * gets a `WORLD_FAILED` (phase `worker-exit`) and the pool starts a fresh
+ * worker in its place for later attaches.
+ *
  * `EQX_PHYSICS_WORKERS`: pool size. `per-room` restores one worker per
  * sector (for A/B measurement).
  */
@@ -29,6 +35,8 @@ interface PoolWorker {
   /** Resolves to the started worker. */
   worker: Promise<Worker>;
   worlds: number;
+  /** Ids of the worlds hosted on this worker (told when it dies). */
+  ids: Set<number>;
 }
 
 /** One sector's world inside a pooled worker. */
@@ -79,6 +87,7 @@ export class PhysicsWorkerPool {
     const pw = this.pick();
     const worldId = this.nextWorldId++;
     pw.worlds++;
+    pw.ids.add(worldId);
     let worker: Worker;
     try {
       worker = await pw.worker;
@@ -97,7 +106,7 @@ export class PhysicsWorkerPool {
       });
     } catch (err) {
       this.handlers.delete(worldId);
-      pw.worlds--;
+      if (pw.ids.delete(worldId)) pw.worlds--;
       throw err;
     }
     let attached = true;
@@ -113,7 +122,7 @@ export class PhysicsWorkerPool {
         if (!attached) return;
         attached = false;
         this.handlers.delete(worldId);
-        pw.worlds--;
+        if (pw.ids.delete(worldId)) pw.worlds--; // not after its worker died
         worker.postMessage({ type: 'REMOVE_WORLD', worldId });
       },
       elu: (prev) => {
@@ -138,7 +147,8 @@ export class PhysicsWorkerPool {
   /** The least-loaded worker, starting a new one while under the pool size. */
   private pick(): PoolWorker {
     if (this.workers.length < this.size) {
-      const pw: PoolWorker = { index: this.workers.length, worker: this.spawn(this.workers.length), worlds: 0 };
+      const pw: PoolWorker = { index: this.workers.length, worker: Promise.resolve(null as unknown as Worker), worlds: 0, ids: new Set() };
+      pw.worker = this.spawn(pw);
       this.workers.push(pw);
       return pw;
     }
@@ -147,7 +157,8 @@ export class PhysicsWorkerPool {
     return best;
   }
 
-  private async spawn(index: number): Promise<Worker> {
+  private async spawn(pw: PoolWorker): Promise<Worker> {
+    const index = pw.index;
     // Rapier ships a pre-built WASM binary; keep it external so the worker
     // loads the same copy as the main thread. Bundled once for the pool.
     this.code ??= bundleWorker({ entryPoint: this.entryPath, external: ['@dimforge/rapier2d-compat'] });
@@ -157,8 +168,9 @@ export class PhysicsWorkerPool {
       // Idle pool workers must not keep a process (or a test runner) alive.
       worker.unref();
       const timer = setTimeout(() => reject(new Error('physics pool worker did not start within 10 s')), 10_000);
+      let started = false;
       worker.on('message', (msg: PooledWorkerMsg) => {
-        if (msg.type === 'POOL_READY') { clearTimeout(timer); resolve(worker); return; }
+        if (msg.type === 'POOL_READY') { started = true; clearTimeout(timer); resolve(worker); return; }
         if (msg.worldId !== undefined) this.handlers.get(msg.worldId)?.(msg);
       });
       worker.on('error', (err) => {
@@ -167,9 +179,27 @@ export class PhysicsWorkerPool {
         reject(err);
       });
       worker.on('exit', (exitCode) => {
-        if (exitCode !== 0) this.logger.error({ code: exitCode, workerIndex: index }, 'physics pool worker exited unexpectedly');
+        this.logger.error({ code: exitCode, workerIndex: index, worlds: pw.ids.size }, 'physics pool worker exited unexpectedly');
+        this.onWorkerExit(pw, exitCode, started);
       });
     });
+  }
+
+  /** A worker died: every world on it is told (`WORLD_FAILED`, phase
+   *  `worker-exit`) and, if it had started, a fresh worker takes its place
+   *  for later attaches (a worker that never started is not retried). */
+  private onWorkerExit(pw: PoolWorker, exitCode: number, started: boolean): void {
+    for (const worldId of pw.ids) {
+      this.handlers.get(worldId)?.({
+        type: 'WORLD_FAILED', worldId, phase: 'worker-exit',
+        errMessage: `physics pool worker ${pw.index} exited (code ${exitCode})`, errStack: '', tick: -1, recent: [],
+      });
+    }
+    pw.ids.clear();
+    pw.worlds = 0;
+    if (!started) return;
+    pw.worker = this.spawn(pw);
+    pw.worker.catch(() => { /* logged by spawn; an attach awaiting it sees the rejection */ });
   }
 }
 

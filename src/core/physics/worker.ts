@@ -37,6 +37,7 @@ import { WakeCensus, WAKE_CENSUS_EVERY_TICKS } from './wakeCensus.js';
 import { rigById } from '../articulation/rigCatalogue.js';
 import { SLEEP_HYSTERESIS_TICKS, spawnAsleep } from './sleepHysteresis.js';
 import type { AddWorldCmd, GcCmd, RemoveWorldCmd, WorkerCommand } from './workerCommands.js';
+import { RecentCommands, worldFailedMsg, type WorldFailedMsg } from './worldFailure.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -83,6 +84,8 @@ interface WorldHandle {
    *  schedule (60 × its game speed per wall second). Returns whether it stepped. */
   pump(now: number): boolean;
   dispose(): void;
+  /** The WORLD_FAILED report for this world after a throw (worldFailure.ts). */
+  failure(worldId: number, phase: 'step' | 'command', err: unknown): WorldFailedMsg;
 }
 
 /**
@@ -164,8 +167,10 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
   /** Dev-only wreck wake census (`EQX_WAKE_CENSUS=1`; see wakeCensus.ts). */
   const wakeCensus = process.env['EQX_WAKE_CENSUS'] === '1' ? new WakeCensus() : null;
   let tick = 0;
+  const recent = new RecentCommands();
 
   const handle = (cmd: WorkerCommand): void => {
+    recent.note(cmd);
     switch (cmd.type) {
       case 'SPAWN': {
         physics.spawnShip(cmd.playerId, cmd.x, cmd.y, cmd.kindId);
@@ -652,6 +657,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
       eventQueue.free();
       physics.dispose();
     },
+    failure: (worldId, phase, err) => worldFailedMsg(worldId, phase, err, tick, recent),
   };
 }
 
@@ -668,12 +674,22 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
 async function main(): Promise<void> {
   const data = workerData as { sab?: SharedArrayBuffer; pooled?: boolean };
   const worlds = new Map<number, WorldHandle>();
+  // A throw from one world (a Rapier panic) drops only that world and reports
+  // it; the worker and its other sectors keep running (worldFailure.ts).
+  const drop = (id: number, w: WorldHandle, phase: 'step' | 'command', err: unknown): void => {
+    worlds.delete(id);
+    parentPort!.postMessage(w.failure(id, phase, err));
+  };
+  const handleIn = (id: number, cmd: WorkerCommand): void => {
+    const w = worlds.get(id);
+    if (w) try { w.handle(cmd); } catch (err) { drop(id, w, 'command', err); }
+  };
   if (data.sab) {
     const world = await createWorld(data.sab, (m) => parentPort!.postMessage(m));
     worlds.set(0, world);
     // Register the handler BEFORE signalling READY so commands sent right
     // after READY are not dropped.
-    parentPort!.on('message', (cmd: WorkerCommand) => world.handle(cmd));
+    parentPort!.on('message', (cmd: WorkerCommand) => handleIn(0, cmd));
     parentPort!.postMessage({ type: 'READY' });
   } else {
     parentPort!.on('message', (cmd: WorkerCommand | AddWorldCmd | RemoveWorldCmd | GcCmd) => {
@@ -694,30 +710,21 @@ async function main(): Promise<void> {
         worlds.delete(cmd.worldId);
         return;
       }
-      worlds.get((cmd as { worldId?: number }).worldId ?? -1)?.handle(cmd);
+      handleIn((cmd as { worldId?: number }).worldId ?? -1, cmd);
     });
     parentPort!.postMessage({ type: 'POOL_READY' });
   }
 
-  // Hi-res tick loop. `setInterval(fn, 16.67)` on Windows quantises to the
-  // ~15.6 ms multimedia-clock granularity and fires every ~31 ms (≈ 32 Hz),
-  // which is what made the May 2026 capture show 37–46 Hz instead of 60.
-  // setImmediate has ~1 ms granularity and lets us hit 60 Hz reliably.
-  // Each hosted world steps on its OWN schedule (60 × its sector's game speed
-  // per wall second, time scale stream), checked in insertion order.
-
-  // The schedule pattern uses `setImmediate` only on tick-due frames so a
-  // backlog (post-GC pause) drains in one event-loop turn; otherwise yields
-  // via `setTimeout(loop, 1)`. Node's libuv calls `timeBeginPeriod(1)` on
-  // Windows when timers are pending, putting the multimedia clock at 1 ms
-  // resolution — so `setTimeout(1)` lands within a millisecond of
-  // `nextTickAt` rather than the legacy 15.6 ms quantisation that doomed
-  // the original `setInterval(16.67)` approach. The catch-up cap below
-  // absorbs any single-iteration slip so cumulative drift cannot grow.
+  // Hi-res tick loop: `setInterval(16.67)` quantises to ~31 ms on Windows.
+  // `setImmediate` on tick-due frames drains a backlog in one turn; otherwise
+  // `setTimeout(loop, 1)` yields (libuv runs the timer at 1 ms resolution).
+  // Each world steps on its OWN schedule (60 x its sector game speed).
+  let now = 0, stepped = false;
+  const pumpOne = (w: WorldHandle, id: number): void => { try { if (w.pump(now)) stepped = true; } catch (err) { drop(id, w, 'step', err); } };
   const loop = (): void => {
-    const now = performance.now();
-    let stepped = false;
-    for (const w of worlds.values()) if (w.pump(now)) stepped = true;
+    now = performance.now();
+    stepped = false;
+    worlds.forEach(pumpOne);
     if (stepped) {
       // After stepping, drain any further backlog in the same event-loop
       // turn before yielding.
