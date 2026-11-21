@@ -61,3 +61,13 @@ export function signed(n: number): string {
   const r = Math.round(n);
   return r > 0 ? `+${r}` : `${r}`;
 }
+
+/** The inspector's PWR line. A generator always shows its output; a consumer
+ *  shows its draw when powered, else UNPOWERED. An UNBUILT structure is not on
+ *  the grid yet (the server reports it unpowered), so it is not drawing power:
+ *  BUILDING, never UNPOWERED (owner play-test 2026-11-21, Shipyard on a +150 grid). */
+export function inspectorPowerLine(selfPower: number, powered: boolean | undefined, built: boolean | undefined): string {
+  if (selfPower > 0) return `PWR +${Math.round(selfPower)}`;
+  if (built !== true) return 'BUILDING';
+  return powered === true ? `PWR ${Math.round(selfPower)}` : 'UNPOWERED';
+}

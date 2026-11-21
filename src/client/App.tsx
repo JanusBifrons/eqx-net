@@ -41,7 +41,7 @@ import { sendFleetOrder } from './ships/shipActionsClient';
 import { installFleetCommandSenders } from './fleet/installFleetCommandSenders';
 import { canFinishFleetPick } from './fleet/fleetPickView';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
-import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
+import { useUIStore, useGameReady, useIsLoadingActive, selectControlMode } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { decideContextMenuPlacement } from './structures/contextMenuPlacement';
 import { ErrorBoundary } from './components/ErrorOverlay';
@@ -515,7 +515,7 @@ function GameSurface({
     // pushes later changes).
     renderer.setFleetOrderMode(useUIStore.getState().fleetOrderMode);
     renderer.setFleetPick(useUIStore.getState().fleetPick?.kind ?? null);
-    installLanePerfSummary(renderer); // phone lane only: 10 s frame-time summaries
+    installLanePerfSummary(renderer, () => selectControlMode(useUIStore.getState())); // phone lane only: 10 s frame-time summaries + stall context
     // Perf scenes (`?perfprobe=1` only): frame times, long tasks, bytes.
     if (perfProbeEnabled(window.location.search)) {
       installPerfProbe(renderer, useWorker);

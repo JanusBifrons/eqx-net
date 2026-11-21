@@ -15,6 +15,7 @@ import { FrameTimeRing } from '@core/perf/FrameTimeRing';
 import { isAutoCaptureEnabled, logEvent } from '../ClientLogger';
 import { getGameClient } from '../../net/clientSingleton';
 import type { PredictionStats } from '../../net/predictionStats';
+import type { ControlMode } from '../../state/storeTypes';
 
 export const LANE_SUMMARY_INTERVAL_MS = 10_000;
 /** A frame over this is a hitch the player sees (3+ refreshes at 60 Hz). */
@@ -77,8 +78,34 @@ export function buildLanePerfSummary(ring: FrameTimeRing, inp: LaneSummaryInputs
   };
 }
 
+/** The player-facing control mode (`selectControlMode`). */
+export type LaneControlMode = ControlMode;
+
+/**
+ * Stamp a stall event's data (`raf_stutter`, `raf_gap`, `loaf`) with the zoom
+ * (`viewHalf`, as in `perf_summary`) and the control mode at the moment it
+ * fired, so a capture shows whether zooming out or command view goes with the
+ * stalls. Mutates and returns `data`: no extra object.
+ */
+export function applyLaneStallContext<T extends object>(data: T, viewHalf: number | null | undefined, mode: LaneControlMode | null): T {
+  const d = data as Record<string, unknown>;
+  d['viewHalf'] = typeof viewHalf === 'number' && viewHalf > 0 ? Math.round(viewHalf) : null;
+  d['mode'] = mode;
+  return data;
+}
+
 let ring: FrameTimeRing | null = null;
 let renderer: IRenderer | null = null;
+let readMode: (() => LaneControlMode) | null = null;
+
+/**
+ * Lane builds: add zoom + control mode to a stall event's data. Called only
+ * when a stall event fires (never per frame); off the lane, one null check.
+ */
+export function withLaneStallContext<T extends object>(data: T): T {
+  if (ring === null) return data;
+  return applyLaneStallContext(data, renderer?.getFeedback().viewHalf, readMode?.() ?? null);
+}
 
 /** One processed frame's gap (ms). Hot path: a null check when off. */
 export function recordLaneFrame(ms: number): void {
@@ -90,8 +117,9 @@ export function lanePerfSummaryEnabled(): boolean {
 }
 
 /** Start the 10 s summaries (lane builds only). A remounted game surface re-points the renderer. */
-export function installLanePerfSummary(rendererIn: IRenderer): void {
+export function installLanePerfSummary(rendererIn: IRenderer, controlMode: () => LaneControlMode): void {
   renderer = rendererIn;
+  readMode = controlMode;
   if (ring !== null || !lanePerfSummaryEnabled()) return;
   const frames = (ring = new FrameTimeRing(4096));
   // Real time: frame timing is wall time
