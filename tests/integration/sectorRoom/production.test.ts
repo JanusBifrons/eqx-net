@@ -4,7 +4,7 @@
  * status reaches clients through room state (#16); only the owner can change a
  * processor's recipe.
  *
- * Layout: Capital (0,0) → Connector (0,-350) → Smelter (0,-650) and Refinery
+ * Layout: Capital (0,0) → Connector (0,-380) → Smelter (0,-650) and Refinery
  * (450,-350); a Cargo Bay (-450,-350) is the base's storage. The Capital's 50
  * power runs the Smelter (40); the Refinery is left unpowered.
  */
@@ -31,7 +31,7 @@ describe('SectorRoom integration — production (P2b)', () => {
       asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         { kind: 'smelter', x: 0, y: -650 },
         { kind: 'cargo_bay', x: -450, y: -350 },
       ],
@@ -98,7 +98,7 @@ describe('SectorRoom integration — production (P2b)', () => {
       asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         { kind: 'refinery', x: 0, y: -680 },
       ],
       prebuiltStructuresOwner: OWNER,
@@ -132,7 +132,7 @@ describe('SectorRoom integration — production (P2b)', () => {
       asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         { kind: 'refinery', x: 0, y: -680 },
         { kind: 'cargo_bay', x: -450, y: -350 },
       ],
@@ -182,7 +182,7 @@ describe('SectorRoom integration — processor blueprint slots (P2b + Living Wor
       asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         { kind: 'solar', x: 700, y: -420 }, // 700×300: clear of the 480-wide Fabricator
         { kind: 'fabricator', x: 0, y: -720 },
         { kind: 'cargo_bay', x: -450, y: -350 },

@@ -5,7 +5,7 @@
  * to a player's base, like its turrets target) and leaves room state, but a
  * friendly pilot can park on it safely; mines leave with their layer.
  *
- * Layout: Capital (0,0) → Connector (0,-350) → Mine Layer (0,-650); a Cargo
+ * Layout: Capital (0,0) → Connector (0,-380) → Mine Layer (0,-650); a Cargo
  * Bay (-450,-350) holds the munitions.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -31,7 +31,7 @@ describe('SectorRoom integration — Mine Layer', () => {
       peacefulDrones: true,
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         { kind: 'mine_layer', x: 0, y: -650 },
         { kind: 'cargo_bay', x: -450, y: -350 },
       ],
