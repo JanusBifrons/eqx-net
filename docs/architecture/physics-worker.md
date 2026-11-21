@@ -42,7 +42,8 @@ The worker posts three discrete message types to the main thread:
 - **`READY`**: once Rapier init completes (per world in pooled mode). The main-thread `SectorRoom` resolves its `start()` promise on it.
 - **`SLEEP_TRANSITION { entityId, sleeping, tick }`**: whenever a body's effective sleep state crosses the `SLEEP_HYSTERESIS_TICKS` boundary (Phase 5). The main thread re-emits it as `ENTITY_SLEPT` / `ENTITY_WOKE` on the local Bus.
 - **`CONTACT_BATCH { tick, contacts: Contact[] }`**: per tick when Rapier's `EventQueue` produced contact-force events above `CONTACT_FORCE_FLOOR` (Stage 2 of the network-feel roadmap). Skipped (no message) when the tick produced no qualifying contacts. The main thread re-emits each contact as `COLLISION_RESOLVED` on the Bus and broadcasts a `collision_resolved` network message.
-  - Each `Contact` carries `{ aId, bId, vAxPost, vAyPost, vBxPost, vByPost, forceMagnitude, impactSpeed?, normalSpeed?, aMass?, bMass? }`.
+  - Each `Contact` carries `{ aId, bId, vAxPost, vAyPost, vBxPost, vByPost, forceMagnitude, impactSpeed?, normalSpeed?, aMass?, bMass?, aApproach?, bApproach? }`.
+  - `aApproach` / `bApproach` split the closing speed per body: each body's OWN pre-step velocity toward the other along the normal (signed). The server books only a body driving in (`> RAM_DRIVE_IN_MIN_SPEED`, 5 u/s) as a ship-vs-ship rammer ([allegiances](allegiances.md)).
   - `impactSpeed` is the closing speed at impact: the magnitude of the relative velocity from the bodies' PRE-step velocities (the worker keeps a `prevVel` snapshot = last tick's post-step velocities and passes it to `drainContacts`).
   - `normalSpeed` is that relative velocity projected on the contact normal (`event.maxForceDirection()`, a→b, clamped ≥ 0): head-on ≈ impactSpeed, a glancing scrape small.
   - `aMass` / `bMass` are the folded Rapier body masses (`World.getBodyMass`).
