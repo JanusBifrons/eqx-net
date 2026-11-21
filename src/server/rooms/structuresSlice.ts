@@ -45,7 +45,7 @@ import { writeRigClipRow } from '../structures/structureRigClip.js';
 import { writeDoorMotionRow, type GateDoorSource } from './doorMotionRow.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdBay, encodeProdCount, encodeProdFrac, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdBay, encodeProdCount, encodeProdFrac, encodeProdQ0, encodeProdQ1, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { shipyardBayOf } from '../../core/articulation/rigs/heavyIndustry.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { isStructureBodySolid } from '../../core/structures/structureBody.js';
@@ -226,9 +226,16 @@ export class StructuresSliceSync {
         if ((st.prodCount ?? SD.prodCount) !== pc) st.prodCount = pc;
         const pf = encodeProdFrac(h.production().cycleFraction(rec)); // loop 3L (#16)
         if ((st.prodFrac ?? SD.prodFrac) !== pf) st.prodFrac = pf;
-        // Loop 3R (#16): the bay this build is in; no build queue on this base yet.
-        const pb = rec.kind === 'shipyard' ? encodeProdBay(shipyardBayOf(rec.prodCycles), 0) : 0;
+        // Loop 3R (#16): the bay this build is in + the builds queued behind it
+        // (B4: the recipe queue's length; encodeProdBay caps it at PROD_QUEUE_MAX).
+        const queued = rec.prodQueue?.length ?? 0;
+        const pb = rec.kind === 'shipyard' ? encodeProdBay(shipyardBayOf(rec.prodCycles), queued) : 0;
         if ((st.prodBay ?? SD.prodBay) !== pb) st.prodBay = pb;
+        // Building panels B4 (#16): the recipe queue + repeat flag.
+        const q0 = encodeProdQ0(rec.prodQueue);
+        if ((st.prodQ0 ?? SD.prodQ0) !== q0) st.prodQ0 = q0;
+        const q1 = encodeProdQ1(rec.prodQueue, rec.prodQueueRepeat);
+        if ((st.prodQ1 ?? SD.prodQ1) !== q1) st.prodQ1 = q1;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
       writeStorageFillRow(rec, st); // storage fill gauge, on step change only

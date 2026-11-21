@@ -22,6 +22,8 @@ import type {
 } from './SectorSnapshot.js';
 import { CURRENT_SCHEMA_VERSION } from './SectorSnapshot.js';
 import { STRUCTURE_KIND_CATALOGUE_VERSION } from '../../shared-types/structureKinds.js';
+import { restoreRecipeQueue } from '../structures/productionQueue.js';
+import type { StructureRecord } from '../structures/StructureRegistry.js';
 
 const noopLogger = { info: () => undefined, warn: () => undefined } as unknown as Logger;
 
@@ -170,6 +172,29 @@ describe('SectorPersistence — structures survive a server restart', () => {
     chunk.ore.minerals = 1; // the saved row is a copy, not the live chunk
     persistence.hydrate();
     expect(restored[0]!.prodChunk).toEqual({ product: 'chunk:rock', quality: 0, uid: 'rc-1', weight: 250, ore: { minerals: 7000 } });
+  });
+
+  it('building panels B4: a recipe queue and its repeat flag survive persist → hydrate → restore; bad ids are dropped', () => {
+    const yard = makeStructure({
+      kind: 'shipyard', recipe: 'build_interceptor', prodCount: 1,
+      prodQueue: ['build_gunship', 'not_a_recipe', 'smelt_alloy', 'build_heavy'],
+      prodQueueRepeat: true,
+    });
+    const plain = makeStructure({ id: 'p2', kind: 'shipyard', recipe: 'build_gunship' });
+    let restored: readonly SectorSnapshotStructure[] = [];
+    const { deps } = makeDeps([yard, plain], (rows) => { restored = rows; });
+    const persistence = new SectorPersistence(deps);
+    persistence.persist();
+    persistence.hydrate();
+    expect(restored[0]!.recipe, 'the head is still saved as recipe').toBe('build_interceptor');
+    expect(restored[0]!.prodQueueRepeat).toBe(true);
+    expect('prodQueue' in restored[1]!, 'no queue writes no key').toBe(false);
+    expect('prodQueueRepeat' in restored[1]!).toBe(false);
+    // The restore seam keeps only known ids this kind can run.
+    const rec = { kind: 'shipyard' } as StructureRecord;
+    restoreRecipeQueue(rec, restored[0]!.prodQueue, restored[0]!.prodQueueRepeat);
+    expect(rec.prodQueue).toEqual(['build_gunship', 'build_heavy']);
+    expect(rec.prodQueueRepeat).toBe(true);
   });
 
   it('persist() skips NPC-owned structures (B2: NPC bases regenerate from their seed)', () => {

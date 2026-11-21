@@ -18,11 +18,13 @@
  * as `set_recipe`, so a loaded cycle hands its inputs back (refused if they
  * don't fit). `set_recipe` clears the queue.
  *
- * Not persisted or on the wire yet (later slices). A chunk recipe in a queue
+ * B4: the queue rides the room-state row (`encodeProdQ0` / `encodeProdQ1`) and
+ * the sector save (`prodQueue` / `prodQueueRepeat`, restored through
+ * `restoreRecipeQueue`). A chunk recipe in a queue
  * holds its chunk when its one build is spent, as a build count does.
  */
 import { MAX_RECIPE_QUEUE, isProcessorKind } from '../../shared-types/production.js';
-import { RECIPES, type RecipeId } from '../../shared-types/recipes.js';
+import { RECIPES, isRecipeId, type RecipeId } from '../../shared-types/recipes.js';
 import type { ProductionSubsystem } from './ProductionSubsystem.js';
 import type { StructureRecord } from './StructureRegistry.js';
 
@@ -81,6 +83,26 @@ export function editRecipeQueue(
     return true;
   }
   return removeEntry(prod, rec, edit.index);
+}
+
+/**
+ * A saved queue back onto `rec` (sector restore). Keeps only known recipe ids
+ * this kind can run, capped at MAX_RECIPE_QUEUE - 1 entries after the head; a
+ * non-array leaves `rec` untouched (an old save restores exactly as before).
+ * An empty saved array still means queue mode (the head is one build).
+ */
+export function restoreRecipeQueue(rec: StructureRecord, saved: unknown, repeat: unknown): void {
+  if (!isProcessorKind(rec.kind)) return;
+  if (Array.isArray(saved)) {
+    const kind = rec.kind;
+    const q: RecipeId[] = [];
+    for (const id of saved) {
+      if (q.length >= MAX_RECIPE_QUEUE - 1) break;
+      if (typeof id === 'string' && isRecipeId(id) && RECIPES[id].processors.includes(kind)) q.push(id);
+    }
+    rec.prodQueue = q;
+  }
+  if (repeat === true) rec.prodQueueRepeat = true;
 }
 
 function removeEntry(prod: Pick<ProductionSubsystem, 'setRecipe'>, rec: StructureRecord, index: number | undefined): boolean {

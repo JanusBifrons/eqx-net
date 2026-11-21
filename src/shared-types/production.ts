@@ -145,6 +145,65 @@ export function decodeProdCount(v: number | undefined): number | undefined {
   return v ? v - 1 : undefined;
 }
 
+/**
+ * Recipe queue on the wire (building panels B4): two uint32 row fields,
+ * `prodQ0` and `prodQ1`, carry the entries after the head as `encodeRecipe`
+ * bytes, low byte first (0 = empty, so a short queue ends at the first 0).
+ * `prodQ0` holds entries 0..3, `prodQ1` entries 4..6 in its low three bytes;
+ * its top byte is free (the queue never exceeds MAX_RECIPE_QUEUE - 1 = 7), so
+ * bit 31 carries the repeat flag. Both 0 = no queue, repeat off.
+ */
+export const PROD_QUEUE_WIRE_SLOTS = 7;
+const PROD_Q_REPEAT = 0x80000000;
+
+/** Pack entries `from..from+n-1` of `queue` into one uint32 (byte per entry). */
+function packQueueWord(queue: readonly RecipeId[] | undefined, from: number, n: number): number {
+  let w = 0;
+  let mul = 1;
+  const len = queue === undefined ? 0 : Math.min(queue.length, PROD_QUEUE_WIRE_SLOTS);
+  for (let i = from; i < from + n && i < len; i++) {
+    w += encodeRecipe(queue![i]) * mul;
+    mul *= 256;
+  }
+  return w;
+}
+
+/** `prodQ0`: the first four queued entries. */
+export function encodeProdQ0(queue: readonly RecipeId[] | undefined): number {
+  return packQueueWord(queue, 0, 4);
+}
+
+/** `prodQ1`: queued entries 4..6, plus the repeat flag in bit 31. */
+export function encodeProdQ1(queue: readonly RecipeId[] | undefined, repeat: boolean | undefined): number {
+  return packQueueWord(queue, 4, 3) + (repeat === true ? PROD_Q_REPEAT : 0);
+}
+
+export function decodeProdQueueRepeat(q1: number | undefined): boolean {
+  return (q1 ?? 0) >= PROD_Q_REPEAT;
+}
+
+/** Decode `prodQ0` / `prodQ1` into `out` IN PLACE (cleared first; the caller
+ *  reuses one array per row, #14). Stops at the first empty byte; an unknown
+ *  recipe byte (newer server) ends the list too. */
+export function decodeProdQueue(q0: number | undefined, q1: number | undefined, out: RecipeId[]): RecipeId[] {
+  out.length = 0;
+  let w = q0 ?? 0;
+  for (let i = 0; i < 4; i++) {
+    const r = decodeRecipe(w % 256);
+    if (r === undefined) return out;
+    out.push(r);
+    w = Math.floor(w / 256);
+  }
+  w = (q1 ?? 0) % PROD_Q_REPEAT;
+  for (let i = 0; i < 3; i++) {
+    const r = decodeRecipe(w % 256);
+    if (r === undefined) return out;
+    out.push(r);
+    w = Math.floor(w / 256);
+  }
+  return out;
+}
+
 /** "Waiting for Minerals" style status line for the inspector. */
 export function prodStatusLine(state: ProdState, missing: GoodId | undefined, recipe?: RecipeId): string {
   if (state === PROD_STATE.starved && recipe !== undefined && RECIPES[recipe].chunkInput !== undefined) return 'Waiting for a rock chunk';
