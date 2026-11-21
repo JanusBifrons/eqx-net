@@ -19,6 +19,7 @@ import { Bar } from './inspectorBar';
 import { phoneTiny } from './inspectorSizes';
 import { inspectorPowerLine } from './structureSettingsPower';
 import { HUD, hullColor } from '../hud/tokens';
+import { useHudSize } from '../hud/useHudScale';
 import { BUILD_AWAITING_CLEAR_LINE } from '../structures/buildAwaitingClear';
 import { PROD_STATE } from '@shared-types/production';
 import { RECIPES, type RecipeId } from '@shared-types/recipes';
@@ -88,6 +89,7 @@ const TONE_COLOR: Readonly<Record<ChipTone, string>> = {
 };
 
 export function StructureCardRows({ d }: { d: StructureCardData }): JSX.Element {
+  const noHover = useHudSize() !== 'desk'; // a tap also fires a hover: desk-only tips
   const power = powerIconState(d);
   const powerLabel = power === null ? '' : d.switchedOff === true ? 'OFF' : inspectorPowerLine(d.selfPower!, d.powered, d.built);
   const chip = structureStatusChip(d);
@@ -107,7 +109,7 @@ export function StructureCardRows({ d }: { d: StructureCardData }): JSX.Element 
             // Desktop hover only (touch never opens it). The icon ignores the
             // pointer so its SVG <title> (the accessible label) shows no second,
             // native tooltip; the span takes the hover.
-            <Tooltip title={`Power: ${powerLabel}`} describeChild disableTouchListener>
+            <Tooltip title={`Power: ${powerLabel}`} describeChild disableTouchListener disableHoverListener={noHover} disableFocusListener={noHover}>
               <Box component="span" sx={HOVER_SX}>
                 <BoltIcon
                   data-testid="entity-stats-power" data-power-state={power} titleAccess={powerLabel}
@@ -118,7 +120,7 @@ export function StructureCardRows({ d }: { d: StructureCardData }): JSX.Element 
           )}
         </Box>
         {chip !== null && (
-          <Tooltip title={chip.title ?? chip.label} describeChild disableTouchListener>
+          <Tooltip title={chip.title ?? chip.label} describeChild disableTouchListener disableHoverListener={noHover} disableFocusListener={noHover}>
             <Box sx={CHIP_SX} data-testid="entity-stats-status" data-status={chip.key}
               style={{ color: TONE_COLOR[chip.tone], borderColor: TONE_COLOR[chip.tone] }}>
               {chip.label}

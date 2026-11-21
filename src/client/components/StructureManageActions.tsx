@@ -18,6 +18,7 @@ import { getStructureKind } from '@shared-types/structureKinds';
 import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
 import { phoneTiny } from './inspectorSizes';
 import { HUD } from '../hud/tokens';
+import { useHudSize } from '../hud/useHudScale';
 import { WINDOW_BTN_SECONDARY_SX } from './GameWindow';
 import { BillChips, type Bill } from './CostChips';
 import { useHoldPress } from './useHoldPress';
@@ -156,9 +157,10 @@ function UpgradeCard({ entityId, data }: { entityId: number; data: ManageActionD
 
 /** Press and hold ~1 s to deconstruct; the fill shows the hold; letting go early cancels. */
 function HoldDeconstruct({ entityId }: { entityId: number }): JSX.Element {
+  const noHover = useHudSize() !== 'desk'; // a tap also fires a hover: desk-only tip
   const { holding, handlers } = useHoldPress(DECONSTRUCT_HOLD_MS, () => sendStructureAction(entityId, 'toggle_deconstruct'));
   return (
-    <Tooltip title="Hold to deconstruct (reverse build, returns resources)" disableTouchListener>
+    <Tooltip title="Hold to deconstruct (reverse build, returns resources)" disableTouchListener disableHoverListener={noHover} disableFocusListener={noHover}>
       <Box component="button" data-testid="structure-action-deconstruct" data-active="0" data-holding={holding ? '1' : '0'}
         aria-label="Hold to deconstruct" sx={DANGER_BTN_SX} {...handlers}
         onContextMenu={(e: { preventDefault: () => void }) => e.preventDefault()}>
