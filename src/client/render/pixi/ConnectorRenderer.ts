@@ -66,28 +66,7 @@ import {
   asteroidObstaclesFromSwarm,
   RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
-
-/** A pooled, mutable stand-in for a {@link Connection} used ONLY by the placement
- *  preview's `canConnect`/`shieldPylonRejection` calls (which read `getOtherNode`
- *  + the array `.length`). Reused across frames so the per-frame pass allocates
- *  nothing (#14); cast to `Connection` at the adjacency boundary. */
-interface PreviewConn {
-  aId: string;
-  bId: string;
-  getOtherNode(id: string): string | null;
-}
-
-/** Allocate one pooled preview-connection (the only `new` for the pool, paid once
- *  as the pool grows; rewritten in place thereafter). */
-function makePreviewConn(): PreviewConn {
-  return {
-    aId: '',
-    bId: '',
-    getOtherNode(id: string): string | null {
-      return id === this.aId ? this.bId : id === this.bId ? this.aId : null;
-    },
-  };
-}
+import { makePreviewConn, type PreviewConn } from './previewConn.js';
 
 /** 0d slice 7 — one candidate's `canConnect` verdict from the last preview
  *  frame: the server's answer for linking the ghost to structure `id`, with
@@ -130,7 +109,7 @@ export function staticSignature(
     } else {
       h = mix(h, -7);
     }
-    h = mix(h, (st.built ? 1 : 0) | (st.wallActive ? 2 : 0));
+    h = mix(h, (st.built ? 1 : 0) | (st.wallActive ? 2 : 0) | (st.mirror === true ? 4 : 0));
     const conn = st.connTo;
     h = mix(h, conn.length);
     for (let c = 0; c < conn.length; c++) h = mix(h, conn[c]!);
@@ -484,7 +463,7 @@ export class ConnectorRenderer {
         if (id > otherId) continue; // each undirected edge once
         const b = swarm.get(otherId);
         if (!b) continue;
-        if (cables) { drawSocketCableBody(g, this.linkCable(id, st, c, a, b), scale, a.radius, b.radius); continue; }
+        if (cables) { drawSocketCableBody(g, this.linkCable(id, st, c, a, b, structures), scale, a.radius, b.radius); continue; }
         if (this.lineLook) { drawLineLookBody(g, this.lineLook, ax, ay, b.x, -b.y, scale, a.radius, b.radius); continue; }
         g.moveTo(ax, ay).lineTo(b.x, -b.y);
         g.stroke({ color: idle.color, alpha: idle.alpha, width: idle.width });
@@ -497,9 +476,10 @@ export class ConnectorRenderer {
   }
 
   /** Link `c` of structure `id` (the lower-id end, pose `a`) to pose `b`:
-   *  its cached cable between the stored sockets. */
-  private linkCable(id: number, st: StructureRenderState, c: number, a: SwarmRenderState, b: SwarmRenderState) {
-    return this.cables.get(id * 65536 + st.connTo[c]!, a, st.connSockSelf?.[c] ?? CABLE_NO_SOCKET, b, st.connSockOther?.[c] ?? CABLE_NO_SOCKET);
+   *  its cached cable between the stored sockets (each end's build mirror from its row). */
+  private linkCable(id: number, st: StructureRenderState, c: number, a: SwarmRenderState, b: SwarmRenderState, rows: ReadonlyMap<number, StructureRenderState>) {
+    const o = st.connTo[c]!;
+    return this.cables.get(id * 65536 + o, a, st.connSockSelf?.[c] ?? CABLE_NO_SOCKET, b, st.connSockOther?.[c] ?? CABLE_NO_SOCKET, st.mirror === true, rows.get(o)?.mirror === true);
   }
 
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
@@ -575,7 +555,7 @@ export class ConnectorRenderer {
         if (!v.pulseActive) continue; // idle: drawn on the static layer
         const bx = b.x;
         const by = -b.y;
-        if (this.socketCables) { drawSocketCableFlow(g, this.linkCable(id, st, ci, a, b), v, src === undefined || src === id, scale, nowMs, material, a.radius, b.radius); continue; }
+        if (this.socketCables) { drawSocketCableFlow(g, this.linkCable(id, st, ci, a, b, structures), v, src === undefined || src === id, scale, nowMs, material, a.radius, b.radius); continue; }
         if (this.lineLook) { drawLineLookFlow(g, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale, a.radius, b.radius); continue; }
         // Glow underlay first (so the core line sits on top).
         if (v.glowAlpha > 0) {
@@ -629,14 +609,14 @@ export class ConnectorRenderer {
       // `buildPct` steps using the server `etaMs`, so it builds smoothly rather
       // than jumping each pulse.
       if (!st.built) {
-        drawStatusBar(g, ax, ay, a.radius, this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs), 0x66ccff);
+        drawStatusBar(g, ax, ay, a.radius, this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs), 0x66ccff, scale);
       } else if (st.deconstructPct > 0) {
-        drawStatusBar(g, ax, ay, a.radius, 1 - st.deconstructPct, 0xff5555); // red emptying bar while reclaiming
+        drawStatusBar(g, ax, ay, a.radius, 1 - st.deconstructPct, 0xff5555, scale); // red emptying bar while reclaiming
       } else if (st.storedPowerMax !== undefined && st.storedPowerMax > 0 && !(this.socketCables && hasBodyStatus(a.shipKind))) {
         // WS-9 (R2.12) — a Battery's always-on CHARGE bar (amber, the panel CHRG colour).
         // With the new look on (`socketCables`, `?fx=new`) a store with a body
         // state lights its cells instead (socket-nub overlay, Stage 4 F1 step C).
-        drawStatusBar(g, ax, ay, a.radius, (st.storedPower ?? 0) / st.storedPowerMax, 0xcc8844);
+        drawStatusBar(g, ax, ay, a.radius, (st.storedPower ?? 0) / st.storedPowerMax, 0xcc8844, scale);
       }
 
       // WS-9 (R2.20) + Phase 5 — out-of-power indicator above a BUILT, UNPOWERED
@@ -745,14 +725,16 @@ export class ConnectorRenderer {
           this._adjPool[poolIdx] = adj;
         }
         adj.length = 0;
-        for (const otherId of st.connTo) {
+        for (let ci = 0; ci < st.connTo.length; ci++) {
           let pc = this._connPool[connPoolIdx];
           if (pc === undefined) {
             pc = makePreviewConn();
             this._connPool[connPoolIdx] = pc;
           }
           pc.aId = sid;
-          pc.bId = String(otherId);
+          pc.bId = String(st.connTo[ci]!);
+          pc.socketA = st.connSockSelf?.[ci] ?? CABLE_NO_SOCKET;
+          pc.socketB = st.connSockOther?.[ci] ?? CABLE_NO_SOCKET;
           adj.push(pc as unknown as Connection);
           connPoolIdx++;
         }
@@ -850,8 +832,8 @@ export class ConnectorRenderer {
         okDists.push(edgeDistance(ghost, node));
         okSockA.push(pick.a);
         okSockB.push(pick.b);
-      } else if (res.reason === 'blocked' || res.reason === 'too-short') { // red; too-short stud to stud (the pick)
-        this.drawPreviewSegment(ax, ay, ghost, pick.a, node, pick.b, res.reason, scale);
+      } else if (res.reason === 'blocked' || res.reason === 'too-short' || res.reason === 'crosses-cable') { // red; too-short / crosses-cable along the pick
+        this.drawPreviewSegment(ax, ay, ghost, pick.a, node, pick.b, res.reason === 'crosses-cable' ? 'blocked' : res.reason, scale);
       }
       // else out-of-range / no-facing-socket / connector-required / full / self / duplicate → not drawn.
     }
