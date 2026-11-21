@@ -35,7 +35,7 @@ export interface StructureMessageHost extends ParsedMessageHost {
   storage(): Pick<StorageService, 'flushDirty'>;
   rebuildStructuresSlice(): void;
   structurePlacement(): Pick<StructurePlacementSubsystem, 'place' | 'remove' | 'lastRefusal'>;
-  structureGrid(): Pick<StructureGridSubsystem, 'reconnect' | 'clearConnections' | 'upgradeStructure'>;
+  structureGrid(): Pick<StructureGridSubsystem, 'reconnect' | 'lastReconnectRefusal' | 'clearConnections' | 'upgradeStructure'>;
   sectorPersistence(): Pick<SectorPersistence, 'persistSoon'>;
   testSeedStorageHold(): SeedHold | null;
   findPacked(owner: string, product: string): { rec: StructureRecord } | { shipId: string } | null;
@@ -128,9 +128,13 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       case 'toggle_deconstruct':
         rec.isDeconstructing = !rec.isDeconstructing;
         break;
-      case 'reconnect':
-        h.structureGrid().reconnect(rec.id);
+      case 'reconnect': {
+        // Say why when nothing new linked (e.g. a rock across the line).
+        const grid = h.structureGrid();
+        grid.reconnect(rec.id);
+        if (grid.lastReconnectRefusal !== null) h.sendNotice(client, grid.lastReconnectRefusal);
         break;
+      }
       case 'clear_connections':
         h.structureGrid().clearConnections(rec.id);
         break;
