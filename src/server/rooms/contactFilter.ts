@@ -1,7 +1,7 @@
 import type { Contact } from '../../core/physics/contactDrain.js';
 import type { MapSchema } from '@colyseus/schema';
 import type { Bus } from '../../core/events/Bus.js';
-import { aggregateRamming } from '../../core/combat/Ramming.js';
+import { aggregateRamming, RAM_DRIVE_IN_MIN_SPEED } from '../../core/combat/Ramming.js';
 import { isLingeringHull } from '../../core/entity/shipLiveness.js';
 import type { CollisionResolvedMessage } from '../../shared-types/messages.js';
 import { wireShipBodyId } from '../../shared-types/shipBodyIds.js';
@@ -168,10 +168,33 @@ export function handleContactBatch(h: ContactBatchHost, tick: number, contacts: 
           damageB,
           tick,
         });
-        if (damageA > 0 && !h.loot().hullContact(p.aId, p.bId)) h.applyDamage(p.aId, p.bId, damageA);
-        if (damageB > 0 && !h.loot().hullContact(p.bId, p.aId)) h.applyDamage(p.bId, p.aId, damageB);
+        // A structure is locked in place and never rams: a ship that flies into
+        // one is hurt with NO attacker, so the bump never marks the ship hostile
+        // to the owner nor escalates the owner's faction (a flagship fleet
+        // guarding the home pocket razed a peaceful player's base, 2026-11-21).
+        // Between two ships only the one driving in rams: a parked or retreating
+        // ship hit by a mover is never booked as its attacker (an escort bumping
+        // a parked Skiff put the player's faction at war, 2026-11-21).
+        if (damageA > 0 && !h.loot().hullContact(p.aId, p.bId)) h.applyDamage(p.aId, ramAttacker(h, p.aId, p.bId, p.bApproach), damageA);
+        if (damageB > 0 && !h.loot().hullContact(p.bId, p.aId)) h.applyDamage(p.bId, ramAttacker(h, p.bId, p.aId, p.aApproach), damageB);
       }
     }
+}
+
+/** The attacker a ram books against `selfId`, hit by `otherId` ('' = none): the
+ *  other body, unless it is a structure (swarm kind 2), which never rams, or,
+ *  ship against ship, it was not driving in (`otherApproach`, its own speed
+ *  toward `selfId`, at or below `RAM_DRIVE_IN_MIN_SPEED`). */
+function ramAttacker(h: ContactBatchHost, selfId: string, otherId: string, otherApproach: number | undefined): string {
+  const other = h.swarmRegistry.get(otherId);
+  if (other?.kind === 2) return '';
+  if (otherApproach !== undefined && otherApproach <= RAM_DRIVE_IN_MIN_SPEED && isShipBody(other) && isShipBody(h.swarmRegistry.get(selfId))) return '';
+  return otherId;
+}
+
+/** A ship body: a drone (swarm kind 1) or a pilot/owned hull (not in the swarm registry). */
+function isShipBody(rec: { kind: number } | null | undefined): boolean {
+  return rec == null || rec.kind === 1;
 }
 
 /** How the client knows a physics body: -1 = a ship, keyed as the client

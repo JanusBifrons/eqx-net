@@ -18,6 +18,7 @@ import { useUIStore } from '../../state/store';
 import { logEvent } from '../../debug/ClientLogger';
 import { stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from '../fleetWarpFollow';
 import type { SentInputState } from '../prediction/predictionStepCtx.js';
+import { resetAnchorHardSnapCount } from '../clockAnchor.js';
 
 export type FleetCommandMessage = FleetOrderMessage | SetModeMessage | SetStanceMessage | FormSquadMessage | DisbandSquadMessage;
 
@@ -255,6 +256,7 @@ export function handleRespawnAck(c: RoomCommandsCtx, msg: RespawnAckMessage): vo
   c.clockAnchorPerfNow = c.gameClock.at(c.welcomePerfNow);
   c.anchorInitialised = true;
   c.anchorFreshAtMs = c.welcomePerfNow;
+  resetAnchorHardSnapCount(); // the anchor is re-seeded: count snaps from this respawn
   // Reset the idle-input throttle so the first post-respawn input always sends.
   c.lastSentInputState = null;
   c.lastSentInputAtMs = 0;
