@@ -36,6 +36,8 @@ import {
   DISPLAY_DELAY_MS, ADAPTIVE_DELAY_CEILING_MS,
   noteSwarmStreamStamp, getSwarmStreamNewestStampMs,
 } from './swarmInterpolation.js';
+import { makeSwarmResumeOffset } from './swarmResumeOffset.js';
+import type { SwarmRenderState } from '../../core/contracts/IRenderer.js';
 
 // The reset method is private. Rather than weakening the public API,
 // we reach in via a narrow structural cast so the test exercises the
@@ -188,5 +190,18 @@ describe('ColyseusGameClient.resetPredictionState', () => {
     // packet; a cleared hold lets the offset drift up 1 % of the lateness.
     expect(swarmArrivalStampMs(1, 10_000 + tickMs + lateMs)).toBeCloseTo(10_000 + tickMs + lateMs * 0.01, 6);
     resetSwarmTickClock();
+  });
+
+  it('clears every drone resume offset (S4b)', () => {
+    const client = new ColyseusGameClient();
+    const off = makeSwarmResumeOffset();
+    off.sx.x = 3; off.sa.x = 0.1; off.halfLifeMs = 100; off.heldX = 5;
+    const entry = { kind: 1, resumeOffset: off } as unknown as SwarmRenderState;
+    (client.mirror as { swarm?: Map<number, SwarmRenderState> }).swarm = new Map([[1, entry]]);
+    asInternals(client).resetPredictionState();
+    expect(off.halfLifeMs).toBe(0);
+    expect(off.sx.x).toBe(0);
+    expect(off.sa.x).toBe(0);
+    expect(off.heldX).toBeNaN();
   });
 });

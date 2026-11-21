@@ -9,13 +9,14 @@
  *   - the display-delay target comes from the drone packet lateness
  *     estimate inside `swarmArrivalStampMs` (S3-3), as in production; the
  *     JSON stream no longer feeds it;
- *   - every frame reads both drones through `interpolateSwarmPose`.
+ *   - every frame reads both drones through `resolveSwarmDrawnPose` (the
+ *     interpolated pose plus the S4b resume offset), as `updateSwarmMirror`.
  * Ground truth: a straight drone and a turning drone, both at 300 u/s.
  * The drawn tracks are scored by `countMotionArtefacts` (assertions.ts);
  * the swarm counters come from swarmInterpolation.ts.
  *
- * Recorded tests assert today's exact numbers so any change shows up. The
- * `it.fails` tests are target behaviour that fails today.
+ * Recorded tests assert today's exact numbers so any change shows up; the
+ * target tests lock behaviour the gap-smoothing steps reached.
  *
  * S4-5 adds the stream-stall hold (`stepSwarmDisplayDelay(frameMs, nowMs)`)
  * and two fixtures past its 400 ms bound: gap-1000 (a 1 s stall on both
@@ -23,8 +24,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { decodeSwarmPacket } from '../../src/client/net/BinarySwarmDecoder.js';
+import { resolveSwarmDrawnPose } from '../../src/client/net/swarmResumeOffset.js';
 import {
-  interpolateSwarmPose,
   resetSwarmTickClock,
   setSwarmDisplayDelayMs,
   setSwarmDisplaySpeed,
@@ -258,10 +259,10 @@ function runDroneDeliveries(
     const turning = mirror.swarm?.get(TURNING_ID);
     if (!straight || !turning) continue;
     const gameMs = t * timeScale;
-    interpolateSwarmPose(straight, t, pose);
+    resolveSwarmDrawnPose(straight, t, frameDtMs, pose);
     const st = straightTruth(gameMs);
     straightFrames.push({ atMs: t, drawnX: pose.x, drawnY: pose.y, trueX: st.x, trueY: st.y });
-    interpolateSwarmPose(turning, t, pose);
+    resolveSwarmDrawnPose(turning, t, frameDtMs, pose);
     const tt = turningTruth(gameMs);
     turningFrames.push({ atMs: t, drawnX: pose.x, drawnY: pose.y, trueX: tt.x, trueY: tt.y });
     opts.onFrame?.(t);
@@ -339,8 +340,11 @@ function runCaptureFixture(): DroneFixtureResult[] {
  *  straight-line glide misses the curve: the S4b gate), glide-limit holds -> 0,
  *  freeze frames unchanged, max delay 256 -> 275 / 237 -> 350; capture segment
  *  1: glide-limit holds 8 -> 0, largest snap 13.15 -> 12; lan-clean, gap-200,
- *  gap-json-only, frame-stall-250 and jitter-4g unchanged). A change to any is a
- *  behaviour change. */
+ *  gap-json-only, frame-stall-250 and jitter-4g unchanged); and for the eased
+ *  resume offset, S4b: gap-400, gap-swarm-only, gap-600 and
+ *  burst-600-both-streams turning snaps 1 -> 0 (largest 2.56 / 3.27 -> 0),
+ *  turning mean lateness +0.12 / +0.13 ms; every other number unchanged. A
+ *  change to any is a behaviour change. */
 const RECORDED: Record<GapProfileName, DroneFixtureResult> = {
   'lan-clean': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 116.67, maxLatenessMs: 116.67 },
@@ -358,21 +362,21 @@ const RECORDED: Record<GapProfileName, DroneFixtureResult> = {
   },
   'gap-400': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.33, maxLatenessMs: 325.46 },
-    turning: { snaps: 1, largestSnapU: 2.56, totalSnapU: 2.56, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.4, maxLatenessMs: 325.46 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.52, maxLatenessMs: 325.46 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
     stampLatenessMeanMs: 21.01, stampLatenessMaxMs: 400, maxDelayMs: 275.46, minDelayMs: 100,
     delayStepsOverBound: 0, maxLatenessEstimateMs: 275.39, resyncs: 0, holdFrames: 3,
   },
   'gap-600': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 251.9, maxLatenessMs: 400 },
-    turning: { snaps: 1, largestSnapU: 3.27, totalSnapU: 3.27, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 252.09, maxLatenessMs: 401.78 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 252.22, maxLatenessMs: 401.78 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
     stampLatenessMeanMs: 46.64, stampLatenessMaxMs: 600, maxDelayMs: 350, minDelayMs: 100,
     delayStepsOverBound: 0, maxLatenessEstimateMs: 424.71, resyncs: 0, holdFrames: 15,
   },
   'burst-600-both-streams': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 251.9, maxLatenessMs: 400 },
-    turning: { snaps: 1, largestSnapU: 3.27, totalSnapU: 3.27, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 252.09, maxLatenessMs: 401.78 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 15, backwardSteps: 0, meanLatenessMs: 252.22, maxLatenessMs: 401.78 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
     stampLatenessMeanMs: 46.64, stampLatenessMaxMs: 600, maxDelayMs: 350, minDelayMs: 100,
     delayStepsOverBound: 0, maxLatenessEstimateMs: 424.71, resyncs: 0, holdFrames: 15,
@@ -386,7 +390,7 @@ const RECORDED: Record<GapProfileName, DroneFixtureResult> = {
   },
   'gap-swarm-only': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.33, maxLatenessMs: 325.46 },
-    turning: { snaps: 1, largestSnapU: 2.56, totalSnapU: 2.56, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.4, maxLatenessMs: 325.46 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 3, backwardSteps: 0, meanLatenessMs: 215.52, maxLatenessMs: 325.46 },
     overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
     stampLatenessMeanMs: 21.01, stampLatenessMaxMs: 400, maxDelayMs: 275.46, minDelayMs: 100,
     delayStepsOverBound: 0, maxLatenessEstimateMs: 275.39, resyncs: 0, holdFrames: 3,
@@ -546,11 +550,15 @@ describe('drone gap-smoothing targets', () => {
     }
   });
 
-  // The S4b gate: the 250 ms straight-line glide differs from the true curve,
-  // so on resume the turning drone still steps 2.56 u (gap-400) / 3.27 u
-  // (gap-600) once. The eased offset (S4b) is gated on these counts.
-  it.fails('zero snaps at gap-400 (turning drone)', () => {
-    expect(runDroneFixture(GAP_PROFILES['gap-400']).turning.snaps).toBe(0);
+  // S4b: the straight-line glide differs from the true curve, so on resume
+  // the turning drone used to step 2.56 u (gap-400) / 3.27 u (gap-600) once.
+  // The eased resume offset (swarmResumeOffset.ts) takes the step out.
+  it('zero snaps at gap-400, gap-600 and burst-600-both-streams (both drones)', () => {
+    for (const name of ['gap-400', 'gap-600', 'burst-600-both-streams'] as const) {
+      const result = runDroneFixture(GAP_PROFILES[name]);
+      expect(result.straight.snaps, `${name} straight`).toBe(0);
+      expect(result.turning.snaps, `${name} turning`).toBe(0);
+    }
   });
 
   // Freezing is only allowed once the glide limit and the 100 ms floor are

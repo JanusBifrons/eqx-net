@@ -34,6 +34,7 @@ import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { structureKindFromIndex } from '../../shared-types/structureKinds.js';
 import { asteroidResourceFromIndex } from '../../shared-types/asteroidResources.js';
 import { swarmArrivalStampMs, noteSwarmSlotOverwrite, noteSwarmStreamStamp } from './swarmInterpolation.js';
+import { makeSwarmResumeOffset } from './swarmResumeOffset.js';
 
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
@@ -41,6 +42,12 @@ interface MutableMirror {
 
 /** Build a 3-deep ring of pre-allocated empty pose entries. Reused per entity
  *  for the lifetime of that entity in the mirror — no per-packet allocation. */
+/** Drones, scrap and wreck pieces: the kinds drawn at the interpolated pose
+ *  (`isRemoteMovingSwarmKind`), so the ones that carry a resume offset. */
+function isMovingKind(kind: number): boolean {
+  return kind === SWARM_KIND_DRONE || kind === SWARM_KIND_SCRAP || kind === SWARM_KIND_WRECK;
+}
+
 function makeEmptyRing(): PoseRingEntry[] {
   const ring: PoseRingEntry[] = new Array(POSE_RING_DEPTH);
   for (let i = 0; i < POSE_RING_DEPTH; i++) {
@@ -187,6 +194,8 @@ export function decodeSwarmPacket(
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
         poseRing: ring,
         ringHead: 1,
+        // S4b: the drawn pose's resume offset, once per moving entity.
+        ...(isMovingKind(kind) ? { resumeOffset: makeSwarmResumeOffset() } : {}),
       };
       swarm.set(entityId, entry);
     } else {
@@ -223,6 +232,8 @@ export function decodeSwarmPacket(
       entry.sleeping = sleeping;
       entry.shieldDown = shieldDown;
       entry.lastUpdateTick = tick;
+      // A reused id that became a moving kind: its offset, once.
+      if (entry.resumeOffset === undefined && isMovingKind(kind)) entry.resumeOffset = makeSwarmResumeOffset();
 
       // Push the new pose into the ring at ringHead, then advance. This is
       // what `interpolateSwarmPose` reads on the hot path.

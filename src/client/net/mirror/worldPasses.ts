@@ -1,6 +1,7 @@
 import { useUIStore } from '../../state/store.js';
 import { resolvePlacementPreviewStatus } from '../../structures/structurePlacementClient.js';
-import { interpolateSwarmPose, stepSwarmDisplayDelay, DISPLAY_DELAY_MS as SHELL_DISPLAY_DELAY_MS } from '../swarmInterpolation.js';
+import { stepSwarmDisplayDelay, DISPLAY_DELAY_MS as SHELL_DISPLAY_DELAY_MS } from '../swarmInterpolation.js';
+import { resolveSwarmDrawnPose } from '../swarmResumeOffset.js';
 import { isRemoteMovingSwarmKind } from '../snapshotRemoteSync.js';
 import { slewDisplayMountAngles } from '../displayMountAngles.js';
 import { getShipKind } from '@shared-types/shipKinds';
@@ -109,12 +110,15 @@ export function updateSwarmMirror(ctx: MirrorPassCtx): void {
   // The display delay glides toward its target once per frame (S3-2) before
   // any read, on this frame's WALL ms (the delay is wall ms). Given the read
   // clock it also holds the read point through a whole-stream stall (S4-5).
+  // On the frame a held stream resumes, a drone whose straight glide missed
+  // its true curve keeps the glide and eases to the samples on a wall-time
+  // spring (S4b, `swarmResumeOffset.ts`). Drawing only, as above.
   const nowMs = ctx.clock.now();
   stepSwarmDisplayDelay(ctx.lastFrameMs, nowMs);
   if (ctx.predWorld && ctx.mirror.swarm) {
     for (const entry of ctx.mirror.swarm.values()) {
       if (!isRemoteMovingSwarmKind(entry.kind)) continue;
-      interpolateSwarmPose(entry, nowMs, ctx.swarmInterpScratch);
+      resolveSwarmDrawnPose(entry, nowMs, ctx.lastFrameMs, ctx.swarmInterpScratch);
       entry.x = ctx.swarmInterpScratch.x;
       entry.y = ctx.swarmInterpScratch.y;
       entry.angle = ctx.swarmInterpScratch.angle;

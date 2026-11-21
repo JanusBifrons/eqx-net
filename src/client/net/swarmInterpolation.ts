@@ -258,6 +258,10 @@ function holdSwarmDisplayDelay(nowMs: number): void {
 
 /** Frames on which a stream stall held the read point (S4-5 telemetry). */
 export function getSwarmHoldFrameCount(): number { return _holdFrameCount; }
+/** True while a stream stall has the read point parked (S4b: swarmResumeOffset.ts). */
+export function isSwarmHoldActive(): boolean { return _holdActive; }
+/** The sector's game speed the swarm reads use (game ms per wall ms). */
+export function getSwarmDisplaySpeed(): number { return _displaySpeed; }
 
 /** Put the delay back at the floor with no target, no lateness estimate and
  *  no stream newest stamp (sector change: `resetPredictionState`; tests:
