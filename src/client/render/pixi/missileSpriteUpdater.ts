@@ -16,6 +16,7 @@ import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { resolveMissileDisplayPose } from '../../combat/MissileMirror.js';
 import { buildMissileGfx, buildMissileExplosionGfx } from './spriteBuilders.js';
+import { mainThreadNowMs } from '../mainThreadNow.js';
 import type { FxExplosions, FxMissileTrails } from '../art/fx/FxExplosions.js';
 
 export interface MissileSpriteCtx {
@@ -42,8 +43,7 @@ const EXPLOSION_LIFE_MS = 400;
  * `now − delay` would sit that far behind every stamp.
  */
 export function missilePoseNowMs(mirror: RenderMirror, rendererNowMs: number): number {
-  const t = mirror.frameTimeMs;
-  return t !== undefined && Number.isFinite(t) ? t : rendererNowMs;
+  return mainThreadNowMs(mirror, rendererNowMs);
 }
 
 /** `nowMs` is the renderer's clock (trails, explosion fades); poses resolve

@@ -2,6 +2,7 @@ import { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { moveKey } from './shipRekey.js';
+import { mainThreadNowMs } from './mainThreadNow.js';
 
 const BAR_WIDTH = 40;
 const BAR_HEIGHT = 4;
@@ -189,6 +190,8 @@ export class HealthBarManager {
     // collapse the chip in one step).
     const dtMs = Math.min(MAX_DRAIN_DT_MS, Math.max(0, now - this.lastUpdateMs));
     this.lastUpdateMs = now;
+    // Pose-ring arrivals are main-thread stamps; the fade/chip clock is ours.
+    const poseNow = mainThreadNowMs(mirror, now);
 
     for (const [entityId, entry] of this.bars) {
       // Find entity position.
@@ -211,7 +214,7 @@ export class HealthBarManager {
               ex = sw.x;
               ey = sw.y;
             } else {
-              const lerped = interpolateSwarmPose(sw, now, this.swarmPoseScratch);
+              const lerped = interpolateSwarmPose(sw, poseNow, this.swarmPoseScratch);
               ex = lerped.x;
               ey = lerped.y;
             }
