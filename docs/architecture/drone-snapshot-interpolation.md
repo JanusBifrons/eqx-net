@@ -265,13 +265,16 @@ convention as the delay floor and ceiling), then freezes there and counts a
 glide-limit hold. It was 100 ms, so a 200 ms gap outran it and froze drones;
 250 matches the missile cap (`MISSILE_EXTRAPOLATION_CAP_MS`). The glide reads
 forward from the newest pose only, so a longer limit asks nothing older of the
-pose ring (`POSE_RING_DEPTH` is unaffected). The velocity term uses the wall
-overshoot (`overshoot / 1000 × v`), unchanged. Effect on the fixtures: gap-400
-freeze frames 12 → 3 and largest snap 47 → 12 u; gap-600 freezes 24 → 15 and
+pose ring (`POSE_RING_DEPTH` is unaffected). The velocity term is game time
+(`overshoot × speed / 1000 × v`, S4-1b): `v` is per game second, so the wall
+overshoot alone glided `speed`× too little at 2× and too much at 0.7× (a 60 wall
+ms glide at 200 u/s moved 12 u where the drone moved 24 u at 2×, 8.4 u at
+0.7×). At 1× it is bit-identical, so the 1× fixtures below are unchanged.
+Effect on the fixtures: gap-400 freeze frames 12 → 3 and largest snap 47 → 12 u; gap-600 freezes 24 → 15 and
 largest snap 93 → 48 u; lan-clean and gap-200 are unchanged (gap-200 was
 already free of freezes under the lateness-sized delay, and stays free with
 the delay pinned at the floor). Locks: `swarmInterpolation.timeScale.test.ts`
-(the limit at 0.7× and 2×), `gapSmoothing.drones.test.ts`.
+(the limit and the glide distance at 0.7× and 2×), `gapSmoothing.drones.test.ts`.
 
 **The packet's tick must be the tick of its poses.** The room and the physics
 worker run separate 60 Hz loops. The room reads the SAB tick at the top of its

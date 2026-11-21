@@ -134,11 +134,12 @@ describe('swarm display delay follows the sector speed (time scale 4b)', () => {
       const read = (pastNewestMs: number): number => interpolateSwarmPose(e, newestMs + pastNewestMs + delayMs, out).x;
 
       const before = getSwarmGlideLimitCount();
-      // Just inside the limit: still gliding, no hold counted.
-      expect(read(limitWallMs - slackMs)).toBeCloseTo(newestX + vx * (limitWallMs - slackMs) / msPerS, 4);
+      // Just inside the limit: still gliding (wall overshoot × speed), no hold counted.
+      expect(read(limitWallMs - slackMs)).toBeCloseTo(newestX + vx * (limitWallMs - slackMs) * speed / msPerS, 4);
       expect(getSwarmGlideLimitCount()).toBe(before);
-      // Past it: frozen at the limit, one hold counted.
-      expect(read(limitWallMs + pastLimitMs)).toBeCloseTo(newestX + vx * limitWallMs / msPerS, 4);
+      // Past it: frozen at the limit, one hold counted. The glide is game time
+      // (S4-1b): wall overshoot × speed.
+      expect(read(limitWallMs + pastLimitMs)).toBeCloseTo(newestX + vx * EXTRAPOLATION_LIMIT_MS / msPerS, 4); // 250 game ms of travel (S4-1b)
       expect(getSwarmGlideLimitCount()).toBe(before + 1);
       // The old 100 ms limit no longer freezes it (100 < 250 / 2 = 125 wall ms).
       expect(read(limitWallMs - slackMs)).toBeGreaterThan(newestX + vx * OLD_GLIDE_LIMIT_MS / msPerS);
@@ -154,5 +155,46 @@ describe('swarm display delay follows the sector speed (time scale 4b)', () => {
     // At 4× the delay is 25 wall ms: now = 1030 → target 1005, halfway.
     mirror.timeScale = 4;
     expect(resolveMissileDisplayPose(mirror, 1, 1030)!.x).toBeCloseTo(5, 5);
+  });
+});
+
+// S4-1b: the glide DISTANCE is game time too. `vx` is units per GAME second,
+// so a read `w` wall ms past the newest pose is `w × speed` game ms along the
+// drone's path. Gliding by the wall overshoot moved it `speed`× too little (2×)
+// or too much (0.7×). The drone here moves at a constant `vx` in game time, so
+// its true position at any read point is known exactly.
+describe('swarm glide travels in game time (S4-1b)', () => {
+  afterEach(() => { setSwarmDisplaySpeed(1); resetSwarmTickClock(); });
+
+  const msPerS = 1000;
+  const vx = 200;
+  const newestMs = 1100;
+  /** Wall ms past the newest pose, inside the glide limit at every speed tested. */
+  const overshootWallMs = 60;
+
+  for (const speed of [0.7, 1, 2]) {
+    it(`at ${speed}× the glide matches the drone's game-time path`, () => {
+      setSwarmDisplaySpeed(speed);
+      setSwarmDisplayDelayMs(0);
+      const delayMs = getSwarmDisplayDelayMs();
+      // The two poses are GLIDE_SAMPLE_SPACING_MS wall ms apart = that × speed game ms.
+      const newestX = vx * GLIDE_SAMPLE_SPACING_MS * speed / msPerS;
+      const e = glideEntry(newestMs, newestX, vx);
+      const out = { x: 0, y: 0, angle: 0 };
+      const x = interpolateSwarmPose(e, newestMs + overshootWallMs + delayMs, out).x;
+      const trueX = newestX + vx * overshootWallMs * speed / msPerS;
+      expect(x).toBeCloseTo(trueX, 6);
+    });
+  }
+
+  it('at 1× the glide is bit-identical to the wall-ms formula', () => {
+    setSwarmDisplaySpeed(1);
+    setSwarmDisplayDelayMs(0);
+    const delayMs = getSwarmDisplayDelayMs();
+    const newestX = 20;
+    const e = glideEntry(newestMs, newestX, vx);
+    const out = { x: 0, y: 0, angle: 0 };
+    const x = interpolateSwarmPose(e, newestMs + overshootWallMs + delayMs, out).x;
+    expect(x).toBe(newestX + vx * (overshootWallMs / msPerS));
   });
 });

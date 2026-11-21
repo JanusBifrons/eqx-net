@@ -500,7 +500,9 @@ export function interpolateSwarmPose(
   // when arrivals stall briefly.
   if (targetMs >= newest.arrivalMs) {
     const overshootMs = Math.min(glideLimitWallMs(), targetMs - newest.arrivalMs);
-    const dt = overshootMs / 1000;
+    // v is per GAME second: the wall overshoot × speed is the game time glided
+    // (S4-1b). The limit above is already ÷ speed, so this caps at 250 game ms.
+    const dt = overshootMs * _displaySpeed / 1000;
     out.x = newest.x + newest.vx * dt;
     out.y = newest.y + newest.vy * dt;
     out.angle = newest.angle + newest.angvel * dt;
