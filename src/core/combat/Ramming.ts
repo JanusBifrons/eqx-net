@@ -54,6 +54,11 @@ import type { Contact } from '../physics/contactDrain.js';
 /** NORMAL closing speed (game u/s) at or below which a collision deals NO
  *  damage — a slow drift / docking tap / light scrape is free. */
 export const RAM_MIN_IMPACT_SPEED = 50;
+
+/** A ship's own speed toward the other (game u/s, `Contact.aApproach`) at or
+ *  below which it was not driving in: still, drifting or moving away. Such a
+ *  ship never counts as the rammer (`server/rooms/contactFilter.ts`). */
+export const RAM_DRIVE_IN_MIN_SPEED = 5;
 /** Damage per unit of normal impact energy (½·μ·(vN − floor)², game units).
  *  Tuned so a full-speed fighter head-on removes ~55 % of each fighter's
  *  combined shield + hull (see the header). The "ramming as a weapon" knob. */
@@ -113,6 +118,15 @@ export interface RamPair {
    *  hit between equal ships; the lighter body's value is the larger. */
   damageA: number;
   damageB: number;
+  /** Body A's / B's own speed toward the other along the normal (MAX over
+   *  the pair's sub-contacts; `Contact.aApproach`). Undefined when unmeasured. */
+  aApproach: number | undefined;
+  bApproach: number | undefined;
+}
+
+function maxDefined(x: number | undefined, y: number | undefined): number | undefined {
+  if (x === undefined) return y;
+  return y === undefined || x >= y ? x : y;
 }
 
 function pairKey(a: string, b: string): string {
@@ -126,22 +140,30 @@ function pairKey(a: string, b: string): string {
  * max-single-force sub-event), and the damage is a pure function of those.
  */
 export function aggregateRamming(contacts: ReadonlyArray<Contact>): RamPair[] {
-  const m = new Map<string, { rep: Contact; force: number; normal: number | undefined }>();
+  // `first` fixes which body appA / appB belong to (a sub-contact may list the
+  // pair the other way round); they are re-oriented to `rep` on output.
+  const m = new Map<string, {
+    rep: Contact; force: number; normal: number | undefined;
+    first: string; appA: number | undefined; appB: number | undefined;
+  }>();
   for (const c of contacts) {
     const key = pairKey(c.aId, c.bId);
     const e = m.get(key);
     if (e === undefined) {
-      m.set(key, { rep: c, force: c.forceMagnitude, normal: c.normalSpeed });
+      m.set(key, { rep: c, force: c.forceMagnitude, normal: c.normalSpeed, first: c.aId, appA: c.aApproach, appB: c.bApproach });
     } else {
       e.force += c.forceMagnitude;
       if (c.forceMagnitude > e.rep.forceMagnitude) e.rep = c;
       // Each sub-contact (triangle) has its own normal; the hardest-hitting
       // one is the impact. Symmetric in a/b order (both vectors flip).
       if (c.normalSpeed !== undefined && (e.normal === undefined || c.normalSpeed > e.normal)) e.normal = c.normalSpeed;
+      const same = c.aId === e.first;
+      e.appA = maxDefined(e.appA, same ? c.aApproach : c.bApproach);
+      e.appB = maxDefined(e.appB, same ? c.bApproach : c.aApproach);
     }
   }
   const out: RamPair[] = [];
-  for (const { rep, force, normal } of m.values()) {
+  for (const { rep, force, normal, first, appA, appB } of m.values()) {
     // Prefer the worker-MEASURED speeds; fall back to the force-derived
     // estimate for contacts that predate them (old captures / replay).
     const impactSpeed = rep.impactSpeed ?? force / FORCE_PER_UNIT_SPEED;
@@ -159,6 +181,8 @@ export function aggregateRamming(contacts: ReadonlyArray<Contact>): RamPair[] {
       vB: { x: rep.vBxPost, y: rep.vByPost },
       damageA: ramDamageTo(normalSpeed, aMass, bMass),
       damageB: ramDamageTo(normalSpeed, bMass, aMass),
+      aApproach: rep.aId === first ? appA : appB,
+      bApproach: rep.aId === first ? appB : appA,
     });
   }
   return out;
