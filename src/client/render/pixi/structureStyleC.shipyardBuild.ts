@@ -30,7 +30,7 @@ import {
   SHIPYARD_SLIP_X1, type ShipyardFitStage,
 } from '../../../core/articulation/rigs/heavyIndustry.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
-import { PROD_STATE, effectiveRecipe } from '../../../shared-types/production.js';
+import { PROD_STATE, effectiveRecipe, encodeRecipe } from '../../../shared-types/production.js';
 import { RECIPES, RECIPE_IDS } from '../../../shared-types/recipes.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { LAMP_AMBER, LAMP_WHITE, SLAB_DARK, SOOT, STEEL } from './structureStyleKit.js';
@@ -184,18 +184,37 @@ const _outline = { color: SHIPYARD_PRINT_CYAN, width: 1.5, alpha: 0.3 };
 const _ghost = { color: SHIPYARD_PRINT_CYAN, alpha: 0.05 };
 const queuedCtx = new Map<number, GraphicsContext>();
 
+/** The recipe byte of queued build `j` (0-based, after the head): its own
+ *  entry in the row's B4 `prodQueue`, else (no queue on the row, e.g. an
+ *  older server) the head recipe. Allocation-free. */
+function queuedRecipe(st: StructureRenderState | undefined, j: number): number {
+  const e = st?.prodQueue?.[j];
+  return e !== undefined ? encodeRecipe(e) : (st?.recipe ?? 0);
+}
+
+/** The cache key of the outlines for `queued` builds behind `bay` (each
+ *  entry's recipe byte, one byte apiece; at most SHIPYARD_BAY_COUNT - 1 drawn). */
+function queuedKey(st: StructureRenderState | undefined, bay: number, queued: number): number {
+  const q = queued < SHIPYARD_BAY_COUNT - 1 ? queued : SHIPYARD_BAY_COUNT - 1;
+  let key = bay * 8 + q;
+  for (let j = 0; j < q; j++) key = key * 256 + queuedRecipe(st, j);
+  return key;
+}
+
 /** The keel part's art with `queued` builds behind the one in `bay`: a
- *  faint print-cyan hull outline (the beam profile at scale `k`) at each
- *  next bay's keel, stern-ward, round to the bow after the last bay. Keel
- *  frame (its anchor is local x 0). Built once per (recipe, bay, queued). */
-function queuedContext(recipe: number, bay: number, queued: number, k: number): GraphicsContext {
-  const key = (recipe * 8 + bay) * 8 + queued;
+ *  faint print-cyan hull outline (the beam profile at that build's OWN hull
+ *  scale, building panels B6) at each next bay's keel, stern-ward, round to
+ *  the bow after the last bay. Keel frame (its anchor is local x 0). Built
+ *  once per (bay, queued, queued recipes). */
+function queuedContext(st: StructureRenderState | undefined, bay: number, queued: number): GraphicsContext {
+  const key = queuedKey(st, bay, queued);
   let c = queuedCtx.get(key);
   if (c !== undefined) return c;
   c = new GraphicsContext();
   const n = SHIPYARD_HULL_BLOCKS, H = SHIPYARD_HULL_HALF_L;
   const q = queued < SHIPYARD_BAY_COUNT - 1 ? queued : SHIPYARD_BAY_COUNT - 1;
   for (let j = 1; j <= q; j++) {
+    const k = shipyardHullScale(queuedRecipe(st, j - 1));
     const bx = shipyardBayKeel(bay + j).x, pts: number[] = [];
     for (let s = 0; s <= n; s++) { const x = -H + (2 * H * s) / n; pts.push(bx + x * k, -shipyardHullHalfBeam(x) * k); }
     for (let s = n; s >= 0; s--) { const x = -H + (2 * H * s) / n; pts.push(bx + x * k, shipyardHullHalfBeam(x) * k); }
@@ -355,13 +374,14 @@ export function shipyardPartShow(rig: Rig, i: number, value: number, st: Structu
     if (g.context !== want) g.context = want;
     return;
   }
-  const k = shipyardHullScale(st?.recipe), bay = st?.prodBay ?? 0;
+  const bay = st?.prodBay ?? 0;
   if (kind === Show.Keel) {
     const q = st?.prodQueued ?? 0;
-    const want = q > 0 ? queuedContext(st?.recipe ?? 0, bay, q, k) : shipyardKeelContext();
+    const want = q > 0 ? queuedContext(st, bay, q) : shipyardKeelContext();
     if (g.context !== want) g.context = want;
     return;
   }
+  const k = shipyardHullScale(st?.recipe);
   const bx = shipyardBayKeel(bay).x;
   // The view placed the shadow at the part's position + its offset.
   const dx = sh !== null ? sh.x - g.x : 0, dy = sh !== null ? sh.y - g.y : 0;

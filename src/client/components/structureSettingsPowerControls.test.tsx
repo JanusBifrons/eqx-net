@@ -11,7 +11,8 @@ import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import { StructureSettingsModal } from './StructureSettingsModal.js';
 import { SetStructurePowerSchema } from '../../shared-types/messages.js';
 
-function seed(kind: string, extra: { switchedOff?: boolean; throttle?: number } = {}): ReturnType<typeof vi.fn> {
+type Extra = { switchedOff?: boolean; throttle?: number; netPower?: number; powered?: boolean; prodState?: number; drawFull?: boolean };
+function seed(kind: string, extra: Extra = {}): ReturnType<typeof vi.fn> {
   const send = vi.fn();
   setGameClient({
     getRoom: () => ({ send }),
@@ -46,7 +47,7 @@ describe('structure settings power controls', () => {
   it('the toggle sends Off', () => {
     const send = seed('miner');
     expect(screen.getByTestId('settings-power-switch')).toHaveAttribute('data-on', '1');
-    fireEvent.click(screen.getByTestId('settings-power-off'));
+    fireEvent.click(screen.getByTestId('settings-power-toggle'));
     expect(sentPower(send)).toEqual({ type: 'set_structure_power', entityId: 9, on: false });
   });
 
@@ -54,7 +55,7 @@ describe('structure settings power controls', () => {
     const send = seed('turret', { switchedOff: true });
     expect(screen.getByTestId('settings-power-switch')).toHaveAttribute('data-on', '0');
     expect(screen.queryByTestId('settings-power-throttle')).toBeNull();
-    fireEvent.click(screen.getByTestId('settings-power-on'));
+    fireEvent.click(screen.getByTestId('settings-power-toggle'));
     expect(sentPower(send)).toEqual({ type: 'set_structure_power', entityId: 9, on: true });
   });
 

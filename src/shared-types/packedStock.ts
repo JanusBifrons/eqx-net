@@ -45,3 +45,20 @@ export function buildEntry(kindId: string, counts: Readonly<Record<string, numbe
   // Only the Capital locks; any other kind builds from the bank.
   return crate ? { label: `${name} · needs packed`, locked: true, count: 0 } : { label: name, locked: false, count: 0 };
 }
+
+/** Kinds placed ONCE per pick: placement ends after a successful place (a
+ *  base has one Capital; a sector one lock). Every other kind keeps placing
+ *  until the player cancels (build-menu redesign M3). */
+export const PLACE_ONCE_KINDS: ReadonlySet<string> = new Set(['capital', 'territory_lock']);
+
+/** The keep-placing rule, shared by the touch Confirm and the desktop click:
+ *  after a successful place of `kindId`, does placement end? Yes for a
+ *  place-once kind, or a crate-stocked kind whose last crate that was (`counts`
+ *  is the stock BEFORE the place; unknown stock never ends it). */
+export function placementEndsAfterPlace(
+  kindId: string, counts: Readonly<Record<string, number>> | null, inSector = true,
+): boolean {
+  if (PLACE_ONCE_KINDS.has(kindId)) return true;
+  if (!needsPackedCrate(kindId) || !inSector || counts === null) return false;
+  return (counts[`structure:${kindId}`] ?? 0) <= 1;
+}

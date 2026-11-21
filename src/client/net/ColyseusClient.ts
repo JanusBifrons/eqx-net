@@ -1859,6 +1859,9 @@ export class ColyseusGameClient {
       // the 2 s dwell costs ≤ 10 store writes, not one per snapshot).
       const dep = depositReadout(serverState.depositing);
       if (useUIStore.getState().depositPct !== dep) useUIStore.getState().setDepositPct(dep);
+      // Shield toggle (#16): the pilot dropped the shields (HUD ring shows DOWN).
+      const lowered = serverState.shieldsLowered === true;
+      if (useUIStore.getState().shieldsLowered !== lowered) useUIStore.getState().setShieldsLowered(lowered);
       // Fire control (#16): the pilot's groups + locks, always applied.
       this.fc.applyFcGroups(serverState.groups);
       this.mirror.localLockedBy = serverState.lockedBy ?? NO_LOCKED_BY;

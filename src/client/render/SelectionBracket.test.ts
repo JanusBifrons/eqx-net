@@ -6,8 +6,8 @@
  *  - the same bracket around EVERY selected ship, plus the focus when it is
  *    not one of them; never a second marker for the focus
  *  - resolves live poses from the mirror by id (ship / swarm-N / parked hull)
- *  - the focus anchor (`lastWorldX/Y`) for the details panel; `resolveFocus`
- *    reports false (so the caller clears the focus) when the entity is gone
+ *  - `resolveFocus` reports false (so the caller clears the focus) when the
+ *    entity is gone
  *  - a bracket keeps a minimum on-screen size at far zoom
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -98,20 +98,16 @@ describe('SelectionBracket', () => {
     expect(x0).toBeCloseTo(-MIN_HALF_PX);
   });
 
-  it('resolveFocus: a parked hull resolves from the one ship list; the anchor sits above it', () => {
+  it('resolveFocus: a parked hull resolves from the one ship list', () => {
     const m = mirror({ ships: new Map([['hull-1', ship(11, 22, { ownerPlayerId: 'o1', isActive: false })]]) as never });
     expect(bracket.resolveFocus(m, 'hull-1')).toBe(true);
-    expect(bracket.lastWorldX).toBe(11);
-    expect(bracket.lastWorldY!).toBeLessThan(-22);
   });
 
-  it('resolveFocus: false + no anchor when the focus is gone or null', () => {
+  it('resolveFocus: false when the focus is gone or null', () => {
     const m = mirror({ ships: new Map([['p1', ship(0, 0)]]) as never });
     expect(bracket.resolveFocus(m, 'p1')).toBe(true);
     expect(bracket.resolveFocus(mirror({}), 'p1')).toBe(false);
-    expect(bracket.lastWorldX).toBeNull();
     expect(bracket.resolveFocus(m, null)).toBe(false);
-    expect(bracket.lastWorldY).toBeNull();
   });
 
   // Phone bug: a selected Shipyard (960x600 footprint, 567 u bounding radius)
@@ -143,13 +139,6 @@ describe('SelectionBracket', () => {
       const box = drawnBox(bracket);
       expect(box.x1 - box.x0).toBeCloseTo(600 + 16);
       expect(box.y1 - box.y0).toBeCloseTo(960 + 16);
-    });
-
-    it('resolveFocus: the panel anchor sits on the footprint top, not the radius', () => {
-      const m = mirror({ swarm: new Map([[7, yard(0)]]) as never });
-      expect(bracket.resolveFocus(m, 'swarm-7')).toBe(true);
-      expect(bracket.lastWorldHalf).toBeCloseTo(300 + 8);
-      expect(bracket.lastWorldY).toBeCloseTo(405 - 308);
     });
   });
 });

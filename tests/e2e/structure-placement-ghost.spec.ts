@@ -50,9 +50,8 @@ async function joinAndOpenBuild(
   );
   await page.locator('[data-testid="speed-dial-fab"]').click();
   await page.locator('[data-testid="speed-dial-build"]').click();
-  // WS-13: the Build menu now drills Build ▸ category ▸ kind. Every test here
-  // builds a Capital (Core category), so enter Core and leave the dial at the
-  // kinds level for the per-test `build-capital` click.
+  // Build opens the Build sidebar. Every test here builds a Capital (Core
+  // category), so pick Core on its rail for the per-test `build-capital` click.
   await page.locator('[data-testid="build-cat-core"]').click();
   return { ctx, page };
 }
@@ -253,16 +252,9 @@ async function clickPlaceAssertAtClick(browser: Browser, useWorker: boolean): Pr
     console.log('PLACEMENT-DEBUG', JSON.stringify({ worker: useWorker, chosen: [chosenX, chosenY], placed: pos }));
     const distToChosen = Math.hypot(pos.x - chosenX, pos.y - chosenY);
     expect(distToChosen, `structure should be at the clicked point, not ${JSON.stringify(pos)}`).toBeLessThan(60);
-    // Phase 5 — placement mode now STAYS ACTIVE after a desktop place so the
-    // player can place MULTIPLE in a row ("don't unselect a building once you've
-    // placed one"). The ghost is still projected (data-placement-screen-x
-    // present); the deliberate EXIT is Escape (asserted next). (Was: cleared on
-    // the one-click place — WS-10.)
-    await page.waitForTimeout(400); // let the server echo land + the ghost re-arm
-    const stillActive = await surfaceAttr(page, 'data-placement-screen-x');
-    expect(stillActive !== null && stillActive !== '', 'placement stays active after a desktop place (place-multiple)').toBe(true);
-    // Escape is the deliberate exit.
-    await page.keyboard.press('Escape');
+    // A desktop click-place KEEPS placing the same building (build-menu M3,
+    // the rule shared with the touch Confirm: placementCancel.ts), except a
+    // place-once kind: this is a Capital, so placement ends after the place.
     await waitPlacementCleared(page);
   } finally {
     await ctx.close();

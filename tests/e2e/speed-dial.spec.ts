@@ -16,12 +16,14 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  *   4. The Map action toggles the galaxy overlay (aria-pressed on the action).
  *   5. The weapon-slot action is reachable and carries its slot id.
  *
- * WS-13 / R2.6 additions (the Build category tier):
- *   6. Action labels are always visible while the dial is open (touch affordance).
- *   7. Build drills Build ▸ category ▸ kind, with a back action that pops levels.
- *   8. Picking a kind CLOSES the dial (build mode owns the screen) but keeps the
- *      kinds level, so the next structure is one FAB tap away (no re-drill).
- *   9. The FAB toggle still closes the dial and re-opens it at the ROOT level.
+ * Build menu redesign M1 (the Build sidebar replaced the dial's build drill):
+ *   6. Build opens the right-hand Build sidebar (category rail + kind tiles)
+ *      and collapses the dial.
+ *   7. A rail tap switches the category.
+ *   8. Picking a kind hides the sidebar. Confirm KEEPS placing the same
+ *      building (M3) with it hidden; Cancel, or a place-once kind (Capital)
+ *      placed, brings it back on the same category for the next structure.
+ *   9. The sidebar's ✕ and Escape close it; the FAB opens the main menu.
  *
  * The held controls (joystick / FIRE / BOOST) deliberately stay OUT of the
  * dial — that contract is covered by `layout-slots.spec.ts`.
@@ -145,107 +147,127 @@ test('weapon-slot action is reachable and carries its slot id', async ({ browser
   }
 });
 
-// ── WS-13 / R2.6 — Build category tier ─────────────────────────────────────
+// ── Build menu redesign M1 — the Build sidebar ─────────────────────────────
 
-test('action labels are visible while the dial is open (touch affordance)', async ({ browser }) => {
+async function openBuildSidebar(page: Page): Promise<void> {
+  await openDial(page);
+  await page.locator('[data-testid="speed-dial-build"]').click();
+  await expect(page.locator('[data-testid="build-sidebar"][data-open="1"]')).toBeVisible({ timeout: 5_000 });
+}
+
+test('Build opens the Build sidebar with its category rail and closes the dial', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser);
   try {
-    await openDial(page);
-    // With tooltipOpen, each action renders a persistent static label — no hover
-    // needed (the whole point: on touch there is no hover). Drill into Build so
-    // the labels under test are the category names the player must read.
-    await page.locator('[data-testid="speed-dial-build"]').click();
-    for (const label of ['Core', 'Economy', 'Defence']) {
-      await expect(page.getByText(label, { exact: true })).toBeVisible({ timeout: 5_000 });
+    await openBuildSidebar(page);
+    for (const id of ['core', 'economy', 'defence']) {
+      await expect(page.locator(`[data-testid="build-cat-${id}"]`)).toBeVisible();
     }
+    // The dial's main actions collapse: the sidebar owns the build list now.
+    await expect(page.locator('[data-testid="speed-dial-menu"]')).toBeHidden();
   } finally {
     await ctx.close();
   }
 });
 
-test('Build drills category → kind, and Back pops each level', async ({ browser }) => {
+test('a rail tap switches the sidebar to that category', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser);
   try {
-    await openDial(page);
-
-    // Build ▸ → the three categories appear; the root Panels action is gone.
-    await page.locator('[data-testid="speed-dial-build"]').click();
-    await expect(page.locator('[data-testid="build-cat-core"]')).toBeVisible();
-    await expect(page.locator('[data-testid="build-cat-economy"]')).toBeVisible();
-    await expect(page.locator('[data-testid="build-cat-defence"]')).toBeVisible();
-    await expect(page.locator('[data-testid="speed-dial-menu"]')).toBeHidden();
-
-    // Defence ▸ → the defence kinds appear (categories gone).
+    await openBuildSidebar(page);
     await page.locator('[data-testid="build-cat-defence"]').click();
     await expect(page.locator('[data-testid="build-turret"]')).toBeVisible();
-    await expect(page.locator('[data-testid="build-cat-core"]')).toBeHidden();
-
-    // Back → categories again.
-    await page.locator('[data-testid="speed-dial-back"]').click();
-    await expect(page.locator('[data-testid="build-cat-core"]')).toBeVisible();
+    await expect(page.locator('[data-testid="build-cat-defence"]')).toHaveAttribute('aria-selected', 'true');
+    await page.locator('[data-testid="build-cat-core"]').click();
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible();
     await expect(page.locator('[data-testid="build-turret"]')).toBeHidden();
-
-    // Back → root.
-    await page.locator('[data-testid="speed-dial-back"]').click();
-    await expect(page.locator('[data-testid="speed-dial-menu"]')).toBeVisible();
-    await expect(page.locator('[data-testid="build-cat-core"]')).toBeHidden();
   } finally {
     await ctx.close();
   }
 });
 
-test('a pick closes the dial and one FAB tap reopens the kinds for repeat builds (R2.6)', async ({ browser }) => {
-  // The Confirm banner is the TOUCH placement flow (desktop places on click
-  // since P3.6, d239bbf8), so this test joins as a touch device.
+test('Confirm keeps placing with the sidebar hidden; Cancel brings it back on the same category', async ({ browser }) => {
+  // The Confirm banner is the TOUCH placement flow (desktop places on click),
+  // so this test joins as a touch device.
+  const { ctx, page } = await joinClient(browser, true);
+  try {
+    await openBuildSidebar(page);
+    await page.locator('[data-testid="build-cat-economy"]').click();
+
+    // Picking a kind raises the ghost and hides the sidebar, so it never
+    // covers the ghost.
+    await page.locator('[data-testid="build-solar"]').click();
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
+    await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+
+    // THE LOCK (M3): Confirm keeps you placing the same building; the
+    // sidebar stays hidden.
+    await page.locator('[data-testid="placement-confirm"]').click();
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible();
+    await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
+    await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+
+    // Cancel ends it: the sidebar is back on Economy, the next pick one tap.
+    await page.locator('[data-testid="placement-cancel"]').click();
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
+    await expect(page.locator('[data-testid="build-kinds"]')).toHaveAttribute('data-category', 'economy', { timeout: 5_000 });
+    await expect(page.locator('[data-testid="build-solar"]')).toBeVisible();
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('a Capital places once: Confirm ends placement and brings the sidebar back', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser, true);
   try {
     const before = await swarmCount(page);
-    await openDial(page);
-    await page.locator('[data-testid="speed-dial-build"]').click();
+    await openBuildSidebar(page);
     await page.locator('[data-testid="build-cat-core"]').click();
-
-    // Picking a kind raises the ghost and closes the dial, so its list never
-    // covers the ghost (build mode, stills review 2026-11-20).
     await page.locator('[data-testid="build-capital"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="build-capital"]')).toBeHidden();
 
-    // Confirm the placement.
     await page.locator('[data-testid="placement-confirm"]').click();
     await page.waitForFunction((b) => {
       const t = document.querySelector('[data-testid="swarm-count"]')?.textContent ?? '0';
       return parseInt(t.replace(/\D/g, '') || '0', 10) > b;
     }, before, { timeout: 8_000 });
 
-    // THE LOCK: one FAB tap reopens the dial at the kinds level (pre-R2.6 the
-    // pick reset to root, forcing a Build ▸ Core re-drill every time).
-    await page.locator('[data-testid="speed-dial-fab"]').click();
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('[data-testid="build-cat-core"]')).toBeHidden(); // at kinds, not categories
-    await page.locator('[data-testid="build-capital"]').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
   } finally {
     await ctx.close();
   }
 });
 
-test('the FAB toggle closes the dial and re-opens it at the root level', async ({ browser }) => {
+test('the sidebar ✕ and Escape close it', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser);
   try {
+    await openBuildSidebar(page);
+    await page.locator('[data-testid="build-sidebar-close"]').click();
+    await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+
+    await openBuildSidebar(page);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('the FAB re-opens the dial at its main menu after a build', async ({ browser }) => {
+  const { ctx, page } = await joinClient(browser);
+  try {
+    await openBuildSidebar(page);
+    await page.locator('[data-testid="build-sidebar-close"]').click();
+    await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+
+    // The dial has no build drill any more: it always opens at the main menu.
     await openDial(page);
-    // Drill into a category…
-    await page.locator('[data-testid="speed-dial-build"]').click();
-    await page.locator('[data-testid="build-cat-core"]').click();
-    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible();
-
-    // …tap the FAB to close.
-    await page.locator('[data-testid="speed-dial-fab"]').click();
-    await expect(page.locator('[data-testid="build-capital"]')).toBeHidden();
-
-    // Re-open: we land back at ROOT, not the drilled level (close resets view).
-    await page.locator('[data-testid="speed-dial-fab"]').click();
     await expect(page.locator('[data-testid="speed-dial-menu"]')).toBeVisible();
+    await expect(page.locator('[data-testid="speed-dial-build"]')).toBeVisible();
     await expect(page.locator('[data-testid="build-capital"]')).toBeHidden();
+    await page.locator('[data-testid="speed-dial-fab"]').click();
+    await expect(page.locator('[data-testid="speed-dial-menu"]')).toBeHidden();
   } finally {
     await ctx.close();
   }

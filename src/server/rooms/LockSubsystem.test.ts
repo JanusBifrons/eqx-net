@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { LockSubsystem, type LockSubsystemDeps, type LockTargetView } from './LockSubsystem.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipLockRange } from '../../core/combat/mountReach.js';
 
 /**
  * exp/fire-control P2 — the server lock rules, hand-rolled mocks (no server).
@@ -195,38 +196,67 @@ describe('LockSubsystem', () => {
     expect(wire()?.c).toBeUndefined();
   });
 
-  // Owner decision 2026-11-14: locking works at ANY distance; distance only
-  // makes it slower. Only firing is range-limited.
-  it('a manual lock on a target far past every weapon\'s reach completes, slowly, never blocked', () => {
-    const near = harness();
-    near.targets.set('s:1', still(200, true));
-    near.locks.requestLock('p1', 'primary', 's:1');
-    let nearSteps = 0;
-    while (!near.locks.hasLocked('p1', 'primary') && nearSteps < 600) { near.locks.step(); nearSteps++; }
+  // Owner 2026-11-21 (reverses "any distance", 2026-11-14): a ship's lock
+  // range is its own longest weapon's reach (`shipLockRange`), hull to hull.
+  const lockEdge = (kindId: string, targetRadius = 30): number => getShipKind(kindId).radius + shipLockRange(getShipKind(kindId)) + targetRadius;
+  const lockWithin = (h: ReturnType<typeof harness>, group: string, n = 600): boolean => {
+    for (let i = 0; i < n && !h.locks.hasLocked('p1', group); i++) h.locks.step();
+    return h.locks.hasLocked('p1', group);
+  };
+
+  it('a fighter (short guns) can not lock past its longest weapon reach', () => {
+    const edge = lockEdge('fighter');
+    const inside = harness();
+    inside.targets.set('s:1', still(edge - 20, true));
+    inside.locks.requestLock('p1', 'primary', 's:1');
+    expect(lockWithin(inside, 'primary')).toBe(true);
 
     const h = harness();
-    h.targets.set('s:1', still(50_000, true));
+    h.targets.set('s:1', still(edge + 20, true));
     h.locks.requestLock('p1', 'primary', 's:1');
-    let farSteps = 0;
-    while (!h.locks.hasLocked('p1', 'primary') && farSteps < 600) {
-      h.locks.step();
-      farSteps++;
-      expect(h.locks.wireFor('p1')![0]!.l[0]?.c).toBeUndefined();
-    }
-    expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
-    expect(farSteps).toBeGreaterThan(nearSteps);
+    h.locks.step();
+    expect(h.locks.wireFor('p1')![0]!.l[0]?.c).toBe(1); // CAN'T TRACK
+    expect(lockWithin(h, 'primary')).toBe(false);
   });
 
-  it('a manual lock does not drop when its target moves far out of reach', () => {
+  it('a railgun battleship locks far past a fighter range, with every group, out to its own lock range only', () => {
+    const fighterEdge = lockEdge('fighter');
+    const h = harness('battleship-rail');
+    h.locks.step();
+    const groups = h.locks.wireFor('p1')!;
+    // Every group (even the short AA) locks out to the ship's longest gun.
+    const d = getShipKind('battleship-rail').radius + 30 + 20_000;
+    expect(d - getShipKind('battleship-rail').radius).toBeGreaterThan(fighterEdge * 10);
+    h.targets.set('s:1', still(d, true));
+    for (const g of groups) { h.locks.setMode('p1', g.id, 'manual'); h.locks.requestLock('p1', g.id, 's:1'); }
+    for (let i = 0; i < 6000 && groups.some((g) => !h.locks.hasLocked('p1', g.id)); i++) h.locks.step();
+    for (const g of groups) expect(h.locks.hasLocked('p1', g.id)).toBe(true);
+    // ...but not past its own lock range.
+    const far = harness('battleship-rail');
+    far.locks.step();
+    const g0 = far.locks.wireFor('p1')![0]!.id;
+    far.targets.set('s:1', still(lockEdge('battleship-rail') + 50, true));
+    far.locks.requestLock('p1', g0, 's:1');
+    expect(lockWithin(far, g0)).toBe(false);
+  });
+
+  it('a manual lock breaks once its target leaves lock range (after the grace)', () => {
     const h = harness();
     h.locks.setMode('p1', 'primary', 'manual');
     h.targets.set('s:6', still(200, true));
     h.locks.requestLock('p1', 'primary', 's:6');
     steps(h.locks, 40);
     expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
-    h.targets.set('s:6', still(50_000, true));
-    steps(h.locks, 50); // 5 s, far past the 1.5 s grace
+    // Out to the edge of lock range, past fire range: still held.
+    h.targets.set('s:6', still(lockEdge('fighter') - 20, true));
+    steps(h.locks, 50);
     expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+    // Past lock range: held through the 1.5 s grace, then dropped.
+    h.targets.set('s:6', still(lockEdge('fighter') + 200, true));
+    steps(h.locks, 5);
+    expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+    steps(h.locks, 50);
+    expect(h.locks.hasLocked('p1', 'primary')).toBe(false);
   });
 
   it('AUTO releases its lock once the target leaves fire range, then re-picks', () => {
@@ -455,12 +485,18 @@ describe('LockSubsystem', () => {
       expect(h.locks.wireFor('p1')![0]!.l[0]!.t).toBe('s:1');
     });
 
-    it('lock_track holds a target on the line far past reach (locks work at any distance)', () => {
+    it('lock_track holds a target on the line out to lock range, not past it', () => {
+      const edge = getShipKind('fighter').radius + shipLockRange(getShipKind('fighter')) + 30;
       const h = harness();
-      h.targets.set('s:2', ahead(50_000));
+      h.targets.set('s:2', ahead(edge - 20));
       h.locks.trackLock('p1', 'primary', 's:2', AHEAD);
       steps(h.locks, 1);
       expect(h.locks.wireFor('p1')![0]!.l[0]?.t).toBe('s:2');
+      const far = harness();
+      far.targets.set('s:2', ahead(edge + 20));
+      far.locks.trackLock('p1', 'primary', 's:2', AHEAD);
+      steps(far.locks, 1);
+      expect(far.locks.wireFor('p1')![0]!.l.length).toBe(0);
     });
 
     it('a claim that leaves the line releases the held lock', () => {

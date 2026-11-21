@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Box, CircularProgress, IconButton, Portal, Tooltip } from '@mui/material';
+import { Box, CircularProgress, IconButton, Tooltip } from '@mui/material';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import RecyclingIcon from '@mui/icons-material/Recycling';
 import BuildIcon from '@mui/icons-material/Build';
@@ -9,9 +9,9 @@ import { toSelectWire } from '../net/selectionClient';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { getGameClient } from '../net/clientSingleton';
 import { sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
-import { decodeGood, effectiveRecipe, isProcessorKind, prodStatusLine, type ProdState } from '@shared-types/production';
-import { RECIPES, type RecipeId } from '@shared-types/recipes';
-import { blueprintLineOf, lastRunLineOf } from './structureSettingsProduction';
+import { decodeGood, isProcessorKind, prodStatusLine, type ProdState } from '@shared-types/production';
+import type { RecipeId } from '@shared-types/recipes';
+import { makesThings, readProduction } from './structureSettingsProduction';
 import { phoneTiny, useInspectorPhoneAttrs } from './inspectorSizes';
 import { gateTypeOf } from '@core/structures/gateGeometry';
 import { GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
@@ -28,16 +28,18 @@ import { HullUnpack } from './HullUnpack';
 import { hullColor } from '../hud/tokens';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { structureGunLines } from './structureGunLines';
-import { canUpgradeStructure, structureUpgradeGoods } from '@core/leveling/structureLevel';
-import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
-import { inspectorPowerLine, structureSelfPower } from './structureSettingsPower';
+import { structureSelfPower } from './structureSettingsPower';
 import type { PickedEntityKind } from '../render/pickEntity';
 import { TargetAction } from './TargetAction';
-import { ACTION_BTN_SX, ICON_SX, StructureManageActions } from './StructureManageActions';
+import { ACTION_BTN_SX, ICON_SX } from './StructureManageActions';
+import { StructureSettingsOpen } from './StructureSettingsModal';
 import { canManageBuildings } from '../structures/buildingManagement';
 // Moved with the management buttons; re-exported so existing importers keep working.
 import { droneName, parkedHullLabels, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
-import { BUILD_AWAITING_CLEAR_LINE, buildStalledLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
+import { buildStalledLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
+import { Bar } from './inspectorBar';
+import { StructureCardRows } from './structureCard';
+import { structureOwnerLabel } from './structureSettingsStatus';
 
 /**
  * Click-to-inspect live stats panel (structures follow-up Item B6).
@@ -94,38 +96,28 @@ interface PanelData {
   /** Battery-only — stored power + capacity (batteries plan). */
   storedPower?: number;
   storedPowerMax?: number;
-  /** Connector-only (Phase-4 C4) — current vs max grid connections ("N / 6").
-   *  Set ONLY for a selected CONNECTOR; absent for every other structure/entity
-   *  (the user: "It shouldn't really apply to other structures"). */
-  connCount?: number;
-  connMax?: number;
-  /** Owning playerId in display form ("you" for the local player, else a
-   *  truncated id) — set for structures so players can identify whose base it is
-   *  (other players' bases are a core part of the game, not a bug). */
+  /** The owner switched it Off (power icon grey). */
+  switchedOff?: boolean;
+  /** Owner in display form ("you", their name or "Unknown"; never a raw id) —
+   *  so players can identify whose base it is. */
   owner?: string;
   /** Phase-1 issue 6 — the structure's numeric swarm entityId (for action
-   *  sends), whether the LOCAL player owns it (gates the action buttons), its
-   *  deconstruct state (Deconstruct↔Cancel toggle), and whether it's a Connector
-   *  (gates the clear-connections button). Set for owned structures only. */
+   *  sends) and whether the LOCAL player owns it (gates the action buttons). */
   entityId?: number;
   isOwn?: boolean;
-  isDeconstructing?: boolean;
-  isConnector?: boolean;
-  /** Phase 4 WS-B4 — the structure's level (≥ 1). Drives the `LVL n` line (shown
-   *  only when > 1) + the Upgrade affordance. */
+  /** A structure: render the compact building card (structureCard.tsx). */
+  isStructure?: boolean;
+  /** Phase 4 WS-B4 — the structure's level (≥ 1), "Lv N" on the card. */
   level?: number;
-  /** Phase 4 WS-B4 — true when the Upgrade action should render: the structure is
-   *  OWNED, fully BUILT (not a blueprint / mid-upgrade), not deconstructing, and
-   *  below the level cap. Gates the 4th action button. */
-  canUpgrade?: boolean;
   /** Gates — who it opens for (an access id). Absent for non-gates. */
   gateAccess?: GateAccess;
-  /** P2b — a processor's recipe (always set for a processor). */
+  /** P2b — a processor's recipe, state and status line ("Running", "Waiting for Minerals", …). */
   recipe?: RecipeId;
-  /** P2b — its status line ("Running", "Waiting for Minerals", …). */
+  prodState?: number;
   prodStatus?: string;
-  /** P2e — goods the next upgrade takes from base storage ("3 Alloy, 1 Components"). */
-  upgradeGoods?: string;
+  /** A building that makes things: the card's "making" slot and its cycle progress (0..100). */
+  makes?: boolean;
+  prodPct?: number;
   /** Coastal defences — per-gun-size reload + arc lines, newline-joined
    *  (`16" ×2 · reload 30 s · arc 144°`). Naval-mount structures only. */
   gunLine?: string;
@@ -135,21 +127,15 @@ interface PanelData {
   noFuel?: boolean;
   /** C2 — someone is breaking into its cargo. */
   breach?: boolean;
-  /** P2b — the recipe needs a blueprint. */
-  needsBlueprint?: boolean;
-  /** P2b — the loaded blueprint ("original" or "N runs", with its quality). */
-  blueprintLine?: string;
-  /** The slot is empty while a copy's last run builds (`lastRunLineOf`). */
-  lastRunLine?: string;
   /** Phase 4 WS-A2 — set for an OWNED in-sector lingering hull (the local
    *  player's own parked ship). Drives the in-world "Pilot" action; the value is
    *  the shipInstanceId to `pilot_ship`. Absent for another player's hull / a
    *  hull the local player can't reclaim. */
   pilotShipId?: string;
-  /** Living World P1a-2 — an OWNED storage structure's contents line + weight
-   *  use, and whether Refine (salvage → minerals, Capital only) is available. */
+  /** Living World P1a-2 — an OWNED storage structure's contents line (gates
+   *  Repair; the line itself shows in the settings panel's status block), and
+   *  whether Refine (salvage → minerals, Capital only) is available. */
   holdLine?: string;
-  holdUse?: string;
   canRefine?: boolean;
   /** Economy v2 W3 — my own BUILT Research Lab: show the lab panel. */
   isLab?: boolean;
@@ -207,13 +193,9 @@ export function EntityStatsPanel(): JSX.Element | null {
 
   if (selectedId === null || data === null) return null;
 
-  const building = data.buildPct !== undefined && data.buildPct < 1;
   const hasCharge = data.storedPowerMax !== undefined && data.storedPowerMax > 0;
   const chargePct = hasCharge ? ((data.storedPower ?? 0) / data.storedPowerMax!) * 100 : 0;
-  // Portalled to <body>: an ancestor stacking context otherwise traps the
-  // z-index under the body-level HUD slot anchors (LESSONS 2026-06-17).
   return (
-    <Portal>
     <Box
       data-testid="entity-stats-panel"
       {...phoneAttrs}
@@ -224,48 +206,41 @@ export function EntityStatsPanel(): JSX.Element | null {
       {...(data.netPower !== undefined ? { 'data-net-power': Math.round(data.netPower) } : {})}
       {...(data.selfPower !== undefined ? { 'data-self-power': Math.round(data.selfPower) } : {})}
       {...(hasCharge ? { 'data-charge-pct': Math.round(chargePct) } : {})}
-      {...(data.connCount !== undefined ? { 'data-conn-count': data.connCount } : {})}
       {...(data.owner !== undefined ? { 'data-structure-owner': data.owner } : {})}
       {...(data.level !== undefined && data.level > 1 ? { 'data-structure-level': data.level } : {})}
       {...(data.pending ? { 'data-stats-pending': '1' } : {})}
       {...(data.infoLine !== undefined ? { 'data-entity-info': data.infoLine } : {})}
       sx={ROOT_SX}
     >
-      <Box sx={NAME_SX} data-testid="entity-stats-name">{data.name}</Box>
-      {data.noHull ? (
-        // R2.23 — asteroid (size/resources) or lingering hull (owner): no bars.
-        <Box sx={INFO_SX} data-testid="entity-stats-info">{data.infoLine}</Box>
-      ) : data.pending ? (
-        // R2.8 — hp/shield awaiting the first server packet: a spinner, not a 0-bar.
-        <Box sx={PENDING_SX} data-testid="entity-stats-spinner">
-          <CircularProgress size={12} thickness={6} sx={SPINNER_SX} />
-        </Box>
+      {data.isStructure ? (
+        // Building-panels A2 — the compact building card: badge, name, Lv, short
+        // hull, power icon, one status chip (+ the "making" slot). Detail lives
+        // in the settings side panel behind the Open button.
+        <StructureCardRows d={data} />
       ) : (
         <>
-          {data.shieldPct !== null && (
+          <Box sx={NAME_SX} data-testid="entity-stats-name">{data.name}</Box>
+          {data.noHull ? (
+            // R2.23 — asteroid (size/resources) or lingering hull (owner): no bars.
+            <Box sx={INFO_SX} data-testid="entity-stats-info">{data.infoLine}</Box>
+          ) : data.pending ? (
+            // R2.8 — hp/shield awaiting the first server packet: a spinner, not a 0-bar.
+            <Box sx={PENDING_SX} data-testid="entity-stats-spinner">
+              <CircularProgress size={12} thickness={6} sx={SPINNER_SX} />
+            </Box>
+          ) : (
             <>
-              <Cap>SHLD</Cap>
-              <Bar pct={data.shieldPct} color={SHIELD_COLOR} />
+              {data.shieldPct !== null && (
+                <>
+                  <Cap>SHLD</Cap>
+                  <Bar pct={data.shieldPct} color={SHIELD_COLOR} />
+                </>
+              )}
+              <Cap>HULL</Cap>
+              <Bar pct={data.hpPct} color={hullColor(data.hpPct)} />
             </>
           )}
-          <Cap>HULL</Cap>
-          <Bar pct={data.hpPct} color={hullColor(data.hpPct)} />
         </>
-      )}
-      {building && (
-        <>
-          <Cap>BUILD</Cap>
-          <Bar pct={(data.buildPct ?? 0) * 100} color={BUILD_COLOR} />
-        </>
-      )}
-      {data.buildBlocked && (
-        // Build done, but a ship inside the footprint keeps it a blueprint (server
-        // blueprintBody.ts) — without this the bar just vanished, unexplained.
-        <Box sx={POWER_SX} data-testid="entity-stats-build-blocked">{BUILD_AWAITING_CLEAR_LINE}</Box>
-      )}
-      {building && data.buildStalled !== undefined && (
-        // The bank ran dry or no Capital routes to it: say why the bar stopped.
-        <Box sx={POWER_SX} data-testid="entity-stats-build-stalled">{data.buildStalled}</Box>
       )}
       {hasCharge && (
         <>
@@ -273,35 +248,10 @@ export function EntityStatsPanel(): JSX.Element | null {
           <Bar pct={chargePct} color={CHARGE_COLOR} />
         </>
       )}
-      {data.selfPower !== undefined && data.selfPower !== 0 && (
-        // C5 + Phase 5 — this BUILDING's own gen/drain (`selfPower`), not the grid
-        // aggregate. A GENERATOR (solar/capital, +out) ALWAYS shows its output —
-        // it generates regardless of the grid running net-negative (you "couldn't
-        // see how much power a SOLAR gives"). A CONSUMER (turret/miner/pylon, −draw)
-        // shows its draw when powered, else UNPOWERED. A passive relay (connector,
-        // selfPower 0) shows NOTHING — it doesn't draw power, so "UNPOWERED" on it
-        // was wrong (it never appears now: the `!== 0` gate skips it). Unbuilt: BUILDING.
-        <Box sx={POWER_SX} data-testid="entity-stats-power">
-          {inspectorPowerLine(data.selfPower, data.powered, data.built)}
-        </Box>
-      )}
       {data.gunLine !== undefined && (
         // Coastal defences — reload + firing arc per gun size.
         <Box sx={GUN_SX} data-testid="entity-stats-guns">
           {data.gunLine}
-        </Box>
-      )}
-      {data.connCount !== undefined && (
-        // C4 — connector-only connection count. Same muted POWER_SX styling.
-        <Box sx={POWER_SX} data-testid="entity-stats-conn">
-          {`CONN ${data.connCount} / ${data.connMax ?? 0}`}
-        </Box>
-      )}
-      {data.level !== undefined && data.level > 1 && (
-        // WS-B4 — the structure's level. Shown only when leveled (>1); a fresh
-        // level-1 structure pays no extra line.
-        <Box sx={POWER_SX} data-testid="entity-stats-level">
-          {`LVL ${data.level}`}
         </Box>
       )}
       {data.gateAccess !== undefined && (
@@ -310,55 +260,17 @@ export function EntityStatsPanel(): JSX.Element | null {
           {`OPENS FOR ${GATE_ACCESS_LABELS[data.gateAccess]}`}
         </Box>
       )}
-      {data.recipe !== undefined && (
-        // P2b — what a processor makes (its label starts with the verb), and its status.
-        <Box sx={POWER_SX} data-testid="entity-stats-recipe" data-recipe={data.recipe} data-prod-status={data.prodStatus}>
-          {`${RECIPES[data.recipe].displayName}${data.prodStatus ? ` · ${data.prodStatus}` : ''}`}
-        </Box>
-      )}
-      {data.breach === true && (
-        <Box sx={POWER_SX} data-testid="entity-stats-breach">
-          BREACH: someone is breaking in
-        </Box>
-      )}
-      {data.noFuel === true && (
-        <Box sx={POWER_SX} data-testid="entity-stats-no-fuel">
-          NO FUEL
-        </Box>
-      )}
-      {data.noAmmo === true && (
-        // P2d — a missile / autocannon turret with no munitions in base storage.
-        <Box sx={POWER_SX} data-testid="entity-stats-no-ammo">
-          NO MUNITIONS
-        </Box>
-      )}
       {data.alienGateLine !== undefined && (
         <Box sx={POWER_SX} data-testid="entity-stats-alien-gate">{data.alienGateLine}</Box>
-      )}
-      {data.recipe !== undefined && (data.needsBlueprint || data.blueprintLine !== undefined) && (
-        <Box sx={POWER_SX} data-testid="entity-stats-blueprint">
-          {data.blueprintLine ?? data.lastRunLine ?? 'NO BLUEPRINT LOADED'}
-        </Box>
-      )}
-      {data.owner !== undefined && (
-        // Owner readout — identifies whose base this is ("you" vs a truncated id).
-        <Box sx={POWER_SX} data-testid="entity-stats-owner">
-          {`OWNER ${data.owner}`}
-        </Box>
-      )}
-      {data.holdLine !== undefined && (
-        // Living World P1a-2 — owned storage contents (owner-only on the wire).
-        <Box sx={POWER_SX} data-testid="entity-stats-hold" data-hold-use={data.holdUse}>
-          {`HOLD ${data.holdUse ?? ''} · ${data.holdLine}`}
-        </Box>
       )}
       {data.isOwn && data.entityId !== undefined && (manage || data.holdLine !== undefined || data.canRefine === true) && (
         // Phase-1 issue 6 — owner-only action buttons. The panel root is
         // pointerEvents:none (passive readout), so this row re-enables pointers.
-        // Building management is Build mode only (`canManageBuildings`); repair
-        // and refine are pilot services and show in every mode.
+        // Open (the settings side panel, where building management lives) is
+        // Build mode only (`canManageBuildings`); repair and refine are pilot
+        // services and show in every mode.
         <Box sx={ACTIONS_SX} data-testid="entity-stats-actions">
-          {manage && <StructureManageActions entityId={data.entityId} data={data} />}
+          {manage && <StructureSettingsOpen entityId={data.entityId} title={data.name} />}
           {data.holdLine !== undefined && (
             // Living World P1a-2 — instant repair of MY ship here (credit sink).
             <Tooltip title="Repair your ship here (paid from your credits)">
@@ -419,7 +331,6 @@ export function EntityStatsPanel(): JSX.Element | null {
         </Box>
       )}
     </Box>
-    </Portal>
   );
 }
 
@@ -428,11 +339,11 @@ export function EntityStatsPanel(): JSX.Element | null {
 // field forces a deliberate decision here instead of silently mis-comparing.
 const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'buildStalled', 'powered', 'built',
-  'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
-  'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
-  'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
-  'recipe', 'prodStatus', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
-  'lastRunLine', 'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
+  'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'switchedOff', 'owner',
+  'entityId', 'isOwn', 'isStructure', 'level', 'pilotShipId',
+  'holdLine', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
+  'recipe', 'prodState', 'prodStatus', 'makes', 'prodPct', 'gunLine', 'noAmmo', 'noFuel', 'breach',
+  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
 ];
 
 /** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
@@ -476,12 +387,14 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       pending: sliceHull === undefined && !got, // spinner only if NEITHER source has hull
     };
     if (st) {
+      data.isStructure = true;
       data.buildPct = st.buildPct;
       if (isBuildAwaitingClear(st)) data.buildBlocked = true;
       const stalled = buildStalledLine(st);
       if (stalled !== undefined) data.buildStalled = stalled;
       data.powered = st.powered;
       data.built = st.built;
+      if (st.switchedOff === true) data.switchedOff = true;
       data.netPower = st.netPower;
       data.storedPower = st.storedPower;
       data.storedPowerMax = st.storedPowerMax;
@@ -498,58 +411,34 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         const guns = structureGunLines(k);
         if (guns.length > 0) data.gunLine = guns.join('\n');
       }
-      // C4 — connection count "N / 6", CONNECTORS ONLY. Client-resident (slice
-      // connTo.length + catalogue maxConnections), so it renders instantly with
-      // no server round-trip; never surfaced for other kinds.
-      if (subtype === 'connector') {
-        data.connCount = st.connTo.length;
-        data.connMax = getStructureKind('connector').maxConnections;
-      }
       // Owner readout — the player's DISPLAY NAME so you can identify whose base
-      // it is ("you" for the local player). An absent ownerName means the owner
-      // didn't resolve to a DB user — an orphaned structure (the server logs it)
-      // → "Unknown". NEVER a raw playerId.
+      // it is ("you" for the local player; "Unknown" for an orphan). NEVER a raw playerId.
       if (st.owner) {
         const localId = getGameClient()?.mirror.localPlayerId ?? null;
-        const isOwn = st.owner === localId;
-        data.owner = isOwn ? 'you' : (st.ownerName ?? 'Unknown');
+        data.owner = structureOwnerLabel(st.owner, st.ownerName, localId);
         // Phase-1 issue 6 — action buttons are OWN-only.
-        data.isOwn = isOwn;
+        data.isOwn = st.owner === localId;
       }
-      // Action-button state (issue 6): the numeric id to act on + the toggle /
-      // connector gates. Always populated for a structure; the render gates the
-      // buttons on `isOwn`.
+      // The numeric id to act on; the render gates the buttons on `isOwn`.
       const eid = parseEntityId(id);
       if (eid !== undefined) data.entityId = eid;
-      data.isDeconstructing = st.isDeconstructing === true;
-      data.isConnector = subtype === 'connector';
       if (gateTypeOf(subtype) !== null) data.gateAccess = gateAccessFromIndex(st.gateAccess);
       if (st.noAmmo === true) data.noAmmo = true;
       if (st.noFuel === true) data.noFuel = true;
       if (st.breach === true) data.breach = true;
-      if (subtype !== undefined && isProcessorKind(subtype)) {
-        // P2b — what it makes and how it's going.
-        data.recipe = effectiveRecipe(subtype, st.recipe);
-        data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing), data.recipe);
-        data.needsBlueprint = RECIPES[data.recipe].blueprintRequired;
-        const bp = blueprintLineOf(st, data.needsBlueprint);
-        if (bp !== undefined) data.blueprintLine = bp;
-        const lastRun = lastRunLineOf(st, data.needsBlueprint);
-        if (lastRun !== undefined) data.lastRunLine = lastRun;
+      const prod = subtype !== undefined && isProcessorKind(subtype) && eid !== undefined ? readProduction(eid) : null;
+      if (prod !== null && subtype !== undefined) {
+        // P2b — what it makes and how it's going (the card's chip + slot).
+        data.recipe = prod.recipe;
+        data.prodState = st.prodState ?? 0;
+        data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing), prod.recipe);
+        if (makesThings(subtype)) {
+          data.makes = true;
+          if (st.prodFrac !== undefined) data.prodPct = Math.round(st.prodFrac * 100);
+        }
       }
-      // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1) drives the LVL
-      // line + the Upgrade affordance. Upgrade is OWN-only, BUILT-only,
-      // not-deconstructing, below the cap.
-      const level = st.level ?? 1;
-      data.level = level;
-      data.canUpgrade =
-        st.built === true && st.isDeconstructing !== true && canUpgradeStructure(level);
-      if (data.canUpgrade && subtype !== undefined) {
-        // P2e — level 3+ also costs goods, taken from base storage when it starts.
-        const bill = structureUpgradeGoods(getStructureKind(subtype).constructionCost, level);
-        const parts = (Object.keys(bill) as GoodId[]).map((g) => `${bill[g]} ${GOOD_DEFS[g].displayName}`);
-        if (parts.length > 0) data.upgradeGoods = parts.join(', ');
-      }
+      // WS-B4 — the level (≥ 1; absent on the slice ⇒ level 1).
+      data.level = st.level ?? 1;
       if (subtype === 'research_lab' && data.isOwn === true && st.built === true) data.isLab = true;
       // v4 T1 — your own built teleporter shows its charge, pairing, rules and pad.
       if (isTeleporterKind(subtype) && data.isOwn === true && st.built === true) data.isTeleporter = true;
@@ -568,7 +457,6 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       // view — the contents line reflects THIS structure's hold).
       if (got && selectionStats.holdLine !== undefined) {
         data.holdLine = selectionStats.holdLine;
-        data.holdUse = selectionStats.holdUse;
         data.canRefine = data.isOwn === true && subtype === 'capital' && selectionStats.holdSalvage > 0;
         if (data.isOwn === true && selectionStats.holdBlueprints !== '') data.blueprints = selectionStats.holdBlueprints;
         if (data.isOwn === true && selectionStats.holdPacked !== '') data.packed = selectionStats.holdPacked;
@@ -636,39 +524,21 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
 }
 
 const SHIELD_COLOR = '#36c8ff';
-const BUILD_COLOR = '#ffc24d';
 const CHARGE_COLOR = '#cc8844';
-const TRACK_W = 72;
-const BAR_H = 4;
-
-// Static fill styling hoisted (drawer-perf sx rule); the two per-render
-// dynamics (width %, colour) go through the plain `style` prop — no per-render
-// emotion serialisation.
-const BAR_FILL_SX = { height: '100%', transition: 'width 1000ms linear' };
-
-function Bar({ pct, color }: { pct: number; color: string }): JSX.Element {
-  const clamped = Math.max(0, Math.min(100, pct));
-  return (
-    <Box sx={BAR_TRACK_SX}>
-      <Box sx={BAR_FILL_SX} style={{ width: `${clamped}%`, backgroundColor: color }} />
-    </Box>
-  );
-}
 
 function Cap({ children }: { children: string }): JSX.Element {
   return <Box component="span" sx={CAP_SX}>{children}</Box>;
 }
 
+// Docked top-centre (App.tsx Slot). Centred, so never wider than the viewport
+// less twice the open side panel (SETTINGS_PANEL_SIZE: clamp(280px, 40vw,
+// 360px)) and 8 px each side: 179 px on a sideways Pixel 7 (915 px).
+export const CARD_MAX_W = 'max(120px, 100vw - 2 * clamp(280px, 40vw, 360px) - 16px)';
+const ELLIPSIS_SX = { overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, minWidth: 0 };
 const ROOT_SX = {
-  // WS-9 (R2.30) — world-anchored: position:fixed, moved to the selected entity's
-  // projected screen point by gameRafLoop each frame. The translate anchors the
-  // box's bottom-centre at that point, which inspectorPlacement.ts keeps clear of the
-  // selected entity. Starts off-screen until the first frame positions it (no flash).
-  position: 'fixed' as const,
-  left: 0,
-  top: -9999,
-  transform: 'translate(-50%, -100%)',
-  zIndex: 1400,
+  maxWidth: CARD_MAX_W,
+  // Last guard only: each card row ellipsizes or wraps on its own (structureCard.tsx).
+  overflow: 'hidden' as const,
   display: 'grid',
   gridTemplateColumns: 'auto auto',
   alignItems: 'center',
@@ -686,17 +556,12 @@ const ROOT_SX = {
 // bar and icons ~2x; mobile (xs, and any phone: inspectorSizes.ts) stays tiny.
 const NAME_SX = {
   gridColumn: '1 / -1',
+  ...ELLIPSIS_SX,
   ...phoneTiny({ fontSize: [10, 20] }),
   fontWeight: 700,
   color: '#cde',
   letterSpacing: 0.3,
   whiteSpace: 'nowrap' as const,
-};
-const BAR_TRACK_SX = {
-  ...phoneTiny({ width: [TRACK_W, TRACK_W * 2], height: [BAR_H, BAR_H * 2] }),
-  borderRadius: '2px',
-  backgroundColor: 'rgba(255,255,255,0.12)',
-  overflow: 'hidden' as const,
 };
 const CAP_SX = {
   ...phoneTiny({ fontSize: [8, 16] }),
@@ -722,6 +587,7 @@ const GUN_SX = {
 };
 const INFO_SX = {
   gridColumn: '1 / -1',
+  ...ELLIPSIS_SX,
   ...phoneTiny({ fontSize: [9, 18] }),
   fontWeight: 600,
   letterSpacing: 0.3,

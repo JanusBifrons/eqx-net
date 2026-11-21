@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MouseEvent, type PointerEvent, type TouchEvent } from 'react';
+import { useCallback, useMemo, useRef, type MouseEvent, type PointerEvent, type TouchEvent } from 'react';
 
 /**
  * Shared touch/click activation for discrete (tap, not held) HUD buttons.
@@ -17,8 +17,8 @@ import { useCallback, useRef, type MouseEvent, type PointerEvent, type TouchEven
  * AutoFireToggleButton double-toggle trap).
  *
  * This hook is the ONE implementation of that pattern (used by
- * `SpeedDialMenu`). Its other half, `useFreshPress` below, guards the options
- * of a menu such a button opens.
+ * `SpeedDialMenu`). Its other half, `useFreshPress` / `useFreshPressSurface`
+ * below, guards what such a button opens.
  */
 
 /**
@@ -77,8 +77,10 @@ export function useTouchClickActivate(): TouchClickActivate {
 }
 
 /**
- * After a menu opens, how long before a press on one of its options counts:
- * a backstop for the press that opened it (owner playtest 2026-11-21).
+ * After a menu opens, how long before a TOUCH (or pen) press inside it counts:
+ * a backstop for the press that opened it (owner playtest 2026-11-21). A mouse
+ * press counts at once: a mouse-opened menu opens on the release, so nothing
+ * of that press is left over.
  */
 export const MENU_ARM_MS = 250;
 
@@ -88,19 +90,21 @@ export interface FreshPressProps {
   onClick: (e: MouseEvent<Element>) => void;
 }
 
-/**
- * The other half of the pattern above: the options of a menu that a
- * touch-activated button opens. That button acts on touchstart, so the menu is
- * up before the finger lifts, and the browser's click for that same touch then
- * lands on whatever option is now under the finger (`preventDefault` in a
- * React touchstart handler is a no-op: the listener is passive). So an option
- * acts only on a FRESH, full press: a pointerdown on that same option at least
- * `MENU_ARM_MS` after the menu opened, then its click. A click with no such
- * down (the opening press's leftover release, or a drag in from another
- * option) is ignored. A keyboard click (`detail === 0`: Enter/Space on a
- * focused button) has no pointer and always acts.
- */
-export function useFreshPress(open: boolean): (fn: () => void) => FreshPressProps {
+/** Spread onto a whole surface (drawer, full-screen map): capture-phase guard. */
+export interface FreshPressSurfaceProps {
+  onPointerDownCapture: (e: PointerEvent<Element>) => void;
+  onClickCapture: (e: MouseEvent<Element>) => void;
+}
+
+interface FreshPressCore {
+  /** Record a pointerdown on `e.currentTarget` (or nothing, inside the arm delay). */
+  down: (e: PointerEvent<Element>) => void;
+  /** Whether this click ends a fresh press on `e.currentTarget`; consumes it. */
+  fresh: (e: MouseEvent<Element>) => boolean;
+}
+
+/** The one fresh-press state machine behind both bindings below. */
+function useFreshPressCore(open: boolean): FreshPressCore {
   const openedAt = useRef(0);
   const wasOpen = useRef(false);
   const pressed = useRef<EventTarget | null>(null);
@@ -109,17 +113,57 @@ export function useFreshPress(open: boolean): (fn: () => void) => FreshPressProp
     pressed.current = null;
   }
   wasOpen.current = open;
+  const down = useCallback((e: PointerEvent<Element>): void => {
+    const armed = e.pointerType === 'mouse' || Date.now() - openedAt.current >= MENU_ARM_MS;
+    pressed.current = armed ? e.currentTarget : null;
+  }, []);
+  const fresh = useCallback((e: MouseEvent<Element>): boolean => {
+    const ok = e.detail === 0 || pressed.current === e.currentTarget;
+    pressed.current = null;
+    return ok;
+  }, []);
+  return useMemo(() => ({ down, fresh }), [down, fresh]);
+}
+
+/**
+ * The other half of the pattern above: what a touch-activated button opens.
+ * That button acts on touchstart, so the menu is up before the finger lifts,
+ * and the browser's click for that same touch then lands on whatever is now
+ * under the finger (`preventDefault` in a React touchstart handler is a no-op:
+ * the listener is passive). So a click acts only if it ends a FRESH, full
+ * press: a pointerdown on the same element after the menu opened (touch: at
+ * least `MENU_ARM_MS` after), then its click. A click with no such down (the
+ * opening press's leftover release, or a drag in from another option) is
+ * ignored. A keyboard click (`detail === 0`: Enter/Space on a focused button)
+ * has no pointer and always acts.
+ *
+ * `useFreshPress` guards single options; `useFreshPressSurface` guards a whole
+ * surface (every button, tab, row and backdrop in it) in the capture phase.
+ */
+export function useFreshPress(open: boolean): (fn: () => void) => FreshPressProps {
+  const { down, fresh } = useFreshPressCore(open);
   return useCallback(
     (fn: () => void): FreshPressProps => ({
-      onPointerDown: (e) => {
-        pressed.current = Date.now() - openedAt.current >= MENU_ARM_MS ? e.currentTarget : null;
-      },
-      onClick: (e) => {
-        const fresh = e.detail === 0 || pressed.current === e.currentTarget;
-        pressed.current = null;
-        if (fresh) fn();
-      },
+      onPointerDown: down,
+      onClick: (e) => { if (fresh(e)) fn(); },
     }),
-    [],
+    [down, fresh],
   );
+}
+
+/** Surface form of {@link useFreshPress}: while `open`, a click inside the
+ *  surface that does not end a fresh press there is stopped before it reaches
+ *  its target. Closed (or never opened from a held press): no guard. */
+export function useFreshPressSurface(open: boolean): FreshPressSurfaceProps {
+  const { down, fresh } = useFreshPressCore(open);
+  const openRef = useRef(open);
+  openRef.current = open;
+  return useMemo(() => ({
+    onPointerDownCapture: down,
+    onClickCapture: (e: MouseEvent<Element>): void => {
+      if (!openRef.current || fresh(e)) return;
+      e.stopPropagation();
+      e.preventDefault();
+    },
+  }), [down, fresh]);
 }
