@@ -20,7 +20,7 @@
 import { StructureState, type SectorState } from './schema/SectorState.js';
 import {
   STRUCTURE_ETA_NONE,
-  STRUCTURE_ETA_STALLED,
+  encodeBuildEta,
   STRUCTURE_FLAG_BUILT,
   STRUCTURE_FLAG_DECONSTRUCTING,
   STRUCTURE_FLAG_POWERED,
@@ -81,7 +81,7 @@ export interface StructuresSliceHost {
   breakIns: Pick<BreakInSubsystem, 'breached' | 'tick'>;
   structureGrid: () => Pick<
     StructureGridSubsystem,
-    'powerSummaryFor' | 'estimateBuildEtaMs' | 'pulse' | 'tickTurrets' | 'tickMiners' | 'mountAnglesOf'
+    'powerSummaryFor' | 'estimateBuildEtaMs' | 'buildStallReason' | 'pulse' | 'tickTurrets' | 'tickMiners' | 'mountAnglesOf'
   >;
   shieldWalls: () => Pick<ShieldWallManager, 'wallsUpFor' | 'wallStateFor' | 'update'>;
   /** `maskFor` and the door states (`GateDoorSource`) for the door rows. */
@@ -178,7 +178,7 @@ export class StructuresSliceSync {
       let etaMs = STRUCTURE_ETA_NONE;
       if (building) {
         const eta = h.structureGrid().estimateBuildEtaMs(rec);
-        etaMs = eta === null ? STRUCTURE_ETA_STALLED : Math.max(0, Math.round(eta));
+        etaMs = encodeBuildEta(eta, eta === null ? h.structureGrid().buildStallReason(rec) : null);
       }
       const deconstructPct = rec.isDeconstructing && rec.constructionCost > 0
         ? 1 - rec.constructionProgress / rec.constructionCost

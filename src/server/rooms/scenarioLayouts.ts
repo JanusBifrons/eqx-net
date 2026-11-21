@@ -39,7 +39,7 @@ import { type ShipKindId } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   STRUCTURE_ETA_NONE,
-  STRUCTURE_ETA_STALLED,
+  decodeBuildEta,
   STRUCTURE_FLAG_BUILT,
   STRUCTURE_FLAG_DECONSTRUCTING,
   STRUCTURE_FLAG_POWERED,
@@ -511,7 +511,7 @@ export function structureRowsForTests(state: StructureRowsState, slice: readonly
     const eta = st.etaMs ?? SD.etaMs;
     if (eta !== STRUCTURE_ETA_NONE) {
       row.buildPct = st.buildPct ?? SD.buildPct;
-      row.etaMs = eta === STRUCTURE_ETA_STALLED ? null : eta;
+      row.etaMs = decodeBuildEta(eta) ?? null;
     }
     if ((flags & STRUCTURE_FLAG_DECONSTRUCTING) !== 0) {
       row.isDeconstructing = true;
