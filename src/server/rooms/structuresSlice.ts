@@ -220,7 +220,7 @@ export class StructuresSliceSync {
         if ((st.prodMissing ?? SD.prodMissing) !== pm) st.prodMissing = pm;
         const runs = encodeBpRuns(rec.blueprint);
         if ((st.bpRuns ?? SD.bpRuns) !== runs) st.bpRuns = runs;
-        const bq = rec.blueprint !== undefined ? blueprintQuality(rec.blueprint) : 0;
+        const bq = runs !== 0 ? blueprintQuality(rec.blueprint!) : 0;
         if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
         const pc = encodeProdCount(rec.prodCount); // job 2E — outputs left
         if ((st.prodCount ?? SD.prodCount) !== pc) st.prodCount = pc;
