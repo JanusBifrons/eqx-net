@@ -42,6 +42,12 @@ export interface StructureRenderState {
    *  `undefined` ⇒ built / not applicable. Drives the smooth linear build bar
    *  and the in-world ETA countdown. */
   etaMs?: number | null;
+  /** Stalled because the owner's bank is dry: the minerals the build still
+   *  owes (inspector "Paused — needs N more minerals"). Absent otherwise. */
+  buildMineralsShort?: number;
+  /** Stalled because no grid route reaches any Capital (inspector "Paused —
+   *  not connected to a Capital"). Absent otherwise. */
+  buildNotConnected?: true;
   /** Deconstruction fraction [0..1] while reclaiming (0 normally). */
   deconstructPct: number;
   /** True while the owner is reclaiming this structure (issue 6) — drives the

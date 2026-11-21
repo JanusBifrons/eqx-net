@@ -42,6 +42,7 @@ const storeState = vi.hoisted(() => ({
 }));
 
 vi.mock('../state/store.js', () => ({
+  selectControlMode: () => 'fly',
   useUIStore: {
     getState: () => storeState,
   },

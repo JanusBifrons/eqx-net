@@ -293,6 +293,8 @@ export interface UIStore {
   warpPickerOpen: boolean;
   /** The contacts overview (lock list) is open (discrete UI flag). */
   contactsOpen: boolean;
+  /** The building settings side panel is open (discrete UI flag; the HUD hides the right-edge weapon strip under it). */
+  structureSettingsOpen: boolean;
   /** Where a held warp goes (the picker's label), shown by the warp chip; null when none. */
   warpHeldTo: string | null;
   /** THE selection (RTS Part A: one selection concept). See {@link UISelection}. */
