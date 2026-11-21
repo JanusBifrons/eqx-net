@@ -273,6 +273,15 @@ already free of freezes under the lateness-sized delay, and stays free with
 the delay pinned at the floor). Locks: `swarmInterpolation.timeScale.test.ts`
 (the limit at 0.7× and 2×), `gapSmoothing.drones.test.ts`.
 
+**The stream's newest stamp (S4-2).** Each tick-stamped drone packet also
+records one number for the stream as a whole: the `swarmArrivalStampMs` stamp
+of the newest server tick seen (`noteSwarmStreamStamp` from the decoder, read
+with `getSwarmStreamNewestStampMs`, NaN after a reset). The newer tick wins, so
+a reordered or late packet never moves it back. `resetSwarmDisplayDelay`
+clears it. Nothing reads it yet; the S4 hold uses it to tell a stalled stream
+from one drone missing from a packet. Lock:
+`src/client/net/swarmStreamNewestStamp.test.ts`.
+
 **The packet's tick must be the tick of its poses.** The room and the physics
 worker run separate 60 Hz loops. The room reads the SAB tick at the top of its
 update, and the worker can publish the next step before the swarm encoder reads

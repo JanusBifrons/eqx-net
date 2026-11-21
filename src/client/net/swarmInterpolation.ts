@@ -195,8 +195,9 @@ export function stepSwarmDisplayDelay(frameDtMs: number): void {
   _displayDelayMs += Math.max(-maxStep, Math.min(maxStep, step));
 }
 
-/** Put the delay back at the floor with no target and no lateness estimate
- *  (sector change: `resetPredictionState`; tests: `resetSwarmTickClock`).
+/** Put the delay back at the floor with no target, no lateness estimate and
+ *  no stream newest stamp (sector change: `resetPredictionState`; tests:
+ *  `resetSwarmTickClock`).
  *  The next `setSwarmDisplayDelayMs` places the value at its target. */
 export function resetSwarmDisplayDelay(): void {
   _lastDelayInputMs = DISPLAY_DELAY_MS;
@@ -206,6 +207,8 @@ export function resetSwarmDisplayDelay(): void {
   _displayDelayPinned = false;
   _latenessEstimate.estimateMs = 0;
   _latenessEstimate.deviationMs = 0;
+  _streamNewestTick = -1;
+  _streamNewestStampMs = Number.NaN;
 }
 
 /** The sector's game speed, from the snapshot keyframe (ColyseusClient).
@@ -298,6 +301,30 @@ export function updateLatenessEstimate(est: LatenessEstimate, sampleMs: number):
 }
 
 const _latenessEstimate: LatenessEstimate = { estimateMs: 0, deviationMs: 0 };
+
+// Drone stream newest stamp (netcode gap smoothing, S4-2). The display-time
+// stamp (`swarmArrivalStampMs` units, wall ms) of the newest server tick seen
+// in any tick-stamped swarm packet, so a hold can tell "the stream stalled"
+// from "this drone was not in the packet". Nothing reads it yet (S4-4/S4-5).
+// Rule: the packet with the NEWER server tick wins; an equal or older tick (a
+// reordered or late packet) leaves it alone, so it never goes backwards on
+// one. It may step back only when a newer tick lands on a re-seeded tick clock
+// (a new timeline), which a plain max would hide behind a stale value.
+// Scalars only (no allocation). Reset by `resetSwarmDisplayDelay`.
+let _streamNewestTick = -1;
+let _streamNewestStampMs = Number.NaN;
+
+/** The decoder calls this once per tick-stamped swarm packet with the
+ *  packet's server tick and its `swarmArrivalStampMs` stamp. */
+export function noteSwarmStreamStamp(tick: number, stampMs: number): void {
+  if (tick <= _streamNewestTick) return;
+  _streamNewestTick = tick;
+  _streamNewestStampMs = stampMs;
+}
+
+/** Display-time stamp (wall ms) of the newest drone packet; NaN before the
+ *  first tick-stamped packet after a reset. */
+export function getSwarmStreamNewestStampMs(): number { return _streamNewestStampMs; }
 
 /**
  * The time a binary swarm packet of server tick `tick` is stamped with in the

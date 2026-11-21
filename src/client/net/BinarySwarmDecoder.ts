@@ -33,7 +33,7 @@ import {
 import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { structureKindFromIndex } from '../../shared-types/structureKinds.js';
 import { asteroidResourceFromIndex } from '../../shared-types/asteroidResources.js';
-import { swarmArrivalStampMs, noteSwarmSlotOverwrite } from './swarmInterpolation.js';
+import { swarmArrivalStampMs, noteSwarmSlotOverwrite, noteSwarmStreamStamp } from './swarmInterpolation.js';
 
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
@@ -95,7 +95,11 @@ export function decodeSwarmPacket(
   const tick = view.getUint32(4, true);
   // The live client stamps ring poses on the server-tick clock, not the raw
   // drain time (`swarmArrivalStampMs`: per-RAF draining bunched the stamps).
-  if (stampByTick) nowMs = swarmArrivalStampMs(tick, nowMs);
+  if (stampByTick) {
+    nowMs = swarmArrivalStampMs(tick, nowMs);
+    // Newest stamp for the stream as a whole (S4-2; nothing reads it yet).
+    noteSwarmStreamStamp(tick, nowMs);
+  }
 
   const expectedBytes = SWARM_HEADER_BYTES + count * SWARM_RECORD_BYTES;
   if (byteLength < expectedBytes) return;
