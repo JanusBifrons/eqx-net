@@ -629,14 +629,14 @@ export class ConnectorRenderer {
       // `buildPct` steps using the server `etaMs`, so it builds smoothly rather
       // than jumping each pulse.
       if (!st.built) {
-        drawStatusBar(g, ax, ay, a.radius, this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs), 0x66ccff);
+        drawStatusBar(g, ax, ay, a.radius, this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs), 0x66ccff, scale);
       } else if (st.deconstructPct > 0) {
-        drawStatusBar(g, ax, ay, a.radius, 1 - st.deconstructPct, 0xff5555); // red emptying bar while reclaiming
+        drawStatusBar(g, ax, ay, a.radius, 1 - st.deconstructPct, 0xff5555, scale); // red emptying bar while reclaiming
       } else if (st.storedPowerMax !== undefined && st.storedPowerMax > 0 && !(this.socketCables && hasBodyStatus(a.shipKind))) {
         // WS-9 (R2.12) — a Battery's always-on CHARGE bar (amber, the panel CHRG colour).
         // With the new look on (`socketCables`, `?fx=new`) a store with a body
         // state lights its cells instead (socket-nub overlay, Stage 4 F1 step C).
-        drawStatusBar(g, ax, ay, a.radius, (st.storedPower ?? 0) / st.storedPowerMax, 0xcc8844);
+        drawStatusBar(g, ax, ay, a.radius, (st.storedPower ?? 0) / st.storedPowerMax, 0xcc8844, scale);
       }
 
       // WS-9 (R2.20) + Phase 5 — out-of-power indicator above a BUILT, UNPOWERED
