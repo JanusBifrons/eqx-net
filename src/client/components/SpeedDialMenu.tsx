@@ -7,31 +7,15 @@ import MenuIcon from '@mui/icons-material/Menu';
 import MapIcon from '@mui/icons-material/Map';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import ConstructionIcon from '@mui/icons-material/Construction';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import FastForwardIcon from '@mui/icons-material/FastForward';
 import { SOLAR_SECTORS } from '../../shared-types/sectorBounds';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { type StructureKindId } from '@shared-types/structureKinds';
-import { buildEntry } from '@shared-types/packedStock';
-import { usePackedStock } from '../structures/usePackedStock';
-import {
-  BUILD_CATEGORIES,
-  CATEGORY_ICON,
-  ROOT_VIEW,
-  categoryById,
-  goBackView,
-  type BuildCategoryId,
-  type DialView,
-} from './buildCategories';
 import { useTouchClickActivate } from './touchClickActivate';
 import { onGameWindowOpen } from './GameWindow';
 import { FIT_OPEN_LIST_SX, useFitActionsToViewport } from './speedDialFit';
-import { onPlacementCancel } from '../structures/placementCancel';
-import { BUILD_ICONS } from './buildIcons';
-
-/** Per-structure-kind build icon (moved to buildIcons.tsx; re-exported here). */
-export { BUILD_ICONS };
+import { BuildSidebar } from './BuildSidebar';
 
 /**
  * Consolidated bottom-right action menu (speed-dial UI refactor).
@@ -63,17 +47,15 @@ export { BUILD_ICONS };
  * `FabProps` (`slotProps.fab`) keeps `data-testid` / `aria-pressed` / handlers on
  * the Fab button, identical to the pre-tooltipOpen placement.
  *
- * Build tree (WS-13 / R2.6): the Build action drills a 3-level nav — main ▸
- * categories ▸ kinds — via the local `view` discriminated union (`buildCategories.tsx`).
- * The FAB stays the open/close toggle; a dedicated back ACTION pops one level; the
- * FAB icon reflects the drilled category at the `kinds` level. Picking a kind sets
- * `placementKind` (entering Build mode) and CLOSES the dial (build mode owns the screen) but keeps the
- * `kinds` view, so one FAB tap brings the same list back for the next structure
- * with no Build ▸ category re-drill (`blur` / `mouseLeave` are ignored in onClose). Categories live client-side
- * only (no wire catalogue field, no version bump, no netgate).
+ * Build menu: the Build action closes the dial and opens the Build sidebar
+ * (BuildSidebar.tsx: a category rail and kind tiles). Picking a kind sets
+ * `placementKind` (entering Build mode) and hides the sidebar, so it never
+ * covers the ghost; Confirm and Cancel (the ghost goes, Build stays) bring it
+ * back for the next structure; entering Build opens it, leaving Build closes it.
+ * Categories live client-side only (no wire field, no version bump, no netgate).
  *
  * Perf: all static `sx` is hoisted to module-level consts (no per-render alloc,
- * per the drawer-perf rules). The dial's open/closed + drilled view are local
+ * per the drawer-perf rules). The dial's and the sidebar's open flags are local
  * React state — pure presentation, never Zustand (invariant #2).
  */
 export interface SpeedDialMenuProps {
@@ -99,9 +81,8 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   const canWarp = SOLAR_SECTORS && sectorKey !== null;
 
   const [open, setOpen] = useState(false);
-  // The dial's drilled view (pure presentation — local state, never Zustand).
-  // Reset to ROOT whenever the dial closes so re-opening starts at the main menu.
-  const [view, setView] = useState<DialView>(ROOT_VIEW);
+  // The Build sidebar (BuildSidebar.tsx) — pure presentation, local state.
+  const [buildOpen, setBuildOpen] = useState(false);
 
   // Multitouch support (smoke handoff 2026-06-06). We drive the FAB + actions on
   // `onTouchStart` so a SECOND simultaneous touch opens/activates them; the
@@ -109,46 +90,39 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   // stays live for desktop (one impl: `useTouchClickActivate`).
   const { touchActivate, clickActivate, isWithinSuppressWindow } = useTouchClickActivate();
 
-  // Fold the dial back to a closed root menu. A game window opening (the loot
-  // or building settings window) does just this: the window takes focus, so no blur.
+  // A game window or the building settings panel opening closes the dial and
+  // the Build sidebar (one right panel at a time): the window takes focus, so no blur.
   const collapse = useCallback(() => {
     setOpen(false);
-    setView(ROOT_VIEW);
+    setBuildOpen(false);
   }, []);
   useEffect(() => onGameWindowOpen(collapse), [collapse]);
 
   const close = useCallback(() => {
-    collapse();
+    setOpen(false);
     // Drop DOM focus from whatever speed-dial button the player just activated
     // (Map / Panels / Weapon). MUI Fab buttons activate on Space/Enter while
     // focused, so a still-focused Map FAB meant the next Space/Fire silently
     // re-toggled the galaxy overlay (WS-F #18). Blurring on close makes every
     // terminal selection lose focus.
     (document.activeElement as HTMLElement | null)?.blur();
-  }, [collapse]);
+  }, []);
 
-  // Build mode keeps the build list ready: entering Build (the mode switch) and
-  // every Confirm / Cancel (the ghost goes, Build stays) open the dial on the
-  // build list: the last category's kinds, else the categories. Leaving Build
-  // closes it back to the main menu.
+  // Build mode keeps the build menu ready: entering Build (the mode switch) and
+  // every Confirm / Cancel (the ghost goes, Build stays) open the Build sidebar
+  // for the next structure. Leaving Build closes it and the dial.
   const building = useUIStore((s) => s.buildMode);
   const buildListReady = useUIStore((s) => s.buildMode && s.placementKind === null);
   const wasBuilding = useRef(false);
-  // A Cancel (not a Confirm) folds the list shut instead: the open list covered
-  // the base behind it (phone stills 2026-11-21). The kinds level is kept, so
-  // one FAB tap brings the same list back (placementCancel.ts).
-  const cancelled = useRef(false);
-  useEffect(() => onPlacementCancel(() => { cancelled.current = true; }), []);
   useEffect(() => {
     if (buildListReady) {
-      setView((v) => (v.level === 'root' ? { level: 'categories' } : v));
-      setOpen(!cancelled.current);
-      cancelled.current = false;
+      setOpen(false);
+      setBuildOpen(true);
     } else if (!building && wasBuilding.current) {
-      close();
+      collapse();
     }
     wasBuilding.current = building;
-  }, [building, buildListReady, close]);
+  }, [building, buildListReady, collapse]);
 
   const toggleOpen = useCallback(() => setOpen((o) => !o), []);
 
@@ -180,28 +154,23 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
     if (next) setActiveSlotId(next.id);
   }, [close, shipKindId, activeSlotId, setActiveSlotId]);
 
-  // Build-tree navigation — pure view transitions, the dial stays open.
-  const enterCategories = useCallback(() => setView({ level: 'categories' }), []);
-  const enterKinds = useCallback(
-    (category: BuildCategoryId) => setView({ level: 'kinds', category }),
-    [],
-  );
-  const goBack = useCallback(() => setView((v) => goBackView(v)), []);
-  // Economy v2 — packed stock while the build drill is open.
-  const packedStock = usePackedStock(open && view.level !== 'root');
-  const inSector = useUIStore((s) => s.currentSectorKey !== null); // no sector = no crate rule
+  // Build ▸ closes the dial and opens the Build sidebar.
+  const handleBuild = useCallback(() => {
+    close();
+    setBuildOpen(true);
+  }, [close]);
+  const closeBuild = useCallback(() => setBuildOpen(false), []);
   // The open list fits the screen (sideways phone) and scrolls: speedDialFit.ts.
   const dialRef = useRef<HTMLDivElement>(null);
-  useFitActionsToViewport(dialRef, direction, open, view.level === 'kinds' ? view.category : view.level);
+  useFitActionsToViewport(dialRef, direction, open);
 
-  // Pick a kind to place: raise the placement ghost and close the list, so it
-  // never covers the ghost (build mode, stills review 2026-11-20). The `kinds`
-  // view is KEPT (unlike close()): one FAB tap reopens the same list for the next
-  // structure, with no Build ▸ category ▸ kind re-drill (the R2.6 complaint).
+  // Pick a kind to place: raise the placement ghost and hide the sidebar, so it
+  // never covers the ghost (build mode, stills review 2026-11-20). Confirm or
+  // Cancel brings it back on the same category (the R2.6 repeat-build need).
   const handlePickBuild = useCallback(
     (kind: StructureKindId) => {
       setPlacementKind(kind);
-      setOpen(false);
+      setBuildOpen(false);
       (document.activeElement as HTMLElement | null)?.blur();
     },
     [setPlacementKind],
@@ -213,66 +182,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   const activeSlot = slots.find((s) => s.id === activeSlotId) ?? slots[0];
   const weaponLabel = activeSlot ? `Weapon: ${activeSlot.displayName}` : 'Weapon';
 
-  // The back action — prepended at every non-root level. Pops one level (the FAB
-  // never takes on the back role, so the open/close toggle is never overloaded).
-  const backAction = (
-    <SpeedDialAction
-      key="back"
-      icon={<ArrowBackIcon />}
-      tooltipTitle="Back"
-      tooltipOpen
-      FabProps={fab(ACTION_FAB_BASE, {
-        'data-testid': 'speed-dial-back',
-        onClick: clickActivate(goBack),
-        onTouchStart: touchActivate(goBack),
-      })}
-    />
-  );
-
-  let actions: ReactNode;
-  if (view.level === 'categories') {
-    actions = [
-      backAction,
-      ...BUILD_CATEGORIES.map((c) => (
-        <SpeedDialAction
-          key={c.id}
-          icon={c.icon}
-          tooltipTitle={c.label}
-          tooltipOpen
-          FabProps={fab(ACTION_FAB_BASE, {
-            'data-testid': `build-cat-${c.id}`,
-            onClick: clickActivate(() => enterKinds(c.id)),
-            onTouchStart: touchActivate(() => enterKinds(c.id)),
-          })}
-        />
-      )),
-    ];
-  } else if (view.level === 'kinds') {
-    actions = [
-      backAction,
-      ...categoryById(view.category).kinds.map((kindId) => {
-        // Economy v2 — non-starter kinds need a packed one: show the count, or
-        // lock (dimmed, no-op) with a hint, instead of refusing on placement.
-        const entry = buildEntry(kindId, packedStock, inSector);
-        const pick = entry.locked ? () => {} : () => handlePickBuild(kindId);
-        return (
-          <SpeedDialAction
-            key={kindId}
-            icon={BUILD_ICONS[kindId] ?? <ConstructionIcon />}
-            tooltipTitle={entry.label}
-            tooltipOpen
-            FabProps={fab(entry.locked ? LOCKED_ACTION_FAB_BASE : ACTION_FAB_BASE, {
-              'data-testid': `build-${kindId}`,
-              'data-locked': entry.locked ? '1' : '0',
-              onClick: clickActivate(pick),
-              onTouchStart: touchActivate(pick),
-            })}
-          />
-        );
-      }),
-    ];
-  } else {
-    actions = [
+  const actions: ReactNode = [
       <SpeedDialAction
         key="menu"
         icon={<MenuIcon />}
@@ -328,28 +238,24 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
         tooltipOpen
         FabProps={fab(ACTION_FAB_BASE, {
           'data-testid': 'speed-dial-build',
-          onClick: clickActivate(enterCategories),
-          onTouchStart: touchActivate(enterCategories),
+          onClick: clickActivate(handleBuild),
+          onTouchStart: touchActivate(handleBuild),
         })}
       />,
-    ];
-    // Phase 5 — the pilot↔spectator toggle MOVED OUT of the speed-dial into the
-    // always-visible `PilotSpectatorToggle` (the user: it "was NOT designed to be
-    // part of the speeddial… visible at all times"). The speed-dial no longer
-    // carries a spectator action.
-  }
-
-  // The FAB reflects the drilled-into category at the `kinds` level (the dial
-  // a pick closes the dial but keeps that level, so it names the last category);
-  // otherwise the standard +/× SpeedDialIcon morph signals open/close.
-  const fabIcon = view.level === 'kinds' ? CATEGORY_ICON[view.category] : <SpeedDialIcon />;
+  ];
+  // Phase 5 — the pilot↔spectator toggle MOVED OUT of the speed-dial into the
+  // always-visible `PilotSpectatorToggle` (the user: it "was NOT designed to be
+  // part of the speeddial… visible at all times"). The speed-dial no longer
+  // carries a spectator action.
 
   return (
+    <>
+    <BuildSidebar open={buildOpen} onClose={closeBuild} onPick={handlePickBuild} />
     <SpeedDial
       ref={dialRef}
       ariaLabel="Game actions"
       data-testid="speed-dial"
-      icon={fabIcon}
+      icon={<SpeedDialIcon />}
       direction={direction}
       open={open}
       // Ignore the MUI 'toggle' reason (its synthesized-click open/close) within
@@ -364,12 +270,10 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
         if (isWithinSuppressWindow()) return;
         setOpen(true);
       }}
-      // Picking a kind closes the dial but keeps the kinds level (handlePickBuild),
-      // so the next structure is one FAB tap away (R2.6). MUI fires onClose on 'blur' / 'mouseLeave' too — e.g. when the player
-      // clicks the canvas to position the ghost or taps the Confirm banner — and
-      // we IGNORE those so an incidental focus change doesn't dismiss the build
-      // menu. Only a deliberate FAB toggle or Escape closes it (resetting to the
-      // root menu); the terminal actions (Panels/Map/Weapon) close via close().
+      // MUI fires onClose on 'blur' / 'mouseLeave' too — e.g. when the player
+      // clicks the canvas — and we IGNORE those so an incidental focus change
+      // doesn't dismiss the dial. Only a deliberate FAB toggle or Escape closes
+      // it; the terminal actions (Panels/Map/Weapon/Build) close via close().
       onClose={(_e, reason) => {
         if (reason === 'toggle') {
           if (isWithinSuppressWindow()) return;
@@ -384,6 +288,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
     >
       {actions}
     </SpeedDial>
+    </>
   );
 }
 
@@ -481,9 +386,6 @@ const ACTION_FAB_BASE = {
     '&:hover': { bgcolor: 'rgba(5,7,15,0.95)' },
   },
 } as const;
-
-/** Economy v2 — a locked build kind (no packed one here): dimmed. */
-const LOCKED_ACTION_FAB_BASE = { ...ACTION_FAB_BASE, sx: { ...ACTION_FAB_BASE.sx, opacity: 0.45 } };
 
 const MENU_ACTION_FAB_PROPS = ACTION_FAB_BASE;
 const WEAPON_ACTION_FAB_PROPS = ACTION_FAB_BASE;

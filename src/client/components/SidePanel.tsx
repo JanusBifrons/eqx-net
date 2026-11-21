@@ -9,10 +9,11 @@
  * and action bar inside the Paper's column.
  *
  * Used by the galaxy map's sector drawer (SectorInfoDrawer.tsx) and the
- * building settings panel (StructureSettingsModal.tsx). A new docked panel
+ * building settings panel (StructureSettingsModal.tsx) and the Build sidebar
+ * (BuildSidebar.tsx); only one of the last two is open at a time. A new docked panel
  * builds on this, never on a copy of it; a full-screen window uses GameWindow.
  */
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Box, Drawer, Portal, useMediaQuery } from '@mui/material';
 import { Z } from '../layout/zIndex';
 import { isTouchDevice } from '../input/TouchInput';
@@ -20,6 +21,7 @@ import {
   focusPanelDock, PANEL_RIGHT_W, PANEL_TOUCH_FRAC, PANEL_TOUCH_MIN_W, PANEL_TOUCH_TOP, SHEET_FRAC_PORTRAIT, SHEET_MAX_H,
   type FocusPanelDock,
 } from '../render/galaxy/galaxyFocus';
+import { useUIStore } from '../state/store';
 
 const SWIPE_CLOSE_PX = 56; // swipe distance (in the dock-out direction) that closes
 
@@ -37,6 +39,22 @@ export interface SidePanelSize {
 export const SECTOR_PANEL_SIZE: SidePanelSize = {
   width: PANEL_RIGHT_W, touchFrac: PANEL_TOUCH_FRAC, touchMinW: PANEL_TOUCH_MIN_W, touchTop: PANEL_TOUCH_TOP,
 };
+
+/** The Build sidebar (BuildSidebar.tsx): 0.4 of a sideways phone's width
+ *  (915 px: 366 px) from below the top-right toolbar; 380 px on desktop. */
+export const BUILD_PANEL_SIZE: SidePanelSize = { width: 380, touchFrac: 0.4, touchMinW: 280, touchTop: PANEL_TOUCH_TOP };
+
+/** Esc closes a panel, unless typing in a field or another Esc owner took the
+ *  key: placement and a fleet map pick cancel first (App.tsx keydown marks the
+ *  key handled), and a game window on top stops the key itself (MUI Modal).
+ *  One Esc press does one thing. */
+export function escapeClosesPanel(e: KeyboardEvent): boolean {
+  if (e.key !== 'Escape' || e.defaultPrevented) return false;
+  const t = e.target as HTMLElement | null;
+  if (t !== null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return false;
+  const st = useUIStore.getState();
+  return st.placementKind === null && st.fleetPick === null;
+}
 
 const PAPER_COMMON = {
   bgcolor: 'rgba(8,12,24,0.98)',
@@ -117,15 +135,23 @@ export interface SidePanelProps {
   /** The grab handle's test id. */
   handleTestId?: string;
   size?: SidePanelSize;
+  /** Esc closes it while open (escapeClosesPanel). */
+  closeOnEscape?: boolean;
   /** Extra attributes on the Paper (E2E hooks). */
   paperAttrs?: Record<string, string>;
   children: ReactNode;
 }
 
 export function SidePanel({
-  open, onClose, testId, handleTestId, size = SECTOR_PANEL_SIZE, paperAttrs, children,
+  open, onClose, testId, handleTestId, size = SECTOR_PANEL_SIZE, closeOnEscape = false, paperAttrs, children,
 }: SidePanelProps): JSX.Element {
   const anchor = useSidePanelDock();
+  useEffect(() => {
+    if (!open || !closeOnEscape) return undefined;
+    const onKey = (e: KeyboardEvent): void => { if (escapeClosesPanel(e)) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, closeOnEscape, onClose]);
 
   // Scoped swipe-to-close on the grab handle (no global listeners — avoids the
   // SwipeableDrawer RTT regression). The Paper FOLLOWS the finger in the

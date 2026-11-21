@@ -2,9 +2,7 @@ import { useLayoutEffect, type RefObject } from 'react';
 
 /**
  * The speed-dial's open action list fits the screen (sideways phone: 412 px
- * tall). The longer build categories (Economy, Industry) ran off the screen
- * edge, so their last entries (the Shipyard) could not be tapped. The open list
- * is capped to the space between it and the far screen edge and scrolls inside
+ * tall). The open list is capped to the space between it and the far screen edge and scrolls inside
  * itself; the look of every entry is unchanged.
  *
  * Measured, not a fixed `dvh` sum: the dial sits under the top-right toolbar,
@@ -13,7 +11,7 @@ import { useLayoutEffect, type RefObject } from 'react';
  * Command view: the bottom-centre stack (desktop build palette, fleet panel /
  * strip, status capsule) can reach under the dial's column (its buttons and
  * their always-on labels). Then a downward list also stops above that stack,
- * so the build list and the fleet / build panels never cover each other
+ * so the list and the fleet / build panels never cover each other
  * (Pixel 7 landscape and desktop). A stack clear of the column changes nothing.
  */
 
@@ -81,7 +79,7 @@ export const ACTION_GAP_VAR = '--speed-dial-action-gap';
  * `paddingPx`) into `maxPx`: the full MUI gap when there is room, squeezed when
  * the list is a little too tall (the main menu with Warp ▸ on a 360 px tall
  * sideways phone). A list too long to fit even at the floor gap keeps the full
- * gap and scrolls, as before (the long build categories).
+ * gap and scrolls.
  */
 export function actionGapToFit(maxPx: number, count: number, buttonPx: number, paddingPx: number): number {
   if (count <= 0 || buttonPx <= 0) return ACTION_GAP_PX;
@@ -111,15 +109,13 @@ export function fitActionsToViewport(root: HTMLElement | null, direction: 'up' |
   list.scrollTop = 0;
 }
 
-/** Refit while the dial is open: on open, on every drill (new list), when the
- *  screen resizes or turns, and when the bottom-centre stack changes size (the
+/** Refit while the dial is open: on open, when the screen resizes or turns, and when the bottom-centre stack changes size (the
  *  fleet panel shows / hides as ships are selected). Event-driven only, never
  *  per frame. */
 export function useFitActionsToViewport(
   rootRef: RefObject<HTMLElement | null>,
   direction: 'up' | 'down',
   open: boolean,
-  viewKey: string,
 ): void {
   useLayoutEffect(() => {
     if (!open) return undefined;
@@ -136,7 +132,7 @@ export function useFitActionsToViewport(
       vv?.removeEventListener('resize', fit);
       ro?.disconnect();
     };
-  }, [rootRef, direction, open, viewKey]);
+  }, [rootRef, direction, open]);
 }
 
 /** The open list scrolls inside itself (touch drag on the labels), and the drag

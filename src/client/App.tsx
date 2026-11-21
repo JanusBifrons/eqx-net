@@ -668,15 +668,16 @@ function GameSurface({
       }
       // WS-10 (R2.5) — Escape cancels structure placement. Main-thread + window
       // level so it works on BOTH render paths (the renderer can't touch
-      // Zustand). No-op when not placing.
-      if (e.key === 'Escape' && useUIStore.getState().placementKind) cancelPlacement();
+      // Zustand). No-op when not placing. Marked handled so a side panel's Esc
+      // (SidePanel escapeClosesPanel) never also fires on the same press.
+      if (e.key === 'Escape' && useUIStore.getState().placementKind) { cancelPlacement(); e.preventDefault(); }
       // RTS slice 14b — Escape cancels a fleet map pick; Enter is Done for a
       // patrol route with enough points. Not from a text field.
       const pick = useUIStore.getState().fleetPick;
       const inField = e.target instanceof HTMLElement
         && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
       if (pick !== null && !inField) {
-        if (e.key === 'Escape') useUIStore.getState().setFleetPick(null);
+        if (e.key === 'Escape') { useUIStore.getState().setFleetPick(null); e.preventDefault(); }
         else if (e.key === 'Enter' && canFinishFleetPick(pick)) useUIStore.getState().requestFleetPickDone();
       }
       // Phase V — R rotates the placement ghost a quarter turn (structures are
