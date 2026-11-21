@@ -239,6 +239,7 @@ view, never the server `StructureRegistry`):
   Locks: `minCableLength.test.ts`,
   `ConnectorRenderer.tooShortPreview.test.ts`, `placementHints.test.tsx`,
   `growBase.test.ts` (minimum cable length).
+- **Cables never cross (owner rule).** `pickCableSocketPair`, given the adjacency (`canConnect` passes it), skips a socket pair whose curve crosses any stored cable (`cableCrossesExisting`, `cableCurve.ts`) and refuses `'crosses-cable'` when none is left ("Can't link: crosses another cable"; the build preview draws it red along the refused pair). Every owner's cables count, as every owner's buildings block a cable. Links sharing an end with the new one (a fan-out) and shield-fence links (emitter post to post: walls, not cables; a new fence link is not checked either) are skipped; touching through a vertex counts, collinear overlap does not. Each stored link is box-tested (both ends padded by `CABLE_TAIL_MAX`) before it is flattened; no cache (`CABLE_CROSS_STATS` counts links flattened and segment tests). Auto-connect simply moves on to the next candidate. Existing crossings on old saves stay. Generated bases had none (output unchanged). Locks: `cableCrossing.test.ts`, `structureGridView.test.ts`, `ConnectorRenderer.placementPreview.test.ts`.
 
 **Server** (`src/server/structures/`):
 - `StructureRegistry` carries the connection adjacency (+ flat conn map),
