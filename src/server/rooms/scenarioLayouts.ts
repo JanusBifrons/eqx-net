@@ -31,6 +31,9 @@
 
 import type { GoodId } from '../../shared-types/goods.js';
 import { starterJunkCopies } from '../economy/starterGrant.js';
+import { makeBlueprint } from '../../shared-types/blueprints.js';
+import { RECIPES, blueprintProductFor, type RecipeId } from '../../shared-types/recipes.js';
+import { CAPITAL_STARTING_MINERALS } from '../../core/structures/structureGridConstants.js';
 import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
 import { type ShipKindId } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -247,7 +250,7 @@ export const RIG_SANDBOX_E2E_SCENE: unknown[] = [
 ];
 /** Room opts read by `seedStructureScenario` (testMode only). */
 export interface StructureScenarioOpts {
-  prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess }>;
+  prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number; rot?: number; gateAccess?: GateAccess; recipe?: RecipeId }>;
   prebuiltStructuresOwner?: string;
   prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
   prebuiltCapitalMinerals?: number;
@@ -286,7 +289,7 @@ export function seedStructureScenario(h: StructureScenarioHost, roomOpts: Struct
   const owner = roomOpts.prebuiltStructuresOwner ?? 'scenario';
   if (prebuilt && prebuilt.length > 0) {
     for (const ps of prebuilt) {
-      const extra = ps as { rot?: number; gateAccess?: GateAccess };
+      const extra = ps as { rot?: number; gateAccess?: GateAccess; recipe?: RecipeId };
       const id = h.structurePlacement().place(owner, ps.kind as string, ps.x, ps.y, { rot: extra.rot });
       if (id === null) {
         h.logger.warn({ kind: ps.kind, x: ps.x, y: ps.y }, 'scenario prebuilt structure rejected');
@@ -295,6 +298,12 @@ export function seedStructureScenario(h: StructureScenarioHost, roomOpts: Struct
       const rec = h.structureRegistry.get(id);
       if (rec && extra.gateAccess && GATE_ACCESS_IDS.includes(extra.gateAccess)) {
         rec.gateAccess = gateAccessIndex(extra.gateAccess);
+      }
+      // A processor already on a recipe (perf `base-loop`: a Shipyard building),
+      // a junk copy in its slot as a player loads one (`StorageService.loadBlueprint`).
+      if (rec && extra.recipe !== undefined) {
+        rec.recipe = extra.recipe;
+        if (RECIPES[extra.recipe].blueprintRequired) rec.blueprint = makeBlueprint(blueprintProductFor(extra.recipe), 'bpc', Math.random, { junk: true });
       }
       if (rec && !rec.isConstructed) {
         rec.isConstructed = true;
@@ -560,4 +569,23 @@ export const BASE_FLOW_OPTS = {
     { x: -750, y: 1100, radius: 40 }, { x: 750, y: 1100, radius: 40 },
     { x: -750, y: -1100, radius: 40 }, { x: 750, y: -1100, radius: 40 },
   ],
+};
+
+/** Perf scene `base-loop`: the Sunday-loop base in sol-prime's belt clearing
+ *  (r 4900; no rock inside). Capital (pad west) + 3 Solars, a Shipyard building an
+ *  Interceptor (east), Refinery and Cargo Bay (south), a Turret and two Shield
+ *  Pylons with their wall. 410 power for 280 used. The first joiner adopts it. */
+export const BASE_LOOP_AT = { x: 96_626, y: 80_499 } as const;
+const loop = (kind: string, x: number, y: number, more?: { rot?: number; recipe?: RecipeId }) =>
+  ({ kind, x: BASE_LOOP_AT.x + x, y: BASE_LOOP_AT.y + y, ...more });
+export const BASE_LOOP_OPTS = {
+  prebuiltStructures: [
+    loop('capital', 0, 0, { rot: 90 }), loop('connector', 0, 350), loop('connector', 0, -350), loop('connector', 420, 0),
+    loop('solar', 450, 500), loop('solar', -450, 500), loop('solar', 450, -500),
+    loop('shipyard', 1000, 0, { recipe: 'build_interceptor' }),
+    loop('refinery', -450, -600), loop('connector', 0, -950), loop('cargo_bay', -400, -1100),
+    loop('turret', 300, -1100), loop('shield_pylon', -350, -1450), loop('shield_pylon', 350, -1450),
+  ],
+  prebuiltStructuresOwner: PREBUILT_ADOPT_OWNER,
+  prebuiltCapitalMinerals: CAPITAL_STARTING_MINERALS,
 };
