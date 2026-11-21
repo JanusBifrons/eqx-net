@@ -53,7 +53,7 @@ On desktop the renderer runs in a Web Worker via `OffscreenCanvas`. How it works
 - **No raw ids in player-facing UI:** show "you", the owner's resolved name, "Unknown" or a kind/role; ids live only in hidden `data-*` attrs and logs. Detail: [mobile-layout](../../docs/features/mobile-layout.md).
 - **React + MUI** for out-of-game UI and overlays, **Pixi** for the in-game surface; never MUI inside the canvas, never HUD numbers in Pixi.
 - **Sizing: start tiny, grow on request** (icons 24–36 px, text 9–11 px, `maxWidth="xs"`, `size="small"` buttons; 44 px only for primary confirms). Detail: same guide.
-- **A panel outside the Slot system that must beat the HUD is `<Portal>`'d to `document.body`;** `placeInspector` keeps the WHOLE inspector on screen (never clamp only the anchor). Detail: same guide.
+- **A panel outside the Slot system that must beat the HUD is `<Portal>`'d to `document.body`.** The selection card docks top-centre in a Slot; never place it per frame. Detail: same guide.
 - **One Pixi galaxy renderer,** `GalaxyMapLayer` (`selector` / `overlay`) on the shared canvas; never a second Pixi `Application`. Detail: [single-canvas-galaxy](../../docs/architecture/single-canvas-galaxy.md).
 - **Galaxy map:** territories group by owner (`resolveSectorOwner`); hover tooltip desktop-only; each entity type's look is one row in `render/entityVisuals.ts`. Detail: [living-galaxy](../../docs/architecture/living-galaxy.md).
 - **A poller feeding a widely-subscribed store field skips unchanged replies** (`rosterPoller` → `shipRoster`). Detail: same guide.
