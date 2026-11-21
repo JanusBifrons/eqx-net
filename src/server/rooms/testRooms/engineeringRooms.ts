@@ -15,9 +15,16 @@ import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
  * 50k minerals and every joiner's wallet 20k credits. Blueprints cable to the
  * Connector at (0, 350): place within its 600 u reach. No rocks or NPCs nearby; ONE
  * rock 1500 u south of the Capital for a red-ghost shot. The 100 ms grid pulse
- * fills a placed Solar (480 minerals, 5 per pulse) in about 10 s.
+ * fills a placed Solar (480 minerals, 5 per pulse) in about 10 s. The Capital
+ * holds the starter junk blueprint copies (`starterJunkCopies`), and the test
+ * sectorKey gives the room a roster (a built hull launches, a crate unpacks);
+ * the adopting joiner gets no second starter grant.
  */
 export const BASE_BUILD_TEST_OPTS = {
+  // A test sectorKey so the roster works: a finished Shipyard hull launches
+  // and a packed hull unpacks (both galaxy-only). Never saved or restored.
+  sectorKey: 'base-build-test',
+  persistSector: false,
   testMode: true,
   asteroidConfig: [],
   droneCount: 0,
@@ -26,6 +33,7 @@ export const BASE_BUILD_TEST_OPTS = {
   prebuiltStructuresOwner: PREBUILT_ADOPT_OWNER,
   prebuiltStructures: BASE_BUILD_PREBUILT.map((p) => ({ ...p })),
   prebuiltCapitalMinerals: 50_000,
+  prebuiltStarterBlueprints: true,
   seedStorageHold: { goods: {}, credits: 20_000 },
   scenarioAsteroids: [{ x: 0, y: -1500, radius: 80 }],
   // West of the base, clear of the Capital's crane pad (centre (-410, 0)).

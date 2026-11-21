@@ -30,6 +30,7 @@
  */
 
 import type { GoodId } from '../../shared-types/goods.js';
+import { starterJunkCopies } from '../economy/starterGrant.js';
 import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
 import { type ShipKindId } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -250,6 +251,7 @@ export interface StructureScenarioOpts {
   prebuiltStructuresOwner?: string;
   prebuiltStorageGoods?: Partial<Record<GoodId, number>>;
   prebuiltCapitalMinerals?: number;
+  prebuiltStarterBlueprints?: boolean;
   pairTeleporters?: boolean;
   teleportShipBoards?: boolean;
   scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
@@ -310,6 +312,12 @@ export function seedStructureScenario(h: StructureScenarioHost, roomOpts: Struct
     if (bank > 0) {
       const cap = [...h.structureRegistry.all()].find((r) => r.owner === owner && r.kind === 'capital');
       if (cap) cap.minerals = Math.min(bank, getStructureKind('capital').storageCapacity);
+    }
+    // Base loop — the starter junk blueprint copies (the starter grant's
+    // items, starterGrant.ts) in the prebuilt Capital's hold.
+    if (roomOpts.prebuiltStarterBlueprints === true) {
+      const cap = [...h.structureRegistry.all()].find((r) => r.owner === owner && r.kind === 'capital');
+      if (cap) (cap.hold ??= { goods: {}, blueprints: [] }).blueprints.push(...starterJunkCopies());
     }
     if (goods) {
       for (const rec of h.structureRegistry.all()) {

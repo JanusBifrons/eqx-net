@@ -222,6 +222,10 @@ export async function bootSectorTestServer(opts: {
   prebuiltStorageGoods?: Record<string, number>;
   /** Base loop — minerals banked in the prebuilt Capital. */
   prebuiltCapitalMinerals?: number;
+  /** Base loop — the starter junk blueprint copies in the prebuilt Capital. */
+  prebuiltStarterBlueprints?: boolean;
+  /** testMode — false: never save or restore this sector's snapshot. */
+  persistSector?: boolean;
   /** Grid pulse interval (ms), testMode. */
   structureGridPulseMs?: number;
   /** v4 T1 — teleporter cycle speed, and pair the seeded teleporters. */
@@ -328,6 +332,8 @@ export async function bootSectorTestServer(opts: {
     autoTimeScale: opts.autoTimeScale,
     prebuiltStorageGoods: opts.prebuiltStorageGoods,
     prebuiltCapitalMinerals: opts.prebuiltCapitalMinerals,
+    prebuiltStarterBlueprints: opts.prebuiltStarterBlueprints,
+    persistSector: opts.persistSector,
     structureGridPulseMs: opts.structureGridPulseMs,
     teleportCycleScale: opts.teleportCycleScale,
     pairTeleporters: opts.pairTeleporters,
