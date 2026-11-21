@@ -51,8 +51,72 @@ gate decision, cookie, key, tunnel-URL parsing; unit-locked in
 - **Service worker:** a lane build sets `VITE_PHONE_LANE=1`, which applies a
   waiting service worker at once instead of on the next launch
   ([web-push](../architecture/web-push.md)).
+- **Logs:** `run/server.log` (server stdout/stderr: pino lines, tick-budget and
+  GC warnings, no colour codes) and `run/vite.log` (build + preview). The
+  lane's children are detached so they outlive `up`; on Windows they start
+  under a small node relay (`loggedSpawnPlan` in `showcase/servers.ts`),
+  because a detached `cmd.exe` drops its node child's output (the old 0-byte
+  `server.log`).
 - **No heavy queue:** a lane `up` is one `vite build` plus a server, started
   on request while the owner waits; it is not on the heavy-job list.
+
+## Play evidence (read this after a play test)
+
+Every lane play session leaves numbers on disk with no extra step:
+
+- `run/server.log`: the server's own log for the whole lane run.
+- `run/captures/<session>/`: the diagnostic capture each phone session
+  streams ([diagnostic-captures](../architecture/diagnostic-captures.md));
+  the lane sets `EQX_DIAG_DIR` (`laneServerEnv` in `phone-lane-core.mjs`), so
+  captures land here, not in the served checkout. Start with:
+  - `frames.ndjson`: one `perf_summary` line per 10 s of play:
+    `{"source":"client","ts":<ms since page load>,"tag":"perf_summary","data":{...}}`
+    with `windowMs`, `frames`, frame time `p50`/`p95`/`p99`/`maxMs` (ms),
+    `hitches` (frames over 50 ms), `viewHalf` (zoom: half the visible world,
+    game units; bigger = zoomed out), `ships`/`drones`/`structures`/`projectiles`
+    on the client, `rttMs`/`rttMeanMs`/`jitterMs`, `corrections` (own-ship
+    corrections in the window), `corrRate`, `maxDrift`. Numbers only: no ids,
+    names or positions (`src/client/debug/perf/laneFrameSummary.ts`).
+  - `perf.ndjson`: individual stutters (`raf_stutter` 30–100 ms, `raf_gap`
+    over 100 ms), long animation frames (`loaf`), long tasks, heap samples,
+    device info. In a lane build every `raf_stutter`, `raf_gap` and `loaf`
+    also carries `viewHalf` (the zoom, as in `perf_summary`) and `mode`
+    (`fly` / `command` / `build`) at the moment it fired
+    (`withLaneStallContext` in `laneFrameSummary.ts`; read only when an event
+    fires, never per frame).
+  - `corrections.ndjson`, `snapshots.ndjson`: the reconciliation detail behind
+    sideways jitter.
+- `run/audit/`: the gameplay audit log.
+
+All of it is lane-only: a normal production build has `VITE_PHONE_LANE` unset,
+so it streams no capture, makes no summary and adds no zoom or mode to stall
+events.
+
+### Naming the code behind a stall
+
+The lane build is minified, so a `loaf` names its scripts as `B` or `""`.
+Each `topScripts` entry also records `sourceURL` and `sourceCharPosition`
+(where the entry function starts in that file), and the build writes source
+maps next to the lane dist (`<phone dir>/dist/assets/*.js.map`, vite
+`build.sourcemap`). Resolve a capture offline:
+
+```
+pnpm phone:names .claude/phone-lane/run/captures/<session>
+pnpm phone:names <perf.ndjson> --dist <a dist folder>
+```
+
+It prints the LoAF scripts by total time as source function, file:line and
+the source line, then the stall counts by control mode and by zoom
+(`viewHalf` in powers of two). Script file names carry the build hash, so a
+capture resolves only against the build it was played on: the next
+`pnpm phone up` rebuilds `dist/` and the old maps are gone ("rebuilt since?").
+Resolve before the next `up`, or copy `dist/` aside first. Code:
+`scripts/dev/lane-stall-names.mjs` (no deps; test
+`tests/unit/lane-stall-names.test.ts`).
+
+Which render phases took longest inside a stall frame is not recorded: the
+renderer's perf probe times only the whole update, so there are no phase hooks
+to read without a new profiler.
 
 ## Security
 
