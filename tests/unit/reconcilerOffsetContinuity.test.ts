@@ -51,6 +51,17 @@ const SMALL_ERROR_U = 5;
 const LARGE_ERROR_U = 220;
 /** Target: the drawn pose does not move at the correction instant. */
 const NO_STEP_TOLERANCE_U = 1e-6;
+/** Frames eased after correction 2 when measuring the glide (500 ms). */
+const GLIDE_FRAMES = 30;
+/**
+ * Glide bound: after correction 2, the drawn ship moves no faster per frame
+ * than the first correction would have on its own (same error, never
+ * interrupted), plus 5 %. The carried offset is at most first error + second
+ * error and gets the half-life of that size, so its peak speed matches the
+ * uninterrupted glide's; a 25 ms half-life on the carried ~208 u (the bug
+ * this locks out) moved 64-72 u per frame against a ~10.3 u peak.
+ */
+const GLIDE_PEAK_SLACK = 1.05;
 
 interface StepResult {
   /** Half-life of the first correction, ms. */
@@ -63,6 +74,10 @@ interface StepResult {
   drawnAfterX: number;
   /** |drawn after - drawn before| at the correction instant, world units. */
   stepU: number;
+  /** Half-life chosen for correction 2, ms. */
+  secondHalfLifeMs: number;
+  /** Largest per-frame drawn move over GLIDE_FRAMES after correction 2. */
+  maxMoveAfterU: number;
 }
 
 let world: PhysicsWorld;
@@ -107,6 +122,8 @@ function runTwoCorrections(firstErrorU: number, framesBetween: number): StepResu
   // Correction 2, at the same wall time as the reading above.
   r.reconcile(serverPose(firstErrorU + SECOND_ERROR_U), tick, tick, tick - 1);
   const drawnAfterX = drawnX(r);
+  const secondHalfLifeMs = r.lerpHalfLifeMs;
+  const maxMoveAfterU = maxPerFrameMove(r, GLIDE_FRAMES);
 
   return {
     firstHalfLifeMs,
@@ -114,7 +131,32 @@ function runTwoCorrections(firstErrorU: number, framesBetween: number): StepResu
     drawnBeforeX,
     drawnAfterX,
     stepU: Math.abs(drawnAfterX - drawnBeforeX),
+    secondHalfLifeMs,
+    maxMoveAfterU,
   };
+}
+
+/** Ease for `frames` 60 Hz frames; largest |drawn x change| in one frame. */
+function maxPerFrameMove(r: Reconciler, frames: number): number {
+  let prev = drawnX(r);
+  let max = 0;
+  for (let f = 0; f < frames; f++) {
+    r.advanceLerp(FRAME_MS);
+    const x = drawnX(r);
+    max = Math.max(max, Math.abs(x - prev));
+    prev = x;
+  }
+  return max;
+}
+
+/** Peak per-frame drawn move of one uninterrupted correction of `errorU`. */
+function singleGlidePeakU(errorU: number): number {
+  world.despawnShip(PLAYER);
+  world.spawnShip(PLAYER, 0, 0);
+  world.setShipState(PLAYER, serverPose(0));
+  const r = new Reconciler(world, PLAYER, new MockClock(0));
+  r.reconcile(serverPose(errorU), 1, 1, 0);
+  return maxPerFrameMove(r, GLIDE_FRAMES);
 }
 
 /**
@@ -169,6 +211,15 @@ describe('Reconciler offset continuity: second correction while the first is eas
         const res = runTwoCorrections(c.firstErrorU, c.frames);
         expect(res.stepU).toBeLessThan(NO_STEP_TOLERANCE_U);
         expect(res.drawnAfterX).toBeCloseTo(res.drawnBeforeX, 9);
+      });
+
+      // Owner decision (D9 follow-up): correction 2's half-life comes from
+      // max(carried offset, raw drift), so a large leftover keeps gliding.
+      it('the carried offset keeps gliding: no frame faster than the first correction alone', () => {
+        const peakAloneU = singleGlidePeakU(c.firstErrorU);
+        const res = runTwoCorrections(c.firstErrorU, c.frames);
+        expect(res.secondHalfLifeMs).toBeGreaterThanOrEqual(res.firstHalfLifeMs * 0.9);
+        expect(res.maxMoveAfterU).toBeLessThanOrEqual(peakAloneU * GLIDE_PEAK_SLACK);
       });
     });
   }

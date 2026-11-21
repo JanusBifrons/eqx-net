@@ -309,7 +309,9 @@ export class Reconciler {
       // Continuity (netgap plan 3.3 / 6.2): the new offset also carries the
       // offset still in effect, so the drawn pose (physics + offset) does
       // not step when a correction lands while the previous one is easing.
-      // The threshold and half-life still use the RAW drift.
+      // The threshold still uses the RAW drift; the half-life uses the larger
+      // of the raw drift and the carried offset, so a large leftover keeps
+      // its long glide instead of collapsing at a small drift's half-life.
       const remX = this._lerping ? this._springX.x : 0;
       const remY = this._lerping ? this._springY.x : 0;
       const remA = this._lerping ? this._springA.x : 0;
@@ -322,7 +324,8 @@ export class Reconciler {
       this.lerpOffset.x = this._springX.x;
       this.lerpOffset.y = this._springY.x;
       this.lerpAngleOffset = this._springA.x;
-      this.lerpHalfLifeMs = playerCorrectionHalfLifeMs(drift);
+      const carried = Math.hypot(this._springX.x, this._springY.x);
+      this.lerpHalfLifeMs = playerCorrectionHalfLifeMs(Math.max(drift, carried));
       this._lerping = true;
     }
     // Prediction world now holds the corrected state.
