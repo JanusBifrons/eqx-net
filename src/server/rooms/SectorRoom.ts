@@ -2519,6 +2519,7 @@ export class SectorRoom extends Room<SectorState> {
       playerToUser: this.playerToUser,
       production: () => this.production, hullHandOff: () => this.hullHandOff,
       resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid),
+      ownShipKey: (pid) => this.pilotSwap.ownShipKey(pid),
       ship: (id) => this.state.ships.get(id),
       shipPoseCache: this.shipPoseCache,
       fittedOf: (id) => this.fittedOf(id),
@@ -4096,7 +4097,7 @@ export class SectorRoom extends Room<SectorState> {
     for (const rec of this.structureRegistry.all()) {
       if (rec.owner === owner && rec.hold !== undefined && isOperationalStorage(rec) && packedCount(rec.hold, product) > 0) return { rec };
     }
-    const shipId = this.resolveActiveShipKey(owner);
+    const shipId = this.pilotSwap.ownShipKey(owner); // flown or parked (Command / Build)
     const row = shipId ? getHoldStore().get(shipId) : undefined;
     if (shipId && row !== undefined && packedCount(row.hold, product) > 0) return { shipId };
     return null;
