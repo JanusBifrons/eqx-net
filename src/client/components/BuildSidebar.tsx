@@ -15,6 +15,11 @@
  * header shares the top-right toolbar's row), Esc (SidePanel) and a swipe on the
  * handle close it. The active category is local state (presentation only), kept
  * across closes so the next structure is one tap away.
+ *
+ * Desktop keys while open (input/buildMenuKeys.ts; they moved here from the old
+ * bottom build hotbar): 1–9 pick the Nth tile of the open category (a tile click),
+ * Q / E step to the previous / next category. The fire-control keys stand down
+ * meanwhile, so 1–9 do not also switch weapon groups.
  */
 import { useEffect, useState } from 'react';
 import { Box } from '@mui/material';
@@ -27,6 +32,14 @@ import { BUILD_CATEGORIES, CATEGORY_ICON, categoryById, type BuildCategoryId } f
 import { BuildKindDetails, BuildKindTile } from './BuildKindTile';
 import { BUILD_PANEL_SIZE, SidePanel } from './SidePanel';
 import { WINDOW_ROOT_SX } from './GameWindow';
+import { buildMenuKeyAction, setBuildMenuKeysOpen, stepCategory } from '../input/buildMenuKeys';
+
+const CATEGORY_IDS: readonly BuildCategoryId[] = BUILD_CATEGORIES.map((c) => c.id);
+
+function isTyping(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  return !!el?.tagName && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+}
 
 export interface BuildSidebarProps {
   open: boolean;
@@ -46,6 +59,30 @@ export function BuildSidebar({ open, onClose, onPick }: BuildSidebarProps): JSX.
   const [shown, setShown] = useState<StructureKindId | null>(null);
   const cat = categoryById(category);
   const shownKind = shown !== null && cat.kinds.includes(shown) ? shown : null;
+  // 1–9 / Q / E while open (see the header): the old hotbar's number-key path.
+  useEffect(() => {
+    if (!open) return;
+    setBuildMenuKeysOpen(true);
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.repeat || e.altKey || e.ctrlKey || e.metaKey || isTyping(e.target)) return;
+      const a = buildMenuKeyAction(e.key, e.code);
+      if (!a) return;
+      e.preventDefault();
+      if (a.kind === 'step') {
+        setCategory(stepCategory(CATEGORY_IDS, category, a.delta));
+        return;
+      }
+      const k = cat.kinds[a.index];
+      if (k === undefined) return;
+      setShown(k);
+      if (!buildEntry(k, packedStock, inSector).locked) onPick(k);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      setBuildMenuKeysOpen(false);
+    };
+  }, [open, category, cat, packedStock, inSector, onPick]);
   return (
     <SidePanel open={open} onClose={onClose} testId="build-sidebar" size={BUILD_PANEL_SIZE} closeOnEscape
       paperAttrs={{ 'data-open': open ? '1' : '0' }} title="Build" headerTestId="build-sidebar-head" closeTestId="build-sidebar-close">

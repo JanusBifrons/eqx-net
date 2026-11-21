@@ -19,8 +19,9 @@ import { DEFAULT_BASE_URL } from '../e2e/helpers/ports';
  * its script attribution and the profile's top self-time functions.
  *
  * Per CLAUDE.md "gate on counts, compare timings" this asserts nothing about
- * time; compare runs from the same machine and session. The count lock lives in
- * `src/client/components/BottomControlPanel.test.tsx`.
+ * time; compare runs from the same machine and session. The pre-mounted build
+ * hotbar it measured is gone (folded into the Build sidebar, which the flip never
+ * opens), so the flip now mounts no build UI at all.
  *
  *   EQX_E2E_PORT_OFFSET=<free N> pnpm e2e:perf tests/perf/death-spectator-hitch.spec.ts --reporter=line
  */
