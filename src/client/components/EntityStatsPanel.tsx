@@ -36,7 +36,7 @@ import { TargetAction } from './TargetAction';
 import { ACTION_BTN_SX, ICON_SX, StructureManageActions } from './StructureManageActions';
 import { canManageBuildings } from '../structures/buildingManagement';
 // Moved with the management buttons; re-exported so existing importers keep working.
-import { droneName, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
+import { droneName, parkedHullLabels, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
 import { BUILD_AWAITING_CLEAR_LINE, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
 
 /**
@@ -602,18 +602,18 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
   }
   // LINGERING HULL (R2.23) — the name line already shows WHOSE hull it is (the
   // owner's server-propagated display name); never surface the raw ownerPlayerId
-  // (no ids in the UI). Absent name ⇒ "Abandoned hull"; the info line is the kind.
+  // (no ids in the UI). Labels come from parkedHullLabels (mine reads as mine).
   if (kind === 'lingering') {
     // A parked hull lives in the one ship list under its shipInstanceId
     // (RTS Part A S3); only a parked hull gets this panel (#17).
     const l = client.mirror.ships.get(id);
     if (!l || !isParkedHull(client.mirror, id, l)) return null;
+    const mine = isOwnedByMe(client.mirror, id, l);
     const data: PanelData = {
-      name: l.displayName || 'Abandoned hull',
+      ...parkedHullLabels(l.displayName, l.kind, mine),
       hpPct: 0,
       shieldPct: null,
       noHull: true,
-      infoLine: `${l.kind ?? 'ship'}`,
       // C3 — a parked hull's cargo: yours opens (move cargo between your
       // ships); anyone else's needs a break-in.
       cargoShip: id,
@@ -621,7 +621,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     // WS-A2 — a lingering hull the LOCAL player owns is reclaimable via the
     // in-world Pilot action. The selection id IS the shipInstanceId (the
     // its `mirror.ships` key), which is exactly what `pilot_ship` needs.
-    if (isOwnedByMe(client.mirror, id, l)) data.pilotShipId = id;
+    if (mine) data.pilotShipId = id;
     return data;
   }
   return null;

@@ -419,7 +419,7 @@ describe('EntityStatsPanel', () => {
     useUIStore.setState({ selection: { ids: [], focusId: 'linger-9', focusKind: 'lingering' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Nova');
-    expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('heavy');
+    expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('Heavy');
     expect(screen.queryByText('HULL')).toBeNull();
   });
 
@@ -439,6 +439,38 @@ describe('EntityStatsPanel', () => {
     fireEvent.click(btn);
     // The selection id IS the shipInstanceId (its `mirror.ships` key).
     expect(sendPilotShip).toHaveBeenCalledWith('ship-mine');
+  });
+
+  // Smoke-test bug (Pixel 7 film): a Mining Skiff my own Shipyard built and
+  // parked read "Abandoned hull" with the raw kind id "mining-skiff". The
+  // server leaves displayName '' when the owner has no account label (a
+  // guest), and the panel never asked whether the hull was mine.
+  it('my own parked hull with no owner name reads as mine, by its kind display name', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me',
+        ships: new Map([['ship-yard', { isActive: false, ownerPlayerId: 'me', displayName: '', kind: 'mining-skiff', x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selection: { ids: [], focusId: 'ship-yard', focusKind: 'lingering' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Mining Skiff');
+    expect(screen.getByTestId('entity-stats-owner')).toHaveTextContent('OWNER you');
+    expect(screen.queryByText(/Abandoned hull/)).toBeNull();
+    expect(screen.queryByText(/mining-skiff/)).toBeNull();
+  });
+
+  it("another player's unnamed parked hull shows its kind display name, never the raw id", () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me',
+        ships: new Map([['ship-x', { isActive: false, ownerPlayerId: 'someone-else', displayName: '', kind: 'mining-skiff', x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selection: { ids: [], focusId: 'ship-x', focusKind: 'lingering' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('Mining Skiff');
+    expect(screen.queryByText(/mining-skiff/)).toBeNull();
   });
 
   it("does NOT show a Pilot action on ANOTHER player's lingering hull", () => {
