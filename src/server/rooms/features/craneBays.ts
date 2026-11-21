@@ -126,7 +126,7 @@ export class CraneBays {
       this.dropDepositDwell(botId);
       return;
     }
-    if (onStructureCraneBay(dock.kind, dock.x, dock.y, dock.rot ?? 0, c.x, c.y)) this.dockDwell(c, dock, undefined, job);
+    if (onStructureCraneBay(dock.kind, dock.x, dock.y, dock.rot ?? 0, c.x, c.y, dock.mirror)) this.dockDwell(c, dock, undefined, job);
     else this.dropDepositDwell(botId);
   };
 
@@ -307,7 +307,7 @@ export class CraneBays {
   private ownDockBayAt(owner: string, x: number, y: number): StructureRecord | null {
     for (const rec of this.h.structures().all()) {
       if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
-      if (onStructureCraneBay(rec.kind, rec.x, rec.y, rec.rot ?? 0, x, y)) return rec;
+      if (onStructureCraneBay(rec.kind, rec.x, rec.y, rec.rot ?? 0, x, y, rec.mirror)) return rec;
     }
     return null;
   }

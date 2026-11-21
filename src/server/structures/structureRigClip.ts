@@ -17,6 +17,7 @@ import { twoBoneIkSolve } from '../../core/articulation/ikAdapter.js';
 import { rigClipIndex } from '../../core/articulation/rig.js';
 import { craneGripPoint } from '../../core/articulation/craneGrip.js';
 import { craneBayFor, rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
+import { structureWorldToLocal } from '../../shared-types/structureKinds/geometry.js';
 import { encodeRigClip, encodeRigHold, STRUCTURE_DEFAULTS as SD } from '../../shared-types/structureStateWire.js';
 import type { StructureState } from '../rooms/schema/SectorState.js';
 import type { StructureRecord } from './StructureRegistry.js';
@@ -97,14 +98,12 @@ export function writeRigClipRow(rec: StructureRecord, st: StructureState): void 
 }
 
 /** World point (wx, wy) in `rec`'s host frame (its centre, turned by `rot`
- *  degrees CCW): what a targeted clip takes. Scene / test entry points only. */
+ *  degrees CCW, build mirror undone): what a targeted clip takes. Scene / test entry points only. */
 export function worldToRigHost(rec: StructureRecord, wx: number, wy: number): { x: number; y: number } {
   const a = ((rec.rot ?? 0) * Math.PI) / 180;
-  const dx = wx - rec.x;
-  const dy = wy - rec.y;
-  const c = Math.cos(a);
-  const s = Math.sin(a);
-  return { x: dx * c + dy * s, y: -dx * s + dy * c };
+  // The shared inverse transform: a mirrored host's rig solves in its
+  // unflipped frame (the drawing flips it back; `structureLocalToWorld`).
+  return structureWorldToLocal(wx, wy, rec.x, rec.y, Math.cos(a), Math.sin(a), rec.mirror, { x: 0, y: 0 });
 }
 
 /** The crane's target for a ship of `kindId` parked at world (wx, wy) heading
@@ -118,7 +117,10 @@ export function craneGripTarget(
   const local = worldToRigHost(rec, wx, wy);
   const bay = craneBayFor(rec.kind);
   if (bay === null) return local;
-  return craneGripPoint(bay, local.x, local.y, wAngle - ((rec.rot ?? 0) * Math.PI) / 180, kindId, local);
+  // A heading in the host frame; a mirror flip turns heading φ into −φ
+  // (nose (−sin φ, cos φ) with x negated).
+  const la = wAngle - ((rec.rot ?? 0) * Math.PI) / 180;
+  return craneGripPoint(bay, local.x, local.y, rec.mirror === true ? -la : la, kindId, local);
 }
 
 /**

@@ -50,6 +50,8 @@ export interface PersistableStructure {
   y: number;
   /** Phase V — rotation in degrees (absent ⇒ 0). */
   rot?: number;
+  /** Build mirror (absent ⇒ not mirrored). */
+  mirror?: boolean;
   /** Gates: access setting index (absent ⇒ default). */
   gateAccess?: number;
   /** The owner switched it Off (absent ⇒ On). */
@@ -214,6 +216,7 @@ export class SectorPersistence {
         kind: s.kind,
         x: s.x,
         ...(s.rot ? { rot: s.rot } : {}),
+        ...(s.mirror === true ? { mirror: true } : {}),
         ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
         ...doorFields(d.gateDoorOf?.(s.id)),
         ...(s.switchedOff === true ? { switchedOff: true } : {}),

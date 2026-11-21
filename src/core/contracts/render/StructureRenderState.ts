@@ -120,6 +120,9 @@ export interface StructureRenderState {
   /** Hologram pass-through: the body is still a blueprint ghost (the
    *  prediction world lets ships through; `isStructureBodySolid`). */
   ghostBody?: boolean;
+  /** Build mirror: placed left-right flipped (x → −x in its local frame,
+   *  before rotation; `structureLocalToWorld`). */
+  mirror?: boolean;
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;

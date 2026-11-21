@@ -170,7 +170,7 @@ function unpackHull(h: BlueprintMessageHost, playerId: string, networkEntityId: 
   if (from === undefined) return [false, `There is no packed ${name} in this base.`];
   const item = takePacked(from.hold!, product)!;
   h.storage().commitChanged([from], []);
-  const res = h.hullHandOff().launchNewHull(playerId, kind, item.quality, newHullOrigin(s.kind, s.x, s.y, s.rot ?? 0, kind), false);
+  const res = h.hullHandOff().launchNewHull(playerId, kind, item.quality, newHullOrigin(s.kind, s.x, s.y, s.rot ?? 0, kind, undefined, s.mirror), false);
   if (!res.ok) {
     (from.hold!.packed ??= []).push(item);
     h.storage().commitChanged([from], []);

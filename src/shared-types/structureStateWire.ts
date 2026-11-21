@@ -45,6 +45,9 @@ export const STRUCTURE_FLAG_LOCK_HOLDING = 256;
 export const STRUCTURE_FLAG_GHOST_BODY = 16384;
 /** The owner switched this structure Off (no draw, no work). */
 export const STRUCTURE_FLAG_OFF = 512;
+/** Build mirror — placed left-right flipped (x → −x in its local frame).
+ *  Bit 15, the last free bit of the uint16. Set once at placement. */
+export const STRUCTURE_FLAG_MIRROR = 32768;
 /** The owner's power throttle rides bits 10-13 of `flags` as the tenths
  *  BELOW full (0 = 100%, the default, so an unthrottled row sends no bits;
  *  10 = 0%). No new schema field. Both sides use these helpers (#15). */

@@ -71,6 +71,9 @@ export interface SectorSnapshotStructure {
   y: number;
   /** Phase V — rotation in degrees (0/90/180/270). Absent ⇒ 0. */
   rot?: number;
+  /** Build mirror: placed left-right flipped. Absent ⇒ not. Additive +
+   *  optional (no schema bump), like `rot`. */
+  mirror?: boolean;
   /** Gates: who the gate opens for (GATE_ACCESS_IDS index). Absent ⇒ default. */
   gateAccess?: number;
   /** Gates (door-power slice 12): a door's position P (1..DOOR_POS_MAX) at

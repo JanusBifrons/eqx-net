@@ -33,6 +33,7 @@ import {
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_FLAG_GHOST_BODY,
+  STRUCTURE_FLAG_MIRROR,
   STRUCTURE_TARGET_NONE,
   STRUCTURE_DEFAULTS as SD,
   encodePlayerTurretTarget,
@@ -154,6 +155,7 @@ export class StructuresSliceSync {
       if (rec.noAmmo === true) flags |= STRUCTURE_FLAG_NO_AMMO;
       if (rec.drawFull === true) flags |= STRUCTURE_FLAG_DRAW_FULL;
       if (rec.switchedOff === true) flags |= STRUCTURE_FLAG_OFF;
+      if (rec.mirror === true) flags |= STRUCTURE_FLAG_MIRROR;
       if (rec.throttle !== undefined) flags |= encodeStructureThrottleFlags(rec.throttle);
       if (h.breakIns.breached(rec.id)) flags |= STRUCTURE_FLAG_BREACH;
       if (rec.isConstructed && getStructureKind(rec.kind).fuelEveryPulses != null && rec.fueled !== true) flags |= STRUCTURE_FLAG_NO_FUEL;

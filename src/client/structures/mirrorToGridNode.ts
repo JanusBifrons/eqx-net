@@ -177,6 +177,7 @@ export function structureMirrorToGridNode(
   out.x = swarmEntry.x;
   out.y = swarmEntry.y;
   out.rot = swarmEntry.angle;
+  out.mirror = structureState.mirror === true;
   out.radius = kind.radius;
   // Phase V — the rotated footprint box (the structure's swarm angle carries
   // its quarter-turn rotation). Must match the server's structureToGridNode.
@@ -232,6 +233,7 @@ export function ghostToGridNode(
   out.x = x;
   out.y = y;
   out.rot = preview.angle ?? 0;
+  out.mirror = false; // the ghost's mirror arrives with the cable preview (job 4B)
   out.radius = kind.radius;
   const ext = structureHalfExtents(preview.kind, ((preview.angle ?? 0) * 180) / Math.PI);
   out.halfW = ext.hw;

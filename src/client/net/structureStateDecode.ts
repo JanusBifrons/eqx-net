@@ -21,6 +21,7 @@ import {
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_FLAG_LOCK_HOLDING,
   STRUCTURE_FLAG_GHOST_BODY,
+  STRUCTURE_FLAG_MIRROR,
   STRUCTURE_DEFAULTS as D,
   STRUCTURE_RIG_CLIP_TARGET,
   CONN_SOCK_UNKNOWN,
@@ -91,6 +92,7 @@ export function decodeStructureState(
   out.breach = (flags & STRUCTURE_FLAG_BREACH) !== 0 ? true : undefined;
   out.lockHolding = (flags & STRUCTURE_FLAG_LOCK_HOLDING) !== 0 ? true : undefined;
   out.ghostBody = (flags & STRUCTURE_FLAG_GHOST_BODY) !== 0 ? true : undefined;
+  out.mirror = (flags & STRUCTURE_FLAG_MIRROR) !== 0 ? true : undefined;
   // Door kinds: gateOpen + the rig fields carry the door segment (slice 9),
   // decoded into doorA / doorB (+ the scrubbed rigClip).
   const door = isDoorKind(rigKind);

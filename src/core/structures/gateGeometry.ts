@@ -30,6 +30,7 @@ import {
 } from '../../shared-types/structureKinds/gatePosts.js';
 import { PAD_SPECS, TELEPORTER_KINDS, isTeleporterKind, padPostCenters } from '../../shared-types/teleport.js';
 import { STRUCTURE_KINDS } from '../../shared-types/structureKinds/lookup.js';
+import { structureLocalToWorld } from '../../shared-types/structureKinds/geometry.js';
 import { SHIPYARD_SLIP_HALF_W, SHIPYARD_SLIP_X0 } from '../articulation/rigs/heavyIndustry.js';
 import { getShipKind, isShipKindId } from '../../shared-types/shipKinds.js';
 import { tuningFor } from '../../shared-types/shipScale/lookup.js';
@@ -186,19 +187,22 @@ export function worldToLocal(x: number, y: number, angle: number, px: number, py
  * (towardX, towardY): a pylon's centre, or the gate post nearest the far end.
  * Both sides compute fence-to-gate walls with this, so the server collider,
  * the client prediction wall and the drawn span meet at the same post.
+ * `mirror` (build mirror): the posts go through `structureLocalToWorld`.
  */
 export function emitterAnchor(
   kind: string | null | undefined,
   x: number, y: number, angle: number,
   towardX: number, towardY: number,
   out: MutPoint,
+  mirror?: boolean,
 ): MutPoint {
   const t = gateTypeOf(kind);
   if (t === null) { out.x = x; out.y = y; return out; }
   const posts = t === 'gate' ? GATE_POSTS : AIRLOCK_POSTS;
   let bestX = x, bestY = y, best = Infinity;
+  const c = Math.cos(angle), s = Math.sin(angle);
   for (const [lx, ly] of posts) {
-    localToWorld(x, y, angle, lx, ly, out);
+    structureLocalToWorld(lx, ly, x, y, c, s, mirror, out);
     const d = (out.x - towardX) * (out.x - towardX) + (out.y - towardY) * (out.y - towardY);
     if (d < best) { best = d; bestX = out.x; bestY = out.y; }
   }
@@ -211,34 +215,38 @@ export function emitterAnchor(
  * World-axis collider boxes for a gate rotated by a quarter turn, as flat
  * `[offsetX, offsetY, halfW, halfH, ...]` relative to the structure centre.
  * Weapon hits test these instead of the full footprint box, so a shot through
- * an open gate's gap passes. null ⇒ not a gate.
+ * an open gate's gap passes. null ⇒ not a gate. `mirror` flips each box
+ * centre's local x first (build mirror, as `structureLocalToWorld`).
  */
-export function gateWorldAxisBoxes(kind: string | null | undefined, angle: number): Float32Array | null {
+export function gateWorldAxisBoxes(kind: string | null | undefined, angle: number, mirror?: boolean): Float32Array | null {
   const boxes = gateColliderBoxes(kind);
   if (!boxes) return null;
   const q = (((Math.round(angle / (Math.PI / 2)) % 4) + 4) % 4);
   const out = new Float32Array(boxes.length * 4);
   const c = q === 0 ? 1 : q === 2 ? -1 : 0;
   const s = q === 1 ? 1 : q === 3 ? -1 : 0;
+  const f = mirror === true ? -1 : 1;
   for (let i = 0; i < boxes.length; i++) {
     const b = boxes[i]!;
-    out[i * 4] = b.cx * c - b.cy * s;
-    out[i * 4 + 1] = b.cx * s + b.cy * c;
+    out[i * 4] = f * b.cx * c - b.cy * s;
+    out[i * 4 + 1] = f * b.cx * s + b.cy * c;
     out[i * 4 + 2] = q % 2 === 0 ? b.hw : b.hh;
     out[i * 4 + 3] = q % 2 === 0 ? b.hh : b.hw;
   }
   return out;
 }
 
-/** The gate collider parts as polygons (local frame), for the physics body. */
-export function gateColliderPolygons(kind: string | null | undefined): Array<Array<{ x: number; y: number }>> | null {
+/** The gate collider parts as polygons (local frame), for the physics body.
+ *  `mirror` flips local x (build mirror; the Shipyard's parts are lopsided). */
+export function gateColliderPolygons(kind: string | null | undefined, mirror?: boolean): Array<Array<{ x: number; y: number }>> | null {
   const boxes = gateColliderBoxes(kind);
   if (!boxes) return null;
+  const f = mirror === true ? -1 : 1;
   return boxes.map((b) => [
-    { x: b.cx - b.hw, y: b.cy - b.hh },
-    { x: b.cx + b.hw, y: b.cy - b.hh },
-    { x: b.cx + b.hw, y: b.cy + b.hh },
-    { x: b.cx - b.hw, y: b.cy + b.hh },
+    { x: f * b.cx - b.hw, y: b.cy - b.hh },
+    { x: f * b.cx + b.hw, y: b.cy - b.hh },
+    { x: f * b.cx + b.hw, y: b.cy + b.hh },
+    { x: f * b.cx - b.hw, y: b.cy + b.hh },
   ]);
 }
 

@@ -62,9 +62,9 @@ export function visitDerivedWalls(
       const ost = structures.get(other);
       const oe = swarm.get(other);
       if (!ost || !oe || !ost.built || !isShieldEmitterKind(oe.shipKind)) continue;
-      emitterAnchor(oe.shipKind, oe.x, oe.y, oe.angle, e.x, e.y, B);
-      emitterAnchor(e.shipKind, e.x, e.y, e.angle, B.x, B.y, A);
-      emitterAnchor(oe.shipKind, oe.x, oe.y, oe.angle, A.x, A.y, B);
+      emitterAnchor(oe.shipKind, oe.x, oe.y, oe.angle, e.x, e.y, B, ost.mirror);
+      emitterAnchor(e.shipKind, e.x, e.y, e.angle, B.x, B.y, A, st.mirror);
+      emitterAnchor(oe.shipKind, oe.x, oe.y, oe.angle, A.x, A.y, B, ost.mirror);
       v.wall(id * 65536 + other, A.x, A.y, B.x, B.y, up && ost.wallActive === true, SHIELD_WALL_THICKNESS, false);
     }
   }

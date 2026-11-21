@@ -33,10 +33,18 @@ function bodySolid(ctx: ClientSpawnCtx): boolean {
   return row === undefined || isStructureBodySolid(row);
 }
 
+/** Is `ctx`'s structure placed mirrored (build mirror)? The room-state row
+ *  decides; no row yet ⇒ unmirrored (rebuilt once when the row says so). */
+function bodyMirrored(ctx: ClientSpawnCtx): boolean {
+  return ctx.structures?.get(ctx.entityId)?.mirror === true;
+}
+
 export class StructureClientLeaf extends ClientEntityLeafBase {
   /** predWorld keys whose body is currently a ghost (set on spawn, so a
    *  re-streamed body starts clean). */
   private readonly ghostKeys = new Set<string>();
+  /** predWorld keys whose body was built mirrored (set on spawn). */
+  private readonly mirroredKeys = new Set<string>();
 
   constructor() {
     super('structure');
@@ -44,13 +52,18 @@ export class StructureClientLeaf extends ClientEntityLeafBase {
 
   spawnBody(ctx: ClientSpawnCtx): void {
     const solid = bodySolid(ctx);
+    const mirror = bodyMirrored(ctx);
+    if (mirror) this.mirroredKeys.add(ctx.key);
+    else this.mirroredKeys.delete(ctx.key);
     // Polygon hull from the single hull-points source — a convexHull collider
     // matching the silhouette (and the server collider built from the same
     // points), replacing the old circular collider.
     const vertices = structureHullPoints(ctx.entry.shipKind, ctx.entry.radius);
     // Gates: the posts (and airlock walls) as separate parts, matching the
-    // server body, so the local ship can fly through the gap (#15).
-    const parts = gateColliderPolygons(ctx.entry.shipKind) ?? undefined;
+    // server body, so the local ship can fly through the gap (#15). Flipped
+    // with the build mirror exactly as `SwarmSpawner.spawnStructure` does
+    // (the Shipyard's parts are lopsided).
+    const parts = gateColliderPolygons(ctx.entry.shipKind, mirror) ?? undefined;
     ctx.predWorld.spawnObstacle(
       ctx.key,
       ctx.entry.x,
@@ -73,7 +86,13 @@ export class StructureClientLeaf extends ClientEntityLeafBase {
 
   onSync(ctx: ClientSyncCtx): void {
     const solid = bodySolid(ctx);
-    if (solid === this.ghostKeys.has(ctx.key)) {
+    if (bodyMirrored(ctx) !== this.mirroredKeys.has(ctx.key)) {
+      // The swarm entry spawned the body before its row said mirrored (or the
+      // flag changed): rebuild ONCE with the flipped parts. spawnBody also
+      // re-reads the ghost state, so this covers a ghost change too.
+      ctx.predWorld.despawnShip(ctx.key);
+      this.spawnBody(ctx);
+    } else if (solid === this.ghostKeys.has(ctx.key)) {
       if (solid) {
         // The server's `solidifyStructure`: default groups, then the rig.
         this.ghostKeys.delete(ctx.key);
