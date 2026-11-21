@@ -83,14 +83,16 @@ Every lane play session leaves numbers on disk with no extra step:
     also carries `viewHalf` (the zoom, as in `perf_summary`) and `mode`
     (`fly` / `command` / `build`) at the moment it fired
     (`withLaneStallContext` in `laneFrameSummary.ts`; read only when an event
-    fires, never per frame).
+    fires, never per frame), plus `phases`: the last stall frame's time by
+    frame phase in ms (below), and `phasesAgeMs` (how long ago that frame
+    ended: about 0 on `raf_stutter` / `raf_gap`, later on a `loaf`).
   - `corrections.ndjson`, `snapshots.ndjson`: the reconciliation detail behind
     sideways jitter.
 - `run/audit/`: the gameplay audit log.
 
 All of it is lane-only: a normal production build has `VITE_PHONE_LANE` unset,
-so it streams no capture, makes no summary and adds no zoom or mode to stall
-events.
+so it streams no capture, makes no summary and adds no zoom, mode or phases to
+stall events.
 
 ### Naming the code behind a stall
 
@@ -107,16 +109,39 @@ pnpm phone:names <perf.ndjson> --dist <a dist folder>
 
 It prints the LoAF scripts by total time as source function, file:line and
 the source line, then the stall counts by control mode and by zoom
-(`viewHalf` in powers of two). Script file names carry the build hash, so a
+(`viewHalf` in powers of two), then the stall time by frame phase (below).
+Script file names carry the build hash, so a
 capture resolves only against the build it was played on: the next
 `pnpm phone up` rebuilds `dist/` and the old maps are gone ("rebuilt since?").
 Resolve before the next `up`, or copy `dist/` aside first. Code:
 `scripts/dev/lane-stall-names.mjs` (no deps; test
 `tests/unit/lane-stall-names.test.ts`).
 
-Which render phases took longest inside a stall frame is not recorded: the
-renderer's perf probe times only the whole update, so there are no phase hooks
-to read without a new profiler.
+### Which phase of the frame stalled
+
+A lane build times each phase of every frame
+(`src/client/debug/perf/lanePhaseTiming.ts`): `performance.now()` marks around
+the existing calls add into one preallocated `Float64Array` (no allocation per
+frame). The phases, in frame order:
+
+| Phase | What it times |
+|---|---|
+| `inbound`, `physics`, `mirror` | the game RAF loop (`app/gameRafLoop.ts`): snapshot drain + apply, the prediction step, the render-mirror sync |
+| `ships`, `connectors`, `swarm`, `farIcons`, `turretsLit`, `sweep` | `updateEntitySprites` (`render/pixi/worldSpriteUpdater.ts`): ship sprites, the structures' connector web, swarm sprites (structures, drones, rocks, wrecks), far-zoom icons, turret shots + lit scene, the unseen-sprite sweep |
+| `projectiles`, `beamsCamera`, `backdrop`, `hudOverlays`, `feedback`, `effects` | the rest of `PixiRenderer.update()` (`render/pixi/framePasses.ts`) |
+| `cameraTick`, `fleetOverlay`, `art` | the renderer's Pixi ticker callback (`rendererSetup/initTicker.ts`) |
+| `pixiRender` | Pixi's own `app.render` (scene walk, batching, GL calls), bracketed by two lane-only ticker listeners just above and below its priority |
+
+The sums roll at each processed frame where the stall detector measures the
+gap; a frame over 30 ms keeps its breakdown, and the stall events carry it as
+`phases` (only phases at 0.05 ms or more). `pnpm phone:names` totals the
+stall time by phase over `raf_stutter` + `raf_gap` (one event per stall frame;
+a `loaf` repeats the same frame), with each phase's share of the stall time
+and `(untimed)`: the part of the gap no mark covers (other callbacks, React,
+GC, style and layout, compositing, and the GPU, whose work is asynchronous
+and shows up only as a later wait). Main-thread renderer only (the phone's
+default); the renderer worker never installs it. Off the lane each mark is
+one null check and reads no clock.
 
 ## Security
 

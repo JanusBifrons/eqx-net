@@ -25,6 +25,7 @@
 import { consumeOneFrameTriggers } from '../render/perFrameTriggers.js';
 import { shouldSkipFrame } from '../perf/frameRateCap.js';
 import { logEvent, isFullDiagMode } from '../debug/ClientLogger.js';
+import { lanePhaseStart, markLaneLoopPhases } from '../debug/perf/lanePhaseTiming.js';
 import {
   useUIStore,
   computeBootstrapReadyFromState,
@@ -217,6 +218,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // (incl. during loading). DC raw-bytes decode + Colyseus state-diff
     // hybrid drain + snapshot coalescer drain — these are the message-
     // arrival paths the bootstrap gates depend on (firstSnapshotApplied).
+    const inboundStart = lanePhaseStart(); // phone-lane phase timing (0, no clock read, off the lane)
     gameClient.tickInbound(deltaMs);
 
     // Probe 1 (mobile-perf-investigation): per-RAF work breakdown.
@@ -246,6 +248,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       renderer.glideCameraTo(fleetArrival.x, fleetArrival.y, PILOT_SWAP_GLIDE_MS);
     }
     const renderStart = performance.now();
+    markLaneLoopPhases(inboundStart, physicsStart, mirrorStart, renderStart);
     const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
     if (shouldRender) renderer.update(gameClient.mirror);
     const renderEnd = performance.now();
