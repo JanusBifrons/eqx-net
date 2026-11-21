@@ -139,6 +139,30 @@ let _tickClockOffsetMs = 0;
 let _tickClockLastTick = 0;
 let _tickClockLastStampMs = 0;
 
+// Drone stream counters (netcode gap smoothing, S0-2). Read-only telemetry:
+// nothing here feeds a pose, delay or clock. Scalars only (no allocation).
+/** Wall ms the last tick-stamped packet arrived after its tick-clock stamp. */
+let _latenessLastMs = 0;
+/** Largest lateness (wall ms) seen since the last reset. */
+let _latenessMaxMs = 0;
+/** Sum of lateness (wall ms) over `_latenessCount` packets (mean = sum/count). */
+let _latenessSumMs = 0;
+/** Tick-stamped packets measured. */
+let _latenessCount = 0;
+/** Ring slots overwritten while their stamp was still newer than the read
+ *  point (proxy for "not yet read": the ring has no per-slot read flag). */
+let _overwriteUnreadCount = 0;
+/** Reads whose target fell before the oldest pose of a FULL ring (old-end
+ *  clamp: history the read needed was already overwritten). A newly seen
+ *  drone whose ring is still filling is not counted. */
+let _oldEndClampCount = 0;
+/** Reads past the newest pose by more than EXTRAPOLATION_LIMIT_MS (frozen at
+ *  the glide limit). Counted per entity per frame. */
+let _glideLimitCount = 0;
+/** The read point: the target time of the latest interpolation read. NaN
+ *  until the first read, so no overwrite counts before anything was read. */
+let _lastReadTargetMs = Number.NaN;
+
 /**
  * The time a binary swarm packet of server tick `tick` is stamped with in the
  * pose ring (fleet-melee follow jitter, owner take 10). Stamping the raw
@@ -162,15 +186,42 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
     _tickClockOffsetMs += (cand - _tickClockOffsetMs) * TICK_CLOCK_DRIFT_UP;
   }
   const stamp = Math.min(nowMs, tick * tickWallMs + _tickClockOffsetMs);
+  const lateMs = nowMs - stamp;
+  _latenessLastMs = lateMs;
+  if (lateMs > _latenessMaxMs) _latenessMaxMs = lateMs;
+  _latenessSumMs += lateMs;
+  _latenessCount++;
   _tickClockLastTick = tick;
   _tickClockLastStampMs = stamp;
   return stamp;
 }
 
-/** Forget the tick clock (tests; a new room re-seeds on its own). */
+/** Forget the tick clock and zero the drone stream counters (tests; a new
+ *  room re-seeds on its own). */
 export function resetSwarmTickClock(): void {
   _tickClockSeeded = false;
+  _latenessLastMs = 0;
+  _latenessMaxMs = 0;
+  _latenessSumMs = 0;
+  _latenessCount = 0;
+  _overwriteUnreadCount = 0;
+  _oldEndClampCount = 0;
+  _glideLimitCount = 0;
+  _lastReadTargetMs = Number.NaN;
 }
+
+/** The decoder calls this before writing over a populated ring slot. */
+export function noteSwarmSlotOverwrite(slotArrivalMs: number): void {
+  if (slotArrivalMs > _lastReadTargetMs) _overwriteUnreadCount++;
+}
+
+export function getSwarmLatenessLastMs(): number { return _latenessLastMs; }
+export function getSwarmLatenessMaxMs(): number { return _latenessMaxMs; }
+export function getSwarmLatenessSumMs(): number { return _latenessSumMs; }
+export function getSwarmLatenessCount(): number { return _latenessCount; }
+export function getSwarmOverwriteUnreadCount(): number { return _overwriteUnreadCount; }
+export function getSwarmOldEndClampCount(): number { return _oldEndClampCount; }
+export function getSwarmGlideLimitCount(): number { return _glideLimitCount; }
 
 export function getSwarmDisplayDelayMs(): number {
   return _displayDelayMs;
@@ -269,6 +320,11 @@ export function interpolateSwarmPose(
     return out;
   }
   const oldest = _populatedScratch[0]!;
+  _lastReadTargetMs = targetMs;
+  if (count > 1) {
+    if (targetMs < oldest.arrivalMs) { if (count === POSE_RING_DEPTH) _oldEndClampCount++; }
+    else if (targetMs - newest.arrivalMs > EXTRAPOLATION_LIMIT_MS) _glideLimitCount++;
+  }
 
   // Single arrival or render time before our oldest sample: pin to oldest
   // pose. Same shape the legacy first-sighting / pre-window branch used.
