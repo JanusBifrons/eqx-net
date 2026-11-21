@@ -115,6 +115,18 @@ describe('LostConnectionOverlay', () => {
     expect(useUIStore.getState().phase).toBe('galaxy-map');
   });
 
+  it('does not bounce to the galaxy map when the countdown ends while a rejoin is under way', () => {
+    // useAutoRejoin flips game → connecting → game with status 'connecting';
+    // the overlay is still in its HIDE_DEBOUNCE window when the count hits 0.
+    useUIStore.getState().setConnectionStatus('disconnected');
+    render(<LostConnectionOverlay />);
+    act(() => { vi.advanceTimersByTime(SHOW_DEBOUNCE_MS + 100); });
+    act(() => { vi.advanceTimersByTime(14_500); });
+    act(() => { useUIStore.getState().setConnectionStatus('connecting'); });
+    act(() => { vi.advanceTimersByTime(1_000); });
+    expect(useUIStore.getState().phase).toBe('game');
+  });
+
   it('routes to the galaxy map immediately when the manual button is clicked', () => {
     useUIStore.getState().setConnectionStatus('disconnected');
     render(<LostConnectionOverlay />);
