@@ -8,9 +8,11 @@
  *     ring (perf-floor Phase 1; cost ≈ tens of µs on desktop).
  *   - Snapshot interval + jitter computation (max-min of last 10).
  *   - Server tick rate EWMA → Zustand for the HUD chip.
- *   - Swarm display-delay buffer sizing from the binary swarm EWMA
- *     plus the JSON-drop bias (Step 4, drone-snapshot-interpolation
- *     pivot — see `docs/architecture/drone-snapshot-interpolation.md`).
+ *   - The JSON snapshot drop detector (`droppedSnapshotsRecent`, read
+ *     by netgate). It no longer sizes the drone display delay: that
+ *     comes from the drone packet lateness estimate in
+ *     `swarmInterpolation.ts` (netcode gap smoothing S3-3; see
+ *     `docs/architecture/drone-snapshot-interpolation.md`).
  *   - Collision-event stale-guard tick — late collision events from
  *     the worker arriving with `tick < snapshot.serverTick` are
  *     dropped (the snapshot has already corrected predWorld).
@@ -25,13 +27,8 @@ import {
 } from './perfStats';
 import {
   observeSnapshotTick,
-  computeInterpBiasMs,
   type DropDetector,
 } from './snapshotDropDetector';
-import {
-  setSwarmDisplayDelayMs,
-  ADAPTIVE_DELAY_FACTOR,
-} from './swarmInterpolation';
 import { useUIStore } from '../state/store';
 import type { CollisionGuardState } from './applyCollisionResolved';
 import type { PredictionStats } from './predictionStats';
@@ -46,8 +43,9 @@ export interface SnapshotPerfStatsCtx {
   collisionGuard: CollisionGuardState;
   dropDetector: DropDetector;
   /** EWMA of inter-arrival ms on the BINARY swarm channel — owned by
-   *  the binary-swarm handler. Read here per JSON snapshot to size
-   *  the display-delay buffer. */
+   *  the binary-swarm handler. No longer read here (S3-3: the drone
+   *  display delay is sized from packet lateness in
+   *  `swarmInterpolation.ts`); kept until the caller stops passing it. */
   swarmBinaryEwma: number;
 }
 
@@ -113,21 +111,11 @@ export function applySnapshotPerfStats(
     ctx.stats.serverTickHzEwma = smoothed;
     useUIStore.getState().setServerTickHz(Math.round(smoothed));
 
-    // Adapt the swarm display-delay buffer to the BINARY swarm cadence
-    // (Step 4, drone-snapshot-interpolation pivot). `swarmBinaryEwma`
-    // tracks the actual drone-pose channel inter-arrival, NOT this
-    // 20 Hz JSON snapshot interval:
-    //   - in-interest combat: ewma ≈ 16–30 ms → ×1.5 ≈ 45 → clamped UP
-    //     to the 100 ms floor (two bracketing per-tick samples always
-    //     exist → smooth lerp, zero steady-state extrapolation).
-    //   - out-of-interest decimated: ewma ≈ 100–170 ms → ×1.5 ≈
-    //     150–255 → within the 280 ms ceiling, still has a bracket.
-    // Re-evaluated on the JSON snapshot tick (~20 Hz) — frequent enough
-    // to track cadence shifts, and `dropBias` (JSON drop-detector) still
-    // biases up on genuine loss bursts so the buffer never empties.
+    // JSON drop detector: feeds `droppedSnapshotsRecent` (netgate). The
+    // drone display delay no longer reads it, nor the binary inter-arrival
+    // EWMA: its target comes from the drone packet lateness estimate
+    // (`swarmArrivalStampMs`, netcode gap smoothing S3-3).
     observeSnapshotTick(ctx.dropDetector, snap.serverTick);
-    const dropBias = computeInterpBiasMs(ctx.dropDetector.dropCount);
-    setSwarmDisplayDelayMs(ctx.swarmBinaryEwma * ADAPTIVE_DELAY_FACTOR + dropBias);
   }
 
   // Rolling jitter: max − min of the last 10 snapshot intervals.
