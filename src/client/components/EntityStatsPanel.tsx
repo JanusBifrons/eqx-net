@@ -533,6 +533,8 @@ export const CARD_MAX_W = 'max(120px, 100vw - 2 * clamp(280px, 40vw, 360px) - 16
 const ELLIPSIS_SX = { overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, minWidth: 0 };
 const ROOT_SX = {
   maxWidth: CARD_MAX_W,
+  // Last guard only: each card row ellipsizes or wraps on its own (structureCard.tsx).
+  overflow: 'hidden' as const,
   display: 'grid',
   gridTemplateColumns: 'auto auto',
   alignItems: 'center',
