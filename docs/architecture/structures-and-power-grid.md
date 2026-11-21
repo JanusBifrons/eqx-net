@@ -712,7 +712,14 @@ the client says so, derived from the row alone (`buildPct >= 1 && !built`,
 [`buildAwaitingClear.ts`](../../src/client/structures/buildAwaitingClear.ts)):
 "WAITING FOR SHIPS TO CLEAR" above the blueprint and "FINISHED — WAITING FOR
 SHIPS TO CLEAR" on the inspector card. Records built
-outside the pulse (restore, seeded bases) settle on the next pulse. **One rule
+outside the pulse (restore, seeded bases) settle on the next pulse. **A
+pre-built kind placed round a ship** (a Capital unpacked over the Fighter
+parked in Command view) starts the same way: built, but a hologram until the
+space is clear (`shipInsideFootprint` at placement), and every parked hull
+inside the footprint gets its owner's ordinary Move order to the nearest clear
+spot (`moveParkedHullsClear` → `landingPoint` → `FleetCommandSubsystem.applyOrder`;
+any placed blueprint does this too). A flown ship inside just flies out through
+it. Lock: `tests/integration/sectorRoom/capitalUnpackClearsShip.test.ts`. **One rule
 everywhere (3F2):** `isStructureBodySolid` (`core/structures/structureBody.ts`,
 reads `ghostBody`; `isConstructed` alone is not it: a finished blueprint waits
 as a ghost, and a structure mid-upgrade is unbuilt but solid). The room-state
