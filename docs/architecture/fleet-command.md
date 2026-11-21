@@ -329,7 +329,7 @@ rate-limited per session per tick by `fleetMsgAllowed`):
 |---|---|
 | `command` | Leave the ship you fly (alias of `spectate`: it parks and gets a wingman). |
 | `pilot_ship { shipId }` | Take a parked ship's controls (same-sector instant swap). |
-| `fleet_order { shipIds, kind, x?, y?, targetId? }` | `move` / `stop` / `attack`. |
+| `fleet_order { shipIds, kind, x?, y?, targetId?, speed? }` | `move` / `stop` / `attack` / `speed`. `speed` (`FleetSpeedSchema`, finite 0..1) is a fraction of each ship's own top speed; on a `move` it paces that order (absent = full, what old clients send); kind `speed` (speed required) re-paces the ships' RUNNING moves and keeps their points (`FleetCommandSubsystem.setMoveSpeed`). 0 brakes and holds in place with the point kept; a later speed sends the ship on. The AI pilot brain caps cruise at `speed × handling.maxSpeed` (per hull, `TravelMode.go`) and boosts only at full. The client maps the telegraph step through the shared `HELM_SPEED_FRACTION`; parity: `shipActionsClient.fleet.test.ts`. |
 | `set_mode { shipIds, mode, x?, y?, route?, escortId? }` | Mode, with the picked route / escort / retreat point. |
 | `set_stance`, `form_squad`, `disband_squad` | As named. |
 

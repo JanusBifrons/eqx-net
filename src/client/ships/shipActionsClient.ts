@@ -46,10 +46,14 @@ function dispatchFleet(msg: FleetCommandMessage): boolean {
   return client.sendFleetCommand(msg);
 }
 
-/** One-off order: `move` to (x, y), `attack` targetId, or `stop`. */
+/** One-off order: `move` to (x, y) (at the Command `speed`, a fraction of
+ *  each ship's top speed; absent = full), `attack` targetId, or `stop`. */
 export function sendFleetOrder(shipIds: string[], order: FleetOrder): boolean {
   if (order.kind === 'move') {
-    return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'move', x: order.x, y: order.y });
+    return dispatchFleet({
+      type: 'fleet_order', shipIds, kind: 'move', x: order.x, y: order.y,
+      ...(order.speed !== undefined ? { speed: order.speed } : {}),
+    });
   }
   if (order.kind === 'attack') {
     return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'attack', targetId: order.targetId });
@@ -78,6 +82,12 @@ export function sendSetMode(shipIds: string[], mode: FleetMode, params: SetModeP
     ...(params.escortId !== undefined ? { escortId: params.escortId } : {}),
     ...(params.x !== undefined && params.y !== undefined ? { x: params.x, y: params.y } : {}),
   });
+}
+
+/** Command speed: re-pace the ships' running Moves to `speed` (a fraction
+ *  of each ship's top speed; 0 halts them in place, keeping the point). */
+export function sendFleetSpeed(shipIds: string[], speed: number): boolean {
+  return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'speed', speed });
 }
 
 /** Set the fire stance for the given ships. */

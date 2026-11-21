@@ -305,13 +305,12 @@ export interface UIStore {
    *  points live in the renderer; `points` is just how many are picked, and
    *  `doneSeq` bumps when the player presses Done. */
   fleetPick: { kind: 'patrol' | 'escort' | 'retreat'; points: number; doneSeq: number } | null;
-  /** Helm orders (capital-ship R&D round 3 D), discrete UI state only: whether
-   *  the ship you fly takes helm orders, whether a course is set, and the speed
-   *  setting (0 stop, 1 one third, 2 two thirds, 3 full). The course point
-   *  itself lives in the client's helm controller, never here (#2). */
+  /** Helm orders, discrete only (course point lives in the helm controller, #2). */
   helmAvailable: boolean;
   helmActive: boolean;
   helmSpeed: 0 | 1 | 2 | 3;
+  /** Command speed for the selection's Moves (0 stop, 1 ⅓, 2 ⅔, 3 full). Discrete UI choice. */
+  commandSpeed: 0 | 1 | 2 | 3;
   /** The local ship's full energy pool — the denominator for the top-center
    *  HUD energy fill (the fill comes per-frame from
    *  `ColyseusClient.getPredictedEnergy()`). Set once on spawn from the
@@ -562,6 +561,7 @@ export interface UIStore {
   requestFleetPickDone: () => void;
   setEnergyMax: (max: number) => void;
   setHelmState: (available: boolean, active: boolean, speed: 0 | 1 | 2 | 3) => void;
+  setCommandSpeed: (speed: 0 | 1 | 2 | 3) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;
   setWallet: (credits: number | null) => void;
   setFreeLaunches: (n: number | null) => void;

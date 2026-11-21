@@ -40,13 +40,7 @@ export type { SelectionFocusKind } from './storeTypes.js';
 // `useAuthStore.user` is known and re-reads from the per-user slot. If you
 // log in for the first time on a device, the legacy `eqxSettings` global key
 // migrates into the per-user slot on that re-read (see `userPrefs.ts`).
-/**
- * The player-facing control mode derived from the stored `pilotMode` +
- * `buildMode` (see `ControlMode`). A pure selector, so the names never drift.
- */
-export function selectControlMode(s: Pick<UIStore, 'pilotMode' | 'buildMode'> & Partial<Pick<UIStore, 'pendingCommandStart'>>): ControlMode {
-  return s.buildMode ? 'build' : s.pilotMode === 'spectator' || s.pendingCommandStart === true ? 'command' : 'fly';
-}
+export { selectControlMode } from './controlMode.js';
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);
 /** Nothing selected (one shared object, so an empty selection never re-renders). */
@@ -178,6 +172,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   helmAvailable: false,
   helmActive: false,
   helmSpeed: 3,
+  commandSpeed: 3,
   energyMax: 100,
   cargo: null,
   cargoCapacity: 0,
@@ -312,6 +307,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   )),
   setEnergyMax: (max) => set({ energyMax: max }),
   setHelmState: (available, active, speed) => set({ helmAvailable: available, helmActive: active, helmSpeed: speed }),
+  setCommandSpeed: (speed) => set({ commandSpeed: speed }),
   setCargo: (cargo, capacity) => set({ cargo, cargoCapacity: capacity }),
   setWallet: (credits) => set({ wallet: credits }),
   setFreeLaunches: (n) => set({ freeLaunches: n }),

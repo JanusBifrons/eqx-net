@@ -1,12 +1,18 @@
 import { Box, ButtonBase } from '@mui/material';
+import { HELM_SPEED_FRACTION } from '@core/helm/helm';
 import { useUIStore, useShouldRenderHud } from '../state/store';
-import { getGameClient } from '../net/clientSingleton';
+import { helmOrdersAllowed } from '../helm/helmModeGate.js';
+import { fleetCommands } from '../fleet/fleetCommands.js';
 
 /**
- * Helm orders (capital-ship R&D round 3 D). Shown only while you fly a ship
- * that takes helm orders (a capital). Tap empty space to set the course; these
- * buttons set the speed: stop, one third, two thirds, full. WASD overrides and
- * cancels the course. Reads only discrete Zustand state (#2).
+ * The ship-speed telegraph (Stop / ⅓ / ⅔ / Full), a Command control (owner,
+ * 2026-11-21: "Command is where you click move to go, and where you set the
+ * speed. Fly is just manual"). It shows in Command while ships are selected
+ * and acts on that selection: the setting rides every move order you give
+ * (`fleet_order` `speed`), and changing it re-paces the selected ships'
+ * running moves (Stop halts them where they are; they keep the point, and a
+ * new speed sends them on). Never in Fly or Build, for any hull.
+ * Reads only discrete Zustand state (#2).
  */
 const LABELS = ['Stop', '⅓', '⅔', 'Full'] as const;
 
@@ -33,22 +39,29 @@ const BTN_SX = {
 };
 const BTN_ON_SX = { ...BTN_SX, backgroundColor: 'rgba(90,160,255,0.45)', color: '#fff' };
 
+/** Set the Command speed and re-pace the selection's running moves. */
+function chooseSpeed(step: 0 | 1 | 2 | 3): void {
+  const s = useUIStore.getState();
+  s.setCommandSpeed(step);
+  const ids = s.selection.ids;
+  if (ids.length > 0) fleetCommands().setSpeed(ids, HELM_SPEED_FRACTION[step] ?? 1);
+}
+
 export function HelmPanel(): JSX.Element | null {
   const show = useShouldRenderHud();
-  const available = useUIStore((s) => s.helmAvailable);
-  const active = useUIStore((s) => s.helmActive);
-  const speed = useUIStore((s) => s.helmSpeed);
-  const building = useUIStore((s) => s.buildMode);
-  if (!show || !available || building) return null;
+  const speed = useUIStore((s) => s.commandSpeed);
+  const selected = useUIStore((s) => s.selection.ids.length > 0);
+  const command = useUIStore(helmOrdersAllowed); // Command only, never Fly or Build
+  if (!show || !command || !selected) return null;
   return (
-    <Box sx={ROOT_SX} data-testid="helm-panel" data-helm-active={active ? '1' : '0'} data-helm-speed={speed}>
-      <Box component="span" sx={LABEL_SX}>{active ? 'Helm: course set' : 'Helm: tap to set course'}</Box>
+    <Box sx={ROOT_SX} data-testid="helm-panel" data-helm-speed={speed}>
+      <Box component="span" sx={LABEL_SX}>Speed</Box>
       {LABELS.map((label, i) => (
         <ButtonBase
           key={label}
           sx={i === speed ? BTN_ON_SX : BTN_SX}
           data-testid={`helm-speed-${i}`}
-          onClick={() => getGameClient()?.setHelmSpeed(i as 0 | 1 | 2 | 3)}
+          onClick={() => chooseSpeed(i as 0 | 1 | 2 | 3)}
         >
           {label}
         </ButtonBase>
