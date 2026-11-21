@@ -532,7 +532,7 @@ function stampMark(
 const SCREEN_GLASS = 0x0b1018, SCREEN_GLOW = 0.9, SCREEN_EMBLEM = 0.74, SCREEN_BEZEL = 0.9;
 
 /**
- * Structure livery (structure restyle 1c, `?structLivery=1`): the owner's
+ * Structure livery (structure restyle 1c, on by default, `?structLivery=0` = off): the owner's
  * emblem in a planned slot (`structureVisuals` `SigilSlotOp`; local world
  * units). The slot is authoritative (no clear-area search, unlike
  * `stampSigils`'s hulls). `screen`: the beacon's big sigil screen, a dark

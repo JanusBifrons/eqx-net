@@ -26,7 +26,7 @@ import {
 export { mixColor, type LightOp, type PolyOp, type RectOp };
 
 /**
- * Livery (structure restyle 1c, `?structLivery=1`): where the OWNER's emblem
+ * Livery (structure restyle 1c, on by default, `?structLivery=0` = off): where the OWNER's emblem
  * goes (pixi space, centre + radius). `screen`: a big lit sigil screen (the
  * capital, i.e. the beacon); else the emblem is painted flat in the owner's
  * colour. The forge stamps the owner's procedural sigil here (`sigil.ts`
@@ -74,7 +74,7 @@ export interface StructureVisualOpts {
   /** Gates in game: leave the legacy plan's shield spans out (the design
    *  sheet still draws them). In game the doors are solid rig leaves. */
   omitSpans?: boolean;
-  /** Owner livery (`?structLivery=1`, off by default): add the sigil slots
+  /** Owner livery (on by default, `?structLivery=0` = off): add the sigil slots
    *  and livery bands. Off = the plan is exactly today's. */
   livery?: boolean;
   /** Structure style (`?restyle=`, `structureStyles.ts`); absent or

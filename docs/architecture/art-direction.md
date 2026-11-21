@@ -30,7 +30,7 @@ has, so a new ship or structure kind gets art automatically.
    lights. Structure rects become blocks: big steel is tall, saturated rects are
    painted plating, translucent ones are lit windows, lights are lamps. Each
    kind is seeded by its id, so it always comes out the same.
-3. **Light** (`src/client/render/art/shade.ts`). Lit once at load: sun, sky fill, rim light,
+3. **Light** (`src/client/render/art/shade.ts`). Lit once at load: sun, sky fill, a faint grey edge (rim) light,
    specular per material, cavity occlusion, and a soft height-field shadow
    toward the sun. Tone-mapped (ACES fit) to sRGB through a lookup table.
 4. **Play** (`src/client/render/art/atlas.ts`; the lab's `__art-lab__/assets.ts` and `main.ts`). All frames go into shared 4096² atlas
@@ -290,6 +290,7 @@ switch back to the old look, for tests and A/B looks only:
 | Structure style (bakes) | `c` (shipyard brutalist) | `?restyle=off` (or `current`) | `a`, `b` | `readStructStyle` (`art/artMode.ts`) |
 | Grid line look | `cable` | `?lineLook=off` | `pipe`, `conduit` | `readLineLook` (`pixi/connectorLineLooks.ts`) |
 | Articulated rigs (Capital crane-bay pad and crane, dock crane, pop-up turret doors) | on | `?rigs=0` | | `readRigsFlag` (`pixi/structureRigs.ts`) |
+| Structure livery (owner colour bands + sigil, like ship livery) | on | `?structLivery=0` (or `off`) | | `readStructLivery` (`art/artMode.ts`) |
 
 An absent or unknown value gets the default. The structure style is a
 Machined-art bake, so classic art (and automated browsers, which get classic
@@ -315,6 +316,11 @@ host).
   (the Capital's crane-bay pad and crane must always show, since ships can
   only unload at the Capital by parking in its bay); the old look stays as a
   test setting.
+- 2026-11-20: owner: structure livery on by default (each structure wears
+  its owner's colour bands and sigil, as ships do); and the edge (rim) light
+  is a faint neutral grey (`DEFAULT_RIG.rim` [0.06, 0.06, 0.06], was a blue
+  [0.1, 0.18, 0.36] that outlined every bevel), for ships, structures and
+  rocks alike. Bakes re-forge (`FORGE_VERSION` r3.1-rim).
 
 ## Client rules in detail
 

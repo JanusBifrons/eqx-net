@@ -58,7 +58,7 @@ const SCENE = ((SCENE_IDS as readonly string[]).includes(qs.get('scene') ?? '') 
  *  lab still shows what a player sees; `?restyle=off` / `current` = today's art.
  *  Not `?style=`: that already picks the lab's render arm (current/machined/…). */
 const RESTYLE = parseStructStyle(MACHINED ? readStructStyle(location.search) : qs.get('restyle'));
-/** `?structLivery=1`: structures wear an owner's livery (the game's
+/** Structures wear an owner's livery by default (`?structLivery=0` = off; the game's
  *  `ownerLivery`, for a stand-in owner), as in game. */
 const STRUCT_LIVERY = readStructLivery(location.search) ? ownerLivery('art-lab-owner') : undefined;
 /** The livery + style a Machined structure bake carries (the accent is the
