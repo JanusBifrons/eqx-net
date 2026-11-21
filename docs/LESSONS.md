@@ -3242,6 +3242,17 @@ shallow: the brake distance jumped to 450-700 u and a fighter entered a 75° tur
 ~32 u off its line into rock. Use the angle between the incoming and outgoing legs, and cap the carried
 speed by how far the ship may swing sideways (`NAV_TURN_SWING`).
 
+## 2026-11-20 — a corner is lost on the way out, not only on the way in
+
+The streets flight still touched rock ~3 runs in 10 at its 76° corner. Logged per tick, the failing runs
+did not carry speed in: tick jitter left the ship almost stopped at the corner, and once past it the brain
+asked for the new leg's full cruise. The pilot thrusts along its nose while the nose comes round, so it
+lurched ~33 u sideways off the new leg into rock. Cap the speed out of a sharp corner by the swing
+its nose has left (`NavRoutes.turnCap`, scaled by that angle and the hull's turn rate): a timed hold
+cost time and still brushed rock when the nose came round late. Don't add the cap to a capital: its
+planner already fits corners to its turning radius, and a second limit only slowed it. Log the ship's
+track against the corner before tuning the brake; the contact point says which side of the corner failed.
+
 ## 2026-11-19 — a long hull planned as a disc of its length never fits a lane
 
 The route planner kept a battleship's centre a full hull length (3 595 u) from rock everywhere. Lanes are
@@ -3302,3 +3313,12 @@ Solar built in ~8 s while its label read 1m 7s. The period now lives on `Structu
 the room's pulse timer and `estimateBuildEtaMs` both read it, and `StructureGridSubsystem.test.ts`
 builds to completion at 1000/250/100 ms and checks the ETA against the pulses it really took.
 Any rate derived from a timer's period reads that timer's period, never the default constant.
+
+## 2026-11-20 — a reactionless pull on a body pressed against the emitter is a thruster
+
+The tractor has no reaction on its emitter (owner: "magic"), and its muzzle sits inside the hull. A
+beam-line body was pulled toward the muzzle even inside `hold`, so a crumb from the same cut resting on
+the skiff's bow was pressed into the hull with lineFrac × F; ship and crumb moved off together at
+~40-57 u/s, helm on Stop, the towed piece trailing at `hold`. A one-sided force law must never push a
+body into the emitter: inside `hold` a line body now feels nothing (`tractorImpulse`). Reproduce such
+bugs with the real hull and the shared pose helpers (`World.tractor.test.ts`), not two balls.

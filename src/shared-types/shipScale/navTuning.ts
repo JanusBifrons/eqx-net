@@ -39,15 +39,17 @@ export function navTurnRoom(full: number, beam: number, sin: number, cos: number
 
 /** A hull's nav numbers, bundled for a route request (`IAiNavRoutes.waypoint`,
  *  `NavField.route`): `clearance` on any turn, `comfort` where room allows,
- *  `beam` on straight runs. */
-export interface NavHull { readonly clearance: number; readonly comfort: number; readonly beam: number }
+ *  `beam` on straight runs; `turnRate` (rad/s, the kind's `maxAngvel`) is how
+ *  fast its nose comes round, which sets how slowly it leaves a sharp corner
+ *  (`NavRoutes`, the follow side only: the planner does not read it). */
+export interface NavHull { readonly clearance: number; readonly comfort: number; readonly beam: number; readonly turnRate: number }
 
 const HULLS = new WeakMap<ShipKind, NavHull>();
 /** {@link NavHull} for a kind, built once per kind (per-tick callers allocate nothing, #14). */
 export function navHull(kind: ShipKind): NavHull {
   let h = HULLS.get(kind);
   if (h === undefined) {
-    h = { clearance: shipTuning(kind).navClearance, comfort: navComfort(kind), beam: navBeamClearance(kind) };
+    h = { clearance: shipTuning(kind).navClearance, comfort: navComfort(kind), beam: navBeamClearance(kind), turnRate: kind.maxAngvel };
     HULLS.set(kind, h);
   }
   return h;

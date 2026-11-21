@@ -67,8 +67,8 @@ export class MoveToHelm {
     // A capital plans with its nose and turning radius: no U-turn where it has no room (slice 11).
     const cap = this.kind.sizeClass === 'capital';
     if (nav !== null && nav.waypoint(self.id, self.x, self.y, tx, ty, navHull(this.kind), t.wingmanArrive, false,
-      cap ? self.angle : NaN, cap ? pilotTurnRadius(h) : 0)) {
-      const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this.steerScratch), v = Math.min(cruiseCap >= 0 ? cruiseCap : this.handling.cruiseSpeed * CALM_CRUISE_FRAC, brakingSpeed(this.handling, nav.ahead));
+      self.angle, cap ? pilotTurnRadius(h) : 0)) {
+      const w = arrive(self.x, self.y, nav.wpX, nav.wpY, 1, this.steerScratch), v = Math.min(cruiseCap >= 0 ? cruiseCap : this.handling.cruiseSpeed * CALM_CRUISE_FRAC, brakingSpeed(this.handling, nav.ahead), nav.turnSpeed);
       this.out(facingOf(w.dirX, w.dirY), w.dirX * v, w.dirY * v, boostOk);
       return false;
     }

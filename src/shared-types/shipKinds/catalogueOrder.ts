@@ -37,6 +37,7 @@ import {
   BATTLECRUISER_B, BATTLECRUISER_C, BATTLESHIP_B, BATTLESHIP_C, BATTLESHIP_RAIL, HEAVY_CRUISER_BEAM, BATTLECRUISER_LANCE,
   BARGE, BARGE_LOOK_KIND,
 } from './capitals/index.js';
+import { MINING_SKIFF } from './miningSkiff.js';
 
 /**
  * Insertion order = canonical catalogue order. Fighter is first so it
@@ -87,6 +88,9 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   BATTLESHIP_RAIL, HEAVY_CRUISER_BEAM, BATTLECRUISER_LANCE,
   // Salvage stream (plan partitioned-chasing-lark PR 15): the mining barge. APPEND ONLY.
   BARGE,
+  // Playable base loop (job 1D): the small mining ship. APPEND ONLY, before
+  // the dev-only barge look kind, which stays last (it exists only behind a switch).
+  MINING_SKIFF,
   // Mining-barge look R&D (plan partitioned-chasing-lark PR 14): ONLY when the
   // dev switch ?bargeLook= / EQX_BARGE_LOOK is set; unset, nothing is appended.
   ...(BARGE_LOOK_KIND ? [BARGE_LOOK_KIND] : []),

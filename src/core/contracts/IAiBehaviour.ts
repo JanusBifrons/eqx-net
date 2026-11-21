@@ -185,6 +185,9 @@ export interface IAiNavRoutes {
   readonly wpX: number;
   readonly wpY: number;
   readonly ahead: number;
+  /** Speed cap (u/s) while the nose comes round a corner just passed (from
+   *  the corner's angle and `hull.turnRate`); Infinity otherwise. */
+  readonly turnSpeed: number;
 }
 
 /** Body-target claims per NPC side (spread targets). One claim per brain;

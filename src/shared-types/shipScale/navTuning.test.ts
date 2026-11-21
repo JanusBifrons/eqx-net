@@ -33,6 +33,6 @@ describe('nav hull numbers (owner 2026-11-19, "width on straights")', () => {
   it('navHull is built once per kind', () => {
     const k = getShipKind('battleship');
     expect(navHull(k)).toBe(navHull(k));
-    expect(navHull(k)).toEqual({ clearance: shipTuning(k).navClearance, comfort: expect.any(Number), beam: navBeamClearance(k) });
+    expect(navHull(k)).toEqual({ clearance: shipTuning(k).navClearance, comfort: expect.any(Number), beam: navBeamClearance(k), turnRate: k.maxAngvel });
   });
 });

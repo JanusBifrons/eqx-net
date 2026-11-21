@@ -11,6 +11,7 @@ import { createDropDetector } from '../snapshotDropDetector';
 import { clearMirror } from '../clearMirror.js';
 import { useUIStore } from '../../state/store';
 import { logEvent } from '../../debug/ClientLogger';
+import { resetBuildModeView } from '../../structures/buildModeView.js';
 import type { PredictionResetCtx } from '../prediction/resetPrediction.js';
 
 type Disposable = { dispose(): void };
@@ -57,6 +58,8 @@ export function disposeClient(c: ClientTeardownCtx): void {
   // builds a new client; reset the spectator flag so the next session starts
   // piloting. (Spectator is client-local and never crosses a room boundary.)
   useUIStore.getState().setPilotMode('pilot');
+  // Build mode never crosses a room boundary either (no stale fly-back).
+  resetBuildModeView();
   c.keyboard = null;
   c.touchInput = null;
   // Phase 4 swift-otter — close the DC transport BEFORE the room leave

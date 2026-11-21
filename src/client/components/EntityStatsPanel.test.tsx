@@ -37,7 +37,7 @@ function fakeClient(mirror: Record<string, unknown>): ColyseusGameClient {
 
 describe('EntityStatsPanel', () => {
   beforeEach(() => {
-    useUIStore.setState({ selection: { ids: [], focusId: null, focusKind: null } });
+    useUIStore.setState({ pilotMode: 'pilot', buildMode: false, selection: { ids: [], focusId: null, focusKind: null } });
     resetSelectionStats();
   });
   afterEach(() => {
@@ -477,7 +477,8 @@ describe('EntityStatsPanel', () => {
   });
 
   // ── Phase-1 issue 6 — owner-only action buttons (deconstruct / reconnect /
-  // clear connections). Gated on owner === local; clear is connector-only. ──
+  // clear connections). Gated on owner === local AND Build mode (management is
+  // Build-only, EntityStatsPanel.buildMode.test.tsx); clear is connector-only. ──
   it('shows Deconstruct + Reconnect on an OWNED structure (no Clear for non-connector)', () => {
     setGameClient(
       fakeClient({
@@ -489,7 +490,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '8', name: 'Solar', hp: 300, hpMax: 300 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('structure-action-deconstruct')).toBeInTheDocument();
     expect(screen.getByTestId('structure-action-reconnect')).toBeInTheDocument();
@@ -507,7 +508,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('structure-action-clear')).toBeInTheDocument();
   });
@@ -523,7 +524,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('entity-stats-actions')).toBeNull();
   });
@@ -560,7 +561,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Smelter', hp: 1800, hpMax: 1800 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
+    useUIStore.setState({ buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-recipe')).toHaveTextContent('Smelt alloy · Waiting for Minerals');
     // #1046 — the recipe label already starts with its verb: no "MAKES" prefix.
@@ -585,7 +586,7 @@ describe('EntityStatsPanel', () => {
       getRoom: () => ({ send: sendSpy }),
     } as unknown as ColyseusGameClient);
     applySelectionStats({ id: '9', name: 'Refinery', hp: 1800, hpMax: 1800 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-recipe')).toHaveAttribute('data-recipe', 'refine_ice_fuel');
     // The recipe button lives in the cog window now, not on the inspector.
@@ -642,7 +643,7 @@ describe('EntityStatsPanel', () => {
       getRoom: () => ({ send: sendSpy }),
     } as unknown as ColyseusGameClient);
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const btn = screen.getByTestId('structure-action-upgrade');
     fireEvent.click(btn);
@@ -663,7 +664,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
   });
@@ -680,7 +681,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('LVL 5');
     expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
@@ -697,7 +698,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
   });
@@ -715,7 +716,7 @@ describe('EntityStatsPanel', () => {
       getRoom: () => ({ send: sendSpy }),
     } as unknown as ColyseusGameClient);
     applySelectionStats({ id: '8', name: 'Solar', hp: 300, hpMax: 300 });
-    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
+    useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const btn = screen.getByTestId('structure-action-deconstruct');
     expect(btn).toHaveAttribute('data-active', '1'); // already deconstructing → Cancel state

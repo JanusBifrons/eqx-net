@@ -239,7 +239,7 @@ export class WreckResplitter {
     // A rock's slivers stay pieces (chunks), never pods (owner 2026-11-17).
     const podBelow = plan.step.extraCuts !== undefined && w.ore === undefined && rs !== null && this.d.dropSalvage !== undefined
       ? rs.minAreaFrac * wreckHullArea(src) : 0;
-    const r = spawnWreckPieces(this.d, this.h, src, w, plan.children, podBelow, serial, childId, k, fifo, id);
+    const r = spawnWreckPieces(this.d, this.h, src, w, plan.children, podBelow, serial, childId, k, fifo);
     if (r.ids.length === 0) {
       if (r.pods === 0) return false;
       this.h.dropPiece(id, fifo);
@@ -260,6 +260,7 @@ export class WreckResplitter {
       pieces: ids.length, ids, mass, holdUntil: tick, chain: plan.chain, parent: wreckId, children: 0,
       src, ...(w.ore !== undefined ? { ore: w.ore } : {}),
     }, w);
+    relayWreckPieces(this.d, id, r);
     this.h.dropPiece(id, fifo);
     return true;
   }
@@ -270,15 +271,15 @@ export class WreckResplitter {
  * `wreck-<serial>-<index>`), each under `podBelow` world area dropped as a
  * pod instead (`dropPieceSalvage`). `like` seeds each per-piece entry's
  * knock numbers (null: the source's own, a rock's first break). The ONE
- * piece spawn of a re-split and of a mined-out rock (rockCut.ts), so the ONE
- * place a parent (`parentId`) is replaced by its pieces: the locks held on
- * it follow them (`CapitalWreckDeps.pieceSplit`), never its slivers' pods.
+ * piece spawn of a re-split and of a mined-out rock (rockCut.ts). The caller
+ * registers the pieces' wreck (`addWreck`), then hands the parent's locks
+ * to them (`relayWreckPieces`).
  */
 export function spawnWreckPieces(
   d: CapitalWreckDeps, h: Pick<WreckResplitHost, 'addPiece'>, src: WreckSource, w: Pick<LiveWreck, 'ore'> & { root?: number },
   placed: ReadonlyArray<WreckChildSpawn>, podBelow: number, serial: number, wreckId: number,
-  like: PieceKnock | null, fifo: string[], parentId: string,
-): { ids: string[]; mass: number; pods: number } {
+  like: PieceKnock | null, fifo: string[],
+): { ids: string[]; masses: number[]; mass: number; pods: number } {
   const body = wreckBodyParams(src.ship ?? src);
   const ids: string[] = [];
   const masses: number[] = []; // once per break, never per tick
@@ -309,8 +310,18 @@ export function spawnWreckPieces(
       cx: g.cx, cy: g.cy, radius: g.radius, burn: null,
     }, fifo);
   }
-  if (ids.length > 0) d.pieceSplit?.(parentId, ids, masses);
-  return { ids, mass, pods };
+  return { ids, masses, mass, pods };
+}
+
+/** The ONE place a parent (`parentId`) is replaced by its pieces (`r`,
+ *  from `spawnWreckPieces`): the locks held on it follow them
+ *  (`CapitalWreckDeps.pieceSplit`), never its slivers' pods. Called once
+ *  the pieces' wreck is registered (`addWreck`) and while the parent is
+ *  still live, so the hand-over reads each piece's size, haul bits and
+ *  lineage (lockSalvage.ts); before that every new piece read as a whole
+ *  rock and a lone laser or tractor lock could land on one it can't work. */
+export function relayWreckPieces(d: CapitalWreckDeps, parentId: string, r: { ids: ReadonlyArray<string>; masses: ReadonlyArray<number> }): void {
+  if (r.ids.length > 0) d.pieceSplit?.(parentId, r.ids, r.masses);
 }
 
 /** A ship wreck's worn-out piece (or a sliver) too small to split leaves a

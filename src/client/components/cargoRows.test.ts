@@ -47,3 +47,10 @@ describe('cargoRows: rock chunks', () => {
     expect(rowHold(hold, rows[1]!).packed).toEqual([hold.packed![1]]);
   });
 });
+
+describe('cargoRows: one-of-a-kind packed items', () => {
+  it('a packed item with its own uid still reads "(packed)", as in the dock list', () => {
+    const hold: Hold = { goods: {}, blueprints: [], packed: [{ product: 'structure:capital', quality: 50, uid: 'cap-1' }] };
+    expect(cargoRows(hold)[0]!.label).toBe('Capital (packed)');
+  });
+});

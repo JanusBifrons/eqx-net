@@ -55,6 +55,7 @@ export { HEAVY, INTERCEPTOR, GUNSHIP } from './shipKinds/heavyClass.js';
 export { MISSILE_FRIGATE } from './shipKinds/missileFrigate.js';
 export { CROSSGUARD } from './shipKinds/crossguard.js';
 export { HAVOK } from './shipKinds/composite/havok.js';
+export { MINING_SKIFF } from './shipKinds/miningSkiff.js';
 
 // Re-export the canonical-order list.
 export { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
@@ -79,6 +80,7 @@ import {
   BATTLECRUISER_B, BATTLECRUISER_C, BATTLESHIP_B, BATTLESHIP_C, BATTLESHIP_RAIL, HEAVY_CRUISER_BEAM, BATTLECRUISER_LANCE,
   BARGE, BARGE_LOOK_KIND,
 } from './shipKinds/capitals/index.js';
+import { MINING_SKIFF } from './shipKinds/miningSkiff.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { NpcAllegianceId } from './allegiances.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
@@ -166,6 +168,7 @@ const CATALOGUE_KINDS = Object.freeze({
   'heavy-cruiser-beam': HEAVY_CRUISER_BEAM,
   'battlecruiser-lance': BATTLECRUISER_LANCE,
   barge: BARGE,
+  'mining-skiff': MINING_SKIFF,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /** The catalogue, plus the mining-barge look kind at the very end when the
@@ -211,7 +214,8 @@ export const SHIP_KINDS: typeof CATALOGUE_KINDS = BARGE_LOOK_KIND
 // 28 → 29 (2026-11-17): cargo-pod gains size classes (16 parts: size × tier).
 // 29 → 30 (2026-11-18): the barge's side mounts (lasers and tractor dishes)
 // swing ±45° (`SIDE_MOUNT_ARC`), not ±1.6 rad.
-export const SHIP_KIND_CATALOGUE_VERSION = 30;
+// 30 → 31 (2026-11-20): the mining skiff kind appended (playable base loop).
+export const SHIP_KIND_CATALOGUE_VERSION = 31;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed
