@@ -16,6 +16,7 @@ import { isAutoCaptureEnabled, logEvent } from '../ClientLogger';
 import { getGameClient } from '../../net/clientSingleton';
 import type { PredictionStats } from '../../net/predictionStats';
 import type { ControlMode } from '../../state/storeTypes';
+import { applyLanePhases, installLanePhaseTiming, rollLanePhases } from './lanePhaseTiming';
 import { getActiveSnapshotTransport } from '../../net/connection/roomConnection.js';
 import {
   getSwarmLatenessLastMs, getSwarmLatenessMaxMs, getSwarmLatenessSumMs, getSwarmLatenessCount,
@@ -162,12 +163,13 @@ let readMode: (() => LaneControlMode) | null = null;
  */
 export function withLaneStallContext<T extends object>(data: T): T {
   if (ring === null) return data;
-  return applyLaneStallContext(data, renderer?.getFeedback().viewHalf, readMode?.() ?? null);
+  // ...and the last stall frame's phase breakdown (lanePhaseTiming.ts).
+  return applyLanePhases(applyLaneStallContext(data, renderer?.getFeedback().viewHalf, readMode?.() ?? null));
 }
 
 /** One processed frame's gap (ms). Hot path: a null check when off. */
 export function recordLaneFrame(ms: number): void {
-  if (ring !== null) ring.push(ms);
+  if (ring !== null) { ring.push(ms); rollLanePhases(ms); }
 }
 
 export function lanePerfSummaryEnabled(): boolean {
@@ -180,6 +182,7 @@ export function installLanePerfSummary(rendererIn: IRenderer, controlMode: () =>
   readMode = controlMode;
   if (ring !== null || !lanePerfSummaryEnabled()) return;
   const frames = (ring = new FrameTimeRing(4096));
+  installLanePhaseTiming();
   // Real time: frame timing is wall time
   let windowStart = performance.now();
   let correctionsBefore = 0;

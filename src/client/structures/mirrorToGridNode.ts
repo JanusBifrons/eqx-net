@@ -37,6 +37,9 @@ import type { FieldRockBody } from '../../core/terrain/chunkStreamer.js';
 
 type ObstacleParts = NonNullable<GridObstacle['parts']>;
 
+/** The preview's pooled link stand-in lives in `previewConn.ts`. */
+export { makePreviewConn, type PreviewConn } from '../render/pixi/previewConn.js';
+
 /** A field rock of a loaded chunk, at rest or at its moved pose (C5h). */
 export interface RestingFieldRock { key: number; x: number; y: number; angle: number; radius: number }
 

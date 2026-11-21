@@ -36,7 +36,7 @@ turns the building a quarter turn, and **Mirror** (the flip button beside it, or
 | Kind | Role | Notes |
 |---|---|---|
 | **Capital** (Core) | Pre-built root hub + the main mineral bank | Born fully built; links up to 4 others |
-| **Connector** (Relay) | Cheap pure hub — the linking mechanism | Links up to 6; everything else attaches to a hub |
+| **Connector** (Relay) | Cheap pure hub — the linking mechanism | 6 sockets, one cable each, so at most 6 links (upgrading adds none); everything else attaches to a hub |
 | **Solar Panel** | Power generator | A leaf — attaches to one hub |
 | **Mining Tower** | Drills asteroids for minerals | A leaf — power-gated |
 | **Turret** | Shoots hostile drones | A leaf — power-gated |

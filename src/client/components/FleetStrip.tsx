@@ -8,6 +8,7 @@ import type { FleetCommands } from '../fleet/fleetCommands.js';
 import { resolveFleetCommands, useFleetSelectionView } from '../fleet/useFleetSelectionView.js';
 import { modeNeedsPick } from '../fleet/fleetPickView.js';
 import { FleetPickBar } from './FleetPickBar.js';
+import { HelmPanel } from './HelmPanel.js';
 
 /**
  * RTS command layer slice 14 — the COMPACT (phone, `useIsCompact`) fleet
@@ -104,6 +105,7 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
         <ToggleButton value="move" sx={TOGGLE_SX} data-testid="fleet-order-move">Move</ToggleButton>
         <ToggleButton value="attack" sx={TOGGLE_SX} data-testid="fleet-order-attack">Attack</ToggleButton>
       </ToggleButtonGroup>
+      <HelmPanel />
       </>)}
     </Box>
   );

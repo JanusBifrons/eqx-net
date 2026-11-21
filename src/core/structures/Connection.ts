@@ -48,7 +48,8 @@ export class Connection {
     /** 0d cable sockets: index into `structureSockets(kind)` of the `aId`
      *  end the cable leaves from (the pair `canConnect` picked), or
      *  `CABLE_NO_SOCKET` for a fence link. Fixed for the link's life, so
-     *  a cable never jumps when other links come and go. */
+     *  a cable never jumps when other links come and go, except a connector
+     *  end moved one face to make room for a new cable (`pickWithReseat`). */
     readonly socketA: number = CABLE_NO_SOCKET,
     /** The `bId` end's socket index (as `socketA`). */
     readonly socketB: number = CABLE_NO_SOCKET,

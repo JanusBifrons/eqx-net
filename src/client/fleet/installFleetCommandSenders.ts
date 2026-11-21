@@ -9,6 +9,7 @@ import { setFleetCommands } from './fleetCommands.js';
 import {
   sendDisbandSquad,
   sendFleetOrder,
+  sendFleetSpeed,
   sendFormSquad,
   sendSetMode,
   sendSetStance,
@@ -22,6 +23,7 @@ export function installFleetCommandSenders(): void {
     },
     setStance: (ids, stance) => { sendSetStance([...ids], stance); },
     stop: (ids) => { sendFleetOrder([...ids], { kind: 'stop' }); },
+    setSpeed: (ids, fraction) => { sendFleetSpeed([...ids], fraction); },
     formSquad: (ids) => { sendFormSquad([...ids]); },
     disbandSquad: (squadId) => { sendDisbandSquad(squadId); },
   });

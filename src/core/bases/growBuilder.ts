@@ -1,7 +1,7 @@
 /** The base generator's placement checker (`growBase.ts`, step 2: "Lay
  *  out"): every placement passes the real `placementRejection` and every
  *  edge the real `canConnect`, AS the base is built. */
-import { getStructureKind, structureHalfExtents, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { getStructureKind, structureHalfExtents, structureSockets, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { canConnect, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
 import {
@@ -30,6 +30,10 @@ interface Node extends GridNode {
 
 // Scratch for the cable socket pick and the curve test (seed-time, but reused
 // all the same: root invariant #14).
+/** How far a bastion moves off its row line when a fence post blocks it,
+ *  and the lines tried in order (on the row first). */
+export const BASTION_NUDGE = 150;
+const BASTION_TRIES = [0, BASTION_NUDGE, -BASTION_NUDGE] as const;
 const linkPick = makeCableSocketPick();
 const linkPoly = new Float64Array(CABLE_CURVE_FLOATS);
 const linkBox = makeCableBox();
@@ -122,6 +126,47 @@ export class Builder {
     this.placed.pop();
     this.nodes.delete(`s${i}`);
   }
+
+  /** Remove the last link (both ends' adjacency, its edge and sockets). */
+  unlinkLast(): void {
+    const [a, b] = this.edges.pop()!;
+    this.edgeSockets.pop();
+    this.adj.get(`s${a}`)!.pop();
+    this.adj.get(`s${b}`)!.pop();
+    this.cid--;
+  }
+
+  /** A bastion off row end `end`: a relay at `relayX` and a hub at `hubX`,
+   *  linked end → relay → hub along the row line, or `BASTION_NUDGE` above or
+   *  below it when a fence post sits on the line (a connector holds one cable
+   *  per socket, so the cable can no longer share a face to bend round it).
+   *  Returns the hub and its y, or null. A relay whose hub fails to place or
+   *  link on every line stays linked to the row, as before. */
+  bastion(end: number, relayX: number, hubX: number, y: number): { hub: number; y: number } | null {
+    for (const dy of BASTION_TRIES) {
+      const relay = this.tryPlace({ kind: 'connector', x: relayX, y: y + dy });
+      if (relay < 0) continue;
+      if (!this.tryLink(end, relay)) { this.undoLast(); continue; }
+      const hub = this.tryPlace({ kind: 'connector', x: hubX, y: y + dy });
+      if (hub >= 0 && this.tryLink(relay, hub)) return { hub, y: y + dy };
+      if (hub >= 0) this.undoLast();
+      if (dy === BASTION_TRIES[BASTION_TRIES.length - 1]) return null;
+      this.unlinkLast();
+      this.undoLast();
+    }
+    return null;
+  }
+}
+
+/** Mask of the connector sockets NOT turned most toward (`dx`, `dy`) (ties
+ *  kept free together). */
+function facesAwayFrom(dx: number, dy: number): number {
+  const socks = structureSockets('connector');
+  let best = -Infinity;
+  for (const k of socks) best = Math.max(best, k.nx * dx + k.ny * dy);
+  let m = 0;
+  socks.forEach((k, i) => { if (k.nx * dx + k.ny * dy < best - 1e-6) m |= 1 << i; });
+  return m;
 }
 
 const linkGaps = new Map<string, number>();
@@ -130,7 +175,9 @@ const linkGaps = new Map<string, number>();
  *  links it under the real `canConnect`: stud to stud at least
  *  `MIN_CABLE_LENGTH` ("keep buildings apart"). Studs square on to the
  *  connector need more gap than a kind whose nearest studs sit off-centre.
- *  Cached per kind, direction and turn (seed-time only). */
+ *  The connector holds one cable per socket, so the probe leaves free only
+ *  its faces turned most toward the leaf: a row's own links may hold the
+ *  others. Cached per kind, direction and turn (seed-time only). */
 export function linkGap(kind: StructureKindId, dx: number, dy: number, rot = 0, minGap = 20): number {
   const key = `${kind}|${dx}|${dy}|${rot}|${minGap}`;
   const hit = linkGaps.get(key);
@@ -141,6 +188,7 @@ export function linkGap(kind: StructureKindId, dx: number, dy: number, rot = 0, 
   for (; g < MIN_CABLE_LENGTH + 2 * ch; g += 2) {
     const b = new Builder();
     b.tryPlace({ kind: 'connector', x: 0, y: 0 });
+    b.nodes.get('s0')!.usedSockets = facesAwayFrom(dx, dy);
     const off = ch + g + (dx !== 0 ? hw : hh);
     if (b.tryPlace({ kind, x: dx * off, y: dy * off, rot }) >= 0 && b.tryLink(0, 1)) break;
   }
