@@ -334,6 +334,11 @@ host).
   rocks alike. Bakes re-forge (`FORGE_VERSION` r3.1-rim).
 - 2026-11-20: owner: ship the light-production redraw (eight kinds, lit only
   while working; family version r2).
+- 2026-11-20: owner: the dock crane arm (and the Capital crane) is toned to
+  the grid cable: a dark gunmetal lattice, hub and slew rings and rivets
+  (`RIG_LOOK_C.armTruss` / `armRim` / `armRivet`) and the internal cable in
+  the connector's plain dark sheath (was a pale blue lattice with bright rims
+  and a lit cable). The clamp jaws and work lamps are unchanged.
 
 ## Client rules in detail
 
