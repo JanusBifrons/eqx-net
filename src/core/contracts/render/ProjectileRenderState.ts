@@ -1,12 +1,13 @@
 import type { PoseRingEntry } from './SwarmRenderState.js';
 
-/** Depth of the per-missile pose ring (playtest 2026-06-10 Issue 11). Sized to
- *  cover MISSILE_DISPLAY_DELAY_MS (+ jitter headroom) at the 20 Hz JSON snapshot
- *  cadence (~50 ms): 100 ms back ≈ 2 intervals, +headroom for the 100–200 ms
- *  jitter band the smoke captures showed → 6 keeps two bracketing samples
- *  available so the hot path is a genuine lerp of buffered truth (mirrors the
- *  drone POSE_RING_DEPTH sizing rule). */
-export const MISSILE_POSE_RING_DEPTH = 6;
+/** Depth of the per-missile pose ring. Sized for the LARGEST display delay the
+ *  missile mirror may run: up to 400 ms for a few seconds after a dropout (gap
+ *  smoothing, decision D2), not just the steady MISSILE_DISPLAY_DELAY_MS.
+ *  At the 20 snapshots/s JSON cadence (50 ms apart): 400 ms / 50 ms = 8
+ *  intervals, + 2 headroom (a bracketing sample past the oldest interval plus
+ *  one for arrival jitter) → 10, so a held / catching-up missile never reads
+ *  past the oldest sample. Locked by ProjectileRenderState.depth.test.ts. */
+export const MISSILE_POSE_RING_DEPTH = 10;
 
 /**
  * Heat-seeking missile render state. Latest authoritative pose plus a per-missile
