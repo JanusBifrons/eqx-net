@@ -45,7 +45,7 @@ import { writeRigClipRow } from '../structures/structureRigClip.js';
 import { writeDoorMotionRow, type GateDoorSource } from './doorMotionRow.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdBay, encodeProdCount, encodeProdFrac, encodeProdQ0, encodeProdQ1, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpProduct, encodeBpRuns, encodeGood, encodeProdBay, encodeProdCount, encodeProdFrac, encodeProdQ0, encodeProdQ1, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { shipyardBayOf } from '../../core/articulation/rigs/heavyIndustry.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { isStructureBodySolid } from '../../core/structures/structureBody.js';
@@ -234,8 +234,11 @@ export class StructuresSliceSync {
         // Building panels B4 (#16): the recipe queue + repeat flag.
         const q0 = encodeProdQ0(rec.prodQueue);
         if ((st.prodQ0 ?? SD.prodQ0) !== q0) st.prodQ0 = q0;
-        const q1 = encodeProdQ1(rec.prodQueue, rec.prodQueueRepeat);
+        // B7 (#16): the slot blueprint rides prodQ1 bits 24..30; network stock in bpAvail.
+        const q1 = encodeProdQ1(rec.prodQueue, rec.prodQueueRepeat, encodeBpProduct(rec.kind, rec.blueprint?.product));
         if ((st.prodQ1 ?? SD.prodQ1) !== q1) st.prodQ1 = q1;
+        const ba = rec.bpAvail ?? SD.bpAvail;
+        if ((st.bpAvail ?? SD.bpAvail) !== ba) st.bpAvail = ba;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
       writeStorageFillRow(rec, st); // storage fill gauge, on step change only

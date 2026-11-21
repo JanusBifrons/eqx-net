@@ -202,6 +202,9 @@ export interface StructureRecord {
   prodQueue?: RecipeId[];
   /** Queue repeat: a finished head goes to the back instead of dropping off. */
   prodQueueRepeat?: boolean;
+  /** Building panels B7: bit i = network storage holds a blueprint for the
+   *  kind's recipe i (`blueprintStock.ts`, 1 Hz). Derived; not persisted. */
+  bpAvail?: number;
   /** A chunk recipe's loaded item (a rock chunk) with the ore still to pay
    *  out; set while `prodLoaded`. Persisted (it holds value). */
   prodChunk?: PackedItem;

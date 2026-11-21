@@ -168,6 +168,7 @@ export const STRUCTURE_DEFAULTS = {
   fillPct: 0,
   prodQ0: 0,
   prodQ1: 0,
+  bpAvail: 0,
 } as const;
 
 /** Storage fill gauge: `fillPct` moves in whole steps of this many percent,
@@ -394,6 +395,8 @@ export interface StructureStateView {
   /** Building panels B4 — the recipe queue (`encodeProdQ0` / `encodeProdQ1`). */
   prodQ0?: number;
   prodQ1?: number;
+  /** Building panels B7 — blueprints in network storage (`decodeBpAvail`). */
+  bpAvail?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
   /** 0d slice 6 — per `connTo` entry, the packed socket pair
    *  (`encodeConnSock`). Optional so a row without it reads as no sockets. */

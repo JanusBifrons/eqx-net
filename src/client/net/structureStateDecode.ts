@@ -35,7 +35,15 @@ import {
 import { decodeProdBay, decodeProdFrac } from '../../shared-types/production.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { clearDoorRow, decodeDoorRow, isDoorKind } from './doorMotionDecode.js';
-import { decodeProdCount, decodeProdQueue, decodeProdQueueRepeat } from '../../shared-types/production.js';
+import {
+  decodeBpAvail,
+  decodeBpProduct,
+  decodeProdCount,
+  decodeProdQueue,
+  decodeProdQueueRepeat,
+  isProcessorKind,
+  prodQ1HasQueue,
+} from '../../shared-types/production.js';
 import type { RecipeId } from '../../shared-types/recipes.js';
 import { isUnownedOwner } from '../../shared-types/relations.js';
 
@@ -121,6 +129,7 @@ export function decodeStructureState(
   out.bpQuality = bpRuns !== 0 ? (v.bpQuality ?? D.bpQuality) : undefined;
   out.prodCount = decodeProdCount(v.prodCount ?? D.prodCount);
   decodeQueue(v, out);
+  decodeBlueprintStock(v, out, rigKind);
   // v4 T1 — teleporters: decode in place (allocated once per teleporter row).
   if (v.tpPhase !== undefined || v.tpPartner !== undefined || v.tpChargePct !== undefined || out.teleport !== undefined) {
     const t = (out.teleport ??= { phase: 0, phaseMs: 0, chargePct: 0, partner: -1, rules: 0, loadGood: 0, loadQty: 0, keepGood: 0, keepQty: 0, padWeight: 0, toll: 0 });
@@ -161,8 +170,25 @@ function decodeQueue(v: StructureStateView, out: StructureRenderState): void {
   const q0 = v.prodQ0 ?? D.prodQ0;
   const q1 = v.prodQ1 ?? D.prodQ1;
   out.prodQueueRepeat = decodeProdQueueRepeat(q1) ? true : undefined;
-  if (q0 === 0 && q1 === 0 && out.prodQueue === undefined) return;
+  if (q0 === 0 && !prodQ1HasQueue(q1) && out.prodQueue === undefined) return;
   decodeProdQueue(q0, q1, (out.prodQueue ??= []) as RecipeId[]);
+}
+
+/** Building panels B7: the slot blueprint's recipe (prodQ1 bits 24..30) and
+ *  the recipes with a blueprint in network storage (`bpAvail`), onto the row
+ *  in place (one `bpAvailable` array per row, allocated the first time one
+ *  shows up). Both index the kind's recipe list, so they need the kind; an
+ *  unknown kind (no pose yet) or a non-processor leaves them undefined. */
+function decodeBlueprintStock(v: StructureStateView, out: StructureRenderState, kind: string | undefined): void {
+  if (kind === undefined || !isProcessorKind(kind)) {
+    out.bpProduct = undefined;
+    if (out.bpAvailable !== undefined) (out.bpAvailable as RecipeId[]).length = 0;
+    return;
+  }
+  out.bpProduct = decodeBpProduct(kind, v.prodQ1 ?? D.prodQ1);
+  const mask = v.bpAvail ?? D.bpAvail;
+  if (mask === 0 && out.bpAvailable === undefined) return;
+  decodeBpAvail(kind, mask, (out.bpAvailable ??= []) as RecipeId[]);
 }
 
 /** 0d slice 6: each link's cable sockets (`connSock`, parallel to `connTo`)

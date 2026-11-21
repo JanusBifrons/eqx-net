@@ -37,7 +37,7 @@
  * effects are cached per slot; steady-state pulses allocate nothing (#14).
  */
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
-import { CHUNK_REFINE_BATCH, RECIPES, blueprintProductFor, type RecipeId, type RecipeOutput } from '../../shared-types/recipes.js';
+import { CHUNK_REFINE_BATCH, RECIPES, blueprintProductFor, type ProcessorKindId, type RecipeId, type RecipeOutput } from '../../shared-types/recipes.js';
 import { PROD_STATE, defaultRecipeFor, isProcessorKind } from '../../shared-types/production.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecipe } from '../../shared-types/blueprints.js';
@@ -48,6 +48,7 @@ import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
 import { advanceRecipeQueue } from './productionQueue.js';
+import { blueprintStockMask, tracksBlueprintStock } from './blueprintStock.js';
 import { hullProduct, packedProduct } from './productIds.js';
 
 /** What one cycle of a recipe actually uses and makes. */
@@ -150,6 +151,8 @@ export class ProductionSubsystem {
     for (let k = 0; k < n; k++) {
       const rec = procs[(start + k) % n]!;
       this.step(rec);
+      // B7: blueprints in this network (the row's bpAvail; blueprintStock.ts).
+      if (tracksBlueprintStock(rec.kind)) { this.collectNetwork(rec); rec.bpAvail = blueprintStockMask(rec.kind as ProcessorKindId, this.net); }
       this.d.setActive?.(rec, rec.prodState === PROD_STATE.running);
     }
   }

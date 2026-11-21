@@ -228,6 +228,10 @@ export class StructureState extends Schema {
    *  a collection, so the row-skip dirty hook needs nothing new. */
   @type('uint32') prodQ0?: number;
   @type('uint32') prodQ1?: number;
+  /** Building panels B7 — processors with blueprint recipes: bit i = network
+   *  storage holds a blueprint for the kind's recipe i (`decodeBpAvail`,
+   *  shared-types/production.ts). The slot blueprint rides prodQ1 bits 24..30. */
+  @type('uint32') bpAvail?: number;
 }
 
 /** A proximity mine (Mine Layer). Static, so room state carries it: the join
