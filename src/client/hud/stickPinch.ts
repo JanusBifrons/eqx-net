@@ -54,9 +54,17 @@ export function stickTouchUp(pointerId: number): void {
   if (i >= 0) active.splice(i, 1);
 }
 
+/**
+ * The canvas each forwarded finger is handed to, resolved once at its
+ * pointerdown: `elementsFromPoint` forces a layout, too costly on every pinch
+ * move on a phone's main-thread renderer. Dropped when the finger lifts.
+ */
+const fingerCanvas = new Map<number, HTMLCanvasElement>();
+
 /** Test hook. */
 export function resetStickPinch(): void {
   active.length = 0;
+  fingerCanvas.clear();
 }
 
 /** The world canvas under (x, y), else the first canvas on the page. */
@@ -71,7 +79,12 @@ function worldCanvasAt(x: number, y: number): HTMLCanvasElement | null {
 
 /** Hand one pinch finger's event to the world canvas (the camera owns pinch). */
 export function forwardPinchPointer(type: string, pointerId: number, clientX: number, clientY: number): void {
-  const canvas = worldCanvasAt(clientX, clientY);
+  let canvas = type === 'pointerdown' ? undefined : fingerCanvas.get(pointerId);
+  if (canvas === undefined || !canvas.isConnected) {
+    canvas = worldCanvasAt(clientX, clientY) ?? undefined;
+    if (canvas !== undefined) fingerCanvas.set(pointerId, canvas);
+  }
+  if (type === 'pointerup' || type === 'pointercancel') fingerCanvas.delete(pointerId);
   if (!canvas) return;
   canvas.dispatchEvent(
     new PointerEvent(type, {
