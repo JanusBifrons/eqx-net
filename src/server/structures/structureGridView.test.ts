@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
-import { autoConnectStructure, buildGridNodes, connectExplicit, linkReachBox, structureToGridNode } from './structureGridView.js';
+import { autoConnectStructure, buildGridNodes, connectExplicit, linkReachBox, reconnectRefusalNotice, structureToGridNode } from './structureGridView.js';
 import { getStructureKind, structureSockets, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { canConnect } from '../../core/structures/Grid.js';
 import { CABLE_NO_SOCKET, CABLE_TAIL_MAX, makeCableSocketPick } from '../../core/structures/cableCurve.js';
@@ -224,5 +224,27 @@ describe('links store the cable sockets canConnect picked (0d slice 5)', () => {
     expect(connectExplicit(registry, 'p1', 'p2')).toBe(true);
     const c = registry.connectionsOf('p1')[0]!;
     expect([c.socketA, c.socketB]).toEqual([CABLE_NO_SOCKET, CABLE_NO_SOCKET]);
+  });
+});
+
+describe('auto-connect skips a hub whose cable would cross another cable (owner rule)', () => {
+  it('links every non-crossing hub and leaves the crossing one, with the plain notice', () => {
+    const registry = new StructureRegistry();
+    registry.add(record('w', 'connector', -300, 0));
+    registry.add(record('e', 'connector', 300, 0));
+    expect(connectExplicit(registry, 'w', 'e')).toBe(true); // a cable across the middle
+    registry.add(record('far', 'connector', 0, 250)); // across that cable from the new one
+    registry.add(record('near', 'connector', 0, -560)); // same side, clear
+    registry.add(record('placed', 'connector', 0, -250));
+    autoConnectStructure(registry, 'placed');
+    const linked = registry.connectionsOf('placed').map((c) => c.getOtherNode('placed')).sort();
+    // w and e share an end with the w–e cable (a fan-out, not a crossing).
+    expect(linked).toEqual(['e', 'near', 'w']);
+    // The existing cable is untouched.
+    expect(registry.connectionsOf('w').some((c) => c.getOtherNode('w') === 'e')).toBe(true);
+    const nodes = buildGridNodes(registry);
+    expect(canConnect(nodes.get('placed')!, nodes.get('far')!, registry.adjacencyMap(), nodes))
+      .toEqual({ ok: false, reason: 'crosses-cable' });
+    expect(reconnectRefusalNotice('crosses-cable')).toBe("Can't link: crosses another cable");
   });
 });
