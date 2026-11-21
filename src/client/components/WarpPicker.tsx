@@ -232,12 +232,13 @@ function SystemMap({ dests, pose, target, onPick, onWarp, press }: {
           <text key={`l-${d.id}`} x={lx} y={ly} fontSize={font} fill={on(d) ? '#ffffff' : '#c8d4e6'} textAnchor={anchor}
             fontWeight={on(d) ? 700 : 400} style={{ pointerEvents: 'none' }}>{d.label}</text>
         ))}
-        {pose && sel && <WarpMapRoute sel={sel} shipX={pose.x} shipY={pose.y} h={H} />}
         {pose && (
           <g transform={`translate(${pose.x} ${-pose.y}) rotate(${(-pose.angle * 180) / Math.PI})`} data-testid="warp-map-ship">
             <polygon points={`0,${-H / 20} ${H / 32},${H / 26} ${-H / 32},${H / 26}`} fill="#ffffff" stroke="#070b14" strokeWidth={H / 200} />
           </g>
         )}
+        {/* Over the ship marker: a short hop's landing ring sits under it. */}
+        {pose && sel && <WarpMapRoute sel={sel} shipX={pose.x} shipY={pose.y} h={H} />}
       </svg>
       <Button fullWidth size="small" variant="contained" disabled={!sel} sx={{ mt: 0.5, fontSize: 12, fontWeight: 700, color: '#04130a', textTransform: 'none' }}
         {...press(() => { if (sel) onWarp(sel); })} data-testid="warp-map-go" data-warp-state={sel?.state}>
