@@ -7,7 +7,9 @@
  * what it was built from changes (rare), so the per-frame check is a map
  * lookup and a few compares (invariant #14).
  */
-import { factionLookVersion, npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
+import { factionLookVersion, LIVERY_EDGES, npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
+import { isUnownedOwner } from '../../../shared-types/relations.js';
+import { DEFAULT_FACTION_COLOR } from '../galaxy/galaxyTerritories.js';
 import { allegianceOfKind } from '../../../shared-types/shipKinds.js';
 import type { Container } from 'pixi.js';
 import { decideArtSwap, type ArtSwap } from '../spriteUpdateDecisions.js';
@@ -130,7 +132,12 @@ export function updateArtShipLight(actx: ShipArtCtx, sprite: Container): void {
 export interface OwnerLivery { team: number; sigil: number; edge: LiveryEdge }
 const ownerLiveries = new Map<string, OwnerLivery>();
 let ownerLiveriesVersion = factionLookVersion();
+/** An ownerless base (capture 4E, `none:` owner) has no faction: every one
+ *  wears the same neutral grey (the galaxy map's neutral-ground colour) and
+ *  plain markings, never its old faction's colour or a hashed player slot. */
+const UNOWNED_LIVERY: OwnerLivery = Object.freeze({ team: DEFAULT_FACTION_COLOR, sigil: 0, edge: LIVERY_EDGES[0]! });
 export function ownerLivery(owner: string): OwnerLivery {
+  if (isUnownedOwner(owner)) return UNOWNED_LIVERY;
   const v = factionLookVersion();
   if (v !== ownerLiveriesVersion) { ownerLiveries.clear(); ownerLiveriesVersion = v; }
   let l = ownerLiveries.get(owner);

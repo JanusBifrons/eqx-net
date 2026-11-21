@@ -36,6 +36,10 @@ import { decodeProdBay, decodeProdFrac } from '../../shared-types/production.js'
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { clearDoorRow, decodeDoorRow, isDoorKind } from './doorMotionDecode.js';
 import { decodeProdCount } from '../../shared-types/production.js';
+import { isUnownedOwner } from '../../shared-types/relations.js';
+
+/** The owner label of an ownerless base (capture 4E): no faction, nobody's. */
+export const UNOWNED_OWNER_LABEL = 'Unowned';
 
 /** Scratch for `decodeProdBay` (reused per row, #14). */
 const _bay = { bay: 0, queued: 0 };
@@ -138,7 +142,8 @@ export function decodeStructureState(
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
   const name = owners.names[oi] ?? '';
-  out.ownerName = name !== '' ? name : undefined;
+  // Capture 4E: an ownerless base (`none:`) has no faction; every owner label reads this.
+  out.ownerName = isUnownedOwner(out.owner) ? UNOWNED_OWNER_LABEL : name !== '' ? name : undefined;
   const level = v.level ?? D.level;
   out.level = level > 1 ? level : undefined;
   const conn = out.connTo;
