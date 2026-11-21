@@ -140,7 +140,8 @@ describe('WarpScreen step list', () => {
     const sector = JOIN_STEP_TEXT[2]!;
     expect(screen.getByTestId('warp-screen-status').textContent).toBe(sector.name);
     expect(screen.getByTestId('warp-step-detail').textContent).toBe(sector.detail);
-    expect(screen.getByTestId('warp-step-count').textContent).toBe('2 of 6');
+    // The count names the highlighted step (1-based), not the finished ones.
+    expect(screen.getByTestId('warp-step-count').textContent).toBe('Step 3 of 6');
   });
 
   it('moves the highlight as gates flip, and the bar agrees with the steps', () => {
@@ -151,9 +152,14 @@ describe('WarpScreen step list', () => {
     act(() => useUIStore.setState({ joinMinimumElapsed: true, localPoseResolved: true, clientReadySent: true }));
     expect(stepStates()).toEqual(['done', 'done', 'done', 'done', 'done', 'current']);
     expect(screen.getByTestId('warp-screen-status').textContent).toBe(JOIN_STEP_TEXT[5]!.name);
+    expect(screen.getByTestId('warp-step-count').textContent).toBe('Step 6 of 6');
     const bar = screen.getByTestId('warp-screen-progress');
     expect(bar.getAttribute('data-gates-done')).toBe(String(joinGatesDone(useUIStore.getState())));
     expect(bar.getAttribute('data-gates-done')).toBe('7');
+    act(() => useUIStore.setState({ arrivalTickFromServer: 1, arrivalAcked: true }));
+    expect(screen.getByTestId('warp-screen-status').textContent).toBe('WARP COMPLETE');
+    expect(screen.getByTestId('warp-step-count').textContent).toBe('6 of 6');
+    expect(screen.queryByTestId('warp-step-detail')).toBeNull();
   });
 
   it('a shipless spectator sees the ship and placing steps done', () => {

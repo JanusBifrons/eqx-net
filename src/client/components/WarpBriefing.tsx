@@ -188,7 +188,7 @@ export function WarpBriefing({ sectorKey, gatesDone, steps, currentStep, active,
         <Box sx={STATUS_ROW_SX}>
           {status}
           <Typography data-testid="warp-step-count" sx={COUNT_SX}>
-            {`${steps.filter((st) => st.done).length} of ${steps.length}`}
+            {currentStep >= 0 ? `Step ${currentStep + 1} of ${steps.length}` : `${steps.length} of ${steps.length}`}
           </Typography>
         </Box>
         {currentStep >= 0 && (

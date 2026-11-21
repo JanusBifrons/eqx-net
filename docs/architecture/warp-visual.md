@@ -50,7 +50,8 @@ stack, zoom-blur, burst ripple and white arrival flash on `app.stage`) is
   resolved + `client_ready` sent), arrive (arrival tick received + acked).
   A shipless spectator has the ship id and pose gates done. The status
   label names the current step (the first not done; WARP COMPLETE once
-  all are), with an "N of 6" count, the current step's explainer, and
+  all are), with a "Step N of 6" count (the current step, 1-based; "6 of
+  6" when done), the current step's explainer, and
   the list marking each step done / current / waiting. `joinGatesDone`
   counts from `joinGateSteps`, so the bar and the list never disagree.
   Right: a CSS-only radar
