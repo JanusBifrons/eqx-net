@@ -2,7 +2,7 @@
 
 Rules for the client network layer. `ColyseusClient.ts` is at its size cap (`scripts/audit-god-files.mjs`); where each kind of addition goes: [god-file-extension-points](../../../docs/architecture/god-file-extension-points.md).
 
-- **A new server → client message** is four pieces: its zod schema in its `src/shared-types/messages/` family file, a row in `ServerMessageSchemas` (`src/shared-types/messages.ts`), a handler in a `handlers/<feature>Handlers.ts` file (`register<Feature>Handlers(room, ctx)`), and one call in `handlers/index.ts`. Never add an inline `room.onMessage` to `ColyseusClient.ts`.
+- **A new server → client message** is four pieces: its zod schema in its `src/shared-types/messages/` family file, a row in `ServerMessageSchemas` (`src/shared-types/messages.ts`), a handler in `handlers/<feature>Handlers.ts`, and one call in `handlers/index.ts`. Never add an inline `room.onMessage` to `ColyseusClient.ts`.
 - **Handler ctx interfaces stay narrow:** only what the handlers touch, never the whole `ColyseusClient`.
 - **Handlers allocate nothing new per message** (#14): closures and scratch are created once at registration.
 - **A per-entity timer or state machine is its own module** (like `drawnShellTiming.ts`, `damageNumberTargets.ts`), never inline in `ColyseusClient.ts`.
@@ -10,8 +10,8 @@ Rules for the client network layer. `ColyseusClient.ts` is at its size cap (`scr
 - **A per-frame mirror pass** is a function in `mirror/` taking the once-built `MirrorPassCtx` (getters for reassigned fields), called in order from `updateMirror`.
 - **A prediction-step pass** is a function in `prediction/` taking the once-built `PredictionStepCtx`, called in order from `tickPhysics`.
 - **Per-sector state** is reset in `prediction/resetPrediction.ts`; **join / transport / room lifecycle** lives in `connection/roomConnection.ts`; **teardown** (`dispose`) in `connection/clientTeardown.ts` — a new subsystem is disposed there.
-- **An outbound room command** (`room.send` from a public client method: pilot swap, spectate / command, fleet orders, upgrades, respawn, `client_ready`) is a function in `connection/roomCommands.ts` taking the once-built `RoomCommandsCtx`; `ColyseusClient` keeps a one-line delegate.
-- **PredWorld body sync** (local-body bootstrap, swarm bodies, ship re-key / remote bodies) lives in `prediction/predWorldSync.ts`.
+- **An outbound room command** (`room.send` from a public client method) is a function in `connection/roomCommands.ts` taking the once-built `RoomCommandsCtx`; `ColyseusClient` keeps a one-line delegate.
+- **PredWorld body sync** (local, swarm, remote bodies) lives in `prediction/predWorldSync.ts`.
 - **`snapshot` and `swarm` stay inline in `connect()`** (hot path).
 - **Fire control and lock state** live in `FireControlClient.ts` (lock line in `fireControl/`); `ColyseusClient` keeps one-line delegates, reached through `FireControlHost`.
 - **The teleport bound** (`isImplausibleJump`, `TELEPORT_MAX_PLAUSIBLE_SPEED`, `TELEPORT_FLOOR_U`): one home, `plausibleSpeed.ts`; every interpolator that snaps imports it, never redefines it.
