@@ -4,6 +4,7 @@ import { getShipKind } from '@shared-types/shipKinds';
 import { ACQUIRE_COLOUR, FAILSAFE_COLOUR, THREAT_COLOUR, groupColour } from '../hud/groupColours';
 import { hullHalfBeam, lockMarkFrame, threatDiamondHalf, threatPointerRadius, threatRingRadius, THREAT_TIP_PX, type LockMarkFrame } from './lockMarkFrame';
 import { acquiringPct, acquiringRank } from '../hud/lockPct';
+import { arcSubpath } from './arcSubpath';
 
 /**
  * Fire-control world-space feedback for the local pilot: lock rings and
@@ -220,8 +221,7 @@ export class AimFeedbackRenderer {
             g.circle(x, y, r).stroke({ width: 2 * px, color: col, alpha: 0.3 });
             if (frac > 0.001) {
               const a0 = -Math.PI / 2;
-              g.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r);
-              g.arc(x, y, r, a0, a0 + Math.PI * 2 * frac).stroke({ width: 4.5 * px, color: col, alpha: dim });
+              arcSubpath(g, x, y, r, a0, a0 + Math.PI * 2 * frac).stroke({ width: 4.5 * px, color: col, alpha: dim });
             }
             // Four ticks closing in from 2x to the ring as the lock builds
             // (they open back out as a let-go lock drains).
@@ -273,8 +273,7 @@ export class AimFeedbackRenderer {
               .lineTo(cx + Math.cos(th + w) * Rp, cy + Math.sin(th + w) * Rp)
               .closePath()
               .fill({ color: THREAT_COLOUR, alpha: 0.95 });
-            g.moveTo(cx + Math.cos(th - 0.5) * Rp, cy + Math.sin(th - 0.5) * Rp);
-            g.arc(cx, cy, Rp, th - 0.5, th + 0.5).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.9 });
+            arcSubpath(g, cx, cy, Rp, th - 0.5, th + 0.5).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.9 });
           }
           // Pulsing diamond on the NPC: round a fighter, a small pin on a capital.
           const dr = threatDiamondHalf(mf, px);
@@ -284,8 +283,7 @@ export class AimFeedbackRenderer {
           // Acquiring: an arc facing the NPC that narrows as its lock builds.
           const frac = Math.max(0, Math.min(1, l.p / 100));
           const half = 0.15 + 0.85 * (1 - frac);
-          g.moveTo(cx + Math.cos(th - half) * Rp, cy + Math.sin(th - half) * Rp);
-          g.arc(cx, cy, Rp, th - half, th + half).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.35 + 0.5 * pulse });
+          arcSubpath(g, cx, cy, Rp, th - half, th + half).stroke({ width: 3 * px, color: THREAT_COLOUR, alpha: 0.35 + 0.5 * pulse });
           // Small notch at the exact bearing.
           g.moveTo(cx + Math.cos(th) * (Rp - 5 * px), cy + Math.sin(th) * (Rp - 5 * px))
             .lineTo(cx + Math.cos(th) * (Rp + 7 * px), cy + Math.sin(th) * (Rp + 7 * px))

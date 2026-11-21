@@ -3344,3 +3344,15 @@ link. Inputs landed late, held repeats replaced them, and the heading snapped by
 Measure lateness where it happens: the server records `inputLeadMargin` for each input and sends it as
 the snapshot `inputMargin`, and the client sizes the lead from `inputPathTicks` (prediction-and-correction
 "Adaptive lookahead"). Treat any timing derived from an ack the server can synthesise as suspect.
+
+## 2026-11-21 — moveTo the arc's start, then arc(): a stray line to the Graphics' origin on phones
+
+Pixi v8's `arc()` pushes its own start point onto the current subpath, so `g.moveTo(arc start);
+g.arc(...)` gives the stroke polygon two identical leading points. `buildLine` normalises the first
+segment by its length (zero), so the whole stroke tessellates to NaN vertices. Desktop GPUs drop
+those triangles; a phone GPU draws them at the Graphics' local origin, so every lock progress arc,
+threat arc, galaxy padlock shackle and flip-ring dash grew a long thin line from far off-screen. A bare
+`arc()` is no fix: after an earlier stroke or fill the path keeps its last point and the arc joins it.
+Draw arcs with `arcSubpath` (`src/client/render/arcSubpath.ts`: moveTo + lineTo, which skips
+duplicates). `g.context.bounds` does not catch this (NaN never widens bounds): test the tessellated
+vertices with `strokeVertices` (`src/client/render/strokeVertices.testutil.ts`) and assert finite.
