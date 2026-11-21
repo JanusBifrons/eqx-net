@@ -207,9 +207,19 @@ describe('ProductionSubsystem', () => {
     expect(bay.hold!.goods).toEqual({ gas: 40 - 3 * 4, fuel: 3, polymer: 3 });
   });
 
+  it('a freshly built refinery starts on Break down rock chunks', () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { ice: 10, gas: 10 }, blueprints: [] } });
+    const refinery = rec('r', 'refinery');
+    const { prod, run } = world([bay, refinery]);
+    expect(prod.recipeOf(refinery)).toBe('refine_rock_chunk');
+    run(1);
+    expect(refinery.prodState).toBe(PROD_STATE.starved); // waiting for a rock chunk
+    expect(bay.hold!.goods).toEqual({ ice: 10, gas: 10 }); // ice and gas untouched
+  });
+
   it('changing recipe mid-cycle hands the loaded inputs back', () => {
     const bay = rec('bay', 'cargo_bay', { hold: { goods: { ice: 10 }, blueprints: [] } });
-    const refinery = rec('r', 'refinery');
+    const refinery = rec('r', 'refinery', { recipe: 'refine_ice_fuel' });
     const { prod, run } = world([bay, refinery]);
     run(1); // refine_ice_fuel loads 2 ice
     expect(bay.hold!.goods.ice).toBe(8);

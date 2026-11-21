@@ -623,13 +623,13 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: '9', name: 'Refinery', hp: 1800, hpMax: 1800 });
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-recipe')).toHaveAttribute('data-recipe', 'refine_ice_fuel');
+    expect(screen.getByTestId('entity-stats-recipe')).toHaveAttribute('data-recipe', 'refine_rock_chunk');
     // The recipe button lives in the cog window now, not on the inspector.
     expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
     fireEvent.click(screen.getByTestId('structure-action-settings'));
     fireEvent.click(screen.getByTestId('structure-settings-tab-production'));
     fireEvent.click(screen.getByTestId('structure-action-recipe'));
-    expect(sendSpy).toHaveBeenCalledWith('set_recipe', { type: 'set_recipe', entityId: 9, recipe: 'refine_gas' });
+    expect(sendSpy).toHaveBeenCalledWith('set_recipe', { type: 'set_recipe', entityId: 9, recipe: 'refine_ice_fuel' });
   });
 
   it('shows a LVL n line for a leveled structure', () => {

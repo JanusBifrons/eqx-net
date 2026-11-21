@@ -42,9 +42,18 @@ export function isProcessorKind(kind: string): kind is ProcessorKindId {
   return (PROCESSOR_KIND_IDS as readonly string[]).includes(kind);
 }
 
+/**
+ * A kind whose default is not its first recipe in catalogue order (the
+ * catalogue is append-only wire format, so its order can't be the choice).
+ * Owner: a new refinery starts on rock chunks; ice and gas are one Change away.
+ */
+const DEFAULT_RECIPE: Readonly<Partial<Record<ProcessorKindId, RecipeId>>> = Object.freeze({
+  refinery: 'refine_rock_chunk',
+});
+
 /** The recipe a processor runs when its owner hasn't picked one. */
 export function defaultRecipeFor(kind: ProcessorKindId): RecipeId {
-  return recipesFor(kind)[0]!;
+  return DEFAULT_RECIPE[kind] ?? recipesFor(kind)[0]!;
 }
 
 /** Wire byte for a selected recipe (0 = default). */
