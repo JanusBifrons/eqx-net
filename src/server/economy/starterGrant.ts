@@ -14,6 +14,7 @@
  */
 import { cloneHold, emptyHold, holdWeight, packedWeightOf } from '../../core/cargo/hold.js';
 import { makeBlueprint } from '../../shared-types/blueprints.js';
+import type { BlueprintItem } from '../../shared-types/items.js';
 import { cargoCapacityForMaxHealth } from '../../shared-types/goods.js';
 import { blueprintProductFor, type RecipeId } from '../../shared-types/recipes.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -28,6 +29,12 @@ export const STARTER_CAPITAL_QUALITY = 50;
 
 /** The starter junk blueprint copies: the recipes they unlock (owner 2026-11-20). */
 export const STARTER_JUNK_RECIPES: readonly RecipeId[] = ['build_mining_skiff', 'build_interceptor'];
+
+/** The starter junk blueprint copies, freshly rolled (the grant's items; the
+ *  `base-build-test` room also stocks its prebuilt Capital with them). */
+export function starterJunkCopies(rng: () => number = Math.random): BlueprintItem[] {
+  return STARTER_JUNK_RECIPES.map((r) => makeBlueprint(blueprintProductFor(r), 'bpc', rng, { junk: true }));
+}
 
 export type StarterGrantEconomy = Pick<EconomyStore, 'starterGranted' | 'markStarterGranted'>;
 
@@ -63,7 +70,7 @@ export function grantStarter(
   if (holdWeight(hold) + packedWeightOf(STARTER_CAPITAL_PRODUCT) > capacity) return false;
   (hold.packed ??= []).push(capitalCrateItem(STARTER_CAPITAL_QUALITY, CAPITAL_STARTING_MINERALS));
   const rng = deps.rng ?? Math.random;
-  for (const r of STARTER_JUNK_RECIPES) hold.blueprints.push(makeBlueprint(blueprintProductFor(r), 'bpc', rng, { junk: true }));
+  hold.blueprints.push(...starterJunkCopies(rng));
   const next: HoldRecord = rec
     ? { ...rec, hold }
     : { holderUid: shipInstanceId, holderType: 'ship', ownerId: playerId, sectorKey: null, x: null, y: null, hold, expiresAt: null };

@@ -179,7 +179,8 @@ export function joinFreshSpawn(
   // Economy v2 W5b + join flow — the ship-picker gate, which pays for the
   // launch (rooms/launchGate.ts). Test wallet seed first, so it pays.
   if ((d.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) seedTestWallet(playerId, parsed.data.initialWallet ?? d.testWalletSeed);
-  if (d.testMode) adoptPrebuiltBase(d.structureRegistry, playerId); // base-build-test: the base is the joiner's
+  // base-build-test: the base is the joiner's, its Capital already holding the starter copies (no grant then).
+  const adoptedBase = d.testMode && adoptPrebuiltBase(d.structureRegistry, playerId) > 0;
   if (!resumedFromStore && d.sectorKey !== null && d.enforceHullGate) chosenKind = gateLaunch(d.launchCostsOn, playerId, chosenKind, (m) => d.sendNotice(client, m));
 
   // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
@@ -392,7 +393,7 @@ export function joinFreshSpawn(
   }
   // Starter grant: a fresh launch carries the once-per-account packed Capital
   // crate (economy/starterGrant.ts). A test-seeded hold (initialCargo) is exact.
-  if (!resumedFromStore && ship.shipInstanceId !== '' && d.sectorKey !== null && !(parsed.success && parsed.data.initialCargo !== undefined)) {
+  if (!resumedFromStore && !adoptedBase && ship.shipInstanceId !== '' && d.sectorKey !== null && !(parsed.success && parsed.data.initialCargo !== undefined)) {
     grantStarter({ econ: getStarterGrantEconomy(), holds: getHoldStore() }, playerId, ship.shipInstanceId, ship.kind);
   }
   ship.shieldLastDamageTick = d.serverTick;

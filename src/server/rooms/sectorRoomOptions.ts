@@ -257,6 +257,9 @@ export interface SectorRoomOptions {
   /** Base loop (testMode) — minerals banked in the prebuilt Capital (what
    *  construction draws), capped at its storage. */
   prebuiltCapitalMinerals?: number;
+  /** Base loop (testMode) — the starter junk blueprint copies
+   *  (`starterJunkCopies`) in the prebuilt Capital's hold. */
+  prebuiltStarterBlueprints?: boolean;
   /** Living World P2 — testMode: join the TradeDirector so deals can be
    *  made in this (non-galaxy) room (showcase / E2E). */
   tradeEnabled?: boolean;
