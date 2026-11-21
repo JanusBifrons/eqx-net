@@ -91,6 +91,10 @@ export interface StructureRecord {
   alienNeighbour?: string;
   /** v4 H — the transit link an NPC teleporter ends (its twin has the same id). */
   npcLink?: string;
+  /** Capture plan 4E (S6) — the NPC base this structure was grown in (its
+   *  seed owner, `npc:<faction>:<baseId>`). Kept when the base falls
+   *  (`none:`) or is captured, so the seeder never regrows it. Persisted. */
+  originBase?: string;
   /** T4 — its toll (credits per 1000 charge; what happens to non-payers). */
   tpToll?: TeleportToll;
   /** T2 — its iris walls and push field exist in the physics worker. */

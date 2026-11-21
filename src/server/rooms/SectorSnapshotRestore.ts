@@ -17,6 +17,7 @@ import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { MAX_FREIGHT_ORDERS } from '../../shared-types/messages/cargoMessages.js';
 import { PackedItemSchema } from '../../shared-types/items.js';
 import { isRecipeId } from '../../shared-types/recipes.js';
+import { isNpcOwner } from '../../shared-types/relations.js';
 import { MAX_BUILD_COUNT } from '../../shared-types/production.js';
 import {
   SLOT_X_OFF,
@@ -136,6 +137,7 @@ export class SectorSnapshotRestore {
         }
         if (r.acceptAutoUnload === false) rec.acceptAutoUnload = false; // cargo pods 14c
         if (typeof r.packedQuality === 'number') rec.packedQuality = r.packedQuality;
+        if (typeof r.originBase === 'string' && isNpcOwner(r.originBase)) rec.originBase = r.originBase; // 4E S6
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
           rec.prodProgress = r.prodProgress ?? 0;
