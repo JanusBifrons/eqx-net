@@ -6,6 +6,8 @@
  *  1. Start a cycle by taking the recipe's inputs from its NETWORK's storage
  *     (the same-owner storage in its grid component: Capital bank, Cargo Bays,
  *     Freight Docks). All or nothing: a missing input leaves it "starved".
+ *     An idle processor starts only when the grid can take its full draw
+ *     (`canDrawFull`); else it holds a steady "unpowered".
  *  2. Advance one step per powered pulse, times the owner throttle
  *     (`structureWorkRate`: 50% takes twice as long, 0% makes no progress).
  *  3. When the cycle completes, put the outputs into network storage. If they
@@ -46,6 +48,7 @@ import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecip
 import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
 import { advanceProgress } from './productionProgress.js';
+import { baseEffect, inputsAsOutputs } from './productionEffect.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { haltAtBuildCount, spendBuildCount } from './productionCount.js';
@@ -66,6 +69,10 @@ export interface ProductionDeps {
   registry: StructureRegistry;
   /** Battery-backed power for a structure's component. */
   powered(id: string): boolean;
+  /** Can the grid take `rec`'s step up to its FULL draw now (`canTakeFullDraw`)?
+   *  An idle processor starts only if so; else it holds "unpowered" rather
+   *  than start, black the grid out, stop and restart every pulse. */
+  canDrawFull?(rec: StructureRecord): boolean;
   /** Ids in the same grid component as `id` (including `id`). */
   componentOf(id: string): readonly string[];
   /** A processor's blueprint changed (a run was spent, or a used-up copy left
@@ -87,18 +94,6 @@ interface AppliedCache {
   material: number;
   output: number;
   eff: EffectiveRecipe;
-}
-
-/** A recipe's base effect (no blueprint), cached per recipe. */
-const BASE_EFFECT = new Map<RecipeId, EffectiveRecipe>();
-function baseEffect(id: RecipeId): EffectiveRecipe {
-  let e = BASE_EFFECT.get(id);
-  if (e === undefined) {
-    const d = RECIPES[id];
-    e = { inputs: d.inputs, outputs: d.outputs, cyclePulses: d.cyclePulses, yieldBonus: 0, quality: 0 };
-    BASE_EFFECT.set(id, e);
-  }
-  return e;
 }
 
 export class ProductionSubsystem {
@@ -286,7 +281,8 @@ export class ProductionSubsystem {
       rec.prodState = PROD_STATE.needsBlueprint;
       return;
     }
-    if (!this.d.powered(rec.id)) {
+    // Already drawing full, its draw is in the grid's net (`powered` covers it).
+    if (!this.d.powered(rec.id) || (rec.drawFull !== true && this.d.canDrawFull?.(rec) === false)) {
       rec.prodState = PROD_STATE.unpowered;
       return;
     }
@@ -591,9 +587,3 @@ export class ProductionSubsystem {
 
 const EMPTY = { goods: {}, blueprints: [] };
 const ONE_FUEL: Readonly<Partial<Record<GoodId, number>>> = Object.freeze({ fuel: 1 });
-
-/** A cycle's inputs as outputs (handing a loaded cycle back). Rare (recipe or
- *  blueprint change), so it may allocate. */
-function inputsAsOutputs(eff: EffectiveRecipe): readonly RecipeOutput[] {
-  return Object.entries(eff.inputs).map(([good, n]) => ({ good: good as GoodId, n: n ?? 0 }));
-}
