@@ -1,11 +1,13 @@
 import { Box, Typography } from '@mui/material';
 import { useUIStore } from '../state/store';
-import { buildSectorBriefing, JOIN_GATE_COUNT } from './sectorBriefing';
+import { buildSectorBriefing, JOIN_GATE_COUNT, type JoinGateStep } from './sectorBriefing';
 
 /**
  * The join loading screen's "sector briefing" body (WarpScreen, Idea A):
  * left, where you are arriving (name, holder, four live facts) over a slim
- * progress bar filled by the REAL join gates; right, a slow radar sweep.
+ * progress bar filled by the REAL join gates, the current step's name and
+ * plain explainer, and the step list (done / current / waiting); right, a
+ * slow radar sweep.
  * Mounted by WarpScreen only while the screen is visible, so its store
  * subscriptions and the CSS sweep cost nothing in play. No RAF, no timers:
  * the sweep is a CSS keyframe (off under `prefers-reduced-motion`), the bar
@@ -81,6 +83,28 @@ const FILL_SX: readonly object[] = Array.from({ length: JOIN_GATE_COUNT + 1 }, (
   transition: 'transform 300ms ease-out',
   '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
 }));
+const STATUS_ROW_SX = { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 1, minWidth: 0 };
+const COUNT_SX = { color: HUD_DIM, fontFamily: MONO, fontSize: 9, lineHeight: 1.3, flex: '0 0 auto' };
+const DETAIL_SX = { color: HUD, fontSize: 10, lineHeight: 1.3, mt: -0.5 };
+const STEPS_SX = { listStyle: 'none', m: 0, p: 0, display: 'flex', flexDirection: 'column' as const, gap: '1px' };
+const STEP_BASE_SX = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 0.75,
+  fontSize: 9,
+  lineHeight: 1.3,
+  whiteSpace: 'nowrap' as const,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+type StepState = 'done' | 'current' | 'waiting';
+const STEP_SX: Record<StepState, object> = {
+  done: { ...STEP_BASE_SX, color: HUD_DIM },
+  current: { ...STEP_BASE_SX, color: CYAN, fontWeight: 700 },
+  waiting: { ...STEP_BASE_SX, color: 'rgba(125,147,171,0.5)' },
+};
+const STEP_MARK: Record<StepState, string> = { done: '✓', current: '▸', waiting: '·' };
+const MARK_SX = { width: 8, flex: '0 0 auto', textAlign: 'center' as const, fontFamily: MONO };
 const RADAR_SX = {
   flex: '0 0 auto',
   width: { xs: 'min(34vw, 46vh)', sm: 'min(30vw, 52vh)' },
@@ -107,6 +131,10 @@ export interface WarpBriefingProps {
   sectorKey: string | null;
   /** Join gates done (0..JOIN_GATE_COUNT), from `joinGatesDone`. */
   gatesDone: number;
+  /** The ordered loading steps, from `joinGateSteps` (the same checks). */
+  steps: readonly JoinGateStep[];
+  /** Index of the step in progress, or -1 when all are done. */
+  currentStep: number;
   /** The screen is showing: false pauses the radar sweep. */
   active: boolean;
   /** The status label element (WarpScreen owns its text + testid). */
@@ -115,7 +143,7 @@ export interface WarpBriefingProps {
   footer: JSX.Element | null;
 }
 
-export function WarpBriefing({ sectorKey, gatesDone, active, status, footer }: WarpBriefingProps): JSX.Element {
+export function WarpBriefing({ sectorKey, gatesDone, steps, currentStep, active, status, footer }: WarpBriefingProps): JSX.Element {
   const galaxyStats = useUIStore((s) => s.galaxyStats);
   const shipRoster = useUIStore((s) => s.shipRoster);
   const brief = buildSectorBriefing(sectorKey, galaxyStats, shipRoster);
@@ -157,10 +185,37 @@ export function WarpBriefing({ sectorKey, gatesDone, active, status, footer }: W
         >
           <Box sx={FILL_SX[done]} />
         </Box>
-        {status}
+        <Box sx={STATUS_ROW_SX}>
+          {status}
+          <Typography data-testid="warp-step-count" sx={COUNT_SX}>
+            {currentStep >= 0 ? `Step ${currentStep + 1} of ${steps.length}` : `${steps.length} of ${steps.length}`}
+          </Typography>
+        </Box>
+        {currentStep >= 0 && (
+          <Typography data-testid="warp-step-detail" sx={DETAIL_SX}>{steps[currentStep]!.detail}</Typography>
+        )}
+        <Box component="ol" sx={STEPS_SX} data-testid="warp-steps" aria-label="Loading steps">
+          {steps.map((st, i) => {
+            const state: StepState = st.done ? 'done' : i === currentStep ? 'current' : 'waiting';
+            return (
+              <Box
+                component="li"
+                key={st.id}
+                sx={STEP_SX[state]}
+                data-testid={`warp-step-${st.id}`}
+                data-step-id={st.id}
+                data-step-state={state}
+                aria-current={state === 'current' ? 'step' : undefined}
+              >
+                <Box component="span" sx={MARK_SX} aria-hidden="true">{STEP_MARK[state]}</Box>
+                {st.name}
+              </Box>
+            );
+          })}
+        </Box>
         {footer}
       </Box>
-      <Box sx={active ? RADAR_SX : RADAR_SX_PAUSED}data-testid="warp-briefing-radar" data-blips={brief?.blips.length ?? 0}>
+      <Box sx={active ? RADAR_SX : RADAR_SX_PAUSED} data-testid="warp-briefing-radar" data-blips={brief?.blips.length ?? 0}>
         <svg viewBox="0 0 100 100" aria-hidden="true">
           <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(79,210,255,0.2)" />
           <circle cx="50" cy="50" r="30" fill="none" stroke="rgba(79,210,255,0.13)" />
@@ -176,10 +231,15 @@ export function WarpBriefing({ sectorKey, gatesDone, active, status, footer }: W
   );
 }
 
+/** The status label: the current step's name (WarpScreen owns the text). */
 export const WARP_STATUS_SX = {
-  color: HUD_DIM,
+  color: HUD,
   fontSize: 9,
   letterSpacing: 2,
   textTransform: 'uppercase' as const,
   lineHeight: 1.3,
+  minWidth: 0,
+  whiteSpace: 'nowrap' as const,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 };

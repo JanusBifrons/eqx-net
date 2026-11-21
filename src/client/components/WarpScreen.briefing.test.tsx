@@ -10,7 +10,10 @@ import { WarpScreen } from './WarpScreen.js';
 import { useUIStore } from '../state/store.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { RosterEntry } from '../state/storeTypes.js';
-import { buildSectorBriefing, joinGatesDone, sectorKeyFromRoomName, JOIN_GATE_COUNT } from './sectorBriefing.js';
+import { buildSectorBriefing, joinGatesDone, sectorKeyFromRoomName, JOIN_GATE_COUNT, JOIN_STEP_TEXT, type JoinStepId } from './sectorBriefing.js';
+
+/** The status label names the loading step in progress. */
+const stepName = (id: JoinStepId): string => JOIN_STEP_TEXT.find((s) => s.id === id)!.name;
 
 let host: HTMLDivElement;
 
@@ -72,7 +75,7 @@ describe('WarpScreen sector briefing', () => {
   it('names the join target before welcome, and reads Unclaimed with no holder', () => {
     useUIStore.setState({ localShipInstanceId: null, currentSectorKey: 'sol-prime', galaxyStats: [live({ key: 'vega-reach' })] });
     renderWarp('vega-reach');
-    expect(screen.getByTestId('warp-screen-status').textContent).toBe('CONNECTING');
+    expect(screen.getByTestId('warp-screen-status').textContent).toBe(stepName('ship'));
     expect(screen.getByTestId('warp-briefing-name').textContent).toBe('Vega Reach');
     expect(screen.getByTestId('warp-briefing-owner').textContent).toBe('Unclaimed');
     expect(fact('threat')).toBe('ThreatQuiet');
@@ -93,7 +96,7 @@ describe('WarpScreen sector briefing', () => {
     renderWarp(null);
     expect(screen.queryByTestId('warp-briefing-name')).toBeNull();
     expect(screen.getByTestId('warp-screen-progress')).toBeTruthy();
-    expect(screen.getByTestId('warp-screen-status').textContent).toBe('LOADING SECTOR');
+    expect(screen.getByTestId('warp-screen-status').textContent).toBe(stepName('sector'));
   });
 
   it('the progress bar advances one step per real gate', () => {
@@ -106,7 +109,7 @@ describe('WarpScreen sector briefing', () => {
     expect(done()).toBe('7');
     act(() => useUIStore.setState({ arrivalTickFromServer: 42 }));
     expect(done()).toBe('8');
-    expect(screen.getByTestId('warp-screen-status').textContent).toBe('WARPING IN');
+    expect(screen.getByTestId('warp-screen-status').textContent).toBe(stepName('arrive'));
   });
 
   it('plots own roster hulls in the sector as radar blips, none elsewhere', () => {

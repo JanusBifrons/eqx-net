@@ -34,22 +34,68 @@ export type JoinGateState = Pick<
   | 'pilotMode'
 >;
 
-/** How many of the {@link JOIN_GATE_COUNT} join gates are done (0..9). A
- *  spectator joining with no ship never gets a ship id or pose, so those two
- *  count as done for them (as `computeBootstrapReadyFromState` treats them). */
-export function joinGatesDone(s: JoinGateState): number {
+export type JoinStepId = 'connect' | 'ship' | 'sector' | 'draw' | 'place' | 'arrive';
+
+/** The loading steps the screen lists, in order: a playful headline `name`
+ *  and a plain-English `detail` of what is really happening. Pure data. */
+export const JOIN_STEP_TEXT: readonly { id: JoinStepId; name: string; detail: string }[] = [
+  { id: 'connect', name: 'Tuning the subspace antenna', detail: 'Connecting to the sector server' },
+  { id: 'ship', name: 'Rummaging for your ship keys', detail: 'Looking up the ship you are flying' },
+  { id: 'sector', name: 'Unpacking the sector', detail: 'Downloading the ships, rocks and structures around you' },
+  { id: 'draw', name: 'Texturizing the void', detail: 'Drawing the world on your screen' },
+  { id: 'place', name: 'Parallel-parking in orbit', detail: 'Putting your ship where the server says it is' },
+  { id: 'arrive', name: 'Calibrating warp ballast', detail: 'Agreeing the exact moment you arrive with the server' },
+];
+
+/** One loading step over one or more of the {@link JOIN_GATE_COUNT} join
+ *  gates. `done` = every gate in it is done. */
+export interface JoinGateStep {
+  id: JoinStepId;
+  name: string;
+  detail: string;
+  /** Gates this step covers. */
+  gates: number;
+  /** Of those, how many are done. */
+  gatesDone: number;
+  done: boolean;
+}
+
+/** The join gates grouped into the ordered steps the loading screen lists.
+ *  The ONLY place the gate checks live: {@link joinGatesDone} counts from
+ *  this, so the list and the bar can never disagree. The minimum-display
+ *  floor (`joinMinimumElapsed`) folds into "draw" so it never reads as a
+ *  step of its own. A spectator joining with no ship never gets a ship id or
+ *  pose, so those count as done for them (as `computeBootstrapReadyFromState`
+ *  treats them). */
+export function joinGateSteps(s: JoinGateState): JoinGateStep[] {
   const shiplessSpectator = s.pilotMode === 'spectator' && s.localShipInstanceId === null;
+  const checks: Record<JoinStepId, readonly boolean[]> = {
+    connect: [s.connectionStatus === 'connected'],
+    ship: [s.localShipInstanceId !== null || shiplessSpectator],
+    sector: [s.firstSnapshotApplied],
+    draw: [s.rendererFirstFrameRendered, s.joinMinimumElapsed],
+    place: [s.localPoseResolved || shiplessSpectator, s.clientReadySent],
+    arrive: [s.arrivalTickFromServer !== null, s.arrivalAcked],
+  };
+  return JOIN_STEP_TEXT.map(({ id, name, detail }) => {
+    const c = checks[id];
+    let n = 0;
+    for (const ok of c) if (ok) n++;
+    return { id, name, detail, gates: c.length, gatesDone: n, done: n === c.length };
+  });
+}
+
+/** How many of the {@link JOIN_GATE_COUNT} join gates are done (0..9),
+ *  counted from {@link joinGateSteps}. */
+export function joinGatesDone(s: JoinGateState): number {
   let n = 0;
-  if (s.connectionStatus === 'connected') n++;
-  if (s.localShipInstanceId !== null || shiplessSpectator) n++;
-  if (s.rendererFirstFrameRendered) n++;
-  if (s.firstSnapshotApplied) n++;
-  if (s.joinMinimumElapsed) n++;
-  if (s.localPoseResolved || shiplessSpectator) n++;
-  if (s.clientReadySent) n++;
-  if (s.arrivalTickFromServer !== null) n++;
-  if (s.arrivalAcked) n++;
+  for (const st of joinGateSteps(s)) n += st.gatesDone;
   return n;
+}
+
+/** Index of the step in progress (the first not done), or -1 when all are. */
+export function currentJoinStepIndex(steps: readonly JoinGateStep[]): number {
+  return steps.findIndex((st) => !st.done);
 }
 
 /** `galaxy-<key>` room name → sector key, else null (`sector`, `galaxy-test`, …). */
