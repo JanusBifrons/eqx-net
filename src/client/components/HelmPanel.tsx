@@ -1,10 +1,12 @@
 import { Box, ButtonBase } from '@mui/material';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
+import { helmOrdersAllowed } from '../helm/helmModeGate.js';
 
 /**
- * Helm orders (capital-ship R&D round 3 D). Shown only while you fly a ship
- * that takes helm orders (a capital). Tap empty space to set the course; these
+ * Helm orders (capital-ship R&D round 3 D): the ship-speed telegraph. A
+ * Command control only (owner, 2026-11-21): Fly is manual piloting, so this
+ * never shows there, for any hull. Tap empty space to set the course; these
  * buttons set the speed: stop, one third, two thirds, full. WASD overrides and
  * cancels the course. Reads only discrete Zustand state (#2).
  */
@@ -38,8 +40,8 @@ export function HelmPanel(): JSX.Element | null {
   const available = useUIStore((s) => s.helmAvailable);
   const active = useUIStore((s) => s.helmActive);
   const speed = useUIStore((s) => s.helmSpeed);
-  const building = useUIStore((s) => s.buildMode);
-  if (!show || !available || building) return null;
+  const command = useUIStore(helmOrdersAllowed); // Command only, never Fly or Build
+  if (!show || !available || !command) return null;
   return (
     <Box sx={ROOT_SX} data-testid="helm-panel" data-helm-active={active ? '1' : '0'} data-helm-speed={speed}>
       <Box component="span" sx={LABEL_SX}>{active ? 'Helm: course set' : 'Helm: tap to set course'}</Box>

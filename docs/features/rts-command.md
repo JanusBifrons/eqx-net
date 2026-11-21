@@ -23,6 +23,19 @@ Two buttons switch between the views:
 You can also **double-click (double-tap)** one of your parked ships to take
 its controls. If the ship you fly is destroyed, you drop back to Command view.
 
+The two views have separate jobs (owner, 2026-11-21):
+
+- **Command** is where you tell ships where to go: tap or click a point to
+  move there, and set ship speed.
+- **Fly** is hand flying only: WASD or the thumbstick. There is no ship-speed
+  telegraph (Stop / ⅓ / ⅔ / Full) and tapping empty space sets no course.
+  This holds for every hull, capitals included: a battleship in Fly turns and
+  thrusts straight off the stick like a fighter, just slower. For long,
+  careful moves in a capital, use Command.
+- Switching to Fly drops any course the helm was steering, so your hands take
+  over at once; a ship you take over also drops its Command move order.
+  Switching back to Command changes nothing.
+
 ## Moving the camera
 
 - **Desktop:** WASD or the arrow keys pan, the mouse wheel zooms, and dragging

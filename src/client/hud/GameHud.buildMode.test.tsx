@@ -55,10 +55,11 @@ describe('GameHud in build mode', () => {
     useUIStore.setState({ phase: 'galaxy-map', pilotMode: 'pilot', isDead: false, helmAvailable: true, placementKind: null, buildMode: false });
   });
 
-  it('shows the flight controls and helm bar while flying (control)', () => {
+  it('shows the flight controls while flying; the helm bar is Command-only (control)', () => {
     renderHud();
     for (const id of FLIGHT_IDS) expect(document.querySelector(`[data-testid="${id}"]`), id).not.toBeNull();
-    expect(document.querySelector('[data-testid="helm-panel"]')).not.toBeNull();
+    // Fly is manual only (#1092): the helm bar shows in Command, not Fly.
+    expect(document.querySelector('[data-testid="helm-panel"]')).toBeNull();
   });
 
   it('renders no flight control and no helm bar in Build mode', () => {

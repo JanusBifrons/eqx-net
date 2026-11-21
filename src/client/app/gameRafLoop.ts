@@ -43,6 +43,7 @@ import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
 import { hudControlsFor, measureBottomHudBand, measureTopHudBand, placeInspector, reclampHeldInspector, type HudBand, type InspectorAnchor } from './inspectorPlacement.js';
 import { isInspectorHeld } from './inspectorHold.js';
+import { HelmModeGate } from '../helm/helmModeGate.js';
 import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
 
 /** Reused each frame (no per-frame allocation, #14). */
@@ -55,9 +56,9 @@ const inspectorAt: InspectorAnchor = { left: 0, top: 0 }, topHud: HudBand = { le
  *  next session re-syncs naturally from null). */
 let _lastPublishedSelectedId: string | null = null;
 
-/** Helm orders (capital-ship R&D round 3 D) — last drained
- *  `feedback.helmCourseSeq`; a change is a new course tap. */
-let _lastHelmCourseSeq = 0;
+/** Helm orders: a course tap (`feedback.helmCourseSeq`) counts in Command
+ *  only; entering Fly drops any course (owner 2026-11-21: Fly is manual). */
+const _helmGate = new HelmModeGate();
 
 /** RTS command view (slice 13a) — last drained `feedback.fleetSelSeq` /
  *  `orderSeq`. A fleet-selection change is mirrored into Zustand (ids only);
@@ -373,10 +374,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // per-frame read is cheap; the actual work fires only on a transition.
     const selFb = feedback ?? renderer.getFeedback();
     gameClient.setFieldView(selFb.viewX, selFb.viewY, selFb.viewHalf); // the cut field follows the camera
-    if (selFb.helmCourseSeq !== _lastHelmCourseSeq) {
-      _lastHelmCourseSeq = selFb.helmCourseSeq;
-      gameClient.setHelmCourse(selFb.helmCourseX, selFb.helmCourseY);
-    }
+    _helmGate.frame(gameClient, useUIStore.getState(), selFb);
     // THE selection (RTS Part A): the selected ships (`fleetSelIds`) and the
     // focus (`selectedPickId/Kind`, the entity whose details panel shows) are
     // ONE renderer-owned selection, mirrored into the ONE store shape in one
