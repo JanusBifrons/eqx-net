@@ -103,14 +103,17 @@ describe('SectorRoom integration — the Attack order (RTS Part B slice 8)', () 
     const post = { ...internals.lingeringPoseCache.get(sid)! };
 
     const R = shipTuning(getShipKind('battleship')).guardRadiusMin;
-    expect(internals.spawnTestDrone('d', post.x, post.y + R * 1.5, 'fighter')).toBe(true);
+    // Just outside the guard radius: a ship locks only within lock range
+    // (owner 2026-11-21, ~1 km hull to hull), so the battleship must close in
+    // before its guns may fire; a slow hull needs the extra time below.
+    expect(internals.spawnTestDrone('d', post.x, post.y + R * 1.1, 'fighter')).toBe(true);
     const start = internals.swarmHealth.get('d')!;
     await harness.advance(1000);
     expect(internals.swarmHealth.get('d'), 'Defensive: the neutral drone is left alone').toBe(start);
 
     client.send('fleet_order', { type: 'fleet_order', shipIds: [sid], kind: 'attack', targetId: 'd' });
     let hit = false;
-    for (let i = 0; i < 120 && !hit; i++) {
+    for (let i = 0; i < 240 && !hit; i++) {
       await harness.advance(250);
       const h = internals.swarmHealth.get('d');
       hit = h === undefined || h < start;
@@ -120,5 +123,5 @@ describe('SectorRoom integration — the Attack order (RTS Part B slice 8)', () 
     // completes); while it lives, the brain is on the ordered target.
     if (internals.swarmHealth.has('d')) expect(internals.aiBrainOf(sid)?.getTargetId?.()).toBe('d');
     await harness.disconnectClient(client);
-  }, 60_000);
+  }, 90_000);
 });

@@ -5,12 +5,14 @@
  *
  * The line runs from the pilot's ship along a world bearing (ship-angle
  * convention: forward = (-sin b, cos b)). A target is on it when it is ahead
- * of the ship and inside a cone that widens with distance. The line has no
- * length cap: locks work at any distance (owner 2026-11-14); only firing is
- * range-limited. The group's reach only scales the near-first tie-break. The
+ * of the ship, within lock range (`pastLockRange`, the same test as
+ * `lockSeconds`, #15) and inside a cone that widens with distance. The
+ * group's reach only scales the near-first tie-break. The
  * target the line already holds keeps it inside a wider (sticky) cone, so a
  * ship drifting across the line doesn't steal it.
  */
+
+import { pastLockRange } from './lockTime.js';
 
 export const LOCK_LINE = {
   /** Cone half-width floor (u). */
@@ -28,13 +30,14 @@ export const LOCK_LINE = {
 /**
  * Score of a target on the lock line (lower = better), or Infinity when the
  * line doesn't hold it. `dx`/`dy`: target minus ship; `dirX`/`dirY`: unit line
- * direction; `held`: the line already holds this target (sticky cone, score -1).
+ * direction; `held`: the line already holds this target (sticky cone, score -1);
+ * `selfRadius`: the pilot's own hull radius (lock range runs hull to hull).
  */
 export function lockLineScore(
-  dx: number, dy: number, dirX: number, dirY: number, radius: number, reach: number, held: boolean,
+  dx: number, dy: number, dirX: number, dirY: number, radius: number, reach: number, held: boolean, selfRadius: number,
 ): number {
   const along = dx * dirX + dy * dirY;
-  if (along < 0) return Infinity;
+  if (along < 0 || pastLockRange(dx, dy, selfRadius + radius)) return Infinity;
   const perp = Math.abs(dx * dirY - dy * dirX);
   const tol = (Math.max(LOCK_LINE.minTol, radius * LOCK_LINE.radiusMul) + along * LOCK_LINE.perAlong) * (held ? LOCK_LINE.stickyMul : 1);
   if (perp > tol) return Infinity;
@@ -46,6 +49,6 @@ export function lockLineScore(
  * says it holds? Uses the sticky cone, which absorbs the client's display
  * delay and the bearing's quantisation.
  */
-export function lockLineHolds(dx: number, dy: number, bearing: number, radius: number, reach: number): boolean {
-  return Number.isFinite(lockLineScore(dx, dy, -Math.sin(bearing), Math.cos(bearing), radius, reach, true));
+export function lockLineHolds(dx: number, dy: number, bearing: number, radius: number, reach: number, selfRadius: number): boolean {
+  return Number.isFinite(lockLineScore(dx, dy, -Math.sin(bearing), Math.cos(bearing), radius, reach, true, selfRadius));
 }

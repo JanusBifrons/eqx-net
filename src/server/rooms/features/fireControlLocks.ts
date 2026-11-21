@@ -316,7 +316,7 @@ export class FireControlLocks {
    * `drones[].hostile` bit, #16). Structures keep their own hostile-act rules.
    * Called per lock per lock step (~10 Hz); no allocation (#14).
    *
-   * Locks work at any distance (owner 2026-11-14), so only a lock held while
+   * A lock holds out to lock range, past a gun's reach, so only a lock held while
    * the pilot is inside the NPC's FIRE range refreshes (lead call): out of
    * its fire range the NPC forgets the pilot 30 s later, lock or no lock.
    */

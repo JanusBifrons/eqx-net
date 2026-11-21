@@ -21,6 +21,7 @@ export function structureLockSecs(
   inp.reach = reach;
   inp.sensor = sensor;
   inp.signature = sig;
+  inp.hullRadii = sig; // lock range: from the mount to the target's hull
   inp.dx = t.x - mx;
   inp.dy = t.y - my;
   inp.dvx = t.vx - selfVx;

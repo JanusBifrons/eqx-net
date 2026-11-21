@@ -117,13 +117,16 @@ describe('NpcLockSubsystem — a capital locks pilots its turrets can engage', (
 });
 
 describe('testMode lockTimeCapS caps NPC locks (drones and capitals on pilots)', () => {
-  const rig = (cap: number | undefined, npcX = 5000) => {
+  // Owner 2026-11-21: nothing locks past lock range (`LOCK_TUNING.maxLockRange`,
+  // 1 km hull to hull), so the battleship sits 0.9 km off the fighter's hull:
+  // 24 + 900 + 2,876 = 3,800 u centre to centre, past its AA guns' reach.
+  const rig = (cap: number | undefined, npcX = 3800) => {
     const write = (x: number, kind: string, out: NpcPose) => { out.x = x; out.y = 0; out.vx = 0; out.vy = 0; return getShipKind(kind); };
     return new NpcLockSubsystem({
       pilots: () => ['f'],
       pilotPose: (_id, out) => write(0, 'fighter', out),
       forEachHostileNpc: (_pid, visit) => visit('bs', 1),
-      npcPose: (_id, out) => write(npcX, 'battleship', out), // 5,000 u: only the 16" reaches
+      npcPose: (_id, out) => write(npcX, 'battleship', out), // 3,800 u: past the AA guns' reach
       lockTimeCapS: () => cap,
     });
   };
@@ -142,33 +145,21 @@ describe('testMode lockTimeCapS caps NPC locks (drones and capitals on pilots)',
     for (let i = 0; i < 4; i++) s.step();
     expect(s.isLocked('bs', 'f')).toBe(true);
   });
-  // Owner 2026-11-14: locks work at any distance, so the cap applies there too.
-  it("far past every gun's reach the cap still applies (locks work at any distance)", () => {
-    const s = rig(0, 100_000);
-    s.step();
-    expect(s.isLocked('bs', 'f')).toBe(true);
-  });
-  it("far past every gun's reach, a capital locks with its longest gun (slowly), not its fast AA", () => {
-    const near = rig(undefined); // 5 km: only the 16" reaches
-    let nearSteps = 0;
-    while (!near.isLocked('bs', 'f') && nearSteps < 5000) { near.step(); nearSteps++; }
-    const far = rig(undefined, 60_000);
-    for (let i = 0; i < nearSteps; i++) far.step();
-    expect(far.isLocked('bs', 'f')).toBe(false); // slower than at 5 km, never the AA's few seconds
-    let farSteps = nearSteps;
-    while (!far.isLocked('bs', 'f') && farSteps < 20_000) { far.step(); farSteps++; }
-    expect(far.isLocked('bs', 'f')).toBe(true);
+  it('past lock range (1.4 km off the hull) the cap never completes a lock', () => {
+    const s = rig(0, 4300);
+    for (let i = 0; i < 20; i++) s.step();
+    expect(s.isLocked('bs', 'f')).toBe(false);
   });
 });
 
 describe('NpcLockSubsystem — testMode instantLock completes NPC locks on that pilot', () => {
-  const rig = (instant: boolean) => {
+  const rig = (instant: boolean, x = 3800) => {
     const write = (x: number, kind: string, out: NpcPose) => { out.x = x; out.y = 0; out.vx = 0; out.vy = 0; return getShipKind(kind); };
     return new NpcLockSubsystem({
       pilots: () => ['f'],
       pilotPose: (_id, out) => write(0, 'fighter', out),
       forEachHostileNpc: (_pid, visit) => visit('bs', 1),
-      npcPose: (_id, out) => write(5000, 'battleship', out), // only the 16" reaches
+      npcPose: (_id, out) => write(x, 'battleship', out), // 3,800 u = 0.9 km off the hull
       instantLock: () => instant,
     });
   };
@@ -179,6 +170,11 @@ describe('NpcLockSubsystem — testMode instantLock completes NPC locks on that 
     const instant = rig(true);
     instant.step();
     expect(instant.isLocked('bs', 'f')).toBe(true);
+  });
+  it('instantLock never locks past lock range', () => {
+    const far = rig(true, 4300);
+    for (let i = 0; i < 20; i++) far.step();
+    expect(far.isLocked('bs', 'f')).toBe(false);
   });
 });
 

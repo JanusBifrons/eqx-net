@@ -14,7 +14,8 @@
  * even one that was shelling it.
  *
  * This test uses the showcase room's battery but parks the battleship where
- * every gun and the battleship's 16" guns can reach (~3,100-3,550 u). The
+ * every gun and the battleship's guns can reach, and inside lock range of the
+ * battery (~1 km from its turrets to the structures' hulls, owner 2026-11-21). The
  * showcase room's own 5,200 u is out of the 8" casemate's (3,542 u) and 11"
  * turret's (4,862 u) reach, and of the battleship's guns (~3,584 u), by
  * layout; that is reported, not changed.
@@ -48,12 +49,14 @@ describe('SectorRoom integration — battleship vs coastal battery', () => {
 
   it('the battery fires on the battleship, and the battleship trains on the battery and fires back', { timeout: 60_000 }, async () => {
     const opts = structuredClone(SHOWCASE_COASTAL_DUEL_OPTS) as unknown as Record<string, unknown>;
-    // In reach of the whole battery (8" casemate at x -1800 is the far one:
-    // ~3,500 u) and of the battleship's own 16" guns.
-    opts['dronePoses'] = [{ kind: 'battleship', x: -900, y: 2700, angle: Math.PI / 2 }];
+    // In reach of the whole battery and of the battleship's own guns, and
+    // close enough for its turrets to LOCK the battery: a ship locks only
+    // within lock range (owner 2026-11-21, ~1 km from the mount to the
+    // structure's hull), so it stands just off the battery's line.
+    opts['dronePoses'] = [{ kind: 'battleship', x: -900, y: 1000, angle: Math.PI / 2 }];
     // The pilot spawns south of the battery, past the battleship's longest
     // lock reach (follows the naval range mode).
-    opts['defaultSpawnY'] = Math.round(2700 - navalGunEngageReach('naval_xl') * LOCK_TUNING.reachSlack - 5000);
+    opts['defaultSpawnY'] = Math.round(1000 - navalGunEngageReach('naval_xl') * LOCK_TUNING.reachSlack - 5000);
     harness = await bootSectorTestServer(opts);
     const cr = await harness.connectActive(SHOWCASE_PILOT_ID, { shipKind: 'fighter', initialHull: 1_000_000, noselfdmg: 1 });
     const room = matchMaker.getLocalRoomById(cr.roomId) as unknown as SectorRoom;

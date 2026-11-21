@@ -49,10 +49,16 @@ export interface LockTuning {
   failsafeMul: number;
   /** A locked/acquiring target may be untrackable this long before it drops. */
   lostGraceSeconds: number;
-  /** Locks work at any distance (owner 2026-11-14); this is only the AUTO
-   *  release band: an AUTO pick is dropped once no mount reaches it within
-   *  reach × this (hysteresis over the in-reach pick). */
+  /** The AUTO release band: an AUTO pick is dropped once no mount reaches it
+   *  within reach × this (hysteresis over the in-reach pick). */
   reachSlack: number;
+  /** Lock range (u, HULL TO HULL: centre distance less both hull radii,
+   *  `pastLockRange`): nothing locks a target farther away, whatever the gun;
+   *  a held lock past it breaks after `lostGraceSeconds`. One rule for every
+   *  ship (player, AI pilot, a capital turret on a structure) and the lock
+   *  line; structure batteries are exempt for now. 1 km on the HUD = 1,000 u
+   *  (`formatContactKm`). */
+  maxLockRange: number;
 }
 
 export const LOCK_TUNING: LockTuning = {
@@ -70,11 +76,13 @@ export const LOCK_TUNING: LockTuning = {
   failsafeMul: 1.75,
   lostGraceSeconds: 1.5,
   reachSlack: 1.1,
+  // Owner 2026-11-21 ("for now"): about 1 km. Reverses "any distance" (2026-11-14).
+  maxLockRange: 1000,
 };
 
 /** Own-ship `lockedBy` rows sent per snapshot: the nearest lockers, completed
- *  locks first (owner 2026-11-14). Why: locks work at any distance, so every
- *  hostile in the sector can lock you; the rows feed radar and aim marks for
+ *  locks first (owner 2026-11-14). Why: many hostiles within lock range
+ *  can lock you at once; the rows feed radar and aim marks for
  *  the threats that matter, and `lockedByN` carries the total, keeping the
  *  wire cost flat however many enemies there are. */
 export const LOCKED_BY_WIRE_ROWS = 8;

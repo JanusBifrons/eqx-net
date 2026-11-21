@@ -121,8 +121,8 @@ export function mountInReach(dx: number, dy: number, reach: number, t: MountRang
  * Is target `t` at (tx, ty) inside FIRE range of ANY of `mounts` on a hull at
  * (sx, sy, sAngle)? Each mount is tested from its own world position with its
  * own gun's reach × `slack`, by `mountInReach` (the one per-turret range
- * gate). Locks work at any distance (owner 2026-11-14), so this, not lock
- * reach, says whether a group could fire: AUTO groups release their pick on
+ * gate). Locks reach lock range (`LOCK_TUNING.maxLockRange`), not a gun's
+ * reach, so this says whether a group could fire: AUTO groups release their pick on
  * it, and the "locks keep it hostile" refreshes gate on it. Cheap first: past
  * every mount's reach + offset + the target's bound it is out with no
  * per-mount test. Alloc-free (#14).

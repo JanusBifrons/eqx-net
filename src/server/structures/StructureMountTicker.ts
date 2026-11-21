@@ -76,8 +76,10 @@ const MAX_DT_SEC = 0.25;
 const DEG = Math.PI / 180;
 /** The pilots' lock tuning, but a lock past `maxSeconds` takes `maxSeconds`
  *  instead of being impossible (`clampAtMax`; heavy mounts then still stretch it
- *  for absolute distance, see `lockSeconds`). */
-const STRUCTURE_LOCK_TUNING = { ...LOCK_TUNING, clampAtMax: true };
+ *  for absolute distance, see `lockSeconds`). Fixed batteries keep locking
+ *  out to their guns' reach: the ship lock range (`maxLockRange`, owner
+ *  2026-11-21) is not applied to them yet (open question for the owner). */
+const STRUCTURE_LOCK_TUNING = { ...LOCK_TUNING, clampAtMax: true, maxLockRange: Infinity };
 
 /** What the ticker asks its owner to do. */
 export interface StructureMountSink {
@@ -283,7 +285,7 @@ export class StructureMountTicker {
     // Heavy guns then stretch it for absolute distance (uncapped, see
     // `lockSeconds`). Out of reach stays unlockable (Infinity). testMode
     // `lockTimeCapS` still caps the result.
-    const secs = capLockSeconds(lockSeconds(inp, STRUCTURE_LOCK_TUNING), inp, this.lockTimeCapS);
+    const secs = capLockSeconds(lockSeconds(inp, STRUCTURE_LOCK_TUNING), inp, this.lockTimeCapS, STRUCTURE_LOCK_TUNING);
     const ev = stepLock(e, dtSec, secs, secs * LOCK_TUNING.failsafeMul, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
     // Unlockable past the grace: start over on the same target (it stays the
     // mount's target; targeting is the arc/tracking rules', not the lock's).

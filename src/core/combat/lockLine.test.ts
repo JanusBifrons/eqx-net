@@ -5,7 +5,7 @@ import { lockLineScore, lockLineHolds } from './lockLine.js';
 describe('lockLine', () => {
   // Line straight ahead (+y): dir = (-sin 0, cos 0) = (0, 1).
   const score = (dx: number, dy: number, held = false, radius = 20, reach = 600): number =>
-    lockLineScore(dx, dy, 0, 1, radius, reach, held);
+    lockLineScore(dx, dy, 0, 1, radius, reach, held, 0);
 
   it('holds a target on the line, ahead and within reach', () => {
     expect(Number.isFinite(score(0, 300))).toBe(true);
@@ -17,14 +17,20 @@ describe('lockLine', () => {
     expect(score(200, 300)).toBe(Infinity);
   });
 
-  // Owner decision 2026-11-14: locks work at any distance, so the line has no
-  // length cap; only firing is range-limited.
-  it('holds a target on the line far past reach (no length cap)', () => {
+  // Owner 2026-11-21: a ship can only be locked from about 1 km for now
+  // (`LOCK_TUNING.maxLockRange`), so the line ends there, whatever the reach.
+  it('holds a target on the line out to lock range (1 km), not past it', () => {
     expect(Number.isFinite(score(0, 600 * 1.1 + 1))).toBe(true);
-    expect(Number.isFinite(score(0, 50_000))).toBe(true);
-    expect(lockLineHolds(0, 50_000, 0, 20, 600)).toBe(true);
+    expect(Number.isFinite(score(0, 900))).toBe(true);
+    expect(score(0, 1200)).toBe(Infinity);
+    expect(lockLineHolds(0, 900, 0, 20, 600, 0)).toBe(true);
+    expect(lockLineHolds(0, 1200, 0, 20, 38_700, 0)).toBe(false);
+    // Hull to hull: a battleship (radius ~2,876) 0.9 km off a fighter's hull
+    // is on the line; 1.3 km off it is not.
+    expect(lockLineHolds(0, 24 + 900 + 2876, 0, 2876, 600, 24)).toBe(true);
+    expect(lockLineHolds(0, 24 + 1300 + 2876, 0, 2876, 600, 24)).toBe(false);
     // Still nearer first among equally centred targets.
-    expect(score(0, 900)).toBeLessThan(score(0, 5000));
+    expect(score(0, 300)).toBeLessThan(score(0, 900));
   });
 
   it('the held target keeps a wider (sticky) cone and always wins', () => {
@@ -39,9 +45,9 @@ describe('lockLine', () => {
   });
 
   it('lockLineHolds uses the world bearing (ship-angle convention) and the sticky cone', () => {
-    expect(lockLineHolds(0, 300, 0, 20, 600)).toBe(true);
-    expect(lockLineHolds(300, 0, -Math.PI / 2, 20, 600)).toBe(true); // bearing −π/2 points +x
-    expect(lockLineHolds(300, 0, Math.PI / 2, 20, 600)).toBe(false);
-    expect(lockLineHolds(120, 300, 0, 20, 600)).toBe(true); // sticky cone
+    expect(lockLineHolds(0, 300, 0, 20, 600, 0)).toBe(true);
+    expect(lockLineHolds(300, 0, -Math.PI / 2, 20, 600, 0)).toBe(true); // bearing −π/2 points +x
+    expect(lockLineHolds(300, 0, Math.PI / 2, 20, 600, 0)).toBe(false);
+    expect(lockLineHolds(120, 300, 0, 20, 600, 0)).toBe(true); // sticky cone
   });
 });

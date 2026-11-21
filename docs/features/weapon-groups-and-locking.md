@@ -26,10 +26,12 @@ weapon's tracking against the target's size, crossing speed and range
 takes about 1.5 s. Big guns barely track a small, fast ship, so a battleship's
 main guns effectively can't lock a fighter; its AA can.
 
-**Any distance.** You can lock anything at any distance; the farther it is, the
-slower the lock. Only firing needs the target in range. A lock you ask for
-stays however far the target goes; an AUTO group lets go of its own pick once
-it leaves firing range and finds a new one. A lock that can't progress (the
+**Lock range: about 1 km.** You can lock a ship only within about 1 km
+(hull to hull, as the contact list shows distance); the farther it is, the
+slower the lock. Past 1 km nothing locks, whatever your guns' reach, and a lock
+you hold breaks a moment after the target moves out. Firing also needs the
+target in your guns' range. An AUTO group lets go of its own pick once it
+leaves firing range and finds a new one. A lock that can't progress (the
 target is too small or fast for the guns) shows CAN'T TRACK.
 
 There are two ways to lock:

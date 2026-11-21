@@ -195,38 +195,35 @@ describe('LockSubsystem', () => {
     expect(wire()?.c).toBeUndefined();
   });
 
-  // Owner decision 2026-11-14: locking works at ANY distance; distance only
-  // makes it slower. Only firing is range-limited.
-  it('a manual lock on a target far past every weapon\'s reach completes, slowly, never blocked', () => {
+  // Owner 2026-11-21 (reverses "any distance", 2026-11-14): a ship can only
+  // be locked from about 1 km (`LOCK_TUNING.maxLockRange` = 1,000 u) for now.
+  it('a manual lock at 0.9 km completes; one at 1.2 km is refused (CAN\x27T LOCK, then dropped)', () => {
     const near = harness();
-    near.targets.set('s:1', still(200, true));
+    near.targets.set('s:1', still(900, true));
     near.locks.requestLock('p1', 'primary', 's:1');
-    let nearSteps = 0;
-    while (!near.locks.hasLocked('p1', 'primary') && nearSteps < 600) { near.locks.step(); nearSteps++; }
+    steps(near.locks, 60);
+    expect(near.locks.hasLocked('p1', 'primary')).toBe(true);
 
     const h = harness();
-    h.targets.set('s:1', still(50_000, true));
+    h.targets.set('s:1', still(1200, true));
     h.locks.requestLock('p1', 'primary', 's:1');
-    let farSteps = 0;
-    while (!h.locks.hasLocked('p1', 'primary') && farSteps < 600) {
-      h.locks.step();
-      farSteps++;
-      expect(h.locks.wireFor('p1')![0]!.l[0]?.c).toBeUndefined();
-    }
-    expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
-    expect(farSteps).toBeGreaterThan(nearSteps);
+    steps(h.locks, 1);
+    expect(h.locks.wireFor('p1')![0]!.l[0]?.c).toBe(1);
+    steps(h.locks, 60);
+    expect(h.locks.hasLocked('p1', 'primary')).toBe(false);
+    expect(h.locks.wireFor('p1')![0]!.l).toHaveLength(0);
   });
 
-  it('a manual lock does not drop when its target moves far out of reach', () => {
+  it('a manual lock breaks when its target goes past lock range', () => {
     const h = harness();
     h.locks.setMode('p1', 'primary', 'manual');
     h.targets.set('s:6', still(200, true));
     h.locks.requestLock('p1', 'primary', 's:6');
     steps(h.locks, 40);
     expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
-    h.targets.set('s:6', still(50_000, true));
-    steps(h.locks, 50); // 5 s, far past the 1.5 s grace
-    expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+    h.targets.set('s:6', still(1200, true));
+    steps(h.locks, 30); // 3 s, past the 1.5 s grace
+    expect(h.locks.hasLocked('p1', 'primary')).toBe(false);
   });
 
   it('AUTO releases its lock once the target leaves fire range, then re-picks', () => {
@@ -455,12 +452,17 @@ describe('LockSubsystem', () => {
       expect(h.locks.wireFor('p1')![0]!.l[0]!.t).toBe('s:1');
     });
 
-    it('lock_track holds a target on the line far past reach (locks work at any distance)', () => {
+    it('lock_track holds a target on the line out to lock range (0.9 km), not past it (1.2 km)', () => {
       const h = harness();
-      h.targets.set('s:2', ahead(50_000));
+      h.targets.set('s:2', ahead(900));
       h.locks.trackLock('p1', 'primary', 's:2', AHEAD);
       steps(h.locks, 1);
       expect(h.locks.wireFor('p1')![0]!.l[0]?.t).toBe('s:2');
+      const far = harness();
+      far.targets.set('s:2', ahead(1200));
+      far.locks.trackLock('p1', 'primary', 's:2', AHEAD);
+      steps(far.locks, 6);
+      expect(far.locks.wireFor('p1')![0]!.l.length).toBe(0);
     });
 
     it('a claim that leaves the line releases the held lock', () => {
