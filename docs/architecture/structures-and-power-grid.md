@@ -163,6 +163,23 @@ view, never the server `StructureRegistry`):
   built Capital stays owned. NPC bases are not flipped yet (slice S5). The
   owner reaches clients through the normal structures slice (`ownerIdx` is
   re-interned on change). Lock: `StructureGridSubsystem.ownerless.test.ts`.
+- **Capturing an ownerless base** (capture plan 4E S4, finders keepers). A
+  player's structure may link to an ownerless one (`gridLinkAllowed` in
+  `relations.ts`, used by auto-connect on placement, the reconnect sweep and
+  button, `linkReachBox` and `connectExplicit`); two players, two different
+  ownerless bases, or an NPC and anyone else never link. When a player's built
+  Capital ends up on one grid piece with ownerless pieces (a Capital placed in
+  range, or a Connector or cable bridge once built: a blueprint is never
+  crossed), every `none:` structure in that piece takes the player's owner. No
+  standing change, no hostile act. The ONE seam is the pulse's topology rebuild
+  (`captureOwnerlessGrids` in `ownerlessBase.ts`, run just before
+  `grid.rebuild`): every link, finished build and removal dirties topology, so
+  every path passes it, and the rebuilt grid and the structures slice after the
+  pulse carry the new owner. `onCaptured` makes the room `persistSoon`. NPC
+  Capitals capture nothing (S5). A player structure linked to an ownerless grid
+  without a Capital of its own leaves it ownerless; if two players' Capitals
+  ever share a piece, the first in registry order takes it. The client build
+  preview still draws same-owner links only (follow-up).
 - `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
   `CONSTRUCTION_PULSE_AMOUNT`, `REPAIR_*`, `DECONSTRUCTION_RATE_KG`,
   `CAPITAL_STARTING_MINERALS`, `FLASH_DURATION_MS`.

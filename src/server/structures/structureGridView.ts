@@ -10,7 +10,7 @@
 import { structureDraw } from '../../shared-types/structurePower.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
-import { isUnownedOwner } from '../../shared-types/relations.js';
+import { gridLinkAllowed, isUnownedOwner } from '../../shared-types/relations.js';
 import { effectiveStructurePowerOutput, effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
 import {
   canConnect,
@@ -111,7 +111,8 @@ interface ConnectCandidate {
  * workflow. Returns the NEAREST connected neighbour id (backward-compatible with
  * the old single-id return), or null.
  *
- * Only links structures owned by the SAME player (connections are per-owner,
+ * Only links structures `gridLinkAllowed` lets join: the SAME owner, or a player
+ * and an ownerless base, which the pulse then captures (connections are per-owner,
  * intra-sector).
  *
  * `obstacles` (Item D) — non-structure bodies (asteroids) that block a
@@ -139,7 +140,7 @@ export function autoConnectStructure(
   const candidates: ConnectCandidate[] = [];
   for (const other of registry.all()) {
     if (other.id === newId) continue;
-    if (other.owner !== newRec.owner) continue; // per-owner grid
+    if (!gridLinkAllowed(other.owner, newRec.owner)) continue; // per-owner grid (+ ownerless capture)
     const otherNode = nodes.get(other.id)!;
     if (!canConnect(newNode, otherNode, adjacency, nodes, obstacles).ok) continue;
     candidates.push({ id: other.id, dist: edgeDistance(newNode, otherNode) });
@@ -184,7 +185,7 @@ export function linkReachBox(registry: StructureRegistry, id: string, out: Obsta
   linkReachBoxStart(rec, out);
   let found = false;
   for (const o of registry.all()) {
-    if (o.id === id || o.owner !== rec.owner) continue;
+    if (o.id === id || !gridLinkAllowed(o.owner, rec.owner)) continue;
     if (linkReachBoxAdd(rec, o, CONNECTION_MAX_RANGE, out)) found = true;
   }
   return found;
@@ -208,7 +209,7 @@ export function connectExplicit(
 ): boolean {
   const a = registry.get(aId);
   const b = registry.get(bId);
-  if (!a || !b || a.owner !== b.owner) return false;
+  if (!a || !b || !gridLinkAllowed(a.owner, b.owner)) return false;
   const na = nodes.get(aId);
   const nb = nodes.get(bId);
   if (!na || !nb) return false;
