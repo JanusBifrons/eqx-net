@@ -3357,3 +3357,12 @@ threat arc, galaxy padlock shackle and flip-ring dash grew a long thin line from
 Draw arcs with `arcSubpath` (`src/client/render/arcSubpath.ts`: moveTo + lineTo, which skips
 duplicates). `g.context.bounds` does not catch this (NaN never widens bounds): test the tessellated
 vertices with `strokeVertices` (`src/client/render/strokeVertices.testutil.ts`) and assert finite.
+
+## 2026-11-21 — a reflection clear that truncates arrays throws on a frozen constant
+
+`clearMirror` walks the render mirror and did `v.length = 0` on every array. `tickPhysics` parks the
+frozen `EMPTY_AIM_IDS` on `mirror.localAimMountIds`, so in strict-mode ESM the truncate threw
+"Cannot assign to read only property 'length'" and `dispose()` stopped half-way (no
+`dispose_complete`, mirror half-cleared) on every leave from the Lost Connection overlay. A generic
+walk that mutates must check `Object.isFrozen` and swap in a fresh value instead; a test that stores
+a frozen constant on the mirror (`colyseusClient.disposeAudit.test.ts`) locks it.
