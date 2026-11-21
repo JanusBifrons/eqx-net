@@ -40,6 +40,21 @@ export const RENDER_DUE_SLEW_MS = 0.5;
 /** Past this gap the render due time snaps (a stall, a hard anchor snap). */
 export const RENDER_DUE_SNAP_MS = 200;
 
+/** Times `slewTickDue` snapped (gap > snapMs) instead of slewing.
+ *  Diagnostic only: tells whether the 200 ms render snap fires on a real link. */
+let renderDueSnapCount = 0;
+
+/** How many render due-time snaps `slewTickDue` has taken since the last reset. */
+export function getRenderDueSnapCount(): number {
+  return renderDueSnapCount;
+}
+
+/** Zero the render-snap counter. Call where the render due time itself is
+ *  reset (`resetPredictionState` sets `lastLocalTickAtMs = -1`). */
+export function resetRenderDueSnapCount(): void {
+  renderDueSnapCount = 0;
+}
+
 /**
  * The due time the local ship's drawn pose dead-reckons from, advanced one
  * tick per processed tick and SLEWED toward `targetDueMs` (the anchor-based
@@ -54,6 +69,6 @@ export const RENDER_DUE_SNAP_MS = 200;
 export function slewTickDue(prevDueMs: number, targetDueMs: number, fixedMs: number, slewMs: number, snapMs: number): number {
   const next = prevDueMs + fixedMs;
   const err = targetDueMs - next;
-  if (Math.abs(err) > snapMs) return targetDueMs;
+  if (Math.abs(err) > snapMs) { renderDueSnapCount++; return targetDueMs; }
   return next + Math.max(-slewMs, Math.min(slewMs, err));
 }
