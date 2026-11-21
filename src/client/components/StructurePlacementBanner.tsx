@@ -12,6 +12,7 @@ import { getPlacementRejection, subscribePlacementRejection } from '../structure
 import { Slot } from '../layout/Slot';
 import { PlacementFenceHint } from './PlacementFenceHint';
 import { PlacementLinkHint } from './PlacementLinkHint';
+import { cancelPlacement } from '../structures/placementCancel';
 
 /**
  * Placement confirm banner (speed-dial-resource-structures plan, Phase 2).
@@ -65,7 +66,7 @@ export function StructurePlacementBanner(): JSX.Element | null {
     // A refused commit (the ghost went red) keeps placement open.
     if (commitChosenPlacement(placementKind)) setPlacementKind(null);
   };
-  const onCancel = (): void => setPlacementKind(null);
+  const onCancel = (): void => cancelPlacement();
   // Same quarter-turn the desktop R key applies; the renderer reads it through
   // the placement preview's angle, so no React state changes here.
   const onRotate = (): void => {
