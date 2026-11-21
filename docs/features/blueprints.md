@@ -123,8 +123,8 @@ reads it as low.
 - **W5 — Shipyard:** ship blueprint + goods → a packed hull → unpack into your
   roster. Modules become manufactured items.
   - **W5a, shipped: unpacking.**
-    - A packed hull (`hull:<kind>`) in your storage shows as an **▢ Unpack
-      \<ship\>** chip in that storage's inspector. Tapping it turns the crate
+    - A packed hull (`hull:<kind>`) in your storage shows as an **Unpack** picture tile (×N)
+      in that storage's selection card. Tapping it turns the crate
       into a ship parked beside the storage, in your roster; pick it from
       the roster like any other.
     - Your roster cap (10) is checked first, and the crate stays put if

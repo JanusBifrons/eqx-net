@@ -105,6 +105,7 @@ export class RespawnHandler {
     // collider (SET_HULL_EXPOSED is idempotent — no-op if already circle).
     ship.shield = getShipKind(ship.kind).shieldMax;
     ship.shieldLastDamageTick = d.serverTick();
+    ship.shieldsLowered = false; // a fresh hull flies with its shields up
     d.postToWorker({ type: 'SET_HULL_EXPOSED', id: playerId, exposed: false, kindId: ship.kind, tick: d.serverTick() });
 
     // Seed the pose cache so any consumer that runs before the next

@@ -193,6 +193,36 @@ describe('shipyard bays down the slip (loop 3R)', () => {
     expect(keel.context).toBe(shipyardKeelContext());
   });
 
+  it('each queued outline is drawn at its OWN hull size (building panels B6: mixed queue)', () => {
+    const v = new StructureRigView(rig);
+    const keel = part(v, 'keel');
+    const ki = shipyardHullScale(encodeRecipe('build_interceptor'));
+    const kf = shipyardHullScale(encodeRecipe('build_missile_frigate')), kh = shipyardHullScale(encodeRecipe('build_heavy'));
+    // Sizes far enough apart that the outline stroke (~1 unit of bounds) cannot blur them.
+    expect(Math.abs(kf - kh) * SHIPYARD_HULL_HALF_L).toBeGreaterThan(8);
+    expect(Math.abs(kf - ki) * SHIPYARD_HULL_HALF_L).toBeGreaterThan(8);
+    const H = SHIPYARD_HULL_HALF_L, near = (got: number, want: number) => expect(Math.abs(got - want), `${got} vs ${want}`).toBeLessThan(1.5);
+    // Interceptor printing in bay 0; a missile frigate then a heavy queued (bays 1, 2).
+    const mixed = { ...row(PROD_STATE.running, 0.5, encodeRecipe('build_interceptor'), 0, 2), prodQueue: ['build_missile_frigate', 'build_heavy'] } as StructureRenderState;
+    v.setRunningFrom(mixed);
+    v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 0 }, SHIPYARD_BUILD_TICKS, 0, 0, 0);
+    const ctx = keel.context;
+    expect(ctx).not.toBe(shipyardKeelContext());
+    // Bay 2 (heavy) is the stern end, bay 1 (frigate) the bow end; neither at the head's size.
+    near(ctx.bounds.minX, shipyardBayKeel(2).x - H * kh);
+    near(ctx.bounds.maxX, shipyardBayKeel(1).x + H * kf);
+    // Same head, queue reversed: different art, each bay at its own entry's size.
+    v.setRunningFrom({ ...mixed, prodQueue: ['build_heavy', 'build_missile_frigate'] } as StructureRenderState);
+    v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 0 }, SHIPYARD_BUILD_TICKS, 0, 0, 0);
+    expect(keel.context).not.toBe(ctx);
+    near(keel.context.bounds.minX, shipyardBayKeel(2).x - H * kf);
+    near(keel.context.bounds.maxX, shipyardBayKeel(1).x + H * kh);
+    // No queue list on the row (older server): the head recipe's size, as before.
+    v.setRunningFrom(row(PROD_STATE.running, 0.5, encodeRecipe('build_interceptor'), 0, 1));
+    v.update({ clipId: SHIPYARD_BUILD_CLIP, startTick: 0 }, SHIPYARD_BUILD_TICKS, 0, 0, 0);
+    near(keel.context.bounds.maxX, shipyardBayKeel(1).x + H * ki);
+  });
+
   it('the gantry and hoist are open over the slip centre line, so the hull printing below shows (3R review)', () => {
     const gantry = shipyardPartContext(rig, rig.partIds.indexOf('gantry'))!;
     const hoist = shipyardPartContext(rig, rig.partIds.indexOf('gantry-hoist'))!;

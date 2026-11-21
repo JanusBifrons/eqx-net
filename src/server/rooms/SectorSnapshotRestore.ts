@@ -19,6 +19,7 @@ import { PackedItemSchema } from '../../shared-types/items.js';
 import { isRecipeId } from '../../shared-types/recipes.js';
 import { isNpcOwner } from '../../shared-types/relations.js';
 import { MAX_BUILD_COUNT } from '../../shared-types/production.js';
+import { restoreRecipeQueue } from '../structures/productionQueue.js';
 import {
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -129,6 +130,7 @@ export class SectorSnapshotRestore {
         // P2b — the owner's recipe choice and a cycle in progress survive a restart.
         if (r.recipe !== undefined && isRecipeId(r.recipe)) rec.recipe = r.recipe;
         if (Number.isInteger(r.prodCount) && r.prodCount! >= 0) rec.prodCount = Math.min(r.prodCount!, MAX_BUILD_COUNT); // job 2E
+        restoreRecipeQueue(rec, r.prodQueue, r.prodQueueRepeat); // B4
         if (r.prepaid === true) rec.prepaid = true;
         // T4b — a Freight Dock's standing orders survive a restart.
         if (r.freightOrders) {

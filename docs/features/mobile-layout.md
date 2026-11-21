@@ -206,11 +206,11 @@ Concretely:
 - Buttons: `size="small"` by default, with `fontSize: 11`.
 
 
-- **The inspector is `<Portal>`'d to `document.body`.** Its `zIndex: 1400` was trapped by an ancestor stacking context under the body-level HUD anchors, so the `top-left` anchor ate clicks on its buttons (LESSONS 2026-11-02). Any panel outside the Slot system that must beat the HUD needs a Portal. `gameRafLoop` still finds it by testid.
-- **The world-anchored inspector is placed by `app/inspectorPlacement.ts` `placeInspector`:** the WHOLE panel stays on screen, below the header, clear of the centre HUD stacks, and never covers the selection: when the placement above the selection box would overlap it, the first clear spot beside it (right, then left) or below it wins, each passing the same HUD band and control checks; only when none fits does the placement above stand, the bottom kept when it is too tall. The box size comes from `RendererFeedback.selectionScreenHalf` (the bracket half-size in screen px).
-  - A target off-screen used to push half the panel out of view (its buttons unclickable). Found by `teleporter.spec.ts`; the header case by `break-in.spec.ts`.
-  - Never clamp only the anchor.
+- **The selection card (`EntityStatsPanel`, every kind: structures, ships, drones, wrecks, parked hulls) docks top-centre:** `<Slot anchor="top-center" order={10} pointerEvents="none">` in `App.tsx`, last in the stack, so its height changes never move a button below it; only its action row takes taps. Its `maxWidth` (`CARD_MAX_W`) is the viewport less twice the open side panel (`SETTINGS_PANEL_SIZE`) and 8 px each side (179 px on a sideways Pixel 7), floor 120 px; name and info lines ellipsize. One placement path: the Slot. Never float it over the selection again.
+- **A panel outside the Slot system that must beat the HUD is `<Portal>`'d to `document.body`:** an ancestor stacking context traps its z-index under the body-level HUD anchors (LESSONS 2026-11-02).
 
 ## History
+
+- **Building-panels A2b:** the selection card stopped floating over the selected object. It had been world-anchored since WS-9: `gameRafLoop` moved it every frame with `app/inspectorPlacement.ts` (whole panel on screen, clear of the HUD bands and the selection box, via `RendererFeedback.selectionScreenX/Y/Half`) and `app/inspectorHold.ts` (held still under a pointer so taps landed). All of that was retired when the card docked in the top-centre Slot.
 
 The bias: it's easier to hear "this is too small, bump it 10 %" than to undo the visual heaviness of a default-sized MUI component cluster. The 2026-05-12 ship-picker rebuild is the canonical example — `maxWidth="sm"` + full kind descriptions + 64 px silhouettes + 22 px stat chips read as "absolutely huge" in playtest; the rebuild dropped to `xs`, 36 px silhouettes, a one-line stat readout, and 11 px buttons.

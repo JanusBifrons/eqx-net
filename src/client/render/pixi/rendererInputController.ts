@@ -344,9 +344,6 @@ export class RendererInputController extends RendererCommandRouting {
     }
   }
 
-  /** WS-9 (R2.30) — reused scratch for the selection screen-projection (#14). */
-  private readonly _selScreenScratch = { x: 0, y: 0 };
-
   /** Per frame (frameViewUpdater `updateHudOverlays`): resolve the selection
    *  focus and the hover outline, and publish both to the feedback. */
   updateSelectionBrackets(mirror: RenderMirror, hoverBracket: HoverBracket | null, lockMarksVisible: boolean): void {
@@ -378,23 +375,5 @@ export class RendererInputController extends RendererCommandRouting {
       hoverBracket?.update(mirror, null);
     }
     this.feedback.hoveredPickId = this._hoveredId;
-    // WS-9 (R2.30) — project the bracket's above-entity point to SCREEN so the
-    // stats box floats over the entity (any kind). Alloc-free toScreenInto (#14).
-    const selWX = this.selectionBracket?.lastWorldX ?? null;
-    const selWY = this.selectionBracket?.lastWorldY ?? null;
-    if (selWX !== null && selWY !== null) {
-      this.camera.toScreenInto(selWX, selWY, this._selScreenScratch);
-      this.feedback.selectionScreenX = this._selScreenScratch.x;
-      this.feedback.selectionScreenY = this._selScreenScratch.y;
-      // The box's screen half-size: project its bottom edge (2 halves below
-      // the top) so the inspector can sit clear of the selection.
-      const worldHalf = this.selectionBracket?.lastWorldHalf ?? 0;
-      this.camera.toScreenInto(selWX, selWY + 2 * worldHalf, this._selScreenScratch);
-      this.feedback.selectionScreenHalf = Math.abs(this._selScreenScratch.y - this.feedback.selectionScreenY) / 2;
-    } else {
-      this.feedback.selectionScreenX = null;
-      this.feedback.selectionScreenY = null;
-      this.feedback.selectionScreenHalf = null;
-    }
   }
 }

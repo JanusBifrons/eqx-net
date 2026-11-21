@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Name the code behind a phone-lane stall (docs/ops/phone-link.md "Play evidence").
  *

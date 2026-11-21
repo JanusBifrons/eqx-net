@@ -49,8 +49,8 @@ export interface LockTuning {
   failsafeMul: number;
   /** A locked/acquiring target may be untrackable this long before it drops. */
   lostGraceSeconds: number;
-  /** Locks work at any distance (owner 2026-11-14); this is only the AUTO
-   *  release band: an AUTO pick is dropped once no mount reaches it within
+  /** Not the lock range (that is the locker's longest gun, `shipLockRange`,
+   *  owner 2026-11-21); this is only the AUTO release band: an AUTO pick is dropped once no mount reaches it within
    *  reach × this (hysteresis over the in-reach pick). */
   reachSlack: number;
 }
@@ -73,8 +73,8 @@ export const LOCK_TUNING: LockTuning = {
 };
 
 /** Own-ship `lockedBy` rows sent per snapshot: the nearest lockers, completed
- *  locks first (owner 2026-11-14). Why: locks work at any distance, so every
- *  hostile in the sector can lock you; the rows feed radar and aim marks for
+ *  locks first (owner 2026-11-14). Why: capitals lock out to their longest
+ *  gun (tens of km), so most hostiles in a sector can lock you; the rows feed radar and aim marks for
  *  the threats that matter, and `lockedByN` carries the total, keeping the
  *  wire cost flat however many enemies there are. */
 export const LOCKED_BY_WIRE_ROWS = 8;

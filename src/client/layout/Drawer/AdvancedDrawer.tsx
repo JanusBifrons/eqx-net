@@ -10,6 +10,7 @@ import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import PaletteOutlinedIcon from '@mui/icons-material/PaletteOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import { useUIStore } from '../../state/store';
+import { useFreshPressSurface } from '../../components/touchClickActivate';
 import { ProfileTab } from './tabs/ProfileTab';
 import { SettingsTab } from './tabs/SettingsTab';
 import { GalaxyTab } from './tabs/GalaxyTab';
@@ -155,6 +156,9 @@ const BOTTOM_TABS = TABS.filter((t) => t.bottom);
 
 export function AdvancedDrawer(): JSX.Element {
   const isDrawerOpen = useUIStore((s) => s.isDrawerOpen);
+  // The dial's Menu action opens the drawer on touchstart: the same finger's
+  // release must not hit the tab, row or backdrop now under it.
+  const freshPress = useFreshPressSurface(isDrawerOpen);
   const drawerTab = useUIStore((s) => s.drawerTab);
   const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
   const setDrawerTab = useUIStore((s) => s.setDrawerTab);
@@ -186,6 +190,7 @@ export function AdvancedDrawer(): JSX.Element {
       open={isDrawerOpen}
       onClose={handleClose}
       data-testid="advanced-drawer"
+      {...freshPress}
       // Pre-mount the Modal infrastructure so opening the drawer is a
       // CSS class flip, not a cold React mount. CLICK→VISIBLE drops
       // from 26 s → ~1.2 s (drawer-lag-trace.spec.ts).

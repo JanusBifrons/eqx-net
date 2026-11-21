@@ -72,6 +72,22 @@ export function sendSetRecipe(entityId: number, recipe: RecipeId, count?: number
   return true;
 }
 
+/** One edit to a processor's recipe queue (building panels B2): append a
+ *  recipe, drop entry `index` (0 = the head), or loop the list on / off. */
+export type RecipeQueueEditOp =
+  | { op: 'add'; recipe: RecipeId }
+  | { op: 'remove'; index: number }
+  | { op: 'repeat'; on: boolean };
+
+/** Building panels B5 — send `edit_recipe_queue` (EditRecipeQueueSchema).
+ *  Owner / kind gated server-side; a refused edit is a silent no-op. */
+export function sendEditRecipeQueue(entityId: number, edit: RecipeQueueEditOp): boolean {
+  const room = getGameClient()?.getRoom();
+  if (!room) return false;
+  room.send('edit_recipe_queue', { type: 'edit_recipe_queue', entityId, ...edit });
+  return true;
+}
+
 /** P2b — load the best matching blueprint from base storage into a processor,
  *  or put its blueprint back. Owner-gated server-side. */
 export function sendBlueprintSlot(entityId: number, action: 'load' | 'unload'): boolean {
