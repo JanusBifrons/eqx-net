@@ -33,7 +33,7 @@ import {
 import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { structureKindFromIndex } from '../../shared-types/structureKinds.js';
 import { asteroidResourceFromIndex } from '../../shared-types/asteroidResources.js';
-import { swarmArrivalStampMs } from './swarmInterpolation.js';
+import { swarmArrivalStampMs, noteSwarmSlotOverwrite } from './swarmInterpolation.js';
 
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
@@ -223,6 +223,7 @@ export function decodeSwarmPacket(
       // Push the new pose into the ring at ringHead, then advance. This is
       // what `interpolateSwarmPose` reads on the hot path.
       const slot = entry.poseRing[entry.ringHead]!;
+      if (!slot.empty) noteSwarmSlotOverwrite(slot.arrivalMs);
       slot.x = x; slot.y = y; slot.angle = angle;
       slot.vx = vx; slot.vy = vy; slot.angvel = angvel;
       slot.arrivalMs = nowMs; slot.serverTick = tick;
