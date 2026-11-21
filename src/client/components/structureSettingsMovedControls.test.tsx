@@ -103,6 +103,38 @@ describe('building settings live in the cog window', () => {
     expect(UnloadBlueprintSchema.safeParse({ type: 'unload_blueprint', entityId: 9 }).success).toBe(true);
   });
 
+  // Base-build film: a run is spent when a cycle STARTS, so a 2-run copy read
+  // "1 run" right after Load while the yard went on to build two hulls.
+  it('counts the build in progress in the runs left (tab and inspector)', () => {
+    seed('fabricator', { bpRuns: 1, bpQuality: 1, prodState: 1, prodFrac: 0.2 });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-blueprint')).toHaveTextContent('BLUEPRINT 2 runs left (1 building) · quality 1');
+    openTab('production');
+    expect(screen.getByTestId('settings-blueprint')).toHaveTextContent('2 runs left (1 building) · quality 1');
+  });
+
+  it('an idle yard keeps the plain runs count', () => {
+    seed('fabricator', { bpRuns: 2, bpQuality: 1, prodState: 2 });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-blueprint')).toHaveTextContent('BLUEPRINT 2 runs · quality 1');
+    openTab('production');
+    expect(screen.getByTestId('settings-blueprint')).toHaveTextContent('2 runs · quality 1');
+  });
+
+  // The server spends a copy's LAST run at cycle start and empties the slot;
+  // while that last hull builds the line must not read as if the blueprint
+  // vanished. The slot really is free, so Load stays and Unload/Swap do not.
+  it('the last run building reads as building with a free slot (tab and inspector)', () => {
+    seed('fabricator', { prodState: 1, prodFrac: 0.4 });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-blueprint')).toHaveTextContent('BLUEPRINT last run building · slot free');
+    expect(screen.getByTestId('entity-stats-blueprint')).not.toHaveTextContent('NO BLUEPRINT LOADED');
+    openTab('production');
+    expect(screen.getByTestId('settings-blueprint')).toHaveTextContent('last run building · slot free');
+    expect(screen.getByTestId('structure-action-load-blueprint')).toHaveTextContent('Load');
+    expect(screen.queryByTestId('structure-action-unload-blueprint')).toBeNull();
+  });
+
   it('an empty blueprint slot offers Load only', () => {
     seed('fabricator');
     render(<EntityStatsPanel />);

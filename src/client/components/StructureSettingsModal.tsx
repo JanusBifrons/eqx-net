@@ -109,7 +109,7 @@ function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
     return () => window.clearInterval(h);
   }, [entityId]);
   if (p === null) return <Box sx={ROW_SX}>No production data</Box>;
-  const { recipe, left, canChange, needsBlueprint, blueprintLine } = p;
+  const { recipe, left, canChange, needsBlueprint, blueprintLine, lastRunLine } = p;
   const plus = left === undefined ? 1 : Math.min(MAX_BUILD_COUNT, left + 1);
   return (
     <Box data-testid="structure-settings-production" data-recipe={recipe} data-left={left ?? 'forever'} sx={GRID_SX}>
@@ -137,7 +137,7 @@ function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
         <>
           <Box sx={LABEL_SX}>Blueprint</Box>
           <Box sx={STEPPER_SX}>
-            <Box sx={VALUE_SX} data-testid="settings-blueprint">{blueprintLine?.replace(/^BLUEPRINT /, '') ?? 'None loaded'}</Box>
+            <Box sx={VALUE_SX} data-testid="settings-blueprint">{(blueprintLine ?? lastRunLine)?.replace(/^BLUEPRINT /, '') ?? 'None loaded'}</Box>
             {needsBlueprint && (
               <Tooltip title={blueprintLine !== undefined ? 'Swap in the best blueprint from storage' : 'Load a blueprint from storage'}>
                 <Box component="button" sx={STEP_BTN_SX} data-testid="structure-action-load-blueprint"
