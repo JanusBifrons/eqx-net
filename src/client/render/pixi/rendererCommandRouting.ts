@@ -102,6 +102,13 @@ export abstract class RendererCommandRouting {
     return this._cmdRouter.enabled && !this.galaxyTapSuppressed() && !this._placementActive;
   }
 
+  /** Build mode (placement in the Command view): the router may take a touch
+   *  gesture; `routerBusy` = it already owns one (a pinch's second finger). */
+  protected buildRouterReady(): boolean {
+    return this._cmdRouter.enabled && !this.galaxyTapSuppressed();
+  }
+  protected buildRouterBusy(): boolean { return !this._cmdRouter.idle; }
+
   protected routeCommandPointer(
     type: string, pointerId: number, x: number, y: number, stamp: number,
     button: number, buttons: number, shiftKey: boolean, pointerType: string,
@@ -120,6 +127,12 @@ export abstract class RendererCommandRouting {
   }
 
   private applyRouterAction(a: RouterAction): void {
+    // Build mode: a pan/pinch stays the camera's; a tap moves the ghost there;
+    // a hold-box is neither drawn nor selects while placing.
+    if (this._placementActive && a.kind !== 'camera') {
+      if (a.kind === 'tapSelect') this.placementTap(a.x, a.y, a.pointerType);
+      return;
+    }
     if (this._fleetPick.kind !== null && a.kind !== 'camera') {
       this.applyPickRouterAction(a);
       return;
@@ -505,6 +518,8 @@ export abstract class RendererCommandRouting {
   }
 
   /** The camera half of a pointer gesture (the subclass). */
+  /** A build-mode tap on empty space: move the placement ghost there. */
+  protected abstract placementTap(x: number, y: number, pointerType: string): void;
   protected abstract cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number, pointerType?: string): boolean;
 
   /** See `IRenderer.setFleetOrderMode`. */

@@ -59,6 +59,7 @@ export {
   SpectateSchema,
   FleetModeSchema,
   FleetStanceSchema,
+  FleetSpeedSchema,
   FleetOrderSchema,
   SetModeSchema,
   SetStanceSchema,

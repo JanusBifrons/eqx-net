@@ -21,9 +21,8 @@ import { installRendererDomListeners, resizeRenderer } from './pixi/rendererSetu
 import { disposeRenderer, resetEffectsForSectorHandoff, type RendererTeardownRefs } from './pixi/rendererSetup/teardown.js';
 import { installFrameTicker, setTickerMaxFPS } from './pixi/rendererSetup/initTicker.js';
 import { createRendererFrameCtx, type RendererFrameCtx } from './pixi/frameCtx.js';
-import { updateEntitySprites, updateProjectilesAndGhost } from './pixi/worldSpriteUpdater.js';
-import { updateBeamsAndCamera, updateBackdrop, updateHudOverlays } from './pixi/frameViewUpdater.js';
-import { createRendererFeedback, createFrameMarkers, writeFrameFeedback, tickFrameEffects } from './pixi/frameFeedbackUpdater.js';
+import { runFramePasses } from './pixi/framePasses.js';
+import { createRendererFeedback, createFrameMarkers } from './pixi/frameFeedbackUpdater.js';
 import { RendererInputController, type ForwardedPointerEvent } from './pixi/rendererInputController.js';
 import { RendererCameraDirector } from './pixi/cameraDirector.js';
 import { artStats, backdropStats, shipVisualProbe, debugEngine, cameraCenterGame, worldToScreenGame, createFleetRingProbe, fleetRingProbe, type FleetRingProbeState, type FleetRingReading, type ArtStats, type BackdropStats, RendererPerfProbe, type RendererProbeState, type ShipVisualProbe } from './pixi/rendererProbes.js';
@@ -370,14 +369,7 @@ export class PixiRenderer implements IRenderer {
     // at the tail of THIS update reads it → always the current frame's mirror.
     this._lastMirror = mirror;
     // The frame passes, in order (pooled ctx `pixi/frameCtx.ts`; no per-frame allocation).
-    const f = this._frame;
-    updateEntitySprites(mirror, f); // pixi/worldSpriteUpdater.ts
-    updateProjectilesAndGhost(mirror, f);
-    updateBeamsAndCamera(mirror, f); // pixi/frameViewUpdater.ts
-    updateBackdrop(mirror, f); // after the camera moved: stars and grid don't lag a frame
-    updateHudOverlays(mirror, f);
-    writeFrameFeedback(mirror, f); // pixi/frameFeedbackUpdater.ts
-    tickFrameEffects(mirror, f); // after every sprite pass (one pose per frame)
+    runFramePasses(mirror, this._frame); // pixi/framePasses.ts (phone-lane phase marks inside)
 
     // eslint-disable-next-line no-restricted-properties -- real time: cost measurement
     this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
