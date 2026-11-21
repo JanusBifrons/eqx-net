@@ -45,7 +45,7 @@ function rng(seed: number): () => number {
 }
 
 interface LinkModel { baseMs: number; jitterMs: number; spikeChance: number; spikeMs: number }
-interface RunResult { snapshots: number; angleCorrections: number[]; leadP50: number }
+interface RunResult { snapshots: number; angleCorrections: number[]; leadP50: number; upP95Ticks: number }
 
 /** Pilot taps: turn for 2 ticks out of every 7, alternating direction. */
 function pilotTurn(tick: number): -1 | 0 | 1 {
@@ -87,6 +87,7 @@ function run(up: LinkModel, down: LinkModel, seconds: number, seed: number): Run
 
   const angleCorrections: number[] = [];
   const leads: number[] = [];
+  const upDelays: number[] = [];
   let snapshots = 0;
   const end = seconds * 1000;
   const warmupMs = 5000;
@@ -162,6 +163,7 @@ function run(up: LinkModel, down: LinkModel, seconds: number, seed: number): Run
           sentAt.set(inputTick, now);
           const at = Math.max(lastUpArrival, now + delay(up));
           lastUpArrival = at;
+          upDelays.push(at - now);
           uplink.push({
             at,
             input: { tick: inputTick, thrust: true, turnLeft: tn === 1, turnRight: tn === -1, boost: false, reverse: false },
@@ -173,7 +175,9 @@ function run(up: LinkModel, down: LinkModel, seconds: number, seed: number): Run
     }
   }
   leads.sort((a, b) => a - b);
-  return { snapshots, angleCorrections, leadP50: leads[Math.floor(leads.length / 2)] ?? 0 };
+  upDelays.sort((a, b) => a - b);
+  const upP95Ticks = (upDelays[Math.floor(upDelays.length * 0.95)] ?? 0) / FIXED_MS;
+  return { snapshots, angleCorrections, leadP50: leads[Math.floor(leads.length / 2)] ?? 0, upP95Ticks };
 }
 
 /** ~100 ms round trip with tunnel jitter — the play-test link. */
@@ -189,6 +193,18 @@ describe('input lead on a slow, jittery link (late inputs → quantised heading 
     expect(res.angleCorrections.length / res.snapshots).toBeLessThan(0.02);
     // The lead covers the ~100 ms round trip (6 ticks), not the 3-tick floor.
     expect(res.leadP50).toBeGreaterThanOrEqual(6);
+  });
+
+  it('grows the lead past 250 ms on a slow mobile link instead of capping it there', () => {
+    // ~350 ms round trip with heavy mobile jitter. The input path's mean + 2 sigma
+    // is past 15 ticks (250 ms) but inside the controller's 30-tick ceiling, so
+    // the lead must grow past the 250 ms sample clamp hotfix #1 put on lastRtt.
+    const up: LinkModel = { baseMs: 160, jitterMs: 100, spikeChance: 0.05, spikeMs: 150 };
+    const down: LinkModel = { baseMs: 80, jitterMs: 40, spikeChance: 0.05, spikeMs: 100 };
+    const res = run(up, down, 60, 7);
+    expect(res.snapshots).toBeGreaterThan(1000);
+    expect(res.angleCorrections.length / res.snapshots).toBeLessThan(0.005);
+    expect(res.leadP50).toBeGreaterThanOrEqual(18);
   });
 
   it('keeps a short lead on a fast link (no lead inflation)', () => {

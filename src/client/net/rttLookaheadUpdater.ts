@@ -42,12 +42,12 @@
 import { inputPathTicks } from '@core/physics/inputQueue';
 import { welfordPush, welfordMean, welfordStdDev, type WelfordState } from '@core/math/Welford';
 import {
+  CEILING_TICKS,
   computeDesiredLead,
   updateLookahead,
   type LookaheadController,
 } from './lookaheadController';
 import {
-  RTT_SAMPLE_CLAMP_MS,
   STEADY_STATE_INTERVAL_MIN_MS,
   STEADY_STATE_INTERVAL_MAX_MS,
 } from './predictionTuning';
@@ -89,7 +89,9 @@ export function updateRttAndLookahead(
   // the server before its tick, from the server-measured margin (#6 above).
   const scale = ctx.timeScale > 0 ? ctx.timeScale : 1;
   const pathTicks = inputPathTicks(ctx.leadTicks * scale, ctx.inputMargin) / scale;
-  const rttSample = Math.min(Math.max(0, pathTicks * FIXED_MS), RTT_SAMPLE_CLAMP_MS);
+  // Clamp at the controller ceiling, not RTT_SAMPLE_CLAMP_MS: that 250 ms clamp
+  // bounded the contaminated lastRtt and would cap the lead at 15 ticks here.
+  const rttSample = Math.min(Math.max(0, pathTicks), CEILING_TICKS) * FIXED_MS;
   welfordPush(ctx.rttWelford, rttSample);
   const mean = welfordMean(ctx.rttWelford);
   const stdDev = welfordStdDev(ctx.rttWelford);
