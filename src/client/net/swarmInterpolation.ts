@@ -20,6 +20,7 @@ import { isImplausibleJump } from './plausibleSpeed.js';
 import {
   ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_MS, DISPLAY_DELAY_SLEW_MAX_RATE, DISPLAY_DELAY_SLEW_SNAP_MS,
   DISPLAY_DELAY_SLEW_TAU_MS, EXTRAPOLATION_LIMIT_MS, SERVER_TICK_MS, latenessTargetRawMs, updateLatenessEstimate,
+  boundSwarmHoldDelayMs, isSwarmHoldDelayOverMax,
   type LatenessEstimate,
 } from './swarmDelaySizing.js';
 /** The delay sizing rules (constants, lateness estimator, target, hold bound)
