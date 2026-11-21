@@ -785,7 +785,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   isHunting(): boolean { return this._search.on; }
 
   /** An owner's Move / Retreat (rules: `TravelMode.go`, `modes/travelMode.ts`). */
-  setTravel(x: number, y: number): void { this._travel.go(x, y, this._orders); }
+  setTravel(x: number, y: number, speed = 1): void { this._travel.go(x, y, this._orders, speed); }
 
   /** One Patrol leg (rules: `TravelMode.patrolLeg`). */
   setPatrolLeg(fromX: number, fromY: number, x: number, y: number): void {

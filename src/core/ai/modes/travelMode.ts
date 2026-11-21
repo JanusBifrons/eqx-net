@@ -58,6 +58,10 @@ export class TravelMode implements IPilotMode {
   state: TravelState = TRAVEL_NONE;
   x = 0;
   y = 0;
+  /** Command speed (the owner's speed telegraph): a fraction of the top
+   *  speed the leg is flown at, 1 = full (the cruise / long-leg rule below),
+   *  0 = brake and hold short of the point until a new speed comes. */
+  speedFrac = 1;
   /** Patrol leg (RTS Part B slice 11, `setPatrolLeg`): a travel that FIGHTS.
    *  The leash is the guard radius round the nearest point of the leg (from
    *  (`legFromX`, `legFromY`) to the travel point): on the route that is the
@@ -90,13 +94,14 @@ export class TravelMode implements IPilotMode {
    * ends the travel. Hold fire still wins (no target, no trigger).
    * Server-only.
    */
-  go(x: number, y: number, o: PilotOrderModes): void {
+  go(x: number, y: number, o: PilotOrderModes, speed = 1): void {
     o.course.setCourse(x, y, false, o);
     o.guard.clear();
     o.search.on = false;
     this.state = TRAVEL_ON_THE_WAY;
     this.x = x;
     this.y = y;
+    this.speedFrac = speed < 0 ? 0 : speed > 1 ? 1 : speed;
     this.fights = false;
   }
 
@@ -167,8 +172,12 @@ export class TravelMode implements IPilotMode {
     const dx = this.x - ctx.self.x;
     const dy = this.y - ctx.self.y;
     const long = dx * dx + dy * dy > (TRAVEL_LONG_LEG_GUARD_MUL * t.guardRadiusMin) ** 2;
-    out.cruiseCap = long ? h.maxSpeed : h.cruiseSpeed;
-    out.boost = long;
+    const cruise = long ? h.maxSpeed : h.cruiseSpeed;
+    // Command speed: never above that fraction of the top speed; below full
+    // the pilot never boosts. Full flies exactly as before.
+    const cap = this.speedFrac * h.maxSpeed;
+    out.cruiseCap = cap < cruise ? cap : cruise;
+    out.boost = long && this.speedFrac >= 1;
   }
 
   /**
