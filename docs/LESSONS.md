@@ -3410,6 +3410,10 @@ landed a correction, and the hysteresis guard turned remote prediction off
 window: `remoteForwardTickCap(lead)`. When you resize a lead, grep for every constant that assumed
 its old size.
 
+## 2026-11-21 — a shared read-and-reset histogram reads empty for every reader after the first
+
+The first tick-health log (`TickHealthWindow`) let every sector room read one process-wide `monitorEventLoopDelay` histogram and the first room to close its window reset it. Rooms close their windows in the same timer phase, so every room after the first read an empty histogram: a playtest logged `eventLoopP99Ms 0` on all 415 lines. A read-and-reset source needs exactly ONE reader (`ProcessTickHealth` reads it once per bucket). Also: the histogram is in nanoseconds and each sample is the whole interval between its timer callbacks, so an idle loop reads ≈ the resolution (≈ 15.6 ms on Windows); subtract the resolution to get delay.
+
 ## 2026-11-21 — a button that acts on touchstart hands its release to whatever it opened
 
 The dial's Warp action runs on `touchstart` (so a second finger works), which opens the warp picker
@@ -3418,4 +3422,6 @@ now under it, and the ship warped: one press opened the menu and picked. `preven
 React `onTouchStart` cannot stop that click (React's touchstart listener is passive), and the dial's
 own click-suppress window only guards the dial. Options of a menu opened on touchstart bind
 `useFreshPress` (`touchClickActivate.ts`): they act only on a pointerdown on the same option, at
-least `MENU_ARM_MS` after opening, then its click (keyboard clicks, `detail === 0`, always act).
+least `MENU_ARM_MS` after opening (touch; a mouse opens on release), then its click (keyboard clicks,
+`detail === 0`, always act). A whole surface (the drawer, the in-game galaxy map) spreads
+`useFreshPressSurface`, the same guard in the capture phase.

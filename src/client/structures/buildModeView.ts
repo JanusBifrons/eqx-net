@@ -15,9 +15,14 @@
  *
  * The camera scale is read from the renderer feedback's `viewHalf` (the larger
  * half of the visible world): scale = (larger window side / 2) / viewHalf.
+ *
+ * The same step fires the building panel's one-shot camera nudge
+ * (`queuePanelNudge`, maths in panelCameraNudge.ts): it needs this frame's
+ * scale and the renderer, which only the loop has. Idle cost: one boolean.
  */
 import { selectControlMode, useUIStore } from '../state/store.js';
 import type { ControlMode } from '../state/storeTypes.js';
+import { panelNudgeX } from '../components/panelCameraNudge.js';
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient.js';
 
 /** Entering build mode multiplies the camera scale by this (a step back). */
@@ -54,6 +59,12 @@ const st = {
   restoreScale: 0,
   /** `leaveBuildMode('fly')` sent the fly-back: the exit hands its zoom on. */
   flyBackSent: false,
+  /** A building panel opened: glide once to put (nudgeX, nudgeY) left of it. */
+  nudgePending: false,
+  nudgeX: 0,
+  nudgeY: 0,
+  /** The panel's on-screen width (CSS px). */
+  nudgePx: 0,
   /** Control mode on the last step (null = none yet), for the card close. */
   lastMode: null as ControlMode | null,
 };
@@ -79,8 +90,22 @@ export function takeBuildRestoreScale(): number {
   return s;
 }
 
+/**
+ * A building panel `panelPx` wide opened on the right: on the next frame with
+ * a camera reading, glide once so game point (x, y) sits mid-way across the
+ * screen left of it (`panelNudgeX`), keeping the zoom. A later call replaces
+ * an unfired one.
+ */
+export function queuePanelNudge(x: number, y: number, panelPx: number): void {
+  st.nudgePending = true;
+  st.nudgeX = x;
+  st.nudgeY = y;
+  st.nudgePx = panelPx;
+}
+
 /** Forget build-mode view state (teardown, tests). */
 export function resetBuildModeView(): void {
+  st.nudgePending = false;
   st.restoreScale = 0;
   st.active = false;
   st.flyShipId = null;
@@ -133,11 +158,18 @@ export function stepBuildModeView(
       if (st.savedScale === 0) {
         st.savedScale = scaleOfView(view.viewHalf, winW, winH);
         camera.glideCameraTo(view.viewX, view.viewY, BUILD_VIEW_GLIDE_MS, st.savedScale * BUILD_ZOOM_OUT);
-      }
+      } else if (st.nudgePending) firePanelNudge(view, camera, winW, winH);
     }
     return;
   }
   if (st.active) exitBuildView(camera);
+  if (st.nudgePending && view !== null && view.viewHalf > 0) firePanelNudge(view, camera, winW, winH);
+}
+
+function firePanelNudge(view: BuildViewSample, camera: BuildViewCamera, winW: number, winH: number): void {
+  st.nudgePending = false;
+  const scale = scaleOfView(view.viewHalf, winW, winH);
+  camera.glideCameraTo(panelNudgeX(st.nudgeX, st.nudgePx, scale), st.nudgeY, BUILD_VIEW_GLIDE_MS);
 }
 
 /**

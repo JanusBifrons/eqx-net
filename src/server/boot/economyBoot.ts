@@ -4,7 +4,7 @@ import { setEconomyRouteProvider } from '../routes/economyRouter.js';
 import { EconomyStore, hydrateEconomyStore } from '../economy/EconomyStore.js';
 import { TradeDirector } from '../economy/TradeDirector.js';
 import { getTradeSink, setTradeSink } from '../economy/tradeSink.js';
-import { setStarterGrantEconomy } from '../economy/starterGrant.js';
+import { grantJoinCredits, setStarterGrantEconomy } from '../economy/starterGrant.js';
 import { ConvoyDirector, isConvoysDisabled } from '../economy/ConvoyDirector.js';
 import { isNpcBasesDisabled } from '../bases/NpcBaseSubsystem.js';
 import { pushNotifier } from '../push/PushNotifier.js';
@@ -44,7 +44,11 @@ export function startEconomy(deps: { logger: Logger; galaxyRooms: Map<string, Se
   const director = world.tradeDirector;
   setEconomyRouteProvider({
     offersFor: (pid, sector) => director.offersFor(pid, sector),
-    view: (pid) => ({ ...store.view(pid), wallet: getWallet().balance(pid), freeLaunches: store.freeLaunches(pid) }),
+    // Join credits land before the Hangar reads the wallet (same as the launch charge).
+    view: (pid) => {
+      grantJoinCredits({ econ: store, wallet: getWallet(), persistence: getPersistence }, pid);
+      return { ...store.view(pid), wallet: getWallet().balance(pid), freeLaunches: store.freeLaunches(pid) };
+    },
     factions: (pid) => store.factionsView(pid, (other) => {
       const uid = getPlayerShipStore().listByPlayer(other).find((r) => r.userId !== null)?.userId ?? null;
       const u = uid ? getUser(uid) : null;

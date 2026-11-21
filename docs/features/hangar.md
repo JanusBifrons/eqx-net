@@ -10,7 +10,7 @@ The look follows the approved join-flow mock-up (HUD tokens in `hud/tokens.ts`: 
 
 - **Header:** "Hangar", "Launching into <sector>", the credit balance (red when in debt), cyan diamond pips for the free capital launches left (out of `FREE_LAUNCHES_START`), and a close button.
 - **Class tabs:** Sub-capitals | Capitals, each with an "N ready" chip. More tabs (Fighters, Bombers, Transports, Location) are one entry each in `HANGAR_TABS`.
-- **Left: square picture tiles.** "Ready to launch" first, then "Shipyard hulls" (Heavy, Interceptor, Gunship, Missile Frigate, Barge), greyed out until built. Each tile shows the ship picture (`shipPortraitUrl`, outline silhouette as a fallback), its name and "<price> cr", "Free", "Owned" or "Shipyard". Capitals have a blue edge; a capital with several fits carries an "N fits" badge.
+- **Left: square picture tiles.** "Ready to launch" first, then "Shipyard hulls" (Heavy, Interceptor, Gunship, Missile Frigate, Barge), greyed out until built. Each tile shows the ship picture (`shipPortraitUrl`, outline silhouette as a fallback), its name and "<price> cr", "Free", "Owned" or "Shipyard". Capitals have a blue edge; a capital with several fits carries an "N fits" badge. The tile is the shared `HullTile`, also used by a building's Build tab ([building-panels](building-panels.md)).
 - **Right: the detail pane.** A big picture with the class line ("Capital · Railguns fit") and name, the fit buttons (Guns, Railguns, Lances, Beams), Hull and Speed bars scaled to the toughest and fastest hull in the Hangar, a line on what the ship is for, and why a launch is or isn't possible (a free launch, debt, Shipyard).
 - **Owned here:** a hull you own that is parked in this sector has a gold edge. Launch resumes it (free); **Abandon this ship** breaks it up exactly as its death would. Abandoning the hull you are flying ejects you to the galaxy map.
 - **Footer:** "Cost …" and "After launch … cr" (plus free launches left), **Back to map** and **LAUNCH ▸**; when refused, "Can't launch this from here" and LAUNCH is disabled.
@@ -42,6 +42,8 @@ Locks: `galaxy-landing-flow.spec.ts`, `hangarModel.test.ts`, `HangarWindow.test.
 - After a Quick launch: a small "Want a bigger ship? Open Hangar" hint in game, and one "sign in to keep your credits" ask after the first fight (mock-up flow B, steps 3 and 4).
 
 ## History
+
+- Join credits (2026-11-21): every pilot is topped up once to 75,000 credits (`JOIN_CREDITS`, was 0), enough to buy a battleship (60,000) from the first Hangar visit. [economy-wallet](economy-wallet.md).
 
 - Quick launch safe start (2026-11-21): Quick launch picked the hot front (Ashfront, robots) every time; a new pilot's parked Fighter was shot within ~20 s and the starter Capital crate was lost for good, so no base could ever start. It now ranks safety (fewest hostiles) first.
 

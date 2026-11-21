@@ -123,11 +123,11 @@ describe('SectorRoom integration — an attacking NPC stays hostile', () => {
     const away = (): void => peek.postToWorker({ type: 'SET_POSITION', entityId: pid, x: 0, y: awayY, angle: 0, vx: 0, vy: 0, angvel: 0 });
     away();
     await waitUntil(() => (peek.shipPoseCache.get(pid)?.y ?? 0) < awayY + 5000, 5000, 'pilot moved away');
-    // Locks work at any distance (owner 2026-11-14): the NPC still holds its
-    // lock out here, but a lock outside its fire range no longer refreshes
-    // hostility (lead call): with the last hostile act aged to 29.8 s, ~1 s
-    // later it forgets.
-    expect(peek.npcLocks.isLocked(npc.id, pid), 'the lock holds at any distance').toBe(true);
+    // Lock range = the locker's longest gun (owner 2026-11-21): out here,
+    // past the 16"'s reach, the held lock breaks after the grace, and a lock
+    // never refreshes hostility outside fire range anyway: with the last
+    // hostile act aged to 29.8 s, ~1 s later it forgets.
+    await waitUntil(() => !peek.npcLocks.isLocked(npc.id, pid), 5000, 'the lock breaks past lock range');
     peek.aiController.markHostile(npc.id, pid, tick() - AGE_TICKS);
     const t1 = tick();
     await waitUntil(() => tick() - t1 >= 60, 5000, '1 s of ticks');

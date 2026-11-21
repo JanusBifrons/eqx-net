@@ -2,7 +2,7 @@
  * `mountsReachTarget`: is a target inside FIRE range of any of a set of
  * mounts (each from its own world position, with its own gun's reach, to the
  * target's hit shape via the shared per-turret gate `mountInReach`)? Since
- * locks work at any distance (owner 2026-11-14), this is what AUTO groups
+ * locks reach the longest gun (owner 2026-11-21), this is what AUTO groups
  * release on and what gates the "locks keep it hostile" refresh.
  */
 import { describe, it, expect } from 'vitest';

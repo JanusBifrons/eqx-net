@@ -6,9 +6,14 @@
  * z-index from this table once; widgets do not set their own.
  *
  * Tier ordering (lowest → highest):
- *   canvas  < hud < mobileControls < drawer < appBar < overlay < modal < transit
+ *   canvas  < hud < mobileControls < hudOverSticks < drawer < appBar < overlay < modal < transit
  *   < rotatePrompt (above the galaxy map chrome at 2000, below the
  *   lost-connection and error overlays at 9999)
+ *
+ * `hudOverSticks`: the bottom-centre HUD stack, above the thumb-stick touch
+ * zones (14/15) so the status capsule's shield ring takes its tap on a phone in
+ * landscape (where the capsule overlaps the move-stick zone). Its hosts and
+ * widgets are `pointerEvents: 'none'` except the controls that take input.
  *
  * `modal`: a game Dialog opened from an overlay (the loot window over the
  * world inspector); the drag ghost (`transit`) still draws above it.
@@ -17,6 +22,7 @@ export const Z = {
   canvas: 0,
   hud: 10,
   mobileControls: 15,
+  hudOverSticks: 16,
   drawer: 1200,
   appBar: 1300,
   overlay: 1400,

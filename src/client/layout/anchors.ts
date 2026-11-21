@@ -153,7 +153,7 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     bottom: SAFE_BOTTOM,
     left: '50%',
     transform: 'translateX(-50%)',
-    zIndex: Z.hud,
+    zIndex: Z.hudOverSticks,
     display: 'flex',
     flexDirection: 'column-reverse',
     alignItems: 'center',

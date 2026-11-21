@@ -70,6 +70,7 @@ import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem, packedGateForBuild, repackItem, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
+import { canTakeFullDraw } from '../structures/structurePowerSwitch.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import type { GateController } from '../structures/GateController.js';
 import { buildGateController } from '../structures/gateControllerFactory.js';
@@ -79,6 +80,7 @@ import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerRoomFeatures } from './features/index.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
+import { swapBlueprintFor } from '../structures/blueprintSwap.js';
 import { seedAlienGates, seedPocketPads, type NpcGateSeedHost, type TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
 import { getTeleportBroker, type TeleportRoom } from '../teleport/TeleportBroker.js';
 import { isNpcBasesDisabled, seedGalaxyBase, seedNpcBases, type NpcBaseSeedHost } from '../bases/NpcBaseSubsystem.js';
@@ -208,6 +210,8 @@ import { createPhysicsWorker } from './contactFilter.js';
 import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
 import { recordLagCompPoses } from './lagCompRecorder.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
+import { TickHealthWindow } from './TickHealthWindow.js';
+import { processTickHealth } from './ProcessTickHealth.js';
 import {
   evaluateSectorIdle,
   findAbandonedShips,
@@ -1227,7 +1231,7 @@ export class SectorRoom extends Room<SectorState> {
   // see the breakdown without saturating the 500-entry server-event buffer.
   // Per-tick accumulation + tick_hitch + tick_budget aggregation lives in
   // TickBudgetTelemetry.
-  private readonly tickBudget = new TickBudgetTelemetry();
+  private readonly tickBudget = new TickBudgetTelemetry(new TickHealthWindow(processTickHealth(logger), () => this.sectorKey ?? this.roomId));
 
   private roomFeatures: { dispose: () => void } | null = null; // features/index.ts; disposed in onDispose
   override async onCreate(options: unknown): Promise<void> {
@@ -2236,9 +2240,9 @@ export class SectorRoom extends Room<SectorState> {
     // collider; updated on the grid pulse + the faster turret tick.
     this.production = new ProductionSubsystem({
       registry: this.structureRegistry,
-      powered: (id) => this.structureGrid.powerSummaryFor(id).powered,
+      powered: (id) => this.structureGrid.powerSummaryFor(id).powered, canDrawFull: (rec) => { const g = this.structureGrid, s = g.powerSummaryFor(rec.id); return canTakeFullDraw(rec, s.powered, s.netPower, g.componentBatteryCharge(rec.id)); },
       componentOf: (id) => this.structureGrid.componentMembersOf(id),
-      onBlueprintSpent: (rec) => this.storage.persistSlot(rec),
+      onBlueprintSpent: (rec) => this.storage.persistSlot(rec), swapBlueprint: (rec, recipe) => swapBlueprintFor(this.storage, rec, recipe),
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
       // D3 — station taxes: a player's habitat modules and spires pay their wallet; an NPC or ownerless base has none (`walletOwnerOf`).
@@ -2573,7 +2577,7 @@ export class SectorRoom extends Room<SectorState> {
       playerToActiveShipInstance: this.playerToActiveShipInstance,
       lockMsgAllowed: (sid) => this.lockMsgAllowed(sid),
       fireControlLocks: () => this.locks,
-      selectionStats: () => this.selectionStats,
+      selectionStats: () => this.selectionStats, shieldHull: () => this.shieldHullRouter,
       webrtcChannelManager: () => this.webrtcChannelManager,
     });
 

@@ -24,9 +24,19 @@ Plan `peppy-jumping-pinwheel`, economy v2, phase W1. This follows Eve Online:
   touches your balance.
 - **Guests are full players.** A guest is an account that hasn't set a
   password, so it has a wallet like anyone else.
+- **Join credits.** Every pilot is topped up to **75,000 credits**
+  (`JOIN_CREDITS` in `shared-types/launch.ts`: 1.2× the dearest battleship
+  launch, rounded up) once per account, so a new pilot can buy a battleship
+  straight away. An existing pilot below 75,000 (even in debt) is raised to
+  it the first time they open the Hangar or launch; one above keeps their
+  balance. It never refills: the "given" flag (`joinCreditsGranted` on the
+  economy row) lands in one atomic group with the wallet row
+  (`economy/starterGrant.ts` `grantJoinCredits`, called by the launch charge
+  and the `/trade/economy` view). Locks: `economy/joinCredits.test.ts`.
 - **Launching a capital (join flow).** Capitals cost credits to launch (the
-  launch table in `shared-types/launch.ts`; sub-capitals are free). A new
-  pilot gets **5 free capital launches**; after those, a launch you can't
+  launch table in `shared-types/launch.ts`; sub-capitals are free). A launch
+  you can afford is paid from the wallet first. A pilot gets **5 free capital
+  launches** for when the wallet is short; after those, a launch you can't
   afford goes on credit, taking the wallet **below zero, down to −100,000**.
   In debt you can't buy anything until income pays it off. Past the floor
   you launch in a Fighter. Resuming a hull you own is free. The [Hangar](hangar.md)
