@@ -158,6 +158,19 @@ export function isNpcOwner(owner: string): boolean {
   return parseOwner(owner).kind === 'npc';
 }
 
+/**
+ * May a power-grid link join structures of owners `a` and `b`? The same owner,
+ * or a player and an ownerless base (capture plan 4E S4: finders keepers; the
+ * link lets the player's Capital take the base). Never two players, two
+ * different ownerless bases, or an NPC and anyone else.
+ */
+export function gridLinkAllowed(a: string, b: string): boolean {
+  if (a === b) return true;
+  const noneA = isUnownedOwner(a);
+  if (noneA === isUnownedOwner(b)) return false;
+  return parseOwner(noneA ? b : a).kind === 'player';
+}
+
 const RANK: Readonly<Record<Stance, number>> = { friendly: 0, neutral: 1, hostile: 2 };
 
 function stanceToRelation(s: Stance): Relation {

@@ -2197,6 +2197,7 @@ export class SectorRoom extends Room<SectorState> {
       // Economy v2 — taking down a structure placed from a packed item gives
       // the packed item back (EVE-style repackaging).
       onRepack: (rec) => this.repackStructure(rec),
+      onCaptured: () => this.sectorPersistence.persistSoon(), // capture 4E S4: owners are durable
       onConstructed: (owner, kind) => {
         auditEvent({ event: 'structure_built', sector: this.sectorKey ?? undefined, owner, kind });
         this.sectorPersistence.persistSoon();

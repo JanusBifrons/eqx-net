@@ -50,7 +50,7 @@ function poweredBase(opts?: { second?: boolean; owner?: string }) {
   for (let i = 0; i < 120; i++) grid.pulse(now += 1000);
   expect(registry.get(turret)!.isConstructed).toBe(true);
   expect(grid.powerSummaryFor(turret).powered).toBe(true);
-  return { registry, grid, capital, second, relay, solar, turret, pulse: () => grid.pulse(now += 1000) };
+  return { registry, grid, placement, capital, second, relay, solar, turret, pulse: () => grid.pulse(now += 1000) };
 }
 
 describe('a base that loses its last Capital (capture plan 4E)', () => {
@@ -91,5 +91,70 @@ describe('a base that loses its last Capital (capture plan 4E)', () => {
     const b = poweredBase({ owner: npc });
     b.registry.remove(b.capital);
     for (const id of [b.relay, b.solar, b.turret]) expect(b.registry.get(id)!.owner).toBe(npc);
+  });
+});
+
+/** An ownerless base (its Capital destroyed) and its old pieces. */
+function ownerlessBase() {
+  const b = poweredBase();
+  b.registry.remove(b.capital);
+  b.pulse();
+  const none = unownedOwner(b.capital);
+  for (const id of [b.relay, b.solar, b.turret]) expect(b.registry.get(id)!.owner).toBe(none);
+  return { ...b, none };
+}
+
+describe('capturing an ownerless base by linking to it (capture plan 4E S4)', () => {
+  const FINDER = 'player-2';
+
+  it('a Capital placed in link range takes the whole ownerless grid', () => {
+    const b = ownerlessBase();
+    const cap = b.placement.place(FINDER, 'capital', 0, 1000, { rot: 0 })!;
+    expect(b.registry.hasConnection(cap, b.relay)).toBe(true);
+    b.pulse();
+    for (const id of [b.relay, b.solar, b.turret]) expect(b.registry.get(id)!.owner).toBe(FINDER);
+    expect(b.grid.componentMembersOf(b.turret)).toContain(cap);
+    expect(b.grid.powerSummaryFor(b.turret).powered).toBe(true);
+  });
+
+  it('a Connector bridging the finder\'s own base takes it once built', () => {
+    const b = ownerlessBase();
+    const cap = b.placement.place(FINDER, 'capital', 0, 1700, { rot: 0 })!;
+    expect(b.registry.connectionCount(cap)).toBe(0); // out of reach on its own
+    const bridge = b.placement.place(FINDER, 'connector', 0, 1000)!;
+    expect(b.registry.hasConnection(bridge, b.relay)).toBe(true);
+    expect(b.registry.hasConnection(bridge, cap)).toBe(true);
+    b.pulse();
+    // A blueprint bridge is never crossed: no capture until it is built.
+    expect(b.registry.get(bridge)!.isConstructed).toBe(false);
+    expect(b.registry.get(b.relay)!.owner).toBe(b.none);
+    for (let i = 0; i < 120 && !b.registry.get(bridge)!.isConstructed; i++) b.pulse();
+    expect(b.registry.get(bridge)!.isConstructed).toBe(true);
+    b.pulse();
+    for (const id of [b.relay, b.solar, b.turret]) expect(b.registry.get(id)!.owner).toBe(FINDER);
+  });
+
+  it('an NPC Capital nearby neither links to nor takes an ownerless base', () => {
+    const b = ownerlessBase();
+    const cap = b.placement.place('npc:traders:sol-3', 'capital', 0, 1000, { rot: 0 })!;
+    b.pulse();
+    expect(b.registry.hasConnection(cap, b.relay)).toBe(false);
+    for (const id of [b.relay, b.solar, b.turret]) expect(b.registry.get(id)!.owner).toBe(b.none);
+    // Even a link forced past the gate (old save, seeded layout) captures nothing.
+    b.registry.addConnection(cap, b.relay, 1);
+    b.pulse();
+    for (const id of [b.relay, b.solar, b.turret]) expect(b.registry.get(id)!.owner).toBe(b.none);
+  });
+
+  it('two ownerless bases joined stay ownerless, each keeping its own owner', () => {
+    const b = ownerlessBase();
+    const other = unownedOwner('pstruct-lost-elsewhere');
+    const c = b.placement.place(other, 'connector', 0, 1000)!;
+    b.registry.get(c)!.isConstructed = true;
+    expect(b.registry.hasConnection(c, b.relay)).toBe(false); // the gate refuses it
+    b.registry.addConnection(c, b.relay, 1);
+    b.pulse();
+    expect(b.registry.get(c)!.owner).toBe(other);
+    for (const id of [b.relay, b.solar, b.turret]) expect(b.registry.get(id)!.owner).toBe(b.none);
   });
 });

@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import {
   cargoOpensFor,
   createRelationContext,
+  gridLinkAllowed,
   isNpcOwner,
   isUnownedOwner,
   npcOwner,
@@ -255,5 +256,28 @@ describe('ownerless base (none:<lostCapitalId>, capture plan 4E)', () => {
     expect(N1).not.toBe(N2);
     expect(relationOf(N1, N2, ctx)).toBe('neutral');
     expect(relationOf(N2, N1, ctx)).toBe('neutral');
+  });
+});
+
+describe('gridLinkAllowed (capture plan 4E S4)', () => {
+  const N1 = unownedOwner('pstruct-7');
+  const N2 = unownedOwner('pstruct-9');
+  const B = '6a7e0000-0000-4000-8000-0000000000b2';
+
+  it('same owner links; a player links to an ownerless base either way round', () => {
+    expect(gridLinkAllowed(A, A)).toBe(true);
+    expect(gridLinkAllowed(N1, N1)).toBe(true);
+    expect(gridLinkAllowed(A, N1)).toBe(true);
+    expect(gridLinkAllowed(N1, A)).toBe(true);
+  });
+
+  it('never two players, two ownerless bases, or an NPC with anyone else', () => {
+    expect(gridLinkAllowed(A, B)).toBe(false);
+    expect(gridLinkAllowed(N1, N2)).toBe(false);
+    for (const npc of ['npc:robots', 'npc:traders:sol-3']) {
+      expect(gridLinkAllowed(npc, N1)).toBe(false);
+      expect(gridLinkAllowed(N1, npc)).toBe(false);
+      expect(gridLinkAllowed(npc, A)).toBe(false);
+    }
   });
 });
