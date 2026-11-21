@@ -131,7 +131,7 @@ reads it as low.
       `build_heavy` and `build_missile_frigate`. Set the recipe, then load the
       blueprint, like any processor. It also comes packed (`pack_shipyard`).
       Changing the recipe swaps a loaded blueprint that no longer fits for
-      storage's best match (else it goes back to storage; a bound copy, or one
+      storage's best match, else your own ship hold's, as a manual Load (else it goes back to storage; a bound copy, or one
       with no linked storage to take it, stays); `set_recipe` in `structureSettingMessages.ts`.
     - **Traders sell packed hulls:** two hull offers on the board at all times,
       priced from the Shipyard recipe's goods value × 1.3 (`hullBillValue`).

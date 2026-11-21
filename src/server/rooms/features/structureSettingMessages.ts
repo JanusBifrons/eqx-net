@@ -27,6 +27,8 @@ export interface StructureSettingMessageHost extends ParsedMessageHost {
   production(): Pick<ProductionSubsystem, 'setRecipe'>;
   storage(): Pick<StorageService, 'flushDirty' | 'refine' | 'loadBlueprint' | 'unloadBlueprint'>;
   rebuildStructuresSlice(): void;
+  /** The flown hull, else the hull parked by Command / Build (`PilotSwap.ownShipKey`). */
+  ownShipKey(playerId: string): string | undefined;
   structureGrid(): Pick<StructureGridSubsystem, 'setSwitchedOn' | 'setThrottle'>;
 }
 
@@ -42,10 +44,11 @@ export function registerStructureSettingMessages(h: StructureSettingMessageHost)
     if (!rec || rec.owner !== owner || !isProcessorKind(rec.kind)) return;
     if (h.production().setRecipe(rec, msg.recipe, msg.count)) {
       // A loaded blueprint for another product would stall the new recipe:
-      // swap in storage's best match, else put it back (stays if no room).
+      // swap in the best match (base storage, else the owner's own ship hold,
+      // exactly as a manual Load), else put it back (stays if no room).
       const product = blueprintProductFor(msg.recipe);
       if (rec.blueprint !== undefined && rec.blueprint.product !== product
-        && !h.storage().loadBlueprint(rec, product, blueprintQuality)) h.storage().unloadBlueprint(rec);
+        && !h.storage().loadBlueprint(rec, product, blueprintQuality, h.ownShipKey(owner))) h.storage().unloadBlueprint(rec);
       h.storage().flushDirty();
       h.rebuildStructuresSlice();
     }
