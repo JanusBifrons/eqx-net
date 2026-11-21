@@ -105,6 +105,25 @@ describe('drainContacts', () => {
     world.dispose();
   });
 
+  it('splits the closing speed per body: a still body has approach 0, the mover all of it', async () => {
+    const world = await PhysicsWorld.create();
+    const eventQueue = new RAPIER.EventQueue(true);
+    world.spawnShip('mover', -20, 0);
+    world.spawnShip('parked', 20, 0);
+    world.setShipState('mover', { x: -20, y: 0, angle: 0, vx: 80, vy: 0 });
+    for (let i = 0; i < 60; i++) world.tick(1 / 60, eventQueue);
+    const preVel = new Map<string, { vx: number; vy: number }>([['mover', { vx: 80, vy: 0 }]]);
+    const contacts = drainContacts(eventQueue, world, 50, preVel);
+    expect(contacts.length).toBeGreaterThan(0);
+    for (const c of contacts) {
+      const moverApp = c.aId === 'mover' ? c.aApproach! : c.bApproach!;
+      const parkedApp = c.aId === 'mover' ? c.bApproach! : c.aApproach!;
+      expect(moverApp).toBeCloseTo(80, 0);
+      expect(parkedApp).toBeCloseTo(0, 5);
+    }
+    world.dispose();
+  });
+
   it('a GLANCING contact has a normalSpeed well below its impactSpeed', async () => {
     const world = await PhysicsWorld.create();
     const eventQueue = new RAPIER.EventQueue(true);

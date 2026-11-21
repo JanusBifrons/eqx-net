@@ -225,6 +225,17 @@ describe('aggregateRamming', () => {
     expect(norm(aggregateRamming([x, z, y]))).toEqual(norm(aggregateRamming([y, x, z])));
   });
 
+  it('per-body approach speed is the max per BODY, even when sub-contacts list the pair swapped', () => {
+    // 'mover' drives in at 300 (and 280 on another triangle); 'parked' is still.
+    const x = { ...mk('mover', 'parked', 400), aApproach: 280, bApproach: 0 };
+    const y = { ...mk('parked', 'mover', 900), aApproach: -2, bApproach: 300 }; // rep (higher force), swapped
+    const [p] = aggregateRamming([x, y]);
+    expect(p!.aId).toBe('parked');
+    expect(p!.aApproach).toBe(0);
+    expect(p!.bApproach).toBe(300);
+    expect(aggregateRamming([mk('a', 'b', 1)])[0]!.aApproach).toBeUndefined();
+  });
+
   it('empty input ⇒ no pairs', () => {
     expect(aggregateRamming([])).toEqual([]);
   });

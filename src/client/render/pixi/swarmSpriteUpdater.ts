@@ -53,6 +53,8 @@ import { applyStructureMirror, counterFlipStructureParts, uprightReadout } from 
 import { BUILD_AWAITING_CLEAR_LABEL, isBuildAwaitingClear } from '../../structures/buildAwaitingClear.js';
 import { buildChargeTelegraph, updateChargeTelegraph, type ChargeTelegraph } from './chargeTelegraph.js';
 import type { Text } from 'pixi.js';
+/** A store's charge readout, with the numbers it last showed (change check). */
+type BatteryText = Text & { shownStored?: number; shownMax?: number };
 import { minerRangeForKind } from '../minerRangeRing.js';
 import {
   buildArtShipSprite, isMachinedSprite, scrapHandleFor, shipArtSwap, structHandleFor,
@@ -560,14 +562,18 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       }
       // Phase-1 issue 7 — a power store's stored-power number (CHANGE-only).
       if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0) {
-        const batText = sprite.getChildByLabel('batteryCharge') as Text | null;
+        const batText = sprite.getChildByLabel('batteryCharge') as BatteryText | null;
         if (batText) {
-          const next =
-            st?.storedPowerMax !== undefined && st.storedPowerMax > 0
-              ? `${Math.round(st.storedPower ?? 0)}/${Math.round(st.storedPowerMax)}`
-              : '';
-          if (batText.text !== next) batText.text = next;
-          if (next !== '') uprightReadout(sprite, batText, entry.radius + 4);
+          // Compare the rounded numbers first; build the string only on a change (#14).
+          const has = st?.storedPowerMax !== undefined && st.storedPowerMax > 0;
+          const stored = has ? Math.round(st.storedPower ?? 0) : -1;
+          const max = has ? Math.round(st.storedPowerMax!) : -1;
+          if (batText.shownStored !== stored || batText.shownMax !== max) {
+            batText.shownStored = stored;
+            batText.shownMax = max;
+            batText.text = has ? `${stored}/${max}` : '';
+          }
+          if (has) uprightReadout(sprite, batText, entry.radius + 4);
         }
       }
     }

@@ -89,6 +89,7 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
   const viewBounds = r.camera.visibleBoundsInto(ctx.swarmViewScratch);
   const fences = r.connectorRenderer.fxFences;
   if (fences) fences.viewBounds = viewBounds;
+  r.connectorRenderer.viewBounds = viewBounds; // off-screen connector work is skipped
   r.connectorRenderer.update(mirror, r.world.scale.x, r.fxNow());
   r.feedback.placementPreviewConnectionCount =
     r.connectorRenderer.placementPreviewConnectionCount;

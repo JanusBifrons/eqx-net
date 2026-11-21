@@ -109,6 +109,12 @@ export interface ContactPayload {
   forceMagnitude: number;
   /** Closing speed (game u/s) at impact — drives the ramming-damage gate. */
   impactSpeed?: number;
+  normalSpeed?: number;
+  aMass?: number;
+  bMass?: number;
+  /** Each body's own speed toward the other (who rams; see Contact). */
+  aApproach?: number;
+  bApproach?: number;
 }
 
 /** Generic worker-to-main message shape (loosely typed; the worker

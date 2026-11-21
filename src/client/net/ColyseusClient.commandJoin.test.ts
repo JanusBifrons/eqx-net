@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
 import { PhysicsWorld } from '../../core/physics/World.js';
 import { selectControlMode, useUIStore } from '../state/store.js';
+import { FLEET_ARRIVAL_SETTLE_MS } from './fleetWarpFollow.js';
 
 type Internals = {
   room: { send: (t: string, p: unknown) => void } | null;
@@ -72,5 +73,34 @@ describe('control_mode: command (RTS slice 10 command-view join)', () => {
     expect(sent).toEqual(['command']);
     expect(c.predWorld!.hasShip(PID)).toBe(false);
     expect(c.mirror.ships.has(PID)).toBe(false);
+  });
+
+  // CI (rts-fleet-warp, command-view-camera): before the flip the camera follows
+  // the local ship, whose drawn pose on a re-join glides in from the pose-less
+  // schema (0, 0); the camera was left there, the hulls off screen, so click and
+  // box select found nothing. The flip now frames the hull at its snapshot pose.
+  it('frames the parked hull once its snapshot pose lands, without selecting it', async () => {
+    let now = 1000;
+    const client = new ColyseusGameClient({ now: () => now } as never);
+    const c = client as unknown as Internals;
+    c.predWorld = await PhysicsWorld.create();
+    c.room = { send: () => {} };
+    c.mirror.localPlayerId = PID;
+    c.mirror.localShipInstanceId = SHIP;
+    c.mirror.ships.set(PID, { x: -600, y: 500, vx: 0, vy: 0, angle: 0, kind: 'fighter' } as never);
+    c.tryInitPredWorld(PID);
+
+    client.enterCommandFromServer();
+    expect(client.consumePendingFleetArrival(), 'not at the pre-arrival pose').toBeNull();
+    const hull = c.mirror.ships.get(SHIP)!;
+    hull.x = -2040; hull.y = 1800; // the next snapshot
+    now += FLEET_ARRIVAL_SETTLE_MS;
+    expect(client.consumePendingFleetArrival()).toEqual({ ids: [SHIP], x: -2040, y: 1800, select: false });
+    expect(client.consumePendingFleetArrival(), 'one-shot').toBeNull();
+
+    // Already in Command (idempotent re-send): no new framing.
+    client.enterCommandFromServer();
+    now += FLEET_ARRIVAL_SETTLE_MS;
+    expect(client.consumePendingFleetArrival()).toBeNull();
   });
 });

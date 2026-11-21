@@ -10,6 +10,12 @@
  * in the destination's mirror (same shipInstanceIds), they are re-selected
  * and the camera glides to them.
  *
+ * The same watch frames a command-view JOIN (`commandArrivalWatch`): the
+ * camera followed the pre-arrival local ship, whose drawn pose can be far
+ * from the hull (a re-join seeds it at the pose-less schema's (0, 0) and it
+ * glides in), so at the arrival flip the camera is pointed at the hull once
+ * its snapshot pose has landed. Frame only: nothing is selected.
+ *
  * Pure (no store, no renderer): decisions only, unit-tested.
  */
 
@@ -40,6 +46,14 @@ export interface FleetArrivalWatch {
   armedAtMs: number;
   /** When the first of `ids` appeared in the mirror; null until then. */
   firstSeenAtMs: number | null;
+  /** Command-view join: frame the hull only (no re-select), and only after
+   *  the settle window (its drawn pose at the flip is the pre-arrival one). */
+  frameOnly?: boolean;
+}
+
+/** The watch a command-view join arms at the arrival flip for its own hull. */
+export function commandArrivalWatch(hullId: string, nowMs: number): FleetArrivalWatch {
+  return { ids: [hullId], armedAtMs: nowMs, firstSeenAtMs: null, frameOnly: true };
 }
 
 export interface FleetArrival {
@@ -48,6 +62,16 @@ export interface FleetArrival {
   /** Their centroid, game space (the camera glide target). */
   x: number;
   y: number;
+  /** Re-select `ids` (a fleet warp); false for a command-view join. */
+  select: boolean;
+}
+
+/** Glide to the arrival unless it is a join whose hull is already near the
+ *  middle of the view (`viewHalf`: half the view's larger extent). */
+export function arrivalNeedsGlide(a: FleetArrival, viewX: number, viewY: number, viewHalf: number): boolean {
+  if (a.select) return true;
+  const near = viewHalf * 0.25;
+  return Math.abs(a.x - viewX) > near || Math.abs(a.y - viewY) > near;
 }
 
 /**
@@ -67,7 +91,8 @@ export function stepFleetArrival(
   for (let i = 0; i < w.ids.length; i++) if (ships.has(w.ids[i]!)) present++;
   if (present === 0) return nowMs - w.armedAtMs > FLEET_ARRIVAL_GIVE_UP_MS ? 'drop' : null;
   if (w.firstSeenAtMs === null) w.firstSeenAtMs = nowMs;
-  if (present < w.ids.length && nowMs - w.firstSeenAtMs < FLEET_ARRIVAL_SETTLE_MS) return null;
+  const settling = nowMs - w.firstSeenAtMs < FLEET_ARRIVAL_SETTLE_MS;
+  if (settling && (present < w.ids.length || w.frameOnly === true)) return null;
   const ids: string[] = [];
   let sx = 0, sy = 0;
   for (let i = 0; i < w.ids.length; i++) {
@@ -76,5 +101,5 @@ export function stepFleetArrival(
     ids.push(w.ids[i]!);
     sx += s.x; sy += s.y;
   }
-  return { ids, x: sx / ids.length, y: sy / ids.length };
+  return { ids, x: sx / ids.length, y: sy / ids.length, select: w.frameOnly !== true };
 }
