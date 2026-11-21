@@ -10,7 +10,10 @@
  *
  * Placement (player `place_structure` only, server-side):
  *  - the builder's side must HOLD the sector on the control meter now;
- *  - at most one lock per sector (a blueprint still building counts).
+ *  - at most one lock per sector (a blueprint still building counts). A lock
+ *    on an ownerless base (capture 4E, `none:`) claims nothing: it does not
+ *    take the slot, so another side may build its own; once the base is
+ *    captured the lock is that player's and takes the slot again.
  *
  * Only a BUILT lock locks: a blueprint under construction does nothing. A lock
  * whose side no longer holds the sector does nothing either (the stepper
@@ -44,7 +47,7 @@ export function territoryLockRefusal(
   if (kindId !== TERRITORY_LOCK_KIND) return null;
   const held = sectorHeldBy(sectorKey, holder);
   if (held === null || held !== parseOwner(owner).faction) return LOCK_NOT_HELD_REASON;
-  for (const s of structures) if (s.kind === TERRITORY_LOCK_KIND) return LOCK_TAKEN_REASON;
+  for (const s of structures) if (s.kind === TERRITORY_LOCK_KIND && !isUnownedOwner(s.owner)) return LOCK_TAKEN_REASON;
   return null;
 }
 
