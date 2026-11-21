@@ -256,7 +256,7 @@ function shortestArc(target: number, source: number): number {
  * entry's `poseRing` regardless, so the scratch never retains
  * anything that wouldn't already be live.
  *
- * Sized to `POSE_RING_DEPTH` (currently 10) — load-bearing if that
+ * Sized to `POSE_RING_DEPTH` — load-bearing if that
  * constant changes, the scratch must grow with it (statically
  * verified at the for-loop bound below). */
 const _populatedScratch: (PoseRingEntry | null)[] = new Array<PoseRingEntry | null>(POSE_RING_DEPTH).fill(null);
