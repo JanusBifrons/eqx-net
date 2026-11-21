@@ -90,6 +90,9 @@ export function joinFreshSpawn(
   let resumedAngle = 0;
   let resumedAngvel = 0;
   let resumedFromStore = false;
+  // The resumed hull was already in this room (lingering / parked): it stays
+  // visible to others through the handshake (`PendingJoinRecord.inWorld`).
+  let resumedInWorld = false;
   /** Phase 3 — when the client supplied a valid `shipId` in JoinOptions,
    *  the bindRosterEntry call resolves to this exact row instead of the
    *  most-recent-updated default. Empty string means "no preference". */
@@ -130,6 +133,7 @@ export function joinFreshSpawn(
         serverLogEvent('respawn_evict_lingering', { playerId, shipInstanceId: requestedShipId });
         d.evictOwnerlessShip(requestedShipId);
         rec = getPlayerShipStore().get(requestedShipId) ?? rec;
+        resumedInWorld = true;
       }
       spawnX = rec.lastX;
       spawnY = rec.lastY;
@@ -560,6 +564,7 @@ export function joinFreshSpawn(
     spawnX,
     spawnY,
     sessionId: client.sessionId,
+    ...(resumedInWorld ? { inWorld: true } : {}),
   });
   serverLogEvent('pending_join_registered', {
     playerId,
