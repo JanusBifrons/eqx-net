@@ -452,3 +452,26 @@ describe('prodStatusLine — chunk recipes', () => {
     expect(prodStatusLine(PROD_STATE.starved, 'ice', 'refine_ice_fuel')).toBe('Waiting for Ice');
   });
 });
+
+describe('ProductionSubsystem — mining skiff (playable base loop)', () => {
+  it('miner builds from minerals with its blueprint', () => {
+    // PLAYTEST (owner 2026-11-20): a Capital bank alone pays the Shipyard bill.
+    const bill = RECIPES.build_mining_skiff.inputs;
+    expect(Object.keys(bill)).toEqual(['minerals']);
+    const capital = rec('c', 'capital', { minerals: bill.minerals! });
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: {}, blueprints: [] } });
+    const yard = rec('y', 'shipyard', { recipe: 'build_mining_skiff', blueprint: bp('hull:mining-skiff', { kind: 'bpo', runs: null }) });
+    world([capital, bay, yard]).run(RECIPES.build_mining_skiff.cyclePulses);
+    expect(capital.minerals).toBe(0);
+    const packed = [...(capital.hold?.packed ?? []), ...(bay.hold!.packed ?? [])];
+    expect(packed.map((p) => p.product)).toEqual(['hull:mining-skiff']);
+  });
+
+  it('without the skiff blueprint the Shipyard waits and spends nothing', () => {
+    const capital = rec('c', 'capital', { minerals: 400 });
+    const yard = rec('y', 'shipyard', { recipe: 'build_mining_skiff' });
+    world([capital, yard]).run(RECIPES.build_mining_skiff.cyclePulses);
+    expect(yard.prodState).toBe(PROD_STATE.needsBlueprint);
+    expect(capital.minerals).toBe(400);
+  });
+});

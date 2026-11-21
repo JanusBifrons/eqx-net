@@ -127,16 +127,16 @@ export type TransitState = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
 export type PilotMode = 'pilot' | 'spectator';
 
 /**
- * RTS command layer (slice 10) — the player-facing name of {@link PilotMode}:
- * `fly` (at the controls) or `command` (free camera over your fleet, your ships
- * AI-flown). The STORED field stays `pilotMode` (the join-readiness gate, the
+ * The player-facing control mode: `fly` (at the controls), `command` (free
+ * camera over your fleet, your ships AI-flown) or `build` (a Command view that
+ * places structures: `buildMode`). The STORED fields stay `pilotMode` (the join-readiness gate, the
  * renderer's `setSpectator`, e2e probes and ~70 call sites read it); read this
  * view through `selectControlMode` and never store it twice. Normal galaxy play
  * starts in `command`: the join's `startMode` decides it, and the server flips
  * the client at the arrival flip (`control_mode`). Before a join the store
  * holds `fly` (`pilotMode = 'pilot'`), which the ship-bound readiness gate needs.
  */
-export type ControlMode = 'fly' | 'command';
+export type ControlMode = 'fly' | 'command' | 'build';
 
 /** What kind of entity the selection's focus is (routes the details panel:
  *  `ship`/`structure` use the server `entity_stats` stream). */
@@ -248,11 +248,11 @@ export interface UIStore {
   correctionRate: number;
   /** True when the local ship has been destroyed and is awaiting respawn. */
   isDead: boolean;
-  /** Phase 4 (Spectator / Construction mode, WS-0) — `pilot` (driving a ship)
-   *  vs `spectator` (free-roam construction camera). Discrete enum, purity-clean
-   *  (#2). Defaults to `pilot`; WS-A1 flips it on death + via the speed-dial
-   *  toggle. WS-0 lands only the flag + setter. */
+  /** `pilot` (driving a ship) vs `spectator` (free camera: Command and Build).
+   *  Discrete enum (#2); the player-facing view is `selectControlMode`. */
   pilotMode: PilotMode;
+  /** Build mode, the third control mode (over a `spectator` pilotMode). */
+  buildMode: boolean;
   /** Phase 8 — stable galaxy sector key the player is currently in (set
    *  from the welcome message), or null in engineering rooms. */
   currentSectorKey: string | null;
@@ -282,7 +282,7 @@ export interface UIStore {
   /** Structures plan (Phase 2) — the structure kind the player is about to
    *  place, or null when not in placement mode. Discrete UI selection
    *  (purity-clean: it's a kind id, not a spatial field). Set by the
-   *  speed-dial Build actions; cleared on confirm / cancel. */
+   *  Build actions (which enter Build mode); cleared on confirm / cancel. */
   placementKind: StructureKindId | null;
   /** Phase 4 warp-to: the warp destination picker is open (discrete UI flag). */
   warpPickerOpen: boolean;
@@ -524,6 +524,7 @@ export interface UIStore {
   /** Phase 4 (Spectator / Construction mode, WS-0) — set the pilot/spectator
    *  mode. WS-A1 wires the death transition + the speed-dial toggle. */
   setPilotMode: (mode: PilotMode) => void;
+  setBuildMode: (on: boolean) => void;
   setCurrentSectorKey: (key: string | null) => void;
   setTransitState: (s: TransitState) => void;
   setTransitProgress: (p: number) => void;

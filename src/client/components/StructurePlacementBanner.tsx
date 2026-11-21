@@ -1,30 +1,36 @@
-import { Box, Button } from '@mui/material';
+import { Box, IconButton } from '@mui/material';
+import RotateRightIcon from '@mui/icons-material/RotateRight';
+import CheckIcon from '@mui/icons-material/Check';
+import CloseIcon from '@mui/icons-material/Close';
 import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { commitChosenPlacement, cyclePlacementRotation } from '../structures/structurePlacementClient';
 import { isTouchDevice } from '../input/TouchInput';
+import { Slot } from '../layout/Slot';
+import { PlacementFenceHint } from './PlacementFenceHint';
+import { PlacementLinkHint } from './PlacementLinkHint';
 
 /**
- * Placement confirm banner (speed-dial-resource-structures plan, Phase 2;
- * world-anchored in the smoke handoff 2026-06-06, Issue 5).
+ * Placement confirm banner (speed-dial-resource-structures plan, Phase 2).
  *
- * Shown only while the player is in placement mode (`placementKind` set by the
- * speed-dial Build menu). The renderer draws a translucent blueprint GHOST at
- * the ahead-of-ship world pose (`RenderMirror.pendingPlacementPreview`); this
- * banner is the Confirm/Cancel affordance anchored OVER that ghost. Confirm
- * sends `place_structure`; Cancel exits placement mode. Rotate turns the ghost a
- * quarter turn through the same `cyclePlacementRotation` the desktop R key uses.
+ * Shown only while the player is in placement (build) mode (`placementKind`
+ * set by the Build menu). The renderer draws a translucent blueprint GHOST
+ * (`RenderMirror.pendingPlacementPreview`); this banner is its Confirm/Cancel
+ * affordance. Confirm sends `place_structure`; Cancel exits placement mode.
+ * Rotate turns the ghost a quarter turn through the same
+ * `cyclePlacementRotation` the desktop R key uses.
  *
- * ── World-anchoring (Issue 5) ──
- * The banner is `position:fixed` at a HIGH z-index, rendered OUTSIDE the Slot
- * system. The old `bottom-center` Slot sat at `Z.hud` (10) — UNDER the
- * `Z.mobileControls` (15) thumb cluster + speed-dial on a phone, so Confirm was
- * occluded and un-tappable (the user's "it's under the UI" report). Now
- * `gameRafLoop` moves it each frame to the renderer's projected on-screen
- * position of the ghost (`RendererFeedback.placementScreenX/Y` →
- * `data-placement-screen-x/y`), via a direct-DOM style write (no per-frame
- * React re-render — invariant #2). The `top/left` below are the pre-projection
- * fallback (e.g. before the first frame, or if the ghost projects off-screen).
+ * ── Docked top-centre (build mode, owner design 2026-11-20) ──
+ * Build mode switches to the Command view and hides the flight controls
+ * (`buildModeView.ts`, `GameHud`), so the banner no longer chases the ghost
+ * (world-anchored, it ran off a sideways phone's edge). It sits in the
+ * `top-center` Slot column, first in order, with the "why" line(s) (the docked
+ * `PlacementLinkHint` / `PlacementFenceHint`) right under it in the same block.
+ *
+ * Icon-only buttons (owner 2026-11-20: "just like a tick, cross or rotate icon
+ * to save space"): rotate, tick (confirm, green), cross (cancel, red), each a
+ * 40 px touch target with an aria-label and title, so the dock fits a sideways
+ * phone between the Fly/Command/Build switch and the speed dial.
  *
  * Static `sx` hoisted (drawer-perf rule).
  */
@@ -58,53 +64,43 @@ export function StructurePlacementBanner(): JSX.Element | null {
   };
 
   return (
-    <Box data-testid="placement-banner" sx={BANNER_SX}>
-      <Box sx={LABEL_SX}>Place {kind.displayName} here?</Box>
-      <Button
-        size="small"
-        data-testid="placement-rotate"
-        aria-label="Rotate 90 degrees"
-        onClick={onRotate}
-        sx={ROTATE_SX}
-      >
-        ⟳ Rotate
-      </Button>
-      <Button
-        size="small"
-        data-testid="placement-confirm"
-        onClick={onConfirm}
-        sx={CONFIRM_SX}
-      >
-        Confirm
-      </Button>
-      <Button
-        size="small"
-        data-testid="placement-cancel"
-        onClick={onCancel}
-        sx={CANCEL_SX}
-      >
-        Cancel
-      </Button>
-    </Box>
+    <Slot anchor="top-center" order={-1}>
+      <Box data-testid="placement-dock" sx={DOCK_SX}>
+        <Box data-testid="placement-banner" sx={BANNER_SX}>
+          <Box sx={LABEL_SX}>Place {kind.displayName} here?</Box>
+          <IconButton data-testid="placement-rotate" aria-label="Rotate" title="Rotate" onClick={onRotate} sx={ROTATE_SX}>
+            <RotateRightIcon fontSize="small" />
+          </IconButton>
+          <IconButton data-testid="placement-confirm" aria-label="Confirm" title="Confirm" onClick={onConfirm} sx={CONFIRM_SX}>
+            <CheckIcon fontSize="small" />
+          </IconButton>
+          <IconButton data-testid="placement-cancel" aria-label="Cancel" title="Cancel" onClick={onCancel} sx={CANCEL_SX}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+        <PlacementFenceHint docked />
+        <PlacementLinkHint docked />
+      </Box>
+    </Slot>
   );
 }
 
+/** The banner + its "why" line(s), stacked in the top-centre column. */
+const DOCK_SX = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: 0.5,
+  maxWidth: 'calc(100vw - 16px)',
+} as const;
+
 const BANNER_SX = {
-  // World-anchored: position:fixed at a z-tier ABOVE the HUD controls (15),
-  // drawer (1200), and overlay (1400) so Confirm is always hit-testable on
-  // mobile. gameRafLoop overwrites left/top each frame from the projected
-  // ghost position; these are the fallback (centred, lower third).
-  position: 'fixed',
-  left: '50%',
-  top: '66%',
-  // Sit just ABOVE the anchor point (the ghost) and horizontally centre on it.
-  transform: 'translate(-50%, calc(-100% - 12px))',
-  zIndex: 1450,
   pointerEvents: 'auto',
   display: 'flex',
   alignItems: 'center',
-  gap: 0.75,
-  px: 1,
+  gap: 0.5,
+  pl: 1,
+  pr: 0.5,
   py: 0.5,
   borderRadius: 1,
   bgcolor: 'rgba(5,7,15,0.82)',
@@ -117,26 +113,17 @@ const BANNER_SX = {
 
 const LABEL_SX = { fontWeight: 700, letterSpacing: 0.3 } as const;
 
-// Thumb-sized (the banner's other buttons are text-sized): a quarter-turn is
-// tapped repeatedly while lining a building up, so it gets a real touch target.
-const ROTATE_SX = {
-  fontSize: 11,
-  minWidth: 64,
-  minHeight: 40,
-  px: 1,
-  color: '#9fd8ff',
-  border: '1px solid rgba(120,200,255,0.45)',
+// Every button is a 40 px square touch target (a quarter-turn is tapped
+// repeatedly while lining a building up); the colour says what it does.
+const ICON_BTN_SX = {
+  width: 40,
+  height: 40,
+  borderRadius: 1,
+  border: '1px solid',
 } as const;
 
-const CONFIRM_SX = {
-  fontSize: 11,
-  py: 0.25,
-  color: '#00ff88',
-  borderColor: 'rgba(0,255,136,0.5)',
-} as const;
+const ROTATE_SX = { ...ICON_BTN_SX, color: '#9fd8ff', borderColor: 'rgba(120,200,255,0.45)' } as const;
 
-const CANCEL_SX = {
-  fontSize: 11,
-  py: 0.25,
-  color: 'rgba(255,120,120,0.95)',
-} as const;
+const CONFIRM_SX = { ...ICON_BTN_SX, color: '#00ff88', borderColor: 'rgba(0,255,136,0.5)' } as const;
+
+const CANCEL_SX = { ...ICON_BTN_SX, color: 'rgba(255,120,120,0.95)', borderColor: 'rgba(255,120,120,0.45)' } as const;

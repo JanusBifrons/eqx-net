@@ -93,7 +93,8 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind tuning lock (2026-05-18 slow-d
     // 25 → 26 on 2026-11-14: nose guns become small-arc turrets.
     // 26 → 27 on 2026-11-14: energy pool ×2 for every kind (ENERGY_POOL_MUL).
     // 29 → 30 on 2026-11-18: barge side mounts swing ±45° (SIDE_MOUNT_ARC).
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(30);
+    // 30 → 31 on 2026-11-20: appended the `mining-skiff` kind (base loop job 1D).
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(31);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

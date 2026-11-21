@@ -35,7 +35,7 @@ import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import { ASTEROID_RESOURCES_PER_AREA } from '../../core/swarm/asteroidShape.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { burnPieceHit } from './wreckBurnHits.js';
-import { placeWreckPieces, spawnWreckPieces, type WreckResplitHost } from './wreckResplit.js';
+import { placeWreckPieces, relayWreckPieces, spawnWreckPieces, type WreckResplitHost } from './wreckResplit.js';
 import type { ChunkOpts } from '../../core/terrain/fieldLayout.js';
 import type { CapitalWreckDeps, PieceKnock, WreckOre, WreckRockView } from './capitalWreckTypes.js';
 
@@ -196,14 +196,9 @@ export class RockCutter {
       ...(fk !== undefined && restX !== undefined && restY !== undefined ? { restX, restY } : {}),
     };
     const [wreckId, serial] = this.h.newWreck();
-    const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, 0, serial, wreckId, null, fifo, id);
+    const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, 0, serial, wreckId, null, fifo);
     if (r.ids.length === 0 && r.pods === 0) return false;
     this.rocks.delete(id);
-    // A field rock is consumed: the field never cuts it whole again, and every
-    // client (a late joiner by the welcome) drops its own copy.
-    if (fk !== undefined) this.d.fieldRockBroken?.(fk);
-    // The rock leaves through the room's normal evict path.
-    this.d.removePiece(id);
     if (r.ids.length > 0) {
       this.h.addWreck({
         desc: {
@@ -221,6 +216,13 @@ export class RockCutter {
         chain: { root: inputs, steps: [] }, parent: 0, children: 0, src, ore,
       }, null);
     }
+    // The pieces' wreck is registered and the rock still live: its locks follow them.
+    relayWreckPieces(this.d, id, r);
+    // A field rock is consumed: the field never cuts it whole again, and every
+    // client (a late joiner by the welcome) drops its own copy.
+    if (fk !== undefined) this.d.fieldRockBroken?.(fk);
+    // The rock leaves through the room's normal evict path.
+    this.d.removePiece(id);
     // Over the cap: the oldest pieces go, exactly as after a ship death.
     this.h.enforceCap(false);
     return true;

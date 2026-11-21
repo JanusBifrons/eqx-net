@@ -124,7 +124,7 @@ describe('ShipShapeSchema — discriminated union (composite-ships Phase 0)', ()
       // eight stay polygon (the union is otherwise additive).
       // cargo-pod: P1a loot pod (one silhouette per glow tier); capitals: WW2
       // deck-plan hulls built from parts (capital-ship R&D).
-      const expected = kind.id === 'havok' || kind.id === 'cargo-pod' || kind.sizeClass === 'capital' ? 'composite' : 'polygon';
+      const expected = kind.id === 'havok' || kind.id === 'cargo-pod' || kind.id === 'mining-skiff' || kind.sizeClass === 'capital' ? 'composite' : 'polygon';
       expect(kind.shape.kind, `${kind.id} shape kind`).toBe(expected);
     }
   });
@@ -453,7 +453,7 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
   });
 
   it('SHIP_KIND_CATALOGUE_VERSION is bumped to 27 (energy pool x2; 26 = nose guns become small-arc turrets, owner 2026-11-14; 25 = arcade handling + toughness layer, owner 2026-11-13: "make it more like micro machines and make fights a bit longer"; 24 = fire-control weapon groups + frigate PD turret; 23 = capital AA mounts + realistic reloads; 22 = capital naval guns, turret rates + spacing; 21 = capital flat transom; 20 = turrets T3: gunship mounts moved to nose / tail; 19 = P3c orb charge-laser mount; 18 = P3b robot-harvester)', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(30); // 30 = barge side mounts ±45° (2026-11-18)
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(31); // 31 = mining skiff appended (2026-11-20)
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {
@@ -475,5 +475,50 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
   it('havok round-trips through the swarm wire index at the end of the list', () => {
     expect(shipKindToIndex('havok')).toBe(8);
     expect(shipKindFromIndex(shipKindToIndex('havok'))).toBe('havok');
+  });
+});
+
+describe('mining skiff — small mining ship (playable base loop job 1D)', () => {
+  it('mining skiff is appended after the barge (wire-stable) and round-trips the swarm index', () => {
+    const barge = shipKindToIndex('barge');
+    expect(shipKindToIndex('mining-skiff')).toBe(barge + 1);
+    expect(shipKindFromIndex(barge + 1)).toBe('mining-skiff');
+  });
+
+  it('mining skiff carries a mining laser and tractors on S mounts, a hold for several chunks, and is owned-only', () => {
+    const k = SHIP_KINDS['mining-skiff'];
+    expect(ShipKindSchema.safeParse(k).success).toBe(true);
+    expect(k.sizeClass).not.toBe('capital');
+    expect(k.npcOnly).toBeFalsy();
+    expect(k.randomSpawn).toBe(false);
+    const mounts = k.mounts ?? [];
+    expect(mounts.map((m) => [m.weaponId, m.size])).toEqual([['mining_laser', 'S'], ['tractor', 'S'], ['tractor', 'S']]);
+    // 250 = the lightest rock chunk (salvageTargeting ROCK_CHUNK_MIN_WEIGHT).
+    expect(k.cargoCapacity).toBe(2000);
+    expect(k.cargoCapacity! / 250).toBeGreaterThanOrEqual(4);
+  });
+
+  it('mining skiff flies hull C (Manta scoop, owner pick) and every mount sits on the hull', () => {
+    const k = SHIP_KINDS['mining-skiff'];
+    expect(k.shape.kind).toBe('composite');
+    const sc = k.shape.scale;
+    const hull = (k.shape as { hull: Array<[number, number]> }).hull.map(([x, y]) => [x * sc, y * sc] as [number, number]);
+    // Convex hull, Pixi-up (nose at -y), drawn at shape.scale; mounts are game-space (+y forward).
+    const inside = (x: number, y: number): boolean => {
+      let sign = 0;
+      for (let i = 0; i < hull.length; i++) {
+        const [ax, ay] = hull[i]!;
+        const [bx, by] = hull[(i + 1) % hull.length]!;
+        const cross = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+        if (cross === 0) continue;
+        if (sign === 0) sign = Math.sign(cross);
+        else if (Math.sign(cross) !== sign) return false;
+      }
+      return true;
+    };
+    for (const m of k.mounts ?? []) expect(inside(m.localX, -m.localY), `${m.id} on the hull`).toBe(true);
+    // Hull C: tractor dishes out on the wingtips, wider than the laser.
+    const [laser, tractor] = k.mounts!;
+    expect(Math.abs(tractor!.localX)).toBeGreaterThan(Math.abs(laser!.localX) + 10);
   });
 });

@@ -2,15 +2,18 @@ import { useState } from 'react';
 import { Menu, MenuItem, ToggleButton, ToggleButtonGroup } from '@mui/material';
 import FlightIcon from '@mui/icons-material/Flight';
 import ExploreIcon from '@mui/icons-material/Explore';
+import ConstructionIcon from '@mui/icons-material/Construction';
 import { selectControlMode, useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 import { getShipKind } from '@shared-types/shipKinds';
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient';
 import type { ControlMode } from '../state/storeTypes';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
+import { leaveBuildMode } from '../structures/buildModeView';
 
 /**
- * The ALWAYS-VISIBLE Command ⇄ Fly toggle (two joined MUI `ToggleButton`s).
+ * The ALWAYS-VISIBLE mode switch: Fly, Command, Build (three joined MUI
+ * `ToggleButton`s; owner 2026-11-20: Build is a third mode, not Command).
  * RTS slice 10 renamed it from Pilot / Spectate: normal play starts in
  * **Command** view (free camera over your fleet, every ship AI-flown) and you
  * **Fly** a ship when you want to take the controls.
@@ -27,7 +30,10 @@ import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
  * path), or says there are none. You never flip straight to flying: you fly a
  * SHIP (`sendPilotShip` → the server reclaims it → `welcome` → `pilotMode =
  * 'pilot'`). **Command** lets go: the ship you were flying is handed back to
- * its AI (`sendCommand`).
+ * its AI (`sendCommand`). **Build** (`build-toggle`) sets `buildMode`: the
+ * hand-over and camera are `buildModeView.ts`, the open build list the speed
+ * dial. Fly or Command is the only way out of Build (`leaveBuildMode`); Fly
+ * takes back the ship flown before Build, else opens the ship menu.
  */
 
 const GROUP_SX = {
@@ -75,6 +81,7 @@ export function PilotSpectatorToggle(): JSX.Element | null {
   const phase = useUIStore((s) => s.phase);
   const controlMode = useUIStore(selectControlMode);
   const setPilotMode = useUIStore((s) => s.setPilotMode);
+  const setBuildMode = useUIStore((s) => s.setBuildMode);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [ships, setShips] = useState<PilotableShip[]>([]);
 
@@ -82,12 +89,19 @@ export function PilotSpectatorToggle(): JSX.Element | null {
   // per React's rules).
   if (phase !== 'game') return null;
 
-  const commanding = controlMode === 'command';
-
   const onChange = (_e: React.MouseEvent<HTMLElement>, next: ControlMode | null): void => {
     // 'fly' is handled by the Fly button's onClick (takes the selected ship or
     // opens the ship menu) — you never directly flip to flying, you fly a SHIP.
+    if (next === 'build') {
+      setBuildMode(true);
+      return;
+    }
     if (next === 'command') {
+      // From Build the ship is already AI-flown: just leave Build.
+      if (controlMode === 'build') {
+        leaveBuildMode('command');
+        return;
+      }
       setPilotMode('spectator');
       // Hand the ship we were flying back to its AI. No-op server-side when
       // there's no active hull (death / command-view join).
@@ -96,7 +110,9 @@ export function PilotSpectatorToggle(): JSX.Element | null {
   };
 
   const onFlyClick = (e: React.MouseEvent<HTMLElement>): void => {
-    if (!commanding) return; // already flying → no-op (the button is the active state)
+    if (controlMode === 'fly') return; // already flying → no-op (the button is the active state)
+    // Leaving Build: fly the ship flown before Build, else pick one from Command.
+    if (controlMode === 'build' && leaveBuildMode('fly')) return;
     const own = getPilotableShips();
     const selected = useUIStore.getState().selection.ids;
     if (selected.length === 1) {
@@ -122,15 +138,11 @@ export function PilotSpectatorToggle(): JSX.Element | null {
         size="small"
         value={controlMode}
         onChange={onChange}
-        aria-label="Command your fleet or fly a ship"
+        aria-label="Fly a ship, command your fleet or build"
         data-testid="pilot-spectator-toggle"
         data-control-mode={controlMode}
         sx={GROUP_SX}
       >
-        <ToggleButton value="command" data-testid="spectator-toggle" aria-label="Command">
-          <ExploreIcon />
-          Command
-        </ToggleButton>
         <ToggleButton
           value="fly"
           data-testid="pilot-toggle"
@@ -139,6 +151,14 @@ export function PilotSpectatorToggle(): JSX.Element | null {
         >
           <FlightIcon />
           Fly
+        </ToggleButton>
+        <ToggleButton value="command" data-testid="spectator-toggle" aria-label="Command">
+          <ExploreIcon />
+          Command
+        </ToggleButton>
+        <ToggleButton value="build" data-testid="build-toggle" aria-label="Build">
+          <ConstructionIcon />
+          Build
         </ToggleButton>
       </ToggleButtonGroup>
       <Menu

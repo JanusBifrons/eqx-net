@@ -19,8 +19,8 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  * WS-13 / R2.6 additions (the Build category tier):
  *   6. Action labels are always visible while the dial is open (touch affordance).
  *   7. Build drills Build ▸ category ▸ kind, with a back action that pops levels.
- *   8. Picking a kind keeps the dial OPEN so several structures place in a row
- *      (the old close-on-pick was the bug).
+ *   8. Picking a kind CLOSES the dial (build mode owns the screen) but keeps the
+ *      kinds level, so the next structure is one FAB tap away (no re-drill).
  *   9. The FAB toggle still closes the dial and re-opens it at the ROOT level.
  *
  * The held controls (joystick / FIRE / BOOST) deliberately stay OUT of the
@@ -194,7 +194,7 @@ test('Build drills category → kind, and Back pops each level', async ({ browse
   }
 });
 
-test('the dial stays open across a placement for repeat builds (R2.6 defect)', async ({ browser }) => {
+test('a pick closes the dial and one FAB tap reopens the kinds for repeat builds (R2.6)', async ({ browser }) => {
   // The Confirm banner is the TOUCH placement flow (desktop places on click
   // since P3.6, d239bbf8), so this test joins as a touch device.
   const { ctx, page } = await joinClient(browser, true);
@@ -204,25 +204,24 @@ test('the dial stays open across a placement for repeat builds (R2.6 defect)', a
     await page.locator('[data-testid="speed-dial-build"]').click();
     await page.locator('[data-testid="build-cat-core"]').click();
 
-    // Picking a kind raises the ghost but leaves the dial OPEN at the kinds level.
+    // Picking a kind raises the ghost and closes the dial, so its list never
+    // covers the ghost (build mode, stills review 2026-11-20).
     await page.locator('[data-testid="build-capital"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
-    // THE LOCK: the dial is STILL open at the kinds level (pre-fix close() here
-    // collapsed it AND reset to root, forcing a Build ▸ Core re-drill every time).
-    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible();
-    await expect(page.locator('[data-testid="build-cat-core"]')).toBeHidden(); // at kinds, not categories
+    await expect(page.locator('[data-testid="build-capital"]')).toBeHidden();
 
-    // Confirm the placement. Clicking the banner blurs the dial — which must NOT
-    // close it (the onClose 'blur'/'mouseLeave' suppression).
+    // Confirm the placement.
     await page.locator('[data-testid="placement-confirm"]').click();
     await page.waitForFunction((b) => {
       const t = document.querySelector('[data-testid="swarm-count"]')?.textContent ?? '0';
       return parseInt(t.replace(/\D/g, '') || '0', 10) > b;
     }, before, { timeout: 8_000 });
 
-    // The dial survived the confirm-blur: a second structure is one tap away, no
-    // re-opening and no category re-navigation.
-    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible();
+    // THE LOCK: one FAB tap reopens the dial at the kinds level (pre-R2.6 the
+    // pick reset to root, forcing a Build ▸ Core re-drill every time).
+    await page.locator('[data-testid="speed-dial-fab"]').click();
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="build-cat-core"]')).toBeHidden(); // at kinds, not categories
     await page.locator('[data-testid="build-capital"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
   } finally {
