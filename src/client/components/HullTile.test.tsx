@@ -4,7 +4,7 @@
  * from RECIPES.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react';
 import { HullTile } from './HullTile.js';
 import { CostChips, recipeBill, shortQty } from './CostChips.js';
 import { RECIPES } from '../../shared-types/recipes.js';
@@ -38,6 +38,28 @@ describe('HullTile', () => {
     expect(tile).toHaveTextContent('Free');
     expect(tile).toHaveTextContent('2 fits');
     expect(within(tile).getByTestId('child-row')).toBeInTheDocument();
+  });
+
+  it('a mouse hover shows the tooltip; a touch never opens it', async () => {
+    render(<HullTile kind="interceptor" name="Interceptor" testId="t" tooltip="Interceptor: 400 Minerals" />);
+    const btn = screen.getByTestId('t').querySelector('button')!;
+    expect(btn).toHaveAttribute('aria-label', 'Interceptor'); // the name stays the button's label
+    // Touch: a long press (past MUI's 700 ms touch delay), then the browser's
+    // emulated mouseover, opens nothing.
+    vi.useFakeTimers();
+    try {
+      fireEvent.touchStart(btn);
+      act(() => { vi.advanceTimersByTime(1500); });
+      fireEvent.mouseOver(btn);
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+    cleanup();
+    render(<HullTile kind="interceptor" name="Interceptor" testId="t" tooltip="Interceptor: 400 Minerals" />);
+    fireEvent.mouseOver(screen.getByTestId('t').querySelector('button')!);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Interceptor: 400 Minerals');
   });
 });
 

@@ -12,7 +12,7 @@
  * reuses the same helpers: `inspectorPowerLine` for the power label and
  * `prodStatusLine` for the production state.
  */
-import { Box, CircularProgress } from '@mui/material';
+import { Box, CircularProgress, Tooltip } from '@mui/material';
 import BoltIcon from '@mui/icons-material/Bolt';
 import { EntityBadge } from './EntityBadge';
 import { Bar } from './inspectorBar';
@@ -103,16 +103,25 @@ export function StructureCardRows({ d }: { d: StructureCardData }): JSX.Element 
           <Bar pct={d.hpPct} color={hullColor(d.hpPct)} short />
         )}
         {power !== null && (
-          <BoltIcon
-            data-testid="entity-stats-power" data-power-state={power} titleAccess={powerLabel}
-            sx={POWER_SX} style={{ color: POWER_COLOR[power] }}
-          />
+          // Desktop hover only (touch never opens it). The icon ignores the
+          // pointer so its SVG <title> (the accessible label) shows no second,
+          // native tooltip; the span takes the hover.
+          <Tooltip title={`Power: ${powerLabel}`} describeChild disableTouchListener>
+            <Box component="span" sx={HOVER_SX}>
+              <BoltIcon
+                data-testid="entity-stats-power" data-power-state={power} titleAccess={powerLabel}
+                sx={POWER_SX} style={{ color: POWER_COLOR[power] }}
+              />
+            </Box>
+          </Tooltip>
         )}
         {chip !== null && (
-          <Box sx={CHIP_SX} data-testid="entity-stats-status" data-status={chip.key} title={chip.title ?? chip.label}
-            style={{ color: TONE_COLOR[chip.tone], borderColor: TONE_COLOR[chip.tone] }}>
-            {chip.label}
-          </Box>
+          <Tooltip title={chip.title ?? chip.label} describeChild disableTouchListener>
+            <Box sx={CHIP_SX} data-testid="entity-stats-status" data-status={chip.key}
+              style={{ color: TONE_COLOR[chip.tone], borderColor: TONE_COLOR[chip.tone] }}>
+              {chip.label}
+            </Box>
+          </Tooltip>
         )}
         {d.owner !== undefined && <Box sx={OWNER_SX} data-testid="entity-stats-owner">{d.owner}</Box>}
       </Box>
@@ -131,7 +140,8 @@ const ROW_SX = { gridColumn: '1 / -1', display: 'flex', alignItems: 'center', ga
 const NAME_SX = { ...phoneTiny({ fontSize: [10, 20] }), fontWeight: 700, color: '#cde', letterSpacing: 0.3 };
 const LEVEL_SX = { ...TEXT_8, fontWeight: 700, color: C.inkDim, fontFamily: HUD.font.num };
 const OWNER_SX = { ...TEXT_8, color: C.inkDim, ml: 'auto' };
-const POWER_SX = phoneTiny({ fontSize: [12, 22] });
+const POWER_SX = { ...phoneTiny({ fontSize: [12, 22] }), pointerEvents: 'none' as const };
+const HOVER_SX = { display: 'inline-flex', alignItems: 'center' } as const;
 const CHIP_SX = {
   ...TEXT_8, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase' as const,
   border: '1px solid', borderRadius: '3px', px: '3px', lineHeight: 1.3,

@@ -4,10 +4,10 @@
  * `shipPortraitUrl`; a kind with no portrait draws its silhouette. The name
  * sits over a bottom fade with an optional caption under it (the Hangar's
  * price); optional slots: a top-right tag ("2 fits"), a top-left ×N badge,
- * a lock overlay, a progress fill, and a row under the picture (children,
- * e.g. CostChips).
+ * a lock overlay, a progress fill, a row under the picture (children,
+ * e.g. CostChips), and a desktop hover tooltip (never opened by touch).
  */
-import { Box, ButtonBase } from '@mui/material';
+import { Box, ButtonBase, Tooltip } from '@mui/material';
 import LockIcon from '@mui/icons-material/Lock';
 import type { PointerEventHandler, ReactNode } from 'react';
 import { getShipKind } from '../../shared-types/shipKinds';
@@ -46,6 +46,8 @@ export interface HullTileProps {
   dim?: boolean;
   /** 0..1 build progress, drawn as a fill; undefined = none. */
   progress?: number;
+  /** Desktop hover text (name, cost, lock reason); touch never opens it. */
+  tooltip?: string;
   /** A row under the picture (e.g. CostChips). */
   children?: ReactNode;
   onClick?: () => void;
@@ -56,14 +58,13 @@ export interface HullTileProps {
 
 export function HullTile({
   kind, name, testId, data, edge = C.edge2, glow = 'none', pressed, caption, tag, badge, locked = false, dim = false,
-  progress, children, onClick, onPointerDown, onPointerUp, onPointerLeave,
+  progress, tooltip, children, onClick, onPointerDown, onPointerUp, onPointerLeave,
 }: HullTileProps): JSX.Element {
   const pic = hullArt(kind);
   const grey = locked || dim;
   const dataAttrs: Record<string, string> = {};
   for (const [k, v] of Object.entries(data ?? {})) dataAttrs[`data-${k}`] = v;
-  return (
-    <Box data-testid={testId} {...dataAttrs}>
+  const tile = (
       <ButtonBase
         onClick={onClick} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerLeave={onPointerLeave}
         aria-pressed={pressed} aria-label={name}
@@ -106,6 +107,10 @@ export function HullTile({
         </Box>
         {caption && <Box component="span" sx={{ position: 'absolute', bottom: 5, left: 6, zIndex: 1, fontFamily: HUD.font.num, fontSize: 10, color: caption.color }}>{caption.text}</Box>}
       </ButtonBase>
+  );
+  return (
+    <Box data-testid={testId} {...dataAttrs}>
+      {tooltip === undefined ? tile : <Tooltip title={tooltip} describeChild disableTouchListener>{tile}</Tooltip>}
       {children !== undefined && <Box sx={{ mt: '3px' }}>{children}</Box>}
     </Box>
   );

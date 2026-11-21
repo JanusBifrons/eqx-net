@@ -14,6 +14,8 @@ import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import { SETTINGS_PANEL_SIZE, settingsTabsFor, StructureSettingsModal } from './StructureSettingsModal.js';
 import { rightPaperSx } from './SidePanel.js';
+import { buildTileTip } from './structureSettingsBuild.js';
+import type { ProductionView } from './structureSettingsProduction.js';
 import { MAX_RECIPE_QUEUE, encodeRecipe } from '../../shared-types/production.js';
 import { EditRecipeQueueSchema, SetRecipeSchema } from '../../shared-types/messages.js';
 
@@ -298,5 +300,50 @@ describe('StructureSettingsModal Build tab (hull picture tiles)', () => {
     expect(screen.getByTestId('build-tile-build_gunship')).toHaveAttribute('data-locked', '0');
     expect(within(screen.getByTestId('build-tile-build_gunship')).queryByTestId('hull-tile-lock')).toBeNull();
     expect(screen.getByTestId('build-tile-build_heavy')).toHaveAttribute('data-locked', '1');
+  });
+});
+
+describe('StructureSettingsModal desktop polish (Esc, hover tips)', () => {
+  afterEach(() => { cleanup(); setGameClient(null); useUIStore.setState({ placementKind: null, fleetPick: null }); });
+
+  it('Esc closes the panel; other keys do not', () => {
+    const onClose = vi.fn();
+    seedTurret('me-123', true);
+    render(<StructureSettingsModal open entityId={9} title="Turret" onClose={onClose} />);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Esc while typing in a field, placing a building or picking a fleet point leaves the panel open', () => {
+    const onClose = vi.fn();
+    seedTurret('me-123', true);
+    render(<><input data-testid="field" /><StructureSettingsModal open entityId={9} title="Turret" onClose={onClose} /></>);
+    fireEvent.keyDown(screen.getByTestId('field'), { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    // Placement and a fleet map pick own Esc first (App.tsx keydown).
+    act(() => { useUIStore.setState({ placementKind: 'turret' }); });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    act(() => { useUIStore.setState({ placementKind: null, fleetPick: { kind: 'patrol', points: 0, doneSeq: 0 } }); });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('a closed panel and an unmounted one never listen for Esc', () => {
+    const onClose = vi.fn();
+    seedTurret('me-123', true);
+    const { unmount } = render(<StructureSettingsModal open={false} entityId={9} title="Turret" onClose={onClose} />);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    unmount();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('build tiles hover-show the hull, its bill and why one is locked', () => {
+    const base = { bpProduct: 'build_interceptor', bpAvailable: [] } as unknown as ProductionView;
+    expect(buildTileTip(base, 'build_interceptor')).toMatch(/^Interceptor: 400 Minerals/);
+    expect(buildTileTip(base, 'build_interceptor')).not.toMatch(/Locked/);
+    expect(buildTileTip(base, 'build_gunship')).toMatch(/Locked: no blueprint/);
   });
 });

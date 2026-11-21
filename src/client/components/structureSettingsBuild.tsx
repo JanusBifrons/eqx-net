@@ -15,7 +15,8 @@ import { RECIPES, hullKindOf, type RecipeId } from '@shared-types/recipes';
 import { MAX_RECIPE_QUEUE } from '@shared-types/production';
 import { HUD } from '../hud/tokens';
 import { HullTile } from './HullTile';
-import { CostChips } from './CostChips';
+import { CostChips, recipeBill } from './CostChips';
+import { GOOD_DEFS } from '@shared-types/goods';
 import { hullRecipesFor, type ProductionView } from './structureSettingsProduction';
 import { sendBlueprintSlot, sendEditRecipeQueue, sendSetRecipe } from '../structures/structureActionsClient';
 import { useHoldPress, type HoldPressHandlers } from './useHoldPress';
@@ -31,6 +32,14 @@ export interface BuildSx { labelSx: object; valueSx: object; btnSx: object }
 function hullName(recipe: RecipeId): string {
   const k = hullKindOf(recipe);
   return k === null ? recipe : getShipKind(k).displayName;
+}
+
+/** A build tile's desktop hover text: the hull, its bill, and why it is
+ *  locked ("Interceptor: 40 Minerals, 10 Alloy"). */
+export function buildTileTip(p: ProductionView, recipe: RecipeId): string {
+  const bill = recipeBill(recipe).map(({ good, n }) => `${n} ${GOOD_DEFS[good].displayName}`).join(', ');
+  const tip = bill === '' ? hullName(recipe) : `${hullName(recipe)}: ${bill}`;
+  return tileLocked(p, recipe) ? `${tip}. Locked: no blueprint in the slot or storage` : tip;
 }
 
 /** The head's badge: "×3" builds left (a plain `set_recipe` count), "∞" when
@@ -119,7 +128,7 @@ function BuildTile({ entityId, recipe, p }: { entityId: number; recipe: RecipeId
       kind={hullKindOf(recipe) ?? ''} name={hullName(recipe)} testId={`build-tile-${recipe}`}
       data={{ current: current ? '1' : '0', locked: locked ? '1' : '0' }}
       edge={current ? C.auto : C.edge2} glow={current ? `0 0 0 1px ${C.auto}` : 'none'} pressed={current}
-      locked={locked} {...tap}
+      locked={locked} tooltip={buildTileTip(p, recipe)} {...tap}
     >
       <CostChips recipe={recipe} />
     </HullTile>
@@ -144,7 +153,7 @@ function QueueStrip({ entityId, p }: { entityId: number; p: ProductionView }): J
         <Box key={i} sx={{ width: 60, flex: 'none' }}>
           <HullTile
             kind={hullKindOf(r) ?? ''} name={hullName(r)} testId={`build-queue-item-${i + 1}`}
-            data={{ index: String(i + 1), recipe: r }} locked={tileLocked(p, r)}
+            data={{ index: String(i + 1), recipe: r }} locked={tileLocked(p, r)} tooltip={`${hullName(r)}: click to remove`}
             onClick={() => removeAt(entityId, p, i + 1)}
           />
         </Box>
