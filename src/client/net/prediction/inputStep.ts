@@ -73,7 +73,10 @@ export function stepInputTick(ctx: PredictionStepCtx, room: Room, kb: KeyboardBi
       // toggled again. Empirical ~10 Hz state-change rate → sustained
       // ~45-70 % rollingCorrRate spiral. Unit-locked in
       // src/client/input/joystickToInput.test.ts.
-      const next = joystickToInput(v, realAngle, ctx.joystickInputState);
+      // The hull's per-tick turn step widens the stop band (else a fast-
+      // turning hull overshoots and wobbles left/right every tick).
+      const turnStep = localId ? ctx.predWorld?.maxTurnPerTick(localId) ?? 0 : 0;
+      const next = joystickToInput(v, realAngle, ctx.joystickInputState, turnStep);
       ctx.joystickInputState = next;
       tcTurnLeft = next.turnLeft;
       tcTurnRight = next.turnRight;
@@ -371,7 +374,7 @@ export function sendCapSentinel(
       const localShip = ctx.mirror.ships.get(ctx.mirror.localPlayerId);
       const realAngle = predState?.angle ?? localShip?.angle ?? null;
       if (realAngle !== null) {
-        const next = joystickToInput(v, realAngle, ctx.joystickInputState);
+        const next = joystickToInput(v, realAngle, ctx.joystickInputState, ctx.predWorld.maxTurnPerTick(ctx.mirror.localPlayerId));
         ctx.joystickInputState = next;
         tcTurnLeft2 = next.turnLeft;
         tcTurnRight2 = next.turnRight;

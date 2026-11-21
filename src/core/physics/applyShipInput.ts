@@ -65,6 +65,16 @@ export interface ShipInputMultipliers {
   turnRate: number;
 }
 
+/** The most a held turn key yaws the ship in one 60 Hz tick (rad): the
+ *  `maxAngvel × turnRate` cap `applyShipInput` writes (a snap-turn hull turns
+ *  exactly this much per tick). A closed-loop steerer that toggles the turn
+ *  bits (the touch stick) must stop inside half of it, or it overshoots and
+ *  flips direction every tick. */
+export function maxTurnPerTick(kind: ShipKind, mul?: ShipInputMultipliers): number {
+  const turnMul = mul !== undefined && mul.turnRate > 0 ? mul.turnRate : 1;
+  return (kind.maxAngvel * turnMul) / 60;
+}
+
 export function applyShipInput(
   body: RAPIER.RigidBody,
   kind: ShipKind,
