@@ -7,7 +7,7 @@
  * 1. COUNT gate: with N sleeping wreck pieces + M moving ships, the swarm
  *    entries (and floats) posted per frame are O(M), not O(N + M). Before the
  *    delta, every MIRROR_UPDATE carried the whole `mirror.swarm` (N + M
- *    entries with their 10-slot pose rings) every frame.
+ *    entries with their POSE_RING_DEPTH-slot pose rings) every frame.
  * 2. PARITY (#15): over frames mixing moving, sleeping, waking, added and
  *    removed entities, non-pose field changes and a key removed, the worker's
  *    swarm (rebuilt by `SwarmMirrorReplica`, as `renderer.worker.ts` does)

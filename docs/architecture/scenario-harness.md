@@ -36,6 +36,18 @@ The 2026-05-08 user-driven test-discipline pivot: every regression we fix gets a
 
 The harness's `runScenario` mirrors `ColyseusClient.handleSnapshot` and `ColyseusClient.tickPhysics`'s control flow, minus physics + DOM + Colyseus surface. It uses the **real** production modules, not stubs — so it tests the actual code-paths that ship to users.
 
+## Network model: gaps, bursts and frame stalls
+
+`runner.ts` also models the transport as it really behaves: both streams (JSON snapshots every third tick, drone packets every tick) are reliable and ordered. Pure and seeded; no timers.
+
+- `GapSpec` (`types.ts`) extends the `{ atMs, durationMs }` gap shape with an optional `streams: 'json' | 'swarm' | 'both'` (default both). Everything sent during the stall arrives together, in send order, at `atMs + durationMs + baseDelayMs`. `Scenario.gapsMs` in `scenarios.ts` is unchanged.
+- `FrameStallSpec` stalls the client frames: no frame fires inside it, the next fires at its end.
+- `buildDeliveries(profile, durationMs)` returns every packet with its arrival time; `buildFrameTimes` returns the frame times; `buildNetworkEvents` turns a profile into `runScenario` events.
+- Named profiles live in `gapProfiles.ts`: `lan-clean`, `gap-200`, `gap-400`, `gap-600`, `burst-600-both-streams`, `gap-json-only`, `gap-swarm-only`, `frame-stall-250`, `jitter-4g` (JSON gaps p50 52, p95 91, p99 170 ms from the 4G capture; both streams share the link lag). Same seed, same delivery list.
+- Self-tests: `gapProfiles.test.ts`.
+- `countMotionArtefacts(frames, opts)` (`assertions.ts`) scores one drawn track against its true track, one `{ atMs, drawnX, drawnY, trueX, trueY }` per frame in simulated ms: snaps (largest, total), freeze frames, backward steps, mean and max lateness; `ignoreFirstMs` skips warm-up. Self-tests: `assertions.motion.test.ts`.
+- `gapSmoothing.drones.test.ts` drives the real drone path (`decodeSwarmPacket` with tick stamping, the adaptive display-delay feed, `interpolateSwarmPose`) through every profile with a straight and a turning drone, and records today's motion counts and swarm counters per profile; `runDroneFixture(profile, { timeScale })` takes the sector game speed.
+
 ## What the harness does *not* simulate
 
 - **Physics** — the harness focuses on the input-clock and prediction-window state. Reconciler replay, predWorld integration, collision events are out of scope. Those are tested at the unit level (`Reconciler.test.ts`, `contactDrain.test.ts`, etc.) and at the E2E level (`tests/e2e/feel-tuning.spec.ts`, `tests/e2e/collision-events.spec.ts`).
