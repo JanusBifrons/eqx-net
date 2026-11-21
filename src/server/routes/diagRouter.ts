@@ -48,6 +48,8 @@ const BUCKETS: Record<string, string> = {
   // event for 30-100 ms inter-RAF gaps, below the raf_gap threshold but
   // perceptible at 90 Hz native. Same channel as raf_gap for correlation.
   raf_stutter: 'perf',
+  // Long animation frames: next to the stalls they explain (`pnpm phone:names`).
+  loaf: 'perf',
   // Probe 4 — damage-number scheduling vs spawn vs cancel split.
   // Previously the smooth-beam path logged 5 `damage_number_predicted`
   // events at the same ts per shot, obscuring whether spawns actually

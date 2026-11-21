@@ -12,13 +12,15 @@ import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds';
 /** The hull Quick launch flies: the free starter Fighter. */
 export const QUICK_LAUNCH_KIND = DEFAULT_SHIP_KIND;
 
-/** Ranks a sector for Quick launch: hot front first, then the higher threat,
- *  then recent fighting, then the most pilots, then the most hostiles (a
- *  calm galaxy sends a newcomer where people are, not into the biggest drone
- *  swarm). */
-function rank(s: SectorLiveState): [number, number, number, number, number] {
+/** Ranks a sector for Quick launch: SAFETY first — no hostiles, else the
+ *  fewest — because a fresh launch carries the once-per-account starter
+ *  crate (packed Capital) and a newcomer starts in Command view with the
+ *  Fighter parked; dropped among robots it is shot within seconds and the
+ *  crate is lost for good. Then, among equally safe sectors: hot front, the
+ *  higher threat, recent fighting, the most pilots. */
+function rank(s: SectorLiveState): [number, number, number, number, number, number] {
   const threat = s.control?.threat ?? 0;
-  return [threat >= HOT_THREAT ? 1 : 0, threat, s.recentCombat != null ? 1 : 0, s.players, s.enemies];
+  return [s.enemies === 0 ? 1 : 0, -s.enemies, threat >= HOT_THREAT ? 1 : 0, threat, s.recentCombat != null ? 1 : 0, s.players];
 }
 
 /** a ranks above b (lexicographic). */
@@ -27,8 +29,8 @@ function above(a: readonly number[], b: readonly number[]): boolean {
   return false;
 }
 
-/** The busiest contested sector in the feed (ties keep feed order), or null
- *  before the first poll. A calm galaxy still gives its busiest sector. */
+/** The safest sector in the feed (no hostiles, else the fewest), busiest
+ *  among equals (ties keep feed order), or null before the first poll. */
 export function quickLaunchSector(stats: readonly SectorLiveState[]): string | null {
   let best: SectorLiveState | null = null;
   let bestRank: readonly number[] | null = null;

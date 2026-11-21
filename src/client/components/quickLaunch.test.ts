@@ -19,6 +19,19 @@ function live(key: string, o: { threat?: SectorControl['threat']; combat?: boole
 }
 
 describe('quickLaunchSector', () => {
+  // Bug 2026-11-21: a brand-new pilot's Quick launch picked Ashfront (hot
+  // front, 6 robots) every time; the parked starter Fighter was shot within
+  // ~20 s and the once-per-account packed Capital crate was lost for good.
+  it('never picks a sector with hostiles while a hostile-free one exists, however hot', () => {
+    const stats = [live('ashfront', { threat: 3, combat: true, players: 4, enemies: 6 }), live('sol-prime')];
+    expect(quickLaunchSector(stats)).toBe('sol-prime');
+  });
+
+  it('when every sector has hostiles, picks the one with the fewest', () => {
+    const stats = [live('ashfront', { threat: 3, enemies: 6 }), live('vega-reach', { enemies: 2 }), live('sol-prime', { enemies: 4 })];
+    expect(quickLaunchSector(stats)).toBe('vega-reach');
+  });
+
   it('is null before the first feed poll', () => {
     expect(quickLaunchSector([])).toBeNull();
   });
@@ -28,11 +41,15 @@ describe('quickLaunchSector', () => {
     expect(quickLaunchSector(stats)).toBe('orion-belt');
   });
 
-  it('among hot fronts, the higher threat, then recent fighting, then pilots, then hostiles', () => {
+  it('among equally safe hot fronts, the higher threat, then recent fighting, then pilots', () => {
     expect(quickLaunchSector([live('sol-prime', { threat: 2, combat: true }), live('vega-reach', { threat: 3 })])).toBe('vega-reach');
     expect(quickLaunchSector([live('sol-prime', { threat: 2 }), live('vega-reach', { threat: 2, combat: true })])).toBe('vega-reach');
-    expect(quickLaunchSector([live('sol-prime', { threat: 2, players: 1 }), live('vega-reach', { threat: 2, enemies: 4 })])).toBe('sol-prime');
-    expect(quickLaunchSector([live('sol-prime', { threat: 2, players: 1 }), live('vega-reach', { threat: 2, players: 1, enemies: 4 })])).toBe('vega-reach');
+    expect(quickLaunchSector([live('sol-prime', { threat: 2 }), live('vega-reach', { threat: 2, players: 1 })])).toBe('vega-reach');
+  });
+
+  it('fewer hostiles beats more pilots or a hotter front', () => {
+    expect(quickLaunchSector([live('sol-prime', { threat: 2, players: 1 }), live('vega-reach', { threat: 2, players: 1, enemies: 4 })])).toBe('sol-prime');
+    expect(quickLaunchSector([live('sol-prime', { threat: 3, players: 5, enemies: 3 }), live('vega-reach', { enemies: 1 })])).toBe('vega-reach');
   });
 
   it('a calm galaxy gives the sector with the most pilots, not the biggest swarm; ties keep feed order', () => {

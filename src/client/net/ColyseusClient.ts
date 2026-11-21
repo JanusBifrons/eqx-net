@@ -1793,6 +1793,9 @@ export class ColyseusGameClient {
           stats: this.stats,
         });
       }
+      // Command / Build (#16): the own cargo rides the parked hull's entry (its shipInstanceId).
+      const parked = this.mirror.localShipInstanceId, pst = parked ? snap.states[parked] : undefined;
+      if (parked && pst !== undefined) this.applyLocalCargo(parked, pst.cargo, pst.fitted);
       return;
     }
 
