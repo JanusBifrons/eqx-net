@@ -121,6 +121,20 @@ describe('building settings live in the cog window', () => {
     expect(screen.getByTestId('settings-blueprint')).toHaveTextContent('2 runs · quality 1');
   });
 
+  // The server spends a copy's LAST run at cycle start and empties the slot;
+  // while that last hull builds the line must not read as if the blueprint
+  // vanished. The slot really is free, so Load stays and Unload/Swap do not.
+  it('the last run building reads as building with a free slot (tab and inspector)', () => {
+    seed('fabricator', { prodState: 1, prodFrac: 0.4 });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-blueprint')).toHaveTextContent('BLUEPRINT last run building · slot free');
+    expect(screen.getByTestId('entity-stats-blueprint')).not.toHaveTextContent('NO BLUEPRINT LOADED');
+    openTab('production');
+    expect(screen.getByTestId('settings-blueprint')).toHaveTextContent('last run building · slot free');
+    expect(screen.getByTestId('structure-action-load-blueprint')).toHaveTextContent('Load');
+    expect(screen.queryByTestId('structure-action-unload-blueprint')).toBeNull();
+  });
+
   it('an empty blueprint slot offers Load only', () => {
     seed('fabricator');
     render(<EntityStatsPanel />);
