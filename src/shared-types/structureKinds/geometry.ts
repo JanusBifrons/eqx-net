@@ -89,3 +89,22 @@ export function structureLocalToWorld(
   out.y = cy + mx * sin + ly * cos;
   return out;
 }
+
+/**
+ * WORLD → structure LOCAL: the exact inverse of `structureLocalToWorld`
+ * (move to the centre, undo the turn, then undo the mirror flip). For a
+ * direction pass `cx = cy = 0`. Alloc-free: writes `out`.
+ */
+export function structureWorldToLocal(
+  wx: number, wy: number,
+  cx: number, cy: number,
+  cos: number, sin: number,
+  mirror: boolean | undefined,
+  out: { x: number; y: number },
+): { x: number; y: number } {
+  const dx = wx - cx, dy = wy - cy;
+  const ux = dx * cos + dy * sin;
+  out.y = -dx * sin + dy * cos;
+  out.x = mirror === true ? -ux : ux;
+  return out;
+}

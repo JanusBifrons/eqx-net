@@ -103,9 +103,9 @@ export class ShieldWallManager {
         const key = wallPairKey(a.id, b.id);
         if (this.walls.has(key)) continue;
         // Each end anchors on the post nearest the other end (a pylon: its centre).
-        emitterAnchor(b.kind, b.x, b.y, rotRad(b), a.x, a.y, this.anchorB);
-        emitterAnchor(a.kind, a.x, a.y, rotRad(a), this.anchorB.x, this.anchorB.y, this.anchorA);
-        emitterAnchor(b.kind, b.x, b.y, rotRad(b), this.anchorA.x, this.anchorA.y, this.anchorB);
+        emitterAnchor(b.kind, b.x, b.y, rotRad(b), a.x, a.y, this.anchorB, b.mirror);
+        emitterAnchor(a.kind, a.x, a.y, rotRad(a), this.anchorB.x, this.anchorB.y, this.anchorA, a.mirror);
+        emitterAnchor(b.kind, b.x, b.y, rotRad(b), this.anchorA.x, this.anchorA.y, this.anchorB, b.mirror);
         const id = `wall-${key}`;
         const w: WallRecord = {
           id, postA: a.id, postB: b.id,

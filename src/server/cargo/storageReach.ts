@@ -18,10 +18,10 @@ export function depositRangeOf(kindId: string): number {
  *  cargo reach? Within its `depositRangeOf` circle, or on its own crane bay
  *  (`onStructureCraneBay`: a Capital's bay lies past 400 u). Not the deposit
  *  rule: hover deposit stays `takesHoverDeposit` + `depositRangeOf`. Alloc-free. */
-export function nearStorage(rec: Pick<StructureRecord, 'kind' | 'x' | 'y' | 'rot'>, x: number, y: number): boolean {
+export function nearStorage(rec: Pick<StructureRecord, 'kind' | 'x' | 'y' | 'rot' | 'mirror'>, x: number, y: number): boolean {
   const r = depositRangeOf(rec.kind);
   if ((rec.x - x) ** 2 + (rec.y - y) ** 2 <= r * r) return true;
-  return onStructureCraneBay(rec.kind, rec.x, rec.y, rec.rot ?? 0, x, y);
+  return onStructureCraneBay(rec.kind, rec.x, rec.y, rec.rot ?? 0, x, y, rec.mirror);
 }
 /** Does storage of `kindId` take the hover deposit (hold within
  *  `depositRangeOf` for `DEPOSIT_DWELL_TICKS`)? A kind with a crane bay
