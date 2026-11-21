@@ -8,7 +8,13 @@ import { useUIStore } from '../state/store.js';
 import { SpectatorIndicator } from './SpectatorIndicator.js';
 
 describe('SpectatorIndicator — Command view (RTS slice 10)', () => {
-  beforeEach(() => useUIStore.setState({ phase: 'game', pilotMode: 'pilot', buildMode: false }));
+  // A joined, ready sector (the loading screen hides the chip: loadingChrome.test.tsx).
+  beforeEach(() => useUIStore.setState({
+    phase: 'game', pilotMode: 'pilot', buildMode: false, loadingCosmeticOnly: false,
+    connectionStatus: 'connected', localShipInstanceId: 'ship-1', firstSnapshotApplied: true,
+    rendererFirstFrameRendered: true, joinMinimumElapsed: true, localPoseResolved: true,
+    clientReadySent: true, arrivalTickFromServer: 100, arrivalAcked: true,
+  }));
 
   it('reads "Build mode" (not Command view) in Build mode', () => {
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true });
