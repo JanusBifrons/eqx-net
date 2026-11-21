@@ -79,7 +79,7 @@ function readPower(entityId: number): PowerSummary | null {
 function samePower(a: PowerSummary | null, b: PowerSummary | null): boolean {
   if (a === null || b === null) return a === b;
   return a.selfPower === b.selfPower && a.load === b.load && a.gridNet === b.gridNet && a.powered === b.powered
-    && a.on === b.on && a.throttle === b.throttle;
+    && a.on === b.on && a.throttle === b.throttle && a.prodState === b.prodState && a.storedPower === b.storedPower;
 }
 
 const LOAD_LABEL: Record<PowerSummary['load'], string> = { full: 'Full (working)', idle: 'Idle (trickle)', none: 'Never draws' };
@@ -105,7 +105,7 @@ function PowerTab({ entityId }: { entityId: number }): JSX.Element {
       <Box sx={LABEL_SX}>Draw now</Box><Box sx={VALUE_SX} data-testid="settings-power-draw">{drawNowText(p)}</Box>
       <Box sx={LABEL_SX}>Load</Box><Box sx={VALUE_SX} data-testid="settings-power-load">{LOAD_LABEL[p.load]}</Box>
       <Box sx={LABEL_SX}>Grid net</Box><Box sx={VALUE_SX} data-testid="settings-power-grid">{signed(p.gridNet)}</Box>
-      <PowerControls entityId={entityId} kindId={readKind(entityId) ?? ''} on={p.on} throttle={p.throttle} labelSx={LABEL_SX} />
+      <PowerControls entityId={entityId} kindId={readKind(entityId) ?? ''} p={p} labelSx={LABEL_SX} />
     </Box>
   );
 }
