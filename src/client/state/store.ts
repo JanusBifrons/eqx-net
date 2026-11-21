@@ -171,6 +171,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   placementKind: null,
   warpPickerOpen: false,
   contactsOpen: false,
+  structureSettingsOpen: false,
   warpHeldTo: null,
   selection: EMPTY_SELECTION,
   fleetOrderMode: 'move',
