@@ -20,7 +20,7 @@ import { getPlayerShipStore } from '../../db/PersistenceWorker.js';
 import { ROSTER_SOFT_GUARD } from '../../playerShips/PlayerShipStore.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { qualityHullFactor } from '../../../shared-types/blueprints.js';
-import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, structureLocalToWorld } from '../../../shared-types/structureKinds.js';
 import { shipyardBayKeel, shipyardBayOf } from '../../../core/articulation/rigs/heavyIndustry.js';
 import { shipyardSlipFits } from '../../../core/structures/gateGeometry.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
@@ -57,15 +57,21 @@ export interface NewHullOrigin {
  * (`shipyardSlipFits`: the Barge) appears at that spot. Any other maker (or
  * an unpacked crate): parked beside it, as before.
  * Ship heading: the nose points along (-sin a, cos a) (`applyShipInput`).
+ * A `mirror`ed yard (build mirror) flips all of it through the shared
+ * `structureLocalToWorld`: the bow, and so the nose, point to local −x.
  */
-export function newHullOrigin(kind: string, x: number, y: number, rotDeg: number, hullKind: string, cycles?: number): NewHullOrigin {
+export function newHullOrigin(kind: string, x: number, y: number, rotDeg: number, hullKind: string, cycles?: number, mirror?: boolean): NewHullOrigin {
   if (kind !== 'shipyard') return { x: x + NEW_HULL_PARK_OFFSET, y, angle: 0, parkX: x + NEW_HULL_PARK_OFFSET, parkY: y, flyOut: false };
   const r = (rotDeg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
   const reach = getStructureKind('shipyard').footprint.w / 2 + NEW_HULL_PARK_OFFSET;
   const k = shipyardBayKeel(shipyardBayOf(cycles));
+  const keel = structureLocalToWorld(k.x, k.y, x, y, c, s, mirror, { x: 0, y: 0 });
+  const park = structureLocalToWorld(reach, 0, x, y, c, s, mirror, { x: 0, y: 0 });
+  // Bow direction (local +x) in world, the nose's (-sin a, cos a).
+  const bow = structureLocalToWorld(1, 0, 0, 0, c, s, mirror, { x: 0, y: 0 });
   return {
-    x: x + k.x * c - k.y * s, y: y + k.x * s + k.y * c, angle: Math.atan2(-c, s),
-    parkX: x + reach * c, parkY: y + reach * s, flyOut: shipyardSlipFits(hullKind),
+    x: keel.x, y: keel.y, angle: Math.atan2(-bow.x, bow.y),
+    parkX: park.x, parkY: park.y, flyOut: shipyardSlipFits(hullKind),
   };
 }
 

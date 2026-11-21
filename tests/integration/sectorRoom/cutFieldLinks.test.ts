@@ -38,7 +38,7 @@ describe('SectorRoom integration — links past an unloaded cut-field rock (C5g)
     const clearAt = (x: number, y: number): boolean =>
       !clampToSectorBounds(x, y).clamped && placementRejection('connector', x, y, [], shaped(x - hw, y - hh, x + hw, y + hh)) === null;
     const connectorAt = (id: string, x: number, y: number): GridNode =>
-      structureToGridNode({ id, kind: 'connector', x, y, rot: 0, radius: Math.hypot(hw, hh), halfW: hw, halfH: hh, isConstructed: true, level: 1 } as unknown as StructureRecord);
+      structureToGridNode({ id, kind: 'connector', owner: 'scenario', x, y, rot: 0, radius: Math.hypot(hw, hh), halfW: hw, halfH: hh, isConstructed: true, level: 1 } as unknown as StructureRecord);
     // A rock of the far chunk with two clear connector spots on opposite
     // sides, in link range, where the core picker finds a plug pair in open
     // space but every plug pair's cable is blocked by the field rocks.

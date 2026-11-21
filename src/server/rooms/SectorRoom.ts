@@ -721,8 +721,8 @@ export class SectorRoom extends Room<SectorState> {
     isHostileToOwner: (playerId, owner) => relationOf(playerId, owner, this.relationCtx) === 'hostile',
   });
   private readonly liveCountsHost: SectorLiveCountsHost = { playerToSlot: () => this.playerToSlot, getActiveShip: (pid) => this.getActiveShip(pid), swarmRegistry: this.swarmRegistry, structureRegistry: this.structureRegistry, patrols: this.patrols, npcHostileTo: (e, p) => this.npcHostileTo(e, p) };
-  private readonly combatAuditHost: CombatDestructionAuditHost = { sectorKey: () => this.sectorKey, structureRegistry: this.structureRegistry, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), payEliteBounty: (k, n, c) => this.payEliteBounty(k, n, c), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h) };
-  private readonly shipDestroyedHost: ShipDestroyedHost = { sectorKey: () => this.sectorKey, roomId: () => this.roomId, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h), getActiveShip: (pid) => this.getActiveShip(pid), ships: () => this.state.ships, forgetSquadMember: (id) => this.fleet.forgetSquadMember(id), vaporisedActiveDeath: () => this.wreckSpawns.vaporisedActiveDeath, clearVaporisedActiveDeath: () => { this.wreckSpawns.vaporisedActiveDeath = null; }, playerToUser: () => this.playerToUser, bountyRoom: () => this, playerToSlot: () => this.playerToSlot, shipPoseCache: () => this.shipPoseCache, sabF32: () => this.sabF32, spillOrLoseShipHold: (...a) => this.spillOrLoseShipHold(...a), deleteRosterRow: (id) => this.deleteRosterRow(id), ownerlessShips: () => this.ownerlessShips, evictOwnerlessShip: (id) => this.evictOwnerlessShip(id), scrapSpawner: () => this.scrapSpawner };
+  private readonly combatAuditHost: CombatDestructionAuditHost = { sectorKey: () => this.sectorKey, structureRegistry: this.structureRegistry, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), payEliteBounty: (k, n, c) => this.payEliteBounty(k, n, c), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h), swarmRegistry: this.swarmRegistry };
+  private readonly shipDestroyedHost: ShipDestroyedHost = { sectorKey: () => this.sectorKey, swarmRegistry: this.swarmRegistry, roomId: () => this.roomId, recentCombatLog: this.recentCombatLog, now: () => this.gameClock.now(), awardKillXp: (k, h) => this.shipProgression.awardKillXp(k, h), getActiveShip: (pid) => this.getActiveShip(pid), ships: () => this.state.ships, forgetSquadMember: (id) => this.fleet.forgetSquadMember(id), vaporisedActiveDeath: () => this.wreckSpawns.vaporisedActiveDeath, clearVaporisedActiveDeath: () => { this.wreckSpawns.vaporisedActiveDeath = null; }, playerToUser: () => this.playerToUser, bountyRoom: () => this, playerToSlot: () => this.playerToSlot, shipPoseCache: () => this.shipPoseCache, sabF32: () => this.sabF32, spillOrLoseShipHold: (...a) => this.spillOrLoseShipHold(...a), deleteRosterRow: (id) => this.deleteRosterRow(id), ownerlessShips: () => this.ownerlessShips, evictOwnerlessShip: (id) => this.evictOwnerlessShip(id), scrapSpawner: () => this.scrapSpawner };
   /** v4 A — the alien gates' guns: who is disabled, and for how long. */
   private readonly gateGuard = new AlienGateGuard({
     swarmSlotOf: (id) => this.swarmRegistry.get(id)?.slot,
@@ -1264,7 +1264,7 @@ export class SectorRoom extends Room<SectorState> {
       loot: () => this.loot, applyDamage: (target, shooter, dmg) => this.applyDamage(target, shooter, dmg),
       swarmRegistry: this.swarmRegistry, lingeringSlots: this.lingeringSlots, ships: () => this.state.ships,
       getActiveShip: (pid) => this.getActiveShip(pid),
-      workerEntryPath: WORKER_TS_PATH, sab: this.sab, logger, playerToSlot: () => this.playerToSlot,
+      workerEntryPath: WORKER_TS_PATH, sab: this.sab, logger, playerToSlot: () => this.playerToSlot, sectorKey: () => this.sectorKey,
     });
     await this.physicsWorkerProxy.start();
 
@@ -2241,7 +2241,7 @@ export class SectorRoom extends Room<SectorState> {
       // D3 — station taxes: a player's habitat modules and spires pay their wallet; an NPC or ownerless base has none (`walletOwnerOf`).
       payCredits: (rec, n) => { const w = walletOwnerOf(rec.owner); if (w !== null) getWallet().credit(w, n, 'station_taxes'); },
       // A finished hull goes live: out of a Shipyard's slipway on a Move order to its park spot (`HullHandOff.launchNewHull`).
-      launchHull: (rec, kind, q) => walletOwnerOf(rec.owner) !== null && this.hullHandOff.launchNewHull(rec.owner, kind, q, newHullOrigin(rec.kind, rec.x, rec.y, rec.rot ?? 0, kind, rec.prodCycles), true).ok,
+      launchHull: (rec, kind, q) => walletOwnerOf(rec.owner) !== null && this.hullHandOff.launchNewHull(rec.owner, kind, q, newHullOrigin(rec.kind, rec.x, rec.y, rec.rot ?? 0, kind, rec.prodCycles, rec.mirror), true).ok,
     });
     // v4 T1-T4 — the teleporters + the broker room (`features/teleportMessages.ts`).
     ({ teleporters: this.teleporters, teleportRoom: this.teleportRoom } = buildTeleporters({
@@ -2520,6 +2520,7 @@ export class SectorRoom extends Room<SectorState> {
       playerToUser: this.playerToUser,
       production: () => this.production, hullHandOff: () => this.hullHandOff,
       resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid),
+      ownShipKey: (pid) => this.pilotSwap.ownShipKey(pid),
       ship: (id) => this.state.ships.get(id),
       shipPoseCache: this.shipPoseCache,
       fittedOf: (id) => this.fittedOf(id),
@@ -3059,7 +3060,7 @@ export class SectorRoom extends Room<SectorState> {
             owner: s.owner,
             kind: s.kind,
             attackerId: shooterId,
-            attackerKind: classifyAttacker(shooterId),
+            attackerKind: classifyAttacker(shooterId, this.swarmRegistry),
           });
         }
         // PWA push — alert the OFFLINE owner's device(s) that their base is
@@ -3070,7 +3071,7 @@ export class SectorRoom extends Room<SectorState> {
         const lastPush = this.structureAttackPushAtMs.get(targetId) ?? -Infinity;
         if (now - lastPush >= STRUCTURE_ATTACK_PUSH_WINDOW_MS) {
           this.structureAttackPushAtMs.set(targetId, now);
-          pushNotifier.onStructureAttacked(s.owner, s.kind, classifyAttacker(shooterId), this.sectorKey ?? undefined);
+          pushNotifier.onStructureAttacked(s.owner, s.kind, classifyAttacker(shooterId, this.swarmRegistry), this.sectorKey ?? undefined);
         }
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
@@ -3575,7 +3576,7 @@ export class SectorRoom extends Room<SectorState> {
    * Announced to the sector as a `world_notice`.
    */
   private payEliteBounty(killerId: string, targetName: string, credits: number): void {
-    if (credits <= 0 || classifyAttacker(killerId) !== 'player') return;
+    if (credits <= 0 || classifyAttacker(killerId, this.swarmRegistry) !== 'player') return;
     getWallet().credit(killerId, credits, 'elite_bounty');
     auditEvent({ event: 'bounty_claimed', sector: this.sectorKey ?? undefined, playerId: killerId, target: targetName, credits });
     const who = this.rosterPersistence.resolveOwnerName(killerId) ?? 'A pilot';
@@ -4097,7 +4098,7 @@ export class SectorRoom extends Room<SectorState> {
     for (const rec of this.structureRegistry.all()) {
       if (rec.owner === owner && rec.hold !== undefined && isOperationalStorage(rec) && packedCount(rec.hold, product) > 0) return { rec };
     }
-    const shipId = this.resolveActiveShipKey(owner);
+    const shipId = this.pilotSwap.ownShipKey(owner); // flown or parked (Command / Build)
     const row = shipId ? getHoldStore().get(shipId) : undefined;
     if (shipId && row !== undefined && packedCount(row.hold, product) > 0) return { shipId };
     return null;

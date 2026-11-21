@@ -39,6 +39,7 @@ import {
 import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
 import type { PackedItem } from '../../shared-types/items.js';
 import type { SavedDoor } from '../../core/structures/gateLogic.js';
+import { migrateStructureRows, type StructureKindWipes } from './structureKindWipes.js';
 
 /** The minimal structure shape `persist()` reads (a subset of `StructureRecord`). */
 export interface PersistableStructure {
@@ -49,6 +50,8 @@ export interface PersistableStructure {
   y: number;
   /** Phase V — rotation in degrees (absent ⇒ 0). */
   rot?: number;
+  /** Build mirror (absent ⇒ not mirrored). */
+  mirror?: boolean;
   /** Gates: access setting index (absent ⇒ default). */
   gateAccess?: number;
   /** The owner switched it Off (absent ⇒ On). */
@@ -125,6 +128,8 @@ export interface SectorPersistenceDeps {
    *  SELECT). Returns undefined when there is none. */
   loadRow: (sectorKey: string) => { snapshot: string; created_at: number } | undefined;
   logger: Logger;
+  /** Job 4H — per-kind wipe table (tests inject one). Absent ⇒ `STRUCTURE_KIND_WIPES`. */
+  structureKindWipes?: StructureKindWipes;
 }
 
 /** Campaign 6.3 — coalesce window for event-driven persists (`persistSoon`).
@@ -211,6 +216,7 @@ export class SectorPersistence {
         kind: s.kind,
         x: s.x,
         ...(s.rot ? { rot: s.rot } : {}),
+        ...(s.mirror === true ? { mirror: true } : {}),
         ...(s.gateAccess ? { gateAccess: s.gateAccess } : {}),
         ...doorFields(d.gateDoorOf?.(s.id)),
         ...(s.switchedOff === true ? { switchedOff: true } : {}),
@@ -315,19 +321,28 @@ export class SectorPersistence {
     // couple to catalogue stats (maxHealth, constructionCost) beyond the
     // append-only `kind` id, so rows minted under a different catalogue are
     // discarded — structures fresh-spawn while the rest of the snapshot
-    // (asteroid health / scrap / lingering hulls) restores normally.
-    const structureVersionOk =
-      payload.structureCatalogueVersion === STRUCTURE_KIND_CATALOGUE_VERSION;
-    const structures = structureVersionOk ? (payload.structures ?? []) : [];
-    if (!structureVersionOk && (payload.structures?.length ?? 0) > 0) {
+    // (asteroid health / scrap / lingering hulls) restores normally. Job 4H:
+    // a bump that flags its changed kinds (`STRUCTURE_KIND_WIPES`) discards
+    // only rows of those kinds.
+    const migration = migrateStructureRows(
+      payload.structures ?? [],
+      payload.structureCatalogueVersion,
+      STRUCTURE_KIND_CATALOGUE_VERSION,
+      d.structureKindWipes,
+    );
+    const structures = migration.kept;
+    if (migration.wiped > 0) {
       d.logger.warn(
         {
           sectorKey,
           stored: payload.structureCatalogueVersion,
           live: STRUCTURE_KIND_CATALOGUE_VERSION,
-          discarded: payload.structures!.length,
+          discarded: migration.wiped,
+          wholeSet: migration.wholeSet,
         },
-        'structure catalogue version mismatch — structures fresh-spawn',
+        migration.wholeSet
+          ? 'structure catalogue version mismatch — structures fresh-spawn'
+          : 'structure catalogue version bump — flagged kinds wiped',
       );
     }
     if (structures.length > 0) {

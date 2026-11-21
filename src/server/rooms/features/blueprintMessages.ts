@@ -45,6 +45,8 @@ export interface BlueprintMessageHost extends ParsedMessageHost {
   storage(): Pick<StorageService, 'loadBlueprint' | 'unloadBlueprint' | 'flushDirty' | 'installBlueprint' | 'network' | 'commitChanged'>;
   rebuildStructuresSlice(): void;
   resolveActiveShipKey(playerId: string): string | undefined;
+  /** The flown hull, else the hull parked by Command / Build (`PilotSwap.ownShipKey`). */
+  ownShipKey(playerId: string): string | undefined;
   ship(shipInstanceId: string): ShipState | undefined;
   shipPoseCache: Pick<ReadonlyMap<string, ShipPhysicsState>, 'get'>;
   fittedOf(shipInstanceId: string): readonly string[];
@@ -168,7 +170,7 @@ function unpackHull(h: BlueprintMessageHost, playerId: string, networkEntityId: 
   if (from === undefined) return [false, `There is no packed ${name} in this base.`];
   const item = takePacked(from.hold!, product)!;
   h.storage().commitChanged([from], []);
-  const res = h.hullHandOff().launchNewHull(playerId, kind, item.quality, newHullOrigin(s.kind, s.x, s.y, s.rot ?? 0, kind), false);
+  const res = h.hullHandOff().launchNewHull(playerId, kind, item.quality, newHullOrigin(s.kind, s.x, s.y, s.rot ?? 0, kind, undefined, s.mirror), false);
   if (!res.ok) {
     (from.hold!.packed ??= []).push(item);
     h.storage().commitChanged([from], []);
@@ -180,7 +182,7 @@ function unpackHull(h: BlueprintMessageHost, playerId: string, networkEntityId: 
 }
 
 /** Economy v2 — `playerId`'s packed STRUCTURES in this sector, by product:
- *  their operational storage here plus their active ship's hold (exactly
+ *  their operational storage here plus their own ship's hold, flown or parked (exactly
  *  where `packedGateForBuild` looks). Control cadence (allocates). */
 function packedStockOf(h: BlueprintMessageHost, playerId: string): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -190,7 +192,7 @@ function packedStockOf(h: BlueprintMessageHost, playerId: string): Record<string
   for (const rec of h.structureRegistry.all()) {
     if (rec.owner === playerId && rec.hold !== undefined && isOperationalStorage(rec)) add(rec.hold.packed);
   }
-  const shipId = h.resolveActiveShipKey(playerId);
+  const shipId = h.ownShipKey(playerId);
   if (shipId) add(getHoldStore().get(shipId)?.hold.packed);
   return counts;
 }

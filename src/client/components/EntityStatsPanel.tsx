@@ -36,7 +36,8 @@ import { TargetAction } from './TargetAction';
 import { ACTION_BTN_SX, ICON_SX, StructureManageActions } from './StructureManageActions';
 import { canManageBuildings } from '../structures/buildingManagement';
 // Moved with the management buttons; re-exported so existing importers keep working.
-import type { StructureRenderState } from '@core/contracts/IRenderer';
+import { droneName, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
+import { BUILD_AWAITING_CLEAR_LINE, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
 
 /**
  * Click-to-inspect live stats panel (structures follow-up Item B6).
@@ -75,6 +76,8 @@ interface PanelData {
   infoLine?: string;
   /** Structure-only extras (playtest 2026-06-10 Issue 8). Undefined otherwise. */
   buildPct?: number; // [0..1]; < 1 ⇒ under construction
+  /** Build done but still a blueprint: a ship inside its footprint (`buildAwaitingClear.ts`). */
+  buildBlocked?: boolean;
   powered?: boolean;
   /** Component (whole-grid) net power — kept on the `data-net-power` attr.
    *  NOT the visible PWR line (that's `selfPower`, per Phase-4 C5). */
@@ -251,6 +254,11 @@ export function EntityStatsPanel(): JSX.Element | null {
           <Bar pct={(data.buildPct ?? 0) * 100} color={BUILD_COLOR} />
         </>
       )}
+      {data.buildBlocked && (
+        // Build done, but a ship inside the footprint keeps it a blueprint (server
+        // blueprintBody.ts) — without this the bar just vanished, unexplained.
+        <Box sx={POWER_SX} data-testid="entity-stats-build-blocked">{BUILD_AWAITING_CLEAR_LINE}</Box>
+      )}
       {hasCharge && (
         <>
           <Cap>CHRG</Cap>
@@ -415,7 +423,7 @@ export function EntityStatsPanel(): JSX.Element | null {
 // equality check. Listed explicitly (not Object.keys) so a future non-primitive
 // field forces a deliberate decision here instead of silently mis-comparing.
 const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
-  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'powered',
+  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'powered',
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
@@ -465,6 +473,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     };
     if (st) {
       data.buildPct = st.buildPct;
+      if (isBuildAwaitingClear(st)) data.buildBlocked = true;
       data.powered = st.powered;
       data.netPower = st.netPower;
       data.storedPower = st.storedPower;
@@ -617,51 +626,6 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     return data;
   }
   return null;
-}
-
-/** Parse the numeric swarm entityId from a selection id (`swarm-<n>` or `<n>`).
- *  Undefined when not numeric. */
-function parseEntityId(id: string): number | undefined {
-  const n = parseInt(id.startsWith('swarm-') ? id.slice('swarm-'.length) : id, 10);
-  return Number.isNaN(n) ? undefined : n;
-}
-
-/** A structure's catalogue display name (INSTANT — from the swarm mirror's
- *  subtype byte), so the panel names it before the first server packet. */
-function structureName(id: string): string | undefined {
-  const client = getGameClient();
-  if (!client) return undefined;
-  const entityId = parseInt(id.startsWith('swarm-') ? id.slice('swarm-'.length) : id, 10);
-  if (Number.isNaN(entityId)) return undefined;
-  const sw = client.mirror.swarm?.get(entityId);
-  return sw?.shipKind ? getStructureKind(sw.shipKind).displayName : undefined;
-}
-
-/** A structure's raw subtype id (the swarm `shipKind` byte) — used to gate the
- *  connector-only connection count (C4). Undefined when the swarm entry is gone. */
-function structureSubtype(id: string): string | undefined {
-  const client = getGameClient();
-  if (!client) return undefined;
-  const entityId = parseInt(id.startsWith('swarm-') ? id.slice('swarm-'.length) : id, 10);
-  if (Number.isNaN(entityId)) return undefined;
-  return client.mirror.swarm?.get(entityId)?.shipKind;
-}
-
-function droneName(shipKind: string | undefined): string {
-  if (!shipKind) return 'Drone';
-  // The name is cosmetic; a capitalised kind id reads fine.
-  return `${shipKind.charAt(0).toUpperCase()}${shipKind.slice(1)} drone`;
-}
-
-/** The grid slice entry for a selected structure, keyed by the numeric entityId
- *  (`mirror.structures` uses the bare entityId; the selection id is the mirror
- *  form `swarm-<entityId>`). Returns undefined if absent. */
-function structureSliceFor(id: string): StructureRenderState | undefined {
-  const client = getGameClient();
-  if (!client) return undefined;
-  const entityId = parseInt(id.startsWith('swarm-') ? id.slice('swarm-'.length) : id, 10);
-  if (Number.isNaN(entityId)) return undefined;
-  return client.mirror.structures?.get(entityId);
 }
 
 const SHIELD_COLOR = '#36c8ff';

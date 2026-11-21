@@ -94,8 +94,8 @@ export function doorLeafCount(kind: string | null | undefined): number {
  * static `gateWorldAxisBoxes` followed by one box per door leaf, posed shut.
  * null ⇒ not a gate.
  */
-export function gateHitBoxes(kind: string | null | undefined, angle: number): Float32Array | null {
-  const fixed = gateWorldAxisBoxes(kind, angle);
+export function gateHitBoxes(kind: string | null | undefined, angle: number, mirror?: boolean): Float32Array | null {
+  const fixed = gateWorldAxisBoxes(kind, angle, mirror);
   if (fixed === null) return null;
   const leaves = doorLeafCount(kind);
   if (leaves === 0) return fixed;

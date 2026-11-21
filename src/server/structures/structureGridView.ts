@@ -58,6 +58,7 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     // Socket rotation: degrees on the record, radians on the node (the
     // client's swarm angle; `rotateStructureSocket` convention).
     rot: ((rec.rot ?? 0) * Math.PI) / 180,
+    ...(rec.mirror === true ? { mirror: true } : {}),
     radius: rec.radius,
     halfW: rec.halfW,
     halfH: rec.halfH,

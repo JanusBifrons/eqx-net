@@ -156,7 +156,10 @@ reads it as low.
   of is dimmed and can't be picked ("Smelter · buy packed"). That covers both
   the speed-dial drill and the desktop bottom bar. It's a request/reply view
   (`packed_stock_query` → `packed_stock`) asked every few seconds while a build
-  menu is open, counting the same places the placement gate looks.
+  menu is open, counting the same places the placement gate looks: your
+  storage here plus your own ship's hold, whether you fly it or it is parked
+  (Command and Build both let go of the ship, so the hold of the hull you
+  parked still counts; `PilotSwap.ownShipKey`).
 
   **Quality matters:** a packed item's quality (0–100, set by the blueprint's
   output stat) gives what's made from it up to **+10 % max hull**: the structure

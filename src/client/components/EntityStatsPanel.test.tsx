@@ -136,6 +136,41 @@ describe('EntityStatsPanel', () => {
     expect(panel).toHaveAttribute('data-self-power', '120');
   });
 
+  // Seen while filming: a Refinery placed over the player's own parked fighter
+  // reached 100% and then sat forever (a finished blueprint only turns solid once
+  // no ship overlaps it — server blueprintBody.ts). The bar vanished and the card
+  // said nothing. buildPct 1 + !built (state already on the wire) now explains it.
+  it('a finished blueprint that is not built yet says it is waiting for ships to clear', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[7, { powered: false, netPower: 0, connTo: [], built: false, buildPct: 1, deconstructPct: 0, etaMs: 0, ghostBody: true }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'refinery', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '7', name: 'Refinery', hp: 300, hpMax: 300 });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-build-blocked')).toHaveTextContent('FINISHED — WAITING FOR SHIPS TO CLEAR');
+  });
+
+  it('a blueprint still building or already built shows no waiting-for-ships line', () => {
+    for (const row of [
+      { built: false, buildPct: 0.5 },
+      { built: true, buildPct: 1 },
+    ]) {
+      setGameClient(
+        fakeClient({
+          structures: new Map([[7, { powered: true, netPower: 0, connTo: [], deconstructPct: 0, ...row }]]),
+          swarm: new Map([[7, { kind: 2, shipKind: 'refinery', radius: 40, x: 0, y: 0 }]]),
+        }),
+      );
+      useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
+      const { unmount } = render(<EntityStatsPanel />);
+      expect(screen.queryByTestId('entity-stats-build-blocked')).toBeNull();
+      unmount();
+    }
+  });
+
   it('a LEVELED solar shows its level-scaled generation (#15 — the server grid scales by level)', () => {
     setGameClient(
       fakeClient({

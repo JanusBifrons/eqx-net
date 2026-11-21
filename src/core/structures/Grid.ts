@@ -41,6 +41,8 @@ export interface GridNode {
    *  `rotateStructureSocket` / `localToWorld` convention). Server: `rot°·π/180`;
    *  client: the swarm angle. */
   rot: number;
+  /** Build mirror: sockets and pad flip x → −x locally before `rot`. */
+  mirror?: boolean;
   radius: number;
   /** Catalogue flag (Connector, Capital, shield emitters, big buildings). NOT
    *  read by `canConnect`: every link needs a Connector end (`isConnector`). */
