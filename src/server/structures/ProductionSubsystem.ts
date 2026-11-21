@@ -48,6 +48,7 @@ import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecip
 import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
 import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
 import { advanceProgress } from './productionProgress.js';
+import { cycleRoll, idHash } from './productionRoll.js';
 import { baseEffect, inputsAsOutputs } from './productionEffect.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/storageHolds.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
@@ -460,16 +461,8 @@ export class ProductionSubsystem {
   /** A deterministic roll in [0, 1) per processor and cycle (the yield bonus). */
   private roll(id: string, cycle: number): number {
     let h = this.idHash.get(id);
-    if (h === undefined) {
-      h = 2166136261;
-      for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
-      this.idHash.set(id, h);
-    }
-    let x = Math.imul(h ^ Math.imul(cycle + 1, 0x9e3779b1), 0x85ebca6b);
-    x ^= x >>> 13;
-    x = Math.imul(x, 0xc2b2ae35);
-    x ^= x >>> 16;
-    return (x >>> 0) / 4294967296;
+    if (h === undefined) { h = idHash(id); this.idHash.set(id, h); }
+    return cycleRoll(h, cycle);
   }
 
   /** Same-owner operational storage in the processor's grid component. */
