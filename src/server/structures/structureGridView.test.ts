@@ -227,6 +227,35 @@ describe('links store the cable sockets canConnect picked (0d slice 5)', () => {
   });
 });
 
+describe('one cable per socket: a held connector face moves to make room', () => {
+  // The breakIn layout: capital west of a connector, solar east, turret just
+  // below. The capital and solar cables first take the two LOWER diagonal faces
+  // (nearest pairs); the straight-down face is under MIN_CABLE_LENGTH to the
+  // turret. Two upper faces stay free, so the turret must still be powered: the
+  // capital's cable moves up one face and the turret takes the freed one.
+  it('capital, solar and a turret 140 below all link to one connector', () => {
+    const registry = new StructureRegistry();
+    for (const [id, kind, x, y] of [
+      ['cap', 'capital', 0, 0], ['con', 'connector', 400, 0], ['sol', 'solar', 900, 0], ['tur', 'turret', 400, 140],
+    ] as const) {
+      registry.add(record(id, kind, x, y));
+      autoConnectStructure(registry, id);
+    }
+    for (const id of ['cap', 'sol', 'tur']) expect(registry.hasConnection('con', id), id).toBe(true);
+    // Still one cable per connector socket.
+    expect(new Set(registry.connectionsOf('con').map((c) => c.socketAt('con'))).size).toBe(3);
+    // Every stored cable is a legal pick on its own two sockets (all others held).
+    const nodes = buildGridNodes(registry);
+    const pick = makeCableSocketPick();
+    for (const c of registry.connectionsOf('con')) {
+      const a = { ...nodes.get(c.aId)!, usedSockets: ~(1 << c.socketA) >>> 0 };
+      const b = { ...nodes.get(c.bId)!, usedSockets: ~(1 << c.socketB) >>> 0 };
+      expect(canConnect(a, b, new Map(), nodes, undefined, pick).ok, c.getOtherNode('con')!).toBe(true);
+      expect([pick.a, pick.b]).toEqual([c.socketA, c.socketB]);
+    }
+  });
+});
+
 describe('auto-connect skips a hub whose cable would cross another cable (owner rule)', () => {
   it('links every non-crossing hub and leaves the crossing one, with the plain notice', () => {
     const registry = new StructureRegistry();

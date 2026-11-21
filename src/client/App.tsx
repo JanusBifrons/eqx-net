@@ -44,6 +44,7 @@ import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive, selectControlMode } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { decideContextMenuPlacement } from './structures/contextMenuPlacement';
+import { cancelPlacement } from './structures/placementCancel';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
@@ -57,7 +58,6 @@ import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
-import { HelmPanel } from './components/HelmPanel';
 import { WarpPicker, WarpStatusChip } from './components/WarpPicker';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
@@ -668,9 +668,7 @@ function GameSurface({
       // WS-10 (R2.5) — Escape cancels structure placement. Main-thread + window
       // level so it works on BOTH render paths (the renderer can't touch
       // Zustand). No-op when not placing.
-      if (e.key === 'Escape' && useUIStore.getState().placementKind) {
-        useUIStore.getState().setPlacementKind(null);
-      }
+      if (e.key === 'Escape' && useUIStore.getState().placementKind) cancelPlacement();
       // RTS slice 14b — Escape cancels a fleet map pick; Enter is Done for a
       // patrol route with enough points. Not from a text field.
       const pick = useUIStore.getState().fleetPick;
@@ -718,7 +716,7 @@ function GameSurface({
         s.pilotMode === 'spectator', // RTS command view: right-click orders
       );
       if (outcome.preventDefault) e.preventDefault();
-      if (outcome.cancel) useUIStore.getState().setPlacementKind(null);
+      if (outcome.cancel) cancelPlacement();
     };
     window.addEventListener('contextmenu', onContextMenu);
 
@@ -941,8 +939,8 @@ function GameSurface({
       <Slot anchor="top-center" order={3}><TeleportWarning /></Slot>
       <Slot anchor="top-center" order={3}><DisabledIndicator /></Slot>
       <Slot anchor="top-center" order={3}><WarpStatusChip /></Slot>
-      {/* Capital-ship R&D round 3 D: helm orders (only while flying a capital). */}
-      <Slot anchor="top-center" order={4}><HelmPanel /></Slot>
+      {/* The Command speed telegraph (HelmPanel) rides the fleet panel / strip,
+       *  never a slot over the map (a bar there swallowed move orders). */}
       {/* Living World P2 — trade toasts (escort prompt when red). */}
       <Slot anchor="top-center" order={5}><TradeToasts /></Slot>
       <WhileAwayDialog />

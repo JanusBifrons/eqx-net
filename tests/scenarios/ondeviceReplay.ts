@@ -136,6 +136,8 @@ function buildEventTimeline(
       serverTick: d.serverTick ?? 0,
       ackedTick: d.ackedTick ?? 0,
       lastRtt: d.rttMs ?? 0,
+      // No `inputSentAtMs`: these captures predate the server's
+      // `inputMargin`, so the replayed lead holds its starting value.
     });
     prevTs = ts;
   }

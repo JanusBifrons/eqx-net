@@ -24,12 +24,17 @@ import {
   getSwarmHoldFrameCount, getSwarmResyncCount, getSwarmGlideLimitCount,
   getSwarmOldEndClampCount, getSwarmLatenessCount,
   getSwarmDisplayDelayMode, getSwarmGapPeakMs, isSwarmDelayCatchingUp,
+  getSwarmLatenessLastMs, getSwarmLatenessMaxMs, getSwarmLatenessSumMs, getSwarmOverwriteUnreadCount,
 } from '../../net/swarmInterpolation.js';
 import { getMissileHoldFrameCount, getMissileResyncCount } from '../../combat/MissileMirror.js';
 import {
   createLaneDelayWindow, sampleLaneDelay, takeLaneDelayWindow,
   type LaneDelayReadings, type LaneDelayWindow,
 } from './laneDelayWindow.js';
+import { applyLanePhases, installLanePhaseTiming, rollLanePhases } from './lanePhaseTiming';
+import { getActiveSnapshotTransport } from '../../net/connection/roomConnection.js';
+import { getAnchorHardSnapCount } from '../../net/clockAnchor.js';
+import { getRenderDueSnapCount } from '../../net/renderTickPhase.js';
 
 export const LANE_SUMMARY_INTERVAL_MS = 10_000;
 /** A frame over this is a hitch the player sees (3+ refreshes at 60 Hz). */
@@ -43,9 +48,40 @@ export interface LaneSummaryInputs {
   net: Pick<PredictionStats, 'rttMs' | 'rttMeanMs' | 'snapshotJitterMs' | 'significantCorrectionCount' | 'rollingCorrRate' | 'maxDriftUnits'> | null;
   /** `significantCorrectionCount` at the previous summary. */
   correctionsBefore: number;
+  /** Netcode gap counters (S0); absent in callers that predate them. */
+  gap?: LaneNetGapCounters;
 }
 
-export interface LanePerfSummary {
+/**
+ * Netcode gap counters (gap-smoothing plan S0). Running values since the last
+ * reset (rejoin / sector handoff), not per window. Optional on the summary: a
+ * `perf_summary` written before them still reads; `null` = no source.
+ */
+export interface LaneNetGapCounters {
+  /** `performance.now()` the last DataChannel frame truly arrived (same base as the line's `ts`). */
+  dcLastArrivalMs?: number | null;
+  /** DataChannel frames replaced unread before the last drain. */
+  dcLastDrainReplaced?: number | null;
+  /** DataChannel frames replaced unread, running total. */
+  dcReplacedTotal?: number | null;
+  /** How late drone (swarm) packets arrived after their tick stamp, ms: last, max, sum, count. */
+  swarmLateLastMs?: number | null;
+  swarmLateMaxMs?: number | null;
+  swarmLateSumMs?: number | null;
+  swarmLateCount?: number | null;
+  /** Drone ring slots overwritten while still newer than the read point. */
+  swarmOverwriteUnread?: number | null;
+  /** Drone reads that fell before the oldest pose of a full ring. */
+  swarmOldEndClamp?: number | null;
+  /** Drone reads frozen at the glide (extrapolation) limit, per drone per frame. */
+  swarmGlideLimit?: number | null;
+  /** Clock anchor hard snaps (drift over 200 ms). */
+  anchorHardSnaps?: number | null;
+  /** Render due-time snaps (gap over 200 ms). */
+  renderDueSnaps?: number | null;
+}
+
+export interface LanePerfSummary extends LaneNetGapCounters {
   windowMs: number;
   frames: number;
   p50: number;
@@ -89,6 +125,26 @@ export function buildLanePerfSummary(ring: FrameTimeRing, inp: LaneSummaryInputs
     corrections: n ? (corrNow >= inp.correctionsBefore ? corrNow - inp.correctionsBefore : corrNow) : null,
     corrRate: n ? r2(n.rollingCorrRate) : null,
     maxDrift: n ? r2(n.maxDriftUnits) : null,
+    ...inp.gap,
+  };
+}
+
+/** Sample the S0 netcode gap counters (10 s timer only, never per frame). */
+export function readLaneNetGapCounters(): LaneNetGapCounters {
+  const dc = getActiveSnapshotTransport();
+  return {
+    dcLastArrivalMs: dc ? r1(dc.lastArrivalMs()) : null,
+    dcLastDrainReplaced: dc ? dc.lastDrainReplacedCount() : null,
+    dcReplacedTotal: dc ? dc.totalReplacedCount() : null,
+    swarmLateLastMs: r1(getSwarmLatenessLastMs()),
+    swarmLateMaxMs: r1(getSwarmLatenessMaxMs()),
+    swarmLateSumMs: r1(getSwarmLatenessSumMs()),
+    swarmLateCount: getSwarmLatenessCount(),
+    swarmOverwriteUnread: getSwarmOverwriteUnreadCount(),
+    swarmOldEndClamp: getSwarmOldEndClampCount(),
+    swarmGlideLimit: getSwarmGlideLimitCount(),
+    anchorHardSnaps: getAnchorHardSnapCount(),
+    renderDueSnaps: getRenderDueSnapCount(),
   };
 }
 
@@ -119,13 +175,15 @@ let readMode: (() => LaneControlMode) | null = null;
  */
 export function withLaneStallContext<T extends object>(data: T): T {
   if (ring === null) return data;
-  return applyLaneStallContext(data, renderer?.getFeedback().viewHalf, readMode?.() ?? null);
+  // ...and the last stall frame's phase breakdown (lanePhaseTiming.ts).
+  return applyLanePhases(applyLaneStallContext(data, renderer?.getFeedback().viewHalf, readMode?.() ?? null));
 }
 
 /** One processed frame's gap (ms). Hot path: a null check when off. */
 export function recordLaneFrame(ms: number): void {
   if (ring === null) return;
   ring.push(ms);
+  rollLanePhases(ms);
   if (delayWindow !== null) sampleLaneDelay(delayWindow, getSwarmDisplayDelayMs());
 }
 
@@ -161,6 +219,7 @@ export function installLanePerfSummary(rendererIn: IRenderer, controlMode: () =>
   // Baseline the counters so the first window counts only its own events.
   takeLaneDelayWindow(delays, readLaneDelay(Number.NaN));
   const frames = (ring = new FrameTimeRing(4096));
+  installLanePhaseTiming();
   // Real time: frame timing is wall time
   let windowStart = performance.now();
   let correctionsBefore = 0;
@@ -177,6 +236,7 @@ export function installLanePerfSummary(rendererIn: IRenderer, controlMode: () =>
       counts: m ? { ships: m.ships.size, drones: m.swarm?.size ?? 0, structures: m.structures?.size ?? 0, projectiles: m.projectiles?.size ?? 0 } : null,
       net: client?.stats ?? null,
       correctionsBefore,
+      gap: readLaneNetGapCounters(),
     });
     correctionsBefore = client?.stats.significantCorrectionCount ?? 0;
     // The missile stream's delay rides the mirror (NaN before it seeds).

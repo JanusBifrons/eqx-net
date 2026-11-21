@@ -1,6 +1,6 @@
 /**
  * Fire control (exp/fire-control) — the inspector's "Target" button: lock the
- * selected ship / drone / structure with the ACTIVE weapon group, so the pilot
+ * selected ship / drone / structure / rock with the ACTIVE weapon group, so the pilot
  * doesn't have to track it with the smart-aim drag. Drawn in the active
  * group's colour (the same colour its lock brackets will be). Shown for
  * something lockable that isn't the pilot's own.
@@ -12,8 +12,10 @@ import { groupColourHex } from '../hud/groupColours';
 
 /** Another player's AI-flown ship is selected as a `'lingering'` entity and is
  *  lockable like any player's ship (your own fleet arrives with `isOwn`). A
- *  cargo pod locks for the tractor (moves it; never loads it). */
-const LOCKABLE = new Set(['ship', 'lingering', 'drone', 'structure', 'pod']);
+ *  cargo pod locks for the tractor (moves it; never loads it). A rock locks
+ *  for mining lasers / tractors, keyed `s:<swarmId>` exactly as the lock line
+ *  keys terrain (non-hostile: terrain never gets a failsafe ring). */
+const LOCKABLE = new Set(['ship', 'lingering', 'drone', 'structure', 'pod', 'asteroid']);
 
 export function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null {
   const kind = useUIStore((s) => s.selection.focusKind);

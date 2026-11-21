@@ -16,6 +16,7 @@ import type { DrawnShellTiming } from '../drawnShellTiming';
 import type { DataChannelTransport } from '../dataChannelTransport.js';
 import { resetSwarmDisplayDelay } from '../swarmInterpolation.js';
 import { resetMissileDisplayDelay } from '../../combat/MissileMirror.js';
+import { resetRenderDueSnapCount } from '../renderTickPhase.js';
 
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 
@@ -183,6 +184,7 @@ export function resetPredictionState(ctx: PredictionResetCtx): void {
   // transit gap would produce nonsense motion. Reset to -1 sentinel;
   // next physics tick post-transit re-stamps it.
   ctx.lastLocalTickAtMs = -1;
+  resetRenderDueSnapCount(); // the render due time restarts: count snaps from here
 
   // Phase 2 swift-otter — close the DataChannel transport on sector
   // handoff. The source room's PeerConnection is torn down; the

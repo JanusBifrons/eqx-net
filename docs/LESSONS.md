@@ -3335,6 +3335,16 @@ unknown attacker id counted as a player, so a rock that rammed an elite "earned"
 looked up as a structure owner. `classifyAttacker` now takes the swarm registry and classes a registry
 rock or wreck piece as `environment`, by kind.
 
+## 2026-11-21 — an RTT measured against a synthesised ack only measures your own lead
+
+The input lead sized itself from `lastRtt − lead × 16.67 ms`. The server acks tick X at server tick X
+even when input X has not arrived (the held-input rule), so `lastRtt` equals the lead by construction and
+the sample was ~0 on every link. On a phone over the tunnel the lead sat at 2–3 ticks on a ~100 ms
+link. Inputs landed late, held repeats replaced them, and the heading snapped by whole turn steps.
+Measure lateness where it happens: the server records `inputLeadMargin` for each input and sends it as
+the snapshot `inputMargin`, and the client sizes the lead from `inputPathTicks` (prediction-and-correction
+"Adaptive lookahead"). Treat any timing derived from an ack the server can synthesise as suspect.
+
 ## 2026-11-21 — the touch stick wobbled fast hulls left/right every tick
 
 Phone report: flying forward on the stick, the ship "would quite often jitter from left to right".
@@ -3388,3 +3398,24 @@ frozen `EMPTY_AIM_IDS` on `mirror.localAimMountIds`, so in strict-mode ESM the t
 `dispose_complete`, mirror half-cleared) on every leave from the Lost Connection overlay. A generic
 walk that mutates must check `Object.isFrozen` and swap in a fresh value instead; a test that stores
 a frozen constant on the mirror (`colyseusClient.disposeAudit.test.ts`) locks it.
+
+## 2026-11-21 — a fixed speculation cap breaks when the horizon it bounds grows
+
+Remote ships forward-predict their held bits from `serverTick` across the lead (the replay) plus a
+snapshot interval of live ticks. The stall cap was a fixed 8 ticks, sized when the lead sat on its
+3-tick floor. Sizing the lead from the server's input margin let it grow (an idle observer also keeps
+its initial 6: it sends no input, so it gets no margin): every snapshot then cut the last held ticks,
+landed a correction, and the hysteresis guard turned remote prediction off
+(`remote-ship-held-thrust.spec.ts`: 13 u per snapshot). A cap on a window must be relative to the
+window: `remoteForwardTickCap(lead)`. When you resize a lead, grep for every constant that assumed
+its old size.
+
+## 2026-11-21 — a button that acts on touchstart hands its release to whatever it opened
+
+The dial's Warp action runs on `touchstart` (so a second finger works), which opens the warp picker
+under the still-down finger. On release the browser's click for that touch landed on the picker row
+now under it, and the ship warped: one press opened the menu and picked. `preventDefault()` in a
+React `onTouchStart` cannot stop that click (React's touchstart listener is passive), and the dial's
+own click-suppress window only guards the dial. Options of a menu opened on touchstart bind
+`useFreshPress` (`touchClickActivate.ts`): they act only on a pointerdown on the same option, at
+least `MENU_ARM_MS` after opening, then its click (keyboard clicks, `detail === 0`, always act).

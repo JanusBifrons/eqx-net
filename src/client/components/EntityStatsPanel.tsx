@@ -36,8 +36,8 @@ import { TargetAction } from './TargetAction';
 import { ACTION_BTN_SX, ICON_SX, StructureManageActions } from './StructureManageActions';
 import { canManageBuildings } from '../structures/buildingManagement';
 // Moved with the management buttons; re-exported so existing importers keep working.
-import { droneName, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
-import { BUILD_AWAITING_CLEAR_LINE, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
+import { droneName, parkedHullLabels, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
+import { BUILD_AWAITING_CLEAR_LINE, buildStalledLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
 
 /**
  * Click-to-inspect live stats panel (structures follow-up Item B6).
@@ -78,6 +78,8 @@ interface PanelData {
   buildPct?: number; // [0..1]; < 1 ⇒ under construction
   /** Build done but still a blueprint: a ship inside its footprint (`buildAwaitingClear.ts`). */
   buildBlocked?: boolean;
+  /** Why a paused build is paused (`buildStalledLine`): dry bank or not connected. */
+  buildStalled?: string;
   powered?: boolean;
   /** Built (not a blueprint): an unbuilt one is off the grid, so never UNPOWERED. */
   built?: boolean;
@@ -261,6 +263,10 @@ export function EntityStatsPanel(): JSX.Element | null {
         // blueprintBody.ts) — without this the bar just vanished, unexplained.
         <Box sx={POWER_SX} data-testid="entity-stats-build-blocked">{BUILD_AWAITING_CLEAR_LINE}</Box>
       )}
+      {building && data.buildStalled !== undefined && (
+        // The bank ran dry or no Capital routes to it: say why the bar stopped.
+        <Box sx={POWER_SX} data-testid="entity-stats-build-stalled">{data.buildStalled}</Box>
+      )}
       {hasCharge && (
         <>
           <Cap>CHRG</Cap>
@@ -421,7 +427,7 @@ export function EntityStatsPanel(): JSX.Element | null {
 // equality check. Listed explicitly (not Object.keys) so a future non-primitive
 // field forces a deliberate decision here instead of silently mis-comparing.
 const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
-  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'powered', 'built',
+  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'buildStalled', 'powered', 'built',
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'connCount', 'connMax', 'owner',
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
@@ -472,6 +478,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     if (st) {
       data.buildPct = st.buildPct;
       if (isBuildAwaitingClear(st)) data.buildBlocked = true;
+      const stalled = buildStalledLine(st);
+      if (stalled !== undefined) data.buildStalled = stalled;
       data.powered = st.powered;
       data.built = st.built;
       data.netPower = st.netPower;
@@ -602,18 +610,18 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
   }
   // LINGERING HULL (R2.23) — the name line already shows WHOSE hull it is (the
   // owner's server-propagated display name); never surface the raw ownerPlayerId
-  // (no ids in the UI). Absent name ⇒ "Abandoned hull"; the info line is the kind.
+  // (no ids in the UI). Labels come from parkedHullLabels (mine reads as mine).
   if (kind === 'lingering') {
     // A parked hull lives in the one ship list under its shipInstanceId
     // (RTS Part A S3); only a parked hull gets this panel (#17).
     const l = client.mirror.ships.get(id);
     if (!l || !isParkedHull(client.mirror, id, l)) return null;
+    const mine = isOwnedByMe(client.mirror, id, l);
     const data: PanelData = {
-      name: l.displayName || 'Abandoned hull',
+      ...parkedHullLabels(l.displayName, l.kind, mine),
       hpPct: 0,
       shieldPct: null,
       noHull: true,
-      infoLine: `${l.kind ?? 'ship'}`,
       // C3 — a parked hull's cargo: yours opens (move cargo between your
       // ships); anyone else's needs a break-in.
       cargoShip: id,
@@ -621,7 +629,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     // WS-A2 — a lingering hull the LOCAL player owns is reclaimable via the
     // in-world Pilot action. The selection id IS the shipInstanceId (the
     // its `mirror.ships` key), which is exactly what `pilot_ship` needs.
-    if (isOwnedByMe(client.mirror, id, l)) data.pilotShipId = id;
+    if (mine) data.pilotShipId = id;
     return data;
   }
   return null;

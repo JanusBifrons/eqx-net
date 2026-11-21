@@ -102,25 +102,26 @@ describe('structureLevel — effective connection cap (Equinox Phase-5 audit)', 
     expect(effectiveStructureMaxConnections(6, 1, 'connector')).toBe(6);
     expect(effectiveStructureMaxConnections(6, undefined, 'connector')).toBe(6);
   });
-  it('UPGRADING adds slots — each level grants STRUCTURE_CONNECTIONS_PER_LEVEL more', () => {
-    // The whole point of the bug fix: an upgraded connector can hold MORE links.
-    expect(effectiveStructureMaxConnections(6, 2, 'connector')).toBe(6 + STRUCTURE_CONNECTIONS_PER_LEVEL);
-    expect(effectiveStructureMaxConnections(6, 3, 'connector')).toBe(6 + 2 * STRUCTURE_CONNECTIONS_PER_LEVEL);
-    // A maxed connector (cap 5) reaches base + 4 grants.
-    expect(effectiveStructureMaxConnections(6, 5, 'connector')).toBe(6 + 4 * STRUCTURE_CONNECTIONS_PER_LEVEL);
-    expect(effectiveStructureMaxConnections(6, 5, 'connector')).toBeGreaterThan(6);
+  it('UPGRADING adds slots — each level grants STRUCTURE_CONNECTIONS_PER_LEVEL more, up to the sockets', () => {
+    // A battery (base 1, 4 sockets) gains a slot per level until its sockets run out.
+    expect(effectiveStructureMaxConnections(1, 2, 'battery')).toBe(1 + STRUCTURE_CONNECTIONS_PER_LEVEL);
+    expect(effectiveStructureMaxConnections(1, 3, 'battery')).toBe(1 + 2 * STRUCTURE_CONNECTIONS_PER_LEVEL);
+    // A connector already uses all 6 sockets at level 1: upgrading adds none.
+    expect(effectiveStructureMaxConnections(6, 5, 'connector')).toBe(6);
+    // A shield emitter is not socket-bound: its cap grows freely.
+    expect(effectiveStructureMaxConnections(3, 5, 'shield_pylon')).toBe(3 + 4 * STRUCTURE_CONNECTIONS_PER_LEVEL);
   });
   it('clamps an out-of-range level (never below the base cap)', () => {
-    expect(effectiveStructureMaxConnections(6, 0, 'connector')).toBe(6);
-    expect(effectiveStructureMaxConnections(6, 99, 'connector')).toBe(effectiveStructureMaxConnections(6, STRUCTURE_LEVEL_CAP, 'connector'));
+    expect(effectiveStructureMaxConnections(1, 0, 'battery')).toBe(1);
+    expect(effectiveStructureMaxConnections(1, 99, 'battery')).toBe(effectiveStructureMaxConnections(1, STRUCTURE_LEVEL_CAP, 'battery'));
   });
-  it('a socket-bound kind is clamped to its sockets; connectors and shield emitters are not', () => {
+  it('a socket-bound kind is clamped to its sockets (connectors too); shield emitters are not', () => {
     // Battery: 4 sockets, so a top-level battery holds 4 links, not 1 + 4.
     expect(effectiveStructureMaxConnections(1, STRUCTURE_LEVEL_CAP, 'battery')).toBe(4);
     expect(effectiveStructureMaxConnections(1, 1, 'battery')).toBe(1);
-    // Connector: 6 faces but takes cables from any side, so 10 at the top.
-    expect(effectiveStructureMaxConnections(6, STRUCTURE_LEVEL_CAP, 'connector')).toBe(10);
-    expect(structureLinksBoundBySockets('connector')).toBe(false);
+    // Connector: 6 sockets, one cable each (owner: no two connectors in one slot), so 6 at the top.
+    expect(effectiveStructureMaxConnections(6, STRUCTURE_LEVEL_CAP, 'connector')).toBe(6);
+    expect(structureLinksBoundBySockets('connector')).toBe(true);
     expect(structureLinksBoundBySockets('shield_pylon')).toBe(false);
     expect(structureLinksBoundBySockets('shield_gate')).toBe(false);
     expect(structureLinksBoundBySockets('shield_airlock')).toBe(false);
