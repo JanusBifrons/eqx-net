@@ -9,7 +9,7 @@
  * Steady state allocates nothing (#14): group/lock/wire objects are created on
  * join, on a new lock or on a ship change, then mutated in place.
  */
-import { LOCK_TUNING, lockCapacityFor, sensorFor, NO_PILOT_MODS } from '../../shared-types/combat/lockProfile.js';
+import { LOCK_TUNING, lockCapacityFor, sensorFor, signatureFor, NO_PILOT_MODS } from '../../shared-types/combat/lockProfile.js';
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { adoptShipLineage, lineageRekey, rekeyBlockedLine, rekeyUnworkable, splitGroupLocks } from './lockSplit.js';
@@ -19,7 +19,7 @@ import { lockSalvageFlags, refreshLockSalvage, type LockSalvageDeps } from './lo
 import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
 import { groupArcs, groupGeometry, shipGroups } from './lockGroups.js';
 export { groupArcs, groupGeometry };
-import { mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
+import { mountInReach, mountWeaponReach, shipLockRange } from '../../core/combat/mountReach.js';
 import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
@@ -85,7 +85,7 @@ export type GroupMode = 'auto' | 'manual';
 
 /** One lock of a group in the own-ship snapshot (`states[].groups`). `r`: released
  *  (draining). `c`: can't lock right now (untrackable: too small or fast for the
- *  group's guns; locks work at any distance); the HUD shows CAN'T TRACK. `f`: salvage
+ *  group's guns, or past lock range); the HUD shows CAN'T TRACK. `f`: salvage
  *  bits (`LOCK_SALVAGE` | tier | `LOCK_CONSUMABLE`; absent = 0), the client's `pickTurretLock` input. */
 export interface WireLock { t: string; s: number; p: number; r?: 1; c?: 1; f?: number }
 export interface WireGroup { id: string; m: 0 | 1; l: WireLock[] }
@@ -127,6 +127,9 @@ interface PlayerLocks {
   kindId: string;
   activatedSig: number;
   sensor: number;
+  /** The ship's lock range (`shipLockRange`: its longest gun) plus its own
+   *  hull radius: lock range runs hull to hull. */
+  lockReach: number;
   groups: GroupState[];
   wire: WireGroup[];
 }
@@ -184,7 +187,7 @@ export class LockSubsystem {
     const startManual = groupMode === 'manual';
     const p = this.players.get(playerId);
     if (p) { p.instant = instant; p.startManual = startManual; p.anyTarget = anyTarget; return; }
-    this.players.set(playerId, { instant, anyTarget, startManual, kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] });
+    this.players.set(playerId, { instant, anyTarget, startManual, kindId: '', activatedSig: -1, sensor: 1, lockReach: 0, groups: [], wire: [] });
   }
 
   /** The testMode `instantLock` trigger is on for this player. */
@@ -236,7 +239,7 @@ export class LockSubsystem {
     if (into === null) { this.clearLocks(from); return; }
     let dst = into.players.get(to);
     if (dst === undefined) {
-      dst = { instant: src.instant, anyTarget: src.anyTarget, startManual: src.startManual, kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] };
+      dst = { instant: src.instant, anyTarget: src.anyTarget, startManual: src.startManual, kindId: '', activatedSig: -1, sensor: 1, lockReach: 0, groups: [], wire: [] };
       into.players.set(to, dst);
     }
     // Swap the group lists: the destination takes the ship's, the source is left empty.
@@ -249,6 +252,7 @@ export class LockSubsystem {
     dst.kindId = src.kindId;
     dst.activatedSig = src.activatedSig;
     dst.sensor = src.sensor;
+    dst.lockReach = src.lockReach;
     this.clearLocks(from);
     for (const g of groups) {
       g.mode = dst.startManual ? 'manual' : g.slotMode;
@@ -297,6 +301,7 @@ export class LockSubsystem {
     p.kindId = ship.kind.id;
     p.activatedSig = sig;
     p.sensor = sensorFor(ship.kind) * NO_PILOT_MODS.lockSpeed;
+    p.lockReach = signatureFor(ship.kind) + shipLockRange(ship.kind);
     p.groups.length = 0;
     p.wire.length = 0;
     for (const { slot, mounts } of shipGroups(ship.kind, ship.activated)) {
@@ -395,7 +400,8 @@ export class LockSubsystem {
     if (bearing === undefined || !Number.isFinite(bearing)) return false;
     if (!this.deps.shooterPose(playerId, this.shooter)) return false;
     if (!this.deps.resolveTarget(playerId, key, this.target)) return false;
-    return lockLineHolds(this.target.x - this.shooter.x, this.target.y - this.shooter.y, bearing, this.target.radius, g.reach);
+    const lockReach = this.players.get(playerId)?.lockReach ?? 0;
+    return lockLineHolds(this.target.x - this.shooter.x, this.target.y - this.shooter.y, bearing, this.target.radius, g.reach, lockReach);
   }
 
   /**
@@ -566,11 +572,12 @@ export class LockSubsystem {
   }
 
   private stepGroup(playerId: string, p: PlayerLocks, g: GroupState, ship: LockShip): void {
-    // Locks work at any distance (owner 2026-11-14). An AUTO group's own pick
+    // A lock holds out to the ship's lock range (its longest gun,
+    // `shipLockRange`), whatever this group's reach. An AUTO group's own pick
     // is released once its target leaves the group's FIRE range (reach ×
     // `reachSlack`, the hysteresis over the in-reach pick), so AUTO re-picks
     // instead of sitting on a target it can't shoot. A lock the pilot asked
-    // for (manual, or a lock line) persists at any distance.
+    // for (manual, or a lock line) persists out to lock range.
     if (g.mode === 'auto') {
       for (let i = g.locks.length - 1; i >= 0; i--) {
         const e = g.locks[i]!;
@@ -637,7 +644,7 @@ export class LockSubsystem {
   private lockSecsNow(p: PlayerLocks, g: GroupState): number {
     const inp = this.inputs, t = this.target, s = this.shooter;
     inp.refSize = g.refSize; inp.tracking = g.tracking; inp.absRange = g.absRange; inp.reach = g.reach;
-    inp.sensor = p.sensor; inp.pilotSpeed = 1; inp.signature = t.radius;
+    inp.sensor = p.sensor; inp.pilotSpeed = 1; inp.signature = t.radius; inp.hullRadii = t.radius; inp.lockRange = p.lockReach;
     inp.dx = t.x - s.x; inp.dy = t.y - s.y; inp.dvx = t.vx - s.vx; inp.dvy = t.vy - s.vy;
     return lockSeconds(inp, LOCK_TUNING);
   }

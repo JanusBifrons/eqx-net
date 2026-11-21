@@ -672,15 +672,16 @@ function GameSurface({
       }
       // WS-10 (R2.5) — Escape cancels structure placement. Main-thread + window
       // level so it works on BOTH render paths (the renderer can't touch
-      // Zustand). No-op when not placing.
-      if (e.key === 'Escape' && useUIStore.getState().placementKind) cancelPlacement();
+      // Zustand). No-op when not placing. Marked handled so a side panel's Esc
+      // (SidePanel escapeClosesPanel) never also fires on the same press.
+      if (e.key === 'Escape' && useUIStore.getState().placementKind) { cancelPlacement(); e.preventDefault(); }
       // RTS slice 14b — Escape cancels a fleet map pick; Enter is Done for a
       // patrol route with enough points. Not from a text field.
       const pick = useUIStore.getState().fleetPick;
       const inField = e.target instanceof HTMLElement
         && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
       if (pick !== null && !inField) {
-        if (e.key === 'Escape') useUIStore.getState().setFleetPick(null);
+        if (e.key === 'Escape') { useUIStore.getState().setFleetPick(null); e.preventDefault(); }
         else if (e.key === 'Enter' && canFinishFleetPick(pick)) useUIStore.getState().requestFleetPickDone();
       }
       // Phase V — R rotates the placement ghost a quarter turn (structures are
@@ -965,11 +966,12 @@ function GameSurface({
        *  owned ship's in-world Pilot action. */}
       {/* Phase 4 warp-to destination picker (portalled; solar sectors only). */}
       <WarpPicker />
-      {/* Click-to-inspect live stats (structures follow-up Item B6). Visible
-       *  only while an entity is selected. WS-9 (R2.30) — WORLD-ANCHORED: rendered
-       *  OUTSIDE the Slot system as a `position:fixed` element that gameRafLoop
-       *  moves to the renderer's projection of the selected entity (any kind). */}
-      <EntityStatsPanel />
+      {/* The selection card (any kind), docked LAST in the top-centre stack
+       *  (order 10, after the helm, toasts and the compact Pilot toggle at 9):
+       *  it appears, vanishes and changes height with the selection, so
+       *  nothing with buttons sits below it to be pushed about. Pointer-
+       *  transparent like before; its action row re-enables taps. */}
+      <Slot anchor="top-center" order={10} pointerEvents="none"><EntityStatsPanel /></Slot>
       {/* Phase 4 WS-B2 — ship stat-upgrade modal. Opens on the local ship's
        *  level-up (the WS-B1 `pendingLevelUp` seam) to spend the earned point. */}
       <UpgradeModalHost />

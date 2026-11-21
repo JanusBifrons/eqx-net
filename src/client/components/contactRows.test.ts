@@ -82,7 +82,7 @@ describe('buildContactRows', () => {
     expect(byKey.get('s:10')!.icon).toBe('structure');
   });
 
-  it('reach: the FIRE reach of the active group vs any group (locks work at any distance)', () => {
+  it('reach: the FIRE reach of the active group vs any group (not the lock range)', () => {
     const byKey = new Map(buildContactRows(mirror(), 'guns', REACHES).map((r) => [r.key, r]));
     // 500 u: inside the guns (600).
     expect(byKey.get('s:8')).toMatchObject({ inActiveReach: true, inAnyReach: true });

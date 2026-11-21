@@ -42,10 +42,11 @@ import {
 import { isTeleporterKind } from '../../shared-types/teleport.js';
 import { writeConnToRow, writeStorageFillRow, writeTeleporterRow } from '../structures/structureStateRows.js';
 import { writeRigClipRow } from '../structures/structureRigClip.js';
+import { structureReadsPowered } from '../structures/structurePowerSwitch.js';
 import { writeDoorMotionRow, type GateDoorSource } from './doorMotionRow.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
-import { PROD_STATE, encodeBpRuns, encodeGood, encodeProdBay, encodeProdCount, encodeProdFrac, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
+import { PROD_STATE, encodeBpProduct, encodeBpRuns, encodeGood, encodeProdBay, encodeProdCount, encodeProdFrac, encodeProdQ0, encodeProdQ1, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
 import { shipyardBayOf } from '../../core/articulation/rigs/heavyIndustry.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { isStructureBodySolid } from '../../core/structures/structureBody.js';
@@ -146,7 +147,7 @@ export class StructuresSliceSync {
       const hpPct = Math.round((Math.max(0, hp) / hpMax) * 100);
       let flags = 0;
       if (rec.isConstructed) flags |= STRUCTURE_FLAG_BUILT;
-      if (summary.powered) flags |= STRUCTURE_FLAG_POWERED;
+      if (structureReadsPowered(rec, summary.powered)) flags |= STRUCTURE_FLAG_POWERED; // its work held for lack of power reads unpowered
       if (rec.isDeconstructing) flags |= STRUCTURE_FLAG_DECONSTRUCTING;
       if (!isStructureBodySolid(rec)) flags |= STRUCTURE_FLAG_GHOST_BODY; // hologram pass-through
       // Every kind's flags (NOT inside the shield-emitter branch below — they
@@ -226,9 +227,19 @@ export class StructuresSliceSync {
         if ((st.prodCount ?? SD.prodCount) !== pc) st.prodCount = pc;
         const pf = encodeProdFrac(h.production().cycleFraction(rec)); // loop 3L (#16)
         if ((st.prodFrac ?? SD.prodFrac) !== pf) st.prodFrac = pf;
-        // Loop 3R (#16): the bay this build is in; no build queue on this base yet.
-        const pb = rec.kind === 'shipyard' ? encodeProdBay(shipyardBayOf(rec.prodCycles), 0) : 0;
+        // Loop 3R (#16): the bay this build is in + the builds queued behind it
+        // (B4: the recipe queue's length; encodeProdBay caps it at PROD_QUEUE_MAX).
+        const queued = rec.prodQueue?.length ?? 0;
+        const pb = rec.kind === 'shipyard' ? encodeProdBay(shipyardBayOf(rec.prodCycles), queued) : 0;
         if ((st.prodBay ?? SD.prodBay) !== pb) st.prodBay = pb;
+        // Building panels B4 (#16): the recipe queue + repeat flag.
+        const q0 = encodeProdQ0(rec.prodQueue);
+        if ((st.prodQ0 ?? SD.prodQ0) !== q0) st.prodQ0 = q0;
+        // B7 (#16): the slot blueprint rides prodQ1 bits 24..30; network stock in bpAvail.
+        const q1 = encodeProdQ1(rec.prodQueue, rec.prodQueueRepeat, encodeBpProduct(rec.kind, rec.blueprint?.product));
+        if ((st.prodQ1 ?? SD.prodQ1) !== q1) st.prodQ1 = q1;
+        const ba = rec.bpAvail ?? SD.bpAvail;
+        if ((st.bpAvail ?? SD.bpAvail) !== ba) st.bpAvail = ba;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
       writeStorageFillRow(rec, st); // storage fill gauge, on step change only

@@ -6,13 +6,13 @@ import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
 import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { commitChosenPlacement, cyclePlacementRotation, getPlacementMirror, togglePlacementMirror } from '../structures/structurePlacementClient';
+import { cyclePlacementRotation, getPlacementMirror, togglePlacementMirror } from '../structures/structurePlacementClient';
 import { isTouchDevice } from '../input/TouchInput';
 import { getPlacementRejection, subscribePlacementRejection } from '../structures/placementChosen';
 import { Slot } from '../layout/Slot';
 import { PlacementFenceHint } from './PlacementFenceHint';
 import { PlacementLinkHint } from './PlacementLinkHint';
-import { cancelPlacement } from '../structures/placementCancel';
+import { cancelPlacement, commitPlacement } from '../structures/placementCancel';
 
 /**
  * Placement confirm banner (speed-dial-resource-structures plan, Phase 2).
@@ -43,7 +43,6 @@ export function StructurePlacementBanner(): JSX.Element | null {
   const placementKind = useUIStore((s) => s.placementKind);
   // The mirror choice is module state; this only re-renders the pressed look.
   const [, bumpMirror] = useState(0);
-  const setPlacementKind = useUIStore((s) => s.setPlacementKind);
   // The ghost's verdict (the server's own placement rule): blocked ⇒ Confirm
   // is disabled, the reason line under the banner says why.
   const blocked = useSyncExternalStore(subscribePlacementRejection, getPlacementRejection) !== null;
@@ -60,11 +59,11 @@ export function StructurePlacementBanner(): JSX.Element | null {
   const kind = getStructureKind(placementKind);
 
   const onConfirm = (): void => {
-    // Commit at the pointer-chosen world point via the shared path (production
-    // `placementChosen` channel — NOT the webdriver-gated dataset; smoke
-    // 2026-06-07 capture kuytvy). Identical to the WS-10 desktop one-click place.
-    // A refused commit (the ghost went red) keeps placement open.
-    if (commitChosenPlacement(placementKind)) setPlacementKind(null);
+    // Commit at the pointer-chosen world point via the ONE path the desktop
+    // click uses too (`commitPlacement`): you KEEP placing the same building
+    // until Cancel, except a place-once kind or the last crate (build-menu M3).
+    // A refused commit (the ghost went red) keeps placement open too.
+    commitPlacement(placementKind);
   };
   const onCancel = (): void => cancelPlacement();
   // Same quarter-turn the desktop R key applies; the renderer reads it through
