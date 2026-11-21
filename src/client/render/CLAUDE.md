@@ -10,3 +10,4 @@
 - **Never** add a new inline pass, or a field in PixiRenderer that serves one feature: the field belongs in that feature's ctx.
 - Moves out of PixiRenderer are verbatim (behaviour identical) and lower its cap in `scripts/audit-god-files.mjs` in the same PR; never raise a cap or trim comments to fit.
 - A new file stays ≤ 600 LOC.
+- **Arcs** go through `arcSubpath` (`arcSubpath.ts`), never `moveTo` + `arc()`: Pixi tessellates the repeated start point to NaN and phones draw a line to the origin (docs/LESSONS.md).

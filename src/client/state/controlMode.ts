@@ -6,6 +6,6 @@ import type { ControlMode, UIStore } from './storeTypes.js';
  * Store-free (re-exported from `store.ts`) so pure helpers can use it without
  * pulling in the store.
  */
-export function selectControlMode(s: Pick<UIStore, 'pilotMode' | 'buildMode'>): ControlMode {
-  return s.buildMode ? 'build' : s.pilotMode === 'spectator' ? 'command' : 'fly';
+export function selectControlMode(s: Pick<UIStore, 'pilotMode' | 'buildMode'> & Partial<Pick<UIStore, 'pendingCommandStart'>>): ControlMode {
+  return s.buildMode ? 'build' : s.pilotMode === 'spectator' || s.pendingCommandStart === true ? 'command' : 'fly';
 }
