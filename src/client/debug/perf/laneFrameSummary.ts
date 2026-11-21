@@ -9,6 +9,9 @@
  * event: it rides the existing streaming capture (`streamingDiag.ts`) to the
  * server, which writes it to the session's `frames.ndjson`
  * (`diagRouter.ts` BUCKETS). Numbers only: no ids, names or positions.
+ * Each line also carries the drone / missile display-delay window
+ * (`laneDelayWindow.ts`): the drone delay is sampled on the same per-frame
+ * call, the counters read at the window edge.
  */
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
@@ -16,6 +19,16 @@ import { isAutoCaptureEnabled, logEvent } from '../ClientLogger';
 import { getGameClient } from '../../net/clientSingleton';
 import type { PredictionStats } from '../../net/predictionStats';
 import type { ControlMode } from '../../state/storeTypes';
+import {
+  getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs, getSwarmSteadyDisplayDelayMs,
+  getSwarmHoldFrameCount, getSwarmResyncCount, getSwarmGlideLimitCount,
+  getSwarmOldEndClampCount, getSwarmLatenessCount,
+} from '../../net/swarmInterpolation.js';
+import { getMissileHoldFrameCount, getMissileResyncCount } from '../../combat/MissileMirror.js';
+import {
+  createLaneDelayWindow, sampleLaneDelay, takeLaneDelayWindow,
+  type LaneDelayReadings, type LaneDelayWindow,
+} from './laneDelayWindow.js';
 
 export const LANE_SUMMARY_INTERVAL_MS = 10_000;
 /** A frame over this is a hitch the player sees (3+ refreshes at 60 Hz). */
@@ -95,6 +108,7 @@ export function applyLaneStallContext<T extends object>(data: T, viewHalf: numbe
 }
 
 let ring: FrameTimeRing | null = null;
+let delayWindow: LaneDelayWindow | null = null;
 let renderer: IRenderer | null = null;
 let readMode: (() => LaneControlMode) | null = null;
 
@@ -109,7 +123,26 @@ export function withLaneStallContext<T extends object>(data: T): T {
 
 /** One processed frame's gap (ms). Hot path: a null check when off. */
 export function recordLaneFrame(ms: number): void {
-  if (ring !== null) ring.push(ms);
+  if (ring === null) return;
+  ring.push(ms);
+  if (delayWindow !== null) sampleLaneDelay(delayWindow, getSwarmDisplayDelayMs());
+}
+
+/** The delay getters and cumulative counters now (window edge only). */
+function readLaneDelay(missileDelayMs: number): LaneDelayReadings {
+  return {
+    delayMs: getSwarmDisplayDelayMs(),
+    targetMs: getSwarmDisplayDelayTargetMs(),
+    steadyMs: getSwarmSteadyDisplayDelayMs(),
+    holdFrames: getSwarmHoldFrameCount(),
+    resyncs: getSwarmResyncCount(),
+    glideLimits: getSwarmGlideLimitCount(),
+    oldEndClamps: getSwarmOldEndClampCount(),
+    swarmPackets: getSwarmLatenessCount(),
+    missileDelayMs,
+    missileHoldFrames: getMissileHoldFrameCount(),
+    missileResyncs: getMissileResyncCount(),
+  };
 }
 
 export function lanePerfSummaryEnabled(): boolean {
@@ -121,6 +154,9 @@ export function installLanePerfSummary(rendererIn: IRenderer, controlMode: () =>
   renderer = rendererIn;
   readMode = controlMode;
   if (ring !== null || !lanePerfSummaryEnabled()) return;
+  const delays = (delayWindow = createLaneDelayWindow());
+  // Baseline the counters so the first window counts only its own events.
+  takeLaneDelayWindow(delays, readLaneDelay(Number.NaN));
   const frames = (ring = new FrameTimeRing(4096));
   // Real time: frame timing is wall time
   let windowStart = performance.now();
@@ -140,8 +176,10 @@ export function installLanePerfSummary(rendererIn: IRenderer, controlMode: () =>
       correctionsBefore,
     });
     correctionsBefore = client?.stats.significantCorrectionCount ?? 0;
+    // The missile stream's delay rides the mirror (NaN before it seeds).
+    const delay = takeLaneDelayWindow(delays, readLaneDelay(m?.swarmDisplayDelayMs ?? Number.NaN));
     frames.reset();
     windowStart = now;
-    logEvent('perf_summary', summary as unknown as Record<string, unknown>);
+    logEvent('perf_summary', { ...summary, ...delay } as unknown as Record<string, unknown>);
   }, LANE_SUMMARY_INTERVAL_MS);
 }

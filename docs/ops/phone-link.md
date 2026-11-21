@@ -77,6 +77,8 @@ Every lane play session leaves numbers on disk with no extra step:
     on the client, `rttMs`/`rttMeanMs`/`jitterMs`, `corrections` (own-ship
     corrections in the window), `corrRate`, `maxDrift`. Numbers only: no ids,
     names or positions (`src/client/debug/perf/laneFrameSummary.ts`).
+    Each line also carries the display-delay machinery (wall ms; field list
+    in [diagnostic-captures](../architecture/diagnostic-captures.md#perf_summary-display-delay-fields)).
   - `perf.ndjson`: individual stutters (`raf_stutter` 30–100 ms, `raf_gap`
     over 100 ms), long animation frames (`loaf`), long tasks, heap samples,
     device info. In a lane build every `raf_stutter`, `raf_gap` and `loaf`
