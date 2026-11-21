@@ -90,9 +90,13 @@ drop at the cap, merges into a pod instead of evicting one.
 hulls never collect. A ship with no roster row (engineering rooms, roster
 full) has nowhere to keep a hold, so it can't pick anything up.
 
-**Client truth.** The own active ship's hold rides `SnapshotMessage.states[].cargo`
-(invariant #16, zero bytes when empty). `loot_collected` is only the popup
-accelerator. A lost message loses a popup, never value.
+**Client truth.** The own ship's hold rides `SnapshotMessage.states[].cargo`
+(invariant #16, zero bytes when empty). "Own ship" is `PilotSwap.ownShipKey`:
+the flown hull, else the hull parked by Command / Build (the hold Build takes
+crates from; `snapshotOwnHold.ts`), and the client applies it in both modes.
+Lock: `parkedHullCargoSlice.test.ts`, `ColyseusClient.parkedCargo.test.ts`.
+`loot_collected` is only the popup accelerator. A lost message loses a popup,
+never value.
 
 ## Death seams (all spill the hold)
 
