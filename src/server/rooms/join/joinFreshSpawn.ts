@@ -30,7 +30,7 @@ import { getStarterGrantEconomy, grantStarter } from '../../economy/starterGrant
 import { tuningFor } from '../../../shared-types/shipScale/lookup.js';
 import { nearestClearPoint } from '../../../core/bases/baseSite.js';
 import { effectiveShipShieldMax, effectiveShipEnergyMax } from '../../../core/leveling/shipStats.js';
-import { getUser } from '../../auth/AuthService.js';
+import { shipOwnerLabel } from '../../auth/userLabel.js';
 import { getPlayerShipStore, getHoldStore } from '../../db/PersistenceWorker.js';
 import { setSession } from '../../transit/sessionRegistry.js';
 import { serverLogEvent } from '../../debug/ServerEventLog.js';
@@ -510,10 +510,7 @@ export function joinFreshSpawn(
   // render a name above their ship. `displayName` is preferred; the
   // email is the documented fallback (see plan). Anonymous players
   // leave an empty string and the client falls back to `Pilot ${id}`.
-  if (effectiveUserId) {
-    const user = getUser(effectiveUserId);
-    if (user) ship.displayName = user.displayName ?? user.email ?? '';
-  }
+  if (effectiveUserId) ship.displayName = shipOwnerLabel(effectiveUserId);
 
   // Phase 8 sub-phase B — register session for diag inspection and future
   // multi-VM transit routing.

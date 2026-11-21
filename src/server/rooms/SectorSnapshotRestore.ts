@@ -33,6 +33,7 @@ import { TeleportRulesSchema, TeleportTollSchema, isTeleporterKind } from '../..
 import type { LootSubsystem } from '../cargo/LootSubsystem.js';
 import type { StorageService } from '../cargo/StorageService.js';
 import { getPlayerShipStore } from '../db/PersistenceWorker.js';
+import { shipOwnerLabel } from '../auth/userLabel.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { FleetCommandSubsystem } from '../fleet/FleetCommandSubsystem.js';
 import { canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
@@ -271,6 +272,10 @@ export class SectorSnapshotRestore {
       ship.playerId = canonicalPlayerId(r.playerId);
       ship.shipInstanceId = r.shipInstanceId;
       ship.kind = r.kind;
+      // The owner's name (the "whose hull" line), as a joining pilot's ship
+      // gets it: a Shipyard build, a warp arrival or a restart restore has no
+      // pilot to carry it in, so it comes from the roster row's account.
+      ship.displayName = shipOwnerLabel(rosterRow.userId);
       // WS-B1/B2/B3 — seed the per-instance progression from the roster so a
       // restored lingering hull renders its public level badge + activated
       // turrets to observers (the gap is keyed by the stable shipInstanceId).
