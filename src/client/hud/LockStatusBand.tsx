@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
 import { getShipKind } from '@shared-types/shipKinds';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getGameClient } from '../net/clientSingleton';
+import { swarmEntityName } from '../fleet/fleetView';
 import { useUIStore } from '../state/store';
 import { FAILSAFE_COLOUR, THREAT_COLOUR_HEX, groupColourHex } from './groupColours';
 import { HUD } from './tokens';
@@ -46,8 +47,7 @@ export interface OwnLockSummary {
 function nameOf(mirror: RenderMirror, key: string): string {
   if (key.startsWith('s:')) {
     const e = mirror.swarm?.get(Number(key.slice(2)));
-    if (e?.kind === 2) return 'Structure';
-    return e?.shipKind ? getShipKind(e.shipKind).displayName : 'Ship';
+    return e ? swarmEntityName(mirror, e, 'Ship') : 'Ship';
   }
   const s = mirror.ships.get(key.slice(2));
   return s?.displayName ?? (s?.kind ? getShipKind(s.kind).displayName : 'Pilot');

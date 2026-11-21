@@ -96,6 +96,30 @@ describe('summariseOwnLock', () => {
   });
 });
 
+// Phone film: a Mining Skiff's tractors on a rock piece read "TRACTORS →
+// Fighter". A wreck / scrap piece's shipKind byte is its parent (or junk for
+// a rock cut), never what the piece is: name it by its swarm kind.
+describe('own lock names a non-ship swarm target by what it is', () => {
+  const target = (id: number) => summariseOwnLock(mirror({
+    swarm: new Map([
+      [9, { kind: 4, shipKind: 'fighter', wreckId: 1, x: 0, y: 0 }],
+      [10, { kind: 4, shipKind: 'fighter', wreckId: 2, x: 0, y: 0 }],
+      [11, { kind: 3, shipKind: 'fighter', x: 0, y: 0 }],
+    ]) as unknown as RenderMirror['swarm'],
+    wrecks: new Map([[1, { parentKind: 'asteroid' }], [2, { parentKind: 'fighter' }]]) as unknown as RenderMirror['wrecks'],
+    localGroups: [{ id: 'tractor', m: 0, l: [{ t: `s:${id}`, s: 1, p: 35 }] }],
+  }), ['Tractors'])!.target;
+  it('a rock piece reads "Rock", not its junk ship kind', () => {
+    expect(target(9)).toBe('Rock');
+  });
+  it('a ship wreck piece reads "Wreck"', () => {
+    expect(target(10)).toBe('Wreck');
+  });
+  it('a scrap piece reads "Scrap"', () => {
+    expect(target(11)).toBe('Scrap');
+  });
+});
+
 // Frame review 2026-11-10: "Gunship LOCKING ON YOU 100%" while still acquiring.
 describe('acquiring readouts never show 100 % before LOCKED', () => {
   it('threat banner caps a 100 % acquiring lock at 99', () => {
