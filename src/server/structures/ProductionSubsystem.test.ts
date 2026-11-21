@@ -10,6 +10,7 @@ import type { StructureRecord, StructureRegistry } from './StructureRegistry.js'
 import { PROD_STATE, prodStatusLine } from '../../shared-types/production.js';
 import { CHUNK_REFINE_BATCH, RECIPES } from '../../shared-types/recipes.js';
 import { ROCK_CHUNK_PRODUCT, type BlueprintItem } from '../../shared-types/items.js';
+import { unownedOwner, walletOwnerOf } from '../../shared-types/relations.js';
 
 function bp(product: string, over: Partial<BlueprintItem> = {}): BlueprintItem {
   return { uid: 'bp1', product, kind: 'bpc', runs: 10, material: 0, output: 0, research: 0, ...over };
@@ -50,6 +51,16 @@ describe('ProductionSubsystem', () => {
     expect(bay.hold!.goods).toEqual({ minerals: 15, alloy: 1 });
     run(SMELT);
     expect(bay.hold!.goods).toEqual({ minerals: 5, alloy: 2 });
+  });
+
+  it('an ownerless base (capture 4E) keeps smelting into its own storage', () => {
+    const none = unownedOwner('pstruct-cap');
+    const bay = rec('bay', 'cargo_bay', { owner: none, hold: { goods: { minerals: 25 }, blueprints: [] } });
+    const smelter = rec('s', 'smelter', { owner: none });
+    const { run } = world([bay, smelter]);
+    run(SMELT);
+    expect(smelter.prodState).toBe(PROD_STATE.running);
+    expect(bay.hold!.goods).toEqual({ minerals: 15, alloy: 1 });
   });
 
   it('a starved processor reports the missing input and takes nothing', () => {
@@ -387,6 +398,18 @@ describe('ProductionSubsystem — habitation (D3)', () => {
     run(HAB.cyclePulses);
     expect(paid.length).toBe(2);
     // Taxes never land in a hold.
+    expect(Object.keys(bay.hold!.goods)).not.toContain('credits');
+  });
+
+  it('an ownerless base (capture 4E) keeps running its habitats, but the taxes go to no wallet', () => {
+    const none = unownedOwner('pstruct-cap');
+    const { bay, hab, paid, run } = city({ provisions: 8, consumer_goods: 2 }, none);
+    run(HAB.cyclePulses);
+    expect(hab.prodState).toBe(PROD_STATE.running);
+    expect(bay.hold!.goods).toEqual({ provisions: 4, consumer_goods: 1 });
+    // The room pays `walletOwnerOf(owner)`: nobody, so nothing is minted.
+    expect(paid).toEqual([{ owner: none, n: 300 }]);
+    expect(walletOwnerOf(paid[0]!.owner)).toBeNull();
     expect(Object.keys(bay.hold!.goods)).not.toContain('credits');
   });
 

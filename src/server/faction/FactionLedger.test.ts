@@ -157,3 +157,25 @@ describe('FactionLedger — NPC bases are not player factions (B2)', () => {
     expect(ledger.factionOf('pstruct-1')).toBeNull();
   });
 });
+
+describe('FactionLedger — an ownerless base (capture plan 4E) is nobody\'s faction', () => {
+  const NONE = 'none:pstruct-cap';
+
+  it('factionOf an ownerless structure is null: its hits escalate no faction', () => {
+    const { ledger } = makeLedger([struct('pstruct-2', NONE)]);
+    expect(ledger.factionOf('pstruct-2')).toBeNull();
+    expect(ledger.factionOf(NONE)).toBeNull();
+  });
+
+  it('baseReadiness never lists an ownerless base (no wave target, no base toast)', () => {
+    const { ledger } = makeLedger([
+      struct('a1', NONE, 'miner'), struct('a2', NONE, 'solar'), struct('a3', NONE, 'turret'),
+      struct('b1', 'alice', 'capital'),
+    ]);
+    const out = ledger.baseReadiness({
+      sectorKey: () => 'sol-prime', serverTick: () => 0, waveNeedsOwner: () => false,
+      ownerPresent: () => false, broadcastBaseReady: () => {},
+    });
+    expect(out.map((r) => r.factionId)).toEqual(['alice']);
+  });
+});

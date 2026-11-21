@@ -101,6 +101,10 @@ export interface SectorSnapshotStructure {
   teleport?: { partner?: { sectorKey: string; uid: string }; rules?: unknown; charge?: number; toll?: unknown };
   /** The packed item's quality (a deconstruct repacks it). */
   packedQuality?: number;
+  /** Capture plan 4E (S6) — the NPC base a fallen or captured piece was grown
+   *  in (`npc:<faction>:<baseId>`): that base never regrows. Absent ⇒ not from
+   *  a fallen base. Additive + optional (no schema bump). */
+  originBase?: string;
   prodProgress?: number;
   /** Build count (job 2E): outputs left. Absent ⇒ repeat forever. */
   prodCount?: number;
@@ -202,6 +206,11 @@ export interface SectorSnapshotPayload {
    *  Optional, additive (no version bump); re-validated on hydrate (schema,
    *  owner, membership, escort target). Absent when none. */
   squads?: FleetSavedSquad[];
+  /** Capture 4E (S6) — the NPC bases (`npc:<faction>:<baseId>`) that fell in
+   *  this sector (`StructureRegistry.fallenBases`); the seeders never regrow
+   *  them. Optional, additive (no version bump); re-validated on hydrate.
+   *  Absent when none (and on an old save). */
+  fallenBases?: string[];
 }
 
 /**

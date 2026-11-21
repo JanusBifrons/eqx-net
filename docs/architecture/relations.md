@@ -25,6 +25,7 @@ Both the actor and the owner are owner strings:
 | a player id (a UUID), or `scenario` in tests | a player or account |
 | `npc:<allegiance>` | an NPC side, e.g. a roaming robot: `npc:robots` |
 | `npc:<allegiance>:<baseId>` | an NPC base: `npc:traders:sol-3` |
+| `none:<lostCapitalId>` | an ownerless base: one whose last Capital was destroyed or packed (`unownedOwner`, `isUnownedOwner`) |
 
 - `npcOwner(allegiance, baseId?)` builds these strings.
 - `parseOwner` reads them, with a cache so hot loops allocate nothing.
@@ -41,6 +42,9 @@ Both the actor and the owner are owner strings:
 | Two NPC parties | `friendly` on the same side, else the allegiance stance table |
 | A player and an NPC party | the stance table, taking the worse direction, unless `npcStanceToPlayer` overrides it |
 | An empty owner | `neutral` |
+| An ownerless base (`none:`), either side | `neutral`: no hostile act, standing or alliance changes it |
+
+- **An ownerless base has no faction** (owner rule, capture plan 4E): no enemies, no allies. It is not an NPC (`isNpcOwner` is false). The lost Capital's id keeps two ownerless bases apart; an empty owner would merge their grids. Its turrets find nothing hostile, and its storage needs the usual break-in. A player captures it by linking it to a grid with their built Capital (`gridLinkAllowed`, capture plan 4E S4): finders keepers, no standing change and no hostile act. Two ownerless bases never link, and an NPC never links to one. Effects (each locked by a test): its turrets, mines and missiles take no target at all, not even drones (`TurretTargeting`); it is no faction to the `FactionLedger` (no escalation, no wave readiness), no side on the control meter (`countsForControl`), and its Territory Lock is inert (`isLiveTerritoryLock`); it holds no standing (`adjustStanding`, `noteStandingHit`); production runs as normal, but credits and launched hulls go to no wallet (`walletOwnerOf`: taxes are not minted, a finished hull stays packed in storage). Per-player lists match the owner string, so its pieces count for nobody.
 
 - **Hostility is treated as mutual.** Robots attack players on sight, so a robot is `hostile` to a player's gate as well as the reverse.
 - **Hostile acts are directional.** If A breaks into B's cargo, A is hostile to B; B is not hostile to A.

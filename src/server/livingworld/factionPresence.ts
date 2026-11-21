@@ -13,7 +13,7 @@
  * Ancients never count (`countsForControl`).
  */
 import { defaultFactionPolicy, isNpcFactionId, npcFactionDef } from '../../shared-types/factions.js';
-import { createRelationContext, npcOwner, relationOf } from '../../shared-types/relations.js';
+import { createRelationContext, isUnownedOwner, npcOwner, relationOf } from '../../shared-types/relations.js';
 import type { SidePresence } from '../../core/territory/sectorControl.js';
 import { getTradeSink } from '../economy/tradeSink.js';
 
@@ -63,7 +63,8 @@ export function controlOpposes(a: string, b: string): boolean {
  * point is `fillSectorPresence`; a restored share of theirs is dropped too.
  */
 export function countsForControl(faction: string): boolean {
-  return npcFactionDef(faction)?.kind !== 'ancient';
+  // Capture 4E — an ownerless base (`none:`) has no side: never a contender.
+  return npcFactionDef(faction)?.kind !== 'ancient' && !isUnownedOwner(faction);
 }
 
 /** The robots' side id on the meter (the `robots` NPC faction). */

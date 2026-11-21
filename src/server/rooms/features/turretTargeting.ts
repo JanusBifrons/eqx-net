@@ -17,7 +17,7 @@ import { NearestPointGrid } from '../../../core/spatial/NearestPointGrid.js';
 import { targetClass } from '../../../core/combat/mountTargeting.js';
 import { fillRangeShape } from '../../../core/combat/fireControlBearing.js';
 import { mayBeInReach, maxShipRangeBound, type MountRangeTarget } from '../../../core/combat/mountReach.js';
-import { isNpcOwner, parseOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
+import { isNpcOwner, isUnownedOwner, parseOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import { allegianceOfKind, getShipKind } from '../../../shared-types/shipKinds.js';
 import { isOnSightHostile, type NpcAllegianceId } from '../../../shared-types/allegiances.js';
 import { policyActsOnStanding, type FactionPolicy } from '../../../shared-types/factions.js';
@@ -45,6 +45,9 @@ export interface TurretTargetingHost {
   /** Extent of the target grids (the sector's playable width). */
   gridBounds: number;
 }
+
+/** An ownerless base's missile homes on nothing (capture 4E). */
+const NO_TARGET = (): boolean => false;
 
 export class TurretTargeting {
   constructor(private readonly h: TurretTargetingHost) {}
@@ -209,6 +212,8 @@ export class TurretTargeting {
    * hostile act or by policy, hostile pilots. Allocation-free in steady state.
    */
   collectTurretTargets(x: number, y: number, range: number, owner: string, out: TurretTargetView[]): number {
+    // Capture 4E — an ownerless base has no enemies: its guns take nothing.
+    if (isUnownedOwner(owner)) return 0;
     const idx = this.turretIdxScratch;
     let n = 0;
     // Fire range is measured from each mount to the target's hull (owner
@@ -269,6 +274,7 @@ export class TurretTargeting {
   ): { id: string; entityId: number; x: number; y: number; radius: number; playerId?: string } | null {
     // B2 — NPC-owned turrets engage by relation (players included); player
     // turrets keep the A1 drone grid below, unchanged.
+    if (isUnownedOwner(owner)) return null; // capture 4E — an ownerless base has no enemies
     if (isNpcOwner(owner)) return this.findNearestNpcTurretTarget(x, y, range, owner);
     this.ensureTurretTargetGrid();
     const i = this.turretTargetGrid.nearest(x, y, range);
@@ -364,6 +370,7 @@ export class TurretTargeting {
       // B2 — an NPC-owned turret's missile homes on what is hostile to its owner
       // (the same rule as its targeting); a player turret's stays drones-only.
       const structOwner = this.h.structureRegistry.get(ownerId)?.owner ?? '';
+      if (isUnownedOwner(structOwner)) return NO_TARGET; // capture 4E — no enemies
       if (isNpcOwner(structOwner)) {
         return (id) => {
           const rec = this.h.swarmRegistry.get(id);

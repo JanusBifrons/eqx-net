@@ -3,10 +3,14 @@ import fc from 'fast-check';
 import {
   cargoOpensFor,
   createRelationContext,
+  gridLinkAllowed,
   isNpcOwner,
+  isUnownedOwner,
   npcOwner,
   parseOwner,
   relationOf,
+  unownedOwner,
+  walletOwnerOf,
   type Relation,
 } from './relations.js';
 
@@ -199,5 +203,81 @@ describe('relationOf — factions (v4 F1)', () => {
     expect(relationOf(A, 'npc:robots:r1', ctx)).toBe('hostile');
     const zero = createRelationContext({ standing: { of: () => 0 } }); // robots' truce policy, no store
     expect(relationOf('npc:robots', 'npc:robots:r1', zero)).toBe('friendly');
+  });
+});
+
+describe('ownerless base (none:<lostCapitalId>, capture plan 4E)', () => {
+  const N1 = unownedOwner('pstruct-7');
+  const N2 = unownedOwner('pstruct-9');
+
+  it('parses as its own kind, keyed by the lost Capital', () => {
+    expect(N1).toBe('none:pstruct-7');
+    const p = parseOwner(N1);
+    expect(p.kind).toBe('none');
+    expect(p.baseId).toBe('pstruct-7');
+    expect(p.faction).toBe(N1);
+    expect(isUnownedOwner(N1)).toBe(true);
+    expect(isUnownedOwner(A)).toBe(false);
+    expect(isNpcOwner(N1)).toBe(false);
+  });
+
+  it('is neutral to players and NPCs both ways, never hostile', () => {
+    const ledger = new HostileActLedger();
+    ledger.record(A, N1, 0);
+    ledger.record(N1, A, 0);
+    const ctx = createRelationContext({
+      hostileActs: ledger,
+      standing: { of: () => -100 },
+      alliances: { areAllied: () => true },
+    });
+    for (const other of [A, 'npc:robots', 'npc:traders:sol-3', 'npc:robots:r1']) {
+      expect(relationOf(other, N1, ctx)).toBe('neutral');
+      expect(relationOf(N1, other, ctx)).toBe('neutral');
+    }
+  });
+
+  it('its storage is locked to everyone but opens by the usual break-in (not own, not an NPC market)', () => {
+    const ctx = createRelationContext({ alliances: { areAllied: () => true } });
+    const rel = relationOf(A, N1, ctx);
+    expect(rel).toBe('neutral'); // the cargo gate's "Locked. That cargo is not yours." -> break_in
+    expect(cargoOpensFor(rel, true)).toBe(false);
+    expect(isNpcOwner(N1)).toBe(false); // never the NPC Freight Dock market path
+  });
+
+  it('has no wallet: earnings go to nobody', () => {
+    expect(walletOwnerOf(N1)).toBeNull();
+    expect(walletOwnerOf('npc:traders:sol-3')).toBeNull();
+    expect(walletOwnerOf('')).toBeNull();
+    expect(walletOwnerOf(A)).toBe(A);
+  });
+
+  it('two different ownerless bases are not the same owner', () => {
+    const ctx = createRelationContext({ alliances: { areAllied: () => true } });
+    expect(N1).not.toBe(N2);
+    expect(relationOf(N1, N2, ctx)).toBe('neutral');
+    expect(relationOf(N2, N1, ctx)).toBe('neutral');
+  });
+});
+
+describe('gridLinkAllowed (capture plan 4E S4)', () => {
+  const N1 = unownedOwner('pstruct-7');
+  const N2 = unownedOwner('pstruct-9');
+  const B = '6a7e0000-0000-4000-8000-0000000000b2';
+
+  it('same owner links; a player links to an ownerless base either way round', () => {
+    expect(gridLinkAllowed(A, A)).toBe(true);
+    expect(gridLinkAllowed(N1, N1)).toBe(true);
+    expect(gridLinkAllowed(A, N1)).toBe(true);
+    expect(gridLinkAllowed(N1, A)).toBe(true);
+  });
+
+  it('never two players, two ownerless bases, or an NPC with anyone else', () => {
+    expect(gridLinkAllowed(A, B)).toBe(false);
+    expect(gridLinkAllowed(N1, N2)).toBe(false);
+    for (const npc of ['npc:robots', 'npc:traders:sol-3']) {
+      expect(gridLinkAllowed(npc, N1)).toBe(false);
+      expect(gridLinkAllowed(N1, npc)).toBe(false);
+      expect(gridLinkAllowed(npc, A)).toBe(false);
+    }
   });
 });

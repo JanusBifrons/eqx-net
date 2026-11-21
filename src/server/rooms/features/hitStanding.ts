@@ -15,13 +15,14 @@ import { isHaulerId } from '../../livingworld/directorBotIds.js';
 import { getTradeSink } from '../../economy/tradeSink.js';
 import { convoyHaulerFactions } from '../../economy/convoyCarriers.js';
 import { allegianceOfKind } from '../../../shared-types/shipKinds.js';
-import { parseOwner } from '../../../shared-types/relations.js';
+import { isUnownedOwner, parseOwner } from '../../../shared-types/relations.js';
 import { STANDING_HIT_DELTA, STANDING_HIT_WINDOW_MS, isNpcFactionId } from '../../../shared-types/factions.js';
 import { classifyAttacker } from '../classifyAttacker.js';
 
 /** F3 — move `from`'s view of `to`, through the economy store. */
 export function adjustStanding(from: string, to: string, delta: number): void {
   if (from === to || from === '' || to === '') return;
+  if (isUnownedOwner(from) || isUnownedOwner(to)) return; // capture 4E — an ownerless base holds no standing
   getTradeSink()?.adjustStanding?.(from, to, delta);
 }
 
@@ -82,6 +83,7 @@ export class RoomHitStanding {
     const attacker = this.attackerFaction(shooterId);
     if (attacker === null || attacker === victim) return;
     if (isNpcFactionId(victim) && isNpcFactionId(attacker)) return;
+    if (isUnownedOwner(victim) || isUnownedOwner(attacker)) return; // capture 4E — an ownerless base holds no standing
     const now = this.h.gameClock.now();
     let row = this.standingHitAtMs.get(victim);
     if (row === undefined) { row = new Map(); this.standingHitAtMs.set(victim, row); }

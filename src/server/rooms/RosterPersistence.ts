@@ -153,6 +153,12 @@ export class RosterPersistence {
     if (cached !== undefined) return cached;
     // B2 — an NPC base is named for its side (never a raw id; client rule).
     const party = parseOwner(owner);
+    // Capture plan 4E — a base that lost its Capital has no owner to name
+    // (not an orphaned structure: no warning).
+    if (party.kind === 'none') {
+      this._ownerNameCache.set(owner, 'Unowned base');
+      return 'Unowned base';
+    }
     if (party.kind === 'npc') {
       // v4 A — the alien gates belong to the Ancients, not a base.
       const name = owner === ALIEN_GATE_OWNER

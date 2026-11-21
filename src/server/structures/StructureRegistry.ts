@@ -16,6 +16,8 @@ import type { TeleportPartner, TeleportRules, TeleportToll, TpPhase } from '../.
 import { CABLE_NO_SOCKET, Connection } from '../../core/structures/Connection.js';
 import type { PlayingClip } from '../../core/articulation/evaluate.js';
 import type { SavedDoor } from '../../core/structures/gateLogic.js';
+import { noteBaseFall, orphanBaseOnCapitalLoss } from './ownerlessBase.js';
+import { isNpcOwner } from '../../shared-types/relations.js';
 
 export interface StructureRecord {
   /** Swarm entity id (also the binary-wire id). */
@@ -90,6 +92,10 @@ export interface StructureRecord {
   alienNeighbour?: string;
   /** v4 H — the transit link an NPC teleporter ends (its twin has the same id). */
   npcLink?: string;
+  /** Capture plan 4E (S6) — the NPC base this structure was grown in (its
+   *  seed owner, `npc:<faction>:<baseId>`). Kept when the base falls
+   *  (`none:`) or is captured, so the seeder never regrows it. Persisted. */
+  originBase?: string;
   /** T4 — its toll (credits per 1000 charge; what happens to non-payers). */
   tpToll?: TeleportToll;
   /** T2 — its iris walls and push field exist in the physics worker. */
@@ -256,6 +262,16 @@ export class StructureRegistry {
    *  true) when its body turns solid (discrete; navigation's static
    *  obstacles). Structures never move after placement. */
   private readonly changeListeners: Array<(rec: StructureRecord, added: boolean) => void> = [];
+  /** Capture 4E (S6) — the NPC bases (seed owners, `npc:<faction>:<baseId>`)
+   *  that fell in this sector: their last built Capital left the world
+   *  (`noteBaseFall`). Saved with the sector (`fallenBases`), so a fallen
+   *  base never regrows, even once every piece of it is gone. */
+  readonly fallenBases = new Set<string>();
+
+  /** Hydrate: the saved `fallenBases` (unvalidated JSON; non-`npc:` dropped). */
+  restoreFallenBases(origins: readonly unknown[]): void {
+    for (const o of origins) if (typeof o === 'string' && isNpcOwner(o)) this.fallenBases.add(o);
+  }
 
   /** Subscribes to adds / removes; returns the unsubscribe. */
   onChange(fn: (rec: StructureRecord, added: boolean) => void): () => void {
@@ -287,8 +303,11 @@ export class StructureRegistry {
   /** Remove a structure AND sever every connection touching it (no leaks).
    *  Returns the removed record (or undefined). */
   remove(id: string): StructureRecord | undefined {
-    this.disconnect(id);
     const rec = this.byId.get(id);
+    // Capture plan 4E — the base a lost last Capital held turns ownerless (the
+    // ONE seam: combat, pack and take-down all end here). Before disconnect.
+    if (rec) { orphanBaseOnCapitalLoss(this, rec); noteBaseFall(this, rec); }
+    this.disconnect(id);
     if (rec) {
       this.byId.delete(id);
       this.everConnected.delete(id); // structure gone — no leak

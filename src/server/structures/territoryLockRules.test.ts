@@ -72,3 +72,25 @@ describe('a lock holding its sector (the beacon turns)', () => {
     expect(isHoldingTerritoryLock(rec('capital', 'alice'), 'alice')).toBe(false);
   });
 });
+
+describe('an ownerless base\'s Territory Lock (capture plan 4E) is inert', () => {
+  it('locks no side and never holds', () => {
+    const lock = rec('territory_lock', 'none:pstruct-cap');
+    expect(isLiveTerritoryLock(lock)).toBe(false);
+    expect(isHoldingTerritoryLock(lock, 'none:pstruct-cap')).toBe(false);
+  });
+
+  it('claims nothing: another player may place a lock nearby, and once captured it blocks again', () => {
+    const lock = rec('territory_lock', 'none:pstruct-cap');
+    // Owner 2026-11-21 "Stops claiming": the ownerless lock does not take the sector.
+    expect(territoryLockRefusal('alice', 'territory_lock', 'orion-belt', 'alice', [lock])).toBeNull();
+    // A lock blueprint left on an ownerless base claims nothing either.
+    expect(
+      territoryLockRefusal('alice', 'territory_lock', 'orion-belt', 'alice', [rec('territory_lock', 'none:pstruct-cap', false)]),
+    ).toBeNull();
+    // Captured (S4 cable path): the lock is bob's again and claims normally.
+    const captured = rec('territory_lock', 'bob');
+    expect(territoryLockRefusal('alice', 'territory_lock', 'orion-belt', 'alice', [captured])).toBe(LOCK_TAKEN_REASON);
+    expect(isLiveTerritoryLock(captured)).toBe(true);
+  });
+});

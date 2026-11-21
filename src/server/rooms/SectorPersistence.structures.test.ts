@@ -139,6 +139,16 @@ describe('SectorPersistence — structures survive a server restart', () => {
     expect(restored[0]!.freightOrders).toEqual(orders);
   });
 
+  it('capture 4E S6: a fallen NPC base piece keeps its originBase through persist → hydrate; an old row has none', () => {
+    let restored: readonly SectorSnapshotStructure[] = [];
+    const { deps } = makeDeps([makeStructure({ owner: 'none:s0', kind: 'solar', originBase: 'npc:core:b0' }), makeStructure({ id: 'p2', kind: 'solar' })], (rows) => { restored = rows; });
+    const persistence = new SectorPersistence(deps);
+    persistence.persist();
+    persistence.hydrate();
+    expect(restored[0]!.originBase).toBe('npc:core:b0');
+    expect('originBase' in restored[1]!, 'a row from no NPC base writes no key').toBe(false);
+  });
+
   it('build mirror (4A): a mirrored structure keeps its mirror flag through persist → hydrate', () => {
     let restored: readonly SectorSnapshotStructure[] = [];
     const { deps } = makeDeps([makeStructure({ kind: 'solar', rot: 90, mirror: true }), makeStructure({ id: 'p2', kind: 'solar' })], (rows) => { restored = rows; });

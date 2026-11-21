@@ -7,7 +7,11 @@
  * A PARTY is an owner string, used for both sides of the question:
  *  - a player (or account) id, e.g. a UUID, or the test owner `scenario`;
  *  - an NPC side, `npc:<allegiance>`, e.g. `npc:robots` for a roaming robot;
- *  - an NPC base, `npc:<allegiance>:<baseId>`, e.g. `npc:traders:sol-3`.
+ *  - an NPC base, `npc:<allegiance>:<baseId>`, e.g. `npc:traders:sol-3`;
+ *  - an ownerless base, `none:<lostCapitalId>`: a base whose last Capital was
+ *    destroyed or packed (capture plan 4E). It keeps working but has no
+ *    faction: neutral to everyone. The lost Capital's id keeps two ownerless
+ *    bases apart (an empty owner would merge their grids).
  * Persistence and uid hashing treat owner strings as opaque, so NPC owners
  * need no migration.
  *
@@ -37,9 +41,30 @@ export const HOSTILE_ACT_COOLDOWN_MS = 10 * 60_000;
 /** Prefix of NPC owner strings. */
 export const NPC_OWNER_PREFIX = 'npc:';
 
+/** Prefix of an ownerless base's owner string (`none:<lostCapitalId>`). */
+export const UNOWNED_OWNER_PREFIX = 'none:';
+
+/** The owner string of a base that lost its last Capital `lostCapitalId`. */
+export function unownedOwner(lostCapitalId: string): string {
+  return `${UNOWNED_OWNER_PREFIX}${lostCapitalId}`;
+}
+
+/** True for an ownerless base's owner string (`none:<lostCapitalId>`). */
+export function isUnownedOwner(owner: string): boolean {
+  return owner.startsWith(UNOWNED_OWNER_PREFIX);
+}
+
+/** The wallet an owner's earnings (station taxes, launched hulls) go to: a
+ *  player's own id. An NPC party or an ownerless base has none (null), so
+ *  nothing is minted to anyone. */
+export function walletOwnerOf(owner: string): string | null {
+  return owner !== '' && parseOwner(owner).kind === 'player' ? owner : null;
+}
+
 export interface PartyRef {
-  readonly kind: 'player' | 'npc';
-  /** Player: the id. NPC: the full owner string. */
+  readonly kind: 'player' | 'npc' | 'none';
+  /** Player: the id. NPC / ownerless: the full owner string. Ownerless also
+   *  uses the full string as its faction (a faction nobody else is in). */
   readonly id: string;
   /** The party's faction: the NPC faction id, or a player's own id (a player
    *  is a faction of one until player factions exist). */
@@ -113,7 +138,9 @@ export function parseOwner(owner: string): PartyRef {
   const hit = PARSE_CACHE.get(owner);
   if (hit) return hit;
   let ref: PartyRef = { kind: 'player', id: owner, faction: owner, allegiance: null, baseId: '' };
-  if (owner.startsWith(NPC_OWNER_PREFIX)) {
+  if (isUnownedOwner(owner)) {
+    ref = { kind: 'none', id: owner, faction: owner, allegiance: null, baseId: owner.slice(UNOWNED_OWNER_PREFIX.length) };
+  } else if (owner.startsWith(NPC_OWNER_PREFIX)) {
     const rest = owner.slice(NPC_OWNER_PREFIX.length);
     const colon = rest.indexOf(':');
     const faction = colon < 0 ? rest : rest.slice(0, colon);
@@ -129,6 +156,19 @@ export function parseOwner(owner: string): PartyRef {
 
 export function isNpcOwner(owner: string): boolean {
   return parseOwner(owner).kind === 'npc';
+}
+
+/**
+ * May a power-grid link join structures of owners `a` and `b`? The same owner,
+ * or a player and an ownerless base (capture plan 4E S4: finders keepers; the
+ * link lets the player's Capital take the base). Never two players, two
+ * different ownerless bases, or an NPC and anyone else.
+ */
+export function gridLinkAllowed(a: string, b: string): boolean {
+  if (a === b) return true;
+  const noneA = isUnownedOwner(a);
+  if (noneA === isUnownedOwner(b)) return false;
+  return parseOwner(noneA ? b : a).kind === 'player';
 }
 
 const RANK: Readonly<Record<Stance, number>> = { friendly: 0, neutral: 1, hostile: 2 };
@@ -178,11 +218,15 @@ function applyPolicy(base: Relation, actor: PartyRef, owner: PartyRef, ctx: Rela
  *  6. Then the owner's faction policy reads its standing toward the actor and
  *     may make the relation hostile (or a neutral one allied). With no
  *     standing web, or default policies, nothing changes.
- * An empty owner (an unowned thing) is 'neutral' to everyone.
+ * An empty owner (an unowned thing) is 'neutral' to everyone, and so is an
+ * ownerless base (`none:`) both ways: no hostile act, standing or alliance
+ * changes that (capture plan 4E, owner: "no enemies, no allies"). Only the
+ * very same owner string is 'self' (one ownerless base's own structures).
  */
 export function relationOf(actor: string, owner: string, ctx: RelationContext): Relation {
   if (actor === owner) return 'self';
   if (owner === '' || actor === '') return 'neutral';
+  if (isUnownedOwner(owner) || isUnownedOwner(actor)) return 'neutral';
   if (ctx.hostileActs?.isHostile(actor, owner, ctx.nowMs) === true) return 'hostile';
   const a = parseOwner(actor);
   const o = parseOwner(owner);

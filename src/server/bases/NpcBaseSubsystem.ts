@@ -17,6 +17,8 @@
  *
  * Then the real systems run: power, batteries, fence, turrets, production.
  * NPC structures are not persisted (B2); a restart regenerates from the seed.
+ * Each piece records its `originBase`; a base that fell (its pieces saved as
+ * `none:` or captured) is never seeded again (capture 4E S6).
  */
 import { DEFAULT_TELEPORT_RULES, NPC_LINK_TOLL, isTeleporterKind } from '../../shared-types/teleport.js';
 import { growBase, type GrownBase } from '../../core/bases/growBase.js';
@@ -32,6 +34,7 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 import type { FactionId } from '../../shared-types/factions.js';
 import { gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
+import { fallenBaseOrigins } from '../structures/ownerlessBase.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 import type { Logger } from 'pino';
@@ -138,6 +141,7 @@ export class NpcBaseSubsystem {
         continue;
       }
       const rec = this.h.registry.get(id)!;
+      rec.originBase = owner; // 4E S6: a fallen base is known by its origin
       rec.isConstructed = true;
       rec.constructionProgress = rec.constructionCost;
       rec.level = p.level ?? 1;
@@ -243,7 +247,7 @@ export interface NpcBaseSeedHost {
   readonly structureRegistry: StructureRegistry;
   readonly swarmRegistry: Pick<SwarmEntityRegistry, 'all'>;
   readonly lingeringPoseCache: ReadonlyMap<string, { x: number; y: number }>;
-  readonly patrols: Pick<PatrolSubsystem, 'addBase'>;
+  readonly patrols: Pick<PatrolSubsystem, 'addBase' | 'watchBaseFalls'>;
   readonly obstacles: { rocks(near?: ObstacleBox): GridObstacle[] };
   readonly logger: Pick<Logger, 'info' | 'warn'>;
   sabF32(): Float32Array;
@@ -259,7 +263,9 @@ export interface NpcBaseSeedHost {
  * site that fits: clear of saved player structures and parked hulls (they
  * always win the space), on the fewest asteroids (those under the footprint
  * are cleared: the builders cleared the rock), as far from the spawn at the
- * origin as it fits. Not persisted: a restart regrows it from the seed.
+ * origin as it fits. Not persisted: a restart regrows it from the seed,
+ * unless it fell (capture 4E S6: the sector's saved `fallenBases`, and its
+ * saved pieces carry `originBase`).
  */
 export function seedGalaxyBase(h: NpcBaseSeedHost, sectorKey: string): void {
   // A sector holds one to three NPC bases (galaxyBasePlan); base 0 is the
@@ -272,11 +278,17 @@ export function seedGalaxyBase(h: NpcBaseSeedHost, sectorKey: string): void {
     getObstacles: (near) => h.obstacles.rocks(near),
   });
   const seededBases: SiteBox[] = [];
+  // Capture 4E (S6) — a fallen (or captured) base never regrows.
+  const fallen = fallenBaseOrigins(h.structureRegistry);
   const plans = galaxyBasePlan(sectorKey);
   // Solar-system sectors (Phase 4): with two or more bases, the last grows
   // at the sector's outer base pocket, out in the system, not at home.
   const outer = SOLAR_SECTORS && plans.length >= 2 ? sectorSites(sectorKey).find((s) => s.kind === 'base') ?? null : null;
   plans.forEach((plan, i) => {
+    if (fallen.has(npcOwner(plan.profile.ownerFaction, plan.baseId))) {
+      h.logger.info({ sectorKey, baseId: plan.baseId }, 'npc base: fallen, not regrown');
+      return;
+    }
     const at = outer && i === plans.length - 1 ? { x: outer.x, y: outer.y } : null;
     const box = seedOneGalaxyBase(h, sectorKey, sector.features, plan, sub, seededBases, at);
     if (box !== null) seededBases.push(box);
@@ -359,6 +371,8 @@ function addGarrisonPatrol(h: NpcBaseSeedHost, tag: string, owner: string, facti
   }
   if (!Number.isFinite(x0)) return;
   const count = tier === 'stronghold' || tier === 'citadel' ? 4 : 3;
+  // Capture 4E (S5) — the garrison stands down if its base falls.
+  h.patrols.watchBaseFalls(h.structureRegistry);
   h.patrols.addBase(tag, owner, faction, { x0, x1, y0, y1 }, cx, cy, count);
 }
 
@@ -371,7 +385,9 @@ export function seedNpcBases(h: NpcBaseSeedHost, specs: readonly NpcBaseSpec[]):
     setHealth: (id, hp) => h.swarmHealth().set(id, hp),
     getObstacles: (near) => h.obstacles.rocks(near),
   });
+  const fallen = fallenBaseOrigins(h.structureRegistry); // 4E S6
   for (const spec of specs.slice(0, 8)) {
+    if (fallen.has(npcOwner(sub.profileOf(spec).ownerFaction, spec.baseId))) continue;
     const r = sub.seed(spec);
     // v4 M2 — a garrison flies its patrol here too (showcase / test rooms).
     if (spec.role === 'military') {

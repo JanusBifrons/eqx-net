@@ -149,7 +149,75 @@ view, never the server `StructureRegistry`):
   destination, and this is load-bearing for the construction flow's outward
   expansion**), power aggregation (`powered`
   requires a Capital in the component AND net ≥ 0), and A* routing + a route
-  cache dropped on every rebuild.
+  cache dropped on every rebuild. A node with `rootsPower` stands in for the
+  Capital (see "A base that loses its last Capital" below).
+- **A base that loses its last Capital** (capture plan 4E). When a built
+  Capital leaves the world (destroyed, packed or taken down; every path ends in
+  `StructureRegistry.remove`, which calls `orphanBaseOnCapitalLoss` in
+  `ownerlessBase.ts` before it cuts the links), each grid piece it held that
+  has no other built Capital gets the owner `none:<lostCapitalId>`. Owner rule:
+  the base keeps working exactly as before (power, batteries, shields,
+  production); it simply has no faction (`relationOf` makes it neutral to
+  everyone). The grid view sets `GridNode.rootsPower` on every ownerless node,
+  so its component stays powered on its own generation. A grid with another
+  built Capital stays owned. NPC bases flip the same way (S5, below). The
+  owner reaches clients through the normal structures slice (`ownerIdx` is
+  re-interned on change). Lock: `StructureGridSubsystem.ownerless.test.ts`.
+- **Capturing an ownerless base** (capture plan 4E S4, finders keepers). A
+  player's structure may link to an ownerless one (`gridLinkAllowed` in
+  `relations.ts`, used by auto-connect on placement, the reconnect sweep and
+  button, `linkReachBox` and `connectExplicit`); two players, two different
+  ownerless bases, or an NPC and anyone else never link. When a player's built
+  Capital ends up on one grid piece with ownerless pieces (a Capital placed in
+  range, or a Connector or cable bridge once built: a blueprint is never
+  crossed), every `none:` structure in that piece takes the player's owner. No
+  standing change, no hostile act. The ONE seam is the pulse's topology rebuild
+  (`captureOwnerlessGrids` in `ownerlessBase.ts`, run just before
+  `grid.rebuild`): every link, finished build and removal dirties topology, so
+  every path passes it, and the rebuilt grid and the structures slice after the
+  pulse carry the new owner. `onCaptured` makes the room `persistSoon`. NPC
+  Capitals capture nothing (S5). A player structure linked to an ownerless grid
+  without a Capital of its own leaves it ownerless; if two players' Capitals
+  ever share a piece, the first in registry order takes it. The client build
+  preview still draws same-owner links only (follow-up).
+- **An NPC base whose Capital dies falls the same way** (capture plan 4E S5;
+  owner: "Finders keepers"). No second mechanism: the same
+  `orphanBaseOnCapitalLoss` flip turns its grid pieces `none:<lostCapitalId>`,
+  still powered. Because its pieces are no longer `npc:`-owned, its faction
+  lets go for free: `npcBaseTrade` lists no trade entry for it (no convoy
+  anchor), it no longer counts for the faction on the control meter
+  (`sectorLiveCounts`) or in `FactionLedger`, and hits on it move no standing
+  (`hitStanding.ts`). Nobody's standing changes when it falls. Its garrison
+  stands down: `PatrolSubsystem.watchBaseFalls` (subscribed by
+  `addGarrisonPatrol`) hears the Capital's removal and, once the owner has no
+  built Capital left in the room, drops that patrol (no respawn, no roaming);
+  surviving ships carry on as attached ships until they are gone. A piece not
+  linked to the lost Capital keeps its `npc:` owner (the same per-grid rule as
+  a player base). Lock: `bases/npcBaseFall.test.ts`.
+- **A fallen NPC base never regrows** (capture plan 4E S6; owner: "never
+  regrows, even after a restart, until captured"; once captured the site is
+  taken, so not then either). The seeder stamps every piece it places with
+  `originBase` (its seed owner, `npc:<faction>:<baseId>`); the field stays when
+  the base falls (`none:`) or is captured, and `SectorPersistence` saves it with
+  the piece (optional `structures[].originBase`, no schema bump; restore keeps
+  only an `npc:` value). The sector also remembers the fall itself: when a
+  seeded base's last built Capital leaves the world (`StructureRegistry.remove`
+  → `noteBaseFall`), its origin joins `StructureRegistry.fallenBases`, saved as
+  the sector's `fallenBases` list, so the base stays fallen even once every
+  piece of it is destroyed. `seedGalaxyBase` and `seedNpcBases` skip every base
+  in `fallenBaseOrigins` (`ownerlessBase.ts`: the recorded falls plus origins
+  of pieces no longer owned by their origin). Seeding runs only at room boot,
+  after restore; nothing regrows a base in a running room. An old save (no
+  `originBase`, no `fallenBases`) loads and regrows as before. Lock:
+  `bases/npcBaseNoRegrow.test.ts`.
+- **An ownerless base's Territory Lock claims nothing** (owner 2026-11-21,
+  "Stops claiming"). A lock owned by `none:` (built or still a blueprint)
+  feeds no side to the control meter (`isLiveTerritoryLock`), never holds
+  (`isHoldingTerritoryLock`), and does not take the sector's one lock slot:
+  `territoryLockRefusal` (`territoryLockRules.ts`) skips it, so another side
+  that holds the sector may build its own lock under the normal rules. Once the
+  base is captured (above) the lock carries the captor's owner and claims and
+  blocks again. Lock: `territoryLockRules.test.ts`.
 - `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
   `CONSTRUCTION_PULSE_AMOUNT`, `REPAIR_*`, `DECONSTRUCTION_RATE_KG`,
   `CAPITAL_STARTING_MINERALS`, `FLASH_DURATION_MS`.

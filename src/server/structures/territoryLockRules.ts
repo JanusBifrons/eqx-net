@@ -10,14 +10,17 @@
  *
  * Placement (player `place_structure` only, server-side):
  *  - the builder's side must HOLD the sector on the control meter now;
- *  - at most one lock per sector (a blueprint still building counts).
+ *  - at most one lock per sector (a blueprint still building counts). A lock
+ *    on an ownerless base (capture 4E, `none:`) claims nothing: it does not
+ *    take the slot, so another side may build its own; once the base is
+ *    captured the lock is that player's and takes the slot again.
  *
  * Only a BUILT lock locks: a blueprint under construction does nothing. A lock
  * whose side no longer holds the sector does nothing either (the stepper
  * ignores a non-holder's lock); if that side takes the sector back, the
  * standing lock locks it again.
  */
-import { parseOwner } from '../../shared-types/relations.js';
+import { isUnownedOwner, parseOwner } from '../../shared-types/relations.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import { sectorController } from '../../core/galaxy/control.js';
 import type { StructureRecord } from './StructureRegistry.js';
@@ -44,7 +47,7 @@ export function territoryLockRefusal(
   if (kindId !== TERRITORY_LOCK_KIND) return null;
   const held = sectorHeldBy(sectorKey, holder);
   if (held === null || held !== parseOwner(owner).faction) return LOCK_NOT_HELD_REASON;
-  for (const s of structures) if (s.kind === TERRITORY_LOCK_KIND) return LOCK_TAKEN_REASON;
+  for (const s of structures) if (s.kind === TERRITORY_LOCK_KIND && !isUnownedOwner(s.owner)) return LOCK_TAKEN_REASON;
   return null;
 }
 
@@ -61,7 +64,8 @@ export function isHoldingTerritoryLock(s: StructureRecord, held: string | null):
   return held !== null && isLiveTerritoryLock(s) && parseOwner(s.owner).faction === held;
 }
 
-/** True when `s` is a built Territory Lock (it locks its owner's side). */
+/** True when `s` is a built Territory Lock (it locks its owner's side). An
+ *  ownerless base's lock (capture 4E, `none:`) has no side to lock: inert. */
 export function isLiveTerritoryLock(s: StructureRecord): boolean {
-  return s.kind === TERRITORY_LOCK_KIND && s.isConstructed;
+  return s.kind === TERRITORY_LOCK_KIND && s.isConstructed && !isUnownedOwner(s.owner);
 }

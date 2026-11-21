@@ -26,12 +26,18 @@
  *    but is never spawned, moved or respawned here. Forgotten once it is gone
  *    from the room.
  *
+ *  - FALLEN BASE (capture 4E S5): when the base loses its last Capital it
+ *    turns ownerless and its garrison stands down (`watchBaseFalls`): no
+ *    respawn, no roaming; surviving ships carry on as attached ships.
+ *
  * Not persisted: NPC bases
  * regenerate on boot, and so do their patrols. Room-owned, ticked from the
  * 1 Hz structure pulse; steady state allocates nothing.
  */
 import type { FactionId } from '../../shared-types/factions.js';
 import { stepRoute } from '../../core/ai/stepRoute.js';
+import type { StructureRegistry } from '../structures/StructureRegistry.js';
+import { isBuiltCapital } from '../structures/ownerlessBase.js';
 
 export const PATROL_BOT_PREFIX = 'patrol-';
 /** Pilots this close to a garrison's footprint can draw its patrol. */
@@ -87,6 +93,7 @@ export class PatrolSubsystem {
   private readonly attached = new Map<string, string>();
   private currentAttachedId = '';
   private currentAttachedOwner = '';
+  private watchingFalls = false;
 
   constructor(private readonly h: PatrolHooks) {}
 
@@ -120,6 +127,37 @@ export class PatrolSubsystem {
   attachShip(botId: string, faction: FactionId, owner: string): void {
     this.attached.set(botId, owner);
     this.factionById.set(botId, faction);
+  }
+
+  /**
+   * Capture 4E (S5) — stand a garrison down when its base falls: once a
+   * removed Capital leaves its owner with no built Capital in the room (the
+   * base turned ownerless, `ownerlessBase.ts`), that owner's patrols stop.
+   * Subscribes once (idempotent); discrete (removals), never per tick.
+   */
+  watchBaseFalls(structures: Pick<StructureRegistry, 'onChange' | 'all'>): void {
+    if (this.watchingFalls) return;
+    this.watchingFalls = true;
+    structures.onChange((rec, added) => {
+      if (added || rec.kind !== 'capital' || !this.patrols.some((p) => p.owner === rec.owner)) return;
+      for (const r of structures.all()) if (r.owner === rec.owner && isBuiltCapital(r)) return;
+      this.dropBase(rec.owner);
+    });
+  }
+
+  /** Drop `owner`'s garrison patrols: no respawn, no roaming round the base.
+   *  Live ships become attached ships (they still fly for their faction and
+   *  answer hostile pilots near them) until they are gone. */
+  private dropBase(owner: string): void {
+    for (let i = this.patrols.length - 1; i >= 0; i--) {
+      const p = this.patrols[i]!;
+      if (p.owner !== owner) continue;
+      this.patrols.splice(i, 1);
+      for (const s of p.ships) {
+        if (s.spawned && this.h.poseOf(s.id, this.scratch)) this.attached.set(s.id, owner);
+        else this.factionById.delete(s.id);
+      }
+    }
   }
 
   /** The faction a patrol ship flies for (undefined if it isn't one). */

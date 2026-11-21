@@ -77,6 +77,8 @@ export interface PersistableStructure {
   tpCharge?: number;
   tpToll?: unknown;
   packedQuality?: number;
+  /** Capture plan 4E (S6) — the NPC base it was grown in (fallen or captured). */
+  originBase?: string;
   isConstructed: boolean;
   constructionProgress: number;
   minerals: number;
@@ -103,6 +105,12 @@ export interface SectorPersistenceDeps {
   /** Reconstruct the placed structures on hydrate (re-place + restore state +
    *  rebuild the grid). Owned by `SectorRoom` (it holds the spawn machinery). */
   restoreStructures: (rows: readonly SectorSnapshotStructure[]) => void;
+  /** Capture 4E (S6) — the NPC bases that fell here (`StructureRegistry.fallenBases`).
+   *  Optional: absent ⇒ none written. */
+  fallenBases?: () => Iterable<string>;
+  /** Capture 4E (S6) — restore the saved falls on hydrate, before the seeders
+   *  run. Rows are unvalidated JSON. Optional: absent ⇒ not restored. */
+  restoreFallenBases?: (origins: readonly unknown[]) => void;
   /** Free-floating scrap pieces to persist (pose from SAB + parent kind +
    *  componentIndex + health). Owned by `SectorRoom` (it reads the SAB). */
   scrapEntities: () => Iterable<SectorSnapshotScrap>;
@@ -237,6 +245,7 @@ export class SectorPersistence {
           } }
           : {}),
         ...(s.packedQuality !== undefined ? { packedQuality: s.packedQuality } : {}),
+        ...(s.originBase !== undefined ? { originBase: s.originBase } : {}),
         y: s.y,
         health: d.swarmHealth.get(s.id) ?? 0,
         isConstructed: s.isConstructed,
@@ -254,6 +263,7 @@ export class SectorPersistence {
     const lingeringHulls: SectorSnapshotLingeringHull[] = [];
     for (const h of d.lingeringHulls()) lingeringHulls.push(h);
     const squads: FleetSavedSquad[] = d.fleetSquads !== undefined ? [...d.fleetSquads()] : [];
+    const fallenBases: string[] = d.fallenBases !== undefined ? [...d.fallenBases()] : [];
     const payload: SectorSnapshotPayload = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       // Campaign 6.2 — stamp the live structure catalogue so hydrate can
@@ -266,6 +276,7 @@ export class SectorPersistence {
       ...(scrap.length > 0 ? { scrap } : {}),
       ...(lingeringHulls.length > 0 ? { lingeringHulls } : {}),
       ...(squads.length > 0 ? { squads } : {}),
+      ...(fallenBases.length > 0 ? { fallenBases } : {}),
     };
     try {
       d.saveRow(sectorKey, payload);
@@ -352,6 +363,9 @@ export class SectorPersistence {
         d.logger.warn({ err, sectorKey }, 'structure restore failed — partial hydrate');
       }
     }
+    // Capture 4E (S6) — the sector's fallen NPC bases (the seeders run after
+    // hydrate and skip them). Older snapshots have none; a non-array is ignored.
+    if (Array.isArray(payload.fallenBases)) d.restoreFallenBases?.(payload.fallenBases);
     const scrap = payload.scrap ?? [];
     if (scrap.length > 0) {
       try {

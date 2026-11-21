@@ -51,6 +51,7 @@ import {
   TURRET_TICK_MS,
 } from '../../core/structures/structureGridConstants.js';
 import { autoConnectStructure, buildGridNodes, linkReachBox, reconnectWithNotice } from './structureGridView.js';
+import { captureOwnerlessGrids } from './ownerlessBase.js';
 import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
@@ -178,10 +179,11 @@ export interface StructureGridHooks extends BlueprintBodyHooks {
    *  `near` (the links' `linkReachBox`) adds the rocks there with no body.
    *  Optional: omitted ⇒ structures-only LOS (byte-identical). */
   getObstacles?: (near?: ObstacleBox) => readonly GridObstacle[];
-  /** Gameplay audit — a blueprint finished construction this pulse. The room
-   *  supplies the closure (it owns the sectorKey). Off the 60 Hz loop (1 Hz
-   *  pulse). Optional ⇒ no-op in the unit harness. */
+  /** Gameplay audit — a blueprint finished construction this pulse (1 Hz, room
+   *  owns the sectorKey). Optional ⇒ no-op in the unit harness. */
   onConstructed?: (owner: string, kind: string) => void;
+  /** Capture 4E S4 — ownerless structures changed owner (the room persists). */
+  onCaptured?: () => void;
   /** v4 T1 — spare power left after the batteries fill goes to teleporter
    *  capacitors in the component. Returns how much was used. */
   chargeCapacitors?: (members: readonly string[], spare: number) => number;
@@ -493,14 +495,12 @@ export class StructureGridSubsystem {
   /** One grid heartbeat. `nowMs` stamps connection flashes. */
   pulse(nowMs: number): GridPulseResult {
     const registry = this.hooks.registry;
-    // Reconnect sweep FIRST (playtest 2026-06-10 Issue 2 — "connectors break
-    // between buildings, they just don't connect sometimes"). autoConnectStructure
-    // runs ONCE at placement and never retries, so a structure placed before its
-    // hub, or whose target hub was at capacity, stays stranded forever. Retry any
-    // unconnected structure each pulse; addConnection dirties topology so the
-    // rebuild below picks the new edge up THIS pulse.
+    // Reconnect sweep FIRST (playtest Issue 2): placement auto-connects once, so
+    // retry stranded structures; the rebuild below sees new edges THIS pulse.
     this.processReconnect();
     if (registry.topologyDirty) {
+      // Capture 4E S4 — the ONE seam: ownerless pieces joined to a player's Capital flip first.
+      if (captureOwnerlessGrids(registry)) this.hooks.onCaptured?.();
       this.grid.rebuild(buildGridNodes(registry), registry.adjacencyMap());
       registry.topologyDirty = false;
     }
