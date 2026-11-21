@@ -521,6 +521,150 @@ const IDLE_RESUME_RECORDED: DroneFixtureResult = {
   delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
 };
 
+/** S1-9: the same fixtures at 0.7x and 2x game speed (display delays are
+ *  game ms / speed, so a fix must hold at every speed). First recorded on main
+ *  against the pre-S3 path; re-recorded on the netgap branch against the
+ *  current path (pose ring 28, slewed delay, capped feed, stream-stall hold).
+ *  Against the first recording: 0.7x gap-400 / gap-600 / burst freezes
+ *  11 / 25 -> 0 / 7 and largest snap 21 / 56 u -> 5 / 4 u; 2x gap-200 snaps
+ *  2 -> 0, gap-400 / gap-600 largest snap 165 / 315 -> 88 / 162 u (still 2
+ *  snaps and 13 / 25 freeze frames: one re-sync each, the 2x glide limit is
+ *  125 wall ms); 2x jitter-4g snaps 18 -> 3 and freezes 5 -> 0, but its
+ *  largest snap grows 19.39 -> 26.83 u and mean lateness 366 -> 382 ms; 0.7x
+ *  gap-swarm-only freezes 10 -> 0 but gains one back-step per drone (0 -> 1).
+ *  A change to any is a behaviour change. */
+const RECORDED_0_7X: Record<GapProfileName, DroneFixtureResult> = {
+  'lan-clean': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 145.48, maxLatenessMs: 145.72 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 145.48, maxLatenessMs: 145.72 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 6.79, stampLatenessMaxMs: 13.86, maxDelayMs: 142.86, minDelayMs: 142.86,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'gap-200': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 184.15, maxLatenessMs: 193.09 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 184.15, maxLatenessMs: 193.09 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 12.11, stampLatenessMaxMs: 207.43, maxDelayMs: 142.86, minDelayMs: 142.86,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'gap-400': {
+    straight: { snaps: 1, largestSnapU: 5.32, totalSnapU: 5.32, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 187.54, maxLatenessMs: 228.46 },
+    turning: { snaps: 1, largestSnapU: 5.32, totalSnapU: 5.32, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 187.57, maxLatenessMs: 228.46 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 25.92, stampLatenessMaxMs: 405.43, maxDelayMs: 154.94, minDelayMs: 142.86,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'gap-600': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 7, backwardSteps: 0, meanLatenessMs: 211.54, maxLatenessMs: 300 },
+    turning: { snaps: 1, largestSnapU: 3.64, totalSnapU: 3.64, freezeFrames: 7, backwardSteps: 0, meanLatenessMs: 211.72, maxLatenessMs: 302.58 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 54.27, stampLatenessMaxMs: 609.52, maxDelayMs: 259.52, minDelayMs: 142.86,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 8,
+  },
+  'burst-600-both-streams': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 7, backwardSteps: 0, meanLatenessMs: 211.54, maxLatenessMs: 300 },
+    turning: { snaps: 1, largestSnapU: 3.64, totalSnapU: 3.64, freezeFrames: 7, backwardSteps: 0, meanLatenessMs: 211.72, maxLatenessMs: 302.58 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 54.27, stampLatenessMaxMs: 609.52, maxDelayMs: 259.52, minDelayMs: 142.86,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 8,
+  },
+  'gap-json-only': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 183.57, maxLatenessMs: 183.81 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 183.57, maxLatenessMs: 183.81 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 6.83, stampLatenessMaxMs: 13.86, maxDelayMs: 142.86, minDelayMs: 142.86,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'gap-swarm-only': {
+    straight: { snaps: 1, largestSnapU: 5.52, totalSnapU: 5.52, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 185.22, maxLatenessMs: 216.83 },
+    turning: { snaps: 1, largestSnapU: 5.52, totalSnapU: 5.52, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 185.25, maxLatenessMs: 216.83 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 25.92, stampLatenessMaxMs: 405.43, maxDelayMs: 142.86, minDelayMs: 142.86,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'frame-stall-250': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 183.59, maxLatenessMs: 184.1 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 183.59, maxLatenessMs: 184.1 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 15.49, stampLatenessMaxMs: 256.72, maxDelayMs: 142.86, minDelayMs: 142.86,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'jitter-4g': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 185.22, maxLatenessMs: 196.2 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 185.22, maxLatenessMs: 196.2 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 19.06, stampLatenessMaxMs: 154.08, maxDelayMs: 142.86, minDelayMs: 142.86,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+};
+
+const RECORDED_2X: Record<GapProfileName, DroneFixtureResult> = {
+  'lan-clean': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 58.33, maxLatenessMs: 58.33 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 58.33, maxLatenessMs: 58.33 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 4.11, stampLatenessMaxMs: 8.25, maxDelayMs: 75, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'gap-200': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 1, backwardSteps: 0, meanLatenessMs: 95.27, maxLatenessMs: 116.75 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 1, backwardSteps: 0, meanLatenessMs: 95.29, maxLatenessMs: 117.51 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 9.57, stampLatenessMaxMs: 208.33, maxDelayMs: 75, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 2,
+  },
+  'gap-400': {
+    straight: { snaps: 2, largestSnapU: 88.18, totalSnapU: 133.74, freezeFrames: 13, backwardSteps: 0, meanLatenessMs: 104.34, maxLatenessMs: 316.67 },
+    turning: { snaps: 2, largestSnapU: 89.28, totalSnapU: 134.81, freezeFrames: 13, backwardSteps: 0, meanLatenessMs: 104.42, maxLatenessMs: 317.51 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 10,
+    stampLatenessMeanMs: 19.83, stampLatenessMaxMs: 404.25, maxDelayMs: 191.67, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 1, holdFrames: 9,
+  },
+  'gap-600': {
+    straight: { snaps: 2, largestSnapU: 162.47, totalSnapU: 253.44, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 128.13, maxLatenessMs: 516.67 },
+    turning: { snaps: 2, largestSnapU: 163.22, totalSnapU: 254.01, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 128.26, maxLatenessMs: 517.51 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 34,
+    stampLatenessMeanMs: 35.47, stampLatenessMaxMs: 602.25, maxDelayMs: 191.67, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 1, holdFrames: 9,
+  },
+  'burst-600-both-streams': {
+    straight: { snaps: 2, largestSnapU: 162.47, totalSnapU: 253.44, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 128.13, maxLatenessMs: 516.67 },
+    turning: { snaps: 2, largestSnapU: 163.22, totalSnapU: 254.01, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 128.26, maxLatenessMs: 517.51 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 34,
+    stampLatenessMeanMs: 35.47, stampLatenessMaxMs: 602.25, maxDelayMs: 191.67, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 1, holdFrames: 9,
+  },
+  'gap-json-only': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 93.61, maxLatenessMs: 111.18 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 93.61, maxLatenessMs: 111.18 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 4.11, stampLatenessMaxMs: 8.25, maxDelayMs: 75, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'gap-swarm-only': {
+    straight: { snaps: 2, largestSnapU: 88.18, totalSnapU: 133.77, freezeFrames: 13, backwardSteps: 0, meanLatenessMs: 103.14, maxLatenessMs: 316.67 },
+    turning: { snaps: 2, largestSnapU: 89.28, totalSnapU: 134.84, freezeFrames: 13, backwardSteps: 0, meanLatenessMs: 103.22, maxLatenessMs: 317.51 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 28,
+    stampLatenessMeanMs: 19.83, stampLatenessMaxMs: 404.25, maxDelayMs: 75, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'frame-stall-250': {
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 95.12, maxLatenessMs: 115.85 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 95.12, maxLatenessMs: 115.85 },
+    overwriteUnread: 20, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 12.51, stampLatenessMaxMs: 258.33, maxDelayMs: 75, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
+  },
+  'jitter-4g': {
+    straight: { snaps: 3, largestSnapU: 26.83, totalSnapU: 48.83, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 381.91, maxLatenessMs: 427.53 },
+    turning: { snaps: 3, largestSnapU: 26.82, totalSnapU: 48.82, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 381.92, maxLatenessMs: 427.53 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 4,
+    stampLatenessMeanMs: 91.55, stampLatenessMaxMs: 315.11, maxDelayMs: 181.77, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 10,
+  },
+};
+
 const PROFILE_NAMES = Object.keys(GAP_PROFILES) as GapProfileName[];
 
 describe('drone gap-smoothing fixtures: today\'s numbers per profile', () => {
@@ -551,6 +695,20 @@ describe('drone gap-smoothing fixtures: today\'s numbers per profile', () => {
     expect(GAP_AT_MS).toBeGreaterThan(IGNORE_FIRST_MS);
   });
 });
+
+for (const [label, timeScale, recorded] of [
+  ['0.7x', 0.7, RECORDED_0_7X],
+  ['2x', 2, RECORDED_2X],
+] as const) {
+  describe(`drone gap-smoothing fixtures at ${label} game speed: today's numbers per profile`, () => {
+    for (const name of PROFILE_NAMES) {
+      it(`${name}: recorded numbers`, () => {
+        const result = runDroneFixture(GAP_PROFILES[name], { timeScale });
+        expect(result).toEqual(recorded[name]);
+      });
+    }
+  });
+}
 
 describe('capture-2026-11-21 drone replay', () => {
   it('recorded numbers per join segment', () => {
