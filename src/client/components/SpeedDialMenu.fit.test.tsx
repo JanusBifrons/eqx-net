@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { SpeedDialMenu } from './SpeedDialMenu.js';
-import { availableListHeight, listFloor, FIT_EDGE_MARGIN_PX, FIT_MIN_HEIGHT_PX } from './speedDialFit.js';
+import { availableListHeight, listFloor, actionGapToFit, ACTION_GAP_VAR, FIT_EDGE_MARGIN_PX, FIT_MIN_HEIGHT_PX } from './speedDialFit.js';
 
 const PHONE_H = 412;
 const LIST_TOP = 110; // under the top-right toolbar
@@ -106,5 +106,58 @@ describe('SpeedDialMenu build list stops above the bottom-centre panels', () => 
     expect(listFloor(col, { top: 396, bottom: 396, left: 457, right: 457 }, 412)).toBe(412);
     expect(listFloor(col, null, 412)).toBe(412);
     expect(availableListHeight({ top: 108, bottom: 0 }, 800, 'down', 680)).toBe(680 - 108 - FIT_EDGE_MARGIN_PX);
+  });
+});
+
+/**
+ * The main action list fits a sideways phone without scrolling (Pixel 7
+ * landscape, 863x360). With Warp ▸ shown, Build ▸ sat partly below the screen
+ * bottom and could only be reached by scrolling the list. When the list is a
+ * little taller than the room, the gap between its buttons shrinks so every
+ * entry is on screen; every entry and its look stay.
+ */
+describe('SpeedDialMenu main list fits 863x360 with Warp shown', () => {
+  const SHORT_H = 360;
+  const TOP = 60; // the list's top under the toolbar
+  const BTN = 40; // an action button
+  let innerHeight: number;
+  beforeEach(() => {
+    useUIStore.setState({ phase: 'galaxy-map', isDead: false, isGalaxyMapOpen: false, currentSectorKey: '0,0', buildMode: false, placementKind: null });
+    innerHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: SHORT_H });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const h = this.classList.contains('MuiSpeedDialAction-fab') ? BTN : 400;
+      return { top: TOP, bottom: TOP + h, left: 0, right: 0, width: BTN, height: h, x: 0, y: TOP, toJSON: () => ({}) };
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useUIStore.setState({ currentSectorKey: null });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
+  });
+
+  it('every main-menu entry, Build ▸ included, fits without scrolling', () => {
+    render(<SpeedDialMenu direction="down" />);
+    fireEvent.click(screen.getByTestId('speed-dial-fab'));
+    expect(screen.getByTestId('speed-dial-warp')).toBeTruthy();
+    expect(screen.getByTestId('speed-dial-build')).toBeTruthy();
+
+    const list = screen.getByTestId('speed-dial').querySelector<HTMLElement>('.MuiSpeedDial-actions')!;
+    const n = list.children.length;
+    expect(n).toBe(5);
+    const max = parseFloat(list.style.maxHeight);
+    expect(max).toBe(SHORT_H - TOP - FIT_EDGE_MARGIN_PX);
+    const cs = getComputedStyle(list);
+    const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    const gapVar = list.style.getPropertyValue(ACTION_GAP_VAR);
+    const gap = gapVar ? parseFloat(gapVar) : 8; // MUI's default button margin
+    expect(pad + n * (BTN + 2 * gap)).toBeLessThanOrEqual(max);
+  });
+
+  it('actionGapToFit: full gap when it fits, squeezed when a little short, full (scroll) when long', () => {
+    expect(actionGapToFit(400, 5, 40, 48)).toBe(8);
+    expect(actionGapToFit(292, 5, 40, 48)).toBe(4);
+    expect(actionGapToFit(268, 5, 40, 48)).toBe(2);
+    expect(actionGapToFit(242, 11, 40, 48)).toBe(8);
   });
 });

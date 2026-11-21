@@ -77,6 +77,14 @@ Every lane play session leaves numbers on disk with no extra step:
     on the client, `rttMs`/`rttMeanMs`/`jitterMs`, `corrections` (own-ship
     corrections in the window), `corrRate`, `maxDrift`. Numbers only: no ids,
     names or positions (`src/client/debug/perf/laneFrameSummary.ts`).
+    Since the netcode gap-smoothing telemetry (S0) it also carries the
+    netcode gap counters (`dcLastArrivalMs`, `dcReplacedTotal`,
+    `swarmLateMaxMs`, `anchorHardSnaps`, ...): how late snapshots arrived and
+    how often things snapped. Field meanings:
+    [diagnostic-captures](../architecture/diagnostic-captures.md#netcode-gap-counters-phone-lane-only).
+    Only phone-lane streaming captures carry them; manual and non-lane
+    captures do not. Older lines without them still read (the fields are
+    optional).
   - `perf.ndjson`: individual stutters (`raf_stutter` 30–100 ms, `raf_gap`
     over 100 ms), long animation frames (`loaf`), long tasks, heap samples,
     device info. In a lane build every `raf_stutter`, `raf_gap` and `loaf`

@@ -82,6 +82,8 @@ export interface CargoMessageHost extends ParsedMessageHost {
   pilotCollector(playerId: string): LootCollector | null;
   /** Cargo pods 14c — the auto-unload switch's ship end. */
   resolveActiveShipKey(playerId: string): string | undefined;
+  /** The flown hull, else the hull parked by Command / Build (`PilotSwap.ownShipKey`). */
+  ownShipKey(playerId: string): string | undefined;
 }
 
 export function registerCargoMessages(h: CargoMessageHost): RoomFeature {
@@ -327,9 +329,17 @@ function shipCargo(h: CargoMessageHost, playerId: string, ref: CargoRef, move: C
     type: 'cargo_state', ...echo, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message,
     ...(breakIn ? { breakIn } : {}), ...(move ? { ok: false } : {}),
   });
-  const t = h.shipTarget(ref);
+  // The HUD chip names you (`ship: playerId`): while you spectate that is the
+  // hull you parked (Command / Quick Launch), keyed by its shipInstanceId.
+  const parked = ref.ship === playerId && h.getActiveShip(playerId)?.isActive !== true ? h.ownShipKey(playerId) : undefined;
+  const t = h.shipTarget(parked !== undefined ? { ship: parked } : ref);
   if (t === null) return closed('Nothing to open.');
   if (h.sectorKey() === null) return closed('Cargo only moves in the galaxy.');
+  if (parked !== undefined && t.holdUid === parked) {
+    // Your own hold from the chip while spectating: look only, like flying.
+    return ownHoldState(getHoldStore().get(parked)?.hold ?? emptyHold(), t.capacity,
+      getPlayerShipStore().get(parked)?.autoUnload !== false, echo, move !== null);
+  }
   const mine = h.getActiveShip(playerId);
   if (!mine?.alive || !mine.isActive || mine.shipInstanceId === '' || getPlayerShipStore().get(mine.shipInstanceId) === null) {
     return closed('You need a ship to move cargo.');

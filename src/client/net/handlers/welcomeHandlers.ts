@@ -17,6 +17,7 @@ import { setFactionLooks } from '../../../shared-types/factions.js';
 import { useUIStore } from '../../state/store';
 import { logEvent } from '../../debug/ClientLogger';
 import { parseWelcome } from '../parseWelcome';
+import { resetAnchorHardSnapCount } from '../clockAnchor.js';
 import type { CutFieldClient } from '../CutFieldClient.js';
 import type { WreckGeometryStore } from '../wreckGeometryStore.js';
 import type { DrawnShellTiming } from '../drawnShellTiming';
@@ -114,6 +115,7 @@ export function registerWelcomeHandlers(room: Room, hctx: WelcomeHandlerCtx): vo
     // snapshot drop straight into EWMA-smoothing instead of snapping.
     ctx.anchorInitialised = true;
     ctx.anchorFreshAtMs = ctx.welcomePerfNow;
+    resetAnchorHardSnapCount(); // the anchor is re-seeded: count snaps from this join
     ctx.inputTick = msg.serverTick; // Sync to server tick space so fire messages pass temporal plausibility check.
     // Reset idle-input throttle: the first input after a (re)connect must
     // always reach the server so it has a baseline before tick advance.

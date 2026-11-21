@@ -17,6 +17,13 @@ import { getGameClient } from '../../net/clientSingleton';
 import type { PredictionStats } from '../../net/predictionStats';
 import type { ControlMode } from '../../state/storeTypes';
 import { applyLanePhases, installLanePhaseTiming, rollLanePhases } from './lanePhaseTiming';
+import { getActiveSnapshotTransport } from '../../net/connection/roomConnection.js';
+import {
+  getSwarmLatenessLastMs, getSwarmLatenessMaxMs, getSwarmLatenessSumMs, getSwarmLatenessCount,
+  getSwarmOverwriteUnreadCount, getSwarmOldEndClampCount, getSwarmGlideLimitCount,
+} from '../../net/swarmInterpolation.js';
+import { getAnchorHardSnapCount } from '../../net/clockAnchor.js';
+import { getRenderDueSnapCount } from '../../net/renderTickPhase.js';
 
 export const LANE_SUMMARY_INTERVAL_MS = 10_000;
 /** A frame over this is a hitch the player sees (3+ refreshes at 60 Hz). */
@@ -30,9 +37,40 @@ export interface LaneSummaryInputs {
   net: Pick<PredictionStats, 'rttMs' | 'rttMeanMs' | 'snapshotJitterMs' | 'significantCorrectionCount' | 'rollingCorrRate' | 'maxDriftUnits'> | null;
   /** `significantCorrectionCount` at the previous summary. */
   correctionsBefore: number;
+  /** Netcode gap counters (S0); absent in callers that predate them. */
+  gap?: LaneNetGapCounters;
 }
 
-export interface LanePerfSummary {
+/**
+ * Netcode gap counters (gap-smoothing plan S0). Running values since the last
+ * reset (rejoin / sector handoff), not per window. Optional on the summary: a
+ * `perf_summary` written before them still reads; `null` = no source.
+ */
+export interface LaneNetGapCounters {
+  /** `performance.now()` the last DataChannel frame truly arrived (same base as the line's `ts`). */
+  dcLastArrivalMs?: number | null;
+  /** DataChannel frames replaced unread before the last drain. */
+  dcLastDrainReplaced?: number | null;
+  /** DataChannel frames replaced unread, running total. */
+  dcReplacedTotal?: number | null;
+  /** How late drone (swarm) packets arrived after their tick stamp, ms: last, max, sum, count. */
+  swarmLateLastMs?: number | null;
+  swarmLateMaxMs?: number | null;
+  swarmLateSumMs?: number | null;
+  swarmLateCount?: number | null;
+  /** Drone ring slots overwritten while still newer than the read point. */
+  swarmOverwriteUnread?: number | null;
+  /** Drone reads that fell before the oldest pose of a full ring. */
+  swarmOldEndClamp?: number | null;
+  /** Drone reads frozen at the glide (extrapolation) limit, per drone per frame. */
+  swarmGlideLimit?: number | null;
+  /** Clock anchor hard snaps (drift over 200 ms). */
+  anchorHardSnaps?: number | null;
+  /** Render due-time snaps (gap over 200 ms). */
+  renderDueSnaps?: number | null;
+}
+
+export interface LanePerfSummary extends LaneNetGapCounters {
   windowMs: number;
   frames: number;
   p50: number;
@@ -76,6 +114,26 @@ export function buildLanePerfSummary(ring: FrameTimeRing, inp: LaneSummaryInputs
     corrections: n ? (corrNow >= inp.correctionsBefore ? corrNow - inp.correctionsBefore : corrNow) : null,
     corrRate: n ? r2(n.rollingCorrRate) : null,
     maxDrift: n ? r2(n.maxDriftUnits) : null,
+    ...inp.gap,
+  };
+}
+
+/** Sample the S0 netcode gap counters (10 s timer only, never per frame). */
+export function readLaneNetGapCounters(): LaneNetGapCounters {
+  const dc = getActiveSnapshotTransport();
+  return {
+    dcLastArrivalMs: dc ? r1(dc.lastArrivalMs()) : null,
+    dcLastDrainReplaced: dc ? dc.lastDrainReplacedCount() : null,
+    dcReplacedTotal: dc ? dc.totalReplacedCount() : null,
+    swarmLateLastMs: r1(getSwarmLatenessLastMs()),
+    swarmLateMaxMs: r1(getSwarmLatenessMaxMs()),
+    swarmLateSumMs: r1(getSwarmLatenessSumMs()),
+    swarmLateCount: getSwarmLatenessCount(),
+    swarmOverwriteUnread: getSwarmOverwriteUnreadCount(),
+    swarmOldEndClamp: getSwarmOldEndClampCount(),
+    swarmGlideLimit: getSwarmGlideLimitCount(),
+    anchorHardSnaps: getAnchorHardSnapCount(),
+    renderDueSnaps: getRenderDueSnapCount(),
   };
 }
 
@@ -141,6 +199,7 @@ export function installLanePerfSummary(rendererIn: IRenderer, controlMode: () =>
       counts: m ? { ships: m.ships.size, drones: m.swarm?.size ?? 0, structures: m.structures?.size ?? 0, projectiles: m.projectiles?.size ?? 0 } : null,
       net: client?.stats ?? null,
       correctionsBefore,
+      gap: readLaneNetGapCounters(),
     });
     correctionsBefore = client?.stats.significantCorrectionCount ?? 0;
     frames.reset();

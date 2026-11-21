@@ -2569,7 +2569,7 @@ export class SectorRoom extends Room<SectorState> {
       reclaimLingeringHull: (client, pid, shipId) => this.pilotSwap.reclaimLingeringHull(client, pid, shipId),
       enterSpectate: (pid) => this.fleetHooks.enterSpectate(pid),
       fleetStatusSoon: this.fleetHooks.fleetStatusSoon,
-      serverTick: () => this.serverTick,
+      serverTick: () => this.serverTick, noteInputMargin: (pid, m) => this.snapshotBroadcaster.inputMargins.set(pid, m),
       playerToActiveShipInstance: this.playerToActiveShipInstance,
       lockMsgAllowed: (sid) => this.lockMsgAllowed(sid),
       fireControlLocks: () => this.locks,

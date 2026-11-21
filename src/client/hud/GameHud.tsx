@@ -70,7 +70,9 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       {flying && <FcStripDock scale={scale} />}
       {/* Contacts overview (lock list): left edge, the strip's mirror. */}
       {flying && <ContactsOverview />}
-      <Slot anchor="top-right" order={2}><SpeedDialMenu direction="down" /></Slot>
+      {/* pointer-events none: the open list's column lets taps through to the base
+          under it; the dial's own buttons re-enable taps (MUI + speedDialFit). */}
+      <Slot anchor="top-right" order={2} pointerEvents="none"><SpeedDialMenu direction="down" /></Slot>
 
       {/* ── Bottom ──────────────────────────────────────────────────────────── */}
       {/* Status capsule: bottom-centre on desktop and landscape touch; order 3 stacks it

@@ -54,8 +54,9 @@
  *    harness replay.
  *
  * Current state (post-fix, 2026-05-21):
- *   - FAITHFULNESS: locked at EXPECTED_REPLAY_TICKS_AHEAD = 16. Original
- *     on-device value 155 — superseded by the fix.
+ *   - FAITHFULNESS: was locked at a replayed 16 (on-device 155). Since the lead
+ *     is sized from the server's `inputMargin`, which this capture predates,
+ *     it is a todo pending a new capture (see the PRE-MARGIN check below).
  *   - USER CONTRACT — ticksAhead bounded: PASS (final ticksAhead 16 < 60).
  *     This is the load-bearing assertion that the spiral is fixed.
  *   - USER CONTRACT — no teleport: still RED in the harness (~115 u jump
@@ -77,7 +78,7 @@
  * post-fix; the 2 GREEN are the spiral fix locks.
  */
 import { describe, it, expect } from 'vitest';
-import { replayCapture } from '../captureHarness';
+import { replayCapture, HARNESS_START_LEAD_TICKS, leadHeldWithoutMargin } from '../captureHarness';
 import {
   assertNoTeleport,
   assertInputFlowMaintained,
@@ -86,24 +87,24 @@ import {
 
 const CAPTURE_PATH = 'diag/captures/2026-05-21T14-21-46Z-1kwv1z';
 
-/**
- * Replayed ticksAhead through the FIXED code (plan: spiral-fix, Phase 2.5,
- * 2026-05-21). Original on-device value was 155 (pre-fix). After the cap
- * landed, the harness replaying this capture produces 16 — much further
- * below the 60-tick cap than vg9hon/ers7xy because the phone capture's RTT
- * (~4 s) means ackedTick advances ~steadily as the cap holds inputTick
- * close to ackedTick. Re-record if prediction logic changes again.
- */
-const EXPECTED_REPLAY_TICKS_AHEAD = 16;
-
 describe('replay lock — 1kwv1z phone streaming spiral', () => {
-  it('FAITHFULNESS: replay reproduces post-fix ticksAhead within ±5', async () => {
+  // The replayed 16 came from the lastRtt lead sample, which is blind under the
+  // held-input ack (here it tracked downlink jitter only). The lead is now sized
+  // from the server's snapshot `inputMargin`, which this capture predates and
+  // which can't be rebuilt from it: its rttMs is that same blind lastRtt, and
+  // its server tick rate drifts 16 ms per snapshot against the phone clock.
+  // The old ±5 check against 16 needs a capture recorded with `inputMargin`.
+  // The spiral-fix lock that matters (ticksAhead bounded < 60) is below and
+  // still runs.
+  it.todo('FAITHFULNESS: replay reproduces post-fix ticksAhead (needs a post-inputMargin capture)');
+
+  it('PRE-MARGIN CAPTURE: nothing but the server margin moves the lead', async () => {
     const trace = await replayCapture(CAPTURE_PATH);
     expect(
-      Math.abs(trace.finalStats.ticksAhead - EXPECTED_REPLAY_TICKS_AHEAD),
-      `harness ticksAhead=${trace.finalStats.ticksAhead}, expected ${EXPECTED_REPLAY_TICKS_AHEAD} ` +
-        `(post-fix cap engaged). If this drifts past ±5, the cap behaviour changed.`,
-    ).toBeLessThanOrEqual(5);
+      leadHeldWithoutMargin(trace.finalStats.ticksAhead),
+      `harness ticksAhead=${trace.finalStats.ticksAhead}, start lead ${HARNESS_START_LEAD_TICKS}: ` +
+        `the lead moved with no inputMargin in the capture.`,
+    ).toBe(true);
   });
 
   it('USER CONTRACT — ticksAhead stays bounded (spiral fix locked, plan: spiral-fix Phase 2)', async () => {
