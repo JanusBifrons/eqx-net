@@ -39,7 +39,8 @@ const frameOf = (root: HTMLElement): HTMLElement => root.querySelector('.MuiPape
 
 describe('StructureSettingsModal', () => {
   beforeEach(() => {
-    useUIStore.setState({ selection: { ids: [], focusId: null, focusKind: null } });
+    // The cog sits with the building-management actions: Build mode only.
+    useUIStore.setState({ buildMode: true, selection: { ids: [], focusId: null, focusKind: null } });
     resetSelectionStats();
   });
   afterEach(() => { setGameClient(null); vi.unstubAllGlobals(); });

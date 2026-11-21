@@ -45,7 +45,8 @@ function openTab(tab: string): void {
 
 describe('building settings live in the cog window', () => {
   beforeEach(() => {
-    useUIStore.setState({ selection: { ids: [], focusId: null, focusKind: null } });
+    // #1045 — building management (the cog) shows in Build mode only.
+    useUIStore.setState({ buildMode: true, selection: { ids: [], focusId: null, focusKind: null } });
     resetSelectionStats();
   });
   afterEach(() => { setGameClient(null); });

@@ -521,9 +521,9 @@ export class PixiRenderer implements IRenderer {
    * so negate Y. See `IRenderer.glideCameraTo`. Driven by elapsed ms inside
    * `Camera.tick` (independent of pose interpolation → no teleport-guard trip).
    */
-  glideCameraTo(gameX: number, gameY: number, durationMs: number): void {
+  glideCameraTo(gameX: number, gameY: number, durationMs: number, toScale = 0): void {
     if (!this.initialized) return;
-    this.camera.glideTo(gameX, -gameY, durationMs);
+    this.camera.glideTo(gameX, -gameY, durationMs, toScale);
   }
 
   /** RTS fleet warp (S8) — see `RendererInputController.selectFleetShips`. */

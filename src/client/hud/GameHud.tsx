@@ -3,7 +3,8 @@
  * in-game overlay (prompts, toasts, helm, inspector, drawer, warp map, cargo)
  * is mounted by App directly.
  *
- *  - Status capsule (shield/hull rings, energy, credits): bottom-centre on
+ *  - Status capsule (shield/hull rings, energy, credits; in Build: base stored
+ *    power + credits, no ship health): bottom-centre on
  *    desktop and landscape touch (above the build palette / fleet panel when
  *    those show); top-centre on portrait touch, where the thumbs fill the bottom.
  *  - Top: lock status band (top-centre), sector chip (top-left), speed dial
@@ -15,7 +16,7 @@
  * Every weapon group fires only at a target it has a completed lock on.
  */
 import { useCallback, useEffect, useRef } from 'react';
-import { useShouldRenderHud, useUIStore } from '../state/store';
+import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { SpeedDialMenu } from '../components/SpeedDialMenu';
@@ -33,6 +34,7 @@ import { LockStatusBand } from './LockStatusBand';
 import { ContactsOverview } from '../components/ContactsOverview';
 import { stickToWorldBearing } from '@core/combat/manualAim';
 import { HoldButton, SectorChip, useEnergyFill, useFakeCredits } from './widgets';
+import { BuildStatusBody } from './BuildStatus';
 
 interface Props {
   /** Present on touch devices only. */
@@ -46,6 +48,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const spectating = useUIStore((s) => s.pilotMode === 'spectator');
   const isDead = useUIStore((s) => s.isDead);
+  // Build mode hides the flight controls: the ghost and the build list own the screen.
+  const building = useUIStore((s) => s.buildMode);
   const size = useHudSize();
   const scale = hudScale(size);
   const landscape = useIsLandscape();
@@ -56,7 +60,7 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
   }, []);
 
   if (!shouldRender) return null;
-  const flying = !spectating && !isDead;
+  const flying = !spectating && !isDead && !building;
   const touch = touchInput !== null;
 
   return (
@@ -107,8 +111,14 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
 
 // ── Status ───────────────────────────────────────────────────────────────────
 
-/** Compact status capsule: segmented shield/hull ring + energy + credits. */
+/**
+ * Compact status capsule: segmented shield/hull ring + energy + credits. In
+ * Build mode (no ship flown) it swaps to the build body (`BuildStatus.tsx`):
+ * base stored power + credits, `data-mode="build"`.
+ */
 export function StatusCapsule({ scale }: { scale: number }): JSX.Element {
+  const mode = useUIStore(selectControlMode);
+  const building = mode === 'build';
   const shield = useUIStore((s) => s.shieldPct);
   const hull = useUIStore((s) => s.hullPct);
   const wallet = useUIStore((s) => s.wallet);
@@ -122,6 +132,7 @@ export function StatusCapsule({ scale }: { scale: number }): JSX.Element {
   return (
     <div
       data-testid="hud-status"
+      data-mode={mode}
       data-hud-exclusion=""
       data-time-scale={timeScale}
       style={{
@@ -137,6 +148,7 @@ export function StatusCapsule({ scale }: { scale: number }): JSX.Element {
         position: 'relative',
       }}
     >
+      {building ? <BuildStatusBody scale={scale} wallet={wallet} /> : <>
       <svg width={d} height={d} style={{ transform: 'rotate(-90deg)' }}>
         <circle cx={d / 2} cy={d / 2} r={r1} fill="none" stroke="rgba(255,255,255,.1)" strokeWidth={2.5} />
         <circle
@@ -160,6 +172,7 @@ export function StatusCapsule({ scale }: { scale: number }): JSX.Element {
           <RollingCounter value={wallet} size={Math.round(10.5 * scale)} />
         </div>
       </div>
+      </>}
       {timeScale !== 1 && <TimeScaleChip timeScale={timeScale} scale={scale} />}
     </div>
   );

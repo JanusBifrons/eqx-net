@@ -23,8 +23,9 @@ export interface ICameraControl {
    * the snapshot teleport guard (Risk #4). While the glide runs it OVERRIDES the
    * follow target, so the production `followLerpFactor:1` follow can't snap mid-
    * transition; once it completes, follow resumes on the new ship.
+   * `toScale` > 0 also eases the camera zoom to that scale (build mode).
    */
-  glideCameraTo(gameX: number, gameY: number, durationMs: number): void;
+  glideCameraTo(gameX: number, gameY: number, durationMs: number, toScale?: number): void;
   /**
    * Phase 5 — set the SPECTATOR WASD free-pan velocity in SCREEN px/sec. The
    * main thread computes it from the held WASD/arrow keys and calls this ONLY on
