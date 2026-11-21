@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installPerfProbe, perfProbeEnabled, runPerfLabScene, runPerfLabTrip } from './debug/perf/perfProbe';
+import { installLanePerfSummary } from './debug/perf/laneFrameSummary';
 import { handlePlacementKey } from './structures/structurePlacementClient';
 import { installWindowLogger, refreshAutoCaptureLatch } from './debug/ClientLogger';
 import { installStreamingDiag } from './debug/streamingDiag';
@@ -18,6 +19,7 @@ import {
   useAuthExpiryRedirect,
   useUserPrefsHydration,
 } from './app/appHooks';
+import { useAutoRejoin } from './app/useAutoRejoin';
 import { PhaseRouter } from './app/PhaseRouter';
 import {
   syncGalaxyVisibility,
@@ -39,12 +41,13 @@ import { sendFleetOrder } from './ships/shipActionsClient';
 import { installFleetCommandSenders } from './fleet/installFleetCommandSenders';
 import { canFinishFleetPick } from './fleet/fleetPickView';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
-import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
+import { useUIStore, useGameReady, useIsLoadingActive, selectControlMode } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { decideContextMenuPlacement } from './structures/contextMenuPlacement';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
+import { sectorKeyFromRoomName } from './components/sectorBriefing';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
 import { RotatePhoneOverlay, useNeedsRotate } from './layout/RotatePhoneOverlay';
 import { cancelTransit } from './net/transitClient';
@@ -512,6 +515,7 @@ function GameSurface({
     // pushes later changes).
     renderer.setFleetOrderMode(useUIStore.getState().fleetOrderMode);
     renderer.setFleetPick(useUIStore.getState().fleetPick?.kind ?? null);
+    installLanePerfSummary(renderer, () => selectControlMode(useUIStore.getState())); // phone lane only: 10 s frame-time summaries + stall context
     // Perf scenes (`?perfprobe=1` only): frame times, long tasks, bytes.
     if (perfProbeEnabled(window.location.search)) {
       installPerfProbe(renderer, useWorker);
@@ -1089,6 +1093,8 @@ export function App(): JSX.Element {
   }, [setPhase]);
 
   useShipSwapDispatcher(setRoomNameOverride, setJoinOptionsOverride);
+  // Dropped room + server reachable again → rejoin the same ship (phone resume).
+  useAutoRejoin();
 
   const handleSpawnNewShip = useCallback((_kind: unknown, sectorKey: string) => {
     // ShipKind already lives in Zustand `selectedShipKind` (the picker
@@ -1154,7 +1160,7 @@ export function App(): JSX.Element {
             'game' && !== 'connecting'; auto-fades on `gameReady`. Mounted
             at the layout root so phase transitions (e.g. connecting →
             game) don't unmount/remount it and lose the fade animation. */}
-        <WarpScreen />
+        <WarpScreen targetSectorKey={sectorKeyFromRoomName(roomNameOverride)} />
       </LayoutProvider>
     </ErrorBoundary>
   );

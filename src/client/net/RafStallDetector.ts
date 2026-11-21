@@ -26,6 +26,7 @@
 
 import { logEvent } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
+import { recordLaneFrame, withLaneStallContext } from '../debug/perf/laneFrameSummary';
 
 export class RafStallDetector {
   private rafSampleCounter = 0;
@@ -113,6 +114,7 @@ export class RafStallDetector {
    * `sampleHeapIfDue` can compute effective RAF rate over the window.
    */
   detectGap(elapsedMs: number, inputTickBefore: number, nowMs: number): void {
+    recordLaneFrame(elapsedMs); // phone-lane frame-time summary (no-op off the lane)
     // r2 — accumulate window stats every RAF.
     this.rafCountSinceSample += 1;
     this.rafElapsedTotalMsSinceSample += elapsedMs;
@@ -120,10 +122,11 @@ export class RafStallDetector {
       this.rafElapsedMaxMsSinceSample = elapsedMs;
     }
     if (elapsedMs > 30 && elapsedMs <= 100) {
-      logEvent('raf_stutter', {
+      // Lane builds add zoom + control mode (only when the event fires).
+      logEvent('raf_stutter', withLaneStallContext({
         elapsedMs: Math.round(elapsedMs * 100) / 100,
         inputTickBefore,
-      });
+      }));
     }
     if (elapsedMs > 100) {
       const heap = readHeapUsedMb();
@@ -134,13 +137,13 @@ export class RafStallDetector {
       const heapDelta = (heap !== undefined && this.lastRafStallHeapMb >= 0)
         ? parseFloat((heap - this.lastRafStallHeapMb).toFixed(2))
         : null;
-      logEvent('raf_gap', {
+      logEvent('raf_gap', withLaneStallContext({
         elapsedMs: Math.round(elapsedMs * 100) / 100,
         inputTickBefore,
         heapUsedMb: heapVal,
         msSinceLastStall,
         heapDeltaMbSinceLastStall: heapDelta,
-      });
+      }));
       this.lastRafStallAtMs = nowMs;
       if (heap !== undefined) this.lastRafStallHeapMb = heap;
     }

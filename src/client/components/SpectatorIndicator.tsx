@@ -1,7 +1,7 @@
 import { Box } from '@mui/material';
 import ExploreIcon from '@mui/icons-material/Explore';
 import ConstructionIcon from '@mui/icons-material/Construction';
-import { selectControlMode, useUIStore } from '../state/store';
+import { selectControlMode, useShowLoadingScreen, useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
 import { useIsCompact } from '../layout/useIsCompact';
 
@@ -39,7 +39,9 @@ const SX = {
 export function SpectatorIndicator(): JSX.Element | null {
   const phase = useUIStore((s) => s.phase);
   const controlMode = useUIStore(selectControlMode);
-  if (phase !== 'game' || controlMode === 'fly') return null;
+  // Never over the join loading screen (sector briefing card).
+  const loadingScreen = useShowLoadingScreen();
+  if (phase !== 'game' || controlMode === 'fly' || loadingScreen) return null;
   if (controlMode === 'build') {
     return (
       <Box sx={SX} data-testid="build-mode-indicator">

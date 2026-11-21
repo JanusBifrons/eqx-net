@@ -9,6 +9,7 @@ import Tooltip from '@mui/material/Tooltip';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { useAuthStore } from '../auth/authStore.js';
 import { AvatarMenu } from './AvatarMenu.js';
+import { useShowLoadingScreen } from '../state/store.js';
 
 interface Props {
   onLoginClick: () => void;
@@ -18,6 +19,9 @@ interface Props {
 
 export function AppHeader({ onLoginClick, onProfileClick, onSettingsClick }: Props) {
   const { user } = useAuthStore();
+  // The join loading screen (sector briefing) owns the screen: no top bar over it.
+  const loadingScreen = useShowLoadingScreen();
+  if (loadingScreen) return null;
 
   return (
     <AppBar

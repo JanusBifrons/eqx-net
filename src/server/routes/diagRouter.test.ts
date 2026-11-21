@@ -146,6 +146,33 @@ describe('diagRouter', () => {
     expect(entry.data.serverTick).toBe(100);
   });
 
+  it('routes the phone lane\'s perf_summary lines to frames.ndjson', async () => {
+    const summary = { frames: 900, p50: 11.1, p95: 16.7, p99: 33.4, maxMs: 120, hitches: 2, viewHalf: 1800 };
+    const res = await fetch(`${baseUrl}/diag/capture`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logs: [{ ts: 10_000, tag: 'perf_summary', data: summary }] }),
+    });
+    expect(res.status).toBe(200);
+    const dirs = await readdir(captureDir);
+    const nd = await readFile(join(captureDir, dirs[0]!, 'frames.ndjson'), 'utf8');
+    const line = JSON.parse(nd.trim()) as { source: string; tag: string; data: typeof summary };
+    expect(line).toMatchObject({ source: 'client', tag: 'perf_summary', data: summary });
+  });
+
+  it('routes loaf next to the stalls in perf.ndjson (with the lane\'s zoom + mode)', async () => {
+    const loaf = { durationMs: 86, topScripts: [{ sourceURL: 'https://h/assets/index-X.js', sourceCharPosition: 62 }], viewHalf: 1800, mode: 'fly' };
+    const res = await fetch(`${baseUrl}/diag/capture`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logs: [{ ts: 10_000, tag: 'loaf', data: loaf }] }),
+    });
+    expect(res.status).toBe(200);
+    const dirs = await readdir(captureDir);
+    const nd = await readFile(join(captureDir, dirs[0]!, 'perf.ndjson'), 'utf8');
+    expect(JSON.parse(nd.trim())).toMatchObject({ source: 'client', tag: 'loaf', data: loaf });
+  });
+
   it('rejects malformed payloads with 400', async () => {
     const res = await fetch(`${baseUrl}/diag/capture`, {
       method: 'POST',

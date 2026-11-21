@@ -35,6 +35,7 @@
  */
 import { logEvent } from './ClientLogger.js';
 import { recordLongtask } from './healthStats.js';
+import { withLaneStallContext } from './perf/laneFrameSummary.js';
 
 interface LongTaskAttributionTiming extends PerformanceEntry {
   containerType?: string;
@@ -69,7 +70,7 @@ interface LoAFScriptEntry {
   sourceFunctionName?: string;
   /** Best-effort source URL. */
   sourceURL?: string;
-  /** Best-effort line + column in sourceURL. */
+  /** Char offset of the entry function in sourceURL (-1 unknown); `pnpm phone:names` maps it to source. */
   sourceCharPosition?: number;
 }
 
@@ -180,13 +181,14 @@ function installLoafObserver(): void {
             invokerType: s.invokerType ?? null,
             sourceFunctionName: s.sourceFunctionName ?? null,
             sourceURL: s.sourceURL ?? null,
+            sourceCharPosition: typeof s.sourceCharPosition === 'number' ? s.sourceCharPosition : null,
             forcedStyleAndLayoutDuration: typeof s.forcedStyleAndLayoutDuration === 'number'
               ? Math.round(s.forcedStyleAndLayoutDuration * 100) / 100
               : 0,
           }))
           .sort((a, b) => b.duration - a.duration)
           .slice(0, 5);
-        logEvent('loaf', {
+        logEvent('loaf', withLaneStallContext({
           startTime: Math.round(entry.startTime * 100) / 100,
           durationMs: Math.round(entry.duration * 100) / 100,
           blockingDurationMs: typeof entry.blockingDuration === 'number'
@@ -200,7 +202,7 @@ function installLoafObserver(): void {
             : null,
           scriptCount: entry.scripts?.length ?? 0,
           topScripts: scripts,
-        });
+        }));
       }
     });
     loafObserver.observe({ type: 'long-animation-frame', buffered: true } as PerformanceObserverInit);

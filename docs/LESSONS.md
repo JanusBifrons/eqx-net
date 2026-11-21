@@ -3335,6 +3335,39 @@ unknown attacker id counted as a player, so a rock that rammed an elite "earned"
 looked up as a structure owner. `classifyAttacker` now takes the swarm registry and classes a registry
 rock or wreck piece as `environment`, by kind.
 
+## 2026-11-21 — the touch stick wobbled fast hulls left/right every tick
+
+Phone report: flying forward on the stick, the ship "would quite often jitter from left to right".
+`joystickToInput` is a bang-bang steerer with a ±0.04 rad stop band, tuned when hulls turned ≤ 0.05
+rad per tick. The arcade handling pass (`turn` × 4.2) made a scout turn 0.105 rad/tick and an
+interceptor 0.087 (a fighter with ≥ 3 turn-rate points crosses too): a ship 0.06 rad off the stick
+lands 0.045 off the other side, still outside the band, flips direction, and repeats every tick
+forever. A steerer that toggles snap-turn bits must stop within half the per-tick step
+(`maxTurnPerTick`, from `applyShipInput`); retuning a turn rate must re-check every closed-loop
+controller that toggles the turn keys (`joystickToInput.test.ts` closed-loop cases).
+
+## 2026-11-21 — the course autopilot (helm) wobbled the same way
+
+`helmStep` stopped turning inside a fixed 0.02 rad deadband and leaned on the coast angle
+(`|ω| / angularDamping`) to stop early, but a snap-turn hull has no angular damping, so its coast is
+zero: a fighter 0.03 rad off a course turned 0.07, landed 0.04 off the other side and turned back
+every tick (sideways wobble on course orders). The helm and the stick now share one stop rule,
+`turnStopAngle(floor, turnStepRad)` in `applyShipInput.ts` (half the per-tick step, never below the
+steerer's own floor). The AI `virtualPilot` already stopped at half a step behind a 2.5-step
+deadband and a no-reverse window, so it was not affected. Locked by `helm.test.ts` "holds a heading
+without turn wobble".
+
+## 2026-11-21 — a detached cmd.exe on Windows drops its node child's output
+
+The phone lane's `run/server.log` was 0 bytes for a whole play test: the server ran detached
+(`spawn(cmd, { shell: true, detached: true, stdio: [ignore, fd, fd] })`) so it outlives `pnpm phone up`.
+A detached `cmd.exe` has no console, so the `node.exe` it starts gets a console of its own and writes
+there; even `node -v >> file` inside that shell writes nothing. A detached node spawned directly keeps
+the file handles. `loggedSpawnPlan` (`showcase/servers.ts`) runs an outliving Windows child under a
+detached node relay; `showcase/servers.test.ts` spawns a real grandchild and reads the file. Also: a
+play-test capture went to the SERVED checkout's `diag/captures/` (a worktree that gets deleted); the
+lane now sets `EQX_DIAG_DIR` to its `run/captures/`.
+
 ## 2026-11-21 — moveTo the arc's start, then arc(): a stray line to the Graphics' origin on phones
 
 Pixi v8's `arc()` pushes its own start point onto the current subpath, so `g.moveTo(arc start);
@@ -3346,3 +3379,12 @@ threat arc, galaxy padlock shackle and flip-ring dash grew a long thin line from
 Draw arcs with `arcSubpath` (`src/client/render/arcSubpath.ts`: moveTo + lineTo, which skips
 duplicates). `g.context.bounds` does not catch this (NaN never widens bounds): test the tessellated
 vertices with `strokeVertices` (`src/client/render/strokeVertices.testutil.ts`) and assert finite.
+
+## 2026-11-21 — a reflection clear that truncates arrays throws on a frozen constant
+
+`clearMirror` walks the render mirror and did `v.length = 0` on every array. `tickPhysics` parks the
+frozen `EMPTY_AIM_IDS` on `mirror.localAimMountIds`, so in strict-mode ESM the truncate threw
+"Cannot assign to read only property 'length'" and `dispose()` stopped half-way (no
+`dispose_complete`, mirror half-cleared) on every leave from the Lost Connection overlay. A generic
+walk that mutates must check `Object.isFrozen` and swap in a fresh value instead; a test that stores
+a frozen constant on the mirror (`colyseusClient.disposeAudit.test.ts`) locks it.

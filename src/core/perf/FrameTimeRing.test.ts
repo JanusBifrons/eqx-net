@@ -23,6 +23,13 @@ describe('FrameTimeRing', () => {
     expect(r.summary().frames).toBe(0);
   });
 
+  it('summary(_, hitchMs) counts hitches over a caller threshold (the phone lane uses 50 ms)', () => {
+    const r = new FrameTimeRing(8);
+    for (const x of [11, 40, 50, 51, 120]) r.push(x);
+    expect(r.summary(undefined, 50).hitches).toBe(2);
+    expect(r.summary().hitches).toBe(4);
+  });
+
   it('summary(last) covers only the newest frames (a soak recent window)', () => {
     const r = new FrameTimeRing(8);
     for (let i = 0; i < 6; i++) r.push(100);

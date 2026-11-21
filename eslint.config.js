@@ -66,6 +66,8 @@ export default [
   {
     ignores: [
       'dist/**',
+      // Minified build output kept as a source-map fixture (lane-stall-names.test.ts).
+      'tests/fixtures/lane-stall/lane-dist/**',
       // Agent worktrees (.claude/worktrees/<id>) are transient nested git
       // clones incl. their dist/ build output; `eslint .` would recurse
       // into them and flag compiled JS. Nothing under .claude is project

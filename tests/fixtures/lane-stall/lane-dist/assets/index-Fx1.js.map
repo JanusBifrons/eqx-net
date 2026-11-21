@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../../src/game.ts"],
+  "sourcesContent": ["// Fixture source for tests/unit/lane-stall-names.test.ts: built once with\n// esbuild (minified, external source map) into ../dist/assets/index-Fx1.js.\nlet swarm: number[] = [];\n\nexport function stepSwarm(dt: number): number {\n  let sum = 0;\n  for (const s of swarm) sum += s * dt;\n  return sum;\n}\n\nexport function renderFrame(now: number): void {\n  const total = stepSwarm(now / 1000);\n  if (total > 1e9) swarm = [];\n  requestAnimationFrame(renderFrame);\n}\n\nexport const onResize = (w: number, h: number): number => w * h + stepSwarm(1);\n"],
+  "mappings": "AAEA,IAAIA,EAAkB,CAAC,EAEhB,SAASC,EAAUC,EAAoB,CAC5C,IAAIC,EAAM,EACV,QAAWC,KAAKJ,EAAOG,GAAOC,EAAIF,EAClC,OAAOC,CACT,CAEO,SAASE,EAAYC,EAAmB,CAC/BL,EAAUK,EAAM,GAAI,EACtB,MAAKN,EAAQ,CAAC,GAC1B,sBAAsBK,CAAW,CACnC,CAEO,IAAME,EAAW,CAACC,EAAWC,IAAsBD,EAAIC,EAAIR,EAAU,CAAC",
+  "names": ["swarm", "stepSwarm", "dt", "sum", "s", "renderFrame", "now", "onResize", "w", "h"]
+}

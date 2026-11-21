@@ -609,8 +609,8 @@ export interface UIStore {
    *  with a brief 'connecting' phase for the loading spinner — far
    *  simpler than the transit machine and not bound by neighbour-only
    *  rules. */
-  pendingShipSwap: { shipId: string; sectorKey: string } | null;
-  setPendingShipSwap: (req: { shipId: string; sectorKey: string } | null) => void;
+  pendingShipSwap: { shipId: string; sectorKey: string; startMode?: 'fly' | 'command' } | null;
+  setPendingShipSwap: (req: { shipId: string; sectorKey: string; startMode?: 'fly' | 'command' } | null) => void;
   /** Phase 5 — `player_ships.ship_id` of the hull the local browser
    *  session is currently piloting. Sourced from `WelcomeMessage.
    *  shipInstanceId` on every successful room join; cleared when the
