@@ -1790,7 +1790,7 @@ export class ColyseusGameClient {
           preResetRemotePos,
           remoteShipOffsets: this._remoteShipOffsets,
           predGuard: this._predGuard,
-          stats: this.stats,
+          stats: this.stats, serverTick: snap.serverTick, gameNowMs, states: snap.states,
         });
       }
       // Command / Build (#16): the own cargo rides the parked hull's entry (its shipInstanceId).
@@ -1916,7 +1916,7 @@ export class ColyseusGameClient {
           preResetRemotePos,
           remoteShipOffsets: this._remoteShipOffsets,
           predGuard: this._predGuard,
-          stats: this.stats,
+          stats: this.stats, serverTick: snap.serverTick, gameNowMs, states: snap.states,
         });
       }
 

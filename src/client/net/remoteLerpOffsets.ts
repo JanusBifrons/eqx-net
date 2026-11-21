@@ -18,6 +18,12 @@
  * hysteresis guard. 3 consecutive corrections > 5 u disable forward-
  * prediction for that remote; 3 consecutive < 5 u re-enable it.
  * Sticky thresholds avoid oscillation.
+ *
+ * Netgap S2-3 — a real teleport SNAPS. A correction no ship could fly
+ * (`isImplausibleJump`, the bound shared with drone interpolation) or one
+ * landing while the ship's PUBLIC warp phase says it is on the run / just
+ * arrived drops the offset, so the drawn ship jumps in one frame instead of
+ * gliding across the screen.
  */
 
 import type { PhysicsWorld } from '@core/physics/World';
@@ -35,6 +41,22 @@ import {
   remoteOffsetHalfLifeForDrift,
 } from './predictionTuning';
 import type { PreResetEntry } from './snapshotRemoteSync';
+import { isImplausibleJump } from './plausibleSpeed.js';
+
+/** Game ms per server tick (fixed 60 Hz sim). */
+const TICK_MS = 1000 / 60;
+/** Wire warp phases that mean "moved by warp, not flight": on the run (2)
+ *  and just dropped out (3). The build-up (1) is still flown in place. */
+const WARP_RUN = 2;
+const WARP_ARRIVED = 3;
+
+/** The previous correction's authoritative sample, per client (keyed by its
+ *  offsets map, so this module owns the state; one object per client). */
+interface LastCorrection {
+  serverTick: number;
+  gameMs: number;
+}
+const lastCorrectionByClient = new WeakMap<Map<string, RemoteShipOffset>, LastCorrection>();
 
 export interface RemoteShipOffset {
   sx: SpringState;
@@ -51,6 +73,14 @@ export interface RemoteLerpOffsetCtx {
   predGuard: RemotePredictionGuard;
   /** Optional: accumulates each remote's reset correction (print-only). */
   stats?: { remoteCorrTotalUnits: number; remoteCorrSamples: number };
+  /** The snapshot's server tick, and the game clock (ms) it is applied at:
+   *  together with the previous correction's they give the span the
+   *  teleport bound is measured over (GAME ms, so time scale cancels).
+   *  Absent (unit rigs): no teleport snap on distance. */
+  serverTick?: number;
+  gameNowMs?: number;
+  /** The snapshot's ship states, for each remote's public warp phase. */
+  states?: Readonly<Record<string, { warp?: 1 | 2 | 3 } | undefined>>;
 }
 
 function wrapPi(a: number): number {
@@ -58,6 +88,24 @@ function wrapPi(a: number): number {
 }
 
 export function computeRemoteLerpOffsets(ctx: RemoteLerpOffsetCtx): void {
+  // Span the bound is measured over: the larger of the server-time span
+  // between the two authoritative samples and the game time the client has
+  // been predicting since the last one was applied (a gap's held snapshot
+  // carries the whole gap's prediction error), so legitimate motion never
+  // reads as a teleport. First correction: no previous sample, span 0.
+  let spanMs = Infinity;
+  if (ctx.serverTick !== undefined && ctx.gameNowMs !== undefined) {
+    let last = lastCorrectionByClient.get(ctx.remoteShipOffsets);
+    if (last) {
+      spanMs = Math.max((ctx.serverTick - last.serverTick) * TICK_MS, ctx.gameNowMs - last.gameMs);
+    } else {
+      spanMs = 0;
+      last = { serverTick: 0, gameMs: 0 };
+      lastCorrectionByClient.set(ctx.remoteShipOffsets, last);
+    }
+    last.serverTick = ctx.serverTick;
+    last.gameMs = ctx.gameNowMs;
+  }
   for (const [remoteId, preReset] of ctx.preResetRemotePos) {
     const postReconcile = ctx.predWorld.getShipState(remoteId);
     if (!postReconcile) continue;
@@ -69,6 +117,14 @@ export function computeRemoteLerpOffsets(ctx: RemoteLerpOffsetCtx): void {
     if (ctx.stats) {
       ctx.stats.remoteCorrTotalUnits += dist;
       ctx.stats.remoteCorrSamples++;
+    }
+    // A teleport (a jump no ship could fly, or a warp run / arrival) snaps:
+    // drop the offset and its spring velocity, so the drawn pose is the new
+    // physics pose this frame. The guard above still got the raw distance.
+    const warp = ctx.states?.[remoteId]?.warp;
+    if (isImplausibleJump(dist, spanMs) || warp === WARP_RUN || warp === WARP_ARRIVED) {
+      ctx.remoteShipOffsets.delete(remoteId);
+      continue;
     }
     const posMoved = dist > 1;
     const angMoved = Math.abs(oa) > ANGLE_NOISE_THRESHOLD;

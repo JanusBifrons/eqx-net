@@ -346,25 +346,28 @@ describe('other players\' ships through gaps and corrections — today\'s number
       counters = rounded(countMotionArtefacts(motionFrames(tl, track, frames)));
     });
 
-    it('records today\'s counts: the 2000 u jump is glided over eight frames', () => {
-      // Before S2-1 the next snapshot's correction dropped the ~401 u still
-      // easing after four frames. With the offset continuous (S2-1) that part
-      // is carried, so the glide runs eight frames (was 4; snaps 32 -> 46,
-      // backward steps 6 -> 14) until S2-3 snaps real teleports.
-      expect(glideFrames).toBe(8);
-      expect(arrivalStepU).toBeCloseTo(341.4, 0);
-      expect(counters.snaps).toBe(46);
-      expect(counters.largestSnapU).toBeCloseTo(527.919, 2);
-      expect(counters.totalSnapU).toBeCloseTo(1665.288, 2);
-      expect(counters.freezeFrames).toBe(0);
-      expect(counters.backwardSteps).toBe(14);
-      expect(counters.meanLatenessMs).toBeCloseTo(-150.534, 2);
-      expect(counters.maxLatenessMs).toBeCloseTo(76.784, 2);
+    it('records today\'s counts: the 2000 u jump is drawn in one frame', () => {
+      // S2-1 made the offset continuous, so the jump glided eight frames
+      // (snaps 46, backward steps 14). S2-3 snaps a jump no ship could fly:
+      // the drawn ship moves the whole ~2000 u on the arrival frame (was
+      // 341.4 u) and the glide is gone (8 -> 0 frames; snaps 46 -> 37,
+      // largest 527.919 -> 1423.837 u, total 1665.288 -> 1524.661 u,
+      // backward steps 14 -> 2). The largest snap is the jump itself, read
+      // against a truth taken at the snapshot's arrival time.
+      expect(glideFrames).toBe(0);
+      expect(arrivalStepU).toBeCloseTo(1991.9, 0);
+      expect(counters.snaps).toBe(37);
+      expect(counters.largestSnapU).toBeCloseTo(1423.837, 2);
+      expect(counters.totalSnapU).toBeCloseTo(1524.661, 2);
+      expect(counters.freezeFrames).toBe(1);
+      expect(counters.backwardSteps).toBe(2);
+      expect(counters.meanLatenessMs).toBeCloseTo(-154.663, 2);
+      expect(counters.maxLatenessMs).toBeCloseTo(19.6, 2);
     });
 
-    // Target (plan 3.2, S2-3): a real teleport is snapped on the frame it
-    // arrives, not glided. Today: 8 frames drawn more than 100 u off.
-    it.fails('a real teleport snaps in one frame', () => {
+    // Plan 3.2, S2-3: a real teleport is snapped on the frame it arrives,
+    // not glided (was 8 frames drawn more than 100 u off).
+    it('a real teleport snaps in one frame', () => {
       expect(glideFrames).toBe(0);
     });
   });
