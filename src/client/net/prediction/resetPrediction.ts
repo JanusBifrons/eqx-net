@@ -15,6 +15,7 @@ import type { CutFieldClient } from '../CutFieldClient.js';
 import type { DrawnShellTiming } from '../drawnShellTiming';
 import type { DataChannelTransport } from '../dataChannelTransport.js';
 import { resetSwarmDisplayDelay } from '../swarmInterpolation.js';
+import { resetMissileDisplayDelay } from '../../combat/MissileMirror.js';
 
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 
@@ -140,6 +141,7 @@ export function resetPredictionState(ctx: PredictionResetCtx): void {
   // ...and the slewed delay goes back to the floor (the destination's first
   // feed places it at its target) with the lateness estimate cleared (S3-2).
   resetSwarmDisplayDelay();
+  resetMissileDisplayDelay(); // the missile (JSON) stream's own record (S5-5)
   // Spatial seed (2026-05-16) — see the method doc comment. Despawn the
   // local predWorld ship body and drop the Reconciler so the
   // destination's first state-diff / snapshot reseeds the body AT THE

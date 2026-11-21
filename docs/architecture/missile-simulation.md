@@ -346,9 +346,53 @@ back to arrival stamps. Through a 600 ms stall of both streams the missile
 still freezes a little before the drone: its newest sample is up to two
 ticks older (the JSON stream carries every third tick), so it reaches its
 250 ms extrapolation cap first while the drone's read point is held; the
-missile hold (S5-5) closes that. Locks: `MissileMirror.test.ts` (follows a
-changed delay, unseeded fallback, wall ms at 2× and 0.7×) and the "same
-lateness" test in `gapSmoothing.missiles.test.ts`.
+missile hold (S5-5, below) removes the snap but not that offset. Locks:
+`MissileMirror.test.ts` (follows a changed delay, unseeded fallback, wall ms
+at 2× and 0.7×) and the "same lateness" test in `gapSmoothing.missiles.test.ts`.
+
+## Missile stream hold and game-ms dead-reckon (netcode gap smoothing S5-5)
+
+Missiles ride the JSON snapshot stream and drones the binary swarm stream;
+the two can stall separately. So the missile stream has its OWN display-delay
+record run through the SAME slew and hold as drones: the shared functions
+`slewDisplayDelay` and `holdDisplayDelay` in `src/client/net/displayDelayHold.ts`
+(owner decision D10 = A; no second copy of the algorithm, see
+`drone-snapshot-interpolation.md`). `applyMissileSnapshot` notes every
+snapshot's tick stamp as the JSON stream's newest stamp (with missiles or
+not: any snapshot shows the stream is alive; the newer tick wins).
+`stepMissileDisplayDelay(mirror, frameDtMs, nowMs)` runs on the main thread
+once per frame right after `stepSwarmDisplayDelay` (`mirror/worldPasses.ts`):
+its target is the drone delay's target (same lateness on a live link: the
+record starts at the drone delay and follows the same steps), and its hold
+parks the missile read point at "JSON newest + `MISSILE_EXTRAPOLATION_CAP_MS`
+÷ speed", re-syncing (counted once per stall) past
+`MAX_TOTAL_DISPLAY_DELAY_MS` ÷ speed, as drones do. The result rides the
+mirror as `mirror.swarmDisplayDelayMs` (the renderer may be a worker); NaN
+before the drone tick clock seeds, as before. `resetMissileDisplayDelay`
+(called by `resetPredictionState`) clears it; `getMissileHoldFrameCount` and
+`getMissileResyncCount` are the telemetry.
+
+The dead-reckon now runs in game ms: ring stamps are wall ms and velocities
+are per game second, so every dt in `resolveMissileDisplayPose` (the
+single-sample reconstruction, the extrapolation and the curve interpolation)
+is wall ms × `timeScale`, and the 250 game-ms cap is ÷ `timeScale` in wall
+ms (as drones, S4-1b). At 2× a missile used to dead-reckon half as far as it
+flew, at 0.7× 1.4× as far.
+
+Effect on the 1× fixtures (missile; before → after): gap-400 1 snap of 14.2 u
+→ 0, mean lateness 210.57 → 221.66 ms; gap-600 and burst-600-both-streams
+1 snap of 15.7 u → 0, 248.44 → 258.66 ms; gap-json-only 1 snap of 41.95 u → 0,
+141.81 → 157.32 ms. Freeze frames (5, 17, 17, 5), max lateness and lan-clean,
+gap-200, frame-stall-250 and jitter-4g are unchanged; drone numbers are
+unchanged. Known gap: through a stall of both streams the missile is drawn
+later than the drone (+12.07 ms mean at gap-400, +13.33 ms at gap-600), because
+its newest sample is up to two ticks older, so its hold starts that much
+earlier and both records slew back at the same bounded rate. Equal lateness
+there would need the missile read point to follow the drone hold, which would
+break independence (a JSON-only stall must hold missiles and not drones: at
+gap-json-only the missile is drawn +17.32 ms later than the drone by design).
+Locks: `MissileMirror.test.ts` (independence both ways, re-sync counted once,
+dead-reckon and cap at 2× and 0.7×) and `gapSmoothing.missiles.test.ts`.
 
 ## Curve-aware interpolation — `angvel` on the wire (WS-C #5, 2026-06-20)
 

@@ -11,8 +11,9 @@
  * - missile: `applyMissileSnapshot` (applied after the snapshot coalescer
  *   keeps only the newest pending snapshot per frame; stamped from its
  *   server tick on the drone tick clock, S5-2)
- *   then `resolveMissileDisplayPose` (the shared drone display delay that
- *   `publishSwarmDisplayDelay` puts on the mirror each frame, S5-4; 250 ms
+ *   then `resolveMissileDisplayPose` (the missile stream's own display delay
+ *   that `stepMissileDisplayDelay` puts on the mirror each frame: the drone
+ *   delay's target, S5-4, held on the JSON stream's stalls, S5-5; 250 ms
  *   glide cap then freeze);
  * - drone: `decodeSwarmPacket` with tick stamping, then
  *   `interpolateSwarmPose`. Once per frame, after the drain and before any
@@ -23,7 +24,7 @@
  * `countMotionArtefacts` scores the drawn tracks against the truth.
  */
 import { describe, it, expect } from 'vitest';
-import { applyMissileSnapshot, publishSwarmDisplayDelay, resolveMissileDisplayPose } from '../../src/client/combat/MissileMirror.js';
+import { applyMissileSnapshot, resetMissileDisplayDelay, resolveMissileDisplayPose, stepMissileDisplayDelay } from '../../src/client/combat/MissileMirror.js';
 import { decodeSwarmPacket } from '../../src/client/net/BinarySwarmDecoder.js';
 import {
   interpolateSwarmPose,
@@ -188,6 +189,7 @@ interface RunResult {
 
 function runProfile(profile: NetworkProfile): RunResult {
   resetSwarmTickClock();
+  resetMissileDisplayDelay();
   setSwarmDisplaySpeed(1);
 
   const track = buildMissileTrack(tickIndexAt(RUN_MS) + 1);
@@ -221,8 +223,9 @@ function runProfile(profile: NetworkProfile): RunResult {
       applyMissileSnapshot(missileSlice(track, tickIndex), mirror, START_SERVER_TICK + tickIndex, now);
     }
     // Once per frame, after the drain and before any read, as production.
-    stepSwarmDisplayDelay(Number.isNaN(prevFrameMs) ? 0 : now - prevFrameMs, now);
-    publishSwarmDisplayDelay(mirror);
+    const frameDtMs = Number.isNaN(prevFrameMs) ? 0 : now - prevFrameMs;
+    stepSwarmDisplayDelay(frameDtMs, now);
+    stepMissileDisplayDelay(mirror, frameDtMs, now);
     prevFrameMs = now;
 
     const mTrue = missileTrueAt(track, now);
@@ -281,8 +284,12 @@ function recorded(r: RunResult): Recorded {
 type MissileProfile = Exclude<GapProfileName, 'gap-swarm-only'>;
 
 /** Recorded numbers: missile samples on the drone tick timeline (S5-2), read
- *  at the shared drone display delay (S5-4), the drone delay stepped each
- *  frame as production. Sizes in world units, lateness in ms of simulated
+ *  at the missile stream's own display delay (drone target, S5-4; JSON stream
+ *  stall hold, S5-5), both delays stepped each frame as production. Before
+ *  S5-5 (missiles read the drone delay, no missile hold): gap-400 1 snap of
+ *  14.2 u, lateness 210.57; gap-600 / burst 1 snap of 15.7 u, lateness
+ *  248.44; gap-json-only 1 snap of 41.95 u, lateness 141.81. Freezes, max
+ *  lateness and the other profiles are unchanged by S5-5. Sizes in world units, lateness in ms of simulated
  *  time; values rounded to 0.01. Before S5-2 (arrival stamps): lan-clean
  *  lateness 116.67; gap-400 / gap-json-only snap 37.5; gap-600 / burst snap
  *  127.5; frame-stall-250 lateness 150; jitter-4g 21 snaps (375 u), 12 freeze
@@ -297,23 +304,33 @@ type MissileProfile = Exclude<GapProfileName, 'gap-swarm-only'>;
 const TODAY: Readonly<Record<MissileProfile, Recorded>> = {
   'lan-clean': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 102.15, maxLatenessMs: 102.15, droneMeanLatenessMs: 102 },
   'gap-200': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 192.01, maxLatenessMs: 307.77, droneMeanLatenessMs: 192.31 },
-  'gap-400': { snaps: 1, largestSnapU: 14.2, totalSnapU: 14.2, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 210.57, maxLatenessMs: 316.85, droneMeanLatenessMs: 209.59 },
-  'gap-600': { snaps: 1, largestSnapU: 15.7, totalSnapU: 15.7, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 248.44, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
-  'burst-600-both-streams': { snaps: 1, largestSnapU: 15.7, totalSnapU: 15.7, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 248.44, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
-  'gap-json-only': { snaps: 1, largestSnapU: 41.95, totalSnapU: 41.95, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 141.81, maxLatenessMs: 233.33, droneMeanLatenessMs: 140 },
+  'gap-400': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 221.66, maxLatenessMs: 319.03, droneMeanLatenessMs: 209.59 },
+  'gap-600': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 258.66, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
+  'burst-600-both-streams': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 258.66, maxLatenessMs: 433.33, droneMeanLatenessMs: 245.33 },
+  'gap-json-only': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 157.32, maxLatenessMs: 233.33, droneMeanLatenessMs: 140 },
   'frame-stall-250': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 140.1, maxLatenessMs: 140.1, droneMeanLatenessMs: 140 },
   'jitter-4g': { snaps: 7, largestSnapU: 6.85, totalSnapU: 32.23, freezeFrames: 0, backwardSteps: 1, meanLatenessMs: 292.26, maxLatenessMs: 342.02, droneMeanLatenessMs: 294.08 },
 };
 
 const PROFILES = Object.keys(TODAY) as MissileProfile[];
 
-/** Profiles where the missile still drifts from the drone during a 600 ms
- *  stall of both streams: the missile's newest sample is up to two ticks older
- *  than the drone's (the JSON stream carries every third tick), so it hits its
- *  250 ms extrapolation cap and freezes first, while the drone's read point is
- *  held (S4-5). Outside the stall the two agree within 0.1 ms; the missile
- *  hold (S5-5) closes this. Missile − drone mean lateness: +3.10 ms each. */
-const STALL_HOLD_PROFILES: ReadonlySet<MissileProfile> = new Set<MissileProfile>(['gap-600', 'burst-600-both-streams']);
+/** Profiles with a stall of both streams longer than the 250 ms glide cap.
+ *  Each stream holds on its OWN newest stamp (S5-5, D10 = A), and the
+ *  missile's newest sample is up to two ticks (~33 ms) older than the drone's
+ *  (the JSON stream carries every third tick), so the missile record holds
+ *  that much earlier and resumes that much later; both then slew back at the
+ *  same bounded rate, so the offset lasts the whole catch-up. Missile − drone
+ *  mean lateness, before S5-5 → now: gap-400 +0.98 → +12.07; gap-600 and
+ *  burst-600-both-streams +3.10 → +13.33 (before S5-5 the missile was NOT
+ *  held: it froze at its cap and then snapped 15.7 u onto the drone's read
+ *  point). Equal lateness here needs the missile read point to follow the
+ *  drone's hold, which a JSON-only stall would then not hold. */
+const STALL_HOLD_PROFILES: ReadonlySet<MissileProfile> = new Set<MissileProfile>(['gap-400', 'gap-600', 'burst-600-both-streams']);
+
+/** A JSON-only stall holds missiles and not drones (S5-5): the missile is
+ *  drawn later than the drone by design here (+17.32 ms mean; before S5-5
+ *  +1.81 ms, with a 41.95 u snap on resume). */
+const JSON_ONLY_STALL: MissileProfile = 'gap-json-only';
 
 function latenessGapMs(name: MissileProfile): number {
   const r = result(name);
@@ -336,16 +353,26 @@ describe('gap smoothing: missile fixtures (today, plan 5.4)', () => {
   // Missiles read the shared drone display delay (S5-4). Before it, missile −
   // drone mean lateness (ms): lan-clean +0.15, gap-200 −52.21, gap-400
   // −67.78, gap-600 −90.16, burst-600-both-streams −90.16, gap-json-only
-  // +1.81, frame-stall-250 +0.10, jitter-4g −145.89. Now: +0.15, −0.30,
-  // +0.98, +3.10, +3.10, +1.81, +0.10, −1.82.
+  // +1.81, frame-stall-250 +0.10, jitter-4g −145.89. After S5-4: +0.15, −0.30,
+  // +0.98, +3.10, +3.10, +1.81, +0.10, −1.82. After S5-5 the stall profiles
+  // move (see STALL_HOLD_PROFILES, JSON_ONLY_STALL); the rest are unchanged.
   it('missile and target drone drawn at the same lateness', () => {
     for (const name of PROFILES) {
-      if (STALL_HOLD_PROFILES.has(name)) continue;
+      if (STALL_HOLD_PROFILES.has(name) || name === JSON_ONLY_STALL) continue;
       expect(latenessGapMs(name)).toBeLessThanOrEqual(SAME_LATENESS_TOLERANCE_MS);
     }
   });
 
-  it.fails('missile and target drone drawn at the same lateness through a 600 ms stall of both streams (S5-5)', () => {
+  it('a JSON-only stall holds the missile and not the drone (S5-5)', () => {
+    const r = result(JSON_ONLY_STALL);
+    expect(r.missile.snaps).toBe(0);
+    expect(r.missile.meanLatenessMs).toBeGreaterThan(r.drone.meanLatenessMs + SAME_LATENESS_TOLERANCE_MS);
+    expect(r.drone.freezeFrames).toBe(0);
+  });
+
+  // Not met by S5-5 (see STALL_HOLD_PROFILES): zero snaps, but the missile
+  // stream's own hold starts up to two ticks before the drone's.
+  it.fails('missile and target drone drawn at the same lateness through a stall of both streams (S5-5)', () => {
     for (const name of STALL_HOLD_PROFILES) {
       expect(latenessGapMs(name)).toBeLessThanOrEqual(SAME_LATENESS_TOLERANCE_MS);
     }

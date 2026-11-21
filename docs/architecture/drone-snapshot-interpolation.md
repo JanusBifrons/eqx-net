@@ -340,6 +340,18 @@ the gate for the S4b eased offset. Locks: `src/client/net/swarmHoldResume.test.t
 `ColyseusClient.resetPredictionState.test.ts`, `gapSmoothing.drones.test.ts`
 (gap-1000 and idle-resume fixtures).
 
+**One mechanism, one record per stream (S5-5, owner decision D10 = A).** The
+slew and the hold are pure functions over a small state record in
+`src/client/net/displayDelayHold.ts` (`slewDisplayDelay`, `holdDisplayDelay`;
+value, target, stall flag, hold and re-sync counters). Drones own one record in
+`swarmInterpolation.ts` (`stepSwarmDisplayDelay` runs the two functions on it,
+held on the binary stream's newest stamp); missiles own another in
+`MissileMirror.ts` (`stepMissileDisplayDelay`, held on the JSON stream's
+newest stamp, see `missile-simulation.md`). The two connections can stall
+separately, so a JSON-only stall holds missiles and not drones and the other
+way round. Change the algorithm in `displayDelayHold.ts` only. Lock:
+`src/client/combat/MissileMirror.test.ts` (independence both ways).
+
 **Frame-stall backlog does not teach the clock (S5-1b).** A main-thread
 freeze delays arrival but says nothing about the network. The drone packets
 that came in during it are all handled at once when the page wakes, before the
