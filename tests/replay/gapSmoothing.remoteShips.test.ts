@@ -21,6 +21,13 @@
  * capture's own (arrival time, server tick) pairs, and the scripted track
  * interpolated at that tick.
  *
+ * Lead: 2q0jxw predates the snapshot `inputMargin`, so the input lead holds
+ * at HARNESS_START_LEAD_TICKS (5) for the whole replay. The first recording
+ * ran before main's 0d821734e/6b3faa289 (lead sized from the server margin,
+ * not lastRtt), when the blind lastRtt sample drove this replay's lead to
+ * ~24 ticks; ccee2d5c2 (remote forward cap relative to the lead) moved the
+ * counts a little more. (a) and (c) were re-recorded after both.
+ *
  * The numbers below are TODAY's, locked exactly. A fix that changes them
  * updates them in the same PR; the `it.fails` cases flip to `it` when the
  * target behaviour lands (S2-1 for the step, S2-3 for the teleport).
@@ -234,18 +241,22 @@ describe('other players\' ships through gaps and corrections — today\'s number
     });
 
     it('records today\'s counts', () => {
+      // Re-recorded after main's 0d821734e + 6b3faa289 (lead held at 5 on
+      // this pre-margin capture, was ~24 from lastRtt) and ccee2d5c2 (remote
+      // forward cap = max(8, ceil(lead) + 5)). Was: snaps 41, largest 99.388,
+      // total 216.609, freeze 10, mean -100.858, max 1446.767.
       expect(heldCount).toBe(9);
-      expect(counters.snaps).toBe(41);
-      expect(counters.largestSnapU).toBeCloseTo(99.388, 2);
-      expect(counters.totalSnapU).toBeCloseTo(216.609, 2);
-      expect(counters.freezeFrames).toBe(10);
+      expect(counters.snaps).toBe(27);
+      expect(counters.largestSnapU).toBeCloseTo(74.534, 2);
+      expect(counters.totalSnapU).toBeCloseTo(151.972, 2);
+      expect(counters.freezeFrames).toBe(39);
       expect(counters.backwardSteps).toBe(0);
       // Negative: drawn ahead of the truth, which is read at the snapshots'
       // ARRIVAL times (one-way delay late) while remotes are forward-predicted.
-      expect(counters.meanLatenessMs).toBeCloseTo(-100.858, 2);
+      expect(counters.meanLatenessMs).toBeCloseTo(-247.562, 2);
       // Not investigated: on a turning track the lateness search (2 s either
       // side) may match a point the truth passed much earlier.
-      expect(counters.maxLatenessMs).toBeCloseTo(1446.767, 2);
+      expect(counters.maxLatenessMs).toBeCloseTo(1492.427, 2);
     });
   });
 
@@ -345,15 +356,22 @@ describe('other players\' ships through gaps and corrections — today\'s number
     it('records today\'s counts: the 2000 u jump is glided over four frames', () => {
       // Offsets drawn: ~1651, ~1118, ~687, ~401 u; the next snapshot's
       // correction then drops the ~401 u still easing (plan 3.3) in one step.
+      // The glide itself (4 frames, ~340.6 u arrival step) is unchanged by
+      // main's lead change; the counters below are re-recorded after
+      // 0d821734e + 6b3faa289 (lead held at 5, was ~24 from lastRtt) and
+      // ccee2d5c2. Was: snaps 32, largest 528.169, total 1711.307, freeze 0,
+      // mean -154.63, max 39.263. The extra snaps pair with the new freeze
+      // frames (the thrusting ship drawn still, then catching up), spread
+      // across inter-snapshot frames, not at the teleport.
       expect(glideFrames).toBe(4);
-      expect(arrivalStepU).toBeCloseTo(340.8, 0);
-      expect(counters.snaps).toBe(32);
-      expect(counters.largestSnapU).toBeCloseTo(528.169, 2);
-      expect(counters.totalSnapU).toBeCloseTo(1711.307, 2);
-      expect(counters.freezeFrames).toBe(0);
+      expect(arrivalStepU).toBeCloseTo(340.6, 0);
+      expect(counters.snaps).toBe(62);
+      expect(counters.largestSnapU).toBeCloseTo(527.93, 2);
+      expect(counters.totalSnapU).toBeCloseTo(1783.537, 2);
+      expect(counters.freezeFrames).toBe(59);
       expect(counters.backwardSteps).toBe(6);
-      expect(counters.meanLatenessMs).toBeCloseTo(-154.63, 2);
-      expect(counters.maxLatenessMs).toBeCloseTo(39.263, 2);
+      expect(counters.meanLatenessMs).toBeCloseTo(-77.049, 2);
+      expect(counters.maxLatenessMs).toBeCloseTo(38.927, 2);
     });
 
     // Target (plan 3.2, S2-3): a real teleport is snapped on the frame it
