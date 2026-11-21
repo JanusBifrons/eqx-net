@@ -73,6 +73,18 @@ describe('HoverBracket', () => {
     expect(gfxOf(bracket).x).toBe(5);
   });
 
+  it('a hovered Shipyard gets its footprint box (960x600 + pad), not a 567 u radius square', () => {
+    const sw = { x: 0, y: 0, angle: 0, radius: 567, kind: 2, shipKind: 'shipyard' };
+    const m = mirror({ swarm: new Map([[9, sw]]) as never });
+    expect(bracket.update(m, 'swarm-9')).toBe(true);
+    const g = (bracket as unknown as { gfx: { moveTo: ReturnType<typeof vi.fn>; lineTo: ReturnType<typeof vi.fn> } }).gfx;
+    const pts = [...g.moveTo.mock.calls, ...g.lineTo.mock.calls] as [number, number][];
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(960 + 12);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(600 + 12);
+  });
+
   it('resolves a parked hull from the one ship list (RTS Part A S3)', () => {
     const m = mirror({
       ships: new Map([['linger-1', { x: 11, y: 22, angle: 0, vx: 0, vy: 0, kind: 'fighter', ownerPlayerId: 'o1', isActive: false }]]) as never,

@@ -1,8 +1,7 @@
 import { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
-import { getShipKind } from '@shared-types/shipKinds';
-import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { isShipIAmFlying } from './shipOwnership';
+import { resolveSelectable, type SelectableTarget } from './SelectionBracket';
 
 /**
  * Hover outline (WS-10 / R2.4) — a SIBLING of {@link SelectionBracket} drawn
@@ -30,17 +29,14 @@ const CORNER_FRAC = 0.32;
 const RADIUS_PAD = 6;
 /** Min half-size so a tiny drone still gets a visible outline. */
 const MIN_HALF = 13;
-/** Fallback collision radius when a ship kind can't be resolved. */
-const SHIP_FALLBACK_RADIUS = 20;
-
-// Module-scope scratch reused by the (rare) asteroid/drone interpolation read,
-// matching SelectionBracket — stays alloc-free regardless of the resolved kind.
-const _poseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 
 export class HoverBracket {
   private readonly gfx: Graphics;
-  /** Last-drawn half-size — the dirty-flag sentinel. -1 forces a first rebuild. */
-  private drawnHalf = -1;
+  /** Last-drawn half extents — the dirty-flag sentinel. -1 forces a first rebuild. */
+  private drawnHw = -1;
+  private drawnHh = -1;
+  /** Reused pose + half-extents scratch (#14). */
+  private readonly _t: SelectableTarget = { x: 0, y: 0, r: 0, hw: 0, hh: 0 };
 
   constructor(parent: Container) {
     this.gfx = new Graphics();
@@ -63,71 +59,42 @@ export class HoverBracket {
       return false;
     }
 
-    let ex: number | undefined;
-    let ey: number | undefined;
-    let radius = SHIP_FALLBACK_RADIUS;
-
-    const ship = mirror.ships.get(hoveredId);
-    if (ship) {
-      ex = ship.x;
-      ey = ship.y;
-      radius = shipRadius(ship.kind);
-    } else if (hoveredId.startsWith('swarm-') && mirror.swarm) {
-      const swarmId = parseInt(hoveredId.slice('swarm-'.length), 10);
-      if (!Number.isNaN(swarmId)) {
-        const sw = mirror.swarm.get(swarmId);
-        if (sw) {
-          // Drones (kind 1) + structures (kind 2) render from `entry.x/y`
-          // directly (one-pose-per-frame); only asteroids use interpolation.
-          if (sw.kind === 1 || sw.kind === 2) {
-            ex = sw.x;
-            ey = sw.y;
-          } else {
-            const lerped = interpolateSwarmPose(sw, performance.now(), _poseScratch);
-            ex = lerped.x;
-            ey = lerped.y;
-          }
-          radius = sw.radius;
-        }
-      }
-    }
-
-    if (ex === undefined || ey === undefined) {
+    // Same id → pose + half-extents resolution as the selection bracket (a
+    // structure is its quarter-turn footprint box, not its bounding circle).
+    const t = this._t;
+    if (!resolveSelectable(mirror, hoveredId, t)) {
       this.gfx.visible = false;
       return false;
     }
 
-    const half = Math.max(MIN_HALF, radius + RADIUS_PAD);
+    const hw = Math.max(MIN_HALF, t.hw + RADIUS_PAD);
+    const hh = Math.max(MIN_HALF, t.hh + RADIUS_PAD);
     // Position every frame (cheap transform). pixiY = -gameY (world container).
-    this.gfx.x = ex;
-    this.gfx.y = -ey;
+    this.gfx.x = t.x;
+    this.gfx.y = -t.y;
     this.gfx.visible = true;
 
-    if (half !== this.drawnHalf) {
-      this.redraw(half);
-      this.drawnHalf = half;
+    if (hw !== this.drawnHw || hh !== this.drawnHh) {
+      this.redraw(hw, hh);
+      this.drawnHw = hw;
+      this.drawnHh = hh;
     }
     return true;
   }
 
   /** Draw the 4 corner brackets in LOCAL coords (origin at entity centre). */
-  private redraw(half: number): void {
+  private redraw(hw: number, hh: number): void {
     const g = this.gfx;
-    const arm = half * CORNER_FRAC;
+    const arm = Math.min(hw, hh) * CORNER_FRAC;
     g.clear();
-    g.moveTo(-half, -half + arm).lineTo(-half, -half).lineTo(-half + arm, -half);
-    g.moveTo(half - arm, -half).lineTo(half, -half).lineTo(half, -half + arm);
-    g.moveTo(half, half - arm).lineTo(half, half).lineTo(half - arm, half);
-    g.moveTo(-half + arm, half).lineTo(-half, half).lineTo(-half, half - arm);
+    g.moveTo(-hw, -hh + arm).lineTo(-hw, -hh).lineTo(-hw + arm, -hh);
+    g.moveTo(hw - arm, -hh).lineTo(hw, -hh).lineTo(hw, -hh + arm);
+    g.moveTo(hw, hh - arm).lineTo(hw, hh).lineTo(hw - arm, hh);
+    g.moveTo(-hw + arm, hh).lineTo(-hw, hh).lineTo(-hw, hh - arm);
     g.stroke({ width: HOVER_THICKNESS, color: HOVER_COLOR, alpha: 0.55 });
   }
 
   destroy(): void {
     this.gfx.destroy();
   }
-}
-
-function shipRadius(kind: string | undefined): number {
-  const k = getShipKind(kind);
-  return k?.radius ?? SHIP_FALLBACK_RADIUS;
 }

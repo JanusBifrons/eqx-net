@@ -1,6 +1,7 @@
 import { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
+import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 
 /**
@@ -18,8 +19,9 @@ import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpo
  * and redrawn by {@link draw} in the Pixi ticker AFTER the frame's camera tick,
  * so the brackets project through the transform the world renders with (a
  * world-follower drawn before the tick lags a frame of camera motion; lock
- * `tests/e2e/fleet-overlay-camera.spec.ts`). A bracket is the entity radius
- * plus a pad at the current zoom, never smaller than {@link MIN_HALF_PX}, so it
+ * `tests/e2e/fleet-overlay-camera.spec.ts`). A bracket is the entity's half
+ * extents (radius for round things, the quarter-turn footprint box for a
+ * structure) plus a pad at the current zoom, never smaller than {@link MIN_HALF_PX}, so it
  * reads at far command-view zoom too; at zoom 1 it is the pre-Part-A look.
  *
  * Pose resolution follows the `HealthBarManager` id convention:
@@ -42,15 +44,20 @@ const SHIP_FALLBACK_RADIUS = 20;
 
 const _poseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 
-interface Target { x: number; y: number; r: number }
+/** A selectable entity's game-space centre and half extents (`hw` along x,
+ *  `hh` along y). Round things (ships, drones, rocks) have `hw = hh = r`; a
+ *  structure is its quarter-turn catalogue footprint box, like the pick. */
+export interface SelectableTarget { x: number; y: number; r: number; hw: number; hh: number }
 
-/** Game-space pose + radius of a selectable entity into `out`; false when gone. */
-export function resolveSelectable(mirror: RenderMirror, id: string, out: Target): boolean {
+/** Game-space pose + half extents of a selectable entity into `out`; false when gone. */
+export function resolveSelectable(mirror: RenderMirror, id: string, out: SelectableTarget): boolean {
   const ship = mirror.ships.get(id);
   if (ship !== undefined) {
     out.x = ship.x;
     out.y = ship.y;
     out.r = getShipKind(ship.kind)?.radius ?? SHIP_FALLBACK_RADIUS;
+    out.hw = out.r;
+    out.hh = out.r;
     return true;
   }
   if (mirror.swarm === undefined || id.length <= 6 || !id.startsWith('swarm-')) return false;
@@ -73,6 +80,18 @@ export function resolveSelectable(mirror: RenderMirror, id: string, out: Target)
     out.y = lerped.y;
   }
   out.r = sw.radius;
+  if (sw.kind === 2 && sw.shipKind !== undefined && isStructureKindId(sw.shipKind)) {
+    // A structure's bounding radius is its footprint's half-DIAGONAL: a long
+    // kind (the 960x600 Shipyard) would get a box far taller than the yard.
+    // Frame its (quarter-turn) footprint box instead, as `pickEntityAt` hits it.
+    const fp = getStructureKind(sw.shipKind).footprint;
+    const quarter = Math.round((sw.angle * 2) / Math.PI) % 2 !== 0;
+    out.hw = (quarter ? fp.h : fp.w) / 2;
+    out.hh = (quarter ? fp.w : fp.h) / 2;
+  } else {
+    out.hw = sw.radius;
+    out.hh = sw.radius;
+  }
   return true;
 }
 
@@ -80,7 +99,7 @@ export type BracketProjectFn = (pixiWorldX: number, pixiWorldY: number, out: { x
 
 export class SelectionBracket {
   private readonly gfx: Graphics;
-  private readonly _t: Target = { x: 0, y: 0, r: 0 };
+  private readonly _t: SelectableTarget = { x: 0, y: 0, r: 0, hw: 0, hh: 0 };
   private readonly _s = { x: 0, y: 0 };
   /** WS-9 (R2.30) — the Pixi-WORLD point just ABOVE the focus (its bracket
    *  top), or null when there is no focus. The renderer projects this to
@@ -115,7 +134,7 @@ export class SelectionBracket {
       this.lastWorldHalf = 0;
       return false;
     }
-    const half = Math.max(MIN_HALF, this._t.r + RADIUS_PAD);
+    const half = Math.max(MIN_HALF, this._t.hh + RADIUS_PAD);
     this.lastWorldHalf = half;
     this.lastWorldX = this._t.x;
     this.lastWorldY = -(this._t.y + half);
@@ -160,15 +179,16 @@ export class SelectionBracket {
     if (!resolveSelectable(mirror, id, t)) return false;
     const s = this._s;
     project(t.x, -t.y, s);
-    const half = Math.max(MIN_HALF_PX, (t.r + RADIUS_PAD) * zoom);
-    const arm = half * CORNER_FRAC;
+    const hw = Math.max(MIN_HALF_PX, (t.hw + RADIUS_PAD) * zoom);
+    const hh = Math.max(MIN_HALF_PX, (t.hh + RADIUS_PAD) * zoom);
+    const arm = Math.min(hw, hh) * CORNER_FRAC;
     const x = s.x;
     const y = s.y;
     const g = this.gfx;
-    g.moveTo(x - half, y - half + arm).lineTo(x - half, y - half).lineTo(x - half + arm, y - half);
-    g.moveTo(x + half - arm, y - half).lineTo(x + half, y - half).lineTo(x + half, y - half + arm);
-    g.moveTo(x + half, y + half - arm).lineTo(x + half, y + half).lineTo(x + half - arm, y + half);
-    g.moveTo(x - half + arm, y + half).lineTo(x - half, y + half).lineTo(x - half, y + half - arm);
+    g.moveTo(x - hw, y - hh + arm).lineTo(x - hw, y - hh).lineTo(x - hw + arm, y - hh);
+    g.moveTo(x + hw - arm, y - hh).lineTo(x + hw, y - hh).lineTo(x + hw, y - hh + arm);
+    g.moveTo(x + hw, y + hh - arm).lineTo(x + hw, y + hh).lineTo(x + hw - arm, y + hh);
+    g.moveTo(x - hw + arm, y + hh).lineTo(x - hw, y + hh).lineTo(x - hw, y + hh - arm);
     if (index === 0) {
       this.lastMarkerId = id;
       this.lastMarker.x = x;
