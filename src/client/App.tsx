@@ -18,6 +18,7 @@ import {
   useAuthExpiryRedirect,
   useUserPrefsHydration,
 } from './app/appHooks';
+import { useAutoRejoin } from './app/useAutoRejoin';
 import { PhaseRouter } from './app/PhaseRouter';
 import {
   syncGalaxyVisibility,
@@ -1090,6 +1091,8 @@ export function App(): JSX.Element {
   }, [setPhase]);
 
   useShipSwapDispatcher(setRoomNameOverride, setJoinOptionsOverride);
+  // Dropped room + server reachable again → rejoin the same ship (phone resume).
+  useAutoRejoin();
 
   const handleSpawnNewShip = useCallback((_kind: unknown, sectorKey: string) => {
     // ShipKind already lives in Zustand `selectedShipKind` (the picker
