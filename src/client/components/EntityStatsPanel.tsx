@@ -36,7 +36,7 @@ import { StructureSettingsOpen } from './StructureSettingsModal';
 import { canManageBuildings } from '../structures/buildingManagement';
 // Moved with the management buttons; re-exported so existing importers keep working.
 import { droneName, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
-import { isBuildAwaitingClear } from '../structures/buildAwaitingClear';
+import { buildStalledLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
 import { Bar } from './inspectorBar';
 import { StructureCardRows } from './structureCard';
 import { structureOwnerLabel } from './structureSettingsStatus';
@@ -80,6 +80,8 @@ interface PanelData {
   buildPct?: number; // [0..1]; < 1 ⇒ under construction
   /** Build done but still a blueprint: a ship inside its footprint (`buildAwaitingClear.ts`). */
   buildBlocked?: boolean;
+  /** Why a paused build is paused (`buildStalledLine`): dry bank or not connected. */
+  buildStalled?: string;
   powered?: boolean;
   /** Built (not a blueprint): an unbuilt one is off the grid, so never UNPOWERED. */
   built?: boolean;
@@ -336,7 +338,7 @@ export function EntityStatsPanel(): JSX.Element | null {
 // equality check. Listed explicitly (not Object.keys) so a future non-primitive
 // field forces a deliberate decision here instead of silently mis-comparing.
 const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
-  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'powered', 'built',
+  'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'buildStalled', 'powered', 'built',
   'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'switchedOff', 'owner',
   'entityId', 'isOwn', 'isStructure', 'level', 'pilotShipId',
   'holdLine', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
@@ -388,6 +390,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       data.isStructure = true;
       data.buildPct = st.buildPct;
       if (isBuildAwaitingClear(st)) data.buildBlocked = true;
+      const stalled = buildStalledLine(st);
+      if (stalled !== undefined) data.buildStalled = stalled;
       data.powered = st.powered;
       data.built = st.built;
       if (st.switchedOff === true) data.switchedOff = true;

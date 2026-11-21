@@ -42,6 +42,7 @@ import { fleetCommands } from '../fleet/fleetCommands.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
 import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
+import { arrivalNeedsGlide } from '../net/fleetWarpFollow.js';
 
 /** Click-to-inspect (Item B5) — last selection id the bridge published, so the
  *  RendererFeedback → Zustand mirror + server select/deselect sends fire ONLY on
@@ -235,10 +236,12 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // RTS fleet warp (S8) — a commander who followed their fleet: once the
     // warped ships are in the new sector's mirror, select them again (the
     // ONE selection, in the renderer) and glide the camera to them. One-shot.
+    // A command-view join frames its own hull the same way (no re-select).
     const fleetArrival = gameClient.consumePendingFleetArrival();
     if (fleetArrival) {
-      renderer.selectFleetShips(fleetArrival.ids);
-      renderer.glideCameraTo(fleetArrival.x, fleetArrival.y, PILOT_SWAP_GLIDE_MS);
+      if (fleetArrival.select) renderer.selectFleetShips(fleetArrival.ids);
+      const vfb = renderer.getFeedback();
+      if (arrivalNeedsGlide(fleetArrival, vfb.viewX, vfb.viewY, vfb.viewHalf)) renderer.glideCameraTo(fleetArrival.x, fleetArrival.y, PILOT_SWAP_GLIDE_MS);
     }
     const renderStart = performance.now();
     const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
