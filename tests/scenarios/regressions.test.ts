@@ -138,98 +138,37 @@ describe('Network-feel regression fixtures', () => {
     expect(result.violation!.ticksAhead).toBeLessThan(0);
   });
 
-  it('TDD demonstration: WITHOUT hotfix #1, a 572 ms gap explodes Welford σ past the bound', () => {
-    // Same TDD discipline for the RTT clamp. Note: hotfix #3's intervalMs
-    // gap-filter would also block the contaminated sample (the 572 ms
-    // burst-recovery snapshot has intervalMs = 572 ms, well outside the
-    // [35, 75] band), so we disable both flags to isolate hotfix #1's
-    // contribution. With clamp+filter both off, the raw 572 ms sample
-    // pushes Welford σ into runaway territory.
-    const events = buildScenarioEvents({
-      name: 'pattern-a-572ms-gap-no-clamp',
-      rafTickHz: 60,
-      rttMs: 37,
-      gapsMs: [{ atMs: 5000, durationMs: 572 }],
-      durationMs: 12_000,
-    });
-    const observations = runScenario(events, {
-      rttClampEnabled: false,
-      rttGapFilterEnabled: false,
-    });
-    const result = welfordStdDevBoundedBy(observations, 100);
-    expect(result.passed).toBe(false);
-    expect(result.violation).toBeDefined();
-    expect(result.violation!.rttStdDev).toBeGreaterThan(100);
-  });
+  // The hotfix #1 / #3 "WITHOUT the hotfix" demonstrations toggled the
+  // runner's private copy of the lead formula. The runner now drives the
+  // client's own `updateRttAndLookahead` (no toggles), and the lead's sample
+  // is the server-measured input margin, which a downlink gap never reaches
+  // — there is no contaminated sample left for a demo to push.
 
-  it('Hotfix #3 (2026-05-08 third diagnostic): Welford mean stays close to live RTT under repeated Pattern A spikes', () => {
+  it('Hotfix #3 (2026-05-08 third diagnostic): repeated Pattern A spikes keep the lead sample near the same link without gaps', () => {
     // Reproduces `diag/captures/2026-05-08T17-51-56-297Z-71krw1.json`:
     // user's live RTT was 83 ms, but `rttMeanMs` had drifted to 177 ms —
-    // the Stage 4 hotfix #1 σ-clamp protected against σ explosions but
-    // clamped samples (250 ms each) were still added to Welford's mean,
-    // inflating it. Inflated mean → leadTicks sized at ~22 ticks →
-    // collision drift = velocity-diff × leadTicks × dt = 50+ u.
+    // gap-delayed snapshots fed inflated samples into Welford, the lead
+    // grew to ~22 ticks and collision drift reached 50+ u.
     //
-    // Fix: gate the Welford push on `dropDetector.dropCount === 0` so
-    // gap-related samples (Pattern A delays + burst-recovery) don't
-    // contaminate the running mean at all.
-    //
-    // Property: across a session with 3 Pattern A spikes, the running
-    // mean stays close to live RTT (83 ms) — never drifts above 120 ms.
-    // Aggressive mobile-jitter scenario — 5 substantial gaps over 10 s
-    // (40% of session in network gaps). Models the mobile session that
-    // produced the user's third diagnostic where rttMeanMs reached 177
-    // while live RTT was 83 (snapshotJitterMs = 28.8 ms, post-clamp σ
-    // hovering at 83 ms).
-    const aggressiveGapScenario = {
+    // Property: across a session with 5 Pattern A spikes (40 % of it in
+    // gaps), the running mean stays within two ticks of the same link with
+    // no gaps. The gaps only delay snapshots; the input path is unchanged.
+    const scenario = {
       name: 'mobile-pattern-a-repeated',
       rafTickHz: 30,
       rttMs: 83,
-      gapsMs: [
-        { atMs: 1500, durationMs: 800 },
-        { atMs: 3500, durationMs: 800 },
-        { atMs: 5500, durationMs: 800 },
-        { atMs: 7500, durationMs: 800 },
-        { atMs: 9500, durationMs: 800 },
-      ],
       durationMs: 11_500,
     } as const;
-    const events = buildScenarioEvents(aggressiveGapScenario);
-    const observations = runScenario(events);
-    const result = rttMeanAlwaysBelow(observations, 120, 1500);
+    const gaps = [1500, 3500, 5500, 7500, 9500].map((atMs) => ({ atMs, durationMs: 800 }));
+    const baseline = runScenario(buildScenarioEvents(scenario));
+    const baselineMean = baseline[baseline.length - 1]!.rttMean;
+    const observations = runScenario(buildScenarioEvents({ ...scenario, gapsMs: gaps }));
+    const result = rttMeanAlwaysBelow(observations, baselineMean + 2 * (1000 / 60), 1500);
     if (!result.passed) {
-      console.log('Window around violation:');
+      console.log(`Window around violation (no-gap mean ${baselineMean.toFixed(1)} ms):`);
       console.log(describeWindow(observations, result.violation!.atMs, 800));
     }
     expect(result.passed).toBe(true);
-  });
-
-  it('TDD demonstration: WITHOUT hotfix #3, Pattern A spikes inflate Welford mean', () => {
-    const events = buildScenarioEvents({
-      name: 'mobile-pattern-a-repeated-bypassed',
-      rafTickHz: 30,
-      rttMs: 83,
-      gapsMs: [
-        { atMs: 1500, durationMs: 800 },
-        { atMs: 3500, durationMs: 800 },
-        { atMs: 5500, durationMs: 800 },
-        { atMs: 7500, durationMs: 800 },
-        { atMs: 9500, durationMs: 800 },
-      ],
-      durationMs: 11_500,
-    });
-    // Disable BOTH hotfix #3 (gap-interval filter) AND hotfix #5
-    // (LEAD-subtract). Either one alone is sufficient to keep the mean
-    // bounded under repeated Pattern A gaps; only with both bypassed
-    // does the regression manifest.
-    const observations = runScenario(events, {
-      rttGapFilterEnabled: false,
-      rttLeadSubtractEnabled: false,
-    });
-    const result = rttMeanAlwaysBelow(observations, 120, 1500);
-    expect(result.passed).toBe(false);
-    expect(result.violation).toBeDefined();
-    expect(result.violation!.rttMean).toBeGreaterThan(120);
   });
 
   it('Steady state: 60 Hz rafTick + healthy network → ticksAhead stays in expected band', () => {
