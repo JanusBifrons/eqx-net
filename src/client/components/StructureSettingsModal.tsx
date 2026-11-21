@@ -20,8 +20,9 @@
  * (structureSettingsStatus.tsx).
  * The inspector card keeps only its Open button and one-shot actions.
  *
- * The ✕, Close, Esc (desktop) or a swipe on the handle shuts it, and so does
- * a change of selection (another entity picked, or none).
+ * The ✕, Close, Esc (desktop, owned by SidePanel) or a swipe on the handle
+ * shuts it, and so does a change of selection (another entity picked, or none)
+ * or the Build sidebar opening (one right panel at a time).
  * Numbers are read from the render mirror at 4 Hz while open (low cadence,
  * like the teleporter panel) — the same slice the PWR line reads.
  */
@@ -76,17 +77,6 @@ function nudgeCameraFor(entityId: number): void {
   if (selectControlMode(useUIStore.getState()) === 'fly' || window.innerHeight > window.innerWidth) return;
   const e = getGameClient()?.mirror.swarm?.get(entityId);
   if (e) queuePanelNudge(e.x, e.y, rightPanelWidthPx(SETTINGS_PANEL_SIZE, window.innerWidth, isTouchDevice()));
-}
-
-/** Esc closes the panel, unless typing in a field or another Esc owner is
- *  live: placement and a fleet map pick cancel first (App.tsx keydown), and a
- *  game window on top stops the key itself (MUI Modal). */
-export function escapeClosesSettings(e: KeyboardEvent): boolean {
-  if (e.key !== 'Escape' || e.defaultPrevented) return false;
-  const t = e.target as HTMLElement | null;
-  if (t !== null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return false;
-  const st = useUIStore.getState();
-  return st.placementKind === null && st.fleetPick === null;
 }
 
 function readKind(entityId: number): string | undefined {
@@ -200,16 +190,19 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
     useUIStore.setState({ structureSettingsOpen: true });
     return () => useUIStore.setState({ structureSettingsOpen: false });
   }, [open]);
+  // One right panel at a time: the Build sidebar opening clears the flag
+  // (BuildSidebar.tsx), and this panel closes.
+  const flagOpen = useUIStore((s) => s.structureSettingsOpen);
+  const flagSeen = useRef(false);
   useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e: KeyboardEvent): void => { if (escapeClosesSettings(e)) onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    if (!open) return;
+    if (flagOpen) flagSeen.current = true;
+    else if (flagSeen.current) onClose();
+  }, [open, flagOpen, onClose]);
   // The building stays in view beside the panel (Build / Command only).
   useEffect(() => { if (open) nudgeCameraFor(entityId); }, [open, entityId]);
   return (
-    <SidePanel open={open} onClose={onClose} testId="structure-settings" size={SETTINGS_PANEL_SIZE}>
+    <SidePanel open={open} onClose={onClose} testId="structure-settings" size={SETTINGS_PANEL_SIZE} closeOnEscape>
       <Box sx={WINDOW_ROOT_SX}>
         <Box sx={WINDOW_HEAD_SX}>
           <Box sx={WINDOW_TITLE_SX}>{title} settings</Box>
