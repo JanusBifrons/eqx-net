@@ -15,9 +15,11 @@
  *
  *   ✗ NOT going through `room.onMessage(...)` registration — we bypass
  *     `connect()` to avoid mocking the entire `colyseus.js` Client flow
- *   ✗ NOT replaying remote-player state — captures only have local
- *     serverState. Replay is local-player-pose focused (which is what
- *     the user contracts assert on anyway).
+ *   ✗ NOT replaying CAPTURED remote-player state — captures only have
+ *     local serverState. A test can script ONE other player's ship
+ *     instead (`ReplayOptions.remoteShip`, netgap S1-5): the harness puts
+ *     it in every synthesised snapshot, can hold whole snapshots back to
+ *     model a gap, and returns the ship's drawn pose per frame.
  *   ✗ NOT replaying drones/projectiles — the captures' snapshot stream
  *     doesn't include full drone[] / projectile arrays; the harness
  *     synthesises an empty drone slice. Collision effects on the local
@@ -94,14 +96,19 @@ interface Internals {
 /** A SnapshotMessage shape sufficient for handleSnapshot's local-ship
  *  reconcile + RTT update path. Remote/drone/projectile arrays are
  *  empty by design (captures don't carry them; see header). */
-function synthesizeSnapshot(playerId: string, ev: SnapshotEventData): SnapshotMessage {
+function synthesizeSnapshot(
+  playerId: string,
+  ev: SnapshotEventData,
+  remoteId?: string,
+  remote?: RemoteShipWireState | null,
+): SnapshotMessage {
   // The wire format is shipInstanceId-keyed but ColyseusGameClient's
   // translator at the top of handleSnapshot routes by playerId via the
   // `playerId` field on each ShipState entry. We use a placeholder
   // shipInstanceId — production C-ii strategy keys the internal mirror
   // by playerId regardless of the wire key, so this is correct.
   const shipInstanceId = `replay-ship-${playerId}`;
-  return {
+  const snap = {
     type: 'snapshot',
     serverTick: ev.serverTick,
     ackedTick: ev.ackedTick,
@@ -125,6 +132,84 @@ function synthesizeSnapshot(playerId: string, ev: SnapshotEventData): SnapshotMe
     boostingShips: [],
     thrustingShips: [],
   } as unknown as SnapshotMessage;
+  if (remoteId !== undefined && remote) {
+    // Another pilot's ACTIVE ship: wire-keyed by its shipInstanceId,
+    // routed to its playerId by the client's real router.
+    const remoteInstanceId = `replay-ship-${remoteId}`;
+    (snap.states as Record<string, unknown>)[remoteInstanceId] = {
+      playerId: remoteId,
+      shipInstanceId: remoteInstanceId,
+      isActive: true,
+      alive: true,
+      x: remote.x,
+      y: remote.y,
+      vx: remote.vx,
+      vy: remote.vy,
+      angle: remote.angle,
+      angvel: remote.angvel,
+      ...(remote.lastInput ? { lastInput: remote.lastInput } : {}),
+    };
+  }
+  return snap;
+}
+
+/** What one snapshot carries for the scripted remote ship (wire fields). */
+export interface RemoteShipWireState {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  angvel: number;
+  /** The remote pilot's held input bits (drive the client's forward
+   *  prediction). Absent = idle. */
+  lastInput?: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean };
+}
+
+/** One other player's ship, scripted by the test (netgap S1-5). */
+export interface RemoteShipFeed {
+  /** The remote pilot's playerId (its mirror key). */
+  id: string;
+  /** Ship kind, e.g. 'fighter' (what the schema diff would supply). */
+  kind: string;
+  /** The state the snapshot stamped `serverTick` carries for this ship,
+   *  or null to leave the ship out of that snapshot. Called once per
+   *  captured snapshot, at the snapshot's capture time `atMs`. Corrections
+   *  and teleports are just states off the ship's true path. */
+  stateAt(serverTick: number, atMs: number): RemoteShipWireState | null;
+  /** When the WHOLE snapshot (local + remote) reaches the client, in the
+   *  capture's ms. Default: `atMs` (applied at its own event, exactly as
+   *  without a feed). A later time holds it; held snapshots are applied in
+   *  order (a later snapshot never overtakes an earlier one) on the first
+   *  frame (rafTick) at or after their time, before that frame's physics. */
+  deliverAtMs?(serverTick: number, atMs: number): number;
+}
+
+/** The remote ship's drawn pose on one frame, read as the renderer reads
+ *  it: `mirror.ships.get(id)` after `updateMirror()`. */
+export interface RemoteDrawnPoseSample {
+  atMs: number;
+  /** Client `inputTick` when this frame completed. */
+  inputTick: number;
+  /** Server tick of the latest snapshot APPLIED (held ones excluded); -1 before any. */
+  lastAppliedServerTick: number;
+  x: number;
+  y: number;
+  angle: number;
+  /** Physics (predWorld) pose under the drawn one; NaN before the body exists. */
+  physX: number;
+  physY: number;
+  physAngle: number;
+  /** Correction offset drawn this frame: drawn − physics (0 without a body). */
+  offsetX: number;
+  offsetY: number;
+  offsetAngle: number;
+}
+
+/** `replayCapture`'s result: the trace plus the remote ship's frames
+ *  (empty without `ReplayOptions.remoteShip`). */
+export interface ReplayResult extends ReplayTrace {
+  remoteDrawnPoses: RemoteDrawnPoseSample[];
 }
 
 export interface ReplayOptions {
@@ -139,6 +224,8 @@ export interface ReplayOptions {
    *  inner loops — callers should keep the probe synchronous).
    *  `eventIndex` is 0-based across the entire timeline. */
   onEvent?: (eventIndex: number, ev: TimelineEvent) => void;
+  /** Script one other player's ship into the snapshots (netgap S1-5). */
+  remoteShip?: RemoteShipFeed;
 }
 
 /**
@@ -149,7 +236,7 @@ export interface ReplayOptions {
 export async function replayCapture(
   capturePath: string,
   _opts: ReplayOptions = {},
-): Promise<ReplayTrace> {
+): Promise<ReplayResult> {
   const cap: LoadedCapture = loadCapture(capturePath);
 
   // 1. Construct real client with mock clock.
@@ -204,6 +291,16 @@ export async function replayCapture(
     angle: firstSnap.data.serverAngle ?? 0,
   });
 
+  // 4b. The scripted remote ship's mirror entry, as the schema diff
+  //     (syncMirror) creates it: identity only, no pose. Its body spawns
+  //     from the first snapshot that carries it (spawnRemoteShipBodies).
+  const remoteFeed = _opts.remoteShip;
+  if (remoteFeed) {
+    internals.mirror.ships.set(remoteFeed.id, {
+      x: 0, y: 0, vx: 0, vy: 0, angle: 0, kind: remoteFeed.kind,
+    });
+  }
+
   // 5. Spawn predWorld body + create Reconciler.
   internals.tryInitPredWorld(playerId);
   if (!internals.reconciler) {
@@ -211,7 +308,7 @@ export async function replayCapture(
   }
 
   // 6. Drive the timeline.
-  const trace: ReplayTrace = {
+  const trace: ReplayResult = {
     source: { path: capturePath, playerId },
     renderedPoses: [],
     capturedRenderedPoses: [],
@@ -227,6 +324,15 @@ export async function replayCapture(
       rollingCorrRate: 0,
     },
     events: cap.events,
+    remoteDrawnPoses: [],
+  };
+
+  // Snapshots held back by `remoteShip.deliverAtMs`, in arrival order.
+  const held: { snap: SnapshotMessage; serverTick: number; deliverAtMs: number }[] = [];
+  let lastAppliedServerTick = -1;
+  const applySnap = (snap: SnapshotMessage, serverTick: number): void => {
+    internals.handleSnapshot(snap);
+    lastAppliedServerTick = serverTick;
   };
 
   // Track the current input-intent state. The captured `input_intent`
@@ -269,17 +375,51 @@ export async function replayCapture(
       }
 
       case 'snapshot': {
-        const snap = synthesizeSnapshot(playerId, ev.data);
-        internals.handleSnapshot(snap);
+        const tick = ev.data.serverTick;
+        const snap = remoteFeed
+          ? synthesizeSnapshot(playerId, ev.data, remoteFeed.id, remoteFeed.stateAt(tick, ev.ts))
+          : synthesizeSnapshot(playerId, ev.data);
+        let deliverAtMs = remoteFeed?.deliverAtMs?.(tick, ev.ts) ?? ev.ts;
+        const last = held[held.length - 1];
+        if (last && last.deliverAtMs > deliverAtMs) deliverAtMs = last.deliverAtMs;
+        if (held.length === 0 && deliverAtMs <= ev.ts) applySnap(snap, tick);
+        else held.push({ snap, serverTick: tick, deliverAtMs });
         break;
       }
 
       case 'rafTick': {
+        // Held snapshots due by this frame apply first (on the frame tick).
+        while (held.length > 0 && held[0]!.deliverAtMs <= ev.ts) {
+          const h = held.shift()!;
+          applySnap(h.snap, h.serverTick);
+        }
         // Drive a real tickPhysics with the captured elapsedMs.
         internals.tickPhysics(ev.data.elapsedMs);
         // Run updateMirror to refresh the mirror's rendered pose (in
         // production this fires from React; we call it once per RAF here).
         internals.updateMirror();
+        if (remoteFeed) {
+          // Read the remote ship the way the renderer does: its mirror
+          // entry, written by updateRemoteShipsMirror (physics + offset).
+          const drawn = internals.mirror.ships.get(remoteFeed.id);
+          if (drawn) {
+            const phys = internals.predWorld?.getShipState(remoteFeed.id);
+            trace.remoteDrawnPoses.push({
+              atMs: ev.ts,
+              inputTick: internals.inputTick,
+              lastAppliedServerTick,
+              x: drawn.x,
+              y: drawn.y,
+              angle: drawn.angle,
+              physX: phys ? phys.x : NaN,
+              physY: phys ? phys.y : NaN,
+              physAngle: phys ? phys.angle : NaN,
+              offsetX: phys ? drawn.x - phys.x : 0,
+              offsetY: phys ? drawn.y - phys.y : 0,
+              offsetAngle: phys ? drawn.angle - phys.angle : 0,
+            });
+          }
+        }
         // Capture the rendered pose.
         const renderedShip = internals.mirror.ships.get(playerId);
         if (renderedShip) {
