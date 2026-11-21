@@ -85,12 +85,14 @@ export function LostConnectionOverlay(): JSX.Element | null {
   // Side-effect on countdown expiry. Split from the interval effect so
   // we don't call setPhase inside a setRemaining updater (React warns
   // about cross-component setState during render).
+  // Gated on `wantsVisible` too: once a rejoin is under way (useAutoRejoin) the
+  // overlay is only waiting out its hide debounce, so never bounce to the map.
   useEffect(() => {
-    if (visible && remaining === 0) {
+    if (visible && wantsVisible && remaining === 0) {
       logEvent('lost_connection_overlay_auto_return', {});
       setPhase('galaxy-map');
     }
-  }, [visible, remaining, setPhase]);
+  }, [visible, wantsVisible, remaining, setPhase]);
 
   if (!visible) return null;
 
