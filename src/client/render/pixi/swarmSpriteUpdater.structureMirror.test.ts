@@ -6,13 +6,15 @@
  * keeps its world aim (counter-flipped, #12).
  */
 import { describe, it, expect } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container, Point } from 'pixi.js';
 import type { Graphics } from 'pixi.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import type { RenderMirror, SwarmRenderState, StructureRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import { structureLocalToWorld } from '../../../shared-types/structureKinds/geometry.js';
+import { applyStructureMirror, counterFlipStructureParts } from './structureMirrorFlip.js';
 
 function emptyPoseRing(): PoseRingEntry[] {
   const ring: PoseRingEntry[] = [];
@@ -90,5 +92,46 @@ describe('updateSwarmSprites — build mirror draws the structure flipped (4C)',
     m.structures!.get(7)!.mirror = false;
     updateSwarmSprites(m, ctx);
     expect(sprite.scale.x).toBeGreaterThan(0);
+  });
+});
+
+describe('build mirror: guns sit where the server puts the mount (4C)', () => {
+  // A structure at a game pose with one gun at a non-centre local point
+  // (the server's mount place is structureLocalToWorld(mount, mirror)).
+  const hx = 120, hy = -60, ha = 0.9, lx = 30, ly = 14, base = 0.25, arc = 0.4;
+  function drawGun(mirror: boolean): { at: { x: number; y: number }; aim: number } {
+    const root = new Container();
+    const sprite = new Container();
+    root.addChild(sprite);
+    sprite.position.set(hx, -hy);
+    sprite.rotation = -ha;
+    const cluster = new Container();
+    sprite.addChild(cluster);
+    const gun = new Container();
+    cluster.addChild(gun);
+    gun.position.set(lx, -ly); // as MountVisualManager lays a mount out
+    gun.rotation = -(base + arc); // applyMountAngles: arc-local aim
+    applyStructureMirror(sprite, mirror);
+    counterFlipStructureParts(sprite, cluster);
+    counterFlipStructureParts(sprite, cluster); // idempotent per frame
+    const o = gun.toGlobal(new Point(0, 0));
+    const f = gun.toGlobal(new Point(0, -1)); // the barrel's forward (Pixi up = game +y)
+    return { at: { x: o.x, y: -o.y }, aim: Math.atan2(-(f.x - o.x), -(f.y - o.y)) };
+  }
+
+  it('the drawn gun position is the server mount position, mirrored or not', () => {
+    for (const mirror of [false, true]) {
+      const w = structureLocalToWorld(lx, ly, hx, hy, Math.cos(ha), Math.sin(ha), mirror, { x: 0, y: 0 });
+      const { at } = drawGun(mirror);
+      expect(at.x).toBeCloseTo(w.x, 6);
+      expect(at.y).toBeCloseTo(w.y, 6);
+    }
+  });
+
+  it('the barrel keeps the true aim angle (the same world bearing mirrored or not)', () => {
+    const plain = drawGun(false).aim;
+    const flipped = drawGun(true).aim;
+    expect(Math.atan2(Math.sin(flipped - plain), Math.cos(flipped - plain))).toBeCloseTo(0, 6);
+    expect(plain).toBeCloseTo(ha + base + arc, 6); // world bearing = body + base + arc
   });
 });

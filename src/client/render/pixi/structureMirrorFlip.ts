@@ -8,8 +8,9 @@
  *
  * Two things must NOT read mirrored, so they are counter-flipped:
  * - the world readouts (text labels): mirrored text is unreadable;
- * - the gun cluster: mount aim is a world bearing (#12) and the server does
- *   not mirror mounts, so the guns keep their true aim and offset.
+ * - the gun cluster: mount aim is a world bearing (#12), so the barrels keep
+ *   their true aim angle; the server DOES mirror mount positions, so each
+ *   gun's offset is negated inside the counter-flipped cluster.
  *
  * Allocation-free (#14): sign writes only, a module-constant label list.
  */
@@ -46,5 +47,20 @@ export function counterFlipStructureParts(sprite: Container, mountCluster: Conta
     const t = sprite.getChildByLabel(READOUT_LABELS[i]!);
     if (t !== null) signScaleX(t, sign);
   }
-  if (mountCluster !== null) signScaleX(mountCluster, sign);
+  if (mountCluster === null) return;
+  signScaleX(mountCluster, sign);
+  // The server puts a mirrored mount at its flipped local point
+  // (`structureLocalToWorld`), so the counter-flipped cluster negates each
+  // gun's x offset (rotations untouched: the barrels keep the true aim).
+  // Mount offsets are static after the cluster is built, so this runs only
+  // when the mirror state changes; a rebuilt cluster starts unflipped.
+  const want = sign < 0;
+  if (offsetsFlipped.has(mountCluster) === want) return;
+  const kids = mountCluster.children;
+  for (let i = 0; i < kids.length; i++) kids[i]!.x = -kids[i]!.x;
+  if (want) offsetsFlipped.add(mountCluster);
+  else offsetsFlipped.delete(mountCluster);
 }
+
+/** Gun clusters whose mount offsets are currently negated. */
+const offsetsFlipped = new WeakSet<Container>();

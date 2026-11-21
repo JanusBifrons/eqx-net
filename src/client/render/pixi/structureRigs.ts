@@ -53,6 +53,7 @@ import type { StructureRenderState } from '../../../core/contracts/IRenderer.js'
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
 import { RIG_LOOK_C, rigArmCable, rigPartContext, type RigArmCable, type RigDrawHook, type RigRowClipMemo } from './structureRigLook.js';
 import { RIG_DRAW_HOOKS } from './structureStyleC.js';
+import { structureLocalToWorld } from '../../../shared-types/structureKinds/geometry.js';
 
 /** Draw structure rig parts: on by default (owner, structure restyle);
  *  `?rigs=0` turns them off (the pre-restyle structures). */
@@ -96,6 +97,9 @@ export function rigLayerZ(layer: DrawLayer): number {
 
 /** Game ticks per second (the server sim rate). */
 export const RIG_TICKS_PER_SEC = 60;
+
+/** Scratch for a clip target's host → world (alloc-free). */
+const HOST_TO_WORLD = { x: 0, y: 0 };
 
 /** A Pixi local transform (caller-owned scratch). */
 export interface PixiXform { x: number; y: number; rotation: number }
@@ -311,8 +315,10 @@ export class StructureRigView {
       if (this.running && dt > 0) this.spinClock += dt;
       this.spinLast = nowTick;
     }
-    // Pixi azimuth -> game angle (y flips), then into the host frame.
-    evaluateRig(this.rig, playing, nowTick, this.pose, twoBoneIkSolve, sunAz !== undefined ? -sunAz - ha : undefined,
+    // Pixi azimuth -> game angle (y flips), then into the host frame; a
+    // mirrored host draws angle φ (from +x) at π − φ, so aim at π − φ (4C).
+    const sunHost = sunAz !== undefined ? -sunAz - ha : undefined;
+    evaluateRig(this.rig, playing, nowTick, this.pose, twoBoneIkSolve, sunHost !== undefined && this.row?.mirror === true ? Math.PI - sunHost : sunHost,
       this.hasSpin ? this.spinClock : undefined);
     const xf = this.xf;
     const clipT = playing !== null ? nowTick - playing.startTick : Number.NaN;
@@ -530,10 +536,11 @@ export class StructureRigs {
       input.from = clip.from;
       input.rate = clip.rate;
       if (clip.targetX !== undefined && clip.targetY !== undefined) {
-        // Host frame → world game coords (the view takes a world target).
-        const c = Math.cos(ha), s = Math.sin(ha);
-        input.targetX = hx + clip.targetX * c - clip.targetY * s;
-        input.targetY = hy + clip.targetX * s + clip.targetY * c;
+        // Host frame → world game coords (the view takes a world target); the
+        // server's frame has the build mirror undone (`worldToRigHost`).
+        const w = structureLocalToWorld(clip.targetX, clip.targetY, hx, hy, Math.cos(ha), Math.sin(ha), row?.mirror, HOST_TO_WORLD);
+        input.targetX = w.x;
+        input.targetY = w.y;
       } else {
         input.targetX = undefined;
         input.targetY = undefined;
