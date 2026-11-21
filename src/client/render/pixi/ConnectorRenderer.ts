@@ -23,7 +23,7 @@ import {
   arcWedgeVisualParams,
   isArcLimited,
   type ArcWedgeAngles,
-  builtRangeCircleVisualInto,
+  builtRangeCircleVisualInto, staticScaleKey,
   cometSegment,
   shieldWallVisualParams,
   type ConnectorVisual,
@@ -142,10 +142,6 @@ export function staticSignature(
   return h;
 }
 
-/** Rebuild the static layer when the zoom has moved more than this fraction
- *  since its last build (its line widths are zoom-dependent). */
-const STATIC_SCALE_TOLERANCE = 0.03;
-
 export class ConnectorRenderer {
   /** Per-frame layer: everything that animates (flow pulses, wall glow and
    *  shimmer, beams, build bars, the placement preview). Cleared every frame. */
@@ -153,8 +149,9 @@ export class ConnectorRenderer {
   /**
    * A3 (plan soft-leaping-truffle v2) — the STATIC layer, drawn BEHIND `gfx`:
    * idle edges, built-turret range rings, up-wall rails and open-iris guides.
-   * Rebuilt only when the structure topology / state signature changes or the
-   * zoom moves past STATIC_SCALE_TOLERANCE, so Pixi stops re-tessellating
+   * Rebuilt only when the structure topology / state signature or the
+   * half-octave zoom key (`staticScaleKey`, flat from 1x in) changes, and
+   * drawn at the key's scale, so Pixi stops re-tessellating
    * every edge of a big base each frame. Measured before the split (citadel,
    * 456 structures, desktop): 0.70 ms median per frame building commands, plus
    * the re-tessellation of every line.
@@ -163,7 +160,7 @@ export class ConnectorRenderer {
   /** Test hook: how many times the static layer has been rebuilt. */
   staticRebuilds = 0;
   private _staticSig = NaN;
-  private _staticScale = 0;
+  private _staticKey = NaN;
   /** Range-ring readouts captured at the last static rebuild. */
   private _staticRingCount = 0;
   private _staticRingRadius = 0;
@@ -420,7 +417,7 @@ export class ConnectorRenderer {
   /**
    * Rebuild the static layer if anything it draws has changed: the structure
    * set and poses, connections, built / walls-up state, the
-   * highlighted turret, or the zoom (past STATIC_SCALE_TOLERANCE). The
+   * highlighted turret, or the zoom key (drawn at the key's scale). The
    * signature is an integer hash walk — far cheaper than drawing.
    */
   private refreshStatic(
@@ -431,12 +428,12 @@ export class ConnectorRenderer {
     // The new fences take over the walls once ready: fold that into the
     // signature so the static rails are rebuilt without them.
     const sig = staticSignature(structures, swarm, this.highlightedStructureId) + (this._fxWallsOn ? 0.5 : 0) + (this.socketCables ? 0.25 : 0);
-    const scaleMoved = this._staticScale === 0 || Math.abs(scale / this._staticScale - 1) > STATIC_SCALE_TOLERANCE;
-    if (sig !== this._staticSig || scaleMoved) {
+    const key = staticScaleKey(scale, this._staticKey);
+    if (sig !== this._staticSig || key !== this._staticKey) {
       this._staticSig = sig;
-      this._staticScale = scale;
+      this._staticKey = key;
       this.staticRebuilds++;
-      this.drawStatic(structures, swarm, scale);
+      this.drawStatic(structures, swarm, Math.pow(2, key / 2));
     }
     this.builtTurretRangeCount = this._staticRingCount;
     this.lastBuiltTurretRangeRadius = this._staticRingRadius;

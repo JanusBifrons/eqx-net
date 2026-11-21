@@ -578,3 +578,18 @@ export function arcWedgeVisualParams(scale: number): {
   const safeScale = scale > 0 ? scale : 1;
   return { color: ARC_WEDGE_COLOR, fillAlpha: 0.06, lineAlpha: 0.22, width: Math.max(1 / safeScale, 1) };
 }
+
+/** log2(1.03) in half-octave units: a key steps up only 3 % past its boundary. */
+const STATIC_KEY_DEAD_BAND = Math.log2(1.03) * 2;
+/** The connector STATIC layer's zoom key (an integer; scale = 2^(key/2)): it
+ *  is drawn at a half-octave step at or below the live zoom, so its pixel
+ *  floors hold and widths run at most one step (sqrt 2, +3 % dead band) wide.
+ *  Clamped at 0 (scale 1): every floor it draws is flat from there up.
+ *  `current` = the built key (NaN: none); kept while still valid. */
+export function staticScaleKey(scale: number, current: number): number {
+  const l = Math.log2(scale > 0 ? scale : 1) * 2;
+  const down = Math.min(0, Math.floor(l));
+  if (!(current <= down)) return down; // too thin (or no build yet)
+  const up = Math.min(0, Math.floor(l - STATIC_KEY_DEAD_BAND));
+  return current < up ? up : current;
+}
