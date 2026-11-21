@@ -637,7 +637,11 @@ its space stays reserved because placement checks the registry. On completion
 ([`blueprintBody.ts`](../../src/server/structures/blueprintBody.ts)) it turns
 solid (`SET_COLLISION_GROUPS` → default, `SwarmSpawner.solidifyStructure`) only
 when no hull (`SectorObstacles.hullCircles`) overlaps its footprint; otherwise it
-waits, fully paid, and finishes the pulse the space is clear. Records built
+waits, fully paid, and finishes the pulse the space is clear. While it waits
+the client says so, derived from the row alone (`buildPct >= 1 && !built`,
+[`buildAwaitingClear.ts`](../../src/client/structures/buildAwaitingClear.ts)):
+"WAITING FOR SHIPS TO CLEAR" above the blueprint and "FINISHED — WAITING FOR
+SHIPS TO CLEAR" on the inspector card. Records built
 outside the pulse (restore, seeded bases) settle on the next pulse. **One rule
 everywhere (3F2):** `isStructureBodySolid` (`core/structures/structureBody.ts`,
 reads `ghostBody`; `isConstructed` alone is not it: a finished blueprint waits
