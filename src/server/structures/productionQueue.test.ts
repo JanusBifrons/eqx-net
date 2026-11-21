@@ -3,7 +3,7 @@
  * the head (`rec.recipe`) advances only after a completed cycle, repeat loops
  * the list, the cap counts the head, and `set_recipe` clears the queue.
  * Uses the Refinery's two blueprint-free recipes (ice → fuel, gas → fuel +
- * polymer) so the mixed list runs without blueprint swapping (a later slice).
+ * polymer); hull-blueprint swapping is in `blueprintSwap.test.ts`.
  */
 import { describe, expect, it } from 'vitest';
 import { ProductionSubsystem } from './ProductionSubsystem.js';

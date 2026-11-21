@@ -78,6 +78,9 @@ export interface ProductionDeps {
   /** A Shipyard finished a 'hull:<kind>': park it as a live ship owned by the
    *  yard's owner. False = it could not; the packed crate goes to storage. */
   launchHull?(rec: StructureRecord, kind: string, quality: number): boolean;
+  /** A queue head needs a blueprint the slot doesn't hold: swap one in from
+   *  network storage (`swapBlueprintFor`, the one swap set_recipe uses too). */
+  swapBlueprint?(rec: StructureRecord, recipe: RecipeId): void;
 }
 
 interface AppliedCache {
@@ -270,7 +273,14 @@ export class ProductionSubsystem {
     if (haltAtBuildCount(rec, loaded, id)) return;
     // A loaded cycle keeps running on what it captured at its start, even if
     // the copy that started it is now used up.
-    const eff = loaded ? this.effective(rec, id) ?? baseEffect(id) : this.effective(rec, id);
+    let eff = loaded ? this.effective(rec, id) ?? baseEffect(id) : this.effective(rec, id);
+    // A recipe queue's head moved to another hull: swap the blueprint (never
+    // mid-cycle: a loaded cycle has an eff). Retried each pulse while it holds,
+    // for queue heads only.
+    if (eff === null && rec.prodQueue !== undefined && this.d.swapBlueprint !== undefined) {
+      this.d.swapBlueprint(rec, id);
+      eff = this.effective(rec, id);
+    }
     if (eff === null) {
       rec.prodState = PROD_STATE.needsBlueprint;
       return;
