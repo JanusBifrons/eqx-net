@@ -158,7 +158,7 @@ function UpgradeCard({ entityId, data }: { entityId: number; data: ManageActionD
 function HoldDeconstruct({ entityId }: { entityId: number }): JSX.Element {
   const { holding, handlers } = useHoldPress(DECONSTRUCT_HOLD_MS, () => sendStructureAction(entityId, 'toggle_deconstruct'));
   return (
-    <Tooltip title="Hold to deconstruct (reverse build, returns resources)">
+    <Tooltip title="Hold to deconstruct (reverse build, returns resources)" disableTouchListener>
       <Box component="button" data-testid="structure-action-deconstruct" data-active="0" data-holding={holding ? '1' : '0'}
         aria-label="Hold to deconstruct" sx={DANGER_BTN_SX} {...handlers}
         onContextMenu={(e: { preventDefault: () => void }) => e.preventDefault()}>
