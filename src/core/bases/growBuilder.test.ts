@@ -73,10 +73,13 @@ describe('one cable per connector socket (owner: no two connectors in one slot)'
     expect(new Set(held).size).toBe(held.length);
   });
 
-  it('a bastion steps off a fence post on its line', () => {
+  it('a bastion steps off a structure that blocks its line', () => {
     const B = new Builder();
     const end = B.tryPlace({ kind: 'connector', x: 0, y: 0 });
-    expect(B.tryPlace({ kind: 'shield_pylon', x: 500, y: 0 })).toBe(1);
+    // A battery (190 box) sits across every relay-hub socket pairing at y=0,
+    // studs and arcs alike, yet clears the line one nudge off. (A pylon is
+    // too small: a side-stud cable can arc round it, and needs no nudge.)
+    expect(B.tryPlace({ kind: 'battery', x: 500, y: 0 })).toBe(1);
     const b = B.bastion(end, 330, 670, 0);
     expect(b).not.toBeNull();
     expect(Math.abs(b!.y)).toBe(BASTION_NUDGE);
