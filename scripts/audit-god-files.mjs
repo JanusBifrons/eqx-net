@@ -65,7 +65,7 @@ const RATCHET_ONLY =
 export const ALLOWLIST = {
   'src/client/app/gameRafLoop.ts': { cap: 710, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
   'src/client/state/store.ts': { cap: 617, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
-  'src/server/fleet/FleetCommandSubsystem.ts': { cap: 909, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
+  'src/server/fleet/FleetCommandSubsystem.ts': { cap: 891, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
   'src/server/transit/TransitOrchestrator.ts': { cap: 909, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
   'src/client/App.tsx': { cap: 1215, target: 600, reason: RATCHET_ONLY },
   'src/client/__art-lab__/fx.ts': { cap: 979, target: 600, reason: RATCHET_ONLY },
@@ -84,7 +84,7 @@ export const ALLOWLIST = {
   'src/client/render/art/fields.ts': { cap: 943, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fx/fxTextures.ts': { cap: 783, target: 600, reason: RATCHET_ONLY },
   'src/client/render/galaxy/GalaxyMapLayer.ts': { cap: 1044, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/pixi/ConnectorRenderer.ts': { cap: 934, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/pixi/ConnectorRenderer.ts': { cap: 816, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/structureVisuals.ts': { cap: 687, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/wreckArt.ts': { cap: 1925, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/Camera.ts': { cap: 871, target: 600, reason: RATCHET_ONLY },

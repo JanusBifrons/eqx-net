@@ -86,7 +86,7 @@ describe('FleetCommandSubsystem', () => {
     expect(pts[0]!.y).toBeGreaterThan(pts[2]!.y);
     // One ship goes to the very point.
     sys.applyOrder('alice', ['m'], { kind: 'move', x: 100, y: 200 });
-    expect(sys.ordersOf('m')!.order).toEqual({ kind: 'move', x: 100, y: 200 });
+    expect(sys.ordersOf('m')!.order).toEqual({ kind: 'move', x: 100, y: 200, speed: 1 });
   });
 
   it('commands apply only to the caller\'s own attached ships; foreign / unknown ids are dropped', () => {
@@ -96,7 +96,7 @@ describe('FleetCommandSubsystem', () => {
     add('b1', 'bob');
     const acc = [...sys.applyOrder('alice', ['a1', 'b1', 'ghost', 'a2', 'a1'], { kind: 'move', x: 500, y: 0 })];
     expect(acc).toEqual(['a1', 'a2']); // b1 foreign, ghost unknown, duplicate a1 once
-    expect(sys.ordersOf('a1')!.order).toEqual({ kind: 'move', x: 500, y: 0 });
+    expect(sys.ordersOf('a1')!.order).toEqual({ kind: 'move', x: 500, y: 0, speed: 1 });
     expect(sys.ordersOf('b1')!.order).toBeNull();
 
     expect([...sys.setStance('bob', ['a1', 'b1'], 'aggressive')]).toEqual(['b1']);
