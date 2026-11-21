@@ -108,6 +108,10 @@ export interface SectorSnapshotStructure {
   prodProgress?: number;
   /** Build count (job 2E): outputs left. Absent ⇒ repeat forever. */
   prodCount?: number;
+  /** Building panels B4 — the recipe queue after the head (RecipeIds,
+   *  validated on restore) and its repeat flag. Absent ⇒ no queue / off. */
+  prodQueue?: unknown[];
+  prodQueueRepeat?: boolean;
   /** Hull HP at save time. */
   health: number;
   /** Built vs blueprint. */

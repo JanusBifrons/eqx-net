@@ -9,10 +9,10 @@ import CrisisAlertIcon from '@mui/icons-material/CrisisAlert';
 import { COASTAL_DEFENCE_KINDS, type StructureKindId } from '@shared-types/structureKinds';
 
 /**
- * Build speed-dial category tier (WS-13 / R2.6).
+ * Build menu categories (WS-13 / R2.6): the Build sidebar's rail.
  *
  * The Build menu groups the 9 placeable structure kinds into three player-facing
- * categories so the dial drills Build ▸ category ▸ kind instead of dumping a flat
+ * categories (the sidebar's rail) instead of dumping a flat
  * 9-icon list. This taxonomy is **client-only presentation** — it is NOT a field
  * on the wire catalogue (`structureKinds.ts`), so it needs no
  * `STRUCTURE_KIND_CATALOGUE_VERSION` bump and never rides a snapshot (no netgate).
@@ -76,7 +76,7 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
   { id: 'transport', label: 'Transport', icon: <TripOriginIcon />, kinds: ['teleporter', 'teleporter_large'] },
 ];
 
-/** The drilled-into category's icon (mirrored onto the FAB at the `kinds` level). */
+/** Each category's icon on the Build sidebar's rail (BuildSidebar.tsx). */
 export const CATEGORY_ICON: Record<BuildCategoryId, ReactNode> = {
   core: <HubIcon />,
   economy: <BoltIcon />,
@@ -93,25 +93,4 @@ export function categoryById(id: BuildCategoryId): BuildCategory {
   // Unreachable: BUILD_CATEGORIES covers every BuildCategoryId.
   if (cat === undefined) throw new Error(`unknown build category: ${id}`);
   return cat;
-}
-
-/**
- * The dial's drilled view (pure presentation — LOCAL React state, NEVER Zustand,
- * invariant #2). `root` = the main menu; `categories` = the 3-category tier
- * (after Build ▸); `kinds` = the kind picker for a chosen category.
- */
-export type DialView =
-  | { level: 'root' }
-  | { level: 'categories' }
-  | { level: 'kinds'; category: BuildCategoryId };
-
-/** Module-const so the common reset never allocates per render. */
-export const ROOT_VIEW: DialView = { level: 'root' };
-
-/**
- * Pure back-navigation reducer: kinds → categories → root; root is a no-op.
- * The FAB stays the open/close toggle; this is what the dedicated back action runs.
- */
-export function goBackView(view: DialView): DialView {
-  return view.level === 'kinds' ? { level: 'categories' } : ROOT_VIEW;
 }

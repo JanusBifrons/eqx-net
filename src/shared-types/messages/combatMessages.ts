@@ -274,3 +274,16 @@ export const MountActivatedEventSchema = z
   })
   .strict();
 export type MountActivatedEvent = z.infer<typeof MountActivatedEventSchema>;
+
+/** Client → server: drop (`up: false`) or raise (`up: true`) the sender's OWN
+ *  piloted ship's shields (HUD shield ring tap). No target field: the server
+ *  acts only on the sender's active hull. Lowering zeroes the shield through
+ *  the break path and holds regen; raising releases the hold (regen then
+ *  follows the normal delay). See docs/features/shield-hull.md. */
+export const SetShieldsSchema = z
+  .object({
+    type: z.literal('set_shields'),
+    up: z.boolean(),
+  })
+  .strict();
+export type SetShieldsMessage = z.infer<typeof SetShieldsSchema>;

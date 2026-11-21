@@ -92,9 +92,9 @@ test("an NPC ship's hold is locked behind a break-in (C3)", async ({ page }) => 
 
 /**
  * Found while writing the break-in spec: from the default spawn (south of the
- * Capital) the Capital sits high on screen, and the world-anchored inspector
- * (it floats ABOVE its anchor) slid UNDER the app header, so "Open cargo"
- * couldn't be clicked. The panel must stay fully below the header.
+ * Capital) the Capital sits high on screen, and the then world-anchored
+ * inspector slid UNDER the app header, so "Open cargo" couldn't be clicked.
+ * The card now docks top-centre; it must stay fully below the header.
  */
 test('the inspector stays clear of the app header when its target is high on screen', async ({ page }) => {
   test.setTimeout(120_000);
@@ -104,7 +104,7 @@ test('the inspector stays clear of the app header when its target is high on scr
   await page.evaluate(([x, y]) => { (window as unknown as EqxWindow).__eqxSelectAtWorld!(x!, y!); }, [cap.x, cap.y]);
   const panel = page.getByTestId('entity-stats-panel');
   await expect(panel).toBeVisible({ timeout: 5_000 });
-  await page.waitForTimeout(200); // a few frames of world-anchoring
+  await page.waitForTimeout(200); // a few frames for the Slot to lay out
   const header = await page.getByTestId('app-header').boundingBox();
   const box = await panel.boundingBox();
   expect(box, 'the panel is laid out').not.toBeNull();

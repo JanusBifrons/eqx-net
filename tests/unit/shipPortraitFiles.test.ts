@@ -4,11 +4,16 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { PORTRAIT_KINDS } from '../../src/client/render/art/shipPortraits.js';
+import { PORTRAIT_KINDS, STRUCTURE_PORTRAIT_KINDS } from '../../src/client/render/art/shipPortraits.js';
 
 describe('ship portrait files', () => {
   it('every flyable hull has a committed picture', () => {
     const missing = PORTRAIT_KINDS.filter((k) => !existsSync(path.resolve('public/ships', `${k}.webp`)));
+    expect(missing).toEqual([]);
+  });
+
+  it('every buildable structure has a committed picture', () => {
+    const missing = STRUCTURE_PORTRAIT_KINDS.filter((k) => !existsSync(path.resolve('public/structures', `${k}.webp`)));
     expect(missing).toEqual([]);
   });
 });

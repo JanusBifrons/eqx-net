@@ -53,6 +53,8 @@ A small top-left two-bar readout: **SHLD** (cyan) over **HULL**
 (green → amber → red). It eases between values; the shield bar climbs
 smoothly as it regenerates. Intentionally minimal for now — it will grow.
 
+**Drop / raise shields:** tap your own shield ring (status capsule) to drop the shields (`set_shields {up:false}`: shield to 0 through the normal break path, regen held, the ring shows DOWN from the own-ship snapshot field `shieldsLowered`); tap again to raise them, and regen then follows the normal `shieldRegenDelayTicks` from the last hit or drop, so a broken shield never skips its recovery. Own active ship only; respawn clears it; AI pilots use the same `ShieldHullRouter.setShipShieldsLowered`.
+
 Per-kind starting values (shield ≈ hull at launch; balance-pass tunable):
 fighter 100/100, scout 60/60, heavy 180/180, interceptor 80/80,
 gunship 140/140.

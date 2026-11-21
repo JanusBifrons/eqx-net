@@ -11,16 +11,19 @@ import { encodeAim } from '@core/combat/manualAim';
 import { isContactLockKind, isTerrainLockKind } from '@core/combat/lockState';
 import { LockLinePick } from '../lockLinePick';
 import { getShipKind } from '@shared-types/shipKinds';
+import { shipLockRange } from '@core/combat/mountReach';
 
 export class LockLineClient {
   constructor(private readonly mirror: RenderMirror, private readonly roomOf: () => Room | null) {}
 
   private get room(): Room | null { return this.roomOf(); }
 
-  /** Best lockable target on the line from (x, y) along `bearing` within `reach`. */
+  /** Best lockable target on the line from (x, y) along `bearing` (within lock range, hull to hull). */
   pick(localId: string, x: number, y: number, bearing: number, reach: number, held: string | null): string | null {
     this._lgLocalId = localId;
-    this._lgPick.begin(x, y, bearing, reach, held);
+    const self = this.mirror.ships.get(localId);
+    const kind = self ? getShipKind(self.kind ?? null) : null;
+    this._lgPick.begin(x, y, bearing, reach, held, kind ? kind.radius + shipLockRange(kind) : 0);
     this.mirror.swarm?.forEach(this._lgVisitSwarm);
     this.mirror.ships.forEach(this._lgVisitShip);
     return this._lgPick.result(); // terrain only with no contact on the line

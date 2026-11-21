@@ -1,8 +1,9 @@
 /**
  * Lock for "one place for building settings": the inspector's settings-type
- * buttons (recipe, blueprint slot, gate access) live in the cog window's tabs,
- * sending the same messages as before; the inspector's owner row keeps only
- * the cog and one-shot actions.
+ * buttons (recipe, blueprint slot, gate access) and management (deconstruct,
+ * reconnect, clear, upgrade) live in the side panel's tabs, sending the same
+ * messages as before; the card's owner row keeps only Open and one-shot
+ * actions.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
@@ -15,12 +16,12 @@ import { settingsTabsFor } from './StructureSettingsModal.js';
 import { nextGateAccess } from './structureSettingsGate.js';
 import { SetGateAccessSchema, SetRecipeSchema, LoadBlueprintSchema, UnloadBlueprintSchema } from '../../shared-types/messages.js';
 
-/** The one-shot actions the inspector keeps beside the cog. */
-const KEPT = new Set([
-  'structure-action-settings', 'structure-action-deconstruct', 'structure-action-reconnect', 'structure-action-clear',
-  'structure-action-repair-ship', 'structure-action-refine', 'structure-action-upgrade',
-]);
-const MOVED = ['structure-action-recipe', 'structure-action-gate-access', 'structure-action-load-blueprint', 'structure-action-unload-blueprint'];
+/** The one-shot actions the card keeps beside Open. */
+const KEPT = new Set(['structure-action-settings', 'structure-action-repair-ship', 'structure-action-refine']);
+const MOVED = [
+  'structure-action-recipe', 'structure-action-gate-access', 'structure-action-load-blueprint', 'structure-action-unload-blueprint',
+  'structure-action-deconstruct', 'structure-action-reconnect', 'structure-action-clear', 'structure-action-upgrade',
+];
 
 /** Select my own built `kind` at entity 9 with extra slice fields; returns the room.send spy. */
 function seed(kind: string, extra: Record<string, unknown> = {}): ReturnType<typeof vi.fn> {
@@ -55,11 +56,10 @@ describe('building settings live in the cog window', () => {
     ['refinery', {}],
     ['fabricator', { bpRuns: 3, bpQuality: 2 }],
     ['shield_gate', {}],
-  ])('the inspector shows only the cog and actions (%s)', (kind, extra) => {
+  ])('the card shows only Open and one-shot actions (%s)', (kind, extra) => {
     seed(kind, extra);
     render(<EntityStatsPanel />);
     const row = screen.getByTestId('entity-stats-actions');
-    // MUI icons carry their own data-testid ("SettingsIcon"); count the buttons.
     const ids = [...row.querySelectorAll('button[data-testid]')].map((e) => e.getAttribute('data-testid')!);
     expect(ids[0]).toBe('structure-action-settings');
     for (const id of ids) expect(KEPT.has(id)).toBe(true);
@@ -105,10 +105,9 @@ describe('building settings live in the cog window', () => {
 
   // Base-build film: a run is spent when a cycle STARTS, so a 2-run copy read
   // "1 run" right after Load while the yard went on to build two hulls.
-  it('counts the build in progress in the runs left (tab and inspector)', () => {
+  it('counts the build in progress in the runs left (tab)', () => {
     seed('fabricator', { bpRuns: 1, bpQuality: 1, prodState: 1, prodFrac: 0.2 });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-blueprint')).toHaveTextContent('BLUEPRINT 2 runs left (1 building) · quality 1');
     openTab('production');
     expect(screen.getByTestId('settings-blueprint')).toHaveTextContent('2 runs left (1 building) · quality 1');
   });
@@ -116,7 +115,6 @@ describe('building settings live in the cog window', () => {
   it('an idle yard keeps the plain runs count', () => {
     seed('fabricator', { bpRuns: 2, bpQuality: 1, prodState: 2 });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-blueprint')).toHaveTextContent('BLUEPRINT 2 runs · quality 1');
     openTab('production');
     expect(screen.getByTestId('settings-blueprint')).toHaveTextContent('2 runs · quality 1');
   });
@@ -124,11 +122,9 @@ describe('building settings live in the cog window', () => {
   // The server spends a copy's LAST run at cycle start and empties the slot;
   // while that last hull builds the line must not read as if the blueprint
   // vanished. The slot really is free, so Load stays and Unload/Swap do not.
-  it('the last run building reads as building with a free slot (tab and inspector)', () => {
+  it('the last run building reads as building with a free slot (tab)', () => {
     seed('fabricator', { prodState: 1, prodFrac: 0.4 });
     render(<EntityStatsPanel />);
-    expect(screen.getByTestId('entity-stats-blueprint')).toHaveTextContent('BLUEPRINT last run building · slot free');
-    expect(screen.getByTestId('entity-stats-blueprint')).not.toHaveTextContent('NO BLUEPRINT LOADED');
     openTab('production');
     expect(screen.getByTestId('settings-blueprint')).toHaveTextContent('last run building · slot free');
     expect(screen.getByTestId('structure-action-load-blueprint')).toHaveTextContent('Load');

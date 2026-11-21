@@ -74,6 +74,8 @@ export interface PlayerEconomy {
   freeLaunches?: number;
   /** Starter grant (packed Capital crate) given; absent = not yet given. */
   starterGranted?: boolean;
+  /** Join credits (`JOIN_CREDITS` top-up) given; absent = not yet given. */
+  joinCreditsGranted?: boolean;
   history: TradeHistoryEntry[];
   /** Value gifted to each side inside the current window (diminishing returns). */
   gifts: Record<EconAllegiance, { value: number; sinceMs: number }>;
@@ -341,6 +343,20 @@ export class EconomyStore {
     return this.playerOp(playerId);
   }
 
+  /** The once-only join credits: given yet? (starterGrant.ts) */
+  joinCreditsGranted(playerId: string): boolean {
+    return this.players.get(playerId)?.joinCreditsGranted === true;
+  }
+
+  /** Mark the join credits given in memory and return the player-row op (NOT
+   *  enqueued): it rides the SAME atomic group as the wallet write. */
+  markJoinCreditsGranted(playerId: string): PersistOp {
+    const pe = this.player(playerId);
+    pe.joinCreditsGranted = true;
+    pe.econVersion++;
+    return this.playerOp(playerId);
+  }
+
   /** An NPC faction's treasury (tolls it collected). */
   treasury(faction: string): number {
     return this.treasuries.get(faction) ?? 0;
@@ -542,6 +558,7 @@ function parsePlayer(json: string): PlayerEconomy | null {
       pe.freeLaunches = Math.max(0, Math.min(FREE_LAUNCHES_START, Math.floor(raw.freeLaunches)));
     }
     if (raw.starterGranted === true) pe.starterGranted = true;
+    if (raw.joinCreditsGranted === true) pe.joinCreditsGranted = true;
     if (Array.isArray(raw.history)) pe.history = raw.history.slice(0, HISTORY_CAP);
     if (raw.gifts) for (const a of ECON_ALLEGIANCES) if (raw.gifts[a]) pe.gifts[a] = { ...raw.gifts[a] };
     if (raw.volume) pe.volume = { ...raw.volume };

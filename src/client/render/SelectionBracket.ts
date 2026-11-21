@@ -102,15 +102,6 @@ export class SelectionBracket {
   private readonly gfx: Graphics;
   private readonly _t: SelectableTarget = { x: 0, y: 0, r: 0, hw: 0, hh: 0 };
   private readonly _s = { x: 0, y: 0 };
-  /** WS-9 (R2.30) — the Pixi-WORLD point just ABOVE the focus (its bracket
-   *  top), or null when there is no focus. The renderer projects this to
-   *  screen each frame so the world-anchored stats box floats over it.
-   *  Pixi-world coords (x = gameX, y = -(gameY + half)). */
-  lastWorldX: number | null = null;
-  lastWorldY: number | null = null;
-  /** Bracket half-size in WORLD units for the focus (0 when there is none):
-   *  the box's centre is this far below `lastWorldY`. */
-  lastWorldHalf = 0;
   /** Brackets drawn in the last {@link draw} (test/diag hook). */
   lastMarkerCount = 0;
   /** First bracket drawn in the last {@link draw}: its id and screen centre (test/diag hook). */
@@ -126,20 +117,10 @@ export class SelectionBracket {
   /**
    * Per frame (in `update()`): resolve the focus. Returns true when it is
    * present; the caller clears the focus on false so the panel and the server
-   * stats stream tear down. Sets the details-panel anchor.
+   * stats stream tear down.
    */
   resolveFocus(mirror: RenderMirror, focusId: string | null): boolean {
-    if (focusId === null || !resolveSelectable(mirror, focusId, this._t)) {
-      this.lastWorldX = null;
-      this.lastWorldY = null;
-      this.lastWorldHalf = 0;
-      return false;
-    }
-    const half = Math.max(MIN_HALF, this._t.hh + RADIUS_PAD);
-    this.lastWorldHalf = half;
-    this.lastWorldX = this._t.x;
-    this.lastWorldY = -(this._t.y + half);
-    return true;
+    return focusId !== null && resolveSelectable(mirror, focusId, this._t);
   }
 
   /**

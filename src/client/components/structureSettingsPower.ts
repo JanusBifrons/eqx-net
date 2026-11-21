@@ -30,9 +30,16 @@ export interface PowerSummary {
   on: boolean;
   /** The owner's throttle in tenths (10 = 100%, the default). */
   throttle: number;
+  /** A processor's `PROD_STATE` (0 for anything else). */
+  prodState: number;
+  /** A Battery's charge and capacity (undefined on every other kind). */
+  storedPower?: number;
+  storedPowerMax?: number;
 }
 
-export function powerSummary(kindId: string, st: PowerSlice & Pick<StructureRenderState, 'netPower' | 'powered'>): PowerSummary {
+type SummarySlice = PowerSlice & Pick<StructureRenderState, 'netPower' | 'powered' | 'prodState' | 'storedPower' | 'storedPowerMax'>;
+
+export function powerSummary(kindId: string, st: SummarySlice): PowerSummary {
   const draws = getStructureKind(kindId).powerConsumption > 0;
   return {
     selfPower: structureSelfPower(kindId, st),
@@ -41,6 +48,9 @@ export function powerSummary(kindId: string, st: PowerSlice & Pick<StructureRend
     powered: st.powered,
     on: st.switchedOff !== true,
     throttle: st.throttle ?? STRUCTURE_THROTTLE_FULL,
+    prodState: st.prodState ?? 0,
+    storedPower: st.storedPower,
+    storedPowerMax: st.storedPowerMax,
   };
 }
 
