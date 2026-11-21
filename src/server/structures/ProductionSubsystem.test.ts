@@ -154,11 +154,27 @@ describe('ProductionSubsystem', () => {
     let spent = 0;
     const { run } = world([bay, fab], { onBlueprintSpent: () => spent++ });
     run(RECIPES.fab_components.cyclePulses * 2);
-    expect(spent).toBe(2);
+    // Two runs spent, then the used-up copy leaves when its last cycle completes.
+    expect(spent).toBe(3);
     expect(fab.blueprint).toBeUndefined();
     expect(bay.hold!.goods.components).toBe(2);
     run(1);
     expect(fab.prodState).toBe(PROD_STATE.needsBlueprint);
+  });
+
+  it('handing a building cycle back refunds its inputs AND its run, the last run too: a copy only ever leaves as outputs', () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { alloy: 10, polymer: 10 }, blueprints: [] } });
+    const fab = rec('f', 'fabricator', { blueprint: bp('recipe:fab_components', { runs: 1 }) });
+    const w = world([bay, fab]);
+    w.run(1);
+    expect(fab.prodLoaded).toBe(true);
+    expect(fab.blueprint?.runs, 'the last run is spent but the copy stays until it completes').toBe(0);
+    expect(w.prod.unload(fab)).toBe(true);
+    expect(fab.blueprint?.runs, 'the run is back').toBe(1);
+    expect(bay.hold!.goods).toEqual({ alloy: 10, polymer: 10 });
+    w.run(RECIPES.fab_components.cyclePulses);
+    expect(bay.hold!.goods.components, 'the run still makes its output').toBe(1);
+    expect(fab.blueprint, 'used up only by a completed cycle').toBeUndefined();
   });
 
   it('an original never runs out', () => {
@@ -481,7 +497,7 @@ describe('ProductionSubsystem — rock chunks (owner 2026-11-17)', () => {
 
 describe('prodStatusLine — chunk recipes', () => {
   it('a starved chunk refinery says it is waiting for a rock chunk', () => {
-    expect(prodStatusLine(PROD_STATE.starved, undefined, 'refine_rock_chunk')).toBe('Waiting for a rock chunk');
+    expect(prodStatusLine(PROD_STATE.starved, undefined, 'refine_rock_chunk')).toBe("Waiting for a rock chunk: land it on your Capital's pad");
     expect(prodStatusLine(PROD_STATE.starved, 'ice', 'refine_ice_fuel')).toBe('Waiting for Ice');
   });
 });

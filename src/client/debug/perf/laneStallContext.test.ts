@@ -51,8 +51,24 @@ describe('lane stall context', () => {
     d.detectGap(60, 10, 1000);
     mode = 'build';
     d.detectGap(140, 11, 2000);
-    expect(logEvent).toHaveBeenCalledWith('raf_stutter', { elapsedMs: 60, inputTickBefore: 10, viewHalf: 2400, mode: 'fly' });
+    // Nothing marked a phase here: the stall frame's breakdown is empty (all untimed).
+    expect(logEvent).toHaveBeenCalledWith('raf_stutter', { elapsedMs: 60, inputTickBefore: 10, viewHalf: 2400, mode: 'fly', phases: {}, phasesAgeMs: expect.any(Number) });
     expect(logEvent).toHaveBeenCalledWith('raf_gap', expect.objectContaining({ elapsedMs: 140, viewHalf: 2400, mode: 'build' }));
+  });
+
+  it('lane build: a stall event carries the phases marked during the stalled frame', async () => {
+    const { mod, det } = await load(true);
+    const phases = await import('./lanePhaseTiming');
+    mod.installLanePerfSummary(fakeRenderer(1000), () => 'command');
+    const rec = phases.lanePhaseRecorder();
+    expect(rec).not.toBeNull();
+    rec!.add(phases.LanePhase.swarm, 22.04);
+    rec!.add(phases.LanePhase.pixiRender, 31);
+    new det.RafStallDetector().detectGap(70, 12, 1000);
+    expect(logEvent).toHaveBeenCalledWith('raf_stutter', expect.objectContaining({
+      elapsedMs: 70, mode: 'command', phases: { swarm: 22, pixiRender: 31 },
+    }));
+    expect(rec!.cur[phases.LanePhase.swarm]).toBe(0); // rolled at the gap
   });
 
   it('normal build: stall events stay as they were (no zoom, no mode)', async () => {

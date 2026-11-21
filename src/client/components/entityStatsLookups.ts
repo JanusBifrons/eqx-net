@@ -5,6 +5,7 @@
  */
 import { getGameClient } from '../net/clientSingleton';
 import { getStructureKind } from '@shared-types/structureKinds';
+import { getShipKind } from '@shared-types/shipKinds';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
 /** Parse the numeric swarm entityId from a selection id (`swarm-<n>` or `<n>`).
@@ -50,4 +51,18 @@ export function structureSliceFor(id: string): StructureRenderState | undefined 
   const entityId = parseInt(id.startsWith('swarm-') ? id.slice('swarm-'.length) : id, 10);
   if (Number.isNaN(entityId)) return undefined;
   return client.mirror.structures?.get(entityId);
+}
+
+/** A parked hull's inspector labels. Mine reads as mine ("OWNER you") under its
+ *  kind's display name, whatever the server put in `displayName` (empty for a
+ *  guest owner). Anyone else's shows the owner's name, else "Abandoned hull",
+ *  over the kind's display name. Never a raw kind id (no ids in the UI). */
+export function parkedHullLabels(
+  displayName: string | undefined,
+  kind: string | undefined,
+  mine: boolean,
+): { name: string; infoLine?: string; owner?: string } {
+  const kindName = getShipKind(kind).displayName;
+  if (mine) return { name: kindName, owner: 'you' };
+  return { name: displayName || 'Abandoned hull', infoLine: kindName };
 }

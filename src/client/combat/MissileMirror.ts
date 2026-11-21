@@ -32,6 +32,8 @@ import {
   type PoseRingEntry,
 } from '../../core/contracts/IRenderer.js';
 import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessages.js';
+// Shared teleport bound (one definition for every client interpolator).
+import { isImplausibleJump } from '../net/plausibleSpeed.js';
 
 /**
  * Display-delay lag in milliseconds. The renderer reads missile poses
@@ -52,13 +54,6 @@ export const MISSILE_DISPLAY_DELAY_MS = 100;
  * 500 ms tail (capture `2026-05-27T16-33-40Z-r0r701`).
  */
 export const MISSILE_EXTRAPOLATION_CAP_MS = 250;
-
-/** Teleport guard (mirrors swarmInterpolation): when two bracketing poses are
- *  further apart than any missile could plausibly travel in the span, that's a
- *  server discontinuity (despawn+id-reuse, lock re-acquire SET) — snap to the
- *  newer pose, never animate across the gap. */
-const TELEPORT_MAX_PLAUSIBLE_SPEED = 2500; // u/s — above any missile speed
-const TELEPORT_FLOOR_U = 64;
 
 /** Campaign 5.1c — SLICE-DRIVEN removal. Absence from the pose slice is the
  *  authoritative despawn signal: the `missile_detonated` event is AOI-filtered
@@ -292,10 +287,12 @@ export function resolveMissileDisplayPose(
   }
 
   const span = b.arrivalMs - a.arrivalMs;
-  // Teleport guard: snap across server discontinuities, never animate them.
+  // Teleport guard: when two bracketing poses are further apart than any
+  // missile could plausibly travel in the span, that's a server discontinuity
+  // (despawn+id-reuse, lock re-acquire SET) — snap to the newer pose, never
+  // animate across the gap.
   const gap = Math.hypot(b.x - a.x, b.y - a.y);
-  const maxPlausible = Math.max(TELEPORT_FLOOR_U, (TELEPORT_MAX_PLAUSIBLE_SPEED * Math.max(0, span)) / 1000);
-  if (gap > maxPlausible) {
+  if (isImplausibleJump(gap, span)) {
     return { x: b.x, y: b.y, angle: b.angle, lifePct: m.lifePct };
   }
 

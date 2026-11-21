@@ -60,8 +60,9 @@ export type { GrownPlacement } from './growBuilder.js';
  *  a spine relay pushed onto its row line is dropped.
  *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power per unit of draw; row gaps fit the leaves facing in.
  *  19→20: landing pads solid to cables, no socket on their side: the spine detours round the Capital's pad up column 1; an unlinkable connector is taken back.
- *  20→21 (restyle F2): wider gate (416), airlock (392) and pylons (120×120); fence pylons 660 apart, each half-side spaced to the gate end (no pylon on a gate). */
-export const BASE_GROWTH_VERSION = 21;
+ *  20→21 (restyle F2): wider gate (416), airlock (392) and pylons (120×120); fence pylons 660 apart, each half-side spaced to the gate end (no pylon on a gate).
+ *  21→22: one cable per connector socket (max 6): leaf gaps fit the face turned at the leaf; a bastion steps off a fence post on its line. */
+export const BASE_GROWTH_VERSION = 22;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -571,14 +572,8 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
         if (hubs.length >= hubsNeeded) break;
         const end = (rowConn.get(j) ?? []).find((c) => B.placements[c]!.x === sideX * cols * PITCH_X);
         if (end === undefined) continue;
-        const y = B.placements[end]!.y;
-        const relay = B.tryPlace({ kind: 'connector', x: sideX * (fx - BASTION_IN), y });
-        if (relay < 0) continue;
-        if (!B.tryLink(end, relay)) { B.undoLast(); continue; }
-        const hub = B.tryPlace({ kind: 'connector', x: sideX * (fx + BASTION_OUT), y });
-        if (hub < 0) continue;
-        if (!B.tryLink(relay, hub)) { B.undoLast(); continue; }
-        hubs.push({ hub, sideX, y });
+        const b = B.bastion(end, sideX * (fx - BASTION_IN), sideX * (fx + BASTION_OUT), B.placements[end]!.y);
+        if (b !== null) hubs.push({ hub: b.hub, sideX, y: b.y });
       }
       if (hubs.length >= hubsNeeded) break;
     }

@@ -5,7 +5,8 @@
  * tick reads the pooled frame ctx (`../frameCtx.ts`) and allocates nothing.
  */
 
-import type { Container, Ticker } from 'pixi.js';
+import { UPDATE_PRIORITY, type Container, type Ticker } from 'pixi.js';
+import { LanePhase, lanePhaseMark, lanePhaseStart } from '../../../debug/perf/lanePhaseTiming.js';
 import { litPass } from '../../art/litPass.js';
 import { MachinedShipSprite } from '../../art/MachinedShipSprite.js';
 import { MachinedFlatSprite } from '../../art/MachinedFlatSprite.js';
@@ -41,12 +42,15 @@ function collectUnusedArt(ctx: RendererFrameCtx): void {
 export function installFrameTicker(ctx: RendererFrameCtx): void {
   const r = ctx.r;
   r.app.ticker.add(() => {
+    let t = lanePhaseStart(); // phone-lane phase timing (one null check per mark off the lane)
     // deltaMS keeps the Camera's zoom-ease framerate-independent
     // (60 / 90 / 120 Hz devices ease at the same wall-clock rate).
     r.camera.tick(r.app.ticker.deltaMS);
+    t = lanePhaseMark(LanePhase.cameraTick, t);
     // Screen-space overlays project through THIS frame's camera (after its
     // tick), the transform the world renders with below.
     r.input.drawFleetOverlay();
+    t = lanePhaseMark(LanePhase.fleetOverlay, t);
     if (r.ringProbeOn) r.captureFleetRingProbe();
     // Machined art: pack finished bakes every frame — including on the
     // galaxy map / warp screen, where `update()` doesn't run, so the
@@ -59,7 +63,16 @@ export function installFrameTicker(ctx: RendererFrameCtx): void {
       collectUnusedArt(ctx);
     }
     if (r.artStatsHook) (globalThis as { __eqxArtStats?: () => unknown }).__eqxArtStats = r.artStatsHook;
+    lanePhaseMark(LanePhase.art, t);
   });
+  // Phone lane: bracket Pixi's own `app.render` (added by its TickerPlugin at
+  // UPDATE_PRIORITY.LOW) with a stamp just before and a mark just after.
+  // Lane builds only, so a production ticker gets no extra listeners.
+  if (import.meta.env['VITE_PHONE_LANE'] === '1') {
+    let renderStart = 0; // closures built once here, not per frame
+    r.app.ticker.add(() => { renderStart = lanePhaseStart(); }, null, UPDATE_PRIORITY.LOW + 1);
+    r.app.ticker.add(() => { lanePhaseMark(LanePhase.pixiRender, renderStart); }, null, UPDATE_PRIORITY.LOW - 1);
+  }
 }
 
 /**

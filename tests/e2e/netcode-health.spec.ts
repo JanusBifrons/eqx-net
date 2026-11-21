@@ -100,12 +100,14 @@ async function runInteraction(page: Page, interaction: InteractionId): Promise<v
       await page.waitForTimeout(RUN_MS * 0.1);
       return;
     case 'autopilot-course':
-      // The helm takes orders once its panel shows (past the loading curtain);
-      // then the helm alone flies the route for the run.
-      await page.getByTestId('helm-panel').waitFor({ timeout: 15_000 });
-      await page.evaluate(([x, y]) => {
-        (window as unknown as { __eqxClient: { setHelmCourse(x: number, y: number): void } }).__eqxClient.setHelmCourse(x!, y!);
-      }, [AUTOPILOT_COURSE.x, AUTOPILOT_COURSE.y]);
+      // The helm takes the course once the local hull is known (re-sent until
+      // it does; Fly shows no helm panel since 2026-11-21, so the programmatic
+      // hook is the way in on both arms); then the helm alone flies the route.
+      await expect.poll(() => page.evaluate(([x, y]) => {
+        const c = (window as unknown as { __eqxClient: { setHelmCourse(x: number, y: number): void; getHelmOrder(): { active: boolean } } }).__eqxClient;
+        if (!c.getHelmOrder().active) c.setHelmCourse(x!, y!);
+        return c.getHelmOrder().active;
+      }, [AUTOPILOT_COURSE.x, AUTOPILOT_COURSE.y]), { timeout: 15_000 }).toBe(true);
       await page.waitForTimeout(RUN_MS);
       return;
   }
