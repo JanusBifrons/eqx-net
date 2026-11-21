@@ -445,7 +445,7 @@ export class ColyseusGameClient {
   private readonly _remoteLastInputs = new Map<string, RemoteInput>();
   /** Stage 3 — per-remote count of forward-prediction ticks applied since
    *  the last snapshot. Reset on snapshot arrival; gated against
-   *  STAGE_3_MAX_LOOKAHEAD_TICKS so a long network stall doesn't produce
+   *  remoteForwardTickCap(lead) so a long network stall doesn't produce
    *  runaway speculative motion. */
   private readonly _remoteForwardTicks = new Map<string, number>();
   /** Stage 3 — hysteresis guard. Tracks recent correction magnitudes per
@@ -2738,14 +2738,14 @@ export class ColyseusGameClient {
    *      whose last 3 corrections exceeded 5 u. Skipped remotes integrate
    *      with damping only (pre-Stage-3 behaviour).
    *   2. **Lookahead cap** — per-remote `_remoteForwardTicks` counter is
-   *      reset on every snapshot. Once it hits STAGE_3_MAX_LOOKAHEAD_TICKS
+   *      reset on every snapshot. Once it hits remoteForwardTickCap(lead)
    *      we stop applying input for that remote until the next snapshot.
    *      A long network stall otherwise would let speculation run away.
    */
   private applyRemoteInputs(): void {
     if (!this.predWorld) return;
     // Every remote ship: other pilots and parked / AI-flown hulls alike.
-    applyRemoteShipInputs(this.predWorld, this.predRemoteShipIds, this._remoteLastInputs, this._remoteForwardTicks, this._predGuard);
+    applyRemoteShipInputs(this.predWorld, this.predRemoteShipIds, this._remoteLastInputs, this._remoteForwardTicks, this._predGuard, this.gameLeadTicks());
   }
 
   /** The local ship's predicted turret angles (#12): `prediction/inputStep.ts`. */
