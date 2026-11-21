@@ -2,11 +2,11 @@
  * Local ship: does the drawn ship step on a second correction?
  * (netcode gap smoothing plan, section 3.3 and job S1-7; decides D9.)
  *
- * `Reconciler.reconcile` sets the new correction offset to
- * "physics before - physics after" and drops whatever is still left of the
- * previous offset. So when a second correction lands while the first one is
- * still easing out, the drawn ship (physics pose + `lerpOffset`) jumps by the
- * leftover part of the first offset.
+ * Before S2b-1, `Reconciler.reconcile` set the new correction offset to
+ * "physics before - physics after" and dropped whatever was still left of
+ * the previous offset, so a second correction landing while the first was
+ * still easing out made the drawn ship (physics pose + `lerpOffset`) jump by
+ * that leftover. The offset now carries the leftover over (continuous).
  *
  * Setup, through the REAL Reconciler and a real PhysicsWorld:
  * - The ship is at rest at the origin and no inputs are buffered, and each
@@ -51,6 +51,17 @@ const SMALL_ERROR_U = 5;
 const LARGE_ERROR_U = 220;
 /** Target: the drawn pose does not move at the correction instant. */
 const NO_STEP_TOLERANCE_U = 1e-6;
+/** Frames eased after correction 2 when measuring the glide (500 ms). */
+const GLIDE_FRAMES = 30;
+/**
+ * Glide bound: after correction 2, the drawn ship moves no faster per frame
+ * than the first correction would have on its own (same error, never
+ * interrupted), plus 5 %. The carried offset is at most first error + second
+ * error and gets the half-life of that size, so its peak speed matches the
+ * uninterrupted glide's; a 25 ms half-life on the carried ~208 u (the bug
+ * this locks out) moved 64-72 u per frame against a ~10.3 u peak.
+ */
+const GLIDE_PEAK_SLACK = 1.05;
 
 interface StepResult {
   /** Half-life of the first correction, ms. */
@@ -63,6 +74,10 @@ interface StepResult {
   drawnAfterX: number;
   /** |drawn after - drawn before| at the correction instant, world units. */
   stepU: number;
+  /** Half-life chosen for correction 2, ms. */
+  secondHalfLifeMs: number;
+  /** Largest per-frame drawn move over GLIDE_FRAMES after correction 2. */
+  maxMoveAfterU: number;
 }
 
 let world: PhysicsWorld;
@@ -107,6 +122,8 @@ function runTwoCorrections(firstErrorU: number, framesBetween: number): StepResu
   // Correction 2, at the same wall time as the reading above.
   r.reconcile(serverPose(firstErrorU + SECOND_ERROR_U), tick, tick, tick - 1);
   const drawnAfterX = drawnX(r);
+  const secondHalfLifeMs = r.lerpHalfLifeMs;
+  const maxMoveAfterU = maxPerFrameMove(r, GLIDE_FRAMES);
 
   return {
     firstHalfLifeMs,
@@ -114,13 +131,38 @@ function runTwoCorrections(firstErrorU: number, framesBetween: number): StepResu
     drawnBeforeX,
     drawnAfterX,
     stepU: Math.abs(drawnAfterX - drawnBeforeX),
+    secondHalfLifeMs,
+    maxMoveAfterU,
   };
 }
 
+/** Ease for `frames` 60 Hz frames; largest |drawn x change| in one frame. */
+function maxPerFrameMove(r: Reconciler, frames: number): number {
+  let prev = drawnX(r);
+  let max = 0;
+  for (let f = 0; f < frames; f++) {
+    r.advanceLerp(FRAME_MS);
+    const x = drawnX(r);
+    max = Math.max(max, Math.abs(x - prev));
+    prev = x;
+  }
+  return max;
+}
+
+/** Peak per-frame drawn move of one uninterrupted correction of `errorU`. */
+function singleGlidePeakU(errorU: number): number {
+  world.despawnShip(PLAYER);
+  world.spawnShip(PLAYER, 0, 0);
+  world.setShipState(PLAYER, serverPose(0));
+  const r = new Reconciler(world, PLAYER, new MockClock(0));
+  r.reconcile(serverPose(errorU), 1, 1, 0);
+  return maxPerFrameMove(r, GLIDE_FRAMES);
+}
+
 /**
- * Today's numbers (recorded 2026-11-21 on this branch). `todayStepU` is the
- * drawn jump at the instant of correction 2; it equals the leftover of the
- * first offset, whatever the size of the second correction.
+ * Numbers recorded 2026-11-21. `leftoverU` is the first offset still in
+ * effect at the instant of correction 2. Before the continuity fix (S2b-1)
+ * the drawn ship jumped by exactly this much; after it, the jump is 0.
  * - small: 5 u error, 25 ms half-life, 50 ms later: 0.759 u left (15.2%).
  * - large: 220 u error, 220 ms glide, 50 ms later: 207.538 u left (94.3%).
  * - large: 220 u error, 220 ms glide, 16.7 ms later: 218.365 u left (99.3%).
@@ -131,21 +173,21 @@ const CASES = [
     firstErrorU: SMALL_ERROR_U,
     frames: SNAPSHOT_GAP_FRAMES,
     halfLifeMs: 25,
-    todayStepU: 0.759,
+    leftoverU: 0.759,
   },
   {
     name: 'large error (220 ms glide), second correction 50 ms later',
     firstErrorU: LARGE_ERROR_U,
     frames: SNAPSHOT_GAP_FRAMES,
     halfLifeMs: 220,
-    todayStepU: 207.538,
+    leftoverU: 207.538,
   },
   {
     name: 'large error (220 ms glide), second correction 16.7 ms later',
     firstErrorU: LARGE_ERROR_U,
     frames: 1,
     halfLifeMs: 220,
-    todayStepU: 218.365,
+    leftoverU: 218.365,
   },
 ] as const;
 
@@ -155,22 +197,29 @@ const RECORDED_DECIMALS = 3;
 describe('Reconciler offset continuity: second correction while the first is easing (plan 3.3, S1-7)', () => {
   for (const c of CASES) {
     describe(c.name, () => {
-      it(`recorded today: drawn ship steps ${c.todayStepU} u at the second correction`, () => {
+      it(`recorded: ${c.leftoverU} u of the first offset left at the second correction`, () => {
         const res = runTwoCorrections(c.firstErrorU, c.frames);
         expect(res.firstHalfLifeMs).toBe(c.halfLifeMs);
-        // The step is exactly the dropped leftover of the first offset.
-        expect(res.stepU).toBeCloseTo(Math.abs(res.leftoverOffsetU), 9);
-        // Drawn pose lands on the new physics pose minus the new offset only.
-        expect(res.drawnAfterX).toBeCloseTo(c.firstErrorU, 9);
-        expect(res.stepU).toBeCloseTo(c.todayStepU, RECORDED_DECIMALS);
+        // Before the fix the drawn ship stepped by exactly this leftover.
+        expect(Math.abs(res.leftoverOffsetU)).toBeCloseTo(c.leftoverU, RECORDED_DECIMALS);
       });
 
-      // Target (plan 3.3 / 6.2): new offset = drawn before - physics after,
-      // so the drawn pose does not move at the correction instant.
-      // Fails today: step is the `todayStepU` above.
-      it.fails(`no visible step on the second correction (today: ${c.todayStepU} u)`, () => {
+      // Plan 3.3 / 6.2: new offset = (physics before + offset still in
+      // effect) - physics after, so the drawn pose does not move at the
+      // correction instant. Before the fix: step = `leftoverU` above.
+      it(`no visible step on the second correction (before the fix: ${c.leftoverU} u)`, () => {
         const res = runTwoCorrections(c.firstErrorU, c.frames);
         expect(res.stepU).toBeLessThan(NO_STEP_TOLERANCE_U);
+        expect(res.drawnAfterX).toBeCloseTo(res.drawnBeforeX, 9);
+      });
+
+      // Owner decision (D9 follow-up): correction 2's half-life comes from
+      // max(carried offset, raw drift), so a large leftover keeps gliding.
+      it('the carried offset keeps gliding: no frame faster than the first correction alone', () => {
+        const peakAloneU = singleGlidePeakU(c.firstErrorU);
+        const res = runTwoCorrections(c.firstErrorU, c.frames);
+        expect(res.secondHalfLifeMs).toBeGreaterThanOrEqual(res.firstHalfLifeMs * 0.9);
+        expect(res.maxMoveAfterU).toBeLessThanOrEqual(peakAloneU * GLIDE_PEAK_SLACK);
       });
     });
   }
