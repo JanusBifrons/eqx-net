@@ -53,7 +53,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 **Persistence and roster** ([persistence-and-migrations](../../docs/architecture/persistence-and-migrations.md#server-implementation-notes)):
 - The `dbWorker` is the sole DB writer via `IPersistenceSink`; the main thread opens the DB read-only. Stop a Windows dev server with `POST /dev/shutdown`.
 - Reconnect and transit arrival restore from the roster through the one `onJoin` shipId-restore path. Persistence is opt-out per kind (`SectorPersistence.persist()`); never key on entity ids across a restart.
-- A schema bump reseeds every sector; new `player_ships` columns use `PLAYER_SHIPS_MIGRATIONS`. Editing `SHIP_KINDS` numbers bumps `SHIP_KIND_CATALOGUE_VERSION`. Sectors are created eagerly at boot.
+- A schema bump reseeds every sector; new `player_ships` columns use `PLAYER_SHIPS_MIGRATIONS`. Editing `SHIP_KINDS` numbers bumps `SHIP_KIND_CATALOGUE_VERSION`. A `STRUCTURE_KIND_CATALOGUE_VERSION` bump lists its changed kinds in `STRUCTURE_KIND_WIPES`. Sectors are created eagerly at boot.
 
 **Transit** ([travel-state](../../docs/architecture/travel-state.md), [configurable-arrival](../../docs/features/configurable-arrival.md)):
 - During the spool the ship stays in the source room, damageable; its destruction aborts the transit. Commit reads the SAB pose, not the schema. Engineering rooms (`sectorKey === null`) have no transit or linger.
