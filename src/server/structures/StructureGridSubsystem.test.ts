@@ -512,25 +512,25 @@ describe('StructureGridSubsystem — reconnect sweep (playtest 2026-06-10 Issue 
     // line-of-sight to the relay.
     h.placement.place(OWNER, 'capital', 0, 0)!;
     const con = relayConnectorRaw(h, 0, 600); // links to the capital (1 slot used)
-    // Fan the leaves at DISTINCT angles around the relay (all in the upper arc,
-    // clear of the Capital below it). Radial sightlines from one hub never cross,
-    // so no leaf blocks another's line-of-sight to the relay — and the stranded
-    // one (below-east) stays reachable when a slot frees. The 700×300 Solars
-    // on the diagonals stand on end (rot 90) so the fan fits in range.
+    // Fan the leaves at DISTINCT angles around the relay, one per hex face (a
+    // connector holds one cable per socket). Radial sightlines from one hub
+    // never cross, so no leaf blocks another's line-of-sight to the relay. The
+    // 700×300 Solars on the diagonals stand on end (rot 90) so the fan fits in range.
     const fillers = [
       h.placeRaw(OWNER, 'solar', 470, 700)!, // east
       h.placeRaw(OWNER, 'solar', 520, 1250, { rot: 90 })!, // north-east
       h.placeRaw(OWNER, 'solar', 0, 1250, { rot: 90 })!, // north
       h.placeRaw(OWNER, 'solar', -520, 1250, { rot: 90 })!, // north-west
-      h.placeRaw(OWNER, 'solar', -470, 700)!, // west
+      h.placeRaw(OWNER, 'solar', 650, 150, { rot: 90 })!, // south-east, past the Capital's corner
     ];
-    expect(h.registry.connectionCount(con)).toBe(6); // capital + 5 solars = full
-    const stranded = h.placeRaw(OWNER, 'solar', 620, 100, { rot: 90 })!; // below-east, clear lane past the Capital's corner
+    expect(h.registry.connectionCount(con)).toBe(6); // capital + 5 solars = full (all six sockets)
+    const stranded = h.placeRaw(OWNER, 'solar', -470, 700)!; // west
     h.pulse();
     expect(h.registry.connectionCount(stranded)).toBe(0); // hub at capacity
 
-    // Remove one filler → a slot frees → the next pulse reconnects the stranded leaf.
-    h.placement.remove(OWNER, fillers[0]!);
+    // Remove one filler (the north-west one, on the face the stranded leaf
+    // looks at) → a socket frees → the next pulse reconnects the stranded leaf.
+    h.placement.remove(OWNER, fillers[3]!);
     h.pulse();
     expect(h.registry.hasConnection(stranded, con)).toBe(true);
   });
