@@ -221,6 +221,19 @@ view, never the server `StructureRegistry`):
 - `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
   `CONSTRUCTION_PULSE_AMOUNT`, `REPAIR_*`, `DECONSTRUCTION_RATE_KG`,
   `CAPITAL_STARTING_MINERALS`, `FLASH_DURATION_MS`.
+- **One cable per socket** (owner rule "you can't have two connectors in one
+  slot"): every cable plugs into its own socket, connectors included. A
+  connector has 6 sockets (one per hex face), so it holds at most 6 cables at
+  any level (`clampLinksToSockets`; a 7th link is refused `a-full` / `b-full`),
+  and a socket already holding a cable is skipped by `pickCableSocketPair`.
+  Only shield emitters (pylon, gate, airlock) are not socket-bound
+  (`structureLinksBoundBySockets`): their fence links share posts. A
+  connector end still takes a cable on a face turned toward the partner, with
+  a short tail. The base generator sizes each leaf gap for the connector face
+  turned straight at the leaf (`linkGap`), and a bastion steps
+  `BASTION_NUDGE` off its row when a fence post blocks the line
+  (`Builder.bastion`). Locks: `canConnectSockets.test.ts`,
+  `structureLevel.test.ts`, `growBuilder.test.ts`, `growBase.test.ts`.
 - **Minimum cable length** (owner rule "keep buildings apart"):
   `MIN_CABLE_LENGTH = 56` u, stud to stud. 56 = a 1× cable's two collars
   (6 u each) plus the short-run span (44 u, `connectorLineLooks.ts` draws

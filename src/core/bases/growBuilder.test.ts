@@ -1,12 +1,12 @@
 /** The base generator's builder stores each link's cable sockets and keeps
  *  placements off the curved cable (structure-restyle 0d slice 5). */
 import { describe, expect, it } from 'vitest';
-import { Builder } from './growBuilder.js';
+import { BASTION_NUDGE, Builder, linkGap } from './growBuilder.js';
 import { canConnect, segmentIntersectsAabb } from '../structures/Grid.js';
 import {
   CABLE_CURVE_FLOATS, CABLE_CURVE_SEGMENTS, CABLE_NO_SOCKET, flattenLinkCable, makeCableBox, makeCableSocketPick,
 } from '../structures/cableCurve.js';
-import { structureHalfExtents } from '../../shared-types/structureKinds.js';
+import { getStructureKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 
 describe('Builder links (0d slice 5)', () => {
   it('stores the socket pair canConnect picked, on the edge and on the Connection', () => {
@@ -55,5 +55,33 @@ describe('Builder links (0d slice 5)', () => {
     free.tryPlace({ kind: 'solar', x: 600, y: 450 });
     expect(free.tryPlace({ kind: 'connector', x: bx, y: by })).toBeGreaterThanOrEqual(0);
     expect(B.tryPlace({ kind: 'connector', x: bx, y: by })).toBe(-1);
+  });
+});
+
+describe('one cable per connector socket (owner: no two connectors in one slot)', () => {
+  it('a row connector with both side links still takes a leaf above and below at linkGap', () => {
+    const B = new Builder();
+    const c = B.tryPlace({ kind: 'connector', x: 0, y: 0 });
+    B.placeLinked({ kind: 'connector', x: -640, y: 0 }, c);
+    B.placeLinked({ kind: 'connector', x: 640, y: 0 }, c);
+    for (const side of [1, -1]) {
+      const { hh } = structureHalfExtents('turret', 0);
+      const y = side * (getStructureKind('connector').footprint.h / 2 + linkGap('turret', 0, side) + hh);
+      expect(B.placeLinked({ kind: 'turret', x: 0, y }, c), `side ${side}`).toBeGreaterThanOrEqual(0);
+    }
+    const held = B.adj.get(`s${c}`)!.map((k) => k.socketAt(`s${c}`));
+    expect(new Set(held).size).toBe(held.length);
+  });
+
+  it('a bastion steps off a fence post on its line', () => {
+    const B = new Builder();
+    const end = B.tryPlace({ kind: 'connector', x: 0, y: 0 });
+    expect(B.tryPlace({ kind: 'shield_pylon', x: 500, y: 0 })).toBe(1);
+    const b = B.bastion(end, 330, 670, 0);
+    expect(b).not.toBeNull();
+    expect(Math.abs(b!.y)).toBe(BASTION_NUDGE);
+    // The blocked try is taken back: only the end, the post, the relay and the hub.
+    expect(B.placements).toHaveLength(4);
+    expect(B.edges).toHaveLength(2);
   });
 });
