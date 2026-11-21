@@ -85,11 +85,19 @@ export const ADAPTIVE_DELAY_FACTOR = 1.5;
  *  the teleport guard covers the in↔out re-acquire. */
 export const ADAPTIVE_DELAY_CEILING_MS = 280;
 
-/** Module-level adaptive delay, updated by ColyseusClient on every snapshot
- *  via `setSwarmDisplayDelayMs()`. Default is the static 100 ms; under slow
- *  server (e.g. burn-test or production overload) this floats up so the
- *  buffer never empties. */
+/** Module-level adaptive delay: the SLEWED value every read uses (netcode gap
+ *  smoothing S3-2). `setSwarmDisplayDelayMs()` (fed by `snapshotPerfStats` on
+ *  every snapshot) sets `_displayDelayTargetMs`; `stepSwarmDisplayDelay()`
+ *  (once per frame, `updateSwarmMirror`) moves this value toward it, so a
+ *  changed target glides instead of jumping the read point. Default is the
+ *  static 100 ms; under slow server (burn-test, production overload) the
+ *  target floats up so the buffer never empties. */
 let _displayDelayMs = DISPLAY_DELAY_MS;
+/** Where the slewed delay is heading (wall ms, already clamped). */
+let _displayDelayTargetMs = DISPLAY_DELAY_MS;
+/** False until the first `setSwarmDisplayDelayMs` after a reset: that first
+ *  set places the value AT its target (no glide up from the floor). */
+let _displayDelaySeeded = false;
 /** The sector's game speed (time scale stream). The floor and ceiling are GAME
  *  ms, so in wall ms they are 100 / speed and 280 / speed: at 4× poses arrive
  *  4× as often and 25 wall ms still spans the same few of them (a fixed 100 ms
@@ -98,14 +106,70 @@ let _displayDelayMs = DISPLAY_DELAY_MS;
 let _displaySpeed = 1;
 let _lastDelayInputMs = DISPLAY_DELAY_MS;
 
-/** Let the snapshot consumer steer the buffer's lookback window. Call with
- *  the rolling EWMA of `snapshotIntervalMs` × ADAPTIVE_DELAY_FACTOR (wall ms). */
-export function setSwarmDisplayDelayMs(ms: number): void {
-  _lastDelayInputMs = ms;
-  _displayDelayMs = Math.max(DISPLAY_DELAY_MS / _displaySpeed, Math.min(ADAPTIVE_DELAY_CEILING_MS / _displaySpeed, ms));
+/** Slew time constant (GAME ms, divided by the speed like the floor and
+ *  ceiling): each frame the delay closes `1 − exp(−frameMs / τ)` of the
+ *  remaining gap to its target (~5 % per 60 Hz frame at 1×), so a small
+ *  target change settles in about a second. */
+export const DISPLAY_DELAY_SLEW_TAU_MS = 300;
+/** Slew rate bound: the delay moves at most this fraction of the frame's own
+ *  wall time per frame, either way. Below 1 the read point (now − delay)
+ *  always advances (≥ 0.9× real time), so drones never stop or reverse from
+ *  a delay change; 0.1 keeps the slow-down / speed-up under 10 %, below what
+ *  the eye reads as a hitch. A 100 → 280 ms step takes ≥ 1.8 s at 1×.
+ *  A ratio, so it needs no speed scaling (the range itself is ÷ speed). */
+export const DISPLAY_DELAY_SLEW_MAX_RATE = 0.1;
+/** Within this (wall ms) of the target the value lands on it exactly. */
+export const DISPLAY_DELAY_SLEW_SNAP_MS = 0.01;
+
+function clampDisplayDelayWallMs(ms: number): number {
+  return Math.max(DISPLAY_DELAY_MS / _displaySpeed, Math.min(ADAPTIVE_DELAY_CEILING_MS / _displaySpeed, ms));
 }
 
-/** The sector's game speed, from the snapshot keyframe (ColyseusClient). */
+/** Let the snapshot consumer steer the buffer's lookback window. Call with
+ *  the rolling EWMA of `snapshotIntervalMs` × ADAPTIVE_DELAY_FACTOR (wall ms).
+ *  Sets the TARGET; the value glides there in `stepSwarmDisplayDelay`
+ *  (the first call after a reset places the value at the target). */
+export function setSwarmDisplayDelayMs(ms: number): void {
+  _lastDelayInputMs = ms;
+  _displayDelayTargetMs = clampDisplayDelayWallMs(ms);
+  if (!_displayDelaySeeded) {
+    _displayDelaySeeded = true;
+    _displayDelayMs = _displayDelayTargetMs;
+  }
+}
+
+/** Move the delay toward its target by one frame of `frameDtMs` wall ms:
+ *  proportional to the remaining gap, bounded to
+ *  `DISPLAY_DELAY_SLEW_MAX_RATE × frameDtMs` either way. Call once per frame
+ *  (`updateSwarmMirror`). Scalars only. */
+export function stepSwarmDisplayDelay(frameDtMs: number): void {
+  const remaining = _displayDelayTargetMs - _displayDelayMs;
+  if (remaining === 0 || !(frameDtMs > 0) || !Number.isFinite(frameDtMs)) return;
+  const maxStep = DISPLAY_DELAY_SLEW_MAX_RATE * frameDtMs;
+  if (Math.abs(remaining) <= Math.min(DISPLAY_DELAY_SLEW_SNAP_MS, maxStep)) {
+    _displayDelayMs = _displayDelayTargetMs;
+    return;
+  }
+  const step = remaining * (1 - Math.exp(-frameDtMs * _displaySpeed / DISPLAY_DELAY_SLEW_TAU_MS));
+  _displayDelayMs += Math.max(-maxStep, Math.min(maxStep, step));
+}
+
+/** Put the delay back at the floor with no target and no lateness estimate
+ *  (sector change: `resetPredictionState`; tests: `resetSwarmTickClock`).
+ *  The next `setSwarmDisplayDelayMs` places the value at its target. */
+export function resetSwarmDisplayDelay(): void {
+  _lastDelayInputMs = DISPLAY_DELAY_MS;
+  _displayDelayTargetMs = clampDisplayDelayWallMs(DISPLAY_DELAY_MS);
+  _displayDelayMs = _displayDelayTargetMs;
+  _displayDelaySeeded = false;
+  _latenessEstimate.estimateMs = 0;
+  _latenessEstimate.deviationMs = 0;
+}
+
+/** The sector's game speed, from the snapshot keyframe (ColyseusClient).
+ *  The floor and ceiling move with it: the target is re-clamped and the
+ *  slewed value is clamped into the new range AT ONCE (it must never sit
+ *  outside the bounds); inside them it keeps gliding toward the target. */
 export function setSwarmDisplaySpeed(speed: number): void {
   const next = Number.isFinite(speed) && speed > 0 ? speed : 1;
   if (next !== _displaySpeed && _tickClockSeeded) {
@@ -113,7 +177,8 @@ export function setSwarmDisplaySpeed(speed: number): void {
     _tickClockOffsetMs = _tickClockLastStampMs - _tickClockLastTick * (SERVER_TICK_MS / next);
   }
   _displaySpeed = next;
-  setSwarmDisplayDelayMs(_lastDelayInputMs);
+  _displayDelayTargetMs = clampDisplayDelayWallMs(_lastDelayInputMs);
+  _displayDelayMs = _displayDelaySeeded ? clampDisplayDelayWallMs(_displayDelayMs) : _displayDelayTargetMs;
 }
 
 /** One server tick in game ms (the room steps at 60 Hz game time). */
@@ -225,16 +290,15 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
   return stamp;
 }
 
-/** Forget the tick clock and zero the drone stream counters (tests; a new
- *  room re-seeds on its own). */
+/** Forget the tick clock, zero the drone stream counters and reset the
+ *  display delay + lateness estimate (tests; a new room re-seeds on its own). */
 export function resetSwarmTickClock(): void {
   _tickClockSeeded = false;
   _latenessLastMs = 0;
   _latenessMaxMs = 0;
   _latenessSumMs = 0;
   _latenessCount = 0;
-  _latenessEstimate.estimateMs = 0;
-  _latenessEstimate.deviationMs = 0;
+  resetSwarmDisplayDelay();
   _overwriteUnreadCount = 0;
   _oldEndClampCount = 0;
   _glideLimitCount = 0;
@@ -258,8 +322,14 @@ export function getSwarmLatenessEstimateMs(): number { return _latenessEstimate.
 /** Smoothed mean absolute deviation of drone packet lateness (wall ms). */
 export function getSwarmLatenessDeviationMs(): number { return _latenessEstimate.deviationMs; }
 
+/** The slewed display delay every read uses (wall ms). */
 export function getSwarmDisplayDelayMs(): number {
   return _displayDelayMs;
+}
+
+/** Where the slewed delay is heading (wall ms, clamped to the floor/ceiling). */
+export function getSwarmDisplayDelayTargetMs(): number {
+  return _displayDelayTargetMs;
 }
 
 export interface InterpolatedPose {

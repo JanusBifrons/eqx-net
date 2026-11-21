@@ -147,6 +147,9 @@ describe('drone stream counters', () => {
   });
 
   it('clean 60 Hz series at the delay ceiling: no overwrite or old-end clamp', () => {
+    // A held ceiling from the first frame: after a reset the first set places
+    // the slewed delay at its target (S3-2), with no glide up from the floor.
+    resetSwarmTickClock();
     setSwarmDisplayDelayMs(ADAPTIVE_DELAY_CEILING_MS);
     expect(getSwarmDisplayDelayMs()).toBe(ADAPTIVE_DELAY_CEILING_MS);
     runSeries();
