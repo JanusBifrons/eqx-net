@@ -13,6 +13,8 @@ diag/captures/<ts>-<id>/
   summary.json        ← read first
   frames.ndjson       ← client: perf_summary (phone lane, one line per 10 s)
   perf.ndjson         ← server: tick_hitch, tick_budget, gc_pause
+                        client: raf_stutter, raf_gap, loaf (phone lane: + viewHalf, mode;
+                        `pnpm phone:names` names loaf scripts, docs/ops/phone-link.md)
   corrections.ndjson  ← client: correction
   combat.ndjson       ← client: fire, fireRejected, swarm_near_enter/exit
                         server: fire_received
