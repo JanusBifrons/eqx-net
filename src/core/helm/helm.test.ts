@@ -7,9 +7,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from '../physics/World.js';
-import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { getShipKind, PLAYABLE_SHIP_KINDS_LIST, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { helmStep, makeHelmOutput, helmArriveRadius, helmPassRadius, type HelmOrder, type HelmRoute, type HelmSpeed } from './helm.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { STAT_POINT_FRAC } from '../leveling/shipStats.js';
 
 beforeAll(async () => { await RAPIER.init(); });
 
@@ -135,4 +136,47 @@ describe('helm on a route (autopilot, navigation slice 13)', () => {
     helmStep({ active: true, tx: 300, ty: 400, speed: 3, route: { pts: Float64Array.of(300, 400), n: 1, idx: 0 } }, pose, k, b);
     expect(b).toEqual(a);
   });
+});
+
+// Arcade handling turns a snap-turn hull 0.07-0.105 rad per tick, wider than
+// the 0.02 rad heading deadband, and its coast angle is zero (no angular
+// damping to coast out): a fighter 0.03 rad off overshot to -0.04, turned
+// back, and wobbled sideways every tick on a course order (the cause of the
+// touch-stick wobble too). Held on a fixed heading from many start offsets
+// over real PhysicsWorld ships, the helm never reverses its turn once settled.
+describe('helm holds a heading without turn wobble (real per-tick turn step)', () => {
+  const cases: Array<[ShipKindId, number]> = [
+    ...PLAYABLE_SHIP_KINDS_LIST.map((k): [ShipKindId, number] => [k.id as ShipKindId, 0]),
+    ['fighter', 4], ['scout', 4],
+  ];
+  it.each(cases)('%s +%i turn points: no left/right reversals after settling', async (kindId, points) => {
+    const world = await PhysicsWorld.create();
+    world.spawnShip('s', 0, 0, kindId);
+    if (points > 0) world.setStatMultipliers('s', { topSpeed: 1, turnRate: 1 + points * STAT_POINT_FRAC });
+    const kind = getShipKind(kindId);
+    const step = world.maxTurnPerTick('s');
+    // A fixed heading, straight "up" (angle 0): the course point is re-set
+    // ahead of the ship each tick so its own sideways drift never moves the
+    // bearing (that is a real course change, not wobble).
+    const order: HelmOrder = { active: true, tx: 0, ty: 0, speed: 3 };
+    const bad: string[] = [];
+    for (let i = 0; i < 41; i++) {
+      const start = -1.2 + (2.4 * i) / 40;
+      world.setShipState('s', { x: 0, y: 0, angle: start, vx: 0, vy: 0, angvel: 0 });
+      const out = makeHelmOutput();
+      let lastDir = 0, flips = 0;
+      for (let t = 0; t < 240; t++) {
+        const s = world.getShipState('s')!;
+        order.tx = s.x; order.ty = s.y + 1e6;
+        helmStep(order, { ...s, angvel: s.angvel ?? 0 }, kind, out, step);
+        const dir = (out.turnLeft ? 1 : 0) - (out.turnRight ? 1 : 0);
+        if (t >= 120 && dir !== 0 && lastDir !== 0 && dir !== lastDir) flips++;
+        if (dir !== 0) lastDir = dir;
+        world.applyInput('s', { thrust: out.thrust, turnLeft: out.turnLeft, turnRight: out.turnRight });
+        world.tick(1 / 60);
+      }
+      if (flips > 0) bad.push(`${start.toFixed(2)}:${flips}`);
+    }
+    expect(bad, `step ${step.toFixed(4)} rad`).toEqual([]);
+  }, 60_000);
 });

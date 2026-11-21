@@ -7,7 +7,7 @@ import {
   type ShipKind,
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
-import { applyShipInput, type ShipInputArgs, type ShipInputMultipliers } from './applyShipInput.js';
+import { applyShipInput, maxTurnPerTick, type ShipInputArgs, type ShipInputMultipliers } from './applyShipInput.js';
 import type { WarpPhase, WarpState } from './warpDrive.js';
 import { castHitscan, RaySkipFilter } from './hitscanRay.js';
 import { applyForceFields, storeForceField, type ForceField } from './forceFields.js';
@@ -514,6 +514,9 @@ export class PhysicsWorld {
     if (!rec) return;
     rec.body.setAngvel(angvel, true);
   }
+
+  /** Most this ship yaws per tick under a held turn key (`maxTurnPerTick`); 0 if unknown. */
+  maxTurnPerTick(id: string): number { const r = this.bodies.get(id); return r ? maxTurnPerTick(r.kind, r.statMul) : 0; }
 
   getShipState(id: string): ShipPhysicsState | null {
     const rec = this.bodies.get(id);
