@@ -100,6 +100,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | An outbound room command (pilot swap, spectate / command view, fleet orders, ship upgrades, mount activation, respawn, `client_ready`) | A function `(ctx, ...)` in `src/client/net/connection/roomCommands.ts` taking the once-built `RoomCommandsCtx`; `ColyseusClient` keeps a one-line public delegate. | live |
 | Client teardown (`dispose()`) | `disposeClient(ctx)` in `src/client/net/connection/clientTeardown.ts` with the once-built `ClientTeardownCtx` (the sector-reset ctx plus teardown-only fields). A new subsystem is disposed / cleared there. | live |
 | Room-state mines into the mirror | `MineSync` (`src/client/net/mirror/mineSync.ts`), built once; `syncStructures` calls `sync()`. | live |
+| Room-state structure rows into the mirror | `StructureRowSync` (`src/client/net/mirror/structureRowSync.ts`), built once; `syncStructures` calls `sync()` (changed rows only). | live |
 
 ## Client: `PixiRenderer.ts` and `IRenderer.ts` (`src/client/render/CLAUDE.md`)
 

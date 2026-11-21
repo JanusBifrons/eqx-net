@@ -25,6 +25,7 @@ export interface ControlMessageHost extends ParsedMessageHost {
   thrustingPlayers: Set<string>;
   postToWorker(cmd: WorkerCmd): void;
   serverTick(): number;
+  noteInputMargin(playerId: string, margin: number): void;
   getActiveShip(playerId: string): ShipState | undefined;
   isPilotDisabled(playerId: string): boolean;
   noteWarpRequest(playerId: string, x: number, y: number): void;
@@ -47,6 +48,7 @@ export function registerControlMessages(h: ControlMessageHost): RoomFeature {
     thrustingPlayers: h.thrustingPlayers,
     postToWorker: (cmd) => h.postToWorker(cmd),
     serverTick: () => h.serverTick(),
+    noteInputMargin: (playerId, margin) => h.noteInputMargin(playerId, margin),
     shipEnergyOf: (playerId) => h.getActiveShip(playerId)?.energy,
     isDisabled: (playerId) => h.isPilotDisabled(playerId),
     onWarpRequest: (playerId, x, y) => h.noteWarpRequest(playerId, x, y),

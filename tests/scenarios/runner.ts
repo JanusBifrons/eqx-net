@@ -1,19 +1,27 @@
 /**
  * Scenario runner — Stage 4.5 of the network-feel roadmap.
  *
- * Composes the production pure modules (Welford, lookaheadController,
- * snapshotDropDetector, inputTickRecovery, clockAnchor) into a state
- * machine matching `ColyseusClient.handleSnapshot` and `tickPhysics`,
- * minus physics + DOM + Colyseus surface.
+ * Composes the production pure modules (rttLookaheadUpdater, Welford,
+ * lookaheadController, snapshotDropDetector, inputTickRecovery,
+ * clockAnchor) into a state machine matching `ColyseusClient.handleSnapshot`
+ * and `tickPhysics`, minus physics + DOM + Colyseus surface.
  *
- * Mirrors the `MAX_CATCH_UP_TICKS` and `RTT_SAMPLE_CLAMP_MS` constants
- * from `ColyseusClient.ts` directly — keep these in sync if the
- * production values change. (Importing them from ColyseusClient would
- * pull in the entire client-side dependency graph including Pixi and
- * Colyseus, which the scenario harness is intentionally avoiding.)
+ * The input lead is sized by the client's own `updateRttAndLookahead`
+ * from the server's per-input margin (`inputMargin`), which the runner
+ * measures with the shared `inputLeadMargin` — never a copy of the
+ * formula (`runnerLeadParity.test.ts` locks this).
+ *
+ * Mirrors the `MAX_CATCH_UP_TICKS` constant from `ColyseusClient.ts`
+ * directly — keep it in sync if the production value changes. (Importing
+ * it from ColyseusClient would pull in the entire client-side dependency
+ * graph including Pixi and Colyseus, which the harness avoids.)
  */
-import { createWelford, welfordPush, welfordMean, welfordStdDev } from '../../src/core/math/Welford';
-import { createLookaheadController, computeDesiredLead, updateLookahead } from '../../src/client/net/lookaheadController';
+import { createWelford, welfordMean, welfordStdDev } from '../../src/core/math/Welford';
+import { createLookaheadController } from '../../src/client/net/lookaheadController';
+import { updateRttAndLookahead } from '../../src/client/net/rttLookaheadUpdater';
+import { inputLeadMargin } from '../../src/core/physics/inputQueue';
+import type { PredictionStats } from '../../src/client/net/predictionStats';
+import type { Reconciler } from '../../src/core/prediction/Reconciler';
 import { createDropDetector, observeSnapshotTick } from '../../src/client/net/snapshotDropDetector';
 import { recoverInputTickFromStarvation } from '../../src/client/net/inputTickRecovery';
 import { updateAnchor, CLOCK_ANCHOR_HARD_SNAP_MS } from '../../src/client/net/clockAnchor';
@@ -30,8 +38,6 @@ import type {
 
 /** Mirrors `ColyseusClient.tickPhysics` MAX_CATCH_UP_TICKS. */
 const MAX_CATCH_UP_TICKS = 4;
-/** Mirrors `ColyseusClient.handleSnapshot` RTT_SAMPLE_CLAMP_MS (Stage 4 hotfix #1). */
-const RTT_SAMPLE_CLAMP_MS = 250;
 /** Physics fixed-step. */
 const FIXED_MS = 1000 / 60;
 
@@ -51,18 +57,36 @@ export function createInitialClientState(opts?: {
     leadTicks: initialLead,
     lastFrameMs: 16.67,
     lastSnapshotAtMs: -1,
+    stats: { rttMeanMs: 0, rttStdDevMs: 0 } as PredictionStats,
+    inputTickHistory: [],
   };
 }
 
-/** Steady-state snapshot cadence band (ms). Server broadcasts every 3
- *  server ticks at 60 Hz physics = 50 ms nominal. Real-world wall-clock
- *  jitter pushes this to roughly 35–75 ms range. Outside that range,
- *  the snapshot is part of a Pattern A gap (huge interval) or a
- *  burst-recovery cluster (tiny interval) — its `lastRtt` is
- *  contaminated by snapshot-delay and shouldn't be pushed into Welford.
- *  Hotfix #3 (2026-05-08 third diagnostic). */
-const STEADY_STATE_INTERVAL_MIN_MS = 35;
-const STEADY_STATE_INTERVAL_MAX_MS = 75;
+/** The reconciler is only a null-check in `updateRttAndLookahead` (a
+ *  pilot with no reconciler keeps its lead); the harness always has one. */
+const RECONCILER_PRESENT = {} as Reconciler;
+
+/** The client's `inputTick` at wall time `atMs` (its claim for an input
+ *  sent then), or undefined before the input loop started. */
+function inputTickAt(state: SimulatedClientState, atMs: number): number | undefined {
+  const h = state.inputTickHistory;
+  for (let i = h.length - 1; i >= 0; i--) {
+    if (h[i]!.atMs <= atMs) return h[i]!.inputTick;
+  }
+  return undefined;
+}
+
+/** The snapshot's `inputMargin`, measured the way the server does
+ *  (`inputLeadMargin`): the claim of the latest input the server held when
+ *  it broadcast, minus the broadcast tick. */
+export function snapshotInputMargin(
+  state: SimulatedClientState,
+  ev: Extract<Event, { type: 'snapshot' }>,
+): number | undefined {
+  if (ev.inputSentAtMs === undefined) return undefined;
+  const claimed = inputTickAt(state, ev.inputSentAtMs);
+  return claimed === undefined ? undefined : inputLeadMargin(claimed, ev.serverTick);
+}
 
 /**
  * Process a single rafTick event. Mirrors `ColyseusClient.tickPhysics`'s
@@ -97,17 +121,7 @@ function applyRafTick(
 function applySnapshot(
   state: SimulatedClientState,
   ev: Extract<Event, { type: 'snapshot' }>,
-  flags: {
-    recoveryEnabled: boolean;
-    rttClampEnabled: boolean;
-    rttGapFilterEnabled: boolean;
-    rttLeadSubtractEnabled: boolean;
-  } = {
-    recoveryEnabled: true,
-    rttClampEnabled: true,
-    rttGapFilterEnabled: true,
-    rttLeadSubtractEnabled: true,
-  },
+  recoveryEnabled = true,
 ): { starvationSnapTriggered: boolean } {
   // ── clockAnchor update (mirrors ColyseusClient.handleSnapshot lines around 1004) ──
   if (state.anchorInitialised) {
@@ -133,46 +147,24 @@ function applySnapshot(
   // ── Stage 4 drop detection (independent signal, used for swarm-interp bias) ──
   observeSnapshotTick(state.dropDetector, ev.serverTick);
 
-  // ── Stage 4 jitter-aware lookahead ──
-  // Hotfix #3: skip the Welford push if this snapshot's `intervalMs`
-  // is outside the steady-state cadence band [35, 75] ms. Snapshots
-  // outside this band are part of a Pattern A gap (intervalMs >> 50)
-  // or a burst-recovery cluster (intervalMs << 50) — their `lastRtt`
-  // is contaminated because Reconciler.lastRtt = now - ackedRec.sentAt
-  // for an input sent before the gap. Even when the σ-clamp from
-  // hotfix #1 caps the sample, it still inflates the running mean.
-  // Skipping these samples altogether keeps Welford's mean tracking
-  // the actual steady-state RTT, which keeps leadTicks sized for
-  // steady-state network — critical for combat where collision drift
-  // scales with leadTicks × velocity-change-per-tick.
+  // ── Stage 4 jitter-aware lookahead: the client's own updater ──
+  const inputMargin = snapshotInputMargin(state, ev);
   const intervalMs = state.lastSnapshotAtMs >= 0 ? ev.atMs - state.lastSnapshotAtMs : -1;
-  const isGapRelated =
-    intervalMs > 0 &&
-    (intervalMs < STEADY_STATE_INTERVAL_MIN_MS || intervalMs > STEADY_STATE_INTERVAL_MAX_MS);
-  if (ev.lastRtt > 0 && (!flags.rttGapFilterEnabled || !isGapRelated)) {
-    // Stage 4 hotfix #5 — strip the gate-induced server-side hold time
-    // from the RTT sample before pushing. See ColyseusClient.handleSnapshot
-    // for the full rationale; the short version is that the input-queue
-    // gate (`tickInputQueue`) holds each input claim X for ~leadTicks
-    // ticks, which is included in `Reconciler.lastRtt` and creates a
-    // positive feedback loop on welford → leadTicks if pushed raw.
-    const rttForWelford = flags.rttLeadSubtractEnabled
-      ? Math.max(0, ev.lastRtt - state.leadTicks * FIXED_MS)
-      : ev.lastRtt;
-    const rttSample = flags.rttClampEnabled
-      ? Math.min(rttForWelford, RTT_SAMPLE_CLAMP_MS)
-      : rttForWelford;
-    welfordPush(state.rttWelford, rttSample);
-    const mean = welfordMean(state.rttWelford);
-    const stdDev = welfordStdDev(state.rttWelford);
-    const desiredLead = computeDesiredLead(mean, stdDev);
-    state.leadTicks = updateLookahead(state.lookaheadCtrl, desiredLead, state.lastFrameMs);
-  }
+  state.leadTicks = updateRttAndLookahead(intervalMs, {
+    reconciler: RECONCILER_PRESENT,
+    stats: state.stats,
+    rttWelford: state.rttWelford,
+    lookaheadCtrl: state.lookaheadCtrl,
+    leadTicks: state.leadTicks,
+    lastFrameMs: state.lastFrameMs,
+    inputMargin,
+    timeScale: 1,
+  });
   state.lastSnapshotAtMs = ev.atMs;
 
   // ── Stage 4 hotfix #2 — inputTick starvation recovery ──
   let starvationSnapTriggered = false;
-  if (flags.recoveryEnabled) {
+  if (recoveryEnabled) {
     const recovered = recoverInputTickFromStarvation(state.inputTick, ev.ackedTick, state.leadTicks);
     if (recovered !== state.inputTick) {
       state.inputTick = recovered;
@@ -193,23 +185,6 @@ export interface RunOptions {
    *  `regressions.test.ts` that prove the bug reproduces without the
    *  hotfix. Default true (production behaviour). */
   starvationRecoveryEnabled?: boolean;
-  /** When false, the runner bypasses the RTT_SAMPLE_CLAMP_MS clamp on
-   *  Welford-pushed RTT samples — same TDD demonstration purpose for
-   *  hotfix #1. Default true. */
-  rttClampEnabled?: boolean;
-  /** When false, the runner pushes RTT samples even on snapshots that
-   *  are part of a Pattern A gap or burst-recovery (drops detected in
-   *  the recent window). Hotfix #3 demonstration flag. Default true:
-   *  production gates the Welford push on `dropDetector.dropCount === 0`
-   *  so gap-related samples never contaminate the running mean. */
-  rttGapFilterEnabled?: boolean;
-  /** When false, the runner pushes raw `lastRtt` into Welford without
-   *  subtracting `leadTicks × FIXED_MS`. Hotfix #5 (2026-05-09)
-   *  demonstration flag. Default true: production subtracts the gate-
-   *  induced server-side hold from the sample so welford tracks
-   *  network-only RTT and the gate doesn't create a positive-feedback
-   *  loop on the lookahead controller. */
-  rttLeadSubtractEnabled?: boolean;
 }
 
 /**
@@ -223,9 +198,6 @@ export function runScenario(
 ): Observation[] {
   const state = opts.initial ?? createInitialClientState();
   const recoveryEnabled = opts.starvationRecoveryEnabled !== false;
-  const rttClampEnabled = opts.rttClampEnabled !== false;
-  const rttGapFilterEnabled = opts.rttGapFilterEnabled !== false;
-  const rttLeadSubtractEnabled = opts.rttLeadSubtractEnabled !== false;
   const observations: Observation[] = [];
 
   for (const ev of events) {
@@ -233,8 +205,9 @@ export function runScenario(
     if (ev.type === 'rafTick') {
       applyRafTick(state, ev);
     } else {
-      ({ starvationSnapTriggered } = applySnapshot(state, ev, { recoveryEnabled, rttClampEnabled, rttGapFilterEnabled, rttLeadSubtractEnabled }));
+      ({ starvationSnapTriggered } = applySnapshot(state, ev, recoveryEnabled));
     }
+    if (state.anchorInitialised) state.inputTickHistory.push({ atMs: ev.atMs, inputTick: state.inputTick });
     observations.push({
       atMs: ev.atMs,
       event: ev.type,
