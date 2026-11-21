@@ -1,0 +1,519 @@
+{
+  "when": "2026-11-21T09:50:14.654Z",
+  "device": "phone-proxy",
+  "reps": 4,
+  "cpuRate": 2,
+  "noiseCheck": false,
+  "host": {
+    "hostname": "2T9394",
+    "platform": "win32 10.0.26200",
+    "node": "v24.14.0",
+    "cpuModel": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "threads": 16,
+    "totalMemMb": 31849,
+    "freeMemMbAtStart": 13618,
+    "gpuRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5070 Ti (0x00002C05) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "browserArgs": [
+      "--use-angle=d3d11",
+      "--ignore-gpu-blocklist",
+      "--enable-gpu-rasterization",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows"
+    ],
+    "headed": false
+  },
+  "load": {
+    "gate": false,
+    "limits": {
+      "minFreeMemMb": 1024,
+      "maxCpuPct": 25
+    },
+    "ignorePorts": [],
+    "portOffset": 300,
+    "atStart": {
+      "at": "2026-11-21T09:47:34.370Z",
+      "cpuPct": 32.5,
+      "cpuWindowMs": 1000,
+      "threads": 16,
+      "freeMemMb": 4885,
+      "totalMemMb": 31849,
+      "foreignListeners": [
+        {
+          "port": 2696,
+          "pid": 21804,
+          "name": "node.exe",
+          "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --imp"
+        },
+        {
+          "port": 5296,
+          "pid": 25240,
+          "name": "node.exe",
+          "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+        },
+        {
+          "port": 24696,
+          "pid": 25240,
+          "name": "node.exe",
+          "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+        }
+      ],
+      "foreignProcs": {
+        "node": 13,
+        "chrome": 14
+      }
+    }
+  },
+  "arms": [
+    {
+      "name": "head",
+      "sha": "5c526aade",
+      "clientParams": {
+        "shipKind": "fighter",
+        "initialHull": "1000000",
+        "art": "machined",
+        "fx": "new",
+        "diag": "0",
+        "perfprobe": "1"
+      },
+      "serverEnv": {}
+    }
+  ],
+  "scenes": {
+    "base-loop": {
+      "title": "The Sunday-loop base in an asteroid sector: Shipyard building, shield wall up",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": null,
+      "base": [],
+      "head": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.45,
+            "serverTickP99": 0.68,
+            "serverTickMax": 6.37,
+            "workerTickP95": 0.74,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 5.909389363099146,
+            "renderP95": 1.3,
+            "renderP99": 2.2,
+            "longTaskMsPerMin": 108.338804990151,
+            "serverCpuMsPerTick": 17.467,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.033
+          },
+          "counts": {
+            "rxKBps": 14.750774581418254,
+            "displayObjects": 1194,
+            "sprites": 18,
+            "swarmAtEnd": 256,
+            "heapMb": 93,
+            "serverBodiesPerTick": 5.07,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.22,
+            "serverSwarmBytesPerTick": 8,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 11,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-21T09:47:43.990Z",
+              "cpuPct": 35.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2491,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2696,
+                  "pid": 21804,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --imp"
+                },
+                {
+                  "port": 5296,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                },
+                {
+                  "port": 24696,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 14
+              }
+            },
+            "after": {
+              "at": "2026-11-21T09:48:20.000Z",
+              "cpuPct": 29.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 11707,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2696,
+                  "pid": 21804,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --imp"
+                },
+                {
+                  "port": 5296,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                },
+                {
+                  "port": 24696,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 14
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.37,
+            "serverTickP99": 0.62,
+            "serverTickMax": 36.43,
+            "workerTickP95": 0.7,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 4.004004004004004,
+            "renderP95": 1.2,
+            "renderP99": 2.2,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.864,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.033
+          },
+          "counts": {
+            "rxKBps": 14.843945508008009,
+            "displayObjects": 1194,
+            "sprites": 18,
+            "swarmAtEnd": 256,
+            "heapMb": 93,
+            "serverBodiesPerTick": 4.23,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.25,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 5,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-21T09:48:21.381Z",
+              "cpuPct": 28.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 11514,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2696,
+                  "pid": 21804,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --imp"
+                },
+                {
+                  "port": 5296,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                },
+                {
+                  "port": 24696,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 14
+              }
+            },
+            "after": {
+              "at": "2026-11-21T09:48:57.799Z",
+              "cpuPct": 28.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 6026,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2696,
+                  "pid": 21804,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --imp"
+                },
+                {
+                  "port": 5296,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                },
+                {
+                  "port": 24696,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 14
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.31,
+            "serverTickP99": 0.38,
+            "serverTickMax": 1.35,
+            "workerTickP95": 0.71,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 1.9692792437967703,
+            "renderP95": 1.1,
+            "renderP99": 1.5,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.048,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.032
+          },
+          "counts": {
+            "rxKBps": 14.822768714306815,
+            "displayObjects": 1194,
+            "sprites": 18,
+            "swarmAtEnd": 256,
+            "heapMb": 93,
+            "serverBodiesPerTick": 4.26,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.24,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 5,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-21T09:48:59.212Z",
+              "cpuPct": 21.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 5888,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2696,
+                  "pid": 21804,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --imp"
+                },
+                {
+                  "port": 5296,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                },
+                {
+                  "port": 24696,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 14
+              }
+            },
+            "after": {
+              "at": "2026-11-21T09:49:35.917Z",
+              "cpuPct": 22.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3264,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2696,
+                  "pid": 21804,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --imp"
+                },
+                {
+                  "port": 5296,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                },
+                {
+                  "port": 24696,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 14
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.94,
+            "serverTickP99": 2.2,
+            "serverTickMax": 8.59,
+            "workerTickP95": 1.18,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 3.937007874015748,
+            "renderP95": 1.3,
+            "renderP99": 1.9,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.442,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.038
+          },
+          "counts": {
+            "rxKBps": 14.785886749507874,
+            "displayObjects": 1194,
+            "sprites": 18,
+            "swarmAtEnd": 256,
+            "heapMb": 82,
+            "serverBodiesPerTick": 4.33,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.22,
+            "serverSwarmBytesPerTick": 8,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 7,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-21T09:49:37.299Z",
+              "cpuPct": 17.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3168,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2696,
+                  "pid": 21804,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --imp"
+                },
+                {
+                  "port": 5296,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                },
+                {
+                  "port": 24696,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 14
+              }
+            },
+            "after": {
+              "at": "2026-11-21T09:50:14.043Z",
+              "cpuPct": 66.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 12955,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2696,
+                  "pid": 21804,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --imp"
+                },
+                {
+                  "port": 5296,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                },
+                {
+                  "port": 24696,
+                  "pid": 25240,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\loop-base-shots\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5296 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 14
+              }
+            }
+          },
+          "raw": null
+        }
+      ]
+    }
+  }
+}

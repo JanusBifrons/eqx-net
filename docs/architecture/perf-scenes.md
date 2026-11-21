@@ -260,6 +260,28 @@ Ledgers:
 
 A real phone timing is still owed before the stream's PR.
 
+## The base-loop scene (`base-loop`, Sunday base loop)
+
+The base a player builds in the Sunday loop, owned by the pilot (the first joiner adopts it, `PREBUILT_ADOPT_OWNER`), in sol-prime's belt clearing (`galaxyField`, so the cut field streams around it): a Capital, 3 Solars, 4 connectors, a Shipyard building an Interceptor, a Refinery, a Cargo Bay, a Turret and two Shield Pylons with their wall up (`scenarioLayouts.BASE_LOOP_OPTS`). The pilot's Mining Skiff and two Interceptors are parked beside it (scene `fleet` steps, hold fire). A prebuilt entry's `recipe` puts a processor on that recipe with a junk blueprint copy in its slot, so the Shipyard is building from the start (a 40-pulse cycle, longer than the 30 s window). `tests/integration/sectorRoom/baseLoopScene.test.ts` checks the scene really stages all that. The no-field arm: `--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`.
+
+```
+pnpm perf:scenes --scenes base-loop --head-only --reps 4 --device phone-proxy --cpu-rate 2
+```
+
+**Reading (2026-11-21, phone-proxy, 4 reps, head only, 5c526aade).** Run with `--no-load-gate`: another session's shots server was up and outside CPU was 18–35 %, so every gated attempt was refused. A busy host only inflates these numbers.
+
+| Metric | Median (range) | Budget |
+|---|---|---|
+| Server tick p95 | 0.41 ms (0.31–0.94) | 16.67 ms |
+| Server tick p99 | 0.65 ms (0.38–2.2) | 16.67 ms |
+| Frame p95 / p99 | 16.8 / 16.8 ms | the ~60 Hz internal work loop |
+| Render p95 / p99 | 1.25 / 2.05 ms | |
+| Hitches | 4.0 a minute (2.0–5.9) | |
+| Display objects | 1,194 | |
+| rx | 14.8 KB/s | |
+
+Within budget. Ledger: `perf/ledger/2026-11-21T09-50-14-654Z-5c526aade-phone-proxy.json`. A real phone reading is still owed.
+
 ## Adding a scene
 
 Add one entry to `PERF_SCENES` with:
