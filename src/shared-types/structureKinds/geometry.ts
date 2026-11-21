@@ -64,10 +64,22 @@ export function structureHalfExtents(
   kindId: string | null | undefined,
   rotDeg: number | null | undefined = 0,
 ): { hw: number; hh: number } {
+  return structureHalfExtentsInto(kindId, rotDeg, { hw: 0, hh: 0 });
+}
+
+/** `structureHalfExtents` written into `out` (alloc-free, for per-message
+ *  and per-tick callers). Returns `out`. */
+export function structureHalfExtentsInto<T extends { hw: number; hh: number }>(
+  kindId: string | null | undefined,
+  rotDeg: number | null | undefined,
+  out: T,
+): T {
   const id = kindId != null && isStructureKindId(kindId) ? kindId : DEFAULT_STRUCTURE_KIND;
   const { w, h } = getStructureKind(id).footprint;
   const quarter = normaliseStructureRotation(rotDeg) % 180 !== 0;
-  return quarter ? { hw: h / 2, hh: w / 2 } : { hw: w / 2, hh: h / 2 };
+  out.hw = quarter ? h / 2 : w / 2;
+  out.hh = quarter ? w / 2 : h / 2;
+  return out;
 }
 
 /**

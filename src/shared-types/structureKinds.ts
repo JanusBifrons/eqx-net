@@ -84,6 +84,7 @@ export {
   STRUCTURE_ROTATIONS,
   normaliseStructureRotation,
   structureHalfExtents,
+  structureHalfExtentsInto,
   structureLocalToWorld,
   structureWorldToLocal,
 } from './structureKinds/geometry.js';
