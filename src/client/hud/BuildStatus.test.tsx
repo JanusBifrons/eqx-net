@@ -9,15 +9,16 @@ import { render, screen, act, cleanup } from '@testing-library/react';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
 const structures = new Map<number, StructureRenderState>();
+const swarm = new Map<number, { shipKind?: string }>();
 vi.mock('../net/clientSingleton', () => ({
   getGameClient: () => ({
-    mirror: { structures, localPlayerId: 'me' },
+    mirror: { structures, swarm, localPlayerId: 'me' },
     getPredictedEnergy: () => 0,
   }),
 }));
 
 import { StatusCapsule } from './GameHud.js';
-import { sumOwnStoredPower } from './BuildStatus.js';
+import { sumOwnCapitalMinerals, sumOwnStoredPower } from './BuildStatus.js';
 import { useUIStore } from '../state/store.js';
 
 function row(p: Partial<StructureRenderState>): StructureRenderState {
@@ -28,6 +29,7 @@ describe('StatusCapsule build variant', () => {
   beforeEach(() => {
     cleanup();
     structures.clear();
+    swarm.clear();
     useUIStore.setState({ pilotMode: 'pilot', buildMode: false, placementKind: null, wallet: 1234 });
   });
 
@@ -86,5 +88,73 @@ describe('sumOwnStoredPower', () => {
   it('is empty with no player or no structures', () => {
     expect(sumOwnStoredPower(undefined, 'me')).toEqual({ stored: 0, max: 0 });
     expect(sumOwnStoredPower(new Map(), null)).toEqual({ stored: 0, max: 0 });
+  });
+});
+
+/**
+ * Mineral bank in the capsule (owner 2026-11-21): a shipyard stalled at 92 %
+ * because the Capital's minerals ran dry while the only number on screen was
+ * the credits. The capsule shows the bank beside the credits, flying and in Build.
+ */
+describe('StatusCapsule mineral bank', () => {
+  beforeEach(() => {
+    cleanup();
+    structures.clear();
+    swarm.clear();
+    useUIStore.setState({ pilotMode: 'pilot', buildMode: false, placementKind: null, wallet: 0 });
+  });
+
+  it('shows your Capital mineral bank beside the credits while flying', () => {
+    structures.set(1, row({ minerals: 4200 }));
+    swarm.set(1, { shipKind: 'capital' });
+    render(<StatusCapsule scale={1} />);
+    const m = screen.getByTestId('hud-minerals');
+    expect(m.getAttribute('data-minerals')).toBe('4200');
+    expect(m.textContent).toContain('4,200');
+    expect(screen.getByTestId('wallet-chip').getAttribute('data-wallet')).toBe('0');
+  });
+
+  it('shows the bank in Build too', () => {
+    structures.set(1, row({ minerals: 300 }));
+    swarm.set(1, { shipKind: 'capital' });
+    useUIStore.setState({ buildMode: true });
+    render(<StatusCapsule scale={1} />);
+    expect(screen.getByTestId('hud-minerals').getAttribute('data-minerals')).toBe('300');
+  });
+
+  it('shows an empty bank as 0 (amber), the stalled-build case', () => {
+    structures.set(1, row({}));
+    swarm.set(1, { shipKind: 'capital' });
+    render(<StatusCapsule scale={1} />);
+    const m = screen.getByTestId('hud-minerals');
+    expect(m.getAttribute('data-minerals')).toBe('0');
+    expect(m.getAttribute('data-empty')).toBe('1');
+  });
+
+  it('hides the bank when you own no Capital here', () => {
+    structures.set(1, row({ minerals: 50 }));
+    swarm.set(1, { shipKind: 'miner' });
+    render(<StatusCapsule scale={1} />);
+    expect(screen.queryByTestId('hud-minerals')).toBeNull();
+  });
+});
+
+describe('sumOwnCapitalMinerals', () => {
+  it('sums only your own built Capitals', () => {
+    const m = new Map<number, StructureRenderState>([
+      [1, row({ minerals: 1000 })],
+      [2, row({ minerals: 500 })],
+      [3, row({ owner: 'them', minerals: 999 })],
+      [4, row({ minerals: 70 })], // a miner's buffer: not the bank
+      [5, row({ built: false, minerals: 5 })],
+    ]);
+    const kinds = new Map([[1, { shipKind: 'capital' }], [2, { shipKind: 'capital' }], [3, { shipKind: 'capital' }], [4, { shipKind: 'miner' }], [5, { shipKind: 'capital' }]]);
+    expect(sumOwnCapitalMinerals(m, kinds, 'me')).toBe(1500);
+  });
+
+  it('is null with no own Capital, no player or no structures', () => {
+    expect(sumOwnCapitalMinerals(undefined, undefined, 'me')).toBeNull();
+    expect(sumOwnCapitalMinerals(new Map([[1, row({})]]), new Map([[1, { shipKind: 'capital' }]]), null)).toBeNull();
+    expect(sumOwnCapitalMinerals(new Map([[1, row({ minerals: 9 })]]), new Map(), 'me')).toBeNull();
   });
 });
