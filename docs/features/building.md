@@ -98,3 +98,4 @@ defend with turrets — all over one 1-second logistics pulse.
 - **Phase 4** — mining towers extract minerals (power-gated) and haul them to the
   Capital; mineral-bank HUD + mining beam.
 - **Phase 5** — defensive turrets track + destroy drones in range (power-gated).
+- **Building panels** — selection card + side panel (Power / Build / Manage): [building-panels](building-panels.md).

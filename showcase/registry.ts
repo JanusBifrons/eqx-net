@@ -224,6 +224,8 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'The Factions tab (v4 F3) shows standings; a meaningful shot needs a staged room with non-zero standings both ways and a turret firing on a disliked pilot.',
   blueprints:
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
+  'building-panels':
+    'Selection card + side panel (Power / Build / Manage, Shipyard hull queue) stills are under owner review; the shot follows sign-off.',
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
 };
