@@ -32,6 +32,10 @@ import {
   type PoseRingEntry,
 } from '../../core/contracts/IRenderer.js';
 import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessages.js';
+// Shared teleport bound (one definition for every client interpolator).
+import { isImplausibleJump } from '../net/plausibleSpeed.js';
+// Read-only tick → stamp conversion on the drone display timeline (S5-2).
+import { swarmTickToStampMs } from '../net/swarmInterpolation.js';
 
 /**
  * Display-delay lag in milliseconds. The renderer reads missile poses
@@ -52,13 +56,6 @@ export const MISSILE_DISPLAY_DELAY_MS = 100;
  * 500 ms tail (capture `2026-05-27T16-33-40Z-r0r701`).
  */
 export const MISSILE_EXTRAPOLATION_CAP_MS = 250;
-
-/** Teleport guard (mirrors swarmInterpolation): when two bracketing poses are
- *  further apart than any missile could plausibly travel in the span, that's a
- *  server discontinuity (despawn+id-reuse, lock re-acquire SET) — snap to the
- *  newer pose, never animate across the gap. */
-const TELEPORT_MAX_PLAUSIBLE_SPEED = 2500; // u/s — above any missile speed
-const TELEPORT_FLOOR_U = 64;
 
 /** Campaign 5.1c — SLICE-DRIVEN removal. Absence from the pose slice is the
  *  authoritative despawn signal: the `missile_detonated` event is AOI-filtered
@@ -110,11 +107,18 @@ export function applyMissileSnapshot(
   const map = mirror.missiles;
 
   if (slice && slice.length > 0) {
+    // Playback stamp (S5-2): every missile in the slice is a pose at
+    // `serverTick`, placed on the drone tick timeline so a backlog drained in
+    // one frame keeps its server spacing. Before that clock is seeded (no
+    // drone packet yet) the sample keeps its arrival stamp.
+    const tickStampMs = swarmTickToStampMs(serverTick, nowMs);
+    const stampMs = Number.isNaN(tickStampMs) ? nowMs : tickStampMs;
     for (const entry of slice) {
       // Signed angular velocity (WS-C #5) — back-fills to 0 for pre-WS-C
       // servers (linear path, byte-identical to before).
       const angvel = entry.angvel ?? 0;
       const existing = map.get(entry.id);
+      const stampWentBack = existing !== undefined && !Number.isNaN(tickStampMs) && isStampBehindRing(existing, stampMs, serverTick);
       if (existing) {
         existing.x = entry.x;
         existing.y = entry.y;
@@ -124,7 +128,8 @@ export function applyMissileSnapshot(
         existing.lifePct = entry.lifePct;
         existing.lastUpdateTick = serverTick;
         existing.latestArrivalMs = nowMs;
-        writeRing(existing, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, nowMs, serverTick);
+        writeRing(existing, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, stampMs, serverTick);
+        if (stampWentBack) restampRing(existing, nowMs);
       } else {
         const fresh: MissileRenderState = {
           id: entry.id,
@@ -139,7 +144,7 @@ export function applyMissileSnapshot(
           weaponId: entry.weaponId,
           lifePct: entry.lifePct,
         };
-        writeRing(fresh, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, nowMs, serverTick);
+        writeRing(fresh, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, stampMs, serverTick);
         map.set(entry.id, fresh);
       }
     }
@@ -152,6 +157,27 @@ export function applyMissileSnapshot(
     if (nowMs - m.latestArrivalMs > MISSILE_ABSENT_DESPAWN_MS) {
       map.delete(id);
     }
+  }
+}
+
+/** True when a NEWER tick would be stamped at or before a sample already in
+ *  the ring: the basis moved (arrival stamps → tick stamps once the drone
+ *  clock seeds, or a tick-clock re-seed), so ring order would run backwards. */
+function isStampBehindRing(m: MissileRenderState, stampMs: number, serverTick: number): boolean {
+  for (let i = 0; i < MISSILE_POSE_RING_DEPTH; i++) {
+    const e = m.poseRing[i]!;
+    if (!e.empty && e.serverTick < serverTick && e.arrivalMs >= stampMs) return true;
+  }
+  return false;
+}
+
+/** Re-stamp every ring sample from its own tick on the current tick clock, so
+ *  the whole ring shares one basis (in place, zero alloc). Only called after a
+ *  tick stamp was taken, so the clock is seeded and no stamp is NaN. */
+function restampRing(m: MissileRenderState, nowMs: number): void {
+  for (let i = 0; i < MISSILE_POSE_RING_DEPTH; i++) {
+    const e = m.poseRing[i]!;
+    if (!e.empty) e.arrivalMs = swarmTickToStampMs(e.serverTick, nowMs);
   }
 }
 
@@ -292,10 +318,14 @@ export function resolveMissileDisplayPose(
   }
 
   const span = b.arrivalMs - a.arrivalMs;
-  // Teleport guard: snap across server discontinuities, never animate them.
+  // Teleport guard: when two bracketing poses are further apart than any
+  // missile could plausibly travel in the span, that's a server discontinuity
+  // (despawn+id-reuse, lock re-acquire SET) — snap to the newer pose, never
+  // animate across the gap.
+  // The bound is a game-time speed: the span between stamps is WALL ms, so
+  // scale it to game ms (at 2× a wall ms carries two game ms of travel).
   const gap = Math.hypot(b.x - a.x, b.y - a.y);
-  const maxPlausible = Math.max(TELEPORT_FLOOR_U, (TELEPORT_MAX_PLAUSIBLE_SPEED * Math.max(0, span)) / 1000);
-  if (gap > maxPlausible) {
+  if (isImplausibleJump(gap, span * (mirror.timeScale ?? 1))) {
     return { x: b.x, y: b.y, angle: b.angle, lifePct: m.lifePct };
   }
 

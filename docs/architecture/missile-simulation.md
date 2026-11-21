@@ -299,6 +299,31 @@ once per missile per frame and writes `sprite.x / sprite.y /
 sprite.rotation` from the cached pose. Future consumers add their own
 read-once-per-frame cache from the same seam.
 
+## Sample stamps — the drone tick timeline (netcode gap smoothing S5-2)
+
+Each ring sample's `arrivalMs` is its **playback stamp**, not its arrival
+time. `applyMissileSnapshot` stamps every missile in a slice with
+`swarmTickToStampMs(snap.serverTick, now)` (`swarmInterpolation.ts`): the
+snapshot's server tick placed on the same tick clock the drones play on,
+read-only, so missiles never steer that clock. Arrival stamps carried
+network jitter and frame stalls into playback: a backlog drained in one
+frame got near-equal stamps and the missile played at an uneven speed; tick
+stamps keep the server's 50 ms spacing. The wire carries no per-missile
+tick, so the snapshot tick is the basis; a missile stepped ahead of it
+(`MissileSimulation.advance` steps at least once per room update) shows as a
+small fixed offset. Before the tick clock is seeded (no drone packet yet,
+e.g. a sector with no drones) the call returns NaN and the sample keeps
+its arrival stamp. If a newer tick would be stamped at or before a sample
+already in the ring (the clock seeds mid-flight, or re-seeds), the whole
+ring is re-stamped from each sample's own `serverTick`, in place, so ring
+order never runs backwards. `latestArrivalMs` stays the real arrival time
+(slice-driven despawn). The teleport guard scales the wall-ms stamp span by
+`mirror.timeScale` before `isImplausibleJump`, whose bound is a game-time
+speed. The display delay is still missile-owned
+(`MISSILE_DISPLAY_DELAY_MS`); sharing the drone delay is S5-4. Locks:
+`MissileMirror.test.ts` (backlog spacing, NaN fallback, re-stamp, teleport
+span at 2× and 0.7×) and `tests/scenarios/gapSmoothing.missiles.test.ts`.
+
 ## Curve-aware interpolation — `angvel` on the wire (WS-C #5, 2026-06-20)
 
 Missiles ride the 20 Hz JSON snapshot (see "Why JSON snapshot" above), and a
