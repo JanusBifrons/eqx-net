@@ -51,13 +51,19 @@ export interface PoseRingEntry {
  *  2026-05-18T18-56-32-1fc0oe). Locked by the liveness + structural-
  *  invariant tests in `tests/unit/swarmInterpolation.smoothness.test.ts`.
  *
- *  10 = ceil(100 / 16.7)=6 + 4 headroom (arrival jitter + a late packet
- *  not evicting the one still needed). Cheap: ~10 small objects per
- *  entity, pre-allocated once, zero per-packet alloc. Also covers the
- *  adaptive-delay range: the delay only rises toward
- *  ADAPTIVE_DELAY_CEILING_MS when the observed cadence is correspondingly
- *  slower, so the ring still spans it. */
-export const POSE_RING_DEPTH = 10;
+ *  Sizing rule: depth ≥ ceil(ADAPTIVE_DELAY_CEILING_MS / server tick ms)
+ *  + 4 headroom (arrival jitter + a late packet not evicting the one
+ *  still needed) = ceil(280 / 16.7) + 4 = 21. The ring is read on the
+ *  server-tick timeline (tick-stamped samples), so the span is
+ *  (depth − 1) × 16.7 ms whatever the packet cadence; the old depth 10
+ *  spanned only 150 ms, and any delay above that (adaptive range up to
+ *  ADAPTIVE_DELAY_CEILING_MS = 280 in client `swarmInterpolation.ts`)
+ *  pinned every drone to its oldest sample (netcode gap-smoothing plan
+ *  3.1). The ceiling lives in the client zone, which core may not
+ *  import, so this stays a literal; `tests/unit/poseRingDepth.test.ts`
+ *  ties the two together. Cheap: 21 small objects per entity,
+ *  pre-allocated once, zero per-packet alloc. */
+export const POSE_RING_DEPTH = 21;
 
 export interface SwarmRenderState {
   /** Latest pose received from the wire. Mirror of `poseRing[ringHead − 1]`'s pose. */
@@ -77,7 +83,7 @@ export interface SwarmRenderState {
   /** Wall-clock arrival timestamps (performance.now()) for the prev/latest pair. */
   prevArrivalMs: number;
   latestArrivalMs: number;
-  /** Phase 6.5 — fixed 3-deep circular buffer of recent poses, read by the
+  /** Phase 6.5 — fixed POSE_RING_DEPTH-deep circular buffer of recent poses, read by the
    *  display-delay interpolator. Entries are pre-allocated; `empty` flag
    *  distinguishes initialised slots from pre-allocated holes. */
   poseRing: PoseRingEntry[];

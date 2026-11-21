@@ -203,6 +203,16 @@ speed change keeps the newest stamp in place. Lock:
 `src/client/net/swarmInterpolation.tickStamp.test.ts` (drain-time stamps step
 error 3.1 u, tick stamps 0.16 u).
 
+**Lateness estimate (measured, drives nothing yet).** Each tick-stamped packet's
+lateness (wall ms after its tick-clock stamp) feeds an asymmetric EWMA,
+`getSwarmLatenessEstimateMs()`, that rises fast (`LATENESS_RISE_TAU_MS` 50 ms)
+and falls slowly (`LATENESS_FALL_TAU_MS` 2000 ms), plus a mean absolute
+deviation, `getSwarmLatenessDeviationMs()` (`LATENESS_DEV_TAU_MS` 250 ms).
+Time constants are per packet at the nominal 60 Hz cadence; units are wall ms,
+matching `setSwarmDisplayDelayMs`. `resetSwarmTickClock` clears both. The
+display delay still comes from the inter-arrival EWMA; a later job sizes it from
+this estimate. Lock: `src/client/net/swarmLatenessEstimate.test.ts`.
+
 **The packet's tick must be the tick of its poses.** The room and the physics
 worker run separate 60 Hz loops. The room reads the SAB tick at the top of its
 update, and the worker can publish the next step before the swarm encoder reads
