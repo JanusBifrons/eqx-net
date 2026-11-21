@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const storeState = vi.hoisted(() => ({
   clientReadySent: true,
   phase: 'game',
+  commandSpeed: 2, // ⅔: a move rides the Command speed
   setSelection: vi.fn(),
   setFleetPick: vi.fn(),
   setFleetPickPoints: vi.fn(),
@@ -71,7 +72,7 @@ describe('gameRafLoop — fleet orders are sent (slice 6c)', () => {
     loop(40);
     loop(60);
     expect(sendFleetOrder).toHaveBeenCalledTimes(1);
-    expect(sendFleetOrder).toHaveBeenCalledWith(['a', 'b'], { kind: 'move', x: 10, y: -5 });
+    expect(sendFleetOrder).toHaveBeenCalledWith(['a', 'b'], { kind: 'move', x: 10, y: -5, speed: 2 / 3 });
     fb.orderSeq = 2;
     loop(80);
     expect(sendFleetOrder).toHaveBeenCalledTimes(2);

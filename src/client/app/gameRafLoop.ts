@@ -44,6 +44,7 @@ import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
 import { hudControlsFor, measureBottomHudBand, measureTopHudBand, placeInspector, reclampHeldInspector, type HudBand, type InspectorAnchor } from './inspectorPlacement.js';
 import { isInspectorHeld } from './inspectorHold.js';
 import { HelmModeGate } from '../helm/helmModeGate.js';
+import { HELM_SPEED_FRACTION } from '@core/helm/helm';
 import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
 
 /** Reused each frame (no per-frame allocation, #14). */
@@ -412,7 +413,9 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       const ids = selFb.fleetSelIds;
       if (ids.length > 0) {
         if (selFb.orderKind === 'move') {
-          sendFleetOrder(ids.slice(), { kind: 'move', x: selFb.orderX, y: selFb.orderY });
+          // At the Command speed the helm panel shows (Stop / ⅓ / ⅔ / Full).
+          const speed = HELM_SPEED_FRACTION[useUIStore.getState().commandSpeed] ?? 1;
+          sendFleetOrder(ids.slice(), { kind: 'move', x: selFb.orderX, y: selFb.orderY, speed });
         } else if (selFb.orderKind === 'attack' && selFb.orderTargetId !== null) {
           sendFleetOrder(ids.slice(), { kind: 'attack', targetId: selFb.orderTargetId });
         }

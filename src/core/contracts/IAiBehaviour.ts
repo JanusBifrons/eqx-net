@@ -441,8 +441,9 @@ export interface IAiBehaviour {
   setHunt?(on: boolean): void;
   /** RTS Move / Retreat (SERVER-ONLY, slice 9): fly to (x, y) without
    *  turning to fight (fire only at what is already in the sights), then
-   *  guard the point. A guard post, a hunt or a stop ends it. */
-  setTravel?(x: number, y: number): void;
+   *  guard the point. A guard post, a hunt or a stop ends it. `speed`: the
+   *  Command speed, a fraction of the top speed (default 1 = full; 0 holds). */
+  setTravel?(x: number, y: number, speed?: number): void;
   /** RTS Patrol (SERVER-ONLY, slice 11): one leg of the fleet route, from
    *  (fromX, fromY) to (x, y): a travel that fights per the attitude within
    *  the guard radius of the leg. Activity `patrolling`. */

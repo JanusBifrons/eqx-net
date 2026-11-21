@@ -65,7 +65,7 @@ describe('FleetCommandSubsystem — squads', () => {
     const target = { x: bx, y: 3000 };
     const acc = sys.applyOrder('alice', [L, A, B], { kind: 'move', ...target });
     expect([...acc].sort()).toEqual([L, A, B].sort());
-    expect(sys.ordersOf(L)!.order).toEqual({ kind: 'move', ...target });
+    expect(sys.ordersOf(L)!.order).toEqual({ kind: 'move', ...target, speed: 1 });
     expect(sys.ordersOf(A)!.order).toBeNull();
     expect(sys.ordersOf(B)!.order).toBeNull();
     expect(sys.squadFollowOf(A)).toBe(L);

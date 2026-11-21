@@ -26,7 +26,12 @@ its controls. If the ship you fly is destroyed, you drop back to Command view.
 The two views have separate jobs (owner, 2026-11-21):
 
 - **Command** is where you tell ships where to go: tap or click a point to
-  move there, and set ship speed.
+  move there, and set ship speed. With ships selected, a **Speed** bar
+  (Stop / ⅓ / ⅔ / Full, a share of each ship's own top speed) shows; every
+  move you give goes at that speed, and changing it re-paces the selected
+  ships that are already moving. Stop brakes them where they are but they
+  keep their destination: pick a speed again and they carry on. The bar
+  starts on Full.
 - **Fly** is hand flying only: WASD or the thumbstick. There is no ship-speed
   telegraph (Stop / ⅓ / ⅔ / Full) and tapping empty space sets no course.
   This holds for every hull, capitals included: a battleship in Fly turns and
