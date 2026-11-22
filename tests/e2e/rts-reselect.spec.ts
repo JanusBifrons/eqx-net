@@ -38,7 +38,7 @@ async function ownHulls(page: Page): Promise<Hull[]> {
 
 const pilotMode = (page: Page): Promise<string | null> => page.locator(SURFACE).getAttribute('data-pilot-mode');
 const controlMode = (page: Page): Promise<string | null> =>
-  page.locator('[data-testid="pilot-spectator-toggle"]').getAttribute('data-control-mode');
+  page.locator('[data-testid="pilot-spectator-toggle"]').getAttribute('data-value');
 const selCount = (page: Page): Promise<number> =>
   page.locator(SURFACE).getAttribute('data-fleet-sel-count').then((v) => Number(v ?? '0'));
 
