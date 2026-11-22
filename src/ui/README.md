@@ -13,6 +13,8 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxIconButton` | The one icon button (rail, left strip, fly-outs). One fixed box (`HUD.size.iconButton`), icon centred, no label | `icon`, **required** `tooltip` (also the aria-label), `tone`, `active`, `badge`, `holdMs`, `disabled`, `onClick`, `data-testid` |
 | `EqxTooltip` | Tooltip: hover on desktop, press-and-hold on touch | `title`, `holdMs` |
 | `EqxSwitch` | On / off | `checked`, `onChange(checked)`, `label` (also the accessible name), `disabled`, `data-testid` |
+| `icons` | Registry (`icons.ts`): one game meaning -> one icon component. One icon means one thing (tested); `EqxIconName` is a string union. Add a meaning there, never import an icon in a feature | `EQX_ICONS`, `EQX_ICON_NAMES`, `EqxIconName` |
+| `EqxIcon` | Draws the registered icon for a meaning, e.g. `<EqxIcon name="patrol" />`. Colour inherited; decorative unless titled | `name`, `size` (small / medium / large from `HUD.size.iconGlyph`, default medium), `title` (accessible name), `data-testid` |
 
 ## Extend, never hand-roll
 
