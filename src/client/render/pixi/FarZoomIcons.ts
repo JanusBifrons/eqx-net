@@ -25,6 +25,7 @@ import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { DEFAULT_RADAR_PREFS, OWN_SHIP_COLOUR, type RadarPrefs } from '../../../shared-types/settings/radar.js';
 import { isOwnedByMe } from '../shipOwnership.js';
+import { farIconRelation, type FarIconRelation } from '../relationToLocal.js';
 
 /**
  * Thresholds, in CSS px of the TRUE sprite's on-screen diameter.
@@ -70,18 +71,9 @@ export function farFieldMix(scale: number): number {
   return (hi - scale) / (hi - lo);
 }
 
-export type FarIconRelation = 'self' | 'friendly' | 'hostile' | 'neutral' | 'trader';
-
-/** Relationship of an entity to the local player, as the radar and contacts
- *  list read it: `isOwn` = yours (the ship you fly or your fleet); other
- *  pilots' ships (AI-flown too) are friendly; a drone is hostile when its AI
- *  targets you (`isHostileToLocal`), a trade hauler is a trader, else neutral. */
-export function farIconRelation(isOwn: boolean, isPlayer: boolean, hostile: boolean, shipKind: string | undefined): FarIconRelation {
-  if (isOwn) return 'self';
-  if (isPlayer) return 'friendly';
-  if (hostile) return 'hostile';
-  return shipKind === 'trader-hauler' ? 'trader' : 'neutral';
-}
+// The relation rule lives in the pure `render/relationToLocal.ts` (shared with
+// the contacts list); re-exported here for existing callers.
+export { farIconRelation, type FarIconRelation } from '../relationToLocal.js';
 
 export interface FarIconColours {
   hostile: number;

@@ -16,6 +16,7 @@ import type { RenderMirror } from '@core/contracts/render/RenderMirror';
 function setup(mirror: RenderMirror) {
   const camera = {
     // 1 px = 1 world unit; screen (x, y) = game (x, -y).
+    scale: { x: 1, y: 1 },
     screenToWorld: vi.fn((x: number, y: number) => ({ x, y })),
     onPointerDown: vi.fn(),
     onPointerMove: vi.fn(),

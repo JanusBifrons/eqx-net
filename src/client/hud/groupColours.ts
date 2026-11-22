@@ -27,8 +27,9 @@ export function groupColour(i: number): number {
 
 /** Failsafe ring (non-hostile target, before the hostile act). */
 export const FAILSAFE_COLOUR = 0xffd23d;
-/** Acquiring ring (hostile, locking). */
-export const ACQUIRE_COLOUR = 0xff4d5a;
+/** Acquiring ring (hostile, locking); also the left strip's Lock button. */
+export const ACQUIRE_COLOUR_HEX = '#ff4d5a';
+export const ACQUIRE_COLOUR: number = parseInt(ACQUIRE_COLOUR_HEX.slice(1), 16);
 
 /** An NPC locking / locked on the local ship. */
 export const THREAT_COLOUR = 0xff3344;

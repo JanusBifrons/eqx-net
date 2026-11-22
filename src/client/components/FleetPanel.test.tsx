@@ -49,7 +49,7 @@ beforeEach(() => {
   resetFleetStatus();
   resetFleetCommands();
   setCompact(false);
-  useUIStore.setState({ phase: 'game', pilotMode: 'spectator', selection: { ids: [], focusId: null, focusKind: null }, fleetOrderMode: 'move', placementKind: null, fleetPick: null });
+  useUIStore.setState({ phase: 'game', pilotMode: 'spectator', selection: { ids: [], focusId: null, focusKind: null }, placementKind: null, fleetPick: null });
   setGameClient({
     getRoom: () => null,
     mirror: {
@@ -232,17 +232,13 @@ describe('FleetStrip (compact)', () => {
     expect(cmds.stop).toHaveBeenCalledWith(['a', 'b']);
   });
 
-  it('the Move / Attack toggle sets the discrete fleetOrderMode', () => {
+  it('has no Move / Attack tap-order toggle (tap rule T3: Move is on the left strip)', () => {
     setCompact(true);
     useUIStore.setState({ selection: { ids: ['a'], focusId: null, focusKind: null } });
     render(<FleetStrip />);
-    expect(screen.getByTestId('fleet-order-move')).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.click(screen.getByTestId('fleet-order-attack'));
-    expect(useUIStore.getState().fleetOrderMode).toBe('attack');
-    expect(screen.getByTestId('fleet-order-attack')).toHaveAttribute('aria-pressed', 'true');
-    // Clicking the pressed one keeps it (exclusive group never goes empty).
-    fireEvent.click(screen.getByTestId('fleet-order-attack'));
-    expect(useUIStore.getState().fleetOrderMode).toBe('attack');
+    expect(screen.getByTestId('fleet-strip')).toBeTruthy();
+    expect(screen.queryByTestId('fleet-order-move')).toBeNull();
+    expect(screen.queryByTestId('fleet-order-attack')).toBeNull();
   });
 
   it('patrol / escort / retreat in the select start a map pick instead of sending (slice 14b)', () => {

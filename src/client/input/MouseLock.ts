@@ -9,7 +9,9 @@
  *    click-to-select keeps working.
  *  - RIGHT button held = boost (context menu suppressed).
  *  - Keys: 1–9 select a weapon group, Shift+1–9 toggle that group AUTO/MAN,
- *    T locks the selected entity with the active group, X drops the active
+ *    T locks the selected entity with the active group (with my ships
+ *    selected and an attackable enemy focused, T is the strip's fleet Lock:
+ *    the ships attack it, `lockFocus`), X drops the active
  *    group's locks. All of these stand down while the Build sidebar is open
  *    (its own 1–9 / Q / E keys: input/buildMenuKeys.ts).
  *
@@ -22,6 +24,12 @@ import { stickToWorldBearing } from '@core/combat/manualAim';
 import { getGameClient } from '../net/clientSingleton';
 import { useUIStore } from '../state/store';
 import { buildMenuKeysOpen } from './buildMenuKeys';
+import { lockFocus } from '../components/targetLock';
+import type { IFleetView } from '@core/contracts/render/IFleetView';
+
+/** The renderer, for T's fleet Lock (null before it exists). */
+export type FleetLockView = () => Pick<IFleetView, 'attackFocus'> | null;
+const NO_FLEET_VIEW: FleetLockView = () => null;
 
 /** A press held this long (or dragged past MOUSE_AIM_DRAG_PX) starts the lock line;
  *  a quicker click is left alone so click-to-select keeps working. */
@@ -68,7 +76,7 @@ function isTyping(t: EventTarget | null): boolean {
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
 }
 
-export function installFcKeys(): () => void {
+export function installFcKeys(fleetView: FleetLockView = NO_FLEET_VIEW): () => void {
   const onKey = (e: KeyboardEvent): void => {
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
     const a = fcKeyAction(e.key, e.code, e.shiftKey, buildMenuKeysOpen());
@@ -89,7 +97,7 @@ export function installFcKeys(): () => void {
       return;
     }
     if (a.kind === 'target') {
-      if (client?.lockSelected()) e.preventDefault();
+      if (lockFocus(st.selection, fleetView(), () => client?.lockSelected() ?? false)) e.preventDefault();
       return;
     }
     if (st.activeGroupId) client?.cancelLock(st.activeGroupId);
@@ -99,7 +107,7 @@ export function installFcKeys(): () => void {
 }
 
 /** Install on the game surface element. Returns a dispose function. */
-export function installMouseLock(el: HTMLElement): () => void {
+export function installMouseLock(el: HTMLElement, fleetView: FleetLockView = NO_FLEET_VIEW): () => void {
   let down = false;
   let dragging = false;
   let downX = 0;
@@ -109,7 +117,7 @@ export function installMouseLock(el: HTMLElement): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const prevCursor = el.style.cursor;
   el.style.cursor = 'crosshair';
-  const disposeKeys = installFcKeys();
+  const disposeKeys = installFcKeys(fleetView);
 
   let refresh: ReturnType<typeof setInterval> | null = null;
   const guide = (): void => {
