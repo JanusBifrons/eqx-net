@@ -3,7 +3,6 @@ import ExploreIcon from '@mui/icons-material/Explore';
 import ConstructionIcon from '@mui/icons-material/Construction';
 import { selectControlMode, useShowLoadingScreen, useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
-import { useIsCompact } from '../layout/useIsCompact';
 
 /**
  * An on-screen sign of the mode the player is in when not flying (RTS slice
@@ -59,18 +58,13 @@ export function SpectatorIndicator(): JSX.Element | null {
 }
 
 /**
- * Where the badge sits. Command: the top-centre status column. Build: never
- * near the ghost, which sits mid-screen under the top-centre placement dock
- * (stills review 2026-11-20: the badge sat just above it). On a wide screen it
- * goes under the mode switch (top-left); on a narrow one, above the dock at
- * the very top. The chip is display-only, so every slot is click-through:
- * a pointer-events:auto wrapper over the map swallowed Command-view clicks and
- * right-click move orders (PR #1098 fleet-command e2e).
+ * Where the badge sits: top-left, by the mode switch, in EVERY mode and on
+ * every screen (owner 2026-11-22: Command had it top-centre, right in your
+ * view, while Build had it top-left; one place for all). The chip is
+ * display-only, so its slot is click-through: a pointer-events:auto wrapper
+ * over the map swallowed Command-view clicks and right-click move orders
+ * (PR #1098 fleet-command e2e).
  */
 export function ControlModeBadge(): JSX.Element {
-  const building = useUIStore((s) => s.buildMode);
-  const compact = useIsCompact();
-  if (!building) return <Slot anchor="top-center" order={4} pointerEvents="none"><SpectatorIndicator /></Slot>;
-  if (compact) return <Slot anchor="top-center" order={-2} pointerEvents="none"><SpectatorIndicator /></Slot>;
   return <Slot anchor="top-left" order={3} pointerEvents="none"><SpectatorIndicator /></Slot>;
 }

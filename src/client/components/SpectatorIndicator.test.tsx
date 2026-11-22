@@ -53,9 +53,29 @@ describe('SpectatorIndicator — Command view (RTS slice 10)', () => {
       </LayoutContext.Provider>,
     );
     const badge = screen.getByTestId('spectator-indicator');
-    for (let el: HTMLElement | null = badge; el && el !== top; el = el.parentElement) {
+    expect(left.contains(badge)).toBe(true);
+    for (let el: HTMLElement | null = badge; el && el !== left; el = el.parentElement) {
       expect(getComputedStyle(el).pointerEvents).toBe('none');
     }
+    top.remove(); left.remove();
+  });
+  // Owner 2026-11-22: one place for the mode label, top-left, in every mode
+  // (Command had it top-centre, in the middle of your view).
+  it.each([
+    ['Command view', { pilotMode: 'spectator', buildMode: false }, 'spectator-indicator'],
+    ['Build mode', { pilotMode: 'spectator', buildMode: true }, 'build-mode-indicator'],
+  ] as const)('%s sits top-left, never top-centre', (_name, mode, testId) => {
+    useUIStore.setState(mode);
+    const top = document.createElement('div');
+    const left = document.createElement('div');
+    document.body.append(top, left);
+    render(
+      <LayoutContext.Provider value={{ 'top-center': top, 'top-left': left }}>
+        <ControlModeBadge />
+      </LayoutContext.Provider>,
+    );
+    expect(left.contains(screen.getByTestId(testId))).toBe(true);
+    expect(top.childElementCount).toBe(0);
     top.remove(); left.remove();
   });
 });
