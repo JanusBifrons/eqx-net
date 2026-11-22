@@ -17,11 +17,12 @@ The slot system replaces that with twelve named anchors and a single z-index tab
 | `top-left` | Column, growing down. Below AppBar + safe-area-top. | HUD chips (sector, hull, ammo, connection, clock) |
 | `top-center` | Column, centered. | MAP button (touch) |
 | `top-right` | Column, growing down, right-aligned. | FullscreenToggle, ShipStatsCard |
-| `middle-left` / `middle-center` / `middle-right` | Available; unused today. | reserved |
+| `middle-center` / `middle-right` | Available; unused today. | reserved |
 | `bottom-left` | Column-reverse, growing up. Above safe-area-bottom + `--mobile-edge-inset`. | Joystick zone (touch) |
 | `bottom-center` | Column-reverse, centered. | WeaponSelector (order=5), GalaxyMapToggleButton (order=10) |
 | `bottom-right` | Row-reverse, growing left. Inset by `--mobile-edge-inset`. | FIRE (rightmost), BOOST |
-| `middle-left` | Column, vertically centered, left-aligned. | HyperspaceOverlay (SPOOLING) |
+| `middle-left` | Column, vertically centered, left-aligned, beside the left strip. | (free) |
+| `middle-left-over` | Same place as `middle-left`, `overStrip` tier (over the left strip and rail). | HyperspaceOverlay (SPOOLING) |
 | `fullscreen` | Inset 0, overlay tier. | DeathOverlay, in-game GalaxyOverviewScreen (warp-mode) |
 | `transit` | Inset 0, transit tier (above overlay). | HyperspaceOverlay warp-streak |
 
@@ -37,6 +38,7 @@ Anchor host CSS bakes in safe-area insets and the AppBar height (`var(--app-bar-
 canvas         0   // Pixi
 hud           10   // top/middle/bottom anchor hosts
 mobileControls 15  // joystick / fire / boost / map
+overStrip   1150   // over the left strip / rail: warp spool bar
 drawer      1200   // SwipeableDrawer (MUI default)
 appBar      1300   // AppHeader
 overlay     1400   // DeathOverlay, GalaxyMap
