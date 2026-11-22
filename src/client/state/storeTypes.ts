@@ -302,7 +302,8 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
   /** THE selection (RTS Part A: one selection concept). See {@link UISelection}. */
   selection: UISelection;
   /** RTS command view (slice 14): the compact fleet strip's order-mode toggle,
-   *  what a tap on the map orders the selected ships to do. Discrete UI choice. */
+   *  what a tap on the map orders the selected ships to do ('move': attack an
+   *  enemy under the tap, else move there; 'attack': enemies only). Discrete UI choice. */
   fleetOrderMode: 'move' | 'attack';
   /** RTS slice 14b: a mode button waiting for a target on the map (patrol
    *  route / ship to escort / retreat point), or null. Discrete only: the

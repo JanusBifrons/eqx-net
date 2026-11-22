@@ -2,7 +2,8 @@
 export interface IFleetView {
   /**
    * RTS command view (slice 12): what a TOUCH tap with a fleet selection
-   * orders — 'move' to the tap point, or 'attack' the entity under it. The
+   * orders — 'move': attack an attackable entity under it, else move to the
+   * tap point; 'attack': attack the entity under it only. The
    * fleet strip's discrete toggle, pushed on change (worker
    * `SET_FLEET_ORDER_MODE`). Mouse orders stay on right-click.
    */

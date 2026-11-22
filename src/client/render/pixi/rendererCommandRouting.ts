@@ -236,8 +236,10 @@ export abstract class RendererCommandRouting {
   }
 
   /** Command-view tap (`decideTapAction`): an own ship selects it; a touch/pen
-   *  tap with a selection gives an order per `_fleetOrderMode`; otherwise it
-   *  falls through to the inspect select (a plain tap clears the selection). */
+   *  tap with a selection gives an order: attack an attackable entity under
+   *  the finger (as right-click does), else move there in `_fleetOrderMode`
+   *  'move' (nothing in 'attack'); otherwise it falls through to the inspect
+   *  select (a plain tap clears the selection). */
   private commandTap(screenX: number, screenY: number, additive: boolean, pointerType: string): void {
     const m = this._lastMirror;
     if (m === null) return;

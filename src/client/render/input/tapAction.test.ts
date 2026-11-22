@@ -23,7 +23,9 @@ const rows: Row[] = [
 
   // touch/pen + selection = order
   ['touch empty map, selection, move', { hasSelection: true }, 'orderMove'],
-  ['touch enemy, selection, move (moves to the point)', { hasSelection: true, hitEntity: true, hitAttackable: true }, 'orderMove'],
+  ['touch enemy, selection, move (attacks it, like right-click)', { hasSelection: true, hitEntity: true, hitAttackable: true }, 'orderAttack'],
+  ['pen enemy, selection, move (attacks it)', { pointerType: 'pen', hasSelection: true, hitEntity: true, hitAttackable: true }, 'orderAttack'],
+  ['touch non-attackable entity, selection, move', { hasSelection: true, hitEntity: true, hitAttackable: false }, 'orderMove'],
   ['touch asteroid, selection, move', { hasSelection: true, hitEntity: true }, 'orderMove'],
   ['touch enemy, selection, attack', { hasSelection: true, orderMode: 'attack', hitEntity: true, hitAttackable: true }, 'orderAttack'],
   ['touch asteroid, selection, attack', { hasSelection: true, orderMode: 'attack', hitEntity: true }, 'none'],

@@ -4,8 +4,10 @@
  * Pure. The renderer picks what is under the tap, then asks this:
  *  - an own ship under the tap always selects it (any pointer);
  *  - touch/pen with a fleet selection gives an ORDER, per the strip's
- *    `fleetOrderMode`: 'move' moves to the tap point (whatever is under it);
- *    'attack' attacks the attackable entity under it, else does nothing;
+ *    `fleetOrderMode`: 'move' attacks an attackable entity under the tap
+ *    (an enemy ship or structure, like desktop right-click), else moves to
+ *    the tap point; 'attack' attacks the attackable entity under it, else
+ *    does nothing;
  *  - otherwise (mouse, or nothing selected) the tap inspects; a plain tap
  *    with a selection first clears it ('deselect' = clear, then inspect).
  * Mouse orders stay on right-click (the router's `order` action).
@@ -34,8 +36,8 @@ export function decideTapAction(c: TapContext): TapAction {
   if (c.hitOwn) return 'select';
   const touchLike = c.pointerType === 'touch' || c.pointerType === 'pen';
   if (touchLike && c.hasSelection) {
-    if (c.orderMode === 'move') return 'orderMove';
-    return c.hitEntity && c.hitAttackable ? 'orderAttack' : 'none';
+    if (c.hitEntity && c.hitAttackable) return 'orderAttack';
+    return c.orderMode === 'move' ? 'orderMove' : 'none';
   }
   return c.hasSelection && !c.additive ? 'deselect' : 'inspect';
 }
