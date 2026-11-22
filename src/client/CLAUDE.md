@@ -8,7 +8,7 @@ Each rule's regression tests (locks) are listed in its Detail guide; run them wh
 
 Never import from `src/client/`: the server `colyseus` package (use `colyseus.js`), `@colyseus/ws-transport`, Node-only / persistence APIs (`better-sqlite3`, `express`, `pino`, `worker_threads`, `node:worker_threads`, `fs`, `node:fs`, `http`, `node:http`), or anything under `src/server/**`.
 
-Allowed: `colyseus.js`, `react`, `react-dom`, `@mui/material`, `@emotion/*`, `pixi.js` v8, `pixi-viewport`, `howler`, `zustand`, `src/core`, `src/shared-types`.
+Allowed: `colyseus.js`, `react`, `react-dom`, `pixi.js` v8, `pixi-viewport`, `howler`, `zustand`, `src/core`, `src/shared-types`, `src/ui`. MUI and `@emotion/*` only through `src/ui` (the EQX catalogue).
 
 ## Zustand Purity (invariant #2, strictly enforced)
 
@@ -19,7 +19,7 @@ Allowed: `colyseus.js`, `react`, `react-dom`, `@mui/material`, `@emotion/*`, `pi
 
 - `PixiRenderer` implements `IRenderer` from `src/core/contracts/`.
 - The renderer **polls** the state mirror every frame. It **never** subscribes to the event bus for positions. Lint blocks `bus.on` imports inside `src/client/render/`.
-- Camera (`pixi-viewport`) follows the local ship. No global-space UI overlay in Pixi — HUD elements are React/MUI outside the Pixi surface.
+- Camera (`pixi-viewport`) follows the local ship.
 - **Starfield:** the farthest star layer is FULL at the camera's zoom floor (every capital floor too) and tiles the whole viewport there; a new floor must keep both.
 - **Zoom-in cap:** the camera never zooms in past the point where the piloted hull fits on screen (`zoomCeilingForView`); the follow camera has no look-ahead, so re-check the cap before adding one. Detail for both: [ship-scale](../../docs/architecture/ship-scale.md).
 - **Spectator:** only `pilotMode` is in the store (the free-roam pose is the renderer `Camera`'s); the death flip mounts no UI (bottom panels pre-mounted); the parked own hull is never re-seeded or re-predicted from the schema. **Pilot swap** stays on the live room: despawn the local predWorld body, null the `Reconciler` so `welcome` re-anchors, one-shot `Camera.glideTo`. Netgate required. Detail: [spectator](../../docs/architecture/spectator-and-construction-mode.md).
