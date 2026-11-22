@@ -12,10 +12,8 @@
  * (avoids the SwipeableDrawer RTT regression). A scoped swipe on the grab
  * handle closes it; the content (children) lays out its own header, scroll body
  * and action bar inside the Paper's column — or, given a `title`, the panel
- * draws the header itself (the title is the grab handle, plus a ✕). A size
- * with `touchToolbarRow` then runs the full height on a phone, its header in
- * the top-right toolbar's row beside a see-through notch the toolbar shows
- * (and is tapped) through. A `centred` size is a slim strip of its own
+ * draws the header itself (the title is the grab handle, plus a ✕). A
+ * `centred` size is a slim strip of its own
  * children only, vertically centred on the right edge (the folded Build sidebar).
  *
  * Used by the galaxy map's sector drawer (SectorInfoDrawer.tsx) and the
@@ -28,7 +26,6 @@ import { Box, Drawer, Portal, useMediaQuery } from '@mui/material';
 import { Z } from '../../client/layout/zIndex.js';
 import { RAIL_W_CSS } from '../../client/layout/railWidth.js';
 import { HUD } from '../../client/hud/tokens.js';
-import { WINDOW_HEAD_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from '../../client/components/GameWindow.js';
 import { isTouchDevice } from '../../client/input/TouchInput.js';
 import {
   focusPanelDock, PANEL_RIGHT_W, PANEL_TOUCH_FRAC, PANEL_TOUCH_MIN_W, PANEL_TOUCH_TOP, SHEET_FRAC_PORTRAIT, SHEET_MAX_H,
@@ -47,16 +44,12 @@ export interface SidePanelSize {
   touchFrac: number;
   touchMinW: number;
   touchTop: number | null;
-  /** Touch, right dock, with a `title`: ignore `touchTop`, run the full height
-   *  and put the header in the top-right toolbar's row beside a see-through
-   *  notch (TOOLBAR_NOTCH_W × TOOLBAR_ROW_H), so no empty band sits above it. */
-  touchToolbarRow?: boolean;
   /** A slim strip: auto height, vertically centred on the right edge (any
-   *  orientation), no notch, no header, no grab handle; `width` on desktop,
+   *  orientation), no header, no grab handle; `width` on desktop,
    *  `touchMinW` on touch. */
   centred?: boolean;
   /** The mock's dock: the right edge, top 0 to bottom 0, on any screen (touch
-   *  and desktop); `touchTop` and `touchToolbarRow` are ignored. */
+   *  and desktop); `touchTop` is ignored. Covers the top-right toolbar (⛶). */
   fullHeight?: boolean;
 }
 
@@ -66,23 +59,16 @@ export const EQX_PANEL_SIZE: SidePanelSize = {
   width: 380, touchFrac: 0.36, touchMinW: 300, touchTop: null, fullHeight: true,
 };
 
-/** The see-through notch left for the top-right toolbar (TopRightToolbar.tsx:
- *  two 26 px chips 4 px apart, 16 px in from the right edge and 16 px down)
- *  plus a 12 px margin; the header row beside it reaches past the toolbar's
- *  bottom edge (42 px). */
-export const TOOLBAR_NOTCH_W = 'calc(env(safe-area-inset-right, 0px) + 84px)';
-export const TOOLBAR_ROW_H = 48;
-
 /** The galaxy map's sector panel (galaxyFocus.ts frames the sector beside it). */
 export const SECTOR_PANEL_SIZE: SidePanelSize = {
   width: PANEL_RIGHT_W, touchFrac: PANEL_TOUCH_FRAC, touchMinW: PANEL_TOUCH_MIN_W, touchTop: PANEL_TOUCH_TOP,
 };
 
 /** The Build sidebar (BuildSidebar.tsx): 0.4 of a sideways phone's width
- *  (915 px: 366 px), full height with its header in the toolbar's row; 380 px
- *  on desktop. */
+ *  (915 px: 366 px), full height over the top-right toolbar like every panel
+ *  (owner 2026-11-22: cover ⛶, leave no gap for it); 380 px on desktop. */
 export const BUILD_PANEL_SIZE: SidePanelSize = {
-  width: 380, touchFrac: 0.4, touchMinW: 280, touchTop: PANEL_TOUCH_TOP, touchToolbarRow: true,
+  width: 380, touchFrac: 0.4, touchMinW: 280, touchTop: null, fullHeight: true,
 };
 
 /** The Build sidebar folded while placing (BuildPlacingStrip.tsx): a slim
@@ -152,11 +138,6 @@ export function rightPaperSx(size: SidePanelSize, touch: boolean): Record<string
   // Phone held sideways: a narrower panel; the sector panel starts below the
   // top-right toolbar (full-screen chip), so the hex keeps the height.
   const width = `clamp(${size.touchMinW}px, ${size.touchFrac * 100}vw, ${size.width}px)`;
-  // Toolbar-row panel: the Paper is see-through and full height; its header
-  // and body boxes paint the panel around the toolbar's notch.
-  if (size.touchToolbarRow === true) {
-    return { ...right, width, top: 0, height: '100dvh', bgcolor: 'transparent', border: 'none', borderRadius: 0 };
-  }
   return {
     ...right,
     width,
@@ -208,8 +189,6 @@ const HANDLE_WRAP_SX = {
   flex: '0 0 auto',
 } as const;
 
-const PANEL_BG = PAPER_COMMON.bgcolor;
-const PANEL_EDGE = PAPER_COMMON.border;
 const P = HUD.panel;
 /** Mock `.ph`: title row with a bottom edge; ← and ✕ are small outlined squares. */
 const HEAD_SX = {
@@ -235,25 +214,6 @@ const BODY_PADDED_SX = {
 } as const;
 /** `body="bare"`: the content lays out its own padding and scroll. */
 const BODY_BARE_SX = { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } as const;
-/** The notch header keeps the window look until the notch goes (plan U5-3). */
-const NOTCH_HEAD_BASE_SX = { ...WINDOW_HEAD_SX, flexWrap: 'nowrap' } as const;
-const GRAB_TITLE_NOTCH_SX = {
-  ...WINDOW_TITLE_SX, flex: '1 1 auto', minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center',
-  touchAction: 'none', '@media (pointer: coarse)': { cursor: 'grab' }, fontSize: 13,
-} as const;
-const X_NOTCH_SX = { ...WINDOW_X_SX, width: 28, height: 28, fontSize: 14 } as const;
-const TOP_ROW_SX = { flex: 'none', display: 'flex', height: TOOLBAR_ROW_H } as const;
-/** The compact header beside the notch; the body's top edge draws the line under it. */
-const HEAD_NOTCH_SX = {
-  ...NOTCH_HEAD_BASE_SX, flex: '1 1 auto', minWidth: 0, minHeight: 0, height: TOOLBAR_ROW_H, py: 0, px: 1, gap: 1,
-  bgcolor: PANEL_BG, border: PANEL_EDGE, borderBottom: 'none', borderRight: 'none', borderTopLeftRadius: '8px',
-} as const;
-/** See-through: the toolbar paints, and is tapped, through it. */
-const NOTCH_SX = { flex: `0 0 ${TOOLBAR_NOTCH_W}`, pointerEvents: 'none' } as const;
-const NOTCH_BODY_SX = {
-  flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: PANEL_BG,
-  border: PANEL_EDGE, borderRight: 'none', borderRadius: '0 8px 0 8px',
-} as const;
 
 /** Where the panel docks now: right sideways, bottom upright. */
 export function useSidePanelDock(): FocusPanelDock {
@@ -334,9 +294,6 @@ export function EqxPanel({
   // A centred strip always docks right; it never becomes the bottom sheet.
   const anchor: FocusPanelDock = centred ? 'right' : dock;
   const touch = isTouchDevice();
-  // The toolbar row needs the panel-drawn header; without one, the plain dock.
-  const notch = title !== undefined && anchor === 'right' && touch && size.touchToolbarRow === true;
-  const paperSize = notch || size.touchToolbarRow !== true ? size : { ...size, touchToolbarRow: false };
   useEffect(() => {
     if (!open || !closeOnEscape) return undefined;
     const onKey = (e: KeyboardEvent): void => { if (escapeClosesPanel(e)) onClose(); };
@@ -389,15 +346,15 @@ export function EqxPanel({
 
   // The panel-drawn header: the title is the grab handle (its swipe closes);
   // the ✕ sits outside it so the handle's pointer capture never takes its click.
-  const header = (compact: boolean): JSX.Element => (
-    <Box sx={compact ? HEAD_NOTCH_SX : HEAD_SX} data-testid={headerTestId} data-compact={compact ? '1' : '0'}>
-      {onBack !== undefined && <Box component="button" type="button" sx={compact ? X_NOTCH_SX : HEAD_BTN_SX}
+  const header = (
+    <Box sx={HEAD_SX} data-testid={headerTestId}>
+      {onBack !== undefined && <Box component="button" type="button" sx={HEAD_BTN_SX}
         onClick={onBack} aria-label="Back" data-testid="eqx-panel-back">←</Box>}
-      <Box sx={compact ? GRAB_TITLE_NOTCH_SX : GRAB_TITLE_SX} onPointerDown={onHandleDown} onPointerMove={onHandleMove}
+      <Box sx={GRAB_TITLE_SX} onPointerDown={onHandleDown} onPointerMove={onHandleMove}
         onPointerUp={onHandleUp} onPointerCancel={onHandleCancel} data-testid={handleTestId} aria-label="Drag to close">
         {title}
       </Box>
-      <Box component="button" type="button" sx={compact ? X_NOTCH_SX : HEAD_BTN_SX} onClick={onClose}
+      <Box component="button" type="button" sx={HEAD_BTN_SX} onClick={onClose}
         aria-label="Close" data-testid={closeTestId}>✕</Box>
     </Box>
   );
@@ -419,26 +376,18 @@ export function EqxPanel({
       data-testid={testId}
       PaperProps={{
         ref: paperRef,
-        sx: anchor === 'bottom' ? PAPER_BOTTOM : rightPaperSx(paperSize, touch),
+        sx: anchor === 'bottom' ? PAPER_BOTTOM : rightPaperSx(size, touch),
         ...paperAttrs,
       }}
     >
       {centred && children}
-      {!centred && title !== undefined && (notch ? (
+      {!centred && title !== undefined && (
         <>
-          <Box sx={TOP_ROW_SX}>
-            {header(true)}
-            <Box sx={NOTCH_SX} aria-hidden data-testid="side-panel-notch" />
-          </Box>
-          <Box sx={NOTCH_BODY_SX}>{bodyBox}{footer}</Box>
-        </>
-      ) : (
-        <>
-          {header(false)}
+          {header}
           {bodyBox}
           {footer}
         </>
-      ))}
+      )}
       {/* Grab handle (swipe-to-close), when the content draws its own header. */}
       {!centred && title === undefined && <Box
         sx={HANDLE_WRAP_SX}

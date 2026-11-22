@@ -13,8 +13,7 @@
  * closes the building settings panel; that panel opening announces a game
  * window, which closes this (BuildSidebarHost's onGameWindowOpen).
  *
- * Its ✕ (SidePanel draws the header; it covers the top-right dial; on a phone the
- * header shares the top-right toolbar's row), Esc (SidePanel) and a swipe on the
+ * Its ✕ (SidePanel draws the header; the panel covers the top-right toolbar), Esc (SidePanel) and a swipe on the
  * handle close it. The active category is local state (presentation only), kept
  * across closes so the next structure is one tap away.
  *
