@@ -47,6 +47,29 @@ describe('HostileDroneBehaviour — attack order (RTS Part B slice 8)', () => {
     expect(ordered.getTargetId()).toBe('far');
   });
 
+  it('a kept lock (capital S2) wins over the nearer enemy the pick would take; an attack order outranks it', () => {
+    const view: AiWorldView = { players: [], swarms: [ship('near', 0, 400, 'robots'), ship('far', 0, 1000, 'robots')], tick: 10, dtSec: 1 / 60 };
+    const kept = owned();
+    kept.setKeptLockTarget('far');
+    kept.tick(body('o1', 0, 0), view);
+    expect(kept.getTargetId()).toBe('far');
+
+    const both = owned();
+    both.setKeptLockTarget('far');
+    both.setOrderedTarget('near', 10);
+    both.tick(body('o1', 0, 0), view);
+    expect(both.getTargetId()).toBe('near');
+  });
+
+  it('a kept lock on a non-hostile is not engaged (the ship picks its own target)', () => {
+    const view: AiWorldView = { players: [], swarms: [ship('near', 0, 400, 'robots'), ship('d1', 0, 300, 'drones')], tick: 10, dtSec: 1 / 60 };
+    const b = owned();
+    b.setEngageOnSight(false);
+    b.setKeptLockTarget('d1');
+    b.tick(body('o1', 0, 0), view);
+    expect(b.getTargetId()).not.toBe('d1');
+  });
+
   it('priority, not an override: an ordered target far beyond the margin loses to a point-blank enemy', () => {
     const view: AiWorldView = {
       players: [], swarms: [ship('near', 0, 200, 'robots'), ship('far', 0, 1500, 'robots')], tick: 10, dtSec: 1 / 60,

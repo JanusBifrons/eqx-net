@@ -10,6 +10,7 @@
  * (the WeaponMountTicker duck-reads it) and the `TargetPick` reads.
  */
 import { FORGET_TICKS, type DroneState } from '../hostileDroneTuning.js';
+import type { MountTargetView } from '../WeaponMountController.js';
 
 export class PilotTargeting {
   // ── Phase 1: hostility / state machine ────────────────────────────────
@@ -48,6 +49,11 @@ export class PilotTargeting {
    *  ship fights a neutral), `ORDERED_TARGET_PRIORITY` in the pick, and free of
    *  the guard leash and the sensor cap. Null = no order. */
   orderedTargetId: string | null = null;
+  /** A kept lock (`setKeptLockTarget`): the hull's live weapon lock its pilot
+   *  or AI pilot already holds. While it is a hostile candidate and no attack
+   *  order stands it wins the pick, so the ship fights what it is locked on
+   *  until that dies or leaves range. Null = none. Server-only. */
+  keptLockId: string | null = null;
   /** The ledger tick the order wrote for its target (-1 = none): lifting the
    *  order forgets the mark unless the target hit this ship since. */
   private orderMarkTick = -1;
@@ -134,5 +140,15 @@ export class PilotTargeting {
       }
       this.state = 'COMBAT';
     } else if (this.hostileTo.size === 0) this.state = 'IDLE';
+  }
+
+  /** The pick's kept-lock winner: the candidate `keptLockId` names when it is
+   *  hostile and no attack order (`ordered`) stands, else null (the brain
+   *  runs its own pick). Alloc-free scan of the first `n` candidates. */
+  keptPick(cand: readonly MountTargetView[], n: number, ordered: string | null): MountTargetView | null {
+    const kept = this.keptLockId;
+    if (kept === null || ordered !== null) return null;
+    for (let i = 0; i < n; i++) if (cand[i]!.id === kept && cand[i]!.hostile) return cand[i]!;
+    return null;
   }
 }
