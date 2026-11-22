@@ -97,7 +97,7 @@ test('another player\'s AI-flown ship is listed and locks like any player\'s shi
   }
 });
 
-test('touch landscape: the rail's Contacts item opens the list; a tap locks', async ({ browser }) => {
+test("touch landscape: the rail's Contacts item opens the list; a tap locks", async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   try {
