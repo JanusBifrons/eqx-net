@@ -25,6 +25,7 @@ type Story = StoryObj<typeof EqxButton>;
 
 export const Secondary: Story = {};
 export const Primary: Story = { args: { tone: 'primary', children: 'Apply' } };
+export const PrimaryDisabled: Story = { args: { tone: 'primary', children: 'Apply', disabled: true } };
 export const Danger: Story = { args: { tone: 'danger', children: 'Scrap' } };
 export const Large: Story = { args: { size: 'large' } };
 export const Disabled: Story = { args: { disabled: true } };

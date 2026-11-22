@@ -4,6 +4,46 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## Galaxy radio and the Gazette (parked 2026-11-22, very long term)
+
+Owner idea, inspired by in-car radio in open-world games. An idea only: no
+design passes yet, nothing decided.
+
+**The radio.** An optional radio fitted to your ship. You tune between
+stations:
+
+- **Galaxy Radio**, a general station for everyone.
+- **One station per AI faction**, each with its own distinct music style.
+  Some sound alien; some are alien bands singing in plain English, which is
+  the joke (rather than alien squealing). Songs would be generated with AI
+  music tools, a bank per faction.
+
+**Breaking news.** The station cuts into the music: "Breaking news in Vega
+Reach: ..." for things that really happened in the galaxy (a wave beaten
+off, a base razed, an elite sighted or killed, a big bounty placed).
+
+**Daily debrief.** Once a day a generated bulletin greets you on login:
+"Good morning, Captain. Since you were last here, ..." A spoken catch-up on
+what happened to your base, your faction and the galaxy while you were away.
+
+**The Gazette.** An older owner idea: a written galaxy newspaper. Same
+source as the radio news, read instead of heard. Not found in any doc as of
+2026-11-22, so this entry is its home too.
+
+**What already exists to build on.** Server-side events that would feed
+it: `broadcastWorldNotice` (bounties, `BountyBoard.ts`), elite sighted /
+destroyed toasts and world events
+([bounties-and-events.md](features/bounties-and-events.md)), wave audit
+events and retreat reasons ([living-world.md](architecture/living-world.md)),
+faction standing ([factions.md](architecture/factions.md)). The news should
+read from these, not a new event system.
+
+**Why it waits:** it's flavour on top of a galaxy that needs to be living
+first (factions, waves, economy). Open questions for later: generated live
+(text-to-speech per player) or pre-made clips; cost per player per day;
+per-faction lore and music style; where the tuner sits in the UI (likely
+the right panel); whether the radio is a ship part you fit or always on.
+
 ## A carrier capital: design notes (parked 2026-11-19)
 
 From the ship-motion mock-ups (artifact `Cn6PdAvbnU6qP4cXDf9kXR`, round 3).

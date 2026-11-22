@@ -9,5 +9,20 @@ export { EqxIconButton, type EqxIconButtonProps } from './EqxIconButton/EqxIconB
 export { EqxTooltip, type EqxTooltipProps } from './EqxTooltip/EqxTooltip.js';
 export { EqxSwitch, type EqxSwitchProps } from './EqxSwitch/EqxSwitch.js';
 export { EqxThemeProvider, type EqxThemeProviderProps } from './EqxThemeProvider/EqxThemeProvider.js';
+export { EqxStrip, type EqxStripProps, type EqxStripSeparatorProps } from './EqxStrip/EqxStrip.js';
+export { EqxStripIdentity, HEALTH_RING, type EqxStripIdentityProps, type EqxStripHealth } from './EqxStripIdentity/EqxStripIdentity.js';
+export { EqxStatusFlyout, type EqxStatusFlyoutProps, type EqxStatusOption } from './EqxStatusFlyout/EqxStatusFlyout.js';
 export { EQX_ICONS, EQX_ICON_NAMES, type EqxIconName } from './icons.js';
 export { EqxIcon, type EqxIconProps, type EqxIconSize } from './EqxIcon/EqxIcon.js';
+export {
+  EqxDropdown,
+  type EqxDropdownProps,
+  type EqxDropdownOption,
+  type EqxDropdownSingleProps,
+  type EqxDropdownMultipleProps,
+} from './EqxDropdown/EqxDropdown.js';
+export { EqxTextField, type EqxTextFieldProps } from './EqxTextField/EqxTextField.js';
+export { EqxSlider, type EqxSliderProps, type EqxSliderMark } from './EqxSlider/EqxSlider.js';
+export { EqxSegmented, type EqxSegmentedProps, type EqxSegmentedOption } from './EqxSegmented/EqxSegmented.js';
+export { EqxPanel, EQX_PANEL_SIZE, type EqxPanelProps, type EqxPanelApply } from './EqxPanel/EqxPanel.js';
+export { EqxRail, RAIL_MAX_ITEMS, RAIL_COG_ID, type EqxRailProps, type EqxRailItem, type EqxRailCog } from './EqxRail/EqxRail.js';
