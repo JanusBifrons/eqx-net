@@ -99,8 +99,8 @@ export function wreckFractureExtraCuts(input: { cutKind?: 'slice' | 'channel'; c
  *  destruction profile picks the options (a capital's are the fracture
  *  defaults); `none` leaves no pieces. A rock breaks in fixed-count mode (no
  *  damage inputs: the profile's cap is the target), like a re-split. */
-export function wreckRootFracture(input: WreckFractureInputs): FracturePiece[] {
-  const src = wreckSourceOf(input);
+export function wreckRootFracture(input: WreckFractureInputs, source?: WreckSource): FracturePiece[] {
+  const src = source ?? wreckSourceOf(input);
   const opts = src.profile.fracture;
   if (opts === null) return [];
   const rock = src.rock !== null;
