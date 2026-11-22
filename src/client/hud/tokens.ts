@@ -276,6 +276,26 @@ export const HUD = {
     rowDimOpacity: 0.6,
     rowSelectedBg: 'rgba(255,255,255,0.06)',
   },
+  /**
+   * EqxTable: a compact sortable table in a ~330 px panel (header like mock
+   * .sec, rows a tighter .lrow). Px. Colours reuse `color` and `list`.
+   */
+  table: {
+    /** Header labels (1cqw) and their tracking (looser than .sec: short words). */
+    headFont: 9,
+    headTracking: '0.06em',
+    /** Cell text (1.1cqw) and small cell text (markers, the page line). */
+    cellFont: 10,
+    smallFont: 9,
+    /** Header and row vertical padding, and the padding at each cell's sides. */
+    headPadY: 3,
+    rowPadY: 4,
+    cellPadX: 3,
+    /** Gap before a header's sort arrow. */
+    arrowGap: 2,
+    /** Gap between the pager's parts. */
+    footGap: 8,
+  },
 } as const;
 
 export function hullColor(pct: number): string {

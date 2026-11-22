@@ -59,6 +59,8 @@ export const EQX_ICON_NAMES = [
   'ship',
   'pod',
   'rock',
+  // Lists and tables
+  'filter',
 ] as const;
 
 export type EqxIconName = (typeof EQX_ICON_NAMES)[number];
@@ -247,4 +249,6 @@ export const EQX_ICONS = {
   ),
   // new: lumpy rock
   rock: <path d="M7 5l6-2 6 4 2 7-4 6-8 1-5-5 1-7z" />,
+  // new: funnel (show or hide a list's filters)
+  filter: <path d="M4 5h16l-6 7.5V19l-4 1.5v-8z" />,
 } as const satisfies Record<EqxIconName, ReactElement>;

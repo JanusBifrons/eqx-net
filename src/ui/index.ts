@@ -29,3 +29,5 @@ export { EqxRail, RAIL_MAX_ITEMS, RAIL_COG_ID, railWidthFor, useRailCompact, typ
 export { EqxBar, barColor, type EqxBarProps, type EqxBarTone } from './EqxBar/EqxBar.js';
 export { EqxSection, type EqxSectionProps } from './EqxSection/EqxSection.js';
 export { EqxListRow, type EqxListRowProps } from './EqxListRow/EqxListRow.js';
+export { EqxTable, tableGridTemplate, type EqxTableProps, type EqxTableColumn, type EqxTableSort, type EqxSortDir } from './EqxTable/EqxTable.js';
+export { tablePageWindow, type EqxTablePageWindow } from './EqxTable/tablePaging.js';
