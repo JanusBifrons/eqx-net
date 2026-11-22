@@ -36,6 +36,7 @@ export const EQX_ICON_NAMES = [
   'trade',
   'target',
   'build',
+  'pilot',
   // Doing mode (placing, route points)
   'rotate',
   'mirror',
@@ -255,4 +256,12 @@ export const EQX_ICONS = {
   ),
   // new: bolt
   power: <path d="M13 2L4 14h7l-1 8 9-12h-7z" />,
+  // new: ship's wheel (take the helm of a parked hull)
+  pilot: (
+    <>
+      <circle cx="12" cy="12" r="7" />
+      <circle cx="12" cy="12" r="2" />
+      <path d="M12 3v7M12 14v7M3 12h7M14 12h7" />
+    </>
+  ),
 } as const satisfies Record<EqxIconName, ReactElement>;

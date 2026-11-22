@@ -66,7 +66,6 @@ import { PlacementLinkHint } from './components/PlacementLinkHint';
 import { TeleportWarning } from './components/TeleportWarning';
 import { TeleportPrompts } from './components/TeleportPrompts';
 import { DisabledIndicator } from './components/DisabledIndicator';
-import { EntityStatsPanel } from './components/EntityStatsPanel';
 import { UpgradeModalHost } from './components/UpgradeModalHost';
 import { Hud } from './components/Hud';
 import { HudTestAttributes } from './components/HudTestAttributes';
@@ -964,12 +963,6 @@ function GameSurface({
        *  owned ship's in-world Pilot action. */}
       {/* Phase 4 warp-to destination picker (portalled; solar sectors only). */}
       <WarpPicker />
-      {/* The selection card (any kind), docked LAST in the top-centre stack
-       *  (order 10, after the helm, toasts and the compact Pilot toggle at 9):
-       *  it appears, vanishes and changes height with the selection, so
-       *  nothing with buttons sits below it to be pushed about. Pointer-
-       *  transparent like before; its action row re-enables taps. */}
-      <Slot anchor="top-center" order={10} pointerEvents="none"><EntityStatsPanel /></Slot>
       {/* Phase 4 WS-B2 — ship stat-upgrade modal. Opens on the local ship's
        *  level-up (the WS-B1 `pendingLevelUp` seam) to spend the earned point. */}
       <UpgradeModalHost />

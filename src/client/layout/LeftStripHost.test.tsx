@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useUIStore } from '../state/store';
 import { LayoutProvider } from './LayoutProvider';
-import { LeftStripHost, stripIdentity } from './LeftStripHost';
+import { LeftStripHost, stripHealth, stripIdentity } from './LeftStripHost';
 
 function stubMedia(): void {
   vi.stubGlobal('matchMedia', (q: string) => ({
@@ -76,11 +76,31 @@ describe('LeftStripHost (U1-8)', () => {
     expect(selectFleetShips).toHaveBeenCalledWith([]);
   });
 
-  it('a focus-only pick has no ⚙ until its Details panel exists', () => {
+  it('a focus-only pick: ⚙ opens its Details panel (U3-2)', () => {
     mount();
     select([], 's1', 'structure');
     expect(screen.getByTestId('left-strip-identity').getAttribute('aria-label')).toBe('Structure');
-    expect(screen.queryByTestId('left-strip-cog')).toBeNull();
+    fireEvent.click(screen.getByTestId('left-strip-cog'));
+    expect(useUIStore.getState().rightPanel).toBe('details');
+    expect(screen.getByTestId('left-strip').getAttribute('data-open')).toBe('false');
+  });
+
+  it("another player's ship: ⚙ opens Details, not Fleet", () => {
+    mount();
+    select([], 'p2', 'ship');
+    fireEvent.click(screen.getByTestId('left-strip-cog'));
+    expect(useUIStore.getState().rightPanel).toBe('details');
+  });
+});
+
+describe('stripHealth', () => {
+  it('rings the hull by the hull thresholds; ok when unknown or hull-less', () => {
+    expect(stripHealth(null)).toBe('ok');
+    expect(stripHealth({ name: 'x', hpPct: 10, shieldPct: null, pending: true })).toBe('ok');
+    expect(stripHealth({ name: 'x', hpPct: 0, shieldPct: null, noHull: true })).toBe('ok');
+    expect(stripHealth({ name: 'x', hpPct: 80, shieldPct: null })).toBe('ok');
+    expect(stripHealth({ name: 'x', hpPct: 40, shieldPct: null })).toBe('warn');
+    expect(stripHealth({ name: 'x', hpPct: 20, shieldPct: null })).toBe('crit');
   });
 });
 
@@ -88,6 +108,6 @@ describe('stripIdentity', () => {
   it('maps the selection to icon, count and panel', () => {
     expect(stripIdentity({ ids: [], focusId: null, focusKind: null })).toBeNull();
     expect(stripIdentity({ ids: ['a'], focusId: 'a', focusKind: 'ship' })).toMatchObject({ icon: 'fleet', count: 1, panel: 'fleet' });
-    expect(stripIdentity({ ids: [], focusId: 'd', focusKind: 'drone' })).toMatchObject({ icon: 'target', count: 1, panel: null });
+    expect(stripIdentity({ ids: [], focusId: 'd', focusKind: 'drone' })).toMatchObject({ icon: 'target', count: 1, panel: 'details' });
   });
 });

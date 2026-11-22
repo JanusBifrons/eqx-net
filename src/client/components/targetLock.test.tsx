@@ -12,7 +12,13 @@ vi.mock('../net/clientSingleton', () => ({
   }),
 }));
 
-import { TargetAction } from './TargetAction';
+import { useTargetLock } from './targetLock';
+/** The hook drawn as a bare button (the strip draws it as an EqxIconButton: selectionStripItems.test.tsx). */
+/** The hook drawn as a bare button (the strip draws it as an EqxIconButton, ). */
+function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null {
+  const t = useTargetLock(isOwn);
+  return t === null ? null : <button data-testid="fc-target" data-state={t.state} onClick={t.onClick}>{t.tooltip}</button>;
+}
 
 /**
  * User report (1v3 clip, 2026-11-08): LOCK in the info box "did nothing". The
@@ -29,7 +35,7 @@ function setLock(lock: { target: string; stage: number; blocked?: boolean } | nu
   });
 }
 
-describe('TargetAction', () => {
+describe('useTargetLock', () => {
   beforeEach(() => { cancelLock.mockReset(); lockSelected.mockReset(); });
 
   it('shows LOCK with no lock, and asks for one on tap', () => {
@@ -41,12 +47,12 @@ describe('TargetAction', () => {
     expect(lockSelected).toHaveBeenCalledOnce();
   });
 
-  it("shows CAN'T TRACK for a lock the server cannot progress (untrackable or past lock range); a tap cancels it", () => {
+  it("says Can't track for a lock the server cannot progress (untrackable or past lock range); a tap cancels it", () => {
     setLock({ target: 's:7', stage: 1, blocked: true });
     render(<TargetAction isOwn={false} />);
     const btn = screen.getByTestId('fc-target');
     expect(btn.getAttribute('data-state')).toBe('blocked');
-    expect(btn.textContent).toBe("CAN'T TRACK");
+    expect(btn.textContent).toBe("Can't track: cancel lock");
     fireEvent.click(btn);
     expect(cancelLock).toHaveBeenCalledWith('primary', 's:7');
   });
@@ -75,7 +81,7 @@ describe('TargetAction', () => {
   // LOCK, so a miner could only lock it by holding the lock line ~8 s. Rocks
   // lock with the hands-off LOCK like a ship, keyed s:<swarmId> (same key the
   // lock line uses for terrain).
-  it('a selected rock shows LOCK · <GROUP>; a tap asks for the lock; a built lock shows UNLOCK keyed s:<id>', () => {
+  it('a selected rock shows Lock · <group>; a tap asks for the lock; a built lock shows UNLOCK keyed s:<id>', () => {
     useUIStore.setState({
       selection: { ids: [], focusId: 'swarm-42', focusKind: 'asteroid' },
       activeGroupId: 'mining',
@@ -84,7 +90,7 @@ describe('TargetAction', () => {
     const { unmount } = render(<TargetAction isOwn={false} />);
     const btn = screen.getByTestId('fc-target');
     expect(btn.getAttribute('data-state')).toBe('lock');
-    expect(btn.textContent).toBe('LOCK · MINING');
+    expect(btn.textContent).toBe('Lock · Mining');
     fireEvent.click(btn);
     expect(lockSelected).toHaveBeenCalledOnce();
     unmount();

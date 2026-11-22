@@ -145,7 +145,7 @@ export function StructureCardRows({ d }: { d: StructureCardData }): JSX.Element 
 }
 
 const TEXT_8 = phoneTiny({ fontSize: [8, 16] });
-// Overflow guards: the card is capped at CARD_MAX_W (179 px on a sideways
+// Overflow guards: the card is capped at a narrow width (179 px on a sideways
 // Pixel 7), so nothing here may hold the row wider than the card. The row
 // wraps: the head (badge .. power) stays on one line with the name ellipsized;
 // the status chip drops to its own line when it does not fit and ellipsizes
