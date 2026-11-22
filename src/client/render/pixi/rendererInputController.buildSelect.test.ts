@@ -13,6 +13,7 @@ import type { RenderMirror } from '@core/contracts/render/RenderMirror';
 function setup() {
   const camera = {
     // 1 px = 1 world unit, origin at the canvas top-left.
+    scale: { x: 1, y: 1 },
     screenToWorld: vi.fn((x: number, y: number) => ({ x, y })),
     onPointerDown: vi.fn(),
     onPointerMove: vi.fn(),
@@ -36,6 +37,7 @@ const MIRROR = {
   localPlayerId: 'me-123',
   ships: new Map(),
   swarm: new Map([[9, { kind: 2, shipKind: 'solar', radius: 40, x: 100, y: -100 }]]),
+  structures: new Map([[9, { owner: 'me-123' }]]),
 } as unknown as RenderMirror;
 
 const ev = (type: string, x: number, y: number, stamp: number) =>
@@ -53,6 +55,7 @@ describe('RendererInputController: a tap on your building in Build selects it', 
     deps.lastMirror = MIRROR;
     tapBuilding(ctl);
     expect(feedback.orderSeq).toBe(1);
+    expect(feedback.orderKind).toBe('move'); // my own building: never attacked
     expect(ctl._focusId).toBeNull();
   });
 

@@ -194,3 +194,12 @@ export function isOwnShipPresent(id: string, mirror: RenderMirror): boolean {
   const s = mirror.ships.get(id);
   return s !== undefined && isParkedHull(mirror, id, s) && isOwnedByMe(mirror, id, s);
 }
+
+/** Whether pick id `id` (`swarm-<entityId>`) is a structure I own: its grid
+ *  row (`mirror.structures`, room state) names me as owner. Alliances have no
+ *  client carrier yet (the server's `relationOf` refuses allied targets). */
+export function isOwnStructure(id: string, mirror: RenderMirror): boolean {
+  const local = mirror.localPlayerId;
+  if (local === null || !id.startsWith('swarm-')) return false;
+  return mirror.structures?.get(Number(id.slice(6)))?.owner === local;
+}

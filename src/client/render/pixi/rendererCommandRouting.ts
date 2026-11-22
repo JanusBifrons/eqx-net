@@ -2,12 +2,12 @@ import type { Camera } from '../worker/Camera';
 import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import type { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
 import type { SelectionBracket } from '../SelectionBracket';
-import { onCraneBayPad, pickEntityAt, type PickedEntityKind } from '../pickEntity';
+import { fingerSlopWorld, onCraneBayPad, pickEntityAt, type PickedEntityKind } from '../pickEntity';
 import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from '../input/commandPointerRouter.js';
 import { decideTapAction, type FleetOrderMode } from '../input/tapAction.js';
 import { DoubleTapTracker } from '../input/doubleTap.js';
 import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from '../input/fleetPick.js';
-import { applySelection, boxSelectOwn, collectFleetShips, focusSurvives, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from '../fleetSelection.js';
+import { applySelection, boxSelectOwn, collectFleetShips, focusSurvives, isOwnShipPresent, isOwnStructure, pickOwnShipAt, sameSelection, tapSelectOwn } from '../fleetSelection.js';
 import type { FleetOverlay, OrderFlash } from '../FleetOverlay.js';
 import { isParkedHull } from '../shipOwnership.js';
 
@@ -249,8 +249,10 @@ export abstract class RendererCommandRouting {
     const fleet = collectFleetShips(m);
     const own = pickOwnShipAt(gx, gy, fleet, m.localPlayerId);
     const touchOrder = own === null && pointerType !== 'mouse' && this._selShips.size > 0;
-    // Pick only when an order needs to know what is under the finger.
-    const hit = touchOrder ? pickEntityAt(gx, gy, m) : null;
+    // Pick only when an order needs to know what is under the finger, with a
+    // fingertip's screen reach at this zoom (zoomed out, 24 world units is a
+    // pixel or two).
+    const hit = touchOrder ? pickEntityAt(gx, gy, m, fingerSlopWorld(this.camera.scale.x)) : null;
     const attackable = hit !== null && this.isAttackable(hit.id, hit.kind, m);
     const action = decideTapAction({
       pointerType,
@@ -303,9 +305,11 @@ export abstract class RendererCommandRouting {
     }
   }
 
-  /** Not own, not an asteroid or a cargo pod (shots pass pods): something the
-   *  fleet can be told to attack. */
+  /** Not own (ship or structure), not an asteroid or a cargo pod (shots pass
+   *  pods): something the fleet can be told to attack. An own structure under
+   *  the finger / cursor falls back to a move order. */
   private isAttackable(id: string, kind: string, m: RenderMirror): boolean {
+    if (kind === 'structure') return !isOwnStructure(id, m);
     return kind !== 'asteroid' && kind !== 'pod' && !this._selShips.has(id) && !isOwnShipPresent(id, m);
   }
 
