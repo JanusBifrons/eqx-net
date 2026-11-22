@@ -242,6 +242,8 @@ export async function bootSectorTestServer(opts: {
   /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
   capitalWrecks?: boolean;
   subcapWrecks?: boolean;
+  /** Structure break-up: a destroyed structure breaks into wreck pieces (off by default). */
+  structureWrecks?: boolean;
   /** Wreck fields 0b: stream this persisted test room's battle wrecks (live rooms always do). */
   battleWreckStreaming?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
@@ -343,6 +345,7 @@ export async function bootSectorTestServer(opts: {
     keepAllOnDeath: opts.keepAllOnDeath ?? true,
     capitalWrecks: opts.capitalWrecks,
     subcapWrecks: opts.subcapWrecks,
+    structureWrecks: opts.structureWrecks,
     battleWreckStreaming: opts.battleWreckStreaming,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,

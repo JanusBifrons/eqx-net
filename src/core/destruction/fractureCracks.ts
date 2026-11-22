@@ -73,50 +73,159 @@ export function primaryCut(p: NonNullable<FracturePlan['primary']>, kind = EDGE_
   return { nx, ny, c: nx * p.point.x + ny * p.point.y, kind };
 }
 
-/** Radial cracks fan this far either side of the kill point's inward line,
- *  as tan(θ/2) (θ ≈ ±65°), so none runs along the struck face. */
-const RADIAL_HALF_SPREAD = 0.64;
-/** Seeded jitter of each radial crack within its slot (a share of it). */
-const RADIAL_JITTER = 0.6;
+/** Seeded jitter of each radial crack's area station, as a share of one
+ *  wedge's even share (±half of it): fair, not machined, wedges. */
+const RADIAL_JITTER = 0.3;
+/** The radial cracks' centre: the kill point pulled this seeded share of
+ *  the way to the outline's centroid (MIN + seeded × SPAN). Nearer the kill
+ *  point the near wedges shrink (one line cuts both sides): at 0.5-0.8 a
+ *  wedge fell to 3-4 % of the hull and the sliver guard dropped cracks. */
+export const RADIAL_PULL_MIN = 0.8;
+export const RADIAL_PULL_SPAN = 0.15;
+/** Bisection steps balancing a radial crack's two misses. */
+const RADIAL_BISECT = 24;
 
 /**
- * Radial cracks (`radialCracks`, structures): `n` straight cracks through
- * the kill point, spread evenly (seeded jitter) either side of the line from
- * it to the hull's centroid, so a squarish hull shatters into n + 1 wedges
- * from the hit. Directions by the rational half-angle form (no trig, #15).
- * Its own seeded stream.
+ * Radial cracks (`radialCracks`, structures): straight cracks through one
+ * centre that cut the hull into near-even-AREA wedges, so a squarish hull
+ * shatters into fair chunky wedges wherever it is hit, a face, a corner or
+ * near the middle. The centre is the kill point (on the outline) pulled a
+ * seeded RADIAL_PULL_MIN..+SPAN of the way to the centroid: cracks fanned
+ * from the kill point itself cut a hit near an edge or corner into long
+ * needles (thin wedges reaching across the whole hull), where an inner
+ * centre gives chunky slices that still break from where it was hit (the
+ * first crack runs toward the kill point, up to its jitter). Worst piece
+ * slenderness (area ÷ longest span²) 0.018 → 0.086, the ships' worst 0.077
+ * (lock: structureSlivers.test.ts). A crack is a
+ * full line, so through an inner centre each one makes two wedges: `n`
+ * asks for n + 1 wedges, so floor((n + 1) / 2) cracks (at least one), at
+ * seeded area stations of the fan of triangles the centre makes with the
+ * outline, walked from the kill point (an odd ask gets one wedge fewer). Arithmetic
+ * only, no trig (#15). Its own seeded stream.
  */
 export function radialCracks(hull: P[], seed: number, kill: Vec2, n: number): FractureLine[] {
   const out: FractureLine[] = [];
-  if (n <= 0) return out;
-  const cen = ringCentroid(hull);
-  let vx = cen.x - kill.x;
-  let vy = cen.y - kill.y;
-  const vl = Math.sqrt(vx * vx + vy * vy);
-  if (vl < 1e-9) return out;
-  vx /= vl;
-  vy /= vl;
+  const m = hull.length;
+  if (n <= 0 || m < 3) return out;
+  const lines = Math.max(1, (n + 1) >> 1);
+  // The edge the kill point lies on (the nearest; the first wins a tie).
+  let e = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < m; i++) {
+    const a = hull[i]!;
+    const b = hull[(i + 1) % m]!;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const l2 = ex * ex + ey * ey;
+    let t = l2 > 0 ? ((kill.x - a.x) * ex + (kill.y - a.y) * ey) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = a.x + ex * t - kill.x;
+    const dy = a.y + ey * t - kill.y;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) { bestD = d; e = i; }
+  }
   const rng = new Rng(fnvMixU32(seed ^ 0x7ad1a, 0xb));
-  // Centre-out order (j = middle, then alternating out), so dropping the
-  // last line first (the cap / sliver loop) drops the outermost wedge.
-  for (let q = 0; q < n; q++) {
-    const lo = (n - 1) >> 1; // the middle line (the lower middle for even n)
-    const j = n % 2 === 1
-      ? (q % 2 === 0 ? lo - q / 2 : lo + (q + 1) / 2)
-      : (q % 2 === 0 ? lo - q / 2 : lo + 1 + (q - 1) / 2);
+  const g = ringCentroid(hull);
+  const pull = RADIAL_PULL_MIN + RADIAL_PULL_SPAN * (rng.u32() / 4294967296);
+  const cx = kill.x + (g.x - kill.x) * pull;
+  const cy = kill.y + (g.y - kill.y) * pull;
+  // The outline walked from the kill point round to it again: triangle k
+  // is (centre, w[k], w[k + 1]).
+  const w: Vec2[] = [kill];
+  for (let k = 1; k <= m; k++) w.push(hull[(e + k) % m]!);
+  w.push(kill);
+  const tri: number[] = [];
+  let total = 0;
+  for (let k = 0; k + 1 < w.length; k++) {
+    const a = w[k]!;
+    const b = w[k + 1]!;
+    const t = ((a.x - cx) * (b.y - cy) - (a.y - cy) * (b.x - cx)) / 2;
+    tri.push(t);
+    total += t;
+  }
+  if (!(total > 0)) return out;
+  // Line j: its ray at area share s and the opposite ray at opp(s) aim at
+  // stations j and j + lines of the 2 × lines even-area wedges (one seeded
+  // jitter for both). From an off-centre centre both cannot hit, so s is
+  // found (bisection) where the two misses are equal and opposite. The
+  // first runs through the kill point (share 0, up to its jitter), so
+  // dropping the last line first (the cap / sliver loop) keeps it.
+  const half = 1 / (2 * lines);
+  for (let j = 0; j < lines; j++) {
     const jit = (rng.u32() / 4294967296 - 0.5) * RADIAL_JITTER;
-    const s = RADIAL_HALF_SPREAD * (-1 + (2 * (j + 0.5 + jit)) / n);
-    const k = 1 / (1 + s * s);
-    const ca = (1 - s * s) * k;
-    const sa = 2 * s * k;
-    // v rotated by θ: (cos θ, sin θ) = ((1 − s²), 2s) / (1 + s²).
-    const dx = vx * ca - vy * sa;
-    const dy = vx * sa + vy * ca;
+    const aim = (2 * j + lines + 2 * jit) * half;
+    let lo = (j - 1 + jit) * half;
+    let hi = (j + 1 + jit) * half;
+    for (let it = 0; it < RADIAL_BISECT; it++) {
+      const mid = (lo + hi) / 2;
+      const o = oppositeShare(w, tri, total, mid, cx, cy);
+      if (o === null) break;
+      if (mid + o < aim) lo = mid;
+      else hi = mid;
+    }
+    const p = stationPoint(w, tri, total, (lo + hi) / 2);
+    let dx = p.x - cx;
+    let dy = p.y - cy;
+    const dl = Math.sqrt(dx * dx + dy * dy);
+    if (dl < 1e-9) continue;
+    dx /= dl;
+    dy /= dl;
     const nx = -dy;
     const ny = dx;
-    out.push({ nx, ny, c: nx * kill.x + ny * kill.y, kind: EDGE_CRACK });
+    out.push({ nx, ny, c: nx * cx + ny * cy, kind: EDGE_CRACK });
   }
   return out;
+}
+
+/** The point at area `share` (wrapped to 0..1) of the fan `tri` over the
+ *  walk `w`. */
+function stationPoint(w: ReadonlyArray<Vec2>, tri: ReadonlyArray<number>, total: number, share: number): Vec2 {
+  const sh = share - Math.floor(share);
+  const want = total * sh;
+  let acc = 0;
+  let k = 0;
+  while (k < tri.length - 1 && acc + tri[k]! < want) acc += tri[k++]!;
+  const tk = tri[k]!;
+  const f = tk > 0 ? Math.min(1, Math.max(0, (want - acc) / tk)) : 0.5;
+  const a = w[k]!;
+  const b = w[k + 1]!;
+  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+}
+
+/** The area share where the ray from (cx, cy) away from the point at
+ *  `share` leaves the walk (its farthest crossing), unwrapped into
+ *  (share, share + 1); null if it crosses nothing. */
+function oppositeShare(w: ReadonlyArray<Vec2>, tri: ReadonlyArray<number>, total: number, share: number, cx: number, cy: number): number | null {
+  const p = stationPoint(w, tri, total, share);
+  const ux = cx - p.x;
+  const uy = cy - p.y;
+  let bestT = 0;
+  let best = -1;
+  let acc = 0;
+  for (let k = 0; k + 1 < w.length; k++) {
+    const a = w[k]!;
+    const b = w[k + 1]!;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const den = ux * ey - uy * ex;
+    if (den !== 0) {
+      const ax = a.x - cx;
+      const ay = a.y - cy;
+      const t = (ax * ey - ay * ex) / den;
+      const f = (ax * uy - ay * ux) / den;
+      if (t > bestT && f >= 0 && f <= 1) {
+        bestT = t;
+        best = (acc + tri[k]! * f) / total;
+      }
+    }
+    acc += tri[k]!;
+  }
+  if (best < 0) return null;
+  const base = share - Math.floor(share);
+  let o = share + (best - base);
+  while (o <= share) o += 1;
+  while (o > share + 1) o -= 1;
+  return o;
 }
 
 /**

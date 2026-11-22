@@ -163,6 +163,7 @@ Status column: **live** = the extension point exists today; **planned** = being 
 | A ship kind | A record in its family file under `src/shared-types/shipKinds/`, appended to `catalogueOrder.ts`. | live |
 | A structure kind | A record in its family file under `src/shared-types/structureKinds/`, appended to its `catalogueOrder.ts`. | live |
 | A weapon | A record in `src/core/combat/WeaponCatalogue.ts`. | live |
+| A destruction profile (`shipScale/destruction.ts`, 600-LOC ceiling) | Its own small file under `src/shared-types/shipScale/` exporting a builder that takes the profiles it borrows (e.g. `structureProfile(SUBCAP, NONE)` in `structureDestruction.ts`) and imports `destruction.ts` types only; `destruction.ts` calls it and registers the result in `DESTRUCTION_PROFILES`. | live |
 
 ## Roll-out
 

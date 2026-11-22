@@ -8,16 +8,18 @@ import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { useAuthStore } from '../auth/authStore.js';
-import { AvatarMenu } from './AvatarMenu.js';
-import { useShowLoadingScreen } from '../state/store.js';
+import { useShowLoadingScreen, useUIStore } from '../state/store.js';
+import { openCogProfile, ProfileAvatar } from '../panels/CogProfilePage.js';
 
 interface Props {
   onLoginClick: () => void;
-  onProfileClick: () => void;
-  onSettingsClick: () => void;
 }
 
-export function AppHeader({ onLoginClick, onProfileClick, onSettingsClick }: Props) {
+/** The gear opens the cog panel's main page (the `rightPanel` flag). */
+const openCogSettings = (): void => useUIStore.getState().setDrawerTab('settings');
+
+/** Desktop top bar. The gear and the avatar both open the cog panel (U2-8b). */
+export function AppHeader({ onLoginClick }: Props) {
   const { user } = useAuthStore();
   // The join loading screen (sector briefing) owns the screen: no top bar over it.
   const loadingScreen = useShowLoadingScreen();
@@ -58,7 +60,7 @@ export function AppHeader({ onLoginClick, onProfileClick, onSettingsClick }: Pro
           <Tooltip title="Settings">
             <IconButton
               size="small"
-              onClick={onSettingsClick}
+              onClick={openCogSettings}
               aria-label="Open settings"
               data-testid="settings-button"
               sx={{ color: 'rgba(255,255,255,0.7)', '&:hover': { color: '#fff' } }}
@@ -67,7 +69,7 @@ export function AppHeader({ onLoginClick, onProfileClick, onSettingsClick }: Pro
             </IconButton>
           </Tooltip>
           {user ? (
-            <AvatarMenu onProfileClick={onProfileClick} />
+            <ProfileAvatar name={user.displayName ?? user.email} size={32} onClick={openCogProfile} data-testid="header-avatar" />
           ) : (
             <Button size="small" variant="outlined" color="primary" onClick={onLoginClick}>
               Login

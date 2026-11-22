@@ -70,7 +70,7 @@ In-game React overlays are positioned via **named slot anchors** ([layout/](layo
 - **Anchors** live in [layout/anchors.ts](layout/anchors.ts). Adding one is fine; changing an existing anchor's CSS is a code-review prompt.
 - **Widgets render via `<Slot anchor="...">`** and never set their own `position`, `top/left/right/bottom`, `zIndex` or safe-area insets; z-tiers come from [layout/zIndex.ts](layout/zIndex.ts) and only anchor hosts use them.
 - **Drawer:** never a `SwipeableDrawer` (its global touch listeners wreck mobile RTT); `keepMounted` stays on; snapshot-rate work in a drawer tab gates on `selectDrawerTabShown('<id>')` (one `rightPanel` flag).
-- **Keep these surfaces:** don't delete the `HudTestAttributes` mirrors without auditing every spec that reads them, nor `ProfileModal.tsx` / `SettingsModal.tsx` / `AvatarMenu.tsx` (the desktop path).
+- **Keep these surfaces:** don't delete the `HudTestAttributes` mirrors without auditing every spec that reads them. Settings and Profile live only in the cog panel (`panels/CogProfilePage.tsx`); the desktop gear and avatar (and the touch avatar badge) open it.
 - **Logout** has one definition, `useLogout()` ([auth/useLogout.ts](auth/useLogout.ts)); every logout entry point routes through it.
 - **Orientation:** phones play sideways: upright, `RotatePhoneOverlay` covers the screen and input is off; full screen starts only from a tap on `<FullscreenToggle>`, never by itself.
 - **Right rail:** discrete tap actions (panels, Map, Warp) live on the right rail (`layout/RightPanelHost.tsx`); held controls (joystick, FIRE, BOOST) stay dedicated. A HUD button a second touch must reach binds `onTouchStart` via `useTouchClickActivate` (a second touch never gets a click).

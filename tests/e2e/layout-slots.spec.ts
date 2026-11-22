@@ -254,7 +254,7 @@ test.describe('layout-slots', () => {
     await ctx.close();
   });
 
-  test('Profile tab Logout shows confirm dialog and routes to the galaxy map on confirm', async ({ browser }) => {
+  test('cog Profile Log out confirms inline and routes to the galaxy map on confirm', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
@@ -262,14 +262,14 @@ test.describe('layout-slots', () => {
     // The cog opens the Settings page; Profile is a drill-down row on it.
     await page.locator('[data-testid="right-rail-cog"]').click();
     await page.locator('[data-testid="cog-row-profile"]').click();
-    const logoutButton = page.locator('[data-testid="profile-tab-logout"]');
+    const logoutButton = page.locator('[data-testid="cog-profile-logout"]');
     await expect(logoutButton).toBeVisible();
     await logoutButton.click();
 
-    const confirmDialog = page.locator('[data-testid="logout-confirm-dialog"]');
-    await expect(confirmDialog).toBeVisible();
-
-    await page.locator('[data-testid="logout-confirm-button"]').click();
+    // Inline confirm: the button turns into "Confirm log out" in place.
+    const confirm = page.locator('[data-testid="cog-profile-logout-confirm"]');
+    await expect(confirm).toBeVisible();
+    await confirm.click();
 
     // The galaxy map is back; localStorage token has been cleared.
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });

@@ -10,11 +10,11 @@
  *   of the open item, ✕ or Esc clears it. Renders the panels the flag opens:
  *   Galaxy (`panels/GalaxyPanel.tsx`), the Trade drill-down (`panels/TradePanel.tsx`),
  *   Jobs (`panels/JobsPanel.tsx`), Faction (`panels/FactionPanel.tsx`), Contacts
- *   (`panels/ContactsPanel.tsx`; the O key too), the cog
- *   panel (`panels/CogPanel.tsx`) and the
+ *   (`panels/ContactsPanel.tsx`; the O key too) and the
  *   selection's Details panel (opened from the left strip's ⚙, not a rail item).
  *   The Build panel (`build`) is mounted by GameHud (BuildSidebarHost) and opens
- *   on the same flag.
+ *   on the same flag; the cog panel (`panels/CogPanel.tsx`) is mounted by
+ *   PhaseRouter (every phase) and opens on it too.
  */
 import { useEffect, useMemo } from 'react';
 import { EqxIcon, EqxRail, railWidthFor, useRailCompact, type EqxRailItem } from '../../ui/index.js';
@@ -27,7 +27,6 @@ import { JobsPanel } from '../panels/JobsPanel';
 import { GalaxyPanel } from '../panels/GalaxyPanel';
 import { FleetRailPanel } from '../panels/FleetPanel';
 import { DetailsPanel } from '../panels/DetailsPanel';
-import { CogPanel } from '../panels/CogPanel';
 import { FactionPanel } from '../panels/FactionPanel';
 import { ContactsPanel, type ContactsPanelProps } from '../panels/ContactsPanel';
 import { Slot } from './Slot';
@@ -84,7 +83,6 @@ export function RightPanelHost({ rendererRef }: Pick<ContactsPanelProps, 'render
       <HoldPanel />
       <FleetRailPanel />
       <DetailsPanel />
-      <CogPanel />
       <FactionPanel />
       <ContactsPanel rendererRef={rendererRef} />
     </>

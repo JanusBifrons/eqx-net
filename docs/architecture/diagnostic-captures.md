@@ -165,7 +165,7 @@ measurement.
 - `src/client/debug/streamingDiag.ts` — `?autocapture` streaming loop (account-gated default-on).
 - `src/client/auth/emailStorage.ts` — persisted account email the autocapture gate reads at boot.
 - `src/server/routes/diagRouter.test.ts` — directory layout + summary shape integration test.
-- `src/client/debug/diagCapture.ts` — POST helper used by `SettingsModal.tsx`.
+- `src/client/debug/diagCapture.ts` — POST helper used by the cog panel's Developer page (`DebugTab.tsx`).
 - `src/client/debug/ClientLogger.ts` — `window.__eqxLogs` ringbuffer.
 - `src/server/debug/ServerEventLog.ts` — `getRecentEvents()` ringbuffer drained into the capture.
 

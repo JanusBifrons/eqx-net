@@ -6,6 +6,10 @@
  * wreck-field chunk source. Moved verbatim out of `SectorRoom` (god-file
  * split slice 54); the room hands in live accessors.
  *
+ * Structure break-up T6: a destroyed structure breaks through the same
+ * `CapitalWreckSubsystem.onDeath` (`spawnStructureWreck`), behind its own
+ * switch (`structureWrecksOn`, read once at boot by `readStructureSwitch`).
+ *
  * The wreck subsystem itself (`CapitalWreckSubsystem`, built by
  * `capitalWreckRoomWiring.ts`) and the room's wreck switches stay the room's;
  * they are read here through getters, as the room's own methods read them.
@@ -25,6 +29,13 @@ import { wreckKindAllowed } from '../../../core/destruction/wreckKindAllowed.js'
 import { terrainRecordStoreFor } from '../../db/PersistenceWorker.js';
 import { getShipKind, type ShipKindId } from '../../../shared-types/shipKinds.js';
 import { FLAG_SLEEPING, SLOT_FLAGS_OFF, slotBase, slotPoseInto } from '../../../shared-types/sabLayout.js';
+import type { StructureRecord } from '../../structures/StructureRegistry.js';
+import type { SwarmEntityRecord } from '../../net/SwarmEntityRegistry.js';
+import { structureBreaks, structureWreckSource, type WreckSource } from '../../../core/destruction/wreckSource.js';
+import { effectiveStructureMaxHealth } from '../../../core/leveling/structureLevel.js';
+import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import { SWARM_KIND_STRUCTURE } from '../../../shared-types/swarmWireFormat.js';
+import { structureWreckSwitchOn } from '../wreckSwitch.js';
 
 /** What the wreck spawns read from the room. Getters for fields the room
  *  assigns in `onCreate` (the subsystem, the switches, the SAB views, the
@@ -44,12 +55,16 @@ export interface RoomWreckSpawnsHost {
   playerToSlot: () => ReadonlyMap<string, number>;
   getActiveShip: (playerId: string) => ShipState | undefined;
   postToWorker: (cmd: WorkerCmd) => void;
+  /** The structure registry (kind, built state, owner, level of a structure). */
+  structureRegistry: { get(id: string): StructureRecord | undefined };
 }
 
 export class RoomWreckSpawns {
   /** The playerId whose ACTIVE hull was just vaporised, for its pod's
    *  vaporised salvage; read and cleared by the `SHIP_DESTROYED` handler. */
   vaporisedActiveDeath: string | null = null;
+  /** Structure break-up switch (`structureWreckSwitchOn`); on by default (owner OK 2026-11-22). */
+  structureWrecksOn = false;
 
   constructor(private readonly h: RoomWreckSpawnsHost) {}
 
@@ -77,6 +92,45 @@ export class RoomWreckSpawns {
       ...(o.fresh === true ? { fresh: true } : {}), // dev look flag (wreck fields 9)
       warn: (obj, msg) => h.logger.warn(obj, msg), ...(h.persistSector() && sectorKey !== null ? { records: terrainRecordStoreFor(`${sectorKey}|wrecks:${o.seed}`) } : {}), // slice 4: touched hulls' rows
     });
+  }
+
+  /** Boot: read the structure break-up switch (room option `structureWrecks`,
+   *  env `EQX_STRUCTURE_WRECKS` wins). */
+  readStructureSwitch(roomOpt: boolean | undefined): void {
+    this.structureWrecksOn = structureWreckSwitchOn(process.env['EQX_STRUCTURE_WRECKS'], roomOpt);
+  }
+
+  /** The wreck source of a structure that breaks here (switch on, a built
+   *  kind with the `structure` profile; `structureBreaks`), else null. Read
+   *  per hit by `wreckKindOf` (a memoised source: no allocation, #14). */
+  structureWreckSourceOf(id: string): WreckSource | null {
+    if (!this.structureWrecksOn || this.h.capitalWrecks() === null) return null;
+    const s = this.h.structureRegistry.get(id);
+    return s !== undefined && structureBreaks(s.kind, s.isConstructed) ? structureWreckSource({ k: s.kind }) : null;
+  }
+
+  /** A structure's registry owner (its wreck keeps the livery; T5 reads
+   *  `desc.owner`), or undefined when it is not a structure. */
+  structureOwnerOf(id: string): string | undefined {
+    const o = this.h.structureRegistry.get(id)?.owner;
+    return o !== undefined && o !== '' ? o : undefined;
+  }
+
+  /** Structure break-up T6: a dying structure (kind 2) breaks into wreck
+   *  pieces through the ship death path (`CapitalWreckSubsystem.onDeath`),
+   *  its body despawned before the pieces spawn. The SAB pose is still live
+   *  (called before `evictSwarmEntity`). Max hull is the structure's
+   *  effective one (level, packed quality). True = vaporised. */
+  spawnStructureWreck(rec: SwarmEntityRecord): boolean {
+    const capitalWrecks = this.h.capitalWrecks();
+    const src = rec.kind === SWARM_KIND_STRUCTURE ? this.structureWreckSourceOf(rec.id) : null;
+    const s = this.h.structureRegistry.get(rec.id);
+    if (capitalWrecks === null || src === null || s === undefined) return false;
+    const pose = slotPoseInto(this.h.sabF32(), rec.slot, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 });
+    const maxHull = effectiveStructureMaxHealth(getStructureKind(s.kind).maxHealth, s.level, s.packedQuality);
+    const slot = rec.slot, id = rec.id;
+    return capitalWrecks.onDeath(id, src, pose, maxHull > 0 ? maxHull : src.maxHull,
+      () => this.h.postToWorker({ type: 'DESPAWN', slot, playerId: id })).vaporised;
   }
 
   /** A live wreck piece's SAB pose into `out` (#14 with a reused `out`), or null when gone. */

@@ -50,8 +50,8 @@ All driven by **`vite-plugin-pwa`** (config in `vite.config.ts`):
 
 The client opt-in helper is `src/client/notifications/pushClient.ts` (capability detection,
 `subscribe` / `unsubscribe`, the pure `shouldOfferPushToggle` gate). The UI is
-`src/client/components/PushNotificationToggle.tsx`, shown in both the desktop
-`SettingsModal` and the mobile drawer `SettingsTab`. On iOS-not-installed it shows
+`src/client/components/PushNotificationToggle.tsx`, shown on the cog panel's
+Settings page (`SettingsTab`). On iOS-not-installed it shows
 the "Add to Home Screen" hint instead of a toggle that can't work.
 
 ## Server: VAPID, subscriptions, the trigger

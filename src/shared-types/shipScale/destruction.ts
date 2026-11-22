@@ -30,6 +30,7 @@
  * imports this file).
  */
 import type { ShipKind } from '../shipKinds/types.js';
+import { structureProfile } from './structureDestruction.js';
 
 export type DestructionProfileId = 'capital' | 'subcap' | 'none' | 'rock' | 'structure';
 export const DESTRUCTION_PROFILE_IDS: readonly DestructionProfileId[] = ['capital', 'subcap', 'none', 'rock', 'structure'];
@@ -105,6 +106,9 @@ export interface DestructionResplit {
   /** Salvage units a whole hull's mass is worth (a pod carries its piece's
    *  mass share of this). */
   readonly salvagePerHull: number;
+  /** Set: a whole hull is worth round(√area × this) in place of
+   *  `salvagePerHull`, clamped 1..the capital's (`wreckSalvagePerHull`). */
+  readonly salvagePerSqrtArea?: number;
   /** The child fracture's options (`maxPieces`: 2-3 children per split). */
   readonly fracture: DestructionFractureOptions;
 }
@@ -219,6 +223,9 @@ export interface DestructionProfile {
    *  speed at which every shared cut opens (`wreckBreakKicks`' seam pass,
    *  mass-weighted impulses), so no cut closes, hinges or overlaps. */
   readonly separateScale: number;
+  /** Wedges from the kill point (`radialCracks`): each seam's guard is what
+   *  it opens at when both pieces leave the kill point at half the guard. */
+  readonly separateFromKill?: boolean;
   /** Multiplier on `shipTuning(kind).wreckCrack`, the impulse each shared
    *  cut throws its faces apart with (`wreckBreakKicks`). The push runs
    *  away from the break point, so it moves the pieces off TOGETHER; this is
@@ -528,40 +535,8 @@ const ROCK: DestructionProfile = {
   fx: { ...NONE.fx, glowStyle: 'simple', glowSeconds: 1, cutGlowStyle: 'full' },
 };
 
-/** A destroyed structure (structure break-up; capital-destruction.md
- *  "Structures"). Never a ship's profile: a structure's wreck source
- *  (`structureWreckSource`) names it. It shatters from the kill point in
- *  wedges (`radialCracks`: a structure is squarish, so the keel-wise zone
- *  and fan cracks of a long hull left it in 2), in fixed-count mode (no
- *  damage inputs, like a rock), capped by area (`pieceSide` 30: a 64 u
- *  connector 2 pieces, a 120-160 u turret or pylon 4-5, anything from
- *  ~180 u up 6). A structure stands still, so its pieces part gently like a
- *  rock's, collide with each other and settle; shots never shove them
- *  (knock 0). A piece wears and re-splits like a sub-capital's: halves into
- *  two, a quarter or less becomes salvage. */
-const STRUCTURE_FRACTURE: DestructionFractureOptions = {
-  maxPieces: 6, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: false,
-  jag: { depth: 2, roughness: 0.12 }, pieceSide: 30, radialCracks: true,
-};
-const STRUCTURE: DestructionProfile = {
-  id: 'structure',
-  fracture: STRUCTURE_FRACTURE,
-  resplit: SUBCAP.resplit,
-  holdMs: 0,
-  pushScale: 2,
-  separateScale: 20,
-  crackScale: 0,
-  spinScale: 0.3,
-  cutPartSpeed: 0,
-  dampingScale: 10,
-  knockScale: 0,
-  knockMaxScale: 0,
-  knockWakeScale: 0,
-  settlePerRadius: 0.125,
-  settleSpin: 0.3,
-  piecesCollide: true,
-  fx: { ...NONE.fx, glowStyle: 'simple', glowSeconds: 1, cutGlowStyle: 'full' },
-};
+/** A destroyed structure: `structureProfile` (`structureDestruction.ts`). */
+const STRUCTURE: DestructionProfile = structureProfile(SUBCAP, NONE);
 
 export const DESTRUCTION_PROFILES: Readonly<Record<DestructionProfileId, DestructionProfile>> = {
   capital: CAPITAL,

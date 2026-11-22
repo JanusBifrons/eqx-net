@@ -1,6 +1,6 @@
 /**
  * Warp route check S3: a warp never passes through a structure (or an
- * asteroid field). With one in the way, the picker offers the NEAR SIDE as
+ * asteroid field). With one in the way, the Galaxy panel offers the NEAR SIDE as
  * the destination ("near side · structure in the way"), and the ship lands
  * exactly there: no server refusal, no correction slide after landing.
  *
@@ -28,7 +28,7 @@ type EqxClient = {
   getWarpPhase?: () => 'idle' | 'spool' | 'cruise';
   warpRequest?: Pose | null;
 };
-type Win = { __eqxClient?: EqxClient; __eqxStore?: { getState: () => { setWarpPickerOpen: (o: boolean) => void } } };
+type Win = { __eqxClient?: EqxClient; __eqxStore?: { getState: () => { setRightPanel: (p: 'galaxy' | null) => void } } };
 
 function ownPose(page: Page): Promise<Pose | null> {
   return page.evaluate(() => {
@@ -51,7 +51,7 @@ function ownStructureCount(page: Page): Promise<number> {
 test('a structure in the way: warp to the offered near side and land there', async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto(
-    `${BASE_URL}/?galaxy=${SECTOR}&startMode=fly&warpui=list&testId=${randomUUID()}&newShip=1&worker=0&initialPacked=structure:capital`,
+    `${BASE_URL}/?galaxy=${SECTOR}&startMode=fly&testId=${randomUUID()}&newShip=1&worker=0&initialPacked=structure:capital`,
     { waitUntil: 'domcontentloaded', timeout: 60_000 },
   );
   await waitForInPlay(page, 90_000);
@@ -85,16 +85,14 @@ test('a structure in the way: warp to the offered near side and land there', asy
   }
   expect(await ownStructureCount(page), 'the Capital was placed').toBeGreaterThan(0);
 
-  // Open the picker: the pocket's row now offers the near side, amber label.
-  await page.evaluate(() => (window as unknown as Win).__eqxStore?.getState().setWarpPickerOpen(true));
-  const row = page.getByTestId(`warp-dest-${best!.id}`);
+  // Open the Galaxy panel: the pocket's row now offers the near side.
+  await page.evaluate(() => (window as unknown as Win).__eqxStore?.getState().setRightPanel('galaxy'));
+  const row = page.getByTestId(`galaxy-warp-${best!.id}`);
   await expect(row).toHaveAttribute('data-warp-state', 'near', { timeout: 10_000 });
-  await expect(page.getByTestId(`warp-sub-${best!.id}`)).toHaveText('near side · structure in the way');
+  await expect(row).toContainText('near side · structure in the way');
   const km = Number(await row.getAttribute('data-km'));
   expect(km, 'the distance shown is to the near side, short of the Capital').toBeLessThan(PLACE_AT / 1000 + 2);
 
-  // A fresh press (the picker arms after MENU_ARM_MS, #1205).
-  await page.waitForTimeout(400);
   await row.click();
   await expect.poll(() => page.evaluate(() => (window as unknown as Win).__eqxClient?.warpRequest ?? null), { timeout: 3_000 })
     .not.toBeNull();

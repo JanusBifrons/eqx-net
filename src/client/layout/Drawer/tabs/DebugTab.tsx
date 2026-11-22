@@ -116,7 +116,7 @@ function SwitchRow({ checked, onChange, label, caption, aria, testId }: SwitchRo
   );
 }
 
-/** The debug switches (once in SettingsModal and the drawer's Settings page). */
+/** The debug switches (the cog panel's Developer page). */
 function DebugSwitches(): JSX.Element {
   const showDevOverlay = useUIStore((s) => s.showDevOverlay);
   const showLogPanel = useUIStore((s) => s.showLogPanel);
