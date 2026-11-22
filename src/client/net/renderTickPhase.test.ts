@@ -8,7 +8,7 @@
  * smooth; measured from the processing time (the old stamp) it step-stalls.
  */
 import { describe, expect, it } from 'vitest';
-import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, tickBoundaryDueMs , slewTickDue } from './renderTickPhase';
+import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, tickBoundaryDueMs , slewTickDue, renderTickElapsedMs } from './renderTickPhase';
 
 const F = 1000 / 60;
 const V = 200; // u/s, constant cruise
@@ -104,5 +104,14 @@ describe('slewTickDue: the drawn pose does not inherit anchor steps', () => {
     for (let i = 0; i < 40; i++) { target += F; due = slewTickDue(due, target + 10, F, 0.5, 200); }
     expect(Math.abs(due - (target + 10))).toBeLessThan(0.5 + 1e-9); // 10 ms closed in 20 ticks
     expect(slewTickDue(0, 0 + F + 500, F, 0.5, 200)).toBe(F + 500); // > 200 ms: snap
+  });
+});
+
+describe('renderTickElapsedMs (the catch-up time every stepped body draws at)', () => {
+  it('is 0 before the first tick, else frame time minus due time, clamped', () => {
+    expect(renderTickElapsedMs(-1, 500)).toBe(0);
+    expect(renderTickElapsedMs(100, 110)).toBe(10);
+    expect(renderTickElapsedMs(100, 100 + DEAD_RECKON_CAP_MS + 50)).toBe(DEAD_RECKON_CAP_MS);
+    expect(renderTickElapsedMs(100, 100 - 50)).toBe(-DEAD_RECKON_BACK_MS);
   });
 });

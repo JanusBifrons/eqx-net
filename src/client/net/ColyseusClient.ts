@@ -2435,7 +2435,7 @@ export class ColyseusGameClient {
     updateSpectatorPlacement(pc, localId);
     updateServerGhost(pc);
     updateSwarmMirror(pc);
-    updateRemoteShipsMirror(pc, localId);
+    updateRemoteShipsMirror(pc, localId, frameNowMs);
     // Parked / AI-flown hulls ride the remote-ship loop above (RTS Part A S3:
     // their bodies are in `predRemoteShipIds` under the bare shipInstanceId),
     // so the old parked-hull offset loop is gone.

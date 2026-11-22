@@ -77,6 +77,9 @@ interface Internals {
   inputTick: number;
   leadTicks: number;
   lastFrameMs: number;
+  /** Due time (game ms) of the latest predicted tick (renderTickPhase). */
+  _lastLocalTickAtMs: number;
+  gameClock: { at(wallMs: number): number };
   localDead: boolean;
   lastSentInputState: unknown;
   lastSentInputAtMs: number;
@@ -193,6 +196,10 @@ export interface RemoteDrawnPoseSample {
   inputTick: number;
   /** Server tick of the latest snapshot APPLIED (held ones excluded); -1 before any. */
   lastAppliedServerTick: number;
+  /** Game ms this frame sits past the due time of the latest predicted tick,
+   *  UNCLAMPED (the drawn pose moves by velocity × this, clamped to
+   *  `DEAD_RECKON_CAP_MS`); NaN before the first tick. */
+  tickElapsedMs: number;
   x: number;
   y: number;
   angle: number;
@@ -424,6 +431,9 @@ export async function replayCapture(
               atMs: ev.ts,
               inputTick: internals.inputTick,
               lastAppliedServerTick,
+              tickElapsedMs: internals._lastLocalTickAtMs >= 0
+                ? internals.gameClock.at(ev.ts) - internals._lastLocalTickAtMs
+                : NaN,
               x: drawn.x,
               y: drawn.y,
               angle: drawn.angle,

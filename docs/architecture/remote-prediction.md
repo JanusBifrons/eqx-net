@@ -41,6 +41,14 @@ The client's `applyRemoteInputs` is gated by:
 
 2. **Lookahead cap** (`remoteForwardTickCap(lead)` = `max(STAGE_3_MAX_LOOKAHEAD_TICKS = 8, ceil(lead) + STAGE_3_LOOKAHEAD_SLACK_TICKS = 5)`, game ticks). Per-remote `_remoteForwardTicks` counter, reset on every snapshot. A snapshot window predicts the remote `lead` ticks (replay) plus ~3 live ticks, so the cap rides the lead: a fixed 8 cut the last held ticks of every snapshot once the margin-sized lead grew past 5 (a correction every snapshot, then the hysteresis guard switched prediction off; lock `remoteForwardLead.test.ts`). Once at the cap we stop applying input for that remote until the next snapshot — the body integrates with damping only. Bounds runaway speculation during long network stalls (e.g. a 500 ms snapshot gap would otherwise let us speculate 30 ticks of "they're still thrusting" without any authoritative confirmation).
 
+## The drawn pose between physics ticks
+
+Physics steps at 60 Hz; the display runs at 90 or 120 Hz on many phones, so some frames run no tick. A remote ship is drawn at its predWorld state plus `velocity × renderTickElapsedMs(...)` (and `angvel ×` the same for the angle), plus its correction offset (`updateRemoteShipsMirror`, `mirror/worldPasses.ts`). `renderTickElapsedMs` (`renderTickPhase.ts`) is the time since the latest predicted tick fell DUE (`lastLocalTickAtMs`), clamped to `[-DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS]`: the same catch-up the local ship draws with (`mirror/localShipPass.ts`), one function for both, because remote bodies step in the same input loop. Without it a remote ship stood still on every no-tick frame unless a correction was still easing (about one frame in three at 90 Hz: a 1, 1, 0 judder).
+
+A frame past the cap (the render due time lagging more than 32 ms, as on a stall or the jittery 2q0jxw capture) draws a fixed lead and holds again on no-tick frames; the cap is what stops a stall from flinging the ship. A snapshot that changes a remote's velocity moves its drawn pose by `dv × catch-up time` on that frame (at most ~17 ms of `dv` in steady play), exactly as the local ship's reconcile does; the offset spring carries only the position correction.
+
+Lock: `tests/replay/gapSmoothing.remoteShips.test.ts` case (d) (no still no-tick frame under the cap on a clean thrust; was 21 of 86 no-tick frames).
+
 ## Why this is *not* a separate `PhysicsWorld` per remote
 
 The roadmap's plan-agent suggested giving each remote ship a tiny `PhysicsWorld`-of-one. We didn't take that path because:
@@ -78,5 +86,6 @@ The hysteresis is per-remote and not currently surfaced in `PredictionStats`; if
 - `src/server/rooms/SectorRoom.ts` — reads SAB FLAGS, populates snapshot.
 - `src/client/net/remotePredictionGuard.ts` — pure hysteresis + cap module.
 - `src/client/net/remoteForwardPrediction.test.ts` — lockstep-property tests.
+- `src/client/net/renderTickPhase.ts` — `renderTickElapsedMs`, the catch-up time remote and local ships draw at.
 - `src/client/net/remotePredictionGuard.test.ts` — hysteresis + cap tests.
 - `src/client/net/ColyseusClient.ts` — `applyRemoteInputs`, snapshot integration.
