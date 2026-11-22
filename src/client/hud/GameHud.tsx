@@ -17,6 +17,7 @@
  */
 import { useCallback, useEffect, useRef } from 'react';
 import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
+import { selectRightPanelOpen } from '../state/rightPanel';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { RAIL_W_CSS } from '../layout/railWidth';
@@ -49,7 +50,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
   const isDead = useUIStore((s) => s.isDead);
   // Build mode hides the flight controls: the ghost and the build list own the screen.
   const building = useUIStore((s) => s.buildMode);
-  const settingsOpen = useUIStore((s) => s.structureSettingsOpen);
+  // A panel docked over the right edge is glass: nothing under it shows or takes touches.
+  const rightPanelOpen = useUIStore(selectRightPanelOpen);
   const rightPanel = useUIStore((s) => s.rightPanel);
   const size = useHudSize();
   const scale = hudScale(size);
@@ -76,7 +78,7 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
         </div>
       </Slot>
       {/* A right-side panel (building settings, or any rail panel) docks over the right edge: no strip under it. */}
-      {flying && !settingsOpen && rightPanel === null && <FcStripDock scale={scale} />}
+      {flying && !rightPanelOpen && <FcStripDock scale={scale} />}
       {/* The Build sidebar portals to <body> (EqxPanel): no Slot. */}
       <BuildSidebarHost />
 
@@ -105,7 +107,9 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       {touch && flying && touchInput && (
         <>
           <MoveStick touchInput={touchInput} />
-          <LockCluster touchInput={touchInput} />
+          {/* The right thumb sits under the right panel: unmounted while one is open
+              (FloatingStick / HoldButton release a held stick or BOOST on unmount). */}
+          {!rightPanelOpen && <LockCluster touchInput={touchInput} />}
         </>
       )}
     </>
