@@ -54,7 +54,7 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
 }) => {
   // Per-step latency budget. The bug surfaces as INDIVIDUAL UI interactions
   // taking many seconds (the user's "laggy as hell" symptom). A single
-  // drawer-toggle click has been measured at 2.7-14 s when the bug hits;
+  // rail Galaxy click has been measured at 2.7-14 s when the bug hits;
   // healthy is sub-second. A 3 s ceiling per step fails loudly instead of
   // accumulating into a generic timeout.
   test.setTimeout(25_000);
@@ -110,8 +110,8 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
   // `force: true` skips actionability checks. If the click is fast with force
   // but slow without, the bug is in the PAGE's stability (render storm / GPU
   // stall). If slow either way, the bug is in the click HANDLER.
-  await page.locator('[data-testid="drawer-toggle"]').click({ force: true });
-  stamp('clicked drawer-toggle');
+  await page.locator('[data-testid="right-rail-galaxy"]').click({ force: true });
+  stamp('clicked rail Galaxy');
   try {
     await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 2_000 });
     stamp('advanced-drawer visible after toggle click');

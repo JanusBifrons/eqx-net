@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
-import { SpeedDialMenu } from './SpeedDialMenu.js';
+import { BuildSidebarHost } from './BuildSidebarHost.js';
 import { commitPlacement } from '../structures/placementCancel.js';
 import { buildMenuKeysOpen } from '../input/buildMenuKeys.js';
 
@@ -26,14 +26,14 @@ function pick(cat: string, kind: string): void {
   fireEvent.click(screen.getByTestId(`build-${kind}`).querySelector('button')!);
 }
 
-describe('SpeedDialMenu: the placing strip', () => {
+describe('BuildSidebarHost: the placing strip', () => {
   beforeEach(() => {
     cleanup();
     useUIStore.setState({ phase: 'galaxy-map', isDead: false, placementKind: null, buildMode: false, packedStock: null });
   });
 
   it('a pick folds the sidebar to the strip with the picked kind; Confirm keeps it', () => {
-    render(<SpeedDialMenu direction="down" />);
+    render(<BuildSidebarHost />);
     act(() => useUIStore.getState().setBuildMode(true));
     expect(mode()).toBe('full');
     pick('economy', 'solar');
@@ -47,7 +47,7 @@ describe('SpeedDialMenu: the placing strip', () => {
   });
 
   it('the portrait expands with placement live; another pick folds back on the new kind', () => {
-    render(<SpeedDialMenu direction="down" />);
+    render(<BuildSidebarHost />);
     act(() => useUIStore.getState().setBuildMode(true));
     pick('economy', 'solar');
     fireEvent.click(screen.getByTestId('build-strip-portrait').querySelector('button')!);
@@ -65,7 +65,7 @@ describe('SpeedDialMenu: the placing strip', () => {
   });
 
   it('the full sidebar ✕ while placing folds to the strip; with nothing placed it closes', () => {
-    render(<SpeedDialMenu direction="down" />);
+    render(<BuildSidebarHost />);
     act(() => useUIStore.getState().setBuildMode(true));
     pick('economy', 'solar');
     fireEvent.click(screen.getByTestId('build-strip-portrait').querySelector('button')!);
@@ -81,7 +81,7 @@ describe('SpeedDialMenu: the placing strip', () => {
   });
 
   it('the strip ✕ cancels placing and the full list comes back; Build stays', () => {
-    render(<SpeedDialMenu direction="down" />);
+    render(<BuildSidebarHost />);
     act(() => useUIStore.getState().setBuildMode(true));
     pick('economy', 'solar');
     fireEvent.click(screen.getByTestId('build-strip-cancel'));
@@ -93,7 +93,7 @@ describe('SpeedDialMenu: the placing strip', () => {
   });
 
   it('a place-once kind ends placement: the strip goes, the full list comes back', () => {
-    render(<SpeedDialMenu direction="down" />);
+    render(<BuildSidebarHost />);
     act(() => useUIStore.getState().setBuildMode(true));
     pick('core', 'capital');
     expect(strip()).toHaveAttribute('data-kind', 'capital');
@@ -103,7 +103,7 @@ describe('SpeedDialMenu: the placing strip', () => {
   });
 
   it('leaving Build closes the strip', () => {
-    render(<SpeedDialMenu direction="down" />);
+    render(<BuildSidebarHost />);
     act(() => useUIStore.getState().setBuildMode(true));
     pick('economy', 'solar');
     act(() => { useUIStore.getState().setPlacementKind(null); useUIStore.getState().setBuildMode(false); });

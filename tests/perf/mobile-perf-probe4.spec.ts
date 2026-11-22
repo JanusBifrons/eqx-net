@@ -83,7 +83,7 @@ test.describe('Probe 4 — roster polling dedupe', () => {
     });
     // Open the drawer Galaxy tab (it used to mount a second roster panel).
     // Drawer toggle is in the top-right slot.
-    const drawerToggle = page.locator('[data-testid="drawer-toggle"]').first();
+    const drawerToggle = page.locator('[data-testid="right-rail-galaxy"]').first();
     if (await drawerToggle.count() > 0) {
       await drawerToggle.click();
       // Galaxy tab is the first/default tab — already selected.

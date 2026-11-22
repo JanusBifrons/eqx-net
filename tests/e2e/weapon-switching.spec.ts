@@ -5,8 +5,8 @@
  * The per-weapon picker (Beam/Laser boxes + 1/2/Q hotkeys) is GONE. Each ship
  * fires its catalogue-bound loadout (scout/fighter/heavy/gunship → bolts,
  * interceptor → beams, missile-frigate → missiles) and the pilot selects the
- * active SLOT via the MUI SlotSelector. This suite asserts:
- *   1. No per-weapon picker; a single-slot toggle is present.
+ * active group on the HUD weapon strip. This suite asserts:
+ *   1. No per-weapon picker; the weapon strip is present.
  *   2. A bolt ship (scout) fires PROJECTILES, never a hitscan beam.
  *   3. A beam ship (interceptor) fires a hitscan BEAM.
  *   4. The bolt ghost is cleaned up after expiry (no stuck duplicates).
@@ -53,19 +53,17 @@ async function getProjectileCount(page: Page): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// 1. No per-weapon picker; the slot selector is present
+// 1. No per-weapon picker; the weapon strip is present
 // ---------------------------------------------------------------------------
-test('slot selector replaces the per-weapon picker', async ({ browser }) => {
+test('weapon strip replaces the per-weapon picker', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser, 'scout');
   try {
     // The old per-weapon boxes are gone.
     await expect(page.locator('[data-testid="weapon-selector"]')).toHaveCount(0);
-    // Speed-dial UI refactor (Phase 1): slot selection moved out of the thumb
-    // cluster into the consolidated SpeedDial. The action is in the DOM but
-    // collapsed until the dial is opened — open it, then assert the slot action
-    // is reachable. Generous render-settle window, not a game-time wait.
-    await page.locator('[data-testid="speed-dial-fab"]').click({ timeout: 10_000 });
-    await expect(page.locator('[data-testid="slot-selector"]')).toBeVisible({ timeout: 10_000 });
+    // Weapon choice lives on the HUD weapon strip (one chip per fire-control
+    // group; the speed dial's slot action is gone, UI language plan A7).
+    // Generous render-settle window, not a game-time wait.
+    await expect(page.locator('[data-testid="fc-strip"]')).toBeVisible({ timeout: 10_000 });
   } finally {
     await ctx.close();
   }

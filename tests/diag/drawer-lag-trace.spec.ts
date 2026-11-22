@@ -41,7 +41,7 @@ async function waitForLocalShip(page: Page, timeoutMs = 25_000): Promise<void> {
   );
 }
 
-test('drawer-toggle click → galaxy-tab-show-map visible (perf budget)', async ({ page }) => {
+test('rail Galaxy click → galaxy-tab-show-map visible (perf budget)', async ({ page }) => {
   test.setTimeout(45_000);
   await fs.promises.mkdir(OUTPUT_DIR, { recursive: true });
 
@@ -61,12 +61,12 @@ test('drawer-toggle click → galaxy-tab-show-map visible (perf budget)', async 
   // the Galaxy tab. It's the first user-meaningful element they see
   // when the drawer opens.
   const t0 = Date.now();
-  await page.locator('[data-testid="drawer-toggle"]').click({ force: true });
+  await page.locator('[data-testid="right-rail-galaxy"]').click({ force: true });
   await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible({ timeout: 15_000 });
   const lagMs = Date.now() - t0;
 
   // eslint-disable-next-line no-console
   console.log(`[drawer-lag-trace] CLICK→VISIBLE: ${lagMs} ms (target < 500)`);
 
-  expect(lagMs, `drawer-toggle → "Show galaxy map" visible: ${lagMs} ms`).toBeLessThan(500);
+  expect(lagMs, `rail Galaxy → "Show galaxy map" visible: ${lagMs} ms`).toBeLessThan(500);
 });

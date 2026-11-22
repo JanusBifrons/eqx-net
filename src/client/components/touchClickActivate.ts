@@ -17,7 +17,7 @@ import { useCallback, useMemo, useRef, type MouseEvent, type PointerEvent, type 
  * AutoFireToggleButton double-toggle trap).
  *
  * This hook is the ONE implementation of that pattern (used by
- * `SpeedDialMenu`). Its other half, `useFreshPress` / `useFreshPressSurface`
+ * `ShieldRing`). Its other half, `useFreshPress` / `useFreshPressSurface`
  * below, guards what such a button opens.
  */
 
@@ -42,7 +42,7 @@ export interface TouchClickActivate {
    *  within the suppress window (drops the trailing synthesized click). */
   clickActivate: (fn: () => void) => () => void;
   /** True if a `touchActivate` fired within the suppress window — for consumers
-   *  (e.g. MUI SpeedDial `onOpen`/`onClose`) that can't route through
+   *  (e.g. a MUI component's `onOpen`/`onClose`) that can't route through
    *  `clickActivate`. */
   isWithinSuppressWindow: () => boolean;
 }
