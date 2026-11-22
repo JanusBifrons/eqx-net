@@ -51,9 +51,9 @@ test('Build ▸ Capital → confirm places a structure that appears in the swarm
   try {
     const before = await swarmCount(page);
 
-    // Open the dial → Build ▸ opens the sidebar → Core on its rail → the Capital tile.
-    await page.locator('[data-testid="speed-dial-fab"]').click();
-    await page.locator('[data-testid="speed-dial-build"]').click();
+    // Build mode opens the sidebar → Core on its rail → the Capital tile.
+    // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+    await page.locator('[data-testid="build-toggle"]').click();
     await page.locator('[data-testid="build-cat-core"]').click();
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="build-capital"] button').click();
@@ -110,8 +110,8 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
   try {
     const before = await readSwarmSize();
 
-    await page.locator('[data-testid="speed-dial-fab"]').click();
-    await page.locator('[data-testid="speed-dial-build"]').click();
+    // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+    await page.locator('[data-testid="build-toggle"]').click();
     await page.locator('[data-testid="build-cat-core"]').click();
     await page.locator('[data-testid="build-capital"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
@@ -176,8 +176,8 @@ test('placement Cancel exits placement mode without placing', async ({ browser }
   try {
     const before = await swarmCount(page);
 
-    await page.locator('[data-testid="speed-dial-fab"]').click();
-    await page.locator('[data-testid="speed-dial-build"]').click();
+    // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+    await page.locator('[data-testid="build-toggle"]').click();
     await page.locator('[data-testid="build-cat-economy"]').click();
     await page.locator('[data-testid="build-solar"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });

@@ -15,6 +15,7 @@ import { useUIStore } from '../state/store.js';
 import { SpeedDialMenu } from './SpeedDialMenu.js';
 import { GameWindow } from './GameWindow.js';
 import { StructureSettingsModal } from './StructureSettingsModal.js';
+import { requestBuildSidebar } from './BuildSidebar.js';
 
 let openWindow: () => void = () => {};
 
@@ -51,8 +52,7 @@ describe('SpeedDialMenu closes when a game window opens', () => {
 
   it('closes the Build sidebar when a GameWindow opens', () => {
     render(<Harness />);
-    fireEvent.click(screen.getByTestId('speed-dial-fab'));
-    fireEvent.click(screen.getByTestId('speed-dial-build'));
+    act(() => useUIStore.getState().setBuildMode(true));
     expect(sidebarOpen()).toBe(true);
     act(() => openWindow());
     expect(sidebarOpen()).toBe(false);
@@ -79,16 +79,15 @@ describe('SpeedDialMenu closes when a game window opens', () => {
       );
     }
     render(<PanelHarness />);
-    fireEvent.click(screen.getByTestId('speed-dial-fab'));
-    fireEvent.click(screen.getByTestId('speed-dial-build'));
+    act(() => useUIStore.getState().setBuildMode(true));
     expect(sidebarOpen()).toBe(true);
     act(() => openPanel());
     expect(screen.getByTestId('structure-settings')).toBeTruthy();
     expect(sidebarOpen()).toBe(false);
     expect(panelOpen).toBe(true);
 
-    // Build opening (here: entering Build mode) closes the settings panel.
-    act(() => useUIStore.getState().setBuildMode(true));
+    // Build opening (here: a Build tap while in Build) closes the settings panel.
+    act(() => requestBuildSidebar());
     expect(sidebarOpen()).toBe(true);
     expect(panelOpen).toBe(false);
     expect(useUIStore.getState().structureSettingsOpen).toBe(false);

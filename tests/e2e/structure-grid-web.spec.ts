@@ -45,9 +45,9 @@ test('Build ▸ Capital places a structure', async ({ browser }) => {
     // test-sector-fast has no drones/asteroids → the swarm starts empty.
     expect(await swarmCount(page)).toBe(0);
 
-    // Open dial → Build ▸ (sidebar) → Core on the rail → Capital tile → confirm.
-    await page.locator('[data-testid="speed-dial-fab"]').click();
-    await page.locator('[data-testid="speed-dial-build"]').click();
+    // Build mode (sidebar) → Core on the rail → Capital tile → confirm.
+    // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+    await page.locator('[data-testid="build-toggle"]').click();
     await page.locator('[data-testid="build-cat-core"]').click();
     await page.locator('[data-testid="build-capital"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });

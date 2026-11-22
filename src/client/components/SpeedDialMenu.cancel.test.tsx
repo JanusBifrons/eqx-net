@@ -13,8 +13,7 @@ const sidebarOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
 
 function pickSolar(): void {
   render(<SpeedDialMenu direction="down" />);
-  fireEvent.click(screen.getByTestId('speed-dial-fab'));
-  fireEvent.click(screen.getByTestId('speed-dial-build'));
+  act(() => useUIStore.getState().setBuildMode(true)); // Build mode: the only way in
   fireEvent.click(screen.getByTestId('build-cat-economy'));
   fireEvent.click(screen.getByTestId('build-solar').querySelector('button')!); // the tile's button, as a tap hits it
 }
