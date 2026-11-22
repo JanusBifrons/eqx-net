@@ -243,7 +243,7 @@ test('construction works while spectating (place a structure with no ship)', asy
   await page.locator('[data-testid="speed-dial-build"]').click();
   await page.locator('[data-testid="build-cat-economy"]').click();
   await expect(page.locator('[data-testid="build-solar"]')).toBeVisible({ timeout: 5_000 });
-  await page.locator('[data-testid="build-solar"]').click();
+  await page.locator('[data-testid="build-solar"] button').click();
 
   // The placement ghost is up (camera-anchored). Wait until the renderer reports
   // a chosen world point (`data-placement-screen-x`), then click to commit.

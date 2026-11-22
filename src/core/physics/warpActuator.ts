@@ -60,6 +60,7 @@ export function applyPilotInput(rec: ShipBody, input: ShipInput): void {
       setCollidersEnabled(rec, true);
       return;
     }
+    // 'arrive': it got there on its own engines; the warp is over and it flies on below.
   }
   const spool = rec.warp !== undefined && rec.warp.phase === 'spool';
   if (!spool) {

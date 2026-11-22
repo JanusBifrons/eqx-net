@@ -86,6 +86,9 @@ export interface PredictionStats {
   /** Unrounded server tick-rate EWMA (the store holds only the rounded HUD
    *  value, so an unchanged reading never notifies). Unset until seeded. */
   serverTickHzEwma?: number;
+  /** Wall time (ms, `performance.now()` base) the last snapshot arrived on
+   *  the wire (either transport). Unset until the first one. */
+  lastSnapshotRecvAtMs?: number;
   /** Wall time (ms) of the last rolling RAF / longtask ring scan. */
   rollingStatsAtMs?: number;
 }

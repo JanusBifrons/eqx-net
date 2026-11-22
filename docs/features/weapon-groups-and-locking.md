@@ -89,7 +89,7 @@ nose on the target.
 | Move | Left thumb floating stick | WASD |
 | Lock (manual) | Right thumb: hold the lock line on a ship | Hold LMB on a ship |
 | Lock (hands-off) | Tap ship or rock → LOCK | Click ship or rock → LOCK, or **T** |
-| Pick group | Tap its chip | **1–9** |
+| Pick group | Tap its chip | **1–9** (they pick buildings while the Build sidebar is open) |
 | AUTO / MAN | The chip's pill | **Shift + 1–9** |
 | Fire a MAN group | Hold its chip | Hold its chip |
 | Drop a group's locks | × beside the chip | **X** |

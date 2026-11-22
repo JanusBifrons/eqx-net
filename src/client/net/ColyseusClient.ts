@@ -113,6 +113,7 @@ import {
   type ShipRouterCtx,
 } from './snapshotShipRouter.js';
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
+import { noteSnapshotArrival } from './snapshotArrivalStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
 import { stepTravel, TRAVEL_OUT_S, type TravelTrip } from './mirror/travelPass.js';
@@ -1528,8 +1529,10 @@ export class ColyseusGameClient {
       ? recvAtMs - this._lastSnapshotRecvAtMs
       : -1;
     this._lastSnapshotRecvAtMs = recvAtMs;
+    this.stats.lastSnapshotRecvAtMs = recvAtMs; // net-health HUD wait readout
     const serverSendPerfNow = (snap as { serverSendPerfNow?: number }).serverSendPerfNow;
     // Emit-when-non-zero on the server (2026-11-14 trim): absent means 0.
+    noteSnapshotArrival(recvAtMs, serverSendPerfNow); // net-health HUD: network vs server
     const wsBufferedAmountBytes = (snap as { wsBufferedAmountBytes?: number }).wsBufferedAmountBytes ?? 0;
     logEvent('snapshot_received', {
       serverTick: snap.serverTick,
@@ -2772,8 +2775,9 @@ export class ColyseusGameClient {
    *  RAF loop + direct-DOM write — never via Zustand (it changes every frame). */
   /**
    * In-sector warp-to (Phase 4, solar-system sectors): ask to warp to a drop
-   * point (a pocket's rim, from `warpDropPoint`). Held in every input until
-   * the local ship arrives; the server ignores a point that isn't a pocket rim.
+   * point (a pocket's rim, or the near side of what is in the way: the picker's
+   * `warpTargetFor` target). Held in every input until the local ship arrives; the
+   * server ignores a point that isn't the target it computes itself.
    */
   public requestWarp(x: number, y: number): void {
     this.warpRequest = { x, y };
@@ -2990,6 +2994,8 @@ export class ColyseusGameClient {
   }
 
   get cutFieldStats(): CutFieldSummary { return this._cutField.summary(); } // cut-field-collision.spec.ts waits on it
+  /** The cut field's options (null: no field): the warp picker's field map (`WarpRouteClient`). */
+  get cutFieldOpts(): ReturnType<typeof createGameCutField>['fieldOpts'] { return this._cutField.fieldOpts; }
 
   dispose(): void { disposeClient(this._predResetCtx); }
 }

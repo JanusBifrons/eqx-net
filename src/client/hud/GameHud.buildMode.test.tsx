@@ -8,7 +8,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 
 vi.mock('../components/SpeedDialMenu', () => ({ SpeedDialMenu: () => <div data-testid="stub-speed-dial" /> }));
-vi.mock('../components/BottomControlPanel', () => ({ BottomControlPanel: () => null }));
 vi.mock('../components/FleetPanel', () => ({ FleetPanel: () => null }));
 vi.mock('../components/FleetStrip', () => ({ FleetStrip: () => null }));
 vi.mock('../components/ContactsOverview', () => ({ ContactsOverview: () => <div data-testid="stub-contacts" /> }));

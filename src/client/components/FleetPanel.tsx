@@ -12,9 +12,8 @@ import { resolveFleetCommands, useFleetSelectionView, type FleetShipView } from 
 
 /**
  * RTS command layer slice 14 — the DESKTOP fleet panel. While own ships are
- * selected in command view it takes the bottom-centre slot from the build bar
- * (`BottomControlPanel` stays MOUNTED and hides itself, see its comment on the
- * death-flip hitch). Mode / stance groups show the selection's shared value
+ * selected in command view it shows in the bottom-centre slot (the slot stays
+ * MOUNTED, the death-flip rule: the flip into spectator mounts no UI). Mode / stance groups show the selection's shared value
  * (none pressed + "mixed" when they differ), action buttons, and a compact
  * per-ship list. Commands go through `fleet/fleetCommands.ts` (no-op until the
  * network slice plugs in), overridable per instance via `commands`.

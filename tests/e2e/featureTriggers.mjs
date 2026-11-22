@@ -28,17 +28,17 @@ export const FEATURE_TRIGGERS = [
     area: 'structures',
     paths: ['src/server/structures/', 'src/core/structures/', 'src/client/structures/', 'src/shared-types/structureKinds', 'src/shared-types/packedStock',
       'src/client/components/StructurePlacementBanner', 'src/client/components/SpeedDialMenu', 'src/client/components/buildCategories',
-      'src/client/components/BuildSidebar', 'src/client/components/BuildKindTile', 'src/client/components/SidePanel',
+      'src/client/components/BuildSidebar', 'src/client/components/BuildKindTile', 'src/client/components/SidePanel', 'src/client/input/buildMenuKeys',
       'src/client/render/pixi/ConnectorRenderer', 'src/core/articulation/', 'src/server/rooms/scene/'],
     specs: ['structure-build-placement', 'structure-grid-web', 'structure-placement-ghost', 'structure-scenario', 'structure-mining-beam',
       'structure-ram-blocked', 'structure-turret-range', 'structure-visible-damageable', 'speed-dial', 'gate-fly-through',
-      'structure-rig-sandbox'],
+      'structure-rig-sandbox', 'build-sidebar-fits-viewport'],
   },
   {
     area: 'spectator and ship switching',
     paths: ['src/client/spectator/', 'src/client/components/PilotSpectatorToggle', 'src/client/net/snapshotShipRouter', 'src/client/ships/',
-      'src/client/components/BottomControlPanel', 'src/client/net/snapshotRemoteSync', 'src/client/net/displayMountAngles'],
-    specs: ['spectator-mode', 'build-hotbar-fits-viewport', 'spectator-npc-turrets', 'spectate-no-phantom-own-ship'],
+      'src/client/net/snapshotRemoteSync', 'src/client/net/displayMountAngles'],
+    specs: ['spectator-mode', 'spectator-npc-turrets', 'spectate-no-phantom-own-ship'],
   },
   {
     // Game time scale (stream/time-scale): per-sector speed, the snapshot keyframe and the HUD chip.
@@ -51,6 +51,13 @@ export const FEATURE_TRIGGERS = [
     area: 'capital helm',
     paths: ['src/core/helm/', 'src/client/helm/', 'src/client/render/helm/', 'src/client/components/HelmPanel'],
     specs: ['capital-helm', 'player-capital-galaxy'],
+  },
+  {
+    // Warp route check: in-sector warps stop at the near side of a field or structure.
+    area: 'warp route check',
+    paths: ['src/client/components/WarpPicker', 'src/client/components/warpDestinations', 'src/client/components/warpRoute',
+      'src/core/galaxy/warpTarget', 'src/core/nav/warpLineStop', 'src/server/rooms/warpRouteCheck'],
+    specs: ['warp-near-side'],
   },
   {
     // Autopilot: the helm flies the planner's route round rocks (navigation slices 12-14).

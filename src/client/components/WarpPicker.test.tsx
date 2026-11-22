@@ -53,6 +53,9 @@ describe('WarpPicker', () => {
     const target = warpDestinations('sol-prime', 0, 0).find((d) => !d.here)!;
     expect((screen.getByTestId('warp-map-go') as HTMLButtonElement).disabled).toBe(true);
     act(() => { fireEvent.click(screen.getByTestId(`warp-map-${target.id}`)); });
+    // A clear line: the route is drawn, with no landing ring (that is for a near side).
+    expect(screen.getByTestId('warp-map-line').getAttribute('data-warp-state')).toBe('clear');
+    expect(screen.queryByTestId('warp-map-landing')).toBeNull();
     fireEvent.click(screen.getByTestId('warp-map-go'));
     expect(requestWarp).toHaveBeenCalledWith(target.dropX, target.dropY);
   });

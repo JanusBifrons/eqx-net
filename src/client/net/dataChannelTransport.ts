@@ -294,6 +294,7 @@ export class DataChannelTransport {
   private _pc: RTCPeerConnection | null = null;
   private _dc: RTCDataChannel | null = null;
   private _phase: TransportPhase = 'idle';
+  private _fellBack = false;
   private _connectTimer: ReturnType<typeof setTimeout> | null = null;
   // The msgpackr packr is unused on the receive-only client path today,
   // but stays available so a future Phase 2c bidirectional channel can
@@ -317,6 +318,11 @@ export class DataChannelTransport {
     return this._phase;
   }
 
+  /** True once this transport fell back to the WebSocket (stays true after close). */
+  get fellBack(): boolean {
+    return this._fellBack;
+  }
+
   /**
    * Start the handshake. Triggered by the welcome handler in ColyseusClient.
    * Idempotent — re-entering returns early when not idle.
@@ -330,6 +336,7 @@ export class DataChannelTransport {
     } catch (err) {
       this._opts.onDiag?.('webrtc_init_error', { error: (err as Error).message });
       this._phase = 'failed';
+      this._fellBack = true;
       this._fallback('init-error');
       return;
     }
@@ -524,6 +531,7 @@ export class DataChannelTransport {
   private _fallback(reason: string): void {
     if (this._phase === 'failed' || this._phase === 'closed') return;
     this._phase = 'failed';
+    this._fellBack = true;
     if (this._connectTimer) {
       clearTimeout(this._connectTimer);
       this._connectTimer = null;
