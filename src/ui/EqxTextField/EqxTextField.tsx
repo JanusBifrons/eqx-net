@@ -15,6 +15,10 @@ export interface EqxTextFieldProps {
   error?: string;
   placeholder?: string;
   disabled?: boolean;
+  /** Called when the field loses focus (commit a typed value there). */
+  onBlur?: () => void;
+  /** The on-screen keyboard to show (`decimal` for coordinates). */
+  inputMode?: 'text' | 'decimal' | 'numeric';
   'data-testid'?: string;
 }
 
@@ -25,6 +29,8 @@ export function EqxTextField({
   error,
   placeholder,
   disabled = false,
+  onBlur,
+  inputMode,
   'data-testid': testId,
 }: EqxTextFieldProps) {
   const hasError = error !== undefined && error !== '';
@@ -37,6 +43,8 @@ export function EqxTextField({
       helperText={hasError ? error : undefined}
       {...(placeholder === undefined ? {} : { placeholder })}
       disabled={disabled}
+      {...(onBlur === undefined ? {} : { onBlur })}
+      {...(inputMode === undefined ? {} : { inputProps: { inputMode } })}
       size="small"
       fullWidth
       data-testid={testId}

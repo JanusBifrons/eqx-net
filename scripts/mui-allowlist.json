@@ -77,7 +77,6 @@
   "src/client/layout/Drawer/tabs/DebugTab.tsx",
   "src/client/layout/Drawer/tabs/FactionLookPicker.tsx",
   "src/client/layout/Drawer/tabs/FactionsTab.tsx",
-  "src/client/layout/Drawer/tabs/GalaxyTab.tsx",
   "src/client/layout/Drawer/tabs/ProfileTab.tsx",
   "src/client/layout/Drawer/tabs/SettingsTab.tsx",
   "src/client/layout/Drawer/tabs/ShipLookTab.tsx",

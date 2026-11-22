@@ -1,8 +1,8 @@
 /**
- * The rail's page panels (UI language plan A4, drawer mapping): Galaxy
- * and Faction (Trade, Jobs and the cog are their own panels, `panels/TradePanel.tsx`,
- * `panels/JobsPanel.tsx` and `panels/CogPanel.tsx`). Each rail item opens ONLY its own pages in the one
- * right panel (`EqxPanel`); there is no tab column (owner 2026-11-22: the old
+ * The rail's page panels (UI language plan A4, drawer mapping): Faction
+ * (Galaxy, Trade, Jobs and the cog are their own panels, `panels/GalaxyPanel.tsx`,
+ * `panels/TradePanel.tsx`, `panels/JobsPanel.tsx` and `panels/CogPanel.tsx`).
+ * Each rail item opens ONLY its own pages in the one right panel (`EqxPanel`); there is no tab column (owner 2026-11-22: the old
  * drawer's sidebar is redundant next to the rail). A panel with more than one
  * page (Faction: Factions / Ship look) shows a
  * page switch at the top; `drawerTab` is the page shown.
@@ -22,7 +22,6 @@ import { Box } from '@mui/material';
 import { EQX_PANEL_SIZE, EqxPanel, EqxSegmented } from '../../../ui/index.js';
 import { useUIStore } from '../../state/store';
 import { DRAWER_TAB_PANEL, type RailId } from '../../state/rightPanel';
-import { GalaxyTab } from './tabs/GalaxyTab';
 import { FactionsTab } from './tabs/FactionsTab';
 import { ShipLookTab } from './tabs/ShipLookTab';
 
@@ -36,14 +35,13 @@ interface PageSpec {
  *  `DRAWER_TAB_PANEL` (the one mapping); the cog's pages (`profile`,
  *  `settings`, `debug`) are drawn by `panels/CogPanel.tsx`. */
 const PAGES: readonly PageSpec[] = [
-  { id: 'galaxy', label: 'Galaxy', node: <GalaxyTab /> },
   { id: 'factions', label: 'Factions', node: <FactionsTab /> },
   { id: 'look', label: 'Ship look', node: <ShipLookTab /> },
 ];
 
 /** The panel title per rail item. */
 const PANEL_TITLE: Readonly<Partial<Record<RailId, string>>> = {
-  galaxy: 'Galaxy', jobs: 'Jobs', faction: 'Faction',
+  faction: 'Faction',
 };
 
 /** The pages of each panel, in order (from `DRAWER_TAB_PANEL`). */

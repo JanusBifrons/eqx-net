@@ -113,7 +113,7 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
   await page.locator('[data-testid="right-rail-galaxy"]').click({ force: true });
   stamp('clicked rail Galaxy');
   try {
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 2_000 });
+    await expect(page.locator('[data-testid="galaxy-panel"]')).toBeVisible({ timeout: 2_000 });
     stamp('advanced-drawer visible after toggle click');
   } catch {
     stamp('toggle click did NOT open drawer; falling back to Zustand');
@@ -121,16 +121,16 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
       const win = window as unknown as StoreWindow;
       win.__eqxStore!.getState().setDrawerTab('galaxy'); // also opens the Galaxy panel
     });
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="galaxy-panel"]')).toBeVisible({ timeout: 5_000 });
     stamp('advanced-drawer visible after Zustand fallback');
   }
-  await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible({ timeout: 5_000 });
-  stamp('drawer-panel-galaxy visible');
-  await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible({ timeout: 5_000 });
-  stamp('galaxy-tab-show-map visible');
+  await expect(page.locator('[data-testid="galaxy-panel-body"]')).toBeVisible({ timeout: 5_000 });
+  stamp('galaxy-panel-body visible');
+  await expect(page.locator('[data-testid="galaxy-open-map"]')).toBeVisible({ timeout: 5_000 });
+  stamp('galaxy-open-map visible');
 
   // === 3. Click "Show galaxy map" — Phase 8 (Bug 4): opens the full-page map ===
-  await page.locator('[data-testid="galaxy-tab-show-map"]').click();
+  await page.locator('[data-testid="galaxy-open-map"]').click();
   stamp('clicked Show galaxy map');
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 5_000 });
   stamp('galaxy-map-screen visible');
