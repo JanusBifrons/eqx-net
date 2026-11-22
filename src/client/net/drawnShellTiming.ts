@@ -19,7 +19,7 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { DamageEvent, LaserFiredEvent } from '@shared-types/messages';
 import type { ShellEnd, ShellSalvo } from '@shared-types/messages/shellEvents';
-import { matchedHoldMs, type HeldDamageSink, type NavalHitHold } from './navalHitHold';
+import { matchedHoldMs, swarmReadPointMs, type HeldDamageSink, type NavalHitHold } from './navalHitHold';
 import { isSwarmDelayOffPilotActive } from './swarmInterpolation';
 import type { ShellSalvoStore } from './shellSalvoStore';
 import { isParkedHull } from '../render/shipOwnership.js';
@@ -45,6 +45,8 @@ export interface DrawnShellTimingHost {
   shellEvents(): boolean;
   /** Game-clock ms. */
   now(): number;
+  /** Wall ms on the drone pose clock (`performance.now()` in the client). */
+  wallNow(): number;
   /** Newest snapshot server tick heard of. */
   anchorTick(): number;
   killSwarmEntity(wireId: string): void;
@@ -89,6 +91,25 @@ export class DrawnShellTiming {
       && this.host.hold().maybeHold(evt, suppressNumber, this.host.store().map, this.host.now());
   }
 
+  /**
+   * A hit on a target drawn on the DRONE timeline (a swarm entity: drone,
+   * scrap, rock, wreck piece; drawn up to the off-pilot display delay in the
+   * past) waits until the drones' read point reaches the newest snapshot
+   * tick at its arrival (`NavalHitHold.holdStamped`), in every view: owner
+   * 2026-11-22, hits line up with the drawn target piloting and in
+   * Command/Build alike. A zero-damage KILLING event is held too, so
+   * `deferKill` holds the death (its FX are skipped at release). Not held:
+   * pilot hulls (mirror.ships), a target not drawn, or before the drone tick
+   * clock is seeded. Returns whether held.
+   */
+  holdDrawnHit(evt: DamageEvent, suppressNumber: boolean): boolean {
+    if (!evt.targetId.startsWith('swarm-')) return false;
+    const entityId = parseInt(evt.targetId.slice('swarm-'.length), 10);
+    if (Number.isNaN(entityId) || this.host.mirror().swarm?.has(entityId) !== true) return false;
+    return this.host.hold().holdStamped(evt, suppressNumber, this.host.anchorTick(),
+      this.host.wallNow(), this.host.now(), isSwarmDelayOffPilotActive());
+  }
+
   /** A `shell_end`: mark the shells, and match held naval hits to it. */
   onShellEnd(msg: ShellEnd): void {
     const store = this.host.store();
@@ -103,16 +124,18 @@ export class DrawnShellTiming {
     for (const e of msg.e) hold.onShellEnd(store.hitTick(e[0], e[1], e[2], e[3]), e[2], e[3], now, offPilot);
   }
 
-  /** One frame of event shells at `displayTick`: draw, burst, and release
-   *  the held hits whose burst is now drawn (or whose safety ran out), and
-   *  the deaths held for them. */
-  place(displayTick: number): void {
+  /** One frame, every frame: draw and burst the event shells at
+   *  `displayTick` (NaN: shells are not events), and release the held hits
+   *  whose burst is now drawn, whose stamp the drones' read point at wall
+   *  `frameWallMs` (the frame's pose time) has reached, or whose safety ran
+   *  out, and the deaths held for them. */
+  place(displayTick: number, frameWallMs = Number.NaN): void {
     const mirror = this.host.mirror();
     const hold = this.host.hold();
-    if (mirror.projectiles) {
+    if (mirror.projectiles && !Number.isNaN(displayTick)) {
       this.host.store().place(mirror.projectiles, displayTick, mirror.pendingShellEnds ??= []);
     }
-    if (hold.size > 0) hold.release(displayTick, this.host.now(), this.host.sink());
+    if (hold.size > 0) hold.release(displayTick, this.host.now(), this.host.sink(), swarmReadPointMs(frameWallMs));
     if (this.pending) this.release();
   }
 
@@ -123,7 +146,8 @@ export class DrawnShellTiming {
 
   /**
    * A `destroy` for `wireId` while a hit on it is still held for its drawn
-   * shell: keep it drawn alive and kill it when that hit is released.
+   * shell, or (drone timeline, `holdDrawnHit`) for the drawn drone to reach
+   * it: keep it drawn alive and kill it when that hit is released.
    * Returns whether it was deferred. Only the KILLING hit counts
    * (`holdsKill`): shells still in flight to it that did not kill it never
    * hold a death (heavy-beam take 8: a beam kill waited ~0.9 s for unrelated
@@ -132,7 +156,7 @@ export class DrawnShellTiming {
    */
   deferKill(wireId: string, vaporised: boolean): boolean {
     const hold = this.host.hold();
-    if (!this.host.shellEvents() || hold.size === 0 || !hold.holdsKill(wireId)) return false;
+    if (hold.size === 0 || !hold.holdsKill(wireId)) return false;
     if (!wireId.startsWith('swarm-')) return this.deferShipKill(wireId, vaporised);
     const entityId = parseInt(wireId.slice('swarm-'.length), 10);
     const entry = Number.isNaN(entityId) ? undefined : this.host.mirror().swarm?.get(entityId);

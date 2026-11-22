@@ -187,20 +187,23 @@ export function updateRemoteShipsMirror(ctx: MirrorPassCtx, localId: string | nu
 
 /** `updateMirror` pass: ghost bolts, drawn shells, projectile extrapolation. */
 export function updateProjectilesMirror(ctx: MirrorPassCtx, frameNowMs: number | undefined): void {
+  // Shells as events (slice 2b): draw salvo shells at the display tick
+  // (server tick estimate minus the drone delay BEFORE the stall hold,
+  // S5-6a: closed-form shells never need the hold), and
+  // burst them when the display reaches their hit. At the FRAME's own
+  // time (RAF stamp), not `gameClock.now()` (shellFrameTime.test.ts).
+  // Every frame (NaN tick without shell events): held hits on drone-timeline
+  // targets release when the drones' read point reaches them.
+  const frameWallMs = frameNowMs ?? ctx.clock.now();
+  const displayTick = ctx.shellEvents
+    ? ctx.clockAnchorServerTick
+      + (ctx.gameClock.at(frameWallMs) - ctx.clockAnchorPerfNow) / SHELL_TICK_MS
+      - shellDisplayDelayGameMs(getSwarmSteadyDisplayDelayMs(), ctx.gameClock.scale) / SHELL_TICK_MS
+    : Number.NaN;
   // Ghost projectiles — advance and write to mirror.projectiles.
   if (ctx.mirror.projectiles) {
     ctx.ghostManager.update(ctx.gameFrameMs(), ctx.mirror.projectiles);
-    // Shells as events (slice 2b): draw salvo shells at the display tick
-    // (server tick estimate minus the drone delay BEFORE the stall hold,
-    // S5-6a: closed-form shells never need the hold), and
-    // burst them when the display reaches their hit. At the FRAME's own
-    // time (RAF stamp), not `gameClock.now()` (shellFrameTime.test.ts).
-    if (ctx.shellEvents) {
-      const displayTick = ctx.clockAnchorServerTick
-        + (ctx.gameClock.at(frameNowMs ?? ctx.clock.now()) - ctx.clockAnchorPerfNow) / SHELL_TICK_MS
-        - shellDisplayDelayGameMs(getSwarmSteadyDisplayDelayMs(), ctx.gameClock.scale) / SHELL_TICK_MS;
-      ctx.placeShells(displayTick);
-    }
+    ctx.placeShells(displayTick, frameWallMs);
 
     // Authoritative projectile extrapolation. Snapshots arrive at 20 Hz, but
     // we render at RAF cadence — without per-frame integration the bolt is
