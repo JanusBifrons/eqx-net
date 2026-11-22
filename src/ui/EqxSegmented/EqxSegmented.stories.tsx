@@ -31,17 +31,23 @@ const FOUR: EqxSegmentedOption[] = [
   { id: 'bases', label: 'Bases' },
   { id: 'rocks', label: 'Rocks' },
 ];
+const ICON_TEXT: EqxSegmentedOption[] = [
+  { id: 'list', label: 'List', icon: <ListIcon /> },
+  { id: 'map', label: 'Map', icon: <MapIcon /> },
+];
 const ICONS: EqxSegmentedOption[] = [
   { id: 'list', icon: <ListIcon fontSize="small" />, tooltip: 'List' },
   { id: 'map', icon: <MapIcon fontSize="small" />, tooltip: 'Map' },
 ];
 
-function Picker({ options, disabled = false }: { options: EqxSegmentedOption[]; disabled?: boolean }) {
+function Picker({ options, disabled = false, hud = false }: { options: EqxSegmentedOption[]; disabled?: boolean; hud?: boolean }) {
   const [v, setV] = useState(options[0]?.id ?? '');
-  return <EqxSegmented options={options} value={v} onChange={setV} label="View" disabled={disabled} />;
+  return <EqxSegmented options={options} value={v} onChange={setV} label="View" disabled={disabled} hud={hud} />;
 }
 
 export const TwoText: Story = { render: () => <Picker options={TWO} /> };
 export const FourText: Story = { render: () => <Picker options={FOUR} /> };
 export const Icons: Story = { render: () => <Picker options={ICONS} /> };
 export const Disabled: Story = { render: () => <Picker options={TWO} disabled /> };
+export const IconAndText: Story = { render: () => <Picker options={ICON_TEXT} /> };
+export const Hud: Story = { render: () => <Picker options={ICON_TEXT} hud /> };

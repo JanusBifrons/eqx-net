@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Menu, MenuItem, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import { Menu, MenuItem } from '@mui/material';
 import FlightIcon from '@mui/icons-material/Flight';
 import ExploreIcon from '@mui/icons-material/Explore';
 import ConstructionIcon from '@mui/icons-material/Construction';
@@ -7,14 +7,15 @@ import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/stor
 import { getGameClient } from '../net/clientSingleton';
 import { getShipKind } from '@shared-types/shipKinds';
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient';
-import type { ControlMode } from '../state/storeTypes';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { leaveBuildMode } from '../structures/buildModeView';
 import { requestBuildSidebar } from './BuildSidebar';
+import { EqxSegmented } from '../../ui/index.js';
 
 /**
- * The ALWAYS-VISIBLE mode switch: Fly, Command, Build (three joined MUI
- * `ToggleButton`s; owner 2026-11-20: Build is a third mode, not Command).
+ * The ALWAYS-VISIBLE mode switch: Fly, Command, Build (one catalogue
+ * `EqxSegmented`, `hud` variant; owner 2026-11-20: Build is a third mode, not
+ * Command). The group carries the mode as `data-value` (fly/command/build).
  * RTS slice 10 renamed it from Pilot / Spectate: normal play starts in
  * **Command** view (free camera over your fleet, every ship AI-flown) and you
  * **Fly** a ship when you want to take the controls.
@@ -36,29 +37,6 @@ import { requestBuildSidebar } from './BuildSidebar';
  * dial. Fly or Command is the only way out of Build (`leaveBuildMode`); Fly
  * takes back the ship flown before Build, else opens the ship menu.
  */
-
-const GROUP_SX = {
-  bgcolor: 'rgba(8,12,22,0.72)',
-  borderRadius: 1,
-  '& .MuiToggleButton-root': {
-    px: { xs: 0.75, sm: 1.25 },
-    py: { xs: 0.25, sm: 0.5 },
-    fontSize: { xs: 10, sm: 12 },
-    lineHeight: 1.1,
-    color: '#9aa0b4',
-    borderColor: 'rgba(255,255,255,0.12)',
-    textTransform: 'none' as const,
-    gap: 0.5,
-  },
-  '& .MuiToggleButton-root.Mui-selected': {
-    color: '#00ff88',
-    bgcolor: 'rgba(0,255,136,0.12)',
-  },
-  '& .MuiToggleButton-root.Mui-selected:hover': {
-    bgcolor: 'rgba(0,255,136,0.18)',
-  },
-  '& .MuiSvgIcon-root': { fontSize: { xs: 14, sm: 16 }, mr: 0.4 },
-} as const;
 
 interface PilotableShip {
   shipId: string;
@@ -92,7 +70,7 @@ export function PilotSpectatorToggle(): JSX.Element | null {
   // Hidden while the sector loads: only once you are in and controllable.
   if (phase !== 'game' || !hudUp) return null;
 
-  const onChange = (_e: React.MouseEvent<HTMLElement>, next: ControlMode | null): void => {
+  const onChange = (next: string): void => {
     // 'fly' is handled by the Fly button's onClick (takes the selected ship or
     // opens the ship menu) — you never directly flip to flying, you fly a SHIP.
     if (next === 'build') {
@@ -119,7 +97,7 @@ export function PilotSpectatorToggle(): JSX.Element | null {
     if (controlMode === 'build') requestBuildSidebar();
   };
 
-  const onFlyClick = (e: React.MouseEvent<HTMLElement>): void => {
+  const onFlyClick = (button: HTMLElement): void => {
     if (controlMode === 'fly') return; // already flying → no-op (the button is the active state)
     // Leaving Build: fly the ship flown before Build, else pick one from Command.
     if (controlMode === 'build' && leaveBuildMode('fly')) return;
@@ -133,7 +111,7 @@ export function PilotSpectatorToggle(): JSX.Element | null {
       }
     }
     setShips(own);
-    setAnchorEl(e.currentTarget);
+    setAnchorEl(button);
   };
 
   const flyShip = (shipId: string): void => {
@@ -143,34 +121,18 @@ export function PilotSpectatorToggle(): JSX.Element | null {
 
   return (
     <>
-      <ToggleButtonGroup
-        exclusive
-        size="small"
+      <EqxSegmented
+        hud
         value={controlMode}
         onChange={onChange}
-        aria-label="Fly a ship, command your fleet or build"
+        label="Fly a ship, command your fleet or build"
         data-testid="pilot-spectator-toggle"
-        data-control-mode={controlMode}
-        sx={GROUP_SX}
-      >
-        <ToggleButton
-          value="fly"
-          data-testid="pilot-toggle"
-          aria-label="Fly a ship"
-          onClick={onFlyClick}
-        >
-          <FlightIcon />
-          Fly
-        </ToggleButton>
-        <ToggleButton value="command" data-testid="spectator-toggle" aria-label="Command">
-          <ExploreIcon />
-          Command
-        </ToggleButton>
-        <ToggleButton value="build" data-testid="build-toggle" aria-label="Build" onClick={onBuildClick}>
-          <ConstructionIcon />
-          Build
-        </ToggleButton>
-      </ToggleButtonGroup>
+        options={[
+          { id: 'fly', label: 'Fly', icon: <FlightIcon />, testId: 'pilot-toggle', onPress: onFlyClick },
+          { id: 'command', label: 'Command', icon: <ExploreIcon />, testId: 'spectator-toggle' },
+          { id: 'build', label: 'Build', icon: <ConstructionIcon />, testId: 'build-toggle', onPress: onBuildClick },
+        ]}
+      />
       <Menu
         anchorEl={anchorEl}
         open={anchorEl !== null}

@@ -66,4 +66,57 @@ describe('EqxSegmented', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Map' }));
     expect(onChange).not.toHaveBeenCalled();
   });
+  it('per-option testId overrides the default; the group carries data-value', () => {
+    render(
+      <EqxSegmented
+        options={[{ id: 'list', label: 'List', testId: 'list-btn' }, { id: 'map', label: 'Map' }]}
+        value='map'
+        onChange={() => {}}
+        label='View'
+        data-testid='seg'
+      />,
+    );
+    expect(screen.getByTestId('list-btn')).toBe(screen.getByRole('button', { name: 'List' }));
+    expect(screen.getByTestId('seg-map')).toBeTruthy();
+    expect(screen.getByTestId('seg').getAttribute('data-value')).toBe('map');
+  });
+
+  it('onPress fires on every press (re-clicks too) with the button, before onChange', () => {
+    const calls: string[] = [];
+    const onPress = vi.fn((el: HTMLElement) => calls.push(`press:${el.textContent ?? ''}`));
+    const onChange = vi.fn((id: string) => calls.push(`change:${id}`));
+    render(
+      <EqxSegmented
+        options={[{ id: 'list', label: 'List', onPress }, { id: 'map', label: 'Map' }]}
+        value='map'
+        onChange={onChange}
+        label='View'
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    expect(calls).toEqual(['press:List', 'change:list']);
+  });
+
+  it('onPress also fires when the pressed option is already the value', () => {
+    const onPress = vi.fn();
+    const onChange = vi.fn();
+    render(<EqxSegmented options={[{ id: 'list', label: 'List', onPress }, { id: 'map', label: 'Map' }]} value='list' onChange={onChange} label='View' />);
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('a label option may carry a leading icon; hud renders the same buttons', () => {
+    render(
+      <EqxSegmented
+        hud
+        options={[{ id: 'a', label: 'Fly', icon: <svg data-testid='ico' /> }, { id: 'b', label: 'Build' }]}
+        value='a'
+        onChange={() => {}}
+        label='Mode'
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Fly' }).contains(screen.getByTestId('ico'))).toBe(true);
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-pressed')).toBe('false');
+  });
 });
