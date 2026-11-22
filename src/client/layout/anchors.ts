@@ -18,6 +18,7 @@ export type AnchorName =
   | 'top-center'
   | 'top-right'
   | 'middle-left'
+  | 'middle-left-over'
   | 'middle-center'
   | 'middle-right'
   | 'bottom-left'
@@ -34,6 +35,7 @@ export const ANCHOR_NAMES: readonly AnchorName[] = [
   'top-center',
   'top-right',
   'middle-left',
+  'middle-left-over',
   'middle-center',
   'middle-right',
   'bottom-left',
@@ -118,6 +120,21 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     left: `max(${SAFE_LEFT}, var(--left-strip-w, 0px))`,
     transform: 'translateY(-50%)',
     zIndex: Z.hud,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: STACK_GAP,
+    pointerEvents: 'none',
+  },
+  // Same place as `middle-left`, but drawn over the left strip and rail
+  // (`Z.overStrip`): the warp spool bar must never sit under the strip
+  // (owner 2026-11-22). The strip itself is untouched.
+  'middle-left-over': {
+    position: 'fixed',
+    top: '50%',
+    left: `max(${SAFE_LEFT}, var(--left-strip-w, 0px))`,
+    transform: 'translateY(-50%)',
+    zIndex: Z.overStrip,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'flex-start',

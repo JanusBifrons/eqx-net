@@ -9,14 +9,42 @@
  * areas are covered implicitly: the slot hosts already pad for them.
  */
 import type { RadarInsets } from '../../shared-types/settings/radar.js';
+import { ANCHOR_NAMES, type AnchorName } from './anchors.js';
 
-/** Edge anchors only — the `fullscreen` / `transit` overlay hosts cover the
- *  whole screen and must never become exclusions. */
-const EDGE_ANCHORS = [
-  'top-left', 'top-center', 'top-right',
-  'middle-left', 'middle-right',
-  'bottom-left', 'bottom-center', 'bottom-right',
-] as const;
+/** Full-screen overlay hosts: they cover the whole screen and must never
+ *  become exclusions. */
+const OVERLAY_ANCHORS: ReadonlySet<AnchorName> = new Set<AnchorName>(['fullscreen', 'transit', 'rotate']);
+
+/** The right rail is a full-height band on the right edge: it insets the
+ *  radar's right track (the track runs just inside it) rather than blocking
+ *  the whole right side as an exclusion. */
+const RAIL_ANCHOR: AnchorName = 'right-rail';
+
+/** Every other anchor is HUD the radar keeps clear of — derived from
+ *  ANCHOR_NAMES so a new anchor (the left strip, CI 2026-11-22) can never be
+ *  missed by a hand-kept list. */
+const EDGE_ANCHORS: readonly AnchorName[] = ANCHOR_NAMES.filter(
+  (n) => !OVERLAY_ANCHORS.has(n) && n !== RAIL_ANCHOR,
+);
+
+function isShown(el: Element): boolean {
+  const r = el.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return false;
+  const style = getComputedStyle(el);
+  return !(style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0');
+}
+
+/** CSS px the right rail takes off the surface's right edge (0 when hidden). */
+function railInsetPx(origin: DOMRect): number {
+  const host = document.querySelector(`[data-anchor="${RAIL_ANCHOR}"]`);
+  if (!host) return 0;
+  let left = Infinity;
+  for (const child of Array.from(host.children)) {
+    if (!isShown(child)) continue;
+    left = Math.min(left, child.getBoundingClientRect().left);
+  }
+  return Number.isFinite(left) ? Math.max(0, Math.round(origin.right - left)) : 0;
+}
 
 function appBarHeightPx(): number {
   try {
@@ -39,10 +67,8 @@ export function measureRadarInsets(surface: Element): RadarInsets {
     const host = document.querySelector(`[data-anchor="${name}"]`);
     if (!host) continue;
     for (const child of Array.from(host.children)) {
+      if (!isShown(child)) continue;
       const r = child.getBoundingClientRect();
-      if (r.width < 1 || r.height < 1) continue;
-      const style = getComputedStyle(child);
-      if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') continue;
       exclusions.push({
         x: Math.round(r.left - origin.left),
         y: Math.round(r.top - origin.top),
@@ -65,7 +91,7 @@ export function measureRadarInsets(surface: Element): RadarInsets {
       h: Math.round(r.height),
     });
   }
-  return { top: Math.max(0, appBarHeightPx() - origin.top), right: 0, bottom: 0, left: 0, exclusions };
+  return { top: Math.max(0, appBarHeightPx() - origin.top), right: railInsetPx(origin), bottom: 0, left: 0, exclusions };
 }
 
 /** Change detection so the renderer (possibly a worker) is only messaged when

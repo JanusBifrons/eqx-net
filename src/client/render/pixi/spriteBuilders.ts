@@ -24,6 +24,7 @@ import {
 } from '../../../shared-types/shipKinds.js';
 import { getStructureKind, isStructureKindId, structureHullPoints } from '../../../shared-types/structureKinds.js';
 import { buildStructureVisual } from './structureVisuals.js';
+import { wreckSourceKindOf } from '../../net/wreckRootSource.js';
 
 export const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
 export const HITBOX_COLOR = 0xff0066;
@@ -192,6 +193,9 @@ const WRECK_FILL_SHADE = 0.45;
 const WRECK_STROKE_SHADE = 0.18;
 /** Outline width in world units (thin beside a several-hundred-unit piece). */
 const WRECK_STROKE_WIDTH = 2;
+/** The base colour of a piece with no ship kind (a structure's, until its
+ *  textured art lands): a neutral dead-hull steel grey, shaded like a hull's. */
+export const WRECK_NEUTRAL_BASE = 0x8c9096;
 
 function shade(c: number, k: number): number {
   const r = Math.round(((c >> 16) & 255) * k);
@@ -201,9 +205,10 @@ function shade(c: number, k: number): number {
 }
 
 /** A wreck piece's colours: its parent hull's base colour, darkened, and a
- *  darker outline. Pure. */
+ *  darker outline; a non-ship parent (a structure's wreck) takes the
+ *  neutral dead-hull grey, never a ship lookup. Pure. */
 export function wreckPieceColors(parentKindId: string): { fill: number; stroke: number } {
-  const base = shipPrimaryColor(getShipKind(parentKindId));
+  const base = wreckSourceKindOf(parentKindId) === 'ship' ? shipPrimaryColor(getShipKind(parentKindId)) : WRECK_NEUTRAL_BASE;
   return { fill: shade(base, WRECK_FILL_SHADE), stroke: shade(base, WRECK_STROKE_SHADE) };
 }
 

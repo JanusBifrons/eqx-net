@@ -37,7 +37,9 @@
 import { MAX_WRECK_CHAIN_DEPTH, rebuildWreckPieces, resolveChildWreckPieces, wreckDescriptorUsable } from '@core/destruction/wreckDescriptorGeometry';
 import type { WreckPieceGeometry } from '@core/destruction/wreckPieces';
 import { isWreckDescriptor, isWreckId, type SnapshotMessage, type WreckDescriptor, type WreckSync } from '@shared-types/messages/snapshotMessages';
-import { WRECK_ROCK_PARENT_KIND, type WreckRockRef } from '@shared-types/messages/wreckDescriptor';
+import type { WreckRockRef } from '@shared-types/messages/wreckDescriptor';
+import type { WreckSource } from '@core/destruction/wreckSource';
+import { rootSourceOf, wreckSourceKindOf } from './wreckRootSource';
 import type { ChunkOpts } from '@core/terrain/fieldLayout';
 
 // The pure descriptor → geometry resolver lives in core (shared with the
@@ -63,7 +65,7 @@ function sameInputs(a: WreckDescriptor, b: WreckDescriptor): boolean {
     && sameExtraCuts(a.extraCuts, b.extraCuts)
     && a.parentWreck === b.parentWreck && a.parentPiece === b.parentPiece
     && a.rock?.id === b.rock?.id && a.rock?.shape === b.rock?.shape && a.rock?.r === b.rock?.r
-    && a.rock?.fk === b.rock?.fk;
+    && a.rock?.fk === b.rock?.fk && a.structure?.k === b.structure?.k;
 }
 
 /** The same cut-field options in value (seed, sizes, radius, clearings). */
@@ -238,17 +240,36 @@ export class WreckGeometryStore {
     return e;
   }
 
-  /** Rock cut: the rock wreck `wreckId` (or the root it resolves to) was
-   *  cut from; undefined for a ship's wreck or an unknown one. Walks at most
-   *  `MAX_WRECK_CHAIN_DEPTH` parents; no allocation. */
-  rockOf(wreckId: number): WreckRockRef | undefined {
+  /** The ROOT descriptor wreck `wreckId` resolves to (itself for a root);
+   *  undefined for an unknown wreck, a missing ancestor or a link whose
+   *  parent kind disagrees. Walks at most `MAX_WRECK_CHAIN_DEPTH` parents;
+   *  no allocation. */
+  rootOf(wreckId: number): WreckDescriptor | undefined {
     let d = this.byId.get(wreckId)?.desc;
     for (let i = 0; d !== undefined && i <= MAX_WRECK_CHAIN_DEPTH; i++) {
-      if (d.parentKind !== WRECK_ROCK_PARENT_KIND) return undefined;
-      if (d.parentWreck === undefined) return d.rock;
-      d = this.byId.get(d.parentWreck)?.desc;
+      if (d.parentWreck === undefined) return d;
+      const p: WreckDescriptor | undefined = this.byId.get(d.parentWreck)?.desc;
+      if (p !== undefined && p.parentKind !== d.parentKind) return undefined;
+      d = p;
     }
     return undefined;
+  }
+
+  /** Rock cut: the rock wreck `wreckId` (or the root it resolves to) was
+   *  cut from; undefined for a ship's or a structure's wreck or an unknown
+   *  one. No allocation. */
+  rockOf(wreckId: number): WreckRockRef | undefined {
+    const root = this.rootOf(wreckId);
+    return root !== undefined && wreckSourceKindOf(root.parentKind) === 'rock' ? root.rock : undefined;
+  }
+
+  /** What wreck `wreckId` (or its root) was cut from: core's memoised
+   *  `WreckSource` (ship, rock or structure, via `rootSourceOf`); undefined
+   *  for an unknown wreck or one not resolvable yet (a field rock before
+   *  the room's field options). */
+  sourceOf(wreckId: number): WreckSource | undefined {
+    const root = this.rootOf(wreckId);
+    return root !== undefined ? rootSourceOf(root, this.fieldOpts) : undefined;
   }
 
   /** Is this wreck known (and rebuildable)? */

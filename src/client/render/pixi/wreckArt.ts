@@ -59,7 +59,7 @@ import { buildWreckPieceGfx, wreckPieceColors } from './spriteBuilders.js';
 import { isIconOnly } from './FarZoomIcons.js';
 import { rockPieceSpeckColor, type RockPieceArt } from './rockPieceArt.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
-import { shipPrimaryColor, shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
+import { shipPrimaryColor } from '../../../core/geometry/shipHullOutline.js';
 import type { BakeJob } from '../art/bake.js';
 import { bakedHullPaint } from '../art/liveryForge.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
@@ -76,9 +76,10 @@ export {
   simpleGlowAt, wreckGlowAt, type WreckGlow,
 } from './wreckGlowCurves.js';
 import { drawnSpan, insideWidth, lastChamferRatio, onDrawnHull, pointInRing, stripInside, writeStrip, type InsideTest } from './wreckGlowStrip.js';
-import { WRECK_ROCK_PARENT_KIND, type WreckDescriptor } from '../../../shared-types/messages/wreckDescriptor.js';
-import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
-import { DESTRUCTION_PROFILES, type DestructionFx, type DestructionProfileId, type WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
+import type { WreckDescriptor } from '../../../shared-types/messages/wreckDescriptor.js';
+import type { WreckSource } from '../../../core/destruction/wreckSource.js';
+import { wreckFrameScale, wreckProfileOf, wreckSourceKindOf } from '../../net/wreckRootSource.js';
+import { type DestructionFx, type DestructionProfileId, type WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
 
 /** Container + meshes (≤ 6 tiles) + one glow mesh (the crack strokes). */
 export const WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX = 8;
@@ -545,9 +546,22 @@ export interface WreckInfo {
   noHold: boolean;
 }
 
-/** A wreck's profile, by its parent kind (a rock's wreck: the rock profile, never a ship lookup). */
-function profileFor(desc: WreckDescriptor): { id: DestructionProfileId; fx: DestructionFx } {
-  return desc.parentKind === WRECK_ROCK_PARENT_KIND ? DESTRUCTION_PROFILES.rock : destructionProfileOf({ type: 'ship', kindId: desc.parentKind });
+/** A wreck's profile, by its SOURCE (`wreckProfileOf`: a rock's or a
+ *  structure's own profile, never a ship lookup). */
+export function profileFor(desc: WreckDescriptor): { id: DestructionProfileId; fx: DestructionFx } {
+  return wreckProfileOf(desc.parentKind);
+}
+
+/** The parent's bounding radius (world u) a piece's far-zoom LOD switches
+ *  on: its rock's, else its source's (a structure's: `source.radius`),
+ *  else its ship kind's. A structure piece with no source falls back to the
+ *  wreck's drawn extent (`info.hullR`), never a ship lookup. Pure. */
+export function wreckParentRadius(
+  parentKind: string, rockR: number | null, source: WreckSource | null, hullR: number,
+): number {
+  if (rockR !== null) return rockR;
+  if (source !== null) return source.radius;
+  return wreckSourceKindOf(parentKind) === 'ship' ? getShipKind(parentKind).radius : hullR;
 }
 
 /** One small blast on a crack: its piece, the point body-local (math-up),
@@ -920,7 +934,7 @@ export class WreckArtState {
       && prev.desc.killX === desc.killX && prev.desc.killY === desc.killY) return prev;
     const prof = profileFor(desc);
     const fx = prof.fx;
-    const s = desc.parentKind === WRECK_ROCK_PARENT_KIND ? 1 : shipShapeScale(getShipKind(desc.parentKind)); // rock pieces: scale 1
+    const s = wreckFrameScale(desc.parentKind); // rock and structure pieces: scale 1
     let hullR = 0;
     for (const p of pieces) hullR = Math.max(hullR, Math.hypot(p.cx, p.cy) + p.radius);
     const ageMs = desc.deathTick !== undefined ? Math.max(0, serverTick - desc.deathTick) * TICK_MS : Infinity;
@@ -1128,12 +1142,14 @@ export class WreckPieceSprite extends Container {
     readonly pieceIndex = 0, readonly rockArt: RockPieceArt | null = null,
     /** The far speck's colour (`wreckPieceSpeckColor` of `art`'s bake); null = the plain piece's fill. */
     private readonly speckFill: number | null = null,
+    /** What the wreck was cut from (`WreckGeometryStore.sourceOf`); null = by `parentKind`. */
+    source: WreckSource | null = null,
   ) {
     super();
     this.piece = piece;
     this.parentKind = parentKind;
-    // A rock piece's LOD switches on its parent rock's size (no ship kind).
-    this.shipRadius = rockArt !== null ? rockArt.rock.r : getShipKind(parentKind).radius;
+    // The LOD switches on the parent's size (a rock's or structure's: no ship kind).
+    this.shipRadius = wreckParentRadius(parentKind, rockArt !== null ? rockArt.rock.r : null, source, info.hullR);
     const settings = litPass.settings;
     if (rockArt !== null) this.artParts.push(this.addChild(rockArt));
     else if (art !== null && art.lit !== undefined && settings !== null) {

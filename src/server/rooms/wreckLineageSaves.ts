@@ -338,7 +338,9 @@ export class BattleWreckSaves implements ChunkSource {
 /** The fracture inputs of a root descriptor (the chain's root). */
 function rootInputs(d: WreckDescriptor): WreckFractureInputs {
   return {
-    ...(d.rock !== undefined ? { rock: d.rock } : { kindId: d.parentKind as WreckFractureInputs['kindId'] }),
+    ...(d.rock !== undefined ? { rock: d.rock }
+      : d.structure !== undefined ? { structure: d.structure }
+        : { kindId: d.parentKind as WreckFractureInputs['kindId'] }),
     seed: d.seed, killX: d.killX, killY: d.killY,
     killBlowDamage: d.killBlowDamage, recentDamageRate: d.recentDamageRate, snapChance: d.snapChance,
     ...(d.cutKind !== undefined ? { cutKind: d.cutKind } : {}),

@@ -12,7 +12,8 @@
 import { fractureHull, cutDirFromAngle, EDGE_HULL, type FractureEdgeKind, type FractureExtraCut, type FractureKillCut, type FracturePiece } from './fractureHull.js';
 import type { WreckExtraCut } from '../../shared-types/messages/wreckDescriptor.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
-import { asWreckSource, wreckSourceOf, type WreckRockSource, type WreckSource } from './wreckSource.js';
+import { asWreckSource, wreckSourceOf, type WreckRockSource, type WreckSource, type WreckStructureRef } from './wreckSource.js';
+import { fractureCapFor } from '../../shared-types/shipScale/destruction.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 
 /**
@@ -21,11 +22,15 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
  * client rebuilds the same pieces the server spawned (no vertex on the wire).
  */
 export interface WreckFractureInputs {
-  /** The dead hull's ship kind; absent for a rock's wreck (`rock`). */
+  /** The dead hull's ship kind; absent for a rock's or a structure's wreck. */
   kindId?: ShipKindId;
   /** Rock cut: the rock this wreck was cut from (its outline is the
-   *  fracture's input; `wreckSource.ts`). Exactly one of `kindId` / `rock`. */
+   *  fracture's input; `wreckSource.ts`). Exactly one of `kindId` / `rock`
+   *  / `structure`. */
   rock?: WreckRockSource;
+  /** Structure break-up: the structure this wreck was broken from (its
+   *  kind's outline is the fracture's input; `structureWreckSource`). */
+  structure?: WreckStructureRef;
   seed: number;
   /** Kill point in the hull's 1× Pixi-up frame, already on the outline. */
   killX: number;
@@ -97,20 +102,22 @@ export function wreckFractureExtraCuts(input: { cutKind?: 'slice' | 'channel'; c
 
 /** The raw fracture of a wreck (hull 1× Pixi-up frame). The source's
  *  destruction profile picks the options (a capital's are the fracture
- *  defaults); `none` leaves no pieces. A rock breaks in fixed-count mode (no
- *  damage inputs: the profile's cap is the target), like a re-split. */
-export function wreckRootFracture(input: WreckFractureInputs): FracturePiece[] {
-  const src = wreckSourceOf(input);
+ *  defaults); `none` leaves no pieces. A rock or a structure breaks in
+ *  fixed-count mode (no damage inputs: the cap is the target), like a
+ *  re-split; a profile with `pieceSide` caps by the source's area. */
+export function wreckRootFracture(input: WreckFractureInputs, source?: WreckSource): FracturePiece[] {
+  const src = source ?? wreckSourceOf(input);
   const opts = src.profile.fracture;
   if (opts === null) return [];
-  const rock = src.rock !== null;
+  // Not a ship (a rock or a structure): no damage-driven count.
+  const fixedCount = src.ship === null;
   return fractureHull({
     hull: src.outline,
     seed: input.seed >>> 0,
     killPoint: { x: input.killX, y: input.killY },
-    maxPieces: opts.maxPieces,
-    killBlowDamage: rock ? undefined : input.killBlowDamage,
-    recentDamageRate: rock ? undefined : input.recentDamageRate,
+    maxPieces: fractureCapFor(opts, src.area),
+    killBlowDamage: fixedCount ? undefined : input.killBlowDamage,
+    recentDamageRate: fixedCount ? undefined : input.recentDamageRate,
     // The descriptor's snap chance (what the server used) wins.
     snapChance: input.snapChance,
     fanCracks: opts.fanCracks,
@@ -119,6 +126,7 @@ export function wreckRootFracture(input: WreckFractureInputs): FracturePiece[] {
     chunkyMinWidthBeams: opts.chunkyMinWidthBeams,
     soundMinShare: opts.soundMinShare,
     sweepCuts: opts.sweepCuts,
+    radialCracks: opts.radialCracks,
     extraChunkChance: opts.extraChunkChance,
     jag: opts.jag,
     cutBurnMinShare: opts.cutBurnMinShare,

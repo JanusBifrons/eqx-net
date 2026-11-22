@@ -53,8 +53,11 @@ brain. The fleet vocabulary (`FleetMode`, `FleetStance`, `FleetOrder`,
   Retaliation marks keep landing (`ownedHullRetaliates`), so a switch to
   Defensive answers a recent attacker. Attach applies both,
   so a restored Hunt / Aggressive ship resumes. An Aggressive ship engages
-  anything hostile to its owner (`AiController.hostileToPlayer` =
-  `npcHostileTo`). Lock: `ownedShipsHunt.test.ts`, `wingmanFights.test.ts`
+  anything hostile to its owner (`AiController.hostileToPlayer`: a structure
+  by `relationOf(owner, structure owner)`, anything else `npcHostileTo`). Enemy
+  structures in range are on sight on EVERY stance but hold fire, Defensive
+  included (`TargetPick.seesStructures`; the room lists them with
+  `ownerFoeOnly` in `features/aiStructureTargets.ts`, drones skip those). Lock: `ownedShipsHunt.test.ts`, `wingmanFights.test.ts`
   "aggressive + hunt", `wingmanKillXp.test.ts`; hold fire: `wingmanFights.test.ts`
   "holdFire" (no target pick, never inside `spawnClearance` of the drone).
   The `rtsFleetScene` kill

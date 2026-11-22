@@ -57,6 +57,17 @@ const samples: Array<[string, unknown]> = [
   ['rock', { ...good, parentKind: 'asteroid', rock: { id: 'rock-1', shape: 7, r: 60 } }],
   ['ice rock', { ...good, parentKind: 'asteroid', rock: { id: 'rock-1', shape: 7, r: 60, res: 'ice' } }],
   ['unknown rock resource', { ...good, parentKind: 'asteroid', rock: { id: 'rock-1', shape: 7, r: 60, res: 'gold' } }],
+  // Structure break-up: a structure ref rides only a ROOT with its parentKind, never with a rock.
+  ['structure', { ...good, parentKind: 'structure', structure: { k: 'connector' } }],
+  ['structure child', { ...good, parentKind: 'structure', structure: { k: 'connector' }, parentWreck: 3, parentPiece: 0 }],
+  ['structure with rock', { ...good, parentKind: 'structure', structure: { k: 'connector' }, rock: { id: 'rock-1', shape: 7, r: 60 } }],
+  ['structure on a rock root', { ...good, parentKind: 'asteroid', structure: { k: 'connector' } }],
+  ['structure on a ship kind', { ...good, structure: { k: 'connector' } }],
+  ['unknown structure kind', { ...good, parentKind: 'structure', structure: { k: 'death_star' } }],
+  ['empty structure kind', { ...good, parentKind: 'structure', structure: { k: '' } }],
+  ['structure ref extra key', { ...good, parentKind: 'structure', structure: { k: 'connector', r: 3 } }],
+  ['structure ref not an object', { ...good, parentKind: 'structure', structure: 'connector' }],
+  ['structure child without ref', { ...good, parentKind: 'structure', parentWreck: 3, parentPiece: 1 }],
   ['null', null],
 ];
 
@@ -71,6 +82,14 @@ describe('wreck wire schemas (slice 3)', () => {
     const ice = samples.find(([n]) => n === 'ice rock')![1];
     expect(WreckDescriptorSchema.safeParse(ice).success).toBe(true);
     expect(isWreckDescriptor(ice)).toBe(true);
+  });
+
+  it('a structure ref rides only a structure root, never with a rock (structure break-up)', () => {
+    const ok = new Set(['structure', 'structure child without ref']);
+    for (const [name, v] of samples) {
+      if (!name.includes('structure')) continue;
+      expect(WreckDescriptorSchema.safeParse(v).success, name).toBe(ok.has(name));
+    }
   });
 
   it('isWreckId agrees with the removes schema', () => {

@@ -15,8 +15,10 @@ import { lineageRowKey, type TerrainRecordStore } from '../db/terrainSql.js';
 import { buildWreckPieces } from '../../core/destruction/wreckPieces.js';
 import { chunkKey } from '../../core/terrain/chunkStreamer.js';
 import { CHUNK_SIZE } from '../../core/terrain/fieldLayout.js';
-import { fieldHullUnits, parseLineageJson } from './wreckLineageStream.js';
+import { FIELD_HULL_UNITS, fieldHullUnits, lineageUnits, parseLineageJson } from './wreckLineageStream.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import { structureWreckSource, type WreckSource } from '../../core/destruction/wreckSource.js';
+import { WRECK_STRUCTURE_PARENT_KIND, WreckDescriptorSchema } from '../../shared-types/messages/wreckDescriptor.js';
 
 const LINGER = 1000;
 
@@ -71,8 +73,8 @@ function make(mem = memStore(), streaming = true) {
   });
   saves = new BattleWreckSaves(() => sys.lineageState(), mem.store, { piecePoseInto: poseInto, tractored: (id) => tractored.has(id), streaming, lingerMs: LINGER });
   let n = 0;
-  /** A battle hull of `kind` broken at (x, y), at rest (no held kick). */
-  const lay = (kind: ShipKindId, x: number, y: number): string[] => {
+  /** A battle hull of `kind` (or any wreck source) broken at (x, y), at rest (no held kick). */
+  const lay = (kind: ShipKindId | WreckSource, x: number, y: number): string[] => {
     const before = new Set(spawned.keys());
     const pose = { x, y, vx: 0, vy: 0, angle: 0.3, angvel: 0 };
     const { pieces, fracture } = buildWreckPieces({ kindId: kind, pose, killWorld: null, attackerWorld: null, seed: 7 + n++, killBlowDamage: 0.5, recentDamageRate: 0.5 });
@@ -143,6 +145,33 @@ describe('battle wrecks stream (wreck fields 0b)', () => {
     t.saves.step(NONE, 4, 3500 + LINGER);
     expect(t.live.size).toBe(0);
     expect(t.mem.rows.size).toBe(1);
+  });
+
+  it('a structure wreck: described by its kind, saved and restored at the same poses (structure break-up)', () => {
+    const t = make();
+    const ids = t.lay(structureWreckSource({ k: 'capital' }), X, Y);
+    expect(ids.length).toBeGreaterThan(1);
+    const [desc] = t.sys.descriptors();
+    expect(desc).toMatchObject({ parentKind: WRECK_STRUCTURE_PARENT_KIND, structure: { k: 'capital' } });
+    expect(desc!.rock).toBeUndefined();
+    expect(WreckDescriptorSchema.safeParse(desc).success).toBe(true);
+    const before = t.table();
+    t.saves.step(NONE, 4, 0);
+    t.saves.step(NONE, 4, LINGER);
+    expect(t.live.size, 'retired').toBe(0);
+    const rec = parseLineageJson([...t.mem.rows.values()][0]!).rec!;
+    expect(rec.nodes[0]!.desc.structure).toEqual({ k: 'capital' });
+    expect(lineageUnits(rec)).toBe(FIELD_HULL_UNITS.subcap);
+    t.saves.step(near(), 4, 2000);
+    expect(t.saves.stats.restored).toBe(1);
+    const after = t.table();
+    expect(after.size).toBe(before.size);
+    for (const [k, b] of before) {
+      const a = after.get(k)!;
+      expect(a, `piece ${k}`).toBeDefined();
+      expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeLessThan(1e-6);
+    }
+    expect(t.sys.descriptors()[0]).toMatchObject({ parentKind: WRECK_STRUCTURE_PARENT_KIND, structure: { k: 'capital' } });
   });
 
   it('a restore counts work units: a budget of one destroyer restores one per step', () => {
