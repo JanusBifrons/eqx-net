@@ -33,7 +33,6 @@ import type { WreckFractureInputs, WreckPieceGeometry } from './wreckPieceFrame.
 export type { WreckFractureInputs, WreckPieceGeometry } from './wreckPieceFrame.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { Rng, fnvMixU32 } from '../random/rng.js';
-import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
@@ -141,7 +140,9 @@ export interface WreckDeathPose {
 }
 
 export interface WreckBuildInput {
-  kindId: ShipKindId;
+  /** The dead hull's ship kind, or any wreck source (`WreckSource`: a rock,
+   *  later a structure); a kind id reads exactly as its `shipWreckSource`. */
+  kindId: ShipKindId | WreckSource;
   pose: WreckDeathPose;
   /** World point the killing blow landed (projected onto the hull). */
   killWorld: Vec2 | null;
@@ -206,14 +207,16 @@ export interface WreckBuild {
   killWorldOnHull: Vec2;
 }
 
-/** World point → the hull's 1× Pixi-up frame, projected onto the outline. */
-export function hullLocalKillPoint(kindId: ShipKindId, pose: WreckDeathPose, world: Vec2): Vec2 {
-  return projectToOutline(shipHullOutline(getShipKind(kindId)), hullLocalPoint(kindId, pose, world));
+/** World point → the source's 1× Pixi-up frame (a ship kind or any
+ *  `WreckSource`), projected onto its outline. */
+export function hullLocalKillPoint(source: ShipKindId | WreckSource, pose: WreckDeathPose, world: Vec2): Vec2 {
+  const src = asWreckSource(source);
+  return projectToOutline(src.outline, hullLocalPoint(src, pose, world));
 }
 
-/** World point → the hull's 1× Pixi-up frame, as it is (not projected). */
-function hullLocalPoint(kindId: ShipKindId, pose: WreckDeathPose, world: Vec2): Vec2 {
-  const s = shipShapeScale(getShipKind(kindId));
+/** World point → the source's 1× Pixi-up frame, as it is (not projected). */
+export function hullLocalPoint(source: ShipKindId | WreckSource, pose: WreckDeathPose, world: Vec2): Vec2 {
+  const s = asWreckSource(source).scale;
   const c = Math.cos(pose.angle);
   const sn = Math.sin(pose.angle);
   const dx = world.x - pose.x;
@@ -397,8 +400,9 @@ export function wreckBreakKicks(
 }
 
 export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
-  const kind = getShipKind(input.kindId);
-  const s = shipShapeScale(kind);
+  // A ship's numbers or any other source's (wreckSource.ts), one path.
+  const src = asWreckSource(input.kindId);
+  const s = src.scale;
   const { pose } = input;
   const c = Math.cos(pose.angle);
   const sn = Math.sin(pose.angle);
@@ -410,7 +414,7 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   };
 
   const target = input.killWorld ?? input.attackerWorld ?? { x: pose.x, y: pose.y };
-  const killLocal = hullLocalKillPoint(input.kindId, pose, target);
+  const killLocal = hullLocalKillPoint(src, pose, target);
   const killWorldOnHull = toWorld(killLocal.x, killLocal.y);
   // v13 burned gap: a wide slice's line runs through the beam's own axis, so
   // the descriptor carries the hit point as it is (the beam's axis at its
@@ -418,16 +422,17 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   // Projecting it onto the outline would slide the strip off the beam.
   const burnedGap = input.cutKind === 'slice' && input.cutAng !== undefined && input.cutW !== undefined && input.cutW > 0
     && input.killWorld !== null;
-  const cutPoint = burnedGap ? hullLocalPoint(input.kindId, pose, target) : killLocal;
+  const cutPoint = burnedGap ? hullLocalPoint(src, pose, target) : killLocal;
 
+  // A ship names its kind; any other source its rock (exactly one of them).
   const fracture: WreckFractureInputs = {
-    kindId: input.kindId,
+    ...(src.ship !== null ? { kindId: src.ship } : { rock: src.rock! }),
     seed: input.seed >>> 0,
     killX: cutPoint.x,
     killY: cutPoint.y,
     killBlowDamage: input.killBlowDamage,
     recentDamageRate: input.recentDamageRate,
-    snapChance: DESTRUCTION_PROFILES[shipTuning(kind).destruction].fracture?.snapChance ?? FRACTURE_SNAP_CHANCE,
+    snapChance: src.profile.fracture?.snapChance ?? FRACTURE_SNAP_CHANCE,
   };
   // Only a cut kill carries the cut fields (an un-cut wreck's inputs keep
   // their old shape).
@@ -437,16 +442,18 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     if (input.cutW !== undefined) fracture.cutW = input.cutW;
     if (input.extraCuts !== undefined && input.extraCuts.length > 0) fracture.extraCuts = input.extraCuts;
   }
-  const geom = wreckPieceGeometry(fracture);
+  // From the source itself (a field rock's field options never ride on its
+  // fracture inputs); a ship's is the same memoised `shipWreckSource`.
+  const geom = fracturePiecesToGeometry(src, wreckRootFracture(fracture, src));
 
   // The parting kicks: impulses against each piece's own mass
   // (`wreckBreakKicks`), harder for a more violent death.
   const harder = 0.75 + 0.5 * violence(input.killBlowDamage, input.recentDamageRate);
   // The profile's spin scale also takes the dying hull's ω the pieces inherit.
-  const hullW = pose.angvel * DESTRUCTION_PROFILES[shipTuning(kind).destruction].spinScale;
+  const hullW = pose.angvel * src.profile.spinScale;
   const n = geom.length;
   const { kvx, kvy, kw } = wreckBreakKicks(
-    input.kindId, geom, killLocal.x * s, -killLocal.y * s, harder,
+    src, geom, killLocal.x * s, -killLocal.y * s, harder,
     fnvMixU32((input.seed >>> 0) ^ 0x3ec7, 0x5),
     fracture.cutKind !== undefined ? (fracture.cutW ?? 0) * s : 0,
     burnedGap ? { px: cutPoint.x * s, py: -cutPoint.y * s, ang: input.cutAng! } : undefined,

@@ -271,7 +271,7 @@ test('after warp hides, UI is interactive — taps reach the rail Galaxy item', 
   // Step 2 — verify the drawer actually opened. If the tap was
   // intercepted by the WarpScreen slot wrapper, the drawer stays
   // closed and this times out.
-  await expect(page.locator('[data-testid="advanced-drawer"]')).toBeAttached({
+  await expect(page.locator('[data-testid="galaxy-panel"]')).toBeAttached({
     timeout: 3_000,
   });
 });

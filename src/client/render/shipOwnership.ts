@@ -51,3 +51,16 @@ export function isParkedHull(mirror: RenderMirror, key: string, entry: ShipRende
   _liveness.isActive = entry.isActive !== false;
   return isLingeringHull(_liveness);
 }
+
+/** The ship the client streams the world around (cut field, prediction-world
+ *  structures / wrecks / walls): the ship I'm flying, else (Command view,
+ *  spectate) my own parked hull, so the world stays loaded around it. Null
+ *  with neither. The ONE centre rule for distance streaming. */
+export function streamCentreShip(mirror: RenderMirror): ShipRenderState | null {
+  const localId = mirror.localPlayerId;
+  if (!localId) return null;
+  const own = mirror.ships.get(localId);
+  if (own) return own;
+  for (const s of mirror.ships.values()) if (s.ownerPlayerId === localId) return s;
+  return null;
+}

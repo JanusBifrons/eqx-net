@@ -115,6 +115,13 @@ export class TargetPick {
     this.pickOptsGuardRetaliate = { ...this.pickOptsGuard };
   }
 
+  /** An owned ship with structures in view: enemy bases are on sight on every
+   *  stance (Hold fire returns before the build), so an IDLE Defensive ship
+   *  still builds its candidates. */
+  seesStructures(view: AiWorldView): boolean {
+    return this.ownerId !== null && view.structures !== undefined && view.structures.length > 0;
+  }
+
   /** The guard leash's reach: the post's radius, retaliation out to radius + fire range. */
   setLeash(guardR: number, fireRange: number): void {
     this.pickOptsGuard.maxDistance = guardR;
@@ -168,6 +175,19 @@ export class TargetPick {
     const structs = view.structures;
     if (structs) {
       for (const s of structs) {
+        // Drones keep the raid list: an owner's-foe entry is for owned brains.
+        if (s.ownerFoeOnly === true && ownerId === null) continue;
+        let h = this.hostileTo.has(s.id);
+        if (ownerId !== null && s.owner === ownerId) h = false; // never my own base
+        const ledger = h;
+        // An enemy base (hostile to my OWNER) in range is a target on every
+        // stance but Hold fire (which never reaches the build), Defensive too.
+        if (!h && ownerId !== null && ownerFoe !== undefined) {
+          const dx = s.x - self.x;
+          const dy = s.y - self.y;
+          h = dx * dx + dy * dy <= engageR2 && ownerFoe(s.id, ownerId);
+        }
+        if (!h && s.ownerFoeOnly === true) continue;
         let c = cand[n];
         if (!c) {
           c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, ledger: false, claims: 0, hitRadius: 0 };
@@ -186,9 +206,9 @@ export class TargetPick {
         c.priority = s.id === ordered ? Math.max(s.priority, ORDERED_TARGET_PRIORITY) : s.priority;
         c.ship = false;
         c.hitRadius = Infinity; // a footprint box, not a hull: the player window
-        c.hostile = this.hostileTo.has(s.id);
-        c.ledger = c.hostile;
-        if (c.hostile) anyHostile = true;
+        c.hostile = h;
+        c.ledger = ledger;
+        if (h) anyHostile = true;
         n++;
       }
     }
