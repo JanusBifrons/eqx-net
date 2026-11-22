@@ -150,8 +150,8 @@ test('weapon-slot action is reachable and carries its slot id', async ({ browser
 // ── Build menu redesign M1 — the Build sidebar ─────────────────────────────
 
 async function openBuildSidebar(page: Page): Promise<void> {
-  await openDial(page);
-  await page.locator('[data-testid="speed-dial-build"]').click();
+  // Build mode is the only way to build (owner 2026-11-22): the switch opens it.
+  await page.locator('[data-testid="build-toggle"]').click();
   await expect(page.locator('[data-testid="build-sidebar"][data-open="1"]')).toBeVisible({ timeout: 5_000 });
 }
 
@@ -264,7 +264,7 @@ test('the FAB re-opens the dial at its main menu after a build', async ({ browse
     // The dial has no build drill any more: it always opens at the main menu.
     await openDial(page);
     await expect(page.locator('[data-testid="speed-dial-menu"]')).toBeVisible();
-    await expect(page.locator('[data-testid="speed-dial-build"]')).toBeVisible();
+    await expect(page.locator('[data-testid="speed-dial-build"]')).toHaveCount(0); // the dial no longer builds
     await expect(page.locator('[data-testid="build-capital"]')).toBeHidden();
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await expect(page.locator('[data-testid="speed-dial-menu"]')).toBeHidden();

@@ -6,7 +6,6 @@ import type { FabProps } from '@mui/material/Fab';
 import MenuIcon from '@mui/icons-material/Menu';
 import MapIcon from '@mui/icons-material/Map';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
-import ConstructionIcon from '@mui/icons-material/Construction';
 import FastForwardIcon from '@mui/icons-material/FastForward';
 import { SOLAR_SECTORS } from '../../shared-types/sectorBounds';
 import { useUIStore, useShouldRenderHud } from '../state/store';
@@ -15,7 +14,7 @@ import { type StructureKindId } from '@shared-types/structureKinds';
 import { useTouchClickActivate } from './touchClickActivate';
 import { onGameWindowOpen } from './GameWindow';
 import { FIT_OPEN_LIST_SX, useFitActionsToViewport } from './speedDialFit';
-import { BuildSidebar } from './BuildSidebar';
+import { BuildSidebar, onBuildSidebarRequest } from './BuildSidebar';
 
 /**
  * Consolidated bottom-right action menu (speed-dial UI refactor).
@@ -47,8 +46,11 @@ import { BuildSidebar } from './BuildSidebar';
  * `FabProps` (`slotProps.fab`) keeps `data-testid` / `aria-pressed` / handlers on
  * the Fab button, identical to the pre-tooltipOpen placement.
  *
- * Build menu: the Build action closes the dial and opens the Build sidebar
- * (BuildSidebar.tsx: a category rail and kind tiles). Picking a kind sets
+ * Build menu: the dial does NOT build (owner, 2026-11-22: one way to build).
+ * Build mode is the only way in: entering it opens the Build sidebar
+ * (BuildSidebar.tsx: a category rail and kind tiles), and a Build tap while
+ * already in Build reopens it after a ✕ (onBuildSidebarRequest). The dial keeps
+ * the basics only (Panels, Map, Weapon, Warp) until its own redesign. Picking a kind sets
  * `placementKind` (entering Build mode) and hides the sidebar, so it never
  * covers the ghost; Confirm keeps placing the same building (placementCancel.ts)
  * with it hidden, and Cancel (the ghost goes, Build stays) brings it back;
@@ -156,11 +158,12 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
     if (next) setActiveSlotId(next.id);
   }, [close, shipKindId, activeSlotId, setActiveSlotId]);
 
-  // Build ▸ closes the dial and opens the Build sidebar.
-  const handleBuild = useCallback(() => {
-    close();
+  // A Build tap while already in Build (the mode switch) brings the sidebar back.
+  useEffect(() => onBuildSidebarRequest(() => {
+    if (!useUIStore.getState().buildMode) return;
+    setOpen(false);
     setBuildOpen(true);
-  }, [close]);
+  }), []);
   const closeBuild = useCallback(() => setBuildOpen(false), []);
   // The open list fits the screen (sideways phone) and scrolls: speedDialFit.ts.
   const dialRef = useRef<HTMLDivElement>(null);
@@ -233,17 +236,6 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
           })}
         />,
       ] : []),
-      <SpeedDialAction
-        key="build"
-        icon={<ConstructionIcon />}
-        tooltipTitle="Build ▸"
-        tooltipOpen
-        FabProps={fab(ACTION_FAB_BASE, {
-          'data-testid': 'speed-dial-build',
-          onClick: clickActivate(handleBuild),
-          onTouchStart: touchActivate(handleBuild),
-        })}
-      />,
   ];
   // Phase 5 — the pilot↔spectator toggle MOVED OUT of the speed-dial into the
   // always-visible `PilotSpectatorToggle` (the user: it "was NOT designed to be
@@ -275,7 +267,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
       // MUI fires onClose on 'blur' / 'mouseLeave' too — e.g. when the player
       // clicks the canvas — and we IGNORE those so an incidental focus change
       // doesn't dismiss the dial. Only a deliberate FAB toggle or Escape closes
-      // it; the terminal actions (Panels/Map/Weapon/Build) close via close().
+      // it; the terminal actions (Panels/Map/Weapon/Warp) close via close().
       onClose={(_e, reason) => {
         if (reason === 'toggle') {
           if (isWithinSuppressWindow()) return;

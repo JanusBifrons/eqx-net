@@ -10,6 +10,7 @@ import { sendCommand, sendPilotShip } from '../ships/shipActionsClient';
 import type { ControlMode } from '../state/storeTypes';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { leaveBuildMode } from '../structures/buildModeView';
+import { requestBuildSidebar } from './BuildSidebar';
 
 /**
  * The ALWAYS-VISIBLE mode switch: Fly, Command, Build (three joined MUI
@@ -111,6 +112,13 @@ export function PilotSpectatorToggle(): JSX.Element | null {
     }
   };
 
+  // Already in Build: the exclusive group sends no change, so a tap here brings
+  // the Build sidebar back after a ✕ (the only way in since the dial stopped
+  // building, owner 2026-11-22).
+  const onBuildClick = (): void => {
+    if (controlMode === 'build') requestBuildSidebar();
+  };
+
   const onFlyClick = (e: React.MouseEvent<HTMLElement>): void => {
     if (controlMode === 'fly') return; // already flying → no-op (the button is the active state)
     // Leaving Build: fly the ship flown before Build, else pick one from Command.
@@ -158,7 +166,7 @@ export function PilotSpectatorToggle(): JSX.Element | null {
           <ExploreIcon />
           Command
         </ToggleButton>
-        <ToggleButton value="build" data-testid="build-toggle" aria-label="Build">
+        <ToggleButton value="build" data-testid="build-toggle" aria-label="Build" onClick={onBuildClick}>
           <ConstructionIcon />
           Build
         </ToggleButton>

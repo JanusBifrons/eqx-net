@@ -1,6 +1,6 @@
 /**
- * Build menu (build-menu redesign M1): the dial's Build action opens the Build
- * sidebar; picking a building hides it, so it never covers the ghost while it
+ * Build menu (build-menu redesign M1): entering Build mode opens the Build
+ * sidebar (the dial no longer builds, owner 2026-11-22); picking a building hides it, so it never covers the ghost while it
  * is placed (stills review 2026-11-20). Confirm KEEPS placing the same building
  * with it hidden (M3); Cancel, or a place-once kind placed, brings it back on
  * the same category for the next structure (the R2.6 repeat-build need).
@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { SpeedDialMenu } from './SpeedDialMenu.js';
+import { requestBuildSidebar } from './BuildSidebar.js';
 import { cancelPlacement, commitPlacement } from '../structures/placementCancel.js';
 
 // Confirm sends nothing here: the commit is stubbed as sent.
@@ -26,12 +27,18 @@ describe('SpeedDialMenu: the Build sidebar', () => {
     useUIStore.setState({ phase: 'galaxy-map', isDead: false, placementKind: null, buildMode: false });
   });
 
-  it('Build closes the dial and opens the sidebar; a pick hides it and keeps the category', () => {
+  it('the dial has no Build entry: one way to build (owner 2026-11-22)', () => {
+    render(<SpeedDialMenu direction="down" />);
+    fireEvent.click(screen.getByTestId('speed-dial-fab'));
+    expect(expanded()).toBe('true');
+    expect(screen.queryByTestId('speed-dial-build')).toBeNull();
+    expect(sidebarOpen()).toBe(false);
+  });
+
+  it('entering Build opens the sidebar; a pick hides it and keeps the category', () => {
     render(<SpeedDialMenu direction="down" />);
     expect(sidebarOpen()).toBe(false);
-    fireEvent.click(screen.getByTestId('speed-dial-fab'));
-    fireEvent.click(screen.getByTestId('speed-dial-build'));
-    expect(expanded()).toBe('false');
+    act(() => useUIStore.getState().setBuildMode(true));
     expect(sidebarOpen()).toBe(true);
 
     fireEvent.click(screen.getByTestId('build-cat-economy'));
@@ -78,11 +85,19 @@ describe('SpeedDialMenu: the Build sidebar', () => {
     expect(sidebarOpen()).toBe(false);
   });
 
-  it('the sidebar ✕ closes it and Build mode stays', () => {
+  it('the sidebar ✕ closes it, Build mode stays, and a Build tap brings it back', () => {
     render(<SpeedDialMenu direction="down" />);
     act(() => useUIStore.getState().setBuildMode(true));
     fireEvent.click(screen.getByTestId('build-sidebar-close'));
     expect(sidebarOpen()).toBe(false);
     expect(useUIStore.getState().buildMode).toBe(true);
+    act(() => requestBuildSidebar());
+    expect(sidebarOpen()).toBe(true);
+  });
+
+  it('a Build request outside Build mode opens nothing', () => {
+    render(<SpeedDialMenu direction="down" />);
+    act(() => requestBuildSidebar());
+    expect(sidebarOpen()).toBe(false);
   });
 });
