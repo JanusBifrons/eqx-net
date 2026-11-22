@@ -56,7 +56,7 @@ const BAY = { x: SHIP.x, y: SHIP.y - 350 };
 const BASE = [
   { kind: 'cargo_bay', ...BAY },
   { kind: 'connector', x: BAY.x - 450, y: BAY.y },
-  { kind: 'capital', x: BAY.x - 450, y: BAY.y - 350, rot: 180 }, // crane-bay pad (keepClear) faces away from the base
+  { kind: 'capital', x: BAY.x - 450, y: BAY.y - 380, rot: 180 }, // crane-bay pad (keepClear) faces away from the base
   { kind: 'refinery', x: BAY.x - 450, y: BAY.y + 330 },
 ];
 

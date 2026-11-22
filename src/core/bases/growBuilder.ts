@@ -34,6 +34,10 @@ interface Node extends GridNode {
  *  and the lines tried in order (on the row first). */
 export const BASTION_NUDGE = 150;
 const BASTION_TRIES = [0, BASTION_NUDGE, -BASTION_NUDGE] as const;
+const CONN_HALF = getStructureKind('connector').footprint.h / 2;
+/** Most centre-to-centre span, less a connector, one relay hop covers (the
+ *  spine's and `reachOut`'s step; under the 600 u link range). */
+export const RELAY_SPAN = 560;
 const linkPick = makeCableSocketPick();
 const linkPoly = new Float64Array(CABLE_CURVE_FLOATS);
 const linkBox = makeCableBox();
@@ -140,21 +144,44 @@ export class Builder {
    *  linked end → relay → hub along the row line, or `BASTION_NUDGE` above or
    *  below it when a fence post sits on the line (a connector holds one cable
    *  per socket, so the cable can no longer share a face to bend round it).
-   *  Returns the hub and its y, or null. A relay whose hub fails to place or
-   *  link on every line stays linked to the row, as before. */
+   *  The relay stands at least a `linkGap` off the row end (minimum cable
+   *  length), and a line with anything standing between relay and hub is
+   *  skipped: the cable would bend round it over the hub's faces the guns
+   *  need. Returns the hub and its y, or null. A relay whose hub fails to
+   *  place or link on every line stays linked to the row, as before. */
   bastion(end: number, relayX: number, hubX: number, y: number): { hub: number; y: number } | null {
+    const ex = this.placements[end]!.x, sx = Math.sign(relayX - ex);
+    relayX = ex + sx * Math.max(Math.abs(relayX - ex), 2 * CONN_HALF + linkGap('connector', sx, 0));
+    const lx0 = Math.min(relayX, hubX) + CONN_HALF, lx1 = Math.max(relayX, hubX) - CONN_HALF;
     for (const dy of BASTION_TRIES) {
-      const relay = this.tryPlace({ kind: 'connector', x: relayX, y: y + dy });
+      const ly = y + dy;
+      if (this.placed.some((q) => q.x + q.halfW > lx0 && q.x - q.halfW < lx1 && Math.abs(q.y - ly) < q.halfH + CONN_HALF)) continue;
+      const relay = this.tryPlace({ kind: 'connector', x: relayX, y: ly });
       if (relay < 0) continue;
       if (!this.tryLink(end, relay)) { this.undoLast(); continue; }
-      const hub = this.tryPlace({ kind: 'connector', x: hubX, y: y + dy });
-      if (hub >= 0 && this.tryLink(relay, hub)) return { hub, y: y + dy };
+      const hub = this.tryPlace({ kind: 'connector', x: hubX, y: ly });
+      if (hub >= 0 && this.tryLink(relay, hub)) return { hub, y: ly };
       if (hub >= 0) this.undoLast();
       if (dy === BASTION_TRIES[BASTION_TRIES.length - 1]) return null;
       this.unlinkLast();
       this.undoLast();
     }
     return null;
+  }
+
+  /** A straight run of connectors `span` out from `from` along +y, in hops
+   *  of at most `RELAY_SPAN` (a span past the link range gets relays).
+   *  Returns the last connector, or -1 with everything it placed taken back. */
+  reachOut(from: number, span: number): number {
+    const { x, y } = this.placements[from]!;
+    const n0 = this.placements.length, e0 = this.edges.length;
+    const hops = Math.max(1, Math.ceil((span - 2 * CONN_HALF) / RELAY_SPAN));
+    let prev = from;
+    for (let k = 1; k <= hops && prev >= 0; k++) prev = this.placeLinked({ kind: 'connector', x, y: y + (span * k) / hops }, prev);
+    if (prev >= 0) return prev;
+    while (this.edges.length > e0) this.unlinkLast();
+    while (this.placements.length > n0) this.undoLast();
+    return -1;
   }
 }
 
@@ -172,10 +199,9 @@ function facesAwayFrom(dx: number, dy: number): number {
 const linkGaps = new Map<string, number>();
 /** The smallest box gap (from `minGap`, in steps of 2) at which `kind`,
  *  turned `rot`, set square off a lone connector in direction (`dx`, `dy`),
- *  links it under the real `canConnect`: stud to stud at least
- *  `MIN_CABLE_LENGTH` ("keep buildings apart"). Studs square on to the
- *  connector need more gap than a kind whose nearest studs sit off-centre.
- *  The connector holds one cable per socket, so the probe leaves free only
+ *  links it under the real `canConnect`: at least `MIN_CABLE_LENGTH` apart,
+ *  box edge to box edge ("keep buildings apart", one clear cable section
+ *  between them), and a facing socket pair whose cable is clear. The connector holds one cable per socket, so the probe leaves free only
  *  its faces turned most toward the leaf: a row's own links may hold the
  *  others. Cached per kind, direction and turn (seed-time only). */
 export function linkGap(kind: StructureKindId, dx: number, dy: number, rot = 0, minGap = 20): number {

@@ -61,14 +61,14 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     const internals = harness.getServerRoom()!._internals;
 
     // Idle drone parked in range of the turret-to-be.
-    expect(internals.spawnTestDrone('mob-1', -130, 900)).toBe(true);
+    expect(internals.spawnTestDrone('mob-1', -170, 900)).toBe(true);
 
     await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
     // WS-5: leaves route via a Connector relay. Diagonal offset (120,120) so its
     // LOS clears the Capital to BOTH the close +x solar and the +y turret.
-    await placeAndWait(harness, room, 'connector', 0, 350);
+    await placeAndWait(harness, room, 'connector', 0, 380);
     const sol = await placeAndWait(harness, room, 'solar', 700, 420); // offsets turret draw
-    const turret = await placeAndWait(harness, room, 'turret', -130, 400);
+    const turret = await placeAndWait(harness, room, 'turret', -170, 400);
     for (let i = 0; i < 120; i++) internals.pulseStructureGrid();
     expect(internals.structureRegistry.get(sol)!.isConstructed).toBe(true);
     expect(internals.structureRegistry.get(turret)!.isConstructed).toBe(true);
@@ -95,12 +95,12 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     const serverRoom = harness.getServerRoom()!;
     const internals = serverRoom._internals;
     const priv = serverRoom as unknown as RoomShotPrivates;
-    internals.spawnTestDrone('mob-bolt', -130, 900);
+    internals.spawnTestDrone('mob-bolt', -180, 900);
 
     await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
-    await placeAndWait(harness, room, 'connector', 0, 350);
+    await placeAndWait(harness, room, 'connector', 0, 380);
     await placeAndWait(harness, room, 'solar', 700, 420);
-    const bolt = await placeAndWait(harness, room, 'laser_bolt_turret', -130, 400);
+    const bolt = await placeAndWait(harness, room, 'laser_bolt_turret', -180, 400);
     for (let i = 0; i < 150; i++) internals.pulseStructureGrid();
     expect(internals.structureRegistry.get(bolt)!.isConstructed).toBe(true);
 
@@ -122,16 +122,16 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     const serverRoom = harness.getServerRoom()!;
     const internals = serverRoom._internals;
     const priv = serverRoom as unknown as RoomShotPrivates;
-    internals.spawnTestDrone('mob-msl', -140, 920);
+    internals.spawnTestDrone('mob-msl', -200, 920);
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
-    await placeAndWait(harness, room, 'connector', 0, 350);
+    await placeAndWait(harness, room, 'connector', 0, 380);
     await placeAndWait(harness, room, 'solar', 700, 420);
     // Extra power (missile draws 30), WEST of the Capital: at (0,600) it sat on the
     // turret's line to the drone, and a turret holds fire over its own structure
     // (NPC line of fire, friendly fire slice 2).
     await placeAndWait(harness, room, 'solar', -700, 0);
-    const mt = await placeAndWait(harness, room, 'missile_turret', -140, 420);
+    const mt = await placeAndWait(harness, room, 'missile_turret', -200, 420);
     for (let i = 0; i < 250; i++) internals.pulseStructureGrid();
     expect(internals.structureRegistry.get(mt)!.isConstructed).toBe(true);
     // P2d — missiles spend munitions: stock the Capital with one unit.
@@ -156,12 +156,12 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     const serverRoom = harness.getServerRoom()!;
     const internals = serverRoom._internals;
     const priv = serverRoom as unknown as RoomShotPrivates;
-    internals.spawnTestDrone('mob-msl2', -140, 920);
+    internals.spawnTestDrone('mob-msl2', -200, 920);
     const cap = await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
-    await placeAndWait(harness, room, 'connector', 0, 350);
+    await placeAndWait(harness, room, 'connector', 0, 380);
     await placeAndWait(harness, room, 'solar', 700, 420);
     await placeAndWait(harness, room, 'solar', -700, 0); // off the line (see above)
-    const mt = await placeAndWait(harness, room, 'missile_turret', -140, 420);
+    const mt = await placeAndWait(harness, room, 'missile_turret', -200, 420);
     for (let i = 0; i < 250; i++) internals.pulseStructureGrid();
     internals.structureRegistry.get(cap)!.hold = { goods: {}, blueprints: [] };
     const before = priv.missileSim.size();
@@ -189,9 +189,9 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     // WS-5: relay offset on +x so its LOS clears the Capital to BOTH the +y
     // turret and the −y miner (both on the y-axis, opposite the Capital).
     await placeAndWait(harness, room, 'connector', 400, 0);
-    const turret = await placeAndWait(harness, room, 'turret', 400, 140);
+    const turret = await placeAndWait(harness, room, 'turret', 400, 175);
     // A miner far enough not to overlap, to push the grid negative.
-    const miner = await placeAndWait(harness, room, 'miner', 420, -200); // a link gap clear of the relay
+    const miner = await placeAndWait(harness, room, 'miner', 420, -220); // a link gap clear of the relay
     for (let i = 0; i < 400; i++) internals.pulseStructureGrid();
     expect(internals.structureRegistry.get(turret)!.isConstructed).toBe(true);
     expect(internals.structureRegistry.get(miner)!.isConstructed).toBe(true);

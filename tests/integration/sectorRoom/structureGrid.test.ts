@@ -148,8 +148,8 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const internals = harness.getServerRoom()!._internals;
 
     await placeAndWait(harness, room, 'capital', 0, 0, 180); // crane bay pad south, clear of the +y relay
-    await placeAndWait(harness, room, 'connector', 0, 350); // WS-5: battery routes via a relay // phase V footprints
-    const bat = await placeAndWait(harness, room, 'battery', 150, 420);
+    await placeAndWait(harness, room, 'connector', 0, 380); // WS-5: battery routes via a relay // phase V footprints
+    const bat = await placeAndWait(harness, room, 'battery', 200, 420);
     const batE = eid(harness, bat);
 
     // Blueprint first: the field is present (battery kind) but empty.

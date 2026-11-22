@@ -9,7 +9,7 @@
  * lands on the wall, not the drone.
  *
  * Layout (the shieldFence.test layout + a turret): Capital (0,0) → Connector
- * (400,0) → pylons (520,0) and (520,500) forming a wall along x = 520; a
+ * (400,0) → pylons (560,0) and (560,500) forming a wall along x = 560; a
  * Turret at (400,250) west of the wall; the drone at (900,250) east of it.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -29,14 +29,14 @@ describe('SectorRoom integration — turret fire vs its own fence', () => {
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0, rot: 180 }, // crane bay pad south, clear of the +y relay
         { kind: 'connector', x: 400, y: 0 },
-        { kind: 'shield_pylon', x: 520, y: 0 },
-        { kind: 'shield_pylon', x: 520, y: 500 },
+        { kind: 'shield_pylon', x: 560, y: 0 },
+        { kind: 'shield_pylon', x: 560, y: 500 },
         { kind, x: 400, y: 250 },
-        { kind: 'solar', x: -200, y: 600 }, // 700×300: its near edge (y 450) clears the relay at y 330
-        { kind: 'connector', x: -200, y: 330 },
+        { kind: 'solar', x: -200, y: 630 }, // 700×300: its near edge (y 480) a cable length past the relay at y 380
+        { kind: 'connector', x: -200, y: 380 },
         // A charged battery so a missile is absorbed, not an overload stun
         // (a stunned wall is open by design).
-        { kind: 'battery', x: -480, y: 330 },
+        { kind: 'battery', x: -480, y: 380 },
       ],
       defaultSpawnX: -2500,
       defaultSpawnY: 0,

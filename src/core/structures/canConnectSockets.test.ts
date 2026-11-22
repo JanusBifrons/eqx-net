@@ -234,9 +234,12 @@ describe('one cable per stud on a socket-bound building (owner rule)', () => {
     const ghost = real('__ghost__', 'connector', 400, -150);
     expect(canConnect(ghost, bat, adj, map(bat, c1, ghost), undefined, pick).ok).toBe(true);
     const server = [pick.a, pick.b];
-    // The preview: link stand-ins with no sockets, the used studs on the node.
+    // The preview: link stand-ins (the client's pooled `previewConn` shape:
+    // ends + each end's stud), the used studs on the node.
+    const real0 = adj.get('bat')![0]!;
     const stand = (aId: string, bId: string): Connection => ({
       aId, bId, getOtherNode: (id: string) => (id === aId ? bId : id === bId ? aId : null),
+      socketAt: (id: string) => real0.socketAt(id),
     }) as unknown as Connection;
     const previewAdj = new Map<string, Connection[]>([['bat', [stand('bat', 'c1')]], ['c1', [stand('c1', 'bat')]]]);
     const selfSocks = adj.get('bat')!.map((c) => c.socketAt('bat'));

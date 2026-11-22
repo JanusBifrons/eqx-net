@@ -183,7 +183,7 @@ export interface RendererFeedback {
   placementPreviewConnectionCount: number;
   /**
    * How many of the placement ghost's candidate links the same preview pass
-   * refused as `'too-short'` (stud to stud under `MIN_CABLE_LENGTH`). With no
+   * refused as `'too-short'` (boxes under `MIN_CABLE_LENGTH` apart, edge to edge). With no
    * link forming, the main thread shows "Can't connect: too close" under the
    * ghost (`placementLinkHint.ts`). `0` with no preview.
    */

@@ -344,8 +344,8 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
 
   it('charges from a powered grid surplus and caps at capacity', () => {
     h.placement.place(OWNER, 'capital', 0, 0)!; // pre-built, +50 surplus
-    relayConnectorRaw(h, 0, 350); // WS-5: battery routes to the Capital via a Connector
-    const bat = h.placeRaw(OWNER, 'battery', 150, 420)!;
+    relayConnectorRaw(h, 0, 380); // WS-5: battery routes to the Capital via a Connector
+    const bat = h.placeRaw(OWNER, 'battery', 200, 420)!;
     build(bat, 'battery');
     expect(h.registry.get(bat)!.storedPower).toBe(0);
 
@@ -360,9 +360,9 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
     // An asteroid in range: the miner DRILLS (active power, full 60 draw).
     h = makeHarness({ entityId: 9, x: -500, y: 700 });
     h.placement.place(OWNER, 'capital', 0, 0)!; // +50
-    relayConnectorRaw(h, 0, 350); // WS-5: battery + miner route via this Connector, beside each other above the Capital
-    const bat = h.placeRaw(OWNER, 'battery', 150, 420)!;
-    const miner = h.placeRaw(OWNER, 'miner', -180, 420)!; // -60 once built
+    relayConnectorRaw(h, 0, 380); // WS-5: battery + miner route via this Connector, beside each other above the Capital
+    const bat = h.placeRaw(OWNER, 'battery', 200, 420)!;
+    const miner = h.placeRaw(OWNER, 'miner', -220, 420)!; // -60 once built
     build(bat, 'battery');
     // Charge while the miner is still a blueprint (contributes 0): +50/pulse.
     for (let i = 0; i < 6; i++) h.pulse();
@@ -405,7 +405,7 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
   // Bank (powerStorageCapacity 3000) never charged, discharged or backed a fence.
   it('a Battery Bank charges past a single battery cap, using its own capacity', () => {
     h.placement.place(OWNER, 'capital', 0, 0)!; // +50 surplus
-    relayConnectorRaw(h, 0, 350);
+    relayConnectorRaw(h, 0, 380);
     const bank = h.placeRaw(OWNER, 'battery_bank', 450, 750)!;
     expect(bank).toBeTruthy();
     build(bank, 'battery_bank');
@@ -419,9 +419,9 @@ describe('StructureGridSubsystem — batteries (full power buffer)', () => {
   it('a Battery Bank covers a deficit and backs the fence buffer', () => {
     h = makeHarness({ entityId: 9, x: -500, y: 700 });
     h.placement.place(OWNER, 'capital', 0, 0)!; // +50
-    relayConnectorRaw(h, 0, 350);
+    relayConnectorRaw(h, 0, 380);
     const bank = h.placeRaw(OWNER, 'battery_bank', 450, 750)!;
-    const miner = h.placeRaw(OWNER, 'miner', -180, 420)!; // -60 once drilling
+    const miner = h.placeRaw(OWNER, 'miner', -220, 420)!; // -60 once drilling
     build(bank, 'battery_bank');
     h.pulse();
     h.registry.get(bank)!.storedPower = 1000;
@@ -488,7 +488,7 @@ describe('StructureGridSubsystem — reconnect sweep (playtest 2026-06-10 Issue 
     // immediately, which is the more direct fix for the 2026-06-10 Issue-2
     // "I placed a relay near my panels but they don't light up" complaint.)
     const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
-    const con = h.placeRaw(OWNER, 'connector', 0, 350)!;
+    const con = h.placeRaw(OWNER, 'connector', 0, 380)!;
     expect(h.registry.hasConnection(con, cap), 'connector links to the capital').toBe(true);
     expect(h.registry.hasConnection(s1, con)).toBe(true);
     expect(h.registry.hasConnection(s2, con)).toBe(true);
@@ -685,10 +685,10 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     // Asteroid at (250,0), within the miner's miningRange.
     const h = makeHarness({ entityId: 7, x: -500, y: 700 });
     h.placement.place(OWNER, 'capital', 0, 0);
-    relayConnectorRaw(h, 0, 350); // WS-5: solar + miner route to the Capital via a Connector
+    relayConnectorRaw(h, 0, 380); // WS-5: solar + miner route to the Capital via a Connector
     // Solar to offset the miner's power draw (miner consumes 60; cap 50 + solar 120 = 170).
     const sol = h.placeRaw(OWNER, 'solar', 450, 500)!;
-    const miner = h.placeRaw(OWNER, 'miner', -180, 420)!;
+    const miner = h.placeRaw(OWNER, 'miner', -220, 420)!;
     const capRec = [...h.registry.all()].find((r) => r.kind === 'capital')!;
 
     // Build solar + miner.
@@ -707,8 +707,8 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     // Asteroid in range, but no solar → miner draws the grid negative.
     const h = makeHarness({ entityId: 9, x: -500, y: 700 });
     h.placement.place(OWNER, 'capital', 0, 0);
-    relayConnectorRaw(h, 0, 350); // WS-5: miner routes to the Capital via a Connector (still draws the grid negative → unpowered)
-    const miner = h.placeRaw(OWNER, 'miner', -180, 420)!;
+    relayConnectorRaw(h, 0, 380); // WS-5: miner routes to the Capital via a Connector (still draws the grid negative → unpowered)
+    const miner = h.placeRaw(OWNER, 'miner', -220, 420)!;
     // Build the miner (construction itself isn't power-gated).
     for (let i = 0; i < 400; i++) h.pulse();
     const minerRec = h.registry.get(miner)!;
@@ -728,9 +728,9 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     // Asteroid in range with a finite pool; capital(+50)+solar(+120)−miner(60) = +110 → powered.
     const h = makeHarness({ entityId: 7, x: -500, y: 700, resources: POOL });
     h.placement.place(OWNER, 'capital', 0, 0);
-    relayConnectorRaw(h, 0, 350); // WS-5: solar + miner route to the Capital via a Connector
+    relayConnectorRaw(h, 0, 380); // WS-5: solar + miner route to the Capital via a Connector
     const sol = h.placeRaw(OWNER, 'solar', 450, 500)!;
-    const miner = h.placeRaw(OWNER, 'miner', -180, 420)!;
+    const miner = h.placeRaw(OWNER, 'miner', -220, 420)!;
     // Force solar + miner BUILT (skip the slow construction pulses) so mining
     // starts on a known pulse — otherwise the build-loop tail would mine the
     // small pool before we can observe the draw-down.
@@ -761,9 +761,9 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
   it('WS-4/R2.27 Phase 2: a built+powered miner broadcasts a mining beam (mountId drill) on the cadence; targetless does NOT', () => {
     const h = makeHarness({ entityId: 7, x: -500, y: 700, resources: 1_000_000 }); // plenty of ore
     h.placement.place(OWNER, 'capital', 0, 0);
-    relayConnectorRaw(h, 0, 350); // WS-5: solar + miner route to the Capital via a Connector
+    relayConnectorRaw(h, 0, 380); // WS-5: solar + miner route to the Capital via a Connector
     const sol = h.placeRaw(OWNER, 'solar', 450, 500)!;
-    const miner = h.placeRaw(OWNER, 'miner', -180, 420)!;
+    const miner = h.placeRaw(OWNER, 'miner', -220, 420)!;
     // Force solar + miner built (capital+50 + solar+120 − miner 60 = +110 → powered).
     for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
       const r = h.registry.get(id)!;
@@ -805,9 +805,9 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
   it('WS-4/R2.27 Phase 2: the mining-beam endpoint is the CACHED rock pose — it does NOT re-scan the live asteroid (beam stays pinned as rocks drift)', () => {
     const h = makeHarness({ entityId: 7, x: -500, y: 700, resources: 1_000_000 });
     h.placement.place(OWNER, 'capital', 0, 0);
-    relayConnectorRaw(h, 0, 350); // WS-5: solar + miner route to the Capital via a Connector
+    relayConnectorRaw(h, 0, 380); // WS-5: solar + miner route to the Capital via a Connector
     const sol = h.placeRaw(OWNER, 'solar', 450, 500)!;
-    const miner = h.placeRaw(OWNER, 'miner', -180, 420)!;
+    const miner = h.placeRaw(OWNER, 'miner', -220, 420)!;
     for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
       const r = h.registry.get(id)!;
       r.isConstructed = true;
@@ -864,9 +864,9 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     h.placement.place(OWNER, 'capital', 0, 0);
     // Diagonal offset (120,120) so the relay clears the Capital's LOS to BOTH
     // the close +x solar (150,0) and the +y turret (0,200).
-    relayConnectorRaw(h, 0, 350);
+    relayConnectorRaw(h, 0, 380);
     const sol = h.placeRaw(OWNER, 'solar', 450, 500)!; // offsets turret draw (15)
-    const turret = h.placeRaw(OWNER, 'turret', -130, 400)!;
+    const turret = h.placeRaw(OWNER, 'turret', -170, 420)!;
     for (let i = 0; i < 120; i++) h.pulse();
     expect(h.registry.get(sol)!.isConstructed).toBe(true);
     expect(h.registry.get(turret)!.isConstructed).toBe(true);
@@ -901,9 +901,9 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     const drone = { id: 'swarm-5', entityId: 5, x: -130, y: 900 };
     const h = makeHarness(undefined, drone);
     h.placement.place(OWNER, 'capital', 0, 0);
-    relayConnectorRaw(h, 0, 350);
+    relayConnectorRaw(h, 0, 380);
     h.placeRaw(OWNER, 'solar', 450, 500);
-    const turret = h.placeRaw(OWNER, 'turret', -130, 400)!;
+    const turret = h.placeRaw(OWNER, 'turret', -170, 420)!;
     for (let i = 0; i < 120; i++) h.pulse();
     const rec = h.registry.get(turret)!;
     expect(rec.isConstructed).toBe(true);
@@ -953,11 +953,11 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     h.placement.place(OWNER, 'capital', 0, 0);
     // WS-5: turret + miner route via a Connector offset on +x (so it clears the
     // Capital's LOS to both the +y turret and the −y miner).
-    relayConnectorRaw(h, 0, 350);
-    const turret = h.placeRaw(OWNER, 'turret', -130, 400)!;
+    relayConnectorRaw(h, 0, 380);
+    const turret = h.placeRaw(OWNER, 'turret', -170, 420)!;
     // No solar: but turret only draws 15; capital 50 − 15 = 35 ≥ 0 → powered.
     // Add a heavy consumer to push the grid negative.
-    const m1 = h.placeRaw(OWNER, 'miner', 200, 420)!; // consumes 60
+    const m1 = h.placeRaw(OWNER, 'miner', 220, 420)!; // consumes 60
     for (let i = 0; i < 400; i++) h.pulse();
     expect(h.registry.get(turret)!.isConstructed).toBe(true);
     expect(h.registry.get(m1)!.isConstructed).toBe(true);
@@ -973,7 +973,7 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     const h = makeHarness(); // no drone
     h.placement.place(OWNER, 'capital', 0, 0);
     relayConnector(h); // WS-5: turret routes to the Capital via a Connector
-    const turret = h.placeRaw(OWNER, 'turret', -130, 400)!;
+    const turret = h.placeRaw(OWNER, 'turret', -170, 420)!;
     for (let i = 0; i < 120; i++) h.pulse();
     expect(h.registry.get(turret)!.isConstructed).toBe(true);
     h.grid.tickTurrets(10_000);
@@ -982,12 +982,12 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
 
   it('a Bolt Turret fires a dodgeable PROJECTILE on its fireRateMs cadence — no stutter (WS-8 §C)', () => {
     // Drone straight +y of the turret so the bolt velocity is a clean (0, +speed).
-    const drone = { id: 'swarm-7', entityId: 7, x: -140, y: 900 };
+    const drone = { id: 'swarm-7', entityId: 7, x: -210, y: 900 };
     const h = makeHarness(undefined, drone);
     h.placement.place(OWNER, 'capital', 0, 0);
-    relayConnectorRaw(h, 0, 350);
+    relayConnectorRaw(h, 0, 380);
     h.placeRaw(OWNER, 'solar', 450, 500); // power the grid
-    const bolt = h.placeRaw(OWNER, 'laser_bolt_turret', -140, 400)!;
+    const bolt = h.placeRaw(OWNER, 'laser_bolt_turret', -210, 420)!;
     for (let i = 0; i < 120; i++) h.pulse();
     expect(h.registry.get(bolt)!.isConstructed).toBe(true);
 

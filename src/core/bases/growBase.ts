@@ -27,7 +27,8 @@ import { RECIPES, packRecipeFor, recipesFor, type RecipeId } from '../../shared-
 import { BASE_PRICES } from '../../shared-types/economy.js';
 import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
 import { keepClearBox } from '../structures/placementRules.js';
-import { Builder, leafReach, linkGap, tallestFrom, upDownGunReach, type GrownPlacement } from './growBuilder.js';
+import { MIN_CABLE_LENGTH } from '../structures/structureGridConstants.js';
+import { Builder, leafReach, linkGap, RELAY_SPAN, tallestFrom, upDownGunReach, type GrownPlacement } from './growBuilder.js';
 import { powerShareCost } from './powerShareCost.js';
 import { roleUnits, type Want } from './roleUnits.js';
 import { seededRandom, type BaseProfile, type BaseTier } from './baseProfile.js';
@@ -61,8 +62,9 @@ export type { GrownPlacement } from './growBuilder.js';
  *  18→19: restyle sizes (Solar 700×300, Reactor/Bank 600×600); power per unit of draw; row gaps fit the leaves facing in.
  *  19→20: landing pads solid to cables, no socket on their side: the spine detours round the Capital's pad up column 1; an unlinkable connector is taken back.
  *  20→21 (restyle F2): wider gate (416), airlock (392) and pylons (120×120); fence pylons 660 apart, each half-side spaced to the gate end (no pylon on a gate).
- *  21→22: one cable per connector socket (max 6): leaf gaps fit the face turned at the leaf; a bastion steps off a fence post on its line. */
-export const BASE_GROWTH_VERSION = 22;
+ *  21→22: one cable per connector socket (max 6): leaf gaps fit the face turned at the leaf; a bastion steps off a fence post on its line.
+ *  22→23: cables a body width apart (fan-outs too), min cable 67 u box edge to edge; relays a cable length clear. */
+export const BASE_GROWTH_VERSION = 23;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -389,9 +391,10 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
       if (prev < 0) return false;
       const prevY = rowY.get(from)!;
       const span = Math.abs(y - prevY);
-      const relays = Math.max(0, Math.ceil((span - 2 * CONN_HALF) / 560) - 1);
+      const relays = Math.max(0, Math.ceil((span - 2 * CONN_HALF) / RELAY_SPAN) - 1);
       for (let r = 1; r <= relays; r++) {
-        let ry = prevY + Math.sign(j) * (span * r) / (relays + 1);
+        const at = B.placed[prev]!; // and at least a cable length (edge to edge) past the last link's box
+        let ry = at.y + Math.sign(j) * Math.max(Math.abs(prevY + Math.sign(j) * (span * r) / (relays + 1) - at.y), at.halfH + CONN_HALF + MIN_CABLE_LENGTH);
         // A keep-clear pad on the spine (the Capital's crane bay, out from
         // its +y side): the relay moves out past the pad's far side.
         for (const q of B.placed) {
@@ -477,9 +480,9 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     rowOrder.push(top);
     const spine = spineAt.get(top)!;
     const fp = getStructureKind(w.kind).footprint;
-    // Its own short spine extension, then the huge kind beyond it.
-    const ext = B.tryPlace({ kind: 'connector', x: 0, y: B.placements[spine]!.y + reach });
-    if (ext < 0 || !B.tryLink(spine, ext)) continue;
+    // Its own short spine extension (relays past the link range), then the huge kind beyond it.
+    const ext = B.reachOut(spine, reach);
+    if (ext < 0) continue;
     const p: GrownPlacement = { kind: w.kind, x: 0, y: B.placements[ext]!.y + CONN_HALF + linkGap(w.kind, 0, 1) + fp.h / 2 };
     if (w.recipe) p.recipe = w.recipe;
     const li = B.tryPlace(p);

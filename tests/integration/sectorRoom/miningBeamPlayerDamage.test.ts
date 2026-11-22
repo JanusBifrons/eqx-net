@@ -4,7 +4,7 @@
  * into an active Miner's beam takes light damage through the real
  * structure-grid → tickMiners → damagePlayersInMiningBeam → applyDamage path.
  *
- * Geometry: a pre-built powered grid (capital@0,0 + relay@0,350 + solar@250,400 + miner@-180,420)
+ * Geometry: a pre-built powered grid (capital@0,0 + relay@0,380 + solar@250,400 + miner@-220,420)
  * mines a rock@-750,420, so the mining beam runs along y=420 from the miner to the
  * rock. A player parked at (-500,420) sits squarely in that beam.
  *
@@ -21,7 +21,7 @@ import { tuningFor } from '../../../src/shared-types/shipScale/lookup.js';
 
 // On the beam line, clear of the miner box by the fighter's spawn clearance
 // (which grows with the ship scale), so the join doesn't nudge it off the line.
-const BEAM_SPAWN_X = -180 - structureHalfExtents('miner').hw - tuningFor('fighter').spawnClearance - 10;
+const BEAM_SPAWN_X = -220 - structureHalfExtents('miner').hw - tuningFor('fighter').spawnClearance - 10;
 import type { SectorState, ShipState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
@@ -45,10 +45,10 @@ describe('SectorRoom integration — mining beam player hazard (WS-4 Phase 3 / R
         // unaffected by the relay.
         // Phase V footprints: relay above the Capital, solar right of it, miner
         // left of it; the rock sits along the miner's row so the beam runs
-        // along y = 420 from x = -180 to -750.
-        { kind: 'connector', x: 0, y: 350 },
+        // along y = 420 from x = -220 to -750.
+        { kind: 'connector', x: 0, y: 380 },
         { kind: 'solar', x: 700, y: 420 }, // 700×300: clear of the relay and Capital
-        { kind: 'miner', x: -180, y: 420 },
+        { kind: 'miner', x: -220, y: 420 },
       ],
       scenarioAsteroids: [{ x: -750, y: 420, radius: 30 }],
     });
@@ -64,7 +64,7 @@ describe('SectorRoom integration — mining beam player hazard (WS-4 Phase 3 / R
 
   it('a player parked in an active mining beam takes light damage', async () => {
     const pid = randomUUID();
-    // Spawn the player ON the miner→rock beam line (y=420, between -180 and -750).
+    // Spawn the player ON the miner→rock beam line (y=420, between -220 and -750).
     const cr = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: BEAM_SPAWN_X, spawnY: 420 });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
     const room = getRoomById(cr.roomId);

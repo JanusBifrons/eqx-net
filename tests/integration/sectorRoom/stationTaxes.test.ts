@@ -4,7 +4,7 @@
  * storage and pays its owner taxes into their WALLET (never a hold); without
  * consumer goods it starves, pays nothing, and clients see why (#16).
  *
- * Layout: Capital (0,0) → Connector (0,-350) → Habitat (0,-650); a Cargo Bay
+ * Layout: Capital (0,0) → Connector (0,-380) → Habitat (0,-650); a Cargo Bay
  * (-450,-350) is the base's storage.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -30,7 +30,7 @@ describe('SectorRoom integration — station taxes (D3)', () => {
       asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         { kind: 'habitat_module', x: 0, y: -650 },
         { kind: 'cargo_bay', x: -450, y: -350 },
       ],
