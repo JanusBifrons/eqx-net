@@ -14,6 +14,8 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxTooltip` | Tooltip: hover on desktop, press-and-hold on touch | `title`, `holdMs` |
 | `EqxSwitch` | On / off | `checked`, `onChange(checked)`, `label` (also the accessible name), `disabled`, `data-testid` |
 | `EqxStrip`, `EqxStripIdentity` | The left strip: one icon column, NO text except count badges; `EqxStrip.Separator` is a thin rule. Width = one button + theme gap; `open` slides it fully off to the left (HUD.motion, reduced-motion = instant); never positions itself. Identity = small ROUND icon, ring colour = health | Strip: `children` (icon buttons / identity / Separator only, else dev warning), `open`, `aria-label`, `data-testid`. Identity: `icon`, **required** `tooltip`, `health` (ok / warn / crit), `count` (badge when > 1), `onClick`, `holdMs`, `data-testid` |
+| `icons` | Registry (`icons.tsx`): one game meaning -> one line icon (the mock-ups' paths). One icon means one thing (tested); `EqxIconName` is a string union. Add a meaning there, never import an icon in a feature | `EQX_ICONS`, `EQX_ICON_NAMES`, `EqxIconName` |
+| `EqxIcon` | Draws the registered icon for a meaning, e.g. `<EqxIcon name="patrol" />`. Colour inherited; decorative unless titled | `name`, `size` (small / medium / large from `HUD.size.iconGlyph`, default medium), `title` (accessible name), `data-testid` |
 
 ## Extend, never hand-roll
 
