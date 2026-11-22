@@ -2,7 +2,7 @@
  * EqxPanel: the one right panel (UI language plan A4), SidePanel evolved and
  * moved here; `src/client/components/SidePanel.tsx` re-exports it, so the old
  * name and path still work. Panel-drawn header: optional ← back (`onBack`),
- * title, ✕. Footer only with `apply`: an Apply button, amber while `dirty`.
+ * title, ✕. Footer only with `apply`: a cyan Apply button, off until `dirty`.
  *
  * The game's side panel shell: a docked, NON-dimming panel with the world live
  * and interactive behind it. Docks RIGHT on any landscape screen (narrower on a
@@ -276,7 +276,7 @@ export interface SidePanelProps {
   closeTestId?: string;
   /** A ← back button before the title (drill-down sub-pages; with `title`). */
   onBack?: () => void;
-  /** The footer: an Apply button, amber while `dirty` (changed, not applied). No footer without it. */
+  /** The footer: a cyan Apply button, dimmed and off until `dirty` (changed, not applied). No footer without it. */
   apply?: EqxPanelApply;
   /** With `title`: 'padded' (default) is the mock body (padding, row gap, scrolls);
    *  'bare' when the content lays out its own (the Build sidebar). */
@@ -303,8 +303,9 @@ const FOOTER_SX = {
   borderTop: `1px solid ${HUD.color.panelEdge}`, bgcolor: HUD.color.sidePanelBg,
 } as const;
 
-/** Apply is the primary: cyan, dimmed and off until something changed; amber
- *  fill while `dirty` so an unapplied change stands out. */
+/** Apply is the primary (mock `.btn.pri`): filled cyan, dimmed and off until
+ *  something changed (`.btn.off`), plain cyan while `dirty`. The amber cue for
+ *  an unapplied change is on the changed EqxSegmented (`appliedValue`). */
 function ApplyFooter({ apply }: { apply: EqxPanelApply }): JSX.Element {
   return (
     <Box sx={FOOTER_SX} data-testid="eqx-panel-footer" data-dirty={apply.dirty ? '1' : '0'}>
@@ -313,7 +314,7 @@ function ApplyFooter({ apply }: { apply: EqxPanelApply }): JSX.Element {
           {apply.secondary.label}
         </EqxButton>
       )}
-      <EqxButton fullWidth onClick={apply.onApply} tone={apply.dirty ? 'manual' : 'primary'} disabled={!apply.dirty}
+      <EqxButton fullWidth onClick={apply.onApply} tone="primary" disabled={!apply.dirty}
         data-testid="eqx-panel-apply">{apply.label ?? 'Apply'}</EqxButton>
     </Box>
   );

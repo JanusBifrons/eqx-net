@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { EQX_PANEL_SIZE, EqxPanel, rightPaperSx } from './EqxPanel.js';
 import { SidePanel } from '../../client/components/SidePanel.js';
-import { HUD } from '../../client/hud/tokens.js';
 
 function stubPortrait(portrait: boolean): void {
   vi.stubGlobal('matchMedia', (q: string) => ({
@@ -70,13 +69,13 @@ describe('EqxPanel', () => {
     expect(onApply).toHaveBeenCalledTimes(1);
   });
 
-  it('dirty fills Apply amber (the manual token)', () => {
+  it('dirty Apply stays the plain cyan primary, enabled (never amber)', () => {
     render(<EqxPanel {...base} onClose={() => {}} apply={{ onApply: () => {}, dirty: true }}>body</EqxPanel>);
     expect(screen.getByTestId('eqx-panel-footer').getAttribute('data-dirty')).toBe('1');
     const apply = screen.getByTestId('eqx-panel-apply');
-    expect(apply.dataset['tone']).toBe('manual');
-    expect(getComputedStyle(apply).backgroundColor).toBe('rgb(255, 176, 46)');
-    expect(HUD.color.manual).toBe('#ffb02e');
+    expect(apply.dataset['tone']).toBe('primary');
+    expect(apply).toHaveProperty('disabled', false);
+    expect(getComputedStyle(apply).backgroundColor).toBe('rgb(52, 216, 255)');
   });
 
   it('a secondary footer action sits beside Apply', () => {

@@ -27,16 +27,7 @@ describe('EqxButton', () => {
     rerender(<EqxButton data-testid="b" tone="danger">X</EqxButton>);
     expect(b().dataset['tone']).toBe('danger');
     expect(b().className).toContain('MuiButton-outlined');
-    expect(TONE_COLOR).toEqual({ primary: HUD.color.auto, secondary: HUD.color.ink, danger: HUD.color.danger, manual: HUD.color.manual });
-  });
-
-  it('manual tone is filled amber with dark text', () => {
-    render(<EqxButton data-testid="b" tone="manual">Apply</EqxButton>);
-    const b = screen.getByTestId('b');
-    expect(b.dataset['tone']).toBe('manual');
-    expect(b.className).toContain('MuiButton-contained');
-    expect(getComputedStyle(b).backgroundColor).toBe('rgb(255, 176, 46)');
-    expect(getComputedStyle(b).color).toBe('rgb(2, 16, 24)');
+    expect(TONE_COLOR).toEqual({ primary: HUD.color.auto, secondary: HUD.color.ink, danger: HUD.color.danger });
   });
 
   it('keeps sentence case (no MUI uppercase)', () => {

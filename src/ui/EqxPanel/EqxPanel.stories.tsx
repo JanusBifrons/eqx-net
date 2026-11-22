@@ -21,26 +21,32 @@ function Sec({ children }: { children: ReactNode }): JSX.Element {
 }
 
 const ORDERS = [{ id: 'Patrol', label: 'Patrol' }, { id: 'Defend', label: 'Defend' }, { id: 'Hunt', label: 'Hunt' },
-  { id: 'Escort', label: 'Escort' }] as const;
+  { id: 'Escort', label: 'Escort' }, { id: 'Retreat', label: 'Retreat' }] as const;
 const STANCES = [{ id: 'Aggressive', label: 'Aggressive' }, { id: 'Defensive', label: 'Defensive' },
   { id: 'Hold fire', label: 'Hold fire' }] as const;
 const SPEEDS = [{ id: 'Stop', label: 'Stop' }, { id: '1/3', label: '⅓' }, { id: '2/3', label: '⅔' },
   { id: 'Full', label: 'Full' }] as const;
 
-/** The mock's fleet panel body; any pick marks the panel dirty. */
-function FleetBody({ start, onChange }: { start: string; onChange: () => void }): JSX.Element {
-  const [order, setOrder] = useState(start);
-  const [stance, setStance] = useState('Defensive');
-  const [speed, setSpeed] = useState('Full');
-  const pick = (set: (v: string) => void) => (v: string): void => { set(v); onChange(); };
+interface FleetOrders { order: string; stance: string; speed: string }
+/** What the fleet is doing now (applied). */
+const APPLIED: FleetOrders = { order: 'Defend', stance: 'Defensive', speed: 'Full' };
+
+/** The mock's fleet panel body: a pick that differs from the applied value shows amber
+ *  (EqxSegmented `appliedValue`). No Ships rows yet: the catalogue has no bar entry. */
+function FleetBody({ value, applied, onChange }: {
+  value: FleetOrders; applied: FleetOrders; onChange: (next: FleetOrders) => void;
+}): JSX.Element {
   return (
     <>
       <Sec>Order</Sec>
-      <EqxSegmented label="Order" options={ORDERS} value={order} onChange={pick(setOrder)} />
+      <EqxSegmented label="Order" options={ORDERS} value={value.order} appliedValue={applied.order}
+        onChange={(order) => onChange({ ...value, order })} />
       <Sec>Stance</Sec>
-      <EqxSegmented label="Stance" options={STANCES} value={stance} onChange={pick(setStance)} />
+      <EqxSegmented label="Stance" options={STANCES} value={value.stance} appliedValue={applied.stance}
+        onChange={(stance) => onChange({ ...value, stance })} />
       <Sec>Speed</Sec>
-      <EqxSegmented label="Speed" options={SPEEDS} value={speed} onChange={pick(setSpeed)} />
+      <EqxSegmented label="Speed" options={SPEEDS} value={value.speed} appliedValue={applied.speed}
+        onChange={(speed) => onChange({ ...value, speed })} />
     </>
   );
 }
@@ -66,13 +72,15 @@ const meta: Meta<typeof EqxPanel> = {
     open: true, testId: 'panel', title: '5 ships selected', closeOnEscape: true, onClose: () => {}, size: EQX_PANEL_SIZE,
   },
   render: function Render(args) {
-    const [dirty, setDirty] = useState(args.apply?.dirty ?? false);
+    const [applied, setApplied] = useState(APPLIED);
+    const [value, setValue] = useState(args.apply?.dirty === true ? { ...APPLIED, order: 'Patrol' } : APPLIED);
+    const dirty = value.order !== applied.order || value.stance !== applied.stance || value.speed !== applied.speed;
     const apply = args.apply === undefined ? undefined : {
-      ...args.apply, dirty, onApply: () => setDirty(false), secondary: { label: 'Stop', onClick: () => {} },
+      ...args.apply, dirty, onApply: () => setApplied(value), secondary: { label: 'Stop', onClick: () => {} },
     };
     return (
       <EqxPanel {...args} apply={apply}>
-        <FleetBody start={dirty ? 'Patrol' : 'Defend'} onChange={() => setDirty(true)} />
+        <FleetBody value={value} applied={applied} onChange={setValue} />
       </EqxPanel>
     );
   },
@@ -81,9 +89,9 @@ export default meta;
 type Story = StoryObj<typeof EqxPanel>;
 
 export const Header: Story = {};
-/** Nothing changed yet: Apply is cyan and dimmed (off). Pick any option to see it turn amber. */
+/** Nothing changed yet: Apply is cyan and dimmed (off). Pick any option: it shows amber, Apply turns on. */
 export const ApplyClean: Story = { args: { apply: { onApply: () => {}, dirty: false } } };
-/** A changed, unapplied value: Apply fills amber. */
+/** A changed, unapplied order (Patrol over the applied Defend): the segment is amber, Apply is plain cyan. */
 export const ApplyDirty: Story = { args: { apply: { onApply: () => {}, dirty: true } } };
 export const WithBack: Story = { args: { title: '5 ships · details', onBack: () => {} } };
 /** Upright phone: the same panel as a bottom sheet. */

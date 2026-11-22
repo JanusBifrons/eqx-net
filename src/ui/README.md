@@ -9,7 +9,7 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | Entry | Purpose | Props |
 |---|---|---|
 | `theme` | The MUI theme, built only from `hud/tokens.ts` | none |
-| `EqxButton` | Text button | `tone` (primary / secondary / danger / manual = amber), `size` (small / medium / large, default small), `disabled`, `onClick`, `data-testid` |
+| `EqxButton` | Text button | `tone` (primary / secondary / danger), `size` (small / medium / large, default small), `disabled`, `onClick`, `data-testid` |
 | `EqxIconButton` | The one icon button (rail, left strip, fly-outs). One fixed box (`HUD.size.iconButton`), icon centred, no label | `icon`, **required** `tooltip` (also the aria-label), `tone`, `active`, `badge`, `holdMs`, `disabled`, `onClick`, `data-testid` |
 | `EqxTooltip` | Tooltip: hover on desktop, press-and-hold on touch | `title`, `holdMs` |
 | `EqxSwitch` | On / off | `checked`, `onChange(checked)`, `label` (also the accessible name), `disabled`, `data-testid` |
