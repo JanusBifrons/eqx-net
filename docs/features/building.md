@@ -8,17 +8,16 @@ EQX Peri lets you build a base out of connected structures, modelled on the
 flash game *The Space Game*: place structures, link them through hubs, and a
 1 Hz pulse moves **power** and **minerals** around the web.
 
-## The speed dial
+## The right rail
 
-All discrete (tap) HUD actions now live in one **bottom-right SpeedDial** FAB —
-the galaxy **Map** toggle, the **Weapon**-slot selector, the **Panels** (drawer)
-entry, and **Build ▸**, which opens the Build sidebar. Your held controls
-(joystick / FIRE / BOOST) stay as dedicated buttons; a tap-to-expand menu is the
-wrong place for an input you hold.
+Discrete (tap) actions live on the **right rail**: in Build mode its **Build**
+item opens the Build sidebar; **Galaxy** holds the map and Warp. Your held
+controls (joystick / FIRE / BOOST) stay as dedicated buttons. (The old speed
+dial and its Build ▸ entry are gone.)
 
 ## The Build sidebar
 
-**Build ▸** on the speed dial (or switching to Build mode) opens the **Build
+Switching to Build mode (or the rail's **Build** item while in Build) opens the **Build
 sidebar** on the right of the screen. It is the one place you pick a building:
 
 - A **category rail** runs down its left edge (Core, Economy, Industry,
@@ -45,7 +44,7 @@ Close it with its ✕, Escape, or a swipe on its handle.
 
 ## Building (Phase 2 — shipped)
 
-1. Open the speed dial → **Build ▸** → pick a category on the rail → tap a
+1. Switch to Build mode → pick a category on the rail → tap a
    building's tile.
 2. A confirm banner appears over the ghost: *Confirm* places the structure
    there; *Cancel* ends placing. On desktop a left-click places at the cursor.

@@ -57,12 +57,12 @@ test('cinematic HUD + scripted camera take over and release cleanly', async ({ p
   test.setTimeout(45_000);
   await join(page);
 
-  // Clean frame: the speed-dial exists but is hidden by the HUD-mode class.
-  const fab = page.locator('[data-testid="speed-dial-fab"]');
-  await expect(fab).toBeAttached({ timeout: 15_000 });
-  await expect(fab).toBeHidden();
+  // Clean frame: the right rail exists but is hidden by the HUD-mode class.
+  const rail = page.locator('[data-testid="right-rail"]');
+  await expect(rail).toBeAttached({ timeout: 15_000 });
+  await expect(rail).toBeHidden();
   await page.evaluate(() => (window as unknown as { __eqxCinema: { setHud: (m: string) => void } }).__eqxCinema.setHud('full'));
-  await expect(fab).toBeVisible();
+  await expect(rail).toBeVisible();
 
   // Hold cut → camera lands exactly on the GAME-space point, away from the ship.
   await play(page, [{ atMs: 0, shot: { kind: 'hold', x: 3000, y: 2000, zoom: 1 }, smoothMs: 0 }]);

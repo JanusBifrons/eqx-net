@@ -32,8 +32,7 @@ export function MobileAvatarBadge({ onProfileClick }: Props): JSX.Element | null
   if (!isTouchDevice()) return null;
 
   // Slotted into top-right at order=1 beside the toolbar's FullscreenToggle.
-  // It only renders on the galaxy-map phase, so it never meets the in-game
-  // DrawerToggle, which is exclusively on the game phase.
+  // It only renders on the galaxy-map phase.
   return (
     <Slot anchor="top-right" order={1}>
       <AvatarMenu variant="mobile" onProfileClick={onProfileClick} />

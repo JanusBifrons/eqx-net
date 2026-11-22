@@ -239,7 +239,7 @@ test('viewport rotation forwards a resize to the worker (no stretched aspect)', 
   ).toBeGreaterThan(800);
 });
 
-test('after warp hides, UI is interactive — taps reach the drawer-toggle', async ({ page }) => {
+test('after warp hides, UI is interactive — taps reach the rail Galaxy item', async ({ page }) => {
   // Regression: the WarpScreen Slot wrapper for the `fullscreen`
   // anchor has `pointer-events: auto` baked in by Slot.tsx, so even
   // when the overlay's inner Box flips to `pointer-events: none`
@@ -255,7 +255,7 @@ test('after warp hides, UI is interactive — taps reach the drawer-toggle', asy
   await expect(warp).toBeAttached({ timeout: 10_000 });
   await expect(warp).toHaveAttribute('data-warp-visible', '0', { timeout: 15_000 });
 
-  // Step 1 — drawer-toggle is the canonical "did my tap reach the
+  // Step 1 — the rail Galaxy item is the canonical "did my tap reach the
   // HUD?" check. It lives under the WarpScreen's slot wrapper in z
   // terms but should receive taps after warp hides.
   //
@@ -266,7 +266,7 @@ test('after warp hides, UI is interactive — taps reach the drawer-toggle', asy
   // around in ways its hit-testing can't account for). The real
   // assertion is the drawer-open check below; we only care here that
   // the React handler runs and the wrapper doesn't swallow the event.
-  await page.locator('[data-testid="drawer-toggle"]').dispatchEvent('click');
+  await page.locator('[data-testid="right-rail-galaxy"]').dispatchEvent('click');
 
   // Step 2 — verify the drawer actually opened. If the tap was
   // intercepted by the WarpScreen slot wrapper, the drawer stays

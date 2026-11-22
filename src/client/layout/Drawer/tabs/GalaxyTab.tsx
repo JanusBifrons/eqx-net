@@ -10,6 +10,7 @@ import {
   Typography,
 } from '@mui/material';
 import HexagonOutlinedIcon from '@mui/icons-material/HexagonOutlined';
+import FastForwardIcon from '@mui/icons-material/FastForward';
 import { useUIStore, type ArrivalMode } from '../../../state/store';
 import { selectDrawerTabShown } from '../../../state/rightPanel';
 import { getSector } from '../../../../core/galaxy/galaxy';
@@ -17,6 +18,7 @@ import { getGameClient } from '../../../net/clientSingleton';
 import {
   SECTOR_PLAYABLE_HALF_EXTENT,
   clampToSectorBounds,
+  SOLAR_SECTORS,
 } from '../../../../shared-types/sectorBounds';
 
 /**
@@ -59,6 +61,7 @@ const SHOW_MAP_BTN_SX = {
   '&:hover': { bgcolor: '#00cc6a' },
 } as const;
 const CAPTION_MUTED_SX = { color: '#9aa0b4' } as const;
+const WARP_BTN_SX = { color: '#dde', borderColor: 'rgba(255,255,255,0.2)' } as const;
 const ARRIVAL_BLOCK_SX = {
   mt: 2,
   pt: 2,
@@ -83,6 +86,7 @@ export function GalaxyTab(): JSX.Element {
   const currentSectorKey = useUIStore((s) => s.currentSectorKey);
   const setGalaxyMapOpen = useUIStore((s) => s.setGalaxyMapOpen);
   const setRightPanel    = useUIStore((s) => s.setRightPanel);
+  const setWarpPickerOpen = useUIStore((s) => s.setWarpPickerOpen);
   const arrivalMode      = useUIStore((s) => s.arrivalMode);
   const arrivalTargetX   = useUIStore((s) => s.arrivalTargetX);
   const arrivalTargetY   = useUIStore((s) => s.arrivalTargetY);
@@ -144,6 +148,14 @@ export function GalaxyTab(): JSX.Element {
     // scrim (GalaxyOverviewSelectChrome) which just dimmed the game + showed
     // the roster. The map is the single unified surface (Phase 7).
     setGalaxyMapOpen(true);
+    setRightPanel(null);
+  };
+
+  // Warp within this solar system: the existing WarpPicker card (it was the
+  // retired speed dial's Warp action). Closes the drawer so the card is clear.
+  const canWarp = SOLAR_SECTORS && currentSectorKey !== null;
+  const onWarp = (): void => {
+    setWarpPickerOpen(true);
     setRightPanel(null);
   };
 
@@ -224,6 +236,19 @@ export function GalaxyTab(): JSX.Element {
       <Typography variant="caption" sx={CAPTION_MUTED_SX}>
         Opens the full galaxy map — tap a sector for its breakdown, your ships, and to warp or join. (Or press M.)
       </Typography>
+      {canWarp && (
+        <Button
+          fullWidth
+          variant="outlined"
+          startIcon={<FastForwardIcon />}
+          onClick={onWarp}
+          disabled={inTransit}
+          data-testid="galaxy-tab-warp"
+          sx={WARP_BTN_SX}
+        >
+          Warp in this system
+        </Button>
+      )}
 
       <Box sx={ARRIVAL_BLOCK_SX}>
         <Typography variant="overline" sx={ARRIVAL_LABEL_SX}>

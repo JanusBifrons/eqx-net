@@ -6,7 +6,7 @@ import { commitChosenPlacement } from './structurePlacementClient';
 /**
  * How a placement ends (build-menu redesign M3). After a place you KEEP
  * PLACING the same building until you cancel; the Build sidebar comes back
- * when `placementKind` clears (SpeedDialMenu.tsx).
+ * when `placementKind` clears (BuildSidebarHost.tsx).
  */
 
 /**

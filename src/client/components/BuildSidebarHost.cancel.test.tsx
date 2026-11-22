@@ -6,19 +6,19 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
-import { SpeedDialMenu } from './SpeedDialMenu.js';
+import { BuildSidebarHost } from './BuildSidebarHost.js';
 import { cancelPlacement } from '../structures/placementCancel.js';
 
 const sidebarOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
 
 function pickSolar(): void {
-  render(<SpeedDialMenu direction="down" />);
+  render(<BuildSidebarHost />);
   act(() => useUIStore.getState().setBuildMode(true)); // Build mode: the only way in
   fireEvent.click(screen.getByTestId('build-cat-economy'));
   fireEvent.click(screen.getByTestId('build-solar').querySelector('button')!); // the tile's button, as a tap hits it
 }
 
-describe('SpeedDialMenu: cancelling a placement', () => {
+describe('BuildSidebarHost: cancelling a placement', () => {
   beforeEach(() => {
     cleanup();
     useUIStore.setState({ phase: 'galaxy-map', isDead: false, placementKind: null, buildMode: false, fleetPick: null });
