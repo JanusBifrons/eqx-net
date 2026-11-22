@@ -45,19 +45,30 @@ describe('EqxSegmented', () => {
     expect(screen.getByRole('button', { name: 'Patrol' })).toBeTruthy();
   });
 
-  it('accepts 2 to 4 options', () => {
-    const four: EqxSegmentedOption[] = [...VIEWS, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }];
-    render(<EqxSegmented options={four} value="list" onChange={() => {}} label="View" />);
-    expect(screen.getAllByRole('button')).toHaveLength(4);
+  it('accepts 2 to 5 options', () => {
+    const five: EqxSegmentedOption[] = [...VIEWS, ...['c', 'd', 'e'].map((id) => ({ id, label: id }))];
+    render(<EqxSegmented options={five} value="list" onChange={() => {}} label="View" />);
+    expect(screen.getAllByRole('button')).toHaveLength(5);
   });
 
-  it('rejects fewer than 2 or more than 4 options in dev', () => {
+  it('rejects fewer than 2 or more than 5 options in dev', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(import.meta.env.DEV).toBe(true);
     const one: EqxSegmentedOption[] = [{ id: 'a', label: 'A' }];
-    expect(() => render(<EqxSegmented options={one} value="a" onChange={() => {}} label="V" />)).toThrow(/2-4/);
-    const five: EqxSegmentedOption[] = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, label: id }));
-    expect(() => render(<EqxSegmented options={five} value="a" onChange={() => {}} label="V" />)).toThrow(/2-4/);
+    expect(() => render(<EqxSegmented options={one} value="a" onChange={() => {}} label="V" />)).toThrow(/2-5/);
+    const six: EqxSegmentedOption[] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id, label: id }));
+    expect(() => render(<EqxSegmented options={six} value="a" onChange={() => {}} label="V" />)).toThrow(/2-5/);
+  });
+
+  it('appliedValue: changed only while the value differs from it', () => {
+    const { rerender } = render(
+      <EqxSegmented options={VIEWS} value="map" appliedValue="list" onChange={() => {}} label="View" data-testid="seg" />,
+    );
+    expect(screen.getByTestId('seg').getAttribute('data-changed')).toBe('true');
+    rerender(<EqxSegmented options={VIEWS} value="map" appliedValue="map" onChange={() => {}} label="View" data-testid="seg" />);
+    expect(screen.getByTestId('seg').getAttribute('data-changed')).toBeNull();
+    rerender(<EqxSegmented options={VIEWS} value="map" onChange={() => {}} label="View" data-testid="seg" />);
+    expect(screen.getByTestId('seg').getAttribute('data-changed')).toBeNull();
   });
 
   it('disabled blocks picks', () => {

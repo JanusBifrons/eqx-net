@@ -63,6 +63,18 @@ export const HUD = {
   },
   /** Minimum invisible touch target (Apple HIG / Material: 44–48 px). */
   touchMin: 44,
+  /** EqxSegmented in a panel (mock `.seg`): full width, equal segments. Sizes px. */
+  segmented: {
+    font: 13,
+    radius: 5,
+    padY: 6,
+    padX: 2,
+    minHeight: 36,
+    /** Selected option (mock `.seg b.on`): cyan wash, cyan text. */
+    selectedBg: 'rgba(52,216,255,0.2)',
+    /** Selected option that differs from the applied value (mock `.seg b.chg`). */
+    changedBg: 'rgba(255,176,46,0.2)',
+  },
   /** Layout sizes (UI language plan B3), px. */
   size: {
     /** Right rail width on a phone. */

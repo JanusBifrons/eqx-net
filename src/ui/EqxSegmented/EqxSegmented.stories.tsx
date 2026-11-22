@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { eqxTheme } from '../theme.js';
 import { EqxSegmented, type EqxSegmentedOption } from './EqxSegmented.js';
 
-/** EQX catalogue: pick one of 2-4 views or values. */
+/** EQX catalogue: pick one of 2-5 views or values. */
 const meta: Meta<typeof EqxSegmented> = {
   title: 'EQX catalogue/EqxSegmented',
   component: EqxSegmented,
@@ -31,6 +31,13 @@ const FOUR: EqxSegmentedOption[] = [
   { id: 'bases', label: 'Bases' },
   { id: 'rocks', label: 'Rocks' },
 ];
+const ORDERS: EqxSegmentedOption[] = [
+  { id: 'patrol', label: 'Patrol' },
+  { id: 'defend', label: 'Defend' },
+  { id: 'hunt', label: 'Hunt' },
+  { id: 'escort', label: 'Escort' },
+  { id: 'retreat', label: 'Retreat' },
+];
 const ICONS: EqxSegmentedOption[] = [
   { id: 'list', icon: <ListIcon fontSize="small" />, tooltip: 'List' },
   { id: 'map', icon: <MapIcon fontSize="small" />, tooltip: 'Map' },
@@ -43,5 +50,13 @@ function Picker({ options, disabled = false }: { options: EqxSegmentedOption[]; 
 
 export const TwoText: Story = { render: () => <Picker options={TWO} /> };
 export const FourText: Story = { render: () => <Picker options={FOUR} /> };
+/** Mock `.seg b.chg`: a pick that differs from the applied order shows amber until applied. */
+function Changed() {
+  const [v, setV] = useState('patrol');
+  return <EqxSegmented options={ORDERS} value={v} appliedValue="defend" onChange={setV} label="Order" />;
+}
+
+export const FiveText: Story = { render: () => <Picker options={ORDERS} /> };
+export const ChangedNotApplied: Story = { render: () => <Changed /> };
 export const Icons: Story = { render: () => <Picker options={ICONS} /> };
 export const Disabled: Story = { render: () => <Picker options={TWO} disabled /> };
