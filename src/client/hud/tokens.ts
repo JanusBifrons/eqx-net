@@ -60,6 +60,10 @@ export const HUD = {
     sidePanelEdge: '#2a3550',
     /** Dark text on a filled cyan / amber button (mock .btn.pri). */
     onAccent: '#021018',
+    /** Right rail column paper. */
+    railBg: 'rgba(7,11,21,0.94)',
+    /** Right rail open item: cyan well. */
+    railActive: 'rgba(52,216,255,0.16)',
   },
   /** Minimum invisible touch target (Apple HIG / Material: 44–48 px). */
   touchMin: 44,
@@ -87,6 +91,8 @@ export const HUD = {
     iconGlyph: { small: 18, medium: 24, large: 32 },
     /** EqxIcon line weight (mock-ups: 2 in strips and panels, 1.7 on the rail). */
     iconStroke: { regular: 2, light: 1.7 },
+    /** A right-rail tile (mock .ri: 4.4cqw of a 915 px phone). */
+    railItem: 40,
   },
   /** EqxPanel layout (mock .ph/.pb/.pf, 1cqw = 9.15 px on a 915 px phone), px. */
   panel: {
@@ -110,6 +116,23 @@ export const HUD = {
     btnPad: 6,
     /** Disabled control opacity (mock .btn.off). */
     offOpacity: 0.35,
+  },
+  /** Right rail geometry (mock .rail / .ri), px. */
+  rail: {
+    /** Tile corner radius. */
+    radius: 6,
+    /** Line icon box. */
+    icon: 22,
+    /** Open item: inset bar on the left edge. */
+    activeBar: 2,
+    /** Column padding top and bottom. */
+    padY: 7,
+    /** Gap between tiles. */
+    gap: 2,
+    /** Divider margin top and bottom. */
+    dividerGap: 3,
+    /** Badge pill text. */
+    badgeFont: 9,
   },
   /** Motion (UI language plan B3). Honour prefers-reduced-motion at the call site. */
   motion: {
