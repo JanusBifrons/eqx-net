@@ -29,7 +29,7 @@ import { FleetRailPanel } from '../panels/FleetPanel';
 import { DetailsPanel } from '../panels/DetailsPanel';
 import { CogPanel } from '../panels/CogPanel';
 import { FactionPanel } from '../panels/FactionPanel';
-import { ContactsPanel } from '../panels/ContactsPanel';
+import { ContactsPanel, type ContactsPanelProps } from '../panels/ContactsPanel';
 import { Slot } from './Slot';
 import { RAIL_COG, railItemById, railTools, RAIL_COMMON, type RailItemSpec } from './railItems';
 
@@ -59,7 +59,7 @@ function useRailWidthVar(px: number): void {
   }, [px]);
 }
 
-export function RightPanelHost(): JSX.Element {
+export function RightPanelHost({ rendererRef }: Pick<ContactsPanelProps, 'rendererRef'> = {}): JSX.Element {
   const shown = useShouldRenderHud();
   const mode = useUIStore(selectControlMode);
   const rightPanel = useUIStore((s) => s.rightPanel);
@@ -86,7 +86,7 @@ export function RightPanelHost(): JSX.Element {
       <DetailsPanel />
       <CogPanel />
       <FactionPanel />
-      <ContactsPanel />
+      <ContactsPanel rendererRef={rendererRef} />
     </>
   );
 }

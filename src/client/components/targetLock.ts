@@ -1,5 +1,7 @@
 /**
- * Fire control: the selection's Target action (a left-strip icon). Locks the
+ * Fire control: the selection's Target action (a left-strip icon), and the
+ * fleet Lock that replaces it while my ships are selected (`fleetLockApplies`,
+ * `lockFocus`; the strip and the T key share them). Target locks the
  * selected ship / drone / structure / rock / pod with the ACTIVE weapon group,
  * so the pilot doesn't have to track it with the smart-aim drag. Null (hidden)
  * for something not lockable, the pilot's own, or with no active group.
@@ -11,8 +13,42 @@
  *    range), a tap cancels it;
  *  - `unlock`: locked, a tap drops it.
  */
+import type { IFleetView } from '@core/contracts/render/IFleetView';
 import { useUIStore } from '../state/store.js';
 import { getGameClient } from '../net/clientSingleton.js';
+import type { SelectionFocusKind, UISelection } from '../state/storeTypes.js';
+
+/** Focus kinds the fleet can be ordered to attack (the renderer's
+ *  `isAttackable`: ships, parked hulls, drones, structures; never rocks or pods). */
+const FLEET_ATTACKABLE: ReadonlySet<SelectionFocusKind> = new Set<SelectionFocusKind>(['ship', 'lingering', 'drone', 'structure']);
+
+/**
+ * Tap rule T2 (ONE Lock): my ships are selected and the focus is an
+ * attackable thing that is not one of them. With ships selected the renderer
+ * keeps only a not-mine focus beside them (`focusSurvives`), so "not one of
+ * the selected ships" is "not mine". The renderer re-checks on the order.
+ */
+export function fleetLockApplies(sel: UISelection): boolean {
+  return sel.ids.length > 0 && sel.focusId !== null && sel.focusKind !== null
+    && FLEET_ATTACKABLE.has(sel.focusKind) && !sel.ids.includes(sel.focusId);
+}
+
+/**
+ * The Lock action, shared by the strip and the T key: the fleet Lock (the
+ * selected ships attack the focus, through the renderer's `attackFocus`, the
+ * right-click order path) when {@link fleetLockApplies}, else `personal` (the
+ * pilot's own lock with the active weapon group). True when something was asked.
+ */
+export function lockFocus(
+  sel: UISelection,
+  fleet: Pick<IFleetView, 'attackFocus'> | null,
+  personal: () => boolean,
+): boolean {
+  if (!fleetLockApplies(sel)) return personal();
+  if (fleet === null) return false;
+  fleet.attackFocus();
+  return true;
+}
 
 /** Another player's AI-flown ship is selected as a `'lingering'` entity and is
  *  lockable like any player's ship (your own fleet arrives with `isOwn`). A
