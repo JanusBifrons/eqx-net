@@ -1141,6 +1141,8 @@ export class WreckPieceSprite extends Container {
     private readonly speckFill: number | null = null,
     /** What the wreck was cut from (`WreckGeometryStore.sourceOf`); null = by `parentKind`. */
     source: WreckSource | null = null,
+    /** A structure piece's gun bakes (`structureWreckGunArts`), per turret place; null = the bar. */
+    structGuns: ReadonlyArray<ShipArt | null> | null = null,
   ) {
     super();
     this.piece = piece;
@@ -1195,8 +1197,8 @@ export class WreckPieceSprite extends Container {
     } else {
       this.artParts.push(this.addChild(buildWreckPieceGfx(piece.outline, parentKind)));
     }
-    // A structure's piece also wears the rig parts drawn over its bake (panels, crane, riser).
-    const rigArt = art !== null && source?.structure ? structureWreckRigArt(source.structure.k, piece) : null;
+    // A structure's piece also wears what is drawn over its bake (rig parts, guns).
+    const rigArt = art !== null && source?.structure ? structureWreckRigArt(source.structure.k, piece, structGuns) : null;
     if (rigArt !== null) { rigArt.tint = info.fx.burntArt ? burntTint(piece, info) : 0xffffff; this.artParts.push(this.addChild(rigArt)); }
     // A profile dead tint, if any, from the first frame whatever path built
     // the piece. None today: a sub-cap piece keeps its ship's normal art

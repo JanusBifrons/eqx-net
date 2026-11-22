@@ -15,6 +15,8 @@ import type { WreckSource } from '../../../core/destruction/wreckSource.js';
 import type { ArtHandle, ShipArt, StructArt } from '../art/ArtService.js';
 import { structHandleFor, wreckArtHandleFor, type ShipArtCtx } from '../art/shipArtSprites.js';
 import { wreckSourceKindOf } from '../../net/wreckRootSource.js';
+import { structureTurrets, turretBakeJobs } from '../art/turretLayout.js';
+import { getStructureKind } from '../../../shared-types/structureKinds.js';
 
 /** Per parent kind: do its wreck pieces draw the dead bake (`fx.deadArt`)?
  *  Filled once per kind (the profile lookup allocates its argument). */
@@ -80,4 +82,25 @@ export function wreckPieceArtOf(h: ArtHandle | null): ShipArt | null {
   if (h === null || h.state !== 'ready') return null;
   if (h.ship !== null) return h.ship;
   return h.struct !== null ? structArtAsShipArt(h.struct) : null;
+}
+
+/**
+ * A structure piece's gun bakes, per `structureTurrets(kindId)` place: the
+ * live turret's own (`turretBakeJobs` with the paint `machinedGunFor` uses:
+ * the structure bake's accent, else the kind colour), so the handle is the
+ * one the live gun wore; a gun's entry is its ready art, else null (the
+ * piece draws the bar, as the live mount did before its bake). Null with
+ * Machined turrets off or no structure bake. Build time only (allocates).
+ */
+export function structureWreckGunArts(actx: ShipArtCtx, h: ArtHandle | null, kindId: string): Array<ShipArt | null> | null {
+  if (actx.art === null || actx.turrets !== true || h === null || h.job.type !== 'struct') return null;
+  const places = structureTurrets(kindId);
+  if (places.length === 0) return null;
+  const paint = h.job.accent ?? getStructureKind(kindId).color;
+  const out: Array<ShipArt | null> = [];
+  for (const p of places) {
+    const g = actx.art.acquire(turretBakeJobs(p, paint, true).gun);
+    out.push(g.state === 'ready' ? g.ship : null);
+  }
+  return out;
 }

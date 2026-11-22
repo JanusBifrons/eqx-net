@@ -67,7 +67,7 @@ import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
 import { wreckSourceKindOf } from '../../net/wreckRootSource';
 import { mainThreadNowMs } from '../mainThreadNow.js';
 import { WreckPieceSprite, coolWreckInfo, wreckPieceSpeckColor } from './wreckArt.js';
-import { wreckPieceArtHandle, wreckPieceArtOf } from './wreckPieceArtHandle.js';
+import { structureWreckGunArts, wreckPieceArtHandle, wreckPieceArtOf } from './wreckPieceArtHandle.js';
 import { buildRockPieceArt, classicRockTint, isRockWreck } from './rockPieceArt.js';
 import { isFieldRockMesh } from '../field/CutFieldLayer.js';
 import { placedRockMeshData } from '../field/placedRockMesh.js';
@@ -304,6 +304,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = new WreckPieceSprite(
           g, wreckParent, pieceArt, info, index, pieceRock !== undefined ? buildRockPieceArt(g, pieceRock, ctx.fieldRocks ?? null) : null,
           pieceArt !== null ? wreckPieceSpeckColor(wreckParent, wreckArtHandle!.job) : null, wreckShip ? null : wreckSrc ?? ctx.wrecks!.sourceOf(entry.wreckId!) ?? null,
+          pieceArt !== null && wreckSrc?.structure ? structureWreckGunArts(ctx.art, wreckArtHandle, wreckSrc.structure.k) : null, // its guns (build time)
         );
       } else {
         // An awake cut-field rock keeps its cut shape and rock surface; a
