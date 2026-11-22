@@ -384,7 +384,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.tickJob(self, view, JOB_ORDER_TICK);
     }
-    const canEngageOnSight = this._tgt.engageOnSight && (this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0));
+    // An owned ship sights enemy bases on every stance (`TargetPick.seesStructures`).
+    const canEngageOnSight = (this._tgt.engageOnSight && (this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0))) || this._targets.seesStructures(view);
     if (this._tgt.state === 'IDLE' && !canEngageOnSight) {
       if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.tickJob(self, view, JOB_ORDER_TICK);

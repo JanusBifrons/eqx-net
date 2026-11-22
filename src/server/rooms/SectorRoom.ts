@@ -128,7 +128,7 @@ const ROOM_STANDING: StandingQuery = { of: (from, to) => getTradeSink()?.standin
  *  settings live in the economy store). No sink ⇒ the catalogue defaults. */
 const ROOM_POLICY = (faction: string): FactionPolicy => getTradeSink()?.policyOf?.(faction) ?? defaultFactionPolicy(faction);
 const NPC_SIDE_PARTY = Object.fromEntries(NPC_ALLEGIANCE_IDS.map((a) => [a, npcOwner(a)])) as Record<NpcAllegianceId, string>;
-import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { AiStructureTargets } from './features/aiStructureTargets.js';
 import { AlienGateGuard, isAlienGatesDisabled } from '../structures/AlienGateGuard.js';
 import { PatrolSubsystem } from '../bases/PatrolSubsystem.js';
 import { alienGateSites } from '../../core/galaxy/alienGates.js';
@@ -398,27 +398,6 @@ interface ProjectileRecord {
   radius: number;
   maxTicks: number;
   weaponId: WeaponId;
-}
-
-/** Wave-system Phase 2 — drone target priority by structure kind (higher =
- *  attacked first). The Capital (the "core" / mineral bank) is the prize; the
- *  Miner is the objective the de-escalation condition keys on; defence + power
- *  rank below. All are > 0 so every hostile structure outranks a player ship
- *  (req #2 "structures primarily"). Tunable per difficulty pass. */
-function structurePriority(kind: StructureKindId): number {
-  switch (kind) {
-    case 'capital':
-      return 3;
-    // The Miner is the wave objective; a shield-fence pylon is a defensive wall
-    // attackers want to dismantle to reach the base — both ranked above the
-    // other leaves so drones actively engage them (the wall absorbs the incoming
-    // fire until its batteries / power give out).
-    case 'miner':
-    case 'shield_pylon':
-      return 2;
-    default:
-      return 1;
-  }
 }
 
 /** Audit throttle window for the "your base is under attack" signal. */
@@ -802,19 +781,9 @@ export class SectorRoom extends Room<SectorState> {
   private readonly factionLedger = new FactionLedger({
     structures: () => this.structureRegistry.all(),
   });
-  /** Wave-system Phase 2 — reused per-tick structure target buffers, rebuilt
-   *  ONCE per tick (shared by every drone via AiWorldView; never per-drone).
-   *  `aiStructureScratch` feeds the brain (priority); `hostileStructureCircles`
-   *  feeds capital turret target picks (radius). Both hold only this sector's
-   *  hostile (under-wave / member-attacked), constructed structures. TARGETING
-   *  only: a shot hits whatever it meets (`nonPlayerRayHit`, friendly fire). */
+  /** The AI's per-tick structure targets (drone raids + owners' enemy bases, `aiStructureTargets.ts`). */
   private readonly aiStructureScratch: AiStructureView[] = [];
-  private readonly hostileStructureCircles: Array<{
-    id: string;
-    x: number;
-    y: number;
-    radius: number;
-  }> = [];
+  private readonly aiStructures = new AiStructureTargets({ structures: () => this.structureRegistry, isHostileToDrones: (o) => this.factionLedger.isHostileToDrones(o), health: (id) => this.swarmHealth.get(id), fleetSize: () => this.fleet.size, fleetOwnerAt: (i) => this.fleet.ownerAt(i), relationCtx: this.relationCtx, now: () => this.gameClock.now(), npcHostileTo: (e, p) => this.npcHostileTo(e, p) });
 
   // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
   /** Authoritative per-mount rotation angle (ship-relative, arc-local) for
@@ -1386,7 +1355,7 @@ export class SectorRoom extends Room<SectorState> {
       // Friendly fire slice 2: a turret holds while an escort is on its line.
       lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max, w, k) => this.lineOfFire.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max, w, k),
       // Capital turrets engage hostile structures too (the AI's per-tick set).
-      hostileStructures: () => this.hostileStructureCircles,
+      hostileStructures: () => this.aiStructures.circles,
       lockTimeCapS: () => this.testLockTimeCapS,
       chargeTicksCap: () => this.testChargeTicksCap,
       traverseTicksCap: () => this.testTraverseTicksCap,
@@ -1479,7 +1448,7 @@ export class SectorRoom extends Room<SectorState> {
     this.aiController.isCharging = (id) => this.mountTicker.charges.mask(id) !== 0;
     // Owned ships engage what is hostile to their owner: the room's one
     // truce-aware NPC→player answer (RTS Part B slice 6).
-    this.aiController.hostileToPlayer = (id, playerId) => this.npcHostileTo(id, playerId);
+    this.aiController.hostileToPlayer = (id, playerId) => this.aiStructures.hostileToPlayer(id, playerId);
 
     // Two-layer shield/hull damage + regen routing. Owns the swarm-side
     // shield state + the three layered-damage methods. Composes the pure
@@ -2860,36 +2829,6 @@ export class SectorRoom extends Room<SectorState> {
     s.angvel = p.angvel ?? 0;
     s.health = this.state.ships.get(id)?.health;
     return s;
-  }
-
-  /**
-   * Wave-system Phase 2 — rebuild this tick's hostile-structure target set,
-   * shared by every drone (called ONCE per tick from `runAiTick`, never
-   * per-drone — #14). A structure is a target iff its owning faction is
-   * `hostileToDrones` (member attacked a drone) OR `underWave` (the director
-   * declared a wave) AND it is constructed. Populates the brain view
-   * (`out` = `aiStructureScratch`, carries `priority`) and the capital turret
-   * target circles (`hostileStructureCircles`); targeting only, a shot hits
-   * whatever it meets. Object churn matches the established `aiPlayerScratch`
-   * view-build pattern (small, bounded structure count).
-   */
-  private fillStructureTargets(out: AiStructureView[]): void {
-    const circles = this.hostileStructureCircles;
-    circles.length = 0;
-    if (this.structureRegistry.size === 0) return;
-    for (const rec of this.structureRegistry.all()) {
-      if (!rec.isConstructed) continue;
-      if (!this.factionLedger.isHostileToDrones(rec.owner)) continue;
-      out.push({
-        id: rec.id,
-        x: rec.x,
-        y: rec.y,
-        health: this.swarmHealth.get(rec.id),
-        maxHealth: getStructureKind(rec.kind).maxHealth,
-        priority: structurePriority(rec.kind),
-      });
-      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius });
-    }
   }
 
   /** Living World P1a-2 — liveness for AI targeting (#17): a player with a
@@ -4686,7 +4625,7 @@ export class SectorRoom extends Room<SectorState> {
       shipPoseCache: this.shipPoseCache,
       aiPlayerScratch: this.aiPlayerScratch,
       aiStructureScratch: this.aiStructureScratch,
-      fillStructureTargets: (out) => this.fillStructureTargets(out),
+      fillStructureTargets: (out) => this.aiStructures.fill(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: this.aiGrids.fillSwarmTargets,
       aiNeighbourGrid: this.aiGrids.neighbours(),
