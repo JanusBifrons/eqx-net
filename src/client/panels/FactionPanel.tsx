@@ -35,13 +35,13 @@ const PAPER_ATTRS = { 'data-testid': 'faction-panel' } as const;
 function MainPage({ open }: { open: (page: FactionPage) => void }): JSX.Element {
   return (
     <div style={PAGE_STYLE}>
-      <FactionsTab />
       <div style={COG_SECTION_STYLE}>
         <EqxSection title="Your ships">
           <EqxListRow primary="Ship look" secondary="The colour and sigil every ship you own wears."
             onOpen={() => open('look')} data-testid="faction-row-look" />
         </EqxSection>
       </div>
+      <FactionsTab />
     </div>
   );
 }

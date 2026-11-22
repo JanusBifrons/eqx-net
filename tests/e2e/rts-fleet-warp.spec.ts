@@ -179,7 +179,7 @@ test.describe('RTS fleet warp @feature', () => {
     await expect.poll(() => currentSector(page), { timeout: 30_000, intervals: [500], message: 'the commander lands in the destination' }).toBe(TO);
     await waitForInPlay(page);
     await waitCommandView(page);
-    await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-control-mode', 'command');
+    await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-value', 'command');
 
     // Both ships are there (same hulls) and still selected.
     await expect.poll(() => ownHullIds(page), { timeout: 15_000, message: 'both warped ships in the destination' }).toEqual(ids);

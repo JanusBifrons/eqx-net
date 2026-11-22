@@ -110,10 +110,12 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     gap: STACK_GAP,
     pointerEvents: 'none',
   },
+  // Beside the left strip while it shows (`--left-strip-w`, layout/leftStripFit.ts),
+  // so the warp spool bar's Abort is never under the strip's ✕.
   'middle-left': {
     position: 'fixed',
     top: '50%',
-    left: SAFE_LEFT,
+    left: `max(${SAFE_LEFT}, var(--left-strip-w, 0px))`,
     transform: 'translateY(-50%)',
     zIndex: Z.hud,
     display: 'flex',
@@ -221,7 +223,9 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
   'left-strip': {
     position: 'fixed',
     top: 'max(calc(var(--hud-tl-bottom, 0px) + 8px), calc(57% - var(--left-strip-h, 0px) / 2))',
-    left: SAFE_LEFT,
+    // Flush with the screen edge: the strip's own background covers the camera
+    // band (safe-area-inset-left) and only its buttons step clear of it (EqxStrip).
+    left: 0,
     // Scaled down only when taller than the room under the HUD (leftStripFit.ts).
     transform: 'scale(var(--left-strip-scale, 1))',
     transformOrigin: 'top left',
