@@ -8,6 +8,7 @@ export { EqxButton, TONE_COLOR, type EqxButtonProps, type EqxButtonSize, type Eq
 export { EqxIconButton, type EqxIconButtonProps } from './EqxIconButton/EqxIconButton.js';
 export { EqxTooltip, type EqxTooltipProps } from './EqxTooltip/EqxTooltip.js';
 export { EqxSwitch, type EqxSwitchProps } from './EqxSwitch/EqxSwitch.js';
+export { EqxThemeProvider, type EqxThemeProviderProps } from './EqxThemeProvider/EqxThemeProvider.js';
 export { EqxStrip, type EqxStripProps, type EqxStripSeparatorProps } from './EqxStrip/EqxStrip.js';
 export { EqxStripIdentity, HEALTH_RING, type EqxStripIdentityProps, type EqxStripHealth } from './EqxStripIdentity/EqxStripIdentity.js';
 export { EqxStatusFlyout, type EqxStatusFlyoutProps, type EqxStatusOption } from './EqxStatusFlyout/EqxStatusFlyout.js';
