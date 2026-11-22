@@ -18,7 +18,7 @@ import {
   getPlacementRotationDeg,
 } from './structurePlacementClient.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { placementChosen, resetPlacementChosen } from './placementChosen.js';
+import { placementChosen, resetPlacementChosen, setPlacementHeld } from './placementChosen.js';
 import { ghostToGridNode, blankGridNode } from './mirrorToGridNode.js';
 
 // Mock the game-client singleton so commitChosenPlacement's send path is
@@ -301,5 +301,70 @@ describe('placement mirror (4B)', () => {
     expect(getPlacementRotationDeg()).toBe(90);
     expect(getPlacementMirror()).toBe(false);
     setPlacementRotationDeg(0);
+  });
+});
+
+// ── Held ghost right after Place (placing-bar 2026-11-22) ────────────────────
+// Bug: placement keeps going after Place, so the next ghost sat exactly on the
+// structure just sent and read red "too close to another structure". The next
+// ghost is HELD (dim, no verdict, Place refused) while the chosen point, kind,
+// rotation and mirror still equal the sent placement; any change frees it.
+describe('held ghost after Place', () => {
+  const out = (): PlacementPreview => ({ kind: 'connector', x: 0, y: 0, angle: 0, pending: false });
+  const sent = (): PendingPlacement => ({
+    kind: 'solar', x: 120, y: -40, rot: 0, mirror: false, sentAtMs: 1000, baselineStructureCount: 3,
+  });
+  const ship = { x: 0, y: 0, angle: 0 };
+
+  beforeEach(() => {
+    send.mockClear();
+    resetPlacementChosen();
+    setPlacementRotationDeg(0);
+    setPlacementMirror(false);
+  });
+
+  it('holds the live ghost while the chosen point is still the sent spot', () => {
+    const o = out();
+    expect(resolvePlacementPreviewStatus('solar', ship, sent(), 1100, 4, true, o, 120, -40)).toBe('active');
+    expect(o.held).toBe(true);
+    expect(o.pending).toBe(false); // still the live ghost: pointer capture stays on
+  });
+
+  it('frees it on a pointer move, a rotate, a mirror or a new kind', () => {
+    const o = out();
+    resolvePlacementPreviewStatus('solar', ship, sent(), 1100, 4, true, o, 121, -40);
+    expect(o.held).toBe(false);
+    setPlacementRotationDeg(90);
+    resolvePlacementPreviewStatus('solar', ship, sent(), 1100, 4, true, o, 120, -40);
+    expect(o.held).toBe(false);
+    setPlacementRotationDeg(0);
+    setPlacementMirror(true);
+    resolvePlacementPreviewStatus('solar', ship, sent(), 1100, 4, true, o, 120, -40);
+    expect(o.held).toBe(false);
+    setPlacementMirror(false);
+    resolvePlacementPreviewStatus('battery', ship, sent(), 1100, 4, true, o, 120, -40);
+    expect(o.held).toBe(false);
+  });
+
+  it('is never held with no sent placement or no chosen point', () => {
+    const o = out();
+    resolvePlacementPreviewStatus('solar', ship, null, 1100, 4, true, o, 120, -40);
+    expect(o.held).toBe(false);
+    resolvePlacementPreviewStatus('solar', ship, sent(), 1100, 4, true, o);
+    expect(o.held).toBe(false);
+  });
+
+  it('Place right after Place sends nothing until the ghost moves', () => {
+    placementChosen.worldX = 120;
+    placementChosen.worldY = -40;
+    expect(commitChosenPlacement('solar')).toBe(true);
+    expect(placementChosen.held).toBe(true);
+    // Same spot again (desktop double-click, or Place tapped twice): refused.
+    expect(commitChosenPlacement('solar')).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1);
+    setPlacementHeld(false); // the ghost moved
+    placementChosen.worldX = 200;
+    expect(commitChosenPlacement('solar')).toBe(true);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });

@@ -85,6 +85,10 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
   // Issue 7): placement is DONE, so it must NOT capture pointers (the camera
   // pans again) and it draws at the SENT point, dimmer.
   const pendingGhost = preview != null && preview.pending === true;
+  // Held = the live ghost still on the placement just sent (right after Place):
+  // it keeps pointer capture but draws in the dim "sent" look with no verdict,
+  // so it never reads red "too close" on its own new structure.
+  const heldGhost = preview != null && !pendingGhost && preview.held === true;
   ctx.input._placementActive = preview != null && !pendingGhost;
   // P6.1 (touch only) — seed the ghost at SCREEN-CENTRE on placement-start so
   // it's visible instead of hidden under the speed-dial at the ahead-of-ship
@@ -127,7 +131,7 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     // Red / green before the click: the server's own overlap rule at the drawn
     // pose (structures, landing pads, rocks). The pending ghost is already sent.
     let rejection: PlacementRejection | null = null;
-    if (!pendingGhost && mirror.swarm) {
+    if (!pendingGhost && !heldGhost && mirror.swarm) {
       const pose = ctx.pose;
       pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = preview.angle; pose.mirror = preview.mirror === true;
       rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles);
@@ -135,7 +139,7 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     ctx.feedback.placementPreviewRejection = rejection;
     // Cyan when clear, red when blocked; the pending ghost is dimmer and still
     // so it reads as "sent, awaiting" vs positioning. Recolour only: no rebuild.
-    ctx.placementGhost.updateGhost(rejection !== null, pendingGhost, ctx.nowMs);
+    ctx.placementGhost.updateGhost(rejection !== null, pendingGhost || heldGhost, ctx.nowMs);
     const screen = camera.toScreen(gx, -gy);
     ctx.feedback.placementScreenX = screen.x;
     ctx.feedback.placementScreenY = screen.y;

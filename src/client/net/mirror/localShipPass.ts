@@ -2,6 +2,7 @@ import { useUIStore } from '../../state/store.js';
 import { logEvent, isFullDiagMode, isRammingProbeEnabled } from '../../debug/ClientLogger.js';
 import { renderTickElapsedMs } from '../renderTickPhase.js';
 import { resolvePlacementPreviewStatus } from '../../structures/structurePlacementClient.js';
+import { placementChosen, setPlacementHeld } from '../../structures/placementChosen.js';
 import type { MirrorPassCtx } from './mirrorPassCtx.js';
 
 /** `updateMirror` pass: due predicted damage-number splits → the mirror. */
@@ -180,7 +181,11 @@ export function updateLocalShipMirror(ctx: MirrorPassCtx, frameNowMs: number | u
         ctx.mirror.structures?.size ?? 0,
         allRenderable,
         ctx.placementPreviewScratch,
+        placementChosen.worldX,
+        placementChosen.worldY,
       );
+      // The next ghost right after Place: dim, no verdict, Place refused (held).
+      setPlacementHeld(placementStatus === 'active' && ctx.placementPreviewScratch.held === true);
       if (placementStatus === 'active' || placementStatus === 'pending') {
         ctx.mirror.pendingPlacementPreview = ctx.placementPreviewScratch;
       } else {

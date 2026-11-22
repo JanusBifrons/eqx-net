@@ -32,6 +32,10 @@ export interface PlacementChosen {
   stuck: boolean;
   /** Why the server would refuse the ghost where it is drawn, or null when clear. */
   rejection: PlacementRejection | null;
+  /** True right after Place while the next ghost still sits on the spot just
+   *  sent (same point, kind, rotation, mirror): it draws dim with no verdict
+   *  and Place refuses until the ghost moves. */
+  held: boolean;
 }
 
 export const placementChosen: PlacementChosen = {
@@ -39,6 +43,7 @@ export const placementChosen: PlacementChosen = {
   worldY: null,
   stuck: false,
   rejection: null,
+  held: false,
 };
 
 const rejectionListeners = new Set<() => void>();
@@ -59,6 +64,24 @@ export function getPlacementRejection(): PlacementRejection | null {
   return placementChosen.rejection;
 }
 
+const heldListeners = new Set<() => void>();
+
+/** Set the held state; listeners hear only a change. */
+export function setPlacementHeld(h: boolean): void {
+  if (placementChosen.held === h) return;
+  placementChosen.held = h;
+  for (const l of heldListeners) l();
+}
+
+/** `useSyncExternalStore` pair for the held state (the Place button). */
+export function subscribePlacementHeld(l: () => void): () => void {
+  heldListeners.add(l);
+  return () => { heldListeners.delete(l); };
+}
+export function getPlacementHeld(): boolean {
+  return placementChosen.held;
+}
+
 /** Per frame while a ghost is up: copy the renderer's chosen point, park
  *  state and verdict. Allocation-free. */
 export function writePlacementChosen(
@@ -76,4 +99,5 @@ export function resetPlacementChosen(): void {
   placementChosen.worldY = null;
   placementChosen.stuck = false;
   setPlacementRejection(null);
+  setPlacementHeld(false);
 }

@@ -1,5 +1,6 @@
 import { selectControlMode, useUIStore } from '../../state/store.js';
 import { resolvePlacementPreviewStatus } from '../../structures/structurePlacementClient.js';
+import { placementChosen, setPlacementHeld } from '../../structures/placementChosen.js';
 import {
   setSwarmDisplayDelayMode, stepSwarmDisplayDelay, getSwarmSteadyDisplayDelayMs,
 } from '../swarmInterpolation.js';
@@ -60,7 +61,11 @@ export function updateSpectatorPlacement(ctx: MirrorPassCtx, localId: string | n
       ctx.mirror.structures?.size ?? 0,
       allRenderable,
       ctx.placementPreviewScratch,
+      placementChosen.worldX,
+      placementChosen.worldY,
     );
+    // The next ghost right after Place: dim, no verdict, Place refused (held).
+    setPlacementHeld(status === 'active' && ctx.placementPreviewScratch.held === true);
     if (status === 'active' || status === 'pending') {
       ctx.mirror.pendingPlacementPreview = ctx.placementPreviewScratch;
     } else {

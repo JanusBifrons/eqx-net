@@ -8,7 +8,7 @@ import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { cyclePlacementRotation, getPlacementMirror, togglePlacementMirror } from '../structures/structurePlacementClient';
 import { isTouchDevice } from '../input/TouchInput';
-import { getPlacementRejection, subscribePlacementRejection } from '../structures/placementChosen';
+import { getPlacementHeld, getPlacementRejection, subscribePlacementHeld, subscribePlacementRejection } from '../structures/placementChosen';
 import { Slot } from '../layout/Slot';
 import { PlacementFenceHint } from './PlacementFenceHint';
 import { PlacementLinkHint } from './PlacementLinkHint';
@@ -45,7 +45,10 @@ export function StructurePlacementBanner(): JSX.Element | null {
   const [, bumpMirror] = useState(0);
   // The ghost's verdict (the server's own placement rule): blocked ⇒ Confirm
   // is disabled, the reason line under the banner says why.
-  const blocked = useSyncExternalStore(subscribePlacementRejection, getPlacementRejection) !== null;
+  const rejected = useSyncExternalStore(subscribePlacementRejection, getPlacementRejection) !== null;
+  // Right after Place the next ghost waits dim on the spot just sent (held).
+  const held = useSyncExternalStore(subscribePlacementHeld, getPlacementHeld);
+  const blocked = rejected || held;
 
   // TOUCH-ONLY affordance (P3.6 / WS-C4b). The banner is the two-step
   // tap-to-position → Confirm/Cancel flow for touch devices. On DESKTOP the
