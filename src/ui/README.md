@@ -17,6 +17,8 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxTextField` | Text input | `label` (also the accessible name), `value`, `onChange(text)`, `error` (message; sets the error state), `placeholder`, `disabled`, `data-testid` |
 | `EqxSlider` | Range | `min`, `max`, `step` (default 1), `marks` (`true` or `{ value, label? }[]`), `value`, `onChange(number)`, `label` (aria-label), `disabled`, `data-testid` |
 | `EqxSegmented` | Pick one of 2-5 views or values (throws in dev outside 2-5); full width, equal segments; selected = cyan, changed (not yet applied) = amber; `onChange` once per pick | `options` (`id` + `label`, or `id` + `icon` + `tooltip`), `value`, `onChange(id)`, `label` (group name), `appliedValue` (the value in force; a differing `value` shows amber, group gets `data-changed`), `disabled`, `data-testid` |
+| `icons` | Registry (`icons.tsx`): one game meaning -> one line icon (the mock-ups' paths). One icon means one thing (tested); `EqxIconName` is a string union. Add a meaning there, never import an icon in a feature | `EQX_ICONS`, `EQX_ICON_NAMES`, `EqxIconName` |
+| `EqxIcon` | Draws the registered icon for a meaning, e.g. `<EqxIcon name="patrol" />`. Colour inherited; decorative unless titled | `name`, `size` (small / medium / large from `HUD.size.iconGlyph`, default medium), `title` (accessible name), `data-testid` |
 
 ## Extend, never hand-roll
 

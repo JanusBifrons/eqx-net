@@ -2,10 +2,11 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { TradeToasts } from './TradeToasts';
 import { useUIStore } from '../state/store';
+import { selectDrawerOpen } from '../state/rightPanel';
 
 describe('TradeToasts', () => {
   beforeEach(() => {
-    useUIStore.setState({ tradeToasts: [], tradeUnread: 0, isDrawerOpen: false, drawerTab: 'galaxy' });
+    useUIStore.setState({ tradeToasts: [], tradeUnread: 0, rightPanel: null, drawerTab: 'galaxy' });
   });
 
   it('renders each toast with its tone and bumps the unread badge', () => {
@@ -24,7 +25,7 @@ describe('TradeToasts', () => {
     render(<TradeToasts />);
     act(() => { useUIStore.getState().pushTradeToast('Your trade hauler is under fire!', 'danger', true); });
     fireEvent.click(screen.getByTestId('trade-toast'));
-    expect(useUIStore.getState().isDrawerOpen).toBe(true);
+    expect(selectDrawerOpen(useUIStore.getState())).toBe(true);
     expect(useUIStore.getState().drawerTab).toBe('trade');
   });
 

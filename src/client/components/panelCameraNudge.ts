@@ -7,13 +7,17 @@
  * through the existing `glideCameraTo` with the renderer feedback's scale.
  */
 import type { SidePanelSize } from './SidePanel';
+import { railWidthPx } from '../layout/railWidth';
 
-/** On-screen width (CSS px) of the right dock for `size`, as `rightPaperSx`
- *  lays it out: `width` (max 92vw) on desktop; on touch `touchFrac` of the
- *  screen clamped to [`touchMinW`, `width`]. */
-export function rightPanelWidthPx(size: SidePanelSize, screenW: number, touch: boolean): number {
+/** On-screen width (CSS px) the right side covers for `size`: the dock as
+ *  `rightPaperSx` lays it out (`width`, max 92vw, on desktop; on touch
+ *  `touchFrac` of the screen clamped to [`touchMinW`, `width`]) plus the
+ *  right rail `railW` (`--rail-w` via `railWidthPx`; 0 until it mounts). */
+export function rightPanelWidthPx(
+  size: SidePanelSize, screenW: number, touch: boolean, railW: number = railWidthPx(),
+): number {
   const w = touch ? Math.min(size.width, Math.max(size.touchMinW, screenW * size.touchFrac)) : size.width;
-  return Math.min(w, screenW * 0.92);
+  return Math.min(w, screenW * 0.92) + railW;
 }
 
 /** Camera centre X that puts `worldX` mid-way across the screen left of a

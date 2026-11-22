@@ -54,7 +54,7 @@ interface UIStoreState {
   phase: string;
   playerId: string | null;
   setPendingShipSwap: (req: { shipId: string; sectorKey: string } | null) => void;
-  setDrawerOpen: (open: boolean) => void;
+  setRightPanel: (panel: string | null) => void;
   setDrawerTab: (tab: string) => void;
   setShipRoster: (ships: RosterEntry[]) => void;
 }

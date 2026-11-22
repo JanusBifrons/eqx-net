@@ -18,3 +18,5 @@ export {
 export { EqxTextField, type EqxTextFieldProps } from './EqxTextField/EqxTextField.js';
 export { EqxSlider, type EqxSliderProps, type EqxSliderMark } from './EqxSlider/EqxSlider.js';
 export { EqxSegmented, type EqxSegmentedProps, type EqxSegmentedOption } from './EqxSegmented/EqxSegmented.js';
+export { EQX_ICONS, EQX_ICON_NAMES, type EqxIconName } from './icons.js';
+export { EqxIcon, type EqxIconProps, type EqxIconSize } from './EqxIcon/EqxIcon.js';

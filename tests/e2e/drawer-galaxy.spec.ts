@@ -20,8 +20,7 @@ interface StoreState {
   phase: string;
   playerId: string | null;
   localShipInstanceId: string | null;
-  isDrawerOpen: boolean;
-  setDrawerOpen: (v: boolean) => void;
+  rightPanel: string | null;
   setDrawerTab: (id: string) => void;
 }
 interface StoreWindow extends Window {
@@ -120,8 +119,7 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
     stamp('toggle click did NOT open drawer; falling back to Zustand');
     await page.evaluate(() => {
       const win = window as unknown as StoreWindow;
-      win.__eqxStore!.getState().setDrawerOpen(true);
-      win.__eqxStore!.getState().setDrawerTab('galaxy');
+      win.__eqxStore!.getState().setDrawerTab('galaxy'); // also opens the Galaxy panel
     });
     await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
     stamp('advanced-drawer visible after Zustand fallback');

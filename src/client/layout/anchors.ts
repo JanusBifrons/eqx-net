@@ -1,8 +1,10 @@
 import type { CSSProperties } from 'react';
 import { Z } from './zIndex';
+import { RAIL_W_CSS } from './railWidth';
 
 /**
- * Named slot anchors. A 3x3 corner/edge/center grid plus four specials.
+ * Named slot anchors. A 3x3 corner/edge/center grid plus specials, and the
+ * right rail / left strip of the UI language (plan B2).
  *
  * The layout host renders one fixed-position div per anchor inside
  * `LayoutProvider`; widgets register into an anchor via `<Slot anchor=...>`.
@@ -23,7 +25,9 @@ export type AnchorName =
   | 'bottom-right'
   | 'fullscreen'
   | 'transit'
-  | 'rotate';
+  | 'rotate'
+  | 'right-rail'
+  | 'left-strip';
 
 export const ANCHOR_NAMES: readonly AnchorName[] = [
   'top-left',
@@ -38,19 +42,24 @@ export const ANCHOR_NAMES: readonly AnchorName[] = [
   'fullscreen',
   'transit',
   'rotate',
+  'right-rail',
+  'left-strip',
 ] as const;
 
 const SAFE_TOP = 'calc(env(safe-area-inset-top, 0px) + var(--app-bar-h, 48px) + 16px)';
 const SAFE_BOTTOM = 'calc(env(safe-area-inset-bottom, 0px) + 16px)';
 const SAFE_LEFT = 'calc(env(safe-area-inset-left, 0px) + 16px)';
-const SAFE_RIGHT = 'calc(env(safe-area-inset-right, 0px) + 16px)';
+// Right-edge HUD sits in by the right rail (`--rail-w`, 0px until it mounts).
+export const SAFE_RIGHT = `calc(env(safe-area-inset-right, 0px) + ${RAIL_W_CSS} + 16px)`;
+// Top of the full-height edge anchors: under the safe area and the app bar.
+const EDGE_TOP = 'calc(env(safe-area-inset-top, 0px) + var(--app-bar-h, 48px))';
 
 // Joystick / fire / boost — driven by --mobile-edge-inset (defined in
 // index.html) so a single landscape-on-touch media query kicks all three
 // further from the bezel without touching the typed CSSProperties map.
 const THUMB_BOTTOM = 'calc(env(safe-area-inset-bottom, 0px) + var(--mobile-edge-inset, 16px))';
 const THUMB_LEFT   = 'calc(env(safe-area-inset-left, 0px) + var(--mobile-edge-inset, 16px))';
-const THUMB_RIGHT  = 'calc(env(safe-area-inset-right, 0px) + var(--mobile-edge-inset, 16px))';
+const THUMB_RIGHT  = `calc(env(safe-area-inset-right, 0px) + ${RAIL_W_CSS} + var(--mobile-edge-inset, 16px))`;
 
 const STACK_GAP = 8;
 
@@ -189,6 +198,34 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     position: 'fixed',
     inset: 0,
     zIndex: Z.rotatePrompt,
+    pointerEvents: 'none',
+  },
+  // Right rail (plan B2): flush to the right edge, full height below the safe
+  // top, `--rail-w` wide (0 until U1-5 mounts the rail and sets it).
+  'right-rail': {
+    position: 'fixed',
+    top: EDGE_TOP,
+    right: 'env(safe-area-inset-right, 0px)',
+    bottom: 'env(safe-area-inset-bottom, 0px)',
+    width: RAIL_W_CSS,
+    zIndex: Z.railStrip,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    pointerEvents: 'none',
+  },
+  // Left strip (plan B2): left edge, centred down the side so it stays clear of
+  // the top-left corner (the mode switch and top-left HUD own it).
+  'left-strip': {
+    position: 'fixed',
+    top: '50%',
+    left: SAFE_LEFT,
+    transform: 'translateY(-50%)',
+    zIndex: Z.railStrip,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: STACK_GAP,
     pointerEvents: 'none',
   },
 };

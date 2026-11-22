@@ -1,45 +1,31 @@
 import { useEffect, useState } from 'react';
-import { Box, CircularProgress, IconButton, Tooltip } from '@mui/material';
-import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
-import RecyclingIcon from '@mui/icons-material/Recycling';
-import BuildIcon from '@mui/icons-material/Build';
+import { Box } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { getGameClient } from '../net/clientSingleton';
-import { sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
 import { decodeGood, isProcessorKind, prodStatusLine, type ProdState } from '@shared-types/production';
 import type { RecipeId } from '@shared-types/recipes';
 import { makesThings, readProduction } from './structureSettingsProduction';
-import { phoneTiny, useInspectorPhoneAttrs } from './inspectorSizes';
+import { useInspectorPhoneAttrs } from './inspectorSizes';
 import { gateTypeOf } from '@core/structures/gateGeometry';
-import { GATE_ACCESS_LABELS, gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
-import { sendPilotShip } from '../ships/shipActionsClient';
-import { BountyAction } from './BountyAction';
-import { BlueprintInstall } from './BlueprintInstall';
-import { ResearchLabPanel } from './ResearchLabPanel';
-import { CargoAction, PodOpen } from './LootWindow';
+import { gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
 import { asteroidPanelRow, podPanelRow } from './swarmTerrainInfo';
-import { ForeignTeleporterPanel, TeleporterPanel } from './TeleporterPanel';
 import { isAlienGateKind, isTeleporterKind } from '../../shared-types/teleport';
 import { alienGateLine } from './alienGateInfo';
-import { HullUnpack } from './HullUnpack';
-import { hullColor } from '../hud/tokens';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { structureGunLines } from './structureGunLines';
 import { structureSelfPower } from './structureSettingsPower';
 import type { PickedEntityKind } from '../render/pickEntity';
-import { TargetAction } from './TargetAction';
-import { ACTION_BTN_SX, ICON_SX } from './StructureManageActions';
-import { StructureSettingsOpen } from './StructureSettingsModal';
-import { canManageBuildings } from '../structures/buildingManagement';
 // Moved with the management buttons; re-exported so existing importers keep working.
 import { droneName, parkedHullLabels, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
 import { buildStalledLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
-import { Bar } from './inspectorBar';
-import { StructureCardRows } from './structureCard';
 import { structureOwnerLabel } from './structureSettingsStatus';
+// The panel's three parts (identity, readout bars, inspector actions) live beside it.
+import { EntityStatsHeader } from './EntityStatsHeader';
+import { EntityStatsBars } from './EntityStatsBars';
+import { EntityStatsActions } from './EntityStatsActions';
 
 /**
  * Click-to-inspect live stats panel (structures follow-up Item B6).
@@ -65,7 +51,7 @@ import { structureOwnerLabel } from './structureSettingsStatus';
 // regardless of the poll; only the server-only hp/shield wait a packet.
 const POLL_MS = 150;
 
-interface PanelData {
+export interface PanelData {
   name: string;
   hpPct: number;
   shieldPct: number | null;
@@ -169,7 +155,6 @@ export function EntityStatsPanel(): JSX.Element | null {
   const selectedId = useUIStore((s) => s.selection.focusId);
   const selectedKind = useUIStore((s) => s.selection.focusKind);
   const [data, setData] = useState<PanelData | null>(null);
-  const manage = useUIStore(canManageBuildings);
   const phoneAttrs = useInspectorPhoneAttrs();
 
   useEffect(() => {
@@ -212,124 +197,9 @@ export function EntityStatsPanel(): JSX.Element | null {
       {...(data.infoLine !== undefined ? { 'data-entity-info': data.infoLine } : {})}
       sx={ROOT_SX}
     >
-      {data.isStructure ? (
-        // Building-panels A2 — the compact building card: badge, name, Lv, short
-        // hull, power icon, one status chip (+ the "making" slot). Detail lives
-        // in the settings side panel behind the Open button.
-        <StructureCardRows d={data} />
-      ) : (
-        <>
-          <Box sx={NAME_SX} data-testid="entity-stats-name">{data.name}</Box>
-          {data.noHull ? (
-            // R2.23 — asteroid (size/resources) or lingering hull (owner): no bars.
-            <Box sx={INFO_SX} data-testid="entity-stats-info">{data.infoLine}</Box>
-          ) : data.pending ? (
-            // R2.8 — hp/shield awaiting the first server packet: a spinner, not a 0-bar.
-            <Box sx={PENDING_SX} data-testid="entity-stats-spinner">
-              <CircularProgress size={12} thickness={6} sx={SPINNER_SX} />
-            </Box>
-          ) : (
-            <>
-              {data.shieldPct !== null && (
-                <>
-                  <Cap>SHLD</Cap>
-                  <Bar pct={data.shieldPct} color={SHIELD_COLOR} />
-                </>
-              )}
-              <Cap>HULL</Cap>
-              <Bar pct={data.hpPct} color={hullColor(data.hpPct)} />
-            </>
-          )}
-        </>
-      )}
-      {hasCharge && (
-        <>
-          <Cap>CHRG</Cap>
-          <Bar pct={chargePct} color={CHARGE_COLOR} />
-        </>
-      )}
-      {data.gunLine !== undefined && (
-        // Coastal defences — reload + firing arc per gun size.
-        <Box sx={GUN_SX} data-testid="entity-stats-guns">
-          {data.gunLine}
-        </Box>
-      )}
-      {data.gateAccess !== undefined && (
-        // Gates — who it opens for (visible to everyone; only the owner changes it).
-        <Box sx={POWER_SX} data-testid="entity-stats-gate-access" data-gate-access={data.gateAccess}>
-          {`OPENS FOR ${GATE_ACCESS_LABELS[data.gateAccess]}`}
-        </Box>
-      )}
-      {data.alienGateLine !== undefined && (
-        <Box sx={POWER_SX} data-testid="entity-stats-alien-gate">{data.alienGateLine}</Box>
-      )}
-      {data.isOwn && data.entityId !== undefined && (manage || data.holdLine !== undefined || data.canRefine === true) && (
-        // Phase-1 issue 6 — owner-only action buttons. The panel root is
-        // pointerEvents:none (passive readout), so this row re-enables pointers.
-        // Open (the settings side panel, where building management lives) is
-        // Build mode only (`canManageBuildings`); repair and refine are pilot
-        // services and show in every mode.
-        <Box sx={ACTIONS_SX} data-testid="entity-stats-actions">
-          {manage && <StructureSettingsOpen entityId={data.entityId} title={data.name} />}
-          {data.holdLine !== undefined && (
-            // Living World P1a-2 — instant repair of MY ship here (credit sink).
-            <Tooltip title="Repair your ship here (paid from your credits)">
-              <IconButton
-                data-testid="structure-action-repair-ship"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendRepairShip()}
-              >
-                <BuildIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {data.canRefine && (
-            // Living World P1a-2 — refine the network's salvage into this
-            // Capital's mineral bank (funds construction).
-            <Tooltip title="Refine salvage into minerals">
-              <IconButton
-                data-testid="structure-action-refine"
-                size="small"
-                sx={ACTION_BTN_SX}
-                onClick={() => sendRefineSalvage(data.entityId!, 1_000)}
-              >
-                <RecyclingIcon sx={ICON_SX} />
-              </IconButton>
-            </Tooltip>
-          )}
-        </Box>
-      )}
-      {data.bountyTarget !== undefined && <BountyAction targetPlayerId={data.bountyTarget} />}
-      {data.blueprints !== undefined && data.entityId !== undefined && (
-        <BlueprintInstall entityId={data.entityId} blueprints={data.blueprints} />
-      )}
-      {data.packed !== undefined && data.entityId !== undefined && <HullUnpack entityId={data.entityId} packed={data.packed} />}
-      {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
-      {data.isTeleporter === true && data.entityId !== undefined && <TeleporterPanel key={data.entityId} entityId={data.entityId} />}
-      {data.isForeignTeleporter === true && data.entityId !== undefined && <ForeignTeleporterPanel key={data.entityId} entityId={data.entityId} />}
-      {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} title={data.name} />}
-      {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} title={data.name} />}
-      {data.podOpen !== undefined && data.entityId !== undefined && <PodOpen key={data.entityId} entityId={data.entityId} inReach={data.podOpen} {...(data.infoLine !== undefined ? { subtitle: data.infoLine } : {})} />}
-      <TargetAction isOwn={data.isOwn === true || data.pilotShipId !== undefined} />
-      {data.pilotShipId !== undefined && (
-        // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
-        // lingering hull. Same-sector instant swap (no spool/curtain); the camera
-        // smooth-lerps to the new ship. The panel root is pointerEvents:none, so
-        // this row re-enables pointers.
-        <Box sx={ACTIONS_SX} data-testid="entity-stats-actions">
-          <Tooltip title="Pilot this ship (instant in-sector swap)">
-            <IconButton
-              data-testid="ship-action-pilot"
-              size="small"
-              sx={ACTION_BTN_SX}
-              onClick={() => sendPilotShip(data.pilotShipId!)}
-            >
-              <FlightTakeoffIcon sx={ICON_SX} />
-            </IconButton>
-          </Tooltip>
-        </Box>
-      )}
+      <EntityStatsHeader data={data} />
+      <EntityStatsBars data={data} />
+      <EntityStatsActions data={data} />
     </Box>
   );
 }
@@ -523,18 +393,10 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
   return null;
 }
 
-const SHIELD_COLOR = '#36c8ff';
-const CHARGE_COLOR = '#cc8844';
-
-function Cap({ children }: { children: string }): JSX.Element {
-  return <Box component="span" sx={CAP_SX}>{children}</Box>;
-}
-
 // Docked top-centre (App.tsx Slot). Centred, so never wider than the viewport
 // less twice the open side panel (SETTINGS_PANEL_SIZE: clamp(280px, 40vw,
 // 360px)) and 8 px each side: 179 px on a sideways Pixel 7 (915 px).
 export const CARD_MAX_W = 'max(120px, 100vw - 2 * clamp(280px, 40vw, 360px) - 16px)';
-const ELLIPSIS_SX = { overflow: 'hidden' as const, textOverflow: 'ellipsis' as const, minWidth: 0 };
 const ROOT_SX = {
   maxWidth: CARD_MAX_W,
   // Last guard only: each card row ellipsizes or wraps on its own (structureCard.tsx).
@@ -551,63 +413,4 @@ const ROOT_SX = {
   pointerEvents: 'none' as const,
   userSelect: 'none' as const,
   fontFamily: 'system-ui, sans-serif',
-};
-// Equinox Phase-5 audit — "WAY too small" on desktop: the sm breakpoint scales fonts,
-// bar and icons ~2x; mobile (xs, and any phone: inspectorSizes.ts) stays tiny.
-const NAME_SX = {
-  gridColumn: '1 / -1',
-  ...ELLIPSIS_SX,
-  ...phoneTiny({ fontSize: [10, 20] }),
-  fontWeight: 700,
-  color: '#cde',
-  letterSpacing: 0.3,
-  whiteSpace: 'nowrap' as const,
-};
-const CAP_SX = {
-  ...phoneTiny({ fontSize: [8, 16] }),
-  letterSpacing: 0.5,
-  color: 'rgba(255,255,255,0.45)',
-  textTransform: 'uppercase' as const,
-};
-const POWER_SX = {
-  gridColumn: '1 / -1',
-  ...phoneTiny({ fontSize: [8, 16] }),
-  fontWeight: 700,
-  letterSpacing: 0.4,
-  color: 'rgba(180,220,255,0.85)',
-  textTransform: 'uppercase' as const,
-};
-const GUN_SX = {
-  gridColumn: '1 / -1',
-  ...phoneTiny({ fontSize: [9, 16] }),
-  fontWeight: 600,
-  letterSpacing: 0.3,
-  color: 'rgba(180,220,255,0.85)',
-  whiteSpace: 'pre-line' as const,
-};
-const INFO_SX = {
-  gridColumn: '1 / -1',
-  ...ELLIPSIS_SX,
-  ...phoneTiny({ fontSize: [9, 18] }),
-  fontWeight: 600,
-  letterSpacing: 0.3,
-  color: 'rgba(200,225,255,0.9)',
-  whiteSpace: 'nowrap' as const,
-};
-const PENDING_SX = {
-  gridColumn: '1 / -1',
-  display: 'flex',
-  justifyContent: 'center',
-  py: '2px',
-};
-const SPINNER_SX = { color: 'rgba(180,220,255,0.8)' };
-// Phase-1 issue 6 — owner-only action-button row. Re-enables pointers (the
-// panel root is pointerEvents:none) and keeps the buttons tiny ("start tiny").
-const ACTIONS_SX = {
-  gridColumn: '1 / -1',
-  display: 'flex',
-  justifyContent: 'center',
-  gap: 0.25,
-  pt: '2px',
-  pointerEvents: 'auto' as const,
 };

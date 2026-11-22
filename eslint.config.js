@@ -2,6 +2,8 @@ import js from '@eslint/js';
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
 import importPlugin from 'eslint-plugin-import';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Zone import boundaries (see docs/blueprint.md and plan file).
@@ -61,6 +63,40 @@ const clientForbidden = [
   'http',
   'node:http',
 ];
+
+/**
+ * MUI lint wall (ui-language plan C6): raw @mui / @emotion imports belong in the
+ * EQX catalogue src/ui/** only. The files that imported them when the wall went
+ * up are on the shrink-only allowlist scripts/mui-allowlist.json (the one list;
+ * scripts/audit-mui.mjs fails CI when it can shrink). `pnpm ui:countdown`.
+ */
+const muiForbidden = ['@mui/*', '@emotion/*'];
+const muiAllowlist = JSON.parse(readFileSync(fileURLToPath(import.meta.resolve('./scripts/mui-allowlist.json')), 'utf8'));
+
+/** The src/client no-restricted-imports rule; allowlisted files get it without the MUI ban. */
+function clientRestrictedImports({ banMui }) {
+  return [
+    'error',
+    {
+      patterns: [
+        ...clientForbidden.map((p) => ({
+          group: [p],
+          message: `src/client must not import server-only libraries or Node-only APIs. Forbidden: ${p}.`,
+        })),
+        ...(banMui
+          ? muiForbidden.map((p) => ({
+              group: [p],
+              message: `Raw ${p} imports live in src/ui/** only (the EQX catalogue): use an src/ui entry, or add the missing entry/prop there. Files on scripts/mui-allowlist.json are exempt until they move; the list only shrinks.`,
+            }))
+          : []),
+        {
+          group: ['**/src/server/**', '../server/**', '../../server/**'],
+          message: 'src/client must not import from src/server.',
+        },
+      ],
+    },
+  ];
+}
 
 export default [
   {
@@ -255,21 +291,7 @@ export default [
   {
     files: ['src/client/**/*.{ts,tsx}'],
     rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            ...clientForbidden.map((p) => ({
-              group: [p],
-              message: `src/client must not import server-only libraries or Node-only APIs. Forbidden: ${p}.`,
-            })),
-            {
-              group: ['**/src/server/**', '../server/**', '../../server/**'],
-              message: 'src/client must not import from src/server.',
-            },
-          ],
-        },
-      ],
+      'no-restricted-imports': clientRestrictedImports({ banMui: true }),
       // A no-argument `useUIStore()` subscribes the component to the ENTIRE
       // store, re-rendering it on every write. In a component that renders the
       // HUD subtree (GameSurface), that cascaded an Emotion/MUI re-render storm
@@ -284,6 +306,13 @@ export default [
           message: 'Do not call useUIStore() with no selector — it subscribes to the WHOLE store and re-renders on every write (Emotion/MUI re-render storm = the 2026-06-06 combat lag). Pass a selector: useUIStore((s) => s.x). Setters are stable, so selecting them never re-renders.',
         },
       ],
+    },
+  },
+  {
+    // The same rule minus the MUI ban for the shrink-only allowlist (see muiForbidden).
+    files: muiAllowlist,
+    rules: {
+      'no-restricted-imports': clientRestrictedImports({ banMui: false }),
     },
   },
   {

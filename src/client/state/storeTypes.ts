@@ -22,6 +22,7 @@ import type { BpMarketState } from '../../shared-types/blueprintMarket.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
 import type { ShieldToggleUi } from './shieldToggleUi.js';
+import type { RightPanelUi } from './rightPanel.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -207,7 +208,7 @@ export interface UIHealthStats {
   longtask: { count30s: number; maxMs30s: number };
 }
 
-export interface UIStore extends ShieldToggleUi {
+export interface UIStore extends ShieldToggleUi, RightPanelUi {
   connectionStatus: ConnectionStatus;
   sectorName: string;
   hullPct: number;
@@ -394,10 +395,6 @@ export interface UIStore extends ShieldToggleUi {
    *  active slot's cooldown to render a circular progress indicator.
    *  Low-cadence — safe in Zustand without trampling React. */
   lastFireMs: number | null;
-  /** Right-edge advanced drawer open state. Discrete UI flag — purity-clean. */
-  isDrawerOpen: boolean;
-  /** Currently active tab inside the advanced drawer (`profile` | `settings` | `galaxy` | `debug`). */
-  drawerTab: string;
   /** Top-level UX phase. App.tsx routes screens off this value. */
   phase: Phase;
   /** Living Galaxy P5 — a galaxy sector picked while logged-OUT, stashed across
@@ -588,8 +585,6 @@ export interface UIStore extends ShieldToggleUi {
   setFcGroups: (groups: FcGroupSummary[]) => void;
   setActiveGroupId: (id: string | null) => void;
   setLastFireMs: (ms: number | null) => void;
-  setDrawerOpen: (v: boolean) => void;
-  setDrawerTab: (id: string) => void;
   setPhase: (p: Phase) => void;
   setPendingPickSector: (key: string | null) => void;
   setGalaxyMapOpen: (v: boolean) => void;

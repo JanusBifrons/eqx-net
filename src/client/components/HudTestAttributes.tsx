@@ -5,7 +5,7 @@ import { useUIStore, useIsLoadingActive } from '../state/store';
  *
  * The real diagnostics live inside the AdvancedDrawer's Dev tab. Even though
  * `keepMounted` is now ON (2026-05-13, commit `2aa7d4f` — see
- * `AdvancedDrawer.tsx`), Dev-tab content only renders when `drawerTab === 'debug' && isDrawerOpen`
+ * `AdvancedDrawer.tsx`), Dev-tab content only renders when `selectDrawerTabShown('debug')`
  * to avoid the 17 Hz snapshot-rate cost while invisible. So the diagnostics
  * are NOT queryable from arbitrary E2E specs. Several existing specs
  * (`feel-test-lockstep`, `swarm-tidi`, `tidi-overlay`, etc.) read these

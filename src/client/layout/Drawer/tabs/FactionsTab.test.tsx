@@ -25,11 +25,11 @@ describe('FactionsTab (v4 F3)', () => {
     sent.length = 0;
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => VIEW })));
     useUIStore.getState().setDrawerTab('factions');
-    useUIStore.getState().setDrawerOpen(true);
+    useUIStore.getState().setRightPanel('faction');
   });
   afterEach(() => {
     vi.unstubAllGlobals();
-    useUIStore.getState().setDrawerOpen(false);
+    useUIStore.getState().setRightPanel(null);
   });
 
   it('shows each faction’s view of you and yours of them, by name (no raw ids)', async () => {
@@ -56,7 +56,7 @@ describe('FactionsTab (v4 F3)', () => {
   });
 
   it('does not poll while hidden', () => {
-    useUIStore.getState().setDrawerOpen(false);
+    useUIStore.getState().setRightPanel(null);
     render(<FactionsTab />);
     expect(fetch).not.toHaveBeenCalled();
   });

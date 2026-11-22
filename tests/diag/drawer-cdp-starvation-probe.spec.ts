@@ -27,7 +27,7 @@ import { test, expect } from '@playwright/test';
  *   - Apply `app.ticker.maxFPS = 30` (PixiRenderer one-liner) and
  *     re-measure. If roundtrip drops to <50 ms, the fix is to throttle
  *     Pixi while modals are open (≈10 LoC in PixiRenderer + a
- *     useEffect in App.tsx watching `isDrawerOpen`).
+ *     useEffect in App.tsx watching `selectDrawerOpen`).
  *
  * Marathon-recovery plan Phase 3 step 3.
  */
