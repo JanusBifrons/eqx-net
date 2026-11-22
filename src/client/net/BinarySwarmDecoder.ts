@@ -38,6 +38,16 @@ import {
 } from './swarmInterpolation.js';
 import { makeSwarmResumeOffset } from './swarmResumeOffset.js';
 
+/** Ids a full snapshot must not sweep. `has`: kept outright (a held death).
+ *  `linger` (live client only, `stampByTick`): asked for each entity a full
+ *  snapshot omits; true keeps it drawn until its owner removes it (a swept
+ *  drone or scrap piece the drawn timeline has not yet passed,
+ *  `DrawnShellTiming.linger`). */
+export interface SwarmSweepKeep {
+  has(id: number): boolean;
+  linger?(id: number, entry: SwarmRenderState): boolean;
+}
+
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
 }
@@ -72,14 +82,15 @@ function makeEmptyRing(): PoseRingEntry[] {
  * is `performance.now()`. `stampByTick` stamps the pose ring with
  * `swarmArrivalStampMs(tick, nowMs)` instead (the live client). `keep`: ids
  * a full snapshot must not sweep (a ship whose death is held for its drawn
- * shell, `DrawnShellTiming.swarmKills`; released within the hold's bound).
+ * shell, `DrawnShellTiming.swarmKills`; released within the hold's bound),
+ * and, with `stampByTick`, any it chooses to `linger` (`SwarmSweepKeep`).
  */
 export function decodeSwarmPacket(
   input: ArrayBuffer | ArrayBufferView,
   mirror: RenderMirror,
   nowMs: number = performance.now(),
   stampByTick = false,
-  keep?: { has(id: number): boolean },
+  keep?: SwarmSweepKeep,
 ): void {
   // Build a DataView that reads the live bytes regardless of whether the
   // input is a raw ArrayBuffer, a Uint8Array view, or a SharedArrayBuffer-
@@ -267,7 +278,11 @@ export function decodeSwarmPacket(
     // every Nth full refresh, and its lifetime is owned by the room-state
     // `structures` row (ColyseusClient.syncStructures removes its entry).
     for (const [id, e] of swarm) {
-      if (!seen.has(id) && e.kind !== SWARM_KIND_STRUCTURE && keep?.has(id) !== true) swarm.delete(id);
+      if (seen.has(id) || e.kind === SWARM_KIND_STRUCTURE || keep?.has(id) === true) continue;
+      // Off-event slice 5: a drone or scrap piece gone without a destroy
+      // stays until the drawn timeline passes its newest sample.
+      if (stampByTick && keep?.linger?.(id, e) === true) continue;
+      swarm.delete(id);
     }
   }
 }

@@ -24,6 +24,7 @@ import type { WreckGeometryStore } from '../wreckGeometryStore.js';
 import type { DrawnShellTiming } from '../drawnShellTiming';
 import type { DataChannelTransport } from '../dataChannelTransport.js';
 import type { SentInputState } from '../prediction/predictionStepCtx.js';
+import { clearMissileDetonations } from '../../combat/MissileMirror.js';
 
 const NO_WRECK_LIST: readonly WreckDescriptor[] = [];
 
@@ -100,6 +101,8 @@ export function registerWelcomeHandlers(room: Room, hctx: WelcomeHandlerCtx): vo
       ctx.mirror.wrecks = ctx.wrecks.descriptors;
     }
     ctx.shellTiming.onWelcome(ctx.shellEvents, msg.shellsInFlight);
+    // Held missile detonations belong to the old room: drop them (no blast).
+    clearMissileDetonations(ctx.mirror);
     // Every claimed faction ship look (#16); later claims: faction_look_claimed.
     if (msg.factionLooks) setFactionLooks(msg.factionLooks);
     const idChanged = ctx.storedPlayerId && msg.playerId !== ctx.storedPlayerId;

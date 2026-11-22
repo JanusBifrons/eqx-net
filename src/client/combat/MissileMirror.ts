@@ -55,6 +55,9 @@ import {
   resetDisplayDelayHold,
   slewDisplayDelay,
 } from '../net/displayDelayHold.js';
+// The stamped-hold deadline shared with held hits (off-pilot event timing).
+import { STAMPED_HOLD_MARGIN_MS, matchedHoldMs } from '../net/navalHitHold.js';
+import { clearWallHits, holdWallHit, pushWallHit, releaseWallHits } from './missileWallHits.js';
 
 /**
  * FALLBACK display delay (GAME ms; wall = 100 / time scale), used only before
@@ -107,6 +110,7 @@ export function stepMissileDisplayDelay(mirror: RenderMirror, frameDtMs: number,
   if (Number.isNaN(getSwarmStreamNewestStampMs())) {
     _missileHoldSeeded = false;
     mirror.swarmDisplayDelayMs = Number.NaN;
+    releaseMissileDetonations(mirror, nowMs, Number.NaN);
     return;
   }
   const speed = getSwarmDisplaySpeed();
@@ -123,6 +127,7 @@ export function stepMissileDisplayDelay(mirror: RenderMirror, frameDtMs: number,
     _missileHold, nowMs, _missileStreamNewestStampMs, MISSILE_EXTRAPOLATION_CAP_MS / speed, speed, getSwarmHoldMaxWallMs(),
   );
   mirror.swarmDisplayDelayMs = _missileHold.delayMs;
+  releaseMissileDetonations(mirror, nowMs, nowMs - _missileHold.delayMs);
 }
 
 /** Forget the missile stream's delay, newest stamp and counters (sector
@@ -291,7 +296,8 @@ export function applyMissileSnapshot(
   // recipient's view — is reaped within the extrapolation cap.
   const despawnMs = missileAbsentDespawnMs();
   for (const [id, m] of map) {
-    if (nowMs - m.latestArrivalMs > despawnMs) {
+    // A held detonation leaves on its own release (`releaseMissileDetonations`).
+    if (m.detStampMs === undefined && nowMs - m.latestArrivalMs > despawnMs) {
       map.delete(id);
     }
   }
@@ -319,12 +325,96 @@ function restampRing(m: MissileRenderState, nowMs: number): void {
 }
 
 /**
- * Remove a missile from the mirror immediately. Called on
- * `missile_detonated` arrival so the sprite stops being drawn the
- * frame the explosion VFX appears.
+ * Remove a missile from the mirror immediately (a detonation that cannot
+ * wait for the drawn missile: `holdMissileDetonation`), so the sprite stops
+ * being drawn the frame the explosion VFX appears.
  */
 export function removeMissile(mirror: RenderMirror, missileId: number): void {
   mirror.missiles?.delete(missileId);
+}
+
+/**
+ * `missile_detonated` arrived (off-pilot event timing, slice 3/6). The event
+ * carries no tick and the missile is drawn on the missile stream's display
+ * delay (100-150 ms piloting, up to seconds off pilot), so removing it at once
+ * made the drawn missile vanish mid-flight with the blast ahead of it. If the
+ * missile is in the mirror and the drone tick clock is seeded, it is KEPT
+ * (still drawn, exempt from the absent-from-slice despawn) with a stamp: the
+ * newest JSON snapshot tick at arrival, on the drone tick clock. The per-frame
+ * step removes it and queues the explosion at (x, y) once the missile read
+ * point (now − the missile delay, what `resolveMissileDisplayPose` reads)
+ * reaches the stamp, or at the deadline: the current delay + the stamped-hold
+ * margin, capped by `matchedHoldMs` (as `NavalHitHold.holdStamped`).
+ * Otherwise it is removed and explodes at once (the old path).
+ */
+export function holdMissileDetonation(
+  mirror: RenderMirror, missileId: number, x: number, y: number, splashRadius: number, nowMs: number,
+): void {
+  const m = mirror.missiles?.get(missileId);
+  const stampMs = missileEventStampMs(nowMs);
+  if (m === undefined || Number.isNaN(stampMs)) {
+    removeMissile(mirror, missileId);
+    pushMissileExplosion(mirror, missileId, x, y, splashRadius);
+    return;
+  }
+  m.detStampMs = stampMs;
+  m.detDeadlineMs = missileEventDeadlineMs(nowMs);
+  m.detX = x; m.detY = y; m.detSplash = splashRadius;
+}
+
+/** A missile event's stamp: the newest JSON snapshot tick on the drone tick
+ *  clock (NaN before either is known). */
+function missileEventStampMs(nowMs: number): number {
+  return _missileStreamNewestTick < 0 ? Number.NaN : swarmTickToStampMs(_missileStreamNewestTick, nowMs);
+}
+
+/** A held missile event's wall-ms deadline: the current delay + the
+ *  stamped-hold margin, capped by `matchedHoldMs` (game ms ÷ speed). */
+function missileEventDeadlineMs(nowMs: number): number {
+  const speed = getSwarmDisplaySpeed();
+  return nowMs + Math.min(
+    _missileHold.delayMs * speed + STAMPED_HOLD_MARGIN_MS, matchedHoldMs(isSwarmDelayOffPilotActive()),
+  ) / speed;
+}
+
+/** A fence stopped a missile (`wall_hit`, kind `missile`; slice 4b/6): its
+ *  flash waits with the missile's detonation (same stamp, same release,
+ *  `missileWallHits.ts`) while a missile is drawn; else it shows now. */
+export function holdMissileWallHit(mirror: RenderMirror, x: number, y: number, nowMs: number): void {
+  const stampMs = missileEventStampMs(nowMs);
+  if (mirror.missiles === undefined || mirror.missiles.size === 0 || Number.isNaN(stampMs)) {
+    pushWallHit(mirror, x, y);
+    return;
+  }
+  holdWallHit(x, y, stampMs, missileEventDeadlineMs(nowMs));
+}
+
+/** Release every held detonation whose stamp the missile read point
+ *  `readPointMs` (NaN: none this frame) reached, or whose deadline passed:
+ *  remove the missile and queue its explosion. Run by the per-frame step. */
+function releaseMissileDetonations(mirror: RenderMirror, nowMs: number, readPointMs: number): void {
+  releaseWallHits(mirror, nowMs, readPointMs);
+  const map = mirror.missiles;
+  if (map === undefined) return;
+  for (const [id, m] of map) {
+    const stampMs = m.detStampMs;
+    if (stampMs === undefined || !(readPointMs >= stampMs || nowMs >= m.detDeadlineMs!)) continue;
+    map.delete(id);
+    pushMissileExplosion(mirror, id, m.detX!, m.detY!, m.detSplash!);
+  }
+}
+
+/** Drop every held detonation and its missile, with no explosion (welcome or
+ *  sector change: those missiles belong to the old room). */
+export function clearMissileDetonations(mirror: RenderMirror): void {
+  clearWallHits();
+  const map = mirror.missiles;
+  if (map === undefined) return;
+  for (const [id, m] of map) if (m.detStampMs !== undefined) map.delete(id);
+}
+
+function pushMissileExplosion(mirror: RenderMirror, missileId: number, x: number, y: number, splashRadius: number): void {
+  (mirror.pendingMissileExplosions ??= []).push({ x, y, splashRadius, missileId });
 }
 
 /** Module scratch for the populated-ring gather (alloc-free per call; sized to

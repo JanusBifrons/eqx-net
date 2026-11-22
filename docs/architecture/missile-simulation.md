@@ -57,7 +57,8 @@ client (player fires)  │  PlayerFireResolver — mode='missile'│
    ColyseusClient.handleSnapshot                              │
        applyMissileSnapshot(snap.missiles, mirror, ...)      │
    ColyseusClient.onMessage('missile_detonated', ...)        │
-       removeMissile + push pendingMissileExplosions          │
+       holdMissileDetonation: keep it flying to the drawn    │
+       detonation, then remove + pendingMissileExplosions    │
                                                              │
    PixiRenderer.update()                                     │
        updateMissileSprites:                                 │
@@ -250,7 +251,7 @@ over the frozen sprite — a visible stutter at end of life.
 Fix: on lifetime expiry `advance()` now calls
 `detonate(m, m.x, m.y, null, null, 'lifetime')` before `releaseAtPos`. This fires
 the `missile_detonated` broadcast (+ local `MISSILE_DETONATED` bus event), so the
-client's `removeMissile()` clears the sprite the same frame and the explosion VFX
+client clears the sprite (once the drawn missile reaches the point) and the explosion VFX
 plays — a clean finish, not a frozen ghost.
 
 The **impact-only DAMAGE design is preserved**: `detonate()` SKIPS all three
@@ -402,6 +403,30 @@ main-thread stamp and desktop missiles were drawn up to a display delay behind
 their oldest sample. Trails and explosion fades keep the renderer clock. Lock:
 `missileSpriteUpdater.test.ts` (a 5000 ms worker offset draws the
 main-thread-resolved pose).
+
+## Detonation waits for the drawn missile (off-pilot event timing, slice 3)
+
+`missile_detonated` carries no tick, and the missile is drawn on the missile
+stream's display delay (100-150 ms piloting, up to seconds in Command/Build).
+Removing it on arrival made the drawn missile vanish mid-flight with the blast
+ahead of it. `holdMissileDetonation` keeps the mirror entry instead, with a
+stamp: the newest JSON snapshot tick at arrival on the drone tick clock
+(`swarmTickToStampMs`), plus the detonation point and splash in flat
+`det*` fields on `MissileRenderState` (no allocation in `onMessage`). The held
+missile keeps being drawn and is exempt from the absent-from-slice despawn.
+`stepMissileDisplayDelay` releases it each frame once the missile read point
+(now − the missile stream delay, the time `resolveMissileDisplayPose` reads)
+reaches the stamp: it removes the entry and queues the explosion at the
+server's detonation point. Safety deadline: the current delay (game ms) +
+`STAMPED_HOLD_MARGIN_MS`, capped by `matchedHoldMs`, the same as
+`NavalHitHold.holdStamped`. The read point is the missile stream's, not
+`swarmReadPointMs`: a swarm-only stall holds drones while missiles play on, and
+the blast must meet the drawn missile. With no drone tick clock yet, or a
+missile not in the mirror, it explodes at once (the old path). A welcome or a
+sector change (`clearMissileDetonations`) drops held detonations with no blast.
+Lock: `MissileMirror.detonation.test.ts` (150 ms piloting and 2 s off pilot:
+one blast at the point, one delay after arrival, drawn up to it; deadline;
+clear).
 
 ## Shells read the drone delay before the hold (netcode gap smoothing S5-6a)
 
