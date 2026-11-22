@@ -299,14 +299,12 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
   warpHeldTo: string | null;
   /** THE selection (RTS Part A: one selection concept). See {@link UISelection}. */
   selection: UISelection;
-  /** RTS command view (slice 14): the compact fleet strip's order-mode toggle,
-   *  what a tap on the map orders the selected ships to do. Discrete UI choice. */
-  fleetOrderMode: 'move' | 'attack';
   /** RTS slice 14b: a mode button waiting for a target on the map (patrol
-   *  route / ship to escort / retreat point), or null. Discrete only: the
+   *  route / ship to escort / retreat point; tap rule T3: the strip's Move
+   *  point), or null. Discrete only: the
    *  points live in the renderer; `points` is just how many are picked, and
    *  `doneSeq` bumps when the player presses Done. */
-  fleetPick: { kind: 'patrol' | 'escort' | 'retreat'; points: number; doneSeq: number } | null;
+  fleetPick: { kind: 'move' | 'patrol' | 'escort' | 'retreat'; points: number; doneSeq: number } | null;
   /** Helm orders, discrete only (course point lives in the helm controller, #2). */
   helmAvailable: boolean;
   helmActive: boolean;
@@ -549,9 +547,8 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
   /** Mirror the renderer's selection (ids + focus) in one write. An empty
    *  `ids` also ends a fleet map pick (no ships left to command). */
   setSelection: (ids: readonly string[], focusId: string | null, focusKind: SelectionFocusKind | null) => void;
-  setFleetOrderMode: (mode: 'move' | 'attack') => void;
   /** Start a map pick for a mode, or cancel it (null). */
-  setFleetPick: (kind: 'patrol' | 'escort' | 'retreat' | null) => void;
+  setFleetPick: (kind: 'move' | 'patrol' | 'escort' | 'retreat' | null) => void;
   /** Mirror the renderer's picked-point count (no-op when not picking). */
   setFleetPickPoints: (points: number) => void;
   /** Done pressed (a patrol with enough points); the renderer sends the route. */

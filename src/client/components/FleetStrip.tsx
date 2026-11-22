@@ -1,5 +1,5 @@
 import { useCallback, type ChangeEvent } from 'react';
-import { Box, Button, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import { Box, Button } from '@mui/material';
 import { FLEET_STATUS_MODES, FLEET_STATUS_STANCES, type FleetMode, type FleetStance } from '@shared-types/messages/fleetStatusMessages';
 import { useUIStore } from '../state/store.js';
 import { useIsCompact } from '../layout/useIsCompact.js';
@@ -14,8 +14,8 @@ import { HelmPanel } from './HelmPanel.js';
  * RTS command layer slice 14 — the COMPACT (phone, `useIsCompact`) fleet
  * strip: one slim row in the bottom-centre slot while own ships are selected
  * in command view. Count, mode + stance as native selects (a "Mixed" entry
- * when the selection differs), Stop, and the Move / Attack order-mode toggle
- * (Zustand `fleetOrderMode`, a discrete UI choice).
+ * when the selection differs) and Stop. Moving is the left strip's Move
+ * (tap rule T3), so there is no tap-order toggle here.
  *
  * Placement: the touch sticks (left/right 44 % from 28 % down) are only
  * mounted while FLYING (GameHud `touch && flying`); command view is spectator,
@@ -49,7 +49,6 @@ const SELECT_STYLE = {
   borderRadius: 4,
 } as const;
 const BTN_SX = { py: 0.1, px: 0.75, minWidth: 0, fontSize: 10, lineHeight: 1.4, textTransform: 'none' } as const;
-const TOGGLE_SX = { py: 0.1, px: 0.75, fontSize: 10, lineHeight: 1.4, textTransform: 'none', color: '#cfe' } as const;
 
 /** The select value when no single value applies. */
 const NONE = '';
@@ -61,8 +60,6 @@ interface Props {
 export function FleetStrip({ commands }: Props): JSX.Element | null {
   const view = useFleetSelectionView();
   const compact = useIsCompact();
-  const orderMode = useUIStore((s) => s.fleetOrderMode);
-  const setOrderMode = useUIStore((s) => s.setFleetOrderMode);
   const { ids } = view;
 
   const picking = useUIStore((s) => s.fleetPick !== null);
@@ -79,9 +76,6 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
     if (v !== NONE) resolveFleetCommands(commands).setStance(ids, v);
   }, [commands, ids]);
   const onStop = useCallback(() => resolveFleetCommands(commands).stop(ids), [commands, ids]);
-  const onOrder = useCallback((_e: unknown, v: 'move' | 'attack' | null) => {
-    if (v !== null) setOrderMode(v);
-  }, [setOrderMode]);
 
   if (!view.active || !compact) return null;
   const n = ids.length;
@@ -101,10 +95,6 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
         {FLEET_STATUS_STANCES.map((s) => <option key={s} value={s}>{STANCE_LABELS[s]}</option>)}
       </select>
       <Button size="small" variant="outlined" color="warning" sx={BTN_SX} data-testid="fleet-stop" onClick={onStop}>Stop</Button>
-      <ToggleButtonGroup size="small" exclusive value={orderMode} onChange={onOrder} aria-label="Tap order">
-        <ToggleButton value="move" sx={TOGGLE_SX} data-testid="fleet-order-move">Move</ToggleButton>
-        <ToggleButton value="attack" sx={TOGGLE_SX} data-testid="fleet-order-attack">Attack</ToggleButton>
-      </ToggleButtonGroup>
       <HelmPanel />
       </>)}
     </Box>

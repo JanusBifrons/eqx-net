@@ -14,6 +14,7 @@ import { renderTickElapsedMs } from '../renderTickPhase.js';
 import { liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../../combat/LocalBeam.js';
 import { updateRemoteBeamDists } from '../../combat/remoteBeamRay.js';
 import { stepMissileDisplayDelay } from '../../combat/MissileMirror.js';
+import { advanceBoltsToHulls } from '../../combat/boltHullStop.js';
 import type { MirrorPassCtx } from './mirrorPassCtx.js';
 
 /** One server tick in ms (shells as events: the display-tick estimate). */
@@ -222,12 +223,9 @@ export function updateProjectilesMirror(ctx: MirrorPassCtx, frameNowMs: number |
     // exact between snapshots. Ghosts are advanced by GhostManager above.
     // GAME seconds (time scale): at 0.4× a bolt drawn on wall dt flew at full
     // speed between snapshots and snapped back (hostile review 2026-11-12).
-    const dtSec = ctx.gameFrameMs() / 1000;
-    for (const entry of ctx.mirror.projectiles.values()) {
-      if (entry.isGhost || entry.event === true) continue;
-      entry.x += entry.vx * dtSec;
-      entry.y += entry.vy * dtSec;
-    }
+    // Every bolt (ghosts too) ends at the first drawn hull its step crosses,
+    // never flying through it until the next snapshot (capital fixes S14).
+    advanceBoltsToHulls(ctx.mirror.projectiles, ctx.gameFrameMs() / 1000, ctx.predWorld ? ctx.displayHitscan() : null, ctx.ghostManager);
   }
 }
 

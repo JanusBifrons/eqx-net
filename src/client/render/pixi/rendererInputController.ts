@@ -67,7 +67,8 @@ export class RendererInputController extends RendererCommandRouting {
       // Click-to-inspect (Item B2): a gameplay tap selects an entity, gated
       // off galaxy + placement so it never cross-fires with warp/picker/build.
       if (!this.galaxyTapSuppressed() && !this._placementActive) {
-        this.handleGameplayTap(e.offsetX, e.offsetY);
+        const pt = e.pointerType ?? 'mouse'; // the same pick as Command (a finger gets its slop)
+        this.handleGameplayTap(e.offsetX, e.offsetY, this.tapSlop(pt), false, pt);
       }
     }
   }
@@ -181,7 +182,7 @@ export class RendererInputController extends RendererCommandRouting {
       // already returned for the selector; `galaxyTapSuppressed()` also
       // covers the in-game overlay (warp taps).
       if (wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
-        this.handleGameplayTap(e.offsetX, e.offsetY);
+        this.handleGameplayTap(e.offsetX, e.offsetY, this.tapSlop(e.pointerType), false, e.pointerType);
       }
     };
     const onWheel = (e: WheelEvent): void => {

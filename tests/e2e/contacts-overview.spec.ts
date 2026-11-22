@@ -1,7 +1,9 @@
 /**
- * Contacts panel (EVE-style lock list, the right panel opened by the rail's
- * Contacts item or the O key): open the list, tap a contact, see the active
- * weapon group lock it; tap it again to cancel.
+ * Contacts panel (EVE-style contact list, the right panel opened by the rail's
+ * Contacts item or the O key): open the list, tap a contact: it is SELECTED,
+ * never locked (owner: "it's never tap to lock"). The panel closes and the
+ * left strip shows the contact; the strip's Lock icon locks it, and the
+ * reopened list's Lock column shows that lock.
  *
  * `fc-duel` room (two fighters and a heavy, idle without `startHostile`),
  * spawned at y 1250 so all three sit ~300-350 u away, inside the guns' reach.
@@ -26,7 +28,7 @@ async function boot(page: Page): Promise<void> {
   await waitForFireControlHud(page);
 }
 
-async function lockFromList(page: Page, open: () => Promise<void>): Promise<void> {
+async function selectFromList(page: Page, open: () => Promise<void>, touch: boolean): Promise<void> {
   const gid = await activeGroupId(page);
   const chip = page.locator(`[data-testid="fc-chip-${gid}"]`);
   await expect(chip).toHaveAttribute('data-locked', '0');
@@ -41,23 +43,30 @@ async function lockFromList(page: Page, open: () => Promise<void>): Promise<void
   const key = (await row.getAttribute('data-key'))!;
   const target = page.locator(`[data-testid="contact-row-${key}"]`);
 
-  await target.click();
+  if (touch) await target.tap();
+  else await target.click();
+  // Selected, not locked: the panel closes and the strip shows the contact.
+  await expect(panel).toBeHidden();
+  await expect(page.locator('[data-testid="left-strip"]')).toBeVisible({ timeout: 5_000 });
+  const lockBtn = page.locator('[data-testid="fc-target"]');
+  await expect(lockBtn).toHaveAttribute('data-state', 'lock', { timeout: 5_000 });
+  await expect(chip).toHaveAttribute('data-locked', '0');
+
+  // The strip's Lock icon locks it; the list's Lock column shows it.
+  if (touch) await lockBtn.tap();
+  else await lockBtn.click();
+  await expect(chip).toHaveAttribute('data-locked', '1', { timeout: 10_000 });
+  await open();
   await expect(target).toHaveAttribute('data-lock', 'locked', { timeout: 10_000 });
   await expect(target).toHaveAttribute('data-lock-group', gid);
-  await expect(chip).toHaveAttribute('data-locked', '1');
-
-  // Tap again: the lock is cancelled.
-  await target.click();
-  await expect(target).toHaveAttribute('data-lock', 'none', { timeout: 10_000 });
-  await expect(chip).toHaveAttribute('data-locked', '0');
 }
 
-test('desktop: O opens the contacts list; a click locks with the active group, again cancels', async ({ browser }) => {
+test('desktop: O opens the contacts list; a click selects (no lock), the strip locks it', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await ctx.newPage();
   try {
     await boot(page);
-    await lockFromList(page, async () => { await page.keyboard.press('o'); });
+    await selectFromList(page, async () => { await page.keyboard.press('o'); }, false);
     await page.screenshot({ path: 'diag/e2e-screenshots/contacts-overview/desktop.png' });
   } finally {
     await ctx.close();
@@ -68,9 +77,10 @@ test('desktop: O opens the contacts list; a click locks with the active group, a
  * RTS Part A — another player's ship flown by an AI pilot is a contact and
  * locks like any player's ship. Player B joins in Command view (their hull
  * parks, AI-flown) 300 u ahead of player A; A's list shows it under its
- * `p:<shipInstanceId>` key (the server resolves that key), and a click locks it.
+ * `p:<shipInstanceId>` key (the server resolves that key); a click selects it
+ * and the strip's Lock icon locks it.
  */
-test('another player\'s AI-flown ship is listed and locks like any player\'s ship', async ({ browser }) => {
+test('another player\'s AI-flown ship is listed, selects and locks like any player\'s ship', async ({ browser }) => {
   test.setTimeout(90_000);
   const testId = randomUUID();
   const b = await launchGalaxyTestClient(browser, { testId, shipKind: 'fighter', spawnX: 0, spawnY: 300, startMode: 'command' });
@@ -89,20 +99,25 @@ test('another player\'s AI-flown ship is listed and locks like any player\'s shi
     expect(key).not.toBe(`p:${b.playerId}`);
     await expect(row).toHaveAttribute('data-kind', 'ship');
     await row.click();
+    await expect(panel).toBeHidden();
+    const lockBtn = page.locator('[data-testid="fc-target"]');
+    await expect(lockBtn).toHaveAttribute('data-state', 'lock', { timeout: 5_000 });
+    await lockBtn.click();
+    await expect(page.locator(`[data-testid="fc-chip-${gid}"]`)).toHaveAttribute('data-locked', '1', { timeout: 15_000 });
+    await page.keyboard.press('o');
     await expect(row).toHaveAttribute('data-lock', 'locked', { timeout: 15_000 });
-    await expect(page.locator(`[data-testid="fc-chip-${gid}"]`)).toHaveAttribute('data-locked', '1');
   } finally {
     await a.ctx.close();
     await b.ctx.close();
   }
 });
 
-test("touch landscape: the rail's Contacts item opens the list; a tap locks", async ({ browser }) => {
+test("touch landscape: the rail's Contacts item opens the list; a tap selects", async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   try {
     await boot(page);
-    await lockFromList(page, async () => { await page.locator('[data-testid="right-rail-contacts"]').tap(); });
+    await selectFromList(page, async () => { await page.locator('[data-testid="right-rail-contacts"]').tap(); }, true);
     // The panel's ✕ closes it (the rightPanel flag clears).
     await page.locator('[data-testid="contacts-panel-close"]').tap();
     await expect(page.locator('[data-testid="contacts-panel"]')).toBeHidden();
