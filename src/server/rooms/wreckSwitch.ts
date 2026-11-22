@@ -14,3 +14,17 @@ export function wreckSwitchOn(env: string | undefined, roomOpt: boolean | undefi
   if (env === '1') return true;
   return roomOpt !== false;
 }
+
+/**
+ * The structure break-up switch (`structureWrecks` room option,
+ * `EQX_STRUCTURE_WRECKS`): does a destroyed structure break into wreck
+ * pieces here? OFF by default until the owner signs off the look; the env
+ * switch wins over the room (`0` off, `1` on), else only a room that sets
+ * `structureWrecks: true` breaks them. Pieces also need the wreck subsystem,
+ * which exists when `capitalWrecks` or `subcapWrecks` is on (the default).
+ */
+export function structureWreckSwitchOn(env: string | undefined, roomOpt: boolean | undefined): boolean {
+  if (env === '0') return false;
+  if (env === '1') return true;
+  return roomOpt === true;
+}
