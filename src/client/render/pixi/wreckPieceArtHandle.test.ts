@@ -8,7 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import { Graphics, Mesh, Texture, TextureSource } from 'pixi.js';
 import type { ArtHandle, ArtService, ShipArt, StructArt } from '../art/ArtService.js';
-import type { ShipArtCtx } from '../art/shipArtSprites.js';
+import { structHandleFor, type ShipArtCtx } from '../art/shipArtSprites.js';
+import { quarterTurns } from '../art/bake.js';
 import { structArtAsShipArt, wreckPieceArtHandle, wreckPieceArtOf } from './wreckPieceArtHandle.js';
 import { WreckArtState, WreckPieceSprite, burntTint, wreckPieceMeshes, wreckTexLayout } from './wreckArt.js';
 import { rebuildWreckPieces } from '../../../core/destruction/wreckDescriptorGeometry.js';
@@ -99,6 +100,34 @@ describe('wreckPieceArtHandle: the art by the wreck\'s source', () => {
     expect(h?.job.type).toBe('struct');
     expect(asked).toHaveLength(1);
     expect(asked[0]!.slice(0, 5)).toEqual(['struct', 'capital', 1, 0, undefined]);
+  });
+
+  it('Baked art: a capital killed at quarter turn 1/2/3 textures its pieces on the FIRST build (the live structure\'s cached bake, not a fresh turn-0 one)', () => {
+    for (const q of [1, 2, 3]) {
+      // A Baked (unlit) cache: one bake per kind + quarter turn (`bakeKey`'s `:rN`);
+      // only what the live structure already wore is ready.
+      const cache = new Map<string, ArtHandle>();
+      const svc = {
+        struct: (id: string, _seed: number, rot = 0) => {
+          const k = `${id}:${quarterTurns(rot)}`;
+          let h = cache.get(k);
+          if (h === undefined) {
+            h = { job: { type: 'struct', id, rot, lit: false }, state: 'pending', ship: null, struct: null } as unknown as ArtHandle;
+            cache.set(k, h);
+          }
+          return h;
+        },
+      } as unknown as ArtService;
+      const a = actx(svc);
+      const angle = q * (Math.PI / 2); // the structure's (and its pieces' death pose) swarm angle
+      const live = structHandleFor(a, 'live', 'capital', -angle)!;
+      Object.assign(live, { state: 'ready', struct: structArt('capital') }); // baked while it stood
+      const h = wreckPieceArtHandle(a, 'piece', ROOT, WRECK_STRUCTURE_PARENT_KIND, undefined, SRC, -angle);
+      expect(wreckPieceArtOf(h), `q${q}`).not.toBeNull();
+      // Spinning on: the same bake, no re-bake per quarter turn.
+      expect(wreckPieceArtHandle(a, 'piece', ROOT, WRECK_STRUCTURE_PARENT_KIND, undefined, SRC, -angle - Math.PI / 2), `q${q} spun`).toBe(h);
+      expect(cache.size, `q${q}`).toBe(1);
+    }
   });
 
   it('no source: no art (the plain piece); art off: none', () => {

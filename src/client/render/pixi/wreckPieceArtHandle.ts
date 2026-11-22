@@ -34,14 +34,20 @@ export function wreckDeadArtFor(kindId: string): boolean {
  * A wreck piece's parent art handle (null: no art, the plain piece).
  *  - ship: the live hull's bake (owner: the descriptor's, else `faction`);
  *  - structure: the structure kind's bake (`source.structure.k`, the root's,
- *    so a re-split child finds it too) at quarter turn 0 (its pieces spin
- *    freely; GPU-lit art, the default, is lit live whatever the turn) and
- *    the descriptor's owner if it carries one (the live structure's livery),
- *    else no owner: `structHandleFor`'s catalogue-colour bake;
+ *    so a re-split child finds it too) at the quarter turn the live
+ *    structure wore (`rot`: the piece's `-angle` on its first ask, still its
+ *    death pose; held after, however it spins), and the descriptor's owner
+ *    if it carries one (the live structure's livery), else no owner:
+ *    `structHandleFor`'s catalogue-colour bake. A Baked (unlit) structure's
+ *    turn joins its bake key (the sun only; the art is not turned, so the
+ *    UVs are the same): turn 0 for a structure placed at a quarter turn was
+ *    a fresh bake its pieces waited on as flat grey polygons, while its own
+ *    turn is the bake already cached. GPU-lit art ignores the turn;
  *  - rock: none.
  */
 export function wreckPieceArtHandle(
   actx: ShipArtCtx, key: string, desc: WreckDescriptor, parent: string, faction: string | undefined, source: WreckSource | undefined,
+  rot = 0,
 ): ArtHandle | null {
   if (actx.art === null) return null;
   switch (wreckSourceKindOf(desc.parentKind)) {
@@ -49,7 +55,10 @@ export function wreckPieceArtHandle(
       return wreckArtHandleFor(actx, key, parent, desc.owner ?? faction, wreckDeadArtFor(parent));
     case 'structure': {
       const k = source?.structure?.k;
-      return k !== undefined ? structHandleFor(actx, key, k, 0, desc.owner) : null;
+      if (k === undefined) return null;
+      // The turn this piece first asked for, held while it spins (no re-bake per quarter turn).
+      const h = actx.handles.get(key);
+      return structHandleFor(actx, key, k, h !== undefined && h.job.type === 'struct' ? h.job.rot ?? 0 : rot, desc.owner);
     }
     default:
       return null;

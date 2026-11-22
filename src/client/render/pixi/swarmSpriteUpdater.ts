@@ -208,9 +208,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     const wreckShip = wreckDesc !== undefined && wreckSourceKindOf(wreckDesc.parentKind) === 'ship';
     const wreckRock = isRockWreck(wreckDesc);
     const wreckParent = wreckDesc !== undefined ? (wreckShip ? entry.shipKind ?? wreckDesc.parentKind : wreckDesc.parentKind) : '';
-    // A structure's piece wears the structure's own bake (its root's kind, `wreckPieceArtHandle`).
+    // A structure's piece wears the structure's own bake (its root's kind, at the live structure's turn: `wreckPieceArtHandle`).
     const wreckSrc = wreckDesc !== undefined && !wreckShip && !wreckRock ? ctx.wrecks!.sourceOf(entry.wreckId!) : undefined; // no alloc (a rock's keys a string: build time only)
-    const wreckArtHandle = wreckDesc !== undefined ? wreckPieceArtHandle(ctx.art, spriteKey, wreckDesc, wreckParent, entry.faction, wreckSrc) : null;
+    const wreckArtHandle = wreckDesc !== undefined ? wreckPieceArtHandle(ctx.art, spriteKey, wreckDesc, wreckParent, entry.faction, wreckSrc, -entry.angle) : null;
     const pieceArt = wreckPieceArtOf(wreckArtHandle);
     // A rock's piece draws the uncut rock's surface (the field rock shader,
     // in the root rock's rest frame); built once, no bake to wait for.
