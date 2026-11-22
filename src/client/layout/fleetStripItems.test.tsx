@@ -45,7 +45,7 @@ beforeEach(() => {
   resetFleetStatus();
   setFleetCommands(cmd);
   useUIStore.setState({
-    phase: 'game', rightPanel: null, contactsOpen: false, travelling: true, pilotMode: 'spectator',
+    phase: 'game', rightPanel: null, travelling: true, pilotMode: 'spectator',
     buildMode: false, placementKind: null, fleetPick: null, commandSpeed: 3,
     selection: { ids: [], focusId: null, focusKind: null },
   });

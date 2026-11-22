@@ -162,8 +162,8 @@ test.describe('layout-slots', () => {
 
     // Galaxy: one page, no page switch and no other panel's tabs.
     await page.locator('[data-testid="right-rail-galaxy"]').click();
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible();
-    await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible();
+    await expect(page.locator('[data-testid="galaxy-panel"]')).toBeVisible();
+    await expect(page.locator('[data-testid="galaxy-panel-body"]')).toBeVisible();
     await expect(page.locator('[data-testid="drawer-tab"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="drawer-tab-trade"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="drawer-tab-settings"]')).toHaveCount(0);
@@ -220,7 +220,7 @@ test.describe('layout-slots', () => {
 
     // Galaxy tab still provides the action.
     await page.locator('[data-testid="right-rail-galaxy"]').click();
-    await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible();
+    await expect(page.locator('[data-testid="galaxy-open-map"]')).toBeVisible();
 
     await ctx.close();
   });

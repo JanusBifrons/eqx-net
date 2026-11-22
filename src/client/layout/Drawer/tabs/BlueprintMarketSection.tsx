@@ -1,22 +1,20 @@
 /**
- * Economy v2 W6 — the Trade tab's Blueprints section: traders' blueprints for
+ * Economy v2 W6 — the Trade panel's Blueprints page: traders' blueprints for
  * sale (Buy) and the blueprints in the selected base (Sell). Rebuilt ONLY from
  * the server's `bp_market_state` replies (#16): it asks on mount, every few
  * seconds while on screen, and after each action. Names only, never ids.
+ *
+ * UI language U2-6b: catalogue sections and rows; each listing is an
+ * `EqxListRow` with its Buy / Sell button at the right. A listing with no
+ * price has no button (plan A4: actions that can't work are hidden).
  */
 import { memo, useEffect } from 'react';
-import { Box, Button, Typography } from '@mui/material';
+import { EqxButton, EqxIcon, EqxListRow, EqxSection } from '../../../../ui/index.js';
 import { useUIStore } from '../../../state/store';
 import { sendBpBuy, sendBpMarketQuery, sendBpSell } from '../../../net/tradeClient';
 import type { BpListing } from '../../../../shared-types/blueprintMarket';
 
 export const BP_MARKET_POLL_MS = 3000;
-
-const ROW_SX = { display: 'flex', alignItems: 'center', gap: 0.5, py: 0.25, borderBottom: '1px solid rgba(255,255,255,0.06)' };
-const MAIN_SX = { flex: 1, minWidth: 0 };
-const MUTED_SX = { fontSize: 9, color: '#9aa0b4' };
-const HEAD_SX = { fontSize: 10, fontWeight: 700, color: '#b9a6ff', mt: 0.75, mb: 0.25 };
-const BTN_SX = { fontSize: 10, minWidth: 0, px: 0.75, py: 0 };
 
 function stars(quality: number): string {
   const n = Math.max(0, Math.min(5, Math.round(quality / 20)));
@@ -30,17 +28,10 @@ export function listingLine(b: BpListing): string {
 }
 
 function Row({ b, action, testid, onClick }: { b: BpListing; action: string; testid: string; onClick: () => void }): JSX.Element {
-  return (
-    <Box sx={ROW_SX} data-testid={testid} data-id={b.id}>
-      <Box sx={MAIN_SX}>
-        <Typography sx={{ fontSize: 11 }}>{b.name} {stars(b.quality)}</Typography>
-        <Typography sx={MUTED_SX}>{listingLine(b)}</Typography>
-      </Box>
-      <Button size="small" sx={BTN_SX} onClick={onClick} disabled={b.price <= 0} data-testid={`${testid}-action`}>
-        {action} {b.price.toLocaleString('en-US')}¢
-      </Button>
-    </Box>
-  );
+  const button = b.price > 0
+    ? <EqxButton onClick={onClick} data-testid={`${testid}-action`}>{action} {b.price.toLocaleString('en-US')}¢</EqxButton>
+    : undefined;
+  return <EqxListRow primary={`${b.name} ${stars(b.quality)}`} secondary={listingLine(b)} side={button} data-testid={testid} />;
 }
 
 export const BlueprintMarketSection = memo(function BlueprintMarketSection({ baseId }: { baseId: number | null }): JSX.Element {
@@ -54,26 +45,30 @@ export const BlueprintMarketSection = memo(function BlueprintMarketSection({ bas
   }, [baseId]);
 
   if (baseId === null) {
-    return <Typography sx={MUTED_SX}>Build a Capital or Cargo Bay here to trade blueprints.</Typography>;
+    return (
+      <EqxListRow primary="No base to trade from" secondary="Build a Capital or Cargo Bay here to trade blueprints."
+        data-testid="bp-market-no-base" />
+    );
   }
-  if (state === null) return <Typography sx={MUTED_SX}>Loading…</Typography>;
+  if (state === null) return <EqxListRow primary="Loading…" data-testid="bp-market-loading" />;
   return (
-    <Box data-testid="bp-market">
+    <div data-testid="bp-market">
       {state.message !== undefined && (
-        <Typography data-testid="bp-market-message" sx={{ fontSize: 10, color: state.ok ? '#9be59b' : '#ff8a8a' }}>
-          {state.message}
-        </Typography>
+        <EqxListRow primary={state.ok ? 'Done' : 'Not done'} secondary={state.message} icon={<EqxIcon name={state.ok ? 'confirm' : 'cancel'} />}
+          data-testid="bp-market-message" />
       )}
-      <Typography sx={HEAD_SX}>Traders sell</Typography>
-      {state.offers.length === 0 && <Typography sx={MUTED_SX}>Nothing for sale right now.</Typography>}
-      {state.offers.map((b) => (
-        <Row key={b.id} b={b} action="Buy" testid="bp-offer" onClick={() => sendBpBuy(baseId, b.id)} />
-      ))}
-      <Typography sx={HEAD_SX}>Your blueprints here</Typography>
-      {state.mine.length === 0 && <Typography sx={MUTED_SX}>None in this base.</Typography>}
-      {state.mine.map((b) => (
-        <Row key={b.id} b={b} action="Sell" testid="bp-mine" onClick={() => sendBpSell(baseId, b.id)} />
-      ))}
-    </Box>
+      <EqxSection title="Traders sell" data-testid="bp-market-offers">
+        {state.offers.length === 0 && <EqxListRow primary="Nothing for sale right now." />}
+        {state.offers.map((b) => (
+          <Row key={b.id} b={b} action="Buy" testid="bp-offer" onClick={() => sendBpBuy(baseId, b.id)} />
+        ))}
+      </EqxSection>
+      <EqxSection title="Your blueprints here" data-testid="bp-market-mine">
+        {state.mine.length === 0 && <EqxListRow primary="None in this base." />}
+        {state.mine.map((b) => (
+          <Row key={b.id} b={b} action="Sell" testid="bp-mine" onClick={() => sendBpSell(baseId, b.id)} />
+        ))}
+      </EqxSection>
+    </div>
   );
 });

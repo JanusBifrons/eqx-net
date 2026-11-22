@@ -141,6 +141,9 @@ export function registerWelcomeHandlers(room: Room, hctx: WelcomeHandlerCtx): vo
     // initial App.tsx setSectorName covers engineering rooms (key=null).
     const ui = useUIStore.getState();
     ui.setCurrentSectorKey(msg.sectorKey);
+    // The trip (if any) has landed: the live sector key now names it, so the
+    // transit destination the load curtain showed until now is cleared.
+    ui.setTransitTargetSectorKey(null);
     if (msg.sectorKey) {
       const sec = getSector(msg.sectorKey);
       if (sec) ui.setSectorName(sec.name);

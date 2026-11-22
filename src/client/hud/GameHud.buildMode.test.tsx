@@ -10,7 +10,6 @@ import { render, cleanup } from '@testing-library/react';
 vi.mock('../components/BuildSidebarHost', () => ({ BuildSidebarHost: () => <div data-testid="stub-build-sidebar" /> }));
 vi.mock('../components/FleetPanel', () => ({ FleetPanel: () => null }));
 vi.mock('../components/FleetStrip', () => ({ FleetStrip: () => null }));
-vi.mock('../components/ContactsOverview', () => ({ ContactsOverview: () => <div data-testid="stub-contacts" /> }));
 vi.mock('./WeaponStrip', () => ({ WeaponStrip: () => <div data-testid="stub-weapon-strip" /> }));
 vi.mock('./LockStatusBand', () => ({ LockStatusBand: () => <div data-testid="stub-lock-band" /> }));
 vi.mock('../net/clientSingleton', () => ({ getGameClient: () => null }));
@@ -36,7 +35,7 @@ const touchInput = {
   setJoystick: vi.fn(), setJoystickIdle: vi.fn(), setBoostHeld: vi.fn(),
 } as unknown as TouchInput;
 
-const FLIGHT_IDS = ['hud-move-zone', 'hud-lock-zone', 'hud-boost', 'stub-weapon-strip', 'stub-lock-band', 'stub-contacts'];
+const FLIGHT_IDS = ['hud-move-zone', 'hud-lock-zone', 'hud-boost', 'stub-weapon-strip', 'stub-lock-band'];
 
 function renderHud() {
   return render(

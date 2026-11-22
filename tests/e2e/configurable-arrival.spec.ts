@@ -30,8 +30,8 @@ async function bootGame(page: import('@playwright/test').Page): Promise<void> {
 
 async function openGalaxyTab(page: import('@playwright/test').Page): Promise<void> {
   await page.locator('[data-testid="right-rail-galaxy"]').click();
-  await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible();
-  await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible();
+  await expect(page.locator('[data-testid="galaxy-panel"]')).toBeVisible();
+  await expect(page.locator('[data-testid="galaxy-panel-body"]')).toBeVisible();
 }
 
 test.describe('configurable-arrival picker', () => {
@@ -42,7 +42,7 @@ test.describe('configurable-arrival picker', () => {
     await bootGame(page);
     await openGalaxyTab(page);
 
-    const toggle = page.locator('[data-testid="arrival-mode-toggle"]');
+    const toggle = page.locator('[data-testid="arrival-mode"]');
     await expect(toggle).toBeVisible();
     // All three pills present.
     await expect(page.locator('[data-testid="arrival-mode-xy"]')).toBeVisible();
@@ -51,8 +51,8 @@ test.describe('configurable-arrival picker', () => {
     // Default mode is `same` → "Same" pill is selected.
     await expect(page.locator('[data-testid="arrival-mode-same"]')).toHaveAttribute('aria-pressed', 'true');
     // Inputs are present but disabled in `same`.
-    await expect(page.locator('[data-testid="arrival-x-input"]')).toBeDisabled();
-    await expect(page.locator('[data-testid="arrival-y-input"]')).toBeDisabled();
+    await expect(page.locator('[data-testid="arrival-x-input"] input')).toBeDisabled();
+    await expect(page.locator('[data-testid="arrival-y-input"] input')).toBeDisabled();
 
     await ctx.close();
   });
@@ -66,13 +66,13 @@ test.describe('configurable-arrival picker', () => {
 
     // X/Y mode → inputs editable.
     await page.locator('[data-testid="arrival-mode-xy"]').click();
-    await expect(page.locator('[data-testid="arrival-x-input"]')).toBeEnabled();
-    await expect(page.locator('[data-testid="arrival-y-input"]')).toBeEnabled();
+    await expect(page.locator('[data-testid="arrival-x-input"] input')).toBeEnabled();
+    await expect(page.locator('[data-testid="arrival-y-input"] input')).toBeEnabled();
 
     // Home mode → inputs disabled, value is 0/0.
     await page.locator('[data-testid="arrival-mode-home"]').click();
-    const xInput = page.locator('[data-testid="arrival-x-input"]');
-    const yInput = page.locator('[data-testid="arrival-y-input"]');
+    const xInput = page.locator('[data-testid="arrival-x-input"] input');
+    const yInput = page.locator('[data-testid="arrival-y-input"] input');
     await expect(xInput).toBeDisabled();
     await expect(yInput).toBeDisabled();
     await expect(xInput).toHaveValue('0');
@@ -89,16 +89,16 @@ test.describe('configurable-arrival picker', () => {
     await openGalaxyTab(page);
 
     await page.locator('[data-testid="arrival-mode-xy"]').click();
-    const xInput = page.locator('[data-testid="arrival-x-input"]');
+    const xInput = page.locator('[data-testid="arrival-x-input"] input');
     // Past the bound, whatever it is: ±200,000 with solar-system sectors on
     // (the default since W1c), ±5,000 with ?solar=0.
     await xInput.fill(String(SECTOR_PLAYABLE_HALF_EXTENT * 5));
     // Trigger blur by clicking somewhere else inside the panel.
-    await page.locator('[data-testid="drawer-panel-galaxy"]').click({ position: { x: 5, y: 5 } });
+    await page.locator('[data-testid="galaxy-panel-body"]').click({ position: { x: 5, y: 5 } });
     // Clamped to +SECTOR_PLAYABLE_HALF_EXTENT — no decimals.
     await expect(xInput).toHaveValue(String(SECTOR_PLAYABLE_HALF_EXTENT));
     // Toast appears with the warning text.
-    const toast = page.locator('[data-testid="arrival-clamp-toast"]');
+    const toast = page.locator('[data-testid="arrival-clamp-note"]');
     await expect(toast).toBeVisible();
     await expect(toast).toContainText(/clamped/i);
 
@@ -113,15 +113,15 @@ test.describe('configurable-arrival picker', () => {
     await openGalaxyTab(page);
 
     await page.locator('[data-testid="arrival-mode-xy"]').click();
-    const xInput = page.locator('[data-testid="arrival-x-input"]');
-    const yInput = page.locator('[data-testid="arrival-y-input"]');
+    const xInput = page.locator('[data-testid="arrival-x-input"] input');
+    const yInput = page.locator('[data-testid="arrival-y-input"] input');
     await xInput.fill('123');
     await yInput.fill('-456');
-    await page.locator('[data-testid="drawer-panel-galaxy"]').click({ position: { x: 5, y: 5 } });
+    await page.locator('[data-testid="galaxy-panel-body"]').click({ position: { x: 5, y: 5 } });
     await expect(xInput).toHaveValue('123');
     await expect(yInput).toHaveValue('-456');
     // Toast must NOT appear — there was nothing to clamp.
-    await expect(page.locator('[data-testid="arrival-clamp-toast"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="arrival-clamp-note"]')).toHaveCount(0);
 
     await ctx.close();
   });
@@ -134,10 +134,10 @@ test.describe('configurable-arrival picker', () => {
     await openGalaxyTab(page);
 
     await page.locator('[data-testid="arrival-mode-xy"]').click();
-    await page.locator('[data-testid="arrival-x-input"]').fill('250');
-    await page.locator('[data-testid="arrival-y-input"]').fill('-750');
+    await page.locator('[data-testid="arrival-x-input"] input').fill('250');
+    await page.locator('[data-testid="arrival-y-input"] input').fill('-750');
     // Blur to commit + persist.
-    await page.locator('[data-testid="drawer-panel-galaxy"]').click({ position: { x: 5, y: 5 } });
+    await page.locator('[data-testid="galaxy-panel-body"]').click({ position: { x: 5, y: 5 } });
 
     // Reload, re-open the tab, confirm state is restored.
     await page.reload();
@@ -146,8 +146,8 @@ test.describe('configurable-arrival picker', () => {
     await openGalaxyTab(page);
 
     await expect(page.locator('[data-testid="arrival-mode-xy"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('[data-testid="arrival-x-input"]')).toHaveValue('250');
-    await expect(page.locator('[data-testid="arrival-y-input"]')).toHaveValue('-750');
+    await expect(page.locator('[data-testid="arrival-x-input"] input')).toHaveValue('250');
+    await expect(page.locator('[data-testid="arrival-y-input"] input')).toHaveValue('-750');
 
     await ctx.close();
   });
@@ -159,7 +159,7 @@ test.describe('configurable-arrival picker', () => {
     await openGalaxyTab(page);
 
     // Picker is part of the Galaxy tab, not gated by mobile breakpoint.
-    await expect(page.locator('[data-testid="arrival-mode-toggle"]')).toBeVisible();
+    await expect(page.locator('[data-testid="arrival-mode"]')).toBeVisible();
     // Default is `same` (the legacy departure-pose behaviour). PC users
     // get the picker if they want to use it, but the wire-default keeps
     // PC unchanged unless they intentionally switch modes.
