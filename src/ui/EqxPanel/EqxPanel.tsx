@@ -132,7 +132,10 @@ export function rightPaperSx(size: SidePanelSize, touch: boolean): Record<string
     // Desktop: the same share of the width, capped at `width` (a 915 px window matches the phone).
     const frac = `${size.touchFrac * 100}vw`;
     const w = touch ? `clamp(${size.touchMinW}px, ${frac}, ${size.width}px)` : `min(${size.width}px, ${frac})`;
-    return { ...right, width: w, top: 0, bottom: 0, height: '100dvh' };
+    // Top = the app bar's height: 0 on touch (covers ⛶, owner 2026-11-22); on
+    // desktop it starts under the AppHeader, level with the rail, so the header's
+    // settings cog (z appBar) never sits over the panel's ✕.
+    return { ...right, width: w, top: 'var(--app-bar-h, 0px)', bottom: 0, height: 'calc(100dvh - var(--app-bar-h, 0px))' };
   }
   if (!touch) return right;
   // Phone held sideways: a narrower panel; the sector panel starts below the

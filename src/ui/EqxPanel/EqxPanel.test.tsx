@@ -95,9 +95,11 @@ describe('EqxPanel', () => {
     expect(getComputedStyle(bodyEl).overflowY).toBe('auto');
   });
 
-  it('EQX_PANEL_SIZE docks flush, full height, on the right edge', () => {
+  it('EQX_PANEL_SIZE docks flush on the right edge, from under the app bar (0 on touch) to the bottom', () => {
     for (const touch of [false, true]) {
-      expect(rightPaperSx(EQX_PANEL_SIZE, touch)).toMatchObject({ top: 0, bottom: 0, height: '100dvh', borderRadius: 0 });
+      expect(rightPaperSx(EQX_PANEL_SIZE, touch)).toMatchObject({
+        top: 'var(--app-bar-h, 0px)', bottom: 0, height: 'calc(100dvh - var(--app-bar-h, 0px))', borderRadius: 0,
+      });
     }
     expect(rightPaperSx(EQX_PANEL_SIZE, true)['width']).toBe('clamp(300px, 36vw, 380px)');
     expect(rightPaperSx(EQX_PANEL_SIZE, false)['width']).toBe('min(380px, 36vw)');
