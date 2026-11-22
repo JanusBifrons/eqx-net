@@ -347,9 +347,32 @@ Safety deadline: the current delay (game ms) + `STAMPED_HOLD_MARGIN_MS`
 (`MAX_HOLD_MS` − `MAX_TOTAL_DISPLAY_DELAY_MS`), capped by `matchedHoldMs`.
 Stamped entries share the pool, `holdsKill` (so `deferKill` holds their
 deaths), `flushTarget` and the welcome flush; shell matching (`onShellEnd`,
-`releaseHitAt`) skips them. Nothing calls it yet; later slices route
-non-shell damage FX, missile detonations, `shell_blast` / `mine_detonated`
-and the swarm sweep through it. Lock: `navalHitHold.stamped.test.ts`.
+`releaseHitAt`) skips them. Lock: `navalHitHold.stamped.test.ts`.
+
+**Slice 2: non-shell damage FX on drone-timeline targets.** Owner decision
+(2026-11-22): hits line up with the drawn target in BOTH views, piloting and
+Command/Build; no mode switch. `handleDamage` (`damagePath.ts`) first tries
+the shell hold (`holdHit`), then `DrawnShellTiming.holdDrawnHit`: a hit on a
+`swarm-<id>` target still in `mirror.swarm` (drone, scrap, rock, wreck
+piece) is held with `holdStamped(…, anchorTick(), wall now, game now,
+offPilot)`. Pilot hulls (`mirror.ships`: the local ship, remote ships on
+their own lerp offset) are never held. Missiles take no `damage` event
+(they are not damage targets); their detonation is slice 3. A zero-damage
+event that KILLS (`newHealth <= 0`, the state carrier for a destruction)
+is held too, so `holdsKill` makes `deferKill` hold a beam / ram / missile
+drone kill until the drawn drone gets there (the sink skips FX for
+`damage <= 0`); `deferKill` no longer needs shell events on. Release:
+`DrawnShellTiming.place(displayTick, frameWallMs)` now runs EVERY frame
+(`updateProjectilesMirror`; `displayTick` is NaN without shell events) and
+passes `swarmReadPointMs(frame RAF time)`. Number and spark stay at the
+event's `hitX/Y`: once released, the drawn drone is at the stamped tick's
+pose, which is where the server hit it (one snapshot interval of slack, as
+the stamp is the newest tick heard, not the hit tick). Tick-clock re-seed
+while held: the stamp taken at hold time is kept (it is the same basis as
+the drone ring samples already drawn); a read point that never reaches it
+falls to the deadline. HP / shield state is never held. Lock:
+`ColyseusClient.droneHitHold.test.ts`. Later slices: missile detonations,
+`shell_blast` / `mine_detonated`, the swarm sweep.
 
 ## Client rules in detail
 
