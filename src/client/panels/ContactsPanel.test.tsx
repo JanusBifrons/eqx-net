@@ -1,9 +1,9 @@
 /**
  * Contacts panel (UI plan U2-3): the rail's Contacts item and the O key open
  * it on the one `rightPanel` flag; ✕ and Esc close it. Rows show names, never
- * ids; a tap locks the row with the ACTIVE group through the same
- * `lock_request` sender the info box uses; a tap on a row the active group is
- * locking or has locked cancels.
+ * ids; a tap SELECTS the row's entity (the renderer focus, like a map tap;
+ * owner: "it's never tap to lock") and closes the panel so the left strip's
+ * Details / Lock icons show. The Lock column is a read-only display.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
@@ -205,22 +205,39 @@ describe('ContactsPanel: the table', () => {
     }
   });
 
-  it('a tap locks the row with the active group', () => {
-    render(<ContactsPanel />);
+  it('a tap SELECTS the row (never locks): the renderer focuses it and the panel closes', () => {
+    const focusEntity = vi.fn();
+    render(<ContactsPanel rendererRef={{ current: { focusEntity } }} />);
     fireEvent.click(screen.getByTestId('contact-row-s:8'));
-    expect(requestLock).toHaveBeenCalledWith('guns', 's:8');
+    expect(requestLock).not.toHaveBeenCalled();
     expect(cancelLock).not.toHaveBeenCalled();
+    expect(focusEntity).toHaveBeenCalledWith('swarm-8', 'drone');
+    expect(useUIStore.getState().rightPanel).toBeNull(); // the strip and the entity show
   });
 
-  it('a tap on a locked (or acquiring) row cancels that lock; it reads LOCK', () => {
+  it('a tap on a locked row selects it too (no unlock); the Lock column still reads LOCK', () => {
     fakeMirror.localGroups[0]!.l = [{ t: 's:7', s: 2, p: 100 }];
-    render(<ContactsPanel />);
+    const focusEntity = vi.fn();
+    render(<ContactsPanel rendererRef={{ current: { focusEntity } }} />);
     const row = screen.getByTestId('contact-row-s:7');
     expect(row.getAttribute('data-lock')).toBe('locked');
     expect(row.textContent).toContain('LOCK');
     fireEvent.click(row);
-    expect(cancelLock).toHaveBeenCalledWith('guns', 's:7');
+    expect(cancelLock).not.toHaveBeenCalled();
     expect(requestLock).not.toHaveBeenCalled();
+    expect(focusEntity).toHaveBeenCalledWith('swarm-7', 'drone');
+  });
+
+  it('a player ship row focuses its mirror key as a ship', () => {
+    const focusEntity = vi.fn();
+    render(<ContactsPanel rendererRef={{ current: { focusEntity } }} />);
+    fireEvent.click(screen.getByTestId(`contact-row-p:${PLAYER_ID}`));
+    expect(focusEntity).toHaveBeenCalledWith(PLAYER_ID, 'ship');
+  });
+
+  it('the header prompt says a tap selects', () => {
+    render(<ContactsPanel />);
+    expect(screen.getByTestId('contacts-group')).toHaveTextContent('Tap a contact to select it');
   });
 
   it('the lock marks sit in their own Lock column, not in the name cell', () => {

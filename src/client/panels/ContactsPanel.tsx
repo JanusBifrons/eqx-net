@@ -14,10 +14,11 @@
  * Opened by the rail's Contacts item (every control mode) or the O key
  * (`input/MouseLock.ts`): `rightPanel = 'contacts'`. ✕ and Esc clear the flag.
  *
- * Tap a row: lock it with the ACTIVE weapon group (the same `lock_request`
- * the info box's LOCK and the T key send). Tap a row the active group is
- * already locking or has locked: cancel (`lock_cancel`, like CANCEL / UNLOCK).
- * The server still checks reach and the lock rules (#15, #19).
+ * Tap a row: SELECT it, never lock it (owner: "it's never tap to lock").
+ * The renderer focuses the entity exactly as a map tap does
+ * (`IFleetView.focusEntity`, key → pick id via `contactFocusTarget`) and the
+ * panel closes, so the left strip shows its icons (Details to inspect, Lock
+ * to lock). The Lock column only displays lock state.
  *
  * Data: the render mirror polled at 4 Hz while open (the TeleporterPanel /
  * warp picker pattern), re-rendering only when what's shown changes
@@ -31,12 +32,14 @@ import {
 } from '../../ui/index.js';
 import { useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
+import type { IFleetView } from '@core/contracts/render/IFleetView';
+import { contactFocusTarget } from '../components/contactFocus';
 import { ENTITY_VISUALS, entityBadgePolygon, type EntityKind } from '../render/entityVisuals';
 import { FAILSAFE_COLOUR, THREAT_COLOUR_HEX, groupColourHex } from '../hud/groupColours';
 import { HUD } from '../hud/tokens';
 import {
   CONTACTS_PAGE_SIZE, CONTACT_STANCE_LABEL, CONTACT_TYPE_LABEL, DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER,
-  buildContactRows, contactFactions, contactTapAction, contactsSignature, filterContacts, formatContactKm,
+  buildContactRows, contactFactions, contactsSignature, filterContacts, formatContactKm,
   sortContacts, tapContactSort,
   type ContactFilter, type ContactRow, type ContactSort, type ContactSortKey, type ContactStance,
   type ContactType, type GroupReach,
@@ -106,7 +109,12 @@ function poll(activeGroupId: string | null, groupIds: ReadonlyArray<string>): Vi
   return { rows, sig: contactsSignature(rows) };
 }
 
-export const ContactsPanel = memo(function ContactsPanel(): JSX.Element {
+/** The renderer seam a row tap focuses through (App's renderer ref). */
+export interface ContactsPanelProps {
+  rendererRef?: { readonly current: Pick<IFleetView, 'focusEntity'> | null };
+}
+
+export const ContactsPanel = memo(function ContactsPanel({ rendererRef }: ContactsPanelProps): JSX.Element {
   const open = useUIStore((s) => s.rightPanel === 'contacts');
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const groups = useUIStore((s) => s.fcGroups);
@@ -138,9 +146,10 @@ export const ContactsPanel = memo(function ContactsPanel(): JSX.Element {
 
   const onRow = (r: ContactRow): void => {
     const c = getGameClient();
-    if (!c || !activeGroupId) return;
-    if (contactTapAction(r) === 'cancel') c.cancelLock(activeGroupId, r.key);
-    else c.requestLock(activeGroupId, r.key);
+    const target = c ? contactFocusTarget(r.key, r.type, c.mirror) : null;
+    if (target === null) return;
+    rendererRef?.current?.focusEntity(target.id, target.kind);
+    setRightPanel(null); // show the left strip and the entity
   };
   const onSort = (id: string): void => { setSort((s) => tapContactSort(s, id as ContactSortKey)); setPage(0); };
   const patchFilter = (p: Partial<ContactFilter>): void => { setFilter((f) => ({ ...f, ...p })); setPage(0); };
@@ -163,7 +172,7 @@ export const ContactsPanel = memo(function ContactsPanel(): JSX.Element {
       <div style={BODY_STYLE}>
         <div style={HEAD_STYLE}>
           <div style={GROW_STYLE}>
-            <EqxListRow primary={activeName ? 'Tap a contact to lock with' : 'No weapon group'}
+            <EqxListRow primary="Tap a contact to select it"
               side={activeName ? <span style={{ color: groupColourHex(activeIdx) }}>{activeName}</span> : undefined}
               data-testid="contacts-group" />
           </div>

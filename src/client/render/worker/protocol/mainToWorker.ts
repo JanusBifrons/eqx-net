@@ -4,7 +4,7 @@
  * no class instances). Locked by `protocol.test.ts`.
  */
 
-import type { FleetOverlayModel, FleetPickKindWire, RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetPickKindWire, FocusEntityKind, RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
@@ -309,6 +309,16 @@ export interface SelectFleetShipsMsg {
 }
 
 /**
+ * Focus (select) one entity, as a map tap on it does — the Contacts panel's
+ * row tap. Drives `PixiRenderer.focusEntity`. Id + kind in the pick form.
+ */
+export interface FocusEntityMsg {
+  type: 'FOCUS_ENTITY';
+  id: string;
+  kind: FocusEntityKind;
+}
+
+/**
  * Cinematic camera — play a cue script (`null` = stop, hand back to gameplay).
  * Drives `PixiRenderer.setCameraScript` → `CameraDirector`. Posted once per
  * script, never per frame. See docs/architecture/cinematic-camera.md.
@@ -453,6 +463,7 @@ export type MainToWorkerMsg =
   | SetHudOverlaysMsg
   | GlideCameraMsg
   | SelectFleetShipsMsg
+  | FocusEntityMsg
   | SetCameraScriptMsg
   | PanCameraMsg
   | SetDiagMarkersMsg

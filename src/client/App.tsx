@@ -954,7 +954,7 @@ function GameSurface({
       {/* The top-centre column carries status + lock warnings, so on a wide screen the
           toggle sits under the sector chip instead of over the ship. */}
       <PilotToggleSlot />
-      <RightPanelHost />
+      <RightPanelHost rendererRef={rendererRef} />
       <LeftStripHost rendererRef={rendererRef} />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
        *  is removed. Death transitions INSTANTLY into spectator (free-roam

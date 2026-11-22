@@ -75,7 +75,7 @@ export interface ContactRow {
   inAnyReach: boolean;
   /** The active group's lock on it, else the first other group's; null = none. */
   lock: ContactLock | null;
-  /** The active group's own lock on it (what a tap cancels). */
+  /** The active group's own lock on it (the row highlight). */
   activeLock: ContactLock | null;
   /** It is locking you: 0 no, 1 acquiring, 2 locked. */
   lockingYou: 0 | 1 | 2;
@@ -275,12 +275,6 @@ export function filterContacts(rows: ReadonlyArray<ContactRow>, f: ContactFilter
 /** The distinct factions present, sorted (the Faction filter's options). */
 export function contactFactions(rows: ReadonlyArray<ContactRow>): string[] {
   return [...new Set(rows.map((r) => r.faction))].sort((a, b) => a.localeCompare(b));
-}
-
-/** What a tap on a row does: cancel the active group's lock on it (acquiring
- *  or locked, like the info box's CANCEL / UNLOCK), else request one. */
-export function contactTapAction(row: ContactRow): 'lock' | 'cancel' {
-  return row.activeLock !== null ? 'cancel' : 'lock';
 }
 
 /** A short signature of what the panel shows, so the 4 Hz poll re-renders only

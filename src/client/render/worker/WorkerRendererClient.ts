@@ -23,6 +23,7 @@ import { readFxKillSwitches } from '../fxKillSwitches.js';
 import type {
   FleetOverlayModel,
   FleetPickKindWire,
+  FocusEntityKind,
   IRenderer,
   RenderMirror,
   RendererFeedback,
@@ -615,6 +616,11 @@ export class WorkerRendererClient implements IRenderer {
   /** RTS fleet warp (S8) — see `IRenderer.selectFleetShips`. */
   selectFleetShips(ids: readonly string[]): void {
     this.post({ type: 'SELECT_FLEET_SHIPS', ids: [...ids] });
+  }
+
+  /** Contacts row tap — see `IRenderer.focusEntity`. */
+  focusEntity(id: string, kind: FocusEntityKind): void {
+    this.post({ type: 'FOCUS_ENTITY', id, kind });
   }
 
   /**

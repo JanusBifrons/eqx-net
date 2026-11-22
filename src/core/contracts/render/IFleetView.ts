@@ -1,3 +1,5 @@
+import type { RendererFeedback } from './RendererFeedback.js';
+
 /** RTS / fleet overlays: order mode, squad overlay, map picks, selection. Part of `IRenderer`. */
 export interface IFleetView {
   /**
@@ -32,7 +34,17 @@ export interface IFleetView {
    * they warped: the same shipInstanceIds, re-selected in the new sector.
    */
   selectFleetShips(ids: readonly string[]): void;
+  /**
+   * Focus (select) this entity, exactly as a map tap on it does (the one
+   * selection the renderer owns; the left strip then shows its icons). Id and
+   * kind in the map pick's form (`selectedPickId/Kind`). Used by the Contacts
+   * panel's row tap (worker `FOCUS_ENTITY`).
+   */
+  focusEntity(id: string, kind: FocusEntityKind): void;
 }
+
+/** A map pick's kind (`RendererFeedback.selectedPickKind`, never null). */
+export type FocusEntityKind = NonNullable<RendererFeedback['selectedPickKind']>;
 
 /** One own ship's squad + order, as the renderer needs it (RTS slice 15a). */
 export interface FleetOverlayShip {

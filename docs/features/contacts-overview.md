@@ -45,16 +45,14 @@ nearest first, type, faction and stance columns, rows coloured by stance):
 - Sort, filters and page are the panel's own state: they survive the 4 Hz
   refresh, and reset when the game reloads.
 
-## Locking from it
+## Selecting from it
 
-- Tap or click a row: the ACTIVE weapon group asks to lock it (`lock_request`,
-  the same message the info box's LOCK and the T key send).
-- Tap a row the active group is already locking or has locked: that lock is
-  cancelled (`lock_cancel`, like CANCEL LOCK / UNLOCK).
-- A row locked by a different group locks it with the active group as well.
-
-Nothing about lock-to-fire changes: the server still checks reach, lock time
-and the lock rules, and a weapon still fires only at a completed lock.
+- Tap or click a row: it SELECTS that contact, never locks it (owner: "it's
+  never tap to lock"). The renderer focuses it exactly as a map tap does
+  (`IFleetView.focusEntity`, worker `FOCUS_ENTITY`) and the panel closes, so
+  the left strip shows its icons: Details to inspect, Lock to lock it.
+- The Lock column only displays lock state; locking goes through the strip,
+  the info box or the T key, and the server still checks the lock rules.
 
 ## Opening it
 
@@ -80,7 +78,9 @@ panel and keeps the left side for the selection strip.
 
 - Pure row building in `src/client/components/contactRows.ts`
   (`buildContactRows`, `contactStance`, `sortContacts` + `tapContactSort`,
-  `filterContacts` + `contactFactions`, `formatContactKm`, `contactTapAction`).
+  `filterContacts` + `contactFactions`, `formatContactKm`); a row's lock key
+  maps to the map pick's id + kind in `components/contactFocus.ts`
+  (`s:<n>` → `swarm-<n>` drone / structure, `p:<key>` → ship / lingering).
 - `src/client/panels/ContactsPanel.tsx` polls the render mirror at 4 Hz while
   open and re-renders only when what's shown changes. Closed, it polls nothing.
   The table is the catalogue `EqxTable` (sortable headers, `onRowTap`,
@@ -97,17 +97,18 @@ panel and keeps the left side for the selection strip.
 
 - Unit: `contactRows.test.ts` (lockable set, names not ids, reach with the
   slack, lock and locking-you state, type / faction / stance, the multi-key
-  sort and header taps, filters, km format, tap action),
+  sort and header taps, filters, km format), `contactFocus.test.ts` (key →
+  focus id + kind),
   `MouseLock.test.ts` (O).
 - Component: `panels/ContactsPanel.test.tsx` (rail pick and O open it, ✕ and
   Esc close it, names not ids, stance colours, header sort and tie-break,
   sort kept across the refresh, filters hide and narrow, faction options,
-  paging, a tap sends `lock_request` for the
-  active group, a tap on a locked row cancels, 4 Hz refresh);
+  paging, a row tap focuses the entity and closes the panel without
+  locking or unlocking, 4 Hz refresh);
   `layout/RightPanelHost.test.tsx` (Contacts on the rail in every mode).
 - E2E: `tests/e2e/contacts-overview.spec.ts` (`fc-duel`, `instantLock`): desktop
-  O + click locks and cancels; touch landscape: the rail's Contacts item + tap
-  locks, ✕ closes.
+  O + click selects (strip shows, no lock); touch landscape: the rail's
+  Contacts item + tap selects, ✕ closes.
 
 ## Next
 

@@ -558,6 +558,10 @@ export abstract class RendererCommandRouting {
   }
 
 
+  /** Focus an entity by id, the same path as a map tap on it (Contacts row
+   *  tap). Never toggles off: tapping the focused contact keeps it. */
+  focusEntity(id: string, kind: PickedEntityKind): void { this.setFocus(id, kind); }
+
   /** Command view follows spectating (see `PixiRenderer.setSpectator`). */
   setCommandView(active: boolean): void {
     // RTS command view == spectating for now (a later slice renames it).

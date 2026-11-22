@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import {
-  DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER, buildContactRows, contactFactions, contactStance, contactTapAction,
+  DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER, buildContactRows, contactFactions, contactStance,
   contactsSignature, filterContacts, formatContactKm, sortContacts, tapContactSort, type ContactSort,
 } from './contactRows';
 
@@ -268,14 +268,7 @@ describe('formatContactKm', () => {
   });
 });
 
-describe('contactTapAction + signature', () => {
-  it('cancels only the active group’s own lock, else locks', () => {
-    const byKey = new Map(buildContactRows(mirror(), 'guns', REACHES).map((r) => [r.key, r]));
-    expect(contactTapAction(byKey.get('s:7')!)).toBe('cancel'); // guns acquiring
-    expect(contactTapAction(byKey.get('s:8')!)).toBe('lock'); // locked by missiles, not guns
-    expect(contactTapAction(byKey.get('s:10')!)).toBe('lock');
-  });
-
+describe('contactsSignature', () => {
   it('the signature ignores sub-display distance changes and sees lock changes', () => {
     const a = buildContactRows(mirror(), 'guns', REACHES);
     const b = buildContactRows(mirror({ ships: new Map<string, unknown>([['me', { x: 1, y: 0 }], [PLAYER_ID, { x: 0, y: -3000, kind: 'fighter', displayName: 'Ripley' }]]) }), 'guns', REACHES);

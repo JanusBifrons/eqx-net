@@ -298,6 +298,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'FOCUS_ENTITY': {
+        if (!renderer) return;
+        renderer.focusEntity(msg.id, msg.kind);
+        break;
+      }
+
       case 'SET_CAMERA_SCRIPT': {
         if (!renderer) return;
         renderer.setCameraScript(msg.cues);
