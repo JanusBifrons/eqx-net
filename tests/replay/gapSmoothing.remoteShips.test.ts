@@ -425,13 +425,14 @@ describe('other players\' ships through gaps and corrections — today\'s number
   describe('(d) a clean stretch: the ship thrusts straight, no gap, no correction scripted', () => {
     let still = 0;
     let noTickFrames = 0;
+    let frames: RemoteDrawnPoseSample[] = [];
 
     beforeAll(async () => {
       const track = await buildTrack(tl, { inputAt: () => THRUST, editAt: () => null }, 0, 0);
       const res = await replayCapture(CAPTURE, {
         remoteShip: { id: REMOTE_ID, kind: KIND, stateAt: (t) => wireAt(tl, track, t) },
       });
-      const frames = windowFrames(res);
+      frames = windowFrames(res);
       for (let i = 1; i < frames.length; i++) if (frames[i]!.inputTick === frames[i - 1]!.inputTick) noTickFrames++;
       still = stillNoTickFrames(tl, track, frames);
     });
@@ -443,6 +444,15 @@ describe('other players\' ships through gaps and corrections — today\'s number
     it('moves on every frame that runs no physics tick', () => {
       expect(noTickFrames).toBeGreaterThan(60);
       expect(still).toBe(0);
+    });
+
+    // The render due time slews toward the clock anchor's due time. Held to
+    // 0.5 ms a tick (30 ms/s) it fell 12-79 ms behind the anchor, whose EWMA
+    // moves up to ~100 ms/s on jittery arrivals, so the catch-up time sat at
+    // its cap and the ship stalled between ticks.
+    it.fails('the render due time keeps up with the clock anchor (catch-up under the cap)', () => {
+      const over = frames.filter((f) => f.tickElapsedMs >= DEAD_RECKON_CAP_MS).length;
+      expect(over / frames.length).toBeLessThan(0.05);
     });
   });
 });
