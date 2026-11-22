@@ -1045,7 +1045,7 @@ export function App(): JSX.Element {
   const [joinOptionsOverride, setJoinOptionsOverride] = useState<Record<string, unknown> | undefined>(initialJoinOpts);
   const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const openSettings = useCallback(() => { const s = useUIStore.getState(); if (s.phase === 'game') s.setDrawerTab('settings'); else setSettingsOpen(true); }, []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   // Apply autoJoin once on mount — overrides the store's default 'galaxy-map'.

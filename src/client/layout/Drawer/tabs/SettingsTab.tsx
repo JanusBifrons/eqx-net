@@ -1,4 +1,4 @@
-import { Box, Button, Divider, FormControlLabel, Stack, Switch, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
+import { Box, Button, Divider, FormControlLabel, Switch, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import HomeIcon from '@mui/icons-material/Home';
 import { useUIStore } from '../../../state/store';
 import { PushNotificationToggle } from '../../../components/PushNotificationToggle';
@@ -15,22 +15,12 @@ const SOFT_LABELS: ReadonlyArray<[number, string]> = [[0, 'Off'], [0.5, 'Light']
 const LIGHTING_GROUP_SX = { mt: 0.5, '& .MuiToggleButton-root': { fontSize: 11, px: 1, py: 0.25 } } as const;
 
 /**
- * Mobile-drawer Settings tab.
- *
- * Hosts the same debug-overlay toggles as the desktop `SettingsModal`
- * (showDevOverlay / showLogPanel / showServerGhost) and a "Return to menu"
- * button that drops the player back at the meta landing.
- *
- * Diagnostic capture lives in the Debug tab now (separated by intent —
- * settings are preferences, capture is a debug action).
+ * The cog panel's settings (panels/CogPanel.tsx main page): return to menu,
+ * graphics and notifications (PushNotificationToggle). The debug switches
+ * (debug overlay, server log, server ghost) and the diagnostic capture live on
+ * the cog's Developer page (DebugTab).
  */
 export function SettingsTab(): JSX.Element {
-  const showDevOverlay = useUIStore((s) => s.showDevOverlay);
-  const showLogPanel = useUIStore((s) => s.showLogPanel);
-  const showServerGhost = useUIStore((s) => s.showServerGhost);
-  const setShowDevOverlay = useUIStore((s) => s.setShowDevOverlay);
-  const setShowLogPanel = useUIStore((s) => s.setShowLogPanel);
-  const setShowServerGhost = useUIStore((s) => s.setShowServerGhost);
   const setPhase = useUIStore((s) => s.setPhase);
   const setRightPanel = useUIStore((s) => s.setRightPanel);
 
@@ -193,67 +183,6 @@ export function SettingsTab(): JSX.Element {
           Notifications
         </Typography>
         <PushNotificationToggle />
-      </Box>
-
-      <Divider />
-
-      <Box>
-        <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block', mb: 1 }}>
-          Debug overlays
-        </Typography>
-        <Stack spacing={1}>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={showDevOverlay}
-                onChange={(e) => setShowDevOverlay(e.target.checked)}
-                inputProps={{ 'aria-label': 'Show debug overlay', 'data-testid': 'settings-toggle-dev-overlay' } as React.InputHTMLAttributes<HTMLInputElement>}
-              />
-            }
-            label={
-              <Box>
-                <Typography variant="body2">Debug overlay</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  RTT, drift, prediction stats. Visible inside the Debug tab.
-                </Typography>
-              </Box>
-            }
-          />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={showLogPanel}
-                onChange={(e) => setShowLogPanel(e.target.checked)}
-                inputProps={{ 'aria-label': 'Show server log', 'data-testid': 'settings-toggle-log-panel' } as React.InputHTMLAttributes<HTMLInputElement>}
-              />
-            }
-            label={
-              <Box>
-                <Typography variant="body2">Server log</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Recent corrections and snapshots. Visible inside the Debug tab.
-                </Typography>
-              </Box>
-            }
-          />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={showServerGhost}
-                onChange={(e) => setShowServerGhost(e.target.checked)}
-                inputProps={{ 'aria-label': 'Show server ghost', 'data-testid': 'settings-toggle-server-ghost' } as React.InputHTMLAttributes<HTMLInputElement>}
-              />
-            }
-            label={
-              <Box>
-                <Typography variant="body2">Server ghost</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Orange diamond showing the server&rsquo;s authoritative ship position.
-                </Typography>
-              </Box>
-            }
-          />
-        </Stack>
       </Box>
     </Box>
   );

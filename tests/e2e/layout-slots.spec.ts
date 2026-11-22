@@ -168,18 +168,19 @@ test.describe('layout-slots', () => {
     await expect(page.locator('[data-testid="drawer-tab-trade"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="drawer-tab-settings"]')).toHaveCount(0);
 
-    // The cog: Profile, Settings, Debug only, Settings first.
+    // The cog: its own scrolling panel, Profile and Developer as drill-down rows.
     await page.locator('[data-testid="right-rail-cog"]').click();
-    await expect(page.locator('[data-testid="drawer-panel-settings"]')).toBeVisible();
-    for (const id of ['profile', 'settings', 'debug']) {
-      await expect(page.locator(`[data-testid="drawer-tab-${id}"]`)).toBeVisible();
+    await expect(page.locator('[data-testid="cog-panel"]')).toBeVisible();
+    await expect(page.locator('[data-testid="cog-page-settings"]')).toBeVisible();
+    for (const id of ['profile', 'developer']) {
+      await expect(page.locator(`[data-testid="cog-row-${id}"]`)).toBeVisible();
     }
-    await expect(page.locator('[data-testid="drawer-tab-galaxy"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="drawer-tab"]')).toHaveCount(0);
 
     await ctx.close();
   });
 
-  test('debug tab houses dev-overlay + log-panel, drawer closed → tab unmounted', async ({ browser }) => {
+  test('cog Developer page houses dev-overlay + log-panel, panel closed → unmounted', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
@@ -189,19 +190,19 @@ test.describe('layout-slots', () => {
     await expect(page.locator('[data-testid="dev-overlay"]')).toHaveCount(0);
 
     await page.locator('[data-testid="right-rail-cog"]').click();
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible();
+    await expect(page.locator('[data-testid="cog-panel"]')).toBeVisible();
 
     // The Settings page shows first — dev-overlay still not rendered.
     await expect(page.locator('[data-testid="dev-overlay"]')).toHaveCount(0);
 
-    // Switch to Debug tab — dev-overlay + log-panel mount.
-    await page.locator('[data-testid="drawer-tab-debug"]').click();
+    // Drill into Developer — dev-overlay + log-panel mount.
+    await page.locator('[data-testid="cog-row-developer"]').click();
     await expect(page.locator('[data-testid="dev-overlay"]')).toBeVisible();
     await expect(page.locator('[data-testid="log-panel"]')).toBeVisible();
     await expect(page.locator('[data-testid="diag-capture-button"]')).toBeVisible();
 
-    // Closing drawer unmounts again.
-    await page.locator('[data-testid="drawer-close"]').click();
+    // Closing the panel unmounts again.
+    await page.locator('[data-testid="cog-close"]').click();
     await expect(page.locator('[data-testid="dev-overlay"]')).toHaveCount(0);
 
     await ctx.close();
@@ -238,13 +239,12 @@ test.describe('layout-slots', () => {
     await ctx.close();
   });
 
-  test('Settings tab "Return to menu" routes back to the galaxy map', async ({ browser }) => {
+  test('cog "Return to menu" routes back to the galaxy map', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page); // starts in /?room=test-sector → game phase
 
     await page.locator('[data-testid="right-rail-cog"]').click();
-    await page.locator('[data-testid="drawer-tab-settings"]').click();
     await page.locator('[data-testid="settings-return-to-menu"]').click();
 
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
@@ -259,9 +259,9 @@ test.describe('layout-slots', () => {
     const page = await ctx.newPage();
     await bootGame(page);
 
-    // The cog opens the Settings page; Profile sits beside it.
+    // The cog opens the Settings page; Profile is a drill-down row on it.
     await page.locator('[data-testid="right-rail-cog"]').click();
-    await page.locator('[data-testid="drawer-tab-profile"]').click();
+    await page.locator('[data-testid="cog-row-profile"]').click();
     const logoutButton = page.locator('[data-testid="profile-tab-logout"]');
     await expect(logoutButton).toBeVisible();
     await logoutButton.click();

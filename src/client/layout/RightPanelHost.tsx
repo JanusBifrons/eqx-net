@@ -8,7 +8,7 @@
  *   camera focus insets (`railWidthPx`) all make room for it.
  * - Driven by the store's `rightPanel` flag: a rail pick sets it, a second pick
  *   of the open item, ✕ or Esc clears it. Renders the panels the flag opens,
- *   including today's advanced drawer (moved here from App.tsx) and the
+ *   including today's advanced drawer (moved here from App.tsx), the cog panel and the
  *   selection's Details panel (opened from the left strip's ⚙, not a rail item).
  */
 import { useEffect, useMemo } from 'react';
@@ -21,6 +21,7 @@ import { AdvancedDrawer } from './Drawer/AdvancedDrawer';
 import { HoldPanel } from '../panels/HoldPanel';
 import { FleetRailPanel } from '../panels/FleetPanel';
 import { DetailsPanel } from '../panels/DetailsPanel';
+import { CogPanel } from '../panels/CogPanel';
 import { Slot } from './Slot';
 import { RAIL_COG, railItemById, railTools, RAIL_COMMON, type RailItemSpec } from './railItems';
 
@@ -76,6 +77,7 @@ export function RightPanelHost(): JSX.Element {
       <HoldPanel />
       <FleetRailPanel />
       <DetailsPanel />
+      <CogPanel />
     </>
   );
 }

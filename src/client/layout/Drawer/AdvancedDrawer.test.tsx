@@ -12,9 +12,6 @@ vi.mock('./tabs/TradeTab', () => ({ TradeTab: () => <div>trade page</div> }));
 vi.mock('./tabs/ContractsTab', () => ({ ContractsTab: () => <div>jobs page</div> }));
 vi.mock('./tabs/FactionsTab', () => ({ FactionsTab: () => <div>factions page</div> }));
 vi.mock('./tabs/ShipLookTab', () => ({ ShipLookTab: () => <div>look page</div> }));
-vi.mock('./tabs/ProfileTab', () => ({ ProfileTab: () => <div>profile page</div> }));
-vi.mock('./tabs/SettingsTab', () => ({ SettingsTab: () => <div>settings page</div> }));
-vi.mock('./tabs/DebugTab', () => ({ DebugTab: () => <div>debug page</div> }));
 
 const { AdvancedDrawer, pagesOfPanel } = await import('./AdvancedDrawer');
 
@@ -27,7 +24,8 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
     expect(pagesOfPanel('trade').map((p) => p.id)).toEqual(['trade']);
     expect(pagesOfPanel('jobs').map((p) => p.id)).toEqual(['contracts']);
     expect(pagesOfPanel('faction').map((p) => p.id)).toEqual(['factions', 'look']);
-    expect(pagesOfPanel('cog').map((p) => p.id)).toEqual(['profile', 'settings', 'debug']);
+    // The cog draws its own panel (panels/CogPanel.tsx).
+    expect(pagesOfPanel('cog')).toEqual([]);
   });
 
   it('Galaxy: its page and title, no tab column and no page switch', () => {
@@ -39,15 +37,20 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
     expect(screen.queryByTestId('drawer-tab-trade')).toBeNull();
   });
 
-  it('the cog: Profile / Settings / Debug switch only; a pick changes the page', () => {
+  it('the cog does not open this panel (CogPanel draws it)', () => {
     render(<AdvancedDrawer />);
     act(() => { useUIStore.getState().setDrawerTab('settings'); });
-    for (const id of ['profile', 'settings', 'debug']) expect(screen.getByTestId(`drawer-tab-${id}`)).toBeTruthy();
-    expect(screen.queryByTestId('drawer-tab-galaxy')).toBeNull();
-    fireEvent.click(screen.getByTestId('drawer-tab-debug'));
-    expect(useUIStore.getState().drawerTab).toBe('debug');
     expect(useUIStore.getState().rightPanel).toBe('cog');
-    expect(screen.getByTestId('drawer-panel-debug').textContent).toBe('debug page');
+    expect(screen.queryByTestId('drawer-tab-settings')).toBeNull();
+  });
+
+  it('Faction: its two pages on a switch; a pick changes the page', () => {
+    render(<AdvancedDrawer />);
+    act(() => { useUIStore.getState().setDrawerTab('factions'); });
+    fireEvent.click(screen.getByTestId('drawer-tab-look'));
+    expect(useUIStore.getState().drawerTab).toBe('look');
+    expect(useUIStore.getState().rightPanel).toBe('faction');
+    expect(screen.getByTestId('drawer-panel-look').textContent).toBe('look page');
   });
 
   it('✕ closes the panel', () => {
