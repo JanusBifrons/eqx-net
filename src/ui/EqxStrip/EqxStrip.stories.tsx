@@ -1,15 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { Box, ThemeProvider } from '@mui/material';
-import RocketIcon from '@mui/icons-material/RocketLaunchOutlined';
-import DefendIcon from '@mui/icons-material/ShieldOutlined';
-import AggressiveIcon from '@mui/icons-material/GpsFixed';
-import StopIcon from '@mui/icons-material/StopCircleOutlined';
-import SettingsIcon from '@mui/icons-material/SettingsOutlined';
-import CloseIcon from '@mui/icons-material/Close';
-import CheckIcon from '@mui/icons-material/Check';
-import RotateIcon from '@mui/icons-material/RotateRight';
-import MirrorIcon from '@mui/icons-material/Flip';
-import FactoryIcon from '@mui/icons-material/FactoryOutlined';
+import { EqxIcon } from '../EqxIcon/EqxIcon.js';
 import { eqxTheme } from '../theme.js';
 import { EqxStrip } from './EqxStrip.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
@@ -37,13 +28,13 @@ export default meta;
 type Story = StoryObj<typeof EqxStrip>;
 
 const fleet5 = [
-  <EqxStripIdentity key="id" icon={<RocketIcon />} tooltip="5 ships selected" health="ok" count={5} />,
-  <EqxIconButton key="order" variant="strip" status="calm" icon={<DefendIcon />} tooltip="Order: Defend" />,
-  <EqxIconButton key="stance" variant="strip" status="alert" icon={<AggressiveIcon />} tooltip="Stance: Aggressive" />,
+  <EqxStripIdentity key="id" icon={<EqxIcon name="fleet" />} tooltip="5 ships selected" health="ok" count={5} />,
+  <EqxIconButton key="order" variant="strip" status="calm" icon={<EqxIcon name="defensive" />} tooltip="Order: Defend" />,
+  <EqxIconButton key="stance" variant="strip" status="alert" icon={<EqxIcon name="aggressive" />} tooltip="Stance: Aggressive" />,
   <EqxStrip.Separator key="sep" />,
-  <EqxIconButton key="stop" variant="strip" tone="danger" icon={<StopIcon />} tooltip="Stop" />,
-  <EqxIconButton key="menu" variant="strip" icon={<SettingsIcon />} tooltip="All orders and details" />,
-  <EqxIconButton key="x" variant="strip" icon={<CloseIcon />} tooltip="Deselect" />,
+  <EqxIconButton key="stop" variant="strip" tone="danger" icon={<EqxIcon name="stop" />} tooltip="Stop" />,
+  <EqxIconButton key="menu" variant="strip" icon={<EqxIcon name="cog" />} tooltip="All orders and details" />,
+  <EqxIconButton key="x" variant="strip" icon={<EqxIcon name="close" />} tooltip="Deselect" />,
 ];
 
 /** Five ships selected: identity + count, order and stance status, separator, actions. */
@@ -54,11 +45,11 @@ export const ShipDamaged: Story = {
   args: {
     'aria-label': 'Selection',
     children: [
-      <EqxStripIdentity key="id" icon={<RocketIcon />} tooltip="Fighter, hull 64%" health="warn" />,
-      <EqxIconButton key="order" variant="strip" status="calm" icon={<DefendIcon />} tooltip="Order: Defend" />,
+      <EqxStripIdentity key="id" icon={<EqxIcon name="fleet" />} tooltip="Fighter, hull 64%" health="warn" />,
+      <EqxIconButton key="order" variant="strip" status="calm" icon={<EqxIcon name="defensive" />} tooltip="Order: Defend" />,
       <EqxStrip.Separator key="sep" />,
-      <EqxIconButton key="menu" variant="strip" icon={<SettingsIcon />} tooltip="Details" />,
-      <EqxIconButton key="x" variant="strip" icon={<CloseIcon />} tooltip="Deselect" />,
+      <EqxIconButton key="menu" variant="strip" icon={<EqxIcon name="cog" />} tooltip="Details" />,
+      <EqxIconButton key="x" variant="strip" icon={<EqxIcon name="close" />} tooltip="Deselect" />,
     ],
   },
 };
@@ -68,9 +59,9 @@ export const ShipCritical: Story = {
   args: {
     'aria-label': 'Selection',
     children: [
-      <EqxStripIdentity key="id" icon={<RocketIcon />} tooltip="Fighter, hull 18%" health="crit" />,
+      <EqxStripIdentity key="id" icon={<EqxIcon name="fleet" />} tooltip="Fighter, hull 18%" health="crit" />,
       <EqxStrip.Separator key="sep" />,
-      <EqxIconButton key="x" variant="strip" icon={<CloseIcon />} tooltip="Deselect" />,
+      <EqxIconButton key="x" variant="strip" icon={<EqxIcon name="close" />} tooltip="Deselect" />,
     ],
   },
 };
@@ -80,12 +71,12 @@ export const Placing: Story = {
   args: {
     'aria-label': 'Placing',
     children: [
-      <EqxStripIdentity key="id" icon={<FactoryIcon />} tooltip="Placing: Refinery" health="ok" />,
-      <EqxIconButton key="ok" variant="strip" tone="primary" icon={<CheckIcon />} tooltip="Place" />,
-      <EqxIconButton key="r" variant="strip" icon={<RotateIcon />} tooltip="Rotate (R)" />,
-      <EqxIconButton key="m" variant="strip" icon={<MirrorIcon />} tooltip="Mirror (F)" />,
+      <EqxStripIdentity key="id" icon={<EqxIcon name="build" />} tooltip="Placing: Refinery" health="ok" />,
+      <EqxIconButton key="ok" variant="strip" tone="primary" icon={<EqxIcon name="confirm" />} tooltip="Place" />,
+      <EqxIconButton key="r" variant="strip" icon={<EqxIcon name="rotate" />} tooltip="Rotate (R)" />,
+      <EqxIconButton key="m" variant="strip" icon={<EqxIcon name="mirror" />} tooltip="Mirror (F)" />,
       <EqxStrip.Separator key="sep" />,
-      <EqxIconButton key="x" variant="strip" tone="danger" icon={<CloseIcon />} tooltip="Stop placing" />,
+      <EqxIconButton key="x" variant="strip" tone="danger" icon={<EqxIcon name="close" />} tooltip="Stop placing" />,
     ],
   },
 };
@@ -100,9 +91,9 @@ export const Horizontal: Story = {
     orientation: 'horizontal',
     'aria-label': 'Stance',
     children: [
-      <EqxIconButton key="aggr" variant="strip" icon={<AggressiveIcon />} tooltip="Aggressive" />,
-      <EqxIconButton key="defn" variant="strip" icon={<DefendIcon />} tooltip="Defensive" active />,
-      <EqxIconButton key="stop" variant="strip" icon={<StopIcon />} tooltip="Hold fire" />,
+      <EqxIconButton key="aggr" variant="strip" icon={<EqxIcon name="aggressive" />} tooltip="Aggressive" />,
+      <EqxIconButton key="defn" variant="strip" icon={<EqxIcon name="defensive" />} tooltip="Defensive" active />,
+      <EqxIconButton key="hold" variant="strip" icon={<EqxIcon name="holdFire" />} tooltip="Hold fire" />,
     ],
   },
 };

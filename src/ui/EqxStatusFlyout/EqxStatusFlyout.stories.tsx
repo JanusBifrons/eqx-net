@@ -1,13 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { Box, ThemeProvider } from '@mui/material';
 import { useState } from 'react';
-import RocketIcon from '@mui/icons-material/RocketLaunchOutlined';
-import DefendIcon from '@mui/icons-material/ShieldOutlined';
-import AggressiveIcon from '@mui/icons-material/GpsFixed';
-import HoldFireIcon from '@mui/icons-material/PauseCircleOutline';
-import StopIcon from '@mui/icons-material/StopCircleOutlined';
-import SettingsIcon from '@mui/icons-material/SettingsOutlined';
-import CloseIcon from '@mui/icons-material/Close';
+import { EqxIcon } from '../EqxIcon/EqxIcon.js';
 import { eqxTheme } from '../theme.js';
 import { EqxStatusFlyout, type EqxStatusOption } from './EqxStatusFlyout.js';
 import { EqxStrip } from '../EqxStrip/EqxStrip.js';
@@ -37,21 +31,21 @@ type Story = StoryObj<typeof EqxStatusFlyout>;
 
 type Stance = 'aggressive' | 'defensive' | 'hold';
 const STANCES: readonly EqxStatusOption<Stance>[] = [
-  { id: 'aggressive', icon: <AggressiveIcon />, tooltip: 'Aggressive', tone: 'danger' },
-  { id: 'defensive', icon: <DefendIcon />, tooltip: 'Defensive' },
-  { id: 'hold', icon: <HoldFireIcon />, tooltip: 'Hold fire' },
+  { id: 'aggressive', icon: <EqxIcon name="aggressive" />, tooltip: 'Aggressive', tone: 'danger' },
+  { id: 'defensive', icon: <EqxIcon name="defensive" />, tooltip: 'Defensive' },
+  { id: 'hold', icon: <EqxIcon name="holdFire" />, tooltip: 'Hold fire' },
 ];
 
 function InStrip({ initial }: { initial: Stance }) {
   const [stance, setStance] = useState<Stance>(initial);
   return (
     <EqxStrip aria-label="Selection">
-      <EqxStripIdentity icon={<RocketIcon />} tooltip="5 ships selected" health="ok" count={5} />
+      <EqxStripIdentity icon={<EqxIcon name="fleet" />} tooltip="5 ships selected" health="ok" count={5} />
       <EqxStatusFlyout value={stance} options={STANCES} onChange={setStance} tooltip="Stance" data-testid="stance" />
       <EqxStrip.Separator />
-      <EqxIconButton variant="strip" tone="danger" icon={<StopIcon />} tooltip="Stop" />
-      <EqxIconButton variant="strip" icon={<SettingsIcon />} tooltip="All orders and details" />
-      <EqxIconButton variant="strip" icon={<CloseIcon />} tooltip="Deselect" />
+      <EqxIconButton variant="strip" tone="danger" icon={<EqxIcon name="stop" />} tooltip="Stop" />
+      <EqxIconButton variant="strip" icon={<EqxIcon name="cog" />} tooltip="All orders and details" />
+      <EqxIconButton variant="strip" icon={<EqxIcon name="close" />} tooltip="Deselect" />
     </EqxStrip>
   );
 }

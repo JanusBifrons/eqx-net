@@ -11,3 +11,5 @@ export { EqxSwitch, type EqxSwitchProps } from './EqxSwitch/EqxSwitch.js';
 export { EqxStrip, type EqxStripProps, type EqxStripSeparatorProps } from './EqxStrip/EqxStrip.js';
 export { EqxStripIdentity, HEALTH_RING, type EqxStripIdentityProps, type EqxStripHealth } from './EqxStripIdentity/EqxStripIdentity.js';
 export { EqxStatusFlyout, type EqxStatusFlyoutProps, type EqxStatusOption } from './EqxStatusFlyout/EqxStatusFlyout.js';
+export { EQX_ICONS, EQX_ICON_NAMES, type EqxIconName } from './icons.js';
+export { EqxIcon, type EqxIconProps, type EqxIconSize } from './EqxIcon/EqxIcon.js';

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { ThemeProvider } from '@mui/material';
-import RocketIcon from '@mui/icons-material/RocketLaunch';
+import { EqxIcon } from '../EqxIcon/EqxIcon.js';
 import { eqxTheme } from '../theme.js';
 import { EqxStripIdentity } from './EqxStripIdentity.js';
 
@@ -18,7 +18,7 @@ const meta: Meta<typeof EqxStripIdentity> = {
       </ThemeProvider>
     ),
   ],
-  args: { icon: <RocketIcon />, tooltip: 'Fighter', health: 'ok' },
+  args: { icon: <EqxIcon name="fleet" />, tooltip: 'Fighter', health: 'ok' },
   argTypes: { health: { control: 'inline-radio', options: ['ok', 'warn', 'crit'] } },
 };
 export default meta;

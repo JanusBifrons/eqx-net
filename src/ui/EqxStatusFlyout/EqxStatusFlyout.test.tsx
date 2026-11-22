@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import ShieldIcon from '@mui/icons-material/Shield';
-import GpsFixedIcon from '@mui/icons-material/GpsFixed';
-import PauseIcon from '@mui/icons-material/PauseCircle';
+import { EqxIcon } from '../EqxIcon/EqxIcon.js';
 import { EqxStatusFlyout, type EqxStatusOption } from './EqxStatusFlyout.js';
 import { EqxStrip } from '../EqxStrip/EqxStrip.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
@@ -14,9 +12,9 @@ afterEach(() => {
 
 type Stance = 'hold' | 'defend' | 'attack';
 const OPTIONS: readonly EqxStatusOption<Stance>[] = [
-  { id: 'hold', icon: <PauseIcon />, tooltip: 'Hold fire' },
-  { id: 'defend', icon: <ShieldIcon />, tooltip: 'Defensive', tone: 'primary' },
-  { id: 'attack', icon: <GpsFixedIcon />, tooltip: 'Aggressive', tone: 'danger' },
+  { id: 'hold', icon: <EqxIcon name="holdFire" />, tooltip: 'Hold fire' },
+  { id: 'defend', icon: <EqxIcon name="defensive" />, tooltip: 'Defensive', tone: 'primary' },
+  { id: 'attack', icon: <EqxIcon name="aggressive" />, tooltip: 'Aggressive', tone: 'danger' },
 ];
 
 function Harness({ onChange = vi.fn() }: { onChange?: (id: Stance) => void }) {
@@ -27,7 +25,7 @@ function Harness({ onChange = vi.fn() }: { onChange?: (id: Stance) => void }) {
       </button>
       <EqxStrip aria-label="Selection">
         <EqxStatusFlyout value="defend" options={OPTIONS} onChange={onChange} tooltip="Stance" data-testid="stance" />
-        <EqxIconButton variant="strip" icon={<PauseIcon />} tooltip="Stop" data-testid="stop" />
+        <EqxIconButton variant="strip" icon={<EqxIcon name="stop" />} tooltip="Stop" data-testid="stop" />
       </EqxStrip>
     </div>
   );
