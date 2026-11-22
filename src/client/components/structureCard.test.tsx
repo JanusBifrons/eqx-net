@@ -11,9 +11,6 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { Box } from '@mui/material';
 import { StructureCardRows, type StructureCardData } from './structureCard.js';
-import { CARD_MAX_W, EntityStatsPanel } from './EntityStatsPanel.js';
-import { applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
-import { useUIStore } from '../state/store.js';
 import { RECIPES, type RecipeId } from '@shared-types/recipes';
 
 /** A narrow width the card rows must fit (the old top-centre card on a sideways Pixel 7). */
