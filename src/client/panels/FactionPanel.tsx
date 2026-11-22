@@ -15,7 +15,6 @@ import { EQX_PANEL_SIZE, EqxListRow, EqxPanel, EqxSection } from '../../ui/index
 import { useUIStore } from '../state/store';
 import { FactionsTab } from '../layout/Drawer/tabs/FactionsTab';
 import { ShipLookTab } from '../layout/Drawer/tabs/ShipLookTab';
-import { COG_SECTION_STYLE } from './cogRows';
 
 /** The Faction panel's pages, keyed by their `drawerTab` id (the main page first). */
 export const FACTION_PAGES = ['factions', 'look'] as const;
@@ -35,12 +34,10 @@ const PAPER_ATTRS = { 'data-testid': 'faction-panel' } as const;
 function MainPage({ open }: { open: (page: FactionPage) => void }): JSX.Element {
   return (
     <div style={PAGE_STYLE}>
-      <div style={COG_SECTION_STYLE}>
-        <EqxSection title="Your ships">
-          <EqxListRow primary="Ship look" secondary="The colour and sigil every ship you own wears."
-            onOpen={() => open('look')} data-testid="faction-row-look" />
-        </EqxSection>
-      </div>
+      <EqxSection title="Your ships">
+        <EqxListRow primary="Ship look" secondary="The colour and sigil every ship you own wears."
+          onOpen={() => open('look')} data-testid="faction-row-look" />
+      </EqxSection>
       <FactionsTab />
     </div>
   );
