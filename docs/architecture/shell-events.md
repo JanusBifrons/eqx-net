@@ -347,9 +347,15 @@ Safety deadline: the current delay (game ms) + `STAMPED_HOLD_MARGIN_MS`
 (`MAX_HOLD_MS` − `MAX_TOTAL_DISPLAY_DELAY_MS`), capped by `matchedHoldMs`.
 Stamped entries share the pool, `holdsKill` (so `deferKill` holds their
 deaths), `flushTarget` and the welcome flush; shell matching (`onShellEnd`,
-`releaseHitAt`) skips them. Nothing calls it yet; later slices route
-non-shell damage FX, missile detonations, `shell_blast` / `mine_detonated`
-and the swarm sweep through it. Lock: `navalHitHold.stamped.test.ts`.
+`releaseHitAt`) skips them. Later slices route non-shell damage FX,
+`shell_blast` / `mine_detonated` and the swarm sweep through it. Lock:
+`navalHitHold.stamped.test.ts`.
+
+**Missile detonations (slice 3)** use the same stamp and deadline but not
+the `NavalHitHold` pool (the FX are not a damage event): the missile mirror
+keeps the detonated entry flying and releases it in its own per-frame step
+when the missile read point reaches the stamp. See
+[missile-simulation](missile-simulation.md#detonation-waits-for-the-drawn-missile-off-pilot-event-timing-slice-3).
 
 ## Client rules in detail
 

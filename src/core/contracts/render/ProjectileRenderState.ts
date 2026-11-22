@@ -50,6 +50,16 @@ export interface MissileRenderState {
   /** Remaining life as a fraction [0..1]. Renderer fades the trail near
    *  end-of-life. */
   lifePct: number;
+  /** Set when its `missile_detonated` arrived before the drawn missile got
+   *  there (off-pilot event timing, slice 3/6): it keeps flying until the
+   *  missile read point reaches `detStampMs` (or `detDeadlineMs`, wall ms),
+   *  then is removed and explodes at (detX, detY) sized `detSplash`
+   *  (`holdMissileDetonation`). Flat fields: no allocation in `onMessage`. */
+  detStampMs?: number;
+  detDeadlineMs?: number;
+  detX?: number;
+  detY?: number;
+  detSplash?: number;
 }
 
 export interface ProjectileRenderState {
